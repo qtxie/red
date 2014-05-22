@@ -39,7 +39,7 @@ platform: context [
 	confd: -2
 
 	buffer: allocate  1024
-	buffer*: buffer ;this stores buffer's head position
+	pbuffer: buffer ;this stores buffer's head position
 
 	#import [
 		LIBC-file cdecl [
@@ -187,6 +187,7 @@ platform: context [
 	;-------------------------------------------
 	putbuffer: func [
 		chars [integer!]
+		return: [integer!]
 		/local
 			n	[integer!]
 			cr	[integer!]
@@ -198,15 +199,17 @@ platform: context [
 		con: GetConsoleMode _get_osfhandle fd-stdout :n		;-- test if output is a console
 		either con > 0 [									;-- output to console
 			if confd = -2 [init-console-out]
-			;if confd = -1 [return WEOF]
-			WriteConsole confd buffer* chars :n null
+			if confd = -1 [return WEOF]					
+			WriteConsole confd pbuffer chars :n null
 		][													;-- output to redirection file
+			;@@ is this conversion really required and wanted?
 			;if wchar = as integer! #"^/" [					;-- convert lf to crlf
 			;	WriteFile _get_osfhandle fd-stdout (as c-string! :cr) 2 :n 0
 			;]
-			WriteFile _get_osfhandle fd-stdout as c-string! buffer* chars :n 0
+			WriteFile _get_osfhandle fd-stdout as c-string! pbuffer chars :n 0
 		]
-		buffer: buffer*
+		buffer: pbuffer
+		chars
 	]
 	;-------------------------------------------
 	;-- Print a UCS-4 string to console
@@ -250,15 +253,23 @@ platform: context [
 		str 	[byte-ptr!]								;-- zero-terminated UCS-2 string
 		/local
 			p	[byte-ptr!]
-			cp	[integer!]
+			chars [integer!]
 	][
 		assert str <> null
 		p: str
+		chars: 0
 		while [p/1 <> null-byte][
-			cp: (as-integer p/2) << 8 + p/1
-			putwchar cp
+			buffer/1: p/1
+			buffer/2: p/2
+			chars: chars + 1
+			buffer: buffer + 2
 			p: p + 2
+			if chars = 512 [  ; if the buffer has 1024 bytes, it has room for 512 chars
+				putbuffer chars
+				chars: 0
+			]
 		]
+		putbuffer chars
 	]
 
 	;-------------------------------------------
@@ -278,23 +289,23 @@ platform: context [
 	print-Latin1: func [
 		str 	[c-string!]								;-- zero-terminated Latin-1 string
 		/local
-			cp [integer!]								;-- codepoint
-			bytes [integer!]
+			cp    [integer!]							;-- codepoint
+			chars [integer!]							;-- mumber of used chars in buffer
 	][
 		assert str <> null
 		chars: 0
 		while [cp: as-integer str/1 not zero? cp][
 			buffer/1: as byte! cp
-			buffer/2: as byte! FFh and cp >> 8
+			buffer/2: as byte! cp >> 8
 			str: str + 1
 			chars: chars + 1
 			buffer: buffer + 2
 			if chars = 512 [  ; if the buffer has 1024 bytes, it has room for 512 chars
 				putbuffer chars
-				bytes: 0
+				chars: 0
 			]
 		]
-		putbuffer bytes
+		putbuffer chars
 	]
 
 	;-------------------------------------------

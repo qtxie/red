@@ -190,11 +190,11 @@ platform: context [
 		return: [integer!]
 		/local
 			n	[integer!]
-			cr	[integer!]
+			;cr	[integer!]
 			con	[integer!]
 	][
 		n: 0
-		cr: as integer! #"^M"
+		;cr: as integer! #"^M"
 
 		con: GetConsoleMode _get_osfhandle fd-stdout :n		;-- test if output is a console
 		either con > 0 [									;-- output to console
@@ -296,7 +296,7 @@ platform: context [
 		chars: 0
 		while [cp: as-integer str/1 not zero? cp][
 			buffer/1: as byte! cp
-			buffer/2: as byte! cp >> 8
+			buffer/2: as byte! 0 ;this should be always 0 in Latin1
 			str: str + 1
 			chars: chars + 1
 			buffer: buffer + 2

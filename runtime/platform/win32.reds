@@ -252,18 +252,16 @@ platform: context [
 	print-UCS2: func [
 		str 	[byte-ptr!]								;-- zero-terminated UCS-2 string
 		/local
-			p	[byte-ptr!]
 			chars [integer!]
 	][
 		assert str <> null
-		p: str
 		chars: 0
-		while [p/1 <> null-byte][
-			buffer/1: p/1
-			buffer/2: p/2
+		while [str/1 <> null-byte][
+			buffer/1: str/1
+			buffer/2: str/2
 			chars: chars + 1
 			buffer: buffer + 2
-			p: p + 2
+			str: str + 2
 			if chars = 512 [  ; if the buffer has 1024 bytes, it has room for 512 chars
 				putbuffer chars
 				chars: 0

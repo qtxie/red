@@ -206,7 +206,7 @@ platform: context [
 			;if wchar = as integer! #"^/" [					;-- convert lf to crlf
 			;	WriteFile _get_osfhandle fd-stdout (as c-string! :cr) 2 :n 0
 			;]
-			WriteFile _get_osfhandle fd-stdout as c-string! pbuffer chars :n 0
+			WriteFile _get_osfhandle fd-stdout as c-string! pbuffer 2 * chars :n 0
 		]
 		buffer: pbuffer
 		chars

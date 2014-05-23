@@ -252,14 +252,21 @@ platform: context [
 	print-UCS2: func [
 		str 	[byte-ptr!]								;-- zero-terminated UCS-2 string
 		/local
-			cp    [byte!]							    ;-- codepoint
+			cp    [integer!]
+			ch1    [byte!]
+			ch2    [byte!]
 			chars [integer!]
 	][
 		assert str <> null
 		chars: 0
-		while [cp: str/1 cp <> null-byte][
-			buffer/1: cp
-			buffer/2: str/2
+		while [
+			ch1: str/1
+			ch2: str/2
+			cp: (as-integer ch2) << 8 + ch1
+			cp <> 0
+		][
+			buffer/1: ch1
+			buffer/2: ch2
 			chars: chars + 1
 			buffer: buffer + 2
 			str: str + 2

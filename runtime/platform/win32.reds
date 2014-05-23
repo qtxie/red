@@ -287,13 +287,12 @@ platform: context [
 	print-Latin1: func [
 		str 	[c-string!]								;-- zero-terminated Latin-1 string
 		/local
-			cp    [integer!]							;-- codepoint
 			chars [integer!]							;-- mumber of used chars in buffer
 	][
 		assert str <> null
 		chars: 0
-		while [cp: as-integer str/1 not zero? cp][
-			buffer/1: as byte! cp
+		while [str/1 <> null-byte][
+			buffer/1: str/1
 			buffer/2: as byte! 0 ;this should be always 0 in Latin1
 			str: str + 1
 			chars: chars + 1

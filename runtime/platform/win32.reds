@@ -252,12 +252,13 @@ platform: context [
 	print-UCS2: func [
 		str 	[byte-ptr!]								;-- zero-terminated UCS-2 string
 		/local
+			cp    [byte!]							    ;-- codepoint
 			chars [integer!]
 	][
 		assert str <> null
 		chars: 0
-		while [str/1 <> null-byte][
-			buffer/1: str/1
+		while [cp: str/1 cp <> null-byte][
+			buffer/1: cp
 			buffer/2: str/2
 			chars: chars + 1
 			buffer: buffer + 2

@@ -293,7 +293,7 @@ platform: context [
 		chars: 0
 		while [str/1 <> null-byte][
 			buffer/1: str/1
-			buffer/2: as byte! 0 ;this should be always 0 in Latin1
+			buffer/2: null-byte ;this should be always 0 in Latin1
 			str: str + 1
 			chars: chars + 1
 			buffer: buffer + 2

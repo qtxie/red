@@ -252,21 +252,19 @@ platform: context [
 	print-UCS2: func [
 		str 	[byte-ptr!]								;-- zero-terminated UCS-2 string
 		/local
-			cp    [integer!]
-			ch1    [byte!]
-			ch2    [byte!]
+			b1    [byte!]
+			b2    [byte!]
 			chars [integer!]
 	][
 		assert str <> null
 		chars: 0
 		while [
-			ch1: str/1
-			ch2: str/2
-			cp: (as-integer ch2) << 8 + ch1
-			cp <> 0
+			b1: str/1
+			b2: str/2
+			((as-integer b2) << 8 + b1) <> 0
 		][
-			buffer/1: ch1
-			buffer/2: ch2
+			buffer/1: b1
+			buffer/2: b2
 			chars: chars + 1
 			buffer: buffer + 2
 			str: str + 2
@@ -286,7 +284,12 @@ platform: context [
 	][
 		assert str <> null
 		print-UCS2 str									;@@ throw an error on failure
-		putwchar 10										;-- newline
+		buffer/1: #"^M"
+		buffer/2: null-byte
+		buffer/3: #"^/"
+		buffer/4: null-byte
+		putbuffer 2
+		;putwchar 10										;-- newline
 	]
 
 	;-------------------------------------------
@@ -322,7 +325,12 @@ platform: context [
 	][
 		assert str <> null
 		print-Latin1 str
-		putwchar 10										;-- newline
+		buffer/1: #"^M"
+		buffer/2: null-byte
+		buffer/3: #"^/"
+		buffer/4: null-byte
+		putbuffer 2
+		;putwchar 10										;-- newline
 	]
 
 	;-------------------------------------------

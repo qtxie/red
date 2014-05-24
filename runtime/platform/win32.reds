@@ -190,22 +190,15 @@ platform: context [
 		return: [integer!]
 		/local
 			n	[integer!]
-			;cr	[integer!]
 			con	[integer!]
 	][
 		n: 0
-		;cr: as integer! #"^M"
-
 		con: GetConsoleMode _get_osfhandle fd-stdout :n		;-- test if output is a console
 		either con > 0 [									;-- output to console
 			if confd = -2 [init-console-out]
 			if confd = -1 [return WEOF]					
 			WriteConsole confd pbuffer chars :n null
 		][													;-- output to redirection file
-			;@@ is this conversion really required and wanted?
-			;if wchar = as integer! #"^/" [					;-- convert lf to crlf
-			;	WriteFile _get_osfhandle fd-stdout (as c-string! :cr) 2 :n 0
-			;]
 			WriteFile _get_osfhandle fd-stdout as c-string! pbuffer 2 * chars :n 0
 		]
 		buffer: pbuffer
@@ -288,8 +281,7 @@ platform: context [
 		buffer/2: null-byte
 		buffer/3: #"^/"
 		buffer/4: null-byte
-		putbuffer 2
-		;putwchar 10										;-- newline
+		putbuffer 2 									;-- newline
 	]
 
 	;-------------------------------------------
@@ -329,8 +321,7 @@ platform: context [
 		buffer/2: null-byte
 		buffer/3: #"^/"
 		buffer/4: null-byte
-		putbuffer 2
-		;putwchar 10										;-- newline
+		putbuffer 2 									;-- newline
 	]
 
 	;-------------------------------------------

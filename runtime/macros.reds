@@ -185,6 +185,7 @@ Red/System [
 	NAT_TO_HEX
 	NAT_DEBASE
 	NAT_ENBASE
+	NAT_CHECKSUM
 ]
 
 #enum math-op! [

@@ -18,6 +18,18 @@ Red/System [
 
 word: context [
 	verbose: 0
+
+	rs-equal?: func [
+		w		[red-word!]
+		s		[c-string!]
+		return: [logic!]
+		/local
+			id	[integer!]
+	][
+		id: symbol/search s
+		id: either positive? id [id][0 - id]
+		either id = symbol/resolve w/symbol [true][false]
+	]
 	
 	load-in: func [
 		str 	[c-string!]

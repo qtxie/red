@@ -1249,6 +1249,53 @@ natives: context [
 		out
 	]
 
+	checksum*: func [
+		_tcp		[integer!]
+		_hash		[integer!]
+		_method		[integer!]
+		_key		[integer!]
+		/local
+			arg		[red-value!]
+			str		[red-string!]
+			method	[red-word!]
+			key		[red-string!]
+			data	[byte-ptr!]
+			b		[byte-ptr!]
+			len		[integer!]
+	][
+		arg: stack/arguments
+		switch TYPE_OF(arg) [
+			TYPE_STRING [
+				str: as red-string! arg
+				data: string/rs-head str
+				len: string/rs-length? str
+			]
+			default [
+				print-line "** Script Error: checksum expected data argument of type: string!"
+			]
+		]
+
+		case [
+			_tcp >= 0 []
+			_hash >= 0 []
+			any [_method >= 0 _key >= 0] [
+				method: as red-word! arg + _method
+				if word/rs-equal? method "md5" [
+					b: crypto/MD5 data len
+					len: 16
+				]
+				if word/rs-equal? method "sha1" [
+					b: crypto/SHA1 data len
+					len: 20
+				]
+				stack/set-last as red-value! binary/load as c-string! b len
+			]
+			true [
+				integer/box crypto/CRC32 data len
+			]
+		]
+	]
+
 	;--- Natives helper functions ---
 
 	loop?: func [
@@ -1484,6 +1531,7 @@ natives: context [
 			:to-hex*
 			:debase*
 			:enbase*
+			:checksum*
 		]
 	]
 

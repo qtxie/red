@@ -3,11 +3,7 @@ Red/System [
 	Author: "Xie Qingtian"
 	File: 	%crypto.reds
 	Tabs:	4
-	Rights:  {Copyright (C) 2011-2014	Nenad Rakocevic,
-										Andreas Bolka,
-										David Olivia,
-										Xie Qing Tian,
-										Peter W A Wood. All rights reserved.}
+	Rights:  {Copyright (C) 2011-2014 Xie Qing Tian All rights reserved.}
 	License: {
 		Distributed under the Boost Software License, Version 1.0.
 		See https://github.com/dockimbel/Red/blob/master/BSL-License.txt
@@ -197,6 +193,16 @@ crypto: context [
 					addrlen	[int-ptr!]
 					return:	[integer!]
 				]
+				read:	"read" [
+					fd		[integer!]
+					buf	    [byte-ptr!]
+					size	[integer!]
+					return:	[integer!]
+				]
+				close:	"close" [
+					fd		[integer!]
+					return:	[integer!]
+				]
 			]
 		]
 
@@ -225,28 +231,25 @@ crypto: context [
 				alg [c-string!]
 				hash	[byte-ptr!]
 				size	[integer!]
-				bufsize [integer!]
 		][
 			hash: as byte-ptr! "0000000000000000000"
 			sa: allocate 88
-			sa/1: 0
-			sa/2: AF_ALG
-			copy-memory sa + 2 as byte-ptr! "hash" 5
+			set-memory sa #"^@" 88
+			sa/1: as-byte AF_ALG
+			copy-memory sa + 2 as byte-ptr! "hash" 4
 			either type = CALG_MD5 [
 				alg: "md5"
-				size: 4
-				bufsize: 16
+				size: 16
 			][
 				alg: "sha1"
-				size: 5
-				bufsize: 20
+				size: 20
 			]
-			copy-memory sa + 24 as byte-ptr! alg size
+			copy-memory sa + 24 as byte-ptr! alg 4
 			fd: socket AF_ALG SOCK_SEQPACKET 0
-			bind fd sa 88
-			opfd: accept fd null 0
-			write opfd data len
-			read opfd hash bufsize
+			sock-bind fd sa 88
+			opfd: accept fd null null
+			write opfd as c-string! data len
+			read opfd hash size
 			close opfd
 			close fd
 			free sa

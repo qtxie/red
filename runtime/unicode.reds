@@ -93,6 +93,7 @@ unicode: context [
 	to-utf8: func [
 		str		[red-string!]
 		part	[integer!]							;--limit the number of chars, -1 means all
+		size	[int-ptr!]
 		return: [c-string!]
 		/local
 			s	 [series!]
@@ -155,6 +156,7 @@ unicode: context [
 			p: p + unit
 		]
 		buf/1: null-byte
+		unless size = null [size/value: as-integer (buf - as byte-ptr! s/offset)]
 
 		as-c-string s/offset
 	]

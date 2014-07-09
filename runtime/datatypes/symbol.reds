@@ -111,7 +111,7 @@ symbol: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "symbol/make-alt"]]
 
-		s: unicode/to-utf8 str -1                       ;-- -1: all chars
+		s: unicode/to-utf8 str -1 null                  ;-- -1: all chars
 		id: search s
 		if positive? id [return id]
 

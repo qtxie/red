@@ -437,7 +437,7 @@ binary: context [
 			as byte-ptr! s1/tail
 		]
 		;@@ it would be nice to encode to utf-8 directly instead of intermediate buffer
-		buf: unicode/to-utf8 bin2 part
+		buf: unicode/to-utf8 bin2 part null
 		copy-memory	p (as byte-ptr! buf) size2
 		free as byte-ptr! buf
 

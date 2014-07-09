@@ -1257,6 +1257,7 @@ natives: context [
 		/local
 			arg		[red-value!]
 			str		[red-string!]
+			bin		[red-binary!]
 			method	[red-word!]
 			key		[red-string!]
 			data	[byte-ptr!]
@@ -1264,14 +1265,14 @@ natives: context [
 			len		[integer!]
 	][
 		arg: stack/arguments
+		len: 0
 		switch TYPE_OF(arg) [
 			TYPE_STRING [
 				str: as red-string! arg
-				data: string/rs-head str
-				len: string/rs-length? str
+				data: as byte-ptr! unicode/to-utf8 str -1 :len
 			]
 			default [
-				print-line "** Script Error: checksum expected data argument of type: string!"
+				print-line "** Script Error: checksum expected data argument of type: string! binary! file!"
 			]
 		]
 
@@ -1280,13 +1281,23 @@ natives: context [
 			_hash >= 0 []
 			any [_method >= 0 _key >= 0] [
 				method: as red-word! arg + _method
-				if word/rs-equal? method "md5" [
-					b: crypto/MD5 data len
-					len: 16
-				]
-				if word/rs-equal? method "sha1" [
-					b: crypto/SHA1 data len
-					len: 20
+				case [
+					word/rs-equal? method "md5" [
+						b: crypto/MD5 data len
+						len: 16
+					]
+					word/rs-equal? method "sha1" [
+						b: crypto/SHA1 data len
+						len: 20
+					]
+					word/rs-equal? method "crc32" [
+						integer/box crypto/CRC32 data len
+						exit
+					]
+					true [
+						print-line "** Script error: invalid argument"
+						exit
+					]
 				]
 				stack/set-last as red-value! binary/load as c-string! b len
 			]

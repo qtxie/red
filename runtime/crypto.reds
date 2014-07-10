@@ -12,6 +12,12 @@ Red/System [
 
 crypto: context [
 
+	#enum crypto-algorithm! [
+		ALG_CRC32
+		ALG_MD5
+		ALG_SHA1
+	]
+
 	crc32-table: declare int-ptr!
 	crc32-table: null
 
@@ -59,6 +65,22 @@ crypto: context [
 		]
 
 		not c
+	]
+
+	MD5: func [
+		data	[byte-ptr!]
+		len		[integer!]
+		return:	[byte-ptr!]
+	][
+		get-digest data len ALG_MD5
+	]
+
+	SHA1: func [
+		data	[byte-ptr!]
+		len		[integer!]
+		return:	[byte-ptr!]
+	][
+		get-digest data len ALG_SHA1
 	]
 
 #switch OS [
@@ -128,7 +150,7 @@ crypto: context [
 			hash: as byte-ptr! "0000000000000000000"
 			provider: 0
 			handle: 0
-			size: either type = CALG_MD5 [16][20]
+			size: either type = ALG_MD5 [type: CALG_MD5 16][type: CALG_SHA1 20]
 			CryptAcquireContext :provider null null PROV_RSA_FULL CRYPT_VERIFYCONTEXT
 			CryptCreateHash provider type null 0 :handle
 			CryptHashData handle data len 0
@@ -136,22 +158,6 @@ crypto: context [
 			CryptDestroyHash handle
 			CryptReleaseContext provider 0
 			hash
-		]
-
-		MD5: func [
-			data	[byte-ptr!]
-			len		[integer!]
-			return:	[byte-ptr!]
-		][
-			get-digest data len CALG_MD5
-		]
-
-		SHA1: func [
-			data	[byte-ptr!]
-			len		[integer!]
-			return:	[byte-ptr!]
-		][
-			get-digest data len CALG_SHA1
 		]
 	]
 	Syllable [
@@ -163,8 +169,53 @@ crypto: context [
 		--NOT_IMPLEMENTED--
 	]
 	Android [
-		;-- Maybe we can use the same APIs as Linux
-		--NOT_IMPLEMENTED--
+		;-- Using OpenSSL Crypto library
+		#import [
+			"libcrypto.so" cdecl [
+				compute-md5: "MD5" [
+					data	[byte-ptr!]
+					len		[integer!]
+					output	[byte-ptr!]
+					return: [byte-ptr!]
+				]
+				compute-sha1: "SHA1" [
+					data	[byte-ptr!]
+					len		[integer!]
+					output	[byte-ptr!]
+					return: [byte-ptr!]
+				]
+			]
+		]
+
+		;typedef struct MD5state_st						;-- 92 bytes
+		;	{
+		;	MD5_LONG A,B,C,D;
+		;	MD5_LONG Nl,Nh;
+		;	MD5_LONG data[MD5_LBLOCK];
+		;	unsigned int num;
+		;	} MD5_CTX;
+
+		get-digest: func [
+			data		[byte-ptr!]
+			len			[integer!]
+			type		[integer!]
+			return:		[byte-ptr!]
+			/local
+				fd		[integer!]
+				opfd	[integer!]
+				sa		[byte-ptr!]
+				alg		[c-string!]
+				hash	[byte-ptr!]
+				size	[integer!]
+		][
+			hash: as byte-ptr! "0000000000000000000"
+			either type = ALG_MD5 [
+				compute-md5 data len hash
+			][
+				compute-sha1 data len hash
+			]
+			hash
+		]
 	]
 	FreeBSD [
 		;-- Using libmd.so
@@ -208,8 +259,6 @@ crypto: context [
 
 		#define AF_ALG 					38
 		#define SOCK_SEQPACKET 			5
-		#define CALG_MD5				00008003h
-		#define CALG_SHA1				00008004h
 
 		;struct sockaddr_alg {					;-- 88 bytes
 		;    __u16   salg_family;
@@ -220,15 +269,15 @@ crypto: context [
 		;};
 
 		get-digest: func [
-			data	[byte-ptr!]
-			len		[integer!]
-			type	[integer!]
-			return:	[byte-ptr!]
+			data		[byte-ptr!]
+			len			[integer!]
+			type		[integer!]
+			return:		[byte-ptr!]
 			/local
-				fd	[integer!]
-				opfd [integer!]
-				sa	[byte-ptr!]
-				alg [c-string!]
+				fd		[integer!]
+				opfd	[integer!]
+				sa		[byte-ptr!]
+				alg		[c-string!]
 				hash	[byte-ptr!]
 				size	[integer!]
 		][
@@ -237,7 +286,7 @@ crypto: context [
 			set-memory sa #"^@" 88
 			sa/1: as-byte AF_ALG
 			copy-memory sa + 2 as byte-ptr! "hash" 4
-			either type = CALG_MD5 [
+			either type = ALG_MD5 [
 				alg: "md5"
 				size: 16
 			][
@@ -255,23 +304,5 @@ crypto: context [
 			free sa
 			hash
 		]
-
-		MD5: func [
-			data	[byte-ptr!]
-			len		[integer!]
-			return:	[byte-ptr!]
-		][
-			get-digest data len CALG_MD5
-		]
-
-		SHA1: func [
-			data	[byte-ptr!]
-			len		[integer!]
-			return:	[byte-ptr!]
-		][
-			get-digest data len CALG_SHA1
-		]
-	]
-]
-
+	]]
 ]

@@ -61,6 +61,7 @@ red: context [
 	#include %datatypes/paren.reds
 	#include %datatypes/issue.reds
 	#include %datatypes/file.reds
+	#include %datatypes/url.reds
 	#include %datatypes/object.reds
 	#include %datatypes/bitset.reds
 	#include %datatypes/point.reds
@@ -73,6 +74,7 @@ red: context [
 	#include %actions.reds
 	#include %natives.reds
 	#include %parse.reds
+	#include %random.reds
 	#include %stack.reds
 	#include %interpreter.reds
 	#if OS <> 'Android [
@@ -120,6 +122,7 @@ red: context [
 		paren/init
 		issue/init
 		file/init
+		url/init
 		object/init
 		bitset/init
 		point/init
@@ -139,6 +142,7 @@ red: context [
 		refinements/build								;-- create refinements used internally
 		natives/init									;-- native specific init code
 		parser/init
+		_random/init
 		
 		stack/init
 		
@@ -166,6 +170,7 @@ red: context [
 			paren/verbose:		verbosity
 			issue/verbose:		verbosity
 			file/verbose:		verbosity
+			url/verbose:		verbosity
 			object/verbose:		verbosity
 			bitset/verbose:		verbosity
 

@@ -161,7 +161,28 @@ integer: context [
 			]
 		]
 	]
-	
+
+	random: func [
+		int		[red-integer!]
+		seed?	[logic!]
+		secure? [logic!]
+		only?   [logic!]
+		return: [red-value!]
+		/local
+			n	 [integer!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "integer/random"]]
+
+		either seed? [
+			_random/srand int/value
+			int/header: TYPE_UNSET
+		][
+			n: _random/rand % int/value + 1
+			int/value: either negative? int/value [0 - n][n]
+		]
+		as red-value! int
+	]
+
 	form: func [
 		int		   [red-integer!]
 		buffer	   [red-string!]
@@ -360,7 +381,7 @@ integer: context [
 			"integer!"
 			;-- General actions --
 			:make
-			null			;random
+			:random
 			null			;reflect
 			null			;to
 			:form

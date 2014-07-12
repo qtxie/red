@@ -1,18 +1,18 @@
 Red/System [
-	Title:   "File! datatype runtime functions"
-	Author:  "Nenad Rakocevic"
-	File: 	 %file.reds
+	Title:   "Url! datatype runtime functions"
+	Author:  "Xie Qingtian"
+	File: 	 %url.reds
 	Tabs:	 4
-	Rights:  "Copyright (C) 2013 Nenad Rakocevic. All rights reserved."
+	Rights:  "Copyright (C) 2014 Xie Qingtian. All rights reserved."
 	License: {
 		Distributed under the Boost Software License, Version 1.0.
 		See https://github.com/dockimbel/Red/blob/master/red-system/runtime/BSL-License.txt
 	}
 ]
 
-file: context [
+url: context [
 	verbose: 0
-	
+
 	load-in: func [
 		src		 [c-string!]							;-- UTF-8 source string buffer
 		size	 [integer!]
@@ -21,10 +21,10 @@ file: context [
 		/local
 			cell [red-string!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "file/load"]]
-		
+		#if debug? = yes [if verbose > 0 [print-line "url/load"]]
+
 		cell: string/load-in src size blk UTF-8
-		cell/header: TYPE_FILE							;-- implicit reset of all header flags
+		cell/header: TYPE_URL							;-- implicit reset of all header flags
 		cell
 	]
 
@@ -37,11 +37,11 @@ file: context [
 	]
 
 	push: func [
-		file [red-file!]
+		url [red-url!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "file/push"]]
-		
-		copy-cell as red-value! file stack/push*
+		#if debug? = yes [if verbose > 0 [print-line "url/push"]]
+
+		copy-cell as red-value! url stack/push*
 	]
 
 	;-- Actions --
@@ -50,19 +50,19 @@ file: context [
 		proto	 [red-value!]
 		spec	 [red-value!]
 		type	 [integer!]
-		return:	 [red-file!]
+		return:	 [red-url!]
 		/local
-			file [red-file!]
+			url [red-url!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "file/make"]]
+		#if debug? = yes [if verbose > 0 [print-line "url/make"]]
 
-		file: as red-file! string/make proto spec type
-		set-type as red-value! file TYPE_FILE
-		file
+		url: as red-url! string/make proto spec type
+		set-type as red-value! url TYPE_URL
+		url
 	]
 
 	mold: func [
-		file    [red-file!]
+		url    [red-url!]
 		buffer	[red-string!]
 		only?	[logic!]
 		all?	[logic!]
@@ -82,16 +82,16 @@ file: context [
 			head   [byte-ptr!]
 			tail   [byte-ptr!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "file/mold"]]
+		#if debug? = yes [if verbose > 0 [print-line "url/mold"]]
 
 		limit: either OPTION?(arg) [
 			int: as red-integer! arg
 			int/value
 		][0]
 
-		s: GET_BUFFER(file)
+		s: GET_BUFFER(url)
 		unit: GET_UNIT(s)
-		p: (as byte-ptr! s/offset) + (file/head << (unit >> 1))
+		p: (as byte-ptr! s/offset) + (url/head << (unit >> 1))
 		head: p
 
 		tail: either zero? limit [						;@@ rework that part
@@ -100,8 +100,6 @@ file: context [
 			either negative? part [p][p + (part << (unit >> 1))]
 		]
 		if tail > as byte-ptr! s/tail [tail: as byte-ptr! s/tail]
-
-		string/append-char GET_BUFFER(buffer) as-integer #"%"
 
 		while [p < tail][
 			cp: switch unit [
@@ -117,25 +115,25 @@ file: context [
 	]
 
 	copy: func [
-		file    [red-file!]
+		url    [red-url!]
 		new		[red-string!]
 		arg		[red-value!]
 		deep?	[logic!]
 		types	[red-value!]
 		return:	[red-series!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "file/copy"]]
-				
-		file: as red-file! string/copy as red-string! file new arg deep? types
-		file/header: TYPE_FILE
-		as red-series! file
+		#if debug? = yes [if verbose > 0 [print-line "url/copy"]]
+
+		url: as red-url! string/copy as red-string! url new arg deep? types
+		url/header: TYPE_URL
+		as red-series! url
 	]
 
 	init: does [
 		datatype/register [
-			TYPE_FILE
+			TYPE_URL
 			TYPE_STRING
-			"file!"
+			"url!"
 			;-- General actions --
 			:make
 			INHERIT_ACTION	;random

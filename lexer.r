@@ -21,6 +21,7 @@ lexer: context [
 	fail?:	none									;-- used for failing some parsing rules
 	type:	none									;-- define the type of the new value
 	rs?:	no 										;-- if TRUE, do lexing for Red/System
+	neg?:	no										;-- if TRUE, denotes a negative number value
 	
 	;====== Parsing rules ======
 
@@ -241,16 +242,26 @@ lexer: context [
 	]
 	
 	integer-rule: [
-		integer-number-rule
-		sticky-word-rule
+		decimal-special									;-- escape path for NaN, INFs
+		| integer-number-rule
+		  opt [decimal-number-rule | decimal-exp-rule e: (type: decimal!)]
+		  sticky-word-rule
 	]
 
+	decimal-special: [
+		(neg?: no) opt [#"-" (neg?: yes)] "1.#" s: [
+			[[#"N" | #"n"] [#"a" | #"A"] [#"N" | #"n"]]
+			| [[#"I" | #"i"] [#"N" | #"n"] [#"F" | #"f"]]
+		] e: (type: issue!)
+	]
+	
+	decimal-exp-rule: [
+		[[#"e" | #"E"] opt [#"-" | #"+"] 1 3 digit]
+	]
+	
 	decimal-number-rule: [
-		(type: decimal!)
-		opt [#"-" | #"+"] digit any [digit | #"'" digit]		;-- first part
-		opt [[dot | comma] any digit]							;-- second part
-		opt [opt [#"e" | #"E"] opt [#"-" | #"+"] some digit]	;-- third part
-		e:
+		[dot | comma] digit any [digit | #"'" digit]
+		opt decimal-exp-rule e: (type: decimal!)
 	]
 
 	decimal-rule: [
@@ -370,7 +381,7 @@ lexer: context [
 		pos: (e: none) s: [
 			comment-rule
 			| escaped-rule    (stack/push value)
-			| integer-rule	  (stack/push load-integer   copy/part s e)
+			| integer-rule	  (stack/push load-number    copy/part s e)
 			| decimal-rule	  (stack/push load-decimal	 copy/part s e)
 			| tuple-rule	  (stack/push to tuple!		 copy/part s e)
 			| hexa-rule		  (stack/push decode-hexa	 copy/part s e)
@@ -540,8 +551,16 @@ lexer: context [
 		to integer! debase/base s 16
 	]
 
-	load-integer: func [s [string!]][
-		unless integer? s: to integer! s [throw-error]
+	load-number: func [s [string!]][
+		switch/default type [
+			#[datatype! decimal!][s: load-decimal s]
+			#[datatype! issue!  ][
+				s: to issue! join "." s
+				if neg? [append s #"-"]
+			]
+		][
+			unless integer? s: to integer! s [throw-error]
+		]
 		s
 	]
 

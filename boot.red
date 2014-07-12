@@ -47,7 +47,7 @@ routine!:		make datatype! #get-definition TYPE_ROUTINE
 object!:		make datatype! #get-definition TYPE_OBJECT
 ;port!:			make datatype! #get-definition TYPE_PORT
 bitset!:		make datatype! #get-definition TYPE_BITSET
-;float!:		make datatype! #get-definition TYPE_FLOAT
+float!:			make datatype! #get-definition TYPE_FLOAT
 point!:			make datatype! #get-definition TYPE_POINT
 
 none:  			make none! 0
@@ -89,7 +89,13 @@ reflect: make action! [[
 	#get-definition ACT_REFLECT
 ]
 
-;to
+to: make action! [[
+		"Converts to a specified datatype."
+		type	[any-type!] "The datatype or example value"
+		spec	[any-type!] "The attributes of the new value"
+	]
+	#get-definition ACT_TO
+]
 
 form: make action! [[
 		"Returns a user-friendly string representation of a value."
@@ -954,6 +960,68 @@ to-hex: make native! [[
 	#get-definition NAT_TO_HEX
 ]
 
+sine: make native! [[
+		"Returns the trigonometric sine."
+		value	[number!]
+		/radians "Value is specified in radians"
+		return: [float!]
+	]
+	#get-definition NAT_SINE
+]
+
+cosine: make native! [[
+		"Returns the trigonometric cosine."
+		value	[number!]
+		/radians "Value is specified in radians"
+		return: [float!]
+	]
+	#get-definition NAT_COSINE
+]
+
+tangent: make native! [[
+		"Returns the trigonometric tangent."
+		value	[number!]
+		/radians "Value is specified in radians"
+		return: [float!]
+	]
+	#get-definition NAT_TANGENT
+]
+
+arcsine: make native! [[
+		"Returns the trigonometric arcsine (in degrees by default)."
+		value	[number!]
+		/radians "Value is specified in radians"
+		return: [float!]
+	]
+	#get-definition NAT_ARCSINE
+]
+
+arccosine: make native! [[
+		"Returns the trigonometric arccosine (in degrees by default)."
+		value	[number!]
+		/radians "Value is specified in radians"
+		return: [float!]
+	]
+	#get-definition NAT_ARCCOSINE
+]
+
+arctangent: make native! [[
+		"Returns the trigonometric arctangent (in degrees by default)."
+		value	[number!]
+		/radians "Value is specified in radians"
+		return: [float!]
+	]
+	#get-definition NAT_ARCTANGENT
+]
+
+NaN?: make native! [[
+		"Returns TRUE if the number is Not-a-Number."
+		value	[number!]
+		return: [logic!]
+	]
+	#get-definition NAT_NAN?
+]
+
 ;------------------------------------------
 ;-			   Operators				  -
 ;------------------------------------------
@@ -1000,6 +1068,7 @@ sp: space: 	 #" "
 null: 		 #"^@"
 crlf:		 "^M^/"
 dot:		 #"."
+comma:		 #","
 
 ;------------------------------------------
 ;-			   Mezzanines				  -

@@ -10,9 +10,10 @@ Red [
 	}
 ]
 
-trans-integer: routine [
-	start [string!]
-	end	  [string!]
+trans-number: routine [
+	start  [string!]
+	end	   [string!]
+	float? [logic!]
 	/local
 		c	 [integer!]
 		n	 [integer!]
@@ -21,6 +22,10 @@ trans-integer: routine [
 		p	 [byte-ptr!]
 		neg? [logic!]
 ][
+	if float? [
+		trans-float start end							;-- decimal! escape path
+		exit
+	]
 	str:  GET_BUFFER(start)
 	unit: GET_UNIT(str)
 	p:	  string/rs-head start
@@ -39,25 +44,61 @@ trans-integer: routine [
 	n: 0
 	until [
 		c: (string/get-char p unit) - #"0"
-		
-		m: n * 10
-		if m < n [SET_RETURN(none-value) exit]			;-- return NONE on overflow
-		n: m
-		
-		if all [n = 2147483640 c = 8][
-			integer/box 80000000h						;-- special exit trap for -2147483648
-			exit
-		]
-		
-		m: n + c
-		if m < n [SET_RETURN(none-value) exit]			;-- return NONE on overflow
-		n: m
+		if c >= 0 [											;-- skip #"'"
+			m: n * 10
+			if m < n [SET_RETURN(none-value) exit]			;-- return NONE on overflow
+			n: m
 
+			if all [n = 2147483640 c = 8][
+				integer/box 80000000h						;-- special exit trap for -2147483648
+				exit
+			]
+
+			m: n + c
+			if m < n [SET_RETURN(none-value) exit]			;-- return NONE on overflow
+			n: m
+		]
 		p: p + unit
 		len: len - 1
 		zero? len
 	]
 	integer/box either neg? [0 - n][n]
+]
+
+trans-float: routine [
+	start [string!]
+	end	  [string!]
+	/local
+		str  [series!]
+		cp	 [integer!]
+		unit [integer!]
+		p	 [byte-ptr!]
+		tail [byte-ptr!]
+		cur	 [byte-ptr!]
+		s0	 [byte-ptr!]
+		byte [byte!]
+][
+	str:  GET_BUFFER(start)
+	unit: GET_UNIT(str)
+	p:	  string/rs-head start
+	tail: p + ((end/head - start/head) << (unit >> 1))
+	cur:  p
+	s0:   cur
+
+	until [											;-- convert to ascii string
+		cp: string/get-char p unit
+		if cp <> as-integer #"'" [					;-- skip #"'"
+			if cp = as-integer #"," [cp: as-integer #"."]
+			cur/1: as-byte cp
+			cur: cur + 1
+		]
+		p: p + unit
+		p = tail
+	]
+	byte:  cur/1      ;store last byte
+	cur/1: #"^@"      ;replace the byte with null so to-float can use it as end of input
+	float/box string/to-float s0
+	cur/1: byte       ;revert the byte back
 ]
 
 trans-hexa: routine [
@@ -364,7 +405,7 @@ transcode: function [
 		some [
 			slash
 			s: [
-				integer-number-rule			(trans-store stack trans-integer s e)
+				integer-number-rule			(trans-store stack trans-number s e no)
 				| begin-symbol-rule			(trans-word stack copy/part s e word!)
 				| paren-rule
 				| #":" s: begin-symbol-rule	(trans-word stack copy/part s e get-word!)
@@ -421,9 +462,30 @@ transcode: function [
 	]
 	
 	integer-rule: [
-		integer-number-rule
-		ahead [integer-end | ws-no-count | end]
+		float-special								;-- escape path for NaN, INFs
+		| integer-number-rule
+		  opt [float-number-rule | float-exp-rule e: (type: float!)]
+		  ahead [integer-end | ws-no-count | end]
 	]
+
+	float-special: [
+		s: opt [#"-"] "1.#" [
+			[[#"N" | #"n"] [#"a" | #"A"] [#"N" | #"n"]]
+			| [[#"I" | #"i"] [#"N" | #"n"] [#"F" | #"f"]]
+		] e: (type: float!)
+	]
+
+	float-exp-rule: [[#"e" | #"E"] opt [#"-" | #"+"] 1 3 digit]
+
+	float-number-rule: [
+		[dot | comma] digit any [digit | #"'" digit]
+		opt float-exp-rule e: (type: float!)
+ 	]
+ 	
+ 	float-rule: [
+		opt [#"-" | #"+"] float-number-rule
+ 		ahead [integer-end | ws-no-count | end]
+ 	]
 	
 	block-rule: [
 		#"[" (append/only stack make block! 4)
@@ -485,7 +547,8 @@ transcode: function [
 		pos: (e: none) s: [
 			comment-rule
 			| escaped-rule		(trans-store stack value)
-			| integer-rule		if (value: trans-integer s e ) (trans-store stack value)
+			| integer-rule		if (value: trans-number s e type = float!) (trans-store stack value)
+			| float-rule		if (value: trans-float s e) (trans-store stack value)
 			| hexa-rule			(trans-store stack trans-hexa s e)
 			| word-rule
 			| lit-word-rule

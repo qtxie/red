@@ -43,6 +43,7 @@ Red/System [
 	TYPE_BITSET
 	TYPE_POINT
 	TYPE_OBJECT
+	TYPE_FLOAT
 	TYPE_BINARY
 	
 	TYPE_TYPESET
@@ -52,7 +53,7 @@ Red/System [
 
 	TYPE_PORT
 
-	TYPE_FLOAT
+	
 ]
 
 #enum actions! [
@@ -183,6 +184,13 @@ Red/System [
 	NAT_MIN
 	NAT_SHIFT
 	NAT_TO_HEX
+	NAT_SINE
+	NAT_COSINE
+	NAT_TANGENT
+	NAT_ARCSINE
+	NAT_ARCCOSINE
+	NAT_ARCTANGENT
+	NAT_NAN?
 ]
 
 #enum math-op! [

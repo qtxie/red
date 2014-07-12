@@ -191,6 +191,10 @@ red: context [
 		all [issue? value value/1 = #"'"]
 	]
 	
+	float-special?: func [value][
+		all [issue? value value/1 = #"."]
+	]
+	
 	insert-lf: func [pos][
 		new-line skip tail output pos yes
 	]
@@ -668,9 +672,19 @@ red: context [
 						item
 					]
 				]
-				emit to path! reduce [to word! form type? :item action]
-				emit value
-				insert-lf -1 - either block? value [length? value][1]
+				either float-special? :item [
+					emit 'float/push64
+					emit-fp-special item
+					insert-lf -3
+				][
+					either decimal? :item [
+						emit to path! reduce ['float action]
+					][
+						emit to path! reduce [to word! form type? :item action]
+					]
+					emit value
+					insert-lf -1 - either block? value [length? value][1]
+				]
 				
 				emit 'block/append*
 				insert-lf -1
@@ -838,10 +852,19 @@ red: context [
 			output: saved
 	]
 	
-	comp-literal: func [root? [logic!] /inactive /local value char? name w make-block type][
+	emit-fp-special: func [value [issue!]][
+		switch next value [
+			#INF  [emit to integer! #{7FF00000} emit 0]
+			#INF- [emit to integer! #{FFF00000} emit 0]
+			#NaN  [emit to integer! #{7FF80000} emit 0]			;-- smallest quiet NaN
+		]
+	]
+	
+	comp-literal: func [root? [logic!] /inactive /local value char? special? name w make-block type][
 		value: pc/1
 		either any [
 			char?: unicode-char? value
+			special?: float-special? value
 			scalar? :value
 		][
 			if root? [
@@ -852,6 +875,16 @@ red: context [
 				char? [
 					emit 'char/push
 					emit to integer! next value
+					insert-lf -2
+				]
+				special? [
+					emit 'float/push64
+					emit-fp-special value
+					insert-lf -3
+				]
+				decimal? :value [
+					emit 'float/push
+					emit load mold :value
 					insert-lf -2
 				]
 				find [refinement! issue! lit-word!] type?/word :value [
@@ -2217,7 +2250,10 @@ red: context [
 		]
 		switch/default type?/word pc/1 [
 			issue!		[
-				either unicode-char? pc/1 [
+				either any [
+					unicode-char?  pc/1
+					float-special? pc/1
+				][
 					comp-literal to logic! root			;-- special encoding for Unicode char!
 				][
 					unless comp-directive [

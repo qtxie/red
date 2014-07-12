@@ -184,8 +184,30 @@ actions: context [
 			
 		action-reflect value field/symbol
 	]
-	
-	to*: func [][]
+
+	to*: func [
+		return: [red-value!]
+	][
+		to as red-datatype! stack/arguments stack/arguments + 1
+	]
+
+	to: func [
+		type	[red-datatype!]
+		spec	[red-value!]
+		return: [red-value!]
+		/local
+			action-to
+	][
+		if TYPE_OF(spec) = type/value [return stack/set-last spec]
+
+		action-to: as function! [
+			type	[red-datatype!]
+			spec	[red-value!]
+			return: [red-value!]
+		] get-action-ptr-from TYPE_OF(spec) ACT_TO
+
+		action-to type spec
+	]
 
 	form*: func [
 		part	   [integer!]
@@ -457,8 +479,59 @@ actions: context [
 		action-remainder
 	]
 
-	round*: func [][]
-	
+	round*: func [
+		_to		  [integer!]
+		even	  [integer!]
+		down	  [integer!]
+		half-down [integer!]
+		floor	  [integer!]
+		ceil	  [integer!]
+		half-ceil [integer!]
+		/local
+			scale [red-value!]
+	][
+		scale: stack/arguments + _to
+		round
+			stack/arguments
+			scale
+			as logic! even	+ 1
+			as logic! down	+ 1
+			as logic! half-down + 1
+			as logic! floor + 1
+			as logic! ceil  + 1
+			as logic! half-ceil + 1
+	]
+
+	round: func [
+		value		[red-value!]
+		scale		[red-value!]
+		_even?		[logic!]
+		down?		[logic!]
+		half-down?	[logic!]
+		floor?		[logic!]
+		ceil?		[logic!]
+		half-ceil?	[logic!]
+		return:		[red-value!]
+		/local
+			action-round
+	][
+		#if debug? = yes [if verbose > 0 [print-line "actions/round"]]
+
+		action-round: as function! [
+			value		[red-value!]
+			scale		[red-value!]
+			_even?		[logic!]
+			down?		[logic!]
+			half-down?	[logic!]
+			floor?		[logic!]
+			ceil?		[logic!]
+			half-ceil?	[logic!]
+			return:		[red-value!]
+		] get-action-ptr value ACT_ROUND
+
+		action-round value scale _even? down? half-down? floor? ceil? half-ceil?
+	]
+
 	subtract*: func [
 		return:	[red-value!]
 		/local
@@ -1215,7 +1288,7 @@ actions: context [
 			:make*
 			:random*
 			:reflect*
-			null			;to
+			:to*
 			:form*
 			:mold*
 			:eval-path
@@ -1229,7 +1302,7 @@ actions: context [
 			:negate*
 			:power*
 			:remainder*
-			null			;round
+			:round*
 			:subtract*
 			:even?*
 			:odd?*

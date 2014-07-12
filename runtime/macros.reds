@@ -191,6 +191,9 @@ Red/System [
 	NAT_ARCCOSINE
 	NAT_ARCTANGENT
 	NAT_NAN?
+	NAT_DEBASE
+	NAT_ENBASE
+	NAT_CHECKSUM
 ]
 
 #enum math-op! [
@@ -244,6 +247,7 @@ Red/System [
 #define GET_CTX(obj)		(as red-context! ((as series! obj/ctx/value) + 1))
 #define FLAG_NOT?(s)		(s/flags and flag-bitset-not <> 0)
 #define SET_RETURN(value)	[stack/set-last as red-value! value]
+#define NOT_WHITESPACE(cp)  [all [cp <> 32 cp <> 9 cp <> 10 cp <> 13]] ;#" " #"^-" #"^/" #"^M"
 
 #define WHITE_CHAR?(char)	[
 	any [
@@ -289,6 +293,7 @@ Red/System [
 		type = TYPE_STRING
 		type = TYPE_FILE
 		type = TYPE_URL
+		type = TYPE_BINARY
 	]
 ]
 

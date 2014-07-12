@@ -26,6 +26,7 @@ write %build/bin/sources.r set-cache [
 		%natives.reds
 		%parse.reds
 		%random.reds
+		%crypto.reds
 		%red.reds
 		%stack.reds
 		%stack.reds
@@ -67,6 +68,7 @@ write %build/bin/sources.r set-cache [
 			%unset.reds
 			%url.reds
 			%word.reds
+			%binary.reds
 		]
 		%platform/ [
 			%android.reds

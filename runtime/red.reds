@@ -66,7 +66,8 @@ red: context [
 	#include %datatypes/bitset.reds
 	#include %datatypes/point.reds
 	#include %datatypes/float.reds
-	
+	#include %datatypes/binary.reds
+
 	;-- Debugging helpers --
 	
 	#include %debug-tools.reds
@@ -76,6 +77,7 @@ red: context [
 	#include %natives.reds
 	#include %parse.reds
 	#include %random.reds
+	#include %crypto.reds
 	#include %stack.reds
 	#include %interpreter.reds
 	#if OS <> 'Android [
@@ -128,6 +130,7 @@ red: context [
 		bitset/init
 		point/init
 		float/init
+		binary/init
 		
 		actions/init
 		

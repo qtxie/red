@@ -236,7 +236,7 @@ Red [
 			]
 			c: unicode/decode-utf8-char utf-char :len
 			switch c [
-				#"^(0D)" [KEY_ENTER]
+				#"^(0A)" [KEY_ENTER]
 				#"^(7F)" [KEY_BACKSPACE]
 				default  [c]
 			]

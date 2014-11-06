@@ -54,6 +54,7 @@ write %build/bin/sources.r set-cache [
 			%none.reds
 			%op.reds
 			%object.reds
+			%pair.reds
 			%paren.reds
 			%path.reds
 			%point.reds
@@ -83,6 +84,12 @@ write %build/bin/sources.r set-cache [
 		]
 	]
 	%utils/ [
+		%aapt/ [
+			%aapt.r
+			%android-res.r
+		]
+		%rebzip.r
+		%signapk.r
 		%extractor.r
 	]
 	%system/ [
@@ -112,6 +119,7 @@ write %build/bin/sources.r set-cache [
 			%win32-driver.reds
 		]
 		%formats/ [
+			%APK.r
 			%ELF.r
 			%Mach-O.r
 			%PE.r
@@ -128,6 +136,22 @@ write %build/bin/sources.r set-cache [
 			%secure-clean-path.r
 			%virtual-struct.r
 			%profiler.r
+		]
+	]
+	%bridges/ [
+		%android/ [
+			%AndroidManifest.xml.model
+			%dex/ [%classes.dex]
+			%res/ [
+				%drawable-hdpi/   [%ic_launcher.png]
+				%drawable-mdpi/   [%ic_launcher.png]
+				%drawable-xhdpi/  [%ic_launcher.png]
+				%drawable-xxhdpi/ [%ic_launcher.png]
+				%values/		  [
+					%strings.xml
+					%styles.xml
+				]
+			]
 		]
 	]
 ]

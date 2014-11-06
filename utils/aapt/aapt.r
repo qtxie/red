@@ -11,11 +11,11 @@ REBOL [
 	}
 ]
 
-do %rebzip.r
+do-cache %utils/rebzip.r
 
 aapt: context [
 
-	android-res: reduce load %android-res.r
+	android-res: reduce load-cache %utils/aapt/android-res.r
 	res-tools-ns: "http://schemas.android.com/tools"
 	res-prv-ns: "http://schemas.android.com/apk/prv/res/"
 	res-root-ns: "http://schemas.android.com/apk/res/"

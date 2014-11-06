@@ -10,8 +10,8 @@ REBOL [
 packager: context [
 	verbose: no
 
-	do %utils/aapt/aapt.r
-	do %utils/signapk.r
+	do-cache %utils/aapt/aapt.r
+	do-cache %utils/signapk.r
 
 	tools-URL:		http://static.red-lang.org/droid-tools/
 	build-root-dir: join temp-dir %builds/
@@ -47,7 +47,7 @@ packager: context [
 	
 	copy-file: func [src [file!] dst [file!]][
 		if slash = last dst [dst: join dst last split-path src]
-		write/binary dst read/binary src
+		write/binary dst read-binary-cache src
 	]
 	
 	get-tools: has [files sys][
@@ -79,7 +79,7 @@ packager: context [
 		opts [object!] src [file!] file [file!]
 		/local 
 			paths src-dir name bin-dir dst cmd apk entries sign-files
-			zip-entries key-alias key-store
+			zip-entries key-alias key-store raw-dir res-dir
 	][		
 		paths: 	 split-path src
 		src-dir: paths/1
@@ -87,25 +87,40 @@ packager: context [
 		bin-dir: build-root-dir/:name
 		append bin-dir slash
 
-		make-dir/deep bin-dir
+		raw-dir: join bin-dir "raw/"
+		res-dir: join bin-dir "res/"
+		make-dir/deep raw-dir
+		make-dir/deep res-dir
 
-		attempt [delete bin-dir/lib/armeabi/libRed.so]
-		attempt [delete bin-dir/lib/x86/libRed.so]
+		attempt [delete raw-dir/lib/armeabi/libRed.so]
+		attempt [delete raw-dir/lib/x86/libRed.so]
 
 		if system/product = 'Core [get-tools]
 
 		dst: either opts/target = 'ARM [
-			make-dir/deep bin-dir/lib/armeabi
+			make-dir/deep raw-dir/lib/armeabi
 			%armeabi/
 		][
-			make-dir/deep bin-dir/lib/x86
+			make-dir/deep raw-dir/lib/x86
 			%x86/
 		]
-		copy-file file join bin-dir [%lib/ dst %libRed.so]
+		copy-file file join raw-dir [%lib/ dst %libRed.so]
 		delete file
 
-		copy-file %bridges/android/dex/classes.dex bin-dir/classes.dex
-		copy-file %bridges/android/AndroidManifest.xml.model build-root-dir/AndroidManifest.xml
+		make-dir res-dir/drawable-hdpi
+		make-dir res-dir/drawable-mdpi
+		make-dir res-dir/drawable-xhdpi
+		make-dir res-dir/drawable-xxhdpi
+		make-dir res-dir/values
+
+		copy-file %bridges/android/dex/classes.dex raw-dir/classes.dex
+		copy-file %bridges/android/res/drawable-hdpi/ic_launcher.png res-dir/drawable-hdpi/ic_launcher.png
+		copy-file %bridges/android/res/drawable-mdpi/ic_launcher.png res-dir/drawable-mdpi/ic_launcher.png
+		copy-file %bridges/android/res/drawable-xhdpi/ic_launcher.png res-dir/drawable-xhdpi/ic_launcher.png
+		copy-file %bridges/android/res/drawable-xxhdpi/ic_launcher.png res-dir/drawable-xxhdpi/ic_launcher.png
+		copy-file %bridges/android/res/values/strings.xml res-dir/values/strings.xml
+		copy-file %bridges/android/res/values/styles.xml res-dir/values/styles.xml
+		copy-file %bridges/android/AndroidManifest.xml.model bin-dir/AndroidManifest.xml
 
 		either system/product = 'Core [
 			unless exists? build-root-dir/:keystore [
@@ -134,9 +149,9 @@ packager: context [
 
 			log "generating apk"
 			aapt/package/to-file 
-						 build-root-dir/AndroidManifest.xml
-						 %bridges/android/res/
-						 bin-dir
+						 bin-dir/AndroidManifest.xml
+						 res-dir
+						 raw-dir
 						 rejoin [build-root-dir name %-unsigned.apk]
 
 			cmd: reform [ {
@@ -169,9 +184,9 @@ packager: context [
 		][
 			log "generating apk"
 			entries: aapt/package/to-entry
-						 build-root-dir/AndroidManifest.xml
-						 %bridges/android/res/
-						 bin-dir
+						 bin-dir/AndroidManifest.xml
+						 res-dir
+						 raw-dir
 
 			log "signing apk"
 			sign-files: signapk/sign key-store entries

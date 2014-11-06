@@ -8,7 +8,7 @@ encap-fs: context [
 	cache: none
 	root: system/script/path
 	base: none
-	text-files: [%.r %.red %.reds %.txt]
+	text-files: [%.r %.red %.reds %.txt %.xml %.model]
 
 	get-cache: func [file][
 		if verbose > 0 [print ["[encap-fs] cache read :" mold file]]
@@ -55,11 +55,11 @@ encap-fs: context [
 				file: mold filename: file
 				insert tail out "^/^-"
 				insert tail out file
+				insert tail out "^-^-"
 				either find/only text-files suffix? file [
-					insert tail out "^-^-"
 					insert tail out mold read filename
 				][
-					insert tail out read/binary filename
+					insert tail out mold read/binary filename
 				]
 				
 			]

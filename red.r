@@ -379,8 +379,8 @@ redc: context [
 		
 		if all [word: in opts 'packager get word][
 			file: join %system/formats/ [opts/packager %.r]
-			unless exists? file [fail ["Packager:" opts/packager "not found!"]]
-			do bind load file 'self
+			unless exists?-cache file [fail ["Packager:" opts/packager "not found!"]]
+			do bind load-cache file 'self
 			packager/process opts src result/4
 		]
 	]

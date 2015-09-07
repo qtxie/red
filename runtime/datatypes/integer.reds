@@ -301,7 +301,7 @@ integer: context [
 			buf [red-string!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "integer/to"]]
-			
+	probe type/value		
 		switch type/value [
 			TYPE_INTEGER [
 				int: as red-integer! type

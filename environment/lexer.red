@@ -12,6 +12,54 @@ Red [
 
 system/lexer: context [
 
+	url: context [
+		scheme: user: pass: host: port-id: path: target: tag: p2: none
+		vars: [scheme user pass host port-id path target]
+
+		;-- URL Character Sets:
+		digit:       make bitset! "0123456789"
+		alpha-num:   make bitset! [#"a" - #"z" #"A" - #"Z" #"0" - #"9"]
+		scheme-char: insert copy alpha-num "+-."
+		path-char:   insert copy alpha-num "=+-_.;:&$@%*',~?| []()^"" ; !!! note: space allowed
+		user-char:   insert copy alpha-num "=+-_.;&$%*,'#|"
+		pass-char:   complement make bitset! "^/ ^-@"
+		;--- missing: encoded chars! !!!
+
+		;-- URL Grammar:
+		url-rules:   [scheme-part user-part host-part path-part file-part tag-part]
+		scheme-part: [copy scheme some scheme-char #":" ["//" | none]]
+		user-part:   [copy user uchars [#":" pass-part | none] #"@" | none (user: pass: none)]
+		pass-part:   [copy pass to #"@" [skip copy p2 to "@" (append append pass "@" p2) | none]]
+		host-part:   [copy host uchars [#":" copy port-id digits | none]]
+		path-part:   [slash copy path path-node | none]
+		path-node:   [pchars slash path-node | none]
+		file-part:   [copy target pchars | none]
+		tag-part:    [#"#" copy tag pchars | none]
+		uchars:      [some user-char | none]
+		pchars:      [some path-char | none]
+		digits:      [1 5 digit]
+
+		;-- Parse Function:
+		parse-url: func [
+			"Return url dataset or cause an error if not a valid URL"
+			port [object! block!]
+			url
+		][  
+			set vars none
+			either parse url url-rules [
+				;-- Does not overwrite existing port values if new value not provided.
+				port/user: user
+				port/pass: pass
+				port/host: host
+				port/port-id: port-id
+				port/path: path
+				port/target: target
+				port/scheme: scheme
+			][print ["URL error:" url]]
+			port
+		]
+	]
+
 	make-binary: routine [
 		start  [string!]
 		end    [string!]

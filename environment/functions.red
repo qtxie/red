@@ -392,6 +392,11 @@ what-dir: func [/local path][
 	path
 ]
 
+split: func [url [url! string!] /local port][
+	port: [host _ path _ port-id _ scheme _ user _ pass _ target _]
+	system/lexer/url/parse-url port url
+]
+
 ;------------------------------------------
 ;-				Aliases					  -
 ;------------------------------------------

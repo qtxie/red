@@ -566,6 +566,14 @@ WndProc: func [
 		color  [integer!]
 		handle [handle!]
 		nmhdr  [tagNMHDR]
+		rect	[RECT_STRUCT]
+		hBitmap [handle!]
+		hBackDC [handle!]
+		width	[integer!]
+		height	[integer!]
+		ftn		[integer!]
+		bf		[tagBLENDFUNCTION]
+		dc		[handle!]
 ][
 	switch msg [
 		WM_COMMAND [
@@ -591,6 +599,29 @@ WndProc: func [
 		]
 		WM_ERASEBKGND [
 			if paint-background hWnd as handle! wParam [return 1]
+		]
+		WM_PAINT [
+			probe "paint-..................."
+			dc: BeginPaint hWnd paint
+			rect: declare RECT_STRUCT
+			GetClientRect hWnd rect
+			width: rect/right - rect/left
+			height: rect/bottom - rect/top
+			hBackDC: CreateCompatibleDC dc
+			hBitmap: CreateCompatibleBitmap dc width height
+			SelectObject hBackDC hBitmap
+			draw-vbase hBackDC (as red-block! get-face-values hWnd) + FACE_OBJ_PANE
+				ftn: 0
+				bf: as tagBLENDFUNCTION :ftn
+				bf/BlendOp: as-byte 0
+				bf/BlendFlags: as-byte 0
+				bf/SourceConstantAlpha: as-byte 255
+				bf/AlphaFormat: as-byte 1
+				AlphaBlend dc 0 0 width height hBackDC 0 0 width height ftn
+			DeleteObject hBitmap
+			DeleteDC hBackDC
+			EndPaint hWnd paint
+			return 0
 		]
 		WM_CTLCOLORBTN [0]
 		WM_CTLCOLOREDIT
@@ -624,6 +655,7 @@ WndProc: func [
 		]
 		WM_CLOSE [
 			res: make-event current-msg 0 EVT_CLOSE
+			?? res
 			if res  = EVT_DISPATCH [return 0]				;-- continue
 			;if res <= EVT_DISPATCH   [free-handles hWnd]	;-- done
 			if res  = EVT_NO_DISPATCH [clean-up PostQuitMessage 0]	;-- stop

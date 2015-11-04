@@ -4,7 +4,7 @@ Red [
 	Icon: %red.ico
 ]
 
-system/view/debug?: yes
+system/view/debug?: no
 live?: system/view/auto-sync?: no
 
 workstation?: system/view/platform/product = 1
@@ -107,6 +107,8 @@ sub-win: make face! [
 		]
 	]
 ]
+
+ic_launcher: load %./bridges/android/samples/eval/res/drawable-xxhdpi/ic_launcher.png
 
 win: make face! [
 	type: 'window text: "Red View" offset: 500x500 size: 800x800
@@ -506,8 +508,8 @@ win/pane: reduce [
 		]
 	]
 	make face! [
-		type: 'image offset: 280x10 size: 100x100
-		data: [%./bridges/android/samples/eval/res/drawable-xxhdpi/ic_launcher.png]
+		type: 'vbase offset: 280x10 size: 100x100
+		image: ic_launcher
 	]
 	tab-panel: make face! [
 		type: 'tab-panel offset: 10x320 size: 250x130

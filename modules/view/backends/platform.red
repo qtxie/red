@@ -193,6 +193,7 @@ system/view/platform: context [
 			tab-panel:		symbol/make "tab-panel"
 			group-box:		symbol/make "group-box"
 			camera:			symbol/make "camera"
+			vbase:			symbol/make "vbase"
 			
 			
 			---:			symbol/make "---"

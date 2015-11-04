@@ -514,6 +514,8 @@ OS-make-view: func [
 		flags: flags or get-para-flags sym para
 	]
 
+	if sym = vbase [return -1]
+
 	case [
 		sym = button [
 			class: #u16 "RedButton"

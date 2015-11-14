@@ -84,8 +84,8 @@ get-path?:	 func ["Returns true if the value is this type" value [any-type!]] [g
 get-word?:	 func ["Returns true if the value is this type" value [any-type!]] [get-word!	= type? :value]
 hash?:		 func ["Returns true if the value is this type" value [any-type!]] [hash!		= type? :value]
 image?:		 func ["Returns true if the value is this type" value [any-type!]] [image!		= type? :value]
-integer?:    func ["Returns true if the value is this type" value [any-type!]] [integer!	= type? :value]
-issue?:    	 func ["Returns true if the value is this type" value [any-type!]] [issue!		= type? :value]
+integer?:	 func ["Returns true if the value is this type" value [any-type!]] [integer!	= type? :value]
+issue?:		 func ["Returns true if the value is this type" value [any-type!]] [issue!		= type? :value]
 lit-path?:	 func ["Returns true if the value is this type" value [any-type!]] [lit-path!	= type? :value]
 lit-word?:	 func ["Returns true if the value is this type" value [any-type!]] [lit-word!	= type? :value]
 logic?:		 func ["Returns true if the value is this type" value [any-type!]] [logic!		= type? :value]
@@ -267,7 +267,7 @@ load: function [
 	"Returns a value or block of values by reading and evaluating a source"
 	source [file! url! string! binary!]
 	/header "TBD: Include Red header as a loaded value"
-	/all    "TBD: Don't evaluate Red header"
+	/all	"TBD: Don't evaluate Red header"
 	/part
 		length [integer! string!]
 	/into "Put results in out block, instead of creating a new block"
@@ -339,9 +339,9 @@ save: function [
 	value   "Value(s) to save"
 	/header "Provide a Red header block (or output non-code datatypes)"
 		header-data [block! object!]
-	/all    "TBD: Save in serialized format"
+	/all	"TBD: Save in serialized format"
 	/length "Save the length of the script content in the header"
-	/as     "Specify the format of data; use NONE to save as plain text"
+	/as	 "Specify the format of data; use NONE to save as plain text"
 		format [word! none!] "E.g. json, html, jpeg, png, redbin etc"
 ][
 	either as [
@@ -431,9 +431,9 @@ modulo: func [
 	/local r
 ][
 	b: absolute b
-    all [0 > r: a % b r: r + b]
-    a: absolute a
-    either all [a + r = (a + b) 0 < r + r - b] [r - b] [r]
+	all [0 > r: a % b r: r + b]
+	a: absolute a
+	either all [a + r = (a + b) 0 < r + r - b] [r - b] [r]
 ]
 
 eval-set-path: func [value1][]
@@ -548,6 +548,96 @@ extract-boot-args: function [][
 		system/options/boot: args
 		system/options/args: none
 	]
+]
+
+repend: func [
+	"Appends a reduced value to a series and returns the series head"
+	series [series!]
+	value
+	/only "Appends a block value as a block"
+][
+	head either only [
+		insert/only tail series reduce :value
+	][
+		insert tail series reduce :value
+	]
+]
+
+join: func [
+	"Concatenates values."
+	value "Base value"
+	rest "Value or block of values"
+][
+	value: either series? :value [copy value] [form :value]
+	repend value :rest
+]
+
+dirize: func [
+	"Returns a copy of the path turned into a directory"
+	path [file! string! url!]
+][
+	either #"/" <> pick path length? path [join path #"/"] [copy path]
+]
+
+clean-path: func [
+	"Cleans-up '.' and '..' in path; returns the cleaned path"
+	file [file! url! string!]
+	/only "Do not prepend current directory"
+	/dir "Add a trailing / if missing"
+	/local out cnt f
+][
+	case [
+		any [only not file? file] [file: copy file]
+		#"/" = first file [
+			file: next file
+			out: next what-dir
+			while [
+				all [
+					#"/" = first file
+					f: find/tail out #"/"
+				]
+			] [
+				file: next file
+				out: f
+			]
+			file: append clear out file
+		]
+		true [file: append what-dir file]
+	]
+	if all [dir not dir? file] [append file #"/"]
+	out: make file! length? file
+	cnt: 0
+	parse reverse file [
+		some [
+			"../" (cnt: cnt + 1)
+			| "./"
+			| #"/" (if any [not file? file #"/" <> last out] [append out #"/"])
+			| copy f [to #"/" | to end skip] (
+				either cnt > 0 [
+					cnt: cnt - 1
+				] [
+					unless find ["" "." ".."] to string! f [append out f]
+				]
+			)
+		]
+	]
+	if all [#"/" = last out #"/" <> last file] [remove back tail out]
+	reverse out
+]
+
+split-path: func [
+	"Splits a file or URL path. Returns a block containing path and target"
+	target [file! url!]
+	/local dir pos
+][
+	parse target [
+		[#"/" | 1 2 #"." opt #"/"] end (dir: dirize target) |
+		pos: any [thru #"/" [end | pos:]] (
+			all [empty? dir: copy/part target at head target index? pos dir: %./]
+			all [find [%. %..] pos: to file! pos insert tail pos #"/"]
+		)
+	]
+	reduce [dir pos]
 ]
 
 ;------------------------------------------

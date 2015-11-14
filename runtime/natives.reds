@@ -425,6 +425,8 @@ natives: context [
 			cframe [byte-ptr!]
 			arg	   [red-value!]
 			do-arg [red-value!]
+			saved  [red-value!]
+			path   [red-value!]
 			str	   [red-string!]
 	][
 		arg: stack/arguments
@@ -450,9 +452,17 @@ natives: context [
 					interpreter/eval as red-block! arg yes
 				]
 				TYPE_FILE [
+					saved: stack/push*
+					path: #get system/script/path
+					copy-cell path saved
+					#call [clean-path arg]
+					#call [split-path arg]
+					copy-cell block/rs-head as red-block! arg path
+
 					str: as red-string! simple-io/read as red-file! arg no no
 					#call [system/lexer/transcode str none]
 					interpreter/eval as red-block! arg yes
+					copy-cell saved path
 				]
 				TYPE_ERROR [
 					stack/throw-error as red-object! arg

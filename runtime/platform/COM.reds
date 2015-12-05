@@ -61,6 +61,11 @@ MEDIATYPE_Interleaved:			[73766169h 00100000h AA000080h 719B3800h]
 #define STGM_SHARE_EXCLUSIVE	00000010h
 #define STGM_CREATE				00001000h
 
+tagSAFEARRAYBOUND: alias struct! [
+	cElements	[integer!]
+	lLbound		[integer!]
+]
+
 tagVARIANT: alias struct! [
 	data1		[integer!]
 	data2		[integer!]
@@ -401,6 +406,11 @@ IWinHttpRequest: alias struct! [
 		]
 	]
 	"oleaut32.dll" stdcall [
+		SysAllocStringByteLen: "SysAllocStringByteLen" [
+			psz		[byte-ptr!]
+			len		[integer!]
+			return: [byte-ptr!]
+		]
 		SysAllocString: "SysAllocString" [
 			psz		[c-string!]
 			return:	[byte-ptr!]
@@ -410,6 +420,12 @@ IWinHttpRequest: alias struct! [
 		]
 		VariantInit: "VariantInit" [
 			pvarg	[tagVARIANT]
+		]
+		SafeArrayCreate: "SafeArrayCreate" [
+			vt		[integer!]
+			cDims	[integer!]
+			bound	[tagSAFEARRAYBOUND]
+			return: [integer!]
 		]
 		SafeArrayGetDim: "SafeArrayGetDim" [
 			psa		[integer!]

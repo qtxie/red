@@ -1299,6 +1299,8 @@ simple-io: context [
 					res		[red-value!]
 					blk		[red-block!]
 					len		[integer!]
+					bound	[tagSAFEARRAYBOUND]
+					storage [float!]
 			][
 				res: as red-value! none-value
 				len: 0
@@ -1322,9 +1324,23 @@ simple-io: context [
 					]
 					HTTP_POST [
 						action: #u16 "POST"
-						body/data1: VT_BSTR
-						bstr-d: SysAllocString unicode/to-utf16 as red-string! data
-						body/data3: as-integer bstr-d
+						;body/data1: VT_BSTR
+						either TYPE_OF(data) = TYPE_BINARY [
+							body/data1: 2000h
+							storage: 0.0
+							bound: as tagSAFEARRAYBOUND :storage
+							bound/cElements: binary/rs-length? as red-binary! data
+							probe bound/cElements
+							bound/lLbound: 0
+							array: SafeArrayCreate VT_UI1 1 bound
+							SafeArrayAccessData array :buf-ptr
+							copy-memory as byte-ptr! buf-ptr binary/rs-head as red-binary! data bound/cElements
+							SafeArrayUnaccessData array
+							body/data3: array
+						][
+							bstr-d: SysAllocString unicode/to-utf16 as red-string! data
+						]
+						;body/data3: as-integer bstr-d
 					]
 					default [--NOT_IMPLEMENTED--]
 				]
@@ -1389,7 +1405,7 @@ simple-io: context [
 							SysFreeString as byte-ptr! buf-ptr
 						]
 					]
-					if method = HTTP_POST [SysFreeString bstr-d]
+					;if method = HTTP_POST [SysFreeString bstr-d]
 					hr: http/ResponseBody IH/ptr body
 				]
 

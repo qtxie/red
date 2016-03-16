@@ -31,4 +31,4 @@ Red [
 extract-boot-args
 
 ;-- temporary code --
-if system/platform <> 'Windows [unset [event! image!]]
+;if system/platform <> 'Windows [unset [event! image!]]

@@ -388,7 +388,12 @@ system/view/platform: context [
 			]
 
 			;#include %android/gui.reds
-			#include %windows/gui.reds
+			#switch OS [
+				Windows  [#include %windows/gui.reds]
+				MacOSX   [#include %osx/gui.reds]
+				Android  []
+				#default []										;-- Linux
+			]
 		]
 	]
 

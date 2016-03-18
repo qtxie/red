@@ -57,9 +57,53 @@ Red/System [
 #define NSEventTypeQuickLook		33
 #define NSEventTypePressure			34
 
+#define kCGLineJoinMiter			0
+#define kCGLineJoinRound			1
+#define kCGLineJoinBevel			2
+
+#define kCGLineCapButt				0
+#define kCGLineCapRound				1
+#define kCGLineCapSquare			2
+
 #define IVAR_RED_FACE	"red-face"
+#define kCFStringEncodingUTF8	08000100h
+#define CFString(cStr)	[CFStringCreateWithCString 0 cStr kCFStringEncodingUTF8]
 
 #define handle! [pointer! [integer!]]
+
+NSRect!: alias struct! [
+	x		[float32!]
+	y		[float32!]
+	w		[float32!]
+	h		[float32!]
+]
+
+NSAppDelegate!: alias struct! [
+	isa		[integer!]
+	window	[integer!]
+]
+
+CGPoint!: alias struct! [
+	x		[float32!]
+	y		[float32!]
+]
+
+RECT_STRUCT: alias struct! [
+	left		[integer!]
+	top			[integer!]
+	right		[integer!]
+	bottom		[integer!]
+]
+
+tagPOINT: alias struct! [
+	x		[integer!]
+	y		[integer!]	
+]
+
+tagSIZE: alias struct! [
+	width	[integer!]
+	height	[integer!]
+]
 
 #import [
 	LIBC-file cdecl [
@@ -129,37 +173,82 @@ Red/System [
 			return:		[integer!]
 		]
 	]
-]
-
-#define kCFStringEncodingUTF8	08000100h
-
-#define CFString(cStr)	[CFStringCreateWithCString 0 cStr kCFStringEncodingUTF8]
-
-NSRect!: alias struct! [
-	x		[float32!]
-	y		[float32!]
-	w		[float32!]
-	h		[float32!]
-]
-
-NSAppDelegate!: alias struct! [
-	isa		[integer!]
-	window	[integer!]
-]
-
-RECT_STRUCT: alias struct! [
-	left		[integer!]
-	top			[integer!]
-	right		[integer!]
-	bottom		[integer!]
-]
-
-tagPOINT: alias struct! [
-	x		[integer!]
-	y		[integer!]	
-]
-
-tagSIZE: alias struct! [
-	width	[integer!]
-	height	[integer!]
+	"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics" cdecl [
+		CGContextSetRGBStrokeColor: "CGContextSetRGBStrokeColor" [
+			c			[handle!]
+			red			[float32!]
+			green		[float32!]
+			blue		[float32!]
+			alpha		[float32!]
+		]
+		CGContextSetRGBFillColor: "CGContextSetRGBFillColor" [
+			c			[handle!]
+			red			[float32!]
+			green		[float32!]
+			blue		[float32!]
+			alpha		[float32!]
+		]
+		CGContextStrokeRect: "CGContextStrokeRect" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+			width		[float32!]
+			height		[float32!]
+		]
+		CGContextFillRect: "CGContextFillRect" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+			width		[float32!]
+			height		[float32!]
+		]
+		CGContextSetLineWidth: "CGContextSetLineWidth" [
+			c			[handle!]
+			width		[float32!]
+		]
+		CGContextSetLineJoin: "CGContextSetLineJoin" [
+			c			[handle!]
+			join		[integer!]
+		]
+		CGContextSetLineCap: "CGContextSetLineCap" [
+			c			[handle!]
+			cap			[integer!]
+		]
+		CGContextSetAllowsAntialiasing: "CGContextSetAllowsAntialiasing" [
+			c			[handle!]
+			anti-alias? [logic!]
+		]
+		CGContextSetAllowsFontSmoothing: "CGContextSetAllowsFontSmoothing" [
+			c			[handle!]
+			smooth?		[logic!]
+		]
+		CGContextSetMiterLimit: "CGContextSetMiterLimit" [
+			c			[handle!]
+			limit		[float32!]
+		]
+		CGContextBeginPath: "CGContextBeginPath" [
+			c			[handle!]
+		]
+		CGContextClosePath: "CGContextClosePath" [
+			c			[handle!]
+		]
+		CGContextMoveToPoint: "CGContextMoveToPoint" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+		]
+		CGContextAddLineToPoint: "CGContextAddLineToPoint" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+		]
+		CGContextAddLines: "CGContextAddLines" [
+			c			[handle!]
+			points		[CGPoint!]
+			count		[integer!]
+		]
+		CGContextStrokePath: "CGContextStrokePath" [
+			c			[handle!]
+		]
+	]
 ]

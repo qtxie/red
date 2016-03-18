@@ -68,6 +68,26 @@ destroy-app: func [
 	no
 ]
 
+draw-rect: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	x		[float32!]
+	y		[float32!]
+	width	[float32!]
+	height	[float32!]
+	/local
+		draw [red-block!]
+][
+	draw: (as red-block! get-face-values self) + FACE_OBJ_DRAW
+	do-draw as handle! self null draw no yes yes yes
+]
+
+add-base-handler: func [class [integer!]][
+	flipp-coord class
+	class_addMethod class sel_getUid "drawRect:" as-integer :draw-rect "v@:{_NSRect=ffff}"
+]
+
 add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
 	class_addMethod class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
@@ -110,6 +130,7 @@ make-super-class: func [
 register-classes: does [
 	make-super-class "RedAppDelegate"	"NSObject"		as-integer :add-app-delegate	no
 	make-super-class "RedView"			"NSView"		as-integer :flipp-coord			no
+	make-super-class "RedBase"			"NSView"		as-integer :add-base-handler	yes
 	make-super-class "RedWindow"		"NSWindow"		as-integer :add-window-handler	yes
 	make-super-class "RedButton"		"NSButton"		as-integer :add-button-handler	yes
 ]

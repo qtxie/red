@@ -10,6 +10,23 @@ Red/System [
 	}
 ]
 
+#define DRAW_FLOAT_MAX		[as float32! 3.4e38]
+
+max-edges: 1000												;-- max number of edges for a polygone
+edges: as CGPoint! allocate max-edges * (size? CGPoint!)	;-- polygone edges buffer
+
+modes: declare struct! [
+	pen-join		[integer!]
+	pen-cap			[integer!]
+	pen-width		[integer!]
+	pen-style		[integer!]
+	pen-color		[integer!]					;-- 00bbggrr format
+	brush-color		[integer!]					;-- 00bbggrr format
+	font-color		[integer!]
+	brush?			[logic!]
+	on-image?		[logic!]					;-- drawing on image?
+]
+
 draw-begin: func [
 	hWnd		[handle!]
 	img			[red-image!]
@@ -17,15 +34,22 @@ draw-begin: func [
 	paint?		[logic!]
 	return: 	[handle!]
 	/local
-		dc		 [handle!]
-		rect	 [RECT_STRUCT]
-		width	 [integer!]
-		height	 [integer!]
-		hBitmap  [handle!]
-		hBackDC  [handle!]
-		graphics [integer!]
+		ctx		[integer!]
 ][
-	hWnd
+	modes/pen-width:	1
+	modes/pen-style:	0
+	modes/pen-color:	0						;-- default: black
+	modes/pen-join:		miter
+	modes/pen-cap:		flat
+	modes/brush-color:	0
+	modes/font-color:	0
+	modes/brush?:		no
+
+	ctx: objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
+	ctx: objc_msgSend [ctx sel_getUid "graphicsPort"]
+
+	CGContextSetMiterLimit as handle! ctx DRAW_FLOAT_MAX
+	as handle! ctx
 ]
 
 draw-end: func [
@@ -34,21 +58,16 @@ draw-end: func [
 	on-graphic? [logic!]
 	cache?		[logic!]
 	paint?		[logic!]
-	/local
-		rect	[RECT_STRUCT]
-		width	[integer!]
-		height	[integer!]
-		bitmap	[integer!]
-		old-dc	[integer!]
 ][
 	0
 ]
 
 OS-draw-anti-alias: func [
-	dc	 [handle!]
+	dc	[handle!]
 	on? [logic!]
 ][
-0
+	CGContextSetAllowsAntialiasing dc on?
+	CGContextSetAllowsFontSmoothing dc on?
 ]
 
 OS-draw-line: func [
@@ -56,20 +75,48 @@ OS-draw-line: func [
 	point  [red-pair!]
 	end	   [red-pair!]
 	/local
-		pt		[tagPOINT]
+		pt		[CGPoint!]
 		nb		[integer!]
-		res		[integer!]
 		pair	[red-pair!]
 ][
-0
+	pt:		edges
+	pair:	point
+	nb:		0
+
+	while [all [pair <= end nb < max-edges]][
+		pt/x: as float32! integer/to-float pair/x
+		pt/y: as float32! integer/to-float pair/y
+		nb: nb + 1
+		pt: pt + 1
+		pair: pair + 1
+	]
+	CGContextBeginPath dc
+	CGContextAddLines dc edges nb
+	CGContextStrokePath dc
 ]
 
 OS-draw-pen: func [
 	dc	   [handle!]
 	color  [integer!]									;-- 00bbggrr format
 	alpha? [logic!]
+	/local
+		r  [float!]
+		g  [float!]
+		b  [float!]
+		a  [float!]
 ][
-0
+	if modes/pen-color <> color [
+		modes/pen-color: color
+		r: integer/to-float color and FFh
+		r: r / 255.0
+		g: integer/to-float color >> 8 and FFh
+		g: g / 255.0
+		b: integer/to-float color >> 16 and FFh
+		b: b / 255.0
+		a: integer/to-float 255 - (color >> 24)
+		a: a / 255.0
+		CGContextSetRGBStrokeColor dc as float32! r as float32! g as float32! b as float32! a
+	]
 ]
 
 OS-draw-fill-pen: func [
@@ -77,15 +124,35 @@ OS-draw-fill-pen: func [
 	color  [integer!]									;-- 00bbggrr format
 	off?   [logic!]
 	alpha? [logic!]
+	/local
+		r  [float!]
+		g  [float!]
+		b  [float!]
+		a  [float!]
 ][
-0
+	modes/brush?: not off?
+	if modes/brush-color <> color [
+		modes/brush-color: color
+		r: integer/to-float color and FFh
+		r: r / 255.0
+		g: integer/to-float color >> 8 and FFh
+		g: g / 255.0
+		b: integer/to-float color >> 16 and FFh
+		b: b / 255.0
+		a: integer/to-float 255 - (color >> 24)
+		a: a / 255.0
+		CGContextSetRGBFillColor dc as float32! r as float32! g as float32! b as float32! a
+	]
 ]
 
 OS-draw-line-width: func [
 	dc	  [handle!]
 	width [red-integer!]
 ][
-0
+	if modes/pen-width <> width/value [
+		modes/pen-width: width/value
+		CGContextSetLineWidth dc as float32! integer/to-float width/value
+	]
 ]
 
 OS-draw-box: func [
@@ -95,7 +162,20 @@ OS-draw-box: func [
 	/local
 		radius [red-integer!]
 		rad	   [integer!]
-][0
+		rc	   [NSRect!]
+][
+	either TYPE_OF(lower) = TYPE_INTEGER [
+		radius: as red-integer! lower
+		lower:  lower - 1
+		rad: radius/value * 2
+		;;@@ TBD round box
+	][
+		rc: make-rect upper/x upper/y lower/x - upper/x lower/y - upper/y
+		if modes/brush? [				;-- fill rect
+			CGContextFillRect dc rc/x rc/y rc/w rc/h
+		]
+		CGContextStrokeRect dc rc/x rc/y rc/w rc/h
+	]
 ]
 
 OS-draw-triangle: func [
@@ -231,18 +311,39 @@ OS-draw-line-join: func [
 	dc	  [handle!]
 	style [integer!]
 	/local
-		mode  [integer!]
+		mode [integer!]
 ][
-	0
+	mode: kCGLineJoinMiter
+	if modes/pen-join <> style [
+		modes/pen-join: style
+		case [
+			style = miter		[mode: kCGLineJoinMiter]
+			style = miter-bevel [mode: kCGLineJoinMiter]
+			style = _round		[mode: kCGLineJoinRound]
+			style = bevel		[mode: kCGLineJoinBevel]
+			true				[mode: kCGLineJoinMiter]
+		]
+		CGContextSetLineJoin dc mode
+	]
 ]
 	
 OS-draw-line-cap: func [
 	dc	  [handle!]
 	style [integer!]
 	/local
-		mode  [integer!]
+		mode [integer!]
 ][
-	0
+	mode: kCGLineCapButt
+	if modes/pen-cap <> style [
+		modes/pen-cap: style
+		case [
+			style = flat		[mode: kCGLineCapButt]
+			style = square		[mode: kCGLineCapSquare]
+			style = _round		[mode: kCGLineCapRound]
+			true				[mode: kCGLineCapButt]
+		]
+		CGContextSetLineCap dc mode
+	]
 ]
 
 OS-draw-image: func [

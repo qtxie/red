@@ -11,12 +11,13 @@ Red/System [
 ]
 
 #include %cocoa.reds
-#include %classes.reds
 #include %events.reds
 
 #include %font.reds
 #include %para.reds
 #include %draw.reds
+
+#include %classes.reds
 
 NSApp:			0
 
@@ -26,14 +27,20 @@ screen-size-x:	0
 screen-size-y:	0
 
 get-face-values: func [
-	face	[handle!]
+	handle	[integer!]
 	return: [red-value!]
 	/local
 		ctx	 [red-context!]
-		node [node!]
 		s	 [series!]
+		ivar [integer!]
+		face [red-object!]
 ][
-	as red-value! none-value
+	ivar: class_getInstanceVariable object_getClass handle IVAR_RED_FACE
+	assert ivar <> 0
+	face: as red-object! handle + ivar_getOffset ivar
+	ctx: TO_CTX(face/ctx)
+	s: as series! ctx/values/value
+	s/offset
 ]
 
 get-node-facet: func [
@@ -115,7 +122,7 @@ to-bgr: func [
 ]
 
 free-handles: func [
-	hWnd [handle!]
+	hWnd [integer!]
 	/local
 		values [red-value!]
 		type   [red-word!]
@@ -125,7 +132,6 @@ free-handles: func [
 		state  [red-value!]
 		sym	   [integer!]
 		dc	   [integer!]
-		handle [handle!]
 ][
 	values: get-face-values hWnd
 	type: as red-word! values + FACE_OBJ_TYPE
@@ -173,7 +179,7 @@ init: func [
 ]
 
 set-selected-focus: func [
-	hWnd [handle!]
+	hWnd [integer!]
 	/local
 		face   [red-object!]
 		values [red-value!]
@@ -384,6 +390,7 @@ OS-make-view: func [
 	case [
 		sym = button [class: "RedButton"]
 		sym = window [class: "RedWindow"]
+		sym = base	 [class: "RedBase"]
 		true [											;-- search in user-defined classes
 			fire [TO_ERROR(script face-type) type]
 		]
@@ -405,10 +412,12 @@ OS-make-view: func [
 		null
 	]
 	rc: make-rect offset/x offset/y size/x size/y
+	if sym <> window [
+		obj: objc_msgSend [obj sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h]
+	]
 
 	case [
 		sym = button [
-			obj: objc_msgSend [obj sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h]
 			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]
 			objc_msgSend [obj sel_getUid "setTitle:" CFString(caption)]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]
@@ -471,12 +480,12 @@ OS-destroy-view: func [
 	face   [red-object!]
 	empty? [logic!]
 	/local
-		handle [handle!]
+		handle [integer!]
 		values [red-value!]
 		obj	   [red-object!]
 		flags  [integer!]
 ][
-	handle: get-face-handle face
+	handle: as-integer get-face-handle face
 	values: object/get-values face
 	flags: get-flags as red-block! values + FACE_OBJ_FLAGS
 	if flags and FACET_FLAGS_MODAL <> 0 [

@@ -13,6 +13,11 @@ Red/System [
 bignum: context [
 	verbose: 1
 	
+	ciL:				4				;-- bignum! unit is 4 bytes; chars in limb
+	biL:				ciL << 3		;-- bits in limb
+	biLH:				ciL << 2		;-- half bits in limb
+	BN_MAX_LIMB:		25600			;-- support 25600 bytes * 4 = 819200 bits
+	
 	;--- Actions ---
 
 	serialize: func [
@@ -44,6 +49,12 @@ bignum: context [
 			string/append-char GET_BUFFER(buffer) as-integer lf
 			part: part - 1
 		]
+		
+		if big/sign = -1 [
+			string/append-char GET_BUFFER(buffer) as-integer #"-"
+			bytes: bytes + 1
+		]
+		
 		part: part - 2
 		while [head < tail][
 			tail: tail - 1
@@ -61,6 +72,78 @@ bignum: context [
 			part: part - 1
 		]
 		part - 1
+	]
+	
+	append-int: func [
+		big			[red-bignum!]
+		i			[integer!]
+		/local
+			s	 	[series!]
+			p	 	[byte-ptr!]
+			p4	 	[int-ptr!]
+	][
+		s: GET_BUFFER(big)
+		p: alloc-tail-unit s 4		
+		p4: as int-ptr! p
+		p4/value: i
+	]
+	
+	grow: func [
+		big			[red-bignum!]
+		size		[integer!]
+		/local
+			s	 	[series!]
+	][
+		if size > BN_MAX_LIMB [--NOT_IMPLEMENTED--]
+		
+		s: GET_BUFFER(big)
+		if size > s/size [
+			s: expand-series s (size * 4)
+		]
+	]
+	
+	swap: func [
+		big1	 	[red-bignum!]
+		big2	 	[red-bignum!]
+		return:	 	[red-bignum!]
+		/local
+			node 	[node!]
+			sign 	[integer!]
+	][
+		node: big1/node 
+		sign: big1/sign
+		big1/node: big2/node
+		big1/sign: big2/sign
+		big2/node: node
+		big2/sign: sign
+		big1
+	]
+	
+	clamp: func [
+		big	 		[red-bignum!]
+		/local
+			s	 	[series!]
+			head	[int-ptr!]
+			tail	[int-ptr!]
+			p4		[int-ptr!]
+	][
+		s: GET_BUFFER(big)
+		head: as int-ptr! s/offset
+		tail: as int-ptr! s/tail
+		
+		while [true] [
+			either head <> tail [
+				p4: tail - 1
+				either p4/1 <> 0 [
+					break
+				][
+					tail: tail - 1
+				]
+			][
+				break
+			]
+		]
+		s/tail: as cell! tail
 	]
 	
 	make: func [
@@ -82,9 +165,11 @@ bignum: context [
 			]
 			default [--NOT_IMPLEMENTED--]
 		]
+		if size > BN_MAX_LIMB [--NOT_IMPLEMENTED--]
 		big: as red-bignum! stack/push*
 		big/header: TYPE_BIGNUM							;-- implicit reset of all header flags
-		big/node: 	alloc-series size 4 0				;-- alloc 32bit unit buffer
+		big/node: 	alloc-series size 4 0				;-- alloc 4 bytes unit buffer
+		big/sign: 	1									;-- default sign is "+"
 		big
 	]
 
@@ -111,7 +196,7 @@ bignum: context [
 	init: does [
 		datatype/register [
 			TYPE_BIGNUM
-			TYPE_VALUE
+			TYPE_SERIES
 			"bignum!"
 			;-- General actions --
 			:make
@@ -146,7 +231,7 @@ bignum: context [
 			null			;back
 			null			;change
 			null			;clear
-			null			;copy
+			INHERIT_ACTION	;copy
 			null			;find
 			null			;head
 			null			;head?
@@ -162,7 +247,7 @@ bignum: context [
 			null			;select
 			null			;sort
 			null			;skip
-			null			;swap
+			:swap
 			null			;tail
 			null			;tail?
 			null			;take

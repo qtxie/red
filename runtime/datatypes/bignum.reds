@@ -129,6 +129,60 @@ bignum: context [
 		s/tail: as cell! tail
 	]
 	
+	absolute-compare: func [
+		big1	 	[red-bignum!]
+		big2	 	[red-bignum!]
+		return:	 	[integer!]
+		/local
+			s1	 	[series!]
+			s2	 	[series!]
+			tail1	[int-ptr!]
+			tail2	[int-ptr!]
+			size 	[integer!]
+	][
+		s1: GET_BUFFER(big1)
+		s2: GET_BUFFER(big2)
+		if (s1/tail - s1/offset) > (s2/tail - s2/offset) [return 1]
+		if (s1/tail - s1/offset) < (s2/tail - s2/offset) [return -1]
+		
+		tail1: as int-ptr! s1/tail
+		tail2: as int-ptr! s2/tail
+		size: as integer! s1/tail - s1/offset
+		loop size [
+			tail1: tail1 - 1
+			tail2: tail2 - 1
+			if tail1/1 > tail2/1 [return 1]
+			if tail1/1 < tail2/1 [return -1]
+		]
+		return 0
+	]
+	
+	compare: func [
+		big1	 	[red-bignum!]
+		big2	 	[red-bignum!]
+		return:	 	[integer!]
+	][
+		if all [
+			big1/sign = 1
+			big2/sign = -1
+		][
+			return 1
+		]
+		
+		if all [
+			big2/sign = 1
+			big1/sign = -1
+		][
+			return -1
+		]
+		
+		either big1/sign = 1 [
+			return absolute-compare big1 big2
+		][
+			return absolute-compare big2 big1
+		]
+	]
+	
 	make: func [
 		proto	 [red-value!]
 		spec	 [red-value!]
@@ -174,6 +228,31 @@ bignum: context [
 		#if debug? = yes [if verbose > 0 [print-line "bignum/mold"]]
 		
 		serialize big buffer only? all? flat? arg part yes
+	]
+	
+	compare*: func [
+		value1    [red-bignum!]						;-- first operand
+		value2    [red-bignum!]						;-- second operand
+		op	      [integer!]						;-- type of comparison
+		return:   [integer!]
+		/local
+			res	  [integer!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/compare"]]
+
+		if all [
+			op = COMP_STRICT_EQUAL
+			TYPE_OF(value1) <> TYPE_OF(value2)
+		][return 1]
+		
+		switch op [
+			COMP_EQUAL		[res: compare value1 value2]
+			COMP_NOT_EQUAL 	[res: not compare value1 value2]
+			default [
+				res: SIGN_COMPARE_RESULT(value1 value2)
+			]
+		]
+		res
 	]
 	
 	absolute: func [
@@ -236,7 +315,7 @@ bignum: context [
 			:mold
 			null			;eval-path
 			null			;set-path
-			null			;compare
+			:compare*
 			;-- Scalar actions --
 			:absolute
 			null			;add

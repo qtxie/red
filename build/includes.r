@@ -73,6 +73,7 @@ write %build/bin/sources.r set-cache [
 		%datatypes/ [
 			%action.reds
 			%block.reds
+			%bignum.reds
 			%bitset.reds
 			%binary.reds
 			%char.reds

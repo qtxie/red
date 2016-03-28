@@ -55,7 +55,8 @@ Red/System [
 	TYPE_BINARY											;-- 29		41
 	TYPE_SERIES											;-- 2A		42
 	TYPE_IMAGE											;-- 2B		43
-	TYPE_EVENT											;-- 2C		44
+	TYPE_BIGNUM											;-- 2C		44
+	TYPE_EVENT											;-- 2D		45
 	TYPE_CLOSURE
 	TYPE_PORT
 	
@@ -338,6 +339,7 @@ Red/System [
 		type = TYPE_FILE
 		type = TYPE_URL
 		type = TYPE_BINARY
+		type = TYPE_BIGNUM
 		type = TYPE_IMAGE
 	]
 ]

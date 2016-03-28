@@ -297,3 +297,10 @@ red-image!: alias struct! [
 	node	[node!]									;-- internal buffer or platform-specific handle
 	size	[integer!]								;-- pair of size
 ]
+
+red-bignum!: alias struct! [
+	header 	[integer!]								;-- cell header
+	_pad1	[integer!]
+	node	[node!]									;-- series node pointer
+	sign	[integer!]								;-- bignum sign
+]

@@ -96,6 +96,7 @@ red: context [
 	#include %datatypes/percent.reds
 	#include %datatypes/tuple.reds
 	#include %datatypes/binary.reds
+	#include %datatypes/bignum.reds
 	#if OS = 'Windows [#include %datatypes/image.reds]	;-- temporary
 	
 	;-- Debugging helpers --
@@ -171,6 +172,7 @@ red: context [
 		pair/init
 		percent/init
 		tuple/init
+		bignum/init
 		#if OS = 'Windows [image/init]					;-- temporary
 		
 		actions/init
@@ -236,6 +238,7 @@ red: context [
 			pair/verbose:		verbosity
 			percent/verbose:	verbosity
 			tuple/verbose:		verbosity
+			bignum/verbose:		1
 			#if OS = 'Windows [image/verbose: verbosity]
 
 			actions/verbose:	verbosity

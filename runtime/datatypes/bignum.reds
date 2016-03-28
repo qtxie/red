@@ -102,23 +102,6 @@ bignum: context [
 		]
 	]
 	
-	swap: func [
-		big1	 	[red-bignum!]
-		big2	 	[red-bignum!]
-		return:	 	[red-bignum!]
-		/local
-			node 	[node!]
-			sign 	[integer!]
-	][
-		node: big1/node 
-		sign: big1/sign
-		big1/node: big2/node
-		big1/sign: big2/sign
-		big2/node: node
-		big2/sign: sign
-		big1
-	]
-	
 	clamp: func [
 		big	 		[red-bignum!]
 		/local
@@ -192,7 +175,53 @@ bignum: context [
 		
 		serialize big buffer only? all? flat? arg part yes
 	]
+	
+	absolute: func [
+		return: [red-bignum!]
+		/local
+			big	  [red-bignum!]
+			value [float!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/absolute"]]
+
+		big: as red-bignum! stack/arguments
+		big/sign: 1
+		big 											;-- re-use argument slot for return value
+	]
+	
+	complement: func [
+		big		[red-bignum!]
+		return:	[red-value!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/complement"]]
 		
+		either big/sign = 1 [
+			big/sign: -1
+		][
+			big/sign: 1
+		]
+		as red-value! big
+	]
+	
+	swap: func [
+		big1	 	[red-bignum!]
+		big2	 	[red-bignum!]
+		return:	 	[red-bignum!]
+		/local
+			node 	[node!]
+			sign 	[integer!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/swap"]]
+		
+		node: big1/node 
+		sign: big1/sign
+		big1/node: big2/node
+		big1/sign: big2/sign
+		big2/node: node
+		big2/sign: sign
+		big1
+	]
+	
 	init: does [
 		datatype/register [
 			TYPE_BIGNUM
@@ -209,7 +238,7 @@ bignum: context [
 			null			;set-path
 			null			;compare
 			;-- Scalar actions --
-			null			;absolute
+			:absolute
 			null			;add
 			null			;divide
 			null			;multiply
@@ -222,7 +251,7 @@ bignum: context [
 			null			;odd?
 			;-- Bitwise actions --
 			null			;and~
-			null			;complement
+			:complement
 			null			;or~
 			null			;xor~
 			;-- Series actions --

@@ -20,6 +20,14 @@ bignum: context [
 	
 	;--- Actions ---
 
+	push: func [
+		big [red-bignum!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/push"]]
+
+		copy-cell as red-value! big stack/push*
+	]
+	
 	serialize: func [
 		big		[red-bignum!]
 		buffer	[red-string!]
@@ -203,7 +211,7 @@ bignum: context [
 			default [--NOT_IMPLEMENTED--]
 		]
 		if size > BN_MAX_LIMB [--NOT_IMPLEMENTED--]
-		big: as red-bignum! stack/push*
+		big: as red-bignum! stack/arguments;stack/push*
 		big/header: TYPE_BIGNUM							;-- implicit reset of all header flags
 		big/node: 	alloc-series size 4 0				;-- alloc 4 bytes unit buffer
 		big/sign: 	1									;-- default sign is "+"
@@ -304,7 +312,7 @@ bignum: context [
 	init: does [
 		datatype/register [
 			TYPE_BIGNUM
-			TYPE_SERIES
+			TYPE_VALUE
 			"bignum!"
 			;-- General actions --
 			:make
@@ -339,7 +347,7 @@ bignum: context [
 			null			;back
 			null			;change
 			null			;clear
-			INHERIT_ACTION	;copy
+			null			;copy
 			null			;find
 			null			;head
 			null			;head?

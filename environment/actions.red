@@ -198,8 +198,8 @@ and~: make action! [[
 
 complement: make action! [[
 		"Returns the opposite (complementing) value of the input value"
-		value	[logic! integer! bitset! typeset! binary!]
-		return: [logic! integer! bitset! typeset! binary!]
+		value	[logic! integer! bitset! typeset! binary! bignum!]
+		return: [logic! integer! bitset! typeset! binary! bignum!]
 	]
 	#get-definition ACT_COMPLEMENT
 ]

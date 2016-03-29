@@ -339,7 +339,6 @@ Red/System [
 		type = TYPE_FILE
 		type = TYPE_URL
 		type = TYPE_BINARY
-		type = TYPE_BIGNUM
 		type = TYPE_IMAGE
 	]
 ]

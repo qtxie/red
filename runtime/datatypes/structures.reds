@@ -300,7 +300,7 @@ red-image!: alias struct! [
 
 red-bignum!: alias struct! [
 	header 	[integer!]								;-- cell header
-	_pad1	[integer!]
+	value	[integer!]
 	node	[node!]									;-- series node pointer
 	sign	[integer!]								;-- bignum sign
 ]

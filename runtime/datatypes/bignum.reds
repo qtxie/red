@@ -19,14 +19,7 @@ bignum: context [
 	BN_MAX_LIMB:		1024			;-- support 1024 * 32 bits
 
 	#define MULADDC_INIT [
-		s0: 0
-		s1: 0
-		b0: 0
-		b1: 0
-		r0: 0
-		r1: 0
-		rx: 0
-		ry: 0
+		s0: 0 s1: 0 b0: 0 b1: 0 r0: 0 r1: 0 rx: 0 ry: 0
 		b0: (b << biLH) >>> biLH
 		b1: b >>> biLH
 	]
@@ -89,7 +82,6 @@ bignum: context [
 
 		if big/sign = -1 [
 			string/append-char GET_BUFFER(buffer) as-integer #"-"
-			bytes: bytes + 1
 			part: part - 1
 		]
 
@@ -141,6 +133,10 @@ bignum: context [
 					OP_SUB [
 						int: as red-integer! right
 						big: sub-int left int/value
+					]
+					OP_MUL [
+						int: as red-integer! right
+						big: mul-int left int/value
 					]
 				]
 			]
@@ -649,6 +645,29 @@ bignum: context [
 		big/sign: big1/sign * big2/sign
 		clamp big
 		big
+	]
+	
+	mul-int: func [
+		big1		[red-bignum!]
+		int			[integer!]
+		return:		[red-bignum!]
+		/local
+			big	 	[red-bignum!]
+			s	 	[series!]
+			p		[int-ptr!]
+	][
+		big: make-at stack/push* 1
+		big/used: 1
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+		p/1: either int > 0 [
+			big/sign: 1
+			int
+		][
+			big/sign: -1
+			0 - int
+		]
+		mul big1 big
 	]
 	
 	compare: func [

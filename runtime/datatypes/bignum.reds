@@ -90,9 +90,9 @@ bignum: context [
 		if big/sign = -1 [
 			string/append-char GET_BUFFER(buffer) as-integer #"-"
 			bytes: bytes + 1
+			part: part - 1
 		]
 
-		part: part - 2
 		loop size [
 			p: p - 1
 			string/concatenate-literal buffer string/byte-to-hex as-integer p/value

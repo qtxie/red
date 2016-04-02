@@ -186,6 +186,7 @@ Red/System [
 #define WS_MINIMIZE			20000000h
 #define WS_POPUP		 	80000000h
 #define WS_EX_TOOLWINDOW	00000080h
+#define WS_DISABLED         08000000h
 
 #define SIF_RANGE			0001h
 #define SIF_PAGE			0002h
@@ -382,6 +383,7 @@ Red/System [
 #define BK_OPAQUE			2
 
 #define NULL_BRUSH          5
+#define NULL_PEN			8
 #define DC_BRUSH			18
 #define DC_PEN              19
 
@@ -429,6 +431,9 @@ Red/System [
 #define GDIPLUS_UNIT_INCH			4
 #define GDIPLUS_FILLMODE_ALTERNATE	0
 #define GDIPLUS_FILLMODE_WINDING	1
+
+#define GDIPLUS_MATRIXORDERPREPEND	0
+#define GDIPLUS_MATRIXORDERAPPEND	1
 
 #define TextRenderingHintSystemDefault		0
 #define TextRenderingHintAntiAliasGridFit	3
@@ -1611,6 +1616,106 @@ DwmIsCompositionEnabled!: alias function! [
 		]
 	]
 	"gdiplus.dll" stdcall [
+		GdipSetPathGradientWrapMode: "GdipSetPathGradientWrapMode" [
+			brush		[integer!]
+			wrapmode	[integer!]
+			return:		[integer!]
+		]
+		GdipCreatePathGradientFromPath: "GdipCreatePathGradientFromPath" [
+			path		[integer!]
+			brush		[int-ptr!]
+			return:		[integer!]
+		]
+		GdipCreatePathGradientI: "GdipCreatePathGradientI" [
+			points		[tagPOINT]
+			count		[integer!]
+			wrapmode	[integer!]
+			brush		[int-ptr!]
+			return:		[integer!]
+		]
+		GdipSetPathGradientCenterColor: "GdipSetPathGradientCenterColor" [
+			brush		[integer!]
+			color		[integer!]
+			return:		[integer!]
+		]
+		GdipSetPathGradientSurroundColorsWithCount: "GdipSetPathGradientSurroundColorsWithCount" [
+			brush		[integer!]
+			colors		[int-ptr!]
+			count		[int-ptr!]
+			return:		[integer!]
+		]
+		GdipSetPathGradientPath: "GdipSetPathGradientPath" [
+			brush		[integer!]
+			path		[integer!]
+			return:		[integer!]
+		]
+		GdipSetPathGradientCenterPointI: "GdipSetPathGradientCenterPointI" [
+			brush		[integer!]
+			point		[tagPOINT]
+			return:		[integer!]
+		]
+		GdipSetPathGradientPresetBlend: "GdipSetPathGradientPresetBlend" [
+			brush		[integer!]
+			colors		[int-ptr!]
+			positions	[pointer! [float32!]]
+			count		[integer!]
+			return:		[integer!]
+		]
+		GdipScalePathGradientTransform: "GdipScalePathGradientTransform" [
+			brush		[integer!]
+			sx			[float32!]
+			sy			[float32!]
+			matrixorder	[integer!]
+			return:		[integer!]
+		]
+		GdipRotatePathGradientTransform: "GdipRotatePathGradientTransform" [
+			brush		[integer!]
+			angle		[float32!]
+			matrixorder	[integer!]
+			return:		[integer!]
+		]
+		GdipScaleLineTransform: "GdipScaleLineTransform" [
+			brush		[integer!]
+			sx			[float32!]
+			sy			[float32!]
+			matrixorder	[integer!]
+			return:		[integer!]
+		]
+		GdipRotateLineTransform: "GdipRotateLineTransform" [
+			brush		[integer!]
+			angle		[float32!]
+			matrixorder	[integer!]
+			return:		[integer!]
+		]
+		GdipCreateTexture: "GdipCreateTexture" [
+			image		[integer!]
+			wrapmode	[integer!]
+			texture		[int-ptr!]
+			return:		[integer!]
+		]
+		GdipDrawImagePointsI: "GdipDrawImagePointsI" [
+			graphics	[integer!]
+			image		[integer!]
+			points		[tagPOINT]
+			count		[integer!]
+			return:		[integer!]
+		]
+		GdipSetLinePresetBlend: "GdipSetLinePresetBlend" [
+			brush		[integer!]
+			colors		[int-ptr!]
+			positions	[pointer! [float32!]]
+			count		[integer!]
+			return:		[integer!]
+		]
+		GdipCreateLineBrushI: "GdipCreateLineBrushI" [
+			pt1			[tagPOINT]
+			pt2			[tagPOINT]
+			color1		[integer!]
+			color2		[integer!]
+			wrap		[integer!]
+			brush		[int-ptr!]
+			return:		[integer!]
+		]
 		GdipDeleteStringFormat: "GdipDeleteStringFormat" [
 			format		[integer!]
 			return:		[integer!]
@@ -1790,6 +1895,22 @@ DwmIsCompositionEnabled!: alias function! [
 			path		[integer!]
 			return:		[integer!]
 		]
+		GdipAddPathRectangleI: "GdipAddPathRectangleI" [
+			path		[integer!]
+			x			[integer!]
+			y			[integer!]
+			width		[integer!]
+			height		[integer!]
+			return:		[integer!]
+		]
+		GdipAddPathEllipseI: "GdipAddPathEllipseI" [
+			path		[integer!]
+			x			[integer!]
+			y			[integer!]
+			width		[integer!]
+			height		[integer!]
+			return:		[integer!]
+		]
 		GdipAddPathArcI: "GdipAddPathArcI" [
 			path		[integer!]
 			x			[integer!]
@@ -1885,6 +2006,21 @@ DwmIsCompositionEnabled!: alias function! [
 		GdipSetPenEndCap: "GdipSetPenEndCap" [
 			pen			[integer!]
 			style		[integer!]
+			return:		[integer!]
+		]
+		GdipSetPenColor: "GdipSetPenColor" [
+			pen			[integer!]
+			color		[integer!]
+			return:		[integer!]
+		]
+		GdipSetPenWidth: "GdipSetPenWidth" [
+			pen			[integer!]
+			width		[float32!]
+			return:		[integer!]
+		]
+		GdipSetPenBrushFill: "GdipSetPenBrushFill" [
+			pen			[integer!]
+			brush		[integer!]
 			return:		[integer!]
 		]
 		GdipDrawImageRectRectI: "GdipDrawImageRectRectI" [

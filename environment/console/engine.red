@@ -162,7 +162,7 @@ system/console: context [
 			clear buffer
 		]
 	
-		unless tail? line [
+		if any [not tail? line mode <> 'mono][
 			either all [not empty? line escape = last line][
 				cue: none
 				clear buffer
@@ -183,14 +183,20 @@ system/console: context [
 		]
 	]
 
-	run: function [/no-banner][
+	run: function [/no-banner /local p][
 		unless no-banner [
 			print [
 				"--== Red" system/version "==--" lf
 				"Type HELP for starting information." lf
 			]
 		]
-		forever [eval-command ask any [cue prompt]]
+		forever [
+			eval-command ask any [
+				cue
+				all [string? set/any 'p do [prompt] :p]
+				form :p
+			]
+		]
 	]
 
 	launch: function [][
@@ -215,7 +221,7 @@ system/console: context [
 
 ;-- Console-oriented function definitions
 
-ll:   does [list-dir/col 1]
+ll:   func ['dir [any-type!]][list-dir/col :dir 1]
 pwd:  does [prin mold system/options/path]
 halt: does [throw/name 'halt-request 'console]
 

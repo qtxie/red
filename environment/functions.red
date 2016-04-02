@@ -73,11 +73,11 @@ quote: func [
 	:value
 ]
 
-first:	func ["Returns the first value in a series"  s [series! pair! tuple!]] [pick s 1]	;@@ temporary definitions, should be natives ?
-second:	func ["Returns the second value in a series" s [series! pair! tuple!]] [pick s 2]
-third:	func ["Returns the third value in a series"  s [series! pair! tuple!]] [pick s 3]
-fourth:	func ["Returns the fourth value in a series" s [series! pair! tuple!]] [pick s 4]
-fifth:	func ["Returns the fifth value in a series"  s [series! pair! tuple!]] [pick s 5]
+first:	func ["Returns the first value in a series"  s [series! tuple! pair!]] [pick s 1]	;@@ temporary definitions, should be natives ?
+second:	func ["Returns the second value in a series" s [series! tuple! pair!]] [pick s 2]
+third:	func ["Returns the third value in a series"  s [series! tuple!]] [pick s 3]
+fourth:	func ["Returns the fourth value in a series" s [series! tuple!]] [pick s 4]
+fifth:	func ["Returns the fifth value in a series"  s [series! tuple!]] [pick s 5]
 
 last:	func ["Returns the last value in a series"  s [series!]][pick back tail s 1]
 
@@ -491,7 +491,16 @@ to-red-file: func [
 	dst
 ]
 
-dir?: func [file [file!]][#"/" = last file]
+dir?: func [file [file! url!]][#"/" = last file]
+
+normalize-dir: function [
+	dir [file! word! path!]
+][
+	unless file? dir [dir: to file! mold dir]
+	if slash <> first dir [dir: clean-path append copy system/options/path dir]
+	unless dir? dir [dir: append copy dir slash]
+	dir
+]
 
 what-dir: func [/local path][
 	path: to-red-file get-current-dir
@@ -499,24 +508,30 @@ what-dir: func [/local path][
 	path
 ]
 
-change-dir: func [
+change-dir: function [
 	"Changes the active directory path"
-	dir [file!]	"New active directory of relative path to the new one"
+	:dir [file! word! path!] "New active directory of relative path to the new one"
 ][
-	if slash <> first dir [dir: clean-path append copy system/options/path dir]
+	unless exists? dir: normalize-dir dir [cause-error 'access 'cannot-open [dir]]
 	system/options/path: dir
 ]
 
 list-dir: function [
-	"Displays a list of files and directories from current active directory"
-	/col				"Forces the display in a given number of columns"
-		n [integer!]	"Number of columns"
+	"Displays a list of files and directories from given folder or current one"
+	'dir [any-type!] "Folder to list"
+	/col			 "Forces the display in a given number of columns"
+		n [integer!] "Number of columns"
 ][
-	list: read %.
+	unless value? 'dir [dir: %.]
+	
+	unless find [file! word! path!] type?/word :dir [
+		cause-error 'script 'expect-arg reduce ['list-dir type? :dir 'dir]
+	]
+	list: read normalize-dir dir
 	max-sz: either n [
 		system/console/limit / n - n					;-- account for n extra spaces
 	][
-		n: max 1 system/console/limit / 22					;-- account for n extra spaces
+		n: max 1 system/console/limit / 22				;-- account for n extra spaces
 		22 - n
 	]
 
@@ -526,7 +541,7 @@ list-dir: function [
 				name: append copy/part name max-sz - 4 "..."
 			]
 			prin tab
-			prin pad mold name max-sz
+			prin pad form name max-sz
 			prin " "
 			if tail? list: next list [exit]
 		]
@@ -556,12 +571,25 @@ within?: func [
 	size	[pair!] "Size of area"
 	return: [logic!]
 ][
-	all [
+	make logic! all [
 		point/x >= offset/x
 		point/y >= offset/y
 		point/x < (offset/x + size/x)
 		point/y < (offset/y + size/y)
 	]
+]
+
+overlap?: function [
+	"Return TRUE if the two faces bounding boxes are overlapping"
+	A		[object!] "First face"
+	B		[object!] "Second face"
+	return: [logic!]  "TRUE if overlapping"
+][
+	A1: A/offset
+	B1: B/offset
+	A2: A1 + A/size
+	B2: B1 + B/size
+	make logic! all [A1/x < B2/x B1/x < A2/x A1/y < B2/y B1/y < A2/y]
 ]
 
 extract: function [

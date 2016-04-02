@@ -18,7 +18,27 @@ bignum: context [
 	biLH:				ciL << 2		;-- half bits in limb
 	BN_MAX_LIMB:		1024			;-- support 1024 * 32 bits
 
-
+	#define MULADDC_INIT [
+		b0: (b << biLH) >> biLH
+		b1: b >> biLH
+	]
+	#define MULADDC_CORE [
+		s0: (s/1 << biLH) >> biLH
+		s1: s/1 >> biLH
+		s: s + 1
+		rx: s0 * b1 			r0: s0 * b0
+		ry: s1 * b0 			r1: s1 * b1
+		r1: r1 + (rx >> biLH)
+		r1: r1 + (ry >> biLH)
+		rx: rx << biLH 			ry: ry << biLH
+		r0: r0 + rx 			r1: r1 + as integer! (r0 < rx)
+		r0: r0 + ry 			r1: r1 + as integer! (r0 < ry)
+		r0: r0 + c 				r1: r1 + as integer! (r0 <  c)
+		r0: r0 + d/1			r1: r1 + as integer! (r0 <  d/1)
+		c: r1					d/1: r0		d: d + 1
+	]
+	#define MULADDC_STOP []
+	
 	push: func [
 		big [red-bignum!]
 	][
@@ -52,6 +72,7 @@ bignum: context [
 		][
 			size: big/used * 4
 		]
+		print-line size
 		p: p + size
 
 		bytes: 0
@@ -124,6 +145,9 @@ bignum: context [
 					]
 					OP_SUB [
 						big: sub left right
+					]
+					OP_MUL [
+						big: mul left right
 					]
 				]
 			]
@@ -491,6 +515,131 @@ bignum: context [
 		add big1 big
 	]
 	
+	mul-hlp: func [
+		i			[integer!]
+		s	 		[int-ptr!]
+		d	 		[int-ptr!]
+		b			[integer!]
+		/local
+			c		[integer!]
+			t		[integer!]
+			s0		[integer!]
+			s1		[integer!]
+			b0		[integer!]
+			b1		[integer!]
+			r0		[integer!]
+			r1		[integer!]
+			rx		[integer!]
+			ry		[integer!]			
+	][
+		c: 0
+		t: 0
+		
+		while [i >= 16][
+			MULADDC_INIT
+	        MULADDC_CORE   MULADDC_CORE
+	        MULADDC_CORE   MULADDC_CORE
+	        MULADDC_CORE   MULADDC_CORE
+	        MULADDC_CORE   MULADDC_CORE
+
+	        MULADDC_CORE   MULADDC_CORE
+	        MULADDC_CORE   MULADDC_CORE
+	        MULADDC_CORE   MULADDC_CORE
+	        MULADDC_CORE   MULADDC_CORE
+	        MULADDC_STOP			
+			i: i - 16
+		]
+		
+		while [i >= 8][
+			MULADDC_INIT
+			MULADDC_CORE   MULADDC_CORE
+			MULADDC_CORE   MULADDC_CORE
+
+			MULADDC_CORE   MULADDC_CORE
+			MULADDC_CORE   MULADDC_CORE
+			MULADDC_STOP
+			i: i - 8
+		]
+		
+		while [i > 0][
+			MULADDC_INIT
+			MULADDC_CORE
+			MULADDC_STOP
+			i: i - 1
+		]
+		
+		until [
+			d/1: d/1 + c
+			c: as integer! (d/1 < c)
+			d: d + 1
+			c = 0
+		]
+	]
+	
+	lset: func [
+		big			[red-bignum!]
+		int			[integer!]
+		/local
+			s	 	[series!]
+			p		[byte-ptr!]
+			p4		[int-ptr!]
+	][
+		grow big 1
+		s: GET_BUFFER(big)
+		p: as byte-ptr! s/offset
+		p4: as int-ptr! s/offset
+		set-memory p #"^@" s/size
+		
+		either int > 0 [
+			p4/1: int
+			big/sign: 1
+		][
+			p4/1: 0 - int
+			big/sign: -1			
+		]
+		big/used: 1
+	]
+	
+	mul: func [
+		big1		[red-bignum!]
+		big2		[red-bignum!]
+		return:		[red-bignum!]
+		/local
+			big		[red-bignum!]
+			s	 	[series!]
+			s1	 	[series!]
+			s2	 	[series!]
+			p		[int-ptr!]
+			p1		[int-ptr!]
+			p2		[int-ptr!]
+			len1	[integer!]
+			len2	[integer!]
+			pt		[int-ptr!]
+	][
+		s1: GET_BUFFER(big1)
+		s2: GET_BUFFER(big2)
+		p1: as int-ptr! s1/offset
+		p2: as int-ptr! s2/offset
+		len1: big1/used
+		len2: big2/used
+		
+		big: make-at stack/push* (((s1/size + s2/size) / 4) + 1)
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+		
+		len1: len1 + 1
+		while [len2 > 0]
+		[
+			pt: p2 + len2 - 1
+			mul-hlp (len1 - 1) p1 (p + len2 - 1) pt/1
+			len2: len2 - 1
+		]
+		
+		big/sign: big1/sign * big2/sign
+		clamp big
+		big
+	]
+	
 	compare: func [
 		big1	 	[red-bignum!]
 		big2	 	[red-bignum!]
@@ -570,7 +719,7 @@ bignum: context [
 					if size % 4 <> 0 [
 						len: len + 1
 					]
-					
+					print-line size
 					big: make-at stack/push* len
 					s: GET_BUFFER(big)
 					pbig: as byte-ptr! s/offset
@@ -589,7 +738,19 @@ bignum: context [
 
 		big
 	]
-
+	
+	form: func [
+		big		[red-bignum!]
+		buffer	[red-string!]
+		arg		[red-value!]
+		part 	[integer!]
+		return: [integer!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/form"]]
+		
+		serialize big buffer no no no arg part no
+	]
+	
 	mold: func [
 		big		[red-bignum!]
 		buffer	[red-string!]
@@ -652,7 +813,12 @@ bignum: context [
 
 		do-math OP_ADD
 	]
-
+	
+	multiply: func [return:	[red-value!]][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/multiply"]]
+		as red-value! do-math OP_MUL
+	]
+	
 	subtract: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/add"]]
 
@@ -702,7 +868,7 @@ bignum: context [
 			null			;random
 			null			;reflect
 			null			;to
-			null			;form
+			:form
 			:mold
 			null			;eval-path
 			null			;set-path
@@ -711,7 +877,7 @@ bignum: context [
 			:absolute
 			:add*
 			null			;divide
-			null			;multiply
+			:multiply
 			:negate
 			null			;power
 			null			;remainder

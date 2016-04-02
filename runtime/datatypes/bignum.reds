@@ -109,12 +109,11 @@ bignum: context [
 				switch type [
 					OP_ADD [
 						int: as red-integer! right
-						big: add-int left int
+						big: add-int left int/value
 					]
 					OP_SUB [
 						int: as red-integer! right
-						int/value: 0 - int/value
-						big: add-int left int
+						big: sub-int left int/value
 					]
 				]
 			]
@@ -213,6 +212,27 @@ bignum: context [
 		]
 	]
 
+	clamp: func [
+		big			[red-bignum!]
+		/local
+			s	 	[series!]
+			p		[int-ptr!]
+			len		[integer!]
+	][
+		s: GET_BUFFER(big)
+		len: big/used
+		p: as int-ptr! s/offset
+		p: p + len
+		loop len [
+			p: p - 1
+			if p/1 = 0 [
+				len: len - 1
+			]
+		]
+		big/used: len
+		big
+	]
+	
 	uint-less: func [
 		u1			[integer!]
 		u2			[integer!]
@@ -254,12 +274,12 @@ bignum: context [
 		s2: GET_BUFFER(big2)
 		p2: as int-ptr! s2/offset
 
-		len: either s1/size > s2/size [
+		len: either big1/used > big2/used [
 			big1/used
 		][
 			big2/used
 		]
-
+		
 		big: copy big1
 		big/sign: 1
 		grow big s2/size
@@ -341,16 +361,7 @@ bignum: context [
 			p2: p2 + 1
 		]
 		
-		len: big/used
-		p: as int-ptr! s/offset
-		p: p + len
-		loop len [
-			p: p - 1
-			if p/1 = 0 [
-				len: len - 1
-			]
-		]
-		big/used: len
+		clamp big
 		big
 	]
 
@@ -436,7 +447,7 @@ bignum: context [
 
 	add-int: func [
 		big1	 	[red-bignum!]
-		int			[red-integer!]
+		int			[integer!]
 		return:	 	[red-bignum!]
 		/local
 			big	 	[red-bignum!]
@@ -447,16 +458,39 @@ bignum: context [
 		big/used: 1
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
-		p/1: either int/value > 0 [
+		p/1: either int > 0 [
 			big/sign: 1
-			int/value
+			int
 		][
 			big/sign: -1
-			0 - int/value
+			0 - int
 		]
 		add big1 big
 	]
-
+	
+	sub-int: func [
+		big1	 	[red-bignum!]
+		int			[integer!]
+		return:	 	[red-bignum!]
+		/local
+			big	 	[red-bignum!]
+			s	 	[series!]
+			p		[int-ptr!]
+	][
+		big: make-at stack/push* 1
+		big/used: 1
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+		p/1: either int > 0 [
+			big/sign: -1
+			int
+		][
+			big/sign: 1
+			0 - int
+		]
+		add big1 big
+	]
+	
 	compare: func [
 		big1	 	[red-bignum!]
 		big2	 	[red-bignum!]
@@ -491,9 +525,16 @@ bignum: context [
 		return:	 	[red-bignum!]
 		/local
 			int	 	[red-integer!]
+			bin	 	[red-binary!]
 			big	 	[red-bignum!]
 			s	 	[series!]
+			sbin	[series!]
 			p		[int-ptr!]
+			pbig	[byte-ptr!]
+			head	[byte-ptr!]
+			tail	[byte-ptr!]
+			len		[integer!]
+			size	[integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/make"]]
 
@@ -510,6 +551,37 @@ bignum: context [
 				][
 					big/sign: -1
 					0 - int/value
+				]
+			]
+			TYPE_BINARY [
+				bin: as red-binary! spec
+				sbin: GET_BUFFER(bin)
+				head: (as byte-ptr! sbin/offset) + bin/head
+				tail: as byte-ptr! sbin/tail
+				size: as-integer tail - head
+				either size = 0 [
+					big: make-at stack/push* 1
+					big/used: 1
+					s: GET_BUFFER(big)
+					p: as int-ptr! s/offset
+					p/1: 0
+				][
+					len: size / 4
+					if size % 4 <> 0 [
+						len: len + 1
+					]
+					
+					big: make-at stack/push* len
+					s: GET_BUFFER(big)
+					pbig: as byte-ptr! s/offset
+					big/used: len
+					loop size [
+						tail: tail - 1
+						pbig/1: tail/1
+						pbig: pbig + 1
+					]
+					
+					clamp big
 				]
 			]
 			default [--NOT_IMPLEMENTED--]

@@ -12,12 +12,12 @@ Red/System [
 
 bignum: context [
 	verbose: 1
-	
+
 	ciL:				4				;-- bignum! unit is 4 bytes; chars in limb
 	biL:				ciL << 3		;-- bits in limb
 	biLH:				ciL << 2		;-- half bits in limb
 	BN_MAX_LIMB:		1024			;-- support 1024 * 32 bits
-	
+
 
 	push: func [
 		big [red-bignum!]
@@ -26,7 +26,7 @@ bignum: context [
 
 		copy-cell as red-value! big stack/push*
 	]
-	
+
 	serialize: func [
 		big			[red-bignum!]
 		buffer		[red-string!]
@@ -40,33 +40,31 @@ bignum: context [
 		/local
 			s		[series!]
 			bytes	[integer!]
-			head	[byte-ptr!]
 			p		[byte-ptr!]
 			size	[integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/serialize"]]
 
 		s: GET_BUFFER(big)
-		head: as byte-ptr! s/offset
+		p: as byte-ptr! s/offset
 		either big/used = 0 [
 			size: 1
 		][
 			size: big/used * 4
 		]
-		print-line size
-		p: head + size
+		p: p + size
 
 		bytes: 0
 		if size > 30 [
 			string/append-char GET_BUFFER(buffer) as-integer lf
 			part: part - 1
 		]
-		
+
 		if big/sign = -1 [
 			string/append-char GET_BUFFER(buffer) as-integer #"-"
 			bytes: bytes + 1
 		]
-		
+
 		part: part - 2
 		loop size [
 			p: p - 1
@@ -85,25 +83,73 @@ bignum: context [
 		]
 		part - 1
 	]
-	
+
+	do-math: func [
+		type		[math-op!]
+		return:		[red-value!]
+		/local
+			left	[red-bignum!]
+			right	[red-bignum!]
+			big		[red-bignum!]
+			int		[red-integer!]
+	][
+		left: as red-bignum! stack/arguments
+		right: left + 1
+
+		assert any [
+			TYPE_OF(left) = TYPE_BIGNUM
+		]
+		assert any [
+			TYPE_OF(right) = TYPE_INTEGER
+			TYPE_OF(right) = TYPE_BIGNUM
+		]
+
+		switch TYPE_OF(right) [
+			TYPE_INTEGER [
+				switch type [
+					OP_ADD [
+						int: as red-integer! right
+						big: add-int left int
+					]
+					OP_SUB [
+						int: as red-integer! right
+						int/value: 0 - int/value
+						big: add-int left int
+					]
+				]
+			]
+			TYPE_BIGNUM [
+				switch type [
+					OP_ADD [
+						big: add left right
+					]
+					OP_SUB [
+						big: sub left right
+					]
+				]
+			]
+		]
+		SET_RETURN(big)
+	]
+
 	make-at: func [
 		slot		[red-value!]
 		len 		[integer!]
 		return:		[red-bignum!]
-		/local 
+		/local
 			big		[red-bignum!]
 			s		[series!]
 			p4		[int-ptr!]
 	][
 		if len = 0 [len: 1]
-		
+
 		;-- make bignum!
 		big: as red-bignum! slot
 		big/header: TYPE_BIGNUM
 		big/node:	alloc-series len 4 0
 		big/sign:	1
 		big/used:	1
-		
+
 		;-- init to zero
 		s: GET_BUFFER(big)
 		p4: as int-ptr! s/offset
@@ -113,7 +159,7 @@ bignum: context [
 		]
 		big
 	]
-	
+
 	copy: func [
 		src	 		[red-bignum!]
 		return:	 	[red-bignum!]
@@ -128,11 +174,11 @@ bignum: context [
 		s1: GET_BUFFER(src)
 		p1: as byte-ptr! s1/offset
 		size: src/used * 4
-		
+
 		big: make-at stack/push* size
 		s2: GET_BUFFER(big)
 		p2: as byte-ptr! s2/offset
-		
+
 		big/sign: src/sign
 		big/used: src/used
 		if size > 0 [
@@ -140,7 +186,7 @@ bignum: context [
 		]
 		big
 	]
-	
+
 	grow: func [
 		big			[red-bignum!]
 		len			[integer!]
@@ -151,12 +197,12 @@ bignum: context [
 	][
 		if len > BN_MAX_LIMB [--NOT_IMPLEMENTED--]
 		if len = 0 [exit]
-		
+
 		s: GET_BUFFER(big)
 		ex_len: (len * 4) - s/size
 		if ex_len > 0 [
 			s: expand-series s ex_len
-			
+
 			;-- set to zero
 			p: as int-ptr! s/offset + big/used
 			loop ex_len [
@@ -166,7 +212,7 @@ bignum: context [
 			big/used: len
 		]
 	]
-	
+
 	uint-less: func [
 		u1			[integer!]
 		u2			[integer!]
@@ -177,18 +223,18 @@ bignum: context [
 	][
 		p1: as byte-ptr! :u1
 		p2: as byte-ptr! :u2
-		
+
 		if p1/4 < p2/4 [return true]
 		if p1/4 > p2/4 [return false]
 		if p1/3 < p2/3 [return true]
-		if p1/3 > p2/3 [return false]	
+		if p1/3 > p2/3 [return false]
 		if p1/2 < p2/2 [return true]
 		if p1/2 > p2/2 [return false]
 		if p1/1 < p2/1 [return true]
-		if p1/1 > p2/1 [return false]	
+		if p1/1 > p2/1 [return false]
 		return false
 	]
-	
+
 	absolute-add: func [
 		big1	 	[red-bignum!]
 		big2		[red-bignum!]
@@ -207,19 +253,19 @@ bignum: context [
 		s1: GET_BUFFER(big1)
 		s2: GET_BUFFER(big2)
 		p2: as int-ptr! s2/offset
-		
-		either s1/size > s2/size [
-			len: s1/size
+
+		len: either s1/size > s2/size [
+			big1/used
 		][
-			len: s2/size
+			big2/used
 		]
-		
+
 		big: copy big1
 		big/sign: 1
 		grow big s2/size
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
-		
+
 		c: 0
 		loop len [
 			tmp: p2/1
@@ -230,7 +276,7 @@ bignum: context [
 			p: p + 1
 			p2: p2 + 1
 		]
-		
+
 		while [c > 0][
 			if len >= s/size [
 				grow big len + 1
@@ -246,7 +292,7 @@ bignum: context [
 		big/used: len
 		big
 	]
-	
+
 	;-- big1 must large than big2
 	absolute-sub: func [
 		big1	 	[red-bignum!]
@@ -267,25 +313,26 @@ bignum: context [
 		s2: GET_BUFFER(big2)
 		p2: as int-ptr! s2/offset
 		len: big2/used
-		
-		if s1/size < s2/size [--NOT_IMPLEMENTED--]
-		
+
+		if big1/used < big2/used [--NOT_IMPLEMENTED--]
+
 		big: copy big1
 		big/sign: 1
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
-		
+
 		c: 0
 		z: 0
 		loop len [
 			z: as integer! (uint-less p/1 c)
 			p/1: p/1 - c
 			c: as integer! (uint-less p/1 p2/1)
+			c: c + z
 			p/1: p/1 - p2/1
 			p: p + 1
 			p2: p2 + 1
 		]
-		
+
 		while [c > 0][
 			z: as integer! (uint-less p/1 c)
 			p/1: p/1 - c
@@ -294,16 +341,19 @@ bignum: context [
 			p2: p2 + 1
 		]
 		
-		p: p - 1
-		len: len - 1
-		if p/1 <> 0 [
-			p: p + 1
-			len: len + 1
+		len: big/used
+		p: as int-ptr! s/offset
+		p: p + len
+		loop len [
+			p: p - 1
+			if p/1 = 0 [
+				len: len - 1
+			]
 		]
 		big/used: len
 		big
 	]
-	
+
 	absolute-compare: func [
 		big1	 	[red-bignum!]
 		big2	 	[red-bignum!]
@@ -316,19 +366,21 @@ bignum: context [
 	][
 		s1: GET_BUFFER(big1)
 		s2: GET_BUFFER(big2)
-		
+
 		if all [
 			big1/used = 0
 			big2/used = 0
 		][
 			return 0
 		]
-		
+
 		if big1/used > big2/used [return 1]
 		if big2/used > big1/used [return -1]
-		
-		p1: as int-ptr! s1/offset + big1/used
-		p2: as int-ptr! s2/offset + big2/used
+
+		p1: as int-ptr! s1/offset
+		p1: p1 + big1/used
+		p2: as int-ptr! s2/offset
+		p2: p2 + big2/used
 		loop big1/used [
 			p1: p1 - 1
 			p2: p2 - 1
@@ -337,14 +389,14 @@ bignum: context [
 		]
 		return 0
 	]
-	
+
 	add: func [
 		big1	 	[red-bignum!]
 		big2		[red-bignum!]
 		return:	 	[red-bignum!]
 		/local
 			big	 	[red-bignum!]
-	][	
+	][
 		either big1/sign <> big2/sign [
 			either (absolute-compare big1 big2) >= 0 [
 				big: absolute-sub big1 big2
@@ -366,14 +418,14 @@ bignum: context [
 		return:	 	[red-bignum!]
 		/local
 			big	 	[red-bignum!]
-	][	
+	][
 		either big1/sign = big2/sign [
 			either (absolute-compare big1 big2) >= 0 [
 				big: absolute-sub big1 big2
 				big/sign: big1/sign
 			][
 				big: absolute-sub big2 big1
-				big/sign: 0 - big1/sign				
+				big/sign: 0 - big1/sign
 			]
 		][
 			big: absolute-add big1 big2
@@ -381,7 +433,7 @@ bignum: context [
 		]
 		big
 	]
-	
+
 	add-int: func [
 		big1	 	[red-bignum!]
 		int			[red-integer!]
@@ -390,7 +442,7 @@ bignum: context [
 			big	 	[red-bignum!]
 			s	 	[series!]
 			p		[int-ptr!]
-	][	
+	][
 		big: make-at stack/push* 1
 		big/used: 1
 		s: GET_BUFFER(big)
@@ -404,7 +456,7 @@ bignum: context [
 		]
 		add big1 big
 	]
-	
+
 	compare: func [
 		big1	 	[red-bignum!]
 		big2	 	[red-bignum!]
@@ -416,23 +468,23 @@ bignum: context [
 		][
 			return 1
 		]
-		
+
 		if all [
 			big2/sign = 1
 			big1/sign = -1
 		][
 			return -1
 		]
-		
+
 		either big1/sign = 1 [
 			return absolute-compare big1 big2
 		][
 			return absolute-compare big2 big1
 		]
 	]
-	
+
 	;--- Actions ---
-	
+
 	make: func [
 		proto	 	[red-value!]
 		spec	 	[red-value!]
@@ -444,7 +496,7 @@ bignum: context [
 			p		[int-ptr!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/make"]]
-		
+
 		switch TYPE_OF(spec) [
 			TYPE_INTEGER [
 				int: as red-integer! spec
@@ -462,7 +514,7 @@ bignum: context [
 			]
 			default [--NOT_IMPLEMENTED--]
 		]
-		
+
 		big
 	]
 
@@ -482,10 +534,10 @@ bignum: context [
 			unit   [integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/mold"]]
-		
+
 		serialize big buffer only? all? flat? arg part yes
 	]
-	
+
 	compare*: func [
 		value1    [red-bignum!]						;-- first operand
 		value2    [red-bignum!]						;-- second operand
@@ -500,7 +552,7 @@ bignum: context [
 			op = COMP_STRICT_EQUAL
 			TYPE_OF(value1) <> TYPE_OF(value2)
 		][return 1]
-		
+
 		switch op [
 			COMP_EQUAL		[res: compare value1 value2]
 			COMP_NOT_EQUAL 	[res: not compare value1 value2]
@@ -510,12 +562,11 @@ bignum: context [
 		]
 		res
 	]
-	
+
 	absolute: func [
-		return: [red-bignum!]
+		return:		[red-bignum!]
 		/local
-			big	  [red-bignum!]
-			value [float!]
+			big		[red-bignum!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/absolute"]]
 
@@ -523,13 +574,25 @@ bignum: context [
 		big/sign: 1
 		big 											;-- re-use argument slot for return value
 	]
-	
-	complement: func [
+
+	add*: func [return: [red-value!]][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/add"]]
+
+		do-math OP_ADD
+	]
+
+	subtract: func [return: [red-value!]][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/add"]]
+
+		do-math OP_SUB
+	]
+
+	negate: func [
 		big		[red-bignum!]
 		return:	[red-value!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/complement"]]
-		
+
 		either big/sign = 1 [
 			big/sign: -1
 		][
@@ -537,7 +600,7 @@ bignum: context [
 		]
 		as red-value! big
 	]
-	
+
 	swap: func [
 		big1	 	[red-bignum!]
 		big2	 	[red-bignum!]
@@ -547,8 +610,8 @@ bignum: context [
 			sign 	[integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/swap"]]
-		
-		node: big1/node 
+
+		node: big1/node
 		sign: big1/sign
 		big1/node: big2/node
 		big1/sign: big2/sign
@@ -556,7 +619,7 @@ bignum: context [
 		big2/sign: sign
 		big1
 	]
-	
+
 	init: does [
 		datatype/register [
 			TYPE_BIGNUM
@@ -574,19 +637,19 @@ bignum: context [
 			:compare*
 			;-- Scalar actions --
 			:absolute
-			null			;add
+			:add*
 			null			;divide
 			null			;multiply
-			null			;negate
+			:negate
 			null			;power
 			null			;remainder
 			null			;round
-			null			;subtract
+			:subtract
 			null			;even?
 			null			;odd?
 			;-- Bitwise actions --
 			null			;and~
-			:complement
+			null			;complement
 			null			;or~
 			null			;xor~
 			;-- Series actions --

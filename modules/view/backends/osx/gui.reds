@@ -195,12 +195,21 @@ set-selected-focus: func [
 ]
 
 set-logic-state: func [
-	hWnd   [handle!]
+	hWnd   [integer!]
 	state  [red-logic!]
 	check? [logic!]
 	/local
 		value [integer!]
-][0]
+][
+	value: either TYPE_OF(state) <> TYPE_LOGIC [
+		state/header: TYPE_LOGIC
+		state/value: check?
+		either check? [-1][0]
+	][
+		as-integer state/value							;-- returns 0/1, matches the messages
+	]
+	objc_msgSend [hWnd sel_getUid "setState:"  value]
+]
 
 get-flags: func [
 	field	[red-block!]
@@ -389,6 +398,14 @@ OS-make-view: func [
 
 	case [
 		sym = button [class: "RedButton"]
+		sym = check [
+			class: "RedButton"
+			flags: NSSwitchButton
+		]
+		sym = radio [
+			class: "RedButton"
+			flags: NSRadioButton
+		]
 		sym = window [class: "RedWindow"]
 		sym = base	 [class: "RedBase"]
 		true [											;-- search in user-defined classes
@@ -417,11 +434,13 @@ OS-make-view: func [
 	]
 
 	case [
-		sym = button [
+		any [sym = button sym = check sym = radio][
 			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]
+			objc_msgSend [obj sel_getUid "setButtonType:" flags]
 			objc_msgSend [obj sel_getUid "setTitle:" CFString(caption)]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]
 			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
+			if sym <> button [set-logic-state obj as red-logic! data no]
 		]
 		sym = window [
 			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y

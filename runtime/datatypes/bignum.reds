@@ -238,7 +238,7 @@ bignum: context [
 		]
 	]
 
-	clamp: func [
+	shrink: func [
 		big			[red-bignum!]
 		/local
 			s	 	[series!]
@@ -387,7 +387,7 @@ bignum: context [
 			p2: p2 + 1
 		]
 		
-		clamp big
+		shrink big
 		big
 	]
 
@@ -643,7 +643,7 @@ bignum: context [
 		]
 		
 		big/sign: big1/sign * big2/sign
-		clamp big
+		shrink big
 		big
 	]
 	
@@ -760,7 +760,7 @@ bignum: context [
 						pbig: pbig + 1
 					]
 					
-					clamp big
+					shrink big
 				]
 			]
 			default [--NOT_IMPLEMENTED--]

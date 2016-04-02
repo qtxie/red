@@ -19,22 +19,29 @@ bignum: context [
 	BN_MAX_LIMB:		1024			;-- support 1024 * 32 bits
 
 	#define MULADDC_INIT [
-		b0: (b << biLH) >> biLH
-		b1: b >> biLH
+		s0: 0
+		s1: 0
+		b0: 0
+		b1: 0
+		r0: 0
+		r1: 0
+		rx: 0
+		ry: 0
+		b0: (b << biLH) >>> biLH
+		b1: b >>> biLH
 	]
 	#define MULADDC_CORE [
-		s0: (s/1 << biLH) >> biLH
-		s1: s/1 >> biLH
-		s: s + 1
+		s0: (s/1 << biLH) >>> biLH
+		s1: s/1 >>> biLH		s: s + 1
 		rx: s0 * b1 			r0: s0 * b0
 		ry: s1 * b0 			r1: s1 * b1
-		r1: r1 + (rx >> biLH)
-		r1: r1 + (ry >> biLH)
+		r1: r1 + (rx >>> biLH)
+		r1: r1 + (ry >>> biLH)
 		rx: rx << biLH 			ry: ry << biLH
-		r0: r0 + rx 			r1: r1 + as integer! (r0 < rx)
-		r0: r0 + ry 			r1: r1 + as integer! (r0 < ry)
-		r0: r0 + c 				r1: r1 + as integer! (r0 <  c)
-		r0: r0 + d/1			r1: r1 + as integer! (r0 <  d/1)
+		r0: r0 + rx 			r1: r1 + as integer! (uint-less r0 rx)
+		r0: r0 + ry 			r1: r1 + as integer! (uint-less r0 ry)
+		r0: r0 + c 				r1: r1 + as integer! (uint-less r0 c)
+		r0: r0 + d/1			r1: r1 + as integer! (uint-less r0 d/1)
 		c: r1					d/1: r0		d: d + 1
 	]
 	#define MULADDC_STOP []
@@ -72,7 +79,6 @@ bignum: context [
 		][
 			size: big/used * 4
 		]
-		print-line size
 		p: p + size
 
 		bytes: 0
@@ -568,9 +574,11 @@ bignum: context [
 			i: i - 1
 		]
 		
+		t: t + 1
+		
 		until [
 			d/1: d/1 + c
-			c: as integer! (d/1 < c)
+			c: as integer! (uint-less d/1  c)
 			d: d + 1
 			c = 0
 		]
@@ -584,7 +592,7 @@ bignum: context [
 			p		[byte-ptr!]
 			p4		[int-ptr!]
 	][
-		grow big 1
+		grow big (big/used + 1)
 		s: GET_BUFFER(big)
 		p: as byte-ptr! s/offset
 		p4: as int-ptr! s/offset
@@ -615,6 +623,7 @@ bignum: context [
 			len1	[integer!]
 			len2	[integer!]
 			pt		[int-ptr!]
+			len		[integer!]
 	][
 		s1: GET_BUFFER(big1)
 		s2: GET_BUFFER(big2)
@@ -623,7 +632,9 @@ bignum: context [
 		len1: big1/used
 		len2: big2/used
 		
-		big: make-at stack/push* (((s1/size + s2/size) / 4) + 1)
+		len: len1 + len2 + 1
+		big: make-at stack/push* len
+		big/used: len
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
 		

@@ -362,3 +362,12 @@ OS-draw-image: func [
 ][
 0
 ]
+
+OS-draw-grad-pen: func [
+	dc			[handle!]
+	type		[integer!]
+	mode		[integer!]
+	offset		[red-pair!]
+	count		[integer!]					;-- number of the colors
+	brush?		[logic!]
+][0]

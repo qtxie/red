@@ -398,6 +398,8 @@ bignum: context [
 
 		if s2/size < (size) [
 			grow big src/used
+			s2: GET_BUFFER(big)
+			p2: as byte-ptr! s2/offset
 		]
 
 		big/sign: src/sign

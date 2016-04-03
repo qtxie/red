@@ -301,6 +301,7 @@ bignum: context [
 			left	[red-bignum!]
 			right	[red-bignum!]
 			big		[red-bignum!]
+			rem		[red-bignum!]
 			int		[red-integer!]
 	][
 		left: as red-bignum! stack/arguments
@@ -342,6 +343,10 @@ bignum: context [
 					]
 					OP_MUL [
 						mul left right big
+					]
+					OP_DIV [
+						rem: make-at stack/push* 1
+						div big rem left right
 					]
 				]
 			]
@@ -1310,6 +1315,12 @@ bignum: context [
 
 		do-math OP_ADD
 	]
+	
+	divide: func [return: [red-value!]][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/divide"]]
+
+		do-math OP_DIV
+	]
 
 	multiply: func [return:	[red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/multiply"]]
@@ -1373,7 +1384,7 @@ bignum: context [
 			;-- Scalar actions --
 			:absolute
 			:add*
-			null			;divide
+			:divide
 			:multiply
 			:negate
 			null			;power

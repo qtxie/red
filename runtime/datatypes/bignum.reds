@@ -539,6 +539,35 @@ bignum: context [
 		copy big ret
 	]
 
+	sub-hlp: func [
+		n			[integer!]
+		s	 		[int-ptr!]
+		d	 		[int-ptr!]
+		/local
+			c		[integer!]
+			z		[integer!]
+	][
+		c: 0
+		loop n [
+			print-line ["d/1: " d/1 " s/1: " s/1]
+			z: as integer! (uint-less d/1 c)
+			print-line ["z: " z]
+			d/1: d/1 - c
+			c: z + as integer! (uint-less d/1 s/1)
+			print-line ["c: " c]
+			d/1: d/1 - s/1
+			s: s + 1
+			d: d + 1
+		]
+		
+		while [c <> 0][
+			z: as integer! (uint-less d/1 c)
+			d/1: d/1 - c
+			c: z
+			d: d + 1
+		]
+	]
+	
 	;-- big1 must large than big2
 	absolute-sub: func [
 		big1	 	[red-bignum!]
@@ -568,25 +597,7 @@ bignum: context [
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
 
-		c: 0
-		z: 0
-		loop len [
-			z: as integer! (uint-less p/1 c)
-			p/1: p/1 - c
-			c: as integer! (uint-less p/1 p2/1)
-			c: c + z
-			p/1: p/1 - p2/1
-			p: p + 1
-			p2: p2 + 1
-		]
-
-		while [c > 0][
-			z: as integer! (uint-less p/1 c)
-			p/1: p/1 - c
-			c: z
-			p: p + 1
-			p2: p2 + 1
-		]
+		sub-hlp len p2 p
 
 		shrink big
 		copy big ret
@@ -622,8 +633,8 @@ bignum: context [
 		loop big1/used [
 			p1: p1 - 1
 			p2: p2 - 1
-			if p1/1 > p2/1 [return 1]
-			if p1/1 < p2/1 [return -1]
+			if uint-less p2/1 p1/1 [return 1]
+			if uint-less p1/1 p2/1 [return -1]
 		]
 		return 0
 	]
@@ -703,13 +714,13 @@ bignum: context [
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
 		p/1: either int >= 0 [
-			big/sign: -1
+			big/sign: 1
 			int
 		][
-			big/sign: 1
+			big/sign: -1
 			0 - int
 		]
-		add big1 big ret
+		sub big1 big ret
 	]
 
 	mul-hlp: func [
@@ -1309,7 +1320,7 @@ bignum: context [
 	]
 
 	subtract: func [return: [red-value!]][
-		#if debug? = yes [if verbose > 0 [print-line "bignum/add"]]
+		#if debug? = yes [if verbose > 0 [print-line "bignum/subtract"]]
 
 		do-math OP_SUB
 	]

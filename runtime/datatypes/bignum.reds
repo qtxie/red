@@ -415,15 +415,17 @@ bignum: context [
 		/local
 			s	 	[series!]
 			p		[int-ptr!]
+			ex_size	[integer!]
 			ex_len	[integer!]
 	][
 		if len > BN_MAX_LIMB [--NOT_IMPLEMENTED--]
 		if len = 0 [exit]
 
 		s: GET_BUFFER(big)
-		ex_len: (len * 4) - s/size
-		if ex_len > 0 [
-			s: expand-series s ex_len
+		ex_size: (len * 4) - s/size 
+		if ex_size > 0 [ 
+  			ex_len: ex_size / 4 
+  			s: expand-series s (len * 4) 
 
 			;-- set to zero
 			p: as int-ptr! s/offset + big/used

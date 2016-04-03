@@ -549,12 +549,9 @@ bignum: context [
 	][
 		c: 0
 		loop n [
-			print-line ["d/1: " d/1 " s/1: " s/1]
 			z: as integer! (uint-less d/1 c)
-			print-line ["z: " z]
 			d/1: d/1 - c
 			c: z + as integer! (uint-less d/1 s/1)
-			print-line ["c: " c]
 			d/1: d/1 - s/1
 			s: s + 1
 			d: d + 1

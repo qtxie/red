@@ -95,6 +95,18 @@ destroy-app: func [
 	no
 ]
 
+paint-background: func [
+	ctx		[handle!]
+	color	[integer!]
+	x		[float32!]
+	y		[float32!]
+	width	[float32!]
+	height	[float32!]
+][
+	OS-draw-fill-pen ctx color yes yes
+	CGContextFillRect ctx x y width height
+]
+
 draw-rect: func [
 	[cdecl]
 	self	[integer!]
@@ -104,10 +116,20 @@ draw-rect: func [
 	width	[float32!]
 	height	[float32!]
 	/local
+		ctx  [integer!]
+		vals [red-value!]
 		draw [red-block!]
+		clr  [red-tuple!]
 ][
-	draw: (as red-block! get-face-values self) + FACE_OBJ_DRAW
-	do-draw as handle! self null draw no yes yes yes
+	ctx: objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
+	ctx: objc_msgSend [ctx sel_getUid "graphicsPort"]
+	vals: get-face-values self
+	draw: as red-block! vals + FACE_OBJ_DRAW
+	clr:  as red-tuple! vals + FACE_OBJ_COLOR
+	if TYPE_OF(clr) = TYPE_TUPLE [
+		paint-background as handle! ctx clr/array1 x y width height
+	]
+	do-draw as handle! ctx null draw no yes yes yes
 ]
 
 add-base-handler: func [class [integer!]][

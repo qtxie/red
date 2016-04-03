@@ -491,7 +491,72 @@ OS-update-view: func [
 	hWnd: int/value
 	int: int + 1
 	flags: int/value
-	
+
+	;if flags and FACET_FLAG_OFFSET <> 0 [
+	;	change-offset hWnd as red-pair! values + FACE_OBJ_OFFSET type
+	;]
+	;if flags and FACET_FLAG_SIZE <> 0 [
+	;	change-size hWnd as red-pair! values + FACE_OBJ_SIZE type
+	;]
+	;if flags and FACET_FLAG_TEXT <> 0 [
+	;	change-text hWnd values type
+	;]
+	;if flags and FACET_FLAG_DATA <> 0 [
+	;	change-data	as handle! hWnd values
+	;]
+	;if flags and FACET_FLAG_ENABLE? <> 0 [
+	;	change-enabled as handle! hWnd values
+	;]
+	;if flags and FACET_FLAG_VISIBLE? <> 0 [
+	;	bool: as red-logic! values + FACE_OBJ_VISIBLE?
+	;	change-visible hWnd bool/value type
+	;]
+	;if flags and FACET_FLAG_SELECTED <> 0 [
+	;	int2: as red-integer! values + FACE_OBJ_SELECTED
+	;	change-selection hWnd int2 values
+	;]
+	;if flags and FACET_FLAG_FLAGS <> 0 [
+	;	SetWindowLong
+	;		as handle! hWnd
+	;		wc-offset + 16
+	;		get-flags as red-block! values + FACE_OBJ_FLAGS
+	;]
+	if flags and FACET_FLAG_DRAW  <> 0 [
+		objc_msgSend [hWnd sel_getUid "display"]
+	]
+	;if flags and FACET_FLAG_COLOR <> 0 [
+	;	either type = base [
+	;		update-base as handle! hWnd null null values
+	;	][
+	;		InvalidateRect as handle! hWnd null 1
+	;	]
+	;]
+	;if flags and FACET_FLAG_PANE <> 0 [
+	;	if tab-panel <> type [				;-- tab-panel/pane has custom z-order handling
+	;		update-z-order 
+	;			as red-block! values + gui/FACE_OBJ_PANE
+	;			null
+	;	]
+	;]
+	;if flags and FACET_FLAG_FONT <> 0 [
+	;	set-font as handle! hWnd face values
+	;	InvalidateRect as handle! hWnd null 1
+	;]
+	;if flags and FACET_FLAG_PARA <> 0 [
+	;	update-para face 0
+	;	InvalidateRect as handle! hWnd null 1
+	;]
+	;if flags and FACET_FLAG_MENU <> 0 [
+	;	menu: as red-block! values + FACE_OBJ_MENU
+	;	if menu-bar? menu window [
+	;		DestroyMenu GetMenu as handle! hWnd
+	;		SetMenu as handle! hWnd build-menu menu CreateMenu
+	;	]
+	;]
+	;if flags and FACET_FLAG_IMAGE <> 0 [
+	;	change-image hWnd values type
+	;]
+
 	int/value: 0										;-- reset flags
 ]
 

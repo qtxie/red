@@ -28,7 +28,7 @@ modes: declare struct! [
 ]
 
 draw-begin: func [
-	hWnd		[handle!]
+	CGCtx		[handle!]
 	img			[red-image!]
 	on-graphic? [logic!]
 	paint?		[logic!]
@@ -45,11 +45,8 @@ draw-begin: func [
 	modes/font-color:	0
 	modes/brush?:		no
 
-	ctx: objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
-	ctx: objc_msgSend [ctx sel_getUid "graphicsPort"]
-
-	CGContextSetMiterLimit as handle! ctx DRAW_FLOAT_MAX
-	as handle! ctx
+	CGContextSetMiterLimit CGCtx DRAW_FLOAT_MAX
+	CGCtx
 ]
 
 draw-end: func [
@@ -182,10 +179,21 @@ OS-draw-triangle: func [
 	dc	  [handle!]
 	start [red-pair!]
 	/local
-		pair  [red-pair!]
-		point [tagPOINT]
+		point [CGPoint!]
 ][
-0
+	point: edges
+
+	loop 3 [
+		point/x: as float32! integer/to-float start/x
+		point/y: as float32! integer/to-float start/y
+		point: point + 1
+		start: start + 1
+	]
+	point/x: edges/x									;-- close the triangle
+	point/y: edges/y
+	CGContextBeginPath dc
+	CGContextAddLines dc edges 4
+	CGContextStrokePath dc
 ]
 
 OS-draw-polygon: func [

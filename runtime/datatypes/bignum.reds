@@ -3,7 +3,6 @@ Red/System [
 	Author:  "bitbegin"
 	File: 	 %bignum.reds
 	Tabs:	 4
-	Rights:  "Copyright (C) 2015 Nenad Rakocevic & Qingtian Xie & bitbegin. All rights reserved."
 	License: {
 		Distributed under the Boost Software License, Version 1.0.
 		See https://github.com/red/red/blob/master/BSL-License.txt
@@ -38,13 +37,205 @@ bignum: context [
 		c: r1					d/1: r0		d: d + 1
 	]
 	#define MULADDC_STOP []
-	
-	push: func [
-		big [red-bignum!]
-	][
-		#if debug? = yes [if verbose > 0 [print-line "bignum/push"]]
 
-		copy-cell as red-value! big stack/push*
+	;-- Count leading zero bits in a given integer
+	clz: func [
+		int			[integer!]
+		return:		[integer!]
+		/local
+			mask	[integer!]
+			ret		[integer!]
+	][
+		mask: 1 << (biL - 1)
+		ret: 0
+
+		loop biL [
+			if (int and mask) <> 0 [
+				break;
+			]
+			mask: mask >>> 1
+			ret: ret + 1
+		]
+		ret
+	]
+
+	bitlen: func [
+		big			[red-bignum!]
+		return:		[integer!]
+		/local
+			s		[series!]
+			p		[int-ptr!]
+			ret		[integer!]
+	][
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+
+		if big/used = 0 [return 0]
+
+		p: P + big/used - 1
+
+		ret: biL - clz p/1
+		ret: ret + ((big/used - 1) * biL)
+		ret
+	]
+
+	len: func [
+		big			[red-bignum!]
+		return:		[integer!]
+		/local
+			ret		[integer!]
+	][
+		ret: bitlen big
+		ret: (ret + 7) >>> 3
+		ret
+	]
+
+	left-shift: func [
+		big			[red-bignum!]
+		count		[integer!]
+		/local
+			ret		[integer!]
+			i		[integer!]
+			v0		[integer!]
+			t1		[integer!]
+			r0		[integer!]
+			r1		[integer!]
+			s		[series!]
+			len		[integer!]
+			p		[int-ptr!]
+			p1		[int-ptr!]
+			p2		[int-ptr!]
+	][
+		r0: 0
+		v0: count / biL
+		t1: count and (biL - 1)
+		i: bitlen big
+		i: i + count
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+
+		if (s/size * 8) < i [
+			len: i / biL
+			if i % biL <> 0 [
+				len: len + 1
+			]
+			grow big len
+			s: GET_BUFFER(big)
+			p: as int-ptr! s/offset
+		]
+
+		big/used: big/used + v0 + 1
+		len: big/used
+
+		ret: 0
+
+		if v0 > 0 [
+			i: len
+			while [i > v0][
+				p1: p + i - 1
+				p2: p + i - v0 - 1
+				p1/1: p2/1
+				i: i - 1
+			]
+
+			while [i > 0][
+				p1: p + i - 1
+				p1/1: 0
+				i: i - 1
+			]
+		]
+
+		if t1 > 0 [
+			i: v0
+			while [i < len][
+				p1: p + i
+				r1: p1/1 >>> (biL - t1)
+				p1/1: p1/1 << t1
+				p1/1: p1/1 or r0
+				r0: r1
+				i: i + 1
+			]
+		]
+
+		if all [
+			v0 > 0
+			t1 > 0
+		][
+			shrink big
+		]
+	]
+
+	right-shift: func [
+		big			[red-bignum!]
+		count		[integer!]
+		/local
+			ret		[integer!]
+			i		[integer!]
+			v0		[integer!]
+			v1		[integer!]
+			r0		[integer!]
+			r1		[integer!]
+			s		[series!]
+			len		[integer!]
+			p		[int-ptr!]
+			p1		[int-ptr!]
+			p2		[int-ptr!]
+	][
+		r0: 0
+		v0: count / biL
+		v1: count and (biL - 1)
+
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+
+		if any [
+			v0 > big/used
+			all [
+				v0 = big/used
+				v1 > 0
+			]
+		][
+			lset big 0
+		]
+
+		len: big/used
+
+		ret: 0
+
+		if v0 > 0 [
+			i: 0
+			while [i < (len - v0)][
+				p1: p + i
+				p2: p + i + v0
+				p1/1: p2/1
+				i: i + 1
+			]
+
+			while [i < len][
+				p1: p + i
+				p1/1: 0
+				i: i + 1
+			]
+		]
+
+		if v1 > 0 [
+			i: len
+			while [i > 0][
+				p1: p + i - 1
+				r1: p1/1 << (biL - v1)
+				p1/1: p1/1 >> v1
+				p1/1: p1/1 or r0
+				r0: r1
+				i: i - 1
+			]
+		]
+
+		if all [
+			v0 > 0
+			v1 > 0
+		][
+			shrink big
+		]
 	]
 
 	serialize: func [
@@ -123,33 +314,34 @@ bignum: context [
 			TYPE_OF(right) = TYPE_BIGNUM
 		]
 
+		big: make-at stack/push* 1
 		switch TYPE_OF(right) [
 			TYPE_INTEGER [
 				switch type [
 					OP_ADD [
 						int: as red-integer! right
-						big: add-int left int/value
+						add-int left int/value big
 					]
 					OP_SUB [
 						int: as red-integer! right
-						big: sub-int left int/value
+						sub-int left int/value big
 					]
 					OP_MUL [
 						int: as red-integer! right
-						big: mul-int left int/value
+						mul-int left int/value big
 					]
 				]
 			]
 			TYPE_BIGNUM [
 				switch type [
 					OP_ADD [
-						big: add left right
+						add left right big
 					]
 					OP_SUB [
-						big: sub left right
+						sub left right big
 					]
 					OP_MUL [
-						big: mul left right
+						mul left right big
 					]
 				]
 			]
@@ -187,29 +379,32 @@ bignum: context [
 
 	copy: func [
 		src	 		[red-bignum!]
-		return:	 	[red-bignum!]
+		big			[red-bignum!]
 		/local
-			big		[red-bignum!]
 			s1	 	[series!]
 			s2	 	[series!]
 			p1		[byte-ptr!]
 			p2		[byte-ptr!]
 			size	[integer!]
 	][
+		if src = big [exit]
+		
 		s1: GET_BUFFER(src)
 		p1: as byte-ptr! s1/offset
 		size: src/used * 4
 
-		big: make-at stack/push* size
 		s2: GET_BUFFER(big)
 		p2: as byte-ptr! s2/offset
+
+		if s2/size < (size) [
+			grow big src/used
+		]
 
 		big/sign: src/sign
 		big/used: src/used
 		if size > 0 [
 			copy-memory p2 p1 size
 		]
-		big
 	]
 
 	grow: func [
@@ -256,9 +451,9 @@ bignum: context [
 			]
 		]
 		big/used: len
-		big
 	]
-	
+
+	;-- u1 < u2
 	uint-less: func [
 		u1			[integer!]
 		u2			[integer!]
@@ -284,15 +479,15 @@ bignum: context [
 	absolute-add: func [
 		big1	 	[red-bignum!]
 		big2		[red-bignum!]
-		return:	 	[red-bignum!]
+		ret			[red-bignum!]
 		/local
+			big	 	[red-bignum!]
 			s	 	[series!]
 			s1	 	[series!]
 			s2	 	[series!]
 			p		[int-ptr!]
 			p2		[int-ptr!]
 			len		[integer!]
-			big	 	[red-bignum!]
 			c		[integer!]
 			tmp		[integer!]
 	][
@@ -305,10 +500,11 @@ bignum: context [
 		][
 			big2/used
 		]
-		
-		big: copy big1
+
+		big: make-at stack/push* 1
+		copy big1 big
 		big/sign: 1
-		grow big s2/size
+		grow big big2/used
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
 
@@ -324,8 +520,8 @@ bignum: context [
 		]
 
 		while [c > 0][
-			if len >= s/size [
-				grow big len + 1
+			if (len * 4) >= s/size [
+				grow big (len + 1)
 				s: GET_BUFFER(big)
 				p: as int-ptr! s/offset
 				p: p + len
@@ -336,14 +532,14 @@ bignum: context [
 			p: p + 1
 		]
 		big/used: len
-		big
+		copy big ret
 	]
 
 	;-- big1 must large than big2
 	absolute-sub: func [
 		big1	 	[red-bignum!]
 		big2		[red-bignum!]
-		return:	 	[red-bignum!]
+		ret	 		[red-bignum!]
 		/local
 			s	 	[series!]
 			s1	 	[series!]
@@ -351,9 +547,9 @@ bignum: context [
 			p		[int-ptr!]
 			p2		[int-ptr!]
 			len		[integer!]
-			big	 	[red-bignum!]
 			c		[integer!]
 			z		[integer!]
+			big		[red-bignum!]
 	][
 		s1: GET_BUFFER(big1)
 		s2: GET_BUFFER(big2)
@@ -362,7 +558,8 @@ bignum: context [
 
 		if big1/used < big2/used [--NOT_IMPLEMENTED--]
 
-		big: copy big1
+		big: make-at stack/push* 1
+		copy big1 big
 		big/sign: 1
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
@@ -386,9 +583,9 @@ bignum: context [
 			p: p + 1
 			p2: p2 + 1
 		]
-		
+
 		shrink big
-		big
+		copy big ret
 	]
 
 	absolute-compare: func [
@@ -430,51 +627,45 @@ bignum: context [
 	add: func [
 		big1	 	[red-bignum!]
 		big2		[red-bignum!]
-		return:	 	[red-bignum!]
-		/local
-			big	 	[red-bignum!]
+		big	 		[red-bignum!]
 	][
 		either big1/sign <> big2/sign [
 			either (absolute-compare big1 big2) >= 0 [
-				big: absolute-sub big1 big2
+				absolute-sub big1 big2 big
 				big/sign: big1/sign
 			][
-				big: absolute-sub big2 big1
+				absolute-sub big2 big1 big
 				big/sign: big2/sign
 			]
 		][
-			big: absolute-add big1 big2
+			absolute-add big1 big2 big
 			big/sign: big1/sign
 		]
-		big
 	]
 
 	sub: func [
 		big1	 	[red-bignum!]
 		big2		[red-bignum!]
-		return:	 	[red-bignum!]
-		/local
-			big	 	[red-bignum!]
+		big	 		[red-bignum!]
 	][
 		either big1/sign = big2/sign [
 			either (absolute-compare big1 big2) >= 0 [
-				big: absolute-sub big1 big2
+				absolute-sub big1 big2 big
 				big/sign: big1/sign
 			][
-				big: absolute-sub big2 big1
+				absolute-sub big2 big1 big
 				big/sign: 0 - big1/sign
 			]
 		][
-			big: absolute-add big1 big2
+			absolute-add big1 big2 big
 			big/sign: big1/sign
 		]
-		big
 	]
 
 	add-int: func [
 		big1	 	[red-bignum!]
 		int			[integer!]
-		return:	 	[red-bignum!]
+		ret		 	[red-bignum!]
 		/local
 			big	 	[red-bignum!]
 			s	 	[series!]
@@ -484,20 +675,20 @@ bignum: context [
 		big/used: 1
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
-		p/1: either int > 0 [
+		p/1: either int >= 0 [
 			big/sign: 1
 			int
 		][
 			big/sign: -1
 			0 - int
 		]
-		add big1 big
+		add big1 big ret
 	]
-	
+
 	sub-int: func [
 		big1	 	[red-bignum!]
 		int			[integer!]
-		return:	 	[red-bignum!]
+		ret		 	[red-bignum!]
 		/local
 			big	 	[red-bignum!]
 			s	 	[series!]
@@ -507,16 +698,16 @@ bignum: context [
 		big/used: 1
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
-		p/1: either int > 0 [
+		p/1: either int >= 0 [
 			big/sign: -1
 			int
 		][
 			big/sign: 1
 			0 - int
 		]
-		add big1 big
+		add big1 big ret
 	]
-	
+
 	mul-hlp: func [
 		i			[integer!]
 		s	 		[int-ptr!]
@@ -532,11 +723,11 @@ bignum: context [
 			r0		[integer!]
 			r1		[integer!]
 			rx		[integer!]
-			ry		[integer!]			
+			ry		[integer!]
 	][
 		c: 0
 		t: 0
-		
+
 		while [i >= 16][
 			MULADDC_INIT
 	        MULADDC_CORE   MULADDC_CORE
@@ -548,10 +739,10 @@ bignum: context [
 	        MULADDC_CORE   MULADDC_CORE
 	        MULADDC_CORE   MULADDC_CORE
 	        MULADDC_CORE   MULADDC_CORE
-	        MULADDC_STOP			
+	        MULADDC_STOP
 			i: i - 16
 		]
-		
+
 		while [i >= 8][
 			MULADDC_INIT
 			MULADDC_CORE   MULADDC_CORE
@@ -562,16 +753,16 @@ bignum: context [
 			MULADDC_STOP
 			i: i - 8
 		]
-		
+
 		while [i > 0][
 			MULADDC_INIT
 			MULADDC_CORE
 			MULADDC_STOP
 			i: i - 1
 		]
-		
+
 		t: t + 1
-		
+
 		until [
 			d/1: d/1 + c
 			c: as integer! (uint-less d/1  c)
@@ -579,7 +770,7 @@ bignum: context [
 			c = 0
 		]
 	]
-	
+
 	lset: func [
 		big			[red-bignum!]
 		int			[integer!]
@@ -593,21 +784,21 @@ bignum: context [
 		p: as byte-ptr! s/offset
 		p4: as int-ptr! s/offset
 		set-memory p #"^@" s/size
-		
-		either int > 0 [
+
+		either int >= 0 [
 			p4/1: int
 			big/sign: 1
 		][
 			p4/1: 0 - int
-			big/sign: -1			
+			big/sign: -1
 		]
 		big/used: 1
 	]
-	
+
 	mul: func [
 		big1		[red-bignum!]
 		big2		[red-bignum!]
-		return:		[red-bignum!]
+		ret			[red-bignum!]
 		/local
 			big		[red-bignum!]
 			s	 	[series!]
@@ -627,13 +818,13 @@ bignum: context [
 		p2: as int-ptr! s2/offset
 		len1: big1/used
 		len2: big2/used
-		
+
 		len: len1 + len2 + 1
 		big: make-at stack/push* len
 		big/used: len
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
-		
+
 		len1: len1 + 1
 		while [len2 > 0]
 		[
@@ -641,16 +832,16 @@ bignum: context [
 			mul-hlp (len1 - 1) p1 (p + len2 - 1) pt/1
 			len2: len2 - 1
 		]
-		
+
 		big/sign: big1/sign * big2/sign
 		shrink big
-		big
+		copy big ret
 	]
-	
+
 	mul-int: func [
 		big1		[red-bignum!]
 		int			[integer!]
-		return:		[red-bignum!]
+		ret			[red-bignum!]
 		/local
 			big	 	[red-bignum!]
 			s	 	[series!]
@@ -660,16 +851,257 @@ bignum: context [
 		big/used: 1
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
-		p/1: either int > 0 [
+		p/1: either int >= 0 [
 			big/sign: 1
 			int
 		][
 			big/sign: -1
 			0 - int
 		]
-		mul big1 big
+		mul big1 big ret
 	]
-	
+
+	long-divide: func [
+		u1				[integer!]
+		u0				[integer!]
+		d				[integer!]
+		return:			[integer!]
+		/local
+			radix		[integer!]
+			hmask		[integer!]
+			d0			[integer!]
+			d1			[integer!]
+			q0			[integer!]
+			q1			[integer!]
+			rAX			[integer!]
+			r0			[integer!]
+			quotient	[integer!]
+			u0_msw		[integer!]
+			u0_lsw		[integer!]
+			s			[integer!]
+			tmp			[integer!]
+	][
+		radix: 1 << biLH
+		hmask: radix - 1
+
+		if any [
+			d = 0
+			uint-less d u1
+		][
+			return -1
+		]
+
+		s: clz d
+		d: d << s
+
+		u1: u1 << s
+		tmp: u0 >>> (biL - s)
+		tmp: tmp and ((0 - s) >> (biL - 1))
+		u1: u1 or tmp
+	    u0: u0 << s
+
+		d1: d >>> biLH
+		d0: d and hmask
+
+		u0_msw: u0 >>> biLH
+		u0_lsw: u0 and hmask
+
+		q1: u1 / d1
+		r0: u1 - (d1 * q1)
+
+		while [
+			any [
+				not uint-less q1 radix
+				uint-less (radix * r0 + u0_msw) (q1 * d0)
+			]
+		][
+			q1: q1 - 1;
+			r0: r0 + d1
+
+			unless uint-less r0 radix [break]
+		]
+
+		rAX: (u1 * radix) + (u0_msw - (q1 * d))
+		q0: rAX / d1
+		r0: rAX - (q0 * d1)
+
+		while [
+			any [
+				not uint-less q0 radix
+				uint-less (radix * r0 + u0_lsw) (q0 * d0)
+			]
+		][
+			q0: q0 - 1
+			r0: r0 + d1
+
+			unless uint-less r0 radix [break]
+		]
+
+		quotient: q1 * radix + q0
+		quotient
+	]
+
+	;-- A = Q * B + R
+	div: func [
+		Q	 		[red-bignum!]
+		R	 		[red-bignum!]
+		A	 		[red-bignum!]
+		B	 		[red-bignum!]
+		return:	 	[logic!]
+		/local
+			X		[red-bignum!]
+			Y		[red-bignum!]
+			Z		[red-bignum!]
+			T1		[red-bignum!]
+			T2		[red-bignum!]
+			i		[integer!]
+			n		[integer!]
+			t		[integer!]
+			k		[integer!]
+			s	 	[series!]
+			px		[int-ptr!]
+			py		[int-ptr!]
+			pz		[int-ptr!]
+			pt1		[int-ptr!]
+			pt2		[int-ptr!]
+			tmp		[integer!]
+			tmp2	[integer!]
+			ret		[integer!]
+	][
+		if 0 = compare-int B 0 [
+			fire [TO_ERROR(math zero-divide)]
+			0								;-- pass the compiler's type-checking
+			return false
+		]
+
+		if (absolute-compare A B) < 0 [
+			lset Q 0
+			copy A R
+			return true
+		]
+
+		X: make-at stack/push* 1
+		Y: make-at stack/push* 1
+		Z: make-at stack/push* (A/used + 2)
+		T1: make-at stack/push* 2
+		T2: make-at stack/push* 3
+
+		copy A X
+		copy B Y
+		X/sign: 1
+		Y/sign: 1
+
+		k: (bitlen Y) % biL
+
+		either k < (biL - 1) [
+			k: biL - 1 - k
+			left-shift X k
+			left-shift Y k
+		][
+			k: 0
+		]
+
+		n: X/used - 1
+		t: Y/used - 1
+		left-shift Y (biL * (n - t))
+
+		s: GET_BUFFER(X)
+		px: as int-ptr! s/offset
+		s: GET_BUFFER(Y)
+		py: as int-ptr! s/offset
+		s: GET_BUFFER(Z)
+		pz: as int-ptr! s/offset
+		s: GET_BUFFER(T1)
+		pt1: as int-ptr! s/offset
+		s: GET_BUFFER(T2)
+		pt2: as int-ptr! s/offset
+
+		while [(compare X Y) >= 0][
+			tmp: n - t
+			pz/tmp: pz/tmp + 1
+			sub X Y X
+		]
+		right-shift Y (biL * (n - t))
+
+		i: n
+		while [i > t][
+			tmp: i - t - 1
+			either px/i >= py/t [
+				pz/tmp: -1
+			][
+				tmp2: i - 1
+				pz/tmp: long-divide px/i px/tmp2 py/t
+			]
+
+			pz/tmp: pz/tmp + 1
+			until [
+				pz/tmp: pz/tmp - 1
+				lset T1 0
+				pt1/1: either t < 1 [
+					0
+				][
+					tmp2: t - 1
+					py/tmp2
+				]
+				pt1/2: py/t
+
+				mul-int T1 pz/tmp T1
+				s: GET_BUFFER(T1)
+				pt1: as int-ptr! s/offset
+
+				lset T2 0
+				pt2/1: either i < 2 [
+					0
+				][
+					tmp2: i - 2
+					px/tmp2
+				]
+				pt2/2: either i < 1 [
+					0
+				][
+					tmp2: i - 1
+					px/tmp2
+				]
+				pt2/3: px/i
+
+				(compare T1 T2) <= 0
+			]
+
+			mul-int Y pz/tmp T1
+			s: GET_BUFFER(T1)
+			pt1: as int-ptr! s/offset
+			
+			left-shift T1 (biL * (tmp))
+			sub X T1 X
+			s: GET_BUFFER(X)
+			px: as int-ptr! s/offset
+			
+			if (compare-int X 0) < 0 [
+				copy Y T1
+				s: GET_BUFFER(T1)
+				pt1: as int-ptr! s/offset
+				
+				left-shift T1 (biL * (tmp))
+				add X T1 X
+				s: GET_BUFFER(X)
+				px: as int-ptr! s/offset
+				pz/tmp: pz/tmp - 1
+			]
+		]
+
+		copy Z Q
+		Q/sign: A/sign  * B/sign
+		
+		right-shift X k
+		X/sign: A/sign
+		copy X R
+		
+		if (compare-int R 0) = 0 [
+			R/sign: 1
+		]
+		return true
+	]
+
 	compare: func [
 		big1	 	[red-bignum!]
 		big2	 	[red-bignum!]
@@ -694,6 +1126,29 @@ bignum: context [
 		][
 			return absolute-compare big2 big1
 		]
+	]
+
+	compare-int: func [
+		big1	 	[red-bignum!]
+		int			[integer!]
+		return:	 	[integer!]
+		/local
+			big	 	[red-bignum!]
+			s	 	[series!]
+			p		[int-ptr!]
+	][
+		big: make-at stack/push* 1
+		big/used: 1
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+		p/1: either int >= 0 [
+			big/sign: 1
+			int
+		][
+			big/sign: -1
+			0 - int
+		]
+		compare big1 big
 	]
 
 	;--- Actions ---
@@ -759,7 +1214,7 @@ bignum: context [
 						pbig/1: tail/1
 						pbig: pbig + 1
 					]
-					
+
 					shrink big
 				]
 			]
@@ -768,7 +1223,7 @@ bignum: context [
 
 		big
 	]
-	
+
 	form: func [
 		big		[red-bignum!]
 		buffer	[red-string!]
@@ -777,10 +1232,10 @@ bignum: context [
 		return: [integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/form"]]
-		
+
 		serialize big buffer no no no arg part no
 	]
-	
+
 	mold: func [
 		big		[red-bignum!]
 		buffer	[red-string!]
@@ -843,12 +1298,12 @@ bignum: context [
 
 		do-math OP_ADD
 	]
-	
+
 	multiply: func [return:	[red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/multiply"]]
 		as red-value! do-math OP_MUL
 	]
-	
+
 	subtract: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/add"]]
 

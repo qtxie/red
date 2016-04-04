@@ -1196,7 +1196,7 @@ bignum: context [
 				big/used: 1
 				s: GET_BUFFER(big)
 				p: as int-ptr! s/offset
-				p/1: either int/value > 0 [
+				p/1: either int/value >= 0 [
 					big/sign: 1
 					int/value
 				][

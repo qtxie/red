@@ -48,7 +48,7 @@ bignum: context [
 	][
 		mask: 1 << (biL - 1)
 		ret: 0
-
+		
 		loop biL [
 			if (int and mask) <> 0 [
 				break;
@@ -114,7 +114,7 @@ bignum: context [
 		s: GET_BUFFER(big)
 		p: as int-ptr! s/offset
 
-		if (s/size * 8) < i [
+		if (big/used * biL) < i [
 			len: i / biL
 			if i % biL <> 0 [
 				len: len + 1
@@ -122,9 +122,9 @@ bignum: context [
 			grow big len
 			s: GET_BUFFER(big)
 			p: as int-ptr! s/offset
+			big/used: len
 		]
 
-		big/used: big/used + v0 + 1
 		len: big/used
 
 		ret: 0
@@ -157,12 +157,12 @@ bignum: context [
 			]
 		]
 
-		if all [
-			v0 > 0
-			t1 > 0
-		][
-			shrink big
-		]
+		;if any [
+		;	v0 > 0
+		;	t1 > 0
+		;][
+		;	shrink big
+		;]
 	]
 
 	right-shift: func [
@@ -230,12 +230,12 @@ bignum: context [
 			]
 		]
 
-		if all [
-			v0 > 0
-			v1 > 0
-		][
-			shrink big
-		]
+		;if any [
+		;	v0 > 0
+		;	v1 > 0
+		;][
+		;	shrink big
+		;]
 	]
 
 	serialize: func [
@@ -314,7 +314,7 @@ bignum: context [
 			TYPE_OF(right) = TYPE_INTEGER
 			TYPE_OF(right) = TYPE_BIGNUM
 		]
-
+		
 		big: make-at stack/push* 1
 		switch TYPE_OF(right) [
 			TYPE_INTEGER [
@@ -352,6 +352,20 @@ bignum: context [
 			]
 		]
 		SET_RETURN(big)
+	]
+
+	dump-bignum: func [
+		big			[red-bignum!]
+		/local
+			s	 	[series!]
+			p		[byte-ptr!]
+	][
+		s: GET_BUFFER(big)
+		p: as byte-ptr! s/offset
+		print-line [lf "===============dump bignum!==============="]
+		print-line ["used: " big/used " sign: " big/sign]
+		dump-memory p 1 2
+		print-line ["=============dump bignum! end=============" lf]
 	]
 
 	make-at: func [
@@ -455,11 +469,15 @@ bignum: context [
 		p: p + len
 		loop len [
 			p: p - 1
-			if p/1 = 0 [
-				len: len - 1
+			either p/1 = 0 [
+				big/used: big/used - 1
+			][
+				break
 			]
 		]
-		big/used: len
+		if big/used = 0 [
+			big/used: 1
+		]
 	]
 
 	;-- u1 < u2
@@ -1007,9 +1025,12 @@ bignum: context [
 		copy B Y
 		X/sign: 1
 		Y/sign: 1
-
+		Z/used: A/used + 2
+		T1/used: 2
+		T2/used: 3
+		
 		k: (bitlen Y) % biL
-
+		
 		either k < (biL - 1) [
 			k: biL - 1 - k
 			left-shift X k
@@ -1018,10 +1039,10 @@ bignum: context [
 			k: 0
 		]
 
-		n: X/used - 1
-		t: Y/used - 1
+		n: X/used
+		t: Y/used
 		left-shift Y (biL * (n - t))
-
+		
 		s: GET_BUFFER(X)
 		px: as int-ptr! s/offset
 		s: GET_BUFFER(Y)
@@ -1034,7 +1055,7 @@ bignum: context [
 		pt2: as int-ptr! s/offset
 
 		while [(compare X Y) >= 0][
-			tmp: n - t
+			tmp: n - t + 1
 			pz/tmp: pz/tmp + 1
 			sub X Y X
 		]
@@ -1042,8 +1063,8 @@ bignum: context [
 
 		i: n
 		while [i > t][
-			tmp: i - t - 1
-			either px/i >= py/t [
+			tmp: i - t
+			either not uint-less px/i py/t [
 				pz/tmp: -1
 			][
 				tmp2: i - 1
@@ -1054,33 +1075,35 @@ bignum: context [
 			until [
 				pz/tmp: pz/tmp - 1
 				lset T1 0
-				pt1/1: either t < 1 [
+				pt1/1: either t < 2 [
 					0
 				][
 					tmp2: t - 1
 					py/tmp2
 				]
 				pt1/2: py/t
+				T1/used: 2
 
 				mul-int T1 pz/tmp T1
 				s: GET_BUFFER(T1)
 				pt1: as int-ptr! s/offset
 
 				lset T2 0
-				pt2/1: either i < 2 [
+				pt2/1: either i < 3 [
 					0
 				][
 					tmp2: i - 2
 					px/tmp2
 				]
-				pt2/2: either i < 1 [
+				pt2/2: either i < 2 [
 					0
 				][
 					tmp2: i - 1
 					px/tmp2
 				]
 				pt2/3: px/i
-
+				T2/used: 3
+				
 				(compare T1 T2) <= 0
 			]
 
@@ -1088,7 +1111,7 @@ bignum: context [
 			s: GET_BUFFER(T1)
 			pt1: as int-ptr! s/offset
 			
-			left-shift T1 (biL * (tmp))
+			left-shift T1 (biL * (tmp - 1))
 			sub X T1 X
 			s: GET_BUFFER(X)
 			px: as int-ptr! s/offset
@@ -1098,19 +1121,26 @@ bignum: context [
 				s: GET_BUFFER(T1)
 				pt1: as int-ptr! s/offset
 				
-				left-shift T1 (biL * (tmp))
+				left-shift T1 (biL * (tmp - 1))
 				add X T1 X
 				s: GET_BUFFER(X)
 				px: as int-ptr! s/offset
 				pz/tmp: pz/tmp - 1
 			]
+			i: i - 1
 		]
-
+		
+		dump-bignum Z
+		
+		shrink Z
 		copy Z Q
 		Q/sign: A/sign  * B/sign
 		
 		right-shift X k
 		X/sign: A/sign
+		shrink X
+		
+		dump-bignum X
 		copy X R
 		
 		if (compare-int R 0) = 0 [

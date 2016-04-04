@@ -436,11 +436,13 @@ OS-make-view: func [
 	case [
 		any [sym = button sym = check sym = radio][
 			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]
-			objc_msgSend [obj sel_getUid "setButtonType:" flags]
 			objc_msgSend [obj sel_getUid "setTitle:" CFString(caption)]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]
 			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
-			if sym <> button [set-logic-state obj as red-logic! data no]
+			if sym <> button [
+				objc_msgSend [obj sel_getUid "setButtonType:" flags]
+				set-logic-state obj as red-logic! data no
+			]
 		]
 		sym = window [
 			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y

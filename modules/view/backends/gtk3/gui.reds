@@ -1,5 +1,5 @@
 Red/System [
-	Title:	"MacOSX GUI backend"
+	Title:	"GTK3 GUI backend"
 	Author: "Qingtian Xie"
 	File: 	%gui.reds
 	Tabs: 	4
@@ -10,16 +10,19 @@ Red/System [
 	}
 ]
 
-#include %cocoa.reds
+#include %gtk.reds
 #include %events.reds
 
 #include %font.reds
 #include %para.reds
 #include %draw.reds
 
-#include %classes.reds
+#include %handlers.reds
 
-NSApp:			0
+GTKApp:			as handle! 0
+GTKApp-Ctx: 	0
+exit-loop:		0
+red-face-id:	0
 
 log-pixels-x:	0
 log-pixels-y:	0
@@ -29,18 +32,8 @@ screen-size-y:	0
 get-face-values: func [
 	handle	[integer!]
 	return: [red-value!]
-	/local
-		ctx	 [red-context!]
-		s	 [series!]
-		ivar [integer!]
-		face [red-object!]
 ][
-	ivar: class_getInstanceVariable object_getClass handle IVAR_RED_FACE
-	assert ivar <> 0
-	face: as red-object! handle + ivar_getOffset ivar
-	ctx: TO_CTX(face/ctx)
-	s: as series! ctx/values/value
-	s/offset
+	null
 ]
 
 get-node-facet: func [
@@ -151,31 +144,18 @@ free-handles: func [
 	state/header: TYPE_NONE
 ]
 
-init: func [
-	/local
-		screen		[integer!]
-		rect		[NSRect!]
-		pool		[integer!]
-		delegate	[integer!]
-][
-	dlopen "/System/Library/Frameworks/Foundation.framework/Versions/Current/Foundation" RTLD_LAZY
-	dlopen "/System/Library/Frameworks/AppKit.framework/Versions/Current/AppKit" RTLD_LAZY
+init: func [][
+	GTKApp: gtk_application_new RED_GTK_APP_ID 0
+	GTKApp-Ctx: g_main_context_default
+	unless g_main_context_acquire GTKApp-Ctx [
+		probe "ERROR: GTK: Cannot acquire main context" halt
+	]
+	g_application_register GTKApp null null
 
-	NSApp: objc_msgSend [objc_getClass "NSApplication" sel_getUid "sharedApplication"]
+	red-face-id: g_quark_from_string "red-face-id"
 
-	pool: objc_msgSend [objc_getClass "NSAutoreleasePool" sel_getUid "alloc"]
-	objc_msgSend [pool sel_getUid "init"]
-
-	register-classes
-
-	delegate: objc_msgSend [objc_getClass "RedAppDelegate" sel_getUid "alloc"]
-	delegate: objc_msgSend [delegate sel_getUid "init"]
-	objc_msgSend [NSApp sel_getUid "setDelegate:" delegate]
-
-	screen: objc_msgSend [objc_getClass "NSScreen" sel_getUid "mainScreen"]
-	rect: as NSRect! (as int-ptr! screen) + 1
-	screen-size-x: float/to-integer as float! rect/w
-	screen-size-y: float/to-integer as float! rect/h
+	screen-size-x: gdk_screen_width
+	screen-size-y: gdk_screen_height
 ]
 
 set-selected-focus: func [
@@ -208,7 +188,6 @@ set-logic-state: func [
 	][
 		as-integer state/value							;-- returns 0/1, matches the messages
 	]
-	objc_msgSend [hWnd sel_getUid "setState:"  value]
 ]
 
 get-flags: func [
@@ -280,71 +259,21 @@ get-screen-size: func [
 ]
 
 store-face-to-obj: func [
-	obj		[integer!]
-	class	[integer!]
+	obj		[handle!]
 	face	[red-object!]
 	/local
-		new  [red-object!]
-		ivar [integer!]
+		storage [red-value!]
 ][
-	ivar: class_getInstanceVariable class IVAR_RED_FACE
-	assert ivar <> 0
-	new: as red-object! obj + ivar_getOffset ivar
-	copy-cell as cell! face as cell! new
-]
-
-make-rect: func [
-	x		[integer!]
-	y		[integer!]
-	w		[integer!]
-	h		[integer!]
-	return: [NSRect!]
-	/local
-		r	[NSRect!]
-][
-	r: declare NSRect!
-	r/x: as float32! integer/to-float x
-    r/y: as float32! integer/to-float y
-    r/w: as float32! integer/to-float w
-    r/h: as float32! integer/to-float h
-    r
-]
-
-init-window: func [
-	window	[integer!]
-	title	[c-string!]
-	rect	[NSRect!]
-	/local
-		view [integer!]
-][
-	window: objc_msgSend [
-		window
-		sel_getUid "initWithContentRect:styleMask:backing:defer:"
-		rect/x rect/y rect/w rect/h
-		NSTitledWindowMask or NSClosableWindowMask or NSResizableWindowMask or NSMiniaturizableWindowMask
-		2 0
-	]
-
-	view: objc_msgSend [objc_getClass "RedView" sel_getUid "alloc"]
-	rect: make-rect 0 0 0 0
-	view: objc_msgSend [view sel_getUid "initWithFrame:" rect/x rect/y rect/w rect/h]
-	objc_msgSend [window sel_getUid "setContentView:" view]
-
-	objc_msgSend [window sel_getUid "setTitle:" CFString(title)]
-	objc_msgSend [window sel_getUid "becomeFirstResponder"]
-	objc_msgSend [window sel_getUid "makeKeyAndOrderFront:" 0]
-	objc_msgSend [window sel_getUid "makeMainWindow"]
-
-	objc_msgSend [NSApp sel_getUid "setActivationPolicy:" 0]
-	objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
+	storage: as red-value! allocate 16					;@@ should delete it when destory widget
+	copy-cell as cell! face storage
+	g_object_set_qdata obj red-face-id as int-ptr! storage
 ]
 
 OS-show-window: func [
-	hWnd [integer!]
-	/local
-		face	[red-object!]
+	hWnd	[integer!]
 ][
-	0
+	gtk_widget_show_all as handle! hWnd
+	gtk_widget_grab_focus as handle! hWnd
 ]
 
 OS-make-view: func [
@@ -369,13 +298,10 @@ OS-make-view: func [
 		flags	  [integer!]
 		bits	  [integer!]
 		sym		  [integer!]
-		id		  [integer!]
-		class	  [c-string!]
 		caption   [c-string!]
 		len		  [integer!]
-		obj		  [integer!]
-		rc		  [NSRect!]
-		view	  [integer!]
+		widget	  [handle!]
+		container [handle!]
 ][
 	stack/mark-func words/_body
 
@@ -395,72 +321,47 @@ OS-make-view: func [
 
 	sym: 	  symbol/resolve type/symbol
 
-	case [
-		sym = button [class: "RedButton"]
-		sym = check [
-			class: "RedButton"
-			flags: NSSwitchButton
-		]
-		sym = radio [
-			class: "RedButton"
-			flags: NSRadioButton
-		]
-		sym = window [class: "RedWindow"]
-		sym = base	 [class: "RedBase"]
-		true [											;-- search in user-defined classes
-			fire [TO_ERROR(script face-type) type]
-		]
-	]
-
-	id: objc_getClass class
-	obj: objc_msgSend [id sel_getUid "alloc"]
-	if zero? obj [print-line "*** Error: Create Window failed!"]
-
-	;-- store the face value in the extra space of the window struct
-	assert TYPE_OF(face) = TYPE_OBJECT					;-- detect corruptions caused by CreateWindow unwanted events
-	store-face-to-obj obj id face
-
-	;-- extra initialization
 	caption: either TYPE_OF(str) = TYPE_STRING [
 		len: -1
 		unicode/to-utf8 str :len
 	][
 		null
 	]
-	rc: make-rect offset/x offset/y size/x size/y
-	if sym <> window [
-		obj: objc_msgSend [obj sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h]
-	]
 
 	case [
-		any [sym = button sym = check sym = radio][
-			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]
-			objc_msgSend [obj sel_getUid "setTitle:" CFString(caption)]
-			objc_msgSend [obj sel_getUid "setTarget:" obj]
-			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
-			if sym <> button [
-				objc_msgSend [obj sel_getUid "setButtonType:" flags]
-				set-logic-state obj as red-logic! data no
-			]
+		sym = button [
+			widget: gtk_button_new_with_label caption
+			gtk_widget_set_size_request widget size/x size/y
+			gobj_signal_connect(widget "clicked" :button-clicked null)
 		]
 		sym = window [
-			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y
-			init-window obj caption rc
+			widget: gtk_application_window_new GTKApp
+			unless null? caption [gtk_window_set_title widget caption]
+			gtk_window_set_default_size widget size/x size/y
+			gtk_container_add widget gtk_fixed_new
+			gtk_window_move widget offset/x offset/y
+			gobj_signal_connect(widget "delete-event" :window-delete-event null)
 		]
-		true [0]
+		true [
+			;-- search in user-defined classes
+			fire [TO_ERROR(script face-type) type]
+		]
 	]
 
 	if all [
 		sym <> window
 		parent <> 0
 	][
-		view: objc_msgSend [parent sel_getUid "contentView"]
-		objc_msgSend [view sel_getUid "addSubview:" obj]	;-- `addSubView:` will retain the obj
-		objc_msgSend [obj sel_getUid "release"]
+		container: gtk_container_get_children as handle! parent
+		gtk_fixed_put as handle! container/value widget offset/x offset/y
 	]
 
+	;-- store the face value in the extra space of the window struct
+	assert TYPE_OF(face) = TYPE_OBJECT					;-- detect corruptions caused by CreateWindow unwanted events
+	store-face-to-obj widget face
+
 	stack/unwind
-	obj
+	as-integer widget
 ]
 
 OS-update-view: func [
@@ -523,7 +424,7 @@ OS-update-view: func [
 	;		get-flags as red-block! values + FACE_OBJ_FLAGS
 	;]
 	if flags and FACET_FLAG_DRAW  <> 0 [
-		objc_msgSend [hWnd sel_getUid "display"]
+		0
 	]
 	;if flags and FACET_FLAG_COLOR <> 0 [
 	;	either type = base [

@@ -392,7 +392,7 @@ system/view/platform: context [
 				Windows  [#include %windows/gui.reds]
 				MacOSX   [#include %osx/gui.reds]
 				Android  []
-				#default []										;-- Linux
+				#default [#include %gtk3/gui.reds]					;-- Linux
 			]
 		]
 	]

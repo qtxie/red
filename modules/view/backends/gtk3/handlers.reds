@@ -37,3 +37,12 @@ window-delete-event: func [
 ][
 	false
 ]
+
+window-removed-event: func [
+	[cdecl]
+	app		[handle!]
+	widget	[handle!]
+	count	[int-ptr!]
+][
+	count/value: count/value - 1
+]

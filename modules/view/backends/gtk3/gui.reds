@@ -146,6 +146,8 @@ free-handles: func [
 
 init: func [][
 	GTKApp: gtk_application_new RED_GTK_APP_ID 0
+	gobj_signal_connect(GTKApp "window-removed" :window-removed-event :exit-loop)
+
 	GTKApp-Ctx: g_main_context_default
 	unless g_main_context_acquire GTKApp-Ctx [
 		probe "ERROR: GTK: Cannot acquire main context" halt

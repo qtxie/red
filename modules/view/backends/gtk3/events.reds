@@ -243,17 +243,17 @@ do-events: func [
 	return:  [logic!]
 	/local
 		msg? [logic!]
-		app  [int-ptr!]
 ][
 	msg?: no
-	app: GTKApp + 3
-	app: as int-ptr! app/value					;-- GApplication->priv
-	app: app + 8								;-- GApplication->priv->use_count
-	while [app/value > 0][
+	;@@ as we cannot access gapplication->priv->use_count
+	;@@ we use a global value to simulate it
+	exit-loop: exit-loop + 1
+
+	while [exit-loop > 0][
 		if g_main_context_iteration GTKApp-Ctx not no-wait? [msg?: yes]
 		if no-wait? [return msg?]
 	]
-
+	
 	while [g_main_context_iteration GTKApp-Ctx false][0] ;-- consume leftover event
 	g_settings_sync
 

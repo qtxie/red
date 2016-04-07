@@ -43,13 +43,11 @@ set-source-color: func [
 ]
 
 draw-begin: func [
-	CGCtx		[handle!]
+	cr			[handle!]
 	img			[red-image!]
 	on-graphic? [logic!]
 	paint?		[logic!]
 	return: 	[handle!]
-	/local
-		ctx		[integer!]
 ][
 	modes/pen-width:	1
 	modes/pen-style:	0
@@ -60,7 +58,8 @@ draw-begin: func [
 	modes/font-color:	0
 	modes/brush?:		no
 
-	CGCtx
+	cairo_set_line_width cr 0.5
+	cr
 ]
 
 draw-end: func [
@@ -120,11 +119,14 @@ OS-draw-line-width: func [
 	width [red-integer!]
 	/local
 		w [integer!]
+		f [float!]
 ][
 	w: width/value
 	if modes/pen-width <> w [
 		modes/pen-width: w
-		cairo_set_line_width dc integer/to-float w
+		f: integer/to-float w
+		f: f - 0.5
+		cairo_set_line_width dc f
 	]
 ]
 

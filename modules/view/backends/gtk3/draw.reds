@@ -10,9 +10,6 @@ Red/System [
 	}
 ]
 
-max-edges: 1000												;-- max number of edges for a polygone
-edges: as tagPOINT allocate max-edges * (size? tagPOINT)	;-- polygon edges buffer
-
 modes: declare struct! [
 	pen-join		[integer!]
 	pen-cap			[integer!]
@@ -23,6 +20,26 @@ modes: declare struct! [
 	font-color		[integer!]
 	brush?			[logic!]
 	on-image?		[logic!]					;-- drawing on image?
+]
+
+set-source-color: func [
+	cr			[handle!]
+	color		[integer!]
+	/local
+		r		[float!]
+		b		[float!]
+		g		[float!]
+		a		[float!]
+][
+	r: integer/to-float color and FFh
+	r: r / 255.0
+	g: integer/to-float color >> 8 and FFh
+	g: g / 255.0
+	b: integer/to-float color >> 16 and FFh
+	b: b / 255.0
+	a: integer/to-float 255 - (color >> 24)
+	a: a / 255.0
+	cairo_set_source_rgba cr r g b a
 ]
 
 draw-begin: func [
@@ -67,36 +84,22 @@ OS-draw-line: func [
 	dc	   [handle!]
 	point  [red-pair!]
 	end	   [red-pair!]
-	/local
-		pt		[tagPOINT]
-		nb		[integer!]
-		pair	[red-pair!]
 ][
-	pt:		edges
-	pair:	point
-	nb:		0
-
-	while [all [pair <= end nb < max-edges]][
-		pt/x: pair/x
-		pt/y: pair/y
-		nb: nb + 1
-		pt: pt + 1
-		pair: pair + 1
+	while [point <= end][
+		cairo_line_to dc integer/to-float point/x integer/to-float point/y
+		point: point + 1
 	]
+	cairo_stroke dc
 ]
 
 OS-draw-pen: func [
 	dc	   [handle!]
 	color  [integer!]									;-- 00bbggrr format
 	alpha? [logic!]
-	/local
-		r  [float!]
-		g  [float!]
-		b  [float!]
-		a  [float!]
 ][
 	if modes/pen-color <> color [
 		modes/pen-color: color
+		set-source-color dc color
 	]
 ]
 
@@ -105,11 +108,6 @@ OS-draw-fill-pen: func [
 	color  [integer!]									;-- 00bbggrr format
 	off?   [logic!]
 	alpha? [logic!]
-	/local
-		r  [float!]
-		g  [float!]
-		b  [float!]
-		a  [float!]
 ][
 	modes/brush?: not off?
 	if modes/brush-color <> color [
@@ -120,9 +118,13 @@ OS-draw-fill-pen: func [
 OS-draw-line-width: func [
 	dc	  [handle!]
 	width [red-integer!]
+	/local
+		w [integer!]
 ][
-	if modes/pen-width <> width/value [
-		modes/pen-width: width/value
+	w: width/value
+	if modes/pen-width <> w [
+		modes/pen-width: w
+		cairo_set_line_width dc integer/to-float w
 	]
 ]
 
@@ -147,19 +149,13 @@ OS-draw-box: func [
 OS-draw-triangle: func [
 	dc	  [handle!]
 	start [red-pair!]
-	/local
-		point [tagPOINT]
 ][
-	point: edges
-
 	loop 3 [
-		point/x: start/x
-		point/y: start/y
-		point: point + 1
+		cairo_line_to dc integer/to-float start/x integer/to-float start/y
 		start: start + 1
 	]
-	point/x: edges/x									;-- close the triangle
-	point/y: edges/y
+	cairo_close_path dc									;-- close the triangle
+	cairo_stroke dc
 ]
 
 OS-draw-polygon: func [

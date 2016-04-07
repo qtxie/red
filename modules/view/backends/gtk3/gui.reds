@@ -36,6 +36,18 @@ get-face-values: func [
 	null
 ]
 
+get-node-values: func [
+	node	[node!]
+	return: [red-value!]
+	/local
+		ctx	 [red-context!]
+		s	 [series!]
+][
+	ctx: TO_CTX(node)
+	s: as series! ctx/values/value
+	s/offset
+]
+
 get-node-facet: func [
 	node	[node!]
 	facet	[integer!]
@@ -177,7 +189,7 @@ set-selected-focus: func [
 ]
 
 set-logic-state: func [
-	hWnd   [integer!]
+	hWnd   [handle!]
 	state  [red-logic!]
 	check? [logic!]
 	/local
@@ -190,6 +202,8 @@ set-logic-state: func [
 	][
 		as-integer state/value							;-- returns 0/1, matches the messages
 	]
+	gtk_toggle_button_set_active hWnd as logic! value
+	if value = -1 [gtk_toggle_button_set_inconsistent hWnd true]
 ]
 
 get-flags: func [
@@ -331,10 +345,19 @@ OS-make-view: func [
 	]
 
 	case [
+		sym = check [
+			widget: gtk_check_button_new_with_label caption
+			set-logic-state widget as red-logic! data no
+			gobj_signal_connect(widget "clicked" :button-clicked null)
+			gobj_signal_connect(widget "toggled" :button-toggled face/ctx)
+		]
 		sym = button [
 			widget: gtk_button_new_with_label caption
-			gtk_widget_set_size_request widget size/x size/y
 			gobj_signal_connect(widget "clicked" :button-clicked null)
+		]
+		sym = base [
+			widget: gtk_drawing_area_new
+			gobj_signal_connect(widget "draw" :base-draw face/ctx)
 		]
 		sym = window [
 			widget: gtk_application_window_new GTKApp
@@ -354,6 +377,7 @@ OS-make-view: func [
 		sym <> window
 		parent <> 0
 	][
+		gtk_widget_set_size_request widget size/x size/y
 		container: gtk_container_get_children as handle! parent
 		gtk_fixed_put as handle! container/value widget offset/x offset/y
 	]
@@ -426,7 +450,7 @@ OS-update-view: func [
 	;		get-flags as red-block! values + FACE_OBJ_FLAGS
 	;]
 	if flags and FACET_FLAG_DRAW  <> 0 [
-		0
+		gtk_widget_queue_draw as handle! hWnd
 	]
 	;if flags and FACET_FLAG_COLOR <> 0 [
 	;	either type = base [

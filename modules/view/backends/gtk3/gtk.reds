@@ -36,21 +36,24 @@ tagSIZE: alias struct! [
 ]
 
 #either OS = 'Windows [
-	#define LIBGOBJECT-file "libgobject-2.0-0.dll"
-	#define LIBGLIB-file	"libglib-2.0-0.dll"
-	#define LIBGIO-file		"libgio-2.0-0.dll"
-	#define LIBGDK-file		"libgdk-3-0.dll"
+	;#define LIBGOBJECT-file "libgobject-2.0-0.dll"
+	;#define LIBGLIB-file	"libglib-2.0-0.dll"
+	;#define LIBGIO-file		"libgio-2.0-0.dll"
+	;#define LIBGDK-file		"libgdk-3-0.dll"
 	#define LIBGTK-file		"libgtk-3-0.dll"
+	;#define LIBCAIRO-file	"libcairo-2.dll"
 ][
-	#define LIBGOBJECT-file "libgobject-2.0.so.0"
-	#define LIBGLIB-file	"libglib-2.0.so.0"
-	#define LIBGIO-file		"libgio-2.0.so.0"
-	#define LIBGDK-file		"libgdk-3.so.0"
+	;#define LIBGOBJECT-file "libgobject-2.0.so.0"
+	;#define LIBGLIB-file	"libglib-2.0.so.0"
+	;#define LIBGIO-file		"libgio-2.0.so.0"
+	;#define LIBGDK-file		"libgdk-3.so.0"
 	#define LIBGTK-file		"libgtk-3.so.0"
+	;#define LIBCAIRO-file	"libcairo.so"
 ]
 
 #import [
-	LIBGOBJECT-file cdecl [
+	LIBGTK-file cdecl [
+	;; LIBGOBJECT-file cdecl [
 		g_object_set_qdata: "g_object_set_qdata" [
 			object		[int-ptr!]
 			quark		[integer!]
@@ -73,16 +76,16 @@ tagSIZE: alias struct! [
 		g_object_unref: "g_object_unref" [
 			object		[int-ptr!]
 		]
-	]
-	LIBGDK-file cdecl [
+	;; ]
+	;; LIBGDK-file cdecl [
 		gdk_screen_width: "gdk_screen_width" [
 			return:		[integer!]
 		]
 		gdk_screen_height: "gdk_screen_height" [
 			return:		[integer!]
 		]
-	]
-	LIBGLIB-file cdecl [
+	;; ]
+	;; LIBGLIB-file cdecl [
 		g_quark_from_string: "g_quark_from_string" [
 			string		[c-string!]
 			return:		[integer!]
@@ -106,8 +109,8 @@ tagSIZE: alias struct! [
 			list		[int-ptr!]
 			return:		[integer!]
 		]
-	]
-	LIBGIO-file cdecl [
+	;; ]
+	;; LIBGIO-file cdecl [
 		g_application_register: "g_application_register" [
 			application [handle!]
 			cancellable [int-ptr!]
@@ -115,8 +118,8 @@ tagSIZE: alias struct! [
 			return:		[logic!]
 		]
 		g_settings_sync: "g_settings_sync" []
-	]
-	LIBGTK-file cdecl [
+	;; ]
+	;; LIBGTK-file cdecl [
 		gtk_application_new: "gtk_application_new" [
 			app-id		[c-string!]
 			flags		[integer!]
@@ -158,6 +161,9 @@ tagSIZE: alias struct! [
 			window		[handle!]
 			return:		[logic!]
 		]
+		gtk_widget_queue_draw: "gtk_widget_queue_draw" [
+			widget		[handle!]
+		]
 		gtk_widget_show_all: "gtk_widget_show_all" [
 			window		[handle!]
 		]
@@ -189,6 +195,114 @@ tagSIZE: alias struct! [
 		gtk_button_new_with_label: "gtk_button_new_with_label" [
 			label		[c-string!]
 			return:		[handle!]
+		]
+		gtk_check_button_new_with_label: "gtk_check_button_new_with_label" [
+			label		[c-string!]
+			return:		[handle!]
+		]
+		gtk_toggle_button_get_active: "gtk_toggle_button_get_active" [
+			button		[handle!]
+			return:		[logic!]
+		]
+		gtk_toggle_button_get_inconsistent: "gtk_toggle_button_get_inconsistent" [
+			button		[handle!]
+			return:		[logic!]
+		]
+		gtk_toggle_button_set_inconsistent: "gtk_toggle_button_get_inconsistent" [
+			button		[handle!]
+			inconsist?	[logic!]
+		]
+		gtk_toggle_button_set_active: "gtk_toggle_button_set_active" [
+			button		[handle!]
+			active?		[logic!]
+		]
+		gtk_drawing_area_new: "gtk_drawing_area_new" [
+			return:		[handle!]
+		]
+	;; LIBCAIRO-file cdecl [
+		cairo_line_to: "cairo_line_to" [
+			cr			[handle!]
+			x			[float!]
+			y			[float!]
+		]
+		cairo_curve_to: "cairo_curve_to" [
+			cr			[handle!]
+			x1			[float!]
+			y1			[float!]
+			x2			[float!]
+			y2			[float!]
+			x3			[float!]
+			y3			[float!]
+		]
+		cairo_move_to: "cairo_move_to" [
+			cr			[handle!]
+			x			[float!]
+			y			[float!]
+		]
+		cairo_arc: "cairo_arc" [
+			cr			[handle!]
+			xc			[float!]
+			yc			[float!]
+			radius		[float!]
+			angle1		[float!]
+			angle2		[float!]
+		]
+		cairo_rectangle: "cairo_rectangle" [
+			cr			[handle!]
+			x			[float!]
+			y			[float!]
+			w			[float!]
+			h			[float!]
+		]
+		cairo_new_sub_path: "cairo_new_sub_path" [
+			cr			[handle!]
+		]
+		cairo_close_path: "cairo_close_path" [
+			cr			[handle!]
+		]
+		cairo_stroke: "cairo_stroke" [
+			cr			[handle!]
+		]
+		cairo_stroke_preserve: "cairo_stroke_preserve" [
+			cr			[handle!]
+		]
+		cairo_fill: "cairo_fill" [
+			cr			[handle!]
+		]
+		cairo_paint: "cairo_paint" [
+			cr			[handle!]
+		]
+		cairo_set_source_rgba: "cairo_set_source_rgba" [
+			cr			[handle!]
+			red			[float!]
+			green		[float!]
+			blue		[float!]
+			alpha		[float!]
+		]
+		cairo_set_line_width: "cairo_set_line_width" [
+			cr			[handle!]
+			width		[float!]
+		]
+		cairo_set_source: "cairo_set_source" [
+			cr			[handle!]
+			source		[handle!]
+		]
+		cairo_set_source_surface: "cairo_set_source_surface" [
+			cr			[handle!]
+			surface		[handle!]
+			x			[float!]
+			y			[float!]
+		]
+		cairo_get_source: "cairo_get_source" [
+			cr			[handle!]
+			return:		[handle!]
+		]
+		cairo_set_antialias: "cairo_set_antialias" [
+			cr			[handle!]
+			antialias	[integer!]
+		]
+		cairo_surface_destroy: "cairo_surface_destroy" [
+			surface		[handle!]
 		]
 	]
 ]

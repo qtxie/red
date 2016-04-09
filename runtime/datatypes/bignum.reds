@@ -157,12 +157,12 @@ bignum: context [
 			]
 		]
 
-		;if any [
-		;	v0 > 0
-		;	t1 > 0
-		;][
-		;	shrink big
-		;]
+		if any [
+			v0 > 0
+			t1 > 0
+		][
+			shrink big
+		]
 	]
 
 	right-shift: func [
@@ -230,12 +230,12 @@ bignum: context [
 			]
 		]
 
-		;if any [
-		;	v0 > 0
-		;	v1 > 0
-		;][
-		;	shrink big
-		;]
+		if any [
+			v0 > 0
+			v1 > 0
+		][
+			shrink big
+		]
 	]
 
 	serialize: func [
@@ -365,8 +365,13 @@ bignum: context [
 		s: GET_BUFFER(big)
 		p: as byte-ptr! s/offset
 		print-line [lf "===============dump bignum!==============="]
-		print-line ["used: " big/used " sign: " big/sign]
-		dump-memory p 1 4
+		print-line ["used: " big/used " sign: " big/sign " addr: " p]
+		p: p + (big/used * 4)
+		loop big/used * 4 [
+			p: p - 1
+			prin-hex-chars as-integer p/1 2
+		]
+		print-line lf
 		print-line ["=============dump bignum! end=============" lf]
 	]
 
@@ -916,6 +921,31 @@ bignum: context [
 		mul big1 big ret
 	]
 
+	uint-div: func [
+		u1				[integer!]
+		u0				[integer!]
+		return:			[integer!]
+		/local
+			i			[integer!]
+	][
+		if u0 = 0 [
+			return u1 / u0
+		]
+		
+		if uint-less u1 u0 [
+			return 0
+		]
+		
+		i: 0
+		while [true] [
+			u1: u1 - u0
+			i: i + 1
+			if uint-less u1 u0 [
+				return i
+			]
+		]
+		return i
+	]
 	long-divide: func [
 		u1				[integer!]
 		u0				[integer!]
@@ -960,8 +990,8 @@ bignum: context [
 
 		u0_msw: u0 >>> biLH
 		u0_lsw: u0 and hmask
-
-		q1: u1 / d1
+		
+		q1: uint-div u1 d1
 		r0: u1 - (d1 * q1)
 
 		while [
@@ -977,7 +1007,7 @@ bignum: context [
 		]
 
 		rAX: (u1 * radix) + (u0_msw - (q1 * d))
-		q0: rAX / d1
+		q0: uint-div rAX d1
 		r0: rAX - (q0 * d1)
 
 		while [
@@ -1095,6 +1125,8 @@ bignum: context [
 			until [
 				pz/tmp: pz/tmp - 1
 				lset T1 0
+				s: GET_BUFFER(T1)
+				pt1: as int-ptr! s/offset
 				pt1/1: either t < 2 [
 					0
 				][
@@ -1105,10 +1137,10 @@ bignum: context [
 				T1/used: 2
 
 				mul-uint T1 pz/tmp T1
-				;s: GET_BUFFER(T1)
-				;pt1: as int-ptr! s/offset
 
 				lset T2 0
+				s: GET_BUFFER(T2)
+				pt2: as int-ptr! s/offset
 				pt2/1: either i < 3 [
 					0
 				][
@@ -1132,8 +1164,6 @@ bignum: context [
 			sub X T1 X
 			s: GET_BUFFER(X)
 			px: as int-ptr! s/offset
-			;s: GET_BUFFER(T1)
-			;pt1: as int-ptr! s/offset
 			if (compare-int X 0) < 0 [
 				copy Y T1
 				;s: GET_BUFFER(T1)

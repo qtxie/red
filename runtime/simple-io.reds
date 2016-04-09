@@ -1090,161 +1090,6 @@ simple-io: context [
 		unicode/to-utf16 str
 	]
 
-	file-list-to-block: func [
-		blk		[red-block!]
-		path	[red-string!]
-		buffer	[byte-ptr!]
-		/local
-			dir [red-string!]
-			name [red-string!]
-			len [integer!]
-	][
-		#if OS = 'Windows [
-			until [
-				dir: as red-string! ALLOC_TAIL(blk)
-				_series/copy as red-series! path as red-series! dir null yes null
-				len: lstrlen buffer
-				name: string/load as-c-string buffer len UTF-16LE
-				string/concatenate dir name -1 0 yes no
-				buffer: buffer + (len + 1 * 2)
-				all [buffer/1 = #"^@" buffer/2 = #"^@"]
-			]
-		]
-	]
-
-	request-dir: func [
-		title	[red-string!]
-		dir		[red-value!]
-		filter	[red-block!]
-		keep?	[logic!]
-		multi?	[logic!]
-		return: [red-value!]
-		/local
-			buffer	[byte-ptr!]
-			ret		[integer!]
-			path	[red-value!]
-			base	[red-value!]
-			str		[red-string!]
-			pbuf	[byte-ptr!]
-			bInfo
-	][
-		#either OS = 'Windows [
-			bInfo: declare tagBROWSEINFO
-			pbuf: null
-			base: stack/arguments
-			buffer: allocate 520
-
-			if dir >= base [
-				pbuf: as byte-ptr! file/to-OS-path as red-file! dir
-				copy-memory buffer pbuf (lstrlen pbuf) << 1 + 2
-			]
-
-			bInfo/hwndOwner: GetForegroundWindow
-			bInfo/lpszTitle: either title >= base [unicode/to-utf16 title][null]
-			bInfo/ulFlags: BIF_RETURNONLYFSDIRS or BIF_USENEWUI or BIF_SHAREABLE
-			bInfo/lpfn: as-integer :req-dir-callback
-			bInfo/lParam: either keep? [dir-keep][as-integer pbuf]
-
-			ret: SHBrowseForFolder bInfo
-			path: as red-value! either zero? ret [none-value][
-				if keep? [
-					unless zero? dir-keep [CoTaskMemFree dir-keep]
-					dir-keep: ret
-				]
-				SHGetPathFromIDList ret buffer
-				str: string/load as-c-string buffer lstrlen buffer UTF-16LE
-				string/append-char GET_BUFFER(str) as-integer #"/"
-				str/header: TYPE_FILE
-				#call [to-red-file str]
-				stack/arguments
-			]
-			free buffer
-			path
-		][
-			as red-value! none-value
-		]
-	]
-
-	request-file: func [
-		title	[red-string!]
-		name	[red-value!]
-		filter	[red-block!]
-		save?	[logic!]
-		multi?	[logic!]
-		return: [red-value!]
-		/local
-			filters [c-string!]
-			buffer	[byte-ptr!]
-			ret		[integer!]
-			len		[integer!]
-			files	[red-value!]
-			base	[red-value!]
-			str		[red-string!]
-			blk		[red-block!]
-			pbuf	[byte-ptr!]
-			ofn
-	][
-		#either OS = 'Windows [
-			ofn: declare tagOFNW
-			base: stack/arguments
-			filters: #u16 "All files^@*.*^@Red scripts^@*.red;*.reds^@REBOL scripts^@*.r^@Text files^@*.txt^@"
-			buffer: allocate MAX_FILE_REQ_BUF
-			either name >= base [
-				pbuf: as byte-ptr! file/to-OS-path as red-file! name
-				len: lstrlen pbuf
-				len: len << 1 - 1
-				while [all [len > 0 pbuf/len <> #"\"]][len: len - 2]
-				if len > 0 [
-					pbuf/len: #"^@"
-					ofn/lpstrInitialDir: as-c-string pbuf
-					pbuf: pbuf + len + 1
-				]
-				copy-memory buffer pbuf (lstrlen pbuf) << 1 + 2
-			][
-				buffer/1: #"^@"
-				buffer/2: #"^@"
-			]
-
-			ofn/lStructSize: size? tagOFNW
-			ofn/hwndOwner: GetForegroundWindow
-			ofn/lpstrTitle: either title >= base [unicode/to-utf16 title][null]
-			ofn/lpstrFile: buffer
-			ofn/lpstrFilter: either filter >= base [file-filter-to-str filter][filters]
-			ofn/nMaxFile: MAX_FILE_REQ_BUF
-			ofn/lpstrFileTitle: null
-			ofn/nMaxFileTitle: 0
-
-			ofn/Flags: OFN_HIDEREADONLY or OFN_EXPLORER
-			if multi? [ofn/Flags: ofn/Flags or OFN_ALLOWMULTISELECT]
-
-			ret: either save? [GetSaveFileName ofn][GetOpenFileName ofn]
-			files: as red-value! either zero? ret [none-value][
-				len: lstrlen buffer
-				str: string/load as-c-string buffer len UTF-16LE
-				#call [to-red-file str]
-				str: as red-string! stack/arguments
-				as red-value! either multi? [
-					pbuf: buffer + (len + 1 * 2)
-					stack/push*							;@@ stack/arguments is already used after #call [...]
-					blk: block/push-only* 1
-					either all [pbuf/1 = #"^@" pbuf/2 = #"^@"][
-						block/rs-append blk as red-value! str
-					][
-						string/append-char GET_BUFFER(str) as-integer #"/"
-						file-list-to-block blk str pbuf
-					]
-					blk
-				][
-					str
-				]
-			]
-			free buffer
-			files
-		][
-			as red-value! none-value
-		]
-	]
-
 	#switch OS [
 		Windows [
 			BSTR-length?: func [s [integer!] return: [integer!] /local len [int-ptr!]][
@@ -1468,9 +1313,165 @@ simple-io: context [
 				]
 				res
 			]
+
+			file-list-to-block: func [
+				blk		[red-block!]
+				path	[red-string!]
+				buffer	[byte-ptr!]
+				/local
+					dir [red-string!]
+					name [red-string!]
+					len [integer!]
+			][
+				until [
+					dir: as red-string! ALLOC_TAIL(blk)
+					_series/copy as red-series! path as red-series! dir null yes null
+					len: lstrlen buffer
+					name: string/load as-c-string buffer len UTF-16LE
+					string/concatenate dir name -1 0 yes no
+					buffer: buffer + (len + 1 * 2)
+					all [buffer/1 = #"^@" buffer/2 = #"^@"]
+				]
+			]
+
+			request-dir: func [
+				title	[red-string!]
+				dir		[red-value!]
+				filter	[red-block!]
+				keep?	[logic!]
+				multi?	[logic!]
+				return: [red-value!]
+				/local
+					buffer	[byte-ptr!]
+					ret		[integer!]
+					path	[red-value!]
+					base	[red-value!]
+					str		[red-string!]
+					pbuf	[byte-ptr!]
+					bInfo
+			][
+				bInfo: declare tagBROWSEINFO
+				pbuf: null
+				base: stack/arguments
+				buffer: allocate 520
+
+				if dir >= base [
+					pbuf: as byte-ptr! file/to-OS-path as red-file! dir
+					copy-memory buffer pbuf (lstrlen pbuf) << 1 + 2
+				]
+
+				bInfo/hwndOwner: GetForegroundWindow
+				bInfo/lpszTitle: either title >= base [unicode/to-utf16 title][null]
+				bInfo/ulFlags: BIF_RETURNONLYFSDIRS or BIF_USENEWUI or BIF_SHAREABLE
+				bInfo/lpfn: as-integer :req-dir-callback
+				bInfo/lParam: either keep? [dir-keep][as-integer pbuf]
+
+				ret: SHBrowseForFolder bInfo
+				path: as red-value! either zero? ret [none-value][
+					if keep? [
+						unless zero? dir-keep [CoTaskMemFree dir-keep]
+						dir-keep: ret
+					]
+					SHGetPathFromIDList ret buffer
+					str: string/load as-c-string buffer lstrlen buffer UTF-16LE
+					string/append-char GET_BUFFER(str) as-integer #"/"
+					str/header: TYPE_FILE
+					#call [to-red-file str]
+					stack/arguments
+				]
+				free buffer
+				path
+			]
+
+			request-file: func [
+				title	[red-string!]
+				name	[red-value!]
+				filter	[red-block!]
+				save?	[logic!]
+				multi?	[logic!]
+				return: [red-value!]
+				/local
+					filters [c-string!]
+					buffer	[byte-ptr!]
+					ret		[integer!]
+					len		[integer!]
+					files	[red-value!]
+					base	[red-value!]
+					str		[red-string!]
+					blk		[red-block!]
+					pbuf	[byte-ptr!]
+					ofn
+			][
+				ofn: declare tagOFNW
+				base: stack/arguments
+				filters: #u16 "All files^@*.*^@Red scripts^@*.red;*.reds^@REBOL scripts^@*.r^@Text files^@*.txt^@"
+				buffer: allocate MAX_FILE_REQ_BUF
+				either name >= base [
+					pbuf: as byte-ptr! file/to-OS-path as red-file! name
+					len: lstrlen pbuf
+					len: len << 1 - 1
+					while [all [len > 0 pbuf/len <> #"\"]][len: len - 2]
+					if len > 0 [
+						pbuf/len: #"^@"
+						ofn/lpstrInitialDir: as-c-string pbuf
+						pbuf: pbuf + len + 1
+					]
+					copy-memory buffer pbuf (lstrlen pbuf) << 1 + 2
+				][
+					buffer/1: #"^@"
+					buffer/2: #"^@"
+				]
+
+				ofn/lStructSize: size? tagOFNW
+				ofn/hwndOwner: GetForegroundWindow
+				ofn/lpstrTitle: either title >= base [unicode/to-utf16 title][null]
+				ofn/lpstrFile: buffer
+				ofn/lpstrFilter: either filter >= base [file-filter-to-str filter][filters]
+				ofn/nMaxFile: MAX_FILE_REQ_BUF
+				ofn/lpstrFileTitle: null
+				ofn/nMaxFileTitle: 0
+
+				ofn/Flags: OFN_HIDEREADONLY or OFN_EXPLORER
+				if multi? [ofn/Flags: ofn/Flags or OFN_ALLOWMULTISELECT]
+
+				ret: either save? [GetSaveFileName ofn][GetOpenFileName ofn]
+				files: as red-value! either zero? ret [none-value][
+					len: lstrlen buffer
+					str: string/load as-c-string buffer len UTF-16LE
+					#call [to-red-file str]
+					str: as red-string! stack/arguments
+					as red-value! either multi? [
+						pbuf: buffer + (len + 1 * 2)
+						stack/push*							;@@ stack/arguments is already used after #call [...]
+						blk: block/push-only* 1
+						either all [pbuf/1 = #"^@" pbuf/2 = #"^@"][
+							block/rs-append blk as red-value! str
+						][
+							string/append-char GET_BUFFER(str) as-integer #"/"
+							file-list-to-block blk str pbuf
+						]
+						blk
+					][
+						str
+					]
+				]
+				free buffer
+				files
+			]
 		]
 		MacOSX [
 			#import [
+				LIBC-file cdecl [
+					objc_getClass: "objc_getClass" [
+						class		[c-string!]
+						return:		[integer!]
+					]
+					sel_getUid: "sel_getUid" [
+						name		[c-string!]
+						return:		[integer!]
+					]
+					objc_msgSend: "objc_msgSend" [[variadic] return: [integer!]]
+				]
 				"/System/Library/Frameworks/CFNetwork.framework/CFNetwork" cdecl [
 					__CFStringMakeConstantString: "__CFStringMakeConstantString" [
 						cStr		[c-string!]
@@ -1577,6 +1578,7 @@ simple-io: context [
 				]
 			]
 
+			#define NSUTF8StringEncoding		4
 			#define kCFStringEncodingUTF8		08000100h
 			#define kCFStringEncodingMacRoman	0
 
@@ -1793,6 +1795,167 @@ simple-io: context [
 					bin: as red-binary! blk
 				]
 				as red-value! bin
+			]
+
+			file-filter-to-nsarray: func [
+				filter	[red-block!]
+				return: [integer!]
+				/local
+					array	[int-ptr!]
+					nsarray [integer!]
+					len		[integer!]
+					h		[integer!]
+					s		[series!]
+					val		[red-string!]
+					end		[red-string!]
+			][
+				len: (block/rs-length? filter) / 2 + 1
+				array: as int-ptr! allocate len * size? int-ptr!
+
+				s: GET_BUFFER(filter)
+				val: as red-string! s/offset + filter/head + 1
+				end: as red-string! s/tail
+
+				while [val < end][
+					h: val/head
+					val/head: h + 2
+					len: -1
+					len: objc_msgSend [
+						objc_getClass "NSString"
+						sel_getUid "stringWithUTF8String:"
+						unicode/to-utf8 val :len
+					]
+					OBJC_AUTO_RELEASE(len)
+					array/value: len
+					val/head: h
+					array: array + 1
+					val: val + 2
+				]
+				array/value: 0
+				nsarray: objc_msgSend [objc_getClass "NSArray" sel_getUid "arrayWithObjects:" array]
+				OBJC_AUTO_RELEASE(nsarray)
+				free as byte-ptr! array
+				nsarray
+			]
+
+			NSURL-to-file: func [
+				url		[integer!]
+				dir?	[logic!]
+				return: [red-value!]
+				/local
+					path	[c-string!]
+					file	[red-string!]
+			][
+				url: objc_msgSend [url sel_getUid "path"]
+				path: as c-string! objc_msgSend [url sel_getUid "UTF8String"]
+				file: string/load path length? path UTF-8
+				if dir? [string/append-char GET_BUFFER(file) as-integer #"/"]
+				#call [to-red-file file]
+				as red-value! file
+			]
+
+			open-request-panel: func [
+				title	[red-string!]
+				name	[red-value!]
+				filter	[red-block!]
+				save?	[logic!]
+				dir?	[logic!]
+				multi?	[logic!]
+				return: [red-value!]
+				/local
+					filters [c-string!]
+					ret		[integer!]
+					len		[integer!]
+					files	[red-value!]
+					base	[red-value!]
+					blk		[red-block!]
+					file	[red-value!]
+					str		[integer!]
+					pool	[integer!]
+					panel	[integer!]
+					enumerator [integer!]
+			][
+				pool: OBJC_ALLOC("NSAutoreleasePool")
+				OBJC_INIT(pool)
+
+				base: stack/arguments
+
+				either save? [
+					panel: objc_msgSend [objc_getClass "NSSavePanel" sel_getUid "savePanel"]
+					objc_msgSend [panel sel_getUid "setCanCreateDirectories:" true]
+				][
+					panel: objc_msgSend [objc_getClass "NSOpenPanel" sel_getUid "openPanel"]
+					if multi? [
+						objc_msgSend [panel sel_getUid "setAllowsMultipleSelection:" true]
+					]
+					if dir? [
+						objc_msgSend [panel sel_getUid "setCanChooseFiles:" false]
+						objc_msgSend [panel sel_getUid "setCanChooseDirectories:" true]
+					]
+				]
+
+				if all [
+					filter >= base
+					0 < block/rs-length? filter
+				][
+					objc_msgSend [panel sel_getUid "setAllowedFileTypes:" file-filter-to-nsarray filter]
+				]
+				if title >= base [
+					len: -1
+					str: CFString((unicode/to-utf8 title :len))
+					objc_msgSend [panel sel_getUid "setTitle:" str]
+					CFRelease str
+				]
+
+				ret: objc_msgSend [panel sel_getUid "runModal"]
+				files: as red-value! either zero? ret [none-value][
+					either save? [
+						str: objc_msgSend [panel sel_getUid "URL"]
+					][
+						str: objc_msgSend [panel sel_getUid "URLs"]
+						enumerator: objc_msgSend [str sel_getUid "objectEnumerator"]
+						str: objc_msgSend [enumerator sel_getUid "nextObject"]
+					]
+					file: NSURL-to-file str dir?
+					as red-value! either multi? [
+						stack/push*							;@@ stack/arguments is already used after #call [...]
+						blk: block/push-only* 1
+						block/rs-append blk file
+						while [
+							str: objc_msgSend [enumerator sel_getUid "nextObject"]
+							str <> 0
+						][
+							block/rs-append blk NSURL-to-file str dir?
+						]
+						blk
+					][
+						file
+					]
+				]
+				OBJC_DRAIN(pool)
+				files
+			]
+
+			request-dir: func [
+				title	[red-string!]
+				dir		[red-value!]
+				filter	[red-block!]
+				keep?	[logic!]
+				multi?	[logic!]
+				return: [red-value!]
+			][
+				open-request-panel title dir filter no yes multi?
+			]
+
+			request-file: func [
+				title	[red-string!]
+				name	[red-value!]
+				filter	[red-block!]
+				save?	[logic!]
+				multi?	[logic!]
+				return: [red-value!]
+			][
+				open-request-panel title name filter save? no multi?
 			]
 		]
 		#default [

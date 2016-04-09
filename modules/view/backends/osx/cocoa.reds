@@ -112,11 +112,6 @@ tagSIZE: alias struct! [
 
 #import [
 	LIBC-file cdecl [
-		dlopen:	"dlopen" [
-			dllpath		[c-string!]
-			flags		[integer!]
-			return:		[integer!]
-		]
 		objc_getClass: "objc_getClass" [
 			class		[c-string!]
 			return:		[integer!]

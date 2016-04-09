@@ -347,6 +347,7 @@ bignum: context [
 					OP_DIV [
 						rem: make-at stack/push* 1
 						div big rem left right
+					]
 					OP_REM [
 						module big left right
 					]
@@ -946,6 +947,7 @@ bignum: context [
 		]
 		return i
 	]
+	
 	long-divide: func [
 		u1				[integer!]
 		u0				[integer!]
@@ -971,7 +973,7 @@ bignum: context [
 
 		if any [
 			d = 0
-			uint-less d u1
+			not uint-less u1 d
 		][
 			return -1
 		]
@@ -1178,8 +1180,6 @@ bignum: context [
 			i: i - 1
 		]
 		
-		dump-bignum Z
-		
 		shrink Z
 		copy Z Q
 		Q/sign: A/sign  * B/sign
@@ -1187,8 +1187,6 @@ bignum: context [
 		right-shift X k
 		X/sign: A/sign
 		shrink X
-		
-		dump-bignum X
 		copy X R
 		
 		if (compare-int R 0) = 0 [

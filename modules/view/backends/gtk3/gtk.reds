@@ -263,13 +263,19 @@ tagSIZE: alias struct! [
 		cairo_stroke: "cairo_stroke" [
 			cr			[handle!]
 		]
-		cairo_stroke_preserve: "cairo_stroke_preserve" [
-			cr			[handle!]
-		]
 		cairo_fill: "cairo_fill" [
 			cr			[handle!]
 		]
+		cairo_fill_preserve: "cairo_fill_preserve" [
+			cr			[handle!]
+		]
 		cairo_paint: "cairo_paint" [
+			cr			[handle!]
+		]
+		cairo_save: "cairo_save" [
+			cr			[handle!]
+		]
+		cairo_restore: "cairo_restore" [
 			cr			[handle!]
 		]
 		cairo_set_source_rgba: "cairo_set_source_rgba" [
@@ -303,6 +309,33 @@ tagSIZE: alias struct! [
 		]
 		cairo_surface_destroy: "cairo_surface_destroy" [
 			surface		[handle!]
+		]
+		cairo_pattern_create_linear: "cairo_pattern_create_linear" [
+			x0			[float!]
+			y0			[float!]
+			x1			[float!]
+			y1			[float!]
+			return:		[handle!]
+		]
+		cairo_pattern_create_radial: "cairo_pattern_create_radial" [
+			cx0			[float!]
+			cy0			[float!]
+			radius0		[float!]
+			cx1			[float!]
+			cy1			[float!]
+			radius1		[float!]
+			return:		[handle!]
+		]
+		cairo_pattern_add_color_stop_rgba: "cairo_pattern_add_color_stop_rgba" [
+			pattern		[handle!]
+			offset		[float!]
+			red			[float!]
+			green		[float!]
+			blue		[float!]
+			alpha		[float!]
+		]
+		cairo_pattern_destroy: "cairo_pattern_destroy" [
+			pattern		[handle!]
 		]
 	]
 ]

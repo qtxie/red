@@ -23,6 +23,7 @@ modes: declare struct! [
 	pen-color		[integer!]					;-- 00bbggrr format
 	brush-color		[integer!]					;-- 00bbggrr format
 	font-color		[integer!]
+	pen?			[logic!]
 	brush?			[logic!]
 	on-image?		[logic!]					;-- drawing on image?
 ]
@@ -43,6 +44,7 @@ draw-begin: func [
 	modes/pen-cap:		flat
 	modes/brush-color:	0
 	modes/font-color:	0
+	modes/brush?:		yes
 	modes/brush?:		no
 
 	CGContextSetMiterLimit CGCtx DRAW_FLOAT_MAX
@@ -95,6 +97,7 @@ OS-draw-line: func [
 OS-draw-pen: func [
 	dc	   [handle!]
 	color  [integer!]									;-- 00bbggrr format
+	off?   [logic!]
 	alpha? [logic!]
 	/local
 		r  [float!]
@@ -102,6 +105,7 @@ OS-draw-pen: func [
 		b  [float!]
 		a  [float!]
 ][
+	modes/pen?: not off?
 	if modes/pen-color <> color [
 		modes/pen-color: color
 		r: integer/to-float color and FFh
@@ -110,7 +114,7 @@ OS-draw-pen: func [
 		g: g / 255.0
 		b: integer/to-float color >> 16 and FFh
 		b: b / 255.0
-		a: integer/to-float 255 - (color >> 24)
+		a: integer/to-float 255 - (color >>> 24)
 		a: a / 255.0
 		CGContextSetRGBStrokeColor dc as float32! r as float32! g as float32! b as float32! a
 	]
@@ -136,7 +140,7 @@ OS-draw-fill-pen: func [
 		g: g / 255.0
 		b: integer/to-float color >> 16 and FFh
 		b: b / 255.0
-		a: integer/to-float 255 - (color >> 24)
+		a: integer/to-float 255 - (color >>> 24)
 		a: a / 255.0
 		CGContextSetRGBFillColor dc as float32! r as float32! g as float32! b as float32! a
 	]

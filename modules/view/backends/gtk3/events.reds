@@ -247,16 +247,19 @@ do-events: func [
 	msg?: no
 	;@@ as we cannot access gapplication->priv->use_count
 	;@@ we use a global value to simulate it
-	exit-loop: exit-loop + 1
+	unless no-wait? [exit-loop: exit-loop + 1]
 
 	while [exit-loop > 0][
 		if g_main_context_iteration GTKApp-Ctx not no-wait? [msg?: yes]
-		if no-wait? [return msg?]
+		if no-wait? [break]
 	]
 	
-	while [g_main_context_iteration GTKApp-Ctx false][0] ;-- consume leftover event
-	g_settings_sync
-
+	while [g_main_context_iteration GTKApp-Ctx false][	;-- consume leftover event
+		msg?: yes
+		if no-wait? [break]
+	]
+	
+	;g_settings_sync
 	;g_main_context_release GTKApp-Ctx			;@@ release it?
 	;g_object_unref GTKApp
 	msg?

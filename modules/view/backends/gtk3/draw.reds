@@ -18,7 +18,9 @@ modes: declare struct! [
 	pen-color		[integer!]					;-- 00bbggrr format
 	brush-color		[integer!]					;-- 00bbggrr format
 	font-color		[integer!]
+	pen?			[logic!]
 	brush?			[logic!]
+	pattern			[handle!]
 	on-image?		[logic!]					;-- drawing on image?
 ]
 
@@ -37,7 +39,7 @@ set-source-color: func [
 	g: g / 255.0
 	b: integer/to-float color >> 16 and FFh
 	b: b / 255.0
-	a: integer/to-float 255 - (color >> 24)
+	a: integer/to-float 255 - (color >>> 24)
 	a: a / 255.0
 	cairo_set_source_rgba cr r g b a
 ]
@@ -56,9 +58,12 @@ draw-begin: func [
 	modes/pen-cap:		flat
 	modes/brush-color:	0
 	modes/font-color:	0
+	modes/pen?:			yes
 	modes/brush?:		no
+	modes/pattern:		null
 
-	cairo_set_line_width cr 0.5
+	cairo_set_line_width cr 1.0
+	set-source-color cr 0
 	cr
 ]
 
@@ -70,6 +75,20 @@ draw-end: func [
 	paint?		[logic!]
 ][
 	0
+]
+
+do-paint: func [dc [handle!]][
+	if modes/brush? [
+		cairo_save dc
+		either null? modes/pattern [
+			set-source-color dc modes/brush-color
+		][
+			cairo_set_source dc modes/pattern
+		]
+		cairo_fill_preserve dc
+		cairo_restore dc
+	]
+	if modes/pen? [cairo_stroke dc]
 ]
 
 OS-draw-anti-alias: func [
@@ -94,8 +113,10 @@ OS-draw-line: func [
 OS-draw-pen: func [
 	dc	   [handle!]
 	color  [integer!]									;-- 00bbggrr format
+	off?   [logic!]
 	alpha? [logic!]
 ][
+	modes/pen?: not off?
 	if modes/pen-color <> color [
 		modes/pen-color: color
 		set-source-color dc color
@@ -109,6 +130,10 @@ OS-draw-fill-pen: func [
 	alpha? [logic!]
 ][
 	modes/brush?: not off?
+	unless null? modes/pattern [
+		cairo_pattern_destroy modes/pattern
+		modes/pattern: null
+	]
 	if modes/brush-color <> color [
 		modes/brush-color: color
 	]
@@ -119,14 +144,11 @@ OS-draw-line-width: func [
 	width [red-integer!]
 	/local
 		w [integer!]
-		f [float!]
 ][
 	w: width/value
 	if modes/pen-width <> w [
 		modes/pen-width: w
-		f: integer/to-float w
-		f: f - 0.5
-		cairo_set_line_width dc f
+		cairo_set_line_width dc integer/to-float w
 	]
 ]
 
@@ -135,8 +157,12 @@ OS-draw-box: func [
 	upper [red-pair!]
 	lower [red-pair!]
 	/local
-		radius [red-integer!]
-		rad	   [integer!]
+		radius	[red-integer!]
+		rad		[integer!]
+		x		[float!]
+		y		[float!]
+		w		[float!]
+		h		[float!]
 ][
 	either TYPE_OF(lower) = TYPE_INTEGER [
 		radius: as red-integer! lower
@@ -144,7 +170,12 @@ OS-draw-box: func [
 		rad: radius/value * 2
 		;;@@ TBD round box
 	][
-0
+		x: integer/to-float upper/x
+		y: integer/to-float upper/y
+		w: integer/to-float lower/x - upper/x
+		h: integer/to-float lower/y - upper/y
+		cairo_rectangle dc x y w h
+		do-paint dc
 	]
 ]
 
@@ -200,10 +231,13 @@ OS-draw-circle: func [
 	center [red-pair!]
 	radius [red-integer!]
 	/local
-		rad-x [integer!]
-		rad-y [integer!]
+		x [float!]
+		y [float!]
 ][
-0
+	x: integer/to-float center/x
+	y: integer/to-float center/y
+	cairo_arc dc x y integer/to-float radius/value 0.0 2.0 * pi
+	do-paint dc
 ]
 
 OS-draw-ellipse: func [
@@ -325,4 +359,80 @@ OS-draw-grad-pen: func [
 	offset		[red-pair!]
 	count		[integer!]					;-- number of the colors
 	brush?		[logic!]
-][0]
+	/local
+		x		[float!]
+		y		[float!]
+		start	[float!]
+		stop	[float!]
+		pattern	[handle!]
+		int		[red-integer!]
+		f		[red-float!]
+		head	[red-value!]
+		next	[red-value!]
+		clr		[red-tuple!]
+		n		[integer!]
+		delta	[float!]
+		p		[float!]
+		scale?	[logic!]
+][
+	x: integer/to-float offset/x
+	y: integer/to-float offset/y
+
+	int: as red-integer! offset + 1
+	start: integer/to-float int/value
+	int: int + 1
+	stop: integer/to-float int/value
+
+	pattern: either type = linear [
+		cairo_pattern_create_linear x + start y x + stop y
+	][
+		cairo_pattern_create_radial x y start x y stop
+	]
+
+	n: 0
+	scale?: no
+	y: 1.0
+	while [
+		int: int + 1
+		n < 3
+	][								;-- fetch angle, scale-x and scale-y (optional)
+		switch TYPE_OF(int) [
+			TYPE_INTEGER	[p: integer/to-float int/value]
+			TYPE_FLOAT		[f: as red-float! int p: f/value]
+			default			[break]
+		]
+		switch n [
+			0	[0]					;-- rotation
+			1	[x:	p scale?: yes]
+			2	[y:	p]
+		]
+		n: n + 1
+	]
+
+	if scale? [0]
+
+	delta: 1.0 / integer/to-float count - 1
+	p: 0.0
+	head: as red-value! int
+	loop count [
+		clr: as red-tuple! either TYPE_OF(head) = TYPE_WORD [_context/get as red-word! head][head]
+		next: head + 1
+		n: clr/array1
+		x: integer/to-float n and FFh
+		x: x / 255.0
+		y: integer/to-float n >> 8 and FFh
+		y: y / 255.0
+		start: integer/to-float n >> 16 and FFh
+		start: start / 255.0
+		stop: integer/to-float 255 - (n >>> 24)
+		stop: stop / 255.0
+		if TYPE_OF(next) = TYPE_FLOAT [head: next f: as red-float! head p: f/value]
+		cairo_pattern_add_color_stop_rgba pattern p x y start stop
+		p: p + delta
+		head: head + 1
+	]
+
+	if brush? [modes/brush?: yes]				;-- set brush, or set pen
+	unless null? modes/pattern [cairo_pattern_destroy modes/pattern]
+	modes/pattern: pattern
+]

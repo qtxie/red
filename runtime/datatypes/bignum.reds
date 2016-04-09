@@ -347,6 +347,8 @@ bignum: context [
 					OP_DIV [
 						rem: make-at stack/push* 1
 						div big rem left right
+					OP_REM [
+						module big left right
 					]
 				]
 			]
@@ -364,7 +366,7 @@ bignum: context [
 		p: as byte-ptr! s/offset
 		print-line [lf "===============dump bignum!==============="]
 		print-line ["used: " big/used " sign: " big/sign]
-		dump-memory p 1 2
+		dump-memory p 1 4
 		print-line ["=============dump bignum! end=============" lf]
 	]
 
@@ -895,6 +897,24 @@ bignum: context [
 		]
 		mul big1 big ret
 	]
+	
+	mul-uint: func [
+		big1		[red-bignum!]
+		uint		[integer!]
+		ret			[red-bignum!]
+		/local
+			big	 	[red-bignum!]
+			s	 	[series!]
+			p		[int-ptr!]
+	][
+		big: make-at stack/push* 1
+		big/used: 1
+		big/sign: 1
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+		p/1: uint
+		mul big1 big ret
+	]
 
 	long-divide: func [
 		u1				[integer!]
@@ -1084,9 +1104,9 @@ bignum: context [
 				pt1/2: py/t
 				T1/used: 2
 
-				mul-int T1 pz/tmp T1
-				s: GET_BUFFER(T1)
-				pt1: as int-ptr! s/offset
+				mul-uint T1 pz/tmp T1
+				;s: GET_BUFFER(T1)
+				;pt1: as int-ptr! s/offset
 
 				lset T2 0
 				pt2/1: either i < 3 [
@@ -1107,19 +1127,17 @@ bignum: context [
 				(compare T1 T2) <= 0
 			]
 
-			mul-int Y pz/tmp T1
-			s: GET_BUFFER(T1)
-			pt1: as int-ptr! s/offset
-			
+			mul-uint Y pz/tmp T1
 			left-shift T1 (biL * (tmp - 1))
 			sub X T1 X
 			s: GET_BUFFER(X)
 			px: as int-ptr! s/offset
-			
+			;s: GET_BUFFER(T1)
+			;pt1: as int-ptr! s/offset
 			if (compare-int X 0) < 0 [
 				copy Y T1
-				s: GET_BUFFER(T1)
-				pt1: as int-ptr! s/offset
+				;s: GET_BUFFER(T1)
+				;pt1: as int-ptr! s/offset
 				
 				left-shift T1 (biL * (tmp - 1))
 				add X T1 X
@@ -1146,6 +1164,25 @@ bignum: context [
 		if (compare-int R 0) = 0 [
 			R/sign: 1
 		]
+		return true
+	]
+	
+	module: func [
+		R	 		[red-bignum!]
+		A	 		[red-bignum!]
+		B	 		[red-bignum!]
+		return:	 	[logic!]
+		/local
+			Q		[red-bignum!]
+	][
+		if (compare-int B 0) < 0 [
+			fire [TO_ERROR(math zero-divide)]
+			0								;-- pass the compiler's type-checking
+			return false
+		]
+		
+		Q: make-at stack/push* 1
+		div Q R A B
 		return true
 	]
 
@@ -1377,6 +1414,11 @@ bignum: context [
 		as red-value! big
 	]
 
+	remainder: func [return: [red-value!]][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/remainder"]]
+		as red-value! do-math OP_REM
+	]
+	
 	swap: func [
 		big1	 	[red-bignum!]
 		big2	 	[red-bignum!]
@@ -1418,7 +1460,7 @@ bignum: context [
 			:multiply
 			:negate
 			null			;power
-			null			;remainder
+			:remainder
 			null			;round
 			:subtract
 			null			;even?

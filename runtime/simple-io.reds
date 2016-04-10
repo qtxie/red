@@ -1840,6 +1840,7 @@ simple-io: context [
 
 			NSURL-to-file: func [
 				url		[integer!]
+				blk		[red-block!]
 				dir?	[logic!]
 				return: [red-value!]
 				/local
@@ -1848,9 +1849,9 @@ simple-io: context [
 			][
 				url: objc_msgSend [url sel_getUid "path"]
 				path: as c-string! objc_msgSend [url sel_getUid "UTF8String"]
-				file: string/load path length? path UTF-8
+				file: string/load-in path length? path blk UTF-8
 				if dir? [string/append-char GET_BUFFER(file) as-integer #"/"]
-				#call [to-red-file file]
+				file/header: TYPE_FILE
 				as red-value! file
 			]
 
@@ -1916,16 +1917,15 @@ simple-io: context [
 						enumerator: objc_msgSend [str sel_getUid "objectEnumerator"]
 						str: objc_msgSend [enumerator sel_getUid "nextObject"]
 					]
-					file: NSURL-to-file str dir?
+					file: NSURL-to-file str null dir?
 					as red-value! either multi? [
-						stack/push*							;@@ stack/arguments is already used after #call [...]
 						blk: block/push-only* 1
 						block/rs-append blk file
 						while [
 							str: objc_msgSend [enumerator sel_getUid "nextObject"]
 							str <> 0
 						][
-							block/rs-append blk NSURL-to-file str dir?
+							NSURL-to-file str blk dir?
 						]
 						blk
 					][
@@ -2225,6 +2225,24 @@ simple-io: context [
 				]
 				as red-value! bin
 			]
+
+			request-dir: func [
+				title	[red-string!]
+				dir		[red-value!]
+				filter	[red-block!]
+				keep?	[logic!]
+				multi?	[logic!]
+				return: [red-value!]
+			][dir]
+
+			request-file: func [
+				title	[red-string!]
+				name	[red-value!]
+				filter	[red-block!]
+				save?	[logic!]
+				multi?	[logic!]
+				return: [red-value!]
+			][name]
 		]
 	]
 ]

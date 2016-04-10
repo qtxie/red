@@ -1196,6 +1196,31 @@ bignum: context [
 		return true
 	]
 	
+	div-int: func [
+		Q	 		[red-bignum!]
+		R	 		[red-bignum!]
+		A	 		[red-bignum!]
+		int	 		[integer!]
+		return:	 	[logic!]
+		/local
+			big	 	[red-bignum!]
+			s	 	[series!]
+			p		[int-ptr!]
+	][
+		big: make-at stack/push* 1
+		big/used: 1
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+		p/1: either int >= 0 [
+			big/sign: 1
+			int
+		][
+			big/sign: -1
+			0 - int
+		]
+		div Q R A big
+	]
+	
 	module: func [
 		R	 		[red-bignum!]
 		A	 		[red-bignum!]

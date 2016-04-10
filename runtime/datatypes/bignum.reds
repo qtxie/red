@@ -196,6 +196,7 @@ bignum: context [
 			]
 		][
 			lset big 0
+			exit
 		]
 
 		len: big/used
@@ -223,7 +224,7 @@ bignum: context [
 			while [i > 0][
 				p1: p + i - 1
 				r1: p1/1 << (biL - v1)
-				p1/1: p1/1 >> v1
+				p1/1: p1/1 >>> v1
 				p1/1: p1/1 or r0
 				r0: r1
 				i: i - 1
@@ -255,7 +256,8 @@ bignum: context [
 			size	[integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/serialize"]]
-
+		
+		dump-bignum big
 		s: GET_BUFFER(big)
 		p: as byte-ptr! s/offset
 		either big/used = 0 [
@@ -456,6 +458,7 @@ bignum: context [
 
 			;-- set to zero
 			p: as int-ptr! s/offset + big/used
+			ex_len: len - big/used
 			loop ex_len [
 				p/1: 0
 				p: p + 1
@@ -522,19 +525,13 @@ bignum: context [
 			s2	 	[series!]
 			p		[int-ptr!]
 			p2		[int-ptr!]
-			len		[integer!]
+			i		[integer!]
 			c		[integer!]
 			tmp		[integer!]
 	][
 		s1: GET_BUFFER(big1)
 		s2: GET_BUFFER(big2)
 		p2: as int-ptr! s2/offset
-
-		len: either big1/used > big2/used [
-			big1/used
-		][
-			big2/used
-		]
 
 		big: make-at stack/push* 1
 		copy big1 big
@@ -544,7 +541,8 @@ bignum: context [
 		p: as int-ptr! s/offset
 
 		c: 0
-		loop len [
+		i: 0
+		loop big2/used [
 			tmp: p2/1
 			p/1: p/1 + c
 			c: as integer! (uint-less p/1  c)
@@ -552,21 +550,24 @@ bignum: context [
 			c: c + as integer! (uint-less p/1 tmp)
 			p: p + 1
 			p2: p2 + 1
+			i: i + 1
 		]
 
 		while [c > 0][
-			if (len * 4) >= s/size [
-				grow big (len + 1)
+			if (i * 4) >= s/size [
+				grow big (i + 1)
 				s: GET_BUFFER(big)
 				p: as int-ptr! s/offset
-				p: p + len
+				p: p + i
 			]
 			p/1: p/1 + c
 			c: as integer! (uint-less p/1 c)
-			len: len + 1
+			i: i + 1
 			p: p + 1
 		]
-		big/used: len
+		if big/used < i [
+			big/used: i
+		]
 		copy big ret
 	]
 
@@ -1182,7 +1183,7 @@ bignum: context [
 		
 		shrink Z
 		copy Z Q
-		Q/sign: A/sign  * B/sign
+		Q/sign: A/sign * B/sign
 		
 		right-shift X k
 		X/sign: A/sign
@@ -1408,13 +1409,13 @@ bignum: context [
 	add*: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/add"]]
 
-		do-math OP_ADD
+		as red-value! do-math OP_ADD
 	]
 	
 	divide: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/divide"]]
 
-		do-math OP_DIV
+		as red-value! do-math OP_DIV
 	]
 
 	multiply: func [return:	[red-value!]][
@@ -1425,7 +1426,7 @@ bignum: context [
 	subtract: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/subtract"]]
 
-		do-math OP_SUB
+		as red-value! do-math OP_SUB
 	]
 
 	negate: func [

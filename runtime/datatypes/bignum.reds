@@ -305,6 +305,7 @@ bignum: context [
 			big		[red-bignum!]
 			rem		[red-bignum!]
 			int		[red-integer!]
+			ret		[integer!]
 	][
 		left: as red-bignum! stack/arguments
 		right: left + 1
@@ -332,6 +333,12 @@ bignum: context [
 					OP_MUL [
 						int: as red-integer! right
 						mul-int left int/value big
+					]
+					OP_REM [
+						int: as red-integer! right
+						ret: 0
+						module-int :ret left int/value
+						lset big ret
 					]
 				]
 			]
@@ -1229,6 +1236,7 @@ bignum: context [
 		/local
 			Q		[red-bignum!]
 	][
+		;-- temp error
 		if (compare-int B 0) < 0 [
 			fire [TO_ERROR(math zero-divide)]
 			0								;-- pass the compiler's type-checking
@@ -1237,6 +1245,74 @@ bignum: context [
 		
 		Q: make-at stack/push* 1
 		div Q R A B
+		
+		if (compare-int R 0) < 0 [
+			add R B R
+		]
+		
+		if (compare R B) >= 0 [
+			sub R B R
+		]
+		
+		return true
+	]
+
+	module-int: func [
+		r	 		[int-ptr!]
+		A	 		[red-bignum!]
+		b	 		[integer!]
+		return:	 	[logic!]
+		/local
+			s	 	[series!]
+			p		[int-ptr!]
+			x		[integer!]
+			y		[integer!]
+			z		[integer!]
+	][
+		;-- temp error
+		if b <= 0 [
+			fire [TO_ERROR(math zero-divide)]
+			0								;-- pass the compiler's type-checking
+			return false
+		]
+		
+		s: GET_BUFFER(A)
+		p: as int-ptr! s/offset
+		
+		if b = 1 [
+			r/1: 0
+			return true
+		]
+		
+		if b = 2 [
+			r/1: p/1 and 1
+			return true
+		]
+		
+		y: 0
+		p: p + A/used
+		loop A/used [
+			x: p/1
+			y: (y << biLH) or (x >>> biLH)
+			z: uint-div y b
+			y: y - (z * b)
+			
+			x: x << biLH
+			y: (y << biLH) or (x >>> biLH)
+			z: uint-div y b
+			y: y - (z * b)
+			
+			p: p - 1
+		]
+		
+		if all [
+			A/sign < 0
+			y <> 0
+		][
+			y: b - y
+		]
+		
+		r/1: y
 		return true
 	]
 
@@ -1290,7 +1366,7 @@ bignum: context [
 	]
 
 	;--- Actions ---
-
+	
 	make: func [
 		proto	 	[red-value!]
 		spec	 	[red-value!]
@@ -1301,7 +1377,6 @@ bignum: context [
 			big	 	[red-bignum!]
 			s	 	[series!]
 			sbin	[series!]
-			p		[int-ptr!]
 			pbig	[byte-ptr!]
 			head	[byte-ptr!]
 			tail	[byte-ptr!]
@@ -1314,16 +1389,7 @@ bignum: context [
 			TYPE_INTEGER [
 				int: as red-integer! spec
 				big: make-at stack/push* 1
-				big/used: 1
-				s: GET_BUFFER(big)
-				p: as int-ptr! s/offset
-				p/1: either int/value >= 0 [
-					big/sign: 1
-					int/value
-				][
-					big/sign: -1
-					0 - int/value
-				]
+				lset big int/value
 			]
 			TYPE_BINARY [
 				bin: as red-binary! spec
@@ -1333,10 +1399,7 @@ bignum: context [
 				size: as-integer tail - head
 				either size = 0 [
 					big: make-at stack/push* 1
-					big/used: 1
-					s: GET_BUFFER(big)
-					p: as int-ptr! s/offset
-					p/1: 0
+					lset big 0
 				][
 					len: size / 4
 					if size % 4 <> 0 [

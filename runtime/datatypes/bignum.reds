@@ -1365,6 +1365,35 @@ bignum: context [
 		compare big1 big
 	]
 
+	;--- Special Functions
+	
+	montg-init: func [
+		mm	 		[int-ptr!]
+		N			[red-bignum!]
+		/local
+			x		[integer!]
+			m0		[integer!]
+			i		[integer!]
+			s	 	[series!]
+			p		[int-ptr!]
+	][
+		s: GET_BUFFER(N)
+		p: as int-ptr! s/offset
+		
+		m0: p/1
+		
+		x: m0
+		x: x + (((m0 + 2) and 4) << 1)
+		
+		i: biL
+		while [i >= 8] [
+			x: x * (2 - (m0 * x))
+			i: i / 2
+		]
+		
+		mm/1: 1 - x
+	]
+
 	;--- Actions ---
 	
 	make: func [

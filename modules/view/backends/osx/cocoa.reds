@@ -83,11 +83,6 @@ NSRect!: alias struct! [
 	h		[float32!]
 ]
 
-NSAppDelegate!: alias struct! [
-	isa		[integer!]
-	window	[integer!]
-]
-
 CGPoint!: alias struct! [
 	x		[float32!]
 	y		[float32!]

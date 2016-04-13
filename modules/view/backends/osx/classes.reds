@@ -52,7 +52,7 @@ button-click: func [
 		state	[integer!]
 		change? [logic!]
 ][
-	make-event self 0 0 EVT_CLICK
+	make-event self 0 EVT_CLICK
 	values: get-face-values self
 	w: as red-word! values + FACE_OBJ_TYPE
 	type: symbol/resolve w/symbol
@@ -71,13 +71,13 @@ button-click: func [
 			bool/value: as logic! state
 			bool/value <> change?
 		]
-		if change? [make-event self 0 0 EVT_CHANGE]
+		if change? [make-event self 0 EVT_CHANGE]
 	]
 ]
 
 will-finish: func [
 	[cdecl]
-	self	[NSAppDelegate!]
+	self	[integer!]
 	cmd		[integer!]
 	notify	[integer!]
 ][
@@ -86,13 +86,24 @@ will-finish: func [
 
 destroy-app: func [
 	[cdecl]
-	self	[NSAppDelegate!]
+	self	[integer!]
 	cmd		[integer!]
 	app		[integer!]
 	return: [logic!]
 ][
 	objc_msgSend [NSApp sel_getUid "stop:" 0]
 	no
+]
+
+win-will-close: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notify	[integer!]
+	/local
+		res [integer!]
+][
+	res: make-event self 0 EVT_CLOSE
 ]
 
 paint-background: func [
@@ -140,6 +151,7 @@ add-base-handler: func [class [integer!]][
 add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
 	class_addMethod class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
+	class_addMethod class sel_getUid "windowWillClose:" as-integer :win-will-close "v12@0:4@8"
 ]
 
 add-button-handler: func [class [integer!]][
@@ -182,4 +194,5 @@ register-classes: does [
 	make-super-class "RedBase"			"NSView"		as-integer :add-base-handler	yes
 	make-super-class "RedWindow"		"NSWindow"		as-integer :add-window-handler	yes
 	make-super-class "RedButton"		"NSButton"		as-integer :add-button-handler	yes
+	make-super-class "RedTextField"		"NSTextField"	0	yes
 ]

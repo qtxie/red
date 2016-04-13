@@ -181,7 +181,6 @@ decode-down-flags: func [
 
 make-event: func [
 	view	[integer!]
-	msg		[integer!]
 	flags	[integer!]
 	evt		[integer!]
 	return: [integer!]

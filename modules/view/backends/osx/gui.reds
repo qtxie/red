@@ -63,6 +63,21 @@ get-face-flags: func [
 	0
 ]
 
+face-handle?: func [
+	face	[red-object!]
+	return: [handle!]									;-- returns NULL is no handle
+	/local
+		state [red-block!]
+		int	  [red-integer!]
+][
+	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
+	if TYPE_OF(state) = TYPE_BLOCK [
+		int: as red-integer! block/rs-head state
+		if TYPE_OF(int) = TYPE_INTEGER [return as handle! int/value]
+	]
+	null
+]
+
 get-face-handle: func [
 	face	[red-object!]
 	return: [handle!]
@@ -131,7 +146,7 @@ free-handles: func [
 		pane   [red-block!]
 		state  [red-value!]
 		sym	   [integer!]
-		dc	   [integer!]
+		handle [integer!]
 ][
 	values: get-face-values hWnd
 	type: as red-word! values + FACE_OBJ_TYPE
@@ -142,7 +157,8 @@ free-handles: func [
 		face: as red-object! block/rs-head pane
 		tail: as red-object! block/rs-tail pane
 		while [face < tail][
-			;@@ TBD
+			handle: as-integer face-handle? face
+			if handle <> 0 [free-handles handle]
 			face: face + 1
 		]
 	]
@@ -332,6 +348,8 @@ init-window: func [
 	objc_msgSend [window sel_getUid "makeKeyAndOrderFront:" 0]
 	objc_msgSend [window sel_getUid "makeMainWindow"]
 
+	objc_msgSend [window sel_getUid "setDelegate:" window]
+
 	objc_msgSend [NSApp sel_getUid "setActivationPolicy:" 0]
 	objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
 ]
@@ -393,6 +411,8 @@ OS-make-view: func [
 	sym: 	  symbol/resolve type/symbol
 
 	case [
+		sym = text [class: "RedTextField"]
+		sym = field [class: "RedTextField"]
 		sym = button [class: "RedButton"]
 		sym = check [
 			class: "RedButton"
@@ -430,6 +450,12 @@ OS-make-view: func [
 	]
 
 	case [
+		sym = text [
+			objc_msgSend [obj sel_getUid "setEditable:" false]
+			objc_msgSend [obj sel_getUid "setBordered:" false]
+			objc_msgSend [obj sel_getUid "setDrawsBackground:" false]
+			objc_msgSend [obj sel_getUid "setStringValue:" CFString(caption)]
+		]
 		any [sym = button sym = check sym = radio][
 			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]
 			objc_msgSend [obj sel_getUid "setTitle:" CFString(caption)]
@@ -583,7 +609,6 @@ OS-destroy-view: func [
 	
 	obj: as red-object! values + FACE_OBJ_PARA
 	;if TYPE_OF(obj) = TYPE_OBJECT [unlink-sub-obj face obj PARA_OBJ_PARENT]
-	
 ]
 
 OS-update-facet: func [

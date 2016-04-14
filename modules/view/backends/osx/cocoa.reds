@@ -70,6 +70,14 @@ Red/System [
 #define kCGLineCapRound				1
 #define kCGLineCapSquare			2
 
+#define NSASCIIStringEncoding		1
+#define NSUTF8StringEncoding		4
+#define NSISOLatin1StringEncoding	5
+#define NSWindowsCP1251StringEncoding	11
+#define NSWindowsCP1252StringEncoding	12
+#define NSWindowsCP1250StringEncoding	15
+#define NSUTF16LittleEndianStringEncoding	94000100h
+
 #define IVAR_RED_FACE	"red-face"
 #define kCFStringEncodingUTF8	08000100h
 #define CFString(cStr)	[CFStringCreateWithCString 0 cStr kCFStringEncodingUTF8]

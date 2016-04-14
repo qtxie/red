@@ -75,11 +75,46 @@ button-click: func [
 	]
 ]
 
+text-did-change: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+	/local
+		text [integer!]
+		size [integer!]
+		str	 [red-string!]
+		face [red-object!]
+		out	 [c-string!]
+][
+	text: objc_msgSend [self sel_getUid "stringValue"]
+	size: objc_msgSend [text sel_getUid "length"]
+	if size >= 0 [
+		str: as red-string! (get-face-values self) + FACE_OBJ_TEXT
+		if TYPE_OF(str) <> TYPE_STRING [
+			string/make-at as red-value! str size UCS-2
+		]
+		if size = 0 [
+			string/rs-reset str
+			exit
+		]
+		out: unicode/get-cache str size + 1 * 4			;-- account for surrogate pairs and terminal NUL
+		objc_msgSend [text sel_getUid "getCString:maxLength:encoding:" out size + 1 * 2 NSUTF16LittleEndianStringEncoding]
+		unicode/load-utf16 null size str
+
+		face: push-face self
+		if TYPE_OF(face) = TYPE_OBJECT [
+			ownership/bind as red-value! str face _text
+		]
+		stack/pop 1
+	]
+]
+
 will-finish: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
-	notify	[integer!]
+	notif	[integer!]
 ][
 	0
 ]
@@ -99,7 +134,7 @@ win-will-close: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
-	notify	[integer!]
+	notif	[integer!]
 	/local
 		res [integer!]
 ][
@@ -158,6 +193,10 @@ add-button-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "button-click:" as-integer :button-click "v@:@"
 ]
 
+add-text-field-handler: func [class [integer!]][
+	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
+]
+
 add-app-delegate: func [class [integer!]][
 	class_addMethod class sel_getUid "applicationWillFinishLaunching:" as-integer :will-finish "v12@0:4@8"
 	class_addMethod class sel_getUid "applicationShouldTerminateAfterLastWindowClosed:" as-integer :destroy-app "B12@0:4@8"
@@ -194,5 +233,5 @@ register-classes: does [
 	make-super-class "RedBase"			"NSView"		as-integer :add-base-handler	yes
 	make-super-class "RedWindow"		"NSWindow"		as-integer :add-window-handler	yes
 	make-super-class "RedButton"		"NSButton"		as-integer :add-button-handler	yes
-	make-super-class "RedTextField"		"NSTextField"	0	yes
+	make-super-class "RedTextField"		"NSTextField"	as-integer :add-text-field-handler	yes
 ]

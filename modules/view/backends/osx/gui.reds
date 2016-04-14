@@ -325,7 +325,7 @@ make-rect: func [
 
 init-window: func [
 	window	[integer!]
-	title	[c-string!]
+	title	[integer!]
 	rect	[NSRect!]
 	/local
 		view [integer!]
@@ -343,7 +343,7 @@ init-window: func [
 	view: objc_msgSend [view sel_getUid "initWithFrame:" rect/x rect/y rect/w rect/h]
 	objc_msgSend [window sel_getUid "setContentView:" view]
 
-	objc_msgSend [window sel_getUid "setTitle:" CFString(title)]
+	if title <> 0 [objc_msgSend [window sel_getUid "setTitle:" title]]
 	objc_msgSend [window sel_getUid "becomeFirstResponder"]
 	objc_msgSend [window sel_getUid "makeKeyAndOrderFront:" 0]
 	objc_msgSend [window sel_getUid "makeMainWindow"]
@@ -386,7 +386,7 @@ OS-make-view: func [
 		sym		  [integer!]
 		id		  [integer!]
 		class	  [c-string!]
-		caption   [c-string!]
+		caption   [integer!]
 		len		  [integer!]
 		obj		  [integer!]
 		rc		  [NSRect!]
@@ -440,9 +440,9 @@ OS-make-view: func [
 	;-- extra initialization
 	caption: either TYPE_OF(str) = TYPE_STRING [
 		len: -1
-		unicode/to-utf8 str :len
+		CFString((unicode/to-utf8 str :len))
 	][
-		null
+		0
 	]
 	rc: make-rect offset/x offset/y size/x size/y
 	if sym <> window [
@@ -454,11 +454,17 @@ OS-make-view: func [
 			objc_msgSend [obj sel_getUid "setEditable:" false]
 			objc_msgSend [obj sel_getUid "setBordered:" false]
 			objc_msgSend [obj sel_getUid "setDrawsBackground:" false]
-			objc_msgSend [obj sel_getUid "setStringValue:" CFString(caption)]
+			if caption <> 0 [objc_msgSend [obj sel_getUid "setStringValue:" caption]]
+		]
+		sym = field [
+			id: objc_msgSend [obj sel_getUid "cell"]
+			objc_msgSend [id sel_getUid "setWraps:" no]
+			objc_msgSend [id sel_getUid "setScrollable:" yes]
+			if caption <> 0 [objc_msgSend [obj sel_getUid "setStringValue:" caption]]
 		]
 		any [sym = button sym = check sym = radio][
 			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]
-			objc_msgSend [obj sel_getUid "setTitle:" CFString(caption)]
+			if caption <> 0 [objc_msgSend [obj sel_getUid "setTitle:" caption]]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]
 			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
 			if sym <> button [

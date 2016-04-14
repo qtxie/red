@@ -175,6 +175,9 @@ tagSIZE: alias struct! [
 			encoding	[integer!]
 			return:		[integer!]
 		]
+		CFRelease: "CFRelease" [
+			cf			[integer!]
+		]
 	]
 	"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics" cdecl [
 		CGContextSetRGBStrokeColor: "CGContextSetRGBStrokeColor" [

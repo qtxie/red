@@ -323,6 +323,36 @@ make-rect: func [
     r
 ]
 
+change-text: func [
+	hWnd	[integer!]
+	values	[red-value!]
+	type	[integer!]
+	/local
+		len  [integer!]
+		txt  [integer!]
+		cstr [c-string!]
+		str  [red-string!]
+][
+	str: as red-string! values + FACE_OBJ_TEXT
+	cstr: switch TYPE_OF(str) [
+		TYPE_STRING [len: -1 unicode/to-utf8 str :len]
+		TYPE_NONE	[""]
+		default		[null]									;@@ Auto-convert?
+	]
+	unless null? cstr [
+		txt: CFString(cstr)
+		case [
+			any [type = field type = text][
+				objc_msgSend [hWnd sel_getUid "setStringValue:" txt]
+			]
+			true [
+				objc_msgSend [hWnd sel_getUid "setTitle:" txt]
+			]
+		]
+		CFRelease txt
+	]
+]
+
 init-window: func [
 	window	[integer!]
 	title	[integer!]
@@ -488,6 +518,7 @@ OS-make-view: func [
 		objc_msgSend [obj sel_getUid "release"]
 	]
 
+	if caption <> 0 [CFRelease caption]
 	stack/unwind
 	obj
 ]
@@ -528,9 +559,9 @@ OS-update-view: func [
 	;if flags and FACET_FLAG_SIZE <> 0 [
 	;	change-size hWnd as red-pair! values + FACE_OBJ_SIZE type
 	;]
-	;if flags and FACET_FLAG_TEXT <> 0 [
-	;	change-text hWnd values type
-	;]
+	if flags and FACET_FLAG_TEXT <> 0 [
+		change-text hWnd values type
+	]
 	;if flags and FACET_FLAG_DATA <> 0 [
 	;	change-data	as handle! hWnd values
 	;]

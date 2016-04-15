@@ -263,4 +263,5 @@ register-classes: does [
 	make-super-class "RedButton"		"NSButton"		as-integer :add-button-handler	yes
 	make-super-class "RedSlider"		"NSSlider"		as-integer :add-slider-handler	yes
 	make-super-class "RedTextField"		"NSTextField"	as-integer :add-text-field-handler	yes
+	make-super-class "RedBox"			"NSBox"			0	yes
 ]

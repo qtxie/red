@@ -29,6 +29,14 @@ Red/System [
 #define NSRadioButton				4
 #define NSMomentaryPushInButton		7
 
+#define NSNoTitle					0
+#define NSAboveTop					1
+#define NSAtTop						2
+#define NSBelowTop					3
+#define NSAboveBottom				4
+#define NSAtBottom					5
+#define NSBelowBottom				6
+
 #define NSLeftMouseDown				1
 #define NSLeftMouseUp				2
 #define NSRightMouseDown			3

@@ -353,12 +353,30 @@ change-text: func [
 	]
 ]
 
+check-type?: func [
+	obj		[integer!]
+	name	[c-string!]
+	return: [logic!]
+][
+	(object_getClass obj) = objc_getClass name
+]
+
+set-content-view: func [
+	obj		[integer!]
+	/local
+		rect [NSRect!]
+		view [integer!]
+][
+	view: objc_msgSend [objc_getClass "RedView" sel_getUid "alloc"]
+	rect: make-rect 0 0 0 0
+	view: objc_msgSend [view sel_getUid "initWithFrame:" rect/x rect/y rect/w rect/h]
+	objc_msgSend [obj sel_getUid "setContentView:" view]
+]
+
 init-window: func [
 	window	[integer!]
 	title	[integer!]
 	rect	[NSRect!]
-	/local
-		view [integer!]
 ][
 	window: objc_msgSend [
 		window
@@ -368,10 +386,7 @@ init-window: func [
 		2 0
 	]
 
-	view: objc_msgSend [objc_getClass "RedView" sel_getUid "alloc"]
-	rect: make-rect 0 0 0 0
-	view: objc_msgSend [view sel_getUid "initWithFrame:" rect/x rect/y rect/w rect/h]
-	objc_msgSend [window sel_getUid "setContentView:" view]
+	set-content-view window
 
 	if title <> 0 [objc_msgSend [window sel_getUid "setTitle:" title]]
 	objc_msgSend [window sel_getUid "becomeFirstResponder"]
@@ -456,6 +471,7 @@ OS-make-view: func [
 		sym = window [class: "RedWindow"]
 		sym = base	 [class: "RedBase"]
 		sym = slider [class: "RedSlider"]
+		sym = group-box [class: "RedBox"]
 		true [											;-- search in user-defined classes
 			fire [TO_ERROR(script face-type) type]
 		]
@@ -515,6 +531,14 @@ OS-make-view: func [
 			objc_msgSend [obj sel_getUid "setFloatValue:" flt]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]
 			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "slider-change:"]
+		]
+		sym = group-box [
+			set-content-view obj
+			either zero? caption [
+				objc_msgSend [obj sel_getUid "setTitlePosition:" NSNoTitle]
+			][
+				objc_msgSend [obj sel_getUid "setTitle:" caption]
+			]
 		]
 		true [0]
 	]

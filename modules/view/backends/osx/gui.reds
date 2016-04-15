@@ -270,8 +270,8 @@ get-flags: func [
 
 get-position-value: func [
 	pos		[red-float!]
-	maximun [integer!]
-	return: [integer!]
+	maximun [float!]
+	return: [float!]
 	/local
 		f	[float!]
 ][
@@ -280,9 +280,9 @@ get-position-value: func [
 		TYPE_OF(pos) = TYPE_FLOAT
 		TYPE_OF(pos) = TYPE_PERCENT
 	][
-		f: pos/value * (integer/to-float maximun)
+		f: pos/value *  maximun
 	]
-	float/to-integer f
+	f
 ]
 
 get-screen-size: func [
@@ -391,6 +391,7 @@ OS-make-view: func [
 		obj		  [integer!]
 		rc		  [NSRect!]
 		view	  [integer!]
+		flt		  [float!]
 ][
 	stack/mark-func words/_body
 
@@ -424,6 +425,7 @@ OS-make-view: func [
 		]
 		sym = window [class: "RedWindow"]
 		sym = base	 [class: "RedBase"]
+		sym = slider [class: "RedSlider"]
 		true [											;-- search in user-defined classes
 			fire [TO_ERROR(script face-type) type]
 		]
@@ -475,6 +477,14 @@ OS-make-view: func [
 		sym = window [
 			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y
 			init-window obj caption rc
+		]
+		sym = slider [
+			flt: integer/to-float either size/x > size/y [size/x][size/y]
+			objc_msgSend [obj sel_getUid "setMaxValue:" flt]
+			flt: get-position-value as red-float! data flt
+			objc_msgSend [obj sel_getUid "setFloatValue:" flt]
+			objc_msgSend [obj sel_getUid "setTarget:" obj]
+			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "slider-change:"]
 		]
 		true [0]
 	]

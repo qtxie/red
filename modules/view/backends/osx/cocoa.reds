@@ -84,6 +84,11 @@ Red/System [
 
 #define handle! [pointer! [integer!]]
 
+objc_super!: alias struct! [
+	receiver	[integer!]
+	class		[integer!]
+]
+
 NSRect!: alias struct! [
 	x		[float32!]
 	y		[float32!]
@@ -157,11 +162,17 @@ tagSIZE: alias struct! [
 			types		[c-string!]
 			return:		[integer!]
 		]
+		class_getSuperclass: "class_getSuperclass" [
+			cls			[integer!]
+			return:		[integer!]
+		]
 		object_getClass: "object_getClass" [
 			id			[integer!]
 			return:		[integer!]
 		]
 		objc_msgSend: "objc_msgSend" [[variadic] return: [integer!]]
+		objc_msgSendSuper: "objc_msgSendSuper" [[variadic] return: [integer!]]
+		objc_msgSend_fpret: "objc_msgSend_fpret" [[variadic] return: [float!]]
 		;objc_msgSend_stret: "objc_msgSend_stret" [
 		;	ret			[int-ptr!]
 		;	obj			[integer!]

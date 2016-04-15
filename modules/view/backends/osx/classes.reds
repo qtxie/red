@@ -75,6 +75,30 @@ button-click: func [
 	]
 ]
 
+slider-change: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	sender	[integer!]
+	/local
+		pos		[red-float!]
+		val		[float!]
+		divisor [float!]
+][
+	pos: (as red-float! get-face-values self) + FACE_OBJ_DATA
+
+	if all [
+		TYPE_OF(pos) <> TYPE_FLOAT
+		TYPE_OF(pos) <> TYPE_PERCENT
+	][
+		percent/rs-make-at as red-value! pos 0.0
+	]
+	val: objc_msgSend_fpret [self sel_getUid "floatValue"]
+	divisor: objc_msgSend_fpret [self sel_getUid "maxValue"]
+	pos/value: val / divisor
+	make-event self 0 EVT_CHANGE
+]
+
 text-did-change: func [
 	[cdecl]
 	self	[integer!]
@@ -193,6 +217,10 @@ add-button-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "button-click:" as-integer :button-click "v@:@"
 ]
 
+add-slider-handler: func [class [integer!]][
+	class_addMethod class sel_getUid "slider-change:" as-integer :slider-change "v@:@"
+]
+
 add-text-field-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
 ]
@@ -233,5 +261,6 @@ register-classes: does [
 	make-super-class "RedBase"			"NSView"		as-integer :add-base-handler	yes
 	make-super-class "RedWindow"		"NSWindow"		as-integer :add-window-handler	yes
 	make-super-class "RedButton"		"NSButton"		as-integer :add-button-handler	yes
+	make-super-class "RedSlider"		"NSSlider"		as-integer :add-slider-handler	yes
 	make-super-class "RedTextField"		"NSTextField"	as-integer :add-text-field-handler	yes
 ]

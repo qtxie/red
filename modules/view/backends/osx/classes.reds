@@ -99,22 +99,29 @@ slider-change: func [
 	make-event self 0 EVT_CHANGE
 ]
 
-text-did-change: func [
-	[cdecl]
-	self	[integer!]
-	cmd		[integer!]
-	notif	[integer!]
+set-selected: func [
+	obj [integer!]
+	idx [integer!]
 	/local
-		text [integer!]
+		int [red-integer!]
+][
+	int: as red-integer! (get-face-values obj) + FACE_OBJ_SELECTED
+	int/header: TYPE_INTEGER
+	int/value: idx
+]
+
+set-text: func [
+	obj  [integer!]
+	text [integer!]
+	/local
 		size [integer!]
 		str	 [red-string!]
 		face [red-object!]
 		out	 [c-string!]
 ][
-	text: objc_msgSend [self sel_getUid "stringValue"]
 	size: objc_msgSend [text sel_getUid "length"]
 	if size >= 0 [
-		str: as red-string! (get-face-values self) + FACE_OBJ_TEXT
+		str: as red-string! (get-face-values obj) + FACE_OBJ_TEXT
 		if TYPE_OF(str) <> TYPE_STRING [
 			string/make-at as red-value! str size UCS-2
 		]
@@ -126,11 +133,39 @@ text-did-change: func [
 		objc_msgSend [text sel_getUid "getCString:maxLength:encoding:" out size + 1 * 2 NSUTF16LittleEndianStringEncoding]
 		unicode/load-utf16 null size str
 
-		face: push-face self
+		face: push-face obj
 		if TYPE_OF(face) = TYPE_OBJECT [
 			ownership/bind as red-value! str face _text
 		]
 		stack/pop 1
+	]
+]
+
+text-did-change: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+][
+	set-text self objc_msgSend [self sel_getUid "stringValue"]
+	make-event self 0 EVT_CHANGE
+]
+
+selection-change: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+	/local
+		idx [integer!]
+		res [integer!]
+][
+	res: make-event self 0 EVT_SELECT
+	idx: objc_msgSend [self sel_getUid "indexOfSelectedItem"]
+	set-selected self idx + 1
+	set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" idx]
+	if res = EVT_DISPATCH [
+		make-event self 0 EVT_CHANGE
 	]
 ]
 
@@ -225,6 +260,11 @@ add-text-field-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
 ]
 
+add-combo-box-handler: func [class [integer!]][
+	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
+	class_addMethod class sel_getUid "comboBoxSelectionDidChange:" as-integer :selection-change "v@:@"
+]
+
 add-app-delegate: func [class [integer!]][
 	class_addMethod class sel_getUid "applicationWillFinishLaunching:" as-integer :will-finish "v12@0:4@8"
 	class_addMethod class sel_getUid "applicationShouldTerminateAfterLastWindowClosed:" as-integer :destroy-app "B12@0:4@8"
@@ -262,6 +302,7 @@ register-classes: does [
 	make-super-class "RedWindow"		"NSWindow"		as-integer :add-window-handler	yes
 	make-super-class "RedButton"		"NSButton"		as-integer :add-button-handler	yes
 	make-super-class "RedSlider"		"NSSlider"		as-integer :add-slider-handler	yes
-	make-super-class "RedTextField"		"NSTextField"	as-integer :add-text-field-handler	yes
+	make-super-class "RedTextField"		"NSTextField"	as-integer :add-text-field-handler yes
+	make-super-class "RedComboBox"		"NSComboBox"	as-integer :add-combo-box-handler yes
 	make-super-class "RedBox"			"NSBox"			0	yes
 ]

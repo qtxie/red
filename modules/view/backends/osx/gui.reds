@@ -373,6 +373,51 @@ set-content-view: func [
 	objc_msgSend [obj sel_getUid "setContentView:" view]
 ]
 
+init-combo-box: func [
+	combo		[integer!]
+	data		[red-block!]
+	caption		[integer!]
+	selected	[red-integer!]
+	drop-list?	[logic!]
+	/local
+		str	 [red-string!]
+		tail [red-string!]
+		len  [integer!]
+		val  [integer!]
+][
+	if any [
+		TYPE_OF(data) = TYPE_BLOCK
+		TYPE_OF(data) = TYPE_HASH
+		TYPE_OF(data) = TYPE_MAP
+	][
+		str:  as red-string! block/rs-head data
+		tail: as red-string! block/rs-tail data
+		
+		objc_msgSend [combo sel_getUid "removeAllItems"]
+		
+		while [str < tail][
+			if TYPE_OF(str) = TYPE_STRING [
+				len: -1
+				val: CFString((unicode/to-utf8 str :len))
+				objc_msgSend [combo sel_getUid "addItemWithObjectValue:" val]
+			]
+			str: str + 1
+		]
+	]
+	if TYPE_OF(selected) = TYPE_INTEGER [
+		objc_msgSend [combo sel_getUid "selectItemAtIndex:" selected/value - 1]
+		val: objc_msgSend [combo sel_getUid "objectValueOfSelectedItem"]
+		objc_msgSend [combo sel_getUid "setObjectValue:" val]
+	]
+	either drop-list? [
+		objc_msgSend [combo sel_getUid "setEditable:" false]
+	][
+		if caption <> 0 [
+			objc_msgSend [combo sel_getUid "setStringValue:" caption]
+		]
+	]
+]
+
 init-window: func [
 	window	[integer!]
 	title	[integer!]
@@ -469,7 +514,14 @@ OS-make-view: func [
 			flags: NSRadioButton
 		]
 		sym = window [class: "RedWindow"]
-		sym = base	 [class: "RedBase"]
+		any [
+			sym = panel
+			sym = base
+		][class: "RedBase"]
+		any [
+			sym = drop-down
+			sym = drop-list
+		][class: "RedComboBox"]
 		sym = slider [class: "RedSlider"]
 		sym = group-box [class: "RedBox"]
 		true [											;-- search in user-defined classes
@@ -539,6 +591,13 @@ OS-make-view: func [
 			][
 				objc_msgSend [obj sel_getUid "setTitle:" caption]
 			]
+		]
+		any [
+			sym = drop-down
+			sym = drop-list
+		][
+			init-combo-box obj data caption selected sym = drop-list
+			objc_msgSend [obj sel_getUid "setDelegate:" obj]
 		]
 		true [0]
 	]

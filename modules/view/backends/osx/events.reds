@@ -199,28 +199,18 @@ make-event: func [
 	state: EVT_DISPATCH
 
 	switch evt [
-		EVT_OVER [0
-		]
-		EVT_KEY_DOWN [0
-		]
-		EVT_KEY_UP [0
-		]
-		EVT_KEY [0
-		]
-		EVT_SELECT [0
-		]
-		EVT_CHANGE [0
-		]
+		EVT_OVER [0]
+		EVT_KEY_DOWN [0]
+		EVT_KEY_UP [0]
+		EVT_KEY [0]
 		EVT_LEFT_DOWN
 		EVT_LEFT_UP
 		EVT_RIGHT_DOWN
 		EVT_RIGHT_UP
 		EVT_MIDDLE_DOWN
 		EVT_MIDDLE_UP
-		EVT_DBL_CLICK [0
-		]
-		EVT_CLICK [0
-		]
+		EVT_DBL_CLICK [0]
+		EVT_CLICK [0]
 		EVT_MENU [0]		;-- symbol ID of the menu
 		default	 [0]
 	]

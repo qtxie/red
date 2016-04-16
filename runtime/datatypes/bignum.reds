@@ -16,6 +16,7 @@ bignum: context [
 	biL:				ciL << 3		;-- bits in limb
 	biLH:				ciL << 2		;-- half bits in limb
 	BN_MAX_LIMB:		1024			;-- support 1024 * 32 bits
+	BN_WINDOW_SIZE:		6				;-- Maximum window size used for modular exponentiation
 
 	#define MULADDC_INIT [
 		s0: 0 s1: 0 b0: 0 b1: 0 r0: 0 r1: 0 rx: 0 ry: 0
@@ -1392,6 +1393,317 @@ bignum: context [
 		]
 		
 		mm/1: 1 - x
+	]
+	
+	;-- Montgomery multiplication: R = A * B * R^-1 mod NN
+	montg-mul: func [
+		A			[red-bignum!]
+		B			[red-bignum!]
+		NN			[red-bignum!]
+		mm			[integer!]
+		T			[red-bignum!]
+		R			[red-bignum!]
+		/local
+			i		[integer!]
+			n		[integer!]
+			m		[integer!]
+			u0		[integer!]
+			u1		[integer!]
+			d		[int-ptr!]
+			s	 	[series!]
+			p		[int-ptr!]
+			pa		[int-ptr!]
+			pb		[int-ptr!]
+			pn		[int-ptr!]
+			pr		[int-ptr!]
+	][
+		lset T 0
+		
+		s: GET_BUFFER(T)
+		d: as int-ptr! s/offset
+		s: GET_BUFFER(NN)
+		n: s/size
+		pn: as int-ptr! s/offset
+		s: GET_BUFFER(B)
+		pb: as int-ptr! s/offset
+		m: s/size
+		m: either m < n [m][n]
+		s: GET_BUFFER(A)
+		pa: as int-ptr! s/offset
+		
+		i: 0
+		loop n [
+			;-- T = (T + u0*B + u1*N) / 2^biL
+			p: pa + i
+			u0: p/1
+			u1: (d/1 + (u0 * pb/1)) * mm
+			
+			mul-hlp m pb d u0
+			mul-hlp n pn d u1
+			d/1: u0
+			d: d + 1
+			p: d + n + 1
+			p/1: 0
+			i: i + 1
+		]
+		
+		T/used: n + 1
+		shrink T
+		copy T R
+		s: GET_BUFFER(R)
+		pr: as int-ptr! s/offset
+		
+		either (absolute-compare R NN) >= 0 [
+			sub-hlp n pn pr
+		][
+			sub-hlp n pr pn
+		]
+		shrink R
+	]
+
+	;-- Montgomery reduction: R = A * R^-1 mod N
+	montg-reduction: func [
+		A			[red-bignum!]
+		N			[red-bignum!]
+		mm			[integer!]
+		T			[red-bignum!]
+		R			[red-bignum!]
+		/local
+			U		[red-bignum!]
+	][
+		U: make-at stack/push* 1
+		lset U 1
+		montg-mul A U N mm T R
+	]
+
+	W-Arr: as red-bignum! allocate (2 << BN_WINDOW_SIZE) * size? red-bignum!
+	
+	;-- Sliding-window exponentiation: X = A^E mod N
+	exp-mod: func [
+		A			[red-bignum!]
+		E			[red-bignum!]
+		N			[red-bignum!]
+		_RR			[red-bignum!]
+		X			[red-bignum!]
+		/local
+			ret		[integer!]
+			wbits	[integer!]
+			wsize	[integer!]
+			one		[integer!]
+			i		[integer!]
+			j		[integer!]
+			nblimbs	[integer!]
+			bufsize	[integer!]
+			nbits	[integer!]
+			ei		[integer!]
+			mm		[integer!]
+			state	[integer!]
+			neg		[logic!]
+			RR		[red-bignum!]
+			T		[red-bignum!]
+			W		[red-bignum!]
+			W1		[red-bignum!]
+			Apos	[red-bignum!]
+			s	 	[series!]
+			p		[int-ptr!]
+			pn		[int-ptr!]
+			pe		[int-ptr!]
+	][
+		one: 1
+		s: GET_BUFFER(N)
+		pn: as int-ptr! s/offset
+		
+		;-- temp error
+		if any [
+			(compare-int N 0) < 0
+			(pn/1 and 1) = 0
+		][
+			fire [TO_ERROR(math zero-divide)]
+			0								;-- pass the compiler's type-checking
+			exit
+		]
+		
+		if (compare-int E 0) < 0 [
+			fire [TO_ERROR(math zero-divide)]
+			0								;-- pass the compiler's type-checking
+			exit
+		]
+		
+		mm: 0
+		montg-init :mm N
+		RR: make-at stack/push* 1
+		lset RR 0
+		T: make-at stack/push* 1
+		lset T 0
+		Apos: make-at stack/push* 1
+		lset Apos 0
+		
+		i: 0
+		loop (2 << BN_WINDOW_SIZE) [
+			W: W-Arr + i
+			W/header: TYPE_BIGNUM
+			W/node:	alloc-series 16 4 0
+			lset W 0
+			i: i + 1
+		]
+		
+		i: bitlen E
+		wsize: either i > 671 [6][
+			either i > 239 [5][
+				either i > 79 [4][
+					either i > 23 [3][1]
+				]
+			]
+		]
+		if wsize > BN_WINDOW_SIZE [
+			wsize: BN_WINDOW_SIZE
+		]
+		
+		s: GET_BUFFER(N)
+		j: s/size + 1
+		grow X j
+		W: W-Arr + 1
+		grow W j
+		grow T j * 2
+		
+		neg: A/sign = -1
+		
+		if neg [
+			copy A Apos
+			Apos/sign: 1
+			A: Apos
+		]
+		
+		;-- If 1st call, pre-compute R^2 mod N
+		s: GET_BUFFER(_RR)
+		either (as integer! s/node) = 0 [
+			lset RR 1
+			s: GET_BUFFER(N)
+			left-shift RR s/size * 2 * biL
+			module RR N RR
+			copy RR _RR
+		][
+			copy _RR RR
+		]
+		
+		;-- W[1] = A * R^2 * R^-1 mod N = A * R mod N
+		W: W-Arr + 1
+		either (compare A N) >= 0 [
+			module A N W
+		][
+			copy A W
+		]
+		montg-mul W RR N mm T W
+
+	 	;-- X = R^2 * R^-1 mod N = R mod N
+		copy RR X
+		montg-reduction X N mm T X
+		
+		if wsize > 1 [
+			;-- W[1 << (wsize - 1)] = W[1] ^ (wsize - 1)
+			j: one << (wsize - 1)
+			s: GET_BUFFER(N)
+			W: W-Arr + j
+			W1: W-Arr + 1
+			grow W s/size + 1
+			copy W1 W
+			
+			loop wsize - 1 [
+				montg-mul W W N mm T W
+			]
+			
+			;-- W[i] = W[i - 1] * W[1]
+			i: j + 1
+			while [i < (one << wsize)][
+				W: W-Arr + i
+				W1: W-Arr + i - 1
+				s: GET_BUFFER(N)
+				grow W s/size + 1
+				copy W1 W
+				W1: W-Arr + 1
+				montg-mul W W1 N mm T W
+				i: i + 1
+			]
+		]
+		
+		s: GET_BUFFER(E)
+		pe: as int-ptr! s/offset
+		nblimbs: s/size
+	    bufsize: 0
+	    nbits: 0
+	    wbits: 0
+	    state: 0
+		
+		while [true][
+			if bufsize = 0 [
+				if nblimbs = 0 [
+					break
+				]
+				
+				nblimbs: nblimbs - 1
+				bufsize: 4 << 3
+			]
+			
+			bufsize: bufsize - 1
+			p: pe + nblimbs
+			ei: (p/1 >>> bufsize) and 1
+			
+			if all [
+				ei = 0
+				state = 0
+			][
+				continue
+			]
+			
+			if all [
+				ei = 0
+				state = 1
+			][
+				;-- out of window, square X
+				montg-mul X X N mm T X
+				continue
+			]
+			
+			;-- add ei to current window
+			state: 2
+			
+			nbits: nbits + 1
+			wbits: wbits or (ei << ( wsize - nbits))
+			
+			if nbits = wsize [
+				;-- X = X^wsize R^-1 mod N
+				loop wsize [
+					montg-mul X X N mm T X
+				]
+				
+				;-- X = X * W[wbits] R^-1 mod N
+				W: W-Arr + wbits
+				montg-mul X W N mm T X
+				state: state - 1
+				nbits: 0
+				wbits: 0
+			]
+		]
+		
+		;-- process the remaining bits
+		loop nbits [
+			montg-mul X X N mm T X
+			
+			wbits: wbits << 1
+			
+			if (wbits and (one << wsize)) <> 0 [
+				W: W-Arr + 1
+				montg-mul X W N mm T X
+			]
+		]
+		
+		;-- X = A^E * R * R^-1 mod N = A^E mod N
+		montg-reduction X N mm T X
+		
+		if neg [
+			X/sign: -1
+			add N X X
+		]
 	]
 
 	;--- Actions ---

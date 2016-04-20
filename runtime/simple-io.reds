@@ -1472,7 +1472,7 @@ simple-io: context [
 					]
 					objc_msgSend: "objc_msgSend" [[variadic] return: [integer!]]
 				]
-				"/System/Library/Frameworks/CFNetwork.framework/CFNetwork" cdecl [
+				"/System/Library/Frameworks/CoreServices.framework/CoreServices" cdecl [
 					__CFStringMakeConstantString: "__CFStringMakeConstantString" [
 						cStr		[c-string!]
 						return:		[integer!]

@@ -198,7 +198,7 @@ tagSIZE: alias struct! [
 			cf			[integer!]
 		]
 	]
-	"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics" cdecl [
+	"/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices" cdecl [
 		CGContextSetRGBStrokeColor: "CGContextSetRGBStrokeColor" [
 			c			[handle!]
 			red			[float32!]

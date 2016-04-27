@@ -12,6 +12,8 @@ Red/System [
 
 #define RTLD_LAZY	1
 
+#define NSAnyEventMask				-1
+
 #define NSUtilityWindowMask         16
 #define NSDocModalWindowMask        32
 #define NSBorderlessWindowMask      0

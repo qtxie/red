@@ -61,7 +61,6 @@ platform: context [
 
 	init-object-c: does [
 		dlopen "/System/Library/Frameworks/Foundation.framework/Versions/Current/Foundation" RTLD_LAZY
-		dlopen "/System/Library/Frameworks/AppKit.framework/Versions/Current/AppKit" RTLD_LAZY
 		true-value: objc_msgSend [objc_getClass "NSNumber" sel_getUid "numberWithBool:" 1]
 		id-alloc: sel_getUid "alloc"
 		id-init:  sel_getUid "init"

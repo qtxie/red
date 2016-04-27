@@ -212,6 +212,9 @@ make-event: func [
 		EVT_DBL_CLICK [0]
 		EVT_CLICK [0]
 		EVT_MENU [0]		;-- symbol ID of the menu
+		EVT_CLOSE [
+			exit-loop: exit-loop - 1
+		]
 		default	 [0]
 	]
 
@@ -233,11 +236,42 @@ do-events: func [
 	no-wait? [logic!]
 	return:  [logic!]
 	/local
-		state [integer!]
-		res	  [integer!]
-		msg?  [logic!]
+		msg?	[logic!]
+		pool	[integer!]
+		timeout [integer!]
+		event	[integer!]
 ][
 	msg?: no
-	objc_msgSend [NSApp sel_getUid "run"]	;@@ Will replace it with a custom event loop
+	timeout: either no-wait? [0][
+		exit-loop: exit-loop + 1
+		
+		objc_msgSend [NSApp sel_getUid "setActivationPolicy:" 0]
+		objc_msgSend [NSApp sel_getUid "finishLaunching"]
+		objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
+		objc_msgSend [objc_getClass "NSDate" sel_getUid "distantFuture"]	
+	]
+
+	;@@ Improve it!!!
+	while [exit-loop > 0][
+		pool: objc_msgSend [objc_getClass "NSAutoreleasePool" sel_getUid "alloc"]
+		objc_msgSend [pool sel_getUid "init"]
+
+		event: objc_msgSend [
+			NSApp sel_getUid "nextEventMatchingMask:untilDate:inMode:dequeue:"
+			NSAnyEventMask
+			timeout
+			NSDefaultRunLoopMode
+			true
+		]
+
+		if event <> 0 [
+			msg?: yes
+			;@@ preprocess
+			objc_msgSend [NSApp sel_getUid "sendEvent:" event]
+		]
+
+		objc_msgSend [pool sel_getUid "drain"]
+		if no-wait? [break]
+	]
 	msg?
 ]

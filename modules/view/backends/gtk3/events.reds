@@ -245,6 +245,7 @@ do-events: func [
 		msg? [logic!]
 ][
 	msg?: no
+	;@@ Improve it!!!
 	;@@ as we cannot access gapplication->priv->use_count
 	;@@ we use a global value to simulate it
 	unless no-wait? [exit-loop: exit-loop + 1]

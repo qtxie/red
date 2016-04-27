@@ -19,8 +19,10 @@ Red/System [
 
 #include %classes.reds
 
-NSApp:			0
+NSApp:					0
+NSDefaultRunLoopMode:	0
 
+exit-loop:		0
 log-pixels-x:	0
 log-pixels-y:	0
 screen-size-x:	0
@@ -173,7 +175,13 @@ init: func [
 		rect		[NSRect!]
 		pool		[integer!]
 		delegate	[integer!]
+		appkit		[integer!]
+		p-int		[int-ptr!]
 ][
+	appkit: red/platform/dlopen "/System/Library/Frameworks/AppKit.framework/Versions/Current/AppKit" RTLD_LAZY
+
+	p-int: red/platform/dlsym appkit "NSDefaultRunLoopMode"
+	NSDefaultRunLoopMode: p-int/value
 	NSApp: objc_msgSend [objc_getClass "NSApplication" sel_getUid "sharedApplication"]
 
 	pool: objc_msgSend [objc_getClass "NSAutoreleasePool" sel_getUid "alloc"]
@@ -439,9 +447,6 @@ init-window: func [
 	objc_msgSend [window sel_getUid "makeMainWindow"]
 
 	objc_msgSend [window sel_getUid "setDelegate:" window]
-
-	objc_msgSend [NSApp sel_getUid "setActivationPolicy:" 0]
-	objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
 ]
 
 OS-show-window: func [

@@ -32,6 +32,11 @@ Red/System [
 			flags		[integer!]
 			return:		[integer!]
 		]
+		dlsym: "dlsym" [
+			handle		[integer!]
+			symbol		[c-string!]
+			return:		[int-ptr!]
+		]
 		getcwd: "getcwd" [
 			buf		[byte-ptr!]
 			size	[integer!]

@@ -277,5 +277,13 @@ tagSIZE: alias struct! [
 		CGContextStrokePath: "CGContextStrokePath" [
 			c			[handle!]
 		]
+		CGContextDrawImage: "CGContextDrawImage" [
+			ctx			[integer!]
+			x			[float32!]
+			y			[float32!]
+			w			[float32!]
+			h			[float32!]
+			src			[integer!]
+		]
 	]
 ]

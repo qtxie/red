@@ -310,7 +310,6 @@ OS-image: context [
 		return:		[integer!]
 		/local
 			width	[integer!]
-			arbg	[integer!]
 	][
 		width: width? bitmap
 		GdipBitmapSetPixel bitmap index % width index / width color

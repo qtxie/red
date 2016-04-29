@@ -17,14 +17,10 @@ put system/codecs 'bmp context [
 	suffixes: [%.bmp]
 	
 	encode: routine [img [image!]][
-		#if OS = 'Windows [
-			stack/set-last as cell! image/encode img IMAGE_BMP
-		]
+		stack/set-last as cell! image/encode img IMAGE_BMP
 	]
 
 	decode: routine [data [any-type!]][
-		#if OS = 'Windows [
-			stack/set-last as cell! image/decode data
-		]
+		stack/set-last as cell! image/decode data
 	]
 ]

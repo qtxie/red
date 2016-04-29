@@ -49,7 +49,7 @@ red: context [
 	#switch OS [
 		Windows  [#include %platform/image-gdiplus.reds]
 		Syllable []
-		MacOSX	 []
+		MacOSX	 [#include %platform/image-quartz.reds]
 		FreeBSD  []
 		#default []
 	]
@@ -97,7 +97,8 @@ red: context [
 	#include %datatypes/tuple.reds
 	#include %datatypes/binary.reds
 	#if OS = 'Windows [#include %datatypes/image.reds]	;-- temporary
-	
+	#if OS = 'MacOSX  [#include %datatypes/image.reds]	;-- temporary
+
 	;-- Debugging helpers --
 	
 	#include %debug-tools.reds
@@ -172,6 +173,7 @@ red: context [
 		percent/init
 		tuple/init
 		#if OS = 'Windows [image/init]					;-- temporary
+		#if OS = 'MacOSX [image/init]					;-- temporary
 		
 		actions/init
 		
@@ -237,6 +239,7 @@ red: context [
 			percent/verbose:	verbosity
 			tuple/verbose:		verbosity
 			#if OS = 'Windows [image/verbose: verbosity]
+			#if OS = 'MacOSX [image/verbose: verbosity]
 
 			actions/verbose:	verbosity
 			natives/verbose:	verbosity

@@ -17,14 +17,10 @@ put system/codecs 'gif context [
 	suffixes: [%.gif]
 	
 	encode: routine [img [image!]][
-		#if OS = 'Windows [
-			stack/set-last as cell! image/encode img IMAGE_GIF
-		]
+		stack/set-last as cell! image/encode img IMAGE_GIF
 	]
 
 	decode: routine [data [any-type!]][
-		#if OS = 'Windows [
-			stack/set-last as cell! image/decode data
-		]
+		stack/set-last as cell! image/decode data
 	]
 ]

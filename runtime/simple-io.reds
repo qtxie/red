@@ -703,25 +703,6 @@ simple-io: context [
 			-1 <> _access path 0				;-- F_OK: 0
 		]
 	]
-
-	read-buffer: func [
-		file	[integer!]
-		buffer	[byte-ptr!]
-		size	[integer!]
-		return:	[integer!]
-		/local
-			read-sz [integer!]
-			res		[integer!]
-	][
-		#either OS = 'Windows [
-			read-sz: -1
-			res: ReadFile file buffer size :read-sz null
-			res: either zero? res [-1][1]
-		][
-			res: _read file buffer size
-		]
-		res
-	]
 	
 	close-file: func [
 		file	[integer!]
@@ -732,6 +713,47 @@ simple-io: context [
 		][
 			_close file
 		]
+	]
+
+	read-buffer: func [
+		filename [c-string!]
+		read-sz  [int-ptr!]						;-- the number of bytes read
+		unicode? [logic!]
+		return:	 [byte-ptr!]
+		/local
+			file	[integer!]
+			len		[integer!]
+			sz		[integer!]
+			res		[integer!]
+			size	[integer!]
+			buffer	[byte-ptr!]
+	][
+		unless unicode? [		;-- only command line args need to be checked
+			if filename/1 = #"^"" [filename: filename + 1]	;-- FIX: issue #1234
+			len: length? filename
+			if filename/len = #"^"" [filename/len: null-byte]
+		]
+		file: open-file filename RIO_READ unicode?
+		if file < 0 [return null]
+
+		size: file-size? file
+		if size <= 0 [
+			print-line "*** Warning: empty file"
+		]
+
+		buffer: allocate size
+		#either OS = 'Windows [
+			sz: 0
+			res: ReadFile file buffer size :sz null
+			res: either zero? res [-1][sz]
+		][
+			res: _read file buffer size
+		]
+		close-file file
+
+		if negative? res [free buffer buffer: null]
+		read-sz/value: res
+		buffer
 	]
 
 	lines-to-block: func [
@@ -770,31 +792,13 @@ simple-io: context [
 		return:	 [red-value!]
 		/local
 			buffer	[byte-ptr!]
-			file	[integer!]
 			size	[integer!]
 			val		[red-value!]
 			str		[red-string!]
-			len		[integer!]
 	][
-		unless unicode? [		;-- only command line args need to be checked
-			if filename/1 = #"^"" [filename: filename + 1]	;-- FIX: issue #1234
-			len: length? filename
-			if filename/len = #"^"" [filename/len: null-byte]
-		]
-		file: open-file filename RIO_READ unicode?
-		if file < 0 [return none-value]
-
-		size: file-size? file
-
-		if size <= 0 [
-			print-line "*** Warning: empty file"
-		]
-		
-		buffer: allocate size
-		len: read-buffer file buffer size
-		close-file file
-
-		if negative? len [return none-value]
+		size: 0
+		buffer: read-buffer filename :size unicode?
+		if null? buffer [return none-value]
 
 		val: as red-value! either binary? [
 			binary/load buffer size

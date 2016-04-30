@@ -371,8 +371,40 @@ OS-draw-image: func [
 		y		[integer!]
 		width	[integer!]
 		height	[integer!]
+		rc		[NSRect!]
+		bitmap	[integer!]
+		ty		[float32!]
 ][
-0
+	either null? start [x: 0 y: 0][x: start/x y: start/y]
+	case [
+		start = end [
+			width:  IMAGE_WIDTH(image/size)
+			height: IMAGE_HEIGHT(image/size)
+		]
+		start + 1 = end [					;-- two control points
+			width: end/x - x
+			height: end/y - y
+		]
+		start + 2 = end [0]					;@@ TBD three control points
+		true [0]							;@@ TBD four control points
+	]
+
+	bitmap: CGBitmapContextCreateImage as-integer image/node
+	rc: make-rect x y width height
+	ty: rc/y + rc/h
+	;-- flip coords
+	;; drawing an image or PDF by calling Core Graphics functions directly,
+	;; we must flip the CTM.
+	;; http://stackoverflow.com/questions/506622/cgcontextdrawimage-draws-image-upside-down-when-passed-uiimage-cgimage
+	CGContextTranslateCTM dc as float32! 0.0 ty
+	CGContextScaleCTM dc as float32! 1.0 as float32! -1.0
+
+	CGContextDrawImage dc rc/x as float32! 0.0 rc/w rc/h bitmap
+	CGImageRelease bitmap
+
+	;-- flip back
+	CGContextScaleCTM dc as float32! 1.0 as float32! -1.0
+	CGContextTranslateCTM dc as float32! 0.0 (as float32! 0.0) - ty
 ]
 
 OS-draw-grad-pen: func [

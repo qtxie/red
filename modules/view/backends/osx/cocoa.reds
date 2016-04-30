@@ -277,13 +277,34 @@ tagSIZE: alias struct! [
 		CGContextStrokePath: "CGContextStrokePath" [
 			c			[handle!]
 		]
+		CGContextRotateCTM: "CGContextRotateCTM" [
+			c			[handle!]
+			angle		[float32!]
+		]
+		CGContextScaleCTM: "CGContextScaleCTM" [
+			c			[handle!]
+			sx			[float32!]
+			sy			[float32!]
+		]
+		CGContextTranslateCTM: "CGContextTranslateCTM" [
+			c			[handle!]
+			tx			[float32!]
+			ty			[float32!]
+		]
 		CGContextDrawImage: "CGContextDrawImage" [
-			ctx			[integer!]
+			ctx			[handle!]
 			x			[float32!]
 			y			[float32!]
 			w			[float32!]
 			h			[float32!]
 			src			[integer!]
+		]
+		CGBitmapContextCreateImage: "CGBitmapContextCreateImage" [
+			ctx			[integer!]
+			return:		[integer!]
+		]
+		CGImageRelease: "CGImageRelease" [
+			image		[integer!]
 		]
 	]
 ]

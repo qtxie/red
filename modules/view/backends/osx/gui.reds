@@ -680,16 +680,13 @@ OS-update-view: func [
 	;		wc-offset + 16
 	;		get-flags as red-block! values + FACE_OBJ_FLAGS
 	;]
-	if flags and FACET_FLAG_DRAW  <> 0 [
+	if any [
+		flags and FACET_FLAG_DRAW  <> 0
+		flags and FACET_FLAG_COLOR <> 0
+		flags and FACET_FLAG_IMAGE <> 0
+	][
 		objc_msgSend [hWnd sel_getUid "display"]
 	]
-	;if flags and FACET_FLAG_COLOR <> 0 [
-	;	either type = base [
-	;		update-base as handle! hWnd null null values
-	;	][
-	;		InvalidateRect as handle! hWnd null 1
-	;	]
-	;]
 	;if flags and FACET_FLAG_PANE <> 0 [
 	;	if tab-panel <> type [				;-- tab-panel/pane has custom z-order handling
 	;		update-z-order 
@@ -711,9 +708,6 @@ OS-update-view: func [
 	;		DestroyMenu GetMenu as handle! hWnd
 	;		SetMenu as handle! hWnd build-menu menu CreateMenu
 	;	]
-	;]
-	;if flags and FACET_FLAG_IMAGE <> 0 [
-	;	change-image hWnd values type
 	;]
 
 	int/value: 0										;-- reset flags

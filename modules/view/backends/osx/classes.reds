@@ -223,16 +223,23 @@ draw-rect: func [
 	/local
 		ctx  [integer!]
 		vals [red-value!]
+		img  [red-image!]
 		draw [red-block!]
 		clr  [red-tuple!]
+		size [red-pair!]
 ][
 	ctx: objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
 	ctx: objc_msgSend [ctx sel_getUid "graphicsPort"]
 	vals: get-face-values self
+	img: as red-image! vals + FACE_OBJ_IMAGE
 	draw: as red-block! vals + FACE_OBJ_DRAW
 	clr:  as red-tuple! vals + FACE_OBJ_COLOR
+	size: as red-pair! vals + FACE_OBJ_SIZE
 	if TYPE_OF(clr) = TYPE_TUPLE [
 		paint-background as handle! ctx clr/array1 x y width height
+	]
+	if TYPE_OF(img) = TYPE_IMAGE [
+		CG-draw-image as handle! ctx as-integer img/node 0 0 size/x size/y
 	]
 	do-draw as handle! ctx null draw no yes yes yes
 ]

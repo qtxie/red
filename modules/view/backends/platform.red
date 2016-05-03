@@ -301,8 +301,10 @@ system/view/platform: context [
 			_right-shift:	word/load "right-shift"
 			_left-control:	word/load "left-control"
 			_right-control:	word/load "right-control"
-			_left-menu:		word/load "left-menu"
-			_right-menu:	word/load "right-menu"
+			_left-alt:		word/load "left-alt"
+			_right-alt:		word/load "right-alt"
+			_left-command:	word/load "left-command"
+			_right-command:	word/load "right-command"
 
 			get-event-type: func [
 				evt		[red-event!]

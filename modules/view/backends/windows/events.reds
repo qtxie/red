@@ -172,8 +172,10 @@ get-event-key: func [
 					VK_RSHIFT	[_right-shift]
 					VK_LCONTROL	[_left-control]
 					VK_RCONTROL	[_right-control]
-					VK_LMENU	[_left-menu]
-					VK_RMENU	[_right-menu]
+					VK_LMENU	[_left-alt]
+					VK_RMENU	[_right-alt]
+					VK_LWIN		[_left-command]
+					VK_RWIN		[_right-command]
 					default		[
 						either evt/type = EVT_KEY [none-value][
 							char: as red-char! stack/push*

@@ -96,7 +96,7 @@ Red/System [
 
 objc_super!: alias struct! [
 	receiver	[integer!]
-	class		[integer!]
+	superclass	[integer!]
 ]
 
 NSRect!: alias struct! [
@@ -198,6 +198,12 @@ tagSIZE: alias struct! [
 		]
 		CFRelease: "CFRelease" [
 			cf			[integer!]
+		]
+	]
+	"/System/Library/Frameworks/Foundation.framework/Versions/Current/Foundation" cdecl [
+		NSStringFromClass: "NSStringFromClass" [
+			class		[integer!]
+			return:		[integer!]
 		]
 	]
 	"/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices" cdecl [
@@ -307,4 +313,18 @@ tagSIZE: alias struct! [
 			image		[integer!]
 		]
 	]
+]
+
+msg-send-super: func [
+	id		[integer!]
+	sel		[integer!]
+	arg		[integer!]
+	return: [integer!]
+	/local
+		super [objc_super!]
+][
+	super: declare objc_super!
+	super/receiver: id
+	super/superclass: objc_msgSend [id sel_getUid "superclass"]
+	objc_msgSendSuper [super sel arg]
 ]

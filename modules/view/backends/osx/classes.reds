@@ -39,6 +39,69 @@ mouse-up: func [
 	probe "mouse-up"
 ]
 
+print-classname: func [
+	obj		[integer!]
+	/local
+		cls		 [integer!]
+		name	 [integer!]
+		cls-name [c-string!]
+][
+	cls: objc_msgSend [obj sel_getUid "class"]
+	name: NSStringFromClass cls
+	cls-name: as c-string! objc_msgSend [name sel_getUid "UTF8String"]
+	?? cls-name
+]
+
+on-key-down: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+	/local
+		res		[integer!]
+		key		[integer!]
+		flags	[integer!]
+][
+	key: objc_msgSend [event sel_getUid "keyCode"]
+	key: either key >= 80h [0][translate-key key]
+	flags: either char-key? as-byte key [0][80000000h]	;-- special key or not
+	flags: flags or check-extra-keys event
+
+	res: make-event self key or flags EVT_KEY_DOWN
+	if res <> EVT_NO_DISPATCH [
+		either flags and 80000000h <> 0 [				;-- special key
+			make-event self key or flags EVT_KEY
+		][
+			key: objc_msgSend [event sel_getUid "characters"]
+			if all [
+				key <> 0
+				0 < objc_msgSend [key sel_getUid "length"]
+			][
+				key: objc_msgSend [key sel_getUid "characterAtIndex:" 0]
+				make-event self key or flags EVT_KEY
+			]
+		]
+	]
+	msg-send-super self cmd event
+]
+
+on-key-up: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+	/local
+		key		[integer!]
+		flags	[integer!]
+][
+	key: objc_msgSend [event sel_getUid "keyCode"]
+	key: either key >= 80h [0][translate-key key]
+	flags: either char-key? as-byte key [0][80000000h]	;-- special key or not
+	flags: flags or check-extra-keys event
+	make-event self key or flags EVT_KEY_DOWN
+	msg-send-super self cmd event
+]
+
 button-click: func [
 	[cdecl]
 	self	[integer!]
@@ -252,6 +315,8 @@ add-base-handler: func [class [integer!]][
 add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
 	class_addMethod class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
+	class_addMethod class sel_getUid "keyDown:" as-integer :on-key-down "v@:@"
+	class_addMethod class sel_getUid "keyUp:" as-integer :on-key-up "v@:@"
 	class_addMethod class sel_getUid "windowWillClose:" as-integer :win-will-close "v12@0:4@8"
 ]
 

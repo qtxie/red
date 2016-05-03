@@ -9,7 +9,7 @@ Red/System [
 		See https://github.com/red/red/blob/master/BSL-License.txt
 	}
 ]
-
+#include %../keycodes.reds
 #include %cocoa.reds
 #include %events.reds
 

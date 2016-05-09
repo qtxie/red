@@ -126,12 +126,6 @@ tagSIZE: alias struct! [
 	height	[integer!]
 ]
 
-either exists? %/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics [
-	#define CoreGraphics-file "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
-][
-	#define CoreGraphics-file "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
-]
-
 #import [
 	LIBC-file cdecl [
 		objc_getClass: "objc_getClass" [

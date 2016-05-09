@@ -10,6 +10,8 @@ Red/System [
 	}
 ]
 
+#define CoreGraphics-file ""                            ;-- Only to be filled for MacOSX
+
 #switch OS [
 	Windows  [
 	  #define LIBC-file	"msvcrt.dll"

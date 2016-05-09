@@ -22,6 +22,11 @@ Red/System [
 	MacOSX	 [
 	  #define LIBC-file	"libc.dylib"
 	  #define LIBM-file	"libc.dylib"
+	  either exists?  %/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics [
+	  	#define CoreGraphics-file "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics"
+	  ][
+    	#define CoreGraphics-file "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+	  ]
 	]
 	Android [
 		#define LIBC-file	"libc.so"

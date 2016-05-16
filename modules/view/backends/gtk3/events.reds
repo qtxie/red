@@ -53,6 +53,16 @@ get-event-face: func [
 	as red-value! push-face as handle! evt/msg
 ]
 
+get-event-window: func [
+	evt		[red-event!]
+	return: [red-value!]
+	/local
+		handle [handle!]
+		face   [red-object!]
+][
+	none-value
+]
+
 get-event-offset: func [
 	evt		[red-event!]
 	return: [red-value!]

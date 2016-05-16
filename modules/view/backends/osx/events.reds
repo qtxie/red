@@ -189,6 +189,16 @@ get-event-face: func [
 	as red-value! push-face as-integer evt/msg
 ]
 
+get-event-window: func [
+	evt		[red-event!]
+	return: [red-value!]
+	/local
+		handle [handle!]
+		face   [red-object!]
+][
+	none-value
+]
+
 char-key?: func [
 	key	    [byte!]									;-- virtual key code
 	return: [logic!]

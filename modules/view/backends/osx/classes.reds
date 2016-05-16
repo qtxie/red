@@ -194,7 +194,7 @@ set-text: func [
 		]
 		out: unicode/get-cache str size + 1 * 4			;-- account for surrogate pairs and terminal NUL
 		objc_msgSend [text sel_getUid "getCString:maxLength:encoding:" out size + 1 * 2 NSUTF16LittleEndianStringEncoding]
-		unicode/load-utf16 null size str
+		unicode/load-utf16 null size str no
 
 		face: push-face obj
 		if TYPE_OF(face) = TYPE_OBJECT [

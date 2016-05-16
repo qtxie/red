@@ -108,7 +108,6 @@ get-child-from-xy: func [
 get-text-size: func [
 	str		[red-string!]
 	hFont	[handle!]
-	len		[integer!]
 	pair	[red-pair!]
 	return: [tagSIZE]
 	/local

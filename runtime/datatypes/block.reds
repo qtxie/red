@@ -22,8 +22,7 @@ block: context [
 			s	[series!]
 	][
 		s: GET_BUFFER(blk)
-		assert (as-integer (s/tail - s/offset)) >> 4 - blk/head >= 0
-		(as-integer (s/tail - s/offset)) >> 4 - blk/head
+		(as-integer (s/tail - s/offset)) >> 4 - blk/head ;-- warning: can be negative for past-end indexes!
 	]
 	
 	rs-next: func [
@@ -401,12 +400,14 @@ block: context [
 			head  [red-value!]
 			tail  [red-value!]
 			value [red-value!]
+			lf?	  [logic!]
 	][
 		s: GET_BUFFER(blk)
 		head:  s/offset + blk/head
 		value: head
 		tail:  s/tail
 		
+		lf?: off
 		cycles/push blk/node
 		
 		while [value < tail][
@@ -416,6 +417,14 @@ block: context [
 			]
 			depth: depth + 1
 			unless cycles/detect? value buffer :part yes [
+				unless flat? [
+					if value/header and flag-new-line <> 0 [ ;-- new-line marker
+						unless lf? [lf?: on indent: indent + 1]
+						string/append-char GET_BUFFER(buffer) as-integer lf
+						loop indent [string/concatenate-literal buffer "    "]
+						part: part - (indent * 4 + 1) 		;-- account for lf
+					]
+				]
 				part: actions/mold value buffer only? all? flat? arg part indent
 			]
 			if positive? depth [
@@ -432,6 +441,12 @@ block: context [
 			s/tail: as cell! (as byte-ptr! s/tail) - GET_UNIT(s) ;-- remove extra white space
 			part: part + 1
 		]
+		if lf? [
+			indent: indent - 1
+			string/append-char GET_BUFFER(buffer) as-integer lf
+			loop indent [string/concatenate-literal buffer "    "]
+			part: part - (indent * 4 + 1) 		;-- account for lf
+		]
 		part
 	]
 
@@ -447,10 +462,11 @@ block: context [
 			size2  [integer!]
 			type1  [integer!]
 			type2  [integer!]
-			end	   [red-value!]
 			value1 [red-value!]
 			value2 [red-value!]
 			res	   [integer!]
+			n	   [integer!]
+			len	   [integer!]
 	][
 		if all [
 			blk1/node = blk2/node
@@ -473,8 +489,9 @@ block: context [
 
 		value1: s1/offset + blk1/head
 		value2: s2/offset + blk2/head
-		end: s1/tail											;-- only one "end" is needed
-		
+		len: either size1 < size2 [size1][size2]
+		n: 0
+
 		cycles/push blk1/node
 		
 		until [
@@ -499,12 +516,14 @@ block: context [
 				cycles/pop
 				return SIGN_COMPARE_RESULT(type1 type2)
 			]
+			n: n + 1
 			any [
 				res <> 0
-				value1 >= end
+				n = len
 			]
 		]
 		cycles/pop
+		if zero? res [res: SIGN_COMPARE_RESULT(size1 size2)]
 		res
 	]
 
@@ -1161,13 +1180,13 @@ block: context [
 			cell	[red-value!]
 			limit	[red-value!]
 			head	[red-value!]
-			key		[red-value!]
 			hash	[red-hash!]
 			table	[node!]
 			int		[red-integer!]
 			p		[int-ptr!]
 			b		[red-block!]
 			s		[series!]
+			h		[integer!]
 			cnt		[integer!]
 			part	[integer!]
 			size	[integer!]
@@ -1228,20 +1247,27 @@ block: context [
 		if any [negative? part part > size][part: size] ;-- truncate if off-range part value
 		
 		s: GET_BUFFER(blk)
-		head?: zero? blk/head
-		tail?: any [(s/offset + blk/head = s/tail) append?]
+		if s/offset + blk/head > s/tail [				;-- Past-end index adjustment
+			blk/head: (as-integer s/tail - s/offset) >> size? cell!
+		]
+		h: blk/head
+		head?: zero? h
+		tail?: any [(s/offset + h = s/tail) append?]
 		slots: part * cnt
-		index: either append? [(as-integer s/tail - s/offset) >> 4][blk/head]
+		index: either append? [(as-integer s/tail - s/offset) >> 4][h]
 		
 		unless tail? [									;TBD: process head? case separately
 			size: as-integer s/tail + slots - s/offset
 			if size > s/size [s: expand-series s size * 2]
-			head: s/offset + blk/head
+			head: s/offset + h
 			move-memory									;-- make space
 				as byte-ptr! head + slots
 				as byte-ptr! head
 				as-integer s/tail - head
-			
+
+			if hash? [
+				_hashtable/refresh table slots h (as-integer s/tail - head) >> 4 yes
+			]
 			s/tail: s/tail + slots
 		]
 
@@ -1253,39 +1279,41 @@ block: context [
 
 				either tail? [
 					while [cell < limit][				;-- multiple values case
-						key: copy-cell cell ALLOC_TAIL(blk)
+						copy-cell cell ALLOC_TAIL(blk)
 						cell: cell + 1
-						key: key - 1
-						if hash? [_hashtable/put table key]
 					]
 				][
 					while [cell < limit][				;-- multiple values case
 						copy-cell cell head
-						if hash? [_hashtable/put table head]
 						head: head + 1
 						cell: cell + 1
 					]
 				]
 			][											;-- single value case
 				either tail? [
-					key: copy-cell value ALLOC_TAIL(blk)
-					key: key - 1
-					if hash? [_hashtable/put table key]
+					copy-cell value ALLOC_TAIL(blk)
 				][
 					copy-cell value head
-					if hash? [_hashtable/put table head]
 				]
 			]
 			cnt: cnt - 1
 		]
+
+		if hash? [
+			s: GET_BUFFER(blk)
+			cell: either tail? [s/tail - slots][s/offset + h]
+			loop slots [
+				_hashtable/put table cell
+				cell: cell + 1
+			]
+		]
+
 		ownership/check as red-value! blk words/_insert value index part
-		
+
 		either append? [blk/head: 0][
-			blk/head: blk/head + slots
+			blk/head: h + slots
 			s: GET_BUFFER(blk)
 			assert s/offset + blk/head <= s/tail
-
-			if all [not tail? hash?][_hashtable/refresh table slots blk/head]
 		]
 		as red-value! blk
 	]
@@ -1619,7 +1647,7 @@ block: context [
 			null			;append
 			INHERIT_ACTION	;at
 			INHERIT_ACTION	;back
-			null			;change
+			INHERIT_ACTION	;change
 			INHERIT_ACTION	;clear
 			:copy
 			:find
@@ -1628,6 +1656,7 @@ block: context [
 			INHERIT_ACTION	;index?
 			:insert
 			INHERIT_ACTION	;length?
+			INHERIT_ACTION	;move
 			INHERIT_ACTION	;next
 			INHERIT_ACTION	;pick
 			INHERIT_ACTION	;poke

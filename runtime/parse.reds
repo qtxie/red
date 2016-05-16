@@ -22,7 +22,7 @@ parser: context [
 		in: as input! ALLOC_TAIL(rules)
 		in/header: TYPE_POINT
 		in/node:   input/node
-		;in/size:   einput/head
+		;in/size:  input/head
 	]
 	
 	#define PARSE_PUSH_POSITIONS [
@@ -30,15 +30,15 @@ parser: context [
 		p/header: TYPE_POINT
 		p/rule:	  (as-integer cmd - block/rs-head rule) >> 4	;-- save cmd position
 		p/input:  input/head									;-- save input position
-		p/sub:	  0												;-- default value for sub-rule type
+		p/sub:	  len												;-- default value for sub-rule type
 	]
 	
 	#define PARSE_SET_INPUT_LENGTH(word) [
-		type: TYPE_OF(input)
+		type-i: TYPE_OF(input)
 		word: either any [								;TBD: replace with ANY_STRING?
-			type = TYPE_STRING
-			type = TYPE_FILE
-			type = TYPE_URL
+			type-i = TYPE_STRING
+			type-i = TYPE_FILE
+			type-i = TYPE_URL
 		][
 			string/rs-length? as red-string! input
 		][
@@ -477,6 +477,7 @@ parser: context [
 			len	   [integer!]
 			cnt	   [integer!]
 			type   [integer!]
+			type-i [integer!]
 			match? [logic!]
 			end?   [logic!]
 			s	   [series!]
@@ -689,12 +690,14 @@ parser: context [
 			state	 [states!]
 			pos		 [byte-ptr!]						;-- required by BS_TEST_BIT_ALT()
 			type	 [integer!]
+			type-i	 [integer!]
 			dt-type	 [integer!]
 			sym		 [integer!]
 			min		 [integer!]
 			max		 [integer!]
 			s		 [series!]
 			cnt		 [integer!]
+			len		 [integer!]
 			offset	 [integer!]
 			cnt-col	 [integer!]
 			upper?	 [logic!]
@@ -737,6 +740,7 @@ parser: context [
 					check-limits series rules
 					
 					#either debug? = yes [PARSE_PUSH_INPUTPOS][none/make-in rules]
+					PARSE_SET_INPUT_LENGTH(len)
 					PARSE_PUSH_POSITIONS
 					block/rs-append rules as red-value! rule
 					if all [value <> null value <> rule][
@@ -791,6 +795,7 @@ parser: context [
 						t/max:	  max
 						t/state:  1
 					]
+					PARSE_SET_INPUT_LENGTH(len)
 					PARSE_PUSH_POSITIONS
 					int: as red-integer! ALLOC_TAIL(rules)
 					int/header: TYPE_INTEGER
@@ -823,12 +828,18 @@ parser: context [
 								if all [match? t/max <> R_NONE][ ;-- if rule matched and an upper bound exists,
 									loop?: cnt < t/max			 ;-- but not reached yet, loop again
 								]
+								if all [						 ;-- try to avoid some infinite loops
+									int/value <> R_WHILE
+									input/head = p/input		 ;-- if no input was consumed (except for WHILE)
+								][
+									PARSE_SET_INPUT_LENGTH(len)
+									if len >= p/sub [			 ;-- and if no input was forward-consumed (remove)
+										loop?: no
+										break?: no
+									]
+								]
 								if any [						 ;-- don't loop if any:
 									break?						 ;-- a BREAK or REJECT command was issued
-									all [						 ;-- try to avoid some infinite loops
-										int/value <> R_WHILE
-										input/head = p/input	 ;-- if no input was consumed (except for WHILE)
-									]
 									all [end? int/value = R_WHILE] ;-- don't loop on WHILE if no more input
 								][
 									loop?: no
@@ -863,7 +874,7 @@ parser: context [
 									]
 								][
 									type: TYPE_OF(input)
-									end?: either any [	;TBD: replace with ANY_STRING?
+									match?: either any [	;TBD: replace with ANY_STRING?
 										type = TYPE_STRING
 										type = TYPE_FILE
 										type = TYPE_URL
@@ -872,9 +883,9 @@ parser: context [
 									][
 										block/rs-next input
 									]
-									if positive? part [end?: input/head >= part or end?]
+									if positive? part [match?: input/head >= part or match?]
 									
-									either end? [
+									either match? [
 										w: as red-word! (block/rs-head rule) + p/rule + 1 ;-- TO/THRU argument
 										match?: all [
 											TYPE_OF(w) = TYPE_WORD 
@@ -915,8 +926,13 @@ parser: context [
 										TYPE_OF(blk) = TYPE_BLOCK
 									]
 									into?: TYPE_OF(blk) = TYPE_GET_WORD
-									if into? [blk: as red-block! _context/get as red-word! blk]
-									
+									if into? [
+										blk: as red-block! _context/get as red-word! blk
+										type: TYPE_OF(blk)
+										unless ANY_SERIES?(type) [
+											PARSE_ERROR [TO_ERROR(script parse-into-bad)]
+										]
+									]
 									value: stack/top	;-- refer last value from paren expression
 									if int/value = R_KEEP [
 										w: as red-word! s/tail
@@ -1128,7 +1144,9 @@ parser: context [
 							PARSE_TRACE(_paren)
 							cmd: (block/rs-head rule) + offset	;-- refresh rule pointers,							
 							tail: block/rs-tail rule			;-- in case the block was changed						
-							if cmd >= tail [cmd: tail - 1]	;-- avoid a "past end" state
+							if cmd >= tail [cmd: tail - 1]		;-- avoid a "past end" state						
+							PARSE_SET_INPUT_LENGTH(len)
+							if negative? len [input/head: input/head + len]
 							state: ST_CHECK_PENDING
 						]
 						default [						;-- try to match a literal value
@@ -1399,13 +1417,14 @@ parser: context [
 							if cmd >= tail [PARSE_ERROR [TO_ERROR(script parse-end) words/_insert]]
 							
 							value: cmd
-							if TYPE_OF(value) = TYPE_PAREN [
+							pop?: TYPE_OF(value) = TYPE_PAREN
+							if pop? [
 								eval value
 								value: stack/top - 1
 								PARSE_TRACE(_paren)
 							]
 							actions/insert input value null max = 1 null no
-							if TYPE_OF(value) = TYPE_PAREN [stack/pop 1]
+							if pop? [stack/pop 1]
 							state: ST_NEXT_ACTION
 						]
 						sym = words/end [				;-- END
@@ -1499,6 +1518,9 @@ parser: context [
 						]
 						true [
 							value: _context/get w
+							if TYPE_OF(value) = TYPE_UNSET [
+								PARSE_ERROR [TO_ERROR(script parse-rule) w]
+							]
 							state: either rule? [ST_MATCH_RULE][ST_DO_ACTION] ;-- enable fast loops for word argument
 						]
 					]

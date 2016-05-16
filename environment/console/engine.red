@@ -35,6 +35,7 @@ system/console: context [
 	history: make block! 200
 	limit:	 67
 	catch?:	 no											;-- YES: force script to fallback into the console
+	count:	 [0 0 0]									;-- multiline counters for [squared curly parens]
 
 	gui?: #system [logic/box #either gui-console? = yes [yes][no]]
 	
@@ -82,15 +83,15 @@ system/console: context [
 
 	count-delimiters: function [
 		buffer	[string!]
+		/extern count
 		return: [block!]
 	][
-		count: copy [0 0 0]								;-- [squared curly parens]
 		escaped: [#"^^" skip]
 		
 		parse buffer [
 			any [
 				escaped
-				| #";" thru lf
+				| remove [#";" [thru lf | to end]]
 				| #"[" (count/1: count/1 + 1)
 				| #"]" (count/1: count/1 - 1)
 				| #"(" (count/3: count/3 + 1)
@@ -98,6 +99,7 @@ system/console: context [
 				| dbl-quote any [escaped | dbl-quote break | skip]
 				| #"{" (count/2: count/2 + 1)
 				  any [escaped | #"}" (count/2: count/2 - 1) break | skip]
+				| #"}" (count/2: count/2 - 1)
 				| skip
 			]
 		]
@@ -166,11 +168,12 @@ system/console: context [
 			either all [not empty? line escape = last line][
 				cue: none
 				clear buffer
+				change/dup count 0 3				;-- reset delimiter counters to zero
 				mode: 'mono							;-- force exit from multiline mode
 				print "(escape)"
 			][
+				cnt: count-delimiters line
 				append buffer line
-				cnt: count-delimiters buffer
 				append buffer lf					;-- needed for multiline modes
 
 				switch mode [
@@ -229,7 +232,13 @@ ll:   func ['dir [any-type!]][list-dir/col :dir 1]
 pwd:  does [prin mold system/options/path]
 halt: does [throw/name 'halt-request 'console]
 
-cd:		:change-dir
+cd:	function [
+	"Changes the active directory path"
+	:dir [file! word! path!] "New active directory of relative path to the new one"
+][
+	change-dir :dir
+]
+
 ls: 	:list-dir
 dir:	:ls
 q: 		:quit

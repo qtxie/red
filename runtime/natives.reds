@@ -1001,8 +1001,10 @@ natives: context [
 			value [red-value!]
 			ref	  [red-value!]
 			fun	  [red-function!]
+			obj	  [node!]
 			word  [red-word!]
 			ctx	  [node!]
+			self? [logic!]
 	][
 		#typecheck [bind copy]
 		value: stack/arguments
@@ -1020,15 +1022,22 @@ natives: context [
 		]
 		
 		either TYPE_OF(value) = TYPE_BLOCK [
+			obj: either TYPE_OF(ref) = TYPE_OBJECT [
+				self?: yes
+				object/save-self-object as red-object! ref
+			][
+				self?: no
+				null
+			]
 			either negative? copy [
-				_context/bind as red-block! value TO_CTX(ctx) null no
+				_context/bind as red-block! value TO_CTX(ctx) obj self?
 			][
 				stack/set-last 
 					as red-value! _context/bind
 						block/clone as red-block! value yes no
 						TO_CTX(ctx)
-						null
-						no
+						obj
+						self?
 			]
 		][
 			word: as red-word! value
@@ -2033,6 +2042,64 @@ natives: context [
 		]
 		unset/push-last
 	]
+	
+	new-line*: func [
+		check? [logic!]
+		_all   [integer!]
+		skip   [integer!]
+		/local
+			cell [cell!]
+			tail [cell!]
+			blk  [red-block!]
+			int	 [red-integer!]
+			bool [red-logic!]
+			s	 [series!]
+			step [integer!]
+			nl?  [logic!]
+	][
+		#typecheck [new-line _all skip]
+		blk: as red-block! stack/arguments
+		bool: as red-logic! blk + 1
+		nl?: bool/value
+		
+		s: GET_BUFFER(blk)
+		cell: s/offset + blk/head
+		
+		either _all <> -1 [
+			step: 1
+			if skip <> -1 [
+				int: as red-integer! blk + skip
+				unless negative? step [step: int/value]
+			]
+			tail: s/tail
+			while [cell < tail][
+				cell/header: either nl? [
+					cell/header or flag-new-line
+				][
+					cell/header and flag-nl-mask
+				]
+				cell: cell + step
+			]
+		][
+			cell/header: either nl? [
+				cell/header or flag-new-line
+			][
+				cell/header and flag-nl-mask
+			]
+		]
+	]
+	
+	new-line?*: func [
+		check? [logic!]
+		/local
+			bool [red-logic!]
+			cell [cell!]
+	][
+		cell: block/rs-head as red-block! stack/arguments
+		bool: as red-logic! stack/arguments
+		bool/header: TYPE_LOGIC
+		bool/value: cell/header and flag-nl-mask <> 0
+	]
 
 	;--- Natives helper functions ---
 
@@ -2429,6 +2496,8 @@ natives: context [
 			:request-dir*
 			:checksum*
 			:unset*
+			:new-line*
+			:new-line?*
 		]
 	]
 

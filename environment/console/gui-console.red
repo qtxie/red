@@ -5,7 +5,10 @@ Red [
 	Icon:		default
 	Version:	0.9.0
 	Needs:		View
-	Config:		[gui-console?: yes]
+	Config:		[
+		gui-console?: yes
+		red-help?: yes
+	]
 	License: {
 		Distributed under the Boost Software License, Version 1.0.
 		See https://github.com/red/red/blob/master/BSL-License.txt
@@ -34,7 +37,7 @@ ask: routine [
 
 input: does [ask ""]
 
-context [
+gui-console-ctx: context [
 	font-name: pick ["Fixedsys" "Consolas"] make logic! find [5.1.0 5.0.0] system/view/platform/version
 
 	console: make face! [
@@ -56,12 +59,15 @@ context [
 		pane: reduce [console]
 	]
 	
-	view/flags/no-wait win [resize]
-	
-	svs: system/view/screens/1
-	svs/pane: next svs/pane
-	
-	system/console/launch
-	
-	do-events
+	launch: does [
+		view/flags/no-wait win [resize]
+		svs: system/view/screens/1
+		svs/pane: next svs/pane
+
+		system/console/launch
+		do-events
+	]
 ]
+
+gui-console-ctx/launch
+

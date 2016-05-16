@@ -299,6 +299,7 @@ Red/System [
 								]
 								if start + 1 > cmd [throw-draw-error cmds cmd + 1 catch?]
 								OS-draw-spline DC as red-pair! start as red-pair! cmd closed?
+								if closed? [cmd: cmd + 1]		;-- skip CLOSED word
 							]
 							sym = line-join	[
 								DRAW_FETCH_VALUE(TYPE_WORD)
@@ -361,7 +362,6 @@ Red/System [
 					]
 					TYPE_BLOCK [
 						parse-draw as red-block! cmd DC catch?
-						cmd: cmd + 1
 					]
 					default [throw-draw-error cmds cmd catch?]
 				]

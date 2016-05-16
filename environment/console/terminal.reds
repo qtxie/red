@@ -341,7 +341,7 @@ terminal: context [
 				p: p + unit
 
 				either cp = 9 [
-					string/concatenate-literal data "    "
+					buf: string/concatenate-literal data "    "
 				][
 					buf: string/append-char buf cp
 				]
@@ -516,8 +516,10 @@ terminal: context [
 				string/remove-char input head
 			]
 		][
-			insert-into-line input head cp
-			head: head + 1
+			if cp <> -1 [
+				insert-into-line input head cp
+				head: head + 1
+			]
 		]
 		vt/cursor: head
 
@@ -601,6 +603,28 @@ terminal: context [
 		vt/char-h: char-y
 	]
 
+	reset-vt: func [vt [terminal!] /local out][
+		out: vt/out
+		out/tail: 1
+		out/head: 1
+		out/last: 1
+		out/lines/offset: 0
+		out/lines/nlines: 0
+		out/nlines: 1
+		out/h-idx: 0
+		out/s-head: -1
+		vt/pos: 1
+		vt/top: 1
+		vt/top-offset: 0
+		vt/nlines: 0
+		vt/scroll: 0
+		vt/select?: no
+		vt/select-all?: no
+		vt/s-mode?: no
+		vt/s-end?: no
+		vt/edit-head: -1
+	]
+
 	init: func [
 		vt		[terminal!]
 		win-x	[integer!]
@@ -612,16 +636,8 @@ terminal: context [
 	][
 		out: as ring-buffer! allocate size? ring-buffer!
 		out/max: 4000
-		out/tail: 1
-		out/head: 1
-		out/last: 1
 		out/lines: as line-node! allocate out/max * size? line-node!
-		out/lines/offset: 0
-		out/lines/nlines: 0
 		out/data: as red-string! string/rs-make-at ALLOC_TAIL(root) 4000
-		out/nlines: 1
-		out/h-idx: 0
-		out/s-head: -1
 
 		vt/bg-color: 00FCFCFCh
 		vt/font-color: 00000000h
@@ -638,22 +654,13 @@ terminal: context [
 		vt/history-beg: 1
 		vt/history-end: 1
 		vt/history-cnt: 0
-		vt/pos: 1
-		vt/top: 1
-		vt/top-offset: 0
-		vt/nlines: 0
-		vt/scroll: 0
 		vt/caret?: no
-		vt/select?: no
-		vt/select-all?: no
 		vt/ask?: no
 		vt/input?: no
-		vt/s-mode?: no
-		vt/s-end?: no
-		vt/edit-head: -1
 		vt/prompt: as red-string! #get system/console/prompt
 		vt/prompt-len: string/rs-length? vt/prompt
 
+		reset-vt vt
 		OS-init vt
 	]
 
@@ -967,9 +974,11 @@ terminal: context [
 		str [red-string!]
 		len [integer!]
 		/local
+			n [integer!]
 			s [series!]
 	][
-		if len = -1 [len: string/rs-length? str]
+		n: string/rs-length? str
+		if any [len > n len = -1][len: n]
 		s: GET_BUFFER(str)
 		s/tail: as cell! (as byte-ptr! s/tail) - (len << (GET_UNIT(s) >> 1))
 	]
@@ -1260,6 +1269,10 @@ terminal: context [
 				select-edit vt RS_KEY_END
 			]
 			RS_KEY_CTRL_DELETE [0]
+			RS_KEY_CTRL_K [
+				reset-vt vt
+				emit-char vt -1 no
+			]
 			default [
 				if cp < 32 [exit]
 				emit-char vt cp no
@@ -1303,6 +1316,7 @@ terminal: context [
 			x		[integer!]
 			w		[integer!]
 			s		[series!]
+			n		[integer!]
 			unit	[integer!]
 			cp		[integer!]
 			char-h	[integer!]
@@ -1338,7 +1352,10 @@ terminal: context [
 				x: 0
 				y: y + char-h
 			]
-			OS-draw-text str 1 x y w char-h
+			n: either cp < 00010000h [1][
+				unicode/cp-to-utf16 cp as byte-ptr! str
+			]
+			OS-draw-text str n x y w char-h
 			x: x + w
 		]
 		unless vt/select-all? [set-normal-color vt]
@@ -1418,7 +1435,7 @@ terminal: context [
 							data/head: offset
 							len: len - cnt
 							offset: offset + cnt
-							c-str: unicode/to-utf16-len data :cnt
+							c-str: unicode/to-utf16-len data :cnt no
 							OS-draw-text c-str cnt 0 y win-w char-h
 							y: y + char-h
 						]
@@ -1459,7 +1476,7 @@ terminal: context [
 			MacOSX   []
 			FreeBSD  []
 			Syllable []
-			#default []										;-- Linux
+			#default []									;-- Linux
 		]
 	]
 
@@ -1473,7 +1490,9 @@ terminal: context [
 		vt/input?: yes
 		set-prompt vt question
 		refresh vt
-		unless paste-from-clipboard vt yes [
+		either paste-from-clipboard vt yes [
+			loop 3 [gui/do-events yes]					;-- make console respontive
+		][
 			vt/ask?: yes
 			update-caret vt
 			stack/mark-func words/_body

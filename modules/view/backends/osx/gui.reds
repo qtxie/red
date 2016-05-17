@@ -360,6 +360,57 @@ change-text: func [
 	]
 ]
 
+change-data: func [
+	hWnd   [integer!]
+	values [red-value!]
+	/local
+		data 	[red-value!]
+		word 	[red-word!]
+		f		[red-float!]
+		str		[red-string!]
+		caption [c-string!]
+		type	[integer!]
+][
+	data: as red-value! values + FACE_OBJ_DATA
+	word: as red-word! values + FACE_OBJ_TYPE
+	type: word/symbol
+	
+	case [
+		all [
+			type = progress
+			TYPE_OF(data) = TYPE_PERCENT
+		][
+			f: as red-float! data
+		]
+		type = check [
+			set-logic-state hWnd as red-logic! data yes
+		]
+		type = radio [
+			set-logic-state hWnd as red-logic! data no
+		]
+		;type = tab-panel [
+		;	set-tabs hWnd get-face-values hWnd
+		;]
+		;type = text-list [
+		;	if TYPE_OF(data) = TYPE_BLOCK [
+		;		init-text-list 
+		;			hWnd
+		;			as red-block! data
+		;			as red-integer! values + FACE_OBJ_SELECTED
+		;	]
+		;]
+		any [type = drop-list type = drop-down][
+			init-combo-box 
+				hWnd
+				as red-block! data
+				null
+				as red-integer! values + FACE_OBJ_SELECTED
+				type = drop-list
+		]
+		true [0]										;-- default, do nothing
+	]
+]
+
 check-type?: func [
 	obj		[integer!]
 	name	[c-string!]
@@ -659,9 +710,9 @@ OS-update-view: func [
 	if flags and FACET_FLAG_TEXT <> 0 [
 		change-text hWnd values type
 	]
-	;if flags and FACET_FLAG_DATA <> 0 [
-	;	change-data	as handle! hWnd values
-	;]
+	if flags and FACET_FLAG_DATA <> 0 [
+		change-data hWnd values
+	]
 	;if flags and FACET_FLAG_ENABLE? <> 0 [
 	;	change-enabled as handle! hWnd values
 	;]

@@ -214,6 +214,16 @@ text-did-change: func [
 	make-event self 0 EVT_CHANGE
 ]
 
+area-text-change: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+][
+	set-text self objc_msgSend [self sel_getUid "string"]
+	make-event self 0 EVT_CHANGE
+]
+
 selection-change: func [
 	[cdecl]
 	self	[integer!]
@@ -332,6 +342,10 @@ add-text-field-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
 ]
 
+add-area-handler: func [class [integer!]][
+	class_addMethod class sel_getUid "textDidChange:" as-integer :area-text-change "v@:@"
+]
+
 add-combo-box-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
 	class_addMethod class sel_getUid "comboBoxSelectionDidChange:" as-integer :selection-change "v@:@"
@@ -375,6 +389,8 @@ register-classes: does [
 	make-super-class "RedButton"		"NSButton"		as-integer :add-button-handler	yes
 	make-super-class "RedSlider"		"NSSlider"		as-integer :add-slider-handler	yes
 	make-super-class "RedTextField"		"NSTextField"	as-integer :add-text-field-handler yes
+	make-super-class "RedTextView"		"NSTextView"	as-integer :add-area-handler yes
 	make-super-class "RedComboBox"		"NSComboBox"	as-integer :add-combo-box-handler yes
+	make-super-class "RedScrollView"	"NSScrollView"	0	yes
 	make-super-class "RedBox"			"NSBox"			0	yes
 ]

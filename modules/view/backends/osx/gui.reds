@@ -499,6 +499,52 @@ init-window: func [
 	objc_msgSend [window sel_getUid "setDelegate:" window]
 ]
 
+make-area: func [
+	face		[red-object!]
+	container	[integer!]
+	text		[integer!]
+	/local
+		id		[integer!]
+		obj		[integer!]
+		tbox	[integer!]
+		rc		[NSRect!]
+][
+	rc: make-rect 0 0 0 0
+	objc_msgSend [container sel_getUid "contentSize"]
+	rc/w: as float32! system/cpu/eax
+	rc/h: as float32! system/cpu/edx
+
+	objc_msgSend [container sel_getUid "setBorderType:" NSGrooveBorder]
+	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
+	objc_msgSend [container sel_getUid "setHasHorizontalScroller:" no]
+	objc_msgSend [container sel_getUid "setAutoresizingMask:" NSViewWidthSizable or NSViewHeightSizable]
+
+	id: objc_getClass "RedTextView"
+	obj: objc_msgSend [id sel_getUid "alloc"]
+
+	assert obj <> 0
+	store-face-to-obj obj id face
+
+	obj: objc_msgSend [
+		obj sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h
+	]
+	rc/y: as float32! 1e37			;-- FLT_MAX
+	objc_msgSend [obj sel_getUid "setVerticallyResizable:" yes]
+	objc_msgSend [obj sel_getUid "setHorizontallyResizable:" no]
+	objc_msgSend [obj sel_getUid "setMinSize:" rc/x rc/h]
+
+	objc_msgSend [obj sel_getUid "setMaxSize:" rc/y rc/y]
+	objc_msgSend [obj sel_getUid "setAutoresizingMask:" NSViewWidthSizable]
+
+	tbox: objc_msgSend [obj sel_getUid "textContainer"]
+	objc_msgSend [tbox sel_getUid "setContainerSize:" rc/w rc/y]
+	objc_msgSend [tbox sel_getUid "setWidthTracksTextView:" yes]
+
+	if text <> null [objc_msgSend [obj sel_getUid "setString:" text]]
+
+	objc_msgSend [container sel_getUid "setDocumentView:" obj]
+]
+
 OS-show-window: func [
 	hWnd [integer!]
 	/local
@@ -557,6 +603,7 @@ OS-make-view: func [
 	sym: 	  symbol/resolve type/symbol
 
 	case [
+		sym = area [class: "RedScrollView"]
 		sym = text [class: "RedTextField"]
 		sym = field [class: "RedTextField"]
 		sym = button [class: "RedButton"]
@@ -616,6 +663,9 @@ OS-make-view: func [
 			objc_msgSend [id sel_getUid "setWraps:" no]
 			objc_msgSend [id sel_getUid "setScrollable:" yes]
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setStringValue:" caption]]
+		]
+		sym = area [
+			make-area face obj caption
 		]
 		any [sym = button sym = check sym = radio][
 			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]

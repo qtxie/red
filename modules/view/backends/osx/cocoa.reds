@@ -24,12 +24,25 @@ Red/System [
 #define NSIconWindowMask            64
 #define NSMiniWindowMask            128
 
+#define NSViewNotSizable			0
+#define NSViewMinXMargin			1
+#define NSViewWidthSizable			2
+#define NSViewMaxXMargin			4
+#define NSViewMinYMargin			8
+#define NSViewHeightSizable			16
+#define NSViewMaxYMargin			32
+
 #define NSRoundedBezelStyle			1
 
 #define NSToggleButton				2
 #define NSSwitchButton				3
 #define NSRadioButton				4
 #define NSMomentaryPushInButton		7
+
+#define NSNoBorder					0
+#define NSLineBorder				1
+#define NSBezelBorder				2
+#define NSGrooveBorder				3
 
 #define NSNoTitle					0
 #define NSAboveTop					1
@@ -104,6 +117,11 @@ NSRect!: alias struct! [
 	y		[float32!]
 	w		[float32!]
 	h		[float32!]
+]
+
+NSSize!: alias struct! [
+	width	[float32!]
+	height	[float32!]
 ]
 
 CGPoint!: alias struct! [
@@ -183,11 +201,7 @@ tagSIZE: alias struct! [
 		objc_msgSend: "objc_msgSend" [[variadic] return: [integer!]]
 		objc_msgSendSuper: "objc_msgSendSuper" [[variadic] return: [integer!]]
 		objc_msgSend_fpret: "objc_msgSend_fpret" [[variadic] return: [float!]]
-		;objc_msgSend_stret: "objc_msgSend_stret" [
-		;	ret			[int-ptr!]
-		;	obj			[integer!]
-		;	sel			[integer!]
-		;]
+		;objc_msgSend_stret: "objc_msgSend_stret" [obj [integer!] sel [integer!]]
 	]
 	"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation" cdecl [
 		CFStringCreateWithCString: "CFStringCreateWithCString" [

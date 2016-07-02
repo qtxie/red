@@ -38,6 +38,7 @@ Red/System [
 		translate:		symbol/make "translate"
 		skew:			symbol/make "skew"
 		transform:		symbol/make "transform"
+		arrow:			symbol/make "arrow"
 
 		_off:			symbol/make "off"
 		closed:			symbol/make "closed"
@@ -457,6 +458,10 @@ Red/System [
 							]
 							sym = reset-matrix  [OS-matrix-reset]
 							sym = invert-matrix [OS-matrix-invert]
+							sym = arrow [
+								DRAW_FETCH_VALUE(TYPE_PAIR)
+								OS-draw-arrow as red-pair! start
+							]
 							true [throw-draw-error cmds cmd catch?]
 						]
 					]

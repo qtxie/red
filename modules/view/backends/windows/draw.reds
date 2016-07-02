@@ -128,7 +128,7 @@ update-pen: func [
 			if join <> -1 [
 				mode: case [
 					join = miter		[PS_JOIN_MITER]
-					join = miter-bevel [PS_JOIN_MITER]
+					join = miter-bevel	[PS_JOIN_MITER]
 					join = _round		[PS_JOIN_ROUND]
 					join = bevel		[PS_JOIN_BEVEL]
 					true				[PS_JOIN_MITER]
@@ -136,7 +136,7 @@ update-pen: func [
 			]
 			if cap <> -1 [
 				mode: mode or case [
-					cap = flat		[PS_ENDCAP_FLAT]
+					cap = flat			[PS_ENDCAP_FLAT]
 					cap = square		[PS_ENDCAP_SQUARE]
 					cap = _round		[PS_ENDCAP_ROUND]
 					true				[PS_ENDCAP_FLAT]
@@ -982,10 +982,10 @@ OS-draw-line-cap: func [
 	modes/pen-cap: style
 	either GDI+? [
 		case [
-			style = flat		[mode: GDIPLUS_LINECAPFLAT]
-			style = square		[mode: GDIPLUS_LINECAPSQUARE]
-			style = _round		[mode: GDIPLUS_LINECAPROUND]
-			true				[mode: GDIPLUS_LINECAPFLAT]
+			style = flat		[mode: GDIPLUS_LINECAP_FLAT]
+			style = square		[mode: GDIPLUS_LINECAP_SQUARE]
+			style = _round		[mode: GDIPLUS_LINECAP_ROUND]
+			true				[mode: GDIPLUS_LINECAP_FLAT]
 		]
 		GdipSetPenStartCap modes/gp-pen mode
 		GdipSetPenEndCap modes/gp-pen mode
@@ -1304,4 +1304,25 @@ OS-matrix-set: func [
 		:m
 	GdipMultiplyWorldTransform modes/graphics m GDIPLUS_MATRIXORDERAPPEND
 	GdipDeleteMatrix m
+]
+
+OS-draw-arrow: func [
+	mode		[red-pair!]
+	/local
+		start	[integer!]
+		end		[integer!]
+][
+	end: switch mode/x [
+		1		[GDIPLUS_LINECAP_ARROWANCHOR]
+		2		[GDIPLUS_LINECAP_ROUNDANCHOR]
+		default [0]
+	]
+	start: switch mode/y [
+		1		[GDIPLUS_LINECAP_ARROWANCHOR]
+		2		[GDIPLUS_LINECAP_ROUNDANCHOR]
+		default [0]
+	]
+
+	GdipSetPenStartCap modes/gp-pen start
+	GdipSetPenEndCap modes/gp-pen end
 ]

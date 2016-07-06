@@ -232,9 +232,6 @@ string: context [
 		str 	[red-string!]
 		len		[integer!]
 		return: [logic!]
-		/local
-			s	   [series!]
-			offset [integer!]
 	][
 		_series/rs-skip as red-series! str len
 	]
@@ -307,6 +304,7 @@ string: context [
 	rs-find-char: func [
 		str		[red-string!]
 		cp		[integer!]
+		skip	[integer!]
 		case?	[logic!]				;-- case sensitive?
 		return: [logic!]
 		/local
@@ -318,6 +316,7 @@ string: context [
 	][
 		s:    GET_BUFFER(str)
 		unit: GET_UNIT(s)
+		skip: unit * skip
 		head: (as byte-ptr! s/offset) + (str/head << (log-b unit))
 		tail: as byte-ptr! s/tail
 		while [head < tail][
@@ -327,7 +326,7 @@ string: context [
 				cp: case-folding/folding-case cp yes	;-- uppercase cp
 			]
 			if c1 = cp [return true]
-			head: head + unit
+			head: head + skip
 		]
 		false
 	]
@@ -652,10 +651,15 @@ string: context [
 			c1	  [integer!]
 			c2	  [integer!]
 			lax?  [logic!]
+			same? [logic!]
 	][
-		if all [
+		same?: all [
 			str1/node = str2/node
 			str1/head = str2/head
+		]
+		if op = COMP_SAME [return either same? [0][-1]]
+		if all [
+			same?
 			any [op = COMP_EQUAL op = COMP_STRICT_EQUAL op = COMP_NOT_EQUAL]
 		][return 0]
 
@@ -795,7 +799,7 @@ string: context [
 		]
 	]
 
-	modify: func [
+	alter: func [
 		str1		[red-string!]						;-- string! to modify
 		str2		[red-string!]						;-- string! to modify to str1
 		part		[integer!]							;-- str2 characters to overwrite, -1 means all
@@ -913,7 +917,7 @@ string: context [
 		offset	  [integer!]							;-- offset from head in codepoints
 		keep?	  [logic!]								;-- do not change str2 encoding
 	][
-		modify str1 str2 part offset keep? TYPE_OVERWRITE
+		alter str1 str2 part offset keep? TYPE_OVERWRITE
 	]
 	
 	concatenate: func [									;-- append str2 to str1
@@ -924,7 +928,7 @@ string: context [
 		keep?	  [logic!]								;-- do not change str2 encoding
 		insert?	  [logic!]								;-- insert str2 at str1 index instead of appending
 	][
-		modify str1 str2 part offset keep? as-integer insert?
+		alter str1 str2 part offset keep? as-integer insert?
 	]
 
 	concatenate-literal: func [
@@ -1090,7 +1094,7 @@ string: context [
 		]
 
 		blk: as red-block! type
-		#call [system/lexer/transcode spec none]
+		#call [system/lexer/transcode spec none none]
 
 		either zero? block/rs-length? blk [
 			ret: as red-value! blk
@@ -1174,7 +1178,7 @@ string: context [
 	][
 		idx: cp + 1
 		case [
-			all [all? cp > 7Fh][
+			any [cp = 1Eh all [all? cp > 7Fh]][
 				append-char GET_BUFFER(buffer) as-integer #"^^"
 				append-char GET_BUFFER(buffer) as-integer #"("
 				concatenate-literal buffer to-hex cp yes
@@ -1317,11 +1321,11 @@ string: context [
 			]
 			default [
 				either set? [
-					element: find parent element null no no no null null no no no no
+					element: find parent element null no no no no null null no no no no
 					actions/poke as red-series! element 2 value null
 					value
 				][
-					select parent element null no no no null null no no
+					select parent element null no no no no null null no no
 				]
 			]
 		]
@@ -1463,6 +1467,7 @@ string: context [
 		part		[red-value!]
 		only?		[logic!]
 		case?		[logic!]
+		same?		[logic!]
 		any?		[logic!]							;@@ not implemented
 		with-arg	[red-string!]						;@@ not implemented
 		skip		[red-integer!]
@@ -1482,6 +1487,7 @@ string: context [
 			int		[red-integer!]
 			char	[red-char!]
 			str2	[red-string!]
+			bits	[red-bitset!]
 			unit	[encoding!]
 			unit2	[encoding!]
 			head2	[integer!]
@@ -1491,9 +1497,13 @@ string: context [
 			c1		[integer!]
 			c2		[integer!]
 			step	[integer!]
+			sbits	[series!]
+			pbits	[byte-ptr!]
+			pos		[byte-ptr!]								;-- required by BS_TEST_BIT
 			limit	[byte-ptr!]
 			part?	[logic!]
-			op		[integer!]
+			bs?		[logic!]
+			not?	[logic!]
 			type	[integer!]
 			found?	[logic!]
 	][
@@ -1571,9 +1581,11 @@ string: context [
 			type = TYPE_FILE
 			type = TYPE_URL
 		][not case?][no]
+		if same? [case?: no]
 		reverse?: any [reverse? last?]					;-- reduce both flags to one
 		step: step << (unit >> 1)
 		pattern: null
+		bs?: no
 		
 		;-- Value argument processing --
 		
@@ -1582,8 +1594,16 @@ string: context [
 				char: as red-char! value
 				c2: char/value
 				if case? [
-					c2: case-folding/folding-case c2 yes	;-- uppercase c2
+					c2: case-folding/folding-case c2 yes ;-- uppercase c2
 				]
+			]
+			TYPE_BITSET [
+				bits:  as red-bitset! value
+				sbits: GET_BUFFER(bits)
+				not?:  FLAG_NOT?(sbits)
+				pbits: as byte-ptr! sbits/offset
+				bs?:   yes
+				case?: no
 			]
 			TYPE_STRING
 			TYPE_FILE
@@ -1630,8 +1650,12 @@ string: context [
 				if case? [
 					c1: case-folding/folding-case c1 yes	;-- uppercase c1
 				]
-				found?: c1 = c2
-				
+				either bs? [
+					BS_TEST_BIT(pbits c1 found?)
+					if not? [found?: not found?]
+				][
+					found?: c1 = c2
+				]
 				if any [
 					match?								;-- /match option returns tail of match (no loop)
 					all [found? tail? not reverse?]		;-- /tail option too, but only when found pattern
@@ -1725,6 +1749,7 @@ string: context [
 		part	 [red-value!]
 		only?	 [logic!]
 		case?	 [logic!]
+		same?	 [logic!]
 		any?	 [logic!]
 		with-arg [red-string!]
 		skip	 [red-integer!]
@@ -1741,7 +1766,7 @@ string: context [
 			offset [integer!]
 			unit   [integer!]
 	][
-		result: find str value part only? case? any? with-arg skip last? reverse? no no
+		result: find str value part only? case? same? any? with-arg skip last? reverse? no no
 		
 		if TYPE_OF(result) <> TYPE_NONE [
 			offset: switch TYPE_OF(value) [
@@ -1914,13 +1939,14 @@ string: context [
 				int/value
 			][
 				sp: as red-string! part-arg
-				assert all [
-					TYPE_OF(sp) = TYPE_STRING			;@@ replace by ANY_STRING?
-					TYPE_OF(sp) = TYPE_FILE
-					TYPE_OF(sp) = TYPE_URL
-					sp/node = str/node
+				form-buf: as red-string! value
+				unless all [
+					TYPE_OF(sp) = TYPE_OF(form-buf)
+					sp/node = form-buf/node
+				][
+					ERR_INVALID_REFINEMENT_ARG(refinements/_part part-arg)
 				]
-				sp/head + 1								;-- /head is 0-based
+				sp/head - form-buf/head
 			]
 		]
 		if OPTION?(dup-arg) [
@@ -2369,6 +2395,7 @@ string: context [
 			invert? [logic!]
 			both?	[logic!]
 			find?	[logic!]
+			append?	[logic!]
 	][
 		step: 1
 		if OPTION?(skip-arg) [
@@ -2388,7 +2415,7 @@ string: context [
 		ser1: as red-series! stack/arguments
 		ser2: ser1 + 1
 		len: _series/get-length ser1 no
-		len: len + either op = OP_UNION [_series/get-length ser2 no][0]
+		if op = OP_UNION [len: len + _series/get-length ser2 no]
 		new: as red-series! string/rs-make-at stack/push* len
 		s2: GET_BUFFER(new)
 		n: 2
@@ -2400,15 +2427,17 @@ string: context [
 			tail: as byte-ptr! s/tail
 
 			while [head < tail] [			;-- iterate over first series
+				append?: no
 				cp: string/get-char head unit
 				if check? [
-					find?: string/rs-find-char as red-string! ser2 cp case?
+					find?: string/rs-find-char as red-string! ser2 cp step case?
 					if invert? [find?: not find?]
 				]
 				if all [
 					find?
-					not string/rs-find-char as red-string! new cp case?
+					not string/rs-find-char as red-string! new cp step case?
 				][
+					append?: yes
 					s2: string/append-char s2 cp
 				]
 
@@ -2418,7 +2447,7 @@ string: context [
 					all [head < tail i < step]
 				][
 					i: i + 1
-					s2: string/append-char s2 string/get-char head unit
+					if append? [s2: string/append-char s2 string/get-char head unit]
 				]
 			]
 
@@ -2443,7 +2472,7 @@ string: context [
 			;-- General actions --
 			:make
 			INHERIT_ACTION	;random
-			null			;reflect
+			INHERIT_ACTION	;reflect
 			:to
 			:form
 			:mold

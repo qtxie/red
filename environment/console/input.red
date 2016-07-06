@@ -17,7 +17,8 @@ Red [
 ;;@@ Temporary patch to allow inclusion in user code.
 unless system/console [
 	system/console: context [
-        history: make block! 200
+		history: make block! 200
+		limit: 72
 	]
 ]
 ;; End patch
@@ -153,9 +154,7 @@ unless system/console [
 		]
 
 		add-history: func [
-			str			[red-string!]
-			/local
-				saved	[integer!]
+			str	[red-string!]
 		][
 			str/head: 0
 			unless zero? string/rs-length? str [

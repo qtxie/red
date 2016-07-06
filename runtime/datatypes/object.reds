@@ -214,7 +214,6 @@ object: context [
 		obj		[red-object!]
 		return: [node!]
 		/local
-			int	 [red-integer!]
 			node [node!]
 			s	 [series!]
 	][
@@ -403,19 +402,19 @@ object: context [
 		ctx: GET_CTX(owner) 
 		s: as series! ctx/values/value
 		fun: as red-function! s/offset + index
-		assert TYPE_OF(fun) = TYPE_FUNCTION
-
-		stack/mark-func words/_on-deep-change*
-		stack/push as red-value! owner
-		stack/push as red-value! word
-		stack/push target
-		stack/push as red-value! action
-		stack/push new
-		integer/push pos
-		integer/push nb
-		if positive? count [_function/init-locals count]
-		_function/call fun owner/ctx
-		stack/unwind
+		if TYPE_OF(fun) = TYPE_FUNCTION [
+			stack/mark-func words/_on-deep-change*
+			stack/push as red-value! owner
+			stack/push as red-value! word
+			stack/push target
+			stack/push as red-value! action
+			stack/push new
+			integer/push pos
+			integer/push nb
+			if positive? count [_function/init-locals count]
+			_function/call fun owner/ctx
+			stack/unwind
+		]
 	]
 	
 	unchanged?: func [
@@ -746,6 +745,9 @@ object: context [
 		obj/ctx:	node
 		obj/class:	class
 		obj/on-set: null								;-- deferred setting, once object's body is evaluated
+		
+		s: as series! node/value
+		copy-cell as red-value! obj s/offset + 1		;-- set back-reference
 		obj
 	]
 	
@@ -757,11 +759,15 @@ object: context [
 		loc-d [integer!]
 		/local
 			obj [red-object!]
+			s	[series!]
 	][
 		obj: as red-object! stack/top - 1
 		assert TYPE_OF(obj) = TYPE_OBJECT
 		obj/on-set: make-callback-node TO_CTX(ctx) idx-s loc-s idx-d loc-d
 		if idx-d <> -1 [ownership/set-owner as red-value! obj obj null]
+		
+		s: as series! ctx/value
+		copy-cell as red-value! obj s/offset + 1		;-- refresh back-reference
 	]
 	
 	push: func [
@@ -774,12 +780,16 @@ object: context [
 		return: [red-object!]
 		/local
 			obj	[red-object!]
+			s	[series!]
 	][
 		obj: as red-object! stack/push*
 		obj/header: TYPE_OBJECT
 		obj/ctx:	ctx
 		obj/class:	class
 		obj/on-set: make-callback-node TO_CTX(ctx) idx-s loc-s idx-d loc-d
+		
+		s: as series! ctx/value
+		copy-cell as red-value! obj s/offset + 1		;-- set back-reference
 		obj
 	]
 	
@@ -787,11 +797,16 @@ object: context [
 		obj		[red-object!]
 		slots	[integer!]
 		return: [red-object!]
+		/local
+			s [series!]
 	][
 		obj/header: TYPE_OBJECT
 		obj/ctx:	_context/create slots no yes
 		obj/class:	0
 		obj/on-set: null
+		
+		s: as series! obj/ctx/value
+		copy-cell as red-value! obj s/offset + 1		;-- set back-reference
 		obj
 	]
 	
@@ -1105,6 +1120,7 @@ object: context [
 
 		if TYPE_OF(obj2) <> TYPE_OBJECT [RETURN_COMPARE_OTHER]
 
+		if op = COMP_SAME [return either obj1/ctx = obj2/ctx [0][-1]]
 		if all [
 			obj1/ctx = obj2/ctx
 			any [op = COMP_EQUAL op = COMP_STRICT_EQUAL op = COMP_NOT_EQUAL]
@@ -1185,6 +1201,7 @@ object: context [
 			tail  [red-value!]
 			src	  [series!]
 			dst	  [series!]
+			s	  [series!]
 			node  [node!]
 			size  [integer!]
 			slots [integer!]
@@ -1207,6 +1224,9 @@ object: context [
 		new/ctx: _context/create slots no yes
 		new/class: obj/class
 		nctx: GET_CTX(new)
+		
+		s: as series! new/ctx/value
+		copy-cell as red-value! new s/offset + 1		;-- set back-reference
 		
 		;-- process SYMBOLS
 		dst: as series! nctx/symbols/value
@@ -1262,6 +1282,7 @@ object: context [
 		part	 [red-value!]
 		only?	 [logic!]
 		case?	 [logic!]
+		same?	 [logic!]
 		any?	 [logic!]
 		with-arg [red-string!]
 		skip	 [red-integer!]
@@ -1286,6 +1307,7 @@ object: context [
 		part	 [red-value!]
 		only?	 [logic!]
 		case?	 [logic!]
+		same?	 [logic!]
 		any?	 [logic!]
 		with-arg [red-string!]
 		skip	 [red-integer!]
@@ -1306,12 +1328,26 @@ object: context [
 		case?	[logic!]
 		return:	[red-value!]
 		/local
-			sym [integer!]
+			sym  [integer!]
+			args [red-value!]
 	][
 		sym: symbol/resolve field/symbol
 		case [
 			sym = words/owner [
 				ownership/set-owner as red-value! obj obj null
+			]
+			sym = words/owned [
+				if TYPE_OF(value) = TYPE_NONE [
+					ownership/unbind as red-value! obj
+				]
+				if TYPE_OF(value) = TYPE_BLOCK [
+					args: block/rs-head as red-block! value
+					assert TYPE_OF(args) = TYPE_OBJECT	;@@ raise error on invalid block
+					ownership/set-owner 
+						as red-value! obj
+						as red-object! args
+						as red-word! args + 1
+				]
 			]
 			true [0]
 		]

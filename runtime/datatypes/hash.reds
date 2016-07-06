@@ -76,7 +76,6 @@ hash: context [
 		hash	[red-hash!]
 		return:	[red-value!]
 		/local
-			s	[series!]
 			blk [red-block!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "hash/clear"]]
@@ -197,7 +196,7 @@ hash: context [
 			INHERIT_ACTION	;index?
 			INHERIT_ACTION	;insert
 			INHERIT_ACTION	;length?
-			null			;move
+			INHERIT_ACTION	;move
 			INHERIT_ACTION	;next
 			INHERIT_ACTION	;pick
 			INHERIT_ACTION	;poke

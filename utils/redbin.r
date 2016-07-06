@@ -116,9 +116,9 @@ context [
 		emit to integer! value
 	]
 	
-	emit-float: func [value [decimal!] /local bin][
+	emit-float: func [value [decimal!] /with type /local bin][
 		pad buffer 8
-		emit-type 'TYPE_FLOAT
+		emit-type any [type 'TYPE_FLOAT]
 		bin: IEEE-754/to-binary64 value
 		emit to integer! copy/part bin 4
 		emit to integer! skip bin 4
@@ -143,6 +143,10 @@ context [
 		emit to integer! copy/part bin 4
 		emit to integer! skip bin 4
 	]
+	
+	emit-time: func [value [time!]][
+		emit-float/with (to decimal! value) * 1E9 'TYPE_TIME
+	]
 
 	emit-char: func [value [integer!]][
 		emit-type 'TYPE_CHAR
@@ -160,21 +164,11 @@ context [
 		emit value/y
 	]
 
-	emit-tuple: func [value [tuple!] /local bin size n header][
-		bin: make binary! 12
-		bin: insert/dup bin null 3
-		size: length? value
-		header: extracts/definitions/TYPE_TUPLE or shift/left size 8
+	emit-tuple: func [value [issue!] /local bin header][
+		bin: tail reverse debase/base next value 16
+		header: extracts/definitions/TYPE_TUPLE or shift/left length? head bin 8
 		if nl? [header: header or nl-flag]
-		
 		emit header
-		n: 0
-		until [
-			n: n + 1
-			insert bin to-bin8 value/:n
-			n = size
-		]
-		bin: tail bin
 		emit to integer! skip bin -4
 		emit to integer! copy/part skip bin -8 4
 		emit to integer! copy/part head bin 4
@@ -268,7 +262,7 @@ context [
 		emit any [ctx-idx idx]
 		if root [
 			if debug? [print [index ": word :" mold word]]
-			index: index + 1
+			unless set? [index: index + 1]
 		]
 	]
 	
@@ -319,9 +313,29 @@ context [
 				]
 			][
 				emit?: case [
-					unicode-char? :item [
-						emit-char to integer! next item
-						no
+					issue? :item [
+						case [
+							unicode-char? :item [
+								emit-char to integer! next item
+								no
+							]
+							tuple-value? :item [
+								emit-tuple item
+								no
+							]
+							percent-value? :item [
+								emit-percent item
+								no
+							]
+							float-special? :item [
+								emit-fp-special item
+								no
+							]
+							'else [
+								emit-issue item
+								no
+							]
+						]
 					]
 					any-word? :item [
 						ctx: main-ctx
@@ -334,14 +348,6 @@ context [
 							]
 						]
 						yes
-					]
-					percent-value? :item [
-						emit-percent item
-						no
-					]
-					float-special? :item [
-						emit-fp-special item
-						no
 					]
 					'else [yes]
 				]
@@ -357,14 +363,13 @@ context [
 						url!
 						string!
 						binary!   [emit-string item]
-						issue!	  [emit-issue item]
 						integer!  [emit-integer item]
 						decimal!  [emit-float item]
 						char!	  [emit-char to integer! item]
 						pair!	  [emit-pair item]
-						tuple!	  [emit-tuple item]
 						datatype! [emit-datatype item]
 						logic!	  [emit-logic item]
+						time!	  [emit-time item]
 						none! 	  [emit-none]
 						unset! 	  [emit-unset]
 					]

@@ -19,6 +19,7 @@ float: context [
 		FORM_FLOAT_32
 		FORM_FLOAT_64
 		FORM_PERCENT
+		FORM_TIME
 	]
 
 	pretty-print?: true
@@ -125,14 +126,22 @@ float: context [
 		]
 
 		s: "0000000000000000000000000000000"					;-- 32 bytes wide, big enough.
-		either type = FORM_FLOAT_32 [
-			s/8: #"0"
-			s/9: #"0"
-			sprintf [s "%.7g" f]
-		][
-			s/17: #"0"
-			s/18: #"0"
-			sprintf [s "%.16g" f]
+		case [
+			type = FORM_FLOAT_32 [
+				s/8: #"0"
+				s/9: #"0"
+				sprintf [s "%.7g" f]
+			]
+			type = FORM_TIME [									;-- nanosecond precision
+				s/10: #"0"
+				s/11: #"0"
+				sprintf [s "%.9g" f]
+			]
+			true [
+				s/17: #"0"
+				s/18: #"0"
+				sprintf [s "%.16g" f]
+			]
 		]
 
 		p:  null
@@ -180,11 +189,12 @@ float: context [
 						all [p0/2 = #"1" p0/1 = #"0"]
 						all [p0/2 = #"9" p0/1 = #"9"]
 					][
-						either type = FORM_FLOAT_32 [
-							sprintf [s0 "%.5g" f]
-						][
-							sprintf [s0 "%.14g" f]
+						s: case [
+							type = FORM_FLOAT_32 ["%.5g"]
+							type = FORM_TIME	 ["%.7g"]
+							true				 ["%.14g"]
 						]
+						sprintf [s0 s f]
 						s: s0
 					]
 				]
@@ -205,7 +215,7 @@ float: context [
 			s/1: #"%"
 			s/2: #"^@"
 		][
-			unless dot? [										;-- added tailing ".0"
+			if all [not dot? type <> FORM_TIME][				;-- added tailing ".0"
 				either p = null [
 					p: s
 				][
@@ -261,6 +271,10 @@ float: context [
 			type1 [integer!]
 			type2 [integer!]
 			int   [red-integer!]
+			op1	  [float!]
+			op2	  [float!]
+			t1?	  [logic!]
+			t2?	  [logic!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "float/do-math"]]
 
@@ -274,6 +288,7 @@ float: context [
 			type1 = TYPE_INTEGER
 			type1 = TYPE_FLOAT
 			type1 = TYPE_PERCENT
+			type1 = TYPE_TIME
 		]
 
 		if type2 = TYPE_TUPLE [
@@ -285,6 +300,7 @@ float: context [
 			type2 = TYPE_CHAR
 			type2 = TYPE_FLOAT
 			type2 = TYPE_PERCENT
+			type2 = TYPE_TIME
 		][fire [TO_ERROR(script invalid-type) datatype/push type2]]
 
 		if type1 = TYPE_INTEGER [
@@ -306,8 +322,22 @@ float: context [
 		][
 			left/header: TYPE_FLOAT
 		]
+		
+		op1: left/value
+		op2: right/value
+		
+		t1?: all [type1 = TYPE_TIME type2 <> TYPE_TIME]
+		t2?: all [type1 <> TYPE_TIME type2 = TYPE_TIME]
+		
+		if t1? [op1: op1 * time/nano]
+		if t2? [op2: op2 * time/nano]
 
-		left/value: do-math-op left/value right/value type
+		left/value: do-math-op op1 op2 type
+		
+		if any [t1? t2?][
+			left/header: TYPE_TIME
+			left/value: left/value * time/oneE9
+		]
 		left
 	]
 
@@ -400,7 +430,6 @@ float: context [
 		only?   [logic!]
 		return: [red-float!]
 		/local
-			t	[float!]
 			s	[float!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "float/random"]]
@@ -584,7 +613,7 @@ float: context [
 		#if debug? = yes [if verbose > 0 [print-line "float/compare"]]
 
 		if all [
-			op = COMP_STRICT_EQUAL
+			any [op = COMP_SAME op = COMP_STRICT_EQUAL]
 			TYPE_OF(value1) <> TYPE_OF(value2)
 		][return 1]
 
@@ -596,6 +625,7 @@ float: context [
 				int: as red-integer! value2
 				right: integer/to-float int/value
 			]
+			TYPE_TIME
 			TYPE_PERCENT
 			TYPE_FLOAT [right: value2/value]
 			default [RETURN_COMPARE_OTHER]

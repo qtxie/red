@@ -91,7 +91,7 @@ forever: make native! [[
 foreach: make native! [[
 		"Evaluates body for each value in a series"
 		'word  [word! block!]   "Word, or words, to set on each iteration"
-		series [series! map!]
+		series [series!]
 		body   [block!]
 	]
 	#get-definition NAT_FOREACH
@@ -103,6 +103,15 @@ forall: make native! [[
 		body  [block!]
 	]
 	#get-definition NAT_FORALL
+]
+
+remove-each: make native! [[
+		"Removes values for each block that returns true, returns removal count"
+		'word [word! block!] "Word or block of words to set each time"
+		data [series!] "The series to traverse (modified)"
+		body [block!] "Block to evaluate (return TRUE to remove)"
+	]
+	#get-definition NAT_REMOVE_EACH
 ]
 
 func: make native! [[
@@ -160,6 +169,8 @@ do: make native! [[
 		value [any-type!]
 		/args "If value is a script, this will set its system/script/args"
 			arg "Args passed to a script (normally a string)"
+		/next "Do next expression only, return it, update block word"
+			position [word!] "Word updated with new block position"
 	]
 	#get-definition NAT_DO
 ]
@@ -696,6 +707,15 @@ debase: make native! [[
 	#get-definition NAT_DEBASE
 ]
 
+enbase: make native! [[
+		"Encodes a string into a binary-coded string (BASE-64 default)"
+		value [binary! string!] "If string, will be UTF8 encoded"
+		/base "Binary base to use"
+			base-value [integer!] "The base to convert from: 64, 16, or 2"
+	]
+	#get-definition NAT_ENBASE
+]
+
 to-local-file: make native! [[
 		"Converts a Red file path to the local system file path"
 		path  [file! string!]
@@ -743,15 +763,11 @@ wait: make native! [[
 ]
 
 checksum: make native! [[
-		"Computes a checksum, CRC, or hash"
+		"Computes a checksum, CRC, hash, or HMAC"
 		data 	[binary! string! file!]
-		/tcp 				"Returns an Internet TCP 16-bit checksum"
-		/hash 				"Returns a hash value"
-			size [integer!] "Size of the hash table"
-		/method				"Method to use"
-			word [word!]	"Methods: SHA1 MD5 CRC32"
-		/key				"Returns keyed HMAC value"
-			key-value [any-string!] "Key to use"
+		method	[word!]	"MD5 SHA1 SHA256 SHA384 SHA512 CRC32 TCP hash"
+		/with	"Extra value for HMAC key or hash table size; not compatible with TCP/CRC32 methods"
+			spec [any-string! binary! integer!] "String or binary for MD5/SHA* HMAC key, integer for hash table size"
 		return: [integer! binary!]
 	]
 	#get-definition NAT_CHECKSUM
@@ -782,4 +798,59 @@ new-line?: make native! [[
 		return:  [block! paren!]
 	]
 	#get-definition NAT_NEW_LINE?
+]
+
+context?: make native! [[
+		"Returns the context in which a word is bound"
+		word	[any-word!]		"Word to check"
+		return: [object! function! none!]
+	]
+	#get-definition NAT_CONTEXT?
+]
+
+set-env: make native! [[
+		"Sets the value of an operating system environment variable (for current process)"
+		var   [any-string! any-word!] "Variable to set"
+		value [string! none!] "Value to set, or NONE to unset it"
+	]
+	#get-definition NAT_SET_ENV
+]
+
+get-env: make native! [[
+		"Returns the value of an OS environment variable (for current process)"
+		var		[any-string! any-word!] "Variable to get"
+		return: [string! none!]
+	]
+	#get-definition NAT_GET_ENV
+]
+
+list-env: make native! [[
+		"Returns a map of OS environment variables (for current process)"
+		return: [map!]
+	]
+	#get-definition NAT_LIST_ENV
+]
+
+now: make native! [[
+		"Returns date and time"
+		/year		"Returns year only"
+		/month		"Returns month only"
+		/day		"Returns day of the month only"
+		/time		"Returns time only"
+		/zone		"Returns time zone offset from UCT (GMT) only"
+		/date		"Returns date only"
+		/weekday	"Returns day of the week as integer (Monday is day 1)"
+		/yearday	"Returns day of the year (Julian)"
+		/precise	"High precision time"
+		/utc		"Universal time (no zone)"
+		return: [time!]					;@@ add date! when we have it
+	]
+	#get-definition NAT_NOW
+]
+
+sign?: make native! [[
+		"Returns sign of N as 1, 0, or -1 (to use as a multiplier)."
+		number [number! time!]
+	]
+	#get-definition NAT_SIGN?
 ]

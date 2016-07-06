@@ -785,7 +785,6 @@ vector: context [
 		/local
 			s1		[series!]
 			s2		[series!]
-			unit	[integer!]
 			unit1	[integer!]
 			unit2	[integer!]
 			type	[integer!]
@@ -798,15 +797,20 @@ vector: context [
 			p2		[byte-ptr!]
 			f1		[float!]
 			f2		[float!]
+			same?	[logic!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "vector/compare"]]
 
 		if TYPE_OF(vec2) <> TYPE_VECTOR [RETURN_COMPARE_OTHER]
 		if vec1/type <> vec2/type [fire [TO_ERROR(script not-same-type)]]
 
-		if all [
+		same?: all [
 			vec1/node = vec2/node
 			vec1/head = vec2/head
+		]
+		if op = COMP_SAME [return either same? [0][-1]]
+		if all [
+			same?
 			any [op = COMP_EQUAL op = COMP_STRICT_EQUAL op = COMP_NOT_EQUAL]
 		][return 0]
 		
@@ -887,16 +891,13 @@ vector: context [
 			cell	  [red-value!]
 			limit	  [red-value!]
 			int		  [red-integer!]
-			char	  [red-char!]
 			sp		  [red-vector!]
 			s		  [series!]
 			s2		  [series!]
 			dup-n	  [integer!]
 			cnt		  [integer!]
 			part	  [integer!]
-			len		  [integer!]
 			added	  [integer!]
-			vec-type  [integer!]
 			tail?	  [logic!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "vector/insert"]]
@@ -904,7 +905,6 @@ vector: context [
 		dup-n: 1
 		cnt:   1
 		part: -1
-		vec-type: vec/type
 
 		if OPTION?(part-arg) [
 			part: either TYPE_OF(part-arg) = TYPE_INTEGER [
@@ -912,13 +912,14 @@ vector: context [
 				int/value
 			][
 				sp: as red-vector! part-arg
+				src: as red-block! value
 				unless all [
-					TYPE_OF(sp) = TYPE_VECTOR
-					sp/node = vec/node
+					TYPE_OF(sp) = TYPE_OF(src)
+					sp/node = src/node
 				][
-					fire [TO_ERROR(script invalid-part) part-arg]
+					ERR_INVALID_REFINEMENT_ARG(refinements/_part part-arg)
 				]
-				sp/head + 1								;-- /head is 0-based
+				sp/head - src/head
 			]
 		]
 		if OPTION?(dup-arg) [

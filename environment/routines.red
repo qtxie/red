@@ -60,6 +60,26 @@ quit-return: routine [
 	quit status
 ]
 
+set-quiet: routine [
+	"Set an object's field to a value without triggering object's events"
+	word  [word!]
+	value [any-type!]
+][
+	_context/set word stack/arguments + 1
+]
+
+browse: routine [
+	"Open web browser to a URL"
+	url [url!]
+][
+	#either OS = 'Windows [
+		platform/ShellExecute 0 #u16 "open" unicode/to-utf16 as red-string! url 0 0 1
+		unset/push-last
+	][
+		fire [TO_ERROR(internal not-here) words/_browse]
+	]
+]
+
 ;-- Following definitions are used to create op! corresponding operators
 shift-right:   routine [data [integer!] bits [integer!]][natives/shift* no -1 -1]
 shift-left:	   routine [data [integer!] bits [integer!]][natives/shift* no 1 -1]
@@ -81,6 +101,10 @@ set-current-dir: routine [path [string!] /local dir [red-file!]][
 	unless platform/set-current-dir file/to-OS-path dir [
 		fire [TO_ERROR(access cannot-open) dir]
 	]
+]
+
+create-dir: routine [path [file!]][			;@@ temporary, user should use `make-dir`
+	simple-io/make-dir file/to-OS-path path
 ]
 
 exists?: routine [path [file!] return: [logic!]][

@@ -22,14 +22,15 @@ system/view/VID: context [
 		cause-error 'script 'vid-invalid-syntax [copy/part spec 3]
 	]
 	
-	react-ctx: context [face: none]
-	
 	process-reactors: function [][
 		foreach [f blk] reactors [
-			bind blk ctx: make react-ctx [face: f]
-			react/with blk ctx
+			either f [
+				bind blk ctx: context [face: f]
+				react/with blk ctx
+			][
+				react blk
+			]
 		]
-		react-ctx/face: none
 		clear reactors
 	]
 	
@@ -71,6 +72,15 @@ system/view/VID: context [
 		if find [file! url!] type?/word value [value: load value]
 		value
 	]
+	
+	add-option: function [opts [object!] spec [block!]][
+		either block? opts/options [
+			foreach [field value] spec [put opts/options field value]
+		][
+			opts/options: copy spec
+		]
+		last spec
+	]
 
 	add-flag: function [obj [object!] facet [word!] field [word!] flag return: [logic!]][
 		unless obj/:facet [
@@ -92,25 +102,25 @@ system/view/VID: context [
 		any [all [any [word? :value path? :value] get :value] value]
 	]
 	
-	fetch-argument: function [expected [datatype! typeset!] spec [block!]][
+	fetch-argument: function [expected [datatype! typeset!] 'pos [word!]][
+		spec: next get pos
 		either any [
 			expected = type: type? value: spec/1
 			all [typeset? expected find expected type]
 		][
 			value
 		][
-			if all [
+			unless all [
 				any [type = word! type = path!]
 				value: get value
 				any [
 					all [datatype? expected expected = type? value]
 					all [typeset? expected find expected type? value]
 				]
-			][
-				return value
-			]
-			throw-error spec
+			][throw-error spec]
 		]
+		set pos spec
+		value
 	]
 	
 	fetch-options: function [
@@ -123,6 +133,7 @@ system/view/VID: context [
 		calc-y?: no
 		
 		obj-spec!: make typeset! [block! object!]
+		rate!: make typeset! [integer! time!]
 		set opts none
 		
 		;-- process style options --
@@ -134,21 +145,23 @@ system/view/VID: context [
 				| ['bold | 'italic | 'underline] (opt?: add-flag opts 'font 'style value)
 				| 'extra	  (opts/extra: fetch-value spec: next spec)
 				| 'data		  (opts/data: fetch-value spec: next spec)
-				| 'draw		  (opts/draw: fetch-argument block! spec: next spec)
-				| 'font		  (opts/font: make any [opts/font font!] fetch-argument obj-spec! spec: next spec)
-				| 'para		  (opts/para: make any [opts/para para!] fetch-argument obj-spec! spec: next spec)
+				| 'draw		  (opts/draw: fetch-argument block! spec)
+				| 'font		  (opts/font: make any [opts/font font!] fetch-argument obj-spec! spec)
+				| 'para		  (opts/para: make any [opts/para para!] fetch-argument obj-spec! spec)
 				| 'wrap		  (opt?: add-flag opts 'para 'wrap? yes)
 				| 'no-wrap	  (opt?: add-flag opts 'para 'wrap? no)
 				| 'focus	  (focal-face: face)
-				| 'font-size  (add-flag opts 'font 'size  fetch-argument integer! spec: next spec)
-				| 'font-color (add-flag opts 'font 'color fetch-argument tuple! spec: next spec)
-				| 'font-name  (add-flag opts 'font 'name  fetch-argument string! spec: next spec)
-				| 'react	  (append reactors reduce [face fetch-argument block! spec: next spec])
-				| 'loose	  (value: [drag-on: 'down] either block? opts/options [append opts/options value][opts/options: value])
+				| 'font-size  (add-flag opts 'font 'size  fetch-argument integer! spec)
+				| 'font-color (add-flag opts 'font 'color fetch-argument tuple! spec)
+				| 'font-name  (add-flag opts 'font 'name  fetch-argument string! spec)
+				| 'react	  (append reactors reduce [face fetch-argument block! spec])
+				| 'loose	  (add-option opts [drag-on: 'down])
 				| 'all-over   (set-flag opts 'flags 'all-over)
 				| 'hidden	  (opts/visible?: no)
 				| 'disabled	  (opts/enable?: no)
-				| 'select	  (opts/selected: fetch-argument integer! spec: next spec)
+				| 'select	  (opts/selected: fetch-argument integer! spec)
+				| 'rate		  (opts/rate: fetch-argument rate! spec)
+				| 'default 	  (opts/data: add-option opts append copy [default: ] fetch-value spec: next spec)
 				| 'space	  (opt?: no)				;-- avoid wrongly reducing that word
 				] to end
 			]
@@ -191,7 +204,8 @@ system/view/VID: context [
 							][make-actor opts style/default-actor spec/1 spec]
 							yes
 						]
-						char!	 [yes]
+						get-word! [make-actor opts style/default-actor spec/1 spec]
+						char!	  [yes]
 					][no]
 				]
 			]
@@ -221,10 +235,12 @@ system/view/VID: context [
 		unless any [name block? body][throw-error spec]
 		unless obj/actors [obj/actors: make block! 4]
 		
-		append obj/actors reduce [
-			load append form name #":"	;@@ to set-word!
-			'func [face [object!] event [event! none!]]
-			copy/deep body
+		append obj/actors load append form name #":"	;@@ to set-word!
+		append obj/actors either get-word? body [body][
+			reduce [
+				'func [face [object!] event [event! none!]]
+				copy/deep body
+			]
 		]
 	]
 	
@@ -259,7 +275,7 @@ system/view/VID: context [
 		
 		opts: object [
 			type: offset: size: text: color: enable?: visible?: selected: image: 
-			font: flags: options: para: data: extra: actors: draw: none
+			rate: font: flags: options: para: data: extra: actors: draw: none
 		]
 		
 		reset: [
@@ -275,10 +291,10 @@ system/view/VID: context [
 		
 		while [all [global? not tail? spec]][			;-- process wrapping panel options
 			switch/default spec/1 [
-				title	 [panel/text: fetch-argument string! spec: next spec]
-				size	 [size: fetch-argument pair! spec: next spec]
+				title	 [panel/text: fetch-argument string! spec]
+				size	 [size: fetch-argument pair! spec]
 				backdrop [
-					value: pre-load fetch-argument background! spec: next spec
+					value: pre-load fetch-argument background! spec
 					switch type?/word value [
 						tuple! [panel/color: value]
 						image! [panel/image: value]
@@ -296,12 +312,13 @@ system/view/VID: context [
 			switch/default value [
 				across	[direction: value]				;@@ fix this
 				below	[direction: value]
-				space	[spacing: fetch-argument pair! spec: next spec]
-				origin	[origin: cursor: fetch-argument pair! spec: next spec]
-				at		[at-offset: fetch-argument pair! spec: next spec]
-				pad		[cursor: cursor + fetch-argument pair! spec: next spec]
-				do		[do-safe bind fetch-argument block! spec: next spec panel]
+				space	[spacing: fetch-argument pair! spec]
+				origin	[origin: cursor: fetch-argument pair! spec]
+				at		[at-offset: fetch-argument pair! spec]
+				pad		[cursor: cursor + fetch-argument pair! spec]
+				do		[do-safe bind fetch-argument block! spec panel]
 				return	[either divides [throw-error spec][do reset]]
+				react	[repend reactors [none fetch-argument block! spec]]
 				style	[
 					unless set-word? name: first spec: next spec [throw-error spec]
 					styling?: yes
@@ -323,6 +340,7 @@ system/view/VID: context [
 				if style/template/type = 'window [throw-error spec]
 				face: make face! copy/deep style/template
 				spec: fetch-options face opts style spec local-styles
+				if style/init [do bind style/init 'face]
 				
 				either styling? [
 					if same? css local-styles [local-styles: copy css]
@@ -376,7 +394,7 @@ system/view/VID: context [
 			unless only [panel/pane: list]
 		]
 		either size [panel/size: size][
-			if pane-size <> 0x0 [panel/size: pane-size]
+			if pane-size <> 0x0 [panel/size: pane-size - spacing + origin]
 		]
 		if image: panel/image [
 			x: image/size/x

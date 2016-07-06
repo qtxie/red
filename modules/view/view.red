@@ -89,7 +89,7 @@ on-face-deep-change*: function [owner word target action new index part state fo
 			tab "forced?    :" forced?
 		]
 	]
-	if all [state word <> 'state][
+	if all [state word <> 'state word <> 'extra][
 		either any [
 			forced?
 			system/view/auto-sync?
@@ -170,10 +170,16 @@ on-face-deep-change*: function [owner word target action new index part state fo
 				]
 			][
 				if owner/type <> 'screen [
+					if all [find [field text] owner/type word = 'text][
+						set-quiet in owner 'data any [
+							all [not empty? owner/text attempt/safer [load owner/text]]
+							all [owner/options owner/options/default]
+						]
+					]
 					system/view/platform/on-change-facet owner word target action new index part
 				]
 			]
-			;check-reactions owner word
+			system/reactivity/check/only owner word
 		][
 			if any [								;-- drop multiple changes on same facet
 				none? state/3
@@ -222,28 +228,10 @@ update-font-faces: function [parent [block! none!]][
 	if block? parent [
 		foreach f parent [
 			if f/state [
-				check-reactions f 'font
-				f/state/2: f/state/2 or 00040000h		;-- (1 << ((index? in f 'font) - 1))
+				system/reactivity/check/only f 'font
+				f/state/2: f/state/2 or 00080000h		;-- (1 << ((index? in f 'font) - 1))
 				show f
 			]
-		]
-	]
-]
-
-check-all-reactions: function [face [object!]][
-	unless empty? pos: system/view/reactors [
-		while [pos: find/skip pos face 4][
-			do-safe pos/3
-			pos: skip pos 4
-		]
-	]
-]
-
-check-reactions: function [face [object!] facet [word!]][
-	unless empty? pos: system/view/reactors [
-		while [pos: find/skip pos face	4][
-			if pos/2 = facet [do-safe pos/3]
-			pos: skip pos 4
 		]
 	]
 ]
@@ -265,7 +253,7 @@ face!: object [				;-- keep in sync with facet! enum
 	parent:		none
 	pane:		none
 	state:		none		;-- [handle [integer! none!] change-array [integer!] deferred [block! none!] drag-offset [pair! none!]]
-	;rate:		none		;@@ to be considered
+	rate:		none
 	edge:		none
 	para:		none
 	font:		none
@@ -282,7 +270,7 @@ face!: object [				;-- keep in sync with facet! enum
 				tab "new  :" type? new
 			]
 		]
-		if word <> 'state [
+		if all [word <> 'state word <> 'extra][
 			if word = 'pane [
 				if all [type = 'window object? new new/type = 'window][
 					cause-error 'script 'bad-window []
@@ -296,10 +284,29 @@ face!: object [				;-- keep in sync with facet! enum
 			unless any [same-pane? find [font para edge actors extra] word][
 				if any [series? new object? new][modify new 'owned reduce [self word]]
 			]
-			if word = 'font [link-sub-to-parent self 'font old new]
-			if word = 'para [link-sub-to-parent self 'para old new]
+			if word = 'font  [link-sub-to-parent self 'font old new]
+			if word = 'para  [link-sub-to-parent self 'para old new]
+			if find [field text] type [
+				if word = 'text [
+					set-quiet 'data any [
+						all [not empty? new attempt/safer [load new]]
+						all [options options/default]
+					]
+				]
+				if 'data = word [
+					either data [
+						if string? text [modify text 'owned none]
+						set-quiet 'text form data		;@@ use form/into (avoids rebinding)
+						modify text 'owned reduce [self 'text]
+					][
+						clear text
+					]
+					saved: 'data
+					word: 'text							;-- force text refresh
+				]
+			]
 
-			check-reactions self word
+			system/reactivity/check/only self any [saved word]
 			
 			if state [
 				;if word = 'type [cause-error 'script 'locked-word [type]]
@@ -380,7 +387,7 @@ para!: object [
 			block? parent
 		][
 			foreach f parent [
-				check-reactions f 'para
+				system/reactivity/check/only f 'para
 				system/view/platform/update-para f (index? in self word) - 1 ;-- sets f/state flag too
 				if all [f/state f/state/1][show f]
 			]
@@ -402,10 +409,10 @@ system/view: context [
 	VID: none
 	
 	handlers: make block! 10
-	reactors: make block! 100
 	
 	evt-names: make hash! [
 		detect			on-detect
+		time			on-time
 		down			on-down
 		up				on-up
 		mid-down		on-mid-down
@@ -553,6 +560,9 @@ show: function [
 			if all [not parent not object? face/parent face/type <> 'window][
 				cause-error 'script 'not-linked []
 			]
+			if any [series? face/extra object? face/extra][
+				modify face/extra 'owned none			;@@ TBD: unflag object's fields (ownership)
+			]
 			if all [object? face/actors in face/actors 'on-create][
 				do-safe [face/actors/on-create face none]
 			]
@@ -587,10 +597,13 @@ show: function [
 		face/state: reduce [obj 0 none false]
 	]
 
-	if face/pane [foreach f face/pane [show/with f face]]
+	if face/pane [
+		foreach f face/pane [show/with f face]
+		system/view/platform/refresh-window face/state/1
+	]
 	;check-all-reactions face
 	
-	if all [new? face/type = 'window][
+	if all [new? face/type = 'window face/visible?][
 		system/view/platform/show-window obj
 	]
 ]
@@ -640,66 +653,6 @@ view: function [
 	
 ]
 
-react: function [
-	"Defines a new reactive action on one or more faces"
-	spec [block!]			"Reaction spec block"
-	/with					"Specifies an optional face object (internal use)"
-		ctx [object! none!] "Optional face context"
-	return: [block!]		"List of faces causing a reaction"
-][
-	collect [
-		parse spec rule: [
-			any [
-				item: [path! | lit-path! | get-path!] (
-					saved: item/1
-					if unset? attempt [get/any item: saved][
-						cause-error 'script 'no-value [item]
-					]
-					obj: none
-					part: (length? item) - 1
-
-					unless all [							;-- search for an object (deep first)
-						2 = length? item
-						object? obj: get item/1
-					][
-						until [
-							path: copy/part item part
-							part: part - 1
-							any [
-								tail? path
-								object? obj: attempt [get path]
-								part = 1
-							]
-						]
-					]
-
-					if all [
-						object? obj							;-- rough checks for face object
-						in obj 'type
-						in obj 'offset
-					][
-						part: part + 1
-						append system/view/reactors reduce [obj item/:part spec ctx]
-						unless find collected obj [keep obj]
-					]
-					parse saved rule
-				)
-				| set-path! | any-string!
-				| into rule
-				| skip
-			]
-		]
-	]
-]
-
-remove-reactor: function [
-	"Destroys reactive actions created by REACT function"
-	faces [object! block!] "Face(s) referenced in a reactive action"
-][
-	process: [while [pos: find system/view/reactors face][remove/part pos 4]]
-	either block? faces [foreach face faces [do process face]][do process face]
-]
-
 center-face: function [
 	"Center a face inside its parent"
 	face [object!]		 "Face to center"
@@ -716,6 +669,7 @@ center-face: function [
 	]
 	either parent [
 		face/offset: parent/size - face/size / 2
+		if face/type = 'window [face/offset: face/offset + parent/offset]
 	][
 		print "CENTER-FACE: face has no parent!"		;-- temporary check
 	]
@@ -750,7 +704,14 @@ remove-event-func: function [
 	"Remove an event function previously added"
 	fun [function!]
 ][
-	remove find system/view/handlers :fun
+	remove find/same system/view/handlers :fun
+]
+
+request-font: function [
+	"Requests a font object"
+	/mono			"Show monospaced font only"
+][
+	system/view/platform/request-font make font! [] mono
 ]
 
 ;=== Global handlers ===
@@ -764,8 +725,10 @@ insert-event-func [
 		face: event/face
 		type: event/type
 		either type = drag-evt [
-			unless find-flag? flags: face/flags 'all-over [
-				either block? flags [append flags 'all-over][face/flags: 'all-over]
+			face/flags: any [
+				all [not block? flags: face/flags :flags reduce [:flags 'all-over]] 
+				all [flags append flags 'all-over]
+				'all-over
 			]
 			do-actor face event 'drag-start
 			face/state/4: event/offset
@@ -792,6 +755,11 @@ insert-event-func [
 					] type [
 						do-actor face event 'drop
 						if face/state [face/state/4: none]
+						face/flags: all [
+							block? flags: face/flags
+							remove find flags 'all-over
+							flags
+						]
 					]
 				]
 			]
@@ -848,7 +816,7 @@ insert-event-func [
 
 ;-- Reactors support handler --
 insert-event-func [
-	if event/type = 'change [
+	if find [change enter unfocus] event/type [
 		face: event/face
 		facet: switch/default face/type [
 			slider		['data]
@@ -862,7 +830,22 @@ insert-event-func [
 			drop-list	['selected]
 		][none]
 		
-		if facet [check-reactions face facet]
+		if facet [system/reactivity/check/only face facet]
 	]
 	none
+]
+
+;-- Field's data facet syncing handler
+insert-event-func [
+	if all [
+		find [change] event/type
+		event/face/type = 'field
+	][
+		face: event/face
+		set-quiet in face 'data any [
+			all [not empty? face/text attempt/safer [load face/text]]
+			all [face/options face/options/default]
+		]
+		system/reactivity/check/only face 'data
+	]
 ]

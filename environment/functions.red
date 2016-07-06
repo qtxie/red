@@ -25,8 +25,13 @@ also: func [
 attempt: func [
 	"Tries to evaluate a block and returns result or NONE on error"
 	value [block!]
+	/safer
 ][
-	unless error? set/any 'value try :value [get/any 'value]
+	either safer [
+		unless error? set/any 'value try/all :value [get/any 'value]
+	][
+		unless error? set/any 'value try :value [get/any 'value]
+	]
 ]
 
 comment: func [value][]
@@ -52,11 +57,7 @@ empty?: func [
 ][
 	prin mold :value
 	prin ": "
-	either value? :value [
-		probe get/any :value
-	][
-		print "unset!"
-	]
+	print either value? :value [mold get/any :value]["unset!"]
 ]
 
 probe: func [
@@ -73,9 +74,9 @@ quote: func [
 	:value
 ]
 
-first:	func ["Returns the first value in a series"  s [series! tuple! pair!]] [pick s 1]	;@@ temporary definitions, should be natives ?
-second:	func ["Returns the second value in a series" s [series! tuple! pair!]] [pick s 2]
-third:	func ["Returns the third value in a series"  s [series! tuple!]] [pick s 3]
+first:	func ["Returns the first value in a series"  s [series! tuple! pair! time!]] [pick s 1]	;@@ temporary definitions, should be natives ?
+second:	func ["Returns the second value in a series" s [series! tuple! pair! time!]] [pick s 2]
+third:	func ["Returns the third value in a series"  s [series! tuple! time!]] [pick s 3]
 fourth:	func ["Returns the fourth value in a series" s [series! tuple!]] [pick s 4]
 fifth:	func ["Returns the fifth value in a series"  s [series! tuple!]] [pick s 5]
 
@@ -115,6 +116,7 @@ routine?:	 func ["Returns true if the value is this type" value [any-type!]] [ro
 set-path?:	 func ["Returns true if the value is this type" value [any-type!]] [set-path!	= type? :value]
 set-word?:	 func ["Returns true if the value is this type" value [any-type!]] [set-word!	= type? :value]
 string?:	 func ["Returns true if the value is this type" value [any-type!]] [string!		= type? :value]
+time?:		 func ["Returns true if the value is this type" value [any-type!]] [time!		= type? :value]
 typeset?:	 func ["Returns true if the value is this type" value [any-type!]] [typeset!	= type? :value]
 tuple?:		 func ["Returns true if the value is this type" value [any-type!]] [tuple!		= type? :value]
 unset?:		 func ["Returns true if the value is this type" value [any-type!]] [unset!		= type? :value]
@@ -180,17 +182,30 @@ offset?: func [
 	subtract index? series2 index? series1
 ]
 
+repend: func [
+	"Appends a reduced value to a series and returns the series head"
+	series [series!]
+	value
+	/only "Appends a block value as a block"
+][
+	head either only [
+		insert/only tail series reduce :value
+	][
+		reduce/into :value tail series					;-- avoids wasting an intermediary block
+	]
+]
+
 replace: function [
 	series [series!]
 	pattern
 	value
 	/all
 ][
-	many?: (series? :pattern) and (
-		   (any-string? series)
-		or (binary? series)
-		or ((any-list? series) and any-list? :pattern)
-	) 
+	many?: any [
+		system/words/all [series? :pattern any-string? series]
+		binary? series
+		system/words/all [any-list? series any-list? :pattern]
+	]
 	len: either many? [length? pattern][1]
 	
 	either all [
@@ -220,6 +235,24 @@ zero?: func [
 	][
 		value = 0
 	]
+]
+
+math: function [
+	"Evaluates a block using math precedence rules, returning the last result"
+	body [block!] "Block to evaluate"
+	/safe		  "Returns NONE on error"
+][
+	parse body rule: [
+		any [
+			pos: ['* (op: 'multiply) | quote slash-word (op: 'divide)] (
+				remove pos
+				insert back pos op
+			)
+			| into rule
+			| skip
+		]
+	]
+	either safe [attempt body][do body]
 ]
 
 charset: func [
@@ -294,6 +327,8 @@ load: function [
 	source [file! url! string! binary!]
 	/header "TBD: Include Red header as a loaded value"
 	/all    "TBD: Don't evaluate Red header"
+	/next	"Load the next value only, updates source series word"
+		position [word!] "Word updated with new series position"
 	/part
 		length [integer! string!]
 	/into "Put results in out block, instead of creating a new block"
@@ -347,13 +382,13 @@ load: function [
 			][return none]
 			source: to string! source/3
 		]
-		binary! [source: to string! source]					;-- UTF-8 encoding
+		binary! [source: to string! source]				;-- For text: UTF-8 encoding TBD: load image in binary form
 	][source]
 
-	either part [
-		system/lexer/transcode/part source out length
-	][
-		system/lexer/transcode source out
+	case [
+		part  [system/lexer/transcode/part source out length]
+		next  [set position system/lexer/transcode/one source out]
+		'else [system/lexer/transcode source out]
 	]
 	unless :all [if 1 = length? out [out: out/1]]
 	out 
@@ -390,8 +425,11 @@ save: function [
 			]
 		]
 		unless find-encoder? [
-			data: either all [mold/all/only :value][mold/only :value]
-			append data newline
+			data: either all [
+				append mold/all/only :value newline
+			][
+				trim mold/only :value
+			]
 			case/all [
 				not binary? data [data: to binary! data]
 				length [
@@ -406,7 +444,7 @@ save: function [
 					foreach [k v] header-data [
 						append header-str reduce [#"^-" mold k #" " mold v newline]
 					]
-					append header-str "]^/"
+					append header-str "]^/^/"
 					insert data header-str
 				]
 			]
@@ -452,15 +490,15 @@ pad: func [
 
 modulo: func [
 	"Compute a nonnegative remainder of A divided by B"
-	a		[number! char! pair! tuple! vector!]
-	b		[number! char! pair! tuple! vector!]
-	return: [number! char! pair! tuple! vector!]
+	a		[number! char! pair! tuple! vector! time!]
+	b		[number! char! pair! tuple! vector! time!]
+	return: [number! char! pair! tuple! vector! time!]
 	/local r
 ][
 	b: absolute b
-    all [0 > r: a % b r: r + b]
-    a: absolute a
-    either all [a + r = (a + b) 0 < r + r - b] [r - b] [r]
+	if (r: a % b) < 0 [r: r + b]
+	a: absolute a
+	either all [a + r = (a + b) 0 < r + r - b][r - b][r]
 ]
 
 eval-set-path: func [value1][]
@@ -477,14 +515,14 @@ to-red-file: func [
 	i: 1
 	either system/platform = 'Windows [
 		until [
-			c: path/(i)
+			c: pick path i
 			i: i + 1
 			case [
 				c = #":" [
 					if any [colon? slash?] [return dst]
 					colon?: yes
 					if i <= len [
-						c: path/(i)
+						c: pick path i
 						if any [c = #"\" c = #"/"][i: i + 1]	;-- skip / in foo:/file
 					]
 					c: #"/"
@@ -533,7 +571,7 @@ change-dir: function [
 
 list-dir: function [
 	"Displays a list of files and directories from given folder or current one"
-	'dir [any-type!] "Folder to list"
+	dir [any-type!]  "Folder to list"
 	/col			 "Forces the display in a given number of columns"
 		n [integer!] "Number of columns"
 ][
@@ -562,6 +600,47 @@ list-dir: function [
 		]
 		prin lf
 	]
+]
+
+make-dir: function [
+	"Creates the specified directory. No error if already exists"
+	path [file!]
+	/deep "Create subdirectories too"
+][
+	if empty? path [return path]
+	if slash <> last path [path: dirize path]
+	if exists? path [
+		if dir? path [return path]
+		cause-error 'access 'cannot-open path
+	]
+	if any [not deep url? path] [
+		create-dir path
+		return path
+	]
+	path: copy path
+	dirs: copy []
+	while [
+		all [
+			not empty? path
+			not exists? path
+			remove back tail path
+		]
+	][
+		end: any [find/last/tail path slash path]
+		insert dirs copy end
+		clear end
+	]
+	created: copy []
+	foreach dir dirs [
+		path: either empty? path [dir] [path/:dir]
+		append path slash
+		if error? try [make-dir path] [
+			foreach dir created [attempt [delete dir]]
+			cause-error 'access 'cannot-open path
+		]
+		insert created path
+	]
+	path
 ]
 
 to-image: func [value][
@@ -673,13 +752,10 @@ flip-exe-flag: function [
 
 split: function [
 	"Break a string series into pieces using the provided delimiters"
-	series	[any-string!]	"String series to split"
-	dlm		[string! char!]	"Delimiter as a char or string pattern"
-	return: [block!]		"Returns a block of split pieces without the delimiters"
-	/local value
+	series [any-string!] dlm [string! char! bitset!] /local s
 ][
-	rule: complement charset dlm
-	parse series [collect [any [keep copy value some rule | skip]]]
+	num: either string? dlm [length? dlm][1]
+	parse series [collect any [copy s [to dlm | to end] keep (s) num skip]]
 ]
 
 dirize: func [
@@ -748,6 +824,16 @@ split-path: func [
 		)
 	]
 	reduce [dir pos]
+]
+
+do-file: func [file [file!] /local saved code new-path][
+	saved: system/options/path
+	code: load file
+	new-path: first split-path clean-path file
+	change-dir new-path
+	set/any 'code do code
+	change-dir saved
+	:code
 ]
 
 ;------------------------------------------

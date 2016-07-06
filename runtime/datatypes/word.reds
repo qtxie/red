@@ -31,7 +31,7 @@ word: context [
 		str 	[c-string!]
 		return:	[red-word!]
 	][
-		_context/add-global symbol/make str
+		_context/add-global-word symbol/make str yes
 	]
 	
 	make-at: func [
@@ -122,8 +122,12 @@ word: context [
 
 		ctx: TO_CTX(node)
 		idx: _context/find-word ctx sym no
-		s: as series! ctx/symbols/value
-		as red-word! s/offset + idx
+		either idx < 0 [
+			_context/add-global sym
+		][
+			s: as series! ctx/symbols/value
+			as red-word! s/offset + idx
+		]
 	]
 	
 	get-in: func [
@@ -339,9 +343,10 @@ word: context [
 			COMP_NOT_EQUAL [
 				res: as-integer not EQUAL_WORDS?(arg1 arg2)
 			]
+			COMP_SAME
 			COMP_STRICT_EQUAL [
 				res: as-integer any [
-					type <> TYPE_WORD
+					type <> TYPE_OF(arg1)
 					arg1/symbol <> arg2/symbol
 				]
 			]

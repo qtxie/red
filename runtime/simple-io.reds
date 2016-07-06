@@ -140,6 +140,11 @@ simple-io: context [
 					template	[int-ptr!]
 					return:		[integer!]
 				]
+				CreateDirectory: "CreateDirectoryW" [
+					pathname	[c-string!]
+					sa			[int-ptr!]
+					return:		[logic!]
+				]
 				ReadFile:	"ReadFile" [
 					file		[integer!]
 					buffer		[byte-ptr!]
@@ -177,7 +182,7 @@ simple-io: context [
 				]
 				CloseHandle:	"CloseHandle" [
 					obj			[integer!]
-					return:		[integer!]
+					return:		[logic!]
 				]
 				SetFilePointer: "SetFilePointer" [
 					file		[integer!]
@@ -550,6 +555,30 @@ simple-io: context [
 
 		]
 
+		#either OS = 'MacOSX [
+			#import [
+				LIBC-file cdecl [
+					lseek: "lseek" [
+						file		[integer!]
+						offset-lo	[integer!]
+						offset-hi	[integer!]
+						whence		[integer!]
+						return:		[integer!]
+					]
+				]
+			]
+		][
+			#import [
+				LIBC-file cdecl [
+					lseek: "lseek" [
+						file		[integer!]
+						offset		[integer!]
+						whence		[integer!]
+						return:		[integer!]
+					]
+				]
+			]
+		]
 		#import [
 			LIBC-file cdecl [
 				_access: "access" [
@@ -577,6 +606,11 @@ simple-io: context [
 				]
 				_close:	"close" [
 					file		[integer!]
+					return:		[integer!]
+				]
+				mkdir: "mkdir" [
+					pathname	[c-string!]
+					mode		[integer!]
 					return:		[integer!]
 				]
 				opendir: "opendir" [
@@ -610,7 +644,18 @@ simple-io: context [
 			]
 		]
 	]
-	
+
+	make-dir: func [
+		path	[c-string!]
+		return: [logic!]
+	][
+		#either OS = 'Windows [
+			CreateDirectory path null
+		][
+			zero? mkdir path 511			;-- 0777
+		]
+	]
+
 	open-file: func [
 		filename [c-string!]
 		mode	 [integer!]
@@ -627,7 +672,10 @@ simple-io: context [
 				access: OPEN_EXISTING
 			][
 				modes: GENERIC_WRITE
-				either mode and RIO_APPEND <> 0 [
+				either any [
+					mode and RIO_APPEND <> 0
+					mode and RIO_SEEK <> 0
+				][
 					access: OPEN_ALWAYS
 				][
 					access: CREATE_ALWAYS
@@ -658,10 +706,10 @@ simple-io: context [
 				access: S_IREAD
 			][
 				modes: O_BINARY or O_WRONLY or O_CREAT
-				modes: either mode and RIO_APPEND <> 0 [
-					modes or O_APPEND
+				either mode and RIO_APPEND <> 0 [
+					modes: modes or O_APPEND
 				][
-					modes or O_TRUNC
+					if mode and RIO_SEEK = 0 [modes: modes or O_TRUNC]
 				]
 				access: S_IREAD or S_IWRITE or S_IRGRP or S_IWGRP or S_IROTH
 			]
@@ -703,57 +751,71 @@ simple-io: context [
 			-1 <> _access path 0				;-- F_OK: 0
 		]
 	]
-	
+
+	seek-file: func [
+		file	[integer!]
+		offset	[integer!]
+	][
+		#case [
+			OS = 'Windows [
+				SetFilePointer file offset null SET_FILE_BEGIN
+			]
+			OS = 'MacOSX [
+				lseek file offset 0 0				;@@ offset is 64bit
+			]
+			true [
+				lseek file offset 0					;-- SEEK_SET
+			]
+		]
+	]
+
+	read-data: func [
+		file	[integer!]
+		buffer	[byte-ptr!]
+		size	[integer!]
+		return:	[integer!]
+		/local
+			read-sz [integer!]
+			res		[integer!]
+	][
+		#either OS = 'Windows [
+			read-sz: -1
+			res: ReadFile file buffer size :read-sz null
+			res: either zero? res [-1][1]
+		][
+			res: _read file buffer size
+		]
+		res
+	]
+
+	write-data: func [
+		file	[integer!]
+		data	[byte-ptr!]
+		size	[integer!]
+		return:	[integer!]
+		/local
+			len [integer!]
+			ret	[integer!]
+	][
+		#either OS = 'Windows [
+			len: 0
+			ret: WriteFile file data size :len null
+			ret: either zero? ret [-1][1]
+		][
+			ret: _write file data size
+		]
+		ret
+	]
+
 	close-file: func [
 		file	[integer!]
-		return:	[integer!]
+		return:	[logic!]
 	][
 		#either OS = 'Windows [
 			CloseHandle file
 		][
-			_close file
+			zero? _close file
 		]
-	]
-
-	read-buffer: func [
-		filename [c-string!]
-		read-sz  [int-ptr!]						;-- the number of bytes read
-		unicode? [logic!]
-		return:	 [byte-ptr!]
-		/local
-			file	[integer!]
-			len		[integer!]
-			sz		[integer!]
-			res		[integer!]
-			size	[integer!]
-			buffer	[byte-ptr!]
-	][
-		unless unicode? [		;-- only command line args need to be checked
-			if filename/1 = #"^"" [filename: filename + 1]	;-- FIX: issue #1234
-			len: length? filename
-			if filename/len = #"^"" [filename/len: null-byte]
-		]
-		file: open-file filename RIO_READ unicode?
-		if file < 0 [return null]
-
-		size: file-size? file
-		if size <= 0 [
-			print-line "*** Warning: empty file"
-		]
-
-		buffer: allocate size
-		#either OS = 'Windows [
-			sz: 0
-			res: ReadFile file buffer size :sz null
-			res: either zero? res [-1][sz]
-		][
-			res: _read file buffer size
-		]
-		close-file file
-
-		if negative? res [free buffer buffer: null]
-		read-sz/value: res
-		buffer
 	]
 
 	lines-to-block: func [
@@ -786,19 +848,52 @@ simple-io: context [
 
 	read-file: func [
 		filename [c-string!]
+		part	 [integer!]
+		offset	 [integer!]
 		binary?	 [logic!]
 		lines?	 [logic!]
 		unicode? [logic!]
 		return:	 [red-value!]
 		/local
 			buffer	[byte-ptr!]
+			file	[integer!]
 			size	[integer!]
 			val		[red-value!]
 			str		[red-string!]
+			len		[integer!]
+			type	[integer!]
 	][
-		size: 0
-		buffer: read-buffer filename :size unicode?
-		if null? buffer [return none-value]
+		unless unicode? [		;-- only command line args need to be checked
+			if filename/1 = #"^"" [filename: filename + 1]	;-- FIX: issue #1234
+			len: length? filename
+			if filename/len = #"^"" [filename/len: null-byte]
+		]
+		file: open-file filename RIO_READ unicode?
+		if file < 0 [return none-value]
+
+		size: file-size? file
+
+		if size <= 0 [
+			close-file file
+			val: stack/push*
+			string/rs-make-at val 1
+			type: either binary? [TYPE_BINARY][TYPE_STRING]
+			set-type val type
+			return val
+		]
+
+		if offset > 0 [
+			seek-file file offset
+			size: size - offset
+		]
+		if part > 0 [
+			if part < size [size: part]
+		]
+		buffer: allocate size
+		len: read-data file buffer size
+		close-file file
+
+		if negative? len [return none-value]
 
 		val: as red-value! either binary? [
 			binary/load buffer size
@@ -820,6 +915,7 @@ simple-io: context [
 		filename [c-string!]
 		data	 [byte-ptr!]
 		size	 [integer!]
+		offset	 [integer!]
 		binary?	 [logic!]
 		append?  [logic!]
 		unicode? [logic!]
@@ -837,17 +933,13 @@ simple-io: context [
 		]
 		mode: RIO_WRITE
 		if append? [mode: mode or RIO_APPEND]
+		if offset > 0 [mode: mode or RIO_SEEK]
 		file: open-file filename mode unicode?
 		if file < 0 [return file]
 
-		#either OS = 'Windows [
-			len: 0
-			if append? [SetFilePointer file 0 null SET_FILE_END]
-			ret: WriteFile file data size :len null
-			ret: either zero? ret [-1][1]
-		][
-			ret: _write file data size
-		]
+		if offset > 0 [seek-file file offset]
+		#if OS = 'Windows [if append? [SetFilePointer file 0 null SET_FILE_END]]
+		ret: write-data file data size
 		close-file file
 		ret
 	]
@@ -1008,17 +1100,32 @@ simple-io: context [
 
 	read: func [
 		filename [red-file!]
+		part	 [red-value!]
+		seek	 [red-value!]
 		binary?	 [logic!]
 		lines?	 [logic!]
 		return:	 [red-value!]
 		/local
-			data [red-value!]
+			data	[red-value!]
+			int		[red-integer!]
+			size	[integer!]
+			offset	[integer!]
 	][
 		if dir? filename [
 			return as red-value! read-dir filename
 		]
 
-		data: read-file file/to-OS-path filename binary? lines? yes
+		size: -1
+		offset: -1
+		if OPTION?(part) [
+			int: as red-integer! part
+			size: int/value
+		]
+		if OPTION?(seek) [
+			int: as red-integer! seek
+			offset: int/value
+		]
+		data: read-file file/to-OS-path filename size offset binary? lines? yes
 		if TYPE_OF(data) = TYPE_NONE [
 			fire [TO_ERROR(access cannot-open) filename]
 		]
@@ -1029,6 +1136,7 @@ simple-io: context [
 		filename [red-file!]
 		data	 [red-value!]
 		part	 [red-value!]
+		seek	 [red-value!]
 		binary?	 [logic!]
 		append?  [logic!]
 		return:  [integer!]
@@ -1039,7 +1147,9 @@ simple-io: context [
 			int  	[red-integer!]
 			limit	[integer!]
 			type	[integer!]
+			offset	[integer!]
 	][
+		offset: -1
 		limit: -1
 		if OPTION?(part) [
 			either TYPE_OF(part) = TYPE_INTEGER [
@@ -1064,7 +1174,11 @@ simple-io: context [
 			]
 			true [ERR_EXPECT_ARGUMENT(type 1)]
 		]
-		type: write-file file/to-OS-path filename buf len binary? append? yes
+		if OPTION?(seek) [
+			int: as red-integer! seek
+			offset: int/value
+		]
+		type: write-file file/to-OS-path filename buf len offset binary? append? yes
 		if negative? type [
 			fire [TO_ERROR(access cannot-open) filename]
 		]

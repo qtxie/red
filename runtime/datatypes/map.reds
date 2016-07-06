@@ -100,9 +100,7 @@ map: context [
 			cell	[red-value!]
 			tail	[red-value!]
 			value	[red-value!]
-			int		[red-integer!]
 			s		[series!]
-			cnt		[integer!]
 			size	[integer!]
 			table	[node!]
 			key		[red-value!]
@@ -186,7 +184,6 @@ map: context [
 		spec		[red-value!]
 		return:		[red-hash!]
 		/local
-			map		[red-hash!]
 			size	[integer!]
 			int		[red-integer!]
 			blk		[red-block!]
@@ -300,12 +297,15 @@ map: context [
 		part	[integer!]
 		indent	[integer!]
 		return:	[integer!]
+		/local
+			prev [integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "map/mold"]]
 
 		string/concatenate-literal buffer "#("
-		part: serialize map buffer only? all? flat? arg part - 2 yes indent + 1 yes
-		if indent > 0 [part: object/do-indent buffer indent part]
+		prev: part - 2
+		part: serialize map buffer no all? flat? arg prev yes indent + 1 yes
+		if all [part <> prev indent > 0][part: object/do-indent buffer indent part]
 		string/append-char GET_BUFFER(buffer) as-integer #")"
 		part - 1
 	]
@@ -323,6 +323,7 @@ map: context [
 		if type <> TYPE_MAP [RETURN_COMPARE_OTHER]
 		switch op [
 			COMP_EQUAL
+			COMP_SAME
 			COMP_STRICT_EQUAL
 			COMP_NOT_EQUAL
 			COMP_SORT
@@ -462,6 +463,7 @@ map: context [
 		part		[red-value!]
 		only?		[logic!]
 		case?		[logic!]
+		same?		[logic!]
 		any?		[logic!]
 		with-arg	[red-string!]
 		skip		[red-integer!]
@@ -475,6 +477,7 @@ map: context [
 			key   [red-value!]
 			val   [red-value!]
 	][
+		if same? [case?: yes]
 		table: map/table
 		key: _hashtable/get table value 0 0 case? no no
 		val: key + 1
@@ -489,6 +492,7 @@ map: context [
 		part	 [red-value!]
 		only?	 [logic!]
 		case?	 [logic!]
+		same?	 [logic!]
 		any?	 [logic!]
 		with-arg [red-string!]
 		skip	 [red-integer!]
@@ -499,6 +503,7 @@ map: context [
 			table [node!]
 			key   [red-value!]
 	][
+		if same? [case?: yes]
 		table: map/table
 		key: _hashtable/get table value 0 0 case? no no
 		either key = null [none-value][key + 1]

@@ -54,8 +54,9 @@ Red/System [
 	TYPE_MAP											;-- 28		40
 	TYPE_BINARY											;-- 29		41
 	TYPE_SERIES											;-- 2A		42
-	TYPE_IMAGE											;-- 2B		43
-	TYPE_EVENT											;-- 2C		44
+	TYPE_TIME											;-- 2B		43
+	TYPE_IMAGE											;-- 2C		44
+	TYPE_EVENT											;-- 2D		45
 	TYPE_CLOSURE
 	TYPE_PORT
 	
@@ -152,6 +153,7 @@ Red/System [
 	NAT_FOREVER
 	NAT_FOREACH
 	NAT_FORALL
+	NAT_REMOVE_EACH
 	NAT_FUNC
 	NAT_FUNCTION
 	NAT_DOES
@@ -227,6 +229,13 @@ Red/System [
 	NAT_UNSET
 	NAT_NEW_LINE
 	NAT_NEW_LINE?
+	NAT_ENBASE
+	NAT_CONTEXT?
+	NAT_SET_ENV
+	NAT_GET_ENV
+	NAT_LIST_ENV
+	NAT_NOW
+	NAT_SIGN?
 ]
 
 #enum math-op! [
@@ -257,6 +266,7 @@ Red/System [
 	COMP_GREATER_EQUAL
 	COMP_SORT
 	COMP_CASE_SORT
+	COMP_SAME
 ]
 
 #enum exceptions! [
@@ -296,6 +306,23 @@ Red/System [
 #define FLAG_NOT?(s)		(s/flags and flag-bitset-not <> 0)
 #define SET_RETURN(value)	[stack/set-last as red-value! value]
 #define TO_ERROR(cat id)	[#in system/catalog/errors cat #in system/catalog/errors/cat id]
+
+#define PLATFORM_TO_CSTR(cstr str len) [
+	#either OS = 'Windows [
+		cstr: unicode/to-utf16 str
+	][
+		len: -1
+		cstr: unicode/to-utf8 str :len
+	]
+]
+
+#define PLATFORM_LOAD_STR(str cstr len) [
+	#either OS = 'Windows [
+		str: string/load cstr len UTF-16LE
+	][
+		str: string/load cstr len UTF-8
+	]
+]
 
 #define WHITE_CHAR?(char)	[
 	any [

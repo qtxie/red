@@ -56,7 +56,6 @@ get-event-window: func [
 	return: [red-value!]
 	/local
 		handle [handle!]
-		face   [red-object!]
 		msg    [tagMSG]
 ][
 	msg: as tagMSG evt/msg
@@ -73,7 +72,6 @@ get-event-face: func [
 	return: [red-value!]
 	/local
 		handle [handle!]
-		face   [red-object!]
 		msg    [tagMSG]
 ][
 	msg: as tagMSG evt/msg
@@ -768,6 +766,16 @@ set-window-info: func [
 	ret?
 ]
 
+TimerProc: func [
+	hWnd   [handle!]
+	msg	   [integer!]
+	id	   [int-ptr!]
+	dwTime [integer!]
+][
+	current-msg/hWnd: hWnd
+	make-event current-msg 0 EVT_TIME
+]
+
 WndProc: func [
 	hWnd	[handle!]
 	msg		[integer!]
@@ -781,7 +789,6 @@ WndProc: func [
 		pos	   [integer!]
 		handle [handle!]
 		font   [red-object!]
-		face   [red-object!]
 		draw   [red-block!]
 		state  [red-block!]
 		brush  [handle!]
@@ -793,42 +800,51 @@ WndProc: func [
 		winpos [tagWINDOWPOS]
 		w-type [red-word!]
 ][
+	type: either no-face? hWnd [panel][			;@@ remove this test, create a WndProc for panel?
+		w-type: (as red-word! get-face-values hWnd) + FACE_OBJ_TYPE
+		symbol/resolve w-type/symbol
+	]
 	switch msg [
 		WM_NCCREATE [
 			p-int: as int-ptr! lParam
 			store-face-to-hWnd hWnd as red-object! p-int/value
 		]
 		WM_WINDOWPOSCHANGED [
-			unless win8+? [
-				w-type: (as red-word! get-face-values hWnd) + FACE_OBJ_TYPE
-				if window = symbol/resolve w-type/symbol [
-					winpos: as tagWINDOWPOS lParam
-					pt: screen-to-client hWnd winpos/x winpos/y
-					offset: (as red-pair! get-face-values hWnd) + FACE_OBJ_OFFSET
-					pt/x: winpos/x - offset/x - pt/x
-					pt/y: winpos/y - offset/y - pt/y
-					update-layered-window hWnd null pt winpos -1
-				]
+			if all [not win8+? type = window][
+				winpos: as tagWINDOWPOS lParam
+				pt: screen-to-client hWnd winpos/x winpos/y
+				offset: (as red-pair! get-face-values hWnd) + FACE_OBJ_OFFSET
+				pt/x: winpos/x - offset/x - pt/x
+				pt/y: winpos/y - offset/y - pt/y
+				update-layered-window hWnd null pt winpos -1
 			]
 		]
 		WM_MOVE
 		WM_SIZE [
-			state: (as red-block! get-face-values hWnd) + FACE_OBJ_STATE
-			if all [
-				TYPE_OF(state) = TYPE_BLOCK			;-- already created the window
-				current-msg <> null
-				wParam <> SIZE_MINIMIZED
-			][
-				type: either msg = WM_MOVE [FACE_OBJ_OFFSET][FACE_OBJ_SIZE]
-				update-pair-facet hWnd type lParam
-				modal-loop-type: either msg = WM_MOVE [EVT_MOVING][EVT_SIZING]
-				current-msg/lParam: lParam
-				make-event current-msg 0 modal-loop-type
+			if type = window [
+				if null? current-msg [init-current-msg]
+				state: (as red-block! get-face-values hWnd) + FACE_OBJ_STATE
+				if wParam <> SIZE_MINIMIZED [
+					type: either msg = WM_MOVE [
+						if all [						;@@ MINIMIZED window, @@ find a better way to detect it
+							WIN32_HIWORD(lParam) < -9999
+							WIN32_LOWORD(lParam) < -9999
+						][return 0]
+						FACE_OBJ_OFFSET
+					][FACE_OBJ_SIZE]
+					update-pair-facet hWnd type lParam
+					modal-loop-type: either msg = WM_MOVE [EVT_MOVING][EVT_SIZING]
+					current-msg/lParam: lParam
+					make-event current-msg 0 modal-loop-type
 
-				if all [msg = WM_SIZE wParam = SIZE_MAXIMIZED][
-					make-event current-msg 0 EVT_SIZE
+					if all [
+						msg = WM_SIZE
+						any [zero? win-state wParam = SIZE_MAXIMIZED]
+					][
+						make-event current-msg 0 EVT_SIZE
+					]
+					return 0
 				]
-				return 0
 			]
 		]
 		;WM_MOVING
@@ -849,13 +865,19 @@ WndProc: func [
 			;]
 			;return 1									;-- TRUE
 		;]
+		WM_ENTERSIZEMOVE [
+			if type = window [win-state: 1]
+		]
 		WM_EXITSIZEMOVE [
-			type: either modal-loop-type = EVT_MOVING [EVT_MOVE][EVT_SIZE]
-			make-event current-msg 0 type
-			return 0
+			if type = window [
+				win-state: 0
+				type: either modal-loop-type = EVT_MOVING [EVT_MOVE][EVT_SIZE]
+				make-event current-msg 0 type
+				return 0
+			]
 		]
 		WM_ACTIVATE [
-			if WIN32_LOWORD(wParam) <> 0 [set-selected-focus hWnd return 0]
+			if all [type = window WIN32_LOWORD(wParam) <> 0][set-selected-focus hWnd return 0]
 		]
 		WM_GESTURE [
 			handle: hWnd
@@ -964,19 +986,19 @@ WndProc: func [
 			]
 			return 0
 		]
-		WM_GETMINMAXINFO [
-			if set-window-info hWnd lParam [return 0]
+		WM_GETMINMAXINFO [								;@@ send before WM_NCCREATE
+			if all [type = window set-window-info hWnd lParam][return 0]
 		]
 		WM_CLOSE [
-			handle: current-msg/hWnd
-			SetFocus current-msg/hWnd					;-- force focus on the closing window,
-			current-msg/hWnd: handle					;-- prevents late unfocus event generation.
-			
-			res: make-event current-msg 0 EVT_CLOSE
-			if res  = EVT_DISPATCH [return 0]				;-- continue
-			;if res <= EVT_DISPATCH   [free-handles hWnd]	;-- done
-			if res  = EVT_NO_DISPATCH [clean-up PostQuitMessage 0]	;-- stop
-			return 0
+			if type = window [
+				SetFocus hWnd									;-- force focus on the closing window,
+				current-msg/hWnd: hWnd							;-- prevents late unfocus event generation.
+				res: make-event current-msg 0 EVT_CLOSE
+				if res  = EVT_DISPATCH [return 0]				;-- continue
+				;if res <= EVT_DISPATCH   [free-handles hWnd]	;-- done
+				if res  = EVT_NO_DISPATCH [clean-up PostQuitMessage 0]	;-- stop
+				return 0
+			]
 		]
 		default [0]
 	]
@@ -1102,7 +1124,6 @@ do-events: func [
 	/local
 		msg	  [tagMSG]
 		state [integer!]
-		res	  [integer!]
 		msg?  [logic!]
 ][
 	msg: declare tagMSG

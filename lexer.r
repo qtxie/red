@@ -90,7 +90,7 @@ lexer: context [
 	not-mstr-char:  #"}"
 	caret-char:	    charset [#"^(40)" - #"^(5F)"]
 	non-printable-char: charset [#"^(00)" - #"^(1F)"]
-	integer-end:	charset {^{"[]();xX}
+	integer-end:	charset {^{"[]();:xX}
 	path-end:		charset {^{"[]();}
 	stop: 		    none
 
@@ -113,9 +113,7 @@ lexer: context [
 	ws: [
 		pos: #"^/" (
 			if count? [
-				line: line + 1 
-				;append/only lines stack/tail?
-				;new-line stack/tail? yes
+				line: line + 1
 				stack/nl?: yes
 			]
 		)
@@ -247,10 +245,21 @@ lexer: context [
 
 	tuple-value-rule: [
 		(type: tuple!)
-		byte dot byte 1 8 [dot byte] e:
+		byte dot byte 1 12 [dot byte] e:
 	]
 
 	tuple-rule: [tuple-value-rule sticky-word-rule]
+	
+	time-rule: [
+		s: integer-number-rule [
+			decimal-number-rule (value: as-time 0 value load-number copy/part s e) ;-- mm:ss.dd
+			| (value2: load-number copy/part s e) [
+				#":" s: integer-number-rule opt decimal-number-rule
+				  (value: as-time value value2 load-number copy/part s e)	;-- hh:mm:ss[.dd]
+				| (value: as-time value value2 0)							;-- hh:mm
+			]
+		] (type: time!)
+	]
 		
 	integer-number-rule: [
 		(type: integer!)
@@ -273,6 +282,7 @@ lexer: context [
 				s: integer-number-rule
 				(value2/2: load-number copy/part s e value: value2)
 			]
+			opt [#":" [time-rule | (throw-error)]]
 	]
 
 	decimal-special: [
@@ -436,7 +446,7 @@ lexer: context [
 		pos: (e: none) s: [
 			comment-rule
 			| escaped-rule    (stack/push value)
-			| tuple-rule	  (stack/push to tuple!		 copy/part s e)
+			| tuple-rule	  (stack/push load-tuple	 copy/part s e)
 			| hexa-rule		  (stack/push decode-hexa	 copy/part s e)
 			| binary-rule	  (stack/push load-binary s e base)
 			| integer-rule	  (stack/push value)
@@ -521,10 +531,6 @@ lexer: context [
 		either encap? [quit][halt]
 	]
 
-	add-line-markers: func [blk [block!]][
-		foreach pos lines [new-line pos yes]
-		clear lines
-	]
 	
 	pad-head: func [s [string!]][
 		head insert/dup s #"0" 8 - length? s
@@ -617,6 +623,18 @@ lexer: context [
 	decode-hexa: func [s [string!]][
 		to integer! debase/base s 16
 	]
+	
+	as-time: func [h [integer!] m [integer!] s [integer! decimal!]][
+		if any [m < 0 all [s s < 0]][type: time! throw-error]
+		to time! reduce [h m s]
+	]
+	
+	load-tuple: func [s [string!] /local new byte p e][
+		new: join make issue! 1 + length? s #"~"
+		byte: [p: 1 3 digit e: (append new skip to-hex load copy/part p e 6)]
+		unless parse s [byte 2 11 [dot byte]][throw-error]
+		new
+	]
 
 	load-number: func [s [string!]][
 		switch/default type [
@@ -666,18 +684,15 @@ lexer: context [
 	]
 
 	load-file: func [s [string!]][
-		to file! dehex s
+		to file! replace/all dehex s #"\" #"/"
 	]
 	
 	process: func [src [string! binary!] /local blk][
 		old-line: line: 1
 		count?: yes
-		
 		blk: stack/allocate block! 100				;-- root block
-
-		unless parse/all/case src program [throw-error]
 		
-		;add-line-markers blk
+		unless parse/all/case src program [throw-error]
 		stack/reset
 		blk
 	]

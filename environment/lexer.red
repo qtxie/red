@@ -13,11 +13,67 @@ Red [
 system/lexer: context [
 
 	throw-error: function [spec [block!] /missing][
+		type: spec/1									;-- preserve lit-words from double reduction
 		spec: reduce spec
 		src: back tail spec
-		src/1: mold/flat/part src/1 40
+		src/1: trim/tail either string? src/1 [
+			form/part trim/with copy src/1 40 lf
+		][
+			mold/flat/part src/1 40
+		]
 		if "^^/" = copy/part pos: skip tail src/1 -3 2 [remove/part pos 2]
+		spec/1: type
 		cause-error 'syntax any [all [missing 'missing] 'invalid] spec
+	]
+	
+	make-hm: routine [h [integer!] m [integer!]][
+		time/box (integer/to-float h) * 3600.0
+			+ ((integer/to-float m) * 60.0)
+			/ time/nano
+	]
+	
+	make-msf: routine [m [integer!] s [float!]][
+		time/box ((integer/to-float m) * 60.0) + s / time/nano
+	]
+	
+	make-hms: routine [h [integer!] m [integer!] s [integer!]][
+		time/box (integer/to-float h) * 3600.0
+			+ ((integer/to-float m) * 60.0)
+			+ (integer/to-float s)
+			/ time/nano
+	]
+	
+	make-hmsf: routine [h [integer!] m [integer!] s [float!]][
+		time/box (integer/to-float h) * 3600.0
+			+ ((integer/to-float m) * 60.0)
+			+ s / time/nano
+	]
+	
+	make-time: function [
+		pos		[string!]
+		hours	[integer! none!]
+		mins	[integer!]
+		secs	[integer! float! none!]
+		return: [time!]
+	][
+		if any [mins < 0 all [secs secs < 0]][throw-error [time! pos]]
+		if all [hours hours < 0][hours: absolute hours neg?: yes]
+		
+		time: case [
+			all [hours secs][
+				either float? secs [
+					make-hmsf hours mins secs
+				][
+					make-hms hours mins secs
+				]
+			]
+			hours [make-hm hours mins]
+			'else [
+				unless float? secs []					;@@ TBD: error
+				make-msf mins secs
+			]
+		]
+		either neg? [negate time][time]
 	]
 
 	make-binary: routine [
@@ -163,7 +219,6 @@ system/lexer: context [
 			tail [byte-ptr!]
 			cur	 [byte-ptr!]
 			s0	 [byte-ptr!]
-			byte [byte!]
 			f	 [float!]
 	][
 		cur: as byte-ptr! "0000000000000000000000000000000"		;-- 32 bytes including NUL
@@ -187,7 +242,6 @@ system/lexer: context [
 			p: p + unit
 			p = tail
 		]
-		byte: cur/1										;-- store last byte
 		cur/1: #"^@"									;-- replace the byte with null so to-float can use it as end of input
 		f: string/to-float s0
 		if len > 31 [free s0]
@@ -335,11 +389,12 @@ system/lexer: context [
 	transcode: function [
 		src	[string!]
 		dst	[block! none!]
+		/one
 		/part	
 			length [integer! string!]
 		return: [block!]
 		/local
-			new s e c hex pos value cnt type process path
+			new s e c pos value cnt type process path
 			digit hexa-upper hexa-lower hexa hexa-char not-word-char not-word-1st
 			not-file-char not-str-char not-mstr-char caret-char
 			non-printable-char integer-end ws-ASCII ws-U+2k control-char
@@ -367,6 +422,7 @@ system/lexer: context [
 		make-file: [
 			new: make type (index? e) - index? s
 			append new dehex copy/part s e
+			parse new [any [s: #"\" change s #"/" | skip]]
 			new
 		]
 
@@ -386,7 +442,7 @@ system/lexer: context [
 				#"^(00)" - #"^(08)"						;-- (exclude TAB)
 				#"^(0A)" - #"^(1F)"
 			]
-			cs/13: charset {^{"[]();xX}					;-- integer-end
+			cs/13: charset {^{"[]();:xX}				;-- integer-end
 			cs/14: charset " ^-^M"						;-- ws-ASCII, ASCII common whitespaces
 			cs/15: charset [#"^(2000)" - #"^(200A)"]	;-- ws-U+2k, Unicode spaces in the U+2000-U+200A range
 			cs/16: charset [ 							;-- Control characters
@@ -639,7 +695,7 @@ system/lexer: context [
 
 		issue-rule: [
 			#"#" (type: issue!) s: symbol-rule (
-				if (index? s) = index? e [throw-error [mold type skip s -4]]
+				if (index? s) = index? e [throw-error [type skip s -4]]
 				to-word stack copy/part s e type
 			)
 		]
@@ -658,11 +714,20 @@ system/lexer: context [
 		]
 		hexa-rule: [2 8 hexa e: #"h"]
 
-		tuple-value-rule: [
-			byte 2 11 [dot byte] e: (type: tuple!)
-		]
+		tuple-value-rule: [byte 2 11 [dot byte] e: (type: tuple!)]
 
 		tuple-rule: [tuple-value-rule sticky-word-rule]
+		
+		time-rule: [
+			s: integer-number-rule [
+				float-number-rule (value: make-time pos none value make-number s e type) ;-- mm:ss.dd
+				| (value2: make-number s e type) [
+					#":" s: integer-number-rule opt float-number-rule
+					  (value: make-time pos value value2 make-number s e type)			;-- hh:mm:ss[.dd]
+					| (value: make-time pos value value2 none)							;-- hh:mm
+				]
+			] (type: time!)
+		]
 
 		integer-number-rule: [
 			opt [#"-" | #"+"] digit any [digit | #"'" digit] e: (type: integer!)
@@ -679,6 +744,7 @@ system/lexer: context [
 				[#"x" | #"X"] s: integer-number-rule
 				(value: as-pair value make-number s e type)
 			  ]
+			  opt [#":" [time-rule | (throw-error [type pos])]]
 		]
 
 		float-special: [
@@ -808,17 +874,17 @@ system/lexer: context [
 			)
 		]
 
+		one-value: [any ws pos: opt literal-value pos: to end]
 		any-value: [pos: any [some ws | literal-value]]
-
 		red-rules: [any-value opt wrong-delimiters]
 
 		unless either part [
 			parse/case/part src red-rules length
 		][
-			parse/case src red-rules
+			parse/case src either one [one-value][red-rules]
 		][
 			throw-error ['value pos]
 		]
-		stack/1
+		either one [pos][stack/1]
 	]
 ]

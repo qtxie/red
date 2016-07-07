@@ -25,26 +25,20 @@ get-focus: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
-	return: [integer!]
-	/local
-		super [objc_super!]
+	return: [logic!]
 ][
 	make-event self 0 EVT_FOCUS
-	super: get-super-obj self
-	objc_msgSendSuper [super cmd]
+	yes
 ]
 
 lost-focus: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
-	return: [integer!]
-	/local
-		super [objc_super!]
+	return: [logic!]
 ][
 	make-event self 0 EVT_UNFOCUS
-	super: get-super-obj self
-	objc_msgSendSuper [super cmd]
+	yes
 ]
 
 mouse-down: func [
@@ -230,6 +224,15 @@ set-text: func [
 	]
 ]
 
+text-did-end-editing: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+][
+	make-event self 0 EVT_UNFOCUS
+]
+
 text-did-change: func [
 	[cdecl]
 	self	[integer!]
@@ -366,8 +369,8 @@ add-slider-handler: func [class [integer!]][
 
 add-text-field-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
+	class_addMethod class sel_getUid "textDidEndEditing:" as-integer :text-did-end-editing "v@:@"
 	class_addMethod class sel_getUid "becomeFirstResponder" as-integer :get-focus "B@:"
-	class_addMethod class sel_getUid "resignFirstResponder" as-integer :lost-focus "B@:"
 ]
 
 add-area-handler: func [class [integer!]][

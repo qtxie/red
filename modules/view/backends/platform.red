@@ -482,7 +482,8 @@ system/view/platform: context [
 	]
 
 	refresh-window: routine [hwnd [integer!]][
-		gui/OS-refresh-window hwnd
+		0
+		;gui/OS-refresh-window hwnd
 	]
 	
 	show-window: routine [id [integer!]][
@@ -509,7 +510,8 @@ system/view/platform: context [
 	]
 
 	request-font: routine [font [object!] mono? [logic!]][
-		gui/OS-request-font font mono?
+	0
+	;	gui/OS-request-font font mono?
 	]
 	
 	init: has [svs][

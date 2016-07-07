@@ -273,7 +273,8 @@ OS-image: context [
 			bmp		[integer!]
 	][
 		size: 0
-		data: simple-io/read-buffer filename :size yes
+		data: null
+		;data: simple-io/read-data filename :size yes
 		if null? data [return -1]
 
 		bmp: load-binary data size

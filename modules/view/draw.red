@@ -418,21 +418,21 @@ Red/System [
 							sym = rotate [
 								DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)
 								DRAW_FETCH_OPT_VALUE(TYPE_PAIR)
-								OS-matrix-rotate as red-integer! start as red-pair! cmd
+								;OS-matrix-rotate as red-integer! start as red-pair! cmd
 							]
 							sym = scale [
 								loop 2 [DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)]
-								OS-matrix-scale as red-integer! start as red-integer! cmd
+								;OS-matrix-scale as red-integer! start as red-integer! cmd
 							]
 							sym = translate [
 								DRAW_FETCH_VALUE(TYPE_PAIR)
 								point: as red-pair! start
-								OS-matrix-translate point/x point/y
+								;OS-matrix-translate point/x point/y
 							]
 							sym = skew [
 								DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)
 								DRAW_FETCH_OPT_VALUE_2(TYPE_INTEGER TYPE_FLOAT)
-								OS-matrix-skew as red-integer! start as red-integer! cmd
+								;OS-matrix-skew as red-integer! start as red-integer! cmd
 							]
 							sym = transform [
 								DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)
@@ -440,23 +440,23 @@ Red/System [
 								value: cmd + 1
 								loop 2 [DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)]
 								DRAW_FETCH_VALUE(TYPE_PAIR)
-								OS-matrix-transform
+							;	OS-matrix-transform
 									as red-integer! start
 									as red-integer! value
 									as red-pair! cmd
 							]
 							sym = push [
 								DRAW_FETCH_VALUE(TYPE_BLOCK)
-								OS-matrix-push
-								parse-draw as red-block! start DC catch?
-								OS-matrix-pop
+							;	OS-matrix-push
+							;	parse-draw as red-block! start DC catch?
+							;	OS-matrix-pop
 							]
 							sym = matrix [
 								DRAW_FETCH_VALUE(TYPE_BLOCK)
-								OS-matrix-set as red-block! start
+							;	OS-matrix-set as red-block! start
 							]
-							sym = reset-matrix  [OS-matrix-reset]
-							sym = invert-matrix [OS-matrix-invert]
+							;sym = reset-matrix  [OS-matrix-reset]
+							;sym = invert-matrix [OS-matrix-invert]
 							true [throw-draw-error cmds cmd catch?]
 						]
 					]

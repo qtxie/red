@@ -329,11 +329,22 @@ tagSIZE: alias struct! [
 	]
 ]
 
+get-super-obj: func [
+	id		[integer!]
+	return: [objc_super!]
+	/local
+		super [objc_super!]
+][
+	super: declare objc_super!
+	super/receiver: id
+	super/superclass: objc_msgSend [id sel_getUid "superclass"]
+	super
+]
+
 msg-send-super: func [
 	id		[integer!]
 	sel		[integer!]
 	arg		[integer!]
-	return: [integer!]
 	/local
 		super [objc_super!]
 ][

@@ -540,7 +540,7 @@ make-area: func [
 	objc_msgSend [tbox sel_getUid "setContainerSize:" rc/w rc/y]
 	objc_msgSend [tbox sel_getUid "setWidthTracksTextView:" yes]
 
-	if text <> null [objc_msgSend [obj sel_getUid "setString:" text]]
+	if text <> 0 [objc_msgSend [obj sel_getUid "setString:" text]]
 
 	objc_msgSend [container sel_getUid "setDocumentView:" obj]
 ]

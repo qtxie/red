@@ -18,6 +18,9 @@ Red/System [
 	]
 ]
 
+#define COM_THIS(interface)		[interface/ptr]
+#define COM_VPTR(this)			[this/vtbl]
+
 #define COM_SUCCEEDED(hr)		[hr >= 0]
 #define COM_FAILED(hr)			[hr < 0]
 

@@ -1,7 +1,7 @@
 Red/System [
-	Title:	"Direct X structures and functions imports"
+	Title:	"Direct2D structures and functions imports"
 	Author: "Xie Qingtian"
-	File: 	%direct-x.reds
+	File: 	%direct2d.reds
 	Tabs: 	4
 	Rights: "Copyright (C) 2016 Qingtian Xie. All rights reserved."
 	License: {

@@ -29,6 +29,13 @@ D3DCOLORVALUE: alias struct! [
 	a			[float32!]
 ]
 
+D2D1_ELLIPSE: alias struct! [
+	x			[float32!]
+	y			[float32!]
+	radiusX		[float32!]
+	radiusY		[float32!]
+]
+
 D2D1_RENDER_TARGET_PROPERTIES: alias struct! [
 	type		[integer!]
 	format		[integer!]
@@ -89,6 +96,22 @@ DrawLine*: alias function! [
 	return:		[integer!]
 ]
 
+DrawEllipse*: alias function! [
+	this		[this!]
+	ellipse		[D2D1_ELLIPSE]
+	brush		[integer!]
+	width		[float32!]
+	style		[integer!]
+	return:		[integer!]
+]
+
+FillEllipse*: alias function! [
+	this		[this!]
+	ellipse		[D2D1_ELLIPSE]
+	brush		[integer!]
+	return:		[integer!]
+]
+
 ID2D1Factory: alias struct! [
 	QueryInterface					[QueryInterface!]
 	AddRef							[AddRef!]
@@ -130,8 +153,8 @@ ID2D1HwndRenderTarget: alias struct! [
 	FillRectangle					[integer!]
 	DrawRoundedRectangle			[integer!]
 	FillRoundedRectangle			[integer!]
-	DrawEllipse						[integer!]
-	FillEllipse						[integer!]
+	DrawEllipse						[DrawEllipse*]
+	FillEllipse						[FillEllipse*]
 	DrawGeometry					[integer!]
 	FillGeometry					[integer!]
 	FillMesh						[integer!]
@@ -193,8 +216,8 @@ ID2D1DCRenderTarget: alias struct! [
 	FillRectangle					[integer!]
 	DrawRoundedRectangle			[integer!]
 	FillRoundedRectangle			[integer!]
-	DrawEllipse						[integer!]
-	FillEllipse						[integer!]
+	DrawEllipse						[DrawEllipse*]
+	FillEllipse						[FillEllipse*]
 	DrawGeometry					[integer!]
 	FillGeometry					[integer!]
 	FillMesh						[integer!]

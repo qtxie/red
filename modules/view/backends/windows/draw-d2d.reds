@@ -121,7 +121,7 @@ OS-draw-line: func [
 
 	either nb = 2 [
 		pt: edges + 1
-		ctx/rt/DrawLine ctx/this edges/x edges/y pt/x pt/y ctx/pen ctx/pen-width 0
+		ctx/rt/DrawLine ctx/this edges/x edges/y pt/x pt/y ctx/pen ctx/pen-width ctx/pen-style
 	][
 		0
 	]
@@ -277,10 +277,29 @@ OS-draw-circle: func [
 	center [red-pair!]
 	radius [red-integer!]
 	/local
-		rad-x [integer!]
-		rad-y [integer!]
+		ctx		[draw-ctx!]
+		ellipse [D2D1_ELLIPSE]
+		f		[red-float!]
+		r		[float!]
 ][
-0
+	ctx: as draw-ctx! dc
+	either TYPE_OF(radius) = TYPE_INTEGER [
+		r: integer/to-float radius/value
+	][
+		f: as red-float! radius
+		r: f/value
+	]
+	ellipse: declare D2D1_ELLIPSE
+	ellipse/x: as float32! integer/to-float center/x
+	ellipse/y: as float32! integer/to-float center/y
+	ellipse/radiusX: as float32! r
+	ellipse/radiusY: ellipse/radiusX
+	if ctx/brush? [
+		ctx/rt/FillEllipse ctx/this ellipse ctx/brush
+	]
+	if ctx/pen? [
+		ctx/rt/DrawEllipse ctx/this ellipse ctx/pen ctx/pen-width ctx/pen-style
+	]
 ]
 
 OS-draw-ellipse: func [

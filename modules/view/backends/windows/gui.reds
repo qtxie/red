@@ -433,7 +433,8 @@ init: func [
 	
 	log-pixels-x: GetDeviceCaps hScreen 88				;-- LOGPIXELSX
 	log-pixels-y: GetDeviceCaps hScreen 90				;-- LOGPIXELSY
-	
+
+	DX-init
 	set-defaults
 ]
 

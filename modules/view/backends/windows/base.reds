@@ -409,11 +409,11 @@ BaseWndProc: func [
 		]
 		WM_PAINT [
 			draw: (as red-block! get-face-values hWnd) + FACE_OBJ_DRAW
-			either zero? GetWindowLong hWnd wc-offset - 4 [
+			;either zero? GetWindowLong hWnd wc-offset - 4 [
 				do-draw hWnd null draw no yes yes yes
-			][
-				bitblt-memory-dc hWnd no
-			]
+			;][
+			;	bitblt-memory-dc hWnd no
+			;]
 			return 0
 		]
 		default [0]

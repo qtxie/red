@@ -22,7 +22,7 @@ draw-ctx!: alias struct! [
 	this			[this!]
 	pen-join		[integer!]
 	pen-cap			[integer!]
-	pen-width		[integer!]
+	pen-width		[float32!]
 	pen-style		[integer!]
 	pen-color		[integer!]					;-- 00bbggrr format
 	brush-color		[integer!]					;-- 00bbggrr format
@@ -34,6 +34,8 @@ draw-ctx!: alias struct! [
 	on-image?		[logic!]					;-- drawing on image?
 ]
 
+modes: declare draw-ctx!						;@@ TBD remove it after finish
+
 draw-begin: func [
 	hwnd		[handle!]
 	img			[red-image!]
@@ -43,24 +45,29 @@ draw-begin: func [
 	/local
 		this	[this!]
 		rt		[ID2D1HwndRenderTarget]
-		ctx		[integer!]
+		ctx		[draw-ctx!]
 		pen		[integer!]
 ][
 	this: create-hwnd-render-target hwnd
 	rt: as ID2D1HwndRenderTarget this/vtbl
 	rt/BeginDraw this
-	pen: 0
 
+	rt/Clear this to-dx-color 00FFFFFFh
+	pen: 0
+	rt/CreateSolidColorBrush this to-dx-color 0 null :pen
+	
 	ctx: as draw-ctx! allocate size? draw-ctx!
 	ctx/rt:				rt
 	ctx/this:			this
-	ctx/pen-width:		1
+	ctx/pen-width:		as float32! 1.0
 	ctx/pen-style:		0
 	ctx/pen-color:		0						;-- default: black
 	ctx/pen-join:		miter
 	ctx/pen-cap:		flat
 	ctx/brush-color:	0
 	ctx/font-color:		0
+	ctx/pen:			pen
+	ctx/brush:			0
 	ctx/pen?:			yes
 	ctx/brush?:			no
 
@@ -76,7 +83,9 @@ draw-end: func [
 	/local
 		ctx		[draw-ctx!]
 ][
+	ctx: as draw-ctx! dc
 	ctx/rt/EndDraw ctx/this null null
+	ctx/rt/Release ctx/this
 	free as byte-ptr! dc
 ]
 
@@ -112,7 +121,7 @@ OS-draw-line: func [
 
 	either nb = 2 [
 		pt: edges + 1
-		ctx/DrawLine ctx/this edges/x edges/y pt/x pt/y
+		ctx/rt/DrawLine ctx/this edges/x edges/y pt/x pt/y ctx/pen ctx/pen-width 0
 	][
 		0
 	]
@@ -173,9 +182,12 @@ OS-draw-fill-pen: func [
 OS-draw-line-width: func [
 	dc	  [handle!]
 	width [red-integer!]
+	/local
+		w	[float32!]
 ][
-	if modes/pen-width <> width/value [
-		modes/pen-width: width/value
+	w: as float32! integer/to-float width/value
+	if modes/pen-width <> w [
+		modes/pen-width: w
 		;CGContextSetLineWidth dc as float32! integer/to-float width/value
 	]
 ]
@@ -187,7 +199,7 @@ OS-draw-box: func [
 	/local
 		radius [red-integer!]
 		rad	   [integer!]
-		rc	   [NSRect!]
+		;rc	   [NSRect!]
 ][
 	either TYPE_OF(lower) = TYPE_INTEGER [
 		radius: as red-integer! lower
@@ -195,10 +207,11 @@ OS-draw-box: func [
 		rad: radius/value * 2
 		;;@@ TBD round box
 	][
-		rc: make-rect upper/x upper/y lower/x - upper/x lower/y - upper/y
-		if modes/brush? [				;-- fill rect
+		0
+		;rc: make-rect upper/x upper/y lower/x - upper/x lower/y - upper/y
+		;if modes/brush? [				;-- fill rect
 			;CGContextFillRect dc rc/x rc/y rc/w rc/h
-		]
+		;]
 		;CGContextStrokeRect dc rc/x rc/y rc/w rc/h
 	]
 ]
@@ -349,18 +362,7 @@ OS-draw-line-join: func [
 	/local
 		mode [integer!]
 ][
-	mode: kCGLineJoinMiter
-	if modes/pen-join <> style [
-		modes/pen-join: style
-		case [
-			style = miter		[mode: kCGLineJoinMiter]
-			style = miter-bevel [mode: kCGLineJoinMiter]
-			style = _round		[mode: kCGLineJoinRound]
-			style = bevel		[mode: kCGLineJoinBevel]
-			true				[mode: kCGLineJoinMiter]
-		]
-		;CGContextSetLineJoin dc mode
-	]
+0
 ]
 	
 OS-draw-line-cap: func [
@@ -369,17 +371,7 @@ OS-draw-line-cap: func [
 	/local
 		mode [integer!]
 ][
-	mode: kCGLineCapButt
-	if modes/pen-cap <> style [
-		modes/pen-cap: style
-		case [
-			style = flat		[mode: kCGLineCapButt]
-			style = square		[mode: kCGLineCapSquare]
-			style = _round		[mode: kCGLineCapRound]
-			true				[mode: kCGLineCapButt]
-		]
-		;CGContextSetLineCap dc mode
-	]
+0
 ]
 
 OS-draw-image: func [

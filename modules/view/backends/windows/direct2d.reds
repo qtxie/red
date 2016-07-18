@@ -74,7 +74,7 @@ CreateSolidColorBrush*: alias function! [
 	color		[D3DCOLORVALUE]
 	properties	[D2D1_BRUSH_PROPERTIES]
 	brush		[int-ptr!]
-	return:		[integer!]]
+	return:		[integer!]
 ]
 
 DrawLine*: alias function! [
@@ -157,7 +157,7 @@ ID2D1HwndRenderTarget: alias struct! [
 	PushAxisAlignedClip				[integer!]
 	SaveDrawingState				[integer!]
 	PopAxisAlignedClip				[integer!]
-	Clear							[integer!]
+	Clear							[function! [this [this!] color [D3DCOLORVALUE]]]
 	BeginDraw						[function! [this [this!]]]
 	EndDraw							[function! [this [this!] tag1 [int-ptr!] tag2 [int-ptr!] return: [integer!]]]
 	GetPixelFormat					[integer!]
@@ -220,7 +220,7 @@ ID2D1DCRenderTarget: alias struct! [
 	PushAxisAlignedClip				[integer!]
 	SaveDrawingState				[integer!]
 	PopAxisAlignedClip				[integer!]
-	Clear							[integer!]
+	Clear							[function! [this [this!] color [D3DCOLORVALUE]]]
 	BeginDraw						[integer!]
 	EndDraw							[integer!]
 	GetPixelFormat					[integer!]
@@ -323,22 +323,23 @@ IDWriteFontFace: alias struct! [
 	GetGdiCompatibleGlyphMetrics	[integer!]
 ]
 
-"d2d1.dll" stdcall [
-	D2D1CreateFactory: "D2D1CreateFactory" [
-		type		[integer!]
-		riid		[int-ptr!]
-		options		[D2D1_FACTORY_OPTIONS]		;-- opt
-		factory		[int-ptr!]
-		return:		[integer!]
+#import [
+	"d2d1.dll" stdcall [
+		D2D1CreateFactory: "D2D1CreateFactory" [
+			type		[integer!]
+			riid		[int-ptr!]
+			options		[D2D1_FACTORY_OPTIONS]		;-- opt
+			factory		[int-ptr!]
+			return:		[integer!]
+		]
 	]
-]
-
-"DWrite.dll" stdcall [
-	DWriteCreateFactory: "D2D1CreateFactory" [
-		type		[integer!]
-		iid			[int-ptr!]
-		factory		[int-ptr!]
-		return:		[integer!]
+	"DWrite.dll" stdcall [
+		DWriteCreateFactory: "DWriteCreateFactory" [
+			type		[integer!]
+			iid			[int-ptr!]
+			factory		[int-ptr!]
+			return:		[integer!]
+		]
 	]
 ]
 
@@ -348,12 +349,34 @@ DX-init: func [
 		factory [integer!]
 ][
 	factory: 0
-	hr: D2D1CreateFactory 0 IID_ID2D1Factory null :factory			;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
+	hr: D2D1CreateFactory 0 IID_ID2D1Factory null :factory		;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
 	assert zero? hr
 	d2d-factory: as this! factory
 	hr: DWriteCreateFactory 0 IID_IDWriteFactory :factory		;-- DWRITE_FACTORY_TYPE_SHARED: 0
 	assert zero? hr
 	dwrite-factory: as this! factory
+]
+
+to-dx-color: func [
+	color	[integer!]
+	return: [D3DCOLORVALUE]
+	/local
+		c	[D3DCOLORVALUE]
+		r	[float!]
+		g	[float!]
+		b	[float!]
+		a	[float!]
+][
+	c: declare D3DCOLORVALUE
+	r: integer/to-float color and FFh
+	c/r: as float32! r / 255.0
+	g: integer/to-float color >> 8 and FFh
+	c/g: as float32! g / 255.0
+	b: integer/to-float color >> 16 and FFh
+	c/b: as float32! b / 255.0
+	a: integer/to-float 255 - (color >>> 24)
+	c/a: as float32! a / 255.0
+	c
 ]
 
 create-hwnd-render-target: func [
@@ -374,7 +397,7 @@ create-hwnd-render-target: func [
 	hprops/hwnd: hwnd
 	hprops/pixelSize.width: rc/right - rc/left
 	hprops/pixelSize.height: rc/bottom - rc/top
-	hprops/presentOptions: 1					;-- D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS
+	hprops/presentOptions: 1						;-- D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS
 
 	props: as D2D1_RENDER_TARGET_PROPERTIES allocate size? D2D1_RENDER_TARGET_PROPERTIES
 	zero-memory as byte-ptr! props size? D2D1_RENDER_TARGET_PROPERTIES
@@ -400,7 +423,7 @@ create-dc-render-target: func [
 ][
 	props: as D2D1_RENDER_TARGET_PROPERTIES allocate size? D2D1_RENDER_TARGET_PROPERTIES
 	props/type: 0									;-- D2D1_RENDER_TARGET_TYPE_DEFAULT
-	props/pixelFormat: 87							;-- DXGI_FORMAT_B8G8R8A8_UNORM
+	props/format: 87								;-- DXGI_FORMAT_B8G8R8A8_UNORM
 	props/alphaMode: 1								;-- D2D1_ALPHA_MODE_PREMULTIPLIED
 	props/dpiX: as float32! integer/to-float log-pixels-x
 	props/dpiY: as float32! integer/to-float log-pixels-y
@@ -409,11 +432,11 @@ create-dc-render-target: func [
 
 	target: 0
 	factory: as ID2D1Factory d2d-factory/vtbl
-	hr: factory/CreateDCRenderTarget d2d-factory :target
+	hr: factory/CreateDCRenderTarget d2d-factory props :target
 	if hr <> 0 [return null]
 	IRT: as this! target
 	rt: as ID2D1DCRenderTarget IRT/vtbl
-	hr: rt/BindDC IRT rc
+	hr: rt/BindDC IRT dc rc
 	if hr <> 0 [rt/Release IRT return null]
 	free as byte-ptr! props
 	IRT

@@ -2366,3 +2366,19 @@ utf16-length?: func [
 	while [any [s/1 <> null-byte s/2 <> null-byte]][s: s + 2]
 	(as-integer s - base) >>> 1							;-- do not count the terminal zero
 ]
+
+to-gdiplus-color: func [
+	color	[integer!]
+	return: [integer!]
+	/local
+		red   [integer!]
+		green [integer!]
+		blue  [integer!]
+		alpha [integer!]
+][
+	red: color and FFh << 16
+	green: color and FF00h
+	blue: color >> 16 and FFh
+	alpha: (255 - (color >>> 24)) << 24
+	red or green or blue or alpha
+]

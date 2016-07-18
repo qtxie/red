@@ -314,22 +314,6 @@ draw-end: func [
 	if all [hWnd <> null paint?][EndPaint hWnd paint]
 ]
 
-to-gdiplus-color: func [
-	color	[integer!]
-	return: [integer!]
-	/local
-		red   [integer!]
-		green [integer!]
-		blue  [integer!]
-		alpha [integer!]
-][
-	red: color and FFh << 16
-	green: color and FF00h
-	blue: color >> 16 and FFh
-	alpha: (255 - (color >>> 24)) << 24
-	red or green or blue or alpha
-]
-
 OS-draw-anti-alias: func [
 	dc	 [handle!]
 	on? [logic!]

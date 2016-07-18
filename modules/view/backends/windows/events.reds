@@ -653,7 +653,9 @@ bitblt-memory-dc: func [
 		ftn		[integer!]
 		bf		[tagBLENDFUNCTION]
 		dc		[handle!]
+		paint	[tagPAINTSTRUCT]
 ][
+	paint: declare tagPAINTSTRUCT
 	dc: BeginPaint hWnd paint
 	hBackDC: as handle! GetWindowLong hWnd wc-offset - 4
 	rect: declare RECT_STRUCT

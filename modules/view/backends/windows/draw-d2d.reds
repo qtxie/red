@@ -10,11 +10,16 @@ Red/System [
 	}
 ]
 
+#include %direct2d.reds
+
 #define DRAW_FLOAT_MAX		[as float32! 3.4e38]
 
 max-edges: 1000												;-- max number of edges for a polygone
+edges: as POINT_2F allocate max-edges * (size? POINT_2F)	;-- polygone edges buffer
 
-modes: declare struct! [
+draw-ctx!: alias struct! [
+	rt				[ID2D1HwndRenderTarget]
+	this			[this!]
 	pen-join		[integer!]
 	pen-cap			[integer!]
 	pen-width		[integer!]
@@ -22,31 +27,44 @@ modes: declare struct! [
 	pen-color		[integer!]					;-- 00bbggrr format
 	brush-color		[integer!]					;-- 00bbggrr format
 	font-color		[integer!]
+	pen				[integer!]
+	brush			[integer!]
 	pen?			[logic!]
 	brush?			[logic!]
 	on-image?		[logic!]					;-- drawing on image?
 ]
 
 draw-begin: func [
-	CGCtx		[handle!]
+	hwnd		[handle!]
 	img			[red-image!]
 	on-graphic? [logic!]
 	paint?		[logic!]
 	return: 	[handle!]
 	/local
+		this	[this!]
+		rt		[ID2D1HwndRenderTarget]
 		ctx		[integer!]
+		pen		[integer!]
 ][
-	modes/pen-width:	1
-	modes/pen-style:	0
-	modes/pen-color:	0						;-- default: black
-	modes/pen-join:		miter
-	modes/pen-cap:		flat
-	modes/brush-color:	0
-	modes/font-color:	0
-	modes/brush?:		yes
-	modes/brush?:		no
+	this: create-hwnd-render-target hwnd
+	rt: as ID2D1HwndRenderTarget this/vtbl
+	rt/BeginDraw this
+	pen: 0
 
-	CGCtx
+	ctx: as draw-ctx! allocate size? draw-ctx!
+	ctx/rt:				rt
+	ctx/this:			this
+	ctx/pen-width:		1
+	ctx/pen-style:		0
+	ctx/pen-color:		0						;-- default: black
+	ctx/pen-join:		miter
+	ctx/pen-cap:		flat
+	ctx/brush-color:	0
+	ctx/font-color:		0
+	ctx/pen?:			yes
+	ctx/brush?:			no
+
+	as handle! ctx
 ]
 
 draw-end: func [
@@ -55,8 +73,11 @@ draw-end: func [
 	on-graphic? [logic!]
 	cache?		[logic!]
 	paint?		[logic!]
+	/local
+		ctx		[draw-ctx!]
 ][
-	0
+	ctx/rt/EndDraw ctx/this null null
+	free as byte-ptr! dc
 ]
 
 OS-draw-anti-alias: func [
@@ -71,10 +92,12 @@ OS-draw-line: func [
 	point  [red-pair!]
 	end	   [red-pair!]
 	/local
-		pt		[CGPoint!]
+		pt		[POINT_2F]
 		nb		[integer!]
 		pair	[red-pair!]
+		ctx		[draw-ctx!]
 ][
+	ctx:	as draw-ctx! dc
 	pt:		edges
 	pair:	point
 	nb:		0
@@ -85,6 +108,13 @@ OS-draw-line: func [
 		nb: nb + 1
 		pt: pt + 1
 		pair: pair + 1
+	]
+
+	either nb = 2 [
+		pt: edges + 1
+		ctx/DrawLine ctx/this edges/x edges/y pt/x pt/y
+	][
+		0
 	]
 ]
 
@@ -110,7 +140,7 @@ OS-draw-pen: func [
 		b: b / 255.0
 		a: integer/to-float 255 - (color >>> 24)
 		a: a / 255.0
-		CGContextSetRGBStrokeColor dc as float32! r as float32! g as float32! b as float32! a
+		;CGContextSetRGBStrokeColor dc as float32! r as float32! g as float32! b as float32! a
 	]
 ]
 
@@ -136,7 +166,7 @@ OS-draw-fill-pen: func [
 		b: b / 255.0
 		a: integer/to-float 255 - (color >>> 24)
 		a: a / 255.0
-		CGContextSetRGBFillColor dc as float32! r as float32! g as float32! b as float32! a
+		;CGContextSetRGBFillColor dc as float32! r as float32! g as float32! b as float32! a
 	]
 ]
 
@@ -146,7 +176,7 @@ OS-draw-line-width: func [
 ][
 	if modes/pen-width <> width/value [
 		modes/pen-width: width/value
-		CGContextSetLineWidth dc as float32! integer/to-float width/value
+		;CGContextSetLineWidth dc as float32! integer/to-float width/value
 	]
 ]
 
@@ -167,9 +197,9 @@ OS-draw-box: func [
 	][
 		rc: make-rect upper/x upper/y lower/x - upper/x lower/y - upper/y
 		if modes/brush? [				;-- fill rect
-			CGContextFillRect dc rc/x rc/y rc/w rc/h
+			;CGContextFillRect dc rc/x rc/y rc/w rc/h
 		]
-		CGContextStrokeRect dc rc/x rc/y rc/w rc/h
+		;CGContextStrokeRect dc rc/x rc/y rc/w rc/h
 	]
 ]
 
@@ -177,7 +207,7 @@ OS-draw-triangle: func [
 	dc	  [handle!]
 	start [red-pair!]
 	/local
-		point [CGPoint!]
+		point [POINT_2F]
 ][
 	point: edges
 
@@ -189,9 +219,9 @@ OS-draw-triangle: func [
 	]
 	point/x: edges/x									;-- close the triangle
 	point/y: edges/y
-	CGContextBeginPath dc
-	CGContextAddLines dc edges 4
-	CGContextStrokePath dc
+	;CGContextBeginPath dc
+	;CGContextAddLines dc edges 4
+	;CGContextStrokePath dc
 ]
 
 OS-draw-polygon: func [
@@ -329,7 +359,7 @@ OS-draw-line-join: func [
 			style = bevel		[mode: kCGLineJoinBevel]
 			true				[mode: kCGLineJoinMiter]
 		]
-		CGContextSetLineJoin dc mode
+		;CGContextSetLineJoin dc mode
 	]
 ]
 	
@@ -348,7 +378,7 @@ OS-draw-line-cap: func [
 			style = _round		[mode: kCGLineCapRound]
 			true				[mode: kCGLineCapButt]
 		]
-		CGContextSetLineCap dc mode
+		;CGContextSetLineCap dc mode
 	]
 ]
 
@@ -376,4 +406,69 @@ OS-draw-grad-pen: func [
 	offset		[red-pair!]
 	count		[integer!]					;-- number of the colors
 	brush?		[logic!]
+][0]
+
+
+OS-matrix-rotate: func [
+	angle	[red-integer!]
+	center	[red-pair!]
+][
+	if angle <> as red-integer! center [OS-matrix-translate 0 - center/x 0 - center/y]
+	if angle <> as red-integer! center [OS-matrix-translate center/x center/y]
+]
+
+OS-matrix-scale: func [
+	sx		[red-integer!]
+	sy		[red-integer!]
+][
+0
+]
+
+OS-matrix-translate: func [
+	x	[integer!]
+	y	[integer!]
+][0
+]
+
+OS-matrix-skew: func [
+	sx		[red-integer!]
+	sy		[red-integer!]
+	/local
+		m	[integer!]
+		x	[float32!]
+		y	[float32!]
+		u	[float32!]
+		z	[float32!]
+][
+	m: 0
+	u: as float32! 1.0
+	z: as float32! 0.0
+	x: as float32! system/words/tan degree-to-radians get-float sx TYPE_TANGENT
+	y: as float32! either sx = sy [0.0][system/words/tan degree-to-radians get-float sy TYPE_TANGENT]
+]
+
+OS-matrix-transform: func [
+	rotate		[red-integer!]
+	scale		[red-integer!]
+	translate	[red-pair!]
+	/local
+		center	[red-pair!]
+][
+0
+]
+
+OS-matrix-push: func [/local state [integer!]][
+	state: 0
+]
+
+OS-matrix-pop: func [][0]
+
+OS-matrix-reset: func [][0]
+
+OS-matrix-invert: func [/local m [integer!]][
+	m: 0
+]
+
+OS-matrix-set: func [
+	blk		[red-block!]
 ][0]

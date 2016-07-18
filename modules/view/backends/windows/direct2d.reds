@@ -39,6 +39,56 @@ D2D1_RENDER_TARGET_PROPERTIES: alias struct! [
 	minLevel	[integer!]
 ]
 
+D2D1_HWND_RENDER_TARGET_PROPERTIES: alias struct! [
+	hwnd				[handle!]
+	pixelSize.width		[integer!]
+	pixelSize.height	[integer!]
+	presentOptions		[integer!]
+]
+
+D2D1_BRUSH_PROPERTIES: alias struct! [
+	opacity				[float32!]
+	transform._11		[float32!]
+	transform._12		[float32!]
+	transform._21		[float32!]
+	transform._22		[float32!]
+	transform._31		[float32!]
+	transform._32		[float32!]
+]
+
+ID2D1SolidColorBrush: alias struct! [
+	QueryInterface		[QueryInterface!]
+	AddRef				[AddRef!]
+	Release				[Release!]
+	GetFactory			[integer!]
+	SetOpacity			[integer!]
+	SetTransform		[integer!]
+	GetOpacity			[integer!]
+	GetTransform		[integer!]
+	SetColor			[function! [this [this!] color [D3DCOLORVALUE]]]
+	GetColor			[integer!]
+]
+
+CreateSolidColorBrush*: alias function! [
+	this		[this!]
+	color		[D3DCOLORVALUE]
+	properties	[D2D1_BRUSH_PROPERTIES]
+	brush		[int-ptr!]
+	return:		[integer!]]
+]
+
+DrawLine*: alias function! [
+	this		[this!]
+	pt0.x		[float32!]
+	pt0.y		[float32!]
+	pt1.x		[float32!]
+	pt1.y		[float32!]
+	brush		[integer!]
+	width		[float32!]
+	style		[integer!]
+	return:		[integer!]
+]
+
 ID2D1Factory: alias struct! [
 	QueryInterface					[QueryInterface!]
 	AddRef							[AddRef!]
@@ -54,9 +104,72 @@ ID2D1Factory: alias struct! [
 	CreateStrokeStyle				[integer!]
 	CreateDrawingStateBlock			[integer!]
 	CreateWicBitmapRenderTarget		[integer!]
-	CreateHwndRenderTarget			[integer!]
+	CreateHwndRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] hwndProperties [D2D1_HWND_RENDER_TARGET_PROPERTIES] target [int-ptr!] return: [integer!]]]
 	CreateDxgiSurfaceRenderTarget	[integer!]
-	CreateDCRenderTarget			[function! [this [this!] properties [integer!] target [interface!] return: [integer!]]]
+	CreateDCRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] target [int-ptr!] return: [integer!]]]
+]
+
+ID2D1HwndRenderTarget: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	GetFactory						[integer!]
+	CreateBitmap					[integer!]
+	CreateBitmapFromWicBitmap		[integer!]
+	CreateSharedBitmap				[integer!]
+	CreateBitmapBrush				[integer!]
+	CreateSolidColorBrush			[CreateSolidColorBrush*]
+	CreateGradientStopCollection	[integer!]
+	CreateLinearGradientBrush		[integer!]
+	CreateRadialGradientBrush		[integer!]
+	CreateCompatibleRenderTarget	[integer!]
+	CreateLayer						[integer!]
+	CreateMesh						[integer!]
+	DrawLine						[DrawLine*]
+	DrawRectangle					[integer!]
+	FillRectangle					[integer!]
+	DrawRoundedRectangle			[integer!]
+	FillRoundedRectangle			[integer!]
+	DrawEllipse						[integer!]
+	FillEllipse						[integer!]
+	DrawGeometry					[integer!]
+	FillGeometry					[integer!]
+	FillMesh						[integer!]
+	FillOpacityMask					[integer!]
+	DrawBitmap						[integer!]
+	DrawText						[integer!]
+	DrawTextLayout					[integer!]
+	DrawGlyphRun					[integer!]
+	SetTransform					[integer!]
+	GetTransform					[integer!]
+	SetAntialiasMode				[integer!]
+	GetAntialiasMode				[integer!]
+	SetTextAntialiasMode			[integer!]
+	GetTextAntialiasMode			[integer!]
+	SetTextRenderingParams			[integer!]
+	GetTextRenderingParams			[integer!]
+	SetTags							[integer!]
+	GetTags							[integer!]
+	PushLayer						[integer!]
+	PopLayer						[integer!]
+	Flush							[integer!]
+	RestoreDrawingState				[integer!]
+	PushAxisAlignedClip				[integer!]
+	SaveDrawingState				[integer!]
+	PopAxisAlignedClip				[integer!]
+	Clear							[integer!]
+	BeginDraw						[function! [this [this!]]]
+	EndDraw							[function! [this [this!] tag1 [int-ptr!] tag2 [int-ptr!] return: [integer!]]]
+	GetPixelFormat					[integer!]
+	SetDpi							[integer!]
+	GetDpi							[integer!]
+	GetSize							[integer!]
+	GetPixelSize					[integer!]
+	GetMaximumBitmapSize			[integer!]
+	IsSupported						[integer!]
+	CheckWindowState				[integer!]
+	Resize							[integer!]
+	GetHwnd							[integer!]
 ]
 
 ID2D1DCRenderTarget: alias struct! [
@@ -68,14 +181,14 @@ ID2D1DCRenderTarget: alias struct! [
 	CreateBitmapFromWicBitmap		[integer!]
 	CreateSharedBitmap				[integer!]
 	CreateBitmapBrush				[integer!]
-	CreateSolidColorBrush			[integer!]
+	CreateSolidColorBrush			[CreateSolidColorBrush*]
 	CreateGradientStopCollection	[integer!]
 	CreateLinearGradientBrush		[integer!]
 	CreateRadialGradientBrush		[integer!]
 	CreateCompatibleRenderTarget	[integer!]
 	CreateLayer						[integer!]
 	CreateMesh						[integer!]
-	DrawLine						[integer!]
+	DrawLine						[DrawLine*]
 	DrawRectangle					[integer!]
 	FillRectangle					[integer!]
 	DrawRoundedRectangle			[integer!]
@@ -210,19 +323,6 @@ IDWriteFontFace: alias struct! [
 	GetGdiCompatibleGlyphMetrics	[integer!]
 ]
 
-ID2D1SolidColorBrush: alias struct! [
-	QueryInterface					[QueryInterface!]
-	AddRef							[AddRef!]
-	Release							[Release!]
-	GetFactory						[integer!]
-	SetOpacity						[integer!]
-	SetTransform					[integer!]
-	GetOpacity						[integer!]
-	GetTransform					[integer!]
-	SetColor						[function! [this [this!] color [D3DCOLORVALUE]]]
-	GetColor						[integer!]
-]
-
 "d2d1.dll" stdcall [
 	D2D1CreateFactory: "D2D1CreateFactory" [
 		type		[integer!]
@@ -254,6 +354,36 @@ DX-init: func [
 	hr: DWriteCreateFactory 0 IID_IDWriteFactory :factory		;-- DWRITE_FACTORY_TYPE_SHARED: 0
 	assert zero? hr
 	dwrite-factory: as this! factory
+]
+
+create-hwnd-render-target: func [
+	hwnd	[handle!]
+	return: [this!]
+	/local
+		props	[D2D1_RENDER_TARGET_PROPERTIES]
+		hprops	[D2D1_HWND_RENDER_TARGET_PROPERTIES]
+		rc		[RECT_STRUCT]
+		factory [ID2D1Factory]
+		rt		[ID2D1HwndRenderTarget]
+		target	[integer!]
+		hr		[integer!]
+][
+	rc: declare RECT_STRUCT
+	GetClientRect hwnd rc
+	hprops: declare D2D1_HWND_RENDER_TARGET_PROPERTIES
+	hprops/hwnd: hwnd
+	hprops/pixelSize.width: rc/right - rc/left
+	hprops/pixelSize.height: rc/bottom - rc/top
+	hprops/presentOptions: 1					;-- D2D1_PRESENT_OPTIONS_RETAIN_CONTENTS
+
+	props: as D2D1_RENDER_TARGET_PROPERTIES allocate size? D2D1_RENDER_TARGET_PROPERTIES
+	zero-memory as byte-ptr! props size? D2D1_RENDER_TARGET_PROPERTIES
+
+	target: 0
+	factory: as ID2D1Factory d2d-factory/vtbl
+	hr: factory/CreateHwndRenderTarget d2d-factory props hprops :target
+	if hr <> 0 [return null]
+	as this! target
 ]
 
 create-dc-render-target: func [

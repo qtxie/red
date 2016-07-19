@@ -16,6 +16,7 @@ Red/System [
 
 max-edges: 1000												;-- max number of edges for a polygone
 edges: as POINT_2F allocate max-edges * (size? POINT_2F)	;-- polygone edges buffer
+grad-stops: as D2D1_GRADIENT_STOP allocate 256 * size? D2D1_GRADIENT_STOP
 
 draw-ctx!: alias struct! [
 	rt				[ID2D1HwndRenderTarget]
@@ -47,14 +48,23 @@ draw-begin: func [
 		rt		[ID2D1HwndRenderTarget]
 		ctx		[draw-ctx!]
 		pen		[integer!]
+		bgcolor [red-tuple!]
 ][
-	this: create-hwnd-render-target hwnd
+	this: as this! GetWindowLong hwnd wc-offset - 24
+	if null? this [
+		this: create-hwnd-render-target hwnd
+		SetWindowLong hwnd wc-offset - 24 as-integer this
+	]
 	rt: as ID2D1HwndRenderTarget this/vtbl
 	rt/BeginDraw this
 
-	rt/Clear this to-dx-color 00FFFFFFh
+	bgcolor: as red-tuple! get-node-facet
+				as node! GetWindowLong hwnd wc-offset + 4
+				FACE_OBJ_COLOR
+	rt/Clear this to-dx-color bgcolor/array1 null
+
 	pen: 0
-	rt/CreateSolidColorBrush this to-dx-color 0 null :pen
+	rt/CreateSolidColorBrush this to-dx-color 0 null null :pen
 	
 	ctx: as draw-ctx! allocate size? draw-ctx!
 	ctx/rt:				rt
@@ -85,7 +95,6 @@ draw-end: func [
 ][
 	ctx: as draw-ctx! dc
 	ctx/rt/EndDraw ctx/this null null
-	ctx/rt/Release ctx/this
 	free as byte-ptr! dc
 ]
 
@@ -133,23 +142,17 @@ OS-draw-pen: func [
 	off?   [logic!]
 	alpha? [logic!]
 	/local
-		r  [float!]
-		g  [float!]
-		b  [float!]
-		a  [float!]
+		ctx		[draw-ctx!]
+		this	[this!]
+		pen		[ID2D1SolidColorBrush]
 ][
-	modes/pen?: not off?
-	if modes/pen-color <> color [
-		modes/pen-color: color
-		r: integer/to-float color and FFh
-		r: r / 255.0
-		g: integer/to-float color >> 8 and FFh
-		g: g / 255.0
-		b: integer/to-float color >> 16 and FFh
-		b: b / 255.0
-		a: integer/to-float 255 - (color >>> 24)
-		a: a / 255.0
-		;CGContextSetRGBStrokeColor dc as float32! r as float32! g as float32! b as float32! a
+	ctx: as draw-ctx! dc
+	ctx/pen?: not off?
+	if ctx/pen-color <> color [
+		ctx/pen-color: color
+		this: as this! ctx/pen
+		pen: as ID2D1SolidColorBrush this/vtbl
+		pen/SetColor this to-dx-color color null
 	]
 ]
 
@@ -417,8 +420,99 @@ OS-draw-grad-pen: func [
 	offset		[red-pair!]
 	count		[integer!]					;-- number of the colors
 	brush?		[logic!]
-][0]
+	/local
+		ctx		[draw-ctx!]
+		rt		[ID2D1HwndRenderTarget]
+		this	[this!]
+		obj		[IUnknown]
+		gprops	[D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES]
+		gstops	[D2D1_GRADIENT_STOP]
+		x		[float!]
+		y		[float!]
+		start	[float!]
+		stop	[float!]
+		brush	[integer!]
+		int		[red-integer!]
+		f		[red-float!]
+		head	[red-value!]
+		next	[red-value!]
+		clr		[red-tuple!]
+		n		[integer!]
+		delta	[float!]
+		p		[float!]
+		scale?	[logic!]
+][
+	ctx: as draw-ctx! dc
+	rt: ctx/rt
+	this: ctx/this
 
+	if ctx/brush <> 0 [
+		this: as this! ctx/brush
+		COM_SAFE_RELEASE(obj this)
+	]
+
+	int: as red-integer! offset + 1
+	;start: integer/to-float int/value
+	int: int + 1
+	stop: integer/to-float int/value
+
+	n: 0
+	scale?: no
+	;y: 1.0
+	while [
+		int: int + 1
+		n < 3
+	][								;-- fetch angle, scale-x and scale-y (optional)
+		switch TYPE_OF(int) [
+			TYPE_INTEGER	[0];p: integer/to-float int/value]
+			TYPE_FLOAT		[0];f: as red-float! int p: f/value]
+			default			[break]
+		]
+		;switch n [
+		;	0	[0]
+		;	1	[if p <> 1.0 [x: p scale?: yes]]
+		;	2	[if p <> 1.0 [y: p scale?: yes]]
+		;]
+		n: n + 1
+	]
+
+	gstops: grad-stops
+	delta: 1.0 / integer/to-float count - 1
+	p: 0.0
+	head: as red-value! int
+	loop count [
+		clr: as red-tuple! either TYPE_OF(head) = TYPE_WORD [_context/get as red-word! head][head]
+		next: head + 1
+		to-dx-color clr/array1 as D3DCOLORVALUE (as int-ptr! gstops) + 1
+		if TYPE_OF(next) = TYPE_FLOAT [head: next f: as red-float! head p: f/value]
+		gstops/position: as float32! p
+		if next <> head [p: p + delta]
+		head: head + 1
+		gstops: gstops + 1
+	]
+
+	rt/CreateGradientStopCollection this grad-stops count 0 0 :n
+
+	brush: 0
+	either type = linear [
+		0
+	][
+		gprops: declare D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES
+		gprops/center.x: as float32! integer/to-float offset/x
+		gprops/center.y: as float32! integer/to-float offset/y
+		gprops/offset.x: as float32! 0.0
+		gprops/offset.x: as float32! 0.0
+		gprops/radius.x: as float32! stop
+		gprops/radius.y: as float32! stop
+		rt/CreateRadialGradientBrush this gprops null n :brush
+	]
+
+	this: as this! n
+	COM_SAFE_RELEASE(obj this)
+
+	if brush? [ctx/brush?: yes]				;-- set brush, or set pen
+	ctx/brush: brush
+]
 
 OS-matrix-rotate: func [
 	angle	[red-integer!]

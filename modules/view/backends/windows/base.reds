@@ -562,9 +562,9 @@ update-base: func [
 ][
 	flags: GetWindowLong hWnd GWL_EXSTYLE
 	if zero? (flags and WS_EX_LAYERED) [
-		graphic: GetWindowLong hWnd wc-offset - 4
-		DeleteDC as handle! graphic
-		SetWindowLong hWnd wc-offset - 4 0
+		;graphic: GetWindowLong hWnd wc-offset - 4
+		;DeleteDC as handle! graphic
+		;SetWindowLong hWnd wc-offset - 4 0
 		InvalidateRect hWnd null 1
 		exit
 	]

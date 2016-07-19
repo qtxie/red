@@ -13,6 +13,7 @@ Red/System [
 ;; ===== Extra slots usage in Window structs =====
 ;;
 ;;		-60 :							<- TOP
+;;		-24 : Direct2D render target handle
 ;;		-20 : evolved-base-layered: child handle
 ;;		-16 : base-layered: owner handle
 ;;		-12 : base-layered: clipped? flags
@@ -320,6 +321,8 @@ free-handles: func [
 		dc	   [integer!]
 		cam	   [camera!]
 		handle [handle!]
+		obj    [IUnknown]
+		this   [this!]
 ][
 	values: get-face-values hWnd
 	type: as red-word! values + FACE_OBJ_TYPE
@@ -352,6 +355,8 @@ free-handles: func [
 				dc: GetWindowLong hWnd wc-offset - 4
 				unless zero? dc [DeleteDC as handle! dc]			;-- delete cached dc
 			]
+			this: as this! GetWindowLong hWnd wc-offset - 24
+			COM_SAFE_RELEASE(obj this)
 		]
 		true [
 			0
@@ -1048,6 +1053,7 @@ OS-make-view: func [
 			SetWindowLong handle wc-offset - 4 0
 			SetWindowLong handle wc-offset - 16 parent
 			SetWindowLong handle wc-offset - 20 0
+			SetWindowLong handle wc-offset - 24 0		;-- Direct2D render target handle
 			either alpha? [
 				pt: as tagPOINT (as int-ptr! offset) + 2
 				unless win8+? [

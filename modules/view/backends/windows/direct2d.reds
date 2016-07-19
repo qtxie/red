@@ -36,6 +36,14 @@ D2D1_ELLIPSE: alias struct! [
 	radiusY		[float32!]
 ]
 
+D2D1_GRADIENT_STOP: alias struct! [
+	position	[float32!]
+	r			[float32!]
+	g			[float32!]
+	b			[float32!]
+	a			[float32!]
+]
+
 D2D1_RENDER_TARGET_PROPERTIES: alias struct! [
 	type		[integer!]
 	format		[integer!]
@@ -63,17 +71,13 @@ D2D1_BRUSH_PROPERTIES: alias struct! [
 	transform._32		[float32!]
 ]
 
-ID2D1SolidColorBrush: alias struct! [
-	QueryInterface		[QueryInterface!]
-	AddRef				[AddRef!]
-	Release				[Release!]
-	GetFactory			[integer!]
-	SetOpacity			[integer!]
-	SetTransform		[integer!]
-	GetOpacity			[integer!]
-	GetTransform		[integer!]
-	SetColor			[function! [this [this!] color [D3DCOLORVALUE]]]
-	GetColor			[integer!]
+D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES: alias struct! [
+	center.x			[float32!]
+	center.y			[float32!]
+	offset.x			[float32!]
+	offset.y			[float32!]
+	radius.x			[float32!]
+	radius.y			[float32!]
 ]
 
 CreateSolidColorBrush*: alias function! [
@@ -81,6 +85,25 @@ CreateSolidColorBrush*: alias function! [
 	color		[D3DCOLORVALUE]
 	properties	[D2D1_BRUSH_PROPERTIES]
 	brush		[int-ptr!]
+	return:		[integer!]
+]
+
+CreateRadialGradientBrush*: alias function! [
+	this		[this!]
+	gprops		[D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES]
+	props		[D2D1_BRUSH_PROPERTIES]
+	stops		[integer!]
+	brush		[int-ptr!]
+	return:		[integer!]
+]
+
+CreateGradientStopCollection*: alias function! [
+	this		[this!]
+	stops		[D2D1_GRADIENT_STOP]
+	stopsCount	[integer!]
+	gamma		[integer!]
+	extendMode	[integer!]
+	stops-ptr	[int-ptr!]
 	return:		[integer!]
 ]
 
@@ -110,6 +133,50 @@ FillEllipse*: alias function! [
 	ellipse		[D2D1_ELLIPSE]
 	brush		[integer!]
 	return:		[integer!]
+]
+
+ID2D1SolidColorBrush: alias struct! [
+	QueryInterface		[QueryInterface!]
+	AddRef				[AddRef!]
+	Release				[Release!]
+	GetFactory			[integer!]
+	SetOpacity			[integer!]
+	SetTransform		[integer!]
+	GetOpacity			[integer!]
+	GetTransform		[integer!]
+	SetColor			[function! [this [this!] color [D3DCOLORVALUE]]]
+	GetColor			[integer!]
+]
+
+ID2D1RadialGradientBrush: alias struct! [
+	QueryInterface				[QueryInterface!]
+	AddRef						[AddRef!]
+	Release						[Release!]
+	GetFactory					[integer!]
+	SetOpacity					[integer!]
+	SetTransform				[integer!]
+	GetOpacity					[integer!]
+	GetTransform				[integer!]
+	SetCenter					[integer!]
+	SetGradientOriginOffset		[integer!]
+	SetRadiusX					[integer!]
+	SetRadiusY					[integer!]
+	GetCenter					[integer!]
+	GetGradientOriginOffset		[integer!]
+	GetRadiusX					[integer!]
+	GetRadiusY					[integer!]
+	GetGradientStopCollection	[integer!]
+]
+
+ID2D1GradientStopCollection: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	GetFactory						[integer!]
+	GetGradientStopCount			[integer!]
+	GetGradientStops				[integer!]
+	GetColorInterpolationGamma		[integer!]
+	GetExtendMode					[integer!]
 ]
 
 ID2D1Factory: alias struct! [
@@ -142,9 +209,9 @@ ID2D1HwndRenderTarget: alias struct! [
 	CreateSharedBitmap				[integer!]
 	CreateBitmapBrush				[integer!]
 	CreateSolidColorBrush			[CreateSolidColorBrush*]
-	CreateGradientStopCollection	[integer!]
+	CreateGradientStopCollection	[CreateGradientStopCollection*]
 	CreateLinearGradientBrush		[integer!]
-	CreateRadialGradientBrush		[integer!]
+	CreateRadialGradientBrush		[CreateRadialGradientBrush*]
 	CreateCompatibleRenderTarget	[integer!]
 	CreateLayer						[integer!]
 	CreateMesh						[integer!]
@@ -205,9 +272,9 @@ ID2D1DCRenderTarget: alias struct! [
 	CreateSharedBitmap				[integer!]
 	CreateBitmapBrush				[integer!]
 	CreateSolidColorBrush			[CreateSolidColorBrush*]
-	CreateGradientStopCollection	[integer!]
+	CreateGradientStopCollection	[CreateGradientStopCollection*]
 	CreateLinearGradientBrush		[integer!]
-	CreateRadialGradientBrush		[integer!]
+	CreateRadialGradientBrush		[CreateRadialGradientBrush*]
 	CreateCompatibleRenderTarget	[integer!]
 	CreateLayer						[integer!]
 	CreateMesh						[integer!]
@@ -382,6 +449,7 @@ DX-init: func [
 
 to-dx-color: func [
 	color	[integer!]
+	clr-ptr [D3DCOLORVALUE]
 	return: [D3DCOLORVALUE]
 	/local
 		c	[D3DCOLORVALUE]
@@ -390,7 +458,11 @@ to-dx-color: func [
 		b	[float!]
 		a	[float!]
 ][
-	c: declare D3DCOLORVALUE
+	either null? clr-ptr [
+		c: declare D3DCOLORVALUE
+	][
+		c: clr-ptr
+	]
 	r: integer/to-float color and FFh
 	c/r: as float32! r / 255.0
 	g: integer/to-float color >> 8 and FFh

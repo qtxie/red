@@ -451,7 +451,7 @@ OS-draw-grad-pen: func [
 	int: as red-integer! offset + 1
 	;start: integer/to-float int/value
 	int: int + 1
-	stop: integer/to-float int/value
+	stop: as float! int/value
 
 	n: 0
 	scale?: no
@@ -474,7 +474,9 @@ OS-draw-grad-pen: func [
 	]
 
 	gstops: grad-stops
-	delta: 1.0 / integer/to-float count - 1
+	n: count - 1
+	delta: as float! n
+	delta: 1.0 / delta
 	p: 0.0
 	head: as red-value! int
 	loop count [
@@ -490,13 +492,16 @@ OS-draw-grad-pen: func [
 
 	rt/CreateGradientStopCollection this grad-stops count 0 0 :n
 
+	x: as float! offset/x
+	y: as float! offset/y
+
 	brush: 0
 	either type = linear [
 		0
 	][
 		gprops: declare D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES
-		gprops/center.x: as float32! integer/to-float offset/x
-		gprops/center.y: as float32! integer/to-float offset/y
+		gprops/center.x: as float32! x
+		gprops/center.y: as float32! y
 		gprops/offset.x: as float32! 0.0
 		gprops/offset.x: as float32! 0.0
 		gprops/radius.x: as float32! stop

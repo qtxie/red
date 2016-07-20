@@ -453,6 +453,7 @@ to-dx-color: func [
 	return: [D3DCOLORVALUE]
 	/local
 		c	[D3DCOLORVALUE]
+		tmp [integer!]
 		r	[float!]
 		g	[float!]
 		b	[float!]
@@ -463,13 +464,17 @@ to-dx-color: func [
 	][
 		c: clr-ptr
 	]
-	r: integer/to-float color and FFh
+	tmp: color and FFh
+	r: as float! tmp
 	c/r: as float32! r / 255.0
-	g: integer/to-float color >> 8 and FFh
+	tmp: color >> 8 and FFh
+	g: as float! tmp
 	c/g: as float32! g / 255.0
-	b: integer/to-float color >> 16 and FFh
+	tmp: color >> 16 and FFh
+	b: as float! tmp
 	c/b: as float32! b / 255.0
-	a: integer/to-float 255 - (color >>> 24)
+	tmp: 255 - (color >>> 24)
+	a: as float! tmp
 	c/a: as float32! a / 255.0
 	c
 ]

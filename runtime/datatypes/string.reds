@@ -300,6 +300,32 @@ string: context [
 		s/tail: s/offset
 		str/head: 0
 	]
+	
+	rs-find: func [
+		str		[red-string!]
+		cp		[integer!]
+		return: [integer!]
+		/local
+			s	 [series!]
+			unit [integer!]
+			pos  [byte-ptr!]
+			head [byte-ptr!]
+			tail [byte-ptr!]
+	][
+		s:	  GET_BUFFER(str)
+		unit: GET_UNIT(s)
+		head: (as byte-ptr! s/offset) + (str/head << (log-b unit))
+		pos:  head
+		tail: as byte-ptr! s/tail
+		
+		while [pos < tail][
+			if cp = get-char pos unit [
+				return (as-integer pos - head) >> (log-b unit)
+			]
+			pos: pos + unit
+		]
+		-1
+	]
 
 	rs-find-char: func [
 		str		[red-string!]
@@ -830,6 +856,7 @@ string: context [
 					type <> TYPE_STRING
 					type <> TYPE_FILE
 					type <> TYPE_URL
+					type <> TYPE_EMAIL
 				][no][
 					zero? equal? str as red-string! value op yes
 				]
@@ -1120,7 +1147,8 @@ string: context [
 		switch t [
 			TYPE_FILE
 			TYPE_URL
-			TYPE_TAG [
+			TYPE_TAG
+			TYPE_EMAIL [
 				set-type copy-cell as cell! spec as cell! type type/value
 				return as red-value! type
 			]
@@ -1400,6 +1428,7 @@ string: context [
 					TYPE_OF(str2) <> TYPE_FILE
 					TYPE_OF(str2) <> TYPE_URL
 					TYPE_OF(str2) <> TYPE_TAG
+					TYPE_OF(str2) <> TYPE_EMAIL
 				]
 			]
 		][RETURN_COMPARE_OTHER]
@@ -1631,6 +1660,7 @@ string: context [
 			type = TYPE_FILE
 			type = TYPE_URL
 			type = TYPE_TAG
+			type = TYPE_EMAIL
 		][not case?][no]
 		if same? [case?: no]
 		reverse?: any [reverse? last?]					;-- reduce both flags to one
@@ -1660,6 +1690,7 @@ string: context [
 			TYPE_FILE
 			TYPE_URL
 			TYPE_TAG
+			TYPE_EMAIL
 			TYPE_BINARY
 			TYPE_WORD [
 				either TYPE_OF(value) = TYPE_WORD [
@@ -1826,6 +1857,7 @@ string: context [
 				TYPE_FILE
 				TYPE_URL
 				TYPE_TAG
+				TYPE_EMAIL
 				TYPE_WORD
 				TYPE_BINARY [
 					either TYPE_OF(value) = TYPE_WORD [
@@ -2052,6 +2084,7 @@ string: context [
 						type = TYPE_FILE 
 						type = TYPE_URL
 						type = TYPE_TAG
+						type = TYPE_EMAIL
 					][
 						form-buf: as red-string! cell
 					][
@@ -2411,6 +2444,7 @@ string: context [
 					type = TYPE_FILE 
 					type = TYPE_URL
 					type = TYPE_TAG
+					type = TYPE_EMAIL
 				][
 					form-buf: as red-string! cell
 				][

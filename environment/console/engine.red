@@ -93,14 +93,18 @@ system/console: context [
 		parse buffer [
 			any [
 				escaped
-				| remove [#";" [thru lf | to end]]
+				| pos: #";" if (zero? count/2) :pos remove [skip [thru lf | to end]]
 				| #"[" (if zero? count/2 [count/1: count/1 + 1])
 				| #"]" (if zero? count/2 [count/1: count/1 - 1])
 				| #"(" (if zero? count/2 [count/3: count/3 + 1])
 				| #")" (if zero? count/2 [count/3: count/3 - 1])
 				| dbl-quote any [escaped | dbl-quote break | skip]
-				| #"{" (count/2: count/2 + 1)
-				  any [escaped | #"}" (count/2: count/2 - 1) break | skip]
+				| #"{" (count/2: count/2 + 1) any [
+					escaped
+					| #"{" (count/2: count/2 + 1)
+					| #"}" (count/2: count/2 - 1) break
+					| skip
+				]
 				| #"}" (count/2: count/2 - 1)
 				| skip
 			]

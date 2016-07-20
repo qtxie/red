@@ -1,7 +1,7 @@
 Red/System [
-	Title:   "Tag! datatype runtime functions"
+	Title:   "Email! datatype runtime functions"
 	Author:  "Nenad Rakocevic"
-	File: 	 %tag.reds
+	File: 	 %email.reds
 	Tabs:	 4
 	Rights:  "Copyright (C) 2016 Nenad Rakocevic. All rights reserved."
 	License: {
@@ -10,15 +10,15 @@ Red/System [
 	}
 ]
 
-tag: context [
+email: context [
 	verbose: 0
 
 	push: func [
-		tag [red-tag!]
+		email [red-email!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "tag/push"]]
+		#if debug? = yes [if verbose > 0 [print-line "email/push"]]
 
-		copy-cell as red-value! tag stack/push*
+		copy-cell as red-value! email stack/push*
 	]
 
 	;-- Actions --
@@ -27,34 +27,19 @@ tag: context [
 		proto	 [red-value!]
 		spec	 [red-value!]
 		type	 [integer!]
-		return:	 [red-tag!]
+		return:	 [red-email!]
 		/local
-			tag [red-tag!]
+			email [red-email!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "tag/make"]]
+		#if debug? = yes [if verbose > 0 [print-line "email/make"]]
 
-		tag: as red-tag! string/make proto spec type
-		set-type as red-value! tag TYPE_TAG
-		tag
-	]
-	
-	form: func [
-		tag		  [red-tag!]
-		buffer	  [red-string!]
-		arg		  [red-value!]
-		part	  [integer!]
-		return:	  [integer!]
-	][
-		#if debug? = yes [if verbose > 0 [print-line "tag/form"]]
-
-		string/append-char GET_BUFFER(buffer) as-integer #"<"
-		part: string/form as red-string! tag buffer arg part - 1
-		string/append-char GET_BUFFER(buffer) as-integer #">"
-		part - 1
+		email: as red-tag! string/make proto spec type
+		set-type as red-value! email TYPE_EMAIL
+		email
 	]
 
 	mold: func [
-		tag     [red-tag!]
+		email   [red-email!]
 		buffer	[red-string!]
 		only?	[logic!]
 		all?	[logic!]
@@ -64,9 +49,62 @@ tag: context [
 		indent	[integer!]
 		return: [integer!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "tag/mold"]]
+		#if debug? = yes [if verbose > 0 [print-line "email/mold"]]
 		
-		form tag buffer arg part - 1
+		url/mold as red-url! email buffer only? all? flat? arg part indent
+	]
+	
+	eval-path: func [
+		parent	[red-string!]								;-- implicit type casting
+		element	[red-value!]
+		value	[red-value!]
+		path	[red-value!]
+		case?	[logic!]
+		return:	[red-value!]
+		/local
+			part  [red-value!]
+			w	  [red-word!]
+			sym	  [integer!]
+			saved [integer!]
+			pos	  [integer!]
+			slots [integer!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "email/eval-path"]]
+
+		either TYPE_OF(element) = TYPE_WORD [
+			w: as red-word! element
+			sym: symbol/resolve w/symbol
+			if all [sym <> words/user sym <> words/host][
+				fire [TO_ERROR(script invalid-path) stack/arguments element]
+			]
+		][
+			fire [TO_ERROR(script invalid-path) stack/arguments element]
+		]
+		
+		pos: string/rs-find parent as-integer #"@"
+		if pos = -1 [pos: string/rs-length? parent]
+		saved: parent/head
+
+		part: either sym = words/user [
+			as red-value! integer/push pos
+		][
+			parent/head: pos + 1
+			either value = null [null][
+				as red-value! integer/push string/rs-length? parent
+			]
+		]
+		either value <> null [
+			_series/change as red-series! parent value part no null
+			object/check-owner as red-value! parent
+		][
+			value: stack/push*
+			_series/copy as red-series! parent as red-series! value part no	null 
+		]
+		
+		slots: either part = null [1][2]
+		stack/pop slots									;-- avoid moving stack top
+		parent/head: saved
+		value
 	]
 
 	to: func [
@@ -74,7 +112,7 @@ tag: context [
 		spec	[red-integer!]
 		return: [red-value!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "tag/to"]]
+		#if debug? = yes [if verbose > 0 [print-line "email/to"]]
 			
 		switch type/value [
 			TYPE_FILE
@@ -90,17 +128,17 @@ tag: context [
 
 	init: does [
 		datatype/register [
-			TYPE_TAG
+			TYPE_EMAIL
 			TYPE_STRING
-			"tag!"
+			"email!"
 			;-- General actions --
 			:make
 			null			;random
 			INHERIT_ACTION	;reflect
 			:to
-			:form
+			INHERIT_ACTION	;form
 			:mold
-			INHERIT_ACTION	;eval-path
+			:eval-path
 			null			;set-path
 			INHERIT_ACTION	;compare
 			;-- Scalar actions --

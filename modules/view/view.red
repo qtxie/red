@@ -327,7 +327,7 @@ font!: object [											;-- keep in sync with font-facet! enum
 	style:		 none
 	angle:		 0
 	color:		 none
-	anti-alias?: yes
+	anti-alias?: no
 	shadow:		 none
 	state:		 none
 	parent:		 none
@@ -494,9 +494,10 @@ system/view: context [
 		:result
 	]
 	
-	capturing?: no
-	auto-sync?: yes
-	debug?: no
+	capturing?: no										;-- enable capturing events (on-detect)
+	auto-sync?: yes										;-- refresh faces on changes automatically
+	debug?: 	no										;-- output verbose logs
+	silent?:	no										;-- do not report errors (livecoding)
 ]
 
 #include %backends/platform.red

@@ -1813,7 +1813,7 @@ DwmIsCompositionEnabled!: alias function! [
 		]
 		GdipGetWorldTransform: "GdipGetWorldTransform" [
 			graphics	[integer!]
-			matrix		[int-ptr!]
+			matrix		[integer!]
 			return:		[integer!]
 		]
 		GdipResetWorldTransform: "GdipResetWorldTransform" [

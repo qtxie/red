@@ -364,13 +364,6 @@ system-call: context [
 			fcntl [fd F_SETFL flags or O_NONBLOCK]
 		]
 
-		set-nonblock-fd: func [
-			fd	[f-desc!]
-		][
-			set-flags-fd fd/reading
-			set-flags-fd fd/writing
-		]
-
 		call: func [                   "Executes a shell command, IO redirections to buffers."
 			cmd			[c-string!]    "The shell command"
 			waitend?	[logic!]       "Wait for end of command, implicit if any buffer is set"
@@ -395,7 +388,6 @@ system-call: context [
 					__red-call-print-error [ error-pipe "stdin" ]
 					return -1
 				]
-				set-nonblock-fd fd-in
 			]
 			if out? [									;- Create buffer for output
 				out-len: 0
@@ -405,7 +397,6 @@ system-call: context [
 					__red-call-print-error [ error-pipe "stdout" ]
 					return -1
 				]
-				set-nonblock-fd fd-out
 			]
 			if err? [									;- Create buffer for error
 				err-len: 0
@@ -415,7 +406,6 @@ system-call: context [
 					__red-call-print-error [ error-pipe "stderr" ]
 					return -1
 				]
-				set-nonblock-fd fd-err
 			]
 
 			pid: fork
@@ -515,6 +505,7 @@ system-call: context [
 					waitend?: true
 					fds: pfds + nfds
 					fds/fd: fd-in/writing
+					set-flags-fd fds/fd
 					fds/events: POLLOUT
 					io-close fd-in/reading
 					nfds: nfds + 1
@@ -525,6 +516,7 @@ system-call: context [
 					out-buf/buffer: allocate READ-BUFFER-SIZE
 					fds: pfds + nfds
 					fds/fd: fd-out/reading
+					set-flags-fd fds/fd
 					fds/events: POLLIN
 					io-close fd-out/writing
 					nfds: nfds + 1
@@ -535,6 +527,7 @@ system-call: context [
 					err-buf/buffer: allocate READ-BUFFER-SIZE
 					fds: pfds + nfds
 					fds/fd: fd-err/reading
+					set-flags-fd fds/fd
 					fds/events: POLLIN
 					io-close fd-err/writing
 					nfds: nfds + 1
@@ -547,10 +540,12 @@ system-call: context [
 						if out-buf <> null [
 							nbytes: io-read fd-out/reading out-buf/buffer + out-len out-size - out-len
 							if nbytes > 0 [out-len: out-len + nbytes]
+							io-close fd-out/reading
 						]
 						if err-buf <> null [
 							nbytes: io-read fd-err/reading err-buf/buffer + err-len err-size - err-len
 							if nbytes > 0 [err-len: err-len + nbytes]
+							io-close fd-err/reading
 						]
 						break
 					]
@@ -563,14 +558,16 @@ system-call: context [
 						revents: fds/events >>> 16
 						case [
 							revents and POLLERR <> 0 [
+								io-close fds/fd
 								fds/fd: -1
 								n: n - 1
 							]
 							revents and POLLOUT <> 0 [
-								nbytes: io-write fds/fd in-buf/buffer in-buf/count - input-len
-								if nbytes <= 0 [n: -1 break]
+								nbytes: io-write fds/fd in-buf/buffer + input-len in-buf/count - input-len
+								if nbytes <= 0 [n: 0 nbytes: in-buf/count]
 								input-len: input-len + nbytes
 								if input-len >= in-buf/count [
+									io-close fds/fd
 									fds/fd: -1
 									n: n - 1
 								]
@@ -594,6 +591,7 @@ system-call: context [
 									nbytes: io-read fds/fd pbuf/buffer + offset/value to-read    ;-- read pipe, store into buffer
 									if nbytes < 0 [break]
 									if nbytes = 0 [
+										io-close fds/fd
 										fds/fd: -1
 										n: n - 1
 									]
@@ -607,7 +605,7 @@ system-call: context [
 								]
 								pbuf/count: offset/value
 							]
-							revents and POLLHUP <> 0 [fds/fd: -1 n: n - 1]
+							revents and POLLHUP <> 0 [io-close fds/fd fds/fd: -1 n: n - 1]
 							revents and POLLNVAL <> 0 [n: -1]
 							true [0]
 						]
@@ -615,7 +613,7 @@ system-call: context [
 				]
 
 				if console? [waitend?: yes]
-				if all [zero? n waitend?][
+				if waitend? [
 					waitpid pid :status 0				;-- Wait child process terminate
 					either (status and 00FFh) <> 0 [	;-- a signal occured. Low byte contains stop code
 						pid: -1
@@ -623,12 +621,8 @@ system-call: context [
 						pid: status >> 8				;-- High byte contains exit code
 					]
 				]
-
 				free as byte-ptr! pfds
 			]
-			if in?  [io-close fd-in/writing]
-			if out? [io-close fd-out/reading]
-			if err? [io-close fd-err/reading]
 			pid
 		] ; call
 	] ; #default

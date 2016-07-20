@@ -1134,6 +1134,17 @@ DwmIsCompositionEnabled!: alias function! [
 			bErase		[integer!]
 			return:		[integer!]
 		]
+		ValidateRect: "ValidateRect" [
+			hWnd		[handle!]
+			lpRect		[RECT_STRUCT]
+			return:		[integer!]
+		]
+		GetUpdateRect: "GetUpdateRect" [
+			hWnd		[handle!]
+			clip		[RECT_STRUCT]
+			bErase		[logic!]
+			return:		[integer!]
+		]
 		GetParent: "GetParent" [
 			hWnd 		[handle!]
 			return:		[handle!]

@@ -86,7 +86,7 @@ draw-begin: func [
 
 draw-end: func [
 	dc			[handle!]
-	hWnd		[handle!]
+	hwnd		[handle!]
 	on-graphic? [logic!]
 	cache?		[logic!]
 	paint?		[logic!]
@@ -443,14 +443,11 @@ OS-draw-grad-pen: func [
 		scale?	[logic!]
 ][
 	ctx: as draw-ctx! dc
+	this: as this! ctx/brush				;-- delete old brush
+	COM_SAFE_RELEASE(obj this)
+
 	rt: ctx/rt
 	this: ctx/this
-
-	if ctx/brush <> 0 [
-		this: as this! ctx/brush
-		COM_SAFE_RELEASE(obj this)
-	]
-
 	int: as red-integer! offset + 1
 	;start: integer/to-float int/value
 	int: int + 1
@@ -462,7 +459,7 @@ OS-draw-grad-pen: func [
 	while [
 		int: int + 1
 		n < 3
-	][								;-- fetch angle, scale-x and scale-y (optional)
+	][										;-- fetch angle, scale-x and scale-y (optional)
 		switch TYPE_OF(int) [
 			TYPE_INTEGER	[0];p: integer/to-float int/value]
 			TYPE_FLOAT		[0];f: as red-float! int p: f/value]

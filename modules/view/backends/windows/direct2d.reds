@@ -505,6 +505,7 @@ create-hwnd-render-target: func [
 	target: 0
 	factory: as ID2D1Factory d2d-factory/vtbl
 	hr: factory/CreateHwndRenderTarget d2d-factory props hprops :target
+	free as byte-ptr! props
 	if hr <> 0 [return null]
 	as this! target
 ]

@@ -565,7 +565,7 @@ update-base: func [
 		;graphic: GetWindowLong hWnd wc-offset - 4
 		;DeleteDC as handle! graphic
 		;SetWindowLong hWnd wc-offset - 4 0
-		InvalidateRect hWnd null 1
+		InvalidateRect hWnd null 0
 		exit
 	]
 

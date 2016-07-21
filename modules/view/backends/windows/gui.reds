@@ -1662,7 +1662,7 @@ OS-update-view: func [
 		either type = base [
 			update-base hWnd null null values
 		][
-			InvalidateRect hWnd null 1
+			InvalidateRect hWnd null 0
 		]
 	]
 	if flags and FACET_FLAG_PANE <> 0 [
@@ -1677,11 +1677,11 @@ OS-update-view: func [
 	]
 	if flags and FACET_FLAG_FONT <> 0 [
 		set-font hWnd face values
-		InvalidateRect hWnd null 1
+		InvalidateRect hWnd null 0
 	]
 	if flags and FACET_FLAG_PARA <> 0 [
 		update-para face 0
-		InvalidateRect hWnd null 1
+		InvalidateRect hWnd null 0
 	]
 	if flags and FACET_FLAG_MENU <> 0 [
 		menu: as red-block! values + FACE_OBJ_MENU

@@ -95,6 +95,11 @@ draw-end: func [
 ][
 	ctx: as draw-ctx! dc
 	ctx/rt/EndDraw ctx/this null null
+	;@@ we should call this function
+	;@@ but it's make our window black
+	;@@ minimize and restore the window
+	;@@ then we get the right result, very strange...
+	ValidateRect hwnd null
 	free as byte-ptr! dc
 ]
 

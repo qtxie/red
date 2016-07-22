@@ -135,6 +135,15 @@ FillEllipse*: alias function! [
 	return:		[integer!]
 ]
 
+DrawTextLayout*: alias function! [
+	this		[this!]
+	x			[float32!]
+	y			[float32!]
+	layout		[integer!]
+	options		[integer!]
+]
+
+
 ID2D1SolidColorBrush: alias struct! [
 	QueryInterface		[QueryInterface!]
 	AddRef				[AddRef!]
@@ -228,7 +237,7 @@ ID2D1HwndRenderTarget: alias struct! [
 	FillOpacityMask					[integer!]
 	DrawBitmap						[integer!]
 	DrawText						[integer!]
-	DrawTextLayout					[integer!]
+	DrawTextLayout					[DrawTextLayout*]
 	DrawGlyphRun					[integer!]
 	SetTransform					[integer!]
 	GetTransform					[integer!]
@@ -291,7 +300,7 @@ ID2D1DCRenderTarget: alias struct! [
 	FillOpacityMask					[integer!]
 	DrawBitmap						[integer!]
 	DrawText						[integer!]
-	DrawTextLayout					[integer!]
+	DrawTextLayout					[DrawTextLayout*]
 	DrawGlyphRun					[integer!]
 	SetTransform					[integer!]
 	GetTransform					[integer!]
@@ -320,7 +329,32 @@ ID2D1DCRenderTarget: alias struct! [
 	GetPixelSize					[integer!]
 	GetMaximumBitmapSize			[integer!]
 	IsSupported						[integer!]
-	BindDC							[function! [this [this!] hDC [integer!] rect [RECT_STRUCT] return: [integer!]]]
+	BindDC							[function! [this [this!] hDC [handle!] rect [RECT_STRUCT] return: [integer!]]]
+]
+
+;-- Direct Write
+
+CreateTextFormat*: alias function! [
+	this		[this!]
+	fontName	[c-string!]
+	fontWeight	[integer!]
+	fontStyle	[integer!]
+	fontStretch	[integer!]
+	fontSize	[float32!]
+	localeName	[c-string!]
+	textFormat	[int-ptr!]
+	return:		[integer!]
+]
+
+CreateTextLayout*: alias function! [
+	this		[this!]
+	string		[c-string!]
+	length		[integer!]
+	format		[integer!]
+	maxWidth	[float32!]
+	maxHeight	[float32!]
+	layout		[int-ptr!]
+	return:		[integer!]
 ]
 
 IDWriteFactory: alias struct! [
@@ -339,10 +373,10 @@ IDWriteFactory: alias struct! [
 	CreateCustomRenderingParams		[integer!]
 	RegisterFontFileLoader			[integer!]
 	UnregisterFontFileLoader		[integer!]
-	CreateTextFormat				[integer!]
+	CreateTextFormat				[CreateTextFormat*]
 	CreateTypography				[integer!]
 	GetGdiInterop					[integer!]
-	CreateTextLayout				[integer!]
+	CreateTextLayout				[CreateTextLayout*]
 	CreateGdiCompatibleTextLayout	[integer!]
 	CreateEllipsisTrimmingSign		[integer!]
 	CreateTextAnalyzer				[integer!]
@@ -511,7 +545,7 @@ create-hwnd-render-target: func [
 ]
 
 create-dc-render-target: func [
-	dc		[integer!]
+	dc		[handle!]
 	rc		[RECT_STRUCT]
 	return: [this!]
 	/local
@@ -535,10 +569,125 @@ create-dc-render-target: func [
 	factory: as ID2D1Factory d2d-factory/vtbl
 	hr: factory/CreateDCRenderTarget d2d-factory props :target
 	if hr <> 0 [return null]
+
 	IRT: as this! target
 	rt: as ID2D1DCRenderTarget IRT/vtbl
 	hr: rt/BindDC IRT dc rc
 	if hr <> 0 [rt/Release IRT return null]
 	free as byte-ptr! props
 	IRT
+]
+
+create-text-format: func [
+	font	[red-object!]
+	return: [integer!]
+	/local
+		values	[red-value!]
+		int		[red-integer!]
+		value	[red-value!]
+		w		[red-word!]
+		str		[red-string!]
+		blk		[red-block!]
+		weight	[integer!]
+		style	[integer!]
+		size	[float32!]
+		len		[integer!]
+		sym		[integer!]
+		name	[c-string!]
+		format	[integer!]
+		factory [IDWriteFactory]
+][
+	values: object/get-values font
+	
+	int: as red-integer! values + FONT_OBJ_SIZE
+	len: either TYPE_OF(int) <> TYPE_INTEGER [10][int/value]
+	size: as float32! integer/to-float len
+
+	str: as red-string! values + FONT_OBJ_NAME
+	name: either TYPE_OF(str) = TYPE_STRING [
+		len: string/rs-length? str
+		if len > 31 [len: 31]
+		unicode/to-utf16-len str :len yes
+	][null]
+	
+	w: as red-word! values + FONT_OBJ_STYLE
+	len: switch TYPE_OF(w) [
+		TYPE_BLOCK [
+			blk: as red-block! w
+			w: as red-word! block/rs-head blk
+			len: block/rs-length? blk
+		]
+		TYPE_WORD  [1]
+		default	   [0]
+	]
+	
+	weight:	 400
+	style: 0
+
+	unless zero? len [
+		loop len [
+			sym: symbol/resolve w/symbol
+			case [
+				sym = _bold	 	 [weight:  700]
+				sym = _italic	 [style:	 1]
+				true			 [0]
+			]
+			w: w + 1
+		]
+	]
+
+	format: 0
+	factory: as IDWriteFactory dwrite-factory/vtbl
+	factory/CreateTextFormat dwrite-factory name 0 weight style size null :format
+	format
+]
+
+draw-text-d2d: func [
+	dc		[handle!]
+	text	[red-string!]
+	font	[red-object!]
+	para	[red-object!]
+	width	[integer!]
+	height	[integer!]
+	/local
+		this	[this!]
+		obj		[IUnknown]
+		rt		[ID2D1DCRenderTarget]
+		dwrite	[IDWriteFactory]
+		rc		[RECT_STRUCT]
+		str		[c-string!]
+		len		[integer!]
+		brush	[integer!]
+		layout	[integer!]
+		values	[red-value!]
+		color	[red-tuple!]
+		int		[red-integer!]
+		w		[float32!]
+		h		[float32!]
+][
+	values: object/get-values font
+	
+	int: as red-integer! (block/rs-head as red-block! values + FONT_OBJ_STATE) + 1
+	w: as float32! integer/to-float width
+	h: as float32! integer/to-float height
+	len: -1
+	str: unicode/to-utf16-len text :len yes
+	layout: 0
+	dwrite: as IDWriteFactory dwrite-factory/vtbl
+	dwrite/CreateTextLayout dwrite-factory str len int/value w h :layout
+
+	rc: declare RECT_STRUCT
+	rc/top: 0 rc/left: 0 rc/right: width rc/bottom: height
+	this: create-dc-render-target dc rc
+
+	rt: as ID2D1DCRenderTarget this/vtbl
+	color: as red-tuple! values + FONT_OBJ_COLOR
+	brush: 0
+	rt/CreateSolidColorBrush this to-dx-color color/array1 null null :brush
+	rt/DrawTextLayout this as float32! 0.0 as float32! 0.0 layout brush 0
+	rt/Release this
+	this: as this! brush
+	COM_SAFE_RELEASE(obj this)
+	this: as this! layout
+	COM_SAFE_RELEASE(obj this)
 ]

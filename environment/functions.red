@@ -25,7 +25,7 @@ also: func [
 attempt: func [
 	"Tries to evaluate a block and returns result or NONE on error"
 	value [block!]
-	/safer
+	/safer "Capture all possible errors and exceptions"
 ][
 	either safer [
 		unless error? set/any 'value try/all :value [get/any 'value]
@@ -89,6 +89,7 @@ binary?:	 func ["Returns true if the value is this type" value [any-type!]] [bin
 block?:		 func ["Returns true if the value is this type" value [any-type!]] [block!		= type? :value]
 char?: 		 func ["Returns true if the value is this type" value [any-type!]] [char!		= type? :value]
 datatype?:	 func ["Returns true if the value is this type" value [any-type!]] [datatype!	= type? :value]
+email?:		 func ["Returns true if the value is this type" value [any-type!]] [email!		= type? :value]
 error?:		 func ["Returns true if the value is this type" value [any-type!]] [error!		= type? :value]
 file?:		 func ["Returns true if the value is this type" value [any-type!]] [file!		= type? :value]
 float?:		 func ["Returns true if the value is this type" value [any-type!]] [float!		= type? :value]
@@ -116,6 +117,7 @@ routine?:	 func ["Returns true if the value is this type" value [any-type!]] [ro
 set-path?:	 func ["Returns true if the value is this type" value [any-type!]] [set-path!	= type? :value]
 set-word?:	 func ["Returns true if the value is this type" value [any-type!]] [set-word!	= type? :value]
 string?:	 func ["Returns true if the value is this type" value [any-type!]] [string!		= type? :value]
+tag?:		 func ["Returns true if the value is this type" value [any-type!]] [tag!		= type? :value]
 time?:		 func ["Returns true if the value is this type" value [any-type!]] [time!		= type? :value]
 typeset?:	 func ["Returns true if the value is this type" value [any-type!]] [typeset!	= type? :value]
 tuple?:		 func ["Returns true if the value is this type" value [any-type!]] [tuple!		= type? :value]
@@ -313,8 +315,8 @@ parse-trace: func [
 ]
 
 suffix?: function [
-	{Return the file suffix of a filename or url. Else, NONE.}
-	path [file! url! string!]
+	"Returns the suffix (extension) of a filename or url, or NONE if there is no suffix"
+	path [file! url! string! email!]
 ][
 	if all [
 		path: find/last path #"."
@@ -556,6 +558,7 @@ normalize-dir: function [
 ]
 
 what-dir: func [/local path][
+	"Returns the active directory path"
 	path: to-red-file get-current-dir
 	unless dir? path [append path #"/"]
 	path
@@ -658,6 +661,26 @@ to-image: func [value][
 	]
 ]
 
+hex-to-rgb: function [
+	"Converts a color in hex format to a tuple value; returns NONE if it fails"
+	hex		[issue!] "Accepts #rgb, #rrggbb, #rrggbbaa"	 ;-- 3,6,8 nibbles supported
+	return: [tuple! none!]								 ;-- 3 or 4 bytes long
+][
+	switch length? str: form hex [
+		3 [
+			uppercase str
+			forall str [str/1: str/1 - pick "70" str/1 >= #"A"]
+
+			as-color 
+				shift/left to integer! str/1 4
+				shift/left to integer! str/2 4
+				shift/left to integer! str/3 4
+		]
+		6 [if bin: to binary! hex [as-color bin/1 bin/2 bin/3]]
+		8 [if bin: to binary! hex [as-rgba bin/1 bin/2 bin/3 bin/4]]
+	]
+]
+
 within?: func [
 	"Return TRUE if the point is within the rectangle bounds"
 	point	[pair!] "XY position"
@@ -729,7 +752,7 @@ collect: function [
 	/into 		  		 "Insert into a buffer instead (returns position after insert)"
 		collected [series!] "The buffer series (modified)"
 ][
-	keep: func [v /only][either only [append/only collected v][append collected v]]
+	keep: func [v /only][either only [append/only collected v][append collected v] v]
 	
 	unless collected [collected: make block! 16]
 	parse body rule: [									;-- selective binding (needs BIND/ONLY support)

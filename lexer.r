@@ -86,8 +86,11 @@ lexer: context [
 	not-word-1st:	union union not-word-char digit charset {'}
 	not-file-char:  charset {[](){}"@:;}
 	not-url-char:	charset {[](){}";}
+	not-email-char:	union not-file-char union ws-ASCII charset "<^/"
 	not-str-char:   #"^""
 	not-mstr-char:  #"}"
+	not-tag-1st:	complement union ws-ASCII charset "=><"
+	not-tag-char:	complement charset ">"
 	caret-char:	    charset [#"^(40)" - #"^(5F)"]
 	non-printable-char: charset [#"^(00)" - #"^(1F)"]
 	integer-end:	charset {^{"[]();:xX}
@@ -267,7 +270,7 @@ lexer: context [
 	]
 	
 	integer-rule: [
-		decimal-special	e:								;-- escape path for NaN, INFs
+		pos: decimal-special e:								;-- escape path for NaN, INFs
 		(type: issue! value: load-number copy/part s e)
 		|	integer-number-rule
 			opt [decimal-number-rule | decimal-exp-rule e: (type: decimal!)]
@@ -373,6 +376,17 @@ lexer: context [
 	multiline-string: [#"{" s: (type: string!) nested-curly-braces]
 	
 	string-rule: [line-string | multiline-string]
+	
+	tag-rule: [
+		#"<" s: not-tag-1st (type: tag!)
+		 some [#"^"" thru #"^"" | #"'" thru #"'" | not-tag-char] e: #">"
+	]
+	
+	email-rule: [
+		(stop: [not-email-char])
+		s: some UTF8-filtered-char #"@" (type: email!)
+		any UTF8-filtered-char e: (value: dehex copy/part s e)
+	]
 
 	base-2-rule: [
 		"2#{" (type: binary!) [
@@ -449,20 +463,22 @@ lexer: context [
 			| tuple-rule	  (stack/push load-tuple	 copy/part s e)
 			| hexa-rule		  (stack/push decode-hexa	 copy/part s e)
 			| binary-rule	  (stack/push load-binary s e base)
+			| email-rule	  (stack/push to email! value)
 			| integer-rule	  (stack/push value)
 			| decimal-rule	  (stack/push load-decimal	 copy/part s e)
+			| tag-rule		  (stack/push to tag!		 copy/part s e)
 			| word-rule		  (stack/push to type value)
 			| lit-word-rule	  (stack/push to type value)
 			| get-word-rule	  (stack/push to type value)
 			| refinement-rule (stack/push to refinement! copy/part s e)
-			| slash-rule	  (stack/push to word! 	   	 copy/part s e)
+			| slash-rule	  (stack/push to word!		 copy/part s e)
 			| file-rule		  (stack/push load-file		 copy/part s e)
 			| char-rule		  (stack/push decode-UTF8-char value)
 			| block-rule	  (stack/push value)
 			| paren-rule	  (stack/push value)
 			| string-rule	  (stack/push load-string s e)
 			| map-rule		  (stack/push value)
-			| issue-rule	  (stack/push to issue!	   	 copy/part s e)
+			| issue-rule	  (stack/push to issue!		 copy/part s e)
 		]
 	]
 	

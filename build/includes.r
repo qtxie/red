@@ -80,6 +80,7 @@ write %build/bin/sources.r set-cache [
 			%common.reds
 			%context.reds
 			%datatype.reds
+			%email.reds
 			%error.reds
 			%event.reds
 			%file.reds
@@ -112,6 +113,7 @@ write %build/bin/sources.r set-cache [
 			%string.reds
 			%structures.reds
 			%symbol.reds
+			%tag.reds
 			%time.reds
 			%typeset.reds
 			%tuple.reds

@@ -514,7 +514,7 @@ system/view/platform: context [
 	;	gui/OS-request-font font mono?
 	]
 	
-	init: has [svs][
+	init: func [/local sys fonts][
 		#system [gui/init]
 		
 		system/view/metrics/dpi: 94						;@@ Needs to be calculated
@@ -527,6 +527,15 @@ system/view/platform: context [
 			pane:	make block! 4
 			state:	reduce [0 0 none copy [1]]
 		]
+		
+		set fonts:
+			bind [fixed sans-serif serif] system/view/fonts
+			switch system/platform [
+				Windows [["Courier New" "Arial" "Times"]
+			]
+		]
+		
+		set [font-fixed font-sans-serif font-serif] reduce fonts
 	]
 	
 	version: none

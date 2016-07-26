@@ -238,7 +238,7 @@ get-text-size: func [
 		size  [tagSIZE]
 ][
 	size: declare tagSIZE
-	if null? hFont [hFont: GetStockObject DEFAULT_GUI_FONT]
+	if null? hFont [hFont: default-font]
 	saved: SelectObject hScreen hFont
 	
 	GetTextExtentPoint32
@@ -363,15 +363,48 @@ free-handles: func [
 	state/header: TYPE_NONE
 ]
 
+set-defaults: func [
+	/local
+		hWnd	[handle!]
+		hTheme	[handle!]
+		font	[tagLOGFONT]
+		name	[c-string!]
+		res		[integer!]
+][
+	if IsThemeActive [
+		hTheme: OpenThemeData null #u16 "Window"
+		if hTheme <> null [
+			font: declare tagLOGFONT
+			res: GetThemeSysFont hTheme 805 font		;-- TMT_MSGBOXFONT
+			if zero? res [
+				name: (as-c-string font) + 28
+				string/load-at
+					name
+					utf16-length? name
+					#get system/view/fonts/system
+					UTF-16LE
+				
+				integer/make-at 
+					#get system/view/fonts/size
+					0 - (font/lfHeight * 72 / log-pixels-y)
+					
+				default-font: CreateFontIndirect font
+			]
+		]
+		CloseThemeData hTheme
+	]
+	if null? default-font [default-font: GetStockObject DEFAULT_GUI_FONT]
+	null
+]
+
 init: func [
 	/local
-		ver [red-tuple!]
-		int [red-integer!]
+		ver   [red-tuple!]
+		int   [red-integer!]
 ][
 	process-id:		GetCurrentProcessId
 	hScreen:		GetDC null
 	hInstance:		GetModuleHandle 0
-	default-font:	GetStockObject DEFAULT_GUI_FONT
 
 	version-info/dwOSVersionInfoSize: size? OSVERSIONINFO
 	GetVersionEx version-info
@@ -399,6 +432,8 @@ init: func [
 	
 	log-pixels-x: GetDeviceCaps hScreen 88				;-- LOGPIXELSX
 	log-pixels-y: GetDeviceCaps hScreen 90				;-- LOGPIXELSY
+	
+	set-defaults
 ]
 
 find-last-window: func [
@@ -460,6 +495,7 @@ init-window: func [										;-- post-creation settings
 	size	[red-pair!]
 	bits	[integer!]
 	/local
+		value 	[red-value!]
 		x		[integer!]
 		y		[integer!]
 		cx		[integer!]
@@ -833,6 +869,8 @@ OS-make-view: func [
 	selected: as red-integer!	values + FACE_OBJ_SELECTED
 	para:	  as red-object!	values + FACE_OBJ_PARA
 	rate:	  					values + FACE_OBJ_RATE
+	
+	bits: 	  get-flags as red-block! values + FACE_OBJ_FLAGS
 
 	flags: 	  WS_CHILD or WS_CLIPSIBLINGS
 	ws-flags: 0
@@ -877,13 +915,15 @@ OS-make-view: func [
 		sym = field [
 			class: #u16 "RedField"
 			unless para? [flags: flags or ES_LEFT or ES_AUTOHSCROLL]
-			ws-flags: WS_TABSTOP or WS_EX_CLIENTEDGE
+			ws-flags: WS_TABSTOP
+			if bits and FACET_FLAGS_NO_BORDER = 0 [ws-flags: ws-flags or WS_EX_CLIENTEDGE]
 		]
 		sym = area [
 			class: #u16 "RedField"
 			unless para? [flags: flags or ES_LEFT or ES_AUTOHSCROLL]
 			flags: flags or ES_MULTILINE or ES_AUTOVSCROLL or WS_VSCROLL or WS_HSCROLL
-			ws-flags: WS_TABSTOP or WS_EX_CLIENTEDGE
+			ws-flags: WS_TABSTOP
+			if bits and FACET_FLAGS_NO_BORDER = 0 [ws-flags: ws-flags or WS_EX_CLIENTEDGE]
 		]
 		sym = text [
 			class: #u16 "RedFace"
@@ -930,7 +970,6 @@ OS-make-view: func [
 		sym = window [
 			class: #u16 "RedWindow"
 			flags: WS_BORDER or WS_CLIPCHILDREN
-			bits: get-flags as red-block! values + FACE_OBJ_FLAGS
 			if bits and FACET_FLAGS_NO_MIN  = 0 [flags: flags or WS_MINIMIZEBOX]
 			if bits and FACET_FLAGS_NO_MAX  = 0 [flags: flags or WS_MAXIMIZEBOX]
 			if bits and FACET_FLAGS_NO_BTNS = 0 [flags: flags or WS_SYSMENU]
@@ -992,7 +1031,7 @@ OS-make-view: func [
 		hInstance
 		as int-ptr! face
 
-	if null? handle [print-line "*** Error: CreateWindowEx failed!"]
+	if null? handle [print-line "*** View Error: CreateWindowEx failed!"]
 
 	if any [win8+? not alpha?][BringWindowToTop handle]
 	set-font handle face values

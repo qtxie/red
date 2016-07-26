@@ -97,6 +97,8 @@ red: context [
 	#include %datatypes/tuple.reds
 	#include %datatypes/binary.reds
 	#include %datatypes/time.reds
+	#include %datatypes/tag.reds
+	#include %datatypes/email.reds
 	#if OS = 'Windows [#include %datatypes/image.reds]	;-- temporary
 	#if OS = 'MacOSX  [#include %datatypes/image.reds]	;-- temporary
 
@@ -174,6 +176,8 @@ red: context [
 		percent/init
 		tuple/init
 		time/init
+		tag/init
+		email/init
 		#if OS = 'Windows [image/init]					;-- temporary
 		#if OS = 'MacOSX [image/init]					;-- temporary
 		
@@ -241,6 +245,8 @@ red: context [
 			percent/verbose:	verbosity
 			tuple/verbose:		verbosity
 			time/verbose:		verbosity
+			tag/verbose:		verbosity
+			email/verbose:		verbosity
 			#if OS = 'Windows [image/verbose: verbosity]
 			#if OS = 'MacOSX [image/verbose: verbosity]
 

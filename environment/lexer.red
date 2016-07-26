@@ -399,8 +399,9 @@ system/lexer: context [
 			not-file-char not-str-char not-mstr-char caret-char
 			non-printable-char integer-end ws-ASCII ws-U+2k control-char
 			four half non-zero path-end base base64-char slash-end not-url-char
+			email-end
 	][
-		cs:		[- - - - - - - - - - - - - - - - - - - - - - -]	;-- memoized bitsets
+		cs:		[- - - - - - - - - - - - - - - - - - - - - - - -]	;-- memoized bitsets
 		stack:	clear []
 		count?:	yes										;-- if TRUE, lines counter is enabled
 		old-line: line: 1
@@ -458,12 +459,13 @@ system/lexer: context [
 			]
 			cs/22: charset {[](){}":;}					;-- slash-end
 			cs/23: charset {[](){}";}					;-- not-url-char
+			cs/24: union cs/8 union cs/14 charset "<^/" ;-- email-end
 		]
 		set [
 			digit hexa-upper hexa-lower hexa hexa-char not-word-char not-word-1st
 			not-file-char not-str-char not-mstr-char caret-char
 			non-printable-char integer-end ws-ASCII ws-U+2k control-char
-			four half non-zero path-end base64-char slash-end not-url-char
+			four half non-zero path-end base64-char slash-end not-url-char email-end
 		] cs
 
 		byte: [
@@ -549,13 +551,13 @@ system/lexer: context [
 		]
 
 		line-string: [
-			{"} s: any [
+			#"^"" s: any [
 				{^^"}
 				| ahead [#"^"" | newline-char] break
 				| escaped-char
 				| skip
 			]
-			e: {"}
+			e: #"^""
 		]
 
 		nested-curly-braces: [
@@ -576,6 +578,18 @@ system/lexer: context [
 		]
 
 		string-rule: [(type: string!) line-string | multiline-string]
+		
+		tag-rule: [
+			#"<" not [#"=" | #">" | #"<" | ws] (type: tag!)
+			 s: some [#"^"" thru #"^"" | #"'" thru #"'" | e: #">" break | skip]
+			(if e/1 <> #">" [throw-error [tag! back s]])
+		]
+		
+		email-rule: [
+			s: some [ahead email-end break | skip] #"@"
+			any [ahead email-end break | skip] e:
+			(type: email!)
+		]
 
 		base-2-rule: [
 			"2#{" (type: binary!) [
@@ -699,6 +713,7 @@ system/lexer: context [
 				to-word stack copy/part s e type
 			)
 		]
+		
 
 		refinement-rule: [
 			slash [
@@ -854,8 +869,10 @@ system/lexer: context [
 				| tuple-rule		(store stack make-tuple s e)
 				| hexa-rule			(store stack make-hexa s e)
 				| binary-rule		if (value: make-binary s e base) (store stack value)
+				| email-rule		(store stack do make-file)
 				| integer-rule		if (value) (store stack value)
 				| float-rule		if (value: make-float s e type) (store stack value)
+				| tag-rule			(store stack do make-string)
 				| word-rule
 				| lit-word-rule
 				| get-word-rule

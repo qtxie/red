@@ -86,22 +86,27 @@ make-profilable make target-class [
 		data
 	]
 	
-	emit-float: func [arg opcode [binary!]][
-		emit either any [
-			arg == 4
-			'float32! = first compiler/get-type arg 
-		][
-			opcode and #{F9FF}
+	emit-float: func [opcode [binary!]][
+		emit either width = 4 [opcode and #{F9FF}][opcode]
+	]
+	
+	emit-float-arg: func [arg opcode [binary!]][
+		emit switch/default first compiler/get-type arg [
+			float32! [opcode and #{F9FF}]
+			integer! [opcode and #{F0FF} or #{0B00}]
 		][
 			opcode
 		]
 	]
 	
-	emit-float-variable: func [name [word! object!] gcode [binary!] pcode [binary!] lcode [binary!]][
-		if 'float32! = first compiler/get-type name [
-			gcode: gcode and #{F9FF}
-			pcode: pcode and #{F9FF}
-			lcode: lcode and #{F9FF} 
+	emit-float-variable: func [
+		name [word! object!] gcode [binary!] pcode [binary!] lcode [binary!]
+		/local codes
+	][
+		codes: [gcode pcode lcode]
+		switch first compiler/get-type name [
+			float32! [foreach c codes [set c (get c) and #{F9FF}]]
+			integer! [foreach c codes [set c (get c) and #{F0FF} or #{0B00}]]
 		]
 		emit-variable name gcode pcode lcode
 	]
@@ -178,7 +183,7 @@ make-profilable make target-class [
 		]
 	]
 	
-	emit-casting: func [value [object!] alt? [logic!] /local type old][
+	emit-casting: func [value [object!] alt? [logic!] /push /local type old][
 		type: compiler/get-type value/data	
 		case [
 			value/type/1 = 'logic! [
@@ -204,45 +209,65 @@ make-profilable make target-class [
 				emit pick [#{81E2} #{25}] alt?    	;-- AND edx|eax, 000000FFh 
 				emit to-bin32 255
 			]
-			all [value/type/1 = 'integer! type/1 = 'float32!][
-				if verbose >= 3 [print [">>>converting from float32! to integer!"]]
+			all [value/type/1 = 'integer! find [float! float64! float32!] type/1][
+				if verbose >= 3 [print [">>>converting from" type/1 "to integer!"]]
 				emit #{83EC04}						;-- SUB esp, 4
-				emit #{D91C24}						;-- FSTP dword [esp]	; save as 32-bit
-				either alt? [
-					emit #{5A}						;-- POP edx
+				either compiler/job/cpu-version >= 4.0 [ ;-- Only CPUs with SSE3, >= Pentium 4
+					emit #{DB0C24}					;-- FISTTP dword [esp]	; save as 32-bit truncated
 				][
-					emit #{58}						;-- POP eax
+					emit-push to integer! #{0E7F}	;-- set FPU_X87_ROUNDING_ZERO mode
+					emit #{D92C24}					;-- FLDCW [esp]
+					emit #{83C404}					;-- ADD esp, 4			; free space
+					emit #{DB1C24}					;-- FISTP dword [esp]	; save as 32-bit
+					emit #{D92D}					;-- FLDCW [<word>]	 	; global
+					emit-reloc-addr fpu-cword/2		;-- one-based index
+				]
+				unless push [
+					either alt? [
+						emit #{5A}					;-- POP edx
+					][
+						emit #{58}					;-- POP eax
+					]
 				]
 			]
 			all [value/type/1 = 'float32! type/1 = 'integer!][
-				if verbose >= 3 [print [">>>converting from integer! to float32!"]]
+				if verbose >= 3 [print ">>>converting from integer! to float32!"]
 				either alt? [
 					emit #{52}						;-- PUSH edx
 				][
 					emit #{50}						;-- PUSH eax
 				]
-				emit #{D90424}						;-- FLD dword [esp]		; load as 32-bit
-				emit #{83C404}						;-- ADD esp, 4			; free space
-			]
-			all [find [float! float64!] value/type/1 find [float32! integer!] type/1][
-				if verbose >= 3 [print [">>>converting from" mold/flat type/1 "to float!"]]
-				either type/1 = 'integer! [
-					either alt? [
-						emit #{52}					;-- PUSH edx
-					][
-						emit #{50}					;-- PUSH eax
-					]
-					emit #{D90424}					;-- FLD dword [esp]		; load as 32-bit
-					emit #{83EC04}					;-- SUB esp, 4			; alloc more space for 64-bit float
+				emit #{DB0424}						;-- FILD dword [esp]	; load as 32-bit
+				either push [
+					emit #{D91C24}					;-- FSTP dword [esp]	; save as 32-bit
 				][
-					emit #{83EC08}					;-- SUB esp, 8			; alloc space for 64-bit float
+					emit #{83C404}					;-- ADD esp, 4			; free space
 				]
+			]
+			all [find [float! float64!] value/type/1 type/1 = 'integer!][
+				if verbose >= 3 [print ">>>converting from integer! to float!"]
+				either alt? [
+					emit #{52}						;-- PUSH edx
+				][
+					emit #{50}						;-- PUSH eax
+				]
+				emit #{DB0424}						;-- FILD dword [esp]	; load as 32-bit
+				either push [
+					emit #{83EC04}					;-- SUB esp, 4			; alloc more space for 64-bit float
+					emit #{DD1C24}					;-- FSTP qword [esp]	; save as 64-bit
+				][
+					emit #{83C404}					;-- ADD esp, 4			; free space
+				]
+			]
+			all [find [float! float64!] value/type/1 type/1 = 'float32!][
+				if verbose >= 3 [print ">>>converting from float32! to float!"]
+				emit #{83EC08}						;-- SUB esp, 8			; alloc space for 64-bit float
 				emit #{DD1C24}						;-- FSTP qword [esp]	; save as 64-bit
 				emit #{DD0424}						;-- FLD qword [esp]		; load as 64-bit
 				emit #{83C408}						;-- ADD esp, 8			; free space
 			]
 			all [value/type/1 = 'float32! find [float! float64!] type/1][
-				if verbose >= 3 [print [">>>converting from float! to float32!"]]
+				if verbose >= 3 [print ">>>converting from float! to float32!"]
 				emit #{83EC04}						;-- SUB esp, 4			; alloc space for 32-bit float
 				emit #{D91C24}						;-- FSTP dword [esp]	; save as 32-bit
 				emit #{D90424}						;-- FLD dword [esp]		; load as 32-bit
@@ -540,7 +565,7 @@ make-profilable make target-class [
 			decimal! [
 				set-width any [cast value]
 				emit-push any [cast value]
-				emit-float width #{DD0424}			;-- FLD [esp]
+				emit-float #{DD0424}				;-- FLD [esp]
 				emit #{83C4} 						;-- ADD esp, 8|4
 				emit to-bin8 pick [4 8] to logic! all [cast cast/type/1 = 'float32!]
 			]
@@ -736,9 +761,9 @@ make-profilable make target-class [
 		
 		either compiler/any-float? type [
 			either zero? offset [
-				emit-float width #{DD00}			;-- FLD [eax]
+				emit-float #{DD00}					;-- FLD [eax]
 			][
-				emit-float width #{DD80}			;-- FLD [eax+offset]
+				emit-float #{DD80}					;-- FLD [eax+offset]
 				emit to-bin32 offset
 			]
 		][
@@ -818,15 +843,15 @@ make-profilable make target-class [
 
 			either integer? idx [
 				either zero? idx: idx - 1 [			;-- indexes are one-based
-					emit-float width opcodes/1
+					emit-float opcodes/1
 				][
 					offset: idx * emitter/size-of? type/2/1	;-- scaled index up
-					emit-float width opcodes/2
+					emit-float opcodes/2
 					emit to-bin32 offset
 				]
 			][
 				emit-load-index idx
-				emit-float width opcodes/3
+				emit-float opcodes/3
 				emit select [4 #{B8} 8 #{F8}] width
 			]
 		][
@@ -895,9 +920,9 @@ make-profilable make target-class [
 				
 				either compiler/any-float? type [
 					either zero? offset [
-						emit-float width #{DD18}	;-- FSTP [eax]
+						emit-float #{DD18}			;-- FSTP [eax]
 					][
-						emit-float width #{DD98}	;-- FSTP [eax+offset]
+						emit-float #{DD98}			;-- FSTP [eax+offset]
 						emit to-bin32 offset
 					]
 				][
@@ -970,7 +995,7 @@ make-profilable make target-class [
 		/with cast [object!]
 		/cdecl										;-- external call
 		/keep
-		/local spec type offset
+		/local spec type offset conv-int-float?
 	][
 		if verbose >= 3 [print [">>>pushing" mold value]]
 		if block? value [value: <last>]
@@ -980,7 +1005,7 @@ make-profilable make target-class [
 				either compiler/any-float? compiler/last-type [
 					set-width/type any [all [cast cast/type] compiler/last-type]
 					emit join #{83EC} to-bin8 width	;-- SUB esp, 8|4
-					emit-float width #{DD1C24}		;-- FSTP [esp]
+					emit-float #{DD1C24}			;-- FSTP [esp]
 				][
 					emit #{50}						;-- PUSH eax
 				]
@@ -1027,7 +1052,7 @@ make-profilable make target-class [
 					emit #{83EC}					;-- SUB esp, 8|4
 					emit to-bin8 width
 					load-float-variable value
-					emit-float width #{DD1C24}		;-- FSTP [esp]			; push double on stack
+					emit-float #{DD1C24}			;-- FSTP [esp]			; push double on stack
 				][
 					emit-variable value
 						#{FF35}						;-- PUSH [value]		; global
@@ -1084,16 +1109,32 @@ make-profilable make target-class [
 				unless keep [emit-push <last>]
 			]
 			object! [
-				unless any [
-					path? value/data
-					compiler/any-float? compiler/get-type value/data 
-				][
-					emit-casting value no
+				type: compiler/get-type value/data
+				
+				conv-int-float?: any [
+					all [
+						find [float! float64! float32!] value/type/1
+						type/1 = 'integer!
+					]
+					all [
+						find [float! float64! float32!] type/1
+						value/type/1 = 'integer!
+					]
 				]
-				either cdecl [
-					emit-push/with/cdecl value/data value
-				][
-					emit-push/with value/data value
+				unless path? value/data [
+					all [
+						conv-int-float?
+						not find [block! tag!] type?/word value/data
+						emit-load value/data
+					]
+					emit-casting/push value no
+				]
+				unless conv-int-float? [
+					either cdecl [
+						emit-push/with/cdecl value/data value
+					][
+						emit-push/with value/data value
+					]
 				]
 			]
 		]
@@ -1435,11 +1476,14 @@ make-profilable make target-class [
 		if object? args/1 [emit-casting args/1 no]	;-- do runtime conversion on eax if required
 
 		;-- Operator and second operand processing
-		either all [object? args/2 find [imm reg] b][
+		all [
+			object? args/2
+			find [imm reg] b
+			args/2/type/1 <> 'integer!				;-- skip explicit casting to integer! (implicit)		
 			emit-casting args/2 yes					;-- do runtime conversion on edx if required
-		][
-			implicit-cast right
 		]
+		implicit-cast right
+		
 		case [
 			find comparison-op name [emit-comparison-op name a b args]
 			find math-op	   name	[emit-math-op		name a b args]
@@ -1526,18 +1570,17 @@ make-profilable make target-class [
 		set-width left
 		
 		load-from-stack: [
-			emit-float width #{DD0424}				;-- FLD [esp]
+			emit-float #{DD0424}					;-- FLD [esp]
 			emit #{83C4} 							;-- ADD esp, 8|4
 			emit to-bin8 width		
 		]
-
 		switch a [									;-- load left operand on FPU stack
 			imm [
 				spec: emitter/store-value none args/1 compiler/get-type args/1
 				either PIC? [
-					emit-float args/1 #{DD83}		;-- FLD [ebx+disp]	; PIC
+					emit-float-arg args/1 #{DD83}	;-- FLD [ebx+disp]	; PIC
 				][
-					emit-float args/1 #{DD05}		;-- FLD [<float>]	; global
+					emit-float-arg args/1 #{DD05}	;-- FLD [<float>]	; global
 				]
 				emit-reloc-addr spec/2
 				set-width args/1
@@ -1558,9 +1601,9 @@ make-profilable make target-class [
 			imm [
 				spec: emitter/store-value none args/2 compiler/get-type args/2
 				either PIC? [
-					emit-float args/2 #{DD83}		;-- FLD [ebx+disp]	; PIC
+					emit-float-arg args/2 #{DD83}	;-- FLD [ebx+disp]	; PIC
 				][
-					emit-float args/2 #{DD05}		;-- FLD [<float>]	; global
+					emit-float-arg args/2 #{DD05}	;-- FLD [<float>]	; global
 				]
 				emit-reloc-addr spec/2
 			]

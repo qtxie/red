@@ -271,6 +271,45 @@ eval-int-path: func [
 	result
 ]
 
+select-key*: func [									;-- called by compiler for SWITCH
+	sub?	[logic!]
+	return: [red-value!]
+	/local
+		blk	  [red-block!]
+		key	  [red-value!]
+		value [red-value!]
+		tail  [red-value!]
+		s	  [series!]
+		step  [integer!]
+][
+	key: as red-value! stack/arguments
+	blk: as red-block! key + 1
+	assert TYPE_OF(blk) = TYPE_BLOCK
+	
+	unless TYPE_OF(key) = TYPE_BLOCK [
+		s: GET_BUFFER(blk)
+		value: s/offset + blk/head
+		tail:  s/tail
+		step:  either sub? [1][2]
+
+		while [value < tail][
+			if TYPE_OF(key) = TYPE_OF(value) [
+				if actions/compare key value COMP_EQUAL [
+					value: either value + 1 < tail [value + 1][value]
+					either sub? [stack/push value][stack/set-last value]
+					return value
+				]
+			]
+			value: value + step
+		]
+	]
+	either sub? [as red-value! none/push][
+		value: stack/arguments
+		value/header: TYPE_NONE
+		value
+	]
+]
+
 cycles: context [
 	size: 1000											;-- max depth allowed (arbitrary)
 	stack: as node! allocate size * size? node!			;-- cycles detection stack
@@ -441,6 +480,9 @@ words: context [
 	hour:			-1
 	minute:			-1
 	second:			-1
+	
+	user:			-1
+	host:			-1
 
 	_body:			as red-word! 0
 	_windows:		as red-word! 0
@@ -626,6 +668,9 @@ words: context [
 		hour:			symbol/make "hour"
 		minute:			symbol/make "minute"
 		second:			symbol/make "second"
+		
+		user:			symbol/make "user"
+		host:			symbol/make "host"
 
 		_windows:		_context/add-global windows
 		_syllable:		_context/add-global syllable

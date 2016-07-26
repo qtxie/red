@@ -300,6 +300,32 @@ string: context [
 		s/tail: s/offset
 		str/head: 0
 	]
+	
+	rs-find: func [
+		str		[red-string!]
+		cp		[integer!]
+		return: [integer!]
+		/local
+			s	 [series!]
+			unit [integer!]
+			pos  [byte-ptr!]
+			head [byte-ptr!]
+			tail [byte-ptr!]
+	][
+		s:	  GET_BUFFER(str)
+		unit: GET_UNIT(s)
+		head: (as byte-ptr! s/offset) + (str/head << (log-b unit))
+		pos:  head
+		tail: as byte-ptr! s/tail
+		
+		while [pos < tail][
+			if cp = get-char pos unit [
+				return (as-integer pos - head) >> (log-b unit)
+			]
+			pos: pos + unit
+		]
+		-1
+	]
 
 	rs-find-char: func [
 		str		[red-string!]
@@ -756,6 +782,32 @@ string: context [
 			match?
 		]
 	]
+	
+	match-tag?: func [
+		str		[red-string!]
+		value	[red-value!]						;-- tag!
+		op		[integer!]
+		return:	[logic!]
+		/local
+			s	 [series!]
+			unit [integer!]
+			c1	 [integer!]
+			c2	 [integer!]
+			len	 [integer!]
+	][
+		s: GET_BUFFER(str)
+		unit: GET_UNIT(s)
+		c1: get-char 
+			(as byte-ptr! s/offset) + (str/head << (log-b unit))
+			unit
+		
+		len: str/head + 1 + rs-length? as red-string! value
+		c2: get-char
+			(as byte-ptr! s/offset) + (len << (log-b unit))
+			unit
+		
+		all [c1 = as-integer #"<" c2 = as-integer #">"]
+	]
 
 	match?: func [
 		str	    [red-string!]
@@ -769,32 +821,45 @@ string: context [
 			unit [integer!]
 			c1	 [integer!]
 			c2	 [integer!]
+			res? [logic!]
 	][
-		either TYPE_OF(value) = TYPE_CHAR [
-			char: as red-char! value
-			c1: char/value
-			
-			s: GET_BUFFER(str)
-			unit: GET_UNIT(s)
-			c2: get-char 
-				(as byte-ptr! s/offset) + (str/head << (log-b unit))
-				unit
-			
-			if op <> COMP_STRICT_EQUAL [
-				if all [65 <= c1 c1 <= 90][c1: c1 + 32]	;-- lowercase c1
-				if all [65 <= c2 c2 <= 90][c2: c2 + 32] ;-- lowercase c2
-				c1: case-folding/folding-case c1 yes	;-- uppercase c1
-				c2: case-folding/folding-case c2 yes	;-- uppercase c2
+		type: TYPE_OF(value)
+		switch type [
+			TYPE_CHAR [
+				char: as red-char! value
+				c1: char/value
+
+				s: GET_BUFFER(str)
+				unit: GET_UNIT(s)
+				c2: get-char 
+					(as byte-ptr! s/offset) + (str/head << (log-b unit))
+					unit
+
+				if op <> COMP_STRICT_EQUAL [
+					if all [65 <= c1 c1 <= 90][c1: c1 + 32]	;-- lowercase c1
+					if all [65 <= c2 c2 <= 90][c2: c2 + 32] ;-- lowercase c2
+					c1: case-folding/folding-case c1 yes	;-- uppercase c1
+					c2: case-folding/folding-case c2 yes	;-- uppercase c2
+				]
+				c1 = c2
 			]
-			c1 = c2
-		][
-			type: TYPE_OF(value)
-			either all [								;@@ ANY_STRING
-				type <> TYPE_STRING
-				type <> TYPE_FILE
-				type <> TYPE_URL
-			][no][
-				zero? equal? str as red-string! value op yes
+			TYPE_TAG [
+				either match-tag? str value op [
+					str/head: str/head + 1
+					res?: zero? equal? str as red-string! value op yes
+					str/head: str/head - 1
+					res?
+				][no]
+			]
+			default  [
+				either all [								;@@ ANY_STRING - TAG
+					type <> TYPE_STRING
+					type <> TYPE_FILE
+					type <> TYPE_URL
+					type <> TYPE_EMAIL
+				][no][
+					zero? equal? str as red-string! value op yes
+				]
 			]
 		]
 	]
@@ -967,17 +1032,17 @@ string: context [
 			zero? part
 		]
 	]
-
-	load-in: func [
+	
+	load-at: func [
 		src		 [c-string!]							;-- source string buffer
 		size	 [integer!]
-		blk		 [red-block!]
+		slot	 [red-value!]
 		encoding [integer!]
 		return:  [red-string!]
 		/local
 			str  [red-string!]
 	][
-		str: as red-string! either null = blk [stack/push*][ALLOC_TAIL(blk)]
+		str: as red-string! either slot = null [stack/push*][slot]
 		str/header:	TYPE_STRING							;-- implicit reset of all header flags
 		str/head:	0
 		str/cache:	null
@@ -991,6 +1056,16 @@ string: context [
 		]
 		str
 	]
+
+	load-in: func [
+		src		 [c-string!]							;-- source string buffer
+		size	 [integer!]
+		blk		 [red-block!]
+		encoding [integer!]
+		return:  [red-string!]
+	][
+		load-at src size ALLOC_TAIL(blk) encoding
+	]
 	
 	load: func [
 		src		 [c-string!]							;-- source string buffer
@@ -998,7 +1073,7 @@ string: context [
 		encoding [integer!]
 		return:  [red-string!]
 	][
-		load-in src size null encoding
+		load-at src size null encoding
 	]
 	
 	make-at: func [
@@ -1071,7 +1146,9 @@ string: context [
 		t: type/value
 		switch t [
 			TYPE_FILE
-			TYPE_URL [
+			TYPE_URL
+			TYPE_TAG
+			TYPE_EMAIL [
 				set-type copy-cell as cell! spec as cell! type type/value
 				return as red-value! type
 			]
@@ -1350,6 +1427,8 @@ string: context [
 					TYPE_OF(str2) <> TYPE_STRING		;@@ use ANY_STRING?
 					TYPE_OF(str2) <> TYPE_FILE
 					TYPE_OF(str2) <> TYPE_URL
+					TYPE_OF(str2) <> TYPE_TAG
+					TYPE_OF(str2) <> TYPE_EMAIL
 				]
 			]
 		][RETURN_COMPARE_OTHER]
@@ -1580,6 +1659,8 @@ string: context [
 			type = TYPE_STRING							;@@ use ANY_STRING?
 			type = TYPE_FILE
 			type = TYPE_URL
+			type = TYPE_TAG
+			type = TYPE_EMAIL
 		][not case?][no]
 		if same? [case?: no]
 		reverse?: any [reverse? last?]					;-- reduce both flags to one
@@ -1608,6 +1689,8 @@ string: context [
 			TYPE_STRING
 			TYPE_FILE
 			TYPE_URL
+			TYPE_TAG
+			TYPE_EMAIL
 			TYPE_BINARY
 			TYPE_WORD [
 				either TYPE_OF(value) = TYPE_WORD [
@@ -1770,7 +1853,13 @@ string: context [
 		
 		if TYPE_OF(result) <> TYPE_NONE [
 			offset: switch TYPE_OF(value) [
-				TYPE_STRING TYPE_FILE TYPE_URL TYPE_WORD TYPE_BINARY [
+				TYPE_STRING
+				TYPE_FILE
+				TYPE_URL
+				TYPE_TAG
+				TYPE_EMAIL
+				TYPE_WORD
+				TYPE_BINARY [
 					either TYPE_OF(value) = TYPE_WORD [
 						str2: as red-string! word/get-buffer as red-word! value
 						head2: 0							;-- str2/head = -1 (casted from symbol!)
@@ -1994,6 +2083,8 @@ string: context [
 						type = TYPE_STRING				;@@ replace with ANY_STRING?
 						type = TYPE_FILE 
 						type = TYPE_URL
+						type = TYPE_TAG
+						type = TYPE_EMAIL
 					][
 						form-buf: as red-string! cell
 					][
@@ -2352,6 +2443,8 @@ string: context [
 					type = TYPE_STRING				;@@ replace with ANY_STRING?
 					type = TYPE_FILE 
 					type = TYPE_URL
+					type = TYPE_TAG
+					type = TYPE_EMAIL
 				][
 					form-buf: as red-string! cell
 				][

@@ -72,7 +72,9 @@ parser: context [
 			]
 			TYPE_STRING 								;TBD: replace with ANY_STRING
 			TYPE_FILE
-			TYPE_URL [
+			TYPE_URL
+			TYPE_TAG
+			TYPE_EMAIL [
 				char: as red-char! base
 				char/header: TYPE_CHAR
 				char/value: string/rs-abs-at as red-string! input p/input
@@ -189,10 +191,13 @@ parser: context [
 				type = TYPE_STRING
 				type = TYPE_FILE
 				type = TYPE_URL
+				type = TYPE_TAG
+				type = TYPE_EMAIL
 				type = TYPE_BINARY
 			]
 			string/rs-length? as red-string! value
 		]
+		if type = TYPE_TAG [len: len + 2]
 		_series/rs-skip as red-series! str len
 	]
 	
@@ -275,6 +280,8 @@ parser: context [
 			type = TYPE_STRING
 			type = TYPE_FILE
 			type = TYPE_URL
+			type = TYPE_TAG
+			type = TYPE_EMAIL
 			type = TYPE_BINARY
 		][
 			unit:  GET_UNIT(s)
@@ -316,22 +323,36 @@ parser: context [
 				TYPE_STRING
 				TYPE_FILE
 				TYPE_URL
+				TYPE_TAG
+				TYPE_EMAIL
 				TYPE_BINARY [
 					if all [type = TYPE_BINARY TYPE_OF(token) <> TYPE_BINARY][
 						PARSE_ERROR [TO_ERROR(script parse-rule) token]
 					]
+					type: TYPE_OF(token)
 					size: string/rs-length? as red-string! token
+					if type = TYPE_TAG [size: size + 2]
 					if (string/rs-length? as red-string! input) < size [return no]
 					
 					phead: as byte-ptr! s/offset
 					unit:  log-b unit
-					type:  TYPE_OF(token)
 					
 					until [
-						res: either type = TYPE_BINARY [
-							binary/equal? as red-binary! input as red-binary! token comp-op yes
-						][
-							string/equal? as red-string! input as red-string! token comp-op yes
+						res: switch type [
+							TYPE_BINARY [
+								binary/equal? as red-binary! input as red-binary! token comp-op yes
+							]
+							TYPE_TAG [
+								either string/match-tag? as red-string! input token comp-op [
+									input/head: input/head + 1
+									res: string/equal? as red-string! input as red-string! token comp-op yes
+									input/head: input/head - 1
+									res
+								][1]					;-- force failure
+							]
+							default  [
+								string/equal? as red-string! input as red-string! token comp-op yes
+							]
 						]
 						if zero? res [return adjust-input-index input pos* size 0]
 						input/head: input/head + 1
@@ -494,6 +515,8 @@ parser: context [
 			type = TYPE_STRING
 			type = TYPE_FILE
 			type = TYPE_URL
+			type = TYPE_TAG
+			type = TYPE_EMAIL
 			type = TYPE_BINARY
 		][
 			either TYPE_OF(token)= TYPE_BITSET [
@@ -879,7 +902,9 @@ parser: context [
 										end?: no
 									]
 								][
-									match?: _series/rs-skip as red-series! input 1
+									before: input/head
+									end?: _series/rs-skip as red-series! input 1
+									match?: before = input/head
 									if positive? part [match?: input/head >= part or match?]
 									
 									either match? [
@@ -950,7 +975,9 @@ parser: context [
 											TYPE_BINARY [binary/insert as red-binary! blk value null yes null no]
 											TYPE_STRING
 											TYPE_FILE
-											TYPE_URL [string/insert as red-string! blk value null yes null no]
+											TYPE_URL 
+											TYPE_TAG
+											TYPE_EMAIL [string/insert as red-string! blk value null yes null no]
 											default  [block/insert blk value null yes null no]
 										]
 									][
@@ -1103,6 +1130,8 @@ parser: context [
 								type = TYPE_STRING
 								type = TYPE_FILE
 								type = TYPE_URL
+								type = TYPE_TAG
+								type = TYPE_EMAIL
 								type = TYPE_BINARY
 							][
 								PARSE_ERROR [TO_ERROR(script parse-unsupported)]
@@ -1207,6 +1236,8 @@ parser: context [
 								type = TYPE_STRING
 								type = TYPE_FILE
 								type = TYPE_URL
+								type = TYPE_TAG
+								type = TYPE_EMAIL
 							]
 							any [
 								TYPE_OF(value) = TYPE_STRING
@@ -1227,7 +1258,9 @@ parser: context [
 							]
 							TYPE_STRING
 							TYPE_FILE
-							TYPE_URL [
+							TYPE_URL
+							TYPE_TAG
+							TYPE_EMAIL [
 								match?: either TYPE_OF(value) = TYPE_BITSET [
 									string/match-bitset? as red-string! input as red-bitset! value
 								][
@@ -1642,7 +1675,9 @@ parser: context [
 							if TYPE_OF(value) = TYPE_UNSET [
 								PARSE_ERROR [TO_ERROR(script parse-rule) w]
 							]
-							state: either rule? [ST_MATCH_RULE][ST_DO_ACTION] ;-- enable fast loops for word argument
+							state: either rule? [ 		;-- enable fast loops for word argument
+								either TYPE_OF(value) = TYPE_WORD [ST_MATCH][ST_MATCH_RULE]
+							][ST_DO_ACTION]
 						]
 					]
 					rule?: no

@@ -118,10 +118,10 @@ OS-image: context [
 			r	[NSRect!]
 	][
 		r: declare NSRect!
-		r/x: as float32! integer/to-float x
-		r/y: as float32! integer/to-float y
-		r/w: as float32! integer/to-float w
-		r/h: as float32! integer/to-float h
+		r/x: as float32! x
+		r/y: as float32! y
+		r/w: as float32! w
+		r/h: as float32! h
 		r
 	]
 

@@ -203,8 +203,8 @@ init: func [
 
 	screen: objc_msgSend [objc_getClass "NSScreen" sel_getUid "mainScreen"]
 	rect: as NSRect! (as int-ptr! screen) + 1
-	screen-size-x: float/to-integer as float! rect/w
-	screen-size-y: float/to-integer as float! rect/h
+	screen-size-x: as-integer rect/w
+	screen-size-y: as-integer rect/h
 ]
 
 set-selected-focus: func [
@@ -332,10 +332,10 @@ make-rect: func [
 		r	[NSRect!]
 ][
 	r: declare NSRect!
-	r/x: as float32! integer/to-float x
-    r/y: as float32! integer/to-float y
-    r/w: as float32! integer/to-float w
-    r/h: as float32! integer/to-float h
+	r/x: as float32! x
+    r/y: as float32! y
+    r/w: as float32! w
+    r/h: as float32! h
     r
 ]
 
@@ -516,12 +516,16 @@ make-area: func [
 		id		[integer!]
 		obj		[integer!]
 		tbox	[integer!]
-		rc		[NSRect!]
+		x		[float32!]
+		y		[float32!]
+		w		[float32!]
+		h		[float32!]
 ][
-	rc: make-rect 0 0 0 0
+	x: as float32! 0.0
+	y: x
 	objc_msgSend [container sel_getUid "contentSize"]
-	rc/w: as float32! system/cpu/eax
-	rc/h: as float32! system/cpu/edx
+	w: as float32! system/cpu/eax
+	h: as float32! system/cpu/edx
 
 	objc_msgSend [container sel_getUid "setBorderType:" NSGrooveBorder]
 	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
@@ -535,18 +539,18 @@ make-area: func [
 	store-face-to-obj obj id face
 
 	obj: objc_msgSend [
-		obj sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h
+		obj sel_getUid "initWithFrame:" x y w h
 	]
-	rc/y: as float32! 1e37			;-- FLT_MAX
+	y: as float32! 1e37			;-- FLT_MAX
 	objc_msgSend [obj sel_getUid "setVerticallyResizable:" yes]
 	objc_msgSend [obj sel_getUid "setHorizontallyResizable:" no]
-	objc_msgSend [obj sel_getUid "setMinSize:" rc/x rc/h]
+	objc_msgSend [obj sel_getUid "setMinSize:" x h]
 
-	objc_msgSend [obj sel_getUid "setMaxSize:" rc/y rc/y]
+	objc_msgSend [obj sel_getUid "setMaxSize:" y y]
 	objc_msgSend [obj sel_getUid "setAutoresizingMask:" NSViewWidthSizable]
 
 	tbox: objc_msgSend [obj sel_getUid "textContainer"]
-	objc_msgSend [tbox sel_getUid "setContainerSize:" rc/w rc/y]
+	objc_msgSend [tbox sel_getUid "setContainerSize:" w y]
 	objc_msgSend [tbox sel_getUid "setWidthTracksTextView:" yes]
 
 	if text <> 0 [objc_msgSend [obj sel_getUid "setString:" text]]
@@ -691,7 +695,7 @@ OS-make-view: func [
 			init-window obj caption rc
 		]
 		sym = slider [
-			flt: integer/to-float either size/x > size/y [size/x][size/y]
+			flt: as-float either size/x > size/y [size/x][size/y]
 			objc_msgSend [obj sel_getUid "setMaxValue:" flt]
 			flt: get-position-value as red-float! data flt
 			objc_msgSend [obj sel_getUid "setFloatValue:" flt]

@@ -86,8 +86,8 @@ OS-draw-line: func [
 	nb:		0
 
 	while [all [pair <= end nb < max-edges]][
-		pt/x: as float32! integer/to-float pair/x
-		pt/y: as float32! integer/to-float pair/y
+		pt/x: as float32! pair/x
+		pt/y: as float32! pair/y
 		nb: nb + 1
 		pt: pt + 1
 		pair: pair + 1
@@ -103,23 +103,19 @@ OS-draw-pen: func [
 	off?   [logic!]
 	alpha? [logic!]
 	/local
-		r  [float!]
-		g  [float!]
-		b  [float!]
-		a  [float!]
+		r  [float32!]
+		g  [float32!]
+		b  [float32!]
+		a  [float32!]
 ][
 	dc/pen?: not off?
 	if dc/pen-color <> color [
 		dc/pen-color: color
-		r: as-float color and FFh
-		r: r / 255.0
-		g: as-float color >> 8 and FFh
-		g: g / 255.0
-		b: as-float color >> 16 and FFh
-		b: b / 255.0
-		a: as-float 255 - (color >>> 24)
-		a: a / 255.0
-		CGContextSetRGBStrokeColor dc/raw as float32! r as float32! g as float32! b as float32! a
+		r: as float32! (as-float color and FFh) / 255.0
+		g: as float32! (as-float color >> 8 and FFh) / 255.0
+		b: as float32! (as-float color >> 16 and FFh) / 255.0
+		a: as float32! (as-float 255 - (color >>> 24)) / 255.0
+		CGContextSetRGBStrokeColor dc/raw r g b a
 	]
 ]
 
@@ -129,23 +125,19 @@ OS-draw-fill-pen: func [
 	off?   [logic!]
 	alpha? [logic!]
 	/local
-		r  [float!]
-		g  [float!]
-		b  [float!]
-		a  [float!]
+		r  [float32!]
+		g  [float32!]
+		b  [float32!]
+		a  [float32!]
 ][
 	dc/brush?: not off?
 	if dc/brush-color <> color [
 		dc/brush-color: color
-		r: as-float color and FFh
-		r: r / 255.0
-		g: as-float color >> 8 and FFh
-		g: g / 255.0
-		b: as-float color >> 16 and FFh
-		b: b / 255.0
-		a: as-float 255 - (color >>> 24)
-		a: a / 255.0
-		CGContextSetRGBFillColor dc/raw as float32! r as float32! g as float32! b as float32! a
+		r: as float32! (as-float color and FFh) / 255.0
+		g: as float32! (as-float color >> 8 and FFh) / 255.0
+		b: as float32! (as-float color >> 16 and FFh) / 255.0
+		a: as float32! (as-float 255 - (color >>> 24)) / 255.0
+		CGContextSetRGBFillColor dc/raw r g b a
 	]
 ]
 
@@ -155,7 +147,7 @@ OS-draw-line-width: func [
 ][
 	if dc/pen-width <> width/value [
 		dc/pen-width: width/value
-		CGContextSetLineWidth dc/raw as float32! integer/to-float width/value
+		CGContextSetLineWidth dc/raw as float32! width/value
 	]
 ]
 
@@ -193,8 +185,8 @@ OS-draw-triangle: func [
 	point: edges
 
 	loop 3 [
-		point/x: as float32! integer/to-float start/x
-		point/y: as float32! integer/to-float start/y
+		point/x: as float32! start/x
+		point/y: as float32! start/y
 		point: point + 1
 		start: start + 1
 	]

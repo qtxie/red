@@ -96,7 +96,7 @@ update-gdiplus-pen: func [/local handle [integer!]][
 		]
 		handle: modes/gp-pen
 		GdipSetPenColor handle to-gdiplus-color modes/pen-color
-		GdipSetPenWidth handle as float32! integer/to-float modes/pen-width
+		GdipSetPenWidth handle as float32! modes/pen-width
 		if modes/pen-join <> -1 [
 			OS-draw-line-join null modes/pen-join
 		]
@@ -261,7 +261,7 @@ draw-begin: func [
 	modes/graphics:	graphics
 	GdipCreatePen1
 		to-gdiplus-color modes/pen-color
-		as float32! integer/to-float modes/pen-width
+		as float32! modes/pen-width
 		GDIPLUS_UNIT_PIXEL
 		:graphics
 	modes/gp-pen: graphics
@@ -424,7 +424,7 @@ OS-draw-line-width: func [
 	if modes/pen-width <> width/value [
 		modes/pen-width: width/value
 		either GDI+? [
-			GdipSetPenWidth modes/gp-pen as float32! integer/to-float modes/pen-width
+			GdipSetPenWidth modes/gp-pen as float32! modes/pen-width
 		][
 			update-pen dc
 		]
@@ -706,16 +706,16 @@ OS-draw-circle: func [
 	][
 		f: as red-float! radius
 		either center + 1 = radius [
-			rad-x: float/to-integer f/value + 0.75
+			rad-x: as-integer f/value + 0.75
 			rad-y: rad-x
-			w: float/to-integer f/value * 2.0
+			w: as-integer f/value * 2.0
 			h: w
 		][
-			rad-y: float/to-integer f/value + 0.75
-			h: float/to-integer f/value * 2.0
+			rad-y: as-integer f/value + 0.75
+			h: as-integer f/value * 2.0
 			f: f - 1
-			rad-x: float/to-integer f/value + 0.75
-			w: float/to-integer f/value * 2.0
+			rad-x: as-integer f/value + 0.75
+			w: as-integer f/value * 2.0
 		]
 	]
 	do-draw-ellipse dc center/x - rad-x center/y - rad-y w h
@@ -774,8 +774,8 @@ OS-draw-text: func [
 	len: string/rs-length? text
 	either modes/on-image? [
 		rect: declare RECT_STRUCT_FLOAT32
-		rect/x: as float32! integer/to-float pos/x
-		rect/y: as float32! integer/to-float pos/y
+		rect/x: as float32! pos/x
+		rect/y: as float32! pos/y
 		rect/width: as float32! 0.0
 		rect/height: as float32! 0.0
 		GdipDrawString modes/graphics str len modes/gp-font rect 0 modes/gp-font-brush
@@ -811,9 +811,9 @@ OS-draw-arc: func [
 	rad-x: radius/x
 	rad-y: radius/y
 	angle: as red-integer! radius + 1
-	angle-begin: integer/to-float angle/value
+	angle-begin: as-float angle/value
 	angle: angle + 1
-	angle-len: integer/to-float angle/value
+	angle-len: as-float angle/value
 
 	closed?: angle < end
 
@@ -851,22 +851,22 @@ OS-draw-arc: func [
 				as float32! angle-len
 		]
 	][
-		rad-x-float: integer/to-float rad-x
-		rad-y-float: integer/to-float rad-y
+		rad-x-float: as-float rad-x
+		rad-y-float: as-float rad-y
 
 		either rad-x = rad-y [				;-- circle
-			start-x: center/x + float/to-integer rad-x-float * (system/words/cos degree-to-radians angle-begin TYPE_COSINE)
-			start-y: center/y + float/to-integer rad-y-float * (system/words/sin degree-to-radians angle-begin TYPE_SINE)
-			end-x:	 center/x + float/to-integer rad-x-float * (system/words/cos degree-to-radians angle-begin + angle-len TYPE_COSINE)
-			end-y:	 center/y + float/to-integer rad-y-float * (system/words/sin degree-to-radians angle-begin + angle-len TYPE_SINE)
+			start-x: center/x + as-integer rad-x-float * (system/words/cos degree-to-radians angle-begin TYPE_COSINE)
+			start-y: center/y + as-integer rad-y-float * (system/words/sin degree-to-radians angle-begin TYPE_SINE)
+			end-x:	 center/x + as-integer rad-x-float * (system/words/cos degree-to-radians angle-begin + angle-len TYPE_COSINE)
+			end-y:	 center/y + as-integer rad-y-float * (system/words/sin degree-to-radians angle-begin + angle-len TYPE_SINE)
 		][
 			rad-x-y: rad-x-float * rad-y-float
 			rad-x-2: rad-x-float * rad-x-float
 			rad-y-2: rad-y-float * rad-y-float
 			tan-2: system/words/tan degree-to-radians angle-begin TYPE_TANGENT
 			tan-2: tan-2 * tan-2
-			start-x: float/to-integer rad-x-y / (sqrt rad-x-2 * tan-2 + rad-y-2)
-			start-y: float/to-integer rad-x-y / (sqrt rad-y-2 / tan-2 + rad-x-2)
+			start-x: as-integer rad-x-y / (sqrt rad-x-2 * tan-2 + rad-y-2)
+			start-y: as-integer rad-x-y / (sqrt rad-y-2 / tan-2 + rad-x-2)
 			if all [angle-begin > 90.0  angle-begin < 270.0][start-x: 0 - start-x]
 			if all [angle-begin > 180.0 angle-begin < 360.0][start-y: 0 - start-y]
 			start-x: center/x + start-x
@@ -874,8 +874,8 @@ OS-draw-arc: func [
 			angle-begin: angle-begin + angle-len
 			tan-2: system/words/tan degree-to-radians angle-begin TYPE_TANGENT
 			tan-2: tan-2 * tan-2
-			end-x: float/to-integer rad-x-y / (sqrt rad-x-2 * tan-2 + rad-y-2)
-			end-y: float/to-integer rad-x-y / (sqrt rad-y-2 / tan-2 + rad-x-2)
+			end-x: as-integer rad-x-y / (sqrt rad-x-2 * tan-2 + rad-y-2)
+			end-y: as-integer rad-x-y / (sqrt rad-y-2 / tan-2 + rad-x-2)
 			if all [angle-begin > 90.0  angle-begin < 270.0][end-x: 0 - end-x]
 			if all [angle-begin > 180.0 angle-begin < 360.0][end-y: 0 - end-y]
 			end-x: center/x + end-x
@@ -1109,7 +1109,7 @@ OS-draw-grad-pen: func [
 		n < 3
 	][								;-- fetch angle, scale-x and scale-y (optional)
 		switch TYPE_OF(int) [
-			TYPE_INTEGER	[p: integer/to-float int/value]
+			TYPE_INTEGER	[p: as-float int/value]
 			TYPE_FLOAT		[f: as red-float! int p: f/value]
 			default			[break]
 		]
@@ -1124,7 +1124,7 @@ OS-draw-grad-pen: func [
 	pt: edges
 	color: colors + 1
 	pos: colors-pos + 1
-	delta: 1.0 / integer/to-float count - 1
+	delta: 1.0 / as-float count - 1
 	p: 0.0
 	head: as red-value! int
 	loop count [
@@ -1197,8 +1197,8 @@ OS-draw-grad-pen: func [
 			all [type = diamond rotate?]
 		][
 			GdipGetPathGradientCenterPointI brush pt
-			sx: as float32! integer/to-float x - pt/x
-			sy: as float32! integer/to-float y - pt/y
+			sx: as float32! x - pt/x
+			sy: as float32! y - pt/y
 			GdipTranslatePathGradientTransform brush sx sy GDIPLUS_MATRIXORDERAPPEND
 		]
 	]
@@ -1258,8 +1258,8 @@ OS-matrix-translate: func [
 	GDI+?: yes
 	GdipTranslateWorldTransform
 		modes/graphics
-		as float32! integer/to-float x
-		as float32! integer/to-float y
+		as float32! x
+		as float32! y
 		GDIPLUS_MATRIXORDERAPPEND
 ]
 

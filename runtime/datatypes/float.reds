@@ -76,21 +76,6 @@ float: context [
 		fl
 	]
 
-	to-integer: func [
-		number 	[float!]
-		return:	[integer!]
-		/local
-			f	[float!]
-			d	[int-ptr!]
-	][
-		;-- Based on this method: http://stackoverflow.com/a/429812/494472
-		;-- A bit more explanation: http://lolengine.net/blog/2011/3/20/understanding-fast-float-integer-conversions
-		number: either number < 0.0 [ceil number][floor number]
-		f: number + 6755399441055744.0
-		d: as int-ptr! :f
-		d/value
-	]
-
 	form-float: func [
 		f			[float!]
 		type		[integer!]
@@ -306,14 +291,14 @@ float: context [
 		if type1 = TYPE_INTEGER [
 			int: as red-integer! left
 			left/header: TYPE_FLOAT
-			left/value: integer/to-float int/value
+			left/value: as-float int/value
 		]
 		if any [
 			type2 = TYPE_INTEGER
 			type2 = TYPE_CHAR
 		][
 			int: as red-integer! right
-			right/value: integer/to-float int/value
+			right/value: as-float int/value
 		]
 
 		if all [							;-- convert percent! to float!
@@ -407,7 +392,7 @@ float: context [
 			TYPE_INTEGER [
 				fl: as red-float! spec
 				int: as red-integer! spec
-				fl/value: integer/to-float int/value
+				fl/value: as-float int/value
 				fl/header: TYPE_FLOAT
 				fl
 			]
@@ -438,7 +423,7 @@ float: context [
 			_random/srand to-integer f/value
 			f/header: TYPE_UNSET
 		][
-			s: (integer/to-float _random/rand) / 2147483647.0
+			s: (as-float _random/rand) / 2147483647.0
 			if s < 0.0 [s: 0.0 - s]
 			f/value: s * f/value
 		]
@@ -623,7 +608,7 @@ float: context [
 			TYPE_CHAR
 			TYPE_INTEGER [
 				int: as red-integer! value2
-				right: integer/to-float int/value
+				right: as-float int/value
 			]
 			TYPE_TIME
 			TYPE_PERCENT
@@ -708,7 +693,7 @@ float: context [
 		exp: base + 1
 		if TYPE_OF(exp) = TYPE_INTEGER [
 			int: as red-integer! exp
-			exp/value: integer/to-float int/value
+			exp/value: as-float int/value
 		]
 		base/value: pow base/value exp/value
 		base

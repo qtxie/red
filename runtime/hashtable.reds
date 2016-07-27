@@ -270,12 +270,12 @@ _hashtable: context [
 		if type = HASH_TABLE_INTEGER [h/indexes: as node! vsize << 4 + 4]
 
 		if size < 32 [size: 32]
-		fsize: integer/to-float size
+		fsize: as-float size
 		f-buckets: fsize / _HT_HASH_UPPER
 		skip: either type = HASH_TABLE_MAP [2][1]
-		h/n-buckets: round-up float/to-integer f-buckets
-		f-buckets: integer/to-float h/n-buckets
-		h/upper-bound: float/to-integer f-buckets * _HT_HASH_UPPER
+		h/n-buckets: round-up as-integer f-buckets
+		f-buckets: as-float h/n-buckets
+		h/upper-bound: as-integer f-buckets * _HT_HASH_UPPER
 		h/flags: alloc-bytes-filled h/n-buckets >> 2 #"^(AA)"
 		h/keys: alloc-bytes h/n-buckets * size? int-ptr!
 
@@ -313,8 +313,8 @@ _hashtable: context [
 		n-buckets: h/n-buckets
 		j: 0
 		new-buckets: round-up new-buckets
-		f: integer/to-float new-buckets
-		new-size: float/to-integer f * _HT_HASH_UPPER
+		f: as-float new-buckets
+		new-size: as-integer f * _HT_HASH_UPPER
 		if new-buckets < 4 [new-buckets: 4]
 		either h/size >= new-size [j: 1][
 			new-flags-node: alloc-bytes-filled new-buckets >> 2 #"^(AA)"

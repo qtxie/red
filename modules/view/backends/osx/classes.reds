@@ -309,8 +309,17 @@ paint-background: func [
 	y		[float32!]
 	width	[float32!]
 	height	[float32!]
+	/local
+		r	[float32!]
+		g	[float32!]
+		b	[float32!]
+		a	[float32!]
 ][
-	OS-draw-fill-pen ctx color yes yes
+	r: as float32! (as-float color and FFh) / 255.0
+	g: as float32! (as-float color >> 8 and FFh) / 255.0
+	b: as float32! (as-float color >> 16 and FFh) / 255.0
+	a: as float32! (as-float 255 - (color >>> 24)) / 255.0
+	CGContextSetRGBFillColor ctx r g b a
 	CGContextFillRect ctx x y width height
 ]
 

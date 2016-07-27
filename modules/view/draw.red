@@ -187,7 +187,7 @@ Red/System [
 
 		push-matrix: func [
 			cmds   [red-block!]
-			DC	   [handle!]
+			DC	   [draw-ctx!]
 			catch? [logic!]								;-- YES: report errors, NO: fire errors
 		][
 			OS-matrix-push
@@ -197,7 +197,7 @@ Red/System [
 
 		parse-draw: func [
 			cmds   [red-block!]
-			DC	   [handle!]
+			DC	   [draw-ctx!]
 			catch? [logic!]								;-- YES: report errors, NO: fire errors
 			/local
 				cmd		[red-value!]
@@ -539,7 +539,7 @@ Red/System [
 			paint?		[logic!]
 			catch?		[logic!]
 			/local
-				DC	   [handle!]						;-- drawing context (opaque handle)
+				DC		[draw-ctx!]						;-- drawing context (opaque handle)
 		][
 			if all [
 				null? handle
@@ -548,7 +548,8 @@ Red/System [
 
 			system/thrown: 0
 
-			DC: draw-begin handle img on-graphic? paint?
+			DC: declare draw-ctx!						;@@ should declare it on stack
+			draw-begin DC handle img on-graphic? paint?
 			if TYPE_OF(cmds) = TYPE_BLOCK [
 				catch RED_THROWN_ERROR [parse-draw cmds DC catch?]
 			]

@@ -439,7 +439,7 @@ Red/System [
 									parse-draw as red-block! cmd DC catch?
 									OS-matrix-pop
 								][
-								;OS-matrix-rotate as red-integer! start as red-pair! cmd
+									OS-matrix-rotate as red-integer! start as red-pair! cmd
 								]
 							]
 							sym = scale [
@@ -451,7 +451,7 @@ Red/System [
 									parse-draw as red-block! cmd DC catch?
 									OS-matrix-pop
 								][
-								;OS-matrix-scale as red-integer! start as red-integer! cmd
+									OS-matrix-scale as red-integer! start as red-integer! cmd
 								]
 							]
 							sym = translate [
@@ -477,7 +477,7 @@ Red/System [
 									parse-draw as red-block! cmd DC catch?
 									OS-matrix-pop
 								][
-								;OS-matrix-skew as red-integer! start as red-integer! cmd
+									OS-matrix-skew as red-integer! start as red-integer! cmd
 								]
 							]
 							sym = transform [
@@ -504,16 +504,16 @@ Red/System [
 							]
 							sym = push [
 								DRAW_FETCH_VALUE(TYPE_BLOCK)
-							;	OS-matrix-push
-							;	parse-draw as red-block! start DC catch?
-							;	OS-matrix-pop
+								OS-matrix-push
+								parse-draw as red-block! start DC catch?
+								OS-matrix-pop
 							]
 							sym = matrix [
 								DRAW_FETCH_VALUE(TYPE_BLOCK)
-							;	OS-matrix-set as red-block! start
+								OS-matrix-set as red-block! start
 							]
-							;sym = reset-matrix  [OS-matrix-reset]
-							;sym = invert-matrix [OS-matrix-invert]
+							sym = reset-matrix  [OS-matrix-reset]
+							sym = invert-matrix [OS-matrix-invert]
 							true [throw-draw-error cmds cmd catch?]
 						]
 					]

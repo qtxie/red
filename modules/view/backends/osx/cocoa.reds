@@ -12,6 +12,11 @@ Red/System [
 
 #define RTLD_LAZY	1
 
+#define gestaltSystemVersion		1937339254			;-- "sysv"
+#define gestaltSystemVersion		1937339185			;-- "sys1"
+#define gestaltSystemVersion		1937339186			;-- "sys2"
+#define gestaltSystemVersion		1937339187			;-- "sys3"
+
 #define NSAnyEventMask				-1
 
 #define NSUtilityWindowMask         16
@@ -201,7 +206,7 @@ tagSIZE: alias struct! [
 		objc_msgSend: "objc_msgSend" [[variadic] return: [integer!]]
 		objc_msgSendSuper: "objc_msgSendSuper" [[variadic] return: [integer!]]
 		objc_msgSend_fpret: "objc_msgSend_fpret" [[variadic] return: [float!]]
-		;objc_msgSend_stret: "objc_msgSend_stret" [obj [integer!] sel [integer!]]
+		objc_msgSend_stret: "objc_msgSend_stret" [obj [integer!] sel [integer!]]
 	]
 	"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation" cdecl [
 		CFStringCreateWithCString: "CFStringCreateWithCString" [
@@ -217,6 +222,13 @@ tagSIZE: alias struct! [
 	"/System/Library/Frameworks/Foundation.framework/Versions/Current/Foundation" cdecl [
 		NSStringFromClass: "NSStringFromClass" [
 			class		[integer!]
+			return:		[integer!]
+		]
+	]
+	"/System/Library/Frameworks/CoreServices.framework/CoreServices" cdecl [
+		Gestalt: "Gestalt" [
+			selector	[integer!]
+			response	[int-ptr!]
 			return:		[integer!]
 		]
 	]

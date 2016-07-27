@@ -329,9 +329,15 @@ draw-rect: func [
 		draw [red-block!]
 		clr  [red-tuple!]
 		size [red-pair!]
+		v1010? [logic!]
 ][
 	ctx: objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
-	ctx: objc_msgSend [ctx sel_getUid "graphicsPort"]
+	v1010?: as logic! objc_msgSend [ctx sel_getUid "respondsToSelector:" sel_getUid "CGContext"]
+	ctx: either v1010? [
+		objc_msgSend [ctx sel_getUid "CGContext"]
+	][
+		objc_msgSend [ctx sel_getUid "graphicsPort"]		;-- deprecated in 10.10
+	]
 	vals: get-face-values self
 	img: as red-image! vals + FACE_OBJ_IMAGE
 	draw: as red-block! vals + FACE_OBJ_DRAW

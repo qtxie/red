@@ -427,3 +427,86 @@ OS-draw-grad-pen: func [
 	count		[integer!]					;-- number of the colors
 	brush?		[logic!]
 ][0]
+
+
+OS-matrix-rotate: func [
+	angle	[red-integer!]
+	center	[red-pair!]
+	/local
+		m	[integer!]
+		pts [tagPOINT]
+][
+	if angle <> as red-integer! center [
+0
+	]
+	;GdipRotateWorldTransform modes/graphics get-float32 angle GDIPLUS_MATRIXORDERAPPEND
+	if angle <> as red-integer! center [
+0
+	]
+]
+
+OS-matrix-scale: func [
+	sx		[red-integer!]
+	sy		[red-integer!]
+][
+0
+]
+
+OS-matrix-translate: func [
+	x	[integer!]
+	y	[integer!]
+][
+0
+]
+
+OS-matrix-skew: func [
+	sx		[red-integer!]
+	sy		[red-integer!]
+	/local
+		m	[integer!]
+		x	[float32!]
+		y	[float32!]
+		u	[float32!]
+		z	[float32!]
+][
+	m: 0
+	u: as float32! 1.0
+	z: as float32! 0.0
+	x: as float32! system/words/tan degree-to-radians get-float sx TYPE_TANGENT
+	y: as float32! either sx = sy [0.0][system/words/tan degree-to-radians get-float sy TYPE_TANGENT]
+]
+
+OS-matrix-transform: func [
+	rotate		[red-integer!]
+	scale		[red-integer!]
+	translate	[red-pair!]
+	/local
+		center	[red-pair!]
+][
+	center: as red-pair! either rotate + 1 = scale [rotate][rotate + 1]
+	OS-matrix-rotate rotate center
+	OS-matrix-scale scale scale + 1
+	OS-matrix-translate translate/x translate/y
+]
+
+OS-matrix-push: func [/local state [integer!]][
+	state: 0
+]
+
+OS-matrix-pop: func [][0]
+
+OS-matrix-reset: func [][0]
+
+OS-matrix-invert: func [/local m [integer!]][
+0
+]
+
+OS-matrix-set: func [
+	blk		[red-block!]
+	/local
+		m	[integer!]
+		val [red-integer!]
+][
+	m: 0
+	val: as red-integer! block/rs-head blk
+]

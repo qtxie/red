@@ -168,6 +168,14 @@ free-handles: func [
 	state/header: TYPE_NONE
 ]
 
+get-os-version: func [
+	/local
+		ver		[red-tuple!]
+		info	[integer!]
+][
+0
+]
+
 init: func [
 	/local
 		screen		[integer!]
@@ -186,6 +194,7 @@ init: func [
 	pool: objc_msgSend [objc_getClass "NSAutoreleasePool" sel_getUid "alloc"]
 	objc_msgSend [pool sel_getUid "init"]
 
+	get-os-version
 	register-classes
 
 	delegate: objc_msgSend [objc_getClass "RedAppDelegate" sel_getUid "alloc"]

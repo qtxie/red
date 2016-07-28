@@ -267,6 +267,20 @@ tagSIZE: alias struct! [
 			width		[float32!]
 			height		[float32!]
 		]
+		CGContextFillEllipseInRect: "CGContextFillEllipseInRect" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+			width		[float32!]
+			height		[float32!]
+		]
+		CGContextStrokeEllipseInRect: "CGContextStrokeEllipseInRect" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+			width		[float32!]
+			height		[float32!]
+		]
 		CGContextSetLineWidth: "CGContextSetLineWidth" [
 			c			[handle!]
 			width		[float32!]

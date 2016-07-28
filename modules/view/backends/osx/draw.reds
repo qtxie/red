@@ -253,12 +253,13 @@ OS-draw-spline: func [
 
 do-draw-ellipse: func [
 	dc		[draw-ctx!]
-	x		[integer!]
-	y		[integer!]
-	width	[integer!]
-	height	[integer!]
+	x		[float32!]
+	y		[float32!]
+	w		[float32!]
+	h		[float32!]
 ][
-0
+	if dc/brush? [CGContextFillEllipseInRect dc/raw x y w h]
+	CGContextStrokeEllipseInRect dc/raw x y w h
 ]
 
 OS-draw-circle: func [
@@ -268,8 +269,37 @@ OS-draw-circle: func [
 	/local
 		rad-x [integer!]
 		rad-y [integer!]
+		w	  [float32!]
+		h	  [float32!]
+		f	  [red-float!]
 ][
-0
+	either TYPE_OF(radius) = TYPE_INTEGER [
+		either center + 1 = radius [					;-- center, radius
+			rad-x: radius/value
+			rad-y: rad-x
+		][
+			rad-y: radius/value							;-- center, radius-x, radius-y
+			radius: radius - 1
+			rad-x: radius/value
+		]
+		w: as float32! rad-x * 2
+		h: as float32! rad-y * 2
+	][
+		f: as red-float! radius
+		either center + 1 = radius [
+			rad-x: as-integer f/value + 0.75
+			rad-y: rad-x
+			w: as float32! f/value * 2.0
+			h: w
+		][
+			rad-y: as-integer f/value + 0.75
+			h: as float32! f/value * 2.0
+			f: f - 1
+			rad-x: as-integer f/value + 0.75
+			w: as float32! f/value * 2.0
+		]
+	]
+	do-draw-ellipse dc as float32! center/x - rad-x as float32! center/y - rad-y w h
 ]
 
 OS-draw-ellipse: func [
@@ -277,7 +307,7 @@ OS-draw-ellipse: func [
 	upper	 [red-pair!]
 	diameter [red-pair!]
 ][
-0
+	do-draw-ellipse dc as float32! upper/x as float32! upper/y as float32! diameter/x as float32! diameter/y
 ]
 
 OS-draw-font: func [

@@ -45,7 +45,7 @@ draw-begin: func [
 	ctx/pen-cap:		flat
 	ctx/brush-color:	0
 	ctx/font-color:		0
-	ctx/brush?:			yes
+	ctx/pen?:			yes
 	ctx/brush?:			no
 
 	CGContextSetMiterLimit CGCtx DRAW_FLOAT_MAX
@@ -99,7 +99,7 @@ OS-draw-line: func [
 
 OS-draw-pen: func [
 	dc	   [draw-ctx!]
-	color  [integer!]									;-- 00bbggrr format
+	color  [integer!]									;-- aabbggrr format
 	off?   [logic!]
 	alpha? [logic!]
 	/local
@@ -109,7 +109,7 @@ OS-draw-pen: func [
 		a  [float32!]
 ][
 	dc/pen?: not off?
-	if dc/pen-color <> color [
+	if all [not off? dc/pen-color <> color][
 		dc/pen-color: color
 		r: as float32! (as-float color and FFh) / 255.0
 		g: as float32! (as-float color >> 8 and FFh) / 255.0
@@ -121,7 +121,7 @@ OS-draw-pen: func [
 
 OS-draw-fill-pen: func [
 	dc	   [draw-ctx!]
-	color  [integer!]									;-- 00bbggrr format
+	color  [integer!]									;-- aabbggrr format
 	off?   [logic!]
 	alpha? [logic!]
 	/local
@@ -130,14 +130,16 @@ OS-draw-fill-pen: func [
 		b  [float32!]
 		a  [float32!]
 ][
-	dc/brush?: not off?
-	if dc/brush-color <> color [
-		dc/brush-color: color
-		r: as float32! (as-float color and FFh) / 255.0
-		g: as float32! (as-float color >> 8 and FFh) / 255.0
-		b: as float32! (as-float color >> 16 and FFh) / 255.0
-		a: as float32! (as-float 255 - (color >>> 24)) / 255.0
-		CGContextSetRGBFillColor dc/raw r g b a
+	either off? [dc/brush?: no][
+		if dc/brush-color <> color [
+			dc/brush?: yes
+			dc/brush-color: color
+			r: as float32! (as-float color and FFh) / 255.0
+			g: as float32! (as-float color >> 8 and FFh) / 255.0
+			b: as float32! (as-float color >> 16 and FFh) / 255.0
+			a: as float32! (as-float 255 - (color >>> 24)) / 255.0
+			CGContextSetRGBFillColor dc/raw r g b a
+		]
 	]
 ]
 
@@ -194,7 +196,7 @@ OS-draw-triangle: func [
 	point/y: edges/y
 	CGContextBeginPath ctx
 	CGContextAddLines ctx edges 4
-	CGContextStrokePath ctx
+	CGContextStrokePath ctx								;-- will clear current path
 ]
 
 OS-draw-polygon: func [
@@ -202,11 +204,38 @@ OS-draw-polygon: func [
 	start [red-pair!]
 	end	  [red-pair!]
 	/local
+		ctx   [handle!]
 		pair  [red-pair!]
-		point [tagPOINT]
+		point [CGPoint!]
 		nb	  [integer!]
+		mode  [integer!]
 ][
-0
+	ctx:   dc/raw
+	point: edges
+	pair:  start
+	nb:	   0
+	
+	while [all [pair <= end nb < max-edges]][
+		point/x: as float32! pair/x
+		point/y: as float32! pair/y
+		nb: nb + 1
+		point: point + 1
+		pair: pair + 1	
+	]
+	;if nb = max-edges [fire error]	
+	point/x: as float32! start/x						;-- close the polygon
+	point/y: as float32! start/y
+
+	CGContextBeginPath ctx
+	CGContextAddLines ctx edges nb + 1
+
+	mode: case [
+		all [dc/pen? dc/brush?] [kCGPathFillStroke]
+		dc/brush?				[kCGPathFill]
+		dc/pen?					[kCGPathStroke]
+		true					[-1]
+	]
+	if mode <> -1 [CGContextDrawPath ctx mode]
 ]
 
 OS-draw-spline: func [

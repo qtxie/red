@@ -98,6 +98,12 @@ Red/System [
 #define kCGLineCapRound				1
 #define kCGLineCapSquare			2
 
+#define kCGPathFill					0
+#define kCGPathEOFill				1
+#define kCGPathStroke				2
+#define kCGPathFillStroke			3
+#define kCGPathEOFillStroke			4
+
 #define NSASCIIStringEncoding		1
 #define NSUTF8StringEncoding		4
 #define NSISOLatin1StringEncoding	5
@@ -308,6 +314,10 @@ tagSIZE: alias struct! [
 		]
 		CGContextStrokePath: "CGContextStrokePath" [
 			c			[handle!]
+		]
+		CGContextDrawPath: "CGContextDrawPath" [
+			c			[handle!]
+			mode		[integer!]
 		]
 		CGContextRotateCTM: "CGContextRotateCTM" [
 			c			[handle!]

@@ -326,6 +326,15 @@ tagSIZE: alias struct! [
 			points		[CGPoint!]
 			count		[integer!]
 		]
+		CGContextAddArc: "CGContextAddArc" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+			radius		[float32!]
+			startAngle	[float32!]
+			endAngle	[float32!]
+			clockwise	[integer!]
+		]
 		CGContextStrokePath: "CGContextStrokePath" [
 			c			[handle!]
 		]

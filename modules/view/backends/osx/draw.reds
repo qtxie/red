@@ -49,6 +49,8 @@ draw-begin: func [
 	ctx/brush?:			no
 
 	CGContextSetMiterLimit CGCtx DRAW_FLOAT_MAX
+	CGContextSetAllowsAntialiasing CGCtx yes
+	CGContextSetAllowsFontSmoothing CGCtx yes
 	ctx
 ]
 
@@ -176,6 +178,20 @@ OS-draw-box: func [
 	]
 ]
 
+do-draw-path: func [
+	dc	  [draw-ctx!]
+	/local
+		mode [integer!]
+][
+	mode: case [
+		all [dc/pen? dc/brush?] [kCGPathFillStroke]
+		dc/brush?				[kCGPathFill]
+		dc/pen?					[kCGPathStroke]
+		true					[-1]
+	]
+	if mode <> -1 [CGContextDrawPath dc/raw mode]
+]
+
 OS-draw-triangle: func [
 	dc	  [draw-ctx!]
 	start [red-pair!]
@@ -196,7 +212,7 @@ OS-draw-triangle: func [
 	point/y: edges/y
 	CGContextBeginPath ctx
 	CGContextAddLines ctx edges 4
-	CGContextStrokePath ctx								;-- will clear current path
+	do-draw-path dc
 ]
 
 OS-draw-polygon: func [
@@ -228,14 +244,7 @@ OS-draw-polygon: func [
 
 	CGContextBeginPath ctx
 	CGContextAddLines ctx edges nb + 1
-
-	mode: case [
-		all [dc/pen? dc/brush?] [kCGPathFillStroke]
-		dc/brush?				[kCGPathFill]
-		dc/pen?					[kCGPathStroke]
-		true					[-1]
-	]
-	if mode <> -1 [CGContextDrawPath ctx mode]
+	do-draw-path dc
 ]
 
 OS-draw-spline: func [
@@ -339,25 +348,36 @@ OS-draw-arc: func [
 	center [red-pair!]
 	end	   [red-value!]
 	/local
+		ctx			[handle!]
 		radius		[red-pair!]
 		angle		[red-integer!]
-		rad-x		[integer!]
-		rad-y		[integer!]
-		start-x		[integer!]
-		start-y 	[integer!]
-		end-x		[integer!]
-		end-y		[integer!]
-		angle-begin [float!]
-		angle-len	[float!]
-		rad-x-float	[float!]
-		rad-y-float	[float!]
-		rad-x-2		[float!]
-		rad-y-2		[float!]
-		rad-x-y		[float!]
-		tan-2		[float!]
+		begin		[red-integer!]
+		rad-x		[float32!]
+		rad-y		[float32!]
+		angle-begin [float32!]
+		angle-len	[float32!]
+		rad			[float32!]
 		closed?		[logic!]
 ][
-0
+	ctx: dc/raw
+	radius: center + 1
+	rad-x: as float32! radius/x
+	rad-y: as float32! radius/y
+	rad: (as float32! PI) / as float32! 180.0
+	begin: as red-integer! radius + 1
+	angle-begin: rad * as float32! begin/value
+	angle: begin + 1
+	angle-len: rad * as float32! begin/value + angle/value
+
+	closed?: angle < end
+
+	CGContextBeginPath ctx
+	if closed? [0]
+
+	if rad-x <> rad-y [0]						;-- elliptical arc
+
+	CGContextAddArc ctx as float32! center/x as float32! center/y rad-x angle-begin angle-len 1
+	do-draw-path dc
 ]
 
 OS-draw-curve: func [

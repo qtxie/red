@@ -364,7 +364,7 @@ OS-draw-text: func [
 
 ;	;-- adjust angles for ellipses
 ;	alpha: as float32! atan2 (_sin alpha) * rx (_cos alpha) * ry
-;	beta:  as float32! atan2 (_sin beta)  * rx  (_cos beta) * ry
+;	beta:  as float32! atan2 (_sin beta)  * rx (_cos beta) * ry
 
 ;	delta: beta - alpha
 ;	if pi32 < as float32! fabs delta [
@@ -387,6 +387,8 @@ OS-draw-arc: func [
 		radius		[red-pair!]
 		angle		[red-integer!]
 		begin		[red-integer!]
+		cx			[float32!]
+		cy			[float32!]
 		rad-x		[float32!]
 		rad-y		[float32!]
 		angle-begin [float32!]
@@ -395,6 +397,8 @@ OS-draw-arc: func [
 		closed?		[logic!]
 ][
 	ctx: dc/raw
+	cx: as float32! center/x
+	cy: as float32! center/y
 	rad: (as float32! PI) / as float32! 180.0
 
 	radius: center + 1
@@ -411,8 +415,8 @@ OS-draw-arc: func [
 
 	if rad-x <> rad-y [0]					;-- elliptical arc
 
-	if closed? [CGContextMoveToPoint ctx as float32! center/x as float32! center/y]
-	CGContextAddArc ctx as float32! center/x as float32! center/y rad-x angle-begin angle-len 0
+	if closed? [CGContextMoveToPoint ctx cx cy]
+	CGContextAddArc ctx cx cy rad-x angle-begin angle-len 0
 	if closed? [CGContextClosePath ctx]
 	do-draw-path dc
 ]
@@ -422,14 +426,34 @@ OS-draw-curve: func [
 	start [red-pair!]
 	end	  [red-pair!]
 	/local
-		pair  [red-pair!]
-		point [tagPOINT]
+		ctx   [handle!]
+		cp1x  [float32!]
+		cp1y  [float32!]
+		cp2x  [float32!]
+		cp2y  [float32!]
 		p2	  [red-pair!]
 		p3	  [red-pair!]
-		nb	  [integer!]
-		count [integer!]
 ][
-0
+	ctx: dc/raw
+	p2: start + 1
+	p3: start + 2
+
+	either 2 = ((as-integer end - start) >> 4) [		;-- p0, p1, p2  -->  p0, (p0 + 2p1) / 3, (2p1 + p2) / 3, p2
+		cp1x: (as float32! p2/x << 1 + start/x) / as float32! 3.0
+		cp1y: (as float32! p2/y << 1 + start/y) / as float32! 3.0
+		cp2x: (as float32! p2/x << 1 + p3/x) / as float32! 3.0
+		cp2y: (as float32! p2/y << 1 + p3/y) / as float32! 3.0
+	][
+		cp1x: as float32! p2/x
+		cp1y: as float32! p2/y
+		cp2x: as float32! p3/x
+		cp2y: as float32! p3/y
+	]
+
+	CGContextBeginPath ctx
+	CGContextMoveToPoint ctx as float32! start/x as float32! start/y
+	CGContextAddCurveToPoint ctx cp1x cp1y cp2x cp2y as float32! end/x as float32! end/y
+	CGContextStrokePath ctx
 ]
 
 OS-draw-line-join: func [

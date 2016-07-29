@@ -160,21 +160,45 @@ OS-draw-box: func [
 	upper [red-pair!]
 	lower [red-pair!]
 	/local
-		radius [red-integer!]
-		rad	   [integer!]
-		rc	   [NSRect!]
+		ctx		[handle!]
+		t		[integer!]
+		radius	[red-integer!]
+		rad		[float32!]
+		x1		[float32!]
+		x2		[float32!]
+		xm		[float32!]
+		ym		[float32!]
+		y1		[float32!]
+		y2		[float32!]
 ][
-	either TYPE_OF(lower) = TYPE_INTEGER [
+	ctx: dc/raw
+	radius: null
+	if TYPE_OF(lower) = TYPE_INTEGER [
 		radius: as red-integer! lower
 		lower:  lower - 1
-		rad: radius/value * 2
-		;;@@ TBD round box
+	]
+	if upper/x > lower/x [t: upper/x upper/x: lower/x lower/x: t]
+	if upper/y > lower/y [t: upper/y upper/y: lower/y lower/y: t]
+
+	x1: as float32! upper/x
+	y1: as float32! upper/y
+	x2: as float32! lower/x
+	y2: as float32! lower/y
+	xm: x1 + (x2 - x1 / as float32! 2.0)
+	ym: y1 + (y2 - y1 / as float32! 2.0)
+
+	either radius <> null [
+		rad: as float32! radius/value
+		CGContextMoveToPoint ctx x1 ym
+		CGContextAddArcToPoint ctx x1 y1 xm y1 rad
+		CGContextAddArcToPoint ctx x2 y1 x2 ym rad
+		CGContextAddArcToPoint ctx x2 y2 xm y2 rad
+		CGContextAddArcToPoint ctx x1 y2 x1 ym rad
+		CGContextClosePath ctx
+		do-draw-path dc
 	][
-		rc: make-rect upper/x upper/y lower/x - upper/x lower/y - upper/y
-		if dc/brush? [				;-- fill rect
-			CGContextFillRect dc/raw rc/x rc/y rc/w rc/h
-		]
-		CGContextStrokeRect dc/raw rc/x rc/y rc/w rc/h
+		if dc/brush? [CGContextFillRect ctx x1 y1 x2 - x1 y2 - y1]
+		CGContextStrokeRect ctx x1 y1 x2 - x1 y2 - y1
 	]
 ]
 

@@ -482,9 +482,16 @@ OS-draw-box: func [
 		radius [red-integer!]
 		rad	   [integer!]
 ][
-	either TYPE_OF(lower) = TYPE_INTEGER [
+	radius: null
+	if TYPE_OF(lower) = TYPE_INTEGER [
 		radius: as red-integer! lower
 		lower:  lower - 1
+	]
+	if GDI+? [
+		if upper/x > lower/x [t: upper/x upper/x: lower/x lower/x: t]
+		if upper/y > lower/y [t: upper/y upper/y: lower/y lower/y: t]
+	]
+	either radius <> null [
 		rad: radius/value * 2
 		either GDI+? [
 			gdiplus-draw-roundbox
@@ -499,8 +506,6 @@ OS-draw-box: func [
 		]
 	][
 		either GDI+? [
-			if upper/x > lower/x [t: upper/x upper/x: lower/x lower/x: t]
-			if upper/y > lower/y [t: upper/y upper/y: lower/y lower/y: t]
 			unless zero? modes/gp-brush [				;-- fill rect
 				GdipFillRectangleI
 					modes/graphics

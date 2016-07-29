@@ -253,11 +253,43 @@ OS-draw-spline: func [
 	end		[red-pair!]
 	closed? [logic!]
 	/local
-		pair  [red-pair!]
-		point [tagPOINT]
-		nb	  [integer!]
+		ctx		[handle!]
+		p		[red-pair!]
+		x1		[float32!]
+		y1		[float32!]
+		x2		[float32!]
+		y2		[float32!]
+		cx1		[float32!]
+		cy1		[float32!]
 ][
-0
+	ctx: dc/raw
+	p: start
+	x1: as float32! p/x
+	y1: as float32! p/y
+	p: p + 1
+	x2: as float32! p/x
+	y2: as float32! p/y
+	cx1: x1 + x2 / as float32! 2.0
+	cy1: y1 + y2 / as float32! 2.0
+
+	CGContextBeginPath ctx
+	CGContextMoveToPoint ctx x1 y1
+	CGContextAddLineToPoint ctx cx1 cy1
+
+	while [
+		p: p + 1
+		p <= end
+	][
+		x1: x2
+		y1: y2
+		x2: as float32! p/x
+		y2: as float32! p/y
+		cx1: x1 + x2 / as float32! 2.0
+		cy1: y1 + y2 / as float32! 2.0
+		CGContextAddQuadCurveToPoint ctx x1 y1 cx1 cy1
+	]
+	CGContextAddLineToPoint ctx x2 y2
+	CGContextStrokePath ctx
 ]
 
 do-draw-ellipse: func [

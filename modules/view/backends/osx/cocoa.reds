@@ -334,6 +334,13 @@ tagSIZE: alias struct! [
 			x			[float32!]
 			y			[float32!]
 		]
+		CGContextAddQuadCurveToPoint: "CGContextAddQuadCurveToPoint" [
+			c			[handle!]
+			cp1x		[float32!]
+			cp1y		[float32!]
+			x			[float32!]
+			y			[float32!]
+		]
 		CGContextAddLines: "CGContextAddLines" [
 			c			[handle!]
 			points		[CGPoint!]

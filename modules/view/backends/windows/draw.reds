@@ -855,15 +855,15 @@ OS-draw-arc: func [
 		rad-y-float: as-float rad-y
 
 		either rad-x = rad-y [				;-- circle
-			start-x: center/x + as-integer rad-x-float * (system/words/cos degree-to-radians angle-begin TYPE_COSINE)
-			start-y: center/y + as-integer rad-y-float * (system/words/sin degree-to-radians angle-begin TYPE_SINE)
-			end-x:	 center/x + as-integer rad-x-float * (system/words/cos degree-to-radians angle-begin + angle-len TYPE_COSINE)
-			end-y:	 center/y + as-integer rad-y-float * (system/words/sin degree-to-radians angle-begin + angle-len TYPE_SINE)
+			start-x: center/x + as-integer rad-x-float * (_cos degree-to-radians angle-begin TYPE_COSINE)
+			start-y: center/y + as-integer rad-y-float * (_sin degree-to-radians angle-begin TYPE_SINE)
+			end-x:	 center/x + as-integer rad-x-float * (_cos degree-to-radians angle-begin + angle-len TYPE_COSINE)
+			end-y:	 center/y + as-integer rad-y-float * (_sin degree-to-radians angle-begin + angle-len TYPE_SINE)
 		][
 			rad-x-y: rad-x-float * rad-y-float
 			rad-x-2: rad-x-float * rad-x-float
 			rad-y-2: rad-y-float * rad-y-float
-			tan-2: system/words/tan degree-to-radians angle-begin TYPE_TANGENT
+			tan-2: _tan degree-to-radians angle-begin TYPE_TANGENT
 			tan-2: tan-2 * tan-2
 			start-x: as-integer rad-x-y / (sqrt rad-x-2 * tan-2 + rad-y-2)
 			start-y: as-integer rad-x-y / (sqrt rad-y-2 / tan-2 + rad-x-2)
@@ -872,7 +872,7 @@ OS-draw-arc: func [
 			start-x: center/x + start-x
 			start-y: center/y + start-y
 			angle-begin: angle-begin + angle-len
-			tan-2: system/words/tan degree-to-radians angle-begin TYPE_TANGENT
+			tan-2: _tan degree-to-radians angle-begin TYPE_TANGENT
 			tan-2: tan-2 * tan-2
 			end-x: as-integer rad-x-y / (sqrt rad-x-2 * tan-2 + rad-y-2)
 			end-y: as-integer rad-x-y / (sqrt rad-y-2 / tan-2 + rad-x-2)
@@ -1276,8 +1276,8 @@ OS-matrix-skew: func [
 	m: 0
 	u: as float32! 1.0
 	z: as float32! 0.0
-	x: as float32! system/words/tan degree-to-radians get-float sx TYPE_TANGENT
-	y: as float32! either sx = sy [0.0][system/words/tan degree-to-radians get-float sy TYPE_TANGENT]
+	x: as float32! _tan degree-to-radians get-float sx TYPE_TANGENT
+	y: as float32! either sx = sy [0.0][_tan degree-to-radians get-float sy TYPE_TANGENT]
 	GdipCreateMatrix2 u y x u z z :m
 	GdipMultiplyWorldTransform modes/graphics m GDIPLUS_MATRIXORDERAPPEND
 	GdipDeleteMatrix m

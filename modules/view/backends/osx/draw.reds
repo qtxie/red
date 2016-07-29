@@ -343,6 +343,41 @@ OS-draw-text: func [
 0
 ]
 
+;make-arc: func [
+	;; make an elliptical arc
+	;; Based on the algorithm described in
+	;; http://www.stillhq.com/ctpfaq/2002/03/c1088.html#AEN1212
+;	ctx		[handle!]
+;	start	[logic!]
+;	cx		[float32!]
+;	cy		[float32!]
+;	rx		[float32!]
+;	ry		[float32!]
+;	alpha	[float32!]
+;	beta	[float32!]
+;	/local
+;		delta	[float32!]
+;		bcp		[float32!]
+;		pi32	[float32!]
+;][
+;	pi32: as float32! PI
+
+;	;-- adjust angles for ellipses
+;	alpha: as float32! atan2 (_sin alpha) * rx (_cos alpha) * ry
+;	beta:  as float32! atan2 (_sin beta)  * rx  (_cos beta) * ry
+
+;	delta: beta - alpha
+;	if pi32 < as float32! fabs delta [
+;		either beta > alpha [
+;			beta: beta - (pi32 * as float32! 2.0)
+;		][
+;			alpha: alpha - (pi32 * as float32! 2.0)
+;		]
+;	]
+;	delta: delta / 2.0
+;	bcp: as float32! 4.0 / 3.0 * (1.0 - _cos delta) / _sin delta
+;]
+
 OS-draw-arc: func [
 	dc	   [draw-ctx!]
 	center [red-pair!]
@@ -360,10 +395,11 @@ OS-draw-arc: func [
 		closed?		[logic!]
 ][
 	ctx: dc/raw
+	rad: (as float32! PI) / as float32! 180.0
+
 	radius: center + 1
 	rad-x: as float32! radius/x
 	rad-y: as float32! radius/y
-	rad: (as float32! PI) / as float32! 180.0
 	begin: as red-integer! radius + 1
 	angle-begin: rad * as float32! begin/value
 	angle: begin + 1
@@ -372,11 +408,12 @@ OS-draw-arc: func [
 	closed?: angle < end
 
 	CGContextBeginPath ctx
-	if closed? [0]
 
-	if rad-x <> rad-y [0]						;-- elliptical arc
+	if rad-x <> rad-y [0]					;-- elliptical arc
 
-	CGContextAddArc ctx as float32! center/x as float32! center/y rad-x angle-begin angle-len 1
+	if closed? [CGContextMoveToPoint ctx as float32! center/x as float32! center/y]
+	CGContextAddArc ctx as float32! center/x as float32! center/y rad-x angle-begin angle-len 0
+	if closed? [CGContextClosePath ctx]
 	do-draw-path dc
 ]
 
@@ -548,8 +585,8 @@ OS-matrix-skew: func [
 	m: 0
 	u: as float32! 1.0
 	z: as float32! 0.0
-	x: as float32! system/words/tan degree-to-radians get-float sx TYPE_TANGENT
-	y: as float32! either sx = sy [0.0][system/words/tan degree-to-radians get-float sy TYPE_TANGENT]
+	x: as float32! _tan degree-to-radians get-float sx TYPE_TANGENT
+	y: as float32! either sx = sy [0.0][_tan degree-to-radians get-float sy TYPE_TANGENT]
 ]
 
 OS-matrix-transform: func [

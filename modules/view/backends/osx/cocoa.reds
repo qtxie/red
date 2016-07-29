@@ -159,6 +159,10 @@ tagSIZE: alias struct! [
 
 #import [
 	LIBC-file cdecl [
+		fabs: "fabs" [
+			x			[float!]
+			return:		[float!]
+		]
 		objc_getClass: "objc_getClass" [
 			class		[c-string!]
 			return:		[integer!]

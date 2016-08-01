@@ -261,9 +261,9 @@ get-position-value: func [
 		TYPE_OF(pos) = TYPE_FLOAT
 		TYPE_OF(pos) = TYPE_PERCENT
 	][
-		f: pos/value * (integer/to-float maximun)
+		f: pos/value * (as-float maximun)
 	]
-	float/to-integer f
+	as-integer f
 ]
 
 get-screen-size: func [

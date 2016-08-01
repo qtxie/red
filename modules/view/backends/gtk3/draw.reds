@@ -10,7 +10,8 @@ Red/System [
 	}
 ]
 
-modes: declare struct! [
+draw-ctx!: alias struct! [
+	raw				[handle!]
 	pen-join		[integer!]
 	pen-cap			[integer!]
 	pen-width		[integer!]
@@ -33,42 +34,44 @@ set-source-color: func [
 		g		[float!]
 		a		[float!]
 ][
-	r: integer/to-float color and FFh
+	r: as-float color and FFh
 	r: r / 255.0
-	g: integer/to-float color >> 8 and FFh
+	g: as-float color >> 8 and FFh
 	g: g / 255.0
-	b: integer/to-float color >> 16 and FFh
+	b: as-float color >> 16 and FFh
 	b: b / 255.0
-	a: integer/to-float 255 - (color >>> 24)
+	a: as-float 255 - (color >>> 24)
 	a: a / 255.0
 	cairo_set_source_rgba cr r g b a
 ]
 
 draw-begin: func [
+	ctx			[draw-ctx!]
 	cr			[handle!]
 	img			[red-image!]
 	on-graphic? [logic!]
 	paint?		[logic!]
-	return: 	[handle!]
+	return: 	[draw-ctx!]
 ][
-	modes/pen-width:	1
-	modes/pen-style:	0
-	modes/pen-color:	0						;-- default: black
-	modes/pen-join:		miter
-	modes/pen-cap:		flat
-	modes/brush-color:	0
-	modes/font-color:	0
-	modes/pen?:			yes
-	modes/brush?:		no
-	modes/pattern:		null
+	ctx/raw:			cr
+	ctx/pen-width:		1
+	ctx/pen-style:		0
+	ctx/pen-color:		0						;-- default: black
+	ctx/pen-join:		miter
+	ctx/pen-cap:		flat
+	ctx/brush-color:	0
+	ctx/font-color:		0
+	ctx/pen?:			yes
+	ctx/brush?:			no
+	ctx/pattern:		null
 
 	cairo_set_line_width cr 1.0
 	set-source-color cr 0
-	cr
+	ctx
 ]
 
 draw-end: func [
-	dc			[handle!]
+	dc			[draw-ctx!]
 	hWnd		[handle!]
 	on-graphic? [logic!]
 	cache?		[logic!]
@@ -77,83 +80,87 @@ draw-end: func [
 	0
 ]
 
-do-paint: func [dc [handle!]][
-	if modes/brush? [
-		cairo_save dc
-		either null? modes/pattern [
-			set-source-color dc modes/brush-color
+do-paint: func [dc [draw-ctx!] /local cr [handle!]][
+	cr: dc/raw
+	if dc/brush? [
+		cairo_save cr
+		either null? dc/pattern [
+			set-source-color cr dc/brush-color
 		][
-			cairo_set_source dc modes/pattern
+			cairo_set_source cr dc/pattern
 		]
-		cairo_fill_preserve dc
-		cairo_restore dc
+		cairo_fill_preserve cr
+		cairo_restore cr
 	]
-	if modes/pen? [cairo_stroke dc]
+	if dc/pen? [cairo_stroke cr]
 ]
 
 OS-draw-anti-alias: func [
-	dc	[handle!]
+	dc	[draw-ctx!]
 	on? [logic!]
 ][
 0
 ]
 
 OS-draw-line: func [
-	dc	   [handle!]
+	dc	   [draw-ctx!]
 	point  [red-pair!]
 	end	   [red-pair!]
+	/local
+		cr [handle!]
 ][
+	cr: dc/raw
 	while [point <= end][
-		cairo_line_to dc integer/to-float point/x integer/to-float point/y
+		cairo_line_to cr as-float point/x as-float point/y
 		point: point + 1
 	]
-	cairo_stroke dc
+	cairo_stroke cr
 ]
 
 OS-draw-pen: func [
-	dc	   [handle!]
+	dc	   [draw-ctx!]
 	color  [integer!]									;-- 00bbggrr format
 	off?   [logic!]
 	alpha? [logic!]
 ][
-	modes/pen?: not off?
-	if modes/pen-color <> color [
-		modes/pen-color: color
-		set-source-color dc color
+	dc/pen?: not off?
+	if dc/pen-color <> color [
+		dc/pen-color: color
+		set-source-color dc/raw color
 	]
 ]
 
 OS-draw-fill-pen: func [
-	dc	   [handle!]
+	dc	   [draw-ctx!]
 	color  [integer!]									;-- 00bbggrr format
 	off?   [logic!]
 	alpha? [logic!]
 ][
-	modes/brush?: not off?
-	unless null? modes/pattern [
-		cairo_pattern_destroy modes/pattern
-		modes/pattern: null
+	dc/brush?: not off?
+	unless null? dc/pattern [
+		cairo_pattern_destroy dc/pattern
+		dc/pattern: null
 	]
-	if modes/brush-color <> color [
-		modes/brush-color: color
+	if dc/brush-color <> color [
+		dc/brush-color: color
 	]
 ]
 
 OS-draw-line-width: func [
-	dc	  [handle!]
+	dc	  [draw-ctx!]
 	width [red-integer!]
 	/local
 		w [integer!]
 ][
 	w: width/value
-	if modes/pen-width <> w [
-		modes/pen-width: w
-		cairo_set_line_width dc integer/to-float w
+	if dc/pen-width <> w [
+		dc/pen-width: w
+		cairo_set_line_width dc/raw as-float w
 	]
 ]
 
 OS-draw-box: func [
-	dc	  [handle!]
+	dc	  [draw-ctx!]
 	upper [red-pair!]
 	lower [red-pair!]
 	/local
@@ -170,29 +177,29 @@ OS-draw-box: func [
 		rad: radius/value * 2
 		;;@@ TBD round box
 	][
-		x: integer/to-float upper/x
-		y: integer/to-float upper/y
-		w: integer/to-float lower/x - upper/x
-		h: integer/to-float lower/y - upper/y
-		cairo_rectangle dc x y w h
+		x: as-float upper/x
+		y: as-float upper/y
+		w: as-float lower/x - upper/x
+		h: as-float lower/y - upper/y
+		cairo_rectangle dc/raw x y w h
 		do-paint dc
 	]
 ]
 
 OS-draw-triangle: func [
-	dc	  [handle!]
+	dc	  [draw-ctx!]
 	start [red-pair!]
 ][
 	loop 3 [
-		cairo_line_to dc integer/to-float start/x integer/to-float start/y
+		cairo_line_to dc/raw as-float start/x as-float start/y
 		start: start + 1
 	]
-	cairo_close_path dc									;-- close the triangle
-	cairo_stroke dc
+	cairo_close_path dc/raw								;-- close the triangle
+	do-paint dc
 ]
 
 OS-draw-polygon: func [
-	dc	  [handle!]
+	dc	  [draw-ctx!]
 	start [red-pair!]
 	end	  [red-pair!]
 	/local
@@ -204,7 +211,7 @@ OS-draw-polygon: func [
 ]
 
 OS-draw-spline: func [
-	dc		[handle!]
+	dc		[draw-ctx!]
 	start	[red-pair!]
 	end		[red-pair!]
 	closed? [logic!]
@@ -217,7 +224,7 @@ OS-draw-spline: func [
 ]
 
 do-draw-ellipse: func [
-	dc		[handle!]
+	dc		[draw-ctx!]
 	x		[integer!]
 	y		[integer!]
 	width	[integer!]
@@ -227,21 +234,21 @@ do-draw-ellipse: func [
 ]
 
 OS-draw-circle: func [
-	dc	   [handle!]
+	dc	   [draw-ctx!]
 	center [red-pair!]
 	radius [red-integer!]
 	/local
 		x [float!]
 		y [float!]
 ][
-	x: integer/to-float center/x
-	y: integer/to-float center/y
-	cairo_arc dc x y integer/to-float radius/value 0.0 2.0 * pi
+	x: as-float center/x
+	y: as-float center/y
+	cairo_arc dc/raw x y as-float radius/value 0.0 2.0 * pi
 	do-paint dc
 ]
 
 OS-draw-ellipse: func [
-	dc	  	 [handle!]
+	dc	  	 [draw-ctx!]
 	upper	 [red-pair!]
 	diameter [red-pair!]
 ][
@@ -249,20 +256,20 @@ OS-draw-ellipse: func [
 ]
 
 OS-draw-font: func [
-	dc		[handle!]
+	dc		[draw-ctx!]
 	font	[red-object!]
 	/local
 		vals  [red-value!]
 		state [red-block!]
 		int   [red-integer!]
 		color [red-tuple!]
-		hFont [handle!]
+		hFont [draw-ctx!]
 ][
 0
 ]
 
 OS-draw-text: func [
-	dc		[handle!]
+	dc		[draw-ctx!]
 	pos		[red-pair!]
 	text	[red-string!]
 	/local
@@ -273,7 +280,7 @@ OS-draw-text: func [
 ]
 
 OS-draw-arc: func [
-	dc	   [handle!]
+	dc	   [draw-ctx!]
 	center [red-pair!]
 	end	   [red-value!]
 	/local
@@ -299,7 +306,7 @@ OS-draw-arc: func [
 ]
 
 OS-draw-curve: func [
-	dc	  [handle!]
+	dc	  [draw-ctx!]
 	start [red-pair!]
 	end	  [red-pair!]
 	/local
@@ -314,29 +321,29 @@ OS-draw-curve: func [
 ]
 
 OS-draw-line-join: func [
-	dc	  [handle!]
+	dc	  [draw-ctx!]
 	style [integer!]
 	/local
 		mode [integer!]
 ][
-	if modes/pen-join <> style [
-		modes/pen-join: style
+	if dc/pen-join <> style [
+		dc/pen-join: style
 	]
 ]
 	
 OS-draw-line-cap: func [
-	dc	  [handle!]
+	dc	  [draw-ctx!]
 	style [integer!]
 	/local
 		mode [integer!]
 ][
-	if modes/pen-cap <> style [
-		modes/pen-cap: style
+	if dc/pen-cap <> style [
+		dc/pen-cap: style
 	]
 ]
 
 OS-draw-image: func [
-	dc			[handle!]
+	dc			[draw-ctx!]
 	image		[red-image!]
 	start		[red-pair!]
 	end			[red-pair!]
@@ -353,7 +360,7 @@ OS-draw-image: func [
 ]
 
 OS-draw-grad-pen: func [
-	dc			[handle!]
+	dc			[draw-ctx!]
 	type		[integer!]
 	mode		[integer!]
 	offset		[red-pair!]
@@ -375,13 +382,13 @@ OS-draw-grad-pen: func [
 		p		[float!]
 		scale?	[logic!]
 ][
-	x: integer/to-float offset/x
-	y: integer/to-float offset/y
+	x: as-float offset/x
+	y: as-float offset/y
 
 	int: as red-integer! offset + 1
-	start: integer/to-float int/value
+	start: as-float int/value
 	int: int + 1
-	stop: integer/to-float int/value
+	stop: as-float int/value
 
 	pattern: either type = linear [
 		cairo_pattern_create_linear x + start y x + stop y
@@ -397,7 +404,7 @@ OS-draw-grad-pen: func [
 		n < 3
 	][								;-- fetch angle, scale-x and scale-y (optional)
 		switch TYPE_OF(int) [
-			TYPE_INTEGER	[p: integer/to-float int/value]
+			TYPE_INTEGER	[p: as-float int/value]
 			TYPE_FLOAT		[f: as red-float! int p: f/value]
 			default			[break]
 		]
@@ -411,20 +418,20 @@ OS-draw-grad-pen: func [
 
 	if scale? [0]
 
-	delta: 1.0 / integer/to-float count - 1
+	delta: 1.0 / as-float count - 1
 	p: 0.0
 	head: as red-value! int
 	loop count [
 		clr: as red-tuple! either TYPE_OF(head) = TYPE_WORD [_context/get as red-word! head][head]
 		next: head + 1
 		n: clr/array1
-		x: integer/to-float n and FFh
+		x: as-float n and FFh
 		x: x / 255.0
-		y: integer/to-float n >> 8 and FFh
+		y: as-float n >> 8 and FFh
 		y: y / 255.0
-		start: integer/to-float n >> 16 and FFh
+		start: as-float n >> 16 and FFh
 		start: start / 255.0
-		stop: integer/to-float 255 - (n >>> 24)
+		stop: as-float 255 - (n >>> 24)
 		stop: stop / 255.0
 		if TYPE_OF(next) = TYPE_FLOAT [head: next f: as red-float! head p: f/value]
 		cairo_pattern_add_color_stop_rgba pattern p x y start stop
@@ -432,7 +439,89 @@ OS-draw-grad-pen: func [
 		head: head + 1
 	]
 
-	if brush? [modes/brush?: yes]				;-- set brush, or set pen
-	unless null? modes/pattern [cairo_pattern_destroy modes/pattern]
-	modes/pattern: pattern
+	if brush? [dc/brush?: yes]				;-- set brush, or set pen
+	unless null? dc/pattern [cairo_pattern_destroy dc/pattern]
+	dc/pattern: pattern
+]
+
+OS-matrix-rotate: func [
+	angle	[red-integer!]
+	center	[red-pair!]
+	/local
+		m	[integer!]
+		pts [tagPOINT]
+][
+	if angle <> as red-integer! center [
+0
+	]
+	;GdipRotateWorldTransform dc/graphics get-float32 angle GDIPLUS_MATRIXORDERAPPEND
+	if angle <> as red-integer! center [
+0
+	]
+]
+
+OS-matrix-scale: func [
+	sx		[red-integer!]
+	sy		[red-integer!]
+][
+0
+]
+
+OS-matrix-translate: func [
+	x	[integer!]
+	y	[integer!]
+][
+0
+]
+
+OS-matrix-skew: func [
+	sx		[red-integer!]
+	sy		[red-integer!]
+	/local
+		m	[integer!]
+		x	[float32!]
+		y	[float32!]
+		u	[float32!]
+		z	[float32!]
+][
+	m: 0
+	u: as float32! 1.0
+	z: as float32! 0.0
+	x: as float32! _tan degree-to-radians get-float sx TYPE_TANGENT
+	y: as float32! either sx = sy [0.0][_tan degree-to-radians get-float sy TYPE_TANGENT]
+]
+
+OS-matrix-transform: func [
+	rotate		[red-integer!]
+	scale		[red-integer!]
+	translate	[red-pair!]
+	/local
+		center	[red-pair!]
+][
+	center: as red-pair! either rotate + 1 = scale [rotate][rotate + 1]
+	OS-matrix-rotate rotate center
+	OS-matrix-scale scale scale + 1
+	OS-matrix-translate translate/x translate/y
+]
+
+OS-matrix-push: func [/local state [integer!]][
+	state: 0
+]
+
+OS-matrix-pop: func [][0]
+
+OS-matrix-reset: func [][0]
+
+OS-matrix-invert: func [/local m [integer!]][
+0
+]
+
+OS-matrix-set: func [
+	blk		[red-block!]
+	/local
+		m	[integer!]
+		val [red-integer!]
+][
+	m: 0
+	val: as red-integer! block/rs-head blk
 ]

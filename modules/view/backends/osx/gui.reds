@@ -22,6 +22,7 @@ Red/System [
 NSApp:					0
 NSDefaultRunLoopMode:	0
 
+default-font:	0
 exit-loop:		0
 log-pixels-x:	0
 log-pixels-y:	0
@@ -174,6 +175,12 @@ get-os-version: func [
 		info	[integer!]
 ][
 0
+]
+
+set-defaults: func [][
+	default-font: objc_msgSend [
+		objc_getClass "NSFont" sel_getUid "systemFontOfSize:" as float32! 0.0
+	]
 ]
 
 init: func [

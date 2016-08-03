@@ -24,6 +24,8 @@ draw-ctx!: alias struct! [
 	pen-color		[integer!]					;-- 00bbggrr format
 	brush-color		[integer!]					;-- 00bbggrr format
 	font-color		[integer!]
+	font			[integer!]
+	font-color?		[logic!]
 	pen?			[logic!]
 	brush?			[logic!]
 	on-image?		[logic!]					;-- drawing on image?
@@ -45,8 +47,10 @@ draw-begin: func [
 	ctx/pen-cap:		flat
 	ctx/brush-color:	0
 	ctx/font-color:		0
+	ctx/font:			0
 	ctx/pen?:			yes
 	ctx/brush?:			no
+	ctx/font-color?:	no
 
 	CGContextSetMiterLimit CGCtx DRAW_FLOAT_MAX
 	CGContextSetAllowsAntialiasing CGCtx yes
@@ -383,9 +387,24 @@ OS-draw-font: func [
 		state [red-block!]
 		int   [red-integer!]
 		color [red-tuple!]
-		hFont [draw-ctx!]
 ][
-0
+	vals: object/get-values font
+	state: as red-block! vals + FONT_OBJ_STATE
+	color: as red-tuple! vals + FONT_OBJ_COLOR
+	
+	dc/font: either TYPE_OF(state) = TYPE_BLOCK [
+		int: as red-integer! block/rs-head state
+		int/value
+	][
+		as-integer make-font as red-object! none-value font
+	]
+
+	dc/font-color?: either TYPE_OF(color) = TYPE_TUPLE [
+		dc/font-color: color/array1
+		yes
+	][
+		no
+	]
 ]
 
 OS-draw-text: func [
@@ -395,6 +414,7 @@ OS-draw-text: func [
 	/local
 		str		[c-string!]
 		len		[integer!]
+		rect	[NSRect!]
 ][
 0
 ]

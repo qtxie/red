@@ -302,6 +302,57 @@ win-will-close: func [
 	res: make-event self 0 EVT_CLOSE
 ]
 
+render-text: func [
+	values	[red-value!]
+	width	[float32!]
+	height	[float32!]
+	/local
+		text	[red-string!]
+		font	[red-object!]
+		para	[red-object!]
+		color	[red-tuple!]
+		state	[red-block!]
+		int		[red-integer!]
+		hFont	[integer!]
+		old		[integer!]
+		flags	[integer!]
+		s		[integer!]
+		font-h	[float32!]
+][
+	text: as red-string! values + FACE_OBJ_TEXT
+	if TYPE_OF(text) <> TYPE_STRING [exit]
+
+	font: as red-object! values + FACE_OBJ_FONT
+	hFont: either TYPE_OF(font) = TYPE_OBJECT [
+		values: object/get-values font
+		color: as red-tuple! values + FONT_OBJ_COLOR
+		if all [
+			TYPE_OF(color) = TYPE_TUPLE
+			color/array1 <> 0
+		][
+			0		;@@ TBD set text color attribute
+		]
+		state: as red-block! values + FONT_OBJ_STATE
+		int: as red-integer! block/rs-head state
+		int/value
+		;@@ TBD set font attribute
+	][
+		default-font
+	]
+
+	para: as red-object! values + FACE_OBJ_PARA
+	flags: either TYPE_OF(para) = TYPE_OBJECT [		;@@ TBD set alignment attribute
+		;--get-para-flags base para
+		0
+	][
+		0
+	]
+	font-h: as float32! objc_msgSend [hFont sel_getUid "lineSize"]
+	
+	s: to-NSString text
+	;@@ TBD draw string
+]
+
 paint-background: func [
 	ctx		[handle!]
 	color	[integer!]
@@ -348,6 +399,9 @@ draw-rect: func [
 		objc_msgSend [ctx sel_getUid "graphicsPort"]		;-- deprecated in 10.10
 	]
 	vals: get-face-values self
+
+	render-text vals width height
+
 	img: as red-image! vals + FACE_OBJ_IMAGE
 	draw: as red-block! vals + FACE_OBJ_DRAW
 	clr:  as red-tuple! vals + FACE_OBJ_COLOR

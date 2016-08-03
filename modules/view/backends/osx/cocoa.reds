@@ -90,6 +90,10 @@ Red/System [
 #define NSEventTypeQuickLook		33
 #define NSEventTypePressure			34
 
+#define NSItalicFontMask			1
+#define NSBoldFontMask				2
+#define NSFixedPitchFontMask		0400h
+
 #define kCGLineJoinMiter			0
 #define kCGLineJoinRound			1
 #define kCGLineJoinBevel			2
@@ -114,7 +118,8 @@ Red/System [
 
 #define IVAR_RED_FACE	"red-face"
 #define kCFStringEncodingUTF8	08000100h
-#define CFString(cStr)	[CFStringCreateWithCString 0 cStr kCFStringEncodingUTF8]
+#define CFString(cStr) [CFStringCreateWithCString 0 cStr kCFStringEncodingUTF8]
+#define NSString(cStr) [objc_msgSend [objc_getClass "NSString" sel_getUid "stringWithUTF8String:" cStr]] 
 
 #define handle! [pointer! [integer!]]
 
@@ -425,4 +430,13 @@ msg-send-super: func [
 	super/receiver: id
 	super/superclass: objc_msgSend [id sel_getUid "superclass"]
 	objc_msgSendSuper [super sel arg]
+]
+
+to-NSString: func [str [red-string!] return: [integer!] /local len][
+	len: -1
+	objc_msgSend [
+		objc_getClass "NSString"
+		sel_getUid "stringWithUTF8String:"
+		unicode/to-utf8 str :len
+	]
 ]

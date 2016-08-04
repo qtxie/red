@@ -482,15 +482,16 @@ make-super-class: func [
 ]
 
 register-classes: does [
-	make-super-class "RedAppDelegate"	"NSObject"		as-integer :add-app-delegate	no
-	make-super-class "RedView"			"NSView"		as-integer :flipp-coord			no
-	make-super-class "RedBase"			"NSView"		as-integer :add-base-handler	yes
-	make-super-class "RedWindow"		"NSWindow"		as-integer :add-window-handler	yes
-	make-super-class "RedButton"		"NSButton"		as-integer :add-button-handler	yes
-	make-super-class "RedSlider"		"NSSlider"		as-integer :add-slider-handler	yes
-	make-super-class "RedTextField"		"NSTextField"	as-integer :add-text-field-handler yes
-	make-super-class "RedTextView"		"NSTextView"	as-integer :add-area-handler yes
-	make-super-class "RedComboBox"		"NSComboBox"	as-integer :add-combo-box-handler yes
-	make-super-class "RedScrollView"	"NSScrollView"	0	yes
-	make-super-class "RedBox"			"NSBox"			0	yes
+	make-super-class "RedAppDelegate"	"NSObject"				as-integer :add-app-delegate	no
+	make-super-class "RedView"			"NSView"				as-integer :flipp-coord			no
+	make-super-class "RedBase"			"NSView"				as-integer :add-base-handler	yes
+	make-super-class "RedWindow"		"NSWindow"				as-integer :add-window-handler	yes
+	make-super-class "RedButton"		"NSButton"				as-integer :add-button-handler	yes
+	make-super-class "RedSlider"		"NSSlider"				as-integer :add-slider-handler	yes
+	make-super-class "RedProgress"		"NSProgressIndicator"	0	yes
+	make-super-class "RedTextField"		"NSTextField"			as-integer :add-text-field-handler yes
+	make-super-class "RedTextView"		"NSTextView"			as-integer :add-area-handler yes
+	make-super-class "RedComboBox"		"NSComboBox"			as-integer :add-combo-box-handler yes
+	make-super-class "RedScrollView"	"NSScrollView"			0	yes
+	make-super-class "RedBox"			"NSBox"					0	yes
 ]

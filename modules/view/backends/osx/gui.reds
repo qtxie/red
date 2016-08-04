@@ -397,6 +397,7 @@ change-data: func [
 			TYPE_OF(data) = TYPE_PERCENT
 		][
 			f: as red-float! data
+			objc_msgSend [hWnd sel_getUid "setDoubleValue:" f/value * 100.0]
 		]
 		type = check [
 			set-logic-state hWnd as red-logic! data yes
@@ -645,6 +646,7 @@ OS-make-view: func [
 			sym = drop-list
 		][class: "RedComboBox"]
 		sym = slider [class: "RedSlider"]
+		sym = progress [class: "RedProgress"]
 		sym = group-box [class: "RedBox"]
 		true [											;-- search in user-defined classes
 			fire [TO_ERROR(script face-type) type]
@@ -708,6 +710,11 @@ OS-make-view: func [
 			objc_msgSend [obj sel_getUid "setFloatValue:" flt]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]
 			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "slider-change:"]
+		]
+		sym = progress [
+			objc_msgSend [obj sel_getUid "setIndeterminate:" false]
+			flt: get-position-value as red-float! data 100.0
+			objc_msgSend [obj sel_getUid "setDoubleValue:" flt]
 		]
 		sym = group-box [
 			set-content-view obj

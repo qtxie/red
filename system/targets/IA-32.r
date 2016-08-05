@@ -428,6 +428,11 @@ make-profilable make target-class [
 		emit #{9BDBE3}								;-- FINIT			; init x87 FPU
 	]
 	
+	emit-get-overflow: does [
+		emit #{0F90C0}								;-- SETO al
+		emit #{83E001}								;-- AND eax, 1
+	]
+	
 	emit-get-pc: func [/ebx][
 		emit #{E800000000}							;-- CALL next		; call the next instruction
 		either ebx [
@@ -900,7 +905,11 @@ make-profilable make target-class [
 		unless value = <last> [
 			if parent [emit #{89C2}]				;-- MOV edx, eax			; save value/address
 			emit-load value
-			if object? value [emit-casting value no]
+			all [
+				object? value
+				not all [decimal? value/data 'float32! = value/type/1]
+				emit-casting value no
+			]
 			unless all [
 				type = 'struct!
 				word? path/2
@@ -1407,8 +1416,6 @@ make-profilable make target-class [
 				]
 			]
 		]
-		;TBD: test overflow and raise exception ? (or store overflow flag in a variable??)
-		; JNO? (Jump if No Overflow)
 	]
 	
 	emit-integer-operation: func [name [word!] args [block!] /local a b sorted? left right][
@@ -1477,14 +1484,15 @@ make-profilable make target-class [
 		if object? args/1 [emit-casting args/1 no]	;-- do runtime conversion on eax if required
 
 		;-- Operator and second operand processing
-		all [
+		either all [
 			object? args/2
 			find [imm reg] b
 			args/2/type/1 <> 'integer!				;-- skip explicit casting to integer! (implicit)
+		][
 			emit-casting args/2 yes					;-- do runtime conversion on edx if required
+		][
+			implicit-cast right
 		]
-		implicit-cast right
-		
 		case [
 			find comparison-op name [emit-comparison-op name a b args]
 			find math-op	   name	[emit-math-op		name a b args]

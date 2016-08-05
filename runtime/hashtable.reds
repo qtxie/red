@@ -209,10 +209,12 @@ _hashtable: context [
 			TYPE_TUPLE [
 				murmur3-x86-32 (as byte-ptr! key) + 4 TUPLE_SIZE?(key)
 			]
-			TYPE_OBJECT [key/data2]
+			TYPE_OBJECT
 			TYPE_DATATYPE
 			TYPE_LOGIC [key/data1]
-			default [key/data3]
+			default [								;-- for any-block!: use head and node
+				murmur3-x86-32 (as byte-ptr! key) + 4 8
+			]
 		]
 	]
 
@@ -584,14 +586,19 @@ _hashtable: context [
 				TYPE_WORD
 				TYPE_GET_WORD
 				TYPE_SET_WORD
-				TYPE_LIT_WORD
-				TYPE_REFINEMENT
-				TYPE_ISSUE	[key/header: TYPE_SET_WORD]		;-- map, convert any-word! to set-word!
+				TYPE_LIT_WORD [key/header: TYPE_SET_WORD]		;-- map, convert any-word! to set-word!
 				TYPE_STRING
 				TYPE_FILE
 				TYPE_URL
 				TYPE_TAG
 				TYPE_EMAIL	[_series/copy as red-series! key as red-series! key null yes null]
+				TYPE_BLOCK
+				TYPE_PAREN
+				TYPE_HASH
+				TYPE_PATH
+				TYPE_GET_PATH
+				TYPE_SET_PATH
+				TYPE_LIT_PATH [fire [TO_ERROR(script invalid-type) datatype/push x]]
 				default		[0]
 			]
 		]

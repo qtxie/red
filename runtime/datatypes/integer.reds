@@ -95,15 +95,29 @@ integer: context [
 	]
 
 	do-math-op: func [
-		left		[integer!]
-		right		[integer!]
-		type		[math-op!]
-		return:		[integer!]
+		left	[integer!]
+		right	[integer!]
+		type	[math-op!]
+		return:	[integer!]
+		/local
+			res [integer!]
 	][
 		switch type [
-			OP_ADD [left + right]
-			OP_SUB [left - right]
-			OP_MUL [left * right]
+			OP_ADD [
+				res: left + right
+				if system/cpu/overflow? [fire [TO_ERROR(math overflow)]]
+				res
+			]
+			OP_SUB [
+				res: left - right
+				if system/cpu/overflow? [fire [TO_ERROR(math overflow)]]
+				res
+			]
+			OP_MUL [
+				res: left * right
+				if system/cpu/overflow? [fire [TO_ERROR(math overflow)]]
+				res
+			]
 			OP_AND [left and right]
 			OP_OR  [left or right]
 			OP_XOR [left xor right]
@@ -457,10 +471,13 @@ integer: context [
 	negate: func [
 		return: [red-integer!]
 		/local
-			int [red-integer!]
+			int	  [red-integer!]
+			fl	  [red-float!]
+			value [integer!]
 	][
 		int: as red-integer! stack/arguments
 		int/value: 0 - int/value
+		if system/cpu/overflow? [fire [TO_ERROR(math overflow)]]
 		int 											;-- re-use argument slot for return value
 	]
 
@@ -576,10 +593,7 @@ integer: context [
 			]
 			sc: abs scale/value
 		]
-
-		if zero? sc [
-			fire [TO_ERROR(math overflow)]
-		]
+		if zero? sc [fire [TO_ERROR(math overflow)]]
 
 		n: abs num
 		r: n % sc

@@ -135,6 +135,8 @@ any-string?:	func ["Returns true if the value is any type of string"	  value [an
 any-word?:		func ["Returns true if the value is any type of word"	  value [any-type!]][find any-word!		type? :value]
 series?:		func ["Returns true if the value is any type of series"	  value [any-type!]][find series!		type? :value]
 number?:		func ["Returns true if the value is any type of number"	  value [any-type!]][find number!		type? :value]
+immediate?:		func ["Returns true if the value is any immediate value"  value [any-type!]][find immediate!	type? :value]
+scalar?:		func ["Returns true if the value is any type of scalar"	  value [any-type!]][find scalar!		type? :value]
 
 spec-of: func [
 	"Returns the spec of a value that supports reflection"
@@ -155,6 +157,13 @@ words-of: func [
 	value
 ][
 	reflect :value 'words
+]
+
+class-of: func [
+	"Returns the class ID of an object"
+	value
+][
+	reflect :value 'class
 ]
 
 values-of: func [

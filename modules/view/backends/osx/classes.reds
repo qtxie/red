@@ -279,12 +279,24 @@ number-of-rows: func [
 	return: [integer!]
 	/local
 		blk [red-block!]
+		head [red-value!]
+		tail [red-value!]
+		cnt  [integer!]
 ][
 	blk: as red-block! (get-face-values obj) + FACE_OBJ_DATA
-	either TYPE_OF(blk) = TYPE_BLOCK [block/rs-length? blk][0]
+	either TYPE_OF(blk) = TYPE_BLOCK [
+		head: block/rs-head blk
+		tail: block/rs-tail blk
+		cnt: 0
+		while [head < tail][
+			if TYPE_OF(head) = TYPE_STRING [cnt: cnt + 1]
+			head: head + 1
+		]
+		cnt
+	][0]
 ]
 
-view-for-table: func [
+object-for-table: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
@@ -293,27 +305,21 @@ view-for-table: func [
 	row		[integer!]
 	return: [integer!]
 	/local
-		id	 [integer!]
 		data [red-block!]
-		cell [integer!]
-		rc	 [NSRect!]
+		head [red-value!]
+		tail [red-value!]
+		idx  [integer!]
 ][
-	id: CFString("RedCol1")
-	cell: objc_msgSend [obj sel_getUid "makeViewWithIdentifier:owner:" id self]
-
-	data: as red-block! (get-face-values obj) + FACE_OBJ_DATA
-	if zero? cell [
-		rc: make-rect 0 0 150 100
-		cell: objc_msgSend [objc_getClass "NSTextField" sel_getUid "alloc"]
-		cell: objc_msgSend [cell sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h]
-		objc_msgSend [cell sel_getUid "setEditable:" false]
-		objc_msgSend [cell sel_getUid "setBordered:" false]
-		objc_msgSend [cell sel_getUid "setIdentifier:" id]
+	data: (as red-block! get-face-values obj) + FACE_OBJ_DATA
+	head: block/rs-head data
+	tail: block/rs-tail data
+	idx: -1
+	while [all [row >= 0 head < tail]][
+		if TYPE_OF(head) = TYPE_STRING [row: row - 1]
+		head: head + 1
+		idx: idx + 1
 	]
-	;CFRelease id
-	id: to-NSString as red-string! block/rs-abs-at data row
-	objc_msgSend [cell sel_getUid "setStringValue:" id]
-	cell
+	to-NSString as red-string! block/rs-abs-at data idx
 ]
 
 will-finish: func [
@@ -498,7 +504,7 @@ add-combo-box-handler: func [class [integer!]][
 
 add-table-view-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "numberOfRowsInTableView:" as-integer :number-of-rows "l@:@"
-	class_addMethod class sel_getUid "tableView:viewForTableColumn:row:" as-integer :view-for-table "@20@0:4@8@12l16"
+	class_addMethod class sel_getUid "tableView:objectValueForTableColumn:row:" as-integer :object-for-table "@20@0:4@8@12l16"
 ]
 
 add-app-delegate: func [class [integer!]][

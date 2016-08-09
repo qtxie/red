@@ -572,6 +572,7 @@ make-text-list: func [
 ][
 	rc/x: as float32! 0.0
 	rc/y: as float32! 0.0
+	rc/w: rc/w - 16.0
 
 	id: CFString("RedCol1")
 	column: objc_msgSend [objc_getClass "NSTableColumn" sel_getUid "alloc"]

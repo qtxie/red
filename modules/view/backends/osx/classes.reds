@@ -271,6 +271,51 @@ selection-change: func [
 	]
 ]
 
+number-of-rows: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	obj		[integer!]
+	return: [integer!]
+	/local
+		blk [red-block!]
+][
+	blk: as red-block! (get-face-values obj) + FACE_OBJ_DATA
+	either TYPE_OF(blk) = TYPE_BLOCK [block/rs-length? blk][0]
+]
+
+view-for-table: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	obj		[integer!]
+	column	[integer!]
+	row		[integer!]
+	return: [integer!]
+	/local
+		id	 [integer!]
+		data [red-block!]
+		cell [integer!]
+		rc	 [NSRect!]
+][
+	id: CFString("RedCol1")
+	cell: objc_msgSend [obj sel_getUid "makeViewWithIdentifier:owner:" id self]
+
+	data: as red-block! (get-face-values obj) + FACE_OBJ_DATA
+	if zero? cell [
+		rc: make-rect 0 0 150 100
+		cell: objc_msgSend [objc_getClass "NSTextField" sel_getUid "alloc"]
+		cell: objc_msgSend [cell sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h]
+		objc_msgSend [cell sel_getUid "setEditable:" false]
+		objc_msgSend [cell sel_getUid "setBordered:" false]
+		objc_msgSend [cell sel_getUid "setIdentifier:" id]
+	]
+	;CFRelease id
+	id: to-NSString as red-string! block/rs-abs-at data row
+	objc_msgSend [cell sel_getUid "setStringValue:" id]
+	cell
+]
+
 will-finish: func [
 	[cdecl]
 	self	[integer!]
@@ -451,6 +496,11 @@ add-combo-box-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "comboBoxSelectionDidChange:" as-integer :selection-change "v@:@"
 ]
 
+add-table-view-handler: func [class [integer!]][
+	class_addMethod class sel_getUid "numberOfRowsInTableView:" as-integer :number-of-rows "l@:@"
+	class_addMethod class sel_getUid "tableView:viewForTableColumn:row:" as-integer :view-for-table "@20@0:4@8@12l16"
+]
+
 add-app-delegate: func [class [integer!]][
 	class_addMethod class sel_getUid "applicationWillFinishLaunching:" as-integer :will-finish "v12@0:4@8"
 	class_addMethod class sel_getUid "applicationShouldTerminateAfterLastWindowClosed:" as-integer :destroy-app "B12@0:4@8"
@@ -492,6 +542,7 @@ register-classes: does [
 	make-super-class "RedTextField"		"NSTextField"			as-integer :add-text-field-handler yes
 	make-super-class "RedTextView"		"NSTextView"			as-integer :add-area-handler yes
 	make-super-class "RedComboBox"		"NSComboBox"			as-integer :add-combo-box-handler yes
+	make-super-class "RedTableView"		"NSTableView"			as-integer :add-table-view-handler yes
 	make-super-class "RedScrollView"	"NSScrollView"			0	yes
 	make-super-class "RedBox"			"NSBox"					0	yes
 ]

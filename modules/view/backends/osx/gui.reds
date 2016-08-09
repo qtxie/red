@@ -519,14 +519,15 @@ init-window: func [
 make-area: func [
 	face		[red-object!]
 	container	[integer!]
+	rc			[NSRect!]
 	text		[integer!]
 	/local
 		id		[integer!]
 		obj		[integer!]
 		tbox	[integer!]
-		rc		[NSRect!]
 ][
-	rc: make-rect 0 0 150 150
+	rc/x: as float32! 0.0
+	rc/y: as float32! 0.0
 	;objc_msgSend2 container sel_getUid "contentSize"				;-- return struct
 
 	objc_msgSend [container sel_getUid "setBorderType:" NSGrooveBorder]
@@ -558,6 +559,48 @@ make-area: func [
 	if text <> 0 [objc_msgSend [obj sel_getUid "setString:" text]]
 
 	objc_msgSend [container sel_getUid "setDocumentView:" obj]
+]
+
+make-text-list: func [
+	face		[red-object!]
+	container	[integer!]
+	rc			[NSRect!]
+	/local
+		id		[integer!]
+		obj		[integer!]
+		column	[integer!]
+][
+	rc/x: as float32! 0.0
+	rc/y: as float32! 0.0
+
+	id: CFString("RedCol1")
+	column: objc_msgSend [objc_getClass "NSTableColumn" sel_getUid "alloc"]
+	column: objc_msgSend [column sel_getUid "initWithIdentifier:" id]
+	;CFRelease id
+	objc_msgSend [column sel_getUid "setWidth:" rc/w]
+
+	;objc_msgSend [container sel_getUid "setHasHorizontalScroller:" no]
+	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
+	objc_msgSend [container sel_getUid "setAutoresizingMask:" NSViewWidthSizable or NSViewHeightSizable]
+
+	id: objc_getClass "RedTableView"
+	obj: objc_msgSend [id sel_getUid "alloc"]
+
+	assert obj <> 0
+	obj: objc_msgSend [
+		obj sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h
+	]
+	store-face-to-obj obj id face
+
+	objc_msgSend [obj sel_getUid "setHeaderView:" 0]
+	objc_msgSend [obj sel_getUid "addTableColumn:" column]
+	objc_msgSend [obj sel_getUid "setDelegate:" obj]
+	objc_msgSend [obj sel_getUid "setDataSource:" obj]
+	objc_msgSend [obj sel_getUid "reloadData"]
+	
+	objc_msgSend [container sel_getUid "setDocumentView:" obj]
+	objc_msgSend [obj sel_getUid "release"]
+	objc_msgSend [column sel_getUid "release"]
 ]
 
 OS-show-window: func [
@@ -618,7 +661,10 @@ OS-make-view: func [
 	sym: 	  symbol/resolve type/symbol
 
 	case [
-		sym = area [class: "RedScrollView"]
+		any [
+			sym = text-list
+			sym = area
+		][class: "RedScrollView"]
 		sym = text [class: "RedTextField"]
 		sym = field [class: "RedTextField"]
 		sym = button [class: "RedButton"]
@@ -681,7 +727,10 @@ OS-make-view: func [
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setStringValue:" caption]]
 		]
 		sym = area [
-			make-area face obj caption
+			make-area face obj rc caption
+		]
+		sym = text-list [
+			make-text-list face obj rc
 		]
 		any [sym = button sym = check sym = radio][
 			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]
@@ -698,7 +747,8 @@ OS-make-view: func [
 			init-window obj caption rc
 		]
 		sym = slider [
-			flt: as-float either size/x > size/y [size/x][size/y]
+			len: either size/x > size/y [size/x][size/y]
+			flt: as-float len
 			objc_msgSend [obj sel_getUid "setMaxValue:" flt]
 			flt: get-position-value as red-float! data flt
 			objc_msgSend [obj sel_getUid "setFloatValue:" flt]

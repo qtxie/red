@@ -428,7 +428,7 @@ change-data: func [
 	]
 ]
 
-check-type?: func [
+same-type?: func [
 	obj		[integer!]
 	name	[c-string!]
 	return: [logic!]
@@ -514,6 +514,26 @@ init-window: func [
 	objc_msgSend [window sel_getUid "makeMainWindow"]
 
 	objc_msgSend [window sel_getUid "setDelegate:" window]
+]
+
+init-camera: func [
+	camera	[integer!]
+	rc		[NSRect!]
+	/local
+		devices	[integer!]
+		session [integer!]
+		preview [integer!]
+		layer	[integer!]
+][
+	rc/x: as float32! 0.0
+	rc/y: as float32! 0.0
+	red/platform/dlopen "/System/Library/Frameworks/AVFoundation.framework/Versions/Current/AVFoundation" RTLD_LAZY
+	session: objc_msgSend [objc_getClass "AVCaptureSession" sel_getUid "alloc"]
+	session: objc_msgSend [session sel_getUid "init"]
+	preview: objc_msgSend [objc_getClass "AVCaptureVideoPreviewLayer" sel_getUid "layerWithSession:" session]
+	objc_msgSend [preview sel_getUid "setFrame:" rc/x rc/y rc/w rc/h]
+	layer: objc_msgSend [camera sel_getUid "layer"]
+	objc_msgSend [layer sel_getUid "addSublayer:" preview]
 ]
 
 make-area: func [
@@ -689,6 +709,7 @@ OS-make-view: func [
 		sym = slider [class: "RedSlider"]
 		sym = progress [class: "RedProgress"]
 		sym = group-box [class: "RedBox"]
+		sym = camera [class: "RedCamera"]
 		true [											;-- search in user-defined classes
 			fire [TO_ERROR(script face-type) type]
 		]
@@ -775,6 +796,9 @@ OS-make-view: func [
 		][
 			init-combo-box obj data caption selected sym = drop-list
 			objc_msgSend [obj sel_getUid "setDelegate:" obj]
+		]
+		sym = camera [
+			init-camera obj rc
 		]
 		true [0]
 	]

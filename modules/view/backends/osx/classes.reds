@@ -55,6 +55,10 @@ add-table-view-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "tableView:objectValueForTableColumn:row:" as-integer :object-for-table "@20@0:4@8@12l16"
 ]
 
+add-camera-handler: func [class [integer!]][
+	0
+]
+
 add-app-delegate: func [class [integer!]][
 	class_addMethod class sel_getUid "applicationWillFinishLaunching:" as-integer :will-finish "v12@0:4@8"
 	class_addMethod class sel_getUid "applicationShouldTerminateAfterLastWindowClosed:" as-integer :destroy-app "B12@0:4@8"
@@ -97,6 +101,7 @@ register-classes: does [
 	make-super-class "RedTextView"		"NSTextView"			as-integer :add-area-handler yes
 	make-super-class "RedComboBox"		"NSComboBox"			as-integer :add-combo-box-handler yes
 	make-super-class "RedTableView"		"NSTableView"			as-integer :add-table-view-handler yes
+	make-super-class "RedCamera"		"NSView"				as-integer :add-camera-handler yes
 	make-super-class "RedScrollView"	"NSScrollView"			0	yes
 	make-super-class "RedBox"			"NSBox"					0	yes
 ]

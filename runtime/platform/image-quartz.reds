@@ -271,11 +271,20 @@ OS-image: context [
 			data	[byte-ptr!]
 			size	[integer!]
 			bmp		[integer!]
+			file	[integer!]
+			result	[integer!]
 	][
 		size: 0
 		data: null
-		;data: simple-io/read-data filename :size yes
-		if null? data [return -1]
+		file: simple-io/open-file filename simple-io/RIO_READ no
+		if file < 0 [return -1]
+		size: simple-io/file-size? file
+		if size <= 0 [simple-io/close-file file return -1]
+		data: allocate size
+		result: simple-io/read-data file data size
+		simple-io/close-file file
+
+		if any [result < 0 null? data][return -1]
 
 		bmp: load-binary data size
 		free data

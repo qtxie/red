@@ -428,6 +428,41 @@ change-data: func [
 	]
 ]
 
+change-selection: func [
+	hWnd   [integer!]
+	int	   [red-integer!]								;-- can be also none! | object!
+	values [red-value!]
+	/local
+		type	[red-word!]
+		sym		[integer!]
+		idx		[integer!]
+][
+	type: as red-word! values + FACE_OBJ_TYPE
+	sym: symbol/resolve type/symbol
+	idx: int/value - 1
+	case [
+		sym = camera [
+			either TYPE_OF(int) = TYPE_NONE [
+				toggle-preview hWnd false
+			][
+				select-camera hWnd idx
+				toggle-preview hWnd true
+			]
+		]
+		sym = text-list [
+			0
+		]
+		any [sym = drop-list sym = drop-down][
+			0
+		]
+		sym = tab-panel [
+			0
+		]
+		sym = window [0]
+		true [0]										;-- default, do nothing
+	]
+]
+
 same-type?: func [
 	obj		[integer!]
 	name	[c-string!]
@@ -514,26 +549,6 @@ init-window: func [
 	objc_msgSend [window sel_getUid "makeMainWindow"]
 
 	objc_msgSend [window sel_getUid "setDelegate:" window]
-]
-
-init-camera: func [
-	camera	[integer!]
-	rc		[NSRect!]
-	/local
-		devices	[integer!]
-		session [integer!]
-		preview [integer!]
-		layer	[integer!]
-][
-	rc/x: as float32! 0.0
-	rc/y: as float32! 0.0
-	red/platform/dlopen "/System/Library/Frameworks/AVFoundation.framework/Versions/Current/AVFoundation" RTLD_LAZY
-	session: objc_msgSend [objc_getClass "AVCaptureSession" sel_getUid "alloc"]
-	session: objc_msgSend [session sel_getUid "init"]
-	preview: objc_msgSend [objc_getClass "AVCaptureVideoPreviewLayer" sel_getUid "layerWithSession:" session]
-	objc_msgSend [preview sel_getUid "setFrame:" rc/x rc/y rc/w rc/h]
-	layer: objc_msgSend [camera sel_getUid "layer"]
-	objc_msgSend [layer sel_getUid "addSublayer:" preview]
 ]
 
 make-area: func [
@@ -798,7 +813,7 @@ OS-make-view: func [
 			objc_msgSend [obj sel_getUid "setDelegate:" obj]
 		]
 		sym = camera [
-			init-camera obj rc
+			init-camera obj rc data
 		]
 		true [0]
 	]
@@ -866,10 +881,10 @@ OS-update-view: func [
 	;	bool: as red-logic! values + FACE_OBJ_VISIBLE?
 	;	change-visible hWnd bool/value type
 	;]
-	;if flags and FACET_FLAG_SELECTED <> 0 [
-	;	int2: as red-integer! values + FACE_OBJ_SELECTED
-	;	change-selection hWnd int2 values
-	;]
+	if flags and FACET_FLAG_SELECTED <> 0 [
+		int2: as red-integer! values + FACE_OBJ_SELECTED
+		change-selection hWnd int2 values
+	]
 	;if flags and FACET_FLAG_FLAGS <> 0 [
 	;	SetWindowLong
 	;		as handle! hWnd

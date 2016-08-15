@@ -12,6 +12,10 @@ Red/System [
 
 #define RTLD_LAZY	1
 
+#define OBJC_ASSOCIATION_ASSIGN		0
+#define OBJC_ASSOCIATION_RETAIN		0301h
+#define OBJC_ASSOCIATION_COPY		0303h
+
 #define gestaltSystemVersion		1937339254			;-- "sysv"
 #define gestaltSystemVersion		1937339185			;-- "sys1"
 #define gestaltSystemVersion		1937339186			;-- "sys2"
@@ -180,6 +184,17 @@ tagSIZE: alias struct! [
 		]
 		objc_registerClassPair: "objc_registerClassPair" [
 			class		[integer!]
+			return:		[integer!]
+		]
+		objc_setAssociatedObject: "objc_setAssociatedObject" [
+			obj			[integer!]
+			key			[integer!]
+			value		[integer!]
+			policy		[integer!]
+		]
+		objc_getAssociatedObject: "objc_getAssociatedObject" [
+			obj			[integer!]
+			key			[integer!]
 			return:		[integer!]
 		]
 		sel_getUid: "sel_getUid" [

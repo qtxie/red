@@ -11,6 +11,7 @@ Red/System [
 ]
 
 #include %delegates.reds
+#include %camera.reds
 
 add-method!: alias function! [class [integer!]]
 

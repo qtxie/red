@@ -21,6 +21,7 @@ Red/System [
 
 NSApp:					0
 NSDefaultRunLoopMode:	0
+&_NSConcreteStackBlock: 0
 
 default-font:	0
 exit-loop:		0
@@ -185,17 +186,20 @@ set-defaults: func [][
 
 init: func [
 	/local
-		screen		[integer!]
-		rect		[NSRect!]
-		pool		[integer!]
-		delegate	[integer!]
-		appkit		[integer!]
-		p-int		[int-ptr!]
+		screen	 [integer!]
+		rect	 [NSRect!]
+		pool	 [integer!]
+		delegate [integer!]
+		lib		 [integer!]
+		p-int	 [int-ptr!]
 ][
-	appkit: red/platform/dlopen "/System/Library/Frameworks/AppKit.framework/Versions/Current/AppKit" RTLD_LAZY
-
-	p-int: red/platform/dlsym appkit "NSDefaultRunLoopMode"
+	lib: red/platform/dlopen "/System/Library/Frameworks/AppKit.framework/Versions/Current/AppKit" RTLD_LAZY
+	p-int: red/platform/dlsym lib "NSDefaultRunLoopMode"
 	NSDefaultRunLoopMode: p-int/value
+
+	lib: red/platform/dlopen "/System/Library/Frameworks/Foundation.framework/Versions/Current/Foundation" RTLD_LAZY
+	&_NSConcreteStackBlock: as-integer red/platform/dlsym lib "_NSConcreteStackBlock"
+
 	NSApp: objc_msgSend [objc_getClass "NSApplication" sel_getUid "sharedApplication"]
 
 	pool: objc_msgSend [objc_getClass "NSAutoreleasePool" sel_getUid "alloc"]
@@ -896,7 +900,13 @@ OS-update-view: func [
 		flags and FACET_FLAG_COLOR <> 0
 		flags and FACET_FLAG_IMAGE <> 0
 	][
-		objc_msgSend [hWnd sel_getUid "display"]
+		either type = camera [
+			snap-camera hWnd
+			values: values + FACE_OBJ_IMAGE
+			until [TYPE_OF(values) = TYPE_IMAGE]			;-- wait
+		][
+			objc_msgSend [hWnd sel_getUid "display"]
+		]
 	]
 	;if flags and FACET_FLAG_PANE <> 0 [
 	;	if tab-panel <> type [				;-- tab-panel/pane has custom z-order handling

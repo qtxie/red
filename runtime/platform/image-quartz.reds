@@ -229,10 +229,10 @@ OS-image: context [
 		copy-memory dst-buf src-buf + offset bytes
 	]
 
-	load-binary: func [
-		data	[byte-ptr!]
-		len		[integer!]
-		return: [integer!]
+	load-nsdata: func [
+		data		[integer!]
+		release?	[logic!]
+		return: 	[integer!]
 		/local
 			color-space [integer!]
 			width		[integer!]
@@ -240,12 +240,10 @@ OS-image: context [
 			ctx			[integer!]
 			rect		[NSRect!]
 			bytes-row	[integer!]
-			src			[integer!]
 			image-data	[integer!]
 			image		[integer!]
 	][
-		src: CFDataCreate 0 data len
-		image-data: CGImageSourceCreateWithData src 0
+		image-data: CGImageSourceCreateWithData data 0
 		image: CGImageSourceCreateImageAtIndex image-data 0 0
 
 		color-space: CGColorSpaceCreateDeviceRGB
@@ -259,9 +257,17 @@ OS-image: context [
 
 		CGColorSpaceRelease color-space
 		CGImageRelease image
-		CFRelease src
+		if release? [CFRelease data]
 		CFRelease image-data
 		ctx
+	]
+
+	load-binary: func [
+		data	[byte-ptr!]
+		len		[integer!]
+		return: [integer!]
+	][
+		load-nsdata CFDataCreate 0 data len yes
 	]
 
 	load-image: func [

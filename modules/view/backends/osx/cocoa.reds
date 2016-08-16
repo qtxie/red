@@ -237,6 +237,15 @@ tagSIZE: alias struct! [
 		objc_msgSendSuper: "objc_msgSendSuper" [[variadic] return: [integer!]]
 		objc_msgSend_fpret: "objc_msgSend_fpret" [[variadic] return: [float!]]
 		objc_msgSend_stret: "objc_msgSend_stret" [obj [integer!] sel [integer!]]
+		_Block_object_assign: "_Block_object_assign" [
+			destAddr	[integer!]
+			obj			[integer!]
+			flags		[integer!]
+		]
+		_Block_object_dispose: "_Block_object_dispose" [
+			obj			[integer!]
+			flags		[integer!]
+		]
 	]
 	"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation" cdecl [
 		CFStringCreateWithCString: "CFStringCreateWithCString" [
@@ -420,6 +429,15 @@ tagSIZE: alias struct! [
 			image		[integer!]
 		]
 	]
+]
+
+#define BLOCK_FIELD_IS_OBJECT	3
+
+objc_block_descriptor: declare struct! [
+	reserved		[integer!]
+	size			[integer!]
+	copy_helper		[function! [dst [int-ptr!] src [int-ptr!]]]
+	dispose_helper	[function! [src [int-ptr!]]]
 ]
 
 get-super-obj: func [

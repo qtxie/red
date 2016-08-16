@@ -17,8 +17,11 @@ Red/System [
 RedCameraSessionKey:	4000FFF0h
 RedCameraDevicesKey:	4000FFF1h
 RedCameraDevInputKey:	4000FFF2h
+RedCameraImageKey:		4000FFF3h
 
 AVMediaTypeVideo:		0
+AVVideoCodecKey:		0
+AVVideoCodecJPEG:		0
 
 init-camera: func [
 	camera	[integer!]
@@ -38,6 +41,8 @@ init-camera: func [
 		size	[integer!]
 		str		[red-string!]
 		cstr	[c-string!]
+		img-out [integer!]
+		setting [integer!]
 ][
 	rc/x: as float32! 0.0
 	rc/y: as float32! 0.0
@@ -45,6 +50,10 @@ init-camera: func [
 		av-lib: red/platform/dlopen "/System/Library/Frameworks/AVFoundation.framework/Versions/Current/AVFoundation" RTLD_LAZY
 		p-int: red/platform/dlsym av-lib "AVMediaTypeVideo"
 		AVMediaTypeVideo: p-int/value
+		p-int: red/platform/dlsym av-lib "AVVideoCodecKey"
+		AVVideoCodecKey: p-int/value
+		p-int: red/platform/dlsym av-lib "AVVideoCodecJPEG"
+		AVVideoCodecJPEG: p-int/value
 	]
 
 	;-- get all devices name
@@ -67,8 +76,18 @@ init-camera: func [
 	session: objc_msgSend [objc_getClass "AVCaptureSession" sel_getUid "alloc"]
 	session: objc_msgSend [session sel_getUid "init"]
 
+	objc_msgSend [session sel_getUid "beginConfiguration"]
+	img-out: objc_msgSend [objc_getClass "AVCaptureStillImageOutput" sel_getUid "alloc"]
+	img-out: objc_msgSend [img-out sel_getUid "init"]
+	setting: objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
+	setting: objc_msgSend [setting sel_getUid "initWithObjectsAndKeys:" AVVideoCodecJPEG AVVideoCodecKey 0]
+	objc_msgSend [img-out sel_getUid "setOutputSettings:" setting]
+	objc_msgSend [session sel_getUid "addOutput:" img-out]
+	objc_msgSend [session sel_getUid "commitConfiguration"]
+
 	objc_setAssociatedObject camera RedCameraSessionKey session OBJC_ASSOCIATION_ASSIGN
 	objc_setAssociatedObject camera RedCameraDevicesKey devices OBJC_ASSOCIATION_RETAIN
+	objc_setAssociatedObject camera RedCameraImageKey   img-out OBJC_ASSOCIATION_ASSIGN
 
 	preview: objc_msgSend [objc_getClass "AVCaptureVideoPreviewLayer" sel_getUid "layerWithSession:" session]
 	objc_msgSend [preview sel_getUid "setFrame:" rc/x rc/y rc/w rc/h]
@@ -116,5 +135,65 @@ toggle-preview: func [
 		objc_msgSend [session sel_getUid "startRunning"]
 	][
 		objc_msgSend [session sel_getUid "stopRunning"]
+	]
+]
+
+still-image-handler: func [
+	[cdecl]
+	block	[int-ptr!]
+	buffer	[integer!]
+	error	[integer!]
+	/local
+		values	[red-value!]
+		data	[integer!]
+][
+	values: as red-value! block/6
+	data: objc_msgSend [
+		objc_getClass "AVCaptureStillImageOutput"
+		sel_getUid "jpegStillImageNSDataRepresentation:"
+		buffer
+	]
+	image/init-image
+		as red-image! values + FACE_OBJ_IMAGE
+		OS-image/load-nsdata data no
+]
+
+snap-camera: func [				;-- capture an image of current preview window
+	camera		[integer!]
+	/local
+		values		[integer!]
+		descriptor	[integer!]
+		invoke		[integer!]
+		reserved	[integer!]
+		flags		[integer!]
+		isa			[integer!]
+		image		[integer!]
+		connection	[integer!]
+		layer		[integer!]
+		orientation [integer!]
+][
+	objc_block_descriptor/reserved: 0
+	objc_block_descriptor/size: 4 * 6
+
+	isa: &_NSConcreteStackBlock
+	flags: 1 << 29				;-- BLOCK_HAS_DESCRIPTOR, no copy and dispose helpers
+	reserved: 0
+	invoke: as-integer :still-image-handler
+	descriptor: as-integer objc_block_descriptor
+	values: as-integer get-face-values camera
+	image: objc_getAssociatedObject camera RedCameraImageKey
+	connection: objc_msgSend [image sel_getUid "connectionWithMediaType:" AVMediaTypeVideo]
+
+	;-- Update the orientation on the still image output video connection before capturing
+	;layer: objc_msgSend [camera sel_getUid "layer"]
+	;orientation: objc_msgSend [layer sel_getUid "connection"]
+	;orientation: objc_msgSend [orientation sel_getUid "videoOrientation"]
+	;objc_msgSend [connection sel_getUid "setVideoOrientation:" orientation]
+
+	objc_msgSend [
+		image
+		sel_getUid "captureStillImageAsynchronouslyFromConnection:completionHandler:"
+		connection
+		:isa
 	]
 ]

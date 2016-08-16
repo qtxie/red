@@ -107,11 +107,10 @@ image: context [
 		handle  [integer!]
 		return: [red-image!]
 	][
-		img/header: TYPE_IMAGE							;-- implicit reset of all header flags
 		img/head: 0
-
 		img/size: (OS-image/height? handle) << 16 or OS-image/width? handle
 		img/node: as node! handle
+		img/header: TYPE_IMAGE							;-- implicit reset of all header flags
 		img
 	]
 	

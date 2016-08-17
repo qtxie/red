@@ -22,6 +22,9 @@ Red/System [
 NSApp:					0
 NSDefaultRunLoopMode:	0
 &_NSConcreteStackBlock: 0
+NSFontAttributeName:	0
+NSParagraphStyleAttributeName: 0
+NSForegroundColorAttributeName: 0
 
 default-font:	0
 exit-loop:		0
@@ -180,7 +183,7 @@ get-os-version: func [
 
 set-defaults: func [][
 	default-font: objc_msgSend [
-		objc_getClass "NSFont" sel_getUid "systemFontOfSize:" as float32! 0.0
+		objc_getClass "NSFont" sel_getUid "systemFontOfSize:" 0
 	]
 ]
 
@@ -196,6 +199,12 @@ init: func [
 	lib: red/platform/dlopen "/System/Library/Frameworks/AppKit.framework/Versions/Current/AppKit" RTLD_LAZY
 	p-int: red/platform/dlsym lib "NSDefaultRunLoopMode"
 	NSDefaultRunLoopMode: p-int/value
+	p-int: red/platform/dlsym lib "NSFontAttributeName"
+	NSFontAttributeName: p-int/value
+	p-int: red/platform/dlsym lib "NSParagraphStyleAttributeName"
+	NSParagraphStyleAttributeName: p-int/value
+	p-int: red/platform/dlsym lib "NSForegroundColorAttributeName"
+	NSForegroundColorAttributeName: p-int/value
 
 	lib: red/platform/dlopen "/System/Library/Frameworks/Foundation.framework/Versions/Current/Foundation" RTLD_LAZY
 	&_NSConcreteStackBlock: as-integer red/platform/dlsym lib "_NSConcreteStackBlock"
@@ -216,6 +225,8 @@ init: func [
 	rect: as NSRect! (as int-ptr! screen) + 1
 	screen-size-x: as-integer rect/w
 	screen-size-y: as-integer rect/h
+
+	set-defaults
 ]
 
 set-selected-focus: func [

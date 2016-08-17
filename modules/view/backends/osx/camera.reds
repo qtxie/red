@@ -7,6 +7,10 @@ Red/System [
 		For 10.9+, use AVFoundation, iOS would also use it.
 		For 10.0 ~ 10.8, use QTKit.
 	}
+	References: {
+		https://developer.apple.com/library/ios/samplecode/AVCam/Listings/AVCam_AAPLCameraViewController_m.html#//apple_ref/doc/uid/DTS40010112-AVCam_AAPLCameraViewController_m-DontLinkElementID_6
+		https://opensource.apple.com/source/libclosure/libclosure-38/BlockImplementation.txt
+	}
 	Rights: "Copyright (C) 2016 Qingtian Xie. All rights reserved."
 	License: {
 		Distributed under the Boost Software License, Version 1.0.

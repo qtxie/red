@@ -112,6 +112,10 @@ Red/System [
 #define kCGPathFillStroke			3
 #define kCGPathEOFillStroke			4
 
+#define NSTextAlignmentLeft			0
+#define NSTextAlignmentRight		1
+#define NSTextAlignmentCenter		2
+
 #define NSASCIIStringEncoding		1
 #define NSUTF8StringEncoding		4
 #define NSISOLatin1StringEncoding	5
@@ -433,6 +437,7 @@ tagSIZE: alias struct! [
 
 #define BLOCK_FIELD_IS_OBJECT	3
 
+;-- https://opensource.apple.com/source/libclosure/libclosure-38/BlockImplementation.txt
 objc_block_descriptor: declare struct! [
 	reserved		[integer!]
 	size			[integer!]
@@ -471,5 +476,25 @@ to-NSString: func [str [red-string!] return: [integer!] /local len][
 		objc_getClass "NSString"
 		sel_getUid "stringWithUTF8String:"
 		unicode/to-utf8 str :len
+	]
+]
+
+to-NSColor: func [
+	color	[integer!]
+	return: [integer!]
+	/local
+		r	[float32!]
+		g	[float32!]
+		b	[float32!]
+		a	[float32!]
+][
+	r: (as float32! color and FFh) / 255.0
+	g: (as float32! color >> 8 and FFh) / 255.0
+	b: (as float32! color >> 16 and FFh) / 255.0
+	a: (as float32! 255 - (color >>> 24)) / 255.0
+	objc_msgSend [
+		objc_getClass "NSColor"
+		sel_getUid "colorWithCalibratedRed:green:blue:alpha:"
+		r g b a
 	]
 ]

@@ -348,6 +348,7 @@ win-will-close: func [
 	/local
 		res [integer!]
 ][
+		probe objc_msgSend [NSApp sel_getUid "mainMenu"]
 	res: make-event self 0 EVT_CLOSE
 ]
 

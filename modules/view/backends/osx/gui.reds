@@ -18,6 +18,7 @@ Red/System [
 #include %draw.reds
 
 #include %classes.reds
+#include %menu.reds
 
 NSApp:					0
 NSDefaultRunLoopMode:	0
@@ -220,6 +221,8 @@ init: func [
 	delegate: objc_msgSend [objc_getClass "RedAppDelegate" sel_getUid "alloc"]
 	delegate: objc_msgSend [delegate sel_getUid "init"]
 	objc_msgSend [NSApp sel_getUid "setDelegate:" delegate]
+
+	create-main-menu
 
 	screen: objc_msgSend [objc_getClass "NSScreen" sel_getUid "mainScreen"]
 	rect: as NSRect! (as int-ptr! screen) + 1
@@ -797,6 +800,10 @@ OS-make-view: func [
 		sym = window [
 			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y
 			init-window obj caption rc
+			if menu-bar? menu window [						;@@ application menu ?
+			?? NSApp
+				build-menu menu objc_msgSend [NSApp sel_getUid "mainMenu"]
+			]
 		]
 		sym = slider [
 			len: either size/x > size/y [size/x][size/y]

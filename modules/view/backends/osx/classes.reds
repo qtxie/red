@@ -20,6 +20,10 @@ add-base-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "drawRect:" as-integer :draw-rect "v@:{_NSRect=ffff}"
 ]
 
+add-menu-handler: func [class [integer!]][
+	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
+]
+
 add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
 	class_addMethod class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
@@ -93,6 +97,7 @@ make-super-class: func [
 register-classes: does [
 	make-super-class "RedAppDelegate"	"NSObject"				as-integer :add-app-delegate	no
 	make-super-class "RedView"			"NSView"				as-integer :flipp-coord			no
+	make-super-class "RedMenu"			"NSMenu"				as-integer :add-menu-handler	yes
 	make-super-class "RedBase"			"NSView"				as-integer :add-base-handler	yes
 	make-super-class "RedWindow"		"NSWindow"				as-integer :add-window-handler	yes
 	make-super-class "RedButton"		"NSButton"				as-integer :add-button-handler	yes

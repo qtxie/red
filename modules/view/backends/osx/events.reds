@@ -437,7 +437,7 @@ make-event: func [
 		EVT_MIDDLE_UP
 		EVT_DBL_CLICK [0]
 		EVT_CLICK [0]
-		EVT_MENU [0]		;-- symbol ID of the menu
+		EVT_MENU [gui-evt/flags: flags and FFFFh]		;-- symbol ID of the menu
 		EVT_CLOSE [
 			exit-loop: exit-loop - 1
 		]

@@ -21,6 +21,7 @@ Red/System [
 #include %menu.reds
 
 NSApp:					0
+AppMainMenu:			0
 NSDefaultRunLoopMode:	0
 &_NSConcreteStackBlock: 0
 NSFontAttributeName:	0
@@ -800,9 +801,13 @@ OS-make-view: func [
 		sym = window [
 			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y
 			init-window obj caption rc
-			if menu-bar? menu window [						;@@ application menu ?
-			?? NSApp
-				build-menu menu objc_msgSend [NSApp sel_getUid "mainMenu"]
+			if all [						;@@ application menu ?
+				zero? AppMainMenu
+				menu-bar? menu window
+			][
+				AppMainMenu: objc_msgSend [NSApp sel_getUid "mainMenu"]
+				store-face-to-obj AppMainMenu objc_getClass "RedMenu" face
+				build-menu menu AppMainMenu
 			]
 		]
 		sym = slider [

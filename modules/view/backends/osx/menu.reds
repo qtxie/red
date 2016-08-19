@@ -10,10 +10,17 @@ Red/System [
 	}
 ]
 
-menu-selected:	-1										;-- last selected menu item ID
-menu-handle: 	as handle! 0							;-- last selected menu handle
-menu-origin:	as handle! 0							;-- window where context menu was opened from
-menu-ctx:		as handle! 0							;-- context menu handle
+red-menu-action: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	sender	[integer!]
+	/local
+		id	[integer!]
+][
+	id: objc_msgSend [sender sel_getUid "tag"]
+	make-event self id EVT_MENU
+]
 
 create-main-menu: func [
 	/local
@@ -24,7 +31,7 @@ create-main-menu: func [
 		app-item	[integer!]
 ][
 	empty-str: NSString("")
-	main-menu: objc_msgSend [objc_getClass "NSMenu" sel_getUid "alloc"]
+	main-menu: objc_msgSend [objc_getClass "RedMenu" sel_getUid "alloc"]
 	main-menu: objc_msgSend [main-menu sel_getUid "initWithTitle:" NSString("NSAppleMenu")]
 	
 	apple-menu: objc_msgSend [objc_getClass "NSMenu" sel_getUid "alloc"]
@@ -55,6 +62,7 @@ build-menu: func [
 		w		 [red-word!]
 		title	 [integer!]
 		key		 [integer!]
+		action	 [integer!]
 ][
 	if TYPE_OF(menu) <> TYPE_BLOCK [return null] 
 
@@ -62,6 +70,7 @@ build-menu: func [
 	tail:  block/rs-tail menu
 
 	key: NSString("")
+	action: sel_getUid "red-menu-action:"
 	while [value < tail][
 		switch TYPE_OF(value) [
 			TYPE_STRING [
@@ -72,8 +81,9 @@ build-menu: func [
 				item: objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "alloc"]
 				item: objc_msgSend [
 					item sel_getUid "initWithTitle:action:keyEquivalent:"
-					title 0 key
+					title action key
 				]
+				objc_msgSend [item sel_getUid "setTarget:" AppMainMenu]
 				if next < tail [
 					switch TYPE_OF(next) [
 						TYPE_BLOCK [
@@ -85,6 +95,7 @@ build-menu: func [
 						]
 						TYPE_WORD [
 							w: as red-word! next
+							objc_msgSend [item sel_getUid "setTag:" w/symbol]
 							value: value + 1
 						]
 						default [0]

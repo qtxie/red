@@ -31,7 +31,7 @@ create-main-menu: func [
 		app-item	[integer!]
 ][
 	empty-str: NSString("")
-	main-menu: objc_msgSend [objc_getClass "RedMenu" sel_getUid "alloc"]
+	main-menu: objc_msgSend [objc_getClass "NSMenu" sel_getUid "alloc"]
 	main-menu: objc_msgSend [main-menu sel_getUid "initWithTitle:" NSString("NSAppleMenu")]
 	
 	apple-menu: objc_msgSend [objc_getClass "NSMenu" sel_getUid "alloc"]
@@ -51,6 +51,7 @@ create-main-menu: func [
 build-menu: func [
 	menu	[red-block!]
 	hMenu	[integer!]
+	target	[integer!]
 	return: [integer!]
 	/local
 		item	 [integer!]
@@ -83,7 +84,7 @@ build-menu: func [
 					item sel_getUid "initWithTitle:action:keyEquivalent:"
 					title action key
 				]
-				objc_msgSend [item sel_getUid "setTarget:" AppMainMenu]
+				objc_msgSend [item sel_getUid "setTarget:" target]
 				if next < tail [
 					switch TYPE_OF(next) [
 						TYPE_BLOCK [
@@ -116,6 +117,21 @@ build-menu: func [
 	hMenu
 ]
 
+set-context-menu: func [
+	obj		[integer!]
+	menu	[red-block!]
+	/local
+		hMenu		[integer!]
+		empty-str	[integer!]
+][
+	empty-str: NSString("")
+	hMenu: objc_msgSend [objc_getClass "NSMenu" sel_getUid "alloc"]
+	hMenu: objc_msgSend [hMenu sel_getUid "initWithTitle:" empty-str]
+	build-menu menu hMenu obj
+	objc_msgSend [obj sel_getUid "setMenu:" hMenu]
+	objc_msgSend [hMenu sel_getUid "release"]
+]
+
 menu-bar?: func [
 	spec	[red-block!]
 	type	[integer!]
@@ -136,64 +152,3 @@ menu-bar?: func [
 	]
 	no
 ]
-
-;show-context-menu: func [
-;	msg		[tagMSG]
-;	x		[integer!]
-;	y		[integer!]
-;	return: [logic!]									;-- TRUE: menu displayed
-;	/local
-;		values [red-value!]
-;		spec   [red-block!]
-;		w	   [red-word!]
-;		hWnd   [handle!]
-;		hMenu  [handle!]
-;][
-	;values: get-facets msg
-	;spec: as red-block! values + FACE_OBJ_MENU
-	;menu-selected: -1
-	;menu-handle: null
-
-	;if TYPE_OF(spec) = TYPE_BLOCK [
-	;	w: as red-word! values + FACE_OBJ_TYPE
-	;	if menu-bar? spec symbol/resolve w/symbol [
-	;		return no
-	;	]
-	;	hWnd: GetParent msg/hWnd
-	;	if null? hWnd [hWnd: msg/hWnd]
-	;	menu-origin: msg/hWnd
-
-	;	hMenu: build-menu spec CreatePopupMenu
-	;	menu-ctx: hMenu
-	;	TrackPopupMenuEx hMenu 0 x y GetParent msg/hWnd null
-	;	return yes
-	;]
-;	no
-;]
-
-;get-menu-id: func [
-;	hMenu	[handle!]
-;	pos		[integer!]
-;	return: [integer!]
-;	/local
-;		item [MENUITEMINFO]
-;][
-;	item: declare MENUITEMINFO 
-;	item/cbSize:  size? MENUITEMINFO
-;	item/fMask:	  MIIM_DATA
-;	GetMenuItemInfo hMenu pos true item
-;	return item/dwItemData
-;]
-
-;do-menu: func [
-;	hWnd [handle!]
-;	/local
-;		res	[integer!]
-;][
-;	res: get-menu-id menu-handle menu-selected
-;	if null? menu-origin [menu-origin: hWnd]
-;	current-msg/hWnd: menu-origin
-;	make-event current-msg res EVT_MENU
-;	unless null? menu-ctx [DestroyMenu menu-ctx]		;-- recursive destruction
-;	menu-origin: null
-;]

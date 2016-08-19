@@ -798,6 +798,12 @@ OS-make-view: func [
 				set-logic-state obj as red-logic! data no
 			]
 		]
+		any [
+			sym = panel
+			sym = base
+		][
+			if TYPE_OF(menu) = TYPE_BLOCK [set-context-menu obj menu]
+		]
 		sym = window [
 			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y
 			init-window obj caption rc
@@ -806,8 +812,7 @@ OS-make-view: func [
 				menu-bar? menu window
 			][
 				AppMainMenu: objc_msgSend [NSApp sel_getUid "mainMenu"]
-				store-face-to-obj AppMainMenu objc_getClass "RedMenu" face
-				build-menu menu AppMainMenu
+				build-menu menu AppMainMenu obj
 			]
 		]
 		sym = slider [

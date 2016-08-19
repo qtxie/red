@@ -18,9 +18,6 @@ add-method!: alias function! [class [integer!]]
 add-base-handler: func [class [integer!]][
 	flipp-coord class
 	class_addMethod class sel_getUid "drawRect:" as-integer :draw-rect "v@:{_NSRect=ffff}"
-]
-
-add-menu-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
 ]
 
@@ -30,6 +27,7 @@ add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "keyDown:" as-integer :on-key-down "v@:@"
 	class_addMethod class sel_getUid "keyUp:" as-integer :on-key-up "v@:@"
 	class_addMethod class sel_getUid "windowWillClose:" as-integer :win-will-close "v12@0:4@8"
+	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
 ]
 
 add-button-handler: func [class [integer!]][
@@ -97,7 +95,6 @@ make-super-class: func [
 register-classes: does [
 	make-super-class "RedAppDelegate"	"NSObject"				as-integer :add-app-delegate	no
 	make-super-class "RedView"			"NSView"				as-integer :flipp-coord			no
-	make-super-class "RedMenu"			"NSMenu"				as-integer :add-menu-handler	yes
 	make-super-class "RedBase"			"NSView"				as-integer :add-base-handler	yes
 	make-super-class "RedWindow"		"NSWindow"				as-integer :add-window-handler	yes
 	make-super-class "RedButton"		"NSButton"				as-integer :add-button-handler	yes

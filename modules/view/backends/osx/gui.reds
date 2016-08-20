@@ -369,6 +369,36 @@ make-rect: func [
     r
 ]
 
+change-size: func [
+	hWnd [integer!]
+	size [red-pair!]
+	type [integer!]
+	/local
+		rc [NSRect!]
+][
+	rc: make-rect size/x size/y 0 0
+	either type = window [
+		0
+	][
+		objc_msgSend [hWnd sel_getUid "setFrameSize:" rc/x rc/y]
+	]
+]
+
+change-offset: func [
+	hWnd [integer!]
+	pos  [red-pair!]
+	type [integer!]
+	/local
+		rc [NSRect!]
+][
+	rc: make-rect pos/x pos/y 0 0
+	either type = window [
+		objc_msgSend [hWnd sel_getUid "setFrameTopLeftPoint:" rc/x rc/y]
+	][
+		objc_msgSend [hWnd sel_getUid "setFrameOrigin:" rc/x rc/y]
+	]
+]
+
 change-text: func [
 	hWnd	[integer!]
 	values	[red-value!]
@@ -828,7 +858,7 @@ OS-make-view: func [
 			flt: as-float len
 			objc_msgSend [obj sel_getUid "setMaxValue:" flt]
 			flt: get-position-value as red-float! data flt
-			objc_msgSend [obj sel_getUid "setFloatValue:" flt]
+			objc_msgSend [obj sel_getUid "setDoubleValue:" flt]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]
 			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "slider-change:"]
 		]
@@ -898,12 +928,12 @@ OS-update-view: func [
 	int: int + 1
 	flags: int/value
 
-	;if flags and FACET_FLAG_OFFSET <> 0 [
-	;	change-offset hWnd as red-pair! values + FACE_OBJ_OFFSET type
-	;]
-	;if flags and FACET_FLAG_SIZE <> 0 [
-	;	change-size hWnd as red-pair! values + FACE_OBJ_SIZE type
-	;]
+	if flags and FACET_FLAG_OFFSET <> 0 [
+		change-offset hWnd as red-pair! values + FACE_OBJ_OFFSET type
+	]
+	if flags and FACET_FLAG_SIZE <> 0 [
+		change-size hWnd as red-pair! values + FACE_OBJ_SIZE type
+	]
 	if flags and FACET_FLAG_TEXT <> 0 [
 		change-text hWnd values type
 	]

@@ -482,9 +482,6 @@ do-events: func [
 	msg?: no
 	timeout: either no-wait? [0][
 		exit-loop: exit-loop + 1
-		
-		objc_msgSend [NSApp sel_getUid "setActivationPolicy:" 0]
-		objc_msgSend [NSApp sel_getUid "finishLaunching"]
 		objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
 		objc_msgSend [objc_getClass "NSDate" sel_getUid "distantFuture"]	
 	]

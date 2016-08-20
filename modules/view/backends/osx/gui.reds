@@ -232,6 +232,9 @@ init: func [
 	screen-size-y: as-integer rect/h
 
 	set-defaults
+
+	objc_msgSend [NSApp sel_getUid "setActivationPolicy:" 0]
+	objc_msgSend [NSApp sel_getUid "finishLaunching"]
 ]
 
 set-selected-focus: func [

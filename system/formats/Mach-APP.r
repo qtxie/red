@@ -64,7 +64,7 @@ packager: context [
 		make-dir/deep bin-dir
 		make-dir/deep res-dir
 
-		copy-file file bin-dir/:name
+		copy-files file bin-dir/:name
 		delete file
 		copy-file %bridges/osx/Resources/AppIcon.icns res-dir/AppIcon.icns
 

@@ -21,6 +21,18 @@ add-base-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
 ]
 
+add-subview: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	view	[integer!]
+][
+	objc_msgSend [
+		objc_msgSend [self sel_getUid "contentView"]
+		sel_getUid "addSubview:" view
+	]
+]
+
 add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
 	class_addMethod class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
@@ -28,6 +40,7 @@ add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "keyUp:" as-integer :on-key-up "v@:@"
 	class_addMethod class sel_getUid "windowWillClose:" as-integer :win-will-close "v12@0:4@8"
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
+	class_addMethod class sel_getUid "addSubview:" as-integer :add-subview "v12@0:4@8"
 ]
 
 add-button-handler: func [class [integer!]][
@@ -60,6 +73,10 @@ add-table-view-handler: func [class [integer!]][
 
 add-camera-handler: func [class [integer!]][
 	0
+]
+
+add-tabview-handler: func [class [integer!]][
+	class_addMethod class sel_getUid "tabView:willSelectTabViewItem:" as-integer :tabview-will-select "v16@0:4@8@12"
 ]
 
 add-app-delegate: func [class [integer!]][
@@ -105,6 +122,7 @@ register-classes: does [
 	make-super-class "RedComboBox"		"NSComboBox"			as-integer :add-combo-box-handler yes
 	make-super-class "RedTableView"		"NSTableView"			as-integer :add-table-view-handler yes
 	make-super-class "RedCamera"		"NSView"				as-integer :add-camera-handler yes
+	make-super-class "RedTabView"		"NSTabView"				as-integer :add-tabview-handler yes
 	make-super-class "RedScrollView"	"NSScrollView"			0	yes
 	make-super-class "RedBox"			"NSBox"					0	yes
 ]

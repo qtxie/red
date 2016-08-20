@@ -19,6 +19,7 @@ Red/System [
 
 #include %classes.reds
 #include %menu.reds
+#include %tab-panel.reds
 
 NSApp:					0
 AppMainMenu:			0
@@ -89,7 +90,7 @@ face-handle?: func [
 
 get-face-handle: func [
 	face	[red-object!]
-	return: [handle!]
+	return: [integer!]
 	/local
 		state [red-block!]
 		int	  [red-integer!]
@@ -98,7 +99,7 @@ get-face-handle: func [
 	assert TYPE_OF(state) = TYPE_BLOCK
 	int: as red-integer! block/rs-head state
 	assert TYPE_OF(int) = TYPE_INTEGER
-	as handle! int/value
+	int/value
 ]
 
 get-child-from-xy: func [
@@ -694,7 +695,6 @@ OS-make-view: func [
 		len		  [integer!]
 		obj		  [integer!]
 		rc		  [NSRect!]
-		view	  [integer!]
 		flt		  [float!]
 ][
 	stack/mark-func words/_body
@@ -732,6 +732,7 @@ OS-make-view: func [
 			flags: NSRadioButton
 		]
 		sym = window [class: "RedWindow"]
+		sym = tab-panel [class: "RedTabView"]
 		any [
 			sym = panel
 			sym = base
@@ -804,6 +805,10 @@ OS-make-view: func [
 		][
 			if TYPE_OF(menu) = TYPE_BLOCK [set-context-menu obj menu]
 		]
+		sym = tab-panel [
+			set-tabs obj values
+			objc_msgSend [obj sel_getUid "setDelegate:" obj]
+		]
 		sym = window [
 			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y
 			init-window obj caption rc
@@ -850,12 +855,8 @@ OS-make-view: func [
 		true [0]
 	]
 
-	if all [
-		sym <> window
-		parent <> 0
-	][
-		view: objc_msgSend [parent sel_getUid "contentView"]
-		objc_msgSend [view sel_getUid "addSubview:" obj]	;-- `addSubView:` will retain the obj
+	if parent <> 0 [
+		objc_msgSend [parent sel_getUid "addSubview:" obj]	;-- `addSubView:` will retain the obj
 		objc_msgSend [obj sel_getUid "release"]
 	]
 
@@ -971,7 +972,7 @@ OS-destroy-view: func [
 		obj	   [red-object!]
 		flags  [integer!]
 ][
-	handle: as-integer get-face-handle face
+	handle: get-face-handle face
 	values: object/get-values face
 	flags: get-flags as red-block! values + FACE_OBJ_FLAGS
 	if flags and FACET_FLAGS_MODAL <> 0 [

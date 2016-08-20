@@ -584,6 +584,10 @@ show: function [
 				do-safe [face/actors/on-create face none]
 			]
 			p: either with [parent/state/1][0]
+			if all [face/type = 'tab-panel face/pane][
+				link-tabs-to-parent face
+				foreach f face/pane [show f]
+			]
 			obj: system/view/platform/make-view face p
 			if with [face/parent: parent]
 			
@@ -597,24 +601,21 @@ show: function [
 				]
 			]
 			
-			switch face/type [
-				tab-panel [link-tabs-to-parent face]
-				window	  [
-					pane: system/view/screens/1/pane
-					if find-flag? face/flags 'modal [
-						foreach f head pane [
-							f/enable?: no
-							unless system/view/auto-sync? [show f]
-						]
+			if face/type = 'window [
+				pane: system/view/screens/1/pane
+				if find-flag? face/flags 'modal [
+					foreach f head pane [
+						f/enable?: no
+						unless system/view/auto-sync? [show f]
 					]
-					append pane face
 				]
+				append pane face
 			]
 		]
 		face/state: reduce [obj 0 none false]
 	]
 
-	if face/pane [
+	if all [face/type <> 'tab-panel face/pane] [
 		foreach f face/pane [show/with f face]
 		system/view/platform/refresh-window face/state/1
 	]

@@ -351,6 +351,16 @@ win-will-close: func [
 	res: make-event self 0 EVT_CLOSE
 ]
 
+tabview-will-select: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	tabview	[integer!]
+	item	[integer!]
+][
+	probe "will select"
+]
+
 ;font-line-height: func [
 ;	hFont	[integer!]
 ;	return: [float32!]

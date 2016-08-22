@@ -320,6 +320,33 @@ object-for-table: func [
 	to-NSString as red-string! block/rs-abs-at data idx
 ]
 
+table-cell-edit: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	obj		[integer!]
+	column	[integer!]
+	row		[integer!]
+	return: [logic!]
+][
+	no
+]
+
+table-select-did-change: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+	/local
+		res [integer!]
+][
+	res: make-event self 0 EVT_SELECT
+	set-selected self 1 + objc_msgSend [self sel_getUid "selectedRow"]
+	if res = EVT_DISPATCH [
+		make-event self 0 EVT_CHANGE
+	]
+]
+
 will-finish: func [
 	[cdecl]
 	self	[integer!]

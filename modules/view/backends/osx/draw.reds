@@ -346,19 +346,19 @@ OS-draw-spline: func [
 			t: t + delta
 			t2: t * t
 			t3: t2 * t
-			x: (as float32! 2.0) * p1/x + ((as float32! 0.0 - p0/x) + p2/x * t) +
+			x: (as float32! 2.0) * p1/x + (p2/x - p0/x * t) +
 			   (((as float32! 2.0) * p0/x - ((as float32! 5.0) * p1/x) + ((as float32! 4.0) * p2/x) - p3/x) * t2) +
-			   (((as float32! 0.0) - p0/x + ((as float32! 3.0) * p1/x)- ((as float32! 3.0) * p2/x) + p3/x) * t3) * 0.5
-			y: (as float32! 2.0) * p1/y + ((as float32! 0.0 - p0/y) + p2/y * t) +
+			   ((as float32! 3.0) * (p1/x - p2/x) + p3/x - p0/x * t3) * 0.5
+			y: (as float32! 2.0) * p1/y + (p2/y - p0/y * t) +
 			   (((as float32! 2.0) * p0/y - ((as float32! 5.0) * p1/y) + ((as float32! 4.0) * p2/y) - p3/y) * t2) +
-			   (((as float32! 0.0) - p0/y + ((as float32! 3.0) * p1/y)- ((as float32! 3.0) * p2/y) + p3/y) * t3) * 0.5
+			   ((as float32! 3.0) * (p1/y - p2/y) + p3/y - p0/y * t3) * 0.5
 			CGContextAddLineToPoint ctx x y
 			n: n + 1
 			n = 25
 		]
 		i: i + 1
 	]
-	CGContextStrokePath ctx
+	do-draw-path dc
 ]
 
 do-draw-ellipse: func [

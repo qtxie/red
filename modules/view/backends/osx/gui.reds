@@ -461,14 +461,12 @@ change-data: func [
 		;type = tab-panel [
 		;	set-tabs hWnd get-face-values hWnd
 		;]
-		;type = text-list [
-		;	if TYPE_OF(data) = TYPE_BLOCK [
-		;		init-text-list 
-		;			hWnd
-		;			as red-block! data
-		;			as red-integer! values + FACE_OBJ_SELECTED
-		;	]
-		;]
+		all [
+			type = text-list
+			TYPE_OF(data) = TYPE_BLOCK
+		][
+			objc_msgSend [objc_msgSend [hWnd sel_getUid "documentView"] sel_getUid "reloadData"]
+		]
 		any [type = drop-list type = drop-down][
 			init-combo-box 
 				hWnd
@@ -484,17 +482,15 @@ change-data: func [
 change-selection: func [
 	hWnd   [integer!]
 	int	   [red-integer!]								;-- can be also none! | object!
-	values [red-value!]
+	type   [integer!]
 	/local
-		type	[red-word!]
-		sym		[integer!]
-		idx		[integer!]
+		idx [integer!]
 ][
-	type: as red-word! values + FACE_OBJ_TYPE
-	sym: symbol/resolve type/symbol
+	if TYPE_OF(int) = TYPE_NONE [idx: -1]
 	idx: int/value - 1
+	if idx < 0 [exit]		;-- @@ should unselect the items ?
 	case [
-		sym = camera [
+		type = camera [
 			either TYPE_OF(int) = TYPE_NONE [
 				toggle-preview hWnd false
 			][
@@ -502,16 +498,22 @@ change-selection: func [
 				toggle-preview hWnd true
 			]
 		]
-		sym = text-list [
+		type = text-list [
+			idx: objc_msgSend [objc_getClass "NSIndexSet" sel_getUid "indexSetWithIndex:" idx]
+			objc_msgSend [
+				objc_msgSend [hWnd sel_getUid "documentView"]
+				sel_getUid "selectRowIndexes:byExtendingSelection:"
+				idx no
+			]
+			objc_msgSend [idx sel_getUid "release"]
+		]
+		any [type = drop-list type = drop-down][
 			0
 		]
-		any [sym = drop-list sym = drop-down][
+		type = tab-panel [
 			0
 		]
-		sym = tab-panel [
-			0
-		]
-		sym = window [0]
+		type = window [0]
 		true [0]										;-- default, do nothing
 	]
 ]
@@ -627,11 +629,11 @@ make-area: func [
 	obj: objc_msgSend [id sel_getUid "alloc"]
 
 	assert obj <> 0
-	store-face-to-obj obj id face
-
 	obj: objc_msgSend [
 		obj sel_getUid "initWithFrame:" rc/x rc/y rc/w rc/h
 	]
+	store-face-to-obj obj id face
+
 	rc/y: as float32! 1e37			;-- FLT_MAX
 	objc_msgSend [obj sel_getUid "setVerticallyResizable:" yes]
 	objc_msgSend [obj sel_getUid "setHorizontallyResizable:" no]
@@ -646,6 +648,7 @@ make-area: func [
 
 	if text <> 0 [objc_msgSend [obj sel_getUid "setString:" text]]
 
+	objc_msgSend [obj sel_getUid "setDelegate:" obj]
 	objc_msgSend [container sel_getUid "setDocumentView:" obj]
 ]
 
@@ -686,7 +689,7 @@ make-text-list: func [
 	objc_msgSend [obj sel_getUid "setDelegate:" obj]
 	objc_msgSend [obj sel_getUid "setDataSource:" obj]
 	objc_msgSend [obj sel_getUid "reloadData"]
-	
+
 	objc_msgSend [container sel_getUid "setDocumentView:" obj]
 	objc_msgSend [obj sel_getUid "release"]
 	objc_msgSend [column sel_getUid "release"]
@@ -948,8 +951,7 @@ OS-update-view: func [
 	;	change-visible hWnd bool/value type
 	;]
 	if flags and FACET_FLAG_SELECTED <> 0 [
-		int2: as red-integer! values + FACE_OBJ_SELECTED
-		change-selection hWnd int2 values
+		change-selection hWnd as red-integer! values + FACE_OBJ_SELECTED type
 	]
 	;if flags and FACET_FLAG_FLAGS <> 0 [
 	;	get-flags as red-block! values + FACE_OBJ_FLAGS

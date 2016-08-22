@@ -952,10 +952,7 @@ OS-update-view: func [
 		change-selection hWnd int2 values
 	]
 	;if flags and FACET_FLAG_FLAGS <> 0 [
-	;	SetWindowLong
-	;		as handle! hWnd
-	;		wc-offset + 16
-	;		get-flags as red-block! values + FACE_OBJ_FLAGS
+	;	get-flags as red-block! values + FACE_OBJ_FLAGS
 	;]
 	if any [
 		flags and FACET_FLAG_DRAW  <> 0

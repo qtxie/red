@@ -282,41 +282,82 @@ OS-draw-spline: func [
 	closed? [logic!]
 	/local
 		ctx		[handle!]
-		p		[red-pair!]
-		x1		[float32!]
-		y1		[float32!]
-		x2		[float32!]
-		y2		[float32!]
-		cx1		[float32!]
-		cy1		[float32!]
+		p		[CGPoint!]
+		p0		[CGPoint!]
+		p1		[CGPoint!]
+		p2		[CGPoint!]
+		p3		[CGPoint!]
+		x		[float32!]
+		y		[float32!]
+		delta	[float32!]
+		t		[float32!]
+		t2		[float32!]
+		t3		[float32!]
+		i		[integer!]
+		n		[integer!]
+		count	[integer!]
+		num		[integer!]
 ][
 	ctx: dc/raw
-	p: start
-	x1: as float32! p/x
-	y1: as float32! p/y
-	p: p + 1
-	x2: as float32! p/x
-	y2: as float32! p/y
-	cx1: x1 + x2 / as float32! 2.0
-	cy1: y1 + y2 / as float32! 2.0
 
-	CGContextBeginPath ctx
-	CGContextMoveToPoint ctx x1 y1
-	CGContextAddLineToPoint ctx cx1 cy1
+	count: (as-integer end - start) >> 4
+	num: count + 1
 
-	while [
+	p: edges
+	unless closed? [
+		p/x: as float32! start/x			;-- duplicate first point
+		p/y: as float32! start/y
 		p: p + 1
-		p <= end
-	][
-		x1: x2
-		y1: y2
-		x2: as float32! p/x
-		y2: as float32! p/y
-		cx1: x1 + x2 / as float32! 2.0
-		cy1: y1 + y2 / as float32! 2.0
-		CGContextAddQuadCurveToPoint ctx x1 y1 cx1 cy1
 	]
-	CGContextAddLineToPoint ctx x2 y2
+	while [start <= end][
+		p/x: as float32! start/x
+		p/y: as float32! start/y
+		p: p + 1
+		start: start + 1
+	]
+	unless closed? [
+		p/x: as float32! end/x				;-- duplicate end point
+		p/y: as float32! end/y
+	]
+
+	p: either closed? [
+		count: count + 1
+		edges + 1
+	][
+		num: num + 2
+		edges
+	]
+	CGContextBeginPath ctx
+	CGContextMoveToPoint ctx p/x p/y
+
+	p: edges
+	i: 0
+	delta: (as float32! 1.0) / (as float32! 25.0)
+
+	while [i < count][						;-- CatmullRom Spline, tension = 0.5
+		p0: p + (i % num)
+		p1: p + (i + 1 % num)
+		p2: p + (i + 2 % num)
+		p3: p + (i + 3 % num)
+
+		t: as float32! 0.0
+		n: 0
+		until [
+			t: t + delta
+			t2: t * t
+			t3: t2 * t
+			x: (as float32! 2.0) * p1/x + ((as float32! 0.0 - p0/x) + p2/x * t) +
+			   (((as float32! 2.0) * p0/x - ((as float32! 5.0) * p1/x) + ((as float32! 4.0) * p2/x) - p3/x) * t2) +
+			   (((as float32! 0.0) - p0/x + ((as float32! 3.0) * p1/x)- ((as float32! 3.0) * p2/x) + p3/x) * t3) * 0.5
+			y: (as float32! 2.0) * p1/y + ((as float32! 0.0 - p0/y) + p2/y * t) +
+			   (((as float32! 2.0) * p0/y - ((as float32! 5.0) * p1/y) + ((as float32! 4.0) * p2/y) - p3/y) * t2) +
+			   (((as float32! 0.0) - p0/y + ((as float32! 3.0) * p1/y)- ((as float32! 3.0) * p2/y) + p3/y) * t3) * 0.5
+			CGContextAddLineToPoint ctx x y
+			n: n + 1
+			n = 25
+		]
+		i: i + 1
+	]
 	CGContextStrokePath ctx
 ]
 

@@ -252,6 +252,28 @@ tagSIZE: alias struct! [
 		]
 	]
 	"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation" cdecl [
+		CFAttributedStringCreateMutable: "CFAttributedStringCreateMutable" [
+			allocator	[integer!]
+			max-length	[integer!]
+			return:		[integer!]
+		]
+		CFAttributedStringReplaceString: "CFAttributedStringReplaceString" [
+			aStr		[integer!]
+			location	[integer!]			;-- CFRange -
+			length		[integer!]			;-- CFRange -
+			string		[integer!]			;-- CFString
+		]
+		CFAttributedStringSetAttribute: "CFAttributedStringSetAttribute" [
+			aStr		[integer!]
+			location	[integer!]
+			length		[integer!]
+			attrName	[integer!]
+			value		[integer!]
+		]
+		CFAttributedStringGetLength: "CFAttributedStringGetLength" [
+			aStr		[integer!]
+			return:		[integer!]
+		]
 		CFStringCreateWithCString: "CFStringCreateWithCString" [
 			allocator	[integer!]
 			cStr		[c-string!]
@@ -276,6 +298,19 @@ tagSIZE: alias struct! [
 		]
 	]
 	"/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices" cdecl [
+		CTLineCreateWithAttributedString: "CTLineCreateWithAttributedString" [
+			aStr		[integer!]
+			return:		[integer!]
+		]
+		CTLineDraw: "CTLineDraw" [
+			line		[integer!]
+			c			[handle!]
+		]
+		CGContextSetTextPosition: "CGContextSetTextPosition" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+		]
 		CGContextSetRGBStrokeColor: "CGContextSetRGBStrokeColor" [
 			c			[handle!]
 			red			[float32!]
@@ -477,6 +512,11 @@ to-NSString: func [str [red-string!] return: [integer!] /local len][
 		sel_getUid "stringWithUTF8String:"
 		unicode/to-utf8 str :len
 	]
+]
+
+to-CFString: func [str [red-string!] return: [integer!] /local len][
+	len: -1
+	CFStringCreateWithCString 0 unicode/to-utf8 str :len kCFStringEncodingUTF8
 ]
 
 to-NSColor: func [

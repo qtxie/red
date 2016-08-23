@@ -372,10 +372,22 @@ win-will-close: func [
 	self	[integer!]
 	cmd		[integer!]
 	notif	[integer!]
-	/local
-		res [integer!]
 ][
-	res: make-event self 0 EVT_CLOSE
+	make-event self 0 EVT_CLOSE
+]
+
+win-did-resize: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+	/local
+		x	[float!]
+		y	[float!]
+		w	[float!]
+		h	[float!]
+][
+	;objc_msgSend_stret self sel_getUid "frame"		;return a struct
 ]
 
 tabview-will-select: func [

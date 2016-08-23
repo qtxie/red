@@ -24,7 +24,9 @@ draw-ctx!: alias struct! [
 	pen-color		[integer!]					;-- 00bbggrr format
 	brush-color		[integer!]					;-- 00bbggrr format
 	font-color		[integer!]
+	font-nscolor	[integer!]
 	font			[integer!]
+	attr-str		[integer!]
 	font-color?		[logic!]
 	pen?			[logic!]
 	brush?			[logic!]
@@ -47,7 +49,9 @@ draw-begin: func [
 	ctx/pen-cap:		flat
 	ctx/brush-color:	0
 	ctx/font-color:		0
+	ctx/font-nscolor:	0
 	ctx/font:			0
+	ctx/attr-str:		0
 	ctx/pen?:			yes
 	ctx/brush?:			no
 	ctx/font-color?:	no
@@ -65,7 +69,8 @@ draw-end: func [
 	cache?		[logic!]
 	paint?		[logic!]
 ][
-	0
+	if dc/font-nscolor <> 0 [objc_msgSend [dc/font-nscolor sel_getUid "release"]]
+	if dc/attr-str <> 0		[CFRelease dc/attr-str]
 ]
 
 OS-draw-anti-alias: func [
@@ -424,6 +429,7 @@ OS-draw-font: func [
 	dc		[draw-ctx!]
 	font	[red-object!]
 	/local
+		attr  [integer!]
 		vals  [red-value!]
 		state [red-block!]
 		int   [red-integer!]
@@ -442,6 +448,8 @@ OS-draw-font: func [
 
 	dc/font-color?: either TYPE_OF(color) = TYPE_TUPLE [
 		dc/font-color: color/array1
+		if dc/font-nscolor <> 0 [objc_msgSend [dc/font-nscolor sel_getUid "release"]]
+		dc/font-nscolor: to-NSColor dc/font-color
 		yes
 	][
 		no
@@ -453,11 +461,35 @@ OS-draw-text: func [
 	pos		[red-pair!]
 	text	[red-string!]
 	/local
-		str		[c-string!]
+		ctx		[handle!]
+		str		[integer!]
+		attr	[integer!]
 		len		[integer!]
+		line	[integer!]
 		rect	[NSRect!]
 ][
-0
+	ctx: dc/raw
+	;str: to-CFString text
+	;attr: dc/attr-str
+	;if zero? attr [
+	;	attr: CFAttributedStringCreateMutable 0 0
+	;	dc/attr-str: attr
+	;]
+	;CFAttributedStringReplaceString attr 0 CFAttributedStringGetLength attr str
+	;CFRelease str
+
+	;len: CFAttributedStringGetLength attr
+	;if dc/font <> 0 [
+	;	CFAttributedStringSetAttribute attr 0 len NSFontAttributeName dc/font
+	;]
+	;if dc/font-color? [
+	;	CFAttributedStringSetAttribute attr 0 len NSForegroundColorAttributeName dc/font-nscolor
+	;]
+
+	;line: CTLineCreateWithAttributedString attr
+	;CGContextSetTextPosition ctx as float32! pos/x as float32! pos/y
+	;CTLineDraw line ctx
+	;CFRelease line
 ]
 
 ;make-arc: func [

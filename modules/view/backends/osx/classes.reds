@@ -39,6 +39,7 @@ add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "keyDown:" as-integer :on-key-down "v@:@"
 	class_addMethod class sel_getUid "keyUp:" as-integer :on-key-up "v@:@"
 	class_addMethod class sel_getUid "windowWillClose:" as-integer :win-will-close "v12@0:4@8"
+	;class_addMethod class sel_getUid "windowDidResize:" as-integer :win-did-resize "v12@0:4@8"
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
 	class_addMethod class sel_getUid "addSubview:" as-integer :add-subview "v12@0:4@8"
 ]

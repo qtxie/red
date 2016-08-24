@@ -445,6 +445,7 @@ OS-draw-grad-pen: func [
 ]
 
 OS-matrix-rotate: func [
+	dc		[draw-ctx!]
 	angle	[red-integer!]
 	center	[red-pair!]
 	/local
@@ -461,6 +462,7 @@ OS-matrix-rotate: func [
 ]
 
 OS-matrix-scale: func [
+	dc		[draw-ctx!]
 	sx		[red-integer!]
 	sy		[red-integer!]
 ][
@@ -468,6 +470,7 @@ OS-matrix-scale: func [
 ]
 
 OS-matrix-translate: func [
+	ctx [handle!]
 	x	[integer!]
 	y	[integer!]
 ][
@@ -475,6 +478,7 @@ OS-matrix-translate: func [
 ]
 
 OS-matrix-skew: func [
+	dc		[draw-ctx!]
 	sx		[red-integer!]
 	sy		[red-integer!]
 	/local
@@ -492,6 +496,7 @@ OS-matrix-skew: func [
 ]
 
 OS-matrix-transform: func [
+	dc			[draw-ctx!]
 	rotate		[red-integer!]
 	scale		[red-integer!]
 	translate	[red-pair!]
@@ -499,24 +504,25 @@ OS-matrix-transform: func [
 		center	[red-pair!]
 ][
 	center: as red-pair! either rotate + 1 = scale [rotate][rotate + 1]
-	OS-matrix-rotate rotate center
-	OS-matrix-scale scale scale + 1
-	OS-matrix-translate translate/x translate/y
+	OS-matrix-rotate dc rotate center
+	OS-matrix-scale dc scale scale + 1
+	OS-matrix-translate dc/raw translate/x translate/y
 ]
 
-OS-matrix-push: func [/local state [integer!]][
+OS-matrix-push: func [dc [draw-ctx!] /local state [integer!]][
 	state: 0
 ]
 
-OS-matrix-pop: func [][0]
+OS-matrix-pop: func [dc [draw-ctx!]][0]
 
-OS-matrix-reset: func [][0]
+OS-matrix-reset: func [dc [draw-ctx!]][0]
 
-OS-matrix-invert: func [/local m [integer!]][
+OS-matrix-invert: func [dc [draw-ctx!] /local m [integer!]][
 0
 ]
 
 OS-matrix-set: func [
+	dc		[draw-ctx!]
 	blk		[red-block!]
 	/local
 		m	[integer!]

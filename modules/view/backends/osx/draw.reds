@@ -27,6 +27,7 @@ draw-ctx!: alias struct! [
 	font-nscolor	[integer!]
 	font			[integer!]
 	attr-str		[integer!]
+	matrix			[integer!]
 	font-color?		[logic!]
 	pen?			[logic!]
 	brush?			[logic!]
@@ -52,6 +53,7 @@ draw-begin: func [
 	ctx/font-nscolor:	0
 	ctx/font:			0
 	ctx/attr-str:		0
+	ctx/matrix:			0
 	ctx/pen?:			yes
 	ctx/brush?:			no
 	ctx/font-color?:	no
@@ -71,6 +73,7 @@ draw-end: func [
 ][
 	if dc/font-nscolor <> 0 [objc_msgSend [dc/font-nscolor sel_getUid "release"]]
 	if dc/attr-str <> 0		[CFRelease dc/attr-str]
+	if dc/matrix <> 0		[CFRelease dc/matrix]
 ]
 
 OS-draw-anti-alias: func [
@@ -556,7 +559,7 @@ OS-draw-arc: func [
 	begin: as red-integer! radius + 1
 	angle-begin: rad * as float32! begin/value
 	angle: begin + 1
-	angle-len: rad * as float32! begin/value + angle/value
+	angle-len: rad * as float32! (begin/value + angle/value)
 
 	closed?: angle < end
 
@@ -716,36 +719,55 @@ OS-draw-grad-pen: func [
 
 
 OS-matrix-rotate: func [
+	dc		[draw-ctx!]
 	angle	[red-integer!]
 	center	[red-pair!]
 	/local
+		ctx [handle!]
 		m	[integer!]
 		pts [tagPOINT]
 ][
-	if angle <> as red-integer! center [
-0
-	]
-	;GdipRotateWorldTransform dc/graphics get-float32 angle GDIPLUS_MATRIXORDERAPPEND
-	if angle <> as red-integer! center [
-0
-	]
+	ctx: dc/raw
+	;if angle <> as red-integer! center [
+	;	m: modes/gp-matrix
+	;	if zero? m [
+	;		GdipCreateMatrix :m
+	;		modes/gp-matrix: m
+	;	]
+	;	GdipGetWorldTransform modes/graphics m
+	;	pts: edges
+	;	pts/x: center/x
+	;	pts/y: center/y
+	;	GdipTransformMatrixPointsI m pts 1
+	;	OS-matrix-translate 0 - pts/x 0 - pts/y
+	;]
+	CGContextRotateCTM ctx get-float32 angle
+	;if angle <> as red-integer! center [
+	;	pts/x: center/x
+	;	pts/y: center/y
+	;	GdipTransformMatrixPointsI m pts 1
+	;	OS-matrix-translate pts/x pts/y
+	;]
 ]
 
 OS-matrix-scale: func [
+	dc		[draw-ctx!]
 	sx		[red-integer!]
 	sy		[red-integer!]
 ][
-0
+	CGContextScaleCTM dc/raw get-float32 sx get-float32 sy
 ]
 
 OS-matrix-translate: func [
+	ctx [handle!]
 	x	[integer!]
 	y	[integer!]
 ][
-0
+	CGContextTranslateCTM ctx as float32! x as float32! y
 ]
 
 OS-matrix-skew: func [
+	dc		[draw-ctx!]
 	sx		[red-integer!]
 	sy		[red-integer!]
 	/local
@@ -763,6 +785,7 @@ OS-matrix-skew: func [
 ]
 
 OS-matrix-transform: func [
+	dc			[draw-ctx!]
 	rotate		[red-integer!]
 	scale		[red-integer!]
 	translate	[red-pair!]
@@ -770,24 +793,29 @@ OS-matrix-transform: func [
 		center	[red-pair!]
 ][
 	center: as red-pair! either rotate + 1 = scale [rotate][rotate + 1]
-	OS-matrix-rotate rotate center
-	OS-matrix-scale scale scale + 1
-	OS-matrix-translate translate/x translate/y
+	OS-matrix-rotate dc rotate center
+	OS-matrix-scale dc scale scale + 1
+	OS-matrix-translate dc/raw translate/x translate/y
 ]
 
-OS-matrix-push: func [/local state [integer!]][
-	state: 0
+OS-matrix-push: func [dc [draw-ctx!]][
+	CGContextSaveGState dc/raw
 ]
 
-OS-matrix-pop: func [][0]
+OS-matrix-pop: func [dc [draw-ctx!]][
+	CGContextRestoreGState dc/raw
+]
 
-OS-matrix-reset: func [][0]
+OS-matrix-reset: func [dc [draw-ctx!]][
+0	
+]
 
-OS-matrix-invert: func [/local m [integer!]][
+OS-matrix-invert: func [dc [draw-ctx!] /local m [integer!]][
 0
 ]
 
 OS-matrix-set: func [
+	dc		[draw-ctx!]
 	blk		[red-block!]
 	/local
 		m	[integer!]

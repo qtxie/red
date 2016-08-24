@@ -185,16 +185,6 @@ Red/System [
 			rgb: get-color-int as red-tuple! value :alpha?
 		]
 
-		push-matrix: func [
-			cmds   [red-block!]
-			DC	   [draw-ctx!]
-			catch? [logic!]								;-- YES: report errors, NO: fire errors
-		][
-			OS-matrix-push
-			parse-draw cmds DC catch?
-			OS-matrix-pop
-		]
-
 		parse-draw: func [
 			cmds   [red-block!]
 			DC	   [draw-ctx!]
@@ -434,24 +424,24 @@ Red/System [
 								DRAW_FETCH_OPT_VALUE(TYPE_PAIR)
 								DRAW_FETCH_OPT_VALUE(TYPE_BLOCK)
 								either pos = cmd [
-									OS-matrix-push
-									OS-matrix-rotate as red-integer! start as red-pair! cmd - 1
+									OS-matrix-push DC
+									OS-matrix-rotate DC as red-integer! start as red-pair! cmd - 1
 									parse-draw as red-block! cmd DC catch?
-									OS-matrix-pop
+									OS-matrix-pop DC
 								][
-									OS-matrix-rotate as red-integer! start as red-pair! cmd
+									OS-matrix-rotate DC as red-integer! start as red-pair! cmd
 								]
 							]
 							sym = scale [
 								loop 2 [DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)]
 								DRAW_FETCH_OPT_VALUE(TYPE_BLOCK)
 								either pos = cmd [
-									OS-matrix-push
-									OS-matrix-scale as red-integer! start as red-integer! cmd - 1
+									OS-matrix-push DC
+									OS-matrix-scale DC as red-integer! start as red-integer! cmd - 1
 									parse-draw as red-block! cmd DC catch?
-									OS-matrix-pop
+									OS-matrix-pop DC
 								][
-									OS-matrix-scale as red-integer! start as red-integer! cmd
+									OS-matrix-scale DC as red-integer! start as red-integer! cmd
 								]
 							]
 							sym = translate [
@@ -459,12 +449,12 @@ Red/System [
 								point: as red-pair! start
 								DRAW_FETCH_OPT_VALUE(TYPE_BLOCK)
 								either pos = cmd [
-									OS-matrix-push
-									OS-matrix-translate point/x point/y
+									OS-matrix-push DC
+									OS-matrix-translate DC/raw point/x point/y
 									parse-draw as red-block! cmd DC catch?
-									OS-matrix-pop
+									OS-matrix-pop DC
 								][
-									OS-matrix-translate point/x point/y
+									OS-matrix-translate DC/raw point/x point/y
 								]
 							]
 							sym = skew [
@@ -472,12 +462,12 @@ Red/System [
 								DRAW_FETCH_OPT_VALUE_2(TYPE_INTEGER TYPE_FLOAT)
 								DRAW_FETCH_OPT_VALUE(TYPE_BLOCK)
 								either pos = cmd [
-									OS-matrix-push
-									OS-matrix-skew as red-integer! start as red-integer! cmd - 1
+									OS-matrix-push DC
+									OS-matrix-skew DC as red-integer! start as red-integer! cmd - 1
 									parse-draw as red-block! cmd DC catch?
-									OS-matrix-pop
+									OS-matrix-pop DC
 								][
-									OS-matrix-skew as red-integer! start as red-integer! cmd
+									OS-matrix-skew DC as red-integer! start as red-integer! cmd
 								]
 							]
 							sym = transform [
@@ -488,15 +478,15 @@ Red/System [
 								DRAW_FETCH_VALUE(TYPE_PAIR)
 								DRAW_FETCH_OPT_VALUE(TYPE_BLOCK)
 								either pos = cmd [
-									OS-matrix-push
-									OS-matrix-transform
+									OS-matrix-push DC
+									OS-matrix-transform DC
 										as red-integer! start
 										as red-integer! value
 										as red-pair! cmd - 1
 									parse-draw as red-block! cmd DC catch?
-									OS-matrix-pop
+									OS-matrix-pop DC
 								][
-									OS-matrix-transform
+									OS-matrix-transform DC
 										as red-integer! start
 										as red-integer! value
 										as red-pair! cmd
@@ -504,16 +494,16 @@ Red/System [
 							]
 							sym = push [
 								DRAW_FETCH_VALUE(TYPE_BLOCK)
-								OS-matrix-push
+								OS-matrix-push DC
 								parse-draw as red-block! start DC catch?
-								OS-matrix-pop
+								OS-matrix-pop DC
 							]
 							sym = matrix [
 								DRAW_FETCH_VALUE(TYPE_BLOCK)
-								OS-matrix-set as red-block! start
+								OS-matrix-set DC as red-block! start
 							]
-							sym = reset-matrix  [OS-matrix-reset]
-							sym = invert-matrix [OS-matrix-invert]
+							sym = reset-matrix  [OS-matrix-reset DC]
+							sym = invert-matrix [OS-matrix-invert DC]
 							true [throw-draw-error cmds cmd catch?]
 						]
 					]

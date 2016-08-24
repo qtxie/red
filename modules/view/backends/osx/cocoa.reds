@@ -306,6 +306,12 @@ tagSIZE: alias struct! [
 			line		[integer!]
 			c			[handle!]
 		]
+		CGContextSaveGState: "CGContextSaveGState" [
+			c			[handle!]
+		]
+		CGContextRestoreGState: "CGContextRestoreGState" [
+			c			[handle!]
+		]
 		CGContextSetTextPosition: "CGContextSetTextPosition" [
 			c			[handle!]
 			x			[float32!]
@@ -438,6 +444,14 @@ tagSIZE: alias struct! [
 			c			[handle!]
 			mode		[integer!]
 		]
+		;CGContextConcatCTM: "CGContextConcatCTM" [
+		;	c			[handle!]
+		;	matrix		[CGAffineTransform]
+		;]
+		;CGContextGetCTM: "CGContextGetCTM" [
+		;	c			[handle!]
+		;	return:		[CGAffineTransform]
+		;]
 		CGContextRotateCTM: "CGContextRotateCTM" [
 			c			[handle!]
 			angle		[float32!]
@@ -452,6 +466,11 @@ tagSIZE: alias struct! [
 			tx			[float32!]
 			ty			[float32!]
 		]
+		;CGPointApplyAffineTransform: "CGPointApplyAffineTransform" [
+		;	point		[CGPoint]
+		;	matrix		[CGAffineTransform]
+		;	return:		[CGPoint]
+		;]
 		CGContextDrawImage: "CGContextDrawImage" [
 			ctx			[handle!]
 			x			[float32!]

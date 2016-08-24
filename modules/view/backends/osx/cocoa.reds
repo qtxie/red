@@ -42,6 +42,7 @@ Red/System [
 #define NSViewMaxYMargin			32
 
 #define NSRoundedBezelStyle			1
+#define NSRegularSquareBezelStyle	2
 
 #define NSToggleButton				2
 #define NSSwitchButton				3

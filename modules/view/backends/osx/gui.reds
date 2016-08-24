@@ -377,6 +377,9 @@ change-size: func [
 		rc [NSRect!]
 ][
 	rc: make-rect size/x size/y 0 0
+	if all [type = button size/y > 32][
+		objc_msgSend [hWnd sel_getUid "setBezelStyle:" NSRegularSquareBezelStyle]
+	]
 	either type = window [
 		0
 	][
@@ -826,14 +829,15 @@ OS-make-view: func [
 			make-text-list face obj rc
 		]
 		any [sym = button sym = check sym = radio][
-			objc_msgSend [obj sel_getUid "setBezelStyle:" NSRoundedBezelStyle]
-			if caption <> 0 [objc_msgSend [obj sel_getUid "setTitle:" caption]]
-			objc_msgSend [obj sel_getUid "setTarget:" obj]
-			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
+			len: either size/y <= 32 [NSRoundedBezelStyle][NSRegularSquareBezelStyle]
+			objc_msgSend [obj sel_getUid "setBezelStyle:" len]
 			if sym <> button [
 				objc_msgSend [obj sel_getUid "setButtonType:" flags]
 				set-logic-state obj as red-logic! data no
 			]
+			if caption <> 0 [objc_msgSend [obj sel_getUid "setTitle:" caption]]
+			objc_msgSend [obj sel_getUid "setTarget:" obj]
+			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
 		]
 		any [
 			sym = panel

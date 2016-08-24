@@ -724,8 +724,6 @@ OS-matrix-rotate: func [
 	center	[red-pair!]
 	/local
 		ctx [handle!]
-		m	[integer!]
-		pts [tagPOINT]
 ][
 	ctx: dc/raw
 	;if angle <> as red-integer! center [
@@ -799,19 +797,19 @@ OS-matrix-transform: func [
 ]
 
 OS-matrix-push: func [dc [draw-ctx!]][
-	CGContextSaveGState dc/raw
+	;CGContextSaveGState dc/raw
 ]
 
 OS-matrix-pop: func [dc [draw-ctx!]][
-	CGContextRestoreGState dc/raw
+	;CGContextRestoreGState dc/raw
 ]
 
 OS-matrix-reset: func [dc [draw-ctx!]][
-0	
+
 ]
 
 OS-matrix-invert: func [dc [draw-ctx!] /local m [integer!]][
-0
+
 ]
 
 OS-matrix-set: func [

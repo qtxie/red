@@ -21,7 +21,7 @@ Red [
 	]
 	button: [
 		default-actor: on-click
-		template: [type: 'button size: 60x30]
+		template: [type: 'button size: 60x32]
 	]
 	text: [
 		default-actor: on-change

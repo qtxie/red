@@ -726,7 +726,6 @@ OS-make-view: func [
 		selected  [red-integer!]
 		para	  [red-object!]
 		flags	  [integer!]
-		bits	  [integer!]
 		sym		  [integer!]
 		id		  [integer!]
 		class	  [c-string!]
@@ -829,11 +828,26 @@ OS-make-view: func [
 			make-text-list face obj rc
 		]
 		any [sym = button sym = check sym = radio][
-			len: either size/y <= 32 [NSRoundedBezelStyle][NSRegularSquareBezelStyle]
+			len: either any [
+				size/y > 32
+				TYPE_OF(img) = TYPE_IMAGE
+			][
+				NSRegularSquareBezelStyle
+			][
+				NSRoundedBezelStyle
+			]
 			objc_msgSend [obj sel_getUid "setBezelStyle:" len]
 			if sym <> button [
 				objc_msgSend [obj sel_getUid "setButtonType:" flags]
 				set-logic-state obj as red-logic! data no
+			]
+			if TYPE_OF(img) = TYPE_IMAGE [
+				len: CGBitmapContextCreateImage as-integer img/node
+				id: objc_msgSend [objc_getClass "NSImage" sel_getUid "alloc"]
+				id: objc_msgSend [id sel_getUid "initWithCGImage:size:" len 0 0] 
+				objc_msgSend [obj sel_getUid "setImage:" id]
+				objc_msgSend [id sel_getUid "release"]
+				CGImageRelease len
 			]
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setTitle:" caption]]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]

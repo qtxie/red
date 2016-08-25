@@ -16,9 +16,9 @@ put system/codecs 'gif context [
 	mime-type: [image/gif]
 	suffixes: [%.gif]
 	
-	encode: routine [img [image!]][
+	encode: routine [img [image!] where [any-type!]][
 		#if OS <> 'Linux [
-		stack/set-last as cell! image/encode img IMAGE_GIF
+		stack/set-last as cell! image/encode img where IMAGE_GIF
 		]
 	]
 

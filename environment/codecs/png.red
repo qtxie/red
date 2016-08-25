@@ -16,9 +16,9 @@ put system/codecs 'png context [
 	mime-type: [image/png]
 	suffixes: [%.png]
 	
-	encode: routine [img [image!]][
+	encode: routine [img [image!] where [any-type!]][
 		#if OS <> 'Linux [
-		stack/set-last as cell! image/encode img IMAGE_PNG
+		stack/set-last as cell! image/encode img where IMAGE_PNG
 		]
 	]
 

@@ -163,10 +163,12 @@ image: context [
 	
 	encode: func [
 		image	[red-image!]
+		dst		[red-value!]
 		format	[integer!]
-		return: [red-binary!]
+		return: [red-value!]
 	][
-		OS-image/encode image format stack/push*
+		if TYPE_OF(dst) = TYPE_NONE [dst: stack/push*]
+		OS-image/encode image dst format
 	]
 
 	decode: func [
@@ -931,5 +933,6 @@ image: context [
 			null			;update
 			null			;write
 		]
+		OS-image/init
 	]
 ]

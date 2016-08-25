@@ -16,9 +16,9 @@ put system/codecs 'bmp context [
 	mime-type: [image/bmp]
 	suffixes: [%.bmp ]
 	
-	encode: routine [img [image!]][
+	encode: routine [img [image!] where [any-type!]][
 		#if OS <> 'Linux [
-		stack/set-last as cell! image/encode img IMAGE_BMP
+			stack/set-last as cell! image/encode img where IMAGE_BMP
 		]
 	]
 

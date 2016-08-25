@@ -16,9 +16,9 @@ put system/codecs 'jpeg context [
 	mime-type: [image/jpeg]
 	suffixes: [%.jpg %.jpeg %.jpe %.jfif]
 	
-	encode: routine [img [image!]][
+	encode: routine [img [image!] where [any-type!]][
 		#if OS <> 'Linux [
-		stack/set-last as cell! image/encode img IMAGE_JPEG
+		stack/set-last as cell! image/encode img where IMAGE_JPEG
 		]
 	]
 

@@ -12,6 +12,12 @@ Red/System [
 
 OS-image: context [
 
+	kUTTypeJPEG:	0
+	kUTTypeTIFF:	0
+	kUTTypeGIF:		0
+	kUTTypePNG:		0
+	kUTTypeBMP:		0
+
 	NSRect!: alias struct! [
 		x		[float32!]
 		y		[float32!]
@@ -27,13 +33,31 @@ OS-image: context [
 
 	#define kCGImageFormatARGB				8194	;-- kCGImageAlphaPremultipliedFirst or kCGBitmapByteOrder32Little
 
+	#define kCFStringEncodingUTF8			08000100h
+
 	#import [
 		"/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices" cdecl [
+			CGImageDestinationCreateWithURL: "CGImageDestinationCreateWithURL" [
+				url			[integer!]
+				type		[integer!]
+				count		[integer!]
+				options		[integer!]
+				return:		[integer!]
+			]
+			CGImageDestinationAddImage: "CGImageDestinationAddImage" [
+				dst			[integer!]
+				image		[integer!]
+				properties	[integer!]
+			]
 			CGColorSpaceCreateDeviceRGB: "CGColorSpaceCreateDeviceRGB" [
 				return:		[integer!]
 			]
 			CGColorSpaceRelease: "CGColorSpaceRelease" [
 				color-space [integer!]
+			]
+			CGBitmapContextCreateImage: "CGBitmapContextCreateImage" [
+				ctx			[integer!]
+				return:		[integer!]
 			]
 			CGBitmapContextCreate: "CGBitmapContextCreate" [
 				buffer		[byte-ptr!]
@@ -102,10 +126,49 @@ OS-image: context [
 				length		[integer!]
 				return:		[integer!]
 			]
+			CFURLCreateWithString: "CFURLCreateWithString" [
+				allocator	[integer!]
+				url			[integer!]
+				baseUrl		[integer!]
+				return:		[integer!]
+			]
+			CFStringCreateWithCString: "CFStringCreateWithCString" [
+				allocator	[integer!]
+				cStr		[c-string!]
+				encoding	[integer!]
+				return:		[integer!]
+			]
+			CFURLCreateStringByAddingPercentEscapes: "CFURLCreateStringByAddingPercentEscapes" [
+				allocator	[integer!]
+				cf-str		[integer!]
+				unescaped	[integer!]
+				escaped		[integer!]
+				encoding	[integer!]
+				return:		[integer!]
+			]
 			CFRelease: "CFRelease" [
 				cf			[integer!]
 			]
 		]
+	]
+
+	init: func [/local lib [integer!] p-int [int-ptr!]][
+		lib: red/platform/dlopen "/System/Library/Frameworks/CoreServices.framework/CoreServices" RTLD_LAZY
+		p-int: red/platform/dlsym lib "kUTTypeJPEG"
+		kUTTypeJPEG: p-int/value
+		p-int: red/platform/dlsym lib "kUTTypeTIFF"
+		kUTTypeTIFF: p-int/value
+		p-int: red/platform/dlsym lib "kUTTypeGIF"
+		kUTTypeGIF: p-int/value
+		p-int: red/platform/dlsym lib "kUTTypePNG"
+		kUTTypePNG: p-int/value
+		p-int: red/platform/dlsym lib "kUTTypeBMP"
+		kUTTypeBMP: p-int/value	
+	]
+
+	to-CFString: func [str [red-string!] return: [integer!] /local len][
+		len: -1
+		CFStringCreateWithCString 0 unicode/to-utf8 str :len kCFStringEncodingUTF8
 	]
 
 	make-rect: func [
@@ -360,14 +423,44 @@ OS-image: context [
 
 	encode: func [
 		image	[red-image!]
-		format	[integer!]
 		slot	[red-value!]
-		return: [red-binary!]
+		format	[integer!]
+		return: [red-value!]
 		/local
-			bin		[red-binary!]
+			type		[integer!]
+			raw-url		[integer!]
+			escaped-url [integer!]
+			path		[integer!]
+			dst			[integer!]
+			img			[integer!]
 	][
-		bin: as red-binary! slot
-		bin
+		switch format [
+			IMAGE_BMP  [type: kUTTypeBMP]
+			IMAGE_PNG  [type: kUTTypePNG]
+			IMAGE_GIF  [type: kUTTypeGIF]
+			IMAGE_JPEG [type: kUTTypeJPEG]
+			IMAGE_TIFF [type: kUTTypeTIFF]
+			default    [probe "Cannot find image encoder" return null]
+		]
+
+		img: CGBitmapContextCreateImage as-integer image/node
+		switch TYPE_OF(slot) [
+			TYPE_URL
+			TYPE_FILE [
+				raw-url: to-CFString as red-string! slot
+				;escaped-url: CFURLCreateStringByAddingPercentEscapes 0 raw-url 0 0 kCFStringEncodingUTF8
+				;path: CFURLCreateWithString 0 escaped-url 0
+				;dst: CGImageDestinationCreateWithURL path type 1 0
+				;CFRelease escaped-url
+				CFRelease raw-url
+				;;if zero? dst []				;-- error
+				;CGImageDestinationAddImage dst img 0
+				;CFRelease dst
+				;CGImageRelease img
+			]
+			default [0]
+		]
+		slot
 	]
 
 	clone: func [

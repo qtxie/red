@@ -459,6 +459,11 @@ change-text: func [
 		cstr [c-string!]
 		str  [red-string!]
 ][
+	if type = base [
+		objc_msgSend [hWnd sel_getUid "display"]
+		exit
+	]
+
 	str: as red-string! values + FACE_OBJ_TEXT
 	cstr: switch TYPE_OF(str) [
 		TYPE_STRING [len: -1 unicode/to-utf8 str :len]
@@ -468,6 +473,9 @@ change-text: func [
 	unless null? cstr [
 		txt: CFString(cstr)
 		case [
+			type = area [
+				objc_msgSend [hWnd sel_getUid "setString:" txt]
+			]
 			any [type = field type = text][
 				objc_msgSend [hWnd sel_getUid "setStringValue:" txt]
 			]
@@ -485,10 +493,12 @@ change-data: func [
 	/local
 		data 	[red-value!]
 		word 	[red-word!]
+		size	[red-pair!]
 		f		[red-float!]
 		str		[red-string!]
 		caption [c-string!]
 		type	[integer!]
+		len		[integer!]
 ][
 	data: as red-value! values + FACE_OBJ_DATA
 	word: as red-word! values + FACE_OBJ_TYPE
@@ -501,6 +511,15 @@ change-data: func [
 		][
 			f: as red-float! data
 			objc_msgSend [hWnd sel_getUid "setDoubleValue:" f/value * 100.0]
+		]
+		all [
+			type = slider
+			TYPE_OF(data) = TYPE_PERCENT
+		][
+			f: as red-float! data
+			size: as red-pair! values + FACE_OBJ_SIZE
+			len: either size/x > size/y [size/x][size/y]
+			objc_msgSend [hWnd sel_getUid "setDoubleValue:" f/value * (as-float len)]
 		]
 		type = check [
 			set-logic-state hWnd as red-logic! data yes
@@ -558,7 +577,9 @@ change-selection: func [
 			objc_msgSend [idx sel_getUid "release"]
 		]
 		any [type = drop-list type = drop-down][
-			0
+			objc_msgSend [hWnd sel_getUid "selectItemAtIndex:" idx]
+			idx: objc_msgSend [hWnd sel_getUid "objectValueOfSelectedItem"]
+			objc_msgSend [hWnd sel_getUid "setObjectValue:" idx]
 		]
 		type = tab-panel [
 			0

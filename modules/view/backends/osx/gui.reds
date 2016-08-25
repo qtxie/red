@@ -9,8 +9,10 @@ Red/System [
 		See https://github.com/red/red/blob/master/BSL-License.txt
 	}
 ]
+
 #include %../keycodes.reds
 #include %cocoa.reds
+#include %selectors.reds
 #include %events.reds
 
 #include %font.reds
@@ -154,12 +156,16 @@ free-handles: func [
 		tail   [red-object!]
 		pane   [red-block!]
 		state  [red-value!]
+		rate   [red-value!]
 		sym	   [integer!]
 		handle [integer!]
 ][
 	values: get-face-values hWnd
 	type: as red-word! values + FACE_OBJ_TYPE
 	sym: symbol/resolve type/symbol
+
+	rate: values + FACE_OBJ_RATE
+	if TYPE_OF(rate) <> TYPE_NONE [change-rate hWnd none-value]
 
 	pane: as red-block! values + FACE_OBJ_PANE
 	if TYPE_OF(pane) = TYPE_BLOCK [
@@ -211,6 +217,8 @@ init: func [
 
 	lib: red/platform/dlopen "/System/Library/Frameworks/Foundation.framework/Versions/Current/Foundation" RTLD_LAZY
 	&_NSConcreteStackBlock: as-integer red/platform/dlsym lib "_NSConcreteStackBlock"
+
+	init-selectors
 
 	NSApp: objc_msgSend [objc_getClass "NSApplication" sel_getUid "sharedApplication"]
 
@@ -367,6 +375,45 @@ make-rect: func [
     r/w: as float32! w
     r/h: as float32! h
     r
+]
+
+change-rate: func [
+	hWnd [integer!]
+	rate [red-value!]
+	/local
+		int		[red-integer!]
+		tm		[red-time!]
+		timer	[integer!]
+		ts		[float!]
+][
+	timer: objc_getAssociatedObject hWnd RedTimerKey
+
+	if timer <> 0 [								;-- cancel a preexisting timer
+		objc_msgSend [timer sel_getUid "invalidate"]
+		objc_setAssociatedObject hWnd RedTimerKey 0 OBJC_ASSOCIATION_ASSIGN
+	]
+
+	switch TYPE_OF(rate) [
+		TYPE_INTEGER [
+			int: as red-integer! rate
+			if int/value <= 0 [fire [TO_ERROR(script invalid-facet-type) rate]]
+			ts: 1.0 / as-float int/value
+		]
+		TYPE_TIME [
+			tm: as red-time! rate
+			if tm/time <= 0.0 [fire [TO_ERROR(script invalid-facet-type) rate]]
+			ts: tm/time / 1E3
+		]
+		TYPE_NONE [exit]
+		default	  [fire [TO_ERROR(script invalid-facet-type) rate]]
+	]
+
+	timer: objc_msgSend [
+		objc_getClass "NSTimer"
+		sel_getUid "scheduledTimerWithTimeInterval:target:selector:userInfo:repeats:"
+		ts hWnd sel-on-timer 0 yes
+	]
+	objc_setAssociatedObject hWnd RedTimerKey timer OBJC_ASSOCIATION_ASSIGN
 ]
 
 change-size: func [
@@ -725,6 +772,7 @@ OS-make-view: func [
 		open?	  [red-logic!]
 		selected  [red-integer!]
 		para	  [red-object!]
+		rate	  [red-value!]
 		flags	  [integer!]
 		sym		  [integer!]
 		id		  [integer!]
@@ -750,6 +798,7 @@ OS-make-view: func [
 	menu:	  as red-block!		values + FACE_OBJ_MENU
 	selected: as red-integer!	values + FACE_OBJ_SELECTED
 	para:	  as red-object!	values + FACE_OBJ_PARA
+	rate:						values + FACE_OBJ_RATE
 
 	sym: 	  symbol/resolve type/symbol
 
@@ -909,6 +958,8 @@ OS-make-view: func [
 		true [0]
 	]
 
+	if TYPE_OF(rate) <> TYPE_NONE [change-rate obj rate]
+
 	if parent <> 0 [
 		objc_msgSend [parent sel_getUid "addSubview:" obj]	;-- `addSubView:` will retain the obj
 		objc_msgSend [obj sel_getUid "release"]
@@ -994,6 +1045,9 @@ OS-update-view: func [
 	;			null
 	;	]
 	;]
+	if flags and FACET_FLAG_RATE <> 0 [
+		change-rate hWnd values + FACE_OBJ_RATE
+	]
 	;if flags and FACET_FLAG_FONT <> 0 [
 	;	set-font as handle! hWnd face values
 	;	InvalidateRect as handle! hWnd null 1
@@ -1028,7 +1082,6 @@ OS-destroy-view: func [
 	if flags and FACET_FLAGS_MODAL <> 0 [
 		0
 		;;TBD
-		;SetActiveWindow GetWindow handle GW_OWNER
 	]
 
 	free-handles handle

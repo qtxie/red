@@ -70,6 +70,15 @@ print-classname: func [
 	?? cls-name
 ]
 
+red-timer-action: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	timer	[integer!]
+][
+	make-event self 0 EVT_TIME
+]
+
 on-key-down: func [
 	[cdecl]
 	self	[integer!]

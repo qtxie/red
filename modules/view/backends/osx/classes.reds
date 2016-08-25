@@ -108,6 +108,7 @@ make-super-class: func [
 	unless zero? method [
 		add-method: as add-method! method
 		add-method new-class
+		class_addMethod new-class sel-on-timer as-integer :red-timer-action "v@:@"
 	]
 	objc_registerClassPair new-class
 ]

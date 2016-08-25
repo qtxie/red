@@ -18,11 +18,6 @@ Red/System [
 	}
 ]
 
-RedCameraSessionKey:	4000FFF0h
-RedCameraDevicesKey:	4000FFF1h
-RedCameraDevInputKey:	4000FFF2h
-RedCameraImageKey:		4000FFF3h
-
 AVMediaTypeVideo:		0
 AVVideoCodecKey:		0
 AVVideoCodecJPEG:		0

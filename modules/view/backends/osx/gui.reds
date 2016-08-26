@@ -449,6 +449,21 @@ change-offset: func [
 	]
 ]
 
+change-visible: func [
+	hWnd  [integer!]
+	show? [logic!]
+	type  [integer!]
+][
+	case [
+		any [type = button type = check type = radio][
+			objc_msgSend [hWnd sel_getUid "setEnabled:" show?]
+			objc_msgSend [hWnd sel_getUid "setTransparent:" not show?]
+		]
+		type = window [0]
+		true [objc_msgSend [hWnd sel_getUid "setHidden:" not show?]]
+	]
+]
+
 change-text: func [
 	hWnd	[integer!]
 	values	[red-value!]
@@ -1033,13 +1048,14 @@ OS-update-view: func [
 	if flags and FACET_FLAG_DATA <> 0 [
 		change-data hWnd values
 	]
-	;if flags and FACET_FLAG_ENABLE? <> 0 [
-	;	change-enabled as handle! hWnd values
-	;]
-	;if flags and FACET_FLAG_VISIBLE? <> 0 [
-	;	bool: as red-logic! values + FACE_OBJ_VISIBLE?
-	;	change-visible hWnd bool/value type
-	;]
+	if flags and FACET_FLAG_ENABLE? <> 0 [
+		bool: as red-logic! values + FACE_OBJ_ENABLE?
+		objc_msgSend [hWnd sel_getUid "setEnabled:" bool/value]
+	]
+	if flags and FACET_FLAG_VISIBLE? <> 0 [
+		bool: as red-logic! values + FACE_OBJ_VISIBLE?
+		change-visible hWnd bool/value type
+	]
 	if flags and FACET_FLAG_SELECTED <> 0 [
 		change-selection hWnd as red-integer! values + FACE_OBJ_SELECTED type
 	]
@@ -1069,13 +1085,12 @@ OS-update-view: func [
 	if flags and FACET_FLAG_RATE <> 0 [
 		change-rate hWnd values + FACE_OBJ_RATE
 	]
-	;if flags and FACET_FLAG_FONT <> 0 [
-	;	set-font as handle! hWnd face values
-	;	InvalidateRect as handle! hWnd null 1
-	;]
+	if flags and FACET_FLAG_FONT <> 0 [
+		set-font hWnd face values
+		objc_msgSend [hWnd sel_getUid "display"]
+	]
 	;if flags and FACET_FLAG_PARA <> 0 [
 	;	update-para face 0
-	;	InvalidateRect as handle! hWnd null 1
 	;]
 	;if flags and FACET_FLAG_MENU <> 0 [
 	;	menu: as red-block! values + FACE_OBJ_MENU

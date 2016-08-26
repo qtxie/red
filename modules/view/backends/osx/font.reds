@@ -122,6 +122,19 @@ get-font-handle: func [
 	null
 ]
 
+set-font: func [
+	hWnd   [integer!]
+	face   [red-object!]
+	values [red-value!]
+	/local
+		font  [red-object!]
+		state [red-block!]
+		int	  [red-integer!]
+		hFont [handle!]
+][
+	font: as red-object! values + FACE_OBJ_FONT
+]
+
 free-font: func [
 	font [red-object!]
 	/local

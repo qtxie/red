@@ -393,6 +393,43 @@ system/view/platform: context [
 				evt/type: sym
 			]
 
+			#import  [
+			LIBM-file cdecl [
+				fabsf: "fabsf" [
+					x			[float32!]
+					return:		[float32!]
+				]
+				sinf:		 "sinf" [
+					radians		[float32!]
+					return:		[float32!]
+				]
+				cosf:		 "cosf" [
+					radians		[float32!]
+					return:		[float32!]
+				]
+				tanf:		 "tanf" [
+					radians		[float32!]
+					return:		[float32!]
+				]
+				asinf:		 "asinf" [
+					radians		[float32!]
+					return:		[float32!]
+				]
+				acosf:		 "acosf" [
+					radians		[float32!]
+					return:		[float32!]
+				]
+				atanf:		 "atanf" [
+					radians		[float32!]
+					return:		[float32!]
+				]
+				atan2f:		 "atan2f" [
+					y			[float32!]
+					x			[float32!]
+					return:		[float32!]
+				]
+			]]
+
 			;#include %android/gui.reds
 			#switch OS [
 				Windows  [#include %windows/gui.reds]

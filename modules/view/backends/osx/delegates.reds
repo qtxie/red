@@ -432,7 +432,7 @@ tabview-will-select: func [
 ;	descender: as float32! objc_msgSend [hFont sel_getUid "descender"]
 ;	ascender: as float32! objc_msgSend [hFont sel_getUid "ascender"]
 ;?? ascender
-;	height: fabs as-float descender
+;	height: fabsf descender
 ;	as float32! ceil height + ascender + leading
 ;	as float32! 20
 ;]

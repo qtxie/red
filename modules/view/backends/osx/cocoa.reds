@@ -179,10 +179,6 @@ tagSIZE: alias struct! [
 
 #import [
 	LIBC-file cdecl [
-		fabs: "fabs" [
-			x			[float!]
-			return:		[float!]
-		]
 		objc_getClass: "objc_getClass" [
 			class		[c-string!]
 			return:		[integer!]
@@ -360,6 +356,13 @@ tagSIZE: alias struct! [
 			height		[float32!]
 		]
 		CGContextStrokeEllipseInRect: "CGContextStrokeEllipseInRect" [
+			c			[handle!]
+			x			[float32!]
+			y			[float32!]
+			width		[float32!]
+			height		[float32!]
+		]
+		CGContextAddEllipseInRect: "CGContextAddEllipseInRect" [
 			c			[handle!]
 			x			[float32!]
 			y			[float32!]

@@ -1092,13 +1092,14 @@ OS-update-view: func [
 	;if flags and FACET_FLAG_PARA <> 0 [
 	;	update-para face 0
 	;]
-	;if flags and FACET_FLAG_MENU <> 0 [
-	;	menu: as red-block! values + FACE_OBJ_MENU
-	;	if menu-bar? menu window [
-	;		DestroyMenu GetMenu as handle! hWnd
-	;		SetMenu as handle! hWnd build-menu menu CreateMenu
-	;	]
-	;]
+	if flags and FACET_FLAG_MENU <> 0 [
+		menu: as red-block! values + FACE_OBJ_MENU
+		if menu-bar? menu window [
+			AppMainMenu: objc_msgSend [NSApp sel_getUid "mainMenu"]
+			objc_msgSend [AppMainMenu sel_getUid "removeAllItems"]
+			build-menu menu AppMainMenu hWnd
+		]
+	]
 
 	int/value: 0										;-- reset flags
 ]

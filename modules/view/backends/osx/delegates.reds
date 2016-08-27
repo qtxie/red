@@ -445,7 +445,6 @@ render-text: func [
 		text	[red-string!]
 		font	[red-object!]
 		para	[red-object!]
-		color	[red-tuple!]
 		state	[red-block!]
 		int		[red-integer!]
 		hFont	[integer!]
@@ -466,13 +465,7 @@ render-text: func [
 	font: as red-object! values + FACE_OBJ_FONT
 	hFont: either TYPE_OF(font) = TYPE_OBJECT [
 		values: object/get-values font
-		color: as red-tuple! values + FONT_OBJ_COLOR
-		if all [
-			TYPE_OF(color) = TYPE_TUPLE
-			color/array1 <> 0
-		][
-			nscolor: to-NSColor color/array1
-		]
+		nscolor: to-NSColor as red-tuple! values + FONT_OBJ_COLOR
 		state: as red-block! values + FONT_OBJ_STATE
 		int: as red-integer! block/rs-head state
 		int/value

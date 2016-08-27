@@ -452,7 +452,7 @@ OS-draw-font: func [
 	dc/font-color?: either TYPE_OF(color) = TYPE_TUPLE [
 		dc/font-color: color/array1
 		if dc/font-nscolor <> 0 [objc_msgSend [dc/font-nscolor sel_getUid "release"]]
-		dc/font-nscolor: to-NSColor dc/font-color
+		dc/font-nscolor: to-NSColor color
 		yes
 	][
 		no

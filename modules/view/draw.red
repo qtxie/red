@@ -76,6 +76,16 @@ Red/System [
 			]
 		]
 
+		transparent-color?: func [
+			color	[red-tuple!]
+			return: [logic!]
+		][
+			all [
+				TYPE_OF(color) = TYPE_TUPLE
+				color/array1 >>> 24 = 255
+			]
+		]
+
 		get-color-int: func [
 			tp		[red-tuple!]
 			alpha?	[int-ptr!]

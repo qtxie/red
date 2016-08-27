@@ -150,6 +150,13 @@ NSRect!: alias struct! [
 	h		[float32!]
 ]
 
+NSColor!: alias struct! [
+	r		[float32!]
+	g		[float32!]
+	b		[float32!]
+	a		[float32!]
+]
+
 NSSize!: alias struct! [
 	width	[float32!]
 	height	[float32!]
@@ -549,21 +556,28 @@ to-CFString: func [str [red-string!] return: [integer!] /local len][
 ]
 
 to-NSColor: func [
-	color	[integer!]
+	color	[red-tuple!]
 	return: [integer!]
 	/local
+		clr [integer!]
 		r	[float32!]
 		g	[float32!]
 		b	[float32!]
 		a	[float32!]
+		c	[NSColor!]
 ][
-	r: (as float32! color and FFh) / 255.0
-	g: (as float32! color >> 8 and FFh) / 255.0
-	b: (as float32! color >> 16 and FFh) / 255.0
-	a: (as float32! 255 - (color >>> 24)) / 255.0
+	if TYPE_OF(color) <> TYPE_TUPLE [return 0]
+
+	c: declare NSColor!
+	clr: color/array1
+	c/r: (as float32! clr and FFh) / 255.0
+	c/g: (as float32! clr >> 8 and FFh) / 255.0
+	c/b: (as float32! clr >> 16 and FFh) / 255.0
+	c/a: (as float32! 255 - (clr >>> 24)) / 255.0
+
 	objc_msgSend [
 		objc_getClass "NSColor"
 		sel_getUid "colorWithCalibratedRed:green:blue:alpha:"
-		r g b a
+		c/r c/g c/b c/a
 	]
 ]

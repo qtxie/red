@@ -132,21 +132,6 @@ get-text-size: func [
 	size
 ]
 
-to-bgr: func [
-	node	[node!]
-	pos		[integer!]
-	return: [integer!]									;-- 00bbggrr format or -1 if not found
-	/local
-		color [red-tuple!]
-][
-	color: as red-tuple! get-node-facet node pos
-	either TYPE_OF(color) = TYPE_TUPLE [
-		color/array1 and 00FFFFFFh
-	][
-		-1
-	]
-]
-
 free-handles: func [
 	hWnd [integer!]
 	/local
@@ -434,6 +419,64 @@ change-size: func [
 	]
 ]
 
+change-image: func [
+	hWnd	[integer!]
+	image	[red-image!]
+	type	[integer!]
+	/local
+		cg-image [integer!]
+		id		 [integer!]
+][
+	case [
+		type = camera [
+			snap-camera hWnd
+			until [TYPE_OF(image) = TYPE_IMAGE]			;-- wait
+		]
+		any [type = button type = check type = radio][
+			if TYPE_OF(image) <> TYPE_IMAGE [
+				objc_msgSend [hWnd sel_getUid "setImage:" 0]
+				exit
+			]
+			cg-image: CGBitmapContextCreateImage as-integer image/node
+			id: objc_msgSend [objc_getClass "NSImage" sel_getUid "alloc"]
+			id: objc_msgSend [id sel_getUid "initWithCGImage:size:" cg-image 0 0]
+			objc_msgSend [hWnd sel_getUid "setImage:" id]
+			objc_msgSend [id sel_getUid "release"]
+			CGImageRelease cg-image
+		]
+		true [
+			objc_msgSend [hWnd sel_getUid "display"]
+		]
+	]
+]
+
+change-color: func [
+	hWnd	[integer!]
+	color	[red-tuple!]
+	type	[integer!]
+	/local
+		clr [integer!]
+][
+	if TYPE_OF(color) <> TYPE_TUPLE [exit]
+	if transparent-color? color [
+		objc_msgSend [hWnd sel_getUid "setDrawsBackground:" no]
+		exit
+	]
+	either any [type = field type = text type = area type = window][
+		clr: to-NSColor color
+		if type = area [
+			hWnd: objc_msgSend [hWnd sel_getUid "documentView"]
+		]
+		if type = text [
+			objc_msgSend [hWnd sel_getUid "setDrawsBackground:" yes]
+		]
+		objc_msgSend [hWnd sel_getUid "setBackgroundColor:" clr]
+		objc_msgSend [clr sel_getUid "release"]
+	][
+		objc_msgSend [hWnd sel_getUid "display"]
+	]
+]
+
 change-offset: func [
 	hWnd [integer!]
 	pos  [red-pair!]
@@ -474,7 +517,10 @@ change-text: func [
 		txt: CFString(cstr)
 		case [
 			type = area [
-				objc_msgSend [hWnd sel_getUid "setString:" txt]
+				objc_msgSend [
+					objc_msgSend [hWnd sel_getUid "documentView"]
+					sel_getUid "setString:" txt
+				]
 			]
 			any [type = field type = text][
 				objc_msgSend [hWnd sel_getUid "setStringValue:" txt]
@@ -912,12 +958,7 @@ OS-make-view: func [
 				set-logic-state obj as red-logic! data no
 			]
 			if TYPE_OF(img) = TYPE_IMAGE [
-				len: CGBitmapContextCreateImage as-integer img/node
-				id: objc_msgSend [objc_getClass "NSImage" sel_getUid "alloc"]
-				id: objc_msgSend [id sel_getUid "initWithCGImage:size:" len 0 0] 
-				objc_msgSend [obj sel_getUid "setImage:" id]
-				objc_msgSend [id sel_getUid "release"]
-				CGImageRelease len
+				change-image obj img sym
 			]
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setTitle:" caption]]
 			objc_msgSend [obj sel_getUid "setTarget:" obj]
@@ -980,6 +1021,7 @@ OS-make-view: func [
 	]
 
 	if TYPE_OF(rate) <> TYPE_NONE [change-rate obj rate]
+	if sym <> base [change-color obj as red-tuple! values + FACE_OBJ_COLOR sym]
 
 	if parent <> 0 [
 		objc_msgSend [parent sel_getUid "addSubview:" obj]	;-- `addSubView:` will retain the obj
@@ -1046,18 +1088,11 @@ OS-update-view: func [
 	;if flags and FACET_FLAG_FLAGS <> 0 [
 	;	get-flags as red-block! values + FACE_OBJ_FLAGS
 	;]
-	if any [
-		flags and FACET_FLAG_DRAW  <> 0
-		flags and FACET_FLAG_COLOR <> 0
-		flags and FACET_FLAG_IMAGE <> 0
-	][
-		either type = camera [
-			snap-camera hWnd
-			values: values + FACE_OBJ_IMAGE
-			until [TYPE_OF(values) = TYPE_IMAGE]			;-- wait
-		][
-			objc_msgSend [hWnd sel_getUid "display"]
-		]
+	if flags and FACET_FLAG_DRAW  <> 0 [
+		objc_msgSend [hWnd sel_getUid "display"]
+	]
+	if flags and FACET_FLAG_COLOR <> 0 [
+		change-color hWnd as red-tuple! values + FACE_OBJ_COLOR type
 	]
 	;if flags and FACET_FLAG_PANE <> 0 [
 	;	if tab-panel <> type [				;-- tab-panel/pane has custom z-order handling
@@ -1084,6 +1119,9 @@ OS-update-view: func [
 	;		SetMenu as handle! hWnd build-menu menu CreateMenu
 	;	]
 	;]
+	if flags and FACET_FLAG_IMAGE <> 0 [
+		change-image hWnd as red-image! values + FACE_OBJ_IMAGE type
+	]
 
 	int/value: 0										;-- reset flags
 ]

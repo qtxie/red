@@ -28,8 +28,10 @@ AppMainMenu:			0
 NSDefaultRunLoopMode:	0
 &_NSConcreteStackBlock: 0
 NSFontAttributeName:	0
-NSParagraphStyleAttributeName: 0
-NSForegroundColorAttributeName: 0
+NSParagraphStyleAttributeName:		0
+NSForegroundColorAttributeName:		0
+NSUnderlineStyleAttributeName:		0
+NSStrikethroughStyleAttributeName:	0
 
 default-font:	0
 exit-loop:		0
@@ -199,6 +201,10 @@ init: func [
 	NSParagraphStyleAttributeName: p-int/value
 	p-int: red/platform/dlsym lib "NSForegroundColorAttributeName"
 	NSForegroundColorAttributeName: p-int/value
+	p-int: red/platform/dlsym lib "NSUnderlineStyleAttributeName"
+	NSUnderlineStyleAttributeName: p-int/value
+	p-int: red/platform/dlsym lib "NSStrikethroughStyleAttributeName"
+	NSStrikethroughStyleAttributeName: p-int/value
 
 	lib: red/platform/dlopen "/System/Library/Frameworks/Foundation.framework/Versions/Current/Foundation" RTLD_LAZY
 	&_NSConcreteStackBlock: as-integer red/platform/dlsym lib "_NSConcreteStackBlock"
@@ -475,6 +481,106 @@ change-color: func [
 	][
 		objc_msgSend [hWnd sel_getUid "display"]
 	]
+]
+
+change-font: func [
+	hWnd	[integer!]
+	face	[red-object!]
+	font	[red-object!]
+	type	[integer!]
+	/local
+		values	[red-value!]
+		style	[red-word!]
+		blk		[red-block!]
+		hFont	[handle!]
+		len		[integer!]
+		para	[integer!]
+		nscolor	[integer!]
+		attrs	[integer!]
+		under	[integer!]
+		strike	[integer!]
+		str		[integer!]
+		title	[integer!]
+][
+	if TYPE_OF(font) <> TYPE_OBJECT [exit]
+
+	hFont: get-font face font
+	values: object/get-values font
+	nscolor: to-NSColor as red-tuple! values + FONT_OBJ_COLOR
+	if zero? nscolor [
+		nscolor: objc_msgSend [objc_getClass "NSColor" sel_getUid "blackColor"]
+	]
+	style: as red-word! values + FONT_OBJ_STYLE
+	len: switch TYPE_OF(style) [
+		TYPE_BLOCK [
+			blk: as red-block! style
+			style: as red-word! block/rs-head blk
+			len: block/rs-length? blk
+		]
+		TYPE_WORD  [1]
+		default	   [0]
+	]
+
+	under: 0
+	strike: 0
+	;unless zero? len [
+	;	loop len [
+	;		attrs: symbol/resolve style/symbol
+	;		case [
+	;			attrs = _underline [under: 1 under: CFNumberCreate 0 15 :under]
+	;			attrs = _strike	 [strike: 1 strike: CFNumberCreate 0 15 :strike]
+	;			true			 [0]
+	;		]
+	;		style: style + 1
+	;	]
+	;]
+
+	para: 0
+	if type = button [
+		para: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
+		para: objc_msgSend [para sel_getUid "mutableCopy"]
+		objc_msgSend [para sel_getUid "setAlignment:" NSTextAlignmentCenter]
+	]
+
+	attrs: objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
+	attrs: objc_msgSend [
+		attrs sel_getUid "initWithObjectsAndKeys:"
+		hFont NSFontAttributeName
+		nscolor NSForegroundColorAttributeName
+		para NSParagraphStyleAttributeName
+		under NSUnderlineStyleAttributeName
+		strike NSStrikethroughStyleAttributeName
+		0
+	]
+
+	case [
+		any [type = button type = check type = radio][
+			title: to-NSString as red-string! (object/get-values face) + FACE_OBJ_TEXT
+			str: objc_msgSend [
+				objc_msgSend [objc_getClass "NSAttributedString" sel_getUid "alloc"]
+				sel_getUid "initWithString:attributes:" title attrs
+			]
+			objc_msgSend [hWnd sel_getUid "setAttributedTitle:" str]
+			objc_msgSend [str sel_getUid "release"]
+			objc_msgSend [title sel_getUid "release"]
+			;objc_msgSend [para sel_getUid "release"]
+		]
+		any [type = field type = text][
+			objc_msgSend [hWnd sel_getUid "setFont:" hFont]
+			objc_msgSend [hWnd sel_getUid "setTextColor:" nscolor]
+		]
+		type = area [
+			objc_msgSend [
+				objc_msgSend [hWnd sel_getUid "documentView"]
+				sel_getUid "setTypingAttributes:" attrs
+			]
+		]
+		true [0]
+	]
+	objc_msgSend [nscolor sel_getUid "release"]
+	objc_msgSend [attrs sel_getUid "release"]
+	if under <> 0 [CFRelease under]
+	if strike <> 0 [CFRelease strike]
 ]
 
 change-offset: func [
@@ -1035,6 +1141,7 @@ OS-make-view: func [
 		true [0]
 	]
 
+	change-font obj face as red-object! values + FACE_OBJ_FONT sym
 	if TYPE_OF(rate) <> TYPE_NONE [change-rate obj rate]
 	if sym <> base [change-color obj as red-tuple! values + FACE_OBJ_COLOR sym]
 
@@ -1055,10 +1162,8 @@ OS-update-view: func [
 		values	[red-value!]
 		state	[red-block!]
 		menu	[red-block!]
-		draw	[red-block!]
 		word	[red-word!]
 		int		[red-integer!]
-		int2	[red-integer!]
 		bool	[red-logic!]
 		s		[series!]
 		hWnd	[integer!]
@@ -1121,8 +1226,7 @@ OS-update-view: func [
 		change-rate hWnd values + FACE_OBJ_RATE
 	]
 	if flags and FACET_FLAG_FONT <> 0 [
-		set-font hWnd face values
-		objc_msgSend [hWnd sel_getUid "display"]
+		change-font hWnd face as red-object! values + FACE_OBJ_FONT type
 	]
 	;if flags and FACET_FLAG_PARA <> 0 [
 	;	update-para face 0

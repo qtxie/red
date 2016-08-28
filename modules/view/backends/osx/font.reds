@@ -32,7 +32,9 @@ make-font: func [
 		manager [integer!]
 		method	[c-string!]
 		hFont	[handle!]
+		temp	[CGPoint!]
 ][
+	temp: declare CGPoint!
 	values: object/get-values font
 
 	int: as red-integer! values + FONT_OBJ_SIZE
@@ -67,6 +69,7 @@ make-font: func [
 		]
 	]
 
+	temp/x: size
 	str: as red-string! values + FONT_OBJ_NAME
 	either TYPE_OF(str) = TYPE_STRING [
 		len: -1
@@ -79,7 +82,7 @@ make-font: func [
 			sym
 			traits
 			0								;-- ignored if use traits
-			size
+			temp/x
 		]
 		CFRelease sym
 	][												;-- use system font
@@ -88,7 +91,7 @@ make-font: func [
 		][
 			"systemFontOfSize:"
 		]
-		hFont: as handle! objc_msgSend [objc_getClass "NSFont" sel_getUid method size]
+		hFont: as handle! objc_msgSend [objc_getClass "NSFont" sel_getUid method temp/x]
 	]
 
 	either null? face [									;-- null => replace underlying font object 
@@ -122,17 +125,17 @@ get-font-handle: func [
 	null
 ]
 
-set-font: func [
-	hWnd   [integer!]
-	face   [red-object!]
-	values [red-value!]
+get-font: func [
+	face	[red-object!]
+	font	[red-object!]
+	return: [handle!]
 	/local
-		font  [red-object!]
-		state [red-block!]
-		int	  [red-integer!]
 		hFont [handle!]
 ][
-	font: as red-object! values + FACE_OBJ_FONT
+	if TYPE_OF(font) <> TYPE_OBJECT [return null]
+	hFont: get-font-handle font
+	if null? hFont [hFont: make-font face font]
+	hFont
 ]
 
 free-font: func [

@@ -290,6 +290,12 @@ tagSIZE: alias struct! [
 			encoding	[integer!]
 			return:		[integer!]
 		]
+		CFNumberCreate: "CFNumberCreate" [
+			allocator	[integer!]
+			type		[integer!]
+			valuePtr	[int-ptr!]
+			return:		[integer!]
+		]
 		CFRelease: "CFRelease" [
 			cf			[integer!]
 		]

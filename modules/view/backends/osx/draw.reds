@@ -495,69 +495,69 @@ OS-draw-text: func [
 	;CFRelease line
 ]
 
-;_draw-arc: func [
-;	; make an elliptical arc
-;	; Based on the algorithm described in
-;	; http://www.stillhq.com/ctpfaq/2002/03/c1088.html#AEN1212
-;	ctx		[handle!]
-;	cx		[float32!]
-;	cy		[float32!]
-;	rx		[float32!]
-;	ry		[float32!]
-;	alpha	[float32!]
-;	beta	[float32!]
-;	start?	[logic!]
-;	closed? [logic!]
-;	/local
-;		delta	[float32!]
-;		bcp		[float32!]
-;		pi32	[float32!]
-;		sin-a	[float32!]
-;		sin-b	[float32!]
-;		cos-a	[float32!]
-;		cos-b	[float32!]
-;		sx		[float32!]
-;		sy		[float32!]
-;][
-;	pi32: as float32! PI
+_draw-arc: func [
+	; make an elliptical arc
+	; Based on the algorithm described in
+	; http://www.stillhq.com/ctpfaq/2002/03/c1088.html#AEN1212
+	ctx		[handle!]
+	cx		[float32!]
+	cy		[float32!]
+	rx		[float32!]
+	ry		[float32!]
+	alpha	[float32!]
+	beta	[float32!]
+	start?	[logic!]
+	closed? [logic!]
+	/local
+		delta	[float32!]
+		bcp		[float32!]
+		pi32	[float32!]
+		sin-a	[float32!]
+		sin-b	[float32!]
+		cos-a	[float32!]
+		cos-b	[float32!]
+		sx		[float32!]
+		sy		[float32!]
+][
+	pi32: as float32! PI
 
-	;;-- adjust angles for ellipses
-	;alpha: atan2f (sinf alpha) * rx (cosf alpha) * ry
-	;beta:  atan2f (sinf beta)  * rx (cosf beta) * ry
+	;-- adjust angles for ellipses
+	alpha: atan2f (sinf alpha) * rx (cosf alpha) * ry
+	beta:  atan2f (sinf beta)  * rx (cosf beta) * ry
 
-	;if pi32 < fabsf beta - alpha [
-	;	either beta > alpha [
-	;		beta: beta - (pi32 * as float32! 2.0)
-	;	][
-	;		alpha: alpha - (pi32 * as float32! 2.0)
-	;	]
-	;]
-	;delta: beta - alpha / 2.0
-	;bcp: as float32! (4.0 / 3.0 * (1.0 - cosf delta) / sinf delta)
+	if pi32 < fabsf beta - alpha [
+		either beta > alpha [
+			beta: beta - (pi32 * as float32! 2.0)
+		][
+			alpha: alpha - (pi32 * as float32! 2.0)
+		]
+	]
+	delta: beta - alpha / 2.0
+	bcp: as float32! (4.0 / 3.0 * (1.0 - cosf delta) / sinf delta)
 
-	;sin-a: sinf alpha
-	;sin-b: sinf beta
-	;cos-a: cosf alpha
-	;cos-b: cosf beta
+	sin-a: sinf alpha
+	sin-b: sinf beta
+	cos-a: cosf alpha
+	cos-b: cosf beta
 
-	;if start? [
-	;	sx: rx * cos-a + cx
-	;	sy: ry * sin-a + cy
-	;	either closed? [
-	;		CGContextAddLineToPoint ctx sx sy
-	;	][
-	;		CGContextMoveToPoint ctx sx sy
-	;	]
-	;]
+	if start? [
+		sx: rx * cos-a + cx
+		sy: ry * sin-a + cy
+		either closed? [
+			CGContextAddLineToPoint ctx sx sy
+		][
+			CGContextMoveToPoint ctx sx sy
+		]
+	]
 
-	;CGContextAddCurveToPoint ctx
-	;	cos-a - (bcp * sin-a) * rx + cx
-	;	sin-a + (bcp * cos-a) * ry + cy
-	;	cos-b + (bcp * sin-b) * rx + cx
-	;	sin-b - (bcp * cos-b) * ry + cy
-	;	cos-b * rx + cx
-	;	sin-b * ry + cy
-;]
+	CGContextAddCurveToPoint ctx
+		cos-a - (bcp * sin-a) * rx + cx
+		sin-a + (bcp * cos-a) * ry + cy
+		cos-b + (bcp * sin-b) * rx + cx
+		sin-b - (bcp * cos-b) * ry + cy
+		cos-b * rx + cx
+		sin-b * ry + cy
+]
 
 OS-draw-arc: func [
 	dc	   [draw-ctx!]
@@ -600,28 +600,28 @@ OS-draw-arc: func [
 
 	CGContextBeginPath ctx
 	if closed? [CGContextMoveToPoint ctx cx cy]
-	;either any [sweep >= 360 sweep <= -360][
-	;	CGContextAddEllipseInRect ctx cx - rad-x cy - rad-y rad-x * as float32! 2.0 rad-y * as float32! 2.0
-	;][
-		;either rad-x <> rad-y [								;-- elliptical arc
-		;	delta: as float32! (PI / 2.0)
-			;drawn: as float32! 0.0
-			;i: 0
-			;until [
-			;	current: angle-begin + drawn
-			;	rad: angle-end - current
-			;	either rad > delta [rad: delta][
-			;		if rad <= as float32! 0.000001 [break]
-			;	]
-			;	_draw-arc ctx cx cy rad-x rad-y current current + rad zero? i closed?
-			;	drawn: drawn + rad
-			;	i: i + 1
-			;	i = 4
-			;]
-		;][
+	either any [sweep >= 360 sweep <= -360][
+		CGContextAddEllipseInRect ctx cx - rad-x cy - rad-y rad-x * as float32! 2.0 rad-y * as float32! 2.0
+	][
+		either rad-x <> rad-y [								;-- elliptical arc
+			delta: as float32! (PI / 2.0)
+			drawn: as float32! 0.0
+			i: 0
+			until [
+				current: angle-begin + drawn
+				rad: angle-end - current
+				either rad > delta [rad: delta][
+					if rad <= as float32! 0.000001 [break]
+				]
+				_draw-arc ctx cx cy rad-x rad-y current current + rad zero? i closed?
+				drawn: drawn + rad
+				i: i + 1
+				i = 4
+			]
+		][
 			CGContextAddArc ctx cx cy rad-x angle-begin angle-end 0
-		;]
-	;]
+		]
+	]
 	if closed? [CGContextClosePath ctx]
 	do-draw-path dc
 ]
@@ -850,11 +850,11 @@ OS-matrix-transform: func [
 ]
 
 OS-matrix-push: func [dc [draw-ctx!]][
-	;CGContextSaveGState dc/raw
+	CGContextSaveGState dc/raw
 ]
 
 OS-matrix-pop: func [dc [draw-ctx!]][
-	;CGContextRestoreGState dc/raw
+	CGContextRestoreGState dc/raw
 ]
 
 OS-matrix-reset: func [dc [draw-ctx!]][

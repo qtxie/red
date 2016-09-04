@@ -3,7 +3,7 @@ Red [
 	Needs: 'View
 ]
 
-system/view/debug?: yes
+system/view/debug?: no
 live?: system/view/auto-sync?: no
 
 workstation?: system/view/platform/product = 1
@@ -266,7 +266,7 @@ button: make face! [
 ]
 
 button/font: make font! [
-	name: "Comic Sans MS"
+	name: "Menlo"
 	size: 16
 	style: [bold italic underline strike]
 	anti-alias?: yes
@@ -274,7 +274,7 @@ button/font: make font! [
 ]
 
 font-A: make font! [
-	name: "Comic Sans MS"
+	name: "Menlo"
 	size: 10
 	color: blue
 	style: [bold italic underline]
@@ -731,7 +731,7 @@ win/pane: reduce [
 			text 40x6 "Hello Red :-)"
 			
 			arc 100x25 80x80 0 90 closed
-			pen red
+			fill-pen off pen red
 			arc 100x25 50x80 30 90
 
 			curve 20x150 60x250 200x50

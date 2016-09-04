@@ -81,7 +81,7 @@ make-font: func [
 			sel_getUid "fontWithFamily:traits:weight:size:"
 			sym
 			traits
-			0								;-- ignored if use traits
+			5								;-- ignored if use traits
 			temp/x
 		]
 		CFRelease sym

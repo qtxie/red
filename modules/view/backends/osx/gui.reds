@@ -521,19 +521,21 @@ change-font: func [
 		default	   [0]
 	]
 
-	under: 0
+	under: 0									;-- NSUnderlineStyleNone
 	strike: 0
-	;unless zero? len [
-	;	loop len [
-	;		attrs: symbol/resolve style/symbol
-	;		case [
-	;			attrs = _underline [under: 1 under: CFNumberCreate 0 15 :under]
-	;			attrs = _strike	 [strike: 1 strike: CFNumberCreate 0 15 :strike]
-	;			true			 [0]
-	;		]
-	;		style: style + 1
-	;	]
-	;]
+	unless zero? len [
+		loop len [
+			attrs: symbol/resolve style/symbol
+			case [
+				attrs = _underline [under: 1]	;-- NSUnderlineStyleSingle
+				attrs = _strike	 [strike: 1]
+				true			 [0]
+			]
+			style: style + 1
+		]
+	]
+	under: CFNumberCreate 0 15 :under
+	strike: CFNumberCreate 0 15 :strike
 
 	para: 0
 	if type = button [
@@ -579,8 +581,8 @@ change-font: func [
 	]
 	objc_msgSend [nscolor sel_getUid "release"]
 	objc_msgSend [attrs sel_getUid "release"]
-	if under <> 0 [CFRelease under]
-	if strike <> 0 [CFRelease strike]
+	CFRelease under
+	CFRelease strike
 ]
 
 change-offset: func [
@@ -646,9 +648,10 @@ change-text: func [
 			any [type = field type = text][
 				objc_msgSend [hWnd sel_getUid "setStringValue:" txt]
 			]
-			true [
+			any [type = button type = radio type = check] [
 				objc_msgSend [hWnd sel_getUid "setTitle:" txt]
 			]
+			true [0]
 		]
 		CFRelease txt
 	]
@@ -853,10 +856,10 @@ make-area: func [
 		id		[integer!]
 		obj		[integer!]
 		tbox	[integer!]
+		x		[integer!]
 ][
 	rc/x: as float32! 0.0
 	rc/y: as float32! 0.0
-	;objc_msgSend2 container sel_getUid "contentSize"				;-- return struct
 
 	objc_msgSend [container sel_getUid "setBorderType:" NSGrooveBorder]
 	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
@@ -1015,7 +1018,7 @@ OS-make-view: func [
 		any [
 			sym = drop-down
 			sym = drop-list
-		][class: "RedComboBox"]
+		][class: "RedComboBox" size/y: 26]				;-- set to default height
 		sym = slider [class: "RedSlider"]
 		sym = progress [class: "RedProgress"]
 		sym = group-box [class: "RedBox"]
@@ -1117,6 +1120,10 @@ OS-make-view: func [
 		]
 		sym = progress [
 			objc_msgSend [obj sel_getUid "setIndeterminate:" false]
+			if size/y > size/x [
+				rc/x: as float32! -90.0
+				objc_msgSend [obj sel_getUid "setBoundsRotation:" rc/x]
+			]
 			flt: get-position-value as red-float! data 100.0
 			objc_msgSend [obj sel_getUid "setDoubleValue:" flt]
 		]
@@ -1235,8 +1242,8 @@ OS-update-view: func [
 		menu: as red-block! values + FACE_OBJ_MENU
 		if menu-bar? menu window [
 			AppMainMenu: objc_msgSend [NSApp sel_getUid "mainMenu"]
-			objc_msgSend [AppMainMenu sel_getUid "removeAllItems"]
-			build-menu menu AppMainMenu hWnd
+			;objc_msgSend [AppMainMenu sel_getUid "removeAllItems"]
+			;build-menu menu AppMainMenu hWnd
 		]
 	]
 	if flags and FACET_FLAG_IMAGE <> 0 [

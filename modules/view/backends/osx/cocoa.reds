@@ -262,28 +262,40 @@ tagSIZE: alias struct! [
 		]
 	]
 	"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation" cdecl [
-		CFAttributedStringCreateMutable: "CFAttributedStringCreateMutable" [
-			allocator	[integer!]
-			max-length	[integer!]
-			return:		[integer!]
-		]
-		CFAttributedStringReplaceString: "CFAttributedStringReplaceString" [
-			aStr		[integer!]
-			location	[integer!]			;-- CFRange -
-			length		[integer!]			;-- CFRange -
-			string		[integer!]			;-- CFString
-		]
-		CFAttributedStringSetAttribute: "CFAttributedStringSetAttribute" [
-			aStr		[integer!]
-			location	[integer!]
-			length		[integer!]
-			attrName	[integer!]
-			value		[integer!]
-		]
-		CFAttributedStringGetLength: "CFAttributedStringGetLength" [
-			aStr		[integer!]
-			return:		[integer!]
-		]
+		;CFAttributedStringCreate: "CFAttributedStringCreate" [
+		;	allocator	[integer!]
+		;	str			[integer!]
+		;	attributes	[integer!]
+		;	return:		[integer!]
+		;]
+		;CFAttributedStringCreateMutable: "CFAttributedStringCreateMutable" [
+		;	allocator	[integer!]
+		;	max-length	[integer!]
+		;	return:		[integer!]
+		;]
+		;CFAttributedStringReplaceString: "CFAttributedStringReplaceString" [
+		;	aStr		[integer!]
+		;	location	[integer!]			;-- CFRange -
+		;	length		[integer!]			;-- CFRange -
+		;	string		[integer!]			;-- CFString
+		;]
+		;CFAttributedStringSetAttribute: "CFAttributedStringSetAttribute" [
+		;	aStr		[integer!]
+		;	location	[integer!]
+		;	length		[integer!]
+		;	attrName	[integer!]
+		;	value		[integer!]
+		;]
+		;CFAttributedStringGetLength: "CFAttributedStringGetLength" [
+		;	aStr		[integer!]
+		;	return:		[integer!]
+		;]
+		;CFAttributedStringBeginEditing: "CFAttributedStringBeginEditing" [
+		;	aStr		[integer!]
+		;]
+		;CFAttributedStringEndEditing: "CFAttributedStringEndEditing" [
+		;	aStr		[integer!]
+		;]
 		CFStringCreateWithCString: "CFStringCreateWithCString" [
 			allocator	[integer!]
 			cStr		[c-string!]

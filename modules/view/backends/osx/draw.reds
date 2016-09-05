@@ -26,7 +26,6 @@ draw-ctx!: alias struct! [
 	font-color		[integer!]
 	font-nscolor	[integer!]
 	font			[integer!]
-	attr-str		[integer!]
 	matrix			[integer!]
 	font-color?		[logic!]
 	pen?			[logic!]
@@ -52,7 +51,6 @@ draw-begin: func [
 	ctx/font-color:		0
 	ctx/font-nscolor:	0
 	ctx/font:			0
-	ctx/attr-str:		0
 	ctx/matrix:			0
 	ctx/pen?:			yes
 	ctx/brush?:			no
@@ -72,7 +70,6 @@ draw-end: func [
 	paint?		[logic!]
 ][
 	if dc/font-nscolor <> 0 [objc_msgSend [dc/font-nscolor sel_getUid "release"]]
-	if dc/attr-str <> 0		[CFRelease dc/attr-str]
 	if dc/matrix <> 0		[CFRelease dc/matrix]
 ]
 
@@ -125,10 +122,10 @@ OS-draw-pen: func [
 	dc/pen?: not off?
 	if all [not off? dc/pen-color <> color][
 		dc/pen-color: color
-		r: as float32! (as-float color and FFh) / 255.0
-		g: as float32! (as-float color >> 8 and FFh) / 255.0
-		b: as float32! (as-float color >> 16 and FFh) / 255.0
-		a: as float32! (as-float 255 - (color >>> 24)) / 255.0
+		r: (as float32! color and FFh) / 255.0
+		g: (as float32! color >> 8 and FFh) / 255.0
+		b: (as float32! color >> 16 and FFh) / 255.0
+		a: (as float32! 255 - (color >>> 24)) / 255.0
 		CGContextSetRGBStrokeColor dc/raw r g b a
 	]
 ]
@@ -148,10 +145,10 @@ OS-draw-fill-pen: func [
 		if dc/brush-color <> color [
 			dc/brush?: yes
 			dc/brush-color: color
-			r: as float32! (as-float color and FFh) / 255.0
-			g: as float32! (as-float color >> 8 and FFh) / 255.0
-			b: as float32! (as-float color >> 16 and FFh) / 255.0
-			a: as float32! (as-float 255 - (color >>> 24)) / 255.0
+			r: (as float32! color and FFh) / 255.0
+			g: (as float32! color >> 8 and FFh) / 255.0
+			b: (as float32! color >> 16 and FFh) / 255.0
+			a: (as float32! 255 - (color >>> 24)) / 255.0
 			CGContextSetRGBFillColor dc/raw r g b a
 		]
 	]
@@ -472,14 +469,12 @@ OS-draw-text: func [
 		rect	[NSRect!]
 ][
 	ctx: dc/raw
+	;;-- TBD flip the coordinate system
+
 	;str: to-CFString text
-	;attr: dc/attr-str
-	;if zero? attr [
-	;	attr: CFAttributedStringCreateMutable 0 0
-	;	dc/attr-str: attr
-	;]
+	;attr: CFAttributedStringCreateMutable 0 0
+	;CFAttributedStringBeginEditing attr
 	;CFAttributedStringReplaceString attr 0 CFAttributedStringGetLength attr str
-	;CFRelease str
 
 	;len: CFAttributedStringGetLength attr
 	;if dc/font <> 0 [
@@ -488,10 +483,12 @@ OS-draw-text: func [
 	;if dc/font-color? [
 	;	CFAttributedStringSetAttribute attr 0 len NSForegroundColorAttributeName dc/font-nscolor
 	;]
-
+	;CFAttributedStringEndEditing attr
 	;line: CTLineCreateWithAttributedString attr
 	;CGContextSetTextPosition ctx as float32! pos/x as float32! pos/y
 	;CTLineDraw line ctx
+	;CFRelease str
+	;CFRelease attr
 	;CFRelease line
 ]
 

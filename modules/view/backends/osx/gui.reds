@@ -1015,7 +1015,7 @@ OS-make-view: func [
 		any [
 			sym = drop-down
 			sym = drop-list
-		][class: "RedComboBox"]
+		][class: "RedComboBox" size/y: 26]				;@@ set to default height
 		sym = slider [class: "RedSlider"]
 		sym = progress [class: "RedProgress"]
 		sym = group-box [class: "RedBox"]

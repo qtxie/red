@@ -158,8 +158,8 @@ NSColor!: alias struct! [
 ]
 
 NSSize!: alias struct! [
-	width	[float32!]
-	height	[float32!]
+	w		[float32!]
+	h		[float32!]
 ]
 
 CGPoint!: alias struct! [

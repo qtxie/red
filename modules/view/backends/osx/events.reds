@@ -235,27 +235,41 @@ get-event-offset: func [
 	evt		[red-event!]
 	return: [red-value!]
 	/local
-		offset [red-pair!]
-		value  [integer!]
+		type	[integer!]
+		offset	[red-pair!]
+		rc		[NSRect!]
 ][
+	type: evt/type
 	case [
 		any [
-			evt/type <= EVT_OVER
-			evt/type = EVT_MOVING
-			evt/type = EVT_SIZING
-			evt/type = EVT_MOVE
-			evt/type = EVT_SIZE
+			type <= EVT_OVER
+			type = EVT_MOVING
+			type = EVT_MOVE
 		][
+			rc: as NSRect! (as int-ptr! evt/msg) + 2
 			offset: as red-pair! stack/push*
 			offset/header: TYPE_PAIR
+			offset/x: as-integer rc/x
+			offset/y: screen-size-y - as-integer (rc/y + rc/h)
 			as red-value! offset
 		]
 		any [
-			evt/type = EVT_ZOOM
-			evt/type = EVT_PAN
-			evt/type = EVT_ROTATE
-			evt/type = EVT_TWO_TAP
-			evt/type = EVT_PRESS_TAP
+			type = EVT_SIZING
+			type = EVT_SIZE
+		][
+			rc: as NSRect! (as int-ptr! evt/msg) + 2
+			offset: as red-pair! stack/push*
+			offset/header: TYPE_PAIR
+			offset/x: as-integer rc/w
+			offset/y: as-integer rc/h
+			as red-value! offset
+		]
+		any [
+			type = EVT_ZOOM
+			type = EVT_PAN
+			type = EVT_ROTATE
+			type = EVT_TWO_TAP
+			type = EVT_PRESS_TAP
 		][
 			offset: as red-pair! stack/push*
 			offset/header: TYPE_PAIR

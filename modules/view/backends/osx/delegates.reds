@@ -385,18 +385,60 @@ win-will-close: func [
 	make-event self 0 EVT_CLOSE
 ]
 
+;win-will-resize: func [								;-- use it to block resizing window
+;	[cdecl]
+;	self	[integer!]
+;	cmd		[integer!]
+;	sender	[integer!]
+;	w		[integer!]
+;	h		[integer!]
+;	/local
+;		sz	[NSSize!]
+;][
+;	sz: as NSSize! :w
+;	system/cpu/edx: h									;-- return NSSize!
+;	system/cpu/eax: w
+;]
+
 win-did-resize: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
 	notif	[integer!]
 	/local
-		x	[float!]
-		y	[float!]
-		w	[float!]
-		h	[float!]
+		rc	[NSRect!]
+		sz	[red-pair!]
 ][
-	;objc_msgSend_stret self sel_getUid "frame"		;return a struct
+	make-event self 0 EVT_SIZING
+	rc: as NSRect! (as int-ptr! self) + 2
+	sz: (as red-pair! get-face-values self) + FACE_OBJ_SIZE		;-- update face/size
+	sz/x: as-integer rc/w
+	sz/y: as-integer rc/h
+]
+
+win-live-resize: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+][
+	make-event self 0 EVT_SIZE
+]
+
+win-did-move: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+	/local
+		rc	[NSRect!]
+		sz	[red-pair!]
+][
+	rc: as NSRect! (as int-ptr! self) + 2
+	sz: (as red-pair! get-face-values self) + FACE_OBJ_OFFSET	;-- update face/offset
+	sz/x: as-integer rc/x
+	sz/y: screen-size-y - as-integer (rc/y + rc/h)
+	make-event self 0 EVT_MOVE
 ]
 
 tabview-will-select: func [

@@ -492,7 +492,7 @@ render-text: func [
 	s: to-NSString text
 	style: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
 	style: objc_msgSend [style sel_getUid "mutableCopy"]
-	;objc_msgSend [style sel_getUid "setAlignment:" NSTextAlignmentCenter]
+	objc_msgSend [style sel_getUid "setAlignment:" NSTextAlignmentCenter]
 	attrs: objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
 	attrs: objc_msgSend [
 		attrs sel_getUid "initWithObjectsAndKeys:"

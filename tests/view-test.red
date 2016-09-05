@@ -266,7 +266,7 @@ button: make face! [
 ]
 
 button/font: make font! [
-	name: "Comic Sans MS"
+	name: "Menlo"
 	size: 16
 	style: [bold italic underline strike]
 	anti-alias?: yes
@@ -274,7 +274,7 @@ button/font: make font! [
 ]
 
 font-A: make font! [
-	name: "Comic Sans MS"
+	name: "Menlo"
 	size: 10
 	color: blue
 	style: [bold italic underline]

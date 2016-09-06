@@ -1327,5 +1327,5 @@ OS-do-draw: func [
 	img		[red-image!]
 	cmds	[red-block!]
 ][
-	do-draw null img cmds no no no no
+	do-draw img/node img cmds no yes yes yes
 ]

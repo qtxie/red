@@ -165,6 +165,10 @@ free-handles: func [
 		]
 	]
 
+	if sym <> window [
+		objc_msgSend [hWnd sel_getUid "removeFromSuperview"]
+	]
+
 	state: values + FACE_OBJ_STATE
 	state/header: TYPE_NONE
 ]
@@ -481,6 +485,46 @@ change-color: func [
 	][
 		objc_msgSend [hWnd sel_getUid "display"]
 	]
+]
+
+update-z-order: func [
+	parent	[integer!]
+	pane	[red-block!]
+	type	[integer!]
+	/local
+		face [red-object!]
+		tail [red-object!]
+		hWnd [handle!]
+		parr [int-ptr!]
+		arr  [integer!]
+		nb   [integer!]
+		s	 [series!]
+][
+	s: GET_BUFFER(pane)
+	face: as red-object! s/offset + pane/head
+	tail: as red-object! s/tail
+	nb: (as-integer tail - face) >> 4
+
+	parr: as int-ptr! allocate nb * 4
+	nb: 0
+	while [face < tail][
+		if TYPE_OF(face) = TYPE_OBJECT [
+			hWnd: face-handle? face
+			if hWnd <> null [
+				nb: nb + 1
+				parr/nb: as-integer hWnd
+			]
+		]
+		face: face + 1
+	]
+	arr: objc_msgSend [
+		objc_getClass "NSArray"
+		sel_getUid "arrayWithObjects:count:"
+		parr nb
+	]
+	free as byte-ptr! parr
+	if type = window [parent: objc_msgSend [parent sel_getUid "contentView"]]
+	objc_msgSend [parent sel_getUid "setSubviews:" arr]
 ]
 
 change-font: func [
@@ -1222,13 +1266,9 @@ OS-update-view: func [
 	if flags and FACET_FLAG_COLOR <> 0 [
 		change-color hWnd as red-tuple! values + FACE_OBJ_COLOR type
 	]
-	;if flags and FACET_FLAG_PANE <> 0 [
-	;	if tab-panel <> type [				;-- tab-panel/pane has custom z-order handling
-	;		update-z-order 
-	;			as red-block! values + gui/FACE_OBJ_PANE
-	;			null
-	;	]
-	;]
+	if flags and FACET_FLAG_PANE <> 0 [
+		update-z-order hWnd as red-block! values + FACE_OBJ_PANE type
+	]
 	if flags and FACET_FLAG_RATE <> 0 [
 		change-rate hWnd values + FACE_OBJ_RATE
 	]

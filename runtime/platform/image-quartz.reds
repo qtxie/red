@@ -49,6 +49,10 @@ OS-image: context [
 				image		[integer!]
 				properties	[integer!]
 			]
+			CGImageDestinationFinalize: "CGImageDestinationFinalize" [
+				dst			[integer!]
+				return:		[logic!]
+			]
 			CGColorSpaceCreateDeviceRGB: "CGColorSpaceCreateDeviceRGB" [
 				return:		[integer!]
 			]
@@ -126,26 +130,6 @@ OS-image: context [
 				length		[integer!]
 				return:		[integer!]
 			]
-			CFURLCreateWithString: "CFURLCreateWithString" [
-				allocator	[integer!]
-				url			[integer!]
-				baseUrl		[integer!]
-				return:		[integer!]
-			]
-			CFStringCreateWithCString: "CFStringCreateWithCString" [
-				allocator	[integer!]
-				cStr		[c-string!]
-				encoding	[integer!]
-				return:		[integer!]
-			]
-			CFURLCreateStringByAddingPercentEscapes: "CFURLCreateStringByAddingPercentEscapes" [
-				allocator	[integer!]
-				cf-str		[integer!]
-				unescaped	[integer!]
-				escaped		[integer!]
-				encoding	[integer!]
-				return:		[integer!]
-			]
 			CFRelease: "CFRelease" [
 				cf			[integer!]
 			]
@@ -164,11 +148,6 @@ OS-image: context [
 		kUTTypePNG: p-int/value
 		p-int: red/platform/dlsym lib "kUTTypeBMP"
 		kUTTypeBMP: p-int/value	
-	]
-
-	to-CFString: func [str [red-string!] return: [integer!] /local len][
-		len: -1
-		CFStringCreateWithCString 0 unicode/to-utf8 str :len kCFStringEncodingUTF8
 	]
 
 	make-rect: func [
@@ -428,8 +407,6 @@ OS-image: context [
 		return: [red-value!]
 		/local
 			type		[integer!]
-			raw-url		[integer!]
-			escaped-url [integer!]
 			path		[integer!]
 			dst			[integer!]
 			img			[integer!]
@@ -447,16 +424,16 @@ OS-image: context [
 		switch TYPE_OF(slot) [
 			TYPE_URL
 			TYPE_FILE [
-				raw-url: to-CFString as red-string! slot
-				;escaped-url: CFURLCreateStringByAddingPercentEscapes 0 raw-url 0 0 kCFStringEncodingUTF8
-				;path: CFURLCreateWithString 0 escaped-url 0
-				;dst: CGImageDestinationCreateWithURL path type 1 0
-				;CFRelease escaped-url
-				CFRelease raw-url
-				;;if zero? dst []				;-- error
-				;CGImageDestinationAddImage dst img 0
-				;CFRelease dst
-				;CGImageRelease img
+				path: simple-io/to-NSURL as red-string! slot yes
+				dst: CGImageDestinationCreateWithURL path type 1 0
+				;if zero? dst []				;-- error
+				CGImageDestinationAddImage dst img 0
+				unless CGImageDestinationFinalize dst [
+					0 ;-- error
+				]
+				CFRelease path
+				CFRelease dst
+				CGImageRelease img
 			]
 			default [0]
 		]

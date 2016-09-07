@@ -980,6 +980,76 @@ make-text-list: func [
 	objc_msgSend [column sel_getUid "release"]
 ]
 
+update-combo-box: func [
+	face  [red-object!]
+	value [red-value!]
+	sym   [integer!]
+	new	  [red-value!]
+	index [integer!]
+	part  [integer!]
+	drop? [logic!]										;-- TRUE: drop-list or drop-down widgets
+	/local
+		hWnd [integer!]
+		msg  [integer!]
+		str  [red-string!]
+][
+	hWnd: get-face-handle face
+	switch TYPE_OF(value) [
+		TYPE_BLOCK [
+			case [
+				any [
+					sym = words/_remove/symbol
+					sym = words/_take/symbol
+					sym = words/_clear/symbol
+				][
+					ownership/unbind-each as red-block! value index part
+					
+					;either all [
+					;	sym = words/_clear/symbol
+					;	zero? index
+					;][
+					;	msg: either drop? [CB_RESETCONTENT][LB_RESETCONTENT]
+					;	SendMessage hWnd msg 0 0
+					;][
+					;	loop part [remove-list-item hWnd index drop?]
+					;]
+				]
+				any [
+					sym = words/_insert/symbol
+					sym = words/_poke/symbol
+					sym = words/_put/symbol
+					sym = words/_reverse/symbol
+				][
+					;ownership/unbind-each as red-block! value index part
+					
+					str: as red-string! either any [
+						null? new
+						TYPE_OF(new) = TYPE_BLOCK
+					][
+						block/rs-abs-at as red-block! value index
+					][
+						new
+					]
+					;loop part [
+					;	if sym <> words/_insert/symbol [
+					;		remove-list-item hWnd index drop?
+					;	]
+					;	insert-list-item hWnd str index drop?
+					;	if sym = words/_reverse/symbol [index: index + 1]
+					;	str: str + 1
+					;]
+				]
+				true [0]
+			]
+		]
+		TYPE_STRING [
+			;remove-list-item hWnd index drop?
+			;insert-list-item hWnd as red-string! value index drop?
+		]
+		default [assert false]			;@@ raise a runtime error
+	]
+]
+
 OS-show-window: func [
 	hWnd [integer!]
 	/local
@@ -1337,7 +1407,33 @@ OS-update-facet: func [
 	
 	case [
 		sym = facets/pane [0]
-		sym = facets/data [0]
+		sym = facets/data [
+			word: as red-word! get-node-facet face/ctx FACE_OBJ_TYPE
+			type: symbol/resolve word/symbol
+			sym: action/symbol
+			case [
+				any [
+					type = drop-list
+					type = drop-down
+				][
+					if any [
+						index and 1 = 1
+						part  and 1 = 1
+					][
+						fire [TO_ERROR(script invalid-data-facet) value]
+					]
+					index: index / 2
+					part:   part / 2
+					if zero? part [exit]
+					
+					update-combo-box face value sym new index part yes
+				]
+				type = tab-panel [
+					0 ;update-tabs face value sym new index part
+				]
+				true [OS-update-view face]
+			]
+		]
 		true [OS-update-view face]
 	]
 ]

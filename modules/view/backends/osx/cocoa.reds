@@ -99,6 +99,17 @@ Red/System [
 #define NSBoldFontMask				2
 #define NSFixedPitchFontMask		0400h
 
+#define NSTrackingMouseEnteredAndExited		1
+#define NSTrackingMouseMoved				2
+#define NSTrackingCursorUpdate				4
+#define NSTrackingActiveWhenFirstResponder	16
+#define NSTrackingActiveInKeyWindow			32
+#define NSTrackingActiveInActiveApp			64
+#define NSTrackingActiveAlways				128
+#define NSTrackingAssumeInside				256
+#define NSTrackingInVisibleRect				512
+#define NSTrackingEnabledDuringMouseDrag	1024
+
 #define kCGLineJoinMiter			0
 #define kCGLineJoinRound			1
 #define kCGLineJoinBevel			2

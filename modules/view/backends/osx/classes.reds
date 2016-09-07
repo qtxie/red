@@ -112,6 +112,9 @@ make-super-class: func [
 		add-method: as add-method! method
 		add-method new-class
 		class_addMethod new-class sel-on-timer as-integer :red-timer-action "v@:@"
+		class_addMethod new-class sel_getUid "mouseEntered:" as-integer :mouse-entered "v@:@"
+		class_addMethod new-class sel_getUid "mouseExited:" as-integer :mouse-exited "v@:@"
+		class_addMethod new-class sel_getUid "mouseMoved:" as-integer :mouse-moved "v@:@"
 	]
 	objc_registerClassPair new-class
 ]

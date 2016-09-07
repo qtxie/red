@@ -45,6 +45,7 @@ mouse-entered: func [
 	cmd		[integer!]
 	event	[integer!]
 ][
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 	make-event self 0 EVT_OVER
 ]
 
@@ -54,6 +55,7 @@ mouse-exited: func [
 	cmd		[integer!]
 	event	[integer!]
 ][
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 	make-event self EVT_FLAG_AWAY EVT_OVER
 ]
 
@@ -63,6 +65,7 @@ mouse-moved: func [
 	cmd		[integer!]
 	event	[integer!]
 ][
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 	make-event self 0 EVT_OVER
 ]
 

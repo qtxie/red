@@ -236,19 +236,33 @@ get-event-offset: func [
 	return: [red-value!]
 	/local
 		type	[integer!]
+		event	[integer!]
 		offset	[red-pair!]
 		rc		[NSRect!]
+		y		[integer!]
+		x		[integer!]
 ][
 	type: evt/type
+	offset: as red-pair! stack/push*
+	offset/header: TYPE_PAIR
 	case [
+		type <= EVT_OVER [
+			event: objc_getAssociatedObject as-integer evt/msg RedNSEventKey
+			either zero? event [offset/x: 0 offset/y: 0][
+				rc: as NSRect! (as int-ptr! event) + 2
+				x: objc_msgSend [evt/msg sel_getUid "convertPoint:fromView:" rc/x rc/y 0]
+				y: system/cpu/edx
+				rc: as NSRect! :x
+				offset/x: as-integer rc/x
+				offset/y: as-integer rc/y
+			]
+			as red-value! offset
+		]
 		any [
-			type <= EVT_OVER
 			type = EVT_MOVING
 			type = EVT_MOVE
 		][
 			rc: as NSRect! (as int-ptr! evt/msg) + 2
-			offset: as red-pair! stack/push*
-			offset/header: TYPE_PAIR
 			offset/x: as-integer rc/x
 			offset/y: screen-size-y - as-integer (rc/y + rc/h)
 			as red-value! offset
@@ -258,8 +272,6 @@ get-event-offset: func [
 			type = EVT_SIZE
 		][
 			rc: as NSRect! (as int-ptr! evt/msg) + 2
-			offset: as red-pair! stack/push*
-			offset/header: TYPE_PAIR
 			offset/x: as-integer rc/w
 			offset/y: as-integer rc/h
 			as red-value! offset
@@ -271,11 +283,9 @@ get-event-offset: func [
 			type = EVT_TWO_TAP
 			type = EVT_PRESS_TAP
 		][
-			offset: as red-pair! stack/push*
-			offset/header: TYPE_PAIR
 			as red-value! offset
 		]
-		true [as red-value! none-value]
+		true [stack/pop 1 as red-value! none-value]
 	]
 ]
 

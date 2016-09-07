@@ -141,10 +141,11 @@ Red/System [
 #define CFString(cStr) [CFStringCreateWithCString 0 cStr kCFStringEncodingUTF8]
 #define NSString(cStr) [objc_msgSend [objc_getClass "NSString" sel_getUid "stringWithUTF8String:" cStr]] 
 
-#define RedCameraSessionKey		4000FFF0h
-#define RedCameraDevicesKey		4000FFF1h
-#define RedCameraDevInputKey	4000FFF2h
-#define RedCameraImageKey		4000FFF3h
+#define RedNSEventKey			4000FFF0h
+#define RedCameraSessionKey		4000FFF1h
+#define RedCameraDevicesKey		4000FFF2h
+#define RedCameraDevInputKey	4000FFF3h
+#define RedCameraImageKey		4000FFF4h
 #define RedTimerKey				4000FFFAh
 
 #define handle! [pointer! [integer!]]

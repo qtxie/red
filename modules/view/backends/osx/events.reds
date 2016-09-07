@@ -168,7 +168,6 @@ make-at: func [
 	return: [red-object!]
 	/local
 		ivar [integer!]
-		
 ][
 	ivar: class_getInstanceVariable object_getClass view IVAR_RED_FACE
 	assert ivar <> 0

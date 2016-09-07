@@ -19,6 +19,9 @@ add-base-handler: func [class [integer!]][
 	flipp-coord class
 	class_addMethod class sel_getUid "drawRect:" as-integer :draw-rect "v@:{_NSRect=ffff}"
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
+	class_addMethod class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
+	class_addMethod class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
+	class_addMethod class sel_getUid "mouseDragged:" as-integer :mouse-drag "v@:@"
 ]
 
 add-subview: func [
@@ -34,8 +37,6 @@ add-subview: func [
 ]
 
 add-window-handler: func [class [integer!]][
-	class_addMethod class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
-	class_addMethod class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
 	class_addMethod class sel_getUid "keyDown:" as-integer :on-key-down "v@:@"
 	class_addMethod class sel_getUid "keyUp:" as-integer :on-key-up "v@:@"
 	class_addMethod class sel_getUid "windowWillClose:" as-integer :win-will-close "v12@0:4@8"

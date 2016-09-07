@@ -75,7 +75,13 @@ mouse-down: func [
 	cmd		[integer!]
 	event	[integer!]
 ][
-	probe "mouse-down"
+	;probe "mouse-down ............"
+	;print-classname self
+	;if 0 <> class_getInstanceVariable object_getClass self IVAR_RED_FACE [
+		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+		make-event self 0 EVT_LEFT_DOWN
+	;]
+	;msg-send-super self cmd event
 ]
 
 mouse-up: func [
@@ -84,7 +90,28 @@ mouse-up: func [
 	cmd		[integer!]
 	event	[integer!]
 ][
-	probe "mouse-up"
+	;probe "mouse-up ............"
+	;print-classname self
+	;if 0 <> class_getInstanceVariable object_getClass self IVAR_RED_FACE [
+		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+		make-event self 0 EVT_LEFT_UP
+	;]
+	;msg-send-super self cmd event
+]
+
+mouse-drag: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+][
+	;probe "mouse-up ............"
+	;print-classname self
+	;if 0 <> class_getInstanceVariable object_getClass self IVAR_RED_FACE [
+		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+		make-event self 0 EVT_OVER
+	;]
+	;msg-send-super self cmd event
 ]
 
 print-classname: func [

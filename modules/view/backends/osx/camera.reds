@@ -58,6 +58,8 @@ init-camera: func [
 	;-- get all devices name
 	devices: objc_msgSend [objc_getClass "AVCaptureDevice" sel_getUid "devicesWithMediaType:" AVMediaTypeVideo]
 	cnt: objc_msgSend [devices sel_getUid "count"]
+	if zero? cnt [exit]
+
 	if TYPE_OF(data) <> TYPE_BLOCK [
 		block/make-at data cnt
 	]

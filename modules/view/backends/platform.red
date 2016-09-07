@@ -240,7 +240,10 @@ system/view/platform: context [
 			no-buttons:		symbol/make "no-buttons"
 			modal:			symbol/make "modal"
 			popup:			symbol/make "popup"
-			
+
+			on-over:		symbol/make "on-over"
+			_actors:		word/load "actors"
+
 			_text:			word/load "text"
 			_control:		word/load "control"
 			_shift:			word/load "shift"

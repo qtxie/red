@@ -39,6 +39,33 @@ lost-focus: func [
 	yes
 ]
 
+mouse-entered: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+][
+	make-event self 0 EVT_OVER
+]
+
+mouse-exited: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+][
+	make-event self EVT_FLAG_AWAY EVT_OVER
+]
+
+mouse-moved: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+][
+	make-event self 0 EVT_OVER
+]
+
 mouse-down: func [
 	[cdecl]
 	self	[integer!]

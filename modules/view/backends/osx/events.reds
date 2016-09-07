@@ -437,7 +437,7 @@ make-event: func [
 	state: EVT_DISPATCH
 
 	switch evt [
-		EVT_OVER [0]
+		EVT_OVER
 		EVT_KEY_DOWN
 		EVT_KEY_UP
 		EVT_KEY [

@@ -95,6 +95,11 @@ Red/System [
 #define NSEventTypeQuickLook		33
 #define NSEventTypePressure			34
 
+#define NSLeftMouseDownMask			2
+#define NSLeftMouseUpMask			4
+#define NSMouseMovedMask			32
+#define NSLeftMouseDraggedMask		64
+
 #define NSItalicFontMask			1
 #define NSBoldFontMask				2
 #define NSFixedPitchFontMask		0400h
@@ -345,6 +350,15 @@ tagSIZE: alias struct! [
 		CTLineDraw: "CTLineDraw" [
 			line		[integer!]
 			c			[handle!]
+		]
+		CGRectContainsPoint: "CGRectContainsPoint" [
+			x			[float32!]
+			y			[float32!]
+			width		[float32!]
+			height		[float32!]
+			x1			[float32!]
+			y1			[float32!]
+			return:		[logic!]
 		]
 		CGContextSaveGState: "CGContextSaveGState" [
 			c			[handle!]

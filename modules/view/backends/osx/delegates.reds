@@ -69,19 +69,69 @@ mouse-moved: func [
 	make-event self 0 EVT_OVER
 ]
 
+button-mouse-down: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+	/local
+		inside?	[logic!]
+		p-int	[int-ptr!]
+		window	[integer!]
+		type	[integer!]
+		y		[integer!]
+		x		[integer!]
+		bound	[NSRect!]
+		rc		[NSRect!]
+][
+	inside?: yes
+	objc_msgSend [self sel_getUid "highlight:" inside?]
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+	make-event self 0 EVT_LEFT_DOWN
+	until [
+		window: objc_msgSend [self sel_getUid "window"]
+		assert window <> 0
+		event: objc_msgSend [
+			window sel_getUid "nextEventMatchingMask:"
+			NSLeftMouseDownMask or NSLeftMouseUpMask or NSLeftMouseDraggedMask
+		]
+		bound: as NSRect! (as int-ptr! self) + 6
+		p-int: (as int-ptr! event) + 1
+		type: p-int/value
+		rc: as NSRect! (p-int + 1)
+		x: objc_msgSend [self sel_getUid "convertPoint:fromView:" rc/x rc/y 0]
+		y: system/cpu/edx
+		rc: as NSRect! :x
+
+		inside?: CGRectContainsPoint bound/x bound/y bound/w bound/h rc/x rc/y
+		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+		switch type [
+			NSLeftMouseDragged [
+				make-event self 0 EVT_OVER
+			]
+			NSLeftMouseUp [
+				make-event self 0 EVT_LEFT_UP
+				if inside? [
+					inside?: false
+					objc_msgSend [self sel_getUid "setNextState"]
+					button-click self
+				]
+			]
+			default [0]
+		]
+		objc_msgSend [self sel_getUid "highlight:" inside?]
+		type = NSLeftMouseUp
+	]
+]
+
 mouse-down: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
 	event	[integer!]
 ][
-	;probe "mouse-down ............"
-	;print-classname self
-	;if 0 <> class_getInstanceVariable object_getClass self IVAR_RED_FACE [
-		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self 0 EVT_LEFT_DOWN
-	;]
-	;msg-send-super self cmd event
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+	make-event self 0 EVT_LEFT_DOWN
 ]
 
 mouse-up: func [
@@ -90,13 +140,8 @@ mouse-up: func [
 	cmd		[integer!]
 	event	[integer!]
 ][
-	;probe "mouse-up ............"
-	;print-classname self
-	;if 0 <> class_getInstanceVariable object_getClass self IVAR_RED_FACE [
-		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self 0 EVT_LEFT_UP
-	;]
-	;msg-send-super self cmd event
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+	make-event self 0 EVT_LEFT_UP
 ]
 
 mouse-drag: func [
@@ -105,13 +150,8 @@ mouse-drag: func [
 	cmd		[integer!]
 	event	[integer!]
 ][
-	;probe "mouse-up ............"
-	;print-classname self
-	;if 0 <> class_getInstanceVariable object_getClass self IVAR_RED_FACE [
-		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self 0 EVT_OVER
-	;]
-	;msg-send-super self cmd event
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+	make-event self 0 EVT_OVER
 ]
 
 print-classname: func [
@@ -187,10 +227,7 @@ on-key-up: func [
 ]
 
 button-click: func [
-	[cdecl]
 	self	[integer!]
-	cmd		[integer!]
-	sender	[integer!]
 	/local
 		w		[red-word!]
 		values	[red-value!]

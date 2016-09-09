@@ -1232,8 +1232,8 @@ OS-make-view: func [
 				change-image obj img sym
 			]
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setTitle:" caption]]
-			objc_msgSend [obj sel_getUid "setTarget:" obj]
-			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
+			;objc_msgSend [obj sel_getUid "setTarget:" obj]
+			;objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
 		]
 		any [
 			sym = panel

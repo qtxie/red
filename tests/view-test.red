@@ -244,7 +244,7 @@ button: make face! [
 	type: 'button
 	text: "Hello"
 	offset: 100x10
-	size: 60x40
+	size: 70x40
 	actors: object [
 		on-click: function [face [object!] event [event!]][
 			;face/color: red
@@ -297,7 +297,7 @@ win/pane: reduce [
 	]
 	button
 	make face! [
-		type: 'button text: "Change" offset: 180x10 size: 60x40
+		type: 'button text: "Change" offset: 180x10 size: 70x40
 		actors: object [
 			on-click: func [face [object!] event [event!]][
 				clear back back tail drop-list/data
@@ -379,7 +379,7 @@ win/pane: reduce [
 	]
 	simple: make face! [type: 'base offset: 200x50 size: 80x24 visible?: no color: red]
 	make face! [
-		type: 'button text: "Show/Hide" offset: 200x80 size: 70x24
+		type: 'button text: "Show/Hide" offset: 190x80 size: 100x24
 		actors: object [
 			on-click: func [face [object!] event [event!]][
 				simple/visible?: not simple/visible?
@@ -432,7 +432,7 @@ win/pane: reduce [
 		]
 	]
 	make face! [
-		type: 'button text: "Set option 5" offset: 300x120 size: 80x24
+		type: 'button text: "Set option 5" offset: 290x120 size: 100x24
 		actors: object [
 			on-click: func [face [object!] event [event!]][
 				drop-list/selected: 5
@@ -632,7 +632,7 @@ win/pane: reduce [
 		]
 	]
 	make face! [
-		type: 'button text: "Start/Stop" offset: 400x400 size: 70x24
+		type: 'button text: "Start/Stop" offset: 390x400 size: 90x24
 		actors: object [
 			on-click: func [face [object!] event [event!]][
 				either cam/selected [
@@ -645,7 +645,7 @@ win/pane: reduce [
 		]
 	]
 	make face! [
-		type: 'button text: "Sub-window" offset: 400x440 size: 70x24
+		type: 'button text: "Sub-window" offset: 390x440 size: 90x24
 		actors: object [
 			on-click: func [face [object!] event [event!]][
 				view sub-win
@@ -653,7 +653,7 @@ win/pane: reduce [
 		]
 	]
 	make face! [
-		type: 'button text: "Sub-window 2" offset: 400x470 size: 70x24
+		type: 'button text: "Sub-window 2" offset: 390x470 size: 90x24
 		actors: object [
 			on-click: func [face [object!] event [event!]][
 				show sub-win2
@@ -661,7 +661,7 @@ win/pane: reduce [
 		]
 	]
 	make face! [
-		type: 'button text: "Quit" offset: 500x440 size: 60x24
+		type: 'button text: "Quit" offset: 490x440 size: 80x24
 		actors: object [
 			on-click: func [face [object!] event [event!]][
 				print "calling unview"
@@ -785,7 +785,7 @@ win/pane: reduce [
 		]
 	]
 	make face! [
-		type: 'button text: "Drag me" offset: 550x540 size: 70x24
+		type: 'button text: "Drag me" offset: 550x540 size: 80x24
 		options: [drag-on: 'down]
 		actors: object [
 			on-drag-start: func [face [object!] event [event!]][
@@ -858,8 +858,8 @@ repeat i 3 [
 append win/pane make face! [
 	type: 'button
 	text: "Reverse"
-	offset: 400x640
-	size: 60x24
+	offset: 390x640
+	size: 80x24
 	actors: object [
 		on-click: func [face [object!] event [event!]][
 			reverse panel/pane

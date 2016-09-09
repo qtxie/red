@@ -49,7 +49,7 @@ add-window-handler: func [class [integer!]][
 ]
 
 add-button-handler: func [class [integer!]][
-	class_addMethod class sel_getUid "button-click:" as-integer :button-click "v@:@"
+	class_addMethod class sel_getUid "mouseDown:" as-integer :button-mouse-down "v@:@"
 ]
 
 add-slider-handler: func [class [integer!]][

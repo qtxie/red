@@ -73,7 +73,7 @@ system/view/VID: context [
 			]
 			'else [
 				either face/text [
-					size-text face
+					size: size-text face
 					if find [button radio check] face/type [size/x: size/x + size/y]
 					size
 				][

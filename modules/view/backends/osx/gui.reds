@@ -123,14 +123,38 @@ get-text-size: func [
 	pair	[red-pair!]
 	return: [tagSIZE]
 	/local
-		saved [handle!]
-		size  [tagSIZE]
+		attrs	[integer!]
+		cf-str	[integer!]
+		attr	[integer!]
+		y		[integer!]
+		x		[integer!]
+		rc		[NSRect!]
+		size	[tagSIZE]
 ][
 	size: declare tagSIZE
+	if null? hFont [hFont: as handle! default-font]
+
+	attrs: objc_msgSend [
+		objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
+		sel_getUid "initWithObjectsAndKeys:"
+		hFont NSFontAttributeName
+		0
+	]
+	cf-str: to-CFString str
+	attr: CFAttributedStringCreate 0 cf-str attrs
+	x: objc_msgSend [attr sel_getUid "size"]		;-- string width on screen
+	y: system/cpu/edx								;-- string height on screen
+	rc: as NSRect! :x
+
+	size/width: as-integer rc/x
+	size/height: as-integer rc/y
 	if pair <> null [
 		pair/x: size/width
 		pair/y: size/height
 	]
+	CFRelease cf-str
+	CFRelease attr
+	objc_msgSend [attrs sel_getUid "release"]
 	size
 ]
 

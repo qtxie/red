@@ -538,34 +538,42 @@ change-font: func [
 		attrs	[integer!]
 		str		[integer!]
 		title	[integer!]
+		view	[integer!]
+		storage [integer!]
 ][
 	if TYPE_OF(font) <> TYPE_OBJECT [exit]
 
 	attrs: make-font-attrs font face type
-	case [
-		any [type = button type = check type = radio][
-			title: to-NSString as red-string! (object/get-values face) + FACE_OBJ_TEXT
-			str: objc_msgSend [
-				objc_msgSend [objc_getClass "NSAttributedString" sel_getUid "alloc"]
-				sel_getUid "initWithString:attributes:" title attrs
-			]
-			objc_msgSend [hWnd sel_getUid "setAttributedTitle:" str]
-			objc_msgSend [str sel_getUid "release"]
-			objc_msgSend [title sel_getUid "release"]
+	objc_msgSend [attrs sel_getUid "autorelease"]
+
+	either type = area [
+		view: objc_msgSend [hWnd sel_getUid "documentView"]
+		storage: objc_msgSend [view sel_getUid "textStorage"]
+		objc_msgSend [
+			storage sel_getUid "setAttributes:range:"
+			attrs 0 objc_msgSend [storage sel_getUid "length"]
 		]
-		;any [type = field type = text][
-		;	objc_msgSend [hWnd sel_getUid "setFont:" hFont]
-		;	objc_msgSend [hWnd sel_getUid "setTextColor:" nscolor]
-		;]
-		type = area [
-			objc_msgSend [
-				objc_msgSend [hWnd sel_getUid "documentView"]
-				sel_getUid "setTypingAttributes:" attrs
-			]
+		objc_msgSend [view sel_getUid "setTypingAttributes:" attrs]
+	][
+		values: (object/get-values face) + FACE_OBJ_TEXT
+		if TYPE_OF(values) <> TYPE_STRING [exit]			;-- accept any-string! ?
+
+		title: to-NSString as red-string! values
+		str: objc_msgSend [
+			objc_msgSend [objc_getClass "NSAttributedString" sel_getUid "alloc"]
+			sel_getUid "initWithString:attributes:" title attrs
 		]
-		true [0]
+		case [
+			any [type = button type = check type = radio][
+				objc_msgSend [hWnd sel_getUid "setAttributedTitle:" str]
+			]
+			any [type = field type = text][
+				objc_msgSend [hWnd sel_getUid "setAttributedStringValue:" str]
+			]
+			true [0]
+		]
+		objc_msgSend [title sel_getUid "release"]
 	]
-	objc_msgSend [attrs sel_getUid "release"]
 ]
 
 change-offset: func [

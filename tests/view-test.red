@@ -275,7 +275,7 @@ button/font: make font! [
 
 font-A: make font! [
 	name: "Menlo"
-	size: 10
+	size: 14
 	color: blue
 	style: [bold italic underline]
 	anti-alias?: yes

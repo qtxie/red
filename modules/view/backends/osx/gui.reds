@@ -873,19 +873,50 @@ init-combo-box: func [
 init-window: func [
 	window	[integer!]
 	title	[integer!]
+	bits	[integer!]
 	rect	[NSRect!]
+	/local
+		flags		[integer!]
+		sel_Hidden	[integer!]
 ][
+	flags: 0
+	if bits and FACET_FLAGS_NO_BORDER = 0 [
+		flags: NSClosableWindowMask
+		if bits and FACET_FLAGS_RESIZE <> 0 [flags: flags or NSResizableWindowMask]
+		if bits and FACET_FLAGS_NO_TITLE = 0 [flags: flags or NSTitledWindowMask]
+		if bits and FACET_FLAGS_NO_MIN  = 0 [flags: flags or NSMiniaturizableWindowMask]
+	]
+	;if bits and FACET_FLAGS_POPUP  <> 0 [ws-flags: ws-flags or WS_EX_TOOLWINDOW]
+	
+	;flags: either bits and FACET_FLAGS_RESIZE = 0 [
+	;	flags and (not WS_MAXIMIZEBOX)
+	;][
+	;	flags or WS_THICKFRAME
+	;]
 	window: objc_msgSend [
 		window
 		sel_getUid "initWithContentRect:styleMask:backing:defer:"
-		rect/x rect/y rect/w rect/h
-		NSTitledWindowMask or NSClosableWindowMask or NSResizableWindowMask or NSMiniaturizableWindowMask
-		2 0
+		rect/x rect/y rect/w rect/h flags 2 0
 	]
 
 	set-content-view window
 
-	if title <> 0 [objc_msgSend [window sel_getUid "setTitle:" title]]
+	sel_Hidden: sel_getUid "setHidden:"
+	if bits and FACET_FLAGS_NO_BORDER = 0 [
+		if bits and FACET_FLAGS_NO_MAX  <> 0 [
+			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 2] sel_Hidden yes]
+		]
+		if bits and FACET_FLAGS_NO_BTNS <> 0 [
+			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 0] sel_Hidden yes]
+			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 1] sel_Hidden yes]
+			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 2] sel_Hidden yes]
+		]
+		if all [
+			bits and FACET_FLAGS_NO_TITLE = 0
+			title <> 0
+		][objc_msgSend [window sel_getUid "setTitle:" title]]
+	]
+
 	objc_msgSend [window sel_getUid "becomeFirstResponder"]
 	objc_msgSend [window sel_getUid "makeKeyAndOrderFront:" 0]
 	objc_msgSend [window sel_getUid "makeMainWindow"]
@@ -898,6 +929,7 @@ make-area: func [
 	container	[integer!]
 	rc			[NSRect!]
 	text		[integer!]
+	border?		[logic!]
 	/local
 		id		[integer!]
 		obj		[integer!]
@@ -907,7 +939,8 @@ make-area: func [
 	rc/x: as float32! 0.0
 	rc/y: as float32! 0.0
 
-	objc_msgSend [container sel_getUid "setBorderType:" NSGrooveBorder]
+	x: either border? [NSGrooveBorder][NSNoBorder]
+	objc_msgSend [container sel_getUid "setBorderType:" x]
 	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
 	objc_msgSend [container sel_getUid "setHasHorizontalScroller:" no]
 	;objc_msgSend [container sel_getUid "setAutoresizingMask:" NSViewWidthSizable or NSViewHeightSizable]
@@ -1182,13 +1215,16 @@ OS-make-view: func [
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setStringValue:" caption]]
 		]
 		sym = field [
+			if bits and FACET_FLAGS_NO_BORDER <> 0 [
+				objc_msgSend [obj sel_getUid "setBordered:" false]
+			]
 			id: objc_msgSend [obj sel_getUid "cell"]
 			objc_msgSend [id sel_getUid "setWraps:" no]
 			objc_msgSend [id sel_getUid "setScrollable:" yes]
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setStringValue:" caption]]
 		]
 		sym = area [
-			make-area face obj rc caption
+			make-area face obj rc caption bits and FACET_FLAGS_NO_BORDER = 0
 		]
 		sym = text-list [
 			make-text-list face obj rc
@@ -1226,7 +1262,7 @@ OS-make-view: func [
 		]
 		sym = window [
 			rc: make-rect offset/x screen-size-y - offset/y - size/y size/x size/y
-			init-window obj caption rc
+			init-window obj caption bits rc
 			if all [						;@@ application menu ?
 				zero? AppMainMenu
 				menu-bar? menu window

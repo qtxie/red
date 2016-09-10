@@ -160,6 +160,15 @@ objc_super!: alias struct! [
 	superclass	[integer!]
 ]
 
+CGAffineTransform!: alias struct! [
+	a		[float32!]
+	b		[float32!]
+	c		[float32!]
+	d		[float32!]
+	tx		[float32!]
+	ty		[float32!]
+]
+
 NSRect!: alias struct! [
 	x		[float32!]
 	y		[float32!]
@@ -265,6 +274,7 @@ tagSIZE: alias struct! [
 			return:		[integer!]
 		]
 		objc_msgSend: "objc_msgSend" [[variadic] return: [integer!]]
+		objc_msgSend_f32: "objc_msgSend" [[variadic] return: [float32!]]
 		objc_msgSendSuper: "objc_msgSendSuper" [[variadic] return: [integer!]]
 		objc_msgSend_fpret: "objc_msgSend_fpret" [[variadic] return: [float!]]
 		objc_msgSend_stret: "objc_msgSend_stret" [obj [integer!] sel [integer!]]
@@ -279,12 +289,12 @@ tagSIZE: alias struct! [
 		]
 	]
 	"/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation" cdecl [
-		;CFAttributedStringCreate: "CFAttributedStringCreate" [
-		;	allocator	[integer!]
-		;	str			[integer!]
-		;	attributes	[integer!]
-		;	return:		[integer!]
-		;]
+		CFAttributedStringCreate: "CFAttributedStringCreate" [
+			allocator	[integer!]
+			str			[integer!]
+			attributes	[integer!]
+			return:		[integer!]
+		]
 		;CFAttributedStringCreateMutable: "CFAttributedStringCreateMutable" [
 		;	allocator	[integer!]
 		;	max-length	[integer!]
@@ -527,6 +537,15 @@ tagSIZE: alias struct! [
 			tx			[float32!]
 			ty			[float32!]
 		]
+		CGContextSetTextMatrix: "CGContextSetTextMatrix" [
+			ctx			[handle!]
+			a			[float32!]
+			b			[float32!]
+			c			[float32!]
+			d			[float32!]
+			tx			[float32!]
+			ty			[float32!]
+		]
 		;CGPointApplyAffineTransform: "CGPointApplyAffineTransform" [
 		;	point		[CGPoint]
 		;	matrix		[CGAffineTransform]
@@ -624,4 +643,25 @@ to-NSColor: func [
 		sel_getUid "colorWithCalibratedRed:green:blue:alpha:"
 		c/r c/g c/b c/a
 	]
+]
+
+make-CGMatrix: func [
+	a		[integer!]
+	b		[integer!]
+	c		[integer!]
+	d		[integer!]
+	tx		[integer!]
+	ty		[integer!]
+	return: [CGAffineTransform!]
+	/local
+		m	[CGAffineTransform!]
+][
+	m: declare CGAffineTransform!
+	m/a: as float32! a
+	m/b: as float32! b
+	m/c: as float32! c
+	m/d: as float32! d
+	m/tx: as float32! tx
+	m/ty: as float32! ty
+	m
 ]

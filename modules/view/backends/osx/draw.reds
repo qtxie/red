@@ -23,11 +23,9 @@ draw-ctx!: alias struct! [
 	pen-style		[integer!]
 	pen-color		[integer!]					;-- 00bbggrr format
 	brush-color		[integer!]					;-- 00bbggrr format
-	font-color		[integer!]
-	font-nscolor	[integer!]
-	font			[integer!]
+	font-attrs		[integer!]
 	matrix			[integer!]
-	font-color?		[logic!]
+	height			[float32!]
 	pen?			[logic!]
 	brush?			[logic!]
 	on-image?		[logic!]					;-- drawing on image?
@@ -40,6 +38,9 @@ draw-begin: func [
 	on-graphic? [logic!]
 	paint?		[logic!]
 	return: 	[draw-ctx!]
+	/local
+		rc		[NSRect!]
+		nscolor [integer!]
 ][
 	ctx/raw:			CGCtx
 	ctx/pen-width:		1
@@ -48,13 +49,18 @@ draw-begin: func [
 	ctx/pen-join:		miter
 	ctx/pen-cap:		flat
 	ctx/brush-color:	0
-	ctx/font-color:		0
-	ctx/font-nscolor:	0
-	ctx/font:			0
 	ctx/matrix:			0
 	ctx/pen?:			yes
 	ctx/brush?:			no
-	ctx/font-color?:	no
+
+	ctx/font-attrs: objc_msgSend [				;-- default font attributes
+		objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
+		sel_getUid "initWithObjectsAndKeys:"
+		default-font NSFontAttributeName
+		0
+	]
+	rc: as NSRect! img
+	ctx/height:	rc/y	
 
 	CGContextSetMiterLimit CGCtx DRAW_FLOAT_MAX
 	CGContextSetAllowsAntialiasing CGCtx yes
@@ -69,7 +75,7 @@ draw-end: func [
 	cache?		[logic!]
 	paint?		[logic!]
 ][
-	if dc/font-nscolor <> 0 [objc_msgSend [dc/font-nscolor sel_getUid "release"]]
+	if dc/font-attrs <> 0	[objc_msgSend [dc/font-attrs sel_getUid "release"]]
 	if dc/matrix <> 0		[CFRelease dc/matrix]
 ]
 
@@ -108,25 +114,37 @@ OS-draw-line: func [
 	CGContextStrokePath ctx
 ]
 
-OS-draw-pen: func [
-	dc	   [draw-ctx!]
-	color  [integer!]									;-- aabbggrr format
-	off?   [logic!]
-	alpha? [logic!]
+CG-set-color: func [
+	ctx		[handle!]
+	color	[integer!]
+	fill?	[logic!]
 	/local
 		r  [float32!]
 		g  [float32!]
 		b  [float32!]
 		a  [float32!]
 ][
+	r: (as float32! color and FFh) / 255.0
+	g: (as float32! color >> 8 and FFh) / 255.0
+	b: (as float32! color >> 16 and FFh) / 255.0
+	a: (as float32! 255 - (color >>> 24)) / 255.0
+	either fill? [
+		CGContextSetRGBFillColor ctx r g b a
+	][
+		CGContextSetRGBStrokeColor ctx r g b a
+	]
+]
+
+OS-draw-pen: func [
+	dc	   [draw-ctx!]
+	color  [integer!]									;-- aabbggrr format
+	off?   [logic!]
+	alpha? [logic!]
+][
 	dc/pen?: not off?
 	if all [not off? dc/pen-color <> color][
 		dc/pen-color: color
-		r: (as float32! color and FFh) / 255.0
-		g: (as float32! color >> 8 and FFh) / 255.0
-		b: (as float32! color >> 16 and FFh) / 255.0
-		a: (as float32! 255 - (color >>> 24)) / 255.0
-		CGContextSetRGBStrokeColor dc/raw r g b a
+		CG-set-color dc/raw color no
 	]
 ]
 
@@ -135,21 +153,12 @@ OS-draw-fill-pen: func [
 	color  [integer!]									;-- aabbggrr format
 	off?   [logic!]
 	alpha? [logic!]
-	/local
-		r  [float32!]
-		g  [float32!]
-		b  [float32!]
-		a  [float32!]
 ][
 	either off? [dc/brush?: no][
 		if dc/brush-color <> color [
 			dc/brush?: yes
 			dc/brush-color: color
-			r: (as float32! color and FFh) / 255.0
-			g: (as float32! color >> 8 and FFh) / 255.0
-			b: (as float32! color >> 16 and FFh) / 255.0
-			a: (as float32! 255 - (color >>> 24)) / 255.0
-			CGContextSetRGBFillColor dc/raw r g b a
+			CG-set-color dc/raw color yes
 		]
 	]
 ]
@@ -428,68 +437,49 @@ OS-draw-ellipse: func [
 OS-draw-font: func [
 	dc		[draw-ctx!]
 	font	[red-object!]
-	/local
-		attr  [integer!]
-		vals  [red-value!]
-		state [red-block!]
-		int   [red-integer!]
-		color [red-tuple!]
 ][
-	vals: object/get-values font
-	state: as red-block! vals + FONT_OBJ_STATE
-	color: as red-tuple! vals + FONT_OBJ_COLOR
-	
-	dc/font: either TYPE_OF(state) = TYPE_BLOCK [
-		int: as red-integer! block/rs-head state
-		int/value
-	][
-		as-integer make-font as red-object! none-value font
-	]
+	objc_msgSend [dc/font-attrs sel_getUid "release"]
+	dc/font-attrs: make-font-attrs font as red-object! none-value -1
+]
 
-	dc/font-color?: either TYPE_OF(color) = TYPE_TUPLE [
-		dc/font-color: color/array1
-		if dc/font-nscolor <> 0 [objc_msgSend [dc/font-nscolor sel_getUid "release"]]
-		dc/font-nscolor: to-NSColor color
-		yes
-	][
-		no
+draw-text-at: func [
+	ctx		[handle!]
+	text	[red-string!]
+	attrs	[integer!]
+	x		[integer!]
+	y		[integer!]
+	/local
+		str		[integer!]
+		attr	[integer!]
+		line	[integer!]
+		delta	[float32!]
+		m		[CGAffineTransform!]
+][
+	m: make-CGMatrix 1 0 0 -1 x y
+	str: to-CFString text
+	attr: CFAttributedStringCreate 0 str attrs
+	line: CTLineCreateWithAttributedString attr
+
+	delta: objc_msgSend_f32 [
+		objc_msgSend [attrs sel_getUid "objectForKey:" NSFontAttributeName]
+		sel_getUid "ascender"
 	]
+	m/ty: m/ty + delta
+	CGContextSetTextMatrix ctx m/a m/b m/c m/d m/tx m/ty
+	CTLineDraw line ctx
+
+	CFRelease str
+	CFRelease attr
+	CFRelease line
 ]
 
 OS-draw-text: func [
 	dc		[draw-ctx!]
 	pos		[red-pair!]
 	text	[red-string!]
-	/local
-		ctx		[handle!]
-		str		[integer!]
-		attr	[integer!]
-		len		[integer!]
-		line	[integer!]
-		rect	[NSRect!]
 ][
-	ctx: dc/raw
-	;;-- TBD flip the coordinate system
-
-	;str: to-CFString text
-	;attr: CFAttributedStringCreateMutable 0 0
-	;CFAttributedStringBeginEditing attr
-	;CFAttributedStringReplaceString attr 0 CFAttributedStringGetLength attr str
-
-	;len: CFAttributedStringGetLength attr
-	;if dc/font <> 0 [
-	;	CFAttributedStringSetAttribute attr 0 len NSFontAttributeName dc/font
-	;]
-	;if dc/font-color? [
-	;	CFAttributedStringSetAttribute attr 0 len NSForegroundColorAttributeName dc/font-nscolor
-	;]
-	;CFAttributedStringEndEditing attr
-	;line: CTLineCreateWithAttributedString attr
-	;CGContextSetTextPosition ctx as float32! pos/x as float32! pos/y
-	;CTLineDraw line ctx
-	;CFRelease str
-	;CFRelease attr
-	;CFRelease line
+	draw-text-at dc/raw text dc/font-attrs pos/x pos/y
+	if dc/brush? [CG-set-color dc/raw dc/brush-color yes]
 ]
 
 _draw-arc: func [

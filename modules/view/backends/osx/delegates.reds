@@ -545,99 +545,79 @@ tabview-will-select: func [
 	probe "will select"
 ]
 
-;font-line-height: func [
-;	hFont	[integer!]
-;	return: [float32!]
-;	/local
-;		leading		[float32!]
-;		descender	[float32!]
-;		ascender	[float32!]
-;		height		[float!]
-;		res			[integer!]
-;][
-;	res: objc_msgSend [objc_getClass "NSLayoutManager" sel_getUid "alloc"]
-;	res: objc_msgSend [res sel_getUid "init"]
-;	height: objc_msgSend_fpret [res sel_getUid "defaultLineHeightForFont:" hFont]
-;dump4 :height
-;	?? hFont
-;	height: objc_msgSend_fpret [hFont sel_getUid "capHeight"]
-;dump4 :height
-;dump4 system/stack/top
-;	leading: as float32! 10
-;?? leading
-;	descender: as float32! objc_msgSend [hFont sel_getUid "descender"]
-;	ascender: as float32! objc_msgSend [hFont sel_getUid "ascender"]
-;?? ascender
-;	height: fabsf descender
-;	as float32! ceil height + ascender + leading
-;	as float32! 20
-;]
-
 render-text: func [
+	ctx		[handle!]
 	values	[red-value!]
-	width	[float32!]
-	height	[float32!]
+	sz		[NSSize!]
 	/local
 		text	[red-string!]
 		font	[red-object!]
 		para	[red-object!]
-		state	[red-block!]
-		int		[red-integer!]
-		hFont	[integer!]
-		old		[integer!]
 		flags	[integer!]
-		s		[integer!]
-		font-h	[float32!]
+		str		[integer!]
+		attr	[integer!]
 		nscolor [integer!]
 		attrs	[integer!]
-		style	[integer!]
+		line	[integer!]
+		sy		[integer!]
+		sx		[integer!]
+		temp	[float32!]
 		rc		[NSRect!]
-		size	[float!]
+		m		[CGAffineTransform!]
 ][
 	text: as red-string! values + FACE_OBJ_TEXT
 	if TYPE_OF(text) <> TYPE_STRING [exit]
 
-	nscolor: 0
 	font: as red-object! values + FACE_OBJ_FONT
-	hFont: either TYPE_OF(font) = TYPE_OBJECT [
-		values: object/get-values font
-		nscolor: to-NSColor as red-tuple! values + FONT_OBJ_COLOR
-		state: as red-block! values + FONT_OBJ_STATE
-		int: as red-integer! block/rs-head state
-		int/value
-		;@@ TBD set font attribute
+	either TYPE_OF(font) = TYPE_OBJECT [
+		attrs: make-font-attrs font as red-object! none-value -1
 	][
-		default-font
+		attrs: objc_msgSend [
+			objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
+			sel_getUid "initWithObjectsAndKeys:"
+			default-font NSFontAttributeName
+			0
+		]
 	]
+
+	str: to-CFString text
+	attr: CFAttributedStringCreate 0 str attrs
+	sx: objc_msgSend [attr sel_getUid "size"]		;-- string width on screen
+	sy: system/cpu/edx								;-- string height on screen
+	rc: as NSRect! :sx
 
 	para: as red-object! values + FACE_OBJ_PARA
 	flags: either TYPE_OF(para) = TYPE_OBJECT [		;@@ TBD set alignment attribute
-		;--get-para-flags base para
-		0
+		get-para-flags base para
 	][
-		0
+		1 or 4										;-- center
 	]
-	;font-h: font-line-height hFont
 
-	rc: make-rect 0 0 0 0
-	rc/w: width
-	rc/h: height
-	if zero? nscolor [
-		nscolor: objc_msgSend [objc_getClass "NSColor" sel_getUid "blackColor"]
+	m: make-CGMatrix 1 0 0 -1 0 0
+	case [
+		flags and 1 <> 0 [temp: sz/w - rc/x m/tx: temp / 2]
+		flags and 2 <> 0 [m/tx: sz/w - rc/x]
+		true [0]
 	]
-	s: to-NSString text
-	style: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
-	style: objc_msgSend [style sel_getUid "mutableCopy"]
-	objc_msgSend [style sel_getUid "setAlignment:" NSTextAlignmentCenter]
-	attrs: objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
-	attrs: objc_msgSend [
-		attrs sel_getUid "initWithObjectsAndKeys:"
-		hFont NSFontAttributeName
-		nscolor NSForegroundColorAttributeName
-		style NSParagraphStyleAttributeName
-		0
+
+	case [
+		flags and 4 <> 0 [temp: sz/h - rc/y m/ty: temp / 2]
+		flags and 8 <> 0 [m/ty: sz/h - rc/y]
+		true [0]
 	]
-	objc_msgSend [s sel_getUid "drawInRect:withAttributes:" rc/x rc/y rc/w rc/h attrs]
+	temp: objc_msgSend_f32 [
+		objc_msgSend [attrs sel_getUid "objectForKey:" NSFontAttributeName]
+		sel_getUid "ascender"
+	]
+	m/ty: m/ty + temp
+	line: CTLineCreateWithAttributedString attr
+	CGContextSetTextMatrix ctx m/a m/b m/c m/d m/tx m/ty
+	CTLineDraw line ctx
+
+	CFRelease str
+	CFRelease attr
+	CFRelease line
+	objc_msgSend [attrs sel_getUid "release"]
 ]
 
 paint-background: func [
@@ -670,20 +650,21 @@ draw-rect: func [
 	width	[float32!]
 	height	[float32!]
 	/local
-		ctx  [integer!]
-		vals [red-value!]
-		img  [red-image!]
-		draw [red-block!]
-		clr  [red-tuple!]
-		size [red-pair!]
-		v1010? [logic!]
+		nsctx	[integer!]
+		ctx		[handle!]
+		vals	[red-value!]
+		img		[red-image!]
+		draw	[red-block!]
+		clr		[red-tuple!]
+		size	[red-pair!]
+		v1010?	[logic!]
 ][
-	ctx: objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
-	v1010?: as logic! objc_msgSend [ctx sel_getUid "respondsToSelector:" sel_getUid "CGContext"]
-	ctx: either v1010? [
-		objc_msgSend [ctx sel_getUid "CGContext"]
+	nsctx: objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
+	v1010?: as logic! objc_msgSend [nsctx sel_getUid "respondsToSelector:" sel_getUid "CGContext"]
+	ctx: as handle! either v1010? [
+		objc_msgSend [nsctx sel_getUid "CGContext"]
 	][
-		objc_msgSend [ctx sel_getUid "graphicsPort"]		;-- deprecated in 10.10
+		objc_msgSend [nsctx sel_getUid "graphicsPort"]		;-- deprecated in 10.10
 	]
 
 	vals: get-face-values self
@@ -692,13 +673,12 @@ draw-rect: func [
 	clr:  as red-tuple! vals + FACE_OBJ_COLOR
 	size: as red-pair! vals + FACE_OBJ_SIZE
 	if TYPE_OF(clr) = TYPE_TUPLE [
-		paint-background as handle! ctx clr/array1 x y width height
+		paint-background ctx clr/array1 x y width height
 	]
 	if TYPE_OF(img) = TYPE_IMAGE [
-		CG-draw-image as handle! ctx as-integer img/node 0 0 size/x size/y
+		CG-draw-image ctx as-integer img/node 0 0 size/x size/y
 	]
+	render-text ctx vals as NSSize! (as int-ptr! self) + 8
 
-	render-text vals width height
-
-	do-draw as handle! ctx null draw no yes yes yes
+	do-draw ctx as red-image! (as int-ptr! self) + 8 draw no yes yes yes
 ]

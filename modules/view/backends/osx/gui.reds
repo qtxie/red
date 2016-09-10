@@ -534,71 +534,14 @@ change-font: func [
 	type	[integer!]
 	/local
 		values	[red-value!]
-		style	[red-word!]
-		blk		[red-block!]
-		hFont	[handle!]
-		len		[integer!]
-		para	[integer!]
 		nscolor	[integer!]
 		attrs	[integer!]
-		under	[integer!]
-		strike	[integer!]
 		str		[integer!]
 		title	[integer!]
 ][
 	if TYPE_OF(font) <> TYPE_OBJECT [exit]
 
-	hFont: get-font face font
-	values: object/get-values font
-	nscolor: to-NSColor as red-tuple! values + FONT_OBJ_COLOR
-	if zero? nscolor [
-		nscolor: objc_msgSend [objc_getClass "NSColor" sel_getUid "blackColor"]
-	]
-	style: as red-word! values + FONT_OBJ_STYLE
-	len: switch TYPE_OF(style) [
-		TYPE_BLOCK [
-			blk: as red-block! style
-			style: as red-word! block/rs-head blk
-			len: block/rs-length? blk
-		]
-		TYPE_WORD  [1]
-		default	   [0]
-	]
-
-	under: 0									;-- NSUnderlineStyleNone
-	strike: 0
-	unless zero? len [
-		loop len [
-			attrs: symbol/resolve style/symbol
-			case [
-				attrs = _underline [under: 1]	;-- NSUnderlineStyleSingle
-				attrs = _strike	 [strike: 1]
-				true			 [0]
-			]
-			style: style + 1
-		]
-	]
-	under: CFNumberCreate 0 15 :under
-	strike: CFNumberCreate 0 15 :strike
-
-	para: 0
-	if type = button [
-		para: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
-		para: objc_msgSend [para sel_getUid "mutableCopy"]
-		objc_msgSend [para sel_getUid "setAlignment:" NSTextAlignmentCenter]
-	]
-
-	attrs: objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
-	attrs: objc_msgSend [
-		attrs sel_getUid "initWithObjectsAndKeys:"
-		hFont NSFontAttributeName
-		nscolor NSForegroundColorAttributeName
-		para NSParagraphStyleAttributeName
-		under NSUnderlineStyleAttributeName
-		strike NSStrikethroughStyleAttributeName
-		0
-	]
-
+	attrs: make-font-attrs font face type
 	case [
 		any [type = button type = check type = radio][
 			title: to-NSString as red-string! (object/get-values face) + FACE_OBJ_TEXT
@@ -609,12 +552,11 @@ change-font: func [
 			objc_msgSend [hWnd sel_getUid "setAttributedTitle:" str]
 			objc_msgSend [str sel_getUid "release"]
 			objc_msgSend [title sel_getUid "release"]
-			;objc_msgSend [para sel_getUid "release"]
 		]
-		any [type = field type = text][
-			objc_msgSend [hWnd sel_getUid "setFont:" hFont]
-			objc_msgSend [hWnd sel_getUid "setTextColor:" nscolor]
-		]
+		;any [type = field type = text][
+		;	objc_msgSend [hWnd sel_getUid "setFont:" hFont]
+		;	objc_msgSend [hWnd sel_getUid "setTextColor:" nscolor]
+		;]
 		type = area [
 			objc_msgSend [
 				objc_msgSend [hWnd sel_getUid "documentView"]
@@ -623,10 +565,7 @@ change-font: func [
 		]
 		true [0]
 	]
-	objc_msgSend [nscolor sel_getUid "release"]
 	objc_msgSend [attrs sel_getUid "release"]
-	CFRelease under
-	CFRelease strike
 ]
 
 change-offset: func [
@@ -1497,6 +1436,9 @@ OS-to-image: func [
 OS-do-draw: func [
 	img		[red-image!]
 	cmds	[red-block!]
+	/local
+		rc	[NSRect!]
 ][
-	do-draw img/node img cmds no yes yes yes
+	rc: make-rect IMAGE_WIDTH(img/size) IMAGE_HEIGHT(img/size) 0 0
+	do-draw img/node as red-image! rc cmds no yes yes yes
 ]

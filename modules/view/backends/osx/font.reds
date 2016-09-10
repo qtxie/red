@@ -168,3 +168,77 @@ update-font: func [
 		default [0]
 	]
 ]
+
+make-font-attrs: func [
+	font	[red-object!]
+	face	[red-object!]
+	type	[integer!]
+	return: [integer!]
+	/local
+		values	[red-value!]
+		blk		[red-block!]
+		style	[red-word!]
+		nsfont	[integer!]
+		nscolor [integer!]
+		len		[integer!]
+		under	[integer!]
+		strike	[integer!]
+		para	[integer!]
+		attrs	[integer!]
+][
+	nsfont: as-integer get-font face font
+	values: object/get-values font
+	nscolor: to-NSColor as red-tuple! values + FONT_OBJ_COLOR
+	if zero? nscolor [
+		nscolor: objc_msgSend [objc_getClass "NSColor" sel_getUid "blackColor"]
+	]
+	style: as red-word! values + FONT_OBJ_STYLE
+	len: switch TYPE_OF(style) [
+		TYPE_BLOCK [
+			blk: as red-block! style
+			style: as red-word! block/rs-head blk
+			len: block/rs-length? blk
+		]
+		TYPE_WORD  [1]
+		default	   [0]
+	]
+
+	under: 0									;-- NSUnderlineStyleNone
+	strike: 0
+	unless zero? len [
+		loop len [
+			attrs: symbol/resolve style/symbol
+			case [
+				attrs = _underline [under: 1]	;-- NSUnderlineStyleSingle
+				attrs = _strike	 [strike: 1]
+				true			 [0]
+			]
+			style: style + 1
+		]
+	]
+	under: CFNumberCreate 0 15 :under
+	strike: CFNumberCreate 0 15 :strike
+
+	para: 0
+	if type = button [
+		para: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
+		para: objc_msgSend [para sel_getUid "mutableCopy"]
+		objc_msgSend [para sel_getUid "setAlignment:" NSTextAlignmentCenter]
+	]
+
+	attrs: objc_msgSend [objc_getClass "NSDictionary" sel_getUid "alloc"]
+	attrs: objc_msgSend [
+		attrs sel_getUid "initWithObjectsAndKeys:"
+		nsfont NSFontAttributeName
+		nscolor NSForegroundColorAttributeName
+		under NSUnderlineStyleAttributeName
+		strike NSStrikethroughStyleAttributeName
+		para NSParagraphStyleAttributeName
+		0
+	]
+	if para <> 0 [objc_msgSend [para sel_getUid "release"]]
+	objc_msgSend [nscolor sel_getUid "release"]
+	CFRelease under
+	CFRelease strike
+	attrs
+]

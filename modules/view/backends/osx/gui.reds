@@ -1242,6 +1242,8 @@ OS-make-view: func [
 		true [0]
 	]
 
+	unless show?/value [change-visible obj no sym]
+
 	change-font obj face as red-object! values + FACE_OBJ_FONT sym
 	if TYPE_OF(rate) <> TYPE_NONE [change-rate obj rate]
 	if sym <> base [change-color obj as red-tuple! values + FACE_OBJ_COLOR sym]

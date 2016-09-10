@@ -533,7 +533,7 @@ win/pane: reduce [
 		image: load %../bridges/android/samples/eval/res/drawable-xxhdpi/ic_launcher.png
 	]
 	tab-panel: make face! [
-		type: 'tab-panel offset: 10x320 size: 250x130
+		type: 'tab-panel offset: 10x320 size: 250x140
 		data: [
 			"tab 1"
 			"tab 2"

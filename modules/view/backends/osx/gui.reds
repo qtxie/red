@@ -886,13 +886,6 @@ init-window: func [
 		if bits and FACET_FLAGS_NO_TITLE = 0 [flags: flags or NSTitledWindowMask]
 		if bits and FACET_FLAGS_NO_MIN  = 0 [flags: flags or NSMiniaturizableWindowMask]
 	]
-	;if bits and FACET_FLAGS_POPUP  <> 0 [ws-flags: ws-flags or WS_EX_TOOLWINDOW]
-	
-	;flags: either bits and FACET_FLAGS_RESIZE = 0 [
-	;	flags and (not WS_MAXIMIZEBOX)
-	;][
-	;	flags or WS_THICKFRAME
-	;]
 	window: objc_msgSend [
 		window
 		sel_getUid "initWithContentRect:styleMask:backing:defer:"
@@ -901,8 +894,8 @@ init-window: func [
 
 	set-content-view window
 
-	sel_Hidden: sel_getUid "setHidden:"
 	if bits and FACET_FLAGS_NO_BORDER = 0 [
+		sel_Hidden: sel_getUid "setHidden:"
 		if bits and FACET_FLAGS_NO_MAX  <> 0 [
 			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 2] sel_Hidden yes]
 		]
@@ -915,6 +908,10 @@ init-window: func [
 			bits and FACET_FLAGS_NO_TITLE = 0
 			title <> 0
 		][objc_msgSend [window sel_getUid "setTitle:" title]]
+	]
+
+	if bits and FACET_FLAGS_POPUP  <> 0 [
+		objc_msgSend [window sel_getUid "setLevel:" CGWindowLevelForKey 5]		;-- FloatingWindowLevel
 	]
 
 	objc_msgSend [window sel_getUid "becomeFirstResponder"]

@@ -353,6 +353,10 @@ tagSIZE: alias struct! [
 		]
 	]
 	"/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices" cdecl [
+		CGWindowLevelForKey: "CGWindowLevelForKey" [
+			key			[integer!]
+			return:		[integer!]
+		]
 		CTLineCreateWithAttributedString: "CTLineCreateWithAttributedString" [
 			aStr		[integer!]
 			return:		[integer!]

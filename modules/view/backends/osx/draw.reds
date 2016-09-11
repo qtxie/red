@@ -764,8 +764,26 @@ OS-matrix-rotate: func [
 	center	[red-pair!]
 	/local
 		ctx [handle!]
+		pad [integer!]
+		ty	[integer!]
+		tx	[integer!]
+		d	[integer!]
+		c	[integer!]
+		b	[integer!]
+		a	[integer!]
+		m	[CGAffineTransform!]
+		top [int-ptr!]
 ][
 	ctx: dc/raw
+
+	;pad: 0
+	;a: 0
+	;pad: system/cpu/esp
+	;print system/cpu/esp
+	;CGContextGetCTM as CGAffineTransform! :a ctx
+	;m: as CGAffineTransform! :a
+	;probe [m/a " " m/b " " m/c " " m/d " " m/tx " " m/ty]
+
 	;if angle <> as red-integer! center [
 	;	m: modes/gp-matrix
 	;	if zero? m [
@@ -779,7 +797,7 @@ OS-matrix-rotate: func [
 	;	GdipTransformMatrixPointsI m pts 1
 	;	OS-matrix-translate 0 - pts/x 0 - pts/y
 	;]
-	CGContextRotateCTM ctx get-float32 angle
+	CGContextRotateCTM ctx (as float32! PI) / (as float32! 180.0) * get-float32 angle
 	;if angle <> as red-integer! center [
 	;	pts/x: center/x
 	;	pts/y: center/y

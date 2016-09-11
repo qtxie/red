@@ -523,10 +523,10 @@ tagSIZE: alias struct! [
 		;	c			[handle!]
 		;	matrix		[CGAffineTransform]
 		;]
-		;CGContextGetCTM: "CGContextGetCTM" [
-		;	c			[handle!]
-		;	return:		[CGAffineTransform]
-		;]
+		CGContextGetCTM: "CGContextGetCTM" [
+			matrix		[CGAffineTransform!]
+			c			[handle!]
+		]
 		CGContextRotateCTM: "CGContextRotateCTM" [
 			c			[handle!]
 			angle		[float32!]

@@ -19,12 +19,12 @@ add-base-handler: func [class [integer!]][
 	flipp-coord class
 	class_addMethod class sel_getUid "drawRect:" as-integer :draw-rect "v@:{_NSRect=ffff}"
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
-	class_addMethod class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
-	class_addMethod class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
-	class_addMethod class sel_getUid "mouseDragged:" as-integer :mouse-drag "v@:@"
+	class_replaceMethod class sel_getUid "mouseDown:" as-integer :base-mouse-down "v@:@"
+	class_replaceMethod class sel_getUid "mouseUp:" as-integer :base-mouse-up "v@:@"
+	class_replaceMethod class sel_getUid "mouseDragged:" as-integer :base-mouse-drag "v@:@"
 ]
 
-add-subview: func [
+win-add-subview: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
@@ -36,6 +36,26 @@ add-subview: func [
 	]
 ]
 
+win-convert-point: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	x		[integer!]
+	y		[integer!]
+	view	[integer!]
+	/local
+		rc	[NSRect!]
+][
+	x: objc_msgSend [
+		objc_msgSend [self sel_getUid "contentView"]
+		sel_getUid "convertPoint:fromView:" x y view
+	]
+	y: system/cpu/edx
+	rc: as NSRect! :x
+	system/cpu/edx: y
+	system/cpu/eax: x
+]
+
 add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "keyDown:" as-integer :on-key-down "v@:@"
 	class_addMethod class sel_getUid "keyUp:" as-integer :on-key-up "v@:@"
@@ -43,13 +63,14 @@ add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "windowDidMove:" as-integer :win-did-move "v12@0:4@8"
 	class_addMethod class sel_getUid "windowDidResize:" as-integer :win-did-resize "v12@0:4@8"
 	class_addMethod class sel_getUid "windowDidEndLiveResize:" as-integer :win-live-resize "v12@0:4@8"
-	;class_addMethod class sel_getUid "windowWillResize:toSize:" as-integer :win-will-resize "'{_NSSize=ff}20@0:4@8{_NSSize=ff}12"
+	;class_addMethod class sel_getUid "windowWillResize:toSize:" as-integer :win-will-resize "{_NSSize=ff}20@0:4@8{_NSSize=ff}12"
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
-	class_addMethod class sel_getUid "addSubview:" as-integer :add-subview "v12@0:4@8"
+	class_addMethod class sel_getUid "addSubview:" as-integer :win-add-subview "v12@0:4@8"
+	class_addMethod class sel_getUid "convertPoint:fromView:" as-integer :win-convert-point "{_NSPoint=ff}20@0:4{_NSPoint=ff}8@16"
 ]
 
 add-button-handler: func [class [integer!]][
-	class_addMethod class sel_getUid "mouseDown:" as-integer :button-mouse-down "v@:@"
+	class_replaceMethod class sel_getUid "mouseDown:" as-integer :button-mouse-down "v@:@"
 ]
 
 add-slider-handler: func [class [integer!]][
@@ -108,14 +129,17 @@ make-super-class: func [
 	new-class: objc_allocateClassPair objc_getClass base new 0
 	if store? [						;-- add an instance value to store red-object!
 		class_addIvar new-class IVAR_RED_FACE 16 2 "{red-face=iiii}"
-	]
-	unless zero? method [
-		add-method: as add-method! method
-		add-method new-class
 		class_addMethod new-class sel-on-timer as-integer :red-timer-action "v@:@"
 		class_addMethod new-class sel_getUid "mouseEntered:" as-integer :mouse-entered "v@:@"
 		class_addMethod new-class sel_getUid "mouseExited:" as-integer :mouse-exited "v@:@"
 		class_addMethod new-class sel_getUid "mouseMoved:" as-integer :mouse-moved "v@:@"
+		class_addMethod new-class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
+		class_addMethod new-class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
+		class_addMethod new-class sel_getUid "mouseDragged:" as-integer :mouse-drag "v@:@"
+	]
+	unless zero? method [
+		add-method: as add-method! method
+		add-method new-class
 	]
 	objc_registerClassPair new-class
 ]

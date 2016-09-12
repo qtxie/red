@@ -265,6 +265,13 @@ tagSIZE: alias struct! [
 			types		[c-string!]
 			return:		[integer!]
 		]
+		class_replaceMethod: "class_replaceMethod" [
+			class		[integer!]
+			name		[integer!]
+			implement	[integer!]
+			types		[c-string!]
+			return:		[integer!]
+		]
 		class_getSuperclass: "class_getSuperclass" [
 			cls			[integer!]
 			return:		[integer!]

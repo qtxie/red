@@ -32,7 +32,7 @@ Red/System [
 		matrix:			symbol/make "matrix"
 		invert-matrix:	symbol/make "invert-matrix"
 		reset-matrix:	symbol/make "reset-matrix"
-		push:			symbol/make "push"
+		_push:			symbol/make "push"
 		rotate:			symbol/make "rotate"
 		scale:			symbol/make "scale"
 		translate:		symbol/make "translate"
@@ -502,7 +502,7 @@ Red/System [
 										as red-pair! cmd
 								]
 							]
-							sym = push [
+							sym = _push [
 								DRAW_FETCH_VALUE(TYPE_BLOCK)
 								OS-matrix-push DC
 								parse-draw as red-block! start DC catch?

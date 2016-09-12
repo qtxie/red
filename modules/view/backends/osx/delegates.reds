@@ -124,6 +124,41 @@ button-mouse-down: func [
 	]
 ]
 
+base-mouse-down: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+][
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+	make-event self 0 EVT_LEFT_DOWN
+]
+
+base-mouse-up: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+][
+	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+	make-event self 0 EVT_LEFT_UP
+]
+
+base-mouse-drag: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+	/local
+		opt [red-value!]
+][
+	opt: (get-face-values self) + FACE_OBJ_OPTIONS
+	if TYPE_OF(opt) = TYPE_BLOCK [
+		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+		make-event self 0 EVT_OVER
+	]
+]
+
 mouse-down: func [
 	[cdecl]
 	self	[integer!]
@@ -132,6 +167,7 @@ mouse-down: func [
 ][
 	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 	make-event self 0 EVT_LEFT_DOWN
+	msg-send-super self cmd event
 ]
 
 mouse-up: func [
@@ -142,6 +178,7 @@ mouse-up: func [
 ][
 	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 	make-event self 0 EVT_LEFT_UP
+	msg-send-super self cmd event
 ]
 
 mouse-drag: func [
@@ -149,9 +186,15 @@ mouse-drag: func [
 	self	[integer!]
 	cmd		[integer!]
 	event	[integer!]
+	/local
+		opt [red-value!]
 ][
-	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-	make-event self 0 EVT_OVER
+	opt: (get-face-values self) + FACE_OBJ_OPTIONS
+	if TYPE_OF(opt) = TYPE_BLOCK [
+		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
+		make-event self 0 EVT_OVER
+	]
+	msg-send-super self cmd event
 ]
 
 print-classname: func [

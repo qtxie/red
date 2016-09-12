@@ -796,6 +796,7 @@ insert-event-func [
 		]
 	][
 		print [
+			"face> type:"	event/face/type
 			"event> type:"	event/type
 			"offset:"		event/offset
 			"key:"			mold event/key

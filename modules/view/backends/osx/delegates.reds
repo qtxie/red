@@ -265,8 +265,8 @@ on-key-up: func [
 	key: either key >= 80h [0][translate-key key]
 	flags: either char-key? as-byte key [0][80000000h]	;-- special key or not
 	flags: flags or check-extra-keys event
-	make-event self key or flags EVT_KEY_DOWN
-	msg-send-super self cmd event
+	make-event self key or flags EVT_KEY_UP
+	;msg-send-super self cmd event
 ]
 
 button-click: func [

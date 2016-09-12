@@ -505,7 +505,6 @@ change-color: func [
 			objc_msgSend [hWnd sel_getUid "setDrawsBackground:" yes]
 		]
 		objc_msgSend [hWnd sel_getUid "setBackgroundColor:" clr]
-		objc_msgSend [clr sel_getUid "release"]
 	][
 		objc_msgSend [hWnd sel_getUid "display"]
 	]

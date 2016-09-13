@@ -152,6 +152,7 @@ Red/System [
 #define RedCameraDevInputKey	4000FFF3h
 #define RedCameraImageKey		4000FFF4h
 #define RedTimerKey				4000FFFAh
+#define RedFieldEditorKey		4000FFFBh
 
 #define handle! [pointer! [integer!]]
 

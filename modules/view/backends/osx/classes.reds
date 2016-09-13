@@ -60,9 +60,11 @@ add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "windowWillClose:" as-integer :win-will-close "v12@0:4@8"
 	class_addMethod class sel_getUid "windowDidMove:" as-integer :win-did-move "v12@0:4@8"
 	class_addMethod class sel_getUid "windowDidResize:" as-integer :win-did-resize "v12@0:4@8"
+	class_addMethod class sel_getUid "windowWillReturnFieldEditor:toObject:" as-integer :return-field-editor "@@:@@"
 	class_addMethod class sel_getUid "windowDidEndLiveResize:" as-integer :win-live-resize "v12@0:4@8"
 	;class_addMethod class sel_getUid "windowWillResize:toSize:" as-integer :win-will-resize "{_NSSize=ff}20@0:4@8{_NSSize=ff}12"
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
+	class_addMethod class sel_getUid "sendEvent:" as-integer :win-send-event "@:@"
 	class_addMethod class sel_getUid "addSubview:" as-integer :win-add-subview "v12@0:4@8"
 	class_addMethod class sel_getUid "convertPoint:fromView:" as-integer :win-convert-point "{_NSPoint=ff}20@0:4{_NSPoint=ff}8@16"
 ]
@@ -135,7 +137,6 @@ make-super-class: func [
 		class_addMethod new-class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
 		class_addMethod new-class sel_getUid "mouseDragged:" as-integer :mouse-drag "v@:@"
 
-		class_addMethod new-class sel_getUid "keyDown:" as-integer :on-key-down "v@:@"
 		class_addMethod new-class sel_getUid "keyUp:" as-integer :on-key-up "v@:@"
 	]
 	unless zero? method [

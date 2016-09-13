@@ -40,6 +40,13 @@ log-pixels-y:	0
 screen-size-x:	0
 screen-size-y:	0
 
+red-face?: func [
+	handle	[integer!]
+	return: [logic!]
+][
+	0 <> class_getInstanceVariable object_getClass handle IVAR_RED_FACE
+]
+
 get-face-values: func [
 	handle	[integer!]
 	return: [red-value!]

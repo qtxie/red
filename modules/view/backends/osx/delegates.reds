@@ -222,7 +222,7 @@ red-timer-action: func [
 on-key-down: func [
 	[cdecl]
 	self	[integer!]
-	cmd		[integer!]
+	;cmd		[integer!]
 	event	[integer!]
 	/local
 		res		[integer!]
@@ -249,7 +249,7 @@ on-key-down: func [
 			]
 		]
 	]
-	msg-send-super self cmd event
+	;msg-send-super self cmd event
 ]
 
 on-key-up: func [
@@ -724,4 +724,46 @@ draw-rect: func [
 	render-text ctx vals as NSSize! (as int-ptr! self) + 8
 
 	do-draw ctx as red-image! (as int-ptr! self) + 8 draw no yes yes yes
+]
+
+return-field-editor: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	sender	[integer!]
+	obj		[integer!]
+	return: [integer!]
+][
+	objc_setAssociatedObject sender RedFieldEditorKey obj OBJC_ASSOCIATION_ASSIGN
+	0
+]
+
+win-send-event: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+	/local
+		p-int		[int-ptr!]
+		type		[integer!]
+		view		[integer!]
+		responder	[integer!]
+		find?		[logic!]
+][
+	p-int: as int-ptr! event
+	type: p-int/2
+	;view: objc_msgSend [self sel_getUid "contentView"]
+	;p-int: as int-ptr! self
+	;view: p-int/7
+
+	if type = NSKeyDown	[
+		find?: yes
+		responder: objc_msgSend [self sel_getUid "firstResponder"]
+		unless red-face? responder [
+			responder: objc_getAssociatedObject self RedFieldEditorKey
+			unless red-face? responder [find?: no]
+		]
+		if find? [on-key-down responder event]
+	]
+	msg-send-super self cmd event
 ]

@@ -124,75 +124,54 @@ button-mouse-down: func [
 	]
 ]
 
-base-mouse-down: func [
-	[cdecl]
-	self	[integer!]
-	cmd		[integer!]
-	event	[integer!]
-][
-	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-	make-event self 0 EVT_LEFT_DOWN
-]
-
-base-mouse-up: func [
-	[cdecl]
-	self	[integer!]
-	cmd		[integer!]
-	event	[integer!]
-][
-	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-	make-event self 0 EVT_LEFT_UP
-]
-
-base-mouse-drag: func [
+mouse-events: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
 	event	[integer!]
 	/local
-		opt [red-value!]
+		p		[int-ptr!]
+		opt		[red-value!]
+		evt		[integer!]
+		flags	[integer!]
 ][
-	opt: (get-face-values self) + FACE_OBJ_OPTIONS
-	if TYPE_OF(opt) = TYPE_BLOCK [
-		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self 0 EVT_OVER
-	]
-]
-
-mouse-down: func [
-	[cdecl]
-	self	[integer!]
-	cmd		[integer!]
-	event	[integer!]
-][
+	p: as int-ptr! event
+	flags: check-extra-keys event
 	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-	make-event self 0 EVT_LEFT_DOWN
-	msg-send-super self cmd event
-]
-
-mouse-up: func [
-	[cdecl]
-	self	[integer!]
-	cmd		[integer!]
-	event	[integer!]
-][
-	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-	make-event self 0 EVT_LEFT_UP
-	msg-send-super self cmd event
-]
-
-mouse-drag: func [
-	[cdecl]
-	self	[integer!]
-	cmd		[integer!]
-	event	[integer!]
-	/local
-		opt [red-value!]
-][
-	opt: (get-face-values self) + FACE_OBJ_OPTIONS
-	if TYPE_OF(opt) = TYPE_BLOCK [
-		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self 0 EVT_OVER
+	switch p/2 [
+		NSLeftMouseDown		[
+			evt: objc_msgSend [event sel_getUid "clickCount"]
+			evt: switch evt [
+				1 [EVT_LEFT_DOWN]
+				2 [EVT_DBL_CLICK]
+				default [-1]
+			]
+			if evt <> -1 [make-event self flags evt]
+		]
+		NSLeftMouseUp		[
+			if 1 = objc_msgSend [event sel_getUid "clickCount"][
+				make-event self flags EVT_LEFT_UP
+			]
+		]
+		NSRightMouseDown	[make-event self flags EVT_RIGHT_DOWN]
+		NSRightMouseUp		[make-event self flags EVT_RIGHT_UP]
+		NSOtherMouseDown	[
+			evt: either 2 < objc_msgSend [event sel_getUid "buttonNumber"][EVT_AUX_DOWN][EVT_MIDDLE_DOWN]
+			 make-event self flags evt
+		]
+		NSOtherMouseUp		[
+			evt: either 2 < objc_msgSend [event sel_getUid "buttonNumber"][EVT_AUX_UP][EVT_MIDDLE_UP]
+			make-event self flags evt
+		]
+		NSLeftMouseDragged	
+		NSRightMouseDragged	
+		NSOtherMouseDragged	[
+			opt: (get-face-values self) + FACE_OBJ_OPTIONS
+			if TYPE_OF(opt) = TYPE_BLOCK [
+				make-event self flags EVT_OVER
+			]
+		]
+		default [0]
 	]
 	msg-send-super self cmd event
 ]
@@ -737,6 +716,10 @@ return-field-editor: func [
 	objc_setAssociatedObject sender RedFieldEditorKey obj OBJC_ASSOCIATION_ASSIGN
 	0
 ]
+
+;app-send-event: func [
+	
+;]
 
 win-send-event: func [
 	[cdecl]

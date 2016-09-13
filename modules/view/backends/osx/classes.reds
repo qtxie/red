@@ -19,9 +19,6 @@ add-base-handler: func [class [integer!]][
 	flipp-coord class
 	class_addMethod class sel_getUid "drawRect:" as-integer :draw-rect "v@:{_NSRect=ffff}"
 	class_addMethod class sel_getUid "red-menu-action:" as-integer :red-menu-action "v@:@"
-	class_replaceMethod class sel_getUid "mouseDown:" as-integer :base-mouse-down "v@:@"
-	class_replaceMethod class sel_getUid "mouseUp:" as-integer :base-mouse-up "v@:@"
-	class_replaceMethod class sel_getUid "mouseDragged:" as-integer :base-mouse-drag "v@:@"
 ]
 
 win-add-subview: func [
@@ -133,9 +130,15 @@ make-super-class: func [
 		class_addMethod new-class sel_getUid "mouseEntered:" as-integer :mouse-entered "v@:@"
 		class_addMethod new-class sel_getUid "mouseExited:" as-integer :mouse-exited "v@:@"
 		class_addMethod new-class sel_getUid "mouseMoved:" as-integer :mouse-moved "v@:@"
-		class_addMethod new-class sel_getUid "mouseDown:" as-integer :mouse-down "v@:@"
-		class_addMethod new-class sel_getUid "mouseUp:" as-integer :mouse-up "v@:@"
-		class_addMethod new-class sel_getUid "mouseDragged:" as-integer :mouse-drag "v@:@"
+		class_addMethod new-class sel_getUid "mouseDown:" as-integer :mouse-events "v@:@"
+		class_addMethod new-class sel_getUid "mouseUp:" as-integer :mouse-events "v@:@"
+		class_addMethod new-class sel_getUid "mouseDragged:" as-integer :mouse-events "v@:@"
+		class_addMethod new-class sel_getUid "rightMouseDown:" as-integer :mouse-events "v@:@"
+		class_addMethod new-class sel_getUid "rightMouseUp:" as-integer :mouse-events "v@:@"
+		class_addMethod new-class sel_getUid "rightMouseDragged:" as-integer :mouse-events "v@:@"
+		class_addMethod new-class sel_getUid "otherMouseDown:" as-integer :mouse-events "v@:@"
+		class_addMethod new-class sel_getUid "otherMouseUp:" as-integer :mouse-events "v@:@"
+		class_addMethod new-class sel_getUid "otherMouseDragged:" as-integer :mouse-events "v@:@"
 
 		class_addMethod new-class sel_getUid "keyUp:" as-integer :on-key-up "v@:@"
 	]

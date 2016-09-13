@@ -441,26 +441,13 @@ make-event: func [
 ][
 	gui-evt/type:  evt
 	gui-evt/msg:   as byte-ptr! obj
-	gui-evt/flags: 0
+	gui-evt/flags: flags
 
 	state: EVT_DISPATCH
 
 	switch evt [
-		EVT_OVER
-		EVT_KEY_DOWN
-		EVT_KEY_UP
-		EVT_KEY [
-			gui-evt/flags: flags
-		]
-		EVT_LEFT_DOWN
-		EVT_LEFT_UP
-		EVT_RIGHT_DOWN
-		EVT_RIGHT_UP
-		EVT_MIDDLE_DOWN
-		EVT_MIDDLE_UP
 		EVT_DBL_CLICK [0]
 		EVT_CLICK [0]
-		EVT_MENU [gui-evt/flags: flags and FFFFh]		;-- symbol ID of the menu
 		EVT_CLOSE [
 			exit-loop: exit-loop - 1
 		]

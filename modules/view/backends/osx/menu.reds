@@ -82,7 +82,7 @@ build-menu: func [
 				item: objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "alloc"]
 				item: objc_msgSend [
 					item sel_getUid "initWithTitle:action:keyEquivalent:"
-					title action key
+					title 0 key
 				]
 				objc_msgSend [item sel_getUid "setTarget:" target]
 				if next < tail [
@@ -97,6 +97,7 @@ build-menu: func [
 						TYPE_WORD [
 							w: as red-word! next
 							objc_msgSend [item sel_getUid "setTag:" w/symbol]
+							objc_msgSend [item sel_getUid "setAction:" action]
 							value: value + 1
 						]
 						default [0]

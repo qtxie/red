@@ -385,12 +385,14 @@ selection-change: func [
 		idx [integer!]
 		res [integer!]
 ][
-	res: make-event self 0 EVT_SELECT
 	idx: objc_msgSend [self sel_getUid "indexOfSelectedItem"]
-	set-selected self idx + 1
-	set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" idx]
-	if res = EVT_DISPATCH [
-		make-event self 0 EVT_CHANGE
+	if idx > 0 [
+		res: make-event self 0 EVT_SELECT
+		set-selected self idx + 1
+		set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" idx]
+		if res = EVT_DISPATCH [
+			make-event self 0 EVT_CHANGE
+		]
 	]
 ]
 

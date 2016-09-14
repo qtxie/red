@@ -854,7 +854,9 @@ init-combo-box: func [
 		tail: as red-string! block/rs-tail data
 		
 		objc_msgSend [combo sel_getUid "removeAllItems"]
-		
+
+		if str = tail [exit]
+
 		while [str < tail][
 			if TYPE_OF(str) = TYPE_STRING [
 				len: -1
@@ -864,11 +866,20 @@ init-combo-box: func [
 			str: str + 1
 		]
 	]
+
+	len: objc_msgSend [combo sel_getUid "numberOfItems"]
+
 	if TYPE_OF(selected) = TYPE_INTEGER [
-		objc_msgSend [combo sel_getUid "selectItemAtIndex:" selected/value - 1]
-		val: objc_msgSend [combo sel_getUid "objectValueOfSelectedItem"]
-		objc_msgSend [combo sel_getUid "setObjectValue:" val]
+		if len > 0 [
+			if selected/value < len [len: selected/value]
+			objc_msgSend [combo sel_getUid "selectItemAtIndex:" len - 1]
+			val: objc_msgSend [combo sel_getUid "objectValueOfSelectedItem"]
+			objc_msgSend [combo sel_getUid "setObjectValue:" val]
+		]
 	]
+
+	if zero? len [objc_msgSend [combo sel_getUid "setStringValue:" NSString("")]]
+
 	either drop-list? [
 		objc_msgSend [combo sel_getUid "setEditable:" false]
 	][

@@ -94,6 +94,7 @@ on-face-deep-change*: function [owner word target action new index part state fo
 			tab "new value  :" mold type? new	 lf
 			tab "index      :" index			 lf
 			tab "part       :" part				 lf
+			tab "auto-sync? :" system/view/auto-sync? lf
 			tab "forced?    :" forced?
 		]
 	]

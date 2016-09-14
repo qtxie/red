@@ -26,8 +26,11 @@ create-main-menu: func [
 	/local
 		app-name	[integer!]
 		empty-str	[integer!]
+		item		[integer!]
+		title		[integer!]
 		main-menu	[integer!]
 		apple-menu	[integer!]
+		srv-menu	[integer!]
 		app-item	[integer!]
 ][
 	empty-str: NSString("")
@@ -37,6 +40,34 @@ create-main-menu: func [
 	apple-menu: objc_msgSend [objc_getClass "NSMenu" sel_getUid "alloc"]
 	apple-menu: objc_msgSend [apple-menu sel_getUid "initWithTitle:" NSString("Apple")]
 	objc_msgSend [NSApp sel_getUid "setAppleMenu:" apple-menu]
+
+	title: NSString("Preferences...")
+	item: objc_msgSend [
+		apple-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"
+		title 0 NSString(",")
+	]
+	objc_msgSend [item sel_getUid "setTag:" 42]
+
+	objc_msgSend [
+		apple-menu sel_getUid "addItem:"
+		objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]
+	]
+
+	title: NSString("Services")
+	item: objc_msgSend [
+		apple-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"
+		title 0 empty-str
+	]
+	srv-menu: objc_msgSend [objc_getClass "NSMenu" sel_getUid "alloc"]
+	srv-menu: objc_msgSend [srv-menu sel_getUid "initWithTitle:" empty-str]
+	objc_msgSend [apple-menu sel_getUid "setSubmenu:forItem:" srv-menu item]
+	objc_msgSend [srv-menu sel_getUid "release"]
+	objc_msgSend [NSApp sel_getUid "setServicesMenu:" srv-menu]
+
+	objc_msgSend [
+		apple-menu sel_getUid "addItem:"
+		objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]
+	]
 
 	app-item: objc_msgSend [
 		main-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"

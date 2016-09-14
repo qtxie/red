@@ -41,17 +41,23 @@ create-main-menu: func [
 	apple-menu: objc_msgSend [apple-menu sel_getUid "initWithTitle:" NSString("Apple")]
 	objc_msgSend [NSApp sel_getUid "setAppleMenu:" apple-menu]
 
+	title: NSString("About %@")
+	app-name: NSString("Me")					;@@ TBD change it to real app-name
+	title: objc_msgSend [objc_getClass "NSString" sel_getUid "stringWithFormat:" title app-name]
+	item: objc_msgSend [
+		apple-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"
+		title sel_getUid "orderFrontStandardAboutPanel:" empty-str
+	]
+	objc_msgSend [item sel_getUid "setTarget:" NSApp]
+	objc_msgSend [apple-menu sel_getUid "addItem:" objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]]
+
 	title: NSString("Preferences...")
 	item: objc_msgSend [
 		apple-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"
 		title 0 NSString(",")
 	]
 	objc_msgSend [item sel_getUid "setTag:" 42]
-
-	objc_msgSend [
-		apple-menu sel_getUid "addItem:"
-		objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]
-	]
+	objc_msgSend [apple-menu sel_getUid "addItem:" objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]]
 
 	title: NSString("Services")
 	item: objc_msgSend [
@@ -63,11 +69,32 @@ create-main-menu: func [
 	objc_msgSend [apple-menu sel_getUid "setSubmenu:forItem:" srv-menu item]
 	objc_msgSend [srv-menu sel_getUid "release"]
 	objc_msgSend [NSApp sel_getUid "setServicesMenu:" srv-menu]
+	objc_msgSend [apple-menu sel_getUid "addItem:" objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]]
 
-	objc_msgSend [
-		apple-menu sel_getUid "addItem:"
-		objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]
+	title: NSString("Hide %@")
+	app-name: NSString("Me")					;@@ TBD change it to real app-name
+	title: objc_msgSend [objc_getClass "NSString" sel_getUid "stringWithFormat:" title app-name]
+	item: objc_msgSend [
+		apple-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"
+		title sel_getUid "hide:" NSString("h")
 	]
+	objc_msgSend [item sel_getUid "setTarget:" NSApp]
+
+	title: NSString("Hide Others")
+	item: objc_msgSend [
+		apple-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"
+		title sel_getUid "hideOtherApplications:" NSString("h")
+	]
+	objc_msgSend [item sel_getUid "setKeyEquivalentModifierMask:" NSCommandKeyMask or NSAlternateKeyMask]
+	objc_msgSend [item sel_getUid "setTarget:" NSApp]
+
+	title: NSString("Show All")
+	item: objc_msgSend [
+		apple-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"
+		title sel_getUid "unhideAllApplications:" empty-str
+	]
+	objc_msgSend [item sel_getUid "setTarget:" NSApp]
+	objc_msgSend [apple-menu sel_getUid "addItem:" objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]]
 
 	app-item: objc_msgSend [
 		main-menu sel_getUid "addItemWithTitle:action:keyEquivalent:"

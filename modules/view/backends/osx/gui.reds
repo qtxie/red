@@ -24,6 +24,7 @@ Red/System [
 #include %tab-panel.reds
 
 NSApp:					0
+NSAppDelegate:			0
 AppMainMenu:			0
 NSDefaultRunLoopMode:	0
 &_NSConcreteStackBlock: 0
@@ -256,6 +257,7 @@ init: func [
 
 	delegate: objc_msgSend [objc_getClass "RedAppDelegate" sel_getUid "alloc"]
 	delegate: objc_msgSend [delegate sel_getUid "init"]
+	NSAppDelegate: delegate
 	objc_msgSend [NSApp sel_getUid "setDelegate:" delegate]
 
 	create-main-menu

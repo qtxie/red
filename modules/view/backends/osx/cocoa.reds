@@ -33,6 +33,16 @@ Red/System [
 #define NSIconWindowMask            64
 #define NSMiniWindowMask            128
 
+#define NSAlphaShiftKeyMask			65536
+#define NSShiftKeyMask				131072
+#define NSControlKeyMask			262144
+#define NSAlternateKeyMask			524288
+#define NSCommandKeyMask			1048576
+#define NSNumericPadKeyMask			2097152
+#define NSHelpKeyMask				4194304
+#define NSFunctionKeyMask			8388608
+#define NSDeviceIndependentModifierFlagsMask FFFF0000h
+
 #define NSViewNotSizable			0
 #define NSViewMinXMargin			1
 #define NSViewWidthSizable			2
@@ -99,6 +109,8 @@ Red/System [
 #define NSLeftMouseUpMask			4
 #define NSMouseMovedMask			32
 #define NSLeftMouseDraggedMask		64
+
+
 
 #define NSItalicFontMask			1
 #define NSBoldFontMask				2

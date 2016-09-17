@@ -386,7 +386,7 @@ selection-change: func [
 		res [integer!]
 ][
 	idx: objc_msgSend [self sel_getUid "indexOfSelectedItem"]
-	if idx > 0 [
+	if idx >= 0 [
 		res: make-event self 0 EVT_SELECT
 		set-selected self idx + 1
 		set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" idx]

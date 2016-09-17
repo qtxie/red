@@ -768,6 +768,7 @@ change-selection: func [
 	type   [integer!]
 	/local
 		idx [integer!]
+		sz	[integer!]
 ][
 	if TYPE_OF(int) = TYPE_NONE [idx: -1]
 	idx: int/value - 1
@@ -782,15 +783,20 @@ change-selection: func [
 			]
 		]
 		type = text-list [
+			hWnd: objc_msgSend [hWnd sel_getUid "documentView"]
+			sz: -1 + objc_msgSend [hWnd sel_getUid "numberOfRows"]
+			if sz < 0 [exit]
+			if sz < idx [idx: sz]			;-- select the last one
 			idx: objc_msgSend [objc_getClass "NSIndexSet" sel_getUid "indexSetWithIndex:" idx]
 			objc_msgSend [
-				objc_msgSend [hWnd sel_getUid "documentView"]
-				sel_getUid "selectRowIndexes:byExtendingSelection:"
-				idx no
+				hWnd sel_getUid "selectRowIndexes:byExtendingSelection:" idx no
 			]
 			objc_msgSend [idx sel_getUid "release"]
 		]
 		any [type = drop-list type = drop-down][
+			sz: -1 + objc_msgSend [hWnd sel_getUid "numberOfItems"]
+			if sz < 0 [exit]
+			if sz < idx [idx: sz]
 			objc_msgSend [hWnd sel_getUid "selectItemAtIndex:" idx]
 			idx: objc_msgSend [hWnd sel_getUid "objectValueOfSelectedItem"]
 			objc_msgSend [hWnd sel_getUid "setObjectValue:" idx]
@@ -852,6 +858,23 @@ set-content-view: func [
 	rect: make-rect 0 0 0 0
 	view: objc_msgSend [view sel_getUid "initWithFrame:" rect/x rect/y rect/w rect/h]
 	objc_msgSend [obj sel_getUid "setContentView:" view]
+]
+
+insert-list-item: func [
+	hWnd  [integer!]
+	item  [red-string!]
+	pos	  [integer!]
+	/local
+		len [integer!]
+][
+	unless TYPE_OF(item) = TYPE_STRING [exit]
+
+	len: objc_msgSend [hWnd sel_getUid "numberOfItems"]
+	if pos > len [pos: len]
+	objc_msgSend [
+		hWnd sel_getUid "insertItemWithObjectValue:atIndex:"
+		to-CFString item pos
+	]
 ]
 
 init-combo-box: func [
@@ -1076,15 +1099,17 @@ update-combo-box: func [
 				][
 					ownership/unbind-each as red-block! value index part
 					
-					;either all [
-					;	sym = words/_clear/symbol
-					;	zero? index
-					;][
-					;	msg: either drop? [CB_RESETCONTENT][LB_RESETCONTENT]
-					;	SendMessage hWnd msg 0 0
-					;][
-					;	loop part [remove-list-item hWnd index drop?]
-					;]
+					either all [
+						sym = words/_clear/symbol
+						zero? index
+					][
+						objc_msgSend [hWnd sel_getUid "removeAllItems"]
+						objc_msgSend [hWnd sel_getUid "setStringValue:" NSString("")]
+					][
+						loop part [
+							objc_msgSend [hWnd sel_getUid "removeItemAtIndex:" index]
+						]
+					]
 				]
 				any [
 					sym = words/_insert/symbol
@@ -1102,21 +1127,21 @@ update-combo-box: func [
 					][
 						new
 					]
-					;loop part [
-					;	if sym <> words/_insert/symbol [
-					;		remove-list-item hWnd index drop?
-					;	]
-					;	insert-list-item hWnd str index drop?
-					;	if sym = words/_reverse/symbol [index: index + 1]
-					;	str: str + 1
-					;]
+					loop part [
+						if sym <> words/_insert/symbol [
+							objc_msgSend [hWnd sel_getUid "removeItemAtIndex:" index]
+						]
+						insert-list-item hWnd str index
+						if sym = words/_reverse/symbol [index: index + 1]
+						str: str + 1
+					]
 				]
 				true [0]
 			]
 		]
 		TYPE_STRING [
-			;remove-list-item hWnd index drop?
-			;insert-list-item hWnd as red-string! value index drop?
+			objc_msgSend [hWnd sel_getUid "removeItemAtIndex:" index]
+			insert-list-item hWnd as red-string! value index
 		]
 		default [assert false]			;@@ raise a runtime error
 	]

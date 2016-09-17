@@ -4,7 +4,7 @@ Red [
 ]
 
 system/view/debug?: no
-live?: system/view/auto-sync?: no
+live?: no system/view/auto-sync?: no
 
 workstation?: system/view/platform/product = 1
 

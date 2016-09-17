@@ -208,9 +208,30 @@ free-handles: func [
 get-os-version: func [
 	/local
 		ver		[red-tuple!]
-		info	[integer!]
+		int		[red-integer!]
+		v		[integer!]
+		major	[integer!]
+		minor	[integer!]
+		bugfix	[integer!]
 ][
-0
+	v: 0 major: 0 minor: 0 bugfix: 0
+	Gestalt gestaltSystemVersion :v
+	Gestalt gestaltSystemVersionMajor :major
+	Gestalt gestaltSystemVersionMinor :minor
+	Gestalt gestaltSystemVersionBugFix :bugfix
+
+	ver: as red-tuple! #get system/view/platform/version
+
+	ver/header: TYPE_TUPLE or (3 << 19)
+	ver/array1: bugfix << 16 or (minor << 8) or major
+
+	int: as red-integer! #get system/view/platform/build
+	int/header: TYPE_INTEGER
+	int/value:  v and FFFFh
+
+	int: as red-integer! #get system/view/platform/product
+	int/header: TYPE_INTEGER
+	int/value:  0
 ]
 
 set-defaults: func [][

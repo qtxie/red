@@ -17,9 +17,9 @@ Red/System [
 #define OBJC_ASSOCIATION_COPY		0303h
 
 #define gestaltSystemVersion		1937339254			;-- "sysv"
-#define gestaltSystemVersion		1937339185			;-- "sys1"
-#define gestaltSystemVersion		1937339186			;-- "sys2"
-#define gestaltSystemVersion		1937339187			;-- "sys3"
+#define gestaltSystemVersionMajor	1937339185			;-- "sys1"
+#define gestaltSystemVersionMinor	1937339186			;-- "sys2"
+#define gestaltSystemVersionBugFix	1937339187			;-- "sys3"
 
 #define NSAnyEventMask				-1
 

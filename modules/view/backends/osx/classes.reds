@@ -55,6 +55,7 @@ win-convert-point: func [
 
 add-window-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "windowWillClose:" as-integer :win-will-close "v12@0:4@8"
+	class_addMethod class sel_getUid "windowShouldClose:" as-integer :win-should-close "B@:@"
 	class_addMethod class sel_getUid "windowDidMove:" as-integer :win-did-move "v12@0:4@8"
 	class_addMethod class sel_getUid "windowDidResize:" as-integer :win-did-resize "v12@0:4@8"
 	class_addMethod class sel_getUid "windowWillReturnFieldEditor:toObject:" as-integer :return-field-editor "@@:@@"

@@ -494,13 +494,24 @@ destroy-app: func [
 	no
 ]
 
+win-should-close: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	sender	[integer!]
+	return: [logic!]
+][
+	make-event sender 0 EVT_CLOSE
+	no
+]
+
 win-will-close: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
 	notif	[integer!]
 ][
-	make-event self 0 EVT_CLOSE
+	nswindow-cnt: nswindow-cnt - 1
 ]
 
 ;win-will-resize: func [								;-- use it to block resizing window

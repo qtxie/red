@@ -34,8 +34,9 @@ NSForegroundColorAttributeName:		0
 NSUnderlineStyleAttributeName:		0
 NSStrikethroughStyleAttributeName:	0
 
+nswindow-cnt:	0
+
 default-font:	0
-exit-loop:		0
 log-pixels-x:	0
 log-pixels-y:	0
 screen-size-x:	0
@@ -197,7 +198,9 @@ free-handles: func [
 		]
 	]
 
-	if sym <> window [
+	either sym = window [
+		objc_msgSend [hWnd sel_getUid "close"]
+	][
 		objc_msgSend [hWnd sel_getUid "removeFromSuperview"]
 	]
 
@@ -1332,6 +1335,7 @@ OS-make-view: func [
 				AppMainMenu: objc_msgSend [NSApp sel_getUid "mainMenu"]
 				build-menu menu AppMainMenu obj
 			]
+			nswindow-cnt: nswindow-cnt + 1
 		]
 		sym = slider [
 			len: either size/x > size/y [size/x][size/y]
@@ -1478,8 +1482,8 @@ OS-update-view: func [
 ]
 
 OS-destroy-view: func [
-	face   [red-object!]
-	empty? [logic!]
+	face	[red-object!]
+	window? [logic!]
 	/local
 		handle [integer!]
 		values [red-value!]

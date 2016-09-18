@@ -445,15 +445,6 @@ make-event: func [
 
 	state: EVT_DISPATCH
 
-	switch evt [
-		EVT_DBL_CLICK [0]
-		EVT_CLICK [0]
-		EVT_CLOSE [
-			exit-loop: exit-loop - 1
-		]
-		default	 [0]
-	]
-
 	#call [system/view/awake gui-evt]
 
 	res: as red-word! stack/arguments
@@ -490,14 +481,13 @@ do-events: func [
 		event	[integer!]
 ][
 	msg?: no
+	if nswindow-cnt > 1 [no-wait?: yes]					;-- should be only one loop
 	timeout: either no-wait? [0][
-		exit-loop: exit-loop + 1
 		objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
 		objc_msgSend [objc_getClass "NSDate" sel_getUid "distantFuture"]	
 	]
 
-	;@@ Improve it!!!
-	while [exit-loop > 0][
+	until [
 		pool: objc_msgSend [objc_getClass "NSAutoreleasePool" sel_getUid "alloc"]
 		objc_msgSend [pool sel_getUid "init"]
 
@@ -518,7 +508,7 @@ do-events: func [
 		]
 
 		objc_msgSend [pool sel_getUid "drain"]
-		if no-wait? [break]
+		any [nswindow-cnt < 1 no-wait?]
 	]
 	msg?
 ]

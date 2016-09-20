@@ -387,11 +387,11 @@ selection-change: func [
 ][
 	idx: objc_msgSend [self sel_getUid "indexOfSelectedItem"]
 	if idx >= 0 [
-		res: make-event self 0 EVT_SELECT
+		res: make-event self idx + 1 EVT_SELECT
 		set-selected self idx + 1
 		set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" idx]
 		if res = EVT_DISPATCH [
-			make-event self 0 EVT_CHANGE
+			make-event self idx + 1 EVT_CHANGE
 		]
 	]
 ]
@@ -570,14 +570,23 @@ win-did-move: func [
 	make-event self 0 EVT_MOVE
 ]
 
-tabview-will-select: func [
+tabview-should-select: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
 	tabview	[integer!]
 	item	[integer!]
+	return: [logic!]
+	/local
+		idx		[integer!]
 ][
-	probe "will select"
+	idx: objc_msgSend [tabview sel_getUid "indexOfTabViewItem:" item]
+	either EVT_DISPATCH = make-event self idx + 1 EVT_CHANGE [
+		set-selected self idx + 1
+		yes
+	][
+		no
+	]
 ]
 
 render-text: func [

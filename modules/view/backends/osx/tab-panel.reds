@@ -10,72 +10,23 @@ Red/System [
 	}
 ]
 
-;select-tab: func [
-;	hWnd [handle!]
-;	idx  [integer!]
-;	/local
-;		nmhdr  [tagNMHDR]
-;		parent [handle!]
-;][
-;	nmhdr: declare tagNMHDR
-;	nmhdr/hwndFrom: hWnd
-;	nmhdr/idFrom:	0
-;	nmhdr/code:		TCN_SELCHANGING
-	
-;	parent: GetParent hWnd
-;	SendMessage parent WM_NOTIFY 0 as-integer nmhdr
-
-;	;SendMessage hWnd TCM_SETCURSEL   idx 0
-;	SendMessage hWnd TCM_SETCURFOCUS idx 0
-	
-;	nmhdr/hwndFrom: hWnd
-;	nmhdr/idFrom:	0
-;	nmhdr/code: TCN_SELCHANGE
-;	SendMessage parent WM_NOTIFY 0 as-integer nmhdr
-;]
-
-;process-tab-select: func [
-;	hWnd	[handle!]
-;	return: [integer!]
-;][
-;	as-integer EVT_NO_DISPATCH = make-event 
-;		current-msg
-;		1 + as-integer SendMessage hWnd TCM_GETCURSEL 0 0
-;		EVT_SELECT
-;]
-
-;process-tab-change: func [
-;	hWnd [handle!]
-;	/local
-;		idx [integer!]
-;][
-;	idx: as-integer SendMessage hWnd TCM_GETCURSEL 0 0
-;	current-msg/hWnd: hWnd
-;	set-tab get-facets current-msg idx
-;	make-event current-msg idx + 1 EVT_CHANGE
-;	current-msg/hWnd: hWnd								;-- could have been changed
-;	get-selected current-msg idx + 1
-;]
-
-;adjust-parent: func [									;-- prevent tabcontrol from having children
-;	hWnd   [handle!]
-;	parent [handle!]
-;	x	   [integer!]
-;	y	   [integer!]
-;	/local
-;		values [red-value!]
-;		type   [red-word!]
-;		pos	   [red-pair!]
-;][
-;	values: get-face-values parent
-;	type: as red-word! values + FACE_OBJ_TYPE
-
-;	if tab-panel = symbol/resolve type/symbol [
-;		SetParent hWnd GetParent parent
-;		pos: as red-pair! values + FACE_OBJ_OFFSET
-;		SetWindowPos hWnd null pos/x + x pos/y + y 0 0 SWP_NOSIZE or SWP_NOZORDER
-;	]
-;]
+select-tab: func [
+	hWnd [integer!]
+	int  [red-integer!]
+	/local
+		nb	[integer!]
+		idx [integer!]
+][
+	nb: objc_msgSend [hWnd sel_getUid "numberOfTabViewItems"]
+	idx: int/value
+	case [
+		idx < 1  [idx: 1]
+		idx > nb [idx: nb]
+		true	 [0]
+	]
+	int/value: idx
+	objc_msgSend [hWnd sel_getUid "selectTabViewItemAtIndex:" idx - 1]
+]
 
 ;insert-tab: func [
 ;	hWnd  [handle!]
@@ -110,12 +61,23 @@ set-tabs: func [
 		tail	[red-string!]
 		int		[red-integer!]
 		nb		[integer!]
+		idx		[integer!]
 		item	[integer!]
 		title	[integer!]
 		panel	[integer!]
 		face	[red-object!]
 		end		[red-object!]
 ][
+	nb: objc_msgSend [obj sel_getUid "numberOfTabViewItems"]
+	idx: nb - 1
+	while [idx >= 0][							;-- remove all tabs
+		objc_msgSend [
+			obj sel_getUid "removeTabViewItem:"
+			objc_msgSend [obj sel_getUid "tabViewItemAtIndex:" idx]
+		]
+		idx: idx - 1
+	]
+
 	data: as red-block! facets + FACE_OBJ_DATA
 	pane: as red-block! facets + FACE_OBJ_PANE
 	nb: 0
@@ -146,49 +108,13 @@ set-tabs: func [
 	]
 	int: as red-integer! facets + FACE_OBJ_SELECTED
 
-	;either TYPE_OF(int) <> TYPE_INTEGER [
-	;	int/header: TYPE_INTEGER						;-- force selection on first tab
-	;	int/value:  1
-	;][
-	;	case [
-	;		int/value < 1  [int/value: 1]
-	;		int/value > nb [int/value: nb]
-	;		true 		   [0]
-	;	]
-	;	select-tab hWnd int/value - 1
-	;]
+	either TYPE_OF(int) <> TYPE_INTEGER [
+		int/header: TYPE_INTEGER						;-- force selection on first tab
+		int/value:  1
+	][
+		select-tab obj int
+	]
 ]
-
-;show-tab: func [
-;	hWnd [handle!]
-;	flag [integer!]
-;][
-;	ShowWindow hWnd flag
-;	unless win8+? [
-;		if flag = SW_SHOW [flag: SW_SHOWNA]
-;		update-layered-window hWnd null null null flag
-;	]
-;]
-
-;get-panel-handle: func [
-;	hWnd	[handle!]			;-- Tab-panel handle!
-;	return: [handle!]
-;	/local
-;		values	[red-value!]
-;		pane	[red-block!]
-;		idx		[red-integer!]
-;		obj		[red-object!]
-;][
-;	values: get-face-values hWnd
-;	pane: as red-block! values + FACE_OBJ_PANE
-;	idx: as red-integer! values + FACE_OBJ_SELECTED
-;	obj: as red-object! (block/rs-head pane) + idx/value - 1
-;	either TYPE_OF(obj) = TYPE_OBJECT [
-;		get-face-handle obj
-;	][
-;		null
-;	]
-;]
 
 ;update-tab-contents: func [
 ;	hWnd	[handle!]

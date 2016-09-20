@@ -102,7 +102,7 @@ add-camera-handler: func [class [integer!]][
 ]
 
 add-tabview-handler: func [class [integer!]][
-	class_addMethod class sel_getUid "tabView:willSelectTabViewItem:" as-integer :tabview-will-select "v16@0:4@8@12"
+	class_addMethod class sel_getUid "tabView:shouldSelectTabViewItem:" as-integer :tabview-should-select "B@:@@"
 ]
 
 add-app-delegate: func [class [integer!]][

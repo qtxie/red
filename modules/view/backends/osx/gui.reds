@@ -744,9 +744,9 @@ change-data: func [
 		type = radio [
 			set-logic-state hWnd as red-logic! data no
 		]
-		;type = tab-panel [
-		;	set-tabs hWnd get-face-values hWnd
-		;]
+		type = tab-panel [
+			set-tabs hWnd get-face-values hWnd
+		]
 		all [
 			type = text-list
 			TYPE_OF(data) = TYPE_BLOCK
@@ -804,9 +804,7 @@ change-selection: func [
 			idx: objc_msgSend [hWnd sel_getUid "objectValueOfSelectedItem"]
 			objc_msgSend [hWnd sel_getUid "setObjectValue:" idx]
 		]
-		type = tab-panel [
-			0
-		]
+		type = tab-panel [select-tab hWnd int]
 		type = window [0]
 		true [0]										;-- default, do nothing
 	]
@@ -1454,7 +1452,7 @@ OS-update-view: func [
 	if flags and FACET_FLAG_COLOR <> 0 [
 		change-color hWnd as red-tuple! values + FACE_OBJ_COLOR type
 	]
-	if flags and FACET_FLAG_PANE <> 0 [
+	if all [flags and FACET_FLAG_PANE <> 0 type <> tab-panel][
 		update-z-order hWnd as red-block! values + FACE_OBJ_PANE type
 	]
 	if flags and FACET_FLAG_RATE <> 0 [

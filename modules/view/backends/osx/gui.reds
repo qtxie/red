@@ -1545,7 +1545,7 @@ OS-update-facet: func [
 					update-combo-box face value sym new index part yes
 				]
 				type = tab-panel [
-					0 ;update-tabs face value sym new index part
+					update-tabs face value sym new index part
 				]
 				true [OS-update-view face]
 			]

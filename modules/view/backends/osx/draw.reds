@@ -17,6 +17,12 @@ edges: as CGPoint! allocate max-edges * (size? CGPoint!)	;-- polygone edges buff
 
 draw-ctx!: alias struct! [
 	raw				[handle!]					;-- OS drawing object: CGContext
+	a				[float32!]					;-- CTM
+	b				[float32!]
+	c				[float32!]
+	d				[float32!]
+	tx				[float32!]
+	ty				[float32!]
 	pen-join		[integer!]
 	pen-cap			[integer!]
 	pen-width		[integer!]
@@ -24,7 +30,6 @@ draw-ctx!: alias struct! [
 	pen-color		[integer!]					;-- 00bbggrr format
 	brush-color		[integer!]					;-- 00bbggrr format
 	font-attrs		[integer!]
-	matrix			[integer!]
 	height			[float32!]
 	pen?			[logic!]
 	brush?			[logic!]
@@ -41,6 +46,8 @@ draw-begin: func [
 	/local
 		rc		[NSRect!]
 		nscolor [integer!]
+		saved	[int-ptr!]
+		m		[CGAffineTransform!]
 ][
 	ctx/raw:			CGCtx
 	ctx/pen-width:		1
@@ -49,7 +56,6 @@ draw-begin: func [
 	ctx/pen-join:		miter
 	ctx/pen-cap:		flat
 	ctx/brush-color:	0
-	ctx/matrix:			0
 	ctx/pen?:			yes
 	ctx/brush?:			no
 
@@ -65,6 +71,16 @@ draw-begin: func [
 	CGContextSetMiterLimit CGCtx DRAW_FLOAT_MAX
 	CGContextSetAllowsAntialiasing CGCtx yes
 	CGContextSetAllowsFontSmoothing CGCtx yes
+
+	m: as CGAffineTransform! (as int-ptr! ctx) + 1
+	saved: system/stack/align
+	push 0
+	push 0
+	push CGCtx
+	push m
+	CGContextGetCTM 2							;-- save CTM
+	system/stack/top: saved
+
 	ctx
 ]
 
@@ -76,7 +92,6 @@ draw-end: func [
 	paint?		[logic!]
 ][
 	if dc/font-attrs <> 0	[objc_msgSend [dc/font-attrs sel_getUid "release"]]
-	if dc/matrix <> 0		[CFRelease dc/matrix]
 ]
 
 OS-draw-anti-alias: func [
@@ -757,6 +772,42 @@ OS-draw-grad-pen: func [
 	brush?		[logic!]
 ][0]
 
+;transform-point: func [
+;	ctx			[handle!]
+;	point		[red-pair!]
+;	return:		[CGPoint!]
+;	/local
+;		saved	[int-ptr!]
+;		ty		[integer!]
+;		tx		[integer!]
+;		d		[integer!]
+;		c		[integer!]
+;		b		[integer!]
+;		a		[integer!]
+;		m		[CGAffineTransform!]
+;		py		[integer!]
+;		px		[integer!]
+;		pt		[CGPoint!]
+;][
+;	a: 0
+;	m: as CGAffineTransform! :a
+;	pt: edges
+;	pt/x: as float32! point/x
+;	pt/y: as float32! point/y
+
+;	saved: system/stack/align
+;	push 0
+;	push 0
+;	push ctx
+;	push m
+;	CGContextGetCTM 2
+;	system/stack/top: saved
+
+;	px: CGPointApplyAffineTransform pt/x pt/y m/a m/b m/c m/d m/tx m/ty
+;	py: system/cpu/edx
+;	pt: as CGPoint! :px
+;	pt
+;]
 
 OS-matrix-rotate: func [
 	dc		[draw-ctx!]
@@ -764,9 +815,16 @@ OS-matrix-rotate: func [
 	center	[red-pair!]
 	/local
 		ctx [handle!]
+		pt	[CGPoint!]
 ][
 	ctx: dc/raw
+	if angle <> as red-integer! center [
+		OS-matrix-translate ctx center/x center/y
+	]
 	CGContextRotateCTM ctx (as float32! PI) / (as float32! 180.0) * get-float32 angle
+	if angle <> as red-integer! center [
+		OS-matrix-translate ctx 0 - center/x 0 - center/y
+	]
 ]
 
 OS-matrix-scale: func [
@@ -790,17 +848,23 @@ OS-matrix-skew: func [
 	sx		[red-integer!]
 	sy		[red-integer!]
 	/local
-		m	[integer!]
-		x	[float32!]
-		y	[float32!]
-		u	[float32!]
-		z	[float32!]
+		ty	[integer!]
+		tx	[integer!]
+		d	[integer!]
+		c	[integer!]
+		b	[integer!]
+		a	[integer!]
+		m	[CGAffineTransform!]
 ][
-	m: 0
-	u: as float32! 1.0
-	z: as float32! 0.0
-	x: as float32! _tan degree-to-radians get-float sx TYPE_TANGENT
-	y: as float32! either sx = sy [0.0][_tan degree-to-radians get-float sy TYPE_TANGENT]
+	a: 0
+	m: as CGAffineTransform! :a
+	m/a: as float32! 1.0
+	m/b: as float32! either sx = sy [0.0][_tan degree-to-radians get-float sy TYPE_TANGENT]
+	m/c: as float32! _tan degree-to-radians get-float sx TYPE_TANGENT
+	m/d: as float32! 1.0
+	m/tx: as float32! 0.0
+	m/ty: as float32! 0.0
+	CGContextConcatCTM dc/raw m/a m/b m/c m/d m/tx m/ty
 ]
 
 OS-matrix-transform: func [
@@ -825,21 +889,58 @@ OS-matrix-pop: func [dc [draw-ctx!]][
 	CGContextRestoreGState dc/raw
 ]
 
-OS-matrix-reset: func [dc [draw-ctx!]][
-
+OS-matrix-reset: func [dc [draw-ctx!] /local m [CGAffineTransform!]][
+	m: as CGAffineTransform! (as int-ptr! dc) + 1
+	CGContextSetCTM dc/raw m/a m/b m/c m/d m/tx m/ty
 ]
 
-OS-matrix-invert: func [dc [draw-ctx!] /local m [integer!]][
-
+OS-matrix-invert: func [
+	dc [draw-ctx!]
+	/local
+		saved	[int-ptr!]
+		ty		[integer!]
+		tx		[integer!]
+		d		[integer!]
+		c		[integer!]
+		b		[integer!]
+		a		[integer!]
+		invert	[CGAffineTransform!]
+		m		[CGAffineTransform!]
+][
+	a: 0
+	invert: as CGAffineTransform! :a
+	m: as CGAffineTransform! (as int-ptr! dc) + 1
+	saved: system/stack/align
+	push 0										;-- padding
+	push m/ty push m/tx push m/d push m/c push m/b push m/a
+	push invert
+	CGAffineTransformInvert 6
+	system/stack/top: saved
+	m: invert
+	CGContextSetCTM dc/raw m/a m/b m/c m/d m/tx m/ty
 ]
 
 OS-matrix-set: func [
 	dc		[draw-ctx!]
 	blk		[red-block!]
 	/local
-		m	[integer!]
-		val [red-integer!]
+		ty	[integer!]
+		tx	[integer!]
+		d	[integer!]
+		c	[integer!]
+		b	[integer!]
+		a	[integer!]
+		m	[CGAffineTransform!]
+		val	[red-integer!]
 ][
-	m: 0
 	val: as red-integer! block/rs-head blk
+	a: 0
+	m: as CGAffineTransform! :a
+	m/a: get-float32 val
+	m/b: get-float32 val + 1
+	m/c: get-float32 val + 2
+	m/d: get-float32 val + 3
+	m/tx: get-float32 val + 4
+	m/ty: get-float32 val + 5
+	CGContextConcatCTM dc/raw m/a m/b m/c m/d m/tx m/ty
 ]

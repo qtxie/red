@@ -551,12 +551,10 @@ change-color: func [
 		clr: to-NSColor color
 		if type = area [
 			hWnd: objc_msgSend [hWnd sel_getUid "documentView"]
+			set-caret-color hWnd color/array1
 		]
 		if type = text [
 			objc_msgSend [hWnd sel_getUid "setDrawsBackground:" yes]
-		]
-		if any [type = area type = field][			;-- change caret color
-			set-caret-color hWnd color/array1
 		]
 		objc_msgSend [hWnd sel_getUid "setBackgroundColor:" clr]
 	][
@@ -1072,7 +1070,8 @@ make-text-list: func [
 	;CFRelease id
 	objc_msgSend [column sel_getUid "setWidth:" rc/w]
 
-	;objc_msgSend [container sel_getUid "setHasHorizontalScroller:" no]
+	objc_msgSend [container sel_getUid "setAutohidesScrollers:" yes]
+	;objc_msgSend [container sel_getUid "setHasHorizontalScroller:" yes]
 	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
 	;objc_msgSend [container sel_getUid "setAutoresizingMask:" NSViewWidthSizable or NSViewHeightSizable]
 

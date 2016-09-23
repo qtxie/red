@@ -891,6 +891,8 @@ OS-matrix-push: func [dc [draw-ctx!]][
 
 OS-matrix-pop: func [dc [draw-ctx!]][
 	CGContextRestoreGState dc/raw
+	dc/pen-color:		0
+	dc/brush-color:		0
 ]
 
 OS-matrix-reset: func [dc [draw-ctx!] /local m [CGAffineTransform!]][

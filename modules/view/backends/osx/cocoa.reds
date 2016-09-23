@@ -686,7 +686,7 @@ to-NSColor: func [
 
 	objc_msgSend [
 		objc_getClass "NSColor"
-		sel_getUid "colorWithCalibratedRed:green:blue:alpha:"
+		sel_getUid "colorWithSRGBRed:green:blue:alpha:"
 		c/r c/g c/b c/a
 	]
 ]

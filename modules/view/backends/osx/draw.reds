@@ -49,6 +49,9 @@ draw-begin: func [
 		saved	[int-ptr!]
 		m		[CGAffineTransform!]
 ][
+	CGContextSaveGState CGCtx
+	CGContextTranslateCTM CGCtx as float32! 0.5 as float32! 0.5
+
 	ctx/raw:			CGCtx
 	ctx/pen-width:		1
 	ctx/pen-style:		0
@@ -69,8 +72,7 @@ draw-begin: func [
 	ctx/height:	rc/y	
 
 	CGContextSetMiterLimit CGCtx DRAW_FLOAT_MAX
-	CGContextSetAllowsAntialiasing CGCtx yes
-	CGContextSetAllowsFontSmoothing CGCtx yes
+	OS-draw-anti-alias ctx yes
 
 	m: as CGAffineTransform! (as int-ptr! ctx) + 1
 	saved: system/stack/align
@@ -86,12 +88,14 @@ draw-begin: func [
 
 draw-end: func [
 	dc			[draw-ctx!]
-	hWnd		[handle!]
+	CGCtx		[handle!]
 	on-graphic? [logic!]
 	cache?		[logic!]
 	paint?		[logic!]
 ][
 	if dc/font-attrs <> 0	[objc_msgSend [dc/font-attrs sel_getUid "release"]]
+	CGContextRestoreGState CGCtx
+	OS-draw-anti-alias dc yes
 ]
 
 OS-draw-anti-alias: func [
@@ -231,7 +235,7 @@ OS-draw-box: func [
 		do-draw-path dc
 	][
 		if dc/brush? [CGContextFillRect ctx x1 y1 x2 - x1 y2 - y1]
-		CGContextStrokeRect ctx x1 y1 x2 - x1 y2 - y1
+		if dc/pen? [CGContextStrokeRect ctx x1 y1 x2 - x1 y2 - y1]
 	]
 ]
 
@@ -398,7 +402,7 @@ do-draw-ellipse: func [
 	h		[float32!]
 ][
 	if dc/brush? [CGContextFillEllipseInRect dc/raw x y w h]
-	CGContextStrokeEllipseInRect dc/raw x y w h
+	if dc/pen? [CGContextStrokeEllipseInRect dc/raw x y w h]
 ]
 
 OS-draw-circle: func [

@@ -1434,7 +1434,9 @@ OS-update-view: func [
 	]
 	if flags and FACET_FLAG_ENABLE? <> 0 [
 		bool: as red-logic! values + FACE_OBJ_ENABLE?
-		objc_msgSend [hWnd sel_getUid "setEnabled:" bool/value]
+		if type <> window [
+			objc_msgSend [hWnd sel_getUid "setEnabled:" bool/value]
+		]
 	]
 	if flags and FACET_FLAG_VISIBLE? <> 0 [
 		bool: as red-logic! values + FACE_OBJ_VISIBLE?

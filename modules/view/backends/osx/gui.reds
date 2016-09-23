@@ -1002,8 +1002,9 @@ make-area: func [
 
 	x: either border? [NSGrooveBorder][NSNoBorder]
 	objc_msgSend [container sel_getUid "setBorderType:" x]
+	objc_msgSend [container sel_getUid "setAutohidesScrollers:" yes]
 	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
-	objc_msgSend [container sel_getUid "setHasHorizontalScroller:" no]
+	;objc_msgSend [container sel_getUid "setHasHorizontalScroller:" yes]
 	;objc_msgSend [container sel_getUid "setAutoresizingMask:" NSViewWidthSizable or NSViewHeightSizable]
 
 	id: objc_getClass "RedTextView"
@@ -1016,16 +1017,14 @@ make-area: func [
 	store-face-to-obj obj id face
 
 	rc/y: as float32! 1e37			;-- FLT_MAX
-	;objc_msgSend [obj sel_getUid "setVerticallyResizable:" yes]
-	objc_msgSend [obj sel_getUid "setHorizontallyResizable:" no]
+	objc_msgSend [obj sel_getUid "setVerticallyResizable:" yes]
+	objc_msgSend [obj sel_getUid "setHorizontallyResizable:" yes]
 	objc_msgSend [obj sel_getUid "setMinSize:" rc/x rc/h]
-
 	objc_msgSend [obj sel_getUid "setMaxSize:" rc/y rc/y]
 	;objc_msgSend [obj sel_getUid "setAutoresizingMask:" NSViewWidthSizable]
 
 	tbox: objc_msgSend [obj sel_getUid "textContainer"]
 	objc_msgSend [tbox sel_getUid "setContainerSize:" rc/w rc/y]
-	objc_msgSend [tbox sel_getUid "setWidthTracksTextView:" yes]
 
 	if text <> 0 [objc_msgSend [obj sel_getUid "setString:" text]]
 

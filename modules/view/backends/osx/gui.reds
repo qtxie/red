@@ -517,6 +517,24 @@ change-image: func [
 	]
 ]
 
+set-caret-color: func [
+	hWnd	[integer!]
+	color	[integer!]
+	/local
+		clr [integer!]
+][
+	clr: either any [
+		color and FFh < 100
+		color >> 8 and FFh < 100
+		color >> 16 and FFh < 100
+	][
+		objc_msgSend [objc_getClass "NSColor" sel_getUid "whiteColor"]
+	][
+		objc_msgSend [objc_getClass "NSColor" sel_getUid "blackColor"]
+	]
+	objc_msgSend [hWnd sel_getUid "setInsertionPointColor:" clr]
+]
+
 change-color: func [
 	hWnd	[integer!]
 	color	[red-tuple!]
@@ -536,6 +554,9 @@ change-color: func [
 		]
 		if type = text [
 			objc_msgSend [hWnd sel_getUid "setDrawsBackground:" yes]
+		]
+		if any [type = area type = field][			;-- change caret color
+			set-caret-color hWnd color/array1
 		]
 		objc_msgSend [hWnd sel_getUid "setBackgroundColor:" clr]
 	][

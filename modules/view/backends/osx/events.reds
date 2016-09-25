@@ -463,10 +463,68 @@ process: func [
 	event	[integer!]
 	return: [integer!]
 	/local
-		res			[integer!]
-		evt-type	[integer!]
+		p-int		[int-ptr!]
+		type		[integer!]
+		window		[integer!]
+		flags		[integer!]
+		faces		[red-block!]
+		face		[red-object!]
+		start		[red-object!]
+		check?		[logic!]
+		active?		[logic!]
+		down?		[logic!]
 ][
-	;evt-type: objc_msgSend [event sel_getUid "type"]
+	window: objc_msgSend [event sel_getUid "window"]
+	if window <> 0 [
+		down?: no active?: no check?: no
+		p-int: as int-ptr! event
+		type: p-int/2
+		if any [
+			type = NSLeftMouseDown type = NSRightMouseDown type = NSOtherMouseDown
+		][
+			active?: yes down?: yes check?: yes
+		]
+		if any [
+			type = NSLeftMouseUp type = NSRightMouseUp type = NSOtherMouseUp
+		][
+			active?: yes check?: yes
+		]
+		switch type [
+			NSLeftMouseDragged
+			NSRightMouseDragged
+			NSOtherMouseDragged
+			NSMouseMoved
+			NSMouseEntered
+			NSMouseExited
+			NSKeyDown
+			NSKeyUp
+			NSScrollWheel [check?: yes]
+			default [0]
+		]
+
+		if all [check? red-face? window][
+			faces: as red-block! #get system/view/screens
+			face: as red-object! block/rs-head faces		;-- screen 1 TBD multi-screen support
+			faces: as red-block! get-node-facet face/ctx FACE_OBJ_PANE
+			if 1 >= block/rs-length? faces [return EVT_DISPATCH]
+
+			start: as red-object! block/rs-head faces
+			face:  as red-object! block/rs-tail faces
+			while [
+				face: face - 1
+				face >= start
+			][
+				flags: get-flags as red-block! get-node-facet face/ctx FACE_OBJ_FLAGS
+				if all [
+					window <> get-face-handle face
+					flags and FACET_FLAGS_MODAL <> 0
+				][
+					if down? [NSBeep]
+					return EVT_NO_DISPATCH
+				]
+			]
+		]
+	]
 	EVT_DISPATCH
 ]
 

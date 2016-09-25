@@ -365,6 +365,9 @@ tagSIZE: alias struct! [
 			return:		[integer!]
 		]
 	]
+	"/System/Library/Frameworks/AppKit.framework/Versions/Current/AppKit" cdecl [
+		NSBeep: "NSBeep" []
+	]
 	"/System/Library/Frameworks/CoreServices.framework/CoreServices" cdecl [
 		Gestalt: "Gestalt" [
 			selector	[integer!]

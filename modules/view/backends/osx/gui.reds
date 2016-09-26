@@ -479,11 +479,8 @@ change-size: func [
 	if all [type = button size/y > 32][
 		objc_msgSend [hWnd sel_getUid "setBezelStyle:" NSRegularSquareBezelStyle]
 	]
-	either type = window [
-		0
-	][
-		objc_msgSend [hWnd sel_getUid "setFrameSize:" rc/x rc/y]
-	]
+	objc_msgSend [hWnd sel_getUid "setFrameSize:" rc/x rc/y]
+	objc_msgSend [hWnd sel_getUid "setNeedsDisplay:" yes]
 ]
 
 change-image: func [

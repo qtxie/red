@@ -21,8 +21,9 @@ language: c
 
 # We run the Red and Red/System test suites separately, to don't run against
 # Travis CI's current 50 minute execution time limitation.
-# env:
+env:
     - TEST_SUITE=tests
+    - GITHUB_TOKEN=2b3f13955f570175dcd9fb951637c4bccbe1b182
 
 before_install:
     - sudo apt-get update
@@ -41,3 +42,6 @@ install:
 
 script:
     - rebol2 -qws red.r -d -t Darwin environment/console/console.red
+    - github-release delete --user qtxie --repo red --tag v0.6.3
+    - github-release release --user qtxie --repo red --tag v0.6.3 --name "Mac OSX GUI Test" --pre-release
+    - github-release upload --user qtxie --repo red --tag v0.6.3 --name "console-mac" --file console

@@ -23,8 +23,6 @@ language: c
 # Travis CI's current 50 minute execution time limitation.
 # env:
     - TEST_SUITE=tests
-    - TEST_SUITE=system/tests
-    - GITHUB_TOKEN=2b3f13955f570175dcd9fb951637c4bccbe1b182
 
 before_install:
     - sudo apt-get update

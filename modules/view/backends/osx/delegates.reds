@@ -149,7 +149,7 @@ mouse-events: func [
 			if evt <> -1 [make-event self flags evt]
 		]
 		NSLeftMouseUp		[
-			if 1 = objc_msgSend [event sel_getUid "clickCount"][
+			if 2 > objc_msgSend [event sel_getUid "clickCount"][
 				make-event self flags EVT_LEFT_UP
 			]
 		]

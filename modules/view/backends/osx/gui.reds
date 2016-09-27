@@ -1166,10 +1166,8 @@ update-combo-box: func [
 
 OS-show-window: func [
 	hWnd [integer!]
-	/local
-		face	[red-object!]
 ][
-	0
+	make-event hWnd 0 EVT_SIZE
 ]
 
 OS-make-view: func [

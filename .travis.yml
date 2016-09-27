@@ -43,6 +43,4 @@ before_script:
     - rebol2 -qws red.r -d -t Darwin environment/console/console.red
 
 script:
-    - github-release delete -s b6160f8eaa5bd487a268bf79a0ffdcb38dbe2795 --user qtxie --repo red --tag v0.6.3
-    - github-release release -s b6160f8eaa5bd487a268bf79a0ffdcb38dbe2795 --user qtxie --repo red --tag v0.6.3 --name "Mac OSX GUI Test Build" --draft
-    - github-release upload -s b6160f8eaa5bd487a268bf79a0ffdcb38dbe2795 --user qtxie --repo red --tag v0.6.3 --name "console-mac" --file console
+    - github-release upload -s 06f75977809f89ad5baf9afa641a96ef20455fea --user qtxie --repo red --tag v0.6.3 --name "console" --file console

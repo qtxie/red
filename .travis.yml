@@ -22,7 +22,6 @@ language: c
 # We run the Red and Red/System test suites separately, to don't run against
 # Travis CI's current 50 minute execution time limitation.
 env:
-    - TEST_SUITE=tests
     - GITHUB_TOKEN=2b3f13955f570175dcd9fb951637c4bccbe1b182
 
 before_install:

@@ -644,6 +644,7 @@ msg-send-super: func [
 	id		[integer!]
 	sel		[integer!]
 	arg		[integer!]
+	return: [integer!]
 	/local
 		super [objc_super!]
 ][

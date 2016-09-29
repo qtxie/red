@@ -201,7 +201,6 @@ red-timer-action: func [
 on-key-down: func [
 	[cdecl]
 	self	[integer!]
-	;cmd		[integer!]
 	event	[integer!]
 	/local
 		res		[integer!]
@@ -228,7 +227,6 @@ on-key-down: func [
 			]
 		]
 	]
-	;msg-send-super self cmd event
 ]
 
 on-key-up: func [
@@ -754,6 +752,50 @@ return-field-editor: func [
 ][
 	objc_setAssociatedObject sender RedFieldEditorKey obj OBJC_ASSOCIATION_ASSIGN
 	0
+]
+
+perform-key-equivalent: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+	return: [logic!]
+	/local
+		type  [integer!]
+		flags [integer!]
+		mask  [integer!]
+		obj   [integer!]
+		sel   [integer!]
+][
+	type: objc_msgSend [event sel_getUid "type"]
+	if type = NSKeyDown [
+		flags: objc_msgSend [event sel_getUid "modifierFlags"]
+		mask: 0
+		if flags and NSAlternateKeyMask <> 0 [mask: mask or NSAlternateKeyMask]
+		if flags and NSShiftKeyMask <> 0 [mask: mask or NSShiftKeyMask]
+		if flags and NSControlKeyMask <> 0 [mask: mask or NSControlKeyMask]
+		if flags and NSCommandKeyMask <> 0 [mask: mask or NSCommandKeyMask]
+		sel: 0
+		if mask = NSCommandKeyMask [
+			flags: objc_msgSend [event sel_getUid "keyCode"]
+			sel: switch flags [
+				6 [sel_getUid "undo:"]				;-- Z
+				7 [sel_getUid "cut:"]				;-- X
+				8 [sel_getUid "copy:"]				;-- C
+				9 [sel_getUid "paste:"]				;-- V
+				0 [sel_getUid "selectAll:"]			;-- A
+				default [0]
+			]
+		]
+		if NSCommandKeyMask or NSShiftKeyMask = mask [
+			if 6 = objc_msgSend [event sel_getUid "keyCode"][sel: sel_getUid "redo:"]
+		]
+		if sel <> 0 [
+			;obj: objc_msgSend [objc_msgSend [sel sel_getUid "window"] sel_getUid "firstResponder"]
+			return as logic! objc_msgSend [NSApp sel_getUid "sendAction:to:from:" sel 0 self]
+		]
+	]
+	as logic! msg-send-super self cmd event
 ]
 
 ;app-send-event: func [

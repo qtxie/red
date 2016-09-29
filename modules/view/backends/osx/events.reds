@@ -217,8 +217,8 @@ check-extra-keys: func [
 ][
 	key: 0
 	flags: objc_msgSend [event sel_getUid "modifierFlags"]
-	if 1 << 18 and flags <> 0 [key: EVT_FLAG_CTRL_DOWN]
-	if 1 << 17 and flags <> 0 [key: key or EVT_FLAG_SHIFT_DOWN]
+	if NSControlKeyMask and flags <> 0 [key: EVT_FLAG_CTRL_DOWN]
+	if NSShiftKeyMask and flags <> 0 [key: key or EVT_FLAG_SHIFT_DOWN]
 	key
 ]
 

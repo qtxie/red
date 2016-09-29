@@ -1044,6 +1044,7 @@ make-area: func [
 
 	if text <> 0 [objc_msgSend [obj sel_getUid "setString:" text]]
 
+	objc_msgSend [obj sel_getUid "setAllowsUndo:" yes]
 	objc_msgSend [obj sel_getUid "setDelegate:" obj]
 	objc_msgSend [container sel_getUid "setDocumentView:" obj]
 ]

@@ -19,24 +19,14 @@ is-flipped: func [
 	true
 ]
 
-get-focus: func [
+become-first-responder: func [
 	[cdecl]
 	self	[integer!]
 	cmd		[integer!]
 	return: [logic!]
 ][
 	make-event self 0 EVT_FOCUS
-	yes
-]
-
-lost-focus: func [
-	[cdecl]
-	self	[integer!]
-	cmd		[integer!]
-	return: [logic!]
-][
-	make-event self 0 EVT_UNFOCUS
-	yes
+	msg-send-super-logic self cmd
 ]
 
 mouse-entered: func [
@@ -64,9 +54,14 @@ mouse-moved: func [
 	self	[integer!]
 	cmd		[integer!]
 	event	[integer!]
+	/local
+		flags [integer!]
 ][
 	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-	make-event self 0 EVT_OVER
+	flags: get-flags (as red-block! get-face-values self) + FACE_OBJ_FLAGS
+	if flags and FACET_FLAGS_ALL_OVER <> 0 [
+		make-event self 0 EVT_OVER
+	]
 ]
 
 button-mouse-down: func [
@@ -352,6 +347,7 @@ text-did-end-editing: func [
 	notif	[integer!]
 ][
 	make-event self 0 EVT_UNFOCUS
+	msg-send-super self cmd notif
 ]
 
 text-did-change: func [
@@ -362,6 +358,16 @@ text-did-change: func [
 ][
 	set-text self objc_msgSend [self sel_getUid "stringValue"]
 	make-event self 0 EVT_CHANGE
+	msg-send-super self cmd notif
+]
+
+area-did-end-editing: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	notif	[integer!]
+][
+	make-event self 0 EVT_UNFOCUS
 ]
 
 area-text-change: func [

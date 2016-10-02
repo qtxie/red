@@ -640,6 +640,19 @@ get-super-obj: func [
 	super
 ]
 
+msg-send-super-logic: func [
+	id		[integer!]
+	sel		[integer!]
+	return: [logic!]
+	/local
+		super [objc_super!]
+][
+	super: declare objc_super!
+	super/receiver: id
+	super/superclass: objc_msgSend [id sel_getUid "superclass"]
+	as logic! objc_msgSendSuper [super sel]
+]
+
 msg-send-super: func [
 	id		[integer!]
 	sel		[integer!]

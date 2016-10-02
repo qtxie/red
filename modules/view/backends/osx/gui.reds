@@ -1401,7 +1401,9 @@ OS-make-view: func [
 	]
 
 	if caption <> 0 [CFRelease caption]
-	setup-tracking-area obj face rc bits
+	if all [sym <> area sym <> field sym <> drop-down][
+		setup-tracking-area obj face rc bits
+	]
 
 	stack/unwind
 	obj

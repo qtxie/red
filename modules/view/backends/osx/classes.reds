@@ -78,17 +78,18 @@ add-slider-handler: func [class [integer!]][
 add-text-field-handler: func [class [integer!]][
 	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
 	class_addMethod class sel_getUid "textDidEndEditing:" as-integer :text-did-end-editing "v@:@"
-	class_addMethod class sel_getUid "becomeFirstResponder" as-integer :get-focus "B@:"
+	class_addMethod class sel_getUid "becomeFirstResponder" as-integer :become-first-responder "B@:"
 	class_addMethod class sel_getUid "performKeyEquivalent:" as-integer :perform-key-equivalent "B@:@"
 ]
 
 add-area-handler: func [class [integer!]][
-	class_addMethod class sel_getUid "textDidChange:" as-integer :area-text-change "v@:@"
-	class_addMethod class sel_getUid "performKeyEquivalent:" as-integer :perform-key-equivalent "B@:@"
+	add-text-field-handler class
+	class_replaceMethod class sel_getUid "textDidChange:" as-integer :area-text-change "v@:@"
+	class_replaceMethod class sel_getUid "textDidEndEditing:" as-integer :area-did-end-editing "v@:@"
 ]
 
 add-combo-box-handler: func [class [integer!]][
-	class_addMethod class sel_getUid "textDidChange:" as-integer :text-did-change "v@:@"
+	add-text-field-handler class
 	class_addMethod class sel_getUid "comboBoxSelectionDidChange:" as-integer :selection-change "v@:@"
 ]
 

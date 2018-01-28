@@ -1798,6 +1798,90 @@ bignum: context [
 		serialize big buffer only? all? flat? arg part yes
 	]
 
+	write-string: func [
+		big			[red-bignum!]
+		radix		[integer!]
+		buf			[byte-ptr!]
+		buflen		[integer!]
+		olen		[red-integer!]
+		return: 	[integer!]
+		/local
+			T		[red-bignum!]
+			n		[integer!]
+			p		[byte-ptr!]
+			s	 	[series!]
+			px		[int-ptr!]
+			i		[integer!]
+			j		[integer!]
+			k		[integer!]
+			c		[integer!]
+			h		[c-string!]
+			id		[integer!]
+	][
+		if any [
+			radix < 2
+			radix > 16
+		][
+			return -1
+		]
+
+		n: bitlen big
+		if [radix >= 4][n: n >>> 1]
+		if [radix >= 16][n: n >>> 1]
+		n: n + 3
+
+		if [buflen < n][
+			olen/value: n
+			return -1
+		]
+
+		p: buf
+		T: make-at stack/push* 1
+
+		if [big/sign = -1][
+			p/1: '-'
+			p: p + 1
+		]
+
+		s: GET_BUFFER(X)
+		px: as int-ptr! s/offset
+		h: "0123456789ABCDEF"
+
+		if [
+			radix = 16
+		][
+			i: big/used
+			k: 0
+			while [i > 0][
+				j: ciL
+				while [j > 0][
+					c: (px/i >>> ((j - 1) >>> 3)) & FFh
+					if all [
+						c = 0
+						k = 0
+						i + j <> 2
+					][
+						continue
+					]
+
+					id: c >> 4 and 15 + 1
+					p/1: id
+					p: p + 1
+					id: c and 15 + 1
+					p/1: id
+					p: p + 1
+
+					k: 1
+					j: j -1
+				]
+				i: i - 1
+			]
+			return 0
+		]
+
+		0
+	]
+
 	compare*: func [
 		value1    [red-bignum!]						;-- first operand
 		value2    [red-bignum!]						;-- second operand

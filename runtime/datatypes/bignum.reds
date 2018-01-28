@@ -1798,6 +1798,41 @@ bignum: context [
 		serialize big buffer only? all? flat? arg part yes
 	]
 
+	write-hlp: func [
+		big			[red-bignum!]
+		radix		[integer!]
+		buf			[int-ptr!]
+		return:		[integer!]
+		/local
+			ret		[integer!]
+			R		[red-bignum!]
+			p		[byte-ptr!]
+	][
+		if any [
+			radix < 2
+			radix > 16
+		][
+			return -1
+		]
+
+		ret: 0
+		module-int :ret big radix
+		R: make-at stack/push* 1
+		div-int big R big radix
+		if 0 <> compare-int big 0 [
+			write-hlp big radix buf
+		]
+
+		either ret < 10 [
+			p: as byte-ptr! buf/1
+			p/1: as byte! ret + 30h
+		][
+			p: as byte-ptr! buf/1
+			p/1: as byte! ret + 37h
+		]
+		0
+	]
+
 	write-string: func [
 		big			[red-bignum!]
 		radix		[integer!]
@@ -1809,6 +1844,7 @@ bignum: context [
 			T		[red-bignum!]
 			n		[integer!]
 			p		[byte-ptr!]
+			pi		[integer!]
 			s	 	[series!]
 			px		[int-ptr!]
 			i		[integer!]
@@ -1816,7 +1852,7 @@ bignum: context [
 			k		[integer!]
 			c		[integer!]
 			h		[c-string!]
-			id		[integer!]
+			id		[byte!]
 	][
 		if any [
 			radix < 2
@@ -1826,36 +1862,33 @@ bignum: context [
 		]
 
 		n: bitlen big
-		if [radix >= 4][n: n >>> 1]
-		if [radix >= 16][n: n >>> 1]
+		if radix >= 4 [n: n >>> 1]
+		if radix >= 16 [n: n >>> 1]
 		n: n + 3
 
-		if [buflen < n][
+		if buflen < n [
 			olen/value: n
 			return -1
 		]
 
 		p: buf
-		T: make-at stack/push* 1
 
-		if [big/sign = -1][
-			p/1: '-'
+		if big/sign = -1 [
+			p/1: #"-"
 			p: p + 1
 		]
 
-		s: GET_BUFFER(X)
+		s: GET_BUFFER(big)
 		px: as int-ptr! s/offset
 		h: "0123456789ABCDEF"
 
-		if [
-			radix = 16
-		][
+		either radix = 16 [
 			i: big/used
 			k: 0
 			while [i > 0][
 				j: ciL
 				while [j > 0][
-					c: (px/i >>> ((j - 1) >>> 3)) & FFh
+					c: (px/i >>> ((j - 1) >>> 3)) and FFh
 					if all [
 						c = 0
 						k = 0
@@ -1864,10 +1897,10 @@ bignum: context [
 						continue
 					]
 
-					id: c >> 4 and 15 + 1
+					id: as byte! c >> 4 and 15 + 1
 					p/1: id
 					p: p + 1
-					id: c and 15 + 1
+					id: as byte! c and 15 + 1
 					p/1: id
 					p: p + 1
 
@@ -1876,9 +1909,20 @@ bignum: context [
 				]
 				i: i - 1
 			]
-			return 0
+		][
+			T: make-at stack/push* 1
+			copy big T
+			if T/sign = -1 [
+				T/sign: 1
+			]
+
+			pi: as integer! p
+			write-hlp T radix :pi
 		]
 
+		p/1: as byte! 0
+		p: p + 1
+		olen/value: as integer! (p - buf)
 		0
 	]
 

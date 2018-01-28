@@ -297,6 +297,80 @@ bignum: context [
 		part - 1
 	]
 
+	serialize-oct: func [
+		big			[red-bignum!]
+		buffer		[red-string!]
+		only?		[logic!]
+		all?		[logic!]
+		flat?		[logic!]
+		arg			[red-value!]
+		part		[integer!]
+		mold?		[logic!]
+		return: 	[integer!]
+		/local
+			s		[series!]
+			bytes	[integer!]
+			p		[byte-ptr!]
+			size	[integer!]
+			rsize	[red-integer!]
+			tmp		[byte-ptr!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "bignum/serialize"]]
+		
+		dump-bignum big
+
+		s: GET_BUFFER(big)
+		p: as byte-ptr! s/offset
+		either big/used = 0 [
+			size: 1
+		][
+			size: big/used * 4
+		]
+
+		rsize: integer/make-at stack/push* size
+		tmp: allocate size * 10
+		if 0 <> write-string big 10 tmp size * 10 rsize [
+			print "something wrong!"
+		]
+
+		size: rsize/value
+		p: tmp
+		p: p + size
+
+		bytes: 0
+		if size > 30 [
+			string/append-char GET_BUFFER(buffer) as-integer lf
+			part: part - 1
+		]
+
+		if big/sign = -1 [
+			string/append-char GET_BUFFER(buffer) as-integer #"-"
+			part: part - 1
+		]
+
+		loop size [
+			p: p - 1
+			string/append-char GET_BUFFER(buffer) as-integer p/1
+			prin-hex-chars as-integer p/1 2
+			bytes: bytes + 1
+			if bytes % 32 = 0 [
+				string/append-char GET_BUFFER(buffer) as-integer lf
+				part: part - 1
+			]
+			part: part - 2
+			if all [OPTION?(arg) part <= 0][
+				free tmp
+				return part
+			]
+		]
+		if all [size > 30 bytes % 32 <> 0] [
+			string/append-char GET_BUFFER(buffer) as-integer lf
+			part: part - 1
+		]
+		free tmp
+		part - 1
+	]
+
 	do-math: func [
 		type		[math-op!]
 		return:		[red-value!]
@@ -1775,7 +1849,7 @@ bignum: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/form"]]
 
-		serialize big buffer no no no arg part no
+		serialize-oct big buffer no no no arg part no
 	]
 
 	mold: func [
@@ -1795,7 +1869,7 @@ bignum: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/mold"]]
 
-		serialize big buffer only? all? flat? arg part yes
+		serialize-oct big buffer only? all? flat? arg part yes
 	]
 
 	write-hlp: func [
@@ -1807,6 +1881,7 @@ bignum: context [
 			ret		[integer!]
 			R		[red-bignum!]
 			p		[byte-ptr!]
+			Q		[red-bignum!]
 	][
 		if any [
 			radix < 2
@@ -1815,12 +1890,17 @@ bignum: context [
 			return -1
 		]
 
+		dump-bignum big
+
 		ret: 0
 		module-int :ret big radix
+		print ["write-hlp mod: " ret " radix: " radix]
+		print lf
 		R: make-at stack/push* 1
-		div-int big R big radix
-		if 0 <> compare-int big 0 [
-			write-hlp big radix buf
+		Q: make-at stack/push* 1
+		div-int Q R big radix
+		if 0 <> compare-int Q 0 [
+			write-hlp Q radix buf
 		]
 
 		either ret < 10 [
@@ -1923,6 +2003,8 @@ bignum: context [
 		p/1: as byte! 0
 		p: p + 1
 		olen/value: as integer! (p - buf)
+		print ["olen/value " olen/value]
+		print lf
 		0
 	]
 

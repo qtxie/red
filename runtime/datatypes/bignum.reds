@@ -1365,7 +1365,7 @@ bignum: context [
 		]
 		
 		y: 0
-		p: p + A/used
+		p: p + A/used - 1
 		loop A/used [
 			x: p/1
 			y: (y << biLH) or (x >>> biLH)

@@ -316,8 +316,6 @@ bignum: context [
 			tmp		[byte-ptr!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bignum/serialize"]]
-		
-		dump-bignum big
 
 		s: GET_BUFFER(big)
 		p: as byte-ptr! s/offset
@@ -335,7 +333,6 @@ bignum: context [
 
 		size: rsize/value
 		p: tmp
-		p: p + size
 
 		bytes: 0
 		if size > 30 [
@@ -349,9 +346,7 @@ bignum: context [
 		]
 
 		loop size [
-			p: p - 1
 			string/append-char GET_BUFFER(buffer) as-integer p/1
-			prin-hex-chars as-integer p/1 2
 			bytes: bytes + 1
 			if bytes % 32 = 0 [
 				string/append-char GET_BUFFER(buffer) as-integer lf
@@ -362,6 +357,7 @@ bignum: context [
 				free tmp
 				return part
 			]
+			p: p + 1
 		]
 		if all [size > 30 bytes % 32 <> 0] [
 			string/append-char GET_BUFFER(buffer) as-integer lf
@@ -1820,7 +1816,6 @@ bignum: context [
 					if size % 4 <> 0 [
 						len: len + 1
 					]
-					print-line size
 					big: make-at stack/push* len
 					s: GET_BUFFER(big)
 					pbig: as byte-ptr! s/offset
@@ -1875,13 +1870,14 @@ bignum: context [
 	write-hlp: func [
 		big			[red-bignum!]
 		radix		[integer!]
-		buf			[int-ptr!]
+		buf			[integer!]
 		return:		[integer!]
 		/local
 			ret		[integer!]
 			R		[red-bignum!]
-			p		[byte-ptr!]
+			pi		[int-ptr!]
 			Q		[red-bignum!]
+			pb		[byte-ptr!]
 	][
 		if any [
 			radix < 2
@@ -1890,12 +1886,8 @@ bignum: context [
 			return -1
 		]
 
-		dump-bignum big
-
 		ret: 0
 		module-int :ret big radix
-		print ["write-hlp mod: " ret " radix: " radix]
-		print lf
 		R: make-at stack/push* 1
 		Q: make-at stack/push* 1
 		div-int Q R big radix
@@ -1903,13 +1895,14 @@ bignum: context [
 			write-hlp Q radix buf
 		]
 
+		pi: as int-ptr! buf
+		pb: as byte-ptr! pi/1
 		either ret < 10 [
-			p: as byte-ptr! buf/1
-			p/1: as byte! ret + 30h
+			pb/1: as byte! ret + 30h
 		][
-			p: as byte-ptr! buf/1
-			p/1: as byte! ret + 37h
+			pb/1: as byte! ret + 37h
 		]
+		pi/1: pi/1 + 1
 		0
 	]
 
@@ -1923,8 +1916,8 @@ bignum: context [
 		/local
 			T		[red-bignum!]
 			n		[integer!]
-			p		[byte-ptr!]
-			pi		[integer!]
+			p		[integer!]
+			p2		[byte-ptr!]
 			s	 	[series!]
 			px		[int-ptr!]
 			i		[integer!]
@@ -1951,10 +1944,11 @@ bignum: context [
 			return -1
 		]
 
-		p: buf
+		p: as integer! buf
 
 		if big/sign = -1 [
-			p/1: #"-"
+			p2: as byte-ptr! p
+			p2/1: #"-"
 			p: p + 1
 		]
 
@@ -1978,10 +1972,12 @@ bignum: context [
 					]
 
 					id: as byte! c >> 4 and 15 + 1
-					p/1: id
+					p2: as byte-ptr! p
+					p2/1: id
 					p: p + 1
 					id: as byte! c and 15 + 1
-					p/1: id
+					p2: as byte-ptr! p
+					p2/1: id
 					p: p + 1
 
 					k: 1
@@ -1996,15 +1992,13 @@ bignum: context [
 				T/sign: 1
 			]
 
-			pi: as integer! p
-			write-hlp T radix :pi
+			write-hlp T radix as integer! :p
 		]
 
-		p/1: as byte! 0
+		p2: as byte-ptr! p
+		p2/1: as byte! 0
 		p: p + 1
-		olen/value: as integer! (p - buf)
-		print ["olen/value " olen/value]
-		print lf
+		olen/value: p - as integer! buf
 		0
 	]
 

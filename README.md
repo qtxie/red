@@ -2,6 +2,7 @@
 [![Join the chat at https://gitter.im/red/red](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/red/red?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 [![Travis build](https://travis-ci.org/red/red.svg?branch=master)](https://travis-ci.org/red/red)
 [![Build status](https://ci.appveyor.com/api/projects/status/mie736c6x4268boo/branch/master?svg=true)](https://ci.appveyor.com/project/red/red/branch/master)
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fqtxie%2Fred.svg?type=shield)](https://app.fossa.io/projects/git%2Bgithub.com%2Fqtxie%2Fred?ref=badge_shield)
 
 Red Programming Language
 ------------------------
@@ -179,3 +180,7 @@ Some anti-virus programs are a bit too sensitive and can wrongly report an alert
 License
 -------------------------
 Both Red and Red/System are published under [BSD](http://www.opensource.org/licenses/bsd-3-clause) license, runtime is under [BSL](http://www.boost.org/users/license.html) license. BSL is a bit more permissive license than BSD, more suitable for the runtime parts.
+
+
+## License
+[![FOSSA Status](https://app.fossa.io/api/projects/git%2Bgithub.com%2Fqtxie%2Fred.svg?type=large)](https://app.fossa.io/projects/git%2Bgithub.com%2Fqtxie%2Fred?ref=badge_large)

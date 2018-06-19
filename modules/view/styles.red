@@ -92,23 +92,23 @@ Red [
 	]
 	h1:  [
 		default-actor: on-down
-		template: [type: 'text size: 80x24 font: make font! [size: 32]]
+		template: [type: 'text size: 80x25 font: make font! [size: 32]]
 	]
 	h2:  [
 		default-actor: on-down
-		template: [type: 'text size: 80x24 font: make font! [size: 26]]
+		template: [type: 'text size: 80x25 font: make font! [size: 26]]
 	]
 	h3:  [
 		default-actor: on-down
-		template: [type: 'text size: 80x24 font: make font! [size: 22]]
+		template: [type: 'text size: 80x25 font: make font! [size: 22]]
 	]
 	h4:  [
 		default-actor: on-down
-		template: [type: 'text size: 80x24 font: make font! [size: 17]]
+		template: [type: 'text size: 80x25 font: make font! [size: 17]]
 	]
 	h5:  [
 		default-actor: on-down
-		template: [type: 'text size: 80x24 font: make font! [size: 13]]
+		template: [type: 'text size: 80x25 font: make font! [size: 13]]
 	]
 	box: [
 		default-actor: on-down

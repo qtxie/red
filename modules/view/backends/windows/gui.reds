@@ -558,7 +558,7 @@ free-faces: func [
 		handle	[handle!]
 ][
 	handle: face-handle? face
-	#if debug? = yes [if null? handle [probe "VIEW: WARNING: free null window handle!"]]
+	;#if debug? = yes [if null? handle [probe "VIEW: WARNING: free null window handle!"]]
 
 	if null? handle [exit]
 
@@ -1241,13 +1241,13 @@ OS-show-window: func [
 ][
 	ShowWindow as handle! hWnd SW_SHOWDEFAULT
 	UpdateWindow as handle! hWnd
-	unless win8+? [
-		update-layered-window as handle! hWnd null null null -1
-	]
+	;unless win8+? [
+	;	update-layered-window as handle! hWnd null null null -1
+	;]
 
 	SetForegroundWindow as handle! hWnd
-	face: (as red-object! get-face-values as handle! hWnd) + FACE_OBJ_SELECTED
-	if TYPE_OF(face) = TYPE_OBJECT [SetFocus get-face-handle face]
+	;face: (as red-object! get-face-values as handle! hWnd) + FACE_OBJ_SELECTED
+	;if TYPE_OF(face) = TYPE_OBJECT [SetFocus get-face-handle face]
 ]
 
 OS-make-view: func [

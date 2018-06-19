@@ -210,7 +210,7 @@ on-face-deep-change*: function ["Internal use only" owner word target action new
 							faces: next faces
 						]
 						;unless forced? [show owner]
-						system/view/platform/on-change-facet owner word target action new index part
+						;system/view/platform/on-change-facet owner word target action new index part
 					]
 					find [remove clear take change] action [
 						either owner/type = 'screen [
@@ -236,7 +236,7 @@ on-face-deep-change*: function ["Internal use only" owner word target action new
 							loop part [
 								face: target/1
 								face/parent: none
-								system/view/platform/destroy-view face no
+								;system/view/platform/destroy-view face no
 								target: next target
 							]
 						]
@@ -269,7 +269,7 @@ on-face-deep-change*: function ["Internal use only" owner word target action new
 								]
 							]
 							unless forced? [show owner]
-							system/view/platform/on-change-facet owner word target action new index part
+							;system/view/platform/on-change-facet owner word target action new index part
 						]
 					]
 				]
@@ -286,7 +286,7 @@ on-face-deep-change*: function ["Internal use only" owner word target action new
 						index: (index? find/same owner/data target) - 1
 						part: 1
 					]
-					system/view/platform/on-change-facet owner word target action new index part
+					;system/view/platform/on-change-facet owner word target action new index part
 				]
 			]
 			system/reactivity/check/only owner word
@@ -406,7 +406,7 @@ face!: object [				;-- keep in sync with facet! enum
 					foreach f head old [
 						f/parent: none
 						if all [block? f/state handle? f/state/1][
-							system/view/platform/destroy-view f no
+							;system/view/platform/destroy-view f no
 						]
 					]
 				]
@@ -449,7 +449,7 @@ face!: object [				;-- keep in sync with facet! enum
 				state/2: state/2 or (1 << ((index? in self word) - 1))
 				if all [state/1 system/view/auto-sync?][show self]
 			][
-				if type = 'rich-text [system/view/platform/update-view self]
+				;if type = 'rich-text [system/view/platform/update-view self]
 			]
 		]
 	]
@@ -657,7 +657,25 @@ system/view: context [
 		]	
 		:result
 	]
-	
+
+	current-win: none
+	widgets: make map! 100
+
+	register: func [name [word!] spec [object!]][
+		put system/view/VID/styles name spec/style
+		put widgets spec/name spec
+	]
+
+	make-view: function [face [object!]][
+		either widget: select widgets face/type [
+			do [widget/init]
+		][probe reduce ["cannot find widget: " face/type]]
+	]
+
+	update-view: function [face [object!]][
+		system/view/platform/redraw current-win
+	]
+
 	capturing?: no										;-- enable capturing events (on-detect)
 	auto-sync?: yes										;-- refresh faces on changes automatically
 	debug?: 	no										;-- output verbose logs
@@ -723,7 +741,8 @@ show: function [
 			]
 			clear pending
 		]
-		if face/state/2 <> 0 [system/view/platform/update-view face]
+		;if face/state/2 <> 0 [system/view/platform/update-view face]
+		if face/state/2 <> 0 [system/view/update-view face]
 	][
 		new?: yes
 		
@@ -747,9 +766,13 @@ show: function [
 				]
 			]
 
-			obj: system/view/platform/make-view face p
+			either face/type = 'window [
+				obj: system/view/platform/make-view face p
+			][
+				obj: system/view/make-view face
+			]
 			if with [face/parent: parent]
-			
+
 			foreach field [para font][
 				if all [field: face/:field p: in field 'parent][
 					either block? p: get p [
@@ -781,7 +804,7 @@ show: function [
 
 	if face/pane [
 		foreach f face/pane [show/with f face]
-		system/view/platform/refresh-window face/state/1
+		;system/view/platform/refresh-window face/state/1
 	]
 	if all [new? object? face/actors in face/actors 'on-created][
 		do-safe [face/actors/on-created face none]		;@@ only called once

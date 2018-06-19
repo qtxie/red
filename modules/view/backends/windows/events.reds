@@ -990,6 +990,7 @@ WndProc: func [
 		flt	   [float!]
 		flags  [integer!]
 		miniz? [logic!]
+		DC	   [draw-ctx!]
 ][
 	type: either no-face? hWnd [panel][			;@@ remove this test, create a WndProc for panel?
 		values: get-face-values hWnd
@@ -1001,16 +1002,16 @@ WndProc: func [
 			p-int: as int-ptr! lParam
 			store-face-to-hWnd hWnd as red-object! p-int/value
 		]
-		WM_WINDOWPOSCHANGED [
-			if all [not win8+? type = window][
-				winpos: as tagWINDOWPOS lParam
-				pt: screen-to-client hWnd winpos/x winpos/y
-				pos: GetWindowLong hWnd wc-offset - 8
-				pt/x: winpos/x - pt/x - WIN32_LOWORD(pos)
-				pt/y: winpos/y - pt/y - WIN32_HIWORD(pos)
-				update-layered-window hWnd null pt winpos -1
-			]
-		]
+		;WM_WINDOWPOSCHANGED [
+		;	if all [not win8+? type = window][
+		;		winpos: as tagWINDOWPOS lParam
+		;		pt: screen-to-client hWnd winpos/x winpos/y
+		;		pos: GetWindowLong hWnd wc-offset - 8
+		;		pt/x: winpos/x - pt/x - WIN32_LOWORD(pos)
+		;		pt/y: winpos/y - pt/y - WIN32_HIWORD(pos)
+		;		update-layered-window hWnd null pt winpos -1
+		;	]
+		;]
 		WM_MOVE
 		WM_SIZE [
 			if (GetWindowLong hWnd wc-offset - 12) and BASE_FACE_D2D <> 0 [
@@ -1199,6 +1200,7 @@ WndProc: func [
 			return 0
 		]
 		WM_ERASEBKGND [
+			return 1
 			draw: (as red-block! values) + FACE_OBJ_DRAW
 			if any [
 				TYPE_OF(draw) = TYPE_BLOCK				;-- draw background in draw to avoid flickering
@@ -1219,14 +1221,24 @@ WndProc: func [
 		]
 		WM_PAINT [
 			draw: (as red-block! values) + FACE_OBJ_DRAW
-			if TYPE_OF(draw) = TYPE_BLOCK [
+			either TYPE_OF(draw) = TYPE_BLOCK [
 				either zero? GetWindowLong hWnd wc-offset - 4 [
 					do-draw hWnd null draw no yes yes yes
 				][
 					bitblt-memory-dc hWnd no
 				]
-				return 0
+			][
+				if null? current-msg [return -1]
+				system/thrown: 0
+				DC: declare draw-ctx!				;@@ should declare it on stack
+				draw-begin DC hWnd null no yes
+				integer/make-at as red-value! draw as-integer DC
+				current-msg/hWnd: hWnd
+				make-event current-msg 0 EVT_DRAWING
+				draw/header: TYPE_NONE
+				draw-end DC hWnd no no yes
 			]
+			return 0
 		]
 		WM_CTLCOLOREDIT
 		WM_CTLCOLORSTATIC 

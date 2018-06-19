@@ -646,7 +646,7 @@ system/view: context [
 		
 		set/any 'result do-actor face event event/type
 		
-		if all [face/parent :result <> 'done][
+		if all [face/parent face/parent/type <> 'window :result <> 'done][
 			set/any 'result system/view/awake/with event face/parent ;-- event bubbling
 			if :result = 'stop [return 'stop]
 		]
@@ -742,7 +742,13 @@ show: function [
 			clear pending
 		]
 		;if face/state/2 <> 0 [system/view/platform/update-view face]
-		if face/state/2 <> 0 [system/view/update-view face]
+		if face/state/2 <> 0 [
+			either face/type = 'window [
+				system/view/platform/update-view face
+			][
+				system/view/update-view face
+			]
+		]
 	][
 		new?: yes
 		

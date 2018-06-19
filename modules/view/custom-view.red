@@ -30,7 +30,7 @@ RoundButton: object [
 
 	style: [
 		default-actor: on-click
-		template: [type: name size: 60x60]
+		template: [type: name size: 10x10]
 	]
 
 	init: func [][
@@ -63,4 +63,13 @@ RoundButton: object [
 
 system/view/register 'myButton RoundButton
 
-view [size 500x500 myButton [b/offset: b/offset + 3x3] b: myButton 20x20]
+;view [size 500x500 myButton [b/offset: b/offset + 3x3] b: myButton 20x20]
+lay: make block! 6000
+append lay [size 810x810]
+
+repeat n 1600 [
+	append lay compose/deep [myButton [print (n)]]
+	if n % 40 = 0 [append lay 'return]
+]
+
+view/flags lay 'resize

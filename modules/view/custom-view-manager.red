@@ -58,6 +58,7 @@ template: [
 				system/view/platform/redraw face
 			]
 		]
+
 		on-down: func [
 			face [object!] event [event!]
 			/local hover widget
@@ -68,8 +69,10 @@ template: [
 				widget: select system/view/widgets hover/type
 				widget/down hover
 				system/view/platform/redraw face
+				system/view/awake/with event hover
 			]
 		]
+
 		on-up: func [
 			face [object!] event [event!]
 			/local hover widget
@@ -85,6 +88,7 @@ template: [
 				system/view/platform/redraw face
 			]
 		]
+
 		on-drawing: func [
 			face [object!] event [event!]
 			/local cmds f widget push-blk
@@ -99,8 +103,8 @@ template: [
 				reduce/into ['translate f/offset] push-blk
 				widget: select system/view/widgets f/type
 				widget/drawing f tail push-blk
-				reduce/into ['push push-blk] cmds
-				system/view/platform/draw-face face cmds
+				repend push-blk ['translate 0 - f/offset]
+				system/view/platform/draw-face face push-blk
 			]
 		]
 	]

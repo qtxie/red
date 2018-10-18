@@ -794,6 +794,11 @@ system/lexer: context [
 			(type: integer!)
 		]
 
+		bigint-rule: [
+			"0x" s: 10 hexa-char any hexa-char e: ahead [integer-end | ws-no-count | end]
+			(type: bigint!)
+		]
+
 		integer-rule: [
 			float-special (value: make-number s e type)	;-- escape path for NaN, INFs
 			| (neg?: no) integer-number-rule
@@ -922,6 +927,7 @@ system/lexer: context [
 				| binary-rule		if (value: make-binary s e base) (store stack value)
 				| email-rule		(store stack do make-file)
 				| date-rule			if (value) (store stack value)
+				| bigint-rule		if (value: make bigint! make-binary s e 16) (store stack value)
 				| integer-rule		if (value) (store stack value)
 				| float-rule		if (value: make-float s e type) (store stack value)
 				| tag-rule			(store stack do make-string)

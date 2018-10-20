@@ -339,6 +339,7 @@ bigint: context [
 			rem		[red-bigint!]
 			int		[red-integer!]
 			ret		[integer!]
+			n		[integer!]
 	][
 		left: as red-bigint! stack/arguments
 		right: left + 1
@@ -354,23 +355,24 @@ bigint: context [
 		big: as red-bigint! stack/push*
 		switch TYPE_OF(right) [
 			TYPE_INTEGER [
+				int: as red-integer! right
+				n: int/value
 				switch type [
 					OP_ADD [
-						int: as red-integer! right
-						add-int left int/value big
+						add-int left n big
 					]
 					OP_SUB [
-						int: as red-integer! right
-						sub-int left int/value big
+						sub-int left n big
 					]
 					OP_MUL [
-						int: as red-integer! right
-						mul-int left int/value big yes
+						mul-int left n big yes
+					]
+					OP_DIV [
+						div-int left n big null
 					]
 					OP_REM [
-						int: as red-integer! right
 						ret: 0
-						mod-int :ret left int/value
+						mod-int :ret left n
 						load-int big ret 1
 					]
 				]
@@ -397,27 +399,6 @@ bigint: context [
 			]
 		]
 		SET_RETURN(big)
-	]
-
-	#if debug? = yes [
-		dump-bigint: func [
-			big			[red-bigint!]
-			/local
-				s	 	[series!]
-				p		[byte-ptr!]
-		][
-			s: GET_BUFFER(big)
-			p: as byte-ptr! s/offset
-			print-line [lf "===============dump bigint!==============="]
-			print-line ["used: " big/size " sign: " big/sign " addr: " p]
-			p: p + (big/size * 4)
-			loop big/size * 4 [
-				p: p - 1
-				prin-hex-chars as-integer p/1 2
-			]
-			print-line lf
-			print-line ["=============dump bigint! end=============" lf]
-		]
 	]
 
 	make-at: func [
@@ -1517,6 +1498,27 @@ bigint: context [
 		big2/node: node
 		big2/sign: sign
 		big1
+	]
+
+	#if debug? = yes [
+		dump-bigint: func [
+			big			[red-bigint!]
+			/local
+				s	 	[series!]
+				p		[byte-ptr!]
+		][
+			s: GET_BUFFER(big)
+			p: as byte-ptr! s/offset
+			print-line [lf "===============dump bigint!==============="]
+			print-line ["used: " big/size " sign: " big/sign " addr: " p]
+			p: p + (big/size * 4)
+			loop big/size * 4 [
+				p: p - 1
+				prin-hex-chars as-integer p/1 2
+			]
+			print-line lf
+			print-line ["=============dump bigint! end=============" lf]
+		]
 	]
 
 	init-caches: does [

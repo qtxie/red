@@ -215,6 +215,7 @@ red: context [
 		symbols: 	block/make-in root 4000
 		global-ctx: _context/create 4000 no no
 
+		bigint/init-caches
 		case-folding/init
 		symbol/table: _hashtable/init 4000 symbols HASH_TABLE_SYMBOL 1
 

@@ -100,6 +100,23 @@ system/lexer: context [
 		if ret/node <> null [ret/header: TYPE_BINARY]		;-- if null, return NONE!
 	]
 
+	make-bigint: routine [
+		start  [string!]
+		end    [string!]
+		/local
+			s	 [series!]
+			p	 [byte-ptr!]
+			len  [integer!]
+			unit [integer!]
+	][
+		s:  GET_BUFFER(start)
+		unit: GET_UNIT(s)
+		p:	  string/rs-head start
+		len:  end/head - start/head
+
+		bigint/load-str stack/arguments p len unit
+	]
+
 	make-tuple: routine [
 		start  [string!]
 		end	   [string!]
@@ -927,7 +944,7 @@ system/lexer: context [
 				| binary-rule		if (value: make-binary s e base) (store stack value)
 				| email-rule		(store stack do make-file)
 				| date-rule			if (value) (store stack value)
-				| bigint-rule		if (value: make bigint! make-binary s e 16) (store stack value)
+				| bigint-rule		if (value: make-bigint s e) (store stack value)
 				| integer-rule		if (value) (store stack value)
 				| float-rule		if (value: make-float s e type) (store stack value)
 				| tag-rule			(store stack do make-string)

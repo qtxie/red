@@ -1287,6 +1287,54 @@ bigint: context [
 		either big/sign = -1 [-1][p/1 - 0]
 	]
 
+	load-str: func [
+		slot	[red-value!]
+		p		[byte-ptr!]
+		len		[integer!]
+		unit	[integer!]
+		/local
+			s		[series!]
+			c		[integer!]
+			hex		[integer!]
+			accum	[integer!]
+			count	[integer!]
+			table	[byte-ptr!]
+			pp		[int-ptr!]
+			size	[integer!]
+			big		[red-bigint!]
+	][
+		assert len > 0
+
+		size: len + 7 >> 3
+		big: make-at slot size
+		big/size: size
+
+		s: GET_BUFFER(big)
+		pp: as int-ptr! s/offset
+		table: string/escape-url-chars
+		p: p + (len * unit)
+		accum: 0
+		count: 0
+		until [
+			p: p - unit
+			c: 7Fh and string/get-char p unit
+			c: c + 1
+			hex: as-integer table/c
+			accum: hex << (count << 2) or accum
+			count: count + 1
+			if count = 8 [
+				pp/value: accum
+				pp: pp + 1
+				count: 0
+				accum: 0
+			]
+			len: len - 1
+			zero? len
+		]
+		if count > 0 [pp/value: accum pp: pp + 1]
+		s/tail: as red-value! pp
+	]
+
 	;--- Actions ---
 
 	make: func [

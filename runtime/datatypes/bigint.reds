@@ -267,6 +267,7 @@ bigint: context [
 			saved	[integer!]
 			bytes	[integer!]
 			ss		[series!]
+			h		[c-string!]
 			Q		[red-bigint!]
 			R		[red-bigint!]
 			buf		[byte-ptr!]
@@ -291,26 +292,30 @@ bigint: context [
 			string/concatenate-literal buffer "0x"
 			part: part - 2
 			i: big/size
+			n: i
 			s: GET_BUFFER(big)
 			pp: as int-ptr! s/offset
+			s: GET_BUFFER(buffer)
 			k: 0
 			while [i > 0][
 				j: ciL
 				while [j > 0][
 					c: (pp/i >>> ((j - 1) << 3)) and FFh
-					if all [
-						c = 0
-						k = 0
-						i + j <> 2
-					][
-						j: j - 1
-						continue
+					h: string/byte-to-hex c
+					if i = n [			;-- first unit
+						either c = 0 [
+							j: j - 1
+							continue
+						][
+							if h/1 = #"0" [h: h + 1 part: part + 1]
+						]
 					]
+					part: part - 2
+					string/concatenate-literal buffer h
 
-					string/concatenate-literal buffer string/byte-to-hex c
 					bytes: bytes + 1
 					if bytes % 32 = 0 [
-						string/append-char GET_BUFFER(buffer) as-integer lf
+						string/append-char s as-integer lf
 						part: part - 1
 					]
 

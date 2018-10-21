@@ -86,6 +86,20 @@ bigint: context [
 		ret + ((big/size - 1) * biL)
 	]
 
+	zero-big?: func [
+		big		[red-bigint!]
+		return: [logic!]
+		/local
+			s	[series!]
+			p	[int-ptr!]
+	][
+		either big/size = 1 [
+			s: GET_BUFFER(big)
+			p: as int-ptr! s/offset
+			p/value = 0
+		][false]
+	]
+
 	left-shift: func [
 		big			[red-bigint!]
 		count		[integer!]
@@ -191,7 +205,7 @@ bigint: context [
 				v1 > 0
 			]
 		][
-			lset big 0
+			load-int big 0 1
 			exit
 		]
 
@@ -790,30 +804,6 @@ bigint: context [
 			d: d + 1
 			c = 0
 		]
-	]
-
-	lset: func [
-		big			[red-bigint!]
-		int			[integer!]
-		/local
-			s	 	[series!]
-			p		[byte-ptr!]
-			p4		[int-ptr!]
-	][
-		grow big (big/size + 1)
-		s: GET_BUFFER(big)
-		p: as byte-ptr! s/offset
-		p4: as int-ptr! s/offset
-		set-memory p #"^@" s/size
-
-		either int >= 0 [
-			p4/1: int
-			big/sign: 1
-		][
-			p4/1: 0 - int
-			big/sign: -1
-		]
-		big/size: 1
 	]
 
 	mul-big: func [
@@ -1420,23 +1410,26 @@ bigint: context [
 		res
 	]
 
-	abs-big: func [
+	copy-big: func [
 		big		[red-bigint!]
-		ret		[red-bigint!]
+		dst		[red-bigint!]
 		return: [red-bigint!]
 	][
-		make-at as red-value! ret big/size
-		copy big ret
-		ret/sign: 1
-		ret
+		make-at as red-value! dst big/size
+		copy big dst
 	]
 
 	absolute: func [
-		return:		[red-bigint!]
+		return: [red-bigint!]
+		/local
+			big [red-bigint!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bigint/absolute"]]
 
-		abs-big as red-bigint! stack/arguments as red-bigint! stack/push*
+		big: copy-big as red-bigint! stack/arguments as red-bigint! stack/push*
+		big/sign: 1
+		stack/set-last as red-value! big
+		big
 	]
 
 	add: func [return: [red-value!]][
@@ -1462,42 +1455,44 @@ bigint: context [
 		as red-value! do-math OP_SUB
 	]
 
-	negate: func [
+	even?: func [
 		big		[red-bigint!]
-		return:	[red-value!]
+		return: [logic!]
+		/local
+			s	[series!]
+			p	[int-ptr!]
 	][
-		#if debug? = yes [if verbose > 0 [print-line "bigint/complement"]]
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+		not as-logic p/value and 1
+	]
 
-		either big/sign = 1 [
-			big/sign: -1
-		][
-			big/sign: 1
-		]
-		as red-value! big
+	odd?: func [
+		big		[red-bigint!]
+		return: [logic!]
+		/local
+			s	[series!]
+			p	[int-ptr!]
+	][
+		s: GET_BUFFER(big)
+		p: as int-ptr! s/offset
+		as-logic p/value and 1
+	]
+
+	negate: func [
+		return: [red-bigint!]
+		/local
+			big [red-bigint!]
+	][
+		big: copy-big as red-bigint! stack/arguments as red-bigint! stack/push*
+		big/sign: 0 - big/sign
+		stack/set-last as red-value! big
+		big
 	]
 
 	remainder: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "bigint/remainder"]]
 		as red-value! do-math OP_REM
-	]
-	
-	swap: func [
-		big1	 	[red-bigint!]
-		big2	 	[red-bigint!]
-		return:	 	[red-bigint!]
-		/local
-			node 	[node!]
-			sign 	[integer!]
-	][
-		#if debug? = yes [if verbose > 0 [print-line "bigint/swap"]]
-
-		node: big1/node
-		sign: big1/sign
-		big1/node: big2/node
-		big1/sign: big2/sign
-		big2/node: node
-		big2/sign: sign
-		big1
 	]
 
 	#if debug? = yes [
@@ -1555,8 +1550,8 @@ bigint: context [
 			:remainder
 			null			;round
 			:subtract
-			null			;even?
-			null			;odd?
+			:even?
+			:odd?
 			;-- Bitwise actions --
 			null			;and~
 			null			;complement
@@ -1585,7 +1580,7 @@ bigint: context [
 			null			;select
 			null			;sort
 			null			;skip
-			:swap
+			null			;swap
 			null			;tail
 			null			;tail?
 			null			;take

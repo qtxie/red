@@ -567,7 +567,6 @@ bigint: context [
 		big			[red-bigint!]		;-- if null, added to big1
 		/local
 			s	 	[series!]
-			s1	 	[series!]
 			s2	 	[series!]
 			p		[int-ptr!]
 			p2		[int-ptr!]
@@ -577,7 +576,6 @@ bigint: context [
 			sz		[integer!]
 			sz2		[integer!]
 	][
-		s1: GET_BUFFER(big1)
 		s2: GET_BUFFER(big2)
 		p2: as int-ptr! s2/offset
 		sz2: big2/size

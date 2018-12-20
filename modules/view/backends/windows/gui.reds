@@ -813,7 +813,8 @@ init: func [
 	int/value:  as-integer version-info/wProductType
 
 	get-metrics
-	
+
+	g-poller: poll/init
 	collector/register as int-ptr! :on-gc-mark
 ]
 

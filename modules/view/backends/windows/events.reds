@@ -1480,13 +1480,18 @@ do-events: func [
 
 	unless no-wait? [exit-loop: 0]
 
-	while [
-		either no-wait? [
-			0 < PeekMessage msg null 0 0 1
-		][
-			0 < GetMessage msg null 0 0
+	while [true][
+		;either no-wait? [
+		;	0 < PeekMessage msg null 0 0 1
+		;][
+		;	0 < GetMessage msg null 0 0
+		;]
+		unless no-wait? [poll/wait null 10]
+		if zero? PeekMessage msg null 0 0 1 [continue]
+		if msg/msg = 12h [
+			probe "quit ..............fjdsklafjdlksafjlkdsajfljsadlkfjadslkflkads"
+			break
 		]
-	][
 		unless msg? [msg?: yes]
 		state: process msg
 		if state >= EVT_DISPATCH [
@@ -1496,6 +1501,7 @@ do-events: func [
 		]
 		if no-wait? [return msg?]
 	]
+probe "fjdkafjladsjfklsadfjdsajfkljadksjflkjsadkfljasdk"
 	unless no-wait? [
 		exit-loop: exit-loop - 1
 		if exit-loop > 0 [PostQuitMessage 0]

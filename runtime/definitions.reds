@@ -340,7 +340,7 @@ Red/System [
 ;=== I/O definitions ===
 
 #enum io-event-type! [
-	IO_EVT_NONE
+	IO_EVT_NONE:	100
 	IO_EVT_ACCEPT
 	IO_EVT_CONNECT
 	IO_EVT_READ

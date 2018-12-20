@@ -32,7 +32,7 @@ REBOL [
 ;;  red-tracing?:	yes							;-- no => do not compile tracing code
 ;;  red-help?:		no							;-- yes => keep doc-strings from boot.red
 ;;	gui-console?:	no							;-- yes => redirect printing to gui console (temporary)
-;;	GUI-engine:		'native						;-- native | test | GTK | ...
+;;	GUI-engine:		'none						;-- none | native | test | GTK | ...
 ;;  legacy:			block! of words				;-- flags for OS legacy features support
 ;;		- stat32								;-- use the older stat struct for 32-bit file access.
 ;;-------------------------------------------

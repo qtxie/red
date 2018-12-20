@@ -418,6 +418,7 @@ system/view/platform: context [
 					EVT_ROTATE		 [_rotate]
 					EVT_TWO_TAP		 [_two-tap]
 					EVT_PRESS_TAP	 [_press-tap]
+					default	[port/get-event-type evt]
 				]
 			]
 			

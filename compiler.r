@@ -4810,6 +4810,10 @@ red: context [
 		][
 			job/modules: make block! 0
 		]
+		probe job/GUI-engine
+		if all [job/GUI-engine = 'none find job/modules 'View][
+			job/GUI-engine: 'native
+		]
 		if all [
 			job/OS = 'Windows
 			job/sub-system = 'GUI

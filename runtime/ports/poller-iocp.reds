@@ -108,7 +108,7 @@ poll: context [
 			type	[integer!]
 			red-port [red-object!]
 	][
-		#if debug? = yes [print-line "poll/wait"]
+		;#if debug? = yes [probe "poll/wait"]
 
 		forever [
 			p: as poller! either null? ref [g-poller][ref]
@@ -120,7 +120,7 @@ poll: context [
 			cnt: 0
 			res: GetQueuedCompletionStatusEx p/port p/events p/evt-cnt :cnt timeout no
 			err: GetLastError
-			if all [res <> 0 err = WAIT_TIMEOUT][return 0]
+			if all [zero? res err = WAIT_TIMEOUT][return 0]
 
 			if cnt = p/evt-cnt [			;-- TBD: extend events buffer
 				0
@@ -147,7 +147,11 @@ poll: context [
 					IOCP_OP_WRITE	[type: IO_EVT_WROTE]
 					IOCP_OP_READ_UDP	[0]
 					IOCP_OP_WRITE_UDP	[0]
-					default			[probe ["wrong iocp code: " data/code]]
+					default			[
+						probe ["wrong iocp code: " data/code]
+						i: i + 1
+						continue
+					]
 				]
 				call-awake red-port msg type
 				i: i + 1

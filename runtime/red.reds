@@ -110,7 +110,7 @@ red: context [
 	#include %datatypes/handle.reds
 	#include %datatypes/date.reds
 	#include %datatypes/port.reds
-	#include %datatypes/event.reds
+	;#include %datatypes/event.reds
 	#if OS = 'Windows [#include %datatypes/image.reds]	;-- temporary
 	#if OS = 'macOS   [#include %datatypes/image.reds]	;-- temporary
 
@@ -207,7 +207,7 @@ red: context [
 		handle/init
 		date/init
 		port/init
-		event/init
+		;event/init
 		#if OS = 'Windows [image/init]					;-- temporary
 		#if OS = 'macOS   [image/init]					;-- temporary
 		

@@ -2577,7 +2577,7 @@ natives: context [
 
 		#switch OS [
 			Windows [
-				platform/ShellExecute 0 #u16 "open" unicode/to-utf16 url 0 0 1
+				ShellExecute 0 #u16 "open" unicode/to-utf16 url 0 0 1
 				unset/push-last
 			]
 			macOS [

@@ -39,7 +39,7 @@ red: context [
 	#include %sort.reds
 	#include %hashtable.reds
 	#include %ownership.reds
-	
+
 	;--------------------------------------------
 	;-- Import OS dependent image functions
 	;-- load-image: func [								;-- return handle
@@ -126,6 +126,7 @@ red: context [
 	#include %call.reds
 	#include %inflate.reds
 	#include %collector.reds
+	#include %io.reds
 
 	_root:	 	declare red-block!						;-- statically alloc root cell for bootstrapping
 	root:	 	as red-block! 0							;-- root block
@@ -228,7 +229,9 @@ red: context [
 		
 		stack/init
 		redbin/boot-load system/boot-data no
-		
+
+		io/init
+
 		#if debug? = yes [
 			datatype/verbose:	verbosity
 			unset/verbose:		verbosity

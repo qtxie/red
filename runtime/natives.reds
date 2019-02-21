@@ -2131,6 +2131,11 @@ natives: context [
 			TYPE_TIME [
 				time: as-integer (val/value * #either OS = 'Windows [1E3][1E6])
 			]
+			TYPE_PORT [
+				io/wait -1				;TBD maybe need to improve it
+				val/header: TYPE_NONE
+				exit
+			]
 			default [fire [TO_ERROR(script invalid-arg) val]]
 		]
 		val/header: TYPE_NONE

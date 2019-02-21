@@ -51,12 +51,45 @@ io: context [
 	][
 		values: object/get-values red-port
 		awake: as red-function! values + port/field-awake
+		if TYPE_OF(awake) <> TYPE_FUNCTION [exit]
+
 		stack/mark-func words/_awake awake/ctx
 		;-- call port/awake: func [port type][]
 		stack/push as red-value! msg	;-- port
 		stack/push get-port-event op	;-- type
 		port/call-function awake awake/ctx
 		stack/reset
+	]
+
+	store-iocp-data: func [
+		data		[iocp-data!]
+		red-port	[red-object!]
+		/local
+			state	[red-object!]
+	][
+		state: as red-object! (object/get-values red-port) + port/field-state
+		integer/make-at (object/get-values state) + 1 as-integer data
+	]
+
+	get-iocp-data: func [
+		red-port	[red-object!]
+		return:		[iocp-data!]
+		/local
+			state	[red-object!]
+			int		[red-integer!]
+	][
+		state: as red-object! (object/get-values red-port) + port/field-state
+		int: as red-integer! (object/get-values state) + 1
+		either TYPE_OF(int) = TYPE_NONE [null][as iocp-data! int/value]
+	]
+
+	wait: func [
+		time		[integer!]
+	][
+		forever [
+			iocp/wait g-iocp time
+			if time > -1 [exit]
+		]
 	]
 
 	init: does [

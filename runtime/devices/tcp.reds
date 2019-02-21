@@ -10,7 +10,6 @@ Red/System [
 	}
 ]
 
-
 tcp-scheme: context [
 
 	tcp-data!: alias struct! [
@@ -37,7 +36,7 @@ tcp-scheme: context [
 				msg: create-red-port p data/accept-sock
 				type: IO_EVT_ACCEPT
 			]
-			SOCK_EVT_CONNECT	[type: IO_EVT_CONNECT]
+			SOCK_EVT_CONNECT [type: IO_EVT_CONNECT]
 			SOCK_EVT_READ	[
 				bin: binary/load tcp/buffer data/transferred
 				copy-cell as cell! bin (object/get-values p) + port/field-data
@@ -66,14 +65,15 @@ tcp-scheme: context [
 		/local
 			data [tcp-data!]
 	][
-		;@@ TBD get tcp-data! from the cache first
+		;@@ IMPROVEMENT get tcp-data! from the cache first
 
 		data: as tcp-data! alloc0 size? tcp-data!
+		data/iocp/type: DEVICE_TCP
 		data/iocp/event-handler: as iocp-event-handler! :event-handler
 		copy-cell as cell! port as cell! :data/port
 
 		;-- store low-level data into red port
-		;-- TBD
+		io/store-iocp-data as iocp-data! data port
 
 		as iocp-data! data
 	]

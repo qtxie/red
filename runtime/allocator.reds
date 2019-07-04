@@ -712,7 +712,7 @@ update-direct-ptr: func [
 	until [
 		stk: stk - 1
 		p: as byte-ptr! stk/value  
-		if all [p > start p < end][
+		if all [(as-integer p) and 3 = 0 p >= start p < end][
 			stk/value: as-integer p + delta
 		]
 		stk = top
@@ -1170,7 +1170,7 @@ expand-series: func [
 	series/flags: series/flags xor series-in-use		  ;-- clear 'used bit (enough to free the series)	
 
 	delta: as-integer new - series
-	update-direct-ptr as byte-ptr! series as byte-ptr! series/tail delta
+	update-direct-ptr as byte-ptr! series/offset as byte-ptr! series/tail delta
 	new	
 ]
 

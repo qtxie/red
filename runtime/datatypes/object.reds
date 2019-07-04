@@ -544,16 +544,18 @@ object: context [
 			id		[integer!]
 			blank	[byte!]
 	][
+		probe ["obj... " system/stack/frame]
 		ctx: 	GET_CTX(obj)
 		syms:   as series! ctx/symbols/value
 		values: as series! ctx/values/value
-		
+
 		sym:	syms/offset
 		s-tail: syms/tail
 		value: 	values/offset
 		evt1:	words/_on-change*/symbol
 		evt2:	words/_on-deep-change*/symbol
-		
+probe :evt1
+probe :evt2		
 		if sym = s-tail [return part]					;-- exit if empty
 
 		either flat? [
@@ -567,6 +569,7 @@ object: context [
 			blank: lf
 		]
 		cycles/push obj/ctx
+dump-hex4 (as int-ptr! :evt2) - 8
 
 		while [sym < s-tail][
 			w: as red-word! sym
@@ -595,6 +598,7 @@ object: context [
 			value: value + 1
 		]
 		cycles/pop
+		probe "end seriekfjdslfjadsjfjkl"
 		part
 	]
 	

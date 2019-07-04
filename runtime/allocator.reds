@@ -707,12 +707,17 @@ update-direct-ptr: func [
 		stk	  [int-ptr!]
 		p	  [byte-ptr!]
 ][
-	top:  system/stack/top
+	top:  system/stack/frame + 16
 	stk:  stk-bottom
 	until [
 		stk: stk - 1
 		p: as byte-ptr! stk/value  
-		if all [p > start p < end][
+		if all [(as-integer p) and 3 = 0 p >= start p < end p/1 <> #"^(FF)"][
+			probe [start " " end " " p " " top " " stk " " stk-bottom]
+			if start = p [
+				dump-hex4 as int-ptr! start
+				dump-hex4 as int-ptr! start + delta
+			]
 			stk/value: as-integer p + delta
 		]
 		stk = top
@@ -817,6 +822,109 @@ collect-frames: func [
 	;extract-stack-refs no
 ]
 
+
+;-------------------------------------------
+;-- Print an integer as hex number on screen, limited to n characters
+;-------------------------------------------
+prin-hex-chars: func [
+	i [integer!]							;-- input integer to print
+	n [integer!]							;-- max number of characters to print (right-aligned)
+	return: [integer!]						;-- return the input integer (pass-thru)
+	/local s c d ret
+][
+	s: "00000000"
+	if zero? i [
+		s: "00000000"
+		prin s + (8 - n) 
+		return i
+	]
+	c: 8
+	ret: i
+	until [
+		d: i // 16
+		if d > 9 [d: d + 7]					;-- 7 = (#"A" - 1) - #"9"
+		s/c: #"0" + d
+		i: i >>> 4
+		c: c - 1
+		zero? c								;-- iterate on all 8 bytes to overwrite previous values
+	]
+	prin s + (8 - n)
+	ret
+]
+
+;-------------------------------------------
+;-- Dump memory on screen in hex format
+;-------------------------------------------
+dump-memory: func [
+	address	[byte-ptr!]						;-- memory address where the dump starts
+	unit	[integer!]						;-- size of memory chunks to print in hex format (1 or 4 bytes)
+	nb		[integer!]						;-- number of lines to print
+	return: [byte-ptr!]						;-- return the pointer (pass-thru)
+	/local offset ascii i byte int-ptr data-ptr limit
+][	
+	assert any [unit = 1 unit = 4]
+	
+	print ["^/Hex dump from: " address "h^/" lf]
+
+	offset: 0
+	ascii: "                "
+	limit: nb * 16
+	
+	data-ptr: address
+	until [
+		print [address ": "]
+		i: 0
+		until [
+			i: i + 1
+			
+			if unit = 1 [
+				prin-hex-chars as-integer address/value 2
+				address: address + 1
+				prin either i = 8 ["  "][" "]
+			]
+			if all [unit = 4 zero? (i // 4)][
+				int-ptr: as int-ptr! address
+				prin-hex int-ptr/value
+				address: address + 4
+				prin either i = 8 ["  "][" "]
+			]
+			
+			byte: data-ptr/value
+			ascii/i: either any [byte < as-byte 32 byte > as-byte 127][
+				either byte = null-byte [#"."][#"?"]
+			][
+				byte
+			]
+			
+			data-ptr: data-ptr + 1
+			i = 16
+		]
+		print [space ascii lf]
+		offset: offset + 16
+		offset = limit
+	]
+	address
+]
+
+;-------------------------------------------
+;-- Dump memory on screen in hex format as array of bytes (handy wrapper on dump-hex)
+;-------------------------------------------
+dump-hex: func [
+	address	[byte-ptr!]						;-- memory address where the dump starts
+	return: [byte-ptr!]						;-- return the pointer (pass-thru)
+][	
+	dump-memory address 1 8
+]
+
+;-------------------------------------------
+;-- Dump memory on screen in hex format as array of 32-bit integers (handy wrapper on dump-hex)
+;-------------------------------------------
+dump-hex4: func [
+	address	[int-ptr!]						;-- memory address where the dump starts
+	return: [int-ptr!]						;-- return the pointer (pass-thru)
+][	
+	as int-ptr! dump-memory as byte-ptr! address 4 8
+]
 
 
 #if debug? = yes [
@@ -1131,6 +1239,7 @@ expand-series: func [
 		units [integer!]
 		delta [integer!]
 		big?  [logic!]
+		cycle [integer!]
 ][
 	;#if debug? = yes [print-wide ["series expansion triggered for:" series new-sz lf]]
 	
@@ -1144,6 +1253,8 @@ expand-series: func [
 	if zero? new-sz [new-sz: series/size * 2]	;-- by default, alloc twice the old size
 
 	if new-sz <= 0 [fire [TO_ERROR(internal no-memory)]]
+
+	cycle: collector/stats/cycles
 
 	node: series/node
 	new: alloc-series-buffer new-sz / units units 0
@@ -1170,7 +1281,12 @@ expand-series: func [
 	series/flags: series/flags xor series-in-use		  ;-- clear 'used bit (enough to free the series)	
 
 	delta: as-integer new - series
-	update-direct-ptr as byte-ptr! series as byte-ptr! series/tail delta
+	if all [units = 1 0 < delta delta < 50][
+		probe ["series: " series " new: " new " " delta " " cycle " " units]
+		if cycle < collector/stats/cycles [probe "gc run..............."]
+		update-direct-ptr as byte-ptr! series/offset as byte-ptr! series/tail delta
+		probe "end......."
+	]
 	new	
 ]
 

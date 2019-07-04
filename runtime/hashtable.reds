@@ -1087,12 +1087,12 @@ _hashtable: context [
 		assert h/indexes <> null
 		assert h/n-buckets > 0
 
-		s: as series! h/indexes/value
-		indexes: as int-ptr! s/offset
-
 		s: as series! h/keys/value
 		keys: as int-ptr! s/offset
 		ii: head							;-- save head
+
+		s: as series! h/indexes/value
+		indexes: as int-ptr! s/offset
 
 		n: size
 		while [n > 0][
@@ -1117,9 +1117,10 @@ _hashtable: context [
 					h/size: h/size - 1
 					part: part + 1
 				]
-			][								;-- may need to expand indexes
+			][								;-- may need to expand indexes 
 				if size + head << 2 > s/size [
 					s: expand-series-filled s s/size << 1 #"^(FF)"
+					indexes: as int-ptr! s/offset
 					s/tail: as cell! (as byte-ptr! s/offset) + s/size
 				]
 			]

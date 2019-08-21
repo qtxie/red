@@ -330,3 +330,10 @@ red-handle!: alias struct! [
 	value	[integer!]								;-- 32-bit signed integer value
 	_pad	[integer!]	
 ]
+
+red-gob!: alias struct! [
+	header	[integer!]
+	padding	[integer!]
+	value	[int-ptr!]
+	_pad	[integer!]
+]

@@ -118,6 +118,7 @@ write %build/bin/sources.r set-cache [
 			%function.reds
 			%get-path.reds
 			%get-word.reds
+			%gob.reds
 			%hash.reds
 			%image.reds
 			%integer.reds

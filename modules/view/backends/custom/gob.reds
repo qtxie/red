@@ -39,6 +39,7 @@ gob-style-border!: alias struct! [
 	width		[integer!]
 	part		[byte!]				;-- which parts to draw
 	opacity		[byte!]
+	style		[byte!]				;-- dotted, solid, etc.
 ]
 
 gob-style-shadow!: alias struct! [
@@ -47,6 +48,7 @@ gob-style-shadow!: alias struct! [
 	radius		[integer!]			;-- blur and spread radius
 	part		[byte!]				;-- which parts to draw
 	inset?		[byte!]
+	next		[gob-style-shadow!]	;-- shadow effect chain
 ]
 
 gob-style-padding!: alias struct! [
@@ -54,16 +56,27 @@ gob-style-padding!: alias struct! [
 	bottom		[coord!]
 	left		[coord!]
 	right		[coord!]
-	inner		[coord!]
+]
+
+gob-style-text!: alias struct! [
+	color		[integer!]
+	select-clr	[integer!]
+	font		[int-ptr!]			;-- backend specific font handle
+	linespace	[float32!]
+	letterspace	[float32!]
+	opacity		[byte!]
+	align		[byte!]				;-- text align
+	shadow		[gob-style-shadow!]
 ]
 
 gob-style!: alias struct! [
-	bg-color	[integer!]			;-- background color
+	states		[integer!]
 	radius		[float32!]
 	opacity		[integer!]
 	border		[gob-style-border! vaule]
-	shadow		[gob-style-shadow! value]
 	padding		[gob-style-padding! value]
+	text		[gob-style-text! value]
+	shadow		[gob-style-shadow!]
 ]
 
 gob!: alias struct! [
@@ -73,6 +86,7 @@ gob!: alias struct! [
 	children	[node!]				;-- child gobs, red-vector!
 	event-fn	[gob-event-fn!]		;-- event function
 	render-fn	[gob-render-fn!]	;-- render function
+	bg-color	[integer!]			;-- background color
 	opacity		[integer!]			;-- overall opacity. Efffects all children
 	style		[gob-style!]
 ]

@@ -68,12 +68,12 @@ time-meter: context [
 
 	elapse: func [
 		t		[time-meter!]
-		return: [float!]		;-- ms
+		return: [float32!]		;-- ms
 		/local
 			d	[integer!]
 	][
 		QueryPerformanceCounter t/t2
 		d: sub64 t/t2 t/t1
-		(as float! d) * 1000.0 / (as float! freq)
+		(as float32! d) * (as float32! 1e3) / (as float32! freq)
 	]
 ]

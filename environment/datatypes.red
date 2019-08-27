@@ -62,6 +62,10 @@ date!:			make datatype! #get-definition TYPE_DATE
 port!:			make datatype! #get-definition TYPE_PORT
 event!:			make datatype! #get-definition TYPE_EVENT
 
+#if find config/modules 'view [
+	gob!: make datatype! #get-definition TYPE_GOB
+]
+
 none:  			make none! 0
 true:  			make logic! 1
 false: 			make logic! 0

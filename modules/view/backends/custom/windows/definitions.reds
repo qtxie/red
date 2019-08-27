@@ -1142,22 +1142,6 @@ GetDpiForMonitor!: alias function! [
 			lpszFace			[c-string!]
 			return: 			[handle!]
 		]
-        SetGraphicsMode: "SetGraphicsMode" [
-            hdc         [handle!]
-            mode        [integer!]
-            return:     [integer!]
-        ]
-        SetWorldTransform: "SetWorldTransform" [
-            hdc         [handle!]
-            lpXform     [XFORM!]
-            return:     [logic!]
-        ]
-        ModifyWorldTransform: "ModifyWorldTransform" [
-            hdc         [handle!]
-            lpXform     [XFORM!]
-            iMode       [integer!]
-            return:     [logic!]
-        ]
 	]
 	"comdlg32.dll" stdcall [
 			GetOpenFileName: "GetOpenFileNameW" [

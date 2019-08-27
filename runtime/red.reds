@@ -103,7 +103,6 @@ red: context [
 	#include %datatypes/tag.reds
 	#include %datatypes/email.reds
 	#include %datatypes/handle.reds
-	#include %datatypes/gob.reds
 	#include %datatypes/date.reds
 	#include %datatypes/port.reds
 	#include %datatypes/image.reds
@@ -202,7 +201,6 @@ red: context [
 		handle/init
 		date/init
 		port/init
-		gob/init
 		image/init
 		#either modules contains 'View [][event/init]
 

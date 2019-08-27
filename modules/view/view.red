@@ -12,7 +12,9 @@ Red [
 
 #system [
 	#include %../../runtime/datatypes/event.reds
+	#include %../../runtime/datatypes/gob.reds
 	event/init
+	gob/init
 ]
 
 #include %utils.red

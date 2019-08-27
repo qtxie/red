@@ -540,11 +540,6 @@ tagBROWSEINFO: alias struct! [
 	iImage			[integer!]
 ]
 
-LARGE_INTEGER: alias struct! [
-	LowPart		[integer!]
-	HighPart	[integer!]
-]
-
 DwmIsCompositionEnabled!: alias function! [
 	pfEnabled	[int-ptr!]
 	return:		[integer!]
@@ -560,14 +555,6 @@ GetDpiForMonitor!: alias function! [
 
 #import [
 	"kernel32.dll" stdcall [
-		QueryPerformanceFrequency: "QueryPerformanceFrequency" [
-			lpFrequency	[LARGE_INTEGER]
-			return:		[logic!]
-		]
-		QueryPerformanceCounter: "QueryPerformanceCounter" [
-			lpCount		[LARGE_INTEGER]
-			return:		[logic!]
-		]
 		GlobalAlloc: "GlobalAlloc" [
 			flags		[integer!]
 			size		[integer!]

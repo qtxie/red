@@ -10,6 +10,8 @@ Red/System [
 	}
 ]
 
+#include %utils.reds
+
 #switch OS [
 	Windows  [#include %windows/host.reds]
 	macOS    [#include %macOS/host.reds]

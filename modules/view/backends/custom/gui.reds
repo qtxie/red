@@ -10,6 +10,12 @@ Red/System [
 	}
 ]
 
+#switch OS [
+	Windows  [#include %windows/host.reds]
+	macOS    [#include %macOS/host.reds]
+	#default [#include %Linux/host.reds]		;-- Linux
+]
+
 #include %text-box.reds
 #include %draw.reds
 #include %events.reds

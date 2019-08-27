@@ -3,9 +3,6 @@ Red [
 	Config: [GUI-engine: 'custom]
 ]
 
-hello: bb: none
-
-win: view/no-wait [
-	hello: button "Hello" [print "ok"]
-	bb: base white on-down [face/color: red]
-]
+win: make gob! [size: 1000x1000 color: red]
+loop 1000 [append win make gob! compose [size: (random 100x100) offset: (random 1000x1000) alpha: (random 255) color: (random 255.255.255)]]
+view win

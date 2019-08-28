@@ -20,16 +20,30 @@ Red/System [
 	GOB_PART_INTERNAL:	16
 ]
 
+#define coord!	integer!
+
+point!: alias struct! [
+	x	[coord!]
+	y	[coord!]
+]
+
+area!: alias struct! [
+	x1	[coord!]
+	y1	[coord!]
+	x2	[coord!]
+	x2	[coord!]
+]
+
 gob-event-fn!: alias function! [
-	obj			[gob!]
-	evt			[gob-event!]
+	obj			[int-ptr!]
+	evt			[event-type!]
 	data		[int-ptr!]
 	post?		[logic!]			;-- post the event to the user? 
 	return:		[integer!]
 ]
 
 gob-render-fn!: alias function! [	;-- used to draw the gob on the screen
-	obj			[gob!]
+	obj			[int-ptr!]
 	mode		[integer!]
 	return:		[logic!]
 ]
@@ -43,7 +57,7 @@ gob-style-border!: alias struct! [
 ]
 
 gob-style-shadow!: alias struct! [
-	offset		[point!]
+	offset		[point! value]
 	color		[integer!]
 	radius		[integer!]			;-- blur and spread radius
 	part		[byte!]				;-- which parts to draw
@@ -73,7 +87,7 @@ gob-style!: alias struct! [
 	states		[integer!]
 	radius		[float32!]
 	opacity		[integer!]
-	border		[gob-style-border! vaule]
+	border		[gob-style-border! value]
 	padding		[gob-style-padding! value]
 	text		[gob-style-text! value]
 	shadow		[gob-style-shadow!]
@@ -81,7 +95,7 @@ gob-style!: alias struct! [
 
 gob!: alias struct! [
 	flags		[integer!]			;-- attributes and states
-	coords		[area!]				;-- top-left(x1, y1), bottom-right(x2, y2)
+	coords		[area! value]		;-- top-left(x1, y1), bottom-right(x2, y2)
 	parent		[gob!]				;-- parent gob
 	children	[node!]				;-- child gobs, red-vector!
 	event-fn	[gob-event-fn!]		;-- event function
@@ -91,3 +105,11 @@ gob!: alias struct! [
 	style		[gob-style!]
 ]
 
+rs-gob: context [
+	create: func [
+		spec	[red-block!]
+		return: [gob!]
+	][
+		as gob! allocate size? gob!
+	]
+]

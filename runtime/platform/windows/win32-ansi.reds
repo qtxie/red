@@ -44,7 +44,6 @@ Red/System [
 
 #define LOWORD(int) (int and FFFFh)
 #define HIWORD(int) (int >>> 16)
-#define coord! integer!
 
 CONSOLE_SCREEN_BUFFER_INFO!: alias struct! [
 	size            [integer!]
@@ -70,7 +69,7 @@ default-attributes: 0 ;this value holds default attributes and is used on `reset
 		]
 		SetConsoleCursorPosition: "SetConsoleCursorPosition" [
 			handle      [integer!]
-			position    [coord!]
+			position    [integer!]
 			return:     [integer!]
 		]
 		GetConsoleScreenBufferInfo: "GetConsoleScreenBufferInfo" [
@@ -82,7 +81,7 @@ default-attributes: 0 ;this value holds default attributes and is used on `reset
 			handle 		[integer!]
 			wchar       [integer!]
 			length      [integer!]
-			writeCoord  [coord!]
+			writeCoord  [integer!]
 			written     [int-ptr!]
 			return:     [integer!]
 		]
@@ -90,7 +89,7 @@ default-attributes: 0 ;this value holds default attributes and is used on `reset
 			handle 		[integer!]
 			attributes  [integer!]
 			length      [integer!]
-			writeCoord  [coord!]
+			writeCoord  [integer!]
 			written     [int-ptr!]
 			return:     [integer!]
 		]
@@ -115,7 +114,7 @@ clear-screen: func[
 	/local
 		num    [integer!]
 		len    [integer!]
-		from   [coord!]
+		from   [integer!]
 		cols   [integer!]
 		rows   [integer!]
 ][
@@ -162,7 +161,7 @@ clear-screen: func[
 
 set-console-cursor: func[
 	"Moves the cursor to the specified position (coordinates)"
-	position   [coord!]
+	position   [integer!]
 ][
 	SetConsoleCursorPosition stdout position
 ]
@@ -223,7 +222,7 @@ parse-ansi-sequence: func[
 		value2  [integer!]
 		command [integer!]
 		attribute [integer!]
-		cursor  [coord!]
+		cursor  [integer!]
 		col     [integer!]
 		row     [integer!]
 ][

@@ -20,6 +20,7 @@ Red [
 #include %utils.red
 
 event?: routine ["Returns true if the value is this type" value [any-type!] return: [logic!]][TYPE_OF(value) = TYPE_EVENT]
+gob?: routine ["Returns true if the value is this type" value [any-type!] return: [logic!]][TYPE_OF(value) = TYPE_GOB]
 
 face?: function [
 	"Returns TRUE if the value is a face! object"
@@ -713,7 +714,7 @@ do-actor: function ["Internal Use Only" face [object!] event [event! none!] type
 
 show: function [
 	"Display a new face or update it"
-	face [object! block!] "Face object to display"
+	face [object! block! gob!] "Face object to display"
 	/with				  "Link the face to a parent face"
 		parent [object!]  "Parent face to link to"
 	/force				  "For internal use only!"
@@ -726,7 +727,12 @@ show: function [
 		exit
 	]
 	if debug-info? face [print ["show:" face/type " with?:" with]]
-	
+
+	if gob? face [
+		system/view/platform/show-window face
+		exit
+	]
+
 	either all [face/state face/state/1][
 		pending: face/state/3
 		
@@ -825,7 +831,7 @@ unview: function [
 
 view: function [
 	"Displays a window view from a layout block or from a window face"
-	spec [block! object!]	"Layout block or face object"
+	spec [block! object! gob!]	"Layout block or face object"
 	/tight					"Zero offset and origin"
 	/options
 		opts [block!]		"Optional features in [name: value] format"
@@ -835,7 +841,7 @@ view: function [
 	/no-wait				"Return immediately - do not wait"
 ][
 	unless system/view/screens [system/view/platform/init]
-	
+
 	if block? spec [spec: either tight [layout/tight spec][layout spec]]
 	if spec/type <> 'window [cause-error 'script 'not-window []]
 	if options [set spec make object! opts]
@@ -856,12 +862,12 @@ view: function [
 
 center-face: function [
 	"Center a face inside its parent"
-	face [object!]		 "Face to center"
+	face [object! gob!]	 "Face to center"
 	/x					 "Center horizontally only"
 	/y					 "Center vertically only"
 	/with				 "Provide a reference face for centering instead of parent face"
 		parent [object!] "Reference face"
-	return: [object!]	 "Returns the centered face"
+	return: [object! gob!] "Returns the centered face"
 ][
 	unless parent [
 		parent: either face/type = 'window [

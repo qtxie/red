@@ -69,6 +69,17 @@ gob: context [
 
 	;-- Actions --
 
+	make: func [
+		proto	[red-gob!]
+		spec	[red-value!]
+		type	[integer!]
+		return:	[red-gob!]  
+	][
+		proto/header: type
+		proto/value: as int-ptr! gui/rs-gob/create as red-block! spec
+		proto
+	]
+
 	form: func [
 		h		[red-gob!]
 		buffer	[red-string!]
@@ -134,7 +145,7 @@ gob: context [
 			TYPE_INTEGER
 			"GOB!"
 			;-- General actions --
-			null			;make
+			:make
 			null			;random
 			null			;reflect
 			null			;to

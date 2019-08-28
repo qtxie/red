@@ -16,6 +16,7 @@ Red/System [
 	#default [#include %Linux/host.reds]		;-- Linux
 ]
 
+#include %gob.reds
 #include %text-box.reds
 #include %draw.reds
 #include %events.reds

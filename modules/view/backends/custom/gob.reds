@@ -95,7 +95,7 @@ gob-style!: alias struct! [
 
 gob!: alias struct! [
 	flags		[integer!]			;-- attributes and states
-	coords		[area! value]		;-- top-left(x1, y1), bottom-right(x2, y2)
+	box			[area! value]		;-- top-left(x1, y1), bottom-right(x2, y2)
 	parent		[gob!]				;-- parent gob
 	children	[node!]				;-- child gobs, red-vector!
 	event-fn	[gob-event-fn!]		;-- event function

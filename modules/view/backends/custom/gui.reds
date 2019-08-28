@@ -10,13 +10,14 @@ Red/System [
 	}
 ]
 
+#include %gob.reds
+
 #switch OS [
 	Windows  [#include %windows/host.reds]
 	macOS    [#include %macOS/host.reds]
 	#default [#include %Linux/host.reds]		;-- Linux
 ]
 
-#include %gob.reds
 #include %text-box.reds
 #include %draw.reds
 #include %events.reds
@@ -141,22 +142,12 @@ init: func [
 		ver   [red-tuple!]
 		int   [red-integer!]
 ][
-	ver: as red-tuple! #get system/view/platform/version
-
-	ver/header: TYPE_TUPLE or (3 << 19)
-	ver/array1: 00010000h
-	
-	int: as red-integer! #get system/view/platform/build
-	int/header: TYPE_INTEGER
-	int/value:  1
-
-	int: as red-integer! #get system/view/platform/product
-	int/header: TYPE_INTEGER
-	int/value:  1
-	
-	collector/register as int-ptr! :on-gc-mark
+	host/init
 ]
 
+cleanup: does [
+	host/cleanup
+]
 
 get-screen-size: func [
 	id		[integer!]
@@ -271,8 +262,11 @@ OS-make-view: func [
 	face	[red-object!]
 	parent	[integer!]
 	return: [integer!]
+	/local
+		g	[red-gob!]
 ][
-	
+	g: as red-gob! face
+	host/make-window g/value
 	as-integer make-handle
 ]
 

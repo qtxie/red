@@ -729,6 +729,9 @@ show: function [
 	if debug-info? face [print ["show:" face/type " with?:" with]]
 
 	if gob? face [
+		unless face/state [
+			system/view/platform/make-view face face/parent
+		]
 		system/view/platform/show-window face
 		exit
 	]

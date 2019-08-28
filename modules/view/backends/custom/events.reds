@@ -117,5 +117,5 @@ do-events: func [
 	no-wait? [logic!]
 	return:  [logic!]
 ][
-	true
+	host/do-events no-wait?
 ]

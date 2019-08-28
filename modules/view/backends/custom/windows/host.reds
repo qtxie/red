@@ -41,6 +41,14 @@ host: context [
 
 	#include %direct2d.reds
 
+	get-para-flags: func [
+		type	[integer!]
+		para	[red-object!]
+		return: [integer!]
+	][
+		0
+	]
+
 	dpi-scale: func [
 		num		[integer!]
 		return: [integer!]
@@ -137,18 +145,38 @@ host: context [
 		lParam	[integer!]
 		return: [integer!]
 		/local
-			target	[int-ptr!]
-			this	[this!]
-			rt		[ID2D1HwndRenderTarget]
-			flags	[integer!]
-			w		[integer!]
-			len		[integer!]
-			hfont	[handle!]
-			draw	[red-block!]
-			DC		[draw-ctx!]
-			font	[red-object!]
+			cs	[tagCREATESTRUCT]
+			obj [gob!]
 	][
-		
+		obj: as gob! GetWindowLongPtr hWnd 0
+		switch msg [
+			WM_NCCREATE [
+				cs: as tagCREATESTRUCT lParam
+				SetWindowLongPtr hWnd 0 cs/lpCreateParams
+				1		;-- continue to create the window
+			]
+			WM_MOUSEHOVER [0]
+			WM_MOUSELEAVE [0]
+			WM_MOVING [0]
+			WM_KEYDOWN [0]
+			WM_SYSKEYDOWN [0]
+			WM_SYSCHAR [0]
+			WM_CHAR [0]
+			WM_UNICHAR [0]
+			WM_SETFOCUS [0]
+			WM_KILLFOCUS [0]
+			WM_SIZE [0]
+			WM_GETMINMAXINFO [0]	;-- for maximization and minimization
+			WM_NCACTIVATE [0]
+			WM_MOUSEACTIVATE [0]
+			WM_SETCURSOR [0]
+			WM_GETOBJECT [0]		;-- for accessibility support
+			WM_CLOSE [0]
+			WM_DESTROY [0]
+			WM_DPICHANGED [0]
+			default []
+		]
+		DefWindowProc hWnd msg wParam lParam
 	]
 
 	register-classes: func [
@@ -163,11 +191,11 @@ host: context [
 		wcex/style:			0
 		wcex/lpfnWndProc:	:RedWndProc
 		wcex/cbClsExtra:	0
-		wcex/cbWndExtra:	size? int-ptr!
+		wcex/cbWndExtra:	size? int-ptr!		;-- gob
 		wcex/hInstance:		hInstance
 		wcex/hIcon:			LoadIcon hInstance as c-string! 1
 		wcex/hCursor:		cur
-		wcex/hbrBackground:	COLOR_3DFACE + 1
+		wcex/hbrBackground:	0
 		wcex/lpszMenuName:	null
 		wcex/lpszClassName: #u16 "RedHostWindow"
 		wcex/hIconSm:		0
@@ -186,7 +214,6 @@ host: context [
 			int   [red-integer!]
 	][
 		process-id:		GetCurrentProcessId
-		hScreen:		GetDC null
 		hInstance:		GetModuleHandle 0
 
 		version-info/dwOSVersionInfoSize: size? OSVERSIONINFO
@@ -211,7 +238,7 @@ host: context [
 		get-dpi
 		DX-init
 		set-defaults
-		register-classes
+		register-classes hInstance
 
 		int: as red-integer! #get system/view/platform/build
 		int/header: TYPE_INTEGER
@@ -229,6 +256,7 @@ host: context [
 
 	make-window: func [
 		obj			[gob!]
+		parent		[handle!]
 		return:		[handle!]
 		/local
 			rc		[RECT_STRUCT value]
@@ -237,26 +265,23 @@ host: context [
 			bits	[integer!]
 			w		[integer!]
 			h		[integer!]
-			parent	[integer!]
 			handle	[handle!]
 	][
-		parent: 0
-		w: obj/box/x2 - obj/box/x1
-		h: obj/box/y2 - obj/box/y1
-
-		if w < 0 [w: 200]
-		if y < 0 [y: 200]
-		rc/left: 0
-		rc/top: 0
-		rc/right:  dpi-scale w
-		rc/bottom: dpi-scale y
-		AdjustWindowRectEx rc flags no window 0
-		w: rc/right - rc/left
-		h: rc/bottom - rc/top
-
 		flags: WS_CAPTION or WS_SYSMENU or WS_MINIMIZEBOX or WS_THICKFRAME
 		wsflags: 0
 		if win10? [wsflags: wsflags or WS_EX_NOREDIRECTIONBITMAP]
+
+		w: obj/box/x2 - obj/box/x1
+		h: obj/box/y2 - obj/box/y1
+		if w < 0 [w: 200]
+		if h < 0 [h: 200]
+		rc/left: 0
+		rc/top: 0
+		rc/right:  dpi-scale w
+		rc/bottom: dpi-scale h
+		AdjustWindowRectEx rc flags no window 0
+		w: rc/right - rc/left
+		h: rc/bottom - rc/top
 
 		handle: CreateWindowEx
 			wsflags
@@ -267,10 +292,50 @@ host: context [
 			dpi-scale obj/box/y1
 			w
 			h
-			as int-ptr! parent
+			parent
 			null
 			hInstance
 			as int-ptr! obj
 		handle
+	]
+
+	show-window: func [
+		hWnd	[handle!]
+	][
+		ShowWindow hWnd SW_SHOWDEFAULT
+	]
+
+	do-events: func [
+		no-wait? [logic!]
+		return:  [logic!]
+		/local
+			msg	  [tagMSG value]
+			state [integer!]
+			msg?  [logic!]
+			saved [tagMSG]
+			run? [logic!]
+	][
+		msg?: no
+		run?: yes
+
+		unless no-wait? [exit-loop: 0]
+
+		while [run?][
+			loop 10 [
+				if 0 < PeekMessage :msg null 0 0 1 [
+					if msg/msg = 12h [run?: no]		;-- WM_QUIT
+					unless msg? [msg?: yes]
+					TranslateMessage :msg
+					DispatchMessage :msg
+					if no-wait? [return msg?]
+				]
+			]
+			io/do-events 16
+		]
+		unless no-wait? [
+			exit-loop: exit-loop - 1
+			if exit-loop > 0 [PostQuitMessage 0]
+		]
+		msg?
 	]
 ]

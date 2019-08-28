@@ -17,6 +17,7 @@ Red/System [
 #define GWL_HWNDPARENT		-8
 #define GWL_STYLE			-16
 #define GWL_EXSTYLE			-20
+#define GWLP_USERDATA		-21
 
 #define GW_OWNER			4
 
@@ -113,9 +114,11 @@ Red/System [
 #define WM_GETMINMAXINFO	0024h
 #define WM_SETFONT			0030h
 #define WM_GETFONT			0031h
+#define WM_GETOBJECT		003Dh
 #define WM_WINDOWPOSCHANGED 0047h
 #define WM_NOTIFY			004Eh
 #define WM_CONTEXTMENU		007Bh
+#define WM_NCACTIVATE		0086h
 #define WM_DISPLAYCHANGE	007Eh
 #define WM_KEYDOWN			0100h
 #define WM_KEYUP			0101h
@@ -123,6 +126,8 @@ Red/System [
 #define WM_DEADCHAR 		0103h
 #define WM_SYSKEYDOWN		0104h
 #define WM_SYSKEYUP			0105h
+#define WM_SYSCHAR			0106h
+#define WM_UNICHAR			0109h
 #define WM_COMMAND 			0111h
 #define WM_SYSCOMMAND		0112h
 #define WM_TIMER			0113h
@@ -154,6 +159,7 @@ Red/System [
 #define WM_EXITSIZEMOVE		0232h
 #define WM_IME_SETCONTEXT	0281h
 #define WM_IME_NOTIFY		0282h
+#define WM_MOUSEHOVER		02A1h
 #define WM_MOUSELEAVE		02A3h
 #define WM_DPICHANGED		02E0h
 #define WM_COPY				0301h
@@ -263,6 +269,21 @@ Red/System [
 #define WIN32_MAKE_LPARAM(low high) [high << 16 or (low and FFFFh)]
 
 #define IS_EXTENDED_KEY		01000000h
+
+tagCREATESTRUCT: alias struct! [
+	lpCreateParams	[int-ptr!]
+	hInstance		[int-ptr!]
+	hMenu			[int-ptr!]
+	hwndParent		[int-ptr!]
+	cy				[integer!]
+	cx				[integer!]
+	y				[integer!]
+	x				[integer!]
+	style			[integer!]
+	lpszName		[c-string!]
+	lpszClass		[c-string!]
+	dwExStyle		[c-string!]
+]
 
 tagWINDOWPOS: alias struct! [
 	hWnd			[handle!]
@@ -920,16 +941,16 @@ GetDpiForMonitor!: alias function! [
 		GetMessagePos: "GetMessagePos" [
 			return:		[integer!]
 		]
-		SetWindowLong: "SetWindowLongW" [
+		GetWindowLongPtr: "GetWindowLongPtrW" [
 			hWnd		[handle!]
 			nIndex		[integer!]
-			dwNewLong	[integer!]
-			return: 	[integer!]
+			return:		[int-ptr!]
 		]
-		GetWindowLong: "GetWindowLongW" [
+		SetWindowLongPtr: "SetWindowLongPtrW" [
 			hWnd		[handle!]
 			nIndex		[integer!]
-			return: 	[integer!]
+			dwNewLong	[int-ptr!]
+			return: 	[int-ptr!]
 		]
 		GetClassInfoEx: "GetClassInfoExW" [
 			hInst		[handle!]

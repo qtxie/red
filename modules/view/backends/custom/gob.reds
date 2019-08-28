@@ -31,7 +31,7 @@ area!: alias struct! [
 	x1	[coord!]
 	y1	[coord!]
 	x2	[coord!]
-	x2	[coord!]
+	y2	[coord!]
 ]
 
 gob-event-fn!: alias function! [

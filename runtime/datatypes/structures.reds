@@ -333,7 +333,7 @@ red-handle!: alias struct! [
 
 red-gob!: alias struct! [
 	header	[integer!]
-	padding	[integer!]
-	value	[int-ptr!]
+	host	[int-ptr!]								;-- host window handle
+	value	[int-ptr!]								;-- gob!
 	_pad	[integer!]
 ]

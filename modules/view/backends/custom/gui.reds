@@ -22,13 +22,6 @@ Red/System [
 #include %draw.reds
 #include %events.reds
 
-handle-counter: as handle! 0
-
-make-handle: func [return: [handle!]][
-	handle-counter: handle-counter + 1
-	handle-counter
-]
-
 get-face-obj: func [
 	hWnd	[handle!]
 	return: [red-object!]
@@ -172,7 +165,7 @@ make-font: func [
 	font [red-object!]
 	return: [handle!]
 ][
-	make-handle
+	as handle! 0
 ]
 
 get-font-handle: func [
@@ -255,7 +248,7 @@ OS-refresh-window: func [hWnd [integer!]][]
 OS-show-window: func [
 	hWnd [integer!]
 ][
-
+	host/show-window as handle! hWnd
 ]
 
 OS-make-view: func [
@@ -264,12 +257,13 @@ OS-make-view: func [
 	return: [integer!]
 	/local
 		g	[red-gob!]
+		h	[handle!]
 ][
 	g: as red-gob! face
-	host/make-window g/value
-	as-integer make-handle
+	h: host/make-window as gob! g/value as handle! parent
+	g/host: h
+	as-integer h
 ]
-
 
 unlink-sub-obj: func [
 	face  [red-object!]

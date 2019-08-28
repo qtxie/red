@@ -76,6 +76,7 @@ gob: context [
 		return:	[red-gob!]  
 	][
 		proto/header: type
+		proto/host: null
 		proto/value: as int-ptr! gui/rs-gob/create as red-block! spec
 		proto
 	]
@@ -140,6 +141,7 @@ gob: context [
 	]
 	
 	init: does [
+		probe "register gob"
 		datatype/register [
 			TYPE_GOB
 			TYPE_INTEGER
@@ -212,5 +214,6 @@ gob: context [
 			null			;update
 			null			;write
 		]
+		probe "register gob done"
 	]
 ]

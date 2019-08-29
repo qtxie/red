@@ -119,6 +119,7 @@ host: context [
 		return: [integer!]
 		/local
 			cs	[tagCREATESTRUCT]
+			rc	[RECT_STRUCT]
 			obj [gob!]
 	][
 		obj: as gob! GetWindowLongPtr hWnd 0
@@ -150,7 +151,20 @@ host: context [
 				PostQuitMessage 0
 				return 0
 			]
-			WM_DPICHANGED [0]
+			WM_DPICHANGED [
+				dpi-x: as float32! WIN32_LOWORD(wParam)			;-- new DPI X
+				dpi-y: as float32! WIN32_HIWORD(wParam)			;-- new DPI Y
+				dpi-factor: WIN32_LOWORD(wParam) * 100 / 96
+				rc: as RECT_STRUCT lParam
+				SetWindowPos 
+					hWnd
+					as handle! 0
+					rc/left rc/top
+					rc/right - rc/left rc/bottom - rc/top
+					SWP_NOZORDER or SWP_NOACTIVATE
+				;d2d-release-target target
+				return 0
+			]
 			default [0]
 		]
 		DefWindowProc hWnd msg wParam lParam

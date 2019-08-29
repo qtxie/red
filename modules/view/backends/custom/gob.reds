@@ -106,16 +106,20 @@ gob-style!: alias struct! [
 	shadow		[gob-style-shadow!]
 ]
 
-gob!: alias struct! [
+gob!: alias struct! [				;-- 64 bytes
 	flags		[integer!]			;-- attributes and states
 	box			[area! value]		;-- top-left(x1, y1), bottom-right(x2, y2)
 	parent		[gob!]				;-- parent gob
 	children	[node!]				;-- child gobs, red-vector!
 	event-fn	[gob-event-fn!]		;-- event function
 	render-fn	[gob-render-fn!]	;-- render function
+	text		[node!]				;-- red-string node
+	image		[node!]				;-- red-image node
+	draw		[node!]				;-- draw block node
 	bg-color	[integer!]			;-- background color
 	opacity		[integer!]			;-- overall opacity. Efffects all children
 	style		[gob-style!]
+	extra		[int-ptr!]
 ]
 
 rs-gob: context [

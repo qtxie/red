@@ -10,8 +10,14 @@ Red/System [
 	}
 ]
 
+d3d-device:		as this! 0
+d3d-ctx:		as this! 0
+d2d-device:		as this! 0
+d2d-ctx:		as this! 0
 d2d-factory:	as this! 0
 dwrite-factory: as this! 0
+dxgi-device:	as this! 0
+dxgi-adapter:	as this! 0
 dw-locale-name: as c-string! 0
 
 dwrite-str-cache: as node! 0
@@ -250,6 +256,67 @@ ID2D1Factory: alias struct! [
 	CreateHwndRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] hwndProperties [D2D1_HWND_RENDER_TARGET_PROPERTIES] target [int-ptr!] return: [integer!]]]
 	CreateDxgiSurfaceRenderTarget	[integer!]
 	CreateDCRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] target [int-ptr!] return: [integer!]]]
+]
+
+ID3D11Device: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	CreateBuffer					[integer!]
+	CreateTexture1D					[integer!]
+	CreateTexture2D					[integer!]
+	CreateTexture3D					[integer!]
+	CreateShaderResourceView		[integer!]
+	CreateUnorderedAccessView		[integer!]
+	CreateRenderTargetView			[integer!]
+	CreateDepthStencilView			[integer!]
+	CreateInputLayout				[integer!]
+	CreateVertexShader				[integer!]
+	CreateGeometryShader			[integer!]
+	CreateGeometryShaderWithStreamOutput [integer!]
+	CreatePixelShader				[integer!]
+	CreateHullShader				[integer!]
+	CreateDomainShader				[integer!]
+	CreateComputeShader				[integer!]
+	CreateClassLinkage				[integer!]
+	CreateBlendState				[integer!]
+	CreateDepthStencilState			[integer!]
+	CreateRasterizerState			[integer!]
+	CreateSamplerState				[integer!]
+	CreateQuery						[integer!]
+	CreatePredicate					[integer!]
+	CreateCounter					[integer!]
+	CreateDeferredContext			[integer!]
+	OpenSharedResource				[integer!]
+	CheckFormatSupport				[integer!]
+	CheckMultisampleQualityLevels	[integer!]
+	CheckCounterInfo				[integer!]
+	CheckCounter					[integer!]
+	CheckFeatureSupport				[integer!]
+	GetPrivateData					[integer!]
+	SetPrivateData					[integer!]
+	SetPrivateDataInterface			[integer!]
+	GetFeatureLevel					[integer!]
+	GetCreationFlags				[integer!]
+	GetDeviceRemovedReason			[integer!]
+	GetImmediateContext				[integer!]
+	SetExceptionMode				[integer!]
+	GetExceptionMode				[integer!]
+]
+
+DXGI_SWAP_CHAIN_DESC1: alias struct! [
+    Width			[integer!]
+    Height			[integer!]
+    Format			[integer!]
+    Stereo			[integer!]
+    SampleCount		[integer!]
+    SampleQuality	[integer!]
+    BufferUsage		[integer!]
+    BufferCount		[integer!]
+    Scaling			[integer!]
+    SwapEffect		[integer!]
+    AlphaMode		[integer!]
+    Flags			[integer!]
 ]
 
 ID2D1HwndRenderTarget: alias struct! [
@@ -718,6 +785,7 @@ DX-init: func [
 		DWriteCreateFactory [DWriteCreateFactory!]
 		GetUserDefaultLocaleName [GetUserDefaultLocaleName!]
 		d2d					[ID2D1Factory]
+		ctx					[integer!]
 ][
 	dll: LoadLibraryA "d2d1.dll"
 	if null? dll [exit]
@@ -730,8 +798,29 @@ DX-init: func [
 	dw-locale-name: as c-string! allocate 85
 	GetUserDefaultLocaleName dw-locale-name 85
 
+	ctx:	 0
 	factory: 0
 	options: 0													;-- debugLevel
+
+	hr: D3D11CreateDevice
+		null
+		1		;-- D3D_DRIVER_TYPE_HARDWARE
+		null
+		33		;-- D3D11_CREATE_DEVICE_BGRA_SUPPORT or D3D11_CREATE_DEVICE_SINGLETHREADED
+		null
+		0
+		7		;-- D3D11_SDK_VERSION
+		:factory
+		null
+		:ctx
+	assert zero? hr
+
+	d3d-device: as this! factory
+	d3d-ctx: as this! ctx
+
+	;-- create DXGI device
+	;hr: 
+	;-- create D2D Device
 	hr: D2D1CreateFactory 0 IID_ID2D1Factory :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
 	assert zero? hr
 	d2d-factory: as this! factory
@@ -792,6 +881,18 @@ d2d-release-target: func [
 	rt/Release this
 	free as byte-ptr! target
 ]
+
+create-device: func [
+	
+][
+	
+]
+
+;create-render-target: func [
+	
+;][
+	
+;]
 
 create-hwnd-render-target: func [
 	hwnd	[handle!]

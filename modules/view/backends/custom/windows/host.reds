@@ -27,7 +27,7 @@ host: context [
 	win-state:		0
 	hIMCtx:			as handle! 0
 	ime-open?:		no
-	ime-font:		as tagLOGFONT allocate 92
+	;ime-font:		as tagLOGFONT allocate 92
 
 	dpi-factor:		100
 	log-pixels-x:	0
@@ -174,7 +174,7 @@ host: context [
 			WM_CLOSE [0]
 			WM_DESTROY [0]
 			WM_DPICHANGED [0]
-			default []
+			default [0]
 		]
 		DefWindowProc hWnd msg wParam lParam
 	]
@@ -213,6 +213,7 @@ host: context [
 			ver   [red-tuple!]
 			int   [red-integer!]
 	][
+		probe "init ......."
 		process-id:		GetCurrentProcessId
 		hInstance:		GetModuleHandle 0
 
@@ -234,11 +235,15 @@ host: context [
 		ver/array1: version-info/dwMajorVersion
 			or (version-info/dwMinorVersion << 8)
 			and 0000FFFFh
-
+probe 1
 		get-dpi
+probe 2
 		DX-init
+probe 3
 		set-defaults
+probe 4
 		register-classes hInstance
+probe 5
 
 		int: as red-integer! #get system/view/platform/build
 		int/header: TYPE_INTEGER

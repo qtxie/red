@@ -141,7 +141,6 @@ gob: context [
 	]
 	
 	init: does [
-		probe "register gob"
 		datatype/register [
 			TYPE_GOB
 			TYPE_INTEGER
@@ -214,6 +213,5 @@ gob: context [
 			null			;update
 			null			;write
 		]
-		probe "register gob done"
 	]
 ]

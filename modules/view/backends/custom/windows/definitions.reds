@@ -941,12 +941,12 @@ GetDpiForMonitor!: alias function! [
 		GetMessagePos: "GetMessagePos" [
 			return:		[integer!]
 		]
-		GetWindowLongPtr: "GetWindowLongPtrW" [
+		GetWindowLongPtr: "GetWindowLongW" [
 			hWnd		[handle!]
 			nIndex		[integer!]
 			return:		[int-ptr!]
 		]
-		SetWindowLongPtr: "SetWindowLongPtrW" [
+		SetWindowLongPtr: "SetWindowLongW" [
 			hWnd		[handle!]
 			nIndex		[integer!]
 			dwNewLong	[int-ptr!]

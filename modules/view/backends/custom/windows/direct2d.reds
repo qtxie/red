@@ -27,7 +27,9 @@ dwrite-str-cache: as node! 0
 #define D2DERR_RECREATE_TARGET 8899000Ch
 #define FLT_MAX	[as float32! 3.402823466e38]
 
-IID_ID2D1Factory:		[06152247h 465A6F50h 8B114592h 07603BFDh]
+IID_IDXGIDevice1:		[77DB970Fh 48BA6276h 010728BAh 2C39B443h]
+;IID_ID2D1Factory:		[06152247h 465A6F50h 8B114592h 07603BFDh]
+IID_ID2D1Factory1:		[BB12D362h 4B9ADAEEh BA141DAAh 1FFA1C40h]
 IID_IDWriteFactory:		[B859EE5Ah 4B5BD838h DC1AE8A2h 48DB937Dh]
 
 D2D1_FACTORY_OPTIONS: alias struct! [
@@ -256,6 +258,7 @@ ID2D1Factory: alias struct! [
 	CreateHwndRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] hwndProperties [D2D1_HWND_RENDER_TARGET_PROPERTIES] target [int-ptr!] return: [integer!]]]
 	CreateDxgiSurfaceRenderTarget	[integer!]
 	CreateDCRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] target [int-ptr!] return: [integer!]]]
+	CreateDevice					[function! [this [this!] dxgiDevice [int-ptr!] d2dDevice [int-ptr!] return: [integer!]]]
 ]
 
 ID3D11Device: alias struct! [
@@ -785,6 +788,7 @@ DX-init: func [
 		DWriteCreateFactory [DWriteCreateFactory!]
 		GetUserDefaultLocaleName [GetUserDefaultLocaleName!]
 		d2d					[ID2D1Factory]
+		d3d					[ID3D11Device]
 		ctx					[integer!]
 ][
 	dll: LoadLibraryA "d2d1.dll"
@@ -818,16 +822,28 @@ DX-init: func [
 	d3d-device: as this! factory
 	d3d-ctx: as this! ctx
 
+	d3d: as ID3D11Device d3d-device/vtbl
 	;-- create DXGI device
-	;hr: 
-	;-- create D2D Device
-	hr: D2D1CreateFactory 0 IID_ID2D1Factory :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
+	hr: d3d/QueryInterface d3d-device IID_IDXGIDevice1 as interface! :factory	
+	assert zero? hr
+	dxgi-device: as this! factory
+
+	hr: D2D1CreateFactory 0 IID_ID2D1Factory1 :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
 	assert zero? hr
 	d2d-factory: as this! factory
+?? d2d-factory
 
 	;-- get system DPI
 	d2d: as ID2D1Factory d2d-factory/vtbl
 	d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
+?? dpi-x
+	dpi-factor: (as-integer dpi-x) * 100 / 96
+
+	;-- create D2D Device
+	hr: d2d/CreateDevice d2d-factory as int-ptr! dxgi-device :factory
+	d2d-device: as this! factory
+	assert zero? hr
+	?? d2d-device  
 
 	hr: DWriteCreateFactory 0 IID_IDWriteFactory :factory		;-- DWRITE_FACTORY_TYPE_SHARED: 0
 	assert zero? hr
@@ -880,12 +896,6 @@ d2d-release-target: func [
 	rt: as ID2D1HwndRenderTarget this/vtbl
 	rt/Release this
 	free as byte-ptr! target
-]
-
-create-device: func [
-	
-][
-	
 ]
 
 ;create-render-target: func [

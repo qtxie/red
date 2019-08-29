@@ -30,8 +30,8 @@ host: context [
 	;ime-font:		as tagLOGFONT allocate 92
 
 	dpi-factor:		100
-	log-pixels-x:	0
-	log-pixels-y:	0
+	dpi-x:			as float32! 0.0
+	dpi-y:			as float32! 0.0
 	screen-size-x:	0
 	screen-size-y:	0
 	default-font-name: as c-string! 0
@@ -61,33 +61,6 @@ host: context [
 		return: [integer!]
 	][
 		num * 100 / dpi-factor
-	]
-
-	get-dpi: func [
-		/local
-			dll		[handle!]
-			fun1	[GetDpiForMonitor!]
-			monitor [handle!]
-			pt		[tagPOINT value]
-			dpi?	[logic!]
-	][
-		dpi?: no
-		if win8+? [
-			dll: LoadLibraryA "shcore.dll"
-			if dll <> null [
-				pt/x: 1 pt/y: 1
-				monitor: MonitorFromPoint pt 2
-				fun1: as GetDpiForMonitor! GetProcAddress dll "GetDpiForMonitor"
-				fun1 monitor 0 :log-pixels-x :log-pixels-y
-				FreeLibrary dll
-				dpi?: yes
-			]
-		]
-		unless dpi? [
-			log-pixels-x: GetDeviceCaps hScreen 88			;-- LOGPIXELSX
-			log-pixels-y: GetDeviceCaps hScreen 90			;-- LOGPIXELSY
-		]
-		dpi-factor: log-pixels-x * 100 / 96
 	]
 
 	set-defaults: func [
@@ -128,7 +101,7 @@ host: context [
 			
 			integer/make-at 
 				#get system/view/fonts/size
-				0 - (font/lfHeight * 72 / log-pixels-y)
+				0 - (font/lfHeight * 72 / as-integer dpi-x)
 				
 			default-font: CreateFontIndirect font
 
@@ -149,6 +122,7 @@ host: context [
 			obj [gob!]
 	][
 		obj: as gob! GetWindowLongPtr hWnd 0
+
 		switch msg [
 			WM_NCCREATE [
 				cs: as tagCREATESTRUCT lParam
@@ -172,7 +146,10 @@ host: context [
 			WM_SETCURSOR [0]
 			WM_GETOBJECT [0]		;-- for accessibility support
 			WM_CLOSE [0]
-			WM_DESTROY [0]
+			WM_DESTROY [
+				PostQuitMessage 0
+				return 0
+			]
 			WM_DPICHANGED [0]
 			default [0]
 		]
@@ -235,8 +212,6 @@ host: context [
 		ver/array1: version-info/dwMajorVersion
 			or (version-info/dwMinorVersion << 8)
 			and 0000FFFFh
-probe 1
-		get-dpi
 probe 2
 		DX-init
 probe 3

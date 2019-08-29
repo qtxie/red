@@ -717,6 +717,7 @@ DX-init: func [
 		D2D1CreateFactory	[D2D1CreateFactory!]
 		DWriteCreateFactory [DWriteCreateFactory!]
 		GetUserDefaultLocaleName [GetUserDefaultLocaleName!]
+		d2d					[ID2D1Factory]
 ][
 	dll: LoadLibraryA "d2d1.dll"
 	if null? dll [exit]
@@ -734,6 +735,11 @@ DX-init: func [
 	hr: D2D1CreateFactory 0 IID_ID2D1Factory :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
 	assert zero? hr
 	d2d-factory: as this! factory
+
+	;-- get system DPI
+	d2d: as ID2D1Factory d2d-factory/vtbl
+	d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
+
 	hr: DWriteCreateFactory 0 IID_IDWriteFactory :factory		;-- DWRITE_FACTORY_TYPE_SHARED: 0
 	assert zero? hr
 	dwrite-factory: as this! factory
@@ -815,8 +821,8 @@ create-hwnd-render-target: func [
 	hprops: as D2D1_HWND_RENDER_TARGET_PROPERTIES :wnd
 
 	zero-memory as byte-ptr! :props size? D2D1_RENDER_TARGET_PROPERTIES
-	props/dpiX: as float32! log-pixels-x
-	props/dpiY: as float32! log-pixels-y
+	props/dpiX: dpi-x
+	props/dpiY: dpi-y
 
 	target: 0
 	factory: as ID2D1Factory d2d-factory/vtbl
@@ -858,8 +864,8 @@ create-dc-render-target: func [
 	props/type: 0									;-- D2D1_RENDER_TARGET_TYPE_DEFAULT
 	props/format: 87								;-- DXGI_FORMAT_B8G8R8A8_UNORM
 	props/alphaMode: 1								;-- D2D1_ALPHA_MODE_PREMULTIPLIED
-	props/dpiX: as float32! log-pixels-x
-	props/dpiY: as float32! log-pixels-y
+	props/dpiX: dpi-x
+	props/dpiY: dpi-y
 	props/usage: 2									;-- D2D1_RENDER_TARGET_USAGE_GDI_COMPATIBLE
 	props/minLevel: 0								;-- D2D1_FEATURE_LEVEL_DEFAULT
 

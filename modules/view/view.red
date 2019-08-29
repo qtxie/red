@@ -13,10 +13,6 @@ Red [
 #system [
 	#include %../../runtime/datatypes/event.reds
 	event/init
-	#if GUI-engine = 'custom [
-		#include %../../runtime/datatypes/gob.reds
-		gob/init
-	]
 ]
 
 #include %utils.red
@@ -689,11 +685,11 @@ do-events: function [
 	return: [logic! word!] "Returned value from last event"
 	/local result
 ][
-	if win: last head system/view/screens/1/pane [
-		unless win/state/4 [win/state/4: not no-wait]		;-- mark the window from which the event loop starts
+	;if win: last head system/view/screens/1/pane [
+	;	unless win/state/4 [win/state/4: not no-wait]		;-- mark the window from which the event loop starts
 		set/any 'result system/view/platform/do-event-loop no-wait
 		:result
-	]
+	;]
 ]
 
 do-safe: func ["Internal Use Only" code [block!] /local result][
@@ -728,13 +724,13 @@ show: function [
 		]
 		exit
 	]
-	if debug-info? face [print ["show:" face/type " with?:" with]]
+	;if debug-info? face [print ["show:" face/type " with?:" with]]
 probe "show"
 	if gob? face [
 		probe "gob face"
-		obj: either face/state [face/host][
-			system/view/platform/make-view face face/parent
-		]
+		obj: face/state
+?? obj
+		unless obj [obj: system/view/platform/make-view face face/parent]
 		system/view/platform/show-window obj
 		exit
 	]
@@ -850,12 +846,12 @@ view: function [
 
 	if block? spec [spec: either tight [layout/tight spec][layout spec]]
 probe spec/type
-	if spec/type <> 'window [cause-error 'script 'not-window []]
-	if options [set spec make object! opts]
-	if flags [spec/flags: either spec/flags [unique union to-block spec/flags to-block flgs][flgs]]
+	;if spec/type <> 'window [cause-error 'script 'not-window []]
+	;if options [set spec make object! opts]
+	;if flags [spec/flags: either spec/flags [unique union to-block spec/flags to-block flgs][flgs]]
 	
-	unless spec/text   [spec/text: "Red: untitled"]
-	unless spec/offset [center-face spec]
+	;unless spec/text   [spec/text: "Red: untitled"]
+	;unless spec/offset [center-face spec]
 	show spec
 	
 	either no-wait [

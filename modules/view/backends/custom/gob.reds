@@ -20,6 +20,19 @@ Red/System [
 	GOB_PART_INTERNAL:	16
 ]
 
+#enum gob-type! [
+	GOB_BASE
+	GOB_WINDOW
+	GOB_BUTTON
+	GOB_LABEL
+	GOB_FIELD
+	GOB_TEXTAREA
+]
+
+#define GOB_FLAG_HOSTED	00010000h
+
+#define GOB_TYPE(flag)	[flag and FFh]
+
 #define coord!	integer!
 
 point!: alias struct! [
@@ -109,7 +122,36 @@ rs-gob: context [
 	create: func [
 		spec	[red-block!]
 		return: [gob!]
+		/local
+			g	[gob!]
 	][
-		as gob! allocate size? gob!
+		g: as gob! alloc0 size? gob!
+		g/flags: GOB_WINDOW
+		g
+	]
+
+	set-flag?: func [
+		gob		[gob!]
+		flag	[integer!]
+		return: [logic!]
+	][
+		gob/flags and flag <> 0
+	]
+
+	get-type: func [
+		gob		[gob!]
+		return: [integer!]
+	][
+		switch GOB_TYPE(gob/flags) [
+			0	[gui/base]
+			1	[gui/window]
+		]
+	]
+
+	get-parent: func [
+		gob		[gob!]
+		return:	[gob!]
+	][
+		null
 	]
 ]

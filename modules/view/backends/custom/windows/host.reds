@@ -272,19 +272,20 @@ probe 5
 			h		[integer!]
 			handle	[handle!]
 	][
+probe "make window"
 		flags: WS_CAPTION or WS_SYSMENU or WS_MINIMIZEBOX or WS_THICKFRAME
 		wsflags: 0
 		if win10? [wsflags: wsflags or WS_EX_NOREDIRECTIONBITMAP]
 
 		w: obj/box/x2 - obj/box/x1
 		h: obj/box/y2 - obj/box/y1
-		if w < 0 [w: 200]
-		if h < 0 [h: 200]
+		if w <= 0 [w: 200]
+		if h <= 0 [h: 200]
 		rc/left: 0
 		rc/top: 0
 		rc/right:  dpi-scale w
 		rc/bottom: dpi-scale h
-		AdjustWindowRectEx rc flags no window 0
+		AdjustWindowRectEx rc flags no 0
 		w: rc/right - rc/left
 		h: rc/bottom - rc/top
 
@@ -301,12 +302,16 @@ probe 5
 			null
 			hInstance
 			as int-ptr! obj
+
+		obj/flags: obj/flags and FFFFFF00h or GOB_WINDOW or GOB_FLAG_HOSTED
+?? handle
 		handle
 	]
 
 	show-window: func [
 		hWnd	[handle!]
 	][
+		?? hWnd
 		ShowWindow hWnd SW_SHOWDEFAULT
 	]
 

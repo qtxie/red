@@ -523,7 +523,12 @@ system/view/platform: context [
 				]
 				test [#include %test/gui.reds]
 				GTK [#include %GTK/gui.reds]
-				custom [#include %custom/gui.reds]
+				custom [
+					#include %custom/gob.reds
+					#include %../../../runtime/datatypes/gob.reds
+					#include %custom/gui.reds
+					gob/init
+				]
 			]
 		]
 	]

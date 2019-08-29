@@ -12,7 +12,16 @@ Red/System [
 
 gob: context [
 	verbose: 0
-	
+
+	sym-state:	-1
+	sym-parent:	-1
+	sym-pane:	-1
+	sym-text:	-1
+	sym-color:	-1
+	sym-data:	-1
+	sym-style:	-1
+	sym-font:	-1
+
 	box: func [
 		value	[int-ptr!]
 		return:	[red-gob!]
@@ -65,6 +74,94 @@ gob: context [
 		hndl/header: TYPE_GOB
 		hndl/value:  value
 		hndl
+	]
+
+	get-value: func [
+		gob			[red-gob!]						;-- implicit type casting
+		element		[red-value!]
+		path		[red-value!]
+		return:		[red-value!]
+		/local
+			g		[gob!]
+			w		[red-word!]
+			int		[red-integer!]
+			idx		[integer!]
+			sym		[integer!]
+			error?	[logic!]
+	][
+		error?: no
+		g: as gob! gob/value
+
+		switch TYPE_OF(element) [
+			TYPE_INTEGER [
+				int: as red-integer! element
+				idx: int/value
+			]
+			TYPE_WORD [
+				w: as red-word! element
+				sym: symbol/resolve w/symbol
+				case [
+					sym = gui/facets/type [
+						word/make-at gui/rs-gob/get-type g element
+					]
+					sym = sym-state	 [
+						either gui/rs-gob/set-flag? g GOB_FLAG_HOSTED [
+							handle/make-at element as-integer gob/host
+						][element/header: TYPE_NONE]
+					]
+					sym = sym-parent [
+						handle/make-at element as-integer gui/rs-gob/get-parent g
+					]
+					sym = sym-text [0]
+					sym = sym-color [0]
+					sym = sym-pane [0]
+					true [error?: yes]
+				]
+			]
+			default [error?: yes]
+		]
+		if error? [fire [TO_ERROR(script invalid-path) path element]]
+		element
+	]
+
+	set-value: func [
+		gob			[red-gob!]						;-- implicit type casting
+		element		[red-value!]
+		value		[red-value!]
+		path		[red-value!]
+		return:		[red-value!]
+		/local
+			g		[gob!]
+			word	[red-word!]
+			int		[red-integer!]
+			idx		[integer!]
+			sym		[integer!]
+			error?	[logic!]
+	][
+		error?: no
+		g: as gob! gob/value
+
+		switch TYPE_OF(element) [
+			TYPE_INTEGER [
+				int: as red-integer! element
+				idx: int/value
+			]
+			TYPE_WORD [
+				word: as red-word! element
+				sym: symbol/resolve word/symbol
+				case [
+					sym = sym-state	 [0]
+					sym = sym-parent [0]
+					sym = sym-text [0]
+					sym = sym-color [0]
+					sym = sym-pane [0]
+					true [error?: yes]
+				]
+			]
+			default [error?: yes]
+		]
+		if error? [fire [TO_ERROR(script invalid-path) path element]]
+		value
 	]
 
 	;-- Actions --
@@ -128,7 +225,7 @@ gob: context [
 	compare: func [
 		value1	[red-gob!]							;-- first operand
 		value2	[red-gob!]							;-- second operand
-		op		[integer!]								;-- type of comparison
+		op		[integer!]							;-- type of comparison
 		return:	[integer!]
 		/local
 			left  [integer!]
@@ -139,7 +236,22 @@ gob: context [
 		if TYPE_OF(value2) <> TYPE_GOB [return 1]
 		SIGN_COMPARE_RESULT(value1/value value2/value)
 	]
-	
+
+	eval-path: func [
+		gob			[red-gob!]						;-- implicit type casting
+		element		[red-value!]
+		value		[red-value!]
+		path		[red-value!]
+		case?		[logic!]
+		return:		[red-value!]
+	][
+		either value <> null [
+			set-value gob element value path
+		][
+			get-value gob element path
+		]
+	]
+
 	init: does [
 		datatype/register [
 			TYPE_GOB
@@ -152,7 +264,7 @@ gob: context [
 			null			;to
 			:form
 			:mold
-			null			;eval-path
+			:eval-path
 			null			;set-path
 			:compare
 			;-- Scalar actions --
@@ -213,5 +325,14 @@ gob: context [
 			null			;update
 			null			;write
 		]
+
+		sym-state:	symbol/make "state"
+		sym-parent:	symbol/make "parent"
+		sym-pane:	symbol/make "pane"
+		sym-text:	symbol/make "text"
+		sym-color:	symbol/make "color"
+		sym-data:	symbol/make "data"
+		sym-style:	symbol/make "style"
+		sym-font:	symbol/make "font"
 	]
 ]

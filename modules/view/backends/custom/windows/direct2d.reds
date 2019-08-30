@@ -18,6 +18,7 @@ d2d-factory:	as this! 0
 dwrite-factory: as this! 0
 dxgi-device:	as this! 0
 dxgi-adapter:	as this! 0
+dxgi-factory:	as this! 0
 dw-locale-name: as c-string! 0
 
 dwrite-str-cache: as node! 0
@@ -31,6 +32,7 @@ IID_IDXGIDevice1:		[77DB970Fh 48BA6276h 010728BAh 2C39B443h]
 ;IID_ID2D1Factory:		[06152247h 465A6F50h 8B114592h 07603BFDh]
 IID_ID2D1Factory1:		[BB12D362h 4B9ADAEEh BA141DAAh 1FFA1C40h]
 IID_IDWriteFactory:		[B859EE5Ah 4B5BD838h DC1AE8A2h 48DB937Dh]
+IID_IDXGIFactory2:		[50C83A1Ch 4C48E072h 3036B087h D0A636FAh]
 
 D2D1_FACTORY_OPTIONS: alias struct! [
 	debugLevel	[integer!]
@@ -108,6 +110,21 @@ D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES: alias struct! [
 	offset.y			[float32!]
 	radius.x			[float32!]
 	radius.y			[float32!]
+]
+
+DXGI_SWAP_CHAIN_DESC1: alias struct! [
+    Width			[integer!]
+    Height			[integer!]
+    Format			[integer!]
+    Stereo			[integer!]
+    SampleCount		[integer!]
+    SampleQuality	[integer!]
+    BufferUsage		[integer!]
+    BufferCount		[integer!]
+    Scaling			[integer!]
+    SwapEffect		[integer!]
+    AlphaMode		[integer!]
+    Flags			[integer!]
 ]
 
 CreateSolidColorBrush*: alias function! [
@@ -196,6 +213,27 @@ Resize*: alias function! [
 	return:		[integer!]
 ]
 
+CreateSwapChainForHwnd*: alias function! [
+	this				[this!]
+	pDevice				[this!]
+	hwnd				[handle!]
+	desc				[DXGI_SWAP_CHAIN_DESC1]
+	pFullscreenDesc		[int-ptr!]
+	pRestrictToOutput	[int-ptr!]
+	ppSwapChain			[int-ptr!]
+	return:				[integer!]
+]
+
+CreateSwapChainForComposition*: alias function! [
+	this				[this!]
+	pDevice				[this!]
+	hwnd				[handle!]
+	desc				[DXGI_SWAP_CHAIN_DESC1]
+	pRestrictToOutput	[int-ptr!]
+	ppSwapChain			[int-ptr!]
+	return:				[integer!]
+]
+
 ID2D1SolidColorBrush: alias struct! [
 	QueryInterface		[QueryInterface!]
 	AddRef				[AddRef!]
@@ -240,6 +278,68 @@ ID2D1GradientStopCollection: alias struct! [
 	GetExtendMode					[integer!]
 ]
 
+IDXGIDevice1: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	SetPrivateData					[integer!]
+	SetPrivateDataInterface			[integer!]
+	GetPrivateData					[integer!]
+	GetParent						[function! [this [this!] riid [int-ptr!] parent [int-ptr!] return: [integer!]]]
+	GetAdapter						[function! [this [this!] adapter [int-ptr!] return: [integer!]]]
+	CreateSurface					[integer!]
+	QueryResourceResidency			[integer!]
+	SetGPUThreadPriority			[integer!]
+	GetGPUThreadPriority			[integer!]
+	SetMaximumFrameLatency			[integer!]
+	GetMaximumFrameLatency			[integer!]
+]
+
+IDXGIAdapter: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	SetPrivateData					[integer!]
+	SetPrivateDataInterface			[integer!]
+	GetPrivateData					[integer!]
+	GetParent						[function! [this [this!] riid [int-ptr!] parent [int-ptr!] return: [integer!]]]
+	EnumOutputs						[integer!]
+	GetDesc							[integer!]
+	CheckInterfaceSupport			[integer!]
+]
+
+IDXGISwapChain1: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	SetPrivateData					[integer!]
+	SetPrivateDataInterface			[integer!]
+	GetPrivateData					[integer!]
+	GetParent						[function! [this [this!] riid [int-ptr!] parent [int-ptr!] return: [integer!]]]
+	GetDevice						[function! [this [this!] riid [int-ptr!] device [int-ptr!] return: [integer!]]]
+	Present							[integer!]
+	GetBuffer						[integer!]
+	SetFullscreenState				[integer!]
+	GetFullscreenState				[integer!]
+	GetDesc							[integer!]
+	ResizeBuffers					[integer!]
+	ResizeTarget					[integer!]
+	GetContainingOutput				[integer!]
+	GetFrameStatistics				[integer!]
+	GetLastPresentCount				[integer!]
+	GetDesc1						[integer!]
+	GetFullscreenDesc				[integer!]
+	GetHwnd							[integer!]
+	GetCoreWindow					[integer!]
+	Present1						[integer!]
+	IsTemporaryMonoSupported		[integer!]
+	GetRestrictToOutput				[integer!]
+	SetBackgroundColor				[integer!]
+	GetBackgroundColor				[integer!]
+	SetRotation						[integer!]
+	GetRotation						[integer!]
+]
+
 ID2D1Factory: alias struct! [
 	QueryInterface					[QueryInterface!]
 	AddRef							[AddRef!]
@@ -259,6 +359,46 @@ ID2D1Factory: alias struct! [
 	CreateDxgiSurfaceRenderTarget	[integer!]
 	CreateDCRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] target [int-ptr!] return: [integer!]]]
 	CreateDevice					[function! [this [this!] dxgiDevice [int-ptr!] d2dDevice [int-ptr!] return: [integer!]]]
+]
+
+IDXGIFactory2: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	SetPrivateData					[integer!]
+	SetPrivateDataInterface			[integer!]
+	GetPrivateData					[integer!]
+	GetParent						[function! [this [this!] riid [int-ptr!] parent [int-ptr!] return: [integer!]]]
+	EnumAdapters					[function! [this [this!] n [integer!] adapter [int-ptr!] return: [integer!]]]
+	MakeWindowAssociation			[integer!]
+	GetWindowAssociation			[integer!]
+	CreateSwapChain					[integer!]
+	CreateSoftwareAdapter			[integer!]
+	EnumAdapters1					[integer!]
+	IsWindowedStereoEnabled			[integer!]
+	CreateSwapChainForHwnd			[CreateSwapChainForHwnd*]
+	CreateSwapChainForCoreWindow	[integer!]
+	GetSharedResourceAdapterLuid	[integer!]
+	RegisterStereoStatusWindow		[integer!]
+	RegisterStereoStatusEvent		[integer!]
+	UnregisterStereoStatus			[integer!]
+	RegisterOcclusionStatusWindow	[integer!]
+	RegisterOcclusionStatusEvent	[integer!]
+	UnregisterOcclusionStatus		[integer!]
+	CreateSwapChainForComposition	[CreateSwapChainForComposition*]
+]
+
+ID2D1Device: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	GetFactory						[integer!]
+	CreateDeviceContext				[function! [this [this!] options [integer!] ctx [int-ptr!] return: [integer!]]]
+	CreatePrintControl				[integer!]
+	SetMaximumTextureMemory			[integer!]
+	GetMaximumTextureMemory			[integer!]
+	ClearResources					[integer!]
+	CreatePrintControl2				[integer!]
 ]
 
 ID3D11Device: alias struct! [
@@ -307,19 +447,99 @@ ID3D11Device: alias struct! [
 	GetExceptionMode				[integer!]
 ]
 
-DXGI_SWAP_CHAIN_DESC1: alias struct! [
-    Width			[integer!]
-    Height			[integer!]
-    Format			[integer!]
-    Stereo			[integer!]
-    SampleCount		[integer!]
-    SampleQuality	[integer!]
-    BufferUsage		[integer!]
-    BufferCount		[integer!]
-    Scaling			[integer!]
-    SwapEffect		[integer!]
-    AlphaMode		[integer!]
-    Flags			[integer!]
+ID2D1DeviceContext: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	GetFactory						[integer!]
+	CreateBitmap					[integer!]
+	CreateBitmapFromWicBitmap		[integer!]
+	CreateSharedBitmap				[integer!]
+	CreateBitmapBrush				[integer!]
+	CreateSolidColorBrush			[CreateSolidColorBrush*]
+	CreateGradientStopCollection	[CreateGradientStopCollection*]
+	CreateLinearGradientBrush		[integer!]
+	CreateRadialGradientBrush		[CreateRadialGradientBrush*]
+	CreateCompatibleRenderTarget	[integer!]
+	CreateLayer						[integer!]
+	CreateMesh						[integer!]
+	DrawLine						[DrawLine*]
+	DrawRectangle					[DrawRectangle*]
+	FillRectangle					[FillRectangle*]
+	DrawRoundedRectangle			[integer!]
+	FillRoundedRectangle			[integer!]
+	DrawEllipse						[DrawEllipse*]
+	FillEllipse						[FillEllipse*]
+	DrawGeometry					[integer!]
+	FillGeometry					[integer!]
+	FillMesh						[integer!]
+	FillOpacityMask					[integer!]
+	DrawBitmap						[integer!]
+	DrawText						[integer!]
+	DrawTextLayout					[DrawTextLayout*]
+	DrawGlyphRun					[integer!]
+	SetTransform					[SetTransform*]
+	GetTransform					[integer!]
+	SetAntialiasMode				[integer!]
+	GetAntialiasMode				[integer!]
+	SetTextAntialiasMode			[function! [this [this!] mode [integer!]]]
+	GetTextAntialiasMode			[integer!]
+	SetTextRenderingParams			[integer!]
+	GetTextRenderingParams			[integer!]
+	SetTags							[integer!]
+	GetTags							[integer!]
+	PushLayer						[integer!]
+	PopLayer						[integer!]
+	Flush							[integer!]
+	SaveDrawingState				[integer!]
+	RestoreDrawingState				[integer!]
+	PushAxisAlignedClip				[integer!]
+	PopAxisAlignedClip				[integer!]
+	Clear							[function! [this [this!] color [D3DCOLORVALUE]]]
+	BeginDraw						[function! [this [this!]]]
+	EndDraw							[function! [this [this!] tag1 [int-ptr!] tag2 [int-ptr!] return: [integer!]]]
+	GetPixelFormat					[integer!]
+	SetDpi							[integer!]
+	GetDpi							[integer!]
+	GetSize							[integer!]
+	GetPixelSize					[integer!]
+	GetMaximumBitmapSize			[integer!]
+	IsSupported						[integer!]
+    CtxCreateBitmap					[integer!]
+    CtxCreateBitmapFromWicBitmap	[integer!]
+    CreateColorContext						[integer!]
+    CreateColorContextFromFilename			[integer!]
+    CreateColorContextFromWicColorContext	[integer!]
+    CreateBitmapFromDxgiSurface				[integer!]
+    CreateEffect							[integer!]
+    CtxCreateGradientStopCollection	[integer!]
+    CreateImageBrush				[integer!]
+    CtxCreateBitmapBrush			[integer!]
+    CreateCommandList				[integer!]
+    IsDxgiFormatSupported			[integer!]
+    IsBufferPrecisionSupported		[integer!]
+    GetImageLocalBounds				[integer!]
+    GetImageWorldBounds				[integer!]
+    GetGlyphRunWorldBounds			[integer!]
+    GetDevice						[integer!]
+    SetTarget						[integer!]
+    GetTarget						[integer!]
+    SetRenderingControls			[integer!]
+    GetRenderingControls			[integer!]
+    SetPrimitiveBlend				[integer!]
+    GetPrimitiveBlend				[integer!]
+    SetUnitMode						[integer!]
+    GetUnitMode						[integer!]
+    CtxDrawGlyphRun					[integer!]
+    DrawImage						[integer!]
+    DrawGdiMetafile					[integer!]
+    CtxDrawBitmap					[integer!]
+    CtxPushLayer					[integer!]
+    InvalidateEffectInputRectangle	[integer!]
+    GetEffectInvalidRectangleCount	[integer!]
+    GetEffectInvalidRectangles		[integer!]
+    GetEffectRequiredInputRectangles [integer!]
+    CtxFillOpacityMask				[integer!]
 ]
 
 ID2D1HwndRenderTarget: alias struct! [
@@ -789,7 +1009,11 @@ DX-init: func [
 		GetUserDefaultLocaleName [GetUserDefaultLocaleName!]
 		d2d					[ID2D1Factory]
 		d3d					[ID3D11Device]
+		d2d-dev				[ID2D1Device]
+		dxgi				[IDXGIDevice1]
+		adapter				[IDXGIAdapter]
 		ctx					[integer!]
+		unk					[IUnknown]
 ][
 	dll: LoadLibraryA "d2d1.dll"
 	if null? dll [exit]
@@ -843,13 +1067,36 @@ DX-init: func [
 	hr: d2d/CreateDevice d2d-factory as int-ptr! dxgi-device :factory
 	d2d-device: as this! factory
 	assert zero? hr
-	?? d2d-device  
+
+?? d2d-device
+
+	;-- create D2D context
+	d2d-dev: as ID2D1Device d2d-device/vtbl
+	hr: d2d-dev/CreateDeviceContext d2d-device 0 :factory
+	assert zero? hr
+	d2d-ctx: as this! factory
+
+	;-- get dxgi adapter
+	dxgi: as IDXGIDevice1 dxgi-device/vtbl
+	hr: dxgi/GetAdapter dxgi-device :factory
+	assert zero? hr
+
+	;-- get Dxgi factory
+	dxgi-adapter: as this! factory
+	adapter: as IDXGIAdapter dxgi-adapter/vtbl
+	hr: adapter/GetParent dxgi-adapter IID_IDXGIFactory2 :factory
+	assert zero? hr
+	dxgi-factory: as this! factory
 
 	hr: DWriteCreateFactory 0 IID_IDWriteFactory :factory		;-- DWRITE_FACTORY_TYPE_SHARED: 0
 	assert zero? hr
 	dwrite-factory: as this! factory
 	str: string/rs-make-at ALLOC_TAIL(root) 1024
 	dwrite-str-cache: str/node
+
+	COM_SAFE_RELEASE(unk dxgi-device)
+	COM_SAFE_RELEASE(unk d2d-device)
+	COM_SAFE_RELEASE(unk dxgi-adapter)
 ]
 
 DX-cleanup: func [/local unk [IUnknown]][
@@ -897,12 +1144,6 @@ d2d-release-target: func [
 	rt/Release this
 	free as byte-ptr! target
 ]
-
-;create-render-target: func [
-	
-;][
-	
-;]
 
 create-hwnd-render-target: func [
 	hwnd	[handle!]

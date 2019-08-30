@@ -77,3 +77,20 @@ time-meter: context [
 		(as float32! d) * (as float32! 1e3) / (as float32! freq)
 	]
 ]
+
+zero-memory: func [
+	dest	[byte-ptr!]
+	size	[integer!]
+][
+	loop size [dest/value: #"^@" dest: dest + 1]
+]
+
+utf16-length?: func [
+	s 		[c-string!]
+	return: [integer!]
+	/local base
+][
+	base: s
+	while [any [s/1 <> null-byte s/2 <> null-byte]][s: s + 2]
+	(as-integer s - base) >>> 1							;-- do not count the terminal zero
+]

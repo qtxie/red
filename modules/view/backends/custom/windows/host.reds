@@ -39,6 +39,12 @@ host: context [
 	rc-cache:		declare RECT_STRUCT
 	;kb-state: 		allocate 256							;-- holds keyboard state for keys conversion
 
+	render-target!: alias struct! [
+		bitmap		[this!]
+		swapchain	[this!]
+		dcompbuf	[this!]
+	]
+
 	#include %direct2d.reds
 
 	get-para-flags: func [
@@ -61,6 +67,38 @@ host: context [
 		return: [integer!]
 	][
 		num * 100 / dpi-factor
+	]
+
+	create-render-target: func [
+		hWnd		[handle!]
+		return:		[render-target!]
+		/local
+			rt		[render-target!]
+			rc		[RECT_STRUCT]
+			desc	[DXGI_SWAP_CHAIN_DESC1 value]
+			dxgi	[IDXGIFactory2]
+			sc		[IDXGISwapChain1]
+	][
+		GetClientRect hWnd :rc
+		zero-memory as byte-ptr! size? DXGI_SWAP_CHAIN_DESC1
+
+		desc/Width: rc/right - rc/left
+		desc/Height: rc/bottom - rc/top
+		desc/Format: 28			;-- DXGI_FORMAT_R8G8B8A8_UNORM
+		desc/SampleCount: 1
+		desc/BufferUsage: 20h	;-- DXGI_USAGE_RENDER_TARGET_OUTPUT
+		desc/BufferCount: 2
+		desc/Scaling: 1			;-- DXGI_SCALING_NONE
+		desc/SwapEffect: 3		;-- DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
+
+		dxgi: as IDXGIFactory2 dxgi-factory/vtbl
+		either win10? [			;-- use direct composition
+			desc/AlphaMode: 1	;-- DXGI_ALPHA_MODE_PREMULTIPLIED
+			dxgi/CreateSwapChainForComposition dxgi-factory d3d-device desc null 
+		][
+			
+		]
+		rt: as render-target! allocate size? render-target!
 	]
 
 	set-defaults: func [

@@ -28,6 +28,7 @@ dwrite-str-cache: as node! 0
 #define D2DERR_RECREATE_TARGET 8899000Ch
 #define FLT_MAX	[as float32! 3.402823466e38]
 
+IID_IDXGISurface:		[CAFCB56Ch 48896AC3h 239E47BFh EC60D2BBh]
 IID_IDXGIDevice1:		[77DB970Fh 48BA6276h 010728BAh 2C39B443h]
 ;IID_ID2D1Factory:		[06152247h 465A6F50h 8B114592h 07603BFDh]
 IID_ID2D1Factory1:		[BB12D362h 4B9ADAEEh BA141DAAh 1FFA1C40h]
@@ -125,6 +126,22 @@ DXGI_SWAP_CHAIN_DESC1: alias struct! [
     SwapEffect		[integer!]
     AlphaMode		[integer!]
     Flags			[integer!]
+]
+
+D2D1_BITMAP_PROPERTIES1: alias struct! [
+	format			[integer!]
+	alphaMode		[integer!]
+	dpiX			[float32!]
+	dpiY			[float32!]
+	options			[integer!]
+	colorContext	[int-ptr!]
+]
+
+DXGI_PRESENT_PARAMETERS: alias struct! [
+	DirtyRectsCount	[integer!]
+	pDirtyRects		[RECT_STRUCT]
+	pScrollRect		[RECT_STRUCT]
+	pScrollOffset	[tagPOINT]
 ]
 
 CreateSolidColorBrush*: alias function! [
@@ -227,7 +244,6 @@ CreateSwapChainForHwnd*: alias function! [
 CreateSwapChainForComposition*: alias function! [
 	this				[this!]
 	pDevice				[this!]
-	hwnd				[handle!]
 	desc				[DXGI_SWAP_CHAIN_DESC1]
 	pRestrictToOutput	[int-ptr!]
 	ppSwapChain			[int-ptr!]
@@ -318,7 +334,7 @@ IDXGISwapChain1: alias struct! [
 	GetParent						[function! [this [this!] riid [int-ptr!] parent [int-ptr!] return: [integer!]]]
 	GetDevice						[function! [this [this!] riid [int-ptr!] device [int-ptr!] return: [integer!]]]
 	Present							[integer!]
-	GetBuffer						[integer!]
+	GetBuffer						[function! [this [this!] idx [integer!] riid [int-ptr!] buffer [int-ptr!] return: [integer!]]]
 	SetFullscreenState				[integer!]
 	GetFullscreenState				[integer!]
 	GetDesc							[integer!]
@@ -331,7 +347,7 @@ IDXGISwapChain1: alias struct! [
 	GetFullscreenDesc				[integer!]
 	GetHwnd							[integer!]
 	GetCoreWindow					[integer!]
-	Present1						[integer!]
+	Present1						[function! [this [this!] SyncInterval [integer!] PresentFlags [integer!] pPresentParameters [DXGI_PRESENT_PARAMETERS] return: [integer!]]]
 	IsTemporaryMonoSupported		[integer!]
 	GetRestrictToOutput				[integer!]
 	SetBackgroundColor				[integer!]
@@ -510,8 +526,8 @@ ID2D1DeviceContext: alias struct! [
     CreateColorContext						[integer!]
     CreateColorContextFromFilename			[integer!]
     CreateColorContextFromWicColorContext	[integer!]
-    CreateBitmapFromDxgiSurface				[integer!]
-    CreateEffect							[integer!]
+    CreateBitmapFromDxgiSurface		[function! [this [this!] surface [int-ptr!] props [D2D1_BITMAP_PROPERTIES1] bitmap [int-ptr!] return: [integer!]]]
+    CreateEffect					[integer!]
     CtxCreateGradientStopCollection	[integer!]
     CreateImageBrush				[integer!]
     CtxCreateBitmapBrush			[integer!]

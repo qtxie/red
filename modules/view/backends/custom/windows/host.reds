@@ -74,10 +74,18 @@ host: context [
 		return:		[render-target!]
 		/local
 			rt		[render-target!]
-			rc		[RECT_STRUCT]
+			rc		[RECT_STRUCT value]
 			desc	[DXGI_SWAP_CHAIN_DESC1 value]
 			dxgi	[IDXGIFactory2]
+			int		[integer!]
 			sc		[IDXGISwapChain1]
+			this	[this!]
+			hr		[integer!]
+			buf		[integer!]
+			props	[D2D1_BITMAP_PROPERTIES1 value]
+			bmp		[integer!]
+			d2d		[ID2D1DeviceContext]
+			unk		[IUnknown]
 	][
 		GetClientRect hWnd :rc
 		zero-memory as byte-ptr! size? DXGI_SWAP_CHAIN_DESC1
@@ -91,14 +99,45 @@ host: context [
 		desc/Scaling: 1			;-- DXGI_SCALING_NONE
 		desc/SwapEffect: 3		;-- DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
 
+		int: 0
+		buf: 0
 		dxgi: as IDXGIFactory2 dxgi-factory/vtbl
 		either win10? [			;-- use direct composition
 			desc/AlphaMode: 1	;-- DXGI_ALPHA_MODE_PREMULTIPLIED
-			dxgi/CreateSwapChainForComposition dxgi-factory d3d-device desc null 
+			hr: dxgi/CreateSwapChainForComposition dxgi-factory d3d-device desc null :int
 		][
-			
+			if zero? dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int [
+				;-- May fail on Win7, try another configuration
+				desc/Scaling: 0		;-- DXGI_SCALING_STRETCH
+				hr: dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int
+			]
 		]
+		assert zero? hr
+
+		;-- get back buffer from the swap chain
+		this: as this! int
+		sc: as IDXGISwapChain1 this/vtbl
+		hr: sc/GetBuffer this 0 IID_IDXGISurface :buf
+		assert zero? hr
+
+		;-- create a bitmap from the buffer
+		props/format: 87		;-- DXGI_FORMAT_B8G8R8A8_UNORM
+		props/alphaMode: 1		;-- D2D1_ALPHA_MODE_PREMULTIPLIED
+		props/dpiX: dpi-x
+		props/dpiY: dpi-y
+		props/options: 3		;-- D2D1_BITMAP_OPTIONS_TARGET or D2D1_BITMAP_OPTIONS_CANNOT_DRAW
+		props/colorContext: null
+		bmp: 0
+		d2d: as ID2D1DeviceContext d2d-ctx/vtbl
+		hr: d2d/CreateBitmapFromDxgiSurface d2d-ctx as int-ptr! buf props :bmp
+		assert hr = 0
+		
 		rt: as render-target! allocate size? render-target!
+		rt/swapchain: as this! int
+		rt/bitmap: as this! bmp
+
+		COM_SAFE_RELEASE_OBJ(unk buf)
+		rt
 	]
 
 	set-defaults: func [

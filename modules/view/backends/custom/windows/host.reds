@@ -40,9 +40,11 @@ host: context [
 	;kb-state: 		allocate 256							;-- holds keyboard state for keys conversion
 
 	render-target!: alias struct! [
-		bitmap		[this!]
-		swapchain	[this!]
-		dcompbuf	[this!]
+		bitmap			[this!]
+		swapchain		[this!]
+		dcomp-device	[this!]
+		dcomp-target	[this!]
+		dcomp-visual	[this!]
 	]
 
 	#include %direct2d.reds
@@ -69,6 +71,54 @@ host: context [
 		num * 100 / dpi-factor
 	]
 
+	create-dcomp: func [
+		target			[render-target!]
+		hWnd			[handle!]
+		d2d-dc			[ID2D1DeviceContext]
+		/local
+			dev			[integer!]
+			d2d-device	[this!]
+			hr			[integer!]
+			unk			[IUnknown]
+			dcomp-dev	[IDCompositionDevice]
+			dcomp		[IDCompositionTarget]
+			this		[this!]
+			tg			[this!]
+			visual		[IDCompositionVisual]
+			DCompositionCreateDevice2 [DCompositionCreateDevice2!]
+	][
+		dev: 0
+		d2d-dc/GetDevice d2d-ctx :dev
+		d2d-device: as this! dev
+		DCompositionCreateDevice2: as DCompositionCreateDevice2! pfnDCompositionCreateDevice2
+		hr: DCompositionCreateDevice2 d2d-device IID_IDCompositionDevice :dev
+		COM_SAFE_RELEASE(unk d2d-device)
+		assert hr = 0
+
+		this: as this! dev
+		target/dcomp-device: this
+
+		dcomp-dev: as IDCompositionDevice this/vtbl
+		hr: dcomp-dev/CreateTargetForHwnd this hWnd yes :dev
+		assert zero? hr
+		tg: as this! dev
+		target/dcomp-target: tg
+
+		hr: dcomp-dev/CreateVisual this :dev
+		assert zero? hr
+		this: as this! dev
+		target/dcomp-visual: this
+
+		visual: as IDCompositionVisual this/vtbl
+		visual/SetContent this target/swapchain
+
+		dcomp: as IDCompositionTarget tg/vtbl
+		hr: dcomp/SetRoot tg this
+		assert zero? hr
+		hr: dcomp-dev/Commit target/dcomp-device
+		assert zero? hr
+	]
+
 	create-render-target: func [
 		hWnd		[handle!]
 		return:		[render-target!]
@@ -92,25 +142,22 @@ host: context [
 
 		desc/Width: rc/right - rc/left
 		desc/Height: rc/bottom - rc/top
-		desc/Format: 28			;-- DXGI_FORMAT_R8G8B8A8_UNORM
+		desc/Format: 87			;-- DXGI_FORMAT_B8G8R8A8_UNORM
 		desc/SampleCount: 1
 		desc/BufferUsage: 20h	;-- DXGI_USAGE_RENDER_TARGET_OUTPUT
 		desc/BufferCount: 2
 		desc/Scaling: 1			;-- DXGI_SCALING_NONE
+		desc/AlphaMode: 1		;-- DXGI_ALPHA_MODE_PREMULTIPLIED
 		desc/SwapEffect: 3		;-- DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
 
 		int: 0
 		buf: 0
 		dxgi: as IDXGIFactory2 dxgi-factory/vtbl
-		either win10? [			;-- use direct composition
-			desc/AlphaMode: 1	;-- DXGI_ALPHA_MODE_PREMULTIPLIED
+		either win8+? [			;-- use direct composition
 			hr: dxgi/CreateSwapChainForComposition dxgi-factory d3d-device desc null :int
 		][
-			if zero? dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int [
-				;-- May fail on Win7, try another configuration
-				desc/Scaling: 0		;-- DXGI_SCALING_STRETCH
-				hr: dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int
-			]
+			desc/Scaling: 0		;-- DXGI_SCALING_STRETCH
+			hr: dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int
 		]
 		assert zero? hr
 
@@ -137,6 +184,7 @@ host: context [
 		rt/bitmap: as this! bmp
 
 		COM_SAFE_RELEASE_OBJ(unk buf)
+		if win8+? [create-dcomp rt hWnd d2d]
 		rt
 	]
 

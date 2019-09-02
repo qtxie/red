@@ -12,7 +12,6 @@ Red/System [
 
 d3d-device:		as this! 0
 d3d-ctx:		as this! 0
-d2d-device:		as this! 0
 d2d-ctx:		as this! 0
 d2d-factory:	as this! 0
 dwrite-factory: as this! 0
@@ -21,6 +20,8 @@ dxgi-adapter:	as this! 0
 dxgi-factory:	as this! 0
 dw-locale-name: as c-string! 0
 
+pfnDCompositionCreateDevice2: as int-ptr! 0
+
 dwrite-str-cache: as node! 0
 
 #define D2D_MAX_BRUSHES 64
@@ -28,12 +29,13 @@ dwrite-str-cache: as node! 0
 #define D2DERR_RECREATE_TARGET 8899000Ch
 #define FLT_MAX	[as float32! 3.402823466e38]
 
-IID_IDXGISurface:		[CAFCB56Ch 48896AC3h 239E47BFh EC60D2BBh]
-IID_IDXGIDevice1:		[77DB970Fh 48BA6276h 010728BAh 2C39B443h]
-;IID_ID2D1Factory:		[06152247h 465A6F50h 8B114592h 07603BFDh]
-IID_ID2D1Factory1:		[BB12D362h 4B9ADAEEh BA141DAAh 1FFA1C40h]
-IID_IDWriteFactory:		[B859EE5Ah 4B5BD838h DC1AE8A2h 48DB937Dh]
-IID_IDXGIFactory2:		[50C83A1Ch 4C48E072h 3036B087h D0A636FAh]
+IID_IDXGISurface:		 [CAFCB56Ch 48896AC3h 239E47BFh EC60D2BBh]
+IID_IDXGIDevice1:		 [77DB970Fh 48BA6276h 010728BAh 2C39B443h]
+;IID_ID2D1Factory:		 [06152247h 465A6F50h 8B114592h 07603BFDh]
+IID_ID2D1Factory1:		 [BB12D362h 4B9ADAEEh BA141DAAh 1FFA1C40h]
+IID_IDWriteFactory:		 [B859EE5Ah 4B5BD838h DC1AE8A2h 48DB937Dh]
+IID_IDXGIFactory2:		 [50C83A1Ch 4C48E072h 3036B087h D0A636FAh]
+IID_IDCompositionDevice: [C37EA93Ah 450DE7AAh 46976FB1h F30704CBh]
 
 D2D1_FACTORY_OPTIONS: alias struct! [
 	debugLevel	[integer!]
@@ -356,6 +358,69 @@ IDXGISwapChain1: alias struct! [
 	GetRotation						[integer!]
 ]
 
+IDCompositionDevice: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	Commit							[function! [this [this!] return: [integer!]]]
+	WaitForCommitCompletion			[integer!]
+	GetFrameStatistics				[integer!]
+	CreateTargetForHwnd				[function! [this [this!] hwnd [handle!] topmost [logic!] target [int-ptr!] return: [integer!]]]
+	CreateVisual					[function! [this [this!] visual [int-ptr!] return: [integer!]]]
+	CreateSurface					[integer!]
+	CreateVirtualSurface			[integer!]
+	CreateSurfaceFromHandle			[integer!]
+	CreateSurfaceFromHwnd			[integer!]
+	CreateTranslateTransform		[integer!]
+	CreateScaleTransform			[integer!]
+	CreateRotateTransform			[integer!]
+	CreateSkewTransform				[integer!]
+	CreateMatrixTransform			[integer!]
+	CreateTransformGroup			[integer!]
+	CreateTranslateTransform3D		[integer!]
+	CreateScaleTransform3D			[integer!]
+	CreateRotateTransform3D			[integer!]
+	CreateMatrixTransform3D			[integer!]
+	CreateTransform3DGroup			[integer!]
+	CreateEffectGroup				[integer!]
+	CreateRectangleClip				[integer!]
+	CreateAnimation					[integer!]
+	CreateTransformGroup			[integer!]
+	CheckDeviceState				[integer!]
+]
+
+IDCompositionVisual: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	SetOffsetX						[function! [this [this!] x [float32!] return: [integer!]]]
+	SetOffsetX1						[integer!]
+	SetOffsetY						[function! [this [this!] y [float32!] return: [integer!]]]
+	SetOffsetY1						[integer!]
+	SetTransform					[integer!]
+	SetTransform1					[integer!]
+	SetTransformParent				[integer!]
+	SetEffect						[integer!]
+	SetBitmapInterpolationMode		[integer!]
+	SetBorderMode					[integer!]
+	SetClip							[integer!]
+	SetClip1						[integer!]
+	SetContent						[function! [this [this!] p [this!] return: [integer!]]]
+	AddVisual						[function! [this [this!] v [this!] above [logic!] vv [this!] return: [integer!]]]
+	RemoveVisual					[integer!]
+	RemoveAllVisuals				[integer!]
+	SetCompositeMode				[integer!]
+
+]
+
+
+IDCompositionTarget: alias struct! [
+	QueryInterface					[QueryInterface!]
+	AddRef							[AddRef!]
+	Release							[Release!]
+	SetRoot							[function! [this [this!] visual [this!] return: [integer!]]]
+]
+
 ID2D1Factory: alias struct! [
 	QueryInterface					[QueryInterface!]
 	AddRef							[AddRef!]
@@ -537,7 +602,7 @@ ID2D1DeviceContext: alias struct! [
     GetImageLocalBounds				[integer!]
     GetImageWorldBounds				[integer!]
     GetGlyphRunWorldBounds			[integer!]
-    GetDevice						[integer!]
+    GetDevice						[function! [this [this!] dev [int-ptr!]]]
     SetTarget						[integer!]
     GetTarget						[integer!]
     SetRenderingControls			[integer!]
@@ -955,6 +1020,13 @@ IDWriteFontFace: alias struct! [
 	GetGdiCompatibleGlyphMetrics	[integer!]
 ]
 
+DCompositionCreateDevice2!: alias function! [
+  	render-dev	[this!]
+  	iid			[int-ptr!]
+	device		[int-ptr!]
+	return:		[integer!]
+]
+
 D2D1CreateFactory!: alias function! [
 	type		[integer!]
 	riid		[int-ptr!]
@@ -1030,6 +1102,7 @@ DX-init: func [
 		adapter				[IDXGIAdapter]
 		ctx					[integer!]
 		unk					[IUnknown]
+		d2d-device			[this!]
 ][
 	dll: LoadLibraryA "d2d1.dll"
 	if null? dll [exit]
@@ -1041,6 +1114,10 @@ DX-init: func [
 	GetUserDefaultLocaleName: as GetUserDefaultLocaleName! GetProcAddress dll "GetUserDefaultLocaleName"
 	dw-locale-name: as c-string! allocate 85
 	GetUserDefaultLocaleName dw-locale-name 85
+	if win8+? [
+		dll: LoadLibraryA "dcomp.dll"
+		pfnDCompositionCreateDevice2: GetProcAddress dll "DCompositionCreateDevice2"
+	]
 
 	ctx:	 0
 	factory: 0

@@ -1155,7 +1155,7 @@ DX-init: func [
 	d2d: as ID2D1Factory d2d-factory/vtbl
 	d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
 ?? dpi-x
-	dpi-factor: (as-integer dpi-x) * 100 / 96
+	dpi-value: as-integer dpi-y
 
 	;-- create D2D Device
 	hr: d2d/CreateDevice d2d-factory as int-ptr! dxgi-device :factory

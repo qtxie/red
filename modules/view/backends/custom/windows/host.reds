@@ -29,7 +29,7 @@ host: context [
 	ime-open?:		no
 	;ime-font:		as tagLOGFONT allocate 92
 
-	dpi-factor:		100
+	dpi-value:		96
 	dpi-x:			as float32! 0.0
 	dpi-y:			as float32! 0.0
 	screen-size-x:	0
@@ -59,18 +59,18 @@ host: context [
 		0
 	]
 
-	dpi-scale: func [
+	logical-to-pixel: func [
 		num		[integer!]
 		return: [integer!]
 	][
-		num * dpi-factor / 100
+		num * dpi-value / 96
 	]
 
-	dpi-unscale: func [
+	pixel-to-logical: func [
 		num		[integer!]
 		return: [integer!]
 	][
-		num * 100 / dpi-factor
+		num * 96 / dpi-value
 	]
 
 	create-dcomp: func [
@@ -272,8 +272,7 @@ host: context [
 				;][
 				;	return EVT_DISPATCH						;-- filter out buggy mouse positions (thanks MS!)
 				;]
-				child: rs-gob/find-child obj x y
-				?? child
+				child: rs-gob/find-child obj pixel-to-logical x pixel-to-logical y
 				return 0
 			]
 			WM_MOUSEHOVER [0]
@@ -300,7 +299,7 @@ host: context [
 			WM_DPICHANGED [
 				dpi-x: as float32! WIN32_LOWORD(wParam)			;-- new DPI X
 				dpi-y: as float32! WIN32_HIWORD(wParam)			;-- new DPI Y
-				dpi-factor: WIN32_LOWORD(wParam) * 100 / 96
+				dpi-value: WIN32_HIWORD(wParam)
 				rc: as RECT_STRUCT lParam
 				SetWindowPos 
 					hWnd
@@ -426,8 +425,8 @@ probe "make window"
 		if h <= 0 [h: 200]
 		rc/left: 0
 		rc/top: 0
-		rc/right:  dpi-scale w
-		rc/bottom: dpi-scale h
+		rc/right:  logical-to-pixel w
+		rc/bottom: logical-to-pixel h
 		AdjustWindowRectEx rc flags no 0
 		w: rc/right - rc/left
 		h: rc/bottom - rc/top
@@ -437,8 +436,8 @@ probe "make window"
 			#u16 "RedHostWindow"
 			#u16 "RedCustomWindow"
 			flags
-			dpi-scale obj/box/x1
-			dpi-scale obj/box/y1
+			logical-to-pixel obj/box/x1
+			logical-to-pixel obj/box/y1
 			w
 			h
 			parent

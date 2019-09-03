@@ -10,6 +10,13 @@ Red/System [
 	}
 ]
 
+red-gob!: alias struct! [
+	header	[integer!]
+	host	[int-ptr!]				;-- host window handle
+	value	[gob!]
+	_pad	[integer!]
+]
+
 gob: context [
 	verbose: 0
 
@@ -23,20 +30,20 @@ gob: context [
 	sym-font:	-1
 
 	box: func [
-		value	[int-ptr!]
+		val		[int-ptr!]
 		return:	[red-gob!]
 		/local
 			h [red-gob!]
 	][
 		h: as red-gob! stack/arguments
 		h/header: TYPE_GOB
-		h/value: value
+		h/value: as gob! val
 		h
 	]
 
 	make-in: func [
 		parent 	[red-block!]
-		value 	[int-ptr!]
+		val 	[gob!]
 		return: [red-gob!]
 		/local
 			h	[red-gob!]
@@ -45,25 +52,25 @@ gob: context [
 		
 		h: as red-gob! ALLOC_TAIL(parent)
 		h/header: TYPE_GOB
-		h/value: value
+		h/value: val
 		h
 	]
 
 	make-at: func [
 		slot	[red-value!]
-		value	[int-ptr!]
+		val		[gob!]
 		return:	[red-gob!]
 		/local
 			h	[red-gob!]
 	][
 		h: as red-gob! slot
 		h/header: TYPE_GOB
-		h/value: value
+		h/value: val
 		h
 	]
 
 	push: func [
-		value	[int-ptr!]
+		val		[int-ptr!]
 		return: [red-gob!]
 		/local
 			hndl [red-gob!]
@@ -72,7 +79,7 @@ gob: context [
 		
 		hndl: as red-gob! stack/push*
 		hndl/header: TYPE_GOB
-		hndl/value:  value
+		hndl/value: as gob! val
 		hndl
 	]
 
@@ -83,14 +90,17 @@ gob: context [
 		return:		[red-value!]
 		/local
 			g		[gob!]
+			child	[gob!]
 			w		[red-word!]
 			int		[red-integer!]
+			len		[integer!]
 			idx		[integer!]
 			sym		[integer!]
+			blk		[red-block!]
 			error?	[logic!]
 	][
 		error?: no
-		g: as gob! gob/value
+		g: gob/value
 
 		switch TYPE_OF(element) [
 			TYPE_INTEGER [
@@ -102,19 +112,27 @@ gob: context [
 				sym: symbol/resolve w/symbol
 				case [
 					sym = gui/facets/type [
-						word/make-at gui/rs-gob/get-type g element
+						word/make-at rs-gob/get-type g element
 					]
 					sym = sym-state	 [
-						either gui/rs-gob/set-flag? g GOB_FLAG_HOSTED [
+						either rs-gob/set-flag? g GOB_FLAG_HOSTED [
 							handle/make-at element as-integer gob/host
 						][element/header: TYPE_NONE]
 					]
 					sym = sym-parent [
-						handle/make-at element as-integer gui/rs-gob/get-parent g
+						handle/make-at element as-integer rs-gob/get-parent g
 					]
 					sym = sym-text [0]
 					sym = sym-color [0]
-					sym = sym-pane [0]
+					sym = sym-pane [
+						len: rs-gob/length? g
+						blk: block/make-at as red-block! element len
+						child: rs-gob/head g
+						loop len [
+							make-in blk child
+							child: child + 1
+						]
+					]
 					true [error?: yes]
 				]
 			]
@@ -139,7 +157,7 @@ gob: context [
 			error?	[logic!]
 	][
 		error?: no
-		g: as gob! gob/value
+		g: gob/value
 
 		switch TYPE_OF(element) [
 			TYPE_INTEGER [
@@ -174,7 +192,7 @@ gob: context [
 	][
 		proto/header: type
 		proto/host: null
-		proto/value: as int-ptr! gui/rs-gob/create as red-block! spec
+		proto/value: rs-gob/create as red-block! spec
 		proto
 	]
 
@@ -222,6 +240,21 @@ gob: context [
 		]
 	]
 
+	eval-path: func [
+		gob			[red-gob!]						;-- implicit type casting
+		element		[red-value!]
+		value		[red-value!]
+		path		[red-value!]
+		case?		[logic!]
+		return:		[red-value!]
+	][
+		either value <> null [
+			set-value gob element value path
+		][
+			get-value gob element path
+		]
+	]
+
 	compare: func [
 		value1	[red-gob!]							;-- first operand
 		value2	[red-gob!]							;-- second operand
@@ -237,19 +270,25 @@ gob: context [
 		SIGN_COMPARE_RESULT(value1/value value2/value)
 	]
 
-	eval-path: func [
-		gob			[red-gob!]						;-- implicit type casting
-		element		[red-value!]
-		value		[red-value!]
-		path		[red-value!]
-		case?		[logic!]
-		return:		[red-value!]
+	insert: func [
+		gob		  [red-gob!]
+		val		  [red-gob!]
+		part-arg  [red-value!]
+		only?	  [logic!]
+		dup-arg	  [red-value!]
+		append?	  [logic!]
+		return:	  [red-value!]
 	][
-		either value <> null [
-			set-value gob element value path
-		][
-			get-value gob element path
-		]
+		rs-gob/insert gob/value val/value append?
+		as red-value! gob
+	]
+
+	length?: func [
+		gob		[red-gob!]
+		return: [integer!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "gob/length?"]]
+		rs-gob/length? gob/value
 	]
 
 	init: does [
@@ -295,8 +334,8 @@ gob: context [
 			null			;head
 			null			;head?
 			null			;index?
-			null			;insert
-			null			;length?
+			:insert
+			:length?
 			null			;move
 			null			;next
 			null			;pick

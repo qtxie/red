@@ -456,6 +456,7 @@ IDXGIFactory2: alias struct! [
 	CreateSwapChain					[integer!]
 	CreateSoftwareAdapter			[integer!]
 	EnumAdapters1					[integer!]
+	IsCurrent						[integer!]
 	IsWindowedStereoEnabled			[integer!]
 	CreateSwapChainForHwnd			[CreateSwapChainForHwnd*]
 	CreateSwapChainForCoreWindow	[integer!]

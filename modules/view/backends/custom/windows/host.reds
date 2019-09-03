@@ -39,6 +39,8 @@ host: context [
 	rc-cache:		declare RECT_STRUCT
 	;kb-state: 		allocate 256							;-- holds keyboard state for keys conversion
 
+	active-win:		as gob! 0
+
 	render-target!: alias struct! [
 		bitmap			[this!]
 		swapchain		[this!]
@@ -138,7 +140,7 @@ host: context [
 			unk		[IUnknown]
 	][
 		GetClientRect hWnd :rc
-		zero-memory as byte-ptr! size? DXGI_SWAP_CHAIN_DESC1
+		zero-memory as byte-ptr! :desc size? DXGI_SWAP_CHAIN_DESC1
 
 		desc/Width: rc/right - rc/left
 		desc/Height: rc/bottom - rc/top
@@ -146,7 +148,6 @@ host: context [
 		desc/SampleCount: 1
 		desc/BufferUsage: 20h	;-- DXGI_USAGE_RENDER_TARGET_OUTPUT
 		desc/BufferCount: 2
-		desc/Scaling: 1			;-- DXGI_SCALING_NONE
 		desc/AlphaMode: 1		;-- DXGI_ALPHA_MODE_PREMULTIPLIED
 		desc/SwapEffect: 3		;-- DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
 
@@ -156,7 +157,6 @@ host: context [
 		either win8+? [			;-- use direct composition
 			hr: dxgi/CreateSwapChainForComposition dxgi-factory d3d-device desc null :int
 		][
-			desc/Scaling: 0		;-- DXGI_SCALING_STRETCH
 			hr: dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int
 		]
 		assert zero? hr
@@ -263,7 +263,7 @@ host: context [
 			WM_SYSCHAR [0]
 			WM_CHAR [0]
 			WM_UNICHAR [0]
-			WM_SETFOCUS [0]
+			WM_SETFOCUS [return 0]
 			WM_KILLFOCUS [0]
 			WM_SIZE [0]
 			WM_GETMINMAXINFO [0]	;-- for maximization and minimization
@@ -289,6 +289,14 @@ host: context [
 					SWP_NOZORDER or SWP_NOACTIVATE
 				;d2d-release-target target
 				return 0
+			]
+			WM_PAINT [
+				probe "WM_PAINT"
+				ValidateRect hWnd null
+			]
+			WM_ERASEBKGND [
+				probe "WM_ERASEBKGND"
+				return 1
 			]
 			default [0]
 		]
@@ -418,7 +426,9 @@ probe "make window"
 			as int-ptr! obj
 
 		obj/flags: obj/flags and FFFFFF00h or GOB_WINDOW or GOB_FLAG_HOSTED
+		active-win: obj
 ?? handle
+		SetWindowLongPtr handle GWLP_USERDATA as int-ptr! create-render-target handle
 		handle
 	]
 
@@ -427,6 +437,12 @@ probe "make window"
 	][
 		?? hWnd
 		ShowWindow hWnd SW_SHOWDEFAULT
+	]
+
+	draw-window: func [
+		
+	][
+		
 	]
 
 	do-events: func [
@@ -454,6 +470,7 @@ probe "make window"
 					if no-wait? [return msg?]
 				]
 			]
+			draw-window
 			io/do-events 16
 		]
 		unless no-wait? [

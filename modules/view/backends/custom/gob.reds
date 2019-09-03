@@ -158,4 +158,43 @@ rs-gob: context [
 	][
 		null
 	]
+
+	;-- actions
+	insert: func [
+		gob		[gob!]
+		child	[gob!]
+		append?	[logic!]
+		/local
+			v	[red-vector! value]
+	][
+		child/parent: gob
+		if null? gob/children [
+			vector/make-at as cell! :v 4 TYPE_INTEGER size? int-ptr!
+			gob/children: v/node
+		]
+		v/node: gob/children
+		vector/rs-append-int :v as-integer child
+	]
+
+	length?: func [
+		gob		[gob!]
+		return:	[integer!]
+		/local
+			s	[red-series! value]
+	][
+		if null? gob/children [return 0]
+		s/node: gob/children
+		_series/get-length :s yes
+	]
+
+	head: func [
+		gob		[gob!]
+		return: [gob!]
+		/local
+			v	[red-vector! value]
+	][
+		v/head: 0
+		v/node: gob/children
+		as gob! vector/rs-head :v
+	]
 ]

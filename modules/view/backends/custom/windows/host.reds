@@ -237,15 +237,18 @@ host: context [
 	]
 
 	RedWndProc: func [
-		hWnd	[handle!]
-		msg		[integer!]
-		wParam	[integer!]
-		lParam	[integer!]
-		return: [integer!]
+		hWnd		[handle!]
+		msg			[integer!]
+		wParam		[integer!]
+		lParam		[integer!]
+		return:		[integer!]
 		/local
-			cs	[tagCREATESTRUCT]
-			rc	[RECT_STRUCT]
-			obj [gob!]
+			cs		[tagCREATESTRUCT]
+			rc		[RECT_STRUCT]
+			obj		[gob!]
+			child	[gob!]
+			x		[integer!]
+			y		[integer!]
 	][
 		obj: as gob! GetWindowLongPtr hWnd 0
 
@@ -253,7 +256,22 @@ host: context [
 			WM_NCCREATE [
 				cs: as tagCREATESTRUCT lParam
 				SetWindowLongPtr hWnd 0 cs/lpCreateParams
-				1		;-- continue to create the window
+				return 1	;-- continue to create the window
+			]
+			WM_MOUSEMOVE [
+				x: WIN32_LOWORD(lParam)
+				y: WIN32_HIWORD(lParam)
+				;if any [
+				;	x < (0 - screen-size-x) 				;@@ needs `negate` support
+				;	y < (0 - screen-size-y)
+				;	x > screen-size-x
+				;	y > screen-size-y
+				;][
+				;	return EVT_DISPATCH						;-- filter out buggy mouse positions (thanks MS!)
+				;]
+				child: rs-gob/find-child obj x y
+				?? child
+				return 0
 			]
 			WM_MOUSEHOVER [0]
 			WM_MOUSELEAVE [0]

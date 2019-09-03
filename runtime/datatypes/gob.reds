@@ -182,6 +182,80 @@ gob: context [
 		value
 	]
 
+	serialize: func [
+		gob		[red-gob!]
+		buffer	[red-string!]
+		only?	[logic!]
+		all?	[logic!]
+		flat?	[logic!]
+		arg		[red-value!]
+		part	[integer!]
+		indent?	[logic!]
+		tabs	[integer!]
+		mold?	[logic!]
+		return: [integer!]
+		/local
+			s-tail	[red-value!]
+			value	[red-value!]
+			w		[red-word!]
+			idx		[integer!]
+			blank	[byte!]
+			g		[gob!]
+			t-list	[int-ptr!]
+			pt		[red-pair! value]
+	][
+		t-list: ["base" 4 "window" 6 "button" 6 "label" 5 "field" 5 "area" 4]
+
+		either flat? [
+			indent?: no
+			blank: space
+		][
+			if mold? [
+				string/append-char GET_BUFFER(buffer) as-integer lf
+				part: part - 1
+			]
+			blank: lf
+		]
+
+		;-- type
+		if indent? [part: object/do-indent buffer tabs part]
+		string/concatenate-literal buffer "type: "
+		part: part - 6
+
+		g: gob/value
+		idx: GOB_TYPE(g/flags) * 2 + 1
+		string/concatenate-literal buffer as c-string! t-list/idx
+		idx: idx + 1
+		part: part - t-list/idx
+		if indent? [
+			string/append-char GET_BUFFER(buffer) as-integer blank
+			part: part - 1
+		]
+
+		;-- offset
+		string/concatenate-literal buffer "offset: "
+		part: part - 8
+		pt/x: g/box/x1
+		pt/y: g/box/y1
+		part: pair/form :pt buffer null part
+		if indent? [
+			string/append-char GET_BUFFER(buffer) as-integer blank
+			part: part - 1
+		]
+
+		;-- size
+		string/concatenate-literal buffer "size: "
+		part: part - 6
+		pt/x: g/box/x2 - g/box/x1
+		pt/y: g/box/y2 - g/box/y1
+		part: pair/form :pt buffer null part
+		if indent? [
+			string/append-char GET_BUFFER(buffer) as-integer blank
+			part: part - 1
+		]
+		part
+	]
+
 	;-- Actions --
 
 	make: func [
@@ -192,12 +266,12 @@ gob: context [
 	][
 		proto/header: type
 		proto/host: null
-		proto/value: rs-gob/create as red-block! spec
+		proto/value: rs-gob/make as red-block! spec
 		proto
 	]
 
 	form: func [
-		h		[red-gob!]
+		gob		[red-gob!]
 		buffer	[red-string!]
 		arg		[red-value!]
 		part	[integer!]
@@ -207,14 +281,11 @@ gob: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "gob/form"]]
 		
-		formed: string/to-hex as-integer h/value false
-		string/concatenate-literal buffer formed
-		string/append-char GET_BUFFER(buffer) as-integer #"h"
-		part - 9
+		serialize gob buffer no no no arg part no 0 no
 	]
 	
 	mold: func [
-		h		[red-gob!]
+		gob		[red-gob!]
 		buffer	[red-string!]
 		only?	[logic!]
 		all?	[logic!]
@@ -224,20 +295,13 @@ gob: context [
 		indent	[integer!]
 		return: [integer!]
 	][
-		#if debug? = yes [
-			all?: yes			;-- show gob in debug mode
-			if verbose > 0 [print-line "gob/mold"]
-		]
+		#if debug? = yes [if verbose > 0 [print-line "gob/mold"]]
 
-		either all? [
-			string/concatenate-literal buffer "#[GOB! "
-			part: form h buffer arg part
-			string/append-char GET_BUFFER(buffer) as-integer #"]"
-			part + 11
-		][
-			string/concatenate-literal buffer "GOB!"
-			part + 11
-		]
+		string/concatenate-literal buffer "make gob! ["
+		part: serialize gob buffer no all? flat? arg part - 11 yes indent + 1 yes
+		if indent > 0 [part: object/do-indent buffer indent part]
+		string/append-char GET_BUFFER(buffer) as-integer #"]"
+		part - 1
 	]
 
 	eval-path: func [

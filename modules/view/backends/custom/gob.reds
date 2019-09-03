@@ -30,6 +30,9 @@ Red/System [
 ]
 
 #define GOB_FLAG_HOSTED	00010000h
+#define GOB_FLAG_HIDDEN 00020000h
+#define GOB_FLAG_TOP	00040000h
+#define GOB_FLAG_DRAG	00080000h
 
 #define GOB_TYPE(flag)	[flag and FFh]
 
@@ -123,17 +126,6 @@ gob!: alias struct! [				;-- 64 bytes
 ]
 
 rs-gob: context [
-	create: func [
-		spec	[red-block!]
-		return: [gob!]
-		/local
-			g	[gob!]
-	][
-		g: as gob! alloc0 size? gob!
-		g/flags: GOB_WINDOW
-		g
-	]
-
 	set-flag?: func [
 		gob		[gob!]
 		flag	[integer!]
@@ -159,7 +151,93 @@ rs-gob: context [
 		null
 	]
 
+	find-child: func [
+		gob		[gob!]
+		x		[integer!]
+		y		[integer!]
+		return: [gob!]
+		/local
+			p	[gob!]
+			n	[integer!]
+	][
+		n: length? gob
+		p: head gob
+?? n
+		loop n [
+			if all [
+				;p/flags and GOB_FLAG_HIDDEN = 0		;-- visible
+				all [
+					p/box/x1 <= x x <= p/box/x2
+					p/box/y1 <= y y <= p/box/y2
+				]
+			][
+				return p
+			]
+			p: p + 1
+		]
+		null
+	]
+
 	;-- actions
+	make: func [
+		spec		[red-block!]
+		return:		[gob!]
+		/local
+			g		[gob!]
+			w		[red-word!]
+			val		[red-value!]
+			end		[red-value!]
+			pair	[red-pair!]
+			int		[red-integer!]
+			type	[integer!]
+			sym		[integer!]
+	][
+		g: as gob! alloc0 size? gob!
+
+		val: block/rs-head spec
+		end: block/rs-tail spec
+
+		while [val < end][
+			w: as red-word! val
+			sym: symbol/resolve w/symbol
+			w: w + 1
+			type: case [
+				sym = facets/type	[
+					sym: symbol/resolve w/symbol
+					case [
+						sym = window [type: GOB_WINDOW]
+						sym = button [type: GOB_BUTTON]
+						true		 [type: GOB_BASE]	
+					]
+				]
+				sym = facets/offset [
+					pair: as red-pair! w
+					g/box/x1: pair/x
+					g/box/y1: pair/y
+				]
+				sym = facets/size [
+					pair: as red-pair! w
+					g/box/x2: g/box/x1 + pair/x
+					g/box/y2: g/box/y1 + pair/y
+				]
+				sym = facets/color [
+					int: as red-integer! w
+					g/bg-color: int/value
+				]
+				sym = facets/opacity [
+					int: as red-integer! w
+					g/opacity: int/value
+				]
+				true					[
+					;fire [TO_ERROR(script bad-make-arg) proto spec]
+					0
+				]
+			]
+			val: val + 2
+		]
+		g
+	]
+
 	insert: func [
 		gob		[gob!]
 		child	[gob!]

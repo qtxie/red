@@ -207,6 +207,7 @@ system/view/platform: context [
 				actors:		symbol/make "actors"
 				extra:		symbol/make "extra"
 				draw:		symbol/make "draw"
+				opacity:	symbol/make "opacity"
 			]
 			
 			_para: context [

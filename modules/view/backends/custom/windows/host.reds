@@ -157,7 +157,10 @@ host: context [
 		either win8+? [			;-- use direct composition
 			hr: dxgi/CreateSwapChainForComposition dxgi-factory d3d-device desc null :int
 		][
+			probe [dxgi-factory " " d3d-device " " hWnd]
+			desc/AlphaMode: 0		;-- DXGI_ALPHA_MODE_PREMULTIPLIED
 			hr: dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int
+			?? hr
 		]
 		assert zero? hr
 

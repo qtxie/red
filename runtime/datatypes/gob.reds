@@ -10,13 +10,6 @@ Red/System [
 	}
 ]
 
-red-gob!: alias struct! [
-	header	[integer!]
-	host	[int-ptr!]				;-- host window handle
-	value	[gob!]
-	_pad	[integer!]
-]
-
 gob: context [
 	verbose: 0
 
@@ -83,6 +76,17 @@ gob: context [
 		hndl
 	]
 
+	get-type: func [
+		gob		[gob!]
+		return: [integer!]
+	][
+		switch GOB_TYPE(gob/flags) [
+			GOB_BASE	[base]
+			GOB_WINDOW	[window]
+			GOB_BUTTON	[button]
+		]
+	]
+
 	get-value: func [
 		gob			[red-gob!]						;-- implicit type casting
 		element		[red-value!]
@@ -90,7 +94,7 @@ gob: context [
 		return:		[red-value!]
 		/local
 			g		[gob!]
-			child	[gob!]
+			child	[int-ptr!]
 			w		[red-word!]
 			int		[red-integer!]
 			len		[integer!]
@@ -112,7 +116,7 @@ gob: context [
 				sym: symbol/resolve w/symbol
 				case [
 					sym = gui/facets/type [
-						word/make-at rs-gob/get-type g element
+						word/make-at get-type g element
 					]
 					sym = sym-state	 [
 						either rs-gob/set-flag? g GOB_FLAG_HOSTED [
@@ -129,7 +133,7 @@ gob: context [
 						blk: block/make-at as red-block! element len
 						child: rs-gob/head g
 						loop len [
-							make-in blk child
+							make-in blk as gob! child/value
 							child: child + 1
 						]
 					]
@@ -256,6 +260,67 @@ gob: context [
 		part
 	]
 
+	rs-make: func [
+		spec		[red-block!]
+		return:		[gob!]
+		/local
+			g		[gob!]
+			w		[red-word!]
+			val		[red-value!]
+			end		[red-value!]
+			pair	[red-pair!]
+			int		[red-integer!]
+			type	[integer!]
+			sym		[integer!]
+	][
+		g: as gob! alloc0 size? gob!
+
+		val: block/rs-head spec
+		end: block/rs-tail spec
+
+		while [val < end][
+			w: as red-word! val
+			sym: symbol/resolve w/symbol
+			w: w + 1
+			type: case [
+				sym = facets/type	[
+					sym: symbol/resolve w/symbol
+					case [
+						sym = window [type: GOB_WINDOW]
+						sym = button [type: GOB_BUTTON]
+						true		 [type: GOB_BASE]	
+					]
+				]
+				sym = facets/offset [
+					pair: as red-pair! w
+					g/box/x1: pair/x
+					g/box/y1: pair/y
+					g/box/x2: g/box/x1 + g/box/x2
+					g/box/y2: g/box/y1 + g/box/y2
+				]
+				sym = facets/size [
+					pair: as red-pair! w
+					g/box/x2: g/box/x1 + pair/x
+					g/box/y2: g/box/y1 + pair/y
+				]
+				sym = facets/color [
+					int: as red-integer! w
+					g/bg-color: int/value
+				]
+				sym = facets/opacity [
+					int: as red-integer! w
+					g/opacity: int/value
+				]
+				true					[
+					;fire [TO_ERROR(script bad-make-arg) proto spec]
+					0
+				]
+			]
+			val: val + 2
+		]
+		g
+	]
+
 	;-- Actions --
 
 	make: func [
@@ -266,7 +331,7 @@ gob: context [
 	][
 		proto/header: type
 		proto/host: null
-		proto/value: rs-gob/make as red-block! spec
+		proto/value: rs-make as red-block! spec
 		proto
 	]
 

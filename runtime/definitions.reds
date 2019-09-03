@@ -228,3 +228,166 @@ Red/System [
 	IMAGE_JPEG
 	IMAGE_TIFF
 ]
+
+;=== GOB! definitions ===
+
+#if modules contains 'View [
+	
+#enum event-type! [
+	EVT_LEFT_DOWN:		1
+	EVT_LEFT_UP
+	EVT_MIDDLE_DOWN
+	EVT_MIDDLE_UP
+	EVT_RIGHT_DOWN
+	EVT_RIGHT_UP
+	EVT_AUX_DOWN
+	EVT_AUX_UP
+	EVT_CLICK
+	EVT_DBL_CLICK
+	EVT_WHEEL
+	EVT_OVER								;-- last mouse event
+
+	EVT_KEY
+	EVT_KEY_DOWN
+	EVT_KEY_UP
+	EVT_IME
+	EVT_FOCUS
+	EVT_UNFOCUS
+	EVT_ENTER
+	
+	EVT_ZOOM
+	EVT_PAN
+	EVT_ROTATE
+	EVT_TWO_TAP
+	EVT_PRESS_TAP
+	
+	EVT_SELECT
+	EVT_CHANGE
+	EVT_MENU
+	
+	EVT_CLOSE								;-- window events
+	EVT_MOVE
+	EVT_SIZE
+	EVT_MOVING
+	EVT_SIZING
+	EVT_TIME
+	EVT_DRAWING
+	EVT_SCROLL
+]
+
+#enum gob-part! [
+	GOB_PART_NONE:		0
+	GOB_PART_TOP:		1
+	GOB_PART_LEFT:		2
+	GOB_PART_BOTTOM:	4
+	GOB_PART_RIGHT:		8
+	GOB_PART_FULL:		15
+	GOB_PART_INTERNAL:	16
+]
+
+#enum gob-type! [
+	GOB_BASE
+	GOB_WINDOW
+	GOB_BUTTON
+	GOB_LABEL
+	GOB_FIELD
+	GOB_TEXTAREA
+]
+
+#define GOB_FLAG_HOSTED	00010000h
+#define GOB_FLAG_HIDDEN 00020000h
+#define GOB_FLAG_TOP	00040000h
+#define GOB_FLAG_DRAG	00080000h
+
+#define GOB_TYPE(flag)	[flag and FFh]
+
+#define coord!	integer!
+
+point!: alias struct! [
+	x	[coord!]
+	y	[coord!]
+]
+
+area!: alias struct! [
+	x1	[coord!]
+	y1	[coord!]
+	x2	[coord!]
+	y2	[coord!]
+]
+
+gob-event-fn!: alias function! [
+	obj			[int-ptr!]
+	evt			[event-type!]
+	data		[int-ptr!]
+	post?		[logic!]			;-- post the event to the user? 
+	return:		[integer!]
+]
+
+gob-render-fn!: alias function! [	;-- used to draw the gob on the screen
+	obj			[int-ptr!]
+	mode		[integer!]
+	return:		[logic!]
+]
+
+gob-style-border!: alias struct! [
+	color		[integer!]
+	width		[integer!]
+	part		[byte!]				;-- which parts to draw
+	opacity		[byte!]
+	style		[byte!]				;-- dotted, solid, etc.
+]
+
+gob-style-shadow!: alias struct! [
+	offset		[point! value]
+	color		[integer!]
+	radius		[integer!]			;-- blur and spread radius
+	part		[byte!]				;-- which parts to draw
+	inset?		[byte!]
+	next		[gob-style-shadow!]	;-- shadow effect chain
+]
+
+gob-style-padding!: alias struct! [
+	top			[coord!]
+	bottom		[coord!]
+	left		[coord!]
+	right		[coord!]
+]
+
+gob-style-text!: alias struct! [
+	color		[integer!]
+	select-clr	[integer!]
+	font		[int-ptr!]			;-- backend specific font handle
+	linespace	[float32!]
+	letterspace	[float32!]
+	opacity		[byte!]
+	align		[byte!]				;-- text align
+	shadow		[gob-style-shadow!]
+]
+
+gob-style!: alias struct! [
+	states		[integer!]
+	radius		[float32!]
+	opacity		[integer!]
+	border		[gob-style-border! value]
+	padding		[gob-style-padding! value]
+	text		[gob-style-text! value]
+	shadow		[gob-style-shadow!]
+]
+
+gob!: alias struct! [				;-- 64 bytes
+	flags		[integer!]			;-- attributes and states
+	box			[area! value]		;-- top-left(x1, y1), bottom-right(x2, y2)
+	parent		[gob!]				;-- parent gob
+	children	[node!]				;-- child gobs, red-vector!
+	event-fn	[gob-event-fn!]		;-- event function
+	render-fn	[gob-render-fn!]	;-- render function
+	text		[node!]				;-- red-string node
+	image		[node!]				;-- red-image node
+	draw		[node!]				;-- draw block node
+	bg-color	[integer!]			;-- background color
+	opacity		[integer!]			;-- overall opacity. Efffects all children
+	style		[gob-style!]
+	extra		[int-ptr!]
+]
+
+]

@@ -125,7 +125,9 @@ free-faces: func [
 ]
 
 on-gc-mark: does [
+	probe "on-gc-mark"
 	collector/keep flags-blk/node
+	;if host/active-win <> null [mark-gob host/active-win]
 ]
 
 init: func [

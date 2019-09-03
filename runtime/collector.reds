@@ -126,6 +126,7 @@ collector: context [
 			native	[red-native!]
 			ctx		[red-context!]
 			image	[red-image!]
+			gob		[red-gob!]
 			len		[integer!]
 	][
 		#if debug? = yes [if verbose > 1 [len: -1 indent: indent + 1]]
@@ -244,6 +245,11 @@ collector: context [
 						mark-block-node as node! native/code
 					]
 				]
+				#if modules contains 'View [
+				TYPE_GOB [
+					gob: as red-gob! value
+					mark-gob gob/value
+				]]
 				#if OS = 'macOS [
 				TYPE_IMAGE [
 					image: as red-image! value
@@ -254,6 +260,24 @@ collector: context [
 			value: value + 1
 		]
 		#if debug? = yes [if verbose > 1 [indent: indent - 1]]
+	]
+
+	mark-gob: func [
+		gob		[gob!]
+		/local
+			p	[int-ptr!]
+			len	[integer!]
+	][
+		either null? gob/children [exit][
+			keep gob/children
+
+			len: rs-gob/length? gob
+			p: rs-gob/head gob
+			loop len [
+				mark-gob as gob! p/value
+				p: p + 1
+			]
+		]
 	]
 	
 	mark-block-node: func [

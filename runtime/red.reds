@@ -30,7 +30,6 @@ red: context [
 	#include %crush.reds
 	
 	;-- Datatypes --
-	
 	#include %datatypes/structures.reds
 	#include %print.reds
 	#include %datatypes/common.reds
@@ -106,7 +105,9 @@ red: context [
 	#include %datatypes/date.reds
 	#include %datatypes/port.reds
 	#include %datatypes/image.reds
-	#either modules contains 'View [][#include %datatypes/event.reds]
+	#either modules contains 'View [
+		#include %datatypes/rs-gob.reds
+	][#include %datatypes/event.reds]
 
 	;-- Debugging helpers --
 	

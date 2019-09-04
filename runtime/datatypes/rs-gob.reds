@@ -11,6 +11,49 @@ Red/System [
 ]
 
 rs-gob: context [
+	make-vector: func [
+		sz		[integer!]
+		return:	[node!]
+		/local
+			node [node!]
+			s	 [series!]
+	][
+		node: alloc-bytes sz * size? int-ptr!
+		s: as series! node/value
+		s/flags: s/flags and flag-unit-mask or size? int-ptr!
+		node
+	]
+
+	vector-insert: func [
+		node	[node!]
+		ptr		[int-ptr!]
+		offset	[integer!]
+		return: [series!]
+		/local
+			s	  [series!]
+			p	  [byte-ptr!]
+			pp	  [struct! [val [int-ptr!]]]
+			unit  [integer!]
+	][
+		s: as series! node/value
+		unit: size? int-ptr!
+
+		if ((as byte-ptr! s/tail) + unit) > ((as byte-ptr! s + 1) + s/size) [
+			s: expand-series s 0
+		]
+		p: (as byte-ptr! s/offset) + (offset << (log-b unit))
+
+		move-memory										;-- make space
+			p + unit
+			p
+			as-integer (as byte-ptr! s/tail) - p
+
+		pp: as struct! [val [int-ptr!]] p
+		pp/val: ptr
+		s/tail: as cell! (as byte-ptr! s/tail) + unit
+		s
+	]
+
 	set-flag?: func [
 		gob		[gob!]
 		flag	[integer!]
@@ -68,12 +111,11 @@ rs-gob: context [
 			v	[red-vector! value]
 	][
 		child/parent: gob
-		if null? gob/children [
-			vector/make-at as cell! :v 4 TYPE_INTEGER size? int-ptr!
-			gob/children: v/node
-		]
+		if null? gob/children [gob/children: make-vector 4]
 		v/node: gob/children
-		vector/rs-append-int :v as-integer child
+		if append? [vector/rs-append-int :v as-integer child][
+			vector-insert v/node as int-ptr! child 0
+		]
 	]
 
 	length?: func [

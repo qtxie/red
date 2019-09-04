@@ -272,7 +272,7 @@ host: context [
 				;][
 				;	return EVT_DISPATCH						;-- filter out buggy mouse positions (thanks MS!)
 				;]
-				child: rs-gob/find-child obj pixel-to-logical x pixel-to-logical y
+				do-mouse-move obj pixel-to-logical x pixel-to-logical y
 				return 0
 			]
 			WM_MOUSEHOVER [0]

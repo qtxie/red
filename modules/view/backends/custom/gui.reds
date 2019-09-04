@@ -10,6 +10,8 @@ Red/System [
 	}
 ]
 
+#include %ui-manager.reds
+
 #switch OS [
 	Windows  [#include %windows/host.reds]
 	macOS    [#include %macOS/host.reds]
@@ -127,7 +129,7 @@ free-faces: func [
 on-gc-mark: does [
 	probe "on-gc-mark"
 	collector/keep flags-blk/node
-	;if host/active-win <> null [mark-gob host/active-win]
+	ui-manager/on-gc-mark
 ]
 
 init: func [
@@ -135,6 +137,7 @@ init: func [
 		ver   [red-tuple!]
 		int   [red-integer!]
 ][
+	ui-manager/init
 	host/init
 	collector/register as int-ptr! :on-gc-mark
 ]

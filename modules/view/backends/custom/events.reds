@@ -113,6 +113,18 @@ OS-make-event: func [
 	event
 ]
 
+do-mouse-move: func [
+	obj		[gob!]
+	x		[integer!]
+	y		[integer!]
+][
+	child: rs-gob/find-child obj x y
+	if child <> null [
+		ui-manager/add-update obj
+		do-mouse-move child x y
+	]
+]
+
 do-events: func [
 	no-wait? [logic!]
 	return:  [logic!]

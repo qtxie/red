@@ -298,6 +298,7 @@ Red/System [
 #define GOB_FLAG_HIDDEN 00020000h
 #define GOB_FLAG_TOP	00040000h
 #define GOB_FLAG_DRAG	00080000h
+#define GOB_FLAG_UPDATE	00100000h
 
 #define GOB_TYPE(flag)	[flag and FFh]
 

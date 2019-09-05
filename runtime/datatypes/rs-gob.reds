@@ -24,16 +24,27 @@ rs-gob: context [
 		node
 	]
 
-	vector-insert: func [
+	vector-append: func [
 		node	[node!]
 		ptr		[int-ptr!]
-		offset	[integer!]
-		return: [series!]
 		/local
-			s	  [series!]
-			p	  [byte-ptr!]
-			pp	  [struct! [val [int-ptr!]]]
-			unit  [integer!]
+			s	[series!]
+			pp	[struct! [val [int-ptr!]]]
+	][
+		s: as series! node/value
+		pp: as struct! [val [int-ptr!]] alloc-tail-unit s size? int-ptr!
+		pp/val: ptr
+	]
+
+	vector-insert: func [
+		node		[node!]
+		ptr			[int-ptr!]
+		offset		[integer!]
+		/local
+			s		[series!]
+			p		[byte-ptr!]
+			pp		[struct! [val [int-ptr!]]]
+			unit	[integer!]
 	][
 		s: as series! node/value
 		unit: size? int-ptr!
@@ -51,7 +62,6 @@ rs-gob: context [
 		pp: as struct! [val [int-ptr!]] p
 		pp/val: ptr
 		s/tail: as cell! (as byte-ptr! s/tail) + unit
-		s
 	]
 
 	set-flag?: func [
@@ -113,7 +123,7 @@ rs-gob: context [
 		child/parent: gob
 		if null? gob/children [gob/children: make-vector 4]
 		v/node: gob/children
-		if append? [vector/rs-append-int :v as-integer child][
+		either append? [vector/rs-append-int :v as-integer child][
 			vector-insert v/node as int-ptr! child 0
 		]
 	]
@@ -135,9 +145,10 @@ rs-gob: context [
 		/local
 			v	[red-vector! value]
 	][
-		assert gob/children <> null
-		v/head: 0
-		v/node: gob/children
-		as int-ptr! vector/rs-head :v
+		either gob/children <> null [
+			v/head: 0
+			v/node: gob/children
+			as int-ptr! vector/rs-head :v
+		][null]
 	]
 ]

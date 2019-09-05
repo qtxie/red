@@ -10,30 +10,6 @@ Red/System [
 	}
 ]
 
-#enum window-flags! [
-	;-- show flags
-	WIN_FLAG_SHOW:		0
-	WIN_FLAG_HIDE:		1
-	WIN_FLAG_MIN:		2
-	WIN_FLAG_MAX:		4
-	WIN_FLAG_INACTIVE:	8
-	;-- window type
-	WIN_TYPE_POPUP:		10h
-	WIN_TYPE_FRAMELESS:	20h
-	WIN_TYPE_TOOL:		40h
-	WIN_TYPE_TASKBAR:	80h
-	;-- render flags
-	WIN_RENDER_FULL:	0100h
-]
-
-wm!: alias struct! [
-	flags		[integer!]
-	hWnd		[handle!]
-	gob			[gob!]			;-- root gob
-	focused		[gob!]			;-- focused gob in the window
-	update-list	[node!]
-]
-
 ui-manager: context [	;-- manager all the windows
 
 	win-list:		as node! 0
@@ -44,49 +20,52 @@ ui-manager: context [	;-- manager all the windows
 			v1	[node!]
 			s	[series!]
 	][
-		win-list: rs-gob/make-vector 2 * size? wm!
-		active-win: as wm! alloc0 size? wm!
+		win-list: rs-gob/make-vector 4
 	]
 
 	on-gc-mark: func [
 		/local
 			w	[wm!]
 			s	[series!]
-			e	[wm!]
+			p	[int-ptr!]
+			e	[int-ptr!]
 	][
 		collector/keep win-list
-		s: as series! win-list/node
-		w: as wm! s/offset
-		e: as wm! s/tail
-		while [w < e][
+		s: as series! win-list/value
+		p: as int-ptr! s/offset
+		e: as int-ptr! s/tail
+		while [p < e][
+			w: as wm! p/value
 			collector/keep w/update-list
-			w: w + 1
+			p: p + 1
 		]
 	]
 
 	add-window: func [
-		hWnd	[handle!]
+		hwnd	[handle!]
 		root	[gob!]
+		render	[render-target!]
+		return: [wm!]
 		/local
 			p	[wm!]
 	][
-		p: as wm! alloc-tail-unit as series! win-list/value size? wm!
+		p: as wm! allocate size? wm!
 		p/flags: 0
 		p/hWnd: hWnd
 		p/gob: root
+		p/render: render
 		p/focused: null
 		p/update-list: rs-gob/make-vector 16
+		rs-gob/vector-append win-list as int-ptr! p
+		p
 	]
 
 	add-update: func [
 		gob		[gob!]
-		/local
-			v	[red-vector! value]
 	][
-		unless rs-gob/set-flag? GOB_FLAG_UPDATE [
+		unless rs-gob/set-flag? gob GOB_FLAG_UPDATE [
 			gob/flags: gob/flags or GOB_FLAG_UPDATE
-			v/node: active-win/update-list
-			vector/rs-append-int :v as-integer gob
+			rs-gob/vector-append active-win/update-list as int-ptr! gob
 		]
 	]
 ]

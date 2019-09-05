@@ -117,6 +117,8 @@ do-mouse-move: func [
 	obj		[gob!]
 	x		[integer!]
 	y		[integer!]
+	/local
+		child	[gob!]
 ][
 	child: rs-gob/find-child obj x y
 	if child <> null [

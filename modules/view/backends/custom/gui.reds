@@ -10,7 +10,36 @@ Red/System [
 	}
 ]
 
-#include %ui-manager.reds
+#switch OS [
+	Windows  [#include %windows/definitions.reds]
+	macOS    [#include %macOS/definitions.reds]
+	#default [#include %Linux/definitions.reds]		;-- Linux
+]
+
+#enum window-flags! [
+	;-- show flags
+	WIN_FLAG_SHOW:		0
+	WIN_FLAG_HIDE:		1
+	WIN_FLAG_MIN:		2
+	WIN_FLAG_MAX:		4
+	WIN_FLAG_INACTIVE:	8
+	;-- window type
+	WIN_TYPE_POPUP:		10h
+	WIN_TYPE_FRAMELESS:	20h
+	WIN_TYPE_TOOL:		40h
+	WIN_TYPE_TASKBAR:	80h
+	;-- render flags
+	WIN_RENDER_FULL:	0100h
+]
+
+wm!: alias struct! [
+	flags		[integer!]
+	hwnd		[handle!]
+	gob			[gob!]			;-- root gob
+	render		[render-target!]
+	focused		[gob!]			;-- focused gob in the window
+	update-list	[node!]
+]
 
 #switch OS [
 	Windows  [#include %windows/host.reds]
@@ -18,6 +47,7 @@ Red/System [
 	#default [#include %Linux/host.reds]		;-- Linux
 ]
 
+#include %ui-manager.reds
 #include %text-box.reds
 #include %draw.reds
 #include %events.reds

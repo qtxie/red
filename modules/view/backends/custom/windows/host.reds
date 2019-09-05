@@ -10,7 +10,6 @@ Red/System [
 	}
 ]
 
-#include %definitions.reds
 #include %utils.reds
 
 host: context [
@@ -38,16 +37,6 @@ host: context [
 
 	rc-cache:		declare RECT_STRUCT
 	;kb-state: 		allocate 256							;-- holds keyboard state for keys conversion
-
-	active-win:		as gob! 0
-
-	render-target!: alias struct! [
-		bitmap			[this!]
-		swapchain		[this!]
-		dcomp-device	[this!]
-		dcomp-target	[this!]
-		dcomp-visual	[this!]
-	]
 
 	#include %direct2d.reds
 
@@ -240,6 +229,7 @@ host: context [
 	]
 
 	RedWndProc: func [
+		[stdcall]
 		hWnd		[handle!]
 		msg			[integer!]
 		wParam		[integer!]
@@ -252,14 +242,18 @@ host: context [
 			child	[gob!]
 			x		[integer!]
 			y		[integer!]
+			wm		[wm!]
 	][
-		obj: as gob! GetWindowLongPtr hWnd 0
+		wm: as wm! GetWindowLongPtr hWnd GWLP_USERDATA
 
 		switch msg [
-			WM_NCCREATE [
+			WM_CREATE [
 				cs: as tagCREATESTRUCT lParam
-				SetWindowLongPtr hWnd 0 cs/lpCreateParams
-				return 1	;-- continue to create the window
+				obj: as gob! cs/lpCreateParams
+				obj/flags: obj/flags and FFFFFF00h or GOB_WINDOW or GOB_FLAG_HOSTED
+				wm: ui-manager/add-window hWnd obj create-render-target hWnd
+				SetWindowLongPtr hWnd GWLP_USERDATA as int-ptr! wm
+				return 0	;-- continue to create the window
 			]
 			WM_MOUSEMOVE [
 				x: WIN32_LOWORD(lParam)
@@ -272,7 +266,7 @@ host: context [
 				;][
 				;	return EVT_DISPATCH						;-- filter out buggy mouse positions (thanks MS!)
 				;]
-				do-mouse-move obj pixel-to-logical x pixel-to-logical y
+				do-mouse-move wm/gob pixel-to-logical x pixel-to-logical y
 				return 0
 			]
 			WM_MOUSEHOVER [0]
@@ -412,7 +406,6 @@ probe 5
 			bits	[integer!]
 			w		[integer!]
 			h		[integer!]
-			handle	[handle!]
 	][
 probe "make window"
 		flags: WS_CAPTION or WS_SYSMENU or WS_MINIMIZEBOX or WS_THICKFRAME
@@ -431,7 +424,7 @@ probe "make window"
 		w: rc/right - rc/left
 		h: rc/bottom - rc/top
 
-		handle: CreateWindowEx
+		CreateWindowEx
 			wsflags
 			#u16 "RedHostWindow"
 			#u16 "RedCustomWindow"
@@ -444,25 +437,24 @@ probe "make window"
 			null
 			hInstance
 			as int-ptr! obj
-
-		obj/flags: obj/flags and FFFFFF00h or GOB_WINDOW or GOB_FLAG_HOSTED
-		active-win: obj
-?? handle
-		SetWindowLongPtr handle GWLP_USERDATA as int-ptr! create-render-target handle
-		handle
 	]
 
 	show-window: func [
 		hWnd	[handle!]
 	][
-		?? hWnd
+		ui-manager/active-win: as wm! GetWindowLongPtr hWnd GWLP_USERDATA
 		ShowWindow hWnd SW_SHOWDEFAULT
 	]
 
-	draw-window: func [
-		
+	draw-windows: func [
+		/local
+			wm		[wm!]
+			hwnd	[handle!]
 	][
-		
+		;probe "draw-windows"
+		;@@ TBD draw all the visible windows in win-list
+		wm: ui-manager/active-win
+		;?? wm
 	]
 
 	do-events: func [
@@ -490,7 +482,7 @@ probe "make window"
 					if no-wait? [return msg?]
 				]
 			]
-			draw-window
+			draw-windows
 			io/do-events 16
 		]
 		unless no-wait? [

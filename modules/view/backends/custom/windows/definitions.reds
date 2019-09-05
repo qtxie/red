@@ -318,6 +318,7 @@ tagTRACKMOUSEEVENT: alias struct! [
 ]
 
 wndproc-cb!: alias function! [
+	[stdcall]
 	hWnd	[handle!]
 	msg		[integer!]
 	wParam	[integer!]
@@ -326,6 +327,7 @@ wndproc-cb!: alias function! [
 ]
 
 timer-cb!: alias function! [
+	[stdcall]
 	hWnd	[handle!]
 	msg		[integer!]
 	idEvent	[int-ptr!]
@@ -1284,4 +1286,12 @@ GetDpiForMonitor!: alias function! [
 			]
 		]
 	]
+]
+
+render-target!: alias struct! [
+	bitmap			[this!]
+	swapchain		[this!]
+	dcomp-device	[this!]
+	dcomp-target	[this!]
+	dcomp-visual	[this!]
 ]

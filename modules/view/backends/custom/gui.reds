@@ -21,6 +21,7 @@ Red/System [
 	WIN_FLAG_SHOW:		0
 	WIN_FLAG_HIDE:		1
 	WIN_FLAG_MIN:		2
+	WIN_FLAG_INVISIBLE: 3		;-- HIDE or MIN
 	WIN_FLAG_MAX:		4
 	WIN_FLAG_INACTIVE:	8
 	;-- window type
@@ -51,6 +52,7 @@ wm!: alias struct! [
 #include %text-box.reds
 #include %draw.reds
 #include %events.reds
+#include %widgets.reds
 
 get-face-obj: func [
 	hWnd	[handle!]

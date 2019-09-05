@@ -50,7 +50,7 @@ ui-manager: context [	;-- manager all the windows
 			p	[wm!]
 	][
 		p: as wm! allocate size? wm!
-		p/flags: 0
+		p/flags: WIN_RENDER_FULL
 		p/hWnd: hWnd
 		p/gob: root
 		p/render: render

@@ -300,7 +300,7 @@ Red/System [
 #define GOB_FLAG_DRAG	00080000h
 #define GOB_FLAG_UPDATE	00100000h
 
-#define GOB_TYPE(flag)	[flag and FFh]
+#define GOB_TYPE(gob)	[gob/flags and FFh]
 
 #define coord!	integer!
 
@@ -376,12 +376,12 @@ gob-style!: alias struct! [
 ]
 
 gob!: alias struct! [				;-- 64 bytes
-	flags		[integer!]			;-- attributes and states
+	flags		[integer!]			;-- type and states
 	box			[area! value]		;-- top-left(x1, y1), bottom-right(x2, y2)
 	parent		[gob!]				;-- parent gob
 	children	[node!]				;-- child gobs, red-vector!
-	event-fn	[gob-event-fn!]		;-- event function
-	render-fn	[gob-render-fn!]	;-- render function
+	;event-fn	[gob-event-fn!]		;-- event function
+	;render-fn	[gob-render-fn!]	;-- render function
 	text		[node!]				;-- red-string node
 	image		[node!]				;-- red-image node
 	draw		[node!]				;-- draw block node

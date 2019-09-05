@@ -446,15 +446,98 @@ probe "make window"
 		ShowWindow hWnd SW_SHOWDEFAULT
 	]
 
+	draw-gob: func [
+		gob		[gob!]
+		/local
+			s		[series!]
+			p		[ptr2ptr!]
+			e		[ptr2ptr!]
+	][
+		switch GOB_TYPE(gob) [
+			GOB_BASE	[widgets/draw-base gob]
+			GOB_WINDOW	[0]
+			GOB_BUTTON	[0]
+			default		[0]
+		]
+		if gob/children <> null [
+			s: as series! gob/children/value
+			p: as ptr2ptr! s/offset
+			e: as ptr2ptr! s/tail
+			while [p < e][
+				draw-gob as gob! p/ptr
+				p: p + 1
+			]
+		]
+	]
+
+	draw-update: func [
+		update-list	[node!]
+	][
+		
+	]
+
+	draw-begin: func [
+		wm			[wm!]
+		/local
+			this	[this!]
+			dc		[ID2D1DeviceContext]
+			clr		[D3DCOLORVALUE]
+			brush	[integer!]
+	][
+		this: d2d-ctx
+		dc: as ID2D1DeviceContext this/vtbl
+		dc/SetTarget this wm/render/bitmap
+		dc/BeginDraw this
+		clr: to-dx-color 00FFCC66h null
+		dc/Clear this clr
+		brush: 0
+		dc/CreateSolidColorBrush this clr null :brush
+		widgets/brush: as this! brush
+	]
+
+	draw-end: func [
+		wm		[wm!]
+		/local
+			this	[this!]
+			dc		[ID2D1DeviceContext]
+			sc		[IDXGISwapChain1]
+			render	[render-target!]
+	][
+		this: d2d-ctx
+		dc: as ID2D1DeviceContext this/vtbl
+		dc/EndDraw this null null
+		dc/SetTarget this null
+		render: wm/render
+		this: render/swapchain
+		sc: as IDXGISwapChain1 this/vtbl
+		sc/Present this 0 0
+	]
+
 	draw-windows: func [
 		/local
 			wm		[wm!]
-			hwnd	[handle!]
+			s		[series!]
+			p		[ptr2ptr!]
+			e		[ptr2ptr!]
 	][
-		;probe "draw-windows"
-		;@@ TBD draw all the visible windows in win-list
-		wm: ui-manager/active-win
-		;?? wm
+		s: as series! ui-manager/win-list/value
+		p: as ptr2ptr! s/offset
+		e: as ptr2ptr! s/tail
+		while [p < e][
+			wm: as wm! p/ptr
+			if wm/flags and WIN_FLAG_INVISIBLE = 0 [
+				widgets/set-render d2d-ctx
+				either wm/flags and WIN_RENDER_FULL = 0 [
+					draw-update wm/update-list	
+				][				
+					draw-begin wm
+					draw-gob wm/gob
+					draw-end wm				
+					wm/flags: wm/flags and (not WIN_RENDER_FULL)
+				]
+			]
+			p: p + 1
+		]
 	]
 
 	do-events: func [

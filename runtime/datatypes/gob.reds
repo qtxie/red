@@ -80,7 +80,7 @@ gob: context [
 		gob		[gob!]
 		return: [integer!]
 	][
-		switch GOB_TYPE(gob/flags) [
+		switch GOB_TYPE(gob) [
 			GOB_BASE	[base]
 			GOB_WINDOW	[window]
 			GOB_BUTTON	[button]
@@ -227,7 +227,7 @@ gob: context [
 		part: part - 6
 
 		g: gob/value
-		idx: GOB_TYPE(g/flags) * 2 + 1
+		idx: GOB_TYPE(g) * 2 + 1
 		string/concatenate-literal buffer as c-string! t-list/idx
 		idx: idx + 1
 		part: part - t-list/idx
@@ -305,6 +305,7 @@ gob: context [
 				]
 				sym = facets/color [
 					int: as red-integer! w
+					probe int/value
 					g/bg-color: int/value
 				]
 				sym = facets/opacity [

@@ -42,6 +42,9 @@ Red/System [
 #define float-ptr!    [pointer! [float!]]
 #define float32-ptr!  [pointer! [float32!]]
 
+ptr2ptr!: alias struct! [ptr [int-ptr!]]
+#define ptr-value!    [ptr2ptr! value]
+
 #define make-c-string [as c-string! allocate]
 
 #define read-io8	  [system/io/read as byte-ptr!]

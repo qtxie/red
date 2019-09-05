@@ -168,6 +168,7 @@ host: context [
 		props/colorContext: null
 		bmp: 0
 		d2d: as ID2D1DeviceContext d2d-ctx/vtbl
+		d2d/setDpi d2d-ctx dpi-x dpi-y
 		hr: d2d/CreateBitmapFromDxgiSurface d2d-ctx as int-ptr! buf props :bmp
 		assert hr = 0
 		
@@ -519,6 +520,7 @@ probe "make window"
 			s		[series!]
 			p		[ptr2ptr!]
 			e		[ptr2ptr!]
+			tm		[time-meter! value]
 	][
 		s: as series! ui-manager/win-list/value
 		p: as ptr2ptr! s/offset
@@ -529,10 +531,13 @@ probe "make window"
 				widgets/set-render d2d-ctx
 				either wm/flags and WIN_RENDER_FULL = 0 [
 					draw-update wm/update-list	
-				][				
+				][
+					probe "Full Draw...................."
+					time-meter/start :tm
 					draw-begin wm
 					draw-gob wm/gob
-					draw-end wm				
+					draw-end wm
+					probe time-meter/elapse :tm
 					wm/flags: wm/flags and (not WIN_RENDER_FULL)
 				]
 			]

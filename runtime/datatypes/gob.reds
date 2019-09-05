@@ -270,6 +270,7 @@ gob: context [
 			end		[red-value!]
 			pair	[red-pair!]
 			int		[red-integer!]
+			tp		[red-tuple!]
 			type	[integer!]
 			sym		[integer!]
 	][
@@ -304,9 +305,8 @@ gob: context [
 					g/box/y2: g/box/y1 + pair/y
 				]
 				sym = facets/color [
-					int: as red-integer! w
-					probe int/value
-					g/bg-color: int/value
+					tp: as red-tuple! w
+					g/bg-color: tp/array1
 				]
 				sym = facets/opacity [
 					int: as red-integer! w

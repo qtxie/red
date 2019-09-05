@@ -1846,7 +1846,7 @@ ID2D1DeviceContext: alias struct! [
 	BeginDraw						[function! [this [this!]]]
 	EndDraw							[function! [this [this!] tag1 [int-ptr!] tag2 [int-ptr!] return: [integer!]]]
 	GetPixelFormat					[integer!]
-	SetDpi							[integer!]
+	SetDpi							[function! [this [this!] x [float32!] y [float32!]]]
 	GetDpi							[integer!]
 	GetSize							[integer!]
 	GetPixelSize					[integer!]

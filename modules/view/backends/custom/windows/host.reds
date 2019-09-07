@@ -146,10 +146,8 @@ host: context [
 		either win8+? [			;-- use direct composition
 			hr: dxgi/CreateSwapChainForComposition dxgi-factory d3d-device desc null :int
 		][
-			probe [dxgi-factory " " d3d-device " " hWnd]
-			desc/AlphaMode: 0		;-- DXGI_ALPHA_MODE_PREMULTIPLIED
+			desc/AlphaMode: 0
 			hr: dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int
-			?? hr
 		]
 		assert zero? hr
 
@@ -306,11 +304,9 @@ host: context [
 				return 0
 			]
 			WM_PAINT [
-				probe "WM_PAINT"
 				ValidateRect hWnd null
 			]
 			WM_ERASEBKGND [
-				probe "WM_ERASEBKGND"
 				return 1
 			]
 			default [0]
@@ -374,13 +370,10 @@ host: context [
 		ver/array1: version-info/dwMajorVersion
 			or (version-info/dwMinorVersion << 8)
 			and 0000FFFFh
-probe 2
+
 		DX-init
-probe 3
 		set-defaults
-probe 4
 		register-classes hInstance
-probe 5
 
 		int: as red-integer! #get system/view/platform/build
 		int/header: TYPE_INTEGER
@@ -532,12 +525,12 @@ probe "make window"
 				either wm/flags and WIN_RENDER_FULL = 0 [
 					draw-update wm/update-list	
 				][
-					probe "Full Draw...................."
+					print "Full Draw in "
 					time-meter/start :tm
 					draw-begin wm
 					draw-gob wm/gob
 					draw-end wm
-					probe time-meter/elapse :tm
+					probe [time-meter/elapse :tm "ms"]
 					wm/flags: wm/flags and (not WIN_RENDER_FULL)
 				]
 			]

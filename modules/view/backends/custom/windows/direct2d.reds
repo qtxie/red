@@ -122,20 +122,17 @@ DX-init: func [
 	hr: D2D1CreateFactory 0 IID_ID2D1Factory1 :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
 	assert zero? hr
 	d2d-factory: as this! factory
-?? d2d-factory
 
 	;-- get system DPI
 	d2d: as ID2D1Factory d2d-factory/vtbl
 	d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
-?? dpi-x
+?? dpi-y
 	dpi-value: as-integer dpi-y
 
 	;-- create D2D Device
 	hr: d2d/CreateDevice d2d-factory as int-ptr! dxgi-device :factory
 	d2d-device: as this! factory
 	assert zero? hr
-
-?? d2d-device
 
 	;-- create D2D context
 	d2d-dev: as ID2D1Device d2d-device/vtbl

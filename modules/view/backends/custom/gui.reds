@@ -159,7 +159,6 @@ free-faces: func [
 ]
 
 on-gc-mark: does [
-	probe "on-gc-mark"
 	collector/keep flags-blk/node
 	ui-manager/on-gc-mark
 ]

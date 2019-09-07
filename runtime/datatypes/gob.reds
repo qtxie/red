@@ -233,7 +233,7 @@ gob: context [
 		part: part - t-list/idx
 		if indent? [
 			string/append-char GET_BUFFER(buffer) as-integer blank
-			part: part - 1
+			part: object/do-indent buffer tabs part - 1
 		]
 
 		;-- offset
@@ -244,7 +244,7 @@ gob: context [
 		part: pair/form :pt buffer null part
 		if indent? [
 			string/append-char GET_BUFFER(buffer) as-integer blank
-			part: part - 1
+			part: object/do-indent buffer tabs part - 1
 		]
 
 		;-- size
@@ -271,7 +271,6 @@ gob: context [
 			pair	[red-pair!]
 			int		[red-integer!]
 			tp		[red-tuple!]
-			type	[integer!]
 			sym		[integer!]
 	][
 		g: as gob! alloc0 size? gob!
@@ -283,14 +282,15 @@ gob: context [
 			w: as red-word! val
 			sym: symbol/resolve w/symbol
 			w: w + 1
-			type: case [
+			case [
 				sym = facets/type	[
 					sym: symbol/resolve w/symbol
 					case [
-						sym = window [type: GOB_WINDOW]
-						sym = button [type: GOB_BUTTON]
-						true		 [type: GOB_BASE]	
+						sym = window [sym: GOB_WINDOW]
+						sym = button [sym: GOB_BUTTON]
+						true		 [sym: GOB_BASE]	
 					]
+					g/flags: sym
 				]
 				sym = facets/offset [
 					pair: as red-pair! w

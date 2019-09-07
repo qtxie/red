@@ -19,79 +19,132 @@ array: context [
 		node	[node!]
 		return: [integer!]
 		/local
-			s	 [series!]
+			s	[series!]
 	][
 		s: as series! node/value
-		(as-integer s/tail - s/offset) >> log-b size? int-ptr!
+		as-integer s/tail - s/offset
+	]
+
+	clear: func [
+		node	[node!]
+		/local
+			s	[series!]
+	][
+		s: as series! node/value
+		s/offset: s/tail
 	]
 
 	append-int: func [
 		node	[node!]
 		val		[integer!]
 		/local
-			s	 [series!]
-			p	 [int-ptr!]
+			s	[series!]
+			p	[int-ptr!]
 	][
 		s: as series! node/value
 		p: as int-ptr! alloc-tail-unit s size? integer!
 		p/value: val
 	]
 
-	append-ptr: func [
+	find-int: func [
 		node	[node!]
-		val		[int-ptr!]
-		/local
-			s	 [series!]
-			p	 [ptr-ptr!]
-	][
-		s: as series! node/value
-		p: as ptr-ptr! alloc-tail-unit s size? int-ptr!	
-		p/value: val
-	]
-
-	find-ptr: func [
-		node	[node!]
-		val		[int-ptr!]
+		val		[integer!]
 		return: [integer!]		;-- return offset if found, -1 if not found
 		/local
-			s	 [series!]
-			p	 [ptr-ptr!]
-			pp	 [ptr-ptr!]
-			e	 [ptr-ptr!]
+			s	[series!]
+			p	[int-ptr!]
+			pp	[int-ptr!]
+			e	[int-ptr!]
 	][
 		s: as series! node/value
-		p: as ptr-ptr! s/offset
-		e: as ptr-ptr! s/tail
+		p: as int-ptr! s/offset
+		e: as int-ptr! s/tail
 		pp: p
 		while [p < e][
 			if p/value = val [
-				return (as-integer p - pp) >> log-b size? int-ptr!
+				return as-integer p - pp
 			]
 			p: p + 1
 		]
 		-1
 	]
 
-	remove-ptr: func [
-		node	[node!]
-		offset	[integer!]
-		len		[integer!]
+	pick-int: func [
+		node		[node!]
+		idx			[integer!]		;-- 1-based index
+		return:		[integer!]
 		/local
-			s	  [series!]
-			p	  [ptr-ptr!]
+			s		[series!]
+			p		[int-ptr!]
+	][
+		s: as series! node/value
+		p: as int-ptr! s/offset
+		assert p + idx - 1 < as int-ptr! s/tail
+		p/idx
+	]
+
+	append-ptr: func [
+		node	[node!]
+		val		[int-ptr!]
+		/local
+			s	[series!]
+			p	[ptr-ptr!]
+	][
+		s: as series! node/value
+		p: as ptr-ptr! alloc-tail-unit s size? int-ptr!	
+		p/value: val
+	]
+
+	pick-ptr: func [
+		node		[node!]
+		idx			[integer!]		;-- 1-based index
+		return:		[node!]
+		/local
+			s		[series!]
+			p		[ptr-ptr!]
+	][
+		s: as series! node/value
+		p: as ptr-ptr! s/offset
+		p: p + idx - 1
+		assert p < as ptr-ptr! s/tail
+		p/value
+	]
+
+	poke-ptr: func [
+		node		[node!]
+		idx			[integer!]		;-- 1-based index
+		val			[int-ptr!]
+		/local
+			s		[series!]
+			p		[ptr-ptr!]
+	][
+		s: as series! node/value
+		p: as ptr-ptr! s/offset
+		p: p + idx - 1
+		assert p < as ptr-ptr! s/tail
+		p/value: val
+	]
+
+	remove-at: func [
+		node	[node!]
+		offset	[integer!]			;-- bytes
+		len		[integer!]			;-- bytes
+		/local
+			s	[series!]
+			p	[byte-ptr!]
 	][
 		s: as series! node/value
 
-		p: (as ptr-ptr! s/offset) + offset
+		p: (as byte-ptr! s/offset) + offset
 
-		assert p + len <= (as ptr-ptr! s/tail)
+		assert p + len <= (as byte-ptr! s/tail)
 
 		move-memory
-			as byte-ptr! p
-			as byte-ptr! p + len
-			as-integer (as ptr-ptr! s/tail) - (p + len)
+			p
+			p + len
+			as-integer (as byte-ptr! s/tail) - (p + len)
 
-		s/tail: as cell! (as ptr-ptr! s/tail) - len
+		s/tail: as cell! (as byte-ptr! s/tail) - len
 	]
 ]
 
@@ -257,7 +310,7 @@ _hashtable: context [
 			p: as ptr-ptr! s/offset
 			e: as ptr-ptr! s/tail
 			while [p < e][
-				collector/keep p/value
+				if p/value <> null [collector/keep p/value]
 				p: p + 1
 			]
 		]
@@ -629,33 +682,6 @@ _hashtable: context [
 		]
 	]
 
-	get-chain: func [
-		chains		[node!]
-		idx			[integer!]		;-- 1-based index
-		return:		[node!]
-		/local
-			s		[series!]
-			p		[ptr-ptr!]
-	][
-		s: as series! chains/value
-		p: as ptr-ptr! s/offset
-		p: p + idx - 1
-		p/value
-	]
-
-	get-chain-value: func [
-		chain		[node!]
-		idx			[integer!]		;-- 1-based index
-		return:		[integer!]
-		/local
-			s		[series!]
-			p		[int-ptr!]
-	][
-		s: as series! chain/value
-		p: as int-ptr! s/offset
-		p/idx
-	]
-
 	put-key: func [
 		node	[node!]
 		key		[integer!]
@@ -901,8 +927,8 @@ _hashtable: context [
 					chain?: keys/i < 0
 					either chain? [
 						x: 0 - keys/i
-						chain: get-chain h/chains x
-						k: blk + get-chain-value chain 1
+						chain: array/pick-ptr h/chains x
+						k: blk + array/pick-int chain 1
 					][
 						k: blk + keys/i
 					]
@@ -914,7 +940,7 @@ _hashtable: context [
 							chain: alloc-bytes 4 * size? integer!
 							array/append-ptr h/chains chain
 							array/append-int chain keys/i
-							keys/i: 0 - array/length? h/chains
+							keys/i: 0 - ((array/length? h/chains) >> log-b size? int-ptr!)
 						]
 						array/append-int chain idx
 						x: i
@@ -1040,8 +1066,12 @@ _hashtable: context [
 			blk		[red-value!]
 			k		[red-value!]
 			idx		[integer!]
+			chain	[node!]
+			p-idx	[int-ptr!]
+			sz		[integer!]
 			find?	[logic!]
 			hash?	[logic!]
+			chain?	[logic!]
 			type	[integer!]
 			key-type [integer!]
 			last-idx [integer!]
@@ -1094,7 +1124,17 @@ _hashtable: context [
 			]
 		][
 			if hash? [
-				idx: keys/i
+				chain?: keys/i < 0
+				either chain? [
+					chain: array/pick-ptr h/chains 0 - keys/i
+					s: as series! chain/value
+					p-idx: as int-ptr! s/offset
+					idx: p-idx/value
+					sz: (as-integer (as int-ptr! s/tail) - p-idx) >> 2
+				][
+					idx: keys/i
+					sz: 1
+				]
 				k: blk + idx
 				if all [
 					_BUCKET_IS_NOT_DEL(flags ii sh)
@@ -1102,20 +1142,24 @@ _hashtable: context [
 					actions/compare k key op
 					idx - head // skip = 0
 				][
-					either reverse? [
-						if all [idx < head idx > last-idx][last-idx: idx find?: yes]
-					][
-						if idx >= head [
-							either last? [
-								if idx > last-idx [last-idx: idx find?: yes]
-							][
-								if idx < last-idx [last-idx: idx find?: yes]
+					loop sz [
+						either reverse? [
+							if all [idx < head idx > last-idx][last-idx: idx find?: yes]
+						][
+							if idx >= head [
+								either last? [
+									if idx > last-idx [last-idx: idx find?: yes]
+								][
+									if idx < last-idx [last-idx: idx find?: yes]
+								]
 							]
 						]
+						if chain? [
+							p-idx: p-idx + 1
+							idx: p-idx/value
+						]
 					]
-					if all [keys/i and 80000000h = 0 find?][
-						return blk + last-idx
-					]
+					if find? [return blk + last-idx]
 				]
 			]
 
@@ -1137,7 +1181,7 @@ _hashtable: context [
 	delete: func [
 		node	[node!]
 		key		[red-value!]
-		/local s h i ii sh flags indexes keys del? idx chain chains
+		/local s h i ii sh flags indexes keys del? idx chain c-idx
 	][
 		s: as series! node/value
 		h: as hashtable! s/offset
@@ -1155,14 +1199,17 @@ _hashtable: context [
 			i: (as-integer key - s/offset) >> 4 + 1
 			s: as series! h/indexes/value
 			indexes: as int-ptr! s/offset
-			i: indexes/i
+			idx: indexes/i
 			del?: yes
-			if keys/i < 0 [
-				s: as series! h/chains/value
-				chains: get-chain h/chains 
-				chain: chains/
-				idx: array/find-ptr 
-				del?: s/offset = s/tail
+			if keys/idx < 0 [
+				c-idx: 0 - keys/idx
+				chain: array/pick-ptr h/chains c-idx
+				idx: array/find-int chain i - 1
+				assert idx > 0
+				array/remove-at chain idx size? integer!
+				either zero? array/length? chain [
+					array/poke-ptr h/chains c-idx null
+				][del?: no]
 			]
 			i: i - 1
 			_HT_CAL_FLAG_INDEX(i ii sh)
@@ -1216,6 +1263,7 @@ _hashtable: context [
 			size: size - 1
 			zero? size
 		]
+		array/clear h/chains
 	]
 
 	destroy: func [

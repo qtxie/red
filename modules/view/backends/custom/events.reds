@@ -126,10 +126,3 @@ do-mouse-move: func [
 		do-mouse-move child x y
 	]
 ]
-
-do-events: func [
-	no-wait? [logic!]
-	return:  [logic!]
-][
-	host/do-events no-wait?
-]

@@ -18,7 +18,6 @@ host: context [
 	win8+?:			no
 	win10?:			no
 
-	exit-loop:		0
 	process-id:		0
 	border-width:	0
 	hScreen:		as handle! 0
@@ -628,13 +627,16 @@ probe "make window"
 	]
 
 	draw-windows: func [
+		return:		[float32!]
 		/local
 			wm		[wm!]
 			s		[series!]
 			p		[ptr-ptr!]
 			e		[ptr-ptr!]
 			tm		[time-meter! value]
+			t		[float32!]
 	][
+		t: as float32! 0.0
 		s: as series! ui-manager/win-list/value
 		p: as ptr-ptr! s/offset
 		e: as ptr-ptr! s/tail
@@ -650,46 +652,43 @@ probe "make window"
 					draw-begin wm
 					draw-gob wm/gob
 					draw-end wm
-					probe [time-meter/elapse :tm "ms"]
+					t: time-meter/elapse :tm
+					probe [t "ms"]
 					wm/flags: wm/flags and (not WIN_RENDER_FULL)
 				]
 			]
 			p: p + 1
 		]
+		t
 	]
+]
 
-	do-events: func [
-		no-wait? [logic!]
-		return:  [logic!]
-		/local
-			msg	  [tagMSG value]
-			state [integer!]
-			msg?  [logic!]
-			saved [tagMSG]
-			run? [logic!]
-	][
-		msg?: no
-		run?: yes
+;-- 
 
-		unless no-wait? [exit-loop: 0]
+do-events: func [
+	no-wait?	[logic!]
+	return:		[logic!]
+	/local
+		msg		[tagMSG value]
+		msg?	[logic!]
+		run?	[logic!]
+		tm		[integer!]
+][
+	msg?: no
+	run?: yes
 
-		while [run?][
-			loop 10 [
-				if 0 < PeekMessage :msg null 0 0 1 [
-					if msg/msg = 12h [run?: no]		;-- WM_QUIT
-					unless msg? [msg?: yes]
-					TranslateMessage :msg
-					DispatchMessage :msg
-					if no-wait? [return msg?]
-				]
+	while [run?][
+		loop 10 [
+			if 0 < PeekMessage :msg null 0 0 1 [
+				if msg/msg = 12h [run?: no]		;-- WM_QUIT
+				unless msg? [msg?: yes]
+				TranslateMessage :msg
+				DispatchMessage :msg
+				if no-wait? [return msg?]
 			]
-			draw-windows
-			io/do-events 16
 		]
-		unless no-wait? [
-			exit-loop: exit-loop - 1
-			if exit-loop > 0 [PostQuitMessage 0]
-		]
-		msg?
+		tm: as-integer (as float32! 16.66) - host/draw-windows
+		if tm > 0 [io/do-events tm]
 	]
+	msg?
 ]

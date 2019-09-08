@@ -23,14 +23,18 @@ renderer: context [
 	][
 		bh: as ID2D1SolidColorBrush brush/vtbl
 		bh/SetColor brush to-dx-color color null
-		render/FillRectangle this rc as-integer brush 
+		render/DrawRectangle this rc as-integer brush as float32! 1.0 0
 	]
 
 	fill-box: func [
 		rc		[RECT_F]
 		color	[integer!]
+		/local
+			bh	[ID2D1SolidColorBrush]
 	][
-		
+		bh: as ID2D1SolidColorBrush brush/vtbl
+		bh/SetColor brush to-dx-color color null
+		render/FillRectangle this rc as-integer brush 
 	]
 
 	set-render: func [rdr [this!]][

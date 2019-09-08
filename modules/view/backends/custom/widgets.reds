@@ -13,13 +13,7 @@ Red/System [
 widgets: context [
 	draw-base: func [
 		gob		[gob!]
-		/local
-			rc	[RECT_F value]
 	][
-		rc/right: as float32! gob/box/x2
-		rc/bottom: as float32! gob/box/y2
-		rc/left: as float32! gob/box/x1
-		rc/top: as float32! gob/box/y1
-		renderer/fill-box :rc gob/bg-color
+		renderer/fill-box as RECT_F :gob/box gob/bg-color
 	]
 ]

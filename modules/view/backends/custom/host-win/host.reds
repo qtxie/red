@@ -29,7 +29,7 @@ host: context [
 	ime-open?:		no
 	;ime-font:		as tagLOGFONT allocate 92
 
-	dpi-value:		96
+	dpi-value:		as float32! 96.0
 	dpi-x:			as float32! 0.0
 	dpi-y:			as float32! 0.0
 	screen-size-x:	0
@@ -107,7 +107,7 @@ host: context [
 		d2d: as ID2D1Factory d2d-factory/vtbl
 		d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
 	?? dpi-y
-		dpi-value: as-integer dpi-y
+		dpi-value: dpi-y
 
 		;-- create D2D Device
 		hr: d2d/CreateDevice d2d-factory as int-ptr! dxgi-device :factory
@@ -158,17 +158,17 @@ host: context [
 	]
 
 	logical-to-pixel: func [
-		num		[integer!]
+		num		[float32!]
 		return: [integer!]
 	][
-		num * dpi-value / 96
+		as-integer (num * dpi-value / as-float32 96.0)
 	]
 
 	pixel-to-logical: func [
 		num		[integer!]
-		return: [integer!]
+		return: [float32!]
 	][
-		num * 96 / dpi-value
+		(as-float32 num * 96) / dpi-value
 	]
 
 	create-dcomp: func [
@@ -402,7 +402,7 @@ host: context [
 			WM_DPICHANGED [
 				dpi-x: as float32! WIN32_LOWORD(wParam)			;-- new DPI X
 				dpi-y: as float32! WIN32_HIWORD(wParam)			;-- new DPI Y
-				dpi-value: WIN32_HIWORD(wParam)
+				dpi-value: dpi-y
 				rc: as RECT_STRUCT lParam
 				SetWindowPos 
 					hWnd
@@ -459,7 +459,9 @@ host: context [
 	][
 		screen-size-x: GetDeviceCaps hScreen HORZRES
 		screen-size-y: GetDeviceCaps hScreen VERTRES
-		pair/push pixel-to-logical screen-size-x pixel-to-logical screen-size-y
+		pair/push
+			as-integer pixel-to-logical screen-size-x
+			as-integer pixel-to-logical screen-size-y
 	]
 
 	init: func [
@@ -525,14 +527,14 @@ probe "make window"
 		wsflags: 0
 		if win10? [wsflags: wsflags or WS_EX_NOREDIRECTIONBITMAP]
 
-		w: obj/box/x2 - obj/box/x1
-		h: obj/box/y2 - obj/box/y1
+		w: logical-to-pixel obj/box/x2 - obj/box/x1
+		h: logical-to-pixel obj/box/y2 - obj/box/y1
 		if w <= 0 [w: 200]
 		if h <= 0 [h: 200]
 		rc/left: 0
 		rc/top: 0
-		rc/right:  logical-to-pixel w
-		rc/bottom: logical-to-pixel h
+		rc/right:  w
+		rc/bottom: h
 		AdjustWindowRectEx rc flags no 0
 		w: rc/right - rc/left
 		h: rc/bottom - rc/top

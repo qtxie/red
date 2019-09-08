@@ -115,14 +115,17 @@ OS-make-event: func [
 
 do-mouse-move: func [
 	obj		[gob!]
-	x		[integer!]
-	y		[integer!]
+	x		[float32!]
+	y		[float32!]
 	/local
 		child	[gob!]
+		t	[time-meter! value]
 ][
+	time-meter/start :t
 	child: rs-gob/find-child obj x y
 	if child <> null [
 		ui-manager/add-update obj
 		do-mouse-move child x y
 	]
+	probe ["find-child: " time-meter/elapse :t]
 ]

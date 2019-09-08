@@ -302,7 +302,7 @@ Red/System [
 
 #define GOB_TYPE(gob)	[gob/flags and FFh]
 
-#define coord!	integer!
+#define coord! float32!
 
 point!: alias struct! [
 	x	[coord!]

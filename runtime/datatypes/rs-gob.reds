@@ -28,8 +28,8 @@ rs-gob: context [
 
 	find-child: func [
 		gob		[gob!]
-		x		[integer!]
-		y		[integer!]
+		x		[float32!]
+		y		[float32!]
 		return: [gob!]
 		/local
 			g	[gob!]
@@ -40,10 +40,6 @@ rs-gob: context [
 		p: head gob
 		loop n [
 			g: as gob! p/value
-;probe [
-;					g/box/x1 " " x " " g/box/x2 lf
-;					g/box/y1 " " y " " g/box/y2
-;]
 			if all [
 				g/flags and GOB_FLAG_HIDDEN = 0		;-- visible
 				all [

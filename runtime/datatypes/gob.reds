@@ -242,8 +242,8 @@ gob: context [
 		;-- offset
 		string/concatenate-literal buffer "offset: "
 		part: part - 8
-		pt/x: g/box/x1
-		pt/y: g/box/y1
+		pt/x: as-integer g/box/x1
+		pt/y: as-integer g/box/y1
 		part: pair/form :pt buffer null part
 		if indent? [
 			string/append-char GET_BUFFER(buffer) as-integer blank
@@ -253,8 +253,8 @@ gob: context [
 		;-- size
 		string/concatenate-literal buffer "size: "
 		part: part - 6
-		pt/x: g/box/x2 - g/box/x1
-		pt/y: g/box/y2 - g/box/y1
+		pt/x: as-integer g/box/x2 - g/box/x1
+		pt/y: as-integer g/box/y2 - g/box/y1
 		part: pair/form :pt buffer null part
 		if indent? [
 			string/append-char GET_BUFFER(buffer) as-integer blank
@@ -297,15 +297,15 @@ gob: context [
 				]
 				sym = facets/offset [
 					pair: as red-pair! w
-					g/box/x1: pair/x
-					g/box/y1: pair/y
+					g/box/x1: as float32! pair/x
+					g/box/y1: as float32! pair/y
 					g/box/x2: g/box/x1 + g/box/x2
 					g/box/y2: g/box/y1 + g/box/y2
 				]
 				sym = facets/size [
 					pair: as red-pair! w
-					g/box/x2: g/box/x1 + pair/x
-					g/box/y2: g/box/y1 + pair/y
+					g/box/x2: g/box/x1 + as-float32 pair/x
+					g/box/y2: g/box/y1 + as-float32 pair/y
 				]
 				sym = facets/color [
 					tp: as red-tuple! w

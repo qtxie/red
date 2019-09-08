@@ -51,6 +51,7 @@ thread: context [
 			;ExitThread: "ExitThread" [
 			;	retval		[integer!]
 			;]
+			SwitchToThread: "SwitchToThread" [return: [logic!]]
 			CloseHandle: "CloseHandle" [
 				hObject		[handle!]
 				return:		[logic!]
@@ -133,6 +134,12 @@ thread: context [
 	][
 		GetCurrentThreadId
 	]
+
+	yield: func [][
+		"relinquish the CPU for a moment"
+		SwitchToThread
+	]
+
 ][	;-- POSIX
 
 	#define	ESRCH		3
@@ -161,6 +168,11 @@ thread: context [
 	]
 
 	#import [
+		LIBC-file cdecl [
+			sched_yield: "sched_yield" [
+				return: [integer!]
+			]
+		]
 		LIBPTHREAD-file cdecl [
 			pthread_attr_init: "pthread_attr_init" [
 				attr		[pthread_attr_t]
@@ -279,6 +291,10 @@ thread: context [
 		return: [integer!]
 	][
 		pthread_self
+	]
+
+	yield: func [][
+		sched_yield
 	]
 ]
 

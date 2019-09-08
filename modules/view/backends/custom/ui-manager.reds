@@ -20,20 +20,20 @@ ui-manager: context [	;-- manager all the windows
 			v1	[node!]
 			s	[series!]
 	][
-		win-list: rs-gob/make-vector 4
+		win-list: array/make 4 size? int-ptr!
 	]
 
 	on-gc-mark: func [
 		/local
 			w	[wm!]
 			s	[series!]
-			p	[int-ptr!]
-			e	[int-ptr!]
+			p	[ptr-ptr!]
+			e	[ptr-ptr!]
 	][
 		collector/keep win-list
 		s: as series! win-list/value
-		p: as int-ptr! s/offset
-		e: as int-ptr! s/tail
+		p: as ptr-ptr! s/offset
+		e: as ptr-ptr! s/tail
 		while [p < e][
 			w: as wm! p/value
 			collector/keep w/update-list
@@ -55,9 +55,21 @@ ui-manager: context [	;-- manager all the windows
 		p/gob: root
 		p/render: render
 		p/focused: null
-		p/update-list: rs-gob/make-vector 16
-		rs-gob/vector-append win-list as int-ptr! p
+		p/update-list: array/make 16 size? int-ptr!
+		array/append-ptr win-list as int-ptr! p
 		p
+	]
+
+	remove-window: func [
+		wm		[wm!]
+		/local
+			g	[gob!]
+	][
+		g: wm/gob
+		g/flags: g/flags and (not GOB_FLAG_HOSTED)
+		array/remove-ptr win-list as int-ptr! wm
+		free as byte-ptr! wm/render
+		free as byte-ptr! wm
 	]
 
 	add-update: func [
@@ -65,7 +77,7 @@ ui-manager: context [	;-- manager all the windows
 	][
 		unless rs-gob/set-flag? gob GOB_FLAG_UPDATE [
 			gob/flags: gob/flags or GOB_FLAG_UPDATE
-			rs-gob/vector-append active-win/update-list as int-ptr! gob
+			array/append-ptr active-win/update-list as int-ptr! gob
 		]
 	]
 ]

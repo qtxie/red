@@ -33,6 +33,7 @@ red: context [
 	#include %datatypes/structures.reds
 	#include %print.reds
 	#include %datatypes/common.reds
+	#include %array.reds
 	#include %unicode.reds
 	#include %case-folding.reds
 	#include %sort.reds

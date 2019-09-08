@@ -717,6 +717,7 @@ show: function [
 		parent [object!]  "Parent face to link to"
 	/force				  "For internal use only!"
 ][
+	probe "show"
 	if block? face [
 		foreach f face [
 			if word? f [f: get f]
@@ -727,6 +728,7 @@ show: function [
 	;if debug-info? face [print ["show:" face/type " with?:" with]]
 	if gob? face [
 		obj: face/state
+		?? obj
 		unless obj [obj: system/view/platform/make-view face face/parent]
 		system/view/platform/show-window obj
 		exit
@@ -839,13 +841,15 @@ view: function [
 	;/modal					"Display a modal window (pop-up)"
 	/no-wait				"Return immediately - do not wait"
 ][
+	probe 1
 	unless system/view/screens [system/view/platform/init]
-
+probe 2
 	if block? spec [spec: either tight [layout/tight spec][layout spec]]
+probe spec/type
 	if spec/type <> 'window [cause-error 'script 'not-window []]
 	if options [set spec make object! opts]
 	if flags [spec/flags: either spec/flags [unique union to-block spec/flags to-block flgs][flgs]]
-	
+	probe 3
 	;unless spec/text   [spec/text: "Red: untitled"]
 	;unless spec/offset [center-face spec]
 	show spec

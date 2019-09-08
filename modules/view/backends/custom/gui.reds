@@ -10,42 +10,12 @@ Red/System [
 	}
 ]
 
-#switch OS [
-	Windows  [#include %windows/definitions.reds]
-	macOS    [#include %macOS/definitions.reds]
-	#default [#include %Linux/definitions.reds]		;-- Linux
-]
-
-#enum window-flags! [
-	;-- show flags
-	WIN_FLAG_SHOW:		0
-	WIN_FLAG_HIDE:		1
-	WIN_FLAG_MIN:		2
-	WIN_FLAG_INVISIBLE: 3		;-- HIDE or MIN
-	WIN_FLAG_MAX:		4
-	WIN_FLAG_INACTIVE:	8
-	;-- window type
-	WIN_TYPE_POPUP:		10h
-	WIN_TYPE_FRAMELESS:	20h
-	WIN_TYPE_TOOL:		40h
-	WIN_TYPE_TASKBAR:	80h
-	;-- render flags
-	WIN_RENDER_FULL:	0100h
-]
-
-wm!: alias struct! [
-	flags		[integer!]
-	hwnd		[handle!]
-	gob			[gob!]			;-- root gob
-	render		[render-target!]
-	focused		[gob!]			;-- focused gob in the window
-	update-list	[node!]
-]
+#include %definitions.reds
 
 #switch OS [
-	Windows  [#include %windows/host.reds]
-	macOS    [#include %macOS/host.reds]
-	#default [#include %Linux/host.reds]		;-- Linux
+	Windows  [#include %host-win/host.reds]
+	macOS    [#include %host-mac/host.reds]
+	#default [#include %host-linux/host.reds]		;-- Linux
 ]
 
 #include %ui-manager.reds
@@ -53,110 +23,6 @@ wm!: alias struct! [
 #include %draw.reds
 #include %events.reds
 #include %widgets.reds
-
-get-face-obj: func [
-	hWnd	[handle!]
-	return: [red-object!]
-	/local
-		face [red-object!]
-][
-	;face: declare red-object!
-	;face/header: GetWindowLong hWnd wc-offset
-	;face/ctx:	 as node! GetWindowLong hWnd wc-offset + 4
-	;face/class:  GetWindowLong hWnd wc-offset + 8
-	;face/on-set: as node! GetWindowLong hWnd wc-offset + 12
-	;face
-	null
-]
-
-get-face-values: func [
-	hWnd	[handle!]
-	return: [red-value!]
-	/local
-		ctx	 [red-context!]
-		node [node!]
-		s	 [series!]
-][
-	;node: as node! GetWindowLong hWnd wc-offset + 4
-	;ctx: TO_CTX(node)
-	;s: as series! ctx/values/value
-	;s/offset
-	null
-]
-
-get-node-facet: func [
-	node	[node!]
-	facet	[integer!]
-	return: [red-value!]
-	/local
-		ctx	 [red-context!]
-		s	 [series!]
-][
-	ctx: TO_CTX(node)
-	s: as series! ctx/values/value
-	s/offset + facet
-]
-
-face-handle?: func [
-	face	[red-object!]
-	return: [handle!]									;-- returns NULL if no handle
-	/local
-		state  [red-block!]
-		handle [red-handle!]
-][
-	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
-	if TYPE_OF(state) = TYPE_BLOCK [
-		handle: as red-handle! block/rs-head state
-		if TYPE_OF(handle) = TYPE_HANDLE [return as handle! handle/value]
-	]
-	null
-]
-
-get-face-handle: func [
-	face	[red-object!]
-	return: [handle!]
-	/local
-		state  [red-block!]
-		handle [red-handle!]
-][
-	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
-	assert TYPE_OF(state) = TYPE_BLOCK
-	handle: as red-handle! block/rs-head state
-	assert TYPE_OF(handle) = TYPE_HANDLE
-	as handle! handle/value
-]
-
-free-faces: func [
-	face	[red-object!]
-	/local
-		values	[red-value!]
-		type	[red-word!]
-		obj		[red-object!]
-		tail	[red-object!]
-		pane	[red-block!]
-		state	[red-value!]
-		rate	[red-value!]
-		sym		[integer!]
-		dc		[integer!]
-		flags	[integer!]
-		handle	[handle!]
-][
-	;handle: face-handle? face
-	;if null? handle [exit]
-
-	values: object/get-values face
-	;type: as red-word! values + FACE_OBJ_TYPE
-	;sym: symbol/resolve type/symbol
-
-	;obj: as red-object! values + FACE_OBJ_FONT
-	;if TYPE_OF(obj) = TYPE_OBJECT [unlink-sub-obj face obj FONT_OBJ_PARENT]
-	
-	;obj: as red-object! values + FACE_OBJ_PARA
-	;if TYPE_OF(obj) = TYPE_OBJECT [unlink-sub-obj face obj PARA_OBJ_PARENT]
-
-	state: values + FACE_OBJ_STATE
-	state/header: TYPE_NONE
-]
 
 on-gc-mark: does [
 	collector/keep flags-blk/node
@@ -181,7 +47,7 @@ get-screen-size: func [
 	id		[integer!]
 	return: [red-pair!]
 ][
-	pair/push 2000 1000
+	host/get-screen-size id
 ]
 
 get-text-size: func [
@@ -194,6 +60,12 @@ get-text-size: func [
 	pair/push 80 20
 ]
 
+face-handle?: func [
+	face	[red-object!]
+	return: [handle!]							;-- returns NULL if no handle
+][
+	null
+]
 
 make-font: func [
 	face [red-object!]
@@ -207,17 +79,7 @@ get-font-handle: func [
 	font	[red-object!]
 	idx		[integer!]							;-- 0-based index
 	return: [handle!]
-	/local
-		state  [red-block!]
-		handle [red-handle!]
 ][
-	state: as red-block! (object/get-values font) + FONT_OBJ_STATE
-	if TYPE_OF(state) = TYPE_BLOCK [
-		handle: (as red-handle! block/rs-head state) + idx
-		if TYPE_OF(handle) = TYPE_HANDLE [
-			return as handle! handle/value
-		]
-	]
 	null
 ]
 
@@ -266,15 +128,12 @@ OS-request-dir: func [
 	as red-value! none-value
 ]
 
-
-
 update-scroller: func [
 	scroller [red-object!]
 	flags [integer!]
 ][
 
 ]
-
 
 OS-redraw: func [hWnd [integer!]][]
 
@@ -304,37 +163,19 @@ unlink-sub-obj: func [
 	face  [red-object!]
 	obj   [red-object!]
 	field [integer!]
-	/local
-		values [red-value!]
-		parent [red-block!]
-		res	   [red-value!]
 ][
-	values: object/get-values obj
-	parent: as red-block! values + field
 ]
 
 OS-update-view: func [
 	face [red-object!]
-	/local
-		ctx		[red-context!]
-		state	[red-block!]
-		int		[red-integer!]
-		s		[series!]
-][
-	ctx: GET_CTX(face)
-	s: as series! ctx/values/value
-	state: as red-block! s/offset + FACE_OBJ_STATE
-	s: GET_BUFFER(state)
-	int: as red-integer! s/offset
-	int: int + 1
-	int/value: 0										;-- reset flags
+][										;-- reset flags
 ]
 
 OS-destroy-view: func [
 	face   [red-object!]
 	empty? [logic!]
 ][
-	free-faces face
+	;free-faces face
 ]
 
 OS-update-facet: func [

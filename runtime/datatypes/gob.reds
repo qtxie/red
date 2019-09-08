@@ -101,11 +101,13 @@ gob: context [
 			idx		[integer!]
 			sym		[integer!]
 			blk		[red-block!]
+			ret		[red-value!]
 			error?	[logic!]
 	][
 		error?: no
 		g: gob/value
 
+		ret: stack/push*
 		switch TYPE_OF(element) [
 			TYPE_INTEGER [
 				int: as red-integer! element
@@ -116,21 +118,21 @@ gob: context [
 				sym: symbol/resolve w/symbol
 				case [
 					sym = gui/facets/type [
-						word/make-at get-type g element
+						word/make-at get-type g ret
 					]
 					sym = sym-state	 [
 						either rs-gob/set-flag? g GOB_FLAG_HOSTED [
-							handle/make-at element as-integer gob/host
-						][element/header: TYPE_NONE]
+							handle/make-at ret as-integer gob/host
+						][ret/header: TYPE_NONE]
 					]
 					sym = sym-parent [
-						handle/make-at element as-integer rs-gob/get-parent g
+						handle/make-at ret as-integer rs-gob/get-parent g
 					]
 					sym = sym-text [0]
 					sym = sym-color [0]
 					sym = sym-pane [
 						len: rs-gob/length? g
-						blk: block/make-at as red-block! element len
+						blk: block/make-at as red-block! ret len
 						child: rs-gob/head g
 						loop len [
 							make-in blk as gob! child/value
@@ -142,8 +144,9 @@ gob: context [
 			]
 			default [error?: yes]
 		]
+		stack/pop 1									;-- avoids moving stack up
 		if error? [fire [TO_ERROR(script invalid-path) path element]]
-		element
+		ret
 	]
 
 	set-value: func [

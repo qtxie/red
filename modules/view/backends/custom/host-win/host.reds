@@ -286,6 +286,7 @@ host: context [
 			WM_GETOBJECT [0]		;-- for accessibility support
 			WM_CLOSE [0]
 			WM_DESTROY [
+				ui-manager/remove-window wm
 				PostQuitMessage 0
 				return 0
 			]
@@ -341,6 +342,15 @@ host: context [
 		hInstance [handle!]
 	][
 		UnregisterClass #u16 "RedHostWindow"	hInstance
+	]
+
+	get-screen-size: func [
+		id		[integer!]									;@@ Not used yet
+		return: [red-pair!]
+	][
+		screen-size-x: GetDeviceCaps hScreen HORZRES
+		screen-size-y: GetDeviceCaps hScreen VERTRES
+		pair/push pixel-to-logical screen-size-x pixel-to-logical screen-size-y
 	]
 
 	init: func [
@@ -444,8 +454,8 @@ probe "make window"
 		gob		[gob!]
 		/local
 			s		[series!]
-			p		[ptr2ptr!]
-			e		[ptr2ptr!]
+			p		[ptr-ptr!]
+			e		[ptr-ptr!]
 	][
 		switch GOB_TYPE(gob) [
 			GOB_BASE	[widgets/draw-base gob]
@@ -455,10 +465,10 @@ probe "make window"
 		]
 		if gob/children <> null [
 			s: as series! gob/children/value
-			p: as ptr2ptr! s/offset
-			e: as ptr2ptr! s/tail
+			p: as ptr-ptr! s/offset
+			e: as ptr-ptr! s/tail
 			while [p < e][
-				draw-gob as gob! p/ptr
+				draw-gob as gob! p/value
 				p: p + 1
 			]
 		]
@@ -511,15 +521,15 @@ probe "make window"
 		/local
 			wm		[wm!]
 			s		[series!]
-			p		[ptr2ptr!]
-			e		[ptr2ptr!]
+			p		[ptr-ptr!]
+			e		[ptr-ptr!]
 			tm		[time-meter! value]
 	][
 		s: as series! ui-manager/win-list/value
-		p: as ptr2ptr! s/offset
-		e: as ptr2ptr! s/tail
+		p: as ptr-ptr! s/offset
+		e: as ptr-ptr! s/tail
 		while [p < e][
-			wm: as wm! p/ptr
+			wm: as wm! p/value
 			if wm/flags and WIN_FLAG_INVISIBLE = 0 [
 				widgets/set-render d2d-ctx
 				either wm/flags and WIN_RENDER_FULL = 0 [

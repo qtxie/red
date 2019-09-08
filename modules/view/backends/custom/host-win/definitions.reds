@@ -1313,13 +1313,6 @@ D3DCOLORVALUE: alias struct! [
 	a			[float32!]
 ]
 
-D2D_RECT_F: alias struct! [
-	left		[float32!]
-	top			[float32!]
-	right		[float32!]
-	bottom		[float32!]
-]
-
 D2D_MATRIX_3X2_F: alias struct! [
 	_11			[float32!]
 	_12			[float32!]
@@ -1451,7 +1444,7 @@ DrawLine*: alias function! [
 
 DrawRectangle*: alias function! [
 	this		[this!]
-	rect		[D2D_RECT_F]
+	rect		[RECT_F]
 	brush		[integer!]
 	strokeWidth [float32!]
 	strokeStyle [integer!]
@@ -1459,7 +1452,7 @@ DrawRectangle*: alias function! [
 
 FillRectangle*: alias function! [
 	this		[this!]
-	rect		[D2D_RECT_F]
+	rect		[RECT_F]
 	brush		[integer!]
 ]
 

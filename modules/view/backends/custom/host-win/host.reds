@@ -11,6 +11,8 @@ Red/System [
 ]
 
 #include %utils.reds
+#include %direct2d.reds
+#include %renderer.reds
 
 host: context [
 	win8+?:			no
@@ -38,7 +40,115 @@ host: context [
 	rc-cache:		declare RECT_STRUCT
 	;kb-state: 		allocate 256							;-- holds keyboard state for keys conversion
 
-	#include %direct2d.reds
+	DX-init: func [
+		/local
+			str					[red-string!]
+			hr					[integer!]
+			factory 			[integer!]
+			dll					[handle!]
+			options				[integer!]
+			D2D1CreateFactory	[D2D1CreateFactory!]
+			DWriteCreateFactory [DWriteCreateFactory!]
+			GetUserDefaultLocaleName [GetUserDefaultLocaleName!]
+			d2d					[ID2D1Factory]
+			d3d					[ID3D11Device]
+			d2d-dev				[ID2D1Device]
+			dxgi				[IDXGIDevice1]
+			adapter				[IDXGIAdapter]
+			ctx					[integer!]
+			unk					[IUnknown]
+			d2d-device			[this!]
+	][
+		dll: LoadLibraryA "d2d1.dll"
+		if null? dll [exit]
+		D2D1CreateFactory: as D2D1CreateFactory! GetProcAddress dll "D2D1CreateFactory"
+		dll: LoadLibraryA "DWrite.dll"
+		if null? dll [exit]
+		DWriteCreateFactory: as DWriteCreateFactory! GetProcAddress dll "DWriteCreateFactory"
+		dll: LoadLibraryA "kernel32.dll"
+		GetUserDefaultLocaleName: as GetUserDefaultLocaleName! GetProcAddress dll "GetUserDefaultLocaleName"
+		dw-locale-name: as c-string! allocate 85
+		GetUserDefaultLocaleName dw-locale-name 85
+		if win8+? [
+			dll: LoadLibraryA "dcomp.dll"
+			pfnDCompositionCreateDevice2: GetProcAddress dll "DCompositionCreateDevice2"
+		]
+
+		ctx:	 0
+		factory: 0
+		options: 0													;-- debugLevel
+
+		hr: D3D11CreateDevice
+			null
+			1		;-- D3D_DRIVER_TYPE_HARDWARE
+			null
+			33		;-- D3D11_CREATE_DEVICE_BGRA_SUPPORT or D3D11_CREATE_DEVICE_SINGLETHREADED
+			null
+			0
+			7		;-- D3D11_SDK_VERSION
+			:factory
+			null
+			:ctx
+		assert zero? hr
+
+		d3d-device: as this! factory
+		d3d-ctx: as this! ctx
+
+		d3d: as ID3D11Device d3d-device/vtbl
+		;-- create DXGI device
+		hr: d3d/QueryInterface d3d-device IID_IDXGIDevice1 as interface! :factory	
+		assert zero? hr
+		dxgi-device: as this! factory
+
+		hr: D2D1CreateFactory 0 IID_ID2D1Factory1 :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
+		assert zero? hr
+		d2d-factory: as this! factory
+
+		;-- get system DPI
+		d2d: as ID2D1Factory d2d-factory/vtbl
+		d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
+	?? dpi-y
+		dpi-value: as-integer dpi-y
+
+		;-- create D2D Device
+		hr: d2d/CreateDevice d2d-factory as int-ptr! dxgi-device :factory
+		d2d-device: as this! factory
+		assert zero? hr
+
+		;-- create D2D context
+		d2d-dev: as ID2D1Device d2d-device/vtbl
+		hr: d2d-dev/CreateDeviceContext d2d-device 0 :factory
+		assert zero? hr
+		d2d-ctx: as this! factory
+
+		;-- get dxgi adapter
+		dxgi: as IDXGIDevice1 dxgi-device/vtbl
+		hr: dxgi/GetAdapter dxgi-device :factory
+		assert zero? hr
+
+		;-- get Dxgi factory
+		dxgi-adapter: as this! factory
+		adapter: as IDXGIAdapter dxgi-adapter/vtbl
+		hr: adapter/GetParent dxgi-adapter IID_IDXGIFactory2 :factory
+		assert zero? hr
+		dxgi-factory: as this! factory
+
+		hr: DWriteCreateFactory 0 IID_IDWriteFactory :factory		;-- DWRITE_FACTORY_TYPE_SHARED: 0
+		assert zero? hr
+		dwrite-factory: as this! factory
+		str: string/rs-make-at ALLOC_TAIL(root) 1024
+		dwrite-str-cache: str/node
+
+		COM_SAFE_RELEASE(unk dxgi-device)
+		COM_SAFE_RELEASE(unk d2d-device)
+		COM_SAFE_RELEASE(unk dxgi-adapter)
+	]
+
+	DX-cleanup: func [/local unk [IUnknown]][
+		COM_SAFE_RELEASE(unk dwrite-factory)
+		COM_SAFE_RELEASE(unk d2d-factory)
+		free as byte-ptr! dw-locale-name
+	]
 
 	get-para-flags: func [
 		type	[integer!]
@@ -496,7 +606,7 @@ probe "make window"
 		dc/Clear this clr
 		brush: 0
 		dc/CreateSolidColorBrush this clr null :brush
-		widgets/brush: as this! brush
+		renderer/brush: as this! brush
 	]
 
 	draw-end: func [
@@ -531,7 +641,7 @@ probe "make window"
 		while [p < e][
 			wm: as wm! p/value
 			if wm/flags and WIN_FLAG_INVISIBLE = 0 [
-				widgets/set-render d2d-ctx
+				renderer/set-render d2d-ctx
 				either wm/flags and WIN_RENDER_FULL = 0 [
 					draw-update wm/update-list	
 				][

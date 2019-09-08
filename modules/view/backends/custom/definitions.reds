@@ -10,6 +10,13 @@ Red/System [
 	}
 ]
 
+RECT_F: alias struct! [
+	left		[float32!]
+	top			[float32!]
+	right		[float32!]
+	bottom		[float32!]
+]
+
 #switch OS [
 	Windows  [#include %host-win/definitions.reds]
 	macOS    [#include %host-mac/definitions.reds]

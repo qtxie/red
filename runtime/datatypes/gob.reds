@@ -13,14 +13,7 @@ Red/System [
 gob: context [
 	verbose: 0
 
-	sym-state:	-1
-	sym-parent:	-1
-	sym-pane:	-1
-	sym-text:	-1
-	sym-color:	-1
-	sym-data:	-1
 	sym-style:	-1
-	sym-font:	-1
 
 	box: func [
 		val		[int-ptr!]
@@ -63,7 +56,7 @@ gob: context [
 	]
 
 	push: func [
-		val		[int-ptr!]
+		val		[gob!]
 		return: [red-gob!]
 		/local
 			hndl [red-gob!]
@@ -72,7 +65,7 @@ gob: context [
 		
 		hndl: as red-gob! stack/push*
 		hndl/header: TYPE_GOB
-		hndl/value: as gob! val
+		hndl/value: val
 		hndl
 	]
 
@@ -117,20 +110,20 @@ gob: context [
 				w: as red-word! element
 				sym: symbol/resolve w/symbol
 				case [
-					sym = gui/facets/type [
+					sym = facets/type [
 						word/make-at get-type g ret
 					]
-					sym = sym-state	 [
+					sym = facets/state	 [
 						either rs-gob/set-flag? g GOB_FLAG_HOSTED [
 							ret/header: TYPE_NONE
 						][ret/header: TYPE_NONE]
 					]
-					sym = sym-parent [
+					sym = facets/parent [
 						handle/make-at ret as-integer rs-gob/get-parent g
 					]
-					sym = sym-text [0]
-					sym = sym-color [0]
-					sym = sym-pane [
+					sym = facets/text [0]
+					sym = facets/color [0]
+					sym = facets/pane [
 						len: rs-gob/length? g
 						blk: block/make-at as red-block! ret len
 						child: rs-gob/head g
@@ -138,6 +131,10 @@ gob: context [
 							make-in blk as gob! child/value
 							child: child + 1
 						]
+					]
+					sym = facets/actors [
+						?? g
+						ret: as red-value! g/actors
 					]
 					true [error?: yes]
 				]
@@ -319,7 +316,7 @@ gob: context [
 			end		[red-value!]
 	][
 		g: as gob! alloc0 size? gob!
-
+?? g
 		val: block/rs-head spec
 		end: block/rs-tail spec
 
@@ -502,13 +499,6 @@ gob: context [
 			null			;write
 		]
 
-		sym-state:	symbol/make "state"
-		sym-parent:	symbol/make "parent"
-		sym-pane:	symbol/make "pane"
-		sym-text:	symbol/make "text"
-		sym-color:	symbol/make "color"
-		sym-data:	symbol/make "data"
 		sym-style:	symbol/make "style"
-		sym-font:	symbol/make "font"
 	]
 ]

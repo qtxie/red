@@ -493,6 +493,13 @@ gob!: alias struct! [				;-- keep the size <= 64 bytes
 	extra		[int-ptr!]			;-- extra data for each type
 ]
 
+gob-event!: alias struct! [
+	gob		[gob!]
+	pt		[point! value]
+	data	[integer!]
+	fdata	[float32!]
+]
+
 red-gob!: alias struct! [
 	header	[integer!]
 	pad		[integer!]

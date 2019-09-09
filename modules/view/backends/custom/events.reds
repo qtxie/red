@@ -31,8 +31,11 @@ get-event-window: func [
 get-event-face: func [
 	evt		[red-event!]
 	return: [red-value!]
+	/local
+		gob-evt	[gob-event!]
 ][
-	as red-value! evt
+	gob-evt: as gob-event! evt/msg
+	as red-value! gob/push gob-evt/gob
 ]
 
 get-event-offset: func [
@@ -85,7 +88,7 @@ get-event-flag: func [
 
 make-event: func [
 	evt			[integer!]
-	gob			[gob-event!]
+	gob-evt		[gob-event!]
 	flags		[integer!]
 	return:		[integer!]
 	/local
@@ -95,8 +98,9 @@ make-event: func [
 		state	[integer!]
 		gui-evt	[red-event! value]
 ][
+	gui-evt/header: TYPE_EVENT
 	gui-evt/type:  evt
-	gui-evt/msg:   as byte-ptr! gob
+	gui-evt/msg:   as byte-ptr! gob-evt
 	gui-evt/flags: flags
 
 	state: EVT_DISPATCH
@@ -104,12 +108,12 @@ make-event: func [
 	stack/mark-try-all words/_anon
 	res: as red-word! stack/arguments
 	catch CATCH_ALL_EXCEPTIONS [
-		#call [system/view/awake gui-evt]
+		#call [system/view/awake :gui-evt]
 		stack/unwind
 	]
 	stack/adjust-post-try
 	if system/thrown <> 0 [system/thrown: 0]
-	
+
 	if TYPE_OF(res) = TYPE_WORD [
 		sym: symbol/resolve res/symbol
 		case [
@@ -125,24 +129,33 @@ do-mouse-move: func [
 	obj		[gob!]
 	x		[float32!]
 	y		[float32!]
+	flags	[integer!]
+	return: [integer!]
 	/local
 		child	[gob!]
-		t	[time-meter! value]
+		evt		[gob-event! value]
+		ret		[integer!]
 ][
-	time-meter/start :t
+	ret: EVT_DISPATCH
 	child: rs-gob/find-child obj x y
 	if child <> null [
 		ui-manager/add-update obj
-		do-mouse-move child x y
+		ret: do-mouse-move child x - child/box/x1 y - child/box/y1 flags
 	]
-	probe ["find-child: " time-meter/elapse :t]
+	if ret = EVT_DISPATCH [		;-- post to parent
+		evt/pt/x: x
+		evt/pt/y: y
+		evt/gob: obj
+		ret: make-event EVT_OVER :evt flags
+	]
+	ret
 ]
 
 do-mouse-down: func [
 	obj		[gob!]
 	x		[float32!]
 	y		[float32!]
-	evt		[integer!]
+	flags	[integer!]
 ][
-	
+	   
 ]

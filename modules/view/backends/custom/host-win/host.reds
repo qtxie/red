@@ -374,7 +374,7 @@ host: context [
 				;][
 				;	return EVT_DISPATCH						;-- filter out buggy mouse positions (thanks MS!)
 				;]
-				do-mouse-move wm/gob pixel-to-logical x pixel-to-logical y
+				do-mouse-move wm/gob pixel-to-logical x pixel-to-logical y 0
 				return 0
 			]
 			WM_MOUSEHOVER [0]

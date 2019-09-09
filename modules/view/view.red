@@ -644,16 +644,17 @@ system/view: context [
 	]
 	
 	awake: function [event [event!] /with face /local result][	;@@ temporary until event:// is implemented
+	probe "awake"
 		unless face [unless face: event/face [exit]]	;-- filter out unbound events
 		
-		unless with [									;-- protect following code from recursion
-			foreach handler handlers [
-				set/any 'result do-safe [handler face event]
-				either event? :result [event: result][if :result [return :result]]
-			]
-			set/any 'result capture-events face event	;-- event capturing
-			if find [stop done] :result [return :result]
-		]
+		;unless with [									;-- protect following code from recursion
+			;foreach handler handlers [
+			;	set/any 'result do-safe [handler face event]
+			;	either event? :result [event: result][if :result [return :result]]
+			;]
+			;set/any 'result capture-events face event	;-- event capturing
+			;if find [stop done] :result [return :result]
+		;]
 		
 		set/any 'result do-actor face event event/type
 		
@@ -697,14 +698,15 @@ do-safe: func ["Internal Use Only" code [block!] /local result][
 	get/any 'result
 ]
 
-do-actor: function ["Internal Use Only" face [object!] event [event! none!] type [word!] /local result][
+do-actor: function ["Internal Use Only" face [object! gob!] event [event! none!] type [word!] /local result][
+	probe "do-actor"
 	if all [
 		object? face/actors
 		act: in face/actors name: select system/view/evt-names type
 		act: get act
 	][
-		if debug-info? face [print ["calling actor:" name]]
-		
+		;if debug-info? face [print ["calling actor:" name]]
+		probe "fjdksjfasldkfjksdajfkljasdfklj"
 		set/any 'result do-safe [do [act face event]]	;-- compiler can't call act, hence DO
 	]
 	:result

@@ -133,7 +133,6 @@ gob: context [
 						]
 					]
 					sym = facets/actors [
-						?? g
 						ret: as red-value! g/actors
 					]
 					true [error?: yes]
@@ -314,16 +313,25 @@ gob: context [
 			g		[gob!]
 			val		[red-value!]
 			end		[red-value!]
+			w		[red-value!]
+			n		[integer!]
+			saved	[integer!]
 	][
 		g: as gob! alloc0 size? gob!
-?? g
+
 		val: block/rs-head spec
 		end: block/rs-tail spec
 
-		while [val < end][
-			set-facets g as red-word! val val + 1
-			val: val + 2
+		w: val
+		saved: spec/head
+		spec/head: saved + 1
+		while [w < end][
+			n: interpreter/eval-single as red-value! spec
+			set-facets g as red-word! w stack/arguments
+			w: val + n
+			spec/head: n + 1
 		]
+		spec/head: saved
 		g
 	]
 
@@ -335,8 +343,8 @@ gob: context [
 		type	[integer!]
 		return:	[red-gob!]  
 	][
-		proto/header: type
 		proto/value: rs-make as red-block! spec
+		proto/header: type
 		proto
 	]
 

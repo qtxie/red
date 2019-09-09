@@ -6,11 +6,20 @@ Red [
 probe "start"
 
 win: make gob! [type: 'window size: 800x800]
-win/actors: make object! [
-	on-over: func [face event][
-		probe "on-over"
+child: make gob! [
+	offset: 100x50 size: 300x300 color: 255.0.0
+	actors: object [
+		on-over: func [face event][
+			probe reduce [face/type event/offset]
+		]
 	]
 ]
+win/actors: make object! [
+	on-over: func [face event][
+		probe reduce [face/type event/offset]
+	]
+]
+append win child
 ?? win
 
 ;t1: now/time/precise

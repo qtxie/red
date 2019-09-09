@@ -164,7 +164,7 @@ find-flag?: routine [
 	bool/value:	 found?
 ]
 
-debug-info?: func ["Internal use only" face [object!] return: [logic!]][
+debug-info?: func ["Internal use only" face [object! gob!] return: [logic!]][
 	all [
 		system/view/debug?
 		not all [
@@ -644,7 +644,6 @@ system/view: context [
 	]
 	
 	awake: function [event [event!] /with face /local result][	;@@ temporary until event:// is implemented
-	probe "awake"
 		unless face [unless face: event/face [exit]]	;-- filter out unbound events
 		
 		;unless with [									;-- protect following code from recursion
@@ -699,14 +698,12 @@ do-safe: func ["Internal Use Only" code [block!] /local result][
 ]
 
 do-actor: function ["Internal Use Only" face [object! gob!] event [event! none!] type [word!] /local result][
-	probe "do-actor"
 	if all [
 		object? face/actors
 		act: in face/actors name: select system/view/evt-names type
 		act: get act
 	][
-		;if debug-info? face [print ["calling actor:" name]]
-		probe "fjdksjfasldkfjksdajfkljasdfklj"
+		if debug-info? face [print ["calling actor:" name]]
 		set/any 'result do-safe [do [act face event]]	;-- compiler can't call act, hence DO
 	]
 	:result
@@ -730,7 +727,6 @@ show: function [
 	;if debug-info? face [print ["show:" face/type " with?:" with]]
 	if gob? face [
 		obj: face/state
-		?? obj
 		unless obj [obj: system/view/platform/make-view face face/parent]
 		system/view/platform/show-window obj
 		exit

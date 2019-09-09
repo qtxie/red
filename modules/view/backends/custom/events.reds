@@ -41,8 +41,11 @@ get-event-face: func [
 get-event-offset: func [
 	evt		[red-event!]
 	return: [red-value!]
+	/local
+		gob-evt [gob-event!]
 ][
-	as red-value! pair/push 10 10
+	gob-evt: as gob-event! evt/msg
+	as red-value! pair/push as-integer gob-evt/pt/x as-integer gob-evt/pt/y
 ]
 
 get-event-key: func [

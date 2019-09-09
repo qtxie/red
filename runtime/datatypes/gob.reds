@@ -309,12 +309,12 @@ gob: context [
 				]
 				sym = facets/color [
 					tp: as red-tuple! w
-					g/bg-color: tp/array1
+					g/backdrop: tp/array1
 				]
-				sym = facets/opacity [
-					int: as red-integer! w
-					g/opacity: int/value
-				]
+				;sym = facets/opacity [
+				;	int: as red-integer! w
+				;	g/opacity: int/value
+				;]
 				true					[
 					;fire [TO_ERROR(script bad-make-arg) proto spec]
 					0

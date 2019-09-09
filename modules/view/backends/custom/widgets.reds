@@ -14,6 +14,6 @@ widgets: context [
 	draw-base: func [
 		gob		[gob!]
 	][
-		renderer/fill-box as RECT_F :gob/box gob/bg-color
+		renderer/fill-box as RECT_F :gob/box gob/backdrop
 	]
 ]

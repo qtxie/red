@@ -495,7 +495,7 @@ gob!: alias struct! [				;-- keep the size <= 64 bytes
 
 red-gob!: alias struct! [
 	header	[integer!]
-	host	[int-ptr!]				;-- host window handle
+	pad		[integer!]
 	value	[gob!]					;-- low-level gob! pointer
 	_pad	[integer!]
 ]

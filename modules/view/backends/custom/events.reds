@@ -10,21 +10,16 @@ Red/System [
 	}
 ]
 
+#enum event-action! [
+	EVT_NO_DISPATCH										;-- no further msg processing allowed
+	EVT_DISPATCH										;-- allow DispatchMessage call only
+]
 
 flags-blk: declare red-block!							;-- static block value for event/flags
 flags-blk/header:	TYPE_UNSET
 flags-blk/head:		0
 flags-blk/node:		alloc-cells 4
 flags-blk/header:	TYPE_BLOCK
-
-fake-event!: alias struct! [
-	handle	[handle!]
-	face	[red-object! value]
-	type	[integer!]									;-- event type
-	time	[integer!]
-	x		[integer!]
-	y		[integer!]
-]
 
 get-event-window: func [
 	evt		[red-event!]
@@ -36,11 +31,8 @@ get-event-window: func [
 get-event-face: func [
 	evt		[red-event!]
 	return: [red-value!]
-	/local
-		msg [fake-event!]
 ][
-	msg: as fake-event! evt/msg
-	as red-value! msg/face
+	as red-value! evt
 ]
 
 get-event-offset: func [
@@ -91,26 +83,42 @@ get-event-flag: func [
 	as red-value! logic/push flags and flag <> 0
 ]
 
-OS-make-event: func [
-	name	[red-word!]
-	face	[red-object!]
-	flags	[integer!]
-	return: [red-event!]
+make-event: func [
+	evt			[integer!]
+	gob			[gob-event!]
+	flags		[integer!]
+	return:		[integer!]
 	/local
-		event [red-event!]
-		evt	  [fake-event!]
+		res		[red-word!]
+		word	[red-word!]
+		sym		[integer!]
+		state	[integer!]
+		gui-evt	[red-event! value]
 ][
-	event: declare red-event!
-	evt:   declare fake-event!
+	gui-evt/type:  evt
+	gui-evt/msg:   as byte-ptr! gob
+	gui-evt/flags: flags
+
+	state: EVT_DISPATCH
+
+	stack/mark-try-all words/_anon
+	res: as red-word! stack/arguments
+	catch CATCH_ALL_EXCEPTIONS [
+		#call [system/view/awake gui-evt]
+		stack/unwind
+	]
+	stack/adjust-post-try
+	if system/thrown <> 0 [system/thrown: 0]
 	
-	event/header: TYPE_EVENT
-	event/flags: flags
-	set-event-type event name
-	
-	event/msg: as byte-ptr! evt
-	copy-cell as red-value! face as red-value! evt/face
-	
-	event
+	if TYPE_OF(res) = TYPE_WORD [
+		sym: symbol/resolve res/symbol
+		case [
+			sym = done [state: EVT_DISPATCH]			;-- prevent other high-level events
+			sym = stop [state: EVT_NO_DISPATCH]			;-- prevent all other events
+			true 	   [0]								;-- ignore others
+		]
+	]
+	state
 ]
 
 do-mouse-move: func [
@@ -128,4 +136,13 @@ do-mouse-move: func [
 		do-mouse-move child x y
 	]
 	probe ["find-child: " time-meter/elapse :t]
+]
+
+do-mouse-down: func [
+	obj		[gob!]
+	x		[float32!]
+	y		[float32!]
+	evt		[integer!]
+][
+	
 ]

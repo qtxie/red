@@ -268,7 +268,7 @@ collector: context [
 			p	[int-ptr!]
 			len	[integer!]
 	][
-		either null? gob/children [exit][
+		if gob/children <> null[
 			keep gob/children
 
 			len: rs-gob/length? gob
@@ -278,6 +278,10 @@ collector: context [
 				p: p + 1
 			]
 		]
+		if gob/text <> null [keep gob/text]
+		if gob/draw <> null [keep gob/draw]
+		if gob/image <> null [keep gob/image]
+		if gob/actors <> null [mark-context gob/actors/ctx]
 	]
 	
 	mark-block-node: func [

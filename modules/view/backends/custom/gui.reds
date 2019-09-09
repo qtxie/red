@@ -18,10 +18,10 @@ Red/System [
 	#default [#include %host-linux/host.reds]		;-- Linux
 ]
 
+#include %events.reds
 #include %ui-manager.reds
 #include %text-box.reds
 #include %draw.reds
-#include %events.reds
 #include %widgets.reds
 
 on-gc-mark: does [
@@ -151,12 +151,9 @@ OS-make-view: func [
 	return: [integer!]
 	/local
 		g	[red-gob!]
-		h	[handle!]
 ][
 	g: as red-gob! face
-	h: host/make-window as gob! g/value as handle! parent
-	g/host: h
-	as-integer h
+	as-integer host/make-window as gob! g/value as handle! parent
 ]
 
 unlink-sub-obj: func [

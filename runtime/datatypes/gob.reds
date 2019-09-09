@@ -122,7 +122,7 @@ gob: context [
 					]
 					sym = sym-state	 [
 						either rs-gob/set-flag? g GOB_FLAG_HOSTED [
-							handle/make-at ret as-integer gob/host
+							ret/header: TYPE_NONE
 						][ret/header: TYPE_NONE]
 					]
 					sym = sym-parent [
@@ -144,9 +144,65 @@ gob: context [
 			]
 			default [error?: yes]
 		]
-		stack/pop 1									;-- avoids moving stack up
+		stack/pop 1			;-- avoids moving stack up
 		if error? [fire [TO_ERROR(script invalid-path) path element]]
 		ret
+	]
+
+	set-facets: func [
+		g			[gob!]
+		word		[red-word!]
+		value		[red-value!]
+		return:		[logic!]			;-- error?
+		/local
+			sym		[integer!]
+			pair	[red-pair!]
+			int		[red-integer!]
+			tp		[red-tuple!]
+	][
+		sym: symbol/resolve word/symbol
+		case [
+			sym = facets/type	[
+				word: as red-word! value
+				sym: symbol/resolve word/symbol
+				case [
+					sym = window [sym: GOB_WINDOW]
+					sym = button [sym: GOB_BUTTON]
+					true		 [sym: GOB_BASE]	
+				]
+				g/flags: sym
+			]
+			sym = facets/offset [
+				pair: as red-pair! value
+				g/box/x1: as float32! pair/x
+				g/box/y1: as float32! pair/y
+				g/box/x2: g/box/x1 + g/box/x2
+				g/box/y2: g/box/y1 + g/box/y2
+			]
+			sym = facets/size [
+				pair: as red-pair! value
+				g/box/x2: g/box/x1 + as-float32 pair/x
+				g/box/y2: g/box/y1 + as-float32 pair/y
+			]
+			sym = facets/color [
+				tp: as red-tuple! value
+				g/backdrop: tp/array1
+			]
+			sym = facets/actors [
+				if TYPE_OF(value) = TYPE_OBJECT [
+					if null? g/actors [
+						g/actors: as red-object! allocate size? red-object!
+					]
+					copy-cell value as cell! g/actors
+				]
+			]
+			;sym = facets/opacity [
+			;	int: as red-integer! value
+			;	g/opacity: int/value
+			;]
+			true [return true]
+		]
+		false
 	]
 
 	set-value: func [
@@ -172,16 +228,7 @@ gob: context [
 				idx: int/value
 			]
 			TYPE_WORD [
-				word: as red-word! element
-				sym: symbol/resolve word/symbol
-				case [
-					sym = sym-state	 [0]
-					sym = sym-parent [0]
-					sym = sym-text [0]
-					sym = sym-color [0]
-					sym = sym-pane [0]
-					true [error?: yes]
-				]
+				error?: set-facets g as red-word! element value
 			]
 			default [error?: yes]
 		]
@@ -268,13 +315,8 @@ gob: context [
 		return:		[gob!]
 		/local
 			g		[gob!]
-			w		[red-word!]
 			val		[red-value!]
 			end		[red-value!]
-			pair	[red-pair!]
-			int		[red-integer!]
-			tp		[red-tuple!]
-			sym		[integer!]
 	][
 		g: as gob! alloc0 size? gob!
 
@@ -282,44 +324,7 @@ gob: context [
 		end: block/rs-tail spec
 
 		while [val < end][
-			w: as red-word! val
-			sym: symbol/resolve w/symbol
-			w: w + 1
-			case [
-				sym = facets/type	[
-					sym: symbol/resolve w/symbol
-					case [
-						sym = window [sym: GOB_WINDOW]
-						sym = button [sym: GOB_BUTTON]
-						true		 [sym: GOB_BASE]	
-					]
-					g/flags: sym
-				]
-				sym = facets/offset [
-					pair: as red-pair! w
-					g/box/x1: as float32! pair/x
-					g/box/y1: as float32! pair/y
-					g/box/x2: g/box/x1 + g/box/x2
-					g/box/y2: g/box/y1 + g/box/y2
-				]
-				sym = facets/size [
-					pair: as red-pair! w
-					g/box/x2: g/box/x1 + as-float32 pair/x
-					g/box/y2: g/box/y1 + as-float32 pair/y
-				]
-				sym = facets/color [
-					tp: as red-tuple! w
-					g/backdrop: tp/array1
-				]
-				;sym = facets/opacity [
-				;	int: as red-integer! w
-				;	g/opacity: int/value
-				;]
-				true					[
-					;fire [TO_ERROR(script bad-make-arg) proto spec]
-					0
-				]
-			]
+			set-facets g as red-word! val val + 1
 			val: val + 2
 		]
 		g
@@ -334,7 +339,6 @@ gob: context [
 		return:	[red-gob!]  
 	][
 		proto/header: type
-		proto/host: null
 		proto/value: rs-make as red-block! spec
 		proto
 	]

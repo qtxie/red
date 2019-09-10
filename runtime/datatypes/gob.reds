@@ -101,6 +101,7 @@ gob: context [
 		g: gob/value
 
 		ret: stack/push*
+		ret/header: TYPE_NONE
 		switch TYPE_OF(element) [
 			TYPE_INTEGER [
 				int: as red-integer! element
@@ -114,9 +115,9 @@ gob: context [
 						word/make-at get-type g ret
 					]
 					sym = facets/state	 [
-						either rs-gob/set-flag? g GOB_FLAG_HOSTED [
-							ret/header: TYPE_NONE
-						][ret/header: TYPE_NONE]
+						if rs-gob/set-flag? g GOB_FLAG_HOSTED [
+							0
+						]
 					]
 					sym = facets/parent [
 						handle/make-at ret as-integer rs-gob/get-parent g
@@ -132,7 +133,10 @@ gob: context [
 							child: child + 1
 						]
 					]
-					sym = facets/actors [
+					all [
+						sym = facets/actors
+						g/actors <> null
+					][
 						ret: as red-value! g/actors
 					]
 					true [error?: yes]

@@ -642,6 +642,10 @@ GetDpiForMonitor!: alias function! [
 		]
 	]
 	"User32.dll" stdcall [
+		GetDC: "GetDC" [
+			hWnd		[handle!]
+			return:		[handle!]
+		]
 		GetCursorPos: "GetCursorPos" [
 			pt			[tagPOINT]
 			return:		[logic!]

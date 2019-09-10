@@ -121,48 +121,6 @@ system/view/platform: context [
 				SCROLLER_OBJ_PARENT
 			]
 
-			#enum event-type! [
-				EVT_LEFT_DOWN:		1
-				EVT_LEFT_UP
-				EVT_MIDDLE_DOWN
-				EVT_MIDDLE_UP
-				EVT_RIGHT_DOWN
-				EVT_RIGHT_UP
-				EVT_AUX_DOWN
-				EVT_AUX_UP
-				EVT_CLICK
-				EVT_DBL_CLICK
-				EVT_WHEEL
-				EVT_OVER								;-- last mouse event
-
-				EVT_KEY
-				EVT_KEY_DOWN
-				EVT_KEY_UP
-				EVT_IME
-				EVT_FOCUS
-				EVT_UNFOCUS
-				EVT_ENTER
-				
-				EVT_ZOOM
-				EVT_PAN
-				EVT_ROTATE
-				EVT_TWO_TAP
-				EVT_PRESS_TAP
-				
-				EVT_SELECT
-				EVT_CHANGE
-				EVT_MENU
-				
-				EVT_CLOSE								;-- window events
-				EVT_MOVE
-				EVT_SIZE
-				EVT_MOVING
-				EVT_SIZING
-				EVT_TIME
-				EVT_DRAWING
-				EVT_SCROLL
-			]
-			
 			#enum event-flag! [
 				EVT_FLAG_AX2_DOWN:		00200000h
 				EVT_FLAG_AUX_DOWN:		00400000h

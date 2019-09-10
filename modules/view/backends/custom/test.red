@@ -5,7 +5,7 @@ Red [
 
 probe "start"
 
-win: make gob! [type: 'window size: 800x800]
+win: make gob! [type: 'window offset: 1000x10 size: 800x800]
 child: make gob! [
 	offset: 100x50 size: 300x300 color: 255.0.0
 	actors: object [

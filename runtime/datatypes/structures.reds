@@ -356,6 +356,7 @@ red-handle!: alias struct! [
 	EVT_FOCUS
 	EVT_UNFOCUS
 	EVT_ENTER
+	EVT_LEAVE
 	
 	EVT_ZOOM
 	EVT_PAN

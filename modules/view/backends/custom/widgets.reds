@@ -16,4 +16,17 @@ widgets: context [
 	][
 		renderer/fill-box as RECT_F :gob/box gob/backdrop
 	]
+
+	signal-button: func [
+		gob		[gob!]
+		evt		[event-type!]
+	][
+		switch evt [
+			EVT_ENTER [0]
+			EVT_LEAVE [0]
+			EVT_LEFT_DOWN [0]
+			EVT_LEFT_UP [0]
+			default [0]
+		]
+	]
 ]

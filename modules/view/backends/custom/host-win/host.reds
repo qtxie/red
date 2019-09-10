@@ -19,12 +19,9 @@ host: context [
 	win10?:			no
 
 	process-id:		0
-	border-width:	0
-	hScreen:		as handle! 0
 	hInstance:		as handle! 0
 	default-font:	as handle! 0
 	version-info: 	declare OSVERSIONINFO
-	win-state:		0
 	hIMCtx:			as handle! 0
 	ime-open?:		no
 	;ime-font:		as tagLOGFONT allocate 92
@@ -456,9 +453,12 @@ host: context [
 	get-screen-size: func [
 		id		[integer!]									;@@ Not used yet
 		return: [red-pair!]
+		/local
+			dc	[handle!]
 	][
-		screen-size-x: GetDeviceCaps hScreen HORZRES
-		screen-size-y: GetDeviceCaps hScreen VERTRES
+		dc: GetDC null
+		screen-size-x: GetDeviceCaps dc HORZRES
+		screen-size-y: GetDeviceCaps dc VERTRES
 		pair/push
 			as-integer pixel-to-logical screen-size-x
 			as-integer pixel-to-logical screen-size-y

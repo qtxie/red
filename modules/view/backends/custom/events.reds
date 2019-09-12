@@ -11,8 +11,8 @@ Red/System [
 ]
 
 #enum event-action! [
+	EVT_DISPATCH
 	EVT_NO_DISPATCH										;-- no further msg processing allowed
-	EVT_DISPATCH										;-- allow DispatchMessage call only
 ]
 
 flags-blk: declare red-block!							;-- static block value for event/flags
@@ -20,6 +20,9 @@ flags-blk/header:	TYPE_UNSET
 flags-blk/head:		0
 flags-blk/node:		alloc-cells 4
 flags-blk/header:	TYPE_BLOCK
+
+mouse-x:		as float32! 0
+mouse-y:		as float32! 0
 
 get-event-window: func [
 	evt		[red-event!]
@@ -119,16 +122,13 @@ make-event: func [
 
 	if TYPE_OF(res) = TYPE_WORD [
 		sym: symbol/resolve res/symbol
-		case [
-			sym = done [state: EVT_DISPATCH]			;-- prevent other high-level events
-			sym = stop [state: EVT_NO_DISPATCH]			;-- prevent all other events
-			true 	   [0]								;-- ignore others
-		]
+		if sym = done [state: EVT_NO_DISPATCH]			;-- prevent other high-level events
 	]
 	state
 ]
 
-do-mouse-move: func [
+send-mouse-event: func [
+	evt		[integer!]
 	obj		[gob!]
 	x		[float32!]
 	y		[float32!]
@@ -136,29 +136,71 @@ do-mouse-move: func [
 	return: [integer!]
 	/local
 		child	[gob!]
-		evt		[gob-event! value]
+		g-evt	[gob-event! value]
 		ret		[integer!]
 ][
 	ret: EVT_DISPATCH
-	child: rs-gob/find-child obj x y
-	if child <> null [
-		ui-manager/add-update obj
-		ret: do-mouse-move child x - child/box/x1 y - child/box/y1 flags
-	]
-	if ret = EVT_DISPATCH [		;-- post to parent
-		evt/pt/x: x
-		evt/pt/y: y
-		evt/gob: obj
-		ret: make-event EVT_OVER :evt flags
+	if obj/flags and GOB_FLAG_DISABLE = 0 [
+		g-evt/pt/x: x
+		g-evt/pt/y: y
+		g-evt/gob: obj
+		ret: make-event evt :g-evt flags
 	]
 	ret
 ]
 
-do-mouse-down: func [
+do-mouse-event: func [
+	evt		[integer!]
 	obj		[gob!]
 	x		[float32!]
 	y		[float32!]
 	flags	[integer!]
+	return: [integer!]
+	/local
+		child	[gob!]
+		ret		[integer!]
+		hover	[gob!]
 ][
-	   
+	ret: EVT_DISPATCH
+
+	if null? ui-manager/hover-gob [					;-- mouse enter a new window
+		send-mouse-event evt obj x y flags
+	]
+
+	child: rs-gob/find-child obj x y
+	either child <> null [
+		ui-manager/add-update obj
+		ret: do-mouse-event evt child x - child/box/x1 y - child/box/y1 flags
+	][
+		hover: ui-manager/hover-gob
+		if hover <> obj [
+			if hover <> null [
+				if any [							;-- mouse leave
+					hover/parent = obj
+					hover/parent = obj/parent		;-- overlapped sibling gobs
+				][
+					send-mouse-event
+						evt
+						hover
+						mouse-x
+						mouse-y
+						flags or EVT_FLAG_AWAY
+				]
+				if any [							;-- mouse enter
+					obj/parent = hover
+					hover/parent = obj/parent		;-- overlapped sibling gobs
+				][
+					send-mouse-event evt obj x y flags
+				]
+			]
+			ui-manager/hover-gob: obj
+		]
+		mouse-x: x
+		mouse-y: y
+	]
+	if all [
+		obj/flags and GOB_FLAG_ALL_OVER <> 0
+		ret = EVT_DISPATCH 
+	][ret: send-mouse-event evt obj x y flags]
+	ret
 ]

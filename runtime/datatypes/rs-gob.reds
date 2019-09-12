@@ -19,13 +19,6 @@ rs-gob: context [
 		gob/flags and flag <> 0
 	]
 
-	get-parent: func [
-		gob		[gob!]
-		return:	[gob!]
-	][
-		null
-	]
-
 	find-child: func [
 		gob		[gob!]
 		x		[float32!]
@@ -35,10 +28,12 @@ rs-gob: context [
 			g	[gob!]
 			p	[int-ptr!]
 			n	[integer!]
+			s	[series!]
 	][
 		n: length? gob
-		p: head gob
+		p: tail gob
 		loop n [
+			p: p - 1
 			g: as gob! p/value
 			if all [
 				g/flags and GOB_FLAG_HIDDEN = 0		;-- visible
@@ -49,7 +44,6 @@ rs-gob: context [
 			][
 				return g
 			]
-			p: p + 1
 		]
 		null
 	]
@@ -92,6 +86,18 @@ rs-gob: context [
 			v/head: 0
 			v/node: gob/children
 			as int-ptr! vector/rs-head :v
+		][null]
+	]
+
+	tail: func [
+		gob		[gob!]
+		return: [int-ptr!]
+		/local
+			s	[series!]
+	][
+		either gob/children <> null [
+			s: as series! gob/children/value
+			as int-ptr! s/tail
 		][null]
 	]
 ]

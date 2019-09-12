@@ -120,7 +120,7 @@ gob: context [
 						]
 					]
 					sym = facets/parent [
-						handle/make-at ret as-integer rs-gob/get-parent g
+						handle/make-at ret 0
 					]
 					sym = facets/text [0]
 					sym = facets/color [0]

@@ -7,19 +7,50 @@ probe "start"
 
 win: make gob! [type: 'window offset: 1000x10 size: 800x800]
 child: make gob! [
-	offset: 100x50 size: 300x300 color: 255.0.0
+	offset: 100x50 size: 100x100 color: 255.0.0
 	actors: object [
 		on-over: func [face event][
-			probe reduce [face/type event/offset]
+			probe reduce [1 face/type event/offset event/flags]
 		]
 	]
 ]
+
+child2: make gob! [
+	offset: 150x50 size: 600x600 color: 255.232.0
+	actors: object [
+		on-over: func [face event][
+			probe reduce [2 face/type event/offset event/flags]
+		]
+	]
+]
+
+child21: make gob! [
+	offset: 100x50 size: 100x100 color: 0.222.0
+	actors: object [
+		on-over: func [face event][
+			probe reduce [21 face/type event/offset event/flags]
+		]
+	]
+]
+child22: make gob! [
+	offset: 250x50 size: 100x100 color: 0.0.223
+	actors: object [
+		on-over: func [face event][
+			probe reduce [22 face/type event/offset event/flags]
+		]
+	]
+]
+
+append child2 child21
+append child2 child22
+
 win/actors: make object! [
 	on-over: func [face event][
-		probe reduce [face/type event/offset]
+		probe reduce [face/type event/offset event/flags]
 	]
 ]
 append win child
+append win child2
 ?? win
 
 ;t1: now/time/precise

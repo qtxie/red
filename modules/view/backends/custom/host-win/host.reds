@@ -36,6 +36,8 @@ host: context [
 	rc-cache:		declare RECT_STRUCT
 	;kb-state: 		allocate 256							;-- holds keyboard state for keys conversion
 
+	#include %events.reds
+
 	DX-init: func [
 		/local
 			str					[red-string!]
@@ -331,94 +333,6 @@ host: context [
 		]
 
 		if null? default-font [default-font: GetStockObject DEFAULT_GUI_FONT]
-	]
-
-	RedWndProc: func [
-		[stdcall]
-		hWnd		[handle!]
-		msg			[integer!]
-		wParam		[integer!]
-		lParam		[integer!]
-		return:		[integer!]
-		/local
-			cs		[tagCREATESTRUCT]
-			rc		[RECT_STRUCT]
-			obj		[gob!]
-			child	[gob!]
-			x		[integer!]
-			y		[integer!]
-			wm		[wm!]
-	][
-		wm: as wm! GetWindowLongPtr hWnd GWLP_USERDATA
-
-		switch msg [
-			WM_CREATE [
-				cs: as tagCREATESTRUCT lParam
-				obj: as gob! cs/lpCreateParams
-				obj/flags: obj/flags and FFFFFF00h or GOB_WINDOW or GOB_FLAG_HOSTED
-				wm: ui-manager/add-window hWnd obj create-render-target hWnd
-				SetWindowLongPtr hWnd GWLP_USERDATA as int-ptr! wm
-				return 0	;-- continue to create the window
-			]
-			WM_MOUSEMOVE [
-				x: WIN32_LOWORD(lParam)
-				y: WIN32_HIWORD(lParam)
-				;if any [
-				;	x < (0 - screen-size-x) 				;@@ needs `negate` support
-				;	y < (0 - screen-size-y)
-				;	x > screen-size-x
-				;	y > screen-size-y
-				;][
-				;	return EVT_DISPATCH						;-- filter out buggy mouse positions (thanks MS!)
-				;]
-				do-mouse-move wm/gob pixel-to-logical x pixel-to-logical y 0
-				return 0
-			]
-			WM_MOUSEHOVER [0]
-			WM_MOUSELEAVE [0]
-			WM_MOVING [0]
-			WM_KEYDOWN [0]
-			WM_SYSKEYDOWN [0]
-			WM_SYSCHAR [0]
-			WM_CHAR [0]
-			WM_UNICHAR [0]
-			WM_SETFOCUS [return 0]
-			WM_KILLFOCUS [0]
-			WM_SIZE [0]
-			WM_GETMINMAXINFO [0]	;-- for maximization and minimization
-			WM_NCACTIVATE [0]
-			WM_MOUSEACTIVATE [0]
-			WM_SETCURSOR [0]
-			WM_GETOBJECT [0]		;-- for accessibility support
-			WM_CLOSE [0]
-			WM_DESTROY [
-				ui-manager/remove-window wm
-				PostQuitMessage 0
-				return 0
-			]
-			WM_DPICHANGED [
-				dpi-x: as float32! WIN32_LOWORD(wParam)			;-- new DPI X
-				dpi-y: as float32! WIN32_HIWORD(wParam)			;-- new DPI Y
-				dpi-value: dpi-y
-				rc: as RECT_STRUCT lParam
-				SetWindowPos 
-					hWnd
-					as handle! 0
-					rc/left rc/top
-					rc/right - rc/left rc/bottom - rc/top
-					SWP_NOZORDER or SWP_NOACTIVATE
-				;d2d-release-target target
-				return 0
-			]
-			WM_PAINT [
-				ValidateRect hWnd null
-			]
-			WM_ERASEBKGND [
-				return 1
-			]
-			default [0]
-		]
-		DefWindowProc hWnd msg wParam lParam
 	]
 
 	register-classes: func [

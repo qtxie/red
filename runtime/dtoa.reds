@@ -66,16 +66,16 @@ Red/System [
 
 red-dtoa: context [
 	P05:  [5 25 125]
-	TENS: [
+	DTOA_TENS: [
 		1e0 1e1 1e2 1e3 1e4 1e5 1e6 1e7 1e8 1e9
 		1e10 1e11 1e12 1e13 1e14 1e15 1e16 1e17 1e18 1e19
-		1e20 1e21 1e22
+		1e20 1e21 1e22 1.0
 	]
 	BIGTENS:  [1e16 1e32 1e64 1e128 1e256]
 	TINYTENS: [1e-16 1e-32 1e-64 1e-128 0.0]
 	TINYTENS/5: 9007199254740992.0 * 9007199254740992e-256
 
-	freelist: [0 0 0 0 0 0 0 0]
+	freelist: [null null null null null null null null]
 	KMax: (size? freelist) - 1
 
 	int64!: alias struct! [int1 [integer!] int2 [integer!]]
@@ -873,7 +873,7 @@ red-dtoa: context [
 		k_check: yes
 		if all [k >= 0 k <= TEN_PMAX] [
 			ki: k + 1							;-- adjust for 1-based array
-			kf: TENS/ki							;@@ f < TENS/ki not work !
+			kf: DTOA_TENS/ki							;@@ f < DTOA_TENS/ki not work !
 			if f < kf [k: k - 1]
 			k_check: no
 		]
@@ -903,7 +903,7 @@ red-dtoa: context [
 
 		if all [be >= 0 k <= DTOA_INT_MAX] [			;-- Do we have a "small" integer?
 			ki: k + 1
-			ds: TENS/ki
+			ds: DTOA_TENS/ki
 			forever [
 				i: 1
 				L: as-integer (f / ds)
@@ -1336,7 +1336,7 @@ red-dtoa: context [
 		either neg? [0 - n][n]
 	]
 
-	#define STRTOD_RETURN [probe ["return: " rv] return either neg? [0.0 - rv][rv]]
+	#define STRTOD_RETURN [return either neg? [0.0 - rv][rv]]
 
 	#define STRTOD_OVERFLOW [
 		d/int2: DTOA_EXP_MASK
@@ -1398,9 +1398,8 @@ red-dtoa: context [
 			aadj aadj1 adj y z next?
 			L bc d d0 d2 w0 w1 ndigits fraclen
 	][
-		probe "string-to-float"
-		dump4 start
-		dump4 end
+probe DTOA_TENS/1
+probe DTOA_TENS/2
 		bb:    null
 		bb1:   null
 		bd:    null
@@ -1488,7 +1487,7 @@ red-dtoa: context [
 		e: e + (nd - i)
 		nd: i
 		if nd0 > nd [nd0: nd]
-
+probe "1"
 		y: 0
 		z: 0
 		i: 0
@@ -1507,50 +1506,64 @@ red-dtoa: context [
 			i: i + 1
 			any [i = nd zero? j]
 		]
-
+probe "2"
+?? nd
 		k: either nd < 16 [nd][16]
+?? k
+?? y
 		rv: as-float y
+?? rv
 		if k > 9 [
 			j: k - 8
-			rv: TENS/j * rv + as-float z
+			?? j
+			rv: DTOA_TENS/j * rv + as-float z
 		]
-
+?? nd
+?? e
 		if nd < 16 [
 			if zero? e [STRTOD_RETURN]
 			case [
 				e > 0 [
 					if e <= TEN_PMAX [
 						e: e + 1
-						rv: rv * TENS/e
+						rv: rv * DTOA_TENS/e
 						STRTOD_RETURN
 					]
 					i: 15 - nd
 					if e <= (TEN_PMAX + i) [
 						e: e - i + 1
 						i: i + 1
-						rv: rv * TENS/i
-						rv: rv * TENS/e
+						rv: rv * DTOA_TENS/i
+						rv: rv * DTOA_TENS/e
 						STRTOD_RETURN
 					]
 				]
-				e >= (0 - TEN_PMAX) [
+				e >= -22 [
 					e: 0 - e + 1
-					rv: rv / TENS/e
+					?? e
+					probe size? DTOA_TENS
+					probe DTOA_TENS/0
+					probe DTOA_TENS/1
+					probe DTOA_TENS/2
+					probe DTOA_TENS/e
+					rv: rv / DTOA_TENS/e
+					?? rv
 					STRTOD_RETURN
 				]
 				true []
 			]
 		]
+probe "3"
 
 		e1: e1 + (nd - k)
 		bc/scale: 0
-
+?? e1
 		case [
 			e1 > 0 [
 				i: e1 and 15
 				if i <> 0 [
 					i: i + 1
-					rv: rv * TENS/i
+					rv: rv * DTOA_TENS/i
 				]
 
 				e1: e1 and (not 15)
@@ -1580,7 +1593,7 @@ red-dtoa: context [
 				i: e1 and 15
 				if i <> 0 [
 					i: i + 1
-					rv: rv / TENS/i
+					rv: rv / DTOA_TENS/i
 				]
 
 				e1: e1 >> 4
@@ -1615,11 +1628,12 @@ red-dtoa: context [
 			]
 			true []
 		]
+probe "4"
 
 		;-- Now the hard part -- adjusting rv to the correct value.
 		bc/nd: nd
 		bc/nd0: nd0
-
+?? nd
 		if nd > 40 [
 			i: 18
 			until [
@@ -1645,6 +1659,7 @@ red-dtoa: context [
 			]
 
 		]
+probe "5"
 
 		bd0: string-to-big s0 nd0 nd y
 		bbe: 0
@@ -1831,7 +1846,7 @@ red-dtoa: context [
 					y <= (2 * 53 * DTOA_EXP_MSK1)
 				][
 					if aadj <= 2147483647.0 [
-						z: as-integer aadj
+						z: as-integer floor aadj
 						if z <= 0 [z: 1]
 						aadj: uint-to-float z
 						aadj1: either dsign <> 0 [aadj][0.0 - aadj]

@@ -10,7 +10,7 @@ Red/System [
 	}
 ]
 
-styles: context [
+styles-ctx: context [
 	background:				symbol/make "background"
 	background-clip:		symbol/make "background-clip"
 	background-size:		symbol/make "background-size"
@@ -106,4 +106,35 @@ styles: context [
 	contrast:				symbol/make "contrast"
 	saturate:				symbol/make "saturate"
 	sepia:					symbol/make "sepia"
+
+	solid:					symbol/make "solid"
+
+	set-background: func [
+		s		[gob-style!]
+		val		[red-value!]
+	][
+		
+	]
+
+	set-border: func [
+		s		[gob-style!]
+		val		[red-value!]
+		/local
+			w	[red-word!]
+			id	[integer!]
+			int	[red-integer!]
+	][
+		switch TYPE_OF(val) [
+			TYPE_WORD [		;-- border style
+				w: as red-word! val
+				id: symbol/resolve w/symbol
+				case [
+					id = solid [s/border/style: GOB_BORDER_SOLID]
+					true [0]
+				]
+			]
+			TYPE_BLOCK [0]
+			TYPE_NONE [s/border/style: GOB_BORDER_NONE]
+		]
+	]
 ]

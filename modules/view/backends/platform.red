@@ -166,6 +166,7 @@ system/view/platform: context [
 				extra:		symbol/make "extra"
 				draw:		symbol/make "draw"
 				opacity:	symbol/make "opacity"
+				styles:		symbol/make "styles"
 			]
 			
 			_para: context [
@@ -483,6 +484,7 @@ system/view/platform: context [
 				test [#include %test/gui.reds]
 				GTK [#include %GTK/gui.reds]
 				custom [
+					#include %custom/styles.reds
 					#include %../../../runtime/datatypes/gob.reds
 					#include %custom/gui.reds
 					gob/init

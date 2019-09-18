@@ -149,6 +149,45 @@ gob: context [
 		ret
 	]
 
+	set-styles: func [
+		g			[gob!]
+		styles-obj	[red-object!]
+		/local
+			s		[gob-style!]
+			ctx		[red-context!]
+			syms	[series!]
+			values	[series!]
+			sym		[red-value!]
+			s-tail	[red-value!]
+			value	[red-value!]
+			w		[red-word!]
+			id		[integer!]
+	][
+		if null? g/styles [g/styles: as gob-style! allocate size? gob-style!]
+		s: g/styles
+
+		ctx: 	GET_CTX(styles-obj)
+		syms:   as series! ctx/symbols/value
+		values: as series! ctx/values/value
+
+		sym:	syms/offset
+		s-tail: syms/tail
+		value: 	values/offset
+		while [sym < s-tail][
+			w: as red-word! sym
+			id: symbol/resolve w/symbol
+			with styles-ctx [
+				case [
+					id = background [set-background s value]
+					id = border [set-border s value]
+					true [0]
+				]
+			]
+			sym: sym + 1
+			value: value + 1
+		]
+	]
+
 	set-facets: func [
 		g			[gob!]
 		word		[red-word!]
@@ -194,6 +233,11 @@ gob: context [
 						g/actors: as red-object! allocate size? red-object!
 					]
 					copy-cell value as cell! g/actors
+				]
+			]
+			sym = facets/styles [
+				if TYPE_OF(value) = TYPE_OBJECT [
+					set-styles g as red-object! value
 				]
 			]
 			;sym = facets/opacity [

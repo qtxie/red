@@ -39,6 +39,9 @@ child22: make gob! [
 			probe reduce [22 face/type event/offset event/flags]
 		]
 	]
+	styles: object [
+		border: [5 solid red]
+	]
 ]
 
 append child2 child21

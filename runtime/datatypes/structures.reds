@@ -388,6 +388,13 @@ red-handle!: alias struct! [
 	GOB_PART_INTERNAL:	16
 ]
 
+;#enum gob-border-style! [
+#define	GOB_BORDER_NONE		#"^(00)"
+#define	GOB_BORDER_SOLID	#"^(01)"
+#define	GOB_BORDER_DOTTED	#"^(02)"
+#define	GOB_BORDER_DASHED	#"^(03)"
+;]
+
 #enum gob-type! [
 	GOB_BASE
 	GOB_WINDOW
@@ -492,7 +499,7 @@ gob!: alias struct! [				;-- keep the size <= 64 bytes
 	backdrop	[integer!]			;-- background color
 	image		[node!]				;-- red-image node
 	actors		[red-object!]
-	style		[gob-style!]
+	styles		[gob-style!]
 	extra		[int-ptr!]			;-- extra data for each type
 ]
 

@@ -475,20 +475,38 @@ probe "make window"
 		ShowWindow hWnd SW_SHOWDEFAULT
 	]
 
+	set-tranlation: func [
+		x		[float32!]
+		y		[float32!]
+		/local
+			m	[D2D_MATRIX_3X2_F value]
+	][
+		m/m11: as float32! 1.0
+		m/m12: as float32! 0.0
+		m/m21: as float32! 0.0
+		m/m22: as float32! 1.0
+		m/dx:  x
+		m/dy:  y
+		renderer/set-matrix :m
+	]
+
 	draw-gob: func [
 		gob		[gob!]
 		/local
-			s		[series!]
-			p		[ptr-ptr!]
-			e		[ptr-ptr!]
+			s	[series!]
+			p	[ptr-ptr!]
+			e	[ptr-ptr!]
+			t	[integer!]
 	][
-		switch GOB_TYPE(gob) [
+		t: GOB_TYPE(gob)
+		switch t [
 			GOB_BASE	[widgets/draw-base gob]
 			GOB_WINDOW	[0]
 			GOB_BUTTON	[0]
 			default		[0]
 		]
 		if gob/children <> null [
+			if t <> GOB_WINDOW [set-tranlation gob/box/x1 gob/box/y1]
 			s: as series! gob/children/value
 			p: as ptr-ptr! s/offset
 			e: as ptr-ptr! s/tail
@@ -512,11 +530,19 @@ probe "make window"
 			dc		[ID2D1DeviceContext]
 			clr		[D3DCOLORVALUE]
 			brush	[integer!]
+			m		[D2D_MATRIX_3X2_F value]
 	][
 		this: d2d-ctx
 		dc: as ID2D1DeviceContext this/vtbl
 		dc/SetTarget this wm/render/bitmap
 		dc/BeginDraw this
+		m/m11: as float32! 1.0
+		m/m12: as float32! 0.0
+		m/m21: as float32! 0.0
+		m/m22: as float32! 1.0
+		m/dx:  as float32! 0.0
+		m/dy:  as float32! 0.0
+		renderer/set-matrix :m
 		clr: to-dx-color 00FFCC66h null
 		dc/Clear this clr
 		brush: 0
@@ -531,6 +557,7 @@ probe "make window"
 			dc		[ID2D1DeviceContext]
 			sc		[IDXGISwapChain1]
 			render	[render-target!]
+			m		[D2D_MATRIX_3X2_F value]
 	][
 		this: d2d-ctx
 		dc: as ID2D1DeviceContext this/vtbl

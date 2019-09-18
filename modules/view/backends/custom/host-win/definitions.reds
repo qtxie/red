@@ -1318,12 +1318,12 @@ D3DCOLORVALUE: alias struct! [
 ]
 
 D2D_MATRIX_3X2_F: alias struct! [
-	_11			[float32!]
-	_12			[float32!]
-	_21			[float32!]
-	_22			[float32!]
-	_31			[float32!]
-	_32			[float32!]
+	m11			[float32!]
+	m12			[float32!]
+	m21			[float32!]
+	m22			[float32!]
+	dx			[float32!]
+	dy			[float32!]
 ]
 
 D2D1_ELLIPSE: alias struct! [

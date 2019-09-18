@@ -15,6 +15,12 @@ renderer: context [
 	render: as ID2D1DeviceContext 0
 	this: as this! 0
 
+	set-matrix: func [
+		m		[D2D_MATRIX_3X2_F]
+	][
+		render/SetTransform this m
+	]
+
 	draw-box: func [
 		rc		[RECT_F]
 		color	[integer!]

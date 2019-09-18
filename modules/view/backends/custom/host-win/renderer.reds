@@ -15,6 +15,21 @@ renderer: context [
 	render: as ID2D1DeviceContext 0
 	this: as this! 0
 
+	set-tranlation: func [
+		x		[float32!]
+		y		[float32!]
+		/local
+			m	[D2D_MATRIX_3X2_F value]
+	][
+		m/m11: as float32! 1.0
+		m/m12: as float32! 0.0
+		m/m21: as float32! 0.0
+		m/m22: as float32! 1.0
+		m/dx:  x
+		m/dy:  y
+		render/SetTransform this :m
+	]
+
 	set-matrix: func [
 		m		[D2D_MATRIX_3X2_F]
 	][

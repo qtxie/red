@@ -11,6 +11,7 @@ Red/System [
 ]
 
 #include %definitions.reds
+#include %utils.reds
 
 #switch OS [
 	Windows  [#include %host-win/host.reds]

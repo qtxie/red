@@ -10,7 +10,6 @@ Red/System [
 	}
 ]
 
-#include %utils.reds
 #include %direct2d.reds
 #include %renderer.reds
 
@@ -475,54 +474,6 @@ probe "make window"
 		ShowWindow hWnd SW_SHOWDEFAULT
 	]
 
-	set-tranlation: func [
-		x		[float32!]
-		y		[float32!]
-		/local
-			m	[D2D_MATRIX_3X2_F value]
-	][
-		m/m11: as float32! 1.0
-		m/m12: as float32! 0.0
-		m/m21: as float32! 0.0
-		m/m22: as float32! 1.0
-		m/dx:  x
-		m/dy:  y
-		renderer/set-matrix :m
-	]
-
-	draw-gob: func [
-		gob		[gob!]
-		/local
-			s	[series!]
-			p	[ptr-ptr!]
-			e	[ptr-ptr!]
-			t	[integer!]
-	][
-		t: GOB_TYPE(gob)
-		switch t [
-			GOB_BASE	[widgets/draw-base gob]
-			GOB_WINDOW	[0]
-			GOB_BUTTON	[0]
-			default		[0]
-		]
-		if gob/children <> null [
-			if t <> GOB_WINDOW [set-tranlation gob/box/x1 gob/box/y1]
-			s: as series! gob/children/value
-			p: as ptr-ptr! s/offset
-			e: as ptr-ptr! s/tail
-			while [p < e][
-				draw-gob as gob! p/value
-				p: p + 1
-			]
-		]
-	]
-
-	draw-update: func [
-		update-list	[node!]
-	][
-		
-	]
-
 	draw-begin: func [
 		wm			[wm!]
 		/local
@@ -568,42 +519,6 @@ probe "make window"
 		sc: as IDXGISwapChain1 this/vtbl
 		sc/Present this 0 0
 	]
-
-	draw-windows: func [
-		return:		[float32!]
-		/local
-			wm		[wm!]
-			s		[series!]
-			p		[ptr-ptr!]
-			e		[ptr-ptr!]
-			tm		[time-meter! value]
-			t		[float32!]
-	][
-		t: as float32! 0.0
-		s: as series! ui-manager/win-list/value
-		p: as ptr-ptr! s/offset
-		e: as ptr-ptr! s/tail
-		while [p < e][
-			wm: as wm! p/value
-			if wm/flags and WIN_FLAG_INVISIBLE = 0 [
-				renderer/set-render d2d-ctx
-				either wm/flags and WIN_RENDER_FULL = 0 [
-					draw-update wm/update-list	
-				][
-					print "Full Draw in "
-					time-meter/start :tm
-					draw-begin wm
-					draw-gob wm/gob
-					draw-end wm
-					t: time-meter/elapse :tm
-					probe [t "ms"]
-					wm/flags: wm/flags and (not WIN_RENDER_FULL)
-				]
-			]
-			p: p + 1
-		]
-		t
-	]
 ]
 
 ;-- 
@@ -630,7 +545,7 @@ do-events: func [
 				if no-wait? [return msg?]
 			]
 		]
-		tm: as-integer (as float32! 16.66) - host/draw-windows
+		tm: as-integer (as float32! 16.66) - widgets/draw-windows
 		if tm > 0 [io/do-events tm]
 	]
 	msg?

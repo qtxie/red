@@ -149,6 +149,27 @@ send-mouse-event: func [
 	ret
 ]
 
+hover-changed?: func [
+	gob-1	[gob!]
+	gob-2	[gob!]
+	return: [logic!]
+	/local
+		g	[gob!]
+		leave? [logic!]
+][
+	leave?: no
+	g: gob-1
+	until [
+		g: g/parent
+		if g = gob-2 [leave?: yes break]
+		null? g
+	]
+	any [
+		leave?
+		gob-1/parent = gob-2/parent		;-- overlapped sibling gobs
+	]
+]
+
 do-mouse-event: func [
 	evt		[integer!]
 	obj		[gob!]
@@ -175,10 +196,7 @@ do-mouse-event: func [
 		hover: ui-manager/hover-gob
 		if hover <> obj [
 			if hover <> null [
-				if any [							;-- mouse leave
-					hover/parent = obj
-					hover/parent = obj/parent		;-- overlapped sibling gobs
-				][
+				if hover-changed? hover obj [
 					send-mouse-event
 						evt
 						hover
@@ -186,10 +204,7 @@ do-mouse-event: func [
 						mouse-y
 						flags or EVT_FLAG_AWAY
 				]
-				if any [							;-- mouse enter
-					obj/parent = hover
-					hover/parent = obj/parent		;-- overlapped sibling gobs
-				][
+				if hover-changed? obj hover [
 					send-mouse-event evt obj x y flags
 				]
 			]

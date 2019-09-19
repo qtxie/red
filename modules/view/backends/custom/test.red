@@ -16,7 +16,7 @@ child: make gob! [
 ]
 
 child2: make gob! [
-	offset: 150x50 size: 300x300 color: 255.232.0
+	offset: 150x50 size: 500x300 color: 255.232.0
 	actors: object [
 		on-over: func [face event][
 			probe reduce [2 face/type event/offset event/flags]

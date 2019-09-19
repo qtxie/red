@@ -71,6 +71,7 @@ widgets: context [
 			p	[ptr-ptr!]
 			e	[ptr-ptr!]
 			t	[integer!]
+			rc	[RECT32! value]
 	][
 		t: GOB_TYPE(gob)
 		switch t [
@@ -86,12 +87,15 @@ widgets: context [
 			s: as series! gob/children/value
 			p: as ptr-ptr! s/offset
 			e: as ptr-ptr! s/tail
-			renderer/push-clip-rect gob/box
+			;rc/left: as float32! 0.0
+			;rc/top: as float32! 0.0
+			;rs-gob/get-content-size gob (as point! :rc) + 1
+			;renderer/push-clip-rect rc
 			while [p < e][
 				draw-gob as gob! p/value
 				p: p + 1
 			]
-			renderer/pop-clip-rect
+			;renderer/pop-clip-rect
 		]
 	]
 

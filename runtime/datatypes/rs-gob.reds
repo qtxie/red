@@ -38,6 +38,27 @@ rs-gob: context [
 		]
 	]
 
+	get-content-size: func [
+		gob		[gob!]
+		sz		[point!]
+		/local
+			ss	[gob-style!]
+			x	[float32!]
+			y	[float32!]
+			box [RECT32!]
+	][
+		ss: gob/styles
+		either ss <> null [
+			x: as float32! (ss/border/width * 2 + ss/padding/left + ss/padding/right)
+			y: as float32! (ss/border/width * 2 + ss/padding/top + ss/padding/bottom)
+		][
+			x: as float32! 0.0
+			y: as float32! 0.0
+		]
+		sz/x: gob/box/right - gob/box/left - x
+		sz/y: gob/box/bottom - gob/box/top - y
+	]
+
 	find-child: func [
 		gob		[gob!]
 		x		[float32!]

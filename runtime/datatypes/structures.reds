@@ -421,11 +421,11 @@ point!: alias struct! [
 	y	[coord!]
 ]
 
-area!: alias struct! [
-	x1	[coord!]
-	y1	[coord!]
-	x2	[coord!]
-	y2	[coord!]
+RECT32!: alias struct! [
+	left		[float32!]
+	top			[float32!]
+	right		[float32!]
+	bottom		[float32!]
 ]
 
 gob-event-fn!: alias function! [
@@ -489,7 +489,7 @@ gob-style!: alias struct! [
 
 gob!: alias struct! [				;-- keep the size <= 64 bytes
 	flags		[integer!]			;-- type and states
-	box			[area! value]		;-- top-left(x1, y1), bottom-right(x2, y2)
+	box			[RECT32! value]		;-- real size: content size + padding + border width
 	parent		[gob!]				;-- parent gob
 	children	[node!]				;-- child gobs, red-vector!
 	text-head	[integer!]			;-- head of the text

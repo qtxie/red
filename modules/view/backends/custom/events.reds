@@ -170,7 +170,7 @@ do-mouse-event: func [
 	child: rs-gob/find-child obj x y
 	either child <> null [
 		ui-manager/add-update obj
-		ret: do-mouse-event evt child x - child/box/x1 y - child/box/y1 flags
+		ret: do-mouse-event evt child x - child/box/left y - child/box/top flags
 	][
 		hover: ui-manager/hover-gob
 		if hover <> obj [

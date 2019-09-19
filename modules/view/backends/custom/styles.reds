@@ -123,8 +123,16 @@ styles-ctx: context [
 			w	[red-word!]
 			id	[integer!]
 			int	[red-integer!]
+			tp	[red-tuple!]
+			blk [red-block!]
+			ser [series!]
+			end [red-value!]
 	][
 		switch TYPE_OF(val) [
+			TYPE_INTEGER [
+				int: as red-integer! val
+				s/border/width: int/value
+			]
 			TYPE_WORD [		;-- border style
 				w: as red-word! val
 				id: symbol/resolve w/symbol
@@ -133,7 +141,20 @@ styles-ctx: context [
 					true [0]
 				]
 			]
-			TYPE_BLOCK [0]
+			TYPE_TUPLE [
+				tp: as red-tuple! val
+				s/border/color: tp/array1
+			]
+			TYPE_BLOCK [
+				blk: as red-block! val
+				ser: GET_BUFFER(blk)
+				val: ser/offset + blk/head
+				end: ser/tail
+				while [val < end][
+					set-border s val
+					val: val + 1
+				]
+			]
 			TYPE_NONE [s/border/style: GOB_BORDER_NONE]
 		]
 	]

@@ -163,7 +163,7 @@ gob: context [
 			w		[red-word!]
 			id		[integer!]
 	][
-		if null? g/styles [g/styles: as gob-style! allocate size? gob-style!]
+		if null? g/styles [g/styles: as gob-style! alloc0 size? gob-style!]
 		s: g/styles
 
 		ctx: 	GET_CTX(styles-obj)
@@ -213,15 +213,15 @@ gob: context [
 			]
 			sym = facets/offset [
 				pair: as red-pair! value
-				g/box/x1: as float32! pair/x
-				g/box/y1: as float32! pair/y
-				g/box/x2: g/box/x1 + g/box/x2
-				g/box/y2: g/box/y1 + g/box/y2
+				g/box/left: as float32! pair/x
+				g/box/top: as float32! pair/y
+				g/box/right: g/box/left + g/box/right
+				g/box/bottom: g/box/top + g/box/bottom
 			]
 			sym = facets/size [
 				pair: as red-pair! value
-				g/box/x2: g/box/x1 + as-float32 pair/x
-				g/box/y2: g/box/y1 + as-float32 pair/y
+				g/box/right: g/box/left + as-float32 pair/x
+				g/box/bottom: g/box/top + as-float32 pair/y
 			]
 			sym = facets/color [
 				tp: as red-tuple! value
@@ -333,8 +333,8 @@ gob: context [
 		;-- offset
 		string/concatenate-literal buffer "offset: "
 		part: part - 8
-		pt/x: as-integer g/box/x1
-		pt/y: as-integer g/box/y1
+		pt/x: as-integer g/box/left
+		pt/y: as-integer g/box/top
 		part: pair/form :pt buffer null part
 		if indent? [
 			string/append-char GET_BUFFER(buffer) as-integer blank
@@ -344,8 +344,8 @@ gob: context [
 		;-- size
 		string/concatenate-literal buffer "size: "
 		part: part - 6
-		pt/x: as-integer g/box/x2 - g/box/x1
-		pt/y: as-integer g/box/y2 - g/box/y1
+		pt/x: as-integer g/box/right - g/box/left
+		pt/y: as-integer g/box/bottom - g/box/top
 		part: pair/form :pt buffer null part
 		if indent? [
 			string/append-char GET_BUFFER(buffer) as-integer blank
@@ -380,6 +380,7 @@ gob: context [
 			spec/head: n + 1
 		]
 		spec/head: saved
+		rs-gob/update-real-size g
 		g
 	]
 

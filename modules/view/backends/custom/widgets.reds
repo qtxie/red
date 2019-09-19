@@ -13,8 +13,36 @@ Red/System [
 widgets: context [
 	draw-base: func [
 		gob		[gob!]
+		/local
+			bd	[gob-style-border!]
+			ss	[gob-style!]
+			rc	[RECT32! value]
+			m	[float32!]
+			n	[float32!]
 	][
-		renderer/fill-box as RECT_F :gob/box gob/backdrop
+		ss: gob/styles
+		bd: ss/border
+
+		;-- 1. draw shadow
+		
+		;-- 2. draw background color
+		renderer/fill-box gob/box gob/backdrop
+
+		;-- 3. draw background image
+
+		;-- 4. draw border
+		if all [ss <> null bd/width <> 0][
+			m: as float32! bd/width
+			n: m / as float32! 2.0
+			rc/left: gob/box/left + n
+			rc/top: gob/box/top + n
+			rc/right: gob/box/right - n
+			rc/bottom: gob/box/bottom - n
+			renderer/draw-box rc m bd/color
+		]
+
+		;-- 5. draw text
+		
 	]
 
 	signal-button: func [
@@ -53,15 +81,17 @@ widgets: context [
 		]
 		if gob/children <> null [
 			if t <> GOB_WINDOW [
-				renderer/set-tranlation gob/box/x1 gob/box/y1
+				renderer/set-tranlation gob/box/left gob/box/top
 			]
 			s: as series! gob/children/value
 			p: as ptr-ptr! s/offset
 			e: as ptr-ptr! s/tail
+			renderer/push-clip-rect gob/box
 			while [p < e][
 				draw-gob as gob! p/value
 				p: p + 1
 			]
+			renderer/pop-clip-rect
 		]
 	]
 

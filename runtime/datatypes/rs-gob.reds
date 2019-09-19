@@ -19,6 +19,25 @@ rs-gob: context [
 		gob/flags and flag <> 0
 	]
 
+	update-real-size: func [
+		gob		[gob!]
+		/local
+			ss	[gob-style!]
+			x	[float32!]
+			y	[float32!]
+			box [RECT32!]
+	][
+		ss: gob/styles
+		;-- calc real size
+		if ss <> null [
+			box: gob/box
+			x: as float32! (ss/border/width * 2 + ss/padding/left + ss/padding/right)
+			y: as float32! (ss/border/width * 2 + ss/padding/top + ss/padding/bottom)
+			box/right: box/right + x
+			box/bottom: box/bottom + y
+		]
+	]
+
 	find-child: func [
 		gob		[gob!]
 		x		[float32!]
@@ -38,8 +57,8 @@ rs-gob: context [
 			if all [
 				g/flags and GOB_FLAG_HIDDEN = 0		;-- visible
 				all [
-					g/box/x1 <= x x <= g/box/x2
-					g/box/y1 <= y y <= g/box/y2
+					g/box/left <= x x <= g/box/right
+					g/box/top <= y y <= g/box/bottom
 				]
 			][
 				return g

@@ -1448,7 +1448,7 @@ DrawLine*: alias function! [
 
 DrawRectangle*: alias function! [
 	this		[this!]
-	rect		[RECT_F]
+	rect		[RECT32!]
 	brush		[integer!]
 	strokeWidth [float32!]
 	strokeStyle [integer!]
@@ -1456,7 +1456,7 @@ DrawRectangle*: alias function! [
 
 FillRectangle*: alias function! [
 	this		[this!]
-	rect		[RECT_F]
+	rect		[RECT32!]
 	brush		[integer!]
 ]
 
@@ -1837,8 +1837,8 @@ ID2D1DeviceContext: alias struct! [
 	Flush							[integer!]
 	SaveDrawingState				[integer!]
 	RestoreDrawingState				[integer!]
-	PushAxisAlignedClip				[integer!]
-	PopAxisAlignedClip				[integer!]
+	PushAxisAlignedClip				[function! [this [this!] rc [RECT32!] mode [integer!]]]
+	PopAxisAlignedClip				[function! [this [this!]]]
 	Clear							[function! [this [this!] color [D3DCOLORVALUE]]]
 	BeginDraw						[function! [this [this!]]]
 	EndDraw							[function! [this [this!] tag1 [int-ptr!] tag2 [int-ptr!] return: [integer!]]]

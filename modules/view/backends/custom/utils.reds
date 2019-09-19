@@ -122,6 +122,16 @@ Red/System [
     ]
 ]
 
+copy-rect: func [
+	src		[RECT32!]
+	dst		[RECT32!]
+][
+	dst/left: src/left
+	dst/right: src/right
+	dst/top: src/top
+	dst/bottom: src/bottom
+]
+
 zero-memory: func [
 	dest	[byte-ptr!]
 	size	[integer!]

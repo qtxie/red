@@ -440,8 +440,8 @@ probe "make window"
 		wsflags: 0
 		if win10? [wsflags: wsflags or WS_EX_NOREDIRECTIONBITMAP]
 
-		w: logical-to-pixel obj/box/x2 - obj/box/x1
-		h: logical-to-pixel obj/box/y2 - obj/box/y1
+		w: logical-to-pixel obj/box/right - obj/box/left
+		h: logical-to-pixel obj/box/bottom - obj/box/top
 		if w <= 0 [w: 200]
 		if h <= 0 [h: 200]
 		rc/left: 0
@@ -457,8 +457,8 @@ probe "make window"
 			#u16 "RedHostWindow"
 			#u16 "RedCustomWindow"
 			flags
-			logical-to-pixel obj/box/x1
-			logical-to-pixel obj/box/y1
+			logical-to-pixel obj/box/left
+			logical-to-pixel obj/box/top
 			w
 			h
 			parent

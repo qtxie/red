@@ -220,7 +220,7 @@ OS-draw-box-d2d: func [
 	/local
 		this	[this!]
 		rt		[ID2D1HwndRenderTarget]
-		rc		[RECT_F value]
+		rc		[RECT32 value]
 ][
 	this: as this! ctx/dc
 	rt: as ID2D1HwndRenderTarget this/vtbl

@@ -15,6 +15,16 @@ renderer: context [
 	render: as ID2D1DeviceContext 0
 	this: as this! 0
 
+	push-clip-rect: func [
+		rc		[RECT32!]
+	][
+		render/PushAxisAlignedClip this rc 0
+	]
+
+	pop-clip-rect: func [][
+		render/PopAxisAlignedClip this
+	]
+
 	set-tranlation: func [
 		x		[float32!]
 		y		[float32!]
@@ -37,18 +47,19 @@ renderer: context [
 	]
 
 	draw-box: func [
-		rc		[RECT_F]
+		rc		[RECT32!]
+		width	[float32!]
 		color	[integer!]
 		/local
 			bh	[ID2D1SolidColorBrush]
 	][
 		bh: as ID2D1SolidColorBrush brush/vtbl
 		bh/SetColor brush to-dx-color color null
-		render/DrawRectangle this rc as-integer brush as float32! 1.0 0
+		render/DrawRectangle this rc as-integer brush width 0
 	]
 
 	fill-box: func [
-		rc		[RECT_F]
+		rc		[RECT32!]
 		color	[integer!]
 		/local
 			bh	[ID2D1SolidColorBrush]

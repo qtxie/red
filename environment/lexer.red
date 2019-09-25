@@ -797,23 +797,26 @@ system/lexer: context [
 		]
 
 		pair-value-rule: [
-			integer-number-rule
+			float-special |
+			(neg?: no) integer-number-rule
 			opt [float-number-rule | float-exp-rule e: (type: float!)]
 		]
 
 		integer-rule: [
-			float-special (value: make-number s e type)	;-- escape path for NaN, INFs
-			| (neg?: no) integer-number-rule
-			  opt [float-number-rule | float-exp-rule e: (type: float!)]
-			  opt [#"%" (type: percent!)]
-			  sticky-word-rule
-			  (value: make-number s e type)
-			  opt [
+			[
+				float-special (value: make-number s e type)	;-- escape path for NaN, INFs
+				| (neg?: no) integer-number-rule
+				  opt [float-number-rule | float-exp-rule e: (type: float!)]
+				  opt [#"%" (type: percent!)]
+				  sticky-word-rule
+				  (value: make-number s e type)
+				  opt [#":" [time-rule | (throw-error [type pos])]]
+		  	]
+		  	opt [
 				[#"x" | #"X"] [s: pair-value-rule | (throw-error [pair! pos])]
 				ahead [pair-end | ws-no-count | end | (throw-error [pair! pos])]
 				(value: as-pair value make-number s e type)
-			  ]
-			  opt [#":" [time-rule | (throw-error [type pos])]]
+			]
 		]
 
 		float-special: [

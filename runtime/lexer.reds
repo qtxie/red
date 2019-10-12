@@ -328,7 +328,7 @@ lexer: context [
 	][
 		probe "word!"
 		cell: alloc-slot state
-		symbol/make-alt src 
+		;symbol/make-alt src 
 		cell/header: TYPE_WORD
 	]
 

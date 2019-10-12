@@ -23,7 +23,8 @@ symbol: context [
 	]
 	
 	search: func [
-		str			 [red-slice!]
+		str			 [c-string!]
+		len			 [integer!]
 		return:		 [integer!]
 		/local
 			s		 [series!]
@@ -98,7 +99,46 @@ symbol: context [
 		_hashtable/put table as red-value! sym
 		block/rs-length? symbols
 	]
-	
+
+	make-alt-cstr: func [
+		cstr 	[c-string!]
+		len		[integer!]
+		return:	[integer!]
+		/local
+			sym	[red-symbol!]
+			id	[integer!]
+			buf [node!]
+			s	[series!]
+			p	[byte-ptr!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "symbol/make-alt-cstr"]]
+
+		buf: alloc-bytes len + 1		;-- add a null byte in the end
+		s: as series! buf/value
+		p: as byte-ptr! s/offset
+		copy-memory p cstr len
+		len: len + 1
+		p/len: null-byte
+		s/tail: as red-value! (p + len)
+		
+		id: search val
+
+		if positive? id [return id]
+
+		sym: as red-symbol! ALLOC_TAIL(symbols)
+		sym/header: TYPE_UNSET
+		either len < 0 [
+			sym/node: str/node
+		][
+			sym/node: copy-part str/node str/head len
+		]
+		sym/cache:  unicode/str-to-utf8 str :len no
+		sym/alias:  either zero? id [-1][0 - id]		;-- -1: no alias, abs(id)>0: alias id
+		sym/header: TYPE_SYMBOL							;-- implicit reset of all header flags
+		_hashtable/put table as red-value! sym
+		block/rs-length? symbols
+	]
+
 	make: func [
 		s 		[c-string!]								;-- input c-string!
 		return:	[integer!]

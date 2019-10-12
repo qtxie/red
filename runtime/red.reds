@@ -216,7 +216,7 @@ red: context [
 		global-ctx: _context/create 4000 no no
 
 		case-folding/init
-		symbol/table: _hashtable/init 4000 symbols HASH_TABLE_SYMBOL 1
+		symbol/table: _hashtable/init 4000 symbols HASH_TABLE_INTEGER 1
 
 		datatype/make-words								;-- build datatype names as word! values
 		words/build										;-- create symbols used internally

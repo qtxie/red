@@ -328,7 +328,8 @@ lexer: context [
 	][
 		probe "word!"
 		cell: alloc-slot state
-		cell/header: TYPE_NONE
+		symbol/make-alt src 
+		cell/header: TYPE_WORD
 	]
 
 	scan-file: func [state [state!] s [byte-ptr!] e [byte-ptr!] flags [integer!]

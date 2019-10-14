@@ -146,7 +146,7 @@ red-symbol!: alias struct! [
 	header 	[integer!]								;-- cell header
 	alias	[integer!]								;-- Alias symbol index
 	node	[node!]									;-- string series node pointer
-	cache	[node!]									;-- UTF-8 cached version of the string (experimental)
+	cache	[integer!]								;-- UTF-8 cached version of the string (experimental)
 ]
 
 red-integer!: alias struct! [

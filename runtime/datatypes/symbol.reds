@@ -26,10 +26,14 @@ symbol: context [
 		sym		[red-symbol!]
 		/local
 			s	[series!]
+			p	[int-ptr!]
+			pp	[byte-ptr!]
 	][
 		if sym/node = null [
-			s: as series! sym/cache/value
-			sym/node: unicode/load-utf8 as c-string! s/offset as-integer s/tail - s/offset
+			s: GET_BUFFER(symbols-str)
+			pp: (as byte-ptr! s/offset) + sym/cache
+			p: as int-ptr! pp
+			sym/node: unicode/load-utf8 as c-string! p + 2 p/value
 		]
 	]
 	

@@ -132,6 +132,7 @@ red: context [
 	_root:	 	declare red-block!						;-- statically alloc root cell for bootstrapping
 	root:	 	as red-block! 0							;-- root block
 	symbols: 	as red-block! 0 						;-- symbols table
+	symbols-str: as red-binary! 0						;-- string buffer for symbols table
 	global-ctx: as node! 0								;-- global context
 	arg-stk:	as red-block!	0						;-- argument stack (should never be relocated)
 	call-stk:	as red-block!	0						;-- call stack (should never be relocated)
@@ -212,11 +213,13 @@ red: context [
 		root:		block/make-fixed null ***-root-size
 		arg-stk:	block/make-fixed root 2 * 2000
 		call-stk:	block/make-fixed root 20 * 2000
-		symbols: 	block/make-in root 4000
+		symbols: 	block/make-in root 100000
+		symbols-str: as red-binary! block/make-fixed root 1024 * 512		;-- 512KB buffer
+		symbols-str/header: TYPE_BINARY
 		global-ctx: _context/create 4000 no no
 
 		case-folding/init
-		symbol/table: _hashtable/init 4000 symbols HASH_TABLE_SYMBOL 1
+		symbol/table: _hashtable/init 100000 symbols HASH_TABLE_SYMBOL 1
 
 		datatype/make-words								;-- build datatype names as word! values
 		words/build										;-- create symbols used internally

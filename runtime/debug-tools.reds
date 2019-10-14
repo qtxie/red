@@ -16,7 +16,7 @@ print-symbol: func [
 		sym [red-symbol!]
 ][
 	sym: symbol/get word/symbol
-	print as-c-string (as series! sym/cache/value) + 1
+	;print as-c-string (as series! sym/cache/value) + 1
 ]
 
 ;-------------------------------------------

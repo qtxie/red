@@ -257,6 +257,7 @@ _hashtable: context [
 		/local sym [red-string!] s [series!]
 	][
 		switch TYPE_OF(key) [
+			TYPE_INTEGER [key/data2]
 			TYPE_SYMBOL [hash-symbol as red-symbol! key]
 			TYPE_STRING
 			TYPE_FILE
@@ -265,8 +266,7 @@ _hashtable: context [
 			TYPE_EMAIL [
 				hash-string as red-string! key case?
 			]
-			TYPE_CHAR
-			TYPE_INTEGER [key/data2]
+			TYPE_CHAR [key/data2]
 			TYPE_FLOAT
 			TYPE_PAIR
 			TYPE_PERCENT
@@ -1357,5 +1357,114 @@ _hashtable: context [
 		k/header: TYPE_SYMBOL
 
 		(as-integer k - blk) >> 4 + 1
+	]
+
+	get-ctx-symbol: func [
+		node		[node!]
+		key			[integer!]				;-- symbol id
+		case?		[logic!]				;-- YES: case insensitive
+		ctx			[node!]					;-- if cxt <> null, create a new word in the context
+		new-id		[int-ptr!]
+		return:		[integer!]
+		/local
+			s		[series!]
+			h		[hashtable!]
+			i		[integer!]
+			flags	[int-ptr!]
+			last	[integer!]
+			mask	[integer!]
+			step	[integer!]
+			keys	[int-ptr!]
+			ii		[integer!]
+			hash	[integer!]
+			sh		[integer!]
+			blk		[red-word!]
+			k		[red-word!]
+			sym		[integer!]
+	][
+		s: as series! node/value
+		h: as hashtable! s/offset
+		assert h/n-buckets > 0
+
+		s: as series! h/keys/value
+		keys: as int-ptr! s/offset
+		s: as series! h/flags/value
+		flags: as int-ptr! s/offset
+		s: as series! h/blk/value
+		blk: as red-word! s/offset
+
+		hash: either case? [symbol/resolve key][key]
+		mask: h/n-buckets - 1
+		i: hash and mask
+		_HT_CAL_FLAG_INDEX(i ii sh)
+		i: i + 1
+		last: i
+		step: 0
+		while [_BUCKET_IS_NOT_EMPTY(flags ii sh)][ 
+			k: blk + keys/i
+			sym: either case? [symbol/resolve k/symbol][k/symbol]
+			if key <> sym [
+				i: i + step and mask
+				_HT_CAL_FLAG_INDEX(i ii sh)
+				i: i + 1
+				step: step + 1
+				if i = last [assert 0 = 1 break]		;-- should not happen
+			]
+		]
+
+		either ctx <> null [
+			either _BUCKET_IS_EITHER(flags ii sh) [
+				if ctx <> null [
+					ii: (as-integer s/tail - s/offset) >> 4	;-- index is zero-base
+					k: as red-word! alloc-tail s
+					k/header: TYPE_WORD						;-- force word! type
+					k/index: ii
+					k/ctx: ctx
+					k/symbol: key
+					new-id/value: ii
+				]
+				-1
+			][new-id/value: keys/i keys/i]
+		][
+			either _BUCKET_IS_EITHER(flags ii sh) [-1][keys/i]
+		]
+	]
+
+	get-ctx-word: func [
+		ctx		[red-context!]
+		idx		[integer!]				;-- word index
+		return:	[red-word!]
+		/local
+			s	[series!]
+			h	[hashtable!]
+	][
+		s: as series! ctx/symbols/value
+		h: as hashtable! s/offset
+		s: as series! h/blk/value 
+		as red-word! s/offset + idx
+	]
+
+	get-ctx-words: func [
+		ctx		[red-context!]
+		return:	[series!]
+		/local
+			s	[series!]
+			h	[hashtable!]
+	][
+		s: as series! ctx/symbols/value
+		h: as hashtable! s/offset
+		as series! h/blk/value 
+	]
+
+	get-ctx-symbols: func [
+		ctx		[red-context!]
+		return:	[node!]
+		/local
+			s	[series!]
+			h	[hashtable!]
+	][
+		s: as series! ctx/symbols/value
+		h: as hashtable! s/offset
+		h/blk
 	]
 ]

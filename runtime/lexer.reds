@@ -241,7 +241,7 @@ lexer: context [
 
 	stash: as cell! 0									;-- special buffer for hatching any-blocks series
 	stack: as red-block! 0								;-- nested series stack
-	stash-size: 1000									;-- pre-allocated cells	number
+	stash-size: 1000100									;-- pre-allocated cells	number
 	depth: 0											;-- recursive calls depth
 
 	alloc-slot: func [s [state!] return: [red-value!] /local slot [red-value!]][

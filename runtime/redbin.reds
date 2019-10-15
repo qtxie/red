@@ -162,14 +162,14 @@ redbin: context [
 			s/tail: s/offset + slots
 		]
 
-		symbols: ctx/symbols
+		s: _hashtable/get-ctx-words ctx
 		data: data + 2
 		i: 0
 
 		while [slots > 0][
 			sym: table + data/1
 			;-- create the words entries in the symbol table of the context
-			slot: 		 as red-word! alloc-tail as series! symbols/value
+			slot: 		 as red-word! alloc-tail s
 			slot/header: TYPE_WORD
 			slot/ctx: 	 new
 			slot/symbol: sym/1

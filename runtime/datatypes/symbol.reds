@@ -77,6 +77,7 @@ symbol: context [
 		return:	[integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "symbol/make"]]
+?? s
 		_hashtable/put-symbol table as byte-ptr! s system/words/length? s
 	]
 	

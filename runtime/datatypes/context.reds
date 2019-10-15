@@ -79,7 +79,7 @@ _context: context [
 			w	[red-word!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "_context/add-global"]]
-		
+?? sym
 		w: add-global-word sym no yes
 		either red/boot? [
 			as red-word! copy-cell as red-value! w ALLOC_TAIL(root)
@@ -101,11 +101,10 @@ _context: context [
 			id	  [integer!]
 			new-id [integer!]
 	][
-probe "add-global-word"
 		new-id: 0
 		ctx: TO_CTX(global-ctx)
 		id: find-or-store ctx sym case? global-ctx :new-id
-probe [id " " sym]
+probe [case? " " id " " sym " " new-id]
 		if id <> -1 [
 			word: _hashtable/get-ctx-word ctx id
 			if all [case? store? word/symbol <> sym][
@@ -115,11 +114,9 @@ probe [id " " sym]
 			return word
 		]
 
+		word: _hashtable/get-ctx-word ctx new-id
 		if positive? symbol/get-alias-id sym [	;-- alias, fetch original id
-		probe "alias"
-			word: _hashtable/get-ctx-word ctx new-id
 			word/index: find-word ctx sym yes
-		probe "alias done"
 		]
 
 		value: alloc-tail as series! ctx/values/value

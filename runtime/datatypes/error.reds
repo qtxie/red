@@ -178,7 +178,7 @@ error: context [
 		#if debug? = yes [if verbose > 0 [print-line "error/make"]]
 
 		new: as red-object! stack/push*
-		
+		assert 0 = 1
 		object/copy
 			as red-object! #get system/standard/error
 			as red-object! new

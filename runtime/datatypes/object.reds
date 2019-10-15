@@ -1283,6 +1283,7 @@ object: context [
 			slots [integer!]
 			type  [integer!]
 	][
+probe "object/copy"
 		#if debug? = yes [if verbose > 0 [print-line "object/copy"]]
 		
 		if OPTION?(types) [--NOT_IMPLEMENTED--]
@@ -1310,6 +1311,8 @@ object: context [
 		if size <= 0 [return new]						;-- empty object!
 		
 		;-- process SYMBOLS
+		_hashtable/copy-to ctx/symbols nctx/symbols
+		src: _hashtable/get-ctx-words ctx
 		dst: _hashtable/get-ctx-words nctx
 		copy-memory as byte-ptr! dst/offset as byte-ptr! src/offset size
 		dst/tail: dst/offset + slots

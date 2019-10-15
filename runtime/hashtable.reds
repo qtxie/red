@@ -258,6 +258,7 @@ _hashtable: context [
 	][
 		switch TYPE_OF(key) [
 			TYPE_INTEGER [key/data2]
+			TYPE_WORD	[symbol/resolve key/data2]
 			TYPE_SYMBOL [hash-symbol as red-symbol! key]
 			TYPE_STRING
 			TYPE_FILE
@@ -273,15 +274,11 @@ _hashtable: context [
 			TYPE_TIME [
 				murmur3-x86-32 (as byte-ptr! key) + 8 8
 			]
-			TYPE_WORD
 			TYPE_SET_WORD
 			TYPE_LIT_WORD
 			TYPE_GET_WORD
 			TYPE_REFINEMENT
-			TYPE_ISSUE [
-				s: GET_BUFFER(symbols)
-				hash-symbol as red-symbol! s/offset + key/data2 - 1
-			]
+			TYPE_ISSUE [symbol/resolve key/data2]
 			TYPE_BINARY [
 				sym: as red-string! key
 				s: GET_BUFFER(sym)
@@ -1083,6 +1080,23 @@ _hashtable: context [
 		new
 	]
 
+	copy-to: func [
+		node	[node!]
+		dst		[node!]
+		return: [node!]
+		/local s [series!] h [hashtable!] ss [series!] hh [hashtable!]
+	][
+		s: as series! node/value
+		h: as hashtable! s/offset
+
+		ss: as series! dst/value
+		hh: as hashtable! ss/offset
+
+		hh/flags: copy-series as series! h/flags/value
+		hh/keys: copy-series as series! h/keys/value
+		dst
+	]
+
 	clear: func [								;-- only for clear hash! datatype
 		node	[node!]
 		head	[integer!]
@@ -1377,6 +1391,7 @@ _hashtable: context [
 			keys	[int-ptr!]
 			ii		[integer!]
 			hash	[integer!]
+			kk		[integer!]
 			sh		[integer!]
 			blk		[red-word!]
 			k		[red-word!]
@@ -1384,7 +1399,12 @@ _hashtable: context [
 	][
 		s: as series! node/value
 		h: as hashtable! s/offset
-		assert h/n-buckets > 0
+
+		if all [ctx <> null h/n-occupied >= h/upper-bound][			;-- update the hash table
+			i: either h/n-buckets > (h/size << 1) [-1][1]
+			kk: h/n-buckets + i
+			resize node kk << 4
+		]
 
 		s: as series! h/keys/value
 		keys: as int-ptr! s/offset
@@ -1393,7 +1413,8 @@ _hashtable: context [
 		s: as series! h/blk/value
 		blk: as red-word! s/offset
 
-		hash: either case? [symbol/resolve key][key]
+		hash: symbol/resolve key
+		kk: either case? [hash][key]
 		mask: h/n-buckets - 1
 		i: hash and mask
 		_HT_CAL_FLAG_INDEX(i ii sh)
@@ -1403,26 +1424,29 @@ _hashtable: context [
 		while [_BUCKET_IS_NOT_EMPTY(flags ii sh)][ 
 			k: blk + keys/i
 			sym: either case? [symbol/resolve k/symbol][k/symbol]
-			if key <> sym [
+			either kk <> sym [
 				i: i + step and mask
 				_HT_CAL_FLAG_INDEX(i ii sh)
 				i: i + 1
 				step: step + 1
 				if i = last [assert 0 = 1 break]		;-- should not happen
-			]
+			][break]
 		]
 
 		either ctx <> null [
-			either _BUCKET_IS_EITHER(flags ii sh) [
-				if ctx <> null [
-					ii: (as-integer s/tail - s/offset) >> 4	;-- index is zero-base
-					k: as red-word! alloc-tail s
-					k/header: TYPE_WORD						;-- force word! type
-					k/index: ii
-					k/ctx: ctx
-					k/symbol: key
-					new-id/value: ii
-				]
+			either _BUCKET_IS_EMPTY(flags ii sh) [
+				_BUCKET_SET_BOTH_FALSE(flags ii sh)
+				h/size: h/size + 1
+				h/n-occupied: h/n-occupied + 1
+				ii: (as-integer s/tail - s/offset) >> 4	;-- index is zero-base
+				keys/i: ii
+
+				k: as red-word! alloc-tail s
+				k/header: TYPE_WORD						;-- force word! type
+				k/index: ii
+				k/ctx: ctx
+				k/symbol: key
+				new-id/value: ii
 				-1
 			][new-id/value: keys/i keys/i]
 		][

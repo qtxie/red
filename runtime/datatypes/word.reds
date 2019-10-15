@@ -33,7 +33,9 @@ word: context [
 		/local
 			w	[red-word!]
 	][
+?? str
 		w: _context/add-global-word symbol/make str yes yes
+?? w
 		either red/boot? [
 			as red-word! copy-cell as red-value! w ALLOC_TAIL(root)
 		][

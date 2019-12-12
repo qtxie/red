@@ -23,3 +23,15 @@ jobs:
       with:
         name: quick-test.log
         path: quick-test/quick-test.log
+
+  Regression:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: setup red repo
+    run: |
+      curl -o ./rebol https://static.red-lang.org/tmp/rebol
+      chmod +x ./rebol
+      ./rebol -qws tests/run-all.r --batch

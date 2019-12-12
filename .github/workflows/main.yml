@@ -14,6 +14,6 @@ jobs:
         $url = "http://static.red-lang.org/build/rebview.exe"
         $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
         (New-Object System.Net.WebClient).DownloadFile($url, $output)
-        dir $Env:GITHUB_WORKSPACE
-        shell: powershell
+        rebview.exe 
+      run: cmd redview.exe tests\run-view-tests.r
 

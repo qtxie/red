@@ -15,8 +15,6 @@ jobs:
         $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
         (New-Object System.Net.WebClient).DownloadFile($url, $output)
     - name: run view test
-      run: |
-        dir
-        rebview.exe -qws tests\run-view-tests.r
+      run: rebview.exe -qws tests\run-view-tests.r --batch
       shell: cmd
 

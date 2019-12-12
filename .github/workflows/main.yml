@@ -32,6 +32,6 @@ jobs:
     - uses: actions/checkout@v1
     - name: setup red repo
       run: |
-        curl -o /bin/rebol https://static.red-lang.org/tmp/rebol
-        chmod +x /bin/rebol
+        sudo curl -o /bin/rebol https://static.red-lang.org/tmp/rebol
+        sudo chmod +x /bin/rebol
         rebol -qws tests/run-all.r --batch

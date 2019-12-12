@@ -1,0 +1,19 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v1
+    - name: run view test
+      run: |
+        $url = "http://static.red-lang.org/build/rebview.exe"
+        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
+        (New-Object System.Net.WebClient).DownloadFile($url, $output)
+        dir GITHUB_WORKSPACE
+        shell: powershell
+

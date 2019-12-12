@@ -17,6 +17,6 @@ jobs:
     - name: run view test
       run: |
         dir
-        redview.exe tests\run-view-tests.r
+        rebview.exe -qws tests\run-view-tests.r
       shell: cmd
 

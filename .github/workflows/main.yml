@@ -26,14 +26,21 @@ jobs:
 
   Regression:
 
-    runs-on: ubuntu-18.04
-
+    runs-on: windows-latest
+    
     steps:
     - uses: actions/checkout@v1
     - name: setup red repo
       run: |
-        sudo apt-get update
-        sudo apt-get install -y libcurl4
-        sudo curl -o /bin/rebol https://static.red-lang.org/tmp/rebol
-        sudo chmod +x /bin/rebol
-        rebol -qws tests/run-all.r --batch
+        $url = "http://static.red-lang.org/build/rebview.exe"
+        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
+        (New-Object System.Net.WebClient).DownloadFile($url, $output)
+    - name: run regression test
+      run: rebview.exe -qws tests\run-all.r --batch
+      shell: cmd
+
+    - uses: actions/upload-artifact@v1
+      if: failure()
+      with:
+        name: regression-test-log
+        path: quick-test/quick-test.log

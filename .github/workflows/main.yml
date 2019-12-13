@@ -3,7 +3,7 @@ name: CI
 on: [push]
 
 jobs:
-  build:
+  View:
 
     runs-on: windows-latest
     
@@ -21,7 +21,7 @@ jobs:
     - uses: actions/upload-artifact@v1
       if: failure()
       with:
-        name: quick-test.log
+        name: view-test-log
         path: quick-test/quick-test.log
 
   Regression:
@@ -32,9 +32,8 @@ jobs:
     - uses: actions/checkout@v1
     - name: setup red repo
       run: |
-        sudo dpkg --add-architecture i386
         sudo apt-get update
-        sudo apt-get install -y libcurl4:i386
+        sudo apt-get install -y libcurl4
         sudo curl -o /bin/rebol https://static.red-lang.org/tmp/rebol
         sudo chmod +x /bin/rebol
         rebol -qws tests/run-all.r --batch

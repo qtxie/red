@@ -20,6 +20,9 @@ Red/System [
 
 #define GMEM_MOVEABLE	2
 
+#define IMG_NODE_HAS_BUFFER		1
+#define IMG_NODE_MODIFIED		2
+
 OS-image: context [
 
 	wic-factory: as this! 0
@@ -38,6 +41,17 @@ OS-image: context [
 		y	[integer!]
 		w	[integer!]
 		h	[integer!]
+	]
+
+	;-- flags bits layout
+	;	0: if set, has an editable buffer with unpremultiply data
+	;	1: if set, the editable buffer has been modified
+	;	2: if set, the image has been marked by the GC
+	img-node!: alias struct! [
+		flags	[integer!]
+		handle	[this!]
+		buffer	[this!]
+		size	[integer!]
 	]
 
 	#import [
@@ -253,6 +267,24 @@ OS-image: context [
 		CopyPalette					[function! [this [this!] pIPalette [int-ptr!] return: [integer!]]]
 		CopyPixels					[function! [this [this!] prc [int-ptr!] stride [integer!] size [integer!] buffer [byte-ptr!] return: [integer!]]]
 		Initialize					[function! [this [this!] pISource [int-ptr!] rec [RECT!] return: [integer!]]]
+	]
+
+	make-node: func [
+		handle	[this!]
+		buffer	[this!]
+		flags	[integer!]
+		width	[integer!]
+		height	[integer!]
+		return: [node!]
+		/local
+			inode	[img-node!]
+	][
+		inode: as img-node! allocate size? img-node!
+		inode/flags: flags
+		inode/handle: handle
+		inode/buffer: buffer
+		inode/size: height << 16 or width
+		as node! inode
 	]
 
 	init: func [
@@ -559,12 +591,11 @@ OS-image: context [
 		as integer! bitmap/ptr
 	]
 
-	load-image: func [
-		src			[red-string!]
-		return:		[int-ptr!]
+	get-frame: func [
+		idec		[com-ptr!]
+		idx			[integer!]
+		return:		[node!]
 		/local
-			IFAC	[IWICImagingFactory]
-			II		[interface! value]
 			this	[this!]
 			dec		[IWICBitmapDecoder]
 			count	[integer!]
@@ -576,11 +607,8 @@ OS-image: context [
 			iconv	[interface! value]
 			cthis	[this!]
 			conv	[IWICFormatConverter]
-			bitmap	[interface! value]
 	][
-		IFAC: as IWICImagingFactory wic-factory/vtbl
-		IFAC/CreateDecoderFromFilename wic-factory file/to-OS-path src null GENERIC_READ 0 :II
-		this: as this! II/ptr
+		this: idec/value
 		dec: as IWICBitmapDecoder this/vtbl
 		count: 0
 		dec/GetFrameCount this :count
@@ -588,7 +616,7 @@ OS-image: context [
 			dec/Release this
 			return null
 		]
-		dec/GetFrame this 0 :iframe
+		dec/GetFrame this idx :iframe
 		fthis: as this! iframe/ptr
 		frame: as IWICBitmapFrameDecode fthis/vtbl
 		w: 0 h: 0
@@ -596,12 +624,22 @@ OS-image: context [
 		IFAC/CreateFormatConverter wic-factory :iconv
 		cthis: as this! iconv/ptr
 		conv: as IWICFormatConverter cthis/vtbl
-		conv/Initialize cthis as int-ptr! fthis as int-ptr! GUID_WICPixelFormat32bppBGRA 0 null 0.0 0
-		IFAC/CreateBitmapFromSource wic-factory as int-ptr! cthis 0 :bitmap
-		conv/Release cthis
+		conv/Initialize cthis as int-ptr! fthis as int-ptr! GUID_WICPixelFormat32bppPBGRA 0 null 0.0 0
 		frame/Release fthis
 		dec/Release this
-		as int-ptr! bitmap/ptr
+		make-node cthis null 0 w h 
+	]
+
+	load-image: func [
+		src			[red-string!]
+		return:		[int-ptr!]
+		/local
+			IFAC	[IWICImagingFactory]
+			II		[interface! value]
+	][
+		IFAC: as IWICImagingFactory wic-factory/vtbl
+		IFAC/CreateDecoderFromFilename wic-factory file/to-OS-path src null GENERIC_READ 0 :II
+		get-frame as com-ptr! :II 0
 	]
 
 	make-image: func [
@@ -668,7 +706,7 @@ OS-image: context [
 		]
 
 		lock/Release lthis
-		as int-ptr! bthis
+		make-node null bthis IMG_NODE_HAS_BUFFER or IMG_NODE_MODIFIED width height
 	]
 
 	load-binary: func [
@@ -680,17 +718,6 @@ OS-image: context [
 			p		[byte-ptr!]
 			s		[integer!]
 			IFAC	[IWICImagingFactory]
-			idec	[interface! value]
-			dthis	[this!]
-			dec		[IWICBitmapDecoder]
-			count	[integer!]
-			iframe	[interface! value]
-			fthis	[this!]
-			frame	[IWICBitmapFrameDecode]
-			iconv	[interface! value]
-			cthis	[this!]
-			conv	[IWICFormatConverter]
-			bitmap	[interface! value]
 	][
 		hMem: GlobalAlloc GMEM_MOVEABLE len
 		p: GlobalLock hMem
@@ -702,27 +729,7 @@ OS-image: context [
 
 		IFAC: as IWICImagingFactory wic-factory/vtbl
 		IFAC/CreateDecoderFromStream wic-factory as int-ptr! s null 1 :idec
-		dthis: as this! idec/ptr
-		dec: as IWICBitmapDecoder dthis/vtbl
-		count: 0
-		dec/GetFrameCount dthis :count
-		if count < 1 [
-			dec/Release dthis
-			return null
-		]
-		dec/GetFrame dthis 0 :iframe
-		fthis: as this! iframe/ptr
-		frame: as IWICBitmapFrameDecode fthis/vtbl
-		IFAC/CreateFormatConverter wic-factory :iconv
-		cthis: as this! iconv/ptr
-		conv: as IWICFormatConverter cthis/vtbl
-		conv/Initialize cthis as int-ptr! fthis as int-ptr! GUID_WICPixelFormat32bppBGRA 0 null 0.0 0
-		IFAC/CreateBitmapFromSource wic-factory as int-ptr! cthis 0 :bitmap
-
-		conv/Release cthis
-		frame/Release fthis
-		dec/Release dthis
-		as int-ptr! bitmap/ptr
+		get-frame as com-ptr! :idec 0
 	]
 
 	encode: func [

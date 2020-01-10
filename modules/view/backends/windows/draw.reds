@@ -199,14 +199,12 @@ draw-begin: func [
 		dc/SetTarget this target/bitmap
 		dc/setDpi this dpi-x dpi-y
 	][
-		wic-bmp: OS-image/get-handle img
+		wic-bmp: OS-image/get-wicbitmap img
 		;-- create a bitmap target
 		target: as render-target! alloc0 size? render-target!
 		target/brushes: as int-ptr! allocate D2D_MAX_BRUSHES * 2 * size? int-ptr!
 
 		zero-memory as byte-ptr! :props size? D2D1_RENDER_TARGET_PROPERTIES
-		props/dpiX: as float32! 0.0
-		props/dpiY: as float32! 0.0
 		factory: as ID2D1Factory d2d-factory/vtbl
 		if 0 <> factory/CreateWicBitmapRenderTarget d2d-factory wic-bmp :props :rt [
 			;TBD error!!!
@@ -215,7 +213,6 @@ draw-begin: func [
 		]
 		ctx/image: img/node
 		this: rt/value
-		?? this
 		dc: as ID2D1DeviceContext this/vtbl 
 	]
 	ctx/dc: as ptr-ptr! this
@@ -228,8 +225,8 @@ draw-begin: func [
 		pp/value: gdi/value
 	]
 
-	dc/SetTextAntialiasMode this 1				;-- ClearType
-	dc/SetAntialiasMode this 0					;-- D2D1_ANTIALIAS_MODE_PER_PRIMITIVE
+	;dc/SetTextAntialiasMode this 1				;-- ClearType
+	;dc/SetAntialiasMode this 0					;-- D2D1_ANTIALIAS_MODE_PER_PRIMITIVE
 
 	matrix2d/identity m
 	dc/SetTransform this :m						;-- set to identity matrix
@@ -245,7 +242,7 @@ draw-begin: func [
 
 	ctx/pre-order?: yes
 
-	if hWnd <> null [
+	either hWnd <> null [
 		values: get-face-values hWnd
 		clr: as red-tuple! values + FACE_OBJ_COLOR
 		bg-clr: either TYPE_OF(clr) = TYPE_TUPLE [clr/array1][-1]
@@ -264,6 +261,8 @@ draw-begin: func [
 			pos/x: 0 pos/y: 0
 			OS-draw-text ctx :pos as red-string! get-face-obj hWnd yes
 		]
+	][
+		dc/Clear this to-dx-color 222 null
 	]
 	ctx
 ]
@@ -321,9 +320,8 @@ draw-end: func [
 			]
 		]
 	][						;-- image! target
-		probe "2"
-		;d2d-release-target rt
-		probe "3"
+		d2d-release-target rt
+		dc/Release this
 	]
 ]
 
@@ -853,7 +851,6 @@ OS-draw-line: func [
 	pt1: pt0 + 1
 
 	either pt1 = end [
-		probe "draw-line"
 		if ctx/pen-type > DRAW_BRUSH_GRADIENT [
 			calc-brush-position
 				ctx/pen
@@ -873,7 +870,6 @@ OS-draw-line: func [
 		if ctx/pen-type > DRAW_BRUSH_GRADIENT [
 			post-process-brush ctx/pen ctx/pen-offset
 		]
-		probe "draw-line done"
 	][
 		_OS-draw-polygon ctx point end no
 	]

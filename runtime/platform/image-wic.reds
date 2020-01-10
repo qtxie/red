@@ -331,6 +331,28 @@ OS-image: context [
 		h
 	]
 
+	get-wicbitmap: func [
+		img			[red-image!]
+		return:		[this!]
+		/local
+			inode	[img-node!]
+			unk		[IUnknown]
+			h		[this!]
+			IFAC	[IWICImagingFactory]
+			bitmap	[com-ptr! value]
+	][
+		inode: as img-node! img/node
+		h: get-handle img
+		IFAC: as IWICImagingFactory wic-factory/vtbl
+		IFAC/CreateBitmapFromSource wic-factory h 2 :bitmap
+		inode/handle: bitmap/value
+		if inode/buffer <> null [
+			COM_SAFE_RELEASE(unk inode/buffer)
+			inode/flags: 0
+		]
+		bitmap/value
+	]
+
 	get-buffer: func [
 		img			[node!]
 		return:		[this!]

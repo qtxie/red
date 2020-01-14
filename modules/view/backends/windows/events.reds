@@ -1091,7 +1091,11 @@ WndProc: func [
 			if (GetWindowLong hWnd wc-offset - 12) and BASE_FACE_D2D <> 0 [
 				target: as render-target! GetWindowLong hWnd wc-offset - 32
 				if target <> null [
-					DX-resize-buffer target WIN32_LOWORD(lParam) WIN32_HIWORD(lParam)
+					this: target/dc
+					rt: as ID2D1HwndRenderTarget this/vtbl
+					color: WIN32_LOWORD(lParam)
+					res: WIN32_HIWORD(lParam)
+					rt/Resize this as tagSIZE :color
 					InvalidateRect hWnd null 1
 				]
 			]

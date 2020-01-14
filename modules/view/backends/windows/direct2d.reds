@@ -654,7 +654,7 @@ ID2D1Factory: alias struct! [
 	CreateStrokeStyle				[function! [this [this!] props [D2D1_STROKE_STYLE_PROPERTIES] dashes [float32-ptr!] count [integer!] style [ptr-ptr!] return: [integer!]]]
 	CreateDrawingStateBlock			[function! [this [this!] desc [this!] param [this!] block [ptr-ptr!] return: [integer!]]]
 	CreateWicBitmapRenderTarget		[function! [this [this!] target [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] bmp [com-ptr!] return: [integer!]]]
-	CreateHwndRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] hwndProperties [D2D1_HWND_RENDER_TARGET_PROPERTIES] target [ptr-ptr!] return: [integer!]]]
+	CreateHwndRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] hwndProperties [D2D1_HWND_RENDER_TARGET_PROPERTIES] target [com-ptr!] return: [integer!]]]
 	CreateDxgiSurfaceRenderTarget	[integer!]
 	CreateDCRenderTarget			[function! [this [this!] properties [D2D1_RENDER_TARGET_PROPERTIES] target [int-ptr!] return: [integer!]]]
 	CreateDevice					[function! [this [this!] dxgiDevice [int-ptr!] d2dDevice [ptr-ptr!] return: [integer!]]]
@@ -1318,10 +1318,6 @@ render-target!: alias struct! [
 	brushes-cnt		[uint!]
 	styles			[red-vector!]
 	bitmap			[this!]
-	swapchain		[this!]
-	dcomp-device	[this!]
-	dcomp-target	[this!]
-	dcomp-visual	[this!]
 ]
 
 #import [
@@ -1426,66 +1422,6 @@ DX-init: func [
 	DX-create-dev
 ]
 
-DX-create-buffer: func [
-	rt			[render-target!]
-	swapchain	[this!]
-	/local
-		sc		[IDXGISwapChain1]
-		this	[this!]
-		hr		[integer!]
-		buf		[integer!]
-		props	[D2D1_BITMAP_PROPERTIES1 value]
-		bmp		[integer!]
-		d2d		[ID2D1DeviceContext]
-		unk		[IUnknown]
-][
-	;-- get back buffer from the swap chain
-	this: as this! swapchain
-	sc: as IDXGISwapChain1 this/vtbl
-	buf: 0
-	hr: sc/GetBuffer this 0 IID_IDXGISurface :buf
-	assert zero? hr
-
-	;-- create a bitmap from the buffer
-	props/format: 87		;-- DXGI_FORMAT_B8G8R8A8_UNORM
-	props/alphaMode: 1		;-- D2D1_ALPHA_MODE_PREMULTIPLIED
-	props/dpiX: dpi-x
-	props/dpiY: dpi-y
-	props/options: 3		;-- D2D1_BITMAP_OPTIONS_TARGET or D2D1_BITMAP_OPTIONS_CANNOT_DRAW
-	props/colorContext: null
-	bmp: 0
-	d2d: as ID2D1DeviceContext d2d-ctx/vtbl
-	d2d/setDpi d2d-ctx dpi-x dpi-y
-	hr: d2d/CreateBitmapFromDxgiSurface d2d-ctx as int-ptr! buf props :bmp
-	assert hr = 0
-	
-	rt/dc: d2d-ctx
-	rt/swapchain: swapchain
-	rt/bitmap: as this! bmp
-
-	COM_SAFE_RELEASE_OBJ(unk buf)
-]
-
-DX-resize-buffer: func [
-	rt				[render-target!]
-	width			[uint!]
-	height			[uint!]
-	/local
-		unk			[IUnknown]
-		this		[this!]
-		sc			[IDXGISwapChain1]
-		hr			[integer!]
-][
-	COM_SAFE_RELEASE(unk rt/bitmap)
-
-	this: rt/swapchain
-	sc: as IDXGISwapChain1 this/vtbl
-	hr: sc/ResizeBuffers this 0 width height 87 0
-	if hr <> 0 [probe "resizing failed" exit]
-
-	DX-create-buffer rt this
-]
-
 DX-create-dev: func [
 	/local
 		factory 			[ptr-value!]
@@ -1500,11 +1436,6 @@ DX-create-dev: func [
 		hr					[integer!]
 		dll					[handle!]
 ][
-	if win8+? [
-		dll: LoadLibraryA "dcomp.dll"
-		pfnDCompositionCreateDevice2: GetProcAddress dll "DCompositionCreateDevice2"
-	]
-
 	hr: D3D11CreateDevice
 		null
 		1		;-- D3D_DRIVER_TYPE_HARDWARE
@@ -1521,56 +1452,21 @@ DX-create-dev: func [
 	d3d-device: as this! factory/value
 	d3d-ctx: as this! ctx/value
 
-	d3d: as ID3D11Device d3d-device/vtbl
-	;-- create DXGI device
-	hr: d3d/QueryInterface d3d-device IID_IDXGIDevice1 as interface! :factory	
-	assert zero? hr
-	dxgi-device: as this! factory/value
-
 	;-- get system DPI
-	d2d: as ID2D1Factory d2d-factory/vtbl
+	;d2d: as ID2D1Factory d2d-factory/vtbl
 	;d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
 
 	dpi-x: as float32! log-pixels-x
 	dpi-y: as float32! log-pixels-y
 	dpi-value: dpi-y
-
-	;-- create D2D Device
-	hr: d2d/CreateDevice d2d-factory as int-ptr! dxgi-device :factory
-	d2d-device: as this! factory/value
-	assert zero? hr
-
-	;-- create D2D context
-	d2d-dev: as ID2D1Device d2d-device/vtbl
-	hr: d2d-dev/CreateDeviceContext d2d-device 0 :factory
-	assert zero? hr
-	d2d-ctx: as this! factory/value
-
-	;-- get dxgi adapter
-	dxgi: as IDXGIDevice1 dxgi-device/vtbl
-	hr: dxgi/GetAdapter dxgi-device :factory
-	assert zero? hr
-
-	;-- get Dxgi factory
-	dxgi-adapter: as this! factory/value
-	adapter: as IDXGIAdapter dxgi-adapter/vtbl
-	hr: adapter/GetParent dxgi-adapter IID_IDXGIFactory2 :factory
-	assert zero? hr
-	dxgi-factory: as this! factory/value
-
-	COM_SAFE_RELEASE(unk dxgi-device)
-	COM_SAFE_RELEASE(unk d2d-device)
-	COM_SAFE_RELEASE(unk dxgi-adapter)	
 ]
 
 DX-release-dev: func [
 	/local
 		unk		[IUnknown]
 ][
-	COM_SAFE_RELEASE(unk d2d-ctx)
 	COM_SAFE_RELEASE(unk d3d-ctx)
 	COM_SAFE_RELEASE(unk d3d-device)
-	COM_SAFE_RELEASE(unk dxgi-factory)
 ]
 
 DX-cleanup: func [/local unk [IUnknown]][
@@ -1591,107 +1487,6 @@ pixel-to-logical: func [
 	return: [float32!]
 ][
 	(as-float32 num * 96) / dpi-value
-]
-
-create-dcomp: func [
-	target			[render-target!]
-	hWnd			[handle!]
-	/local
-		dev			[integer!]
-		d2d-device	[this!]
-		hr			[integer!]
-		unk			[IUnknown]
-		dcomp-dev	[IDCompositionDevice]
-		dcomp		[IDCompositionTarget]
-		this		[this!]
-		tg			[this!]
-		visual		[IDCompositionVisual]
-		d2d-dc		[ID2D1DeviceContext]
-		DCompositionCreateDevice2 [DCompositionCreateDevice2!]
-][
-	dev: 0
-	d2d-dc: as ID2D1DeviceContext d2d-ctx/vtbl
-	d2d-dc/GetDevice d2d-ctx :dev
-	d2d-device: as this! dev
-	DCompositionCreateDevice2: as DCompositionCreateDevice2! pfnDCompositionCreateDevice2
-	hr: DCompositionCreateDevice2 d2d-device IID_IDCompositionDevice :dev
-	COM_SAFE_RELEASE(unk d2d-device)
-	assert hr = 0
-
-	this: as this! dev
-	target/dcomp-device: this
-
-	dcomp-dev: as IDCompositionDevice this/vtbl
-	hr: dcomp-dev/CreateTargetForHwnd this hWnd yes :dev
-	assert zero? hr
-	tg: as this! dev
-	target/dcomp-target: tg
-
-	hr: dcomp-dev/CreateVisual this :dev
-	assert zero? hr
-	this: as this! dev
-	target/dcomp-visual: this
-
-	visual: as IDCompositionVisual this/vtbl
-	visual/SetContent this target/swapchain
-
-	dcomp: as IDCompositionTarget tg/vtbl
-	hr: dcomp/SetRoot tg this
-	assert zero? hr
-	hr: dcomp-dev/Commit target/dcomp-device
-	assert zero? hr
-]
-
-create-render-target: func [
-	hWnd		[handle!]
-	rt			[render-target!]
-	/local
-		rc		[RECT_STRUCT value]
-		desc	[DXGI_SWAP_CHAIN_DESC1 value]
-		dxgi	[IDXGIFactory2]
-		int		[integer!]
-		sc		[IDXGISwapChain1]
-		this	[this!]
-		hr		[integer!]
-		buf		[integer!]
-		unk		[IUnknown]
-][
-	GetClientRect hWnd :rc
-	zero-memory as byte-ptr! :desc size? DXGI_SWAP_CHAIN_DESC1
-
-	desc/Width: rc/right - rc/left
-	desc/Height: rc/bottom - rc/top
-	desc/Format: 87			;-- DXGI_FORMAT_B8G8R8A8_UNORM
-	desc/SampleCount: 1
-	desc/BufferUsage: 20h	;-- DXGI_USAGE_RENDER_TARGET_OUTPUT
-	desc/BufferCount: 2
-	desc/AlphaMode: 0
-	desc/SwapEffect: 3		;-- DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL
-
-	int: 0
-	buf: 0
-	dxgi: as IDXGIFactory2 dxgi-factory/vtbl
-	hr: dxgi/CreateSwapChainForHwnd dxgi-factory d3d-device hWnd desc null null :int
-	assert zero? hr
-
-	DX-create-buffer rt as this! int
-	rt
-]
-
-create-bitmap-target: func [
-	hWnd		[handle!]
-	rt			[render-target!]
-	/local
-		rc		[RECT_STRUCT value]
-		this	[this!]
-		unk		[IUnknown]
-		d2d		[ID2D1DeviceContext]
-][
-	GetClientRect hWnd :rc
-
-	d2d: as ID2D1DeviceContext d2d-ctx/vtbl	
-	rt/dc: d2d-ctx
-	rt/bitmap: create-d2d-bitmap d2d-ctx rc/right - rc/left rc/bottom - rc/top 9
 ]
 
 to-dx-color: func [
@@ -1729,16 +1524,14 @@ d2d-release-target: func [
 		brushes: brushes + 2
 	]
 	COM_SAFE_RELEASE(obj target/bitmap)
-	COM_SAFE_RELEASE(obj target/swapchain)
-	COM_SAFE_RELEASE(obj target/dcomp-visual)
-	COM_SAFE_RELEASE(obj target/dcomp-target)
-	COM_SAFE_RELEASE(obj target/dcomp-device)
+	COM_SAFE_RELEASE(obj target/dc)
 	free as byte-ptr! target
 ]
 
 create-hwnd-render-target: func [
-	hwnd	[handle!]
-	return: [this!]
+	hwnd		[handle!]
+	layered?	[logic!]
+	return:		[this!]
 	/local
 		props		[D2D1_RENDER_TARGET_PROPERTIES value]
 		options		[integer!]
@@ -1752,7 +1545,8 @@ create-hwnd-render-target: func [
 		left		[integer!]
 		factory		[ID2D1Factory]
 		rt			[ID2D1HwndRenderTarget]
-		target		[ptr-value!]
+		target		[com-ptr! value]
+		this		[this!]
 		hr			[integer!]
 ][
 	left: 0 top: 0 right: 0 bottom: 0
@@ -1766,11 +1560,20 @@ create-hwnd-render-target: func [
 	zero-memory as byte-ptr! :props size? D2D1_RENDER_TARGET_PROPERTIES
 	props/dpiX: as float32! log-pixels-x
 	props/dpiY: as float32! log-pixels-y
+	if layered? [
+		props/type: 0									;-- D2D1_RENDER_TARGET_TYPE_DEFAULT
+		props/format: 87								;-- DXGI_FORMAT_B8G8R8A8_UNORM
+		props/alphaMode: 1								;-- D2D1_ALPHA_MODE_PREMULTIPLIED
+		props/usage: 2
+	]
 
 	factory: as ID2D1Factory d2d-factory/vtbl
 	hr: factory/CreateHwndRenderTarget d2d-factory :props hprops :target
 	if hr <> 0 [return null]
-	as this! target/value
+	this: as this! target/value
+	rt: as ID2D1HwndRenderTarget this/vtbl
+	rt/QueryInterface this IID_ID2D1DeviceContext :target	;-- Query ID2D1DeviceContext interface
+	target/value
 ]
 
 get-hwnd-render-target: func [
@@ -1783,11 +1586,7 @@ get-hwnd-render-target: func [
 	target: as render-target! GetWindowLong hWnd wc-offset - 32
 	if null? target [
 		target: as render-target! alloc0 size? render-target!
-		either layered? [
-			create-bitmap-target hwnd target
-		][
-			create-render-target hWnd target
-		]
+		target/dc: create-hwnd-render-target hWnd layered?
 		target/brushes: as int-ptr! allocate D2D_MAX_BRUSHES * 2 * size? int-ptr!
 		SetWindowLong hWnd wc-offset - 32 as-integer target
 	]

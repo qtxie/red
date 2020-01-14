@@ -191,13 +191,8 @@ draw-begin: func [
 	ctx/hwnd:		hWnd
 	update-pen-style ctx
 
-	this: d2d-ctx
-	dc: as ID2D1DeviceContext this/vtbl
-
 	either hWnd <> null [
 		target: get-hwnd-render-target hWnd on-graphic?
-		dc/SetTarget this target/bitmap
-		dc/setDpi this dpi-x dpi-y
 	][
 		wic-bmp: OS-image/get-wicbitmap img
 		;-- create a bitmap target
@@ -215,9 +210,11 @@ draw-begin: func [
 		this: rt/value
 		dc: as ID2D1DeviceContext this/vtbl
 		dc/QueryInterface this IID_ID2D1DeviceContext :rt	;-- Query ID2D1DeviceContext interface
-		this: rt/value
-		dc: as ID2D1DeviceContext this/vtbl
+		target/dc: rt/value
 	]
+
+	this: target/dc
+	dc: as ID2D1DeviceContext this/vtbl
 	ctx/dc: as ptr-ptr! this
 	ctx/target: as int-ptr! target
 
@@ -291,8 +288,7 @@ draw-end: func [
 ][
 	this: as this! ctx/dc
 	dc: as ID2D1DeviceContext this/vtbl
-	dc/EndDraw this null null
-	if hWnd <> null [dc/SetTarget this null]
+	hr: dc/EndDraw this null null
 
 	release-ctx ctx		;@@ Possible improvement: cache resources for window target
 
@@ -300,14 +296,9 @@ draw-end: func [
 
 	rt: as render-target! ctx/target
 	either hWnd <> null [	;-- window target
-		this: rt/swapchain
-		sc: as IDXGISwapChain1 this/vtbl
-		hr: sc/Present this 0 0
-
 		switch hr [
 			COM_S_OK [ValidateRect hWnd null]
-			DXGI_ERROR_DEVICE_REMOVED
-			DXGI_ERROR_DEVICE_RESET [
+			D2DERR_RECREATE_TARGET [
 				d2d-release-target rt
 				ctx/dc: null
 				SetWindowLong hWnd wc-offset - 32 0
@@ -315,7 +306,7 @@ draw-end: func [
 				InvalidateRect hWnd null 0
 			]
 			default [
-				0			;@@ TBD log error!!!
+				0		;@@ TBD log error!!!
 			]
 		]
 	][						;-- image! target
@@ -1741,7 +1732,6 @@ OS-draw-brush-bitmap: func [
 	ithis: OS-image/get-handle img
 	dc/CreateBitmapFromWicBitmap2 this ithis null :bmp
 	_OS-draw-brush-bitmap ctx as this! bmp/value width height crop-1 crop-2 mode brush?
-	COM_SAFE_RELEASE(unk ithis)
 	ithis: as this! bmp/value
 	COM_SAFE_RELEASE(unk ithis)
 ]

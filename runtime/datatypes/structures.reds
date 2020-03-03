@@ -331,6 +331,13 @@ red-handle!: alias struct! [
 	_pad	[integer!]	
 ]
 
+red-slice!: alias struct! [							;@@ internal use only !!!
+	header 	[integer!]								;-- cell header
+	head	[integer!]								;-- head index (zero-based)
+	node	[node!]									;-- series node pointer
+	length	[integer!]								;-- length of the series
+]
+
 ;=== GOB! definitions ===
 
 #if modules contains 'View [

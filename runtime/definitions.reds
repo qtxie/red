@@ -136,9 +136,6 @@ Red/System [
 ]
 
 #if OS = 'Windows [
-	this!: alias struct! [vtbl [int-ptr!]]
-	com-ptr!: alias struct! [value [this!]]
-
 	gradient!: alias struct! [
 		extra           [integer!]                              ;-- used when pen width > 1
 		path-data       [PATHDATA]                              ;-- preallocated for performance reasons

@@ -10,6 +10,9 @@ Red/System [
 	}
 ]
 
+this!: alias struct! [vtbl [int-ptr!]]
+com-ptr!: alias struct! [value [this!]]
+
 #define COM_SAFE_RELEASE_OBJ(interface obj) [
 	this: as this! obj
 	if this <> null [

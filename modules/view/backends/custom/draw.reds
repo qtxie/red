@@ -344,6 +344,10 @@ OS-set-clip: func [
 
 ]
 
+OS-clip-end: func [
+	ctx			[draw-ctx!]
+][]
+
 OS-matrix-rotate: func [
 	ctx			[draw-ctx!]
 	pen-fill	[integer!]
@@ -390,11 +394,9 @@ OS-matrix-transform: func [
 	
 ]
 
-OS-matrix-push: func [ctx [draw-ctx!] state [draw-state!]][
+OS-draw-state-push: func [ctx [draw-ctx!] state [draw-state!]][]
 
-]
-
-OS-matrix-pop: func [ctx [draw-ctx!] state [draw-state!]][]
+OS-draw-state-pop: func [ctx [draw-ctx!] state [draw-state!]][]
 
 OS-matrix-reset: func [
 	ctx			[draw-ctx!]
@@ -424,4 +426,18 @@ OS-set-matrix-order: func [
 	order	[integer!]
 ][
 
+]
+
+OS-draw-shadow: func [
+	ctx		[draw-ctx!]
+	offset	[red-pair!]
+	blur	[integer!]
+	spread	[integer!]
+	color	[integer!]
+	inset?	[logic!]
+	/local
+		s		[shadow!]
+		ss		[shadow!]
+		chain?	[logic!]
+][
 ]

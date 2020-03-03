@@ -36,6 +36,7 @@ init-base-face: func [
 	SetWindowLong handle wc-offset - 16 parent
 	SetWindowLong handle wc-offset - 20 0
 	SetWindowLong handle wc-offset - 24 0
+	SetWindowLong handle wc-offset - 32 0
 	pt/x: dpi-scale offset/x
 	pt/y: dpi-scale offset/y
 	either alpha? [
@@ -130,8 +131,7 @@ render-base: func [
 
 	type: symbol/resolve w/symbol
 	if all [
-		group-box <> type
-		window <> type
+		type = base
 		render-text values hWnd hDC :rc null null
 	][
 		res: true
@@ -402,6 +402,7 @@ update-layered-window: func [
 ]
 
 BaseInternalWndProc: func [
+	[stdcall]
 	hWnd	[handle!]
 	msg		[integer!]
 	wParam	[integer!]
@@ -427,13 +428,14 @@ BaseInternalWndProc: func [
 ]
 
 BaseWndProc: func [
+	[stdcall]
 	hWnd	[handle!]
 	msg		[integer!]
 	wParam	[integer!]
 	lParam	[integer!]
 	return: [integer!]
 	/local
-		target	[int-ptr!]
+		target	[render-target!]
 		this	[this!]
 		rt		[ID2D1HwndRenderTarget]
 		flags	[integer!]
@@ -461,13 +463,9 @@ BaseWndProc: func [
 					update-base hWnd null null get-face-values hWnd
 				]
 			][
-				target: as int-ptr! GetWindowLong hWnd wc-offset - 24
+				target: as render-target! GetWindowLong hWnd wc-offset - 32
 				if target <> null [
-					this: as this! target/value
-					rt: as ID2D1HwndRenderTarget this/vtbl
-					w: WIN32_LOWORD(lParam)
-					flags: WIN32_HIWORD(lParam)
-					rt/Resize this as tagSIZE :w
+					DX-resize-buffer target WIN32_LOWORD(lParam) WIN32_HIWORD(lParam)
 					InvalidateRect hWnd null 1
 				]
 			]
@@ -582,9 +580,14 @@ update-base-image: func [
 	img			[red-image!]
 	width		[integer!]
 	height		[integer!]
+	/local
+		bitmap	[integer!]
+		lock	[com-ptr! value]
 ][
 	if TYPE_OF(img) = TYPE_IMAGE [
-		GdipDrawImageRectI graphic as-integer img/node 0 0 width height
+		bitmap: OS-image/to-gpbitmap img :lock
+		GdipDrawImageRectI graphic bitmap 0 0 width height
+		OS-image/release-gpbitmap bitmap :lock
 	]
 ]
 
@@ -715,6 +718,17 @@ transparent-base?: func [
 	][false][true]
 ]
 
+scale-graphic: func [
+	graphic		[integer!]
+	/local
+		ratio	[float32!]
+][
+	if dpi-factor <> 100 [
+		ratio: (as float32! dpi-factor) / (as float32! 100.0)
+		GdipScaleWorldTransform graphic ratio ratio GDIPLUS_MATRIX_PREPEND
+	]
+]
+
 update-base: func [
 	hWnd	[handle!]
 	parent	[handle!]
@@ -737,6 +751,12 @@ update-base: func [
 		bf		[tagBLENDFUNCTION value]
 		graphic [integer!]
 		flags	[integer!]
+		ctx		[draw-ctx! value]
+		pdc		[com-ptr! value]
+		this	[this!]
+		dc		[ID2D1DeviceContext]
+		rt-dc	[ID2D1GdiInteropRenderTarget]
+		hdc		[ptr-value!]
 ][
 	if (GetWindowLong hWnd wc-offset - 12) and BASE_FACE_D2D <> 0 [
 		InvalidateRect hWnd null 0
@@ -752,30 +772,10 @@ update-base: func [
 		exit
 	]
 
-	img:	as red-image!  values + FACE_OBJ_IMAGE
-	color:	as red-tuple!  values + FACE_OBJ_COLOR
 	cmds:	as red-block!  values + FACE_OBJ_DRAW
-	text:	as red-string! values + FACE_OBJ_TEXT
-	font:	as red-object! values + FACE_OBJ_FONT
-	para:	as red-object! values + FACE_OBJ_PARA
 	sz:		as red-pair!   values + FACE_OBJ_SIZE
-	graphic: 0
-
 	width: dpi-scale sz/x
 	height: dpi-scale sz/y
-	hBackDC: CreateCompatibleDC hScreen
-	hBitmap: CreateCompatibleBitmap hScreen width height
-	SelectObject hBackDC hBitmap
-	GdipCreateFromHDC hBackDC :graphic
-
-	if TYPE_OF(color) = TYPE_TUPLE [				;-- update background
-		update-base-background graphic color width height
-	]
-	GdipSetSmoothingMode graphic GDIPLUS_ANTIALIAS
-	update-base-image graphic img width height
-	update-base-text hWnd graphic hBackDC text font para width height null
-	do-draw null as red-image! graphic cmds yes no no yes
-
 	ptSrc/x: 0
 	ptSrc/y: 0
 	size: as tagSIZE :width
@@ -784,11 +784,48 @@ update-base: func [
 	bf/SourceConstantAlpha: as-byte 255
 	bf/AlphaFormat: as-byte 1
 	flags: 2
-	UpdateLayeredWindow hWnd null ptDst size hBackDC :ptSrc 0 :bf flags
 
-	GdipDeleteGraphics graphic
-	DeleteObject hBitmap
-	DeleteDC hBackDC
+	either TYPE_OF(cmds) = TYPE_BLOCK [
+		system/thrown: 0
+		catch RED_THROWN_ERROR [
+			draw-begin ctx hWnd null yes yes
+			parse-draw ctx cmds yes
+
+			this: as this! ctx/dc
+			dc: as ID2D1DeviceContext this/vtbl
+			dc/QueryInterface this IID_IDGdiInterop :pdc
+			this: pdc/value
+			rt-dc: as ID2D1GdiInteropRenderTarget this/vtbl
+			rt-dc/GetDC this 0 :hdc
+			UpdateLayeredWindow hWnd null ptDst size hdc/value :ptSrc 0 :bf flags
+			rt-dc/ReleaseDC this null
+
+			draw-end ctx hWnd yes no yes
+		]
+		system/thrown: 0
+	][
+		img:	as red-image!  values + FACE_OBJ_IMAGE
+		color:	as red-tuple!  values + FACE_OBJ_COLOR
+		text:	as red-string! values + FACE_OBJ_TEXT
+		font:	as red-object! values + FACE_OBJ_FONT
+		para:	as red-object! values + FACE_OBJ_PARA
+		graphic: 0
+		hBackDC: CreateCompatibleDC hScreen
+		hBitmap: CreateCompatibleBitmap hScreen width height
+		SelectObject hBackDC hBitmap
+		GdipCreateFromHDC hBackDC :graphic
+
+		if TYPE_OF(color) = TYPE_TUPLE [		;-- update background
+			update-base-background graphic color width height
+		]
+		GdipSetSmoothingMode graphic GDIPLUS_ANTIALIAS
+		update-base-image graphic img width height
+		update-base-text hWnd graphic hBackDC text font para width height null
+		UpdateLayeredWindow hWnd null ptDst size hBackDC :ptSrc 0 :bf flags
+		GdipDeleteGraphics graphic
+		DeleteObject hBitmap
+		DeleteDC hBackDC
+	]
 ]
 
 

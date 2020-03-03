@@ -426,7 +426,8 @@ lexer: context [
 	]
 
 	decimal-special: [
-		s: "-0.0" pos: [integer-end | ws-no-count | end ] :pos | (neg?: no) opt [#"-" (neg?: yes)] "1.#" s: [
+		s: "-0.0" pos: [integer-end | ws-no-count | end ] :pos 
+		| (neg?: no) opt [#"-" (neg?: yes)] opt #"+" "1.#" s: [
 			[[#"N" | #"n"] [#"a" | #"A"] [#"N" | #"n"]]
 			| [[#"I" | #"i"] [#"N" | #"n"] [#"F" | #"f"]]
 		]
@@ -821,7 +822,12 @@ lexer: context [
 				]
 			]
 		][
-			unless find [integer! decimal!] type?/word s: to integer! s [throw-error]
+			if any [
+				not find [integer! decimal!] type?/word s: to integer! s
+				all [rs? type <> type? s]
+			][
+				throw-error
+			]
 		]
 		s
 	]

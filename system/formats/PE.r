@@ -703,6 +703,7 @@ context [
 		fh/opt-headers-size: opt-header-size
 		fh/flags:			 to integer! defs/c-flags/executable-image
 									  or defs/c-flags/machine-32bit
+									  or defs/c-flags/large-address-aware
 		
 		unless find job/sections 'reloc	[
 			fh/flags: fh/flags or to integer! defs/c-flags/relocs-stripped
@@ -1157,9 +1158,9 @@ context [
 		linker/set-image-info
 			job
 			base-address
-			(section-addr?/memory job 'code)
+			(section-addr?/memory job 'code) - base-address
 			length? job/sections/code/2
-			(section-addr?/memory job 'data)
+			(section-addr?/memory job 'data) - base-address
 			length? job/sections/data/2
 
 		if job/show-func-map? [linker/show-funcs-map job entry-point-address? job]

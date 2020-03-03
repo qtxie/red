@@ -12,7 +12,11 @@ Red/System [
 
 #if dev-mode? = yes [
 	#include %../../../../runtime/platform/COM.reds
-	#include %../../../../runtime/platform/image-gdiplus.reds
+	#either legacy = none [
+		#include %../../../../runtime/platform/image-wic.reds
+	][
+		#include %../../../../runtime/platform/image-gdiplus.reds
+	]
 ]
 
 #define NM_CUSTOMDRAW			-12
@@ -141,6 +145,16 @@ Red/System [
 #define TCM_ADJUSTRECT		1328h
 #define TCM_SETCURFOCUS		1330h
 #define TCM_INSERTITEMW		133Eh
+
+#define MCS_NOTODAY			10h
+#define MCS_SHORTDAYSOFWEEK 80h
+#define MCS_NOSELCHANGEONNAV 0100h
+
+#define MCN_SELCHANGE		FFFFFD13h
+
+#define MCM_GETCURSEL       1001h
+#define MCM_SETCURSEL		1002h
+#define MCM_SETCOLOR		100Ah
 
 #define TCIF_TEXT			0001h
 
@@ -305,7 +319,7 @@ Red/System [
 #define WM_RBUTTONUP		0205h
 #define WM_MBUTTONDOWN		0207h
 #define WM_MBUTTONUP		0208h
-#define	WM_MOUSEWHELL		020Ah
+#define	WM_MOUSEWHEEL		020Ah
 #define WM_ENTERMENULOOP	0211h
 #define WM_SIZING			0214h
 #define WM_MOVING			0216h
@@ -495,6 +509,7 @@ Red/System [
 #define TextRenderingHintClearTypeGridFit	5
 
 #define SRCCOPY					00CC0020h
+#define CAPTUREBLT				40000000h
 
 #define ILC_COLOR24				18h
 #define ILC_COLOR32				20h
@@ -699,6 +714,7 @@ tagMINMAXINFO: alias struct! [
 ]
 
 wndproc-cb!: alias function! [
+	[stdcall]
 	hWnd	[handle!]
 	msg		[integer!]
 	wParam	[integer!]
@@ -707,6 +723,7 @@ wndproc-cb!: alias function! [
 ]
 
 timer-cb!: alias function! [
+	[stdcall]
 	hWnd	[handle!]
 	msg		[integer!]
 	idEvent	[int-ptr!]
@@ -2376,12 +2393,12 @@ XFORM!: alias struct! [
 		]
 		GdipCreateFromHWND: "GdipCreateFromHWND" [
 			hwnd		[handle!]
-			graphics	[GpGraphics!]
+			graphics	[int-ptr!]
 			return:		[integer!]
 		]
 		GdipCreateFromHDC: "GdipCreateFromHDC" [
 			hDC			[handle!]
-			graphics	[GpGraphics!]
+			graphics	[int-ptr!]
 			return:		[integer!]
 		]
 		GdipDeleteGraphics: "GdipDeleteGraphics" [
@@ -2798,6 +2815,21 @@ XFORM!: alias struct! [
 			return:		[logic!]
 		]
 	]
+	"d3d11.dll" stdcall [
+		D3D11CreateDevice: "D3D11CreateDevice" [
+			adapter		[int-ptr!]
+			DriverType	[integer!]
+			Software	[int-ptr!]
+			Flags		[integer!]
+			pFeatures	[int-ptr!]
+			Features	[integer!]
+			SDKVersion	[integer!]
+			ppDevice	[ptr-ptr!]
+			pFeatLevel	[int-ptr!]
+			ppContext	[ptr-ptr!]
+			return:		[integer!]
+		]
+	]
 	"ole32.dll" stdcall [
 		CoTaskMemFree: "CoTaskMemFree" [
 			pv		[integer!]
@@ -2894,4 +2926,34 @@ utf16-length?: func [
 	base: s
 	while [any [s/1 <> null-byte s/2 <> null-byte]][s: s + 2]
 	(as-integer s - base) >>> 1							;-- do not count the terminal zero
+]
+
+to-gdiplus-color: func [
+	color	[integer!]
+	return: [integer!]
+	/local
+		red   [integer!]
+		green [integer!]
+		blue  [integer!]
+		alpha [integer!]
+][
+	red: color and FFh << 16
+	green: color and FF00h
+	blue: color >> 16 and FFh
+	alpha: FF000000h and not color
+	red or green or blue or alpha
+]
+
+;-- see https://stackoverflow.com/questions/4258295/aero-how-to-draw-solid-opaque-colors-on-glass
+;   and https://stackoverflow.com/questions/5647322/gdi-font-rendering-especially-in-layered-windows
+;   GDI+ is often buggy when alpha=255 (fully opaque)
+to-gdiplus-color-fixed: func [
+	color	[integer!]
+	return: [integer!]
+	/local
+		r   [integer!]
+][
+	r: to-gdiplus-color color
+	if r >>> 24 = FFh [r: r xor 01000000h]
+	r
 ]

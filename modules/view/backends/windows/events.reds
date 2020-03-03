@@ -978,10 +978,10 @@ update-window: func [
 					type = rich-text
 					(GetWindowLong hWnd wc-offset - 12) and BASE_FACE_D2D <> 0
 				][
-					len: GetWindowLong hWnd wc-offset - 24
+					len: GetWindowLong hWnd wc-offset - 32
 					if len <> 0 [
-						d2d-release-target as int-ptr! len
-						SetWindowLong hWnd wc-offset - 24 0
+						d2d-release-target as render-target! len
+						SetWindowLong hWnd wc-offset - 32 0
 					]
 				]
 				type = group-box [
@@ -1016,6 +1016,7 @@ update-window: func [
 ]
 
 TimerProc: func [
+	[stdcall]
 	hWnd   [handle!]
 	msg	   [integer!]
 	id	   [int-ptr!]
@@ -1026,13 +1027,14 @@ TimerProc: func [
 ]
 
 WndProc: func [
+	[stdcall]
 	hWnd	[handle!]
 	msg		[integer!]
 	wParam	[integer!]
 	lParam	[integer!]
 	return: [integer!]
 	/local
-		target [int-ptr!]
+		target [render-target!]
 		this   [this!]
 		rt	   [ID2D1HwndRenderTarget]
 		res	   [integer!]
@@ -1087,13 +1089,9 @@ WndProc: func [
 		WM_MOVE
 		WM_SIZE [
 			if (GetWindowLong hWnd wc-offset - 12) and BASE_FACE_D2D <> 0 [
-				target: as int-ptr! GetWindowLong hWnd wc-offset - 24
+				target: as render-target! GetWindowLong hWnd wc-offset - 32
 				if target <> null [
-					this: as this! target/value
-					rt: as ID2D1HwndRenderTarget this/vtbl
-					color: WIN32_LOWORD(lParam)
-					res: WIN32_HIWORD(lParam)
-					rt/Resize this as tagSIZE :color
+					DX-resize-buffer target WIN32_LOWORD(lParam) WIN32_HIWORD(lParam)
 					InvalidateRect hWnd null 1
 				]
 			]
@@ -1223,6 +1221,7 @@ WndProc: func [
 			switch nmhdr/code [
 				TCN_SELCHANGING [return process-tab-select nmhdr/hWndFrom]
 				TCN_SELCHANGE	[process-tab-change nmhdr/hWndFrom]
+				MCN_SELCHANGE	[process-calendar-change nmhdr/hWndFrom]
 				NM_CUSTOMDRAW	[
 					res: process-custom-draw wParam lParam
 					if res <> 0 [return res]
@@ -1414,9 +1413,9 @@ WndProc: func [
 			if hidden-hwnd <> null [
 				values: (get-face-values hidden-hwnd) + FACE_OBJ_EXT3
 				values/header: TYPE_NONE
-				target: as int-ptr! GetWindowLong hidden-hwnd wc-offset - 24
+				target: as render-target! GetWindowLong hidden-hwnd wc-offset - 32
 				if target <> null [d2d-release-target target]
-				SetWindowLong hidden-hwnd wc-offset - 24 0
+				SetWindowLong hidden-hwnd wc-offset - 32 0
 			]
 			RedrawWindow hWnd null null 4 or 1			;-- RDW_ERASE | RDW_INVALIDATE
 		]
@@ -1485,7 +1484,7 @@ process: func [
 			if msg/hWnd = hover-saved [hover-saved: null]
 			EVT_DISPATCH
 		]
-		WM_MOUSEWHELL [
+		WM_MOUSEWHEEL [
 			flags: 0
 			if msg/wParam and 08h <> 0 [flags: flags or EVT_FLAG_CTRL_DOWN]		;-- MK_CONTROL
 			if msg/wParam and 04h <> 0 [flags: flags or EVT_FLAG_SHIFT_DOWN]	;-- MK_SHIFT

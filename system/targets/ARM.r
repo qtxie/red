@@ -1370,7 +1370,7 @@ make-profilable make target-class [
 	]
 
 	emit-load: func [
-		value [char! logic! integer! word! string! path! paren! get-word! object! decimal!]
+		value [char! logic! integer! word! string! path! paren! get-word! object! decimal! issue!]
 		/alt
 		/with cast [object!]
 		/local type offset spec original opcode
@@ -1387,6 +1387,7 @@ make-profilable make target-class [
 			integer! [
 				emit-load-imm32 value
 			]
+			issue!
 			decimal! [
 				either all [cast cast/type/1 = 'float32!][
 					emit-load-imm32 to integer! IEEE-754/to-binary32 value
@@ -1500,7 +1501,7 @@ make-profilable make target-class [
 	]
 	
 	emit-store: func [
-		name [word!] value [char! logic! integer! word! string! paren! tag! get-word! decimal!]
+		name [word!] value [char! logic! integer! word! string! paren! tag! get-word! decimal! issue!]
 		spec [block! none!]
 		/by-value slots [integer!]
 		/local store-qword store-word store-byte type opcode
@@ -1535,6 +1536,7 @@ make-profilable make target-class [
 			integer! [
 				do store-word
 			]
+			issue!
 			decimal! [
 				type: compiler/get-variable-spec name
 				either type/1 = 'float32! [
@@ -1908,7 +1910,7 @@ make-profilable make target-class [
 	]
 
 	emit-push: func [
-		value [char! logic! integer! word! block! string! tag! path! get-word! object! decimal!]
+		value [char! logic! integer! word! block! string! tag! path! get-word! object! decimal! issue!]
 		/with cast [object!]
 		/cdecl
 		/local push-last push-last64 spec type conv-int-float? float?
@@ -1949,6 +1951,7 @@ make-profilable make target-class [
 				emit-load-imm32/reg value 3
 				emit-i32 #{e92d0008}				;-- PUSH {r3}
 			]
+			issue!
 			decimal! [
 				either all [cast cast/type/1 = 'float32! not cdecl][
 					emit-load-imm32 to integer! IEEE-754/to-binary32 value
@@ -2431,7 +2434,7 @@ make-profilable make target-class [
 		]
 	]
 
-	emit-float-operation: func [name [word!] args [block!] /local a b left right spec size saved][
+	emit-float-operation: func [name [word!] args [block!] /local a b left right spec size saved conv?][
 		if verbose >= 3 [print [">>>inlining float op:" mold name mold args]]
 		
 		set [a b] get-arguments-class args
@@ -2525,30 +2528,22 @@ make-profilable make target-class [
 						#{ee010a10}					;-- FMSR s2, r0
 				]
 				if block? right [
-					if path? left [emit-pop-float 0]
-					emit-float 
-						#{ec410b11}					;-- FMDRR d1, r1, r0
-						#{ee010a10}					;-- FMSR s2, r0
+					either all [path? left not path? right][
+						emit-pop-float 1
+						if object? args/2 [
+							emit-vfp-casting/right args/2
+							conv?: yes
+						]
+					][
+						emit-float 
+							#{ec410b11}				;-- FMDRR d1, r1, r0
+							#{ee010a10}				;-- FMSR s2, r0
+					]
 				]
-				if object? args/2 [emit-vfp-casting/right args/2]
+				if all [object? args/2 not conv?][emit-vfp-casting/right args/2]
 			]
 		]
 		width: saved
-		
-		if any [
-			all [b = 'reg all [path? left block? right]]
-			;all [a = 'reg b = 'ref path? left]
-		][											;-- exchange s0/s2 or d0/d1
-			either width = 4 [
-				emit-i32 #{eeb02a40}				;-- FCPYS  s4, s0
-				emit-i32 #{eeb00a41}				;-- FCPYS  s0, s2
-				emit-i32 #{eeb01a42}				;-- FCPYS  s2, s4
-			][
-				emit-i32 #{eeb02b40}				;-- FCPYD  d2, d0
-				emit-i32 #{eeb00b41}				;-- FCPYD  d0, d1
-				emit-i32 #{eeb01b42}				;-- FCPYD  d1, d2
-			]
-		]
 		
 		case [
 			find comparison-op name [
@@ -2609,7 +2604,7 @@ make-profilable make target-class [
 				]
 			]
 		][
-			if issue? args/1 [args: args/2]
+			if compiler/variadic? args/1 [args: args/2]
 			reg: freg: stk: 0
 			cconv: fspec/3
 			types: fspec/4
@@ -2730,7 +2725,7 @@ make-profilable make target-class [
 	]
 	
 	emit-call-import: func [args [block!] fspec [block!] spec [block!] attribs [block! none!] /local extra type][
-		if all [issue? args/1 args/1 <> #custom fspec/3 <> 'cdecl][
+		if all [compiler/variadic? args/1 args/1 <> #custom fspec/3 <> 'cdecl][
 			emit-variadic-data args
 		]
 		extra: emit-AAPCS-header args fspec attribs
@@ -2774,7 +2769,7 @@ make-profilable make target-class [
 			]
 			if cb? [emit-hf-return fspec/4]
 		][
-			if all [issue? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
+			if all [compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
 			emit-reloc-addr spec/3
 			emit-i32 #{eb000000}					;-- BL <disp>
 		]
@@ -2824,7 +2819,7 @@ make-profilable make target-class [
 		
 		emit-i32 #{e1a0c00d}						;-- MOV ip, sp
 		emit-i32 #{e3cdd007}						;-- BIC sp, sp, #7		; align sp to 8 bytes
-		if issue? tag: args/1 [args: args/2]
+		if compiler/variadic? tag: args/1 [args: args/2]
 		size: max 16 emit-AAPCS-header/calc args fspec all [block? blk: fspec/4/1 blk]
 		unless zero? size // 8 [emit-i32 #{e24dd004}] ;-- SUB sp, sp, #4	; ensure call will be 8-bytes aligned
 		emit-i32 #{e92d5000}						;-- PUSH {ip,lr}		; save previous sp and lr value

@@ -16,6 +16,7 @@ red: context [
 	#include %definitions.reds
 	#include %macros.reds
 	#include %tools.reds
+	#include %dtoa.reds
 	
 	#switch OS [										;-- OS-specific initialize function
 		Windows  [#include %platform/windows/win32.reds]
@@ -50,7 +51,7 @@ red: context [
 	;-- ]
 	;--------------------------------------------
 	#switch OS [
-		Windows  [#include %platform/windows/image-gdiplus.reds]
+		Windows  [#include %platform/windows/image-wic.reds]
 		macOS	 [#include %platform/darwin/image-quartz.reds]
 		Android  []
 		FreeBSD  []
@@ -128,7 +129,7 @@ red: context [
 	#include %redbin.reds
 	#include %utils.reds
 	#include %call.reds
-	#include %inflate.reds
+	#include %compress.reds
 	#include %collector.reds
 	#include %io.reds
 

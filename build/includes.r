@@ -40,11 +40,6 @@ write %build/bin/sources.r set-cache [
 			%png.red
 			%csv.red
 			%json.red
-			%json/ [
-				%common.red
-				%load-json.red
-				%to-json.red
-			]
 		]
 		%console/ [
 			%auto-complete.red
@@ -81,12 +76,14 @@ write %build/bin/sources.r set-cache [
 		%case-folding.reds
 		%clipboard.reds
 		%collector.reds
+		%compress.reds
 		%crush.reds
 		%crypto.reds
 		%debug-tools.reds
 		%definitions.reds
+		%deflate.reds
+		%dtoa.reds
 		%hashtable.reds
-		%inflate.reds
 		%interpreter.reds
 		%macros.reds
 		%natives.reds
@@ -170,6 +167,7 @@ write %build/bin/sources.r set-cache [
 				%windows.reds
 			]
 			%definitions.reds
+			%image-wic.reds
 			%image-gdiplus.reds
 			%image-quartz.reds
 			%android.reds
@@ -199,10 +197,12 @@ write %build/bin/sources.r set-cache [
 					%base.reds
 					%button.reds
 					%camera.reds
+					%calendar.reds
 					%classes.reds
 					%comdlgs.reds
 					%direct2d.reds
-					%draw-d2d.reds
+					%matrix2d.reds
+					%draw-gdi.reds
 					%draw.reds
 					%events.reds
 					%font.reds

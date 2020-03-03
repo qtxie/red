@@ -133,13 +133,7 @@ block: context [
 		s: GET_BUFFER(blk)
 		slot: s/offset + blk/head
 		tail: s/tail
-		
-		compare: as function! [
-			value1  [red-value!]
-			value2  [red-value!]
-			op	    [integer!]							;-- type of comparison
-			return: [integer!]							;-- returns 0 if COMP_FIND matches
-		] actions/get-action-ptr value ACT_COMPARE		;-- extract the dispatched action
+		compare: DISPATCH_COMPARE(value)
 
 		while [slot < tail][
 			if zero? compare value slot COMP_FIND [
@@ -748,7 +742,17 @@ block: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "block/compare"]]
 		
-		if TYPE_OF(blk2) <> TYPE_OF(blk1) [RETURN_COMPARE_OTHER]
+		if TYPE_OF(blk2) <> TYPE_OF(blk1) [
+			unless all [
+				op = COMP_STRICT_EQUAL_WORD
+				any [
+					all [TYPE_OF(blk1) = TYPE_PATH TYPE_OF(blk2) = TYPE_LIT_PATH]
+					all [TYPE_OF(blk2) = TYPE_PATH TYPE_OF(blk1) = TYPE_LIT_PATH]
+				]
+			][
+				RETURN_COMPARE_OTHER
+			]
+		]
 		compare-each blk1 blk2 op
 	]
 	
@@ -1121,12 +1125,7 @@ block: context [
 		if flags and sort-reverse-mask = sort-reverse-mask [
 			temp: value1 value1: value2 value2: temp
 		]
-		action-compare: as function! [
-			value1  [red-value!]						;-- first operand
-			value2  [red-value!]						;-- second operand
-			op	    [integer!]							;-- type of comparison
-			return: [integer!]
-		] actions/get-action-ptr value1 ACT_COMPARE
+		action-compare: DISPATCH_COMPARE(value1)
 
 		res: action-compare value1 value2 op
 		if res = -2 [res: TYPE_OF(value1) - TYPE_OF(value2)]
@@ -1201,7 +1200,7 @@ block: context [
 		switch TYPE_OF(res) [
 			TYPE_LOGIC [
 				bool: as red-logic! res
-				either bool/value [-1][1]
+				either bool/value [1][-1]
 			]
 			TYPE_INTEGER [
 				int: as red-integer! res
@@ -1215,8 +1214,8 @@ block: context [
 					true [0]
 				]
 			]
-			TYPE_NONE [1]
-			default [-1]
+			TYPE_NONE [-1]
+			default   [1]
 		]
 	]
 
@@ -1512,7 +1511,6 @@ block: context [
 		blk: as red-block! _series/take blk part-arg deep? last?
 		s: GET_BUFFER(blk)
 
-		ownership/check as red-value! blk words/_take null blk/head 1
 		if deep? [
 			slot: s/offset
 			until [
@@ -1536,7 +1534,6 @@ block: context [
 		][
 			copy-cell as cell! s/offset as cell! blk
 		]
-		ownership/check as red-value! blk words/_taken null blk/head 0
 		as red-value! blk
 	]
 

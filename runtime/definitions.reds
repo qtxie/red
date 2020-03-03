@@ -80,6 +80,9 @@ Red/System [
 
 ;== Draw Context definitions ==
 
+#define F32_0	[as float32! 0.0]
+#define F32_1	[as float32! 1.0]
+
 #if OS = 'macOS [
 	CGAffineTransform!: alias struct! [
 		a		[float32!]
@@ -133,6 +136,9 @@ Red/System [
 ]
 
 #if OS = 'Windows [
+	this!: alias struct! [vtbl [int-ptr!]]
+	com-ptr!: alias struct! [value [this!]]
+
 	gradient!: alias struct! [
 		extra           [integer!]                              ;-- used when pen width > 1
 		path-data       [PATHDATA]                              ;-- preallocated for performance reasons
@@ -182,40 +188,111 @@ Red/System [
 		pattern-image-pen		[integer!]
 	]
 
-	draw-ctx!: alias struct! [
-		dc				[int-ptr!]								;-- OS drawing object
-		hwnd			[int-ptr!]								;-- Window's handle
-		pen				[integer!]
-		brush			[integer!]
-		pen-join		[integer!]
-		pen-cap			[integer!]
-		pen-width		[float32!]
-		pen-style		[integer!]
-		pen-color		[integer!]								;-- 00bbggrr format
-		brush-color		[integer!]								;-- 00bbggrr format
-		font-color		[integer!]
-		bitmap			[int-ptr!]
-		brushes			[int-ptr!]
-		graphics		[integer!]								;-- gdiplus graphics
-		gp-state		[integer!]
-		gp-pen			[integer!]								;-- gdiplus pen
-		gp-pen-type 	[brush-type!]							;-- gdiplus pen type (for texture, another set of transformation functions must be applied)
-		gp-pen-saved	[integer!]
-		gp-brush		[integer!]								;-- gdiplus brush
-		gp-brush-type 	[brush-type!]							;-- gdiplus brush type (for texture, another set of transformation functions must be applied)
-		gp-font			[integer!]								;-- gdiplus font
-		gp-font-brush	[integer!]
-		gp-matrix		[integer!]
-		gp-path			[integer!]
-		image-attr		[integer!]								;-- gdiplus image attributes
-		scale-ratio		[float32!]
-		pen?			[logic!]
-		brush?			[logic!]
-		on-image?		[logic!]								;-- drawing on image?
-		alpha-pen?		[logic!]
-		alpha-brush?	[logic!]
-		font-color?		[logic!]
-		other 			[other!]
+	#either legacy = none [
+		sub-path!: alias struct! [
+			path			[integer!]
+			sink			[integer!]
+			last-pt-x		[float32!]
+			last-pt-y		[float32!]
+			shape-curve?	[logic!]
+			control-x		[float32!]
+			control-y		[float32!]
+		]
+
+		shadow!: alias struct! [
+			offset-x		[integer!]
+			offset-y		[integer!]
+			blur			[integer!]
+			spread			[integer!]
+			color			[integer!]
+			inset?			[logic!]
+			next			[shadow!]
+		]
+		matrix3x2!: alias struct! [
+			_11				[float32!]
+			_12				[float32!]
+			_21				[float32!]
+			_22				[float32!]
+			_31				[float32!]
+			_32				[float32!]
+		]
+
+		#define DRAW_STATE_DATA [
+			pen				[this!]
+			brush			[this!]
+			pen-type		[integer!]
+			brush-type		[integer!]
+			pen-color		[integer!]
+			brush-color		[integer!]
+			font-color		[integer!]
+			pen-join		[integer!]
+			pen-cap			[integer!]
+			pen-grad-type	[integer!]
+			brush-grad-type	[integer!]
+			pen-offset		[POINT_2F value]
+			brush-offset	[POINT_2F value]
+		]
+
+		draw-state!: alias struct! [
+			block			[this!]
+			DRAW_STATE_DATA
+		]
+
+		draw-ctx!: alias struct! [
+			dc				[ptr-ptr!]
+			DRAW_STATE_DATA
+			target			[int-ptr!]
+			hwnd			[int-ptr!]			;-- Window's handle
+			pen-width		[float32!]
+			pen-style		[this!]
+			bitmap			[int-ptr!]
+			image			[int-ptr!]			;-- original image handle
+			pre-order?		[logic!]			;-- matrix order, default pre-order for row-major vector
+			on-image?		[logic!]			;-- drawing on image?
+			font-color?		[logic!]
+			shadow?			[logic!]
+			text-format		[this!]
+			state			[this!]				;-- current draw state
+			sub				[sub-path! value]
+			shadows			[shadow! value]
+			clip-layer		[this!]
+		]
+	][
+		draw-ctx!: alias struct! [
+			dc				[int-ptr!]			;-- OS drawing object
+			hwnd			[int-ptr!]			;-- Window's handle
+			pen				[integer!]
+			brush			[integer!]
+			pen-join		[integer!]
+			pen-cap			[integer!]
+			pen-width		[float32!]
+			pen-style		[integer!]
+			pen-color		[integer!]			;-- 00bbggrr format
+			brush-color		[integer!]			;-- 00bbggrr format
+			font-color		[integer!]
+			bitmap			[int-ptr!]
+			brushes			[int-ptr!]
+			graphics		[integer!]			;-- gdiplus graphics
+			gp-state		[integer!]
+			gp-pen			[integer!]			;-- gdiplus pen
+			gp-pen-type 	[brush-type!]		;-- gdiplus pen type (for texture, another set of transformation functions must be applied)
+			gp-pen-saved	[integer!]
+			gp-brush		[integer!]			;-- gdiplus brush
+			gp-brush-type 	[brush-type!]		;-- gdiplus brush type (for texture, another set of transformation functions must be applied)
+			gp-font			[integer!]			;-- gdiplus font
+			gp-font-brush	[integer!]
+			gp-matrix		[integer!]
+			gp-path			[integer!]
+			image-attr		[integer!]			;-- gdiplus image attributes
+			scale-ratio		[float32!]
+			pen?			[logic!]
+			brush?			[logic!]
+			on-image?		[logic!]			;-- drawing on image?
+			alpha-pen?		[logic!]
+			alpha-brush?	[logic!]
+			font-color?		[logic!]
+			other 			[other!]
+		]
 	]
 ]
 

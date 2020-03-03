@@ -250,7 +250,7 @@ collector: context [
 					gob: as red-gob! value
 					mark-gob gob/value
 				]]
-				#if OS = 'macOS [
+				#if any [OS = 'macOS OS = 'Windows][
 				TYPE_IMAGE [
 					image: as red-image! value
 					keep image/node

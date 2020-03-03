@@ -440,7 +440,7 @@ face!: object [				;-- keep in sync with facet! enum
 						all [options options/default]
 					]
 				]
-				if 'data = word [
+				if word = 'data [
 					either data [
 						if string? text [modify text 'owned none]
 						set-quiet 'text form data		;@@ use form/into (avoids rebinding)
@@ -657,7 +657,7 @@ system/view: context [
 		
 		set/any 'result do-actor face event event/type
 		
-		if all [face/parent :result <> 'done][
+		if all [face/parent not find [done continue] :result][
 			set/any 'result system/view/awake/with event face/parent ;-- event bubbling
 			if :result = 'stop [return 'stop]
 		]
@@ -690,6 +690,12 @@ do-events: function [
 		set/any 'result system/view/platform/do-event-loop no-wait
 		:result
 	;]
+]
+
+stop-events: function [
+	"Stop the last opened event loop"
+][
+	system/view/platform/exit-event-loop
 ]
 
 do-safe: func ["Internal Use Only" code [block!] /local result][

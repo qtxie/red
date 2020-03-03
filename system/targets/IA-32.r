@@ -782,7 +782,7 @@ make-profilable make target-class [
 	]
 	
 	emit-load: func [
-		value [char! logic! integer! word! string! path! paren! get-word! object! decimal!]
+		value [char! logic! integer! word! string! path! paren! get-word! object! decimal! issue!]
 		/alt
 		/with cast [object!]
 		/local offset spec
@@ -805,6 +805,7 @@ make-profilable make target-class [
 				emit #{B8}							;-- MOV eax, value
 				emit to-bin32 value
 			]
+			issue!
 			decimal! [
 				set-width any [cast value]
 				emit-push any [cast value]
@@ -918,7 +919,7 @@ make-profilable make target-class [
 	]
 	
 	emit-store: func [
-		name [word!] value [char! logic! integer! word! string! paren! tag! get-word! decimal!]
+		name [word!] value [char! logic! integer! word! string! paren! tag! get-word! decimal! issue!]
 		spec [block! none!]
 		/by-value slots [integer!]
 		/local store-dword type offset
@@ -946,6 +947,7 @@ make-profilable make target-class [
 				do store-dword
 				emit to-bin32 value
 			]
+			issue!
 			decimal! [
 				store-float-variable name
 			]
@@ -1353,7 +1355,7 @@ make-profilable make target-class [
 	]
 	
 	emit-push: func [
-		value [char! logic! integer! word! block! string! tag! path! get-word! object! decimal!]
+		value [char! logic! integer! word! block! string! tag! path! get-word! object! decimal! issue!]
 		/with cast [object!]
 		/cdecl										;-- external call
 		/keep
@@ -1401,16 +1403,17 @@ make-profilable make target-class [
 					emit #{6A}						;-- PUSH imm8
 					emit to-bin8 value
 				][
-					emit #{68}						;-- PUSH imm32		
+					emit #{68}						;-- PUSH imm32
 					emit to-bin32 value	
 				]
 			]
+			issue!
 			decimal! [
 				value: either all [cast cast/type/1 = 'float32! not cdecl][
 					IEEE-754/to-binary32/rev value
 				][
 					value: IEEE-754/to-binary64/rev value
-					emit #{68}						;-- PUSH high part		
+					emit #{68}						;-- PUSH high part
 					emit at value 5
 					value
 				]
@@ -1943,7 +1946,7 @@ make-profilable make target-class [
 
 	emit-float-operation: func [
 		name [word!] args [block!] 
-		/local a b left right spec reversed? type
+		/local a b left right spec reversed? type ldr? reg-right
 	][
 		if verbose >= 3 [print [">>>inlining float op:" mold name mold args]]
 
@@ -1955,6 +1958,19 @@ make-profilable make target-class [
 		left:  compiler/unbox args/1
 		right: compiler/unbox args/2
 		set-width left
+		
+		reg-right: [
+			all [
+				object? args/2
+				block? right
+				ldr?: not find [float! float32!] compiler/get-type right
+				emit-casting args/2 no			;-- load b on FPU stack
+			]
+			if path? right [
+				emit-push/keep args/2			;-- late path loading
+				ldr?: yes
+			]
+		]
 
 		switch a [									;-- load left operand on FPU stack
 			imm [
@@ -1976,6 +1992,7 @@ make-profilable make target-class [
 				]
 			]
 			reg [
+				if all [b = 'reg not path? right][do reg-right]
 				if object? args/1 [
 					if block? left [emit-casting args/1 no]
 					set-width/type compiler/last-type: args/1/type
@@ -2001,15 +2018,7 @@ make-profilable make target-class [
 					emit-casting args/2 no
 				]
 			]
-			reg [
-				all [
-					object? args/2
-					block? right
-					not find [float! float32!] compiler/get-type right
-					emit-casting args/2 no			;-- load b on FPU stack
-				]
-				if path? right [emit-push/keep args/2] ;-- late path loading
-			]
+			reg [unless ldr? [do reg-right]]
 		]
 		
 		reversed?: to logic! all [b = 'reg any [
@@ -2034,7 +2043,7 @@ make-profilable make target-class [
 		][
 			size: size + stack-width				;-- account for extra space
 		]
-		if issue? args/1 [							;-- test for variadic call
+		if compiler/variadic? args/1 [
 			size: call-arguments-size? args/2
 			if spec/2 = 'native [
 				size: size + pick [12 8] args/1 = #typed 	;-- account for extra arguments
@@ -2139,7 +2148,7 @@ make-profilable make target-class [
 	
 	emit-call-import: func [args [block!] fspec [block!] spec [block!] attribs [block! none!] /local cdecl?][
 		cdecl?: fspec/3 = 'cdecl
-		if all [issue? args/1 not cdecl?][emit-variadic-data args]
+		if all [compiler/variadic? args/1 not cdecl?][emit-variadic-data args]
 
 		either compiler/job/OS = 'macOS [
 			either PIC? [
@@ -2175,7 +2184,7 @@ make-profilable make target-class [
 				emit-indirect-call spec
 			]
 		][
-			if all [issue? args/1 not cdecl?][emit-variadic-data args]
+			if all [compiler/variadic? args/1 not cdecl?][emit-variadic-data args]
 			emit #{E8}								;-- CALL NEAR disp
 			emit-reloc-addr spec					;-- 32-bit relative displacement
 		]
@@ -2193,7 +2202,7 @@ make-profilable make target-class [
 			emit #{89E7}							;-- MOV edi, esp
 			emit #{83E4F0}							;-- AND esp, -16
 
-			offset: 4 + either issue? args/1 [		;-- account for saved edi
+			offset: 4 + either compiler/variadic? args/1 [ ;-- account for saved edi
 				all [
 					args/1 = #variadic
 					fspec/3 <> 'cdecl

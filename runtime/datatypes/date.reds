@@ -453,13 +453,14 @@ date: context [
 		switch TYPE_OF(value) [
 			TYPE_INTEGER [
 				int: as red-integer! value
-				h: int/value
+				h: int/value % 16
 				m: 0
 			]
 			TYPE_TIME [
 				tm: as red-time! value
-				h: time/get-hours tm/time
-				m: time/get-minutes tm/time
+				t: fmod tm/time 57600.0					;-- 16.0 hours in seconds
+				h: time/get-hours t
+				m: time/get-minutes t
 			]
 			default [fire [TO_ERROR(script invalid-arg) value]]
 		]
@@ -478,6 +479,46 @@ date: context [
 			dt/date: DATE_SET_ZONE(d v)
 			dt/time: to-utc-time t v
 		]
+	]
+
+	make-at: func [
+		slot	[red-value!]
+		year	[integer!]
+		month	[integer!]
+		day		[integer!]
+		tm		[float!]
+		TZ-h	[integer!]
+		TZ-m	[integer!]
+		time?	[logic!]
+		TZ? 	[logic!]
+		return: [red-date!]
+		/local
+			dt	 [red-date!]
+			d	 [integer!]
+			z	 [integer!]
+			-TZ? [logic!]
+	][
+		dt: as red-date! slot
+		d: 0
+		d: DATE_SET_YEAR(d year)
+		d: DATE_SET_MONTH(d month)
+		d: DATE_SET_DAY(d day)
+		d: DATE_SET_TIME_FLAG(d)
+		set-type as red-value! dt TYPE_DATE				;-- preserve eventual flags in the header
+		dt/date: d
+		
+		-TZ?: no
+		if tz-h < 0 [-TZ?: yes tz-h: 0 - tz-h]
+		z: tz-h << 2 and 7Fh or (tz-m / 15)
+		if -TZ? [z: DATE_SET_ZONE_NEG(z)]
+		dt/date: DATE_SET_ZONE(dt/date z)
+		either time? [
+			dt/time: to-utc-time tm DATE_GET_ZONE(dt/date)
+		][
+			dt/date: DATE_CLEAR_TIME_FLAG(dt/date)
+			dt/time: 0.0
+		]
+		dt
 	]
 
 	set-all: func[

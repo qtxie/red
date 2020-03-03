@@ -765,7 +765,7 @@ win/pane: reduce [
 		actors: object [
 			on-wheel: func [face [object!] event [event!]][
 				print [face/type event/picked]
-				canvas/offset/y: canvas/offset/y + event/picked
+				canvas/offset/y: canvas/offset/y + to-integer event/picked
 				unless live? [show canvas]
 			]
 		]
@@ -866,6 +866,36 @@ win/pane: reduce [
 			]
 			on-rotate: func [face [object!] event [event!]][
 				probe "rotating"
+			]
+		]
+	]
+	calendar: make face! [
+		type: 'calendar offset: 750x450 size: 300x300 color: rebolor
+		actors: object [
+			on-change: func [face [object!] event [event!]][
+				print ["Selected date:" face/data]
+			]
+		]
+	]
+	make face! [
+		type: 'button offset: 750x750 size: 90x30 text: "Previous month"
+		actors: object [
+			on-click: func [face [object!] event [event!]][
+				if date? calendar/data [
+					calendar/data/month: calendar/data/month - 1
+					show calendar
+				]
+			]
+		]
+	]
+	make face! [
+		type: 'button offset: 960x750 size: 90x30 text: "Next week"
+		actors: object [
+			on-click: func [face [object!] event [event!]][
+				if date? calendar/data [
+					calendar/data: calendar/data + 7
+					show calendar
+				]
 			]
 		]
 	]

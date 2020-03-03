@@ -41,8 +41,8 @@ deep-reactor!: make reactor! [
 	]
 ]
 
-;reactor:	  function [spec [block!]][make reactor! spec]
-;deep-reactor: function [spec [block!]][make deep-reactor! spec]
+reactor:	  function [spec [block!]][make reactor! spec]
+deep-reactor: function [spec [block!]][make deep-reactor! spec]
 
 
 system/reactivity: context [
@@ -54,10 +54,10 @@ system/reactivity: context [
 	source:		 []
 
 	add-relation: func [
-		obj [object!]
-		word [default!]
+		obj		 [object!]
+		word
 		reaction [block! function!]
-		targets [set-word! block! object! none!]
+		targets  [set-word! block! object! none!]
 		/local new-rel
 	][
 		new-rel: reduce [obj :word :reaction targets]
@@ -208,9 +208,7 @@ system/reactivity: context [
 		obj: context? field
 		parse reaction rule: [
 			any [
-				item: word! (
-					if in obj item/1 [add-relation obj item/1 reaction field]
-				)
+				item: word! (if in obj item/1 [add-relation obj item/1 reaction field])
 				| any-path! | any-string!
 				| into rule
 				| skip
@@ -313,7 +311,7 @@ system/reactivity: context [
 								cause-error 'script 'no-value [item]
 							]
 							either 2 = length? item [
-								obj: get item/1
+								set/any 'obj get/any item/1
 								part: 1
 							][
 								part: length? item

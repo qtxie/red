@@ -52,12 +52,6 @@ Red/System [
 
 OS-image: context [
 
-	CLSID_BMP_ENCODER:  [557CF400h 11D31A04h 0000739Ah 2EF31EF8h]
-	CLSID_JPEG_ENCODER: [557CF401h 11D31A04h 0000739Ah 2EF31EF8h]
-	CLSID_GIF_ENCODER:  [557CF402h 11D31A04h 0000739Ah 2EF31EF8h]
-	CLSID_TIFF_ENCODER: [557CF405h 11D31A04h 0000739Ah 2EF31EF8h]
-	CLSID_PNG_ENCODER:  [557CF406h 11D31A04h 0000739Ah 2EF31EF8h]
-
 	RECT!: alias struct! [
 		left	[integer!]
 		top		[integer!]
@@ -91,14 +85,6 @@ OS-image: context [
 			]
 			GlobalUnlock: "GlobalUnlock" [
 				hMem		[integer!]
-				return:		[integer!]
-			]
-		]
-		"ole32.dll" stdcall [
-			CreateStreamOnHGlobal: "CreateStreamOnHGlobal" [
-				hMem		[integer!]
-				fAutoDel	[logic!]
-				ppstm		[int-ptr!]
 				return:		[integer!]
 			]
 		]
@@ -158,6 +144,12 @@ OS-image: context [
 			GdipGetImageHeight: "GdipGetImageHeight" [
 				image		[integer!]
 				height		[int-ptr!]
+				return:		[integer!]
+			]
+			GdipCreateBitmapFromGdiDib: "GdipCreateBitmapFromGdiDib" [
+				bmi			[byte-ptr!]
+				data		[byte-ptr!]
+				bitmap		[int-ptr!]
 				return:		[integer!]
 			]
 			GdipCreateBitmapFromScan0: "GdipCreateBitmapFromScan0" [
@@ -232,7 +224,55 @@ OS-image: context [
 				palette		[byte-ptr!]
 				return:		[integer!]
 			]
+			GdipCreateHBITMAPFromBitmap: "GdipCreateHBITMAPFromBitmap" [
+				image		[integer!]
+				hbmp		[int-ptr!]
+				background	[integer!]
+				return:		[integer!]
+			]
 		]
+	]
+
+	get-pixel-format: func [
+		image		[integer!]
+		format		[int-ptr!]
+		return:		[integer!]
+	][
+		GdipGetImagePixelFormat image format
+	]
+
+	fixed-format?: func [
+		format		[integer!]
+		return:		[logic!]
+	][
+		format = PixelFormat32bppARGB
+	]
+
+	fixed-format: func [
+		return:		[integer!]
+	][
+		PixelFormat32bppARGB
+	]
+
+	create-bitmap-from-scan0: func [
+		width		[integer!]
+		height		[integer!]
+		stride		[integer!]
+		format		[integer!]
+		scan0		[byte-ptr!]
+		bitmap		[int-ptr!]
+		return:		[integer!]
+	][
+		GdipCreateBitmapFromScan0 width height stride format scan0 bitmap
+	]
+
+	create-bitmap-from-gdidib: func [
+		bmi			[byte-ptr!]
+		data		[byte-ptr!]
+		bitmap		[int-ptr!]
+		return:		[integer!]
+	][
+		GdipCreateBitmapFromGdiDib bmi data bitmap
 	]
 
 	width?: func [
@@ -307,6 +347,18 @@ OS-image: context [
 		bitmap: as BitmapData! handle
 		stride/value: bitmap/stride
 		as int-ptr! bitmap/scan0
+	]
+
+	get-data-pixel-format: func [
+		handle		[integer!]
+		format		[int-ptr!]
+		return:		[integer!]
+		/local
+			bitmap	[BitmapData!]
+	][
+		bitmap: as BitmapData! handle
+		format/value: bitmap/pixelFormat
+		0
 	]
 
 	get-pixel: func [
@@ -683,4 +735,37 @@ OS-image: context [
 		dst/node: as node! bmp
 		dst
 	]
+
+	to-HBITMAP:  func [
+		image		[red-image!]
+		return:		[integer!]
+		/local
+			bitmap	[integer!]
+	][
+		bitmap: 0
+		GdipCreateHBITMAPFromBitmap as-integer img/node :bitmap 0
+		bitmap
+	]
+
+	from-HBITMAP: func [
+		hBitmap		[integer!]
+		return:		[red-image!]
+	][
+		bitmap: 0
+		GdipCreateBitmapFromHBITMAP hBitmap 0 :bitmap
+		if zero? bitmap [return as red-image! none-value]
+
+		image/init-image as red-image! stack/push* as int-ptr! bitmap
+	]
+
+	to-gpbitmap: func [
+		image		[red-image!]
+		return:		[integer!]
+	][
+		as integer! image/node
+	]
+
+	release-gpbitmap: func [
+		bitmap		[integer!]
+	][]
 ]

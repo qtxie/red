@@ -180,6 +180,12 @@ gob: context [
 				case [
 					id = background [set-background s value]
 					id = border [set-border s value]
+					id = shadow [
+						if null? s/shadow [
+							s/shadow: as gob-style-shadow! alloc0 size? gob-style-shadow!
+						]
+						set-shadow s value
+					]
 					true [0]
 				]
 			]
@@ -198,6 +204,7 @@ gob: context [
 			pair	[red-pair!]
 			int		[red-integer!]
 			tp		[red-tuple!]
+			blk		[red-block!]
 	][
 		sym: symbol/resolve word/symbol
 		case [
@@ -238,6 +245,13 @@ gob: context [
 			sym = facets/styles [
 				if TYPE_OF(value) = TYPE_OBJECT [
 					set-styles g as red-object! value
+				]
+			]
+			sym = facets/draw [
+				if TYPE_OF(value) = TYPE_BLOCK [
+					blk: as red-block! value
+					g/draw-head: blk/head
+					g/draw: blk/node
 				]
 			]
 			;sym = facets/opacity [

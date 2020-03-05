@@ -12,6 +12,8 @@ Red/System [
 
 #include %direct2d.reds
 #include %renderer.reds
+#include %draw.reds
+#include %text-box.reds
 
 host: context [
 	win8+?:			no
@@ -480,15 +482,16 @@ probe "make window"
 		this: d2d-ctx
 		renderer/set-graphic-ctx this
 		renderer/set-target wm/render/bitmap
+		current-rt: wm/render
 
 		dc: as ID2D1DeviceContext this/vtbl
 		dc/BeginDraw this
-		m/m11: as float32! 1.0
-		m/m12: as float32! 0.0
-		m/m21: as float32! 0.0
-		m/m22: as float32! 1.0
-		m/dx:  as float32! 0.0
-		m/dy:  as float32! 0.0
+		m/_11: as float32! 1.0
+		m/_12: as float32! 0.0
+		m/_21: as float32! 0.0
+		m/_22: as float32! 1.0
+		m/_31:  as float32! 0.0
+		m/_32:  as float32! 0.0
 		renderer/set-matrix :m
 		clr: to-dx-color 00FFCC66h null
 		dc/Clear this clr

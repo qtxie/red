@@ -10,7 +10,7 @@ Red/System [
 	}
 ]
 
-ui-manager: context [	;-- manager all the windows
+ui-manager: context [	;-- manage all the windows
 
 	win-list:		as node! 0
 	active-win:		as wm! 0

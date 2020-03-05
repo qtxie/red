@@ -34,22 +34,22 @@ renderer: context [
 		/local
 			m	[D2D_MATRIX_3X2_F value]
 	][
-		m/m11: as float32! 1.0
-		m/m12: as float32! 0.0
-		m/m21: as float32! 0.0
-		m/m22: as float32! 1.0
-		m/dx:  x
-		m/dy:  y
+		m/_11: as float32! 1.0
+		m/_12: as float32! 0.0
+		m/_21: as float32! 0.0
+		m/_22: as float32! 1.0
+		m/_31:  x
+		m/_32:  y
 		ctx/SetTransform this :m
 	]
 
 	reset-matrix: func [/local m [D2D_MATRIX_3X2_F value]][
-		m/m11: as float32! 1.0
-		m/m12: as float32! 0.0
-		m/m21: as float32! 0.0
-		m/m22: as float32! 1.0
-		m/dx:  as float32! 0.0
-		m/dy:  as float32! 0.0
+		m/_11: as float32! 1.0
+		m/_12: as float32! 0.0
+		m/_21: as float32! 0.0
+		m/_22: as float32! 1.0
+		m/_31:  as float32! 0.0
+		m/_32:  as float32! 0.0
 		ctx/SetTransform this :m
 	]
 

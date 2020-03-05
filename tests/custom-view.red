@@ -31,6 +31,7 @@ child21: make gob! [
 			probe reduce [21 face/type event/offset event/flags]
 		]
 	]
+	draw: [box 20x20 80x80 10 text 20x40 "Hello Red!"]
 ]
 child22: make gob! [
 	offset: 250x50 size: 100x100 color: 0.0.223

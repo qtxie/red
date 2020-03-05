@@ -12,7 +12,7 @@ Red/System [
 
 #include %definitions.reds
 #include %utils.reds
-;#include %matrix2d.reds
+#include %matrix2d.reds
 
 #switch OS [
 	Windows  [#include %host-win/host.reds]
@@ -23,8 +23,6 @@ Red/System [
 #include %events.reds
 #include %widgets.reds
 #include %ui-manager.reds
-#include %text-box.reds
-#include %draw.reds
 
 on-gc-mark: does [
 	collector/keep flags-blk/node

@@ -294,3 +294,29 @@ render-target-lost?: func [
 	rt/Clear target to-dx-color 0 null
 	0 <> rt/EndDraw target null null
 ]
+
+create-d2d-bitmap: func [
+	this	[this!]
+	width	[uint32!]
+	height	[uint32!]
+	options	[integer!]
+	return: [this!]
+	/local
+		dc		[ID2D1DeviceContext]
+		props	[D2D1_BITMAP_PROPERTIES1 value]
+		sz		[SIZE_U! value]
+		bitmap	[ptr-value!]
+][
+	props/format: 87
+	props/alphaMode: 1
+	props/dpiX: host/dpi-x
+	props/dpiY: host/dpi-y
+	props/options: options
+	props/colorContext: null
+
+	sz/width: width
+	sz/height: height
+	dc: as ID2D1DeviceContext this/vtbl
+	dc/CreateBitmap2 this sz null 0 props :bitmap
+	as this! bitmap/value
+]

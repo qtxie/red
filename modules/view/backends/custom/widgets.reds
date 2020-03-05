@@ -17,14 +17,17 @@ widgets: context [
 			ss		[gob-style!]
 			box		[RECT_F!]
 			rc		[RECT_F! value]
-			m		[float32!]
+			bd-w	[float32!]
 			n		[float32!]
 			w		[float32!]
 			h		[float32!]
+			x		[float32!]
+			y		[float32!]
 			bmp		[this!]
 			old		[this!]
 			shadow?	[logic!]
 			mat		[D2D_MATRIX_3X2_F value]
+			blk		[red-block! value]
 	][
 		ss: gob/styles
 		shadow?: all [ss <> null ss/shadow <> null]
@@ -58,18 +61,44 @@ widgets: context [
 
 		;-- 4. draw border
 		if all [ss <> null ss/border/width <> 0][
-			m: as float32! ss/border/width
-			n: m / as float32! 2.0
+			bd-w: as float32! ss/border/width
+			n: bd-w / as float32! 2.0
 			rc/left: box/left + n
 			rc/top: box/top + n
 			rc/right: box/right - n
 			rc/bottom: box/bottom - n
-			renderer/draw-box rc m ss/border/color
+			renderer/draw-box rc bd-w ss/border/color
 		]
 
 		;-- 5. draw text
 
 		;-- 6. draw draw block
+		if gob/draw <> null [
+			unless shadow? [renderer/get-matrix :mat]
+			x: box/left + mat/_31
+			y: box/top + mat/_32
+			either ss <> null [
+				x: x + bd-w + ss/padding/left
+				y: y + bd-w + ss/padding/top
+				w: bd-w * 2 + ss/padding/left + ss/padding/right
+				h: bd-w * 2 + ss/padding/top + ss/padding/bottom
+			][
+				w: as float32! 0.0
+				h: as float32! 0.0
+			]
+			renderer/set-tranlation x y
+			rc/left: as float32! 0.0
+			rc/top: as float32! 0.0
+			rc/right: box/right - box/left - w
+			rc/bottom: box/bottom - box/top - h
+			renderer/push-clip-rect rc
+			blk/header: TYPE_BLOCK
+			blk/head: gob/draw-head
+			blk/node: gob/draw
+			do-draw as int-ptr! gob null blk no yes yes yes
+			renderer/pop-clip-rect
+			unless shadow? [renderer/set-matrix :mat]
+		]
 
 		if shadow? [
 			renderer/flush
@@ -99,7 +128,6 @@ widgets: context [
 			p	[ptr-ptr!]
 			e	[ptr-ptr!]
 			t	[integer!]
-			rc	[RECT_F! value]
 	][
 		t: GOB_TYPE(gob)
 		switch t [
@@ -115,15 +143,10 @@ widgets: context [
 			s: as series! gob/children/value
 			p: as ptr-ptr! s/offset
 			e: as ptr-ptr! s/tail
-			;rc/left: as float32! 0.0
-			;rc/top: as float32! 0.0
-			;rs-gob/get-content-size gob (as point! :rc) + 1
-			;renderer/push-clip-rect rc
 			while [p < e][
 				draw-gob as gob! p/value
 				p: p + 1
 			]
-			;renderer/pop-clip-rect
 		]
 	]
 ]

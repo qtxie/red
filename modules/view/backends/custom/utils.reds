@@ -123,8 +123,8 @@ Red/System [
 ]
 
 copy-rect: func [
-	src		[RECT32!]
-	dst		[RECT32!]
+	src		[RECT_F!]
+	dst		[RECT_F!]
 ][
 	dst/left: src/left
 	dst/right: src/right

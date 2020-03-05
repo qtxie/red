@@ -12,37 +12,71 @@ Red/System [
 
 widgets: context [
 	draw-base: func [
-		gob		[gob!]
+		gob			[gob!]
 		/local
-			bd	[gob-style-border!]
-			ss	[gob-style!]
-			rc	[RECT32! value]
-			m	[float32!]
-			n	[float32!]
+			ss		[gob-style!]
+			box		[RECT_F!]
+			rc		[RECT_F! value]
+			m		[float32!]
+			n		[float32!]
+			w		[float32!]
+			h		[float32!]
+			bmp		[this!]
+			old		[this!]
+			shadow?	[logic!]
+			mat		[D2D_MATRIX_3X2_F value]
 	][
 		ss: gob/styles
-		bd: ss/border
+		shadow?: all [ss <> null ss/shadow <> null]
 
 		;-- 1. draw shadow
-		
+		box: gob/box
+		if shadow? [
+			n: host/dpi-value / as float32! 96.0
+			w: box/right - box/left
+			h: box/bottom - box/top
+			bmp: renderer/create-bitmap
+					as-integer w + (as float32! 1.0) * n
+					as-integer h + (as float32! 1.0) * n
+
+			old: renderer/get-target		;-- save old target
+			renderer/set-target bmp
+			renderer/get-matrix :mat
+			renderer/reset-matrix
+
+			rc/left: as float32! 0.5
+			rc/top:  as float32! 0.5
+			rc/right:  w + (as float32! 0.5)
+			rc/bottom: h + (as float32! 0.5)
+			box: :rc
+		]
+
 		;-- 2. draw background color
-		renderer/fill-box gob/box gob/backdrop
+		renderer/fill-box box gob/backdrop
 
 		;-- 3. draw background image
 
 		;-- 4. draw border
-		if all [ss <> null bd/width <> 0][
-			m: as float32! bd/width
+		if all [ss <> null ss/border/width <> 0][
+			m: as float32! ss/border/width
 			n: m / as float32! 2.0
-			rc/left: gob/box/left + n
-			rc/top: gob/box/top + n
-			rc/right: gob/box/right - n
-			rc/bottom: gob/box/bottom - n
-			renderer/draw-box rc m bd/color
+			rc/left: box/left + n
+			rc/top: box/top + n
+			rc/right: box/right - n
+			rc/bottom: box/bottom - n
+			renderer/draw-box rc m ss/border/color
 		]
 
 		;-- 5. draw text
-		
+
+		;-- 6. draw draw block
+
+		if shadow? [
+			renderer/flush
+			renderer/set-target old
+			renderer/set-matrix :mat
+			renderer/draw-shadow bmp gob/box ss/shadow
+		]
 	]
 
 	signal-button: func [
@@ -58,12 +92,6 @@ widgets: context [
 		]
 	]
 
-	draw-update: func [
-		update-list	[node!]
-	][
-		
-	]
-
 	draw-gob: func [
 		gob		[gob!]
 		/local
@@ -71,7 +99,7 @@ widgets: context [
 			p	[ptr-ptr!]
 			e	[ptr-ptr!]
 			t	[integer!]
-			rc	[RECT32! value]
+			rc	[RECT_F! value]
 	][
 		t: GOB_TYPE(gob)
 		switch t [
@@ -97,41 +125,5 @@ widgets: context [
 			]
 			;renderer/pop-clip-rect
 		]
-	]
-
-	draw-windows: func [
-		return:		[float32!]
-		/local
-			wm		[wm!]
-			s		[series!]
-			p		[ptr-ptr!]
-			e		[ptr-ptr!]
-			tm		[time-meter! value]
-			t		[float32!]
-	][
-		t: as float32! 0.0
-		s: as series! ui-manager/win-list/value
-		p: as ptr-ptr! s/offset
-		e: as ptr-ptr! s/tail
-		while [p < e][
-			wm: as wm! p/value
-			if wm/flags and WIN_FLAG_INVISIBLE = 0 [
-				renderer/set-render d2d-ctx
-				either wm/flags and WIN_RENDER_FULL = 0 [
-					draw-update wm/update-list	
-				][
-					print "Full Draw in "
-					time-meter/start :tm
-					host/draw-begin wm
-					draw-gob wm/gob
-					host/draw-end wm
-					t: time-meter/elapse :tm
-					probe [t "ms"]
-					wm/flags: wm/flags and (not WIN_RENDER_FULL)
-				]
-			]
-			p: p + 1
-		]
-		t
 	]
 ]

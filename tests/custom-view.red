@@ -5,7 +5,7 @@ Red [
 
 probe "start"
 
-win: make gob! [type: 'window offset: 1000x10 size: 800x800]
+win: make gob! [type: 'window offset: 50x50 size: 800x800]
 child: make gob! [
 	offset: 100x50 size: 100x100 color: 255.0.0
 	actors: object [
@@ -16,7 +16,7 @@ child: make gob! [
 ]
 
 child2: make gob! [
-	offset: 150x50 size: 500x300 color: 255.232.0
+	offset: 150x50 size: 500x300 color: 255.255.255
 	actors: object [
 		on-over: func [face event][
 			probe reduce [2 face/type event/offset event/flags]
@@ -40,7 +40,8 @@ child22: make gob! [
 		]
 	]
 	styles: object [
-		border: [10 solid 0.255.0.183]
+		border: [5 solid 0.255.0]
+		shadow: [0x0 12 0.0.0]
 	]
 ]
 
@@ -54,7 +55,6 @@ win/actors: make object! [
 ]
 append win child
 append win child2
-?? win
 
 ;t1: now/time/precise
 ;loop 10000 [

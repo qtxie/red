@@ -41,10 +41,9 @@ host: context [
 		/local
 			str					[red-string!]
 			hr					[integer!]
-			factory 			[integer!]
+			factory 			[com-ptr! value]
 			dll					[handle!]
 			options				[integer!]
-			D2D1CreateFactory	[D2D1CreateFactory!]
 			DWriteCreateFactory [DWriteCreateFactory!]
 			GetUserDefaultLocaleName [GetUserDefaultLocaleName!]
 			d2d					[ID2D1Factory]
@@ -56,9 +55,6 @@ host: context [
 			unk					[IUnknown]
 			d2d-device			[this!]
 	][
-		dll: LoadLibraryA "d2d1.dll"
-		if null? dll [exit]
-		D2D1CreateFactory: as D2D1CreateFactory! GetProcAddress dll "D2D1CreateFactory"
 		dll: LoadLibraryA "DWrite.dll"
 		if null? dll [exit]
 		DWriteCreateFactory: as DWriteCreateFactory! GetProcAddress dll "DWriteCreateFactory"
@@ -72,7 +68,6 @@ host: context [
 		]
 
 		ctx:	 0
-		factory: 0
 		options: 0													;-- debugLevel
 
 		hr: D3D11CreateDevice
@@ -88,35 +83,34 @@ host: context [
 			:ctx
 		assert zero? hr
 
-		d3d-device: as this! factory
+		d3d-device: factory/value
 		d3d-ctx: as this! ctx
 
 		d3d: as ID3D11Device d3d-device/vtbl
 		;-- create DXGI device
 		hr: d3d/QueryInterface d3d-device IID_IDXGIDevice1 as interface! :factory	
 		assert zero? hr
-		dxgi-device: as this! factory
+		dxgi-device: factory/value
 
 		hr: D2D1CreateFactory 0 IID_ID2D1Factory1 :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
 		assert zero? hr
-		d2d-factory: as this! factory
+		d2d-factory: factory/value
 
 		;-- get system DPI
 		d2d: as ID2D1Factory d2d-factory/vtbl
 		d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
-	?? dpi-y
 		dpi-value: dpi-y
 
 		;-- create D2D Device
-		hr: d2d/CreateDevice d2d-factory as int-ptr! dxgi-device :factory
-		d2d-device: as this! factory
+		hr: d2d/CreateDevice d2d-factory dxgi-device :factory
+		d2d-device: factory/value
 		assert zero? hr
 
 		;-- create D2D context
 		d2d-dev: as ID2D1Device d2d-device/vtbl
 		hr: d2d-dev/CreateDeviceContext d2d-device 0 :factory
 		assert zero? hr
-		d2d-ctx: as this! factory
+		d2d-ctx: factory/value
 
 		;-- get dxgi adapter
 		dxgi: as IDXGIDevice1 dxgi-device/vtbl
@@ -124,15 +118,15 @@ host: context [
 		assert zero? hr
 
 		;-- get Dxgi factory
-		dxgi-adapter: as this! factory
+		dxgi-adapter: factory/value
 		adapter: as IDXGIAdapter dxgi-adapter/vtbl
 		hr: adapter/GetParent dxgi-adapter IID_IDXGIFactory2 :factory
 		assert zero? hr
-		dxgi-factory: as this! factory
+		dxgi-factory: factory/value
 
 		hr: DWriteCreateFactory 0 IID_IDWriteFactory :factory		;-- DWRITE_FACTORY_TYPE_SHARED: 0
 		assert zero? hr
-		dwrite-factory: as this! factory
+		dwrite-factory: factory/value
 		str: string/rs-make-at ALLOC_TAIL(root) 1024
 		dwrite-str-cache: str/node
 
@@ -480,12 +474,14 @@ probe "make window"
 			this	[this!]
 			dc		[ID2D1DeviceContext]
 			clr		[D3DCOLORVALUE]
-			brush	[integer!]
+			brush	[com-ptr! value]
 			m		[D2D_MATRIX_3X2_F value]
 	][
 		this: d2d-ctx
+		renderer/set-graphic-ctx this
+		renderer/set-target wm/render/bitmap
+
 		dc: as ID2D1DeviceContext this/vtbl
-		dc/SetTarget this wm/render/bitmap
 		dc/BeginDraw this
 		m/m11: as float32! 1.0
 		m/m12: as float32! 0.0
@@ -496,9 +492,8 @@ probe "make window"
 		renderer/set-matrix :m
 		clr: to-dx-color 00FFCC66h null
 		dc/Clear this clr
-		brush: 0
 		dc/CreateSolidColorBrush this clr null :brush
-		renderer/brush: as this! brush
+		renderer/brush: brush/value
 	]
 
 	draw-end: func [
@@ -545,7 +540,7 @@ do-events: func [
 				if no-wait? [return msg?]
 			]
 		]
-		tm: as-integer (as float32! 16.66) - widgets/draw-windows
+		tm: as-integer (as float32! 16.66) - ui-manager/draw-windows
 		if tm > 0 [io/do-events tm]
 	]
 	msg?

@@ -30,7 +30,7 @@ Red/System [
 	WIN_TYPE_TOOL:		40h
 	WIN_TYPE_TASKBAR:	80h
 	;-- render flags
-	WIN_RENDER_FULL:	0100h
+	WIN_RENDER_ALL:		0100h
 ]
 
 wm!: alias struct! [

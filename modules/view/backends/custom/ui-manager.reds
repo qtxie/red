@@ -51,7 +51,7 @@ ui-manager: context [	;-- manager all the windows
 			p	[wm!]
 	][
 		p: as wm! allocate size? wm!
-		p/flags: WIN_RENDER_FULL
+		p/flags: WIN_RENDER_ALL
 		p/hWnd: hWnd
 		p/gob: root
 		p/render: render
@@ -80,5 +80,46 @@ ui-manager: context [	;-- manager all the windows
 			gob/flags: gob/flags or GOB_FLAG_UPDATE
 			array/append-ptr active-win/update-list as int-ptr! gob
 		]
+	]
+
+	draw-update: func [
+		update-list	[node!]
+	][
+		
+	]
+
+	draw-windows: func [
+		return:		[float32!]
+		/local
+			wm		[wm!]
+			s		[series!]
+			p		[ptr-ptr!]
+			e		[ptr-ptr!]
+			tm		[time-meter! value]
+			t		[float32!]
+	][
+		t: as float32! 0.0
+		s: as series! win-list/value
+		p: as ptr-ptr! s/offset
+		e: as ptr-ptr! s/tail
+		while [p < e][
+			wm: as wm! p/value
+			if wm/flags and WIN_FLAG_INVISIBLE = 0 [
+				either wm/flags and WIN_RENDER_ALL = 0 [
+					draw-update wm/update-list	
+				][
+					print "Full Draw in "
+					time-meter/start :tm
+					host/draw-begin wm
+					widgets/draw-gob wm/gob
+					host/draw-end wm
+					t: time-meter/elapse :tm
+					probe [t "ms"]
+					wm/flags: wm/flags and (not WIN_RENDER_ALL)
+				]
+			]
+			p: p + 1
+		]
+		t
 	]
 ]

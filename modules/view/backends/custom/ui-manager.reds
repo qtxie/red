@@ -15,6 +15,7 @@ ui-manager: context [	;-- manage all the windows
 	win-list:		as node! 0
 	active-win:		as wm! 0
 	hover-gob:		as gob! 0		;-- the gob under the mouse
+	capture-gob:	as gob! 0		;-- the gob being captured when mouse left-button down
 
 	init: func [
 		/local

@@ -76,7 +76,7 @@ RedWndProc: func [
 			mouse-flags: decode-down-flags wParam
 			mouse-x: pixel-to-logical x
 			mouse-y: pixel-to-logical y
-			do-mouse-event EVT_OVER wm/gob mouse-x mouse-y mouse-flags
+			do-mouse-move EVT_OVER wm/gob mouse-x mouse-y mouse-flags
 			return 0
 		]
 		WM_MOUSELEAVE [
@@ -87,6 +87,12 @@ RedWndProc: func [
 			]
 			return 0
 		]
+		WM_LBUTTONDOWN
+		WM_LBUTTONUP
+		WM_RBUTTONDOWN
+		WM_RBUTTONUP
+		WM_MBUTTONDOWN
+		WM_MBUTTONUP	[do-mouse-press msg - 0200h wm/gob mouse-x mouse-y mouse-flags]
 		WM_MOVING [0]
 		WM_KEYDOWN [0]
 		WM_SYSKEYDOWN [0]

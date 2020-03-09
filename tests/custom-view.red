@@ -10,7 +10,16 @@ child: make gob! [
 	offset: 100x50 size: 100x100 color: 255.0.0
 	actors: object [
 		on-over: func [face event][
-			probe reduce [1 face/type event/offset event/flags]
+			probe reduce [1 "over" face/type event/offset event/flags]
+		]
+		on-up: func [face event][
+			probe reduce [1 "mouse up" face/type event/offset event/flags]
+		]
+		on-down: func [face event][
+			probe reduce [1 "mouse down" face/type event/offset event/flags]
+		]
+		on-click: func [face event][
+			probe reduce [1 "mouse click" face/type event/offset event/flags]
 		]
 	]
 ]

@@ -170,7 +170,7 @@ hover-changed?: func [
 	]
 ]
 
-do-mouse-event: func [
+do-mouse-move: func [
 	evt		[integer!]
 	obj		[gob!]
 	x		[float32!]
@@ -191,7 +191,7 @@ do-mouse-event: func [
 	child: rs-gob/find-child obj x y
 	either child <> null [
 		ui-manager/add-update obj
-		ret: do-mouse-event evt child x - child/box/left y - child/box/top flags
+		ret: do-mouse-move evt child x - child/box/left y - child/box/top flags
 	][
 		hover: ui-manager/hover-gob
 		if hover <> obj [
@@ -217,5 +217,32 @@ do-mouse-event: func [
 		obj/flags and GOB_FLAG_ALL_OVER <> 0
 		ret = EVT_DISPATCH 
 	][ret: send-mouse-event evt obj x y flags]
+	ret
+]
+
+do-mouse-press: func [
+	evt		[integer!]
+	root	[gob!]
+	x		[float32!]
+	y		[float32!]
+	flags	[integer!]
+	/local
+		gb	[gob!]
+		ret [integer!]
+][
+	ret: EVT_DISPATCH
+	gb: ui-manager/hover-gob
+	if gb <> null [ret: send-mouse-event evt gb x y flags]
+	switch evt [
+		EVT_LEFT_DOWN [
+			ui-manager/capture-gob: gb
+		]
+		EVT_LEFT_UP [
+			if ui-manager/capture-gob = gb [
+				ret: send-mouse-event EVT_CLICK gb x y flags 
+			]
+		]
+		default []
+	]
 	ret
 ]

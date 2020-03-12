@@ -75,6 +75,18 @@ renderer: context [
 		ctx/DrawRectangle this rc brush width null
 	]
 
+	draw-rounded-box: func [
+		rc		[ROUNDED_RECT_F!]
+		width	[float32!]
+		color	[integer!]
+		/local
+			bh	[ID2D1SolidColorBrush]
+	][
+		bh: as ID2D1SolidColorBrush brush/vtbl
+		bh/SetColor brush to-dx-color color null
+		ctx/DrawRoundedRectangle this rc brush width null
+	]	
+
 	fill-box: func [
 		rc		[RECT_F!]
 		color	[integer!]
@@ -85,6 +97,17 @@ renderer: context [
 		bh/SetColor brush to-dx-color color null
 		ctx/FillRectangle this rc brush 
 	]
+
+	fill-rounded-box: func [
+		rc		[ROUNDED_RECT_F!]
+		color	[integer!]
+		/local
+			bh	[ID2D1SolidColorBrush]
+	][
+		bh: as ID2D1SolidColorBrush brush/vtbl
+		bh/SetColor brush to-dx-color color null
+		ctx/FillRoundedRectangle this rc brush
+	]	
 
 	flush: func [/local err1 err2 [integer!]][
 		err1: 0 err2: 0

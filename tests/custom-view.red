@@ -40,18 +40,37 @@ child21: make gob! [
 			probe reduce [21 face/type event/offset event/flags]
 		]
 	]
-	draw: [box 20x20 80x80 10 text 20x40 "Hello Red!"]
+	draw: [box 20x20 80x80 10]
 ]
+
+btn-styles-normal: object [
+	border-radius: 5
+	shadow: none
+]
+
+btn-styles-hover: object [
+	border-radius: 5
+	shadow: [0x0 20 0.0.0]
+]
+
 child22: make gob! [
-	offset: 250x50 size: 100x100 color: 0.0.223
+	offset: 250x50 size: 100x38 color: 98.0.238
 	actors: object [
 		on-over: func [face event][
+			either find event/flags 'away [
+				;face/color: 98.0.238
+				face/styles: btn-styles-normal
+			][
+				;face/color: 187.134.252
+				face/styles: btn-styles-hover
+			]
 			probe reduce [22 face/type event/offset event/flags]
 		]
 	]
 	styles: object [
-		border: [5 solid 0.255.0]
-		shadow: [0x0 12 0.0.0]
+		;border: [4 solid 0.255.0]
+		border-radius: 5
+		;shadow: [0x0 2 0.0.0]
 	]
 ]
 

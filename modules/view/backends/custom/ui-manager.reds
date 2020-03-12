@@ -89,6 +89,12 @@ ui-manager: context [	;-- manage all the windows
 		
 	]
 
+	redraw: func [][
+		if active-win <> null [
+			active-win/flags: active-win/flags or WIN_RENDER_ALL
+		]
+	]
+
 	draw-windows: func [
 		return:		[float32!]
 		/local

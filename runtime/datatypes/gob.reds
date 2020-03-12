@@ -180,8 +180,11 @@ gob: context [
 				case [
 					id = background [set-background s value]
 					id = border [set-border s value]
+					id = border-radius [s/radius: get-float32 as red-integer! value]
 					id = shadow [
-						if null? s/shadow [
+						either s/shadow [
+							
+						][
 							s/shadow: as gob-style-shadow! alloc0 size? gob-style-shadow!
 						]
 						set-shadow s value
@@ -290,6 +293,7 @@ gob: context [
 			]
 			default [error?: yes]
 		]
+		ui-manager/redraw
 		if error? [fire [TO_ERROR(script invalid-path) path element]]
 		value
 	]

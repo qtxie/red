@@ -31,14 +31,14 @@ OS-text-box-color: func [
 	color	[integer!]
 	/local
 		this	[this!]
-		rt		[render-target!]
+		rt		[renderer!]
 		dc		[ID2D1DeviceContext]
 		dl		[IDWriteTextLayout]
 		brush	[integer!]
 ][
 	brush: select-brush target + 1 color
 	if zero? brush [
-		rt: as render-target! target
+		rt: as renderer! target
 		this: rt/dc
 		dc: as ID2D1DeviceContext this/vtbl
 		dc/CreateSolidColorBrush this to-dx-color color null null as com-ptr! :brush
@@ -58,12 +58,12 @@ OS-text-box-background: func [
 	color	[integer!]
 	/local
 		this	[this!]
-		rt		[render-target!]
+		rt		[renderer!]
 		dc		[ID2D1DeviceContext]
 		cache	[red-vector!]
 		brush	[integer!]
 ][
-	rt: as render-target! target
+	rt: as renderer! target
 	cache: rt/styles
 	if null? cache [
 		cache: vector/make-at ALLOC_TAIL(root) 128 TYPE_INTEGER 4
@@ -284,7 +284,7 @@ OS-text-box-metrics: func [
 
 OS-text-box-layout: func [
 	box		[red-object!]
-	target	[render-target!]
+	target	[renderer!]
 	ft-clr	[integer!]
 	catch?	[logic!]
 	return: [this!]
@@ -308,56 +308,53 @@ OS-text-box-layout: func [
 ][
 	values: object/get-values box
 	state: as red-block! values + FACE_OBJ_EXT3
-	fmt: as this! create-text-format as red-object! values + FACE_OBJ_FONT box
+	;fmt: as this! create-text-format as red-object! values + FACE_OBJ_FONT box
 
-	;if null? target [
-
+	;either TYPE_OF(state) = TYPE_BLOCK [
+	;	pval: block/rs-head state
+	;	int: as red-integer! pval
+	;	layout: as this! int/value
+	;	COM_SAFE_RELEASE(IUnk layout)		;-- release previous text layout
+	;	bool: as red-logic! int + 3
+	;	bool/value: false
+	;][
+	;	block/make-at state 4
+	;	none/make-in state					;-- 1: text layout
+	;	handle/make-in state 0				;-- 2: target
+	;	none/make-in state					;-- 3: text
+	;	logic/make-in state false			;-- 4: layout?
+	;	pval: block/rs-head state
 	;]
 
-	either TYPE_OF(state) = TYPE_BLOCK [
-		pval: block/rs-head state
-		int: as red-integer! pval
-		layout: as this! int/value
-		COM_SAFE_RELEASE(IUnk layout)		;-- release previous text layout
-		bool: as red-logic! int + 3
-		bool/value: false
-	][
-		block/make-at state 4
-		none/make-in state					;-- 1: text layout
-		handle/make-in state 0				;-- 2: target
-		none/make-in state					;-- 3: text
-		logic/make-in state false			;-- 4: layout?
-		pval: block/rs-head state
-	]
+	;handle/make-at pval + 1 as-integer target
+	;vec: target/styles
+	;if vec <> null [vector/rs-clear vec]
 
-	handle/make-at pval + 1 as-integer target
-	vec: target/styles
-	if vec <> null [vector/rs-clear vec]
+	;set-text-format fmt as red-object! values + FACE_OBJ_PARA
+	;set-tab-size fmt as red-integer! values + FACE_OBJ_EXT1
+	;set-line-spacing fmt as red-integer! values + FACE_OBJ_EXT2
 
-	set-text-format fmt as red-object! values + FACE_OBJ_PARA
-	set-tab-size fmt as red-integer! values + FACE_OBJ_EXT1
-	set-line-spacing fmt as red-integer! values + FACE_OBJ_EXT2
+	;str: as red-string! values + FACE_OBJ_TEXT
+	;size: as red-pair! values + FACE_OBJ_SIZE
+	;either TYPE_OF(size) = TYPE_PAIR [
+	;	w: size/x h: size/y
+	;][
+	;	w: 0 h: 0
+	;]
 
-	str: as red-string! values + FACE_OBJ_TEXT
-	size: as red-pair! values + FACE_OBJ_SIZE
-	either TYPE_OF(size) = TYPE_PAIR [
-		w: size/x h: size/y
-	][
-		w: 0 h: 0
-	]
+	;copy-cell as red-value! str pval + 2			;-- save text
+	;layout: create-text-layout str fmt w h
+	;handle/make-at pval as-integer layout
 
-	copy-cell as red-value! str pval + 2			;-- save text
-	layout: create-text-layout str fmt w h
-	handle/make-at pval as-integer layout
-
-	styles: as red-block! values + FACE_OBJ_DATA
-	if all [
-		TYPE_OF(styles) = TYPE_BLOCK
-		1 < block/rs-length? styles
-	][
-		parse-text-styles as int-ptr! target as handle! layout styles 7FFFFFFFh catch?
-	]
-	layout
+	;styles: as red-block! values + FACE_OBJ_DATA
+	;if all [
+	;	TYPE_OF(styles) = TYPE_BLOCK
+	;	1 < block/rs-length? styles
+	;][
+	;	parse-text-styles as int-ptr! target as handle! layout styles 7FFFFFFFh catch?
+	;]
+	;layout
+	null
 ]
 
 txt-box-draw-background: func [

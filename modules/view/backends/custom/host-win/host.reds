@@ -166,7 +166,7 @@ host: context [
 	]
 
 	create-dcomp: func [
-		target			[render-target!]
+		target			[renderer!]
 		hWnd			[handle!]
 		d2d-dc			[ID2D1DeviceContext]
 		/local
@@ -215,9 +215,9 @@ host: context [
 
 	create-render-target: func [
 		hWnd		[handle!]
-		return:		[render-target!]
+		return:		[renderer!]
 		/local
-			rt		[render-target!]
+			rt		[renderer!]
 			rc		[RECT_STRUCT value]
 			desc	[DXGI_SWAP_CHAIN_DESC1 value]
 			dxgi	[IDXGIFactory2]
@@ -273,12 +273,14 @@ host: context [
 		hr: d2d/CreateBitmapFromDxgiSurface d2d-ctx as int-ptr! buf props :bmp
 		assert hr = 0
 		
-		rt: as render-target! allocate size? render-target!
+		rt: as renderer! allocate size? renderer!
 		rt/swapchain: as this! int
 		rt/bitmap: as this! bmp
 
 		COM_SAFE_RELEASE_OBJ(unk buf)
 		if win8+? [create-dcomp rt hWnd d2d]
+
+		renderer/init d2d-ctx
 		rt
 	]
 
@@ -480,7 +482,7 @@ probe "make window"
 			m		[D2D_MATRIX_3X2_F value]
 	][
 		this: d2d-ctx
-		renderer/set-graphic-ctx this
+		renderer/set-renderer wm/render
 		renderer/set-target wm/render/bitmap
 		current-rt: wm/render
 
@@ -495,8 +497,6 @@ probe "make window"
 		renderer/set-matrix :m
 		clr: to-dx-color 00FFCC66h null
 		dc/Clear this clr
-		dc/CreateSolidColorBrush this clr null :brush
-		renderer/brush: brush/value
 	]
 
 	draw-end: func [
@@ -505,7 +505,7 @@ probe "make window"
 			this	[this!]
 			dc		[ID2D1DeviceContext]
 			sc		[IDXGISwapChain1]
-			render	[render-target!]
+			render	[renderer!]
 			m		[D2D_MATRIX_3X2_F value]
 	][
 		this: d2d-ctx

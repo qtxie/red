@@ -26,6 +26,7 @@ draw-base: func [
 		old		[this!]
 		mat		[D2D_MATRIX_3X2_F value]
 		blk		[red-block! value]
+		str		[red-string!]
 		round?	[logic!]
 		shadow?	[logic!]
 		border? [logic!]
@@ -95,6 +96,14 @@ draw-base: func [
 	]
 
 	;-- 5. draw text
+	if gob/text <> null [
+		str: as red-string! :blk
+		str/header: TYPE_STRING
+		str/head: 0
+		str/node: gob/text
+		str/cache: null
+		renderer/draw-text box str ss
+	]
 
 	;-- 6. draw draw block
 	if gob/draw <> null [

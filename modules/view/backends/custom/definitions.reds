@@ -37,7 +37,7 @@ wm!: alias struct! [
 	flags		[integer!]
 	hwnd		[handle!]
 	gob			[gob!]			;-- root gob
-	render		[render-target!]
+	render		[renderer!]
 	focused		[gob!]			;-- focused gob in the window
 	update-list	[node!]
 ]

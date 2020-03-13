@@ -2324,7 +2324,7 @@ CreateTextFormat*: alias function! [
 	fontStretch	[integer!]
 	fontSize	[float32!]
 	localeName	[c-string!]
-	textFormat	[int-ptr!]
+	textFormat	[com-ptr!]
 	return:		[integer!]
 ]
 
@@ -2335,7 +2335,7 @@ CreateTextLayout*: alias function! [
 	format		[this!]
 	maxWidth	[float32!]
 	maxHeight	[float32!]
-	layout		[int-ptr!]
+	layout		[com-ptr!]
 	return:		[integer!]
 ]
 
@@ -2610,7 +2610,7 @@ GetUserDefaultLocaleName!: alias function! [
 	]
 ]
 
-render-target!: alias struct! [
+renderer!: alias struct! [
 	dc				[this!]
 	brushes			[int-ptr!]
 	brushes-cnt		[uint!]

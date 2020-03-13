@@ -182,9 +182,7 @@ gob: context [
 					id = border [set-border s value]
 					id = border-radius [s/radius: get-float32 as red-integer! value]
 					id = shadow [
-						either s/shadow [
-							
-						][
+						if null? s/shadow [
 							s/shadow: as gob-style-shadow! alloc0 size? gob-style-shadow!
 						]
 						set-shadow s value
@@ -208,6 +206,7 @@ gob: context [
 			int		[red-integer!]
 			tp		[red-tuple!]
 			blk		[red-block!]
+			str		[red-string!]
 	][
 		sym: symbol/resolve word/symbol
 		case [
@@ -243,6 +242,14 @@ gob: context [
 						g/actors: as red-object! allocate size? red-object!
 					]
 					copy-cell value as cell! g/actors
+				]
+			]
+			sym = facets/text [
+				either TYPE_OF(value) = TYPE_STRING [
+					str: as red-string! value
+					g/text: str/node
+				][
+					g/text: null
 				]
 			]
 			sym = facets/styles [

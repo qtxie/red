@@ -144,15 +144,26 @@ gob-style-padding!: alias struct! [
 	right		[coord!]
 ]
 
+;gob-style-font!: alias struct! [
+;	family		[c-string!]
+;	size		[integer!]
+;	weight		[integer!]
+;	style		[integer!]			;-- italic, bold, underline
+;]
+
 gob-style-text!: alias struct! [
-	color		[integer!]
-	select-clr	[integer!]
-	font		[int-ptr!]			;-- backend specific font handle
-	linespace	[float32!]
-	letterspace	[float32!]
-	opacity		[byte!]
-	align		[byte!]				;-- text align
-	shadow		[gob-style-shadow!]
+	color		 [integer!]
+	select-clr	 [integer!]
+	;font		 [gob-style-font! value]
+	font-family	 [c-string!]
+	font-size	 [integer!]
+	font-weight	 [integer!]
+	font-style	 [integer!]			;-- italic, bold, underline
+	line-space	 [float32!]
+	letter-space [float32!]
+	opacity		 [byte!]
+	align		 [byte!]			;-- text align
+	shadow		 [gob-style-shadow!]
 ]
 
 gob-style!: alias struct! [
@@ -167,10 +178,10 @@ gob-style!: alias struct! [
 
 gob!: alias struct! [				;-- try to keep size? gob! <= 64 bytes
 	flags		[integer!]			;-- type and states
-	box			[RECT_F! value]		;-- real size: content size + padding + border width
+	box			[RECT_F! value]		;-- box = content size + padding + border width
 	parent		[gob!]				;-- parent gob
 	children	[node!]				;-- child gobs, red-vector!
-	text-head	[integer!]			;-- head of the text
+	font		[int-ptr!]			;-- backend specific font handle
 	text		[node!]				;-- red-string node
 	draw-head	[integer!]			;-- head of the draw block
 	draw		[node!]				;-- draw block node

@@ -10,7 +10,7 @@ Red/System [
 	}
 ]
 
-current-rt: as render-target! 0
+current-rt: as renderer! 0
 
 #enum DRAW-BRUSH-TYPE! [
 	DRAW_BRUSH_NONE
@@ -164,7 +164,7 @@ draw-begin: func [
 		m		[D2D_MATRIX_3X2_F value]
 		bg-clr	[integer!]
 		brush	[com-ptr! value]
-		target	[render-target!]
+		target	[renderer!]
 		brushes [int-ptr!]
 		pbrush	[ID2D1SolidColorBrush]
 		d3d-clr [D3DCOLORVALUE]
@@ -191,13 +191,13 @@ draw-begin: func [
 	ctx/hwnd:		hWnd
 	update-pen-style ctx
 
-	this: renderer/this
-	dc: renderer/ctx
+	this: renderer/_this
+	dc: renderer/_ctx
 
 	if hWnd = null [
 		wic-bmp: OS-image/get-wicbitmap img
 		;-- create a bitmap target
-		;target: as render-target! alloc0 size? render-target!
+		;target: as renderer! alloc0 size? renderer!
 		;target/brushes: as int-ptr! allocate D2D_MAX_BRUSHES * 2 * size? int-ptr!
 
 		;zero-memory as byte-ptr! :props size? D2D1_RENDER_TARGET_PROPERTIES
@@ -336,26 +336,26 @@ OS-draw-text: func [
 	this: as this! ctx/dc
 	dc: as ID2D1DeviceContext this/vtbl
 
-	layout: either TYPE_OF(text) = TYPE_OBJECT [				;-- text-box!
-		OS-text-box-layout as red-object! text as render-target! ctx/target 0 yes
-	][
-		if null? ctx/text-format [
-			ctx/text-format: as this! create-text-format as red-object! text null
-		]
-		create-text-layout text ctx/text-format 0 0
-	]
-	color?: no
-	if ctx/font-color <> ctx/pen-color [
-		pen: as this! ctx/pen
-		brush: as ID2D1SolidColorBrush pen/vtbl
-		brush/SetColor pen to-dx-color ctx/font-color null
-		color?: yes
-	]
-	txt-box-draw-background ctx/target pos layout
-	dc/DrawTextLayout this as float32! pos/x as float32! pos/y layout ctx/pen 0
-	if color? [
-		brush/SetColor pen to-dx-color ctx/pen-color null
-	]
+	;layout: either TYPE_OF(text) = TYPE_OBJECT [				;-- text-box!
+	;	OS-text-box-layout as red-object! text as renderer! ctx/target 0 yes
+	;][
+	;	if null? ctx/text-format [
+	;		ctx/text-format: as this! create-text-format as red-object! text null
+	;	]
+	;	create-text-layout text ctx/text-format 0 0
+	;]
+	;color?: no
+	;if ctx/font-color <> ctx/pen-color [
+	;	pen: as this! ctx/pen
+	;	brush: as ID2D1SolidColorBrush pen/vtbl
+	;	brush/SetColor pen to-dx-color ctx/font-color null
+	;	color?: yes
+	;]
+	;txt-box-draw-background ctx/target pos layout
+	;dc/DrawTextLayout this as float32! pos/x as float32! pos/y layout ctx/pen 0
+	;if color? [
+	;	brush/SetColor pen to-dx-color ctx/pen-color null
+	;]
 	true
 ]
 
@@ -865,7 +865,7 @@ draw-shadow: func [
 		eff2	[this!]
 		effect	[ID2D1Effect]
 		pt		[POINT_2F value]
-		target	[render-target!]
+		target	[renderer!]
 		output	[com-ptr! value]
 		sigma	[float32!]
 		s		[shadow!]
@@ -879,7 +879,7 @@ draw-shadow: func [
 	err1: 0 err2: 0
 	dc/Flush this :err1 :err2
 
-	target: as render-target! ctx/target
+	target: as renderer! ctx/target
 	dc/SetTarget this target/bitmap
 
 	s: ctx/shadows
@@ -1287,13 +1287,13 @@ OS-draw-font: func [
 	/local
 		clr [red-tuple!]
 ][
-	ctx/text-format: as this! create-text-format font null
-	;-- set font color
-	clr: as red-tuple! (object/get-values font) + FONT_OBJ_COLOR
-	if TYPE_OF(clr) = TYPE_TUPLE [
-		ctx/font-color: clr/array1
-		ctx/font-color?: yes
-	]
+	;ctx/text-format: as this! create-text-format font null
+	;;-- set font color
+	;clr: as red-tuple! (object/get-values font) + FONT_OBJ_COLOR
+	;if TYPE_OF(clr) = TYPE_TUPLE [
+	;	ctx/font-color: clr/array1
+	;	ctx/font-color?: yes
+	;]
 ]
 
 OS-draw-arc: func [

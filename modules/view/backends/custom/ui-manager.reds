@@ -46,7 +46,7 @@ ui-manager: context [	;-- manage all the windows
 	add-window: func [
 		hwnd	[handle!]
 		root	[gob!]
-		render	[render-target!]
+		render	[renderer!]
 		return: [wm!]
 		/local
 			p	[wm!]

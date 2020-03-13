@@ -78,95 +78,95 @@ to-dx-color: func [
 	c
 ]
 
-create-text-format: func [
-	font	[red-object!]
-	face	[red-object!]
-	return: [integer!]
-	/local
-		values	[red-value!]
-		h-font	[red-handle!]
-		int		[red-integer!]
-		value	[red-value!]
-		w		[red-word!]
-		str		[red-string!]
-		blk		[red-block!]
-		weight	[integer!]
-		style	[integer!]
-		size	[float32!]
-		len		[integer!]
-		sym		[integer!]
-		name	[c-string!]
-		format	[integer!]
-		factory [IDWriteFactory]
-		save?	[logic!]
-][
-	weight:	400
-	style:  0
-	either TYPE_OF(font) = TYPE_OBJECT [
-		save?: yes
-		values: object/get-values font
-		blk: as red-block! values + FONT_OBJ_STATE
-		if TYPE_OF(blk) <> TYPE_BLOCK [
-			block/make-at blk 2
-			none/make-in blk
-			none/make-in blk
-		]
+;create-text-format: func [
+;	font	[red-object!]
+;	face	[red-object!]
+;	return: [integer!]
+;	/local
+;		values	[red-value!]
+;		h-font	[red-handle!]
+;		int		[red-integer!]
+;		value	[red-value!]
+;		w		[red-word!]
+;		str		[red-string!]
+;		blk		[red-block!]
+;		weight	[integer!]
+;		style	[integer!]
+;		size	[float32!]
+;		len		[integer!]
+;		sym		[integer!]
+;		name	[c-string!]
+;		format	[integer!]
+;		factory [IDWriteFactory]
+;		save?	[logic!]
+;][
+;	weight:	400
+;	style:  0
+;	either TYPE_OF(font) = TYPE_OBJECT [
+;		save?: yes
+;		values: object/get-values font
+;		blk: as red-block! values + FONT_OBJ_STATE
+;		if TYPE_OF(blk) <> TYPE_BLOCK [
+;			block/make-at blk 2
+;			none/make-in blk
+;			none/make-in blk
+;		]
 
-		value: block/rs-head blk
-		h-font: (as red-handle! value) + 1
-		if TYPE_OF(h-font) = TYPE_HANDLE [
-			return h-font/value
-		]
+;		value: block/rs-head blk
+;		h-font: (as red-handle! value) + 1
+;		if TYPE_OF(h-font) = TYPE_HANDLE [
+;			return h-font/value
+;		]
 
-		if TYPE_OF(value) = TYPE_NONE [make-font face font]	;-- make a GDI font
+;		if TYPE_OF(value) = TYPE_NONE [make-font face font]	;-- make a GDI font
 
-		int: as red-integer! values + FONT_OBJ_SIZE
-		len: either TYPE_OF(int) <> TYPE_INTEGER [10][int/value]
-		size: ConvertPointSizeToDIP(len)
+;		int: as red-integer! values + FONT_OBJ_SIZE
+;		len: either TYPE_OF(int) <> TYPE_INTEGER [10][int/value]
+;		size: ConvertPointSizeToDIP(len)
 
-		str: as red-string! values + FONT_OBJ_NAME
-		name: either TYPE_OF(str) = TYPE_STRING [
-			len: string/rs-length? str
-			if len > 31 [len: 31]
-			unicode/to-utf16-len str :len yes
-		][null]
+;		str: as red-string! values + FONT_OBJ_NAME
+;		name: either TYPE_OF(str) = TYPE_STRING [
+;			len: string/rs-length? str
+;			if len > 31 [len: 31]
+;			unicode/to-utf16-len str :len yes
+;		][null]
 		
-		w: as red-word! values + FONT_OBJ_STYLE
-		len: switch TYPE_OF(w) [
-			TYPE_BLOCK [
-				blk: as red-block! w
-				w: as red-word! block/rs-head blk
-				len: block/rs-length? blk
-			]
-			TYPE_WORD  [1]
-			default	   [0]
-		]
+;		w: as red-word! values + FONT_OBJ_STYLE
+;		len: switch TYPE_OF(w) [
+;			TYPE_BLOCK [
+;				blk: as red-block! w
+;				w: as red-word! block/rs-head blk
+;				len: block/rs-length? blk
+;			]
+;			TYPE_WORD  [1]
+;			default	   [0]
+;		]
 
-		unless zero? len [
-			loop len [
-				sym: symbol/resolve w/symbol
-				case [
-					sym = _bold	 	 [weight:  700]
-					sym = _italic	 [style:	 2]
-					true			 [0]
-				]
-				w: w + 1
-			]
-		]
-	][
-		save?: no
-		int: as red-integer! #get system/view/fonts/size
-		str: as red-string!  #get system/view/fonts/system
-		size: ConvertPointSizeToDIP(int/value)
-		name: unicode/to-utf16 str
-	]
+;		unless zero? len [
+;			loop len [
+;				sym: symbol/resolve w/symbol
+;				case [
+;					sym = _bold	 	 [weight:  700]
+;					sym = _italic	 [style:	 2]
+;					true			 [0]
+;				]
+;				w: w + 1
+;			]
+;		]
+;	][
+;		save?: no
+;		int: as red-integer! #get system/view/fonts/size
+;		str: as red-string!  #get system/view/fonts/system
+;		size: ConvertPointSizeToDIP(int/value)
+;		name: unicode/to-utf16 str
+;	]
 
-	format: 0
-	factory: as IDWriteFactory dwrite-factory/vtbl
-	factory/CreateTextFormat dwrite-factory name 0 weight style 5 size dw-locale-name :format
-	if save? [handle/make-at as red-value! h-font format]
-	format
-]
+;	format: 0
+;	factory: as IDWriteFactory dwrite-factory/vtbl
+;	factory/CreateTextFormat dwrite-factory name 0 weight style 5 size dw-locale-name :format
+;	if save? [handle/make-at as red-value! h-font format]
+;	format
+;]
 
 set-text-format: func [
 	fmt		[this!]
@@ -222,7 +222,7 @@ set-line-spacing: func [
 	/local
 		IUnk			[IUnknown]
 		dw				[IDWriteFactory]
-		lay				[integer!]
+		lay				[com-ptr! value]
 		layout			[this!]
 		lineCount		[integer!]
 		maxBidiDepth	[integer!]
@@ -239,10 +239,10 @@ set-line-spacing: func [
 	type: TYPE_OF(int)
 	if all [type <> TYPE_INTEGER type <> TYPE_FLOAT][exit]
 
-	left: 73 lineCount: 0 lay: 0 
+	left: 73 lineCount: 0
 	dw: as IDWriteFactory dwrite-factory/vtbl
 	dw/CreateTextLayout dwrite-factory as c-string! :left 1 fmt FLT_MAX FLT_MAX :lay
-	layout: as this! lay
+	layout: lay/value
 	dl: as IDWriteTextLayout layout/vtbl
 	lm: as DWRITE_LINE_METRICS :left
 	dl/GetLineMetrics layout lm 1 :lineCount
@@ -263,7 +263,7 @@ create-text-layout: func [
 		dw	[IDWriteFactory]
 		w	[float32!]
 		h	[float32!]
-		lay	[integer!]
+		lay	[com-ptr! value]
 ][
 	len: -1
 	either TYPE_OF(text) = TYPE_STRING [
@@ -273,13 +273,13 @@ create-text-layout: func [
 		str: ""
 		len: 0
 	]
-	lay: 0
+
 	w: either zero? width  [FLT_MAX][as float32! width]
 	h: either zero? height [FLT_MAX][as float32! height]
 
 	dw: as IDWriteFactory dwrite-factory/vtbl
 	dw/CreateTextLayout dwrite-factory str len fmt w h :lay
-	as this! lay
+	lay/value
 ]
 
 render-target-lost?: func [

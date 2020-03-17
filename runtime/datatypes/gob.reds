@@ -207,8 +207,10 @@ gob: context [
 			tp		[red-tuple!]
 			blk		[red-block!]
 			str		[red-string!]
+			prop	[anim-property!]
 	][
 		sym: symbol/resolve word/symbol
+		prop: animation/check g value sym
 		case [
 			sym = facets/type	[
 				word: as red-word! value
@@ -264,12 +266,18 @@ gob: context [
 					g/draw: blk/node
 				]
 			]
+			sym = styles-ctx/transition [
+				if TYPE_OF(value) = TYPE_BLOCK [
+					parse-transition g as red-block! value
+				]
+			]
 			;sym = facets/opacity [
 			;	int: as red-integer! value
 			;	g/opacity: int/value
 			;]
 			true [return true]
 		]
+		if prop <> null [animation/set-property g prop sym yes]
 		false
 	]
 

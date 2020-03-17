@@ -31,6 +31,7 @@ child2: make gob! [
 			probe reduce [2 face/type event/offset event/flags]
 		]
 	]
+	draw: [box 20x20 80x80 10]
 ]
 
 child21: make gob! [
@@ -38,9 +39,11 @@ child21: make gob! [
 	actors: object [
 		on-over: func [face event][
 			probe reduce [21 face/type event/offset event/flags]
+			face/size: either find event/flags 'away [100x100][200x200]
 		]
 	]
-	draw: [box 20x20 80x80 10]
+	;-- transition: [<property> <duration> <timing-function> <delay>]
+	transition: [size 0.5 'ease-in]
 ]
 
 btn-styles-normal: object [
@@ -54,7 +57,7 @@ btn-styles-hover: object [
 ]
 
 child22: make gob! [
-	offset: 250x50 size: 100x38 color: 98.0.238
+	offset: 350x50 size: 100x38 color: 98.0.238
 	actors: object [
 		on-over: func [face event][
 			either find event/flags 'away [

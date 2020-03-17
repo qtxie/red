@@ -17,11 +17,7 @@ ui-manager: context [	;-- manage all the windows
 	hover-gob:		as gob! 0		;-- the gob under the mouse
 	capture-gob:	as gob! 0		;-- the gob being captured when mouse left-button down
 
-	init: func [
-		/local
-			v1	[node!]
-			s	[series!]
-	][
+	init: func [][
 		win-list: array/make 4 size? int-ptr!
 	]
 
@@ -33,6 +29,7 @@ ui-manager: context [	;-- manage all the windows
 			e	[ptr-ptr!]
 	][
 		collector/keep win-list
+		collector/keep animation/anim-list
 		s: as series! win-list/value
 		p: as ptr-ptr! s/offset
 		e: as ptr-ptr! s/tail
@@ -109,19 +106,20 @@ ui-manager: context [	;-- manage all the windows
 		s: as series! win-list/value
 		p: as ptr-ptr! s/offset
 		e: as ptr-ptr! s/tail
+		animation/run-all 18
 		while [p < e][
 			wm: as wm! p/value
 			if wm/flags and WIN_FLAG_INVISIBLE = 0 [
 				either wm/flags and WIN_RENDER_ALL = 0 [
 					draw-update wm/update-list	
 				][
-					print "Full Draw in "
+					;print "Full Draw in "
 					time-meter/start :tm
 					host/draw-begin wm
 					widgets/draw-gob wm/gob
 					host/draw-end wm
 					t: time-meter/elapse :tm
-					probe [t "ms"]
+					;probe [t "ms"]
 					wm/flags: wm/flags and (not WIN_RENDER_ALL)
 				]
 			]

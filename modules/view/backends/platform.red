@@ -489,6 +489,7 @@ system/view/platform: context [
 				GTK [#include %GTK/gui.reds]
 				custom [
 					#include %custom/styles.reds
+					#include %custom/animation.reds
 					#include %../../../runtime/datatypes/gob.reds
 					#include %custom/gui.reds
 					gob/init

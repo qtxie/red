@@ -36,6 +36,7 @@ init: func [
 ][
 	ui-manager/init
 	host/init
+	animation/init
 	collector/register as int-ptr! :on-gc-mark
 ]
 

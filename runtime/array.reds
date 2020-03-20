@@ -45,6 +45,13 @@ array: context [
 		s/offset: s/tail
 	]
 
+	copy: func [
+		node	[node!]
+		return: [node!]
+	][
+		copy-series as series! node/value
+	]
+
 	append-int: func [
 		node	[node!]
 		val		[integer!]

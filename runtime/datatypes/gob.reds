@@ -13,8 +13,6 @@ Red/System [
 gob: context [
 	verbose: 0
 
-	sym-style:	-1
-
 	box: func [
 		val		[int-ptr!]
 		return:	[red-gob!]
@@ -494,6 +492,56 @@ gob: context [
 		SIGN_COMPARE_RESULT(value1/value value2/value)
 	]
 
+	clear: func [
+		gob		[red-gob!]
+		return:	[red-value!]
+		/local
+			s	 [series!]
+			size [integer!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "gob/clear"]]
+
+		;ownership/check as red-value! ser words/_clear null ser/head size
+		rs-gob/clear gob/value
+		;ownership/check as red-value! ser words/_cleared null ser/head 0
+		as red-value! gob
+	]
+
+	copy: func [
+		obj      [red-gob!]
+		new	  	 [red-gob!]
+		part-arg [red-value!]
+		deep?	 [logic!]
+		types	 [red-value!]
+		return:	 [red-gob!]
+		/local
+			ctx	  [red-context!]
+			nctx  [red-context!]
+			value [red-value!]
+			tail  [red-value!]
+			src	  [series!]
+			dst	  [series!]
+			node  [node!]
+			size  [integer!]
+			slots [integer!]
+			type  [integer!]
+			sym	  [red-word!]
+			w-ctx [node!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "gob/copy"]]
+		
+		if OPTION?(types) [--NOT_IMPLEMENTED--]
+
+		if OPTION?(part-arg) [
+			ERR_INVALID_REFINEMENT_ARG(refinements/_part part-arg)
+		]
+
+		new/header: TYPE_UNSET
+		new/value: rs-gob/copy obj/value
+		new/header: TYPE_GOB
+		new
+	]
+
 	insert: func [
 		gob		  [red-gob!]
 		val		  [red-gob!]
@@ -552,8 +600,8 @@ gob: context [
 			null			;at
 			null			;back
 			null			;change
-			null			;clear
-			null			;copy
+			:clear
+			:copy
 			null			;find
 			null			;head
 			null			;head?
@@ -588,7 +636,5 @@ gob: context [
 			null			;update
 			null			;write
 		]
-
-		sym-style:	symbol/make "style"
 	]
 ]

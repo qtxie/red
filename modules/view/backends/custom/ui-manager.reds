@@ -113,13 +113,12 @@ ui-manager: context [	;-- manage all the windows
 				either wm/flags and WIN_RENDER_ALL = 0 [
 					draw-update wm/update-list	
 				][
-					;print "Full Draw in "
 					time-meter/start :tm
 					host/draw-begin wm
 					widgets/draw-gob wm/gob
 					host/draw-end wm
 					t: time-meter/elapse :tm
-					;probe [t "ms"]
+					VIEW_MSG(["Full Draw in " t "ms"])
 					wm/flags: wm/flags and (not WIN_RENDER_ALL)
 				]
 			]

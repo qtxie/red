@@ -36,6 +36,7 @@ widgets: context [
 			s: as series! gob/children/value
 			p: as ptr-ptr! s/offset
 			e: as ptr-ptr! s/tail
+probe ["1 " p " " e]
 			while [p < e][
 				draw-gob as gob! p/value
 				p: p + 1

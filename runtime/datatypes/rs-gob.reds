@@ -89,6 +89,7 @@ Red/System [
 #define GOB_FLAG_ALL_OVER	00100000h
 #define GOB_FLAG_UPDATE		00200000h
 #define GOB_FLAG_TOP		00400000h
+#define GOB_FLAG_COW_STYLES	00800000h		;-- copy-on-write styles
 
 #define GOB_TYPE(gob)	[gob/flags and FFh]
 
@@ -180,7 +181,7 @@ gob!: alias struct! [				;-- try to keep size? gob! <= 64 bytes
 	flags		[integer!]			;-- type and states
 	box			[RECT_F! value]		;-- box = content size + padding + border width
 	parent		[gob!]				;-- parent gob
-	children	[node!]				;-- child gobs, red-vector!
+	children	[node!]				;-- child gobs, array of gobs
 	font		[int-ptr!]			;-- backend specific font handle
 	text		[node!]				;-- red-string node
 	draw-head	[integer!]			;-- head of the draw block
@@ -286,18 +287,34 @@ rs-gob: context [
 
 	;-- actions
 
+	clear: func [
+		gob		[gob!]
+	][
+		if gob/children <> null [array/clear gob/children]
+	]
+
+	copy: func [
+		gob		[gob!]
+		return: [gob!]
+		/local
+			g	[gob!]
+	][
+		g: as gob! allocate size? gob!
+		copy-memory as byte-ptr! g as byte-ptr! gob size? gob!
+		g/flags: g/flags or GOB_FLAG_COW_STYLES
+		if g/children <> null [g/children: array/copy g/children]
+		g
+	]
+
 	insert: func [
 		gob		[gob!]
 		child	[gob!]
 		append?	[logic!]
-		/local
-			v	[red-vector! value]
 	][
 		child/parent: gob
 		if null? gob/children [gob/children: array/make 4 size? int-ptr!]
-		v/node: gob/children
-		either append? [vector/rs-append-int :v as-integer child][
-			array/insert-ptr v/node as int-ptr! child 0
+		either append? [array/append-ptr gob/children as int-ptr! child][
+			array/insert-ptr gob/children as int-ptr! child 0
 		]
 	]
 

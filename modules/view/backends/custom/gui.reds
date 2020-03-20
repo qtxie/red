@@ -61,6 +61,50 @@ get-text-size: func [
 	pair/push 80 20
 ]
 
+get-flags: func [
+	field	[red-block!]
+	return: [integer!]									;-- return a bit-array of all flags
+	/local
+		word  [red-word!]
+		len	  [integer!]
+		sym	  [integer!]
+		flags [integer!]
+][
+	switch TYPE_OF(field) [
+		TYPE_BLOCK [
+			word: as red-word! block/rs-head field
+			len: block/rs-length? field
+			if zero? len [return 0]
+		]
+		TYPE_WORD [
+			word: as red-word! field
+			len: 1
+		]
+		default [return 0]
+	]
+	flags: 0
+	
+	loop len [
+		sym: symbol/resolve word/symbol
+		case [
+			sym = all-over	 [flags: flags or FACET_FLAGS_ALL_OVER]
+			sym = resize	 [flags: flags or FACET_FLAGS_RESIZE]
+			sym = no-title	 [flags: flags or FACET_FLAGS_NO_TITLE]
+			sym = no-border  [flags: flags or FACET_FLAGS_NO_BORDER]
+			sym = no-min	 [flags: flags or FACET_FLAGS_NO_MIN]
+			sym = no-max	 [flags: flags or FACET_FLAGS_NO_MAX]
+			sym = no-buttons [flags: flags or FACET_FLAGS_NO_BTNS]
+			sym = modal		 [flags: flags or FACET_FLAGS_MODAL]
+			sym = popup		 [flags: flags or FACET_FLAGS_POPUP]
+			sym = scrollable [flags: flags or FACET_FLAGS_SCROLLABLE]
+			sym = password	 [flags: flags or FACET_FLAGS_PASSWORD]
+			true			 [fire [TO_ERROR(script invalid-arg) word]]
+		]
+		word: word + 1
+	]
+	flags
+]
+
 face-handle?: func [
 	face	[red-object!]
 	return: [handle!]							;-- returns NULL if no handle
@@ -151,10 +195,57 @@ OS-make-view: func [
 	parent	[integer!]
 	return: [integer!]
 	/local
-		g	[red-gob!]
+		g		[red-gob!]
+		values	[red-value!]
+		type	[red-word!]
+		str		[red-string!]
+		tail	[red-string!]
+		offset	[red-pair!]
+		size	[red-pair!]
+		data	[red-block!]
+		int		[red-integer!]
+		img		[red-image!]
+		menu	[red-block!]
+		show?	[red-logic!]
+		open?	[red-logic!]
+		rate	[red-value!]
+		saved	[red-value!]
+		font	[red-object!]
+		flags	[integer!]
+		bits	[integer!]
+		sym		[integer!]
+		id		[integer!]
+		class	[c-string!]
+		caption [integer!]
+		len		[integer!]
+		obj		[integer!]
+		hWnd	[integer!]
+		flt		[float!]
 ][
-	g: as red-gob! face
-	as-integer host/make-window as gob! g/value as handle! parent
+	stack/mark-native words/_body
+
+	values: object/get-values face
+
+	type:	  as red-word!		values + FACE_OBJ_TYPE
+	str:	  as red-string!	values + FACE_OBJ_TEXT
+	offset:   as red-pair!		values + FACE_OBJ_OFFSET
+	size:	  as red-pair!		values + FACE_OBJ_SIZE
+	show?:	  as red-logic!		values + FACE_OBJ_VISIBLE?
+	open?:	  as red-logic!		values + FACE_OBJ_ENABLED?
+	data:	  as red-block!		values + FACE_OBJ_DATA
+	img:	  as red-image!		values + FACE_OBJ_IMAGE
+	menu:	  as red-block!		values + FACE_OBJ_MENU
+	font:	  as red-object!	values + FACE_OBJ_FONT
+	rate:						values + FACE_OBJ_RATE
+	g:		  as red-gob!		values + FACE_OBJ_GOB
+
+	bits: 	  get-flags as red-block! values + FACE_OBJ_FLAGS
+	sym: 	  symbol/resolve type/symbol
+
+	stack/unwind
+
+	if sym = window [host/make-window as gob! g/value as handle! parent]
+	as-integer g/value
 ]
 
 unlink-sub-obj: func [

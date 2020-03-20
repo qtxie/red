@@ -194,7 +194,7 @@ on-face-deep-change*: function ["Internal use only" owner word target action new
 			tab "forced?    :" forced?
 		]
 	]
-	if all [state word <> 'state word <> 'extra][
+	if all [state word <> 'state word <> 'extra word <> 'gob][
 		either any [
 			forced?
 			system/view/auto-sync?
@@ -384,6 +384,7 @@ face!: object [				;-- keep in sync with facet! enum
 	actors:		none
 	extra:		none		;-- for storing optional user data
 	draw:		none
+	#if config/GUI-engine = 'custom [gob: none]
 	
 	on-change*: function [word old new][
 		if debug-info? self [
@@ -395,7 +396,7 @@ face!: object [				;-- keep in sync with facet! enum
 				tab "new  :" type? :new
 			]
 		]
-		if all [word <> 'state word <> 'extra][
+		if all [word <> 'state word <> 'extra word <> 'gob][
 			all [
 				not empty? srs: system/reactivity/source
 				srs/1 = self
@@ -421,10 +422,14 @@ face!: object [				;-- keep in sync with facet! enum
 				if all [not same-pane? type = 'tab-panel self/state][
 					link-tabs-to-parent/init self
 				]
+				#if config/GUI-engine = 'custom [
+					clear self/gob
+					if block? :new [foreach f new [append self/gob f/gob]]
+				]
 			]
 			if all [not same-pane? any [series? :old object? :old]][modify old 'owned none]
 			
-			unless any [same-pane? find [font para edge actors extra] word][
+			unless any [same-pane? find [font para edge actors extra gob] word][
 				if any [series? :new object? :new][
 					modify new 'owned none				;@@ `new` may be owned by another container
 					modify new 'owned reduce [self word]
@@ -715,6 +720,22 @@ do-actor: function ["Internal Use Only" face [object! gob!] event [event! none!]
 	:result
 ]
 
+#if config/GUI-engine = 'custom [
+	init-face: func [
+		"set facets in face/gob"
+		face	[object!]
+		/local gob
+	][
+		gob: face/gob
+		gob/offset: face/offset
+		gob/size: face/size
+		gob/text: face/text
+		gob/draw: face/draw
+		gob/color: face/color
+		;gob/image: face/image
+	]
+]
+
 show: function [
 	"Display a new face or update it"
 	face [object! block! gob!] "Face object to display"
@@ -722,7 +743,6 @@ show: function [
 		parent [object!]  "Parent face to link to"
 	/force				  "For internal use only!"
 ][
-	probe "show"
 	if block? face [
 		foreach f face [
 			if word? f [f: get f]
@@ -750,6 +770,8 @@ show: function [
 		if face/state/2 <> 0 [system/view/platform/update-view face]
 	][
 		new?: yes
+
+		#if config/GUI-engine = 'custom [init-face face]
 		
 		if face/type <> 'screen [
 			if all [not force face/type <> 'window][
@@ -811,7 +833,9 @@ show: function [
 		do-safe [face/actors/on-created face none]		;@@ only called once
 	]
 	if all [new? face/type = 'window face/visible?][
+	probe "start show"
 		system/view/platform/show-window obj
+	probe "end show"
 	]
 ]
 
@@ -845,17 +869,15 @@ view: function [
 	;/modal					"Display a modal window (pop-up)"
 	/no-wait				"Return immediately - do not wait"
 ][
-	probe 1
 	unless system/view/screens [system/view/platform/init]
-probe 2
+
 	if block? spec [spec: either tight [layout/tight spec][layout spec]]
-probe spec/type
 	if spec/type <> 'window [cause-error 'script 'not-window []]
 	if options [set spec make object! opts]
 	if flags [spec/flags: either spec/flags [unique union to-block spec/flags to-block flgs][flgs]]
-	probe 3
-	;unless spec/text   [spec/text: "Red: untitled"]
-	;unless spec/offset [center-face spec]
+
+	unless spec/text   [spec/text: "Red: untitled"]
+	unless spec/offset [center-face spec]
 	show spec
 	
 	either no-wait [

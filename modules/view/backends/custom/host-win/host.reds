@@ -380,7 +380,6 @@ host: context [
 			ver   [red-tuple!]
 			int   [red-integer!]
 	][
-		probe "init ......."
 		process-id:		GetCurrentProcessId
 		hInstance:		GetModuleHandle 0
 
@@ -433,7 +432,6 @@ host: context [
 			w		[integer!]
 			h		[integer!]
 	][
-probe "make window"
 		flags: WS_CAPTION or WS_SYSMENU or WS_MINIMIZEBOX or WS_THICKFRAME
 		wsflags: 0
 		if win10? [wsflags: wsflags or WS_EX_NOREDIRECTIONBITMAP]
@@ -467,9 +465,14 @@ probe "make window"
 
 	show-window: func [
 		hWnd	[handle!]
+		/local
+			g	[gob!]
+			wm	[wm!]
 	][
-		ui-manager/active-win: as wm! GetWindowLongPtr hWnd GWLP_USERDATA
-		ShowWindow hWnd SW_SHOWDEFAULT
+		g: as gob! hWnd
+		wm: as wm! g/extra
+		ui-manager/active-win: wm
+		ShowWindow wm/hwnd SW_SHOWDEFAULT
 	]
 
 	draw-begin: func [
@@ -529,11 +532,15 @@ do-events: func [
 		msg?	[logic!]
 		run?	[logic!]
 		tm		[integer!]
+		mt		[time-meter! value]
+		t		[float32!]
 ][
 	msg?: no
 	run?: yes
 
 	while [run?][
+		;time-meter/start :mt
+		
 		loop 10 [
 			if 0 < PeekMessage :msg null 0 0 1 [
 				if msg/msg = 12h [run?: no]		;-- WM_QUIT
@@ -545,6 +552,9 @@ do-events: func [
 		]
 		tm: as-integer (as float32! 16.66) - ui-manager/draw-windows
 		if tm > 0 [io/do-events tm]
+
+		;t: time-meter/elapse :mt
+		;VIEW_MSG(["sleep " t "ms"])
 	]
 	msg?
 ]

@@ -1344,7 +1344,8 @@ object: context [
 					TYPE_FILE
 					TYPE_URL
 					TYPE_TAG
-					TYPE_EMAIL [
+					TYPE_EMAIL
+					TYPE_GOB [
 						actions/copy 
 							as red-series! value
 							value						;-- overwrite the value

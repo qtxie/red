@@ -13,7 +13,49 @@ Red [
 system/view/platform: context [
 
 	#system [
+
+		view-log-level: 3
+
+		#define VIEW_MSG(msg) [#if debug? = yes [if view-log-level > 0 [print-line msg]]]
+		#define VIEW_WARN(msg) [#if debug? = yes [if view-log-level > 1 [print-line msg]]]
+		#define VIEW_ERROR(msg) [#if debug? = yes [if view-log-level > 2 [print-line msg]]]
+
 		gui: context [
+		#either GUI-engine = 'custom [
+			#enum facet! [
+				FACE_OBJ_TYPE
+				FACE_OBJ_OFFSET
+				FACE_OBJ_SIZE
+				FACE_OBJ_TEXT
+				FACE_OBJ_IMAGE
+				FACE_OBJ_COLOR
+				FACE_OBJ_MENU
+				FACE_OBJ_DATA
+				FACE_OBJ_ENABLED?
+				FACE_OBJ_VISIBLE?
+				FACE_OBJ_SELECTED
+				FACE_OBJ_FLAGS
+				FACE_OBJ_OPTIONS
+				FACE_OBJ_PARENT
+				FACE_OBJ_PANE
+				FACE_OBJ_STATE
+				FACE_OBJ_RATE
+				FACE_OBJ_EDGE
+				FACE_OBJ_PARA
+				FACE_OBJ_FONT
+				FACE_OBJ_ACTORS
+				FACE_OBJ_EXTRA
+				FACE_OBJ_DRAW
+				FACE_OBJ_GOB
+				FACE_OBJ_ONCHANGE
+				FACE_OBJ_ONDEEPCHANGE
+				FACE_OBJ_EXT1
+				FACE_OBJ_EXT2
+				FACE_OBJ_EXT3
+				FACE_OBJ_EXT4
+				FACE_OBJ_EXT5
+			]
+		][
 			#enum facet! [
 				FACE_OBJ_TYPE
 				FACE_OBJ_OFFSET
@@ -46,6 +88,7 @@ system/view/platform: context [
 				FACE_OBJ_EXT4
 				FACE_OBJ_EXT5
 			]
+		]
 			
 			#enum facet-flag! [
 				FACET_FLAG_TYPE:		00000001h
@@ -71,6 +114,7 @@ system/view/platform: context [
 				FACET_FLAG_ACTOR:		00100000h
 				FACET_FLAG_EXTRA:		00200000h
 				FACET_FLAG_DRAW:		00400000h
+				FACET_FLAG_GOB:			00800000h
 			]
 			
 			#enum flags-flag! [

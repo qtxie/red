@@ -102,23 +102,24 @@ event: context [
 	][
 		word: as red-word! element
 		sym: symbol/resolve word/symbol
-		grp: evt/type >>> 16
+		grp: evt/type >>> 24
 
 		either value <> null [
 			if sym <> words/type [fire [TO_ERROR(script bad-path-set) path word]]
 			if TYPE_OF(value) <> TYPE_WORD [fire [TO_ERROR(script bad-path-set) path value]]
 			switch grp [
 				#if modules contains 'View [
-				EVT_CATEGORY_GUI [gui/set-event-type evt as red-word! value]
+				EVT_GROUP_GUI [gui/set-event-type evt as red-word! value]
 				]
-				EVT_CATEGORY_IO  [0]
+				EVT_GROUP_IO  [0]
 				default [assert 1 = 0]		;-- something is wrong
 			]
 			value
 		][
 			switch grp [
 				#if modules contains 'View [
-				EVT_CATEGORY_GUI [
+				EVT_GROUP_GUI
+				EVT_GROUP_GOB [
 					case [
 						sym = words/type	  [gui/get-event-type evt]
 						sym = words/face	  [gui/get-event-face evt]
@@ -138,7 +139,7 @@ event: context [
 						true 				  [fire [TO_ERROR(script invalid-path) path element] null]
 					]
 				]]
-				EVT_CATEGORY_IO [
+				EVT_GROUP_IO [
 					case [
 						sym = words/type	[io/get-event-type evt]
 						sym = words/port	[io/get-event-port evt]

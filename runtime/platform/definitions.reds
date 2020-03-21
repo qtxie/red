@@ -12,10 +12,18 @@ Red/System [
 
 ;=== Cross platform definitions ===
 
-#enum event-category! [
-	EVT_CATEGORY_GUI
-	EVT_CATEGORY_IO
+#enum event-group! [
+	EVT_GROUP_GUI
+	EVT_GROUP_GOB
+	EVT_GROUP_IO
 ]
+
+#define SET_EVENT_TYPE(evt category t) [
+	evt/type: category << 24 or t
+]
+
+#define GET_EVENT_GROUP(evt) [evt/type >>> 24]
+#define GET_EVENT_TYPE(evt) [evt/type and 00FFFFFFh]
 
 #define SOCK_STREAM		1				;-- stream socket
 #define SOCK_DGRAM		2				;-- datagram socket

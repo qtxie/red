@@ -390,7 +390,7 @@ system/view/platform: context [
 				evt		[red-event!]
 				return: [red-value!]
 			][
-				as red-value! switch evt/type [
+				as red-value! switch GET_EVENT_TYPE(evt) [
 					EVT_TIME		 [_time]
 					EVT_DRAWING		 [_drawing]
 					EVT_SCROLL		 [_scroll]

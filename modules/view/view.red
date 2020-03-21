@@ -651,14 +651,14 @@ system/view: context [
 	awake: function [event [event!] /with face /local result][	;@@ temporary until event:// is implemented
 		unless face [unless face: event/face [exit]]	;-- filter out unbound events
 		
-		;unless with [									;-- protect following code from recursion
-			;foreach handler handlers [
-			;	set/any 'result do-safe [handler face event]
-			;	either event? :result [event: result][if :result [return :result]]
-			;]
-			;set/any 'result capture-events face event	;-- event capturing
-			;if find [stop done] :result [return :result]
-		;]
+		unless with [									;-- protect following code from recursion
+			foreach handler handlers [
+				set/any 'result do-safe [handler face event]
+				either event? :result [event: result][if :result [return :result]]
+			]
+			set/any 'result capture-events face event	;-- event capturing
+			if find [stop done] :result [return :result]
+		]
 		
 		set/any 'result do-actor face event event/type
 		
@@ -673,7 +673,24 @@ system/view: context [
 		]	
 		:result
 	]
-	
+
+	do-actor-gob: function ["Internal Use Only" face [gob!] event [event! none!] /local result][
+		if all [
+			block? face/actors
+			act: select face/actors event/type
+		][
+			if debug-info? face [print ["calling gob actor:" name]]
+			set/any 'result do-safe [do [act face event]]	;-- compiler can't call act, hence DO
+		]
+		:result
+	]
+
+	awake-gob: function [event [event!] /with face /local result][	;@@ temporary until event:// is implemented
+		unless face [unless face: event/face [exit]]	;-- filter out unbound events
+		set/any 'result do-actor-gob face event
+		:result
+	]
+
 	capturing?: no										;-- enable capturing events (on-detect)
 	auto-sync?: yes										;-- refresh faces on changes automatically
 	debug?: 	no										;-- output verbose logs
@@ -708,7 +725,7 @@ do-safe: func ["Internal Use Only" code [block!] /local result][
 	get/any 'result
 ]
 
-do-actor: function ["Internal Use Only" face [object! gob!] event [event! none!] type [word!] /local result][
+do-actor: function ["Internal Use Only" face [object!] event [event! none!] type [word!] /local result][
 	if all [
 		object? face/actors
 		act: in face/actors name: select system/view/evt-names type

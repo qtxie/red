@@ -36,9 +36,15 @@ get-event-face: func [
 	return: [red-value!]
 	/local
 		gob-evt	[gob-event!]
+		grp		[integer!]
 ][
-	gob-evt: as gob-event! evt/msg
-	as red-value! gob/push gob-evt/gob
+	grp: GET_EVENT_GROUP(evt)
+	either grp = EVT_GROUP_GOB [
+		gob-evt: as gob-event! evt/msg
+		as red-value! gob/push gob-evt/gob
+	][
+		null
+	]
 ]
 
 get-event-offset: func [
@@ -105,16 +111,16 @@ make-event: func [
 		gui-evt	[red-event! value]
 ][
 	gui-evt/header: TYPE_EVENT
-	gui-evt/type:  evt
 	gui-evt/msg:   as byte-ptr! gob-evt
 	gui-evt/flags: flags
+	SET_EVENT_TYPE(gui-evt EVT_GROUP_GOB evt)
 
 	state: EVT_DISPATCH
 
 	stack/mark-try-all words/_anon
 	res: as red-word! stack/arguments
 	catch CATCH_ALL_EXCEPTIONS [
-		#call [system/view/awake :gui-evt]
+		#call [system/view/awake-gob :gui-evt]
 		stack/unwind
 	]
 	stack/adjust-post-try

@@ -281,7 +281,7 @@ collector: context [
 		if gob/text <> null [keep gob/text]
 		if gob/draw <> null [keep gob/draw]
 		if gob/image <> null [keep gob/image]
-		if gob/actors <> null [mark-context gob/actors/ctx]
+		if gob/actors <> null [mark-block gob/actors]
 	]
 	
 	mark-block-node: func [

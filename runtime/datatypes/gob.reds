@@ -237,9 +237,9 @@ gob: context [
 				g/backdrop: tp/array1
 			]
 			sym = facets/actors [
-				if TYPE_OF(value) = TYPE_OBJECT [
+				if TYPE_OF(value) = TYPE_BLOCK [
 					if null? g/actors [
-						g/actors: as red-object! allocate size? red-object!
+						g/actors: as red-block! allocate size? red-block!
 					]
 					copy-cell value as cell! g/actors
 				]

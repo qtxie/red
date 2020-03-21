@@ -9,8 +9,8 @@ window!: make face! [
 	type: 'window
 	gob: make gob! [
 		type: 'window offset: 50x50 size: 800x800
-		actors: object [
-			on-over: func [face event][
+		actors: reduce [
+			'over func [face event][
 				probe reduce [face/type event/offset event/flags]
 			]
 		]
@@ -21,8 +21,8 @@ base!: make face! [
 	type: 'base
 	gob: make gob! [
 		offset: 0x0 size: 100x100
-		actors: object [
-			on-over: func [face event][
+		actors: reduce [
+			'over func [face event][
 				probe reduce [face/type event/offset event/flags]
 			]
 		]

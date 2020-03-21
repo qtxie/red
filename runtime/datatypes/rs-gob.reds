@@ -188,9 +188,15 @@ gob!: alias struct! [				;-- try to keep size? gob! <= 64 bytes
 	draw		[node!]				;-- draw block node
 	backdrop	[integer!]			;-- background color
 	image		[node!]				;-- red-image node
-	actors		[red-object!]
+	actors		[red-block!]
 	styles		[gob-style!]
 	extra		[int-ptr!]			;-- extra data for each type
+	#if GUI-engine = 'custom [
+	face		[integer!]
+	value1		[integer!]
+	value2		[integer!]
+	value3		[integer!]
+	]
 ]
 
 gob-event!: alias struct! [

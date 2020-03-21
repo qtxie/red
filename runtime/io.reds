@@ -62,7 +62,7 @@ io: context [
 			evt		[red-event! value]
 	][
 		evt/header: TYPE_EVENT
-		evt/type: EVT_CATEGORY_IO << 16 or op
+		SET_EVENT_TYPE(evt EVT_GROUP_IO op)
 		evt/msg: as byte-ptr! msg
 
 		;-- call port/awake: func [event [event!]][]

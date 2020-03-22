@@ -489,7 +489,6 @@ host: context [
 			dc		[ID2D1DeviceContext]
 			clr		[D3DCOLORVALUE]
 			brush	[com-ptr! value]
-			m		[D2D_MATRIX_3X2_F value]
 	][
 		this: d2d-ctx
 		renderer/set-renderer wm/render
@@ -498,13 +497,8 @@ host: context [
 
 		dc: as ID2D1DeviceContext this/vtbl
 		dc/BeginDraw this
-		m/_11: as float32! 1.0
-		m/_12: as float32! 0.0
-		m/_21: as float32! 0.0
-		m/_22: as float32! 1.0
-		m/_31:  as float32! 0.0
-		m/_32:  as float32! 0.0
-		renderer/set-matrix :m
+		matrix2d/identity wm/matrix
+		renderer/set-matrix wm/matrix
 		clr: to-dx-color 00FFCC66h null
 		dc/Clear this clr
 	]

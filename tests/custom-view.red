@@ -11,7 +11,19 @@ window!: make face! [
 		type: 'window offset: 50x50 size: 800x800 
 		actors: reduce [
 			'over func [gob event][
-				probe reduce [gob/type event/offset event/flags]
+				probe reduce [gob/type gob/offset event/offset event/flags]
+			]
+		]
+	]
+]
+
+button!: make face! [
+	type: 'button
+	gob: make gob! [
+		offset: 0x0 size: 100x100
+		actors: reduce [
+			'over func [gob event][
+				gob/offset: gob/offset + 10x10
 			]
 		]
 	]
@@ -23,8 +35,13 @@ base!: make face! [
 		offset: 0x0 size: 100x100
 		actors: reduce [
 			'over func [gob event][
-				probe reduce [gob/type event/offset event/flags]
+				probe reduce [gob/type gob/text gob/offset event/offset event/flags]
 			]
+		]
+		styles: object [
+			border: [11 solid 0.0.228]
+			;border-radius: 5
+			;shadow: [0x0 2 0.0.0]
 		]
 	]
 ]
@@ -33,7 +50,7 @@ win: make window! [offset: 50x50 size: 800x800]
 
 win/pane: reduce [
 	child: make base! [
-		offset: 100x50 size: 100x100 color: 255.0.0
+		offset: 100x50 size: 100x100 color: 255.0.0 
 		actors: object [
 			on-over: func [face event][
 				probe reduce [1 "over" face/type event/offset event/flags]
@@ -63,7 +80,12 @@ win/pane: reduce [
 
 child2/pane: reduce [
 	child21: make base! [
-		offset: 100x50 size: 100x100 color: 0.222.0 text: "Hello Red"
+		offset: 100x50 size: 200x200 color: 0.222.0 
+		pane: reduce [
+			make button! [
+				offset: 100x100 size: 40x40
+			]
+		]
 		actors: object [
 			on-over: func [face event][
 				probe reduce [21 face/type event/offset event/flags]

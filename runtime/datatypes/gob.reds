@@ -121,15 +121,17 @@ gob: context [
 					sym = facets/parent [
 						handle/make-at ret 0
 					]
-					all [
-						sym = facets/text
-						g/text <> null
-					][
-						str: as red-string! ret
-						str/header: TYPE_STRING
-						str/head: 0
-						str/node: g/text
-						str/cache: null
+					sym = facets/text [
+						if g/text <> null [
+							str: as red-string! ret
+							str/header: TYPE_STRING
+							str/head: 0
+							str/node: g/text
+							str/cache: null
+						]
+					]
+					sym = facets/offset [
+						pair/make-at ret as-integer g/box/left as-integer g/box/top
 					]
 					sym = facets/color [0]
 					sym = facets/pane [
@@ -216,6 +218,8 @@ gob: context [
 			blk		[red-block!]
 			str		[red-string!]
 			prop	[anim-property!]
+			w		[float32!]
+			h		[float32!]
 	][
 		sym: symbol/resolve word/symbol
 		prop: animation/check g value sym
@@ -232,10 +236,12 @@ gob: context [
 			]
 			sym = facets/offset [
 				pair: as red-pair! value
+				w: g/box/right - g/box/left
+				h: g/box/bottom - g/box/top
 				g/box/left: as float32! pair/x
 				g/box/top: as float32! pair/y
-				g/box/right: g/box/left + g/box/right
-				g/box/bottom: g/box/top + g/box/bottom
+				g/box/right: g/box/left + w
+				g/box/bottom: g/box/top + h
 			]
 			sym = facets/size [
 				pair: as red-pair! value

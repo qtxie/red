@@ -40,4 +40,5 @@ wm!: alias struct! [
 	render		[renderer!]
 	focused		[gob!]			;-- focused gob in the window
 	update-list	[node!]
+	matrix		[D2D_MATRIX_3X2_F value]
 ]

@@ -115,7 +115,7 @@ ui-manager: context [	;-- manage all the windows
 				][
 					time-meter/start :tm
 					host/draw-begin wm
-					widgets/draw-gob wm/gob
+					widgets/draw-gob wm/gob wm/matrix
 					host/draw-end wm
 					t: time-meter/elapse :tm
 					VIEW_MSG(["Full Draw in " t "ms"])

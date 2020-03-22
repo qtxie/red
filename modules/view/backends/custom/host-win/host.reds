@@ -422,7 +422,7 @@ host: context [
 
 	make-window: func [
 		obj			[gob!]
-		parent		[handle!]
+		parent		[gob!]
 		return:		[handle!]
 		/local
 			rc		[RECT_STRUCT value]
@@ -431,6 +431,8 @@ host: context [
 			bits	[integer!]
 			w		[integer!]
 			h		[integer!]
+			wm		[wm!]
+			handle	[handle!]
 	][
 		flags: WS_CAPTION or WS_SYSMENU or WS_MINIMIZEBOX or WS_THICKFRAME
 		wsflags: 0
@@ -448,6 +450,11 @@ host: context [
 		w: rc/right - rc/left
 		h: rc/bottom - rc/top
 
+		either parent <> null [
+			wm: as wm! parent/extra
+			handle: wm/hwnd
+		][handle: null]
+
 		CreateWindowEx
 			wsflags
 			#u16 "RedHostWindow"
@@ -457,7 +464,7 @@ host: context [
 			logical-to-pixel obj/box/top
 			w
 			h
-			parent
+			handle
 			null
 			hInstance
 			as int-ptr! obj

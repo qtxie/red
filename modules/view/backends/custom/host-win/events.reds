@@ -77,11 +77,11 @@ RedWndProc: func [
 			mouse-flags: decode-down-flags wParam
 			mouse-x: pixel-to-logical x
 			mouse-y: pixel-to-logical y
-			do-mouse-move EVT_OVER wm/gob mouse-x mouse-y mouse-flags
+			do-mouse-move EVT_OVER wm/gob mouse-x mouse-y mouse-flags yes
 			return 0
 		]
 		WM_MOUSELEAVE [
-			send-mouse-event EVT_OVER wm/gob mouse-x mouse-y mouse-flags or EVT_FLAG_AWAY
+			send-mouse-event EVT_OVER wm/gob mouse-x mouse-y mouse-flags or EVT_FLAG_AWAY no
 			if hover-win = hWnd [
 				hover-win: null
 				ui-manager/hover-gob: null

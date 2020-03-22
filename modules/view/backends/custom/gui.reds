@@ -196,6 +196,7 @@ OS-make-view: func [
 	return: [integer!]
 	/local
 		g		[red-gob!]
+		gob		[gob!]
 		values	[red-value!]
 		type	[red-word!]
 		str		[red-string!]
@@ -244,8 +245,11 @@ OS-make-view: func [
 
 	stack/unwind
 
-	if sym = window [host/make-window as gob! g/value as handle! parent]
-	as-integer g/value
+	gob: as gob! g/value
+	if sym = window [host/make-window gob as gob! parent]
+	copy-cell as cell! face as cell! :gob/face
+	gob/parent: as gob! parent
+	as-integer gob
 ]
 
 unlink-sub-obj: func [

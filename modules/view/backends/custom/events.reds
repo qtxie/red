@@ -37,13 +37,16 @@ get-event-face: func [
 	/local
 		gob-evt	[gob-event!]
 		grp		[integer!]
+		g		[gob!]
 ][
 	grp: GET_EVENT_GROUP(evt)
+	gob-evt: as gob-event! evt/msg
 	either grp = EVT_GROUP_GOB [
-		gob-evt: as gob-event! evt/msg
 		as red-value! gob/push gob-evt/gob
 	][
-		null
+		g: gob-evt/gob
+		assert g/face <> 0
+		copy-cell as cell! :g/face stack/push*
 	]
 ]
 
@@ -102,6 +105,7 @@ make-event: func [
 	evt			[integer!]
 	gob-evt		[gob-event!]
 	flags		[integer!]
+	evt-grp		[integer!]
 	return:		[integer!]
 	/local
 		res		[red-word!]
@@ -113,14 +117,18 @@ make-event: func [
 	gui-evt/header: TYPE_EVENT
 	gui-evt/msg:   as byte-ptr! gob-evt
 	gui-evt/flags: flags
-	SET_EVENT_TYPE(gui-evt EVT_GROUP_GOB evt)
+	SET_EVENT_TYPE(gui-evt evt-grp evt)
 
 	state: EVT_DISPATCH
 
 	stack/mark-try-all words/_anon
 	res: as red-word! stack/arguments
 	catch CATCH_ALL_EXCEPTIONS [
-		#call [system/view/awake-gob :gui-evt]
+		either evt-grp = EVT_GROUP_GOB [
+			#call [system/view/awake-gob :gui-evt]
+		][
+			#call [system/view/awake :gui-evt]
+		]
 		stack/unwind
 	]
 	stack/adjust-post-try
@@ -128,7 +136,7 @@ make-event: func [
 
 	if TYPE_OF(res) = TYPE_WORD [
 		sym: symbol/resolve res/symbol
-		if sym = done [state: EVT_NO_DISPATCH]			;-- prevent other high-level events
+		if sym = done [state: EVT_NO_DISPATCH]		;-- pass event to gob
 	]
 	state
 ]
@@ -139,6 +147,7 @@ send-mouse-event: func [
 	x		[float32!]
 	y		[float32!]
 	flags	[integer!]
+	root?	[logic!]
 	return: [integer!]
 	/local
 		child	[gob!]
@@ -150,7 +159,12 @@ send-mouse-event: func [
 		g-evt/pt/x: x
 		g-evt/pt/y: y
 		g-evt/gob: obj
-		ret: make-event evt :g-evt flags
+		if 0 <> obj/face [		;-- root gob of each face!
+			ret: make-event evt :g-evt flags EVT_GROUP_GUI
+		]
+		if all [not root? ret = EVT_DISPATCH][
+			ret: make-event evt :g-evt flags EVT_GROUP_GOB
+		]
 	]
 	ret
 ]
@@ -182,6 +196,7 @@ do-mouse-move: func [
 	x		[float32!]
 	y		[float32!]
 	flags	[integer!]
+	root?	[logic!]
 	return: [integer!]
 	/local
 		child	[gob!]
@@ -191,13 +206,20 @@ do-mouse-move: func [
 	ret: EVT_DISPATCH
 
 	if null? ui-manager/hover-gob [					;-- mouse enter a new window
-		send-mouse-event evt obj x y flags
+		send-mouse-event evt obj x y flags no
 	]
 
 	child: rs-gob/find-child obj x y
 	either child <> null [
 		ui-manager/add-update obj
-		ret: do-mouse-move evt child x - child/box/left y - child/box/top flags
+		if all [
+			root?
+			child/flags and GOB_FLAG_ALL_OVER <> 0
+			EVT_NO_DISPATCH = send-mouse-event evt obj x y flags yes
+		][
+			return EVT_NO_DISPATCH
+		]
+		ret: do-mouse-move evt child x - child/box/left y - child/box/top flags no
 	][
 		hover: ui-manager/hover-gob
 		if hover <> obj [
@@ -209,9 +231,10 @@ do-mouse-move: func [
 						mouse-x
 						mouse-y
 						flags or EVT_FLAG_AWAY
+						no
 				]
 				if hover-changed? obj hover [
-					send-mouse-event evt obj x y flags
+					send-mouse-event evt obj x y flags no
 				]
 			]
 			ui-manager/hover-gob: obj
@@ -222,7 +245,7 @@ do-mouse-move: func [
 	if all [
 		obj/flags and GOB_FLAG_ALL_OVER <> 0
 		ret = EVT_DISPATCH 
-	][ret: send-mouse-event evt obj x y flags]
+	][ret: send-mouse-event evt obj x y flags no]
 	ret
 ]
 
@@ -238,14 +261,14 @@ do-mouse-press: func [
 ][
 	ret: EVT_DISPATCH
 	gb: ui-manager/hover-gob
-	if gb <> null [ret: send-mouse-event evt gb x y flags]
+	if gb <> null [ret: send-mouse-event evt gb x y flags no]
 	switch evt [
 		EVT_LEFT_DOWN [
 			ui-manager/capture-gob: gb
 		]
 		EVT_LEFT_UP [
 			if ui-manager/capture-gob = gb [
-				ret: send-mouse-event EVT_CLICK gb x y flags 
+				ret: send-mouse-event EVT_CLICK gb x y flags no
 			]
 		]
 		default []

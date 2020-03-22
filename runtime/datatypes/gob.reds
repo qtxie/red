@@ -88,6 +88,7 @@ gob: context [
 			child	[int-ptr!]
 			w		[red-word!]
 			int		[red-integer!]
+			str		[red-string!]
 			len		[integer!]
 			idx		[integer!]
 			sym		[integer!]
@@ -120,7 +121,16 @@ gob: context [
 					sym = facets/parent [
 						handle/make-at ret 0
 					]
-					sym = facets/text [0]
+					all [
+						sym = facets/text
+						g/text <> null
+					][
+						str: as red-string! ret
+						str/header: TYPE_STRING
+						str/head: 0
+						str/node: g/text
+						str/cache: null
+					]
 					sym = facets/color [0]
 					sym = facets/pane [
 						len: rs-gob/length? g

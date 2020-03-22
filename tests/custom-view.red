@@ -8,10 +8,10 @@ probe "start"
 window!: make face! [
 	type: 'window
 	gob: make gob! [
-		type: 'window offset: 50x50 size: 800x800
+		type: 'window offset: 50x50 size: 800x800 
 		actors: reduce [
-			'over func [face event][
-				probe reduce [face/type event/offset event/flags]
+			'over func [gob event][
+				probe reduce [gob/type event/offset event/flags]
 			]
 		]
 	]
@@ -22,8 +22,8 @@ base!: make face! [
 	gob: make gob! [
 		offset: 0x0 size: 100x100
 		actors: reduce [
-			'over func [face event][
-				probe reduce [face/type event/offset event/flags]
+			'over func [gob event][
+				probe reduce [gob/type event/offset event/flags]
 			]
 		]
 	]
@@ -75,7 +75,7 @@ child2/pane: reduce [
 
 win/actors: make object! [
 	on-over: func [face event][
-		probe reduce [face/type event/offset event/flags]
+		probe reduce ["face" face/type event/offset event/flags]
 	]
 ]
 

@@ -23,14 +23,10 @@ widgets: context [
 			e	[ptr-ptr!]
 			t	[integer!]
 			rc	[RECT_F! value]
-			ss	[gob-style!]
 			x	[float32!]
 			y	[float32!]
-			xx	[float32!]
-			yy	[float32!]
 			box	[RECT_F!]
 			m	[D2D_MATRIX_3X2_F value]
-			bd-w [integer!]
 	][
 		t: GOB_TYPE(gob)
 		switch t [
@@ -40,8 +36,7 @@ widgets: context [
 			default		[0]
 		]
 		if gob/children <> null [
-			ss: gob/styles
-			box: gob/box
+			box: gob/cbox
 			either t <> GOB_WINDOW [
 				x: box/left
 				y: box/top		
@@ -50,24 +45,14 @@ widgets: context [
 				y: F32_0
 			]
 
-			either ss <> null [
-				bd-w: ss/border/width
-				x: x + ss/padding/left + bd-w
-				y: y + ss/padding/top + bd-w
-				xx: ss/padding/right - bd-w
-				yy: ss/padding/bottom - bd-w
-			][
-				xx: F32_0
-				yy: F32_0
-			]
-
 			matrix2d/translate mat x y m false
 			renderer/set-matrix m
 
 			rc/left: F32_0
 			rc/top: F32_0
-			rc/right: box/right - x - xx
-			rc/bottom: box/bottom - y - yy
+			rc/right: box/right - box/left
+			rc/bottom: box/bottom - box/top
+			probe [x " " y " " rc/right " " rc/bottom]
 			renderer/push-clip-rect :rc
 			s: as series! gob/children/value
 			p: as ptr-ptr! s/offset

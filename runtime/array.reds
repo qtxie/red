@@ -89,7 +89,7 @@ array: context [
 
 	pick-int: func [
 		node		[node!]
-		idx			[integer!]		;-- 1-based index
+		idx			[integer!]		;-- 0-based index
 		return:		[integer!]
 		/local
 			s		[series!]
@@ -97,7 +97,8 @@ array: context [
 	][
 		s: as series! node/value
 		p: as int-ptr! s/offset
-		assert p + idx - 1 < as int-ptr! s/tail
+		assert p + idx < as int-ptr! s/tail
+		idx: idx + 1
 		p/idx
 	]
 
@@ -143,22 +144,22 @@ array: context [
 
 	pick-ptr: func [
 		node		[node!]
-		idx			[integer!]		;-- 1-based index
-		return:		[node!]
+		idx			[integer!]		;-- 0-based index
+		return:		[int-ptr!]
 		/local
 			s		[series!]
 			p		[ptr-ptr!]
 	][
 		s: as series! node/value
 		p: as ptr-ptr! s/offset
-		p: p + idx - 1
+		p: p + idx
 		assert p < as ptr-ptr! s/tail
 		p/value
 	]
 
 	poke-ptr: func [
 		node		[node!]
-		idx			[integer!]		;-- 1-based index
+		idx			[integer!]		;-- 0-based index
 		val			[int-ptr!]
 		/local
 			s		[series!]
@@ -166,7 +167,7 @@ array: context [
 	][
 		s: as series! node/value
 		p: as ptr-ptr! s/offset
-		p: p + idx - 1
+		p: p + idx
 		assert p < as ptr-ptr! s/tail
 		p/value: val
 	]

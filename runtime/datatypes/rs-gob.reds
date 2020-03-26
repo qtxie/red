@@ -177,9 +177,10 @@ gob-style!: alias struct! [
 	shadow		[gob-style-shadow!]
 ]
 
-gob!: alias struct! [				;-- try to keep size? gob! <= 64 bytes
+gob!: alias struct! [				;-- size: 80 bytes, 96 bytes with face slot
 	flags		[integer!]			;-- type and states
-	box			[RECT_F! value]		;-- box = content size + padding + border width
+	box			[RECT_F! value]		;-- box = content box + padding + border width
+	cbox		[RECT_F! value]		;-- content box 
 	parent		[gob!]				;-- parent gob
 	children	[node!]				;-- child gobs, array of gobs
 	font		[int-ptr!]			;-- backend specific font handle
@@ -222,44 +223,30 @@ rs-gob: context [
 		gob/flags and flag <> 0
 	]
 
-	update-real-size: func [
+	update-content-box: func [
 		gob		[gob!]
 		/local
 			ss	[gob-style!]
-			x	[float32!]
-			y	[float32!]
 			box [RECT_F!]
+			cbox [RECT_F!]
+			bd-w [float32!]
 	][
 		ss: gob/styles
 		;-- calc real size
-		if ss <> null [
-			box: gob/box
-			x: as float32! (ss/border/width * 2 + ss/padding/left + ss/padding/right)
-			y: as float32! (ss/border/width * 2 + ss/padding/top + ss/padding/bottom)
-			box/right: box/right + x
-			box/bottom: box/bottom + y
-		]
-	]
-
-	get-content-size: func [
-		gob		[gob!]
-		sz		[point!]
-		/local
-			ss	[gob-style!]
-			x	[float32!]
-			y	[float32!]
-			box [RECT_F!]
-	][
-		ss: gob/styles
-		either ss <> null [
-			x: as float32! (ss/border/width * 2 + ss/padding/left + ss/padding/right)
-			y: as float32! (ss/border/width * 2 + ss/padding/top + ss/padding/bottom)
+		box: gob/box
+		cbox: gob/cbox
+		either null? ss [
+			cbox/left: box/left
+			cbox/right: box/right
+			cbox/top: box/top
+			cbox/bottom: box/bottom
 		][
-			x: as float32! 0.0
-			y: as float32! 0.0
+			bd-w: as float32! ss/border/width
+			cbox/left: box/left + bd-w + ss/padding/left
+			cbox/right: box/right - bd-w - ss/padding/right
+			cbox/top: box/top + bd-w + ss/padding/top
+			cbox/bottom: box/bottom - bd-w - ss/padding/bottom 
 		]
-		sz/x: gob/box/right - gob/box/left - x
-		sz/y: gob/box/bottom - gob/box/top - y
 	]
 
 	find-child: func [

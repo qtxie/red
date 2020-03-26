@@ -12,13 +12,14 @@ Red/System [
 
 ui-manager: context [	;-- manage all the windows
 
-	win-list:		as node! 0
 	active-win:		as wm! 0
 	hover-gob:		as gob! 0		;-- the gob under the mouse
-	capture-gob:	as gob! 0		;-- the gob being captured when mouse left-button down
+	captured:		as node! 0
+	win-list:		as node! 0
 
 	init: func [][
 		win-list: array/make 4 size? int-ptr!
+		captured: array/make 16 size? int-ptr!
 	]
 
 	on-gc-mark: func [
@@ -29,6 +30,7 @@ ui-manager: context [	;-- manage all the windows
 			e	[ptr-ptr!]
 	][
 		collector/keep win-list
+		collector/keep captured
 		collector/keep animation/anim-list
 		s: as series! win-list/value
 		p: as ptr-ptr! s/offset
@@ -122,6 +124,7 @@ ui-manager: context [	;-- manage all the windows
 					wm/flags: wm/flags and (not WIN_RENDER_ALL)
 				]
 			]
+			array/clear wm/update-list
 			p: p + 1
 		]
 		t

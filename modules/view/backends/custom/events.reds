@@ -211,7 +211,7 @@ do-mouse-move: func [
 
 	child: rs-gob/find-child obj x y
 	either child <> null [
-		ui-manager/add-update obj
+		;ui-manager/add-update obj
 		if all [
 			root?
 			child/flags and GOB_FLAG_ALL_OVER <> 0
@@ -219,7 +219,7 @@ do-mouse-move: func [
 		][
 			return EVT_NO_DISPATCH
 		]
-		ret: do-mouse-move evt child x - child/box/left y - child/box/top flags no
+		ret: do-mouse-move evt child x - child/cbox/left y - child/cbox/top flags no
 	][
 		hover: ui-manager/hover-gob
 		if hover <> obj [
@@ -249,29 +249,52 @@ do-mouse-move: func [
 	ret
 ]
 
-do-mouse-press: func [
+_do-mouse-press: func [
 	evt		[integer!]
-	root	[gob!]
+	obj		[gob!]
 	x		[float32!]
 	y		[float32!]
 	flags	[integer!]
+	return: [integer!]		;-- high-word: return value of click event
 	/local
 		gb	[gob!]
-		ret [integer!]
+		r0	[integer!]
+		r1	[integer!]
+		r2	[integer!]
 ][
-	ret: EVT_DISPATCH
-	gb: ui-manager/hover-gob
-	if gb <> null [ret: send-mouse-event evt gb x y flags no]
+	r0: EVT_DISPATCH
+
+	gb: rs-gob/find-child obj x y
+	if gb <> null [
+		r0: _do-mouse-press evt gb x - gb/cbox/left y - gb/cbox/top flags
+	]
+	if r0 and FFFFh = EVT_DISPATCH [
+		r1: send-mouse-event evt obj x y flags no
+	]
 	switch evt [
 		EVT_LEFT_DOWN [
-			ui-manager/capture-gob: gb
+			array/append-ptr ui-manager/captured as int-ptr! obj
 		]
 		EVT_LEFT_UP [
-			if ui-manager/capture-gob = gb [
-				ret: send-mouse-event EVT_CLICK gb x y flags no
+			if all [
+				r0 >>> 16 = EVT_DISPATCH
+				-1 <> array/find-ptr ui-manager/captured as int-ptr! obj
+			][
+				r2: send-mouse-event EVT_CLICK obj x y flags no
 			]
 		]
-		default []
+		default [0]
 	]
-	ret
+	r2 << 16 or r1
+]
+
+do-mouse-press: func [
+	evt		[integer!]
+	obj		[gob!]
+	x		[float32!]
+	y		[float32!]
+	flags	[integer!]
+][
+	_do-mouse-press evt obj x y flags
+	if evt = EVT_LEFT_UP [array/clear ui-manager/captured]
 ]

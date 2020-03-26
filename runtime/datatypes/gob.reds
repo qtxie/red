@@ -322,6 +322,7 @@ gob: context [
 			]
 			default [error?: yes]
 		]
+		rs-gob/update-content-box g
 		ui-manager/redraw
 		if error? [fire [TO_ERROR(script invalid-path) path element]]
 		value
@@ -427,7 +428,7 @@ gob: context [
 			spec/head: n + 1
 		]
 		spec/head: saved
-		rs-gob/update-real-size g
+		rs-gob/update-content-box g
 		g
 	]
 

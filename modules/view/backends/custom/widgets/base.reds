@@ -15,6 +15,7 @@ draw-base: func [
 	/local
 		ss		[gob-style!]
 		box		[RECT_F!]
+		cbox	[RECT_F!]
 		rc		[ROUNDED_RECT_F! value]
 		bd-w	[float32!]
 		n		[float32!]
@@ -108,22 +109,14 @@ draw-base: func [
 	;-- 6. draw draw block
 	if gob/draw <> null [
 		unless shadow? [renderer/get-matrix :mat]
-		x: box/left + mat/_31
-		y: box/top + mat/_32
-		either ss <> null [
-			x: x + bd-w + ss/padding/left
-			y: y + bd-w + ss/padding/top
-			w: bd-w * 2 + ss/padding/left + ss/padding/right
-			h: bd-w * 2 + ss/padding/top + ss/padding/bottom
-		][
-			w: as float32! 0.0
-			h: as float32! 0.0
-		]
+		cbox: gob/cbox
+		x: cbox/left + mat/_31
+		y: cbox/top + mat/_32
 		renderer/set-tranlation x y
 		rc/left: as float32! 0.0
 		rc/top: as float32! 0.0
-		rc/right: box/right - box/left - w
-		rc/bottom: box/bottom - box/top - h
+		rc/right: cbox/right - cbox/left
+		rc/bottom: cbox/bottom - cbox/top
 		renderer/push-clip-rect as RECT_F! :rc
 		blk/header: TYPE_BLOCK
 		blk/head: gob/draw-head

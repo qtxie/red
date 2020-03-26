@@ -39,7 +39,7 @@ base!: make face! [
 			]
 		]
 		styles: object [
-			border: [11 solid 0.0.228]
+			border: [10 solid 0.0.228]
 			;border-radius: 5
 			;shadow: [0x0 2 0.0.0]
 		]
@@ -91,13 +91,31 @@ child2/pane: reduce [
 				probe reduce [21 face/type event/offset event/flags]
 				face/size: either find event/flags 'away [100x100][200x200]
 			]
+			on-up: func [face event][
+				probe reduce [21 "mouse up" face/type event/offset event/flags]
+			]
+			on-down: func [face event][
+				probe reduce [21 "mouse down" face/type event/offset event/flags]
+			]
+			on-click: func [face event][
+				probe reduce [21 "mouse click" face/type event/offset event/flags]
+			]
 		]
 	]
 ]
 
 win/actors: make object! [
 	on-over: func [face event][
-		probe reduce ["face" face/type event/offset event/flags]
+		probe reduce ["win" face/type event/offset event/flags]
+	]
+	on-up: func [face event][
+		probe reduce ["win" "mouse up" face/type event/offset event/flags]
+	]
+	on-down: func [face event][
+		probe reduce ["win" "mouse down" face/type event/offset event/flags]
+	]
+	on-click: func [face event][
+		probe reduce ["win" "mouse click" face/type event/offset event/flags]
 	]
 ]
 

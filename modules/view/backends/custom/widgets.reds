@@ -46,14 +46,14 @@ widgets: context [
 			]
 
 			matrix2d/translate mat x y m false
-			renderer/set-matrix m
+			gfx/set-matrix m
 
 			rc/left: F32_0
 			rc/top: F32_0
 			rc/right: box/right - box/left
 			rc/bottom: box/bottom - box/top
 			probe [x " " y " " rc/right " " rc/bottom]
-			renderer/push-clip-rect :rc
+			gfx/push-clip-rect :rc
 			s: as series! gob/children/value
 			p: as ptr-ptr! s/offset
 			e: as ptr-ptr! s/tail
@@ -61,7 +61,7 @@ widgets: context [
 				draw-gob as gob! p/value m
 				p: p + 1
 			]
-			renderer/pop-clip-rect
+			gfx/pop-clip-rect
 		]
 	]
 ]

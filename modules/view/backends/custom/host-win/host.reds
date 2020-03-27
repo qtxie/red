@@ -11,7 +11,7 @@ Red/System [
 ]
 
 #include %direct2d.reds
-#include %renderer.reds
+#include %gfx.reds
 #include %draw.reds
 #include %text-box.reds
 
@@ -103,7 +103,7 @@ host: context [
 
 		if win8+? [create-dcomp rt hWnd]
 
-		renderer/init d2d-ctx
+		gfx/init d2d-ctx
 		rt
 	]
 
@@ -314,14 +314,14 @@ host: context [
 			brush	[com-ptr! value]
 	][
 		this: d2d-ctx
-		renderer/set-renderer wm/render
-		renderer/set-target wm/render/bitmap
+		gfx/set-renderer wm/render
+		gfx/set-target wm/render/bitmap
 		current-rt: wm/render
 
 		dc: as ID2D1DeviceContext this/vtbl
 		dc/BeginDraw this
 		matrix2d/identity wm/matrix
-		renderer/set-matrix wm/matrix
+		gfx/set-matrix wm/matrix
 		clr: to-dx-color 00FFCC66h null
 		dc/Clear this clr
 	]

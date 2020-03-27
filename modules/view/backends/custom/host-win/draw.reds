@@ -191,8 +191,8 @@ draw-begin: func [
 	ctx/hwnd:		hWnd
 	update-pen-style ctx
 
-	this: renderer/_this
-	dc: renderer/_ctx
+	this: gfx/_this
+	dc: gfx/_ctx
 
 	if hWnd = null [
 		wic-bmp: OS-image/get-wicbitmap img

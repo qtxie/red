@@ -48,14 +48,14 @@ draw-base: func [
 		n: dpi-value / as float32! 96.0
 		w: box/right - box/left
 		h: box/bottom - box/top
-		bmp: renderer/create-bitmap
+		bmp: gfx/create-bitmap
 				as-integer w + (as float32! 1.0) * n
 				as-integer h + (as float32! 1.0) * n
 
-		old: renderer/get-target		;-- save old target
-		renderer/set-target bmp
-		renderer/get-matrix :mat
-		renderer/reset-matrix
+		old: gfx/get-target		;-- save old target
+		gfx/set-target bmp
+		gfx/get-matrix :mat
+		gfx/reset-matrix
 
 		rc/left: as float32! 0.0
 		rc/top:  as float32! 0.0
@@ -82,17 +82,17 @@ draw-base: func [
 	either round? [
 		rc/radiusX: ss/radius
 		rc/radiusY: ss/radius
-		renderer/fill-rounded-box :rc gob/backdrop
-	][renderer/fill-box box gob/backdrop]
+		gfx/fill-rounded-box :rc gob/backdrop
+	][gfx/fill-box box gob/backdrop]
 
 	;-- 3. draw background image
 
 	;-- 4. draw border
 	if border? [
 		either round? [
-			renderer/draw-rounded-box :rc bd-w ss/border/color
+			gfx/draw-rounded-box :rc bd-w ss/border/color
 		][
-			renderer/draw-box as RECT_F! :rc bd-w ss/border/color
+			gfx/draw-box as RECT_F! :rc bd-w ss/border/color
 		]
 	]
 
@@ -103,34 +103,34 @@ draw-base: func [
 		str/head: 0
 		str/node: gob/text
 		str/cache: null
-		renderer/draw-text box str ss
+		gfx/draw-text box str ss
 	]
 
 	;-- 6. draw draw block
 	if gob/draw <> null [
-		unless shadow? [renderer/get-matrix :mat]
+		unless shadow? [gfx/get-matrix :mat]
 		cbox: gob/cbox
 		x: cbox/left + mat/_31
 		y: cbox/top + mat/_32
-		renderer/set-tranlation x y
+		gfx/set-tranlation x y
 		rc/left: as float32! 0.0
 		rc/top: as float32! 0.0
 		rc/right: cbox/right - cbox/left
 		rc/bottom: cbox/bottom - cbox/top
-		renderer/push-clip-rect as RECT_F! :rc
+		gfx/push-clip-rect as RECT_F! :rc
 		blk/header: TYPE_BLOCK
 		blk/head: gob/draw-head
 		blk/node: gob/draw
 		do-draw as int-ptr! gob null blk no yes yes yes
-		renderer/pop-clip-rect
-		unless shadow? [renderer/set-matrix :mat]
+		gfx/pop-clip-rect
+		unless shadow? [gfx/set-matrix :mat]
 	]
 
 	if shadow? [
-		renderer/flush
-		renderer/set-target old
-		renderer/set-matrix :mat
-		renderer/draw-shadow bmp gob/box ss/shadow
+		gfx/flush
+		gfx/set-target old
+		gfx/set-matrix :mat
+		gfx/draw-shadow bmp gob/box ss/shadow
 	]
 ]
 

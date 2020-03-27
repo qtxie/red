@@ -1,7 +1,7 @@
 Red/System [
-	Title:	"GOB Renderer"
+	Title:	"Drawing functions"
 	Author: "Xie Qingtian"
-	File: 	%renderer.reds
+	File: 	%gfx.reds
 	Tabs: 	4
 	Rights: "Copyright (C) 2019 Red Foundation. All rights reserved."
 	License: {
@@ -12,7 +12,7 @@ Red/System [
 
 #define GAUSSIAN_SCALE_FACTOR 1.87997120597325
 
-renderer: context [
+gfx: context [
 	_pen:	as this! 0		;-- stroke/text color
 	_brush: as this! 0		;-- fill color
 	_target: as this! 0

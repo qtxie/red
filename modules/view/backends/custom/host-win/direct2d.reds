@@ -19,6 +19,9 @@ dxgi-device:	as this! 0
 dxgi-adapter:	as this! 0
 dxgi-factory:	as this! 0
 dw-locale-name: as c-string! 0
+dpi-value:		as float32! 96.0
+dpi-x:			as float32! 0.0
+dpi-y:			as float32! 0.0
 
 pfnDCompositionCreateDevice2: as int-ptr! 0
 
@@ -309,8 +312,8 @@ create-d2d-bitmap: func [
 ][
 	props/format: 87
 	props/alphaMode: 1
-	props/dpiX: host/dpi-x
-	props/dpiY: host/dpi-y
+	props/dpiX: dpi-x
+	props/dpiY: dpi-y
 	props/options: options
 	props/colorContext: null
 
@@ -319,4 +322,261 @@ create-d2d-bitmap: func [
 	dc: as ID2D1DeviceContext this/vtbl
 	dc/CreateBitmap2 this sz null 0 props :bitmap
 	as this! bitmap/value
+]
+
+create-dcomp: func [
+	target			[renderer!]
+	hWnd			[handle!]
+	/local
+		dev			[integer!]
+		d2d-dc		[ID2D1DeviceContext]
+		d2d-device	[this!]
+		hr			[integer!]
+		unk			[IUnknown]
+		dcomp-dev	[IDCompositionDevice]
+		dcomp		[IDCompositionTarget]
+		this		[this!]
+		tg			[this!]
+		visual		[IDCompositionVisual]
+		DCompositionCreateDevice2 [DCompositionCreateDevice2!]
+][
+	dev: 0
+	d2d-dc: as ID2D1DeviceContext d2d-ctx/vtbl
+	d2d-dc/GetDevice d2d-ctx :dev
+	d2d-device: as this! dev
+	DCompositionCreateDevice2: as DCompositionCreateDevice2! pfnDCompositionCreateDevice2
+	hr: DCompositionCreateDevice2 d2d-device IID_IDCompositionDevice :dev
+	COM_SAFE_RELEASE(unk d2d-device)
+	assert hr = 0
+
+	this: as this! dev
+	target/dcomp-device: this
+
+	dcomp-dev: as IDCompositionDevice this/vtbl
+	hr: dcomp-dev/CreateTargetForHwnd this hWnd yes :dev
+	assert zero? hr
+	tg: as this! dev
+	target/dcomp-target: tg
+
+	hr: dcomp-dev/CreateVisual this :dev
+	assert zero? hr
+	this: as this! dev
+	target/dcomp-visual: this
+
+	visual: as IDCompositionVisual this/vtbl
+	visual/SetContent this target/swapchain
+
+	dcomp: as IDCompositionTarget tg/vtbl
+	hr: dcomp/SetRoot tg this
+	assert zero? hr
+	hr: dcomp-dev/Commit target/dcomp-device
+	assert zero? hr
+]
+
+DX-init: func [
+	/local
+		str					[red-string!]
+		hr					[integer!]
+		factory 			[com-ptr! value]
+		dll					[handle!]
+		options				[integer!]
+		DWriteCreateFactory [DWriteCreateFactory!]
+		GetUserDefaultLocaleName [GetUserDefaultLocaleName!]
+][
+	dll: LoadLibraryA "DWrite.dll"
+	if null? dll [exit]
+	DWriteCreateFactory: as DWriteCreateFactory! GetProcAddress dll "DWriteCreateFactory"
+	dll: LoadLibraryA "kernel32.dll"
+	GetUserDefaultLocaleName: as GetUserDefaultLocaleName! GetProcAddress dll "GetUserDefaultLocaleName"
+	dw-locale-name: as c-string! allocate 85
+	GetUserDefaultLocaleName dw-locale-name 85
+
+	;-- create D2D factory
+	options: 0													;-- debugLevel
+	hr: D2D1CreateFactory 0 IID_ID2D1Factory1 :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
+	assert zero? hr
+	d2d-factory: as this! factory/value
+
+	;-- create DWrite factory
+	hr: DWriteCreateFactory 0 IID_IDWriteFactory :factory		;-- DWRITE_FACTORY_TYPE_SHARED: 0
+	assert zero? hr
+	dwrite-factory: as this! factory/value
+	str: string/rs-make-at ALLOC_TAIL(root) 1024
+	dwrite-str-cache: str/node
+
+	DX-create-dev
+]
+
+DX-create-buffer: func [
+	rt			[renderer!]
+	swapchain	[this!]
+	/local
+		sc		[IDXGISwapChain1]
+		this	[this!]
+		hr		[integer!]
+		buf		[integer!]
+		props	[D2D1_BITMAP_PROPERTIES1 value]
+		bmp		[integer!]
+		d2d		[ID2D1DeviceContext]
+		unk		[IUnknown]
+][
+	;-- get back buffer from the swap chain
+	this: as this! swapchain
+	sc: as IDXGISwapChain1 this/vtbl
+	buf: 0
+	hr: sc/GetBuffer this 0 IID_IDXGISurface :buf
+	assert zero? hr
+
+	;-- create a bitmap from the buffer
+	props/format: 87		;-- DXGI_FORMAT_B8G8R8A8_UNORM
+	props/alphaMode: 1		;-- D2D1_ALPHA_MODE_PREMULTIPLIED
+	props/dpiX: dpi-x
+	props/dpiY: dpi-y
+	props/options: 3		;-- D2D1_BITMAP_OPTIONS_TARGET or D2D1_BITMAP_OPTIONS_CANNOT_DRAW
+	props/colorContext: null
+	bmp: 0
+	d2d: as ID2D1DeviceContext d2d-ctx/vtbl
+	d2d/setDpi d2d-ctx dpi-x dpi-y
+	hr: d2d/CreateBitmapFromDxgiSurface d2d-ctx as int-ptr! buf props :bmp
+	assert hr = 0
+	
+	rt/dc: d2d-ctx
+	rt/swapchain: swapchain
+	rt/bitmap: as this! bmp
+
+	COM_SAFE_RELEASE_OBJ(unk buf)
+]
+
+DX-resize-buffer: func [
+	rt				[renderer!]
+	width			[uint!]
+	height			[uint!]
+	/local
+		unk			[IUnknown]
+		this		[this!]
+		sc			[IDXGISwapChain1]
+		hr			[integer!]
+][
+	COM_SAFE_RELEASE(unk rt/bitmap)
+
+	this: rt/swapchain
+	sc: as IDXGISwapChain1 this/vtbl
+	hr: sc/ResizeBuffers this 0 width height 87 0
+	if hr <> 0 [probe "resizing failed" exit]
+
+	DX-create-buffer rt this
+]
+
+DX-create-dev: func [
+	/local
+		factory 			[com-ptr! value]
+		d2d					[ID2D1Factory]
+		d3d					[ID3D11Device]
+		d2d-dev				[ID2D1Device]
+		dxgi				[IDXGIDevice1]
+		adapter				[IDXGIAdapter]
+		ctx					[com-ptr! value]
+		unk					[IUnknown]
+		d2d-device			[this!]
+		hr					[integer!]
+		dll					[handle!]
+][
+	if host/win8+? [
+		dll: LoadLibraryA "dcomp.dll"
+		pfnDCompositionCreateDevice2: GetProcAddress dll "DCompositionCreateDevice2"
+	]
+
+	hr: D3D11CreateDevice
+		null
+		1		;-- D3D_DRIVER_TYPE_HARDWARE
+		null
+		33		;-- D3D11_CREATE_DEVICE_BGRA_SUPPORT or D3D11_CREATE_DEVICE_SINGLETHREADED
+		null
+		0
+		7		;-- D3D11_SDK_VERSION
+		:factory
+		null
+		:ctx
+	assert zero? hr
+
+	d3d-device: factory/value
+	d3d-ctx: ctx/value
+
+	d3d: as ID3D11Device d3d-device/vtbl
+	;-- create DXGI device
+	hr: d3d/QueryInterface d3d-device IID_IDXGIDevice1 as interface! :factory	
+	assert zero? hr
+	dxgi-device: factory/value
+
+	;-- get system DPI
+	d2d: as ID2D1Factory d2d-factory/vtbl
+	d2d/GetDesktopDpi d2d-factory :dpi-x :dpi-y
+	dpi-value: dpi-y
+
+	;-- create D2D Device
+	hr: d2d/CreateDevice d2d-factory dxgi-device :factory
+	d2d-device: factory/value
+	assert zero? hr
+
+	;-- create D2D context
+	d2d-dev: as ID2D1Device d2d-device/vtbl
+	hr: d2d-dev/CreateDeviceContext d2d-device 0 :factory
+	assert zero? hr
+	d2d-ctx: factory/value
+
+	;-- get dxgi adapter
+	dxgi: as IDXGIDevice1 dxgi-device/vtbl
+	hr: dxgi/GetAdapter dxgi-device :factory
+	assert zero? hr
+
+	;-- get Dxgi factory
+	dxgi-adapter: factory/value
+	adapter: as IDXGIAdapter dxgi-adapter/vtbl
+	hr: adapter/GetParent dxgi-adapter IID_IDXGIFactory2 :factory
+	assert zero? hr
+	dxgi-factory: factory/value
+
+	COM_SAFE_RELEASE(unk dxgi-device)
+	COM_SAFE_RELEASE(unk d2d-device)
+	COM_SAFE_RELEASE(unk dxgi-adapter)	
+]
+
+DX-release-dev: func [
+	/local
+		unk		[IUnknown]
+][
+	COM_SAFE_RELEASE(unk d2d-ctx)
+	COM_SAFE_RELEASE(unk d3d-ctx)
+	COM_SAFE_RELEASE(unk d3d-device)
+	COM_SAFE_RELEASE(unk dxgi-factory)
+]
+
+DX-cleanup: func [/local unk [IUnknown]][
+	DX-release-dev
+	COM_SAFE_RELEASE(unk dwrite-factory)
+	COM_SAFE_RELEASE(unk d2d-factory)
+	free as byte-ptr! dw-locale-name
+]
+
+DX-release-target: func [
+	target	[renderer!]
+	/local
+		brushes [int-ptr!]
+		cnt		[integer!]
+		this	[this!]
+		obj		[IUnknown]
+][
+	brushes: target/brushes
+	cnt: target/brushes-cnt
+	target/brushes-cnt: 0
+	loop cnt [
+		COM_SAFE_RELEASE_OBJ(obj brushes/2)
+		brushes: brushes + 2
+	]
+	COM_SAFE_RELEASE(obj target/bitmap)
+	COM_SAFE_RELEASE(obj target/swapchain)
+	COM_SAFE_RELEASE(obj target/dcomp-visual)
+	COM_SAFE_RELEASE(obj target/dcomp-target)
+	COM_SAFE_RELEASE(obj target/dcomp-device)
+	free as byte-ptr! target
 ]

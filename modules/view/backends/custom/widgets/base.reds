@@ -45,7 +45,7 @@ draw-base: func [
 
 	box: gob/box
 	either shadow? [		;-- 1. prepares for drawing shadow
-		n: host/dpi-value / as float32! 96.0
+		n: dpi-value / as float32! 96.0
 		w: box/right - box/left
 		h: box/bottom - box/top
 		bmp: renderer/create-bitmap
@@ -57,10 +57,10 @@ draw-base: func [
 		renderer/get-matrix :mat
 		renderer/reset-matrix
 
-		rc/left: as float32! 0.5
-		rc/top:  as float32! 0.5
-		rc/right:  w + (as float32! 0.5)
-		rc/bottom: h + (as float32! 0.5)
+		rc/left: as float32! 0.0
+		rc/top:  as float32! 0.0
+		rc/right:  w
+		rc/bottom: h
 		box: as RECT_F! :rc
 	][
 		if round? [

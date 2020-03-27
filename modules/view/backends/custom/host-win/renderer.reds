@@ -291,8 +291,8 @@ renderer: context [
 	][
 		props/format: 87
 		props/alphaMode: 1
-		props/dpiX: host/dpi-x
-		props/dpiY: host/dpi-y
+		props/dpiX: dpi-x
+		props/dpiY: dpi-y
 		props/options: 1
 		props/colorContext: null
 		sz/width: width

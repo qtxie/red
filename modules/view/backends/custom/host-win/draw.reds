@@ -959,7 +959,7 @@ OS-draw-box: func [
 	w: lower/x - upper/x
 	h: lower/y - upper/y
 	either ctx/shadow? [
-		scale: host/dpi-value / as float32! 96.0
+		scale: dpi-value / as float32! 96.0
 		rc/left: as float32! 0.5
 		rc/top:  as float32! 0.5
 		rc/right:  (as float32! w) + (as float32! 0.5)
@@ -1189,7 +1189,7 @@ do-draw-ellipse: func [
 	rx: dx / as float32! 2.0
 	ry: dy / as float32! 2.0
 	either ctx/shadow? [
-		scale: host/dpi-value / as float32! 96.0
+		scale: dpi-value / as float32! 96.0
 		ellipse/x: rx + as float32! 0.5
 		ellipse/y: ry + as float32! 0.5
 		bmp: create-d2d-bitmap		;-- create an intermediate bitmap

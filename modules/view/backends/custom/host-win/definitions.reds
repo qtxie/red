@@ -1207,7 +1207,7 @@ GetDpiForMonitor!: alias function! [
 			SDKVersion	[integer!]
 			ppDevice	[com-ptr!]
 			pFeatLevel	[int-ptr!]
-			ppContext	[int-ptr!]
+			ppContext	[com-ptr!]
 			return:		[integer!]
 		]
 	]

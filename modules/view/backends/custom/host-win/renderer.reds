@@ -225,17 +225,39 @@ renderer: context [
 			target	[renderer!]
 			output	[com-ptr! value]
 			sigma	[float32!]
-			spread	[integer!]
+			spread	[float32!]
+			w		[float32!]
+			h		[float32!]
 			unk		[IUnknown]
 			err1	[integer!]
 			err2	[integer!]
 	][
 		until [
 			sbmp: bmp
+			spread: as float32! s/spread
+			if s/spread <> 0 [			;-- scale intput bitmap
+				_ctx/CreateEffect _this CLSID_D2D1Scale :eff-s
+				eff2: eff-s/value
+				effect: as ID2D1Effect eff2/vtbl
+				effect/SetInput eff2 0 bmp true
+				w: rc/right - rc/left
+				h: rc/bottom - rc/top
+				pt/x: (spread * as float32! 2.0) + w / w
+				pt/y: (spread * as float32! 2.0) + h / h
+				effect/base/setValue eff2 0 0 as byte-ptr! :pt size? POINT_2F
+				effect/GetOutput eff2 :output
+				sbmp: output/value
+			]
+
 			_ctx/CreateEffect _this CLSID_D2D1Shadow :eff-v
 			eff: eff-v/value
 			effect: as ID2D1Effect eff/vtbl
 			effect/SetInput eff 0 sbmp true
+
+			if s/spread <> 0 [
+				COM_SAFE_RELEASE(unk sbmp)
+				COM_SAFE_RELEASE(unk eff2)
+			]
 
 			sigma: as float32! (as float! s/radius) / GAUSSIAN_SCALE_FACTOR
 			effect/base/setValue eff 0 0 as byte-ptr! :sigma size? float32!
@@ -244,8 +266,8 @@ renderer: context [
 			effect/GetOutput eff :output
 			sbmp: output/value
 
-			pt/x: rc/left + s/offset/x
-			pt/y: rc/top  + s/offset/y
+			pt/x: rc/left + s/offset/x - spread
+			pt/y: rc/top  + s/offset/y - spread
 			_ctx/DrawImage _this sbmp pt null 1 0
 			COM_SAFE_RELEASE(unk sbmp)
 			COM_SAFE_RELEASE(unk eff)

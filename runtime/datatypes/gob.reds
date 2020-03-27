@@ -172,6 +172,7 @@ gob: context [
 			value	[red-value!]
 			w		[red-word!]
 			id		[integer!]
+			n		[integer!]
 	][
 		if null? g/styles [g/styles: as gob-style! alloc0 size? gob-style!]
 		s: g/styles
@@ -191,12 +192,7 @@ gob: context [
 					id = background [set-background s value]
 					id = border [set-border s value]
 					id = border-radius [s/radius: get-float32 as red-integer! value]
-					id = shadow [
-						if null? s/shadow [
-							s/shadow: as gob-style-shadow! alloc0 size? gob-style-shadow!
-						]
-						set-shadow s value
-					]
+					id = shadow [n: 0 set-shadow s value :n]
 					true [0]
 				]
 			]

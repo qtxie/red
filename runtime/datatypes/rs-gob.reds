@@ -133,6 +133,7 @@ gob-style-shadow!: alias struct! [
 	offset		[point! value]
 	color		[integer!]
 	radius		[integer!]			;-- blur radius
+	spread		[integer!]
 	part		[byte!]				;-- which parts to draw
 	inset?		[byte!]
 	next		[gob-style-shadow!]	;-- shadow effect chain

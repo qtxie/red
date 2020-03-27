@@ -41,7 +41,7 @@ base!: make face! [
 		styles: object [
 			border: [10 solid 0.0.228]
 			;border-radius: 5
-			;shadow: [0x0 2 0.0.0]
+			shadow: [0x0 20 -5 0.0.0]
 		]
 	]
 ]

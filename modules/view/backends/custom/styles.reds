@@ -162,25 +162,33 @@ styles-ctx: context [
 	set-shadow: func [
 		s		[gob-style!]
 		val		[red-value!]
+		n		[int-ptr!]
 		/local
 			pt	[red-pair!]
 			int	[red-integer!]
 			tp	[red-tuple!]
 			blk	[red-block!]
 			ss	[gob-style-shadow!]
+			new	[gob-style-shadow!]
 			ser [series!]
 			end [red-value!]
 	][
 		ss: s/shadow
 		switch TYPE_OF(val) [
 			TYPE_PAIR [
+				n/value: 0
+				new: as gob-style-shadow! alloc0 size? gob-style-shadow!
+				new/next: ss
+				s/shadow: new
+				ss: new
 				pt: as red-pair! val
 				ss/offset/x: as float32! pt/x
 				ss/offset/y: as float32! pt/y
 			]
 			TYPE_INTEGER [
 				int: as red-integer! val
-				ss/radius: int/value
+				either zero? n/value [ss/radius: int/value][ss/spread: int/value]
+				n/value: n/value + 1
 			]
 			TYPE_TUPLE [
 				tp: as red-tuple! val
@@ -191,12 +199,22 @@ styles-ctx: context [
 				ser: GET_BUFFER(blk)
 				val: ser/offset + blk/head
 				end: ser/tail
+				if TYPE_OF(val) <> TYPE_PAIR [
+					s/shadow: as gob-style-shadow! alloc0 size? gob-style-shadow!
+				]
 				while [val < end][
-					set-shadow s val
+					set-shadow s val n
 					val: val + 1
 				]
 			]
-			TYPE_NONE [free as byte-ptr! ss s/shadow: null]
+			TYPE_NONE [
+				while [ss <> null][
+					new: ss/next
+					free as byte-ptr! ss
+					ss: new
+				]
+				s/shadow: null
+			]
 		]
 	]
 ]

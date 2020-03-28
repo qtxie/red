@@ -149,6 +149,9 @@ gob: context [
 					][
 						ret: as red-value! g/actors
 					]
+					sym = words/face [
+						copy-cell as cell! :g/face ret
+					]
 					true [error?: yes]
 				]
 			]

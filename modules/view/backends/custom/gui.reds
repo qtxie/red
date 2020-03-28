@@ -182,12 +182,21 @@ update-scroller: func [
 
 OS-redraw: func [hWnd [integer!]][]
 
-OS-refresh-window: func [hWnd [integer!]][]
+OS-refresh-window: func [hWnd [integer!] /local g [gob!]][
+	g: as gob! hWnd
+	if GOB_TYPE(g) = GOB_WINDOW [ui-manager/draw-windows]
+]
 
 OS-show-window: func [
-	hWnd [integer!]
+	hWnd	[integer!]
+	/local
+		g	[gob!]
+		wm	[wm!]
 ][
-	host/show-window as handle! hWnd
+	g: as gob! hWnd
+	wm: as wm! g/extra
+	ui-manager/active-win: wm
+	host/show-window wm/hWnd
 ]
 
 OS-make-view: func [
@@ -246,9 +255,9 @@ OS-make-view: func [
 	stack/unwind
 
 	gob: as gob! g/value
-	if sym = window [host/make-window gob as gob! parent]
 	copy-cell as cell! face as cell! :gob/face
 	gob/parent: as gob! parent
+	if sym = window [host/make-window gob as gob! parent]
 	as-integer gob
 ]
 

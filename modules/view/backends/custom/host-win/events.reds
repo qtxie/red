@@ -65,8 +65,6 @@ RedWndProc: func [
 			return 0	;-- continue to create the window
 		]
 		WM_MOUSEMOVE [
-			x: WIN32_LOWORD(lParam)
-			y: WIN32_HIWORD(lParam)
 			if hover-win <> hWnd [
 				track/cbSize: size? tagTRACKMOUSEEVENT
 				track/dwFlags: 2					;-- TME_LEAVE
@@ -75,8 +73,8 @@ RedWndProc: func [
 				hover-win: hWnd
 			]
 			mouse-flags: decode-down-flags wParam
-			mouse-x: pixel-to-logical x
-			mouse-y: pixel-to-logical y
+			mouse-x: pixel-to-logical WIN32_LOWORD(lParam)
+			mouse-y: pixel-to-logical WIN32_HIWORD(lParam)
 			do-mouse-move EVT_OVER wm/gob mouse-x mouse-y mouse-flags yes
 			return 0
 		]
@@ -102,7 +100,16 @@ RedWndProc: func [
 		WM_UNICHAR [0]
 		WM_SETFOCUS [return 0]
 		WM_KILLFOCUS [0]
-		WM_SIZE [0]
+		WM_SIZE [
+			if wParam <> SIZE_MINIMIZED [
+				x: WIN32_LOWORD(lParam)
+				y: WIN32_HIWORD(lParam)
+				DX-resize-buffer wm/render x y
+				send-pt-event EVT_SIZING wm/gob pixel-to-logical x pixel-to-logical y 0
+				ui-manager/draw-windows
+			]
+			return 0
+		]
 		WM_GETMINMAXINFO [0]	;-- for maximization and minimization
 		WM_NCACTIVATE [0]
 		WM_MOUSEACTIVATE [0]

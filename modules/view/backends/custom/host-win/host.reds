@@ -295,14 +295,8 @@ host: context [
 
 	show-window: func [
 		hWnd	[handle!]
-		/local
-			g	[gob!]
-			wm	[wm!]
 	][
-		g: as gob! hWnd
-		wm: as wm! g/extra
-		ui-manager/active-win: wm
-		ShowWindow wm/hwnd SW_SHOWDEFAULT
+		ShowWindow hwnd SW_SHOWDEFAULT
 	]
 
 	draw-begin: func [
@@ -354,7 +348,7 @@ host: context [
 				wm/render: create-render-target wm/hWnd
 			]
 			default [
-				0			;@@ TBD log error!!!
+				VIEW_ERROR(["IDXGISwapChain1/Present failed: " as int-ptr! hr])
 			]
 		]
 	]

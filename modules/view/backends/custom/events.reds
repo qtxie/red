@@ -150,7 +150,6 @@ send-mouse-event: func [
 	root?	[logic!]
 	return: [integer!]
 	/local
-		child	[gob!]
 		g-evt	[gob-event! value]
 		ret		[integer!]
 ][
@@ -167,6 +166,16 @@ send-mouse-event: func [
 		]
 	]
 	ret
+]
+
+send-pt-event: func [
+	evt		[integer!]
+	obj		[gob!]
+	x		[float32!]
+	y		[float32!]
+	flags	[integer!]
+][
+	send-mouse-event evt obj x y flags no
 ]
 
 hover-changed?: func [

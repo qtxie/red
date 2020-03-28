@@ -20,6 +20,16 @@ Red [
 event?: routine ["Returns true if the value is this type" value [any-type!] return: [logic!]][TYPE_OF(value) = TYPE_EVENT]
 gob?: routine ["Returns true if the value is this type" value [any-type!] return: [logic!]][TYPE_OF(value) = TYPE_GOB]
 
+#if config/GUI-engine = 'custom [
+	gob-widgets: make map! 64
+	register-widget: func [
+		name	[word!]
+		proto	[gob!]
+	][
+		put gob-widgets name proto
+	]
+]
+
 face?: function [
 	"Returns TRUE if the value is a face! object"
 	value	"Value to test"

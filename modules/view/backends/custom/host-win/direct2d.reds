@@ -462,7 +462,7 @@ DX-resize-buffer: func [
 	this: rt/swapchain
 	sc: as IDXGISwapChain1 this/vtbl
 	hr: sc/ResizeBuffers this 0 width height 87 0
-	if hr <> 0 [probe "resizing failed" exit]
+	if hr <> 0 [VIEW_ERROR("DX resizing buffer failed") exit]
 
 	DX-create-buffer rt this
 ]

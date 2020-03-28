@@ -572,6 +572,7 @@ system/view/VID: context [
 		unless panel [
 			focal-face: none
 			panel: make face! copy system/view/VID/styles/window/template  ;-- absolute path to avoid clashing with /styles
+			#if config/GUI-engine = 'custom [panel/gob: select gob-widgets 'window]
 		]
 		either block? panel/pane [list: panel/pane][panel/pane: list]
 		
@@ -727,6 +728,9 @@ system/view/VID: context [
 					if name [set name face]
 					pane-size: max pane-size face/offset + face/size
 					if opts/now? [do-actor face none 'time]
+				]
+				#if config/GUI-engine = 'custom [
+					face/gob: select gob-widgets face/type
 				]
 			]
 			spec: next spec

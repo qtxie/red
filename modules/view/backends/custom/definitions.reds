@@ -33,6 +33,18 @@ Red/System [
 	WIN_RENDER_ALL:		0100h
 ]
 
+renderer!: alias struct! [
+	dc				[this!]
+	brushes			[int-ptr!]
+	brushes-cnt		[uint!]
+	styles			[red-vector!]
+	bitmap			[this!]
+	swapchain		[this!]
+	dcomp-device	[this!]
+	dcomp-target	[this!]
+	dcomp-visual	[this!]
+]
+
 wm!: alias struct! [
 	flags		[integer!]
 	hwnd		[handle!]
@@ -41,4 +53,8 @@ wm!: alias struct! [
 	focused		[gob!]			;-- focused gob in the window
 	update-list	[node!]
 	matrix		[D2D_MATRIX_3X2_F value]
+]
+
+#define IF_GOB_FACE(code) [
+	#if GUI-engine = 'custom code
 ]

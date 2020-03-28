@@ -149,12 +149,12 @@ gfx: context [
 		style:  0
 		len:    10
 
-		either ss <> null [
+		if ss <> null [
 			len: ss/text/font-size
 			name: ss/text/font-family
-		][
-			name: host/default-font-name
 		]
+		if null? name [name: host/default-font-name]
+
 		if len <= 0 [len: 10]
 		size: ConvertPointSizeToDIP(len)
 

@@ -149,9 +149,8 @@ gob: context [
 					][
 						ret: as red-value! g/actors
 					]
-					sym = words/face [
-						copy-cell as cell! :g/face ret
-					]
+					sym = facets/data [ret: as red-value! g/data]
+					sym = words/face [ret: as red-value! :g/face]
 					true [error?: yes]
 				]
 			]
@@ -195,7 +194,10 @@ gob: context [
 					id = background [set-background s value]
 					id = border [set-border s value]
 					id = border-radius [s/radius: get-float32 as red-integer! value]
-					id = shadow [n: 0 set-shadow s value :n]
+					id = shadow [
+						set-shadow s none-value null		;-- delete previous one
+						n: 0 set-shadow s value :n
+					]
 					true [0]
 				]
 			]
@@ -283,6 +285,10 @@ gob: context [
 				if TYPE_OF(value) = TYPE_BLOCK [
 					parse-transition g as red-block! value
 				]
+			]
+			sym = facets/data [
+				g/data: as int-ptr! allocate size? red-value!
+				copy-cell value as cell! g/data
 			]
 			;sym = facets/opacity [
 			;	int: as red-integer! value

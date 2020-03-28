@@ -274,7 +274,7 @@ host: context [
 		h: rc/bottom - rc/top
 
 		either parent <> null [
-			wm: as wm! parent/extra
+			wm: as wm! parent/data
 			handle: wm/hwnd
 		][handle: null]
 

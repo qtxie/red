@@ -94,6 +94,30 @@ ui-manager: context [	;-- manage all the windows
 		]
 	]
 
+	draw-window: func [
+		wm			[wm!]
+		return:		[float32!]
+		/local
+			tm		[time-meter! value]
+			t		[float32!]
+	][
+		if wm/flags and WIN_FLAG_INVISIBLE = 0 [
+			either wm/flags and WIN_RENDER_ALL = 0 [
+				draw-update wm/update-list	
+			][
+				time-meter/start :tm
+				host/draw-begin wm
+				widgets/draw-gob wm/gob wm/matrix
+				host/draw-end wm
+				t: time-meter/elapse :tm
+				VIEW_MSG(["Full Draw in " t "ms"])
+				wm/flags: wm/flags and (not WIN_RENDER_ALL)
+			]
+		]
+		array/clear wm/update-list
+		t
+	]
+
 	draw-windows: func [
 		return:		[float32!]
 		/local
@@ -101,7 +125,6 @@ ui-manager: context [	;-- manage all the windows
 			s		[series!]
 			p		[ptr-ptr!]
 			e		[ptr-ptr!]
-			tm		[time-meter! value]
 			t		[float32!]
 	][
 		t: as float32! 0.0
@@ -111,20 +134,7 @@ ui-manager: context [	;-- manage all the windows
 		animation/run-all 18
 		while [p < e][
 			wm: as wm! p/value
-			if wm/flags and WIN_FLAG_INVISIBLE = 0 [
-				either wm/flags and WIN_RENDER_ALL = 0 [
-					draw-update wm/update-list	
-				][
-					time-meter/start :tm
-					host/draw-begin wm
-					widgets/draw-gob wm/gob wm/matrix
-					host/draw-end wm
-					t: time-meter/elapse :tm
-					VIEW_MSG(["Full Draw in " t "ms"])
-					wm/flags: wm/flags and (not WIN_RENDER_ALL)
-				]
-			]
-			array/clear wm/update-list
+			t: t + draw-window wm
 			p: p + 1
 		]
 		t

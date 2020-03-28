@@ -192,12 +192,12 @@ gob!: alias struct! [				;-- size: 80 bytes, 96 bytes with face slot
 	image		[node!]				;-- red-image node
 	actors		[red-block!]
 	styles		[gob-style!]
-	extra		[int-ptr!]			;-- extra data for each type
+	data		[int-ptr!]			;-- extra data for each type
 	#if GUI-engine = 'custom [
 	face		[integer!]
-	value1		[integer!]
-	value2		[integer!]
-	value3		[integer!]
+	obj-ctx		[node!]
+	obj-class	[integer!]
+	obj-cb		[node!]
 	]
 ]
 
@@ -250,6 +250,17 @@ rs-gob: context [
 		]
 	]
 
+	set-size: func [
+		g			[gob!]
+		w			[float32!]
+		h			[float32!]
+	][
+		g/box/right: g/box/left + w
+		g/box/bottom: g/box/top + h
+		g/cbox/right: g/cbox/left + w
+		g/cbox/bottom: g/cbox/top + h
+	]
+
 	find-child: func [
 		gob		[gob!]
 		x		[float32!]
@@ -297,6 +308,18 @@ rs-gob: context [
 		copy-memory as byte-ptr! g as byte-ptr! gob size? gob!
 		g/flags: g/flags or GOB_FLAG_COW_STYLES
 		if g/children <> null [g/children: array/copy g/children]
+		if all [
+			gob/data <> null
+			GOB_TYPE(gob) <> GOB_WINDOW
+		][
+			g/data: as int-ptr! allocate size? red-value!
+			actions/copy 
+				as red-series! gob/data
+				as red-value! g/data
+				null
+				yes
+				null
+		]
 		g
 	]
 

@@ -2609,15 +2609,3 @@ GetUserDefaultLocaleName!: alias function! [
 		]
 	]
 ]
-
-renderer!: alias struct! [
-	dc				[this!]
-	brushes			[int-ptr!]
-	brushes-cnt		[uint!]
-	styles			[red-vector!]
-	bitmap			[this!]
-	swapchain		[this!]
-	dcomp-device	[this!]
-	dcomp-target	[this!]
-	dcomp-visual	[this!]
-]

@@ -51,6 +51,7 @@ RedWndProc: func [
 		wm		[wm!]
 		flags	[integer!]
 		track	[tagTRACKMOUSEEVENT value]
+		pair	[red-pair!]
 ][
 	wm: as wm! GetWindowLongPtr hWnd GWLP_USERDATA
 
@@ -60,7 +61,7 @@ RedWndProc: func [
 			obj: as gob! cs/lpCreateParams
 			obj/flags: obj/flags and FFFFFF00h or GOB_WINDOW or GOB_FLAG_HOSTED
 			wm: ui-manager/add-window hWnd obj create-render-target hWnd
-			obj/extra: as int-ptr! wm
+			obj/data: as int-ptr! wm
 			SetWindowLongPtr hWnd GWLP_USERDATA as int-ptr! wm
 			return 0	;-- continue to create the window
 		]
@@ -104,9 +105,19 @@ RedWndProc: func [
 			if wParam <> SIZE_MINIMIZED [
 				x: WIN32_LOWORD(lParam)
 				y: WIN32_HIWORD(lParam)
+				mouse-x: pixel-to-logical x
+				mouse-y: pixel-to-logical y
 				DX-resize-buffer wm/render x y
-				send-pt-event EVT_SIZING wm/gob pixel-to-logical x pixel-to-logical y 0
-				ui-manager/draw-windows
+				rs-gob/set-size wm/gob mouse-x mouse-y
+				ui-manager/redraw
+				ui-manager/draw-window wm
+				send-pt-event EVT_SIZING wm/gob mouse-x mouse-y 0
+				IF_GOB_FACE([
+					pair: as red-pair! (get-face-values wm/gob) + FACE_OBJ_SIZE
+					pair/header: TYPE_PAIR
+					pair/x: as-integer mouse-x
+					pair/y: as-integer mouse-y
+				])
 			]
 			return 0
 		]

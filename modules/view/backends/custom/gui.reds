@@ -24,6 +24,24 @@ Red/System [
 #include %widgets.reds
 #include %ui-manager.reds
 
+IF_GOB_FACE([
+
+get-face-values: func [
+	g		 [gob!]
+	return:  [red-value!]
+	/local
+		ctx	 [red-context!]
+		node [node!]
+		s	 [series!]
+][
+	node: g/obj-ctx
+	ctx: TO_CTX(node)
+	s: as series! ctx/values/value
+	s/offset
+]
+
+])
+
 on-gc-mark: does [
 	collector/keep flags-blk/node
 	ui-manager/on-gc-mark
@@ -194,7 +212,7 @@ OS-show-window: func [
 		wm	[wm!]
 ][
 	g: as gob! hWnd
-	wm: as wm! g/extra
+	wm: as wm! g/data
 	ui-manager/active-win: wm
 	host/show-window wm/hWnd
 ]

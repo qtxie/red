@@ -52,7 +52,7 @@ widgets: context [
 			rc/top: F32_0
 			rc/right: box/right - box/left
 			rc/bottom: box/bottom - box/top
-			probe [x " " y " " rc/right " " rc/bottom]
+
 			gfx/push-clip-rect :rc
 			s: as series! gob/children/value
 			p: as ptr-ptr! s/offset

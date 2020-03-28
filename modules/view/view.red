@@ -751,14 +751,15 @@ do-actor: function ["Internal Use Only" face [object!] event [event! none!] type
 	init-face: func [
 		"set facets in face/gob"
 		face	[object!]
-		/local gob
+		/local gob f
 	][
 		gob: face/gob
 		gob/offset: face/offset
 		gob/size: face/size
-		gob/text: face/text
-		gob/draw: face/draw
-		gob/color: face/color
+		if face/text  [gob/text: face/text]
+		if face/draw  [gob/draw: face/draw]
+		if face/color [gob/color: face/color]
+		if block? face/pane [foreach f face/pane [append gob f/gob]]
 		;gob/image: face/image
 	]
 ]

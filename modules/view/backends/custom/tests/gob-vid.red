@@ -65,13 +65,13 @@ register-widget 'button make gob! [
 ]
 
 register-widget 'base make gob! [
-	color: 128.128.128
+	flags: 'all-over
 ]
 
 view [
 	backdrop 102.204.255
-	size 200x200
 	button 80x30 "Click Me" [probe "Hello Red"]
+	base 100x100 on-over [probe event/offset] on-up [probe reduce ["on-up" event/offset]]
 ]
 
 probe "done"

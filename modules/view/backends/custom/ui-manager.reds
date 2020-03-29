@@ -14,6 +14,7 @@ ui-manager: context [	;-- manage all the windows
 
 	active-win:		as wm! 0
 	hover-gob:		as gob! 0		;-- the gob under the mouse
+	captured-gob:	as gob! 0
 	captured:		as node! 0
 	win-list:		as node! 0
 

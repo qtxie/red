@@ -94,11 +94,8 @@ gob: context [
 			sym		[integer!]
 			blk		[red-block!]
 			ret		[red-value!]
-			error?	[logic!]
 	][
-		error?: no
 		g: gob/value
-
 		ret: stack/push*
 		ret/header: TYPE_NONE
 		switch TYPE_OF(element) [
@@ -151,13 +148,12 @@ gob: context [
 					]
 					sym = facets/data [ret: as red-value! g/data]
 					sym = words/face [ret: as red-value! :g/face]
-					true [error?: yes]
+					true [0]
 				]
 			]
-			default [error?: yes]
+			default [fire [TO_ERROR(script invalid-path) path element]]
 		]
 		stack/pop 1			;-- avoids moving stack up
-		if error? [fire [TO_ERROR(script invalid-path) path element]]
 		ret
 	]
 
@@ -206,6 +202,42 @@ gob: context [
 		]
 	]
 
+	get-flags: func [
+		field	[red-block!]
+		return: [integer!]									;-- return a bit-array of all flags
+		/local
+			word  [red-word!]
+			len	  [integer!]
+			sym	  [integer!]
+			flags [integer!]
+	][
+		switch TYPE_OF(field) [
+			TYPE_BLOCK [
+				word: as red-word! block/rs-head field
+				len: block/rs-length? field
+				if zero? len [return 0]
+			]
+			TYPE_WORD [
+				word: as red-word! field
+				len: 1
+			]
+			default [return 0]
+		]
+		flags: 0
+		
+		loop len [
+			sym: symbol/resolve word/symbol
+			case [
+				sym = all-over	 [flags: flags or GOB_FLAG_ALL_OVER]
+				sym = scrollable [0]
+				sym = password	 [0]
+				true			 [0]
+			]
+			word: word + 1
+		]
+		flags
+	]
+
 	set-facets: func [
 		g			[gob!]
 		word		[red-word!]
@@ -233,7 +265,7 @@ gob: context [
 					sym = button [sym: GOB_BUTTON]
 					true		 [sym: GOB_BASE]	
 				]
-				g/flags: sym
+				g/flags: g/flags or sym
 			]
 			sym = facets/offset [
 				pair: as red-pair! value
@@ -286,6 +318,7 @@ gob: context [
 					parse-transition g as red-block! value
 				]
 			]
+			sym = facets/flags [g/flags: g/flags or get-flags as red-block! value]
 			sym = facets/data [
 				g/data: as int-ptr! allocate size? red-value!
 				copy-cell value as cell! g/data

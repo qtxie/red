@@ -24,6 +24,28 @@ flags-blk/header:	TYPE_BLOCK
 mouse-x:		as float32! 0
 mouse-y:		as float32! 0
 
+map-pt-from-win: func [
+	g		[gob!]
+	x		[float32!]
+	y		[float32!]
+	xx		[float32-ptr!]
+	yy		[float32-ptr!]
+	/local
+		a	[float32!]
+		b	[float32!]
+][
+	a: F32_0
+	b: F32_0
+	until [
+		a: a + g/cbox/left
+		b: b + g/cbox/top
+		g: g/parent
+		null? g/parent
+	]
+	xx/value: x - a
+	yy/value: y - b
+]
+
 get-event-window: func [
 	evt		[red-event!]
 	return: [red-value!]
@@ -199,6 +221,26 @@ hover-changed?: func [
 	]
 ]
 
+send-captured-event: func [
+	evt		[integer!]
+	x		[float32!]
+	y		[float32!]
+	flags	[integer!]
+	filter	[integer!]
+	/local
+		captured [gob!]
+][
+	captured: ui-manager/captured-gob
+	if all [
+		captured <> null
+		ui-manager/hover-gob <> captured
+		captured/flags and filter <> 0
+	][
+		map-pt-from-win captured x y :x :y
+		send-mouse-event evt captured x y flags no
+	]
+]
+
 do-mouse-move: func [
 	evt		[integer!]
 	obj		[gob!]
@@ -254,7 +296,10 @@ do-mouse-move: func [
 	if all [
 		obj/flags and GOB_FLAG_ALL_OVER <> 0
 		ret = EVT_DISPATCH 
-	][ret: send-mouse-event evt obj x y flags no]
+	][
+		ret: send-mouse-event evt obj x y flags no
+	]
+	if root? [send-captured-event evt x y flags GOB_FLAG_ALL_OVER]
 	ret
 ]
 
@@ -304,6 +349,11 @@ do-mouse-press: func [
 	y		[float32!]
 	flags	[integer!]
 ][
+	if evt = EVT_LEFT_DOWN [ui-manager/captured-gob: ui-manager/hover-gob]
 	_do-mouse-press evt obj x y flags
-	if evt = EVT_LEFT_UP [array/clear ui-manager/captured]
+	if evt = EVT_LEFT_UP [
+		send-captured-event evt x y flags -1
+		ui-manager/captured-gob: null
+		array/clear ui-manager/captured
+	]
 ]

@@ -316,7 +316,7 @@ host: context [
 		dc/BeginDraw this
 		matrix2d/identity wm/matrix
 		gfx/set-matrix wm/matrix
-		clr: to-dx-color 00FFCC66h null
+		clr: to-dx-color wm/gob/backdrop null
 		dc/Clear this clr
 	]
 
@@ -353,8 +353,6 @@ host: context [
 		]
 	]
 ]
-
-;-- 
 
 do-events: func [
 	no-wait?	[logic!]

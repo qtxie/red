@@ -10,7 +10,7 @@ Red/System [
 	}
 ]
 
-#enum event-type! [
+#enum gob-event-type! [
 	EVT_LEFT_DOWN:		1
 	EVT_LEFT_UP
 	EVT_DBL_CLICK
@@ -73,7 +73,7 @@ Red/System [
 #define	GOB_BORDER_DASHED	#"^(03)"
 ;]
 
-#enum gob-type! [
+#enum gob-type! [	;-- basic widgets
 	GOB_BASE
 	GOB_WINDOW
 	GOB_BUTTON
@@ -109,7 +109,7 @@ RECT_F!: alias struct! [
 
 gob-event-fn!: alias function! [
 	obj			[int-ptr!]
-	evt			[event-type!]
+	evt			[gob-event-type!]
 	data		[int-ptr!]
 	post?		[logic!]			;-- post the event to the user? 
 	return:		[integer!]
@@ -168,8 +168,14 @@ gob-style-text!: alias struct! [
 	shadow		 [gob-style-shadow!]
 ]
 
+#define GOB_STYLE_BACKDROP 		1
+#define GOB_STYLE_BORDER		2
+#define GOB_STYLE_TEXT			4
+#define GOB_STYLE_SHADOW		8
+
 gob-style!: alias struct! [
-	states		[integer!]
+	states		[integer!]			;-- each bit indicate whether a property has been set or not
+	backdrop	[integer!]			;-- background color
 	radius		[float32!]			;-- corner radius
 	opacity		[integer!]			;-- overall opacity. Effects all children
 	border		[gob-style-border! value]

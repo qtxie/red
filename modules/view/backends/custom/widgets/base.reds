@@ -31,17 +31,21 @@ draw-base: func [
 		round?	[logic!]
 		shadow?	[logic!]
 		border? [logic!]
+		bcolor	[integer!]
 ][
 	round?: no
 	shadow?: no
 	border?: no
 
 	ss: gob/styles
-	if ss <> null [
+	either ss <> null [
 		round?: ss/radius <> F32_0
 		shadow?: ss/shadow <> null
 		border?: ss/border/width <> 0
-	]
+		if ss/states and GOB_STYLE_BACKDROP <> 0 [
+			bcolor: ss/backdrop
+		]
+	][bcolor: gob/backdrop]
 
 	box: gob/box
 	either shadow? [		;-- 1. prepares for drawing shadow
@@ -82,8 +86,8 @@ draw-base: func [
 	either round? [
 		rc/radiusX: ss/radius
 		rc/radiusY: ss/radius
-		gfx/fill-rounded-box :rc gob/backdrop
-	][gfx/fill-box box gob/backdrop]
+		gfx/fill-rounded-box :rc bcolor
+	][gfx/fill-box box bcolor]
 
 	;-- 3. draw background image
 
@@ -131,18 +135,5 @@ draw-base: func [
 		gfx/set-target old
 		gfx/set-matrix :mat
 		gfx/draw-shadow bmp gob/box ss/shadow
-	]
-]
-
-signal-button: func [
-	gob		[gob!]
-	evt		[event-type!]
-][
-	switch evt [
-		EVT_ENTER [0]
-		EVT_LEAVE [0]
-		EVT_LEFT_DOWN [0]
-		EVT_LEFT_UP [0]
-		default [0]
 	]
 ]

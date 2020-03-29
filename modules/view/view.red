@@ -812,6 +812,12 @@ show: function [
 			if all [object? face/actors in face/actors 'on-create][
 				do-safe [face/actors/on-create face none]
 			]
+			#if config/GUI-engine = 'custom [
+				gob: face/gob
+				if all [block? gob/actors act: select gob/actors 'create][
+					do-safe [act gob none]
+				]
+			]
 			p: either with [parent/state/1][0]
 
 			#if config/OS = 'macOS [					;@@ remove this system specific code

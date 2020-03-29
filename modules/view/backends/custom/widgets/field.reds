@@ -1,7 +1,7 @@
 Red/System [
-	Title:	"Drawing Button widget"
+	Title:	"field widget"
 	Author: "Xie Qingtian"
-	File: 	%button.reds
+	File: 	%field.reds
 	Tabs: 	4
 	Rights: "Copyright (C) 2019 Red Foundation. All rights reserved."
 	License: {
@@ -10,7 +10,7 @@ Red/System [
 	}
 ]
 
-draw-button: func [
+draw-field: func [
 	gob			[gob!]
 ][
 	

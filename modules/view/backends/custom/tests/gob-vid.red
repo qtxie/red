@@ -6,6 +6,17 @@ Red [
 ;; styles
 
 btn-normal: object [
+	background: 255.255.255
+	border-radius: 4
+	shadow: [
+		0x3 1 -2 0.0.0.204
+		0x2 2 0.0.0.220
+		0x1 5 0.0.0.224
+	]
+]
+
+btn-hover: object [
+	background: 240.240.240
 	border-radius: 4
 	shadow: [
 		0x3 1 -2 0.0.0.204
@@ -15,6 +26,7 @@ btn-normal: object [
 ]
 
 btn-down: object [
+	background: 210.210.210
 	border-radius: 4
 	shadow: [
 		0x3 7 -2 0.0.0.180
@@ -35,29 +47,21 @@ register-widget 'window make gob! [
 ]
 
 register-widget 'button make gob! [
-	color: 255.255.255
 	actors: reduce [
-		'over func [gob event /local data][
-			data: gob/data
-			gob/color: either find event/flags 'away [data/1][data/2]
+		'create func [gob _][
+			probe "on-create"
 		]
-		'down func [gob evt /local data][
-			data: gob/data
-			gob/color: data/3
+		'over func [gob event][
+			gob/styles: either find event/flags 'away [btn-normal][btn-hover]
+		]
+		'down func [gob evt][
 			gob/styles: btn-down
 		]
-		'up func [gob evt /local data][
-			data: gob/data
-			gob/color: data/1
+		'up func [gob evt][
 			gob/styles: btn-normal
 		]
 	]
 	styles: btn-normal
-	data: reduce [
-		255.255.255		;-- normal color
-		240.240.240		;-- hover color
-		210.210.210		;-- down color
-	]
 ]
 
 register-widget 'base make gob! [
@@ -65,6 +69,7 @@ register-widget 'base make gob! [
 ]
 
 view [
+	backdrop 102.204.255
 	size 200x200
 	button 80x30 "Click Me" [probe "Hello Red"]
 ]

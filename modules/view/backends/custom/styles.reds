@@ -112,8 +112,11 @@ styles-ctx: context [
 	set-background: func [
 		s		[gob-style!]
 		val		[red-value!]
+		/local tp [red-tuple!]
 	][
-		
+		tp: as red-tuple! val
+		s/backdrop: tp/array1
+		s/states: s/states or GOB_STYLE_BACKDROP
 	]
 
 	set-border: func [

@@ -12,7 +12,7 @@ Red/System [
 
 widgets: context [
 	#include %widgets/base.reds
-	#include %widgets/button.reds
+	#include %widgets/field.reds
 
 	draw-gob: func [
 		gob		[gob!]
@@ -31,7 +31,8 @@ widgets: context [
 		t: GOB_TYPE(gob)
 		switch t [
 			GOB_BASE	[draw-base gob]
-			GOB_BUTTON	[draw-button gob]
+			GOB_FIELD	[draw-field gob]
+			GOB_BUTTON	[0]
 			GOB_WINDOW	[0]
 			default		[0]
 		]

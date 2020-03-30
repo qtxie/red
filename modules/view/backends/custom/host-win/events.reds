@@ -80,7 +80,7 @@ RedWndProc: func [
 			return 0
 		]
 		WM_MOUSELEAVE [
-			send-mouse-event EVT_OVER wm/gob mouse-x mouse-y mouse-flags or EVT_FLAG_AWAY no
+			send-mouse-event EVT_OVER wm/gob mouse-x mouse-y mouse-flags or EVT_FLAG_AWAY
 			if hover-win = hWnd [
 				hover-win: null
 				ui-manager/hover-gob: null
@@ -92,7 +92,15 @@ RedWndProc: func [
 		WM_RBUTTONDOWN
 		WM_RBUTTONUP
 		WM_MBUTTONDOWN
-		WM_MBUTTONUP	[do-mouse-press msg - 0200h wm/gob mouse-x mouse-y mouse-flags]
+		WM_MBUTTONUP	[
+			switch msg [
+				WM_LBUTTONDOWN [SetCapture hWnd]
+				WM_LBUTTONUP [ReleaseCapture]
+				default [0]
+			]
+			do-mouse-press msg - 0200h wm/gob mouse-x mouse-y mouse-flags
+			return 0
+		]
 		WM_MOVING [0]
 		WM_KEYDOWN [0]
 		WM_SYSKEYDOWN [0]

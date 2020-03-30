@@ -34,13 +34,15 @@ map-pt-from-win: func [
 		a	[float32!]
 		b	[float32!]
 ][
-	a: F32_0
-	b: F32_0
-	until [
-		a: a + g/cbox/left
-		b: b + g/cbox/top
+	a: g/cbox/left
+	b: g/cbox/top
+	if g/parent <> null [
 		g: g/parent
-		null? g/parent
+		while [g/parent <> null][
+			a: a + g/cbox/left
+			b: a + g/cbox/top
+			g: g/parent
+		]
 	]
 	xx/value: x - a
 	yy/value: y - b
@@ -169,7 +171,6 @@ send-mouse-event: func [
 	x		[float32!]
 	y		[float32!]
 	flags	[integer!]
-	root?	[logic!]
 	return: [integer!]
 	/local
 		g-evt	[gob-event! value]
@@ -183,7 +184,7 @@ send-mouse-event: func [
 		if 0 <> obj/face [		;-- root gob of each face!
 			ret: make-event evt :g-evt flags EVT_GROUP_GUI
 		]
-		if all [not root? ret = EVT_DISPATCH][
+		if ret = EVT_DISPATCH [
 			ret: make-event evt :g-evt flags EVT_GROUP_GOB
 		]
 	]
@@ -197,7 +198,7 @@ send-pt-event: func [
 	y		[float32!]
 	flags	[integer!]
 ][
-	send-mouse-event evt obj x y flags no
+	send-mouse-event evt obj x y flags
 ]
 
 hover-changed?: func [
@@ -221,6 +222,18 @@ hover-changed?: func [
 	]
 ]
 
+child?: func [
+	child	[gob!]
+	parent	[gob!]
+	return: [logic!]
+][
+	while [child <> null][
+		child: child/parent
+		if child = parent [return true]
+	]
+	false
+]
+
 send-captured-event: func [
 	evt		[integer!]
 	x		[float32!]
@@ -234,10 +247,12 @@ send-captured-event: func [
 	if all [
 		captured <> null
 		ui-manager/hover-gob <> captured
-		captured/flags and filter <> 0
+		any [filter = -1 captured/flags and filter <> 0]
 	][
-		map-pt-from-win captured x y :x :y
-		send-mouse-event evt captured x y flags no
+		if not child? ui-manager/hover-gob captured [	;-- hover-gob is not a child of the captured-gob
+			map-pt-from-win captured x y :x :y
+			send-mouse-event evt captured x y flags
+		]
 	]
 ]
 
@@ -257,19 +272,12 @@ do-mouse-move: func [
 	ret: EVT_DISPATCH
 
 	if null? ui-manager/hover-gob [					;-- mouse enter a new window
-		send-mouse-event evt obj x y flags no
+		send-mouse-event evt obj x y flags
 	]
 
 	child: rs-gob/find-child obj x y
 	either child <> null [
 		;ui-manager/add-update obj
-		if all [
-			root?
-			child/flags and GOB_FLAG_ALL_OVER <> 0
-			EVT_NO_DISPATCH = send-mouse-event evt obj x y flags yes
-		][
-			return EVT_NO_DISPATCH
-		]
 		ret: do-mouse-move evt child x - child/cbox/left y - child/cbox/top flags no
 	][
 		hover: ui-manager/hover-gob
@@ -282,10 +290,9 @@ do-mouse-move: func [
 						mouse-x
 						mouse-y
 						flags or EVT_FLAG_AWAY
-						no
 				]
 				if hover-changed? obj hover [
-					send-mouse-event evt obj x y flags no
+					send-mouse-event evt obj x y flags
 				]
 			]
 			ui-manager/hover-gob: obj
@@ -297,7 +304,7 @@ do-mouse-move: func [
 		obj/flags and GOB_FLAG_ALL_OVER <> 0
 		ret = EVT_DISPATCH 
 	][
-		ret: send-mouse-event evt obj x y flags no
+		ret: send-mouse-event evt obj x y flags
 	]
 	if root? [send-captured-event evt x y flags GOB_FLAG_ALL_OVER]
 	ret
@@ -323,7 +330,7 @@ _do-mouse-press: func [
 		r0: _do-mouse-press evt gb x - gb/cbox/left y - gb/cbox/top flags
 	]
 	if r0 and FFFFh = EVT_DISPATCH [
-		r1: send-mouse-event evt obj x y flags no
+		r1: send-mouse-event evt obj x y flags
 	]
 	switch evt [
 		EVT_LEFT_DOWN [
@@ -334,7 +341,7 @@ _do-mouse-press: func [
 				r0 >>> 16 = EVT_DISPATCH
 				-1 <> array/find-ptr ui-manager/captured as int-ptr! obj
 			][
-				r2: send-mouse-event EVT_CLICK obj x y flags no
+				r2: send-mouse-event EVT_CLICK obj x y flags
 			]
 		]
 		default [0]

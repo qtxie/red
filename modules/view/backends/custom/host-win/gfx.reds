@@ -198,6 +198,14 @@ gfx: context [
 		h: rc/bottom - rc/top
 		layout: create-text-layout txt fmt as-integer w as-integer h
 
+		;-- text color
+		OS-text-box-color
+			as handle! _renderer
+			as handle! layout
+			0
+			string/rs-length? txt
+			styles/text/color
+
 		x: F32_0 y: F32_0
 		get-text-size layout :x :y
 

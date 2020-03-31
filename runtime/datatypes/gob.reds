@@ -168,6 +168,7 @@ gob: context [
 			sym		[red-value!]
 			s-tail	[red-value!]
 			value	[red-value!]
+			tp		[red-tuple!]
 			w		[red-word!]
 			id		[integer!]
 			n		[integer!]
@@ -193,6 +194,10 @@ gob: context [
 					id = shadow [
 						set-shadow s none-value null		;-- delete previous one
 						n: 0 set-shadow s value :n
+					]
+					id = text-color [
+						tp: as red-tuple! value
+						s/text/color: tp/array1
 					]
 					true [0]
 				]

@@ -336,26 +336,26 @@ OS-draw-text: func [
 	this: as this! ctx/dc
 	dc: as ID2D1DeviceContext this/vtbl
 
-	;layout: either TYPE_OF(text) = TYPE_OBJECT [				;-- text-box!
-	;	OS-text-box-layout as red-object! text as renderer! ctx/target 0 yes
-	;][
-	;	if null? ctx/text-format [
-	;		ctx/text-format: as this! create-text-format as red-object! text null
-	;	]
-	;	create-text-layout text ctx/text-format 0 0
-	;]
-	;color?: no
-	;if ctx/font-color <> ctx/pen-color [
-	;	pen: as this! ctx/pen
-	;	brush: as ID2D1SolidColorBrush pen/vtbl
-	;	brush/SetColor pen to-dx-color ctx/font-color null
-	;	color?: yes
-	;]
-	;txt-box-draw-background ctx/target pos layout
-	;dc/DrawTextLayout this as float32! pos/x as float32! pos/y layout ctx/pen 0
-	;if color? [
-	;	brush/SetColor pen to-dx-color ctx/pen-color null
-	;]
+	layout: either TYPE_OF(text) = TYPE_OBJECT [				;-- text-box!
+		OS-text-box-layout as red-object! text as renderer! ctx/target 0 yes
+	][
+		if null? ctx/text-format [
+			ctx/text-format: as this! make-dw-font as red-object! text
+		]
+		create-text-layout text ctx/text-format 0 0
+	]
+	color?: no
+	if ctx/font-color <> ctx/pen-color [
+		pen: as this! ctx/pen
+		brush: as ID2D1SolidColorBrush pen/vtbl
+		brush/SetColor pen to-dx-color ctx/font-color null
+		color?: yes
+	]
+	txt-box-draw-background ctx/target pos layout
+	dc/DrawTextLayout this as float32! pos/x as float32! pos/y layout ctx/pen 0
+	if color? [
+		brush/SetColor pen to-dx-color ctx/pen-color null
+	]
 	true
 ]
 
@@ -1287,13 +1287,13 @@ OS-draw-font: func [
 	/local
 		clr [red-tuple!]
 ][
-	;ctx/text-format: as this! create-text-format font null
-	;;-- set font color
-	;clr: as red-tuple! (object/get-values font) + FONT_OBJ_COLOR
-	;if TYPE_OF(clr) = TYPE_TUPLE [
-	;	ctx/font-color: clr/array1
-	;	ctx/font-color?: yes
-	;]
+	ctx/text-format: as this! make-dw-font font
+	;-- set font color
+	clr: as red-tuple! (object/get-values font) + FONT_OBJ_COLOR
+	if TYPE_OF(clr) = TYPE_TUPLE [
+		ctx/font-color: clr/array1
+		ctx/font-color?: yes
+	]
 ]
 
 OS-draw-arc: func [

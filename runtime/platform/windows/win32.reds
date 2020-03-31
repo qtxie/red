@@ -249,5 +249,7 @@ platform: context [
 		WSAIoctl fd C8000006h h 16 :DisconnectEx-func size? int-ptr! :n null null
 
 		closesocket fd
+
+		OS-image/init		;-- init WIC
 	]
 ]

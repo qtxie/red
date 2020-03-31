@@ -1136,6 +1136,12 @@ GetDpiForMonitor!: alias function! [
 		]
 	]
 	"gdi32.dll" stdcall [
+		GetObject: "GetObjectW" [
+			hObj		[handle!]
+			cbBuffer	[integer!]
+			lpObject	[byte-ptr!]
+			return:		[integer!]
+		]
 		GetDeviceCaps: "GetDeviceCaps" [
 			hDC			[handle!]
 			nIndex		[integer!]

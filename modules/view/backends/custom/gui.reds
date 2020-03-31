@@ -131,19 +131,18 @@ face-handle?: func [
 ]
 
 make-font: func [
-	face [red-object!]
-	font [red-object!]
-	return: [handle!]
-][
-	as handle! 0
-]
-
-get-font-handle: func [
+	face	[red-object!]
 	font	[red-object!]
-	idx		[integer!]							;-- 0-based index
 	return: [handle!]
+	/local
+		blk	[red-block!]
 ][
-	null
+	blk: as red-block! (object/get-values font) + FONT_OBJ_PARENT
+	if face <> null [
+		if TYPE_OF(blk) <> TYPE_BLOCK [blk: block/make-at blk 4]
+		block/rs-append blk as red-value! face
+	]
+	OS-make-font font
 ]
 
 update-para: func [
@@ -154,18 +153,20 @@ update-para: func [
 ]
 
 update-font: func [
-	font	[red-object!]
-	flags	[integer!]
+	font [red-object!]
+	flag [integer!]
 ][
-
-]
-
-OS-request-font: func [
-	font	 [red-object!]
-	selected [red-object!]
-	mono?	 [logic!]
-][
-
+	switch flag [
+		FONT_OBJ_NAME
+		FONT_OBJ_SIZE
+		FONT_OBJ_STYLE
+		FONT_OBJ_ANGLE
+		FONT_OBJ_ANTI-ALIAS? [
+			free-font font
+			make-font null font
+		]
+		default [0]
+	]
 ]
 
 OS-request-file: func [
@@ -178,7 +179,6 @@ OS-request-file: func [
 ][
 	as red-value! none-value
 ]
-
 
 OS-request-dir: func [
 	title	[red-string!]

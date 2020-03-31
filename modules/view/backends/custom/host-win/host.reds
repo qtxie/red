@@ -12,6 +12,7 @@ Red/System [
 
 #include %direct2d.reds
 #include %gfx.reds
+#include %font.reds 
 #include %draw.reds
 #include %text-box.reds
 
@@ -98,7 +99,8 @@ host: context [
 		]
 		assert zero? hr
 
-		rt: as renderer! allocate size? renderer!
+		rt: as renderer! alloc0 size? renderer!
+		rt/brushes: as int-ptr! allocate D2D_MAX_BRUSHES * 2 * size? int-ptr!
 		DX-create-buffer rt as this! int
 
 		if win8+? [create-dcomp rt hWnd]

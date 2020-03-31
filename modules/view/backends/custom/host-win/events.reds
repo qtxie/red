@@ -93,7 +93,7 @@ RedWndProc: func [
 		WM_RBUTTONUP
 		WM_MBUTTONDOWN
 		WM_MBUTTONUP	[
-			switch msg [
+			switch msg [																						
 				WM_LBUTTONDOWN [SetCapture hWnd]
 				WM_LBUTTONUP [ReleaseCapture]
 				default [0]

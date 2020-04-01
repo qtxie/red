@@ -40,7 +40,7 @@ map-pt-from-win: func [
 		g: g/parent
 		while [g/parent <> null][
 			a: a + g/cbox/left
-			b: a + g/cbox/top
+			b: b + g/cbox/top
 			g: g/parent
 		]
 	]
@@ -246,13 +246,11 @@ send-captured-event: func [
 	captured: ui-manager/captured-gob
 	if all [
 		captured <> null
-		ui-manager/hover-gob <> captured
+		captured/flags and GOB_FLAG_AWAY <> 0
 		any [filter = -1 captured/flags and filter <> 0]
 	][
-		if not child? ui-manager/hover-gob captured [	;-- hover-gob is not a child of the captured-gob
-			map-pt-from-win captured x y :x :y
-			send-mouse-event evt captured x y flags
-		]
+		map-pt-from-win captured x y :x :y
+		send-mouse-event evt captured x y flags
 	]
 ]
 
@@ -284,6 +282,9 @@ do-mouse-move: func [
 		if hover <> obj [
 			if hover <> null [
 				if hover-changed? hover obj [
+					if ui-manager/captured-gob = hover [
+						GOB_SET_FLAG(hover GOB_FLAG_AWAY)
+					]
 					send-mouse-event
 						evt
 						hover
@@ -292,6 +293,7 @@ do-mouse-move: func [
 						flags or EVT_FLAG_AWAY
 				]
 				if hover-changed? obj hover [
+					GOB_UNSET_FLAG(obj GOB_FLAG_AWAY)
 					send-mouse-event evt obj x y flags
 				]
 			]

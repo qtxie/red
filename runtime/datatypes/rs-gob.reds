@@ -90,8 +90,14 @@ Red/System [
 #define GOB_FLAG_UPDATE		00200000h
 #define GOB_FLAG_TOP		00400000h
 #define GOB_FLAG_COW_STYLES	00800000h		;-- copy-on-write styles
+#define GOB_FLAG_AWAY		01000000h
+#define GOB_FLAG_FOCUS		02000000h
+#define GOB_FLAG_POPUP		04000000h
+#define GOB_FLAG_MODAL		08000000h
 
-#define GOB_TYPE(gob)	[gob/flags and FFh]
+#define GOB_TYPE(gob)				[gob/flags and FFh]
+#define GOB_SET_FLAG(gob flag)		[gob/flags: gob/flags or flag]
+#define GOB_UNSET_FLAG(gob flag)	[gob/flags: gob/flags and (not flag)]
 
 #define coord! float32!
 

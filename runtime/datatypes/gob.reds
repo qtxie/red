@@ -323,10 +323,16 @@ gob: context [
 					parse-transition g as red-block! value
 				]
 			]
-			sym = facets/flags [g/flags: g/flags or get-flags as red-block! value]
+			sym = facets/flags [g/flags: get-flags as red-block! value]
 			sym = facets/data [
 				g/data: as int-ptr! allocate size? red-value!
 				copy-cell value as cell! g/data
+			]
+			sym = facets/image [
+				either TYPE_OF(value) = TYPE_IMAGE [
+					blk: as red-block! value
+					g/image: blk/node
+				][g/image: null]
 			]
 			;sym = facets/opacity [
 			;	int: as red-integer! value
@@ -367,7 +373,7 @@ gob: context [
 		]
 		rs-gob/update-content-box g
 		ui-manager/redraw
-		if error? [fire [TO_ERROR(script invalid-path) path element]]
+		if all [path <> null error?][fire [TO_ERROR(script invalid-path) path element]]
 		value
 	]
 
@@ -623,6 +629,25 @@ gob: context [
 		rs-gob/length? gob/value
 	]
 
+	put: func [
+		gob		[red-gob!]
+		field	[red-value!]
+		value	[red-value!]
+		case?	[logic!]
+		return:	[red-value!]
+		/local
+			slot  [red-value!]
+			s	  [series!]
+			hash? [logic!]
+			hash  [red-hash!]
+			put?  [logic!]
+	][
+		#if debug? = yes [if verbose > 0 [print-line "gob/put"]]
+
+		set-value gob field value null
+		value
+	]
+
 	init: does [
 		datatype/register [
 			TYPE_GOB
@@ -672,7 +697,7 @@ gob: context [
 			null			;next
 			null			;pick
 			null			;poke
-			null			;put
+			:put
 			null			;remove
 			null			;reverse
 			null			;select

@@ -474,6 +474,9 @@ face!: object [				;-- keep in sync with facet! enum
 				;if word = 'type [cause-error 'script 'locked-word [type]]
 				state/2: state/2 or (1 << ((index? in self word) - 1))
 				if all [state/1 system/view/auto-sync?][show self]
+				#if config/GUI-engine = 'custom [
+					put self/gob word new
+				]
 			][
 				if type = 'rich-text [system/view/platform/update-view self]
 			]
@@ -756,11 +759,12 @@ do-actor: function ["Internal Use Only" face [object!] event [event! none!] type
 		gob: face/gob
 		gob/offset: face/offset
 		gob/size: face/size
+		gob/flags: face/flags
 		if face/text  [gob/text: face/text]
 		if face/draw  [gob/draw: face/draw]
+		if face/image [gob/image: face/image]
 		if face/color [gob/color: face/color]
 		if block? face/pane [foreach f face/pane [append gob f/gob]]
-		;gob/image: face/image
 	]
 ]
 

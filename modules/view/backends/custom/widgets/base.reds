@@ -28,6 +28,7 @@ draw-base: func [
 		mat		[D2D_MATRIX_3X2_F value]
 		blk		[red-block! value]
 		str		[red-string!]
+		img		[red-image!]
 		round?	[logic!]
 		shadow?	[logic!]
 		border? [logic!]
@@ -90,6 +91,11 @@ draw-base: func [
 	][gfx/fill-box box bcolor]
 
 	;-- 3. draw background image
+	if gob/image <> null [
+		img: as red-image! :blk
+		img/node: gob/image
+		gfx/draw-image box img
+	]
 
 	;-- 4. draw border
 	if border? [

@@ -132,6 +132,23 @@ gfx: context [
 		_ctx/Flush _this :err1 :err2
 	]
 
+	draw-image: func [
+		rc		[RECT_F!]
+		img		[red-image!]
+		/local
+			ithis	[this!]
+			bthis	[this!]
+			bmp		[ptr-value!]
+			unk		[IUnknown]
+	][
+		ithis: OS-image/get-handle img
+		_ctx/CreateBitmapFromWicBitmap2 _this ithis null :bmp
+		bthis: as this! bmp/value
+		;-- D2D1_INTERPOLATION_MODE_DEFINITION_LINEAR
+		_ctx/DrawBitmap2 _this as int-ptr! bthis rc as float32! 1.0 1 null null
+		COM_SAFE_RELEASE(unk bthis)
+	]
+
 	create-text-format: func [
 		ss			[gob-style!]
 		return: 	[this!]
@@ -149,6 +166,7 @@ gfx: context [
 		style:  0
 		len:    10
 
+		name: null
 		if ss <> null [
 			len: ss/text/font-size
 			name: ss/text/font-family
@@ -199,12 +217,14 @@ gfx: context [
 		layout: create-text-layout txt fmt as-integer w as-integer h
 
 		;-- text color
-		OS-text-box-color
-			as handle! _renderer
-			as handle! layout
-			0
-			string/rs-length? txt
-			styles/text/color
+		if styles <> null [
+			OS-text-box-color
+				as handle! _renderer
+				as handle! layout
+				0
+				string/rs-length? txt
+				styles/text/color
+		]
 
 		x: F32_0 y: F32_0
 		get-text-size layout :x :y

@@ -209,6 +209,7 @@ gfx: context [
 			y		[float32!]
 			w		[float32!]
 			h		[float32!]
+			unk		[IUnknown]
 	][
 		fmt: as this! create-text-format styles
 
@@ -236,6 +237,8 @@ gfx: context [
 		y: rc/top + h
 
 		_ctx/DrawTextLayout _this x y layout _pen 0
+		COM_SAFE_RELEASE(unk layout)
+		COM_SAFE_RELEASE(unk fmt)
 	]
 
 	draw-shadow: func [			;-- draw bitmap with shadow

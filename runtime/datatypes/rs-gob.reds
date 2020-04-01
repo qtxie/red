@@ -190,13 +190,18 @@ gob-style!: alias struct! [
 	shadow		[gob-style-shadow!]
 ]
 
+gob-cache!: alias struct! [
+	txt-fmt		[int-ptr!]
+	txt-layout	[int-ptr!]
+	bitmap		[int-ptr!]
+]
+
 gob!: alias struct! [				;-- size: 80 bytes, 96 bytes with face slot
 	flags		[integer!]			;-- type and states
 	box			[RECT_F! value]		;-- box = content box + padding + border width
 	cbox		[RECT_F! value]		;-- content box 
 	parent		[gob!]				;-- parent gob
 	children	[node!]				;-- child gobs, array of gobs
-	font		[int-ptr!]			;-- backend specific font handle
 	text		[node!]				;-- red-string node
 	draw-head	[integer!]			;-- head of the draw block
 	draw		[node!]				;-- draw block node
@@ -205,6 +210,7 @@ gob!: alias struct! [				;-- size: 80 bytes, 96 bytes with face slot
 	actors		[red-block!]
 	styles		[gob-style!]
 	data		[int-ptr!]			;-- extra data for each type
+	cache		[gob-cache!]
 	#if GUI-engine = 'custom [
 	face		[integer!]
 	obj-ctx		[node!]

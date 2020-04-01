@@ -345,6 +345,7 @@ host: context [
 			COM_S_OK [0]
 			DXGI_ERROR_DEVICE_REMOVED
 			DXGI_ERROR_DEVICE_RESET [
+				VIEW_MSG("DXGI_DEVICE_RESET")
 				DX-release-target render
 				DX-create-dev
 				wm/render: create-render-target wm/hWnd

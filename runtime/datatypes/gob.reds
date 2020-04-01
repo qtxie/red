@@ -325,7 +325,7 @@ gob: context [
 			]
 			sym = facets/flags [g/flags: get-flags as red-block! value]
 			sym = facets/data [
-				g/data: as int-ptr! allocate size? red-value!
+				if null? g/data [g/data: as int-ptr! allocate size? red-value!]
 				copy-cell value as cell! g/data
 			]
 			sym = facets/image [

@@ -42,7 +42,7 @@ array: context [
 			s	[series!]
 	][
 		s: as series! node/value
-		s/offset: s/tail
+		s/tail: s/offset
 	]
 
 	copy: func [

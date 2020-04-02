@@ -39,14 +39,15 @@ draw-base: func [
 	border?: no
 
 	ss: gob/styles
-	either ss <> null [
+	bcolor: gob/backdrop
+	if ss <> null [
 		round?: ss/radius <> F32_0
 		shadow?: ss/shadow <> null
 		border?: ss/border/width <> 0
 		if ss/states and GOB_STYLE_BACKDROP <> 0 [
 			bcolor: ss/backdrop
 		]
-	][bcolor: gob/backdrop]
+	]
 
 	box: gob/box
 	either shadow? [		;-- 1. prepares for drawing shadow

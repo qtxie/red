@@ -220,4 +220,45 @@ styles-ctx: context [
 			]
 		]
 	]
+
+	set-font-style: func [
+		s		[gob-style!]
+		val		[red-value!]
+		/local
+			w	[red-word!]
+			blk [red-block!]
+			len [integer!]
+			flg [integer!]
+			sym [integer!]
+	][
+		w: as red-word! val
+		len: switch TYPE_OF(w) [
+			TYPE_BLOCK [
+				blk: as red-block! w
+				w: as red-word! block/rs-head blk
+				len: block/rs-length? blk
+			]
+			TYPE_WORD  [1]
+			default	   [0]
+		]
+
+		flg: FONT_STYLE_NORMAL
+		unless zero? len [
+			loop len [
+				sym: symbol/resolve w/symbol
+				case [
+					sym = _bold	 	 [
+						s/text/font-weight: 700
+						flg: flg or FONT_STYLE_BOLD
+					]
+					sym = _italic	 [flg: flg or FONT_STYLE_ITALIC]
+					sym = _underline [flg: flg or FONT_STYLE_UNDERLINE]
+					sym = _strike	 [flg: flg or FONT_STYLE_STRIKE]
+					true			 [0]
+				]
+				w: w + 1
+			]
+		]
+		s/text/font-style: flg
+	]
 ]

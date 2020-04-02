@@ -169,6 +169,8 @@ gob: context [
 			s-tail	[red-value!]
 			value	[red-value!]
 			tp		[red-tuple!]
+			int		[red-integer!]
+			str		[red-string!]
 			w		[red-word!]
 			id		[integer!]
 			n		[integer!]
@@ -198,6 +200,21 @@ gob: context [
 					id = text-color [
 						tp: as red-tuple! value
 						s/text/color: tp/array1
+					]
+					id = font-style [
+						set-font-style s value
+					]
+					id = font-family [
+						if TYPE_OF(value) = TYPE_STRING [
+							str: as red-string! value
+							s/text/font-family: str/node
+						]
+					]
+					id = font-size [
+						if TYPE_OF(value) = TYPE_INTEGER [
+							int: as red-integer! value
+							s/text/font-size: int/value
+						]
 					]
 					true [0]
 				]

@@ -159,31 +159,40 @@ gfx: context [
 			len		[integer!]
 			sym		[integer!]
 			name	[c-string!]
+			txt		[gob-style-text!]
 			format	[com-ptr! value]
 			factory [IDWriteFactory]
+			str		[red-string! value]
 	][
-		weight:	400
+		weight: 0
 		style:  0
 		len:    10
 
 		name: null
 		if ss <> null [
-			len: ss/text/font-size
-			name: ss/text/font-family
+			txt: as gob-style-text! :ss/text
+			len: txt/font-size
+			weight: txt/font-weight
+			if txt/font-style and FONT_STYLE_ITALIC <> 0 [style: 2]
+			if txt/font-family <> null [
+				str/head: 0
+				str/node: txt/font-family
+				str/cache: null
+				name: unicode/to-utf16 str
+			]
 		]
-		if null? name [name: host/default-font-name]
 
+		if null? name [name: host/default-font-name]
+		if weight <= 0 [weight: 400]
 		if len <= 0 [len: 10]
 		size: ConvertPointSizeToDIP(len)
-
-		;TBD extract font style
 
 		factory: as IDWriteFactory dwrite-factory/vtbl
 		factory/CreateTextFormat dwrite-factory name 0 weight style 5 size dw-locale-name :format
 		format/value
 	]
 
-	get-text-size: func [
+	get-layout-size: func [
 		layout		[this!]
 		width		[float32-ptr!]
 		height		[float32-ptr!]
@@ -228,7 +237,7 @@ gfx: context [
 		]
 
 		x: F32_0 y: F32_0
-		get-text-size layout :x :y
+		get-layout-size layout :x :y
 
 		;-- draw text in the center of the rect
 		w: w - x / as float32! 2.0

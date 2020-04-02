@@ -152,21 +152,21 @@ gob-style-padding!: alias struct! [
 	right		[coord!]
 ]
 
-;gob-style-font!: alias struct! [
-;	family		[c-string!]
-;	size		[integer!]
-;	weight		[integer!]
-;	style		[integer!]			;-- italic, bold, underline
-;]
+#enum font-style! [
+	FONT_STYLE_NORMAL:		0
+	FONT_STYLE_ITALIC:		1
+	FONT_STYLE_BOLD:		2
+	FONT_STYLE_UNDERLINE:	4
+	FONT_STYLE_STRIKE:		8
+]
 
 gob-style-text!: alias struct! [
 	color		 [integer!]
 	select-clr	 [integer!]
-	;font		 [gob-style-font! value]
-	font-family	 [c-string!]
+	font-family	 [node!]
 	font-size	 [integer!]
 	font-weight	 [integer!]
-	font-style	 [integer!]			;-- italic, bold, underline
+	font-style	 [font-style!]		;-- italic, bold, underline
 	line-space	 [float32!]
 	letter-space [float32!]
 	opacity		 [byte!]

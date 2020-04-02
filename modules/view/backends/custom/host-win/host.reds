@@ -31,6 +31,7 @@ host: context [
 	screen-size-x:	0
 	screen-size-y:	0
 	default-font-name: as c-string! 0
+	default-text-fmt: as this! 0
 
 	rc-cache:		declare RECT_STRUCT
 	;kb-state: 		allocate 256							;-- holds keyboard state for keys conversion
@@ -155,6 +156,8 @@ host: context [
 		]
 
 		if null? default-font [default-font: GetStockObject DEFAULT_GUI_FONT]
+
+		default-text-fmt: gfx/create-text-format null
 	]
 
 	register-classes: func [
@@ -184,6 +187,22 @@ host: context [
 		hInstance [handle!]
 	][
 		UnregisterClass #u16 "RedHostWindow"	hInstance
+	]
+
+	get-text-size: func [
+		text		[red-string!]
+		hFont		[handle!]
+		x			[float32-ptr!]
+		y			[float32-ptr!]
+		w			[integer!]
+		h			[integer!]
+		/local
+			layout	[this!]
+			fmt		[this!]
+	][
+		either hFont <> null [fmt: as this! hFont][fmt: default-text-fmt]
+		layout: create-text-layout text fmt w h
+		gfx/get-layout-size layout x y
 	]
 
 	get-screen-size: func [

@@ -73,10 +73,35 @@ get-text-size: func [
 	face 	[red-object!]
 	text	[red-string!]
 	hFont	[handle!]
-	p		[red-pair!]
-	return: [red-pair!]
+	pair	[red-pair!]
+	return: [tagSIZE]
+	/local
+		layout [this!]
+		w		[integer!]
+		h		[integer!]
+		size	[tagSIZE]
+		sz		[red-pair!]
+		x		[float32!]
+		y		[float32!]
 ][
-	pair/push 80 20
+	size: declare tagSIZE
+	w: 0 h: 0
+	if face <> null [
+		sz: as red-pair! (object/get-values face) + FACE_OBJ_SIZE
+		w: sz/x
+		h: sz/y
+	]
+	x: F32_0 y: F32_0
+	host/get-text-size text hFont :x :y w h
+
+	size/width:  as integer! (x + as float32! 0.5)
+	size/height: as integer! (y + as float32! 0.5)
+	if pair <> null [
+		pair/x: size/width
+		pair/y: size/height
+	]
+	probe [size/width " " size/height]
+	size
 ]
 
 get-flags: func [

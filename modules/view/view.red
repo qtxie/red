@@ -754,7 +754,7 @@ do-actor: function ["Internal Use Only" face [object!] event [event! none!] type
 	init-face: func [
 		"set facets in face/gob"
 		face	[object!]
-		/local gob f
+		/local gob f ft
 	][
 		gob: face/gob
 		gob/offset: face/offset
@@ -765,6 +765,15 @@ do-actor: function ["Internal Use Only" face [object!] event [event! none!] type
 		if face/image [gob/image: face/image]
 		if face/color [gob/color: face/color]
 		if block? face/pane [foreach f face/pane [append gob f/gob]]
+		if face/font [
+			ft: face/font
+			gob/styles: object [
+				font-family: ft/name
+				font-size: ft/size
+				font-style: ft/style
+				text-color: ft/color
+			]
+		]
 	]
 ]
 
@@ -896,6 +905,67 @@ unview: function [
 	]
 ]
 
+custom-widgets: object [
+	btn-radius: 4
+	btn-shadow-normal: [
+		0x3 1 -2 0.0.0.204
+		0x2 2 0.0.0.220
+		0x1 5 0.0.0.224
+	]
+	btn-shadow-down: [
+		0x3 7 -2 0.0.0.180
+		0x2 8 0.0.0.200
+		0x1 11 0.0.0.204
+	]
+
+	btn-normal: object [
+		background: 255.255.255
+		text-color: blue
+		border-radius: btn-radius
+		shadow: btn-shadow-normal
+	]
+
+	btn-hover: object [
+		background: 240.240.240
+		border-radius: btn-radius
+		shadow: btn-shadow-normal
+	]
+
+	btn-down: object [
+		background: 210.210.210
+		border-radius: btn-radius
+		shadow: btn-shadow-down
+	]
+
+	register: func [][
+		register-widget 'window make gob! [
+			type: 'window color: white
+		]
+
+		register-widget 'button make gob! [
+			actors: reduce [
+				'create func [gob _][]
+				'over func [gob event][
+					gob/styles: either find event/flags 'away [btn-normal][btn-hover]
+				]
+				'down func [gob evt][
+					gob/styles: btn-down
+				]
+				'up func [gob evt][
+					gob/styles: btn-normal
+				]
+			]
+			styles: btn-normal
+		]
+
+		register-widget 'base make gob! []
+
+		register-widget 'panel make gob! []
+
+		register-widget 'text make gob! []
+	]
+]
+
 view: function [
 	"Displays a window view from a layout block or from a window face"
 	spec [block! object! gob!]	"Layout block or face object"
@@ -908,6 +978,7 @@ view: function [
 	/no-wait				"Return immediately - do not wait"
 ][
 	unless system/view/screens [system/view/platform/init]
+	if empty? gob-widgets [custom-widgets/register]
 
 	if block? spec [spec: either tight [layout/tight spec][layout spec]]
 	if spec/type <> 'window [cause-error 'script 'not-window []]

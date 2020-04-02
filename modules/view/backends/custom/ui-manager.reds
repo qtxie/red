@@ -70,7 +70,7 @@ ui-manager: context [	;-- manage all the windows
 		g: wm/gob
 		g/flags: g/flags and (not GOB_FLAG_HOSTED)
 		array/remove-ptr win-list as int-ptr! wm
-		free as byte-ptr! wm/render
+		host/free-renderer wm/render
 		free as byte-ptr! wm
 	]
 

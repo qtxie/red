@@ -193,29 +193,36 @@ draw-begin: func [
 
 	this: gfx/_this
 	dc: gfx/_ctx
+	ctx/target: as int-ptr! current-rt
 
 	if hWnd = null [
 		wic-bmp: OS-image/get-wicbitmap img
 		;-- create a bitmap target
-		;target: as renderer! alloc0 size? renderer!
-		;target/brushes: as int-ptr! allocate D2D_MAX_BRUSHES * 2 * size? int-ptr!
+		target: as renderer! alloc0 size? renderer!
+		target/brushes: as int-ptr! allocate D2D_MAX_BRUSHES * 2 * size? int-ptr!
 
-		;zero-memory as byte-ptr! :props size? D2D1_RENDER_TARGET_PROPERTIES
-		;factory: as ID2D1Factory d2d-factory/vtbl
-		;if 0 <> factory/CreateWicBitmapRenderTarget d2d-factory wic-bmp :props :rt [
-		;	;TBD error!!!
-		;	probe "CreateWicBitmapRenderTarget failed in draw-begin"
-		;	return ctx
-		;]
-		;ctx/image: img/node
-		;this: rt/value
-		;dc: as ID2D1DeviceContext this/vtbl
-		;dc/QueryInterface this IID_ID2D1DeviceContext :rt	;-- Query ID2D1DeviceContext interface
-		;this: rt/value
-		;dc: as ID2D1DeviceContext this/vtbl
+		zero-memory as byte-ptr! :props size? D2D1_RENDER_TARGET_PROPERTIES
+		factory: as ID2D1Factory d2d-factory/vtbl
+		if 0 <> factory/CreateWicBitmapRenderTarget d2d-factory wic-bmp :props :rt [
+			VIEW_ERROR("CreateWicBitmapRenderTarget failed in draw-begin")
+			return ctx
+		]
+		ctx/image: img/node
+		this: rt/value
+		dc: as ID2D1DeviceContext this/vtbl
+		dc/QueryInterface this IID_ID2D1DeviceContext :rt	;-- Query ID2D1DeviceContext interface
+		this: rt/value
+		dc: as ID2D1DeviceContext this/vtbl
+		ctx/target: as int-ptr! target
+
+		dc/BeginDraw this
+		dc/SetTextAntialiasMode this 1				;-- ClearType
+		dc/SetAntialiasMode this 0					;-- D2D1_ANTIALIAS_MODE_PER_PRIMITIVE
+
+		matrix2d/identity m
+		dc/SetTransform this :m						;-- set to identity matrix
 	]
 	ctx/dc: as ptr-ptr! this
-	ctx/target: as int-ptr! current-rt
 
 	d3d-clr: to-dx-color ctx/pen-color null
 	dc/CreateSolidColorBrush this d3d-clr null :brush
@@ -250,7 +257,20 @@ draw-end: func [
 	on-graphic? [logic!]
 	cache?		[logic!]
 	paint?		[logic!]
+	/local
+		this	[this!]
+		dc		[ID2D1DeviceContext]
+		sc		[IDXGISwapChain1]
+		hr		[integer!]
 ][
+	if null? hWnd [
+		this: as this! ctx/dc
+		dc: as ID2D1DeviceContext this/vtbl
+		dc/EndDraw this null null
+		DX-release-target as renderer! ctx/target
+		dc/Release this
+	]
+	release-ctx ctx
 ]
 
 release-pen-style: func [

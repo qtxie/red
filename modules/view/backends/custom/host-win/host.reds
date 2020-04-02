@@ -240,6 +240,12 @@ host: context [
 		int/value:  as-integer version-info/wProductType
 	]
 
+	free-renderer: func [
+		render	[renderer!]
+	][
+		DX-release-target render
+	]
+
 	cleanup: does [
 		unregister-classes hInstance
 		DX-cleanup

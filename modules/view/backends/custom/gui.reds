@@ -123,10 +123,31 @@ get-flags: func [
 	flags
 ]
 
+get-node-facet: func [
+	node	[node!]
+	facet	[integer!]
+	return: [red-value!]
+	/local
+		ctx	 [red-context!]
+		s	 [series!]
+][
+	ctx: TO_CTX(node)
+	s: as series! ctx/values/value
+	s/offset + facet
+]
+
 face-handle?: func [
 	face	[red-object!]
 	return: [handle!]							;-- returns NULL if no handle
+	/local
+		state [red-block!]
+		int	  [red-integer!]
 ][
+	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
+	if TYPE_OF(state) = TYPE_BLOCK [
+		int: as red-integer! block/rs-head state
+		if TYPE_OF(int) = TYPE_HANDLE [return as handle! int/value]
+	]
 	null
 ]
 
@@ -283,7 +304,71 @@ unlink-sub-obj: func [
 	face  [red-object!]
 	obj   [red-object!]
 	field [integer!]
+	/local
+		values [red-value!]
+		parent [red-block!]
+		res	   [red-value!]
 ][
+	values: object/get-values obj
+	parent: as red-block! values + field
+	
+	if TYPE_OF(parent) = TYPE_BLOCK [
+		res: block/find parent as red-value! face null no no yes no null null no no no no
+		if TYPE_OF(res) <> TYPE_NONE [_series/remove as red-series! res null null]
+		if all [
+			field = FONT_OBJ_PARENT
+			block/rs-tail? parent
+		][
+			free-font obj
+		]
+	]
+]
+
+free-faces: func [
+	face	[red-object!]
+	/local
+		values	[red-value!]
+		type	[red-word!]
+		obj		[red-object!]
+		tail	[red-object!]
+		pane	[red-block!]
+		state	[red-value!]
+		rate	[red-value!]
+		sym		[integer!]
+		dc		[integer!]
+		flags	[integer!]
+		handle	[handle!]
+][
+	handle: face-handle? face
+	#if debug? = yes [if null? handle [probe "VIEW: WARNING: free null window handle!"]]
+
+	if null? handle [exit]
+
+	values: object/get-values face
+	type: as red-word! values + FACE_OBJ_TYPE
+	sym: symbol/resolve type/symbol
+
+	rate: values + FACE_OBJ_RATE
+	;if TYPE_OF(rate) <> TYPE_NONE [change-rate handle none-value]
+
+	obj: as red-object! values + FACE_OBJ_FONT
+	if TYPE_OF(obj) = TYPE_OBJECT [unlink-sub-obj face obj FONT_OBJ_PARENT]
+	
+	obj: as red-object! values + FACE_OBJ_PARA
+	if TYPE_OF(obj) = TYPE_OBJECT [unlink-sub-obj face obj PARA_OBJ_PARENT]
+
+	pane: as red-block! values + FACE_OBJ_PANE
+	if TYPE_OF(pane) = TYPE_BLOCK [
+		obj: as red-object! block/rs-head pane
+		tail: as red-object! block/rs-tail pane
+		while [obj < tail][
+			free-faces obj
+			obj: obj + 1
+		]
+	]
+
+	state: values + FACE_OBJ_STATE
+	state/header: TYPE_NONE
 ]
 
 OS-update-view: func [
@@ -295,7 +380,7 @@ OS-destroy-view: func [
 	face   [red-object!]
 	empty? [logic!]
 ][
-	;free-faces face
+	free-faces face
 ]
 
 OS-update-facet: func [

@@ -28,26 +28,21 @@ widgets: context [
 			box	[RECT_F!]
 			m	[D2D_MATRIX_3X2_F value]
 	][
+		box: gob/cbox
+		x: box/left
+		y: box/top
 		t: GOB_TYPE(gob)
 		switch t [
 			GOB_BASE	[draw-base gob]
 			GOB_FIELD	[draw-field gob]
 			GOB_BUTTON	[0]
-			GOB_WINDOW	[0]
+			GOB_WINDOW	[x: F32_0 y: F32_0]
 			default		[0]
 		]
-		if gob/children <> null [
-			box: gob/cbox
-			either t <> GOB_WINDOW [
-				x: box/left
-				y: box/top		
-			][
-				x: F32_0
-				y: F32_0
-			]
 
-			matrix2d/translate mat x y m false
-			gfx/set-matrix m
+		if gob/children <> null [
+			matrix2d/translate mat x y :m false
+			gfx/set-matrix :m
 
 			rc/left: F32_0
 			rc/top: F32_0
@@ -63,6 +58,7 @@ widgets: context [
 				p: p + 1
 			]
 			gfx/pop-clip-rect
+			gfx/set-matrix mat
 		]
 	]
 ]

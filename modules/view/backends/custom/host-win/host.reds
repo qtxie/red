@@ -380,6 +380,30 @@ host: context [
 			]
 		]
 	]
+
+	free-gob: func [
+		g		[gob!]
+		/local
+			unk	[IUnknown]
+			t	[this!]
+			ss	[gob-style-shadow!]
+			new [gob-style-shadow!]
+	][
+		if g/cache <> null [
+			t: as this! g/cache/txt-fmt
+			COM_SAFE_RELEASE(unk t)
+		]
+		if g/styles <> null [
+			ss: g/styles/shadow 
+			while [ss <> null][
+				new: ss/next
+				free as byte-ptr! ss
+				ss: new
+			]
+			free as byte-ptr! g/styles
+		]
+		free as byte-ptr! g
+	]
 ]
 
 do-events: func [

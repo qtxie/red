@@ -20,6 +20,7 @@ Red/System [
 	#default [#include %host-linux/host.reds]		;-- Linux
 ]
 
+#include %para.reds
 #include %events.reds
 #include %widgets.reds
 #include %ui-manager.reds
@@ -191,13 +192,6 @@ make-font: func [
 	OS-make-font font
 ]
 
-update-para: func [
-	para	[red-object!]
-	flags	[integer!]
-][
-
-]
-
 update-font: func [
 	font [red-object!]
 	flag [integer!]
@@ -284,7 +278,7 @@ OS-make-view: func [
 		open?	[red-logic!]
 		rate	[red-value!]
 		saved	[red-value!]
-		font	[red-object!]
+		para	[red-object!]
 		flags	[integer!]
 		bits	[integer!]
 		sym		[integer!]
@@ -309,7 +303,7 @@ OS-make-view: func [
 	data:	  as red-block!		values + FACE_OBJ_DATA
 	img:	  as red-image!		values + FACE_OBJ_IMAGE
 	menu:	  as red-block!		values + FACE_OBJ_MENU
-	font:	  as red-object!	values + FACE_OBJ_FONT
+	para:	  as red-object!	values + FACE_OBJ_PARA
 	rate:						values + FACE_OBJ_RATE
 	g:		  as red-gob!		values + FACE_OBJ_GOB
 
@@ -321,6 +315,11 @@ OS-make-view: func [
 	gob: as gob! g/value
 	copy-cell as cell! face as cell! :gob/face
 	gob/parent: as gob! parent
+
+	if TYPE_OF(para) = TYPE_OBJECT [
+		if null? gob/styles [gob/styles: as gob-style! alloc0 size? gob-style!]
+		gob/styles/text/align: get-para-flags para
+	]
 	if sym = window [host/make-window gob as gob! parent]
 	as-integer gob
 ]
@@ -359,6 +358,7 @@ free-faces: func [
 		pane	[red-block!]
 		state	[red-value!]
 		rate	[red-value!]
+		gob		[red-gob!]
 		sym		[integer!]
 		dc		[integer!]
 		flags	[integer!]
@@ -391,6 +391,9 @@ free-faces: func [
 			obj: obj + 1
 		]
 	]
+
+	gob: as red-gob! values + FACE_OBJ_GOB
+	if TYPE_OF(gob) = TYPE_GOB [host/free-gob gob/value]
 
 	state: values + FACE_OBJ_STATE
 	state/header: TYPE_NONE

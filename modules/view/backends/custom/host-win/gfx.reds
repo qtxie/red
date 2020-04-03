@@ -19,6 +19,7 @@ gfx: context [
 	_ctx: as ID2D1DeviceContext 0
 	_this: as this! 0
 	_renderer: as renderer! 0
+	_gob: as gob! 0
 
 	init: func [
 		ctx			[this!]
@@ -216,11 +217,20 @@ gfx: context [
 			layout	[this!]
 			x		[float32!]
 			y		[float32!]
+			ww		[float32!]
+			hh		[float32!]
 			w		[float32!]
 			h		[float32!]
+			align	[integer!]
 			unk		[IUnknown]
 	][
-		fmt: as this! create-text-format styles
+		if null? _gob/cache [_gob/cache: as gob-cache! alloc0 size? gob-cache!]
+
+		fmt: as this! _gob/cache/txt-fmt
+		if null? fmt [
+			fmt: as this! create-text-format styles
+			_gob/cache/txt-fmt: as int-ptr! fmt
+		]
 
 		w: rc/right - rc/left
 		h: rc/bottom - rc/top
@@ -236,17 +246,31 @@ gfx: context [
 				styles/text/color
 		]
 
-		x: F32_0 y: F32_0
-		get-layout-size layout :x :y
+		ww: F32_0 hh: F32_0
+		get-layout-size layout :ww :hh
 
-		;-- draw text in the center of the rect
-		w: w - x / as float32! 2.0
-		h: h - y / as float32! 2.0
-		x: rc/left + w
-		y: rc/top + h
+		;-- text alignment
+		x: rc/left
+		y: rc/top
+		if styles <> null [
+			ww: w - ww
+			hh: h - hh
+			align: styles/text/align
+			case [		;-- h-align
+				align and TEXT_ALIGN_CENTER <> 0 [x: x + (ww / as float32! 2.0)]
+				align and TEXT_ALIGN_RIGHT <> 0 [x: x + ww]
+				true [0]
+			]
+			case [		;-- v-align
+				align and TEXT_ALIGN_VCENTER <> 0 [y: y + (hh / as float32! 2.0)]
+				align and TEXT_ALIGN_BOTTOM <> 0 [y: y + hh]
+				true [0]
+			]
+		]
 
 		_ctx/DrawTextLayout _this x y layout _pen 0
-		;COM_SAFE_RELEASE(unk layout)
+		flush
+		COM_SAFE_RELEASE(unk layout)
 		;COM_SAFE_RELEASE(unk fmt)
 	]
 

@@ -32,6 +32,7 @@ widgets: context [
 		x: box/left
 		y: box/top
 		t: GOB_TYPE(gob)
+		gfx/_gob: gob
 		switch t [
 			GOB_BASE	[draw-base gob]
 			GOB_FIELD	[draw-field gob]

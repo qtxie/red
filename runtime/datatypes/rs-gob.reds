@@ -160,6 +160,14 @@ gob-style-padding!: alias struct! [
 	FONT_STYLE_STRIKE:		8
 ]
 
+#define TEXT_ALIGN_LEFT 		0
+#define TEXT_ALIGN_RIGHT 		1
+#define TEXT_ALIGN_CENTER 		2
+#define TEXT_ALIGN_TOP 			0
+#define TEXT_ALIGN_VCENTER		4
+#define TEXT_ALIGN_BOTTOM 		8
+#define TEXT_WRAP_FLAG	 		20h
+
 gob-style-text!: alias struct! [
 	color		 [integer!]
 	select-clr	 [integer!]
@@ -169,8 +177,8 @@ gob-style-text!: alias struct! [
 	font-style	 [font-style!]		;-- italic, bold, underline
 	line-space	 [float32!]
 	letter-space [float32!]
-	opacity		 [byte!]
-	align		 [byte!]			;-- text align
+	opacity		 [float32!]
+	align		 [integer!]			;-- text align, wrap?
 	shadow		 [gob-style-shadow!]
 ]
 

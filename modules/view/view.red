@@ -355,9 +355,12 @@ link-sub-to-parent: function ["Internal Use Only" face [object!] type [word!] ol
 	]
 ]
 
-update-font-faces: function ["Internal Use Only" parent [block! none!]][
+update-font-faces: function ["Internal Use Only" parent [block! none!] font][
 	if block? parent [
 		foreach f parent [
+			#if config/GUI-engine = 'custom [
+				if f/gob [update-font-gob f/gob font]
+			]
 			if f/state [
 				system/reactivity/check/only f 'font
 				f/state/2: f/state/2 or 00080000h		;-- (1 << ((index? in f 'font) - 1))
@@ -512,10 +515,10 @@ font!: object [											;-- keep in sync with font-facet! enum
 			if any [series? :old object? :old][modify old 'owned none]
 			if any [series? :new object? :new][modify new 'owned reduce [self word]]
 
-			if all [block? state handle? state/1][ 
+			if all [block? state handle? state/1][
 				system/view/platform/update-font self (index? in self word) - 1
-				update-font-faces parent
 			]
+			update-font-faces parent self
 		]
 	]
 	
@@ -526,7 +529,7 @@ font!: object [											;-- keep in sync with font-facet! enum
 			not find [remove clear take] action
 		][
 			system/view/platform/update-font self (index? in self word) - 1
-			update-font-faces parent
+			update-font-faces parent self
 		]
 	]	
 ]
@@ -751,6 +754,18 @@ do-actor: function ["Internal Use Only" face [object!] event [event! none!] type
 ]
 
 #if config/GUI-engine = 'custom [
+
+	update-font-gob: func [gob ft /local styles obj][
+		styles: gob/styles
+		obj: object [
+			font-family: ft/name
+			font-size: ft/size
+			font-style: ft/style
+			text-color: ft/color
+		]
+		gob/styles: either object? styles [make styles obj][obj]
+	]
+
 	init-face: func [
 		"set facets in face/gob"
 		face	[object!]
@@ -765,15 +780,7 @@ do-actor: function ["Internal Use Only" face [object!] event [event! none!] type
 		if face/image [gob/image: face/image]
 		if face/color [gob/color: face/color]
 		if block? face/pane [foreach f face/pane [append gob f/gob]]
-		if face/font [
-			ft: face/font
-			gob/styles: object [
-				font-family: ft/name
-				font-size: ft/size
-				font-style: ft/style
-				text-color: ft/color
-			]
-		]
+		if face/font [update-font-gob gob face/font]
 	]
 ]
 
@@ -880,9 +887,7 @@ show: function [
 		do-safe [face/actors/on-created face none]		;@@ only called once
 	]
 	if all [new? face/type = 'window face/visible?][
-	probe "start show"
 		system/view/platform/show-window obj
-	probe "end show"
 	]
 ]
 

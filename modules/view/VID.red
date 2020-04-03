@@ -423,7 +423,7 @@ system/view/VID: context [
 		font: opts/font
 		if any [face-font: face/font font][
 			either face-font [
-				face-font: copy face-font				;-- @@ share font/state between faces ?
+				face-font: copy/deep face-font			;-- @@ share font/state between faces ?
 				if font [
 					set/some face-font font				;-- overwrite face/font with opts/font
 					opts/font: face-font
@@ -434,6 +434,7 @@ system/view/VID: context [
 			foreach [field value] default-font [
 				if none? face-font/:field [face-font/:field: get value]
 			]
+			face-font/parent: none
 		]
 		if all [block? face/actors block? actors: opts/actors][
 			foreach [name f s b] face/actors [

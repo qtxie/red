@@ -248,7 +248,7 @@ OS-redraw: func [hWnd [integer!]][]
 
 OS-refresh-window: func [hWnd [integer!] /local g [gob!]][
 	g: as gob! hWnd
-	if GOB_TYPE(g) = GOB_WINDOW [ui-manager/draw-windows]
+	;if GOB_TYPE(g) = GOB_WINDOW [ui-manager/draw-windows]
 ]
 
 OS-show-window: func [

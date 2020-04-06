@@ -269,6 +269,7 @@ DX-init: func [
 
 	;-- create D2D factory
 	options: 0													;-- debugLevel
+	#if debug? = yes [options: 3]								;-- D2D1_DEBUG_LEVEL_INFORMATION
 	hr: D2D1CreateFactory 0 IID_ID2D1Factory1 :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
 	assert zero? hr
 	d2d-factory: as this! factory/value
@@ -356,17 +357,20 @@ DX-create-dev: func [
 		d2d-device			[this!]
 		hr					[integer!]
 		dll					[handle!]
+		flags				[integer!]
 ][
 	if host/win8+? [
 		dll: LoadLibraryA "dcomp.dll"
 		pfnDCompositionCreateDevice2: GetProcAddress dll "DCompositionCreateDevice2"
 	]
 
+	flags: 33	;-- D3D11_CREATE_DEVICE_BGRA_SUPPORT or D3D11_CREATE_DEVICE_SINGLETHREADED
+	#if debug? = yes [flags: flags or 2]
 	hr: D3D11CreateDevice
 		null
 		1		;-- D3D_DRIVER_TYPE_HARDWARE
 		null
-		33		;-- D3D11_CREATE_DEVICE_BGRA_SUPPORT or D3D11_CREATE_DEVICE_SINGLETHREADED
+		flags
 		null
 		0
 		7		;-- D3D11_SDK_VERSION

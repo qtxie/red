@@ -114,9 +114,13 @@ styles-ctx: context [
 		val		[red-value!]
 		/local tp [red-tuple!]
 	][
-		tp: as red-tuple! val
-		s/backdrop: tp/array1
-		s/states: s/states or GOB_STYLE_BACKDROP
+		either TYPE_OF(val) = TYPE_TUPLE [
+			tp: as red-tuple! val
+			s/backdrop: tp/array1
+			s/states: s/states or GOB_STYLE_BACKDROP
+		][
+			s/states: s/states and (not GOB_STYLE_BACKDROP)
+		]
 	]
 
 	set-border: func [

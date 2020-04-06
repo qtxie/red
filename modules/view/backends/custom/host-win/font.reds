@@ -38,6 +38,7 @@ make-dw-font: func [
 		factory [IDWriteFactory]
 		save?	[logic!]
 ][
+	VIEW_MSG("make-dw-font")
 	weight:	400
 	style:  0
 	either TYPE_OF(font) = TYPE_OBJECT [
@@ -91,6 +92,7 @@ make-dw-font: func [
 	factory: as IDWriteFactory dwrite-factory/vtbl
 	factory/CreateTextFormat dwrite-factory name 0 weight style 5 size dw-locale-name :format
 	if save? [handle/make-at as red-value! h-font as-integer format/value]
+	VIEW_MSG("make-dw-font done")
 	as handle! format/value
 ]
 

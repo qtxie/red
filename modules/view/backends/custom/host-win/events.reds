@@ -42,10 +42,7 @@ RedWndProc: func [
 	lParam		[integer!]
 	return:		[integer!]
 	/local
-		cs		[tagCREATESTRUCT]
 		rc		[RECT_STRUCT]
-		obj		[gob!]
-		child	[gob!]
 		x		[integer!]
 		y		[integer!]
 		wm		[wm!]
@@ -57,12 +54,6 @@ RedWndProc: func [
 
 	switch msg [
 		WM_CREATE [
-			cs: as tagCREATESTRUCT lParam
-			obj: as gob! cs/lpCreateParams
-			obj/flags: obj/flags and FFFFFF00h or GOB_WINDOW or GOB_FLAG_HOSTED
-			wm: ui-manager/add-window hWnd obj create-render-target hWnd
-			obj/data: as int-ptr! wm
-			SetWindowLongPtr hWnd GWLP_USERDATA as int-ptr! wm
 			return 0	;-- continue to create the window
 		]
 		WM_MOUSEMOVE [
@@ -117,8 +108,10 @@ RedWndProc: func [
 				mouse-y: pixel-to-logical y
 				DX-resize-buffer wm/render x y
 				rs-gob/set-size wm/gob mouse-x mouse-y
+
 				ui-manager/redraw
 				ui-manager/draw-window wm
+
 				send-pt-event EVT_SIZING wm/gob mouse-x mouse-y 0
 				IF_GOB_FACE([
 					pair: as red-pair! (get-face-values wm/gob) + FACE_OBJ_SIZE
@@ -134,9 +127,13 @@ RedWndProc: func [
 		WM_MOUSEACTIVATE [0]
 		WM_SETCURSOR [0]
 		WM_GETOBJECT [0]		;-- for accessibility support
-		WM_CLOSE [0]
-		WM_DESTROY [
+		WM_CLOSE [
 			ui-manager/remove-window wm
+			DestroyWindow hWnd
+			return 0
+		]
+		WM_DESTROY [
+			;@@ don't use wm, it already released in WM_CLOSE message
 			PostQuitMessage 0
 			return 0
 		]
@@ -151,15 +148,13 @@ RedWndProc: func [
 				rc/left rc/top
 				rc/right - rc/left rc/bottom - rc/top
 				SWP_NOZORDER or SWP_NOACTIVATE
-			;d2d-release-target target
 			return 0
 		]
 		WM_PAINT [
 			ValidateRect hWnd null
+			return 0
 		]
-		WM_ERASEBKGND [
-			return 1
-		]
+		WM_ERASEBKGND [return 1]
 		default [0]
 	]
 	DefWindowProc hWnd msg wParam lParam

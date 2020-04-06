@@ -198,8 +198,10 @@ gob: context [
 						n: 0 set-shadow s value :n
 					]
 					id = text-color [
-						tp: as red-tuple! value
-						s/text/color: tp/array1
+						if TYPE_OF(value) = TYPE_TUPLE [
+							tp: as red-tuple! value
+							s/text/color: tp/array1
+						]
 					]
 					id = font-style [
 						set-font-style s value

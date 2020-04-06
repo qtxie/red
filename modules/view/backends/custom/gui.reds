@@ -364,6 +364,7 @@ free-faces: func [
 		flags	[integer!]
 		handle	[handle!]
 ][
+	VIEW_MSG("free-faces")
 	handle: face-handle? face
 	#if debug? = yes [if null? handle [probe "VIEW: WARNING: free null window handle!"]]
 
@@ -394,7 +395,7 @@ free-faces: func [
 
 	gob: as red-gob! values + FACE_OBJ_GOB
 	if TYPE_OF(gob) = TYPE_GOB [host/free-gob gob/value]
-
+	VIEW_MSG("free-faces done")
 	state: values + FACE_OBJ_STATE
 	state/header: TYPE_NONE
 ]

@@ -14,11 +14,11 @@ system/view/platform: context [
 
 	#system [
 
-		view-log-level: 3
+		view-log-level: 2
 
-		#define VIEW_MSG(msg) [#if debug? = yes [if view-log-level > 0 [print-line msg]]]
+		#define VIEW_ERROR(msg) [#if debug? = yes [if view-log-level > 0 [print-line msg]]]
 		#define VIEW_WARN(msg) [#if debug? = yes [if view-log-level > 1 [print-line msg]]]
-		#define VIEW_ERROR(msg) [#if debug? = yes [if view-log-level > 2 [print-line msg]]]
+		#define VIEW_MSG(msg) [#if debug? = yes [if view-log-level > 2 [print-line msg]]]
 
 		gui: context [
 		#either GUI-engine = 'custom [

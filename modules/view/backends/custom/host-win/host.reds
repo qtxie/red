@@ -172,7 +172,7 @@ host: context [
 		wcex/style:			0
 		wcex/lpfnWndProc:	:RedWndProc
 		wcex/cbClsExtra:	0
-		wcex/cbWndExtra:	size? int-ptr!		;-- gob
+		wcex/cbWndExtra:	0
 		wcex/hInstance:		hInstance
 		wcex/hIcon:			LoadIcon hInstance as c-string! 1
 		wcex/hCursor:		cur
@@ -283,6 +283,7 @@ host: context [
 			h		[integer!]
 			wm		[wm!]
 			handle	[handle!]
+			hWnd	[handle!]
 	][
 		flags: WS_CAPTION or WS_SYSMENU or WS_MINIMIZEBOX or WS_THICKFRAME
 		wsflags: 0
@@ -305,7 +306,12 @@ host: context [
 			handle: wm/hwnd
 		][handle: null]
 
-		CreateWindowEx
+		;-- Before CreateWindowEx returns, the WndProc will receive following messages:
+		;-- msg: 36   WM_GETMINMAXINFO
+		;-- msg: 129  WM_NCCREATE
+		;-- msg: 131  WM_NCCALCSIZE
+		;-- msg: 1    WM_CREATE
+		hWnd: CreateWindowEx
 			wsflags
 			#u16 "RedHostWindow"
 			#u16 "RedCustomWindow"
@@ -317,7 +323,13 @@ host: context [
 			handle
 			null
 			hInstance
-			as int-ptr! obj
+			null
+
+		obj/flags: obj/flags and FFFFFF00h or GOB_WINDOW or GOB_FLAG_HOSTED
+		wm: ui-manager/add-window hWnd obj create-render-target hWnd
+		obj/data: as int-ptr! wm
+		SetWindowLongPtr hWnd GWLP_USERDATA as int-ptr! wm
+		hWnd
 	]
 
 	show-window: func [
@@ -412,26 +424,28 @@ do-events: func [
 	/local
 		msg		[tagMSG value]
 		msg?	[logic!]
-		run?	[logic!]
 		tm		[integer!]
 		mt		[time-meter! value]
 		t		[float32!]
 ][
 	msg?: no
-	run?: yes
 
-	while [run?][
+	forever [
 		;time-meter/start :mt
-		
-		loop 10 [
+
+		loop 3 [
 			if 0 < PeekMessage :msg null 0 0 1 [
-				if msg/msg = 12h [run?: no]		;-- WM_QUIT
+				if msg/msg = 12h [		;-- WM_QUIT
+					;@@ do cleanup here if needed
+					return yes
+				]
 				unless msg? [msg?: yes]
 				TranslateMessage :msg
 				DispatchMessage :msg
 				if no-wait? [return msg?]
 			]
 		]
+
 		tm: as-integer (as float32! 16.66) - ui-manager/draw-windows
 		if tm > 0 [io/do-events tm]
 

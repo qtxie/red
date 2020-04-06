@@ -162,7 +162,7 @@ draw-begin: func [
 		this	[this!]
 		dc		[ID2D1DeviceContext]
 		m		[D2D_MATRIX_3X2_F value]
-		bg-clr	[integer!]
+		hr		[integer!]
 		brush	[com-ptr! value]
 		target	[renderer!]
 		brushes [int-ptr!]

@@ -36,7 +36,6 @@ widgets: context [
 		switch t [
 			GOB_BASE	[draw-base gob]
 			GOB_FIELD	[draw-field gob]
-			GOB_BUTTON	[0]
 			GOB_WINDOW	[x: F32_0 y: F32_0]
 			default		[0]
 		]

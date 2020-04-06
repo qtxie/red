@@ -105,8 +105,6 @@ host: context [
 		DX-create-buffer rt as this! int
 
 		if win8+? [create-dcomp rt hWnd]
-
-		gfx/init d2d-ctx
 		rt
 	]
 
@@ -247,6 +245,8 @@ host: context [
 			and 0000FFFFh
 
 		DX-init
+		gfx/init d2d-ctx
+
 		set-defaults
 		register-classes hInstance
 

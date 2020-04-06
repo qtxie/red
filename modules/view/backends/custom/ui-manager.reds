@@ -72,6 +72,10 @@ ui-manager: context [	;-- manage all the windows
 		array/remove-ptr win-list as int-ptr! wm
 		host/free-renderer wm/render
 		free as byte-ptr! wm
+		active-win: null
+		hover-gob:	null
+		captured-gob: null
+		array/clear captured
 	]
 
 	add-update: func [

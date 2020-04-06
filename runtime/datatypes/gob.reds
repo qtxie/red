@@ -74,7 +74,8 @@ gob: context [
 		switch GOB_TYPE(gob) [
 			GOB_BASE	[base]
 			GOB_WINDOW	[window]
-			GOB_BUTTON	[button]
+			GOB_FIELD	[field]
+			GOB_TEXTAREA [area]
 		]
 	]
 
@@ -286,7 +287,8 @@ gob: context [
 				sym: symbol/resolve word/symbol
 				case [
 					sym = window [sym: GOB_WINDOW]
-					sym = button [sym: GOB_BUTTON]
+					sym = field	 [sym: GOB_FIELD]
+					sym = area	 [sym: GOB_TEXTAREA]
 					true		 [sym: GOB_BASE]	
 				]
 				g/flags: g/flags or sym
@@ -417,8 +419,11 @@ gob: context [
 			g		[gob!]
 			t-list	[int-ptr!]
 			pt		[red-pair! value]
+			str		[c-string!]
+			len		[integer!]
 	][
-		t-list: ["base" 4 "window" 6 "button" 6 "label" 5 "field" 5 "area" 4]
+		;-- there is R/S bug
+		;t-list: ["base" 4 "window" 6 "button" 6 "label" 5 "field" 5 "area" 4]
 
 		either flat? [
 			indent?: no
@@ -437,10 +442,19 @@ gob: context [
 		part: part - 6
 
 		g: gob/value
-		idx: GOB_TYPE(g) * 2 + 1
-		string/concatenate-literal buffer as c-string! t-list/idx
-		idx: idx + 1
-		part: part - t-list/idx
+		switch GOB_TYPE(g) [
+			GOB_BASE	[str: "base" len: 4]
+			GOB_WINDOW	[str: "window" len: 6]
+			GOB_FIELD	[str: "field" len: 5]
+			GOB_TEXTAREA [str: "area" len: 4]
+			default	[str: "ALIEN" len: 5]
+		]
+		string/concatenate-literal buffer str
+		part: part - len
+		;idx: GOB_TYPE(g) * 2 + 1
+		;string/concatenate-literal buffer as c-string! t-list/idx
+		;idx: idx + 1
+		;part: part - t-list/idx
 		if indent? [
 			string/append-char GET_BUFFER(buffer) as-integer blank
 			part: object/do-indent buffer tabs part - 1

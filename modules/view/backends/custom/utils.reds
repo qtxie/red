@@ -142,7 +142,7 @@ zero-memory: func [
 utf16-length?: func [
 	s 		[c-string!]
 	return: [integer!]
-	/local base
+	/local base [c-string!]
 ][
 	base: s
 	while [any [s/1 <> null-byte s/2 <> null-byte]][s: s + 2]

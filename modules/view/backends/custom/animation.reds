@@ -220,6 +220,10 @@ animation: context [
 		]
 		null
 	]
+
+	clear: func [][
+		
+	]
 ]
 
 parse-transition: func [

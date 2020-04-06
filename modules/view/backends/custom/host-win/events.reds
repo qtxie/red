@@ -133,6 +133,7 @@ RedWndProc: func [
 			return 0
 		]
 		WM_DESTROY [
+			hover-win: null
 			;@@ don't use wm, it already released in WM_CLOSE message
 			PostQuitMessage 0
 			return 0

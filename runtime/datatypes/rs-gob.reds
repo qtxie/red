@@ -76,8 +76,6 @@ Red/System [
 #enum gob-type! [	;-- basic widgets
 	GOB_BASE
 	GOB_WINDOW
-	GOB_BUTTON
-	GOB_LABEL
 	GOB_FIELD
 	GOB_TEXTAREA
 ]

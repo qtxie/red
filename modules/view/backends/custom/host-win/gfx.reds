@@ -269,9 +269,7 @@ gfx: context [
 		]
 
 		_ctx/DrawTextLayout _this x y layout _pen 0
-		;flush
-		;COM_SAFE_RELEASE(unk layout)
-		;COM_SAFE_RELEASE(unk fmt)
+		COM_SAFE_RELEASE(unk layout)
 	]
 
 	draw-shadow: func [			;-- draw bitmap with shadow

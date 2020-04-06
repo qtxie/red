@@ -59,8 +59,8 @@ init: func [
 	collector/register as int-ptr! :on-gc-mark
 ]
 
-cleanup: does [
-	host/cleanup
+clean-up: does [
+	host/clean-up
 ]
 
 get-screen-size: func [

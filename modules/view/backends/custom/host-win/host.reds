@@ -265,7 +265,7 @@ host: context [
 		DX-release-target render
 	]
 
-	cleanup: does [
+	clean-up: does [
 		unregister-classes hInstance
 		DX-cleanup
 	]

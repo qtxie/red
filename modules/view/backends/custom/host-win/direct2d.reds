@@ -18,6 +18,7 @@ dwrite-factory: as this! 0
 dxgi-device:	as this! 0
 dxgi-adapter:	as this! 0
 dxgi-factory:	as this! 0
+#if debug? = yes [dxgi-debug: as this! 0]
 dw-locale-name: as c-string! 0
 dpi-value:		as float32! 96.0
 dpi-x:			as float32! 0.0
@@ -358,10 +359,17 @@ DX-create-dev: func [
 		hr					[integer!]
 		dll					[handle!]
 		flags				[integer!]
+		GetDebugInterface	[DXGIGetDebugInterface!]
 ][
 	if host/win8+? [
 		dll: LoadLibraryA "dcomp.dll"
 		pfnDCompositionCreateDevice2: GetProcAddress dll "DCompositionCreateDevice2"
+		#if debug? = yes [if view-log-level > 3 [
+			dll: LoadLibraryA "dxgidebug.dll"
+			either dll <> null [
+				GetDebugInterface: as DXGIGetDebugInterface! GetProcAddress dll "DXGIGetDebugInterface"
+			][GetDebugInterface: null]
+		]]
 	]
 
 	flags: 33	;-- D3D11_CREATE_DEVICE_BGRA_SUPPORT or D3D11_CREATE_DEVICE_SINGLETHREADED
@@ -416,9 +424,15 @@ DX-create-dev: func [
 	assert zero? hr
 	dxgi-factory: factory/value
 
+	#if debug? = yes [if view-log-level > 3 [
+		hr: GetDebugInterface IID_IDXGIDebug :factory
+		assert zero? hr
+		dxgi-debug: factory/value
+	]]
+
 	COM_SAFE_RELEASE(unk dxgi-device)
 	COM_SAFE_RELEASE(unk d2d-device)
-	COM_SAFE_RELEASE(unk dxgi-adapter)	
+	COM_SAFE_RELEASE(unk dxgi-adapter)
 ]
 
 DX-release-dev: func [

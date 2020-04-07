@@ -265,9 +265,14 @@ host: context [
 		DX-release-target render
 	]
 
-	clean-up: does [
+	clean-up: func [/local d [IDXGIDebug]][
 		unregister-classes hInstance
+		gfx/clean-up
 		DX-cleanup
+		#if debug? = yes [if view-log-level > 3 [
+			d: as IDXGIDebug dxgi-debug/vtbl
+			d/ReportLiveObjects dxgi-debug DXGI_DEBUG_ALL DXGI_DEBUG_RLO_ALL
+		]]
 	]
 
 	make-window: func [

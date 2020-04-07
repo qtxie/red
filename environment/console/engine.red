@@ -114,6 +114,8 @@ system/console: context [
 		]
 	]
 
+	clean-up: routine [][gui/clean-up]
+
 	check-delimiters: function [
 		buffer	[string!]
 		/extern delimiters
@@ -316,6 +318,7 @@ system/console: context [
 		][
 			run
 		]
+		clean-up
 	]
 ]
 

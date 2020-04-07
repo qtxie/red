@@ -382,4 +382,12 @@ gfx: context [
 	][
 		_renderer: ptr
 	]
+
+	clean-up: func [
+		/local
+			IUnk	[IUnknown]
+	][
+		COM_SAFE_RELEASE(IUnk _pen)
+		COM_SAFE_RELEASE(IUnk _brush)
+	]
 ]

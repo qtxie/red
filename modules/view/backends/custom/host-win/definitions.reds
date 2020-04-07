@@ -1302,12 +1302,14 @@ GetDpiForMonitor!: alias function! [
 
 #define D2D_MAX_BRUSHES 64
 
+#define DXGI_DEBUG_RLO_ALL	 7
 #define DXGI_FORMAT_A8_UNORM 65
 #define D2DERR_RECREATE_TARGET 8899000Ch
 #define DXGI_ERROR_DEVICE_REMOVED 887A0005h
 #define DXGI_ERROR_DEVICE_RESET	887A0007h
 #define FLT_MAX	[as float32! 3.402823466e38]
 
+IID_IDXGIDebug:			 [119E7452h 40FEDE9Eh F9880688h 41B4120Ch]
 IID_IDXGISurface:		 [CAFCB56Ch 48896AC3h 239E47BFh EC60D2BBh]
 IID_IDXGIDevice1:		 [77DB970Fh 48BA6276h 010728BAh 2C39B443h]
 ;IID_ID2D1Factory:		 [06152247h 465A6F50h 8B114592h 07603BFDh]
@@ -1320,6 +1322,7 @@ IID_ID2D1DeviceContext:	 [E8F7FE7Ah 466D191Ch 569795ADh 98A9BD78h]
 CLSID_D2D1UnPremultiply: [FB9AC489h 41EDAD8Dh 63BB9999h F710D147h]
 CLSID_D2D1Scale:		 [9DAF9369h 4D0E3846h 600C4EA4h D7A53479h]
 CLSID_D2D1Shadow:		 [C67EA361h 4E691863h 5D69DB89h 6B5B9A3Eh]
+DXGI_DEBUG_ALL:			 [E48AE283h 490BDA80h E943E687h 08DACFA9h]
 
 D2D1_FACTORY_OPTIONS: alias struct! [
 	debugLevel	[integer!]
@@ -1710,6 +1713,13 @@ CreateSwapChainForComposition*: alias function! [
 	SetTransform		[SetTransform*]
 	GetOpacity			[integer!]
 	GetTransform		[GetTransform*]
+]
+
+IDXGIDebug: alias struct! [
+	QueryInterface		[QueryInterface!]
+	AddRef				[AddRef!]
+	Release				[Release!]
+	ReportLiveObjects	[function! [this [this!] apiid [int-ptr!] flags [integer!] return: [integer!]]]
 ]
 
 ID2D1Brush: alias struct! [
@@ -2563,6 +2573,12 @@ DCompositionCreateDevice2!: alias function! [
   	render-dev	[this!]
   	iid			[int-ptr!]
 	device		[int-ptr!]
+	return:		[integer!]
+]
+
+DXGIGetDebugInterface!: alias function! [
+	iid			[int-ptr!]
+	result		[com-ptr!]
 	return:		[integer!]
 ]
 

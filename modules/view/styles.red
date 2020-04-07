@@ -21,7 +21,7 @@ Red [
 	]
 	button: [
 		default-actor: on-click
-		template: [type: 'button size: 60x25]
+		template: [type: 'button size: 60x25 para: make para! [align: 'center v-align: 'middle]]
 	]
 	text: [
 		default-actor: on-down

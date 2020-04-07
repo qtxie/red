@@ -270,7 +270,7 @@ DX-init: func [
 
 	;-- create D2D factory
 	options: 0													;-- debugLevel
-	#if debug? = yes [if view-log-level > 2 [options: 3]]		;-- D2D1_DEBUG_LEVEL_INFORMATION
+	#if debug? = yes [if view-log-level > 3 [options: 3]]		;-- D2D1_DEBUG_LEVEL_INFORMATION
 	hr: D2D1CreateFactory 0 IID_ID2D1Factory1 :options :factory	;-- D2D1_FACTORY_TYPE_SINGLE_THREADED: 0
 	assert zero? hr
 	d2d-factory: as this! factory/value
@@ -373,7 +373,7 @@ DX-create-dev: func [
 	]
 
 	flags: 33	;-- D3D11_CREATE_DEVICE_BGRA_SUPPORT or D3D11_CREATE_DEVICE_SINGLETHREADED
-	#if debug? = yes [if view-log-level > 2 [flags: flags or 2]]
+	#if debug? = yes [if view-log-level > 3 [flags: flags or 2]]
 	hr: D3D11CreateDevice
 		null
 		1		;-- D3D_DRIVER_TYPE_HARDWARE

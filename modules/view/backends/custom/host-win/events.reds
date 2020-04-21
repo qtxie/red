@@ -71,6 +71,9 @@ RedWndProc: func [
 			return 0
 		]
 		WM_MOUSELEAVE [
+			if ui-manager/hover-gob <> wm/gob [
+				send-mouse-event EVT_OVER ui-manager/hover-gob mouse-x mouse-y mouse-flags or EVT_FLAG_AWAY
+			]
 			send-mouse-event EVT_OVER wm/gob mouse-x mouse-y mouse-flags or EVT_FLAG_AWAY
 			if hover-win = hWnd [
 				hover-win: null

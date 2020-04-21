@@ -375,52 +375,6 @@ DISPLAY_DEVICE: alias struct! [
 	DevName		[byte!]
 ]
 
-OSVERSIONINFO: alias struct! [
-	dwOSVersionInfoSize [integer!]
-	dwMajorVersion		[integer!]
-	dwMinorVersion		[integer!]
-	dwBuildNumber		[integer!]	
-	dwPlatformId		[integer!]
-	szCSDVersion		[byte-ptr!]						;-- array of 128 bytes
-	szCSDVersion0		[integer!]
-	szCSDVersion1		[float!]
-	szCSDVersion2		[float!]
-	szCSDVersion3		[float!]
-	szCSDVersion4		[float!]
-	szCSDVersion5		[float!]
-	szCSDVersion6		[float!]
-	szCSDVersion7		[float!]
-	szCSDVersion8		[float!]
-	szCSDVersion9		[float!]
-	szCSDVersion10		[float!]
-	szCSDVersion11		[float!]
-	szCSDVersion12		[float!]
-	szCSDVersion13		[float!]
-	szCSDVersion14		[float!]
-	szCSDVersion15		[float!]
-	szCSDVersion16		[float!]
-	szCSDVersion17		[float!]
-	szCSDVersion18		[float!]
-	szCSDVersion19		[float!]
-	szCSDVersion20		[float!]
-	szCSDVersion21		[float!]
-	szCSDVersion22		[float!]
-	szCSDVersion23		[float!]
-	szCSDVersion24		[float!]
-	szCSDVersion25		[float!]
-	szCSDVersion26		[float!]
-	szCSDVersion27		[float!]
-	szCSDVersion28		[float!]
-	szCSDVersion29		[float!]
-	szCSDVersion30		[float!]
-	szCSDVersion31		[float!]
-	wServicePack		[integer!]						;-- Major: 16, Minor: 16
-	wSuiteMask0			[byte!]
-	wSuiteMask1			[byte!]
-	wProductType		[byte!]
-	wReserved			[byte!]
-]
-
 tagINITCOMMONCONTROLSEX: alias struct! [
 	dwSize		[integer!]
 	dwICC		[integer!]
@@ -608,10 +562,6 @@ GetDpiForMonitor!: alias function! [
 			uSize		[integer!]
 			return:		[integer!]
 		]
-		GetVersionEx: "GetVersionExW" [
-			lpVersionInfo [OSVERSIONINFO]
-			return:		[integer!]
-		]
 		LocalLock: "LocalLock" [
 			hMem		[handle!]
 			return:		[byte-ptr!]
@@ -632,10 +582,6 @@ GetDpiForMonitor!: alias function! [
 			hModule		[handle!]
 			lpProcName	[c-string!]
 			return:		[int-ptr!]
-		]
-		lstrlen: "lstrlenW" [
-			str			[byte-ptr!]
-			return:		[integer!]
 		]
 		GetConsoleWindow: "GetConsoleWindow" [
 			return:			[int-ptr!]
@@ -1333,13 +1279,6 @@ D3DCOLORVALUE: alias struct! [
 	g			[float32!]
 	b			[float32!]
 	a			[float32!]
-]
-
-RECT_F!: alias struct! [
-	left		[float32!]
-	top			[float32!]
-	right		[float32!]
-	bottom		[float32!]
 ]
 
 ROUNDED_RECT_F!: alias struct! [

@@ -43,6 +43,8 @@ base!: make face! [
 			;border-radius: 5
 			shadow: [0x0 20 -5 0.0.0]
 		]
+		;-- transition: [<property> <duration> <timing-function> <delay>]
+		transition: [size 0.5 'ease-in]
 	]
 ]
 

@@ -136,7 +136,7 @@ ui-manager: context [	;-- manage all the windows
 		s: as series! win-list/value
 		p: as ptr-ptr! s/offset
 		e: as ptr-ptr! s/tail
-		animation/run-all 18
+		animation/run-all 17
 		while [p < e][
 			wm: as wm! p/value
 			t: t + draw-window wm

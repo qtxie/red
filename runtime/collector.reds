@@ -262,6 +262,7 @@ collector: context [
 		#if debug? = yes [if verbose > 1 [indent: indent - 1]]
 	]
 
+	#if modules contains 'View [
 	mark-gob: func [
 		gob		[gob!]
 		/local
@@ -282,7 +283,7 @@ collector: context [
 		if gob/draw <> null [keep gob/draw]
 		if gob/image <> null [keep gob/image]
 		if gob/actors <> null [mark-block gob/actors]
-	]
+	]]
 	
 	mark-block-node: func [
 		node [node!]

@@ -10,7 +10,6 @@ Red/System [
 	}
 ]
 
-#include %definitions.reds
 #include %utils.reds
 #include %matrix2d.reds
 

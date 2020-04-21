@@ -59,13 +59,6 @@ D3DCOLORVALUE: alias struct! [
 	a			[float32!]
 ]
 
-RECT_F!: alias struct! [
-	left		[float32!]
-	top			[float32!]
-	right		[float32!]
-	bottom		[float32!]
-]
-
 ROUNDED_RECT_F!: alias struct! [
 	left		[float32!]
 	top			[float32!]

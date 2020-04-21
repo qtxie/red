@@ -534,7 +534,7 @@ system/view/platform: context [
 				custom [
 					#include %custom/styles.reds
 					#include %custom/animation.reds
-					#include %../../../runtime/datatypes/gob.reds
+					#include %custom/gob.reds
 					#include %custom/gui.reds
 					gob/init
 				]

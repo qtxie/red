@@ -626,6 +626,7 @@ gob: context [
 			type  [integer!]
 			sym	  [red-word!]
 			w-ctx [node!]
+			g	  [gob!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "gob/copy"]]
 		
@@ -636,8 +637,11 @@ gob: context [
 		]
 
 		new/header: TYPE_UNSET
-		new/value: rs-gob/copy obj/value
+		g: rs-gob/copy obj/value
+		new/value: g
 		new/header: TYPE_GOB
+
+		if g/anim <> null [animation/add as animation! g/anim]
 		new
 	]
 

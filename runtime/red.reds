@@ -108,7 +108,8 @@ red: context [
 	#include %datatypes/port.reds
 	#include %datatypes/image.reds
 	#either modules contains 'View [
-		#include %datatypes/rs-gob.reds
+		#include %../modules/view/backends/custom/definitions.reds
+		#include %../modules/view/backends/custom/rs-gob.reds
 	][#include %datatypes/event.reds]
 
 	;-- Debugging helpers --

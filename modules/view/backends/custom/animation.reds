@@ -10,48 +10,6 @@ Red/System [
 	}
 ]
 
-#enum animation-flags! [
-	ANIM_STOP:		0
-	ANIM_PLAYBACK:	1
-	ANIM_REPEAT:	2
-	ANIM_RUNNING:	4
-]
-
-#enum animation-type! [
-	ANIM_TYPE_INT32
-	ANIM_TYPE_FLOAT32
-	ANIM_TYPE_SIZE
-	ANIM_TYPE_OFFSET
-	ANIM_TYPE_TUPLE
-]
-
-anim-property!: alias struct! [
-	next		[anim-property!]
-	ptr			[int-ptr!]			;-- point to a property of the gob
-	sym			[integer!]
-	type		[animation-type!]
-	duration	[integer!]
-	start		[int-ptr!]			;-- start value
-	end			[int-ptr!]			;-- end value
-]
-
-animation!: alias struct! [
-	gob			[gob!]				;-- animation in this gob
-	flags		[animation-flags!]			
-	exec		[int-ptr!]			;-- anim-function!
-	ticks		[integer!]			;-- current animation ticks in ms
-	properties	[anim-property!]
-]
-
-anim-function!: alias function! [
-	anim		[animation!]
-]
-
-#define NEW_ANIM_PROPERTY(data-size) [as anim-property! alloc0 data-size + size? anim-property!]
-
-#define ANIM_RESOLUTION 1024
-#define ANIM_RES_SHIFT 10
-
 cubic-bezier: func [
 	t		[uint!]
 	u0		[integer!]
@@ -147,6 +105,7 @@ animation: context [
 				new: p-int/4 - p-int/2
 				new: t * new >> 10 + p-int/2	;-- new height
 				g/box/bottom: g/box/top + as-float32 new
+				rs-gob/update-content-box g
 			]
 		]
 		ui-manager/redraw
@@ -224,6 +183,8 @@ animation: context [
 	clear: func [][
 		
 	]
+
+	free: func [anim [animation!]][]
 ]
 
 parse-transition: func [
@@ -241,8 +202,11 @@ parse-transition: func [
 		new		[anim-property!]
 		t		[float32!]
 ][
+	if gob/anim <> null [animation/free as animation! gob/anim]
+
 	anim: as animation! alloc0 size? animation!
 	anim/gob: gob
+	gob/anim: as int-ptr! anim
 
 	cmd:  block/rs-head cmds
 	tail: block/rs-tail cmds
@@ -256,6 +220,7 @@ parse-transition: func [
 				case [
 					sym = facets/size [
 						new: NEW_ANIM_PROPERTY(16)		;-- 2 * size? WxH
+						new/size: 16 + size? anim-property!
 						new/sym: sym
 						new/ptr: :gob/box
 						new/type: ANIM_TYPE_SIZE

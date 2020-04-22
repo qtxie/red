@@ -40,7 +40,7 @@ base!: make face! [
 		]
 		styles: object [
 			border: [10 solid 0.0.228]
-			;border-radius: 5
+			border-radius: 5
 			shadow: [0x0 20 -5 0.0.0]
 		]
 		;-- transition: [<property> <duration> <timing-function> <delay>]
@@ -103,6 +103,7 @@ child2/pane: reduce [
 				probe reduce [21 "mouse click" face/type event/offset event/flags]
 			]
 		]
+		draw: [fill-pen yellow box 1x1 30x30]
 	]
 ]
 

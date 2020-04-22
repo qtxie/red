@@ -387,8 +387,8 @@ gfx: context [
 		w: box/right - box/left
 		h: box/bottom - box/top
 		bmp: create-bitmap
-				as-integer w + (as float32! 1.0) * n
-				as-integer h + (as float32! 1.0) * n
+				as-integer w * n + as float32! 0.99
+				as-integer h * n + as float32! 0.99
 		g/data: as int-ptr! bmp
 	]
 

@@ -18,6 +18,7 @@ _draw-base: func [
 		box		[RECT_F!]
 		cbox	[RECT_F!]
 		rc		[ROUNDED_RECT_F! value]
+		rc2		[RECT_F! value]
 		bd-w	[float32!]
 		n		[float32!]
 		w		[float32!]
@@ -51,18 +52,29 @@ _draw-base: func [
 	]
 
 	box: gob/box
+	cbox: gob/cbox
 	either shadow? [		;-- 1. prepares for drawing shadow
+		x: box/left
+		y: box/top
 		n: dpi-value / as float32! 96.0
-		w: box/right - box/left
-		h: box/bottom - box/top
+		w: box/right - x
+		h: box/bottom - y
 		bmp: gfx/create-bitmap
-				as-integer w + (as float32! 1.0) * n
-				as-integer h + (as float32! 1.0) * n
+				as-integer w * n + as float32! 0.99
+				as-integer h * n + as float32! 0.99
+
+		;;TBD create a bigger bitmap if it's layer gob
 
 		old: gfx/get-target		;-- save old target
 		gfx/set-target bmp
 		gfx/get-matrix :mat
 		gfx/reset-matrix
+
+		rc2/right: cbox/right - x
+		rc2/bottom: cbox/bottom - y
+		rc2/left: cbox/left - x
+		rc2/top: cbox/top - y
+		cbox: :rc2
 
 		rc/left: as float32! 0.0
 		rc/top:  as float32! 0.0
@@ -120,11 +132,14 @@ _draw-base: func [
 
 	;-- 6. draw draw block
 	if gob/draw <> null [
-		unless shadow? [gfx/get-matrix :mat]
-		cbox: gob/cbox
-		x: cbox/left + mat/_31
-		y: cbox/top + mat/_32
-
+		either shadow? [
+			x: cbox/left
+			y: cbox/top
+		][
+			gfx/get-matrix :mat
+			x: cbox/left + mat/_31
+			y: cbox/top + mat/_32
+		]
 		gfx/set-translation x y
 		rc/left: as float32! 0.0
 		rc/top: as float32! 0.0

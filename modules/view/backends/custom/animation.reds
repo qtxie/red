@@ -109,6 +109,7 @@ animation: context [
 			]
 		]
 		ui-manager/redraw
+		if rs-gob/set-flag? g GOB_FLAG_LAYER [GOB_SET_FLAG(g GOB_FLAG_UPDATE)]
 	]
 
 	run-all: func [

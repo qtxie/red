@@ -70,6 +70,7 @@ register-widget 'button make gob! [
 
 register-widget 'base make gob! [
 	flags: 'all-over
+	layer?: yes
 ]
 
 font-A: make font! [

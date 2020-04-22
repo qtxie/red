@@ -11,6 +11,7 @@ Red/System [
 ]
 
 styles-ctx: context [
+	layer?:					symbol/make "layer?"
 	background:				symbol/make "background"
 	background-clip:		symbol/make "background-clip"
 	background-size:		symbol/make "background-size"

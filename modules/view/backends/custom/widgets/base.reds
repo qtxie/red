@@ -10,8 +10,9 @@ Red/System [
 	}
 ]
 
-draw-base: func [
+_draw-base: func [
 	gob			[gob!]
+	layer?		[logic!]
 	/local
 		ss		[gob-style!]
 		box		[RECT_F!]
@@ -123,7 +124,8 @@ draw-base: func [
 		cbox: gob/cbox
 		x: cbox/left + mat/_31
 		y: cbox/top + mat/_32
-		gfx/set-tranlation x y
+
+		gfx/set-translation x y
 		rc/left: as float32! 0.0
 		rc/top: as float32! 0.0
 		rc/right: cbox/right - cbox/left
@@ -143,4 +145,47 @@ draw-base: func [
 		gfx/set-matrix :mat
 		gfx/draw-shadow bmp gob/box ss/shadow
 	]
+]
+
+draw-base: func [
+	gob			[gob!]
+	/local
+		box		[RECT_F!]
+		n		[float32!]
+		x		[float32!]
+		y		[float32!]
+		w		[float32!]
+		h		[float32!]
+		bmp		[this!]
+		old-t	[this!]
+		mat		[D2D_MATRIX_3X2_F value]
+][
+	either rs-gob/set-flag? gob GOB_FLAG_LAYER [
+		if rs-gob/set-flag? gob GOB_FLAG_RESIZE [
+			gfx/recreate-layer gob
+			GOB_UNSET_FLAG(gob GOB_FLAG_RESIZE)
+		]
+		bmp: as this! gob/data
+		assert bmp <> null
+		box: gob/box
+		gfx/get-matrix :mat
+		if rs-gob/set-flag? gob GOB_FLAG_UPDATE [
+			w: mat/_31
+			h: mat/_32
+			old-t: gfx/get-target
+			gfx/set-target bmp
+			mat/_31: (F32_0) - box/left
+			mat/_32: (F32_0)  - box/top
+			gfx/set-matrix :mat
+			gfx/clear
+			_draw-base gob yes
+			gfx/flush
+			gfx/set-target old-t
+			mat/_31: w
+			mat/_32: h
+			gfx/set-matrix :mat
+			GOB_UNSET_FLAG(gob GOB_FLAG_UPDATE)
+		]
+		gfx/draw-bitmap bmp as POINT_2F box
+	][_draw-base gob no]
 ]

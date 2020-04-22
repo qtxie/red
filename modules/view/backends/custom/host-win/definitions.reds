@@ -2032,7 +2032,16 @@ DrawImage*: alias function! [
 	composite	[integer!]
 ]
 
-DrawBitmap*: alias function! [
+DrawBitmap1*: alias function! [
+	this		[this!]
+	bmp			[int-ptr!]
+	dst			[RECT_F!]
+	opacity		[float32!]
+	mode		[integer!]
+	src			[RECT_F!]
+]
+
+DrawBitmap2*: alias function! [
 	this		[this!]
 	bmp			[int-ptr!]
 	dst			[RECT_F!]
@@ -2095,7 +2104,7 @@ CombineWithGeometry*: alias function! [
 	FillGeometry					[function! [this [this!] geometry [this!] brush [this!] opacityBrush [this!] return: [integer!]]]
 	FillMesh						[integer!]
 	FillOpacityMask					[integer!]
-	DrawBitmap						[integer!]
+	DrawBitmap						[DrawBitmap1*]
 	DrawText						[integer!]
 	DrawTextLayout					[DrawTextLayout*]
 	DrawGlyphRun					[integer!]
@@ -2158,7 +2167,7 @@ ID2D1DeviceContext: alias struct! [
     DrawGlyphRun2					[integer!]
     DrawImage						[DrawImage*]
     DrawGdiMetafile					[integer!]
-    DrawBitmap2						[DrawBitmap*]
+    DrawBitmap2						[DrawBitmap2*]
     PushLayer2						[PushLayer*]
     InvalidateEffectInputRectangle	[integer!]
     GetEffectInvalidRectangleCount	[integer!]

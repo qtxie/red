@@ -292,6 +292,7 @@ on-face-deep-change*: function ["Internal use only" owner word target action new
 						part: 1
 					]
 					system/view/platform/on-change-facet owner word target action new index part
+					#if config/GUI-engine = 'custom [put owner/gob word new]
 				]
 			]
 			system/reactivity/check/only owner word

@@ -275,10 +275,14 @@ gob: context [
 			tp		[red-tuple!]
 			blk		[red-block!]
 			str		[red-string!]
+			bool	[red-logic!]
+			layer?	[logic!]
 			prop	[anim-property!]
 			w		[float32!]
 			h		[float32!]
+			redraw? [logic!]
 	][
+		redraw?: yes
 		sym: symbol/resolve word/symbol
 		prop: animation/check g value sym
 		case [
@@ -292,6 +296,7 @@ gob: context [
 					true		 [sym: GOB_BASE]	
 				]
 				g/flags: g/flags or sym
+				redraw?: no
 			]
 			sym = facets/offset [
 				pair: as red-pair! value
@@ -301,11 +306,13 @@ gob: context [
 				g/box/top: as float32! pair/y
 				g/box/right: g/box/left + w
 				g/box/bottom: g/box/top + h
+				redraw?: no
 			]
 			sym = facets/size [
 				pair: as red-pair! value
 				g/box/right: g/box/left + as-float32 pair/x
 				g/box/bottom: g/box/top + as-float32 pair/y
+				if rs-gob/set-flag? g GOB_FLAG_LAYER [GOB_SET_FLAG(g GOB_FLAG_RESIZE)]
 			]
 			sym = facets/color [
 				tp: as red-tuple! value
@@ -318,6 +325,7 @@ gob: context [
 					]
 					copy-cell value as cell! g/actors
 				]
+				redraw?: no
 			]
 			sym = facets/text [
 				either TYPE_OF(value) = TYPE_STRING [
@@ -344,7 +352,7 @@ gob: context [
 					parse-transition g as red-block! value
 				]
 			]
-			sym = facets/flags [g/flags: get-flags as red-block! value]
+			sym = facets/flags [g/flags: g/flags or get-flags as red-block! value]
 			sym = facets/data [
 				if null? g/data [g/data: as int-ptr! allocate size? red-value!]
 				copy-cell value as cell! g/data
@@ -355,11 +363,23 @@ gob: context [
 					g/image: blk/node
 				][g/image: null]
 			]
+			sym = styles-ctx/layer? [
+				either TYPE_OF(value) = TYPE_LOGIC [
+					bool: as red-logic! value
+					layer?: bool/value
+				][layer?: no]
+				either layer? [GOB_SET_FLAG(g GOB_FLAG_LAYER)][
+					GOB_UNSET_FLAG(g GOB_FLAG_LAYER)
+				]
+			]
 			;sym = facets/opacity [
 			;	int: as red-integer! value
 			;	g/opacity: int/value
 			;]
 			true [return true]
+		]
+		if all [redraw? rs-gob/set-flag? g GOB_FLAG_LAYER][
+			GOB_SET_FLAG(g GOB_FLAG_UPDATE)
 		]
 		if prop <> null [animation/set-property g prop sym yes]
 		false
@@ -422,7 +442,7 @@ gob: context [
 			str		[c-string!]
 			len		[integer!]
 	][
-		;-- there is R/S bug
+		;-- This will crash, a bug in R/S
 		;t-list: ["base" 4 "window" 6 "button" 6 "label" 5 "field" 5 "area" 4]
 
 		either flat? [

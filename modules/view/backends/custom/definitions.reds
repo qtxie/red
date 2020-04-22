@@ -94,6 +94,8 @@ Red/System [
 #define GOB_FLAG_FOCUS		02000000h
 #define GOB_FLAG_POPUP		04000000h
 #define GOB_FLAG_MODAL		08000000h
+#define GOB_FLAG_LAYER		10000000h
+#define GOB_FLAG_RESIZE		20000000h
 
 #define GOB_TYPE(gob)				[gob/flags and FFh]
 #define GOB_SET_FLAG(gob flag)		[gob/flags: gob/flags or flag]

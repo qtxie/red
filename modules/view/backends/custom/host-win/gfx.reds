@@ -47,7 +47,7 @@ gfx: context [
 		_ctx/PopAxisAlignedClip _this
 	]
 
-	set-tranlation: func [
+	set-translation: func [
 		x		[float32!]
 		y		[float32!]
 		/local
@@ -342,6 +342,13 @@ gfx: context [
 		COM_SAFE_RELEASE(unk bmp)
 	]
 
+	draw-bitmap: func [
+		bmp			[this!]
+		pt			[POINT_2F]
+	][
+		_ctx/DrawImage _this bmp pt null 1 0
+	]
+
 	create-bitmap: func [
 		width		[uint32!]
 		height		[uint32!]
@@ -361,6 +368,32 @@ gfx: context [
 		sz/height: height
 		_ctx/CreateBitmap2 _this sz null 0 props :bitmap
 		as this! bitmap/value
+	]
+
+	recreate-layer: func [
+		g		[gob!]
+		/local
+			bmp [this!]
+			unk	[IUnknown]
+			box	[RECT_F!]
+			n	[float32!]
+			w	[float32!]
+			h	[float32!]
+	][
+		bmp: as this! g/data
+		if bmp <> null [COM_SAFE_RELEASE(unk bmp)]
+		n: dpi-value / as float32! 96.0
+		box: g/box
+		w: box/right - box/left
+		h: box/bottom - box/top
+		bmp: create-bitmap
+				as-integer w + (as float32! 1.0) * n
+				as-integer h + (as float32! 1.0) * n
+		g/data: as int-ptr! bmp
+	]
+
+	clear: func [][
+		_ctx/Clear _this to-dx-color _gob/backdrop null
 	]
 
 	set-target: func [

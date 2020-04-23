@@ -6,6 +6,11 @@
 [![ARMel build](https://bs.red-lang.org/armel.svg)](https://travis-ci.org/red/red)
 [![ARMhf build](https://bs.red-lang.org/armhf.svg)](https://travis-ci.org/red/red)
 
+Prototype of GOB-based View
+------------------------
+
+[Click here for more details](modules/view/backends/custom/README.md)
+
 Red Programming Language
 ------------------------
 

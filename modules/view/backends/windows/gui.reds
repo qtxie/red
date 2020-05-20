@@ -288,7 +288,10 @@ get-text-size: func [
 		hwnd 	[handle!]
 		dc 		[handle!]
 		size 	[tagSIZE]
+		face-sz	[red-pair!]
 		rc 		[RECT_STRUCT value]
+		w		[integer!]
+		h		[integer!]
 		bbox 	[RECT_STRUCT_FLOAT32 value]
 ][
 	size: declare tagSIZE
@@ -300,11 +303,22 @@ get-text-size: func [
 		hwnd: GetDesktopWindow
 	]
 	values: object/get-values face
+	face-sz: as red-pair! values + FACE_OBJ_SIZE
 	dc: GetWindowDC hwnd
 
 	if null? hFont [hFont: default-font]
 	saved: SelectObject hwnd hFont
-	GetClientRect hWnd rc
+
+	rc/left: 0 rc/top: 0
+	w: 0 h: 0
+	if TYPE_OF(face-sz) = TYPE_PAIR [
+		w: dpi-scale face-sz/x
+		h: dpi-scale face-sz/y
+	]
+	if zero? w [w: 7FFFFFFFh]
+	if zero? h [h: 7FFFFFFFh]
+	rc/right: w
+	rc/bottom: h
 	render-text values hwnd dc rc str :bbox
 
 	SelectObject hwnd saved
@@ -312,7 +326,6 @@ get-text-size: func [
 	
 	size/width:  as integer! ceil as float! bbox/width
 	size/height: as integer! ceil as float! bbox/height
-
 	if pair <> null [
 		pair/x: as integer! ceil as float! bbox/width  * 100 / dpi-factor
 		pair/y: as integer! ceil as float! bbox/height * 100 / dpi-factor

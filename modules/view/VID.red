@@ -458,6 +458,7 @@ system/view/VID: context [
 		][
 			sz: any [face/size 0x0]
 			min-sz: either find containers face/type [sz][
+				if opts/size-x [face/size: as-pair opts/size-x 0]
 				(any [pad 0x0]) + any [
 					all [
 						any [face/text series? face/data face/font]

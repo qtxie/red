@@ -76,6 +76,20 @@ matrix:
 
 ###### all ##############################################################
 install:
+  # Linux: hook up qemu, build 32bit image including curl and rebol
+  - >
+    if [[ ${TRAVIS_OS_NAME} == "linux" ]]; then
+    docker run --rm --privileged
+    multiarch/qemu-user-static:register &&
+    printf
+    'FROM i386/debian:latest\n
+    RUN apt-get update &&
+    apt-get install -y curl libcurl4 &&
+    curl -o /bin/rebol https://static.red-lang.org/tmp/rebol &&
+    chmod +x /bin/rebol\n
+    ' > Dockerfile &&
+    docker build -t i386/debian:red . ;
+    fi
   # ARMel: build tests on i386
   - >
     if [[ ${OS} == "armel" ]]; then
@@ -94,6 +108,7 @@ install:
     i386/debian:red rebol -qws system/tests/build-arm-tests.r '-t RPi' &&
     docker pull balenalib/raspberry-pi2-debian:latest ;
     fi
+
 
 # If tests fail, change status code and save test logs into Travis logs
 after_failure:

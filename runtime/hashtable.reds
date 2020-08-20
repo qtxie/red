@@ -1590,9 +1590,10 @@ _hashtable: context [
 			vsize [integer!] blk-node [series!] find? [logic!] xx [integer!] new? [logic!]
 			len2 [integer!] strict? [logic!] p [byte-ptr!]
 	][
+		?? node
 		s: as series! node/value
 		h: as hashtable! s/offset
-
+?? h
 		if h/n-occupied >= h/upper-bound [			;-- update the hash table
 			vsize: either h/n-buckets > (h/size << 1) [-1][1]
 			n-buckets: h/n-buckets + vsize
@@ -1612,6 +1613,7 @@ _hashtable: context [
 		site: n-buckets
 		mask: n-buckets - 2
 		hash: murmur3-x86-32 to-lower cstr len len
+?? hash
 		strict?: not opt?
 		loop 2 [	;-- first try: case-sensitive comparison, second try: case-insensitive comparison
 			find?: yes
@@ -1643,7 +1645,8 @@ _hashtable: context [
 			]
 			either any [find? opt?][break][xx: x strict?: no]
 		]
-
+probe "break"
+?? x
 		_HT_CAL_FLAG_INDEX((x - 1) ii sh)
 		either _BUCKET_IS_EMPTY(flags ii sh) [
 			k: as red-symbol! alloc-tail blk-node
@@ -1657,7 +1660,7 @@ _hashtable: context [
 				keys/xx: idx
 			]
 		]
-
+?? len2
 		_BUCKET_SET_BOTH_FALSE(flags ii sh)
 		h/size: h/size + 1
 		h/n-occupied: h/n-occupied + 1

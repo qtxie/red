@@ -269,6 +269,7 @@ murmur3-x86-32: func [
 	assert len > 0
 
 	data: key
+?? len
 	nblocks: len / 4
 	h1: hash-secret						;-- seed
 ?? nblocks

@@ -271,10 +271,12 @@ murmur3-x86-32: func [
 	data: key
 	nblocks: len / 4
 	h1: hash-secret						;-- seed
-
+?? nblocks
 	;-- body
 	blocks: as int-ptr! (data + (nblocks * 4))
+?? blocks
 	i: 0 - nblocks
+?? i
 	while [negative? i][
 		p: blocks + i
 		k1: p/value						;@@ do endian-swapping if needed
@@ -287,7 +289,7 @@ murmur3-x86-32: func [
 		h1: h1 * 5 + E6546B64h
 		i: i + 1
 	]
-
+?? h1
 	;-- tail
 	n: len and 3
 	if positive? n [
@@ -301,7 +303,7 @@ murmur3-x86-32: func [
 		k1: k1 * MURMUR_HASH_3_X86_32_C2
 		h1: h1 xor k1
 	]
-
+?? n
 	;-- finalization
 	h1: h1 xor len
 	h1: h1 >>> 16 xor h1

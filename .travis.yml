@@ -1,7 +1,7 @@
 # Only use continuous integration on the master branch
 branches:
   only:
-    - master
+    - travis-test
 
 
 notifications:

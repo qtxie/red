@@ -1601,9 +1601,11 @@ _hashtable: context [
 		]
 
 		blk-node: as series! h/blk/value
+?? blk-node
 		blk: as red-symbol! blk-node/offset
+?? blk
 		idx: (as-integer blk-node/tail - as cell! blk) >> 4
-
+?? idx
 		s: as series! h/keys/value
 		keys: as int-ptr! s/offset
 		s: as series! h/flags/value
@@ -1612,6 +1614,7 @@ _hashtable: context [
 		x:	  n-buckets
 		site: n-buckets
 		mask: n-buckets - 2
+?? mask
 		hash: murmur3-x86-32 to-lower cstr len len
 ?? hash
 		strict?: not opt?

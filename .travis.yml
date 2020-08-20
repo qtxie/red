@@ -47,12 +47,6 @@ matrix:
       -w /red/quick-test/runnable/arm-tests/red/
       --entrypoint /red/quick-test/runnable/arm-tests/red/run-all.sh
       balenalib/armv5e-debian:latest
-    - >
-      travis_wait 15 docker run -v ${PWD}:/red
-      -e LD_LIBRARY_PATH='$LD_LIBRARY_PATH:/red/quick-test/runnable/arm-tests/system/'
-      -w /red/quick-test/runnable/arm-tests/system/
-      --entrypoint /red/quick-test/runnable/arm-tests/system/run-all.sh
-      balenalib/armv5e-debian:latest
 
 
   ### ARMhf ############################################################
@@ -66,12 +60,7 @@ matrix:
       -w /red/quick-test/runnable/arm-tests/red/
       --entrypoint /red/quick-test/runnable/arm-tests/red/run-all.sh
       balenalib/raspberry-pi2-debian:latest
-    - >
-      travis_wait 15 docker run -v ${PWD}:/red
-      -e LD_LIBRARY_PATH='$LD_LIBRARY_PATH:/red/quick-test/runnable/arm-tests/system/'
-      -w /red/quick-test/runnable/arm-tests/system/
-      --entrypoint /red/quick-test/runnable/arm-tests/system/run-all.sh
-      balenalib/raspberry-pi2-debian:latest
+
 
 
 ###### all ##############################################################

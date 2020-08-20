@@ -36,22 +36,6 @@ matrix:
 
   include:
 
-
-  ### Linux ############################################################
-  - os: linux
-    dist: trusty
-    sudo: required
-    env: OS=linux
-    script:                                             # Run i386 tests
-    - >
-      docker run -v ${PWD}:/red -w /red
-      i386/debian:red rebol -qws tests/run-all.r --batch
-    - mv quick-test/quick-test.log quick-test/quick-test-red.log
-    - >
-      docker run -v ${PWD}:/red -w /red
-      i386/debian:red rebol -qws system/tests/run-all.r --batch
-
-
   ### ARMel ############################################################
   - os: linux
     dist: trusty
@@ -90,31 +74,8 @@ matrix:
       balenalib/raspberry-pi2-debian:latest
 
 
-  ### macOS ############################################################
-  - os: osx
-    env: OS=macos
-    script:                                            # Run macOS tests
-    - rebol -qws tests/run-all.r --batch
-    - mv quick-test/quick-test.log quick-test/quick-test-red.log
-    - rebol -qws system/tests/run-all.r --batch
-
-
 ###### all ##############################################################
 install:
-  # Linux: hook up qemu, build 32bit image including curl and rebol
-  - >
-    if [[ ${TRAVIS_OS_NAME} == "linux" ]]; then
-    docker run --rm --privileged
-    multiarch/qemu-user-static:register &&
-    printf
-    'FROM i386/debian:latest\n
-    RUN apt-get update &&
-    apt-get install -y curl libcurl4 &&
-    curl -o /bin/rebol https://static.red-lang.org/tmp/rebol &&
-    chmod +x /bin/rebol\n
-    ' > Dockerfile &&
-    docker build -t i386/debian:red . ;
-    fi
   # ARMel: build tests on i386
   - >
     if [[ ${OS} == "armel" ]]; then
@@ -133,14 +94,6 @@ install:
     i386/debian:red rebol -qws system/tests/build-arm-tests.r '-t RPi' &&
     docker pull balenalib/raspberry-pi2-debian:latest ;
     fi
-  # macOS: install rebol
-  - >
-    if [[ ${OS} == "macos" ]]; then
-    sudo curl -o /usr/local/bin/rebol
-    https://static.red-lang.org/tmp/rebol-osx &&
-    sudo chmod +x /usr/local/bin/rebol ;
-    fi
-
 
 # If tests fail, change status code and save test logs into Travis logs
 after_failure:

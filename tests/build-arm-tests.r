@@ -61,8 +61,6 @@ do %source/units/run-all-init.r
 output: copy ""
 foreach file [
     "run-all-comp1.red"
-    "run-all-comp2.red"
-    "run-all-interp.red"
 ][
     print ["Compiling" file] "..." 
     test-file: join %source/units/auto-tests/ file

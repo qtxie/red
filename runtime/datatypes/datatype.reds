@@ -22,6 +22,7 @@ datatype: context [
 		i: 1
 		until [
 			name: name-table + i
+		probe name/buffer
 			name/word: word/load name/buffer
 			i: i + 1
 			i > top-id

@@ -70,7 +70,7 @@ foreach file [
     exe: to-local-file join arm-dir exe
     cmd: join "" [  to-local-file system/options/boot " -sc "
         to-local-file clean-path %../red.r
-        " -r -t " target " -o " exe " "
+        " -d -r -t " target " -o " exe " "
     	to-local-file test-file	
     ]
     clear output

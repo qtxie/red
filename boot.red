@@ -38,8 +38,8 @@ Red [
 	;-- temporary code --
 	#if any [
 		not find [Windows macOS Linux] config/OS
-		all [config/OS = 'Linux config/target = 'ARM]
-	][	
+		all [config/OS = 'Linux not find config/modules 'view]
+	][
 		unset [event! image!]
 		image?: func ["Returns true if the value is this type" value [any-type!]][false]
 	]

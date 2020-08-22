@@ -335,37 +335,37 @@ camera-draw: func [
 		pixbuf	[handle!]
 		last	[handle!]
 ][
-	cfg: as integer! GET-CAMERA-CFG(widget)
-	last: GET-CAMERA-IMG(widget)
-	pixbuf: null
-	if all [
-		cfg <> 0
-		0 = camera-dev/trylock cfg
-	][
-		data: 0
-		dlen: 0
-		camera-dev/get-data cfg :data :dlen
-		if dlen <> 0 [
-			;-- now precess data
-			input: g_memory_input_stream_new_from_data as byte-ptr! data dlen null
-			pixbuf: gdk_pixbuf_new_from_stream input null null
-			gdk_cairo_set_source_pixbuf cr pixbuf 0.0 0.0
-			cairo_paint cr
-			camera-dev/signal cfg
-		]
-		camera-dev/unlock cfg
-	]
-	either null? pixbuf [
-		unless null? last [
-			gdk_cairo_set_source_pixbuf cr last 0.0 0.0
-			cairo_paint cr
-		]
-	][
-		unless null? last [
-			g_object_unref last
-		]
-		SET-CAMERA-IMG(widget pixbuf)
-	]
+	;cfg: as integer! GET-CAMERA-CFG(widget)
+	;last: GET-CAMERA-IMG(widget)
+	;pixbuf: null
+	;if all [
+	;	cfg <> 0
+	;	0 = camera-dev/trylock cfg
+	;][
+	;	data: 0
+	;	dlen: 0
+	;	camera-dev/get-data cfg :data :dlen
+	;	if dlen <> 0 [
+	;		;-- now precess data
+	;		input: g_memory_input_stream_new_from_data as byte-ptr! data dlen null
+	;		pixbuf: gdk_pixbuf_new_from_stream input null null
+	;		gdk_cairo_set_source_pixbuf cr pixbuf 0.0 0.0
+	;		cairo_paint cr
+	;		camera-dev/signal cfg
+	;	]
+	;	camera-dev/unlock cfg
+	;]
+	;either null? pixbuf [
+	;	unless null? last [
+	;		gdk_cairo_set_source_pixbuf cr last 0.0 0.0
+	;		cairo_paint cr
+	;	]
+	;][
+	;	unless null? last [
+	;		g_object_unref last
+	;	]
+	;	SET-CAMERA-IMG(widget pixbuf)
+	;]
 	EVT_DISPATCH
 ]
 
@@ -374,8 +374,8 @@ camera-cb: func [
 	/local
 		widget	[handle!]
 ][
-	widget: camera-dev/get-widget cfg
-	gtk_widget_queue_draw widget
+	;widget: camera-dev/get-widget cfg
+	;gtk_widget_queue_draw widget
 ]
 
 transparent-base?: func [

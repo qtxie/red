@@ -1156,7 +1156,7 @@ Red/System [
 						idx: range/x - 1
 						len: range/y
 						if idx + len > max-len [len: max-len - idx]
-						#if OS = 'Windows [
+						#if all [OS = 'Windows GUi-engine = 'native][
 							len: adjust-index text idx len 1
 							idx: adjust-index text 0 idx 1
 						]

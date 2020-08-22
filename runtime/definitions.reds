@@ -79,7 +79,7 @@ Red/System [
 	EXTRACT_ARGB
 ]
 
-#if OS = 'Linux [
+#if any [OS = 'Linux GUI-engine = 'GTK][
 
 	tagPOINT: alias struct! [
 		x		[integer!]
@@ -236,6 +236,7 @@ Red/System [
 	#define BFFM_SELCHANGED			2
 	#define BFFM_SETSELECTION		1127
 
+	#if GUI-engine = 'native [
 	#enum brush-type! [
 		BRUSH_TYPE_NORMAL
 		BRUSH_TYPE_TEXTURE
@@ -359,7 +360,7 @@ Red/System [
 		alpha-brush?	[logic!]
 		font-color?		[logic!]
 		other 			[other!]
-	]
+	]]
 ][
 	#define O_RDONLY	0
 	#define O_WRONLY	1

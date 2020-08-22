@@ -25,7 +25,7 @@ Red/System [
 #include %comdlgs.reds
 #include %tab-panel.reds
 #include %text-list.reds
-#include %camera.reds
+;#include %camera.reds
 
 unicode-cp:			0
 im-preedit?:		no
@@ -474,16 +474,16 @@ free-handles: func [
 		g_timer_stop timer
 		g_timer_destroy timer
 	]
-	if sym = camera [
-		cfg: as integer! GET-CAMERA-CFG(widget)
-		if cfg <> 0 [
-			camera-dev/close cfg
-		]
-		last: GET-CAMERA-IMG(widget)
-		unless null? last [
-			g_object_unref last
-		]
-	]
+	;if sym = camera [
+	;	cfg: as integer! GET-CAMERA-CFG(widget)
+	;	if cfg <> 0 [
+	;		camera-dev/close cfg
+	;	]
+	;	last: GET-CAMERA-IMG(widget)
+	;	unless null? last [
+	;		g_object_unref last
+	;	]
+	;]
 
 	state: values + FACE_OBJ_STATE
 	state/header: TYPE_NONE
@@ -1173,9 +1173,9 @@ change-selection: func [
 				gtk_text_buffer_select_range buffer as handle! ins as handle! bound
 			]
 		]
-		type = camera [
-			select-camera widget idx
-		]
+	;	type = camera [
+	;		select-camera widget idx
+	;	]
 		type = text-list [
 			select-text-list widget idx
 		]
@@ -1834,11 +1834,11 @@ OS-make-view: func [
 
 			store-face-to-obj container face
 		]
-		sym = camera [
-			widget: gtk_layout_new null null
-			gtk_layout_set_size widget size/x size/y
-			init-camera widget data selected size
-		]
+		;sym = camera [
+		;	widget: gtk_layout_new null null
+		;	gtk_layout_set_size widget size/x size/y
+		;	init-camera widget data selected size
+		;]
 		sym = calendar [
 			widget: gtk_calendar_new
 		]

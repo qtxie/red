@@ -333,7 +333,7 @@ line-distance: func [
 	px: (as float32! x2) - x
 	py: (as float32! y2) - y
 	delta: (px * px) + (py * py)
-	sqrtf delta
+	delta
 ]
 
 update-pattern: func [
@@ -448,7 +448,7 @@ get-shape-center: func [
 		while [point <= end][
 			dx: centroid-x - as float32! point/x
 			dy: centroid-y - as float32! point/y
-			r: sqrtf dx * dx + ( dy * dy )
+			r: dx * dx + ( dy * dy )
 			if r > d/value [ d/value: r ]
 			point: point + 1
 		]
@@ -2417,9 +2417,9 @@ OS-draw-shape-arc: func [
 	p2-x: either rel? [ p1-x + as float32! end/x ][ as float32! end/x ]
 	p2-y: either rel? [ p1-y + as float32! end/y ][ as float32! end/y ]
 	item: as red-integer! end + 1
-	radius-x: fabsf get-float32 item
+	radius-x:  get-float32 item
 	item: item + 1
-	radius-y: fabsf get-float32 item
+	radius-y:  get-float32 item
 	item: item + 1
 	pi2: as float32! 2.0 * PI
 	theta: get-float32 item
@@ -2429,22 +2429,22 @@ OS-draw-shape-arc: func [
 	;-- calculate center
 	dx: (p1-x - p2-x) / as float32! 2.0
 	dy: (p1-y - p2-y) / as float32! 2.0
-	cos-val: cosf theta
-	sin-val: sinf theta
+	cos-val: theta
+	sin-val: theta
 	X1: (cos-val * dx) + (sin-val * dy)
 	Y1: (cos-val * dy) - (sin-val * dx)
 	rx2: radius-x * radius-x
 	ry2: radius-y * radius-y
 	rad-check: ((X1 * X1) / rx2) + ((Y1 * Y1) / ry2)
 	if rad-check > as float32! 1.0 [
-		radius-x: radius-x * sqrtf rad-check
-		radius-y: radius-y * sqrtf rad-check
+		radius-x: radius-x *  rad-check
+		radius-y: radius-y *  rad-check
 		rx2: radius-x * radius-x
 		ry2: radius-y * radius-y
 	]
 	either large? = sweep? [sign: as float32! -1.0 ][sign: as float32! 1.0 ]
 	sqrt-val: ((rx2 * ry2) - (rx2 * Y1 * Y1) - (ry2 * X1 * X1)) / ((rx2 * Y1 * Y1) + (ry2 * X1 * X1))
-	either sqrt-val < as float32! 0.0 [cf: as float32! 0.0 ][ cf: sign * sqrtf sqrt-val ]
+	either sqrt-val < as float32! 0.0 [cf: as float32! 0.0 ][ cf: sign * sqrt-val ]
 	cx: cf * (radius-x * Y1 / radius-y)
 	cy: cf * (radius-y * X1 / radius-x) * (as float32! -1.0)
 	center-x: (cos-val * cx) - (sin-val * cy) + ((p1-x + p2-x) / as float32! 2.0)
@@ -2465,8 +2465,8 @@ OS-draw-shape-arc: func [
 	p2-y: as float32! last-y
 
 	;-- calculate angles
-	cx: atan2f p1-y p1-x
-	cy: atan2f p2-y p2-x
+	cx:  p1-y p1-x
+	cy:  p2-y p2-x
 
 	cairo_save cr
 	cairo_new_sub_path cr

@@ -11,9 +11,8 @@ Red/System [
 ]
 
 clipboard: context [
-#switch OS [
-	Windows [
-
+#case [
+	all [OS = 'Windows GUI-engine = 'native][
 		tagMSG: alias struct! [							;-- used to work around #4284
 			hWnd	[handle!]
 			msg		[integer!]
@@ -500,7 +499,7 @@ clipboard: context [
 			all [res/1 <> 0 res/2 <> 0 not null? p]
 		];; write
 	]
-	macOS [
+	OS = 'macOS [
 		#import [
 			LIBC-file cdecl [
 				objc_getClass: "objc_getClass" [
@@ -586,11 +585,11 @@ clipboard: context [
 			as logic! res
 		]
 	]
-#if modules contains 'View [
-	Linux [
+	any [OS = 'Linux GUI-engine = 'GTK][
+	#if modules contains 'View [
 		;; Depends on GTK
 		#import [
-			"libgtk-3.so.0" cdecl [
+			"libgtk-3-0.dll" cdecl [
 				gdk_atom_intern_static_string: "gdk_atom_intern_static_string" [
 					name 		[c-string!]
 					return:		[handle!]
@@ -667,8 +666,7 @@ clipboard: context [
 			]
 			true
 		]
-	]
-]
+	]]
 	#default [
 		read: func [
 			return:		[red-value!]

@@ -6,7 +6,7 @@ Red [
 	Icon:	 %app.ico
 	Version: 0.0.1
 	Needs:	 View
-	Config:	 [gui-console?: yes red-help?: yes]
+	Config:	 [gui-console?: yes red-help?: yes GUI-engine: 'GTK]
 	Rights:  "Copyright (C) 2014-2018 Red Foundation. All rights reserved."
 	License: {
 		Distributed under the Boost Software License, Version 1.0.

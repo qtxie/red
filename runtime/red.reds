@@ -49,13 +49,15 @@ red: context [
 	;-- ]
 	;--------------------------------------------
 	#switch OS [
-		Windows  [#include %platform/image-gdiplus.reds]
+		Windows  [#if GUI-engine = 'native [#include %platform/image-gdiplus.reds]]
 		Syllable []
 		macOS	 [#include %platform/image-quartz.reds]
 		Linux	 [#if modules contains 'View [#include %platform/image-gdk.reds]]
 		FreeBSD  []
 		#default []
 	]
+
+	#if GUI-engine = 'GTK [#include %platform/image-gdk.reds]
 	
 	#include %datatypes/datatype.reds
 	#include %datatypes/unset.reds

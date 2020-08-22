@@ -530,8 +530,8 @@ system/view/platform: context [
 						#default []					;-- Linux
 					]
 				]
+				GTK  [#include %gtk3/gui.reds]
 				test [#include %test/gui.reds]
-				GTK [#include %GTK/gui.reds]
 			]
 		]
 	]
@@ -650,7 +650,7 @@ system/view/platform: context [
 				]
 			]
 			test []
-			GTK  []
+			GTK  [gui/post-quit-msg]
 		]
 	]
 

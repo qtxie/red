@@ -235,7 +235,11 @@ redbin: context [
 			copy-memory as byte-ptr! top + 1 as byte-ptr! path/stack size * size? integer!
 			top: top + size + 1
 		]
-		
+
+		on-gc-mark: does [
+			_hashtable/mark map
+		]
+
 		reset: func [/local min-size] [
 			min-size: 16'384
 			if (as-integer end - list) > (min-size * size? integer!) [	;-- free the extra RAM
@@ -249,7 +253,7 @@ redbin: context [
 			top: list
 			either null? map [
 				map: _hashtable/init 1024 null HASH_TABLE_INTEGER 1
-				_hashtable/mark map
+				collector/register as int-ptr! :on-gc-mark
 			][
 				_hashtable/clear-map map
 			]

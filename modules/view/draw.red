@@ -626,9 +626,7 @@ Red/System [
 								sweep?: false
 								large?: false
 								DRAW_FETCH_VALUE(TYPE_PAIR)
-								DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)
-								DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)
-								DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)
+								loop 3 [DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)]
 								end: cmd
 								opts: cmd
 								loop 2 [
@@ -788,7 +786,7 @@ Red/System [
 							]
 							sym = _arc [
 								loop 2 [DRAW_FETCH_VALUE(TYPE_PAIR)]	;-- center/radius (of the circle/ellipse)
-								loop 2 [DRAW_FETCH_VALUE(TYPE_INTEGER)]	;-- angle begin/length (degrees)
+								loop 2 [DRAW_FETCH_VALUE_2(TYPE_INTEGER TYPE_FLOAT)]	;-- angle begin/length (degrees)
 								DRAW_FETCH_OPT_VALUE(TYPE_WORD)
 								word: as red-word! cmd
 								if all [

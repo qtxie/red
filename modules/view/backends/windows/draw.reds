@@ -1451,8 +1451,7 @@ OS-draw-arc: func [
 		begin		[red-integer!]
 		angle-begin [float32!]
 		angle		[red-integer!]
-		sweep		[integer!]
-		i			[integer!]
+		sweep		[float32!]
 		angle-end	[float32!]
 		pt-start	[POINT_2F value]
 		end-x		[float32!]
@@ -1483,11 +1482,11 @@ OS-draw-arc: func [
 	rad-x: as float32! radius/x
 	rad-y: as float32! radius/y
 	begin: as red-integer! radius + 1
-	angle-begin: rad * as float32! begin/value
+	end-x: get-float32 begin
+	angle-begin: rad * end-x
 	angle: begin + 1
-	sweep: angle/value
-	i: begin/value + sweep
-	angle-end: rad * as float32! i
+	sweep: get-float32 angle
+	angle-end: rad * (end-x + sweep)
 
 	;-- adjust angles for ellipses
 	if rad-x <> rad-y [
@@ -1541,8 +1540,8 @@ OS-draw-arc: func [
 	arc/size/width: rad-x
 	arc/size/height: rad-y
 	arc/angle: as float32! 0.0
-	arc/direction: as-integer sweep >= 0
-	arc/arcSize: either sweep >= 180 [1][0]
+	arc/direction: as-integer sweep >= (as float32! 0.0)
+	arc/arcSize: either (fabs as float! sweep) >= 180.0 [1][0]
 	hr: gsink/AddArc sthis arc
 	gsink/EndFigure sthis either closed? [1][0]
 

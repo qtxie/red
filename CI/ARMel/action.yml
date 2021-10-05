@@ -1,0 +1,12 @@
+name: Run on x86
+description: Run a shell command in Linux ARMel container
+inputs:
+  command:
+    description: 'Command to run'
+    required: true
+    default: 'echo 0'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.command }}

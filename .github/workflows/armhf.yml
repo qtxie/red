@@ -61,4 +61,4 @@ jobs:
       if: failure()
       with:
         name: ARMhf-Tests-log
-        path: ${{ github.workspace }}/quick-test/quick-test.log
+        path: quick-test.log

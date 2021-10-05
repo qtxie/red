@@ -9,6 +9,7 @@ for exe in *;
      chmod +x $exe;
      printf "$exe is running \r";
      report=`./$exe`;
+     echo "$report"
      echo "$report" >> quick-test.log
      case "$report" in 
      *'Number of Assertions Failed:    0'* ) echo "$exe passed             ";;

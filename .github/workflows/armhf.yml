@@ -1,10 +1,10 @@
-name: RPi
+name: Linux-ARMhf
 
 on: push
 
 jobs:
-  Build-RPi-Tests:
-    runs-on: windows-2016
+  Build-ARMhf-Tests:
+    runs-on: windows-latest
     name: Build RPi Tests
     steps:
     - name: Checkout
@@ -22,40 +22,43 @@ jobs:
 
     - uses: actions/upload-artifact@v2
       with:
-        name: red-repo
-        path: ${{ github.workspace }}
-        retention-days: 3
-
-    - uses: actions/upload-artifact@v2
-      with:
-        name: rpi-tests-bin
+        name: armhf-tests-bin
         path: quick-test/runnable/arm-tests/red
         retention-days: 3
 
-  Run-RPi-Tests:
+  Run-ARMhf-Tests:
 
-    runs-on: [self-hosted, linux, arm]
-    needs: Build-RPi-Tests
+    runs-on: ubuntu-latest
+    needs: Build-ARMhf-Tests
     
     steps:
-    - name: Clean working directory
-      run: |
-        echo "Cleaning up previous run"
-        rm -rf ${{ github.workspace }}/*
+    - name: Checkout
+      uses: actions/checkout@v2
 
     - name: Retrieve tests
       uses: actions/download-artifact@v2
       with:
-        name: rpi-tests-bin
+        name: armhf-tests-bin
+        path: quick-test/runnable/arm-tests/red
 
-    - name: Run tests
+    - name: Chmod files
       run: |
-        chmod +x run-all.sh
-        ./run-all.sh
+        chmod +x quick-test/runnable/arm-tests/red/*
+
+    - name: Set up QEMU
+      id: qemu
+      uses: docker/setup-qemu-action@v1
+      with:
+        platforms: arm
+
+    - name: Run Tests
+      uses: ./CI/ARMhf
+      with:
+        command: cd quick-test/runnable/arm-tests/red && ./run-all.sh
 
     # upload log file if any test failed
     - uses: actions/upload-artifact@v2
       if: failure()
       with:
-        name: RPi-Tests-log
-        path: quick-test.log
+        name: ARMhf-Tests-log
+        path: ${{ github.workspace }}/quick-test/quick-test.log

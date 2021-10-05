@@ -1,0 +1,12 @@
+name: Run on ARMhf Linux
+description: Run a shell command in a Linux ARMhf container
+inputs:
+  command:
+    description: 'Command to run'
+    required: true
+    default: 'echo 0'
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
+  args:
+    - ${{ inputs.command }}

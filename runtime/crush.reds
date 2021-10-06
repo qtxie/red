@@ -176,7 +176,7 @@ crush: context [							;-- LZ77
 	]
 
 	;-- header of compressed data:
-	;-- algorithm (4), compressed size (4), orignal size (4)
+	;-- compressed size (4), orignal size (4)
 	compress: func [
 		data	[byte-ptr!]
 		length	[integer!]

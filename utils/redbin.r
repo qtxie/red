@@ -486,5 +486,6 @@ context [
 			flags										;-- flags: symbols [+ options]
 		]
 		insert buffer header
+		pad buffer 8
 	]
 ]

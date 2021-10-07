@@ -1,0 +1,27 @@
+name: Linux-ARMhf
+
+on: push
+
+jobs:
+  Run-ARMhf-Tests:
+
+    runs-on: ubuntu-latest
+    needs: Build-ARMhf-Tests
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - uses: pguyot/arm-runner-action@v1
+      with:
+        command: |
+          ls -la
+          chmod +x quick-test/runnable/arm-tests/red/run-all.sh
+          quick-test/runnable/arm-tests/red/run-all.sh
+
+    # upload log file if any test failed
+    - uses: actions/upload-artifact@v2
+      if: failure()
+      with:
+        name: ARMhf-Tests-log
+        path: quick-test.log

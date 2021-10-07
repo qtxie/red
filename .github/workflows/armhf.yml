@@ -16,7 +16,8 @@ jobs:
         optimize_image: no
         exit_on_fail: no
         copy_artifact_path: quick-test/runnable/arm-tests/red/quick-test.log
-        base_image: 'dietpi:rpi_armv6_buster'
+        base_image: 'raspios_lite:2021-03-04'
+        cpu: cortex-a7
         commands: |
           uname -m
           apt-get update -y

@@ -16,14 +16,12 @@ jobs:
         optimize_image: no
         exit_on_fail: no
         copy_artifact_path: quick-test/runnable/arm-tests/red/quick-test.log
-        base_image: 'raspbian_lite:2020-02-13'
-        cpu: cortex-a8
+        base_image: 'dietpi:rpi_armv6_buster'
         commands: |
           uname -m
           apt-get update -y
           apt-get install --no-install-recommends -y libgdk-pixbuf2.0-0
           chmod +x quick-test/runnable/arm-tests/red/*
-          quick-test/runnable/arm-tests/red/run-all-comp2
           quick-test/runnable/arm-tests/red/run-all-interp
 
     # upload log file if any test failed

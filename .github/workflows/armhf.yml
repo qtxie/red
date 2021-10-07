@@ -22,7 +22,7 @@ jobs:
           apt-get update -y
           apt-get install --no-install-recommends -y libgdk-pixbuf2.0-0
           chmod +x quick-test/runnable/arm-tests/red/*
-          quick-test/runnable/arm-tests/red/run-all-interp
+          quick-test/runnable/arm-tests/red/run-all-comp2
 
     # upload log file if any test failed
     - uses: actions/upload-artifact@v2

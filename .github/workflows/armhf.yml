@@ -13,10 +13,17 @@ jobs:
 
     - uses: pguyot/arm-runner-action@v1
       with:
-        command: |
+        optimize_image: no
+        exit_on_fail: no
+        copy_artifact_path: quick-test/quick-test.log
+        cpu: 'cortex-a7'
+        commands: |
+          apt-get update -y
+          apt-get install --no-install-recommends -y libgdk-pixbuf2.0-0 libcurl4
           ls -la
           chmod +x quick-test/runnable/arm-tests/red/run-all.sh
           quick-test/runnable/arm-tests/red/run-all.sh
+          echo quick-test/quick-test.log
 
     # upload log file if any test failed
     - uses: actions/upload-artifact@v2

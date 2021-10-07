@@ -11,12 +11,14 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v2
 
-    - uses: pguyot/arm-runner-action@v1
+    - uses: pguyot/arm-runner-action@HEAD
       with:
         optimize_image: no
         exit_on_fail: no
         copy_artifact_path: quick-test/runnable/arm-tests/red/quick-test.log
+        cpu: cortex-a8
         commands: |
+          uname -m
           apt-get update -y
           apt-get install --no-install-recommends -y libgdk-pixbuf2.0-0
           cd quick-test/runnable/arm-tests/red

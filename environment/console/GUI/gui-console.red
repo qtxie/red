@@ -262,6 +262,21 @@ ask: function [
 
 input: function ["Wait for console user input" return: [string!]][ask ""]
 
+print-color: func [
+	value	[any-type!]
+	color	[tuple! block!]
+][
+	gui-console-ctx/terminal/set-color color
+	print value
+	gui-console-ctx/terminal/set-color none
+	()
+]
+
+print-RTD: function [value [block!]][
+	data: rtd-layout/only value	
+	print-color data/1 data/2
+]
+
 #system [
 	gui-console-buffer: as red-value! 0
 

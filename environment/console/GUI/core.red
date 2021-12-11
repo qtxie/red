@@ -12,6 +12,7 @@ Red [
 
 object [
 	lines:		make block! 1000				;-- line buffer
+	colors:		make block! 1000				;-- color of each line
 	nlines:		clear make vector! 1000			;-- line count of each line, changed according to window width
 	heights:	clear make vector! 1000			;-- height of each (wrapped) line, in pixels
 	flags:		clear make vector! 1000			;-- flags of each line. e.g. hidden flag
@@ -61,6 +62,7 @@ object [
 
 	windows:	none							;-- all the windows opened
 
+	line-color: none
 	tab-size:	4
 	foreground: 0.0.0
 	background: none
@@ -216,6 +218,10 @@ object [
 		poke flags length? lines val
 	]
 
+	set-color: func [color [none! tuple! block!]][
+		line-color: color
+	]
+
 	add-line: func [str [string!]][
 		either full? [
 			line-cnt: line-cnt - first nlines
@@ -225,11 +231,13 @@ object [
 				nlines: reset-buffer nlines
 				heights: reset-buffer heights
 				flags: reset-buffer flags
+				colors: reset-buffer colors
 			][
 				lines: next lines
 				nlines: next nlines
 				heights: next heights
 				flags: next flags
+				colors: next colors
 			]
 			append lines str
 			append flags 0
@@ -240,6 +248,7 @@ object [
 			full?: max-lines = length? lines
 			calc-top
 		]
+		append/only colors line-color
 	]
 
 	add-lines: function [str [string!] copy? [logic!]][
@@ -881,6 +890,7 @@ object [
 		clear nlines
 		clear heights
 		clear selects
+		clear colors
 		scroller/page-size: page-cnt
 		scroller/max-size: page-cnt - 1
 		scroller/position: 0
@@ -997,7 +1007,7 @@ object [
 		if swap? [move/part skip selects 2 selects 2]
 	]
 
-	paint: func [/local txt str cmds y n h cnt delta num end styles][
+	paint: func [/local txt str cmds y n h cnt delta num end styles clr][
 		if empty? lines [exit]
 
 		cmds: [pen color text 0x0 text-box]
@@ -1016,6 +1026,10 @@ object [
 			]
 			box/text: txt
 			if color? [highlight/add-styles txt clear styles theme]
+			if clr: pick colors n [
+				if tuple? clr [clr: reduce [as-pair 1 length? str clr]]
+				append styles clr
+			]
 			mark-selects styles n
 			cmds/4/y: y
 			system/view/platform/draw-face console cmds

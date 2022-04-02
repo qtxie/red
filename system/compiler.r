@@ -86,6 +86,7 @@ system-dialect: make-profilable context [
 		none-type:	 	 [#[none]]						;-- marker for "no value returned"
 		last-type:	 	 none-type						;-- type of last value from an expression
 		locals: 	 	 none							;-- currently compiled function specification block
+		rs-src:			 make block! 10
 		definitions:  	 make block! 100
 		enumerations: 	 make hash! 10
 		expr-call-stack: make block! 10					;-- simple stack of nested calls for a given expression
@@ -3991,6 +3992,7 @@ system-dialect: make-profilable context [
 					]
 				]
 			]
+			append/only rs-src src
 		]
 		
 		finalize: has [tmpl words][
@@ -4104,9 +4106,10 @@ system-dialect: make-profilable context [
 				compiler/comp-call '__red-boot []
 			]
 			if payload [								;-- Redbin boot data handling
-				emitter/target/emit-load-literal [binary!] payload
-				emitter/target/emit-move-path-alt
-				emitter/access-path first [system/boot-data:] <last> 
+				;emitter/target/emit-load-literal [binary!] payload
+				;emitter/target/emit-move-path-alt
+				;emitter/access-path first [system/boot-data:] <last> 
+				repend first compiler/rs-src ['system/boot-data: payload]
 			]
  			unless empty? red/sys-global [
 				set-cache-base %./
@@ -4178,7 +4181,7 @@ system-dialect: make-profilable context [
 			do bind spec job
 			old-PIC?: emitter/target/PIC?
 			emitter/target/PIC?: job/PIC?
-			if all [job/PIC? not old-PIC?][emitter/target/on-init]
+			;if all [job/PIC? not old-PIC?][emitter/target/on-init]
 			if job/command-line [do bind job/command-line job]		;-- ensures cmd-line options have priority
 		]
 	]
@@ -4275,7 +4278,7 @@ system-dialect: make-profilable context [
 			
 			clean-up
 			loader/init
-			emit-main-prolog
+			;emit-main-prolog
 			
 			job/need-main?: to logic! any [
 				job/need-main?							;-- pass-thru if set in config file
@@ -4291,7 +4294,7 @@ system-dialect: make-profilable context [
 				opts/runtime?
 			][
 				comp-start								;-- init libC properly
-			]		
+			]
 			if opts/runtime? [
 				comp-runtime-prolog to logic! loaded all [loaded job-data/3]
 			]
@@ -4315,6 +4318,12 @@ system-dialect: make-profilable context [
 			set-verbose-level opts/verbosity
 			compiler/finalize							;-- compile all functions
 			set-verbose-level 0
+
+			probe length? compiler/rs-src
+			write %hello-red.reds "Red/System [origin: 'Red]^/"
+			foreach src compiler/rs-src [
+				write/append %hello-red.reds mold/only skip src 2
+			]
 			
 			if job/libRedRT-update? [libRedRT/save-extras]
 		]
@@ -4324,7 +4333,7 @@ system-dialect: make-profilable context [
 				nl mold emitter/code-buf nl
 			]
 		]
-		
+		opts/link?: no
 		if opts/link? [
 			link-time: dt [
 				job/symbols: emitter/symbols

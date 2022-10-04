@@ -801,6 +801,8 @@ object: context [
 			more [red-value!]
 			blk  [red-block!]
 			spec [red-block!]
+			cell [red-context!]
+			f-ctx [node!]
 	][
 		s: as series! fun/more/value
 		more: s/offset
@@ -817,7 +819,15 @@ object: context [
 		blk: block/clone as red-block! more yes yes
 		_context/bind blk octx self yes					;-- rebind new body to object's context
 		_context/bind blk GET_CTX(fun) null no			;-- rebind new body to function's context
-		_function/push spec blk	fun/ctx null null fun/header ;-- recreate function
+
+		f-ctx: alloc-cells 2
+		cell: as red-context! alloc-tail as series! f-ctx/value
+		alloc-tail as series! f-ctx/value				;-- allocate a slot for obj/func back-reference
+		s: as series! fun/ctx/value
+		copy-cell s/offset as cell! cell				;-- copy the function's red-context!
+		cell/self: f-ctx
+
+		_function/push spec blk	f-ctx null null fun/header ;-- recreate function
 		copy-cell stack/top - 1	as red-value! fun		;-- overwrite function slot in object
 		stack/pop 2										;-- remove extra stack slots (block/clone and _function/push)
 		

@@ -7,7 +7,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: send message
-    - shell: bash
       env:
         TG_CHAT_ID: ${{ secrets.TelegramChatId }}
         TG_BOT_TOKEN: ${{ secrets.TelegramBotToken }}

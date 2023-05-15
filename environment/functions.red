@@ -50,20 +50,6 @@ quit: func [
 	quit-return any [status 0]
 ]
 
-quit2: func [
-	"Stops evaluation and exits the program"
-	/return status	[integer!] "Return an exit status"
-][
-	#if all [
-		config/OS <> 'Windows
-		not config/gui-console?
-	][
-		if system/console [do [_terminate-console]]
-	]
-	if system/console [do [_save-cfg]]
-	quit-return any [status 0]
-]
-
 empty?: func [
 	"Returns true if data is a series at its tail or an empty map"
 	data	[series! none! map!]

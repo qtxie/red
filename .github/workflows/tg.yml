@@ -7,10 +7,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: send message
-    - shell: bash
       env:
         TG_CHAT_ID: ${{ secrets.TelegramChatId }}
         TG_BOT_TOKEN: ${{ secrets.TelegramBotToken }}
       run: |
-        curl -k --data chat_id="$TG_CHAT_ID" "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+        curl -k --data chat_id="$TG_CHAT_ID" "https://api.telegram.org/bot/sendMessage" \
         --data-raw 'text=${{github.actor}} starred red/red'

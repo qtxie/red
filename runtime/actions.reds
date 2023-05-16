@@ -38,6 +38,7 @@ actions: context [
 		value	[red-value!]							;-- any-type! value
 		action	[integer!]								;-- action ID
 		path	[red-value!]
+		element [red-value!]
 		return: [integer!]								;-- action pointer (datatype-dependent)
 		/local
 			type  [integer!]							;-- datatype ID
@@ -48,11 +49,18 @@ actions: context [
 		index: action-table/index						;-- lookup action function pointer
 
 		if zero? index [
-			if null? path [path: none-value]
-			fire [
-				TO_ERROR(script bad-path-type)
-				path
-				datatype/push type
+			either null? path [							;-- compiled path
+				fire [
+					TO_ERROR(script bad-path-type2)
+					element
+					datatype/push type
+				]			
+			][											;-- interpreted path
+				fire [
+					TO_ERROR(script bad-path-type)
+					path
+					datatype/push type
+				]
 			]
 		]
 		index
@@ -256,29 +264,34 @@ actions: context [
 			arg	   [red-value!]
 			buffer [red-string!]
 			int    [red-integer!]
-			limit  [integer!]
+			limit expected [integer!]
 	][
 		arg: stack/arguments + part
+		expected: 0
 		
-		limit: either part >= 0 [
+		either part >= 0 [
 			int: as red-integer! arg
-			int/value
-		][0]
-		
+			assert TYPE_OF(int) = TYPE_INTEGER
+			limit: int/value
+			if limit <= 0 [
+				string/rs-make-at stack/arguments 1
+				exit
+			]
+			expected: limit
+		][limit: MAX_INT]
+	
 		stack/keep										;-- keep last value
 		buffer: string/rs-make-at stack/push* 16		;@@ /part argument
-		limit: form stack/arguments buffer arg limit
+		form stack/arguments buffer arg limit
 		
-		if all [part >= 0 negative? limit][
-			string/truncate-from-tail GET_BUFFER(buffer) limit
-		]
+		if expected > 0 [string/truncate GET_BUFFER(buffer) expected]
 		stack/set-last as red-value! buffer
 	]
 	
 	form: func [
 		value   [red-value!]							;-- FORM argument
 		buffer  [red-string!]							;-- FORM buffer
-		arg		[red-value!]							;-- max bytes count
+		arg		[red-value!]							;-- max characters count
 		part	[integer!]
 		return: [integer!]
 		/local
@@ -289,7 +302,7 @@ actions: context [
 		action-form: as function! [
 			value	[red-value!]						;-- FORM argument
 			buffer	[red-string!]						;-- FORM buffer
-			arg		[red-value!]						;-- max bytes count
+			arg		[red-value!]						;-- max characters count
 			part	[integer!]
 			return: [integer!]							;-- remaining part count
 		] get-action-ptr value ACT_FORM
@@ -306,18 +319,25 @@ actions: context [
 			arg	   [red-value!]
 			buffer [red-string!]
 			int    [red-integer!]
-			limit  [integer!]
+			limit expected [integer!]
 	][
 		arg: stack/arguments + part
-		
-		limit: either part >= 0 [
+		expected: 0
+
+		either part >= 0 [
 			int: as red-integer! arg
-			int/value
-		][0]
+			assert TYPE_OF(int) = TYPE_INTEGER
+			limit: int/value
+			if limit <= 0 [
+				string/rs-make-at stack/arguments 1
+				exit
+			]
+			expected: limit
+		][limit: MAX_INT]
 
 		stack/keep										;-- keep last value
 		buffer: string/rs-make-at stack/push* 16		;@@ /part argument
-		limit: mold 
+		mold
 			stack/arguments
 			buffer
 			as logic! only + 1
@@ -327,9 +347,7 @@ actions: context [
 			limit
 			0
 		
-		if all [part >= 0 negative? limit][
-			string/truncate-from-tail GET_BUFFER(buffer) limit
-		]
+		if expected > 0 [string/truncate GET_BUFFER(buffer) expected]
 		stack/set-last as red-value! buffer
 	]
 	
@@ -340,7 +358,7 @@ actions: context [
 		all?	 [logic!]
 		flat?	 [logic!]
 		arg		 [red-value!]
-		part     [integer!]								;-- max bytes count
+		part     [integer!]								;-- max characters count
 		indent	 [integer!]
 		return:  [integer!]
 		/local
@@ -355,7 +373,7 @@ actions: context [
 			all?	 [logic!]
 			flat?	 [logic!]
 			part-arg [red-value!]		
-			part	 [integer!]							;-- max bytes count
+			part	 [integer!]							;-- max characters count
 			indent	 [integer!]
 			return:  [integer!]							;-- remaining part count
 		] get-action-ptr value ACT_MOLD
@@ -370,15 +388,17 @@ actions: context [
 			value [red-value!]
 	][
 		value: either set? [stack/arguments + 2][null]
-		value: stack/set-last eval-path 
+		stack/set-last eval-path 
 			stack/arguments
 			stack/arguments + 1
 			value
 			null
+			null
+			null
+			-1
 			no
-		
-		if set? [object/path-parent/header: TYPE_NONE]	;-- disables owner checking
-		value
+			no
+			yes
 	]
 	
 	eval-path: func [
@@ -386,7 +406,12 @@ actions: context [
 		element	[red-value!]
 		value	[red-value!]
 		path	[red-path!]
+		gparent [red-value!]
+		p-item	[red-value!]
+		index	[integer!]
 		case?	[logic!]
+		get?	[logic!]
+		tail?	[logic!]
 		return:	[red-value!]
 		/local
 			action-path
@@ -398,11 +423,16 @@ actions: context [
 			element	[red-value!]
 			value	[red-value!]
 			path	[red-value!]
+			gparent [red-value!]
+			p-item	[red-value!]
+			index	[integer!]
 			case?	[logic!]
+			get?	[logic!]
+			tail?	[logic!]
 			return:	[red-value!]
-		] get-action-ptr-path parent ACT_EVALPATH as red-value! path
+		] get-action-ptr-path parent ACT_EVALPATH as red-value! path element
 		
-		action-path parent element value as red-value! path case?
+		action-path parent element value as red-value! path gparent p-item index case? get? tail?
 	]
 	
 	set-path*: func [][]
@@ -477,8 +507,6 @@ actions: context [
 			TYPE_FUNCTION
 			TYPE_OP
 			TYPE_ROUTINE [res: SIGN_COMPARE_RESULT(value1/data3 value2/data3)]
-			TYPE_NONE
-			TYPE_UNSET	 [res: 0]
 			default		 [res: action-compare value1 value2 op]
 		]
 		res
@@ -1284,15 +1312,18 @@ actions: context [
 
 	reverse*: func [
 		part [integer!]
+		skip [integer!]
 	][
 		reverse
 			as red-series! stack/arguments
 			stack/arguments + part
+			stack/arguments + skip
 	]
 
 	reverse: func [
 		series  [red-series!]
 		part	[red-value!]
+		skip    [red-value!]
 		return:	[red-value!]
 		/local
 			action-reverse
@@ -1302,10 +1333,11 @@ actions: context [
 		action-reverse: as function! [
 			series	[red-series!]
 			part	[red-value!]
+			skip    [red-value!]
 			return:	[red-value!]
 		] get-action-ptr as red-value! series ACT_REVERSE
 
-		action-reverse series part
+		action-reverse series part skip
 	]
 	
 	select*: func [

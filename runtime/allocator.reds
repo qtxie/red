@@ -30,7 +30,12 @@ int-array!: alias struct! [ptr [int-ptr!]]
 ;	17:		owner							;-- indicate that an object is an owner
 ;	16:		native! op						;-- operator is made from a native! function
 ;	15:		extern flag						;-- routine code is external to Red (from FFI)
-;	14-8:	<reserved>
+;	14:		sign bit						;-- sign of money
+;	13:		dirty?							;-- word flag indicating if value has been modified
+;	12-11:	context type					;-- context-type! value (context! cells only)
+;	10:		trace							;-- force tracing mode attribut flag (function! cells only)
+;	9:		no-trace						;-- disable tracing mode attribut flag (function! cells only)
+;	8:		<reserved>
 ;	7-0:	datatype ID						;-- datatype number
 
 cell!: alias struct! [
@@ -55,7 +60,7 @@ cell!: alias struct! [
 ;	19:		complement						;-- complement flag for bitsets
 ;	18:		UTF-16 cache					;-- signifies that the string cache is UTF-16 encoded (UTF-8 by default)
 ;	17:		owned							;-- series is owned by an object
-;	16-3: 	<reserved>
+;	16-5: 	<reserved>
 ;	4-0:	unit							;-- size in bytes of atomic element stored in buffer
 											;-- 0: UTF-8, 1: Latin1/binary, 2: UCS-2, 4: UCS-4, 16: block! cell
 series-buffer!: alias struct! [
@@ -128,36 +133,8 @@ fill: func [
 	p	  [byte-ptr!]
 	end   [byte-ptr!]
 	byte  [byte!]
-	/local
-		p4		 [int-ptr!]
-		tail	 [int-ptr!]
-		cnt		 [integer!]
-		byte4	 [integer!]
-		aligned? [logic!]
 ][
-	cnt: (as-integer p) and 3
-	unless zero? cnt [						;-- preprocess unaligned beginning
-		while [cnt > 0][p/cnt: byte cnt: cnt - 1]
-		p: as byte-ptr! (as-integer p) + 4 and -4
-	]
-	
-	aligned?: zero? ((as-integer end) and 3)
-	tail: either aligned? [as int-ptr! end][as int-ptr! (as-integer end) and -4]
-	p4: as int-ptr! p
-	
-	if p4 < tail [
-		byte4: either byte = null-byte [0][
-			byte4: as-integer byte
-			(byte4 << 24) or (byte4 << 16) or (byte4 << 8) or byte4
-		]
-		while [p4 < tail][p4/value: byte4 p4: p4 + 1] ;-- zero fill target region using 32-bit accesses
-	]
-	
-	unless aligned? [						;-- postprocess unaligned ending
-		cnt: (as-integer end) and 3
-		p: as byte-ptr! p4
-		while [cnt > 0][p/cnt: byte cnt: cnt - 1]
-	]
+	set-memory p byte as-integer end - p
 ]
 
 ;-------------------------------------------
@@ -480,7 +457,6 @@ compact-series-frame: func [
 		delta [integer!]
 		size  [integer!]
 		tail? [logic!]
-		mark? [logic!]
 ][
 	tail: memory/stk-tail
 	s: as series! frame + 1					;-- point to first series buffer
@@ -500,10 +476,9 @@ compact-series-frame: func [
 			while [							;-- search for a live series
 				s: as series! (as byte-ptr! s + 1) + s/size + SERIES_BUFFER_PADDING
 				tail?: s >= heap
-				mark?: s/flags and flag-gc-mark <> 0
-				not any [mark? tail?]
+				not tail?
 			][
-				free-node s/node
+				either s/flags and flag-gc-mark <> 0 [break][free-node s/node]
 			]
 			;probe ["live found at: " s]
 		]
@@ -514,7 +489,8 @@ compact-series-frame: func [
 				s/flags: s/flags and not flag-gc-mark	;-- clear mark flag
 				s: as series! (as byte-ptr! s + 1) + s/size + SERIES_BUFFER_PADDING
 				tail?: s >= heap
-				any [s/flags and flag-gc-mark = 0 tail?]
+				;@@ test tail? first, otherwise s/flags may crash if s = heap
+				any [tail? s/flags and flag-gc-mark = 0]
 			]
 			;probe ["gap found at: " s]
 			if dst <> null [
@@ -567,7 +543,6 @@ cross-compact-frame: func [
 		size	[integer!]
 		size2	[integer!]
 		tail?	[logic!]
-		mark?	[logic!]
 		cross?	[logic!]
 		update? [logic!]
 ][
@@ -599,10 +574,9 @@ cross-compact-frame: func [
 			while [							;-- search for a live series
 				s: as series! (as byte-ptr! s + 1) + s/size + SERIES_BUFFER_PADDING
 				tail?: s >= heap
-				mark?: s/flags and flag-gc-mark <> 0
-				not any [mark? tail?]
+				not tail?
 			][
-				free-node s/node
+				either s/flags and flag-gc-mark <> 0 [break][free-node s/node]
 			]
 		]
 		unless tail? [
@@ -615,10 +589,10 @@ cross-compact-frame: func [
 				ss: s						;-- save previous series pointer
 				s: as series! (as byte-ptr! s + 1) + s/size + SERIES_BUFFER_PADDING
 				tail?: s >= heap
-				any [
+				any [	;@@ test tail? first, otherwise s/flags may crash if s = heap
+					tail?	
 					all [cross? size >= free-sz]
 					s/flags and flag-gc-mark = 0
-					tail?
 				]
 			]
 
@@ -906,8 +880,9 @@ alloc-series-buffer: func [
 	;-- extra space between two adjacent series-buffer!s (ensure s1/tail <> s2)
 	sz: SERIES_BUFFER_PADDING + size + size? series-buffer!
 	flag-big: 0
-	
-	either sz >= memory/s-max [				;-- alloc a big frame if too big for series frames
+	series: null
+	either (as byte-ptr! sz) >= (as byte-ptr! memory/s-max) [ ;-- alloc a big frame if too big for series frames
+		collector/do-cycle					;-- launch a GC pass
 		series: as series-buffer! alloc-big sz
 		flag-big: flag-series-big
 	][
@@ -916,7 +891,10 @@ alloc-series-buffer: func [
 			if null? frame [
 				collector/do-cycle			;-- launch a GC pass
 				frame: find-space sz
-				if null? frame [
+				if any [
+					null? frame
+					(as-integer frame/tail - frame/heap) < 52428	;- 1MB * 5%
+				][
 					if sz >= memory/s-size [ ;@@ temporary checks
 						memory/s-size: memory/s-max
 					]
@@ -953,10 +931,11 @@ alloc-series: func [
 	unit	[integer!]						;-- size of atomic elements stored
 	offset	[integer!]						;-- force a given offset for series buffer
 	return: [int-ptr!]						;-- return a new node pointer (pointing to the newly allocated series buffer)
-	/local series node
+	/local series [series!] node [int-ptr!]
 ][
 ;	#if debug? = yes [print-wide ["allocating series:" size unit offset lf]]
-
+	series: null
+	node: null
 	series: alloc-series-buffer size unit offset
 	node: alloc-node						;-- get a new node
 	series/node: node						;-- link back series to node
@@ -1044,6 +1023,19 @@ alloc-bytes: func [
 ][
 	if zero? size [size: 16]
 	alloc-series size 1 0					;-- optimize by default for tail insertion
+]
+
+;-------------------------------------------
+;-- Wrapper on alloc-series for codepoints buffer allocation
+;-------------------------------------------
+alloc-codepoints: func [
+	size	[integer!]						;-- number of codepoints slots to preallocate
+	unit	[integer!]
+	return: [int-ptr!]						;-- return a new node pointer (pointing to the newly allocated series buffer)
+][
+	assert unit <= 4
+	if zero? size [size: 16 >> (unit >> 1)]
+	alloc-series size unit 0				;-- optimize by default for tail insertion
 ]
 
 ;-------------------------------------------

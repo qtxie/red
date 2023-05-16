@@ -33,6 +33,7 @@ float: context [
 	+INF: 0.0											;-- rebol can't load INF, NaN
 	-INF: 0.0											;-- rebol can't load INF, NaN
 	QNaN: 0.0
+	HALF: 0.0
 
 	double-int-union: as int64! :DOUBLE_MAX				;-- set to largest number
 	double-int-union/int2: 7FEFFFFFh
@@ -46,6 +47,14 @@ float: context [
 
 	double-int-union: as int64! :QNaN					;-- smallest quiet NaN
 	double-int-union/int2: 7FF80000h
+	
+	double-int-union: as int64! :HALF
+	double-int-union/int2: 3FDFFFFFh
+	double-int-union/int1: FFFFFFFFh
+	
+	round-to-int: func [f [float!] return: [integer!]][
+		as-integer f + HALF
+	]
 
 	abs: func [
 		value	[float!]
@@ -233,19 +242,13 @@ float: context [
 			OP_ADD [left + right]
 			OP_SUB [left - right]
 			OP_MUL [left * right]
-			OP_DIV [
-				either all [0.0 = right not NaN? right][
-					either left > 0.0 [+INF][either left = 0.0 [QNaN][-INF]]
-				][
-					left / right
-				]
-			]
+			OP_DIV [left / right]
 			OP_REM [
-				either all [0.0 = right not NaN? right][
-					fire [TO_ERROR(math zero-divide)]
-					0.0									;-- pass the compiler's type-checking
-				][
-					fmod left right
+				case [
+					0.0 * right = 0.0 [fmod left right]	;-- finite right part - no special case
+					NaN? right [QNaN]
+					0.0 * left = 0.0 [left]				;-- finite % +-infinity - special case for #4900
+					true [QNaN]							;-- (+-infinity or NaN) % +-infinity = NaN
 				]
 			]
 			default [
@@ -288,6 +291,7 @@ float: context [
 
 		switch type2 [
 			TYPE_TUPLE [return as red-float! tuple/do-math type]
+			TYPE_MONEY [return as red-float! money/do-math type]
 			TYPE_PAIR  [
 				if type1 <> TYPE_TIME [
 					if any [type = OP_SUB type = OP_DIV][
@@ -411,7 +415,14 @@ float: context [
 		fl/value: value
 		fl
 	]
-
+	
+	from-money: func [
+		mn      [red-money!]
+		return: [float!]
+	][
+		money/to-float mn
+	]
+	
 	from-binary: func [
 		bin		[red-binary!]
 		return: [float!]
@@ -499,16 +510,23 @@ float: context [
 		return: [red-float!]
 		/local
 			s	[float!]
+			sp	[int-ptr!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "float/random"]]
 
 		either seed? [
 			s: f/value
-			_random/srand as-integer s
+			sp: as int-ptr! :s
+			_random/srand sp/1 xor sp/2
 			f/header: TYPE_UNSET
 		][
-			s: (as-float _random/rand) / 2147483647.0
-			f/value: s * f/value
+			either secure? [
+				f/value: ((as-float _random/rand-secure) / 2147483647.0 + (as-float _random/rand-secure))
+					/ (2147483648.0 / f/value)
+			] [
+				s: (as-float _random/rand) / 2147483647.0
+				f/value: s * f/value
+			]
 		]
 		f
 	]
@@ -522,6 +540,7 @@ float: context [
 			int	 [red-integer!]
 			tm	 [red-time!]
 			str  [red-string!]
+			res	 [red-float!]
 			p	 [byte-ptr!]
 			err	 [integer!]
 			unit [integer!]
@@ -537,6 +556,9 @@ float: context [
 				int: as red-integer! spec
 				proto/value: as-float int/value
 			]
+			TYPE_MONEY [
+				proto/value: from-money as red-money! spec
+			]
 			TYPE_TIME [
 				tm: as red-time! spec
 				proto/value: tm/time
@@ -544,14 +566,27 @@ float: context [
 			TYPE_ANY_STRING [
 				err: 0
 				str: as red-string! spec
-				s: GET_BUFFER(str)
-				unit: GET_UNIT(s)
-				p: (as byte-ptr! s/offset) + (str/head << log-b unit)
-				len: (as-integer s/tail - p) >> log-b unit
-				
-				either len > 0 [
-					proto/value: tokenizer/scan-float p len unit :err
-				][err: -1]
+				either type = TYPE_PERCENT [
+					res: as red-float! load-single-value str stack/push*
+					switch TYPE_OF(res) [
+						TYPE_PERCENT
+						TYPE_FLOAT	 [proto/value: res/value]
+						TYPE_INTEGER [
+							int: as red-integer! res
+							proto/value: as-float int/value
+						]
+						default 	 [err: -1]
+					 ]
+				][
+					s: GET_BUFFER(str)
+					unit: GET_UNIT(s)
+					p: (as byte-ptr! s/offset) + (str/head << log-b unit)
+					len: (as-integer s/tail - p) >> log-b unit
+
+					either len > 0 [
+						proto/value: tokenizer/scan-float p len unit :err
+					][err: -1]
+				]
 				if err <> 0 [fire [TO_ERROR(script bad-to-arg) datatype/push type spec]]
 			]
 			TYPE_BINARY [
@@ -624,6 +659,13 @@ float: context [
 				n/value and 000FFFFFh <> 0
 			]
 		][false]
+	]
+	
+	special?: func [
+		value	[float!]
+		return: [logic!]
+	][
+		any [value = 1.#INF value = -1.#INF NaN? value]
 	]
 
 	;@@ using 64bit integer will simplify it significantly.
@@ -706,6 +748,8 @@ float: context [
 			left  [float!]
 			right [float!] 
 			res	  [integer!]
+			ip1   [int-ptr!]
+			ip2   [int-ptr!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "float/compare"]]
 
@@ -717,7 +761,11 @@ float: context [
 		left: value1/value
 
 		switch TYPE_OF(value2) [
-			TYPE_CHAR
+			TYPE_MONEY [
+				if money/float-underflow? left [return -1]
+				if money/float-overflow?  left [return 1]
+				return money/compare money/from-float left as red-money! value2 op
+			]
 			TYPE_INTEGER [
 				int: as red-integer! value2
 				right: as-float int/value
@@ -730,6 +778,12 @@ float: context [
 		switch op [
 			COMP_EQUAL
 			COMP_NOT_EQUAL 	[res: as-integer not almost-equal left right]
+			COMP_STRICT_EQUAL [res: as-integer not left = right]	;-- SIGN_COMPARE_RESULT cannot handle NaN 
+			COMP_SAME [
+				ip1: as int-ptr! :left
+				ip2: as int-ptr! :right
+				res: as-integer any [ip1/1 <> ip2/1  ip1/2 <> ip2/2]
+			]
 			default [
 				res: SIGN_COMPARE_RESULT(left right)
 			]
@@ -854,6 +908,10 @@ float: context [
 			e		[integer!]
 			v		[logic!]
 	][
+		if TYPE_OF(scale) = TYPE_MONEY [
+			fire [TO_ERROR(script not-related) stack/get-call datatype/push TYPE_MONEY]
+		]
+		
 		e: 0
 		f: as red-float! value
 		dec: f/value
@@ -866,7 +924,6 @@ float: context [
 				sc: abs scale/value
 			]
 			if TYPE_OF(f) = TYPE_PERCENT [sc: sc / 100.0]
-			if sc = 0.0 [fire [TO_ERROR(math overflow)]]
 		]
 		if sc < ldexp abs dec -53 [return value]		;-- is scale negligible?
 
@@ -911,11 +968,7 @@ float: context [
 				int/header: TYPE_INTEGER
 				int/value: as integer! dec
 			][
-				value/header: either TYPE_OF(scale) = TYPE_PERCENT [
-					TYPE_FLOAT
-				][
-					TYPE_OF(scale)
-				]
+				value/header: TYPE_OF(scale)
 			]
 		]
 		value

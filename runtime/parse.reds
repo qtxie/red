@@ -70,11 +70,7 @@ parser: context [
 				int2/header: TYPE_INTEGER
 				int2/value: binary/rs-abs-at as red-binary! input offset
 			]
-			TYPE_STRING 								;TBD: replace with ANY_STRING
-			TYPE_FILE
-			TYPE_URL
-			TYPE_TAG
-			TYPE_EMAIL [
+			TYPE_ANY_STRING [
 				char: as red-char! base
 				char/header: TYPE_CHAR
 				char/value: string/rs-abs-at as red-string! input offset
@@ -86,9 +82,9 @@ parser: context [
 	#define PARSE_TRACE(event) [
 		#if red-tracing? = yes [
 			if OPTION?(fun) [
-				rule/head: (as-integer cmd - block/rs-head rule) >> 4
-				if negative? rule/head [rule/head: 0]
-				unless fire-event fun words/event match? rule input fun-locs saved? [
+				head: (as-integer cmd - block/rs-head rule) >> 4
+				if negative? head [head: 0]
+				unless fire-event fun words/event match? rule input fun-locs head saved? [
 					return as red-value! logic/push match?
 				]
 			]
@@ -131,11 +127,11 @@ parser: context [
 		R_COLLECT:		-12
 		R_KEEP:			-13
 		R_KEEP_PAREN:	-14
-		R_KEEP_PICK:	-15
 		R_AHEAD:		-16
 		R_CHANGE:		-17
 		R_CHANGE_ONLY:	-18
 		R_CASE:			-19
+		R_PICK_FLAG:	 1
 	]
 	
 	triple!: alias struct! [
@@ -181,6 +177,57 @@ parser: context [
 		]
 	]
 	
+	transfer: func [
+		src		[red-series!]
+		h2		[integer!]
+		out		[red-series!]
+		append? [logic!]
+		return: [logic!]								;-- FALSE if fast-path is not taken
+		/local
+			s1	  [series!]
+			s2	  [series!]
+			unit  [integer!]
+			size  [integer!]
+			size1 [integer!]
+			len1  [integer!]
+			tail  [byte-ptr!]
+			p	  [byte-ptr!]
+			h1	  [integer!]
+			extra [integer!]
+	][
+		s1: GET_BUFFER(out)								;-- destination
+		s2: GET_BUFFER(src)								;-- source
+		unit: GET_UNIT(s1)
+		if any [unit > 4 unit <> GET_UNIT(s2)][return false] ;-- block! values require an /only mode
+		h1: out/head << (log-b unit)
+		extra: src/head - h2
+		size: extra * unit
+		assert size > 0
+
+		len1: (as-integer s1/tail - s1/offset) << 4
+		size1: len1 + size
+
+		if (as byte-ptr! s1/size) < (as byte-ptr! size1) [ ;-- force an unsigned comparison
+			s1: expand-series s1 size1 * 2
+		]
+		append?: any [append? len1 = 0]
+		unless append? [
+			move-memory									;-- make space
+				(as byte-ptr! s1/offset) + h1 + size
+				(as byte-ptr! s1/offset) + h1
+				len1 - h1
+		]
+		tail: as byte-ptr! s1/tail
+		p: either append? [tail][(as byte-ptr! s1/offset) + h1]
+		
+		copy-memory p (as byte-ptr! s2/offset) + (h2 * unit) size
+		p: p + size
+		unless append? [p: tail + size]
+		s1/tail: as cell! p
+		out/head: out/head + extra
+		true
+	]
+	
 	compare-values: func [
 		value2	[red-value!]
 		value	[red-value!]
@@ -196,6 +243,28 @@ parser: context [
 		actions/compare value2 value comp-op
 	]
 	
+	match-datatype?: func [
+		input	[red-binary!]
+		dt		[red-datatype!]
+		dt-type [integer!]
+		return:	[logic!]
+		/local
+			len type size [integer!]
+			s		[series!]
+			buf pos	[byte-ptr!]
+			match?	[logic!]
+	][
+		len: 0
+		s: GET_BUFFER(input)
+		buf: (as byte-ptr! s/offset) + input/head
+		size: as-integer (as byte-ptr! s/tail) - buf
+		type: lexer/scan null buf size yes yes no no :len null null null
+		
+		match?: either dt-type = TYPE_TYPESET [BS_TEST_BIT_ALT(dt type)][type = dt/value]
+		if match? [_series/rs-skip as red-series! input len - 1] ;-- -1 to account for later rs-skip
+		match?
+	]
+	
 	advance: func [
 		str		[red-string!]
 		value	[red-value!]							;-- char! or string! value
@@ -207,11 +276,7 @@ parser: context [
 		type: TYPE_OF(value)
 		len: either any [type = TYPE_CHAR type = TYPE_BITSET][1][
 			assert any [
-				type = TYPE_STRING
-				type = TYPE_FILE
-				type = TYPE_URL
-				type = TYPE_TAG
-				type = TYPE_EMAIL
+				ANY_STRING?(type)
 				type = TYPE_BINARY
 			]
 			string/rs-length? as red-string! value
@@ -298,12 +363,8 @@ parser: context [
 		s: GET_BUFFER(input)
 		
 		type: TYPE_OF(input)
-		either any [									;TBD: replace with ANY_STRING + TYPE_BINARY
-			type = TYPE_STRING
-			type = TYPE_FILE
-			type = TYPE_URL
-			type = TYPE_TAG
-			type = TYPE_EMAIL
+		either any [
+			ANY_STRING?(type)
 			type = TYPE_BINARY
 		][
 			unit:  GET_UNIT(s)
@@ -341,11 +402,7 @@ parser: context [
 						p >= ptail
 					]
 				]
-				TYPE_STRING
-				TYPE_FILE
-				TYPE_URL
-				TYPE_TAG
-				TYPE_EMAIL
+				TYPE_ANY_STRING
 				TYPE_BINARY [
 					bin?: type = TYPE_BINARY
 					type: TYPE_OF(token)
@@ -472,7 +529,6 @@ parser: context [
 		]
 		
 		p:	   phead
-
 		s:	   GET_BUFFER(bits)
 		pbits: as byte-ptr! s/offset
 		not?:  FLAG_NOT?(s)
@@ -508,6 +564,138 @@ parser: context [
 		
 		either not max? [min <= cnt][all [min <= cnt cnt <= max]]
 	]
+
+	loop-char: func [									;-- optimized bitset matching loop
+		input	[red-series!]
+		char	[red-char!]
+		comp-op	[integer!]
+		min		[integer!]
+		max		[integer!]
+		counter [int-ptr!]
+		part	[integer!]
+		return: [logic!]
+		/local
+			s	   [series!]
+			unit   [integer!]
+			c c0 u [integer!]
+			p	   [byte-ptr!]
+			phead  [byte-ptr!]
+			ptail  [byte-ptr!]
+			p4	   [int-ptr!]
+			table  [int-ptr!]
+			cp	   [integer!]
+			cnt	   [integer!]
+			size   [integer!]
+			max?   [logic!]
+			match? [logic!]
+	][
+		s:	   GET_BUFFER(input)
+		unit:  GET_UNIT(s)
+		phead: (as byte-ptr! s/offset) + (input/head << (log-b unit))
+		ptail: as byte-ptr! s/tail
+		
+		if positive? part [
+			p: (as byte-ptr! s/offset) + (part << (log-b unit))
+			if p < ptail [ptail: p]
+		]
+		
+		p:		phead
+		c:		char/value
+		cnt:	0
+		match?:	yes
+		max?:	max <> R_NONE
+		
+		either comp-op = COMP_STRICT_EQUAL [
+			switch unit [
+				Latin1 [
+					until [
+						cp: as-integer p/value
+						if cp <> c [break]
+						cnt: cnt + 1
+						p: p + 1
+						if max? [if cnt >= max [break]]
+						p = ptail
+					]
+				]
+				UCS-2  [
+					until [
+						cp: (as-integer p/2) << 8 + p/1
+						if cp <> c [break]
+						cnt: cnt + 1
+						p: p + 2
+						if max? [if cnt >= max [break]]
+						p = ptail
+					]
+				]
+				UCS-4  [
+					p4: as int-ptr! p
+					until [
+						cp: p4/value
+						if cp <> c [break]
+						cnt: cnt + 1
+						p4: p4 + 1
+						if max? [if cnt >= max [break]]
+						p4 = as int-ptr! ptail
+					]
+				]
+			]
+		][
+			table: case-folding/upper-table
+			either c <= FFFFh [							;-- uppercase C before entering the search loop
+				u: table/c
+				if u <> 0 [c: u]
+			][
+				c: case-folding/change-char c yes
+			]			
+			switch unit [
+				Latin1 [
+					until [
+						cp: as-integer p/value
+						u: table/cp
+						if u <> 0 [cp: u]
+						if cp <> c [break]
+						cnt: cnt + 1
+						p: p + 1
+						if max? [if cnt >= max [break]]
+						p = ptail
+					]
+				]
+				UCS-2  [
+					until [
+						cp: (as-integer p/2) << 8 + p/1
+						u: table/cp
+						if u <> 0 [cp: u]
+						if cp <> c [break]
+						cnt: cnt + 1
+						p: p + 2
+						if max? [if cnt >= max [break]]
+						p = ptail
+					]
+				]
+				UCS-4  [
+					p4: as int-ptr! p
+					until [
+						cp: p4/value
+						either cp <= FFFFh [
+							u: table/cp
+							if u <> 0 [cp: u]
+						][
+							cp: case-folding/change-char cp yes
+						]
+						if cp <> c [break]
+						cnt: cnt + 1
+						p4: p4 + 1
+						if max? [if cnt >= max [break]]
+						p4 = as int-ptr! ptail
+					]
+				]
+			]
+		]
+		input/head: input/head + ((as-integer p - phead) >> (log-b unit))
+		counter/value: cnt
+		
+		either not max? [min <= cnt][all [min <= cnt cnt <= max]]
+	]
 	
 	loop-token: func [									;-- fast literal matching loop
 		input	[red-series!]
@@ -535,47 +723,41 @@ parser: context [
 		type: 	TYPE_OF(input)
 		type2:	TYPE_OF(token)
 		
-		either any [									;TBD: replace with ANY_STRING
-			type = TYPE_STRING
-			type = TYPE_FILE
-			type = TYPE_URL
-			type = TYPE_TAG
-			type = TYPE_EMAIL
+		either any [
+			ANY_STRING?(type)
 			type = TYPE_BINARY
 		][
-			either TYPE_OF(token)= TYPE_BITSET [
-				match?: loop-bitset input as red-bitset! token min max counter part
-				cnt: counter/value
-			][
-				len: either any [type2 = TYPE_CHAR type2 = TYPE_BITSET][1][
-					unless any [
-						type2 = TYPE_STRING
-						type2 = TYPE_FILE
-						type2 = TYPE_URL
-						type2 = TYPE_TAG
-						type2 = TYPE_EMAIL
-						type2 = TYPE_BINARY
-					][return no]
-					string/rs-length? as red-string! token
+			switch type2 [
+				TYPE_BITSET [
+					match?: loop-bitset input as red-bitset! token min max counter part
+					cnt: counter/value
 				]
-				if zero? len [return yes]
-				if type2 = TYPE_TAG [len: len + 2]
-				
-				until [									;-- ANY-STRING input matching
-					match?: either type = TYPE_BINARY [
-						binary/match? as red-binary! input token comp-op
-					][
-						string/match? as red-string! input token comp-op
-					]
-					end?: any [
-						all [match? _series/rs-skip input len]	;-- consume matched input
-						all [positive? part input/head >= part]
-					]
-					cnt: cnt + 1
-					any [
-						not match?
-						end?
-						all [max <> R_NONE cnt >= max]
+				TYPE_CHAR [
+					match?: loop-char input as red-char! token comp-op min max counter part
+					cnt: counter/value
+				]
+				default [
+					unless any [ANY_STRING?(type2) type2 = TYPE_BINARY][return no]
+					len: string/rs-length? as red-string! token
+					if zero? len [return yes]
+					if type2 = TYPE_TAG [len: len + 2]
+
+					until [									;-- ANY-STRING input matching
+						match?: either type = TYPE_BINARY [
+							binary/match? as red-binary! input token comp-op
+						][
+							string/match? as red-string! input token comp-op
+						]
+						end?: any [
+							all [match? _series/rs-skip input len]	;-- consume matched input
+							all [positive? part input/head >= part]
+						]
+						cnt: cnt + 1
+						any [
+							not match?
+							end?
+							all [max <> R_NONE cnt >= max]
+						]
 					]
 				]
 			]
@@ -667,6 +849,7 @@ parser: context [
 		rule	[red-block!]
 		input   [red-series!]
 		locals	[integer!]
+		offset	[integer!]
 		saved?	[logic!]
 		return: [logic!]
 		/local
@@ -674,20 +857,29 @@ parser: context [
 			len	  [integer!]
 			saved [red-value!]
 			res	  [red-value!]
+			int	  [red-integer!]
+			more  [series!]
+			ctx	  [node!]
 	][
 		PARSE_SAVE_SERIES
 		saved: stack/top
 		stack/top: stack/top + 1						;-- keep last value from paren expression
 
-		stack/mark-func words/_body	fun/ctx				;@@ find something more adequate
+		more: as series! fun/more/value
+		int: as red-integer! more/offset + 4
+		ctx: either TYPE_OF(int) = TYPE_INTEGER [as node! int/value][global-ctx]
+
+		stack/mark-func words/_parse-cb	fun/ctx
 		stack/push as red-value! event
 		logic/push match?
-		stack/push as red-value! rule
+		rule: as red-block! stack/push as red-value! rule
 		stack/push as red-value! input
 		stack/push as red-value! rules
-		if positive? locals [_function/init-locals 1 + locals]	;-- +1 for /local refinement
+		if positive? locals [_function/init-locals locals]
+		rule/head: offset
+		assert system/thrown = 0
 		
-		catch RED_THROWN_ERROR [_function/call fun global-ctx]	;FIXME: hardcoded origin context
+		catch RED_THROWN_ERROR [_function/call fun ctx as red-value! words/_parse-cb CB_PARSE]
 
 		PARSE_RESTORE_SERIES							;-- restore localy saved series/head first
 		if system/thrown <> 0 [reset saved? re-throw]
@@ -752,6 +944,7 @@ parser: context [
 	][
 		PARSE_SAVE_SERIES
 		saved: stack/top
+		assert system/thrown = 0
 		catch RED_THROWN_ERROR [interpreter/eval as red-block! code no]
 		PARSE_RESTORE_SERIES							;-- restore localy saved series/head first
 		if system/thrown <> 0 [reset saved? re-throw]
@@ -761,7 +954,7 @@ parser: context [
 	]
 
 	process: func [
-		input	[red-series!]
+		in-root	[red-series!]
 		rule	[red-block!]
 		comp-op	[integer!]
 		;strict? [logic!]
@@ -769,9 +962,11 @@ parser: context [
 		fun		[red-function!]
 		return: [red-value!]
 		/local
+			input	 [red-series! value]
 			new		 [red-series!]
 			int		 [red-integer!]
 			int2	 [red-integer!]
+			pair	 [red-pair!]
 			blk		 [red-block!]
 			sym*	 [red-symbol!]
 			cmd		 [red-value!]
@@ -789,19 +984,24 @@ parser: context [
 			in		 [input!]
 			state	 [states!]
 			pos		 [byte-ptr!]						;-- required by BS_TEST_BIT_ALT()
+			s		 [series!]
 			type	 [integer!]
+			type2    [integer!]
 			dt-type	 [integer!]
+			rtype	 [integer!]
+			flags	 [integer!]
 			sym		 [integer!]
 			min		 [integer!]
 			max		 [integer!]
-			s		 [series!]
 			cnt		 [integer!]
 			len		 [integer!]
 			offset	 [integer!]
+			head 	 [integer!]
 			cnt-col	 [integer!]
 			saved	 [integer!]
 			before   [integer!]
 			fun-locs [integer!]
+			delta    [integer!]
 			upper?	 [logic!]
 			end?	 [logic!]
 			ended?	 [logic!]
@@ -816,7 +1016,8 @@ parser: context [
 			done?	 [logic!]
 			saved?	 [logic!]
 			gc-saved [logic!]
-			word?    [logic!]
+			append?  [logic!]
+			do-keep  [subroutine!]
 	][
 		match?:	  yes
 		end?:	  no
@@ -832,17 +1033,27 @@ parser: context [
 		cnt:	   0
 		cnt-col:   0
 		fun-locs:  0
-		state:    ST_PUSH_BLOCK
-
-		s: GET_BUFFER(series)
-		if s/offset = s/tail [gc-saved: collector/active? collector/active?: no]
+		flags:     0
+		state:     ST_PUSH_BLOCK
+		
+		do-keep: [
+			either into? [
+				switch TYPE_OF(blk) [
+					TYPE_BINARY 	[binary/insert as red-binary! blk value null yes null append?]
+					TYPE_ANY_STRING [string/insert as red-string! blk value null yes null append?]
+					default  		[block/insert blk value null yes null append?]
+				]
+			][
+				block/rs-append blk value
+			]
+		]
 
 		if OPTION?(fun) [fun-locs: _function/count-locals fun/spec 0 no]
 		
 		saved?: save-stack
 		base: stack/push*								;-- slot on stack for COPY/SET operations (until OPTION?() is fixed)
 		base/header: TYPE_UNSET
-		input: as red-series! block/rs-append series as red-value! input ;-- input now points to the series stack entry
+		copy-cell (block/rs-append series as red-value! in-root) as red-value! input
 		cmd: (block/rs-head rule) - 1					;-- decrement to compensate for starting increment
 		tail: block/rs-tail rule						;TBD: protect current rule block from changes
 		
@@ -890,7 +1101,7 @@ parser: context [
 						value: s/tail - 1
 						assert s/offset <= value
 						
-						state: either TYPE_OF(value) = TYPE_INTEGER [
+						state: either TYPE_OF(value) = TYPE_PAIR [
 							ST_POP_RULE
 						][
 							either match? [ST_NEXT_ACTION][ST_FIND_ALTERN]
@@ -911,9 +1122,10 @@ parser: context [
 					]
 					PARSE_SET_INPUT_LENGTH(len)
 					PARSE_PUSH_POSITIONS
-					int: as red-integer! ALLOC_TAIL(rules)
-					int/header: TYPE_INTEGER
-					int/value: type
+					pair: as red-pair! ALLOC_TAIL(rules)
+					pair/header: TYPE_PAIR
+					pair/x: type
+					pair/y: flags
 					if cmd < tail [cmd: cmd + 1]		;-- move after the rule prologue
 					value: cmd
 					PARSE_TRACE(_push)
@@ -929,8 +1141,11 @@ parser: context [
 					][
 						pop?: yes
 						p: as positions! s/tail - 2
-						int: as red-integer! value
-						switch int/value [
+						pair: as red-pair! value
+						rtype: pair/x
+						flags: pair/y
+						
+						switch rtype [
 							R_WHILE
 							R_NONE [					;-- iterative rules (ANY, SOME, WHILE, ...)
 								t: as triple! s/tail - 3
@@ -941,7 +1156,7 @@ parser: context [
 									loop?: cnt < t/max			 ;-- but not reached yet, loop again
 								]
 								if all [						 ;-- try to avoid some infinite loops
-									int/value <> R_WHILE
+									rtype <> R_WHILE
 									input/head = p/input		 ;-- if no input was consumed (except for WHILE)
 								][
 									PARSE_SET_INPUT_LENGTH(len)
@@ -950,10 +1165,7 @@ parser: context [
 										break?: no
 									]
 								]
-								if any [						 ;-- don't loop if any:
-									break?						 ;-- a BREAK or REJECT command was issued
-									all [end? int/value <> R_WHILE]	 ;-- don't loop if no more input
-								][
+								if break? [						 ;-- don't loop if a BREAK or REJECT command was issued
 									loop?: no
 									break?: no
 								]
@@ -983,7 +1195,7 @@ parser: context [
 							R_TO
 							R_THRU [
 								either match? [
-									if int/value = R_TO [
+									if rtype = R_TO [
 										input/head: p/input	;-- move input before the last match
 										PARSE_CHECK_INPUT_EMPTY?
 									]
@@ -1027,34 +1239,37 @@ parser: context [
 								]
 							]
 							R_KEEP
-							R_KEEP_PAREN
-							R_KEEP_PICK [
+							R_KEEP_PAREN [
 								if match? [
 									blk: as red-block! stack/get-top
 									assert any [
-										TYPE_OF(blk) = TYPE_WORD
-										TYPE_OF(blk) = TYPE_GET_WORD
-										TYPE_OF(blk) = TYPE_BLOCK
+										TYPE_OF(blk) = TYPE_WORD		;-- COLLECT SET
+										TYPE_OF(blk) = TYPE_GET_WORD	;-- COLLECT INTO
+										TYPE_OF(blk) = TYPE_REFINEMENT	;-- COLLECT AFTER
+										TYPE_OF(blk) = TYPE_BLOCK		;-- COLLECT
 									]
-									into?: TYPE_OF(blk) = TYPE_GET_WORD
+									append?: TYPE_OF(blk) = TYPE_REFINEMENT
+									into?: any [TYPE_OF(blk) = TYPE_GET_WORD append?]
 									if into? [
 										blk: as red-block! _context/get as red-word! blk
 										type: TYPE_OF(blk)
-										unless ANY_SERIES?(type) [
-											PARSE_ERROR [TO_ERROR(script parse-into-bad)]
+										if all [type <> TYPE_OF(input) not ANY_SERIES_PARSE?(type)][
+											PARSE_ERROR [TO_ERROR(script parse-into-type)]
 										]
 									]
 									value: stack/top	;-- refer last value from paren expression
 									stack/top: stack/top + 1
 									offset: p/input		;-- required by PARSE_PICK_INPUT
 									
-									if int/value = R_KEEP [
+									if rtype = R_KEEP [
 										case [
 											p/sub = R_COPY [			;-- KEEP COPY case
 												value: _context/get as red-word! s/tail
 											]
 											offset + 1 < input/head [	;-- KEEP with matched size > 1
-												PARSE_COPY_INPUT(value)
+												either transfer input offset as red-series! blk append? [value: null][											
+													PARSE_COPY_INPUT(value)
+												]
 											]
 											offset < input/head [
 												PARSE_PICK_INPUT		;-- KEEP with matched size = 1
@@ -1062,34 +1277,33 @@ parser: context [
 											true [value: null]
 										]
 									]
-									either int/value <> R_KEEP_PICK [
+									either any [rtype = R_KEEP_PAREN flags <> R_PICK_FLAG][
 										offset: input/head	;-- ensures no looping
 									][
 										if offset >= input/head [value: null]
 									]
 									
 									if value <> null [
-										until [
-											if int/value = R_KEEP_PICK [
-												PARSE_PICK_INPUT
-												offset: offset + 1
-											]
+										either rtype = R_KEEP_PAREN [
 											s-top: stack/top	;-- shields the stack from eventual object event call
-											either into? [
-												switch TYPE_OF(blk) [
-													TYPE_BINARY [binary/insert as red-binary! blk value null yes null no]
-													TYPE_STRING
-													TYPE_FILE
-													TYPE_URL 
-													TYPE_TAG
-													TYPE_EMAIL [string/insert as red-string! blk value null yes null no]
-													default  [block/insert blk value null yes null no]
-												]
+											either flags = R_PICK_FLAG [
+												append?: any [append? not into?] ;-- force appending for simple COLLECT
+												block/insert blk value null no null append?
 											][
-												block/rs-append blk value
+												do-keep
 											]
 											stack/top: s-top
-											offset = input/head
+										][
+											until [
+												if flags = R_PICK_FLAG [
+													PARSE_PICK_INPUT
+													offset: offset + 1
+												]
+												s-top: stack/top	;-- shields the stack from eventual object event call
+												do-keep
+												stack/top: s-top
+												offset = input/head
+											]
 										]
 									]
 									stack/top: stack/top - 1
@@ -1097,6 +1311,8 @@ parser: context [
 							]
 							R_REMOVE [
 								if match? [
+									int: as red-integer! base
+									int/header: TYPE_INTEGER
 									int/value: input/head - p/input
 									input/head: p/input
 									assert int/value >= 0
@@ -1112,6 +1328,7 @@ parser: context [
 								if match? [
 									s-top: null
 									switch TYPE_OF(cmd) [
+										TYPE_PATH [PARSE_ERROR [TO_ERROR(script parse-rule) cmd]]
 										TYPE_PAREN [
 											s-top: stack/top
 											value: eval cmd no saved?
@@ -1125,11 +1342,12 @@ parser: context [
 										]
 										default	  [value: cmd]
 									]
-									only?: int/value = R_CHANGE_ONLY
+									only?: rtype = R_CHANGE_ONLY
+									int: as red-integer! base		;@@ remove once OPTION? fixed
+									int/header: TYPE_INTEGER
 									int/value: input/head - p/input
 									input/head: p/input
 									assert int/value >= 0
-									copy-cell as red-value! int base	;@@ remove once OPTION? fixed
 									PARSE_SAVE_SERIES
 									new: actions/change input value base only? null
 									if s-top <> null [stack/top: s-top]
@@ -1160,7 +1378,8 @@ parser: context [
 												_context/set as red-word! blk value
 												stack/pop 1
 											]
-											TYPE_GET_WORD [
+											TYPE_GET_WORD
+											TYPE_REFINEMENT [
 												blk: as red-block! _context/get as red-word! blk
 												block/insert-value blk value
 											]
@@ -1173,12 +1392,14 @@ parser: context [
 									]
 									stack/pop 1
 								]
-								if TYPE_OF(value) = TYPE_GET_WORD [	;-- COLLECT INTO exiting
+								if any [				;-- COLLECT INTO/AFTER exiting
+									TYPE_OF(value) = TYPE_GET_WORD
+									TYPE_OF(value) = TYPE_REFINEMENT
+								][
 									t: as triple! s/tail - 3
-									unless t/max = -1 [
-										blk: as red-block! _context/get as red-word! value
-										blk/head: t/max	;-- restore saved block cursor
-									]
+									assert t/max <> -1
+									blk: as red-block! _context/get as red-word! value
+									blk/head: t/max		;-- restore saved block cursor
 								]
 							]
 							R_INTO [
@@ -1187,7 +1408,7 @@ parser: context [
 								
 								s: GET_BUFFER(series)
 								s/tail: s/tail - 1
-								input: as red-series! s/tail - 1
+								copy-cell s/tail - 1 as red-value! input
 								unless ended? [match?: no]
 								if match? [input/head: input/head + 1]	;-- skip parsed series
 								
@@ -1205,7 +1426,7 @@ parser: context [
 							assert s/offset <= s/tail
 							if s/tail > s/offset [
 								p: as positions! s/tail - 2
-								p/sub: int/value		;-- save rule type in parent stack frame
+								p/sub: rtype			;-- save rule type in parent stack frame
 							]
 							state: ST_CHECK_PENDING
 						]
@@ -1217,7 +1438,7 @@ parser: context [
 					value: s/tail - 1
 					assert s/offset <= value
 					
-					state: either TYPE_OF(value) <> TYPE_INTEGER [
+					state: either TYPE_OF(value) <> TYPE_PAIR [
 						either match? [ST_NEXT_ACTION][ST_FIND_ALTERN]
 					][
 						ST_POP_RULE
@@ -1238,25 +1459,22 @@ parser: context [
 						TYPE_TYPESET
 						TYPE_DATATYPE [
 							type: TYPE_OF(input)
-							if any [					;TBD: replace with ANY_STRING?
-								type = TYPE_STRING
-								type = TYPE_FILE
-								type = TYPE_URL
-								type = TYPE_TAG
-								type = TYPE_EMAIL
-								type = TYPE_BINARY
-							][
+							if ANY_STRING?(type) [
 								PARSE_ERROR [TO_ERROR(script parse-unsupported)]
 							]
 							PARSE_CHECK_INPUT_EMPTY?
 							either end? [match?: false][
 								dt: as red-datatype! value
-								value: block/rs-head input
-								match?: either dt-type = TYPE_TYPESET [
-									type: TYPE_OF(value)
-									BS_TEST_BIT_ALT(dt type)
+								match?: either type = TYPE_BINARY [
+									match-datatype? as red-binary! input dt dt-type
 								][
-									TYPE_OF(value) = dt/value
+									value: block/rs-head input
+									type: TYPE_OF(value)
+									either dt-type = TYPE_TYPESET [
+										BS_TEST_BIT_ALT(dt type)
+									][
+										type = dt/value
+									]
 								]
 								PARSE_TRACE(_match)
 							]
@@ -1300,10 +1518,14 @@ parser: context [
 							if all [upper? int2/value < 0][
 								PARSE_ERROR [TO_ERROR(script out-of-range) int2]
 							]
-							state: either all [zero? int/value not upper?][
-								cmd: cmd + 1			;-- skip over sub-rule
+							state: either all [
+								zero? int/value
+								any [not upper? zero? int2/value]
+							][
+								cmd: cmd + 1 + as integer! upper?		;-- skip over sub-rule
 								ST_CHECK_PENDING
 							][
+								flags: 0
 								min:  int/value
 								max:  either upper? [cmd: cmd + 1 int2/value][min]
 								type: R_NONE
@@ -1344,7 +1566,7 @@ parser: context [
 						s: GET_BUFFER(rules)
 						value: s/tail - 1
 						assert s/offset <= value
-						either TYPE_OF(value) = TYPE_INTEGER [ST_POP_RULE][ST_POP_BLOCK]
+						either TYPE_OF(value) = TYPE_PAIR [ST_POP_RULE][ST_POP_BLOCK]
 					][
 						PARSE_TRACE(_fetch)
 						value: cmd
@@ -1355,13 +1577,7 @@ parser: context [
 					type: TYPE_OF(input)
 					either end? [
 						match?: all [
-							any [
-								type = TYPE_STRING
-								type = TYPE_FILE
-								type = TYPE_URL
-								type = TYPE_TAG
-								type = TYPE_EMAIL
-							]
+							ANY_STRING?(type)
 							any [
 								TYPE_OF(value) = TYPE_STRING
 								TYPE_OF(value) = TYPE_FILE
@@ -1379,11 +1595,7 @@ parser: context [
 								]
 								all [match? advance as red-string! input value]	;-- consume matched input
 							]
-							TYPE_STRING
-							TYPE_FILE
-							TYPE_URL
-							TYPE_TAG
-							TYPE_EMAIL [
+							TYPE_ANY_STRING [
 								match?: either TYPE_OF(value) = TYPE_BITSET [
 									string/match-bitset? as red-string! input as red-bitset! value
 								][
@@ -1417,7 +1629,6 @@ parser: context [
 							R_WHILE		 [words/_while]
 							R_COLLECT	 [words/_collect]
 							R_KEEP
-							R_KEEP_PICK
 							R_KEEP_PAREN [words/_keep]
 							R_AHEAD		 [words/_ahead]
 							default		 [null]
@@ -1431,13 +1642,26 @@ parser: context [
 							TYPE_WORD	 [state: ST_WORD rule?: all [type <> R_COLLECT type <> R_KEEP]]
 							TYPE_DATATYPE
 							TYPE_TYPESET
+							TYPE_PAREN
 							TYPE_INTEGER [state: ST_DO_ACTION]
 							default [
 								either min = R_NONE [
 									state: either any [type = R_TO type = R_THRU][
 										match?: find-token? rules input value comp-op part saved?
 										PARSE_TRACE(_match)
-										ST_POP_RULE
+										s: GET_BUFFER(rules)
+										either match? [
+											if type = R_TO [
+												p: as positions! s/tail - 2
+												input/head: p/input	;-- move input before the last match
+											]
+										][
+											if positive? part [match?: input/head > part or match?]
+										]
+										PARSE_TRACE(_pop)
+										s/tail: s/tail - 3	;-- pop rule stack frame
+										assert s/offset <= s/tail
+										ST_CHECK_PENDING
 									][
 										ST_DO_ACTION	;-- set/get-words are sinking here
 									]
@@ -1480,6 +1704,7 @@ parser: context [
 						sym*: symbol/get sym
 						if verbose > 0 [print "parse: " print-symbol w print lf]
 					]
+					flags: 0
 					case [
 						sym = words/pipe [				;-- |
 							if cmd = tail [PARSE_ERROR [TO_ERROR(script parse-end) words/_pipe]]
@@ -1487,13 +1712,18 @@ parser: context [
 							s: GET_BUFFER(rules)
 							value: s/tail - 1
 							assert s/offset <= value
-							state: either TYPE_OF(value) = TYPE_INTEGER [ST_POP_RULE][ST_POP_BLOCK]
+							state: either TYPE_OF(value) = TYPE_PAIR [ST_POP_RULE][ST_POP_BLOCK]
 						]
 						sym = words/skip [				;-- SKIP
-							PARSE_CHECK_INPUT_EMPTY?
-							match?: not end?
+							state: either end? [
+								match?: no
+								ST_CHECK_PENDING
+							][
+								PARSE_CHECK_INPUT_EMPTY?
+								match?: not end?
+								ST_NEXT_INPUT
+							]
 							PARSE_TRACE(_match)
-							state: ST_NEXT_INPUT
 						]
 						sym = words/any* [				;-- ANY
 							if cmd + 1 = tail [PARSE_ERROR [TO_ERROR(script parse-end) words/_any]]
@@ -1511,26 +1741,37 @@ parser: context [
 						]
 						sym = words/copy [				;-- COPY
 							cmd: cmd + 1
-							if any [cmd = tail TYPE_OF(cmd) <> TYPE_WORD][
+							if any [cmd + 1 >= tail TYPE_OF(cmd) <> TYPE_WORD][
 								PARSE_ERROR [TO_ERROR(script parse-end) words/_copy]
 							]
 							min:   R_NONE
 							type:  R_COPY
 							state: ST_PUSH_RULE
 						]
-						sym = words/thru [				;-- THRU
-							min:   R_NONE
-							type:  R_THRU
-							state: ST_PUSH_RULE
-						]
-						sym = words/to [				;-- TO
-							min:   R_NONE
-							type:  R_TO
-							state: ST_PUSH_RULE
+						any [sym = words/to sym = words/thru][ ;-- TO/THRU
+							w: as red-word! cmd + 1 
+							either all [
+								(as red-value! w) < tail
+								TYPE_OF(w) = TYPE_WORD 
+								words/end = symbol/resolve w/symbol
+							][
+								match?: yes				;-- `to/thru end` fast path
+								PARSE_TRACE(_match)
+								cmd: cmd + 1
+								input/head: _series/rs-tail input
+								if all [positive? part part < input/head][input/head: part]
+								end?: yes
+								state: ST_CHECK_PENDING
+							][
+								min:   R_NONE
+								type:  either sym = words/to [R_TO][R_THRU]
+								state: ST_PUSH_RULE
+							]
 						]
 						sym = words/remove [			;-- REMOVE
 							done?: no
 							value: cmd + 1
+							if TYPE_OF(value) = TYPE_PATH [PARSE_ERROR [TO_ERROR(script parse-rule) cmd]]
 							if all [value < tail TYPE_OF(value) = TYPE_WORD][
 								new: as red-series! _context/get as red-word! value
 								if all [TYPE_OF(new) = TYPE_OF(input) new/node = input/node][
@@ -1577,7 +1818,8 @@ parser: context [
 								][
 									cmd: cmd + 1
 									value: cmd + 1
-									R_KEEP_PICK
+									flags: R_PICK_FLAG
+									either TYPE_OF(value) = TYPE_PAREN [R_KEEP_PAREN][R_KEEP]
 								][
 									R_KEEP
 								]
@@ -1614,17 +1856,26 @@ parser: context [
 							if TYPE_OF(value) <> TYPE_BLOCK [
 								PARSE_ERROR [TO_ERROR(script parse-end) words/_into]
 							]
-							value: block/rs-head input
-							type: TYPE_OF(value)
-							either all [ANY_SERIES?(type) type <> TYPE_IMAGE][
-								input: as red-series! block/rs-append series value
-								min:  R_NONE
-								type: R_INTO
-								state: ST_PUSH_RULE
-							][
+							PARSE_CHECK_INPUT_EMPTY?
+							either end? [
 								match?: no
-								PARSE_TRACE(_match)
 								state: ST_CHECK_PENDING
+							][
+								value: block/rs-head input
+								type: TYPE_OF(value)
+								either ANY_SERIES_PARSE?(type) [
+									s: GET_BUFFER(series)
+									new: as red-series! s/tail - 1
+									new/head: input/head
+									copy-cell block/rs-append series value as red-value! input
+									min:  R_NONE
+									type: R_INTO
+									state: ST_PUSH_RULE
+								][
+									match?: no
+									PARSE_TRACE(_match)
+									state: ST_CHECK_PENDING
+								]
 							]
 						]
 						sym = words/insert [			;-- INSERT
@@ -1634,49 +1885,44 @@ parser: context [
 								TYPE_OF(w) = TYPE_WORD
 								words/only = symbol/resolve w/symbol
 							]
-							cmd: cmd + max
-							value: cmd + 1
-							if value >= tail [PARSE_ERROR [TO_ERROR(script parse-end) words/_insert]]
+							cmd: cmd + max + 1			;-- jump over optional ONLY
+							if cmd >= tail [PARSE_ERROR [TO_ERROR(script parse-end) words/_insert]]
 							
 							s-top: null
 							saved: input/head
-							word?: TYPE_OF(value) = TYPE_WORD
-							either word? [
-								new: as red-series! _context/get as red-word! value
+							
+							if TYPE_OF(cmd) = TYPE_WORD [
+								new: as red-series! _context/get as red-word! cmd
 								if all [TYPE_OF(new) = TYPE_OF(input) new/node = input/node][
-									cmd: value + 1		;-- INSERT position
-									if cmd >= tail [PARSE_ERROR [TO_ERROR(script parse-rule) words/_insert]]
-									switch TYPE_OF(cmd) [
-										TYPE_PAREN [
-											s-top: stack/top
-											value: eval cmd no saved?
-											PARSE_TRACE(_paren)
-										]
-										TYPE_WORD [
-											value: _context/get as red-word! cmd
-											if TYPE_OF(value) = TYPE_UNSET [
-												PARSE_ERROR [TO_ERROR(script no-value) cmd]
-											]
-										]
-										default	  [value: cmd]
-									]
+									cmd: cmd + 1		;-- INSERT position
 									input/head: new/head
 								]
-							][
-								cmd: value
-								if TYPE_OF(value) = TYPE_PAREN [
-									s-top: stack/top
-									value: eval value no saved?
-									PARSE_TRACE(_paren)
+								if cmd >= tail [
+									PARSE_ERROR [TO_ERROR(script parse-rule) words/_insert]
 								]
 							]
+							
+							switch TYPE_OF(cmd) [
+								TYPE_PATH [PARSE_ERROR [TO_ERROR(script parse-rule) cmd]]
+								TYPE_PAREN [
+									s-top: stack/top
+									value: eval cmd no saved?
+									PARSE_TRACE(_paren)
+								]
+								TYPE_WORD [
+									value: _context/get as red-word! cmd
+									if TYPE_OF(value) = TYPE_UNSET [
+										PARSE_ERROR [TO_ERROR(script no-value) cmd]
+									]
+								]
+								default [value: cmd]
+							]
+							
 							PARSE_SAVE_SERIES
 							before: input/head
-							if all [word? TYPE_OF(value) = TYPE_WORD][
-								value: _context/get as red-word! value
-							]
 							actions/insert input value null as-logic max null no
-							input/head: saved + (input/head - before)
+							delta: either before > saved [0][input/head - before]
+							input/head: saved + delta	;-- position might have shifted after insertion
 							if s-top <> null [stack/top: s-top]
 							PARSE_RESTORE_SERIES
 							state: ST_NEXT_ACTION
@@ -1700,6 +1946,7 @@ parser: context [
 									if cmd >= tail [PARSE_ERROR [TO_ERROR(script parse-rule) words/_change]]
 									s-top: null
 									switch TYPE_OF(cmd) [
+										TYPE_PATH [PARSE_ERROR [TO_ERROR(script parse-rule) cmd]]
 										TYPE_PAREN [
 											s-top: stack/top
 											value: eval cmd no saved?
@@ -1716,7 +1963,6 @@ parser: context [
 									copy-cell as red-value! input base 	;@@ remove once OPTION? fixed
 									input/head: new/head
 									PARSE_SAVE_SERIES
-									if TYPE_OF(value) = TYPE_WORD [value: _context/get as red-word! value]
 									actions/change input value base as-logic max null
 									if s-top <> null [stack/top: s-top]
 									PARSE_RESTORE_SERIES
@@ -1781,17 +2027,37 @@ parser: context [
 									][
 										PARSE_ERROR [TO_ERROR(script parse-end) words/_collect]
 									]
-									either into? [get-word/push w][stack/push as red-value! w]
-									cmd: as red-value! w
+
+									either not into? [stack/push as red-value! w][
+										value: _context/get w	;-- #4197
+										type:  TYPE_OF(value)
+										type2: TYPE_OF(input)
+										if any [
+											not ANY_SERIES_PARSE?(type)
+											all [
+												type <> type2
+												any [
+													type = TYPE_BINARY
+													all [ANY_STRING?(type) ANY_BLOCK?(type2)]
+												]
+											]
+										][
+											PARSE_ERROR [TO_ERROR(script parse-into-type)]
+										]
+										new: as red-series! value
+										if new/node = input/node [PARSE_ERROR [TO_ERROR(script parse-into-bad)]]
+										either sym = words/after [refinement/push w][get-word/push w]
+									]
+									cmd: cmd + 2		;-- skip `COLLECT <word>`
 								]
 							]
 							either into? [
 								blk: as red-block! _context/get w
 								type: TYPE_OF(blk)
-								unless ANY_SERIES?(type) [
-									PARSE_ERROR [TO_ERROR(script parse-into-bad)]
+								if all [type <> TYPE_OF(input) not ANY_SERIES_PARSE?(type)][
+									PARSE_ERROR [TO_ERROR(script parse-into-type)]
 								]
-								max: either sym = words/after [-1][blk/head] ;-- save block cursor
+								max: blk/head			;-- save block cursor
 							][
 								block/push-only* 8
 							]
@@ -1824,7 +2090,7 @@ parser: context [
 						]
 						sym = words/set [				;-- SET
 							cmd: cmd + 1
-							if any [cmd = tail TYPE_OF(cmd) <> TYPE_WORD][
+							if any [cmd + 1 >= tail TYPE_OF(cmd) <> TYPE_WORD][
 								PARSE_ERROR [TO_ERROR(script parse-end) words/_set]
 							]
 							min:   R_NONE
@@ -1866,9 +2132,6 @@ parser: context [
 			state = ST_EXIT
 		]
 		reset saved?
-
-		s: GET_BUFFER(series)
-		if s/offset = s/tail [collector/active?: gc-saved]
 
 		either collect? [
 			base + 1

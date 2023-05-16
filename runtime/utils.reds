@@ -120,6 +120,8 @@ Red/System [
 			len		[integer!]
 	][
 		env: as int-ptr! platform/environ
+		#if target = 'ARM [env: as int-ptr! env/value] ;@@ ???
+
 		blk: null
 		len: 0
 
@@ -160,6 +162,28 @@ check-arg-type: func [
 
 #switch OS [
 	Windows [
+
+	SYSTEM_INFO!: alias struct! [
+		dwOemId						[integer!]
+		dwPageSize					[integer!]
+		lpMinimumApplicationAddress [byte-ptr!]
+		lpMaximumApplicationAddress [byte-ptr!]
+		dwActiveProcessorMask		[int-ptr!]
+		dwNumberOfProcessors		[integer!]
+		dwProcessorType				[integer!]
+		dwAllocationGranularity		[integer!]
+		wProcessorLevel				[integer!]
+		;wProcessorRevision
+	]
+
+	#import [
+		"kernel32.dll" stdcall [
+			GetNativeSystemInfo: "GetNativeSystemInfo" [
+				lpSystemInfo [SYSTEM_INFO!]
+			]
+		]
+	]
+
 	__get-OS-info: func [
 		/local
 			obj		[red-object!]
@@ -167,10 +191,11 @@ check-arg-type: func [
 			str		[red-string!]
 			val		[red-value!]
 			ver		[OSVERSIONINFO value]
+			info	[SYSTEM_INFO! value]
 			int		[red-integer!]
 			arch	[c-string!]
 			name	[c-string!]
-			_64bit? [integer!]
+			build	[integer!]
 			server? [logic!]
 	][
 		obj: object/make-at as red-object! stack/push* 8
@@ -181,6 +206,7 @@ check-arg-type: func [
 		ver/szCSDVersion: 0
 		platform/GetVersionEx :ver
 
+		build: ver/dwBuildNumber
 		server?: ver/wProductType <> #"^(01)"
 		str: string/load-at "Windows " 8 val UTF-8
 		name: switch ver/dwMajorVersion [
@@ -199,8 +225,19 @@ check-arg-type: func [
 					3 [either server? ["Server 2012 R2"]["8.1"]]
 				]
 			]
-			default [	;-- Windows 10
-				either server? ["Windows Server 2016"]["10"]
+			default [	;-- Windows 10+
+				either server? [
+					case [
+						build >= 20285	["Server 2022"]
+						build >= 17134	["Server 2019"]
+						true			["Server 2016"]
+					]
+				][
+					case [
+						build >= 22000	["11"]
+						true			["10"]
+					]
+				]
 			]
 		]
 		string/concatenate-literal str name
@@ -210,9 +247,15 @@ check-arg-type: func [
 		]
 		_context/add-with ctx _context/add-global symbol/make "name" val
 
-		_64bit?: 0
-		platform/IsWow64Process platform/GetCurrentProcess :_64bit?
-		either zero? _64bit? [arch: "i686"][arch: "x86-64"]
+		GetNativeSystemInfo :info
+		arch: switch info/dwOemId and FFFFh [		;-- wProcessorArchitecture
+			0  ["x86-32"]
+			5  ["ARM"]
+			6  ["IA-64"]
+			9  ["x86-64"]
+			12 ["ARM64"]
+			default ["Unknown"]
+		]
 		word/make-at symbol/make arch val
 		_context/add-with ctx _context/add-global symbol/make "arch" val
 
@@ -224,7 +267,7 @@ check-arg-type: func [
 
 		int: as red-integer! val
 		int/header: TYPE_INTEGER
-		int/value:  ver/dwBuildNumber
+		int/value:  build
 		_context/add-with ctx _context/add-global symbol/make "build" val
 		stack/pop 2
 	]]
@@ -304,6 +347,173 @@ check-arg-type: func [
 		_context/add-with ctx _context/add-global symbol/make "build" val
 		stack/pop 2
 	]]
+
+	NetBSD [
+	utsname!: alias struct! [
+		sysname		[c-string!]
+		nodename	[c-string!]
+		release		[c-string!]
+		version		[c-string!]
+		machine		[c-string!]
+	]
+
+	#import [
+		LIBC-file cdecl [
+			uname: "uname" [
+				buf		[utsname!]
+				return: [integer!]
+			]
+			strchr: "strchr" [
+				str			[c-string!]
+				c			[byte!]
+				return:		[c-string!]
+			]
+		]
+	]
+
+	__get-OS-info: func [
+		/local
+			obj		[red-object!]
+			ctx		[red-context!]
+			val		[red-value!]
+			int		[red-integer!]
+			pbuf	[byte-ptr!]
+			str		[c-string!]
+			p		[c-string!]
+			err		[integer!]
+			major	[integer!]
+			minor	[integer!]
+			bugfix	[integer!]
+			file	[integer!]
+			len		[integer!]
+			buf		[utsname!]
+	][
+		obj: object/make-at as red-object! stack/push* 8
+		val: stack/push*
+		ctx: GET_CTX(obj)
+
+		buf: as utsname! allocate size? utsname!
+		uname buf
+
+		str: (as c-string! buf) + 256
+		string/load-at str length? str val UTF-8
+		_context/add-with ctx _context/add-global symbol/make "name" val
+
+		str: as c-string! buf
+		word/make-at symbol/make str + (256 * 4) val
+		_context/add-with ctx _context/add-global symbol/make "arch" val
+
+		err: 0
+		str: str + (256 * 2)
+		p: strchr str #"."
+		major: tokenizer/scan-integer as byte-ptr! str as-integer p - str 1 :err
+
+		str: p + 1
+		p: strchr str #"."
+		minor: tokenizer/scan-integer as byte-ptr! str as-integer p - str 1 :err
+
+		either p <> null [
+			str: p + 1
+			p: strchr str #"_"
+			bugfix: tokenizer/scan-integer as byte-ptr! str as-integer p - str 1 :err
+		][
+			bugfix: 0
+		]
+
+		either bugfix <> 0 [
+			val/header: TYPE_TUPLE or (3 << 19)
+			val/data1: bugfix << 16 or (minor << 8) or major
+		][
+			val/header: TYPE_TUPLE or (2 << 19)
+			val/data1: minor << 8 or major
+		]
+		_context/add-with ctx _context/add-global symbol/make "version" val
+
+		str: (as c-string! buf) + (256 * 3)
+		string/load-at str length? str val UTF-8
+		_context/add-with ctx _context/add-global symbol/make "build" val
+
+		stack/pop 2
+		free as byte-ptr! buf
+	]]
+
+	FreeBSD [
+	utsname!: alias struct! [
+		sysname		[c-string!]
+		nodename	[c-string!]
+		release		[c-string!]
+		version		[c-string!]
+		machine		[c-string!]
+	]
+
+	#import [
+		LIBC-file cdecl [
+			uname: "uname" [
+				buf		[utsname!]
+				return: [integer!]
+			]
+			strchr: "strchr" [
+				str			[c-string!]
+				c			[byte!]
+				return:		[c-string!]
+			]
+		]
+	]
+
+	__get-OS-info: func [
+		/local
+			obj		[red-object!]
+			ctx		[red-context!]
+			val		[red-value!]
+			int		[red-integer!]
+			pbuf	[byte-ptr!]
+			str		[c-string!]
+			p		[c-string!]
+			err		[integer!]
+			major	[integer!]
+			minor	[integer!]
+			bugfix	[integer!]
+			file	[integer!]
+			len		[integer!]
+			buf		[utsname!]
+	][
+		obj: object/make-at as red-object! stack/push* 8
+		val: stack/push*
+		ctx: GET_CTX(obj)
+
+		buf: as utsname! allocate size? utsname!
+		uname buf
+
+		str: (as c-string! buf) + 32
+		string/load-at str length? str val UTF-8
+		_context/add-with ctx _context/add-global symbol/make "name" val
+
+		str: as c-string! buf
+		word/make-at symbol/make str + (32 * 4) val
+		_context/add-with ctx _context/add-global symbol/make "arch" val
+
+		err: 0
+		str: str + (32 * 2)
+		p: strchr str #"."
+		major: tokenizer/scan-integer as byte-ptr! str as-integer p - str 1 :err
+
+		str: p + 1
+		p: strchr str #"-"
+		minor: tokenizer/scan-integer as byte-ptr! str as-integer p - str 1 :err
+		bugfix: 0		
+
+		val/header: TYPE_TUPLE or (2 << 19)
+		val/data1: minor << 8 or major
+		_context/add-with ctx _context/add-global symbol/make "version" val
+
+		str: (as c-string! buf) + (32 * 3)
+		string/load-at str length? str val UTF-8
+		_context/add-with ctx _context/add-global symbol/make "build" val
+
+		stack/pop 2
+		free as byte-ptr! buf
+	]]
+
 	#default [
 	utsname!: alias struct! [
 		_pad0	[float!]
@@ -401,9 +611,14 @@ check-arg-type: func [
 			pbuf: allocate len
 			simple-io/read-data file pbuf len
 			simple-io/close-file file
-			str: simple-io/strstr as c-string! pbuf {PRETTY_NAME="}
-			str: str + 13
-			p: strchr str #"^""
+			str: simple-io/strstr as c-string! pbuf {PRETTY_NAME=}
+			str: str + 12
+			either str/1 = #"^"" [
+				str: str + 1
+				p: strchr str #"^""
+			][
+				p: strchr str lf
+			]
 			p/1: null-byte
 		][
 			str: (as c-string! buf) + 65

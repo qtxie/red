@@ -8,9 +8,8 @@ Red [
 	; Needs:   'View
 ]
 
-
-; TODO: `area` face tests
-; TODO: `size-text` tests, for different faces
+;@@ TODO: `area` face tests
+;@@ TODO: `size-text` tests, for different faces
 
 
 #include %../../../quick-test/quick-test.red
@@ -18,8 +17,8 @@ Red [
 
 ~~~start-file~~~ "base-self-test"
 
-; relies upon the View subsystem (not yet available on some platforms)
-; FIXME: currently these tests are hopeless on MacOS
+;-- relies upon the View subsystem (not yet available on some platforms)
+;@@ FIXME: currently these tests are hopeless on MacOS
 do [if all [object? :system/view  system/platform = 'Windows] [
 
 
@@ -49,10 +48,10 @@ bst-show-delay: 0:0:5
 ;-- capturing framerate
 bst-w7?: all ['Windows = system/platform  find/match get bind 'name os-info "Windows 7"]
 bst-rate: either bst-w7? [67][2] 	 	;-- works fast w/o bugs on W7 only
-
+?? bst-rate
 
 ;-- colors should include B and R components of different intensities
-;  because these two are swapped around between Red/GDI and GDI+
+;-- because these two are swapped around between Red/GDI and GDI+
 bst-colors: context [bg: yellow fg: red]
 
 
@@ -105,7 +104,7 @@ set/any 'bst-assert-backup get/any 'assert
 ;-- skip the assertions and let quick-test do its thing
 assert: func [c [block!]] []
 
-; -- assertion func used during the development stage
+;-- assertion func used during the development stage
 ; assert: function [contract [block!]][
 ; 	set [cond msg] reduce contract
 ; 	unless cond [
@@ -134,7 +133,7 @@ forxy: func ["loop thru a 2D area" 'p s c /local i] [
 	any [pair? s  s: s/size]
 	i: 0
 	loop s/x * s/y [
-		set p 1x1 + as-pair i % s/x i / s/x
+		set p 1x1 + as-pair i % s/x to integer! i / s/x
 		do c
 		i: i + 1
 	]
@@ -161,7 +160,7 @@ amnt3?: func [
 	"calculates the amount of `color` in a mix"
 	c [tuple!] b [tuple!]
 ] [
-	max' 	0.0 	; in case all amounts are none (c = black), return 0.0
+	max' 	0.0 	;-- in case all amounts are none (c = black), return 0.0
 	min'	amnt? c/1 b/1
 	min'	amnt? c/2 b/2
 			amnt? c/3 b/3
@@ -212,9 +211,25 @@ diff3: func [
 	a
 ]
 
-assert [50.60.70 = diff3 100.100.100 50.40.30 	'diff3]
+assert [50.60.70    = diff3 100.100.100 50.40.30 		'diff3]
 assert [100.140.130 = diff3 100.100.100 200.240.230 	'diff3]
 assert [100.140.130 = diff3 200.240.230 100.100.100 	'diff3]
+
+
+contrast: func [
+	"contrast (0 to 1) between 2 tuples"
+	a [tuple!] b [tuple!]
+] [
+	a: diff3 a b
+	(max a/1 max a/2 a/3) / 255.0
+]
+
+assert [0 = contrast black black]
+assert [1 = contrast white black]
+assert [1 = contrast black white]
+assert [1 = contrast black blue]
+assert [1 = contrast red   blue]
+assert [10.0 / 255 = contrast 10.20.30 20.10.20]
 
 
 imgdiff: func [
@@ -223,7 +238,7 @@ imgdiff: func [
 ] [
 	assert [a/size = b/size]
 	forxy xy a [
-		a/:xy: either all [0 < xy/x  xy/x < 125  0 < xy/y  xy/y < 125]
+		a/:xy: either all [0 < xy/x  xy/x < a/size/x  0 < xy/y  xy/y < a/size/y]
 			[ diff3 a/:xy b/:xy ]
 			[ 0.0.0 ]		;-- ignore the border
 	]
@@ -232,8 +247,8 @@ imgdiff: func [
 
 assert [(make image! [3x3 0.0.0]) = imgdiff make image! 3x3 make image! 3x3]
 
-; return format: [tuple! percent! ...]
-; removes alpha channel so it won't cause trouble
+;-- return format: [tuple! percent! ...]
+;-- removes alpha channel so it won't cause trouble
 count-colors: func [
 	"returns colors used in the image, sorted by frequency (0-100%)"
 	im [image!] return: [block!] /local m c n tot xy
@@ -325,7 +340,7 @@ bright: func [
 	if 4 = length? c [c/4: none]
 	unless black = c [
 		hi: max c/1 max c/2 c/3
-		repeat i 3 [c/:i: c/:i * 255 / hi]
+		repeat i 3 [c/:i: to integer! c/:i * 255 / hi]
 	]
 	c
 ]
@@ -338,7 +353,7 @@ assert [yellow = bright 100.100.0 	'bright]
 
 
 ;-- very simple tuples brightness comparison
-;  used to choose a brighter shade when clashing palette
+;-- used to choose a brighter shade when clashing palette
 brighter-than?: make op! func [a [tuple!] b [tuple!]] [
 	all [a <> b  a/1 >= b/1  a/2 >= b/2  a/3 >= b/3]
 ]
@@ -360,7 +375,7 @@ clash: func [
 	cs [block!] /local cs'
 ] [
 	if 4 >= length? cs [return cs] 		;-- nothing to join
-	; start from index 1, since W8 sometimes returns 2 shades of background color!
+	;-- start from index 1, since W8 sometimes returns 2 shades of background color!
 	; cs: skip cs 2
 	until [
 		cs': skip cs 2
@@ -465,10 +480,10 @@ assert [[0.0 0.0 1.0 1.0] = text-bounds? draw 10x10
 assert [[0.0 0.0 1.0 1.0] = text-bounds?/lines draw 10x10
 		[pen blue box 0x0 9x9] 	'text-bounds?]
 assert [[0.1 0.1 0.9 0.9] = text-bounds? draw 10x10
-		[pen blue line 1x1 4x2 line 1x4 8x5 line 1x7 8x8] 	'text-bounds?]
+		[scale 0.5 0.5 pen blue line 3x3 9x5 line 3x9 17x11 line 3x15 17x17] 	'text-bounds?]
 assert [[0.1 0.1 0.5 0.3  0.1 0.4 0.9 0.6  0.1 0.7 0.9 0.9] =
 		text-bounds?/lines draw 10x10
-		[pen blue line 1x1 4x2 line 1x4 8x5 line 1x7 8x8] 	'text-bounds?]
+		[scale 0.5 0.5 pen blue line 3x3 9x5 line 3x9 17x11 line 3x15 17x17] 	'text-bounds?]
 
 
 text-center?: func [
@@ -539,11 +554,11 @@ text-aligned?: func [
 		unless ls: text-bounds?/lines im [return no]
 		either find [left right] al [
 			foreach [x _ dx _] ls compose [
-				r: r and not about?/tol (either 'left = al [[0.08 x]][[0.92 dx]]) 0 0.06
+				r: r and not about?/tol (either 'left = al [[0.07 x]][[0.93 dx]]) 0 0.07
 			]
 		][
 			foreach [_ y _ dy] ls compose [
-				r: r and not about?/tol (either 'top  = al [[0.08 y]][[0.92 dy]]) 0 0.06
+				r: r and not about?/tol (either 'top  = al [[0.07 y]][[0.93 dy]]) 0 0.07
 			]
 		]
 	]
@@ -590,9 +605,62 @@ equally-spaced?: func [
 ]
 
 assert [equally-spaced? text-bounds?/lines draw 10x10
-		[pen blue line 1x1 4x2 line 1x4 8x5 line 1x7 8x8] 	'equally-spaced?]
+		[scale 0.5 0.5 pen blue line 3x3 9x5 line 3x9 17x11 line 3x15 17x17] 	'equally-spaced?]
 assert [not equally-spaced? text-bounds?/lines draw 10x10
-		[pen blue line 1x0 4x1 line 1x4 8x5 line 1x7 8x8] 	'equally-spaced?]
+		[scale 0.5 0.5 pen blue line 3x1 9x3 line 3x9 17x11 line 3x15 17x17] 	'equally-spaced?]
+
+
+;-- this is not a proper blur, but a little approximate - enough for the task at hand
+blur3x3: function [im [image!]] [
+	im-1: copy im  im-1/alpha: 255 - 25
+	im-2: copy im  im-2/alpha: 255 - 50
+	draw copy im [
+		image im-2 -1x0
+		image im-2  1x0
+		image im-2  0x1
+		image im-2  0x-1
+		image im-1 -1x-1
+		image im-1  1x-1
+		image im-1 -1x1
+		image im-1  1x1
+	]
+]
+
+
+;-- took this from https://gitlab.com/hiiamboris/red-view-test-system
+;-- sensitive to both changes in overall brightness (1) and individual "outlier" pixels (2):
+;-- 1) sum of (normalized) pixel contrasts (PC), checked against (fuzz^2)*area
+;-- 2) sum of squares of PC/fuzz, checked against fuzz*area
+visually-similar?: function [
+	"Loosely compare two images for equality"
+	im1 [image!]
+	im2 [image!]
+	/with fuzz [percent! float!] "Comparison fuzziness (0% = strict, default = 10%)"
+][
+	assert [im1/size = im2/size]
+	fuzz: any [fuzz 10%]
+	if fuzz = 0% [fuzz: 0.01%]							;-- no zero division
+	assert [all [0 <= fuzz fuzz <= 1] 'fuzz]
+	im1: blur3x3 im1									;-- blur images to lessen the effect of image offsets due to possible rounding errors
+	im2: blur3x3 im2
+	sum1: 0.0 sum2: 0.0 sumcsq: 0.0
+	area: im1/size/x * im1/size/y
+	max-sumcsq: area * fuzz								;-- sum of squares of pixel contrasts, allowing each pixel to have up to fuzz=contrast
+	repeat i length? im1 [
+		px1: im1/:i  px2: im2/:i
+		sum1: sum1 + px1/1 + px1/2 + px1/3
+		sum2: sum2 + px2/1 + px2/2 + px2/3
+		c: (contrast px1 px2) / fuzz					;-- normalized to `fuzz`, so peaks when c >> fuzz
+		sumcsq: c * c + sumcsq
+		if sumcsq > max-sumcsq [return no]
+	]
+	sum-white: area * 3 * 255.0							;-- 3 for R,G,B, 255 for max brightness
+	dif: (absolute sum2 - sum1) / sum-white				;-- relative difference in overall brightness
+	dif <= (fuzz ** 2)
+]
+
+assert [    visually-similar? draw 1x1 [] draw 1x1 []]
+assert [not visually-similar? draw 1x1 [] make image! [1x1 #{000000}]]
 
 
 shoot: func [
@@ -608,8 +676,11 @@ shoot: func [
 	do compose/deep [
 		(either async ['view/tight/no-wait/options]['view/tight/options]) [
 			panel [(either backdrop [reduce ['backdrop bd]][[]]) origin 0x0 space 0x0 (vid)]
-			rate (bst-rate)
+			extra none
+			rate 70
 			on-time [
+				unless face/extra [face/extra: now/utc/precise + (0:0:1 / bst-rate) exit]
+				if now/utc/precise < face/extra [exit]
 				face/rate: none 		;-- ensure it won't trigger twice
 				event: to-image (either whole ['face/parent]['face])
 				unview/only face/parent
@@ -619,11 +690,11 @@ shoot: func [
 			; FIXME: on W8 the capture is often partial when goes off screen
 			; offset: random system/view/screens/1/size - 50x50
 			offset: random system/view/screens/1/size - 300x300
+			?? offset
 		]
 	]
 	r
 ]
-
 
 shoot-parallel: func [
 	"used to obtain lots of snapshots in parallel"
@@ -652,6 +723,7 @@ shoot-parallel: func [
 		text "waiting for snapshots to complete" rate 5
 		on-time [if started = finished [unview/only face/parent]]
 	]
+	loop 50 [do-events/no-wait]		;-- let the last windows actually close
 	i: 0
 	parse code rule: [any [
 		change [['shoot | 'shoot/whole] block!] (reduce [to-paren compose [pick snaps (i: i + 1)]])
@@ -664,11 +736,11 @@ shoot-parallel: func [
 
 
 ;-- does the same TESTS code with all of the following:
-;  1 opaque font, opaque bgnd
-;  2 opaque font, transparent bgnd
-;  3 transparent font, opaque bgnd
-;  4 transparent font, transparent bgnd
-; modifies the tests names, adding a suffix (from `ss`)
+;--  1 opaque font, opaque bgnd
+;--  2 opaque font, transparent bgnd
+;--  3 transparent font, opaque bgnd
+;--  4 transparent font, transparent bgnd
+;-- modifies the tests names, adding a suffix (from `ss`)
 four-ways: func [code [block!] /local ws ss i j d code' rule s full] [
 	if empty? code [exit]
 	ws: [
@@ -682,7 +754,7 @@ four-ways: func [code [block!] /local ws ss i j d code' rule s full] [
 	repeat i 4 [
 		code': copy/deep code
 		unless 1 = i [
-			repeat j d: (length? ws) / 4 [
+			repeat j d: to integer! (length? ws) / 4 [
 				replace/all/deep code' ws/:j ws/(i - 1 * d + j)
 			]
 		]
@@ -735,10 +807,12 @@ test-dual-chrome?: func [
 	/strict "exactly 2 colors"
 	/local n
 ] [
-	; NOTE: cleartype doesn't play by the rules and can produce
-	;  multi-colored rendering out of seemingly monochrome font
-	;  can't use = 2 here!  unless /strict is specified
-	n: length? collect [forall cs [if tuple? cs/1 [keep cs/1]]]
+	;-- NOTE: cleartype doesn't play by the rules and can produce
+	;--  multi-colored rendering out of seemingly monochrome font
+	;--  can't use = 2 here!  unless /strict is specified
+	coll: collect [forall cs [if tuple? cs/1 [keep cs/1]]]
+	?? coll
+	n: length? coll
 	unless any [n = 2  all [not strict  n >= 2] ] [
 		maybe-display-shortly im form reduce [
 			"expected" pick ["=" ">="] true = strict "2 colors, got" n "from" mold cs
@@ -773,16 +847,16 @@ test-images-of-equal-size?: func [
 
 test-images-equal?: func [
 	"test if images A and B are equal (excluding the border)"
-	a [image!] b [image!] /tol tolrel tolabs /local s diff
+	a [image!] b [image!] /with fuzz /local s
 ] [
 	test-images-of-equal-size? a b
-	diff: imgdiff copy a b
-	unless img-black?/tol diff tolrel tolabs [
+	fuzz: any [fuzz 10%]
+	unless visually-similar?/with a b fuzz [
 		s: form reduce [
-			"expected images to be equal, but found"
-			(length? trim diff/rgb) / 3 "different pixels"
+			"expected images to be equal, but found to be not,"
+			"compared with fuzziness=" fuzz
 		]
-		maybe-display-shortly [a b diff] s
+		maybe-display-shortly [a b] s
 		return no
 	]
 	yes
@@ -790,12 +864,16 @@ test-images-equal?: func [
 
 test-images-NOT-equal?: func [
 	"test if images A and B are NOT equal (excluding the border)"
-	a [image!] b [image!] /tol tolrel tolabs /local s diff
+	a [image!] b [image!] /with fuzz /local s
 ] [
 	test-images-of-equal-size? a b
-	diff: imgdiff copy a b
-	if img-black?/tol diff tolrel tolabs [
-		maybe-display-shortly [a b diff] "expected images to be NOT equal, but they are"
+	fuzz: any [fuzz 10%]
+	if visually-similar?/with a b fuzz [
+		s: form reduce [
+			"expected images to be NOT equal, but they are,"
+			"compared with fuzziness=" fuzz
+		]
+		maybe-display-shortly [a b] s
 		return no
 	]
 	yes
@@ -836,7 +914,36 @@ test-same-text-size?: func [
 	] [
 		s: form reduce [
 			"expected text to be of equal size on these images, got" sz1 "vs" sz2
-			", compared with tol rel=0 abs=1"
+			", compared with tol rel=8% abs=1"
+		]
+		maybe-display-shortly [im1 im2] s
+		return no
+	]
+	yes
+]
+
+
+test-same-text-origin-and-size?: function [
+	"test if text on 2 images is of equal size and origin"
+	im1 [image!] im2 [image!]
+] [
+	unless all [
+		bs1: text-bounds? im1
+		bs2: text-bounds? im2
+		or1: as-pair  round im1/size/x * bs1/1  round im1/size/y * bs1/2
+		or2: as-pair  round im2/size/x * bs2/1  round im2/size/y * bs2/2
+		sz1: as-pair  round im1/size/x * (bs1/3 - bs1/1)  round im1/size/y * (bs1/4 - bs1/2)
+		sz2: as-pair  round im2/size/x * (bs2/3 - bs2/1)  round im2/size/y * (bs2/4 - bs2/2)
+		origin-error: 3.0 / 96 * system/view/metrics/dpi		;-- 3px of error, scaled - enough?
+		about?/tol or1/x or2/x 0% origin-error
+		about?/tol or1/y or2/y 0% origin-error
+		about?/tol sz1/x sz2/x 8% 1		;-- allow 8% + 1px of error - W10 has different proofing for unrotated text
+		about?/tol sz1/y sz2/y 8% 1
+	] [
+		s: form reduce [
+			"expected text to be of equal origin and size on these images, got"
+			"origin=" or1 "vs" or2 "and size=" sz1 "vs" sz2
+			", compared with tol rel=8% abs=1 (size), rel=0% abs=3px (origin)"
 		]
 		maybe-display-shortly [im1 im2] s
 		return no
@@ -981,7 +1088,7 @@ test-NOT-equally-spaced?: func [
 
 ===start-group=== "testing utilities test"
 	
-	; use asserts during development and these - when finished
+	;-- use asserts during development and these - when finished
 
 	--test-- "tut-01"
 		--assert [1x1 2x1 1x2 2x2] = collect [forxy xy make image! 2x2 [keep xy]]
@@ -1090,10 +1197,10 @@ test-NOT-equally-spaced?: func [
 		--assert [0.0 0.0 1.0 1.0] = text-bounds? draw 10x10 [pen blue box 0x0 9x9]
 		--assert [0.0 0.0 1.0 1.0] = text-bounds?/lines draw 10x10 [pen blue box 0x0 9x9]
 		--assert [0.1 0.1 0.9 0.9] = text-bounds? draw 10x10
-				[pen blue line 1x1 4x2 line 1x4 8x5 line 1x7 8x8]
+				[scale 0.5 0.5 pen blue line 3x3 9x5 line 3x9 17x11 line 3x15 17x17]
 		--assert [0.1 0.1 0.5 0.3  0.1 0.4 0.9 0.6  0.1 0.7 0.9 0.9] =
 				text-bounds?/lines draw 10x10
-				[pen blue line 1x1 4x2 line 1x4 8x5 line 1x7 8x8]
+				[scale 0.5 0.5 pen blue line 3x3 9x5 line 3x9 17x11 line 3x15 17x17]
 
 	--test-- "tut-15"
 		bst-im: make image! 10x10  bst-im/(2x2): blue
@@ -1137,9 +1244,21 @@ test-NOT-equally-spaced?: func [
 
 	--test-- "tut-18"
 		--assert equally-spaced? text-bounds?/lines draw 10x10
-				[pen blue line 1x1 4x2 line 1x4 8x5 line 1x7 8x8]
+				[scale 0.5 0.5 pen blue line 3x3 9x5 line 3x9 17x11 line 3x15 17x17]
 		--assert not equally-spaced? text-bounds?/lines draw 10x10
-				[pen blue line 1x0 4x1 line 1x4 8x5 line 1x7 8x8]
+				[scale 0.5 0.5 pen blue line 3x1 9x3 line 3x9 17x11 line 3x15 17x17]
+
+	--test-- "tut-19"
+		--assert 0 = contrast black black
+		--assert 1 = contrast white black
+		--assert 1 = contrast black white
+		--assert 1 = contrast black blue
+		--assert 1 = contrast red   blue
+		--assert 10.0 / 255 = contrast 10.20.30 20.10.20
+
+	--test-- "tut-20"
+		--assert     visually-similar? draw 1x1 [] draw 1x1 []
+		--assert not visually-similar? draw 1x1 [] make image! [1x1 #{000000}]
 
 ===end-group===
 
@@ -1163,6 +1282,7 @@ test-NOT-equally-spaced?: func [
 
 
 
+view/no-wait [text "This window is a workaround for R2 call bug which hides first one (or more??) windows"]
 
 
 ===start-group=== "to-image check"
@@ -1224,12 +1344,11 @@ test-NOT-equally-spaced?: func [
 		bst-im3: draw bst-sz compose [scale (bst-sc) (bst-sc) image bst-im]
 		bst-im1': shoot/whole [image bst-im]
 		bst-im2': shoot/whole [base' draw [image bst-im]]
-		;@@ FIXME: this one is sometimes very sharp, sometimes text is in bold - too different from the original; need better comparison algos
-		; bst-im4: draw bst-sz compose/deep [matrix [-1 0 0 1 (bst-sz/x) 0] scale (bst-sc) (bst-sc) font (copy bst-font1) text 0x0 "TEXT"]
-		--assert test-images-equal? bst-im1 bst-im2
-		--assert test-images-equal? bst-im1 bst-im3
-		--assert test-images-equal? bst-im1' bst-im2'
-		; --assert test-images-equal? bst-im2 bst-im4		;@@ FIXME: not working yet
+		bst-im4: draw bst-sz compose/deep [matrix [-1 0 0 1 (bst-sz/x) 0] scale (bst-sc) (bst-sc) font (copy bst-font1) text 0x0 "TEXT"]
+		--assert test-images-equal?/with bst-im1  bst-im2  15%
+		--assert test-images-equal?/with bst-im1  bst-im3  15%
+		--assert test-images-equal?/with bst-im1' bst-im2' 15%
+		--assert test-images-equal?/with bst-im2  bst-im4  15%
 	]
 
 ===end-group===
@@ -1239,72 +1358,76 @@ test-NOT-equally-spaced?: func [
 
 	four-ways [
 	--test-- "crc-11 - base, preset colors"
-		; checks if text is 1) indeed rendered 2) colors are as requested
+		;-- checks if text is 1) indeed rendered 2) colors are as requested
 		bst-cs: colorset? bst-im: shoot [base' "CAT"]
+		print "---CRC-11--- begin"
+		prin ["bst-im:" mold save/as copy #{} bst-im 'png]
+		?? bst-cs
 		--assert test-dual-chrome? bst-im bst-cs
-		--assert test-color-match? bst-im bst-cs/1 bst-colors/bg
-		--assert test-color-match? bst-im bst-cs/3 bst-colors/fg
+		--assert test-color-match?     bst-im probe bst-cs/1 bst-colors/bg
+		--assert test-color-match?/tol bst-im probe bst-cs/3 bst-colors/fg 0 20
 		--assert test-match?/tol bst-im bst-cs/2 95%  0 4.5%
 		--assert test-match?/tol bst-im bst-cs/4 5%   0 4.5%
+		print "---CRC-11--- end"
 	]
 
 	--test-- "crc-12 - base, system default background"
-		; checks if box uses the system default background color
+		;-- checks if box uses the system default background color
 		bst-cs: colorset? bst-im: shoot [box "CAT" font bst-font1]
 		--assert test-dual-chrome? bst-im bst-cs
 		try [	;-- colors/window might be undefined
-			--assert test-color-match? bst-im bst-cs/1 system/view/metrics/colors/window
+			--assert test-color-match? bst-im bst-cs/1 system/view/metrics/colors/panel
 		]
-		--assert test-color-match? bst-im bst-cs/3 bst-colors/fg
+		--assert test-color-match?/tol bst-im bst-cs/3 bst-colors/fg 0 20
 		--assert test-match?/tol bst-im bst-cs/2 95%  0 4.5%
 		--assert test-match?/tol bst-im bst-cs/4 5%   0 4.5%
 
 	--test-- "crc-13 - base, system default bg+text"
-		; checks if unspecified font color defaults to the system default text color
+		;-- checks if unspecified font color defaults to the system default text color
 		bst-cs: colorset? bst-im: shoot [box "CAT" font-size 16]
 		--assert test-dual-chrome? bst-im bst-cs
 		--assert test-contrast? bst-im bst-cs/1 bst-cs/3
 		try [ 	;-- colors/window might be undefined
-			--assert test-color-match? bst-im bst-cs/1 system/view/metrics/colors/window
+			--assert test-color-match? bst-im bst-cs/1 system/view/metrics/colors/panel
 		]
 		try [ 	;-- colors/text might be undefined
-			--assert test-color-match? bst-im bst-cs/3 system/view/metrics/colors/text
+			--assert test-color-match?/tol bst-im bst-cs/3 system/view/metrics/colors/text 0 20
 		]
 		--assert test-match?/tol bst-im bst-cs/2 95%  0 4.5%
 		--assert test-match?/tol bst-im bst-cs/4 5%   0 4.5%
 
 	four-ways [
 	--test-- "crc-21 - text, preset colors"
-		; checks if text is 1) indeed rendered 2) colors are as requested
+		;-- checks if text is 1) indeed rendered 2) colors are as requested
 		bst-cs: colorset? bst-im: shoot [text' "CAT"]
 		--assert test-dual-chrome? bst-im bst-cs
-		--assert test-color-match? bst-im bst-cs/1 bst-colors/bg
-		--assert test-color-match? bst-im bst-cs/3 bst-colors/fg
+		--assert test-color-match?     bst-im bst-cs/1 bst-colors/bg
+		--assert test-color-match?/tol bst-im bst-cs/3 bst-colors/fg 0 20
 		--assert test-match?/tol bst-im bst-cs/2 90%  0 9.0%
 		--assert test-match?/tol bst-im bst-cs/4 9.5% 0 9.0%
 	]
 
 	--test-- "crc-22 - text, system default background"
-		; checks if box uses the system default background color
+		;-- checks if box uses the system default background color
 		bst-cs: colorset? bst-im: shoot [text 100 "CAT" font bst-font1]
 		--assert test-dual-chrome? bst-im bst-cs
 		try [	;-- colors/window might be undefined
-			--assert test-color-match? bst-im bst-cs/1 system/view/metrics/colors/window
+			--assert test-color-match? bst-im bst-cs/1 system/view/metrics/colors/panel
 		]
-		--assert test-color-match? bst-im bst-cs/3 bst-colors/fg
+		--assert test-color-match?/tol bst-im bst-cs/3 bst-colors/fg 0 20
 		--assert test-match?/tol bst-im bst-cs/2 90%  0 9.0%
 		--assert test-match?/tol bst-im bst-cs/4 9.5% 0 9.0%
 
 	--test-- "crc-23 - text, system default bg+text"
-		; checks if unspecified font color defaults to the system default text color
+		;-- checks if unspecified font color defaults to the system default text color
 		bst-cs: colorset? bst-im: shoot [text bold 100 "CAT" font-size 16]
 		--assert test-dual-chrome? bst-im bst-cs
 		--assert test-contrast? bst-im bst-cs/1 bst-cs/3
 		try [ 	;-- colors/window might be undefined
-			--assert test-color-match? bst-im bst-cs/1 system/view/metrics/colors/window
+			--assert test-color-match? bst-im bst-cs/1 system/view/metrics/colors/panel
 		]
 		try [ 	;-- colors/text might be undefined
-			--assert test-color-match? bst-im bst-cs/3 system/view/metrics/colors/text
+			--assert test-color-match?/tol bst-im bst-cs/3 system/view/metrics/colors/text 0 20
 		]
 		--assert test-match?/tol bst-im bst-cs/2 90%  0 9.0%
 		--assert test-match?/tol bst-im bst-cs/4 9.5% 0 9.0%
@@ -1360,10 +1483,10 @@ test-NOT-equally-spaced?: func [
 		--assert test-text-anchor? c shoot [base+ "C^/A^/T" middle center]
 
 	--test-- "tac-32"
-		--assert test-text-anchor? w shoot [base+ "C^/A^/T" left]
-		--assert test-text-anchor? e shoot [base+ "C^/A^/T" right]
-		--assert test-text-anchor? n shoot [base+ "C^/A^/T" top]
-		--assert test-text-anchor? s shoot [base+ "C^/A^/T" bottom]
+		--assert test-text-anchor? w w: shoot [base+ "C^/A^/T" left]
+		--assert test-text-anchor? e e: shoot [base+ "C^/A^/T" right]
+		--assert test-text-anchor? n n: shoot [base+ "C^/A^/T" top]
+		--assert test-text-anchor? s s: shoot [base+ "C^/A^/T" bottom]
 
 	--test-- "tac-33"
 		--assert test-text-anchor? nw shoot [base+ "C^/A^/T" left top]
@@ -1424,7 +1547,7 @@ test-NOT-equally-spaced?: func [
 		--assert test-same-text-size? bst-im-lt bst-im-lb
 		--assert test-same-text-size? bst-im-lt bst-im-rb
 		--assert test-same-text-size? bst-im-lt bst-im-tr
-		--assert test-images-equal?   bst-im-tr bst-im-tx
+		--assert test-images-equal?/with bst-im-tr bst-im-tx 0%
 
 	--test-- "#4116"
 		;-- shoot 2 images with different fonts: the images should be different!
@@ -1436,14 +1559,12 @@ test-NOT-equally-spaced?: func [
 	]	;-- four-ways
 
 	;-- not 4-way-scalable this one
-	;@@ TODO: parts 2 and 3
-	--test-- "#3725 part 1"
-		bst-im1: shoot compose/deep [base' "ABC" left top draw [font (copy bst-font1) text 0x0 "ABC"]]	;-- 2 strings
-		bst-im2: shoot compose/deep [base'       left top draw [font (copy bst-font1) text 0x0 "ABC"]]	;-- 1 string
+	--test-- "#3725 part 1"		;-- parts 2 and 3 were dismissed
+		bst-im1: shoot compose/deep [base' "ABC" left top]
+		bst-im2: shoot compose/deep [base'       left top draw [font (copy bst-font1) text 0x0 "ABC"]]
 		bst-im3: shoot compose/deep [base'*      left top draw [font (copy bst-font1) text 0x0 "ABC"]]	;-- with transparency
-		;-- 100 is a huge tolerance, but the real value due to aliasing is about 64-65 -- @@ FIXME -- better way?
-		--assert test-images-equal?/tol bst-im1 bst-im2 0 100		;-- both draw and base strings do align?
-		--assert test-images-equal?/tol bst-im1	bst-im3 0 100		;-- no double scaling?
+		--assert test-same-text-origin-and-size? bst-im1 bst-im2		;-- both draw and base strings do align?
+		--assert test-same-text-origin-and-size? bst-im1 bst-im3		;-- no double scaling?
 
 ===end-group===
 

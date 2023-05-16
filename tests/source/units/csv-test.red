@@ -2,6 +2,7 @@ Red [
 	Title:   "CSV codec test script"
 	Author:  "Boleslav Březovský"
 	File: 	 %csv-test.red
+	Needs:	 CSV
 	Rights:  "Copyright (C) 2011-2019 Red Foundation. All rights reserved."
 	License: "BSD-3 - https://github.com/red/red/blob/origin/BSD-3-License.txt"
 ]
@@ -36,6 +37,13 @@ Red [
 			to-csv/quote ["hello world" "," "'"] #"'"
 	--test-- "to-csv-6-unaligned"
 		--assert error? to-csv [[1 2 3][1 2 3 4]]
+	--test-- "to-csv-7-fix-4424"
+		--assert {"x x"^/} = to-csv l: ["x x"]
+		--assert l = ["x x"] ; we need to make sure original was not modified
+		unset 'l
+	--test-- "to-csv-block-of-keyval"
+		--assert {a,b^/1,2^/3,4^/} = to-csv reduce [object [a: 1 b: 2] object [a: 3 b: 4]]
+		--assert {a,b^/1,2^/3,4^/} = to-csv reduce [make map! [a: 1 b: 2] make map! [a: 3 b: 4]]
 ===end-group===
 
 ===start-group=== "load-csv"

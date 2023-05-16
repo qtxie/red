@@ -6,14 +6,10 @@
 	red/get-root-node2
 	red/type-check-alt
 	red/type-check
-	red/set-int-path*
-	red/eval-int-path*
-	red/set-path*
 	red/eval-path*
-	red/eval-int-path
-	red/eval-path
 	red/select-key*
 	red/alloc-bytes
+	red/alloc-cells
 	red/get-cmdline-args
 
 	red/redbin/boot-load
@@ -38,7 +34,6 @@
 	red/stack/reset
 	red/stack/keep
 	red/stack/push
-	red/stack/check-call
 	red/stack/unroll
 	red/stack/unroll-loop
 	red/stack/revert
@@ -47,6 +42,8 @@
 	red/stack/set-last
 
 	red/interpreter/eval-path
+	red/lexer/scan
+	red/lexer/scan-alt
 
 	red/none/push-last
 
@@ -75,6 +72,7 @@
 	red/lit-word/push
 	red/logic/push
 	red/map/push
+	red/money/push
 	red/none/push
 	red/object/push
 	red/op/push
@@ -82,6 +80,7 @@
 	red/paren/push
 	red/path/push
 	red/percent/push
+	red/ref/push
 	red/refinement/push
 	red/routine/push
 	red/set-path/push
@@ -114,25 +113,28 @@
 	red/word/from
 	red/word/load
 	red/word/push-local
+	red/word/duplicate
 
 	red/get-word/get
 	red/set-word/push-local
 
 	red/_context/get
-	red/_context/clone
+	red/_context/clone-words
 	red/_context/set-integer
 
-	red/object/duplicate
+	red/object/clone-series
 	red/object/transfer
 	red/object/init-push
 	red/object/init-events
 	red/object/loc-fire-on-set*
+	red/object/loc-ctx-fire-on-set*
 	red/object/fire-on-set*
 	red/object/get-values
 
 	red/integer/get-any*
 	red/integer/get*
 	red/integer/get
+	red/integer/make-at
 	red/integer/form-signed
 	red/logic/get
 	red/float/get
@@ -198,16 +200,16 @@
 	red/object/unchanged?
 	red/object/unchanged2?
 
-	red/natives/repeat-init*
-	red/natives/repeat-set
 	red/natives/remove-each-init
 	red/natives/remove-each-next
 	red/natives/foreach-next-block
 	red/natives/foreach-next
-	red/natives/forall-loop
-	red/natives/forall-next
+	red/natives/forall-next?
 	red/natives/forall-end
 	red/natives/forall-end-adjust
+	red/natives/coerce-counter*
+	red/natives/inc-counter
+	red/natives/get-series-length
 
 	red/actions/make*
 	red/actions/random*
@@ -318,6 +320,7 @@
 	red/natives/exclude*
 	red/natives/complement?*
 	red/natives/dehex*
+	red/natives/enhex*
 	red/natives/negative?*
 	red/natives/positive?*
 	red/natives/max*
@@ -373,9 +376,47 @@
 	red/natives/compress*
 	red/natives/decompress*
 	red/natives/recycle*
+	red/natives/transcode*
+	red/natives/as-money*
+
+	;-- for view backend
+	red/symbol/resolve
+	red/object/get-word
+	red/fire
+	red/datatype/register
+	red/block/rs-tail
+	red/stack/push*
+	red/word/push*
+	red/block/rs-clear
+	red/object/rs-find
+	red/block/make-at
+	red/handle/make-in
+	red/unicode/to-utf8
+	red/string/to-hex
+	red/integer/make-in
+	red/logic/make-in
+	red/string/make-at
+	red/unicode/load-utf8-buffer
+	red/ownership/bind
+	red/string/load
+	red/set-type
+	red/unicode/load-utf8-stream
+	red/word/make-at
+	red/word/push-in
+	red/block/select-word
+	red/block/find
+	red/_series/remove
+	red/image/init-image
+	red/OS-image/lock-bitmap
+	red/OS-image/get-data
+	red/OS-image/unlock-bitmap
+	red/ownership/check
+	red/report
+	red/_context/set
+	red/string/load-at
 ][
-	red/object/path-parent	cell!
-	red/object/field-parent	cell!
+	red/root				red-block!
+	red/stk-bottom			int-ptr!
 	red/stack/arguments		cell!
 	red/stack/top			cell!
 	red/stack/bottom		cell!
@@ -385,4 +426,5 @@
 	red/false-value			cell!
 	red/boot?				logic!
 	red/collector/active?	logic!
+	red/natives/buffer-blk	red-block!
 ]

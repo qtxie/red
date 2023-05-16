@@ -13,27 +13,34 @@ Red/System [
 ;; ===== Extra slots usage in Window structs =====
 ;;
 ;;		-60  :							<- TOP
+;;		-36  : Direct2D render target
+;;		-32	 : base: mouse capture count
+;;			 : window: default font
 ;;		-28  : Cursor handle
-;;		-24  : Direct2D target interface
-;;			   base-layered: caret's owner handle
-;;		-20  : evolved-base-layered: child handle, window: previous focused handle
+;;		-24  : base-layered: caret's owner handle, Window: modal loop type for moving and resizing
+;;		-20  : evolved-base-layered: child handle
 ;;		-16  : base-layered: owner handle, window: border width and height
-;;		-12  : base-layered: clipped? flag, caret? flag, d2d? flag, ime? flag
+;;		-12  : clipped? flag, caret? flag, d2d? flag, ime? flag
 ;;		 -8  : base: pos X/Y in pixel
 ;;			   window: pos X/Y in pixel
 ;;		 -4  : camera: camera!
-;;			   console: terminal!
-;;			   base: bitmap cache
-;;			   draw: old-dc
 ;;			   group-box: frame hWnd
+;;			   window destroy flag
 ;;		  0  : |
 ;;		  4  : |__ face!
 ;;		  8  : |
 ;;		  12 : |
 ;;		  16 : FACE_OBJ_FLAGS        <- BOTTOM
 
+#define IS_D2D_FACE(sym) [
+	any [sym = base sym = rich-text sym = window sym = panel]
+]
+
+#define FACE_FREED(hwnd) [zero? GetWindowLong hwnd wc-offset]
+
 #include %win32.reds
 #include %direct2d.reds
+#include %matrix2d.reds
 #include %classes.reds
 #include %events.reds
 
@@ -46,8 +53,12 @@ Red/System [
 #include %tab-panel.reds
 #include %text-list.reds
 #include %button.reds
-#include %draw-d2d.reds
-#include %draw.reds
+#include %calendar.reds
+#either draw-engine = 'GDI+ [
+	#include %draw-gdi.reds
+][
+	#include %draw.reds
+]
 #include %comdlgs.reds
 
 exit-loop:		0
@@ -57,6 +68,7 @@ hScreen:		as handle! 0
 hInstance:		as handle! 0
 default-font:	as handle! 0
 hover-saved:	as handle! 0							;-- last window under mouse cursor
+prev-captured:	as handle! 0
 version-info: 	declare OSVERSIONINFO
 current-msg: 	as tagMSG 0
 wc-extra:		80										;-- reserve 64 bytes for win32 internal usage (arbitrary)
@@ -68,8 +80,10 @@ win-state:		0
 hIMCtx:			as handle! 0
 ime-open?:		no
 ime-font:		as tagLOGFONT allocate 92
+base-down-hwnd: as handle! 0
 
 dpi-factor:		100
+inital-dpi:		96
 log-pixels-x:	0
 log-pixels-y:	0
 screen-size-x:	0
@@ -110,6 +124,7 @@ get-face-obj: func [
 	/local
 		face [red-object!]
 ][
+	if null? hWnd [return null]
 	face: declare red-object!
 	face/header: GetWindowLong hWnd wc-offset
 	face/ctx:	 as node! GetWindowLong hWnd wc-offset + 4
@@ -176,14 +191,13 @@ get-widget-handle: func [
 		hWnd: GetParent hWnd							;-- for composed widgets (try 1)
 		if no-face? hWnd [
 			hWnd: WindowFromPoint msg/x msg/y			;-- try 2
+			id: 0
+			GetWindowThreadProcessId hWnd :id
+			if any [
+				id <> process-id
+				hWnd = GetConsoleWindow					;-- see #1290
+			] [ return as handle! -1 ]
 			if no-face? hWnd [
-				id: 0
-				GetWindowThreadProcessId hWnd :id
-				if any [
-					id <> process-id
-					hWnd = GetConsoleWindow				;-- see #1290
-				] [ return as handle! -1 ]
-
 				p: as int-ptr! GetWindowLong hWnd 0		;-- try 3
 				either null? p [
 					hWnd: as handle! -1					;-- not found
@@ -277,46 +291,62 @@ get-gesture-info: func [
 get-text-size: func [
 	face 	[red-object!]
 	str		[red-string!]
-	hFont	[handle!]
 	pair	[red-pair!]
-	return: [tagSIZE]
 	/local
-		saved 	[handle!]
 		values 	[red-value!]
+		font	[red-object!]
+		state	[red-block!]
+		type	[red-word!]
+		sym		[integer!]
+		hFont	[handle!]
 		hwnd 	[handle!]
 		dc 		[handle!]
-		size 	[tagSIZE]
+		c-str	[c-string!]
+		size 	[tagSIZE value]
 		rc 		[RECT_STRUCT value]
 		bbox 	[RECT_STRUCT_FLOAT32 value]
 ][
-	size: declare tagSIZE
-
 	;-- possibly null if hwnd wasn't stored in `state` yet (upon face creation)
 	;  in this case hwnd=0 is of the screen, while `para` can still be applied from the face/ctx
 	hwnd: face-handle? face
 	if null? hwnd [
 		hwnd: GetDesktopWindow
 	]
+
 	values: object/get-values face
 	dc: GetWindowDC hwnd
 
-	if null? hFont [hFont: default-font]
-	saved: SelectObject hwnd hFont
-	GetClientRect hWnd rc
-	render-text values hwnd dc rc str :bbox
+	type: as red-word! values + FACE_OBJ_TYPE
+	sym: symbol/resolve type/symbol
 
-	SelectObject hwnd saved
-	ReleaseDC hwnd dc
-	
-	size/width:  as integer! ceil as float! bbox/width
-	size/height: as integer! ceil as float! bbox/height
+	either IS_D2D_FACE(sym) [
+		GetClientRect hWnd :rc
+		render-text values hwnd dc :rc str :bbox
+		if pair <> null [
+			pair/x: as integer! bbox/width * (as float32! 98.0) / (as float32! dpi-factor)
+			pair/y: as integer! bbox/height * (as float32! 100.0) / (as float32! dpi-factor)
+		]
+	][	;-- native controls use GDI to draw the text, so we use GDI function to measure the text size
+		font: as red-object! values + FACE_OBJ_FONT
+		hFont: null
+		if TYPE_OF(font) = TYPE_OBJECT [
+			state: as red-block! values + FONT_OBJ_STATE
+			if TYPE_OF(state) = TYPE_BLOCK [hFont: get-font-handle font 0]
+			if null? hFont [hFont: make-font face font]
+		]
+		if null? hFont [hFont: default-font]
 
-	if pair <> null [
-		pair/x: as integer! ceil as float! bbox/width
-		pair/y: as integer! ceil as float! bbox/height
+		SelectObject dc hFont
+		c-str: unicode/to-utf16 str
+		GetTextExtentPoint32 dc c-str wcslen c-str :size
+
+		if pair <> null [
+			pair/x: size/width + 1 * 100 / dpi-factor	;-- +1 to compensate the precision loss
+			pair/y: size/height * 100 / dpi-factor
+		]
 	]
 
-	size
+	ReleaseDC hwnd dc
 ]
 
 update-scrollbars: func [
@@ -448,6 +478,29 @@ set-area-options: func [
 	]
 ]
 
+get-scrollbar-ratio: func [
+	int		 [red-integer!]
+	return:  [float!]
+	/local
+		fl	  [red-float!]
+		ratio [float!]
+][
+	switch TYPE_OF(int) [
+		TYPE_INTEGER [
+			ratio: as-float int/value
+		]
+		TYPE_FLOAT
+		TYPE_PERCENT [
+			fl: as red-float! int
+			ratio: fl/value
+		]
+		default [return -1.0]
+	]
+	if ratio < 0.0 [ratio: 0.0]
+	if ratio > 1.0 [ratio: 1.0]
+	ratio
+]
+
 update-scroller: func [
 	scroller [red-object!]
 	flag	 [integer!]
@@ -455,6 +508,7 @@ update-scroller: func [
 		parent		[red-object!]
 		vertical?	[red-logic!]
 		int			[red-integer!]
+		bool		[red-logic!]
 		values		[red-value!]
 		hWnd		[handle!]
 		nTrackPos	[integer!]
@@ -471,15 +525,17 @@ update-scroller: func [
 	int: as red-integer! block/rs-head as red-block! (object/get-values parent) + FACE_OBJ_STATE
 	hWnd: as handle! int/value
 
-	int: as red-integer! values + flag
-
 	if flag = SCROLLER_OBJ_VISIBLE? [
-		ShowScrollBar hWnd as-integer vertical?/value as logic! int/value
+		bool: as red-logic! values + SCROLLER_OBJ_VISIBLE?
+		ShowScrollBar hWnd as-integer vertical?/value bool/value
 		exit
 	]
 
 	fMask: switch flag [
-		SCROLLER_OBJ_POS [nPos: int/value SIF_POS]
+		SCROLLER_OBJ_POS [
+			int: as red-integer! values + SCROLLER_OBJ_POS
+			nPos: int/value SIF_POS
+		]
 		SCROLLER_OBJ_PAGE
 		SCROLLER_OBJ_MAX [
 			int: as red-integer! values + SCROLLER_OBJ_PAGE
@@ -564,8 +620,35 @@ to-bgr: func [
 	]
 ]
 
+free-dc: func [
+	handle	[int-ptr!]
+	/local
+		dc	[integer!]
+][
+	#either draw-engine = 'GDI+ [
+	if zero? (WS_EX_LAYERED and GetWindowLong handle GWL_EXSTYLE) [
+		dc: GetWindowLong handle wc-offset - 4
+		if dc <> 0 [DeleteDC as handle! dc]			;-- delete cached dc
+	]
+	dc: GetWindowLong handle wc-offset - 36
+	if dc <> 0 [
+		either (GetWindowLong handle wc-offset - 12) and BASE_FACE_IME <> 0 [
+			d2d-release-target as render-target! dc
+		][											;-- caret
+			DestroyCaret
+		]
+	]][
+	;-- Direct2D backend
+	dc: GetWindowLong handle wc-offset - 36
+	if dc <> 0 [d2d-release-target as render-target! dc]
+	if (GetWindowLong handle wc-offset - 12) and BASE_FACE_IME <> 0 [
+		DestroyCaret
+	]]
+]
+
 free-faces: func [
-	face	[red-object!]
+	face		[red-object!]
+	top-level?	[logic!]
 	/local
 		values	[red-value!]
 		type	[red-word!]
@@ -579,6 +662,7 @@ free-faces: func [
 		flags	[integer!]
 		cam		[camera!]
 		handle	[handle!]
+		hFont	[handle!]
 ][
 	handle: face-handle? face
 	#if debug? = yes [if null? handle [probe "VIEW: WARNING: free null window handle!"]]
@@ -589,7 +673,9 @@ free-faces: func [
 	type: as red-word! values + FACE_OBJ_TYPE
 	sym: symbol/resolve type/symbol
 
-	if sym = window [ShowWindow handle SW_HIDE]			;-- hide it first for better User experience
+	if sym = window [	;-- hide it first for better User experience
+		SetWindowPos handle null 0 0 0 0 SWP_HIDEWINDOW or SWP_NOMOVE or SWP_NOSIZE or SWP_NOZORDER
+	]
 
 	rate: values + FACE_OBJ_RATE
 	if TYPE_OF(rate) <> TYPE_NONE [change-rate handle none-value]
@@ -605,56 +691,44 @@ free-faces: func [
 		obj: as red-object! block/rs-head pane
 		tail: as red-object! block/rs-tail pane
 		while [obj < tail][
-			free-faces obj
+			free-faces obj no
 			obj: obj + 1
 		]
-	]	
+	]
+
 	case [
 		sym = group-box [
 			;-- destroy the extra frame window
 			DestroyWindow as handle! GetWindowLong handle wc-offset - 4 as-integer handle
 		]
-		sym = camera [
-			cam: as camera! GetWindowLong handle wc-offset - 4
-			unless null? cam [
-				teardown-graph cam
-				free-graph cam
-			]
-		]
-		any [sym = window sym = panel sym = base sym = rich-text][
-			if zero? (WS_EX_LAYERED and GetWindowLong handle GWL_EXSTYLE) [
-				dc: GetWindowLong handle wc-offset - 4
-				if dc <> 0 [DeleteDC as handle! dc]			;-- delete cached dc
-			]
-			dc: GetWindowLong handle wc-offset - 24
-			if dc <> 0 [
-				either (GetWindowLong handle wc-offset - 12) and BASE_FACE_IME <> 0 [
-					d2d-release-target as int-ptr! dc
-				][											;-- caret
-					DestroyCaret
-				]
-			]
+		sym = panel [
+			DestroyWindow handle
 		]
 		true [
 			0
 			;; handle user-provided classes too
 		]
 	]
-	either sym = window [
+	if sym = window [
+		hFont: as handle! GetWindowLong handle wc-offset - 32	;-- default font
+		if hFont <> null [DeleteObject hFont]
+
 		state: values + FACE_OBJ_SELECTED
 		state/header: TYPE_NONE
 		SetWindowLong handle wc-offset - 4 -1
-		PostMessage handle WM_CLOSE 0 0
-	][
-		DestroyWindow handle
 	]
 
+	SetWindowLong handle wc-offset 0
 	state: values + FACE_OBJ_STATE
 	state/header: TYPE_NONE
+
+	if top-level? [PostMessage handle WM_CLOSE 0 0]
 ]
 
 set-defaults: func [
+	hWnd		[handle!]
 	/local
+		hFont	[handle!]
 		hTheme	[handle!]
 		font	[tagLOGFONT]
 		ft		[tagLOGFONT value]
@@ -664,6 +738,12 @@ set-defaults: func [
 		metrics [tagNONCLIENTMETRICS value]
 		theme?	[logic!]
 ][
+	if default-font-name <> null [free as byte-ptr! default-font-name default-font-name: null]
+	if hWnd <> null [
+		hFont: as handle! GetWindowLong hWnd wc-offset - 32
+		if hFont <> null [DeleteObject hFont]
+	]
+
 	theme?: IsThemeActive
 	res: -1
 	either theme? [
@@ -688,17 +768,19 @@ set-defaults: func [
 			len
 			#get system/view/fonts/system
 			UTF-16LE
-		
+
+		font/lfHeight: font/lfHeight * log-pixels-y / inital-dpi	;-- font/lfHeight isn't affected by DPI change, we update it manually
 		integer/make-at 
 			#get system/view/fonts/size
 			0 - (font/lfHeight * 72 / log-pixels-y)
-			
+
 		default-font: CreateFontIndirect font
 
 		if theme? [CloseThemeData hTheme]
 	]
 
 	if null? default-font [default-font: GetStockObject DEFAULT_GUI_FONT]
+	if hWnd <> null [SetWindowLong hWnd wc-offset - 32 as-integer default-font]
 ]
 
 enable-visual-styles: func [
@@ -744,6 +826,7 @@ get-dpi: func [
 		log-pixels-x: GetDeviceCaps hScreen 88			;-- LOGPIXELSX
 		log-pixels-y: GetDeviceCaps hScreen 90			;-- LOGPIXELSY
 	]
+	inital-dpi: log-pixels-x
 	dpi-factor: log-pixels-x * 100 / 96
 ]
 
@@ -825,7 +908,7 @@ init: func [
 
 	get-dpi
 	unless winxp? [DX-init]
-	set-defaults
+	set-defaults null
 
 	register-classes hInstance
 
@@ -844,6 +927,7 @@ init: func [
 
 cleanup: does [
 	unregister-classes hInstance
+	DX-release-dev
 	DX-cleanup
 ]
 
@@ -903,6 +987,8 @@ init-window: func [										;-- post-creation settings
 	SetWindowLong handle wc-offset - 4 0
 	SetWindowLong handle wc-offset - 16 0
 	SetWindowLong handle wc-offset - 24 0
+	SetWindowLong handle wc-offset - 32 0
+	SetWindowLong handle wc-offset - 36 0
 ]
 
 get-selected-handle: func [
@@ -936,15 +1022,27 @@ set-logic-state: func [
 	state  [red-logic!]
 	check? [logic!]
 	/local
-		value [integer!]
-][
-	value: either TYPE_OF(state) <> TYPE_LOGIC [
-		state/header: TYPE_LOGIC
-		state/value: check?
-		either check? [BST_INDETERMINATE][false]
-	][
-		as-integer state/value							;-- returns 0/1, matches the messages
+		values [red-block!]
+		flags  [integer!]
+		type   [integer!]
+		value  [integer!]
+		tri?   [logic!]
+][	
+	if check? [
+		values: as red-block! object/get-values get-face-obj hWnd
+		flags: get-flags as red-block! values + FACE_OBJ_FLAGS
+		tri?: flags and FACET_FLAGS_TRISTATE <> 0
 	]
+	
+	type: TYPE_OF(state)
+	value: either all [check? tri? type = TYPE_NONE][BST_INDETERMINATE][
+		as integer! switch type [
+			TYPE_NONE  [false]
+			TYPE_LOGIC [state/value]					;-- returns 0/1, matches the state flag
+			default	   [true]
+		]
+	]
+
 	SendMessage hWnd BM_SETCHECK value 0
 ]
 
@@ -983,6 +1081,7 @@ get-flags: func [
 			sym = no-buttons [flags: flags or FACET_FLAGS_NO_BTNS]
 			sym = modal		 [flags: flags or FACET_FLAGS_MODAL]
 			sym = popup		 [flags: flags or FACET_FLAGS_POPUP]
+			sym = tri-state  [flags: flags or FACET_FLAGS_TRISTATE]
 			sym = scrollable [flags: flags or FACET_FLAGS_SCROLLABLE]
 			sym = password	 [flags: flags or FACET_FLAGS_PASSWORD]
 			true			 [fire [TO_ERROR(script invalid-arg) word]]
@@ -993,25 +1092,19 @@ get-flags: func [
 ]
 
 get-logic-state: func [
-	msg		[tagMSG]
-	return: [logic!]									;-- TRUE if state has changed
+	msg [tagMSG]
 	/local
 		bool  [red-logic!]
 		state [integer!]
-		otype [integer!]
-		obool [logic!]
 ][
 	bool: as red-logic! get-facet msg FACE_OBJ_DATA
 	state: as-integer SendMessage msg/hWnd BM_GETCHECK 0 0
 
 	either state = BST_INDETERMINATE [
-		otype: TYPE_OF(bool)
-		bool/header: TYPE_NONE							;-- NONE indicates undeterminate
-		bool/header <> otype
+		bool/header: TYPE_NONE
 	][
-		obool: bool/value
+		bool/header: TYPE_LOGIC
 		bool/value: state = BST_CHECKED
-		bool/value <> obool
 	]
 ]
 
@@ -1222,38 +1315,48 @@ parse-common-opts: func [
 		img		[red-image!]
 		len		[integer!]
 		sym		[integer!]
+		bitmap	[integer!]
+		lock	[com-ptr! value]
 ][
 	SetWindowLong hWnd wc-offset - 28 0
 	if TYPE_OF(options) = TYPE_BLOCK [
 		word: as red-word! block/rs-head options
 		len: block/rs-length? options
 		if len % 2 <> 0 [exit]
+		
 		while [len > 0][
-			sym: symbol/resolve word/symbol
-			case [
-				sym = _cursor [
-					w: word + 1
-					either TYPE_OF(w) = TYPE_IMAGE [
-						img: as red-image! w
-						GdipCreateHICONFromBitmap as-integer img/node :sym
-					][
-						sym: symbol/resolve w/symbol
-						sym: case [
-							sym = _I-beam		[IDC_IBEAM]
-							sym = _hand			[32649]			;-- IDC_HAND
-							sym = _cross		[32515]
-							sym = _resize-ns	[32645]
-							any [
-								sym = _resize-ew
-								sym = _resize-we
-							]					[32644]
-							true				[IDC_ARROW]
+			if TYPE_OF(word) = TYPE_SET_WORD [
+				sym: symbol/resolve word/symbol
+				case [
+					sym = _cursor [
+						w: word + 1
+						either TYPE_OF(w) = TYPE_IMAGE [
+							img: as red-image! w
+							bitmap: OS-image/to-gpbitmap img :lock
+							GdipCreateHICONFromBitmap bitmap :sym
+							OS-image/release-gpbitmap bitmap :lock
+							SetWindowLong hWnd wc-offset - 28 sym
+						][
+							if TYPE_OF(w) = TYPE_WORD [
+								sym: symbol/resolve w/symbol
+								sym: case [
+									sym = _I-beam		[IDC_IBEAM]
+									sym = _hand			[32649]			;-- IDC_HAND
+									sym = _cross		[32515]
+									sym = _resize-ns	[32645]
+									any [
+										sym = _resize-ew
+										sym = _resize-we
+									]					[32644]
+									true				[IDC_ARROW]
+								]
+								sym: as-integer LoadCursor null sym
+								SetWindowLong hWnd wc-offset - 28 sym
+							]
 						]
-						sym: as-integer LoadCursor null sym
 					]
-					SetWindowLong hWnd wc-offset - 28 sym
+					true [0]
 				]
-				true [0]
 			]
 			word: word + 2
 			len: len - 2
@@ -1261,7 +1364,10 @@ parse-common-opts: func [
 	]
 ]
 
-OS-redraw: func [hWnd [integer!]][InvalidateRect as handle! hWnd null 0]
+OS-redraw: func [hWnd [integer!]][
+	InvalidateRect as handle! hWnd null 0
+	UpdateWindow as handle! hWnd
+]
 
 OS-refresh-window: func [hWnd [integer!]][UpdateWindow as handle! hWnd]
 
@@ -1270,6 +1376,8 @@ OS-show-window: func [
 	/local
 		face	[red-object!]
 ][
+	if prev-captured <> null [ReleaseCapture]
+	check-base-capture
 	ShowWindow as handle! hWnd SW_SHOWDEFAULT
 	UpdateWindow as handle! hWnd
 	unless win8+? [
@@ -1303,12 +1411,12 @@ OS-make-view: func [
 		ws-flags  [integer!]
 		bits	  [integer!]
 		sym		  [integer!]
+		state	  [integer!]
 		class	  [c-string!]
 		caption   [c-string!]
 		value	  [integer!]
 		handle	  [handle!]
 		hWnd	  [handle!]
-		focused   [handle!]
 		p		  [ext-class!]
 		id		  [integer!]
 		vertical? [logic!]
@@ -1319,6 +1427,7 @@ OS-make-view: func [
 		off-y	  [integer!]
 		rc		  [RECT_STRUCT value]
 		si		  [tagSCROLLINFO]
+		ratio	  [float!]
 ][
 	stack/mark-native words/_body
 
@@ -1335,7 +1444,7 @@ OS-make-view: func [
 	selected: as red-integer!	values + FACE_OBJ_SELECTED
 	para:	  as red-object!	values + FACE_OBJ_PARA
 	rate:	  					values + FACE_OBJ_RATE
-	options:   as red-block!	values + FACE_OBJ_OPTIONS
+	options:  as red-block!		values + FACE_OBJ_OPTIONS
 	
 	bits: 	  get-flags as red-block! values + FACE_OBJ_FLAGS
 
@@ -1361,11 +1470,17 @@ OS-make-view: func [
 	case [
 		sym = button [
 			class: #u16 "RedButton"
+			flags: flags or 00002000h		;-- BS_MULTILINE
 			;flags: flags or BS_PUSHBUTTON
+		]
+		sym = toggle [
+			class: #u16 "RedButton"
+			flags: flags or BS_AUTOCHECKBOX or BS_PUSHLIKE
 		]
 		sym = check [
 			class: #u16 "RedButton"
-			flags: flags or WS_TABSTOP or BS_AUTOCHECKBOX
+			state: either bits and FACET_FLAGS_TRISTATE <> 0 [BS_AUTO3STATE][BS_AUTOCHECKBOX]
+			flags: flags or WS_TABSTOP or state
 		]
 		sym = radio [
 			class: #u16 "RedButton"
@@ -1384,9 +1499,9 @@ OS-make-view: func [
 		]
 		sym = field [
 			class: #u16 "RedField"
-			flags: flags or WS_TABSTOP
+			flags: flags or WS_TABSTOP or ES_AUTOHSCROLL
 			if bits and FACET_FLAGS_PASSWORD <> 0 [flags: flags or ES_PASSWORD]
-			unless para? [flags: flags or ES_LEFT or ES_AUTOHSCROLL or ES_NOHIDESEL]
+			unless para? [flags: flags or ES_LEFT or ES_NOHIDESEL]
 			if bits and FACET_FLAGS_NO_BORDER = 0 [ws-flags: ws-flags or WS_EX_CLIENTEDGE]
 		]
 		sym = area [
@@ -1406,7 +1521,7 @@ OS-make-view: func [
 		]
 		sym = drop-down [
 			class: #u16 "RedCombo"
-			flags: flags or CBS_DROPDOWN or CBS_HASSTRINGS ;or WS_OVERLAPPED
+			flags: flags or CBS_DROPDOWN or CBS_HASSTRINGS or CBS_AUTOHSCROLL ;or WS_OVERLAPPED
 		]
 		sym = drop-list [
 			class: #u16 "RedCombo"
@@ -1444,6 +1559,10 @@ OS-make-view: func [
 		sym = camera [
 			class: #u16 "RedCamera"
 		]
+		sym = calendar [
+			class: #u16 "RedCalendar"
+			flags: flags or MCS_NOSELCHANGEONNAV or MCS_NOTODAY or MCS_SHORTDAYSOFWEEK
+		]
 		sym = window [
 			class: #u16 "RedWindow"
 			flags: WS_CAPTION or WS_CLIPCHILDREN
@@ -1474,10 +1593,8 @@ OS-make-view: func [
 			AdjustWindowRectEx rc flags menu-bar? menu window ws-flags
 			rc/right: rc/right - rc/left
 			rc/bottom: rc/bottom - rc/top
-			focused: null 
 			if bits and FACET_FLAGS_MODAL <> 0 [
-				parent: as-integer find-last-window
-				if parent <> 0 [focused: get-selected-handle as handle! parent]
+				parent: as-integer GetActiveWindow
 			]
 		]
 		true [											;-- search in user-defined classes
@@ -1543,11 +1660,17 @@ OS-make-view: func [
 
 	;-- extra initialization
 	case [
-		sym = button	[init-button handle values]
 		sym = camera	[init-camera handle data selected false]
 		sym = text-list [init-text-list handle data selected]
 		sym = base		[init-base-face handle parent values alpha?]
 		sym = tab-panel [set-tabs handle values]
+		any [
+			sym = button
+			sym = toggle
+		][
+			init-button handle values
+			if sym = toggle [set-logic-state handle as red-logic! data no]
+		]
 		sym = group-box [
 			flags: flags or WS_GROUP or BS_GROUPBOX
 			hWnd: CreateWindowEx
@@ -1569,38 +1692,52 @@ OS-make-view: func [
 		]
 		panel? [
 			adjust-parent handle as handle! parent offset/x offset/y
-			SetWindowLong handle wc-offset - 24 0
+			SetWindowLong handle wc-offset - 4 0
+			SetWindowLong handle wc-offset - 36 0
 		]
-		sym = slider [
+		any [
+			sym = slider
+			sym = progress
+		][
 			vertical?: size/y > size/x
 			value: either vertical? [size/y][size/x]
-			SendMessage handle TBM_SETRANGE 1 value << 16
-			value: get-position-value as red-float! data value
-			if vertical? [value: size/y - value]
-			SendMessage handle TBM_SETPOS 1 value
+			off-x: get-position-value as red-float! data value
+			if vertical? [off-x: size/y - off-x]
+			either sym = slider [
+				SendMessage handle TBM_SETRANGE 1 value << 16
+				SendMessage handle TBM_SETPOS 1 off-x
+			][
+				SendMessage handle PBM_SETRANGE 0 value << 16
+				SendMessage handle PBM_SETPOS off-x 0
+			]
 		]
 		sym = scroller [
+			ratio: get-scrollbar-ratio selected
+			if ratio < 0.0 [
+				ratio: 0.1						;-- default to 10%
+				fl: as red-float! selected
+				fl/header: TYPE_PERCENT
+				fl/value: ratio
+			]
 			si: declare tagSCROLLINFO
 			si/cbSize: size? tagSCROLLINFO
 			si/fMask: SIF_PAGE or SIF_POS or SIF_RANGE
 			si/nMin: 0
 			si/nMax: 100
-			si/nPage: 10
+			si/nPage: float/round-to-int ratio * 100.0
 			si/nPos: 0
 			SetScrollInfo handle SB_CTL si true
 			fl: as red-float! data
 			fl/header: TYPE_FLOAT
 			fl/value:  0.0
-			fl: as red-float! selected
-			fl/header: TYPE_PERCENT
-			fl/value: 0.10
 		]
-		sym = progress [
-			value: get-position-value as red-float! data 100
-			SendMessage handle PBM_SETPOS value 0
+		any [
+			sym = toggle
+			sym = check
+			sym = radio
+		][
+			set-logic-state handle as red-logic! data sym = check
 		]
-		sym = check [set-logic-state handle as red-logic! data no]
-		sym = radio [set-logic-state handle as red-logic! data no]
 		any [
 			sym = drop-down
 			sym = drop-list
@@ -1611,7 +1748,7 @@ OS-make-view: func [
 			set-hint-text handle options
 			if TYPE_OF(selected) <> TYPE_NONE [change-selection handle selected values]
 		]
-		sym = area	 [
+		sym = area [
 			set-area-options handle options
 			change-text handle values sym
 			if TYPE_OF(selected) <> TYPE_NONE [change-selection handle selected values]
@@ -1620,16 +1757,17 @@ OS-make-view: func [
 			init-base-face handle parent values alpha?
 			SetWindowLong handle wc-offset - 12 BASE_FACE_D2D or BASE_FACE_IME
 		]
+		sym = calendar [
+			init-calendar handle as red-value! data
+			update-calendar-color handle as red-value! values + FACE_OBJ_COLOR
+		]
 		sym = window [
 			init-window handle
-			SetWindowLong handle wc-offset - 20 as-integer focused
 			#if sub-system = 'gui [
 				with clipboard [
 					if null? main-hWnd [main-hWnd: handle]
 				]
 			]
-			offset/x: off-x - rc/left * 100 / dpi-factor
-			offset/y: off-y - rc/top * 100 / dpi-factor
 			SetWindowLong
 				handle
 				wc-offset - 8
@@ -1655,7 +1793,6 @@ change-size: func [
 		max		[integer!]
 		msg		[integer!]
 		layer?	[logic!]
-		values	[red-value!]
 		pos		[red-pair!]
 		sz-x	[integer!]
 		sz-y	[integer!]
@@ -1691,9 +1828,12 @@ change-size: func [
 	]
 	case [
 		any [type = slider type = progress][
+			sz-x: size/x
+			sz-y: size/y
 			max: either sz-x > sz-y [sz-x][sz-y]
 			msg: either type = slider [TBM_SETRANGEMAX][max: max << 16 PBM_SETRANGE]
 			SendMessage hWnd msg 0 max					;-- do not force a redraw
+			change-data hWnd vals
 		]
 		type = scroller  [
 			;; TBD
@@ -1701,6 +1841,7 @@ change-size: func [
 		]
 		type = area		 [update-scrollbars hWnd null]
 		type = tab-panel [update-tab-contents hWnd FACE_OBJ_SIZE]
+		type = text		 [InvalidateRect hWnd null 1]	;-- issue #4388
 		true	  		 [0]
 	]
 ]
@@ -1854,6 +1995,8 @@ adjust-selection: func [
 		p-bgn: head + (bgn/1 << unit-b)
 		p-end: head + (end/1 << unit-b)
 		quote: 0  nl: 0
+		if p-bgn < head [p-bgn: head]
+		if p-end > tail [p-end: tail]
 		string/sniff-chars head  p-bgn unit :quote :nl
 		bgn/1: bgn/1 + nl
 		string/sniff-chars p-bgn p-end unit :quote :nl
@@ -1991,7 +2134,7 @@ change-image: func [
 	type	[integer!]
 ][
 	if type = base [update-base hWnd null null values]
-	if type = button [init-button hWnd values]
+	if any [type = button type = toggle][init-button hWnd values]
 ]
 
 change-selection: func [
@@ -2000,7 +2143,6 @@ change-selection: func [
 	values [red-value!]
 	/local
 		type [red-word!]
-		f	 [red-float!]
 		flt	 [float!]
 		si	 [tagSCROLLINFO value]
 		sym	 [integer!]
@@ -2009,14 +2151,12 @@ change-selection: func [
 	sym: symbol/resolve type/symbol
 	case [
 		sym = scroller [
-			f: as red-float! int
-			flt: f/value
-			if flt < 0.0 [flt: 0.0]
-			if flt > 1.0 [flt: 1.0]
+			flt: get-scrollbar-ratio int
+			if flt < 0.0 [exit]
 			si/cbSize: size? tagSCROLLINFO
 			si/fMask: SIF_PAGE or SIF_RANGE
 			GetScrollInfo hWnd SB_CTL :si
-			si/nPage: as-integer flt * as-float si/nMax - si/nMin
+			si/nPage: float/round-to-int flt * as-float si/nMax - si/nMin
 			SetScrollInfo hWnd SB_CTL :si true
 		]
 		sym = camera [
@@ -2073,7 +2213,7 @@ change-data: func [
 	
 	case [
 		all [
-			type = slider
+			any [type = slider type = progress]
 			any [TYPE_OF(data) = TYPE_PERCENT TYPE_OF(data) = TYPE_FLOAT]
 		][
 			f: as red-float! data
@@ -2081,7 +2221,11 @@ change-data: func [
 			flt: f/value
 			range: either size/y > size/x [flt: 1.0 - flt size/y][size/x]
 			flt: flt * as-float range
-			SendMessage hWnd TBM_SETPOS 1 as-integer flt
+			either type = slider [
+				SendMessage hWnd TBM_SETPOS 1 as-integer flt
+			][
+				SendMessage hWnd PBM_SETPOS as-integer flt 0
+			]
 		]
 		all [type = scroller TYPE_OF(data) = TYPE_FLOAT][
 			f: as red-float! data
@@ -2095,15 +2239,11 @@ change-data: func [
 			si/nPos: si/nMin + as-integer (flt * as-float range)
 			SetScrollInfo hWnd SB_CTL :si true
 		]
-		all [
-			type = progress
-			any [TYPE_OF(data) = TYPE_PERCENT TYPE_OF(data) = TYPE_FLOAT]
+		any [
+			type = check
+			type = toggle
 		][
-			f: as red-float! data
-			SendMessage hWnd PBM_SETPOS as-integer f/value * 100.0 0
-		]
-		type = check [
-			set-logic-state hWnd as red-logic! data yes
+			set-logic-state hWnd as red-logic! data type = check
 		]
 		type = radio [
 			set-logic-state hWnd as red-logic! data no
@@ -2114,6 +2254,9 @@ change-data: func [
 		]
 		type = tab-panel [
 			set-tabs hWnd get-face-values hWnd
+		]
+		all [type = calendar TYPE_OF(data) = TYPE_DATE][
+			change-calendar hWnd as red-date! data
 		]
 		type = text-list [
 			if TYPE_OF(data) = TYPE_BLOCK [
@@ -2263,6 +2406,7 @@ update-z-order: func [
 		nb	 [integer!]
 		sub? [logic!]
 ][
+	if TYPE_OF(pane) <> TYPE_BLOCK [exit]
 	s: GET_BUFFER(pane)
 	
 	face: as red-object! s/offset + pane/head
@@ -2337,6 +2481,7 @@ OS-update-view: func [
 		int		[red-integer!]
 		int2	[red-integer!]
 		bool	[red-logic!]
+		color	[red-tuple!]
 		s		[series!]
 		hWnd	[handle!]
 		flags	[integer!]
@@ -2397,15 +2542,19 @@ OS-update-view: func [
 		]
 	]
 	if flags and FACET_FLAG_DRAW  <> 0 [
-		if any [type = base type = panel type = window type = rich-text][
+		if IS_D2D_FACE(type) [
 			update-base hWnd null null values
 		]
 	]
 	if flags and FACET_FLAG_COLOR <> 0 [
-		either type = base [
-			update-base hWnd GetParent hWnd null values
-		][
-			InvalidateRect hWnd null 1
+		case [
+			IS_D2D_FACE(type) [
+				update-base hWnd null null values
+			]
+			type = calendar [
+				update-calendar-color hWnd as red-value! values + FACE_OBJ_COLOR
+			]
+			true [InvalidateRect hWnd null 1]
 		]
 	]
 	if flags and FACET_FLAG_PANE <> 0 [
@@ -2420,10 +2569,18 @@ OS-update-view: func [
 	]
 	if flags and FACET_FLAG_FONT <> 0 [
 		set-font hWnd face values
-		InvalidateRect hWnd null 1
+		either IS_D2D_FACE(type) [
+			update-base hWnd null null values
+		][
+			InvalidateRect hWnd null 1
+		]
 	]
 	if flags and FACET_FLAG_PARA <> 0 [
-		InvalidateRect hWnd null 1
+		either IS_D2D_FACE(type) [
+			update-base hWnd null null values
+		][
+			InvalidateRect hWnd null 1
+		]
 	]
 	if flags and FACET_FLAG_MENU <> 0 [
 		menu: as red-block! values + FACE_OBJ_MENU
@@ -2443,11 +2600,11 @@ OS-destroy-view: func [
 	face   [red-object!]
 	empty? [logic!]
 ][
-	free-faces face
-	either empty? [
+	free-faces face yes
+	if empty? [
 		exit-loop: exit-loop + 1
 		PostQuitMessage 0
-	][loop 3 [do-events yes]]
+	]
 ]
 
 OS-update-facet: func [
@@ -2479,7 +2636,7 @@ OS-update-facet: func [
 					change-faces-parent pane null new index part
 				]
 				any [
-					sym = words/_insert/symbol
+					sym = words/_inserted/symbol
 					sym = words/_poke/symbol			;@@ unbind old value
 					sym = words/_put/symbol				;@@ unbind old value
 					sym = words/_moved/symbol
@@ -2532,7 +2689,6 @@ OS-to-image: func [
 		width	[integer!]
 		height	[integer!]
 		bmp		[handle!]
-		bitmap	[integer!]
 		img		[red-image!]
 		word	[red-word!]
 		size	[red-pair!]
@@ -2584,14 +2740,9 @@ OS-to-image: func [
 		]
 	]
 
-	bitmap: 0
-	GdipCreateBitmapFromHBITMAP bmp 0 :bitmap
+	img: OS-image/from-HBITMAP as integer! bmp 0
 
-	either zero? bitmap [img: as red-image! none-value][
-		img: image/init-image as red-image! stack/push* as int-ptr! bitmap
-	]
-
-    if screen? [DeleteDC mdc]				;-- we delete it in Draw when print window
+    DeleteDC mdc
     DeleteObject bmp
     unless screen? [ReleaseDC hWnd dc]
 	img
@@ -2609,6 +2760,7 @@ OS-draw-face: func [
 	cmds	[red-block!]
 ][
 	if TYPE_OF(cmds) = TYPE_BLOCK [
+		assert system/thrown = 0
 		catch RED_THROWN_ERROR [parse-draw ctx cmds yes]
 	]
 	if system/thrown = RED_THROWN_ERROR [system/thrown: 0]

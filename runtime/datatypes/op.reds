@@ -89,7 +89,6 @@ op: context [
 			;type = TYPE_BLOCK
 			type = TYPE_ACTION					;@@ replace with ANY_NATIVE? when available
 			type = TYPE_NATIVE
-			type = TYPE_OP
 			type = TYPE_FUNCTION
 			type = TYPE_ROUTINE
 		][fire [TO_ERROR(script invalid-type) datatype/push TYPE_OF(spec)]]
@@ -102,10 +101,9 @@ op: context [
 			;	blk/node
 			;]
 			TYPE_ACTION
-			TYPE_NATIVE
-			TYPE_OP [
-				if type = TYPE_NATIVE [flag: flag-native-op]
-				native: as red-native! spec				
+			TYPE_NATIVE [
+				flag: flag-native-op
+				native: as red-native! spec
 				unless binary? native/spec [fire [TO_ERROR(script bad-op-spec)]]
 				code: native/code
 				native/spec
@@ -155,11 +153,25 @@ op: context [
 		part	[integer!]
 		indent	[integer!]
 		return: [integer!]
+		/local
+			more [red-value!]
+			fun	 [red-function!]
+			blk	 [red-block!]
+			node [node!]
+			s	 [series!]
+			pre	 [c-string!]
+			body?[logic!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "op/mold"]]
 
-		string/concatenate-literal buffer "make op! ["
+		string/concatenate-literal buffer "make op! "
+		part: part - 9
+		body?: op/header and body-flag <> 0
+		pre: either body? ["func "]["["]
+		string/concatenate-literal buffer pre
+		part: part - length? pre
 		
+		stack/mark-native words/_anon					;-- avoid block/mold corrupting current stack frame
 		part: block/mold								;-- mold spec
 			native/reflect op words/spec
 			buffer
@@ -167,18 +179,28 @@ op: context [
 			all?
 			flat?
 			arg
-			part - 10
+			part
 			indent
+		stack/unwind
 		
-		string/concatenate-literal buffer "]"
-		part - 1
-
+		either body? [										;-- mold body if available
+			node: as node! op/code
+			s: as series! node/value
+			blk: as red-block! s/offset
+			if TYPE_OF(blk) = TYPE_BLOCK [
+				part: block/mold blk buffer no all? flat? arg part indent
+			]
+		][
+			string/concatenate-literal buffer "]"
+			part: part - 1
+		]
+		part
 	]
 
 	compare: func [
-		arg1	[red-op!]							;-- first operand
-		arg2	[red-op!]							;-- second operand
-		op		[integer!]							;-- type of comparison
+		arg1	[red-op!]								;-- first operand
+		arg2	[red-op!]								;-- second operand
+		op		[integer!]								;-- type of comparison
 		return:	[integer!]
 		/local
 			type  [integer!]

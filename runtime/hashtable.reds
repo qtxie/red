@@ -13,12 +13,177 @@ Red/System [
 	}
 ]
 
+#define HASH_TABLE_ERR_OK 0
+#define HASH_TABLE_ERR_REHASH 1
+#define HASH_TABLE_ERR_REBUILT 2
+
+array: context [
+
+	length?: func [
+		node	[node!]
+		return: [integer!]
+		/local
+			s	[series!]
+	][
+		s: as series! node/value
+		as-integer s/tail - s/offset
+	]
+
+	clear: func [
+		node	[node!]
+		/local
+			s	[series!]
+	][
+		s: as series! node/value
+		s/tail: s/offset
+	]
+
+	append-int: func [
+		node	[node!]
+		val		[integer!]
+		/local
+			s	[series!]
+			p	[int-ptr!]
+	][
+		s: as series! node/value
+		p: as int-ptr! alloc-tail-unit s size? integer!
+		p/value: val
+	]
+
+	find-int: func [
+		node	[node!]
+		val		[integer!]
+		return: [integer!]		;-- return offset if found, -1 if not found
+		/local
+			s	[series!]
+			p	[int-ptr!]
+			pp	[int-ptr!]
+			e	[int-ptr!]
+	][
+		s: as series! node/value
+		p: as int-ptr! s/offset
+		e: as int-ptr! s/tail
+		pp: p
+		while [p < e][
+			if p/value = val [
+				return as-integer p - pp
+			]
+			p: p + 1
+		]
+		-1
+	]
+
+	pick-int: func [
+		node		[node!]
+		idx			[integer!]		;-- 1-based index
+		return:		[integer!]
+		/local
+			s		[series!]
+			p		[int-ptr!]
+	][
+		s: as series! node/value
+		p: as int-ptr! s/offset
+		assert p + idx - 1 < as int-ptr! s/tail
+		p/idx
+	]
+
+	append-ptr: func [
+		node	[node!]
+		val		[int-ptr!]
+		/local
+			s	[series!]
+			p	[ptr-ptr!]
+	][
+		s: as series! node/value
+		p: as ptr-ptr! alloc-tail-unit s size? int-ptr!	
+		p/value: val
+	]
+
+	find-ptr: func [
+		node	[node!]
+		val		[int-ptr!]
+		return: [integer!]		;-- return offset if found, -1 if not found
+		/local
+			s	[series!]
+			p	[ptr-ptr!]
+			pp	[ptr-ptr!]
+			e	[ptr-ptr!]
+	][
+		s: as series! node/value
+		p: as ptr-ptr! s/offset
+		e: as ptr-ptr! s/tail
+		pp: p
+		while [p < e][
+			if p/value = val [
+				return as-integer p - pp
+			]
+			p: p + 1
+		]
+		-1
+	]
+
+	pick-ptr: func [
+		node		[node!]
+		idx			[integer!]		;-- 1-based index
+		return:		[node!]
+		/local
+			s		[series!]
+			p		[ptr-ptr!]
+	][
+		s: as series! node/value
+		p: as ptr-ptr! s/offset
+		p: p + idx - 1
+		assert p < as ptr-ptr! s/tail
+		p/value
+	]
+
+	poke-ptr: func [
+		node		[node!]
+		idx			[integer!]		;-- 1-based index
+		val			[int-ptr!]
+		/local
+			s		[series!]
+			p		[ptr-ptr!]
+	][
+		s: as series! node/value
+		p: as ptr-ptr! s/offset
+		p: p + idx - 1
+		assert p < as ptr-ptr! s/tail
+		p/value: val
+	]
+
+	remove-at: func [
+		node	[node!]
+		offset	[integer!]			;-- bytes
+		len		[integer!]			;-- bytes
+		/local
+			s	[series!]
+			p	[byte-ptr!]
+	][
+		s: as series! node/value
+
+		p: (as byte-ptr! s/offset) + offset
+
+		assert p + len <= (as byte-ptr! s/tail)
+
+		move-memory
+			p
+			p + len
+			as-integer (as byte-ptr! s/tail) - (p + len)
+
+		s/tail: as cell! (as byte-ptr! s/tail) - len
+	]
+]
+
 #define MAP_KEY_DELETED		[0]
 
 #define HASH_TABLE_HASH		0
 #define HASH_TABLE_MAP		1
 #define HASH_TABLE_SYMBOL	2
 #define HASH_TABLE_INTEGER	3
+
+#define HASH_SYMBOL_BLOCK	1
+#define HASH_SYMBOL_CONTEXT	2
 
 #define _HT_HASH_UPPER		0.77
 
@@ -56,7 +221,7 @@ hash-string: func [
 ][
 	s: GET_BUFFER(str)
 	unit: GET_UNIT(s)
-	head: either TYPE_OF(str) = TYPE_SYMBOL [0][str/head]
+	head: str/head
 	p: (as byte-ptr! s/offset) + (head << (log-b unit))
 
 	sc: as red-slice! str
@@ -151,10 +316,24 @@ murmur3-x86-32: func [
 	h1
 ]
 
+murmur3-x86-int: func [h1 [integer!] return: [integer!]][
+	h1: h1 >>> 16 xor h1
+	h1: h1 * 85EBCA6Bh
+	h1: h1 >>> 13 xor h1
+	h1: h1 * C2B2AE35h
+	h1: h1 >>> 16 xor h1
+	h1
+]
+
 _hashtable: context [
+	str-buffer: as byte-ptr! 0
+	str-buffer-sz: 256
+	refresh-buffer: as red-hash! 0
+
 	hashtable!: alias struct! [
 		size		[integer!]
 		indexes		[node!]
+		chains		[node!]
 		flags		[node!]
 		keys		[node!]
 		blk			[node!]
@@ -171,15 +350,28 @@ _hashtable: context [
 			h	 [hashtable!]
 			val	 [red-value!]
 			end	 [red-value!]
-			node [node!]
+			p	 [ptr-ptr!]
+			e	 [ptr-ptr!]
+			type	 [integer!]
 	][
 		collector/keep table
 		s: as series! table/value
 		h: as hashtable! s/offset
-		if h/type = HASH_TABLE_HASH [collector/keep h/indexes]
+		type: h/type
+		if type = HASH_TABLE_HASH [
+			collector/keep h/indexes
+			collector/keep h/chains
+			s: as series! h/chains/value
+			p: as ptr-ptr! s/offset
+			e: as ptr-ptr! s/tail
+			while [p < e][
+				if p/value <> null [collector/keep p/value]
+				p: p + 1
+			]
+		]
 		collector/keep h/flags
 		collector/keep h/keys
-		if h/type = HASH_TABLE_INTEGER [collector/keep h/blk]
+		if type > 1 [collector/keep h/blk]
 	]
 
 	sweep: func [
@@ -233,39 +425,55 @@ _hashtable: context [
 		n + 1
 	]
 
+	hash-symbol: func [
+		sym		[red-symbol!]
+		return: [integer!]
+		/local
+			s	[series!]
+			len [integer!]
+	][
+		s: as series! sym/cache/value
+		len: as-integer s/tail - s/offset
+		murmur3-x86-32
+			to-lower as byte-ptr! s/offset len
+			len
+	]
+
 	hash-value: func [
 		key		[red-value!]
 		case?	[logic!]
 		return: [integer!]
-		/local sym [red-string!] s [series!]
+		/local
+			value  [red-value!]
+			sym    [red-string!]
+			sign   [integer!]
+			result [integer!]
+			s      [series!]
 	][
 		switch TYPE_OF(key) [
-			TYPE_SLICE
-			TYPE_SYMBOL
-			TYPE_STRING
-			TYPE_FILE
-			TYPE_URL
-			TYPE_TAG
-			TYPE_EMAIL [
+			TYPE_INTEGER [murmur3-x86-int key/data2]
+			TYPE_ALL_WORD [symbol/resolve key/data2]
+			TYPE_SYMBOL [hash-symbol as red-symbol! key]
+			TYPE_ANY_STRING [
 				hash-string as red-string! key case?
 			]
-			TYPE_CHAR
-			TYPE_INTEGER [key/data2]
+			TYPE_CHAR [murmur3-x86-int key/data2]
 			TYPE_FLOAT
 			TYPE_PAIR
 			TYPE_PERCENT
 			TYPE_TIME [
 				murmur3-x86-32 (as byte-ptr! key) + 8 8
 			]
-			TYPE_WORD
-			TYPE_SET_WORD
-			TYPE_LIT_WORD
-			TYPE_GET_WORD
-			TYPE_REFINEMENT
-			TYPE_ISSUE [
-				s: GET_BUFFER(symbols)
-				sym: as red-string! s/offset + key/data2 - 1
-				hash-string sym case?
+			TYPE_NONE  [-1]
+			TYPE_UNSET [-2]
+			TYPE_MONEY [
+				value: copy-cell key stack/push*
+				sign: money/get-sign as red-money! value
+				value/header: TYPE_MONEY			;-- implicit reset of all header flags
+				money/set-sign as red-money! value sign
+				result: murmur3-x86-32 as byte-ptr! value size? cell!
+				stack/pop 1
+				result
 			]
 			TYPE_BINARY [
 				sym: as red-string! key
@@ -274,20 +482,29 @@ _hashtable: context [
 					(as byte-ptr! s/offset) + sym/head
 					(as-integer s/tail - s/offset) - sym/head
 			]
-			TYPE_DATE
-			TYPE_POINT
-			TYPE_TYPESET [
-				murmur3-x86-32 (as byte-ptr! key) + 4 12
-			]
 			TYPE_TUPLE [
 				murmur3-x86-32 (as byte-ptr! key) + 4 TUPLE_SIZE?(key)
 			]
+			TYPE_DATE
+			TYPE_POINT
+			TYPE_TYPESET
+			TYPE_FUNCTION
+			TYPE_OP [murmur3-x86-32 (as byte-ptr! key) + 4 12]
 			TYPE_OBJECT
+			TYPE_ERROR
+			TYPE_PORT [murmur3-x86-int key/data1]
 			TYPE_DATATYPE
 			TYPE_LOGIC [key/data1]
-			default [								;-- for any-block!: use head and node
+			TYPE_ACTION
+			TYPE_NATIVE [key/data3]
+			TYPE_MAP
+			TYPE_HANDLE
+			TYPE_EVENT [murmur3-x86-int key/data2]
+			TYPE_IMAGE
+			TYPE_ANY_BLOCK [							;-- use head and node
 				murmur3-x86-32 (as byte-ptr! key) + 4 8
 			]
+			default [assert false 0]
 		]
 	]
 
@@ -340,6 +557,10 @@ _hashtable: context [
 		node: alloc-bytes size
 		s: as series! node/value
 		s/tail: as cell! (as byte-ptr! s/offset) + s/size
+		fill 
+			as byte-ptr! s/offset
+			as byte-ptr! s/tail
+			#"^@"
 		node
 	]
 
@@ -361,6 +582,47 @@ _hashtable: context [
 		node
 	]
 
+	fill-series: func [
+		node	[node!]
+		byte	[byte!]
+		/local
+			s	[series!]
+	][
+		s: as series! node/value
+		fill 
+			as byte-ptr! s/offset
+			(as byte-ptr! s/offset) + s/size
+			byte
+	]
+
+	copy-context: func [
+		ctx		[red-context!]
+		node	[node!]
+		return: [node!]
+		/local
+			s	[series!]
+			h	[hashtable!]
+			ss	[series!]
+			hh	[hashtable!]
+			b	[node!]
+			k	[node!]
+			a	[logic!]
+	][
+		s: as series! ctx/symbols/value
+		h: as hashtable! s/offset
+
+		ss: as series! node/value
+		hh: as hashtable! ss/offset
+		copy-memory as byte-ptr! hh as byte-ptr! h size? hashtable!
+		b: copy-series as series! h/blk/value
+		hh/blk: b
+		k: copy-series as series! h/keys/value
+		hh/keys: k
+		hh/flags: copy-series as series! h/flags/value
+
+		node
+	]
+
 	init: func [
 		size	[integer!]
 		blk		[red-block!]
@@ -372,20 +634,30 @@ _hashtable: context [
 			flags		[node!]
 			keys		[node!]
 			indexes		[node!]
+			chains		[node!]
 			s			[series!]
 			ss			[series!]
 			h			[hashtable!]
 			f-buckets	[float!]
 			fsize		[float!]
 			skip		[integer!]
+			saved		[logic!]
 	][
 		node: _alloc-bytes-filled size? hashtable! #"^(00)"
+		if type = HASH_TABLE_SYMBOL [
+			if null? str-buffer [str-buffer: allocate str-buffer-sz]
+			if all [vsize = HASH_SYMBOL_CONTEXT blk <> null][
+				return copy-context as red-context! blk node
+			]
+			if size >= 4000 [size: size << 1]		;-- global context
+		]
+
 		s: as series! node/value
 		h: as hashtable! s/offset
 		h/type: type
 		if type = HASH_TABLE_INTEGER [h/indexes: as node! vsize + 1 << 4]
 
-		if size < 32 [size: 32]
+		if size < 4 [size: 4]
 		fsize: as-float size
 		f-buckets: fsize / _HT_HASH_UPPER
 		skip: either type = HASH_TABLE_MAP [2][1]
@@ -399,6 +671,8 @@ _hashtable: context [
 		if type = HASH_TABLE_HASH [
 			indexes: _alloc-bytes-filled size * size? integer! #"^(FF)"
 			h/indexes: indexes
+			chains: alloc-bytes 4 * size? node!
+			h/chains: chains
 		]
 		h/flags: flags
 		h/keys: keys
@@ -406,12 +680,47 @@ _hashtable: context [
 			h/blk: alloc-cells size
 		][
 			h/blk: blk/node
+			saved: collector/active?
+			collector/active?: no							;-- turn off GC
 			put-all node blk/head skip
+			collector/active?: saved
 		]
 		node
 	]
 
-	resize-hash: func [
+	rehash: func [
+		node			[node!]
+		new-buckets		[integer!]
+		/local
+			flags		[node!]
+			s			[series!]
+			h			[hashtable!]
+			n-buckets	[integer!]
+			new-size	[integer!]
+			f			[float!]
+	][
+		s: as series! node/value
+		h: as hashtable! s/offset
+
+		f: as-float new-buckets
+		new-buckets: round-up as-integer f * 1.5
+		f: as-float new-buckets
+		new-size: as-integer f * _HT_HASH_UPPER
+		if new-buckets < 4 [new-buckets: 4]
+
+		h/size: 0
+		h/n-occupied: 0
+		h/upper-bound: new-size
+		h/n-buckets: new-buckets
+		array/clear h/chains
+		flags: _alloc-bytes-filled new-buckets >> 2 #"^(AA)"
+		h/flags: flags
+		h/keys: _alloc-bytes new-buckets * size? int-ptr!
+
+		put-all node 0 1
+	]
+
+	resize-map: func [
 		node			[node!]
 		new-buckets		[integer!]
 		/local
@@ -421,15 +730,24 @@ _hashtable: context [
 			new-size	[integer!]
 			f			[float!]
 			flags		[node!]
+			new-blk		[node!]
+			i sz		[integer!]
+			end			[red-value!]
+			value		[red-value!]
+			key			[red-value!]
+			len	vsize	[integer!]
+			k			[int-ptr!]
+			slot		[red-value!]
 	][
 		s: as series! node/value
 		h: as hashtable! s/offset
 
 		new-buckets: round-up new-buckets
 		f: as-float new-buckets
-		new-size: as-integer f * _HT_HASH_UPPER
+		new-size: as-integer f * _HT_HASH_UPPER + 0.5
 		if new-buckets < 4 [new-buckets: 4]
 
+		sz: h/size
 		h/size: 0
 		h/n-occupied: 0
 		h/upper-bound: new-size
@@ -438,7 +756,25 @@ _hashtable: context [
 		h/flags: flags
 		h/keys: _alloc-bytes new-buckets * size? int-ptr!
 
-		put-all node 0 1
+		vsize: as integer! h/indexes
+		len: vsize >> 4
+		vsize: vsize - size? red-value!
+
+		s: as series! h/blk/value
+		end: s/tail
+		i: 0
+		h/blk: alloc-cells sz * len
+		while [
+			value: s/offset + i
+			value < end
+		][
+			k: as int-ptr! value
+			if value/header = TYPE_UNSET [
+				slot: put-key node k/2
+				copy-memory as byte-ptr! slot as byte-ptr! (value + 1) vsize
+			]
+			i: i + len
+		]
 	]
 
 	resize: func [
@@ -480,9 +816,10 @@ _hashtable: context [
 		n-buckets: h/n-buckets
 		j: 0
 		new-buckets: round-up new-buckets
-		f: as-float new-buckets
-		new-size: as-integer f * _HT_HASH_UPPER
 		if new-buckets < 4 [new-buckets: 4]
+		f: as-float new-buckets
+		new-size: as-integer f * _HT_HASH_UPPER + 0.5
+
 		either h/size >= new-size [j: 1][
 			new-flags-node: _alloc-bytes-filled new-buckets >> 2 #"^(AA)"
 			s: as series! new-flags-node/value
@@ -539,7 +876,7 @@ _hashtable: context [
 			;@@ if h/n-buckets > new-buckets []			;-- shrink the hash table
 			h/flags: new-flags-node
 			h/n-buckets: new-buckets
-			h/n-occupied: h/size
+			if h/type <> HASH_TABLE_MAP [h/n-occupied: h/size]
 			h/upper-bound: new-size
 		]
 	]
@@ -561,7 +898,7 @@ _hashtable: context [
 		if h/n-occupied >= h/upper-bound [			;-- update the hash table
 			vsize: either h/n-buckets > (h/size << 1) [-1][1]
 			n-buckets: h/n-buckets + vsize
-			resize node n-buckets
+			resize-map node n-buckets
 		]
 
 		vsize: as integer! h/indexes
@@ -683,7 +1020,9 @@ _hashtable: context [
 		either _BUCKET_IS_EITHER(flags ii sh) [null][
 			_BUCKET_SET_DEL_TRUE(flags ii sh)
 			h/size: h/size - 1
-			(as cell! blk + keys/i) + 1
+			k: as int-ptr! blk + keys/i
+			k/value: TYPE_VALUE
+			(as cell! k) + 1
 		]
 	]
 
@@ -741,26 +1080,46 @@ _hashtable: context [
 		key 	[red-value!]
 		return: [red-value!]
 		/local
+			err [integer!]
+	][
+		err: 0
+		put-err node key :err
+	]
+
+	put-err: func [
+		node	[node!]
+		key 	[red-value!]
+		errcode	[int-ptr!]
+		return: [red-value!]
+		/local
 			s [series!] h [hashtable!] x [integer!] i [integer!] site [integer!]
 			last [integer!] mask [integer!] step [integer!] keys [int-ptr!]
 			hash [integer!] n-buckets [integer!] flags [int-ptr!] ii [integer!]
-			sh [integer!] continue? [logic!] blk [red-value!] idx [integer!]
-			type [integer!] del? [logic!] indexes [int-ptr!] k [red-value!]
+			sh [integer!] continue? saved [logic!] blk [red-value!] idx [integer!]
+			type [integer!] del? chain? [logic!] indexes chain [int-ptr!] k [red-value!]
 	][
 		s: as series! node/value
 		h: as hashtable! s/offset
 		type: h/type
 
+		errcode/value: HASH_TABLE_ERR_OK
 		if h/n-occupied >= h/upper-bound [			;-- update the hash table
 			idx: either h/n-buckets > (h/size << 1) [-1][1]
 			n-buckets: h/n-buckets + idx
 			either type = HASH_TABLE_HASH [
-				resize-hash node n-buckets
+				rehash node n-buckets
+				errcode/value: HASH_TABLE_ERR_REBUILT
+				return key
 			][
 				if type = HASH_TABLE_MAP [n-buckets: h/n-buckets + 1]
 				resize node n-buckets
 			]
+			s: as series! node/value
+			h: as hashtable! s/offset
 		]
+
+		saved: collector/active?
+		collector/active?: no						;-- turn off GC
 
 		s: as series! h/blk/value
 		idx: (as-integer (key - s/offset)) >> 4
@@ -794,13 +1153,30 @@ _hashtable: context [
 					]
 				]
 			][
-				if del? [site: i]
-				if type = HASH_TABLE_HASH [
-					k: blk + (keys/i and 7FFFFFFFh)
-					if all [
-						TYPE_OF(k) = TYPE_OF(key)
-						actions/compare k key COMP_EQUAL
-					][keys/i: keys/i or 80000000h]
+				either del? [site: i][
+					if type = HASH_TABLE_HASH [
+						chain?: keys/i < 0
+						either chain? [
+							chain: array/pick-ptr h/chains 0 - keys/i
+							k: blk + array/pick-int chain 1
+						][
+							k: blk + keys/i
+						]
+						if all [
+							TYPE_OF(k) = TYPE_OF(key)
+							actions/compare k key COMP_EQUAL
+						][
+							unless chain? [
+								chain: alloc-bytes 4 * size? integer!
+								array/append-ptr h/chains chain
+								array/append-int chain keys/i
+								keys/i: 0 - ((array/length? h/chains) >> log-b size? int-ptr!)
+							]
+							array/append-int chain idx
+							x: i
+							break
+						]
+					]
 				]
 
 				i: i + step and mask
@@ -831,14 +1207,15 @@ _hashtable: context [
 		]
 		if type = HASH_TABLE_HASH [
 			s: as series! h/indexes/value
-			if s/size >> 2 = idx [
-				s: expand-series-filled s s/size << 1 #"^(FF)"
+			if idx << 2 >= s/size [
+				s: expand-series-filled s idx << 3 #"^(FF)"
 				s/tail: as cell! (as byte-ptr! s/offset) + s/size
 			]
 			indexes: as int-ptr! s/offset
 			idx: idx + 1
 			indexes/idx: x
 		]
+		collector/active?: saved
 		key
 	]
 
@@ -924,8 +1301,13 @@ _hashtable: context [
 			blk		[red-value!]
 			k		[red-value!]
 			idx		[integer!]
+			chain	[node!]
+			p-idx	[int-ptr!]
+			sz		[integer!]
 			find?	[logic!]
 			hash?	[logic!]
+			chain?	[logic!]
+			align   [integer!]
 			type	[integer!]
 			key-type [integer!]
 			last-idx [integer!]
@@ -939,7 +1321,7 @@ _hashtable: context [
 		type: h/type
 		hash?: type = HASH_TABLE_HASH
 		key-type: TYPE_OF(key)
-		set-header?: all [type = HASH_TABLE_MAP word/any-word? key-type]
+		set-header?: all [type = HASH_TABLE_MAP ANY_WORD?(key-type)]
 		if set-header? [
 			saved-type: key-type
 			key-type: TYPE_SET_WORD
@@ -978,33 +1360,58 @@ _hashtable: context [
 			]
 		][
 			if hash? [
-				idx: keys/i and 7FFFFFFFh
+				chain?: keys/i < 0
+				either chain? [
+					chain: array/pick-ptr h/chains 0 - keys/i
+					s: as series! chain/value
+					p-idx: as int-ptr! s/offset
+					idx: p-idx/value
+					sz: (as-integer (as int-ptr! s/tail) - p-idx) >> 2
+				][
+					idx: keys/i
+					sz: 1
+				]
 				k: blk + idx
 				if all [
 					_BUCKET_IS_NOT_DEL(flags ii sh)
-					actions/compare k key op
-					idx - head // skip = 0
+					actions/compare k key COMP_EQUAL
 				][
-					either reverse? [
-						if all [idx < head idx > last-idx][last-idx: idx find?: yes]
-					][
-						if idx >= head [
-							either last? [
-								if idx > last-idx [last-idx: idx find?: yes]
+					loop sz [
+						either last? [		;-- backward searching
+							align: head - 1 - idx
+						][
+							align: idx - head
+						]
+						if all [
+							actions/compare k key op
+							align // skip = 0
+						][
+							either reverse? [
+								if all [idx < head idx > last-idx][last-idx: idx find?: yes]
 							][
-								if idx < last-idx [last-idx: idx find?: yes]
+								if idx >= head [
+									either last? [
+										if idx > last-idx [last-idx: idx find?: yes]
+									][
+										if idx < last-idx [last-idx: idx find?: yes]
+									]
+								]
 							]
 						]
+						if chain? [
+							p-idx: p-idx + 1
+							idx: p-idx/value
+							k: blk + idx
+						]
 					]
-					if all [keys/i and 80000000h = 0 find?][
-						return blk + last-idx
-					]
+					if find? [return blk + last-idx]
 				]
 			]
 
 			i: i + step and mask
 			_HT_CAL_FLAG_INDEX(i ii sh)
 			i: i + 1
+
 			step: step + 1
 			if i = last [
 				if set-header? [key/header: saved-type]
@@ -1020,8 +1427,8 @@ _hashtable: context [
 	delete: func [
 		node	[node!]
 		key		[red-value!]
-		/local s [series!] h [hashtable!] i [integer!] ii [integer!]
-			sh [integer!] flags [int-ptr!] indexes [int-ptr!]
+		/local s [series!] h [hashtable!] i ii idx c-idx [integer!]
+			sh [integer!] flags keys chain [int-ptr!] indexes [int-ptr!]
 	][
 		s: as series! node/value
 		h: as hashtable! s/offset
@@ -1031,20 +1438,34 @@ _hashtable: context [
 			key: key + 1
 			key/header: MAP_KEY_DELETED
 		][										;-- hash!
+			s: as series! h/keys/value
+			keys: as int-ptr! s/offset
 			s: as series! h/flags/value
 			flags: as int-ptr! s/offset
 			s: as series! h/blk/value
 			i: (as-integer key - s/offset) >> 4 + 1
 			s: as series! h/indexes/value
 			indexes: as int-ptr! s/offset
-			i: indexes/i - 1
+			idx: indexes/i
+			if keys/idx < 0 [
+				c-idx: 0 - keys/idx
+				chain: array/pick-ptr h/chains c-idx
+				i: array/find-int chain i - 1
+				assert i >= 0
+				array/remove-at chain i size? integer!
+				either zero? array/length? chain [
+					array/poke-ptr h/chains c-idx null
+					keys/idx: c-idx
+				][exit]
+			]
+			i: idx - 1
 			_HT_CAL_FLAG_INDEX(i ii sh)
 			_BUCKET_SET_DEL_TRUE(flags ii sh)
 		]
 		h/size: h/size - 1
 	]
 
-	copy: func [
+	copy: func [				;-- only map! use it
 		node	[node!]
 		blk		[node!]
 		return: [node!]
@@ -1064,29 +1485,74 @@ _hashtable: context [
 		new
 	]
 
-	clear: func [								;-- only for clear hash! datatype
+	clear-map: func [
+		node	[node!]
+		/local
+			s	[series!]
+			h	[hashtable!]
+	][
+		s: as series! node/value
+		h: as hashtable! s/offset
+		h/size: 0
+		h/n-occupied: 0
+		array/clear h/blk
+		s: as series! h/flags/value
+		fill as byte-ptr! s/offset as byte-ptr! s/tail #"^(AA)"
+	]
+
+	clear: func [				;-- only for clear hash! datatype
 		node	[node!]
 		head	[integer!]
 		size	[integer!]
-		/local s [series!] h [hashtable!] flags [int-ptr!] i [integer!]
-			ii [integer!] sh [integer!] indexes [int-ptr!]
+		/local s [series!] h [hashtable!] flags [int-ptr!] i [integer!] del? [logic!]
+			ii idx c-idx [integer!] sh n [integer!] indexes keys chain [int-ptr!]
 	][
 		if zero? size [exit]
+
 		s: as series! node/value
 		h: as hashtable! s/offset
 
+		s: as series! h/blk/value
+		n: (as-integer s/tail - s/offset) >> 4
+		if head + size > n [size: n - head]
+		if n = size [	;-- clear all
+			h/size: 0
+			h/n-occupied: 0
+			fill-series h/flags #"^(AA)"
+			fill-series h/indexes #"^(FF)"
+			array/clear h/chains
+			exit
+		]
+
 		;h/n-occupied: h/n-occupied - size		;-- enable it when we have shrink
 		h/size: h/size - size
+		s: as series! h/keys/value
+		keys: as int-ptr! s/offset
 		s: as series! h/flags/value
 		flags: as int-ptr! s/offset
 		s: as series! h/indexes/value
 		indexes: (as int-ptr! s/offset) + head
 		until [
-			i: indexes/value - 1
-			assert i >= 0
-
-			_HT_CAL_FLAG_INDEX(i ii sh)
-			_BUCKET_SET_DEL_TRUE(flags ii sh)
+			del?: yes
+			idx: indexes/value
+			assert idx > 0
+			if keys/idx < 0 [
+				c-idx: 0 - keys/idx
+				chain: array/pick-ptr h/chains c-idx
+				i: array/find-int chain head
+				assert i >= 0
+				array/remove-at chain i size? integer!
+				either zero? array/length? chain [
+					array/poke-ptr h/chains c-idx null
+					keys/idx: c-idx
+				][del?: no]
+			]
+			if del? [
+				i: idx - 1
+				_HT_CAL_FLAG_INDEX(i ii sh)
+				_BUCKET_SET_DEL_TRUE(flags ii sh)
+			]
+			head: head + 1
 			indexes: indexes + 1
 			size: size - 1
 			zero? size
@@ -1105,10 +1571,23 @@ _hashtable: context [
 		head	[integer!]
 		size	[integer!]
 		change? [logic!]					;-- deleted or inserted items
-		/local s [series!] h [hashtable!] indexes [int-ptr!] i [integer!]
-			n [integer!] keys [int-ptr!] index [int-ptr!] part [integer!]
-			flags [int-ptr!] ii [integer!] sh [integer!]
+		return: [integer!]
+		/local s [series!] h [hashtable!] indexes chain p e keys index flags [int-ptr!]
+			i c-idx idx part ii sh n [integer!] table [node!] saved [logic!]
 	][
+		if size > 30000 [return HASH_TABLE_ERR_REHASH]
+
+		saved: collector/active?
+		collector/active?: no
+
+		if null? refresh-buffer [
+			refresh-buffer: as red-hash! ALLOC_TAIL(root)
+			refresh-buffer/header: TYPE_MAP
+			refresh-buffer/node: alloc-bytes 4
+			refresh-buffer/table: init 1024 null HASH_TABLE_INTEGER 0
+		]
+		table: refresh-buffer/table
+
 		s: as series! node/value
 		h: as hashtable! s/offset
 		assert h/indexes <> null
@@ -1125,10 +1604,27 @@ _hashtable: context [
 		while [n > 0][
 			index: indexes + head
 			i: index/value
-			keys/i: keys/i + offset
+			either keys/i < 0 [				;-- chain mode
+				chain: array/pick-ptr h/chains 0 - keys/i
+				if null? get-value table as-integer chain [
+					put-key table as-integer chain
+					s: as series! chain/value
+					p: as int-ptr! s/offset
+					e: as int-ptr! s/tail
+					while [p < e][
+						if p/value >= ii [
+							p/value: p/value + offset
+						]
+						p: p + 1
+					]
+				]
+			][
+				keys/i: keys/i + offset
+			]
 			head: head + 1
 			n: n - 1
 		]
+		clear-map table
 
 		if change? [
 			head: ii						;-- restore head
@@ -1138,15 +1634,28 @@ _hashtable: context [
 				flags: as int-ptr! s/offset
 				while [negative? part][
 					index: indexes + head + part
-					i: index/value - 1
+					i: index/value
+					if keys/i < 0 [
+						c-idx: 0 - keys/i
+						chain: array/pick-ptr h/chains c-idx
+						idx: array/find-int chain head + part
+						assert idx >= 0
+						array/remove-at chain idx size? integer!
+						either zero? array/length? chain [
+							array/poke-ptr h/chains c-idx null
+							keys/i: c-idx
+						][part: part + 1 continue]
+					]
+					i: i - 1
 					_HT_CAL_FLAG_INDEX(i ii sh)
 					_BUCKET_SET_DEL_TRUE(flags ii sh)
 					h/size: h/size - 1
 					part: part + 1
 				]
 			][								;-- may need to expand indexes
-				if size + head << 2 > s/size [
-					s: expand-series-filled s s/size << 1 #"^(FF)"
+				s: as series! h/indexes/value
+				if size + head + offset << 2 > s/size [
+					s: expand-series-filled s size + head + offset << 3 #"^(FF)"
 					indexes: as int-ptr! s/offset
 					s/tail: as cell! (as byte-ptr! s/offset) + s/size
 				]
@@ -1156,6 +1665,8 @@ _hashtable: context [
 				as byte-ptr! indexes + head
 				size * 4
 		]
+		collector/active?: saved
+		HASH_TABLE_ERR_OK
 	]
 
 	move: func [
@@ -1197,5 +1708,269 @@ _hashtable: context [
 			part * 4
 		copy-memory as byte-ptr! indexes + dst temp items
 		free temp
+	]
+
+	to-lower: func [				;-- Latin1 locale only, TBD: locale support
+		str		[byte-ptr!]
+		len		[integer!]
+		return: [byte-ptr!]
+		/local
+			n	[integer!]
+	][
+		if len > str-buffer-sz [
+			free str-buffer
+			str-buffer: allocate len
+		]
+		n: 1
+		loop len [
+			either any [
+				str/n > #"Z"
+				str/n < #"A"
+			][
+				str-buffer/n: str/n
+			][
+				str-buffer/n: str/n or #"`"
+			]
+			n: n + 1
+		]
+		str-buffer
+	]
+
+	compare-cstr: func [
+		cstr1	[byte-ptr!]
+		cstr2	[byte-ptr!]
+		len		[integer!]
+		strict?	[logic!]
+		return: [integer!]
+	][
+		either strict? [
+			compare-memory cstr1 cstr2 len
+		][
+			platform/strnicmp cstr1 cstr2 len
+		]
+	]
+
+	put-symbol: func [
+		node	[node!]
+		cstr	[byte-ptr!]
+		len		[integer!]
+		opt?	[logic!]			;-- don't put if found
+		return: [integer!]			;-- return symbol id
+		/local
+			s [series!] h [hashtable!] x [integer!] i [integer!] site [integer!]
+			last [integer!] mask [integer!] step [integer!] keys [int-ptr!]
+			hash [integer!] n-buckets [integer!] flags [int-ptr!] ii [integer!]
+			sh [integer!] blk [red-symbol!] idx [integer!] del? [logic!] k [red-symbol!]
+			vsize [integer!] blk-node [series!] find? [logic!] xx [integer!] new? [logic!]
+			len2 [integer!] strict? [logic!] p [byte-ptr!]
+	][
+		s: as series! node/value
+		h: as hashtable! s/offset
+
+		if h/n-occupied >= h/upper-bound [			;-- update the hash table
+			vsize: either h/n-buckets > (h/size << 1) [-1][1]
+			n-buckets: h/n-buckets + vsize
+			resize node n-buckets << 4
+		]
+
+		blk-node: as series! h/blk/value
+		blk: as red-symbol! blk-node/offset
+		idx: (as-integer blk-node/tail - as cell! blk) >> 4
+
+		s: as series! h/keys/value
+		keys: as int-ptr! s/offset
+		s: as series! h/flags/value
+		flags: as int-ptr! s/offset
+		n-buckets: h/n-buckets + 1
+		x:	  n-buckets
+		site: n-buckets
+		mask: n-buckets - 2
+		hash: murmur3-x86-32 to-lower cstr len len
+		strict?: not opt?
+		loop 2 [	;-- first try: case-sensitive comparison, second try: case-insensitive comparison
+			find?: yes
+			i: hash and mask
+			_HT_CAL_FLAG_INDEX(i ii sh)
+			i: i + 1									;-- 1-based index
+			either _BUCKET_IS_EMPTY(flags ii sh) [x: i break][
+				step: 0
+				last: i
+				while [
+					find?: _BUCKET_IS_NOT_EMPTY(flags ii sh)
+					find?
+				][
+					k: as red-symbol! blk + keys/i
+					s: as series! k/cache/value
+					len2: as-integer (s/tail - s/offset)
+					either any [
+						len2 <> len
+						0 <> compare-cstr as byte-ptr! s/offset cstr len strict?
+					][
+						i: i + step and mask
+						_HT_CAL_FLAG_INDEX(i ii sh)
+						i: i + 1
+						step: step + 1
+						if i = last [x: site find?: no break]
+					][break]
+				]
+				x: i
+			]
+			either any [find? opt?][break][xx: x strict?: no]
+		]
+
+		_HT_CAL_FLAG_INDEX((x - 1) ii sh)
+		either _BUCKET_IS_EMPTY(flags ii sh) [
+			k: as red-symbol! alloc-tail blk-node
+			keys/x: idx
+			len2: -1
+		][
+			len2: keys/x + 1
+			either any [strict? opt?][return len2][
+				k: as red-symbol! alloc-tail blk-node
+				_HT_CAL_FLAG_INDEX((xx - 1) ii sh)
+				keys/xx: idx
+			]
+		]
+
+		_BUCKET_SET_BOTH_FALSE(flags ii sh)
+		h/size: h/size + 1
+		h/n-occupied: h/n-occupied + 1
+
+		blk-node: as series! h/blk/value
+		blk: as red-symbol! blk-node/offset
+
+		k/header: TYPE_UNSET
+		node: alloc-bytes len + 1		;-- add NUL bytes to make it compatible with C string
+		s: as series! node/value
+		p: as byte-ptr! s/offset
+		copy-memory p cstr len
+		p: p + len
+		p/1: null-byte
+		s/tail: as red-value! p
+		k/cache: node
+		k/node: null
+		k/alias: len2
+		k/header: TYPE_SYMBOL
+
+		(as-integer k - blk) >> 4 + 1
+	]
+
+	get-ctx-symbol: func [
+		node		[node!]
+		key			[integer!]				;-- symbol id
+		case?		[logic!]				;-- YES: case insensitive
+		ctx			[node!]					;-- if cxt <> null, create a new word in the context
+		new-id		[int-ptr!]
+		return:		[integer!]
+		/local
+			s		[series!]
+			h		[hashtable!]
+			i		[integer!]
+			flags	[int-ptr!]
+			last	[integer!]
+			mask	[integer!]
+			step	[integer!]
+			keys	[int-ptr!]
+			ii		[integer!]
+			hash	[integer!]
+			kk		[integer!]
+			sh		[integer!]
+			blk		[red-word!]
+			k		[red-word!]
+			sym		[integer!]
+	][
+		s: as series! node/value
+		h: as hashtable! s/offset
+
+		if all [ctx <> null h/n-occupied >= h/upper-bound][			;-- update the hash table
+			i: either h/n-buckets > (h/size << 1) [-1][1]
+			kk: h/n-buckets + i
+			resize node kk << 4
+		]
+
+		s: as series! h/keys/value
+		keys: as int-ptr! s/offset
+		s: as series! h/flags/value
+		flags: as int-ptr! s/offset
+		s: as series! h/blk/value
+		blk: as red-word! s/offset
+
+		hash: symbol/resolve key
+		kk: either case? [hash][key]
+		mask: h/n-buckets - 1
+		i: hash and mask
+		_HT_CAL_FLAG_INDEX(i ii sh)
+		i: i + 1
+		last: i
+		step: 0
+		while [_BUCKET_IS_NOT_EMPTY(flags ii sh)][ 
+			k: blk + keys/i
+			sym: either case? [symbol/resolve k/symbol][k/symbol]
+			either kk <> sym [
+				i: i + step and mask
+				_HT_CAL_FLAG_INDEX(i ii sh)
+				i: i + 1
+				step: step + 1
+				if i = last [assert 0 = 1 break]		;-- should not happen
+			][break]
+		]
+
+		either ctx <> null [
+			either _BUCKET_IS_EMPTY(flags ii sh) [
+				_BUCKET_SET_BOTH_FALSE(flags ii sh)
+				h/size: h/size + 1
+				h/n-occupied: h/n-occupied + 1
+				ii: (as-integer s/tail - s/offset) >> 4	;-- index is zero-base
+				keys/i: ii
+
+				k: as red-word! alloc-tail s
+				k/header: TYPE_WORD						;-- force word! type
+				k/index: ii
+				k/ctx: ctx
+				k/symbol: key
+				new-id/value: ii
+				-1
+			][new-id/value: keys/i keys/i]
+		][
+			either _BUCKET_IS_EMPTY(flags ii sh) [-1][keys/i]
+		]
+	]
+
+	get-ctx-word: func [
+		ctx		[red-context!]
+		idx		[integer!]				;-- word index
+		return:	[red-word!]
+		/local
+			s	[series!]
+			h	[hashtable!]
+	][
+		s: as series! ctx/symbols/value
+		h: as hashtable! s/offset
+		s: as series! h/blk/value 
+		as red-word! s/offset + idx
+	]
+
+	get-ctx-words: func [
+		ctx		[red-context!]
+		return:	[series!]
+		/local
+			s	[series!]
+			h	[hashtable!]
+	][
+		s: as series! ctx/symbols/value
+		h: as hashtable! s/offset
+		as series! h/blk/value 
+	]
+
+	get-ctx-symbols: func [
+		ctx		[red-context!]
+		return:	[node!]
+		/local
+			s	[series!]
+			h	[hashtable!]
+	][
+		s: as series! ctx/symbols/value
+		h: as hashtable! s/offset
+		h/blk
 	]
 ]

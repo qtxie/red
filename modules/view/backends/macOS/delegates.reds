@@ -155,7 +155,6 @@ button-mouse-down: func [
 				make-event self 0 EVT_LEFT_UP
 				if inside? [
 					inside?: false
-					objc_msgSend [self sel_getUid "setNextState"]
 					button-click self
 				]
 			]
@@ -302,6 +301,24 @@ popup-button-action: func [
 	objc_msgSend [self sel_getUid "setTitle:" str]
 ]
 
+handle-speical-key: func [
+	self	[integer!]
+	event	[integer!]
+	return: [logic!]
+	/local
+		key		[integer!]
+		flags	[integer!]
+][
+	key: objc_msgSend [event sel_getUid "keyCode"]
+	either key = 72h [		;-- insert key
+		flags: check-extra-keys event
+		key: translate-key key
+		special-key: -1
+		make-event self key or flags EVT_KEY
+		no
+	][yes]
+]
+
 on-key-down: func [
 	[cdecl]
 	self	[integer!]
@@ -336,6 +353,21 @@ on-key-down: func [
 				key: objc_msgSend [key sel_getUid "characterAtIndex:" 0]
 				make-event self key or flags EVT_KEY
 			]
+		]
+	]
+]
+
+key-down-base: func [
+	[cdecl]
+	self	[integer!]
+	cmd		[integer!]
+	event	[integer!]
+][
+	either zero? objc_getAssociatedObject self RedRichTextKey [
+		on-key-down self event
+	][
+		objc_msgSend [
+			objc_msgSend [self sel_getUid "inputContext"] sel_getUid "handleEvent:" event
 		]
 	]
 ]
@@ -401,36 +433,40 @@ on-flags-changed: func [
 ]
 
 button-click: func [
-	self	[integer!]
+	[cdecl]
+	self [integer!]
 	/local
 		w		[red-word!]
 		values	[red-value!]
-		bool	[red-logic!]
 		type 	[integer!]
-		state	[integer!]
-		change? [logic!]
-][
-	make-event self 0 EVT_CLICK
+		event	[integer!]
+][	
 	values: get-face-values self
 	w: as red-word! values + FACE_OBJ_TYPE
 	type: symbol/resolve w/symbol
-	if any [
-		type = check
-		type = radio
-	][
-		bool: as red-logic! values + FACE_OBJ_DATA
-		state: objc_msgSend [self sel_getUid "state"]
-		change?: either state = -1 [
-			type: TYPE_OF(bool)
-			bool/header: TYPE_NONE							;-- NONE indicates undeterminate
-			bool/header <> type
+	
+	if type <> radio [objc_msgSend [self sel_getUid "setNextState"]]
+	
+	event: case [
+		type = button [EVT_CLICK]
+		any [
+			type = toggle
+			type = check
 		][
-			change?: bool/value								;-- save the old value
-			bool/value: as logic! state
-			bool/value <> change?
+			get-logic-state self EVT_CHANGE
 		]
-		if change? [make-event self 0 EVT_CHANGE]
+		all [
+			type = radio
+			NSOffState = objc_msgSend [self sel_getUid "state"] ;-- ignore double-click (fixes #4246)
+		][
+			objc_msgSend [self sel_getUid "setNextState"]		;-- gets converted to CHANGE by high-level event handler
+			get-logic-state self
+			EVT_CLICK
+		]
+		true [0]
 	]
+	
+	unless zero? event [make-event self 0 event]
 ]
 
 empty-func: func [
@@ -540,6 +576,14 @@ slider-change: func [
 			0 <> objc_getAssociatedObject self RedAllOverFlagKey
 		]
 	][make-event self EVT_FLAG_DOWN EVT_OVER]
+	make-event self 0 EVT_CHANGE
+]
+
+calendar-change: func [
+	[cdecl]
+	self   [integer!]
+][	
+	sync-calendar self
 	make-event self 0 EVT_CHANGE
 ]
 
@@ -750,6 +794,7 @@ object-for-table: func [
 	data: (as red-block! get-face-values obj) + FACE_OBJ_DATA
 	head: block/rs-head data
 	tail: block/rs-tail data
+
 	idx: -1
 	while [all [row >= 0 head < tail]][
 		type: TYPE_OF(head)
@@ -757,6 +802,9 @@ object-for-table: func [
 		head: head + 1
 		idx: idx + 1
 	]
+
+	if any [idx = -1 row >= 0][return 0]
+
 	font: (as red-object! get-face-values obj) + FACE_OBJ_FONT
 	str: to-NSString as red-string! block/rs-abs-at data idx
 	if TYPE_OF(font) = TYPE_OBJECT [
@@ -836,17 +884,10 @@ win-send-event: func [
 					responder: objc_getAssociatedObject self RedFieldEditorKey
 					unless red-face? responder [find?: no]
 				]
-				if find? [
-					on-key-down responder event
-					send?: no
-				]
+				if find? [on-key-down responder event]
 			][
-				on-key-down responder event
-				send?: no
-				unless zero? objc_getAssociatedObject self RedRichTextKey [
-					objc_msgSend [
-						objc_msgSend [self sel_getUid "inputContext"] sel_getUid "handleEvent:" event
-					]
+				if find? [	;-- handle some special keys on rich-text base face
+					send?: handle-speical-key responder event
 				]
 			]
 		]
@@ -990,7 +1031,25 @@ win-will-close: func [
 	self	[integer!]
 	cmd		[integer!]
 	notif	[integer!]
+	/local
+		i	[integer!]
+		n	[integer!]
+		p	[int-ptr!]
+		pp	[int-ptr!]
 ][
+	p: as int-ptr! vector/rs-head active-wins
+	n: vector/rs-length? active-wins
+	i: 0
+	while [i < n][
+		pp: p + 1
+		if pp/value = self [		;-- active its parent window
+			objc_msgSend [p/value sel_getUid "makeKeyAndOrderFront:" p/value]
+			string/remove-part as red-string! active-wins i 2
+			break
+		]
+		p: p + 2
+		i: i + 2
+	]
 	0
 ]
 
@@ -1143,12 +1202,12 @@ render-text: func [
 	m: make-CGMatrix 1 0 0 -1 0 0
 	case [
 		flags and 1 <> 0 [m/tx: sz/w - rc/x]
-		flags and 2 <> 0 [temp: sz/w - rc/x m/tx: temp / 2]
+		flags and 2 <> 0 [temp: sz/w - rc/x m/tx: temp / as float32! 2.0]
 		true [0]
 	]
 
 	case [
-		flags and 4 <> 0 [temp: sz/h - rc/y m/ty: temp / 2]
+		flags and 4 <> 0 [temp: sz/h - rc/y m/ty: temp / as float32! 2.0]
 		flags and 8 <> 0 [m/ty: sz/h - rc/y]
 		true [0]
 	]
@@ -1416,6 +1475,10 @@ hit-test: func [
 		h		[integer!]
 		ratio	[float32!]
 		vals	[red-value!]
+		clr		[red-tuple!]
+		rc		[NSRect! value]
+		rep		[integer!]
+		alpha	[float!]
 ][
 	super/receiver: self
 	super/superclass: objc_msgSend [self sel_getUid "superclass"]
@@ -1436,7 +1499,28 @@ hit-test: func [
 			ratio: (as float32! h) / (as float32! sz/y)
 			y: as-integer pt/y * ratio
 			pixel: OS-image/get-pixel img/node y * w + x
-			if pixel >>> 24 = 0 [v: 0]
+			if pixel >>> 24 = 0 [return 0]
+		]
+
+		clr: (as red-tuple! vals) + FACE_OBJ_COLOR
+		if any [	;-- full transparent color
+			TYPE_OF(clr) = TYPE_NONE
+			all [
+				TYPE_OF(clr) = TYPE_TUPLE
+				TUPLE_SIZE?(clr) > 3
+				clr/array1 >>> 24 = 255
+			]
+		][
+			rc: objc_msgSend_rect [self sel_getUid "bounds"]
+			rep: objc_msgSend [self sel_getUid "bitmapImageRepForCachingDisplayInRect:" rc/x rc/y rc/w rc/h]
+			objc_msgSend [self sel_getUid "cacheDisplayInRect:toBitmapImageRep:" rc/x rc/y rc/w rc/h rep]
+			pt: objc_msgSend_pt [
+				self sel_getUid "convertPoint:fromView:" x y
+				objc_msgSend [self sel_getUid "superview"]
+			]
+			pixel: objc_msgSend [rep sel_getUid "colorAtX:y:" as-integer pt/x as-integer pt/y]
+			alpha: objc_msgSend_fpret [pixel sel_getUid "alphaComponent"]
+			if alpha = 0.0 [return 0]
 		]
 	]
 	v
@@ -1482,7 +1566,7 @@ draw-rect: func [
 	sym: symbol/resolve type/symbol
 
 	if TYPE_OF(clr) = TYPE_TUPLE [
-		paint-background ctx clr/array1 x y width height
+		paint-background ctx get-tuple-color clr x y width height
 	]
 	if TYPE_OF(img) = TYPE_IMAGE [
 		CG-draw-image ctx OS-image/to-cgimage img 0 0 size/x size/y
@@ -1518,9 +1602,7 @@ return-field-editor: func [
 	obj		[integer!]
 	return: [integer!]
 ][
-	if obj <> 0 [
-		objc_setAssociatedObject obj RedFieldEditorKey 0 OBJC_ASSOCIATION_ASSIGN
-	]
+	objc_setAssociatedObject sender RedFieldEditorKey obj OBJC_ASSOCIATION_ASSIGN
 	0
 ]
 

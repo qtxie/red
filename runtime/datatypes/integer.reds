@@ -19,6 +19,13 @@ integer: context [
 	][
 		any [fl/value > 2147483647.0 fl/value < -2147483648.0]
 	]
+	
+	sign?: func [
+		integer [integer!]
+		return: [integer!]
+	][
+		SIGN_COMPARE_RESULT(integer 0)
+	]
 
 	abs: func [
 		value	[integer!]
@@ -73,23 +80,32 @@ integer: context [
 		int
 	]
 	
+	from-money: func [
+		mn      [red-money!]
+		return: [integer!]
+	][
+		money/to-integer mn
+	]
+	
 	from-binary: func [
 		bin		[red-binary!]
 		return: [integer!]
 		/local
 			s	   [series!]
+			hd     [byte-ptr!]
 			p	   [byte-ptr!]
 			len	   [integer!]
 			i	   [integer!]
 			factor [integer!]
 	][
 		s: GET_BUFFER(bin)
-		len: (as-integer s/tail - s/offset) + bin/head
+		hd: binary/rs-head bin
+		len: binary/rs-length? bin
 		if len > 4 [len: 4]								;-- take first 32 bits only
 
 		i: 0
 		factor: 0
-		p: (as byte-ptr! s/offset) + bin/head + len - 1
+		p: hd + len - 1
 
 		loop len [
 			i: i + ((as-integer p/value) << factor)
@@ -103,27 +119,36 @@ integer: context [
 		issue	[red-word!]
 		return: [integer!]
 		/local
-			len  [integer!]
-			str  [red-string!]
-			bin  [red-binary!]
-			s	 [series!]
-			unit [integer!]
+			len hex acc c [integer!]
+			str		[red-string!]
+			s		[series!]
+			table p [byte-ptr!]
+			unit	[integer!]
+			do-err	[subroutine!]
 	][
+		do-err: [fire [TO_ERROR(script invalid-data) issue]]
+		table: string/escape-url-chars
 		str: as red-string! stack/push as red-value! symbol/get issue/symbol
-		str/head: 0								;-- /head = -1 (casted from symbol!)
+		str/head: 0										;-- /head = -1 (casted from symbol!)
 		s: GET_BUFFER(str)
 		unit: GET_UNIT(s)
 		len: string/rs-length? str
-		if len > 8 [len: 8]
-
-		str/node: binary/decode-16 
-			(as byte-ptr! s/offset) + (str/head << (unit >> 1))
-			len
-			unit
-		if null? str/node [fire [TO_ERROR(script invalid-data) issue]]
-		len: from-binary as red-binary! str
-		stack/pop 1
-		len
+		if len > 8 [do-err]
+		
+		acc: 0
+		p: as byte-ptr! s/offset
+		until [
+			c: 7Fh and string/get-char p unit
+			if any [c = -1 c < as-integer space][do-err]
+			c: c + 1
+			hex: as-integer table/c
+			if hex > 15 [do-err]
+			acc: acc << 4 + hex
+			p: p + unit
+			len: len - 1
+			zero? len
+		] 
+		acc
 	]
 
 	form-signed: func [									;@@ replace with sprintf() call?
@@ -158,52 +183,60 @@ integer: context [
 		left	[integer!]
 		right	[integer!]
 		type	[math-op!]
+		slot	[red-integer!]
 		return:	[integer!]
 		/local
+			fl	[red-float!]
 			res [integer!]
 	][
 		switch type [
 			OP_ADD [
 				res: left + right
 				if system/cpu/overflow? [fire [TO_ERROR(math overflow)]]
-				res
 			]
 			OP_SUB [
 				res: left - right
 				if system/cpu/overflow? [fire [TO_ERROR(math overflow)]]
-				res
 			]
 			OP_MUL [
 				res: left * right
 				if system/cpu/overflow? [fire [TO_ERROR(math overflow)]]
-				res
 			]
-			OP_AND [left and right]
-			OP_OR  [left or right]
-			OP_XOR [left xor right]
+			OP_AND [res: left and right]
+			OP_OR  [res: left or right]
+			OP_XOR [res: left xor right]
 			OP_REM [
 				either zero? right [
 					fire [TO_ERROR(math zero-divide)]
-					0								;-- pass the compiler's type-checking
+					0									;-- pass the compiler's type-checking
 				][
 					if all [left = -2147483648 right = -1][
 						fire [TO_ERROR(math overflow)]
 					]
-					left % right
+					res: left % right
 				]
 			]
 			OP_DIV [
 				either zero? right [
 					fire [TO_ERROR(math zero-divide)]
-					0								;-- pass the compiler's type-checking
+					0									;-- pass the compiler's type-checking
 				][
 					if all [left = -2147483648 right = -1][
 						fire [TO_ERROR(math overflow)]
 					]
-					left / right
+					either any [null? slot left % right = 0][
+						res: left / right
+					][
+						fl: as red-float! slot			;-- promote to float
+						fl/header: TYPE_FLOAT
+						fl/value: (as-float left) / as-float right
+						return 0						;-- place-holder value
+					]
 				]
 			]
 		]
+		if slot <> null [slot/value: res]
+		res
 	]
 
 	do-math: func [
@@ -229,7 +262,10 @@ integer: context [
 
 		switch TYPE_OF(right) [
 			TYPE_INTEGER TYPE_CHAR [
-				left/value: do-math-op left/value right/value op
+				do-math-op left/value right/value op left
+			]
+			TYPE_MONEY [
+				left: as red-integer! money/do-math op
 			]
 			TYPE_FLOAT TYPE_PERCENT TYPE_TIME [float/do-math op]
 			TYPE_PAIR
@@ -285,7 +321,7 @@ integer: context [
 			int [red-integer!]
 	][
 		int: as red-integer! slot
-		int/header: TYPE_INTEGER
+		set-type slot TYPE_INTEGER
 		int/value: value
 		int
 	]
@@ -349,8 +385,6 @@ integer: context [
 		secure? [logic!]
 		only?   [logic!]
 		return: [red-value!]
-		/local
-			n	 [integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "integer/random"]]
 
@@ -359,8 +393,7 @@ integer: context [
 			int/header: TYPE_UNSET
 		][
 			unless zero? int/value [
-				n: _random/rand % int/value + 1
-				int/value: either negative? int/value [0 - n][n]
+				int/value: _random/int-uniform-distr secure? int/value
 			]
 		]
 		as red-value! int
@@ -374,6 +407,7 @@ integer: context [
 		/local
 			int  [red-integer!]
 			fl	 [red-float!]
+			mn   [red-money!]
 			str	 [red-string!]
 			t	 [red-time!]
 			p	 [byte-ptr!]
@@ -399,6 +433,9 @@ integer: context [
 				fl: as red-float! spec
 				if overflow? fl [fire [TO_ERROR(script type-limit) datatype/push TYPE_INTEGER]]
 				int/value: as-integer fl/value
+			]
+			TYPE_MONEY [
+				int/value: from-money as red-money! spec
 			]
 			TYPE_BINARY [
 				int/value: from-binary as red-binary! spec
@@ -491,6 +528,12 @@ integer: context [
 			TYPE_CHAR [
 				char: as red-char! value2				;@@ could be optimized as integer! and char!
 				right: char/value						;@@ structures are overlapping exactly
+			]
+			TYPE_MONEY [
+				return money/compare
+					money/from-integer left
+					as red-money! value2
+					op
 			]
 			TYPE_FLOAT
 			TYPE_TIME
@@ -624,6 +667,7 @@ integer: context [
 			negative? exp/value
 		]
 		unless up? [
+			assert system/thrown = 0
 			catch RED_INT_OVERFLOW [
 				base/value: int-power base/value exp/value
 			]
@@ -699,6 +743,10 @@ integer: context [
 			r		[integer!]
 			val		[integer!]
 	][
+		if TYPE_OF(scale) = TYPE_MONEY [
+			fire [TO_ERROR(script not-related) stack/get-call datatype/push TYPE_MONEY]
+		]
+		
 		int: as red-integer! value
 		num: int/value
 		if num = 80000000h [return value]
@@ -712,7 +760,7 @@ integer: context [
 			]
 			sc: abs scale/value
 		]
-		if zero? sc [fire [TO_ERROR(math overflow)]]
+		if zero? sc [return value]
 
 		n: abs num
 		r: n % sc

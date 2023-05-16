@@ -72,7 +72,7 @@ display-about: function [][
 		style txt:   text font-color white
 		style small: txt  font [size: 9 color: white]
 		style link:  text cursor 'hand all-over
-			on-down [browse face/data]
+			on-down [browse to-url face/text]
 			on-over [face/font/style: either event/away? [none]['underline]]
 
 		below
@@ -80,7 +80,7 @@ display-about: function [][
 		txt bold "Red Programming Language" font [size: 15 color: white]
 		ver: txt font [size: 9 color: white]
 		at 153x86 image fstk-logo
-		at 0x160 small 360x20 "Copyright 2011-2018 - Red Foundation"
+		at 0x160 small 360x20 "Copyright 2011-2022 - Red Foundation"
 		at 0x180 small 360x20 "and contributors."
 		at 0x230 link red-lang font-size 10 font-color white
 		at 0x260 link github   font-size 10 font-color white
@@ -226,6 +226,6 @@ load-cfg: func [/local cfg-content gui-default][
 		append cfg [history: []]
 	]
 	apply-cfg
-	win/selected: console
 	system/view/auto-sync?: yes
+	win/selected: console
 ]

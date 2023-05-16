@@ -11,7 +11,7 @@ Red [
 ]
 
 if: make native! [[
-		"If conditional expression is TRUE, evaluate block; else return NONE"
+		"If conditional expression is truthy, evaluate block; else return NONE"
 		cond  	 [any-type!]
 		then-blk [block!]
 	]
@@ -19,7 +19,7 @@ if: make native! [[
 ]
 
 unless: make native! [[
-		"If conditional expression is not TRUE, evaluate block; else return NONE"
+		"If conditional expression is falsy, evaluate block; else return NONE"
 		cond  	 [any-type!]
 		then-blk [block!]
 	]
@@ -27,30 +27,30 @@ unless: make native! [[
 ]
 
 either: make native! [[
-		"If conditional expression is true, eval true-block; else eval false-blk"
+		"If conditional expression is truthy, evaluate the first branch; else evaluate the alternative"
 		cond  	  [any-type!]
 		true-blk  [block!]
 		false-blk [block!]
 	]
 	#get-definition NAT_EITHER
 ]
-	
+
 any: make native! [[
-		"Evaluates, returning at the first that is true"
+		"Evaluates and returns the first truthy value, if any; else NONE"
 		conds [block!]
 	]
 	#get-definition NAT_ANY
 ]
 
 all: make native! [[
-		"Evaluates, returning at the first that is not true"
+		"Evaluates and returns the last value if all are truthy; else NONE"
 		conds [block!]
 	]
 	#get-definition NAT_ALL
 ]
 
 while: make native! [[
-		"Evaluates body as long as condition block returns TRUE"
+		"Evaluates body as long as condition block evaluates to truthy value"
 		cond [block!]	"Condition block to evaluate on each iteration"
 		body [block!]	"Block to evaluate on each iteration"
 	]
@@ -58,7 +58,7 @@ while: make native! [[
 ]
 	
 until: make native! [[
-		"Evaluates body until it is TRUE"
+		"Evaluates body until it is truthy"
 		body [block!]
 	]
 	#get-definition NAT_UNTIL
@@ -66,7 +66,7 @@ until: make native! [[
 
 loop: make native! [[
 		"Evaluates body a number of times"
-		count [integer!]
+		count [integer! float!]
 		body  [block!]
 	]
 	#get-definition NAT_LOOP
@@ -75,7 +75,7 @@ loop: make native! [[
 repeat: make native! [[
 		"Evaluates body a number of times, tracking iteration count"
 		'word [word!]    "Iteration counter; not local to loop"
-		value [integer!] "Number of times to evaluate body"
+		value [integer! float!] "Number of times to evaluate body"
 		body  [block!]
 	]
 	#get-definition NAT_REPEAT
@@ -106,10 +106,10 @@ forall: make native! [[
 ]
 
 remove-each: make native! [[
-		"Removes values for each block that returns true"
+		"Removes values for each block that returns truthy value"
 		'word [word! block!] "Word or block of words to set each time"
 		data [series!] "The series to traverse (modified)"
-		body [block!] "Block to evaluate (return TRUE to remove)"
+		body [block!] "Block to evaluate (return truthy value to remove)"
 	]
 	#get-definition NAT_REMOVE_EACH
 ]
@@ -157,9 +157,9 @@ switch: make native! [[
 ]
 
 case: make native! [[
-		"Evaluates the block following the first true condition"
+		"Evaluates the block following the first truthy condition"
 		cases [block!] "Block of condition-block pairs"
-		/all "Test all conditions, evaluating the block following each true condition"
+		/all "Test all conditions, evaluating the block following each truthy condition"
 	]
 	#get-definition NAT_CASE
 ]
@@ -172,6 +172,14 @@ do: make native! [[
 			arg "Args passed to a script (normally a string)"
 		/next "Do next expression only, return it, update block word"
 			position [word!] "Word updated with new block position"
+		/trace
+			callback [function! [
+				event	[word!]
+				code	[any-block!]
+				value 	[any-type!]
+				frame [pair!]			"current frame start/top positions"
+				return: [word! none!]
+			]]
 	]
 	#get-definition NAT_DO
 ]
@@ -198,7 +206,7 @@ compose: make native! [[
 
 get: make native! [[
 		"Returns the value a word refers to"
-		word	[any-word! refinement! path! object!]
+		word	[any-word! any-path! object!]
 		/any  "If word has no value, return UNSET rather than causing an error"
 		/case "Use case-sensitive comparison (path only)"
 		return: [any-type!]
@@ -208,7 +216,7 @@ get: make native! [[
 
 set: make native! [[
 		"Sets the value(s) one or more words refer to"
-		word	[any-word! block! object! path!] "Word, object, map path or block of words to set"
+		word	[any-word! block! object! any-path!] "Word, object, map path or block of words to set"
 		value	[any-type!] "Value or block of values to assign to words"
 		/any  "Allow UNSET as a value rather than causing an error"
 		/case "Use case-sensitive comparison (path only)"
@@ -298,7 +306,7 @@ same?: make native! [[
 ]
 
 not: make native! [[
-		"Returns the boolean complement of a value"
+		"Returns the logical complement of a value (truthy or falsy)"
 		value [any-type!]
 	]
 	#get-definition NAT_NOT
@@ -435,16 +443,26 @@ dehex: make native! [[
 	#get-definition NAT_DEHEX
 ]
 
+enhex: make native! [[
+		"Encode URL-style hex encoded (%xx) strings"
+		value [any-string!]
+		return:	[string!] "Always return a string"
+	]
+	#get-definition NAT_ENHEX
+]
+
 negative?: make native! [[
 		"Returns TRUE if the number is negative"
-		number [number! time!]
+		number [number! money! time!]
+		return: [logic!]
 	]
 	#get-definition NAT_NEGATIVE?
 ]
 
 positive?: make native! [[
 		"Returns TRUE if the number is positive"
-		number [number! time!]
+		number [number! money! time!]
+		return: [logic!]
 	]
 	#get-definition NAT_POSITIVE?
 ]
@@ -488,7 +506,7 @@ to-hex: make native! [[
 
 sine: make native! [[
 		"Returns the trigonometric sine"
-		angle	[number!]
+		angle	[float! integer!]
 		/radians "Angle is specified in radians"
 		return: [float!]
 	]
@@ -497,7 +515,7 @@ sine: make native! [[
 
 cosine: make native! [[
 		"Returns the trigonometric cosine"
-		angle	[number!]
+		angle	[float! integer!]
 		/radians "Angle is specified in radians"
 		return: [float!]
 	]
@@ -506,7 +524,7 @@ cosine: make native! [[
 
 tangent: make native! [[
 		"Returns the trigonometric tangent"
-		angle	[number!]
+		angle	[float! integer!]
 		/radians "Angle is specified in radians"
 		return: [float!]
 	]
@@ -515,7 +533,7 @@ tangent: make native! [[
 
 arcsine: make native! [[
 		"Returns the trigonometric arcsine (in degrees by default in range [-90,90])"
-		sine	[number!] "in range [-1,1]"
+		sine	[float! integer!] "in range [-1,1]"
 		/radians "Angle is returned in radians [-pi/2,pi/2]"
 		return: [float!]
 	]
@@ -524,7 +542,7 @@ arcsine: make native! [[
 
 arccosine: make native! [[
 		"Returns the trigonometric arccosine (in degrees by default in range [0,180])"
-		cosine	[number!] "in range [-1,1]"
+		cosine	[float! integer!] "in range [-1,1]"
 		/radians "Angle is returned in radians [0,pi]"
 		return: [float!]
 	]
@@ -533,7 +551,7 @@ arccosine: make native! [[
 
 arctangent: make native! [[
 		"Returns the trigonometric arctangent (in degrees by default in range [-90,90])"
-		tangent	[number!] "in range [-inf,+inf]"
+		tangent	[float! integer!] "in range [-inf,+inf]"
 		/radians "Angle is returned in radians [-pi/2,pi/2]"
 		return: [float!]
 	]
@@ -541,8 +559,8 @@ arctangent: make native! [[
 ]
 arctangent2: make native! [[
 		"Returns the smallest angle between the vectors (1,0) and (x,y) in degrees by default (-180,180]"
-		y       [number!]
-		x       [number!]
+		y       [float! integer!]
+		x       [float! integer!]
 		/radians "Angle is returned in radians (-pi,pi]"
 		return: [float!]
 	]
@@ -559,7 +577,7 @@ NaN?: make native! [[
 
 zero?: make native! [[
 		"Returns TRUE if the value is zero"
-		value	[number! pair! time! char! tuple!]
+		value	[number! money! pair! time! char! tuple!]
 		return: [logic!]
 	]
 	#get-definition NAT_ZERO?
@@ -567,7 +585,7 @@ zero?: make native! [[
 
 log-2: make native! [[
 		"Return the base-2 logarithm"
-		value	[number!]
+		value	[float! integer!]
 		return: [float!]
 	]
 	#get-definition NAT_LOG_2
@@ -575,7 +593,7 @@ log-2: make native! [[
 
 log-10: make native! [[
 		"Returns the base-10 logarithm"
-		value	[number!]
+		value	[float! integer!]
 		return: [float!]
 	]
 	#get-definition NAT_LOG_10
@@ -583,7 +601,7 @@ log-10: make native! [[
 
 log-e: make native! [[
 		"Returns the natural (base-E) logarithm of the given value"
-		value	[number!]
+		value	[float! integer!]
 		return: [float!]
 	]
 	#get-definition NAT_LOG_E
@@ -591,7 +609,7 @@ log-e: make native! [[
 
 exp: make native! [[
 		"Raises E (the base of natural logarithm) to the power specified"
-		value	[number!]
+		value	[float! integer!]
 		return: [float!]
 	]
 	#get-definition NAT_EXP
@@ -599,7 +617,7 @@ exp: make native! [[
 
 square-root: make native! [[
 		"Returns the square root of a number"
-		value	[number!]
+		value	[float! integer!]
 		return: [float!]
 	]
 	#get-definition NAT_SQUARE_ROOT
@@ -626,14 +644,15 @@ value?: make native! [[
 try: make native! [[
 		"Tries to DO a block and returns its value or an error"
 		block	[block!]
-		/all "Catch also BREAK, CONTINUE, RETURN, EXIT and THROW exceptions"
+		/all  "Catch also BREAK, CONTINUE, RETURN, EXIT and THROW exceptions"
+		/keep "Capture and save the call stack in the error object"
 	]
 	#get-definition NAT_TRY
 ]
 
 uppercase: make native! [[
 		"Converts string of characters to uppercase"
-		string		[any-string! char!]
+		string		[any-string! char!] "Value to convert (modified when series)"
 		/part "Limits to a given length or position"
 			limit	[number! any-string!]
 		return: 	[any-string! char!]
@@ -643,7 +662,7 @@ uppercase: make native! [[
 
 lowercase: make native! [[
 		"Converts string of characters to lowercase"
-		string		[any-string! char!]
+		string		[any-string! char!] "Value to convert (modified when series)"
 		/part "Limits to a given length or position"
 			limit	[number! any-string!]
 		return:		[any-string! char!]
@@ -657,6 +676,15 @@ as-pair: make native! [[
 		y [integer! float!]
 	]
 	#get-definition NAT_AS_PAIR
+]
+
+as-money: make native! [[
+		"Combine currency code and amount into a monetary value"
+		currency [word!]
+		amount   [integer! float!]
+		return:  [money!]
+	]
+	#get-definition NAT_AS_MONEY
 ]
 
 break: make native! [[
@@ -781,14 +809,14 @@ new-line: make native! [[
 
 new-line?: make native! [[
 		"Returns the state of the new-line marker within a list series"
-		position [any-list!] "Position to change marker"
-		return:  [any-list!]
+		position [any-list!] "Position to check marker"
+		return:  [logic!]
 	]
 	#get-definition NAT_NEW_LINE?
 ]
 
 context?: make native! [[
-		"Returns the context in which a word is bound"
+		"Returns the context to which a word is bound"
 		word	[any-word!]		"Word to check"
 		return: [object! function! none!]
 	]
@@ -837,7 +865,8 @@ now: make native! [[
 
 sign?: make native! [[
 		"Returns sign of N as 1, 0, or -1 (to use as a multiplier)"
-		number [number! time!]
+		number [number! money! time!]
+		return: [integer!]
 	]
 	#get-definition NAT_SIGN?
 ]
@@ -874,36 +903,62 @@ size?: make native! [[
 ]
 
 browse: make native! [[
-		"Open web browser to a URL or file mananger to a local file"
+		"Opens the URL in a web browser or the file in the associated application"
 		url		[url! file!]
 	]
 	#get-definition NAT_BROWSE
 ]
 
 compress: make native! [[
-		"compresses data. return GZIP format (RFC 1952) by default"
-		data		[any-string! binary!]
-		/zlib		"Return ZLIB format (RFC 1950)"
-		/deflate	"Return DEFLATE format (RFC 1951)"
+		"Compresses data"
+		data	[any-string! binary!]
+		method	[word!]	"zlib deflate gzip"
+		return: [binary!]
 	]
 	#get-definition NAT_COMPRESS
 ]
 
 decompress: make native! [[
-		"Decompresses data. Data in GZIP format (RFC 1952) by default"
-		data		[binary!]
-		/zlib		"Data in ZLIB format (RFC 1950)"
-		size		[integer!] "Uncompressed data size. Use 0 if don't know"
-		/deflate	"Data in DEFLATE format (RFC 1951)"
-		size		[integer!] "Uncompressed data size. Use 0 if don't know"
+		"Decompresses data"
+		data	[binary!]
+		method	[word!]	"zlib deflate gzip"
+		/size "Specify an uncompressed data size (ignored for GZIP)"
+			sz [integer!] "Uncompressed data size; must not be negative"
+		return: [binary!]
 	]
 	#get-definition NAT_DECOMPRESS
 ]
 
 recycle: make native! [[
-		"Recycles unused memory"
-		/on		"Turns on garbage collector"
-		/off	"Turns off garbage collector"
+		"Recycles unused memory and returns memory amount still in use"
+		/on		"Turns on garbage collector; returns nothing"
+		/off	"Turns off garbage collector; returns nothing"
+		return: [integer! unset!]
 	]
 	#get-definition NAT_RECYCLE
+]
+
+transcode: make native! [[
+		"Translates UTF-8 binary source to values. Returns one or several values in a block"
+		src	 [binary! string!]	"UTF-8 input buffer; string argument will be UTF-8 encoded"
+		/next			"Translate next complete value (blocks as single value)"
+		/one			"Translate next complete value, returns the value only"
+		/prescan		"Prescans only, do not load values. Returns guessed type."
+		/scan			"Scans only, do not load values. Returns recognized type."
+		/part			"Translates only part of the input buffer"
+			length [integer! binary!] "Length in bytes or tail position"
+		/into			"Optionally provides an output block"
+			dst	[block!]
+		/trace
+			callback [function! [
+				event	[word!]
+				input	[binary! string!]
+				type	[word! datatype!]
+				line	[integer!]
+				token
+				return: [logic!]
+			]]
+		return: [block!]
+	]
+	#get-definition NAT_TRANSCODE
 ]

@@ -103,12 +103,14 @@ collector: context [
 		node [node!]
 		/local
 			ctx  [red-context!]
+			slot [red-value!]
 	][
-		;probe "context"
 		if keep node [
-			ctx: TO_CTX(node)
-			keep ctx/symbols
+			ctx: TO_CTX(node)							;-- [context! function!|object!]
+			slot: as red-value! ctx
+			_hashtable/mark ctx/symbols
 			unless ON_STACK?(ctx) [mark-block-node ctx/values]
+			mark-values slot + 1 slot + 2				;-- mark the back-reference value (2nd value)
 		]
 	]
 
@@ -155,10 +157,7 @@ collector: context [
 				]
 				TYPE_BLOCK
 				TYPE_PAREN
-				TYPE_PATH
-				TYPE_LIT_PATH
-				TYPE_GET_PATH
-				TYPE_SET_PATH [
+				TYPE_ANY_PATH [
 					series: as red-series! value
 					if series/node <> null [			;-- can happen in routine
 						#if debug? = yes [if verbose > 1 [print ["len: " block/rs-length? as red-block! series]]]
@@ -173,12 +172,12 @@ collector: context [
 						]
 					]
 				]
-				TYPE_SYMBOL
-				TYPE_STRING
-				TYPE_URL 
-				TYPE_FILE
-				TYPE_TAG 
-				TYPE_EMAIL [
+				TYPE_SYMBOL [
+					series: as red-series! value
+					keep as node! series/extra
+					if series/node <> null [keep series/node]
+				]
+				TYPE_ANY_STRING [
 					#if debug? = yes [if verbose > 1 [print as-c-string string/rs-head as red-string! value]]
 					series: as red-series! value
 					keep series/node
@@ -203,7 +202,7 @@ collector: context [
 					#if debug? = yes [if verbose > 1 [print "context"]]
 					ctx: as red-context! value
 					;keep ctx/self
-					mark-block-node ctx/symbols
+					_hashtable/mark ctx/symbols
 					unless ON_STACK?(ctx) [mark-block-node ctx/values]
 				]
 				TYPE_HASH
@@ -244,10 +243,10 @@ collector: context [
 						mark-block-node as node! native/code
 					]
 				]
-				#if OS = 'macOS [
+				#if any [OS = 'macOS OS = 'Linux OS = 'Windows][
 				TYPE_IMAGE [
 					image: as red-image! value
-					keep image/node
+					#if draw-engine <> 'GDI+ [if image/node <> null [keep image/node]]
 				]]
 				default [0]
 			]
@@ -284,13 +283,13 @@ collector: context [
 			p		[int-ptr!]
 			obj		[red-object!]
 			w		[red-word!]
-			cb
 		#if debug? = yes [
 			file	[c-string!]
 			saved	[integer!]
 			buf		[c-string!]
-			tm tm1
+			tm tm1	[float!]
 		]
+			cb
 	][
 		#if debug? = yes [if verbose > 1 [
 			#if OS = 'Windows [platform/dos-console?: no]
@@ -324,34 +323,16 @@ collector: context [
 		mark-values stack/bottom stack/top
 		
 		#if debug? = yes [if verbose > 1 [probe "marking globals"]]
-		keep case-folding/upper-to-lower/node
-		keep case-folding/lower-to-upper/node
-
-		#if debug? = yes [if verbose > 1 [probe "marking path parent"]]
-		obj: object/path-parent
-		if TYPE_OF(obj) = TYPE_OBJECT [
-			mark-context obj/ctx
-			if obj/on-set <> null [keep obj/on-set]
-		]
-		w: object/field-parent
-		if TYPE_OF(w) = TYPE_WORD [
-			if w/ctx <> null [
-				;print-symbol w
-				;print "^/"
-				either w/symbol = words/self [
-					;probe "self"
-					mark-block-node w/ctx
-				][
-					mark-context w/ctx
-				]
-			]
-		]
+		if interpreter/near/node <> null [keep interpreter/near/node]
+		lexer/mark-buffers
 		
 		#if debug? = yes [if verbose > 1 [probe "marking globals from optional modules"]]
 		p: ext-markers
 		while [p < ext-top][
-			cb: as function! [] p/value
-			cb
+			if p/value <> 0 [							;-- check if not unregistered
+				cb: as function! [] p/value
+				cb
+			]
 			p: p + 1
 		]
 		
@@ -374,7 +355,7 @@ collector: context [
 
 		#if debug? = yes [
 			tm: (platform/get-time yes yes) - tm - tm1
-			sprintf [buf ", mark: %.1fms, sweep: %.1fms" tm1 * 1000 tm * 1000]
+			sprintf [buf ", mark: %.1fms, sweep: %.1fms" tm1 * 1000.0 tm * 1000.0]
 			probe [" => " memory-info null 1 buf]
 			if verbose > 1 [
 				simple-io/close-file stdout
@@ -391,8 +372,16 @@ collector: context [
 	
 	register: func [cb [int-ptr!]][
 		assert (as-integer ext-top - ext-markers) >> 2 < ext-size
-		ext-top/value: as integer! cb
+		ext-top/value: as-integer cb
 		ext-top: ext-top + 1
+	]
+	
+	unregister: func [cb [int-ptr!] /local p [int-ptr!]][
+		p: ext-markers
+		while [p < ext-top][
+			if p/value = as-integer cb [p/value: 0 exit]
+			p: p + 1
+		]
 	]
 	
 ]

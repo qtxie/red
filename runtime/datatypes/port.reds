@@ -34,9 +34,9 @@ port: context [
 		actor: as red-function! object/rs-select actors as red-value! action
 		if TYPE_OF(actor) <> TYPE_FUNCTION [fire [TO_ERROR(access no-port-action) action]]
 		
-		count: _function/calc-arity null actor 0
+		count: _function/count-locals actor/spec 0 no
 		if positive? count [_function/init-locals count]
-		_function/call actor actors/ctx
+		_function/call actor actors/ctx as red-value! action CB_PORT
 		stack/unwind-last
 	]
 	
@@ -219,9 +219,10 @@ port: context [
 		do-action words/_index? 1
 	]
 	
-	length?: func [return: [red-value!]][
+	length?: func [return: [integer!] /local int [red-integer!]][
 		#if debug? = yes [if verbose > 0 [print-line "port/length?"]]
-		do-action words/_length? 1
+		int: as red-integer! do-action words/_length? 1
+		int/value
 	]
 	
 	next: func [return: [red-value!]][
@@ -552,6 +553,7 @@ port: context [
 	reverse: func [
 		port	[red-object!]
 		part	[red-value!]
+		skip    [red-value!]
 		return: [red-value!]
 		/local
 			actors [red-object!]

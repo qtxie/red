@@ -11,18 +11,12 @@ Red/System [
 ]
 
 #define CALL_STACK_MASK					0F000000h
+#define CALL_STACK_FULL_MASK			FF0000FFh
 #define CALL_STACK_TYPE?(p flags)		(CALL_STACK_MASK and p/header = flags)
 #define NOT_CALL_STACK_TYPE?(p flags)	(CALL_STACK_MASK and p/header <> flags)
 
 stack: context [										;-- call stack
 	verbose: 0
-	
-	dyn-info!: alias struct! [
-		header [integer!]
-		code   [integer!]
-		count  [integer!]
-		locals [integer!]
-	]
 	
 	call-frame!: alias struct! [
 		header [integer!]								;-- symbol ID of the calling function
@@ -42,7 +36,6 @@ stack: context [										;-- call stack
 	cbottom: 		as call-frame!	0
 	ctop:	 		as call-frame! 	0
 	
-	acc-mode?: 		no									;-- YES: accumulate expressions on stack
 	body-symbol:	0									;-- symbol ID
 	anon-symbol:	0									;-- symbol ID
 	
@@ -65,9 +58,9 @@ stack: context [										;-- call stack
 	;-- header flags
 	#enum flags! [
 		FLAG_INTERPRET: 80000000h						;-- Called from interpreter
-		FLAG_THROW_ATR:	40000000h						;-- Throw function attribut
-		FLAG_CATCH_ATR:	20000000h						;--	Catch function attribut
-		FLAG_IN_FUNC:	10000000h						;--	Inside of a function body (volative flag)
+		FLAG_THROW_ATR:	40000000h						;-- Throw function attribute
+		FLAG_CATCH_ATR:	20000000h						;--	Catch function attribute
+		FLAG_IN_FUNC:	10000000h						;--	Inside of a function body (volatile flag)
 
 		FRAME_FUNCTION:	01000000h						;-- function! call
 		FRAME_NATIVE:	02000000h						;-- native! or action! call
@@ -93,18 +86,20 @@ stack: context [										;-- call stack
 		args-series:  GET_BUFFER(arg-stk)
 		calls-series: GET_BUFFER(call-stk)
 
-		a-end: as cell!		  (as byte-ptr! args-series)  + args-series/size
-		c-end: as call-frame! (as byte-ptr! calls-series) + calls-series/size
-
 		bottom:  	args-series/offset
 		arguments:	bottom
 		top:	 	bottom
 		cbottom: 	as call-frame! calls-series/offset
 		ctop:	 	cbottom
-		
+
+		a-end: as cell!		  (as byte-ptr! bottom)  + args-series/size
+		c-end: as call-frame! (as byte-ptr! cbottom) + calls-series/size
+
 		body-symbol: words/_body/symbol
 		anon-symbol: words/_anon/symbol
 	]
+	
+	set-ctop: func [ptr [int-ptr!]][ctop: as call-frame! ptr]
 	
 	mark: func [
 		fun  [red-word!]
@@ -113,7 +108,8 @@ stack: context [										;-- call stack
 		#if debug? = yes [if verbose > 0 [print-line "stack/mark"]]
 
 		if ctop >= c-end [
-			top: top - 4								;-- make space within the stack for error processing
+			top: top - 5								;-- make space within the stack for error processing
+			if top < bottom [top: bottom]
 			fire [TO_ERROR(internal stack-overflow)]
 		]
 		ctop/header: type or (fun/symbol << 8)
@@ -123,7 +119,8 @@ stack: context [										;-- call stack
 		ctop/saved:  null
 		ctop: ctop + 1
 		arguments: top								;-- top of stack becomes frame base
-
+		assert top >= bottom
+		
 		#if debug? = yes [if verbose > 1 [dump]]
 	]
 	
@@ -137,7 +134,8 @@ stack: context [										;-- call stack
 		#if debug? = yes [if verbose > 0 [print-line "stack/mark-func"]]
 
 		if ctop >= c-end [
-			top: top - 4								;-- make space within the stack for error processing
+			top: top - 5								;-- make space within the stack for error processing
+			if top < bottom [top: bottom]
 			fire [TO_ERROR(internal stack-overflow)]
 		]
 		values: either null? ctx-name [null][			;-- null only happens in some libRedRT cases
@@ -152,12 +150,9 @@ stack: context [										;-- call stack
 		ctop/saved:  values
 		ctop: ctop + 1
 		arguments: top								;-- top of stack becomes frame base
+		assert top >= bottom
 
 		#if debug? = yes [if verbose > 1 [dump]]
-	]
-	
-	check-call: does [
-		if acc-mode? [check-dyn-call]
 	]
 
 	reset: func [
@@ -165,7 +160,8 @@ stack: context [										;-- call stack
 	][
 		#if debug? = yes [if verbose > 0 [print-line "stack/reset"]]
 		
-		either acc-mode? [check-dyn-call][top: arguments]
+		top: arguments
+		assert top >= bottom
 		arguments
 	]
 	
@@ -175,7 +171,6 @@ stack: context [										;-- call stack
 		#if debug? = yes [if verbose > 0 [print-line "stack/keep"]]
 		
 		top: arguments + 1								;-- keep last value in arguments slot
-		if acc-mode? [check-dyn-call]
 		arguments
 	]
 	
@@ -203,6 +198,26 @@ stack: context [										;-- call stack
 		]
 	]
 	
+	collect-calls: func [
+		dst [red-block!]
+		/local
+			p	  [call-frame!]
+			ctx	  [node!]
+			sym	  [integer!]
+	][
+		p: ctop - 1
+		until [
+			sym: p/header >> 8 and FFFFh
+			if all [sym <> body-symbol	sym <> anon-symbol][
+				ctx: either null? p/fctx [global-ctx][p/fctx]
+				block/rs-append dst as red-value! word/at ctx sym
+				integer/make-at ALLOC_TAIL(dst) (as-integer p/prev - stack/bottom) >> 4
+			]
+			p: p - 1
+			p <= cbottom
+		]
+	]
+	
 	get-call: func [
 		return: [red-word!]
 		/local
@@ -222,6 +237,21 @@ stack: context [										;-- call stack
 		either p < cbottom [words/_not-found][word/at p/ctx sym]
 	]
 	
+	update-call: func [
+		call [red-value!]
+		/local
+			w [red-word!]
+			p [call-frame!]
+	][
+		w: as red-word! call
+		if TYPE_OF(w) = TYPE_WORD [
+			p: either where-ctop = null [ctop][where-ctop]
+			assert p > cbottom
+			p: p - 1
+			p/header: p/header and CALL_STACK_FULL_MASK or (w/symbol << 8)
+		]
+	]
+	
 	revert: does [
 		#if debug? = yes [if verbose > 0 [print-line "stack/revert"]]
 
@@ -234,6 +264,8 @@ stack: context [										;-- call stack
 			top: arguments
 			arguments: ctop/prev
 		]
+		assert top >= bottom
+		assert arguments >= bottom
 		
 		#if debug? = yes [if verbose > 1 [dump]]
 	]
@@ -249,6 +281,8 @@ stack: context [										;-- call stack
 			arguments: ctop/prev
 		]
 		top: top - 1
+		assert top >= bottom
+		assert arguments >= bottom
 
 		#if debug? = yes [if verbose > 1 [dump]]
 	]
@@ -260,7 +294,7 @@ stack: context [										;-- call stack
 		ctop: ctop - 1
 		top: arguments + 1
 		arguments: ctop/prev
-		if acc-mode? [check-dyn-call]
+		assert arguments >= bottom
 		
 		#if debug? = yes [if verbose > 1 [dump]]
 	]
@@ -274,6 +308,7 @@ stack: context [										;-- call stack
 
 		last: arguments
 		unwind
+		assert arguments >= bottom
 		copy-cell last arguments
 	]
 	
@@ -316,6 +351,7 @@ stack: context [										;-- call stack
 
 		last: arguments
 		unroll-frames flags no
+		assert ctop/prev >= bottom
 		copy-cell last ctop/prev
 		arguments: ctop/prev
 		top: arguments
@@ -328,8 +364,33 @@ stack: context [										;-- call stack
 	
 	adjust: does [
 		top: top - 1
+		assert top >= bottom
 		copy-cell top top - 1
-		check-call
+	]
+	
+	trace-in: func [
+		level	[integer!]
+		list	[red-block!]							;-- optional call stack storage block
+		stk		[integer!]
+		/local
+			fun	  [red-value!]
+			top	  [call-frame!]
+			base  [call-frame!]
+			sym	  [integer!]
+	][
+		top: as call-frame! stk
+		base: cbottom
+		until [
+			sym: base/header >> 8 and FFFFh
+			if all [sym <> body-symbol sym <> anon-symbol][
+				fun: _context/get-any sym base/ctx
+				if any [level > 1 TYPE_OF(fun) = TYPE_FUNCTION][
+					 word/make-at sym ALLOC_TAIL(list)
+				]
+			]
+			base: base + 1
+			base >= top									;-- defensive exit condition
+		]
 	]
 	
 	trace: func [
@@ -355,7 +416,7 @@ stack: context [										;-- call stack
 			sym: base/header >> 8 and FFFFh
 			
 			if all [sym <> body-symbol sym <> anon-symbol][
-				fun: _context/get-global sym
+				fun: _context/get-any sym base/ctx
 				if any [level > 1 TYPE_OF(fun) = TYPE_FUNCTION][
 					part: word/form 
 						word/make-at sym value
@@ -370,7 +431,7 @@ stack: context [										;-- call stack
 				]
 			]
 			base: base + 1
-			base >= top									;-- defensive test
+			base >= top									;-- defensive exit condition
 		]
 		part
 	]
@@ -383,6 +444,7 @@ stack: context [										;-- call stack
 	][
 		base: object/get-values err
 		int: as red-integer! base + error/get-stack-id
+		if TYPE_OF(int) = TYPE_BLOCK [exit]				;-- call stack already captured
 		int/header: TYPE_INTEGER
 		int/value:  as-integer ctop
 	]
@@ -412,6 +474,7 @@ stack: context [										;-- call stack
 			natives/print* no
 			quit -2
 		]
+		assert top >= bottom
 		push as red-value! err
 		throw RED_THROWN_ERROR
 	]
@@ -424,9 +487,11 @@ stack: context [										;-- call stack
 			save-top  [red-value!]
 			save-ctop [call-frame!]
 	][
+		assert top >= bottom
 		result:	   arguments
 		save-top:  top
 		save-ctop: ctop
+		if ctop > cbottom  [ctop: ctop - 1]
 		
 		;-- unwind the stack and determine the outcome of a break/continue exception
 		until [
@@ -449,6 +514,7 @@ stack: context [										;-- call stack
 			ctop: ctop + 1
 			arguments: ctop/prev
 			top: arguments
+			assert top >= bottom
 			either all [return? not cont?][set-last result][unset/push-last]
 			either cont? [
 				throw RED_THROWN_CONTINUE
@@ -465,10 +531,12 @@ stack: context [										;-- call stack
 			save-top  [red-value!]
 			save-ctop [call-frame!]
 	][
+		assert top >= bottom
 		result:	   arguments
 		save-top:  top
 		save-ctop: ctop
-
+		if ctop > cbottom  [ctop: ctop - 1]
+		
 		;-- unwind the stack and determine the outcome of an exit/return exception
 		until [
 			if CALL_STACK_TYPE?(ctop FRAME_TRY_ALL) [
@@ -490,6 +558,7 @@ stack: context [										;-- call stack
 			ctop: ctop + 1
 			arguments: ctop/prev
 			top: arguments
+			assert top >= bottom
 			either return? [
 				set-last result
 				throw RED_THROWN_RETURN
@@ -507,9 +576,11 @@ stack: context [										;-- call stack
 			save-top  [red-value!]
 			save-ctop [call-frame!]
 	][
+		assert top >= bottom
 		result:	   arguments
 		save-top:  top
 		save-ctop: ctop
+		if ctop > cbottom  [ctop: ctop - 1]
 		
 		if where-ctop = null [where-ctop: ctop]
 		
@@ -534,6 +605,7 @@ stack: context [										;-- call stack
 			ctop: ctop + 1
 			arguments: ctop/prev
 			top: arguments
+			assert top >= bottom
 			push result
 			push result + 1								;-- get back the NAME argument too
 			throw id
@@ -541,7 +613,10 @@ stack: context [										;-- call stack
 	]
 	
 	adjust-post-try: does [
-		if top-type? = TYPE_ERROR [set-last top - 1]
+		if top-type? = TYPE_ERROR [
+			assert top - 1 >= bottom
+			set-last top - 1
+		]
 		top: arguments + 1
 	]
 	
@@ -613,6 +688,7 @@ stack: context [										;-- call stack
 			value [red-value!]
 	][
 		value: top - 1
+		assert value >= bottom
 		TYPE_OF(value)
 	]
 	
@@ -627,161 +703,11 @@ stack: context [										;-- call stack
 			type  [integer!]
 	][
 		value: top - 1
+		assert value >= bottom
 		type: TYPE_OF(value)
 		any [											;@@ replace with ANY_FUNCTION?
 			type = TYPE_FUNCTION
 			type = TYPE_ROUTINE
-		]
-	]
-	
-	defer-call: func [
-		name   [red-word!]
-		code   [integer!]
-		count  [integer!]
-		octx [node!]
-		/local
-			info [dyn-info!]
-	][
-		;mark-native words/_anon
-		integer/push as-integer octx					;-- store optional wrapping object pointer
-		
-		info: as dyn-info! push*
-		info/header: TYPE_POINT
-		info/code:   code								;-- store wrapping function pointer
-		info/count:  count								;-- store caller's arity
-		info/locals: -2									;-- store caller's locals count
-		
-		mark-dyn name									;-- open new frame
-		acc-mode?: yes
-		arguments/header: TYPE_VALUE					;-- use TYPE_VALUE to signal "no argument"
-	]
-	
-	push-call: func [
-		path [red-path!]
-		idx  [integer!]
-		code [integer!]
-		octx [node!]
-		/local
-			fun		 [red-function!]
-			p		 [red-path!]
-			info	 [dyn-info!]
-			counters [integer!]
-	][
-		;mark-native words/_anon
-		fun: as red-function! top - 1
-		
-		assert any [
-			TYPE_OF(fun) = TYPE_FUNCTION
-			TYPE_OF(fun) = TYPE_ROUTINE
-		]
-		counters: _function/calc-arity path fun idx
-		p: as red-path! copy-cell as red-value! path push*
-		p/head: idx										;-- store path with function's index
-		
-		integer/push as-integer octx					;-- store optional wrapping object pointer
-		
-		info: as dyn-info! push*
-		info/header: TYPE_POINT
-		info/code:   code								;-- store wrapping function pointer
-		info/count:  counters and FFFFh					;-- store caller's arity
-		info/locals: counters >> 16						;-- store caller's locals count
-		
-		mark-dyn as red-word! block/rs-abs-at as red-block! path idx  ;-- open new frame
-		acc-mode?: yes
-		
-		either zero? (counters and FFFFh) [
-			arguments/header: TYPE_UNSET
-			check-dyn-call								;-- short path to call with no arguments
-		][
-			arguments/header: TYPE_VALUE				;-- use TYPE_VALUE to signal "no argument"
-		]
-	]
-	
-	check-dyn-call: func [
-		/local
-			int		   [red-integer!]
-			fun		   [red-function!]
-			obj		   [red-object!]
-			base	   [red-value!]
-			last	   [red-value!]
-			info	   [dyn-info!]
-			ctx		   [node!]
-			octx	   [node!]
-			more	   [series!]
-			p		   [call-frame!]
-			dyn?	   [logic!]
-			new-frame? [logic!]
-			code
-	][
-		p: ctop - 1
-		if p < cbottom [exit]
-		
-		if all [
-			CALL_STACK_TYPE?(p FRAME_DYN_CALL)
-			TYPE_OF(arguments) <> TYPE_VALUE
-		][
-			info: as dyn-info! arguments - 1
-			unless zero? info/count [info/count: info/count - 1]
-			
-			if zero? info/count [
-				base: arguments
-				either info/locals = -2 [
-					fun: null
-					new-frame?: no
-				][
-					ctx: null
-					fun: as red-function! base - 4
-					more: as series! fun/more/value
-					int: as red-integer! more/offset + 4
-					obj: as red-object! base - 5
-					case [
-						TYPE_OF(obj) = TYPE_OBJECT  [ctx: obj/ctx]
-						TYPE_OF(int) = TYPE_INTEGER [ctx: as node! int/value]
-						true						[ctx: null]
-					]
-
-					new-frame?: info/locals = -1
-					case [
-						info/locals > 0 [_function/init-locals info/locals]
-						new-frame?		[_function/lay-frame]
-						true			[0]					;-- 0 locals case, do nothing
-					]
-				]
-				
-				code: as function! [octx [node!]] info/code
-				int: as red-integer! base - 2
-				octx: as node! int/value
-				
-				acc-mode?: no							;-- temporary disable accumulative mode
-				unless null? fun [_function/call fun ctx] ;-- run the detected function
-				unless zero? info/code [code octx]		;-- run wrapper code (stored as function)
-				if new-frame? [unwind-last]				;-- close new frame created for handling refinements
-				
-				last: arguments
-				unwind									;-- close frame opened in 'push-call
-				either all [
-					null? fun							;-- for defered calls only
-					arguments + 3 < top					;-- check if not first argument of parent call?
-				][
-					copy-cell last arguments + 1
-					top: top - 2						;-- adjust stack to right position for next argument
-				][
-					copy-cell last arguments			;-- unwind-last
-				]
-				
-				;base: arguments
-				;unwind
-				;push base
-				acc-mode?: yes
-				
-				p: ctop - 1								;-- decide to keep or not the accumulative mode on
-				either p < cbottom [
-					acc-mode?: no						;-- bottom of stack reached, switch back to normal
-				][
-					dyn?: CALL_STACK_TYPE?(p FRAME_DYN_CALL)
-					either dyn? [check-dyn-call][acc-mode?: no] ;-- if another dyn call pending, keep the mode on
-				]
-			]
 		]
 	]
 
@@ -801,6 +727,53 @@ stack: context [										;-- call stack
 				4
 				(as-integer ctop + 2 - cbottom) >> 4
 			print-line ["ctop: " ctop]
+		]
+		
+		show-frames: func [
+			/local
+				p	  [call-frame!]
+				sym	  [red-symbol!]
+				flags lines [integer!]
+				lower upper [red-value!]
+		][
+			p: ctop
+			lower: arguments
+			upper: top
+			
+			until [
+				sym: symbol/get p/header >> 8 and FFFFh
+				flags: p/header and FF000000h
+			
+				print ["^/-FRAME- : " as-c-string (as series! sym/cache/value) + 1 ", "]
+				
+				if flags and F0000000h = FLAG_INTERPRET [print "INTERPRET,"]
+				if flags and F0000000h = FLAG_THROW_ATR [print "THROW_ATR,"]
+				if flags and F0000000h = FLAG_CATCH_ATR [print "CATCH_ATR,"]
+				if flags and F0000000h = FLAG_IN_FUNC   [print "IN_FUNC,"]
+				if flags and 0F000000h = FRAME_FUNCTION [print "FUNC,"]
+				if flags and 0F000000h = FRAME_NATIVE   [print "NATIVE,"]
+				if flags and 0F000000h = FRAME_ROUTINE  [print "ROUTINE,"]
+				if flags and 0F000000h = FRAME_TRY      [print "TRY,"]
+				if flags and 0F000000h = FRAME_TRY_ALL  [print "TRY_ALL,"]
+				if flags and 0F000000h = FRAME_CATCH    [print "CATCH,"]
+				if flags and FF000000h = FRAME_EVAL     [print "EVAL,"]
+				if flags and 0F000000h = FRAME_LOOP     [print "LOOP,"]
+				if flags and 0F000000h = FRAME_DYN_CALL [print "DYN_CALL,"]
+				if flags and FF000000h = FRAME_INT_FUNC [print "INT_FUNC,"]
+				if flags and FF000000h = FRAME_INT_NAT  [print "INT_NAT,"]
+				if flags and FF000000h = FRAME_IN_CFUNC [print "IN_CFUNC,"]
+				
+				print-line [" prev_args: " p/prev]
+				lines: (as-integer upper + 1 - lower) >> 4
+				if lines > 20 [lines: 20]
+				if lines > 0  [dump-memory-raw as byte-ptr! lower 4 lines]
+				
+				lower: p/prev
+				upper: arguments
+				p: p - 1
+				p <= cbottom
+			]
+			print lf
 		]
 	]
 ]

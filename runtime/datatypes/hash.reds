@@ -24,6 +24,7 @@ hash: context [
 			hash	[red-hash!]
 			size	[integer!]
 			int		[red-integer!]
+			fl		[red-float!]
 			table	[node!]
 			blk		[red-block!]
 			blk?	[logic!]
@@ -32,10 +33,10 @@ hash: context [
 
 		blk?: no
 		switch TYPE_OF(spec) [
-			TYPE_INTEGER [
-				int: as red-integer! spec
-				size: int/value
-				if negative? size [fire [TO_ERROR(script out-of-range) spec]]
+			TYPE_INTEGER
+			TYPE_FLOAT [
+				size: get-int-from spec
+				if size <= 0 [size: 1]
 			]
 			TYPE_BLOCK [
 				size: block/rs-length? as red-block! spec
@@ -88,20 +89,6 @@ hash: context [
 		block/mold as red-block! hash buffer no all? flat? arg part - 11 indent
 	]
 
-	clear: func [
-		hash	[red-hash!]
-		return:	[red-value!]
-		/local
-			blk [red-block!]
-	][
-		#if debug? = yes [if verbose > 0 [print-line "hash/clear"]]
-
-		blk: as red-block! hash
-		_hashtable/clear hash/table blk/head block/rs-length? blk
-		block/rs-clear blk
-		as red-value! hash
-	]
-
 	copy: func [
 		hash    	[red-hash!]
 		new			[red-block!]
@@ -116,6 +103,7 @@ hash: context [
 		#if debug? = yes [if verbose > 0 [print-line "hash/copy"]]
 
 		block/copy as red-block! hash new part-arg deep? types
+		new/header: TYPE_BLOCK							;-- _hashtable/init may trigger GC. `new` is actually a block for now.
 		size: block/rs-length? new
 		table: _hashtable/init size new HASH_TABLE_HASH 1
 		hash: as red-hash! new
@@ -204,7 +192,7 @@ hash: context [
 			INHERIT_ACTION	;at
 			INHERIT_ACTION	;back
 			INHERIT_ACTION	;change
-			:clear
+			INHERIT_ACTION	;clear
 			:copy
 			INHERIT_ACTION	;find
 			INHERIT_ACTION	;head

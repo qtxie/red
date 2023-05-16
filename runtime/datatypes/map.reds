@@ -24,24 +24,31 @@ map: context [
 		size: as int-ptr! s/offset
 		size/value
 	]
+	
+	valid-key?: func [type [integer!] return: [logic!]][
+		switch type [
+			TYPE_ALL_WORD
+			TYPE_BINARY
+			TYPE_ANY_STRING
+			TYPE_MONEY
+			TYPE_INTEGER TYPE_CHAR TYPE_FLOAT TYPE_DATE
+			TYPE_PERCENT TYPE_TUPLE TYPE_PAIR TYPE_TIME [yes]
+			default										[no]
+		]		
+	]
 
 	preprocess-key: func [
-		key		[red-value!]
+		key	 [red-value!]
+		path [red-value!]
 	][
 		switch TYPE_OF(key) [
-			TYPE_WORD
-			TYPE_GET_WORD
-			TYPE_SET_WORD
-			TYPE_LIT_WORD [key/header: TYPE_SET_WORD]		;-- convert any-word! to set-word!
+			TYPE_ANY_WORD [key/header: TYPE_SET_WORD]		;-- convert any-word! to set-word!
 			TYPE_BINARY
-			TYPE_STRING
-			TYPE_FILE
-			TYPE_URL
-			TYPE_TAG
-			TYPE_EMAIL	 [_series/copy as red-series! key as red-series! key null yes null]
-			TYPE_INTEGER TYPE_CHAR TYPE_FLOAT TYPE_DATE
-			TYPE_PERCENT TYPE_TUPLE TYPE_PAIR TYPE_TIME [0]
-			default		[fire [TO_ERROR(script invalid-type) datatype/push TYPE_OF(key)]]
+			TYPE_ANY_STRING [_series/copy as red-series! key as red-series! key null yes null]
+			TYPE_MONEY
+			TYPE_INTEGER TYPE_CHAR TYPE_FLOAT TYPE_DATE TYPE_PERCENT
+			TYPE_TUPLE TYPE_PAIR TYPE_TIME TYPE_ISSUE TYPE_REFINEMENT [0]
+			default	[fire [TO_ERROR(script invalid-path) path datatype/push TYPE_OF(key)]]
 		]
 	]
 
@@ -147,7 +154,7 @@ map: context [
 			value: cell + 1
 			either key = null [
 				copy-cell cell kkey
-				preprocess-key kkey
+				preprocess-key kkey null
 				s: as series! map/node/value
 				key: copy-cell kkey as cell! alloc-tail-unit s (size? cell!) << 1
 				val: key + 1
@@ -187,7 +194,7 @@ map: context [
 		if blk = null [blk: block/make-at as red-block! slot size]
 		table: _hashtable/init size blk HASH_TABLE_MAP 1
 		map: as red-hash! slot
-		map/header: TYPE_MAP							;-- implicit reset of all header flags
+		set-type slot TYPE_MAP
 		map/table: table
 		map
 	]
@@ -215,7 +222,7 @@ map: context [
 				if type = -1 [					;-- called by TO
 					fire [TO_ERROR(script bad-to-arg) datatype/push TYPE_MAP spec]
 				]
-				GET_INT_FROM(size spec)
+				size: get-int-from spec
 				if negative? size [fire [TO_ERROR(script out-of-range) spec]]
 			]
 			TYPE_ANY_LIST [
@@ -228,8 +235,12 @@ map: context [
 		]
 
 		if zero? size [size: 1]
-		blk: block/make-at as red-block! stack/push* size
-		if blk? [block/copy as red-block! spec blk null no null]
+		either blk? [
+			; use clone here to prevent extra copying of spec
+			blk: block/clone as red-block! spec no no
+		][
+			blk: block/make-at as red-block! stack/push* size
+		]
 		make-at as red-value! blk blk size
 	]
 
@@ -481,7 +492,12 @@ map: context [
 		element	[red-value!]
 		value	[red-value!]
 		path	[red-value!]
+		gparent [red-value!]
+		p-item	[red-value!]
+		index	[integer!]
 		case?	[logic!]
+		get?	[logic!]
+		tail?	[logic!]
 		return:	[red-value!]
 		/local
 			table	[node!]
@@ -499,7 +515,7 @@ map: context [
 		either value <> null [						;-- set value
 			either key = null [
 				copy-cell element k
-				preprocess-key k
+				preprocess-key k path
 				s: as series! parent/node/value
 				key: copy-cell k as cell! alloc-tail-unit s (size? cell!) << 1
 				val: key + 1
@@ -547,33 +563,17 @@ map: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "map/put"]]
 		
-		eval-path map field value as red-value! none-value case?
+		eval-path map field value as red-value! none-value null null -1 case? no yes
 		value
 	]
 
 	clear: func [
 		map		[red-hash!]
 		return:	[red-value!]
-		/local
-			s		[series!]
-			value	[red-value!]
-			i		[integer!]
-			size	[int-ptr!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "map/clear"]]
 
-		s: GET_BUFFER(map)
-		i: 0
-		while [
-			value: s/offset + i
-			value < s/tail
-		][
-			_hashtable/delete map/table value
-			i: i + 2
-		]
-		s: as series! map/table/value
-		size: as int-ptr! s/offset
-		size/value: 0
+		_hashtable/clear-map map/table
 		as red-value! map
 	]
 
@@ -711,14 +711,7 @@ map: context [
 		w: as red-word! block/rs-head blk
 		while [all [i < size k < tail]][
 			type: TYPE_OF(w)
-			unless any [
-				type = TYPE_WORD
-				type = TYPE_GET_WORD
-				type = TYPE_SET_WORD
-				type = TYPE_LIT_WORD
-			][
-				fire [TO_ERROR(script invalid-arg) w]
-			]
+			unless ANY_WORD?(type) [fire [TO_ERROR(script invalid-arg) w]]
 			v: k + 1
 			either all [i % 2 = 0 v/header = MAP_KEY_DELETED][
 				k: k + 2

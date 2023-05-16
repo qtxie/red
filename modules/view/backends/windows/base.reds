@@ -10,6 +10,8 @@ Red/System [
 	}
 ]
 
+painting?: no
+
 init-base-face: func [
 	handle		[handle!]
 	parent		[integer!]
@@ -36,6 +38,8 @@ init-base-face: func [
 	SetWindowLong handle wc-offset - 16 parent
 	SetWindowLong handle wc-offset - 20 0
 	SetWindowLong handle wc-offset - 24 0
+	SetWindowLong handle wc-offset - 32 0
+	SetWindowLong handle wc-offset - 36 0
 	pt/x: dpi-scale offset/x
 	pt/y: dpi-scale offset/y
 	either alpha? [
@@ -182,6 +186,19 @@ clip-layered-window: func [
 		flags	[integer!]
 ][
 	flags: GetWindowLong hWnd wc-offset - 12
+	if all [						;-- delete window clip region
+		BASE_FACE_CLIPPED and flags <> 0
+		zero? x
+		zero? y
+		size/width = new-width
+		size/height = new-height
+	][
+		SetWindowRgn hWnd null false
+		child: as handle! GetWindowLong hWnd wc-offset - 20
+		if child <> null [SetWindowRgn child null false]
+		SetWindowLong hWnd wc-offset - 12 flags and FFFFFFFEh
+		exit
+	]
 	if any [
 		not zero? x
 		not zero? y
@@ -198,13 +215,6 @@ clip-layered-window: func [
 			SetWindowRgn child rgn false
 		]
 	]
-	if all [
-		BASE_FACE_CLIPPED and flags <> 0
-		zero? x
-		zero? y
-		size/width = new-width
-		size/height = new-height
-	][SetWindowLong hWnd wc-offset - 12 flags and FFFFFFFEh]
 ]
 
 process-layered-region: func [
@@ -421,6 +431,7 @@ BaseInternalWndProc: func [
 			FillRect as handle! wParam rect hBrush
 			return 1
 		]
+		WM_DESTROY [free-dc hWnd]
 		default [0]
 	]
 	DefWindowProc hWnd msg wParam lParam
@@ -434,7 +445,7 @@ BaseWndProc: func [
 	lParam	[integer!]
 	return: [integer!]
 	/local
-		target	[int-ptr!]
+		target	[render-target!]
 		this	[this!]
 		rt		[ID2D1HwndRenderTarget]
 		flags	[integer!]
@@ -444,6 +455,7 @@ BaseWndProc: func [
 		draw	[red-block!]
 		DC		[draw-ctx!]
 		font	[red-object!]
+		ps		[tagPAINTSTRUCT value]
 ][
 	switch msg [
 		WM_MOUSEACTIVATE [
@@ -453,42 +465,68 @@ BaseWndProc: func [
 				return 3							;-- do not make it activated when click it
 			]
 		]
-		WM_LBUTTONDOWN	 [SetCapture hWnd return 0]
-		WM_LBUTTONUP	 [ReleaseCapture return 0]
+		WM_LBUTTONDOWN	 [
+			w: GetWindowLong hWnd wc-offset - 32
+			SetWindowLong hWnd wc-offset - 32 w + 1
+			if zero? w [SetCapture hWnd return 0]
+		]
+		WM_LBUTTONUP	 [
+			w: GetWindowLong hWnd wc-offset - 32
+			if w > 0 [
+				SetWindowLong hWnd wc-offset - 32 w - 1
+				ReleaseCapture return 0
+			]
+		]
 		WM_ERASEBKGND	 [return 1]					;-- drawing in WM_PAINT to avoid flicker
 		WM_SIZE  [
+		#either draw-engine = 'GDI+ [
 			either (GetWindowLong hWnd wc-offset - 12) and BASE_FACE_D2D = 0 [
 				unless zero? GetWindowLong hWnd wc-offset + 4 [
 					update-base hWnd null null get-face-values hWnd
 				]
 			][
-				target: as int-ptr! GetWindowLong hWnd wc-offset - 24
-				if target <> null [
-					this: as this! target/value
-					rt: as ID2D1HwndRenderTarget this/vtbl
-					w: WIN32_LOWORD(lParam)
-					flags: WIN32_HIWORD(lParam)
-					rt/Resize this as tagSIZE :w
-					InvalidateRect hWnd null 1
-				]
+				DX-resize-rt hWnd lParam
 			]
+		][
+			;-- Direct2D backend
+			target: as render-target! GetWindowLong hWnd wc-offset - 36
+			if target <> null [
+				DX-resize-buffer target WIN32_LOWORD(lParam) WIN32_HIWORD(lParam)
+			]
+			either all [
+				(WS_EX_LAYERED and GetWindowLong hWnd GWL_EXSTYLE) <> 0
+				0 <> GetWindowLong hWnd wc-offset + 4
+			][
+				update-base hWnd null null get-face-values hWnd
+			][
+				InvalidateRect hWnd null 1
+			]
+		]
 			return 0
 		]
 		0317h	;-- WM_PRINT 			;-- these messages are not actually being used
 		0318h	;-- WM_PRINTCLIENT 		; see https://stackoverflow.com/a/44062144
 		WM_PAINT
 		WM_DISPLAYCHANGE [
-			if (WS_EX_LAYERED and GetWindowLong hWnd GWL_EXSTYLE) = 0 [
+			if painting? [return 0]
+			if all [
+				(WS_EX_LAYERED and GetWindowLong hWnd GWL_EXSTYLE) = 0	;-- not a layered window
+				0 <> GetWindowLong hWnd wc-offset		;-- linked with a face object
+			][
+				#either draw-engine = 'GDI+ [][BeginPaint hWnd :ps]
+				painting?: yes
 				draw: (as red-block! get-face-values hWnd) + FACE_OBJ_DRAW
 				either TYPE_OF(draw) = TYPE_BLOCK [
-					either zero? GetWindowLong hWnd wc-offset - 4 [
-						do-draw hWnd null draw no yes yes yes
-					][
-						bitblt-memory-dc hWnd no null 0 0
-					]
+					#if draw-engine = 'GDI+ [
+					if 0 <> GetWindowLong hWnd wc-offset - 4 [
+						bitblt-memory-dc hWnd no null 0 0 null
+						return 0
+					]]
+					do-draw hWnd null draw no yes yes yes
 				][
-					if null? current-msg [return -1]
-					system/thrown: 0
+					if null? current-msg [init-current-msg]
+					;system/thrown: 0
+					assert system/thrown = 0
 					DC: declare draw-ctx!				;@@ should declare it on stack
 					catch RED_THROWN_ERROR [
 						draw-begin DC hWnd null no yes
@@ -500,6 +538,8 @@ BaseWndProc: func [
 					]
 					system/thrown: 0
 				]
+				painting?: no
+				#either draw-engine = 'GDI+ [][EndPaint hWnd :ps]
 				return 0
 			]
 		]
@@ -547,6 +587,7 @@ BaseWndProc: func [
 			process-command-event hWnd msg wParam lParam
 			return 0
 		]
+		WM_DESTROY [free-dc hWnd]
 		default [0]
 	]
 	if (GetWindowLong hWnd wc-offset - 12) and BASE_FACE_IME <> 0 [
@@ -583,9 +624,14 @@ update-base-image: func [
 	img			[red-image!]
 	width		[integer!]
 	height		[integer!]
+	/local
+		bitmap	[integer!]
+		lock	[com-ptr! value]
 ][
 	if TYPE_OF(img) = TYPE_IMAGE [
-		GdipDrawImageRectI graphic as-integer img/node 0 0 width height
+		bitmap: OS-image/to-gpbitmap img :lock
+		GdipDrawImageRectI graphic bitmap 0 0 width height
+		OS-image/release-gpbitmap bitmap :lock
 	]
 ]
 
@@ -598,7 +644,7 @@ update-base-background: func [
 		clr		[integer!]
 		brush	[integer!]
 ][
-	clr: to-gdiplus-color-fixed color/array1
+	clr: to-gdiplus-color-fixed get-tuple-color color
 	brush: 0
 	GdipCreateSolidFill clr :brush
 	GdipFillRectangleI graphic brush 0 0 width height
@@ -661,7 +707,7 @@ update-base-text: func [
 			hFont: as-integer make-font get-face-obj hWnd font
 		]
 		if TYPE_OF(color) = TYPE_TUPLE [
-			clr: color/array1
+			clr: get-tuple-color color
 			default-color: no
 		]
 	]
@@ -670,7 +716,7 @@ update-base-text: func [
 	flags: either TYPE_OF(para) = TYPE_OBJECT [
 		get-para-flags base para
 	][
-		5 							;-- 1 = center + 4 = middle
+		0 							;-- 1 = center + 4 = middle
 	]
 	h-align: flags and 3 			;-- 0,1,2 = left,center,right
 	v-align: flags >>> 2 and 3		;-- 0,4,8 = top,middle,bottom
@@ -681,12 +727,12 @@ update-base-text: func [
 	GdipCreateStringFormat fflags or 80000000h 0 :format 	;-- 1 << 31 = GDI passthrough
 	GdipSetStringFormatAlign format h-align
 	GdipSetStringFormatLineAlign format v-align
+	GdipSetStringFormatTrimming format 0	;-- TrimmingNone
 
 	rect/x: as float32! 0.0
 	rect/y: as float32! 0.0
-	rect/width: as float32! dpi-unscale width
-	rect/height: as float32! dpi-unscale height
-
+	rect/width: as float32! width
+	rect/height: as float32! height
 	either bbox = null [
 		if default-color [clr: GetSysColor COLOR_WINDOWTEXT]
 		gdiclr: to-gdiplus-color-fixed clr
@@ -727,6 +773,7 @@ scale-graphic: func [
 	]
 ]
 
+#either draw-engine = 'GDI+ [
 update-base: func [
 	hWnd	[handle!]
 	parent	[handle!]
@@ -800,8 +847,73 @@ update-base: func [
 	GdipDeleteGraphics graphic
 	DeleteObject hBitmap
 	DeleteDC hBackDC
-]
+]][
+;-- Direct2D backend
+update-base: func [
+	hWnd	[handle!]
+	parent	[handle!]
+	ptDst	[tagPOINT]
+	values	[red-value!]
+	/local
+		img		[red-image!]
+		color	[red-tuple!]
+		cmds	[red-block!]
+		text	[red-string!]
+		font	[red-object!]
+		para	[red-object!]
+		sz		[red-pair!]
+		height	[integer!]
+		width	[integer!]
+		size	[tagSIZE]
+		hBitmap [handle!]
+		hBackDC [handle!]
+		ptSrc	[tagPOINT value]
+		bf		[tagBLENDFUNCTION value]
+		graphic [integer!]
+		flags	[integer!]
+		ctx		[draw-ctx! value]
+		this	[this!]
+		surf	[IDXGISurface1]
+		hdc		[ptr-value!]
+		rc		[RECT_STRUCT value]
+][
+	if zero? (WS_EX_LAYERED and GetWindowLong hWnd GWL_EXSTYLE) [
+		InvalidateRect hWnd null 1
+		exit
+	]
 
+	cmds:	as red-block!  values + FACE_OBJ_DRAW
+	sz:		as red-pair!   values + FACE_OBJ_SIZE
+	width: dpi-scale sz/x
+	height: dpi-scale sz/y
+	ptSrc/x: 0
+	ptSrc/y: 0
+	size: as tagSIZE :width
+	bf/BlendOp: as-byte 0
+	bf/BlendFlags: as-byte 0
+	bf/SourceConstantAlpha: as-byte 255
+	bf/AlphaFormat: as-byte 1
+	flags: 2
+
+	either TYPE_OF(cmds) = TYPE_BLOCK [
+		do-draw hWnd null cmds yes no no yes
+	][
+		system/thrown: 0
+		catch RED_THROWN_ERROR [draw-begin :ctx hWnd null yes no]
+		draw-end :ctx hWnd yes no no
+		if system/thrown = RED_THROWN_ERROR [
+			system/thrown: 0
+		]
+	]
+
+	this: get-surface hWnd
+	surf: as IDXGISurface1 this/vtbl
+	surf/GetDC this 0 :hdc
+	UpdateLayeredWindow hWnd null ptDst size hdc/value :ptSrc 0 :bf flags
+	rc/left: 0 rc/top: 0 rc/right: 0 rc/bottom: 0	;-- empty RECT
+	surf/ReleaseDC this :rc
+	surf/Release this
+]]
 
 ;-- blends the image of every encountered visible layered window into the DC
 imprint-layers-deep: func [
@@ -822,6 +934,10 @@ imprint-layers-deep: func [
 	cofs 		[red-pair!]		;-- "child" offset - it's position inside the parent
 	chwnd 		[handle!]
 	cvalues		[red-value!]
+	this		[this!]
+	surf		[IDXGISurface1]
+	hdc			[ptr-value!]
+	rc			[RECT_STRUCT value]
 ][
 	if null = values [values: get-face-values hwnd]
 
@@ -830,13 +946,24 @@ imprint-layers-deep: func [
 	sym: symbol/resolve type/symbol
 	if all [sym = base  layered-win? hwnd][
 		draw: as red-block! values + FACE_OBJ_DRAW
+#either draw-engine = 'GDI+ [
 		either all [bx = 0 by = 0] [
 			;-- paint directly to DC
 			do-draw hwnd as red-image! dc draw no no no yes
 		][
 			do-draw hwnd null draw no yes no yes 		;-- paint into RAM
-			bitblt-memory-dc hwnd yes dc bx by 			;-- blend back
+			bitblt-memory-dc hwnd yes dc bx by null		;-- blend back
 		]
+][	;-- Direct2D backend
+		do-draw hwnd null draw yes no no yes
+		this: get-surface hwnd
+		surf: as IDXGISurface1 this/vtbl
+		surf/GetDC this 0 :hdc
+		bitblt-memory-dc hwnd yes dc bx by hdc/value	;-- blend back
+		rc/left: 0 rc/top: 0 rc/right: 0 rc/bottom: 0	;-- empty RECT
+		surf/ReleaseDC this :rc
+		surf/Release this
+]
 	]
 
 	;-- imprint hwnd's children if any

@@ -35,6 +35,38 @@ date: context [
 		fire [TO_ERROR(script bad-to-arg) datatype/push TYPE_DATE spec]
 	]
 	
+	get-named-index: func [
+		w 		[red-word!]
+		ref		[red-value!]
+		return: [integer!]
+		/local
+			sym idx [integer!]
+	][
+		sym: symbol/resolve w/symbol
+		idx: -1
+		case [
+			sym = words/date   	 [idx: 1]
+			sym = words/year   	 [idx: 2]
+			sym = words/month  	 [idx: 3]
+			sym = words/day	   	 [idx: 4]
+			sym = words/zone   	 [idx: 5]
+			sym = words/time   	 [idx: 6]
+			sym = words/hour   	 [idx: 7]
+			sym = words/minute 	 [idx: 8]
+			sym = words/second 	 [idx: 9]
+			sym = words/weekday	 [idx: 10]
+			sym = words/yearday	 [idx: 11]
+			sym = words/julian 	 [idx: 11]				;-- alternative name for "yearday"
+			sym = words/timezone [idx: 12]
+			sym = words/week 	 [idx: 13]
+			sym = words/isoweek	 [idx: 14]
+			true 			     [
+				if TYPE_OF(ref) = TYPE_TIME [fire [TO_ERROR(script cannot-use) w ref]]
+			]
+		]
+		idx
+	]
+	
 	push-field: func [
 		dt		[red-date!]
 		field	[integer!]
@@ -70,10 +102,10 @@ date: context [
 			7 [integer/push time/get-hours t]
 			8 [integer/push time/get-minutes t]
 			9 [float/push DATE_GET_SECONDS(t)]
-		   10 [integer/push (date-to-days d) + 2 % 7 + 1]
+		   10 [integer/push (date-to-days d) + 2 // 7 + 1]
 		   11 [integer/push get-yearday d]
 		   13 [
-				wd: (Jan-1st-of d) + 3 % 7				;-- start the week on Sunday
+				wd: (Jan-1st-of d) + 3 // 7				;-- start the week on Sunday
 				days: 7 - wd
 				d: get-yearday d
 				d: either d <= days [1][d + wd - 1 / 7 + 1]
@@ -127,7 +159,7 @@ date: context [
 			wd	 [integer!]
 	][
 		days: Jan-1st-of d
-		wd: days + 2 % 7 + 1
+		wd: days + 2 // 7 + 1
 		weekday/value: wd
 		base: either wd < 5 [1][8]						;-- before Friday, go prev Monday, from Friday, go to next one
 		days + base - wd								;-- adjust to closest Monday
@@ -398,6 +430,46 @@ date: context [
 		left
 	]
 	
+	set-isoweek: func [
+		dt	[red-date!]
+		v	[integer!]
+		/local
+			d  [integer!]
+			wd [integer!]
+			t? [logic!]
+	][
+		wd: 0
+		d: dt/date
+		t?: DATE_GET_TIME_FLAG(d)
+		dt/date: days-to-date v - 1 * 7 + W1-1-of d :wd DATE_GET_ZONE(d) t?
+	]
+	
+	set-weekday: func [
+		dt	[red-date!]
+		v	[integer!]
+		/local
+			days [integer!]
+			d	 [integer!]
+			t?	 [logic!]
+	][
+		d: dt/date
+		days: date-to-days d
+		t?: DATE_GET_TIME_FLAG(d)
+		dt/date: days-to-date days + (v - 1) - (days + 2 // 7) DATE_GET_ZONE(d) t?
+	]
+	
+	set-yearday: func [
+		dt	[red-date!]
+		v	[integer!]
+		/local
+			d  [integer!]
+			t? [logic!]
+	][
+		d: dt/date
+		t?: DATE_GET_TIME_FLAG(d)
+		dt/date: days-to-date v + (Jan-1st-of d) - 1 DATE_GET_ZONE(d) t?
+	]
+	
 	set-month: func [
 		dt	[red-date!]
 		v	[integer!]
@@ -480,8 +552,48 @@ date: context [
 			dt/time: to-utc-time t v
 		]
 	]
-
-	set-all: func[
+	
+	make-at: func [
+		slot	[red-value!]
+		year	[integer!]
+		month	[integer!]
+		day		[integer!]
+		tm		[float!]
+		TZ-h	[integer!]
+		TZ-m	[integer!]
+		time?	[logic!]
+		TZ? 	[logic!]
+		return: [red-date!]
+		/local
+			dt	 [red-date!]
+			d	 [integer!]
+			z	 [integer!]
+			-TZ? [logic!]
+	][
+		dt: as red-date! slot
+		d: 0
+		d: DATE_SET_YEAR(d year)
+		d: DATE_SET_MONTH(d month)
+		d: DATE_SET_DAY(d day)
+		d: DATE_SET_TIME_FLAG(d)
+		set-type as red-value! dt TYPE_DATE				;-- preserve eventual flags in the header
+		dt/date: d
+		
+		-TZ?: no
+		if tz-h < 0 [-TZ?: yes tz-h: 0 - tz-h]
+		z: tz-h << 2 and 7Fh or (tz-m / 15)
+		if -TZ? [z: DATE_SET_ZONE_NEG(z)]
+		dt/date: DATE_SET_ZONE(dt/date z)
+		either time? [
+			dt/time: to-utc-time tm DATE_GET_ZONE(dt/date)
+		][
+			dt/date: DATE_CLEAR_TIME_FLAG(dt/date)
+			dt/time: 0.0
+		]
+		dt
+	]
+	
+	set-all: func [
 		dt     [red-date!]
 		year   [integer!]
 		month  [integer!]
@@ -490,7 +602,9 @@ date: context [
 		minute [integer!]
 		second [integer!]
 		nsec   [integer!] 
-		/local d t
+		/local 
+			d [integer!]
+			t [float!]
 	][
 		d: 0 t: 0.0
 		d: DATE_SET_YEAR(d year)
@@ -501,9 +615,9 @@ date: context [
 		  + (60.0   * as float! minute)
 		  + (         as float! second)
 		  + (1e-9   * as float! nsec)
-		dt/header: TYPE_DATE
+		set-type as red-value! dt TYPE_DATE				;-- preserve eventual flags in the header
 		dt/date: d
-		dt/time: t
+		dt/time: t										;-- !! not converted to UTC !!
 	]
 	
 	create: func [
@@ -679,12 +793,10 @@ date: context [
 		return: [red-value!]
 		/local
 			d	  [integer!]
-			n	  [integer!]
-			dd	  [integer!]
-			tz	  [integer!]
 			s	  [float!]
 			d1	  [integer!]
 			time? [logic!]
+			rnd	  [integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "date/random"]]
 
@@ -695,10 +807,21 @@ date: context [
 			dt/header: TYPE_UNSET
 		][
 			time?: DATE_GET_TIME_FLAG(d)
-			dt/date: days-to-date _random/rand % date-to-days d DATE_GET_ZONE(d) time?
+
+			rnd: _random/int-uniform-distr secure? date-to-days d
+			dt/date: days-to-date rnd - 1 DATE_GET_ZONE(d) time?
 			if time? [
-				dt/date: DATE_SET_ZONE(dt/date _random/rand)
-				s: (as-float _random/rand) / 2147483647.0 * 3600.0
+				dt/date: either secure? [
+					DATE_SET_ZONE(dt/date _random/rand-secure)
+				] [
+					DATE_SET_ZONE(dt/date _random/rand)
+				]
+				s: either secure? [
+					((as-float _random/rand-secure) / 2147483647.0 + (as-float _random/rand-secure))
+						/ (2147483648.0 / 3600.0)
+				] [
+					(as-float _random/rand) / 2147483647.0 * 3600.0
+				]
 				s: (floor s) / 3600.0
 				dt/time: s * 24.0 * time/h-factor
 				set-time dt dt/time yes
@@ -790,11 +913,15 @@ date: context [
 		
 		string/append-char GET_BUFFER(buffer) sep
 		
+		if year < 0 [
+			year: 0 - year
+			string/append-char GET_BUFFER(buffer) as-integer #"-"
+		]
 		formed: integer/form-signed year
-		part: either year >= 0 [
+		part: either year < 100 [
 			len: 4 - length? formed
 			if len > 0 [loop len [string/append-char GET_BUFFER(buffer) as-integer #"0"]]
-			part - 5									;-- 4 + separator
+			part: part - 5									;-- 4 + separator
 		][
 			part - length? formed
 		]
@@ -846,11 +973,18 @@ date: context [
 		element	[red-value!]
 		value	[red-value!]
 		path	[red-value!]
+		gparent [red-value!]
+		p-item	[red-value!]
+		index	[integer!]
 		case?	[logic!]
+		get?	[logic!]
+		tail?	[logic!]
 		return:	[red-value!]
 		/local
 			word   [red-word!]
 			int	   [red-integer!]
+			obj	   [red-object!]
+			old	   [red-value!]
 			tm	   [red-time!]
 			dt2	   [red-date!]
 			days   [integer!]
@@ -861,6 +995,7 @@ date: context [
 			wd	   [integer!]
 			time?  [logic!]
 			error? [logic!]
+			evt?   [logic!]
 	][
 		error?: no
 
@@ -871,26 +1006,8 @@ date: context [
 				if any [field < 1 field > 14][error?: yes]
 			]
 			TYPE_WORD [
-				word: as red-word! element
-				sym: symbol/resolve word/symbol
-				case [
-					sym = words/date   	 [field: 1]
-					sym = words/year   	 [field: 2]
-					sym = words/month  	 [field: 3]
-					sym = words/day	   	 [field: 4]
-					sym = words/zone   	 [field: 5]
-					sym = words/time   	 [field: 6]
-					sym = words/hour   	 [field: 7]
-					sym = words/minute 	 [field: 8]
-					sym = words/second 	 [field: 9]
-					sym = words/weekday	 [field: 10]
-					sym = words/yearday	 [field: 11]
-					sym = words/julian 	 [field: 11]
-					sym = words/timezone [field: 12]
-					sym = words/week 	 [field: 13]
-					sym = words/isoweek	 [field: 14]
-					true 			   [error?: yes]
-				]
+				field: get-named-index as red-word! element path
+				if field = -1 [error?: yes]
 			]
 			default [error?: yes]
 		]
@@ -902,6 +1019,10 @@ date: context [
 				int: as red-integer! value
 				v: int/value
 			]
+			obj: as red-object! gparent
+			evt?: all [obj <> null TYPE_OF(obj) = TYPE_OBJECT obj/on-set <> null TYPE_OF(p-item) = TYPE_WORD]
+			if evt? [old: stack/push as red-value! dt]
+
 			d: dt/date
 			time?: DATE_GET_TIME_FLAG(d)
 			switch field [
@@ -945,13 +1066,13 @@ date: context [
 						int: as red-integer! element
 						int/value: int/value - 6		;-- normalize accessor for time!
 					]
-					time/eval-path as red-time! dt element value path case?
+					time/eval-path as red-time! dt element value path gparent p-item index case? no yes
 					set-time dt dt/time field = 7
 					dt/date: DATE_SET_TIME_FLAG(dt/date)
 				]
 				10  [									;-- /weekday:
 					days: date-to-days d
-					dt/date: days-to-date days + (v - 1) - (days + 2 % 7) DATE_GET_ZONE(d) time?
+					dt/date: days-to-date days + (v - 1) - (days + 2 // 7) DATE_GET_ZONE(d) time?
 				]
 				11 [									;-- /yearday: /julian: 
 					dt/date: days-to-date v + (Jan-1st-of d) - 1 DATE_GET_ZONE(d) time?
@@ -959,7 +1080,7 @@ date: context [
 				13 [									;-- /week:
 					days: Jan-1st-of d
 					if v > 1 [
-						wd: days + 3 % 7				;-- start the week on Sunday
+						wd: days + 3 // 7				;-- start the week on Sunday
 						days: days + (v - 2 * 7) + 7 - wd
 					]
 					dt/date: days-to-date days DATE_GET_ZONE(d) time?
@@ -970,7 +1091,10 @@ date: context [
 				]
 				default [assert false]
 			]
-			object/check-owner as red-value! dt
+			if evt? [
+				object/fire-on-set as red-object! gparent as red-word! p-item old as red-value! dt
+				stack/pop 1								;-- avoid moving stack top
+			]
 			value
 		][
 			value: push-field dt field
@@ -992,6 +1116,8 @@ date: context [
 			t1	 [float!]
 			t2	 [float!]
 			eq?	 [logic!]
+			ip1  [int-ptr!]
+			ip2  [int-ptr!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "date/compare"]]
 
@@ -999,17 +1125,21 @@ date: context [
 		if type <> TYPE_DATE [RETURN_COMPARE_OTHER]
 		d1: DATE_CLEAR_TIME_FLAG(value1/date) >> 7		;-- remove TZ, clear time? flag
 		d2: DATE_CLEAR_TIME_FLAG(value2/date) >> 7
-		t1: floor value1/time + 0.5						;-- in UTC already, round to integer
-		t2: floor value2/time + 0.5
+		t1: value1/time
+		t2: value2/time
 		
-		eq?: all [d1 = d2 t1 = t2]
+		eq?: all [d1 = d2 float/almost-equal t1 t2]
 		
 		switch op [
 			COMP_EQUAL
 			COMP_FIND
-			COMP_SAME
 			COMP_NOT_EQUAL
 			COMP_STRICT_EQUAL [res: as-integer not eq?]
+			COMP_SAME [
+				ip1: as int-ptr! :t1
+				ip2: as int-ptr! :t2
+				res: as-integer any [d1 <> d2  ip1/1 <> ip2/1  ip1/2 <> ip2/2]
+			]
 			default [
 				either eq? [res: 0][
 					res: SIGN_COMPARE_RESULT(d1 d2)
@@ -1028,6 +1158,7 @@ date: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "date/pick"]]
 
+		if TYPE_OF(boxed) = TYPE_WORD [index: get-named-index as red-word! boxed as red-value! dt]
 		if any [index < 1 index > 14][fire [TO_ERROR(script out-of-range) boxed]]
 		push-field dt index
 	]

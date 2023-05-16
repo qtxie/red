@@ -5,7 +5,7 @@ Red [
 	Tabs:	 4
 	Icon:	 %app.ico
 	Version: 0.0.1
-	Needs:	 View
+	Needs:	 [View JSON CSV]
 	Config:	 [gui-console?: yes red-help?: yes]
 	Rights:  "Copyright (C) 2014-2018 Red Foundation. All rights reserved."
 	License: {
@@ -43,12 +43,13 @@ gui-console-ctx: context [
 	cfg-dir:	none
 	cfg-path:	none
 	cfg:		none
-	font:		make font! [name: "Consolas" size: 11 color: 0.0.0]
+	font:		make font! [name: system/view/fonts/fixed size: 11 color: 0.0.0]
 	caret-clr:	0.0.0.1
+	caret-rate: 2
 	scroller:	make scroller! []
 
 	console:	make face! [
-		type: 'rich-text color: 0.0.128 offset: 0x0 size: 400x400
+		type: 'rich-text color: 0.0.128 offset: 0x0 size: 200x200
 		flags:   [scrollable all-over]
 		options: [cursor: I-beam]
 		menu: [
@@ -64,7 +65,7 @@ gui-console-ctx: context [
 		]
 		actors: object [
 			on-time: func [face [object!] event [event!]][
-				if caret/enabled? [caret/rate: 2]
+				if all [caret/enabled? none? caret/rate][caret/rate: caret-rate]
 				terminal/on-time
 				'done
 			]
@@ -121,7 +122,7 @@ gui-console-ctx: context [
 	]
 
 	caret: make face! [
-		type: 'base color: caret-clr offset: 0x0 size: 1x17 rate: 2 enabled?: no
+		type: 'base color: caret-clr offset: 0x0 size: 1x17 enabled?: no
 		options: compose [caret (console) cursor: I-beam accelerated: yes]
 		actors: object [
 			on-time: func [face [object!] event [event!]][
@@ -139,8 +140,8 @@ gui-console-ctx: context [
 	show-caret: func [][unless caret/enabled? [caret/enabled?: yes]]
 
 	setup-faces: does [
-		console/pane: reduce [caret]
-		append win/pane reduce [console tips]
+		;console/pane: reduce [caret]
+		append win/pane reduce [console caret tips]
 		win/menu: [
 			"File" [
 				"Run..."			run-file
@@ -168,7 +169,7 @@ gui-console-ctx: context [
 						if ft: request-font/font/mono font [
 							font: ft
 							console/font: font
-							terminal/update-cfg font cfg
+							terminal/zoom font
 						]
 					]
 					settings		[show-cfg-dialog]
@@ -190,14 +191,15 @@ gui-console-ctx: context [
 			on-focus: func [face [object!] event [event!]][
 				caret/color: caret-clr
 				unless caret/enabled? [caret/enabled?: yes]
-				caret/rate: 2
-				terminal/refresh
+				caret/rate: caret-rate
+				terminal/refresh/force
 			]
 			on-unfocus: func [face [object!] event [event!]][
 				if caret/enabled? [caret/enabled?: no]
 				caret/rate: none
 			]
 		]
+		caret/rate: caret-rate
 		tips/parent: win
 	]
 
@@ -214,19 +216,27 @@ gui-console-ctx: context [
 		]
 	]
 
-	launch: func [/local svs][
+	launch: func [/local svs rate][
+		rate: get-caret-blink-time
+		caret-rate: case [
+			rate > 0 [to-time rate / 1000.0]
+			rate < 0 [none]
+			rate = 0 [2]
+		]
+
 		setup-faces
 		win/visible?: no					;-- hide it first to avoid flicker
 
 		view/flags/no-wait win [resize]		;-- create window instance
 		console/init
 		load-cfg
-		win/visible?: yes
+		if empty? system/script/args [win/visible?: yes]
 
 		svs: system/view/screens/1
 		svs/pane: next svs/pane				;-- proctect itself from unview/all
 
 		add-gui-print
+		console/rate: 10
 		system/console/launch
 	]
 ]
@@ -239,44 +249,76 @@ ask: function [
 	"Prompt the user for input"
 	question [string!]
 	/hide
+	/history "specify the history block"
+		blk  [block!]
 	return:  [string!]
 ][
-	gui-console-ctx/show-caret
-
-	line: make string! 8
-	line: insert line question
-
-	vt: gui-console-ctx/terminal
-	vt/line: line
-	vt/pos: 0
-	vt/add-line head line
-	vt/ask?: yes
-	vt/reset-top/force
-	vt/clear-stack
-	vt/set-flag hide
-	either vt/paste/resume [
-		vt/do-ask-loop/no-wait
+	t?: tracing?
+	trace off
+	if all [
+		gui-console-ctx/console/state
+		not gui-console-ctx/win/visible?
 	][
-		system/view/platform/redraw gui-console-ctx/console
-		system/view/auto-sync?: yes
-		do-events
+		gui-console-ctx/win/visible?: yes
 	]
-	vt/ask?: no
+
+	gui-console-ctx/show-caret
+	line: gui-console-ctx/terminal/ask question blk hide
 	gui-console-ctx/caret/enabled?: no
 	unless gui-console-ctx/console/state [line: "quit"]
+	trace t?
 	line
 ]
 
 input: function ["Wait for console user input" return: [string!]][ask ""]
 
+get-caret-blink-time: routine [
+	return: [integer!]	;-- blink time, in milliseconds, -1: INFINITE
+][
+	#either OS = 'Windows [
+		GetCaretBlinkTime
+	][500]
+]
+
 #system [
+
+	#if OS = 'Windows [
+		#import [
+			"user32.dll" stdcall [
+				GetCaretBlinkTime: "GetCaretBlinkTime" [
+					return:		[uint!]
+				]
+			]
+		]
+	]
+
 	gui-console-buffer: as red-value! 0
 
 	red-print-gui: func [
 		str		[red-string!]
 		lf?		[logic!]
+		/local
+			t?  [logic!]
 	][
+		with [red][
+			;-- @@ an ugly hacking @@
+			;-- part of the internal states of the gui-console may be changed before
+			;-- throwing error inside vprint. Incomplete states will make gui-console crazy.
+			;-- if it's a stack overflow error, calling any function in Red will make it stack overflow again.
+			;-- because of that, we cannot catch the error inside vprint to restore the states.
+			;-- also save the states and restore them are not easy in current implementation. (--)!
+			;-- so we check it before entering the vprint here
+			if any [
+				stack/ctop + 60 >= stack/c-end	;-- vprint uses 60 slots on call stk
+				stack/top + 80 >= stack/a-end	;-- vprint uses 80 slots on arg stk
+			][
+				fire [TO_ERROR(internal stack-overflow)]
+			]
+		]
+		t?: interpreter/tracing?
+		if t? [interpreter/tracing?: no]
 		#call [gui-console-ctx/terminal/vprint str lf?]
+		interpreter/tracing?: t?
 	]
 
 	rs-print-gui: func [

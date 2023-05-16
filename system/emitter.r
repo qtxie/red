@@ -29,7 +29,7 @@ emitter: make-profilable context [
 		value [integer!]				;-- 32/64-bit, watch out for endianess!!
 	] none
 	
-	datatypes: to-hash [
+	types-model: [
 		;int8!		1	signed
 		byte!		1	unsigned
 		;int16!		2	signed
@@ -48,7 +48,10 @@ emitter: make-profilable context [
 		c-string!	4	-				;-- 32-bit, 8 for 64-bit
 		struct!		4	-				;-- 32-bit, 8 for 64-bit ; struct! passed by reference
 		function!	4	-				;-- 32-bit, 8 for 64-bit
+		subroutine!	4	-				;-- 32-bit, 8 for 64-bit
 	]
+	
+	datatypes: none						;-- initialized by init function
 	
 	datatype-ID: [
 		logic!		1
@@ -61,6 +64,7 @@ emitter: make-profilable context [
 		byte-ptr!   7
 		int-ptr!	8
 		function!	9
+		ptr-ptr!	10
 		struct!		1000
 	]
 	
@@ -110,15 +114,16 @@ emitter: make-profilable context [
 		/on cond [word! block! logic!]
 		/adjust offset [integer!]
 		/local size
+		/parity use-parity? [none! logic!] "also emit parity check for unordered (NaN) comparison"
 	][
 		case [
 			over [
-				size: target/emit-branch chunk/1 cond offset
+				size: target/emit-branch chunk/1 cond offset use-parity?
 				foreach ptr chunk/2 [ptr/1: ptr/1 + size]	;-- adjust relocs
 				size
 			]
 			back [
-				target/emit-branch/back? chunk/1 cond offset
+				target/emit-branch/back? chunk/1 cond offset use-parity?
 			]
 		]
 	]
@@ -185,12 +190,12 @@ emitter: make-profilable context [
 		]
 	]
 
-	logic-to-integer: func [op [word! block!] /with chunk [block!] /local offset body][
+	logic-to-integer: func [op [word! block!] /parity use-parity? /with chunk [block!] /local offset body][
 		if all [with block? op][op: op/1]
 		
 		if find target/comparison-op op [
 			set [offset body] chunks/make-boolean
-			branch/over/on/adjust body reduce [op] offset/1
+			branch/over/on/adjust/parity body reduce [op] offset/1 use-parity?
 			either with [chunks/join chunk body][merge body]
 		]
 	]
@@ -210,11 +215,12 @@ emitter: make-profilable context [
 			spec: compiler/find-aliased spec/1
 		]
 		body: bind/copy body 'type
-		if block? spec/1 [spec: next spec]
+		if block? spec/1 [spec: next spec]				;-- skip [attributs] if present
 
-		foreach [name t] spec [							;-- skip 'struct!
+		foreach [name t] spec [
 			unless word? name [break]
 			either 'value = last type: t [
+				if 'struct! = type/1 [type: type/2]
 				foreach-member type body
 			][
 				do body
@@ -329,39 +335,46 @@ emitter: make-profilable context [
 				store-global 0 'integer! none
 			]
 			array! [
-				type: first compiler/get-type value/1
-				if find [float! float64!] type [pad-data-buf 8] ;-- optional 32-bit padding to ensure /0 points to the length slot
-				ptr: tail data-buf							;-- ensures array pointer skips size info
-				f64?: no
-				foreach item value [						;-- mixed types, use 32/64-bit for each slot
-					unless word? item [
-						t: first compiler/get-type item 
-						if all [not f64? find [float! float64!] t][f64?: yes]
-						if type <> t [type: 'integer!]
-					]
-				]
-				either find value string! [
-					list: collect [
-						foreach item value [				 ;-- store array
-							either decimal? item [
-								store-global item 'float! none
-							][
-								either string? item [
-									keep item
-									keep store-global 0 'integer! none
-								][
-									store-global item 'integer! none
-								]
-								if f64? [store-global to integer! #{CAFEBABE} 'integer! none]
-							]
+				either binary? value [
+					pad-data-buf target/ptr-size
+					ptr: tail data-buf
+					append ptr value
+					pad-data-buf target/ptr-size
+				][
+					type: first compiler/get-type value/1
+					if find [float! float64!] type [pad-data-buf 8] ;-- optional 32-bit padding to ensure /0 points to the length slot
+					ptr: tail data-buf					;-- ensures array pointer skips size info
+					f64?: no
+					foreach item value [				;-- mixed types, use 32/64-bit for each slot
+						unless word? item [
+							t: first compiler/get-type item 
+							if all [not f64? find [float! float64!] t][f64?: yes]
+							if type <> t [type: 'integer!]
 						]
 					]
-					foreach [str ref] list [				 ;-- store strings
-						store-value/ref none str [c-string!] reduce [ref + 1]
-					]
-				][
-					foreach item value [
-						store-global item any [all [get-word? item 'get-word!] type] none
+					either find value string! [
+						list: collect [
+							foreach item value [			;-- store array
+								either decimal? item [
+									store-global item 'float! none
+								][
+									either string? item [
+										keep item
+										keep store-global 0 'integer! none
+									][
+										store-global item 'integer! none
+									]
+									if f64? [store-global to integer! #{CAFEBABE} 'integer! none]
+								]
+							]
+						]
+						foreach [str ref] list [			;-- store strings
+							store-value/ref none str [c-string!] reduce [ref + 1]
+						]
+					][
+						foreach item value [
+							store-global item any [all [get-word? item 'get-word!] type] none
+						]
 					]
 				]
 			]
@@ -416,10 +429,13 @@ emitter: make-profilable context [
 				saved: name
 				name: none								;-- anonymous data storing
 			]
-			if all [paren? value not word? value/1][
+			if any [all [paren? value not word? value/1] binary? value][
 				type: [array!]
 			]
-			if any [all [not new-global? not local?] string? value paren? value][
+			if any [
+				all [not new-global? not local?]
+				find [string! paren! binary!] type?/word value
+			][
 				if string? value [type: [c-string!]]	;-- force c-string! in case of type casting
 				spec: store-value/ref name value type refs  ;-- store it with hardcoded pointer address
 			]
@@ -675,19 +691,12 @@ emitter: make-profilable context [
 	]
 	
 	get-size: func [type [block! word!] value][
-		either word? type [
-			datatypes/:type
-		][
-			either 'array! = first head type [
-				second head type
-			][
-				switch/default type/1 [
-					c-string! [reduce ['+ 1 reduce ['length? value]]]
-					struct!   [member-offset? type/2 none]
-				][
-					select datatypes type/1
-				]
-			]
+		case [
+			word? type 					[datatypes/:type]
+			'array! = first head type	[second head type]
+			type/1 = 'c-string!			[reduce ['+ 1 reduce ['length? value]]]
+			type/1 = 'struct!			[member-offset? type/2 none]
+			'else						[select datatypes type/1]
 		]
 	]
 	
@@ -782,6 +791,13 @@ emitter: make-profilable context [
 		foreach ptr exits [target/patch-jump-point code-buf ptr end]
 	]
 	
+	resolve-subrc-points: func [subs [block!]][
+		foreach [name spec] subs [
+			foreach ptr spec/3 [target/patch-sub-call code-buf ptr ptr - spec/1]
+		]
+		clear subs
+	]
+
 	calc-locals-offsets: func [spec [block!] /local total var sz extra][
 		total: negate extra: target/locals-offset
 		while [not tail? spec: next spec][
@@ -873,13 +889,21 @@ emitter: make-profilable context [
 			clear code-buf
 			clear data-buf
 			clear symbols
+			clear 	stack
+			clear 	exits
+			clear 	breaks
+			clear 	cont-next
+			clear 	cont-back
+
 		]
 		clear stack
 		path: pick [%system/targets/ %targets/] encap?
 		target: do-cache rejoin [path job/target %.r]
+		foreach w [width signed? last-saved?][set in target w none]
 		target/compiler: compiler: system-dialect/compiler
 		target/PIC?: job/PIC?
 		target/void-ptr: head insert/dup copy #{} null target/ptr-size
 		int-to-bin/little-endian?: target/little-endian?
+		datatypes: to-hash types-model
 	]
 ]

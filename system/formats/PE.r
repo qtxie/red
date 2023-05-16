@@ -27,32 +27,68 @@ context [
 		6BCDE15CE62DA773B3D6FF400856B7081D48F3DF605AC821FC700DAE8816E3E2
 		D22B72E7CAC21E9B7C3EFC3F23437BB958040000
 	}
-	if all [
-		system/version/4 = 3
-		find system/components 'Library 
-	][
-		path: to-rebol-file get-env "SystemRoot"		;-- workaround issues on 64-bit editions
-		Imagehlplib: load/library path/System32/Imagehlp.dll
 
-		int-ptr!: make struct! [n [integer!]] none
+	on-file-written: func [job [object!] file [file!] /local file-sum chk-sum offset buffer res][
+		if all [
+			system/version/4 = 3							;-- only when running the toolchain on Windows
+			find system/components 'Library 
+		][
+			path: to-rebol-file get-env "SystemRoot"		;-- workaround issues on 64-bit editions
+			Imagehlplib: load/library path/System32/Imagehlp.dll
 
-		MapFileAndCheckSum: make routine! [
-			Filename	[string!]
-			HeaderSum	[struct! [n [integer!]]]
-			CheckSum	[struct! [n [integer!]]]
-			return:		[integer!]
-		] Imagehlplib "MapFileAndCheckSumA" 
+			int-ptr!: make struct! [n [integer!]] none
+
+			MapFileAndCheckSum: make routine! [
+				Filename	[string!]
+				HeaderSum	[struct! [n [integer!]]]
+				CheckSum	[struct! [n [integer!]]]
+				return:		[integer!]
+			] Imagehlplib "MapFileAndCheckSumA"
+
+			either redc/load-lib? [
+				file-sum: make struct! int-ptr! [0]
+				chk-sum:  make struct! int-ptr! [0]
+
+				res: MapFileAndCheckSum
+					to-local-file get-modes file 'full-path
+					file-sum
+					chk-sum
+
+				if res <> 0 [
+					print [
+						"*** Linker Error: checksum calculation failed^/"
+						"*** Reason: " select res [
+							1 "Could not open the file."
+							2 "Could not map the file."
+							3 "Could not map a view of the file."
+							4 "Could not convert the file name to Unicode."
+						]
+					]
+				]
+
+				offset: (length? defs/image/MSDOS-header) + ((5 + 17) * 4) + 1
+				buffer: read/binary file
+				pointer/value: chk-sum/n
+				change/part at buffer offset form-struct pointer 4
+				write/binary file buffer
+			][
+				if job/type = 'drv [
+					make error! "Rebol/View or a Rebol kernel with /Library component is required!"
+				]
+			]
+		]
 	]
-	
+
 	defs: [
+		PE-signature #{50450000}						;-- "PE^@^@"
 		image [
 			exe-base-address	#{00400000}
 			dll-base-address	#{10000000}
 			drv-base-address	#{00010000}
 			
 			MSDOS-header #{
-				4D5A800001000000 04001000FFFF0000
-				4001000000000000 4000000000000000
+				4D5A900003000000 04000000FFFF0000
+				B800000000000000 4000000000000000
 				0000000000000000 0000000000000000
 				0000000000000000 0000000080000000
 				0E1FBA0E00B409CD 21B8014CCD215468
@@ -154,8 +190,8 @@ context [
 			BSS					#{C0000080}	;-- [read write uninitialized]
 			data				#{C0000040}	;-- [read write initialized]
 			export				#{40000040}	;-- [read initialized]
-			import				#{C0000040}	;-- [read write initialized]
-			idata				#{C0000040}	;-- [read write initialized]
+			import				#{40000040}	;-- [read initialized]
+			idata				#{40000040}	;-- [read initialized]
 			reloc				#{42000040} ;-- [read discardable initialized]
 			except				#{40000040}	;-- [read initialized]
 			rsrc				#{40000040}	;-- [read initialized]
@@ -209,8 +245,9 @@ context [
 			version				"FileVersion"
 			rights				"LegalCopyright"
 			trademarks			"LegalTrademarks"
-			Author				"PrivateBuild"
+			;Author				"PrivateBuild"
 			ProductName			"ProductName"
+			ProductVersion		"ProductVersion"
 		]
 	]
 
@@ -417,11 +454,13 @@ context [
 		]
 	]
 	
-	precalc-entry-point: func [job [object!] /local ptr][
+	precalc-entry-point: func [job [object!] /local ptr extra][
+		extra: pick 1x0 to-logic find job/sections 'import  ;-- +1 for IAT section not yet added
 		ptr: (length? defs/image/MSDOS-header)
+			+ (length? defs/PE-signature)
 			+ (length? form-struct file-header)
 			+ (opt-header-size)
-			+ (sect-header-size * divide length? job/sections 2)
+			+ (sect-header-size * (extra + divide length? job/sections 2))
 			
 		ep-mem-page:  round/ceiling ptr / memory-align
 		ep-file-page: round/ceiling ptr / file-align
@@ -677,7 +716,7 @@ context [
 		code-refs: make block! 1000
 		data-refs: make block! 100
 		foreach [name spec] job/symbols [
-			either all [spec/1 = 'global block? spec/4][
+			either all [find [global native] spec/1 block? spec/4][
 				foreach ref spec/4 [append data-refs ref]
 			][
 				foreach ref spec/3 [append code-refs ref]
@@ -693,7 +732,7 @@ context [
 	]
 
 	build-header: func [job [object!] /local fh][
-		if find [exe dll drv] job/type [append job/buffer "PE^@^@"]	;-- image signature
+		if find [exe dll drv] job/type [append job/buffer defs/PE-signature]
 
 		fh: make-struct file-header none
 		fh/machine: 		 to integer! select defs/machine job/target
@@ -721,7 +760,7 @@ context [
 		foreach [name spec] sections [
 			flag: select defs/s-type name
 			unless zero? to integer! flag and #{00000040} [
-				n: n + (length? spec/2) + (pad-size? spec/2)
+				n: n + round/to/ceiling (length? spec/2) file-align
 			]
 		]
 		n
@@ -752,9 +791,9 @@ context [
 		oh: make-struct optional-header none
 
 		oh/magic:				to integer! #{010B}		;-- PE32 magic number
-		oh/major-link-version:  linker/version/1
-		oh/minor-link-version:	linker/version/2
-		oh/code-size:			length? job/sections/code/2
+		oh/major-link-version:  14						;-- required to be > 3.5 by Windows to load the PE file!
+		oh/minor-link-version:	0						;-- API from WinTrust and DbgHlp libraries won't work otherwise!
+		oh/code-size:			round/to/ceiling (length? job/sections/code/2) file-align
 		oh/initdata-size:		initdata-size? job/sections
 		oh/uninitdata-size:		0			
 		oh/entry-point-addr:	ep						;-- entry point is set to beginning of CODE
@@ -771,14 +810,14 @@ context [
 		oh/minor-sub-version:	0
 		oh/win32-ver-value:		0						;-- reserved, must be zero
 		oh/image-size:			image-size? job
-		oh/headers-size:		code-page * file-align
+		oh/headers-size:		ep-file-page * file-align
 		oh/checksum:			either job/type = 'drv [123456][0]	;-- for drivers and DLL only (dummy default)
 		oh/sub-system:			select defs/sub-system job/sub-system
 		oh/dll-flags:			flags
-		oh/stack-res-size:		to integer! #{00100000}
-		oh/stack-com-size:		to integer! #{00005000}
-		oh/heap-res-size:		to integer! #{00100000}
-		oh/heap-com-size:		to integer! #{00100000}
+		oh/stack-res-size:		to integer! #{00800000}
+		oh/stack-com-size:		to integer! #{00800000}
+		oh/heap-res-size:		to integer! #{00800000}
+		oh/heap-com-size:		to integer! #{00800000}
 		oh/loader-flags:		0						;-- reserved, must be zero
 		oh/data-dir-nb:			16
 		;-- data directory
@@ -819,11 +858,13 @@ context [
 			code	".text"
 			data  	".data"
 			import	".rdata"
+			export	".edata"
 			rsrc	".rsrc"
 			idata	".idata"
+			reloc	".reloc"
 		] name
 		change s: form-struct sh append form name null
-		change spec s	
+		change spec s
 	]
 
 	icon-number?: func [icons [block!] /local data num][
@@ -977,6 +1018,9 @@ context [
 
 		foreach [key key-str] defs/resource-version-info [
 			if value: select info key [
+				if all [key = 'ProductVersion issue? value][ ;-- convert it back to tuple!
+					value: to tuple! debase/base next value 16
+				]
 				build-res-string tail buf key-str to string! value
 			]
 		]
@@ -1017,28 +1061,24 @@ context [
 		change buf to-bin16 length? buf
 	]
 
-	build-res-file-info: func [info [block!] type [word!] /local f ver][
-		either all [
-			ver: select info 'version
-			issue? ver
-		][
-			ver: 0.0.0.0 or to tuple! debase/base next ver 16
-		][
-			ver: 0.0.0.0
+	build-res-file-info: func [info [block!] type [word!] /local f ver pver v pv][
+		ver: 0.0.0.0
+		pver: 0.0.0.0
+		if all [v: select info 'version issue? v][
+			ver: ver or to tuple! debase/base next v 16
 		]
-		
+		if all [pv: select info 'ProductVersion issue? pv][
+			pver: pver or to tuple! debase/base next pv 16
+		]
 		f: make-struct vs-fixed-fileinfo none
 		f/signature:			to-integer #{FEEF04BD}
 		f/struct-version:		to-integer #{00010000}
 		f/file-version-ms: 		ver/2 or shift/left ver/1 16
 		f/file-version-ls: 		ver/4 or shift/left ver/3 16
-		f/product-version-ms:	ver/2 or shift/left ver/1 16
-		f/product-version-ls:	ver/4 or shift/left ver/3 16
-		f/OS: 					to-integer #{00040004}	;-- VOS_NT_WINDOWS32
-		f/type:					switch/default type [
-									dll	[2]
-									drv [3]
-								][1]					;-- exe
+		f/product-version-ms:	pver/2 or shift/left pver/1 16
+		f/product-version-ls:	pver/4 or shift/left pver/3 16
+		f/OS: 					to-integer #{00000004}	;-- VOS__WINDOWS32
+		f/type:					switch/default type [dll [2] drv [3]][1] ;-- exe
 		form-struct f
 	]
 
@@ -1169,37 +1209,6 @@ context [
 			pad: pad-size? spec/2
 			append job/buffer spec/2
 			insert/dup tail job/buffer null pad
-		]
-	]
-	
-	on-file-written: func [job [object!] file [file!] /local file-sum chk-sum offset buffer res][
-		if job/type = 'drv [
-			file-sum: make struct! int-ptr! [0]
-			chk-sum:  make struct! int-ptr! [0]
-
-			res: MapFileAndCheckSum
-				to-local-file get-modes file 'full-path
-				file-sum
-				chk-sum
-
-			if res <> 0 [
-				print [
-					"*** Linker Error: checksum calculation failed^/"
-					"*** Reason: " select res [
-						1 "Could not open the file."
-						2 "Could not map the file."
-						3 "Could not map a view of the file."
-						4 "Could not convert the file name to Unicode."
-					]
-				]
-			]
-
-			offset: (length? defs/image/MSDOS-header) + ((5 + 17) * 4) + 1
-
-			buffer: read/binary file
-			pointer/value: chk-sum/n
-			change/part at buffer offset form-struct pointer 4
-			write/binary file buffer
 		]
 	]
 ]

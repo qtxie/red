@@ -22,8 +22,8 @@ compilation-error?: does [true? find qt/comp-output "*** Compilation Error"]
 loading-error: func [value] [found? find qt/comp-output join "*** Loading Error: " value]
 compilation-error: func [value] [found? find qt/comp-output join "*** Compilation Error: " value]
 syntax-error: func [value] [found? find qt/comp-output join "*** Syntax Error: " value]
--test-: :--test--
---test--: func [value] [probe value -test- value]
+; -test-: :--test--
+; --test--: func [value] [probe value -test- value]
 
 ===start-group=== "Red/System regressions #1 - #1000"
 
@@ -458,10 +458,10 @@ print [y lf]
 		--assert not crashed?
 		--compile-and-run-this {
 Red/System []
-fabs: func [x [float!] return: [float!] ][
+_fabs: func [x [float!] return: [float!] ][
 	either x < 0.0 [0.0 - x][x]
 ]
-print [fabs -3.14 lf]
+print [_fabs -3.14 lf]
 }
 		--assert not crashed?		
 
@@ -1117,6 +1117,7 @@ print-wide [
 }
 		--assert equal? "A ^/B" qt/output
 
+comment {							;; nesting EITHER is invalid
 	--test-- "#528"
 		--compile-and-run-this {
 Red/System []
@@ -1126,6 +1127,7 @@ print-wide [system/args-list s]
 		--assert equal? 
 			copy/part qt/output 8 
 			copy/part tail qt/output -8
+}
 
 	--test-- "#533"
 		--compile-this {
@@ -1351,6 +1353,141 @@ Red/System []
 probe 1.836E13
 }
 		--assert not found? find qt/output "13.0"
+
+
+	--test-- "#2671"
+		--compile-and-run-this {
+Red/System []
+
+string: "^^(0)^^(1)^^(2)^^(3)^^(4)^^(5)^^(6)^^(7)^^(8)^^(9)^^(A)^^(B)^^(C)^^(D)^^(E)^^(F)"
+binary: #{000102030405060708090A0B0C0D0E0F}
+array:  [
+	#"^^(0)" #"^^(1)" #"^^(2)" #"^^(3)"
+	#"^^(4)" #"^^(5)" #"^^(6)" #"^^(7)"
+	#"^^(8)" #"^^(9)" #"^^(A)" #"^^(B)"
+	#"^^(C)" #"^^(D)" #"^^(E)" #"^^(F)"
+]
+
+this: compare-memory
+	as byte-ptr! string
+	binary
+	length? string
+
+that: compare-memory
+	array
+	binary
+	length? string
+
+probe [this that]
+}
+		
+		--assert 0 = load qt/output
+		
+		--compile-this {Red/System [] #"^^(0000001)"}
+		--assert syntax-error "Invalid char! value"
+
+		--compile-this {Red/System [] "^^(0000001)"}
+		--assert syntax-error "Invalid string! value"
+		
+		--compile-this {Red/System [] #"^^(skibadee-skibadanger)"}
+		--assert syntax-error "Invalid char! value"
+		
+		--compile-this {Red/System [] "^^(skibadee-skibadanger)"}
+		--assert syntax-error "Invalid string! value"
+		
+	--test-- "#3515"
+		--compile-this {
+			Red/System []
+			bin: [#"^^(01)" #"^^(02)"]
+			print-line size? bin
+			print-line as integer! bin/1
+			bin: [#"^^(03)" #"^^(04)" #"^^(05)" #"^^(06)"]
+			print-line size? bin
+			print-line as integer! bin/1
+		}
+		--assert compilation-error "a literal array pointer cannot be reassigned"
+
+	--test-- "#3662"
+		--compile-this {Red/System [] 1h}				;@@ allow it?
+		--assert loading-error "invalid hex literal"
+		
+		--compile-this {Red/System [] 100000000h}
+		--assert loading-error "invalid hex literal"
+		
+		--compile-and-run-this {
+			Red/System []
+			probe 10h
+			probe 100h
+			probe 1000h
+			probe 10000h
+			probe 100000h
+			probe 1000000h
+			probe 10000000h
+		}
+		--assert equal?
+			load qt/output
+			[16 256 4096 65536 1048576 16777216 268435456]
+
+	--test-- "#4931-1"									;-- allowed case
+		--compile-and-run-this {
+			Red/System []
+			f: func [return: [integer!] /local sr [subroutine!] x][
+				sr: [x: 1]
+				sr
+				x
+			]
+			probe f			
+		}
+		--assert compiled?
+		--assert "1" = trim/all qt/output
+
+	--test-- "#4931-2"									;-- not allowed case
+		--compile-this {
+			Red/System []
+			f: func [return: [integer!] /local sr [subroutine!] x][
+				x: 1
+				sr: [x: x * 2]
+				sr
+				x
+			]
+			probe f			
+		}
+		--assert not compiler-error?
+		--assert compilation-error "type declaration missing"
+
+	--test-- "#4931-3"									;-- not allowed case
+		--compile-this {
+			Red/System []
+			f: func [
+				x [float!]
+				return: [integer!]
+				/local sr [subroutine!] y
+			][
+				y: as integer! x
+				sr: [y]
+				0
+			]
+			probe f 100.0
+		}
+		--assert not compiler-error?
+		--assert compilation-error "type declaration missing"
+
+	--test-- "#4931-4"									;-- not allowed case
+		--compile-this {
+			Red/System []
+			f: func [
+				x [float!]
+				return: [integer!]
+				/local sr [subroutine!] y
+			][
+				y: as integer! x
+				sr: [push as integer! y]
+				0
+			]
+			probe f 100.0
+		}
+		--assert not compiler-error?
+		--assert compilation-error "type declaration missing"
 
 ===end-group===
 

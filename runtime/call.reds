@@ -317,7 +317,6 @@ ext-process: context [
 				s-inf/dwFlags: STARTF_USESTDHANDLES
 			]
 			unless console? [
-				if in-buf  = null [ s-inf/hStdInput:  0 ]
 				inherit: true
 				s-inf/dwFlags: STARTF_USESTDHANDLES
 			]
@@ -395,9 +394,7 @@ ext-process: context [
 
 		init: does [
 			shell-name: platform/getenv "SHELL"
-			if null? shell-name [	;-- if $SHELL is not defined
-				shell-name: "/bin/bash"
-			]
+			if null? shell-name [shell-name: "/bin/sh"]	;-- if $SHELL is not defined
 			init-global
 		]
 

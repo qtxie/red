@@ -161,7 +161,6 @@ get-screen-size: func [
 get-text-size: func [
 	face 	[red-object!]
 	text	[red-string!]
-	hFont	[handle!]
 	p		[red-pair!]
 	return: [red-pair!]
 ][
@@ -348,6 +347,7 @@ OS-draw-face: func [
 	cmds	[red-block!]
 ][
 	if TYPE_OF(cmds) = TYPE_BLOCK [
+		assert system/thrown = 0
 		catch RED_THROWN_ERROR [parse-draw ctx cmds yes]
 	]
 	if system/thrown = RED_THROWN_ERROR [system/thrown: 0]

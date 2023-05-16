@@ -13,6 +13,9 @@ Red [
 system/view/platform: context [
 
 	#system [
+
+		view-log-level: 0
+
 		gui: context [
 			#enum facet! [
 				FACE_OBJ_TYPE
@@ -75,7 +78,8 @@ system/view/platform: context [
 			
 			#enum flags-flag! [
 				FACET_FLAGS_ALL_OVER:	00000001h
-
+				
+				FACET_FLAGS_TRISTATE:	00020000h
 				FACET_FLAGS_SCROLLABLE:	00040000h
 				FACET_FLAGS_PASSWORD:	00080000h
 
@@ -219,7 +223,7 @@ system/view/platform: context [
 				left:		symbol/make "left"
 				center:		symbol/make "center"
 				right:		symbol/make "right"
-				top:		symbol/make "top"
+				top:		symbol/make-opt "top"
 				middle:		symbol/make "middle"
 				bottom:		symbol/make "bottom"
 			]
@@ -227,6 +231,7 @@ system/view/platform: context [
 			screen:			symbol/make "screen"
 			window:			symbol/make "window"
 			button:			symbol/make "button"
+			toggle:			symbol/make "toggle"
 			check:			symbol/make "check"
 			radio:			symbol/make "radio"
 			field:			symbol/make "field"
@@ -246,6 +251,7 @@ system/view/platform: context [
 			caret:			symbol/make "caret"
 			scroller:		symbol/make "scroller"
 			rich-text:		symbol/make "rich-text"
+			calendar:		symbol/make "calendar"
 
 			---:			symbol/make "---"
 			done:			symbol/make "done"
@@ -277,6 +283,7 @@ system/view/platform: context [
 			no-buttons:		symbol/make "no-buttons"
 			modal:			symbol/make "modal"
 			popup:			symbol/make "popup"
+			tri-state:		symbol/make "tri-state"
 			scrollable:		symbol/make "scrollable"
 			password:		symbol/make "password"
 
@@ -291,7 +298,7 @@ system/view/platform: context [
 			_resize-we:		symbol/make "resize-we"
 			_resize-ew:		symbol/make "resize-ew"
 
-			on-over:		symbol/make "on-over"
+			_drag-on:		symbol/make "drag-on"
 			_actors:		word/load "actors"
 			_scroller:		word/load "scroller"
 			_window:		word/load "window"
@@ -340,6 +347,8 @@ system/view/platform: context [
 			_drawing:		word/load "drawing"
 			_scroll:		word/load "scroll"
 
+			_vertical:		word/load "vertical"
+			_horizontal:	word/load "horizontal"
 			_track:			word/load "track"
 			_page-left:		word/load "page-left"
 			_page-right:	word/load "page-right"
@@ -377,7 +386,9 @@ system/view/platform: context [
 			_right-command:	word/load "right-command"
 			_caps-lock:		word/load "caps-lock"
 			_num-lock:		word/load "num-lock"
-			
+			_scroll-lock:	word/load "scroll-lock"
+			_pause:			word/load "pause"
+
 			red/boot?: no
 			red/collector/active?: yes
 
@@ -515,12 +526,25 @@ system/view/platform: context [
 				]
 			]]
 
+			get-tuple-color: func [
+				tp		[red-tuple!]
+				return: [integer!]
+				/local
+					color [integer!]
+			][
+				color: tp/array1
+				if TUPLE_SIZE?(tp) = 3 [color: color and 00FFFFFFh]
+				color
+			]
+
 			#switch GUI-engine [
 				native [
 					;#include %android/gui.reds
 					#switch OS [
 						Windows  [#include %windows/gui.reds]
 						macOS    [#include %macOS/gui.reds]
+						; GTK backend (is it in conflict with %GTK/gui.reds)
+						Linux	 [#include %gtk3/gui.reds]
 						#default []					;-- Linux
 					]
 				]
@@ -547,10 +571,7 @@ system/view/platform: context [
 		/local
 			values [red-value!]
 			text   [red-string!]
-			pair   [red-pair!]
-			font   [red-object!]
-			state  [red-block!]
-			hFont  [int-ptr!]							;-- handle!
+			pair   [red-pair! value]
 	][
 		;@@ check if object is a face?
 		values: object/get-values face
@@ -564,22 +585,15 @@ system/view/platform: context [
 			exit
 		]
 
-		font: as red-object! values + gui/FACE_OBJ_FONT
-		hFont: either TYPE_OF(font) = TYPE_OBJECT [
-			state: as red-block! (object/get-values font) + gui/FONT_OBJ_STATE
-			either TYPE_OF(state) <> TYPE_BLOCK [gui/make-font face font][gui/get-font-handle font 0]
-		][
-			null
-		]
-		pair: as red-pair! stack/arguments
+		;pair: as red-pair! stack/arguments		;@@ wrong! overwrite face
 		pair/header: TYPE_PAIR
-		
-		gui/get-text-size face text hFont pair
+		gui/get-text-size face text :pair
+		stack/set-last as red-value! :pair
 	]
 	
 	on-change-facet: routine [
 		owner  [object!]
-		word   [word!]
+		word   [any-word!]
 		value  [any-type!]
 		action [word!]
 		new	   [any-type!]
@@ -629,6 +643,7 @@ system/view/platform: context [
 	]
 
 	draw-image: routine [image [image!] cmds [block!]][
+		if any [zero? IMAGE_WIDTH(image/size) zero? IMAGE_HEIGHT(image/size)][exit]
 		gui/OS-do-draw image cmds
 		ownership/check as red-value! image words/_poke as red-value! image -1 -1
 	]
@@ -640,8 +655,8 @@ system/view/platform: context [
 
 	do-event-loop: routine [no-wait? [logic!] /local bool [red-logic!]][
 		bool: as red-logic! stack/arguments
-		bool/header: TYPE_LOGIC
 		bool/value:  gui/do-events no-wait?
+		bool/header: TYPE_LOGIC
 	]
 
 	exit-event-loop: routine [][
@@ -650,6 +665,7 @@ system/view/platform: context [
 				#switch OS [
 					Windows  [gui/PostQuitMessage 0]
 					macOS    [gui/post-quit-msg]
+					Linux    [gui/post-quit-msg]
 					#default [0]
 				]
 			]
@@ -658,28 +674,38 @@ system/view/platform: context [
 		]
 	]
 
-	request-font: routine [font [object!] selected [object!] mono? [logic!]][
-		gui/OS-request-font font selected mono?
+	request-font: routine [font [object!] selected [any-type!] mono? [logic!]][
+		gui/OS-request-font font as red-object! selected mono?
 	]
 
 	request-file: routine [
-		title	[string!]
-		name	[file!]
-		filter	[block!]
+		title	[any-type!]
+		name	[any-type!]
+		filter	[any-type!]
 		save?	[logic!]
 		multi?	[logic!]
 	][
-		stack/set-last gui/OS-request-file title name filter save? multi?
+		stack/set-last gui/OS-request-file
+			as red-string! title
+			as red-file! name
+			as red-block! filter
+			save?
+			multi?
 	]
 
 	request-dir: routine [
-		title	[string!]
-		dir		[file!]
-		filter	[block!]
+		title	[any-type!]
+		dir		[any-type!]
+		filter	[any-type!]
 		keep?	[logic!]
 		multi?	[logic!]
 	][
-		stack/set-last gui/OS-request-dir title dir filter keep? multi?
+		stack/set-last gui/OS-request-dir
+			as red-string! title
+			as red-file! dir
+			as red-block! filter
+			keep?
+			multi?
 	]
 
 	text-box-metrics: routine [
@@ -689,10 +715,18 @@ system/view/platform: context [
 		/local
 			state	[red-block!]
 			bool	[red-logic!]
+			values	[red-value!]
+			txt		[red-string!]
 			layout? [logic!]
 	][
 		layout?: yes
-		state: as red-block! (object/get-values box) + gui/FACE_OBJ_EXT3
+		values: object/get-values box
+		txt: as red-string! values + gui/FACE_OBJ_TEXT
+		if TYPE_OF(txt) <> TYPE_STRING [
+			stack/set-last none-value
+			exit
+		]
+		state: as red-block! values + gui/FACE_OBJ_EXT3
 		if TYPE_OF(state) = TYPE_BLOCK [
 			bool: as red-logic! (block/rs-tail state) - 1
 			layout?: bool/value
@@ -714,11 +748,14 @@ system/view/platform: context [
 		extend system/view/metrics/margins [#switch config/OS [
 			Windows [
 				button:			[1x1   1x1]				;-- LeftxRight TopxBottom
+				toggle:			[1x1   1x1]
 				tab-panel:		[0x2   0x1]
 				group-box:		[0x0   0x1]
+				calendar:		[1x0   0x0]
 			]
 			macOS [
 				button:			[2x2   2x3 regular 6x6 4x7 small 5x5 4x6 mini 1x1 0x1]
+				toggle:			[2x2   2x3 regular 6x6 4x7 small 5x5 4x6 mini 1x1 0x1]
 				regular:		[6x6   4x7]
 				small:			[5x5   4x6]
 				mini:			[1x1   0x1]
@@ -732,14 +769,18 @@ system/view/platform: context [
 			Windows [
 				check:			[16x0  0x0]				;-- 13 + 3 for text padding
 				radio:			[16x0  0x0]				;-- 13 + 3 for text padding
+				field:			[0x8   0x0]
 				group-box:		[3x3  10x3]
 				tab-panel:		[1x3  25x0]
 				button:			[8x8   0x0]
+				toggle:			[8x8   0x0]
 				drop-down:		[0x7   0x0]
 				drop-list:		[0x7   0x0]
+				calendar:		[21x0 1x0]
 			]
 			macOS [
 				button:			[11x11 0x0 regular 14x14 0x0 small 11x11 0x0 mini 11x11 0x0]
+				toggle:			[11x11 0x0 regular 14x14 0x0 small 11x11 0x0 mini 11x11 0x0]
 				check:			[20x0  3x1]
 				radio:			[20x0  1x1]
 				text:			[3x3   0x0]
@@ -747,12 +788,33 @@ system/view/platform: context [
 				group-box:		[0x8  4x18]
 				drop-list:		[14x26 0x0 regular 14x26 0x0 small 11x22 0x0 mini 11x22 0x0]
 			]
+			Linux [
+				button:			[17x17 3x3]
+				toggle:			[17x17 3x3]
+				check:			[20x8  2x2]
+				radio:			[20x8  2x2]
+				text:			[3x3   0x0]
+				field:			[9x9   1x1]
+				group-box:		[0x8  4x18]
+				tab-panel:		[0x0  39x0]
+				drop-list:		[0x40 0x0]
+				drop-down:		[0x54 0x0]
+			]
+		]]
+		extend system/view/metrics/fixed-heights [#switch config/OS [
+			macOS	[
+				progress:	21
+			]
+			Linux [
+				progress:	4
+			]
 		]]
 		#switch config/OS [
 			Windows [
 				if version/1 <= 6 [						;-- for Win7 & XP
 					extend system/view/metrics/def-heights [
 						button:		23
+						toggle:		23
 						text:		24
 						field:		24
 						check:		24
@@ -774,6 +836,20 @@ system/view/platform: context [
 					progress:	21
 				]
 			]
+ 			Linux	[
+				 extend system/view/metrics/def-heights [
+					button:		29
+					toggle:		29
+					check:		20
+					radio:		19
+					text:		17
+					field:		30
+					drop-down:	34
+					drop-list:	34
+					progress:	4
+					slider:		34
+				]
+			]
 		]
 		
 		colors: system/view/metrics/colors
@@ -785,6 +861,8 @@ system/view/platform: context [
 			]
 			macOS [
 			
+			]
+			Linux [
 			]
 		]
 
@@ -799,14 +877,26 @@ system/view/platform: context [
 		set fonts:
 			bind [fixed sans-serif serif] system/view/fonts
 			switch system/platform [
+				;-- references:
+				;-- https://fontsarena.com/blog/operating-systems-default-serif-fonts/
+				;-- https://fontsarena.com/blog/operating-systems-default-sans-serif-fonts/
+				;-- https://www.granneman.com/webdev/coding/css/fonts-and-formatting/default-fonts
 				Windows [
-					either version/1 >= 6 [
-						["Consolas" "Arial" "Times"]
-					][
-						["Courier New" "Arial" "Times"]
+					case [
+						version >= 6.0.0 [["Consolas" "Segoe UI" "Times New Roman"]]
+						'xp              [["Courier New" "Tahoma" "Times New Roman"]]
 					]
 				]
-				macOS [["Menlo" "Arial" "Times"]]
+				macOS [
+					case [
+						version >= 10.11.0 [["SF Mono" "San Francisco" "Times"]]
+						version >= 10.10.0 [["Menlo" "Helvetica Neue" "Times"]]
+						'older             [["Menlo" "Lucida Grande" "Times"]]
+					]
+				]
+				;-- use "Monospace" on Linux, we let the system use the default one
+				Linux [["Monospace" "DejaVu Sans" "Times New Roman"]]
+				Android [["Roboto Mono" "Roboto" "Noto Serif"]]
 			]
 		
 		set [font-fixed font-sans-serif font-serif] reduce fonts

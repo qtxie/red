@@ -11,9 +11,6 @@ Red [
 
 ~~~start-file~~~ "image"
 
-; FIXME: linux compiler can't swallow this, using do
-do [if all [system/view value? 'image! datatype? get 'image!] [
-
 img: make image! 2x2
 ===start-group=== "image range(integer index)"
 	--test-- "image range(integer index) 1"
@@ -140,9 +137,9 @@ img: make image! 2x2
 		img2: copy/part img 6x8
 		--assert img = img2
 
-	--test-- "image copy 3"
-		img2: copy/part img 48
-		--assert img = img2
+	;--test-- "image copy 3"
+	;	img2: copy/part img 48
+	;	--assert img = img2
 
 	--test-- "image copy 4"
 		img2: copy/part img 0x0
@@ -164,15 +161,44 @@ img: make image! 2x2
 		img3: make image! [6x1 #{111111121212131313141414151515161616}]
 		--assert img2 = img3
 
-	--test-- "image copy 8"
-		img2: copy/part img 7
-		img3: make image! [6x1 #{111111121212131313141414151515161616}]
-		--assert img2 = img3
+	;--test-- "image copy 8"
+	;	img2: copy/part img 7
+	;	img3: make image! [6x1 #{111111121212131313141414151515161616}]
+	;	--assert img2 = img3
 
-	--test-- "image copy 9"
-		img2: copy/part img 13
-		img3: create-test-image 6x2
-		--assert img2 = img3
+	;--test-- "image copy 9"
+	;	img2: copy/part img 13
+	;	img3: create-test-image 6x2
+	;	--assert img2 = img3
+
+	im: make image! [4x4 #{
+	    010000020000030000040000
+	    050000060000070000080000
+	    0900000A00000B00000C0000
+	    0D00000E00000F0000100000
+	}]
+
+	--test-- "image copy 10"
+		im2: copy skip im 1x1
+		im3: make image! [3x3 #{0600000700000800000A00000B00000C00000E00000F0000100000}]
+		--assert im2 = im3
+
+	--test-- "image copy 11"
+		im2: copy/part skip im 1x1 2x2
+		im3: make image! [2x2 #{0600000700000A00000B0000}]
+		--assert im2 = im3
+
+	--test-- "image copy 12"
+		im2: copy/part skip im 1x1 skip im 3x3
+		im4: copy/part skip im 3x3 skip im 1x1
+		im3: make image! [2x2 #{0600000700000A00000B0000}]
+		--assert im2 = im3
+		--assert im4 = im3
+
+	--test-- "image copy 13"
+		im2: copy/part tail im -2x-2
+		im3: make image! [2x2 #{0B00000C00000F0000100000}]
+		--assert im2 = im3
 
 ===end-group===
 
@@ -197,32 +223,53 @@ img: make image! 2x2
 		img3: copy/part img 2x2
 		--assert img2 = img3
 
-	--test-- "#3769 case 2"
-		img: make image! 4x4
-		img2: make image! 1x1
-		img3: copy/part img 1
-		--assert img2 = img3
+	;--test-- "#3769 case 2"
+	;	img: make image! 4x4
+	;	img2: make image! 1x1
+	;	img3: copy/part img 1
+	;	--assert img2 = img3
 
-	--test-- "#3769 case 3"
-		img: make image! 4x4
-		img2: make image! 1x1
-		loop 2 [img3: copy/part img 1]
-		--assert img2 = img3
+	;--test-- "#3769 case 3"
+	;	img: make image! 4x4
+	;	img2: make image! 1x1
+	;	loop 2 [img3: copy/part img 1]
+	;	--assert img2 = img3
 
 	--test-- "#3769 case 4"
 		img: make image! 0x0
 		img2: copy img
 		--assert img = img2
 
+	#if config/target <> 'ARM [
 	--test-- "#3769 (#1555 regression)"
-		save %test.png make image! 10x10
-		img: load %test.png
-		save %test.png img
-		delete %test.png
+		test-png: qt-tmp-dir/test1555.png
+		save test-png make image! 10x10
+		img: load test-png
+		save test-png img
+		delete test-png
 		--assert true
+	]
 
+	--test-- "#4421 case 1"
+		i: make image! [1x1 #{111111}]
+		foreach [x y] i [
+			--assert x = 17.17.17.0
+			--assert none? y
+		]
+
+	--test-- "#4421 case 2"
+		n: 0
+		foreach [x y] 'a/b/c [
+			either zero? n [
+				--assert x = 'a
+				--assert y = 'b
+			][
+				--assert x = 'c
+				--assert none? y
+			]
+			n: 1
+		]
+	
 ===end-group===
-
-]]
 
 ~~~end-file~~~

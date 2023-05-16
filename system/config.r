@@ -10,7 +10,9 @@ REBOL [
 ;;-------------------------------------------
 ;;     Compilation Target Options
 ;;-------------------------------------------
-;;	OS:				'Windows | 'Linux | 'macOS | 'Syllable	;-- operating system name
+;;	OS:				'Windows | 'Linux | 'macOS
+;;					| 'Syllable	| 'FreeBSD
+;;					| 'NetBSD | 'Android 		;-- operating system name
 ;;	format:			'PE  | 'ELF | 'Mach-o		;-- file format
 ;;	type:			'exe | 'dll | 'drv			;-- file type
 ;;	target:			'IA-32 | 'ARM				;-- CPU or VM target
@@ -33,8 +35,10 @@ REBOL [
 ;;  red-help?:		no							;-- yes => keep doc-strings from boot.red
 ;;	gui-console?:	no							;-- yes => redirect printing to gui console (temporary)
 ;;	GUI-engine:		'native						;-- native | test | GTK | ...
+;;	draw-engine:	none						;-- none => use the best one on the OS, GDI+ => use GDI+ on Windows
 ;;  legacy:			block! of words				;-- flags for OS legacy features support
 ;;		- stat32								;-- use the older stat struct for 32-bit file access.
+;;		- no-touch								;-- no touch support
 ;;-------------------------------------------
 
 ;-------------------------
@@ -57,6 +61,7 @@ WindowsXP [
 	type:		'exe
 	sub-system: 'GUI
 	legacy:		[no-touch]
+	draw-engine: 'GDI+
 ]
 MSDOS-Old [								; pre-Pentium 4 target
 	OS:			'Windows
@@ -95,6 +100,21 @@ Linux [									; Linux default target
 	format: 	'ELF
 	type:		'exe
 	dynamic-linker: "/lib/ld-linux.so.2"
+	stack-align-16?: yes
+]
+Linux-GTK [								; Linux GUI target
+	OS:			'Linux
+	format: 	'ELF
+	type:		'exe
+	dynamic-linker: "/lib/ld-linux.so.2"
+	stack-align-16?: yes
+	sub-system: 'GUI
+]
+Linux-musl [
+	OS:			'Linux
+	format: 	'ELF
+	type:		'exe
+	dynamic-linker: "/lib/ld-musl-i386.so.1"
 	stack-align-16?: yes
 ]
 Linux-Old [
@@ -154,6 +174,17 @@ RPi [
 	base-address: 32768					; 8000h
 	dynamic-linker: "/lib/ld-linux-armhf.so.3"
 ]
+RPi-GTK [
+	OS:			'Linux
+	format:		'ELF
+	target:		'ARM
+	ABI:		'hard-float
+	type:		'exe
+	cpu-version: 7.0
+	base-address: 32768					; 8000h
+	dynamic-linker: "/lib/ld-linux-armhf.so.3"
+	sub-system: 'GUI
+]
 ;-------------------------
 Syllable [
 	OS:			'Syllable
@@ -169,6 +200,16 @@ FreeBSD [
 	dynamic-linker: "/usr/libexec/ld-elf.so.1"
 	syscall: 'BSD
 	target: 'IA-32
+]
+;-------------------------
+NetBSD [
+	OS:				'NetBSD
+	format: 		'ELF
+	type:			'exe
+	dynamic-linker: "/usr/libexec/ld.elf_so"
+	syscall: 		'BSD
+	target: 		'IA-32
+	PIC?:			 yes
 ]
 ;-------------------------
 Darwin [

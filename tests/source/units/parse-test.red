@@ -462,14 +462,13 @@ Red [
 	--test-- "blk-ext53"
 		a: []
 		--assert parse [1] [collect after a [keep skip]]
-		--assert a = []
-		--assert [1] = head a
+		--assert a = [1]
 
 	--test-- "blk-ext54"
 		list: next [1 2 3]
 		--assert parse [a 4 b 5 c] [collect after list [some [keep word! | skip]]]
-		--assert list = [2 3]
-		--assert [1 a b c 2 3] = head list
+		--assert list = [2 3 a b c ]
+		--assert [1 2 3 a b c ] = head list
 		
 ===end-group===
 
@@ -564,7 +563,46 @@ Red [
 	--test-- "blk-ins5"	
 		--assert parse blk: [] [insert only [a b]]
 		--assert blk = [[a b]]
-
+	
+	--test-- "blk-ins6"
+		series: [a b c]
+		letter: 'x
+		--assert parse series [insert letter 'a 'b 'c]
+		--assert series == [x a b c]
+	
+	--test-- "blk-ins7"
+		series:  [a b c]
+		letters: [x y z]
+		--assert parse series ['a 'b insert letters insert only letters 'c]
+		--assert series == [a b x y z [x y z] c]
+	
+	--test-- "blk-ins8"
+		series:  [a b c]
+		letters: [x y z]
+		--assert parse series [mark: 'a insert mark letters insert only mark letters 'b 'c]
+		--assert series == [[x y z] x y z a b c]
+	
+	--test-- "blk-ins9"
+		series: [a b c]
+		letter: 'x
+		--assert parse series [mark: insert (letter) 'a 'b insert only mark (letter) 'c]
+		--assert series == [x x a b c]
+	
+	--test-- "blk-ins10"
+		series:  [a b c]
+		letters: [x y z]
+		--assert parse series [
+			to end mark: [fail]
+			| insert only mark letters insert mark letters 'a 'b 'c 'x 'y 'z block!
+		]
+		--assert series == [a b c x y z [x y z]]
+	
+	--test-- "blk-ins 11"
+		series: [b]
+		digit:  2
+		--assert parse series [insert digit 'b]
+		--assert series == [2 b]
+	
 	--test-- "blk-chg1"
 		--assert parse blk: [1][change integer! 'a]
 		--assert blk = [a]
@@ -613,6 +651,9 @@ Red [
 		--assert parse blk: [1 2 3][b: some integer! change only b (reduce [1 + 2])]
 		--assert blk = [[3]]
 
+	--test-- "blk-chg17 issue #4432"
+		b: ["long long long string" "long long long string" [1]]
+		--assert parse copy "." [change skip (b)]
 
 ===end-group===
 
@@ -1464,6 +1505,35 @@ Red [
 		--assert parse str: "test" [some [skip p: insert #"_"] :p remove skip]
 		--assert str = "t_e_s_t"
 
+	--test-- "str-ins5"
+		series: "abc"
+		--assert parse series ["a" mark: "b" insert mark space insert space "c"]
+		--assert series == "a b c"
+
+	--test-- "str-ins6"
+		series: "abc"
+		--assert parse series [
+			mark: "abc" insert only mark space mark: [fail]
+			| insert only mark space [space "abc" space]
+		]
+		--assert series == " abc "
+	
+	--test-- "str-ins7"
+		series: "abc"
+		--assert parse series [
+			insert space
+			insert only space "a"
+			insert (space)
+			insert only (space) "b"
+			mark: insert only mark space
+			mark: insert only mark (space) "c"
+			mark: [fail] |
+			insert mark space
+			insert only mark space
+			[2 space "a" 2 space "b" 2 space "c" 2 space]
+		]
+		--assert series == "  a  b  c  "
+	
 	--test-- "str-chg1"
 		--assert parse str: "1" [change skip #"a"]
 		--assert str = "a"
@@ -1759,13 +1829,13 @@ Red [
 		--assert res = [html [head [title ["Test"]] body [div [u ["Hello"] b ["World"]]]]]
 
 	--test-- "str-cplx3"
-		foo: func [value][value]
+		foo-cplx3: func [value][value]
 		res: parse [a 3 4 t [t 9] "test" 8][
 			collect [
 				any [
 					keep integer!
 					| p: block! :p into [
-						collect [any [keep integer! keep ('+) | skip keep (foo '-)]]
+						collect [any [keep integer! keep ('+) | skip keep (foo-cplx3 '-)]]
 					] 
 					| skip
 				]
@@ -2702,7 +2772,7 @@ Red [
 
 		partition3108: function [elems [block!] group [integer!]][
 			parse elems [
-				collect some [keep group skip | collect keep to end]
+				collect some [end | keep group skip | collect keep to end]
 			]
 		]
 		--assert [[1 2] [3 4] [5 6] [7 8] [9]] = partition3108 [1 2 3 4 5 6 7 8 9] 2
@@ -2710,7 +2780,6 @@ Red [
 	--test-- "#3927"
 		parse "bx" [some [not "b" | skip]]
 		--assert true				;-- just check that parse finishes
-
 
 	--test-- "#3357"
 		parse x3357: [][insert ('foo)]
@@ -2721,7 +2790,7 @@ Red [
 
 	--test-- "#3951"
 		res: none
-		do "res: expand-directives/clean [[] #macro word! func [s e]['OK] WTF]()"
+		do "res: expand-directives/clean [[] #macro word! func [s e]['OK] WTF #reset]()"
 		--assert res = [[] OK]
 
 	--test-- "#3427"
@@ -2730,9 +2799,191 @@ Red [
 		--assert parse/part %234 ["23" to end] 3
 		repeat i 4 [--assert parse/part "12" ["1" to [end]] i]
 
+	--test-- "#3427-2"
+		e: none
+		parse "abcdef" [to [end] e:] 4 e
+		--assert e == ""
+		parse/part "abcde2" [to [end] e:] 4 e
+		--assert e == "e2"
+		parse/part "abcde3" [to end e:] 4 e
+		--assert e == "e3"
+		parse/part "abcde4" [any skip e:] 4 e
+		--assert e == "e4"
+
+	--test-- "#3951"
+		res: none
+		do "res: expand-directives/clean [[] #macro word! func [s e]['OK] WTF]()"
+		--assert res = [[] OK]
+		expand-directives/clean []						;-- remove the macro just loaded
+
 	--test-- "#4101"
 		--assert parse [a/b] ['a/b]
 		--assert error? try [parse [a/b] [a/b]]
+		--assert error? try [parse [a b c][change only 3 word! d/e]]
+		--assert error? try [parse [a b c][mark: 3 word! change mark d/e]]
+		--assert error? try [parse [a/b c d][remove a/b]]
+		--assert error? try [parse [c d][insert a/b 2 word!]]
+
+	--test-- "#4318"
+		x4318: 0
+		--assert error? try [parse [][copy x4318]]
+		--assert error? try [parse [][set x4318]]
+		--assert zero? x4318
+	
+	--test-- "#4194"
+		--assert not parse reduce [make vector! 0][into []]
+
+	--test-- "#4197"
+		x4197: make string! 0
+		--assert error? try [parse [][collect into x4197 []]]
+		x4197: make binary! 0
+		--assert parse #{}[collect into x4197 []]		;-- changed by #4732
+		--assert x4197 == #{}
+		x4197: make vector! 0
+		--assert error? try [parse "" [collect into x4197 []]]
+		x4197: make block! 3
+		parse quote (a b c) [collect into x4197 keep pick to end]
+		--assert x4197 = [a b c]
+		x4197: make paren! 3
+		parse <abc> [collect into x4197 [keep to end [fail] | keep pick to end]]
+		--assert x4197 = quote (<abc> #"a" #"b" #"c")
+		x4197: make tag! 3
+		parse %abc [collect into x4197 [keep to end [fail] | keep pick to end]]
+		--assert x4197 = <abcabc>
+	
+	--test-- "#4198"
+		--assert [a] = parse [][collect keep pick ('a)]
+		--assert [[a b]] = parse [][collect keep ([a b])]
+		--assert [a b] = parse [][collect keep pick ([a b])]
+		--assert [value [block]] = parse [] [collect [keep pick ([value]) keep ([block])]]
+
+	--test-- "#4200"
+		word:  'foo
+		block: []
+		mark:  block
+		
+		parse block [mark: change mark word]			;-- word's value
+		--assert block = [foo]		
+		clear block
+		
+		parse block [mark: change mark (word)]			;-- result of expression
+		--assert block = [foo]
+		clear block
+		
+		parse block [mark: change mark ('foo)]			;-- result of expression
+		--assert block = [foo]
+		clear block
+		
+		parse block [mark: change mark ([foo])]			;-- result of expression
+		--assert block = [foo]
+		clear block
+		
+		parse block [mark: change only mark ([foo])]	;--result of expression
+		--assert block = [[foo]]
+		clear block
+		
+		parse block [mark: change mark #foo]			;-- literal value
+		--assert block = [#foo]
+		clear block
+		
+		parse block [mark: change mark [#foo]]			;-- literal value
+		--assert block = [#foo]
+		clear block
+		
+		parse block [mark: change only mark [#foo]]		;-- literal value
+		--assert block = [[#foo]]
+		clear block
+		
+		parse block [change none word]					;-- word's value
+		--assert block = [foo]
+		clear block
+		
+		parse block [change none (word)]				;-- result of expression
+		--assert block = [foo]
+		clear block
+		
+		parse block [change none ('foo)]				;-- result of expression
+		--assert block = [foo]
+		clear block
+		
+		parse block [change none ([foo])]				;-- result of expression
+		--assert block = [foo]
+		clear block
+		
+		parse block [change only none ([foo])]			;-- result of expression
+		--assert block = [[foo]]
+		clear block
+		
+		parse block [change none #foo]					;-- literal value
+		--assert block = [#foo]
+		clear block
+		
+		parse block [change none [#foo]]				;-- literal value
+		--assert block = [#foo]
+		clear block
+		
+		parse block [change only none [#foo]]			;-- literal value
+		--assert block = [[#foo]]
+		clear block
+
+	--test-- "#4591"
+		--assert not parse " " [0 0 space]
+		--assert not parse [x] [0 0 'x]
+		
+		--assert parse [][0 0 "ignore me"]
+		--assert parse [][0 0 [ignore me]]
+		--assert parse [][0   "ignore me"]
+		--assert parse [][0   [ignore me]]
+
+	--test-- "#4678"
+		--assert false == parse to binary! "["  [none!]
+		--assert false == parse to binary! "("  [none!]
+		--assert false == parse to binary! "#(" [none!]
+
+	--test-- "#4682"
+		parse to binary! {https://example.org"} [copy match url! (--assert https://example.org == to url! match)]
+		parse to binary! {a@b.com"} [copy match email! (--assert a@b.com == to email! to string! match)]
+		
+		;; non-passing test, match == @@ref
+		;parse to binary! {@ref"} [copy match ref! (--assert @ref == to ref! to string! match)]
+
+	--test-- "#4863"
+		--assert parse to-binary "word" [word!]
+		--assert parse to-binary "   word" [word!]
+		--assert parse to-binary "123" [integer!]
+		--assert not parse to-binary "123.456" [integer!]
+		--assert parse to-binary "    123" [integer!]
+		--assert parse to-binary "hello 123 world" [word! integer! word!]
+		--assert parse to-binary "hello 123 world" [word! space integer! space word!]
+
+	--test-- "#5232"
+		parse/case [a b c @ d e f] [collect set   x any [@ keep pick ('-) | keep skip]]
+		--assert x = [a b c - d e f]
+		x: []
+		parse/case [a b c @ d e f] [collect into  x any [@ keep pick ('-) | keep skip]]
+		--assert x = [a b c - d e f]
+		x: []
+		parse/case [a b c @ d e f] [collect after x any [@ keep pick ('-) | keep skip]]
+		--assert x = [a b c - d e f]
+
+	--test-- "#5251"
+		--assert false == parse [1] [opt (--assert true)]
+
+
+	--test-- "#5285"
+		vowel: charset "aeiou"
+		str: "parse must not be bugged"
+		res: "p-rs- m-st n-t b- b-gg-d"
+		out: ""
+		rule: [
+			(clear out)
+			any [keep to vowel skip keep (#"-")]
+			keep to end
+		]
+		parse str b: [collect into out rule]  --assert out == res
+		take/last append str "¿"
+		parse str b: [collect into  out rule] --assert out == res
+		parse str b: [collect after out rule] --assert out == res
 
 ===end-group===
     

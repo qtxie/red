@@ -25,6 +25,10 @@ Red [
 		--assert equal? pick tb1-t 1 1
 		--assert equal? pick tb1-t 2 1
 		--assert equal? pick tb1-t 3 1
+		--assert equal? pick tb1-t 'hour 1
+		--assert equal? pick tb1-t 'minute 1
+		--assert equal? pick tb1-t 'second 1
+		--assert error? try [pick tb1-t 'hello]
 		
 	--test-- "tb-2"
 		tb2-t: 0:0:0
@@ -201,7 +205,7 @@ Red [
 
 	--test-- "time-func-args-2"
 		; quick empirical min/max values
-		--assert 1 = tf 170144881:00:05.620492334958379e19 0:00:09.99999e-16
+		--assert 1 = tf 170144881:00:05.620492334958379 0:00:09.99999
 
 ===end-group===
 
@@ -214,16 +218,16 @@ Red [
 	][
 		switch tfi [
 			1 [1:1:1]
-			2 [170144881:00:05.620492334958379e19]
-			3 [0:00:09.99999e-16]
+			2 [170144881:00:05.620492334958379]
+			3 [0:00:09.99999]
 		]
 	]
 	--test-- "time return 1"
 		--assert 1:1:1 = tf1 1
 	--test-- "time return 2"
-		--assert 170144881:00:05.620492334958379e19 = tf1 2
+		--assert 170144881:00:05.620492334958379 = tf1 2
 	--test-- "time return 3"
-		--assert 0:00:09.99999e-16 = tf1 3
+		--assert 0:00:09.99999 = tf1 3
 
 ===end-group===
 
@@ -379,6 +383,9 @@ Red [
 	--test-- "round 4"
 		--assert 12:34:56.1 = round/to 12:34:56 0.3
 		--assert 12:34:56.1 = round/to 12:34:56 30%
+
+	--test-- "round 5"
+		--assert 12:34:56.7 = round/to 12:34:56.7 0
 
 ===end-group===
 

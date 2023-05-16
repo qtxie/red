@@ -1,0 +1,88 @@
+
+Usage: red [command] [options] [file]
+
+[file]: any Red or Red/System source file.
+
+* The -c, -r and -u options are mutually exclusive.
+
+[options]:
+
+    -c, --compile                  : Generate an executable in the working
+                                     folder, using libRedRT. (development mode)
+
+    -d, --debug, --debug-stabs     : Compile source file in debug mode. STABS
+                                     is supported for Linux targets.
+
+    -dlib, --dynamic-lib           : Generate a shared library from the source
+                                     file.
+
+    -e, --encap                    : Compile in encap mode, so code is interpreted
+                                     at runtime. Avoids compiler issues. Required
+                                     for some dynamic code.
+
+    -h, --help                     : Output this help text.
+
+    -o <file>, --output <file>     : Specify a non-default [path/][name] for
+                                     the generated binary file.
+
+    -r, --release                  : Compile in release mode, linking everything
+                                     together (default: development mode).
+
+    -s, --show-expanded            : Output result of Red source code expansion by
+                                     the preprocessor.
+
+    -t <ID>, --target <ID>         : Cross-compile to a different platform
+                                     target than the current one (see targets
+                                     table below).
+
+    -u, --update-libRedRT          : Rebuild libRedRT and compile the input script
+                                     (only for Red scripts with R/S code).
+
+    -v <level>, --verbose <level>  : Set compilation verbosity level, 1-3 for
+                                     Red, 4-11 for Red/System.
+
+    -V, --version                  : Output Red's executable version in x.y.z
+                                     format.
+
+    --config [...]                 : Provides compilation settings as a block
+                                     of `name: value` pairs.
+
+    --no-compress                  : Omit Redbin format compression.
+
+    --no-runtime                   : Do not include runtime during Red/System
+                                     source compilation.
+
+    --no-view                      : Do not include VIEW module in the CLI console
+                                     and the libRedRT.
+
+    --red-only                     : Stop just after Red-level compilation.
+                                     Use higher verbose level to see compiler
+                                     output. (internal debugging purpose)
+
+    --show-func-map                : Output an address/name map of Red/System
+                                     functions, for debugging purposes.
+
+[command]:
+
+    build libRed [stdcall]         : Builds libRed library and unpacks the
+                                     libRed/ folder locally.
+
+    clear [<path>]                 : Delete all temporary files from current
+                                     or target <path> folder.
+
+Cross-compilation targets:
+
+    MSDOS        : Windows, x86, console (+ GUI) applications
+    Windows      : Windows, x86, GUI applications
+    WindowsXP    : Windows, x86, GUI applications, no touch API
+    Linux        : GNU/Linux, x86
+    Linux-musl   : GNU/Linux, x86, musl libc
+    Linux-ARM    : GNU/Linux, ARMv5, armel (soft-float)
+    RPi          : GNU/Linux, ARMv7, armhf (hard-float)
+    Darwin       : macOS Intel, console or GUI applications
+    macOS        : macOS Intel, GUI-only, applications bundles
+    Syllable     : Syllable OS, x86
+    FreeBSD      : FreeBSD, x86
+    NetBSD       : NetBSD, x86
+    Android      : Android, ARMv5
+    Android-x86  : Android, x86

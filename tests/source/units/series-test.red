@@ -622,16 +622,16 @@ Red [
 		--assert 6 = index? find/only a 'a/b
 
 	--test-- "series-find-51"
-		--assert 2 = index? find/match a 2
+		--assert 2 = index? find/match/tail a 2
 
 	--test-- "series-find-52"
-		--assert none? find/match a 3
+		--assert none? find/match/tail a 3
 
 	--test-- "series-find-53"
-		--assert 4 = index? find/match a [2 3 5]
+		--assert 4 = index? find/match/tail a [2 3 5]
 
 	--test-- "series-find-54"
-		--assert none? find/match next a [2 3 5]
+		--assert none? find/match/tail next a [2 3 5]
 		
 	--test-- "series-find-55"
 		--assert 4 = index? find/tail a 5
@@ -677,22 +677,22 @@ Red [
 		--assert 5 = index? find/part s #"o" 5
 
 	--test-- "series-find-69"
-		--assert 2 = index? find/match s #"h"
+		--assert 2 = index? find/match/tail s #"h"
 
 	--test-- "series-find-70"
-		--assert 5 = index? find/match s "hell"
+		--assert 5 = index? find/match/tail s "hell"
 
 	--test-- "series-find-71"
-		--assert 5 = index? find/match s "Hell"
+		--assert 5 = index? find/match/tail s "Hell"
 
 	--test-- "series-find-72"
-		--assert none? find/match/case s "hell"
+		--assert none? find/match/case/tail s "hell"
 
 	--test-- "series-find-73"
-		--assert 5 = index? find/match/case s "Hell"
+		--assert 5 = index? find/match/case/tail s "Hell"
 
 	--test-- "series-find-74"
-		--assert none? find/match next s "hell"
+		--assert none? find/match/tail next s "hell"
 
 	--test-- "series-find-75"
 		--assert 8 = index? find/case s "Red"
@@ -748,16 +748,16 @@ Red [
 		--assert 6 = index? find/only hs-fd-1 'a/b
 
 	--test-- "series-find-92"
-		--assert 2 = index? find/match hs-fd-1 2
+		--assert 2 = index? find/match/tail hs-fd-1 2
 
 	--test-- "series-find-93"
-		--assert none? find/match hs-fd-1 3
+		--assert none? find/match/tail hs-fd-1 3
 
 	--test-- "series-find-94"
-		--assert 4 = index? find/match hs-fd-1 [2 3 5]
+		--assert 4 = index? find/match/tail hs-fd-1 [2 3 5]
 
 	--test-- "series-find-95"
-		--assert none? find/match next hs-fd-1 [2 3 5]
+		--assert none? find/match/tail next hs-fd-1 [2 3 5]
 		
 	--test-- "series-find-96"
 		--assert 4 = index? find/tail hs-fd-1 5
@@ -789,7 +789,21 @@ Red [
 		put sf-105 'a 1
 		--assert (make hash! [a 1]) = find sf-105 'a
 
-		
+	--test-- "series-find-106"
+		--assert " b c" = find/last/part "a b c" space 3
+		--assert " b c" = find/last/part skip "xyza b c" 3 space 3
+	
+	--test-- "series-find-107"
+		--assert [x b x c] = find/last/part [a x b x c] 'x 3
+		--assert [x b x c] = find/last/part skip [x x x a x b x c] 3 'x 3
+	
+	--test-- "series-find-108"
+		--assert none? find/last/part "abc" #"^(01)" 100
+
+	--test-- "series-find-109"
+		hs-bs: make hash! append/dup [] [1 2 3] 10000
+		--assert none? find hs-bs [3 4]
+	
 ===end-group===
 
 ===start-group=== "remove"
@@ -865,6 +879,13 @@ Red [
 	--test-- "remove-hash-7"
 		hs: make hash! [a 1 1 b 2 2 c 3 3]
 		--assert (make hash! [a 1 1 c 3 3]) =  remove/key/part hs 'b 2
+
+	--test-- "remove-hash-8 - issue #5118"
+		hs-remove-8: make hash! [a b c a b c]
+		remove/part skip hs-remove-8 3 3
+		--assert 1 = index? find/last hs-remove-8 'a
+		--assert 2 = index? find/last hs-remove-8 'b
+		--assert 3 = index? find/last hs-remove-8 'c
 
 	--test-- "remove-str-1"
 		a: "123"
@@ -1114,6 +1135,61 @@ Red [
 		--assert #{020103} = reverse/part #{010203} 2
 		--assert #{010302} = head reverse next #{010203}
 
+===end-group===
+
+===start-group=== "reverse/skip"
+	--test-- "reverse/skip-1"
+		--assert error? try [reverse/skip [0]   0]
+		--assert error? try [reverse/skip [-1] -1]
+		--assert error? try [reverse/skip ["1"] "1"]
+	
+	--test-- "reverse/skip-2"
+		--assert error? try [reverse/skip [1 2 3] 2]
+		--assert error? try [reverse/skip [1 2 3] 4]
+	
+	--test-- "reverse/skip-3"
+		--assert error? try [reverse/skip/part [a b c d e f] 6 2]
+		--assert error? try [reverse/skip/part [a b c d e f] 3 4]
+	
+	--test-- "reverse/skip-4"
+		--assert [a b c] == reverse/skip [a b c] 3
+		--assert <abc>   == reverse/skip <abc> 3
+		
+	--test-- "reverse/skip-5"
+		series: make vector! [integer! 16 [1 2 3 4]]
+		reverse/skip series 2
+		--assert series == make vector! [integer! 16 [3 4 1 2]]
+	
+	--test-- "reverse/skip-6"
+		series: make hash! [#"a" #"b" #"c" #"d"]
+		reverse/skip series 2
+		--assert series == make hash! [#"c" #"d" #"a" #"b"]
+		--assert #"d" == series/(#"c")
+		--assert #"a" == select series #"d"
+		--assert #"b" == last series
+		--assert head? find series #"c"
+	
+	--test-- "reverse/skip-7"
+		--assert [d e f a b c] == reverse/skip [a b c d e f] 3
+		--assert [e f c d a b] == reverse/skip [a b c d e f] 2
+		--assert [f e d c b a] == reverse/skip [a b c d e f] 1
+	
+	--test-- "reverse/skip-8"
+		--assert "🍇🍏🍑🍒🍉🍊🍌🍎" == reverse/skip "🍉🍊🍌🍎🍇🍏🍑🍒" 4
+		--assert "🍑🍒🍇🍏🍌🍎🍉🍊" == reverse/skip "🍉🍊🍌🍎🍇🍏🍑🍒" 2
+		--assert "🍒🍑🍏🍇🍎🍌🍊🍉" == reverse/skip "🍉🍊🍌🍎🍇🍏🍑🍒" 1
+	
+	--test-- "reverse/skip-9"
+		--assert [c d a b e f g h] == reverse/skip/part [a b c d e f g h] 2 4
+	
+	--test-- "reverse/skip-10"
+		series: <abcdefgh>
+		--assert <abefcdgh> == head reverse/part/skip skip series 2 skip series 6 2
+	
+	--test-- "reverse/skip-11"
+		--assert strict-equal?
+			reverse <abc>
+			reverse/skip <abc> 1
 ===end-group===
 
 ===start-group=== "take"
@@ -1370,20 +1446,25 @@ Red [
 	--test-- "trim-str-11"
 		--assert "    ^-1^/    b2^-  ^/  c3  ^/  ^/^/" = trim/with copy mstr 97
 
+	--test-- "trim-str-12 issue #5076"
+		--assert 2 = length? trim first split {х^/+й} "+"
+
 	--test-- "trim-block-1"
 		--assert [1 2] = trim [#[none] 1 #[none] 2 #[none]]
 
-	--test-- "trim-bin-1"
-		--assert #{} = trim #{00}
+	--test-- "trim-bin-1"	--assert #{} = trim #{00}
+	--test-- "trim-bin-2"	--assert #{1234} = trim #{000012340000}
+	--test-- "trim-bin-3"	--assert #{12340000} = trim/head #{000012340000}
+	--test-- "trim-bin-4"	--assert #{00001234} = trim/tail #{000012340000}
+	--test-- "trim-bin-5"	--assert #{} = trim/tail #{000000}
+	--test-- "trim-bin-6"	--assert #{11} = head trim/tail at #{11000000} 1
+	--test-- "trim-bin-7"	--assert #{11} = head trim/tail at #{11000000} 2
+	--test-- "trim-bin-8"	--assert #{1100} = head trim/tail at #{11000000} 3
+	--test-- "trim-bin-9"	--assert #{110000} = head trim/tail at #{11000000} 4
+	--test-- "trim-bin-10"	--assert #{11000000} = head trim/tail at #{11000000} 5
+	--test-- "trim-bin-11"	--assert #{} = trim/head #{000000}
+	--test-- "trim-bin-12"	--assert #{} = trim at #{11000000} 2
 
-	--test-- "trim-bin-2"
-		--assert #{1234} = trim #{000012340000}
-
-	--test-- "trim-bin-3"
-		--assert #{12340000} = trim/head #{000012340000}
-
-	--test-- "trim-bin-4"
-		--assert #{00001234} = trim/tail #{000012340000}
 ===end-group===
 
 ===start-group=== "sort"
@@ -1407,6 +1488,19 @@ Red [
 		--assert "1cd2ab3ef4gh" = sort/skip a 3
 		--assert "12abcd3ef4gh" = sort/part a 6
 		--assert "34efgh" = sort/part skip a 6 tail a
+
+    --test-- "sort-str-5"                              ;-- invalid refinements combos
+        --assert not error? try [sort/skip/part "abc" 2 0]  ;-- zero part is OK with any skip
+        --assert error? try [sort/all/compare "abc" 1]      ;-- either /all or /compare
+        --assert error? try [sort/compare "abc" 1]          ;-- needs /skip
+        --assert error? try [sort/all "abc" 1]              ;-- needs /skip
+
+    --test-- "sort-str-6"
+        s: does [copy "313312"]
+        --assert "123133" = sort/skip s 2
+        --assert "123133" = sort/skip/compare s 2 1
+        --assert "311233" = sort/skip/compare s 2 2
+        --assert "123133" = sort/skip/all s 2
 
 	--test-- "sort-blk-1"
 		a: [bc 799 ab2 42 bb1 321.3 "Mo" "Curly" "Larry" -24 0 321.8] 
@@ -1447,6 +1541,46 @@ Red [
 		--assert [3 2 1] = sort/compare [1 3 2] func [a b] [a > b]
 		--assert [1 2 3 4 5 6] = sort/compare [1 2 3 4 5 6] func [a b] [a < b]
 		--assert [6 5 4 3 2 1] = sort/compare [1 2 3 4 5 6] func [a b] [a > b]
+
+    --test-- "sort-blk-6"                               ;-- invalid refinements combos
+        --assert not error? try [sort/skip/part [a b c] 2 0]    ;-- zero part is OK with any skip
+        --assert error? try [sort/all/compare [a b c] 1]        ;-- either /all or /compare
+        --assert error? try [sort/compare [a b c] 1]            ;-- needs /skip
+        --assert error? try [sort/all [a b c] 1]                ;-- needs /skip
+
+    --test-- "sort-blk-7"
+        s: does [copy [3 1 3 3 1 2]]
+        --assert [1 2 3 1 3 3] = sort/skip s 2
+        --assert [1 2 3 1 3 3] = sort/skip/compare s 2 1
+        --assert [3 1 1 2 3 3] = sort/skip/compare s 2 2
+        --assert [1 2 3 1 3 3] = sort/skip/all s 2
+
+    --test-- "sort-blk-8 issue 5265"
+		o1: make object! [x: 1 y: 90]
+		o2: make object! [x: 2 y: 1]
+		o3: make object! [x: 2 y: 2]
+
+		data: reduce [o1 o2 o3]
+		sort/compare data func [a b /local ra rb][
+		   ra: a/x + a/y
+		   rb: b/x + b/y
+		   return ra < rb
+		]
+		--assert data = reduce [o2 o3 o1]
+
+    --test-- "sort-vec-1"
+        s: does  [make vector! [3 1 3 3 1 2]]
+        --assert (make vector! [1 2 3 1 3 3]) = sort/skip s 2
+        --assert (make vector! [1 2 3 1 3 3]) = sort/skip/compare s 2 1
+        --assert (make vector! [3 1 1 2 3 3]) = sort/skip/compare s 2 2
+        --assert (make vector! [1 2 3 1 3 3]) = sort/skip/all s 2
+
+    --test-- "sort-bin-1"
+        s: does  [make binary! [3 1 3 3 1 2]]
+        --assert (make binary! [1 2 3 1 3 3]) = sort/skip s 2
+        --assert (make binary! [1 2 3 1 3 3]) = sort/skip/compare s 2 1
+        --assert (make binary! [3 1 1 2 3 3]) = sort/skip/compare s 2 2
+        --assert (make binary! [1 2 3 1 3 3]) = sort/skip/all s 2
 		
 ===end-group===
 
@@ -1493,6 +1627,29 @@ Red [
 		--assert [1 2 5 6]		= difference a b
 		--assert [1 2]			= exclude a b
 		--assert [5 6]			= exclude b a
+
+	--test-- "set-op-blk-2"
+		a: [[1] [2] [3] [4] [5]]
+		b: [[3] [4] [5] [6] [7]]
+		--assert [[3] [4] [5]] = intersect a b
+		--assert [[1] [2] [3] [4] [5] [6] [7]] = union a b
+		--assert [[1] [2] [3]]= unique [[1] [2] [1] [2] [3]]
+		--assert [[1] [2] [6] [7]] = difference a b
+		--assert [[1] [2]] = exclude a b
+		--assert [[6] [7]] = exclude b a
+
+	--test-- "set-op-hash"
+		a: make hash! [5 6 7 8]
+		b: skip a 2
+		--assert (make hash! [7 8])		= unique b
+		--assert (make hash! [5 6 7 8])	= unique a
+		--assert (make hash! [5 6 7 8])	= union a b
+		--assert (make hash! [7 8])		= intersect a b
+		--assert (make hash! [7 8])		= intersect b a
+		--assert (make hash! [5 6])		= difference a b
+		--assert (make hash! [5 6])		= difference b a
+		--assert (make hash! [5 6])		= exclude a b
+		--assert (make hash! [])		= exclude b a
 
 	--test-- "set-op-str"
 		a: "CBAD"
@@ -1833,13 +1990,76 @@ Red [
 		--assert empty? copy/part a -4
 		--assert "3456" = copy/part b -4
 		--assert "123456" = copy/part b -10
+
+  --test-- "copy-5"  --assert empty? copy/part "" 1x5
+  --test-- "copy-6"  --assert empty? copy/part "" 1x-5
+  --test-- "copy-7"  --assert empty? copy/part "" -1x5
+  --test-- "copy-8"  --assert empty? copy/part "" -1x-5
+  --test-- "copy-9"  --assert empty? copy/part "" -5x-1
+  --test-- "copy-10" --assert empty? copy/part "hello new world" 10x7
+  --test-- "copy-11" --assert empty? copy/part skip "hello new world" 10 -1x-5
+  --test-- "copy-12" --assert empty? copy/part "hello" 0x0     ;-- index 0 <=> index 1
+  --test-- "copy-13" --assert empty? copy/part "hello" 1x1
+  --test-- "copy-14" --assert "h"      == copy/part "hello" 0x1  
+  --test-- "copy-15" --assert "h"      == copy/part "hello" 1x2
+  --test-- "copy-16" --assert "new"    == copy/part "hello new world" 7x10
+  --test-- "copy-17" --assert "worl"   == copy/part skip "hello new world" 10 1x5
+  --test-- "copy-18" --assert " world" == copy/part skip "hello new world" 10 -1x5
+  --test-- "copy-19" --assert " new"   == copy/part skip "hello new world" 10 -5x-1
+
+  --test-- "copy-20" --assert empty? copy/part [] 1x5
+  --test-- "copy-21" --assert empty? copy/part [] 1x-5
+  --test-- "copy-22" --assert empty? copy/part [] -1x5
+  --test-- "copy-23" --assert empty? copy/part [] -1x-5
+  --test-- "copy-24" --assert empty? copy/part [] -5x-1
+  --test-- "copy-25" --assert empty? copy/part [a b c d e f g h i j] 5x4
+  --test-- "copy-26" --assert empty? copy/part skip [a b c d e f g h i j] 5 -1x-5
+  --test-- "copy-27" --assert empty? copy/part [a b c d e] 0x0     ;-- index 0 <=> index 1
+  --test-- "copy-28" --assert empty? copy/part [a b c d e] 1x1
+  --test-- "copy-29" --assert [a]       == copy/part [a b c d e] 0x1
+  --test-- "copy-30" --assert [a]       == copy/part [a b c d e] 1x2
+  --test-- "copy-31" --assert [c d]     == copy/part [a b c d e f g h i j] 3x5
+  --test-- "copy-32" --assert [e f g h] == copy/part skip [a b c d e f g h i j] 4 1x5
+  --test-- "copy-33" --assert [d e f g h i]  == copy/part skip [a b c d e f g h i j] 4 -1x5
+  --test-- "copy-34" --assert [d e f g] == copy/part skip [a b c d e f g h i j] 8 -5x-1
+
 ===end-group===
 
 ===start-group=== "random"
+
 	--test-- "ser-random-1"
 		res: random/only #{AA}
 		--assert integer? res
 		--assert 170 = res
+
+	--test-- "ser-random-2"
+		--assert 2 = random/only next [1 2]
+
+	--test-- "ser-random-3"
+		s: "1234567890"
+		r: random copy s
+		--assert s <> r
+		summed: 0 foreach c r [summed: summed + c]
+		--assert summed = 525
+
+	--test-- "ser-random-4"
+		s: "1234567890"
+		r: random/secure copy s
+		--assert s <> r
+		summed: 0 foreach c r [summed: summed + c]
+		--assert summed = 525
+
+===end-group===
+
+
+===start-group=== "poke"
+
+	--test-- "hash-poke-1"
+	h: make hash! [1 2 3 4 5]
+	h/1: 10
+	--assert h = find h 10
+	poke h 2 20
+	--assert (next h) = find h 20
 
 ===end-group===
 

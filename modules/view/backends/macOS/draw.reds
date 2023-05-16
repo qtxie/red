@@ -13,8 +13,6 @@ Red/System [
 #include %text-box.reds
 
 #define DRAW_FLOAT_MAX		[as float32! 3.4e38]
-#define F32_0				[as float32! 0.0]
-#define F32_1				[as float32! 1.0]
 
 max-colors: 256												;-- max number of colors for gradient
 max-edges: 1000												;-- max number of edges for a polygon
@@ -60,6 +58,7 @@ draw-begin: func [
 	]
 
 	ctx/raw:			CGCtx
+	ctx/ctx-matrix:		CGContextGetCTM CGCtx
 	ctx/matrix/a:		F32_1
 	ctx/matrix/b:		F32_0
 	ctx/matrix/c:		F32_0
@@ -227,6 +226,30 @@ OS-draw-line-width: func [
 	if width-v <= F32_0 [width-v: F32_1]
 	dc/pen-width: width-v
 	CGContextSetLineWidth dc/raw width-v
+]
+
+OS-draw-line-pattern: func [
+	dc			[draw-ctx!]
+	start		[red-integer!]
+	end			[red-integer!]
+	/local
+		p		[red-integer!]
+		cnt		[integer!]
+		dashes	[float32-ptr!]
+		pf		[float32-ptr!]
+][
+	cnt: (as-integer end - start) / 16 + 1
+	dashes: null
+	if cnt > 0 [
+		dashes: as float32-ptr! system/stack/allocate cnt
+		pf: dashes
+		while [start <= end][
+			pf/1: as float32! start/value
+			pf: pf + 1
+			start: start + 1
+		]
+	]
+	CGContextSetLineDash dc/raw as float32! 0.0 dashes cnt
 ]
 
 get-shape-center: func [
@@ -981,78 +1004,121 @@ CG-draw-image: func [						;@@ use CALayer to get very good performance?
 	width		[integer!]
 	height		[integer!]
 	/local
-		rc		[NSRect!]
+		tx		[float32!]
 		ty		[float32!]
+		w		[float32!]
+		h		[float32!]
+		flip-x	[float32!]
+		flip-y	[float32!]
 ][
-	rc: make-rect x y width height
-	ty: rc/y + rc/h
+	either width < 0 [
+		w: as float32! 0 - width
+		flip-x: as float32! -1.0
+	][
+		w: as float32! width
+		flip-x: as float32! 1.0
+	]
+	tx: as float32! x
+	either height < 0 [
+		h: as float32! 0 - height
+		flip-y: as float32! 1.0
+	][
+		h: as float32! height
+		flip-y: as float32! -1.0
+	]
+	ty: as float32! y + height
 	;-- flip coords
 	;; drawing an image or PDF by calling Core Graphics functions directly,
 	;; we must flip the CTM.
 	;; http://stackoverflow.com/questions/506622/cgcontextdrawimage-draws-image-upside-down-when-passed-uiimage-cgimage
-	CGContextTranslateCTM dc as float32! 0.0 ty
-	CGContextScaleCTM dc as float32! 1.0 as float32! -1.0
+	CGContextTranslateCTM dc tx ty
+	CGContextScaleCTM dc flip-x flip-y
 
-	CGContextDrawImage dc rc/x as float32! 0.0 rc/w rc/h image
+	CGContextDrawImage dc as float32! 0.0 as float32! 0.0 w h image
 
 	;-- flip back
-	CGContextScaleCTM dc as float32! 1.0 as float32! -1.0
-	CGContextTranslateCTM dc as float32! 0.0 (as float32! 0.0) - ty
+	CGContextScaleCTM dc flip-x flip-y
+	CGContextTranslateCTM dc (as float32! 0.0) - tx (as float32! 0.0) - ty
 ]
 
 OS-draw-image: func [
 	dc			[draw-ctx!]
-	image		[red-image!]
+	src			[red-image!]
 	start		[red-pair!]
 	end			[red-pair!]
 	key-color	[red-tuple!]
 	border?		[logic!]
 	crop1		[red-pair!]
 	pattern		[red-word!]
+	return:		[integer!]
 	/local
-		img		[integer!]
-		sub-img [integer!]
+		src.w	[integer!]
+		src.h	[integer!]
 		x		[integer!]
 		y		[integer!]
-		width	[integer!]
-		height	[integer!]
-		w		[float32!]
-		h		[float32!]
-		ww		[float32!]
+		w		[integer!]
+		h		[integer!]
 		crop2	[red-pair!]
+		crop.x	[integer!]
+		crop.y	[integer!]
+		crop.w	[integer!]
+		crop.h	[integer!]
+		dst		[red-image! value]
+		handle	[integer!]
 ][
-	either null? start [x: 0 y: 0][x: start/x y: start/y]
-	case [
-		start = end [
-			width:  IMAGE_WIDTH(image/size)
-			height: IMAGE_HEIGHT(image/size)
+	either any [
+		start + 2 = end
+		start + 3 = end
+	][
+		x: 0 y: 0 w: 0 h: 0
+		image/any-resize src dst crop1 start end :x :y :w :h
+		if dst/header = TYPE_NONE [return 0]
+		handle: OS-image/to-cgimage dst
+		CG-draw-image dc/raw handle x y w h
+		OS-image/delete dst
+	][
+		src.w: IMAGE_WIDTH(src/size)
+		src.h: IMAGE_HEIGHT(src/size)
+		either null? start [x: 0 y: 0][x: start/x y: start/y]
+		unless null? crop1 [
+			crop2: crop1 + 1
+			crop.x: crop1/x
+			crop.y: crop1/y
+			crop.w: crop2/x
+			crop.h: crop2/y
+			if crop.x + crop.w > src.w [
+				crop.w: src.w - crop.x
+			]
+			if crop.y + crop.h > src.h [
+				crop.h: src.h - crop.y
+			]
 		]
-		start + 1 = end [					;-- two control points
-			width: end/x - x
-			height: end/y - y
+		case [
+			start = end [
+				either null? crop1 [
+					w: src.w h: src.h
+				][
+					w: crop.w h: crop.h
+				]
+			]
+			start + 1 = end [
+				w: end/x - x
+				h: end/y - y
+			]
+			true [return 0]
 		]
-		start + 2 = end [0]					;@@ TBD three control points
-		true [0]							;@@ TBD four control points
+		handle: OS-image/to-cgimage src
+		unless null? crop1 [
+			handle: CGImageCreateWithImageInRect handle
+						as float32! crop.x as float32! crop.y
+						as float32! crop.w as float32! crop.h
+		]
+		CG-draw-image dc/raw handle x y w h
+		unless null? crop1 [
+			CGImageRelease handle
+		]
 	]
-
-	img: OS-image/to-cgimage image
-	if crop1 <> null [
-		crop2: crop1 + 1
-		w: as float32! crop2/x
-		h: as float32! crop2/y
-		ww: w / h * (as float32! height)
-		width: as-integer ww
-		sub-img: CGImageCreateWithImageInRect
-			img
-			as float32! crop1/x
-			as float32! crop1/y
-			w
-			h
-		img: sub-img
-	]
-
-	CG-draw-image dc/raw img x y width height
-	if crop1 <> null [CGImageRelease img]
+	0
 ]
 
 fill-gradient-region: func [
@@ -1178,7 +1244,7 @@ OS-draw-grad-pen-old: func [
 
 	loop count [
 		clr: as red-tuple! either TYPE_OF(head) = TYPE_WORD [_context/get as red-word! head][head]
-		val: clr/array1
+		val: get-tuple-color clr
 		color/1: (as float32! val and FFh) / 255.0
 		color/2: (as float32! val >> 8 and FFh) / 255.0
 		color/3: (as float32! val >> 16 and FFh) / 255.0
@@ -1254,7 +1320,7 @@ OS-draw-grad-pen: func [
 	head: stops
 	loop count [
 		clr: as red-tuple! either TYPE_OF(head) = TYPE_WORD [_context/get as red-word! head][head]
-		val: clr/array1
+		val: get-tuple-color clr
 		color/1: (as float32! val and FFh) / 255.0
 		color/2: (as float32! val >> 8 and FFh) / 255.0
 		color/3: (as float32! val >> 16 and FFh) / 255.0
@@ -1337,10 +1403,19 @@ OS-matrix-scale: func [
 	dc		[draw-ctx!]
 	pen		[integer!]
 	sx		[red-integer!]
-	sy		[red-integer!]
+	center	[red-pair!]
+	/local
+		sy	[red-integer!]
 ][
+	sy: sx + 1
 	either pen = -1 [
+		if TYPE_OF(center) = TYPE_PAIR [
+			_OS-matrix-translate dc/raw center/x center/y
+		]
 		CGContextScaleCTM dc/raw get-float32 sx get-float32 sy
+		if TYPE_OF(center) = TYPE_PAIR [
+			_OS-matrix-translate dc/raw 0 - center/x 0 - center/y
+		]
 	][
 		dc/matrix: CGAffineTransformScale dc/matrix get-float32 sx get-float32 sy
 	]
@@ -1371,18 +1446,34 @@ OS-matrix-skew: func [
 	dc		[draw-ctx!]
 	pen		[integer!]
 	sx		[red-integer!]
-	sy		[red-integer!]
+	center	[red-pair!]
 	/local
+		sy	[red-integer!]
+		xv	[float!]
+		yv	[float!]
 		m	[CGAffineTransform! value]
 ][
+	sy: sx + 1
+	xv: get-float sx
+	yv: either any [
+		sx = center
+		TYPE_OF(sy) = TYPE_PAIR
+	][0.0][get-float sy]
+
 	m/a: as float32! 1.0
-	m/b: as float32! either sx = sy [0.0][tan degree-to-radians get-float sy TYPE_TANGENT]
-	m/c: as float32! tan degree-to-radians get-float sx TYPE_TANGENT
+	m/b: as float32! either yv = 0.0 [0.0][tan degree-to-radians yv TYPE_TANGENT]
+	m/c: as float32! tan degree-to-radians xv TYPE_TANGENT
 	m/d: as float32! 1.0
 	m/tx: as float32! 0.0
 	m/ty: as float32! 0.0
 	either pen = -1 [
+		if TYPE_OF(center) = TYPE_PAIR [
+			_OS-matrix-translate dc/raw center/x center/y
+		]
 		CGContextConcatCTM dc/raw m
+		if TYPE_OF(center) = TYPE_PAIR [
+			_OS-matrix-translate dc/raw 0 - center/x 0 - center/y
+		]
 	][
 		dc/matrix: CGAffineTransformConcat dc/matrix m
 	]
@@ -1402,11 +1493,11 @@ OS-matrix-transform: func [
 	center?: rotate <> center
 
 	_OS-matrix-translate dc/raw translate/x translate/y
-	OS-matrix-scale dc pen scale scale + 1
+	OS-matrix-scale dc pen scale center
 	OS-matrix-rotate dc pen rotate center
 ]
 
-OS-matrix-push: func [dc [draw-ctx!] state [draw-state!]][
+OS-draw-state-push: func [dc [draw-ctx!] state [draw-state!]][
 	CGContextSaveGState dc/raw
 	state/pen-clr: dc/pen-color
 	state/brush-clr: dc/brush-color
@@ -1418,7 +1509,7 @@ OS-matrix-push: func [dc [draw-ctx!] state [draw-state!]][
 	state/a-brush?: dc/grad-brush?
 ]
 
-OS-matrix-pop: func [dc [draw-ctx!] state [draw-state!]][
+OS-draw-state-pop: func [dc [draw-ctx!] state [draw-state!]][
 	CGContextRestoreGState dc/raw
 	dc/pen-color: state/pen-clr
 	dc/brush-color: state/brush-clr
@@ -1431,22 +1522,19 @@ OS-matrix-pop: func [dc [draw-ctx!] state [draw-state!]][
 ]
 
 OS-matrix-reset: func [
-	dc [draw-ctx!]
-	pen [integer!]
+	dc		[draw-ctx!]
+	pen		[integer!]
 	/local
-		m [CGAffineTransform! value]
+		ctx	[handle!]
+		m	[CGAffineTransform! value]
 ][
-	either dc/on-image? [
-		m: CGAffineTransformMake F32_1 F32_0 F32_0 as float32! -1.0 F32_0 dc/rect-y
-	][
-		m: CGAffineTransformMake F32_1 F32_0 F32_0 F32_1 as float32! 0.5 as float32! 0.5
-	]
-	CGContextSetCTM dc/raw m
+	ctx: dc/raw
+	CGContextSetCTM ctx dc/ctx-matrix
 ]
 
 OS-matrix-invert: func [
-	dc	[draw-ctx!]
-	pen	[integer!]
+	dc		[draw-ctx!]
+	pen		[integer!]
 	/local
 		ctx	[handle!]
 		m	[CGAffineTransform! value]
@@ -1472,7 +1560,8 @@ OS-matrix-set: func [
 	m/d: get-float32 val + 3
 	m/tx: get-float32 val + 4
 	m/ty: get-float32 val + 5
-	CGContextConcatCTM dc/raw m
+	m: CGAffineTransformConcat m dc/ctx-matrix
+	CGContextSetCTM dc/raw m
 ]
 
 OS-set-matrix-order: func [
@@ -1527,10 +1616,15 @@ OS-set-clip: func [
 	CGContextClip ctx
 ]
 
+OS-clip-end: func [
+	ctx		[draw-ctx!]
+][]
+
 ;-- shape sub command --
 
 OS-draw-shape-beginpath: func [
 	dc          [draw-ctx!]
+	draw?		[logic!]
 ][
 	dc/path: CGPathCreateMutable
 	CGPathMoveToPoint dc/path null F32_0 F32_0
@@ -1643,54 +1737,58 @@ draw-curve: func [
 		pf		[float32-ptr!]
 		pt		[red-pair!]
 ][
-	pt: start + 1
-	p1x: as float32! start/x
-	p1y: as float32! start/y
-	p2x: as float32! pt/x
-	p2y: as float32! pt/y
-	if num = 3 [					;-- cubic Bézier
-		pt: start + 2
-		p3x: as float32! pt/x
-		p3y: as float32! pt/y
-	]
-
-	dx: dc/last-pt-x
-	dy: dc/last-pt-y
-	if rel? [
-		pf: :p1x
-		loop num [
-			pf/1: pf/1 + dx			;-- x
-			pf/2: pf/2 + dy			;-- y
-			pf: pf + 2
+	while [ start < end ][
+		pt: start + 1
+		p1x: as float32! start/x
+		p1y: as float32! start/y
+		p2x: as float32! pt/x
+		p2y: as float32! pt/y
+		if num = 3 [					;-- cubic Bézier
+			pt: start + 2
+			p3x: as float32! pt/x
+			p3y: as float32! pt/y
 		]
-	]
 
-	if short? [
-		either dc/shape-curve? [
-			;-- The control point is assumed to be the reflection of the control point
-			;-- on the previous command relative to the current point
-			p1x: dx * 2.0 - dc/control-x
-			p1y: dy * 2.0 - dc/control-y
-		][
-			;-- if previous command is not curve/curv/qcurve/qcurv, use current point
-			p1x: dx
-			p1y: dy
+		dx: dc/last-pt-x
+		dy: dc/last-pt-y
+		if rel? [
+			pf: :p1x
+			loop num [
+				pf/1: pf/1 + dx			;-- x
+				pf/2: pf/2 + dy			;-- y
+				pf: pf + 2
+			]
 		]
-	]
 
-	dc/shape-curve?: yes
-	either num = 3 [				;-- cubic Bézier
-		CGPathAddCurveToPoint dc/path null p1x p1y p2x p2y p3x p3y
-		dc/control-x: p2x
-		dc/control-y: p2y
-		dc/last-pt-x: p3x
-		dc/last-pt-y: p3y
-	][								;-- quadratic Bézier
-		CGPathAddQuadCurveToPoint dc/path null p1x p1y p2x p2y
-		dc/control-x: p1x
-		dc/control-y: p1y
-		dc/last-pt-x: p2x
-		dc/last-pt-y: p2y
+		if short? [
+			either dc/shape-curve? [
+				;-- The control point is assumed to be the reflection of the control point
+				;-- on the previous command relative to the current point
+				p1x: dx * (as float32! 2.0) - dc/control-x
+				p1y: dy * (as float32! 2.0) - dc/control-y
+			][
+				;-- if previous command is not curve/curv/qcurve/qcurv, use current point
+				p1x: dx
+				p1y: dy
+			]
+			start: start - 1
+		]
+
+		dc/shape-curve?: yes
+		either num = 3 [				;-- cubic Bézier
+			CGPathAddCurveToPoint dc/path null p1x p1y p2x p2y p3x p3y
+			dc/control-x: p2x
+			dc/control-y: p2y
+			dc/last-pt-x: p3x
+			dc/last-pt-y: p3y
+		][								;-- quadratic Bézier
+			CGPathAddQuadCurveToPoint dc/path null p1x p1y p2x p2y
+			dc/control-x: p1x
+			dc/control-y: p1y
+			dc/last-pt-x: p2x
+			dc/last-pt-y: p2y
+		]
+		start: start + num
 	]
 ]
 
@@ -1981,3 +2079,12 @@ OS-draw-brush-pattern: func [
 		dc/grad-pen: -1
 	]
 ]
+
+OS-draw-shadow: func [
+	ctx		[draw-ctx!]
+	offset	[red-pair!]
+	blur	[integer!]
+	spread	[integer!]
+	color	[integer!]
+	inset?	[logic!]
+][0]

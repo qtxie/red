@@ -143,6 +143,9 @@ typeset: context [
 		if type = OP_UNIQUE [return set1]
 
 		set2: set1 + 1
+		if all [TYPE_OF(set2) <> TYPE_TYPESET TYPE_OF(set2) <> TYPE_DATATYPE][
+			fire [TO_ERROR(script invalid-arg) as red-value! set2]
+		]
 		res: as red-typeset! stack/push*
 		res/header: TYPE_TYPESET
 		rs-clear res
@@ -242,7 +245,7 @@ typeset: context [
 			array	[byte-ptr!]
 			id		[integer!]
 			name	[names!]
-			pos		[byte-ptr!]								;-- required by BS_TEST_BIT
+			pos		[byte-ptr!]							;-- required by BS_TEST_BIT
 			set?	[logic!]							;-- required by BS_TEST_BIT
 	][
 		array: (as byte-ptr! sets) + 4

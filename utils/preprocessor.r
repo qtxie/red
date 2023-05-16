@@ -95,15 +95,28 @@ preprocessor: context [
 			p: set-word! (unless in exec p/1 [append syms p/1])
 			| skip
 		]]
-		unless empty? syms [exec: make exec append syms none]
+		unless empty? syms [
+			exec: make exec append syms none
+			rebind-all
+		]
 		do-safe/with bind to block! code exec cmd
 	]
 	
-	count-args: func [spec [block!] /local total][
-		total: 0
+	rebind-all: func [/local rule p][
+		protos: bind protos exec
+		
+		parse macros rule: [
+			any [p: function! (bind body-of first p exec) | p: [block! | paren!] :p into rule | skip]
+		]
+	]
+	
+	count-args: func [spec [block!] /block /local total pos][
+		total: either block [copy []][0]
 		parse spec [
 			any [
-				[word! | lit-word! | get-word!] (total: total + 1)
+				pos: [word! | lit-word! | get-word!] (
+					either block [append total type? pos/1] [total: total + 1]
+				)
 				| refinement! (return total)
 				| skip
 			]
@@ -111,8 +124,12 @@ preprocessor: context [
 		total
 	]
 	
-	func-arity?: func [spec [block!] /with path [path!] /local arity pos][
-		arity: count-args spec
+	arg-mode?: func [spec [block!] idx [integer!]][
+		pick count-args/block spec idx
+	]
+	
+	func-arity?: func [spec [block!] /with path [path!] /block /local arity pos][
+		arity: either block [count-args/block spec] [count-args spec]
 		if path [
 			foreach word next path	[
 				unless pos: find/tail spec to refinement! word [
@@ -122,39 +139,89 @@ preprocessor: context [
 					]
 					do-quit
 				]
-				arity: arity + count-args pos
+				either block
+					[append arity count-args/block pos]
+					[arity: arity + count-args pos]
 			]
 		]
 		arity
 	]
-	
-	fetch-next: func [code [block! paren!] /local base arity value path][
-		base: code
-		arity: 1
+
+	value-path?: func [path [path!] /local value i item selectable] [
+		selectable: make typeset! [
+			block! paren! path! lit-path! set-path! get-path!
+			object! port! error! map!
+		]
+		repeat i length? path [
+			set/any 'value either i = 1 [get/any first path][
+				set/any 'item pick path i
+				case [
+					get-word? :item [set/any 'item get/any to word! item]
+					paren?    :item [set/any 'item do item]
+				]
+				either integer? :item [pick value item][select value :item]
+			]
+			unless find selectable type? get/any 'value [
+				path: copy/part path i
+				break
+			]
+		]
+		reduce [path get/any 'value]
+	]
+
+	fetch-next: func [code [block! paren!] /local i left item item2 value fn-spec path f-arity at-op? op-mode][
+		left: reduce [yes]
 		
-		while [arity > 0][
-			arity: arity + either all [
-				not tail? next code
-				word? value: code/2
-				op? get/any value
+		while [all [not tail? left not tail? code]] [
+			either not left/1 [							;-- skip quoted argument
+				remove left
 			][
-				code: next code
-				1
-			][
-				either all [
-					find [word! path!] type?/word value: code/1
-					value: either word? value [value][first path: value]
-					any-function? get/any value
-				][
-					either path [
-						func-arity?/with spec-of get value path
-					][
-						func-arity? spec-of get value
+				item: first code
+				f-arity: any [
+					all [								;-- a ...
+						word? :item
+						any-function? set/any 'value get/any :item
+						func-arity?/block fn-spec: spec-of get/any :item
 					]
-				][0]
+					all [								;-- a/b ...
+						path? :item
+						set/any [path value] value-path? :item
+						any-function? get/any 'value
+						func-arity?/block/with
+							fn-spec: spec-of :value
+							at :item length? :path
+					]
+				]
+
+				if at-op?: all [						;-- a * b
+					1 < length? code
+					word? item2: second code
+					op? get/any :item2
+				] [
+					op-mode: arg-mode? spec-of get/any :item2 1
+					if all [f-arity  op-mode = word!] [		;-- check if function's lit/get-arg takes priority
+						at-op?: word! = arg-mode? fn-spec 1
+					]
+				]
+
+				case [
+					at-op? [							;-- a * b
+						code: next code					;-- skip `a *` part
+						left/1: word! = arg-mode? spec-of get/any :item2 2
+					]
+
+					f-arity [							;-- a ... / a/b ...
+						if op? get/any 'value [return skip code 2]	;-- starting with op is an error
+						remove left
+						repeat i length? f-arity [insert at left i word! = f-arity/:i]
+					]
+
+					not find [set-word! set-path!] type?/word item [	;-- not a: or a/b:
+						remove left
+					]
+				]
 			]
 			code: next code
-			arity: arity - 1
 		]
 		code
 	]
@@ -221,7 +288,13 @@ preprocessor: context [
 				]
 			]
 		]
-		if any [not valid? all [not named? cnt <> 2]][
+		if any [
+			not valid?
+			all [
+				not named?
+				any [cnt <> 2 all [block? spec/1 empty? spec/1]]
+			]
+		][
 			print [
 				"*** Macro Error: invalid specification^/"
 				"*** Where:" mold copy/part spec 3
@@ -237,11 +310,10 @@ preprocessor: context [
 			append protos copy/part spec 4
 		][												;-- pattern-matching macro
 			macro: do bind copy/part next spec 3 exec
-			append/only protos spec/4
 			
 			repend rule [
 				to set-word! 's
-				bind spec/1 exec						;-- allow rule to reference exec's words
+				spec/1
 				to set-word! 'e
 				to-paren compose/deep either all [
 					block? spec/3/1 find spec/3/1 'manual
@@ -260,6 +332,7 @@ preprocessor: context [
 		new-line pos yes
 		
 		exec: make exec protos
+		rebind-all
 	]
 
 	reset: func [job [object! none!]][
@@ -336,9 +409,11 @@ preprocessor: context [
 					if active? [
 						pos: pick [3 2] keep?
 						if trace? [print ["preproc: eval" mold s/:pos]]
+						saved: s
 						expr: do-code s/:pos s/1
+						s: saved
 						if all [keep? trace?][print ["preproc: ==" mold expr]]
-						either keep? [s: change/part s expr e][remove/part s e]
+						either keep? [s: change/part s :expr e][remove/part s e]
 					]
 				) :s
 				| s: #local [block! | (syntax-error s next s)] e: (
@@ -355,7 +430,7 @@ preprocessor: context [
 				
 				| s: #process [[
 					  'on  (active?: yes remove/part s 2) :s
-					| 'off (active?: no  remove/part s 2) :s [to #process | to end]
+					| 'off (active?: no  remove/part s 2) :s [to #process | to end (active?: yes)]
 				] | (syntax-error s next s)]
 				
 				| s: #macro [
@@ -380,9 +455,12 @@ preprocessor: context [
 		"Invokes the preprocessor on argument list, modifying and returning it"
 		code [block! paren!] "List of Red values to preprocess"
 		/clean 				 "Clear all previously created macros and words"
-		/local job
+		/local job saved
 	][
+		saved: s
 		job: system/build/config
-		either clean [expand/clean code job][expand code job]
+		also 
+			either clean [expand/clean code job][expand code job]
+			s: saved
 	]
 ]

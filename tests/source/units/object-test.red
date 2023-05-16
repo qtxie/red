@@ -2146,6 +2146,58 @@ Red [
 
 ===end-group===
 
+===start-group=== "changed fields"
+	
+	reset: func [foo [object!]][modify foo 'changed none]
+	ebbs?: func [foo [object!]][reflect foo 'changed]
+	
+	foo: reset object [x: y: 0]						;@@ RESET is required to trick the compiler
+
+	--test-- "changed-1"		
+		--assert [] = ebbs? foo
+		foo/x: 1
+		--assert [x] = ebbs? foo
+		
+	--test-- "changed-2"
+		put foo 'y 2
+		--assert [x y] = ebbs? foo
+		--assert [] = ebbs? reset foo
+	
+	--test-- "changed-3"
+		do bind [x: y: 0] foo
+		--assert [x y] = ebbs? foo
+		
+	--test-- "changed-4"
+		set in reset foo 'y 1
+		--assert [y] = ebbs? foo
+		
+	--test-- "changed-5"
+		set 'foo/x 2
+		--assert [x y] = ebbs? foo
+		--assert [] = ebbs? reset foo
+	
+	--test-- "changed-6"
+		set foo [bar]
+		--assert [x y] = ebbs? foo					;-- Y was set to NONE
+	
+	--test-- "changed-7"
+		set/some reset foo [bar]
+		--assert [x] = ebbs? foo					;-- Y was ignored
+	
+	--test-- "changed-8"
+		set reset foo object []
+		--assert [] = ebbs? foo
+	
+	--test-- "changed-9"
+		set reset foo object [y: 2]
+		--assert [y] = ebbs? foo
+	
+	--test-- "changed-10"
+		set reset foo object [x: 1 y: 2]
+		--assert [x y] = ebbs? foo
+	
+===end-group===
+
 ===start-group=== "set"
 
 	--test-- "os1"
@@ -2272,13 +2324,15 @@ Red [
 			on-deep-change*: func [
 				owner word target action new index part
 			][
-				if equal? mold owner mold make object! [a: 0 b: [1 2 3 4 5 6]] [a: a + 1]
-				if equal? word 'b [a: a + 10]
-				if equal? target [1 2 3 4 5 6] [a: a + 100]
-				if equal? action 'append [a: a + 1000]
-				if equal? new 6 [a: a + 10000]
-				if equal? index 5 [a: a + 100000]
-				if equal? part 1 [a: a + 1000000]				 
+				if action = 'appended [
+					if equal? mold owner mold make object! [a: 0 b: [1 2 3 4 5 6]] [a: a + 1]
+					if equal? word 'b [a: a + 10]
+					if equal? target [1 2 3 4 5 6] [a: a + 100]
+					if equal? action 'appended [a: a + 1000]
+					if equal? new 6 [a: a + 10000]
+					if equal? index 5 [a: a + 100000]
+					if equal? part 1 [a: a + 1000000]
+				]
 			]
 			a: 0
 			b: [1 2 3 4 5]
@@ -2288,6 +2342,47 @@ Red [
 		
 ===end-group===
 
+===start-group=== "construct"
+
+	--test-- "oc1"
+		oc1: construct [b: 2 c: print]
+		--assert (body-of oc1) == [b: 2 c: 'print]
+
+	--test-- "oc2"
+		oc2: construct/with [d: append] oc1
+		--assert (body-of oc2) == [b: 2 c: 'print d: 'append]
+
+	--test-- "oc3"
+		spec: [z: 3 y: insert]
+		oc3: construct/with spec oc1
+		--assert (body-of oc3) == [b: 2 c: 'print z: 3 y: 'insert]
+
+	--test-- "oc4"
+		blk: [b: 2 c: print]
+		oc4: construct blk
+		--assert (body-of oc4) == [b: 2 c: 'print]
+
+	--test-- "oc5"
+		blk: [b: 2 c: print]
+		oc5: object [a: 1]
+		oc51: construct/with blk oc5
+		--assert (body-of oc51) == [a: 1 b: 2 c: 'print]
+
+	--test-- "oc6"
+		blk: [b: 6 c: print]
+		oc6: construct/with blk object [a: 5]
+		--assert (body-of oc6) == [a: 5 b: 6 c: 'print]
+
+	--test-- "oc7"
+		oc7: construct [a: true]
+		--assert logic? oc7/a
+		oc71: construct/only [a: true]
+		--assert word? oc71/a
+		oc72: construct/only/with [b: true] oc7
+		--assert logic? oc72/a
+		--assert word?  oc72/b
+
+===end-group===
 
 ===start-group=== "regression tests"
 
@@ -2320,6 +2415,122 @@ Red [
 			g3406: context [f: does [x]  x: 3]
 			h3406: make g3406 object [x: 5]
 			--assert h3406/f = 5
+		]
+
+	--test-- "issue #4765"
+		a4765: make object! [ x: 1 show: does [x] ]
+		b4765: make object! [ x: 2 y: 3 show: does [reduce [x y]] ]
+		c4765: make a4765 b4765
+		--assert a4765/show == 1
+		--assert b4765/show == [2 3]
+
+		a4765x: make object! [ x: 1 show: does [x] ]
+		b4765x: make object! [ x: 2 show: does [reduce [x y]] y: 3]
+		c4765x: make a4765x b4765x
+		--assert a4765x/show == 1
+		--assert b4765x/show == [2 3]
+
+	--test-- "#3804"
+		checks: 0
+		o3804: object [
+			i: 1
+			on-change*: func [w o n] [checks: checks + 1]
+		]
+		o3804/i: o3804/i + 1
+		set in o3804 'i o3804/i + 1
+		do bind [i: i + 1] o3804
+		--assert checks = 3
+	
+	--test-- "#3805"
+		do [
+			checks: 0
+			d3805: make reactor! [
+				set-quiet 'on-change* func
+					spec-of :reactor!/on-change*
+					compose [
+						checks: checks + 1
+						(bind copy/deep body-of :reactor!/on-change* self)
+					]
+				a: "123"
+			]
+			d3805/a: "456"
+			append d3805/a "4"
+			--assert checks = 2
+			--assert d3805/a = "4564"
+		]
+
+	--test-- "#4500"
+		do [
+			r4500: reactor [
+				x: 1
+				on-change*: function spec-of :on-change* bind/copy body-of :on-change* self
+			]
+			src4500: reactor [a: b: none]
+			tgt: [0 "tgt block"]
+			react [tgt/1: src4500/a]
+			r4500/x: tgt
+			src4500/a: 100
+			--assert tgt/1 = 100
+		]
+
+	--test-- "#4552"
+		do [
+			--assert (make object! []) = context? object [return quote self]
+			--assert same? (context? 'do) context? object [return 'self]
+		]
+
+	--test-- "#4787"
+		do [
+			events: 0
+			o: make deep-reactor! [
+				on-deep-change*: func [o w t a n i p /local x] [
+					y: context? 'o
+					--assert function? :y
+					--assert false == :local
+					--assert none? :x
+					local: p: x: :y
+					p: x: :y
+					--assert function? :y
+					--assert function? :p
+					--assert function? :x
+					--assert function? :local
+					events: events + 1
+				]
+				x: []
+				append x 1
+			]
+			--assert events = 2
+			--assert o/x = [1]
+
+			events: 0
+			o1: object [on-change*: func [word old new] []]
+			o2: make o1 [
+				on-change*: func [word old new /local x] [
+					--assert none? :x
+					--assert false == :local
+					events: events + 1
+				]
+				v: 0
+			]
+			--assert events = 2
+			o2/v: 1
+			--assert events = 3
+		]
+
+	--test-- "#5135"
+		do [
+			r2-5135: none
+			r1-5135: reactor [x: 0 y: is [x] set 'r2-5135 self]
+			--assert same? r1-5135 r2-5135
+			r1-5135/x: 1
+			--assert all [r1-5135/x = 1 r1-5135/y = 1]
+			r2-5135/x: 2
+			--assert all [r2-5135/x = 2 r2-5135/y = 2]
+		]
+
+	--test-- "#5190"
+		do [
+			--assert error? try [object [self/self/self: 1 probe self]]
 		]
 
 ===end-group===

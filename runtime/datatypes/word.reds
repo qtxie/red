@@ -19,6 +19,11 @@ Red/System [
 word: context [
 	verbose: 0
 	
+	duplicate: func [w [red-word!] return: [red-word!]][
+		assert red/boot?
+		as red-word! copy-cell as red-value! w ALLOC_TAIL(root)
+	]
+	
 	load-in: func [
 		str 	[c-string!]
 		blk		[red-block!]
@@ -49,7 +54,7 @@ word: context [
 			cell [red-word!]
 	][
 		cell: as red-word! pos
-		cell/header: TYPE_WORD							;-- implicit reset of all header flags
+		set-type pos TYPE_WORD
 		cell/ctx: 	 global-ctx
 		cell/symbol: id
 		cell/index:  _context/add TO_CTX(global-ctx) cell
@@ -110,10 +115,8 @@ word: context [
 			s	[series!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "word/from"]]
-		
-		ctx: TO_CTX(node)
-		s: as series! ctx/symbols/value
-		as red-word! s/offset + index
+
+		_hashtable/get-ctx-word TO_CTX(node) index
 	]
 	
 	at: func [
@@ -123,7 +126,6 @@ word: context [
 		/local
 			ctx	[red-context!]
 			idx [integer!]
-			s	[series!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "word/at"]]
 
@@ -132,8 +134,7 @@ word: context [
 		either idx < 0 [
 			_context/add-global sym
 		][
-			s: as series! ctx/symbols/value
-			as red-word! s/offset + idx
+			_hashtable/get-ctx-word ctx idx
 		]
 	]
 	
@@ -165,7 +166,7 @@ word: context [
 
 		ctx: TO_CTX(node)
 		if null? ctx/values [
-			s: as series! ctx/symbols/value
+			s: _hashtable/get-ctx-words ctx
 			fire [TO_ERROR(script not-defined) s/offset + index]
 		]
 		
@@ -203,10 +204,15 @@ word: context [
 		/local
 			ctx	   [red-context!]
 			value  [red-value!]
+			w	   [red-word!]
 			values [series!]
 	][
 		value: stack/get-top
 		ctx: TO_CTX(node)
+		if GET_CTX_TYPE(ctx) = CONTEXT_OBJECT [
+			w: _hashtable/get-ctx-word ctx index
+			w/header: w/header or flag-word-dirty
+		]
 		values: as series! ctx/values/value
 		stack/push values/offset + index
 		copy-cell value values/offset + index
@@ -218,10 +224,15 @@ word: context [
 		/local
 			ctx	   [red-context!]
 			value  [red-value!]
+			w	   [red-word!]
 			values [series!]
 	][
 		value: stack/get-top
 		ctx: TO_CTX(node)
+		if GET_CTX_TYPE(ctx) = CONTEXT_OBJECT [
+			w: _hashtable/get-ctx-word ctx index
+			w/header: w/header or flag-word-dirty
+		]
 		values: as series! ctx/values/value
 		copy-cell value values/offset + index
 	]
@@ -233,12 +244,17 @@ word: context [
 		/local
 			ctx	   [red-context!]
 			value  [red-value!]
+			w	   [red-word!]
 			values [series!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "word/set-in"]]
 		
 		value: stack/arguments
 		ctx: TO_CTX(node)
+		if GET_CTX_TYPE(ctx) = CONTEXT_OBJECT [
+			w: _hashtable/get-ctx-word ctx index
+			w/header: w/header or flag-word-dirty
+		]		
 		values: as series! ctx/values/value
 		copy-cell value values/offset + index
 		value
@@ -287,36 +303,31 @@ word: context [
 		/local
 			s	[series!]
 			str [red-string!]
+			sym [red-value!]
 	][
 		s: GET_BUFFER(symbols)
-		str: as red-string! stack/push s/offset + w/symbol - 1
+		sym: s/offset + w/symbol - 1
+		symbol/make-red-string as red-symbol! sym
+		str: as red-string! stack/push sym
 		str/header: TYPE_STRING
 		str/head: 0
 		str/cache: null
 		str
 	]
 	
-	check-1st-char: func [
-		w [red-word!]
+	prescan-word: func [
+		issue	[red-word!]
+		return: [integer!]								;-- recognized TYPE id
 		/local
 			sym [red-symbol!]
-			buf	[series!]
-			s   [c-string!]
-			cp  [integer!]
-			c   [byte!]
+			s	[series!]
+			len size [integer!]
 	][
-		sym: symbol/get w/symbol
-		buf: as series! sym/node/value
-		cp: string/get-char as byte-ptr! buf/offset GET_UNIT(buf)
-		if cp > 127 [exit]
-		c: as-byte cp
-		
-		s: {/\^^,[](){}"#%$@:;'0123465798}
-		until [
-			if c = s/1 [fire [TO_ERROR(syntax bad-char) w]]
-			s: s + 1
-			s/1 = null-byte
-		]
+		sym: symbol/get issue/symbol
+		s: as series! sym/cache/value
+		size: as-integer (s/tail - s/offset)
+		len: 0
+		lexer/scan null as byte-ptr! s/offset size yes yes no no :len null null null
 	]
 
 	;-- Actions --
@@ -369,36 +380,35 @@ word: context [
 			dt		[red-datatype!]
 			bool	[red-logic!]
 			str		[red-string!]
+			word	[red-word!]
 			name	[names!]
 			cstr	[c-string!]
-			len		[integer!]
+			index t	[integer!]
 			val		[red-value!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "word/to"]]
 
 		switch TYPE_OF(spec) [
-			TYPE_WORD
-			TYPE_SET_WORD
-			TYPE_GET_WORD
-			TYPE_LIT_WORD
-			TYPE_REFINEMENT [proto: spec]
+			TYPE_ANY_WORD [proto: spec]
+			TYPE_REFINEMENT
 			TYPE_ISSUE [
-				check-1st-char as red-word! spec
+				word: as red-word! spec
+				t: prescan-word word
+				unless ANY_WORD?(t) [fire [TO_ERROR(script bad-to-arg) datatype/push type spec]]
+				index: _context/bind-word TO_CTX(global-ctx) word	;-- issue #4537
+				assert index >= 0
 				proto: spec
 			]
 			TYPE_STRING [
-				len: 0
-				val: as red-value! :len
-				copy-cell spec val					;-- save spec, load-value will change it
 				proto: load-value as red-string! spec
-				unless any-word? TYPE_OF(proto) [fire [TO_ERROR(syntax bad-char) val]]
+				unless any-word? TYPE_OF(proto) [fire [TO_ERROR(script invalid-chars)]]
 			]
 			TYPE_CHAR [
 				char: as red-char! spec
 				str: string/make-at stack/push* 1 Latin1
 				string/append-char GET_BUFFER(str) char/value
 				proto: load-value str
-				unless any-word? TYPE_OF(proto) [fire [TO_ERROR(syntax bad-char) str]]
+				unless any-word? TYPE_OF(proto) [fire [TO_ERROR(script invalid-chars)]]
 			]
 			TYPE_DATATYPE [
 				dt: as red-datatype! spec
@@ -458,11 +468,17 @@ word: context [
 			COMP_FIND [
 				res: as-integer not EQUAL_WORDS?(arg1 arg2)
 			]
-			COMP_SAME
 			COMP_STRICT_EQUAL [
 				res: as-integer any [
 					type <> TYPE_OF(arg1)
 					arg1/symbol <> arg2/symbol
+				]
+			]
+			COMP_SAME [
+				res: as-integer any [
+					arg1/symbol <> arg2/symbol
+					arg1/ctx    <> arg2/ctx
+					type <> TYPE_OF(arg1)
 				]
 			]
 			COMP_STRICT_EQUAL_WORD [

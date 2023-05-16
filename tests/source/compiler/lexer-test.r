@@ -14,9 +14,9 @@ halt: func [][]
 store-quiet-mode: system/options/quiet
 system/options/quiet: true
 
-do %../../../system/utils/encap-fs.r
+do %../../../utils/encap-fs.r
 do %../../../quick-test/quick-unit-test.r
-do %../../../lexer.r
+do %../../../encapper/lexer.r
 
 
 ~~~start-file~~~ "lexer"
@@ -247,6 +247,23 @@ do %../../../lexer.r
 		}}
 		--assert "#{3D}" = mold second lexer/process src
 
+	--test-- "lexer-41"
+		src: {Red []
+			%{abc}%
+			%{}%
+			%%{}%%
+			%{a^^b}%
+			%{^}}%
+			%%{Nice^^World^}% rawstring! }%%
+		}
+		--assert [
+			"abc"
+			""
+			""
+			"a^^b"
+			"}"
+			"Nice^^World}% rawstring! "
+		] = next lexer/process src
 
 ===end-group===
 	

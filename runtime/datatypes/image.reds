@@ -44,6 +44,9 @@ image: context [
 		/local
 			pixel [integer!]
 	][
+		if IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) = offset [
+			return as red-tuple! none-value
+		]
 		pixel: OS-image/get-pixel img/node offset
 		tuple/rs-make [
 			pixel and 00FF0000h >> 16
@@ -58,11 +61,15 @@ image: context [
 		img		[red-image!]
 		size	[integer!]
 		/local
-			i [integer!]
+			i	[integer!]
+			h	[integer!]
 	][
-		i: 1
-		while [i <= size][
-			_context/set (as red-word! _series/pick as red-series! words i null) as red-value! rs-pick img i
+		h: img/head
+		i: 0
+		while [i < size][
+			_context/set 
+				as red-word! _series/pick as red-series! words i + 1 null
+				as red-value! rs-pick img i + h
 			i: i + 1
 		]
 	]
@@ -109,6 +116,152 @@ image: context [
 		init-image as red-image! stack/push* as node! OS-image/resize img width height
 	]
 
+	any-resize: func [
+		src			[red-image!]
+		dst			[red-image!]
+		crop1		[red-pair!]
+		start		[red-pair!]		;-- first point
+		end			[red-pair!]		;-- end point
+		rect.x		[int-ptr!]
+		rect.y		[int-ptr!]
+		rect.w		[int-ptr!]
+		rect.h		[int-ptr!]
+		/local
+			w		[integer!]
+			h		[integer!]
+			w1		[integer!]
+			h1		[integer!]
+			vertex	[TRANS-VERTEX! value]
+			pos		[red-pair!]
+			vec1	[VECTOR2D! value]
+			vec2	[VECTOR2D! value]
+			vec3	[VECTOR2D! value]
+			crop.x	[integer!]
+			crop.y	[integer!]
+			crop.w	[integer!]
+			crop.h	[integer!]
+			crop2	[red-pair!]
+			handle	[integer!]
+			handle2	[integer!]
+			buf		[int-ptr!]
+			buf2	[int-ptr!]
+			pb		[byte-ptr!]
+			nbuf	[int-ptr!]
+			neg-x?	[logic!]
+			neg-y?	[logic!]
+	][
+		w: IMAGE_WIDTH(src/size)
+		h: IMAGE_HEIGHT(src/size)
+
+		either null? start [
+			vertex/v1x: as float32! 0.0
+			vertex/v1y: as float32! 0.0
+		][
+			vertex/v1x: as float32! start/x
+			vertex/v1y: as float32! start/y
+		]
+		unless null? crop1 [
+			crop2: crop1 + 1
+			crop.x: crop1/x
+			crop.y: crop1/y
+			crop.w: crop2/x
+			crop.h: crop2/y
+			if crop.x + crop.w > w [
+				crop.w: w - crop.x
+			]
+			if crop.y + crop.h > h [
+				crop.h: h - crop.y
+			]
+		]
+		case [
+			start = end [
+				either null? crop1 [
+					w1: w h1: h
+				][
+					w1: crop.w h1: crop.h
+				]
+				vertex/v2x: vertex/v1x + as float32! w1
+				vertex/v2y: vertex/v1y
+				vertex/v3x: vertex/v1x + as float32! w1
+				vertex/v3y: vertex/v1y + as float32! h1
+				vertex/v4x: vertex/v1x
+				vertex/v4y: vertex/v1y + as float32! h1
+			]
+			start + 1 = end [					;-- two control points
+				vertex/v2x: as float32! end/x
+				vertex/v2y: vertex/v1y
+				vertex/v3x: as float32! end/x
+				vertex/v3y: as float32! end/y
+				vertex/v4x: vertex/v1x
+				vertex/v4y: as float32! end/y
+			]
+			start + 2 = end [					;-- three control points
+				pos: start + 1
+				vertex/v2x: as float32! pos/x
+				vertex/v2y: as float32! pos/y
+				pos: pos + 1
+				vertex/v4x: as float32! pos/x
+				vertex/v4y: as float32! pos/y
+				vector2d/from-points vec1 vertex/v1x vertex/v1y vertex/v2x vertex/v2y
+				vector2d/from-points vec2 vertex/v1x vertex/v1y vertex/v4x vertex/v4y
+				vec3/x: vec1/x + vec2/x
+				vec3/y: vec1/y + vec2/y
+				vertex/v3x: as float32! vec3/x + vertex/v1x
+				vertex/v3y: as float32! vec3/y + vertex/v1y
+			]
+			start + 3 = end [								;-- four control points
+				pos: start + 1
+				vertex/v2x: as float32! pos/x
+				vertex/v2y: as float32! pos/y
+				pos: pos + 1
+				vertex/v4x: as float32! pos/x
+				vertex/v4y: as float32! pos/y
+				pos: pos + 1
+				vertex/v3x: as float32! pos/x
+				vertex/v3y: as float32! pos/y
+			]
+			true [
+				dst/header: TYPE_NONE
+				exit
+			]
+		]
+		neg-x?: no
+		neg-y?: no
+		if vertex/v1x > vertex/v2x [
+			neg-x?: yes
+			image-utils/flip-x vertex vertex/v1x
+		]
+		if vertex/v2y > vertex/v3y [
+			neg-y?: yes
+			image-utils/flip-y vertex vertex/v1y
+		]
+
+		handle: 0
+		buf: acquire-buffer src :handle
+		either crop1 <> null [
+			pb: allocate crop.w * crop.h * 4
+			image-utils/crop as byte-ptr! buf w h crop.x crop.y crop.w crop.h pb
+			nbuf: image-utils/transform as int-ptr! pb crop.w crop.h vertex rect.x rect.y rect.w rect.h
+			free pb
+		][
+			nbuf: image-utils/transform buf w h vertex rect.x rect.y rect.w rect.h
+		]
+		release-buffer src handle no
+		if null? nbuf [dst/header: TYPE_NONE exit]
+		init-image dst OS-image/make-image rect.w/1 rect.h/1 null null null
+		handle2: 0
+		buf2: acquire-buffer dst :handle2
+		copy-memory as byte-ptr! buf2 as byte-ptr! nbuf rect.w/1 * rect.h/1 * 4
+		release-buffer dst handle2 yes
+		free as byte-ptr! nbuf
+		if neg-x? [
+			rect.w/1: 0 - rect.w/1
+		]
+		if neg-y? [
+			rect.h/1: 0 - rect.h/1
+		]
+	]
+
 	load-binary: func [
 		data	[red-binary!]
 		return: [red-image!]
@@ -153,6 +306,7 @@ image: context [
 		format	[integer!]
 		return: [red-value!]
 	][
+		if zero? image/size [fire [TO_ERROR(access bad-media)]]
 		if TYPE_OF(dst) = TYPE_NONE [dst: stack/push*]
 		OS-image/encode image dst format
 	]
@@ -231,6 +385,7 @@ image: context [
 		/local
 			offset	[integer!]
 			sz		[integer!]
+			bin-sz	[integer!]
 			s		[series!]
 			p		[byte-ptr!]
 			stride	[integer!]
@@ -255,11 +410,16 @@ image: context [
 
 		type: TYPE_OF(bin)
 		either type = TYPE_BINARY [
+			bin-sz: binary/rs-length? bin
 			s: GET_BUFFER(bin)
 			p: as byte-ptr! s/offset
 			either method = EXTRACT_ARGB [
-				copy-memory as byte-ptr! data p sz * 4
+				sz: sz * 4
+				if bin-sz < sz [sz: bin-sz]
+				copy-memory as byte-ptr! data p sz
 			][
+				if method = EXTRACT_RGB [bin-sz: bin-sz / 3]	;-- number of pixels
+				if bin-sz < sz [end: data + bin-sz]
 				while [data < end][
 					pixel: data/value
 					either method = EXTRACT_ALPHA [
@@ -379,8 +539,8 @@ image: context [
 			pair	[red-pair!]
 			blk		[red-block!]
 			bin		[red-binary!]
-			rgb		[byte-ptr!]
-			alpha	[byte-ptr!]
+			rgb		[red-binary!]
+			alpha	[red-binary!]
 			color	[red-tuple!]
 			x		[integer!]
 			y		[integer!]
@@ -418,7 +578,7 @@ image: context [
 				unless block/rs-next blk [
 					bin: as red-binary! block/rs-head blk
 					switch TYPE_OF(bin) [
-						TYPE_BINARY [rgb: binary/rs-head bin]
+						TYPE_BINARY [rgb: bin]
 						TYPE_TUPLE	[color: as red-tuple! bin]
 						default		[fire [TO_ERROR(script invalid-arg) bin]]
 					]
@@ -426,7 +586,7 @@ image: context [
 				unless block/rs-next blk [
 					bin: as red-binary! block/rs-head blk
 					check-arg-type as red-value! bin TYPE_BINARY
-					alpha: binary/rs-head bin
+					alpha: bin
 				]
 			]
 			default [return to proto spec type]
@@ -455,7 +615,7 @@ image: context [
 			]
 			TYPE_OBJECT [
 				#either modules contains 'View [
-					spec: stack/push spec						;-- store spec to avoid corrution (#2460)
+					spec: stack/push spec						;-- store spec to avoid corruption (#2460)
 					#call [face? spec]
 					ret: as red-logic! stack/arguments
 					if ret/value [return exec/gui/OS-to-image as red-object! spec]
@@ -677,7 +837,12 @@ image: context [
 		element	[red-value!]
 		value	[red-value!]
 		path	[red-value!]
+		gparent [red-value!]
+		p-item	[red-value!]
+		index	[integer!]
 		case?	[logic!]
+		get?	[logic!]
+		tail?	[logic!]
 		return:	[red-value!]
 		/local
 			set? [logic!]
@@ -772,21 +937,24 @@ image: context [
 			COMP_NOT_EQUAL
 			COMP_SORT
 			COMP_CASE_SORT [
-				either any [
-					arg1/size <> arg2/size
-					all [arg1/size = arg2/size arg1/head <> arg2/head]
+				;-- 1. compare size first
+				;-- 2. if the same size, compare contents
+				bmp1: IMAGE_WIDTH(arg1/size) * IMAGE_HEIGHT(arg1/size)
+				bmp2: IMAGE_WIDTH(arg2/size) * IMAGE_HEIGHT(arg2/size)
+				either bmp1 <> bmp2 [
+					res: SIGN_COMPARE_RESULT(bmp1 bmp2)
 				][
-					res: 1
-				][
-					type: 0
-					bmp1: OS-image/lock-bitmap arg1 no
-					bmp2: OS-image/lock-bitmap arg2 no
-					res: compare-memory
-						as byte-ptr! OS-image/get-data bmp1 :type
-						as byte-ptr! OS-image/get-data bmp2 :type
-						IMAGE_WIDTH(arg1/size) * IMAGE_HEIGHT(arg2/size) * 4
-					OS-image/unlock-bitmap arg1 bmp1
-					OS-image/unlock-bitmap arg2 bmp2
+					either zero? arg1/size [res: 0][
+						type: 0
+						bmp1: OS-image/lock-bitmap arg1 no
+						bmp2: OS-image/lock-bitmap arg2 no
+						res: compare-memory
+							as byte-ptr! OS-image/get-data bmp1 :type
+							as byte-ptr! OS-image/get-data bmp2 :type
+							IMAGE_WIDTH(arg1/size) * IMAGE_HEIGHT(arg2/size) * 4
+						OS-image/unlock-bitmap arg1 bmp1
+						OS-image/unlock-bitmap arg2 bmp2
+					]
 				]
 			]
 			default [
@@ -820,7 +988,7 @@ image: context [
 
 		img: as red-image! stack/arguments
 		offset: img/head + 1
-		if IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) > offset  [
+		if IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) >= offset [
 			img/head: offset
 		]
 		img
@@ -841,16 +1009,18 @@ image: context [
 	tail?: func [
 		return:	  [red-value!]
 		/local
-			img	  [red-image!]
-			state [red-logic!]
+			img	   [red-image!]
+			state  [red-logic!]
+			offset [integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "image/tail?"]]
 
-		img:   as red-image! stack/arguments
-		state: as red-logic! img
+		img:    as red-image! stack/arguments
+		state:  as red-logic! img
+		offset: img/head + 1
 
 		state/header: TYPE_LOGIC
-		state/value:  IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) <= (img/head + 1)
+		state/value:  not IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) >= offset
 		as red-value! state
 	]
 
@@ -866,6 +1036,92 @@ image: context [
 		img
 	]
 
+	change: func [
+		img		 [red-image!]
+		value	 [red-value!]
+		part-arg [red-value!]
+		only?	 [logic!]
+		dup-arg  [red-value!]
+		return:	 [red-image!]
+		/local
+			type [integer!]
+			bmp1 [integer!]
+			bmp2 [integer!]
+			bin1 [int-ptr!]
+			bin2 [int-ptr!]
+			img2 [red-image!]
+			idx  [red-value! value]
+			head n i1 i2 [integer!]
+			w1 h1 w2 h2 [integer!]
+			x x1 y1 x2 y2 [integer!]
+			stride1 stride2 [integer!]
+	][
+		if OPTION?(dup-arg) [--NOT_IMPLEMENTED--]
+		if OPTION?(part-arg) [--NOT_IMPLEMENTED--]
+
+		head: img/head
+		type: TYPE_OF(value)
+		switch type [
+			TYPE_TUPLE [
+				ownership/check as red-value! img words/_change null head 1
+				integer/make-at idx img/head
+				poke img -1 idx value
+				img/head: head + 1
+				ownership/check as red-value! img words/_changed null head 1
+			]
+			TYPE_IMAGE [
+				img2: as red-image! value
+				w1: IMAGE_WIDTH(img/size)
+				h1: IMAGE_HEIGHT(img/size)
+
+				if w1 * h1 <= head [return img]	;-- at the tail, change nothing
+
+				ownership/check as red-value! img words/_change null head 1
+
+				x: head % w1
+				x1: x
+				y1: head / w1
+
+				stride1: 0
+				stride2: 0
+				bmp1: OS-image/lock-bitmap img yes
+				bin1: OS-image/get-data bmp1 :stride1
+				bmp2: OS-image/lock-bitmap img2 no
+				bin2: OS-image/get-data bmp2 :stride2
+
+				w2: IMAGE_WIDTH(img2/size)
+				h2: IMAGE_HEIGHT(img2/size)
+				x2: 0
+				y2: 0
+				n: 0
+				while [all [y1 < h1 y2 < h2]] [
+					while [all [x1 < w1 x2 < w2]] [
+						i1: y1 * w1 + x1 + 1
+						i2: y2 * w2 + x2 + 1
+						bin1/i1: bin2/i2
+						n: n + 1
+						x1: x1 + 1
+						x2: x2 + 1
+					]
+					x1: x
+					x2: 0
+					y1: y1 + 1
+					y2: y2 + 1
+				]
+
+				OS-image/unlock-bitmap img bmp1
+				OS-image/unlock-bitmap img2 bmp2
+
+				x1: x + w2
+				if x1 > w1 [x1: w1]
+				img/head: y1 - 1 * w1 + x1
+				ownership/check as red-value! img words/_changed null head n
+			]
+			default [fire [TO_ERROR(script invalid-type) datatype/push type]]
+		]
+		img
+	]
+
 	copy: func [
 		img	    	[red-image!]
 		new			[red-image!]
@@ -874,29 +1130,78 @@ image: context [
 		types		[red-value!]
 		return:		[red-image!]
 		/local
-			part?	[logic!]
 			int		[red-integer!]
+			sz		[red-pair!]
+			img1	[red-image!]
 			img2	[red-image!]
 			offset	[integer!]
-			part	[integer!]
 			type	[integer!]
+			x y w h	[integer!]
+			width	[integer!]
+			height	[integer!]
+			return-empty-img [subroutine!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "image/copy"]]
 
-		offset: img/head
-		part: IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) - offset
-		part?: no
+		return-empty-img: [
+			new/size: 0
+			new/header: TYPE_IMAGE
+			new/head: 0
+			new/node: null
+			return new
+		]
 
-		if OPTION?(part-arg) [
-			part?: yes
+		width: IMAGE_WIDTH(img/size)
+		height: IMAGE_HEIGHT(img/size)
+
+		if any [
+			width <= 0
+			height <= 0
+		][
+			return-empty-img
+		]
+
+		offset: img/head
+		either OPTION?(part-arg) [
 			type: TYPE_OF(part-arg)
 			case [
-				type = TYPE_INTEGER [
-					int: as red-integer! part-arg
-					part: either int/value > part [part][int/value]
+				type = TYPE_INTEGER [	;-- view the image as a 1-D series, return a Partx1 image 
+					--NOT_IMPLEMENTED--
 				]
-				type = TYPE_PAIR [0]
-				true [
+				type = TYPE_PAIR [
+					x: offset % width
+					y: offset / width
+					sz: as red-pair! part-arg
+					case [
+						all [sz/x > 0 sz/y > 0 offset < (width * height)][
+							w: width - x
+							h: height - y
+							if sz/x < w [w: sz/x]
+							if sz/y < h [h: sz/y]
+						]
+						all [sz/x < 0 sz/y < 0 offset > 0][
+							w: 0 - sz/x
+							h: 0 - sz/y
+							if zero? x [x: width]
+							either w > x [
+								w: x
+								x: 0
+							][
+								x: x - w
+							]
+							if y < height [y: y + 1]
+							either h > y [
+								h: y
+								y: 0
+							][
+								y: y - h
+							]
+						]
+						true [return-empty-img]
+					]
+
+				]
+				type = TYPE_IMAGE [
 					img2: as red-image! part-arg
 					unless all [
 						TYPE_OF(img2) = TYPE_IMAGE
@@ -904,18 +1209,46 @@ image: context [
 					][
 						ERR_INVALID_REFINEMENT_ARG(refinements/_part part-arg)
 					]
-					part: img2/head - img/head
+					either img2/head > img/head [
+						img1: img
+					][
+						img1: img2
+						img2: img
+					]
+
+					offset: img2/head
+					w: offset / width
+					h: offset / width
+
+					offset: img1/head
+					x: offset % width
+					y: offset / width
+
+					w: w - x
+					h: h - y
 				]
+				true [ERR_INVALID_REFINEMENT_ARG(refinements/_part part-arg)]
 			]
+		][
+			if zero? offset [
+				return OS-image/clone img new
+			]
+
+			x: offset % width
+			y: offset / width
+			w: width - x
+			h: height - y
 		]
 
-		if negative? part [
-			part: 0 - part
-			offset: offset - part
-			if negative? offset [offset: 0 part: img/head]
+		either any [
+			w <= 0
+			h <= 0
+		][
+			return-empty-img
+		][
+			OS-image/copy img new x y w h
 		]
-
-		OS-image/clone img new part as red-pair! part-arg part?
+		new
 	]
 
 	init: does [
@@ -954,7 +1287,7 @@ image: context [
 			null			;append
 			:at
 			INHERIT_ACTION	;back
-			null			;change
+			:change
 			null			;clear
 			:copy
 			null			;find

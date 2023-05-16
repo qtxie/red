@@ -14,6 +14,16 @@ clipboard: context [
 #switch OS [
 	Windows [
 
+		tagMSG: alias struct! [							;-- used to work around #4284
+			hWnd	[handle!]
+			msg		[integer!]
+			wParam	[integer!]
+			lParam	[integer!]
+			time	[integer!]
+			x		[integer!]							;@@ POINT struct
+			y		[integer!]	
+		]
+
 		#import [
 			"User32.dll" stdcall [
 				OpenClipboard: "OpenClipboard" [
@@ -45,6 +55,14 @@ clipboard: context [
 				RegisterClipboardFormat: "RegisterClipboardFormatA" [
 					lpszFormat	[c-string!]
 					return:		[integer!]
+				]
+				PeekMessage: "PeekMessageW" [			;-- used to work around #4284
+					msg			[tagMSG]
+					hWnd		[handle!]
+					msgMin		[integer!]
+					msgMax		[integer!]
+					removeMsg	[integer!]
+					return: 	[integer!]
 				]
 			]
 			"kernel32.dll" stdcall [
@@ -93,15 +111,6 @@ clipboard: context [
 			pt					[tagPOINT value]
 			fNC					[logic!]
 			fWide				[logic!]
-		]
-
-		BitmapData!: alias struct! [
-			width		[integer!]
-			height		[integer!]
-			stride		[integer!]
-			pixelFormat	[integer!]
-			scan0		[byte-ptr!]
-			reserved	[integer!]
 		]
 
 		BITMAPV5HEADER!: alias struct! [
@@ -169,6 +178,7 @@ clipboard: context [
 				i		[integer!]
 				len		[integer!]
 				hdr		[BITMAPV5HEADER!]
+				msg		[tagMSG value]
 		][
 			val: none-value
 			p: null
@@ -180,6 +190,7 @@ clipboard: context [
 				unless ok [Sleep 1]
 				ok: OpenClipboard main-hWnd
 				if ok [break]
+				PeekMessage :msg null 0 0 0				;-- magic workaround for #4284
 			]
 			unless ok [return as red-value! false-value]
 
@@ -279,14 +290,24 @@ clipboard: context [
 							hdr/BlueMask  = 000000FFh
 						][								;-- can copy the data directly
 							if hdr/Height < 0 [hdr/Height: 0 - hdr/Height]
-							assert all [0 = OS-image/GdipGetImagePixelFormat bmp :i  i = PixelFormat32bppARGB]
-							OS-image/GdipCreateBitmapFromScan0 hdr/Width hdr/Height 0 PixelFormat32bppARGB p :bmp
+							assert all [0 = OS-image/get-pixel-format bmp :i  OS-image/fixed-format? i]
+							OS-image/create-bitmap-from-scan0 hdr/Width hdr/Height 0 OS-image/fixed-format p :bmp
 						][								;-- will have to convert, losing the alpha data if any
-							OS-image/GdipCreateBitmapFromGdiDib
-								p  p + hdr/Size + (hdr/ClrUsed * 4) + hdr/ProfileSize  :bmp
+							#either draw-engine = 'GDI+ [
+								OS-image/create-bitmap-from-gdidib
+									p  p + hdr/Size + (hdr/ClrUsed * 4) + hdr/ProfileSize :bmp
+							][
+								GlobalUnlock hMem
+								hMem: GetClipboardData CF_BITMAP
+								val: as red-value! OS-image/from-HBITMAP hMem 2	;-- WICBitmapIgnoreAlpha
+								hMem: 0
+							]
 						]
-						val: as red-value! image/init-image as red-image! stack/push* as int-ptr! bmp
-						GlobalUnlock hMem
+						if hMem <> 0 [
+							if zero? bmp [return as red-value! none-value]
+							val: as red-value! image/init-image as red-image! stack/push* as int-ptr! bmp
+							GlobalUnlock hMem
+						]
 					]
 					break
 				]
@@ -319,8 +340,14 @@ clipboard: context [
 				blk		[red-block!]
 				img		[red-image!]
 				df		[DROPFILES!]
-				bmdata	[BitmapData!]
+				bmdata	[integer!]
+				w		[integer!]
+				h		[integer!]
+				s		[integer!]
+				scan0	[byte-ptr!]
+				format	[integer!]
 				hdr		[BITMAPV5HEADER!]
+				msg		[tagMSG value]
 		][
 			hMem: [0 0]  hMem/1: 0  hMem/2: 0
 			fmts: [0 0]  fmts/1: 0  fmts/2: 0
@@ -392,52 +419,63 @@ clipboard: context [
 
 				TYPE_IMAGE	[
 					img: as red-image! data
-					if IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) > 0 [
-						;-- put image in the "PNG" format for it's better portability
-						;; see https://stackoverflow.com/a/15691001 on rationale
-						fmts/1: RegisterClipboardFormat "PNG"
-						assert fmts/1 <> 0
-						bin: as red-binary! image/encode img none-value IMAGE_PNG
-						len: binary/rs-length? bin
-						hMem/1: GlobalAlloc 2 len
-						if hMem/1 <> 0 [
-							p1: GlobalLock hMem/1
-							unless null? p1 [
-								copy-memory p1 binary/rs-head bin len
-								GlobalUnlock hMem/1
+					len: IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size)
+					case [
+						len > 0 [
+							;-- put image in the "PNG" format for it's better portability
+							;; see https://stackoverflow.com/a/15691001 on rationale
+							fmts/1: RegisterClipboardFormat "PNG"
+							assert fmts/1 <> 0
+							bin: as red-binary! image/encode img none-value IMAGE_PNG
+							len: binary/rs-length? bin
+							hMem/1: GlobalAlloc 2 len
+							if hMem/1 <> 0 [
+								p1: GlobalLock hMem/1
+								unless null? p1 [
+									copy-memory p1 binary/rs-head bin len
+									GlobalUnlock hMem/1
+								]
 							]
-						]
 
-						;-- also put the image in DIB format for compatibility
-						fmts/2: CF_DIBV5
-						bmdata: as BitmapData! OS-image/lock-bitmap img no
-						assert not null? bmdata
-						len: bmdata/width * bmdata/height * 4
-						hMem/2: GlobalAlloc 2 len + size? BITMAPV5HEADER!
-						if hMem/2 <> 0 [
-							p: GlobalLock hMem/2
-							unless null? p [
-								set-memory p #"^@" size? BITMAPV5HEADER!
-								hdr: as BITMAPV5HEADER! p
-								hdr/Size: size? BITMAPV5HEADER!
-								hdr/Width: bmdata/width
-								hdr/Height: 0 - bmdata/height	;-- top-down image
-								hdr/PlanesBitCount: 00200001h	;-- 32 bpp, 1 plane
-								hdr/Compression: 3				;-- BI_BITFIELDS
-								hdr/SizeImage: len
-								hdr/AlphaMask: FF000000h
-								hdr/RedMask:   00FF0000h
-								hdr/GreenMask: 0000FF00h
-								hdr/BlueMask:  000000FFh
-								hdr/CSType: 57696E20h			;-- "Win " = LCS_WINDOWS_COLOR_SPACE
-								hdr/Intent: 4					;-- 4 = LCS_GM_IMAGES
-								assert bmdata/pixelFormat = PixelFormat32bppARGB
-								copy-memory p + hdr/Size bmdata/scan0 len
-								GlobalUnlock hMem/2
+							;-- also put the image in DIB format for compatibility
+							fmts/2: CF_DIBV5
+							bmdata: OS-image/lock-bitmap img no
+							assert 0 <> bmdata
+							w: OS-image/width? img/node
+							h: OS-image/height? img/node
+							s: 0
+							scan0: as byte-ptr! OS-image/get-data bmdata :s
+							len: w * h * 4
+							format: 0
+							OS-image/get-data-pixel-format bmdata :format
+							hMem/2: GlobalAlloc 2 len + size? BITMAPV5HEADER!
+							if hMem/2 <> 0 [
+								p: GlobalLock hMem/2
+								unless null? p [
+									set-memory p #"^@" size? BITMAPV5HEADER!
+									hdr: as BITMAPV5HEADER! p
+									hdr/Size: size? BITMAPV5HEADER!
+									hdr/Width: w
+									hdr/Height: 0 - h				;-- top-down image
+									hdr/PlanesBitCount: 00200001h	;-- 32 bpp, 1 plane
+									hdr/Compression: 3				;-- BI_BITFIELDS
+									hdr/SizeImage: len
+									hdr/AlphaMask: FF000000h
+									hdr/RedMask:   00FF0000h
+									hdr/GreenMask: 0000FF00h
+									hdr/BlueMask:  000000FFh
+									hdr/CSType: 57696E20h			;-- "Win " = LCS_WINDOWS_COLOR_SPACE
+									hdr/Intent: 4					;-- 4 = LCS_GM_IMAGES
+									assert OS-image/fixed-format? format
+									copy-memory p + hdr/Size scan0 len
+									GlobalUnlock hMem/2
+								]
 							]
-						]
-						OS-image/unlock-bitmap img as integer! bmdata
-					];; if IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) > 0
+							OS-image/unlock-bitmap img bmdata
+						];; if IMAGE_WIDTH(img/size) * IMAGE_HEIGHT(img/size) > 0
+						zero? len [p: as byte-ptr! 1] ;-- empty clipboard in case of empty image
+						true [fire [TO_ERROR(script invalid-arg) data]]
+					]
 				];; TYPE_IMAGE
 
 				default		[fire [TO_ERROR(script invalid-arg) data]]
@@ -449,6 +487,7 @@ clipboard: context [
 				unless ok [Sleep 1]
 				ok: OpenClipboard main-hWnd
 				if ok [break]
+				PeekMessage :msg null 0 0 0				;-- magic workaround for #4284
 			]
 			unless ok [									;-- clean up after a (rare) failure
 				unless hMem/1 = 0 [
@@ -564,6 +603,125 @@ clipboard: context [
 			as logic! res
 		]
 	]
+	Linux [
+	#either modules contains 'View [
+		;; Depends on GTK
+		#import [
+			"libgtk-3.so.0" cdecl [
+				gdk_atom_intern_static_string: "gdk_atom_intern_static_string" [
+					name 		[c-string!]
+					return:		[handle!]
+				]
+				gtk_clipboard_get: "gtk_clipboard_get" [
+					atom 		[handle!]
+					return: 	[handle!]
+				]
+				gtk_clipboard_set_text: "gtk_clipboard_set_text" [
+					clipboard 	[handle!]
+					text 		[c-string!]
+					len 		[integer!]
+				]
+				gtk_clipboard_set_image: "gtk_clipboard_set_image" [
+					clipboard 	[handle!]
+					img 		[handle!]
+				]
+				gtk_clipboard_wait_for_text: "gtk_clipboard_wait_for_text" [
+					clipboard 	[handle!]
+					return: 	[c-string!]
+				]
+				gtk_clipboard_wait_for_image: "gtk_clipboard_wait_for_image" [
+					clipboard 	[handle!]
+					return: 	[handle!]
+				]
+				gtk_clipboard_clear: "gtk_clipboard_clear" [Clipboard [handle!]]
+				g_free: "g_free" [
+					ptr			[handle!]
+				]
+			]
+		]
+
+		to-red-string: func [
+			cstr	[c-string!]
+			slot	[red-value!]
+			return:	[red-string!]
+			/local
+				str		[red-string!]
+				size	[integer!]
+		][
+			size: length? cstr
+			if null? slot [slot: stack/push*]
+			str: string/make-at slot size Latin1
+			unicode/load-utf8-stream cstr size str null
+			str
+		]
+
+		read: func [
+			return:		[red-value!]
+			/local
+				clipboard 	[handle!]
+				str 		[c-string!]
+				val			[red-value!]
+				img			[handle!]
+		][
+			val: none-value
+			clipboard: gtk_clipboard_get gdk_atom_intern_static_string "CLIPBOARD"
+			str: gtk_clipboard_wait_for_text clipboard
+			if str <> null [
+				val: as red-value! to-red-string str null
+				g_free as handle! str
+				return val
+			]
+			img: gtk_clipboard_wait_for_image clipboard
+			if img <> null [
+				val: as red-value! image/init-image as red-image! stack/push* OS-image/load-pixbuf img
+			]
+			val
+		]
+
+		write: func [
+			data		[red-value!]
+			return:		[logic!]
+			/local
+				clipboard 	[handle!]
+				text		[red-string!]
+				str 		[c-string!]
+				strlen 		[integer!]
+				img			[handle!]
+		][
+			clipboard: gtk_clipboard_get gdk_atom_intern_static_string "CLIPBOARD"
+			switch TYPE_OF(data) [
+				TYPE_STRING [ 
+					text: as red-string! data
+					strlen: -1
+					str: unicode/to-utf8 text :strlen
+					gtk_clipboard_set_text clipboard str strlen
+				]
+				TYPE_IMAGE	[
+					img: OS-image/to-pixbuf as red-image! data
+					if img <> null [
+						gtk_clipboard_set_image clipboard img
+					]
+				]
+				TYPE_NONE	[gtk_clipboard_clear clipboard]
+				default		[return false]
+			]
+			true
+		]
+	][
+		read: func [
+			return:		[red-value!]
+		][
+			none-value
+		]
+
+		write: func [
+			data		[red-value!]
+			return:		[logic!]
+		][
+			true
+		]
+	]
+	]
 	#default [
 		read: func [
 			return:		[red-value!]
@@ -577,5 +735,5 @@ clipboard: context [
 		][
 			true
 		]
-	]											;-- Linux...
+	]
 ]]

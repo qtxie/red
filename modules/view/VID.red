@@ -22,6 +22,7 @@ system/view/VID: context [
 			#switch config/OS [
 				Windows [#include %backends/windows/rules.red]
 				macOS	[#include %backends/macOS/rules.red]
+				Linux	[#include %backends/gtk3/rules.red]
 			]
 		]
 		
@@ -36,6 +37,8 @@ system/view/VID: context [
 				adjust-buttons
 				capitalize
 				Cancel-OK
+			]
+			Linux [
 			]
 		]
 		user: []
@@ -53,8 +56,6 @@ system/view/VID: context [
 		]
 	]
 	
-	focal-face:	none
-	reactors:	make block! 20
 	debug?: 	no
 	
 	containers: [panel tab-panel group-box]
@@ -71,13 +72,13 @@ system/view/VID: context [
 	
 	throw-error: func [spec [block!]][
 		either system/view/silent? [
-			throw 'silent
+			throw/name 'silent 'silenced
 		][
 			cause-error 'script 'vid-invalid-syntax [copy/part spec 3]
 		]
 	]
 	
-	process-reactors: function [/local res][
+	process-reactors: function [reactors [block!] /local res][
 		set 'res try/all [
 			foreach [f blk later?] reactors [
 				blk: copy/deep blk
@@ -89,21 +90,21 @@ system/view/VID: context [
 				]
 			]
 		]
-		clear reactors									;-- ensures clearing even if reaction fails
 		if error? :res [do res]
 	]
 	
 	calc-size: function [face [object!]][
 		case [
-			all [
-				block? data: face/data
-				not empty? data 
-				find [text-list drop-list drop-down] face/type
-			][
+			find [text-list drop-list drop-down] face/type [
 				min-sz: 0x0
-				foreach txt data [
-					if any-string? txt [min-sz: max min-sz size-text/with face as string! txt]
-				]
+				either all [
+					block? data: face/data
+					not empty? data
+				][ 
+					foreach txt data [
+						if any-string? txt [min-sz: max min-sz size-text/with face as string! txt]
+					]
+				][min-sz: size-text/with face "X"]
 				if all [face/text face/type <> 'drop-list][
 					min-sz: max min-sz size-text face
 				]
@@ -265,9 +266,8 @@ system/view/VID: context [
 	fetch-expr: func [code [word!]][do/next next get code code]
 	
 	fetch-options: function [
-		face [object!] opts [object!] style [block!] spec [block!] css [block!] styling? [logic!]
+		face [object!] opts [object!] style [block!] spec [block!] css [block!] reactors [block!] styling? [logic!]
 		/no-skip
-		/extern focal-face
 		return: [block!]
 	][
 		opt?: 	 yes
@@ -276,6 +276,7 @@ system/view/VID: context [
 		do-with: none
 		
 		obj-spec!:	make typeset! [block! object!]
+		sel-spec!:	make typeset! [integer! float! percent!]
 		rate!:		make typeset! [integer! time!]
 		color!:		make typeset! [tuple! issue!]
 		cursor!:	make typeset! [word! lit-word! image!]
@@ -298,7 +299,7 @@ system/view/VID: context [
 				| 'para		  (opts/para: make any [opts/para para!] fetch-argument obj-spec! spec)
 				| 'wrap		  (opt?: add-flag opts 'para 'wrap? yes)
 				| 'no-wrap	  (add-flag opts 'para 'wrap? no opt?: yes)
-				| 'focus	  (focal-face: face)
+				| 'focus	  (set bind 'focal-face :layout face)
 				| 'font-name  (add-flag opts 'font 'name  fetch-argument string! spec)
 				| 'font-size  (add-flag opts 'font 'size  fetch-argument integer! spec)
 				| 'font-color (add-flag opts 'font 'color pre-load fetch-argument color! spec)
@@ -306,9 +307,11 @@ system/view/VID: context [
 				| 'loose	  (add-option opts [drag-on: 'down])
 				| 'all-over   (set-flag opts 'flags 'all-over)
 				| 'password   (set-flag opts 'flags 'password)
+				| 'tri-state  (set-flag opts 'flags 'tri-state)
+				| 'scrollable (set-flag opts 'flags 'scrollable)
 				| 'hidden	  (opts/visible?: no)
 				| 'disabled	  (opts/enabled?: no)
-				| 'select	  (opts/selected: fetch-argument integer! spec)
+				| 'select	  (opts/selected: fetch-argument sel-spec! spec)
 				| 'rate		  (opts/rate: fetch-argument rate! spec)
 				   opt [rate! 'now (opts/now?: yes spec: next spec)]
 				| 'default 	  (opts/data: add-option opts append copy [default: ] fetch-value spec: next spec)
@@ -323,6 +326,7 @@ system/view/VID: context [
 					if later?: spec/2 = 'later [spec: next spec]
 					repend reactors [face fetch-argument block! spec later?]
 				)
+				| 'style to end (opt?: no)
 				] to end
 			]
 			unless match? [
@@ -344,6 +348,7 @@ system/view/VID: context [
 							pair!	 [unless opts/size  [opts/size:  value]]
 							string!	 [unless opts/text  [opts/text:  value]]
 							logic!
+							date!
 							percent! [unless opts/data  [opts/data:  value] yes]
 							image!	 [unless opts/image [opts/image: value]]
 							tuple!	 [
@@ -415,6 +420,7 @@ system/view/VID: context [
 		all [											;-- preprocess RTD inputs
 			face/type = 'rich-text
 			opts/data
+			not pair? opts/data/1
 			rtd-layout/with opts/data face
 			opts/data: none
 		]
@@ -422,8 +428,9 @@ system/view/VID: context [
 		font: opts/font
 		if any [face-font: face/font font][
 			either face-font [
-				face-font: copy face-font				;-- @@ share font/state between faces ?
+				face-font: copy face-font				;-- @@ share font/state between faces
 				if font [
+					face-font/state: none				;-- clear font/state
 					set/some face-font font				;-- overwrite face/font with opts/font
 					opts/font: face-font
 				]
@@ -439,6 +446,7 @@ system/view/VID: context [
 				unless find actors name [repend actors [name f s b]]
 			]
 		]
+		if opts/flags [opts/flags: set-flag face 'flags opts/flags]	;-- pre-merge /flags facets
 		
 		set/some face opts								;-- merge default+styles and user options
 		
@@ -457,17 +465,18 @@ system/view/VID: context [
 			min-sz: either find containers face/type [sz][
 				(any [pad 0x0]) + any [
 					all [
-						any [face/text series? face/data]
+						any [face/text series? face/data face/font]
 						calc-size face
 					]
 					sz
 				]
 			]
-			face/size: either opts/size-x [				;-- x size provided by user
+			new: either opts/size-x [					;-- x size provided by user
 				as-pair opts/size-x max sz/y min-sz/y
 			][
 				max sz min-sz
 			]
+			if new <> face/size [face/size: new]		;-- avoid triggering unnecessary reactions
 		]
 		if tight? [face/size: calc-size face]
 		
@@ -485,7 +494,7 @@ system/view/VID: context [
 		unless any [name block? body][throw-error spec]
 		unless obj/actors [obj/actors: make block! 4]
 		
-		spec: [face [object!] event [event! none!]]
+		spec: [[trace] face [object!] event [event! none!]]
 		if all [block? body body/1 = 'local block? body/2][
 			append spec: copy spec /local
 			append spec body/2
@@ -501,6 +510,7 @@ system/view/VID: context [
 	]
 	
 	set 'layout function [
+		[no-trace]
 		"Return a face with a pane built from a VID description"
 		spec		  [block!]	"Dialect block of styles, attributes, and layouts"
 		/tight					"Zero offset and origin"
@@ -515,10 +525,10 @@ system/view/VID: context [
 		/styles					"Use an existing styles list"
 			css		  [block!]	"Styles list"
 		/local axis anti								;-- defined in a SET block
-		/extern focal-face
 	][
 		background!:  make typeset! [image! file! url! tuple! word! issue!]
 		list:		  make block! 4						;-- panel's pane block
+		reactors:     make block! 10					;-- reactors of this particular layout
 		local-styles: any [css make block! 2]			;-- panel-local styles definitions
 		pane-size:	  0x0								;-- panel's content dynamic size
 		direction: 	  'across
@@ -572,7 +582,7 @@ system/view/VID: context [
 			focal-face: none
 			panel: make face! copy system/view/VID/styles/window/template  ;-- absolute path to avoid clashing with /styles
 		]
-		either block? panel/pane [list: panel/pane][panel/pane: list]
+		unless only [either block? panel/pane [list: panel/pane][panel/pane: list]]
 		
 		any [
 			all [										;-- account for container's hard paddings
@@ -583,177 +593,188 @@ system/view/VID: context [
 		]
 		
 		if debug? [append panel/draw: make block! 30 [pen red]]
-		
-		while [all [global? not tail? spec]][			;-- process wrapping panel options
-			switch/default spec/1 [
-				title	 [panel/text: fetch-argument string! spec]
-				size	 [size: fetch-argument pair! spec]
-				backdrop [
-					value: pre-load fetch-argument background! spec
-					switch type?/word value [
-						tuple! [panel/color: value]
-						image! [panel/image: value]
-					]
-				]
-			][
-				either all [word? spec/1 find/skip next system/view/evt-names spec/1 2][
-					make-actor panel spec/1 spec/2 spec spec: next spec
-				][
-					global?: no
-				]
-			]
-			
-			if global? [spec: next spec]
-		]
-		
-		while [not tail? spec][							;-- process panel's content
-			value: spec/1
-			set [axis anti] pick [[x y][y x]] direction = 'across
-			
-			switch/default value [
-				below
-				across [
-					below?: value = 'below
-					do re-align
-					all [
-						direction <> value 				;-- if direction changed
-						anti2: pick [y x] value = 'across
-						cursor/:anti2 <> origin/:anti2	;-- and if not close to opposite edge
-						cursor/:anti2: cursor/:anti2 + spacing/:anti2 ;-- ensure proper spacing when changing direction
-					]
-					direction: value
-					bound: max bound cursor
-					max-sz: 0
-				]
-				space	[spacing: fetch-argument pair! spec]
-				origin	[origin: cursor: pad + top-left: fetch-argument pair! spec]
-				at		[at-offset: fetch-expr 'spec spec: back spec]
-				pad		[cursor: cursor + fetch-argument pair! spec]
-				do		[do-safe bind fetch-argument block! spec panel]
-				return	[either divides [throw-error spec][do reset]]
-				react	[
-					if later?: spec/2 = 'later [spec: next spec]
-					repend reactors [none fetch-argument block! spec later?]
-				]
-				style	[
-					unless set-word? name: first spec: next spec [throw-error spec]
-					styling?: yes
-				]
-			][
-				unless styling? [
-					name: none
-					if set-word? value [
-						name: value
-						value: first spec: next spec
-					]
-				]
-				unless style: any [
-					styled?: select local-styles value
-					select system/view/VID/styles value
-				][
-					throw-error spec
-				]
-				st: style/template
-				if st/type = 'window [throw-error spec]
-				
-				if actors: st/actors [st/actors: none]	;-- avoid binding actors bodies to face object
-				face: make face! copy/deep st
-				if actors [face/actors: copy/deep st/actors: actors]
-				
-				if h: select system/view/metrics/def-heights face/type [face/size/y: h]
-				unless styling? [face/parent: panel]
 
-				spec: fetch-options face opts style spec local-styles to-logic styling?
-				if all [style/init not styling?][do bind style/init 'face]
-				
-				either styling? [
-					if same? css local-styles [local-styles: copy css]
-					name: to word! form name
-					value: copy style
-					clean-style value/template: body-of face face/type
-					
-					if opts/init [
-						either value/init [append value/init opts/init][
-							reduce/into [to-set-word 'init opts/init] tail value
+		catch/name [
+			while [all [global? not tail? spec]][			;-- process wrapping panel options
+				switch/default spec/1 [
+					title	 [panel/text: fetch-argument string! spec]
+					size	 [panel/size: size: fetch-argument pair! spec]
+					backdrop [
+						value: pre-load fetch-argument background! spec
+						switch type?/word value [
+							tuple! [panel/color: value]
+							image! [panel/image: value]
 						]
 					]
-					either pos: find local-styles name [pos/2: value][ 
-						reduce/into [name value] tail local-styles
-					]
-					styled: make block! 4
-					foreach w opt-words [if get in opts w [append styled w]]
-					repend value [to-set-word 'styled styled]
-					styling?: off
 				][
-					blk: [style: _ vid-align: _ at-offset: #[none]]
-					blk/2: value
-					blk/4: align
-					add-option face new-line/all blk no
-				
-					;-- update cursor position --
-					either at-offset [
-						face/options/at-offset: face/offset: at-offset
-						at-offset: none
-						all [							;-- account for hard margins
-							mar: select system/view/metrics/margins face/type
-							face/offset: face/offset - as-pair mar/1/x mar/2/x
-						]
+					either all [word? spec/1 find/skip next system/view/evt-names spec/1 2][
+						make-actor panel spec/1 spec/2 spec spec: next spec
 					][
-						either all [					;-- grid layout
-							divide?: all [divides divides <= length? list]
-							zero? index: (length? list) // divides
-						][
-							do reset
-						][								;-- flow layout
-							if all [max-sz > 0 cursor/:axis <> origin/:axis][
-								cursor/:axis: cursor/:axis + spacing/:axis
+						global?: no
+					]
+				]
+
+				if global? [spec: next spec]
+			]
+
+			while [not tail? spec][							;-- process panel's content
+				value: spec/1
+				set [axis anti] pick [[x y][y x]] direction = 'across
+
+				switch/default value [
+					below
+					across [
+						below?: value = 'below
+						do re-align
+						all [
+							direction <> value 				;-- if direction changed
+							anti2: pick [y x] value = 'across
+							cursor/:anti2 <> origin/:anti2	;-- and if not close to opposite edge
+							cursor/:anti2: cursor/:anti2 + spacing/:anti2 ;-- ensure proper spacing when changing direction
+						]
+						direction: value
+						bound: max bound cursor
+						max-sz: 0
+					]
+					space	[spacing: fetch-argument pair! spec]
+					origin	[origin: cursor: pad + top-left: fetch-argument pair! spec]
+					at		[at-offset: fetch-expr 'spec spec: back spec]
+					pad		[cursor: cursor + fetch-argument pair! spec]
+					do		[do-safe bind fetch-argument block! spec panel]
+					return	[either divides [throw-error spec][do reset]]
+					react	[
+						if later?: spec/2 = 'later [spec: next spec]
+						repend reactors [none fetch-argument block! spec later?]
+					]
+					style	[
+						unless set-word? name: first spec: next spec [throw-error spec]
+						styling?: yes
+					]
+				][
+					unless styling? [
+						name: none
+						if set-word? value [
+							name: value
+							value: first spec: next spec
+						]
+					]
+					unless style: any [
+						styled?: select local-styles value
+						select system/view/VID/styles value
+					][
+						throw-error spec
+					]
+					st: style/template
+					if st/type = 'window [throw-error spec]
+
+					if actors: st/actors [st/actors: none]	;-- avoid binding actors bodies to face object
+					face: make face! copy/deep st
+					if actors [face/actors: copy/deep st/actors: actors]
+					if all [name not styling?][set name face]
+
+					if all [
+						h: select system/view/metrics/def-heights face/type
+						h > face/size/y
+					][face/size/y: h]
+					unless styling? [face/parent: panel]
+
+					spec: fetch-options face opts style spec local-styles reactors to-logic styling?
+					if all [style/init not styling?][do bind style/init 'face]
+
+					either styling? [
+						if same? css local-styles [local-styles: copy css]
+						name: to word! form name
+						value: copy style
+						clean-style value/template: body-of face face/type
+
+						if opts/init [
+							either value/init [append value/init opts/init][
+								reduce/into [to-set-word 'init opts/init] tail value
 							]
 						]
-						max-sz: max max-sz face/size/:anti
-						face/offset: cursor
-						cursor/:axis: cursor/:axis + face/size/:axis
-						
-						if all [divide? index > 0][
-							index: index + 1
-							face/offset/:axis: list/:index/offset/:axis
+						either pos: find local-styles name [pos/2: value][ 
+							reduce/into [name value] tail local-styles
 						]
+						styled: make block! 4
+						foreach w opt-words [if get in opts w [append styled w]]
+						repend value [to-set-word 'styled styled]
+						styling?: off
+					][
+						blk: [style: _ vid-align: _ at-offset: #[none]]
+						blk/2: value
+						blk/4: align
+						add-option face new-line/all blk no
+
+						;-- update cursor position --
+						either at-offset [
+							face/options/at-offset: face/offset: at-offset
+							at-offset: none
+							all [							;-- account for hard margins
+								mar: select system/view/metrics/margins face/type
+								face/offset: face/offset - as-pair mar/1/x mar/2/x
+							]
+						][
+							either all [					;-- grid layout
+								divide?: all [divides divides <= length? list]
+								zero? index: (length? list) // divides
+							][
+								do reset
+							][								;-- flow layout
+								if all [max-sz > 0 cursor/:axis <> origin/:axis][
+									cursor/:axis: cursor/:axis + spacing/:axis
+								]
+							]
+							max-sz: max max-sz face/size/:anti
+							face/offset: cursor
+							cursor/:axis: cursor/:axis + face/size/:axis
+
+							if all [divide? index > 0][
+								index: index + 1
+								face/offset/:axis: list/:index/offset/:axis
+							]
+						]
+						unless any [face/color panel/type = 'tab-panel face/type = 'text][
+							face/color: system/view/metrics/colors/(face/type)
+						]
+
+						append list face
+						pane-size: max pane-size face/offset + face/size
+						if opts/now? [do-actor face none 'time]
 					]
-					unless any [face/color panel/type = 'tab-panel face/type = 'text][
-						face/color: system/view/metrics/colors/(face/type)
+					if h: select system/view/metrics/fixed-heights face/type [
+						dir: 'y
+						if all [
+							face/type = 'progress
+							face/size/y > face/size/x
+						][dir: 'x]
+						face/offset/:dir: face/offset/:dir + (face/size/:dir - h / 2)
+						face/size/:dir: h
 					]
-					
-					append list face
-					if name [set name face]
-					pane-size: max pane-size face/offset + face/size
-					if opts/now? [do-actor face none 'time]
+				]
+				spec: next spec
+			]
+			do re-align
+			process-reactors reactors						;-- Needs to be after [set name face]
+		] 'silenced
+		
+		either only [list][
+			either size [panel/size: size][
+				if pane-size <> 0x0 [
+					if svmp [
+						pad2: as-pair svmp/1/y svmp/2/y		;-- bottom-right padding
+						origin: either top-left + pad = origin [top-left + pad2][max top-left pad2]
+					]
+					panel/size: pane-size + origin
 				]
 			]
-			spec: next spec
-		]
-		do re-align
-		process-reactors								;-- Needs to be after [set name face]
-		
-		either size [panel/size: size][
-			if pane-size <> 0x0 [
-				if svmp [
-					pad2: as-pair svmp/1/y svmp/2/y		;-- bottom-right padding
-					origin: either top-left + pad = origin [top-left + pad2][max top-left pad2]
-				]
-				panel/size: pane-size + origin
-			]
-		]
-		if all [not size image: panel/image][panel/size: max panel/size image/size]
+			if all [not size image: panel/image][panel/size: max panel/size image/size]
 
-		if all [focal-face find panel/pane focal-face not parent][panel/selected: focal-face]
+			if all [focal-face find panel/pane focal-face not parent][panel/selected: focal-face]
 
-		if options [set/some panel make object! user-opts]
-		if flags [panel/flags: either panel/flags [unique union to-block panel/flags to-block flgs][flgs]]
-		if block? panel/actors [panel/actors: context panel/actors]
+			if options [set/some panel make object! user-opts]
+			if flags [panel/flags: either panel/flags [unique union to-block panel/flags to-block flgs][flgs]]
+			if block? panel/actors [panel/actors: context panel/actors]
 		
-		either only [
-			panel/pane: none
-			list
-		][
 			if panel/type = 'window [
 				panel/parent: system/view/screens/1
 				system/view/VID/GUI-rules/process panel

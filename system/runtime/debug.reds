@@ -68,9 +68,19 @@ __print-debug-line: func [
 ;-------------------------------------------
 __print-debug-stack: func [
 	address [byte-ptr!]						;-- memory address where the runtime error happened
-	/local 
-		ret funcs records nb next end top frame s value lines pf [float-ptr!]
-		unused base
+	code	[integer!]						;-- internal error type
+	/local
+		pf			[float-ptr!]
+		next-frame	[subroutine!]
+		ret			[int-ptr!]
+		funcs end	[byte-ptr!]
+		records next[__func-record!]
+		nb			[integer!]
+		top frame	[int-ptr!]
+		s			[c-string!]
+		value lines	[integer!]
+		base 		[integer!]
+		unused		[float!]
 ][
 	funcs:	as byte-ptr! __debug-funcs
 	frame:	system/debug/frame
@@ -79,6 +89,15 @@ __print-debug-stack: func [
 	top:	frame + 2
 	lines:	40								;-- max number of lines displayed
 	print-line "***"
+	
+	next-frame: [
+		top: frame
+		frame: as int-ptr! top/value
+		top: top + 1
+		ret: as int-ptr! #either any [type <> 'exe PIC? = yes][top/value - base][top/value]
+		top: frame + 2
+	]
+	if code = 98 [next-frame]				;-- 98 => assertion, jump over the injected ***-on-quit call frame.
 	
 	until [
 		nb: __debug-funcs-nb
@@ -141,19 +160,14 @@ __print-debug-stack: func [
 			print lf
 			lines: lines - 1
 		]
-		
-		top: frame
-		frame: as int-ptr! top/value
-		top: top + 1
-		ret: as int-ptr! #either any [type <> 'exe PIC? = yes][top/value - base][top/value]
-		top: frame + 2
-		
+		next-frame
 		any [zero? nb zero? lines]
 	]
 ]
 
 stack-trace: func [][
-	__print-debug-stack system/pc
+	__set-stack-on-crash
+	__print-debug-stack system/pc 0
 ]
 
 ;-------------------------------------------
@@ -188,17 +202,13 @@ prin-hex-chars: func [
 ;-------------------------------------------
 ;-- Dump memory on screen in hex format
 ;-------------------------------------------
-dump-memory: func [
+dump-memory-raw: func [
 	address	[byte-ptr!]						;-- memory address where the dump starts
 	unit	[integer!]						;-- size of memory chunks to print in hex format (1 or 4 bytes)
 	nb		[integer!]						;-- number of lines to print
 	return: [byte-ptr!]						;-- return the pointer (pass-thru)
 	/local offset ascii i byte int-ptr data-ptr limit
 ][	
-	assert any [unit = 1 unit = 4]
-	
-	print ["^/Hex dump from: " address "h^/" lf]
-
 	offset: 0
 	ascii: "                "
 	limit: nb * 16
@@ -239,8 +249,23 @@ dump-memory: func [
 	address
 ]
 
+
 ;-------------------------------------------
-;-- Dump memory on screen in hex format as array of bytes (handy wrapper on dump-hex)
+;-- Dump memory on screen in hex format
+;-------------------------------------------
+dump-memory: func [
+	address	[byte-ptr!]						;-- memory address where the dump starts
+	unit	[integer!]						;-- size of memory chunks to print in hex format (1 or 4 bytes)
+	nb		[integer!]						;-- number of lines to print
+	return: [byte-ptr!]						;-- return the pointer (pass-thru)
+][	
+	assert any [unit = 1 unit = 4]
+	print ["^/Hex dump from: " address "h^/" lf]
+	dump-memory-raw address unit nb
+]
+
+;-------------------------------------------
+;-- Dump memory on screen in hex format as array of bytes (handy wrapper on dump-memory)
 ;-------------------------------------------
 dump-hex: func [
 	address	[byte-ptr!]						;-- memory address where the dump starts
@@ -250,7 +275,7 @@ dump-hex: func [
 ]
 
 ;-------------------------------------------
-;-- Dump memory on screen in hex format as array of 32-bit integers (handy wrapper on dump-hex)
+;-- Dump memory on screen in hex format as array of 32-bit integers (handy wrapper on dump-memory)
 ;-------------------------------------------
 dump-hex4: func [
 	address	[int-ptr!]						;-- memory address where the dump starts

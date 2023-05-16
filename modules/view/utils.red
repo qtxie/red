@@ -19,11 +19,7 @@ hex-to-rgb: function [
 		3 [
 			uppercase str
 			forall str [str/1: str/1 - pick "70" str/1 >= #"A"]
-
-			as-color 
-				shift/left to integer! str/1 4
-				shift/left to integer! str/2 4
-				shift/left to integer! str/3 4
+			as-color  11h * str/1  11h * str/2  11h * str/3
 		]
 		6 [if bin: to binary! hex [as-color bin/1 bin/2 bin/3]]
 		8 [if bin: to binary! hex [as-rgba bin/1 bin/2 bin/3 bin/4]]
@@ -59,12 +55,13 @@ overlap?: function [
 ]
 
 distance?: function [
-	"Returns the distance between the center of two faces"
-	A		[object!] "First face"
-	B		[object!] "Second face"
+	"Returns the distance between 2 points or face centers"
+	A		[object! pair!] "First face or point"
+	B		[object! pair!] "Second face or point"
 	return: [float!]  "Distance between them"
 ][
-	square-root
-		((A/offset/x - B/offset/x + (A/size/x - B/size/x / 2)) ** 2)
-		+ ((A/offset/y - B/offset/y + (A/size/y - B/size/y / 2)) ** 2)
+	A: either object? A [A/offset * 2 + A/size][A * 2]	;-- doubling for odd-sized faces
+	B: either object? B [B/offset * 2 + B/size][B * 2]	;-- to compensate for integer pair (im)precision
+	d: B - A
+	d/x ** 2 + (d/y ** 2) ** 0.5 / 2
 ]

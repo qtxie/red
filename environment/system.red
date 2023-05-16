@@ -11,13 +11,20 @@ Red [
 ]
 
 system: context [
-	version: #version
+	version: #do keep [form load-cache %encapper/version.r]
 	build: context [
-		date: to-local-date #build-date
-		git: do #git
-		config: context #build-config
+		date: #do keep [
+			use [date][
+				date: now
+				date: date - date/zone
+				date/zone: none
+				date
+			]
+		]
+		git: #do keep [load-cache %build/git.r]
+		config: context #do keep [reduce [load find mold config to-char 91]]
 	]
-		
+	
 	words: #system [
 		__make-sys-object: func [
 			/local
@@ -36,17 +43,8 @@ system: context [
 		__make-sys-object
 	]
 
-	platform: func ["Return a word identifying the operating system"][
-		#system [
-			#switch OS [
-				Windows  [SET_RETURN(words/_windows)]
-				Syllable [SET_RETURN(words/_syllable)]
-				macOS	 [SET_RETURN(words/_macOS)]
-				#default [SET_RETURN(words/_linux)]
-			]
-		]
-	]
-
+	platform: #do keep [to-lit-word config/OS]
+	
 	catalog: context [
 		datatypes:
 		actions:
@@ -59,13 +57,14 @@ system: context [
 			]
 			email!	[user host]
 			event!	[
-				type face window offset key picked flags away? down? mid-down?
+				type face window offset key picked flags orientation away? down? mid-down?
 				alt-down? aux-down? ctrl? shift?
 			]
 			image!	[size argb rgb alpha]
 			pair!	[x y]
 			;point!	[x y z]
 			time!	[hour minute second]
+			money!  [code amount]
 		]
 		
 		errors: context [
@@ -86,13 +85,13 @@ system: context [
 			syntax: object [
 				code:				200
 				type:				"Syntax Error"
-				invalid:			["invalid" :arg1 "at" :arg2]
-				missing:			["missing" :arg1 "at" :arg2]
+				invalid:			[:arg1 "invalid" :arg2 "at" :arg3]
+				missing:			[:arg1 "missing" :arg2 "at"  :arg3]
 				no-header:			["script is missing a Red header:" :arg1]
 				no-rs-header:		["script is missing a Red/System header:" :arg1]
 				bad-header:			["script header is not valid:" :arg1]
-				malconstruct:		["invalid construction spec:" :arg1]
-				bad-char:			["invalid character in:" :arg1]
+				malconstruct:		[:arg1 "invalid construction spec at" :arg2]
+				bad-char:			[:arg1 "invalid character at" :arg2]
 			]
 			script: object [
 				code:				300
@@ -123,12 +122,15 @@ system: context [
 				no-refine:			[:arg1 "has no refinement called" :arg2]
 				bad-refines:		"incompatible or invalid refinements"
 				bad-refine:			["incompatible refinement:" :arg1]
+				dup-refine:			["duplicate refinement usage in:" :arg1]
 				word-first:			["path must start with a word:" :arg1]
 				empty-path:			"cannot evaluate an empty path value"
+				unset-path:			[:arg2 "is unset in path" :arg1]
 				invalid-path:		["cannot access" :arg2 "in path" :arg1]
 				invalid-path-set:	["unsupported type in" :arg1 "set-path"]
 				invalid-path-get:	["unsupported type in" :arg1 "get-path"]
 				bad-path-type:		["path" :arg1 "is not valid for" :arg2 "type"]
+				bad-path-type2:		["path element >" :arg1 "< does not apply to" :arg2 "type"]
 				bad-path-set:		["cannot set" :arg2 "in path" :arg1]
 				bad-field-set:		["cannot set" :arg1 "field to" :arg2 "datatype"]
 				dup-vars:			["duplicate variable specified:" :arg1]
@@ -144,7 +146,7 @@ system: context [
 				no-return:			"block did not return a value"
 				throw-usage:		"invalid use of a thrown error value"
 				locked-word:		["protected word - cannot modify:" :arg1]
-				;protected:			"protected value or series - cannot modify"
+				protected:			"protected value or series - cannot modify"
 				;self-protected:	"cannot set/unset self - it is protected"
 				bad-bad:			[:arg1 "error:" :arg2]
 				bad-make-arg:		["cannot MAKE" :arg1 "from:" :arg2]
@@ -158,7 +160,8 @@ system: context [
 				bad-loop-series:	["Loop series changed to invalid value:" :arg1]
 				;bad-decode:		"missing or unsupported encoding marker"
 				;already-used:		["alias word is already in use:" :arg1]
-				;wrong-denom:		[:arg1 "not same denomination as" :arg2]
+				wrong-denom:		[:arg1 "not same denomination as" :arg2]
+				bad-denom:			["invalid denomination:" :arg1]
 				;bad-press:			["invalid compressed data - problem:" :arg1]
 				;dialect:			["incorrect" :arg1 "dialect usage at:" :arg2]
 				invalid-obj-evt:	["invalid object event handler:" :arg1]
@@ -172,7 +175,8 @@ system: context [
 				parse-infinite:		["PARSE - infinite recursion at rule: [" :arg1 "]"]
 				parse-stack:		"PARSE - stack limit reached"
 				parse-keep:			"PARSE - KEEP is used without a wrapping COLLECT"
-				parse-into-bad:		"PARSE - COLLECT INTO/AFTER expects a series! argument"
+				parse-into-bad:		"PARSE - COLLECT INTO/AFTER invalid series! argument"
+				parse-into-type:    "PARSE - COLLECT INTO/AFTER expects a series! of compatible datatype"
 				invalid-draw:		["invalid Draw dialect input at:" :arg1]
 				invalid-data-facet: ["invalid DATA facet content" :arg1]
 				face-type:			["VIEW - invalid face type:" :arg1]
@@ -190,7 +194,6 @@ system: context [
 				react-bad-obj:		"REACT - target can only contain object values"
 				react-gctx:			["REACT - word" :arg1 "is not a reactor's field"]
 				lib-invalid-arg:	["LIBRED - invalid argument for" :arg1]
-				buffer-not-enough:	["Buffer size too small, should be:" :arg1]
 			]
 			math: object [
 				code:				400
@@ -225,7 +228,7 @@ system: context [
 				;read-only:			["read-only - write not allowed:" :arg1]
 				;no-buffer:			["port has no data buffer:" :arg1]
 				;timeout:			["port action timed out:" :arg1]
-				;no-create:			["cannot create:" :arg1]
+				no-create:			["cannot create:" :arg1]
 				;no-delete:			["cannot delete:" :arg1]
 				;no-rename:			["cannot rename:" :arg1]
 				;bad-file-path:		["bad file path:" :arg1]
@@ -233,8 +236,8 @@ system: context [
 				;security:			["security violation:" :arg1 " (refer to SECURE function)"]
 				;security-level:	["attempt to lower security to" :arg1]
 				;security-error:	["invalid" :arg1 "security policy:" :arg2]
-				;no-codec:			["cannot decode or encode (no codec):" :arg1]
-				;bad-media:			["bad media data (corrupt image, sound, video)"]
+				no-codec:			["cannot decode or encode (no codec):" :arg1]
+				bad-media:			["bad media data (corrupt image, sound, video)"]
 				;no-extension:		["cannot open extension:" :arg1]
 				;bad-extension:		["invalid extension format:" :arg1]
 				;extension-init:	["extension cannot be initialized (check version):" :arg1]
@@ -252,7 +255,7 @@ system: context [
 			user: object [
 				code:				800
 				type:				"User Error"
-				message:			[:arg1]
+				message:			'arg1
 			]
 			internal: object [
 				code:				900
@@ -263,7 +266,7 @@ system: context [
 				wrong-mem:			"failed to release memory"
 				stack-overflow:		"stack overflow"
 				;bad-series:		"invalid series"
-				;limit-hit:			["internal limit reached:" :arg1]
+				limit-hit:			["internal limit reached:" :arg1]
 				;bad-sys-func:		["invalid or missing system function:" :arg1]
 				too-deep:			"block or paren series is too deep to display"
 				no-cycle:			"circular reference not allowed"
@@ -281,9 +284,24 @@ system: context [
 		interpreted?: func ["Return TRUE if called from the interpreter"][
 			#system [logic/box stack/eval? null no]
 		]
+		last-error:  none
+		stack-trace: 1									;-- 0: disabled
 		
-		last-error: none
-		trace: 1										;-- 0: disabled
+		callbacks: object [
+			lexer?: 	  no							;-- called by transcode/trace
+			parse?:		  no							;-- called by parse/trace
+			sort?:		  no							;-- called by sort/compare
+			change?:	  no							;-- called by object's on-change*
+			deep?:		  no							;-- called by object's on-deep-change*
+			port?:		  no							;-- called by port's action dispatcher
+			bits:		  0								;-- (internal) automatically set
+
+			on-change*: function [word old new][
+				unless integer? bits [set-quiet 'bits 0]	;-- prevents tampering with that field
+				idx: 1 << ((index? word) - 1)
+				set-quiet 'bits either new [bits or idx][bits and complement idx]
+			]
+		]
 	]
 	
 	modules: make block! 8
@@ -297,11 +315,6 @@ system: context [
 		locale:
 		locale*: none									;-- in locale language
 
-		;collation: context [
-		;	lower-to-upper: #system [stack/set-last as cell! case-folding/lower-to-upper]
-		;	upper-to-lower: #system [stack/set-last as cell! case-folding/upper-to-lower]
-		;]
-
 		months: [
 		  "January" "February" "March" "April" "May" "June"
 		  "July" "August" "September" "October" "November" "December"
@@ -309,6 +322,35 @@ system: context [
 
 		days: [
 		  "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday" "Sunday"
+		]
+		
+		currencies: context [
+			;-- ISO currencies + BTC, ETH, RED
+			list: [
+				AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BTC BGN BHD BIF BMD BND BOB BRL BSD
+				BTN	BWP BYN BZD CAD CDF CHF CKD CLP CNY COP CRC CUC CUP CVE CZK DJF DKK DOP DZD EGP ERN
+				ETB ETH	EUR FJD FKP FOK GBP GEL GGP GHS GIP GMD GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS
+				IMP INR	IQD IRR ISK JEP JMD JOD JPY KES KGS KHR KID KMF KPW KRW KWD KYD KZT LAK LBP LKR
+				LRD LSL	LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MYR MZN NAD NGN NIO NOK NPR
+				NZD OMR	PAB PEN PGK PHP PKR PLN PND PRB PYG QAR RED RON RSD RUB RWF SAR SBD SCR SDG SEK
+				SGD SHP SLL	SLS SOS SRD SSP STN SYP SZL THB TJS TMT TND TOP TRY TTD TVD TWD TZS UAH UGX
+				USD UYU UZS	VES VND VUV WST CFA XAF XCD XOF CFP XPF YER ZAR ZMW
+			]
+			on-change*: func [word old new][
+				set-quiet word old
+				cause-error 'script 'protected []
+			]
+			on-deep-change*: func [owner word target action new index part][
+				if any [
+					word <> 'list
+					not find [append appended] action
+					not word? :new
+					all [action = 'append any [find list new 255 < length? list]] ;-- limit index to 8-bit
+					3 <> length? form new
+				][cause-error 'script 'protected []]
+				
+				if action = 'appended [set-slot-quiet back tail list to word! uppercase form new]
+			]
 		]
 	]
 	
@@ -326,12 +368,13 @@ system: context [
 		quiet: 			false
 		binary-base: 	16
 		decimal-digits: 15
+		money-digits:	2
 		module-paths: 	make block! 1
 		file-types: 	none
 		
 		;-- change the way float numbers are processed
 		float: context [
-			pretty?: false
+			pretty?: true
 			full?: 	 false
 			
 			on-change*: func [word old new][
@@ -382,7 +425,7 @@ system: context [
 	
 	standard: context [									;-- do not change object fields number/order
 		header: object [
-			title: name: type: version: date: file: author: needs: none
+			Title: Name: Type: Version: Date: File: Home: Author: Tabs: Needs: License: Note: History: none
 		]
 		port: object [
 			spec: scheme: actor: awake: state: data: extra: none
@@ -401,8 +444,36 @@ system: context [
 		]
 	]
 	
-	lexer:		none
+	lexer: context [
+		pre-load: none
+		
+		exit-states: reduce [
+			'eof error! block! block! paren! paren! string! string! map! path! datatype!
+			'comment string! word! issue! integer! refinement! char! file! binary! percent!
+			float! float! tuple! date! pair! time! money! tag! url! email! 'hex 'rawstring ref!
+		]
+		
+		tracer: func [
+			event  [word!]                  			;-- event name
+			input  [string! binary!]            		;-- input series at current loading position
+			type   [datatype! word! none!]       		;-- type of token or value currently processed.
+			line   [integer!]               			;-- current input line number
+			token                      					;-- current token as an input slice (pair!) or a loaded value.
+			return: [logic!]                			;-- YES: continue to next lexing stage, NO: cancel current token lexing
+		][
+			print [										;-- total: 64
+				uppercase pad event 8
+				pad mold type 12
+				pad mold/part token 12 12				;-- limit in case it's a huge string/binary
+				pad line 4
+				mold/part input 16
+			]
+			either event = 'error [input: next input no][yes]
+		]
+	]
+	
 	console:	none
 	view:		none
 	reactivity: none
+	tools:		none
 ]

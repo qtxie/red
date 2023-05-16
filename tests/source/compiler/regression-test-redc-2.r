@@ -1,7 +1,7 @@
 REBOL [
 	Title:   "Regression tests script for Red Compiler"
 	Author:  "Boleslav Březovský"
-	File: 	 %regression-test-redc.r
+	File: 	 %regression-test-redc-2.r
 	Rights:  "Copyright (C) 2016 Boleslav Březovský. All rights reserved."
 	License: "BSD-3 - https://github.com/red/red/blob/origin/BSD-3-License.txt"
 ]
@@ -242,6 +242,10 @@ print ["remainder of division of over 5 is: " remain-value]
 }
 		--assert compiled?
 
+	--test-- "#650"
+		--compile-this-red {f: func [/1][] f/1}
+		--assert not compiled?
+
 	--test-- "#659"
 		--compile-and-run-this-red {
 f: does [parse [] []]
@@ -260,12 +264,6 @@ replace code "Hello" "Cheers"
 }
 	--assert not crashed?
 
-	--test-- "#669"
-		--compile-and-run-this-red {
-a: #version 
-print type? a 
-}
-		--assert equal? "string" trim/tail qt/output
 
 ; NOTE: Output of these tests is probably messed by Rebol
 ;		so I leave it commented out for now

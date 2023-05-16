@@ -548,8 +548,8 @@ OS-image: context [
 	make-image: func [
 		width	[integer!]
 		height	[integer!]
-		rgb		[byte-ptr!]
-		alpha	[byte-ptr!]
+		rgb-bin	[red-binary!]
+		alpha-bin [red-binary!]
 		color	[red-tuple!]
 		return: [node!]
 		/local
@@ -561,21 +561,40 @@ OS-image: context [
 			y			[integer!]
 			scan0		[int-ptr!]
 			pos			[integer!]
+			rgb			[byte-ptr!]
+			alpha		[byte-ptr!]
+			len			[integer!]
+			len2		[integer!]
 	][
 		scan0: as int-ptr! allocate width * height * 4
 		y: 0
 		either null? color [
+			either rgb-bin <> null [
+				len: binary/rs-length? rgb-bin
+				len: len / 3 * 3
+				rgb: binary/rs-head rgb-bin
+			][len: 0]
+			either alpha-bin <> null [
+				len2: binary/rs-length? alpha-bin
+				alpha: binary/rs-head alpha-bin
+			][len2: 0]
+
 			while [y < height][
 				x: 0
 				while [x < width][
 					pos: width * y + x + 1
-					either null? alpha [a: 255][a: 255 - as-integer alpha/1 alpha: alpha + 1]
-					either null? rgb [r: 255 g: 255 b: 255][
+					either len2 > 0 [
+						a: 255 - as-integer alpha/1
+						alpha: alpha + 1
+						len2: len2 - 1
+					][a: 255]
+					either len > 0 [
 						r: as-integer rgb/1
 						g: as-integer rgb/2
 						b: as-integer rgb/3
 						rgb: rgb + 3
-					]
+						len: len - 3
+					][r: 255 g: 255 b: 255]
 					scan0/pos: r << 16 or (g << 8) or b or (a << 24)
 					x: x + 1
 				]
@@ -754,21 +773,50 @@ OS-image: context [
 	]
 
 	clone: func [
+		src			[red-image!]
+		dst			[red-image!]
+		return:		[red-image!]
+		/local
+			inode0	[img-node!]
+			width	[integer!]
+			height	[integer!]
+			pixels	[integer!]
+			handle0	[int-ptr!]
+			handle	[int-ptr!]
+			scan0	[int-ptr!]
+	][
+		inode0: as img-node! (as series! src/node/value) + 1
+		handle0: inode0/handle
+		width: IMAGE_WIDTH(inode0/size)
+		height: IMAGE_HEIGHT(inode0/size)
+		pixels: width * height * 4
+
+		either null? handle0 [
+			scan0: as int-ptr! allocate pixels
+			dst/node: make-node null scan0 IMG_NODE_HAS_BUFFER or IMG_NODE_MODIFIED width height
+			copy-memory as byte-ptr! scan0 as byte-ptr! inode0/buffer pixels
+		][
+			handle: CGImageCreateCopy handle0
+			dst/node: make-node handle null 0 width height
+		]
+		dst/size: src/size
+		dst/header: TYPE_IMAGE
+		dst/head: 0
+		return dst
+	]
+
+	copy: func [
 		src		[red-image!]
 		dst		[red-image!]
-		part	[integer!]
-		size	[red-pair!]
-		part?	[logic!]
+		x		[integer!]
+		y		[integer!]
+		w		[integer!]
+		h		[integer!]
 		return: [red-image!]
 		/local
 			inode0	[img-node!]
 			width	[integer!]
 			height	[integer!]
-			offset	[integer!]
-			x		[integer!]
-			y		[integer!]
-			h		[integer!]
-			w		[integer!]
 			src-buf [byte-ptr!]
 			dst-buf [byte-ptr!]
 			handle0	[int-ptr!]
@@ -779,61 +827,6 @@ OS-image: context [
 		handle0: inode0/handle
 		width: IMAGE_WIDTH(inode0/size)
 		height: IMAGE_HEIGHT(inode0/size)
-		offset: src/head
-
-		if any [
-			width <= 0
-			height <= 0
-		][
-			dst/size: 0
-			dst/header: TYPE_IMAGE
-			dst/head: 0
-			dst/node: make-node null null IMG_NODE_HAS_BUFFER or IMG_NODE_MODIFIED 0 0
-			return dst
-		]
-
-		if all [zero? offset not part?][
-			either null? handle0 [
-				scan0: as int-ptr! allocate inode0/size
-				dst/node: make-node null scan0 IMG_NODE_HAS_BUFFER or IMG_NODE_MODIFIED width height
-				copy-memory as byte-ptr! scan0 as byte-ptr! inode0/buffer inode0/size
-			][
-				handle: CGImageCreateCopy handle0
-				dst/node: make-node handle null 0 width height
-			]
-			dst/size: src/size
-			dst/header: TYPE_IMAGE
-			dst/head: 0
-			return dst
-		]
-
-		x: offset % width
-		y: offset / width
-		either all [part? TYPE_OF(size) = TYPE_PAIR][
-			w: width - x
-			h: height - y
-			if size/x < w [w: size/x]
-			if size/y < h [h: size/y]
-		][
-			either zero? part [
-				w: 0 h: 0
-			][
-				either part < width [h: 1 w: part][
-					h: part / width
-					w: width
-				]
-			]
-		]
-		if any [
-			w <= 0
-			h <= 0
-		][
-			dst/size: 0
-			dst/header: TYPE_IMAGE
-			dst/head: 0
-			dst/node: make-node null null IMG_NODE_HAS_BUFFER or IMG_NODE_MODIFIED 0 0
-			return dst
-		]
 
 		either null? handle0 [
 			dst-buf: allocate w * h * 4

@@ -1724,6 +1724,12 @@ Red/System [
 		j: -2147483648
 		--assert i / j = 1
 
+	--test-- "integer-divide100"
+		--assert -1 / 4 = 0
+		i: -1
+		j: 4
+		--assert i / j = 0
+
 ===end-group===
 
 ===start-group=== "integer-modulo"

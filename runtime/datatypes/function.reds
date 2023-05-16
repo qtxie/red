@@ -14,109 +14,6 @@ Red/System [
 _function: context [
 	verbose: 0
 	
-	lay-frame: func [
-		/local
-			path	  [red-path!]
-			fun		  [red-function!]
-			value	  [red-value!]
-			head	  [red-value!]
-			tail	  [red-value!]
-			base	  [red-value!]
-			ref		  [red-refinement!]
-			end		  [red-word!]
-			word	  [red-word!]
-			bool	  [red-logic!]
-			s		  [series!]
-			required? [logic!]
-			type	  [integer!]
-			count	  [integer!]
-			pos		  [integer!]
-			
-	][
-		base: stack/arguments
-		fun:  as red-function! base - 4
- 		path: as red-path! base - 3
- 		
-		stack/mark-func-body words/_anon
-		
-		s: as series! fun/spec/value
-		
-		head:  s/offset
-		value: head
-		tail:  s/tail
-
-		count: 0										;-- base arity (mandatory arguments only)
-		required?: yes									;-- yes: processing mandatory args, no: optional args
-
-		while [value < tail][							;-- first pass on spec
-			switch TYPE_OF(value) [
-				TYPE_WORD
-				TYPE_GET_WORD
-				TYPE_LIT_WORD [
-					either required? [
-						stack/push base + count
-						count: count + 1
-					][
-						none/push						;-- reserve optional argument or local slot
-					]
-				]
-				TYPE_REFINEMENT [
-					if required? [required?: no]		;-- no more mandatory arguments
-					logic/push false
-				]
-				default [0]								;-- ignore other values
-			]
-			value: value + 1
-		]
-		
-		s: GET_BUFFER(path)
-		word: as red-word! s/offset + path/head + 1
-		end:  as red-word! s/tail
-		pos: 0
-		
-		while [word < end][								;-- second pass on path + spec
-			value: head
-			
-			while [value < tail][
-				switch TYPE_OF(value) [
-					TYPE_REFINEMENT [
-						ref: as red-refinement! value
-						either EQUAL_WORDS?(ref word) [
-							bool: as red-logic! stack/arguments + pos
-							bool/value: true
-
-							value: value + 1
-							pos: pos + 1
-							while [
-								type: TYPE_OF(value)
-								all [
-									value < tail
-									type <> TYPE_REFINEMENT
-									type <> TYPE_SET_WORD
-								]
-							][
-								if all [type <> TYPE_STRING type <> TYPE_BLOCK][
-									copy-cell base + count stack/arguments + pos
-									pos: pos + 1
-									count: count + 1
-								]
-								value: value + 1
-							]
-						][
-							pos: pos + 1
-						]
-					]
-					TYPE_WORD
-					TYPE_GET_WORD
-					TYPE_LIT_WORD [pos: pos + 1]
-					default [0]
-				]
-				value: value + 1
-			]
-			word: word + 1
-		]
-	]
-	
 	refinement-arity?: func [
 		spec	[red-value!]
 		tail	[red-value!]
@@ -148,89 +45,43 @@ _function: context [
 		either found? [count][-1]
 	]
 	
-	calc-arity: func [
-		path	[red-path!]								;-- if null, just count all optional slots
-		fun		[red-function!]
-		index	[integer!]								;-- 0-base index position of function in path
-		return: [integer!]
-		/local
-			value  [red-value!]
-			tail   [red-value!]
-			s	   [series!]
-			count  [integer!]
-			locals [integer!]
-			cnt	   [integer!]
-			len	   [integer!]
-			stop?  [logic!]
-	][
-		s: as series! fun/spec/value
-		
-		value:  s/offset
-		tail:   s/tail
-		stop?:  no
-		count:  0
-		locals: 0
-		
-		if value = tail [return 0]
-		
-		while [all [not stop? value < tail]][
-			switch TYPE_OF(value) [
-				TYPE_WORD
-				TYPE_GET_WORD
-				TYPE_LIT_WORD [count: count + 1]
-				TYPE_REFINEMENT [
-					stop?: yes
-					locals: (as-integer tail - (value + 1)) >> 4 ;-- include all remaining slots
-				]
-				TYPE_SET_WORD [stop?: yes]
-				default [0]								;-- ignore other values
-			]
-			value: value + 1
-		]
-		if null? path [return locals + 1]				;-- + 1 for including the 1st refinement too
-		
-		len: block/rs-length? as red-block! path
-		index: index + 1
-		
-		if index < len [
-			until [
-				value: block/rs-abs-at as red-block! path index
-				cnt: refinement-arity? s/offset tail as red-word! value
-				if cnt = -1 [
-					fire [
-						TO_ERROR(script no-refine)
-						stack/get-call
-						value
-					]
-				]
-				count: count + cnt
-				index: index + 1
-				index = len
-			]
-			locals: -1									;-- used to signal refinement presence
-			0
-		]
-		locals << 16 or count							;-- combine both values as 16-bit words
-	]
-	
 	call: func [
-		fun	[red-function!]
-		ctx [node!]
+		fun	  [red-function!]
+		ctx	  [node!]
+		ref	  [red-value!]
+		class [cb-class!]
 		/local
 			s	   [series!]
 			native [red-native!]
 			saved  [node!]
 			fctx   [red-context!]
-			call ocall
+			int	   [red-integer!]
+			prev?  [logic!]
+			allow? [logic!]
+			call ocall									;@@ FIXME: avoid 64-bit stack slots, leads to GCing garbage
 	][
+		prev?: interpreter/tracing?
+		allow?: all [prev? class <> CB_INTERPRETER]
+		if allow? [
+			int: as red-integer! #get system/state/callbacks/bits
+			assert TYPE_OF(int) = TYPE_INTEGER
+			if class and int/value = 0 [interpreter/tracing?: no]	;-- disable tracing for unwanted internal callbacks
+		]
 		s: as series! fun/more/value
-
 		native: as red-native! s/offset + 2
 		either zero? native/code [
-			interpreter/eval-function fun as red-block! s/offset
+			with [interpreter][
+				if allow? [fire-call ref fun]
+				eval-function fun as red-block! s/offset ref
+				if allow? [
+					fire-return ref fun
+					tracing?: prev?
+				]
+			]
 		][
 			fctx: GET_CTX(fun)
 			saved: fctx/values
+			assert system/thrown = 0
 			catch RED_THROWN_ERROR [
 				either ctx = global-ctx [
 					call: as function! [] native/code
@@ -243,6 +94,7 @@ _function: context [
 				]
 			]
 			fctx/values: saved
+			if allow? [interpreter/tracing?: prev?]
 			
 			switch system/thrown [
 				RED_THROWN_ERROR
@@ -306,7 +158,7 @@ _function: context [
 		while [value < tail][							;-- 1st pass: detect if out-of-order (ooo?)
 			word:  as red-word! value
 			if TYPE_OF(value) <> TYPE_WORD [
-				fire [TO_ERROR(script no-refine) fname word]
+				fire [TO_ERROR(script bad-refine) word]
 			]
 
 			unless ooo? [
@@ -343,6 +195,7 @@ _function: context [
 						if ref? [
 							bool: as red-logic! head + 1
 							assert TYPE_OF(bool) = TYPE_LOGIC
+							if bool/value [fire [TO_ERROR(script dup-refine) path]]
 							bool/value: true
 						]
 						offset: offset + 1
@@ -446,6 +299,7 @@ _function: context [
 						either all [
 							blk < tail
 							TYPE_OF(blk) = TYPE_BLOCK
+							positive? block/rs-length? blk
 						][
 							typeset/make-with list blk
 						][
@@ -475,7 +329,11 @@ _function: context [
 					assert TYPE_OF(blk) = TYPE_BLOCK
 					unless routine? [
 						block/rs-append list value
-						typeset/make-with list blk
+						either positive? block/rs-length? blk [
+							typeset/make-with list blk
+						][
+							typeset/make-default list
+						]
 					]
 				]
 				default [0]								;-- ignore other values
@@ -663,6 +521,9 @@ _function: context [
 			if -1 = count-locals spec/node spec/head yes [
 				block/rs-append spec as red-value! refinements/local
 			]
+			value: as red-value! words/_local
+			value: block/find list value null no no no no null null no no no no
+			if TYPE_OF(value) <> TYPE_NONE [_series/remove as red-series! value null null] ;@@ will trigger ownership events
 			block/rs-append-block spec list
 		]
 		list
@@ -740,28 +601,67 @@ _function: context [
 		]
 	]
 	
-	validate: func [									;-- temporary mimalist spec checking
-		spec [red-block!]
+	decode-attributes: func [
+		list	[red-block!]
+		return: [integer!]
+		/local
+			w	  [red-word!]
+			end	  [red-word!]
+			sym	  [integer!]
+			flags [integer!]
+	][
+		w:   as red-word! block/rs-head list
+		end: as red-word! block/rs-tail list
+		flags: 0
+		
+		while [w < end][
+			if TYPE_OF(w) <> TYPE_WORD [return -1]		;-- error case
+			sym: symbol/resolve w/symbol 
+			case [
+				sym = words/trace 	[flags: flags or flag-force-trace]
+				sym = words/no-trace[flags: flags or flag-no-trace]
+				true 				[0]
+			]
+			w: w + 1
+		]
+		flags
+	]
+	
+	validate: func [									;-- temporary minimalist spec checking
+		spec	[red-block!]
+		return: [integer!]
 		/local
 			value  [red-value!]
 			end	   [red-value!]
 			next   [red-value!]
 			next2  [red-value!]
 			w      [red-word!]
+			flags  [integer!]
+			local? [logic!]
+			do-error [subroutine!]
 	][
-		value: block/rs-head spec
-		end:   block/rs-tail spec
+		do-error: [fire [TO_ERROR(script bad-func-def) spec]]
+		value:  block/rs-head spec
+		end:    block/rs-tail spec
+		local?: no
+		flags:  0
+		
+		if all [value < end TYPE_OF(value) = TYPE_BLOCK][
+			flags: decode-attributes as red-block! value
+			if flags = -1 [do-error]
+			value: value + 1							;-- skip optional attributs block
+		]
 		
 		while [value < end][
 			switch TYPE_OF(value) [
 				TYPE_WORD
-				TYPE_GET_WORD [
+				TYPE_GET_WORD
+				TYPE_LIT_WORD [
+					if all [local? any [TYPE_OF(value) = TYPE_GET_WORD TYPE_OF(value) = TYPE_LIT_WORD]][do-error]
 					next: value + 1
 					if all [next < end TYPE_OF(next) = TYPE_STRING][
 						next2: next + 1
-						if all [next2 < end TYPE_OF(next2) = TYPE_BLOCK][
-							fire [TO_ERROR(script bad-func-def)	spec]
-						]
+						if all [next2 < end TYPE_OF(next2) = TYPE_BLOCK][do-error]
 					]
 					value: value + 1
 					if all [
@@ -772,39 +672,55 @@ _function: context [
 						value: value + 1
 					]
 				]
-				TYPE_SET_WORD [							;-- only return: is allowed as a set-word!
+				TYPE_SET_WORD [								 ;-- only return: is allowed as a set-word!
 					w: as red-word! value
-					if words/return* <> symbol/resolve w/symbol [
-						fire [TO_ERROR(script bad-func-def)	w]
-					]
+					if words/return* <> symbol/resolve w/symbol [do-error]
 					next: value + 1
 					next2: next + 1
 					unless all [
 						next < end
-						TYPE_OF(next) = TYPE_BLOCK		;-- return: must have a type spec
-						any [							;-- This allows a return: spec before each refinement
-							next2 = end
-							TYPE_OF(next2) = TYPE_REFINEMENT
+						TYPE_OF(next) = TYPE_BLOCK			 ;-- return: must have a type spec
+						any [
+							next2 = end						 ;-- return: with type spec is enough
+							TYPE_OF(next2) = TYPE_REFINEMENT ;-- This allows a return: spec before each refinement
+							all [							 ;-- docstring is allowed if at the tail
+								TYPE_OF(next2) = TYPE_STRING
+								next2 + 1 = end
+							]
 						]
-					][
-						fire [TO_ERROR(script bad-func-def) value]
-					]
-					value: next
+					][do-error]
+					value: next2
 				]
-				TYPE_LIT_WORD
-				TYPE_REFINEMENT
-				TYPE_BLOCK
+				TYPE_REFINEMENT [
+					w: as red-word! value 
+					either refinements/local/symbol = symbol/resolve w/symbol [local?: yes][
+						if local? [do-error]
+					]
+					next: value + 1
+					if next < end [
+						if all [
+							TYPE_OF(next) <> TYPE_WORD
+							TYPE_OF(next) <> TYPE_GET_WORD
+							TYPE_OF(next) <> TYPE_LIT_WORD
+							TYPE_OF(next) <> TYPE_REFINEMENT
+							TYPE_OF(next) <> TYPE_SET_WORD
+							TYPE_OF(next) <> TYPE_STRING
+						][
+							value: next do-error
+						]
+					]
+					value: value + 1
+				]
 				TYPE_STRING [
 					value: value + 1
 				]
-				default [
-					fire [TO_ERROR(script bad-func-def) value]
-				]
+				default [do-error]
 			]
 		]
 		check-duplicates spec
+		flags
 	]
-
+	
 	count-locals: func [
 		node	[node!]
 		offset	[integer!]
@@ -831,7 +747,10 @@ _function: context [
 				TYPE_REFINEMENT [
 					unless count? [
 						ref: as red-refinement! value
-						if sym = symbol/resolve ref/symbol [count?: yes]
+						if sym = symbol/resolve ref/symbol [
+							count?: yes
+							cnt: cnt + 1
+						]
 					]
 				]
 				TYPE_WORD [if count? [cnt: cnt + 1]]
@@ -847,11 +766,13 @@ _function: context [
 		/local
 			p  [red-value!]
 	][
-		until [
+		assert nb > 0
+		logic/push false								;-- /local = false
+		nb: nb - 1
+		while [nb > 0][
 			p: stack/push*
 			p/header: TYPE_NONE
 			nb: nb - 1
-			zero? nb
 		]
 	]
 
@@ -861,6 +782,7 @@ _function: context [
 		ctx		 [node!]								;-- if not null, context is predefined by compiler
 		code	 [integer!]
 		obj-ctx	 [node!]
+		flags	 [integer!]
 		return:	 [node!]								;-- return function's local context reference
 		/local
 			fun    [red-function!]
@@ -874,13 +796,13 @@ _function: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "_function/push"]]
 
-		f-ctx: either null? ctx [_context/make spec yes no][ctx]
+		f-ctx: either null? ctx [_context/make spec yes no CONTEXT_FUNCTION][ctx]
 		fun: as red-function! stack/push*
 		fun/header:  TYPE_UNSET
 		fun/spec:	 spec/node
 		fun/ctx:	 f-ctx
 		fun/more:	 alloc-unset-cells 5
-		fun/header:  TYPE_FUNCTION						;-- implicit reset of all header flags
+		fun/header:  TYPE_FUNCTION or flags
 		
 		s: as series! f-ctx/value
 		copy-cell as red-value! fun s/offset + 1		;-- set back-reference
@@ -927,8 +849,9 @@ _function: context [
 		type	[integer!]
 		return:	[red-function!]
 		/local
-			spec [red-block!]
-			body [red-block!]
+			spec  [red-block!]
+			body  [red-block!]
+			flags [integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "function/make"]]
 		
@@ -943,13 +866,13 @@ _function: context [
 		if TYPE_OF(spec) <> TYPE_BLOCK [
 			fire [TO_ERROR(script bad-func-def)	list]
 		]
-		validate spec
+		flags: validate spec
 		body: spec + 1
 		
 		if TYPE_OF(body) <> TYPE_BLOCK [
 			fire [TO_ERROR(script bad-func-def)	list]
 		]
-		push spec body null 0 null
+		push spec body null 0 null flags
 		as red-function! stack/get-top
 	]
 	
@@ -958,8 +881,10 @@ _function: context [
 		field	[integer!]
 		return:	[red-block!]
 		/local
-			blk [red-block!]
-			s	[series!]
+			blk	 [red-block!]
+			word [red-word!]
+			tail [red-value!]
+			s	 [series!]
 	][
 		case [
 			field = words/spec [
@@ -973,7 +898,18 @@ _function: context [
 				stack/set-last s/offset
 			]
 			field = words/words [
-				--NOT_IMPLEMENTED--						;@@ build the words block from spec
+				blk: as red-block! stack/arguments		;-- overwrite the function slot on stack
+				blk/header: TYPE_BLOCK
+				blk/node: _hashtable/get-ctx-symbols GET_CTX(fun)
+				blk/head: 0
+				blk: block/clone blk no no
+				
+				word: as red-word! block/rs-head blk
+				tail: block/rs-tail blk
+				while [word < as red-word! tail][
+					word/ctx: fun/ctx
+					word: word + 1
+				]
 			]
 			true [
 				--NOT_IMPLEMENTED--						;@@ raise error

@@ -1,40 +1,16 @@
-name: Linux-x86
+name: Send Message to Telegram
 
-on: push
+on: watch
 
 jobs:
-  Linux-Red-Tests:
+  Notify:
     runs-on: ubuntu-latest
-    name: Run Linux-x86 Tests
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-    - name: Build Tests
-      uses: ./CI/Linux-gtk
-      with:
-        command: /sbin/start-stop-daemon --start --quiet --background --exec /usr/bin/Xvfb && sleep 3 && rebol -qws tests/run-all.r --batch
-
-    # upload log file if any test failed
-    - uses: actions/upload-artifact@v3
-      if: failure()
-      with:
-        name: Linux-Red-Tests-log
-        path: quick-test/quick-test.log
-
-  Linux-RS-Tests:
-    runs-on: ubuntu-latest
-    name: Run Linux-RS Tests
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-    - name: Build Tests
-      uses: ./CI/Linux-32
-      with:
-        command: rebol -qws system/tests/run-all.r --batch
-
-    # upload log file if any test failed
-    - uses: actions/upload-artifact@v3
-      if: failure()
-      with:
-        name: Linux-RS-Tests-log
-        path: quick-test/quick-test.log
+    - name: send message
+    - shell: bash
+      env:
+        TG_CHAT_ID: ${{ secrets.TelegramChatId }}
+        TG_BOT_TOKEN: ${{ secrets.TelegramBotToken }}
+      run: |
+        curl -k --data chat_id="$TG_CHAT_ID" "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+        --data-raw 'text=${{github.actor}} starred red/red'

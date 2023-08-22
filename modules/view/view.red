@@ -798,6 +798,7 @@ show: function [
 			clear pending
 		]
 		if face/state/2 <> 0 [system/view/platform/update-view face]
+		obj: face/state/1
 	][
 		new?: yes
 		
@@ -866,7 +867,7 @@ show: function [
 	if all [new? object? face/actors in face/actors 'on-created][
 		do-safe [face/actors/on-created face none]		;@@ only called once
 	]
-	if all [new? face/type = 'window face/visible?][
+	if all [face/type = 'window face/visible?][
 		system/view/platform/show-window obj
 	]
 	show?

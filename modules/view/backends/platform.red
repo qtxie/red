@@ -855,6 +855,9 @@ system/view/platform: context [
 						drop-down:		[0x54 0x0]
 					]
 				]]
+				terminal [
+					panel [0x0 0x0]
+				]
 			]
 		]
 		extend system/view/metrics/fixed-heights [

@@ -40,7 +40,8 @@ array: context [
 			s	[series!]
 	][
 		s: as series! node/value
-		(as-integer s/tail - s/offset) >> (log-b GET_UNIT(s))
+		;(as-integer s/tail - s/offset) >> (log-b GET_UNIT(s))
+		as-integer s/tail - s/offset
 	]
 
 	clear: func [

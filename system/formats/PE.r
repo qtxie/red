@@ -822,7 +822,7 @@ context [
 		oh/data-dir-nb:			16
 		;-- data directory
 		oh/import-addr:			named-sect-addr? job 'import
-		oh/import-size:			length? job/sections/import/2
+		oh/import-size:			(length? form-struct import-directory) * (1 + divide length? job/sections/import/3 2)
 		oh/IAT-addr:			named-sect-addr? job 'idata
 		oh/IAT-size:			length? job/sections/idata/2
 		

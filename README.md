@@ -1,7 +1,7 @@
 [![Join the chat at https://gitter.im/red/red](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/red/red?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-![Windows build 2](https://github.com/red/red/workflows/Windows/badge.svg?branch=master)
-![Linux build 2](https://github.com/red/red/workflows/Linux-x86/badge.svg?branch=master)
-![ARMhf build 2](https://github.com/red/red/workflows/RPi/badge.svg?branch=master)
+![Windows build 2](https://github.com/qtxie/red/workflows/Windows/badge.svg?branch=master)
+![Linux build 2](https://github.com/qtxie/red/workflows/Linux-x86/badge.svg?branch=master)
+![ARMhf build 2](https://github.com/qtxie/red/workflows/RPi/badge.svg?branch=master)
 
 # Red Programming Language
 

@@ -35,6 +35,8 @@ jobs:
 
     - name: Retrieve tests
       uses: actions/download-artifact@v4
+      with:
+        name: rpi-rs-bin
 
     - name: Run tests
       run: |

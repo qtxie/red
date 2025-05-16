@@ -57,9 +57,9 @@ unless release-mode [
     	do %source/units/auto-tests/run-each-comp.r
         do %source/units/auto-tests/run-each-interp.r
     ][
-        --run-test-file-quiet %source/units/auto-tests/run-all-comp1.red
-        --run-test-file-quiet %source/units/auto-tests/run-all-comp2.red
-        --run-test-file-quiet %source/units/auto-tests/run-all-interp.red
+        --compile-red %source/units/auto-tests/run-all-comp1.red
+        --compile-red %source/units/auto-tests/run-all-comp2.red
+        --compile-red %source/units/auto-tests/run-all-interp.red
     ]
 ===end-group===
 

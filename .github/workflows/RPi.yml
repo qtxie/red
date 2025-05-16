@@ -21,7 +21,7 @@ jobs:
         path: quick-test/runnable/arm-tests/system
         retention-days: 3
 
-  Run-RS-tests-ubuntu:
+  Run-RS-tests-ubuntux:
     runs-on: ubuntu-24.04-arm
     needs: Build-RPi-Tests
 

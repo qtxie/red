@@ -11,9 +11,14 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Build Tests
-      uses: ./CI/Linux-32
-      with:
-        command: rebol -qws tests/build-arm-tests.r -t RPi && rebol -qws system/tests/build-arm-tests.r -t RPi
+      run: |
+        sudo wget -O /bin/rebol https://static.red-lang.org/tmp/rebol
+        sudo chmod +x /bin/rebol
+        sudo dpkg --add-architecture i386
+        sudo apt update
+        sudo apt install libc6:i386
+        rebol -qws tests/build-arm-tests.r -t RPi
+        rebol -qws system/tests/build-arm-tests.r -t RPi
 
     - uses: actions/upload-artifact@v4
       with:

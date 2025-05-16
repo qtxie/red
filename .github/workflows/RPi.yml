@@ -30,7 +30,7 @@ jobs:
       run: |
         sudo dpkg --add-architecture armhf
         sudo apt update
-        sudo apt install libc6:armhf libgdk-pixbuf-2.0-0:armhf install libssl3t64:armhf
+        sudo apt install libc6:armhf libgdk-pixbuf-2.0-0:armhf libssl3t64:armhf
         sudo ln -s /lib/arm-linux-gnueabihf/libcrypto.so.3 /lib/arm-linux-gnueabihf/libcrypto.so.1.1
 
     - name: Retrieve tests

@@ -10,11 +10,6 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    - name: Build Red Tests
-      uses: ./CI/Linux-32
-      with:
-        command: rebol -qws tests/build-arm-tests.r -t RPi
-
     - name: Build Red/System Tests
       uses: ./CI/Linux-32
       with:
@@ -22,31 +17,24 @@ jobs:
 
     - uses: actions/upload-artifact@v4
       with:
-        name: rpi-tests-bin
-        path: quick-test/runnable/arm-tests/red
-        retention-days: 3
-
-    - uses: actions/upload-artifact@v4
-      with:
         name: rpi-rs-bin
         path: quick-test/runnable/arm-tests/system
         retention-days: 3
 
-  Run-RS-Tests-Armbian:
-
-    runs-on: [self-hosted, Linux, ARM64]
+  Run-RS-tests-ubuntu:
+    runs-on: ubuntu-24.04-arm
     needs: Build-RPi-Tests
-    
+
     steps:
-    - name: Clean working directory
+    - name: Install 32bit libs
       run: |
-        echo "Cleaning up previous run"
-        rm -rf ${{ github.workspace }}/*
+        sudo dpkg --add-architecture armhf
+        sudo apt update
+        sudo apt install libc6:armhf libgdk-pixbuf-2.0-0:armhf install libssl3t64:armhf
+        sudo ln -s /lib/arm-linux-gnueabihf/libcrypto.so.3 /lib/arm-linux-gnueabihf/libcrypto.so.1.1
 
     - name: Retrieve tests
       uses: actions/download-artifact@v4
-      with:
-        name: rpi-rs-bin
 
     - name: Run tests
       run: |
@@ -59,32 +47,4 @@ jobs:
       if: failure()
       with:
         name: RS-Tests-Armbian-log
-        path: quick-test.log
-
-  Run-Red-Tests-Armbian:
-
-    runs-on: [self-hosted, Linux, ARM64]
-    needs: Run-RS-Tests-Armbian
-    
-    steps:
-    - name: Clean working directory
-      run: |
-        echo "Cleaning up previous run"
-        rm -rf ${{ github.workspace }}/*
-
-    - name: Retrieve tests
-      uses: actions/download-artifact@v4
-      with:
-        name: rpi-tests-bin
-
-    - name: Run tests
-      run: |
-        chmod +x run-all.sh
-        ./run-all.sh
-
-    # upload log file if any test failed
-    - uses: actions/upload-artifact@v4
-      if: failure()
-      with:
-        name: Red-Tests-Armbian-log
         path: quick-test.log

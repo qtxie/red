@@ -12,7 +12,7 @@ Red/System [
 
 clipboard: context [
 #switch OS [
-	Windows [
+	Windows [ 
 
 		tagMSG: alias struct! [							;-- used to work around #4284
 			hWnd	[handle!]

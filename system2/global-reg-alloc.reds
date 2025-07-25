@@ -431,7 +431,7 @@ global-reg-alloc: context [
 			vregs			[vector!]
 			p pp p1 p2		[ptr-ptr!]
 			pint pa pc		[int-ptr!]
-			node			[reg-node!]
+			node node2		[reg-node!]
 			vreg			[vreg!]
 			i n n-regs hint	[integer!]
 			idx				[integer!]
@@ -532,8 +532,8 @@ global-reg-alloc: context [
 					pa/n: 1
 				][
 					p1: pp + n
-					node: as reg-node! p1/value
-					unless node/removed? [
+					node2: as reg-node! p1/value
+					unless node2/removed? [
 						n: n + 1
 						n: pc/n + 1
 						pa/n: 1
@@ -566,7 +566,7 @@ global-reg-alloc: context [
 			if pc/idx > 0 [continue]
 			unless node/spill? [fail "no regs available"]
 
-			vreg/spillable?: false
+			vreg/fixed?: true
 			alloc-slot a/cg/frame vreg
 			a/spill?: true
 		]
@@ -741,9 +741,10 @@ global-reg-alloc: context [
 			node: as reg-node! pp/value
 			pp: pv + n
 			vreg: as vreg! pp/value
+
 			if all [
 				not node/removed?
-				vreg/spillable?
+				not vreg/fixed?
 			][
 				cost: as float32! node/spill-cost
 				f: as float32! node/n-interfere
@@ -856,19 +857,21 @@ global-reg-alloc: context [
 			p: p - 1
 			info: as block-info! p/value
 			succs: block-successors info/block
-			pp: ARRAY_DATA(succs)
-			loop succs/length [
-				e: as cf-edge! pp/value
-				blk: e/dst
-				i: blk/info/rpo-num
-				j: vars-cnt
-				while [j < len][
-					if bit-table/pick liveness i j [
-						bit-table/set liveness info/rpo-num j
+			if succs <> null [
+				pp: ARRAY_DATA(succs)
+				loop succs/length [
+					e: as cf-edge! pp/value
+					blk: e/dst
+					i: blk/info/rpo-num
+					j: vars-cnt
+					while [j < len][
+						if bit-table/pick liveness i j [
+							bit-table/set liveness info/rpo-num j
+						]
+						j: j + 1
 					]
-					j: j + 1
+					pp: pp + 1
 				]
-				pp: pp + 1
 			]
 			if info/loop-info <> null [
 				end: info/loop-info/end
@@ -989,7 +992,7 @@ global-reg-alloc: context [
 	][
 		node: as reg-node! ptr-array/pick a/graph/nodes vreg/idx
 		new-v: dup-vreg a/cg vreg
-		new-v/spillable?: false
+		new-v/fixed?: true
 		new-v/reload-from: vreg
 		if constraint <= a/reg-set/n-regs [new-v/hint: constraint]
 		node/new-vreg: new-v
@@ -1003,7 +1006,7 @@ global-reg-alloc: context [
 			p	[int-ptr!]
 			node [reg-node!]
 	][
-		n: vector/pick-last-int a/simplify-list
+		n: vector/remove-last-int a/simplify-list
 		node: as reg-node! ptr-array/pick a/graph/nodes n
 		node/removed?: yes
 		vector/append-int a/select-stack n
@@ -1464,7 +1467,9 @@ global-reg-alloc: context [
 			node: as reg-node! ptr-array/pick nodes vreg/idx
 			cset: int-array/copy as int-array! ptr-array/pick rset/regs constraint
 			qsort as byte-ptr! cset + 1 cset/length 4 :compare-cb
-			regs: as int-array! ptr-array/pick rset/regs vreg/reg-class
+
+			p: a/reg-set/regs-cls + vreg/reg-class
+			regs: as int-array! ptr-array/pick rset/regs p/value
 			p: as int-ptr! regs + 1
 			pp: as int-ptr! cset + 1
 			i: 1 j: 1
@@ -1650,11 +1655,13 @@ global-reg-alloc: context [
 		bit-table/clear-row liveness liveout-row
 
 		succs: block-successors blk
-		p: ARRAY_DATA(succs)
-		loop succs/length [
-			e: as cf-edge! p/value
-			bit-table/or-rows liveness liveout-row e/dst/info/rpo-num
-			p: p + 1
+		if succs <> null [
+			p: ARRAY_DATA(succs)
+			loop succs/length [
+				e: as cf-edge! p/value
+				bit-table/or-rows liveness liveout-row e/dst/info/rpo-num
+				p: p + 1
+			]
 		]
 		bit-table/and-rows liveness liveout-row a/mask-row
 	]
@@ -2456,6 +2463,24 @@ global-reg-alloc: context [
 		]
 	]
 
+	get-pmove-reg: func [
+		s		[reg-set!]
+		cls		[reg-class!]
+		idx		[integer!]
+		return: [integer!]
+		/local
+			p	[int-ptr!]
+			rset [int-array!]
+	][
+		if zero? idx [
+			p: s/scratch + cls
+			return p/value
+		]
+		p: s/regs-cls + cls
+		rset: as int-array! ptr-array/pick s/regs p/value
+		int-array/pick rset rset/length - idx - 1
+	]
+
 	update-reg-state: func [
 		a [allocator!] s [reg-state!] vreg [vreg!]
 		/local
@@ -2650,6 +2675,7 @@ global-reg-alloc: context [
 			lvps		[vector!]
 			liveness	[bit-table!]
 			p pp p2		[ptr-ptr!]
+			lp-info		[lp-info!]
 			blocks		[vector!]
 			loops		[vector!]
 			instrs		[vector!]
@@ -2694,12 +2720,11 @@ global-reg-alloc: context [
 		bit-table/clear-row liveness live-row
 
 		blk-len: blocks/length
-		p: VECTOR_DATA(lvps)
+		lp-info: as lp-info! lvps/data
 		loop VECTOR_SIZE?(lvps) [
-			p: p + 2
-			lp: as livepoint! p/value
+			lp: lp-info/livepoint
 			bit-table/or-rows liveness live-row blk-len + lp/index
-			p: p + 1
+			lp-info: lp-info + 1
 		]
 
 		n-vregs: a/vregs/length
@@ -2798,6 +2823,7 @@ global-reg-alloc: context [
 			blk: info/block
 			cur-row: reload-start + info/rpo-num
 			succs: block-successors blk
+			if null? succs [succs: empty-array]
 			kill-row: kills-succ blk succs spiller
 			child: info/dom-child
 			if child <> null [
@@ -3020,6 +3046,7 @@ global-reg-alloc: context [
 			p		 [ptr-ptr!]
 			liveness [bit-table!]
 			lps		 [vector!]
+			lp-info  [lp-info!]
 			lp		 [livepoint!]
 			e		 [cf-edge!]
 			blk		 [basic-block!]
@@ -3033,16 +3060,13 @@ global-reg-alloc: context [
 		kill-row: p-start + block/info/rpo-num
 		bit-table/clear-row liveness kill-row
 		lps: spiller/livepoints
-		p: VECTOR_DATA(lps)
+		lp-info: as lp-info! lps/data
 		loop VECTOR_SIZE?(lps) [
-			either block = as basic-block! p/value [
-				p: p + 2
-				lp: as livepoint! p/value
+			if block = lp-info/block [
+				lp: lp-info/livepoint
 				bit-table/or-rows liveness kill-row n-blks + lp/index
-				p: p + 1
-			][
-				p: p + 3
 			]
+			lp-info: lp-info + 1
 		]
 		p: ARRAY_DATA(succs)
 		loop succs/length [

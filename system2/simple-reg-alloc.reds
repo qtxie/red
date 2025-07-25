@@ -161,20 +161,6 @@ free-reg: func [
 	if clear? [v/reg: 0]
 ]
 
-get-pmove-reg: func [
-	s		[reg-set!]
-	cls		[reg-class!]
-	idx		[integer!]
-	return: [integer!]
-	/local
-		p	[int-ptr!]
-		rset [int-array!]
-][
-	p: s/regs-cls + cls
-	rset: as int-array! ptr-array/pick s/regs p/value
-	int-array/pick rset idx
-]
-
 ;-- simple reg allocator
 ;-- spills everything to the stack between basic blocks
 simple-reg-alloc: context [
@@ -793,5 +779,19 @@ simple-reg-alloc: context [
 			l: l/tail
 		]
 		v/pmove: 0
+	]
+
+	get-pmove-reg: func [
+		s		[reg-set!]
+		cls		[reg-class!]
+		idx		[integer!]
+		return: [integer!]
+		/local
+			p	[int-ptr!]
+			rset [int-array!]
+	][
+		p: s/regs-cls + cls
+		rset: as int-array! ptr-array/pick s/regs p/value
+		int-array/pick rset idx
 	]
 ]

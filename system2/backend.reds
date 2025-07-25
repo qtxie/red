@@ -133,7 +133,7 @@ vreg!: alias struct! [			;-- virtual register
 	end			[integer!]
 	live?		[logic!]
 	live-pos	[integer!]		;-- last live position
-	spillable?	[logic!]
+	fixed?		[logic!]
 	reload-from	[vreg!]
 	spill		[integer!]
 	hint		[integer!]
@@ -202,10 +202,16 @@ codegen!: alias struct! [
 	ssa-ctx				[ssa-ctx!]
 	liveness			[bit-table!]
 	nlivepoints			[integer!]
-	livepoints			[vector!]		;-- vector<(basic-block!, instr!, livepoint!)>
+	livepoints			[vector!]		;-- vector<lp-info!>
 	compute-liveness?	[logic!]
 	fixed-stack?		[logic!]
 	m					[instr-matcher!]
+]
+
+lp-info!: alias struct! [
+	block		[basic-block!]
+	instr		[mach-instr!]
+	livepoint	[livepoint!]
 ]
 
 move-arg!: alias struct! [
@@ -351,6 +357,9 @@ backend: context [
 	#include %x86/codegen.reds
 	#include %simple-reg-alloc.reds
 	#include %global-reg-alloc.reds
+
+	fn-reg-alloc!: alias function! [cg [codegen!]]
+	reg-alloc: as fn-reg-alloc! 0
 
 	remove-instr: func [		;-- remove mach-instr! x
 		x		[mach-instr!]
@@ -565,10 +574,18 @@ backend: context [
 	]
 
 	init: func [
+		job		[red-object!]
 		/local
 			p	[ptr-ptr!]
 			i	[integer!]
+			dev	[red-logic!]
 	][
+		dev: as red-logic! object/rs-select job as cell! word/load "dev-mode?"
+		either all [TYPE_OF(dev) = TYPE_LOGIC not dev/value][
+			backend/reg-alloc: :global-reg-alloc/alloc
+		][
+			backend/reg-alloc: :simple-reg-alloc/alloc
+		]
 		int-imm-caches: ptr-array/make 10
 		p: ARRAY_DATA(int-imm-caches)
 		i: -1
@@ -1100,6 +1117,7 @@ backend: context [
 			idx [integer!]
 			lv	[bit-table!]
 			v	[vector!]
+			info [lp-info!]
 	][
 		row: either cg/cur-blk <> null [cg/cur-blk/mark][0]
 		p: as ptr-ptr! i + 1
@@ -1126,10 +1144,10 @@ backend: context [
 						idx: cg/blocks/length + lp/index
 						bit-table/grow-row lv idx + 1
 						bit-table/or-rows lv idx row
-						v: cg/livepoints
-						vector/append-ptr v as byte-ptr! cg/cur-blk
-						vector/append-ptr v as byte-ptr! i
-						vector/append-ptr v as byte-ptr! o
+						info: as lp-info! vector/new-item cg/livepoints
+						info/block: cg/cur-blk
+						info/instr: i
+						info/livepoint: lp
 					]
 				]
 				default [0]
@@ -1159,7 +1177,7 @@ backend: context [
 		cg/instrs: ptr-vector/make rpo/blocks/length
 		cg/liveness: bit-table/make rpo/blocks/length 32
 		cg/reg-set: frame/cc/reg-set
-		cg/livepoints: vector/make 3 * size? int-ptr! 10
+		cg/livepoints: vector/make size? lp-info! 10
 		cg/compute-liveness?: yes
 		cg/m: matcher/make
 		cg/mark: fn/mark
@@ -1543,10 +1561,8 @@ backend: context [
 		info	[block-info!]
 		/local
 			end	[integer!]
-			p	[ptr-ptr!]
+			p	[lp-info!]
 			i	[integer!]
-			blk [basic-block!]
-			lv	[livepoint!]
 			tbl [bit-table!]
 			v	[vector!]
 			nblk [integer!]
@@ -1559,15 +1575,11 @@ backend: context [
 		end: info/loop-info/end
 		tbl: cg/liveness
 		v: cg/livepoints
-		p: as ptr-ptr! vector/tail v
+		p: as lp-info! vector/tail v
 		loop v/length [
 			p: p - 1
-			lv: as livepoint! p/value
-			p: p - 2
-			blk: as basic-block! p/value
-
-			if blk/mark >= end [break]
-			bit-table/or-rows tbl nblk + lv/index cur-mark
+			if p/block/mark >= end [break]
+			bit-table/or-rows tbl nblk + p/livepoint/index cur-mark
 		]
 
 		;-- propagate the liveness to all blocks in this loop
@@ -1664,7 +1676,7 @@ backend: context [
 		if verbose >= 3 [print-fn cg/first-i]
 
 		dprint "=> Do register allocation"
-		simple-reg-alloc/alloc cg
+		reg-alloc cg
 		if verbose >= 3 [print-fn cg/first-i]
 
 		compute-frame-size frm

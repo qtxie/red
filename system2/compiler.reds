@@ -507,7 +507,6 @@ compiler: context [
 	#include %ir/lowering.reds
 	#include %backend.reds
 
-	fn-alloc-regs!: alias function! [codegen [codegen!]]
 	fn-make-frame!: alias function! [ir [ir-fn!] return: [frame!]]
 	fn-make-cc!: alias function! [ft [fn-type!] op [instr-op!] return: [call-conv!]]
 	fn-generate!: alias function! [cg [codegen!] blk [basic-block!] i [instr!]]
@@ -532,7 +531,6 @@ compiler: context [
 		big-endian?: no
 
 		;-- backend specific functions
-		alloc-regs: as fn-alloc-regs! 0
 		make-frame: as fn-make-frame! 0
 		make-cc:	as fn-make-cc! 0
 		gen-op:		as fn-generate! 0
@@ -1046,7 +1044,7 @@ compiler: context [
 					x86-stdcall/init
 					x86-cdecl/init
 					x86-internal-cc/init
-					
+
 					target/make-cc: :x86-cc/make
 					target/make-frame: :x86/make-frame
 					target/gen-op: as fn-generate! :x86/gen-op
@@ -1109,7 +1107,7 @@ compiler: context [
 		type-checker/init
 		rst-printer/init
 		ir-graph/init
-		backend/init
+		backend/init job
 	]
 
 	clean: does [

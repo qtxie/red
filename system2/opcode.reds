@@ -16,14 +16,14 @@ Red/System [
 	INS_GOTO            ;-- 7
 	INS_RETURN          ;-- 8
 	INS_THROW           ;-- 9
-                        
+
 	OP_BOOL_EQ          ;-- 10
 	OP_BOOL_NE          ;-- 11
 	OP_BOOL_AND         ;-- 12
 	OP_BOOL_OR          ;-- 13
 	OP_BOOL_XOR         ;-- 14
 	OP_BOOL_NOT         ;-- 15
-                            
+
 	OP_INT_ADD          ;-- 16
 	OP_INT_SUB          ;-- 17
 	OP_INT_MUL          ;-- 18
@@ -40,7 +40,7 @@ Red/System [
 	OP_INT_NE           ;-- 29
 	OP_INT_LT           ;-- 30
 	OP_INT_LTEQ         ;-- 31
-                            
+
 	OP_FLT_ADD          ;-- 32
 	OP_FLT_SUB          ;-- 33
 	OP_FLT_MUL          ;-- 34
@@ -57,12 +57,12 @@ Red/System [
 	OP_FLT_NE           ;-- 45
 	OP_FLT_LT           ;-- 46
 	OP_FLT_LTEQ         ;-- 47
-                            
+
 	OP_INT_CAST         ;-- 48
 	OP_FLOAT_CAST       ;-- 49
 	OP_INT_TO_F         ;-- 50
 	OP_FLT_TO_I			;-- 51
-                            
+
 	OP_PTR_ADD			;-- 52
 	OP_PTR_SUB			;-- 53
 	OP_PTR_EQ			;-- 54
@@ -74,23 +74,23 @@ Red/System [
 	OP_PTR_STORE		;-- 60
 	OP_PTR_AT			;-- 61
 	OP_GET_PTR			;-- 62
-	                        
+
 	OP_DEFAULT_VALUE	;-- 63
-	                        
+
 	OP_CALL_FUNC		;-- 64
-                            
+
 	OP_SET_FIELD		;-- 65
 	OP_GET_FIELD		;-- 66
 	OP_GET_GLOBAL		;-- 67
 	OP_SET_GLOBAL		;-- 68
-	OP_SET_LOCAL		;-- 69 
+	OP_SET_LOCAL		;-- 69
 
 	OP_CPU_IP			;-- 70 get instruction pointer
 	OP_CPU_SP			;-- 71 get stack pointer
-                            
+
 	OP_FLOAT_PROMOTE	;-- 72
 	OP_BITS_VIEW		;-- 73
-                            
+
 	OP_CATCH_BEG		;-- 74
 	OP_CATCH_END		;-- 75
 	OP_THROW			;-- 76

@@ -209,7 +209,7 @@ simple-reg-alloc: context [
 		rstate/reloads: reloads
 		init-reg-state rstate cg
 
-		move-dsts: ptr-vector/make 4
+		move-dsts: vector/make size? pmove-dest! 4
 		rstate/move-dsts: move-dsts
 
 		cur: cg/last-i
@@ -228,7 +228,7 @@ simple-reg-alloc: context [
 				n: 0
 				while [n < len][
 					emit-pmoves rstate n next
-					n: n + 2
+					n: n + 1
 				]
 				cur: prev
 				continue
@@ -739,11 +739,13 @@ simple-reg-alloc: context [
 			i	[integer!]
 			r	[integer!]
 			cg	[codegen!]
+			m	[pmove-dest!]
 			rset  [reg-set!]
 			frame [frame!]
 	][
-		v: as vreg! vector/pick-ptr s/move-dsts idx
-		dst: as list! vector/pick-ptr s/move-dsts idx + 1
+		m: as pmove-dest! vector/pick s/move-dsts idx
+		v: m/src
+		dst: m/dests
 		if v/pmove <= 0 [exit]		;-- already emitted or on stack
 
 		cg: s/cg

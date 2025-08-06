@@ -58,7 +58,7 @@ rpo: context [
 	][
 		b: as block-info! malloc size? block-info!
 		b/block: bb
-		b/rpo-num: num
+		b/rpo-idx: num
 		b/start: -1
 		b/end: -1
 		b/label: make-label bb
@@ -398,7 +398,7 @@ compute-dominators: func [
 			e: as cf-edge! pp/value
 			pb2: as basic-block! e/src/next
 			pi2: pb2/info
-			if pi2/rpo-num >= bi/rpo-num [pp: pp + 1 continue]
+			if pi2/rpo-idx >= bi/rpo-idx [continue]
 			pi: common-dominator pi pi2
 		]
 		bi/dom-parent: pi

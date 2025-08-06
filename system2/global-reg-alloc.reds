@@ -15,6 +15,7 @@ reg-node!: alias struct! [
 	id			[integer!]
 	block		[basic-block!]
 	interfere	[vector!]			;-- vector<int!> sorted
+	interfere2	[vector!]
 	n-interfere [integer!]
 	moves		[vector!]			;-- vector<int!>
 	n-moves		[integer!]
@@ -282,6 +283,7 @@ global-reg-alloc: context [
 	spiller!: alias struct! [
 		cg				[codegen!]
 		blocks			[vector!]
+		livepoints		[vector!]
 		liveness		[bit-table!]
 		pass-start		[integer!]
 		reload-start	[integer!]
@@ -289,7 +291,6 @@ global-reg-alloc: context [
 		tmp-row			[integer!]
 		cur-row			[integer!]
 		save-row		[integer!]
-		livepoints		[vector!]
 	]
 
 	fn-process!: alias function! [a [allocator!] blk [basic-block!] cur-i [mach-instr!]]
@@ -350,12 +351,12 @@ global-reg-alloc: context [
 		a/reg-set: rset
 		p: rset/regs-cls + class_i32
 		arr: as int-array! ptr-array/pick rset/regs p/value
-		a/n-colors: arr/length - 1		;-- minus one temp reg
+		a/n-colors: arr/length - 2		;-- minus 2 temp regs
 		lv: cg/liveness
 		a/liveness: lv
 		a/liveout-row: lv/rows
 		a/mask-row: lv/rows + 1
-		bit-table/grow-row lv a/mask-row
+		bit-table/grow-row lv a/mask-row + 1
 		bit-table/set-row lv a/mask-row
 
 		blks: cg/blocks
@@ -378,7 +379,7 @@ global-reg-alloc: context [
 
 		init-move-set as move-set! :a/moves-next rset
 		init-move-set as move-set! :a/moves-prev rset
-		a/pmove-dests: ptr-vector/make 10
+		a/pmove-dests: vector/make size? pmove-dest! 10
 		a/reg-index: rs-array/make size? vreg-reg! rset/n-regs + 1
 		process-instrs-backward a blks as int-ptr! :alloc-after-coloring
 	]
@@ -459,8 +460,9 @@ global-reg-alloc: context [
 		nodes: a/graph/nodes
 		p: VECTOR_DATA(vregs)
 		pp: ARRAY_DATA(nodes)
-		i: vregs/length - 1
+		i: vregs/length
 		while [i > 0][
+			i: i - 1
 			p1: p + i
 			p2: pp + i
 			node: as reg-node! p2/value
@@ -468,7 +470,6 @@ global-reg-alloc: context [
 				null? p1/value
 				all [not node/use? not node/color?]
 			][
-				i: i - 1
 				continue
 			] 
 			case [
@@ -476,7 +477,6 @@ global-reg-alloc: context [
 				node/n-moves > 0 [probe "wrong moves count" halt]
 				true [vector/append-int simplify-list i]
 			]
-			i: i - 1
 		]
 
 		moves-list: a/moves-list
@@ -519,11 +519,12 @@ global-reg-alloc: context [
 			node: as reg-node! p1/value
 			node/removed?: false
 			pa: as int-ptr! ARRAY_DATA(allocated)
-			i: 0
-			while [i < n-regs][
-				pa/i: 0
-				i: i + 1
+			loop n-regs [
+				pa/value: 0
+				pa: pa + 1
 			]
+
+			pa: as int-ptr! ARRAY_DATA(allocated)
 			pint: as int-ptr! node/interfere/data
 			loop node/interfere/length [
 				n: pint/value
@@ -541,7 +542,6 @@ global-reg-alloc: context [
 				]
 				pint: pint + 1
 			]
-
 			idx: idx + 1
 			hint: vreg/hint
 			pint: pa + hint
@@ -555,9 +555,10 @@ global-reg-alloc: context [
 			pint: a/reg-set/regs-cls + vreg/reg-class
 			regs: as int-array! ptr-array/pick a/reg-set/regs pint/value
 			pint: as int-ptr! regs + 1
-			loop regs/length - 1 [
-				n: pint/value + 1
-				if zero? pa/n [
+			loop regs/length - 2 [
+				n: pint/value
+				i: n + 1
+				if zero? pa/i [
 					pc/idx: n
 					break
 				]
@@ -741,7 +742,6 @@ global-reg-alloc: context [
 			node: as reg-node! pp/value
 			pp: pv + n
 			vreg: as vreg! pp/value
-
 			if all [
 				not node/removed?
 				not vreg/fixed?
@@ -862,11 +862,11 @@ global-reg-alloc: context [
 				loop succs/length [
 					e: as cf-edge! pp/value
 					blk: e/dst
-					i: blk/info/rpo-num
+					i: blk/info/rpo-idx
 					j: vars-cnt
 					while [j < len][
 						if bit-table/pick liveness i j [
-							bit-table/set liveness info/rpo-num j
+							bit-table/set liveness info/rpo-idx j
 						]
 						j: j + 1
 					]
@@ -875,7 +875,7 @@ global-reg-alloc: context [
 			]
 			if info/loop-info <> null [
 				end: info/loop-info/end
-				i: info/rpo-num
+				i: info/rpo-idx
 				j: i + 1
 				while [j < end][
 					bit-table/or-rows liveness j i
@@ -1156,10 +1156,8 @@ global-reg-alloc: context [
 		while [n > 0][
 			pp: p + n
 			node: as reg-node! pp/value
-			either node/id <> n [
+			either node/id = n [break][
 				n: node/id
-			][
-				break
 			]
 		]
 		n
@@ -1227,8 +1225,9 @@ global-reg-alloc: context [
 		a [allocator!] blk [basic-block!] cur-i [mach-instr!]
 		/local
 			opcode	[integer!]
+			rset	[reg-set!]
 			p pp pn	[ptr-ptr!]
-			end		[ptr-ptr!]
+			p2		[ptr-ptr!]
 			pm		[int-ptr!]
 			o		[operand!]
 			d		[def!]
@@ -1244,6 +1243,7 @@ global-reg-alloc: context [
 			liveness [bit-table!]
 			liveout-row dst src weight [integer!]
 	][
+		rset: a/reg-set
 		liveness: a/liveness
 		liveout-row: a/liveout-row
 		opcode: MACH_OPCODE(cur-i)
@@ -1259,12 +1259,12 @@ global-reg-alloc: context [
 				i: i + 1
 				p: p + 1
 			]
-			a/cur-weight: int-array/pick a/block-weight blk/info/rpo-num
+			a/cur-weight: int-array/pick a/block-weight blk/info/rpo-idx
 			exit
 		]
 
 		if opcode = I_BLK_BEG [
-			bit-table/copy-row liveness blk/info/rpo-num liveout-row
+			bit-table/copy-row liveness blk/info/rpo-idx liveout-row
 		]
 		;if opcode = I_PMOVE [
 		;	n: cur-i/num / 2
@@ -1304,7 +1304,7 @@ global-reg-alloc: context [
 					pn: pp + v/idx
 					node: as reg-node! pn/value
 					if all [
-						on-stack? a/reg-set d/constraint
+						on-stack? rset d/constraint
 						not node/use?
 					][
 						p: p + 1
@@ -1346,21 +1346,22 @@ global-reg-alloc: context [
 
 		;; 3rd pass: free defs, mark live use!
 		p: INS_OPERANDS(cur-i)
-		end: p + cur-i/num
+		p2: either cur-i/num > 1 [p + 1][p]
+		p: p - 1
 		loop cur-i/num [
+			p: p + 1
 			o: as operand! p/value
 			switch o/header and FFh [
 				OD_DEF [
 					d: as def! o
 					v: d/vreg
-					if null? v [p: p + 1 continue]
+					if null? v [continue]
 					pn: pp + v/idx
 					node: as reg-node! pn/value
 					if all [
-						on-stack? a/reg-set d/constraint
+						on-stack? rset d/constraint
 						not node/use?
 					][
-						p: p + 1
 						continue
 					]
 					mark-dead-def a v
@@ -1368,15 +1369,11 @@ global-reg-alloc: context [
 				]
 				OD_KILL [
 					k: as kill! o
-					pn: p + 1
-					o: as operand! pn/value
-					either all [
-						pn < end
-						o/header and FFh = OD_LIVEPOINT
-					][
+					o: as operand! p2/value
+					either o/header and FFh = OD_LIVEPOINT [	;-- if it's a call
 						bit-table/clear-row liveness liveout-row
 					][
-						regs: as int-array! ptr-array/pick a/reg-set/regs k/constraint
+						regs: as int-array! ptr-array/pick rset/regs k/constraint
 						pint: as int-ptr! regs + 1
 						loop regs/length [
 							add-interference-edges-reg a pint/value null
@@ -1394,16 +1391,14 @@ global-reg-alloc: context [
 					v: u/vreg
 					if any [
 						null? v
-						on-stack? a/reg-set u/constraint
+						on-stack? rset u/constraint
 					][
-						p: p + 1
 						continue
 					]
 					mark-live-use a v
 				]
 				default [0]		;-- do nothing
 			]
-			p: p + 1
 		]
 
 		;; free uses
@@ -1468,13 +1463,13 @@ global-reg-alloc: context [
 			cset: int-array/copy as int-array! ptr-array/pick rset/regs constraint
 			qsort as byte-ptr! cset + 1 cset/length 4 :compare-cb
 
-			p: a/reg-set/regs-cls + vreg/reg-class
+			p: rset/regs-cls + vreg/reg-class
 			regs: as int-array! ptr-array/pick rset/regs p/value
 			p: as int-ptr! regs + 1
 			pp: as int-ptr! cset + 1
 			i: 1 j: 1
 			n: cset/length
-			loop regs/length - 1 [
+			loop regs/length - 2 [
 				reg: p/i
 				either all [
 					j <= n
@@ -1510,7 +1505,7 @@ global-reg-alloc: context [
 			p		[ptr-ptr!]
 			n		[reg-node!]
 	][
-		bit-table/set a/liveness a/liveout-row vreg/idx
+		bit-table/clear a/liveness a/liveout-row vreg/idx
 		p: ARRAY_DATA(a/graph/nodes) + vreg/idx
 		n: as reg-node! p/value
 		n/spill-cost: n/spill-cost + a/cur-weight
@@ -1537,15 +1532,16 @@ global-reg-alloc: context [
 		filter		[vreg!]
 		/local
 			len		[integer!]
-			i		[integer!]
+			i idx	[integer!]
 			p pn	[ptr-ptr!]
 	][
 		len: a/vregs/length
+		idx: either null? filter [-1][filter/idx]
 		pn: ARRAY_DATA(a/graph/nodes)
 		i: 0
 		while [i < len][
 			if all [
-				any [null? filter i <> filter/idx]
+				i <> idx
 				bit-table/pick a/liveness a/liveout-row i
 			][
 				p: pn + i
@@ -1580,7 +1576,13 @@ global-reg-alloc: context [
 		old: node/interfere
 		p-old: as int-ptr! old/data
 
-		interfere: vector/make size? integer! 1
+		interfere: node/interfere2
+		either null? interfere [
+			interfere: vector/make size? integer! old/length
+		][
+			vector/clear interfere
+		]
+		node/interfere2: old
 		node/interfere: interfere
 		i: 0
 		ii: i + 1
@@ -1659,7 +1661,7 @@ global-reg-alloc: context [
 			p: ARRAY_DATA(succs)
 			loop succs/length [
 				e: as cf-edge! p/value
-				bit-table/or-rows liveness liveout-row e/dst/info/rpo-num
+				bit-table/or-rows liveness liveout-row e/dst/info/rpo-idx
 				p: p + 1
 			]
 		]
@@ -1757,6 +1759,7 @@ global-reg-alloc: context [
 					update-reg-state a reg-state as vreg! p/value
 				]
 				p: p + 1
+				i: i + 1
 			]
 			exit
 		]
@@ -1811,21 +1814,22 @@ global-reg-alloc: context [
 
 		pp: ARRAY_DATA(a/graph/nodes)
 		p: INS_OPERANDS(cur-i)
+		p: p - 1
 		loop cur-i/num [
+			p: p + 1
 			o: as operand! p/value
 			switch o/header and FFh [
 				OD_DEF [
 					d: as def! o
 					v: d/vreg
 					c: d/constraint
-					if null? v [p: p + 1 continue]
+					if null? v [continue]
 					pn: pp + v/idx
 					node: as reg-node! pn/value
 					if all [
 						on-caller-stack? c
 						not node/use?
 					][
-						p: p + 1
 						continue
 					]
 					loc: alloc-def-reg a v c opcode <> I_RESTORE
@@ -1864,7 +1868,6 @@ global-reg-alloc: context [
 					v: u/vreg
 					c: u/constraint
 					if any [null? v on-stack? a/reg-set c][
-						p: p + 1
 						continue
 					]
 					loc: alloc-use-reg a v c
@@ -1884,17 +1887,18 @@ global-reg-alloc: context [
 				]
 				default [0]		;-- do nothing
 			]
-			p: p + 1
 		]
 
 		p: INS_OPERANDS(cur-i)
+		p: p - 1
 		loop cur-i/num [
+			p: p + 1
 			o: as operand! p/value
 			switch o/header and FFh [
 				OD_OVERWRITE [
 					w: as overwrite! o
 					v: w/src
-					if v/reload-from <> null [p: p + 1 continue]
+					if v/reload-from <> null [continue]
 					update-reg-state a reg-state v
 				]
 				OD_USE [
@@ -1906,14 +1910,12 @@ global-reg-alloc: context [
 						on-stack? a/reg-set c
 						v/reload-from <> null
 					][
-						p: p + 1
 						continue
 					]
 					update-reg-state a reg-state v
 				]
 				default [0]
 			]
-			p: p + 1
 		]
 		emit-moves a/cg moves-next next-i
 		emit-moves a/cg moves-prev cur-i
@@ -2262,6 +2264,7 @@ global-reg-alloc: context [
 			o	[operand!]
 			u	[use!]
 			v	[vreg!]
+			rset [reg-set!]
 			r rr [vreg-reg!]
 			reg i len [integer!]
 	][
@@ -2275,6 +2278,7 @@ global-reg-alloc: context [
 			r: r + 1
 		]
 
+		rset: a/reg-set
 		p: INS_OPERANDS(cur-i)
 		loop cur-i/num [
 			o: as operand! p/value
@@ -2284,8 +2288,8 @@ global-reg-alloc: context [
 					v: u/vreg
 					reg: int-array/pick a/coloring v/idx
 					if all [
-						not on-stack? a/reg-set u/constraint
-						is-reg? a/reg-set reg
+						not on-stack? rset u/constraint
+						is-reg? rset reg
 					][
 						r: rr + reg
 						r/reg: v/pmove - 1
@@ -2300,7 +2304,7 @@ global-reg-alloc: context [
 		i: 0
 		while [i < len][
 			emit-pmoves a i next-i
-			i: i + 2
+			i: i + 1
 		]
 	]
 
@@ -2320,13 +2324,15 @@ global-reg-alloc: context [
 			cg	[codegen!]
 			rr	[vreg-reg!]
 			r	[vreg-reg!]
+			m	[pmove-dest!]
 			arg [move-arg! value]
 			rset  [reg-set!]
 			frame [frame!]
 			i i2 tmp loc [integer!]
 	][
-		v: as vreg! vector/pick-ptr a/pmove-dests idx
-		dst: as list! vector/pick-ptr a/pmove-dests idx + 1
+		m: as pmove-dest! vector/pick a/pmove-dests idx
+		v: m/src
+		dst: m/dests
 		if v/pmove <= 0 [exit]		;-- already emitted or on stack
 
 		cg: a/cg
@@ -2472,10 +2478,6 @@ global-reg-alloc: context [
 			p	[int-ptr!]
 			rset [int-array!]
 	][
-		if zero? idx [
-			p: s/scratch + cls
-			return p/value
-		]
 		p: s/regs-cls + cls
 		rset: as int-array! ptr-array/pick s/regs p/value
 		int-array/pick rset rset/length - idx - 1
@@ -2513,7 +2515,7 @@ global-reg-alloc: context [
 			pp/value: as int-ptr! -1	;-- pos
 			pp: pp + 1
 		]
-		s/pos: 0
+		s/cursor: 0
 	]
 
 	preprocess: func [
@@ -2539,7 +2541,7 @@ global-reg-alloc: context [
 					u: as use! o
 					v: u/vreg
 					c: u/constraint
-					if on-stack? a/reg-set c [
+					either on-stack? a/reg-set c [
 						arg/src-v: v
 						arg/src-reg: 0
 						arg/dst-reg: c
@@ -2550,6 +2552,10 @@ global-reg-alloc: context [
 						][
 							arg/dst-v: null
 							insert-move-loc a/cg :arg cur-i
+						]
+					][
+						if vreg-const?(v) [
+							bit-table/set a/liveness a/liveout-row v/idx
 						]
 					]
 				]
@@ -2571,18 +2577,18 @@ global-reg-alloc: context [
 		a		[allocator!]
 		next-i	[mach-instr!]
 		/local
-			vregs [vector!] liveness [bit-table!] out-row m-row i n [integer!]
+			vregs [vector!] liveness [bit-table!] lv-row m-row i n [integer!]
 			p [ptr-ptr!] args [move-arg! value]
 	][
 		vregs: a/vregs
 		p: VECTOR_DATA(vregs)
 		liveness: a/liveness
-		out-row: a/liveout-row
+		lv-row: a/liveout-row
 		m-row: a/mask-row
 		i: 0
 		n: vregs/length
 		while [i < n][
-			if bit-table/pick liveness out-row i [
+			if bit-table/pick liveness lv-row i [
 				args/dst-v: as vreg! p/value
 				args/src-v: args/dst-v
 				args/dst-reg: 0
@@ -2592,7 +2598,7 @@ global-reg-alloc: context [
 			p: p + 1
 			i: i + 1
 		]
-		bit-table/clear-row liveness out-row
+		bit-table/clear-row liveness lv-row
 	]
 
 	reset: func [
@@ -2645,7 +2651,7 @@ global-reg-alloc: context [
 		m/dst-reg: 0
 		m/src-reg: vreg/spill
 		insert-restore cg :m args/next-i
-		bit-table/clear cg/liveness args/block/info/rpo-num idx
+		bit-table/clear cg/liveness args/block/info/rpo-idx idx
 		unless succ-block? args/block args/succs [
 			bit-table/clear cg/liveness args/row idx
 		]
@@ -2710,6 +2716,7 @@ global-reg-alloc: context [
 		spiller/cg: cg
 		spiller/blocks: blocks
 		spiller/liveness: liveness
+		spiller/livepoints: lvps
 
 		i: liveness/rows
 		bit-table/grow-row liveness i + 3
@@ -2735,14 +2742,13 @@ global-reg-alloc: context [
 			if bit-table/pick liveness live-row i [
 				pp: p + i
 				v: as vreg! pp/value
-				if vreg-not-const?(v) [
+				either vreg-not-const?(v) [
 					alloc-slot frame v
 					n-slots: n-slots + 1
-					i: i + 1
-					continue
+				][
+					bit-table/clear liveness live-row i
 				]
 			]
-			bit-table/clear liveness live-row i
 			i: i + 1
 		]
 		bit-table/copy-row liveness save-row live-row
@@ -2769,9 +2775,10 @@ global-reg-alloc: context [
 				l: as label! p/value
 				blk: l/block
 				info: blk/info
-				vector/poke-ptr instrs info/rpo-num as int-ptr! cur-i
-				kills-pred tmp-row blk spiller
-				cur-row: pass-start + info/rpo-num
+				vector/poke-ptr instrs info/rpo-idx as int-ptr! cur-i
+				kills-from-pred tmp-row blk spiller
+				cur-row: pass-start + info/rpo-idx
+				spiller/cur-row: cur-row
 			]
 			if opcode = I_BLK_END [
 				bit-table/or-rows liveness cur-row tmp-row
@@ -2781,10 +2788,8 @@ global-reg-alloc: context [
 					loop loops/length [
 						loop-info: as loop-info! p/value
 						i: loop-info/end - 1
-						if info/rpo-num = i [
-							spiller/cur-row: cur-row
+						if info/rpo-idx = i [
 							process-loop loop-info cur-i spiller
-							cur-row: spiller/cur-row
 							break
 						]
 						p: p + 1
@@ -2821,7 +2826,7 @@ global-reg-alloc: context [
 		loop blk-len [
 			info: as block-info! p/value
 			blk: info/block
-			cur-row: reload-start + info/rpo-num
+			cur-row: reload-start + info/rpo-idx
 			succs: block-successors blk
 			if null? succs [succs: empty-array]
 			kill-row: kills-succ blk succs spiller
@@ -2833,9 +2838,9 @@ global-reg-alloc: context [
 				][
 					pp: VECTOR_DATA(instrs)
 					while [child <> null][
-						p2: pp + child/rpo-num
+						p2: pp + child/rpo-idx
 						ins: as mach-instr! p2/value
-						row: reload-start + child/rpo-num
+						row: reload-start + child/rpo-idx
 						args/cg: cg
 						args/next-i: ins/next
 						args/block: child/block
@@ -2849,7 +2854,7 @@ global-reg-alloc: context [
 					pp: ARRAY_DATA(succs)
 					loop succs/length [
 						e: as cf-edge! pp/value
-						bit-table/and-rows liveness tmp-row reload-start + e/dst/info/rpo-num
+						bit-table/and-rows liveness tmp-row reload-start + e/dst/info/rpo-idx
 						pp: pp + 1
 					]
 					bit-table/or-rows liveness cur-row tmp-row
@@ -2858,13 +2863,13 @@ global-reg-alloc: context [
 					pp: ARRAY_DATA(succs)
 					loop succs/length [
 						e: as cf-edge! pp/value
-						bit-table/or-rows liveness tmp-row reload-start + e/dst/info/rpo-num
+						bit-table/or-rows liveness tmp-row reload-start + e/dst/info/rpo-idx
 						pp: pp + 1
 					]
 
 					while [child <> null][
 						unless succ-block? child/block succs [
-							bit-table/and-rows liveness tmp-row reload-start + child/rpo-num
+							bit-table/and-rows liveness tmp-row reload-start + child/rpo-idx
 							bit-table/or-rows liveness cur-row tmp-row
 							break
 						]
@@ -2873,11 +2878,11 @@ global-reg-alloc: context [
 
 					child: info/dom-child
 					while [child <> null][
-						pp: VECTOR_DATA(instrs) + child/rpo-num
+						pp: VECTOR_DATA(instrs) + child/rpo-idx
 						ins: as mach-instr! pp/value
 						bit-table/copy-row liveness tmp-row cur-row
 						bit-table/flip-row liveness tmp-row
-						bit-table/and-rows liveness tmp-row reload-start + child/rpo-num
+						bit-table/and-rows liveness tmp-row reload-start + child/rpo-idx
 						args/cg: cg
 						args/next-i: ins/next
 						args/block: child/block
@@ -2916,7 +2921,6 @@ global-reg-alloc: context [
 	][
 		instrs: spiller/cg/instrs
 		lvn: spiller/liveness
-		cur-row: spiller/cur-row
 		p: VECTOR_DATA(instrs)
 		p: p + loop-info/start
 		cur-i: as mach-instr! p/value
@@ -2927,9 +2931,9 @@ global-reg-alloc: context [
 				l: as label! p/value
 				blk: l/block
 				info: blk/info
-				cur-row: spiller/pass-start + info/rpo-num
+				cur-row: spiller/pass-start + info/rpo-idx
 				spiller/cur-row: cur-row
-				kills-pred cur-row blk spiller
+				kills-from-pred cur-row blk spiller
 			]
 			p: INS_OPERANDS(cur-i)
 			p: p + cur-i/num - 1
@@ -2976,7 +2980,7 @@ global-reg-alloc: context [
 		liveness: spiller/liveness
 		idx: vreg/idx
 		if bit-table/pick liveness cur-row idx [
-			bit-table/set liveness spiller/reload-start + info/rpo-num idx
+			bit-table/set liveness spiller/reload-start + info/rpo-idx idx
 			bit-table/clear liveness cur-row idx
 		]
 	]
@@ -3007,13 +3011,13 @@ global-reg-alloc: context [
 			bit-table/clear liveness cur-row idx
 		][
 			if bit-table/pick liveness tmp-row idx [
-				bit-table/set liveness spiller/reload-start + info/rpo-num idx
+				bit-table/set liveness spiller/reload-start + info/rpo-idx idx
 				bit-table/clear liveness tmp-row idx
 			]
 		]
 	]
 
-	kills-pred: func [
+	kills-from-pred: func [
 		dst-row			[integer!]
 		block			[basic-block!]
 		spiller			[spiller!]
@@ -3031,7 +3035,7 @@ global-reg-alloc: context [
 		loop preds/length [
 			e: as cf-edge! p/value
 			blk: as basic-block! e/src/next
-			bit-table/or-rows liveness dst-row spiller/pass-start + blk/info/rpo-num
+			bit-table/or-rows liveness dst-row spiller/pass-start + blk/info/rpo-idx
 			p: p + 1
 		]
 		bit-table/and-rows liveness dst-row spiller/live-row
@@ -3057,7 +3061,7 @@ global-reg-alloc: context [
 		p-start: spiller/pass-start
 		liveness: spiller/liveness
 		n-blks: spiller/blocks/length
-		kill-row: p-start + block/info/rpo-num
+		kill-row: p-start + block/info/rpo-idx
 		bit-table/clear-row liveness kill-row
 		lps: spiller/livepoints
 		lp-info: as lp-info! lps/data
@@ -3072,7 +3076,7 @@ global-reg-alloc: context [
 		loop succs/length [
 			e: as cf-edge! p/value
 			blk: e/dst
-			bit-table/or-rows liveness kill-row p-start + blk/info/rpo-num
+			bit-table/or-rows liveness kill-row p-start + blk/info/rpo-idx
 			p: p + 1
 		]
 		bit-table/and-rows liveness kill-row spiller/live-row

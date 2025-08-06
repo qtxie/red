@@ -262,9 +262,11 @@ ssa-optimizer: context [
 			flags: INSTR_FLAGS(i1)
 		]
 		same-i?: true
-		p: ARRAY_DATA(i/inputs) + 1
+		p: ARRAY_DATA(i/inputs)
 		len: i/inputs/length - 1
 		loop len [
+			p: p + 1
+			if null? p [continue]
 			e: as df-edge! p/value
 			i2: e/dst
 			if i2 <> null [
@@ -273,7 +275,6 @@ ssa-optimizer: context [
 				flags: INSTR_FLAGS(i2) and flags
 			]
 			if i2 <> i1 [same-i?: false]
-			p: p + 1
 		]
 		assert n > 0
 		if same-i? [

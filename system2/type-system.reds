@@ -684,6 +684,13 @@ type-system: context [
 				return type-system/integer-type
 			]
 			RST_TYPE_NULL [t2]
+			RST_TYPE_VOID [null]
+			RST_TYPE_ARRAY [
+				switch TYPE_KIND(t2) [
+					RST_TYPE_ARRAY RST_TYPE_PTR [t1]
+					default [null]
+				]
+			]
 			default [t1]
 		]
 	]

@@ -354,6 +354,11 @@ backend: context [
 		ref		[integer!]
 	]
 
+	pmove-dest!: alias struct! [
+		src		[vreg!]
+		dests	[list!]
+	]
+
 	#include %x86/codegen.reds
 	#include %simple-reg-alloc.reds
 	#include %global-reg-alloc.reds
@@ -372,7 +377,7 @@ backend: context [
 
 	collect-pmove-dests: func [
 		i		[mach-instr!]
-		dests	[vector!]
+		dests	[vector!]		;-- vector<pmove-dest!>
 		/local
 			p	[ptr-ptr!]
 			pp	[ptr-ptr!]
@@ -381,6 +386,7 @@ backend: context [
 			l	[list!]
 			u	[use!]
 			v	[vreg!]
+			m	[pmove-dest!]
 			idx [integer!]
 	][
 		vector/clear dests
@@ -392,13 +398,13 @@ backend: context [
 			u: as use! pp/value
 			v: u/vreg
 			either v/pmove <= 0 [
-				v/pmove: dests/length / 2 + 1
-				vector/append-ptr dests as byte-ptr! v
-				vector/append-ptr dests as byte-ptr! make-list as int-ptr! d null
+				v/pmove: dests/length + 1
+				m: as pmove-dest! vector/new-item dests
+				m/src: v
+				m/dests: make-list as int-ptr! d null
 			][
-				idx: (v/pmove - 1) * 2 + 1
-				l: as list! vector/pick-ptr dests idx	;-- def list
-				vector/poke-ptr dests idx as int-ptr! make-list as int-ptr! d l
+				m: as pmove-dest! vector/pick dests v/pmove - 1
+				m/dests: make-list as int-ptr! d m/dests
 			]
 			p: p + 1
 			pp: pp + 1
@@ -521,8 +527,8 @@ backend: context [
 					pp: pp + 1
 				]
 			]
-			p: p + 1
 			i: i + 1
+			p: p + 1
 		]
 		s/caller-base: CALLER_SPILL_BASE
 		s/callee-base: CALLEE_SPILL_BASE
@@ -1119,7 +1125,7 @@ backend: context [
 			v	[vector!]
 			info [lp-info!]
 	][
-		row: either cg/cur-blk <> null [cg/cur-blk/mark][0]
+		row: either cg/cur-blk <> null [cg/cur-blk/info/rpo-idx][0]
 		p: as ptr-ptr! i + 1
 		lv: cg/liveness
 		loop i/num [
@@ -1287,7 +1293,7 @@ backend: context [
 		new/size: size
 		new/reg-class: v/reg-class
 		new/stack-idx: -2
-		vector/poke-ptr vregs idx as int-ptr! v
+		vector/poke-ptr vregs idx as int-ptr! new
 		if v/spill < 0 [
 			new/spill: -2 - idx		;-- use negative spill to mark constants
 		]
@@ -1784,9 +1790,10 @@ backend: context [
 				prin "imm#"
 				imm: as immediate! a
 				val: imm/value
-				if val <> null [
+				either val <> null [
 					t: TYPE_OF(val)
 					switch t [
+						TYPE_CHAR
 						TYPE_INTEGER
 						TYPE_FLOAT [prin-token val]
 						TYPE_ADDR [
@@ -1800,12 +1807,12 @@ backend: context [
 						]
 						default [
 							prin "type:" print t
-							prin ":"
-							if t < 100 [prin-token val]
+							;prin ":"
+							;if t < 100 [prin-token val]
 							0
 						]
 					]
-				]
+				][prin "null"]
 			]
 			OD_OVERWRITE [
 				prin "overwrite dst#"
@@ -1823,6 +1830,7 @@ backend: context [
 			]
 			OD_LIVEPOINT [prin "livepoint"]
 			OD_SCRATCH	[prin "<scratch>"]
+			default [print ["unknown operand: " a/header and FFh] halt]
 		]
 	]
 

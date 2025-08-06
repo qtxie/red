@@ -127,7 +127,7 @@ loop-info!: alias struct! [
 
 block-info!: alias struct! [
 	block		[basic-block!]
-	rpo-num		[integer!]
+	rpo-idx		[integer!]
 	start		[integer!]
 	end			[integer!]
 	label		[label!]
@@ -1803,6 +1803,7 @@ ir-graph: context [
 			RST_TYPE_LOGIC [const-false fn]
 			RST_TYPE_INT [const-int-zero fn]
 			RST_TYPE_NULL [const-null fn]
+			RST_TYPE_ARRAY [const-empty-str fn]
 			default [nop fn]
 		]
 	]
@@ -1926,6 +1927,13 @@ ir-graph: context [
 		return: [instr-const!]
 	][
 		get-cached-const 9 type-system/null-type null fn
+	]
+
+	const-empty-str: func [
+		fn		[ir-fn!]
+		return: [instr-const!]
+	][
+		get-const type-system/cstr-type null fn
 	]
 
 	get-cached-const: func [

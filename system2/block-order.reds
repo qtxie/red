@@ -440,3 +440,23 @@ common-dominator: func [
 	]
 	a
 ]
+
+dominator?: func [	;-- is a dominator b?
+	a		[block-info!]
+	b		[block-info!]
+	return: [logic!]
+][
+	while [a/dom-depth < b/dom-depth][b: b/dom-parent]
+	a = b
+]
+
+block-in-loop?: func [
+	blk-info	[block-info!]
+	loop-info	[loop-info!]
+	return:		[logic!]
+	/local
+		idx		[integer!]
+][
+	idx: blk-info/rpo-idx
+	all [idx >= loop-info/start idx < loop-info/end]
+]

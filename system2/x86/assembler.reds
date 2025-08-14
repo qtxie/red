@@ -1730,7 +1730,7 @@ assemble-op: func [
 	i		[mach-instr!]
 	/local
 		op	[integer!]
-		p	[ptr-ptr!]
+		p p2 [ptr-ptr!]
 		l	[label!]
 		lvp [livepoint!]
 		c n [integer!]
@@ -1770,14 +1770,18 @@ assemble-op: func [
 			]
 		]
 		I_CALL [
+			p2: p
 			f: as operand! p/value
 			imm: as immediate! f
 			val: as val! imm/value
 			assert val/header = TYPE_FUNCTION
 
 			fn: as fn! val/ptr
-			p: p + 1
-			lvp: as livepoint! p/value
+			until [
+				p: p + 1
+				lvp: as livepoint! p/value
+				OPERAND_TYPE(lvp) = OD_LIVEPOINT
+			]
 			either NODE_TYPE(fn) = RST_FUNC [
 				either NODE_FLAGS(fn) and RST_IMPORT_FN = 0 [
 					asm/call-rel REL_ADDR
@@ -1786,7 +1790,7 @@ assemble-op: func [
 				]
 				record-fn-call fn asm/pos - 4
 			][
-				p: p - 2 + i/num
+				p: p2 + i/num - 1	;-- last operand is the func pointer
 				f: as operand! p/value
 				loc: to-loc f
 				either target/gpr-reg? loc [
@@ -2318,6 +2322,8 @@ assemble: func [
 		loc [integer!]
 		imm [integer!]
 		l	[label!]
+		d	[def!]
+		cls [integer!]
 		p	[ptr-ptr!]
 		ins [integer!]
 		ft	[fn-type!]
@@ -2344,10 +2350,12 @@ assemble: func [
 					asm/push-r x86-regs/esi
 					asm/push-r x86-regs/edi
 				]
+				exit
 			]
 			I_BLK_BEG [
 				l: as label! p/value
 				l/pos: asm/pos
+				exit
 			]
 			I_RET [
 				ft: as fn-type! cg/fn/fn/type
@@ -2359,13 +2367,25 @@ assemble: func [
 				]
 				asm/leave
 				asm/ret
+				exit
+			]
+			I_RESTORE [
+				d: as def! p/value
+				cls: d/vreg/reg-class
+				loc: to-loc as operand! d
+				either target/xmm-reg? loc [
+					op: either cls = class_i32 [I_MOVSS][I_MOVSD]
+					ins: op or AM_XMM_OP
+				][
+					op: either any [cls = class_i32 cls = class_f32][I_MOVD][I_MOVQ]
+					ins: op or AM_REG_OP
+				]
 			]
 			default [0]
 		]
-		exit
 	]
 
-	m: i/header >> AM_SHIFT and 1Fh
+	m: ins >> AM_SHIFT and 1Fh
 	switch m [
 		_AM_NONE [assemble-op cg i]
 		_AM_REG_OP [

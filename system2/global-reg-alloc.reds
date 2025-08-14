@@ -810,13 +810,15 @@ global-reg-alloc: context [
 		/local
 			liveness	[bit-table!]
 			vars-cnt	[integer!]
-			i j len		[integer!]
+			i j len idx	[integer!]
 			mask-row	[integer!]
 			end			[integer!]
 			clr			[int-ptr!]
-			p pn pp		[ptr-ptr!]
+			p pn pp pb	[ptr-ptr!]
 			node		[reg-node!]
 			blocks		[vector!]
+			v			[vector!]
+			vreg		[vreg!]
 			blk			[basic-block!]
 			info		[block-info!]
 			succs		[ptr-array!]
@@ -834,6 +836,7 @@ global-reg-alloc: context [
 
 		clr: as int-ptr! a/coloring + 1
 		pn: ARRAY_DATA(a/graph/nodes)
+		pp: VECTOR_DATA(a/vregs)
 		i: 0		
 		while [i < vars-cnt][
 			if zero? clr/value [
@@ -841,19 +844,22 @@ global-reg-alloc: context [
 				p: pn + i
 				node: as reg-node! p/value
 				if node/common-dom <> null [
-					;insert-reload
-					0
+					p: pp + i
+					insert-reload a as vreg! p/value node
 				]
 			]
 			clr: clr + 1
 			i: i + 1
 		]
 
+		pb: ARRAY_DATA(a/blk-reloads)
 		blocks: a/cg/blocks
 		p: VECTOR_DATA(blocks)
-		i: blocks/length
-		p: p + i
-		loop i [
+		len: blocks/length
+		p: p + len
+		i: len
+		while [i > 0][
+			i: i - 1
 			p: p - 1
 			info: as block-info! p/value
 			succs: block-successors info/block
@@ -862,10 +868,10 @@ global-reg-alloc: context [
 				loop succs/length [
 					e: as cf-edge! pp/value
 					blk: e/dst
-					i: blk/info/rpo-idx
+					idx: blk/info/rpo-idx
 					j: vars-cnt
 					while [j < len][
-						if bit-table/pick liveness i j [
+						if bit-table/pick liveness idx j [
 							bit-table/set liveness info/rpo-idx j
 						]
 						j: j + 1
@@ -873,12 +879,22 @@ global-reg-alloc: context [
 					pp: pp + 1
 				]
 			]
+
+			pp: pb + i
+			v: as vector! pp/value
+			pp: VECTOR_DATA(v) 
+			loop v/length [
+				vreg: as vreg! pp/value
+				bit-table/clear liveness i vreg/idx
+				pp: pp + 1
+			]
+
 			if info/loop-info <> null [
 				end: info/loop-info/end
-				i: info/rpo-idx
-				j: i + 1
+				idx: info/rpo-idx
+				j: idx + 1
 				while [j < end][
-					bit-table/or-rows liveness j i
+					bit-table/or-rows liveness j idx
 					j: j + 1
 				]
 			]
@@ -927,7 +943,7 @@ global-reg-alloc: context [
 								u/constraint: a/reg-set/spill-start
 								continue
 							]
-							v: process-spill a v c
+							v: process-spill a v c blk
 							u/vreg: v
 						]
 					]
@@ -942,7 +958,7 @@ global-reg-alloc: context [
 						not on-stack? a/reg-set c
 						zero? pint/value
 					][
-						v2: process-spill a v2 c
+						v2: process-spill a v2 c blk
 						w/src: v2
 					]
 					if v <> null [
@@ -962,7 +978,7 @@ global-reg-alloc: context [
 						if zero? pint/value [
 							node: as reg-node! ptr-array/pick nodes v/idx
 							if node/common-dom <> null [
-								;insert-reload
+								insert-reload a v node
 								node/common-dom: null
 							]
 							node/block: blk
@@ -981,22 +997,160 @@ global-reg-alloc: context [
 		]
 	]
 
+	find-common-dominator: func [
+		a			[allocator!]
+		vreg		[vreg!]
+		blk-info	[block-info!]
+		return:		[block-info!]
+		/local
+			node	[reg-node!]
+			common	[block-info!]
+			b		[basic-block!]
+			bi		[block-info!]
+			succs	[ptr-array!]
+			loops	[vector!]
+			e		[cf-edge!]
+			p		[ptr-ptr!]
+			liveness [bit-table!]
+			loop-info [loop-info!]
+	][
+		node: as reg-node! ptr-array/pick a/graph/nodes vreg/idx
+		common: node/common-dom
+		bi: common-dominator common blk-info
+		b: bi/block
+		if null? b [return null]
+
+		loops: a/cg/rpo/loops
+		if loops <> null [
+			p: VECTOR_DATA(loops)
+			loop loops/length [
+				loop-info: as loop-info! p/value
+				if all [
+					block-in-loop? bi loop-info
+					any [
+						not block-in-loop? common loop-info
+						not block-in-loop? blk-info loop-info
+					]
+				][
+					return null
+				]
+				p: p + 1
+			]
+		]
+		if b = common/block [return common]
+		if b = node/block [return null]
+
+		succs: block-successors blk-info/block
+		if succs <> null [
+			liveness: a/liveness
+			p: ARRAY_DATA(succs)
+			loop succs/length [
+				e: as cf-edge! p/value
+				unless bit-table/pick liveness e/dst/info/rpo-idx vreg/idx [
+					return null
+				]
+				p: p + 1
+			]
+		]
+		bi
+	]
+
+	find-dominator-out-loop: func [
+		a			[allocator!]
+		node		[reg-node!]
+		return:		[block-info!]
+		/local
+			v		[vreg!]
+			bi		[block-info!]
+			common	[block-info!]
+			p		[block-info!]
+	][
+		v: node/new-vreg
+		common: node/common-dom
+		bi: node/block/info
+		p: common
+		while [p <> null][
+			if all [
+				p/dom-parent <> null
+				not dominator? bi p/dom-parent
+			][break]
+			if all [
+				p/loop-info <> null
+				p/dom-parent <> null
+				p/dom-parent <> bi
+				block-in-loop? common p/loop-info
+			][
+				common: p/dom-parent
+				bit-table/set a/liveness p/rpo-idx v/idx
+			]
+			p: p/dom-parent
+		]
+		common
+	]
+
+	insert-reload: func [
+		a		[allocator!]
+		vreg	[vreg!]
+		node	[reg-node!]
+		/local
+			ins  [mach-instr!]
+			idx  [integer!]
+			v	 [vector!]
+			args [move-arg! value]
+	][
+		node/common-dom: find-dominator-out-loop a node
+		args/dst-v: node/new-vreg
+		args/src-v: vreg
+		args/dst-reg: 0
+		idx: node/common-dom/rpo-idx
+		ins: as mach-instr! vector/pick-ptr a/cg/instrs idx
+		backend/insert-reload a/cg :args ins/next
+		v: as vector! ptr-array/pick a/blk-reloads idx
+		vector/append-ptr v as byte-ptr! node/new-vreg
+	]
+
 	process-spill: func [
 		a			[allocator!]
 		vreg		[vreg!]
 		constraint	[integer!]
+		blk			[basic-block!]
 		return:		[vreg!]
 		/local
 			node	[reg-node!]
 			new-v	[vreg!]
+			new-d	[block-info!]
+			bi		[block-info!]
 	][
 		node: as reg-node! ptr-array/pick a/graph/nodes vreg/idx
-		new-v: dup-vreg a/cg vreg
-		new-v/fixed?: true
-		new-v/reload-from: vreg
-		if constraint <= a/reg-set/n-regs [new-v/hint: constraint]
-		node/new-vreg: new-v
-		new-v
+		bi: blk/info
+		either node/block = blk [
+			new-v: dup-vreg a/cg vreg
+			new-v/fixed?: true
+			new-v/reload-from: vreg
+			if constraint <= a/reg-set/n-regs [new-v/hint: constraint]
+			node/new-vreg: new-v
+			new-v
+		][
+			either null? node/common-dom [
+				new-v: dup-vreg a/cg vreg
+				new-v/spill: vreg/spill
+				node/new-vreg: new-v
+				node/common-dom: bi
+			][
+				new-d: find-common-dominator a vreg bi
+				either null? new-d [
+					insert-reload a vreg node
+					new-v: dup-vreg a/cg vreg
+					new-v/spill: vreg/spill
+					node/new-vreg: new-v
+					node/common-dom: bi
+				][
+					node/common-dom: new-d
+				]
+			]
+			bit-table/set a/liveness bi/rpo-idx node/new-vreg/idx
+			node/new-vreg
+		]
 	]
 
 	do-simplify: func [
@@ -1370,7 +1524,7 @@ global-reg-alloc: context [
 				OD_KILL [
 					k: as kill! o
 					o: as operand! p2/value
-					either o/header and FFh = OD_LIVEPOINT [	;-- if it's a call
+					either OPERAND_TYPE(o) = OD_LIVEPOINT [	;-- if it's a call
 						bit-table/clear-row liveness liveout-row
 					][
 						regs: as int-array! ptr-array/pick rset/regs k/constraint
@@ -2592,7 +2746,7 @@ global-reg-alloc: context [
 				args/dst-v: as vreg! p/value
 				args/src-v: args/dst-v
 				args/dst-reg: 0
-				backend/insert-reload a/cg args next-i
+				backend/insert-reload a/cg :args next-i
 				bit-table/clear liveness m-row  i
 			]
 			p: p + 1
@@ -2616,7 +2770,7 @@ global-reg-alloc: context [
 		a/blk-reloads: ptr-array/make blks/length
 		p: ARRAY_DATA(a/blk-reloads)
 		loop blks/length [
-			p/value: as int-ptr! vector/make size? vreg! 4
+			p/value: as int-ptr! ptr-vector/make 4
 			p: p + 1
 		]
 		init-reg-state as reg-state! :a/reg-state a/cg
@@ -2797,8 +2951,9 @@ global-reg-alloc: context [
 				]
 			]
 			p: INS_OPERANDS(cur-i)
-			p: p + cur-i/num - 1
+			p: p + cur-i/num
 			loop cur-i/num [
+				p: p - 1
 				o: as operand! p/value
 				switch o/header and FFh [
 					OD_USE [
@@ -2891,7 +3046,6 @@ global-reg-alloc: context [
 						bit-table/apply liveness tmp-row as int-ptr! :insert-restore-idx as int-ptr! :args
 						child: child/dom-sibling
 					]
-					child: info/dom-child
 				]
 			]
 			p: p - 1
@@ -2936,8 +3090,9 @@ global-reg-alloc: context [
 				kills-from-pred cur-row blk spiller
 			]
 			p: INS_OPERANDS(cur-i)
-			p: p + cur-i/num - 1
+			p: p + cur-i/num
 			loop cur-i/num [
+				p: p - 1
 				o: as operand! p/value
 				switch o/header and FFh [
 					OD_DEF [

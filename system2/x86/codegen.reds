@@ -1493,6 +1493,8 @@ x86: context [
 			n-spilled	 [integer!]
 			fixed-stack? [logic!]
 	][
+		;-- order is important DEFS 0, KILLS 1, LVP 2, OVW 3, USES 4
+
 		;ir-printer/print-instr i print lf
 		o: as instr-op! i
 		fn: as fn! o/target
@@ -1510,7 +1512,6 @@ x86: context [
 		]
 
 		use-ptr cg as int-ptr! fn
-		live-point cg cc
 
 		rt: cc/ret-type
 		assert rt <> null
@@ -1530,6 +1531,7 @@ x86: context [
 		]
 
 		kill cg x86_REG_ALL
+		live-point cg cc
 
 		n: 0
 		p: ARRAY_DATA(i/inputs)

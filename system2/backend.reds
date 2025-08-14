@@ -1944,6 +1944,8 @@ backend: context [
 			I_STACK_ALLOC	["stack/allocate"]
 			I_STACK_FREE	["stack/free"]
 			I_STACK_ALIGN	["stack/align"]
+			I_RESTORE		["restore"]
+			I_RELOAD		["reload"]
 			default 		[probe ["mach op " MACH_OPCODE(i)] "unknown op"]
 		]
 	]

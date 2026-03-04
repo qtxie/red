@@ -1,4 +1,4 @@
-REBOL [
+Red [
 	Title:   "Redbin format encoder for Red compiler"
 	Author:  "Nenad Rakocevic"
 	File: 	 %redbin.r
@@ -7,25 +7,25 @@ REBOL [
 	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"
 ]
 
+#process off
+
 context [
-	header:			make binary! 10'000
-	buffer:			make binary! 200'000
-	sym-table:		make binary! 10'000
-	sym-string:		make binary! 10'000
-	symbols:		make hash! 	 1'000						;-- [word1 word2 ...]
-	contexts:		make hash!	 1'000						;-- [name [symbols] index ...]
-	index:			0
+	header:		make binary! 10'000
+	buffer:		make binary! 200'000
+	sym-table:	make binary! 10'000
+	sym-string:	make binary! 10'000
+	symbols:	make hash! 	 1'000						;-- [word1 word2 ...]
+	contexts:	make hash!	 1'000						;-- [name [symbols] index ...]
+	index:		0
 	
-	stats:			make block! 100
-	profile?:		no
-	debug?:			no
+	stats:		make block! 100
+	profile?:	no
+	debug?:		no
 	
-	UTF8-char:		lexer/UTF8-char
-	chars:			make block!  10'000
-	decoded:		make binary! 10'000
-	nl-flag:		to-integer #{80000000}					;-- header's new-line flag
-	nl?:			no
-	self-compile?:	no
+	chars: 		make block!  10'000
+	decoded: 	make binary! 10'000
+	nl-flag:	to-integer #{80000000}					;-- header's new-line flag
+	nl?:		no
 
 	profile: func [blk /local pos][
 		foreach item blk [
@@ -46,29 +46,9 @@ context [
 		]
 	]
 	
-	preprocess-directives: func [blk][
-		unless self-compile? [
-			forall blk [
-				if blk/1 = #get-definition [				;-- temporary directive
-					value: select extracts/definitions blk/2
-					change/only/part blk value 2
-				]
-			]
-		]
-	]
-	
 	decode-UTF8: func [str [string! file! url! tag! email!] /local upper s e cp unit new][
 		upper: 0
 
-		parse/all/case str [
-			any [s: UTF8-char e: (
-				cp: either e = next s [s/1][			;-- shortcut for ASCII codepoints
-					lexer/decode-UTF8-char/redbin as-binary copy/part s e
-				]
-				append chars cp: to integer! cp
-				upper: max upper cp
-			)]
-		]
 		if upper < 128 [								;-- shortcut for ASCII strings
 			clear chars
 			return reduce [str 1]
@@ -92,14 +72,14 @@ context [
 		emit extracts/definitions/:type or either nl? [nl-flag][0]
 	]
 	
-	emit-float-bin: func [f [decimal!] /local bin][
-		bin: IEEE-754/to-binary64 f
+	emit-float-bin: func [f [float!] /local bin][
+		bin: to-binary f
 		emit to integer! copy/part bin 4
 		emit to integer! skip bin 4
 	]
 	
-	emit-float32-bin: func [f [decimal! issue!]][
-		insert tail buffer IEEE-754/to-binary32/rev f
+	emit-float32-bin: func [f [float! issue!]][
+		insert tail buffer to-binary f
 	]
 	
 	emit-ctx-info: func [word [any-word!] ctx [word! none!] /local entry pos][
@@ -128,27 +108,30 @@ context [
 		emit to integer! value
 	]
 	
-	emit-float: func [value [decimal!] /with type /local bin][
+	emit-float: func [value [float!] /with type /local bin][
 		pad buffer 8
 		emit-type any [type 'TYPE_FLOAT]
 		emit-float-bin value
 	]
 	
-	emit-fp-special: func [value [issue!] /local p][
+	emit-fp-special: func [value [issue!] /local p b][
 		pad buffer 8
 		emit-type 'TYPE_FLOAT
-		insert tail buffer IEEE-754/to-binary64/rev4 value
+		b: reverse to-binary value
+		append b copy/part b 4
+		b: copy skip b 4
+		insert tail buffer b
 	]
 
 	emit-percent: func [value [issue!] /local bin][
 		pad buffer 8
 		emit-type 'TYPE_PERCENT
-		value: to decimal! to string! copy/part value back tail value
+		value: to float! to string! copy/part value back tail value
 		emit-float-bin value / 100.0
 	]
 	
 	emit-time: func [value [time!]][
-		emit-float/with to decimal! value 'TYPE_TIME
+		emit-float/with to float! value 'TYPE_TIME
 	]
 	
 	emit-date: func [value [date!] /with zone][
@@ -175,7 +158,7 @@ context [
 	
 	emit-point: func [list [block!]][
 		emit-type select [2 TYPE_POINT2D 3 TYPE_POINT3D] length? list
-		forall list [emit-float32-bin either integer? list/1 [to decimal! list/1][list/1]]
+		forall list [emit-float32-bin either integer? list/1 [to float! list/1][list/1]]
 	]
 
 	emit-tuple: func [value [issue!] /local bin header][
@@ -318,6 +301,7 @@ context [
 			]
 			'else [type?/word :blk]
 		]
+
 		emit-type select [
 			block!		TYPE_BLOCK
 			paren!		TYPE_PAREN
@@ -328,7 +312,6 @@ context [
 			map			TYPE_MAP
 		] type
 		
-		preprocess-directives blk
 		unless type = 'map [emit (index? blk) - 1]		;-- head field
 		emit length? blk
 		if all [not sub debug?][
@@ -413,7 +396,7 @@ context [
 						string!
 						binary!   [emit-string item]
 						integer!  [emit-integer item]
-						decimal!  [emit-float item]
+						float!	  [emit-float item]
 						char!	  [emit-char to integer! item]
 						pair!	  [emit-pair item]
 						datatype! [emit-datatype get-RS-type-ID/word item]
@@ -498,3 +481,5 @@ context [
 		insert buffer header
 	]
 ]
+
+#process on

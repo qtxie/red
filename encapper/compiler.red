@@ -1,4 +1,4 @@
-REBOL [
+Red [
 	Title:   "Red compiler"
 	Author:  "Nenad Rakocevic"
 	File: 	 %compiler.r
@@ -7,7 +7,15 @@ REBOL [
 	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"
 ]
 
-do-cache %system/compiler.r
+bind?: routine [word [word!] /local obj [red-object!]][
+	obj: as red-object! stack/arguments
+	obj/header: TYPE_OBJECT
+	obj/class: 0
+	obj/ctx: word/ctx
+	obj/on-set: null
+]
+
+#include %../system2/compiler.red
 
 red: context [
 	verbose:	   0									;-- logs verbosity level
@@ -37,16 +45,14 @@ red: context [
 	expr-stack:	   make block! 8
 	current-call:  none
 	currencies:	   none									;-- extra user-defined currency codes from script's header
-	self-compile?: no
-	
-	unless value? 'Red [red: none]						;-- for %preprocessor to load
-	
-	lexer: 		   do bind load-cache %encapper/lexer.r 'self
-	extracts:	   do bind load-cache %utils/extractor.r 'self
-	redbin:		   do bind load-cache %utils/redbin.r 'self
-	preprocessor:  do-cache file: %utils/preprocessor.r
-	preprocessor:  do preprocessor/expand/clean load-cache file none ;-- apply preprocessor on itself
-	
+	self-compile?: no									;-- compiling the Red compiler itself?
+		
+	extracts:	   #include %../utils/extractor.red
+	redbin:		   #include %../utils/redbin.red
+
+	#process off
+	#self-compiling on
+
 	sys-global:    make block! 1
 	lit-vars: 	   reduce [
 		'block	   make hash! 1000
@@ -105,7 +111,11 @@ red: context [
 	
 	iterators: [loop until while repeat foreach forall forever remove-each]
 	
-	standard-modules: load-cache %encapper/modules.r
+	standard-modules: [
+		View		%modules/view/view.red				all
+		JSON		%environment/codecs/JSON.red		all
+		CSV 		%environment/codecs/CSV.red			all
+	]
 
 	func-constructors: [
 		'func | 'function | 'does | 'has | 'routine | 'make 'function!
@@ -128,6 +138,7 @@ red: context [
 	set-last-none: does [copy [stack/reset none/push-last]]	;-- copy required for R/S line counting injection
 
 	--not-implemented--: does [print "Feature not yet implemented!" halt]
+	abs: :absolute
 	
 	quit-on-error: does [
 		clean-up
@@ -245,13 +256,7 @@ red: context [
 	]
 	
 	preprocess-strings: func [code [block!] /local rule s][  ;-- re-encode strings for Red/System
-		parse code rule: [
-			any [
-				s: string! (lexer/decode-UTF8-string s/1)
-				| into rule
-				| skip
-			]
-		]
+
 	]
 	
 	convert-to-block: func [mark [block!]][
@@ -298,7 +303,7 @@ red: context [
 			datatype!
 			char!
 			integer!
-			decimal!
+			float!
 			refinement!
 			issue!
 			lit-word!
@@ -378,17 +383,20 @@ red: context [
 		pos: find objects ctx
 		either object? pos/2 [pos/2][pos/-1]
 	]
-	
-	bind-function: func [body [block!] shadow [object!] /local self* rule pos][
+
+	do [
+	bind-function: func [body [block!] shadow [object!] /local self* self rule pos][
 		bind body shadow
 		if 1 < length? obj-stack [
-			self*: in do obj-stack 'self				;-- rebind SELF to the wrapping object
+			self: do obj-stack
+			self*: 'self
+			;self*: in do obj-stack 'self				;-- rebind SELF to the wrapping object
 			
 			parse body rule: [
 				any [pos: 'self (pos/1: self*) | into rule | skip]
 			]
 		]
-	]
+	]]
 	
 	get-word-index: func [name [word!] /with c [word!] /local ctx pos list][
 		if with [
@@ -1060,8 +1068,9 @@ red: context [
 		reduce [found? fpath base]
 	]
 	
-	object-access?: func [path [series!] /local res][
-		either path/1 = 'self [
+	object-access?: func [path [series!] /local res self?][
+		self?: do [path/1 = 'self]
+		either self? [
 			bind? path/1
 		][
 			all [
@@ -1093,9 +1102,10 @@ red: context [
 	
 	obj-func-path?: func [
 		path [path!]
-		/local fpath base symbol found? fun origin name obj info ctx
+		/local fpath base symbol found? fun origin name obj info ctx self?
 	][
-		either path/1 = 'self [
+		self?: do [path/1 = 'self]
+		either self? [
 			found?: bind? path/1
 			path: copy path
 			path/1: pick find objects found? -1
@@ -1256,7 +1266,7 @@ red: context [
 		do-error: [throw-error ["invalid function spec block:" mold pos]]
 		flags: 0
 		foreach attrib spec/1 [
-			unless word? attrib [do-error]
+			unless word? attrib [do do-error]
 			flags: switch/default attrib [				;-- keep those flags synced with %runtime/definitions.reds
 				trace	 [flags or to-integer #{00000400}]
 				no-trace [flags or to-integer #{00000200}]
@@ -1353,7 +1363,7 @@ red: context [
 					alias: decorate-func new
 					old: decorate-exec-ctx decorate-func name
 				]
-				libRedRT/collect-aliased alias old
+				;libRedRT/collect-aliased alias old
 			]
 			
 			either pos: find-ssa new [					;-- add the real function name as alias
@@ -1532,9 +1542,9 @@ red: context [
 			native! [nat?: yes if find intrinsics name [type: 'intrinsic!]]
 			action! [append actions name]
 			op!     [
-				if find [has does] pos/4 invalid-spec
+				if find [has does] pos/4 [do invalid-spec]
 				either find [func function] pos/4 [		;-- anon function case
-					unless block? spec: pos/5 invalid-spec
+					unless block? spec: pos/5 [do invalid-spec]
 					defer: name
 				][
 					repend op-actions [name proto: get-prefix-func to word! pos/4]
@@ -1684,7 +1694,7 @@ red: context [
 	]
 	
 	encode-UTC-time: func [time [time! none!] zone [time! none!]][
-		to decimal! either time [either zone [time - zone][time]][0.0]
+		to float! either time [either zone [time - zone][time]][0.0]
 	]
 	
 	encode-date: func [value [date!] /with zone /local date][
@@ -1699,8 +1709,8 @@ red: context [
 		date
 	]
 
-	emit-float: func [value [decimal!] /local bin][
-		bin: IEEE-754/to-binary64 value
+	emit-float: func [value [float!] /local bin][
+		bin: to-binary value
 		emit to integer! copy/part bin 4
 		emit to integer! skip bin 4
 	]
@@ -1748,21 +1758,21 @@ red: context [
 					insert-lf -2
 				]
 				percent? [
-					value: to decimal! to string! copy/part value back tail value
+					value: to float! to string! copy/part value back tail value
 					emit 'percent/push64
 					emit-float value / 100.0
 					insert-lf -3
 				]
 				special? [
 					emit 'float/push64
-					emit IEEE-754/to-binary64/split value
+					;emit IEEE-754/to-binary64/split value
 					insert-lf -3
 				]
 				map? [
 					emit compose [map/push as red-hash! get-root (redbin/emit-block value)]
 					insert-lf -3
 				]
-				decimal? :value [
+				float? :value [
 					emit 'float/push64
 					emit-float value
 					insert-lf -3
@@ -1829,7 +1839,7 @@ red: context [
 				]
 				time? :value [
 					emit 'time/push
-					emit to decimal! value
+					emit to float! value
 					insert-lf -2
 				]
 				dt-special? [
@@ -1847,7 +1857,7 @@ red: context [
 				point? [
 					type: pick [point2D point3D] 2 = length? value: next value
 					emit append to-path type 'push
-					foreach v value [emit reduce ['as-float32 either integer? v [to-decimal v][v]]]
+					foreach v value [emit reduce ['as-float32 either integer? v [to-float v][v]]]
 					insert-lf -5
 				]
 				'else [
@@ -1909,12 +1919,14 @@ red: context [
 		unless with [pc: next pc]
 		name
 	]
-	
+
+	do [
 	rebind-body: func [
 		symbol [word!] entry [block!] ctx [object!]
-		/local rule pos self*
+		/local rule pos self* self
 	][
-		self*: in ctx 'self
+		self: ctx
+		self*: 'self
 
 		;-- rebind the new body to the parent object's context
 		entry: bind/copy copy/part next entry 8 ctx
@@ -1926,7 +1938,7 @@ red: context [
 			parse entry/2 rule: [any [pos: 'self (pos/1: self*) | into rule | skip]]
 		]
 		entry
-	]
+	]]
 	
 	inherit-functions: func [							 ;-- multiple inheritance case
 		new [object!] extend [object!]
@@ -1942,7 +1954,7 @@ red: context [
 				]
 				either entry: find bodies symbol [		;-- not allowed for libRedRT client programs
 					append bodies name
-					append bodies rebind-body symbol entry new	;-- merge the entry block
+					append bodies do [rebind-body symbol entry new]	;-- merge the entry block
 				][
 					redirect-to literals [
 						emit compose [#define (decorate-func name) (decorate-func symbol)]
@@ -2817,7 +2829,7 @@ red: context [
 							all [block? counter counter]
 							all [any-word? counter reduce [counter]]
 							[]
-						] make-local
+						] [do make-local]
 					]
 				)
 				| path! | lit-path! | set-path!
@@ -2840,13 +2852,13 @@ red: context [
 	]
 	
 	comp-func: func [
-		/collect /does /has
+		/collect_ /does_ /has_
 		/local
 			name word spec body symbols locals-nb spec-idx body-idx ctx pos octx
 			src-name original global? path obj fpath shadow defer ctx-idx body-code
 			alter entry mark flags
 	][
-		unless all [block? pc/2 any [does block? pc/3]][ ;-- fallback if no literal spec & body blocks
+		unless all [block? pc/2 any [does_ block? pc/3]][ ;-- fallback if no literal spec & body blocks
 			word: pc/1
 			all [
 				alter: get-prefix-func word
@@ -2855,7 +2867,7 @@ red: context [
 			]
 			pc: next pc
 			mark: tail output
-			comp-call/thru word entry/2
+			do [comp-call/thru word entry/2]
 			defer: copy mark
 			clear mark
 			return defer
@@ -2899,9 +2911,9 @@ red: context [
 		body: pc/2
 		
 		case [
-			collect [collect-words spec body]
-			does	[body: spec spec: make block! 1 pc: back pc]
-			has		[spec: head insert copy spec /local]
+			collect_ [collect-words spec body]
+			does_	 [body: spec spec: make block! 1 pc: back pc]
+			has_	 [spec: head insert copy spec /local]
 		]
 		set [symbols locals-nb flags] check-spec spec
 		add-function name spec
@@ -2926,7 +2938,7 @@ red: context [
 			ctx
 			spec
 		]
-		bind-function body shadow
+		do [bind-function body shadow]
 		
 		body-code: either job/red-store-bodies? [
 			body-idx: redbin/emit-block body
@@ -2956,15 +2968,15 @@ red: context [
 	]
 	
 	comp-function: does [
-		comp-func/collect
+		comp-func/collect_
 	]
 	
 	comp-does: does [
-		comp-func/does
+		comp-func/does_
 	]
 	
 	comp-has: does [
-		comp-func/has
+		comp-func/has_
 	]
 	
 	comp-routine: has [name word spec spec* body spec-idx body-idx original ctx ret][
@@ -3371,13 +3383,13 @@ red: context [
 					]
 				]
 				integer! paren! string!	[
-					if head? path [path-head-error]
+					if head? path [probe "path-head-error"]
 				]
 			][
 				throw-error ["cannot use" mold type? value "value in path:" pc/1]
 			]
 		]
-		self?: path/1 = 'self
+		self?: do [path/1 = 'self]
 		if all [
 			not any [set? dynamic? find path integer!]
 			set [fpath symbol ctx] obj-func-path? path
@@ -3712,7 +3724,7 @@ red: context [
 					]
 				][										;-- call with no refinements
 					if spec/4 [
-						foreach [ref offset args] spec/4 emit-no-ref
+						foreach [ref offset args] spec/4 [do emit-no-ref]
 					]
 				]
 			]
@@ -3746,7 +3758,7 @@ red: context [
 		name: pc/-1
 		switch/default pc/2 [
 			datatype! [
-				either all [not self-compile? pc/3 = #get-definition][
+				either pc/3 = #get-definition [
 					redbin/emit-word/root/set? name none none
 					redbin/emit-datatype pc/4
 					pc: skip pc 4
@@ -3757,7 +3769,7 @@ red: context [
 			]
 			action!
 			native! [
-				either all [not self-compile? pc/3/2 = #get-definition][
+				either pc/3/2 = #get-definition [
 					redbin/emit-word/root/set? name none none
 					either pc/2 = 'action! [
 						redbin/emit-native/action pc/3/3 pc/3/1
@@ -3882,7 +3894,7 @@ red: context [
 		emit-close-frame
 	]
 
-	comp-word: func [/literal /final /thru /local name local? alter emit-word original new ctx defer][
+	comp-word: func [/literal /final /thru /local name local? self? alter emit-word original new ctx defer][
 		name: to word! original: pc/1
 		local?: local-bound? original
 		
@@ -3903,11 +3915,12 @@ red: context [
 			exit
 		]
 		pc: next pc										;@@ move it deeper
-		
+
+		self?: do [name = 'self]
 		case [
 			all [not thru name = 'exit	][comp-exit]
 			all [not thru name = 'return][comp-return]
-			all [not thru name = 'self	][comp-self original]
+			all [not thru self?			][comp-self original]
 			all [
 				not final
 				not local?
@@ -4263,19 +4276,7 @@ red: context [
 	]
 	
 	in-cache?: func [file [file!] /local path][
-		either encap? [
-			if exists?-cache file [return yes]
-			if any [not value? 'script-path not script-path][return no]
-			
-			path: either slash = first script-path [
-				skip script-path length? system/script/path
-			][
-				script-path
-			]
-			exists?-cache secure-clean-path join path file
-		][
-			no
-		]
+		no
 	]
 	
 	comp-include: func [pc [block!] /only /local file saved version mark script-file cache?][
@@ -4319,17 +4320,6 @@ red: context [
 	]
 
 	comp-directive: has [mark value][
-		if pc/1 = #self-compiling [
-			case [
-				pc/2 = 'on  [self-compile?: yes pc: skip pc 2]
-				pc/2 = 'off [self-compile?: no pc: skip pc 2]
-				true		[self-compile?: yes pc: next pc]
-			]
-			redbin/self-compile?: self-compile?
-			return true
-		]
-		if self-compile? [return false]
-
 		switch pc/1 [
 			#include [
 				comp-include pc
@@ -4467,7 +4457,7 @@ red: context [
 		]
 		if any [root close-path][
 			if paths < length? paths-stack [
-				emit-dynamic-path out
+				;emit-dynamic-path out
 				if tail? pc [emit-dyn-check]
 			]
 		]
@@ -4617,21 +4607,19 @@ red: context [
 	
 	encap-preprocess: func [code [block!] /local prolog rule p][
 		prolog: make block! 1
-		unless self-compile? [
-			parse code rule: [
-				any [
-					p: set-word! 'routine block! block! (
-						insert/part tail prolog p 4
-						p: remove/part p 4
-					) :p
-					| p: [#system | #system-global] block! (
-						insert/part tail prolog p 2
-						p: remove/part p 2
-					) :p
-					| p: #include (pc: p comp-include/only p) :p
-					| p: [block! | paren!] :p into rule
-					| skip
-				]
+		parse code rule: [
+			any [
+				p: set-word! 'routine block! block! (
+					insert/part tail prolog p 4
+					p: remove/part p 4
+				) :p
+				| p: [#system | #system-global] block! (
+					insert/part tail prolog p 2
+					p: remove/part p 2
+				) :p
+				| p: #include (pc: p comp-include/only p) :p
+				| p: [block! | paren!] :p into rule
+				| skip
 			]
 		]
 		reduce [prolog code]
@@ -4714,7 +4702,7 @@ red: context [
 		
 		comp-bodies										;-- compile deferred functions
 		comp-finish
-		libRedRT/save-extras
+		;libRedRT/save-extras
 		
 		reduce [user mods main]
 	]
@@ -4822,9 +4810,9 @@ red: context [
 			]
 		]]
 		
-		if all [job/dev-mode? not job/libRedRT?][
-			replace out <imports> libRedRT/get-include-file job
-		]
+		;if all [job/dev-mode? not job/libRedRT?][
+		;	replace out <imports> libRedRT/get-include-file job
+		;]
 		
 		if job/encap? [
 			code: encap-preprocess code
@@ -4898,7 +4886,7 @@ red: context [
 		]
 		either file? file [
 			unless hidden [script-name: file]
-			src: lexer/process read-cache file
+			src: load file
 		][
 			unless hidden [script-name: 'in-memory]
 			src: file
@@ -4940,7 +4928,8 @@ red: context [
 			mods: make block! 2
 			
 			foreach mod list [
-				unless file: find standard-modules mod [
+				file: find standard-modules mod
+				unless file [
 					throw-error ["module not found:" mod]
 				]
 				all [
@@ -5029,28 +5018,31 @@ red: context [
 			if job/show = 'expanded [probe next src]
 			process-fields src/1 next src
 			extracts/init job
-			if job/libRedRT? [libRedRT/init]
-			if file? file [system-dialect/collect-resources src/1 resources file]
+			;if job/libRedRT? [libRedRT/init]
+			;if file? file [system-dialect/collect-resources src/1 resources file]
 			src: next src
-			
-			if all [job/dev-mode? not job/libRedRT?][
-				defs: libRedRT/get-definitions
-				append clear functions defs/1
-				;redbin/index:	defs/2
-				globals:		defs/3
-				objects:		compose/deep bind objects: defs/4 red
-				contexts:		defs/5
-				actions:		defs/6
-				op-actions:		defs/7
-				foreach w defs/8 [add-symbol w]
-				append literals defs/9
-				s-counter:		defs/10
-				needed: 		exclude needed defs/11	;-- exclude already compiled modules
-				shadow-funcs:	defs/12
-				make-keywords
-			]
+
+			;if all [job/dev-mode? not job/libRedRT?][
+			;	defs: libRedRT/get-definitions
+			;	append clear functions defs/1
+			;	;redbin/index:	defs/2
+			;	globals:		defs/3
+			;	objects:		compose/deep bind objects: defs/4 red
+			;	contexts:		defs/5
+			;	actions:		defs/6
+			;	op-actions:		defs/7
+			;	foreach w defs/8 [add-symbol w]
+			;	append literals defs/9
+			;	s-counter:		defs/10
+			;	needed: 		exclude needed defs/11	;-- exclude already compiled modules
+			;	shadow-funcs:	defs/12
+			;	make-keywords
+			;]
 			either job/type = 'dll [comp-as-lib src][comp-as-exe src]
 		]
 		reduce [output time redbin/buffer resources]
 	]
+
+	#process on
+	#self-compiling off
 ]

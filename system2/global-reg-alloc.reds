@@ -748,7 +748,11 @@ global-reg-alloc: context [
 			][
 				cost: as float32! node/spill-cost
 				f: as float32! node/n-interfere
-				cost: cost / f
+				either f > as float32! 0.0 [
+					cost: cost / f
+				][
+					cost: cost * as float32! 1000000.0	;-- very low interference = high priority to spill
+				]
 				if cost < min-cost [
 					idx: i
 					min-cost: cost
@@ -757,7 +761,12 @@ global-reg-alloc: context [
 			i: i + 1
 			p: p + 1
 		]
-		if idx = -1 [fail "fail to spill"]
+		if idx = -1 [
+			;-- All nodes in spill-list are either removed or fixed.
+			;-- Remove all entries from spill-list and return.
+			vector/clear spill-list
+			exit
+		]
 		p: as int-ptr! spill-list/data
 		pint: p + idx
 		n: pint/value
@@ -1253,20 +1262,14 @@ global-reg-alloc: context [
 				coalesce?: true
 				nx/n-moves: nx/n-moves - 1
 				reg-graph/merge-moves graph x y
-				either all [
-					n-tmp >= n-colors
-					nx/n-interfere < n-colors
-				][
-					remove-from-list a/freeze-list x
+				;-- Remove x from all lists first, then add to appropriate one
+				remove-from-list a/freeze-list x
+				remove-from-list a/simplify-list x
+				remove-from-list a/spill-list x
+				either n-tmp >= n-colors [
 					vector/append-int a/spill-list x
 				][
-					if all [
-						n-tmp < n-colors
-						zero? nx/n-moves
-					][
-						remove-from-list a/freeze-list x
-						vector/append-int a/simplify-list x
-					]
+					vector/append-int a/simplify-list x
 				]
 				nx/interfere: combine
 				nx/n-interfere: n-tmp
@@ -1275,11 +1278,10 @@ global-reg-alloc: context [
 		if coalesce? [
 			a/statistic/n-coalesces: a/statistic/n-coalesces + 1
 			ny/removed?: yes
-			either ny/n-interfere < n-colors [
-				remove-from-list a/freeze-list y
-			][
-				remove-from-list a/spill-list y
-			]
+			;-- Try removing from all lists since node could be in any of them
+			remove-from-list a/freeze-list y
+			remove-from-list a/spill-list y
+			remove-from-list a/simplify-list y
 			pint: as int-ptr! ny/interfere/data
 			loop ny/interfere/length [
 				t: pint/value

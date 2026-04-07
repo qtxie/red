@@ -293,7 +293,87 @@ global-reg-alloc: context [
 		save-row		[integer!]
 	]
 
+	interfere-merge-state!: alias struct! [
+		a				[allocator!]
+		idx			[integer!]
+		old-cur		[int-ptr!]
+		old-end		[int-ptr!]
+		interfere	[vector!]
+		n-interfere [integer!]
+		nodes		[ptr-array!]
+	]
+
+	reg-interfere-state!: alias struct! [
+		filter-idx	[integer!]
+		reg			[integer!]
+		len			[integer!]
+		nodes		[ptr-array!]
+	]
+
+	liveout-state!: alias struct! [
+		a			[allocator!]
+		vregs		[ptr-ptr!]
+		len			[integer!]
+	]
+
 	fn-process!: alias function! [a [allocator!] blk [basic-block!] cur-i [mach-instr!]]
+
+	merge-live-interfere: func [
+		idx		[integer!]
+		args	[int-ptr!]
+		/local
+			s	[interfere-merge-state!]
+			p	[ptr-ptr!]
+	][
+		s: as interfere-merge-state! args
+		if idx >= s/a/vregs/length [exit]
+		while [all [s/old-cur < s/old-end s/old-cur/value < idx]][
+			vector/append-int s/interfere s/old-cur/value
+			s/old-cur: s/old-cur + 1
+		]
+		if idx = s/idx [
+			if all [s/old-cur < s/old-end s/old-cur/value = idx][
+				s/old-cur: s/old-cur + 1
+			]
+			exit
+		]
+		if all [s/old-cur < s/old-end s/old-cur/value = idx][
+			vector/append-int s/interfere idx
+			s/old-cur: s/old-cur + 1
+			exit
+		]
+		vector/append-int s/interfere idx
+		s/n-interfere: s/n-interfere + 1
+		p: ARRAY_DATA(s/nodes) + idx
+		reg-node/add-interfere as reg-node! p/value s/idx
+	]
+
+	add-live-reg-edge: func [
+		idx		[integer!]
+		args	[int-ptr!]
+		/local
+			s	[reg-interfere-state!]
+			p	[ptr-ptr!]
+	][
+		s: as reg-interfere-state! args
+		if idx >= s/len [exit]
+		if idx = s/filter-idx [exit]
+		p: ARRAY_DATA(s/nodes) + idx
+		reg-node/add-interfere as reg-node! p/value 0 - s/reg
+	]
+
+	process-liveout-edge: func [
+		idx		[integer!]
+		args	[int-ptr!]
+		/local
+			s	[liveout-state!]
+			p	[ptr-ptr!]
+	][
+		s: as liveout-state! args
+		if idx >= s/len [exit]
+		p: s/vregs + idx
+		add-interference-edges s/a as vreg! p/value
+	]
 
 	init-move-set: func [
 		m			[move-set!]
@@ -1398,6 +1478,7 @@ global-reg-alloc: context [
 			pint	[int-ptr!]
 			liveness [bit-table!]
 			liveout-row dst src weight [integer!]
+			liveout [liveout-state! value]
 	][
 		rset: a/reg-set
 		liveness: a/liveness
@@ -1406,15 +1487,10 @@ global-reg-alloc: context [
 		if opcode = I_BLK_END [
 			compute-liveout a blk
 			vregs: a/vregs
-			p: VECTOR_DATA(vregs)
-			i: 0
-			loop vregs/length [
-				if bit-table/pick liveness liveout-row i [
-					add-interference-edges a as vreg! p/value
-				]
-				i: i + 1
-				p: p + 1
-			]
+			liveout/a: a
+			liveout/vregs: VECTOR_DATA(vregs)
+			liveout/len: vregs/length
+			bit-table/apply liveness liveout-row as int-ptr! :process-liveout-edge as int-ptr! :liveout
 			a/cur-weight: int-array/pick a/block-weight blk/info/rpo-idx
 			exit
 		]
@@ -1687,24 +1763,13 @@ global-reg-alloc: context [
 		reg			[integer!]
 		filter		[vreg!]
 		/local
-			len		[integer!]
-			i idx	[integer!]
-			p pn	[ptr-ptr!]
+			state	[reg-interfere-state! value]
 	][
-		len: a/vregs/length
-		idx: either null? filter [-1][filter/idx]
-		pn: ARRAY_DATA(a/graph/nodes)
-		i: 0
-		while [i < len][
-			if all [
-				i <> idx
-				bit-table/pick a/liveness a/liveout-row i
-			][
-				p: pn + i
-				reg-node/add-interfere as reg-node! p/value 0 - reg
-			]
-			i: i + 1
-		]
+		state/filter-idx: either null? filter [-1][filter/idx]
+		state/reg: reg
+		state/len: a/vregs/length
+		state/nodes: a/graph/nodes
+		bit-table/apply a/liveness a/liveout-row as int-ptr! :add-live-reg-edge as int-ptr! :state
 	]
 
 	add-interference-edges: func [
@@ -1722,6 +1787,7 @@ global-reg-alloc: context [
 			liveness [bit-table!]
 			interfere old [vector!]
 			liveout-row n-interfere [integer!]
+			state	[interfere-merge-state! value]
 	][
 		g: a/graph
 		pn: ARRAY_DATA(g/nodes)
@@ -1757,45 +1823,21 @@ global-reg-alloc: context [
 		n-interfere: node/n-interfere
 		liveness: a/liveness
 		liveout-row: a/liveout-row
-		j: 0
-		n-vregs: a/vregs/length
-		while [
-			all [
-				i < len
-				j < n-vregs
-			]
-		][
-			either p-old/ii = j [
-				vector/append-int interfere p-old/ii
-				i: ii
-				ii: i + 1
-			][
-				if all [
-					j <> idx
-					bit-table/pick liveness liveout-row j
-				][
-					vector/append-int interfere j
-					n-interfere: n-interfere + 1
-					p: pn + j
-					reg-node/add-interfere as reg-node! p/value idx
-				]
-			]
-			j: j + 1
-		]
+		state/a: a
+		state/idx: idx
+		state/old-cur: p-old + i
+		state/old-end: p-old + len
+		state/interfere: interfere
+		state/n-interfere: n-interfere
+		state/nodes: g/nodes
+		bit-table/apply liveness liveout-row as int-ptr! :merge-live-interfere as int-ptr! :state
 
-		while [j < n-vregs][
-			if all [
-				bit-table/pick liveness liveout-row j
-				j <> idx
-			][
-				vector/append-int interfere j
-				n-interfere: n-interfere + 1
-				p: pn + j
-				reg-node/add-interfere as reg-node! p/value idx
-			]
-			j: j + 1
+		while [state/old-cur < state/old-end][
+			j: state/old-cur/value
+			if j <> idx [vector/append-int interfere j]
+			state/old-cur: state/old-cur + 1
 		]
-		node/n-interfere: n-interfere
+		node/n-interfere: state/n-interfere
 	]
 
 	compute-liveout: func [

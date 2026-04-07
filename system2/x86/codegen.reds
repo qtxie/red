@@ -1029,7 +1029,7 @@ x86-cc: context [
 	]
 ]
 
-x86: context [
+	x86: context [
 
 	rrsd!: alias struct! [
 		base	[instr!]
@@ -1040,7 +1040,7 @@ x86: context [
 
 	#include %assembler.reds
 
-	int-op-width?: func [
+		int-op-width?: func [
 		i		[instr-op!]
 		return: [integer!]
 		/local
@@ -1051,6 +1051,69 @@ x86: context [
 			INT_WIDTH(t)
 		][
 			32
+		]
+	]
+
+	stack-use-legal?: func [
+		ins		[mach-instr!]
+		idx		[integer!]
+		return: [logic!]
+		/local
+			mode [integer!]
+			op   [integer!]
+	][
+		mode: ins/header >> AM_SHIFT and 1Fh
+		op: ins/header and 03FFh
+		case [
+			mode = _AM_OP_IMM [
+				all [
+					idx = 0
+					any [op = I_CMPB op = I_CMPD]
+				]
+			]
+			mode = _AM_REG_OP [
+				all [
+					idx = 1
+					any [
+						op = I_MOVD
+						op = I_MOVQ
+						op = I_MOVB
+						op = I_MOVBSX
+						op = I_MOVBZX
+						op = I_MOVW
+						op = I_MOVWSX
+						op = I_MOVWZX
+						op = I_CMPB
+						op = I_CMPD
+						op = I_BSR
+					]
+				]
+			]
+			mode = _AM_XMM_OP [
+				all [
+					idx = 1
+					any [
+						op = I_MOVSS
+						op = I_MOVSD
+						op = I_UCOMISS
+						op = I_UCOMISD
+						op = I_CVTSS2SD
+						op = I_CVTSD2SS
+					]
+				]
+			]
+			mode = _AM_REG_XOP [
+				all [
+					idx = 1
+					any [
+						op = I_MOVSS
+						op = I_MOVSD
+						op = I_CVTSS2SID
+						op = I_CVTSD2SID
+					]
+				]
+			]
+			true [false]
 		]
 	]
 

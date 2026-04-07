@@ -1281,11 +1281,15 @@ context [
 		
 		build-import job								;-- populate import section buffer
 
-		if job/type = 'dll [build-export job]			;-- populate export section buffer
+		if job/type = 'dll [
+			build-export job
+		]			;-- populate export section buffer
 
 		;if find job/sections 'rsrc	[build-resource job]
 		
-		if find [dll drv] job/type [build-reloc job]
+		if find [dll drv] job/type [
+			build-reloc job
+		]
 
 		out: job/buffer
 		append out defs/image/MSDOS-header
@@ -1301,13 +1305,13 @@ context [
 		resolve-import-refs job							;-- resolve DLL imports references
 		resolve-data-refs job							;-- resolve data references
 
-		;linker/set-image-info
-		;	job
-		;	base-address
-		;	(section-addr?/memory job 'code) - base-address
-		;	length? job/sections/code/2
-		;	(section-addr?/memory job 'data) - base-address
-		;	length? job/sections/data/2
+		linker/set-image-info
+			job
+			base-address
+			(section-addr?/memory job 'code) - base-address
+			length? job/sections/code/2
+			(section-addr?/memory job 'data) - base-address
+			length? job/sections/data/2
 
 		if job/show-func-map? [linker/show-funcs-map job entry-point-address? job]
 

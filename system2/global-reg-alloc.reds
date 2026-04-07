@@ -1045,7 +1045,7 @@ global-reg-alloc: context [
 			u		[use!]
 			w		[overwrite!]
 			d		[def!]
-			c n		[integer!]
+			c n idx	[integer!]
 			v v2	[vreg!]
 			clr		[int-ptr!]
 			pint	[int-ptr!]
@@ -1058,7 +1058,9 @@ global-reg-alloc: context [
 		clr: as int-ptr! a/coloring + 1
 		p: INS_OPERANDS(cur-i)
 		p: p + cur-i/num
+		idx: cur-i/num
 		loop cur-i/num [
+			idx: idx - 1
 			p: p - 1
 			o: as operand! p/value
 			switch o/header and FFh [
@@ -1073,6 +1075,16 @@ global-reg-alloc: context [
 					][
 						pint: clr + v/idx
 						if zero? pint/value [
+							if all [
+								zero? c
+								vreg-not-const?(v)
+								v/usage = USAGE_ONCE
+								v/spill > 0
+								x86/stack-use-legal? cur-i idx
+							][
+								u/constraint: v/spill
+								continue
+							]
 							if opcode = I_PMOVE [
 								u/constraint: a/reg-set/spill-start
 								continue
@@ -1970,7 +1982,7 @@ global-reg-alloc: context [
 			u				[use!]
 			w				[overwrite!]
 			k				[kill!]
-			reg c loc		[integer!]
+			reg c loc idx	[integer!]
 			dst src v		[vreg!]
 			vr				[vreg-reg!]
 			node			[reg-node!]
@@ -2049,7 +2061,9 @@ global-reg-alloc: context [
 		pp: ARRAY_DATA(a/graph/nodes)
 		p: INS_OPERANDS(cur-i)
 		p: p - 1
+		idx: -1
 		loop cur-i/num [
+			idx: idx + 1
 			p: p + 1
 			o: as operand! p/value
 			switch o/header and FFh [
@@ -2109,6 +2123,17 @@ global-reg-alloc: context [
 					u: as use! o
 					v: u/vreg
 					c: u/constraint
+					if all [
+						v <> null
+						zero? c
+						v/reload-from <> null
+						v/usage = USAGE_ONCE
+						v/reload-from/spill > 0
+						x86/stack-use-legal? cur-i idx
+					][
+						u/constraint: v/reload-from/spill
+						continue
+					]
 					if any [null? v on-stack? a/reg-set c][
 						continue
 					]

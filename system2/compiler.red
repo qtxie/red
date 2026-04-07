@@ -45,6 +45,7 @@ system-dialect: context [
 		flags:				none						;-- global flags
 		sub-system:			none						;-- target environment (GUI | console)
 		symbols:			none						;-- symbols table
+		exports:			none						;-- exported symbols table
 		output:				none						;-- output file name (without extension)
 		debug-info:			none						;-- debugging informations
 		base-address:		none						;-- base address
@@ -241,6 +242,7 @@ system-dialect: context [
 		job/code-buf: #{}
 		job/data-buf: #{}
 		job/imports: make block! 10
+		job/exports: make block! 10
 		job/symbols: make block! 10
 		job
 	]
@@ -249,6 +251,15 @@ system-dialect: context [
 		t0: now/time/precise
 		do code
 		now/time/precise - t0
+	]
+
+	inject-win32-dll-stubs: func [src [block!]][
+		insert skip src 2 [
+			on-load: func [handle [integer!]] []
+			on-unload: func [handle [integer!]] []
+			on-new-thread: func [handle [integer!]] []
+			on-exit-thread: func [handle [integer!]] []
+		]
 	]
 
 	collect-resources: func [
@@ -352,6 +363,9 @@ system-dialect: context [
 					src: loader/process file
 					;if job/OS = 'Windows [collect-resources src/2 resources file]
 				]
+				if all [job/type = 'dll job/OS = 'Windows not job/red-pass?][
+					inject-win32-dll-stubs src
+				]
 			]
 			comp-time: dt [compiler/run job src file]
 		]
@@ -360,17 +374,20 @@ system-dialect: context [
 		compiler/finalize							;-- compile all functions
 		set-verbose-level 0
 
-		if verbose > 3 [
-			probe job/imports
-			probe job/symbols
-			probe job/data-buf
-		]
 		if opts/link? [
 			link-time: dt [
+				if all [job/type = 'dll empty? job/exports][
+					do make error! "missing #export directive for DLL production"
+				]
 				job/sections: compose/deep/only [
 					code   [- 	(job/code-buf)]
 					data   [- 	(job/data-buf)]
 					import [- - (job/imports)]
+				]
+				unless empty? job/exports [
+					append job/sections compose/deep/only [
+						export [- - (job/exports)]
+					]
 				]
 				;if job/OS = 'Windows [
 				;	if icon: find resources 'icon [

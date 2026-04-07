@@ -555,6 +555,8 @@ compiler: context [
 	src-blk: as red-block! 0
 	cur-blk: as red-block! 0
 	script: as cell! 0
+	exports-blk: as red-block! 0
+	entry-fn: as fn! 0
 
 	ir-module: as ir-module! 0
 	program: as mach-program! 0
@@ -687,6 +689,10 @@ compiler: context [
 		src: fn/body
 		src-blk: src
 		dprint "^/^/=> Parsing"
+		if all [null? parent f-ctx = null fn/token <> null][
+			f-ctx: parser/make-ctx fn/token parent yes
+			parser/add-decl f-ctx fn/token as int-ptr! fn
+		]
 		ctx: parser/parse-context fn/token src parent f-ctx
 		if null? parent [
 			func-length: as fn! parser/find-word as red-word! w-length? ctx RST_FUNC
@@ -761,7 +767,11 @@ compiler: context [
 			fn: as fn! kv/2
 			ty: NODE_TYPE(fn)
 			case [
-				all [ty = RST_FUNC NODE_FLAGS(fn) and RST_IMPORT_FN = 0][
+				all [
+					ty = RST_FUNC
+					NODE_FLAGS(fn) and RST_IMPORT_FN = 0
+					fn <> entry-fn
+				][
 					cur-blk: fn/body
 					f-ctx: parser/make-ctx fn/token ctx yes
 					init-func-ctx f-ctx fn
@@ -876,6 +886,121 @@ compiler: context [
 		]
 	]
 
+	needed-fn-symbol?: func [
+		w		[red-word!]
+		return: [logic!]
+		/local
+			p end	[cell!]
+			sym		[integer!]
+			exp		[red-word!]
+	][
+		sym: symbol/resolve w/symbol
+		if any [
+			sym = symbol/make "***-dll-entry-point"
+			sym = symbol/make "***-drv-entry-point"
+		][return true]
+
+		if exports-blk = null [return false]
+		p: block/rs-head exports-blk
+		end: block/rs-tail exports-blk
+		while [p < end][
+			exp: as red-word! p
+			if sym = symbol/resolve exp/symbol [return true]
+			p: p + 2
+		]
+		false
+	]
+
+	fill-job-functions: func [
+		symbols		[red-block!]
+		funcs		[vector!]
+		/local
+			p		[ptr-ptr!]
+			cg		[codegen!]
+			fn		[fn!]
+			ty		[integer!]
+			w		[red-word!]
+			name	[cell!]
+			cstr	[c-string!]
+			w-native [cell!]
+			w-dash	 [cell!]
+			blk		[red-block!]
+	][
+		w-native: as cell! word/load "native"
+		w-dash: as cell! word/load "-"
+		p: as ptr-ptr! funcs/data
+		loop funcs/length [
+			cg: as codegen! p/value
+			fn: cg/fn/fn
+			if fn/token <> null [
+				ty: TYPE_OF(fn/token)
+				if any [ty = TYPE_WORD ty = TYPE_SET_WORD][
+				w: as red-word! fn/token
+				if needed-fn-symbol? w [
+					cstr: symbol/get-c-string w/symbol
+					name: as cell! word/load cstr
+					red/block/rs-append symbols name
+					blk: red/block/make-in symbols 4
+					red/block/rs-append blk w-native
+					red/integer/make-in blk cg/mark
+					red/block/make-in blk 1
+					red/block/rs-append blk w-dash
+				]
+				]
+			]
+			p: p + 1
+		]
+	]
+
+	fill-job-globals: func [
+		symbols		[red-block!]
+		ctx		[context!]
+		/local
+			decls	[int-ptr!]
+			n		[integer!]
+			kv		[int-ptr!]
+			ty		[integer!]
+			var		[var-decl!]
+			w		[red-word!]
+			name	[cell!]
+			cstr	[c-string!]
+			w-global [cell!]
+			w-dash	 [cell!]
+			blk		[red-block!]
+	][
+		if null? ctx [exit]
+		w-global: as cell! word/load "global"
+		w-dash: as cell! word/load "-"
+		decls: ctx/decls
+		n: hashmap/size? decls
+		kv: null
+		loop n [
+			kv: hashmap/next decls kv
+			var: as var-decl! kv/2
+			ty: NODE_TYPE(var)
+			case [
+				all [ty = RST_VAR_DECL GLOBAL_VAR?(var)][
+					if var/data-idx < 0 [record-global var]
+					if var/data-idx >= 0 [
+						w: as red-word! var/token
+						cstr: symbol/get-c-string w/symbol
+						name: as cell! word/load cstr
+						red/block/rs-append symbols name
+						blk: red/block/make-in symbols 4
+						red/block/rs-append blk w-global
+						red/integer/make-in blk var/data-idx
+						red/block/make-in blk 1
+						red/block/rs-append blk w-dash
+					]
+				]
+				ty = RST_CONTEXT [
+					fill-job-globals symbols as context! var
+				]
+				true [0]
+			]
+		]
+	]
+
 	fill-job-imports: func [
 		imports		[red-block!]
 		/local
@@ -967,6 +1092,13 @@ compiler: context [
 			data	[red-binary!]
 			symbols [red-block!]
 			imports [red-block!]
+			exports [red-block!]
+			type	[red-word!]
+			OS		[red-word!]
+			red-pass [red-logic!]
+			type-id [integer!]
+			OS-id	[integer!]
+			main-token [cell!]
 			_job	[cell! value]
 	][
 		job: as red-object! copy-cell as cell! job _job		;-- job slot will be overwrite by lexer
@@ -975,10 +1107,22 @@ compiler: context [
 		data: as red-binary! object/rs-select job as cell! word/load "data-buf"
 		symbols: as red-block! object/rs-select job as cell! word/load "symbols"
 		imports: as red-block! object/rs-select job as cell! word/load "imports"
+		exports: as red-block! object/rs-select job as cell! word/load "exports"
+		type: as red-word! object/rs-select job as cell! word/load "type"
+		OS: as red-word! object/rs-select job as cell! word/load "OS"
+		red-pass: as red-logic! object/rs-select job as cell! word/load "red-pass?"
+		type-id: symbol/resolve type/symbol
+		OS-id: symbol/resolve OS/symbol
+		exports-blk: exports
 
 		init-program
 
-		fn: xmalloc(fn!)	;-- entry func
+		main-token: either all [
+			type-id = symbol/make "dll"
+			OS-id = symbol/make "Windows"
+			not red-pass/value
+		][as cell! word/load "***-main"][null]
+		fn: parser/make-func main-token null no	;-- entry func
 		fn/body: src
 		fn/type: as rst-type! op-cache/void-op
 
@@ -986,8 +1130,10 @@ compiler: context [
 		;-- TBD compile functions with multi-threads
 		stack/mark-try-all words/_anon
 		catch CATCH_ALL_EXCEPTIONS [
+			entry-fn: fn
 			ctx: comp-fn fn null null
 			comp-functions ctx
+			entry-fn: null
 			stack/unwind
 		]
 		stack/adjust-post-try
@@ -1007,6 +1153,8 @@ compiler: context [
 		reloc-fn-calls funcs symbols
 
 		;-- fill the job object, we'll do the rest part in Red
+		fill-job-functions symbols funcs
+		fill-job-globals symbols ctx
 		fill-job-symbols symbols
 		fill-job-imports imports
 		fill-job-code code

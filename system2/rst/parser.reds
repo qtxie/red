@@ -565,6 +565,11 @@ parser: context [
 	k_typecheck:	symbol/make "typecheck"
 	k_build-date:	symbol/make "build-date"
 
+	s_on_load:			symbol/make "on-load"
+	s_on_unload:		symbol/make "on-unload"
+	s_on_new_thread:	symbol/make "on-new-thread"
+	s_on_exit_thread:	symbol/make "on-exit-thread"
+
 	;-- system/*
 	k_system:		symbol/make "system"
 	k_stack:		symbol/make "stack"
@@ -910,7 +915,7 @@ parser: context [
 		f/parent: parent
 		f/accept: :func_accept
 		SET_NODE_TYPE(f RST_FUNC)
-		if parent/with-ns <> null [
+		if all [parent <> null parent/with-ns <> null][
 			f/with-ns: vector/copy parent/with-ns
 		]
 		f
@@ -3054,7 +3059,7 @@ parser: context [
 					sym = k_build-date [0]
 					sym = k_enum [pc: parse-enum pc end ctx]
 					sym = k_import [pc: parse-imports pc end ctx]
-					sym = k_export [0]
+					sym = k_export [pc: parse-exports pc end ctx]
 					sym = k_syscall [0]
 					sym = k_script [
 						pc: advance-next pc end
@@ -3299,6 +3304,117 @@ parser: context [
 		exit-block
 	]
 
+	set-export-abi: func [
+		fn		[fn!]
+		attr	[integer!]
+		/local
+			ft	[fn-type!]
+	][
+		ft: as fn-type! fn/type
+		ft/header: ft/header and FFFCFFFFh		;-- clear cdecl/stdcall bits only
+		ADD_FN_ATTRS(ft attr)
+	]
+
+	append-export-name: func [
+		name	[red-word!]
+		ext-name	[cell!]
+		/local
+			cstr [c-string!]
+	][
+		either ext-name <> null [
+			red/block/rs-append compiler/exports-blk ext-name
+		][
+			cstr: symbol/get-c-string name/symbol
+			string/load-in cstr length? cstr compiler/exports-blk UTF-8
+		]
+	]
+
+	parse-exports: func [
+		pc		[cell!]
+		end		[cell!]
+		ctx		[context!]
+		return: [cell!]
+		/local
+			blk		[red-block!]
+			p tail	[cell!]
+			ext-name	[cell!]
+			attr	[integer!]
+			sym		[integer!]
+			w		[red-word!]
+			node	[rst-node!]
+			fn		[fn!]
+			var		[var-decl!]
+			saved-blk [red-block!]
+	][
+		attr: FN_CC_CDECL
+		pc: advance-next pc end
+		either TYPE_OF(pc) = TYPE_WORD [
+			w: as red-word! pc
+			sym: symbol/resolve w/symbol
+			attr: case [
+				sym = k_cdecl	 [FN_CC_CDECL]
+				sym = k_stdcall [FN_CC_STDCALL]
+				true [
+					throw-error [pc "invalid calling convention specifier:" pc]
+					0
+				]
+			]
+			pc: expect-next pc end TYPE_BLOCK
+		][
+			pc: expect pc TYPE_BLOCK
+		]
+
+		blk: as red-block! pc
+		p: block/rs-head blk
+		tail: block/rs-tail blk
+		if p = tail [return pc]
+
+		enter-block(blk)
+
+		while [p < tail][
+			ext-name: null
+			unless TYPE_OF(p) = TYPE_WORD [
+				throw-error [p "invalid exported symbol:" p]
+			]
+
+			w: as red-word! p
+			node: find-word w ctx -1
+			if null? node [
+				throw-error [p "undefined exported symbol:" p]
+			]
+
+			switch NODE_TYPE(node) [
+				RST_FUNC [
+					if NODE_FLAGS(node) and RST_IMPORT_FN <> 0 [
+						throw-error [p "invalid exported symbol:" p]
+					]
+					fn: as fn! node
+					set-export-abi fn attr
+				]
+				RST_VAR_DECL [
+					var: as var-decl! node
+					if LOCAL_VAR?(var) [
+						throw-error [p "invalid exported symbol:" p]
+					]
+				]
+				default [
+					throw-error [p "invalid exported symbol:" p]
+				]
+			]
+
+			red/block/rs-append compiler/exports-blk p
+			p: p + 1
+			if all [p < tail TYPE_OF(p) = TYPE_STRING][
+				ext-name: p
+				p: p + 1
+			]
+			append-export-name w ext-name
+		]
+
+		exit-block
+		pc
+	]
+
 	parse-imports: func [
 		pc		[cell!]
 		end		[cell!]
@@ -3363,6 +3479,21 @@ parser: context [
 			hashmap/put ctx/decls sym decl
 			true
 		][false]
+	]
+
+	dll-callback?: func [
+		name	[red-word!]
+		return: [logic!]
+		/local
+			sym [integer!]
+	][
+		sym: symbol/resolve name/symbol
+		any [
+			sym = s_on_load
+			sym = s_on_unload
+			sym = s_on_new_thread
+			sym = s_on_exit_thread
+		]
 	]
 
 	parse-context: func [
@@ -3578,15 +3709,37 @@ parser: context [
 			fn	[fn!]
 			spec [red-block!]
 			body [red-block!]
+			val	[ptr-ptr!]
+			old	[red-block!]
+			w	[red-word!]
+			sym [integer!]
 	][
-		fn: make-func pc ctx no
 		body: as red-block! advance pc end 3
 		spec: body - 1
+		w: as red-word! pc
+		sym: symbol/resolve w/symbol
+		val: hashmap/get ctx/decls sym
+		either null? val [
+			fn: make-func pc ctx no
+		][
+			fn: as fn! val/value
+			old: as red-block! fn/body
+			unless all [
+				NODE_TYPE(fn) = RST_FUNC
+				dll-callback? w
+				old <> null
+				zero? block/rs-length? old
+			][
+				throw-error [pc "symbol name was already defined"]
+			]
+		]
 		fn/body: body
 		fn/type: as rst-type! parse-fn-spec spec fn
 
-		unless add-decl ctx pc as int-ptr! fn [
-			throw-error [pc "symbol name was already defined"]
+		if null? val [
+			unless add-decl ctx pc as int-ptr! fn [
+				throw-error [pc "symbol name was already defined"]
+			]
 		]
 		as cell! body
 	]

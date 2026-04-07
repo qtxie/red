@@ -219,7 +219,6 @@ reg-node: context [
 ]
 
 global-reg-alloc: context [
-
 	statistic!: alias struct! [
 		n-vars		[integer!]
 		n-iters		[integer!]
@@ -316,6 +315,21 @@ global-reg-alloc: context [
 		len			[integer!]
 	]
 
+	reg-state-update-state!: alias struct! [
+		a			[allocator!]
+		s			[reg-state!]
+		vregs		[ptr-ptr!]
+		len			[integer!]
+	]
+
+	reload-const-state!: alias struct! [
+		a			[allocator!]
+		next-i		[mach-instr!]
+		m-row		[integer!]
+		vregs		[ptr-ptr!]
+		len			[integer!]
+	]
+
 	fn-process!: alias function! [a [allocator!] blk [basic-block!] cur-i [mach-instr!]]
 
 	merge-live-interfere: func [
@@ -373,6 +387,39 @@ global-reg-alloc: context [
 		if idx >= s/len [exit]
 		p: s/vregs + idx
 		add-interference-edges s/a as vreg! p/value
+	]
+
+	update-live-reg-state: func [
+		idx		[integer!]
+		args	[int-ptr!]
+		/local
+			s	[reg-state-update-state!]
+			p	[ptr-ptr!]
+	][
+		s: as reg-state-update-state! args
+		if idx >= s/len [exit]
+		p: s/vregs + idx
+		update-reg-state s/a s/s as vreg! p/value
+	]
+
+	insert-reload-const: func [
+		idx		[integer!]
+		args	[int-ptr!]
+		/local
+			s	[reload-const-state!]
+			p	[ptr-ptr!]
+			m	[move-arg! value]
+			vreg [vreg!]
+	][
+		s: as reload-const-state! args
+		if idx >= s/len [exit]
+		p: s/vregs + idx
+		vreg: as vreg! p/value
+		m/dst-v: vreg
+		m/src-v: vreg
+		m/dst-reg: 0
+		backend/insert-reload s/a/cg :m s/next-i
+		bit-table/clear s/a/liveness s/m-row idx
 	]
 
 	init-move-set: func [
@@ -901,6 +948,7 @@ global-reg-alloc: context [
 			vars-cnt	[integer!]
 			i j len idx	[integer!]
 			mask-row	[integer!]
+			tmp-row		[integer!]
 			end			[integer!]
 			clr			[int-ptr!]
 			p pn pp pb	[ptr-ptr!]
@@ -916,6 +964,7 @@ global-reg-alloc: context [
 		vars-cnt: a/vars-cnt
 		liveness: a/liveness
 		mask-row: a/mask-row
+		tmp-row: a/liveout-row
 		i: vars-cnt
 		len: a/vregs/length
 		while [i < len][
@@ -956,15 +1005,10 @@ global-reg-alloc: context [
 				pp: ARRAY_DATA(succs)
 				loop succs/length [
 					e: as cf-edge! pp/value
-					blk: e/dst
-					idx: blk/info/rpo-idx
-					j: vars-cnt
-					while [j < len][
-						if bit-table/pick liveness idx j [
-							bit-table/set liveness info/rpo-idx j
-						]
-						j: j + 1
-					]
+					idx: e/dst/info/rpo-idx
+					bit-table/copy-row liveness tmp-row idx
+					bit-table/and-rows liveness tmp-row mask-row
+					bit-table/or-rows liveness info/rpo-idx tmp-row
 					pp: pp + 1
 				]
 			]
@@ -1386,9 +1430,11 @@ global-reg-alloc: context [
 		return: [integer!]
 		/local
 			p pp	[ptr-ptr!]
+			next root cur [integer!]
 			node	[reg-node!]
 	][
 		p: ARRAY_DATA(nodes)
+		cur: n
 		while [n > 0][
 			pp: p + n
 			node: as reg-node! pp/value
@@ -1396,7 +1442,17 @@ global-reg-alloc: context [
 				n: node/id
 			]
 		]
-		n
+		root: n
+		n: cur
+		while [n > 0][
+			pp: p + n
+			node: as reg-node! pp/value
+			if node/id = root [break]
+			next: node/id
+			node/id: root
+			n: next
+		]
+		root
 	]
 
 	remove-from-list: func [
@@ -1404,7 +1460,7 @@ global-reg-alloc: context [
 		x		[integer!]
 		/local
 			p	[int-ptr!]
-			y	[integer!]
+			y		[integer!]
 	][
 		p: as int-ptr! vec/data
 		loop vec/length [
@@ -1661,10 +1717,6 @@ global-reg-alloc: context [
 		]
 	]
 
-	compare-cb: func [[cdecl] a [int-ptr!] b [int-ptr!] return: [integer!]][
-		a/value - b/value
-	]
-
 	compare-moves: func [[cdecl] a [int-ptr!] b [int-ptr!] return: [integer!]][
 		;; sort moves-list in descending order
 		b/3 - a/3
@@ -1677,11 +1729,9 @@ global-reg-alloc: context [
 		weight		[integer!]
 		/local
 			rset	[reg-set!]
-			cset	[int-array!]
 			regs	[int-array!]
-			p pp	[int-ptr!]
-			reg i j	[integer!]
-			n		[integer!]
+			p		[int-ptr!]
+			reg	[integer!]
 			node	[reg-node!]
 			nodes	[ptr-array!]
 	][
@@ -1692,26 +1742,15 @@ global-reg-alloc: context [
 		][
 			nodes: a/graph/nodes
 			node: as reg-node! ptr-array/pick nodes vreg/idx
-			cset: int-array/copy as int-array! ptr-array/pick rset/regs constraint
-			qsort as byte-ptr! cset + 1 cset/length 4 :compare-cb
-
 			p: rset/regs-cls + vreg/reg-class
 			regs: as int-array! ptr-array/pick rset/regs p/value
 			p: as int-ptr! regs + 1
-			pp: as int-ptr! cset + 1
-			i: 1 j: 1
-			n: cset/length
 			loop regs/length - 2 [
-				reg: p/i
-				either all [
-					j <= n
-					reg = pp/j
-				][
-					j: j + 1
-				][
+				reg: p/value
+				unless in-reg-set? rset reg constraint [
 					reg-node/add-interfere node 0 - reg
 				]
-				i: i + 1
+				p: p + 1
 			]
 		]
 	]
@@ -1936,6 +1975,7 @@ global-reg-alloc: context [
 			node			[reg-node!]
 			regs			[int-array!]
 			pint			[int-ptr!]
+			state			[reg-state-update-state! value]
 	][
 		prev-i: cur-i/prev
 		next-i: cur-i/next
@@ -1949,16 +1989,11 @@ global-reg-alloc: context [
 		if opcode = I_BLK_END [
 			reset-reg-state reg-state
 			compute-liveout a blk
-			i: 0
-			len: vregs/length
-			p: VECTOR_DATA(vregs)
-			while [i < len][
-				if bit-table/pick liveness liveout-row i [
-					update-reg-state a reg-state as vreg! p/value
-				]
-				p: p + 1
-				i: i + 1
-			]
+			state/a: a
+			state/s: reg-state
+			state/vregs: VECTOR_DATA(vregs)
+			state/len: vregs/length
+			bit-table/apply liveness liveout-row as int-ptr! :update-live-reg-state as int-ptr! :state
 			exit
 		]
 
@@ -2775,27 +2810,19 @@ global-reg-alloc: context [
 		a		[allocator!]
 		next-i	[mach-instr!]
 		/local
-			vregs [vector!] liveness [bit-table!] lv-row m-row i n [integer!]
-			p [ptr-ptr!] args [move-arg! value]
+			vregs [vector!] liveness [bit-table!] lv-row m-row [integer!]
+			state [reload-const-state! value]
 	][
 		vregs: a/vregs
-		p: VECTOR_DATA(vregs)
 		liveness: a/liveness
 		lv-row: a/liveout-row
 		m-row: a/mask-row
-		i: 0
-		n: vregs/length
-		while [i < n][
-			if bit-table/pick liveness lv-row i [
-				args/dst-v: as vreg! p/value
-				args/src-v: args/dst-v
-				args/dst-reg: 0
-				backend/insert-reload a/cg :args next-i
-				bit-table/clear liveness m-row  i
-			]
-			p: p + 1
-			i: i + 1
-		]
+		state/a: a
+		state/next-i: next-i
+		state/m-row: m-row
+		state/vregs: VECTOR_DATA(vregs)
+		state/len: vregs/length
+		bit-table/apply liveness lv-row as int-ptr! :insert-reload-const as int-ptr! :state
 		bit-table/clear-row liveness lv-row
 	]
 

@@ -158,6 +158,7 @@ reg-graph: context [
 		]
 		vec
 	]
+
 ]
 
 reg-node: context [
@@ -2075,10 +2076,18 @@ global-reg-alloc: context [
 					c: w/constraint
 					loc: alloc-def-reg a dst c true
 					reg: int-array/pick a/coloring src/idx
-					case [
-						src/reload-from <> null [
-							a/statistic/n-reloads: a/statistic/n-reloads + 1
-							vr: as vreg-reg! vector/new-item a/moves-prev/reloads
+		case [
+			all [
+				vreg-const?(src)
+				src/usage <> USAGE_MANY
+			][
+				vr: as vreg-reg! vector/new-item a/moves-prev/reloads
+				vr/vreg: src
+				vr/reg: loc
+			]
+			src/reload-from <> null [
+				a/statistic/n-reloads: a/statistic/n-reloads + 1
+				vr: as vreg-reg! vector/new-item a/moves-prev/reloads
 							vr/vreg: src/reload-from
 							vr/reg: loc
 						]
@@ -2180,7 +2189,17 @@ global-reg-alloc: context [
 				add-reg-move as move-set! :a/moves-next vreg loc reg
 			]
 		]
-		if all [save? vreg/spill > 0][
+		if all [
+			save?
+			vreg/spill > 0
+			any [
+				vreg/usage = USAGE_MANY
+				all [
+					vreg/usage = USAGE_ONCE
+					prev-vreg <> vreg
+				]
+			]
+		][
 			a/statistic/n-stores: a/statistic/n-stores + 1
 			s: as reg-save! vector/new-item a/moves-next/saves
 			s/vreg: vreg
@@ -2206,6 +2225,14 @@ global-reg-alloc: context [
 		loc: find-best-loc a/reg-usage rstate vreg/reg-class reg constraint
 
 		case [
+			all [
+				vreg-const?(vreg)
+				vreg/usage <> USAGE_MANY
+			][
+				vr: as vreg-reg! vector/new-item a/moves-prev/reloads
+				vr/vreg: vreg
+				vr/reg: loc
+			]
 			vreg/reload-from <> null [
 				a/statistic/n-reloads: a/statistic/n-reloads + 1
 				vr: as vreg-reg! vector/new-item a/moves-prev/reloads
@@ -2786,16 +2813,22 @@ global-reg-alloc: context [
 							arg/dst-v: null
 							insert-move-loc a/cg :arg cur-i
 						]
-					][
-						if vreg-const?(v) [
-							bit-table/set a/liveness a/liveout-row v/idx
+						][
+							if all [
+								vreg-const?(v)
+								v/usage = USAGE_MANY
+							] [
+								bit-table/set a/liveness a/liveout-row v/idx
+							]
 						]
 					]
-				]
 				OD_OVERWRITE [
 					w: as overwrite! o
 					v: w/src
-					if vreg-const?(v) [
+					if all [
+						vreg-const?(v)
+						v/usage = USAGE_MANY
+					] [
 						bit-table/set a/liveness a/liveout-row v/idx
 					]
 				]

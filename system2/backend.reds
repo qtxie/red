@@ -695,7 +695,6 @@ backend: context [
 	update-usage: func [
 		reg		[vreg!]
 	][
-		if vreg-const?(reg) [exit]		;-- constant value
 		either reg/usage = USAGE_NONE [
 			reg/usage: USAGE_ONCE
 		][
@@ -1253,6 +1252,7 @@ backend: context [
 		v/idx: idx
 		v/size: 1
 		v/reg-class: cls
+		v/usage: USAGE_NONE
 		v/stack-idx: -2
 		vector/poke-ptr vregs idx as int-ptr! v
 		if all [i <> null INSTR_CONST?(i)][
@@ -1292,6 +1292,7 @@ backend: context [
 		new/idx: idx
 		new/size: size
 		new/reg-class: v/reg-class
+		new/usage: USAGE_NONE
 		new/stack-idx: -2
 		vector/poke-ptr vregs idx as int-ptr! new
 		if v/spill < 0 [

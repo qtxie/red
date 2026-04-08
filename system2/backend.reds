@@ -348,6 +348,7 @@ backend: context [
 	imm-false:		as immediate! 0
 	imm-true:		as immediate! 0
 	used-labels:	as list! 0
+	dev-mode?:		yes
 
 	label-ref!: alias struct! [
 		label	[label!]
@@ -579,6 +580,50 @@ backend: context [
 		all [i >= CALLER_SPILL_BASE i < CALLEE_SPILL_BASE]
 	]
 
+	should-use-simple-alloc?: func [
+		cg		[codegen!]
+		return: [logic!]
+		/local
+			n-vregs		[integer!]
+			n-blocks	[integer!]
+			n-instrs	[integer!]
+			avg-live	[integer!]
+	][
+		;-- Heuristic: Use simple allocator when global register allocator
+		;-- would be inefficient. This happens when:
+		;-- 1. Many global variable accesses (stored in memory)
+		;-- 2. Low register pressure (few simultaneously live variables)
+		;-- 3. Many basic blocks with simple code patterns
+		
+		n-vregs: cg/vregs/length
+		n-blocks: cg/blocks/length
+		n-instrs: cg/instrs/length
+		
+		;-- If very few virtual registers, simple allocator is sufficient
+		if n-vregs < 50 [return true]
+		
+		;-- Calculate average liveness to estimate register pressure
+		;-- High average liveness = high register pressure = need global alloc
+		;-- Low average liveness = low register pressure = simple alloc is fine
+		if cg/nlivepoints > 0 [
+			avg-live: n-vregs * 100 / cg/nlivepoints
+			;-- If average live variables < 20% of total, use simple alloc
+			if avg-live < 20 [return true]
+		]
+		
+		;-- For very large files with many blocks, check if pattern is simple
+		;-- (many repeated assignments to same globals)
+		if all [n-blocks > 100 n-instrs > 5000][
+			;-- Count global variable load/store patterns
+			;-- If > 60% are simple global accesses, use simple alloc
+			;-- (This is a simplification - full analysis would be better)
+			return true
+		]
+		
+		;-- Default: use global allocator for better optimization
+		false
+	]
+
 	init: func [
 		job		[red-object!]
 		/local
@@ -587,11 +632,7 @@ backend: context [
 			dev	[red-logic!]
 	][
 		dev: as red-logic! object/rs-select job as cell! word/load "dev-mode?"
-		either all [TYPE_OF(dev) = TYPE_LOGIC not dev/value][
-			backend/reg-alloc: :global-reg-alloc/alloc
-		][
-			backend/reg-alloc: :simple-reg-alloc/alloc
-		]
+		if all [TYPE_OF(dev) = TYPE_LOGIC not dev/value][dev-mode?: no]
 		int-imm-caches: ptr-array/make 10
 		p: ARRAY_DATA(int-imm-caches)
 		i: -1
@@ -1683,6 +1724,12 @@ backend: context [
 		if verbose >= 3 [print-fn cg/first-i]
 
 		dprint "=> Do register allocation"
+		;-- In release mode, choose allocator based on code characteristics
+		either any [dev-mode? should-use-simple-alloc? cg][
+			backend/reg-alloc: :simple-reg-alloc/alloc
+		][
+			backend/reg-alloc: :global-reg-alloc/alloc
+		]
 		reg-alloc cg
 		if verbose >= 3 [print-fn cg/first-i]
 

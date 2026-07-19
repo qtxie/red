@@ -30,7 +30,8 @@ function Invoke-CheckedProcess {
 			-NoNewWindow -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 		if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
 			$process.Kill($true)
-			throw "$FilePath timed out after $TimeoutSeconds seconds"
+			$arguments = if ($ArgumentList.Count) { ' ' + ($ArgumentList -join ' ') } else { '' }
+			throw "$FilePath$arguments timed out after $TimeoutSeconds seconds"
 		}
 		$output = (Get-Content -LiteralPath $stdout -Raw -ErrorAction SilentlyContinue) +
 			(Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)

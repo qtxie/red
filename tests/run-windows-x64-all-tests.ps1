@@ -36,7 +36,8 @@ function Invoke-CheckedProcess {
 			-RedirectStandardOutput $OutputPath -RedirectStandardError $stderr
 		if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
 			$process.Kill($true)
-			throw "$FilePath timed out after $TimeoutSeconds seconds"
+			$arguments = if ($ArgumentList.Count) { ' ' + ($ArgumentList -join ' ') } else { '' }
+			throw "$FilePath$arguments timed out after $TimeoutSeconds seconds"
 		}
 		$process.WaitForExit()
 		$process.Refresh()
@@ -123,7 +124,11 @@ function Invoke-NativePhase {
 		throw 'x64 test dependencies are missing; run the Prepare phase first'
 	}
 	$cdbPath = Resolve-Cdb $Cdb
-	$common = @{ Compiler = $Compiler }
+	$common = @{
+		Compiler = $Compiler
+		CompileTimeoutSeconds = $CompileTimeoutSeconds
+		RunTimeoutSeconds = $RunTimeoutSeconds
+	}
 	if ($KeepArtifactsOnFailure) { $common.KeepArtifactsOnFailure = $true }
 	$withDumpbin = $common.Clone()
 	$withDumpbin.Dumpbin = $Dumpbin

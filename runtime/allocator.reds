@@ -165,9 +165,10 @@ resolve-node: func [
 	/local entry [ptr-ptr!]
 ][
 	if zero? handle [return null]
-	assert all [handle > 0 handle < node-registry/next]
+	;-- Release builds strip assert. Out-of-range / non-handle values must not
+	;-- AV when loading entries[handle-1] (common after GC use-after-free).
+	if any [handle < 1 handle >= node-registry/next][return null]
 	entry: node-registry/entries + (handle - 1)
-	assert entry/value <> null
 	as node! entry/value
 ]
 
@@ -175,8 +176,28 @@ resolve-series: func [
 	handle	[node-handle!]
 	return:	[series!]
 	/local node [node!]
+	#if debug? = yes [frame [int-ptr!] count [integer!]]
 ][
+	if zero? handle [
+		#if debug? = yes [
+			print-line "*** zero series handle; native callers:"
+			frame: system/stack/frame
+			count: 8
+			while [all [frame <> null count > 0]][
+				print ["***   " frame "h " as byte-ptr! frame/2 "h" lf]
+				frame: as int-ptr! frame/1
+				count: count - 1
+			]
+		]
+		return null
+	]
 	node: resolve-node handle
+	if null? node [
+		;-- Freed handle (nonzero). Do not fire[]: error formatting re-enters here.
+		print-line ["*** freed series handle: " handle]
+		#if debug? = yes [stack-trace]
+		halt
+	]
 	as series! node/value
 ]
 
@@ -1047,7 +1068,7 @@ collect-big-frames: func [
 			collector/nodes-list/store s/node
 			free-big as byte-ptr! s
 		][
-			s/flags: s/flags and not flag-gc-mark	;-- clear mark flag
+			s/flags: s/flags and not (flag-gc-mark or flag-gc-scan)	;-- clear mark+scan
 		]
 	]
 ]

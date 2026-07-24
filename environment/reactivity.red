@@ -174,9 +174,9 @@ system/reactivity: context [
 		body [block!] "Code block to evaluate"
 		/local result
 	][
-		relations: tail relations
+		relations: tail system/reactivity/relations
 		set/any 'result eval/safe body
-		relations: head relations
+		relations: head system/reactivity/relations
 		:result
 	]
 	
@@ -187,7 +187,7 @@ system/reactivity: context [
 		if system/reactivity/debug? [
 			print ["-- reactivity: stopping, face:" face/type "/deep:" deep]
 		]
-		list: relations
+		list: system/reactivity/relations
 		while [not tail? list][
 			either any [
 				same? list/1 face
@@ -207,7 +207,7 @@ system/reactivity: context [
 	
 	set 'clear-reactions function ["Removes all reactive relations"][
 		if system/reactivity/debug? [print "-- reactivity: clear all"]
-		clear relations
+		clear system/reactivity/relations
 	]
 	
 	set 'dump-reactions function [
@@ -216,7 +216,7 @@ system/reactivity: context [
 		limit: (any [all [system/console system/console/size/x] 72]) - 10
 		count: 0
 		
-		foreach [obj field reaction target] relations [
+		foreach [obj field reaction target] system/reactivity/relations [
 			prin count: count + 1
 			prin ":---^/"
 			prin "  Source: object "
@@ -239,7 +239,7 @@ system/reactivity: context [
 				]
 			]
 		]
-		if empty? relations [print "-- no reactions --"]
+		if empty? system/reactivity/relations [print "-- no reactions --"]
 		()												;-- avoids returning anything in the console
 	]
 	
@@ -249,19 +249,23 @@ system/reactivity: context [
 		reaction [block!]		"Reactive relation"
 	][
 		obj: context? field
+		
+		;-- Stage1: reaction blocks from compiled make reactor! may not keep object binding.
+		;-- Bind to the field owner so bare words like x/y resolve on eval and later checks.
+		bind reaction obj
 		parse reaction rule: [
 			any [
-				item: word! (if in obj item/1 [add-relation obj item/1 reaction field])
+				item: word! (if in obj item/1 [system/reactivity/add-relation obj item/1 reaction field])
 				| [path! | lit-path! | get-path!] (
 					item: item/1
 					if all [in obj item/1 not same? obj system/words][ ;-- avoid double registration
-						add-relation obj item/1 reaction field
+						system/reactivity/add-relation obj item/1 reaction field
 					]
 				) | set-path! | any-string! | into rule | skip
 			]
 		]
 		react/later/with reaction field
-		set field either block? :reaction/1 [do :reaction/1][eval reaction]
+		set field either block? :reaction/1 [do :reaction/1][system/reactivity/eval reaction]
 	]
 
 	set 'is does [cause-error 'internal 'deprecated ["IS" "RELATE word: [reaction]"]]
@@ -274,13 +278,13 @@ system/reactivity: context [
 		return: [block! function! word! none!] "Returns reaction, type or NONE"
 	][
 		either target [
-			pos: skip relations 3
+			pos: skip system/reactivity/relations 3
 			while [pos: find/skip pos field 4][
 				if same? reactor context? pos/1 [return pos/-1]
 				pos: skip pos 4
 			]
 		][
-			pos: relations
+			pos: system/reactivity/relations
 			while [pos: find/same/skip pos reactor 4][
 				if pos/2 = field [return pos/3]
 				pos: skip pos 4
@@ -323,7 +327,7 @@ system/reactivity: context [
 							if all [pos: find objs item/1 word? item/2][
 								obj: pick objects 1 + index? pos
 								if reflect obj 'events? [
-									add-relation obj item/2 :reaction objects
+									system/reactivity/add-relation obj item/2 :reaction objects
 									found?: yes
 								]
 							]
@@ -333,11 +337,11 @@ system/reactivity: context [
 						| skip
 					]
 				]
-				if all [not later found?][eval objects]
+				if all [not later found?][system/reactivity/eval objects]
 			]
 			unlink [
 				if block? src [src: reduce src]
-				pos: relations
+				pos: system/reactivity/relations
 				found?: no
 				while [pos: find/same/only pos :reaction][
 					obj: pos/-2
@@ -354,7 +358,7 @@ system/reactivity: context [
 				parse reaction rule: [
 					any [
 						item: [path! | lit-path! | get-path!] (
-							found?: found? or identify-sources item/1 :reaction ctx
+							found?: found? or system/reactivity/identify-sources item/1 :reaction ctx
 							parse item/1 rule
 						)
 						| set-path! | any-string!
@@ -362,7 +366,7 @@ system/reactivity: context [
 						| skip
 					]
 				]
-				if all [not later found?][eval reaction]
+				if all [not later found?][system/reactivity/eval reaction]
 			]
 		]
 		either found? [:reaction][none]					;-- returns NONE if no relation was processed

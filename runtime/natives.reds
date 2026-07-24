@@ -2910,6 +2910,10 @@ natives: context [
 				compressor/gzip = sym [
 					res: gzip-compress buffer :buflen src srclen
 				]
+				compressor/crush = sym [
+					buflen: crush/compress src srclen buffer
+					res: either buflen > 0 [0][-1]
+				]
 				true [fire [TO_ERROR(script invalid-arg) method]]
 			]
 			if res <> 1 [break]
@@ -2936,6 +2940,7 @@ natives: context [
 			dstlen	[integer!]
 			s		[series!]
 			buf		[byte-ptr!]
+			saved	[byte-ptr!]
 	][
 		#typecheck [decompress size]
 		arg: as red-binary! stack/arguments
@@ -2949,6 +2954,18 @@ natives: context [
 			dstlen: sz/value
 		]
 		sym: symbol/resolve method/symbol
+		if compressor/crush = sym [
+			saved: crush/decompress src :dstlen
+			if saved = null [fire [TO_ERROR(script invalid-data)]]
+			binary/make-at as red-value! dst dstlen
+			s: GET_BUFFER(dst)
+			buf: as byte-ptr! s/offset
+			copy-memory buf saved dstlen
+			crush/release saved
+			s/tail: as cell! (buf + dstlen)
+			stack/set-last as red-value! dst
+			exit
+		]
 		case [
 			compressor/zlib = sym [
 				if dstlen <= srclen [

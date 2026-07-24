@@ -20,6 +20,7 @@ make-profilable make target-class [
 	locals-offset:		16							;-- offset from frame pointer to local variables (catch ID + addr + bitmap offset)
 	def-locals-offset:	16							;-- default offset from frame pointer to local variables
 	
+	stack-bitmap-counts?: yes						;-- arg/local slot counts so GC can visit node-handle! integers
 	fpu-cword: none									;-- x87 control word reference in emitter/symbols
 	fpu-flags: to integer! #{037A}					;-- default control word, division by zero
 													;-- and invalid operands raise exceptions.

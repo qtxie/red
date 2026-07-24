@@ -1,4 +1,4 @@
-REBOL [
+Red [
 	Title:   "Red compiler"
 	Author:  "Nenad Rakocevic"
 	File: 	 %compiler.r
@@ -7,7 +7,85 @@ REBOL [
 	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"
 ]
 
-do-cache %system/compiler.r
+
+; Top-level helper so frame capture uses true function locals under the native
+; compiler. Object-method locals and `do [copy mark ...]` have both failed in Stage1.
+red-compiler-take-frame: func [mark [series! none!] /local start][
+	unless series? :mark [return make block! 0]
+	start: copy mark
+	clear mark
+	start
+]
+
+; Top-level path join avoids method-local/`copy` issues seen in compiled Stage1.
+red-compiler-emit-block: func [blk /with main-ctx /sub /local result][
+	; Stage1-safe: avoid object-method refinements; use pending fields instead.
+	compiler-redbin-emitter/pending-with-ctx: either with [main-ctx][none]
+	compiler-redbin-emitter/pending-sub?: to logic! sub
+	do [compiler-redbin-emitter/emit-block blk]
+	compiler-redbin-emitter/pending-with-ctx: none
+	compiler-redbin-emitter/pending-sub?: no
+	result: compiler-redbin-emitter/last-index
+	either integer? :result [result][0]
+]
+
+red-compiler-emit-context: func [
+	name [word!] spec [block!] stack? [logic!] self? [logic!] type [word!] /root /local result
+][
+	compiler-redbin-emitter/pending-root?: to logic! root
+	do [compiler-redbin-emitter/emit-context name spec stack? self? type]
+	compiler-redbin-emitter/pending-root?: no
+	result: compiler-redbin-emitter/last-index
+	either integer? :result [result][0]
+]
+
+red-compiler-emit-word-root: func [
+	word ctx [word! none!] ctx-idx [integer! none!] /set? /local result
+][
+	compiler-redbin-emitter/pending-root?: yes
+	compiler-redbin-emitter/pending-set?: to logic! set?
+	do [compiler-redbin-emitter/emit-word word ctx ctx-idx]
+	compiler-redbin-emitter/pending-root?: no
+	compiler-redbin-emitter/pending-set?: no
+	result: compiler-redbin-emitter/word-index
+	either integer? :result [result][0]
+]
+
+red-compiler-emit-string-root: func [value /local result][
+	do [compiler-redbin-emitter/emit-string/root value]
+	result: compiler-redbin-emitter/string-index
+	either integer? :result [result][0]
+]
+
+red-compiler-emit-typeset-root: func [v1 [integer!] v2 [integer!] v3 [integer!] /local result][
+	do [compiler-redbin-emitter/emit-typeset/root v1 v2 v3]
+	result: compiler-redbin-emitter/typeset-index
+	either integer? :result [result][0]
+]
+
+red-compiler-emit-native: func [id [word!] spec [block!] /action /local result][
+	compiler-redbin-emitter/pending-action?: to logic! action
+	do [compiler-redbin-emitter/emit-native id spec]
+	compiler-redbin-emitter/pending-action?: no
+	true
+]
+
+red-compiler-safe-copy: func [value][
+	; Never call copy on none!/unset in compiled Stage1 paths.
+	either series? :value [copy value][make block! 0]
+]
+
+red-compiler-join-obj-stack: func [stack item /local out value][
+	unless path? :stack [stack: to path! 'objects]
+	out: make block! 8
+	foreach value to block! stack [append out value]
+	either path? item [
+		foreach value to block! item [append out value]
+	][
+		append out item
+	]
+	to path! out
+]
 
 red: context [
 	verbose:	   0									;-- logs verbosity level
@@ -33,18 +111,16 @@ red: context [
 	func-objs:	   none									;-- points to 'objects first in-function object
 	paths-stack:   make block! 4						;-- stack of generated code for handling dual codepaths for paths
 	native-ts:	   make block! 200						;-- prepared native! typesets: [name [<ts-list>] ...]
-	rebol-gctx:	   bind? 'rebol
+	bindings:	   compiler-bindings
+	binding-of:	   :context?
+	rebol-gctx:	   binding-of 'rebol
 	expr-stack:	   make block! 8
 	current-call:  none
 	currencies:	   none									;-- extra user-defined currency codes from script's header
-	
-	unless value? 'Red [red: none]						;-- for %preprocessor to load
-	
-	lexer: 		   do bind load-cache %encapper/lexer.r 'self
-	extracts:	   do bind load-cache %utils/extractor.r 'self
-	redbin:		   do bind load-cache %utils/redbin.r 'self
-	preprocessor:  do-cache file: %utils/preprocessor.r
-	preprocessor:  do preprocessor/expand/clean load-cache file none ;-- apply preprocessor on itself
+	lexer:		   compiler-lexer
+	extracts:	   compiler-extractor
+	redbin:		   compiler-redbin-emitter
+	preprocessor: compiler-preprocessor
 	
 	sys-global:    make block! 1
 	lit-vars: 	   reduce [
@@ -58,6 +134,7 @@ red: context [
 	locals:		   none
 	locals-stack:  make block! 32
 	output:		   make block! 100
+	frame-stack:   make block! 16					;-- nested set-word mark positions
 	sym-table:	   make block! 1000
 	literals:	   make block! 1000
 	declarations:  make block! 1000
@@ -67,19 +144,18 @@ red: context [
 	types-cache:   make hash!  100						;-- store compiled typesets [types array name...]
 	last-type:	   none
 	return-def:    to-set-word 'return					;-- return: keyword
-	encapped:	   make block! 1
 	s-counter:	   0									;-- series suffix counter
 	depth:		   0									;-- expression nesting level counter
 	max-depth:	   0
 	root-slots:	   0									;-- extra root block slots counter
 	booting?:	   none									;-- YES: compiling boot script
 	nl: 		   newline
-	set 'float!	   'float								;-- type names not defined in Rebol
-	set 'handle!   'handle
 	comment-marker: '------------|
+	include-directive: to issue! "include"
+	get-definition-directive: to issue! "get-definition"
  
 	unboxed-set:   [integer! char! float! float32! logic!]
-	block-set:	   [block! paren! path! set-path! lit-path!]	;@@ missing get-path!
+	block-set:	   [block! paren! path! set-path! lit-path! get-path!]
 	string-set:	   [string! binary!]
 	series-set:	   union block-set string-set
 	
@@ -99,21 +175,42 @@ red: context [
 	]
 	
 	logic-words:  [true false yes no on off]
+	operator-symbols: make map! [
+		"+"  "op_add"
+		"-"  "op_subtract"
+		"*"  "op_multiply"
+		"/"  "op_divide"
+		"//" "op_modulo"
+		"%"  "op_remainder"
+		"="  "op_equal"
+		"<>" "op_not_equal"
+		"==" "op_strict_equal"
+		"=?" "op_same"
+		"<"  "op_lesser"
+		">"  "op_greater"
+		"<=" "op_lesser_equal"
+		">=" "op_greater_equal"
+		"<<" "op_shift_left"
+		">>" "op_shift_right"
+		">>>" "op_shift_logical"
+		"**" "op_power"
+	]
 	
 	word-iterators: [repeat foreach forall remove-each]	;-- only the ones using word(s) as counter(s)
 	
 	iterators: [loop until while repeat foreach forall forever remove-each]
 	
-	standard-modules: load-cache %encapper/modules.r
+	standard-modules: compiler-modules
 
 	func-constructors: [
 		'func | 'function | 'does | 'has | 'routine | 'make 'function!
 	]
 
-	functions: make hash! [
-	;---name--type--arity----------spec----------------------------refs--
-		make [action! 2 [type [datatype! word!] spec [any-type!]] #[none]]	;-- must be pre-defined
-	]
+	functions: make hash! 1000
+	append functions 'make
+	append/only functions reduce [
+		'action! 2 [type [datatype! word!] spec [any-type!]] none
+	]											;-- MAKE must be pre-defined
 	
 	make-keywords: does [
 		foreach [name spec] functions [
@@ -127,6 +224,7 @@ red: context [
 	set-last-none: does [copy [stack/reset none/push-last]]	;-- copy required for R/S line counting injection
 
 	--not-implemented--: does [print "Feature not yet implemented!" halt]
+	abs: :absolute
 	
 	quit-on-error: does [
 		clean-up
@@ -190,31 +288,55 @@ red: context [
 		][no]
 	]
 	
-	relative-path?: func [file [file!]][
-		not find "/~" first file
+	relative-path?: func [file [file!] /local ch][
+		if empty? file [return yes]
+		ch: first file
+		not find "/~" ch
 	]
-	
-	process-include-paths: func [code [block!] /local rule file saved-script-path][
+
+	resolve-include-file: func [file [file!] /local bases base candidate][
+		unless relative-path? file [return clean-path file]
+		bases: copy []
+		if script-path [append bases script-path]
+		unless empty? script-stk [
+			append bases first split-path last script-stk
+		]
+		if main-path [
+			append bases main-path
+			append bases append copy main-path %system/
+		]
+		if all [value? 'system object? system/options system/options/path][
+			append bases system/options/path
+			append bases append copy system/options/path %system/
+		]
+		foreach base bases [
+			candidate: clean-path append copy base file
+			if exists? candidate [return candidate]
+		]
+		clean-path append copy any [script-path main-path %""] file
+	]
+
+	process-include-paths: func [code [block!] /local rule file nested saved-script-path][
 		saved-script-path: script-path
 		parse code rule: [
 			some [
-				#include file: (
+				include-directive file: (
 					script-path: any [script-path main-path]
 					if all [script-path relative-path? file/1][
-						file/1: clean-path join script-path file/1
+						file/1: clean-path append copy script-path file/1
 					]
 					unless empty? script-stk [
 						insert next file reduce [#script last script-stk]
 					]
 				)
-				| into rule
+				| nested: [block! | paren!] :nested into rule
 				| skip
 			]
 		]
 		script-path: saved-script-path
 	]
 	
-	process-calls: func [code [block!] /global /local rule pos mark][
+	process-calls: func [code [block!] /global /local rule pos mark nested][
 		parse code rule: [
 			some [
 				#call pos: (
@@ -224,13 +346,13 @@ red: context [
 					clear mark
 				)
 				| #get pos: (process-get-directive pos/1 back pos)
-				| into rule
+				| nested: [block! | paren!] :nested into rule
 				| skip
 			]
 		]
 	]
 	
-	process-routine-calls: func [code [block!] ctx [word!] ignore [block!] obj [object!] /local rule name][
+	process-routine-calls: func [code [block!] ctx [word!] ignore [block!] obj [object!] /local rule name nested][
 		parse code rule: [
 			some [
 				name: word! (
@@ -239,21 +361,14 @@ red: context [
 					]
 				)
 				| path! | set-path! | lit-path!
-				| into rule
+				| nested: [block! | paren!] :nested into rule
 				| skip
 			]
 		]
 	]
 	
-	preprocess-strings: func [code [block!] /local rule s][  ;-- re-encode strings for Red/System
-		parse code rule: [
-			any [
-				s: string! (lexer/decode-UTF8-string s/1)
-				| into rule
-				| skip
-			]
-		]
-	]
+	; TRANSCODE has already decoded UTF-8 strings into Red's native string form.
+	preprocess-strings: func [code [block!]][code]
 	
 	convert-to-block: func [mark [block!]][
 		change/part/only mark copy/deep mark tail mark	;-- put code between [...]
@@ -267,7 +382,32 @@ red: context [
 		clear mark
 	]
 	
-	to-nibbles: func [src [string!] /local out][
+	to-nibbles: func [
+		src [string! money!]
+		/local out text negative? marker code digits point decimals
+	][
+		if money? :src [
+			text: mold/all src
+			negative?: find "+-" text/1
+			if negative? [negative?: text/1 = #"-" remove text]
+			marker: find text #"$"
+			code: either marker = head text ["..."][copy/part text marker]
+			digits: copy next marker
+			replace/all digits "'" ""
+			either point: find digits #"." [
+				decimals: length? next point
+				remove point
+			][decimals: 0]
+			append/dup digits #"0" 5 - decimals
+			insert/dup digits #"0" 22 - length? digits
+			return reduce [
+				to logic! negative?
+				to-currency-code code
+				to-nibbles digits
+			]
+		]
+		; Pack amount as string of char codes 0-255. Emitter stores c-string as
+		; Latin-1 bytes (not UTF-8), so high nibbles stay single bytes.
 		out: make string! 11
 		foreach [high low] src [
 			append out to char! add
@@ -299,7 +439,7 @@ red: context [
 			datatype!
 			char!
 			integer!
-			decimal!
+			float!
 			refinement!
 			issue!
 			lit-word!
@@ -307,6 +447,12 @@ red: context [
 			get-word!
 			set-word!
 			pair!
+			percent!
+			point2D!
+			point3D!
+			money!
+			tuple!
+			ref!
 			time!
 			date!
 		] type?/word :expr
@@ -315,26 +461,14 @@ red: context [
 	local-bound?: func [original [any-word!] /local obj][
 		all [
 			not empty? locals-stack
-			rebol-gctx <> obj: bind? original
-			find shadow-funcs obj
+			rebol-gctx <> obj: binding-of original
+			bindings/shadow-entry-of obj
 		]
 	]
 	
 	local-word?: func [name [word!]][
 		all [not empty? locals-stack find last locals-stack name]
 	]
-	
-	unicode-char?:  func [value][value/1 = #"'"]
-	float-special?: func [value][value/1 = #"."]
-	tuple-value?:	func [value][value/1 = #"~"]
-	money-value?:	func [value][value/1 = #"$"]
-	ref-value?:		func [value][value/1 = #"@"]
-	type-value?:	func [value][all [value/1 = #"!" value/2 = #"~"]]
-	percent-value?: func [value][#"%" = last value]
-	
-	date-special?:  func [value][all [block? value value/1 = #!date!]]
-	map-value?:     func [value][all [block? value value/1 = #!map!]]
-	point-value?:   func [value][all [block? value value/1 = #!point!]]
 	
 	insert-lf: func [pos][
 		new-line skip tail output pos yes
@@ -361,14 +495,14 @@ red: context [
 	]
 	
 	parent-object?: func [obj [object!]][
-		all [not empty? locals-stack (next first obj) = container-obj?]
+		all [not empty? locals-stack object? container-obj? same? obj container-obj?]
 	]
 	
 	find-binding: func [original [any-word!] /local ctx idx obj][
 		all [
 			ctx: all [
-				rebol-gctx <> obj: bind? original
-				any [select objects obj select shadow-funcs obj]
+				rebol-gctx <> obj: binding-of original
+				any [select-obj obj bindings/shadow-context-of obj]
 			]
 			attempt [idx: get-word-index/with to word! original ctx]
 			reduce [ctx idx]
@@ -379,14 +513,34 @@ red: context [
 		pos: find objects ctx
 		either object? pos/2 [pos/2][pos/-1]
 	]
-	
-	bind-function: func [body [block!] shadow [object!] /local self* rule pos][
+
+	bind-function: func [body [block!] shadow [object!] /local self* rule pos wrapper head-word][
 		bind body shadow
 		if 1 < length? obj-stack [
-			self*: in do obj-stack 'self				;-- rebind SELF to the wrapping object
-			
-			parse body rule: [
-				any [pos: 'self (pos/1: self*) | into rule | skip]
+			wrapper: either path? :obj-stack [safe-eval-object-path obj-stack][none]
+			if object? wrapper [
+				; Red objects do not expose a real self word to in (unlike Rebol).
+				; Build a word bound to the wrapper object, then rebind both bare SELF
+				; and SELF path heads so method bodies resolve object fields.
+				self*: any [
+					in wrapper 'self
+					first bind copy [self] wrapper
+				]
+				parse body rule: [
+					any [
+						pos: word! (
+							if pos/1 = 'self [pos/1: self*]
+						)
+						| pos: [path! set-path! get-path! lit-path!] (
+							head-word: pick pos/1 1
+							if all [any-word? :head-word to word! head-word = 'self][
+								change at pos/1 1 self*
+							]
+						)
+						| pos: [block! | paren!] :pos into rule
+						| skip
+					]
+				]
 			]
 		]
 	]
@@ -410,15 +564,15 @@ red: context [
 	
 	emit-word-ref: func [name [any-word!] /no-prefix /local obj idx ctx][
 		case [
-			rebol-gctx = obj: bind? name [
+			rebol-gctx = obj: binding-of name [
 				emit either no-prefix [decorate-symbol name][prefix-exec name]
 			]
-			all [ctx: select objects obj attempt [idx: get-word-index/with name ctx]][
+			all [ctx: select-obj obj attempt [idx: get-word-index/with name ctx]][
 				emit 'word/push-local
 				emit either parent-object? obj ['octx][ctx] ;-- optional parametrized context reference (octx)
 				emit idx
 			]
-			ctx: select shadow-funcs obj [
+			ctx: bindings/shadow-context-of obj [
 				emit 'word/push-local
 				emit ctx
 				emit get-word-index name					;@@ replace that
@@ -431,13 +585,22 @@ red: context [
 		name [any-word!] original [any-word!] type [word!] actions [block!]
 		/local ctx obj idx
 	][
-		either all [
-			ctx: all [
-				rebol-gctx <> obj: bind? original
-				select objects obj
-			]
-			attempt [idx: get-word-index/with name ctx]
-		][
+		;-- Resolve object-local words: prefer binding of `original`, then current
+		;-- obj-stack (Stage1 often leaves body words unbound after load).
+		ctx: all [
+			rebol-gctx <> obj: binding-of original
+			select-obj obj
+		]
+		unless all [ctx attempt [idx: get-word-index/with name ctx]][
+			if all [
+				1 < length? obj-stack
+				obj: attempt [safe-eval-object-path obj-stack]
+				object? :obj
+				ctx: select-obj obj
+				attempt [idx: get-word-index/with name ctx]
+			][0][ctx: none]
+		]
+		either all [ctx integer? idx][
 			emit append to path! type actions/1
 			emit either parent-object? obj ['octx][ctx] ;-- optional parametrized context reference (octx)
 			emit idx
@@ -454,8 +617,8 @@ red: context [
 		name: to word! :name
 		
 		either all [
-			rebol-gctx <> obj: bind? original
-			ctx: select shadow-funcs obj
+			rebol-gctx <> obj: binding-of original
+			ctx: bindings/shadow-context-of obj
 			name <> 'self
 		][
 			emit append to path! type 'push-local
@@ -469,8 +632,8 @@ red: context [
 	
 	emit-get-word: func [name [word!] original [any-word!] /any? /literal /local new obj ctx][
 		either all [
-			rebol-gctx <> obj: bind? original
-			ctx: select shadow-funcs obj
+			rebol-gctx <> obj: binding-of original
+			ctx: bindings/shadow-context-of obj
 		][	
 			either all [not empty? ctx-stack ctx <> last ctx-stack][
 				emit 'word/get-local
@@ -484,16 +647,19 @@ red: context [
 			emit decorate-symbol/no-alias name
 		][
 			if all [new: select-ssa name not find-function new new][name: new]
-			emit case [									;-- global word
+			emit case [									;-- global / object word
 				all [
 					literal
 					obj = rebol-gctx
+					;-- Stay on get-word/get only when not inside an object body.
+					1 = length? obj-stack
 				][
 					'get-word/get
 				]
 				any?  ['word/get-any]
 				'else [
-					emit-push-from name name 'word [get-local get]
+					;-- Pass `original` so object binding (or obj-stack fallback) is kept
+					emit-push-from name original 'word [get-local get]
 					exit
 				]
 			]
@@ -509,21 +675,21 @@ red: context [
 		name: to word! original
 		
 		either all [
-			rebol-gctx <> obj: bind? original
-			find shadow-funcs obj
+			rebol-gctx <> obj: binding-of original
+			bindings/shadow-context-of obj
 		][
 			either get? [
 				append blk decorate-symbol/no-alias name ;-- local word, point to value slot
 			][
 				append blk [as cell! get-root]
-				append blk redbin/emit-word/root name select objects obj none
+				append blk red-compiler-emit-word-root name select-obj obj none
 			]
 		][
 			if all [new: select-ssa name not find-function new new][name: new]
 			either get? [
 				either all [
 					rebol-gctx <> obj
-					ctx: select objects obj
+					ctx: select-obj obj
 					attempt [idx: get-word-index/with name ctx]
 				][
 					repend blk [
@@ -537,7 +703,7 @@ red: context [
 				]
 			][
 				append blk [as cell! get-root]
-				append blk redbin/emit-word/root name none none
+				append blk red-compiler-emit-word-root name none none
 			]
 			
 		]
@@ -688,13 +854,13 @@ red: context [
 		check:  [
 			'object/unchanged?
 				prefix-exec path/1						;-- word (object! value)
-				third obj: find objects do obj-stk		;-- class id (integer!)
+				third obj: find-obj either path? :obj-stk [safe-eval-object-path obj-stk][none]		;-- class id (integer!)
 		]
 		check2: [
 			'object/unchanged2?
 				parent-ctx								;-- ctx (node!)
 				get-word-index/with path/1 parent-ctx	;-- object slot in parent's ctx
-				third obj: find objects do obj-stk		;-- class id
+				third obj: find-obj either path? :obj-stk [safe-eval-object-path obj-stk][none]		;-- class id
 		]
 		obj-stk: copy/part fpath (index? find fpath path/1) - 1
 		obj-stk/1: either find-contexts path/1 ['func-objs]['objects]
@@ -735,7 +901,7 @@ red: context [
 	
 	make-typeset: func [
 		spec [block!] option [block! none!] f-spec [block!] native? [logic!]
-		/local bs ts word bit idx name
+		/local bs ts word bit idx name current red-name
 	][
 		spec: sort spec									;-- sort types to reduce cache misses
 		
@@ -747,20 +913,29 @@ red: context [
 
 			foreach type spec [
 				unless block? type [
-					if type = 'red/cell! [type: 'any-type!]	;-- coming from routines
+					case [
+						find [red/cell! red-value!] type [type: 'any-type!]
+						all [red-name: form type find/match red-name "red-"] [
+							type: to word! skip red-name 4
+						]
+						true []
+					]
 					type: either word: in extracts/scalars type [get word][reduce [type]]
 
 					foreach word type [
 						bit: get-RS-type-ID name: word
 						unless bit [throw-error/near ["invalid datatype name:" name] f-spec]
-						idx: (bit / 32) + 1
-						poke ts idx ts/:idx or shift/logical -2147483648 bit and 255
+						idx: (to integer! (bit / 32)) + 1
+						current: pick ts idx
+						unless integer? current [
+							throw-error/near ["datatype ID outside typeset range:" name bit] f-spec
+						]
+						poke ts idx current or (shift/logical -2147483648 (bit and 31))
 					]
 				]
 			]
-			forall ts [ts/1: to integer! to-bin32 ts/1]	;-- convert to little-endian values
 			
-			idx: redbin/emit-typeset/root ts/1 ts/2 ts/3
+			idx: red-compiler-emit-typeset-root ts/1 ts/2 ts/3
 			redirect-to literals [
 				name: decorate-series-var 'ts
 				emit compose [(to set-word! name) as red-typeset! get-root (idx)]
@@ -781,12 +956,12 @@ red: context [
 		spec
 	]
 	
-	emit-type-checking: func [name [word!] spec [block!] /native /local pos type][
+	emit-type-checking: func [name [any-word!] spec [block!] /native /local pos type][
 		unless native [name: to word! next form name]	;-- remove prefix decoration
 		
 		either pos: any [
-			find spec name
-			find spec to lit-word! name
+			find/same spec name
+			find/same spec to lit-word! name
 		][
 			type: case [
 				all [block? pos/2 not empty? pos/2]	[pos/2]
@@ -854,23 +1029,43 @@ red: context [
 	
 	get-counter: does [s-counter: s-counter + 1]
 	
-	clean-lf-deep: func [blk [block! paren!] /local pos][
+	clean-lf-deep: func [blk [block! paren!] /local pos nested][
 		blk: copy/deep blk
 		parse blk rule: [
 			pos: (new-line/all pos off)
-			into rule | skip
+			nested: [block! | paren!] :nested into rule | skip
 		]
 		blk
 	]
 
-	clean-lf-flag: func [name [word! lit-word! set-word! get-word! refinement!]][
-		mold/flat to word! name
+	clean-lf-flag: func [name [word! lit-word! set-word! get-word! refinement!] /local text encoded][
+		text: form name
+		if all [
+			any [get-word? name lit-word? name refinement? name]
+			(not empty? text)
+			find ":'/" text/1
+		][remove text]
+		if all [(set-word? name) (not empty? text) (last text) = #":"][remove back tail text]
+		encoded: select operator-symbols text
+		unless encoded [replace/all text "/" "_slash_"]
+		any [encoded text]
 	]
 	
-	prefix-func: func [word [word!] /with path][
+	prefix-func: func [word [word!] /with path /local obj ctx][
+		; Prefer shadow object ctx so registration (ctx~method) matches
+		; obj-func-path?/inherit-functions lookup via select-obj.
 		if 1 < length? obj-stack [
-			path: any [obj-func-call? word next any [path obj-stack]]
-			word: decorate-obj-member word path
+			obj: any [
+				all [path? :path safe-eval-object-path path]
+				all [object? :container-obj? container-obj?]
+				all [path? :obj-stack safe-eval-object-path obj-stack]
+			]
+			ctx: any [
+				all [object? :obj select-obj obj]
+				obj-func-call? word
+				next any [path obj-stack]
+			]
+			word: decorate-obj-member word ctx
 		]
 		word
 	]
@@ -901,12 +1096,24 @@ red: context [
 		append to path! 'exec name
 	]
 	
-	decorate-symbol: func [name [word!] /no-alias /local pos][
+	decorate-symbol: func [name [word!] /no-alias /local pos text result cleaned][
 		if all [not no-alias not local-word? name pos: find/case/skip aliases name 2][name: pos/2]
-		to word! join "~" clean-lf-flag name
+		cleaned: clean-lf-flag name
+		text: append copy "~" form cleaned
+		set/any 'result try [to word! text]
+		if error? :result [
+			; Stage1/Red: some words cannot be re-loaded after ~ decoration
+			; use hex-encoded spelling as a stable R/S identifier instead
+			; word/load still uses the original symbol spelling via add-symbol.
+			text: rejoin ["~s" enbase/base to binary! form cleaned 16]
+			set/any 'result try [to word! text]
+		]
+		if error? :result [throw-error ["cannot decorate symbol" mold name "as" mold text]]
+		result
 	]
 	
-	decorate-func: func [name [word!] /strict /local new][
+	decorate-func: func [name [any-word!] /strict /local new][
+		name: to word! clean-lf-flag name
 		if all [not strict new: select-ssa name][name: new]
 		to word! join "f_" clean-lf-flag name
 	]
@@ -987,12 +1194,15 @@ red: context [
 		none
 	]
 	
-	to-context-spec: func [spec [block!] /local pos][
-		spec: copy spec
+	to-context-spec: func [spec [block! none!] /local pos fields name][
+		spec: red-compiler-safe-copy spec
 		if pos: find spec 'self [remove pos]			;-- avoid setting object/self to none (issue #5687)
-		forall spec [spec/1: to set-word! spec/1]
-		append spec none
-		make object! spec
+		fields: make block! (2 * length? spec)
+		foreach name spec [
+			append fields to set-word! name
+			append/only fields none
+		]
+		make object! fields
 	]
 	
 	iterator-pending?: does [
@@ -1000,7 +1210,7 @@ red: context [
 	]
 	
 	join-obj-stack: func [item [word! path!]][
-		new-line/all join obj-stack item off
+		red-compiler-join-obj-stack obj-stack item
 	]
 	
 	get-obj-base: func [name [any-word!]][
@@ -1014,8 +1224,21 @@ red: context [
 	find-object: func [spec [word! object!] /by-name][
 		case [
 			by-name [find/skip objects spec 6]
-			'else	[back find/skip next objects spec 6]
+			; Red object! equality is by value. Distinct shadow objects with the
+			; same fields (e.g. two make object! [a: none]) collide under plain
+			; find/select and reuse the first object's context (fcobj/a after sf1).
+			; Rebol treated distinct objects as unequal, so identity was implicit.
+			'else	[back find/same/skip next objects spec 6]
 		]
+	]
+
+	; Identity lookup helpers for the objects registry (see find-object note).
+	select-obj: func [obj [object! none!]][
+		all [object? :obj select/same objects obj]
+	]
+
+	find-obj: func [obj [object! none!]][
+		all [object? :obj find/same objects obj]
 	]
 	
 	find-proto: func [obj [block!] fun [word!] /local proto o multi?][
@@ -1027,15 +1250,63 @@ red: context [
 				return obj/1							;-- method redefined in spec
 			]
 			if in proto/1 fun [return obj/1]			;-- check <spec> prototype
-			if o: find-proto find objects proto/1 fun [return o] ;-- recurse into previous prototypes
+			if o: find-proto find-obj proto/1 fun [return o] ;-- recurse into previous prototypes
 			
 			unless proto/2 [return none]				;-- finish if simple inheritance case
 			if in proto/2 fun [return proto/2]			;-- check <base> prototype
-			if o: find-proto find objects proto/2 fun [return o] ;-- recurse into previous prototypes
+			if o: find-proto find-obj proto/2 fun [return o] ;-- recurse into previous prototypes
 		]
 		none
 	]
 	
+	safe-eval-object-path: func [fpath [path!] /local root value pos name entry][
+		; Walk object paths without `do path` (compiled Stage1 path access on
+		; none escapes attempt and aborts the compiler).
+		if any [none? :fpath empty? fpath][return none]
+		either find [objects func-objs] fpath/1 [
+			; Flat objects registry: [name obj ctx id proto events] * N
+			; `func-objs` is a tail pointer into the same table for objects
+			; declared inside the current function body. Search only from that
+			; tail so function parameters named like prior globals (e.g. o/x)
+			; do not resolve to earlier global shadow objects.
+			unless all [2 <= length? fpath word? fpath/2][return none]
+			entry: either all [
+				fpath/1 = 'func-objs
+				any-block? :func-objs
+			][func-objs][objects]
+			while [not tail? entry][
+				if all [entry/1 = fpath/2 object? entry/2][
+					value: entry/2
+					pos: skip fpath 2
+					while [not tail? pos][
+						unless object? :value [return none]
+						name: pos/1
+						unless all [word? name in value name][return none]
+						value: get in value name
+						pos: next pos
+					]
+					return either object? :value [:value][none]
+				]
+				entry: skip entry 6
+			]
+			none
+		][
+			; Nested object tree rooted at a gettable word (rare under Stage1).
+			attempt [set/any 'root get/any fpath/1]
+			unless object? get/any 'root [return none]
+			value: get/any 'root
+			pos: next fpath
+			while [not tail? pos][
+				unless object? :value [return none]
+				name: pos/1
+				unless all [word? name in value name][return none]
+				value: get in value name
+				pos: next pos
+			]
+			either object? :value [:value][none]
+		]
+	]
+
 	search-obj: func [path [path!] /local search base fpath found?][
 		search: [
 			fpath: head insert copy path base
@@ -1043,7 +1314,7 @@ red: context [
 				remove back tail fpath
 				any [
 					tail? next fpath
-					object? found?: attempt [do fpath]	;-- path evaluates to an object: found!
+					object? found?: safe-eval-object-path fpath
 				]
 			]
 		]
@@ -1063,45 +1334,73 @@ red: context [
 		reduce [found? fpath base]
 	]
 	
-	object-access?: func [path [series!] /local res][
-		either path/1 = 'self [
-			bind? path/1
+	object-access?: func [path [series!] /local res self? wrapper][
+		self?: path/1 = 'self
+		either self? [
+			; Prefer word binding; if it is not a registered shadow object (common
+			; for method bodies after bind to the function context), use the
+			; container object saved for deferred method compilation.
+			res: binding-of path/1
+			either all [object? :res find-obj res][
+				res
+			][
+				any [
+					all [object? :container-obj? container-obj?]
+					all [path? :obj-stack safe-eval-object-path obj-stack]
+				]
+			]
 		][
+			wrapper: either path? :obj-stack [safe-eval-object-path obj-stack][none]
 			all [
 				1 < length? obj-stack
-				in do obj-stack path/1
+				object? wrapper
+				in wrapper path/1
 				insert path next obj-stack			;-- insert prefix into object path
 			]
 			search-obj to path! path
 		]
 	]
 	
-	is-object?: func [expr /local pos][
-		unless find [word! get-word! path!] type?/word expr [return none]
-		any [
-			attempt [do join-obj-stack expr]
-			all [path? expr attempt [do head insert copy expr 'objects]]
-			all [
-				find [object! word!] type?/word expr
-				pos: find-object/by-name expr
-				pos/2
-			]
+	is-object?: func [expr /local pos name entry][
+		; Flat objects registry only. Shadow-tree `do path` evaluation is unsafe
+		; under compiled Stage1 (path access errors escape attempt and abort the
+		; compiler). Nested make <proto> cases should register by name.
+		unless find [word! get-word! path! object!] type?/word expr [return none]
+		if object? :expr [return expr]
+		name: case [
+			any [word? expr get-word? expr] [to word! expr]
+			all [path? expr word? last expr] [last expr]
+			true [none]
 		]
+		unless name [return none]
+		entry: objects
+		while [not tail? entry][
+			if all [entry/1 = name object? entry/2][return entry/2]
+			entry: skip entry 6
+		]
+		none
 	]
-	
 	obj-func-call?: func [name [any-word!] /local obj][
-		if any [rebol-gctx = obj: bind? name find shadow-funcs obj][return no]
-		select objects obj
+		if any [rebol-gctx = obj: binding-of name bindings/shadow-context-of obj][return no]
+		select-obj obj
 	]
 	
 	obj-func-path?: func [
 		path [path!]
-		/local fpath base symbol found? fun origin name obj info ctx
+		/local fpath base symbol found? fun origin name obj info ctx self? val method pos cand
 	][
-		either path/1 = 'self [
-			found?: bind? path/1
+		self?: do [path/1 = 'self]
+		either self? [
+			found?: binding-of path/1
+			unless all [object? :found? find-obj found?][
+				found?: any [
+					all [object? :container-obj? container-obj?]
+					all [path? :obj-stack safe-eval-object-path obj-stack]
+				]
+			]
+			unless all [object? :found? find-obj found?][return none]
 			path: copy path
-			path/1: pick find objects found? -1
+			path/1: pick find-obj found? -1
 			fun: head insert copy path 'objects 
 			fpath: head clear next copy path
 		][
@@ -1123,27 +1422,48 @@ red: context [
 			][
 				pick path length? fpath
 			]
-			unless function! = attempt [do fun][return none] ;-- not a function call
+			; Multi-inherit copies real functions; static collection uses function! marker.
+			val: attempt [either all [object? :found? word? last fun][get in found? last fun][do fun]]
+			unless any [
+				all [datatype? :val val = function!]
+				function? :val
+			][return none] ;-- not a function call
 			remove fpath								;-- remove 'objects prefix
 		]
 
-		obj: 	find objects found?
+		obj:	find-obj found?
 		origin: find-proto obj last fun
-		name:	either origin [select objects origin][obj/2]
-		symbol: decorate-obj-member first find/tail fun fpath name
-
-		either find functions symbol [
+		method: last fun
+		name:	either origin [select-obj origin][all [obj obj/2]]
+		; Methods register as ctx~method (prefix-func). Also accept access-word
+		; decoration used by older fallback registration.
+		symbol: none
+		foreach cand reduce [
+			all [name decorate-obj-member method name]
+			all [obj obj/2 decorate-obj-member method obj/2]
+			all [object? :found? select-obj found? decorate-obj-member method select-obj found?]
+			all [object? :origin select-obj origin decorate-obj-member method select-obj origin]
+			all [obj word? obj/-1 decorate-obj-member method obj/-1]
+			all [object? :origin pos: find-obj origin word? pos/-1 decorate-obj-member method pos/-1]
+			all [object? :found? pos: find-obj found? word? pos/-1 decorate-obj-member method pos/-1]
+			all [path? :fun decorate-obj-member method head clear back tail copy fun]
+			all [path? :fpath decorate-obj-member method fpath]
+		][
+			if all [word? :cand find functions cand][symbol: cand break]
+		]
+		
+		either symbol [
 			fpath: next find path last fpath			;-- point to function name
 			reduce [
 				either 1 = length? fpath [fpath/1][copy fpath]
 				symbol
-				obj/2 									;-- object instance ctx name
+				either all [obj obj/2][obj/2][name]		;-- object instance ctx name
 			]
 		][
 			none
 		]
 	]
-	
+
 	system-words-path?: func [path [path! set-path!] /local get?][
 		if all [
 			2 < length? path
@@ -1169,8 +1489,8 @@ red: context [
 		path
 	]
 	
-	push-locals: func [symbols [block!]][
-		append/only locals-stack symbols
+	push-locals: func [locals-list [block! none!]][
+		append/only locals-stack any [locals-list make block! 0]
 	]
 
 	pop-locals: does [
@@ -1219,7 +1539,7 @@ red: context [
 		]
 	]
 	
-	rewrite-locals: func [code [block!] /local rule s pos word ctx p?][
+	rewrite-locals: func [code [block!] /local rule s pos word ctx p? nested][
 		parse code rule: [
 			some [
 				[
@@ -1238,7 +1558,7 @@ red: context [
 						]
 					]
 				) :pos
-				| into rule
+				| nested: [block! | paren!] :nested into rule
 				| skip
 			]
 		]
@@ -1259,7 +1579,7 @@ red: context [
 		do-error: [throw-error ["invalid function spec block:" mold pos]]
 		flags: 0
 		foreach attrib spec/1 [
-			unless word? attrib [do-error]
+			unless word? attrib [do do-error]
 			flags: switch/default attrib [				;-- keep those flags synced with %runtime/definitions.reds
 				trace	 [flags or to-integer #{00000400}]
 				no-trace [flags or to-integer #{00000200}]
@@ -1280,8 +1600,8 @@ red: context [
 			not only
 			pos: find-function name original
 			not all [									;-- if name is not bound to an object
-				rebol-gctx <> obj: bind? original
-				not find shadow-funcs obj
+					rebol-gctx <> obj: binding-of original
+				not bindings/shadow-context-of obj
 			]
 		][
 			remove/part pos 2							;-- remove previous function definition
@@ -1356,7 +1676,7 @@ red: context [
 					alias: decorate-func new
 					old: decorate-exec-ctx decorate-func name
 				]
-				libRedRT/collect-aliased alias old
+				;libRedRT/collect-aliased alias old
 			]
 			
 			either pos: find-ssa new [					;-- add the real function name as alias
@@ -1383,26 +1703,34 @@ red: context [
 		]
 	]
 	
-	check-spec: func [spec [block!] /local symbols word pos stop locals return? loc? flags][
-		symbols: make block! length? spec
-		locals:  0
+	; Note: do not name a function local `locals` — the frontend object already
+	; has a `locals` field (active locals stack). Compiled methods can bind that
+	; field instead of a true local, which corrupts compiler state and can make
+	; check-spec return a non-block for empty `does` specs.
+	check-spec: func [spec [block!] /local spec-symbols word pos stop nb-locals return? loc? flags s][
+		spec-symbols: make block! length? spec
+		nb-locals: 0
 		flags:	 0
-		loc?: 	 no
+		loc?:	 no
+		return?: no
+		stop: []
 		
 		unless parse spec [
 			opt string!
 			opt [pos: block! (flags: decode-attributes pos) opt string!]
 			any [
-				pos: /local (
+				; Red PARSE equates /local refinement with word! local. Match refinement!
+				; and require the value to be /local before entering the locals section.
+				pos: refinement! if (pos/1 = /local) (
 					if loc? [stop: [end skip]]
-					append symbols 'local
+					append spec-symbols 'local
 					loc?: yes
 				) stop [
 					any [
 						pos: word! (
-							unless find symbols word: to word! pos/1 [
-								append symbols word
-								locals: locals + 1
+							unless find spec-symbols word: to word! pos/1 [
+								append spec-symbols word
+								nb-locals: nb-locals + 1
 							]
 						)
 						pos: opt block! pos: opt string!
@@ -1415,7 +1743,7 @@ red: context [
 				| [
 					[word! | lit-word! | get-word!] opt block! opt string!
 					| refinement! opt string! (if any [loc? return?][stop: [end skip]]) stop
-				] (append symbols to word! pos/1)
+				] (append spec-symbols to word! pos/1)
 			]
 		][
 			throw-error ["invalid function spec block:" mold pos]
@@ -1433,7 +1761,7 @@ red: context [
 				throw-error ["duplicate word definition:" s/1]
 			]
 		]
-		reduce [symbols locals flags]
+		reduce [spec-symbols nb-locals flags]
 	]
 	
 	make-attributs: func [spec [block!] /prolog locals /epilog /local flags trace? no-trace? out][
@@ -1494,11 +1822,16 @@ red: context [
 		reduce [list arity]
 	]
 	
-	get-prefix-func: func [name [word!] /local path word ctx][
+	get-prefix-func: func [name [word!] /local path word ctx value][
+		unless path? :obj-stack [obj-stack: to path! 'objects]
 		if 1 < length? obj-stack [
-			path: copy obj-stack
+			path: red-compiler-safe-copy obj-stack
 			while [1 < length? path][
-				if all [word: in do path name function! = get word][
+				if all [
+					o: safe-eval-object-path path word: either object? o [in o name][none]
+					value: get word
+					any [same? :value function! function? :value]
+				][
 					return prefix-func/with name path
 				]
 				remove back tail path
@@ -1535,9 +1868,9 @@ red: context [
 			native! [nat?: yes if find intrinsics name [type: 'intrinsic!]]
 			action! [append actions name]
 			op!     [
-				if find [has does] pos/4 invalid-spec
+				if find [has does] pos/4 [do invalid-spec]
 				either find [func function] pos/4 [		;-- anon function case
-					unless block? spec: pos/5 invalid-spec
+					unless block? spec: pos/5 [do invalid-spec]
 					defer: name
 				][
 					repend op-actions [name proto: get-prefix-func to word! pos/4]
@@ -1548,7 +1881,7 @@ red: context [
 			spec: either pos/3 = 'op! [
 				either entry: find functions proto [
 					if 1 < length? obj-stack [
-						append entry/2 select objects do obj-stack	;-- append context name if method
+						append entry/2 select-obj either path? :obj-stack [safe-eval-object-path obj-stack][none]	;-- append context name if method
 					]
 					entry/2/3
 				][
@@ -1584,9 +1917,9 @@ red: context [
 		if all [1 <> length? obj-stack path/1 = last obj-stack][remove path]		;-- remove temp object prefix inserted by object-access? (mind #4567!)
 		
 		idx: either empty? ctx-stack [
-			redbin/emit-block path
+			red-compiler-emit-block path
 		][
-			redbin/emit-block/with path last ctx-stack
+			red-compiler-emit-block/with path last ctx-stack
 		]
 		emit 'eval-path*
 		
@@ -1606,9 +1939,13 @@ red: context [
 		emit-close-frame
 	]
 	
-	get-return-type: func [spec [block!] /local type][	;-- for routine spec blocks
+	get-return-type: func [spec [block!] /local type position][	;-- for routine spec blocks
+		position: head spec
+		while [all [not tail? position not set-word? :position/1]][position: next position]
 		all [
-			type: select spec return-def
+			not tail? position
+			position/1 = return-def
+			type: pick position 2
 			find [integer! logic! float!] type/1
 			type
 		]
@@ -1687,130 +2024,132 @@ red: context [
 	]
 	
 	encode-UTC-time: func [time [time! none!] zone [time! none!]][
-		to decimal! either time [either zone [time - zone][time]][0.0]
+		to float! either time [either zone [time - zone][time]][0.0]
 	]
 	
 	encode-date: func [value [date!] /with zone /local date][
-		unless zone [zone: value/zone]
+		zone: any [zone value/zone 0:00]
 		date:  (shift/left value/year 17)
 			or (shift/left value/month 12)
 			or (shift/left value/day 7)
-			or (shift/left abs zone/hour 2)
-			or (abs to-integer zone/minute / 15)
+			or (shift/left absolute zone/hour 2)
+			or (to integer! ((absolute to integer! zone/minute) / 15))
 		if negative? zone [date: date or 64]			;-- zone negative bit
 		if value/time [date: date or 65536]				;-- time? flag
 		date
 	]
 
-	emit-float: func [value [decimal!] /local bin][
-		bin: IEEE-754/to-binary64 value
+	emit-float: func [value [float!] /local bin][
+		bin: to-binary value
 		emit to integer! copy/part bin 4
 		emit to integer! skip bin 4
 	]
 	
 	comp-literal: func [
 		/inactive /with val
-		/local value char? special? percent? map? tuple? money? ref? dt-special? point? dtype?
-			   name w make-block type idx zone
+		/local value name w make-block type idx zone bin size money-data value-type v
 	][
 		make-block: [
 			value: to block! value
 			either empty? ctx-stack [
-				redbin/emit-block value
+				red-compiler-emit-block value
 			][
-				redbin/emit-block/with value last ctx-stack
+				red-compiler-emit-block/with value last ctx-stack
 			]
 		]
 		value: either with [val][pc/1]					;-- val can be NONE
-		map?: map-value? :value
-		dt-special?: date-special? :value
-		point?: point-value? :value
+		value-type: type?/word :value
 		
 		either any [
-			all [
-				issue? :value
-				any [
-					char?:	  unicode-char? value
-					special?: float-special? value
-					percent?: percent-value? value
-					tuple?:	  tuple-value? value
-					money?:	  money-value? value
-					ref?:	  ref-value? value
-					dtype?:	  type-value? value
-				]
-			]
+			char? :value
+			percent? :value
+			tuple? :value
+			money? :value
+			ref? :value
+			datatype? :value
 			scalar? :value
-			map?
-			dt-special?
-			point?
+			map? :value
+			find [point2D! point3D!] value-type
 		][
 			case [
-				char? [
+				char? :value [
 					emit 'char/push
-					emit to integer! next value
+					emit to integer! value
 					insert-lf -2
 				]
-				percent? [
-					value: to string! copy/part value back tail value
+				percent? :value [
 					emit 'percent/push64
-					emit-float to decimal! append value "e-2"	;-- scale by 1/100 in a single rounding step (#5753)
+					emit-float to float! value
 					insert-lf -3
 				]
-				special? [
-					emit 'float/push64
-					emit IEEE-754/to-binary64/split value
-					insert-lf -3
+				map? :value [
+					;-- Stage1 redbin TYPE_MAP via #!map! marker was producing blocks;
+					;-- store body as a plain block and build the map at runtime.
+					value: copy to block! value
+					emit compose [
+						map/push map/make null as red-value! get-root (red-compiler-emit-block value) 0
+					]
+					insert-lf -6
 				]
-				map? [
-					emit compose [map/push as red-hash! get-root (redbin/emit-block value)]
-					insert-lf -3
-				]
-				decimal? :value [
+				float? :value [
 					emit 'float/push64
 					emit-float value
 					insert-lf -3
 				]
-				tuple? [
-					bin: tail reverse debase/base next value 16
+				tuple? :value [
+					bin: to binary! value
+					size: length? bin
+					append/dup bin 0 12 - size
 					emit 'tuple/push
-					emit length? head bin
-					emit to integer! skip bin -4
-					emit to integer! copy/part skip bin -4 -4
-					emit to integer! copy/part skip bin -8 -4
+					emit size
+					emit to integer! reverse copy/part bin 4
+					emit to integer! reverse copy/part skip bin 4 4
+					emit to integer! reverse copy/part skip bin 8 4
 					insert-lf -5
 				]
-				money? [
+				money? :value [
 					emit 'money/push
-					value: to string! next value
-					emit pick [true false] value/4 = #"-"
-					emit to-currency-code copy/part value 3
-					emit to-nibbles copy skip value 4
+					money-data: to-nibbles value
+					; R/S accepts word! true/false, not logic! values.
+					emit pick [true false] money-data/1
+					emit money-data/2
+					emit money-data/3
+					insert-lf -4
 				]
-				ref? [
-					idx: redbin/emit-string/root next value	;-- issue! is an any-string! in Rebol2
+				ref? :value [
+					idx: red-compiler-emit-string-root value
 					emit 'ref/push
 					emit compose [as red-string! get-root (idx)]
 					insert-lf -5
 				]
-				dtype? [
+				datatype? :value [
 					emit 'datatype/push
-					emit get-RS-type-ID to-word form skip value 2
+					emit get-RS-type-ID value
 					insert-lf -2
 				]
 				find [refinement! issue!] type?/word :value [
-					w: to word! form value
-					either issue? :value [add-symbol/only w][add-symbol w]
-					type: to word! form type? :value
-					
-					either all [not issue? :value local-word? w][
-						emit append to path! type 'push-local
-						emit last ctx-stack
-						emit get-word-index w
-						insert-lf -3
-					][
-						emit to path! reduce [type 'push]
-						emit to path! reduce ['exec decorate-symbol w]	;@@ replace by prefix-exec
+					; Match Rebol/encapper: form issue! drops leading '#'; symbol spelling
+					; matches redbin emit-issue (form) so switch select-key* works.
+					; Stage1/Red: to word! form fails for pure-digit issue spellings
+					; ("12345678" loads as integer! -> invalid-chars). Use issue/load.
+					either issue? :value [
+						emit 'issue/load
+						emit form value
 						insert-lf -2
+					][
+						w: to word! form value
+						add-symbol w
+						type: to word! form type? :value
+						either local-word? w [
+							emit append to path! type 'push-local
+							emit last ctx-stack
+							emit get-word-index w
+							insert-lf -3
+						][
+							emit to path! reduce [type 'push]
+							emit to path! reduce ['exec decorate-symbol w]	;@@ replace by prefix-exec
+							insert-lf -2
+						]
 					]
 				]
 				none? :value [
@@ -1832,25 +2171,21 @@ red: context [
 				]
 				time? :value [
 					emit 'time/push
-					emit to decimal! value
+					emit to float! value
 					insert-lf -2
-				]
-				dt-special? [
-					emit 'date/push
-					zone: value/3
-					value: value/2
-					emit reduce [encode-date/with value zone encode-UTC-time value/time zone]
-					insert-lf -4
 				]
 				date? :value [
 					emit 'date/push
 					emit reduce [encode-date value encode-UTC-time value/time value/zone]
 					insert-lf -4
 				]
-				point? [
-					type: pick [point2D point3D] 2 = length? value: next value
+				find [point2D! point3D!] value-type [
+					value: either value-type = 'point2D! [
+						reduce [value/x value/y]
+					][reduce [value/x value/y value/z]]
+					type: pick [point2D point3D] 2 = length? value
 					emit append to-path type 'push
-					foreach v value [emit reduce ['as-float32 either integer? v [to-decimal v][v]]]
+					foreach v value [emit reduce ['as-float32 either integer? v [to-float v][v]]]
 					insert-lf -5
 				]
 				'else [
@@ -1869,24 +2204,24 @@ red: context [
 					emit compose [paren/push get-root (do make-block)]
 					insert-lf -3
 				]
-				path! set-path!	[
+				path! set-path! lit-path! get-path!	[
 					case [
 						inactive [
-							either get-word? pc/1/1 [	;-- R2 doesn't have get-path!
+							either get-path? :value [
 								emit 'get-path/push
-								pc/1/1: to word! pc/1/1
+								emit [as red-path!]
 							][
-								emit to path! reduce [to word! form type? pc/1 'push]
-								if path? pc/1 [emit [as red-path!]]
+								emit to path! reduce [to word! form type? :value 'push]
+								emit [as red-path!]
 							]
 						]
-						lit-path? pc/1 [
+						lit-path? :value [
 							emit 'path/push
 							emit [as red-path!]
 						]
 						true [
-							emit to path! reduce [to word! form type? pc/1 'push]
-							if path? pc/1 [emit [as red-path!]]
+							emit to path! reduce [to word! form type? :value 'push]
+							emit [as red-path!]
 						]
 					]
 					idx: do make-block
@@ -1894,13 +2229,13 @@ red: context [
 					insert-lf -3
 				]
 				string!	file! url! tag! email! [
-					idx: redbin/emit-string/root value
+					idx: red-compiler-emit-string-root value
 					emit to path! reduce [to word! form type? value 'push]
 					emit compose [as red-string! get-root (idx)]
 					insert-lf -5
 				]
 				binary!	[
-					idx: redbin/emit-string/root value
+					idx: red-compiler-emit-string-root value
 					emit 'binary/push
 					emit compose [as red-binary! get-root (idx)]
 					insert-lf -5
@@ -1912,10 +2247,10 @@ red: context [
 		unless with [pc: next pc]
 		name
 	]
-	
+
 	rebind-body: func [
 		symbol [word!] entry [block!] ctx [object!]
-		/local rule pos self*
+		/local rule pos self* nested
 	][
 		self*: in ctx 'self
 
@@ -1926,32 +2261,47 @@ red: context [
 			;-- rebind the body to the function's context
 			bind entry/2 shadow
 			;-- rebind 'self words in body block to new object
-			parse entry/2 rule: [any [pos: 'self (pos/1: self*) | into rule | skip]]
+			parse entry/2 rule: [
+				any [
+					pos: 'self (pos/1: self*)
+					| nested: [block! | paren!] :nested into rule
+					| skip
+				]
+			]
 		]
 		entry
 	]
 	
 	inherit-functions: func [							 ;-- multiple inheritance case
 		new [object!] extend [object!]
-		/local symbol name entry
+		/local symbol name entry value pos cand
 	][
-		foreach word next first extend [
-			if function! = get in extend word [
-				symbol: decorate-obj-member word select objects extend
-				
-				repend functions [
-					name: decorate-obj-member word select objects new
-					select functions symbol
-				]
-				either entry: find bodies symbol [		;-- not allowed for libRedRT client programs
-					append bodies name
-					append bodies rebind-body symbol entry new	;-- merge the entry block
+		foreach word words-of extend [
+			value: get in extend word
+			if any [same? :value function! value = function! function? :value][
+				; Resolve source method under ctx or access-word decoration.
+				symbol: none
+				foreach cand reduce [
+					all [select-obj extend decorate-obj-member word select-obj extend]
+					all [pos: find-obj extend word? pos/-1 decorate-obj-member word pos/-1]
 				][
-					redirect-to literals [
-						emit compose [#define (decorate-func name) (decorate-func symbol)]
+					if all [word? :cand find functions cand][symbol: cand break]
+				]
+				if symbol [
+					name: decorate-obj-member word select-obj new
+					unless find functions name [					;-- avoid redefine on multi-inherit overlap
+						repend functions [name select functions symbol]
+						either entry: find bodies symbol [		;-- not allowed for libRedRT client programs
+							append bodies name
+							append bodies do [rebind-body symbol entry new]
+						][
+							redirect-to literals [
+								emit compose [#define (decorate-func name) (decorate-func symbol)]
+							]
+						]
+						add-symbol name
 					]
 				]
-				add-symbol name
 			]
 		]
 	]
@@ -1963,7 +2313,8 @@ red: context [
 		/locals
 			words ctx spec name id func? obj original body pos entry symbol
 			body? ctx2 new blk list path on-set-info values w defer mark blk-idx
-			event pos2 loc-s loc-d shadow-path saved-pc saved set? evt-var
+			event pos2 loc-s loc-d shadow-path path-values saved-pc saved set? evt-var type words-pos
+			shadow-words shadow-spec callback on-change-callback on-deep-change-callback
 	][
 		saved-pc: pc
 		either set-path? original: pc/-1 [
@@ -1972,7 +2323,13 @@ red: context [
 			name: to word! original: any [word original]
 			check-redefined/only name original
 		]
-		words: any [all [proto third proto] make block! 8] ;-- start from existing ctx or fresh
+		words: make block! 8
+		if proto [									;-- start from existing context
+			foreach w words-of proto [
+				append words w
+				append/only words get in proto w
+			]
+		]
 		list:  clear any [list []]
 		values: make block! 8
 		
@@ -2011,13 +2368,13 @@ red: context [
 							]
 						]
 					)
-					| #include (comp-include/only pos) :pos
+					| include-directive (comp-include/only pos) :pos
 					| skip
 				]
 			]
 
 			spec: make block! (length? words) / 2
-			forskip words 2 [append spec to word! words/1]
+			foreach [word type] words [append spec to word! word]
 		][
 			unless extend [
 				pos: tail output						;-- defer it to runtime evaluation	
@@ -2037,9 +2394,13 @@ red: context [
 				clear pos
 				return defer
 			]
-			obj:    find objects proto/1				;-- simple inheritance case
-			spec:   next first obj/1
-			words:  third obj/1
+			obj:    find-obj proto/1				;-- simple inheritance case
+			spec:   words-of obj/1
+			words:  make block! (2 * length? spec)
+			foreach w spec [
+				append words w
+				append/only words get in obj/1 w
+			]
 			
 			unless find [context object object!] pc/1 [
 				if all [not new: is-object? pc/2 not passive][
@@ -2048,21 +2409,26 @@ red: context [
 				]
 				
 				if all [passive not new][new: proto/1]
-				ctx2: select objects new proto/1		;-- multiple inheritance case
-				spec: union spec next first new
+				ctx2: select-obj new		;-- multiple inheritance case
+				spec: union spec words-of new
 				insert proto new
 				
-				forskip words 2 [
-					if word: in new words/1 [words/2: get in new words/1]
+				words-pos: words
+				while [not tail? words-pos][
+					if word: in new words-pos/1 [words-pos/2: get word]
+					words-pos: skip words-pos 2
 				]
-				foreach [name value] third new [
-					unless find words name [repend words [name value]]
+				; NOTE: must not use `name` here — it holds the object access word
+				; (e.g. new). Clobbering it registers multi-inherit under the last
+				; field name (e.g. foo) and breaks later path/method lookup.
+				foreach field words-of new [
+					unless find words field [repend words [field get in new field]]
 				]
 			]
 		]
 
 		ctx: add-context spec
-		blk-idx: redbin/emit-context/root ctx spec no yes 'object
+		blk-idx: red-compiler-emit-context/root ctx spec no yes 'object
 		
 		redirect-to literals [							;-- store spec and body blocks
 			emit compose [
@@ -2073,21 +2439,45 @@ red: context [
 		
 		symbol: either path [ctx][
 			if pos: find get-obj-base name name [pos/1: none] ;-- unbind word with previous object
-			
-			get pick [name ctx] to logic! any [			;-- ctx for object's word, else name
-				rebol-gctx = obj: bind? original
-				find shadow-funcs obj
-			]
+			; Under compiled Red, context? of a freshly loaded set-word may not
+			; compare equal with the boot-time rebol-gctx snapshot even when both
+			; refer to the global context. Prefer the source name for globals and
+			; function-local shadow bindings so nested objects/system/build paths work.
+			obj: binding-of original
+			either any [
+				none? obj
+				same? rebol-gctx obj
+				rebol-gctx = obj
+				bindings/shadow-context-of obj
+				not local-word? name
+			][name][ctx]
 		]
 		
+		shadow-words: copy words
+		on-change-callback: func [word old new][]
+		on-deep-change-callback: func [owner word target action new index part][]
+		if callback: find/skip shadow-words 'on-change* 2 [
+			callback/2: to get-word! 'on-change-callback
+		]
+		if callback: find/skip shadow-words 'on-deep-change* 2 [
+			callback/2: to get-word! 'on-deep-change-callback
+		]
+		; Red's make object! expects set-word/value pairs. Source collection may
+		; already use set-words, but normalize so word/value pairs also work.
+		shadow-spec: make block! length? shadow-words
+		foreach [word value] shadow-words [
+			append shadow-spec to set-word! word
+			append/only shadow-spec :value
+		]
 		repend objects [								;-- register shadow object	
 			symbol										;-- object access word
-			obj: make object! words						;-- shadow object
+			obj: make object! shadow-spec				;-- shadow object
 			ctx											;-- object's context name
 			id: get-counter								;-- unique object ID
 			proto										;-- optional prototype object
 			none										;-- [idx loc idx2 loc2...] (for events)
 		]
+
 		on-set-info: back tail objects
 
 		shadow-path: either all [
@@ -2104,7 +2494,9 @@ red: context [
 		][
 			join-obj-stack either path [to path! path][name] ;-- account for current object stack
 		]
-		shadow-path: new-line/all shadow-path no
+		path-values: to block! shadow-path
+		new-line/all path-values no
+		shadow-path: to path! path-values
 		
 		either path [
 			unless attempt [
@@ -2114,7 +2506,12 @@ red: context [
 			]
 		][
 			unless tail? next obj-stack [				;-- set object in shadow tree (if sub-object)
-				do reduce [to set-path! shadow-path obj]
+				unless attempt [
+					do reduce [to set-path! shadow-path obj]
+				][
+					; Parent shadow path may still be incomplete; keep compiling.
+					none
+				]
 			]
 		]
 		if body? [bind body obj]
@@ -2129,11 +2526,13 @@ red: context [
 		
 		if proto [
 			if body? [inherit-functions obj last proto]
-			emit reduce ['object/clone-series select objects last proto ctx 'true]
+			emit reduce ['object/clone-series select-obj (last proto) ctx 'true]
 			insert-lf -4
 		]
 		if all [not body? not passive][
-			inherit-functions obj new
+			; First prototype methods not present on second (make a b has no body).
+			if object? last proto [inherit-functions obj last proto]
+			if object? :new [inherit-functions obj new]
 			emit reduce ['object/transfer ctx2 ctx]
 			insert-lf -3
 		]
@@ -2155,12 +2554,15 @@ red: context [
 				pc: skip pc 2
 			]
 			all [body? not empty? pc/2][
-				saved: copy obj-stack					;-- preserve current object stack
+				unless path? :obj-stack [obj-stack: to path! 'objects]
+				saved: red-compiler-safe-copy obj-stack		;-- preserve current object stack
 				either set? [
 					obj-stack: append to path! 'objects any [path name] ;-- from root
 				][
 					append obj-stack any [path name]	;-- from current objects stack
-					new-line/all obj-stack off
+					path-values: to block! obj-stack
+					new-line/all path-values off
+					obj-stack: to path! path-values
 				]
 				pc: next pc
 				comp-next-block yes
@@ -2182,7 +2584,7 @@ red: context [
 			pos: (index? pos) - 1					;-- 0-based contexts arrays
 			unless entry: any [
 				find functions decorate-obj-member event ctx
-				all [proto find functions decorate-obj-member event select objects proto/1]
+				all [proto find functions decorate-obj-member event select-obj proto/1]
 			][
 				pc: back pc
 				throw-error ["invalid" event "event definition in object" name]
@@ -2196,7 +2598,7 @@ red: context [
 			pos2: (index? pos2) - 1					;-- 0-based contexts arrays
 			unless entry: any [
 				find functions decorate-obj-member event ctx
-				all [proto find functions decorate-obj-member event select objects proto/1]
+				all [proto find functions decorate-obj-member event select-obj proto/1]
 			][
 				pc: back pc
 				throw-error ["invalid" event "event definition in object" name]
@@ -2532,9 +2934,9 @@ red: context [
 					add-global word
 				]
 				idx: either ctx: find-contexts to word! blk/1 [
-					redbin/emit-block/with blk ctx
+					red-compiler-emit-block/with blk ctx
 				][
-					redbin/emit-block blk
+					red-compiler-emit-block blk
 				]
 			]
 			word? pc/1 [
@@ -2619,9 +3021,9 @@ red: context [
 				add-global word
 			]
 			idx: either ctx: find-contexts to word! blk/1 [
-				redbin/emit-block/with blk ctx
+				red-compiler-emit-block/with blk ctx
 			][
-				redbin/emit-block blk
+				red-compiler-emit-block blk
 			]
 		][
 			add-symbol word: pc/1
@@ -2692,14 +3094,14 @@ red: context [
 	]
 	
 	comp-func-body: func [
-		name [word!] spec [block!] body [block!] symbols [block!] locals-nb [integer!]
-		/local init locals blk args? tracing
+		name [word!] spec [block!] body [block!] func-symbols [block!] locals-nb [integer!]
+		/local init rs-locals blk args? tracing
 	][
-		push-locals copy symbols						;-- prepare compiled spec block
-		forall symbols [symbols/1: decorate-symbol/no-alias symbols/1]
-		locals: append copy [/local ctx [red-context!] saved [node-handle!] body-top [int-ptr!]] symbols ;-- symbols can stay untyped as they are stored on the Red stack (GC protected)
-		set/any 'tracing make-attributs/prolog spec locals
-		blk: either container-obj? [head insert copy locals [octx [node-handle!]]][locals]
+		push-locals copy func-symbols					;-- prepare compiled spec block
+		forall func-symbols [func-symbols/1: decorate-symbol/no-alias func-symbols/1]
+		rs-locals: append copy [/local ctx [red-context!] saved [node-handle!] body-top [int-ptr!]] func-symbols ;-- function symbols can stay untyped as they are stored on the Red stack (GC protected)
+		set/any 'tracing make-attributs/prolog spec rs-locals
+		blk: either container-obj? [head insert copy rs-locals [octx [node-handle!]]][rs-locals]
 		emit reduce [to set-word! decorate-func/strict name 'func blk]
 		insert-lf -3
 
@@ -2707,7 +3109,7 @@ red: context [
 
 		;-- Function's prolog --
 		pop-locals
-		init: make block! 4 * length? symbols
+		init: make block! 4 * length? func-symbols
 		
 		append init compose [							;-- point context values series to stack
 			ctx: TO_CTX(to paren! last ctx-stack)
@@ -2718,22 +3120,22 @@ red: context [
 		new-line skip tail init -4 on
 		args?: yes
 		
-		forall symbols [								;-- assign local variable to Red arguments
-			append init to set-word! symbols/1
+		forall func-symbols [						;-- assign local variable to Red arguments
+			append init to set-word! func-symbols/1
 			new-line back tail init on
-			if symbols/1 = '~local [args?: no]			;-- signal end of arguments
+			if func-symbols/1 = '~local [args?: no]		;-- signal end of arguments
 			
 			if all [
 				args?
-				blk: emit-type-checking symbols/1 spec
+				blk: emit-type-checking func-symbols/1 spec
 			][
 				append init blk
-				append init (index? symbols) - 1		;-- index of argument for the type-checker
+				append init (index? func-symbols) - 1	;-- index of argument for the type-checker
 			]
-			either head? symbols [
+			either head? func-symbols [
 				append/only init 'stack/arguments
 			][
-				repend init [symbols/-1 '+ 1]
+				repend init [func-symbols/-1 '+ 1]
 			]
 		]
 		unless zero? locals-nb [						;-- init local words on stack
@@ -2742,7 +3144,7 @@ red: context [
 			]
 		]
 		name: decorate-symbol name
-		if find symbols name [name: decorate-exec-ctx name]
+		if find func-symbols name [name: decorate-exec-ctx name]
 		
 		append init compose [							;-- body stack frame
 			stack/mark-func-body words/_body
@@ -2760,10 +3162,11 @@ red: context [
 		insert last output init
 	]
 	
-	collect-words: func [spec [block!] body [block!] /local pos loc end ignore words word rule counter][
-		if pos: find spec /extern [
+	collect-words: func [spec [block!] body [block!] /local pos loc end ignore words word rule counter nested][
+		; Red FIND matches refinement! /extern to word! extern (unlike Rebol).
+		if all [pos: find spec /extern refinement? pos/1][
 			either end: any [
-				find next pos refinement!
+				all [e: find next pos refinement! refinement? e/1 e]
 				find next pos set-word!
 			][
 				ignore: copy/part next pos end
@@ -2778,14 +3181,22 @@ red: context [
 			]
 		]
 		;-- Check if local words are duplicates of lit/get-word arguments
-		if loc: find spec /local [
+		; Red FIND matches refinement! /local to word! local (unlike Rebol). Require
+		; the refinement! type. Also require lit/get-word! types on false-positive finds.
+		if all [loc: find spec /local refinement? loc/1][
 			pos: loc
 			while [not tail? pos][
 				either all [
 					find [word! lit-word! get-word!] type?/word pos/1
-					any [ 
-						find/part spec to lit-word! pos/1 loc
-						find/part spec to get-word! pos/1 loc
+					any [
+						all [
+							p: find/part spec to lit-word! pos/1 loc
+							lit-word? p/1
+						]
+						all [
+							p: find/part spec to get-word! pos/1 loc
+							get-word? p/1
+						]
 					]
 				][
 					throw-error ["duplicate word definition in function:" pos/1]
@@ -2827,18 +3238,23 @@ red: context [
 							all [block? counter counter]
 							all [any-word? counter reduce [counter]]
 							[]
-						] make-local
+						] [do make-local]
 					]
 				)
 				| path! | lit-path! | set-path!
-				| into rule
+				| nested: [block! | paren!] :nested into rule
 				| skip
 			]
 		]
 		unless empty? words [
 			remove find words 'local					;-- #4998
 			pos: tail spec
-			either parse spec [thru /local any word! loc: to end][
+			; Only match a true refinement! /local (Red FIND/PARSE equate /local and local)
+			either all [
+				loc: find spec /local
+				refinement? loc/1
+				parse loc [refinement! any word! loc: to end]
+			][
 				insert loc words
 			][
 				append spec /local
@@ -2850,13 +3266,13 @@ red: context [
 	]
 	
 	comp-func: func [
-		/collect /does /has
+		/collect_ /does_ /has_
 		/local
-			name word spec body symbols locals-nb spec-idx body-idx ctx pos octx
+			name word spec body func-symbols locals-nb spec-idx body-idx ctx pos octx
 			src-name original global? path obj fpath shadow defer ctx-idx body-code
-			alter entry mark flags
+			alter entry mark flags spec-info
 	][
-		unless all [block? pc/2 any [does block? pc/3]][ ;-- fallback if no literal spec & body blocks
+		unless all [block? pc/2 any [does_ block? pc/3]][ ;-- fallback if no literal spec & body blocks
 			word: pc/1
 			all [
 				alter: get-prefix-func word
@@ -2865,9 +3281,9 @@ red: context [
 			]
 			pc: next pc
 			mark: tail output
-			comp-call/thru word entry/2
-			defer: copy mark
-			clear mark
+			do [comp-call/thru word entry/2]
+			defer: red-compiler-safe-copy mark
+			if series? :mark [clear mark]
 			return defer
 		]
 		original: pc/-1
@@ -2878,8 +3294,11 @@ red: context [
 					set [obj fpath] object-access? path 
 					obj
 				][
-					do reduce [join to set-path! fpath last path 'function!] ;-- update shadow object info
-					obj: find objects obj
+					do reduce [
+						to set-path! append to block! fpath last path
+						'function!
+					] ;-- update shadow object info
+					obj: find-obj obj
 					name: to word! rejoin [any [obj/-1 obj/2] #"~" last path] 
 					add-symbol name
 				][
@@ -2909,19 +3328,32 @@ red: context [
 		body: pc/2
 		
 		case [
-			collect [collect-words spec body]
-			does	[body: spec spec: make block! 1 pc: back pc]
-			has		[spec: head insert copy spec /local]
+			collect_ [collect-words spec body]
+			does_	 [body: spec spec: make block! 1 pc: back pc]
+			has_	 [spec: head insert (red-compiler-safe-copy spec) /local]
 		]
-		set [symbols locals-nb flags] check-spec spec
+		spec-info: check-spec spec
+		either all [block? :spec-info 3 <= length? spec-info][
+			func-symbols: any [all [block? spec-info/1 spec-info/1] make block! 0]
+			locals-nb: any [all [integer? spec-info/2 spec-info/2] 0]
+			flags: any [all [integer? spec-info/3 spec-info/3] 0]
+		][
+			func-symbols: make block! 0
+			locals-nb: 0
+			flags: 0
+		]
 		add-function name spec
-		if pos: find spec return-def [register-user-type/store name pos/2]
+		pos: head spec
+		while [all [not tail? pos not set-word? :pos/1]][pos: next pos]
+		if all [not tail? pos pos/1 = return-def][
+			register-user-type/store name (pick pos 2)
+		]
 
 		
-		push-locals symbols								;-- store spec and body blocks
-		ctx: push-context copy symbols
-		ctx-idx: redbin/emit-context/root ctx symbols yes no 'function
-		spec-idx: redbin/emit-block spec
+		push-locals (red-compiler-safe-copy func-symbols)	;-- store spec and body blocks
+		ctx: push-context (red-compiler-safe-copy func-symbols)
+		ctx-idx: red-compiler-emit-context/root ctx func-symbols yes no 'function
+		spec-idx: red-compiler-emit-block spec
 		redirect-to literals [
 			emit compose [
 				(to set-word! ctx) get-root-node (ctx-idx) ;-- build context with value on stack
@@ -2932,20 +3364,21 @@ red: context [
 
 		repend shadow-funcs [							;-- register a new shadow context
 			decorate-func/strict name
-			shadow: to-context-spec symbols
+			shadow: to-context-spec func-symbols
 			ctx
 			spec
 		]
+		bindings/register-shadow shadow ctx spec
 		bind-function body shadow
 		
 		body-code: either job/red-store-bodies? [
-			body-idx: redbin/emit-block body
+			body-idx: red-compiler-emit-block body
 			reduce ['get-root body-idx]
 		][
 			[null]
 		]
 		
-		octx: either 1 < length? obj-stack [select objects do obj-stack][0]
+		octx: either 1 < length? obj-stack [select-obj either path? :obj-stack [safe-eval-object-path obj-stack][none]][0]
 		if all [global? octx octx <> 0][append last functions octx]	;-- add origin obj ctx to function's entry
 		
 		defer: compose [
@@ -2956,9 +3389,9 @@ red: context [
 		new-line defer yes
 		new-line skip tail defer -4 no
 		repend bodies [									;-- save context for deferred function compilation
-			name spec body symbols locals-nb 
+			name spec body func-symbols locals-nb 
 			copy locals-stack copy ssa-names copy ctx-stack
-			all [1 < length? obj-stack next first do obj-stack] ;-- save optional wrapping object
+			all [1 < length? obj-stack path? :obj-stack safe-eval-object-path obj-stack]			;-- save optional wrapping object
 		]
 		pop-context
 		pc: skip pc 2
@@ -2966,15 +3399,15 @@ red: context [
 	]
 	
 	comp-function: does [
-		comp-func/collect
+		comp-func/collect_
 	]
 	
 	comp-does: does [
-		comp-func/does
+		comp-func/does_
 	]
 	
 	comp-has: does [
-		comp-func/has
+		comp-func/has_
 	]
 	
 	comp-routine: has [name word spec spec* body spec-idx body-idx original ctx ret][
@@ -2996,9 +3429,9 @@ red: context [
 		]
 		clear find spec*: copy spec /local
 		parse spec* [any [word! [pos: block! | (insert/only pos [any-type!])] | skip]]
-		spec-idx: redbin/emit-block spec*
+		spec-idx: red-compiler-emit-block spec*
 		body-idx: either job/red-store-bodies? [
-			reduce [redbin/emit-block body]
+			reduce [red-compiler-emit-block body]
 		][
 			-1
 		]
@@ -3035,12 +3468,22 @@ red: context [
 		unless find expr-stack 'try-all [emit-exit-function]
 	]
 	
-	comp-self: func [original [any-word!] /local obj ctx][
-		either rebol-gctx = obj: bind? original [
+	comp-self: func [original [any-word!] /local obj ctx entry][
+		either rebol-gctx = obj: binding-of original [
 			pc: back pc									;-- backtrack and process word again
 			comp-word/thru
 		][
-			obj: find objects obj
+			; Method bodies often bind SELF to the function shadow context. Fall
+			; back to the container object registered for deferred method compile.
+			unless all [object? :obj entry: find-obj obj][
+				obj: any [
+					all [object? :container-obj? container-obj?]
+					all [path? :obj-stack safe-eval-object-path obj-stack]
+				]
+				entry: either object? :obj [find-obj obj][none]
+			]
+			unless entry [throw-error ["cannot resolve SELF for word:" original]]
+			obj: entry
 			either obj/5 [
 				ctx: either empty? locals-stack [obj/2]['octx]
 				emit reduce ['object/push ctx obj/5/5 obj/3 obj/5/1 obj/5/2 obj/5/3 obj/5/4] ;-- event(s) case
@@ -3051,7 +3494,7 @@ red: context [
 			]
 		]
 	]
-	
+
 	comp-switch: has [mark arg body list cnt pos default? value idx][
 		if path? pc/-1 [
 			foreach ref next pc/-1 [
@@ -3086,7 +3529,7 @@ red: context [
 				| value: skip (repend list [value/1 cnt])
 			]
 		]
-		idx: redbin/emit-block list
+		idx: red-compiler-emit-block list
 		
 		emit-open-frame 'select-key*					;-- SWITCH lookup frame
 		emit arg
@@ -3309,11 +3752,12 @@ red: context [
 		/set?
 		/local 
 			path value emit? get? entry alter saved after dynamic? ctx mark obj? new t? p
-			fpath symbol obj self? true-blk defer obj-field? parent fire index breaks 
-	][
+			fpath symbol obj self? true-blk defer obj-field? parent fire index breaks pos][
 		path:  copy pc/1
 		emit?: yes
 		set?:  to logic! set?
+		get?: get-path? :path
+		if get? [path: to path! path]
 		
 		unless path: system-words-path? path [exit]
 		
@@ -3340,7 +3784,7 @@ red: context [
 			exit
 		]
 		
-		if all [not set? defer: dispatch-ctx-keywords/with pc/1/1 path/1][
+		if all [not set? not get? defer: dispatch-ctx-keywords/with pc/1/1 path/1][
 			if block? defer [emit defer]
 			exit
 		]
@@ -3382,13 +3826,13 @@ red: context [
 					]
 				]
 				integer! paren! string!	[
-					if head? path [path-head-error]
+					if head? path [probe "path-head-error"]
 				]
 			][
 				throw-error ["cannot use" mold type? value "value in path:" pc/1]
 			]
 		]
-		self?: path/1 = 'self
+		self?: do [path/1 = 'self]
 		if all [
 			not any [set? dynamic? find path integer!]
 			set [fpath symbol ctx] obj-func-path? path
@@ -3430,19 +3874,36 @@ red: context [
 				p: path
 				until [										;-- process nested objects
 					t?: tail? next p: next p
-					obj: find objects obj
+					obj: find-obj obj
 					if all [not t? object? new: select obj/1 p/1][
 						obj: new
-						if t? [obj: find objects obj]
+						if t? [obj: find-obj obj]
 					]
 					t?
 				]
 			][
-				obj: find objects obj
+				obj: find-obj obj
 			]
 			ctx: second obj
 			unless index: get-word-index/with last path ctx [
-				throw-error ["word" last path "not defined in" path]
+				; Shadow object may have fields missing from the static contexts table
+				; (seen with make <proto> [] under nested contexts during self-host).
+				; Rebuild the table from words-of so indices match runtime object layout.
+				either all [
+					object? first obj
+					in first obj last path
+				][
+					pos: words-of first obj
+					either select contexts ctx [
+						clear select contexts ctx
+						append select contexts ctx pos
+					][
+						repend contexts [ctx copy pos]
+					]
+					index: (index? find pos last path) - 1
+				][
+					throw-error ["word" last path "not defined in" path]
+				]
 			]
 			
 			true-blk: compose/deep pick [
@@ -3476,13 +3937,13 @@ red: context [
 					2 < length? path [						;-- extract word from parent context
 						breaks: [-12 -9 -6 -1]
 						set [obj fpath] object-access? copy/part path (length? path) - 1
-						ctx: second obj: find objects obj
+						ctx: second obj: find-obj obj
 						['word/from ctx get-word-index/with pick tail path -2 ctx]
 					]
 					self? [									;-- self/field
 						breaks: [-10 -7 -4 -1]
 						set [obj fpath] object-access? copy/part path 1
-						ctx: second obj: find objects obj
+						ctx: second obj: find-obj obj
 						fire: 'object/loc-ctx-fire-on-set*
 						[ctx]
 					]
@@ -3590,9 +4051,12 @@ red: context [
 		either all [not thru spec/1 = 'intrinsic!][
 			switch any [all [path? call call/1] call] keywords
 		][
-			if all [path? call (length? call) <> length? unique call][
-				pc: back pc
-				throw-error ["duplicate or invalid refinement usage:" call]
+			if path? call [
+				list: to block! call
+				if (length? list) <> (length? unique list)[
+					pc: back pc
+					throw-error ["duplicate or invalid refinement usage:" call]
+				]
 			]
 			compact?: spec/1 <> 'function!				;-- do not push refinements on stack
 			refs: make block! 1							;-- refinements storage in compact mode
@@ -3615,6 +4079,9 @@ red: context [
 			current-call: call							;-- for error reporting
 			pos: pc
 			comp-arguments spec/3 spec/2				;-- fetch arguments
+			unless any [none? spec/4 block? spec/4][
+				fail ["invalid function refinement metadata:" name mold spec]
+			]
 			
 			if all [path? call none? spec/4][
 				pc: back pos
@@ -3714,8 +4181,9 @@ red: context [
 						]
 					]
 					if dyn-list [
-						;-- while/skip instead of foreach [a b c] (Stage1 stack alignment).
-						;-- Do not reuse `name` (function name) as the refinement temp.
+						;-- while/skip instead of foreach [a b c]: Stage1-compiled
+						;-- foreach-next-block can see a misaligned Red stack (series slot
+						;-- holds an object with class=-1) and halt on resolve-series.
 						pos: dyn-list
 						while [not tail? pos][
 							mark: tail output
@@ -3729,7 +4197,7 @@ red: context [
 					]
 				][										;-- call with no refinements
 					if spec/4 [
-						foreach [ref offset args] spec/4 emit-no-ref
+						foreach [ref offset args] spec/4 [do emit-no-ref]
 					]
 				]
 			]
@@ -3763,9 +4231,12 @@ red: context [
 		name: pc/-1
 		switch/default pc/2 [
 			datatype! [
-				either pc/3 = #get-definition [
-					redbin/emit-word/root/set? name none none
-					redbin/emit-datatype pc/4
+				either any [
+					pc/3 = get-definition-directive
+					all [issue? pc/3 (form pc/3) = "get-definition"]
+				][
+					red-compiler-emit-word-root/set? name none none
+					compiler-redbin-emitter/emit-datatype pc/4
 					pc: skip pc 4
 					yes
 				][
@@ -3774,12 +4245,19 @@ red: context [
 			]
 			action!
 			native! [
-				either pc/3/2 = #get-definition [
-					redbin/emit-word/root/set? name none none
+				either all [
+					block? pc/3
+					(length? pc/3) >= 2
+					any [
+						pc/3/2 = get-definition-directive
+						all [issue? pc/3/2 (form pc/3/2) = "get-definition"]
+					]
+				][
+					red-compiler-emit-word-root/set? name none none
 					either pc/2 = 'action! [
-						redbin/emit-native/action pc/3/3 pc/3/1
+						red-compiler-emit-native/action pc/3/3 pc/3/1
 					][
-						redbin/emit-native pc/3/3 pc/3/1
+						red-compiler-emit-native pc/3/3 pc/3/1
 					]
 					fetch-functions back pc
 					pc: skip pc 3
@@ -3797,7 +4275,7 @@ red: context [
 		/native
 		/local 
 			name value ctx original obj obj-bound? deep? inherit? proto
-			defer mark start take-frame preset? no-check?
+			defer start preset? no-check?
 	][
 		name: original: pc/1
 		pc: next pc
@@ -3815,12 +4293,23 @@ red: context [
 		]
 		
 		obj-bound?: all [
-			rebol-gctx <> obj: bind? original
-			not find shadow-funcs obj
+			rebol-gctx <> obj: binding-of original
+			not bindings/shadow-context-of obj
+		]
+		;-- Stage1: body words may be unbound after load; use current object from stack.
+		unless obj-bound? [
+			if all [
+				1 < length? obj-stack
+				obj: attempt [safe-eval-object-path obj-stack]
+				object? :obj
+				select-obj obj
+			][obj-bound?: yes]
 		]
 		deep?: 1 < length? obj-stack
-		mark: tail output
-		take-frame: [start: copy mark clear mark not block? pc/1]
+		; Reentrant set-word frames: store mark series on frame-stack (object field).
+		; Do not rely on method locals for the mark position under compiled Stage1.
+		append/only frame-stack tail output
+		start: none
 		
 		;-- Try to push the name/value pair into Redbin data --
 		all [
@@ -3829,6 +4318,7 @@ red: context [
 			empty? expr-stack
 			pc/1 = 'make
 			comp-set-make
+			take/last frame-stack
 			exit
 		]
 		if all [word? name find [path! word!] type?/word pc/1 is-object? pc/1][
@@ -3853,7 +4343,7 @@ red: context [
 				pc/1 = 'make
 				any [pc/2 = 'object! proto: is-object? pc/2]
 			][
-				do take-frame
+				start: red-compiler-take-frame last frame-stack
 				check-redefined name original
 				pc: next pc
 				defer: either proto [
@@ -3861,11 +4351,14 @@ red: context [
 				][
 					comp-context/with original
 				]
-				unless defer [insert mark start]		;-- restore beginning of frame
+				unless defer [insert last frame-stack start]	;-- restore beginning of frame
 			]
 			all [
 				any [word? pc/1 all [path? pc/1 not get-word? pc/1/1]]
-				do take-frame
+				(
+					start: red-compiler-take-frame last frame-stack
+					not block? pc/1
+				)
 				any [not find [object context construct] pc/1 check-redefined name original]
 				defer: dispatch-ctx-keywords/with original pc/1
 			][]
@@ -3882,11 +4375,12 @@ red: context [
 			emit start
 			emit defer
 		]
+		take/last frame-stack
 		
 		either native [
 			emit-native/with 'set [-1 -1 -1 -1]			;@@ refinement not handled yet
 		][
-			either all [obj-bound? ctx: select objects obj][
+			either all [obj-bound? ctx: select-obj obj][
 				emit 'word/set-in
 				emit either parent-object? obj ['octx][ctx] ;-- optional parametrized context reference (octx)
 				emit get-word-index/with name ctx
@@ -3899,7 +4393,7 @@ red: context [
 		emit-close-frame
 	]
 
-	comp-word: func [/literal /final /thru /local name local? alter emit-word original new ctx defer][
+	comp-word: func [/literal /final /thru /local name local? self? alter emit-word original new ctx defer][
 		name: to word! original: pc/1
 		local?: local-bound? original
 		
@@ -3915,16 +4409,20 @@ red: context [
 			]
 		]
 		
-		if defer: dispatch-ctx-keywords original [
+		if all [
+			not local?
+			defer: dispatch-ctx-keywords original
+		][
 			if block? defer [emit defer]
 			exit
 		]
 		pc: next pc										;@@ move it deeper
-		
+
+		self?: do [name = 'self]
 		case [
 			all [not thru name = 'exit	][comp-exit]
 			all [not thru name = 'return][comp-return]
-			all [not thru name = 'self	][comp-self original]
+			all [not thru self?			][comp-self original]
 			all [
 				not final
 				not local?
@@ -3944,7 +4442,7 @@ red: context [
 					all [
 						entry: find functions name
 						1 < length? obj-stack
-						append entry/2 select objects do obj-stack	;-- append context name if method
+						append entry/2 select-obj either path? :obj-stack [safe-eval-object-path obj-stack][none]	;-- append context name if method
 					]
 				]
 			]
@@ -3958,7 +4456,7 @@ red: context [
 						name: alter
 					]
 					all [
-						rebol-gctx = bind? original
+						rebol-gctx = binding-of original
 						entry: find functions name
 					]
 				]
@@ -3983,7 +4481,12 @@ red: context [
 			any [
 				find globals name
 				find-contexts name
+				; Get-word of ops/natives (e.g. :< or :+) is literal mode, so the
+				; function-call branch above is skipped. Still treat known functions
+				; as defined so get-word/get can load the value (function-test fun-ref-4).
+				find functions name
 			][
+				unless find/case symbols name [add-symbol name]
 				do emit-word
 			]
 			'else [
@@ -4148,7 +4651,7 @@ red: context [
 					throw-error ["invalid #get argument:" spec]
 				]
 				set [obj fpath] object-access? spec
-				ctx: second obj: find objects obj
+				ctx: second obj: find-obj obj
 				unless idx: get-word-index/with last spec ctx [return none]
 				remove/part code 2
 				blk: [red/word/get-in (decorate-exec-ctx ctx) (idx)]
@@ -4169,7 +4672,7 @@ red: context [
 		]
 		append path word
 		set [obj fpath] object-access? path
-		ctx: second obj: find objects obj
+		ctx: second obj: find-obj obj
 		unless idx: get-word-index/with word ctx [return none]
 		remove/part code 3
 		blk: [red/object/get-word (decorate-exec-ctx ctx) (idx)]
@@ -4212,10 +4715,10 @@ red: context [
 					type: types/1/1
 				][
 					arg: body/1
-					if word? arg [arg: attempt [get arg]]
+					if word? :arg [arg: attempt [get arg]]
 					type: none
 					foreach value types/1 [
-						if value = type?/word arg [type: value break]
+						if value = type?/word :arg [type: value break]
 					]
 				]
 				if find [any-type! object!] type [type: none]
@@ -4285,41 +4788,18 @@ red: context [
 		insert-lf -1
 	]
 	
-	in-cache?: func [file [file!] /local path][
-		either encap? [
-			if exists?-cache file [return yes]
-			if any [not value? 'script-path not script-path][return no]
-			
-			path: either slash = first script-path [
-				skip script-path length? system/script/path
-			][
-				script-path
-			]
-			exists?-cache secure-clean-path join path file
-		][
-			no
-		]
-	]
-	
-	comp-include: func [pc [block!] /only /local file saved version mark script-file cache? saved-script-path saved-include-stk][
+	comp-include: func [pc [block!] /only /local file saved version mark script-file saved-script-path saved-include-stk][
 		unless file? file: pc/2 [
 			throw-error ["#include requires a file argument:" pc/2]
 		]
-		cache?: in-cache? file
 		if only [saved-include-stk: copy include-stk]
 		append include-stk script-path
 		saved-script-path: script-path
 
-		if all [not booting? relative-path? file][
-			file: clean-path join any [script-path main-path] file
-		]
-		script-path: either find file slash [
-			first split-path file
-		][
-			none
-		]
+		file: resolve-include-file file
+		script-path: first split-path file
 
-		unless any [cache? booting? exists? file][
+		unless any [booting? exists? file][
 			throw-error ["include file not found:" pc/2]
 		]
 		either find included-list file [
@@ -4338,7 +4818,7 @@ red: context [
 			saved: script-name
 			unless only [insert skip pc 2 #pop-path]
 			src: load-source/header file
-			src: preprocessor/expand src job
+			src: compiler-preprocessor/expand src job
 			change/part pc next src 2			;@@ Header skipped, should be processed
 			script-name: saved
 			append included-list file
@@ -4351,15 +4831,25 @@ red: context [
 	]
 
 	comp-directive: has [mark value][
-		switch pc/1 [
-			#include [
-				comp-include pc
-				true
+		if pc/1 = include-directive [
+			comp-include pc
+			return true
+		]
+		if pc/1 = get-definition-directive [
+			either value: select extracts/definitions pc/2 [
+				change/only/part pc value 2
+				comp-expression						;-- continue expression fetching
+			][
+				pc: next pc
 			]
+			return true
+		]
+		switch pc/1 [
 			#pop-path [
 				take/last script-stk
 				script-path: take/last include-stk
 				pc: next pc
+				true
 			]
 			#system [
 				unless block? pc/2 [
@@ -4394,15 +4884,6 @@ red: context [
 					#script script-name
 				]
 				pc: skip pc 2
-				true
-			]
-			#get-definition [							;-- temporary directive
-				either value: select extracts/definitions pc/2 [
-					change/only/part pc value 2
-					comp-expression						;-- continue expression fetching
-				][
-					pc: next pc
-				]
 				true
 			]
 			#register-intrinsics [						;-- internal boot-level directive
@@ -4451,26 +4932,14 @@ red: context [
 		]
 		
 		switch/default type?/word pc/1 [
-			issue!		[
-				either all [
-					issue? pc/1
-					any [
-						unicode-char?  pc/1
-						float-special? pc/1
-						percent-value? pc/1
-					]
-				][
-					comp-literal						;-- issue! used for special encoding
-				][
-					unless comp-directive [comp-literal]
-				]
-			]
+			issue!		[unless comp-directive [comp-literal]]
 			;-- active datatypes with specific literal form
 			set-word!	[comp-set-word]
 			word!		[comp-word]
 			get-word!	[comp-word/literal]
 			paren!		[comp-paren root]
 			set-path!	[comp-path/set? root]
+			get-path!	[comp-path root]
 			path! 		[comp-path root]
 		][
 			comp-literal
@@ -4488,7 +4957,7 @@ red: context [
 		]
 		if any [root close-path][
 			if paths < length? paths-stack [
-				emit-dynamic-path out
+				;emit-dynamic-path out
 				if tail? pc [emit-dyn-check]
 			]
 		]
@@ -4588,7 +5057,7 @@ red: context [
 	
 	register-object: func [obj [word! path!] name /store /local pos prev entry o][
 		if pos: any [
-			all [path? obj object? o: do head insert copy obj 'objects find-object o]
+			all [path? obj object? o: safe-eval-object-path head insert copy obj 'objects find-object o]
 			all [not path? obj find-object/by-name obj]
 		][
 			;if prev: find get-obj-base name name [prev/1: none] ;-- unbind word with previous object
@@ -4645,31 +5114,11 @@ red: context [
 		]
 	]
 	
-	encap-preprocess: func [code [block!] /local prolog rule p][
-		prolog: make block! 1
-		parse code rule: [
-			any [
-				p: set-word! 'routine block! block! (
-					insert/part tail prolog p 4
-					p: remove/part p 4
-				) :p
-				| p: [#system | #system-global] block! (
-					insert/part tail prolog p 2
-					p: remove/part p 2
-				) :p
-				| p: #include (pc: p comp-include/only p) :p
-				| p: [block! | paren!] :p into rule
-				| skip
-			]
-		]
-		reduce [prolog code]
-	]
-	
 	comp-bodies: has [pos][
 		obj-stack: to path! 'func-objs
 		pos: tail objects
 		
-		foreach [name spec body symbols locals-nb stack ssa ctx obj?] bodies [
+		foreach [name spec body func-symbols locals-nb stack ssa ctx obj?] bodies [
 			locals-stack: stack
 			ssa-names: ssa
 			ctx-stack: ctx
@@ -4678,7 +5127,7 @@ red: context [
 			depth: max-depth
 			preprocess-types name spec
 
-			comp-func-body name spec body copy symbols locals-nb ;-- copy avoids symbols corruption by decoration
+			comp-func-body name spec body copy func-symbols locals-nb ;-- copy avoids function symbols corruption by decoration
 		]
 		clear pos
 		clear locals-stack
@@ -4687,7 +5136,7 @@ red: context [
 	]
 	
 	comp-init: does [
-		redbin/init
+		compiler-redbin-emitter/init
 		add-symbol 'datatype!
 		add-global 'datatype!
 		foreach [name specs] functions [
@@ -4707,14 +5156,17 @@ red: context [
 	]
 	
 	comp-finish: does [
-		redbin/finish pick [[compress] []] to logic! all [redc/load-lib? job/redbin-compress?]
+		compiler-redbin-emitter/finish pick [[compress] []] to logic! all [
+			job/redbin-compress?
+			compiler-crush/available?
+		]
 	]
 	
 	comp-source: func [code [block!] /local user main saved mods][
 		output: make block! 10000
 		comp-init
 		
-		pc: next preprocessor/expand/clean load-source/hidden %encapper/boot.red job ;-- compile Red's boot script
+		pc: next compiler-preprocessor/expand/clean load-source/hidden %compiler/bootstrap-boot.red job
 		unless job/red-help? [clear-docstrings pc]
 		booting?: yes
 		comp-block
@@ -4729,7 +5181,7 @@ red: context [
 			saved-include-stk: copy include-stk
 			saved-script-stk: copy script-stk
 			script-path: first split-path module
-			pc: next preprocessor/expand load-source/hidden module job
+			pc: next compiler-preprocessor/expand load-source/hidden module job
 			unless job/red-help? [clear-docstrings pc]
 			comp-block
 			script-path: saved
@@ -4749,7 +5201,7 @@ red: context [
 		
 		comp-bodies										;-- compile deferred functions
 		comp-finish
-		libRedRT/save-extras
+		;libRedRT/save-extras
 		
 		reduce [user mods main]
 	]
@@ -4826,7 +5278,7 @@ red: context [
 		unless empty? sys-global [
 			process-calls/global sys-global				;-- lazy #call processing
 		]
-		slots: redbin/index + 3000 + root-slots
+		slots: compiler-redbin-emitter/index + 3000 + root-slots
 		if job/dev-mode? [slots: slots + 100'000]		;-- Cannot know how many slots will be needed by the app
 		change/only find out <root-size> slots
 		
@@ -4839,7 +5291,7 @@ red: context [
 		if verbose > 2 [?? output]
 	]
 	
-	comp-as-exe: func [code [block!] /local out user mods main defs header][
+	comp-as-exe: func [code [block!] /local out user mods main defs][
 		out: copy/deep either job/dev-mode? [[
 			Red/System [origin: 'Red]
 
@@ -4865,16 +5317,6 @@ red: context [
 		if all [job/dev-mode? not job/libRedRT?][
 			replace out <imports> libRedRT/get-include-file job
 		]
-		if job/encap? [
-			header: reduce [code/1]
-			code: encap-preprocess code
-			code: compose/deep [
-				(header)
-				(code/1)
-				do [(next code/2)]
-			]
-		]
-		
 		set [user mods main] comp-source code
 		
 		;-- assemble all parts together in right order
@@ -4914,7 +5356,7 @@ red: context [
 			process-calls/global sys-global				;-- lazy #call processing
 		]
 
-		change/only find out <root-size> redbin/index + 3000 + root-slots
+		change/only find out <root-size> compiler-redbin-emitter/index + 3000 + root-slots
 		change/only find last out <script> script		;-- inject compilation result in template
 		output: out
 		if verbose > 2 [?? output]
@@ -4927,19 +5369,27 @@ red: context [
 			some [
 				['action! | 'native!] into [into clean]
 				| ['func | 'function | 'routine] into clean
-				| into rule
+				| pos: [block! | paren!] :pos into rule
 				| skip
 			]
 		]
 	]
 	
 	load-source: func [file [file! block!] /hidden /header /local src][
-		if all [encap? header slash = first file not exists? file][
-			file: head remove/part copy file length? system/script/path
-		]
 		either file? file [
 			unless hidden [script-name: file]
-			src: lexer/process read-cache file
+			src: lexer/process/file read/binary file file
+			if all [
+				(length? src) >= 4
+				src/1 = 'REBOL
+				block? src/2
+				src/3 = 'Red
+				block? src/4
+			][src: skip src 2]						;-- canonical dual-host source
+			unless all [src src/1 = 'Red block? src/2][
+				throw-error ["invalid Red source header:" file]
+			]
+			src: next src
 		][
 			unless hidden [script-name: 'in-memory]
 			src: file
@@ -4983,7 +5433,8 @@ red: context [
 			mods: make block! 2
 			
 			foreach mod list [
-				unless file: find standard-modules mod [
+				file: find standard-modules mod
+				unless file [
 					throw-error ["module not found:" mod]
 				]
 				all [
@@ -5009,7 +5460,38 @@ red: context [
 		process-currencies header
 	]
 	
+	; Re-apply expression field inits. Stage0 can compile large context field
+	; expressions incorrectly (none), which breaks #get-definition matching and
+	; forces full make action!/native! emission instead of redbin natives.
+	ensure-host-fields: does [
+		include-directive: to issue! "include"
+		get-definition-directive: to issue! "get-definition"
+		return-def: to-set-word 'return
+		actions-prefix: to path! 'actions
+		natives-prefix: to path! 'natives
+		unless path? :obj-stack [obj-stack: to path! 'objects]
+		unless object? :lexer [lexer: compiler-lexer]
+		unless object? :extracts [extracts: compiler-extractor]
+		unless object? :redbin [redbin: compiler-redbin-emitter]
+		unless object? :preprocessor [preprocessor: compiler-preprocessor]
+		unless object? :bindings [bindings: compiler-bindings]
+		unless block? :lit-vars [
+			lit-vars: reduce [
+				'block make hash! 1000
+				'string make hash! 1000
+				'context make hash! 1000
+				'typeset make hash! 100
+			]
+		]
+		; binding-of 'rebol may be none in pure Red host; keep a stable sentinel.
+		unless object? :rebol-gctx [
+			rebol-gctx: any [binding-of 'rebol binding-of 'system none]
+		]
+	]
+
 	clean-up: does [
+		ensure-host-fields
+		bindings/reset
 		clear include-stk
 		clear included-list
 		clear script-stk
@@ -5022,6 +5504,7 @@ red: context [
 		clear ctx-stack
 		clear objects
 		obj-stack: to path! 'objects					;-- reset it to original value
+		clear frame-stack
 		clear paths-stack
 		clear locals-stack
 		clear output
@@ -5045,7 +5528,7 @@ red: context [
 		depth:	   0
 		max-depth: 0
 		root-slots:	  0
-		redbin/index: 0									;-- required here by libRedRT
+		compiler-redbin-emitter/index: 0									;-- required here by libRedRT
 		container-obj?:
 		script-path:
 		script-file:
@@ -5064,11 +5547,11 @@ red: context [
 		main-path: first split-path any [all [block? file system/options/path] file]
 		resources: make block! 8
 
-		time: dt [
-			src: load-source file
+		time: now/time/precise
+		src: load-source file
 			job/red-pass?: yes
 			process-config src/1
-			preprocessor/expand/clean src job
+			src: compiler-preprocessor/expand/clean src job
 			if job/show = 'expanded [probe next src]	;-- show postprocessed source file
 			process-fields src/1 next src
 			extracts/init job
@@ -5078,7 +5561,7 @@ red: context [
 			if all [job/dev-mode? not job/libRedRT?][
 				defs: libRedRT/get-definitions
 				append clear functions defs/1
-				;redbin/index:	defs/2
+				;compiler-redbin-emitter/index:	defs/2
 				globals:		defs/3
 				objects:		compose/deep bind objects: defs/4 red
 				contexts:		defs/5
@@ -5089,6 +5572,7 @@ red: context [
 				s-counter:		defs/10
 				needed: 		exclude needed defs/11	;-- exclude already compiled modules
 				shadow-funcs:	defs/12
+				bindings/rebuild-shadows shadow-funcs
 				make-keywords
 			]
 			print [
@@ -5096,7 +5580,19 @@ red: context [
 				"...Modules          :" either empty? job/modules [#"-"][mold/only job/modules]
 			]
 			either job/type = 'dll [comp-as-lib src][comp-as-exe src]
-		]
-		reduce [output time redbin/buffer resources]
+		time: now/time/precise - time
+		reduce [output time compiler-redbin-emitter/buffer resources]
 	]
+
 ]
+
+compiler-frontend: red
+compiler-redbin-emitter/frontend: red
+compiler-redbin-emitter/front-encode-date: :red/encode-date
+compiler-redbin-emitter/front-encode-UTC-time: :red/encode-UTC-time
+compiler-redbin-emitter/front-to-nibbles: :red/to-nibbles
+compiler-redbin-emitter/front-to-currency-code: :red/to-currency-code
+compiler-redbin-emitter/front-get-RS-type-ID: :red/get-RS-type-ID
+compiler-redbin-emitter/front-local-word?: :red/local-word?
+compiler-redbin-emitter/front-get-word-index: :red/get-word-index
+compiler-redbin-emitter/front-find-binding: :red/find-binding

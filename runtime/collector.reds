@@ -418,6 +418,7 @@ collector: context [
 			]
 		]	
 		node: as node! ptr/value
+		if any [null? node null? node/value][return no]
 		s: as series! node/value
 		flags: s/flags
 		new?: flags and flag-gc-mark = 0
@@ -436,6 +437,7 @@ collector: context [
 	][
 		if zero? ptr/value [return no]
 		node: resolve-node ptr/value
+		if any [null? node null? node/value][return no]
 		s: as series! node/value
 		flags: s/flags
 		new?: flags and flag-gc-mark = 0
@@ -443,12 +445,122 @@ collector: context [
 		new?
 	]
 
+
+	;-- Deep-mark a unit-1 series only when every field of hashtable! is
+	;-- consistent with a live table. Must be strict: a false positive would
+	;-- let _hashtable/mark rewrite random buffer words via keep-raw while
+	;-- do-node-cycle's refs map is active (silent memory corruption).
+	mark-hashtable-node: func [
+		node [node!]
+		/local
+			s sk sf sb [series!]
+			ht   [int-ptr!]
+			kn fn bn [node!]
+			type n-buckets n-occupied upper keys flags blk [integer!]
+			raw  [int-ptr!]
+	][
+		if any [null? node null? node/value][exit]
+		s: as series! node/value
+		if GET_UNIT(s) <> 1 [exit]
+		if s/flags and series-in-use = 0 [exit]
+		if (as-integer s/tail - s/offset) < 40 [exit]
+		;-- table series must own a stable handle that points back here
+		if any [s/node < 1 s/node >= node-registry/next][exit]
+		kn: resolve-node s/node
+		if any [null? kn kn <> node][exit]
+
+		ht: as int-ptr! s/offset
+		type: ht/10
+		n-buckets: ht/8
+		n-occupied: ht/7
+		upper: ht/9
+		keys: ht/5
+		flags: ht/4
+		blk: ht/6
+		if any [
+			type < HASH_TABLE_HASH
+			type > HASH_TABLE_OWNERSHIP
+			n-buckets < 4
+			n-buckets > 01000000h
+			(n-buckets and (n-buckets - 1)) <> 0
+			n-occupied < 0
+			n-occupied > n-buckets
+			upper <= 0
+			upper > n-buckets
+			keys = 0
+			flags = 0
+		][exit]
+		unless frames-list/find as int-ptr! keys FRAME_NODES [exit]
+		unless frames-list/find as int-ptr! flags FRAME_NODES [exit]
+		if all [blk <> 0 not frames-list/find as int-ptr! blk FRAME_NODES][exit]
+
+		kn: as node! keys
+		if any [null? kn null? kn/value][exit]
+		sk: as series! kn/value
+		if any [
+			GET_UNIT(sk) <> 4							;-- key array is integer!
+			sk/size < (n-buckets * size? integer!)
+		][exit]
+
+		fn: as node! flags
+		if any [null? fn null? fn/value][exit]
+		sf: as series! fn/value
+		if any [
+			GET_UNIT(sf) <> 1							;-- flag bytes
+			sf/size < (n-buckets >> 2)
+		][exit]
+
+		if blk <> 0 [
+			bn: as node! blk
+			if any [null? bn null? bn/value][exit]
+			sb: as series! bn/value
+			if all [
+				type > 0									;-- maps/hashes store cells
+				type < HASH_TABLE_NODE_KEY
+				GET_UNIT(sb) <> 16
+			][exit]
+		]
+
+		raw: as int-ptr! node
+		_hashtable/mark as ptr-ptr! :raw
+	]
+
+	;-- Mark a node-handle! found on the native stack. Handles are integer!
+	;-- and never appear in the pointer bitmap. unit-16 cell series deep-mark
+	;-- via mark-block-node. unit-1 is shallow-kept; validated hashtables are
+	;-- deep-marked so nested keys/flags/blk stay live across GC.
+	mark-stack-handle: func [
+		sp [ptr-ptr!]
+		/local
+			handle [integer!]
+			entry [ptr-ptr!]
+			node  [node!]
+			s     [series!]
+	][
+		handle: as integer! sp/value
+		if all [handle > 0 handle < node-registry/next][
+			entry: node-registry/entries + (handle - 1)
+			if entry/value <> null [
+				node: as node! entry/value
+				if node/value <> null [
+					s: as series! node/value
+					either GET_UNIT(s) = 16 [
+						mark-block-node as int-ptr! sp
+					][
+						keep as int-ptr! sp
+						if GET_UNIT(s) = 1 [mark-hashtable-node node]
+					]
+				]
+			]
+		]
+	]
+
 	unmark: func [
 		handle	[node-handle!]
 		/local s [series!]
 	][
 		s: resolve-series handle
-		s/flags: s/flags and not flag-gc-mark
+		s/flags: s/flags and not (flag-gc-mark or flag-gc-scan)
 	]
 	
 	mark-context: func [
@@ -457,15 +569,27 @@ collector: context [
 			node [int-ptr!]
 			ctx  [red-context!]
 			slot [red-value!]
+			s	 [series!]
+			phys [node!]
 	][
-		if keep ptr [
-			ctx: TO_CTX(ptr/value)							;-- [context! function!|object!]
-			slot: as red-value! ctx
-			node: as int-ptr! resolve-node ctx/symbols
+		;-- flag-gc-mark = buffer reachable; flag-gc-scan = nested deep-marked
+		;-- (or deep-mark in progress). Bare keep only sets mark; a later
+		;-- mark-context still deep-scans when scan is clear.
+		if zero? ptr/value [exit]
+		phys: resolve-node ptr/value
+		if any [null? phys null? phys/value][exit]
+		keep ptr
+		s: as series! phys/value
+		if s/flags and flag-gc-scan <> 0 [exit]
+		s/flags: s/flags or flag-gc-scan				;-- set before nested (cycle break)
+		ctx: TO_CTX(ptr/value)							;-- [context! function!|object!]
+		slot: as red-value! ctx
+		node: as int-ptr! resolve-node ctx/symbols
+		if node <> null [
 			_hashtable/mark as ptr-ptr! :node
-			unless ON_STACK?(ctx) [mark-block-node :ctx/values]
-			mark-values slot + 1 slot + 2				;-- mark the back-reference value (2nd value)
 		]
+		unless ON_STACK?(ctx) [mark-block-node :ctx/values]
+		mark-values slot + 1 slot + 2				;-- mark the back-reference value (2nd value)
 	]
 
 	mark-values: func [
@@ -544,14 +668,16 @@ collector: context [
 					#if debug? = yes [if verbose > 1 [print "object"]]
 					obj: as red-object! value
 					mark-context :obj/ctx
-					if HANDLE?(obj/on-set) [keep :obj/on-set]
+					if HANDLE?(obj/on-set) [mark-block-node :obj/on-set]
 				]
 				TYPE_CONTEXT [
 					#if debug? = yes [if verbose > 1 [print "context"]]
 					ctx: as red-context! value
 					;keep :ctx/self
 					node: as int-ptr! resolve-node ctx/symbols
-					_hashtable/mark as ptr-ptr! :node
+					if node <> null [
+						_hashtable/mark as ptr-ptr! :node
+					]
 					unless ON_STACK?(ctx) [mark-block-node :ctx/values]
 				]
 				TYPE_HASH
@@ -560,7 +686,9 @@ collector: context [
 					hash: as red-hash! value
 					mark-block-node :hash/node
 					node: as int-ptr! resolve-node hash/table
-					_hashtable/mark as ptr-ptr! :node		;@@ check if previously marked
+					if node <> null [
+						_hashtable/mark as ptr-ptr! :node		;@@ check if previously marked
+					]
 				]
 				TYPE_FUNCTION
 				TYPE_ROUTINE [
@@ -607,13 +735,17 @@ collector: context [
 	mark-block-node: func [
 		ptr	[int-ptr!]
 		/local
-			node [node!]
 			s	 [series!]
+			phys [node!]
 	][
-		if keep ptr [
-			s: resolve-series ptr/value
-			mark-values s/offset s/tail
-		]
+		if zero? ptr/value [exit]
+		phys: resolve-node ptr/value
+		if any [null? phys null? phys/value][exit]
+		keep ptr
+		s: as series! phys/value
+		if s/flags and flag-gc-scan <> 0 [exit]
+		s/flags: s/flags or flag-gc-scan				;-- set before nested (cycle break)
+		mark-values s/offset s/tail
 	]
 
 	mark-block-raw: func [
@@ -622,22 +754,19 @@ collector: context [
 			node [node!]
 			s	 [series!]
 	][
-		if keep-raw ptr [
-			node: as node! ptr/value
-			s: as series! node/value
-			mark-values s/offset s/tail
-		]
+		if null? ptr/value [exit]
+		keep-raw ptr
+		node: as node! ptr/value
+		s: as series! node/value
+		if s/flags and flag-gc-scan <> 0 [exit]
+		s/flags: s/flags or flag-gc-scan
+		mark-values s/offset s/tail
 	]
 	
 	mark-block: func [
 		blk [red-block!]
-		/local
-			s [series!]
 	][
-		if keep :blk/node [
-			s: GET_BUFFER(blk)
-			mark-values s/offset s/tail
-		]
+		mark-block-node :blk/node
 	]
 	
 	prepare-series-move: func [						;-- Rewrite headers for a pending series move
@@ -705,7 +834,7 @@ collector: context [
 				src: as byte-ptr! s
 				;probe ["search gap from: " s]
 				until [									;-- search for a gap
-					s/flags: s/flags and not flag-gc-mark	;-- clear mark flag
+					s/flags: s/flags and not (flag-gc-mark or flag-gc-scan)	;-- clear mark+scan
 					s: as series! (as byte-ptr! s + 1) + s/size + SERIES_BUFFER_PADDING
 					tail?: s >= heap
 					;@@ test tail? first, otherwise s/flags may crash if s = heap
@@ -805,7 +934,7 @@ collector: context [
 				size: 0
 				src: as byte-ptr! s
 				until [									;-- search for a gap
-					s/flags: s/flags and not flag-gc-mark	;-- clear mark flag
+					s/flags: s/flags and not (flag-gc-mark or flag-gc-scan)	;-- clear mark+scan
 					size2: size
 					size: SERIES_BUFFER_PADDING + size + s/size + size? series-buffer!
 					ss: s								;-- save previous series pointer
@@ -939,7 +1068,7 @@ collector: context [
 			node [node!]
 			c-low c-high lib-low lib-high caller [byte-ptr!]
 			s [series!]
-			bits slot-bits idx disp nb arg-slots local-slots slots handle [integer!]
+			bits slot-bits idx disp nb arg-slots local-slots slots handle h n [integer!]
 			ext? dyn? [logic!]
 	][
 		c-low: system/image/base + system/image/code
@@ -977,7 +1106,7 @@ collector: context [
 				assert slot-bits >= 0
 				b: either slot-bits and 40000000h <> 0 [base'][base] ;-- select exe or dll's bitmap array
 				map: b + (slot-bits and 0FFFFFFFh)		;-- first corresponding bitmap slot (removing bit flags)
-				#either any [target = 'X86-64 target = 'ARM64] [
+				#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [
 					arg-slots: map/value
 					map: map + 1
 					local-slots: map/value
@@ -987,10 +1116,10 @@ collector: context [
 					local-slots: 0
 				]
 				head: map								;-- saved head reference for later args bitmap detection
-				#either any [target = 'X86-64 target = 'ARM64] [idx: -1][idx: 2] ;-- arguments index
+				#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [idx: -1][idx: 2] ;-- arguments index
 				disp: 1									;-- scanning direction
-				loop 2 [								;-- 1st loop: args, 2nd loop: locals
-					#either any [target = 'X86-64 target = 'ARM64] [
+				loop 2 [									;-- 1st loop: args, 2nd loop: locals
+					#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [
 						slots: either disp = 1 [arg-slots][local-slots]
 					][slots: 0]
 					until [
@@ -1004,91 +1133,256 @@ collector: context [
 						][
 							dyn?: yes
 							bits: encode-dyn-ptr frm bits = 20000000h ;-- replace bitmap by a dynamic one (32 stack slots only)
-							#if any [target = 'X86-64 target = 'ARM64] [slots: 31]
+							#if any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [slots: 31]
 						]
-						while [#either any [target = 'X86-64 target = 'ARM64] [
-							any [bits <> 0 (idx + 1) < slots]
-						][
-							bits <> 0
-						]][
-							#either any [target = 'X86-64 target = 'ARM64] [idx: idx + 1][idx: idx + disp]
-							#if any [target = 'X86-64 target = 'ARM64] [
-								sp-address: either disp = -1 [
-									(as byte-ptr! frm) - ((5 + arg-slots + idx) * size? pointer!)
-								][either all [dyn? idx >= arg-slots] [
-									(as byte-ptr! frm) + ((2 + idx - arg-slots) * size? pointer!)
+						;-- Root fix: always consume up to 31 bit positions per word
+						;-- (or until declared slots are exhausted). Stopping when the
+						;-- remaining bit word becomes 0 misaligns idx for multi-word
+						;-- bitmaps, so later pointer/handle slots are scanned at the
+						;-- wrong stack addresses. That drops live series* from
+						;-- stk-refs and fails to mark live handles under GC pressure.
+						n: 0
+						#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [
+							while [all [n < 31 (idx + 1) < slots]][
+								idx: idx + 1
+								n: n + 1
+								#either any [target = 'X86-64 target = 'ARM64] [
+									sp-address: either disp = -1 [
+										(as byte-ptr! frm) - ((5 + arg-slots + idx) * size? pointer!)
+									][either all [dyn? idx >= arg-slots] [
+										(as byte-ptr! frm) + ((2 + idx - arg-slots) * size? pointer!)
+									][
+										(as byte-ptr! frm) - ((5 + idx) * size? pointer!)
+									]]
+									sp: as ptr-ptr! sp-address
+									mark-stack-handle sp
 								][
-									(as byte-ptr! frm) - ((5 + idx) * size? pointer!)
-								]]
-								sp: as ptr-ptr! sp-address
-								if all [idx < slots][
-									handle: as integer! sp/value
-									if all [handle > 0 handle < node-registry/next][
-										entry: node-registry/entries + (handle - 1)
-										if entry/value <> null [keep as int-ptr! sp]
+									#if target = 'IA-32 [
+										;-- args: [ebp+8]=frm+2; locals: [ebp-20]=frm-5
+										sp: either disp = 1 [frm + 2 + idx][frm - 5 - idx]
+										mark-stack-handle sp
 									]
 								]
-							]
-							if bits and 1 <> 0 [		;-- check if the slot is a pointer
-								#either any [target = 'X86-64 target = 'ARM64] [
-								][sp: frm + idx - 1]
-								p: sp/value
-								if #either any [target = 'X86-64 target = 'ARM64] [
-									p > as int-ptr! FFFFh
-								][all [
-									p > as int-ptr! FFFFh	  ;-- filter out too low values
-									p < as int-ptr! FFFFF000h ;-- filter out too high values
-								]][
-									node: as node! p
-									case [
-										all [			;=== Mark node! references ===
-											frames-list/find p FRAME_NODES
-											node/value <> null
-											not frames-list/find node/value FRAME_NODES ;-- freed nodes can still be on the stack!
-											frames-list/find node/value FRAME_SERIES
-											keep-raw as ptr-ptr! sp
-										][
-											;probe ["(scan) node pointer on stack: " p " : " as byte-ptr! node/value]
-											p: sp/value				;-- refresh it after `keep sp` call
-											node: as node! p
-											s: as series! node/value
-											if GET_UNIT(s) = 16 [mark-values s/offset s/tail]
-										]
-						all [
-							not all [(as byte-ptr! stack/bottom) <= p p <= (as byte-ptr! stack/top)] ;-- stack region is fixed
-							frames-list/find p FRAME_SERIES
-						][
-							;probe ["stack pointer: " p " : " as byte-ptr! p/value " (" frm + idx - 1 ")"]
-											if store? [	;=== Extract series references ===
-												if refs = tail [
-													;@@ for cases like issue #3628, should find a better way to handle it
-													refs: memory/stk-refs
-													memory/stk-sz: memory/stk-sz + 1000
-													refs: as ptr-ptr! realloc as byte-ptr! refs memory/stk-sz * 2 * size? int-ptr!
-													memory/stk-refs: refs
-													tail: refs + (memory/stk-sz * 2)
-													refs: tail - 2000
+								if bits and 1 <> 0 [	;-- check if the slot is a pointer
+									p: sp/value
+									if #either any [target = 'X86-64 target = 'ARM64] [
+										p > as int-ptr! FFFFh
+									][all [
+										p > as int-ptr! FFFFh
+										p < as int-ptr! FFFFF000h
+									]][
+										node: as node! p
+										case [
+											all [		;=== Mark node! references ===
+												frames-list/find p FRAME_NODES
+												node/value <> null
+												not frames-list/find node/value FRAME_NODES
+												frames-list/find node/value FRAME_SERIES
+												keep-raw as ptr-ptr! sp
+											][
+												p: sp/value
+												node: as node! p
+												s: as series! node/value
+												either GET_UNIT(s) = 16 [
+													mark-values s/offset s/tail
+												][
+													if GET_UNIT(s) = 1 [mark-hashtable-node node]
 												]
-												refs/value: p			;-- pointer inside a frame
-												new: refs + 1
+											]
+											all [
+												not all [(as byte-ptr! stack/bottom) <= p p <= (as byte-ptr! stack/top)]
+												frames-list/find p FRAME_SERIES
+											][
+												;-- If p is a series header (back-ref matches), mark via
+												;-- its stable handle. Interior series pointers only need
+												;-- stk-refs relocation.
+												s: as series! p
+												if all [
+													s/flags and series-in-use <> 0
+													s/node > 0
+													s/node < node-registry/next
+												][
+													node: resolve-node s/node
+													if all [node <> null node/value = as int-ptr! s][
+														keep :s/node
+														if GET_UNIT(s) = 1 [mark-hashtable-node node]
+														if GET_UNIT(s) = 16 [
+															if s/flags and flag-gc-scan = 0 [
+																s/flags: s/flags or flag-gc-scan
+																mark-values s/offset s/tail
+															]
+														]
+													]
+												]
+												if store? [
+													if refs = tail [
+														refs: memory/stk-refs
+														memory/stk-sz: memory/stk-sz + 1000
+														refs: as ptr-ptr! realloc as byte-ptr! refs memory/stk-sz * 2 * size? int-ptr!
+														memory/stk-refs: refs
+														tail: refs + (memory/stk-sz * 2)
+														refs: tail - 2000
+													]
+													refs/value: p
+													new: refs + 1
 													#either any [target = 'X86-64 target = 'ARM64] [
-													new/value: as int-ptr! sp-address
-												][new/value: as int-ptr! sp]
-												refs: refs + 2
-												nb: nb + 1
+														new/value: as int-ptr! sp-address
+													][new/value: as int-ptr! sp]
+													refs: refs + 2
+													nb: nb + 1
+												]
+											]
+											true [0]
+										]
+									]
+								]
+								bits: bits >>> 1		;-- next slot flag
+							]
+						][
+							;-- Legacy targets without slot counts: still consume full
+							;-- 31-bit words when the extension bit is set so idx stays
+							;-- aligned across multi-word bitmaps.
+							either ext? [
+								loop 31 [
+									idx: idx + disp
+									if bits and 1 <> 0 [
+										sp: frm + idx - 1
+										p: sp/value
+										if all [
+											p > as int-ptr! FFFFh
+											p < as int-ptr! FFFFF000h
+										][
+											node: as node! p
+											case [
+												all [
+													frames-list/find p FRAME_NODES
+													node/value <> null
+													not frames-list/find node/value FRAME_NODES
+													frames-list/find node/value FRAME_SERIES
+													keep-raw as ptr-ptr! sp
+												][
+													p: sp/value
+													node: as node! p
+													s: as series! node/value
+													if GET_UNIT(s) = 16 [mark-values s/offset s/tail]
+												]
+												all [
+													not all [(as byte-ptr! stack/bottom) <= p p <= (as byte-ptr! stack/top)]
+													frames-list/find p FRAME_SERIES
+												][
+													if store? [
+														if refs = tail [
+															refs: memory/stk-refs
+															memory/stk-sz: memory/stk-sz + 1000
+															refs: as ptr-ptr! realloc as byte-ptr! refs memory/stk-sz * 2 * size? int-ptr!
+															memory/stk-refs: refs
+															tail: refs + (memory/stk-sz * 2)
+															refs: tail - 2000
+														]
+														refs/value: p
+														new: refs + 1
+														new/value: as int-ptr! sp
+														refs: refs + 2
+														nb: nb + 1
+													]
+												]
+												true [0]
 											]
 										]
-										true [0]
 									]
+									bits: bits >>> 1
+								]
+							][
+								while [bits <> 0][
+									idx: idx + disp
+									if bits and 1 <> 0 [
+										sp: frm + idx - 1
+										p: sp/value
+										if all [
+											p > as int-ptr! FFFFh
+											p < as int-ptr! FFFFF000h
+										][
+											node: as node! p
+											case [
+												all [
+													frames-list/find p FRAME_NODES
+													node/value <> null
+													not frames-list/find node/value FRAME_NODES
+													frames-list/find node/value FRAME_SERIES
+													keep-raw as ptr-ptr! sp
+												][
+													p: sp/value
+													node: as node! p
+													s: as series! node/value
+													if GET_UNIT(s) = 16 [mark-values s/offset s/tail]
+												]
+												all [
+													not all [(as byte-ptr! stack/bottom) <= p p <= (as byte-ptr! stack/top)]
+													frames-list/find p FRAME_SERIES
+												][
+													if store? [
+														if refs = tail [
+															refs: memory/stk-refs
+															memory/stk-sz: memory/stk-sz + 1000
+															refs: as ptr-ptr! realloc as byte-ptr! refs memory/stk-sz * 2 * size? int-ptr!
+															memory/stk-refs: refs
+															tail: refs + (memory/stk-sz * 2)
+															refs: tail - 2000
+														]
+														refs/value: p
+														new: refs + 1
+														new/value: as int-ptr! sp
+														refs: refs + 2
+														nb: nb + 1
+													]
+												]
+												true [0]
+											]
+										]
+									]
+									bits: bits >>> 1
 								]
 							]
-							bits: bits >>> 1			;-- next slot flag
 						]
 						map: map + 1					;-- next 31 slots bitmap
-						not ext?						;-- loop until no more extended slots
+						;-- Stop when no extension, or all declared slots consumed.
+						#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [
+							any [
+								not ext?
+								(idx + 1) >= slots
+							]
+						][
+							not ext?
+						]
 					]
-					#either any [target = 'X86-64 target = 'ARM64] [idx: -1][idx: -3] ;-- locals index
+					#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [idx: -1][idx: -3] ;-- locals index
 					disp: -1							;-- scanning direction
+				]
+				;-- node-handle! temps live in the gap below the reserved local frame
+				;-- and above the child frame (call args / expression spills). Formal
+				;-- local-slots cover only declared locals; scan the gap too.
+				;-- Layout (addresses decrease downward): args, frm, fixed, locals, temps, child.
+				#if target = 'IA-32 [
+					;-- Full frame body scan for node-handle! only (safe: registry
+					;-- validates handles). Do not conservatively treat random stack
+					;-- words as node*/series* — false positives corrupt live data.
+					sp: frm - 4
+					slot: either all [
+						prev <> null
+						prev > as ptr-ptr! system/stack/top
+						prev < frm
+					][prev][as ptr-ptr! system/stack/top]
+					while [sp > slot][
+						sp: sp - 1
+						mark-stack-handle sp
+					]
+					sp: frm + 1
+					idx: 0
+					while [all [idx < 64 sp < as ptr-ptr! stk-bottom]][
+						sp: sp + 1
+						idx: idx + 1
+						mark-stack-handle sp
+					]
 				]
 			]
 			prev: frm
@@ -1189,8 +1483,12 @@ collector: context [
 			if verbose > 1 [probe "^/marking..."]
 		]
 
+		;-- Node-frame compaction relocates raw node* inside hashtable tables.
+		;-- Live tables must be deep-marked via _hashtable/mark so keep-raw
+		;-- rewrites keys/flags/blk after moves. X64/ARM64 skip this pass
+		;-- (rs-* relocation map still 32-bit keyed).
 		#either any [target = 'X86-64 target = 'ARM64] [
-			0										;-- rs-* relocation map still uses 32-bit pointer keys
+			0
 		][
 			do-node-cycle
 		]

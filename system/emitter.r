@@ -1188,6 +1188,25 @@ emitter: make-profilable context [
 		append out bits
 		unless args-done? [arg-slots: i]
 		local-slots: either args-done? [i][0]
+		;-- node-handle! completion: reserved local frame can be larger than the
+		;-- typed bit-walk (e.g. untyped locals use stack-slot-max). GC must visit
+		;-- every reserved slot or live handles in padding are invisible.
+		if all [target/stack-bitmap-counts? args-done? pos: find locals /local][
+			total: 0
+			spec: next pos
+			while [not tail? spec][
+				either block? spec/2 [
+					sz: max size-of? spec/2 target/stack-width
+					spec: next spec
+				][
+					sz: target/stack-slot-max
+				]
+				total: total + sz
+				spec: next spec
+			]
+			reserved: to integer! (total + target/stack-width - 1) / target/stack-width
+			if reserved > local-slots [local-slots: reserved]
+		]
 		unless find out '- [append out [- 0]]
 		if not target/stack-bitmap-counts? [
 			compact-extension find/tail out '-			;-- remove tail empty arrays (locals)

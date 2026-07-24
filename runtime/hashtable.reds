@@ -2473,6 +2473,8 @@ _hashtable: context [
 			vsize: either h/n-buckets > (h/size << 1) [-1][1]
 			n-buckets: h/n-buckets + vsize
 			resize node n-buckets << 4
+			s: as series! node/value
+			h: as hashtable! s/offset
 		]
 
 		blk-node: as series! h/blk/value
@@ -2569,17 +2571,49 @@ _hashtable: context [
 			s			[series!]
 			h			[hashtable!]
 			flags keys	[int-ptr!]
+			pin			[red-hash!]
 			i last mask step ii	hash kk sh sym [integer!]
+			pinned?		[logic!]
 	][
+		if zero? node [
+			;-- Caller passed an unbuilt/cleared context symbols handle.
+			print-line "*** GC-BUG get-ctx-symbol: symbols handle is 0"
+			if HANDLE?(ctx) [new-id/value: -1]
+			return -1
+		]
+		;-- Pin table on Red stack (when live) so GC marks nested keys/flags/blk
+		;-- via TYPE_HASH. Skip during early init before stack/bottom is set.
+		pinned?: stack/bottom <> null
+		if pinned? [
+			pin: as red-hash! stack/push*
+			pin/header: TYPE_UNSET
+			pin/head: 0
+			pin/node: 0
+			pin/table: node
+			pin/header: TYPE_HASH
+		]
+
 		s: resolve-series node
+		if null? s [
+			if pinned? [stack/pop 1]
+			if HANDLE?(ctx) [new-id/value: -1]
+			return -1
+		]
 		h: as hashtable! s/offset
 
 		if all [HANDLE?(ctx) h/n-occupied >= h/upper-bound][	;-- update the hash table
 			i: either h/n-buckets > (h/size << 1) [-1][1]
 			kk: h/n-buckets + i
 			resize resolve-node node kk << 4
+			;-- resize may relocate the table; re-resolve before using h/keys
+			s: resolve-series node
+			h: as hashtable! s/offset
 		]
 
+		hash: symbol/resolve key
+		;-- symbol/resolve may allocate/GC; re-resolve table and sub-series
+		s: resolve-series node
+		h: as hashtable! s/offset
 		s: as series! h/keys/value
 		keys: as int-ptr! s/offset
 		s: as series! h/flags/value
@@ -2587,7 +2621,6 @@ _hashtable: context [
 		s: as series! h/blk/value
 		blk: as red-word! s/offset
 
-		hash: symbol/resolve key
 		kk: either case? [hash][key]
 		mask: h/n-buckets - 1
 		i: (murmur3-x86-int hash) and mask
@@ -2597,7 +2630,18 @@ _hashtable: context [
 		step: 0
 		while [_BUCKET_IS_NOT_EMPTY(flags ii sh)][ 
 			k: blk + keys/i
-			sym: either case? [symbol/resolve k/symbol][k/symbol]
+			either case? [
+				sym: symbol/resolve k/symbol
+				;-- re-resolve after possible GC inside symbol/resolve
+				s: resolve-series node
+				h: as hashtable! s/offset
+				s: as series! h/keys/value
+				keys: as int-ptr! s/offset
+				s: as series! h/flags/value
+				flags: as int-ptr! s/offset
+				s: as series! h/blk/value
+				blk: as red-word! s/offset
+			][sym: k/symbol]
 			either kk <> sym [
 				i: i + step and mask
 				_HT_CAL_FLAG_INDEX(i ii sh)
@@ -2621,11 +2665,19 @@ _hashtable: context [
 				k/ctx: ctx
 				k/symbol: key
 				new-id/value: ii
-				-1
-			][new-id/value: keys/i keys/i]
+				if pinned? [stack/pop 1]
+				return -1
+			][
+				new-id/value: keys/i
+				if pinned? [stack/pop 1]
+				return keys/i
+			]
 		][
-			either _BUCKET_IS_EMPTY(flags ii sh) [-1][keys/i]
+			ii: either _BUCKET_IS_EMPTY(flags ii sh) [-1][keys/i]
+			if pinned? [stack/pop 1]
+			return ii
 		]
+		0												;-- unreachable
 	]
 
 	get-ctx-word: func [

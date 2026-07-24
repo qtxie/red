@@ -327,10 +327,12 @@ compressor: context [
 	zlib:		0
 	deflate:	0
 	gzip:		0
+	crush:		0
 
 	init: does [
 		zlib:		symbol/make "zlib"
 		deflate:	symbol/make "deflate"
 		gzip:		symbol/make "gzip"
+		crush:		symbol/make "crush"
 	]
 ]

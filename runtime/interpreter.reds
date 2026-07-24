@@ -422,6 +422,7 @@ interpreter: context [
 			prev?  [logic!]
 			allow? [logic!]
 			entry  [int-ptr!]
+			call-top [int-ptr!]
 			call   [function! []]
 			ocall  [function! [octx [node-handle!]]]
 	][
@@ -445,6 +446,7 @@ interpreter: context [
 			fctx: GET_CTX(fun)
 			saved: fctx/values
 			entry: resolve-compiled-code code/value
+			call-top: as int-ptr! stack/ctop
 			assert system/thrown = 0
 			catch RED_THROWN_ERROR [
 				either ctx = global-ctx [
@@ -456,6 +458,10 @@ interpreter: context [
 					ocall ctx
 					0
 				]
+			]
+			;-- ordinary compiled returns must leave the interpreter function frame on top
+			if system/thrown = 0 [
+				while [(as int-ptr! stack/ctop) > call-top][stack/unwind-last]
 			]
 			fctx/values: saved
 			if allow? [tracing?: prev?]

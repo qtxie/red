@@ -397,29 +397,71 @@ _context: context [
 			vals [node!]
 			handle symbols values [node-handle!]
 			source [red-block!]
+			root	[red-block!]
+			vpin	[red-block!]
+			spin	[red-hash!]
+			pin?	[logic!]
+			extra	[integer!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "_context/create"]]
 		
 		if zero? slots [slots: 1]
 		new: alloc-cells 2
 		handle: node-handle-of new
-		cell: as red-context! alloc-tail as series! new/value
-		cell/header: TYPE_UNSET							;-- properly set cell's type before possible GC pass
-		slot: alloc-tail as series! new/value			;-- allocate a slot for obj/func back-reference
+		;-- Pin the fresh context series on the Red stack when the Red stack is
+		;-- already live. Stage1 (IA-32) does not reliably treat native-stack
+		;-- node-handle! integers as GC roots; only Red-stack cells are safe.
+		;-- global-ctx is created before stack/init, so pin is skipped then.
+		;-- Keep cell header as TYPE_UNSET until symbols+values are assigned;
+		;-- marking a half-built TYPE_CONTEXT (symbols=0) crashes in keep-raw.
+		pin?: stack/bottom <> null
+		extra: 0
+		if pin? [
+			root: as red-block! stack/push*
+			root/header: TYPE_UNSET
+			root/head: 0
+			root/node: handle
+			root/extra: 0
+			root/header: TYPE_BLOCK
+		]
+		cell: as red-context! alloc-tail either pin? [resolve-series handle][as series! new/value]
+		cell/header: TYPE_UNSET							;-- set type before possible GC pass
+		slot: alloc-tail either pin? [resolve-series handle][as series! new/value]
 		slot/header: TYPE_UNSET	
 
 		either stack? [
 			source: either HANDLE?(proto) [as red-block! TO_CTX(proto)][null]
 			symbols: node-handle-of _hashtable/init slots source HASH_TABLE_SYMBOL HASH_SYMBOL_CONTEXT
+			;-- Re-resolve after possible GC inside hashtable/init
 			cell: TO_CTX(handle)
-			cell/values: 0								;-- will be set to stack frame dynamically
+			cell/values: 0								;-- stack frame set dynamically
 			cell/symbols: symbols
 			cell/header: TYPE_CONTEXT or flag-series-stk
 		][
-			vals: alloc-unset-cells slots	;@@ keep it on native stack, so it can be marked by the GC
+			vals: alloc-unset-cells slots
 			values: node-handle-of vals
+			;-- Pin values series: IA-32 stack scan misses node-handle! locals.
+			if pin? [
+				vpin: as red-block! stack/push*
+				vpin/header: TYPE_UNSET
+				vpin/head: 0
+				vpin/node: values
+				vpin/extra: 0
+				vpin/header: TYPE_BLOCK
+				extra: extra + 1
+			]
 			source: either HANDLE?(proto) [as red-block! TO_CTX(proto)][null]
 			symbols: node-handle-of _hashtable/init slots source HASH_TABLE_SYMBOL HASH_SYMBOL_CONTEXT
+			;-- Pin symbols hashtable until linked into the context cell.
+			if pin? [
+				spin: as red-hash! stack/push*
+				spin/header: TYPE_UNSET
+				spin/head: 0
+				spin/node: 0
+				spin/table: symbols
+				spin/header: TYPE_HASH
+				extra: extra + 1
+			]
 			cell: TO_CTX(handle)
 			cell/symbols: symbols
 			cell/values: values
@@ -428,9 +470,10 @@ _context: context [
 		cell: TO_CTX(handle)
 		SET_CTX_TYPE(cell type)
 		if self? [cell/header: cell/header or flag-self-mask]
+		if pin? [stack/pop extra + 1]					;-- pop symbols/values pins + context pin
 		handle
 	]
-	
+
 	make: func [
 		spec	[red-block!]
 		stack?	[logic!]

@@ -636,6 +636,8 @@ object: context [
 			s	   [series!]
 			idx	   [integer!]
 			type   [integer!]
+			i	   [integer!]
+			count  [integer!]
 	][
 		from: TO_CTX(src)
 		to:	  TO_CTX(dst)
@@ -667,6 +669,29 @@ object: context [
 			]
 			symbol: symbol + 1
 			value: value + 1
+		]
+
+		;-- 2nd pass: rebind transferred functions to destination layout (multi-inherit)
+		from: TO_CTX(src)
+		s: _hashtable/get-ctx-words from
+		count: (as-integer s/tail - s/offset) >> 4
+		i: 0
+		while [i < count][
+			from: TO_CTX(src)
+			s: _hashtable/get-ctx-words from
+			symbol: s/offset + i
+			word: as red-word! symbol
+			s: resolve-series from/values
+			value: s/offset + i
+			if TYPE_OF(value) = TYPE_FUNCTION [
+				to: TO_CTX(dst)
+				idx: _context/find-word to word/symbol yes
+				assert idx > -1
+				s: resolve-series to/values
+				value: s/offset + idx
+				rebind as red-function! value dst idx
+			]
+			i: i + 1
 		]
 	]
 	

@@ -276,7 +276,7 @@ system/tools: context [
 			ref	   [any-type!]
 			frame  [pair!]
 		][
-			do [emit [uppercase form event offset mold-part :ref 30 mold-part :value 30 frame]]
+			do [system/tools/tracers/emit [uppercase form event offset system/tools/tracers/mold-part :ref 30 system/tools/tracers/mold-part :value 30 frame]]
 		]
 		
 		;; helpers to keep code readable, unlike `change/only back back tail series last series`
@@ -293,8 +293,8 @@ system/tools: context [
 		;; free list of blocks to minimize tracer's side effects
 		free: context [
 			list: make block! 20
-			put:  func [block [block!]] [if 100 > length? block [push list clear head block]]
-			get:  does [any [pop list  make block! 10]]
+			put:  func [block [block!]] [if 100 > length? block [append/only list clear head block]]
+			get:  does [any [take/last list  make block! 10]]
 			loop 20 [put make block! 10]
 		]
 		
@@ -317,34 +317,58 @@ system/tools: context [
 			subexprs:        []							;-- offsets within pushed/pushed' of last subexpr start (a stack)
 			;; saved states to unroll on exception:
 			stack:           []							;-- stack of internal call frame (pairs)
+			;-- Word list kept for documentation / stack-period. Stage1 does not
+			;-- bind words inside object-literal blocks, so get/set word on this
+			;-- list would look up globals ("fetched has no value"). save/unroll
+			;-- use explicit field access instead.
 			saved:           [func-depth expr-depth fetched fetched' pushed pushed' subexprs]
 			stack-period:    2 + length? saved			;-- +frame +path size
 			
-			save-level: function ["Save current nesting level on the stack" frame [pair!]] [
-				push stack frame
-				push stack length? path
-				foreach word saved [
-					push stack value: get word
-					set word either block? value [free/get][0] 
-				]
+			save-level: function ["Save current nesting level on the stack" frame [pair!] /local d][
+				d: system/tools/tracers/data
+				append/only d/stack frame
+				append/only d/stack length? d/path
+				append/only d/stack d/func-depth  d/func-depth: 0
+				append/only d/stack d/expr-depth  d/expr-depth: 0
+				append/only d/stack d/fetched     d/fetched:  system/tools/tracers/free/get
+				append/only d/stack d/fetched'    d/fetched': system/tools/tracers/free/get
+				append/only d/stack d/pushed      d/pushed:   system/tools/tracers/free/get
+				append/only d/stack d/pushed'     d/pushed':  system/tools/tracers/free/get
+				append/only d/stack d/subexprs    d/subexprs: system/tools/tracers/free/get
 			]
-			unroll-level: function ["Unroll last nesting level from the stack"] [
-				repeat i n: length? saved [				;@@ needs foreach/reverse
-					value: get word: pick saved n - i + 1
-					if block? value [free/put value]
-					set word pop stack 
-				]
-				clear skip path pop stack				;-- cut path
-				pop stack								;-- forget frame
+			unroll-level: function ["Unroll last nesting level from the stack" /local d][
+				d: system/tools/tracers/data
+				if block? d/subexprs [system/tools/tracers/free/put d/subexprs]
+				d/subexprs: take/last d/stack
+				if block? d/pushed' [system/tools/tracers/free/put d/pushed']
+				d/pushed': take/last d/stack
+				if block? d/pushed [system/tools/tracers/free/put d/pushed]
+				d/pushed: take/last d/stack
+				if block? d/fetched' [system/tools/tracers/free/put d/fetched']
+				d/fetched': take/last d/stack
+				if block? d/fetched [system/tools/tracers/free/put d/fetched]
+				d/fetched: take/last d/stack
+				d/expr-depth: take/last d/stack
+				d/func-depth: take/last d/stack
+				clear skip d/path take/last d/stack
+				take/last d/stack
 			]
 	
-			reset: function ["Reset collector's data"] [
-				clear path
-				clear stack
-				set [func-depth expr-depth] 0
-				foreach block-name skip saved 2 [clear get block-name]
+			reset: function ["Reset collector's data" /local d][
+				d: system/tools/tracers/data
+				clear d/path
+				clear d/stack
+				d/func-depth: 0
+				d/expr-depth: 0
+				clear d/fetched
+				clear d/fetched'
+				clear d/pushed
+				clear d/pushed'
+				clear d/subexprs
 			]
 			
+			;-- Stage1 does not bind nested object methods' bare field words.
+			;-- Collector always goes through `d: system/tools/tracers/data`.
 			collector: function [
 				"Generic tracer that collects high-level tracing info"
 				event  [word!]							;-- Event name
@@ -353,109 +377,103 @@ system/tools: context [
 				value  [any-type!]						;-- Value currently processed
 				ref	   [any-type!]						;-- Reference of current call
 				frame  [pair!]							;-- Stack frame start/top positions
-				/extern func-depth expr-depth pushed pushed'
+				/local d call saved-frame isop? bgn
 			][
+				d: system/tools/tracers/data
 				call: [
 					all [								;-- filtering by events, scope, expression level:
-						any [none? event-filter  find event-filter event]
-						any [none? scope-filter  none? code  find/same/only scope-filter code]
+						any [none? d/event-filter  find d/event-filter event]
+						any [none? d/scope-filter  none? code  find/same/only d/scope-filter code]
 						any [
-							inspect-sub-exprs?
-							find [error throw] event 
-							0 = expr-depth
-							all [1 = expr-depth  find [call return] event]
+							d/inspect-sub-exprs?
+							find [error throw] event
+							0 = d/expr-depth
+							all [1 = d/expr-depth  find [call return] event]
 						]
-						inspect system/tools/tracers/data event code offset :value :ref frame
+						d/inspect d event code offset :value :ref frame
 					]
 				]
 				
-				;; unroll multiple enter/exit levels at once, after throw/error ('return' from try or 'catch' from catch only)
-				;; must be done before 'call', otherwise it may filter out the event by (wrong) expr-depth
+				;; unroll multiple enter/exit levels at once, after throw/error
 				if find [return catch] event [
-					saved-frame: pick tail stack negate stack-period
-					while [unless tail? stack [saved-frame/1 > frame/1]] [ 
-						unroll-level
-						saved-frame: pick tail stack negate stack-period
+					saved-frame: pick tail d/stack negate d/stack-period
+					while [unless tail? d/stack [saved-frame/1 > frame/1]] [
+						d/unroll-level
+						saved-frame: pick tail d/stack negate d/stack-period
 					]
 				]
 				
-				;; report finishing events before removing relevant data
 				if find [return epilog exit expr error throw] event [do call]
 				
 				switch event [
-					prolog [func-depth: func-depth + 1]
-					epilog [func-depth: func-depth - 1]
+					prolog [d/func-depth: d/func-depth + 1]
+					epilog [d/func-depth: d/func-depth - 1]
 					
-					fetch [								;-- save fetched values (part of source code interpreter has "seen" so far)
-						if any [inspect-sub-exprs? not path? code] [
-							push fetched :value
-							push fetched' mold-part :value mold-size
+					fetch [
+						if any [d/inspect-sub-exprs? not path? code] [
+							append/only d/fetched :value
+							append/only d/fetched' system/tools/tracers/mold-part :value system/tools/tracers/mold-size
 						]
 					]
-					push  [								;-- save evaluated values
-						if any [inspect-sub-exprs? not path? code] [
-							push pushed :value
-							push pushed' mold-part :value mold-size
+					push  [
+						if any [d/inspect-sub-exprs? not path? code] [
+							append/only d/pushed :value
+							append/only d/pushed' system/tools/tracers/mold-part :value system/tools/tracers/mold-size
 						]
 					]
 					
-					open [								;-- mark start of a sub-expression
-						;; remember previous subexpr start & start a new subexpr
-						isop?: any [op? :value op? if word? :value [attempt [get/any value]]]	;@@ REP #113; word may not have context
-						push subexprs index? pushed	
-						pushed:  either isop? [top-of pushed][tail pushed]
-						pushed': either isop? [top-of pushed'][tail pushed']
-						;; put function/op name into the subexpr
-						push pushed  :value
-						push pushed' mold-part :value mold-size
-						expr-depth: expr-depth + 1
+					open [
+						isop?: any [op? :value op? if word? :value [attempt [get/any value]]]
+						append/only d/subexprs index? d/pushed
+						d/pushed:  either isop? [back tail d/pushed][tail d/pushed]
+						d/pushed': either isop? [back tail d/pushed'][tail d/pushed']
+						append/only d/pushed  :value
+						append/only d/pushed' system/tools/tracers/mold-part :value system/tools/tracers/mold-size
+						d/expr-depth: d/expr-depth + 1
 					]
-					call [								;-- collect evaluation path
-						push path any [if path? ref [:ref/1] ref <anon>]	;-- simplify path calls to just function names
+					call [
+						append/only d/path any [if path? ref [:ref/1] ref <anon>]
 					]
-					return [							;-- revert both
-						pop path
-						expr-depth: expr-depth - 1
-						;; restore previous subexpr and clear the current one
-						bgn: any [pop subexprs 1]
-						pushed:  at head clear pushed bgn 
-						pushed': at head clear pushed' bgn
-						;; put returned value into subexpr
-						push pushed  :value
-						push pushed' mold-part :value mold-size
+					return [
+						take/last d/path
+						d/expr-depth: d/expr-depth - 1
+						bgn: any [take/last d/subexprs 1]
+						d/pushed:  at head clear d/pushed bgn
+						d/pushed': at head clear d/pushed' bgn
+						append/only d/pushed  :value
+						append/only d/pushed' system/tools/tracers/mold-part :value system/tools/tracers/mold-size
 					]
-					enter [								;-- mark start of an inner block of top-level exprs
-						unless path? code [save-level frame]
+					enter [
+						unless path? code [d/save-level frame]
 					]
-					exit [								;-- revert it
-						unless path? code [unroll-level]
-						if paren? code [				;-- paren result will be reused
-							push pushed  :value
-							push pushed' mold-part :value mold-size
+					exit [
+						unless path? code [d/unroll-level]
+						if paren? code [
+							append/only d/pushed  :value
+							append/only d/pushed' system/tools/tracers/mold-part :value system/tools/tracers/mold-size
 						]
 					]
-					expr [								;-- remove finished expressions from the stack
-						foreach word [fetched fetched' pushed pushed'] [
-							clear get word
-						]
+					expr [
+						clear d/fetched
+						clear d/fetched'
+						clear d/pushed
+						clear d/pushed'
 					]
 				]
 				
-				;; report starting events after removing relevant data
 				unless find [return epilog exit expr error throw] event [do call]
 				
-				;; print out event info for debugging
-				if debug? [
-					do [emit [							;@@ without 'do' emit is hardcoded
+				if d/debug? [
+					do [system/tools/tracers/emit [
 						uppercase pad event 7
 						pad type? code 6
 						pad :ref 12
 						pad frame 6
-						pad mold-part :value 20 22
-						pad form/part fetched' 60 62
-						pad func-depth 3
-						pad expr-depth 3
-						subexprs
+						pad system/tools/tracers/mold-part :value 20 22
+						pad form/part d/fetched' 60 62
+						pad d/func-depth 3
+						pad d/expr-depth 3
+						d/subexprs
 					]]
 				]
 			];; collector function
@@ -492,9 +510,14 @@ system/tools: context [
 			last-path:      []									;-- cached, reported only when changed
 			constants:      [yes no on off true false none]		;-- common constant names
 			type-names:     to [] any-type!						;-- common type names defined in runtime
-			ignored-words:  make hash! compose [(constants) (type-names)]
-			fetched-index:  (index? find data/saved 'fetched)  - (length? data/saved) - 1 
-			fetched'-index: (index? find data/saved 'fetched') - (length? data/saved) - 1 
+			; Avoid compose [(constants) (type-names)]: Stage1 redbin can emit those
+			; words as globals during object construction, causing "constants has no value".
+			ignored-words:  make hash! append copy [yes no on off true false none] to [] any-type!
+			; Precomputed from data/saved: [func-depth expr-depth fetched fetched' pushed pushed' subexprs]
+			; (index? find saved 'fetched) - (length? saved) - 1 = 3-7-1 = -5. Avoid data/saved path
+			; during object construction under Stage1 (path binding gaps).
+			fetched-index:  -5
+			fetched'-index: -4
 						
 		 	inspect: function [
 		 		data   [object!]						;-- collector's stats
@@ -518,14 +541,14 @@ system/tools: context [
 						data/inspect-sub-exprs?
 						set/any 'word last data/fetched
 						any [word? :word get-word? :word]
-						not find ignored-words word
+						not find system/tools/tracers/inspector/ignored-words word
 						word <> last data/pushed		;-- lit/get-args preserve the word - no need to report it
 					]
 					return [data/inspect-sub-exprs?] 
 				] event
 				any [report? exit]
 				
-				full:    any [fixed-width attempt [system/console/size/1] 80]
+				full:    any [system/tools/tracers/inspector/fixed-width attempt [system/console/size/1] 80]
 				width:   full - 7						;-- last column(1) + " => "(4) + min. indent(2)
 				left:    min 60 to integer! width / 2	;-- cap at 60 as we don't want it to be huge
 				right:   width - left
@@ -536,34 +559,34 @@ system/tools: context [
 				
 				expr: case [
 					not data/inspect-sub-exprs? [data/fetched']
-					event = 'push [top-of data/fetched']
+					event = 'push [back tail data/fetched']
 					'else [data/pushed']
 				]
 				if paren? expr [expr: as [] expr]		;-- otherwise /only won't remove brackets
 				if path?  code [expr: as path! expr]
 				
 				;; print current path, only works in non-/all mode
-				unless any [data/inspect-sub-exprs?  data/path == last-path] [
-					path: uppercase mold-part as path! data/path full - 1 - level
-					p: change skip indent2 level path			;-- add path of refs 
+				unless any [data/inspect-sub-exprs?  data/path == system/tools/tracers/inspector/last-path] [
+					path: uppercase system/tools/tracers/mold-part as path! data/path full - 1 - level
+					p: change skip indent2 level path			;-- add path of refs
 					
-					unless empty? pexpr: pick tail data/stack fetched'-index [
-						orig-expr: pick tail data/stack fetched-index 
+					unless empty? pexpr: pick tail data/stack system/tools/tracers/inspector/fetched'-index [
+						orig-expr: pick tail data/stack system/tools/tracers/inspector/fetched-index
 						name: either path? :orig-expr/1 [:orig-expr/1/1][:orig-expr/1]
 						if :name = last data/path [				;-- don't duplicate last path item if orig expr starts with it
 							pexpr: next pexpr
 						]
 						change change p " " form/part pexpr (length? p) - 1		;-- add parent expr to path
 					]
-					do [emit indent2]							;@@ without 'do' emit is hardcoded
+					do [system/tools/tracers/emit indent2]
 					
-					append clear last-path data/path			;-- remember last displayed path
+					append clear system/tools/tracers/inspector/last-path data/path
 				]
 				
 				;; print expression and result
 				change        skip indent level       form/part expr left - level
-				change change skip indent left " => " mold-part :value right
-				do [emit indent]								;@@ without 'do' emit is hardcoded
+				change change skip indent left " => " system/tools/tracers/mold-part :value right
+				do [system/tools/tracers/emit indent]
 			];; inspect function
 		];; inspector context
 	];; tracers context

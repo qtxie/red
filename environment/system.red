@@ -11,17 +11,29 @@ Red [
 ]
 
 system: context [
-	version: #do keep [form load-cache %encapper/version.r]
+	version: #do keep [
+		either in config 'compiler-version [
+			form config/compiler-version
+		][form load-cache %encapper/version.r]
+	]
 	build: context [
 		date: #do keep [
-			use [date][
-				date: now
-				date: date - date/zone
-				date/zone: none
-				date
+			either in config 'compiler-build-date [
+				config/compiler-build-date
+			][
+				use [date][
+					date: now
+					date: date - date/zone
+					date/zone: none
+					date
+				]
 			]
 		]
-		git: #do keep [load-cache %build/git.r]
+		git: #do keep [
+			either in config 'compiler-git [
+				config/compiler-git
+			][load-cache %build/git.r]
+		]
 		config: context #do keep [reduce [load find mold config to-char 91]]
 	]
 	

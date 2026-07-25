@@ -2571,31 +2571,14 @@ _hashtable: context [
 			s			[series!]
 			h			[hashtable!]
 			flags keys	[int-ptr!]
-			pin			[red-hash!]
 			i last mask step ii	hash kk sh sym [integer!]
-			pinned?		[logic!]
 	][
 		if zero? node [
-			;-- Caller passed an unbuilt/cleared context symbols handle.
-			print-line "*** GC-BUG get-ctx-symbol: symbols handle is 0"
 			if HANDLE?(ctx) [new-id/value: -1]
 			return -1
 		]
-		;-- Pin table on Red stack (when live) so GC marks nested keys/flags/blk
-		;-- via TYPE_HASH. Skip during early init before stack/bottom is set.
-		pinned?: stack/bottom <> null
-		if pinned? [
-			pin: as red-hash! stack/push*
-			pin/header: TYPE_UNSET
-			pin/head: 0
-			pin/node: 0
-			pin/table: node
-			pin/header: TYPE_HASH
-		]
-
 		s: resolve-series node
 		if null? s [
-			if pinned? [stack/pop 1]
 			if HANDLE?(ctx) [new-id/value: -1]
 			return -1
 		]
@@ -2665,19 +2648,11 @@ _hashtable: context [
 				k/ctx: ctx
 				k/symbol: key
 				new-id/value: ii
-				if pinned? [stack/pop 1]
-				return -1
-			][
-				new-id/value: keys/i
-				if pinned? [stack/pop 1]
-				return keys/i
-			]
+				-1
+			][new-id/value: keys/i keys/i]
 		][
-			ii: either _BUCKET_IS_EMPTY(flags ii sh) [-1][keys/i]
-			if pinned? [stack/pop 1]
-			return ii
+			either _BUCKET_IS_EMPTY(flags ii sh) [-1][keys/i]
 		]
-		0												;-- unreachable
 	]
 
 	get-ctx-word: func [

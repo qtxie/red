@@ -1,0 +1,44 @@
+{
+  "timeout_seconds": 30,
+  "variables": {
+    "stage0": "D:\\EE\\QTool\\rebcmdview.exe"
+  },
+  "left": {
+    "command": [
+      "{stage0}",
+      "-cqs",
+      "{root}\\red.r",
+      "-r",
+      "-d",
+      "-o",
+      "{output}.exe",
+      "{source}"
+    ]
+  },
+  "right": {
+    "command": [
+      "{stage0}",
+      "-cqs",
+      "{root}\\red.r",
+      "-r",
+      "-d",
+      "-o",
+      "{output}.exe",
+      "{source}"
+    ]
+  },
+  "cases": [
+    {
+      "id": "empty-reds",
+      "source": "system/tests/source/compiler/empty.reds"
+    },
+    {
+      "id": "hello-reds",
+      "source": "system/tests/source/compiler/hello.reds"
+    },
+    {
+      "id": "define-reds",
+      "source": "system/tests/source/compiler/define-test.reds"
+    }
+  ]
+}

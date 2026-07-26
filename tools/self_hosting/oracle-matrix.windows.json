@@ -1,0 +1,78 @@
+{
+  "timeout_seconds": 60,
+  "variables": {
+    "stage0": "D:\\EE\\QTool\\rebcmdview.exe"
+  },
+  "left": {
+    "command": [
+      "{stage0}",
+      "-cqs",
+      "{root}\\red.r",
+      "-r",
+      "-d",
+      "-t",
+      "{target}",
+      "-o",
+      "{output}",
+      "{source}"
+    ]
+  },
+  "right": {
+    "command": [
+      "{stage0}",
+      "-cqs",
+      "{root}\\red.r",
+      "-r",
+      "-d",
+      "-t",
+      "{target}",
+      "-o",
+      "{output}",
+      "{source}"
+    ]
+  },
+  "cases": [
+    {
+      "id": "ia32-pe",
+      "source": "system/tests/source/compiler/empty.reds",
+      "variables": {
+        "target": "MSDOS"
+      }
+    },
+    {
+      "id": "ia32-elf",
+      "source": "system/tests/source/compiler/empty.reds",
+      "variables": {
+        "target": "Linux"
+      }
+    },
+    {
+      "id": "x86-64-elf",
+      "source": "system/tests/source/compiler/empty.reds",
+      "variables": {
+        "target": "Linux-X86-64"
+      }
+    },
+    {
+      "id": "arm-elf",
+      "source": "system/tests/source/compiler/empty.reds",
+      "variables": {
+        "target": "Linux-ARM"
+      }
+    },
+    {
+      "id": "arm64-elf",
+      "source": "system/tests/source/compiler/empty.reds",
+      "variables": {
+        "target": "Linux-ARM64"
+      }
+    },
+    {
+      "id": "arm64-mach-o",
+      "source": "system/tests/source/compiler/empty.reds",
+      "variables": {
+        "target": "Darwin-ARM64"
+      }
+    }
+  ]
+}

@@ -1,0 +1,2034 @@
+Red [
+	Title:	 "Red/System ELF format emitter"
+	Author:  "Andreas Bolka, Nenad Rakocevic"
+	File:	 %ELF.red
+	Tabs:	 4
+	Rights:  "Copyright (C) 2011-2015 Andreas Bolka,-2018 Red Foundation. All rights reserved."
+	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"
+]
+
+;; NOTE: all "offsets" are offsets into the file (as stored on disk),
+;; all "addresses" are virtual addresses (of the process in memory).
+
+system-format-ELF: context [
+	defs: compose [
+		;; Required by the linker.
+		extensions [
+			exe %""
+			obj %.o
+			lib %.a
+			dll %.so
+		]
+
+		;; Target-specific Defaults (job-overridable)
+
+		base-address	(to-integer #{08048000})
+		page-size		4096
+		rpath			"$ORIGIN:/usr/pkg/lib"  ;; Additional path is for NetBSD. TODO: consider moving this rpath option to config, instead of hard-coding.
+
+		;; ELF Constants
+
+		elfclass32		1			;; 32-bit object
+		elfclass64		2			;; 64-bit object
+
+		elfdata2lsb		1			;; 2's-complement, little endian
+
+		ev-current		1			;; the "current" version we're adhering to
+
+		et-exec			2			;; executable file
+		et-dyn			3			;; shared object file
+
+		em-386			3			;; intel 80386
+		em-arm			40			;; ARM
+		em-x86-64		62			;; AMD x86-64
+		em-aarch64		183			;; ARM AArch64
+
+		ef-arm-abi		83886080	;; ABI version: 05000000h
+		ef-arm-hard		1024		;; Hard floating point required (400h)
+		ef-arm-soft		512			;; Soft floating point required (200h)
+		ef-arm-ep		2			;; Has entry points (02h)
+
+		pt-load			1			;; loadable segment
+		pt-dynamic		2			;; dynamic linking information
+		pt-interp		3			;; dynamic linker ("interpreter") path name
+		pt-note			4			;; vendor-specific note segment
+		pt-phdr			6			;; program header table
+		pt-tls			7			;; thread-local storage template
+		pt-GNU-stack	1685382481	;; GNU stack flags
+		pt-gnu-relro	1685382482	;; read-only after relocation (6474e552h)
+		pt-arm-exidx	1879048193	;; ARM EHABI unwind-index table (70000001h)
+
+		pf-x			1			;; executable segment
+		pf-w			2			;; writable segment
+		pf-r			4			;; readable wegment
+
+		shn-undef		0			;; undefined section
+
+		sht-null		0			;; inactive section header
+		sht-progbits	1			;; program-specific data (w/ file extent)
+		sht-symtab		2			;; symbol table (for link editing)
+		sht-strtab		3			;; string table
+		sht-hash		5			;; symbol hash table
+		sht-dynamic		6			;; dynamic linking
+		sht-note		7			;; vendor note
+		sht-nobits		8			;; program-specific data (w/o file extend)
+		sht-rel			9			;; relocations (w/o addends)
+		sht-rela		4			;; relocations (with addends)
+		sht-dynsym		11			;; symbol table (dynamic linking)
+
+		;; Processor-specific section type
+		sht-arm-exidx			1879048193		;; ARM unwind section
+		sht-arm-preemption		1879048194		;; Preempton details
+		sht-arm-attributes		1879048195		;; ARM attributes section
+
+		shf-write		1			;; dynamically writable section
+		shf-alloc		2			;; dynamically allocated section
+		shf-execinstr	4			;; dynamically executable section
+
+		stn-undef		0			;; end of a hash chain (undef symtab nr)
+
+		stb-global		1			;; global symbol
+
+		stt-object		1			;; symbol is a data object
+		stt-func		2			;; symbol is a code object
+
+		stv-default		0			;; default symbol visibility
+
+		dt-null			0			;; marks the end of the _DYNAMIC array
+		dt-needed		1			;; strtable offset of the name of a library
+		dt-hash			4			;; address of the symbol hash table
+		dt-strtab		5			;; address of the string table
+		dt-symtab		6			;; address of the symbol table
+		dt-strsz		10			;; total size of the string table (in bytes)
+		dt-syment		11			;; size of one symbol table entry (in bytes)
+		dt-init			12			;; address of the initialization function
+		dt-fini			13			;; address of the termination function
+		dt-soname		14			;; library name
+		dt-rpath		15			;; library search path (deprecated)
+		dt-rel			17			;; address of the relocation table
+		dt-relsz		18			;; total size of the relocation table
+		dt-relent		19			;; size of one reloc table entry (in bytes)
+		dt-pltrelsz		2			;; total size of PLT relocations
+		dt-pltgot		3			;; address of PLT/GOT table
+		dt-rela			7			;; address of the RELA relocation table
+		dt-relasz		8			;; total size of the RELA relocation table
+		dt-relaent		9			;; size of one RELA reloc table entry
+		dt-jmprel		23			;; address of PLT relocations
+		dt-bind-now		24			;; process relocations before transfer
+		dt-pltrel		20			;; relocation type used for PLT
+		dt-runpath		29			;; library search path
+		dt-flags-1		1879048187	;; state flags
+
+		df-1-pie		134217728	;; position-independent executable
+
+		r-386-32		1			;; direct 32-bit relocation
+		r-386-copy		5			;; copy symbol at runtime
+		r-386-rel		8			;; relocation relative to image's base
+
+		r-arm-abs32		2			;; direct 32-bit relocation
+		r-arm-copy		20			;; copy symbol at runtime
+		r-arm-rel		23			;; relocation relative to image's base
+
+		r-x86-64-64			1		;; direct 64-bit relocation
+		r-x86-64-pc32		2		;; PC-relative 32-bit relocation
+		r-x86-64-got32		3		;; 32-bit GOT entry relocation
+		r-x86-64-plt32		4		;; 32-bit PLT address relocation
+		r-x86-64-copy		5		;; copy symbol at runtime
+		r-x86-64-glob-dat	6		;; set GOT entry to symbol address
+		r-x86-64-jump-slot	7		;; set PLT/GOT entry to symbol address
+		r-x86-64-relative	8		;; relocation relative to image base
+		r-x86-64-gotpcrel	9		;; 32-bit signed PC-relative GOT offset
+
+		r-aarch64-copy		1024	;; copy symbol at runtime
+		r-aarch64-glob-dat	1025	;; set GOT entry to symbol address
+		r-aarch64-jump-slot	1026	;; set PLT/GOT entry to symbol address
+		r-aarch64-relative	1027	;; relocation relative to image base
+
+		stabs-n-undf	0			;; undefined stabs entry
+		stabs-n-fun		36			;; function name
+		stabs-n-so		100			;; source file name
+
+		arm [
+			attributes [
+				cpu-raw-name			#{04}
+				cpu-name				#{05}
+				cpu-arch				#{06}
+				cpu-arch-profile		#{07}
+				arm-isa-use				#{08}
+				thumb-isa-use			#{09}
+				fp-arch					#{0A}
+				wmmx-arch				#{0B}
+				advanced-simd-arch		#{0C}
+				abi-pcs-wchar_t			#{12}
+				abi-fp-rounding			#{13}
+				abi-fp-denormal			#{14}
+				abi-fp-exceptions		#{15}
+				abi-fp-user-exceptions	#{16}
+				abi-fp-number-model		#{17}
+				abi-align-needed		#{18}
+				abi-align-preserved		#{19}
+				abi-enum-size			#{1A}
+				abi-hardfp-use			#{1B}
+				abi-vfp-args			#{1C}
+				abi-wmmx-args			#{1D}
+				div-use					#{2C}
+			]
+
+			cpu-arch [
+				pre-v4				#{00}
+				v4					#{01}			;; e.g. SA110
+				v4T					#{02}           ;; e.g. ARM7TDMI
+				v5T					#{03}           ;; e.g. ARM9TDMI
+				v5TE				#{04}           ;; e.g. ARM946E_S
+				v5TEJ				#{05}           ;; e.g. ARM926EJ_S
+				v6					#{06}           ;; e.g. ARM1136J_S
+				v6KZ				#{07}           ;; e.g. ARM1176JZ_S
+				v6T2				#{08}           ;; e.g. ARM1156T2F_S
+				v6K					#{09}           ;; e.g. ARM1136J_S
+				v7					#{0A}          ;; e.g. Cortex A8, Cortex M3
+				v6-M				#{0B}          ;; e.g. Cortex M1
+				v6S-M				#{0C}          ;; v6_M with the System extensions
+				v7E-M				#{0D}          ;; v7_M with DSP extensions
+				v8					#{0E}          ;; v8, AArch32
+			]
+
+			cpu-arch-profile [
+				not-applicable		#{00}		;; pre v7, or cross-profile code
+				application			#{41}       ;; 'A' (e.g. for Cortex A8)
+				realtime			#{52}       ;; 'R' (e.g. for Cortex R4)
+				micro-controller	#{4D}       ;; 'M' (e.g. for Cortex M3)
+				system				#{53}       ;; 'S' Application or real-time profile
+			]
+		]
+	]
+
+	;; ELF Structures
+
+	elf-header: make-struct [		;; (Elf32_Ehdr)
+		ident-mag0		[char!]		;; 0x7F (EI_MAG0)
+		ident-mag1		[char!]		;; "E" (EI_MAG1)
+		ident-mag2		[char!]		;; "L" (EI_MAG2)
+		ident-mag3		[char!]		;; "F" (EI_MAG3)
+		ident-class		[char!]		;; file class
+		ident-data		[char!]		;; data encoding
+		ident-version	[char!]		;; file version
+		ident-osabi		[char!]
+		ident-pad1		[integer!]
+		ident-pad2		[integer!]
+		type			[short]
+		machine			[short]
+		version			[integer!]
+		entry			[integer!]	;; virtual address of program entry point
+		phoff			[integer!]	;; file offset to phdr table
+		shoff			[integer!]	;; file offset to shdr table
+		flags			[integer!]
+		ehsize			[short]		;; size-of elf-header
+		phentsize		[short]		;; size-of program-header
+		phnum			[short]		;; num of "segments" (entries in phdr tab)
+		shentsize		[short]		;; size-of section-header
+		shnum			[short]		;; num of "sections" (entries in shdr tab)
+		shstrndx		[short]		;; shdr table index of .shstrtab section
+	] none
+
+	elf-header64: make-struct [		;; (Elf64_Ehdr)
+		ident-mag0		[char!]		;; 0x7F (EI_MAG0)
+		ident-mag1		[char!]		;; "E" (EI_MAG1)
+		ident-mag2		[char!]		;; "L" (EI_MAG2)
+		ident-mag3		[char!]		;; "F" (EI_MAG3)
+		ident-class		[char!]		;; file class
+		ident-data		[char!]		;; data encoding
+		ident-version	[char!]		;; file version
+		ident-osabi		[char!]
+		ident-pad1		[integer!]
+		ident-pad2		[integer!]
+		type			[short]
+		machine			[short]
+		version			[integer!]
+		entry			[uint64]	;; virtual address of program entry point
+		phoff			[uint64]	;; file offset to phdr table
+		shoff			[uint64]	;; file offset to shdr table
+		flags			[integer!]
+		ehsize			[short]		;; size-of elf-header64
+		phentsize		[short]		;; size-of program-header64
+		phnum			[short]		;; num of "segments" (entries in phdr tab)
+		shentsize		[short]		;; size-of section-header64
+		shnum			[short]		;; num of "sections" (entries in shdr tab)
+		shstrndx		[short]		;; shdr table index of .shstrtab section
+	] none
+
+	program-header: make-struct [	;; (Elf32_Phdr)
+		type			[integer!]
+		offset			[integer!]
+		vaddr			[integer!]
+		paddr			[integer!]
+		filesz			[integer!]
+		memsz			[integer!]
+		flags			[integer!]
+		align			[integer!]
+	] none
+
+	program-header64: make-struct [	;; (Elf64_Phdr)
+		type			[integer!]
+		flags			[integer!]
+		offset			[uint64]
+		vaddr			[uint64]
+		paddr			[uint64]
+		filesz			[uint64]
+		memsz			[uint64]
+		align			[uint64]
+	] none
+
+	section-header: make-struct [	;; (Elf32_Shdr)
+		name			[integer!]	;; index into .shstrtab
+		type			[integer!]
+		flags			[integer!]
+		addr			[integer!]
+		offset			[integer!]
+		size			[integer!]
+		link			[integer!]
+		info			[integer!]
+		addralign		[integer!]
+		entsize			[integer!]
+	] none
+
+	section-header64: make-struct [	;; (Elf64_Shdr)
+		name			[integer!]	;; index into .shstrtab
+		type			[integer!]
+		flags			[uint64]
+		addr			[uint64]
+		offset			[uint64]
+		size			[uint64]
+		link			[integer!]
+		info			[integer!]
+		addralign		[uint64]
+		entsize			[uint64]
+	] none
+
+	elf-dynamic: make-struct [		;; (Elf32_Dyn)
+		tag				[integer!]
+		val				[integer!]
+	] none
+
+	elf-dynamic64: make-struct [	;; (Elf64_Dyn)
+		tag				[int64]
+		val				[uint64]
+	] none
+
+	elf-symbol: make-struct [		;; (Elf32_Sym)
+		name			[integer!]	;; symbol strtab index (zero: unnamed sym)
+		value			[integer!]	;; absolute value, address, ...
+		size			[integer!]	;; associated symbol size (if any)
+		info			[char!]		;; symbol type and binding attributes
+		other			[char!]		;; symbol visibility
+		shndx			[short]		;; section this symbol is associated with
+	] none
+
+	elf-symbol64: make-struct [		;; (Elf64_Sym)
+		name			[integer!]	;; symbol strtab index (zero: unnamed sym)
+		info			[char!]		;; symbol type and binding attributes
+		other			[char!]		;; symbol visibility
+		shndx			[short]		;; section this symbol is associated with
+		value			[uint64]	;; absolute value, address, ...
+		size			[uint64]	;; associated symbol size (if any)
+	] none
+
+	elf-relocation: make-struct [	;; (Elf32_Rel)
+		offset			[integer!]
+		info-sym		[char!]
+		info-type		[char!]
+		info-addend		[short]
+	] none
+
+	elf-relocation64: make-struct [	;; (Elf64_Rela)
+		offset			[uint64]
+		info			[uint64]
+		addend			[int64]
+	] none
+
+	stab-entry: make-struct [
+		strx			[integer!]
+		type			[char!]
+		other			[char!]
+		desc			[short]
+		value			[integer!]
+	] none
+
+	machine-word: make-struct [
+		value			[integer!]
+	] none
+
+	machine-word64: make-struct [
+		value			[uint64]
+	] none
+
+	elf64-target?: func [target [word!]][to logic! find [X86-64 ARM64] target]
+	ehdr-struct?: func [target [word!]][either elf64-target? target [elf-header64][elf-header]]
+	phdr-struct?: func [target [word!]][either elf64-target? target [program-header64][program-header]]
+	shdr-struct?: func [target [word!]][either elf64-target? target [section-header64][section-header]]
+	dynamic-struct?: func [target [word!]][either elf64-target? target [elf-dynamic64][elf-dynamic]]
+	symbol-struct?: func [target [word!]][either elf64-target? target [elf-symbol64][elf-symbol]]
+	relocation-struct?: func [target [word!]][either elf64-target? target [elf-relocation64][elf-relocation]]
+	machine-word-struct?: func [target [word!]][either elf64-target? target [machine-word64][machine-word]]
+
+	;; ------------------------------------------------------------------------
+
+	;; The macro structure of our generated ELF binaries.
+	default-structure: [
+		;; Standard metadata:		[type		flags				align]
+		segment "rx"				[load		[r x]				page] [
+			struct "ehdr"
+			segment "phdr"			[phdr	  	[r]					byte]
+			segment "interp"		[interp	  	[r]					byte] [
+				section ".interp"	[progbits 	[alloc]				byte]
+			]
+			segment "note"			[note		[r]					word] [
+				section ".note.netbsd.ident"
+									[note 		[alloc]				word]
+				section ".note.netbsd.pax"
+									[note 		[alloc]				word]
+			]
+			segment "GNU-stack" 	[gnu-stack	[r w]				word] [
+				section ".note.GNU-stack"
+									[progbits	[]					word]
+			]
+			section ".hash"			[hash	  	[alloc]				word]
+			section ".dynstr"		[strtab	  	[alloc]				byte]
+			section ".dynsym"		[dynsym	  	[alloc]				word]
+			section ".rel.text"		[rel	  	[alloc]				word]
+			section ".rela.plt"		[rela	  	[alloc]				word]
+			section ".plt"			[progbits 	[alloc execinstr]	word]
+			section ".text"			[progbits 	[alloc execinstr]	word]
+		]
+
+		segment "ro"				[load	  	[r]					page] [
+			section ".rodata"		[progbits 	[alloc]				word]
+		]
+
+		segment "rw"				[load	  	[r w]				page] [
+			section ".data"			[progbits 	[write alloc]		word]
+			section ".got.plt"		[progbits 	[write alloc]		word]
+			section ".data.rel.ro"	[progbits 	[write alloc]		word]
+			segment "dynamic"		[dynamic  	[r w]				word] [
+				section ".dynamic"	[dynamic  	[write alloc]		word]
+			]
+		]
+
+		segment "relro"				[gnu-relro	[r]					byte] ;-- covers .rodata (patched post-layout)
+		segment "tls"				[tls		[r]					word] ;-- static-link TLS template inside .data (patched post-layout)
+		segment "arm-exidx"			[arm-exidx	[r]					word] ;-- static-link EHABI index inside .data (patched post-layout)
+
+		section ".stab"				[progbits	[]					word]
+		section ".stabstr"			[strtab		[]					byte]
+
+		section ".shstrtab"			[strtab	  	[]					byte]
+		section ".ARM.attributes"	[arm-attributes []				byte]
+		struct "shdr"
+	]
+
+	;; The main entry point called from the linker.
+	build: func [
+		job [object!]
+		/local
+			base-address dynamic-linker
+			libraries imports exports natives
+			structure segments sections commands layout
+			data-size data-reloc rodata-reloc dynamic-size data-imports di-pairs
+			di-name di-off di-size
+			get-address get-offset get-size get-meta get-data set-data
+			relro-offset plt-offset pos list soname base
+			relro-entry dynamic-entry dynamic-section rw-entry gap
+			import-funcs import-vars relro-imports gotplt-count plt-size
+			ehdr-struct phdr-struct shdr-struct dynamic-struct
+			symbol-struct relocation-struct relro-word-struct
+			reloc-section
+	] [
+		base-address: either any [job/type = 'dll job/PIC?][0][
+			any [job/base-address defs/base-address]
+		]
+		dynamic-linker: any [job/dynamic-linker ""]
+
+		base: last split-path job/build-basename
+		soname: form base
+		unless %.so = suffix? base [append soname ".so"]
+
+		;-- (hack) Move libRedRT in first position to avoid "system" symbol
+		;-- to be bound to libC instead! (TBD: find a cleaner way)
+		if pos: find list: job/sections/import/3 "libRedRT.so" [
+			insert list take/part pos 2
+		]
+
+		set [libraries imports] collect-import-names job
+		import-funcs: collect-import-funcs imports
+		import-vars: collect-import-vars imports
+		relro-imports: either elf64-target? job/target [import-vars][imports]
+		exports: collect-exports job
+		natives: collect-natives job
+		data-reloc: collect-data-reloc job
+		rodata-reloc: either job/PIC? [collect-rodata-reloc job][make block! 0] ;-- non-PIC bakes absolute addrs
+
+		;; libc data-symbol imports (copy-relocated): prepend them to `exports`
+		;; as defined STT_OBJECT entries so build-dynsym emits them; build-
+		;; reltext additionally emits one R_*_COPY relocation per symbol.
+		data-imports: any [job/static-data  copy []]
+		unless empty? data-imports [
+			di-pairs: make block! 16
+			foreach [di-name di-off di-size] data-imports [
+				repend di-pairs [
+					di-name reduce ['type 'global 'offset di-off 'size di-size]
+				]
+			]
+			insert exports di-pairs
+		]
+
+		gotplt-count: either all [elf64-target? job/target not empty? import-funcs][
+			3 + length? import-funcs
+		][0]
+		plt-size: either all [elf64-target? job/target not empty? import-funcs][
+			either job/target = 'ARM64 [32 + (16 * length? import-funcs)][
+				16 * (1 + length? import-funcs)
+			]
+		][0]
+
+		structure: copy/deep default-structure
+		reloc-section: either elf64-target? job/target [".rela.dyn"][".rel.text"]
+		if elf64-target? job/target [
+			replace-deep structure ".rel.text" reloc-section
+			replace-deep structure 'rel 'rela
+		]
+		if any [not elf64-target? job/target empty? import-funcs] [
+			remove-elements structure [".rela.plt" ".plt" ".got.plt"]
+		]
+		if empty? relro-imports [
+			remove-elements structure [".data.rel.ro"]
+		]
+
+		either all [job/PIC? find job/sections 'rodata][ ;-- protected data under PIC: load-time relocs need it
+			pos: find structure "ro"					;-- writable during load, made read-only after (RELRO)
+			change/only at pos/2 2 [r w]
+		][
+			remove-elements structure ["relro"]			;-- no PT_GNU_RELRO otherwise
+		]
+		if job/target <> 'ARM [
+			remove-elements structure [".ARM.attributes"]
+		]
+
+		unless all [external-linker/etls-off  external-linker/etls-memsz > 0][
+			remove-elements structure ["tls"]			;-- no PT_TLS without a template
+		]
+
+		unless all [job/target = 'ARM  external-linker/exidx-range][
+			remove-elements structure ["arm-exidx"]		;-- no PT_ARM_EXIDX without a merged index
+		]
+
+		if job/OS <> 'NetBSD [
+			remove-elements structure [
+				".note.netbsd.ident"
+				".note.netbsd.pax"
+			]
+		]
+
+		if any [empty? dynamic-linker job/type = 'dll] [
+			remove-elements structure [".interp"]
+		]
+
+		if all [empty? imports empty? data-imports not job/PIE?] [
+			remove-elements structure [
+				".interp"
+			]
+		]
+
+		if all [empty? imports empty? exports not job/PIE?] [
+			remove-elements structure [
+				".hash"
+				".dynstr"
+				".dynsym"
+				".dynamic"
+			]
+		]
+
+		unless job/debug? [
+			remove-elements structure [".stab" ".stabstr"]
+		]
+
+		data-size: size-of job/sections/data/2
+		if job/debug? [
+			data-size: data-size
+				+ (linker/get-debug-lines-size job)
+				+  linker/get-debug-funcs-size job
+		]
+		if zero? data-size [
+			remove-elements structure [".data"]
+		]
+		unless find job/sections 'rodata [
+			remove-elements structure [".rodata"]
+		]
+
+		dynamic-size: calc-dynamic-size job/type job/target job/PIE? length? import-funcs job/symbols
+		ehdr-struct: ehdr-struct? job/target
+		phdr-struct: phdr-struct? job/target
+		shdr-struct: shdr-struct? job/target
+		dynamic-struct: dynamic-struct? job/target
+		symbol-struct: symbol-struct? job/target
+		relocation-struct: relocation-struct? job/target
+		relro-word-struct: machine-word-struct? job/target
+
+		segments: collect-structure-names structure 'segment
+
+		;; ELF standard mandates that PHDR, INTERP
+		;; must me placed before any LOAD segments. NOTE placement is not defined
+		;; but is placed before LOAD as well, by convention:
+		;; http://www.sco.com/developers/gabi/latest/ch5.pheader.html
+		either to logic! find segments "note" [
+			insert at segments 5 first segments
+			remove segments
+		][
+			insert at segments 4 first segments
+			remove segments
+		]
+
+		sections: collect-structure-names structure 'section
+
+		commands: compose/deep [
+			"rx"			skip (base-address)
+			"ro"			skip (defs/page-size)
+			"rw"			skip (defs/page-size)
+
+			".hash"			meta [link ".dynsym"]
+			".dynsym"		meta [link ".dynstr" info 1]
+			(reloc-section)	meta [link ".dynsym" info ".text"]
+			".rela.plt"	meta [link ".dynsym" info ".got.plt"]
+			".dynamic"		meta [link ".dynstr"]
+			".stab"			meta [link ".stabstr"]
+
+			"ehdr"			size (size-of ehdr-struct)
+			"phdr"			size [(phdr-struct)		length? segments]
+			"relro"			size 0					;-- overlaps .rodata; address/size patched post-layout
+			"tls"			size 0					;-- overlaps .data; location patched post-layout
+			"arm-exidx"		size 0					;-- overlaps .data; location patched post-layout
+			".hash"			size [machine-word		2 + 2 + (length? imports) + ((length? exports) / 2)]
+			".dynsym"		size [(symbol-struct)	1 + (length? imports) + ((length? exports) / 2)]
+			".dynsym"		align (either elf64-target? job/target [8][4])
+			(reloc-section)	size [(relocation-struct) (length? relro-imports) + (length? data-reloc) + (length? rodata-reloc) + ((length? data-imports) / 3)]
+			(reloc-section)	align (either elf64-target? job/target [8][4])
+			".rela.plt"		size [(relocation-struct) length? import-funcs]
+			".rela.plt"		align (either elf64-target? job/target [8][4])
+			".plt"			size (plt-size)
+			".data"			size (data-size)
+			".data"			align (either elf64-target? job/target [max 8 job/static-align][job/static-align])
+			".rodata"		align (either elf64-target? job/target [8][4])
+			".got.plt"		size [(relro-word-struct) gotplt-count]
+			".got.plt"		align (either elf64-target? job/target [8][4])
+			".data.rel.ro"	size [(relro-word-struct) length? relro-imports]
+			".data.rel.ro"	align (either elf64-target? job/target [8][4])
+			".dynamic"		size [(dynamic-struct)	dynamic-size + length? libraries]
+			".dynamic"		align (either elf64-target? job/target [8][4])
+			".stab"			size [stab-entry		2 + ((length? natives) / 2)]
+			"shdr"			size [(shdr-struct)		length? sections]
+
+			"interp"		size (length? to-c-string dynamic-linker)					;-- NetBD has strict checks to make sure interp header and section sizes are the same
+			".interp"		data (to-c-string dynamic-linker)
+			".note.netbsd.ident"
+							data (#{0700000004000000010000004E6574425344000000E9A435})	;-- https://www.netbsd.org/docs/kernel/elf-notes.html
+			".note.netbsd.pax"
+							data (#{0400000004000000030000005061580000000000})
+			".note.GNU-stack"
+							data (#{})
+			".dynstr"		data (to-elf-strtab compose [(libraries) (imports) (extract exports 2) (defs/rpath) (soname)])
+			".text"			data (job/sections/code/2)
+			".rodata"		data (any [attempt [job/sections/rodata/2] #{}])
+			".stabstr"		data (to-elf-strtab join ["%_"] extract natives 2)
+			".shstrtab"		data (to-elf-strtab sections)
+			".ARM.attributes" data (build-arm-attributes job/ABI job/cpu-version)
+		]
+
+		layout: layout-binary structure commands
+		if all [elf64-target? job/target dynamic-entry: select layout "dynamic"] [
+			dynamic-section: select layout ".dynamic"
+			gap: dynamic-section/offset - dynamic-entry/offset
+			dynamic-entry/offset: dynamic-section/offset
+			dynamic-entry/address: dynamic-section/address
+			dynamic-entry/size: dynamic-section/size
+			dynamic-entry/meta/align: 'dword
+			dynamic-section/meta/align: 'dword
+			if positive? gap [
+				rw-entry: select layout "rw"
+				rw-entry/size: rw-entry/size + gap
+			]
+		]
+
+		;; In the following section, we try to minimize the global state passed
+		;; around. Instead of just passing LAYOUT to all build-* functions, we
+		;; try to pass the minimum amount of information necessary. This makes
+		;; the dependencies between those builders more explicit.
+
+		get-address: func [name] [layout/:name/address]
+		get-offset: func [name] [layout/:name/offset]
+		get-size: func [name] [layout/:name/size]
+		get-meta: func [name] [layout/:name/meta]
+		get-data: func [name] [layout/:name/data]
+
+		has-element: func [name] [to logic! find/skip layout name 2]
+
+		set-data: func [name builder] [
+			if has-element name [
+				layout/:name/data: do builder
+			]
+		]
+
+		if has-element "relro" [						;-- PT_GNU_RELRO covers the .rodata page(s)
+			relro-entry: select layout "relro"
+			relro-entry/address: get-address ".rodata"
+			relro-entry/offset:  get-offset ".rodata"
+			relro-entry/size:    defs/page-size * round/ceiling (get-size ".rodata") / defs/page-size
+		]
+
+		;; PT_TLS covers the static linker's TLS template inside .data;
+		;; p_memsz (template + .tbss) and p_align come from static-link in
+		;; build-phdr -- only the file location is known here.
+		if all [external-linker/etls-off  pos: select layout "tls"][
+			pos/address: (get-address ".data") + external-linker/etls-off
+			pos/offset:  (get-offset ".data") + external-linker/etls-off
+			pos/size:    external-linker/etls-filesz
+		]
+
+		;; PT_ARM_EXIDX publishes the merged EHABI index, so phdr-walking
+		;; unwinders (dl_iterate_phdr in cross-image unwinds: libgcc_s
+		;; forced unwinds, pthread cancellation) can find it -- the
+		;; statically-linked libgcc_eh path binary-searches the same table
+		;; through __exidx_start/__exidx_end.
+		if all [external-linker/exidx-range  pos: select layout "arm-exidx"][
+			pos/address: (get-address ".data") + external-linker/exidx-range/1
+			pos/offset:  (get-offset ".data") + external-linker/exidx-range/1
+			pos/size:    external-linker/exidx-range/2
+		]
+
+		set-data "ehdr" [
+			build-ehdr
+				job/os
+				job/target
+				job/type
+				job/PIC?
+				job/ABI
+				get-offset "phdr"
+				get-offset "shdr"
+				get-address ".text"
+				segments
+				sections
+		]
+
+		set-data "phdr"
+			[build-phdr job/target collect [
+				foreach segment segments [keep/only (select layout segment)]
+			]]
+
+		set-data ".hash"
+			[build-hash compose [(imports) (extract exports 2)]]
+
+		set-data ".dynsym" [
+			build-dynsym
+				job/target
+				imports
+				exports
+				get-data ".dynstr"
+				get-address ".text"
+				section-index-of sections ".text"
+				get-address ".data"
+				section-index-of sections ".data"
+				any [attempt [get-address ".rodata"] 0]
+				section-index-of sections ".rodata"
+		]
+
+		set-data ".rela.plt" [
+			build-relplt
+				job/target
+				imports
+				import-funcs
+				get-address ".got.plt"
+		]
+
+		set-data ".plt" [
+			build-plt
+				job/target
+				import-funcs
+				get-address ".plt"
+				get-address ".got.plt"
+		]
+
+		set-data ".data" [
+			if job/debug? [
+				linker/build-debug-lines job get-address ".text"
+				linker/build-debug-func-names job get-address ".text"
+			]
+			job/sections/data/2
+		]
+
+		;; Resolve data references before building RELA entries; x86-64 stores
+		;; relative pointer values in r_addend rather than in the relocated slot.
+		if any [has-element ".data" has-element ".rodata"] [
+			linker/resolve-symbol-refs
+				job
+				get-data ".text"
+				any [attempt [get-data ".data"] #{}]
+				any [attempt [get-data ".rodata"] #{}]
+				get-address ".text"
+				any [attempt [get-address ".data"] 0]
+				any [attempt [get-address ".rodata"] 0]
+				machine-word
+		]
+
+		set-data reloc-section [
+			build-reltext
+				job/target
+				imports
+				relro-imports
+				any [attempt [get-address ".data.rel.ro"] 0]
+				data-reloc
+				any [attempt [get-address ".data"] 0]	;-- in case .data segment is absent
+				any [attempt [get-data ".data"] #{}]
+				get-address ".text"
+				data-imports
+				rodata-reloc
+				any [attempt [get-address ".rodata"] 0]
+				any [attempt [get-data ".rodata"] #{}]
+		]
+
+		set-data ".got.plt" [
+			build-got-plt
+				job/target
+				import-funcs
+				get-address ".dynamic"
+				get-address ".plt"
+		]
+
+		set-data ".data.rel.ro"
+			[build-relro job/target relro-imports]
+
+		set-data ".dynamic" [
+			build-dynamic
+				job/type
+				job/target
+				job/PIE?
+				job/symbols
+				get-address ".text"
+				get-address ".hash"
+				get-address ".dynstr" get-size ".dynstr"
+				get-address ".dynsym"
+				get-address reloc-section get-size reloc-section
+				any [attempt [get-address ".got.plt"] none]
+				any [attempt [get-address ".rela.plt"] none]
+				any [attempt [get-size ".rela.plt"] 0]
+				get-data ".dynstr"
+				libraries
+				soname
+		]
+
+		set-data ".stab" [
+			build-stab
+				get-address ".text"
+				get-data ".stabstr"
+				natives
+		]
+
+		set-data "shdr" [
+			build-shdr
+				job/target
+				collect [
+					foreach name sections [
+						keep name
+						keep/only (select layout name)
+					]
+				]
+				commands
+				get-data ".shstrtab"
+		]
+
+		;; Resolve import references.
+		if any [has-element ".data.rel.ro" has-element ".plt"] [
+			relro-offset: none
+			if has-element ".data.rel.ro" [
+			relro-offset: get-address ".data.rel.ro"
+			if job/PIC? [relro-offset: relro-offset - get-address ".text"]
+			]
+			plt-offset: none
+			if has-element ".plt" [
+				plt-offset: get-address ".plt"
+				if job/PIC? [plt-offset: plt-offset - get-address ".text"]
+			]
+			resolve-import-refs
+				job
+				imports
+				import-vars
+				import-funcs
+				get-data ".text"
+				get-address ".text"
+				relro-offset
+				plt-offset
+		]
+
+		;; Apply external C object relocations (static linking).
+		external-linker/apply-relocs
+			job
+			get-address ".text"
+			any [attempt [get-address ".data"] 0]
+			0
+
+		linker/set-image-info
+			job
+			base: any [job/base-address defs/base-address]
+			(get-address ".text") - either job/PIC? [0][base]
+			get-size ".text"
+			(get-address ".data") - either job/PIC? [0][base]
+			get-size ".data"
+			0 0										;-- .rodata already read-only by segment/RELRO
+
+		if job/show-func-map? [linker/show-funcs-map job get-address ".text"]
+
+		;; Concatenate the layout data into the output binary.
+		job/buffer: copy #{}
+		foreach [name values] layout [
+			append job/buffer serialize-data values/data			;; Data
+			insert/dup tail job/buffer null values/pad			;; Padding
+		]
+		job/buffer
+	]
+
+	;; -- ELF structure builders --
+
+	build-ehdr: func [
+		target-os [word!]
+		target-arch [word!]
+		target-type [word!]
+		PIC?		[logic!]
+		ABI			[word! none!]
+		phdr-offset [integer!]
+		shdr-offset [integer!]
+		text-address [integer!]
+		segment-names [block!]
+		section-names [block!]
+		/local eh ehdr phdr shdr
+	] [
+		ehdr: ehdr-struct? target-arch
+		phdr: phdr-struct? target-arch
+		shdr: shdr-struct? target-arch
+		eh: make-struct ehdr none
+		eh/ident-mag0:		#"^(7F)"
+		eh/ident-mag1:		#"E"
+		eh/ident-mag2:		#"L"
+		eh/ident-mag3:		#"F"
+		eh/ident-class:		either elf64-target? target-arch [defs/elfclass64][defs/elfclass32]
+		eh/ident-data:		defs/elfdata2lsb
+		eh/ident-version:	defs/ev-current
+		eh/version:			defs/ev-current
+		;; C++ static links enter through the linker's ctor-walk stub, which
+		;; falls into Red's own entry (text-address) once initializers ran.
+		eh/entry:			either target-type = 'exe [
+			text-address + any [external-linker/cpp-entry 0]
+		][0]
+		eh/phoff:			phdr-offset
+		eh/shoff:			shdr-offset
+		eh/flags:			0
+		eh/ehsize:			size-of ehdr
+		eh/phentsize:		size-of phdr
+		eh/phnum:			length? segment-names
+		eh/shentsize:		size-of shdr
+		eh/shnum:			1 + length? section-names
+		eh/shstrndx:		index? find section-names ".shstrtab"
+
+		;; Target-specific header fields.
+
+		eh/ident-osabi: switch/default target-os [
+			FreeBSD      [9]
+			Linux        [3]
+		]	             [0]
+
+		eh/type: select reduce [
+			'exe defs/et-exec
+			'dll defs/et-dyn
+		] either PIC? ['dll][target-type]
+
+		switch target-arch [
+			ia-32	[
+				eh/machine: defs/em-386
+			]
+			arm		[
+				eh/machine: defs/em-arm
+				eh/flags: defs/ef-arm-abi or defs/ef-arm-ep or	;; EABI v5
+					either ABI = 'hard-float [defs/ef-arm-hard][defs/ef-arm-soft]
+			]
+			X86-64	[
+				eh/machine: defs/em-x86-64
+			]
+			ARM64	[
+				eh/machine: defs/em-aarch64
+			]
+		]
+
+		eh
+	]
+
+	build-phdr: func [target-arch [word!] segments [block!] /local ph phdr] [
+		phdr: phdr-struct? target-arch
+		collect [
+			foreach segment segments [
+				ph: make-struct phdr none
+				ph/type:		lookup-def "pt-" segment/meta/type
+				ph/offset:		segment/offset
+				ph/vaddr:		segment/address
+				ph/paddr:		segment/address
+				ph/filesz:		segment/size
+				ph/memsz:		segment/size
+				ph/flags:		lookup-flags "pf-" segment/meta/flags
+				ph/align:		lookup-align segment/meta/align
+				if segment/meta/type = 'tls [
+					;-- p_filesz = template bytes; p_memsz adds .tbss
+					ph/memsz:	external-linker/etls-memsz
+					ph/align:	external-linker/etls-align
+				]
+				keep ph
+			]
+		]
+	]
+
+	build-hash: func [symbols [block!] /local nsymbols i values] [
+		;; @@ Document lookup algorithm?
+		nsymbols: length? symbols
+		values: collect [
+			;; nbucket
+			keep 1
+			;; nchain
+			keep nsymbols + 1
+			;; bucket[0] = 1 if nsymbols>0 else 0
+			keep min nsymbols 1
+			;; chain[0] = undef
+			keep defs/stn-undef
+			;; chain[i:1..nsymbols-1] = i+1
+			i: 2
+			while [i <= nsymbols][
+				keep i
+				i: i + 1
+			]
+			;; chain[nsymbols] = undef if nsymbols>0 (else omit)
+			if nsymbols > 0 [
+				keep defs/stn-undef
+			]
+		]
+		collect [
+			foreach value values [
+				keep make-struct machine-word reduce [value]
+			]
+		]
+	]
+
+	build-dynsym: func [
+		target-arch [word!]
+		imports [block!]
+		exports [block!]
+		dynstr [binary!]
+		text-address [integer!]
+		text-index [integer!]
+		data-address [integer!]
+		data-index [integer!]
+		rodata-address [integer!]
+		rodata-index [integer!]
+		/local result entry export-base export-type export-index sym
+	] [
+		sym: symbol-struct? target-arch
+		result: copy []
+
+		;; Symbol #0: undefined symbol
+		append result make-struct sym none
+
+		foreach symbol imports [
+			entry: make-struct sym none
+			entry/name: strtab-index-of dynstr symbol
+			entry/value: 0 ;; Unknown, for imported symbols.
+			entry/info: to-elf-symbol-info
+				defs/stb-global
+				either issue? symbol [defs/stt-object][defs/stt-func]
+			entry/other: defs/stv-default
+			entry/shndx: defs/shn-undef
+			append result entry
+		]
+
+		foreach [symbol meta] exports [
+			set [export-base export-type export-index] case [
+				meta/type = 'global [
+					reduce [data-address defs/stt-object data-index]
+				]
+				meta/type = 'constant [
+					reduce [rodata-address defs/stt-object rodata-index]
+				]
+				true [
+					reduce [text-address defs/stt-func text-index]
+				]
+			]
+			entry: make-struct sym none
+			entry/name: strtab-index-of dynstr symbol
+			entry/value: export-base + meta/offset
+			entry/info: to-elf-symbol-info defs/stb-global export-type
+			entry/size: meta/size
+			entry/other: defs/stv-default
+			entry/shndx: export-index
+			append result entry
+		]
+
+		result
+	]
+
+	build-reltext: func [
+		target-arch [word!]
+		symbols [block!]
+		vars [block!]
+		relro-address [integer!]
+		relocs [block!]
+		data-address [integer!]
+		data [binary!]
+		code-address [integer!]
+		data-imports [block!]
+		rodata-relocs [block!]
+		rodata-address [integer!]
+		rodata [binary!]
+		/local rel-type result entry len copy-type relative-type glob-dat-type di-name di-off di-size i reloc symbol ptr import-count
+	] [
+		if elf64-target? target-arch [
+			glob-dat-type: either target-arch = 'ARM64 [defs/r-aarch64-glob-dat][defs/r-x86-64-glob-dat]
+			relative-type: either target-arch = 'ARM64 [defs/r-aarch64-relative][defs/r-x86-64-relative]
+			copy-type: either target-arch = 'ARM64 [defs/r-aarch64-copy][defs/r-x86-64-copy]
+			reloc: relocation-struct? target-arch
+			import-count: length? symbols
+			result: make block! (length? relocs) + (length? rodata-relocs)
+				+ ((length? data-imports) / 3) + len: length? vars
+			repeat i len [
+				symbol: vars/:i
+				entry: make-struct reloc none
+				entry/offset:	relro-address + ((size-of machine-word64) * (i - 1))
+				entry/info:		reduce [glob-dat-type index? find symbols symbol]
+				entry/addend:	0
+				append result entry
+			]
+			foreach ptr relocs [
+				entry: make-struct reloc none
+				entry/offset:	data-address + ptr
+				entry/info:		reduce [relative-type 0]
+				entry/addend:	to integer! reverse copy/part at data ptr + 1 4
+				append result entry
+			]
+			foreach ptr rodata-relocs [
+				entry: make-struct reloc none
+				entry/offset: rodata-address + ptr
+				entry/info: reduce [relative-type 0]
+				entry/addend: to integer! reverse copy/part at rodata ptr + 1 4
+				append result entry
+			]
+			i: 0
+			foreach [di-name di-off di-size] data-imports [
+				entry: make-struct reloc none
+				entry/offset: data-address + di-off
+				entry/info: reduce [copy-type 1 + import-count + i]
+				entry/addend: 0
+				append result entry
+				i: i + 1
+			]
+			return result
+		]
+		rel-type: select reduce [
+			'IA-32	defs/r-386-32
+			'ARM	defs/r-arm-abs32
+		] target-arch
+		result: make block! (length? relocs) + (length? rodata-relocs) + len: length? symbols
+
+		repeat i len [ 									;-- 1..n, 0 is undef
+			entry: make-struct elf-relocation none
+			entry/offset:		rel-address-of/index relro-address (i - 1)
+			entry/info-sym:		rel-type
+			entry/info-type:	i // 256
+			entry/info-addend:	shift/logical i 8
+			append result entry
+		]
+
+		rel-type: select reduce [
+			'IA-32	defs/r-386-rel
+			'ARM	defs/r-arm-rel
+		] target-arch
+
+		foreach ptr relocs [
+			entry: make-struct elf-relocation none
+			entry/offset:		data-address + ptr
+			entry/info-sym:		rel-type
+			entry/info-type:	0
+			entry/info-addend:	0
+			append result entry
+		]
+
+		foreach ptr rodata-relocs [						;-- protected data: base-relative fixups (RELRO)
+			entry: make-struct elf-relocation none
+			entry/offset:		rodata-address + ptr
+			entry/info-sym:		rel-type
+			entry/info-type:	0
+			entry/info-addend:	0
+			append result entry
+		]
+
+		;; R_*_COPY for each libc data-symbol import: at start-up the loader
+		;; copies the symbol's value into the reserved `.data` slot. The data
+		;; imports occupy the first `exports` slots, hence dynsym indices
+		;; (1 + len) .. (1 + len + n - 1).
+		copy-type: select reduce [
+			'IA-32	defs/r-386-copy
+			'ARM	defs/r-arm-copy
+		] target-arch
+		i: 0
+		foreach [di-name di-off di-size] data-imports [
+			entry: make-struct elf-relocation none
+			entry/offset:		data-address + di-off
+			entry/info-sym:		copy-type
+			entry/info-type:	(1 + len + i) // 256
+			entry/info-addend:	shift/logical (1 + len + i) 8
+			append result entry
+			i: i + 1
+		]
+		result
+	]
+
+	build-relplt: func [
+		target-arch [word!]
+		imports [block!]
+		funcs [block!]
+		gotplt-address [integer!]
+		/local reloc result entry slot symbol
+	][
+		reloc: relocation-struct? target-arch
+		result: make block! length? funcs
+		slot: 0
+		foreach symbol funcs [
+			entry: make-struct reloc none
+			entry/offset:	gotplt-address + ((size-of machine-word64) * (3 + slot))
+			entry/info:		reduce [
+				either target-arch = 'ARM64 [defs/r-aarch64-jump-slot][defs/r-x86-64-jump-slot]
+				index? find imports symbol
+			]
+			entry/addend:	0
+			append result entry
+			slot: slot + 1
+		]
+		result
+	]
+
+	build-got-plt: func [
+		target-arch [word!]
+		funcs [block!]
+		dynamic-address [integer!]
+		plt-address [integer!]
+		/local result slot
+	][
+		if target-arch = 'ARM64 [
+			result: make block! 3 + length? funcs
+			append result make-struct machine-word64 reduce [0]
+			append result make-struct machine-word64 reduce [0]
+			append result make-struct machine-word64 reduce [0]
+			foreach symbol funcs [
+				append result make-struct machine-word64 reduce [plt-address]
+			]
+			return result
+		]
+		result: make block! 3 + length? funcs
+		append result make-struct machine-word64 reduce [dynamic-address]
+		append result make-struct machine-word64 reduce [0]
+		append result make-struct machine-word64 reduce [0]
+		slot: 1
+		foreach symbol funcs [
+			append result make-struct machine-word64 reduce [plt-address + (16 * slot) + 6]
+			slot: slot + 1
+		]
+		result
+	]
+
+	encode-aarch64-adrp: func [target [integer!] source [integer!] reg [integer!] /local pages encoded][
+		pages: ((target and -4096) - (source and -4096)) / 4096
+		if any [pages < -1048576 pages > 1048575][
+			make error! "AArch64 PLT ADRP target is out of range"
+		]
+		encoded: pages and 2097151
+		(to integer! #{90000000})
+			or ((encoded and 3) * 536870912)
+			or ((shift/logical (encoded and 2097148) 2) * 32)
+			or reg
+	]
+
+	build-plt: func [
+		target-arch [word!]
+		funcs [block!]
+		plt-address [integer!]
+		gotplt-address [integer!]
+		/local result slot disp target source low
+	][
+		if target-arch = 'ARM64 [
+			result: copy #{}
+			target: gotplt-address + 16
+			append result int-to-bin/to-bin32 (to integer! #{A9BF7BF0})    ; STP x16, x30, [sp, #-16]!
+			append result int-to-bin/to-bin32 encode-aarch64-adrp target plt-address + 4 16
+			low: target and 4095
+			append result int-to-bin/to-bin32 (to integer! #{F9400211}) or (low * 128)
+			append result int-to-bin/to-bin32 (to integer! #{91000210}) or (low * 1024)
+			append result int-to-bin/to-bin32 (to integer! #{D61F0220})    ; BR x17
+			repeat i 3 [append result int-to-bin/to-bin32 (to integer! #{D503201F})] ; NOP
+			slot: 0
+			foreach symbol funcs [
+				target: gotplt-address + (8 * (3 + slot))
+				source: plt-address + 32 + (16 * slot)
+				append result int-to-bin/to-bin32 encode-aarch64-adrp target source 16
+				low: target and 4095
+				append result int-to-bin/to-bin32 (to integer! #{F9400211}) or (low * 128)
+				append result int-to-bin/to-bin32 (to integer! #{91000210}) or (low * 1024)
+				append result int-to-bin/to-bin32 (to integer! #{D61F0220}) ; BR x17
+				slot: slot + 1
+			]
+			return result
+		]
+		result: copy #{}
+		target: gotplt-address + 8
+		source: plt-address + 6
+		disp: target - source
+		append result #{FF35}
+		append result int-to-bin/to-bin32 disp
+		target: gotplt-address + 16
+		source: plt-address + 12
+		disp: target - source
+		append result #{FF25}
+		append result int-to-bin/to-bin32 disp
+		append result #{0F1F4000}
+		slot: 0
+		foreach symbol funcs [
+			target: gotplt-address + ((size-of machine-word64) * (3 + slot))
+			source: plt-address + (16 * (slot + 1)) + 6
+			disp: target - source
+			append result #{FF25}
+			append result int-to-bin/to-bin32 disp
+			append result #{68}
+			append result int-to-bin/to-bin32 slot
+			source: plt-address + (16 * (slot + 1)) + 16
+			disp: plt-address - source
+			append result #{E9}
+			append result int-to-bin/to-bin32 disp
+			slot: slot + 1
+		]
+		result
+	]
+
+	build-reldata: func [
+		target-arch [word!]
+		relocs [block!]
+		data-address [integer!]
+		/local rel-type result entry len
+	][
+		result: make block! (length? relocs) / 2
+
+		foreach [name spec] relocs [
+			entry: make-struct elf-relocation none
+			entry/offset: spec/2
+			entry/info-sym: defs/stn-undef
+			entry/info-type: 0
+			entry/info-addend: 0
+			append result entry
+		]
+		result
+	]
+
+	build-relro: func [target-arch [word!] symbols [block!]] [
+		;; @@ Use NOBITS section (filesize 0, memsize n) instead?
+		collect [
+			loop length? symbols [
+				keep (make-struct (machine-word-struct? target-arch) reduce [0])
+			]
+		]
+	]
+
+	build-dynamic: func [
+		job-type		[word!]
+		target			[word!]
+		PIE?			[logic! none!]
+		symbols			[hash!]
+		text-address	[integer!]
+		hash-address	[integer!]
+		dynstr-address	[integer!]
+		dynstr-size 	[integer!]
+		dynsym-address	[integer!]
+		reltext-address [integer!]
+		reltext-size 	[integer!]
+		pltgot-address	[integer! none!]
+		relplt-address	[integer! none!]
+		relplt-size		[integer!]
+		dynstr			[binary!]
+		libraries		[block!]
+		soname			[string!]
+		/local entries spec dyn
+	] [
+		dyn: dynamic-struct? target
+		entries: copy []
+
+		;; One DT_NEEDED for each dynamic library:
+		foreach library libraries [
+			repend entries ['needed strtab-index-of dynstr library]
+		]
+		if target <> 'ARM [
+			repend entries ['rpath strtab-index-of dynstr defs/rpath]
+		]
+
+		if job-type = 'dll [
+			repend entries ['soname strtab-index-of dynstr soname]
+
+			if spec: select symbols '***-dll-entry-point [
+				repend entries ['init text-address + spec/2 - 1]
+			]
+			if spec: select symbols 'on-unload [
+				repend entries ['fini text-address + spec/2 - 1]
+			]
+		]
+		if PIE? [
+			repend entries ['flags-1 defs/df-1-pie]
+		]
+		if relplt-size > 0 [
+			append entries reduce [
+				'pltgot		pltgot-address
+				'pltrelsz	relplt-size
+				'pltrel		defs/dt-rela
+				'jmprel		relplt-address
+			]
+		]
+
+		;; Static _DYNAMIC entries:
+		append entries reduce [
+			'hash	hash-address
+			'strtab	dynstr-address
+			'symtab	dynsym-address
+			'strsz	dynstr-size
+			'syment	size-of symbol-struct? target
+		]
+		append entries either elf64-target? target [
+			reduce [
+				'rela	 reltext-address
+				'relasz	 reltext-size
+				'relaent size-of relocation-struct? target
+				'null	 0
+			]
+		][
+			reduce [
+				'rel	reltext-address
+				'relsz	reltext-size
+				'relent	size-of relocation-struct? target
+				'null	0
+			]
+		]
+
+		collect [
+			foreach [tag value] entries [
+				keep make-struct dyn reduce [lookup-def "dt-" tag value]
+			]
+		]
+	]
+
+	build-stab: func [
+		text-address [integer!] stabstr [binary!] natives [block!]
+		/local r s
+	] [
+		collect [
+			;; The first synthetic entry (required) holds the number of
+			;; non-synthetic entries as well as the size of the string table.
+			s: make-struct stab-entry none
+			s/type: defs/stabs-n-undf
+			s/desc: 1 + ((length? natives) / 2)
+			s/value: size-of stabstr
+			keep s
+
+			;; One source file stab (N_SO) is required before any other stabs.
+			s: make-struct stab-entry none
+			s/type: defs/stabs-n-so
+			s/value: text-address
+			s/strx: 1 ;; @@ Use a real source name (instead of "%_")
+			keep s
+
+			foreach [name offset] natives [
+				s: make-struct stab-entry none
+				s/type: defs/stabs-n-fun
+				s/value: text-address + offset
+				s/strx: strtab-index-of stabstr name
+				keep s
+			]
+		]
+	]
+
+	build-shdr: func [
+		target-arch [word!] sections [block!] commands [block!] shstrtab [binary!]
+		/local names sh name section shdr result
+	] [
+		shdr: shdr-struct? target-arch
+		names: extract sections 2
+		result: reduce [make-struct shdr none]
+		foreach [name section] sections [
+			sh: make-struct shdr none
+			sh/name:		strtab-index-of shstrtab name
+			sh/type:		lookup-def "sht-" section/meta/type
+			sh/flags:		lookup-flags "shf-" section/meta/flags
+			sh/addr:		section/address
+			sh/offset:		section/offset
+			sh/size:		section/size
+			sh/link:		section-index-of names select section/meta 'link
+			sh/info:		section-index-of names select section/meta 'info
+			sh/addralign:	lookup-align section/meta/align
+			sh/entsize:		find-entry-size commands name
+			append result sh
+		]
+		result
+	]
+
+	build-arm-attributes: func [
+		ABI			[word! none!]
+		cpu-version [tuple! float!]
+		/local section sub-section attributes attrs ver
+	][
+		attrs: defs/arm/attributes
+		ver: case [
+			cpu-version < 7.0 ['v5T]
+			all [7.0 <= cpu-version cpu-version < 8.0]['v7]
+			8.0 <= cpu-version ['v8]
+		]
+		attributes: rejoin [
+			attrs/cpu-arch				defs/arm/cpu-arch/:ver
+			attrs/arm-isa-use			#{01}			;; yes
+			attrs/abi-pcs-wchar_t		#{04}			;; 4 bytes
+			attrs/abi-fp-denormal		#{01}			;; needed
+			attrs/abi-fp-exceptions		#{01}			;; needed
+			attrs/abi-fp-number-model	#{03}			;; IEEE-754
+			attrs/abi-align-needed		#{01}			;; 8-byte
+			attrs/abi-align-preserved	#{01}			;; 8-byte, except leaf SP
+			attrs/abi-enum-size			#{02}			;; at least 32 bits
+			attrs/div-use				#{01}			;; not allowed
+		]
+		if ABI = 'hard-float [
+			append attributes rejoin [
+				attrs/abi-hardfp-use	#{03}
+				attrs/abi-vfp-args		#{01}
+			]
+		]
+		sub-section: rejoin [
+			#{01}					;; file tag
+			int-to-bin/to-bin32 5 + length? attributes
+			attributes
+		]
+		section: rejoin [
+			to-binary "aeabi^@"		;; vendor-name
+			sub-section
+		]
+		rejoin [
+			#{41}					;; version A
+			int-to-bin/to-bin32 4 + length? section
+			section
+		]
+	]
+
+	;; -- Job helpers --
+
+	collect-data-reloc: func [job [object!] /local list syms spec][
+		list: make block! 100
+		syms: job/symbols
+		if all [
+			job/runtime?
+			job/PIC?
+			job/target = 'X86-64
+			spec: find syms '***-exec-image
+		][
+			append list spec/2/2 + 8					;-- __image!/base after hidden struct slot
+		]
+
+		while [not tail? syms][
+			syms: skip syms 2
+			if all [
+				not tail? syms
+				syms/1 = <data>
+				block? syms/2/4
+				positive? syms/2/4/1					;-- negative: read-only data ref, resolved at link time
+			][
+				append list either syms/2/4/1 - 1 = syms/-1/2 [
+					syms/-1/2							;-- pointer slot to value slot
+				][
+					syms/2/4/1 - 1						;-- literal pointer in array to c-string buffer
+				]
+			]
+		]
+		list
+	]
+
+	;; Read-only (protected) data positions holding an address: the pointer slot
+	;; and any data-to-data pointers embedded in protected arrays (e.g. string
+	;; arrays). Under PIC these need an R_*_RELATIVE relocation so the loader adds
+	;; the image base at load time (the addend written by resolve-symbol-refs is
+	;; the target's base-relative offset).
+	collect-rodata-reloc: func [job [object!] /local list name spec ref][
+		list: make block! 100
+		foreach [name spec] job/symbols [			;-- every symbol: <data> payloads + native fn-ptr targets
+			if block? spec/4 [
+				foreach ref spec/4 [
+					if negative? ref [append list (negate ref) - 1]	;-- 0-based rodata offset
+				]
+			]
+		]
+		list
+	]
+
+	collect-import-names: func [job [object!] /local libraries symbols] [
+		libraries: copy []
+		symbols: copy []
+		foreach [libname libuses] job/sections/import/3 [
+			append libraries libname
+			foreach [symbol callsites] libuses [
+				append symbols symbol
+			]
+		]
+		reduce [libraries symbols]
+	]
+
+	collect-import-funcs: func [imports [block!] /local funcs][
+		funcs: copy []
+		foreach symbol imports [
+			unless issue? symbol [append funcs symbol]
+		]
+		funcs
+	]
+
+	collect-import-vars: func [imports [block!] /local vars][
+		vars: copy []
+		foreach symbol imports [
+			if issue? symbol [append vars symbol]
+		]
+		vars
+	]
+
+	collect-exports: func [
+		{Collect a list of exported objects: symbol, type, offset and size. As
+		the object size is not yet stored in the symbol or exports table, we
+		have to compute it here.}
+		job [object!]
+		/local current-tail code-tail data-tail rodata-tail symbol-offset symbol-size ext-name
+	] [
+		unless find job/sections 'export [return make block! 0]
+
+		code-tail: length? job/sections/code/2
+		data-tail: length? job/sections/data/2
+		rodata-tail: length? any [attempt [job/sections/rodata/2] #{}]
+		collect [
+			foreach [meta symbol] reverse copy job/symbols [
+				catch [
+					case [
+						find [import import-var native-ref] meta/1 [
+							throw 'continue
+						]
+						'global = meta/1 [
+							symbol-offset: meta/2
+							symbol-size: data-tail - symbol-offset
+							data-tail: symbol-offset
+						]
+						'constant = meta/1 [
+							symbol-offset: meta/2
+							symbol-size: rodata-tail - symbol-offset
+							rodata-tail: symbol-offset
+						]
+						'native = meta/1 [
+							;; Code symbols have 1-based offsets, data symbols
+							;; have 0-based offsets in job/symbols ...
+							symbol-offset: meta/2 - 1
+							symbol-size: code-tail - symbol-offset
+							code-tail: symbol-offset
+						]
+						true [
+							make error! reform ["Unhandled symbol type:" meta/1]
+						]
+					]
+					if ext-name: select job/sections/export/3 symbol [
+						keep compose/deep [
+							(ext-name) [
+								type	(meta/1)
+								offset	(symbol-offset)
+								size	(symbol-size)
+							]
+						]
+					]
+				]
+			]
+		]
+	]
+
+	collect-natives: func [job [object!]] [
+		collect [
+			foreach [name meta] job/symbols [
+				if meta/1 = 'native [
+					keep reduce [(join name ":F") (meta/2 - 1)]
+				]
+			]
+		]
+	]
+
+	resolve-import-refs: func [
+		job [object!]
+		symbols [block!]
+		vars [block!]
+		funcs [block!]
+		code [binary!]
+		text-address [integer!]
+		relro-offset [integer! none!]
+		plt-offset [integer! none!]
+		/local rel disp index delta opcode target-address
+	] [
+		foreach [libname libimports] job/sections/import/3 [
+			linker/check-dup-symbols job libimports
+			foreach [symbol callsites] libimports [
+				either elf64-target? job/target [
+					index: either issue? symbol [
+						index? find vars symbol
+					][
+						index? find funcs symbol
+					]
+					disp: either issue? symbol [
+						relro-offset + ((size-of machine-word64) * (index - 1))
+					][
+						plt-offset + either job/target = 'ARM64 [16 * (index + 1)][16 * index]
+					]
+					target-address: either job/PIC? [text-address + disp][disp]
+					foreach callsite callsites [
+						case [
+							all [job/target = 'ARM64 issue? symbol] [
+								unless all [
+									block? callsite
+									2 <= length? callsite
+									integer? callsite/1
+									integer? callsite/2
+								][make error! "invalid AArch64 import data reference"]
+								linker/patch-arm64-page-ref
+									code callsite/1
+									(text-address + callsite/1 - 1)
+									target-address callsite/2
+							]
+							job/target = 'ARM64 [
+								delta: target-address - (text-address + callsite - 1)
+								if any [not zero? delta // 4 delta < -134217728 delta > 134217724][
+									make error! "AArch64 import branch is out of range"
+								]
+								opcode: (to integer! #{94000000}) or (((delta / 4) and 67108863))
+								change/part at code callsite int-to-bin/to-bin32 opcode 4
+							]
+							true [
+								change/part at code callsite
+									int-to-bin/to-bin32 (target-address - text-address - callsite - 3) 4
+							]
+						]
+					]
+				][
+					rel: make-struct machine-word none
+					rel/value: rel-address-of/symbol relro-offset symbols symbol
+					foreach callsite callsites [
+						change/part at code callsite serialize-data rel size-of rel
+					]
+				]
+			]
+		]
+	]
+
+	;; -- File structure/file commands helpers --
+
+	remove-elements: func [structure elements /local begin mark name children] [
+		parse structure [
+			any [
+				begin: (children: none)
+				word! ;; type
+				set name string!
+				opt [block!] ;; meta
+				opt [set children block!]
+				mark: (
+					if children [remove-elements children elements]
+					if any [find elements name  all [block? children empty? children]] [
+						mark: remove/part begin mark
+					]
+				) :mark
+			]
+		]
+	]
+
+	replace-deep: func [series [block!] old new /local item][
+		forall series [
+			item: first series
+			either block? item [
+				replace-deep item old new
+			][
+				if item = old [change/only series new]
+			]
+		]
+		head series
+	]
+
+	collect-structure-names: func [
+		structure [block!] filter [word! block!] /local result type name
+	] [
+		result: copy []
+		parse structure elements-rule: [
+			any [
+				set type word!
+				set name string!
+				opt [block!] ;; meta
+				(if filter = type [append result name])
+				opt [into [elements-rule]]
+			]
+		]
+		result
+	]
+
+	find-skip: func [commands [block!] name [string!]] [
+		any [select commands reduce [name 'skip] 0]
+	]
+
+	find-align: func [commands [block!] name [string!]] [
+		select commands reduce [name 'align]
+	]
+
+	find-size: func [commands [block!] name [string!] /local data spec] [
+		if data: select commands reduce [name 'data] [
+			return size-of data
+		]
+
+		if spec: select commands reduce [name 'size] [
+			;; size spec variant 1: `value`
+			if integer? spec [return spec]
+
+			;; size spec variant 2: `word` (bound)
+			if word? spec [return size-of get spec]
+
+			;; size spec variant 3: `[element num-elements]` (bound, unreduced)
+			set [element num-elements] reduce spec
+			return num-elements * size-of element
+		]
+
+		make error! reform ["Unknown node size:" name]
+	]
+
+	find-entry-size: func [commands [block!] name [string!] /local spec] [
+		;; Items with a `[element num-elements]` size command have an entry
+		;; size, everything else does not.
+		either block? spec: select commands reduce [name 'size] [
+			size-of first reduce spec
+		] [
+			0
+		]
+	]
+
+	merge-meta: func [
+		commands [block!] name [string!] meta [block!] /local result
+	] [
+		append
+			reduce ['type meta/1 'flags meta/2 'align meta/3]
+			any [select commands reduce [name 'meta] []]
+	]
+
+	calc-dynamic-size: func [
+		job-type	[word!]
+		target		[word!]
+		PIE?		[logic! none!]
+		plt-count	[integer!]
+		symbols		[hash!]
+		/local entries spec
+	][
+		  (any [all [job-type = 'dll select symbols '***-dll-entry-point 1] 0])
+		+ (any [all [job-type = 'dll 1] 0])
+		+ (any [all [job-type = 'dll select symbols 'on-unload 1] 0])
+		+ (any [all [PIE? 1] 0])
+		+ (any [all [elf64-target? target plt-count > 0 4] 0])
+		+ (any [all [target <> 'ARM 1] 0])				;-- dt-rpath
+		+ length? [
+			hash
+			strtab
+			symtab
+			strsz
+			syment
+			rel
+			relsz
+			relent
+			null
+		]
+	]
+
+	complete-sizes: func [
+		structure [block!] commands [block!] /local total size name children
+	] [
+		;; This could be inlined into LAYOUT-BINARY, but having it explicit as
+		;; a second pass makes things more clear.
+		total: 0
+		parse structure [
+			any [
+				word! ;; type
+				set name string!
+				opt [block!] ;; meta
+				[
+					set children block!
+					(
+						total: total + size: complete-sizes children commands
+						repend commands [name 'size size]
+					)
+				|
+					(
+						size: find-size commands name
+						;; Ensure all leaf nodes are padded to 32-bit multiples.
+						unless zero? pad: (4 - (size // 4)) // 4 [ ;; @@ Make alignment target-specific.
+							repend commands [name 'pad pad]
+						]
+						total: total + size + pad
+					)
+				]
+			]
+		]
+		total
+	]
+
+	layout-binary: func [
+		{Given a file structure and file layout commands, generate a full file
+		"layout". A file layout collects the type, offset, address, size,
+		metadata and data for each element in the file's structure.}
+		structure [block!] commands [block!]
+		/local layout emit offset address elements-rule name type meta size a p prev
+	] [
+		layout: copy []
+
+		emit: func [n t o a s m d /local p] [
+			p: any [select commands reduce [name 'pad] 0]
+			repend layout [
+				n reduce [
+					'type t 'offset o 'address a 'size s 'pad p 'meta m 'data d
+				]
+			]
+			p
+		]
+
+		offset: 0
+		address: 0
+
+		complete-sizes structure commands
+
+		parse structure elements-rule: [
+			any [
+				(meta: copy [])
+				set type word!
+				set name string!
+				opt [set meta block!]
+				(
+					address: address + find-skip commands name
+					;; Align this element: charge the gap to the preceding entry's
+					;; trailing padding (the serializer writes `pad` zero bytes) and
+					;; widen that entry so an enclosing segment's filesz/memsz still
+					;; span the inserted padding.
+					if all [a: find-align commands name  not zero? p: (a - (offset // a)) // a][
+						prev: last layout
+						prev/pad:  prev/pad + p
+						prev/size: prev/size + p
+						offset:  offset + p
+						address: address + p
+					]
+					size: find-size commands name
+					meta: merge-meta commands name meta
+					data: select commands reduce [name 'data]
+				)
+				[
+					into [
+						(emit name type offset address size meta data)
+						elements-rule
+					]
+				|
+					(
+						padding: emit name type offset address size meta data
+						address: address + size + padding
+						offset: offset + size + padding
+					)
+				]
+			]
+		]
+
+		layout
+	]
+
+	;; -- Definitions lookup --
+
+	lookup-def: func [prefix [string! word!] suffix [string! word!]] [
+		defs/(to-word join prefix suffix)
+	]
+
+	lookup-flags: func [prefix [string! word!] flags [block!] /local value] [
+		value: 0
+		foreach flag flags [
+			value: value or lookup-def prefix flag
+		]
+		value
+	]
+
+	lookup-align: func [align [word!]] [
+		select reduce [
+			'byte	1
+			'word	size-of machine-word
+			'dword	2 * size-of machine-word
+			'page	defs/page-size
+		] align
+	]
+
+	;; -- Helpers for creating/using ELF structures --
+
+	strtab-index-of: func [strtab [binary!] string [string! issue!]] [
+		-1 + index? find strtab to-c-string string
+	]
+
+	section-index-of: func [
+		sections [block!] section [string! integer! none!] /local pos
+	] [
+		case [
+			integer? section [section]
+			pos: find sections section [index? pos]
+			true [0]
+		]
+	]
+
+	rel-address-of: func [
+		base [integer!]
+		/symbol syms [block!] sym [string! issue!]
+		/index ind [integer!]
+	] [
+		base + ((size-of machine-word) * any [ind (-1 + index? find syms sym)])
+	]
+
+	to-c-string: func [data [string! binary! issue!]] [join to-binary data #{00}]
+
+	to-elf-strtab: func [items [block!] /local output] [
+		output: copy #{00}
+		foreach item items [append output to-c-string form item]
+		output
+	]
+
+	to-elf-symbol-info: func [binding [integer!] type [integer!]] [
+		(shift/left binding 4) + (type and 15)
+	]
+
+	;; -- Helpers for working with various binary data intermediaries --
+
+	serialize-data: func [data [block! object! binary! none!] /local output] [
+		case [
+			block? data		[
+				output: make binary! 128
+				foreach item data [append output serialize-data item]
+				output
+			]
+			struct? data	[form-struct data]
+			binary? data	[data]
+			none? data		[#{}]
+		]
+	]
+
+	size-of: func [data [block! object! binary! none!]] [
+		length? serialize-data data
+	]
+
+	;; -- Misc helpers --
+
+	flatten: func [items] [collect [foreach item items [keep item]]]
+]

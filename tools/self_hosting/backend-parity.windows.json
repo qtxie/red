@@ -1,0 +1,55 @@
+{
+  "timeout_seconds": 120,
+  "variables": {
+    "stage0": "D:\\EE\\QTool\\rebcmdview.exe",
+    "red_console": "D:\\EE\\QTool\\red-console.exe"
+  },
+  "compare": {
+    "stdout": false,
+    "stderr": true,
+    "artifacts": true
+  },
+  "left": {
+    "command": [
+      "{stage0}",
+      "-cqs",
+      "{root}\\red.r",
+      "-r",
+      "--no-runtime",
+      "-t",
+      "{target}",
+      "-o",
+      "{output}{suffix}",
+      "{source}"
+    ]
+  },
+  "right": {
+    "command": [
+      "{red_console}",
+      "{root}\\red-system-selfhost.red",
+      "{mode}",
+      "{output}{suffix}",
+      "{source}"
+    ]
+  },
+  "cases": [
+    {
+      "id": "windows-ia32-pe",
+      "source": "tools/self_hosting/fixtures/backend/linked-windows-ia32.reds",
+      "variables": {
+        "target": "MSDOS",
+        "mode": "--check-link-pe",
+        "suffix": ".exe"
+      }
+    },
+    {
+      "id": "linux-ia32-elf",
+      "source": "tools/self_hosting/fixtures/backend/linked-linux-ia32.reds",
+      "variables": {
+        "target": "Linux",
+        "mode": "--check-link-elf",
+        "suffix": ""
+      }
+    }
+  ]
+}

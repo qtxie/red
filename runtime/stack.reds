@@ -399,7 +399,8 @@ stack: context [										;-- call stack
 	]
 
 	unroll-to: func [
-		target [int-ptr!]
+		target       [int-ptr!]
+		keep-result? [logic!]
 		/local
 			result [red-value!]
 			target-frame [call-frame!]
@@ -409,7 +410,7 @@ stack: context [										;-- call stack
 	][
 		target-frame: as call-frame! target
 		result: arguments
-		if ctop > target-frame [result: target-frame/prev]
+		if all [not keep-result? ctop > target-frame][result: target-frame/prev]
 		frame: ctop
 		while [frame > target-frame][
 			frame: frame - 1

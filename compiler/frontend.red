@@ -843,7 +843,7 @@ red: context [
 	
 	emit-exit-function: does [
 		emit [
-			stack/unroll stack/FRAME_FUNCTION
+			stack/unroll-to body-top yes
 			ctx/values: saved
 			exit
 		]
@@ -3168,7 +3168,7 @@ red: context [
 		
 		;-- Function's epilog --
 		append last output compose [
-			stack/unroll-to body-top						;-- close leaked frames and the body, propagating the result
+			stack/unroll-to body-top no					;-- close leaked frames and the body, propagating the result
 			ctx/values: saved							;-- restore context values pointer
 			(make-attributs/epilog spec)
 		]

@@ -3110,7 +3110,7 @@ red: context [
 	
 	comp-func-body: func [
 		name [word!] spec [block!] body [block!] func-symbols [block!] locals-nb [integer!]
-		/local init rs-locals blk args? tracing
+		/local init rs-locals blk args? tracing object-ctx
 	][
 		push-locals copy func-symbols					;-- prepare compiled spec block
 		forall func-symbols [func-symbols/1: decorate-symbol/no-alias func-symbols/1]
@@ -3120,7 +3120,10 @@ red: context [
 		emit reduce [to set-word! decorate-func/strict name 'func blk]
 		insert-lf -3
 
+		object-ctx: all [object? :container-obj? select-obj container-obj?]
+		compiler-redbin-emitter/object-with-ctx: object-ctx
 		comp-sub-block/with 'func-body body				;-- compile function's body
+		compiler-redbin-emitter/object-with-ctx: none
 
 		;-- Function's prolog --
 		pop-locals

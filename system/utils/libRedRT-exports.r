@@ -41,6 +41,7 @@
 	red/stack/keep
 	red/stack/push
 	red/stack/unroll
+	red/stack/unroll-to
 	red/stack/unroll-loop
 	red/stack/revert
 	red/stack/adjust-post-try
@@ -434,6 +435,7 @@
 	red/stack/arguments		cell!
 	red/stack/top			cell!
 	red/stack/bottom		cell!
+	red/stack/ctop			int-ptr!
 	red/unset-value			cell!
 	red/none-value			cell!
 	red/true-value			cell!

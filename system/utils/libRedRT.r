@@ -23,6 +23,7 @@ libRedRT: context [
 	include-file: %libRedRT-include.red
 	extras-file:  %libRedRT-extras.r
 	defs-file:	  %libRedRT-defs.r
+	red-defs-file: %libRedRT-defs.red
 	root-dir:	  %./
 	
 	get-path: func [file][
@@ -46,6 +47,42 @@ libRedRT: context [
 			replace/all data/:part ">>>" to word! ">>>"
 		]
 		data
+	]
+
+	to-red-moldable: func [value /local type out item word][
+		type: type?/word get/any 'value
+		switch/default type [
+			none! [to issue! "__libRedRT-none"]
+			logic! [to issue! either value ["__libRedRT-true"]["__libRedRT-false"]]
+			integer! decimal! word! set-word! lit-word! get-word!
+			refinement! issue! char! file! url! path! set-path! lit-path! get-path!
+			pair! time! date! money! percent! [value]
+			string! binary! [copy value]
+			block! [
+				out: make block! length? value
+				foreach item value [append/only out to-red-moldable get/any 'item]
+				out
+			]
+			paren! [
+				out: to paren! copy []
+				foreach item value [append/only out to-red-moldable get/any 'item]
+				out
+			]
+			hash! [
+				out: make block! length? value
+				foreach item value [append/only out to-red-moldable get/any 'item]
+				out
+			]
+			object! [
+				out: make block! 2 * length? first value
+				foreach word next first value [
+					append out to set-word! word
+					append/only out to-red-moldable get in value word
+				]
+				reduce [to issue! "__libRedRT-object" out]
+			]
+			datatype! [reduce [to issue! "__libRedRT-datatype" to word! form value]]
+		][none]
 	]
 	
 	init: does [
@@ -130,7 +167,7 @@ libRedRT: context [
 		tree
 	]
 	
-	process: func [job functions exports /local name list pos tmpl words lits file base-dir][
+	process: func [job functions exports /local name list pos tmpl words lits file base-dir data lib-name][
 		if find [Windows macOS] job/OS [
 			append funcs [
 				red/image/push
@@ -142,6 +179,10 @@ libRedRT: context [
 
 		clear imports
 		clear template
+		lib-name: rejoin [
+			form lib-file
+			switch/default job/OS [Windows [".dll"] macOS [".dylib"]][".so"]
+		]
 		append template "^/red: context "
 		
 		append imports [
@@ -287,6 +328,7 @@ libRedRT: context [
 		]
 		
 		append template mold imports
+		replace/all template "libRedRT-file" mold lib-name
 		tmpl: load replace/all mold template "[red/" "["
 		
 		file: get-path include-file
@@ -302,7 +344,7 @@ libRedRT: context [
 		]
 		replace/all lits 'get-root-node 'get-root-node2
 		
-		tmpl: mold/all reduce [
+		data: reduce [
 			new-line/all/skip to-block red/functions yes 2
 			red/redbin/index
 			red/globals
@@ -316,6 +358,7 @@ libRedRT: context [
 			red/needed
 			red/shadow-funcs
 		]
+		tmpl: mold/all data
 		replace/all tmpl "% " {%"" }
 		replace/all tmpl ">>>" {">>>"}
 		replace/all tmpl "red/red-" "red-"
@@ -323,6 +366,10 @@ libRedRT: context [
 		file: get-path defs-file
 		if all [not encap? slash <> first file][file: join %../ file]
 		write clean-path file tmpl
+
+		file: get-path red-defs-file
+		if all [not encap? slash <> first file][file: join %../ file]
+		write clean-path file mold to-red-moldable data
 	]
 	
 ]

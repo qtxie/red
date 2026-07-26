@@ -636,7 +636,7 @@ context [
 	build-import: func [
 		job [object!]
 		/local spec IDTs ILTs out dlls hints idt ilt ptr ILTs-base hints-base
-			dlls-base IAT-base ILT-size idx IAT-buffer len offset list idata
+			dlls-base IAT-base ILT-size idx IAT-buffer len offset list idata def-name
 	][
 		spec:		job/sections/import
 		IDTs: 		make block! len: divide length? spec/3 2	;-- list of directory entries
@@ -664,8 +664,9 @@ context [
 			foreach [def reloc] list [
 				append last ILTs ilt: make-struct ILT-struct none
 				ilt/rva: length? hints
-				repend hints [#{0000} form def null]	;-- Ordinal is zero, not used
-				if even? length? def [append hints null]
+				def-name: form def
+				repend hints [#{0000} def-name null]	;-- Ordinal is zero, not used
+				if even? length? def-name [append hints null]
 				len: len + 1
 			]
 			len: len + 1								;-- account for null entry

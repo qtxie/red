@@ -75,14 +75,9 @@ compiler-options: context [
 	to-job: func [options [object!] /local job overrides output parts][
 		job: compiler-system-job/new option-get options 'target
 		unless job [return make error! compiler-system-job/last-error/message]
-		; TODO: default to Stage0-like libRedRT once Red-loadable defs/shadows work.
-		; Until then, full runtime embed matches reliable Stage1 suite behavior.
 		release?: option-get options 'release?
 		update?: option-get options 'update-libRedRT?
-		dev?: either any [release? update?][false][
-			; allow explicit future --dev; default remains full embed
-			false
-		]
+		dev?: not any [release? update?]
 		overrides: reduce [
 			'debug? option-get options 'debug?
 			'static-link? false

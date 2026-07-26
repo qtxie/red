@@ -583,6 +583,16 @@ compiler-redbin-emitter: context [
 								]
 							]
 						]
+						; A function body nested in an object uses its own context for
+						; arguments/locals, then the enclosing object context for fields.
+						if all [none? idx word? object-with-ctx][
+							if entry: find contexts object-with-ctx [
+								if pos: find entry/2 to word! :item [
+									ctx: object-with-ctx
+									idx: (index? pos) - 1
+								]
+							]
+						]
 						if none? idx [
 							either all [with front-local-word? to word! :item][
 								idx: front-get-word-index/with to word! :item main-ctx

@@ -137,7 +137,7 @@ libRedRT: context [
 	]
 
 	collect-aliased: func [new [word!] old [path!]][
-		repend aliased [new to word! form old]
+		repend aliased [new old]
 	]
 
 	undecorate: func [sym [word! path!]][
@@ -311,7 +311,7 @@ libRedRT: context [
 
 		list: third second find imports #import			;-- aliased functions
 		foreach [new old] aliased [
-			spec: copy/deep functions/:old/4
+			spec: copy/deep functions/(compiler-name old)/4
 			clear find spec /local
 			repend list [to set-word! new form undecorate old spec]
 			new-line skip tail list -3 yes
@@ -384,7 +384,14 @@ libRedRT: context [
 		file: get-path include-file
 		write clean-path file tmpl
 
-		words: to-block extract red/symbols 2
+		; Red hashes do not retain insertion order after growing, while the stored
+		; symbol IDs are the root-slot order expected by generated code and libRedRT.
+		; Reconstruct Stage0's insertion order explicitly instead of enumerating the
+		; hash directly.
+		list: to block! red/symbols
+		words: make block! ((length? list) / 2)
+		loop ((length? list) / 2) [append words none]
+		foreach [name pos] list [poke words pos/2 name]
 		remove-each w words [find form w #"~"]
 
 		lits: copy red/literals

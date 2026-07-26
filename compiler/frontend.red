@@ -206,7 +206,9 @@ red: context [
 		'func | 'function | 'does | 'has | 'routine | 'make 'function!
 	]
 
-	functions: make hash! 1000
+	; Function registration order determines the root slots allocated by comp-init.
+	; Rebol hashes retain that order, but Red hashes can enumerate by bucket order.
+	functions: make block! 1000
 	append functions 'make
 	append/only functions reduce [
 		'action! 2 [type [datatype! word!] spec [any-type!]] none
@@ -914,9 +916,12 @@ red: context [
 
 			foreach type spec [
 				unless block? type [
+					red-name: form type
 					case [
-						find [red/cell! red-value!] type [type: 'any-type!]
-						all [red-name: form type find/match red-name "red-"] [
+						find ["red/cell!" "red>cell!" "red-value!" "red>red-value!"] red-name [
+							type: 'any-type!
+						]
+						find/match red-name "red-" [
 							type: to word! skip red-name 4
 						]
 						true []
@@ -1153,6 +1158,21 @@ red: context [
 			new-line skip tail sym-table -3 on
 		]
 	]
+
+	add-issue-symbol: func [value [issue!] /local spelling name sym result][
+		spelling: form value
+		set/any 'result try [to word! spelling]
+		name: either error? :result [
+			to word! rejoin ["issue-" enbase/base to binary! spelling 16]
+		][result]
+		sym: decorate-symbol name
+		unless any [find/case symbols name find sym-table to set-word! sym][
+			repend sym-table [to set-word! sym 'word/load spelling]
+			root-slots: root-slots + 1
+			new-line skip tail sym-table -3 on
+		]
+		sym
+	]
 	
 	add-global: func [name [word!]][
 		unless any [
@@ -1169,7 +1189,10 @@ red: context [
 	][
 		name: to word! original
 		spelling: form name
-		if spelling <> (clean-lf-flag name) [
+		if all [
+			spelling <> (clean-lf-flag name)
+			none? select operator-symbols spelling
+		][
 			add-symbol/with name name
 			add-global name
 		]
@@ -1728,7 +1751,7 @@ red: context [
 					alias: decorate-func new
 					old: decorate-exec-ctx decorate-func name
 				]
-				;libRedRT/collect-aliased alias old
+				libRedRT/collect-aliased alias old
 			]
 			
 			either pos: find-ssa new [					;-- add the real function name as alias
@@ -2178,13 +2201,9 @@ red: context [
 					insert-lf -2
 				]
 				find [refinement! issue!] type?/word :value [
-					; Match Rebol/encapper: form issue! drops leading '#'; symbol spelling
-					; matches redbin emit-issue (form) so switch select-key* works.
-					; Stage1/Red: to word! form fails for pure-digit issue spellings
-					; ("12345678" loads as integer! -> invalid-chars). Use issue/load.
 					either issue? :value [
-						emit 'issue/load
-						emit form value
+						emit 'issue/push
+						emit to path! reduce ['exec add-issue-symbol value]
 						insert-lf -2
 					][
 						w: to word! form value

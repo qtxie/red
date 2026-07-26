@@ -114,7 +114,7 @@ Root cause class: **function/op body arg rebinding after redbin decode** (args l
 
 **Keep (from prior GC work):** collector stack-handle + `flag-gc-scan`; allocator resolve hardening; hashtable re-resolve (**no pin**); crush; system/reactivity/tools Stage1 paths.
 
-**Drop / avoid:** context/hashtable pins; object multi-inherit rebind hacks; treating interpreter `call-top` unwind as the permanent frame fix (experimented; not sufficient alone). Unstaged `runtime/interpreter.reds` call-top experiment should stay out of commits unless proven.
+**Drop / avoid:** context/hashtable pins; object multi-inherit rebind hacks; treating interpreter `call-top` unwind as the permanent frame fix. The runtime cleanup is validated by `interpreter-compiled-stack-probe.red` (20,000 recursive interpreter/compiled transitions), but it does not replace the compiler-side `stack/unroll-to` work.
 
 **`stack/unroll-to`:** pragmatic Stage1 epilog until call-frame leaks fixed; Stage0 classic is `stack/unwind-last`. Long-term: find leaks, restore `unwind-last`, delete `unroll-to`.
 

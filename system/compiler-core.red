@@ -1674,6 +1674,14 @@ system-dialect: context [
 			to paren! list
 		]
 
+		order-ctx-candidates: func [a b][				;-- order by increasing path size,
+			either path? a [							;-- and word! before path!.
+				all [path? b (length? a) < (length? b)]
+			][
+				path? b
+			]
+		]
+
 		store-ns-symbol: func [name [word!] /local pos][
 			if rs-ns-path [
 				either pos: find/skip sym-ctx-table name 2 [
@@ -1684,7 +1692,7 @@ system-dialect: context [
 						pos/2: reduce [pos/2]
 					]
 					append/only pos/2 copy rs-ns-path
-					sort pos/2
+					sort/compare/stable pos/2 :order-ctx-candidates
 				][
 					append sym-ctx-table name
 					append/only sym-ctx-table copy rs-ns-path

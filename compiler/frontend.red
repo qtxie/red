@@ -298,6 +298,7 @@ red: context [
 		unless relative-path? file [return clean-path file]
 		bases: copy []
 		if script-path [append bases script-path]
+		if file? script-name [append bases first split-path script-name]
 		unless empty? script-stk [
 			append bases first split-path last script-stk
 		]
@@ -1319,6 +1320,28 @@ red: context [
 		]
 	]
 
+	safe-set-object-path: func [
+		fpath [path!] value [object!]
+		/local parts field parent slot replacement entry
+	][
+		if 2 > length? fpath [return no]
+		parts: to block! fpath
+		field: take/last parts
+		unless all [word? field object? parent: safe-eval-object-path to path! parts][return no]
+		either slot: in parent field [
+			set slot value
+		][
+			replacement: make parent reduce [to set-word! field value]
+			entry: objects
+			while [not tail? entry][
+				if all [object? entry/2 same? entry/2 parent][entry/2: replacement]
+				entry: skip entry 6
+			]
+			unless safe-set-object-path to path! parts replacement [return no]
+		]
+		yes
+	]
+
 	search-obj: func [path [path!] /local search base fpath found?][
 		search: [
 			fpath: head insert copy path base
@@ -1346,27 +1369,29 @@ red: context [
 		reduce [found? fpath base]
 	]
 	
-	object-access?: func [path [series!] /local res self? wrapper][
+	object-access?: func [path [series!] /local res self? wrapper value][
 		self?: path/1 = 'self
 		either self? [
-			; Prefer word binding; if it is not a registered shadow object (common
-			; for method bodies after bind to the function context), use the
-			; container object saved for deferred method compilation.
 			res: binding-of path/1
-			either all [object? :res find-obj res][
-				res
-			][
-				any [
-					all [object? :container-obj? container-obj?]
-					all [path? :obj-stack safe-eval-object-path obj-stack]
-				]
+			any [
+				all [object? :container-obj? container-obj?]
+				all [object? :res find-obj res res]
+				all [path? :obj-stack safe-eval-object-path obj-stack]
 			]
 		][
-			wrapper: either path? :obj-stack [safe-eval-object-path obj-stack][none]
-			all [
+			res: binding-of path/1
+			wrapper: any [
+				all [object? :res find-obj res in res path/1 res]
+				all [object? :container-obj? in container-obj? path/1 container-obj?]
+				either path? :obj-stack [safe-eval-object-path obj-stack][none]
+			]
+			if all [
 				1 < length? obj-stack
 				object? wrapper
 				in wrapper path/1
+			][
+				value: get in wrapper path/1
+				unless object? :value [return none]
 				insert path next obj-stack			;-- insert prefix into object path
 			]
 			search-obj to path! path
@@ -1392,6 +1417,19 @@ red: context [
 			entry: skip entry 6
 		]
 		found
+	]
+
+	expand-context-includes: func [body [block!] /local pos][
+		pos: body
+		while [not tail? pos][
+			either pos/1 = include-directive [
+				; Stage0 expands this while parsing fields. Red's parser can stop at
+				; the replaced span, so normalize includes before field collection.
+				comp-include/only pos
+			][
+				pos: next pos
+			]
+		]
 	]
 
 	obj-func-call?: func [name [any-word!] /local obj][
@@ -2356,6 +2394,7 @@ red: context [
 		if proto [proto: reduce [proto]]
 		
 		either body?: block? pc/2 [
+			expand-context-includes pc/2
 			parse body: pc/2 [							;-- collect words from body block
 				some [
 					(clear list)
@@ -2521,19 +2560,12 @@ red: context [
 		shadow-path: to path! path-values
 		
 		either path [
-			unless attempt [
-				do reduce [to set-path! shadow-path obj] ;-- set object in shadow tree
-			][
+			unless safe-set-object-path shadow-path obj [
 				path: symbol							;-- undefined object path, so use ctx name
 			]
 		][
 			unless tail? next obj-stack [				;-- set object in shadow tree (if sub-object)
-				unless attempt [
-					do reduce [to set-path! shadow-path obj]
-				][
-					; Parent shadow path may still be incomplete; keep compiling.
-					none
-				]
+				safe-set-object-path shadow-path obj
 			]
 		]
 		if body? [bind body obj]
@@ -3498,13 +3530,13 @@ red: context [
 		unless find expr-stack 'try-all [emit-exit-function]
 	]
 	
-	comp-self: func [original [any-word!] /local obj ctx entry][
-		either rebol-gctx = obj: binding-of original [
+	comp-self: func [original [any-word!] /local obj ctx entry binding][
+		binding: binding-of original
+		either all [not object? :container-obj? rebol-gctx = binding][
 			pc: back pc									;-- backtrack and process word again
 			comp-word/thru
 		][
-			; Method bodies often bind SELF to the function shadow context. Fall
-			; back to the container object registered for deferred method compile.
+			obj: any [all [object? :container-obj? container-obj?] binding]
 			unless all [object? :obj entry: find-obj obj][
 				obj: any [
 					all [object? :container-obj? container-obj?]
@@ -3934,10 +3966,16 @@ red: context [
 					]
 					index: (index? find pos last path) - 1
 				][
-					throw-error ["word" last path "not defined in" path]
+					either self? [
+						throw-error ["word" last path "not defined in" path]
+					][
+						obj-field?: no
+						obj?: no
+					]
 				]
 			]
-			
+
+			if obj-field? [
 			true-blk: compose/deep pick [
 				[[word/set-in-ctx (ctx) (index)]]
 				[[word/get-local  (ctx) (index)]]
@@ -3993,6 +4031,7 @@ red: context [
 					stack/reset
 				]
 				foreach pos breaks [new-line skip tail any [mark last output] pos yes]
+			]
 			]
 		]
 		mark: tail output
@@ -4713,7 +4752,7 @@ red: context [
 	
 	process-call-directive: func [
 		body [block!] global?
-		/local name spec cmd types type arg path ctx offset
+		/local name spec cmd types type type-name arg path ctx offset
 	][
 		name: body/1
 		switch/default type?/word name [
@@ -4756,7 +4795,9 @@ red: context [
 				if find [any-type! object!] type [type: none]
 			]
 			offset: either type [
-				cmd: to path! reduce [to word! form get type 'push]
+				type-name: form type
+				take/last type-name
+				cmd: to path! reduce [to word! type-name 'push]
 				if global? [insert cmd pick [exec red] type = 'event!] ;@@ ad-hoc treatment of event!...
 				-1
 			][
@@ -5099,10 +5140,10 @@ red: context [
 			if store [
 				obj: entry/2
 				either set-path? name [
-					do reduce [to set-path! join-obj-stack to path! name obj] ;-- set object in shadow tree
+					safe-set-object-path join-obj-stack to path! name obj
 				][
 					unless tail? next obj-stack [		;-- set object in shadow tree (if sub-object)
-						do reduce [to set-path! join-obj-stack name obj]
+						safe-set-object-path join-obj-stack name obj
 					]
 				]
 			]
@@ -5128,10 +5169,10 @@ red: context [
 				if store [
 					obj: entry/2
 					either set-path? name [
-						do reduce [to set-path! join-obj-stack to path! name obj] ;-- set object in shadow tree
+						safe-set-object-path join-obj-stack to path! name obj
 					][
 						unless tail? next obj-stack [		;-- set object in shadow tree (if sub-object)
-							do reduce [to set-path! join-obj-stack name obj]
+							safe-set-object-path join-obj-stack name obj
 						]
 					]
 				]
@@ -5194,7 +5235,7 @@ red: context [
 		]
 	]
 	
-	comp-source: func [code [block!] /local user main saved mods][
+	comp-source: func [code [block!] /local user main saved saved-name mods][
 		output: make block! 10000
 		comp-init
 		
@@ -5208,15 +5249,20 @@ red: context [
 		mods: tail output
 		append output [#user-code]
 		foreach module needed [
+			module: clean-path module
 			saved: if script-path [copy script-path]
+			saved-name: script-name
 			saved-main: if main-path [copy main-path]
 			saved-include-stk: copy include-stk
 			saved-script-stk: copy script-stk
 			script-path: first split-path module
+			script-name: module
+			append script-stk module
 			pc: next compiler-preprocessor/expand load-source/hidden module job
 			unless job/red-help? [clear-docstrings pc]
 			comp-block
 			script-path: saved
+			script-name: saved-name
 			main-path: saved-main
 			include-stk: saved-include-stk
 			script-stk: saved-script-stk
@@ -5418,9 +5464,14 @@ red: context [
 				src/3 = 'Red
 				block? src/4
 			][src: skip src 2]						;-- canonical dual-host source
-			unless all [src src/1 = 'Red block? src/2][
+			unless all [
+				src
+				block? src/2
+				any [src/1 = 'Red src/1 = first [Red/System]]
+			][
 				throw-error ["invalid Red source header:" file]
 			]
+			; Stage0's lexer consumes the language marker and leaves the header block.
 			src: next src
 		][
 			unless hidden [script-name: 'in-memory]

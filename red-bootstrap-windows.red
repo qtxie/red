@@ -4,6 +4,8 @@ Red [
 ]
 
 compiler-root: system/options/path
+; The core compiler does not load View, but it needs the datatype token to compile View targets.
+event!: make datatype! #get-definition TYPE_EVENT
 
 
 ; The bootstrap backend deliberately contains only dynamic Windows/IA-32 PE
@@ -21,6 +23,9 @@ compiler-root: system/options/path
 #include %compiler/redbin-emitter.red
 #include %compiler/frontend.red
 #include %compiler/bootstrap-options.red
+
+; The compiler retains large host graphs that are not fully covered by precise GC roots yet.
+recycle/off
 
 bootstrap-version: "0.6.6-selfhost.1-windows"
 red-system-marker: first [Red/System]

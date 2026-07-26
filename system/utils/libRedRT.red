@@ -45,7 +45,9 @@ libRedRT: context [
 		clean-path join root-dir file
 	]
 
-	exports-data: transcode/one read/binary get-path exports-file
+	exports-data: get-path exports-file
+	exports-data: read/binary exports-data
+	exports-data: transcode exports-data
 	funcs: first exports-data
 	vars: second exports-data
 	user-funcs: tail funcs
@@ -139,49 +141,75 @@ libRedRT: context [
 	]
 
 	undecorate: func [sym [word! path!]][
-		any [find/match sym: form sym "exec/" sym]
+		sym: form sym
+		if find/match sym "exec/" [remove/part sym 5]
+		sym
 	]
 
-	make-exports: func [functions exports job /local name file][
+	compiler-name: func [value [word! path!]][
+		either path? value [system-dialect/compiler/path-to-word value][to word! value]
+	]
+
+	make-exports: func [functions exports job /local name spelling file data extra entry][
 		foreach [name spec] functions [
+			spelling: form name
 			if all [
-				pos: find/match form name "exec/"
-				not find pos slash
+				find/match spelling "exec>"
+				not find skip spelling 5 ">"
 			][
-				append/only funcs transcode/one form name
+				name: system-dialect/compiler/undecorate name
+				if all [
+					path? name
+					(length? name) = 2
+					name/1 = 'exec
+				][
+					append/only funcs name
+				]
 			]
 		]
 		if exists? file: get-path extras-file [
-			funcs: unique append funcs transcode read/binary file
+			data: read/binary file
+			data: transcode data
+			foreach extra data [
+				unless find/only funcs extra [append/only funcs extra]
+			]
 		]
 		foreach def funcs [
 			unless all [none? job/GUI-engine def = 'exec/gui/OS-alert] [
-				name: to word! form def
-				repend exports [name undecorate def]
-				unless select/only functions name [
+				name: compiler-name def
+				entry: system-dialect/compiler/find-functions name
+				unless entry [
 					print ["*** libRedRT Error: definition not found for" def]
 					halt
 				]
 				system-dialect/compiler/flag-callback name none
+				repend exports [entry/1 undecorate def]
 			]
 		]
 		foreach [def type] vars [
-			repend exports [to word! form def undecorate def]
+			repend exports [compiler-name def undecorate def]
 		]
 	]
 
-	obj-to-path: func [list tree /local pos o][
+	obj-to-path: func [
+		list tree /at path [path!]
+		/local pos o field child-path sym obj ctx id proto opt w
+	][
+		unless at [path: obj-path]
 		foreach [sym obj ctx id proto opt] list [
-			if 2 < length? obj-path [
-				pos: find tree obj
-				change/only pos to paren! reduce [append copy obj-path sym]
+			if 2 < length? path [
+				pos: find/same/skip next tree obj 6
+				change/only pos to paren! reduce [append copy path sym]
 			]
-			if object? obj [
-				foreach w next first obj [
-					if object? o: get in obj w [
-						append obj-path transcode/one mold/flat sym	;-- clean-up unwanted newlines hints
-						obj-to-path reduce [w o none none none none] tree
-						remove back tail obj-path
+			if all [object? obj not none? sym][
+				foreach w words-of obj [
+					field: in obj w
+					if field [
+						o: get field
+						if object? :o [
+							child-path: append copy path transcode/one mold/flat sym
+							obj-to-path/at reduce [w o none none none none] tree child-path
+						]
 					]
 				]
 			]
@@ -189,7 +217,7 @@ libRedRT: context [
 		tree
 	]
 
-	process: func [job functions exports /local name list pos tmpl words lits file base-dir lib-name][
+	process: func [job functions exports /local name list pos tmpl words lits file base-dir lib-name globals contexts][
 		if find [Windows macOS] job/OS [
 			append funcs [
 				red/image/push
@@ -272,7 +300,7 @@ libRedRT: context [
 				name: last ctx
 				append pos to set-word! name
 				new-line back tail pos yes
-				name: to word! form def
+				name: compiler-name def
 				append pos undecorate def
 
 				spec: copy/deep functions/:name/4
@@ -364,13 +392,15 @@ libRedRT: context [
 			remove/part skip pos -3 5
 		]
 		replace/all lits 'get-root-node 'get-root-node2
+		globals: to block! red/globals
+		contexts: to block! red/contexts
 
 		tmpl: mold/all reduce [
 			new-line/all/skip to-block red/functions yes 2
 			red/redbin/index
-			red/globals
+			globals
 			obj-to-path list: copy/deep red/objects list
-			red/contexts
+			contexts
 			red/actions
 			red/op-actions
 			words

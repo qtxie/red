@@ -427,6 +427,27 @@ Red/System [
 			fooo
 			--assert e = 456
 	]
+
+	--test-- "nsw5 - innermost function in nested with context"
+		nsw5-result: 0
+		nsw5-root: context [
+			init: does [nsw5-result: 1]
+		]
+		with nsw5-root [
+			exec: context [
+				init: does [nsw5-result: 2]
+				gui: context [
+					init: does [nsw5-result: 3]
+					time-meter: context [
+						freq: 0
+						init: does [freq: 1 nsw5-result: 4]
+						start: does [if zero? freq [init]]
+					]
+				]
+			]
+			exec/gui/time-meter/start
+		]
+		--assert nsw5-result = 4
 	
 ===end-group===
 
@@ -528,4 +549,3 @@ Red/System [
 ===end-group===
 
 ~~~end-file~~~
-

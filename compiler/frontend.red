@@ -1161,6 +1161,18 @@ red: context [
 			repend globals [name 'unset!]
 		]
 	]
+
+	register-redbin-global: func [
+		original [word! set-word! lit-word! get-word! refinement!]
+		/local name spelling
+	][
+		name: to word! original
+		spelling: form name
+		if spelling <> (clean-lf-flag name) [
+			add-symbol/with name name
+			add-global name
+		]
+	]
 	
 	push-call: func [name [word! tag!]][
 		append expr-stack name
@@ -3330,7 +3342,7 @@ red: context [
 				src-name: to word! original
 				unless global? [src-name: get-prefix-func src-name]
 				name: check-func-name src-name
-				add-symbol/with word: to word! clean-lf-flag name to word! clean-lf-flag original
+				add-symbol/with word: to word! clean-lf-flag name to word! original
 				unless any [
 					local-word? name
 					1 < length? obj-stack
@@ -4300,7 +4312,7 @@ red: context [
 		name: original: pc/1
 		pc: next pc
 		unless local-word? name: to word! clean-lf-flag name [
-			add-symbol name
+			add-symbol/with name to word! original
 			add-global name
 		]
 		
@@ -5441,7 +5453,7 @@ red: context [
 		if all [job/type = 'dll job/OS <> 'Windows][job/PIC?: yes]	;-- ensure PIC mode is enabled
 	]
 	
-	process-needs: func [header [block!] src [block!] /local list file mods][
+	process-needs: func [header [block!] src [block!] /local list file mods entry module-name][
 		either all [
 			list: select header first [Needs:]
 			find [word! lit-word! block!] type?/word list	;-- do not process other types
@@ -5452,10 +5464,15 @@ red: context [
 			job/modules: list
 			mods: make block! 2
 			
-			foreach mod list [
-				file: find standard-modules mod
+			foreach module-name list [
+				file: none
+				entry: standard-modules
+				while [not tail? entry][
+					if equal? (form entry/1) (form module-name) [file: entry break]
+					entry: skip entry 3
+				]
 				unless file [
-					throw-error ["module not found:" mod]
+					throw-error ["module not found:" module-name]
 				]
 				all [
 					any [file/3 = 'all find file/3 job/OS]
@@ -5616,3 +5633,4 @@ compiler-redbin-emitter/front-get-RS-type-ID: :red/get-RS-type-ID
 compiler-redbin-emitter/front-local-word?: :red/local-word?
 compiler-redbin-emitter/front-get-word-index: :red/get-word-index
 compiler-redbin-emitter/front-find-binding: :red/find-binding
+compiler-redbin-emitter/front-register-global: :red/register-redbin-global

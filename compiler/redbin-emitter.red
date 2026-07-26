@@ -92,6 +92,7 @@ compiler-redbin-emitter: context [
 	front-local-word?: func [name [word!]][false]
 	front-get-word-index: func [name [word!] /with context [word!]][none]
 	front-find-binding: func [word [any-word!]][none]
+	front-register-global: func [word [word! set-word! lit-word! get-word! refinement!]][none]
 
 	header:		make binary! 10'000
 	buffer:		make binary! 200'000
@@ -466,6 +467,7 @@ compiler-redbin-emitter: context [
 			if entry: find contexts ctx [ctx-field: entry/3]
 		]
 
+		do [front-register-global word]
 		if set? [emit-byte CP_GSET]						;-- global-set: value record follows
 		either any [ctx-field = -1 none? idx idx < 0] [
 			emit-tag type								;-- canonical form: global binding

@@ -3387,7 +3387,7 @@ red: context [
 		bind-function body shadow
 		
 		body-code: either job/red-store-bodies? [
-			body-idx: red-compiler-emit-block body
+			body-idx: red-compiler-emit-block/with body ctx
 			reduce ['get-root body-idx]
 		][
 			[null]

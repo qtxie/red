@@ -397,6 +397,36 @@ stack: context [										;-- call stack
 		arguments: ctop/prev
 		top: arguments
 	]
+
+	unroll-to: func [
+		target [int-ptr!]
+		/local
+			result [red-value!]
+			target-frame [call-frame!]
+			frame [call-frame!]
+			ctx   [red-context!]
+			type  [integer!]
+	][
+		target-frame: as call-frame! target
+		result: arguments
+		if ctop > target-frame [result: target-frame/prev]
+		frame: ctop
+		while [frame > target-frame][
+			frame: frame - 1
+			type: CALL_STACK_MASK and frame/header
+			if type = FRAME_FUNCTION [
+				if frame/fctx <> 0 [
+					ctx: TO_CTX(frame/fctx)
+					ctx/values: frame/saved
+				]
+			]
+		]
+		frame: target-frame - 1
+		copy-cell result frame/prev
+		arguments: frame/prev
+		top: result + 1
+		ctop: frame
+	]
 	
 	unroll-loop: func [inner? [logic!]][
 		#if debug? = yes [if verbose > 0 [print-line "stack/unroll-loop"]]

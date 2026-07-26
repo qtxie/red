@@ -1361,10 +1361,10 @@ red: context [
 		]
 	]
 	
-	is-object?: func [expr /local pos name entry][
-		; Flat objects registry only. Shadow-tree `do path` evaluation is unsafe
-		; under compiled Stage1 (path access errors escape attempt and abort the
-		; compiler). Nested make <proto> cases should register by name.
+	is-object?: func [expr /local pos name entry found][
+		; Prefer last registry match for a given access word. First-match returned
+		; stale global shadows when the same word (e.g. `new`) was reused in later
+		; scopes, breaking make-chain method inheritance (wrong TO_CTX / missing get-a).
 		unless find [word! get-word! path! object!] type?/word expr [return none]
 		if object? :expr [return expr]
 		name: case [
@@ -1373,13 +1373,15 @@ red: context [
 			true [none]
 		]
 		unless name [return none]
+		found: none
 		entry: objects
 		while [not tail? entry][
-			if all [entry/1 = name object? entry/2][return entry/2]
+			if all [entry/1 = name object? entry/2][found: entry/2]
 			entry: skip entry 6
 		]
-		none
+		found
 	]
+
 	obj-func-call?: func [name [any-word!] /local obj][
 		if any [rebol-gctx = obj: binding-of name bindings/shadow-context-of obj][return no]
 		select-obj obj
@@ -2083,13 +2085,11 @@ red: context [
 					insert-lf -3
 				]
 				map? :value [
-					;-- Stage1 redbin TYPE_MAP via #!map! marker was producing blocks;
-					;-- store body as a plain block and build the map at runtime.
-					value: copy to block! value
-					emit compose [
-						map/push map/make null as red-value! get-root (red-compiler-emit-block value) 0
-					]
-					insert-lf -6
+					;-- Real map! (Stage1). Encode as redbin TYPE_MAP via #!map! marker,
+					;-- same runtime shape as Stage0: map/push as red-hash! get-root N.
+					value: head insert copy to block! value #!map!
+					emit compose [map/push as red-hash! get-root (red-compiler-emit-block value)]
+					insert-lf -3
 				]
 				float? :value [
 					emit 'float/push64
@@ -2274,38 +2274,46 @@ red: context [
 	
 	inherit-functions: func [							 ;-- multiple inheritance case
 		new [object!] extend [object!]
-		/local symbol name entry value pos cand
+		/local symbol name entry value pos path-ext path-new
 	][
+		;-- Stage0 algorithm with Stage1 object identity (select/same -> ctx).
+		;-- objects layout: [symbol obj ctx id proto events] (skip 6).
+		;-- select/same objects obj returns ctx (value after obj). Fallback must
+		;-- use pos/2 (ctx), not pos/-1 (access symbol) — wrong decoration path
+		;-- made find bodies pick an unrelated method and emit bad TO_CTX.
 		foreach word words-of extend [
 			value: get in extend word
 			if any [same? :value function! value = function! function? :value][
-				; Resolve source method under ctx or access-word decoration.
-				symbol: none
-				foreach cand reduce [
-					all [select-obj extend decorate-obj-member word select-obj extend]
-					all [pos: find-obj extend word? pos/-1 decorate-obj-member word pos/-1]
-				][
-					if all [word? :cand find functions cand][symbol: cand break]
+				path-ext: select-obj extend
+				unless path-ext [
+					if pos: find-obj extend [path-ext: pos/2]
 				]
-				if symbol [
-					name: decorate-obj-member word select-obj new
-					unless find functions name [					;-- avoid redefine on multi-inherit overlap
+				path-new: select-obj new
+				unless path-new [
+					if pos: find-obj new [path-new: pos/2]
+				]
+				if all [path-ext path-new][
+					symbol: decorate-obj-member word path-ext
+					if find functions symbol [
+						name: decorate-obj-member word path-new
 						repend functions [name select functions symbol]
-						either entry: find bodies symbol [		;-- not allowed for libRedRT client programs
-							append bodies name
-							append bodies do [rebind-body symbol entry new]
-						][
-							redirect-to literals [
-								emit compose [#define (decorate-func name) (decorate-func symbol)]
+						unless find bodies name [
+							either entry: find bodies symbol [
+								append bodies name
+								append bodies do [rebind-body symbol entry new]
+							][
+								redirect-to literals [
+									emit compose [#define (decorate-func name) (decorate-func symbol)]
+								]
 							]
+							add-symbol name
 						]
-						add-symbol name
 					]
 				]
 			]
 		]
 	]
-	
+
 	comp-context: func [
 		/with word
 		/extend proto [object!]
@@ -2438,6 +2446,8 @@ red: context [
 		]
 		
 		symbol: either path [ctx][
+			; Unbind previous access-word on both registries so is-object? name
+			; lookup (and Stage0-style reuse of the word) hits the new shadow.
 			if pos: find get-obj-base name name [pos/1: none] ;-- unbind word with previous object
 			; Under compiled Red, context? of a freshly loaded set-word may not
 			; compare equal with the boot-time rebol-gctx snapshot even when both
@@ -2530,9 +2540,8 @@ red: context [
 			insert-lf -4
 		]
 		if all [not body? not passive][
-			; First prototype methods not present on second (make a b has no body).
-			if object? last proto [inherit-functions obj last proto]
-			if object? :new [inherit-functions obj new]
+			; Stage0: inherit only from the second prototype object (`new`).
+			inherit-functions obj new
 			emit reduce ['object/transfer ctx2 ctx]
 			insert-lf -3
 		]
@@ -2565,7 +2574,11 @@ red: context [
 					obj-stack: to path! path-values
 				]
 				pc: next pc
+				;-- Sticky object ctx for redbin emit-block/with (issue #2920: d: [e]).
+				;-- Not on ctx-stack (would break find-contexts / emit-deep-check).
+				compiler-redbin-emitter/object-with-ctx: ctx
 				comp-next-block yes
+				compiler-redbin-emitter/object-with-ctx: none
 				obj-stack: saved						;-- restore objects stack
 			]
 			'else [
@@ -2665,8 +2678,10 @@ red: context [
 	comp-try: has [path all? keep? mark body call handlers][
 		all?: keep?: no
 		if path? path: pc/-1 [
-			all?:  to logic! find path 'all
-			keep?: to logic! find path 'keep
+			;-- /same: Red FIND would match get-word! :all to word! all (Rebol does not).
+			;-- try/:all is dynamic; only static try/all selects mark-try-all.
+			all?:  to logic! find/same path 'all
+			keep?: to logic! find/same path 'keep
 		]
 		call: pick [try-all try] all?
 		
@@ -3717,7 +3732,8 @@ red: context [
 			]
 			call: pc/-1
 			foreach [flag opt][any? any case? case only? only some? some][
-				set flag pick [0 -1] to logic! all [path? call find call opt]
+				;-- /same: avoid matching get-word refinements (set/:any) as static flags
+				set flag pick [0 -1] to logic! all [path? call find/same call opt]
 			]
 			emit-open-frame 'set
 			comp-expression
@@ -3738,8 +3754,9 @@ red: context [
 			pc: next pc
 		][
 			call: pc/-1
-			case?: to logic! all [path? call find call 'case]
-			any?:  to logic! all [path? call find call 'any]
+			;-- /same: avoid matching get-word refinements (get/:any) as static flags
+			case?: to logic! all [path? call find/same call 'case]
+			any?:  to logic! all [path? call find/same call 'any]
 			emit-open-frame 'get
 			comp-substitute-expression
 			emit-native/with 'get reduce [pick [0 -1] any? pick [0 -1] case?]

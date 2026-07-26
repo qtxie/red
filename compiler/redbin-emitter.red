@@ -104,7 +104,8 @@ compiler-redbin-emitter: context [
 	word-index:	-1								;-- last emit-word/root return (Stage1-safe)
 	string-index:	-1							;-- last emit-string/root return (Stage1-safe)
 	typeset-index:	-1							;-- last emit-typeset/root return (Stage1-safe)
-	pending-with-ctx: none						;-- Stage1-safe substitute for /with
+	pending-with-ctx: none
+	object-with-ctx: none					;-- sticky object ctx for body literals (#2920)						;-- Stage1-safe substitute for /with
 	pending-sub?: no							;-- Stage1-safe substitute for /sub
 	pending-root?: no							;-- Stage1-safe substitute for /root
 	pending-set?: no							;-- Stage1-safe substitute for /set?
@@ -485,7 +486,7 @@ compiler-redbin-emitter: context [
 	
 	emit-block: func [
 		blk [any-block! path! lit-path! get-path! set-path!] /with main-ctx [word!] /sub
-		/local type item binding ctx idx emit? multi-line? ofs
+		/local type item binding ctx idx emit? multi-line? ofs body entry pos value
 	][
 		; Merge refinement args with Stage1-safe pending fields (refinements on
 		; object method paths can be dropped by the native compiler).
@@ -494,13 +495,20 @@ compiler-redbin-emitter: context [
 				with: yes
 				main-ctx: pending-with-ctx
 			]
+			if all [not with word? object-with-ctx][
+				with: yes
+				main-ctx: object-with-ctx
+			]
 		]
 		if pending-sub? [sub: yes]
 		if profile? [profile blk]
 		
 		type: case [
 			get-path? :blk ['get-path]
-			blk/1 = #!map! [
+			all [
+				issue? :blk/1
+				any [blk/1 = #!map! (form blk/1) = "!map!"]
+			][
 				remove blk
 				'map
 			]
@@ -528,6 +536,7 @@ compiler-redbin-emitter: context [
 			get-path	TYPE_GET_PATH
 			map			TYPE_MAP
 		] type
+		unless type [type: 'TYPE_BLOCK]
 		
 		preprocess-directives blk
 		ofs: (index? blk) - 1
@@ -612,15 +621,17 @@ compiler-redbin-emitter: context [
 						point2D!  [emit-point reduce [item/x item/y]]
 						point3D!  [emit-point reduce [item/x item/y item/z]]
 						map!      [
+							;-- Keep #!map! at series head (insert returns after the marker).
+							body: head insert copy to block! item #!map!
 							either with [
 								pending-with-ctx: main-ctx
 								pending-sub?: yes
-								emit-block insert copy to block! item #!map!
+								emit-block body
 								pending-sub?: no
 								pending-with-ctx: none
 							][
 								pending-sub?: yes
-								emit-block insert copy to block! item #!map!
+								emit-block body
 								pending-sub?: no
 							]
 						]

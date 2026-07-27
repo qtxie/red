@@ -16,42 +16,56 @@ This plan distinguishes two goals:
 The first goal is the bootstrap-critical path. The second goal finishes the
 migration and prevents Rebol from remaining an implicit maintenance dependency.
 
+## Current Cutover Decision
+
+As of 2026-07-27, Windows x64 development has crossed the Stage1 boundary.
+Commit `22a832e95` plus the GC and global case-alias fixes in the current tree
+passes the complete Stage1 Red and Red/System unit matrices, and
+`build/self-hosting/red-bootstrap-stage1-x64-gc-fixed.exe` is the active
+bootstrap seed. Its SHA-256 is
+`13476CD765F640E975DEA357FA2F6B425C6AD49A9E90770FEEAC07A0BCF4BDC0`.
+
+- All next Windows x64 compiler, runtime, and test builds use this Stage1 seed.
+- Rebol Stage0 is removed from the normal build, test, parity, and debugging
+  workflow. It is retained only as an explicitly requested recovery or
+  historical audit tool.
+- The next compiler generation is Stage2 built by Stage1. Stage2 then builds
+  Stage3 for the fixed-point comparison.
+- Other targets must be added to the Red-hosted compiler; they do not justify
+  restoring Stage0 to the primary workflow.
+- Stage0 was used once, by explicit request, to recover this seed after the old
+  `fixed24` bootstrap driver was found to call `recycle/off`. Normal work resumes
+  from the GC-on Stage1 seed.
+- References below to Rebol behavior remain migration history unless a section
+  explicitly identifies an unfinished source-port task.
+
 ## Implemented Checkpoints
 
-The transition has an executable Red-hosted foundation. The compiler front end,
-Red/System emitter, IA-32 target, PE/ELF/Mach-O format emitters, object readers,
-and static-link boundary are now directly included from Red. The current
-interpreter executes the complete compiler path; a compiled full-backend build
-currently reaches native code generation but exceeds Red's global-variable
-space limit (the smaller compiled self-host core remains green):
+The Windows x64 transition now has a compiled, Red-hosted bootstrap foundation:
 
-- `red-selfhost.red` compiles directly with the documented Stage 0 command and
-  has no encapper or `build.r` dependency in its literal include closure.
-- `tools/self_hosting/selfhost.py` records the source baseline, generated target
-  registry, Rebol-only API usage, and normalized differential
-  artifacts. The Stage 0 oracle corpus passes across IA-32/x86-64/ARM/ARM64 and
-  PE/ELF/Mach-O.
-- `compiler/` contains Red-native integer, IEEE-754, Unicode, path, virtual
-  struct, SHA-256, phase timing, binding identity, option, extractor, target
-  registry, and canonical-source runtime extraction. Each has direct-entrypoint
-  checks; generated target files fail verification when their inputs drift.
-- `system/compiler.red` now carries every detected top-level method from the
-  current `system/compiler.r`, including the post-2018 integer, union, overflow,
-  ABI, and ARM64-related work. It passes a native `transcode` source gate and
-  executes the complete current backend closure through Red.
-- Current PE/ELF output from the Red-hosted linker is byte-identical to the
-  Rebol oracle after only timestamp/checksum normalization. The default Red icon
-  is embedded as compiler data in `compiler/embedded-assets.red`; generated PE
-  resources contain the actual ICO payload and the pure-Red checksum matches
-  Windows `MapFileAndCheckSumW`.
+- `build/self-hosting/red-bootstrap-stage1-x64-gc-fixed.exe` is a PE32+ x64
+  compiler built from the Red frontend and Red/System backend.
+- The Stage1 compiler passes all 60 non-View Red unit files in development mode:
+  8,801 tests and 16,849/16,849 assertions.
+- It passes the Windows x64 Red/System suite: 10,575 tests and
+  12,640/12,640 assertions.
+- It passes the release-mode `points-test`: 142/142 assertions.
+- It builds the PE32+ x64 `libRedRT.dll` used by development mode, including the
+  CSV and JSON codecs.
+- Startup GC remains active while the Stage1 compiler builds and runs these
+  tests. Disabling GC is not part of the supported bootstrap path.
+- Stage1 builds a runnable Stage2 after 635 collector cycles.
+- The active driver is `red-bootstrap-windows.red`; the compiler frontend,
+  Red/System compiler, x64 target, PE linker, and runtime builder are Red
+  sources in the current tree.
 
 ## Completion Criteria
 
 The migration is complete only when all of the following are true:
 
-- A fixed, checksummed Red bootstrap executable builds a Stage 1 compiler from a
-  clean checkout without Rebol installed or available on `PATH`.
-- Stage 1 builds Stage 2, and Stage 2 builds Stage 3 from the same sources.
+- A fixed, checksummed Stage1 bootstrap executable builds Stage2 from a clean
+  checkout without Rebol installed or available on `PATH`.
+- Stage2 builds Stage3 from the same sources and manifest.
 - Stage 2 and Stage 3 produce identical normalized compiler intermediates and
   identical binaries after excluding only documented, intentional metadata. The
   end goal is bit-for-bit equality.
@@ -135,10 +149,13 @@ Rebol-free-tree criterion.
 ## Architectural Decision
 
 Use a **parity-first reimplementation of the current compiler** as the critical
-path. The current Rebol compiler defines the observable contract, not the shape
-of the implementation. Porting a function literally is optional; simplifying
-the data flow, removing compatibility scaffolding, precomputing tables, and
-using faster algorithms are expected when the differential gates stay green.
+path. The verified Windows x64 Stage1 compiler and current `HEAD` define the
+active observable contract, not the shape of the implementation. The committed
+Rebol sources remain useful algorithm and migration references, but executing
+Stage0 is no longer a normal parity step. Porting a function literally is
+optional; simplifying the data flow, removing compatibility scaffolding,
+precomputing tables, and using faster algorithms are expected when the
+differential gates stay green.
 Selectively reuse the best algorithms from `system2` when their contracts are
 covered; do not require the unfinished `system2` rewrite as a prerequisite.
 
@@ -150,11 +167,11 @@ functions that Red already provides.
 
 Reasons:
 
-- The current Rebol-hosted compiler is the only implementation with the full
-  current target, object-format, static-link, and test surface.
+- The Windows x64 Stage1 compiler is the current tested implementation and the
+  seed from which the next compiler generation is built.
 - A parity-first reimplementation permits component-by-component differential
-  testing against a working oracle while leaving room for a smaller and faster
-  Red design.
+  testing against that recorded seed while leaving room for a smaller and
+  faster Red design.
 - Replacing the host language and the compiler architecture simultaneously
   makes failures difficult to localize.
 - Self-hosting requires the compiler to be implemented in Red; it does not
@@ -174,8 +191,8 @@ successor of `encapper/compiler.r`, not a new encapping layer.
 
 ## Non-Negotiable Invariants
 
-1. **Current behavior is the oracle.** Port current `HEAD`, not the 2024 or 2026
-   snapshots.
+1. **Current behavior is the oracle.** Use the verified x64 Stage1 behavior and
+   current `HEAD`, not old snapshots or an unrecorded Stage0 result.
 2. **No silent feature cuts.** A port may not comment out developer mode,
    dynamic paths, resources, `libRedRT`, compression, target formats, or errors
    merely to reach bootstrap.
@@ -199,8 +216,8 @@ successor of `encapper/compiler.r`, not a new encapping layer.
 9. **No duplicated runtime tree.** Generate a deterministic runtime bundle from
    canonical `runtime/` and `system/runtime/` sources instead of maintaining a
    copied `system2/runtime/` tree.
-10. **Every milestone is bisectable.** Keep the existing Rebol compiler green
-    until the corresponding Red component has passed its parity gate.
+10. **Every milestone is bisectable.** Keep the recorded Stage1 seed and the
+    completed Windows x64 test gates green until its successor passes them.
 11. **No Rebol compatibility substrate.** Replace Rebol-only plumbing with a
     small Red-native boundary or delete it. Compatibility code is justified only
     when a compiler-visible semantic difference has a failing parity test.
@@ -246,26 +263,24 @@ published form is <https://static.red-lang.org/red-system-specs.html>.
 Use explicit names for each compiler generation:
 
 ```text
-trusted Rebol + current red.r
+checksummed Windows x64 Stage1 seed
         |
-        | directly compiles red-selfhost.red once
+        | compiles red-bootstrap-windows.red from a clean tree
         v
-red-stage1
+Windows x64 Stage2
         |
-        | compiles exactly the same source manifest
+        | compiles the same source manifest and options
         v
-red-stage2
-        |
-        | compiles exactly the same source manifest
-        v
-red-stage3
+Windows x64 Stage3
 ```
 
-- **Stage 0** is the current Rebol-hosted compiler. It is allowed only in the
-  transition build and diverse-double-compilation checks.
-- **Stage 1** is built by Stage 0 from the new Red toolchain sources.
-- **Stage 2** is built by Stage 1 and is the first genuinely self-hosted result.
-- **Stage 3** is built by Stage 2 and proves the build reaches a fixed point.
+- **Stage1** is `red-bootstrap-stage1-x64-gc-fixed.exe`, the verified GC-on
+  bootstrap seed based on commit `22a832e95` and the current fixes.
+- **Stage2** is the first compiler built after this cutover, using Stage1 and
+  the current Red source tree.
+- **Stage3** is built by Stage2 and proves the build reaches a fixed point.
+- **Stage0** is outside the normal chain. It may be used only for an explicitly
+  requested recovery or historical audit and its output is not a release gate.
 
 The source manifest, target registry, build options, and bootstrap seed hash
 must be recorded beside each stage. The direct
@@ -273,10 +288,11 @@ entrypoint uses normal compiled includes for its static implementation closure;
 runtime sources remain canonical files read through the verified manifest. A
 stage must not consume files from a previous stage's cache.
 
-After cutover, CI starts from a small, versioned Red bootstrap binary with a
-published checksum. Periodically rebuild that seed through both the last trusted
-Rebol compiler and the current Red compiler to retain a diverse-double-
-compilation trust path while Rebol tooling is still obtainable.
+CI and developer builds start from the versioned Stage1 Red bootstrap binary
+with a published checksum. Seed provenance is protected by its recorded source
+revision, build command, complete test totals, and Stage2/Stage3 fixed-point
+rebuilds. A diverse-compiler audit may be performed separately, but it must not
+restore Rebol as a normal build dependency.
 
 ## Work Plan
 
@@ -303,8 +319,8 @@ Primary work:
 
 Gate:
 
-- The same current compiler compared with itself produces an empty differential
-  report on Windows and Linux.
+- The Stage1 baseline compared with itself produces an empty differential
+  report. Stage2 and later candidates use the same artifact schema.
 - The corpus covers every current Red/System target class and binary format,
   even where a target is compile-only in CI.
 
@@ -365,8 +381,8 @@ Primary work:
 
 Gate:
 
-- Rebol and Red lexers emit identical normalized token/value/location streams
-  for the corpus.
+- The Stage1 baseline and candidate lexers emit identical normalized
+  token/value/location streams for the corpus.
 - Both preprocessors emit structurally identical blocks and identical error
   locations.
 - Redbin output is byte-identical, and each implementation can decode the
@@ -405,7 +421,7 @@ Gate:
 
 - The Red-hosted compiler passes the complete existing IA-32 Red/System suite on
   Windows and Linux in interpreted and compiled forms.
-- Code/data buffers and relocation records match the Rebol compiler, or each
+- Code/data buffers and relocation records match the Stage1 baseline, or each
   reviewed difference has an explicit test proving equivalent behavior.
 
 ### Milestone 4: Port Linkers, Formats, And Remaining Targets
@@ -462,10 +478,10 @@ Primary work:
 - Add checkpoints for compiler output blocks, deferred function bodies,
   literals, symbol/context tables, Redbin payload, resources, and generated
   Red/System source.
-- Record phase timings and peak working-set data for the Rebol oracle and Red
-  implementation. A rewrite may change algorithms freely, but each accepted
-  slice must match or improve the documented baseline on its representative
-  corpus.
+- Record phase timings and peak working-set data for the Stage1 baseline and
+  candidate implementation. A rewrite may change algorithms freely, but each
+  accepted slice must match or improve the documented baseline on its
+  representative corpus.
 
 Gate:
 
@@ -474,7 +490,10 @@ Gate:
 - Release, development, debug, module, `libRedRT`, Red-only, and
   show-expanded modes have explicit passing integration tests.
 
-### Milestone 6: Implement The Direct Driver And Retire The Rebol Build
+### Milestone 6: Promote The Direct Driver And Retire The Rebol Build
+
+Status: complete for the normal Windows x64 path. Follow-up cleanup remains for
+other targets and auxiliary scripts.
 
 Primary files:
 
@@ -496,23 +515,26 @@ Primary work:
   encap cache or duplicate runtime source under another compiler directory.
 - Make Git version, build date, signing, and output paths explicit inputs so
   reproducibility tests can substitute deterministic values.
-- Provide one command that builds Stage 1 with the current Stage 0 compiler. In
-  this workspace, the transition command starts from the documented form:
+- Use the verified Stage1 seed to build Stage2. The standard Windows x64 command
+  is:
 
-  ```text
-  cmd /c D:\EE\QTool\rebcmdview.exe -cqs ./red.r -r -d -o <stage1> <bootstrap-driver.red>
+  ```powershell
+  build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe `
+      -r -d -t Windows-X86-64 `
+      -o build\self-hosting\red-bootstrap-stage2-x64-gc-fixed.exe `
+      red-bootstrap-windows.red
   ```
 
-- Provide a second command with the same interface that uses Stage 1 to build
-  Stage 2 from the exact same manifest.
+- Stage2 must expose the same command interface and build Stage3 from the exact
+  same manifest and options.
 
 Gate:
 
-- Stage 1 supports the full documented CLI and builds representative Red and
-  Red/System programs for every supported configuration.
-- Stage 1's compiler-phase benchmark is no slower than the Stage 0 baseline on
-  the published corpus, or includes a reviewed explanation and follow-up issue
-  for any intentional regression.
+- Stage1 supports the required Windows x64 CLI and passes the complete Red and
+  Red/System Windows x64 test matrices recorded above.
+- Stage2 matches or improves the recorded Stage1 compiler-phase benchmark, or
+  includes a reviewed explanation and follow-up issue for any intentional
+  regression.
 - A clean build produces no untracked source/cache files outside a designated
   build directory.
 
@@ -520,17 +542,17 @@ Gate:
 
 Primary work:
 
-- Build Stage 1 with Stage 0, Stage 2 with Stage 1, and Stage 3 with Stage 2 in
-  fresh directories with empty caches.
+- Starting from the recorded Stage1 seed, build Stage2 with Stage1 and Stage3
+  with Stage2 in fresh directories with empty caches.
 - Compare source manifests, generated definitions, expanded compiler source,
   Red compiler output, Red/System IR/code/data/relocations, and final binaries at
   each stage.
 - Run Stage 2 and Stage 3 against the full compiler/runtime corpus through the
   Red differential harness, not only a hello program or compiler smoke test.
-  Legacy test-runner parity moves to Milestone 8 because those runners are still
-  Rebol programs at this point.
+  Legacy test-runner parity moves to Milestone 8 where those runners are still
+  being ported.
 - Run the build in an environment where Rebol executables are absent and network
-  access is disabled after the bootstrap seed is supplied.
+  access is disabled after the Stage1 bootstrap seed is supplied.
 - Run a filesystem trace that fails on an attempted `.r` open or undeclared
   input.
 - Investigate every Stage 2/Stage 3 difference. Maintain a short, machine-readable
@@ -562,8 +584,8 @@ Gate:
 - `git ls-files '*.r'` is empty.
 - A repository-wide scan finds no Rebol executable names, Rebol headers, or
   Rebol-only file/API calls outside migration documentation.
-- All tests run under Red and report the same totals and failures as the final
-  Rebol-run baseline.
+- All tests run under Red and preserve the recorded Stage1 test totals while
+  fixing any explicitly tracked failures.
 - The full supported CI matrix passes using the self-hosted compiler and the
   ported Red test runners.
 
@@ -577,8 +599,8 @@ Primary work:
   run the existing target matrix.
 - Add a scheduled job that rebuilds the seed and compares it with the published
   artifact.
-- Keep diverse-double-compilation as a release audit for a bounded transition
-  period, but remove Rebol from required developer and CI workflows.
+- Keep any diverse-compiler comparison as an optional release audit that is
+  independent of the normal developer and CI workflows.
 - Update build and contributor documentation to describe the Red-only path.
 
 Gate:
@@ -613,26 +635,23 @@ Minimum continuous lanes during the migration:
 
 ## Suggested Change Sequence
 
-Keep reviewable changes smaller than the milestones:
+The active sequence after the Windows x64 cutover is:
 
-1. Differential harness, manifest inventory, and deterministic inputs.
-2. Host-contract tests and supported binding identity.
-3. Lexer and lexer parity corpus.
-4. Preprocessor and canonical runtime-ID extraction.
-5. Redbin and source-store replacement.
-6. Red/System utilities, loader, and compiler core.
-7. Target contract, emitter, and IA-32.
-8. PE/ELF linker parity, then ARM.
-9. Static/object linkers and formats.
-10. X86-64/ARM64/Mach-O parity.
-11. Red compiler front end in functional slices.
-12. Direct driver, verified dependency closure, and Stage 1 artifact.
-13. Stage 2/Stage 3 fixed-point CI.
-14. Test/generator/tool ports and `.r` removal.
-15. Red-only CI and bootstrap seed release.
-
-Do not begin mass file renaming in step 1. The early deliverable is an oracle
-that makes later translations measurable.
+1. Promote `red-bootstrap-stage1-x64-gc-fixed.exe` to a stable seed artifact and
+   record its SHA-256, source commit, build command, and verified test totals.
+2. Build Stage2 with Stage1 in a fresh directory using
+   `red-bootstrap-windows.red`.
+3. Build an x64 `libRedRT.dll` with Stage2 and rerun the complete development-
+   mode Red suite, Windows x64 Red/System suite, and representative release
+   tests.
+4. Build Stage3 with Stage2 from the same manifest and options. Compare the
+   expanded compiler source, generated Red/System, code/data/relocations, and PE
+   image with Stage2 after only documented metadata normalization.
+5. Add the Stage2/Stage3 fixed-point and full Windows x64 test gates to CI.
+6. Remove remaining normal-path `.r` loads and Rebol executable references from
+   build, test, and CI entrypoints.
+7. Port the remaining test runners, generators, tools, targets, and host
+   configurations into the Red-only path without reintroducing Stage0.
 
 ## Principal Risks And Controls
 
@@ -648,15 +667,14 @@ that makes later translations measurable.
 | Backend redesign delays self-hosting | Parity-first reimplementation first; `system2` IR remains optional until its contract is proven |
 | Literal translation preserves Rebol overhead | Parity-first phase design, generated registries, and benchmark gates |
 | Reproducibility is masked by broad normalization | Record all inputs; normalize only named metadata; compare intermediates |
-| A bootstrap binary weakens supply-chain trust | Checksums, provenance, fixed-point rebuilds, and diverse double compilation |
+| A bootstrap binary weakens supply-chain trust | Checksums, provenance, fixed-point rebuilds, and an optional independent diverse-compiler audit |
 | Direct entrypoint or target registry omits a dependency | Generated registry-based manifest and closure test |
 
-## First Executable Deliverable
+## Next Executable Deliverable
 
-The first implementation work should be Milestone 0, not another compiler file
-translation. Its concrete output is a command that runs a selected Red or
-Red/System fixture through two compiler commands and produces a structured diff
-of:
+The next implementation work is the Stage2/Stage3 fixed-point build. It must run
+a selected Red or Red/System fixture through the Stage1 baseline and candidate
+compiler commands and produce a structured diff of:
 
 1. preprocessing/lexing output,
 2. compiler intermediate output,
@@ -664,6 +682,6 @@ of:
 4. final binary metadata, and
 5. program output or diagnostic category.
 
-Once that harness can show the old direct ports' known semantic differences, it
-is strong enough to guide the current-tree port without repeating the earlier
-WIP dead ends.
+The deliverable is complete when Stage2 passes the recorded Windows x64 test
+matrices, Stage3 rebuilds from Stage2, and all remaining Stage2/Stage3
+differences are either eliminated or limited to documented metadata.

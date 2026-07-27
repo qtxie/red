@@ -24,8 +24,8 @@ event!: make datatype! #get-definition TYPE_EVENT
 #include %compiler/frontend.red
 #include %compiler/bootstrap-options.red
 
-; The compiler retains large host graphs that are not fully covered by precise GC roots yet.
-recycle/off
+; Keep collection enabled while the compiler builds its large intermediate graphs.
+recycle/on
 
 bootstrap-version: "0.6.6-selfhost.1-windows"
 red-system-marker: first [Red/System]

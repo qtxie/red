@@ -1141,14 +1141,22 @@ red: context [
 		reduce [var set-var]
 	]
 	
-	add-symbol: func [name [word!] /only /with original /local sym id alias][
+	add-symbol: func [name [word!] /only /with original /local sym id alias pos][
 		unless find/case symbols name [
 			if find symbols name [
 				if find/case/skip aliases name 2 [exit]
 				alias: decorate-series-var name
 				repend aliases [name alias]
 			]
-			sym: decorate-symbol name
+			; A global symbol alias must not depend on the current function's
+			; locals. Otherwise a same-spelled local suppresses the declaration
+			; alias while later global references still emit it.
+			pos: find/case/skip aliases name 2
+			sym: either pos [
+				decorate-symbol/no-alias pos/2
+			][
+				decorate-symbol/no-alias name
+			]
 			id: 1 + ((length? symbols) / 2)
 			unless only [repend symbols [name reduce [sym id]]]
 			repend sym-table [

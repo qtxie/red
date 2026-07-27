@@ -1,170 +1,138 @@
-# Handover: Stage1 self-hosting suite / IR parity
+# Handover: Windows x64 GC-on Stage1 cutover
 
-**Date:** 2026-07-26
-**Branch:** `red-64` (local commits ahead of origin)
-**Policy:** Root-cause compiler/runtime fixes; prefer Stage0 emission shapes; no Stage1-only context pins.
-**Working Stage1 binary:** `build/self-hosting/red-bootstrap-stage1.exe`
-**Recent commit:** `6bf94e6c6` - Stage1 object bindings and libRedRT dev mode
+**Date:** 2026-07-27
+**Branch:** `red-64`
+**Baseline commit:** `22a832e95` - Windows x64 Stage1 passes Red tests
+**Bootstrap compiler:** `build/self-hosting/red-bootstrap-stage1-x64-gc-fixed.exe`
+**Bootstrap SHA-256:** `13476CD765F640E975DEA357FA2F6B425C6AD49A9E90770FEEAC07A0BCF4BDC0`
+**Development runtime:** `libRedRT.dll`
 
-## Status summary
+## Compiler policy
 
-| Gate | Stage1 | Stage0 |
-|------|--------|--------|
-| evaluation-test | **294/294** | 294/294 |
-| object-test | **652/652** | 652/652 |
-| series-test | **1119/1119** | green |
-| function-test | **147/147** | green |
-| comparison-test | **558/558** | 558/558 |
-| preprocessor-test | **21/21** | green |
-| Core suite batch (~61) | **~52 PASS** | — |
-| redbin-codec-test | **1762/1762** | **1762/1762** |
-| parse-test | **1455/1455** (libRedRT dev mode) | 1455/1455 baseline |
-| recycle-test | compile succeeds | green |
-| case-folding-test | **192/192** | green |
-| lexer-test | **929/929** | green |
-| json/csv-test | module not found | modules wired in Stage0 |
-| Stage2 self-host | broken historically | n/a |
+The Rebol-hosted Stage0 compiler is retired from normal development. All next
+compiler, runtime, and test work must be compiled by the Windows x64 Stage1
+compiler above.
 
-Batch logs: `build/self-hosting/unit/suite/summary.txt`, `*.log`.
+The current seed was rebuilt once with the old Rebol Stage0 compiler after the
+previous `fixed24` driver was found to call `recycle/off`. The replacement calls
+`recycle/on`, fixes global case-alias emission, and is the active seed. This was
+an explicitly requested recovery build, not a return to Stage0 for normal work.
 
-The failure investigations below are retained as historical debugging context.
-The redbin, parse, recycle compile, case-folding, and lexer failures listed in
-those sections have since been fixed.
+The one-time recovery command was:
 
-## What landed recently (map + frontend)
-
-### Map literals `#[k: v]` (fixes compare-map-1 / #5259)
-
-**Was wrong:** nested/literal maps encoded without `#!map!` at **series head** (`insert` returns after the marker), so redbin wrote plain blocks; `type? #[x: 1]` became `block!`, mold like `[1]`. Suite could false-pass `<>` as block inequality.
-
-**Fix:**
-- `compiler/redbin-emitter.red`: `body: head insert copy to block! item #!map!` before `emit-block`; sturdier marker check; sticky `object-with-ctx` for #2920.
-- `compiler/frontend.red`: map literals emit Stage0 shape
-  `map/push as red-hash! get-root (emit-block [#!map! ...])`
-  (`#!map!` is **only** an internal redbin marker; Stage1 loads real `map!` values.)
-
-**Verified:** expr / nested / empty `#[]` / `#[x: #(none)]` all `map!`; comparison-test **558/558**.
-
-### Other frontend pieces in same commit
-
-- `is-object?`: **last** registry match (name reuse / inherit chains).
-- `inherit-functions`: decorate via object **ctx** (`pos/2`), Stage0-like `repend functions` + skip duplicate bodies.
-- Sticky `compiler-redbin-emitter/object-with-ctx` around object body compile (#2920) — **not** `ctx-stack`.
-- `find/same` for Stage1 refinement detection (`try/:all`, `get`/`set` flags). Leave Stage0 `encapper/compiler.r` plain `find` (Rebol has no `find/same`).
-- `stack/unroll-to` in `runtime/stack.reds` — Stage1 epilog still needs multi-frame pop (pure `unwind-last` AVs on large bootstrap).
-
-## redbin-codec-test: why still red (not maps)
-
-### Minimal repro (Stage1 only)
-
-```red
-///: load/as save/as none :// 'redbin 'redbin
-8 /// 3   ; Stage0 -> 2, Stage1 -> Script Error: a has no value (Where: mod)
+```powershell
+cmd /c D:\EE\QTool\rebcmdview.exe -cqs .\red.r -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe `
+    red-bootstrap-windows.red
 ```
 
-`//` is `make op! :modulo` (`environment/operators.red`). Body:
+- Do not invoke `red.r` through `rebcmdview.exe` for normal builds or tests.
+- Treat the current x64 Stage1 executable as the bootstrap seed.
+- The next compiler built from source is Stage2, not another Stage1.
+- Rebuild `libRedRT.dll` with Stage1 whenever development-mode runtime code
+  changes.
+- Keep Rebol Stage0 only as an explicit disaster-recovery or historical audit
+  tool. Using it requires a deliberate request; it is not a parity gate.
+- When an old algorithm is useful, inspect the committed `.r` source or Git
+  history. Do not execute Stage0 merely to copy its output.
 
-```red
-r: mod a absolute b
-either any [a - r = a r + b = b][0][r]
+This cutover currently applies to Windows x64. Other targets must be brought
+into the Red-hosted compiler rather than restoring Stage0 to the main workflow.
+
+## Verified baseline
+
+| Gate | Result |
+| --- | --- |
+| Stage1 image | PE32+ x64 (`8664`) |
+| Stage1 startup GC | active; 243 cycles in release `points-test` compilation |
+| Red unit suite, development mode | 8,801 tests; 16,849/16,849 assertions |
+| Red/System Windows x64 suite | 10,575 tests; 12,640/12,640 assertions |
+| `points-test`, release mode | 142/142 assertions |
+| Stage1 builds Stage2 | complete; 635 GC cycles; Stage2 starts successfully |
+| Stage1-built `libRedRT.dll` | PE32+ x64; CSV and JSON included |
+
+The Red suite covers all 60 non-View unit files in
+`tools/self_hosting/run-red-unit-tests.red`. The Red/System runner selects
+`struct-x64-test.reds` and `size-x64-test.reds` and uses an x64 `structlib.dll`.
+
+## Standard commands
+
+Set the compiler once in PowerShell:
+
+```powershell
+$stage1 = Resolve-Path .\build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe
 ```
 
-### Stage0 vs Stage1 after redbin of `://`
+Compile a release Red or Red/System program:
 
-| Check | Stage0 | Stage1 |
-|--------|--------|--------|
-| live `8 // 3` | 2 | 2 |
-| after roundtrip `8 /// 3` | **2** | **`a has no value`** |
-| `context?` of body word `a` | **`[a b local r]`** (function ctx) | **global `system/words`** |
-| compact bin size | **463** | **423** (-40) |
+```powershell
+& $stage1 -r -d -t Windows-X86-64 -o <output> <source>
+```
 
-Root cause class: **function/op body arg rebinding after redbin decode** (args land on global ctx). Not map emission. Same `runtime/redbin.reds` encode-op/decode-op; Stage1 image function/context shape or encode path drops ~40 bytes of context payload.
+Compile in development mode using `libRedRT.dll`:
 
-### Bisect
+```powershell
+& $stage1 -d -t Windows-X86-64 -o <output> <source>
+```
 
-- Values group through **object** (~line 360): PASS (~1344 asserts).
-- Including **op** section (`///: test ://`, `8 /// 3`): FAIL with mod/`a` error.
-- Isolated map roundtrips: PASS.
+Build Stage2 from the current sources:
 
-### Why hard
+```powershell
+& $stage1 -r -d -t Windows-X86-64 `
+    -o build\self-hosting\red-bootstrap-stage2-x64-gc-fixed.exe `
+    red-bootstrap-windows.red
+```
 
-1. Symptom points at `mod` / assert; real bug is **context rebind** on op! -> function! redbin.
-2. Double wrap: TYPE_OP + subtype function + context/symbols/references (`#4563` TBD in redbin).
-3. Same codec source; Stage0 vs Stage1 **in-memory function/context** (and/or GC/handles) differ — encode walks live cells.
-4. Full suite is large; iterate on the 5-line probe, not 1762 asserts.
+Rebuild the x64 development runtime with Stage1:
 
-### Fix direction (not done)
+```powershell
+& $stage1 -d -t Windows-X86-64 -o libRedRT.dll `
+    build\self-hosting\stage1-libredrt.red
+```
 
-- Diff Stage0 vs Stage1 compact redbin for `://` (missing context/reference records).
-- Trace `encode-function` / `decode-function` / context word binding for mezzanine ops under Stage1 image.
-- Confirm whether Stage1 env construction of `modulo`/`//` already differs before encode.
+Run all Red unit tests in development mode:
 
-## Other residual suite failures
+```powershell
+$env:RED_COMPILER = $stage1
+$env:RED_COMPILER_ARGUMENTS = '-t Windows-X86-64'
+& D:\EE\QTool\red-console.exe .\tools\self_hosting\run-red-unit-tests.red
+```
 
-| Test | Class | Notes |
-|------|--------|------|
-| parse-test | frontend binding | `PARSE - invalid rule: macros` near `expand-directives/clean [[] #macro word!]` |
-| recycle-test | Stage1 compile AV | ~`0046FADD` while compiling |
-| case-folding-test | GC/handle | `freed series handle` after frontend |
-| lexer-test | frontend | `type/1` on word! in `comp-context` / dialect |
-| json-test / csv-test | modules | `module not found` under Stage1 bootstrap |
-| functions-test | harness | name only; `function-test` already green |
+Run the Windows x64 Red/System suite:
 
-## Runtime allowlist / do-not
+```powershell
+$env:RED_SYSTEM_COMPILER = $stage1
+$env:RED_SYSTEM_COMPILER_ARGUMENTS = '-t Windows-X86-64'
+$env:RED_SYSTEM_STRUCTLIB = Resolve-Path .\build\self-hosting\structlib-x64.dll
+& D:\EE\QTool\red-console.exe .\tools\self_hosting\run-red-system-tests.red
+```
 
-**Keep (from prior GC work):** collector stack-handle + `flag-gc-scan`; allocator resolve hardening; hashtable re-resolve (**no pin**); crush; system/reactivity/tools Stage1 paths.
+`red-console.exe` is only the test-runner host here; it is not compiling the
+test programs. Watch it for a hung process after the runner exits.
 
-**Drop / avoid:** context/hashtable pins; object multi-inherit rebind hacks; treating interpreter `call-top` unwind as the permanent frame fix. The runtime cleanup is validated by `interpreter-compiled-stack-probe.red` (20,000 recursive interpreter/compiled transitions), but it does not replace the compiler-side `stack/unroll-to` work.
+## Next work
 
-**`stack/unroll-to`:** pragmatic Stage1 epilog until call-frame leaks fixed; Stage0 classic is `stack/unwind-last`. Long-term: find leaks, restore `unwind-last`, delete `unroll-to`.
+1. Rebuild `libRedRT.dll` with Stage2 and rerun both complete suites.
+2. Build Stage3 with Stage2 and compare Stage2/Stage3 expanded source, Red/System
+   output, relocations, and final PE images after normalizing only documented
+   metadata.
+3. Give the bootstrap seed a stable artifact name in artifact storage and record
+   its source commit, build command, and test totals beside the checksum above.
+4. Remove remaining normal-path `.r` loads and Rebol executable references from
+   build, test, and CI entry points.
+5. Port additional targets into the Red-hosted compiler without reintroducing a
+   Stage0 dependency.
 
-**Red `context?` = Rebol `bind?`:** call `context?` directly; no fabricated `bind?` routine.
-
-## Key files
+## Relevant files
 
 | Area | Path |
-|------|------|
-| Stage1 frontend | `compiler/frontend.red` |
-| Redbin emitter | `compiler/redbin-emitter.red` |
-| Lexer adapter | `compiler/lexer.red` |
-| Runtime redbin codec | `runtime/redbin.reds` |
-| Stack / epilog | `runtime/stack.reds` |
-| Ops | `environment/operators.red`, `environment/functions.red` (`mod`/`modulo`) |
-| Bootstrap | `red-bootstrap-windows.red` |
-| Stage0 host compiler | `encapper/compiler.r` (do not invent Red-only `find/same` there) |
-
-## Verify commands
-
-```bat
-REM Rebuild Stage1 (Rebol host)
-D:\EE\QTool\rebcmdview.exe -cqs ./red.r -r -o build/self-hosting/red-bootstrap-stage1.exe red-bootstrap-windows.red
-
-REM Map / comparison
-build\self-hosting\red-bootstrap-stage1.exe -r -o build\self-hosting\unit\suite\comparison-test.exe tests\source\units\comparison-test.red
-build\self-hosting\unit\suite\comparison-test.exe
-REM expect 558/558
-
-REM Minimal op redbin regression (Stage1 currently fails)
-REM ///: load/as save/as none :// 'redbin 'redbin
-REM print try [8 /// 3]
-REM Stage0: 2 ; Stage1: a has no value
-```
-
-Quick interpret (no long compile): `D:\EE\QTool\red-console.exe script.red` — watch for hung console CPU.
-
-## Suggested next order
-
-1. **redbin op/function context rebind** — minimal `://` probe; Stage0 vs Stage1 bin + `context?` of body args.
-2. **parse-test / macros** — binding/emission for preprocessor object fields (not runtime parse).
-3. Compile stability: recycle AV, case-folding freed handle, lexer `type/1`.
-4. Modules JSON/CSV for Stage1 bootstrap if those units are required.
-5. IR parity corpus Stage0 vs Stage1; only then claim suite green = parity.
-6. Call-frame leaks -> drop `unroll-to` -> Stage2 (`tracing?`, ns resolution).
-
-## Notes / non-goals
-
-- d85b port tree was planned then **reverted**; not current baseline.
-- Operator decoration may stay Red-native (`~op_add`); normalize in IR compares.
-- Do not push object ctx onto `ctx-stack` for body literals (breaks `find-contexts` / `emit-deep-check`).
-- Prefer Stage0 algorithm fidelity over permanent Stage1-only band-aids.
-'''
+| --- | --- |
+| Bootstrap driver | `red-bootstrap-windows.red` |
+| Red frontend | `compiler/frontend.red` |
+| Red/System compiler | `system/compiler-core.red` |
+| Windows x64 target | `system/targets/X86-64.red` |
+| Stage1 runtime export builder | `system/utils/libRedRT.red` |
+| Red unit runner | `tools/self_hosting/run-red-unit-tests.red` |
+| Red/System unit runner | `tools/self_hosting/run-red-system-tests.red` |
+| Long-term migration plan | `red-self-hosting-plan.md` |

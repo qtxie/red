@@ -824,4 +824,18 @@ if system/state/interpreted? [                      ;-- not yet supported by com
 		
 ===end-group===
 
+===start-group=== "case-colliding foreach words"
+
+	--test-- "foreach-local-case-alias"
+		case-alias-identity: func [file][file]
+		case-alias-count: func [/local count][
+			count: 0
+			foreach file ["a" "bb"] [count: count + length? file]
+			count
+		]
+		--assert "x" = case-alias-identity "x"
+		--assert 3 = case-alias-count
+
+===end-group===
+
 ~~~end-file~~~

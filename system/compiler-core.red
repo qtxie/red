@@ -4348,7 +4348,10 @@ system-dialect: context [
 						struct-type: resolve-aliased scan-types/1
 						struct-slots: emitter/struct-slots?/direct struct-type/2
 						struct-size: emitter/struct-size?/direct struct-type/2
-						if pass-struct-pointer?/aggregate spec struct-slots struct-size struct-type [
+						if all [
+							spec/2 = 'import
+							pass-struct-pointer?/aggregate spec struct-slots struct-size struct-type
+						][
 							temp-slots: temp-slots + struct-slots
 						]
 					]
@@ -4417,7 +4420,10 @@ system-dialect: context [
 								struct-size: emitter/struct-size?/direct struct-type/2
 								either all [
 									find [X86-64 ARM64] job/target
-									pass-struct-pointer?/aggregate spec struct-slots struct-size struct-type
+									all [
+										spec/2 = 'import
+										pass-struct-pointer?/aggregate spec struct-slots struct-size struct-type
+									]
 								][
 									emitter/push-struct-ref expr struct-type
 								][

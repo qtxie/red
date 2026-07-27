@@ -8,8 +8,8 @@ compiler-root: system/options/path
 event!: make datatype! #get-definition TYPE_EVENT
 
 
-; The bootstrap backend deliberately contains only dynamic Windows/IA-32 PE
-; support. Static linking and the other targets enter after the compiler can
+; The bootstrap backend contains dynamic Windows PE support for IA-32 and
+; x86-64. Static linking and the other targets enter after the compiler can
 ; rebuild this executable without Rebol.
 #include %system/compiler-windows-bootstrap.red
 
@@ -31,7 +31,7 @@ bootstrap-version: "0.6.6-selfhost.1-windows"
 red-system-marker: first [Red/System]
 
 print-usage: does [
-	print "Usage: red-bootstrap-windows [-r] [-u] [-d] [-dlib] [--red-only] [-o output.exe] source.red|source.reds"
+	print "Usage: red-bootstrap-windows [-r] [-u] [-d] [-dlib] [-t target] [--red-only] [-o output.exe] source.red|source.reds"
 ]
 
 fail-command: func [message][
@@ -94,9 +94,9 @@ compile-source: func [
 	unless all [
 		(compiler-system-job/job-get job 'OS) = 'Windows
 		(compiler-system-job/job-get job 'format) = 'PE
-		(compiler-system-job/job-get job 'target) = 'IA-32
+		find [IA-32 X86-64] compiler-system-job/job-get job 'target
 	][
-		fail-command "bootstrap supports only Windows IA-32 PE targets"
+		fail-command "bootstrap supports only Windows IA-32 or x86-64 PE targets"
 	]
 	if compiler-system-job/job-get job 'static-link? [fail-command "static linking is unavailable in the bootstrap compiler"]
 	; Full runtime until Stage1 libRedRT defs path is verified.
@@ -148,3 +148,4 @@ if error? :options [fail-command mold options]
 if compiler-options/option-get options 'help? [print-usage quit/return 0]
 if compiler-options/option-get options 'version? [print bootstrap-version quit/return 0]
 compile-source options
+quit/return 0

@@ -57,18 +57,18 @@ Red [
 	bitwise-op:	   [and or xor]
 	bitshift-op:   [>> << -**]
 
-	opp-conditions: [
+	opp-conditions: reduce [
 	;-- condition ------ opposite condition --
-		overflow?		 not-overflow?
-		not-overflow?	 overflow?
-		=				 <>
-		<>				 =
-		even?			 odd?
-		odd?			 even?
-		<				 >=
-		>=				 <
-		<=				 >
-		>				 <=
+		'overflow?		 'not-overflow?
+		'not-overflow?	 'overflow?
+		(to word! "=")	 (to word! "<>")
+		(to word! "<>")	 (to word! "=")
+		'even?			 'odd?
+		'odd?			 'even?
+		(to word! "<")	 (to word! ">=")
+		(to word! ">=")	 (to word! "<")
+		(to word! "<=")	 (to word! ">")
+		(to word! ">")	 (to word! "<=")
 	]
 
 	opposite?: func [cond [word!]][
@@ -261,7 +261,11 @@ Red [
 				if name = 'not [res: compiler-api/get-type args/1]
 			]
 			op [
-				either compiler-api/any-float? compiler-api/resolve-expr-type args/1 [
+				either any [
+					compiler-api/any-float? compiler-api/resolve-expr-type args/1
+					float? compiler-api/unbox args/1
+					float? compiler-api/unbox args/2
+				][
 					emit-float-operation name args
 				][
 					emit-integer-operation name args

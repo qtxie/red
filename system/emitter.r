@@ -282,7 +282,7 @@ emitter: make-profilable context [
 	store-global: func [
 		value type [word!] spec [block! word! none!]
 		/packed											;-- array elements use their natural size
-		/local size ptr by-val? pad-size list t f64? data-buf hex
+		/local size ptr by-val? pad-size list t f64? data-buf
 	][
 		data-buf: active-buf							;-- shadows context word, keeps body target-agnostic
 		if any [find [logic! function!] type logic? value][
@@ -379,9 +379,7 @@ emitter: make-profilable context [
 					integer? value
 					negative? value
 				][
-					hex: form to-hex value
-					if hex/1 = #"#" [remove hex]
-					value: to issue! rejoin [".u64h:" skip tail hex -8]
+					type: 'int64!
 				]
 				store-global value type none
 			]

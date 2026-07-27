@@ -50,6 +50,7 @@ compiler-options: context [
 				find ["-t" "--target"] token [
 					position: next position
 					if tail? position [return missing-value token]
+					option-set options 'target to string! position/1
 				]
 				find ["-o" "--output"] token [
 					position: next position
@@ -98,7 +99,7 @@ compiler-options: context [
 			compiler-system-job/for-source job to file! option-get options 'source
 		]
 		if option-get options 'output [
-			output: to file! option-get options 'output
+			output: to-red-file to file! option-get options 'output
 			either all [not empty? output (last output) = #"/"][
 				compiler-system-job/job-set job 'build-prefix output
 			][

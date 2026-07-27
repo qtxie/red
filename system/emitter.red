@@ -89,6 +89,8 @@ compiler-api: context [
 		invoke/full 'find-aliased reduce [type prefix position] none
 	]
 	get-attributes: func [spec [block!]][invoke 'get-attributes reduce [spec] none]
+	find-attribute: func [spec [block!] name [word!]][invoke 'find-attribute reduce [spec name] false]
+	get-arity: func [spec [block!]][invoke 'get-arity reduce [spec] 0]
 	get-type: func [value][invoke 'get-type reduce [value] none]
 	get-variable-spec: func [name [word!]][invoke 'get-variable-spec reduce [name] none]
 	int-literal-hex: func [value type [word!]][invoke 'int-literal-hex reduce [value type] none]
@@ -146,6 +148,10 @@ target-reserve-call-struct-temps: func [target [object!] slots [integer!] /local
 ]
 
 #include %targets/IA-32.red
+#either config/target = 'X86-64 [
+#include %targets/X86-64.red
+][
+]
 
 ;-- Top-level roots for emitter buffers (object fields have been seen
 ;-- corrupted to residual make sizes like 10000 under Stage1 GC).
@@ -168,7 +174,7 @@ emitter: context [
 	bits-buf:  make binary! 10'000
 	verbose:   0						;-- logs verbosity level
 
-	target:	    system-target-IA32			;-- keep the statically bound target identity
+	target:	    #either config/target = 'X86-64 [system-target-X86-64][system-target-IA32]	;-- keep the statically bound target identity
 	compiler:   none					;-- just a short-cut
 	libc-init?:	none					;-- TRUE if currently processing libc init part
 	rodata?:	no						;-- TRUE: store* routines write to rodata-buf (protected data)
@@ -455,7 +461,7 @@ emitter: context [
 	store-global: func [
 		value type [word!] spec [block! word! none!]
 		/packed											;-- array elements use their natural size
-		/local size ptr by-val? pad-size list t f64? data-buf hex high-unicode?
+		/local size ptr by-val? pad-size list t f64? data-buf high-unicode?
 	][
 		data-buf: active-buf							;-- shadows context word, keeps body target-agnostic
 		if any [none? data-buf not binary? data-buf][
@@ -568,9 +574,7 @@ emitter: context [
 					integer? value
 					negative? value
 				][
-					hex: form to-hex value
-					if hex/1 = #"#" [remove hex]
-					value: to issue! rejoin [".u64h:" skip tail hex -8]
+					type: 'int64!
 				]
 				store-global value type none
 			]
@@ -1113,7 +1117,7 @@ emitter: context [
 		][
 			member-offset? spec none
 		]
-		round/ceiling size / target/stack-width
+		to integer! round/ceiling size / target/stack-width
 	]
 
 	struct-size?: func [spec [block!] /direct /check /local size][
@@ -1132,7 +1136,7 @@ emitter: context [
 			]
 			spec: spec/2
 		]
-		either compiler-api/union-spec? spec [
+		to integer! either compiler-api/union-spec? spec [
 			union-size? spec
 		][
 			member-offset? spec none
@@ -1622,17 +1626,28 @@ emitter: context [
 		rodata?: no
 		compiler: system-dialect/compiler
 		configure-compiler-api compiler
+		#either config/target = 'X86-64 [
+		unless job/target = 'X86-64 [
+			compiler-api/throw-error ["unsupported Red/System target:" job/target]
+		]
+		][
 		unless job/target = 'IA-32 [
 			compiler-api/throw-error ["unsupported Red/System target:" job/target]
 		]
-		foreach w [
-			width signed? last-saved? saved-last-wide? last-math-op
-			call-arg-index call-extra-slots call-pad-slots call-shadow-slots
-			call-stack-slots call-float-reg-count call-struct-temp-slots
-			call-variadic?
-		][if slot: in target w [set slot none]]
+		]
+		foreach w [width signed? last-saved? saved-last-wide? last-math-op][
+			if slot: in target w [set slot none]
+		]
 		target/call-arg-types: make block! 8
 		target/by-value-args: make block! 8
+		target/call-arg-index: 0
+		target/call-extra-slots: 0
+		target/call-pad-slots: 0
+		target/call-shadow-slots: 0
+		target/call-stack-slots: 0
+		target/call-float-reg-count: 0
+		target/call-struct-temp-slots: 0
+		target/call-variadic?: no
 		target/compiler: compiler
 		target/PIC?: job/PIC?
 		target/PIE?: job/PIE?

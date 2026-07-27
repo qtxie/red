@@ -259,13 +259,15 @@ target-class: context [
 				if name = 'not [res: compiler/get-type args/1]
 			]
 			op [
-				either compiler/any-float? compiler/resolve-expr-type args/1 [
+				res: either compiler/any-float? compiler/resolve-expr-type args/1 [
 					emit-float-operation name args
 				][
 					emit-integer-operation name args
+					none
 				]
 				unless find comparison-op name [	;-- comparison always return a logic!
 					res: any [
+						all [block? res res]
 						all [block? args/1 compiler/last-type]
 						compiler/get-type args/1	;-- other ops return type of the first argument	
 					]

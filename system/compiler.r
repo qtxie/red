@@ -4683,7 +4683,7 @@ system-dialect: make-profilable context [
 					any [variable set-thru?] boxed		;-- process casting if result assigned to variable
 					find [logic! byte! int8! uint8! int16! uint16! integer! int32! uint32! float! float32! float64!] last-type/1
 					find [logic! byte! int8! uint8! int16! uint16! integer! int32! uint32! float! float32! float64!] boxed/type	;-- fixes #967
-					last-type/1 <> boxed/type
+					last-type/1 <> boxed/type/1
 				][
 					emitter/target/emit-casting boxed no ;-- insert runtime type casting if required
 					last-type: boxed/type

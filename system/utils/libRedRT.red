@@ -150,6 +150,23 @@ libRedRT: context [
 		either path? value [system-dialect/compiler/path-to-word value][to word! value]
 	]
 
+	relativize-red-types: func [spec [block!] /local pos value spelling][
+		pos: spec
+		while [not tail? pos][
+			value: pos/1
+			either block? value [
+				relativize-red-types value
+			][
+				if word? value [
+					spelling: form value
+					if find/match spelling "red>" [pos/1: to word! skip spelling 4]
+				]
+			]
+			pos: next pos
+		]
+		spec
+	]
+
 	make-exports: func [functions exports job /local name spelling file data extra entry][
 		foreach [name spec] functions [
 			spelling: form name
@@ -303,7 +320,7 @@ libRedRT: context [
 				name: compiler-name def
 				append pos undecorate def
 
-				spec: copy/deep functions/:name/4
+				spec: relativize-red-types copy/deep functions/:name/4
 				clear find spec /local
 				append/only pos spec
 			]
@@ -311,7 +328,7 @@ libRedRT: context [
 
 		list: third second find imports #import			;-- aliased functions
 		foreach [new old] aliased [
-			spec: copy/deep functions/(compiler-name old)/4
+			spec: relativize-red-types copy/deep functions/(compiler-name old)/4
 			clear find spec /local
 			repend list [to set-word! new form undecorate old spec]
 			new-line skip tail list -3 yes

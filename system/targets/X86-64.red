@@ -265,7 +265,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 				if name = 'not [res: compiler-api/get-type args/1]
 			]
 			op [
-				either any [
+				res: either any [
 					compiler-api/any-float? compiler-api/resolve-expr-type args/1
 					float? compiler-api/unbox args/1
 					float? compiler-api/unbox args/2
@@ -273,9 +273,11 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 					emit-float-operation name args
 				][
 					emit-integer-operation name args
+					none
 				]
 				unless find comparison-op name [	;-- comparison always return a logic!
 					res: any [
+						all [block? res res]
 						all [block? args/1 compiler-api/last-type]
 						compiler-api/get-type args/1	;-- other ops return type of the first argument
 					]
@@ -321,6 +323,9 @@ target: 'X86-64
 	]
 
 	noop: does []
+	last-value?: func [value][
+		all [tag? value value = <last>]
+	]
 	call-arg-index: 0
 	call-arg-types: copy []
 	call-stack-slots: 0
@@ -1226,7 +1231,7 @@ target: 'X86-64
 
 	emit-load-ecx: func [value /local type][
 		case [
-			value = <last> [
+			last-value? value [
 				type: compiler-api/resolve-aliased compiler-api/last-type
 				emit either find [pointer! c-string! function! subroutine! struct! union! int64! uint64!] type/1 [
 					#{4889C1}						;-- MOV rcx, rax
@@ -1962,7 +1967,7 @@ target: 'X86-64
 			compiler-api/unbox args/2
 		]
 		right-block?: block? right
-		right-last?: right = <last>
+		right-last?: last-value? right
 		right-loaded?: no
 		right-signed?: no
 		if any [right-block? right-last?] [
@@ -2025,7 +2030,6 @@ target: 'X86-64
 		if all [
 			right-signed?
 			not imm?
-			not right-block?
 			find [+ -] name
 			find [pointer! c-string! struct! union! any-pointer!] type/1
 		][
@@ -2166,32 +2170,32 @@ target: 'X86-64
 		]
 		last-math-op: name
 	]
+	emit-load-float-op: func [arg single? [logic!] /local value spec][
+		value: compiler-api/unbox arg
+		either float? value [
+			spec: emitter/store-value none value either single? [[float32!]][[float!]]
+			emit-float-ref spec/2 either single? [#{C5FA1005}][#{C5FB1005}]
+			compiler-api/set-last-type  either single? [[float32!]][[float!]]
+		][
+			emit-load arg
+		]
+	]
 	emit-float-operation: func [
 		name [word!] args [block!]
-		/local type right-type single? store-op cmp-op right-block? left-block? left-last? pre-saved? left-expr left-expr-type load-float-op
+		/local type right-type single? store-op cmp-op right-block? left-block? left-last? pre-saved? left-expr left-expr-type
 	][
 		if verbose >= 3 [print [">>>inlining float op:" mold name mold args]]
 		type: compiler-api/resolve-expr-type args/1
 		right-type: compiler-api/resolve-expr-type args/2
-		single?: any [type/1 = 'float32! right-type/1 = 'float32!]
+		single?: to logic! any [type/1 = 'float32! right-type/1 = 'float32!]
 		left-expr: compiler-api/unbox args/1
 		left-expr-type: either block? left-expr [compiler-api/get-type left-expr][none]
 		right-block?: block? compiler-api/unbox args/2
 		left-block?: block? left-expr
-		left-last?: any [args/1 = <last> left-block?]
+		left-last?: any [last-value? args/1 left-block?]
 		pre-saved?: last-saved?
 		store-op: either single? [#{C5FA110424}][#{C5FB110424}]
 		cmp-op: either single? [#{C5F82E0424}][#{C5F92E0424}]
-		load-float-op: func [arg /local value spec][
-			value: compiler-api/unbox arg
-			either all [single? float? value][
-				spec: emitter/store-value none value [float32!]
-				emit-float-ref spec/2 #{C5FA1005}
-				compiler-api/set-last-type  [float32!]
-			][
-				emit-load arg
-			]
-		]
 		case [
 			find comparison-op name [
 				signed?: no								;-- UCOMIS[S/D] uses CF/ZF/PF, not signed integer flags
@@ -2218,18 +2222,18 @@ target: 'X86-64
 						emit store-op					;-- MOVS[S/D] [rsp], xmm0
 						last-saved?: yes
 						saved-last-wide?: yes
-						load-float-op args/2
+						emit-load-float-op args/2 single?
 						emit either single? [#{F30F10C8}][#{F20F10C8}] ;-- MOVS[S/D] xmm1, xmm0
 						emit either single? [#{C5FA100424}][#{C5FB100424}]
 						emit #{488D642410}				;-- LEA rsp, [rsp+16] without clobbering flags
 						emit either single? [#{0F2EC1}][#{660F2EC1}] ;-- UCOMIS[S/D] xmm0, xmm1
 					][
-						load-float-op args/2
+						emit-load-float-op args/2 single?
 						emit #{4883EC10}				;-- SUB rsp, 16
 						emit store-op					;-- MOVS[S/D] [rsp], xmm0
 						last-saved?: yes
 						saved-last-wide?: yes
-						load-float-op args/1
+						emit-load-float-op args/1 single?
 						emit cmp-op						;-- UCOMIS[S/D] xmm0, [rsp]
 						emit #{488D642410}				;-- LEA rsp, [rsp+16] without clobbering flags
 					]
@@ -2260,20 +2264,20 @@ target: 'X86-64
 						last-saved?: no
 					]
 					right-block? [
-					load-float-op args/2
+					emit-load-float-op args/2 single?
 					emit #{4883EC10}
 					emit store-op
 					last-saved?: yes
 					saved-last-wide?: yes
-					load-float-op args/1
+					emit-load-float-op args/1 single?
 					]
 					yes [
-					load-float-op args/1
+					emit-load-float-op args/1 single?
 					emit #{4883EC10}
 					emit store-op
 					last-saved?: yes
 					saved-last-wide?: yes
-					load-float-op args/2
+					emit-load-float-op args/2 single?
 					]
 				]
 				unless all [left-block? right-block? pre-saved?][
@@ -2313,7 +2317,7 @@ target: 'X86-64
 					emit store-op
 					last-saved?: yes
 					saved-last-wide?: yes
-					load-float-op args/2
+					emit-load-float-op args/2 single?
 					emit either single? [#{C5FA100C24}][#{C5FB100C24}] ;-- VMOVS[S/D] xmm1, [rsp]
 					emit switch name [
 						- [either single? [#{C5F25CC0}][#{C5F35CC0}]] ;-- VSUBS[S/D] xmm0, xmm1, xmm0
@@ -2321,12 +2325,12 @@ target: 'X86-64
 						]
 					]
 					yes [
-					load-float-op args/2
+					emit-load-float-op args/2 single?
 					emit #{4883EC10}
 					emit store-op
 					last-saved?: yes
 					saved-last-wide?: yes
-					load-float-op args/1
+					emit-load-float-op args/1 single?
 					emit switch name [
 						- [either single? [#{C5FA5C0424}][#{C5FB5C0424}]] ;-- VSUBS[S/D] xmm0, xmm0, [rsp]
 							/ [either single? [#{C5FA5E0424}][#{C5FB5E0424}]] ;-- VDIVS[S/D] xmm0, xmm0, [rsp]
@@ -2341,6 +2345,10 @@ target: 'X86-64
 			yes [
 				compiler-api/throw-error "unsupported operation on floats"
 			]
+		]
+		unless find comparison-op name [
+			compiler-api/set-last-type  either single? [[float32!]][type]
+			return compiler-api/last-type
 		]
 	]
 	emit-throw: func [value [integer! word!] /thru][
@@ -2475,7 +2483,7 @@ target: 'X86-64
 				compiler-api/set-last-type  arg-type
 				emit-push <last>
 			][
-				if value = <last> [
+				if last-value? value [
 					compiler-api/set-last-type  arg-type
 					emit-push <last>
 					emit-typed-int64-padding fspec arg-type
@@ -2517,7 +2525,7 @@ target: 'X86-64
 	emit-load: func [value /with cast [object!] /local type spec local-spec resolved-type load-type field][
 		if block? value [value: <last>]
 		case [
-			value = <last> []
+			last-value? value []
 			object? value [
 				emit-load compiler-api/unbox value
 				emit-casting value no
@@ -2792,7 +2800,7 @@ target: 'X86-64
 		]
 		if logic? value [value: either value [1][0]]
 		if all [
-			value <> <last>
+			not last-value? value
 			find [string! paren! binary!] type?/word value
 			compiler-api/any-pointer? type
 		][
@@ -2805,7 +2813,7 @@ target: 'X86-64
 			]
 		]
 		if all [
-			value <> <last>
+			not last-value? value
 			not find [string! paren! binary!] type?/word value
 		][
 			source-type: compiler-api/get-type value
@@ -3152,7 +3160,7 @@ target: 'X86-64
 		switch type [
 			c-string! [
 				idx: path/2
-				last?: value = <last>
+				last?: last-value? value
 				unless parent [
 					either last? [
 						emit #{50}					;-- PUSH rax, save value
@@ -3162,7 +3170,7 @@ target: 'X86-64
 						emit-init-path path/1
 					]
 				]
-				if value <> <last> [
+				unless last-value? value [
 					emit #{50}						;-- PUSH rax
 					emit-load value
 					emit #{5A}						;-- POP rdx
@@ -3200,8 +3208,8 @@ target: 'X86-64
 				set-width/type mtype/1
 				size: emitter/size-of? mtype
 				idx: either path/2 = 'value [1][path/2]
-				source-type: either value = <last> [compiler-api/last-type][compiler-api/get-type value]
-				last?: value = <last>
+				source-type: either last-value? value [compiler-api/last-type][compiler-api/get-type value]
+				last?: last-value? value
 				unless parent [
 					either last? [
 						emit #{50}					;-- PUSH rax, save value
@@ -3211,7 +3219,7 @@ target: 'X86-64
 						emit-init-path path/1
 					]
 				]
-				if value <> <last> [
+				unless last-value? value [
 					emit #{50}						;-- PUSH rax
 					emit-load value
 					case [
@@ -3351,8 +3359,8 @@ target: 'X86-64
 				][
 					exit
 				]
-				source-type: either value = <last> [compiler-api/last-type][compiler-api/get-type value]
-				last?: value = <last>
+				source-type: either last-value? value [compiler-api/last-type][compiler-api/get-type value]
+				last?: last-value? value
 				if all [find [struct! union!] mtype/1 not aggregate-by-value?][size: stack-width]
 				if all [
 					last?
@@ -3466,7 +3474,7 @@ target: 'X86-64
 						emit-init-path path/1
 					]
 				]
-				if value <> <last> [
+				unless last-value? value [
 					emit #{50}						;-- PUSH rax
 					emit-load value
 					case [

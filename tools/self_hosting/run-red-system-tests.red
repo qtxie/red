@@ -23,6 +23,9 @@ make-dir output-dir
 compiler-script: %red-system-selfhost-windows.red
 red-console: system/options/boot
 compiler-executable: get-env "RED_SYSTEM_COMPILER"
+compiler-arguments: any [get-env "RED_SYSTEM_COMPILER_ARGUMENTS" ""]
+structlib-file: any [get-env "RED_SYSTEM_STRUCTLIB" join-file source-dir %libs/structlib.dll]
+x64?: not none? find compiler-arguments "X86-64"
 run-only?: not none? find system/options/args "--run-only"
 
 quoted: func [value][
@@ -52,6 +55,7 @@ compile-source: func [
 	target: join-file output-dir output
 	command: rejoin [
 		compiler-prefix
+		either empty? compiler-arguments [""][rejoin [" " compiler-arguments]]
 		either output-type = 'dll [" -dlib"][""]
 		" -o " quoted target " " quoted source
 	]
@@ -95,6 +99,10 @@ unit-sources: [
 	%system-test.reds %atomic-test.reds %queue-test.reds %push-pop-test.reds
 	%auto-tests/dylib-auto-test.reds
 ]
+if x64? [
+	change find unit-sources %struct-test.reds %struct-x64-test.reds
+	change find unit-sources %size-test.reds %size-x64-test.reds
+]
 
 compiled: make block! (length? unit-sources) * 2
 either run-only? [
@@ -110,7 +118,7 @@ either run-only? [
 ][
 	compile-source join-file source-dir %libtest-dll1.reds 'dll
 	compile-source join-file source-dir %libtest-dll2.reds 'dll
-	write/binary join-file output-dir %structlib.dll read/binary join-file source-dir %libs/structlib.dll
+	write/binary join-file output-dir %structlib.dll read/binary to file! structlib-file
 
 	foreach relative unit-sources [
 		append/only compiled relative

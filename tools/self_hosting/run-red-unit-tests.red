@@ -19,6 +19,7 @@ unless compiler-executable [
 	print "RED_COMPILER env var required (path to Stage1 red-bootstrap exe)"
 	quit/return 1
 ]
+compiler-arguments: any [get-env "RED_COMPILER_ARGUMENTS" ""]
 
 quoted: func [value][rejoin [{"} to-local-file value {"}]]
 compiler-prefix: quoted to file! compiler-executable
@@ -37,6 +38,7 @@ compile-source: func [
 	target: join-file output-dir output
 	command: rejoin [
 		compiler-prefix
+		either empty? compiler-arguments [""][rejoin [" " compiler-arguments]]
 		" -o " quoted target " " quoted source
 	]
 	print ["compile" source "->" target]

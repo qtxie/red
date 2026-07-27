@@ -261,7 +261,7 @@ Red [
 				if name = 'not [res: compiler-api/get-type args/1]
 			]
 			op [
-				either any [
+				res: either any [
 					compiler-api/any-float? compiler-api/resolve-expr-type args/1
 					float? compiler-api/unbox args/1
 					float? compiler-api/unbox args/2
@@ -269,9 +269,11 @@ Red [
 					emit-float-operation name args
 				][
 					emit-integer-operation name args
+					none
 				]
 				unless find comparison-op name [	;-- comparison always return a logic!
 					res: any [
+						all [block? res res]
 						all [block? args/1 compiler-api/last-type]
 						compiler-api/get-type args/1	;-- other ops return type of the first argument
 					]

@@ -127,9 +127,9 @@ compiler-preprocessor: context [
 		protect-includes input false
 		set/any 'result try [
 			either clean [
-				expand-directives/clean input
+				expand-directives/clean/preserve-includes input
 			][
-				expand-directives input
+				expand-directives/preserve-includes input
 			]
 		]
 		set-global-rebol saved-rebol
@@ -142,7 +142,6 @@ compiler-preprocessor: context [
 			result: get/any 'result
 			if any [block? :result paren? :result][
 				protect-includes result true
-				restore-do-includes result
 			]
 			:result
 		]

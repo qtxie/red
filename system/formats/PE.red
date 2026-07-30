@@ -625,7 +625,8 @@ system-format-PE: context [
 	build-import: func [
 		job [object!]
 		/local spec IDTs ILTs out dlls hints idt ilt ptr ILTs-base hints-base
-			dlls-base IAT-base ILT-size idx IAT-buffer len offset list idata def-name
+			dlls-base IAT-base ILT-size idx IAT-buffer len offset name list def reloc
+			dll idata def-name
 	][
 		spec:		job/sections/import
 		IDTs: 		make block! len: divide length? spec/3 2	;-- list of directory entries
@@ -651,7 +652,7 @@ system-format-PE: context [
 			append/only ILTs make block! 50
 			linker/check-dup-symbols job list
 			foreach [def reloc] list [
-				append last ILTs ilt: make-struct ILT-struct none
+				append last :ILTs ilt: make-struct ILT-struct none
 				ilt/rva: length? hints
 				def-name: form def
 				repend hints [#{0000} def-name null]	;-- Ordinal is zero, not used

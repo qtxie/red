@@ -5,7 +5,7 @@ Red [
 
 compiler-root: system/options/path
 ; The core compiler does not load View, but it needs the datatype token to compile View targets.
-event!: make datatype! #get-definition TYPE_EVENT
+unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
 
 ; The bootstrap backend contains dynamic Windows PE support for IA-32 and
@@ -18,11 +18,13 @@ event!: make datatype! #get-definition TYPE_EVENT
 #include %compiler/preprocessor.red
 #include %compiler/extractor.red
 #include %compiler/redbin.red
-#include %compiler/binding-identity.red
 #include %compiler/crush.red
-#include %compiler/redbin-emitter.red
 #include %compiler/frontend.red
 #include %compiler/bootstrap-options.red
+
+; Interpreted bootstrap follows Stage0's deep binding operation. The AOT source
+; materializes this field through frontend.red's nested include instead.
+if none? red/redbin [do bind load %compiler/redbin-emitter.red red]
 
 ; Keep collection enabled while the compiler builds its large intermediate graphs.
 recycle/on
@@ -122,7 +124,13 @@ compile-source: func [
 		frontend-result: compiler-frontend/compile source job
 		print ["...frontend time    :" frontend-result/2]
 		if compiler-system-job/job-get job 'red-only? [
-			probe frontend-result/1
+			unless compiler-options/option-get options 'output [
+				fail-command "--red-only requires -o output.reds"
+			]
+			write to file! compiler-options/option-get options 'output mold/only frontend-result/1
+			write/binary to file! rejoin [
+				compiler-options/option-get options 'output ".redbin"
+			] frontend-result/3
 			return none
 		]
 		saved-verbosity: compiler-system-job/job-get job 'verbosity

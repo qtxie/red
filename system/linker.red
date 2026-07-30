@@ -303,7 +303,7 @@ linker: context [
 		all [spec/1 = 'native not find [_div_ _udiv_ _i64_div_] name]
 	]
 
-	get-debug-funcs-size: func [job [object!] /local size sc][
+	get-debug-funcs-size: func [job [object!] /local size sc name spec][
 		sc: system-dialect/compiler
 		size: 0
 		foreach [name spec] job/symbols [
@@ -319,7 +319,7 @@ linker: context [
 	build-debug-func-names: func [
 		job 	 [object!]
 		code-ptr [integer!]							;-- code memory address
-		/local buffer specs args arity sc list rec-size record name-ptr args-ptr data-buf spec nb
+		/local buffer specs args arity sc list rec-size record name name-ptr args-ptr data-buf spec nb entry-ptr
 	][
 		sc: system-dialect/compiler
 		list: make block! 4000
@@ -367,6 +367,7 @@ linker: context [
 	show-funcs-map: func [
 		job 	 [object!]
 		code-ptr [integer!]							;-- code memory address
+		/local name spec
 	][
 		print "^/--- Functions entry points ---"
 		foreach [name spec] job/symbols [

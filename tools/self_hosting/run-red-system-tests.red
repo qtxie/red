@@ -69,7 +69,10 @@ compile-source: func [
 		attempt: attempt + 1
 		if exists? target [delete target]
 		if exists? log-file [delete log-file]
-		full-cmd: rejoin [command " > " quoted log-file " 2>&1"]
+		; The compiler uses the Windows GUI subsystem, so CMD otherwise returns
+		; before the process exits. START /WAIT keeps the status and output file
+		; checks synchronized with the actual compiler process.
+		full-cmd: rejoin [{start "" /wait } command " > " quoted log-file " 2>&1"]
 		status: call/shell/wait full-cmd
 		any [
 			all [status = 0 exists? target]

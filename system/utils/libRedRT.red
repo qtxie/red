@@ -101,7 +101,7 @@ libRedRT: context [
 
 	get-definitions: func [/local data file][
 		file: get-path defs-file
-		data: revive-objects load file
+		data: relativize-red-types revive-objects load file
 		foreach part [1 7 8][
 			replace/all data/:part %"" to word! "%"
 			replace/all data/:part ">>>" to word! ">>>"

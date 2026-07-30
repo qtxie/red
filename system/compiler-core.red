@@ -1104,7 +1104,7 @@ system-dialect: context [
 			all [
 				block? type
 				word? type/1
-				'value = last type
+				'value = last :type
 				any [
 					'struct! = type/1
 					'union! = type/1
@@ -1736,7 +1736,7 @@ system-dialect: context [
 				to word! spec/1 reduce [get-arity spec/3 type cc new-line/all spec/3 off]
 			]
 			if find-attribute spec/3 'callback [
-				append last functions 'callback
+				append last :functions 'callback
 			]
 		]
 
@@ -2183,10 +2183,8 @@ system-dialect: context [
 		]
 
 		check-body: func [body][
-			case/all [
-				not block? :body [throw-error "expected a block of code"]
-				empty? body  	 [throw-error "expected a non-empty block of code"]
-			]
+			if not block? :body [throw-error "expected a block of code"]
+			if empty? body [throw-error "expected a non-empty block of code"]
 		]
 
 		fetch-into: func [								;-- compile sub-block
@@ -2579,7 +2577,7 @@ system-dialect: context [
 						spec: copy spec
 						clear-docstrings spec
 						add-function 'syscall reduce [name none spec] 'syscall
-						append last functions id		;-- extend definition with syscode
+						append last :functions id		;-- extend definition with syscode
 					)
 				]
 			][
@@ -2612,18 +2610,12 @@ system-dialect: context [
 			]
 		]
 
-		invoke-red: func [name [word!] args [block!] /local slot fn][
-			unless slot: in red name [return none]
-			fn: get slot
-			apply :fn compiler-api/quote-arguments args
-		]
-
 		process-get: func [code [block!]][
 			unless job/red-pass? [						;-- when Red runtime is included in a R/S app
 				pc: skip pc 2							;-- just ignore #get directive
 				return none
 			]
-			unless invoke-red 'process-get-directive reduce [code/2 pc] [
+			unless red-compiler-process-get code/2 pc [
 				throw-error ["cannot resolve path:" code/2]
 			]
 			fetch-expression #get
@@ -2634,7 +2626,7 @@ system-dialect: context [
 				pc: skip pc 2							;-- just ignore #in directive
 				return none
 			]
-			unless invoke-red 'process-in-directive reduce [code/2 code/3 pc] [
+			unless red-compiler-process-in code/2 code/3 pc [
 				throw-error ["cannot resolve path:" code/2]
 			]
 			fetch-expression #in
@@ -2645,7 +2637,7 @@ system-dialect: context [
 				pc: skip pc 2							;-- just ignore directive
 				return none
 			]
-			checks: invoke-red 'process-typecheck-directive reduce [code/2]
+			checks: red-compiler-process-typecheck code/2
 			remove/part pc 2
 			if checks [insert pc checks]
 			none										;-- do not return an expression to compile
@@ -2657,7 +2649,7 @@ system-dialect: context [
 				return none
 			]
 			mark: tail red/output
-			invoke-red 'process-call-directive reduce [code/2 yes]
+			red-compiler-process-call code/2 yes
 			remove/part pc 2
 			insert pc mark
 			clear mark
@@ -3589,18 +3581,18 @@ system-dialect: context [
 
 		comp-break: does [
 			if empty? loop-stack [throw-error "BREAK used with no loop"]
-			if 'while-cond = last loop-stack [throw-error "BREAK cannot be used in WHILE condition block"]
-			emitter/target/emit-jump-point last emitter/breaks
+			if 'while-cond = last :loop-stack [throw-error "BREAK cannot be used in WHILE condition block"]
+			emitter/target/emit-jump-point last :emitter/breaks
 			pc: next pc
 			none
 		]
 
 		comp-continue: does [
 			if empty? loop-stack [throw-error "CONTINUE used with no loop"]
-			if 'while-cond = last loop-stack [
+			if 'while-cond = last :loop-stack [
 				throw-error "CONTINUE cannot be used in WHILE condition block"
 			]
-			emitter/target/emit-jump-point last either 'until = last loop-stack [
+			emitter/target/emit-jump-point last either 'until = last :loop-stack [
 				emitter/cont-back						;-- jump at the beginning for UNTIL iterator,
 			][											;-- as the looping condition cannot be guessed.
 				emitter/cont-next						;-- jump at end for all others
@@ -3916,7 +3908,7 @@ system-dialect: context [
 						check-specs name type/2
 						clear-docstrings type/2
 						add-function 'routine reduce [name none type/2] get-cconv type/2
-						append last functions reduce [path 'local]
+						append last :functions reduce [path 'local]
 						return comp-func-args name skip tail functions -2
 					]
 					'else [
@@ -3947,7 +3939,7 @@ system-dialect: context [
 					throw-error "get-word syntax only reserved for native functions for now"
 				]
 				if all [
-					symbol: last expr-call-stack
+					symbol: last :expr-call-stack
 					spec: find functions symbol
 					spec/2/2 = 'import					;-- only flag it when passed to external calls
 					spec/2/5 <> 'callback
@@ -4497,7 +4489,7 @@ system-dialect: context [
 			value: unbox expr
 			if all [
 				find [block! path! tag!] type?/word value
-				'value <> last last-type				;-- struct by value has specific handling
+				'value <> last :last-type				;-- struct by value has specific handling
 			][
 				either int64? last-type [
 					emitter/target/emit-move-path-alt/pair ;-- save assigned value
@@ -4521,7 +4513,7 @@ system-dialect: context [
 
 			all [
 				block? spec
-				'value = last spec						;-- for local struct by value only
+				'value = last :spec						;-- for local struct by value only
 				not-initialized? set-path/1
 				init-local set-path/1 expr casted		;-- mark as initialized and infer type if required
 			]
@@ -4584,7 +4576,7 @@ system-dialect: context [
 			][
 				fun-name: decorate-function name
 				add-function 'routine reduce [fun-name none casted/2] get-cconv casted/2
-				append last functions reduce [name 'local]
+				append last :functions reduce [name 'local]
 			]
 
 			either type: any [
@@ -4617,11 +4609,11 @@ system-dialect: context [
 					backtrack set-word
 					throw-error "a literal array pointer cannot be reassigned"
 				]
-				if all [struct-by-value? spec not any [val? 'value = last new]][
+				if all [struct-by-value? spec not any [val? 'value = last :new]][
 					backtrack set-word
 					throw-error ["a struct value cannot be assigned to a pointer: " value]
 				]
-				if 'value = last new [new: head remove back tail copy new]
+				if 'value = last :new [new: head remove back tail copy new]
 
 
 				if all [
@@ -4660,7 +4652,7 @@ system-dialect: context [
 			value: unbox expr
 			if any [block? value path? value][value: <last>]
 			if store? [
-				unless all [paren? value 'value = last value][ ;-- struct by value excluded from heap allocation
+				unless all [paren? value 'value = last :value][ ;-- struct by value excluded from heap allocation
 					if all [
 						new
 						casted
@@ -4773,7 +4765,7 @@ system-dialect: context [
 			if block? expr [							;-- if expr is a function call
 				all [
 					variable
-					'value = last last-type				;-- for a struct passed by value
+					'value = last :last-type				;-- for a struct passed by value
 					word? expr/1
 					any [not subrc? throw-error "cannot return a struct by value from a subroutine"]
 					spec: select functions expr/1
@@ -5049,7 +5041,7 @@ system-dialect: context [
 					last-type: expr/type
 				]
 				ret: all [
-					'value = last ret
+					'value = last :ret
 					any [
 						all [ret/1 = 'struct! ret/2]
 						all [ret/1 = 'union! ret/2]
@@ -5205,26 +5197,24 @@ system-dialect: context [
 	]
 
 	output-logs: does [
-		case/all [
-			verbose >= 1 [
+		if verbose >= 1 [
 				print [
 					nl
 					"-- compiler/globals --" nl mold new-line/all/skip to-block compiler/globals yes 2 nl
 					"-- emitter/symbols --"  nl mold new-line/all/skip to-block emitter/symbols yes 2 nl
 				]
-			]
-			verbose >= 2 [
+		]
+		if verbose >= 2 [
 				print [
 					"-- compiler/functions --" nl mold new-line/all/skip to-block compiler/functions yes 2 nl
 				]
-			]
-			verbose >= 6 [
+		]
+		if verbose >= 6 [
 				print [
 					"-- emitter/code-buf --" nl mold emitter/code-buf nl
 					"-- emitter/data-buf --" nl mold emitter/data-buf nl
 					"as-string:"        	 nl mold as-string emitter/data-buf nl
 				]
-			]
 		]
 	]
 
@@ -5414,8 +5404,8 @@ system-dialect: context [
 					append info either loader/relative-path? file [
 						join main-path file
 					][file]
-					unless exists? last info [
-						red/throw-error ["cannot find icon:" last info]
+					unless exists? last :info [
+						red/throw-error ["cannot find icon:" last :info]
 					]
 				]
 				append/only res copy info
@@ -5466,17 +5456,17 @@ system-dialect: context [
 			job-data [block!]
 		/local
 			comp-time link-time err output src resources icon buffer buffer-size
-			file sections result
+			file file-list sections result
 	][
 		comp-time: now/time/precise
 		link-time: none
 		output: none
 		buffer: none
-		unless block? files [files: reduce [files]]
+		file-list: either block? files [files][reduce [files]]
 
 		unless opts [opts: make options-class []]
 		normalize-code-model opts
-		job: make-job opts last files				;-- last input filename is retained for output name
+		job: make-job opts last :file-list			;-- last input filename is retained for output name
 		loader/job: job
 		emitter/init opts/link? job
 
@@ -5510,7 +5500,7 @@ system-dialect: context [
 		resources: either loaded [job-data/4][make block! 8]
 		if job/libRedRT-update? [libRedRT/init-extras]
 
-		file: first files
+		file: first file-list
 		either loaded [
 			src: loader/process/with job-data/1 file
 		][
@@ -5519,8 +5509,8 @@ system-dialect: context [
 			if job/OS = 'Windows [collect-resources src/2 resources file]
 		]
 		compiler/run job src file
-		if not tail? next files [
-			compile-sources next files to logic! loaded job-data job resources
+		if not tail? next file-list [
+			compile-sources next file-list to logic! loaded job-data job resources
 		]
 		set-verbose-level 0
 		if opts/runtime? [comp-runtime-epilog]
@@ -5588,4 +5578,16 @@ system-dialect: context [
 		set in system-dialect 'last-result result
 		none
 	]
+]
+
+; The type grammar is mutually recursive and contains forward references to
+; fields declared later in the compiler object. Rebind the complete rule graph
+; after object construction so the compiled Red host matches Stage0 binding.
+foreach name [
+	struct-syntax union-syntax pointer-syntax func-pointer type-syntax type-spec
+][
+	bind get in system-dialect/compiler name system-dialect/compiler
+]
+foreach [name action] system-dialect/compiler/keywords [
+	bind action system-dialect/compiler
 ]

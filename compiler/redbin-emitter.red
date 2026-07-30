@@ -1,99 +1,10 @@
-Red [
-	Title:   "Redbin format encoder for Red compiler"
-	Author:  "Nenad Rakocevic"
-	File: 	 %compiler/redbin-emitter.red
-	Tabs:	 4
-	Rights:  "Copyright (C) 2015-2018 Red Foundation. All rights reserved."
-	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"
-]
+Red []
 
-compiler-redbin-emitter: context [
-	frontend: none
-	; Standalone date helpers (same reason as money: avoid relying on front-* rebinding).
-	front-encode-UTC-time: func [time [time! none!] zone [time! none!]][
-		to float! either time [either zone [time - zone][time]][0.0]
-	]
-	front-encode-date: func [value [date!] /with zone /local date][
-		zone: any [zone value/zone 0:00]
-		date:  (shift/left value/year 17)
-			or (shift/left value/month 12)
-			or (shift/left value/day 7)
-			or (shift/left absolute zone/hour 2)
-			or (to integer! ((absolute to integer! zone/minute) / 15))
-		if negative? zone [date: date or 64]			;-- zone negative bit
-		if value/time [date: date or 65536]				;-- time? flag
-		date
-	]
-	; Standalone money helpers: Stage1 object-field rebinding of front-* can leave
-	; the empty stubs in place, so keep real implementations here.
-	front-to-currency-code: func [code [string!] /local pos extra][
-		code: to word! code
-		case [
-			pos: find compiler-extractor/currencies code [index? pos]
-			all [
-				object? frontend
-				extra: in frontend 'currencies
-				block? get extra
-				pos: find get extra code
-			][(index? pos) + length? compiler-extractor/currencies]
-			code = '... [0]
-			'else [
-				print ["*** Syntax Error: unknown money! currency" code]
-				0
-			]
-		]
-	]
-	front-to-nibbles: func [
-		src [string! money!]
-		/local out text negative? marker code digits point decimals
-	][
-		if money? :src [
-			text: mold/all src
-			negative?: find "+-" text/1
-			if negative? [negative?: text/1 = #"-" remove text]
-			marker: find text #"$"
-			code: either marker = head text ["..."][copy/part text marker]
-			digits: copy next marker
-			replace/all digits "'" ""
-			either point: find digits #"." [
-				decimals: length? next point
-				remove point
-			][decimals: 0]
-			append/dup digits #"0" 5 - decimals
-			insert/dup digits #"0" 22 - length? digits
-			return reduce [
-				to logic! negative?
-				front-to-currency-code code
-				front-to-nibbles digits
-			]
-		]
-		out: make binary! 11
-		foreach [high low] src [
-			append out add
-				shift/left (to integer! high - #"0") 4
-				to integer! low - #"0"
-		]
-		out
-	]
-	front-get-RS-type-ID: func [name [word! datatype!] /word /local type spelling][
-		; Standalone implementation so Stage1 works even if frontend binding fails.
-		spelling: either datatype? name [form name][
-			head remove back tail form name
-		]
-		replace/all spelling #"-" #"_"
-		type: to word! uppercase head insert spelling "TYPE_"
-		either word [type][
-			any [
-				select compiler-extractor/definitions type
-				0
-			]
-		]
-	]
-	front-local-word?: func [name [word!]][false]
-	front-get-word-index: func [name [word!] /with context [word!]][none]
-	front-find-binding: func [word [any-word!]][none]
-	front-register-global: func [word [word! set-word! lit-word! get-word! refinement!]][none]
+redbin: context [
 
+	; This file is included inside the frontend context. Keeping the emitter
+	; nested there reproduces Stage0's `do bind ... 'self` behavior: emitter
+	; functions resolve frontend state directly, rather than through callbacks.
 	header:		make binary! 10'000
 	buffer:		make binary! 200'000
 	sym-string:	make binary! 10'000
@@ -101,16 +12,6 @@ compiler-redbin-emitter: context [
 	symbols:	make hash! 	 1'000						;-- symbol spellings
 	contexts:	make hash!	 1'000						;-- [name [symbols] index ...]
 	index:		0
-	last-index:	-1								;-- last emit-block/context return (Stage1-safe)
-	word-index:	-1								;-- last emit-word/root return (Stage1-safe)
-	string-index:	-1							;-- last emit-string/root return (Stage1-safe)
-	typeset-index:	-1							;-- last emit-typeset/root return (Stage1-safe)
-	pending-with-ctx: none
-	object-with-ctx: none					;-- sticky object ctx for body literals (#2920)						;-- Stage1-safe substitute for /with
-	pending-sub?: no							;-- Stage1-safe substitute for /sub
-	pending-root?: no							;-- Stage1-safe substitute for /root
-	pending-set?: no							;-- Stage1-safe substitute for /set?
-	pending-action?: no						;-- Stage1-safe substitute for /action
 	
 	stats:		make block! 100
 	profile?:	no
@@ -294,11 +195,11 @@ compiler-redbin-emitter: context [
 	emit-date: func [value [date!] /with zone][
 		either value/time [
 			emit-tag/mod 'TYPE_DATE
-			emit-u32-le front-encode-date/with value zone
-			emit-float64-le front-encode-UTC-time value/time any [zone value/zone]
+			emit-u32-le encode-date/with value zone
+			emit-float64-le encode-UTC-time value/time any [zone value/zone]
 		][
 			emit-tag 'TYPE_DATE
-			emit-u32-le front-encode-date/with value zone
+			emit-u32-le encode-date/with value zone
 		]
 	]
 
@@ -340,12 +241,14 @@ compiler-redbin-emitter: context [
 		append buffer bin
 	]
 	
-	emit-money: func [value [money! issue!] /local data][
+	emit-money: func [value [money! issue!] /local data byte][
 		if money? value [
-			data: front-to-nibbles value
+			data: to-nibbles value
 			either data/1 [emit-tag/mod 'TYPE_MONEY][emit-tag 'TYPE_MONEY]
 			append buffer data/2
-			append buffer data/3
+			; Stage0's string-to-binary conversion preserves packed bytes. Red's
+			; conversion is UTF-8, so append each character code explicitly.
+			foreach byte data/3 [emit-byte to integer! byte]
 			exit
 		]
 		value: to string! next form value
@@ -354,12 +257,12 @@ compiler-redbin-emitter: context [
 		][
 			emit-tag 'TYPE_MONEY
 		]
-		append buffer either value/1 = #"." [0][front-to-currency-code copy/part value 3]
-		append buffer front-to-nibbles copy/part skip value 4 22		;-- nibbles array
+		emit-byte either value/1 = #"." [0][to-currency-code copy/part value 3]
+		data: to-nibbles copy/part skip value 4 22
+		foreach byte data [emit-byte to integer! byte]		;-- packed nibbles array
 	]
 	
 	emit-native: func [id [word!] spec [block!] /action /local native-id][
-		if pending-action? [action: yes]
 		native-id: select compiler-extractor/definitions id
 		unless integer? native-id [
 			print ["*** Compiler Internal Error: missing generated native ID:" id]
@@ -367,11 +270,9 @@ compiler-redbin-emitter: context [
 		]
 		emit-tag pick [TYPE_ACTION TYPE_NATIVE] to logic! action
 		emit-varint native-id
-		pending-sub?: yes
-		emit-block spec
-		pending-sub?: no
+		emit-block/sub spec
 	]
-	
+
 	emit-typeset: func [v1 [integer!] v2 [integer!] v3 [integer!] /root /local bin][
 		;-- Typeset bits use network bit order within each 32-bit group.
 		bin: rejoin [to-binary v1 to-binary v2 to-binary v3]
@@ -383,11 +284,10 @@ compiler-redbin-emitter: context [
 		if root [
 			if debug? [print [index ": typeset"]]
 			index: index + 1
-			typeset-index: index - 1
 		]
 		index - 1
 	]
-	
+
 	emit-string: func [str [any-string! binary! ref! issue!] /root /local type unit][
 		type: either any [issue? str ref? str] ['TYPE_REF][	;-- internal encoding or native ref!
 			select [
@@ -414,11 +314,10 @@ compiler-redbin-emitter: context [
 		if root [
 			if debug? [print [index ": string :" copy/part str 40]]
 			index: index + 1
-			string-index: index - 1
 		]
 		index - 1
 	]
-	
+
 	emit-issue: func [value [issue!]][
 		emit-tag 'TYPE_ISSUE
 		emit-symbol form value
@@ -441,8 +340,6 @@ compiler-redbin-emitter: context [
 		word ctx [word! none!] ctx-idx [integer! none!] /root /set?
 		/local type entry pos ctx-field idx
 	][
-		if pending-root? [root: yes]
-		if pending-set? [set?: yes]
 		type: select [
 			word!		TYPE_WORD
 			set-word!	TYPE_SET_WORD
@@ -454,22 +351,14 @@ compiler-redbin-emitter: context [
 		ctx-field: -1
 		idx: -1
 		if all [ctx entry: find contexts ctx][
-			ctx-field: entry/3
 			if pos: find entry/2 to word! word [
+				ctx-field: entry/3
 				idx: (index? pos) - 1
 			]
 		]
-		; Prefer caller-provided field index (from emit-block /with lookup).
-		if all [integer? ctx-idx ctx-idx >= 0][idx: ctx-idx]
-		; If we have a context and field index, encode as context-bound even when
-		; the word was not found by name lookup (Stage1 binding gaps).
-		if all [ctx-field = -1 ctx integer? idx idx >= 0][
-			if entry: find contexts ctx [ctx-field: entry/3]
-		]
-
-		do [front-register-global word]
+		idx: any [ctx-idx idx]
 		if set? [emit-byte CP_GSET]						;-- global-set: value record follows
-		either any [ctx-field = -1 none? idx idx < 0] [
+		either ctx-field = -1 [
 			emit-tag type								;-- canonical form: global binding
 			emit-symbol word
 		][
@@ -481,28 +370,14 @@ compiler-redbin-emitter: context [
 		if root [
 			if debug? [print [index ": word :" mold word]]
 			unless set? [index: index + 1]
-			word-index: index - 1
 		]
 		index - 1
 	]
-	
+
 	emit-block: func [
 		blk [any-block! path! lit-path! get-path! set-path!] /with main-ctx [word!] /sub
-		/local type item binding ctx idx emit? multi-line? ofs body entry pos value
+		/local type item binding ctx idx emit? multi-line? ofs body value
 	][
-		; Merge refinement args with Stage1-safe pending fields (refinements on
-		; object method paths can be dropped by the native compiler).
-		unless with [
-			if word? pending-with-ctx [
-				with: yes
-				main-ctx: pending-with-ctx
-			]
-			if all [not with word? object-with-ctx][
-				with: yes
-				main-ctx: object-with-ctx
-			]
-		]
-		if pending-sub? [sub: yes]
 		if profile? [profile blk]
 		
 		type: case [
@@ -517,14 +392,12 @@ compiler-redbin-emitter: context [
 			blk/1 = #!point! [
 				emit-point next blk
 				unless sub [index: index + 1]
-				last-index: index - 1
-				return last-index
+				return index - 1
 			]
 			blk/1 = #!date! [
 				emit-date/with blk/2 blk/3
 				unless sub [index: index + 1]
-				last-index: index - 1
-				return last-index
+				return index - 1
 			]
 			'else [type?/word :blk]
 		]
@@ -558,50 +431,21 @@ compiler-redbin-emitter: context [
 			item: blk/1
 			either any-block? :item [
 				either with [
-					pending-with-ctx: main-ctx
-					pending-sub?: yes
-					emit-block :item
-					pending-sub?: no
-					pending-with-ctx: none
+					emit-block/sub/with :item main-ctx
 				][
-					pending-sub?: yes
-					emit-block :item
-					pending-sub?: no
+					emit-block/sub :item
 				]
 			][
 				emit?: case [
 					issue? :item [emit-issue item no]
-					any-word? :item [
+					any [any-word? :item refinement? :item] [
 						ctx: main-ctx
-						idx: none
 						value: :item
-						; Prefer the /with object/function context word list. Do not rely
-						; only on local-word? (function locals) or bind?/find-binding, which
-						; have failed under compiled Stage1 for object field blocks.
-						if all [with word? main-ctx][
-							if entry: find contexts main-ctx [
-								if pos: find entry/2 to word! :item [
-									idx: (index? pos) - 1
-								]
-							]
-						]
-						; A function body nested in an object uses its own context for
-						; arguments/locals, then the enclosing object context for fields.
-						if all [none? idx word? object-with-ctx][
-							if entry: find contexts object-with-ctx [
-								if pos: find entry/2 to word! :item [
-									ctx: object-with-ctx
-									idx: (index? pos) - 1
-								]
-							]
-						]
-						if none? idx [
-							either all [with front-local-word? to word! :item][
-								idx: front-get-word-index/with to word! :item main-ctx
-							][
-								if binding: front-find-binding :item [
-									set [ctx idx] binding
-								]
+						either all [with local-word? to word! :item][
+							idx: get-word-index/with to word! :item main-ctx
+						][
+							if binding: find-binding :item [
+								set [ctx idx] binding
 							]
 						]
 						yes
@@ -636,18 +480,12 @@ compiler-redbin-emitter: context [
 							;-- Keep #!map! at series head (insert returns after the marker).
 							body: head insert copy to block! item #!map!
 							either with [
-								pending-with-ctx: main-ctx
-								pending-sub?: yes
-								emit-block body
-								pending-sub?: no
-								pending-with-ctx: none
+								emit-block/sub/with body main-ctx
 							][
-								pending-sub?: yes
-								emit-block body
-								pending-sub?: no
+								emit-block/sub body
 							]
 						]
-						datatype! [emit-datatype front-get-RS-type-ID/word item]
+					datatype! [emit-datatype get-RS-type-ID/word item]
 						logic!	  [emit-logic item]
 						time!	  [emit-time item]
 						date!	  [emit-date item]
@@ -660,15 +498,13 @@ compiler-redbin-emitter: context [
 		nl?: no
 		if type = 'TYPE_MAP [insert blk #!map!]
 		unless sub [index: index + 1]
-		last-index: index - 1							;-- Stage1 reads this field if return is lost
-		last-index										;-- return the block index
+		return index - 1								;-- return the block index
 	]
-	
+
 	emit-context: func [
 		name [word!] spec [block!] stack? [logic!] self? [logic!] type [word!] /root
 		/local flags
 	][
-		if pending-root? [root: yes]
 		repend contexts [name copy spec index]			;-- COPY to avoid late word decorations
 		flags: select [function 1 object 2] type
 		if stack? [flags: flags or 4]
@@ -682,10 +518,9 @@ compiler-redbin-emitter: context [
 			if debug? [print [index ": context :" trim/lines copy/part mold/flat spec 50 "," stack? "," self?]]
 			index: index + 1
 		]
-		last-index: index - 1
-		last-index
+		index - 1
 	]
-	
+
 	init: does [
 		clear header
 		clear buffer
@@ -694,15 +529,6 @@ compiler-redbin-emitter: context [
 		clear symbols
 		clear contexts
 		index: 0
-		last-index: -1
-		word-index: -1
-		string-index: -1
-		typeset-index: -1
-		pending-with-ctx: none
-		pending-sub?: no
-		pending-root?: no
-		pending-set?: no
-		pending-action?: no
 	]
 	
 	finish: func [spec [block!] /local flags compressed][

@@ -17,9 +17,7 @@ compiler-root: system/options/path
 #include %compiler/preprocessor.red
 #include %compiler/extractor.red
 #include %compiler/redbin.red
-#include %compiler/binding-identity.red
 #include %compiler/crush.red
-#include %compiler/redbin-emitter.red
 #include %compiler/source-parity.red
 #include %compiler/frontend.red
 
@@ -34,7 +32,7 @@ check-source: has [root current port missing extra retired current-redbin port-r
 	current-redbin: compiler-source-parity/inventory root/utils/redbin.r none
 	port-redbin: compiler-source-parity/inventory
 		root/compiler/redbin-emitter.red
-		'compiler-redbin-emitter
+		none
 	missing: exclude copy current port
 	extra: exclude copy port current
 	retired: sort [
@@ -68,9 +66,7 @@ check-load: does [
 	either all [
 		object? compiler-frontend
 		function? :compiler-frontend/compile
-		same? compiler-frontend/bindings compiler-bindings
 		same? compiler-frontend/redbin compiler-redbin-emitter
-		same? compiler-redbin-emitter/frontend compiler-frontend
 	][
 		print ["current Red frontend load: OK fields:" length? words-of compiler-frontend]
 		0

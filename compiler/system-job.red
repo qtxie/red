@@ -175,7 +175,7 @@ compiler-system-job: context [
 	][
 		last-error: none
 		data: either object? values [body-of values][values]
-		pos: head data
+		pos: data
 		while [not tail? pos][
 			unless any [word? pos/1 set-word? pos/1][
 				return fail "configuration field must be a word" none pos/1

@@ -198,6 +198,12 @@ Red [
 		--assert 11 = first fe1-b
 		--assert 9 = length? fe1-b
 
+	--test-- "foreach-dynamic-body"
+		fe2-total: 0
+		fe2-body: [fe2-total: fe2-total + fe2-value]
+		do [foreach fe2-value [1 2 3] fe2-body]
+		--assert 6 = fe2-total
+
 ===end-group===
 
 ===start-group=== "forall"

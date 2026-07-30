@@ -17,6 +17,7 @@ preprocessor: context [
 	depth:	 0											;-- track depth of recursive macro calls
 	active?: yes
 	trace?:  no
+	preserve-includes?: no
 	s:		 none
 	
 	do-quit: does [
@@ -353,7 +354,7 @@ preprocessor: context [
 				
 				| s: #include (
 					if active? [
-						either all [not Rebol system/state/interpreted?][
+						either all [not Rebol not preserve-includes? system/state/interpreted?][
 							saved: s
 							attempt [expand load s/2 job]	;-- just preprocess it
 							s: saved
@@ -368,7 +369,7 @@ preprocessor: context [
 				)
 				| s: #include-binary [file! | string!] (
 					if active? [
-						either all [not Rebol system/state/interpreted?][
+						either all [not Rebol not preserve-includes? system/state/interpreted?][
 							s/1: 'read/binary
 							if string? s/2 [s/2: to-red-file s/2]
 						][
@@ -453,12 +454,16 @@ preprocessor: context [
 		"Invokes the preprocessor on argument list, modifying and returning it"
 		code [block! paren!] "List of Red values to preprocess"
 		/clean 				 "Clear all previously created macros and words"
-		/local job saved
+		/preserve-includes "Process includes as on the Rebol compiler host"
+		/local job saved saved-preserve result
 	][
 		saved: s
+		saved-preserve: preprocessor/preserve-includes?
+		preprocessor/preserve-includes?: preserve-includes
 		job: system/build/config
-		also 
-			either clean [expand/clean code job][expand code job]
-			s: saved
+		result: either clean [expand/clean code job][expand code job]
+		s: saved
+		preprocessor/preserve-includes?: saved-preserve
+		:result
 	]
 ]

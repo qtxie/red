@@ -148,10 +148,7 @@ target-reserve-call-struct-temps: func [target [object!] slots [integer!] /local
 ]
 
 #include %targets/IA-32.red
-#either config/target = 'X86-64 [
 #include %targets/X86-64.red
-][
-]
 
 ;-- Top-level roots for emitter buffers (object fields have been seen
 ;-- corrupted to residual make sizes like 10000 under Stage1 GC).
@@ -174,7 +171,7 @@ emitter: context [
 	bits-buf:  make binary! 10'000
 	verbose:   0						;-- logs verbosity level
 
-	target:	    #either config/target = 'X86-64 [system-target-X86-64][system-target-IA32]	;-- keep the statically bound target identity
+	target:	    system-target-X86-64
 	compiler:   none					;-- just a short-cut
 	libc-init?:	none					;-- TRUE if currently processing libc init part
 	rodata?:	no						;-- TRUE: store* routines write to rodata-buf (protected data)
@@ -254,15 +251,16 @@ emitter: context [
 		empty: does [copy/deep [#{} []]]
 
 		start: has [s][
+			emitter/ensure-code-buf
 			repend/only queue [
-				s: tail code-buf
+				s: tail emitter/code-buf
 				make block! 10
 			]
 			index? s
 		]
 
 		stop: has [entry blk][
-			entry: last queue
+			entry: last :queue
 			remove back tail queue
 			blk: reduce [copy entry/1 entry/2 index? entry/1]
 			clear entry/1
@@ -272,7 +270,7 @@ emitter: context [
 		make-boolean: func [/opt op [word!]][
 			start
 			reduce [
-				target/emit-boolean-switch op
+				emitter/target/emit-boolean-switch op
 				stop
 			]
 		]
@@ -439,7 +437,7 @@ emitter: context [
 
 	foreach-member: func [spec [block!] body [block!] /local type name t][
 		all [
-			'value = last spec
+			'value = last :spec
 			not find [struct! union!] spec/1
 			spec: compiler-api/find-aliased spec/1
 		]
@@ -449,7 +447,8 @@ emitter: context [
 
 		foreach [name t] spec [
 			unless word? name [break]
-			either 'value = last type: t [
+			type: t
+			either 'value = last :type [
 				if find [struct! union!] type/1 [type: type/2]
 				foreach-member type body
 			][
@@ -461,7 +460,7 @@ emitter: context [
 	store-global: func [
 		value type [word!] spec [block! word! none!]
 		/packed											;-- array elements use their natural size
-		/local size ptr by-val? pad-size list t f64? data-buf high-unicode?
+		/local size ptr by-val? pad-size list t f64? data-buf high-unicode? var
 	][
 		data-buf: active-buf							;-- shadows context word, keeps body target-agnostic
 		if any [none? data-buf not binary? data-buf][
@@ -535,7 +534,7 @@ emitter: context [
 				either string? value [
 					if all [							;-- heuristic to detect wide strings (UTF-16LE)
 						value/2 = null
-						null = last value
+						null = last :value
 					][
 						pad-data-buf 2					;-- ensures it is aligned on 16-bit
 						ptr: tail data-buf
@@ -584,7 +583,7 @@ emitter: context [
 				pad-data-buf pad-size
 				ptr: tail data-buf
 				foreach [var type] spec [
-					by-val?: 'value = last type
+					by-val?: 'value = last :type
 					if spec: compiler-api/find-aliased type/1 [type: spec]
 					either all [by-val? type/1 = 'struct!][
 						store-global value type/1 type/2
@@ -749,7 +748,8 @@ emitter: context [
 		if all [name not all [new-global? literal?]][	;-- emit dynamic loading code when required
 			either all [
 				value = <last>
-				'value = last type: compiler/last-type
+				type: compiler/last-type
+				'value = last :type
 				any [
 					'struct! = type/1
 					'union! = type/1
@@ -776,7 +776,7 @@ emitter: context [
 	type-align?: func [type [word! block!] /local base alias][
 		if block? type [
 			if all [
-				'value = last type
+				'value = last :type
 				alias: compiler-api/find-aliased type/1
 			][
 				if find [struct! union!] alias/1 [return aggregate-align? alias/2]
@@ -1001,7 +1001,7 @@ emitter: context [
 		][
 			compiler-api/resolve-type/with path/1 parent
 		]
-		if all [block? type 'value = last type alias: compiler-api/find-aliased type/1][
+		if all [block? type 'value = last :type alias: compiler-api/find-aliased type/1][
 			type: append copy alias 'value
 		]
 		second type
@@ -1016,7 +1016,7 @@ emitter: context [
 			][
 				compiler-api/resolve-type path/1
 			]
-			if all [block? full-type 'value = last full-type alias: compiler-api/find-aliased full-type/1][
+		if all [block? full-type 'value = last :full-type alias: compiler-api/find-aliased full-type/1][
 				full-type: append copy alias 'value
 			]
 			type: first full-type
@@ -1034,7 +1034,7 @@ emitter: context [
 				either all [
 					compiler/locals
 					type: select compiler/locals to word! path/1
-					'value = last type
+					'value = last :type
 				][
 					target/emit-load path/1
 				][
@@ -1053,7 +1053,7 @@ emitter: context [
 		]
 		if all [
 			block? type
-			'value = last type
+			'value = last :type
 			any [
 				'struct! = type/1
 				'union! = type/1
@@ -1100,7 +1100,7 @@ emitter: context [
 		if check [
 			unless all [
 				spec: select spec compiler/return-def
-				'value = last spec
+				'value = last :spec
 			][
 				return none
 			]
@@ -1124,7 +1124,7 @@ emitter: context [
 		if check [
 			unless all [
 				spec: select spec compiler/return-def
-				'value = last spec
+				'value = last :spec
 			][
 				return none
 			]
@@ -1146,7 +1146,7 @@ emitter: context [
 	struct-ptr?: func [spec [block!] /metadata fspec [block!] /local ret size attrs external?][
 		all [
 			ret: select spec compiler/return-def
-			'value = last ret
+			'value = last :ret
 			any [
 				all [
 					target/target = 'X86-64
@@ -1218,10 +1218,10 @@ emitter: context [
 		t: compiler-api/resolve-aliased type
 		case [
 			find [pointer! c-string! function!] t/1 [true]
-			all [t/1 = 'struct! 'value <> last t] [true]
-			all [t/1 = 'union! 'value <> last t] [true]
-			all [t/1 = 'struct! 'value = last t] [struct-has-pointer? t/2]
-			all [t/1 = 'union! 'value = last t] [union-has-pointer? t/2]
+			all [t/1 = 'struct! 'value <> last :t] [true]
+			all [t/1 = 'union! 'value <> last :t] [true]
+			all [t/1 = 'struct! 'value = last :t] [struct-has-pointer? t/2]
+			all [t/1 = 'union! 'value = last :t] [union-has-pointer? t/2]
 			'else [false]
 		]
 	]
@@ -1250,7 +1250,7 @@ emitter: context [
 	]
 
 	foreach-field: func [spec [block!] body [block!] /local type slots][
-		if 'value = last spec [
+		if 'value = last :spec [
 			case [
 				spec/1 = 'struct! [spec: reverse-fields spec/2]
 				spec/1 = 'union!	[spec: spec/2]
@@ -1269,7 +1269,8 @@ emitter: context [
 		]
 
 		while [not tail? spec][
-			either 'value = last type: spec/2 [
+			type: spec/2
+			either 'value = last :type [
 				foreach-field second compiler-api/find-aliased spec/2/1 body
 			][
 				do body
@@ -1340,7 +1341,7 @@ emitter: context [
 						pick 2x1 to logic! find [float! float64! int64! uint64!] spec/1 ;-- 64-bit types need 2 bits on 32-bit targets.
 					]
 
-					either all [target/ptr-size = 8 'value = last spec] [
+					either all [target/ptr-size = 8 'value = last :spec] [
 						slots: struct-slots? spec
 						either type-has-pointer? spec [
 							repeat n slots [
@@ -1352,7 +1353,7 @@ emitter: context [
 							if i > 30 store
 						]
 				][either compiler-api/any-pointer?/with spec ts [
-						either 'value = last spec [
+						either 'value = last :spec [
 							foreach-field spec [
 								step: either target/ptr-size = 8 [1][pick 2x1 to logic! find [float! float64! int64! uint64!] type/1]
 								if compiler-api/any-pointer?/with type ts [
@@ -1477,13 +1478,13 @@ emitter: context [
 	resolve-loop-jumps: func [chunk [block!] type [word!] /local list end len buffer][
 		list: emitter/:type
 		buffer: chunk/1
-		len: (last chunk) - 1
+		len: (last :chunk) - 1
 
 		either type = 'cont-back [
-			foreach ptr last list [target/patch-jump-back buffer ptr - len]
+			foreach ptr last :list [target/patch-jump-back buffer ptr - len]
 		][
 			end: index? tail buffer
-			foreach ptr last list [target/patch-jump-point buffer ptr - len end]
+			foreach ptr last :list [target/patch-jump-point buffer ptr - len end]
 		]
 	]
 
@@ -1626,14 +1627,8 @@ emitter: context [
 		rodata?: no
 		compiler: system-dialect/compiler
 		configure-compiler-api compiler
-		#either config/target = 'X86-64 [
 		unless job/target = 'X86-64 [
 			compiler-api/throw-error ["unsupported Red/System target:" job/target]
-		]
-		][
-		unless job/target = 'IA-32 [
-			compiler-api/throw-error ["unsupported Red/System target:" job/target]
-		]
 		]
 		foreach w [width signed? last-saved? saved-last-wide? last-math-op][
 			if slot: in target w [set slot none]

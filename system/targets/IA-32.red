@@ -566,23 +566,21 @@ system-target-IA32: context [
 			2 [emit #{66} spec/2]					;-- 16-bit
 			4 [spec/2]								;-- 32-bit
 		]
-		case/all [
-			2 < length? spec [
+		if 2 < length? spec [
 				value: make integer! compiler-api/unbox spec/3
 				emit switch w [
 					1 [int-to-bin/to-bin8 value]
 					2 [int-to-bin/to-bin16 value]
 					4 [int-to-bin/to-bin32 value]
 				]
-			]
-			3 < length? spec [
+		]
+		if 3 < length? spec [
 				value: make integer! compiler-api/unbox spec/4
 				emit switch w [
 					1 [int-to-bin/to-bin8 value]
 					2 [int-to-bin/to-bin16 value]
 					4 [int-to-bin/to-bin32 value]
 				]
-			]
 		]
 	]
 

@@ -28,6 +28,8 @@ output-dir: path-at root-dir %build/self-hosting/compiler-tests/
 compiler-script: path-at root-dir %red-system-selfhost-windows.red
 red-console: system/options/boot
 compiler-executable: get-env "RED_SYSTEM_COMPILER"
+compiler-arguments: any [get-env "RED_SYSTEM_COMPILER_ARGUMENTS" ""]
+compiler-library-target: any [get-env "RED_SYSTEM_LIBRARY_TARGET" "MSDOS"]
 compiler-prefix: either compiler-executable [
 	quoted to file! compiler-executable
 ][
@@ -40,7 +42,7 @@ qt: context [
 	comp-output: make string! 0
 	output: make string! 0
 	base-dir: root-dir
-	library-target: "MSDOS"
+	library-target: compiler-library-target
 ]
 
 test-name: "unnamed compiler test"
@@ -67,7 +69,8 @@ cleanup-current: does [
 compile-command: func [source [file!] output [file!] output-type [word!] /local command][
 	command: rejoin [
 		compiler-prefix
-		either output-type = 'dll [" -dlib -t MSDOS"][""]
+		either empty? compiler-arguments [""][rejoin [" " compiler-arguments]]
+		either output-type = 'dll [rejoin [" -dlib -t " compiler-library-target]][""]
 		" -o " quoted output " " quoted source
 	]
 	command

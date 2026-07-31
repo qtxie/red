@@ -2390,6 +2390,15 @@ Red [
 		--assert logic? oc72/a
 		--assert word?  oc72/b
 
+	--test-- "oc8"
+		oc8-prototype: context [known: none]
+		oc8-spec: [dynamic: none]
+		oc8: construct/with oc8-spec oc8-prototype
+		oc8/dynamic: 42
+		oc8-sentinel: true
+		--assert oc8-sentinel
+		--assert 42 = oc8/dynamic
+
 ===end-group===
 
 ===start-group=== "regression tests"

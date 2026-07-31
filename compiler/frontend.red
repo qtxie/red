@@ -3945,7 +3945,6 @@ red: context [
 						throw-error ["word" last path "not defined in" path]
 					][
 						obj-field?: no
-						obj?: no
 					]
 				]
 			]

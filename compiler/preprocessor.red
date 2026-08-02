@@ -24,6 +24,7 @@ compiler-preprocessor: context [
 	include-binary-name: "include-binary"
 	include-marker-name: "compiler-include"
 	include-binary-marker-name: "compiler-include-binary"
+	preserve-includes?: to logic! find spec-of :expand-directives to refinement! 'preserve-includes
 
 	make-issue: func [name [string!]][to issue! name]
 
@@ -126,10 +127,11 @@ compiler-preprocessor: context [
 		input: copy/deep code
 		protect-includes input false
 		set/any 'result try [
-			either clean [
-				expand-directives/clean/preserve-includes input
-			][
-				expand-directives/preserve-includes input
+			case [
+				all [clean preserve-includes?][expand-directives/clean/preserve-includes input]
+				clean [expand-directives/clean input]
+				preserve-includes? [expand-directives/preserve-includes input]
+				true [expand-directives input]
 			]
 		]
 		set-global-rebol saved-rebol

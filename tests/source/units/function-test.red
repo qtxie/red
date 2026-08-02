@@ -778,6 +778,19 @@ if system/state/interpreted? [                      ;-- not yet supported by com
         --assert (first [fwga4-o/i:]) = fwga-f fwga4-o/i:
 ===end-group===
 
+===start-group=== "local function values"
+
+	--test-- "local-function-call"
+		local-helper: func [value][value + 1000]
+		local-function-owner: func [/local local-helper][
+			local-helper: func [value][value + 1]
+			local-helper 41
+		]
+		--assert 41 = local-function-owner
+		--assert 1041 = local-helper 41
+
+===end-group===
+
 ===start-group=== "function spec validation"
 	--test-- "fsv1"
         --assert function? func [][]

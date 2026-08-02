@@ -180,7 +180,10 @@ linker: context [
 								]
 							][
 								unless find [import import-var] spec/1 [
-									throw-error "invalid ARM64 symbol reference"
+									throw-error [
+										"invalid ARM64 symbol reference:"
+										name "type:" spec/1 "ref:" mold ref
+									]
 								]
 							]
 						]
@@ -284,12 +287,12 @@ linker: context [
 			append buffer virtual-struct/form-value record
 			records: skip records 3
 		]
-
 		data-buf: job/sections/data/2
 		set-ptr job '__debug-lines length? data-buf	;-- patch __debug-lines symbol to point to 1st record
 		set-integer job '__debug-lines-nb (length? records) / 3
 
-		repend data-buf [buffer strings]
+		append data-buf buffer
+		append data-buf strings
 	]
 
 	undecorate: func [name [word!]][
@@ -361,7 +364,8 @@ linker: context [
 		set-ptr job '__debug-funcs length? data-buf		;-- patch __debug-funcs symbol to point to 1st record
 		set-integer job '__debug-funcs-nb nb
 
-		repend data-buf [buffer specs]
+		append data-buf buffer
+		append data-buf specs
 	]
 
 	show-funcs-map: func [

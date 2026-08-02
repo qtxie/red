@@ -312,21 +312,22 @@ system-dialect: context [
 				p: next header
 			]
 
-			parse p [									;-- search for closest line marker
-				some [
-					pos: set mark pair! (
-						if mark/2 = idx [
-							line-cache-pos:  pos
-							line-cache-idx:  mark/2
-							line-cache-line: mark/1
-							return mark/1				;-- exact value position match
-						]
-						if mark/2 > idx [return prev]	;-- closest value position match
-						line-cache-pos:  pos
-						line-cache-idx:  mark/2
-						line-cache-line: prev: mark/1
-					)
+			; Red Parse parens do not preserve the Stage0 local binding for `mark`
+			; here. Walk the same consecutive pair markers directly.
+			while [all [not tail? p pair? p/1]][
+				pos: p
+				mark: p/1
+				if mark/2 = idx [
+					line-cache-pos:  pos
+					line-cache-idx:  mark/2
+					line-cache-line: mark/1
+					return mark/1					;-- exact value position match
 				]
+				if mark/2 > idx [return prev]		;-- closest value position match
+				line-cache-pos:  pos
+				line-cache-idx:  mark/2
+				line-cache-line: prev: mark/1
+				p: next p
 			]
 			return prev									;-- return last marker
 		]
@@ -397,6 +398,12 @@ system-dialect: context [
 
 		undecorate: func [value [word! path! set-word! set-path!] /local v pos][
 			unless find v: mold value decoration [return value]
+
+			; The Red port uses `>` as its namespace separator, so standard
+			; comparison and shift operators collide with decorated spellings.
+			; Keep the Stage0 reconstruction algorithm for every other value,
+			; including compiler-owned `exec>` names used by libRedRT exports.
+			if find [">" ">=" "<>" ">>" ">>>"] v [return value]
 
 			while [pos: find v decoration][
 				unless find rs-ns-list to path! copy/part v pos [
@@ -5393,7 +5400,7 @@ system-dialect: context [
 					] :icon
 				append/only res reduce [
 					either find [default flat] :icon [
-						system-format-PE/default-icon
+						compiler-assets/default-icon
 					][
 						join base icon-file
 					]
@@ -5412,7 +5419,7 @@ system-dialect: context [
 			]
 		][
 			append res 'icon
-			append/only res reduce [system-format-PE/default-icon]
+			append/only res reduce [compiler-assets/default-icon]
 		]
 
 		clear info

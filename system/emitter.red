@@ -10,6 +10,7 @@ Red [
 compiler-api-protocol: [
 	any-float? any-pointer? backtrack canonical-type cast catch-attribut?
 	check-throw check-variable-arity? external-abi-call? find-aliased
+	floats-in-condition?
 	get-attributes get-type get-variable-spec int-literal-hex int64-hex
 	int64-literal-info int64? integer-type? integer-width?
 	is-small-struct-float? literal? local-variable? lossless-integer-cast?
@@ -85,6 +86,9 @@ compiler-api: context [
 	check-throw: does [invoke 'check-throw [] none]
 	check-variable-arity?: func [spec [block!]][invoke 'check-variable-arity? reduce [spec] false]
 	external-abi-call?: func [spec [block!]][invoke 'external-abi-call? reduce [spec] false]
+	floats-in-condition?: func [condition [block!]][
+		invoke 'floats-in-condition? reduce [condition] false
+	]
 	find-aliased: func [type [word!] /prefix /position][
 		invoke/full 'find-aliased reduce [type prefix position] none
 	]
@@ -147,8 +151,31 @@ target-reserve-call-struct-temps: func [target [object!] slots [integer!] /local
 	if slot [do reduce [get slot slots]]
 ]
 
-#include %targets/IA-32.red
-#include %targets/X86-64.red
+#include %../compiler/system-target-class.red
+
+; A focused native compiler must bind emitter calls to its concrete target.
+; Stage0 gets that concrete object from DO-CACHE before compiling any input;
+; the self-hosted compiler establishes the same relationship statically.
+#either config/show = 'X86-64-only [
+	#include %targets/X86-64.red
+	selected-system-target: system-target-X86-64
+][
+#either config/show = 'ARM64-ELF-only [
+	#include %targets/ARM64.red
+	selected-system-target: system-target-ARM64
+][
+#either config/show = 'ARM-ELF-only [
+	#include %targets/ARM.red
+	selected-system-target: system-target-ARM
+][
+	#include %targets/IA-32.red
+	#include %targets/ARM.red
+	#include %targets/X86-64.red
+	#include %targets/ARM64.red
+	selected-system-target: system-target-X86-64
+]
+]
+]
 
 ;-- Top-level roots for emitter buffers (object fields have been seen
 ;-- corrupted to residual make sizes like 10000 under Stage1 GC).
@@ -171,7 +198,7 @@ emitter: context [
 	bits-buf:  make binary! 10'000
 	verbose:   0						;-- logs verbosity level
 
-	target:	    system-target-X86-64
+	target:     selected-system-target
 	compiler:   none					;-- just a short-cut
 	libc-init?:	none					;-- TRUE if currently processing libc init part
 	rodata?:	no						;-- TRUE: store* routines write to rodata-buf (protected data)
@@ -1627,9 +1654,36 @@ emitter: context [
 		rodata?: no
 		compiler: system-dialect/compiler
 		configure-compiler-api compiler
-		unless job/target = 'X86-64 [
+		#either config/show = 'X86-64-only [
+			unless job/target = 'X86-64 [
+				compiler-api/throw-error ["X86-64 compiler received target:" job/target]
+			]
+			target: system-target-X86-64
+][
+		#either config/show = 'ARM64-ELF-only [
+			unless job/target = 'ARM64 [
+				compiler-api/throw-error ["ARM64 compiler received target:" job/target]
+			]
+			target: system-target-ARM64
+][
+		#either config/show = 'ARM-ELF-only [
+			unless job/target = 'ARM [
+				compiler-api/throw-error ["ARM compiler received target:" job/target]
+			]
+			target: system-target-ARM
+][
+		target: select reduce [
+			'IA-32 system-target-IA32
+			'ARM system-target-ARM
+			'X86-64 system-target-X86-64
+			'ARM64 system-target-ARM64
+		] job/target
+		unless target [
 			compiler-api/throw-error ["unsupported Red/System target:" job/target]
 		]
+]
+]
+]
 		foreach w [width signed? last-saved? saved-last-wide? last-math-op][
 			if slot: in target w [set slot none]
 		]

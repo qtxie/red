@@ -8,19 +8,22 @@ It has two jobs while the Red implementation is being reworked:
 * `diff` runs two compiler commands against the same corpus and preserves raw
   stdout, stderr, and output artifacts while comparing normalized results.
 
-The direct compiler entrypoint is `red-selfhost.red`. It is compiled with the
-repository's documented Stage 0 command; this tool only verifies its source
-closure and compares later stages.
+The direct compiler entrypoint is `red-bootstrap-windows.red`. The canonical
+Windows x64 compiler is the fixed-point self-hosted binary at
+`build/self-hosting/red-bootstrap-stage1-x64-gc-fixed.exe`; this tool only
+verifies its source closure and compares compiler generations.
 
 The transition build produces an ordinary executable directly:
 
-```text
-cmd /c D:\EE\QTool\rebcmdview.exe -cqs ./red.r -r -d -o build/self-hosting/red-selfhost.exe red-selfhost.red
-build\self-hosting\red-selfhost.exe --check-all
+```powershell
+$compiler = Resolve-Path .\build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe
+& $compiler -r -d -t Windows-X86-64 `
+    -o build\self-hosting\red-bootstrap-next-x64.exe `
+    red-bootstrap-windows.red
 ```
 
-Once Stage 1 exists, replace the compiler executable in that command with the
-Stage 1 binary. No `build.r`, pre-cap, or encap step is involved.
+No `build.r`, pre-cap, encap, Rebol executable, or `red.r` invocation is
+involved in the normal self-hosted build.
 
 Example:
 
@@ -31,8 +34,8 @@ python tools/self_hosting/selfhost.py verify tools/self_hosting/source-baseline.
 python tools/self_hosting/selfhost.py target-registry
 ```
 
-The Windows Stage 0 smoke corpus uses the documented Rebol compiler only as
-an oracle and keeps both output trees for inspection:
+The old Windows Stage0 oracle configurations are retained only for an explicitly
+requested historical audit. Do not run them during normal development:
 
 ```text
 python tools/self_hosting/selfhost.py diff tools/self_hosting/oracle-selfcheck.windows.json --work-root build/self-hosting/oracle-runs --report build/self-hosting/oracle-report.json
@@ -44,9 +47,9 @@ The target matrix covers all current CPU classes and PE, ELF, and Mach-O:
 python tools/self_hosting/selfhost.py diff tools/self_hosting/oracle-matrix.windows.json --work-root build/self-hosting/oracle-matrix-runs --report build/self-hosting/oracle-matrix-report.json
 ```
 
-The command configuration is intentionally explicit.  A future Red Stage 1
-uses the same corpus and replaces only the `right.command` definition; it does
-not introduce an encap cache or a Rebol build script.
+The command configuration is intentionally explicit. New parity configurations
+must compare self-hosted generations and must not introduce an encap cache or a
+Rebol build script.
 
 `fixtures/host-contract/dynamic-object-method.red` records a known interpreter /
 compiled-Red divergence for an object method injected through a slot initially

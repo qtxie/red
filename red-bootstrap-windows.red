@@ -1,6 +1,7 @@
 Red [
-	Title: "Self-hosted Windows Red compiler bootstrap"
+	Title: "Self-hosted Red compiler bootstrap"
 	File:  %red-bootstrap-windows.red
+	Config: [show: 'X86-64-only]
 ]
 
 compiler-root: system/options/path
@@ -8,10 +9,8 @@ compiler-root: system/options/path
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
 
-; The bootstrap backend contains dynamic Windows PE support for IA-32 and
-; x86-64. Static linking and the other targets enter after the compiler can
-; rebuild this executable without Rebol.
-#include %system/compiler-windows-bootstrap.red
+; Use the complete Red-hosted backend. Stage0 is not part of target selection.
+#include %system/compiler.red
 
 #include %compiler/modules.red
 #include %compiler/version.red
@@ -29,11 +28,11 @@ if none? red/redbin [do bind load %compiler/redbin-emitter.red red]
 ; Keep collection enabled while the compiler builds its large intermediate graphs.
 recycle/on
 
-bootstrap-version: "0.6.6-selfhost.1-windows"
+bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
 
 print-usage: does [
-	print "Usage: red-bootstrap-windows [-r] [-u] [-d] [-dlib] [-t target] [--red-only] [-o output.exe] source.red|source.reds"
+	print "Usage: red-bootstrap [-r] [-u] [-d] [-dlib] [-t target] [--red-only] [-o output] source.red|source.reds"
 ]
 
 fail-command: func [message][
@@ -93,14 +92,6 @@ compile-source: func [
 
 	job: compiler-options/to-job options
 	if error? :job [fail-command mold job]
-	unless all [
-		(compiler-system-job/job-get job 'OS) = 'Windows
-		(compiler-system-job/job-get job 'format) = 'PE
-		find [IA-32 X86-64] compiler-system-job/job-get job 'target
-	][
-		fail-command "bootstrap supports only Windows IA-32 or x86-64 PE targets"
-	]
-	if compiler-system-job/job-get job 'static-link? [fail-command "static linking is unavailable in the bootstrap compiler"]
 	; Full runtime until Stage1 libRedRT defs path is verified.
 	if none? compiler-system-job/job-get job 'dev-mode? [
 		compiler-system-job/job-set job 'dev-mode? false

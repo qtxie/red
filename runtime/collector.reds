@@ -32,6 +32,8 @@ collector: context [
 	stats: declare struct! [
 		cycles		 [integer!]							;-- nb or GC runs
 		nodes-cycles [integer!]							;-- nb of node frames compaction runs
+		pinned-frames [integer!]						;-- conservatively retained series frames in current cycle
+		pinned-bytes  [integer!]						;-- bytes retained by conservative frame pins
 	]
 	
 	ext-size: 100
@@ -49,6 +51,8 @@ collector: context [
 	][
 		stats/cycles: 			0
 		stats/nodes-cycles:		0
+		stats/pinned-frames:	0
+		stats/pinned-bytes:	0
 		prefs/nodes-gc-trigger: 5						;-- trigger if node frame is unchanged after 5 cycles
 	]
 
@@ -109,8 +113,10 @@ collector: context [
 		]
 		nodes:  declare list!
 		series: declare list!
+		pinned: declare list!
 		nodes/size:  min-size
 		series/size: min-size
+		pinned/size: fit-cache
 		
 		rebuild: func [									;-- build an array of node frames pointers
 			/local
@@ -123,6 +129,10 @@ collector: context [
 			;-- allocation alignement not guaranteed, so L1 cache optmization is only eventual.
 			if null? nodes/list  [nodes/list:  as ptr-ptr! allocate min-size * size? int-ptr!]
 			if null? series/list [series/list: as ptr-ptr! allocate min-size * size? int-ptr!]
+			if null? pinned/list [pinned/list: as ptr-ptr! allocate pinned/size * size? int-ptr!]
+			pinned/count: 0
+			stats/pinned-frames: 0
+			stats/pinned-bytes: 0
 			
 			process: [
 				until [
@@ -162,6 +172,97 @@ collector: context [
 				pos: s/list + cnt
 				process
 			]
+		]
+
+		big-frame?: func [
+			base [int-ptr!]
+			return: [logic!]
+			/local frame [big-frame!]
+		][
+			frame: memory/b-head
+			while [frame <> null][
+				if base = as int-ptr! frame [return yes]
+				frame: frame/next
+			]
+			no
+		]
+
+		;-- Return the containing series or big-series frame without interpreting
+		;-- the candidate as a series header. The sorted predecessor lookup keeps
+		;-- conservative stack values from causing arbitrary memory reads.
+		find-series-frame: func [
+			ptr [int-ptr!]
+			return: [int-ptr!]
+			/local
+				b e p [ptr-ptr!]
+				base [int-ptr!]
+				regular [series-frame!]
+				big [big-frame!]
+				finish [byte-ptr!]
+		][
+			if zero? series/count [return null]
+			b: series/list
+			e: b + series/count
+			while [b < e][
+				p: b + (((as-integer e - b) / size? int-ptr!) / 2)
+				either p/value <= ptr [b: p + 1][e: p]
+			]
+			if b = series/list [return null]
+			p: b - 1
+			base: p/value
+			either big-frame? base [
+				big: as big-frame! base
+				finish: (as byte-ptr! big) + (size? big-frame!) + big/size
+			][
+				regular: as series-frame! base
+				finish: (as byte-ptr! regular) + regular/size
+			]
+			either all [base <= ptr ptr < as int-ptr! finish][base][null]
+		]
+
+		pin: func [
+			ptr [int-ptr!]
+			return: [logic!]
+			/local base [int-ptr!] p tail [ptr-ptr!] frame [series-frame!] big [big-frame!]
+		][
+			base: find-series-frame ptr
+			if null? base [return no]
+			p: pinned/list
+			tail: p + pinned/count
+			while [p < tail][
+				if p/value = base [return yes]
+				p: p + 1
+			]
+			if pinned/count = pinned/size [
+				pinned/size: pinned/size * 2
+				pinned/list: as ptr-ptr! realloc as byte-ptr! pinned/list pinned/size * size? int-ptr!
+			]
+			p: pinned/list + pinned/count
+			p/value: base
+			pinned/count: pinned/count + 1
+			stats/pinned-frames: stats/pinned-frames + 1
+			either big-frame? base [
+				big: as big-frame! base
+				stats/pinned-bytes: stats/pinned-bytes + big/size + size? big-frame!
+			][
+				frame: as series-frame! base
+				stats/pinned-bytes: stats/pinned-bytes + frame/size
+			]
+			yes
+		]
+
+		pinned?: func [
+			frame [int-ptr!]
+			return: [logic!]
+			/local p tail [ptr-ptr!]
+		][
+			p: pinned/list
+			tail: p + pinned/count
+			while [p < tail][
+				if p/value = frame [return yes]
+				p: p + 1
+			]
+			no
 		]
 		
 		find: func [
@@ -768,6 +869,142 @@ collector: context [
 	][
 		mark-block-node :blk/node
 	]
+
+	;-- Resolve an arbitrary pointer inside a managed series allocation to its
+	;-- allocator-owned header. Only trusted headers are dereferenced while
+	;-- walking from the frame base.
+	find-series-owner: func [
+		ptr [int-ptr!]
+		return: [series!]
+		/local
+			base [int-ptr!]
+			frame [series-frame!]
+			big [big-frame!]
+			s [series!]
+			finish next [byte-ptr!]
+	][
+		base: frames-list/find-series-frame ptr
+		if null? base [return null]
+		either frames-list/big-frame? base [
+			big: as big-frame! base
+			s: as series! ((as byte-ptr! big) + size? big-frame!)
+			finish: (as byte-ptr! s) + big/size
+		][
+			frame: as series-frame! base
+			s: as series! ((as byte-ptr! frame) + size? series-frame!)
+			finish: as byte-ptr! frame/heap
+		]
+		while [(as byte-ptr! s) < finish][
+			next: (as byte-ptr! s) + (size? series-buffer!) + s/size + SERIES_BUFFER_PADDING
+			if all [
+				(as int-ptr! s) <= ptr
+				ptr < as int-ptr! next
+			][return s]
+			if any [next <= as byte-ptr! s next > finish][return null]
+			s: as series! next
+		]
+		null
+	]
+
+	mark-series-root: func [
+		s [series!]
+		return: [logic!]
+		/local node [node!] unit [integer!]
+	][
+		if any [
+			null? s
+			s/flags and series-in-use = 0
+			s/node < 1
+			s/node >= node-registry/next
+		][return no]
+		node: resolve-node s/node
+		if any [null? node node/value <> as int-ptr! s][return no]
+		keep :s/node
+		unit: GET_UNIT(s)
+		if unit = 1 [mark-hashtable-node node]
+		if all [unit = 16 s/flags and flag-gc-scan = 0][
+			s/flags: s/flags or flag-gc-scan
+			mark-values s/offset s/tail
+		]
+		yes
+	]
+
+	;-- Unknown native slots are not rewritten. A possible interior series
+	;-- pointer pins its whole frame, while an exact raw node can still be
+	;-- marked precisely on 64-bit targets where node frames do not compact.
+	pin-stack-candidate: func [
+		sp [ptr-ptr!]
+		/local p [int-ptr!] node [node!] s [series!]
+	][
+		p: sp/value
+		if p <= as int-ptr! FFFFh [exit]
+		if frames-list/find p FRAME_NODES [
+			node: as node! p
+			if all [
+				node/value <> null
+				not frames-list/find node/value FRAME_NODES
+				(frames-list/find-series-frame node/value) <> null
+			][
+				s: find-series-owner node/value
+				if s <> null [
+					mark-series-root s
+					exit
+				]
+			]
+		]
+		frames-list/pin p
+	]
+
+	mark-pinned-frames: func [
+		/local
+			p tail [ptr-ptr!]
+			base [int-ptr!]
+			frame [series-frame!]
+			big [big-frame!]
+			s [series!]
+			finish next [byte-ptr!]
+	][
+		p: frames-list/pinned/list
+		tail: p + frames-list/pinned/count
+		while [p < tail][
+			base: p/value
+			either frames-list/big-frame? base [
+				big: as big-frame! base
+				s: as series! ((as byte-ptr! big) + size? big-frame!)
+				finish: (as byte-ptr! s) + big/size
+			][
+				frame: as series-frame! base
+				s: as series! ((as byte-ptr! frame) + size? series-frame!)
+				finish: as byte-ptr! frame/heap
+			]
+			while [(as byte-ptr! s) < finish][
+				next: (as byte-ptr! s) + (size? series-buffer!) + s/size + SERIES_BUFFER_PADDING
+				if next > finish [fire [TO_ERROR(internal no-memory)]]
+				if s/flags and series-in-use <> 0 [mark-series-root s]
+				s: as series! next
+			]
+			p: p + 1
+		]
+	]
+
+	clear-pinned-series-frame: func [
+		frame [series-frame!]
+		/local s [series!] finish next [byte-ptr!]
+	][
+		s: as series! ((as byte-ptr! frame) + size? series-frame!)
+		finish: as byte-ptr! frame/heap
+		while [(as byte-ptr! s) < finish][
+			next: (as byte-ptr! s) + (size? series-buffer!) + s/size + SERIES_BUFFER_PADDING
+			if s/flags and series-in-use <> 0 [
+				s/flags: s/flags and not (flag-gc-mark or flag-gc-scan)
+			]
+			s: as series! next
+		]
+	]
+
+	pinned-frame?: func [frame [int-ptr!] return: [logic!]][
+		frames-list/pinned? frame
+	]
 	
 	prepare-series-move: func [						;-- Rewrite headers for a pending series move
 		src dst	[byte-ptr!]							;-- source and destination regions
@@ -901,7 +1138,10 @@ collector: context [
 			]
 		]
 		prev: frame/prev
-		if null? prev [									;-- first frame
+		if any [
+			null? prev									;-- first frame
+			frames-list/pinned? as int-ptr! prev		;-- never move into a conservatively pinned frame
+		][
 			return compact-series-frame frame refs
 		]
 
@@ -1069,7 +1309,7 @@ collector: context [
 			c-low c-high lib-low lib-high caller [byte-ptr!]
 			s [series!]
 			bits slot-bits idx disp nb arg-slots local-slots slots handle h n [integer!]
-			ext? dyn? [logic!]
+			ext? dyn? managed? [logic!]
 	][
 		c-low: system/image/base + system/image/code
 		c-high: c-low + system/image/code-size
@@ -1171,50 +1411,30 @@ collector: context [
 										p > as int-ptr! FFFFh
 										p < as int-ptr! FFFFF000h
 									]][
+										managed?: no
 										node: as node! p
 										case [
 											all [		;=== Mark node! references ===
 												frames-list/find p FRAME_NODES
 												node/value <> null
 												not frames-list/find node/value FRAME_NODES
-												frames-list/find node/value FRAME_SERIES
-												keep-raw as ptr-ptr! sp
+												(frames-list/find-series-frame node/value) <> null
 											][
-												p: sp/value
-												node: as node! p
-												s: as series! node/value
-												either GET_UNIT(s) = 16 [
-													mark-values s/offset s/tail
-												][
-													if GET_UNIT(s) = 1 [mark-hashtable-node node]
+												s: find-series-owner node/value
+												if all [s <> null node/value = as int-ptr! s][
+													keep-raw as ptr-ptr! sp
+													node: as node! sp/value
+													mark-series-root as series! node/value
 												]
 											]
 											all [
 												not all [(as byte-ptr! stack/bottom) <= p p <= (as byte-ptr! stack/top)]
-												frames-list/find p FRAME_SERIES
+												(frames-list/find-series-frame p) <> null
 											][
-												;-- If p is a series header (back-ref matches), mark via
-												;-- its stable handle. Interior series pointers only need
-												;-- stk-refs relocation.
-												s: as series! p
-												if all [
-													s/flags and series-in-use <> 0
-													s/node > 0
-													s/node < node-registry/next
-												][
-													node: resolve-node s/node
-													if all [node <> null node/value = as int-ptr! s][
-														keep :s/node
-														if GET_UNIT(s) = 1 [mark-hashtable-node node]
-														if GET_UNIT(s) = 16 [
-															if s/flags and flag-gc-scan = 0 [
-																s/flags: s/flags or flag-gc-scan
-																mark-values s/offset s/tail
-															]
-														]
-													]
-												]
-												if store? [
+												s: find-series-owner p
+												managed?: all [s <> null mark-series-root s]
+												unless managed? [frames-list/pin p]
+												if all [managed? store?][
 													if refs = tail [
 														refs: memory/stk-refs
 														memory/stk-sz: memory/stk-sz + 1000
@@ -1235,6 +1455,9 @@ collector: context [
 											true [0]
 										]
 									]
+								]
+								#if any [target = 'X86-64 target = 'ARM64] [
+									if bits and 1 = 0 [pin-stack-candidate sp]
 								]
 								bits: bits >>> 1		;-- next slot flag
 							]
@@ -1362,6 +1585,20 @@ collector: context [
 				;-- and above the child frame (call args / expression spills). Formal
 				;-- local-slots cover only declared locals; scan the gap too.
 				;-- Layout (addresses decrease downward): args, frm, fixed, locals, temps, child.
+				#if any [target = 'X86-64 target = 'ARM64] [
+					sp-address: (as byte-ptr! frm) - ((4 + arg-slots + local-slots) * size? pointer!)
+					sp: as ptr-ptr! sp-address
+					slot: either all [
+						prev <> null
+						prev > as ptr-ptr! system/stack/top
+						prev < frm
+					][prev][as ptr-ptr! system/stack/top]
+					while [sp > slot][
+						sp: sp - 1
+						mark-stack-handle sp
+						pin-stack-candidate sp
+					]
+				]
 				#if target = 'IA-32 [
 					;-- Full frame body scan for node-handle! only (safe: registry
 					;-- validates handles). Do not conservatively treat random stack
@@ -1427,11 +1664,13 @@ collector: context [
 			;@@ the tail of the last frame, add 1 to avoid moving
 			next: frame/next + 1
 
-			either type = COLLECTOR_RELEASE [
+			either frames-list/pinned? as int-ptr! frame [
+				clear-pinned-series-frame frame
+			][either type = COLLECTOR_RELEASE [
 				refs: cross-compact-frame frame refs
 			][
 				refs: compact-series-frame frame refs
-			]
+			]]
 			frame: next - 1
 			frame = null
 		]
@@ -1527,6 +1766,7 @@ collector: context [
 		#if debug? = yes [if verbose > 1 [probe "scanning native stack"]]
 		frames-list/rebuild								;-- refresh nodes and series frames list
 		scan-stack-refs yes
+		mark-pinned-frames
 		if refs <> null [cycles/refresh]
 		#if debug? = yes [tm1: (platform/get-time yes yes) - tm]	;-- marking time
 
@@ -1554,6 +1794,12 @@ collector: context [
 			tm: (platform/get-time yes yes) - tm - tm1
 			sprintf [buf ", mark: %.1fms, sweep: %.1fms" tm1 * 1000.0 tm * 1000.0]
 			probe [" => " memory-info null 1 buf]
+			if verbose > 0 [
+				print [
+					" pinned: " stats/pinned-frames
+					" frames / " stats/pinned-bytes " bytes"
+				]
+			]
 			if verbose > 1 [
 				simple-io/close-file stdout
 				stdout: saved

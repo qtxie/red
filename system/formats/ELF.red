@@ -370,6 +370,22 @@ system-format-ELF: context [
 	relocation-struct?: func [target [word!]][either elf64-target? target [elf-relocation64][elf-relocation]]
 	machine-word-struct?: func [target [word!]][either elf64-target? target [machine-word64][machine-word]]
 
+	get-layout-address: func [layout [block!] name [string!]][layout/:name/address]
+	get-layout-offset: func [layout [block!] name [string!]][layout/:name/offset]
+	get-layout-size: func [layout [block!] name [string!]][layout/:name/size]
+	get-layout-meta: func [layout [block!] name [string!]][layout/:name/meta]
+	get-layout-data: func [layout [block!] name [string!]][layout/:name/data]
+
+	has-layout-element?: func [layout [block!] name [string!]][
+		to logic! find/skip layout name 2
+	]
+
+	set-layout-data: func [layout [block!] name [string!] builder [block!]][
+		if has-layout-element? layout name [
+			layout/:name/data: do builder
+		]
+	]
+
 	;; ------------------------------------------------------------------------
 
 	;; The macro structure of our generated ELF binaries.
@@ -434,7 +450,6 @@ system-format-ELF: context [
 			structure segments sections commands layout
 			data-size data-reloc rodata-reloc dynamic-size data-imports di-pairs
 			di-name di-off di-size
-			get-address get-offset get-size get-meta get-data set-data
 			relro-offset plt-offset pos list soname base
 			relro-entry dynamic-entry dynamic-section rw-entry gap
 			import-funcs import-vars relro-imports gotplt-count plt-size
@@ -656,38 +671,21 @@ system-format-ELF: context [
 			]
 		]
 
-		;; In the following section, we try to minimize the global state passed
-		;; around. Instead of just passing LAYOUT to all build-* functions, we
-		;; try to pass the minimum amount of information necessary. This makes
-		;; the dependencies between those builders more explicit.
-
-		get-address: func [name] [layout/:name/address]
-		get-offset: func [name] [layout/:name/offset]
-		get-size: func [name] [layout/:name/size]
-		get-meta: func [name] [layout/:name/meta]
-		get-data: func [name] [layout/:name/data]
-
-		has-element: func [name] [to logic! find/skip layout name 2]
-
-		set-data: func [name builder] [
-			if has-element name [
-				layout/:name/data: do builder
-			]
-		]
-
-		if has-element "relro" [						;-- PT_GNU_RELRO covers the .rodata page(s)
+		if has-layout-element? layout "relro" [		;-- PT_GNU_RELRO covers the .rodata page(s)
 			relro-entry: select layout "relro"
-			relro-entry/address: get-address ".rodata"
-			relro-entry/offset:  get-offset ".rodata"
-			relro-entry/size:    defs/page-size * round/ceiling (get-size ".rodata") / defs/page-size
+			relro-entry/address: get-layout-address layout ".rodata"
+			relro-entry/offset:  get-layout-offset layout ".rodata"
+			relro-entry/size:    to integer! (
+				defs/page-size * round/ceiling (get-layout-size layout ".rodata") / defs/page-size
+			)
 		]
 
 		;; PT_TLS covers the static linker's TLS template inside .data;
 		;; p_memsz (template + .tbss) and p_align come from static-link in
 		;; build-phdr -- only the file location is known here.
 		if all [external-linker/etls-off  pos: select layout "tls"][
-			pos/address: (get-address ".data") + external-linker/etls-off
-			pos/offset:  (get-offset ".data") + external-linker/etls-off
+			pos/address: (get-layout-address layout ".data") + external-linker/etls-off
+			pos/offset:  (get-layout-offset layout ".data") + external-linker/etls-off
 			pos/size:    external-linker/etls-filesz
 		]
 
@@ -697,139 +695,139 @@ system-format-ELF: context [
 		;; statically-linked libgcc_eh path binary-searches the same table
 		;; through __exidx_start/__exidx_end.
 		if all [external-linker/exidx-range  pos: select layout "arm-exidx"][
-			pos/address: (get-address ".data") + external-linker/exidx-range/1
-			pos/offset:  (get-offset ".data") + external-linker/exidx-range/1
+			pos/address: (get-layout-address layout ".data") + external-linker/exidx-range/1
+			pos/offset:  (get-layout-offset layout ".data") + external-linker/exidx-range/1
 			pos/size:    external-linker/exidx-range/2
 		]
 
-		set-data "ehdr" [
+		set-layout-data layout "ehdr" [
 			build-ehdr
 				job/os
 				job/target
 				job/type
 				job/PIC?
 				job/ABI
-				get-offset "phdr"
-				get-offset "shdr"
-				get-address ".text"
+				get-layout-offset layout "phdr"
+				get-layout-offset layout "shdr"
+				get-layout-address layout ".text"
 				segments
 				sections
 		]
 
-		set-data "phdr"
+		set-layout-data layout "phdr"
 			[build-phdr job/target collect [
 				foreach segment segments [keep/only (select layout segment)]
 			]]
 
-		set-data ".hash"
+		set-layout-data layout ".hash"
 			[build-hash compose [(imports) (extract exports 2)]]
 
-		set-data ".dynsym" [
+		set-layout-data layout ".dynsym" [
 			build-dynsym
 				job/target
 				imports
 				exports
-				get-data ".dynstr"
-				get-address ".text"
+				get-layout-data layout ".dynstr"
+				get-layout-address layout ".text"
 				section-index-of sections ".text"
-				get-address ".data"
+				get-layout-address layout ".data"
 				section-index-of sections ".data"
-				any [attempt [get-address ".rodata"] 0]
+				any [attempt [get-layout-address layout ".rodata"] 0]
 				section-index-of sections ".rodata"
 		]
 
-		set-data ".rela.plt" [
+		set-layout-data layout ".rela.plt" [
 			build-relplt
 				job/target
 				imports
 				import-funcs
-				get-address ".got.plt"
+				get-layout-address layout ".got.plt"
 		]
 
-		set-data ".plt" [
+		set-layout-data layout ".plt" [
 			build-plt
 				job/target
 				import-funcs
-				get-address ".plt"
-				get-address ".got.plt"
+				get-layout-address layout ".plt"
+				get-layout-address layout ".got.plt"
 		]
 
-		set-data ".data" [
+		set-layout-data layout ".data" [
 			if job/debug? [
-				linker/build-debug-lines job get-address ".text"
-				linker/build-debug-func-names job get-address ".text"
+				linker/build-debug-lines job get-layout-address layout ".text"
+				linker/build-debug-func-names job get-layout-address layout ".text"
 			]
 			job/sections/data/2
 		]
 
 		;; Resolve data references before building RELA entries; x86-64 stores
 		;; relative pointer values in r_addend rather than in the relocated slot.
-		if any [has-element ".data" has-element ".rodata"] [
+		if any [has-layout-element? layout ".data" has-layout-element? layout ".rodata"] [
 			linker/resolve-symbol-refs
 				job
-				get-data ".text"
-				any [attempt [get-data ".data"] #{}]
-				any [attempt [get-data ".rodata"] #{}]
-				get-address ".text"
-				any [attempt [get-address ".data"] 0]
-				any [attempt [get-address ".rodata"] 0]
+				get-layout-data layout ".text"
+				any [attempt [get-layout-data layout ".data"] #{}]
+				any [attempt [get-layout-data layout ".rodata"] #{}]
+				get-layout-address layout ".text"
+				any [attempt [get-layout-address layout ".data"] 0]
+				any [attempt [get-layout-address layout ".rodata"] 0]
 				machine-word
 		]
 
-		set-data reloc-section [
+		set-layout-data layout reloc-section [
 			build-reltext
 				job/target
 				imports
 				relro-imports
-				any [attempt [get-address ".data.rel.ro"] 0]
+				any [attempt [get-layout-address layout ".data.rel.ro"] 0]
 				data-reloc
-				any [attempt [get-address ".data"] 0]	;-- in case .data segment is absent
-				any [attempt [get-data ".data"] #{}]
-				get-address ".text"
+				any [attempt [get-layout-address layout ".data"] 0]	;-- in case .data segment is absent
+				any [attempt [get-layout-data layout ".data"] #{}]
+				get-layout-address layout ".text"
 				data-imports
 				rodata-reloc
-				any [attempt [get-address ".rodata"] 0]
-				any [attempt [get-data ".rodata"] #{}]
+				any [attempt [get-layout-address layout ".rodata"] 0]
+				any [attempt [get-layout-data layout ".rodata"] #{}]
 		]
 
-		set-data ".got.plt" [
+		set-layout-data layout ".got.plt" [
 			build-got-plt
 				job/target
 				import-funcs
-				get-address ".dynamic"
-				get-address ".plt"
+				get-layout-address layout ".dynamic"
+				get-layout-address layout ".plt"
 		]
 
-		set-data ".data.rel.ro"
+		set-layout-data layout ".data.rel.ro"
 			[build-relro job/target relro-imports]
 
-		set-data ".dynamic" [
+		set-layout-data layout ".dynamic" [
 			build-dynamic
 				job/type
 				job/target
 				job/PIE?
 				job/symbols
-				get-address ".text"
-				get-address ".hash"
-				get-address ".dynstr" get-size ".dynstr"
-				get-address ".dynsym"
-				get-address reloc-section get-size reloc-section
-				any [attempt [get-address ".got.plt"] none]
-				any [attempt [get-address ".rela.plt"] none]
-				any [attempt [get-size ".rela.plt"] 0]
-				get-data ".dynstr"
+				get-layout-address layout ".text"
+				get-layout-address layout ".hash"
+				get-layout-address layout ".dynstr" get-layout-size layout ".dynstr"
+				get-layout-address layout ".dynsym"
+				get-layout-address layout reloc-section get-layout-size layout reloc-section
+				any [attempt [get-layout-address layout ".got.plt"] none]
+				any [attempt [get-layout-address layout ".rela.plt"] none]
+				any [attempt [get-layout-size layout ".rela.plt"] 0]
+				get-layout-data layout ".dynstr"
 				libraries
 				soname
 		]
 
-		set-data ".stab" [
+		set-layout-data layout ".stab" [
 			build-stab
-				get-address ".text"
-				get-data ".stabstr"
+				get-layout-address layout ".text"
+				get-layout-data layout ".stabstr"
 				natives
 		]
 
-		set-data "shdr" [
+		set-layout-data layout "shdr" [
 			build-shdr
 				job/target
 				collect [
@@ -839,28 +837,28 @@ system-format-ELF: context [
 					]
 				]
 				commands
-				get-data ".shstrtab"
+				get-layout-data layout ".shstrtab"
 		]
 
 		;; Resolve import references.
-		if any [has-element ".data.rel.ro" has-element ".plt"] [
+		if any [has-layout-element? layout ".data.rel.ro" has-layout-element? layout ".plt"] [
 			relro-offset: none
-			if has-element ".data.rel.ro" [
-			relro-offset: get-address ".data.rel.ro"
-			if job/PIC? [relro-offset: relro-offset - get-address ".text"]
+			if has-layout-element? layout ".data.rel.ro" [
+			relro-offset: get-layout-address layout ".data.rel.ro"
+			if job/PIC? [relro-offset: relro-offset - get-layout-address layout ".text"]
 			]
 			plt-offset: none
-			if has-element ".plt" [
-				plt-offset: get-address ".plt"
-				if job/PIC? [plt-offset: plt-offset - get-address ".text"]
+			if has-layout-element? layout ".plt" [
+				plt-offset: get-layout-address layout ".plt"
+				if job/PIC? [plt-offset: plt-offset - get-layout-address layout ".text"]
 			]
 			resolve-import-refs
 				job
 				imports
 				import-vars
 				import-funcs
-				get-data ".text"
-				get-address ".text"
+				get-layout-data layout ".text"
+				get-layout-address layout ".text"
 				relro-offset
 				plt-offset
 		]
@@ -868,20 +866,20 @@ system-format-ELF: context [
 		;; Apply external C object relocations (static linking).
 		external-linker/apply-relocs
 			job
-			get-address ".text"
-			any [attempt [get-address ".data"] 0]
+			get-layout-address layout ".text"
+			any [attempt [get-layout-address layout ".data"] 0]
 			0
 
 		linker/set-image-info
 			job
 			base: any [job/base-address defs/base-address]
-			(get-address ".text") - either job/PIC? [0][base]
-			get-size ".text"
-			(get-address ".data") - either job/PIC? [0][base]
-			get-size ".data"
+			(get-layout-address layout ".text") - either job/PIC? [0][base]
+			get-layout-size layout ".text"
+			(get-layout-address layout ".data") - either job/PIC? [0][base]
+			get-layout-size layout ".data"
 			0 0										;-- .rodata already read-only by segment/RELRO
 
-		if job/show-func-map? [linker/show-funcs-map job get-address ".text"]
+		if job/show-func-map? [linker/show-funcs-map job get-layout-address layout ".text"]
 
 		;; Concatenate the layout data into the output binary.
 		job/buffer: copy #{}
@@ -1885,24 +1883,31 @@ system-format-ELF: context [
 		total
 	]
 
+	emit-layout-entry: func [
+		layout [block!] commands [block!]
+		name [string!] type [word!]
+		offset [integer!] address [integer!] size [integer!]
+		meta [block!] data
+		/local padding
+	][
+		padding: any [select commands reduce [name 'pad] 0]
+		repend layout [
+			name reduce [
+				'type type 'offset offset 'address address 'size size
+				'pad padding 'meta meta 'data data
+			]
+		]
+		padding
+	]
+
 	layout-binary: func [
 		{Given a file structure and file layout commands, generate a full file
 		"layout". A file layout collects the type, offset, address, size,
 		metadata and data for each element in the file's structure.}
 		structure [block!] commands [block!]
-		/local layout emit offset address elements-rule name type meta size a p prev
+		/local layout offset address elements-rule name type meta size a p prev
 	] [
 		layout: copy []
-
-		emit: func [n t o a s m d /local p] [
-			p: any [select commands reduce [name 'pad] 0]
-			repend layout [
-				n reduce [
-					'type t 'offset o 'address a 'size s 'pad p 'meta m 'data d
-				]
-			]
-			p
-		]
 
 		offset: 0
 		address: 0
@@ -1934,12 +1939,12 @@ system-format-ELF: context [
 				)
 				[
 					into [
-						(emit name type offset address size meta data)
+						(emit-layout-entry layout commands name type offset address size meta data)
 						elements-rule
 					]
 				|
 					(
-						padding: emit name type offset address size meta data
+						padding: emit-layout-entry layout commands name type offset address size meta data
 						address: address + size + padding
 						offset: offset + size + padding
 					)
@@ -1997,7 +2002,9 @@ system-format-ELF: context [
 		base + ((size-of machine-word) * any [ind (-1 + index? find syms sym)])
 	]
 
-	to-c-string: func [data [string! binary! issue!]] [join to-binary data #{00}]
+	to-c-string: func [data [string! binary! issue!]][
+		join either binary? data [data][to binary! form data] #{00}
+	]
 
 	to-elf-strtab: func [items [block!] /local output] [
 		output: copy #{00}

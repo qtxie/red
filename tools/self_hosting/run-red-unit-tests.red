@@ -3,7 +3,7 @@ Red [
 	File:  %run-red-unit-tests.red
 ]
 
-; Compiles and runs non-View Red unit tests through RED_COMPILER (Stage1).
+; Compiles and runs non-View Red unit tests through RED_COMPILER.
 ; Uses the same Quick-Test summary format as the Red/System suite runner.
 
 join-file: func [base [file!] relative [file!]][append copy base relative]
@@ -16,7 +16,7 @@ output-dir: %build/self-hosting/red-unit-suite/
 make-dir output-dir
 compiler-executable: get-env "RED_COMPILER"
 unless compiler-executable [
-	print "RED_COMPILER env var required (path to Stage1 red-bootstrap exe)"
+	print "RED_COMPILER env var required (path to self-hosted red-bootstrap exe)"
 	quit/return 1
 ]
 compiler-arguments: any [get-env "RED_COMPILER_ARGUMENTS" ""]

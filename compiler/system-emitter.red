@@ -60,7 +60,11 @@ compiler-system-emitter: context [
 		]
 	]
 
-	connect: func [compiler-service [object!] target-service [object!]][
+	connect: func [
+		compiler-service [object!]
+		target-service [object!]
+		/local slot
+	][
 		compiler: compiler-service
 		target: target-service
 		target/connect compiler self

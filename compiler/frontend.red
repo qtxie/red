@@ -90,6 +90,7 @@ red: context [
 	boot-extras:   make block! 100
 	bodies:		   make block! 1000
 	ssa-names: 	   make block! 10						;-- unique names lookup table (SSA form)
+	final-ssa-names: make block! 10						;-- final aliases visible through object slots
 	types-cache:   make hash!  100						;-- store compiled typesets [types array name...]
 	last-type:	   none
 	return-def:    to-set-word 'return					;-- return: keyword
@@ -158,6 +159,7 @@ red: context [
 	; Function registration order determines the root slots allocated by comp-init.
 	; Rebol hashes retain that order, but Red hashes can enumerate by bucket order.
 	functions: make block! 1000
+	local-functions: make block! 300					;-- [context-word source-name registry-name...]
 	append functions 'make
 	append/only functions reduce [
 		'action! 2 [type [datatype! word!] spec [any-type!]] none
@@ -444,7 +446,14 @@ red: context [
 	find-ssa: func [name [word!]][find/skip ssa-names name 2]
 	
 	select-ssa: func [name [word!] /local pos][
-		all [pos: find/skip ssa-names name 2 pos/2]
+		any [
+			all [
+				object? :container-obj?
+				pos: find/skip final-ssa-names name 2
+				pos/2
+			]
+			all [pos: find/skip ssa-names name 2 pos/2]
+		]
 	]
 	
 	parent-object?: func [obj [object!]][
@@ -1612,15 +1621,25 @@ red: context [
 		]
 	]
 	
-	find-function: func [name [word!] original [any-word!] /local entry bound?][
-		all [
-			entry: find functions name
-			any [
-				all [not bound?: local-bound? original head? functions]	;-- global case
-				all [bound? not head? functions]		;-- local case
-			]
-			entry
+	find-local-function: func [original [any-word!] /local binding ctx source pos found][
+		binding: local-bound? original
+		unless binding [return none]
+		ctx: binding/2
+		source: to word! original
+		pos: local-functions
+		found: none
+		while [not tail? pos][
+			if all [pos/1 = ctx pos/2 = source][found: pos]
+			pos: skip pos 3
 		]
+		all [found find functions found/3]
+	]
+
+	find-function: func [name [word!] original [any-word!]][
+		; Stage0's hash position implicitly separated global and local entries.
+		; Stage1 keeps registration order in a block, so resolve a local function
+		; through its exact binding identity and leave global entries untouched.
+		either local-bound? original [find-local-function original][find functions name]
 	]
 
 	decode-attributes: func [spec [block!] /local do-error flags][
@@ -3381,6 +3400,9 @@ red: context [
 			flags: 0
 		]
 		add-function name spec
+		if all [any-word? :original pos: local-bound? original][
+			repend local-functions [pos/2 to word! original name]
+		]
 		pos: head spec
 		while [all [not tail? pos not set-word? :pos/1]][pos: next pos]
 		if all [not tail? pos pos/1 = return-def][
@@ -5165,6 +5187,8 @@ red: context [
 	comp-bodies: has [pos][
 		obj-stack: to path! 'func-objs
 		pos: tail objects
+		clear final-ssa-names
+		append final-ssa-names ssa-names
 		
 		foreach [name spec body func-symbols locals-nb stack ssa ctx obj?] bodies [
 			locals-stack: stack
@@ -5180,6 +5204,7 @@ red: context [
 		clear pos
 		clear locals-stack
 		clear ssa-names
+		clear final-ssa-names
 		func-objs: none
 	]
 	
@@ -5576,6 +5601,7 @@ red: context [
 		clear declarations
 		clear boot-extras
 		clear bodies
+		clear final-ssa-names
 		clear actions
 		clear op-actions
 		clear keywords
@@ -5587,6 +5613,7 @@ red: context [
 		clear types-cache
 		clear shadow-funcs
 		clear native-ts
+		clear local-functions
 		s-counter: 0
 		depth:	   0
 		max-depth: 0

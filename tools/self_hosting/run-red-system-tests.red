@@ -4,7 +4,7 @@ Red [
 ]
 
 ; Compiles and runs the non-static Windows IA-32 Red/System unit suite through
-; RED_SYSTEM_COMPILER (or red-system-selfhost-windows.red under red-console).
+; RED_SYSTEM_COMPILER must name the self-hosted red-bootstrap executable.
 
 join-file: func [base [file!] relative [file!]][
 	append copy base relative

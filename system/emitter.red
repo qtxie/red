@@ -185,6 +185,7 @@ emitter-rodata-buf: make binary! 100'000
 emitter-bits-buf: make binary! 10'000
 
 emitter: context [
+	last-value?: func [value][all [tag? value value = <last>]]
 	code-buf:  make binary! 100'000
 	data-buf:  make binary! 100'000
 	rodata-buf: make binary! 100'000	;-- protected data, emitted to a read-only segment
@@ -502,7 +503,7 @@ emitter: context [
 			if logic? value [value: make integer! value]	;-- TRUE => 1, FALSE => 0
 		]
 		if all [
-			value = <last>
+			last-value? value
 			not find [
 				float! float64! int64! uint64!
 				pointer! c-string! struct! union! function! subroutine! array!
@@ -774,7 +775,7 @@ emitter: context [
 		]
 		if all [name not all [new-global? literal?]][	;-- emit dynamic loading code when required
 			either all [
-				value = <last>
+				last-value? value
 				type: compiler/last-type
 				'value = last :type
 				any [

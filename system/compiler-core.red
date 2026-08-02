@@ -425,9 +425,10 @@ system-dialect: context [
 		]
 
 		blockify: func [value][either block? value [value][reduce [value]]]
+		last-value?: func [value][all [tag? value value = <last>]]
 
 		literal?: func [value][
-			not any [word? value get-word? value path? value block? value value = <last>]
+			not any [word? value get-word? value path? value block? value last-value? value]
 		]
 
 		not-typed?: func [name [word!] /local pos][
@@ -1013,7 +1014,7 @@ system-dialect: context [
 						throw-error ["negative integer literal cannot initialize uint64!:" value]
 					][hex]
 				]
-				value = <last> ["0000000000000000"]
+				last-value? value ["0000000000000000"]
 				'else [
 					throw-error ["invalid 64-bit integer literal:" mold value]
 				]
@@ -1054,7 +1055,7 @@ system-dialect: context [
 						]
 						skip to string! to-hex value 8 - (width * 2)
 					]
-					value = <last> [
+					last-value? value [
 						copy/part "00000000" width * 2
 					]
 					'else [
@@ -1286,7 +1287,7 @@ system-dialect: context [
 					]
 				]
 				object!  [value/type]
-				tag!	 [either value = <last> [last-type][[logic!]]]
+				tag!	 [either last-value? value [last-type][[logic!]]]
 				string!	 [[c-string!]]
 				get-word! [
 					name: to word! value
@@ -3821,7 +3822,7 @@ system-dialect: context [
 						throw-error "expression is missing a return value"
 					]
 					either attribute = 'typed [
-						if all [expr = <last> none? last-type/1][
+						if all [last-value? expr none? last-type/1][
 							pc: pos
 							throw-error "expression has no defined return type"
 						]
@@ -4369,12 +4370,12 @@ system-dialect: context [
 				types slots struct-type struct-slots struct-size
 		][
 			name: decorate-fun name
-			list: args
-			either variadic? args/1 [
+			list: either variadic? args/1 [
 				promote-variadic name args/1 args/2		;-- check named args + promote variadic tail (C ABI)
-				list: args/2
+				args/2
 			][
 				check-arguments-type name args
+				args
 			]
 			spec: functions/:name
 			slots: process-returned-struct name spec list
@@ -4646,7 +4647,7 @@ system-dialect: context [
 				]
 				if any [
 					all [casted casted/1 = 'function!]
-					all [expr = <last> casted: last-type last-type/1 = 'function!]
+					all [last-value? expr casted: last-type last-type/1 = 'function!]
 				][
 					add-function 'routine reduce [name none casted/2] get-cconv casted/2
 				]

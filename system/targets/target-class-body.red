@@ -51,6 +51,8 @@ Red [
 	unsigned-right-shift-sym: first [-**]
 
 	comparison-op: [= <> < > <= >=]
+	last-value?: func [value][all [tag? value value = <last>]]
+	ret-ptr-value?: func [value][all [tag? value value = <ret-ptr>]]
 	math-op:	   compose [+ - * / // (to word! first [%])]
 	mod-rem-op:    compose [// (to word! first [%])]
 	mod-rem-func:  compose [// mod (to word! first [%]) rem]
@@ -193,7 +195,7 @@ Red [
 		c: 1
 		foreach op [a b][
 			arg: either object? args/:c [compiler-api/cast args/:c][args/:c]
-			set op either arg = <last> [
+			set op either last-value? arg [
 				 'reg								;-- value in accumulator
 			][
 				switch type?/word arg [

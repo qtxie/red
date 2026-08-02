@@ -376,7 +376,7 @@ redbin: context [
 
 	emit-block: func [
 		blk [any-block! path! lit-path! get-path! set-path!] /with main-ctx [word!] /sub
-		/local type item binding ctx idx emit? multi-line? ofs body value
+		/local type item binding ctx idx emit? multi-line? ofs body value word
 	][
 		if profile? [profile blk]
 		
@@ -441,8 +441,9 @@ redbin: context [
 					any [any-word? :item refinement? :item] [
 						ctx: main-ctx
 						value: :item
-						either all [with local-word? to word! :item][
-							idx: get-word-index/with to word! :item main-ctx
+						word: binding-word :item
+						either all [with word local-word? word][
+							idx: get-word-index/with word main-ctx
 						][
 							if binding: find-binding :item [
 								set [ctx idx] binding

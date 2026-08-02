@@ -929,15 +929,46 @@ collector: context [
 		yes
 	]
 
-	;-- Unknown native slots are not rewritten. A possible interior series
-	;-- pointer pins its whole frame, while an exact raw node can still be
-	;-- marked precisely on 64-bit targets where node frames do not compact.
-	pin-stack-candidate: func [
-		sp [ptr-ptr!]
-		/local p [int-ptr!] node [node!] s [series!]
+	store-stack-ref: func [
+		value [int-ptr!]
+		sp    [ptr-ptr!]
+		refs  [ptr-ptr!]
+		return: [ptr-ptr!]
+		/local tail new [ptr-ptr!]
+	][
+		tail: memory/stk-refs + (memory/stk-sz * 2)
+		if refs = tail [
+			refs: memory/stk-refs
+			memory/stk-sz: memory/stk-sz + 1000
+			refs: as ptr-ptr! realloc as byte-ptr! refs memory/stk-sz * 2 * size? int-ptr!
+			memory/stk-refs: refs
+			tail: refs + (memory/stk-sz * 2)
+			refs: tail - 2000
+		]
+		refs/value: value
+		new: refs + 1
+		new/value: as int-ptr! sp
+		refs + 2
+	]
+
+	;-- Pointer bitmap slots and the active expression-spill gap are safe to
+	;-- rewrite. Resolve conservative spill candidates through an allocator
+	;-- header before retaining them, so one live interior pointer does not keep
+	;-- every unrelated series in its 2 MiB frame alive.
+	mark-stack-candidate: func [
+		sp     [ptr-ptr!]
+		store? [logic!]
+		refs   [ptr-ptr!]
+		return: [ptr-ptr!]
+		/local p [int-ptr!] node [node!] s [series!] managed? [logic!]
 	][
 		p: sp/value
-		if p <= as int-ptr! FFFFh [exit]
+		if #either any [target = 'X86-64 target = 'ARM64] [
+			p <= as int-ptr! FFFFh
+		][any [
+			p <= as int-ptr! FFFFh
+			p >= as int-ptr! FFFFF000h
+		]][return refs]
 		if frames-list/find p FRAME_NODES [
 			node: as node! p
 			if all [
@@ -946,13 +977,27 @@ collector: context [
 				(frames-list/find-series-frame node/value) <> null
 			][
 				s: find-series-owner node/value
-				if s <> null [
-					mark-series-root s
-					exit
+				if all [s <> null node/value = as int-ptr! s][
+					keep-raw as ptr-ptr! sp
+					node: as node! sp/value
+					mark-series-root as series! node/value
+					return refs
 				]
 			]
 		]
-		frames-list/pin p
+		if all [
+			not all [(as byte-ptr! stack/bottom) <= p p <= (as byte-ptr! stack/top)]
+			(frames-list/find-series-frame p) <> null
+		][
+			s: find-series-owner p
+			managed?: all [s <> null mark-series-root s]
+			either managed? [
+				if store? [refs: store-stack-ref p sp refs]
+			][
+				frames-list/pin p
+			]
+		]
+		refs
 	]
 
 	mark-pinned-frames: func [
@@ -1309,7 +1354,7 @@ collector: context [
 			c-low c-high lib-low lib-high caller [byte-ptr!]
 			s [series!]
 			bits slot-bits idx disp nb arg-slots local-slots slots handle h n [integer!]
-			ext? dyn? managed? [logic!]
+			ext? dyn? [logic!]
 	][
 		c-low: system/image/base + system/image/code
 		c-high: c-low + system/image/code-size
@@ -1404,60 +1449,9 @@ collector: context [
 									]
 								]
 								if bits and 1 <> 0 [	;-- check if the slot is a pointer
-									p: sp/value
-									if #either any [target = 'X86-64 target = 'ARM64] [
-										p > as int-ptr! FFFFh
-									][all [
-										p > as int-ptr! FFFFh
-										p < as int-ptr! FFFFF000h
-									]][
-										managed?: no
-										node: as node! p
-										case [
-											all [		;=== Mark node! references ===
-												frames-list/find p FRAME_NODES
-												node/value <> null
-												not frames-list/find node/value FRAME_NODES
-												(frames-list/find-series-frame node/value) <> null
-											][
-												s: find-series-owner node/value
-												if all [s <> null node/value = as int-ptr! s][
-													keep-raw as ptr-ptr! sp
-													node: as node! sp/value
-													mark-series-root as series! node/value
-												]
-											]
-											all [
-												not all [(as byte-ptr! stack/bottom) <= p p <= (as byte-ptr! stack/top)]
-												(frames-list/find-series-frame p) <> null
-											][
-												s: find-series-owner p
-												managed?: all [s <> null mark-series-root s]
-												unless managed? [frames-list/pin p]
-												if all [managed? store?][
-													if refs = tail [
-														refs: memory/stk-refs
-														memory/stk-sz: memory/stk-sz + 1000
-														refs: as ptr-ptr! realloc as byte-ptr! refs memory/stk-sz * 2 * size? int-ptr!
-														memory/stk-refs: refs
-														tail: refs + (memory/stk-sz * 2)
-														refs: tail - 2000
-													]
-													refs/value: p
-													new: refs + 1
-													#either any [target = 'X86-64 target = 'ARM64] [
-														new/value: as int-ptr! sp-address
-													][new/value: as int-ptr! sp]
-													refs: refs + 2
-													nb: nb + 1
-												]
-											]
-											true [0]
-										]
-									]
-								]
-								#if any [target = 'X86-64 target = 'ARM64] [
-									if bits and 1 = 0 [pin-stack-candidate sp]
+									entry: refs
+									refs: mark-stack-candidate sp store? refs
+									if refs <> entry [nb: nb + 1]
 								]
 								bits: bits >>> 1		;-- next slot flag
 							]
@@ -1596,7 +1590,9 @@ collector: context [
 					while [sp > slot][
 						sp: sp - 1
 						mark-stack-handle sp
-						pin-stack-candidate sp
+						entry: refs
+						refs: mark-stack-candidate sp store? refs
+						if refs <> entry [nb: nb + 1]
 					]
 				]
 				#if target = 'IA-32 [

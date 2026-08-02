@@ -399,7 +399,7 @@ system-target-ARM64: context [
 	emit-load: func [value /with cast [object!] /local raw raw-type local-spec type info][
 		if block? value [value: <last>]
 		case [
-			value = <last> []
+			last-value? value []
 			object? value [
 				raw: compiler-api/unbox value
 				type: compiler-api/resolve-aliased value/type
@@ -489,9 +489,9 @@ system-target-ARM64: context [
 	emit-push: func [value][
 		either tag? value [
 			case [
-				value = <last> []
-				value = <ret-ptr> [
-					unless <ret-ptr> = emitter/stack/1 [
+				last-value? value []
+				ret-ptr-value? value [
+					unless ret-ptr-value? emitter/stack/1 [
 						compiler-api/throw-error "ARM64 return pointer is not available in this frame"
 					]
 					emit-frame-insn #{F8400000} emitter/stack/2 0
@@ -501,7 +501,7 @@ system-target-ARM64: context [
 				]
 			]
 		][
-			unless value = <last> [emit-load value]
+			unless last-value? value [emit-load value]
 	]
 		emit-i32 #{D10023FF}                                  ; SUB sp, sp, #8
 		emit-i32 #{910003F0}                                  ; MOV x16, sp
@@ -587,9 +587,9 @@ system-target-ARM64: context [
 		]
 		if tag? arg [
 			case [
-				arg = <last> []
-				arg = <ret-ptr> [
-					unless <ret-ptr> = emitter/stack/1 [
+				last-value? arg []
+				ret-ptr-value? arg [
+					unless ret-ptr-value? emitter/stack/1 [
 						compiler-api/throw-error "ARM64 return pointer is not available in this frame"
 					]
 					emit-frame-insn #{F8400000} emitter/stack/2 0
@@ -612,7 +612,7 @@ system-target-ARM64: context [
 			emit-i32 #{D10043FF}                              ; SUB sp, sp, #16
 			emit-i32 either float32-type? arg-type [#{BC0003E0}][#{FC0003E0}] ; STUR s0/d0, [sp]
 		][
-			unless value = <last> [
+			unless last-value? value [
 				either object? arg [emit-load arg][emit-load value]
 			]
 			emit-i32 #{D10043FF}                              ; SUB sp, sp, #16
@@ -948,7 +948,7 @@ system-target-ARM64: context [
 		if block? value [value: <last>]
 		if logic? value [value: either value [1][0]]
 		type: compiler-api/resolve-aliased compiler-api/get-variable-spec name
-		unless value = <last> [
+		unless last-value? value [
 			literal-pointer?: all [
 				find [string! paren! binary!] type?/word value
 				compiler-api/any-pointer? type
@@ -1102,8 +1102,8 @@ system-target-ARM64: context [
 		op-type: reduce [either single? ['float32!]['float!]]
 		right: compiler-api/unbox args/2
 		left: compiler-api/unbox args/1
-		nested-right?: any [block? right right = <last>]
-		nested-left?: any [block? left left = <last>]
+		nested-right?: any [block? right last-value? right]
+		nested-left?: any [block? left last-value? left]
 		saved?: last-saved?
 		left-source-type: either object? args/1 [
 			compiler-api/resolve-aliased compiler-api/get-type args/1/data
@@ -1302,7 +1302,7 @@ system-target-ARM64: context [
 		/local full type pointee offset base-spec field alias slots hfa aggregate-size remaining width opcode i field-size inline?
 	][
 		if all [
-			value = <last>
+			last-value? value
 			block? compiler-api/last-type
 			'value = last compiler-api/last-type
 		][
@@ -1357,7 +1357,7 @@ system-target-ARM64: context [
 			exit
 		]
 		base-spec: parent
-		if value <> <last> [
+		unless last-value? value [
 			unless parent [emit-init-path path/1]
 			emit-i32 #{D10043FF}                              ; SUB sp, sp, #16
 			emit-i32 #{F90003E0}                              ; STR x0, [sp]
@@ -1366,7 +1366,7 @@ system-target-ARM64: context [
 			emit-i32 #{F94003E0}                              ; LDR x0, [sp]
 			emit-i32 #{910043FF}                              ; ADD sp, sp, #16
 		]
-		if all [value = <last> not parent][
+		if all [last-value? value not parent][
 			emit-move-path-alt/with compiler-api/last-type
 			emit-init-path path/1
 		]
@@ -1730,8 +1730,8 @@ system-target-ARM64: context [
 		wide?: wide-type? type
 		right: compiler-api/unbox args/2
 		left: compiler-api/unbox args/1
-		nested-right?: any [block? right right = <last>]
-		nested-left?: any [block? left left = <last>]
+		nested-right?: any [block? right last-value? right]
+		nested-left?: any [block? left last-value? left]
 		if char? right [right: to integer! right]
 		if logic? right [right: either right [1][0]]
 		imm?: integer? right
@@ -1777,7 +1777,7 @@ system-target-ARM64: context [
 			imm?: no
 		]
 		unless imm? [
-			unless any [block? right right = <last>][
+			unless any [block? right last-value? right][
 				emit-load-alt args/2 right-type
 			]
 			if all [wide? not wide-type? right-type compiler-api/signed-integer? right-type][
@@ -2082,7 +2082,7 @@ system-target-ARM64: context [
 		raw: compiler-api/unbox value
 		if block? raw [raw: <last>]
 		type: compiler-api/resolve-aliased compiler-api/get-type value
-		unless raw = <last> [emit-load value]
+		unless last-value? raw [emit-load value]
 		either type/1 = 'logic! [
 			emit-i32 #{52000000}                              ; EOR w0, w0, #1
 		][
@@ -2540,7 +2540,7 @@ system-target-ARM64: context [
 		if slots [
 			ret-ptr?: to logic! emitter/struct-ptr? locals
 			either ret-ptr? [
-				unless <ret-ptr> = emitter/stack/1 [
+				unless ret-ptr-value? emitter/stack/1 [
 					compiler-api/throw-error ["Function" name "has no return pointer in" mold locals]
 				]
 				emit-frame-insn #{F8400000} emitter/stack/2 16 ; LDR x16, [x29, #ret-ptr]

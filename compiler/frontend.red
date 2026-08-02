@@ -57,10 +57,15 @@ red: context [
 	func-objs:	   none									;-- points to 'objects first in-function object
 	paths-stack:   make block! 4						;-- stack of generated code for handling dual codepaths for paths
 	native-ts:	   make block! 200						;-- prepared native! typesets: [name [<ts-list>] ...]
-	; Red's ANY-WORD! excludes REFINEMENT!, unlike Rebol's. Normalize the cell
-	; type before CONTEXT? so this preserves Stage0's BIND? input contract.
-	binding-of: func [word [any-word! refinement!]][
-		context? to word! :word
+	; Stage0 can coerce every refinement to word!, including numeric spellings
+	; such as /1. Red rejects those spellings as word!, and they cannot name a
+	; context field, so keep the failed conversion out of binding lookup.
+	binding-word: func [value [any-word! refinement!]][
+		attempt [to word! :value]
+	]
+
+	binding-of: func [word [any-word! refinement!] /local value][
+		all [value: binding-word :word context? value]
 	]
 	rebol-gctx:	   binding-of 'rebol
 	expr-stack:	   make block! 8
@@ -460,13 +465,15 @@ red: context [
 		all [not empty? locals-stack object? container-obj? same? obj container-obj?]
 	]
 	
-	find-binding: func [original [any-word! refinement!] /local ctx idx obj][
+	find-binding: func [original [any-word! refinement!] /local ctx idx obj word][
 		all [
+			word: binding-word :original
 			ctx: all [
+				word
 				rebol-gctx <> obj: binding-of original
 				any [select-obj obj select/same shadow-funcs obj]
 			]
-			attempt [idx: get-word-index/with to word! original ctx]
+			attempt [idx: get-word-index/with word ctx]
 			reduce [ctx idx]
 		]
 	]
@@ -1134,6 +1141,18 @@ red: context [
 		][result]
 		sym: decorate-symbol name
 		unless any [find/case symbols name find sym-table to set-word! sym][
+			repend sym-table [to set-word! sym 'word/load spelling]
+			root-slots: root-slots + 1
+			new-line skip tail sym-table -3 on
+		]
+		sym
+	]
+
+	add-refinement-symbol: func [value [refinement!] /local spelling name sym][
+		spelling: form value
+		name: to word! rejoin ["refinement-" enbase/base to binary! spelling 16]
+		sym: decorate-symbol name
+		unless find sym-table to set-word! sym [
 			repend sym-table [to set-word! sym 'word/load spelling]
 			root-slots: root-slots + 1
 			new-line skip tail sym-table -3 on
@@ -1810,7 +1829,7 @@ red: context [
 				| [
 					[word! | lit-word! | get-word!] opt block! opt string!
 					| refinement! opt string! (if any [loc? return?][stop: [end skip]]) stop
-				] (append spec-symbols to word! pos/1)
+				] (if word: binding-word pos/1 [append spec-symbols word])
 			]
 		][
 			throw-error ["invalid function spec block:" mold pos]
@@ -2198,17 +2217,22 @@ red: context [
 						emit to path! reduce ['exec add-issue-symbol value]
 						insert-lf -2
 					][
-						w: to word! form value
-						add-symbol w
-						type: to word! form type? :value
-						either local-word? w [
-							emit append to path! type 'push-local
-							emit last ctx-stack
-							emit get-word-index w
-							insert-lf -3
+						either w: binding-word :value [
+							add-symbol w
+							type: to word! form type? :value
+							either local-word? w [
+								emit append to path! type 'push-local
+								emit last ctx-stack
+								emit get-word-index w
+								insert-lf -3
+							][
+								emit to path! reduce [type 'push]
+								emit to path! reduce ['exec decorate-symbol w]	;@@ replace by prefix-exec
+								insert-lf -2
+							]
 						][
-							emit to path! reduce [type 'push]
-							emit to path! reduce ['exec decorate-symbol w]	;@@ replace by prefix-exec
+							emit 'refinement/push
+							emit to path! reduce ['exec add-refinement-symbol value]
 							insert-lf -2
 						]
 					]
@@ -2344,7 +2368,7 @@ red: context [
 		;-- made find bodies pick an unrelated method and emit bad TO_CTX.
 		foreach word words-of extend [
 			value: get in extend word
-			if any [same? :value function! value = function! function? :value][
+			if any [same? :value function! function? :value][
 				path-ext: select-obj extend
 				unless path-ext [
 					if pos: find-obj extend [path-ext: pos/2]
@@ -3266,8 +3290,9 @@ red: context [
 		foreach item spec [								;-- add all arguments to ignore list
 			if find [word! lit-word! get-word! refinement!] type?/word item [
 				unless ignore [ignore: make block! 1]
-				item: to word! :item
-				unless find ignore item [append ignore item]
+				if item: binding-word :item [
+					unless find ignore item [append ignore item]
+				]
 			]
 		]
 		words: make block! 1
@@ -5456,7 +5481,9 @@ red: context [
 	load-source: func [file [file! block!] /hidden /header /local src][
 		either file? file [
 			unless hidden [script-name: file]
-			src: compiler-lexer/process/file read/binary file file
+			; Match Stage0's READ-CACHE input contract: text READ normalizes CRLF
+			; before the lexer materializes multiline string values.
+			src: compiler-lexer/process/file read file file
 			if all [
 				(length? src) >= 4
 				src/1 = 'REBOL

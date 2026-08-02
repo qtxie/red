@@ -4,6 +4,7 @@ Red [
 ]
 
 compiler-system-target-class: context [
+	last-value?: func [value][all [tag? value value = <last>]]
 	target: none
 	little-endian?: none
 	struct-align-size: none
@@ -329,7 +330,7 @@ compiler-system-target-class: context [
 			][
 				arguments/:index
 			]
-			set slot either argument = <last> [
+			set slot either last-value? argument [
 				'reg
 			][
 				switch type?/word argument [

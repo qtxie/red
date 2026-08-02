@@ -319,6 +319,7 @@ compiler-system-types: context [
 	]
 
 	int64-literal?: func [value][to logic! int64-literal-info value]
+	last-value?: func [value][all [tag? value value = <last>]]
 
 	int64-hex: func [value type [word!] /local info hex negative?][
 		case [
@@ -331,7 +332,7 @@ compiler-system-types: context [
 				hex: decimal64-to-hex form absolute value negative?
 				hex
 			]
-			value = <last> ["0000000000000000"]
+			last-value? value ["0000000000000000"]
 			true [throw-error ["invalid 64-bit integer literal:" mold value]]
 		]
 	]
@@ -363,7 +364,7 @@ compiler-system-types: context [
 				hex: to string! to-hex value
 				copy skip hex 8 - (width * 2)
 			]
-			value = <last> [copy/part "00000000" width * 2]
+			last-value? value [copy/part "00000000" width * 2]
 			true [throw-error ["invalid integer literal:" mold value]]
 		]
 	]

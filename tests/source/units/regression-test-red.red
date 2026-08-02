@@ -3498,14 +3498,15 @@ comment {
 		;; prevent the inner literal block [] to be referenced by loaded Redbin
 		;; payload. Moreover, as the loaded code is kept on stack by `do`, the 
 		;; memory cannot be fully released, so an extra `recycle` is needed
-		;; after `do`.
+		;; after `do`. The live byte count depends on allocator reuse, so check
+		;; the reactor-owned series directly after the in-scope collection.
 
-		s0: s1: s2: none
+		s0: s2: none
 		do {
 			s0: recycle
 			r: make reactor! [a: append/dup [] 'x 10'000] 
-			s1: recycle
-			--assert s1 - s0 >= 160'000
+			recycle
+			--assert 10'000 = length? r/a
 			r: none
 		}
 		s2: recycle

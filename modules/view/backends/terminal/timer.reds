@@ -31,8 +31,10 @@ timer: context [
 		timer-list: array/make 8 size? int-ptr!
 	]
 
-	on-gc-mark: does [
-		collector/keep-raw as int-ptr! :timer-list
+	on-gc-mark: func [/local raw [int-ptr!]][
+		raw: as int-ptr! timer-list
+		collector/keep-raw as ptr-ptr! :raw
+		timer-list: as node! raw
 	]
 
 	timer-proc: func [

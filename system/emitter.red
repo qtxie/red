@@ -165,6 +165,10 @@ target-reserve-call-struct-temps: func [target [object!] slots [integer!] /local
 	#include %targets/ARM64.red
 	selected-system-target: system-target-ARM64
 ][
+#either config/show = 'ARM64-Darwin-only [
+	#include %targets/ARM64.red
+	selected-system-target: system-target-ARM64
+][
 #either config/show = 'ARM-ELF-only [
 	#include %targets/ARM.red
 	selected-system-target: system-target-ARM
@@ -174,6 +178,7 @@ target-reserve-call-struct-temps: func [target [object!] slots [integer!] /local
 	#include %targets/X86-64.red
 	#include %targets/ARM64.red
 	selected-system-target: system-target-X86-64
+]
 ]
 ]
 ]
@@ -1668,6 +1673,12 @@ emitter: context [
 			]
 			target: system-target-ARM64
 ][
+		#either config/show = 'ARM64-Darwin-only [
+			unless job/target = 'ARM64 [
+				compiler-api/throw-error ["ARM64 compiler received target:" job/target]
+			]
+			target: system-target-ARM64
+][
 		#either config/show = 'ARM-ELF-only [
 			unless job/target = 'ARM [
 				compiler-api/throw-error ["ARM compiler received target:" job/target]
@@ -1683,6 +1694,7 @@ emitter: context [
 		unless target [
 			compiler-api/throw-error ["unsupported Red/System target:" job/target]
 		]
+]
 ]
 ]
 ]

@@ -107,6 +107,7 @@ red: context [
 	nl: 		   newline
 	comment-marker: '------------|
 	include-directive: to issue! "include"
+	pop-path-directive: to issue! "pop-path"
 	get-definition-directive: to issue! "get-definition"
  
 	unboxed-set:   [integer! char! float! float32! logic!]
@@ -4933,7 +4934,10 @@ red: context [
 				#script script-file
 			]
 			saved: script-name
-			unless only [insert skip pc 2 #pop-path]
+			; Materialize the marker through a bound value.  The retired Stage0
+			; compiler drops a direct issue! literal used as a call argument here,
+			; which leaves nested include paths active in the generated compiler.
+			unless only [insert skip pc 2 pop-path-directive]
 			src: load-source/header file
 			src: compiler-preprocessor/expand src job
 			change/part pc next src 2			;@@ Header skipped, should be processed
@@ -5604,6 +5608,7 @@ red: context [
 	; forces full make action!/native! emission instead of redbin natives.
 	ensure-host-fields: does [
 		include-directive: to issue! "include"
+		pop-path-directive: to issue! "pop-path"
 		get-definition-directive: to issue! "get-definition"
 		return-def: to-set-word 'return
 		actions-prefix: to path! 'actions

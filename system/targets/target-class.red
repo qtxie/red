@@ -7,6 +7,6 @@ Red [
 	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"
 ]
 
-target-class: context [
-	#include %target-class-body.red
-]
+#include %target-class-body.red
+
+target-class: context target-class-body

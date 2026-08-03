@@ -13,7 +13,15 @@ Red [
 
 ===start-group=== "text IO"
 
-	do [if system/platform <> 'Linux [
+	do [
+		clipboard-available?: any [
+			system/platform = 'Windows
+			all [
+				system/platform = 'macOS
+				false <> write-clipboard ""
+			]
+		]
+		if clipboard-available? [
 
 		--test-- "text-io-1"
 			--assert false <> write-clipboard ""
@@ -32,7 +40,8 @@ Red [
 			--assert false <> write-clipboard til1
 			--assert til1 = read-clipboard
 			unset 'til1
-	]]
+		]
+	]
 
 
 	do [if system/platform = 'Windows [

@@ -35,8 +35,10 @@ ansi-parser: context [
 		buffer: array/make 100 1
 	]
 
-	on-gc-mark: does [
-		collector/keep-raw as int-ptr! :buffer
+	on-gc-mark: func [/local raw [int-ptr!]][
+		raw: as int-ptr! buffer
+		collector/keep-raw as ptr-ptr! :raw
+		buffer: as node! raw
 	]
 
 	add-byte: func [

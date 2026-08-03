@@ -402,7 +402,7 @@ check-system-backend-source: has [
 ][
 	pairs: [
 		[%system/emitter.r emitter %system/emitter.red emitter 63]
-		[%system/targets/target-class.r target-class %system/targets/target-class-body.red source-body 13]
+		[%system/targets/target-class.r target-class %system/targets/target-class-body.red target-class-body 13]
 		[%system/targets/IA-32.r #(none) %system/targets/IA-32.red system-target-IA32 118]
 		[%system/linker.r linker %system/linker.red linker 20]
 		[%system/linker-static.r static-link %system/linker-static.red static-link 90]
@@ -424,7 +424,7 @@ check-system-backend-source: has [
 	failures: 0
 	target-manifest: compiler-source-parity/decode %system/targets/target-class.red
 	base-methods: compiler-source-parity/inventory
-		%system/targets/target-class-body.red 'source-body
+		%system/targets/target-class-body.red 'target-class-body
 	ia32-inventory: compiler-source-parity/inventory
 		%system/targets/IA-32.red 'system-target-IA32
 	ia32-adapters: [homogeneous-floats? emit-push-struct-ref on-root-level-entry]

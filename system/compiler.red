@@ -31,6 +31,9 @@ Red [
 #either config/show = 'X86-64-only [
 	#include %formats/PE.red
 ][
+#either config/show = 'ARM64-Darwin-only [
+	#include %formats/Mach-O-ARM64.red
+][
 #either any [
 	config/show = 'ARM-ELF-only
 	config/show = 'ARM64-ELF-only
@@ -41,6 +44,7 @@ Red [
 	#include %formats/Mach-O-ARM64.red
 	#include %formats/PE.red
 	#include %formats/ELF.red
+]
 ]
 ]
 
@@ -64,8 +68,29 @@ emit-system-file: func [job [object!]][
 ]
 
 finish-system-file: func [job [object!] file [file!]][
-	system-format-PE/on-file-written job file
+system-format-PE/on-file-written job file
 ]
+][
+#either config/show = 'ARM64-Darwin-only [
+system-file-extension: func [job [object!]][
+	if job/format <> 'Mach-O [
+		system-dialect/compiler/throw-error [
+			"Darwin ARM64 compiler only supports Mach-O output, got:" job/format
+		]
+	]
+	select system-format-MachO-ARM64/defs/extensions job/type
+]
+
+emit-system-file: func [job [object!]][
+	if any [job/format <> 'Mach-O job/target <> 'ARM64][
+		system-dialect/compiler/throw-error [
+			"Darwin ARM64 compiler received target:" job/format job/target
+		]
+	]
+	system-format-MachO-ARM64/build job
+]
+
+finish-system-file: func [job [object!] file [file!]][none]
 ][
 #either any [
 	config/show = 'ARM-ELF-only
@@ -117,6 +142,7 @@ emit-system-file: func [job [object!]][
 
 finish-system-file: func [job [object!] file [file!]][
 	if job/format = 'PE [system-format-PE/on-file-written job file]
+]
 ]
 ]
 ]

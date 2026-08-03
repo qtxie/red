@@ -3,6 +3,7 @@ Red [
 	File:  %target-class-body.red
 ]
 
+target-class-body: [
 	target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document once stabilized
 	default-align: stack-width: stack-slot-max:				  	   ; TBD: document once stabilized
 	branch-offset-size: locals-offset: def-locals-offset: none	   ; TBD: document once stabilized
@@ -282,3 +283,4 @@ Red [
 		]
 		res
 	]
+]

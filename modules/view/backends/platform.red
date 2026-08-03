@@ -630,6 +630,7 @@ system/view/platform: context [
 				flags
 			]
 			
+			#if GUI-engine = 'native [
 			reattach-window-face: func [
 				hMonitor [handle!]
 				window	 [red-object!]
@@ -657,7 +658,7 @@ system/view/platform: context [
 						TYPE_OF(h) = TYPE_HANDLE
 						h/type = handle/CLASS_MONITOR
 						#either OS = 'Windows [
-							(get-win-handle h) = hMonitor
+							(gui/get-win-handle h) = hMonitor
 						][
 							#either OS = 'macOS [
 								#either ABI = 'apple-aarch64 [
@@ -686,6 +687,7 @@ system/view/platform: context [
 					face: face + 1
 				]
 				assert false
+			]
 			]
 
 			link-font-to-face: func [
@@ -863,7 +865,7 @@ system/view/platform: context [
 		SET_RETURN(none-value)
 	]
 
-	#either config/OS = 'Windows [
+	#either all [config/GUI-engine = 'native config/OS = 'Windows] [
 		refresh-window: routine [h [handle!]][
 			gui/OS-refresh-window gui/get-win-handle h
 		]
@@ -885,7 +887,7 @@ system/view/platform: context [
 				handle/CLASS_WINDOW
 		]
 	][
-	#either all [config/OS = 'macOS config/ABI = 'apple-aarch64] [
+	#either all [config/GUI-engine = 'native config/OS = 'macOS config/ABI = 'apple-aarch64] [
 		refresh-window: routine [h [handle!]][
 			gui/OS-refresh-window gui/get-cocoa-handle as red-handle! h
 		]
@@ -933,14 +935,14 @@ system/view/platform: context [
 		ownership/check as red-value! image words/_poke as red-value! image -1 -1
 	]
 
-	#either all [config/OS = 'macOS config/ABI = 'apple-aarch64] [
+	#either all [config/GUI-engine = 'native config/OS = 'macOS config/ABI = 'apple-aarch64] [
 		draw-face: routine [face [object!] cmds [block!] /local h [int64!] flags [integer!]][
 			flags: gui/get-flags as red-block! (object/get-values face) + gui/FACE_OBJ_FLAGS
 			h: gui/face-handle? face
 			if h <> 0 [gui/OS-draw-face h cmds flags]
 		]
 	][
-		#either config/OS = 'macOS [
+		#either all [config/GUI-engine = 'native config/OS = 'macOS] [
 			draw-face: routine [face [object!] cmds [block!] /local h [integer!] flags [integer!]][
 				flags: gui/get-flags as red-block! (object/get-values face) + gui/FACE_OBJ_FLAGS
 				h: gui/face-handle? face

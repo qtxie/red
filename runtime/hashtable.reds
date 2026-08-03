@@ -235,7 +235,7 @@ array: context [
 	pick-ptr: func [
 		node		[node!]
 		idx			[integer!]		;-- 1-based index
-		return:		[node!]
+		return:		[int-ptr!]
 		/local
 			s		[series!]
 			p		[ptr-ptr!]
@@ -244,7 +244,7 @@ array: context [
 		p: as ptr-ptr! s/offset
 		p: p + idx - 1
 		assert p < as ptr-ptr! s/tail
-		as node! p/value
+		p/value
 	]
 
 	poke-ptr: func [
@@ -1850,7 +1850,7 @@ _hashtable: context [
 					if type = HASH_TABLE_HASH [
 						chain?: keys/i < 0
 						either chain? [
-							chain: array/pick-ptr h/chains 0 - keys/i
+							chain: as node! array/pick-ptr h/chains 0 - keys/i
 							k: blk + array/pick-int chain 1
 						][
 							k: blk + keys/i
@@ -2036,7 +2036,7 @@ _hashtable: context [
 			if hash? [
 				chain?: keys/i < 0
 				either chain? [
-					chain: array/pick-ptr h/chains 0 - keys/i
+					chain: as node! array/pick-ptr h/chains 0 - keys/i
 					s: as series! chain/value
 					p-idx: as int-ptr! s/offset
 					idx: p-idx/value
@@ -2127,7 +2127,7 @@ _hashtable: context [
 			idx: indexes/i
 			if keys/idx < 0 [
 				c-idx: 0 - keys/idx
-				chain: array/pick-ptr h/chains c-idx
+				chain: as node! array/pick-ptr h/chains c-idx
 				i: array/find-int chain i - 1
 				assert i >= 0
 				array/remove-at chain i size? integer!
@@ -2231,7 +2231,7 @@ _hashtable: context [
 			assert idx > 0
 			if keys/idx < 0 [
 				c-idx: 0 - keys/idx
-				chain: array/pick-ptr h/chains c-idx
+				chain: as node! array/pick-ptr h/chains c-idx
 				i: array/find-int chain head
 				assert i >= 0
 				array/remove-at chain i size? integer!
@@ -2302,7 +2302,7 @@ _hashtable: context [
 			index: indexes + head
 			i: index/value
 			either keys/i < 0 [				;-- chain mode
-				chain: array/pick-ptr h/chains 0 - keys/i
+				chain: as node! array/pick-ptr h/chains 0 - keys/i
 				if null? get-value table node-handle-of chain [
 					put-key table node-handle-of chain
 					s: as series! chain/value
@@ -2334,7 +2334,7 @@ _hashtable: context [
 					i: index/value
 					if keys/i < 0 [
 						c-idx: 0 - keys/i
-						chain: array/pick-ptr h/chains c-idx
+						chain: as node! array/pick-ptr h/chains c-idx
 						idx: array/find-int chain head + part
 						assert idx >= 0
 						array/remove-at chain idx size? integer!

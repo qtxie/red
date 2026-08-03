@@ -15,7 +15,7 @@ red-compiler-process-call: func [body [block!] global? [logic!]][none]
 recycle/on
 
 arm-suite-builder: context [
-	root-dir: source-dir: output-dir: target-name: none
+	root-dir: source-dir: output-dir: target-name: library-suffix: none
 	compiled: failures: 0
 	resume?: false
 
@@ -70,11 +70,13 @@ arm-suite-builder: context [
 		result/4
 	]
 
-	make-dylib-test: func [/local source text include-file][
+	make-dylib-test: func [/local source text include-file library1 library2][
 		source: join-file output-dir %dylib-auto-test.reds
 		text: read join-file source-dir %auto-tests/dylib-auto-test.reds
-		replace/all text {"libtest-dll1.dll"} {"./libtest-dll1.so"}
-		replace/all text {"libtest-dll2.dll"} {"./libtest-dll2.so"}
+		library1: mold rejoin ["./libtest-dll1" library-suffix]
+		library2: mold rejoin ["./libtest-dll2" library-suffix]
+		replace/all text {"libtest-dll1.dll"} library1
+		replace/all text {"libtest-dll2.dll"} library2
 		include-file: join-file root-dir %quick-test/quick-test.reds
 		replace text
 			{#include %../../../../../quick-test/quick-test.reds}
@@ -129,11 +131,13 @@ arm-suite-builder: context [
 		runner-text: read join-file root-dir %system/tests/run-all.sh
 		replace/all runner-text "^M" ""
 		write/binary runner to binary! runner-text
-		either target-name = "Linux-ARM64" [
+		either find ["Linux-ARM64" "Darwin-ARM64"] target-name [
+			if target-name = "Linux-ARM64" [
 			validator: join-file output-dir %validate-arm64-elf.sh
 			validator-text: read join-file root-dir %system/tests/validate-arm64-elf.sh
 			replace/all validator-text "^M" ""
 			write/binary validator to binary! validator-text
+			]
 			write/binary join-file output-dir %structlib.c
 				read/binary join-file source-dir %libs/structlib.c
 		][
@@ -153,6 +157,7 @@ arm-suite-builder: context [
 			quit/return 2
 		]
 		target-name: expected-target
+		library-suffix: either target-name = "Darwin-ARM64" [".dylib"][".so"]
 		resume?: all [(length? args) = 2 args/2 = "--resume"]
 		if all [(length? args) = 2 not resume?][fail "second argument must be --resume"]
 
@@ -183,15 +188,15 @@ arm-suite-builder: context [
 			%overflow-test.reds %vararg-test.reds %infix-test.reds %conditional-test.reds
 			%system-test.reds %atomic-test.reds %queue-test.reds %push-pop-test.reds
 		]
-		if target-name = "Linux-ARM64" [
+		if find ["Linux-ARM64" "Darwin-ARM64"] target-name [
 			change find unit-sources %struct-test.reds %struct-x64-test.reds
 			change find unit-sources %size-test.reds %size-x64-test.reds
 		]
 
 		compile-source/library join-file source-dir %libtest-dll1.reds
-			join-file output-dir %libtest-dll1.so
+			join-file output-dir to file! rejoin ["libtest-dll1" library-suffix]
 		compile-source/library join-file source-dir %libtest-dll2.reds
-			join-file output-dir %libtest-dll2.so
+			join-file output-dir to file! rejoin ["libtest-dll2" library-suffix]
 
 		foreach relative unit-sources [
 			source: join-file source-dir relative

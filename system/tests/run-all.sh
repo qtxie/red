@@ -31,6 +31,13 @@ if [ -f darwin-arm64-abi-helper.c ]; then
     exit 1;
   fi
 fi
+if [ -f darwin-arm64-dylib-loader.c ]; then
+  if ! "${CC:-cc}" -arch arm64 -O2 \
+    -o darwin-arm64-dylib-loader darwin-arm64-dylib-loader.c; then
+    echo "****** failed to build darwin-arm64-dylib-loader *****";
+    exit 1;
+  fi
+fi
 if [ "$platform" = "Darwin" ]; then
   export DYLD_LIBRARY_PATH="$PWD${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}";
   for library in *.dylib; do
@@ -71,6 +78,8 @@ for exe in *;
      case "$exe" in
        darwin-arm64-runtime-smoke)
          report=`$TIMEOUT ./"$exe" alpha 2>&1`; status=$?;;
+       darwin-arm64-dylib-loader)
+         report=`$TIMEOUT ./"$exe" ./darwin-arm64-shared.dylib 2>&1`; status=$?;;
        arm64-*|darwin-arm64-*)
          report=`$TIMEOUT ./"$exe" alpha beta 2>&1`; status=$?;;
        *)

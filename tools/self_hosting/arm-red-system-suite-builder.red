@@ -39,6 +39,7 @@ arm-suite-builder: context [
 		source [file!]
 		output [file!]
 		/library
+		/no-runtime
 		/local options job result
 	][
 		if all [resume? exists? output][
@@ -57,6 +58,7 @@ arm-suite-builder: context [
 		if error? :job [
 			fail rejoin ["job setup failed: " mold job]
 		]
+		compiler-system-job/job-set job 'runtime? not no-runtime
 		compiler-system-job/job-set job 'link? true
 		set/any 'result try [system-dialect/compile/options source job]
 		if error? :result [
@@ -140,6 +142,12 @@ arm-suite-builder: context [
 			]
 			write/binary join-file output-dir %structlib.c
 				read/binary join-file source-dir %libs/structlib.c
+			if target-name = "Darwin-ARM64" [
+				write/binary join-file output-dir %darwin-arm64-abi-helper.c
+					read/binary join-file source-dir %darwin-arm64-abi-helper.c
+				write/binary join-file output-dir %darwin-arm64-dylib-loader.c
+					read/binary join-file source-dir %darwin-arm64-dylib-loader.c
+			]
 		][
 			write/binary join-file output-dir %libstructlib.so
 				read/binary join-file source-dir %libs/libstructlib-armhf.so
@@ -204,6 +212,27 @@ arm-suite-builder: context [
 			clear find/last name ".reds"
 			output: join-file output-dir to file! name
 			compile-source source output
+		]
+
+		if target-name = "Darwin-ARM64" [
+			compile-source/no-runtime
+				join-file source-dir %darwin-arm64-minimal-smoke.reds
+				join-file output-dir %darwin-arm64-minimal-smoke
+			compile-source/no-runtime
+				join-file source-dir %darwin-arm64-import-smoke.reds
+				join-file output-dir %darwin-arm64-import-smoke
+			compile-source/no-runtime
+				join-file source-dir %darwin-arm64-import-var-smoke.reds
+				join-file output-dir %darwin-arm64-import-var-smoke
+			compile-source
+				join-file source-dir %darwin-arm64-runtime-smoke.reds
+				join-file output-dir %darwin-arm64-runtime-smoke
+			compile-source/no-runtime
+				join-file source-dir %darwin-arm64-abi-smoke.reds
+				join-file output-dir %darwin-arm64-abi-smoke
+			compile-source/library
+				join-file root-dir %system/tests/shared-lib.reds
+				join-file output-dir %darwin-arm64-shared.dylib
 		]
 
 		if target-name = "Linux-ARM64" [

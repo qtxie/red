@@ -786,8 +786,21 @@ if system/state/interpreted? [                      ;-- not yet supported by com
 			local-helper: func [value][value + 1]
 			local-helper 41
 		]
-		--assert 41 = local-function-owner
+		--assert 42 = local-function-owner
+
+		local-refined-owner: func [/local local-helper][
+			local-helper: func [value /twice][either twice [value * 2][value]]
+			local-helper/twice 21
+		]
+		--assert 42 = local-refined-owner
 		--assert 1041 = local-helper 41
+
+		consume-local-and-callback: func [value callback][none]
+		local-block-owner: func [cleanup [block!]][
+			consume-local-and-callback cleanup func [][none]
+			do cleanup
+		]
+		--assert 42 = local-block-owner [42]
 
 ===end-group===
 

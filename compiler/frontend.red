@@ -3448,7 +3448,7 @@ red: context [
 			flags: 0
 		]
 		add-function name spec
-		if all [any-word? :original pos: local-bound? original][
+		if all [set-word? :original pos: local-bound? original][
 			repend local-functions [pos/2 to word! original name]
 		]
 		pos: head spec
@@ -3910,6 +3910,12 @@ red: context [
 						]
 					][
 						if head? path [
+							if ctx: local-bound? value [
+								path/1: entry/1
+								pc: next pc
+								comp-call/with path entry/2 (to word! value) ctx/2
+								exit
+							]
 							if all [alter: select-ssa name name: alter][
 								path/1: alter
 								if new: find functions alter [entry: new]	;-- keep entry if alias target was redefined away
@@ -4160,7 +4166,7 @@ red: context [
 		/with symbol ctx-name [word!]
 		/thru
 		/local 
-			item name compact? refs ref? cnt pos ctx mark list ref offset fctx
+			item name compact? refs ref? cnt pos ctx mark list ref offset fctx local-entry
 			args option stop? original get? dyn-list blk native? code type v id
 	][
 		either all [not thru spec/1 = 'intrinsic!][
@@ -4179,17 +4185,39 @@ red: context [
 			
 			name: original: either path? call [call/1][call]
 			name: to word! clean-lf-flag name
-			either all [with not empty? locals-stack not compact?][	;-- only if in a function's body
-				fctx: get-func-ctx name ctx-name
-				if fctx = 'null [fctx: ctx-name]		;-- path-generated wrapper fallback
-				emit reduce [							;-- special case for path-generated wrapper functions
-					'stack/mark-func 
-					decorate-exec-ctx decorate-symbol name
-					fctx
+			local-entry: none
+			if with [
+				pos: local-functions
+				while [not tail? pos][
+					if all [
+						pos/1 = ctx-name
+						pos/2 = symbol
+						pos/3 = name
+					][local-entry: pos break]
+					pos: skip pos 3
 				]
-				insert-lf -3
-			][
-				emit-open-frame/with name spec/1 ctx-name
+			]
+			case [
+				local-entry [
+					fctx: get-func-ctx name none
+					emit reduce [
+						'stack/mark-func
+						'word/from ctx-name (get-word-index/with symbol ctx-name)
+						fctx
+					]
+					insert-lf -5
+				]
+				all [with not empty? locals-stack not compact?][	;-- only if in a function's body
+					fctx: get-func-ctx name ctx-name
+					if fctx = 'null [fctx: ctx-name]		;-- path-generated wrapper fallback
+					emit reduce [							;-- special case for path-generated wrapper functions
+						'stack/mark-func
+						decorate-exec-ctx decorate-symbol name
+						fctx
+					]
+					insert-lf -3
+				]
+				true [emit-open-frame/with name spec/1 ctx-name]
 			]
 			current-call: call							;-- for error reporting
 			pos: pc
@@ -4509,7 +4537,10 @@ red: context [
 		emit-close-frame
 	]
 
-	comp-word: func [/literal /final /thru /local name local? self? alter emit-word original new ctx defer][
+	comp-word: func [
+		/literal /final /thru
+		/local name local? self? alter emit-word original new ctx defer entry source
+	][
 		name: to word! original: pc/1
 		local?: local-bound? original
 		
@@ -4561,6 +4592,15 @@ red: context [
 						append entry/2 select-obj either path? :obj-stack [safe-eval-object-path obj-stack][none]	;-- append context name if method
 					]
 				]
+			]
+			all [
+				not literal
+				local?
+				entry: find-local-function original
+			][
+				source: name
+				name: entry/1
+				comp-call/with name entry/2 source local?/2
 			]
 			all [
 				not literal

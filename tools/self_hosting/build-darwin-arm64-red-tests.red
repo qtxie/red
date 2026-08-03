@@ -20,9 +20,8 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
 if none? red/redbin [do bind load %compiler/redbin-emitter.red red]
 
-; The installed interpreter's collector faults during large compiler jobs.
-; The generated macOS runtimes retain their normal GC configuration.
-recycle/off
+; The x64 self-hosted interpreter uses the fixed collector.
+recycle/on
 
 darwin-red-suite-builder: context [
 	root-dir: source-dir: output-dir: none

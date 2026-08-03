@@ -7,19 +7,7 @@ Red [
 	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"
 ]
 
-system-target-ARM: context [
-	#do keep [
-		target-body-file: join system/options/path %system/targets/target-class-body.red
-		unless exists? target-body-file [
-			target-body-file: join system/options/path %targets/target-class-body.red
-		]
-		target-body-source: either value? 'transcode [
-			transcode read/binary target-body-file
-		][
-			load target-body-file
-		]
-		copy skip target-body-source 2
-	]
+system-target-ARM: make target-class [
 	target:				'ARM
 	little-endian?:		yes
 	struct-align-size:	4

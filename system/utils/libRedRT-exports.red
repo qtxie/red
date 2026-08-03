@@ -429,6 +429,7 @@
 	red/_context/set
 	red/string/load-at
 	exec/gui/OS-alert
+	red/object/set-compiled-method
 ][
 	red/root				red-block!
 	red/stk-bottom			int-ptr!

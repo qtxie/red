@@ -510,6 +510,27 @@ Red [
 		new11: make base11 [a: 2]
 		--assert 1 = new11/oo/f
 
+	--test-- "inherit-12"
+		base12: context [
+			hook: none
+			invoke: func [value [integer!]][hook value]
+		]
+		new12: make base12 [
+			hook: func [value [integer!]][value * 2]
+		]
+		--assert 42 = new12/invoke 21
+		invoke12: :new12/invoke
+		new12b: make base12 [
+			hook: func [value [integer!]][value * 3]
+		]
+		--assert 42 = invoke12 21
+		--assert 63 = new12b/invoke 21
+
+	--test-- "inherit-13"
+		base13: context [get-self: does [self]]
+		new13: make base13 []
+		--assert same? new13 new13/get-self
+
 ===end-group===
 
 ===start-group=== "external deep setting"

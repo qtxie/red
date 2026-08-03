@@ -708,6 +708,39 @@ object: context [
 			target: target + 1
 		]
 	]
+
+	set-compiled-method: func [
+		ctx-handle [node-handle!]
+		index   [integer!]
+		code    [integer!]
+		/local
+			ctx  [red-context!]
+			fun  [red-function!]
+			int  [red-integer!]
+			more [node-handle!]
+			s    [series!]
+	][
+		ctx: TO_CTX(ctx-handle)
+		s: resolve-series ctx/values
+		fun: as red-function! s/offset + index
+		assert TYPE_OF(fun) = TYPE_FUNCTION
+
+		; clone-series copies function cells shallowly. Detach the metadata before
+		; changing its compiled entry, otherwise this also changes the prototype.
+		more: node-handle-of copy-series resolve-series fun/more
+		ctx: TO_CTX(ctx-handle)
+		s: resolve-series ctx/values
+		fun: as red-function! s/offset + index
+		fun/more: more
+
+		s: resolve-series more
+		int: as red-integer! s/offset + 2
+		int/header: TYPE_INTEGER
+		int/value: code
+		int: as red-integer! s/offset + 4
+		int/header: TYPE_INTEGER
+		int/value: ctx-handle
+	]
 	
 	extend: func [
 		ctx-handle	[node-handle!]						;-- new context

@@ -2337,10 +2337,17 @@ red: context [
 		symbol [word!] entry [block!] ctx [object!]
 		/local rule pos self* nested
 	][
-		self*: in ctx 'self
+		; Red objects do not expose SELF through IN. Construct the same bound word
+		; used by bind-function so inherited method bodies retain their receiver.
+		self*: any [in ctx 'self first bind copy [self] ctx]
 
 		;-- rebind the new body to the parent object's context
 		entry: bind/copy copy/part next entry 8 ctx
+		; Deferred body compilation uses the saved owner to classify bare method
+		; calls. Keep it aligned with the context specialization above, otherwise
+		; a prototype NONE slot remains non-callable after the derived object
+		; replaces it with a function.
+		entry/8: ctx
 		
 		if object? shadow: select shadow-funcs decorate-func/strict symbol [
 			;-- rebind the body to the function's context
@@ -2359,8 +2366,9 @@ red: context [
 	
 	inherit-functions: func [							 ;-- multiple inheritance case
 		new [object!] extend [object!]
-		/local symbol name entry value pos path-ext path-new
+		/local symbol name entry value pos path-ext path-new inherited
 	][
+		inherited: make block! 4
 		;-- Stage0 algorithm with Stage1 object identity (select/same -> ctx).
 		;-- objects layout: [symbol obj ctx id proto events] (skip 6).
 		;-- select/same objects obj returns ctx (value after obj). Fallback must
@@ -2393,9 +2401,21 @@ red: context [
 							]
 							add-symbol name
 						]
+						repend inherited [get-word-index/with word path-new name]
 					]
 				]
 			]
+		]
+		inherited
+	]
+
+	emit-inherited-functions: func [ctx [word!] inherited [block!] /local index name][
+		foreach [index name] inherited [
+			emit compose [
+				object/set-compiled-method (ctx) (index)
+				as integer! (to get-word! decorate-func/strict name)
+			]
+			insert-lf -6
 		]
 	]
 
@@ -2407,7 +2427,7 @@ red: context [
 			words ctx spec name id func? obj original body pos entry symbol
 			body? ctx2 new blk list path on-set-info values w defer mark blk-idx
 			event pos2 loc-s loc-d shadow-path path-values saved-pc saved set? evt-var type words-pos
-			shadow-words shadow-spec callback on-change-callback on-deep-change-callback
+			shadow-words shadow-spec callback on-change-callback on-deep-change-callback inherited
 	][
 		saved-pc: pc
 		either set-path? original: pc/-1 [
@@ -2605,15 +2625,17 @@ red: context [
 		]
 		
 		if proto [
-			if body? [inherit-functions obj last proto]
+			if body? [inherited: inherit-functions obj last proto]
 			emit reduce ['object/clone-series select-obj (last proto) ctx 'true]
 			insert-lf -4
+			if inherited [emit-inherited-functions ctx inherited]
 		]
 		if all [not body? not passive][
 			; Stage0: inherit only from the second prototype object (`new`).
-			inherit-functions obj new
+			inherited: inherit-functions obj new
 			emit reduce ['object/transfer ctx2 ctx]
 			insert-lf -3
+			emit-inherited-functions ctx inherited
 		]
 
 		emit-src-comment/with none rejoin [mold pc/-1 " context " mold spec]

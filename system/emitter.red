@@ -152,6 +152,7 @@ target-reserve-call-struct-temps: func [target [object!] slots [integer!] /local
 ]
 
 #include %../compiler/system-target-class.red
+#include %targets/target-class.red
 
 ; A focused native compiler must bind emitter calls to its concrete target.
 ; Stage0 gets that concrete object from DO-CACHE before compiling any input;

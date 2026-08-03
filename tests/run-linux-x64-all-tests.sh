@@ -2,22 +2,22 @@
 set -eu
 
 phase=${1:-all}
-compiler=${2:-${RED_COMPILER:-rebol}}
 compile_timeout=${COMPILE_TIMEOUT_SECONDS:-300}
 run_timeout=${RUN_TIMEOUT_SECONDS:-30}
 smoke_runs=${X64_SMOKE_RUNS:-3}
 
 script_dir=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 root=$(CDPATH='' cd "$script_dir/.." && pwd)
+compiler=${2:-${RED_COMPILER:-$root/build/self-hosting/red-bootstrap-stage1-linux-x64.exe}}
 artifact_dir="$root/build/linux-x64-all-tests"
 dependency_dir="$artifact_dir/dependencies"
 source_dir="$root/system/tests/source/units"
 runtime_source_dir="$root/tests/source/runtime"
 
 case "$phase" in
-	prepare|native|all) ;;
+	prepare|native|system|all) ;;
 	*)
-		echo "Usage: $0 [prepare|native|all] [rebol-compiler]" >&2
+		echo "Usage: $0 [prepare|native|system|all] [stage1-compiler]" >&2
 		exit 2
 		;;
 esac
@@ -90,9 +90,22 @@ compile_program() {
 	name=$1
 	source=$2
 	output=$3
-	run_logged "$name-compile" timeout "${compile_timeout}s" \
-		"$compiler" -qws "$root/red.r" -r -d -t Linux-X86-64 \
-		-o "$output" "$source"
+	if [ "${RESUME_TESTS:-0}" = 1 ] && [ -f "$output" ]; then
+		echo "Reusing $output"
+		chmod +x "$output"
+		return 0
+	fi
+	case "$compiler" in
+		*.exe)
+			run_logged "$name-compile" timeout "${compile_timeout}s" \
+				"$compiler" -r -d -t Linux-X86-64 \
+				-o "$(wslpath -w "$output")" "$(wslpath -w "$source")"
+			;;
+		*)
+			run_logged "$name-compile" timeout "${compile_timeout}s" \
+				"$compiler" -r -d -t Linux-X86-64 -o "$output" "$source"
+			;;
+	esac
 	chmod +x "$output"
 }
 
@@ -100,9 +113,21 @@ compile_library() {
 	name=$1
 	source=$2
 	output=$3
-	run_logged "$name-compile" timeout "${compile_timeout}s" \
-		"$compiler" -qws "$root/red.r" -dlib -t Linux-X86-64-SO \
-		-o "$output" "$source"
+	if [ "${RESUME_TESTS:-0}" = 1 ] && [ -f "$output" ]; then
+		echo "Reusing $output"
+		return 0
+	fi
+	case "$compiler" in
+		*.exe)
+			run_logged "$name-compile" timeout "${compile_timeout}s" \
+				"$compiler" -r -dlib -d -t Linux-X86-64-SO \
+				-o "$(wslpath -w "$output")" "$(wslpath -w "$source")"
+			;;
+		*)
+			run_logged "$name-compile" timeout "${compile_timeout}s" \
+				"$compiler" -r -dlib -d -t Linux-X86-64-SO -o "$output" "$source"
+			;;
+	esac
 }
 
 run_program() {
@@ -313,12 +338,104 @@ run_native_suite() {
 	echo "Linux x86-64 native tests passed."
 }
 
+run_system_suite() {
+	if [ ! -d "$dependency_dir" ]; then
+		echo "Linux x86-64 dependencies are missing; run the prepare phase first" >&2
+		return 1
+	fi
+
+	compile_library system-libtest-dll1 \
+		"$source_dir/libtest-dll1.reds" "$artifact_dir/libtest-dll1.so"
+	compile_library system-libtest-dll2 \
+		"$source_dir/libtest-dll2.reds" "$artifact_dir/libtest-dll2.so"
+
+	unit_sources='array-test
+logic-test
+byte-test
+c-string-test
+struct-x64-test
+union-test
+pointer-test
+cast-test
+alias-test
+length-test
+null-test
+enum-test
+protect-test
+float-test
+float32-test
+lib-test
+get-pointer-test
+float-pointer-test
+namespace-test
+not-test
+size-x64-test
+integer-test
+fixed-int-test
+int64-test
+function-test
+case-test
+switch-test
+subroutine-test
+use-test
+exit-test
+return-test
+exceptions-test
+modulo-test
+math-mixed-test
+overflow-test
+vararg-test
+infix-test
+conditional-test
+system-test
+atomic-test
+queue-test
+push-pop-test'
+
+	count=0
+	for suite in $unit_sources; do
+		binary="$artifact_dir/system-$suite"
+		compile_program "system-$suite" "$source_dir/$suite.reds" "$binary"
+		run_program "system-$suite" "$binary"
+		log="$artifact_dir/system-$suite-run.log"
+		if ! grep -E 'Number of Assertions Failed:[[:space:]]+0' "$log" >/dev/null; then
+			echo "$suite did not report a zero-failure Quick-Test summary" >&2
+			cat "$log" >&2
+			return 1
+		fi
+		count=$((count + 1))
+	done
+
+	dylib_source="$artifact_dir/dylib-auto-test-linux.reds"
+	quick_test_reds=$(wslpath -w "$root/quick-test/quick-test.reds" | \
+		tr '\\' '/' | sed 's|^\([A-Za-z]\):|/\1|')
+	sed \
+		-e "s|#include .*quick-test/quick-test.reds|#include %$quick_test_reds|" \
+		-e 's|libtest-dll1\.dll|libtest-dll1.so|g' \
+		-e 's|libtest-dll2\.dll|libtest-dll2.so|g' \
+		"$source_dir/auto-tests/dylib-auto-test.reds" >"$dylib_source"
+	dylib_binary="$artifact_dir/system-dylib-auto-test"
+	compile_program system-dylib-auto-test "$dylib_source" "$dylib_binary"
+	run_program system-dylib-auto-test "$dylib_binary"
+	dylib_log="$artifact_dir/system-dylib-auto-test-run.log"
+	if ! grep -E 'Number of Assertions Failed:[[:space:]]+0' "$dylib_log" >/dev/null; then
+		echo "dylib-auto-test did not report a zero-failure Quick-Test summary" >&2
+		cat "$dylib_log" >&2
+		return 1
+	fi
+	count=$((count + 1))
+
+	echo "Linux x86-64 Red/System unit suites passed ($count tests)."
+}
+
 case "$phase" in
 	prepare) prepare_suite ;;
 	native) run_native_suite ;;
+	system) run_system_suite ;;
 	all)
 		prepare_suite
 		run_native_suite
+		run_system_suite
 		;;
 esac
 

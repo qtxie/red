@@ -541,12 +541,14 @@ target: 'X86-64
 			yes [old]
 		]
 	]
-	sysv-mark-class: func [classes [block!] offset [integer!] size [integer!] class [word!] /local first-index last-index][
+	sysv-mark-class: func [classes [block!] offset [integer!] size [integer!] class [word!] /local first-index last-index index][
 		if zero? size [exit]
 		first-index: (to integer! (offset / stack-width)) + 1
 		last-index: (to integer! ((offset + size - 1) / stack-width)) + 1
-		for index first-index last-index 1 [
+		index: first-index
+		while [index <= last-index][
 			sysv-merge-class classes index class
+			index: index + 1
 		]
 	]
 	sysv-classify-type: func [type [block!] offset [integer!] classes [block!] /local resolved size class][
@@ -584,7 +586,7 @@ target: 'X86-64
 		spec: resolved/2
 		size: emitter/struct-size?/direct spec
 		if size > 16 [return [memory]]
-		slots: round/ceiling size / stack-width
+		slots: to integer! round/ceiling (size / stack-width)
 		classes: make block! slots
 		insert/dup classes 'no-class slots
 		sysv-classify-spec spec 0 classes

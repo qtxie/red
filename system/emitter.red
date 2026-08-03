@@ -157,7 +157,10 @@ target-reserve-call-struct-temps: func [target [object!] slots [integer!] /local
 ; A focused native compiler must bind emitter calls to its concrete target.
 ; Stage0 gets that concrete object from DO-CACHE before compiling any input;
 ; the self-hosted compiler establishes the same relationship statically.
-#either config/show = 'X86-64-only [
+#either any [
+	config/show = 'X86-64-only
+	config/show = 'X86-64-ELF-only
+][
 	#include %targets/X86-64.red
 	selected-system-target: system-target-X86-64
 ][
@@ -1661,7 +1664,10 @@ emitter: context [
 		rodata?: no
 		compiler: system-dialect/compiler
 		configure-compiler-api compiler
-		#either config/show = 'X86-64-only [
+		#either any [
+			config/show = 'X86-64-only
+			config/show = 'X86-64-ELF-only
+		][
 			unless job/target = 'X86-64 [
 				compiler-api/throw-error ["X86-64 compiler received target:" job/target]
 			]

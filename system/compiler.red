@@ -15,6 +15,7 @@ Red [
 #either any [
 	config/show = 'ARM-ELF-only
 	config/show = 'ARM64-ELF-only
+	config/show = 'X86-64-ELF-only
 	config/show = 'X86-64-only
 ][][
 	#include %formats/Mach-O-sign.red
@@ -37,6 +38,7 @@ Red [
 #either any [
 	config/show = 'ARM-ELF-only
 	config/show = 'ARM64-ELF-only
+	config/show = 'X86-64-ELF-only
 ][
 	#include %formats/ELF.red
 ][
@@ -95,11 +97,12 @@ finish-system-file: func [job [object!] file [file!]][none]
 #either any [
 	config/show = 'ARM-ELF-only
 	config/show = 'ARM64-ELF-only
+	config/show = 'X86-64-ELF-only
 ][
 system-file-extension: func [job [object!]][
 	if job/format <> 'ELF [
 		system-dialect/compiler/throw-error [
-			"ARM debug compiler only supports ELF output, got:" job/format
+			"focused compiler only supports ELF output, got:" job/format
 		]
 	]
 	select system-format-ELF/defs/extensions job/type
@@ -108,7 +111,7 @@ system-file-extension: func [job [object!]][
 emit-system-file: func [job [object!]][
 	if job/format <> 'ELF [
 		system-dialect/compiler/throw-error [
-			"ARM debug compiler only supports ELF output, got:" job/format
+			"focused compiler only supports ELF output, got:" job/format
 		]
 	]
 	system-format-ELF/build job

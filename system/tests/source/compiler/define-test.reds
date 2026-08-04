@@ -21,6 +21,15 @@ Red/System [
 	--assert 2 = i504-arr/I504-MAX-SIZE
 	
 ===end-group===
+
+===start-group=== "macro recursion"
+	--test-- "macro body preserves strings"
+		#define PASS-STRING(value) [value]
+		macro-string: PASS-STRING("NSString")
+		--assert macro-string/1 = #"N"
+		--assert macro-string/8 = #"g"
+
+===end-group===
   
 
 ~~~end-file~~~

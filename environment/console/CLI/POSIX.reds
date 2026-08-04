@@ -212,11 +212,13 @@ get-window-size: func [
 ][
 	ws/rowcol: 0
 	ws/xypixel: 0
+	columns: 80
+	rows: 24
 	if zero? ioctl stdout TIOCGWINSZ :ws [
 		columns: ws/rowcol >> 16
 		rows: ws/rowcol and FFFFh
 	]
-	if any [zero? columns zero? rows][
+	if any [columns <= 0 rows <= 0][
 		columns: 80
 		rows: 24
 	]
@@ -296,8 +298,24 @@ init-console: func [
 	relative-y: 0
 	
 	if console? [
-		sigemptyset (as-integer :so) + 4
-		so/sigaction: as-integer :on-resize
+		#either any [OS = 'FreeBSD OS = 'NetBSD] [
+			sigemptyset as byte-ptr! :so/mask0
+		][
+			sigemptyset as byte-ptr! :so/mask
+		]
+		so/sigaction: #either OS = 'macOS [
+			#either ABI = 'apple-aarch64 [
+				as byte-ptr! :on-resize
+			][
+				as integer! :on-resize
+			]
+		][
+			#either any [OS = 'FreeBSD OS = 'NetBSD] [
+				as integer! :on-resize
+			][
+				as byte-ptr! :on-resize
+			]
+		]
 		so/flags: 0
 		#either OS = 'Linux [
 			sigaction SIGWINCH :so null
@@ -312,20 +330,26 @@ init-console: func [
 			as byte-ptr! saved-term
 			size? termios!
 
-		term/c_iflag: term/c_iflag and not (
-			TERM_BRKINT or TERM_ICRNL or TERM_INPCK or TERM_ISTRIP or TERM_IXON
-		)
-		term/c_oflag: term/c_oflag and not TERM_OPOST
-		term/c_cflag: term/c_cflag or TERM_CS8
-		term/c_lflag: term/c_lflag and not (
-			TERM_ECHO or TERM_ICANON or TERM_IEXTEN or TERM_ISIG
-		)
-		#case [
-			any [OS = 'macOS OS = 'FreeBSD OS = 'NetBSD] [
-				cc: (as byte-ptr! :term) + (4 * size? integer!)
-			]
-			true [cc: (as byte-ptr! :term) + (4 * size? integer!) + 1]
+		#either all [OS = 'macOS ABI = 'apple-aarch64] [
+			term/c_iflag: term/c_iflag and (as uint64! (not (
+				TERM_BRKINT or TERM_ICRNL or TERM_INPCK or TERM_ISTRIP or TERM_IXON
+			)))
+			term/c_oflag: term/c_oflag and (as uint64! (not TERM_OPOST))
+			term/c_cflag: term/c_cflag or (as uint64! TERM_CS8)
+			term/c_lflag: term/c_lflag and (as uint64! (not (
+				TERM_ECHO or TERM_ICANON or TERM_IEXTEN or TERM_ISIG
+			)))
+		][
+			term/c_iflag: term/c_iflag and not (
+				TERM_BRKINT or TERM_ICRNL or TERM_INPCK or TERM_ISTRIP or TERM_IXON
+			)
+			term/c_oflag: term/c_oflag and not TERM_OPOST
+			term/c_cflag: term/c_cflag or TERM_CS8
+			term/c_lflag: term/c_lflag and not (
+				TERM_ECHO or TERM_ICANON or TERM_IEXTEN or TERM_ISIG
+			)
 		]
+		cc: as byte-ptr! :term/c_cc1
 		cc/TERM_VMIN:  as-byte 1
 		cc/TERM_VTIME: as-byte 0
 

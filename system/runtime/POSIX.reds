@@ -21,7 +21,7 @@ Red/System [
 			return: [integer!]
 		]
 		sigemptyset: "sigemptyset" [
-			mask	[integer!]
+			mask	[byte-ptr!]
 			return: [integer!]
 		]
 		atexit: "__cxa_atexit" [			;-- https://refspecs.linuxbase.org/LSB_3.1.1/LSB-Core-generic/LSB-Core-generic/baselib---cxa-atexit.html

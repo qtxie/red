@@ -76,6 +76,7 @@ system-dialect: context [
 		show:				none
 		command-line:		none
 		show-func-map?:		no							;-- yes => output the functions address/name map
+		packager:			none						;-- optional post-link application packager
 	]
 
 	normalize-code-model: func [opts [object!]][
@@ -1920,10 +1921,13 @@ system-dialect: context [
 			]
 			cconv: ['cdecl | 'stdcall]
 			attribs: [
-				['variadic 'objc | 'objc 'variadic]
-				| [cconv ['variadic | 'typed | 'custom]]
-				| [['variadic | 'typed | 'custom] cconv]
-				| 'catch | 'infix | 'variadic | 'typed | 'custom | 'callback | 'objc | cconv
+				opt [
+					['variadic 'objc | 'objc 'variadic]
+					| [cconv ['variadic | 'typed | 'custom]]
+					| [['variadic | 'typed | 'custom] cconv]
+					| 'catch | 'infix | 'variadic | 'typed | 'custom | 'callback | 'objc | cconv
+				]
+				opt 'red-internal
 			]
 			type-def: pick [[func-pointer | type-spec] [type-spec]] to logic! extend
 			fun-rule: [pos: block! (check-specs name pos/1)]
@@ -4144,23 +4148,25 @@ system-dialect: context [
 		]
 
 		external-call?: func [spec [block!] /local attribs][
-			to logic! any [
-				spec/5 = 'callback
-				find [cdecl stdcall] spec/3
-				all [
-					attribs: get-attributes spec/4
-					any [find attribs 'cdecl find attribs 'stdcall]
+			attribs: get-attributes spec/4
+			to logic! all [
+				not all [attribs find attribs 'red-internal]
+				any [
+					spec/5 = 'callback
+					find [cdecl stdcall] spec/3
+					all [attribs any [find attribs 'cdecl find attribs 'stdcall]]
 				]
 			]
 		]
 
 		external-abi-call?: func [spec [block!] /local attribs][
-			to logic! any [
-				spec/2 = 'import
-				spec/5 = 'callback
-				all [
-					attribs: get-attributes spec/4
-					any [find attribs 'cdecl find attribs 'stdcall]
+			attribs: get-attributes spec/4
+			to logic! all [
+				not all [attribs find attribs 'red-internal]
+				any [
+					spec/2 = 'import
+					spec/5 = 'callback
+					all [attribs any [find attribs 'cdecl find attribs 'stdcall]]
 				]
 			]
 		]
@@ -4191,6 +4197,7 @@ system-dialect: context [
 		][
 			all [
 				spec/2 = 'import						 ;-- system ABI is enforced on imports only
+				external-abi-call? spec
 				case [
 					job/target = 'ARM [
 						all [spec/3 = 'cdecl 1 < slots]	 ;-- ARM requires it only for struct > 4 bytes

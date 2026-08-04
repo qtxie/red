@@ -22,30 +22,37 @@ libRedRT: context [
 	extras-file:  %libRedRT-extras.red
 	defs-file:	  %libRedRT-defs.red
 	exports-file: %libRedRT-exports.red
-	; Rebol used %./. Stage0 writes include/defs next to the process cwd or under build/.
+	; Stage0 writes generated include/defs below this directory.
 	root-dir:	  system/options/path
 
 	get-path: func [file [file!] /local names n path][
-		; Prefer cwd (Stage0 layout), then build/, then system/utils/.
 		names: reduce [file]
 		if find form file ".red" [
 			append names to-red-file replace copy form file ".red" ".r"
 		]
 		foreach n names [
-			if exists? n [return clean-path n]
 			path: clean-path join root-dir n
-			if exists? path [return path]
-			path: clean-path join root-dir join %build/ n
-			if exists? path [return path]
-			path: clean-path join root-dir join %build/self-hosting/ n
-			if exists? path [return path]
-			path: clean-path join root-dir join %system/utils/ n
 			if exists? path [return path]
 		]
 		clean-path join root-dir file
 	]
 
-	exports-data: get-path exports-file
+	get-source-path: func [file [file!] /local roots root path][
+		roots: reduce [
+			root-dir
+			system/options/path
+			clean-path join system/options/path %build/
+			clean-path join system/options/path %build/self-hosting/
+			clean-path join system/options/path %system/utils/
+		]
+		foreach root roots [
+			path: clean-path join root file
+			if exists? path [return path]
+		]
+		clean-path join system/options/path join %system/utils/ file
+	]
+
+	exports-data: get-source-path exports-file
 	exports-data: read/binary exports-data
 	exports-data: transcode exports-data
 	funcs: first exports-data
@@ -167,7 +174,7 @@ libRedRT: context [
 		spec
 	]
 
-	make-exports: func [functions exports job /local name spelling file data extra entry][
+	make-exports: func [functions exports job /local name spelling file data extra entry spec attrs][
 		foreach [name spec] functions [
 			spelling: form name
 			if all [
@@ -199,6 +206,15 @@ libRedRT: context [
 					print ["*** libRedRT Error: definition not found for" def]
 					halt
 				]
+				; Keep the implementation on Red/System's private ABI. The generated
+				; import uses the same ABI; only ordinary foreign calls use the OS ABI.
+				spec: entry/2/4
+				attrs: either block? spec/1 [spec/1][
+					all [string? spec/1 block? spec/2 spec/2]
+				]
+				either attrs [
+					unless find attrs 'red-internal [append attrs 'red-internal]
+				][insert/only spec [red-internal]]
 				system-dialect/compiler/flag-callback name none
 				repend exports [entry/1 undecorate def]
 			]

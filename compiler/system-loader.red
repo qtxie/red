@@ -134,7 +134,7 @@ compiler-system-loader: context [
 		macro [block! paren!]
 		s [block! paren!]
 		e [block! paren!]
-		/local rule pos i type value path
+		/local rule pos i type value path nested
 	][
 		unless equal? length? args length? s/2 [
 			throw-error ["invalid macro arguments count in:" mold s/2]
@@ -169,7 +169,7 @@ compiler-system-loader: context [
 						]
 					]
 				)
-				| into rule
+				| nested: [block! | paren!] :nested into rule
 				| skip
 			]
 		]
@@ -211,7 +211,7 @@ compiler-system-loader: context [
 		/own
 		/local blk rule name value args s e opr then-block else-block cases body p
 			saved stack header mark idx prev enum-value enum-name enum-names line-rule
-			recurse condition
+			recurse condition nested
 	][
 		#process off
 		if verbose > 0 [print "running block preprocessor..."]
@@ -242,8 +242,12 @@ compiler-system-loader: context [
 		]
 		recurse: [
 			saved: reduce [s e]
-			parse value rule: [
-				some [defs | into rule | skip] 		;-- resolve macros recursively
+			parse/case value rule: [
+				some [
+					defs
+					| nested: [block! | paren!] :nested into rule
+					| skip
+				]								;-- resolve macros recursively
 			]
 			set [s e] saved
 		]
@@ -252,13 +256,13 @@ compiler-system-loader: context [
 			| set name word! set opr skip set value any-type!
 		]
 		
-		parse src blk: [
+		parse/case src blk: [
 			s: (do store-line)
 			while [
 				defs								;-- resolve definitions in a single pass
 				| s: set value word! (
 					s: either p: find definitions value [
-						s/1: p/1					;-- Parse matches literal words case-sensitively
+						s/1: p/1
 						s
 					][next s]
 				) :s

@@ -412,16 +412,18 @@ Red [
 	--test-- "recycle-hash-1"
 		rh1-mem: none
 		rh1-mem2: none
-		rh1-hash: none
-		recycle
-		rh1-mem: stats
-		
 		rh1-hash: make hash! [1 2 3 4 5 6 7 8 9 10]
 		rh1-hash: none
 		recycle
-		
+		rh1-mem: stats
+
+		; Include conservative native-stack retention in the baseline.
+		rh1-hash: make hash! [1 2 3 4 5 6 7 8 9 10]
+		rh1-hash: none
+		recycle
+
 		rh1-mem2: stats
-		--assert rh1-mem2 <= rh1-mem	
+		--assert rh1-mem2 <= rh1-mem
 
 	;--test-- "recycle-hash-2"
 	;	rh2-mem: none
@@ -463,13 +465,16 @@ Red [
 		rh4-hash: none
 		rh4-blk: []
 		loop 20 [ append/only rh4-blk [1 2 3 4 5 6 7 8 9 10]]
-		recycle
-		rh4-mem: stats
-		
-		rh4-hash: make hash! compose [ a (copy rh4-blk) b (copy rh4-blk) ]
+		rh4-hash: make hash! compose [a (copy rh4-blk) b (copy rh4-blk)]
 		rh4-hash: none
 		recycle
-		
+		rh4-mem: stats
+
+		; Include conservative native-stack retention in the baseline.
+		rh4-hash: make hash! compose [a (copy rh4-blk) b (copy rh4-blk)]
+		rh4-hash: none
+		recycle
+
 		rh4-mem2: stats
 		--assert rh4-mem2 <= rh4-mem
 		

@@ -1,35 +1,52 @@
 param(
-	[string]$Compiler = 'D:\EE\QTool\rebcmdview.exe',
-	[string]$Remote = 'gh-runner'
+	[string]$Compiler,
+	[string]$Remote = 'macmini',
+	[string]$OutputDir
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$outputDir = Join-Path $repo 'build\macos-arm64-view-tests'
+if (-not $OutputDir) {
+	$OutputDir = Join-Path $repo 'build\macos-arm64-view-tests'
+}
+$outputDir = [System.IO.Path]::GetFullPath($OutputDir)
 $name = 'macos-arm64-view-smoke'
 $output = Join-Path $outputDir $name
 $app = "$output.app"
 $archive = Join-Path $outputDir "$name.tar"
 $source = Join-Path $repo 'tests\source\view\macos-arm64-smoke.red'
 
+if (-not $Compiler) {
+	$Compiler = Get-ChildItem (Join-Path $repo 'build\self-hosting') `
+		-Filter 'red-bootstrap-stage1-darwin-arm64*.exe' -File |
+		Sort-Object LastWriteTime -Descending |
+		Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $Compiler -or -not (Test-Path -LiteralPath $Compiler -PathType Leaf)) {
+	throw 'A Stage1 Darwin ARM64 compiler is required'
+}
+
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 Remove-Item -LiteralPath $app -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $output,$archive -Force -ErrorAction SilentlyContinue
 
-$compileArgs = @(
-	'/c', $Compiler, '-cqs', (Join-Path $repo 'red.r'), '-r',
-	'-t', 'macOS-ARM64', '-d', '--show-func-map',
-	'-o', $output, $source
-)
-& cmd @compileArgs
+& $Compiler -d -t macOS-ARM64 -o $output $source
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $app -PathType Container)) {
-	throw "macOS ARM64 View smoke compilation failed with exit code $LASTEXITCODE"
+	throw "macOS ARM64 View compilation failed with exit code $LASTEXITCODE"
+}
+
+$bundleExecutable = Join-Path $app "Contents\MacOS\$name"
+$bundleRuntime = Join-Path $app 'Contents\MacOS\libRedRT.dylib'
+foreach ($file in @($bundleExecutable, $bundleRuntime, (Join-Path $app 'Contents\Info.plist'))) {
+	if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+		throw "Bundle artifact is missing: $file"
+	}
 }
 
 $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
 & $tar -cf $archive -C $outputDir "$name.app"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $archive -PathType Leaf)) {
-	throw 'Failed to package the macOS ARM64 View smoke bundle'
+	throw 'Failed to package the macOS ARM64 View bundle'
 }
 
 $remoteDir = (& ssh $Remote 'mktemp -d /tmp/red-macos-arm64-view.XXXXXX').Trim()
@@ -38,36 +55,54 @@ if ($LASTEXITCODE -ne 0 -or $remoteDir -notmatch '^/tmp/red-macos-arm64-view\.[A
 }
 
 try {
-	& scp $archive "${Remote}:$remoteDir/"
-	if ($LASTEXITCODE -ne 0) { throw 'Failed to copy the macOS ARM64 View bundle' }
+	$copied = $false
+	foreach ($attempt in 1..3) {
+		& scp -O -o ConnectTimeout=10 $archive "${Remote}:$remoteDir/$name.tar"
+		if ($LASTEXITCODE -eq 0) {
+			$copied = $true
+			break
+		}
+		if ($attempt -lt 3) { Start-Sleep -Seconds 2 }
+	}
+	if (-not $copied) { throw 'Failed to copy the macOS ARM64 View bundle' }
 
 	$command = @"
 set -eu
 cd '$remoteDir'
 tar -xf '$name.tar'
 exe='$name.app/Contents/MacOS/$name'
-chmod 755 "`$exe"
+runtime='$name.app/Contents/MacOS/libRedRT.dylib'
+chmod 755 "`$exe" "`$runtime"
 test "`$(uname -m)" = arm64
 file "`$exe" | grep -q 'Mach-O 64-bit executable arm64'
-otool -hv "`$exe" | grep -q ARM64
-otool -L "`$exe" | grep -q 'AppKit.framework'
+file "`$runtime" | grep -q 'Mach-O 64-bit dynamically linked shared library arm64'
+otool -L "`$exe" | grep -q '@loader_path/libRedRT.dylib'
+otool -L "`$runtime" | grep -q 'AppKit.framework'
+otool -D "`$runtime" | grep -q '@rpath/libRedRT.dylib'
 dyld_info -validate_only "`$exe"
-cp "`$exe" '$name.signature-probe'
-chmod 755 '$name.signature-probe'
-codesign --verify --strict --verbose=4 '$name.signature-probe'
-rm '$name.signature-probe'
-rm -f macos-arm64-view-smoke.ok macos-arm64-view-smoke.error
-if ./"`$exe"; then
-  :
-else
-  status=`$?
-  if test -f macos-arm64-view-smoke.error; then cat macos-arm64-view-smoke.error; fi
-  exit "`$status"
+dyld_info -validate_only "`$runtime"
+cp "`$exe" '$name-executable-signature-probe'
+cp "`$runtime" '$name-runtime-signature-probe.dylib'
+codesign --verify --strict --verbose=4 '$name-executable-signature-probe'
+codesign --verify --strict --verbose=4 '$name-runtime-signature-probe.dylib'
+rm '$name-executable-signature-probe' '$name-runtime-signature-probe.dylib'
+plutil -lint '$name.app/Contents/Info.plist'
+codesign --force --deep --sign - '$name.app'
+codesign --verify --deep --strict --verbose=4 '$name.app'
+
+console_user=`$(stat -f %Su /dev/console)
+ssh_user=`$(id -un)
+if test "`$console_user" != "`$ssh_user"; then
+  printf 'Static View validation passed; GUI run skipped (console user %s, SSH user %s).\n' "`$console_user" "`$ssh_user"
+  exit 0
 fi
+
+rm -f macos-arm64-view-smoke.ok macos-arm64-view-smoke.error
+./"`$exe"
 test "`$(cat macos-arm64-view-smoke.ok)" = MACOS-ARM64-VIEW-OK
 "@
 	& ssh $Remote $command
-	if ($LASTEXITCODE -ne 0) { throw 'macOS ARM64 View smoke failed on the remote runner' }
+	if ($LASTEXITCODE -ne 0) { throw 'macOS ARM64 View validation failed on the remote runner' }
 }
 finally {
 	if ($remoteDir -match '^/tmp/red-macos-arm64-view\.[A-Za-z0-9]+$') {
@@ -75,4 +110,4 @@ finally {
 	}
 }
 
-Write-Host "macOS ARM64 native View smoke passed on $Remote."
+Write-Host "macOS ARM64 Stage1 View validation passed on $Remote."

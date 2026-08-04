@@ -739,20 +739,37 @@ Red/System [
 			#define TERM_ISIG		80h
 			#define TERM_ICANON		0100h
 			#define TERM_ECHO		08h	
-			#define TERM_IEXTEN		4000h
+			#define TERM_IEXTEN		0400h
 
-			termios!: alias struct! [
-				c_iflag			[integer!]
-				c_oflag			[integer!]
-				c_cflag			[integer!]
-				c_lflag			[integer!]
-				c_cc1			[integer!]						;-- c_cc[20]
-				c_cc2			[integer!]
-				c_cc3			[integer!]
-				c_cc4			[integer!]
-				c_cc5			[integer!]
-				c_ispeed		[integer!]
-				c_ospeed		[integer!]
+			#either all [OS = 'macOS ABI = 'apple-aarch64] [
+				termios!: alias struct! [
+					c_iflag			[uint64!]
+					c_oflag			[uint64!]
+					c_cflag			[uint64!]
+					c_lflag			[uint64!]
+					c_cc1			[integer!]					;-- c_cc[20]
+					c_cc2			[integer!]
+					c_cc3			[integer!]
+					c_cc4			[integer!]
+					c_cc5			[integer!]
+					_pad			[integer!]
+					c_ispeed		[uint64!]
+					c_ospeed		[uint64!]
+				]
+			][
+				termios!: alias struct! [
+					c_iflag			[integer!]
+					c_oflag			[integer!]
+					c_cflag			[integer!]
+					c_lflag			[integer!]
+					c_cc1			[integer!]					;-- c_cc[20]
+					c_cc2			[integer!]
+					c_cc3			[integer!]
+					c_cc4			[integer!]
+					c_cc5			[integer!]
+					c_ispeed		[integer!]
+					c_ospeed		[integer!]
+				]
 			]
 		]
 		true [													;-- Linux
@@ -885,12 +902,33 @@ Red/System [
 				timeout [integer!]
 				return: [integer!]
 			]
-			ioctl: "ioctl" [
-				fd		[integer!]
-				request	[integer!]
-				ws		[winsize!]
-				return: [integer!]
+			#either all [OS = 'macOS ABI = 'apple-aarch64] [
+				libc-ioctl: "ioctl" [[variadic]
+					fd		[integer!]
+					request	[uint64!]
+					return: [integer!]
+				]
+			][
+				libc-ioctl: "ioctl" [
+					fd		[integer!]
+					request	[integer!]
+					ws		[winsize!]
+					return: [integer!]
+				]
 			]
+		]
+	]
+
+	ioctl: func [
+		fd		[integer!]
+		request	[integer!]
+		ws		[winsize!]
+		return: [integer!]
+	][
+		#either all [OS = 'macOS ABI = 'apple-aarch64] [
+			libc-ioctl [fd as uint64! request ws]
+		][
+			libc-ioctl fd request ws
 		]
 	]
 ]

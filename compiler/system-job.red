@@ -55,6 +55,7 @@ compiler-system-job: context [
 		show: none
 		command-line: none
 		show-func-map?: false
+		packager: none
 		compiler-version: none
 		compiler-build-date: none
 		compiler-git: none
@@ -115,6 +116,7 @@ compiler-system-job: context [
 			show: none
 			command-line: none
 			show-func-map?: false
+			packager: none
 			compiler-version: none
 			compiler-build-date: none
 			compiler-git: none

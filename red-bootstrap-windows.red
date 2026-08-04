@@ -20,6 +20,7 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 #include %compiler/crush.red
 #include %compiler/frontend.red
 #include %compiler/bootstrap-options.red
+#include %system/formats/Mach-APP.red
 
 ; Interpreted bootstrap follows Stage0's deep binding operation. The AOT source
 ; materializes this field through frontend.red's nested include instead.
@@ -38,6 +39,106 @@ print-usage: does [
 fail-command: func [message][
 	print ["*** Red command-line error:" message]
 	quit/return 1
+]
+
+join-file: func [base [file!] relative [file!]][append copy base relative]
+
+libRedRT-target: func [job [object!] /local os cpu][
+	os: compiler-system-job/job-get job 'OS
+	cpu: compiler-system-job/job-get job 'target
+	case [
+		all [os = 'Windows cpu = 'X86-64] ['Windows-X86-64-DLL]
+		all [os = 'Linux cpu = 'X86-64] ['Linux-X86-64-SO]
+		all [os = 'Linux cpu = 'ARM64] ['Linux-ARM64-SO]
+		all [os = 'macOS cpu = 'ARM64] ['Darwin-ARM64-SO]
+		true [none]
+	]
+]
+
+libRedRT-output-dir: func [job [object!] /local dir][
+	dir: compiler-system-job/job-get job 'build-prefix
+	dir: either empty? dir [system/options/path][clean-path dir]
+	unless (last dir) = #"/" [append dir #"/"]
+	dir
+]
+
+configure-libRedRT-path: func [dir [file!]][
+	libRedRT/root-dir: dir
+]
+
+libRedRT-ready?: func [job [object!] /local dir extension][
+	dir: libRedRT-output-dir job
+	configure-libRedRT-path dir
+	extension: switch/default compiler-system-job/job-get job 'OS [
+		Windows [%.dll]
+		macOS [%.dylib]
+	][%.so]
+	all [
+		exists? join-file dir to file! rejoin [form libRedRT/lib-file extension]
+		exists? join-file dir libRedRT/include-file
+		exists? join-file dir libRedRT/defs-file
+	]
+]
+
+build-libRedRT: func [
+	app-job [object!]
+	/local target dir job source frontend-result backend-result saved-verbosity result
+][
+	target: libRedRT-target app-job
+	unless target [
+		fail-command rejoin [
+			"no libRedRT target for "
+			compiler-system-job/job-get app-job 'OS
+			" " compiler-system-job/job-get app-job 'target
+		]
+	]
+	dir: libRedRT-output-dir app-job
+	make-dir/deep dir
+	configure-libRedRT-path dir
+
+	job: compiler-system-job/new target
+	unless job [fail-command compiler-system-job/last-error/message]
+	compiler-system-job/job-set job 'build-prefix dir
+	compiler-system-job/job-set job 'build-basename libRedRT/lib-file
+	compiler-system-job/job-set job 'type 'dll
+	compiler-system-job/job-set job 'dev-mode? true
+	compiler-system-job/job-set job 'libRedRT? true
+	compiler-system-job/job-set job 'link? true
+	compiler-system-job/job-set job 'unicode? true
+	compiler-system-job/job-set job 'red-pass? true
+	compiler-system-job/job-set job 'GUI-engine compiler-system-job/job-get app-job 'GUI-engine
+	compiler-system-job/job-set job 'draw-engine compiler-system-job/job-get app-job 'draw-engine
+	compiler-system-job/job-set job 'debug? compiler-system-job/job-get app-job 'debug?
+	compiler-system-job/job-set job 'redbin-compress? compiler-system-job/job-get app-job 'redbin-compress?
+	compiler-system-job/job-set job 'compiler-version compiler-version
+	compiler-system-job/job-set job 'compiler-build-date compiler-build-date
+	compiler-system-job/job-set job 'compiler-git none
+	compiler-system-job/normalize job
+
+	; Keep the runtime module set identical to Stage0's libRedRT build.
+	source: either all [
+		compiler-system-job/job-get job 'GUI-engine
+		find [Windows macOS Linux] compiler-system-job/job-get job 'OS
+	][[[Needs: [View CSV JSON]]]][[[Needs: [CSV JSON]]]]
+
+	print ["Compiling" join-file dir %libRedRT "..."]
+	set/any 'result try [compiler-frontend/compile source job]
+	if error? :result [fail-command rejoin ["libRedRT frontend failed: " mold result]]
+	frontend-result: result
+	saved-verbosity: compiler-system-job/job-get job 'verbosity
+	compiler-system-job/job-set job 'verbosity (max 0 saved-verbosity - 3)
+	set/any 'result try [
+		system-dialect/compile/options/loaded libRedRT/lib-file job frontend-result
+	]
+	compiler-system-job/job-set job 'verbosity saved-verbosity
+	if error? :result [fail-command rejoin ["libRedRT backend failed: " mold result]]
+	backend-result: system-dialect/last-result
+	unless all [
+		block? backend-result
+		file? backend-result/4
+		exists? backend-result/4
+	][fail-command "libRedRT build produced no dylib"]
+	configure-libRedRT-path dir
 ]
 
 strip-quotes: func [text [string!]][
@@ -79,7 +180,7 @@ read-source-marker: func [
 
 compile-source: func [
 	options [object!]
-	/local source marker job frontend-result backend-result saved-verbosity build-prefix
+	/local source marker job frontend-result backend-result saved-verbosity build-prefix packager-name
 ][
 	unless compiler-options/option-get options 'source [fail-command "missing source file"]
 	source: resolve-source-path compiler-options/option-get options 'source
@@ -92,7 +193,6 @@ compile-source: func [
 
 	job: compiler-options/to-job options
 	if error? :job [fail-command mold job]
-	; Full runtime until Stage1 libRedRT defs path is verified.
 	if none? compiler-system-job/job-get job 'dev-mode? [
 		compiler-system-job/job-set job 'dev-mode? false
 	]
@@ -107,6 +207,12 @@ compile-source: func [
 	compiler-system-job/job-set job 'compiler-git none
 	build-prefix: compiler-system-job/job-get job 'build-prefix
 	unless empty? build-prefix [make-dir/deep build-prefix]
+	if all [
+		marker = 'Red
+		compiler-system-job/job-get job 'dev-mode?
+		not compiler-system-job/job-get job 'libRedRT?
+		not libRedRT-ready? job
+	][build-libRedRT job]
 
 	print ["Compiling" source "..."]
 	either marker = red-system-marker [
@@ -132,6 +238,13 @@ compile-source: func [
 
 	backend-result: system-dialect/last-result
 	unless block? backend-result [fail-command "Red/System backend did not produce a result"]
+	if packager-name: compiler-system-job/job-get job 'packager [
+		switch/default packager-name [
+			Mach-APP [
+				poke backend-result 4 mach-app-packager/process job source backend-result/4
+			]
+		][fail-command rejoin ["unsupported packager: " packager-name]]
+	]
 	print [
 		"...native time      :" backend-result/1
 		"...link time        :" backend-result/2

@@ -864,7 +864,7 @@ make-profilable make target-class [
 		if all [compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
 		n: call-arg-index
 		indirect-result?: to logic! emitter/struct-ptr? fspec/4
-		apple-call?: apple-aarch64?
+		apple-call?: to logic! all [apple-aarch64? compiler/external-abi-call? fspec]
 		objc-call?: compiler/find-attribute fspec/4 'objc
 		apple-variadic?: to logic! all [
 			apple-call?

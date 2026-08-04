@@ -120,7 +120,7 @@ libRedRT: context [
 		any [find/match sym: form sym "exec/" sym]
 	]
 	
-	make-exports: func [functions exports job /local name file][
+	make-exports: func [functions exports job /local name file spec attrs][
 		foreach [name spec] functions [
 			if all [
 				pos: find/match form name "exec/"
@@ -140,6 +140,15 @@ libRedRT: context [
 					print ["*** libRedRT Error: definition not found for" def]
 					halt
 				]
+				; Keep the implementation on Red/System's private ABI. The generated
+				; import uses the same ABI; only ordinary foreign calls use the OS ABI.
+				spec: functions/:name/4
+				attrs: either block? spec/1 [spec/1][
+					all [string? spec/1 block? spec/2 spec/2]
+				]
+				either attrs [
+					unless find attrs 'red-internal [append attrs 'red-internal]
+				][insert/only spec [red-internal]]
 				system-dialect/compiler/flag-callback name none
 			]
 		]

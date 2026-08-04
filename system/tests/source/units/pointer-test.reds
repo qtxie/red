@@ -202,6 +202,26 @@ Red/System [
 	
 ===end-group===
 
+#if target = 'X86-64 [
+
+===start-group=== "Pointers large-offset arithmetic"
+
+	--test-- "pointer-calc-x64-large-positive"
+	large-base: as [pointer! [integer!]] 0000000100000000h
+	large-index: 1073741824
+	large-result: large-base + large-index
+	--assert large-result = as [pointer! [integer!]] 0000000200000000h
+
+	--test-- "pointer-calc-x64-large-negative"
+	large-base: as [pointer! [integer!]] 0000000200000000h
+	large-index: -1073741824
+	large-result: large-base + large-index
+	--assert large-result = as [pointer! [integer!]] 0000000100000000h
+
+===end-group===
+
+]
+
 ===start-group=== "Local pointers simple read/write tests"
 
 pointer-local-foo: func [

@@ -533,6 +533,72 @@ Red/System [
 
 ===end-group===
 
+===start-group=== "dense switch dispatch"
+
+	dense-switch-func: func [value [integer!] return: [integer!]][
+		switch value [
+			10 [110]
+			11 [111]
+			12 [112]
+			13 [113]
+			14 [114]
+			15 [115]
+			16 [116]
+			17 [117]
+			18 [118]
+			19 [119]
+			20 [120]
+			21 [121]
+			22 [122]
+			23 [123]
+			24 [124]
+			25 [125]
+			27 [127]
+			28 [128]
+			29 [129]
+			30 [130]
+			31 [131]
+			32 [132]
+			33 [133]
+			34 [134]
+			35 [135]
+			36 [136]
+			37 [137]
+			38 [138]
+			39 [139]
+			40 [140]
+			41 [141]
+			42 [142]
+			default [199]
+		]
+	]
+
+	--test-- "dense-switch-1"
+	--assert 113 = dense-switch-func 13
+
+	--test-- "dense-switch-2"
+	--assert 199 = dense-switch-func 9
+
+	--test-- "dense-switch-3"
+	--assert 199 = dense-switch-func 43
+
+	--test-- "dense-switch-hole"
+	--assert 199 = dense-switch-func 26
+
+	--test-- "dense-switch-char"
+	dense-switch-char: #"D"
+	dense-switch-result: switch dense-switch-char [
+		#"A" [1]
+		#"B" [2]
+		#"C" [3]
+		#"D" [4]
+		#"E" [5]
+		#"F" [6]
+		default [9]
+	]
+	--assert dense-switch-result = 4
+
+===end-group===
+
 
 ~~~end-file~~~
-

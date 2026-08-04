@@ -1737,6 +1737,8 @@ emitter: context [
 		target/call-float-reg-count: 0
 		target/call-struct-temp-slots: 0
 		target/call-variadic?: no
+		if slot: in target 'call-top-arg-rax? [set slot no]
+		if slot: in target 'opt-level [set slot job/opt-level]
 		if slot: in target 'optimize? [set slot positive? job/opt-level]
 		target/compiler: compiler
 		target/PIC?: job/PIC?

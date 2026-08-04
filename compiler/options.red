@@ -82,6 +82,7 @@ compiler-options: context [
 					"--debug-stabs" [options/debug?: true]
 					"-O0" [options/opt-level: 0]
 					"-O1" [options/opt-level: 1]
+					"-O2" [options/opt-level: 2]
 					"-s" [options/static?: true]
 					"--static" [options/static?: true]
 					"-n" [options/no-runtime?: true]

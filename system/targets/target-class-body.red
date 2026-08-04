@@ -12,7 +12,7 @@ Red [
 	stateful-calls?: no
 	call-arg-index: call-arg-types: call-extra-slots: call-pad-slots:
 	call-shadow-slots: call-stack-slots: call-float-reg-count:
-	call-struct-temp-slots: none
+	call-struct-temp-slots: call-top-arg-rax?: none
 	call-variadic?: none
 
 	on-global-prolog: 		 none					;-- called at start of global code section

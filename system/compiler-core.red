@@ -3495,7 +3495,7 @@ system-dialect: context [
 			<last>
 		]
 
-		comp-switch: has [expr save-type spec value values body bodies list types default pos tagged-type tagged? id][
+		comp-switch: has [expr save-type spec value values body bodies list types default pos tagged-type tagged? id dispatch][
 			pc: next pc
 			expr: fetch-expression/keep/final 'switch	;-- compile argument
 			if any [none? expr last-type = none-type][
@@ -3583,17 +3583,28 @@ system-dialect: context [
 			;-- construct tests + branching and insert them at head
 			last-type: save-type
 			emitter/set-signed-state expr				;-- properly set signed/unsigned state
-			values: tail values
-			until [
-				values: skip values -2
-				foreach v values/1 [					;-- process multiple values per action
-					body: comp-chunked [
-						emitter/target/emit-integer-operation '= reduce [<last> v]
+			dispatch: none
+			if all [
+				job/target = 'X86-64
+				job/opt-level >= 2
+			][
+				dispatch: emitter/target/emit-switch-dispatch values bodies
+			]
+			either dispatch [
+				bodies: dispatch
+			][
+				values: tail values
+				until [
+					values: skip values -2
+					foreach v values/1 [				;-- process multiple values per action
+						body: comp-chunked [
+							emitter/target/emit-integer-operation '= reduce [<last> v]
+						]
+						emitter/branch/over/on/adjust bodies [=] values/2
+						bodies: emitter/chunks/join body bodies
 					]
-					emitter/branch/over/on/adjust bodies [=] values/2	;-- insert action branching
-					bodies: emitter/chunks/join body bodies
+					head? values
 				]
-				head? values
 			]
 			emitter/merge bodies						;-- commit all to main code buffer
 
@@ -4368,6 +4379,7 @@ system-dialect: context [
 				emitter/target/call-variadic?: no
 				emitter/target/call-float-reg-count: 0
 				emitter/target/call-struct-temp-slots: 0
+				emitter/target/call-top-arg-rax?: no
 				clear emitter/target/by-value-args
 
 				comp-expression expr yes
@@ -4381,6 +4393,7 @@ system-dialect: context [
 				emitter/target/call-variadic?: saved-call-variadic?
 				emitter/target/call-float-reg-count: saved-call-float-reg-count
 				emitter/target/call-struct-temp-slots: saved-call-struct-temp-slots
+				emitter/target/call-top-arg-rax?: no
 				clear emitter/target/by-value-args
 				append emitter/target/by-value-args saved-by-value-args
 				emitter/target/last-saved?: saved-call-last-saved?
@@ -4620,6 +4633,7 @@ system-dialect: context [
 
 		comp-variable-assign: func [
 			set-word [set-word!] expr casted [block! none!] store? [logic!]
+			materialized? [logic! none!]
 			/local name type new value fun-name spec val?
 		][
 			name: to word! set-word
@@ -4713,7 +4727,15 @@ system-dialect: context [
 				throw-error ["unable to determine a type for:" name]
 			]
 			value: unbox expr
-			if any [block? value path? value][value: <last>]
+			if any [
+				block? value
+				path? value
+				all [
+					materialized?
+					job/target = 'X86-64
+					job/opt-level >= 2
+				]
+			][value: <last>]
 			if store? [
 				unless all [paren? value 'value = last :value][ ;-- struct by value excluded from heap allocation
 					if all [
@@ -4741,7 +4763,7 @@ system-dialect: context [
 
 		comp-expression: func [
 			expr keep? [logic!]
-			/local variable boxed casting new? type spec store? subrc? set-thru?
+			/local variable boxed casting new? type spec store? subrc? set-thru? materialized?
 		][
 			;-- preprocessing expression
 			if all [block? expr find [set-word! set-path!] type?/word expr/1][
@@ -4802,6 +4824,7 @@ system-dialect: context [
 					find [tag! binary!] type?/word unbox expr
 					all [not new? not boxed set-word? variable store? logic? expr]
 				][
+					materialized?: yes
 					either boxed [
 						unless all [boxed/action = 'null set-word? variable job/target = 'IA-32][
 							emitter/target/emit-load/with expr boxed ;-- emit code for single value
@@ -4897,7 +4920,7 @@ system-dialect: context [
 				]
 				unless boxed [boxed: expr]
 				switch type?/word variable [
-					set-word! [comp-variable-assign variable expr casting store?]
+					set-word! [comp-variable-assign variable expr casting store? materialized?]
 					set-path! [comp-path-assign		variable boxed casting store?]
 				]
 			]
@@ -5077,14 +5100,71 @@ system-dialect: context [
 			expr
 		]
 
+		function-has-fast-native-call?: func [
+			body [any-block!]
+			/local item name entry
+		][
+			foreach item body [
+				case [
+					any-path? item []
+					any-block? item [
+						if function-has-fast-native-call? item [return yes]
+					]
+					word? item [
+						name: decorate-fun item
+						if all [
+							entry: select functions name
+							entry/2 = 'native
+							entry/1 <= 4
+						][return yes]
+					]
+					true []
+				]
+			]
+			no
+		]
+
+		function-has-unstable-stack?: func [
+			body [any-block!]
+			/local item
+		][
+			foreach item body [
+				case [
+					any-path? item [
+						if all [
+							(length? item) >= 3
+							item/1 = 'system
+							item/2 = 'stack
+							find [allocate free push-all pop-all] item/3
+						][return yes]
+					]
+					any-block? item [
+						if function-has-unstable-stack? item [return yes]
+					]
+					word? item [
+						if find [catch push pop] item [return yes]
+					]
+					true []
+				]
+			]
+			no
+		]
+
 		comp-func-body: func [
 			name [word!] spec [block!] body [block!] offset [integer!]
-			/local args-sz local-sz expr ret
+			/local args-sz local-sz expr ret shadow-slot
 		][
 			inject-loop-variable spec body
 			init-struct-values spec
 			locals: spec
 			func-name: name
+			if shadow-slot: in emitter/target 'reserve-fixed-shadow? [
+				set shadow-slot all [
+					job/opt-level >= 2
+					function-has-fast-native-call? body
+					not function-has-unstable-stack? body
+				]
+			]
 
 			set [args-sz local-sz] emitter/enter name locals offset ;-- build function prolog
 			func-locals-sz: local-sz
@@ -5114,6 +5194,8 @@ system-dialect: context [
 				]
 			]
 			emitter/leave name locals args-sz local-sz ret ;-- build function epilog
+			if shadow-slot: in emitter/target 'reserve-fixed-shadow? [set shadow-slot no]
+			if shadow-slot: in emitter/target 'fixed-shadow-space? [set shadow-slot no]
 			remove-func-pointers
 			unless empty? subroutines [emitter/resolve-subrc-points subroutines]
 			clear locals-init

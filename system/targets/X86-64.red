@@ -16,7 +16,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 	stateful-calls?: no
 	call-arg-index: call-arg-types: call-extra-slots: call-pad-slots:
 	call-shadow-slots: call-stack-slots: call-float-reg-count:
-	call-struct-temp-slots: none
+	call-struct-temp-slots: call-top-arg-rax?: none
 	call-variadic?: none
 
 	on-global-prolog: 		 none					;-- called at start of global code section
@@ -34,7 +34,10 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 	signed?: 	none								;-- TRUE => signed op, FALSE => unsigned op
 	last-saved?: no									;-- TRUE => operand saved in another register
 	saved-last-wide?: no
+	opt-level: none
 	optimize?: none
+	reserve-fixed-shadow?: no
+	fixed-shadow-space?: no
 	by-value-args: none
 	last-math-op: none
 	last-red-frame: none							;-- memory slot holding the last Red frame pointer before an external call
@@ -337,6 +340,7 @@ target: 'X86-64
 	call-float-reg-count: 0
 	by-value-args: copy []
 	call-struct-temp-slots: 0
+	call-top-arg-rax?: no
 	saved-last-wide?: no
 
 	win64?: does [
@@ -506,10 +510,28 @@ target: 'X86-64
 		]
 	]
 
-	emit-load-int64-literal: func [value type [word!] /local hex][
+	emit-load-int64-literal: func [value type [word!] /local hex high low][
 		hex: system-dialect/compiler/int64-hex value type
-		emit #{48B8}								;-- MOV rax, imm64
-		emit reverse debase/base hex 16
+		high: copy/part hex 8
+		low: copy skip hex 8
+		case [
+			all [optimize? high = "00000000"] [
+				emit #{B8}							;-- MOV eax, imm32 (zero extends)
+				emit reverse debase/base low 16
+			]
+			all [
+				optimize?
+				high = "FFFFFFFF"
+				find "89ABCDEF" low/1
+			][
+				emit #{48C7C0}						;-- MOV rax, sign-extended imm32
+				emit reverse debase/base low 16
+			]
+			true [
+				emit #{48B8}						;-- MOV rax, imm64
+				emit reverse debase/base hex 16
+			]
+		]
 	]
 
 	patch-stack-offset: func [name [word! tag!] offset [integer!] /local pos][
@@ -608,6 +630,19 @@ target: 'X86-64
 			]
 		]
 	]
+	use-fixed-call-shadow?: func [eligible? [logic!]][
+		if all [
+			eligible?
+			win64?
+			fixed-shadow-space?
+			zero? call-stack-slots
+			zero? call-extra-slots
+		][
+			call-shadow-slots: 0
+			return yes
+		]
+		no
+	]
 	emit-normalize-sysv-return: func [fspec [block!] /local ret classes][
 		unless all [
 			not win64?
@@ -684,6 +719,21 @@ target: 'X86-64
 			]
 		]
 	]
+	emit-pop-or-move-rax: func [pop-op [binary!] move-op [binary!] /local eligible?][
+		eligible?: call-top-arg-rax?
+		call-top-arg-rax?: no
+		either all [
+			opt-level >= 2
+			eligible?
+			not empty? emitter/code-buf
+			80 = to integer! last emitter/code-buf	;-- trailing PUSH rax
+		][
+			remove back tail emitter/code-buf
+			emit move-op
+		][
+			emit pop-op
+		]
+	]
 
 	emit-call-register-loads: func [
 		n [integer!]
@@ -746,12 +796,9 @@ target: 'X86-64
 								stack-offset
 							stack-offset: stack-offset + stack-width
 						][
-							emit pick [
-								#{59}		;-- POP rcx
-								#{5A}		;-- POP rdx
-								#{4158}		;-- POP r8
-								#{4159}		;-- POP r9
-							] slot
+							emit-pop-or-move-rax
+								pick [#{59} #{5A} #{4158} #{4159}] slot
+								pick [#{4889C1} #{4889C2} #{4989C0} #{4989C1}] slot
 						]
 						int-reg: int-reg + 1
 					]
@@ -836,14 +883,9 @@ target: 'X86-64
 								stack-offset
 							stack-offset: stack-offset + stack-width
 						][
-							emit pick [
-								#{5F}		;-- POP rdi
-								#{5E}		;-- POP rsi
-								#{5A}		;-- POP rdx
-								#{59}		;-- POP rcx
-								#{4158}		;-- POP r8
-								#{4159}		;-- POP r9
-							] int-reg + 1
+							emit-pop-or-move-rax
+								pick [#{5F} #{5E} #{5A} #{59} #{4158} #{4159}] int-reg + 1
+								pick [#{4889C7} #{4889C6} #{4889C2} #{4889C1} #{4989C0} #{4989C1}] int-reg + 1
 						]
 						int-reg: int-reg + 1
 					][
@@ -859,6 +901,7 @@ target: 'X86-64
 		]
 		call-stack-slots: stack-offset / stack-width
 		call-float-reg-count: float-reg
+		call-top-arg-rax?: no
 	]
 
 	emit-load-win64-arg-slot: func [index [integer!] /local src-offset][
@@ -873,6 +916,68 @@ target: 'X86-64
 			src-offset: 16 + ((index - 1) * stack-width)
 			emit-rbp-ref src-offset #{488B45}		;-- MOV rax, [rbp+disp]
 		]
+	]
+	emit-switch-dispatch: func [
+		values [block!]
+		bodies [block!]
+		/local entries cursor value body-offset count min-value max-value span previous
+			code table-bytes dispatch-size default-displacement target-offset index
+	][
+		entries: make block! 16
+		cursor: values
+		while [not tail? cursor][
+			foreach value cursor/1 [
+				value: to integer! value
+				if negative? value [return none]
+				repend entries [value cursor/2]
+			]
+			cursor: skip cursor 2
+		]
+		count: (length? entries) / 2
+		if count < 32 [return none]
+
+		sort/skip entries 2
+		previous: none
+		foreach [value body-offset] entries [
+			if all [not none? previous value = previous][return none]
+			previous: value
+		]
+		min-value: entries/1
+		max-value: first skip tail entries -2
+		span: max-value - min-value
+		unless all [
+			span <= 255
+			(span + 1) <= (count * 2)
+		][return none]
+
+		table-bytes: (span + 1) * 4
+		dispatch-size: table-bytes + (either zero? min-value [27][32])
+		code: make binary! dispatch-size
+		unless zero? min-value [
+			append code #{2D}						;-- SUB eax, minimum case value
+			append code int-to-bin/to-bin32 min-value
+		]
+		append code #{3D}						;-- CMP eax, normalized range
+		append code int-to-bin/to-bin32 span
+		append code #{0F87}					;-- JA default body
+		default-displacement: dispatch-size - ((length? code) + 4)
+		append code int-to-bin/to-bin32 default-displacement
+		append code #{4C8D1D}					;-- LEA r11, [RIP+table]
+		append code int-to-bin/to-bin32 9
+		append code #{49630483}				;-- MOVSXD rax, dword [r11+rax*4]
+		append code #{4C01D8}					;-- ADD rax, r11
+		append code #{FFE0}						;-- JMP rax
+
+		repeat index (span + 1) [
+			target-offset: select/skip entries ((min-value + index) - 1) 2
+			target-offset: either none? target-offset [
+				table-bytes
+			][
+				(table-bytes + (length? bodies/1)) - target-offset
+			]
+			append code int-to-bin/to-bin32 target-offset
+		]
+		emitter/chunks/join reduce [code copy []] bodies
 	]
 	emit-copy-rax-to-r11: func [size [integer!] /local qwords remainder offset][
 		qwords: to integer! (size / stack-width)
@@ -1591,6 +1696,7 @@ target: 'X86-64
 		emit #{4C89D8}							;-- MOV rax, r11
 	]
 	emit-prolog: func [name [word!] locals [block!] bitmap [integer!] /local locals-size reg-count local-slots][
+		fixed-shadow-space?: reserve-fixed-shadow?
 		reg-count: register-argument-count? name locals
 		locals-offset: 4 * stack-width + (reg-count * stack-width)
 		locals-size: either find locals /local [
@@ -1610,6 +1716,7 @@ target: 'X86-64
 		if odd? reg-count + local-slots [
 			emit-reserve-stack 1
 		]
+		if fixed-shadow-space? [emit-reserve-stack 4]
 		reduce [locals-size 0]
 	]
 	emit-epilog: func [
@@ -1788,8 +1895,10 @@ target: 'X86-64
 		call-variadic?: no
 		call-float-reg-count: 0
 		call-struct-temp-slots: 0
+		call-top-arg-rax?: no
 	]
 	emit-variadic-data: func [args [block!] /local total data-slots byte-size][
+		call-top-arg-rax?: no
 		either args/1 = #typed [
 			total: (length? args/2) / 3
 			data-slots: total * 3
@@ -1846,17 +1955,19 @@ target: 'X86-64
 		call-variadic?: no
 		call-float-reg-count: 0
 		call-struct-temp-slots: 0
+		call-top-arg-rax?: no
 	]
 	emit-call-native: func [
 		args [block!] fspec [block!] spec [block!] attribs [block! none!]
 		/routine-call name [word!]
-		/local n target
+		/local n target fixed-shadow?
 	][
 		if all [system-dialect/compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
 		n: length? call-arg-types
 		emit-call-register-loads n
+		fixed-shadow?: use-fixed-call-shadow? not routine-call
 		emit-align-call-stack
-		if win64? [emit-reserve-stack 4]
+		if all [win64? not fixed-shadow?] [emit-reserve-stack 4]
 		either routine-call [
 			target: either all [2 <= length? fspec 'local = last fspec][
 				pick tail fspec -2
@@ -1888,6 +1999,7 @@ target: 'X86-64
 		call-variadic?: no
 		call-float-reg-count: 0
 		call-struct-temp-slots: 0
+		call-top-arg-rax?: no
 	]
 	emit-not: func [value [word! char! tag! integer! logic! path! string! object!] /local opcodes type boxed][
 		if verbose >= 3 [print [">>>emitting NOT" mold value]]
@@ -2017,8 +2129,8 @@ target: 'X86-64
 			right-signed?: system-dialect/compiler/signed-integer? system-dialect/compiler/resolve-expr-type args/2
 		]
 		signed?: system-dialect/compiler/signed-integer? type
-		wide?: find [pointer! c-string! function! subroutine! struct! union! any-pointer! int64! uint64!] type/1
-		ptr-wide-imm?: find [pointer! c-string! function! subroutine! struct! union! any-pointer!] type/1
+		wide?: to logic! find [pointer! c-string! function! subroutine! struct! union! any-pointer! int64! uint64!] type/1
+		ptr-wide-imm?: to logic! find [pointer! c-string! function! subroutine! struct! union! any-pointer!] type/1
 		if any [right-block? right-last?][
 			unless all [left-block? last-saved?][
 				emit either wide? [#{4889C1}][#{89C1}] ;-- MOV rcx/ecx, rax/eax
@@ -2042,29 +2154,33 @@ target: 'X86-64
 				][
 					unless right-loaded? [emit-load-ecx right-source]
 					either optimize? [
+						if right-signed? [
+							emit #{4863C9}				;-- MOVSXD rcx, ecx before scaling
+							right-signed?: no
+						]
 						case [
 							scale = 2 [
-								emit either right-signed? [#{C1E1}][#{48C1E1}] ;-- SHL ecx/rcx, 1
+								emit #{48C1E1}				;-- SHL rcx, 1
 								emit #{01}
 							]
 							scale = 4 [
-								emit either right-signed? [#{C1E1}][#{48C1E1}] ;-- SHL ecx/rcx, 2
+								emit #{48C1E1}				;-- SHL rcx, 2
 								emit #{02}
 							]
 							scale = 8 [
-								emit either right-signed? [#{C1E1}][#{48C1E1}] ;-- SHL ecx/rcx, 3
+								emit #{48C1E1}				;-- SHL rcx, 3
 								emit #{03}
 							]
 							scale = 16 [
-								emit either right-signed? [#{C1E1}][#{48C1E1}] ;-- SHL ecx/rcx, 4
+								emit #{48C1E1}				;-- SHL rcx, 4
 								emit #{04}
 							]
 							scale <= 127 [
-								emit either right-signed? [#{6BC9}][#{486BC9}] ;-- IMUL ecx/rcx, imm8
+								emit #{486BC9}				;-- IMUL rcx, rcx, imm8
 								emit int-to-bin/to-bin8 scale
 							]
 							true [
-								emit either right-signed? [#{69C9}][#{4869C9}] ;-- IMUL ecx/rcx, imm32
+								emit #{4869C9}				;-- IMUL rcx, rcx, imm32
 								emit int-to-bin/to-bin32 scale
 							]
 						]
@@ -2150,10 +2266,17 @@ target: 'X86-64
 							]
 						]
 					]
+				][
+					unless all [
+						opt-level >= 2
+						not right-loaded?
+						word? right-source
+						emit-integer-memory-op? name right-source wide?
 					][
 						unless right-loaded? [emit-load-ecx right-source]
 						emit either wide? [#{4839C8}][#{39C8}] ;-- CMP rax/eax, rcx/ecx
 					]
+				]
 				]
 			imm? [
 				switch/default name [
@@ -2189,23 +2312,30 @@ target: 'X86-64
 				]
 			]
 			yes [
-				unless right-loaded? [emit-load-ecx right-source]
-				switch/default name [
-					+	[emit either wide? [#{4801C8}][#{01C8}]]	;-- ADD rax/eax, rcx/ecx
-					-	[emit either wide? [#{4829C8}][#{29C8}]]	;-- SUB rax/eax, rcx/ecx
-					*	[emit either wide? [#{480FAFC1}][#{0FAFC1}]] ;-- IMUL rax/eax, rcx/ecx
-					and [emit either wide? [#{4821C8}][#{21C8}]]	;-- AND rax/eax, rcx/ecx
-					or	[emit either wide? [#{4809C8}][#{09C8}]]	;-- OR rax/eax, rcx/ecx
-					xor [emit either wide? [#{4831C8}][#{31C8}]]	;-- XOR rax/eax, rcx/ecx
-					<<	[emit either wide? [#{48D3E0}][#{D3E0}]]	;-- SHL rax/eax, cl
-					>>	[emit either wide? [
-							either signed? [#{48D3F8}][#{48D3E8}]
-						][
-							either signed? [#{D3F8}][#{D3E8}]
-						]]								;-- SAR|SHR rax/eax, cl
-					-**	[emit either wide? [#{48D3E8}][#{D3E8}]]	;-- SHR rax/eax, cl
+				unless all [
+					opt-level >= 2
+					not right-loaded?
+					word? right-source
+					emit-integer-memory-op? name right-source wide?
 				][
-					system-dialect/compiler/throw-error ["x86-64 integer op not supported yet:" mold name]
+					unless right-loaded? [emit-load-ecx right-source]
+					switch/default name [
+						+	[emit either wide? [#{4801C8}][#{01C8}]]	;-- ADD rax/eax, rcx/ecx
+						-	[emit either wide? [#{4829C8}][#{29C8}]]	;-- SUB rax/eax, rcx/ecx
+						*	[emit either wide? [#{480FAFC1}][#{0FAFC1}]] ;-- IMUL rax/eax, rcx/ecx
+						and [emit either wide? [#{4821C8}][#{21C8}]]	;-- AND rax/eax, rcx/ecx
+						or	[emit either wide? [#{4809C8}][#{09C8}]]	;-- OR rax/eax, rcx/ecx
+						xor [emit either wide? [#{4831C8}][#{31C8}]]	;-- XOR rax/eax, rcx/ecx
+						<<	[emit either wide? [#{48D3E0}][#{D3E0}]]	;-- SHL rax/eax, cl
+						>>	[emit either wide? [
+								either signed? [#{48D3F8}][#{48D3E8}]
+							][
+								either signed? [#{D3F8}][#{D3E8}]
+							]]							;-- SAR|SHR rax/eax, cl
+						-**	[emit either wide? [#{48D3E8}][#{D3E8}]]	;-- SHR rax/eax, cl
+					][
+						system-dialect/compiler/throw-error ["x86-64 integer op not supported yet:" mold name]
+					]
 				]
 			]
 		]
@@ -2253,22 +2383,106 @@ target: 'X86-64
 			emit-load arg
 		]
 	]
+	emit-float-memory-op?: func [
+		name [word!]
+		value [word!]
+		single? [logic!]
+		/local type local? opcode
+	][
+		unless all [
+			opt-level >= 2
+			not import-var? value
+		][return no]
+		type: system-dialect/compiler/resolve-aliased system-dialect/compiler/get-type value
+		unless either single? [
+			type/1 = 'float32!
+		][
+			to logic! find [float! float64!] type/1
+		][return no]
+		local?: to logic! emitter/local-offset? value
+		opcode: case [
+			find comparison-op name [
+				either local? [
+					either single? [#{0F2E45}][#{660F2E45}]
+				][
+					either single? [#{0F2E05}][#{660F2E05}]
+				]
+			]
+			name = '+ [
+				either local? [
+					either single? [#{C5FA5845}][#{C5FB5845}]
+				][
+					either single? [#{C5FA5805}][#{C5FB5805}]
+				]
+			]
+			name = '- [
+				either local? [
+					either single? [#{C5FA5C45}][#{C5FB5C45}]
+				][
+					either single? [#{C5FA5C05}][#{C5FB5C05}]
+				]
+			]
+			name = '* [
+				either local? [
+					either single? [#{C5FA5945}][#{C5FB5945}]
+				][
+					either single? [#{C5FA5905}][#{C5FB5905}]
+				]
+			]
+			name = divide-sym [
+				either local? [
+					either single? [#{C5FA5E45}][#{C5FB5E45}]
+				][
+					either single? [#{C5FA5E05}][#{C5FB5E05}]
+				]
+			]
+			true [return no]
+		]
+		either local? [
+			emit-local-ref value opcode
+		][
+			emit-global-ref value opcode
+		]
+		yes
+	]
 	emit-float-operation: func [
 		name [word!] args [block!]
-		/local type right-type single? store-op cmp-op right-block? left-block? left-last? pre-saved? left-expr left-expr-type
+		/local type right-type single? store-op cmp-op right-block? left-block? left-last? pre-saved? left-expr right-expr left-expr-type
 	][
 		if verbose >= 3 [print [">>>inlining float op:" mold name mold args]]
 		type: system-dialect/compiler/resolve-expr-type args/1
 		right-type: system-dialect/compiler/resolve-expr-type args/2
 		single?: to logic! any [type/1 = 'float32! right-type/1 = 'float32!]
 		left-expr: system-dialect/compiler/unbox args/1
+		right-expr: system-dialect/compiler/unbox args/2
 		left-expr-type: either block? left-expr [system-dialect/compiler/get-type left-expr][none]
-		right-block?: block? system-dialect/compiler/unbox args/2
+		right-block?: block? right-expr
 		left-block?: block? left-expr
 		left-last?: any [last-value? args/1 left-block?]
 		pre-saved?: last-saved?
 		store-op: either single? [#{C5FA110424}][#{C5FB110424}]
 		cmp-op: either single? [#{C5F82E0424}][#{C5F92E0424}]
+		if all [
+			opt-level >= 2
+			not right-block?
+			word? right-expr
+			single? = (right-type/1 = 'float32!)
+			any [
+				not left-last?
+				system-dialect/compiler/any-float? system-dialect/compiler/last-type
+			]
+		][
+			unless left-last? [emit-load-float-op args/1 single?]
+			if emit-float-memory-op? name right-expr single? [
+				either find comparison-op name [
+					signed?: no
+					return none
+				][
+					system-dialect/compiler/last-type: either single? [[float32!]][type]
+					return system-dialect/compiler/last-type
+				]
+			]
+		]
 		case [
 			find comparison-op name [
 				signed?: no								;-- UCOMIS[S/D] uses CF/ZF/PF, not signed integer flags
@@ -2453,6 +2667,7 @@ target: 'X86-64
 		call-variadic?: no
 		call-float-reg-count: 0
 		call-struct-temp-slots: 0
+		call-top-arg-rax?: no
 	]
 	emit-variable: func [name [word! object!]][
 		emit-load name
@@ -2477,15 +2692,17 @@ target: 'X86-64
 		]
 	]
 	emit-typed-int64-padding: func [fspec [block!] type [block!]][
-		if all [
+		either all [
 			system-dialect/compiler/find-attribute fspec/4 'typed
 			find [int64! uint64!] type/1
 		][
 			emit #{8B442404}						;-- MOV eax, [rsp+4] ; high half of value
 			emit #{89442408}						;-- MOV [rsp+8], eax ; typed-value/_padding
-		]
+			yes
+		][no]
 	]
 	emit-argument: func [arg fspec [block!] /local value arg-type argc hidden?][
+		call-top-arg-rax?: no
 		argc: system-dialect/compiler/get-arity fspec/4
 		hidden?: hidden-ret-ptr? fspec
 		if hidden? [argc: argc + 1]
@@ -2493,7 +2710,7 @@ target: 'X86-64
 			if system-dialect/compiler/find-attribute fspec/4 'typed [
 				call-arg-index: call-arg-index + 1
 				append/only call-arg-types [integer!]
-				emit-push 0
+				call-top-arg-rax?: emit-push/track 0
 			]
 			exit
 		]
@@ -2512,7 +2729,7 @@ target: 'X86-64
 		call-arg-index: call-arg-index + 1
 		if tag? arg [
 			append/only call-arg-types [pointer! [byte!]]
-			emit-push arg
+			call-top-arg-rax?: emit-push/track arg
 			exit
 		]
 		arg-type: system-dialect/compiler/get-type arg
@@ -2536,13 +2753,13 @@ target: 'X86-64
 				]
 			]
 			system-dialect/compiler/last-type:  arg-type
-			emit-push <last>
+			call-top-arg-rax?: emit-push/track <last>
 		][
 			if object? arg [
 				emit-load arg
 				system-dialect/compiler/last-type:  arg-type
-				emit-push <last>
-				emit-typed-int64-padding fspec arg-type
+				call-top-arg-rax?: emit-push/track <last>
+				if emit-typed-int64-padding fspec arg-type [call-top-arg-rax?: no]
 				exit
 			]
 			if system-dialect/compiler/any-float? arg-type [
@@ -2554,46 +2771,127 @@ target: 'X86-64
 			either path? value [
 				emit-load value
 				system-dialect/compiler/last-type:  arg-type
-				emit-push <last>
+				call-top-arg-rax?: emit-push/track <last>
 			][
 				if last-value? value [
 					system-dialect/compiler/last-type:  arg-type
-					emit-push <last>
-					emit-typed-int64-padding fspec arg-type
+					call-top-arg-rax?: emit-push/track <last>
+					if emit-typed-int64-padding fspec arg-type [call-top-arg-rax?: no]
 					exit
 				]
 				either word? value [
 					emit-load value
 					system-dialect/compiler/last-type:  arg-type
-					emit-push <last>
-					emit-typed-int64-padding fspec arg-type
+					call-top-arg-rax?: emit-push/track <last>
+					if emit-typed-int64-padding fspec arg-type [call-top-arg-rax?: no]
 				][
 					if tag? value [
-						emit-push value
+						call-top-arg-rax?: emit-push/track value
 						exit
 					]
 					if string? value [
 						emit-load-literal [c-string!] value
 						system-dialect/compiler/last-type:  arg-type
-						emit-push <last>
+						call-top-arg-rax?: emit-push/track <last>
 						exit
 					]
 					if issue? value [
 						emit-load value
 						system-dialect/compiler/last-type:  arg-type
-						emit-push <last>
-						emit-typed-int64-padding fspec arg-type
+						call-top-arg-rax?: emit-push/track <last>
+						if emit-typed-int64-padding fspec arg-type [call-top-arg-rax?: no]
 						exit
 					]
 					if logic? value [value: either value [1][0]]
 					unless any [integer? value char? value][
 						system-dialect/compiler/throw-error ["x86-64 literal argument not supported yet:" mold value]
 					]
-					emit-push value
-					emit-typed-int64-padding fspec arg-type
+					call-top-arg-rax?: emit-push/track value
+					if emit-typed-int64-padding fspec arg-type [call-top-arg-rax?: no]
 				]
 			]
 		]
+	]
+	emit-integer-memory-op?: func [
+		name [word!]
+		value [word!]
+		wide? [logic!]
+		/local type local? opcode
+	][
+		unless all [
+			opt-level >= 2
+			not import-var? value
+		][return no]
+		type: system-dialect/compiler/get-type value
+		unless block? type [return no]
+		type: system-dialect/compiler/resolve-aliased type
+		unless either wide? [
+			to logic! find [
+				int64! uint64! pointer! c-string! function! subroutine!
+				struct! union! any-pointer!
+			] type/1
+		][
+			to logic! find [integer! int32! uint32!] type/1
+		][return no]
+		local?: to logic! emitter/local-offset? value
+		opcode: case [
+			find comparison-op name [
+				either local? [
+					either wide? [#{483B45}][#{3B45}]
+				][
+					either wide? [#{483B05}][#{3B05}]
+				]
+			]
+			name = '+ [
+				either local? [
+					either wide? [#{480345}][#{0345}]
+				][
+					either wide? [#{480305}][#{0305}]
+				]
+			]
+			name = '- [
+				either local? [
+					either wide? [#{482B45}][#{2B45}]
+				][
+					either wide? [#{482B05}][#{2B05}]
+				]
+			]
+			name = '* [
+				either local? [
+					either wide? [#{480FAF45}][#{0FAF45}]
+				][
+					either wide? [#{480FAF05}][#{0FAF05}]
+				]
+			]
+			name = 'and [
+				either local? [
+					either wide? [#{482345}][#{2345}]
+				][
+					either wide? [#{482305}][#{2305}]
+				]
+			]
+			name = 'or [
+				either local? [
+					either wide? [#{480B45}][#{0B45}]
+				][
+					either wide? [#{480B05}][#{0B05}]
+				]
+			]
+			name = 'xor [
+				either local? [
+					either wide? [#{483345}][#{3345}]
+				][
+					either wide? [#{483305}][#{3305}]
+				]
+			]
+			true [return no]
+		]
+		either local? [
+			emit-local-ref value opcode
+		][
+			emit-global-ref value opcode
+		]
+		yes
 	]
 	emit-load: func [value /with cast [object!] /local type spec local-spec resolved-type load-type field][
 		if block? value [value: <last>]
@@ -3679,6 +3977,7 @@ target: 'X86-64
 		/returned
 		/local classes class descriptors int-count float-count index base-type descriptor
 	][										;-- number of 64-bit stack slots
+		call-top-arg-rax?: no
 		either sysv [
 			classes: sysv-aggregate-classes type
 			either classes/1 = 'memory [
@@ -3727,6 +4026,7 @@ target: 'X86-64
 		]
 	]
 	emit-push-struct-ref: func [slots [integer!] /local offset][
+		call-top-arg-rax?: no
 		if call-struct-temp-slots < slots [
 			system-dialect/compiler/throw-error "x86-64 struct argument temporary stack space was not reserved"
 		]
@@ -3743,6 +4043,7 @@ target: 'X86-64
 		emit #{4C89D8}							;-- MOV rax, r11
 		append/only call-arg-types [pointer! [byte!]]
 		emit #{50}								;-- PUSH rax
+		call-top-arg-rax?: yes
 	]
 	emit-store-union-tag: func [spec [block!] name [word!] reg [word!] /local id tag type][
 		if all [
@@ -4254,7 +4555,8 @@ target: 'X86-64
 		emit #{0FAE15}								;-- LDMXCSR [RIP+disp32]
 		emit-reloc-disp32 fpu-cword/2
 	]
-	emit-push: func [value][
+	emit-push: func [value /track /local pushed-rax?][
+		pushed-rax?: no
 		if verbose >= 3 [print [">>>pushing" mold value]]
 		if logic? value [value: either value [1][0]]
 		either tag? value [
@@ -4267,16 +4569,19 @@ target: 'X86-64
 					emit either (first system-dialect/compiler/last-type) = 'float32! [#{F30F110424}][#{F20F110424}]
 				][
 					emit #{50}						;-- PUSH rax
+					pushed-rax?: yes
 				]
 			][
 				either value = <ret-ptr> [
 					emit #{488D85}					;-- LEA rax, [rbp+args-offset]
 					emit int-to-bin/to-bin32 args-offset
 					emit #{50}						;-- PUSH rax
+					pushed-rax?: yes
 				][
 					emit #{488D8424}				;-- LEA rax, [rsp+<args-top>]
 					emit int-to-bin/to-bin32 to integer! value
 					emit #{50}						;-- PUSH rax
+					pushed-rax?: yes
 				]
 			]
 		][
@@ -4297,9 +4602,11 @@ target: 'X86-64
 				]
 				unless all [integer? value optimize?][
 					emit #{50}						;-- PUSH rax
+					pushed-rax?: yes
 				]
 			]
 		]
+		either track [pushed-rax?][no]
 	]
 	emit-push-all: does [
 		emit #{50}								;-- PUSH rax

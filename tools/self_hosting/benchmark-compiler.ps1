@@ -7,7 +7,7 @@ param(
     [string]$Target = "Windows-X86-64",
     [int]$Runs = 1,
     [string]$OutputRoot = "build\compiler-benchmarks",
-    [ValidateSet("default", "O0", "O1")]
+    [ValidateSet("default", "O0", "O1", "O2")]
     [string]$Optimization = "default",
     [switch]$Stage0,
     [switch]$NoDebug,

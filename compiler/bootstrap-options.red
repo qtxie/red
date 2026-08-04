@@ -43,6 +43,7 @@ compiler-options: context [
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
 				token = "-O0" [option-set options 'opt-level 0]
 				token = "-O1" [option-set options 'opt-level 1]
+				token = "-O2" [option-set options 'opt-level 2]
 				find ["-dlib" "--dll"] token [option-set options 'dll? true]
 				find ["-u" "--update-libRedRT"] token [
 					option-set options 'update-libRedRT? true

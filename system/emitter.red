@@ -429,7 +429,7 @@ emitter: context [
 	]
 
 	get-symbol-spec: func [name [word!]][
-		compiler-api/get-variable-spec name
+		system-dialect/compiler/get-variable-spec name
 	]
 
 	get-symbol-ref: func [name [word!] /local spec][
@@ -437,7 +437,7 @@ emitter: context [
 			find compiler/functions name [get-func-ref name]	;-- function case
 			spec: select symbols name [spec]					;-- global variable case
 			'else [
-				compiler-api/throw-error ["attempt to get a reference on unknown symbol" name]
+				system-dialect/compiler/throw-error ["attempt to get a reference on unknown symbol" name]
 			]
 		]
 	]
@@ -445,7 +445,7 @@ emitter: context [
 	get-func-ref: func [name [word!] /local entry][
 		entry: find/last symbols name
 		unless entry [
-			compiler-api/throw-error ["missing function symbol:" name]
+			system-dialect/compiler/throw-error ["missing function symbol:" name]
 		]
 		if entry/2/1 = 'native [
 			repend symbols [							;-- copy 'native entry to a 'global entry
@@ -496,11 +496,11 @@ emitter: context [
 		all [
 			'value = last :spec
 			not find [struct! union!] spec/1
-			spec: compiler-api/find-aliased spec/1
+			spec: system-dialect/compiler/find-aliased spec/1
 		]
 		body: bind/copy body 'type
 		if block? spec/1 [spec: next spec]				;-- skip [attributs] if present
-		if compiler-api/union-spec? spec [spec: compiler-api/union-members spec]
+		if system-dialect/compiler/union-spec? spec [spec: system-dialect/compiler/union-members spec]
 
 		foreach [name t] spec [
 			unless word? name [break]
@@ -525,7 +525,7 @@ emitter: context [
 			data-buf: active-buf
 		]
 		if any [none? data-buf not binary? data-buf][
-			compiler-api/throw-error "store-global: emitter data buffer is none/invalid"
+			system-dialect/compiler/throw-error "store-global: emitter data buffer is none/invalid"
 		]
 		if any [find [logic! function!] type logic? value][
 			type: 'integer!
@@ -560,7 +560,7 @@ emitter: context [
 					'else [size]
 				]
 				ptr: tail data-buf
-				value: debase/base compiler-api/int-literal-hex value type 16
+				value: debase/base system-dialect/compiler/int-literal-hex value type 16
 				either target/little-endian? [
 					value: tail value
 					loop size [append ptr (first value: skip value -1)]
@@ -576,7 +576,7 @@ emitter: context [
 				pad-data-buf either type = 'float32! [target/default-align][8] ;-- align 64-bit floats on 64-bit
 				ptr: tail data-buf
 				either binary? value [append ptr value][ ;-- `as float32! keep` case
-					value: compiler-api/unbox value
+					value: system-dialect/compiler/unbox value
 					if integer? value [value: to float! value]
 
 					unless find [float! issue!] type?/word value [value: 0.0]
@@ -641,7 +641,7 @@ emitter: context [
 				ptr: tail data-buf
 				foreach [var type] spec [
 					by-val?: 'value = last :type
-					if spec: compiler-api/find-aliased type/1 [type: spec]
+					if spec: system-dialect/compiler/find-aliased type/1 [type: spec]
 					either all [by-val? type/1 = 'struct!][
 						store-global value type/1 type/2
 					][
@@ -660,7 +660,7 @@ emitter: context [
 			get-word! [
 				spec: any [
 					select symbols to word! value
-					all [compiler-api/ns-path select symbols compiler-api/ns-prefix to word! value]
+					all [system-dialect/compiler/rs-ns-path select symbols system-dialect/compiler/ns-prefix to word! value]
 				]
 				case [
 					spec/4 = '- [spec/4: make block! 1]
@@ -676,13 +676,13 @@ emitter: context [
 					append ptr value
 					pad-data-buf target/ptr-size
 				][
-					type: first compiler-api/get-type value/1
+					type: first system-dialect/compiler/get-type value/1
 					if find [float! float64!] type [pad-data-buf 8] ;-- optional 32-bit padding to ensure /0 points to the length slot
 					ptr: tail data-buf					;-- ensures array pointer skips size info
 					f64?: no
 					foreach item value [				;-- mixed types, use 32/64-bit for each slot
 						unless word? item [
-							t: first compiler-api/get-type item
+							t: first system-dialect/compiler/get-type item
 							if all [not f64? find [float! float64!] t][f64?: yes]
 							if type <> t [type: 'integer!]
 						]
@@ -724,7 +724,7 @@ emitter: context [
 				pad-data-buf target/ptr-size
 			]
 		][
-			compiler-api/throw-error ["store-global unexpected type:" type]
+			system-dialect/compiler/throw-error ["store-global unexpected type:" type]
 		]
 		(index? ptr) - 1								;-- offset of stored value
 	]
@@ -736,7 +736,7 @@ emitter: context [
 		/ref ref-ptr
 		/local ptr new
 	][
-		if new: compiler-api/find-aliased type/1 [
+		if new: system-dialect/compiler/find-aliased type/1 [
 			type: new
 		]
 		ptr: store-global value type/1 all [			;-- allocate value slot
@@ -751,7 +751,7 @@ emitter: context [
 		/protected										;-- route value to the read-only data segment
 		/local new new-global? ptr refs n-spec spec literal? saved slots local?
 	][
-		if new: compiler-api/find-aliased type/1 [
+		if new: system-dialect/compiler/find-aliased type/1 [
 			type: new
 		]
 		new-global?: not any [							;-- TRUE if unknown global symbol
@@ -759,8 +759,8 @@ emitter: context [
 			find symbols name 							;-- known symbol
 		]
 		either all [
-			literal?: compiler-api/literal? value			;-- literal values only
-			compiler-api/any-pointer? type					;-- complex types only
+			literal?: system-dialect/compiler/literal? value			;-- literal values only
+			system-dialect/compiler/any-pointer? type					;-- complex types only
 		][
 			if new-global? [
 				rodata?: to logic! protected			;-- PIC: slot filled by a load-time relative reloc (RELRO)
@@ -810,8 +810,8 @@ emitter: context [
 				any [
 					'struct! = type/1
 					'union! = type/1
-					'struct! = first type: compiler-api/resolve-aliased type
-					'union! = first type: compiler-api/resolve-aliased type
+					'struct! = first type: system-dialect/compiler/resolve-aliased type
+					'union! = first type: system-dialect/compiler/resolve-aliased type
 				]
 			][
 				slots: struct-slots?/direct type/2
@@ -834,7 +834,7 @@ emitter: context [
 		if block? type [
 			if all [
 				'value = last :type
-				alias: compiler-api/find-aliased type/1
+				alias: system-dialect/compiler/find-aliased type/1
 			][
 				if find [struct! union!] alias/1 [return aggregate-align? alias/2]
 				type: alias
@@ -853,7 +853,7 @@ emitter: context [
 	]
 
 	aggregate-align?: func [spec [block!] /local align a name type][
-		if compiler-api/union-spec? spec [return union-payload-align? spec]
+		if system-dialect/compiler/union-spec? spec [return union-payload-align? spec]
 		align: 1
 		foreach [name type] spec [
 			a: type-align? type
@@ -868,7 +868,7 @@ emitter: context [
 
 	union-payload-align?: func [spec [block!] /local align a name type][
 		align: 1
-		foreach [name type] compiler-api/union-members spec [
+		foreach [name type] system-dialect/compiler/union-members spec [
 			a: type-align? type
 			if a > align [align: a]
 		]
@@ -876,7 +876,7 @@ emitter: context [
 	]
 
 	union-payload-offset?: func [spec [block!] /local tag-size][
-		either compiler-api/tagged-union? spec [
+		either system-dialect/compiler/tagged-union? spec [
 			tag-size: size-of? spec/2
 			align-offset? tag-size union-payload-align? spec
 		][
@@ -890,9 +890,9 @@ emitter: context [
 	][
 		size: 0
 		align: 1
-		foreach [name type] compiler-api/union-members spec [
+		foreach [name type] system-dialect/compiler/union-members spec [
 			member-size: size-of? type
-			unless member-size [compiler-api/throw-error ["invalid union member type:" mold type]]
+			unless member-size [system-dialect/compiler/throw-error ["invalid union member type:" mold type]]
 			member-align: type-align? type
 			if member-size > size [size: member-size]
 			if member-align > align [align: member-align]
@@ -905,15 +905,15 @@ emitter: context [
 		either none? name [
 			union-size? spec
 		][
-			unless type: compiler-api/union-variant-type? spec name [
-				compiler-api/throw-error ["invalid union member" to lit-word! name]
+			unless type: system-dialect/compiler/union-variant-type? spec name [
+				system-dialect/compiler/throw-error ["invalid union member" to lit-word! name]
 			]
 			union-payload-offset? spec
 		]
 	]
 
 	member-offset?: func [spec [block!] name [word! none!] /local offset align var type][
-		if compiler-api/union-spec? spec [
+		if system-dialect/compiler/union-spec? spec [
 			return union-member-offset? spec name
 		]
 		offset: 0
@@ -932,12 +932,12 @@ emitter: context [
 			switch/default path/2 [
 				stack [
 					if all [2 = length? path set?][
-						compiler-api/backtrack path
-						compiler-api/throw-error "cannot modify system/stack"
+						system-dialect/compiler/backtrack path
+						system-dialect/compiler/throw-error "cannot modify system/stack"
 					]
 					if 3 < length? path [
-						compiler-api/backtrack path
-						compiler-api/throw-error "invalid system/stack access"
+						system-dialect/compiler/backtrack path
+						system-dialect/compiler/throw-error "invalid system/stack access"
 					]
 					switch path/3 [
 						top [
@@ -956,8 +956,8 @@ emitter: context [
 						]
 						align [
 							if set? [
-								compiler-api/backtrack path
-								compiler-api/throw-error "cannot modify system/stack/align"
+								system-dialect/compiler/backtrack path
+								system-dialect/compiler/throw-error "cannot modify system/stack/align"
 							]
 							target/emit-stack-align
 						]
@@ -965,8 +965,8 @@ emitter: context [
 				]
 				pc [
 					if set? [
-						compiler-api/backtrack path
-						compiler-api/throw-error "cannot modify system/pc"
+						system-dialect/compiler/backtrack path
+						system-dialect/compiler/throw-error "cannot modify system/pc"
 					]
 					target/emit-get-pc
 					compiler/last-type: either target/pc-as-pointer? [
@@ -982,22 +982,22 @@ emitter: context [
 				]
 				fpu [
 					if 2 = length? path [
-						compiler-api/backtrack path
-						compiler-api/throw-error "invalid system/fpu access"
+						system-dialect/compiler/backtrack path
+						system-dialect/compiler/throw-error "invalid system/fpu access"
 					]
 					switch path/3 [
 						type [
 							either set? [
-								compiler-api/backtrack path
-								compiler-api/throw-error "cannot modify system/fpu/type"
+								system-dialect/compiler/backtrack path
+								system-dialect/compiler/throw-error "cannot modify system/fpu/type"
 							][
 								target/emit-fpu-get/type
 							]
 						]
 						option [
 							if 3 = length? path [
-								compiler-api/backtrack path
-								compiler-api/throw-error "invalid system/fpu/option access"
+								system-dialect/compiler/backtrack path
+								system-dialect/compiler/throw-error "invalid system/fpu/option access"
 							]
 							either set? [
 								target/emit-fpu-set/options value path/4
@@ -1007,8 +1007,8 @@ emitter: context [
 						]
 						mask [
 							if 3 = length? path [
-								compiler-api/backtrack path
-								compiler-api/throw-error "invalid system/fpu/mask access"
+								system-dialect/compiler/backtrack path
+								system-dialect/compiler/throw-error "invalid system/fpu/mask access"
 							]
 							either set? [
 								target/emit-fpu-set/masks value path/4
@@ -1028,16 +1028,16 @@ emitter: context [
 						]
 						update [
 							either set? [
-								compiler-api/backtrack path
-								compiler-api/throw-error "system/fpu/update is an action"
+								system-dialect/compiler/backtrack path
+								system-dialect/compiler/throw-error "system/fpu/update is an action"
 							][
 								target/emit-fpu-update
 							]
 						]
 						init [
 							either set? [
-								compiler-api/backtrack path
-								compiler-api/throw-error "system/fpu/init is an action"
+								system-dialect/compiler/backtrack path
+								system-dialect/compiler/throw-error "system/fpu/init is an action"
 							][
 								target/emit-fpu-init
 							]
@@ -1054,11 +1054,11 @@ emitter: context [
 
 	resolve-path-head: func [path [path! set-path!] parent [block! none!] /local type alias][
 		type: either head? path [
-			compiler-api/resolve-type path/1
+			system-dialect/compiler/resolve-type path/1
 		][
-			compiler-api/resolve-type/with path/1 parent
+			system-dialect/compiler/resolve-type/with path/1 parent
 		]
-		if all [block? type 'value = last :type alias: compiler-api/find-aliased type/1][
+		if all [block? type 'value = last :type alias: system-dialect/compiler/find-aliased type/1][
 			type: append copy alias 'value
 		]
 		second type
@@ -1069,11 +1069,11 @@ emitter: context [
 
 		either 2 = length? path [
 			full-type: either parent [
-				compiler-api/resolve-type/with path/1 parent
+				system-dialect/compiler/resolve-type/with path/1 parent
 			][
-				compiler-api/resolve-type path/1
+				system-dialect/compiler/resolve-type path/1
 			]
-		if all [block? full-type 'value = last :full-type alias: compiler-api/find-aliased full-type/1][
+		if all [block? full-type 'value = last :full-type alias: system-dialect/compiler/find-aliased full-type/1][
 				full-type: append copy alias 'value
 			]
 			type: first full-type
@@ -1105,7 +1105,7 @@ emitter: context [
 	]
 
 	size-of?: func [type [word! block!] /local t][
-		if all [block? type compiler-api/union-spec? type][
+		if all [block? type system-dialect/compiler/union-spec? type][
 			return union-size? type
 		]
 		if all [
@@ -1114,8 +1114,8 @@ emitter: context [
 			any [
 				'struct! = type/1
 				'union! = type/1
-				'struct! = first t: compiler-api/find-aliased type/1
-				'union! = first t: compiler-api/find-aliased type/1
+				'struct! = first t: system-dialect/compiler/find-aliased type/1
+				'union! = first t: system-dialect/compiler/find-aliased type/1
 			]
 		][
 			if t [type: t]
@@ -1131,7 +1131,7 @@ emitter: context [
 				select datatypes 'integer!
 			]
 			all [										;-- search in user-aliased types
-				type: compiler-api/find-aliased type
+				type: system-dialect/compiler/find-aliased type
 				select datatypes type/1
 			]
 		]
@@ -1164,12 +1164,12 @@ emitter: context [
 		]
 		unless direct [
 			if not find [struct! union!] spec/1 [
-				spec: compiler-api/find-aliased spec/1
+				spec: system-dialect/compiler/find-aliased spec/1
 				if not find [struct! union!] spec/1 [return none]
 			]
 			spec: spec/2
 		]
-		size: either compiler-api/union-spec? spec [
+		size: either system-dialect/compiler/union-spec? spec [
 			union-size? spec
 		][
 			member-offset? spec none
@@ -1188,12 +1188,12 @@ emitter: context [
 		]
 		unless direct [
 			if not find [struct! union!] spec/1 [
-				spec: compiler-api/find-aliased spec/1
+				spec: system-dialect/compiler/find-aliased spec/1
 				if not find [struct! union!] spec/1 [return none]
 			]
 			spec: spec/2
 		]
-		to integer! either compiler-api/union-spec? spec [
+		to integer! either system-dialect/compiler/union-spec? spec [
 			union-size? spec
 		][
 			member-offset? spec none
@@ -1209,9 +1209,9 @@ emitter: context [
 					target/target = 'X86-64
 					compiler/job/OS = 'Windows
 					external?: any [
-						all [metadata compiler-api/external-abi-call? fspec]
+						all [metadata system-dialect/compiler/external-abi-call? fspec]
 						all [
-							attrs: compiler-api/get-attributes spec
+							attrs: system-dialect/compiler/get-attributes spec
 							any [find attrs 'cdecl find attrs 'stdcall]
 						]
 					]
@@ -1272,7 +1272,7 @@ emitter: context [
 	]
 
 	type-has-pointer?: func [type [block!] /local t spec][
-		t: compiler-api/resolve-aliased type
+		t: system-dialect/compiler/resolve-aliased type
 		case [
 			find [pointer! c-string! function!] t/1 [true]
 			all [t/1 = 'struct! 'value <> last :t] [true]
@@ -1297,7 +1297,7 @@ emitter: context [
 
 	union-has-pointer?: func [spec [block!] /local type found? name][
 		found?: no
-		foreach [name type] compiler-api/union-members spec [
+		foreach [name type] system-dialect/compiler/union-members spec [
 			if type-has-pointer? type [
 				found?: yes
 				break
@@ -1312,14 +1312,14 @@ emitter: context [
 				spec/1 = 'struct! [spec: reverse-fields spec/2]
 				spec/1 = 'union!	[spec: spec/2]
 				not find [struct! union!] spec/1 [
-					spec: compiler-api/find-aliased spec/1
+					spec: system-dialect/compiler/find-aliased spec/1
 					spec: either spec/1 = 'union! [spec/2][reverse-fields spec/2]
 				]
 			]
 		]
 		body: bind/copy body 'type
 		if block? spec/1 [spec: next spec]				;-- skip struct's [attributs] if present
-		if compiler-api/union-spec? spec [
+		if system-dialect/compiler/union-spec? spec [
 			type: either union-has-pointer? spec [[pointer! [integer!]]][[integer!]]
 			loop struct-slots?/direct spec [do body]
 			exit
@@ -1328,7 +1328,7 @@ emitter: context [
 		while [not tail? spec][
 			type: spec/2
 			either 'value = last :type [
-				foreach-field second compiler-api/find-aliased spec/2/1 body
+				foreach-field second system-dialect/compiler/find-aliased spec/2/1 body
 			][
 				do body
 			]
@@ -1409,11 +1409,11 @@ emitter: context [
 							i: i + slots
 							if i > 30 store
 						]
-				][either compiler-api/any-pointer?/with spec ts [
+				][either system-dialect/compiler/any-pointer?/with spec ts [
 						either 'value = last :spec [
 							foreach-field spec [
 								step: either target/ptr-size = 8 [1][pick 2x1 to logic! find [float! float64! int64! uint64!] type/1]
-								if compiler-api/any-pointer?/with type ts [
+								if system-dialect/compiler/any-pointer?/with type ts [
 									bits: bits or (shift/left 1 i)
 								]
 								if (i: i + step) > 30 store
@@ -1508,7 +1508,7 @@ emitter: context [
 			target/emit-push-struct/sysv struct-slots?/direct spec/2 spec
 		][
 			either target/target = 'ARM64 [
-				either block? compiler-api/unbox/deep expr [
+				either block? system-dialect/compiler/unbox/deep expr [
 					target/emit-push-struct/aggregate/returned struct-slots?/direct spec/2 spec
 				][
 					target/emit-push-struct/aggregate struct-slots?/direct spec/2 spec
@@ -1689,25 +1689,25 @@ emitter: context [
 			config/show = 'X86-64-ELF-only
 		][
 			unless job/target = 'X86-64 [
-				compiler-api/throw-error ["X86-64 compiler received target:" job/target]
+				system-dialect/compiler/throw-error ["X86-64 compiler received target:" job/target]
 			]
 			target: system-target-X86-64
 ][
 		#either config/show = 'ARM64-ELF-only [
 			unless job/target = 'ARM64 [
-				compiler-api/throw-error ["ARM64 compiler received target:" job/target]
+				system-dialect/compiler/throw-error ["ARM64 compiler received target:" job/target]
 			]
 			target: system-target-ARM64
 ][
 		#either config/show = 'ARM64-Darwin-only [
 			unless job/target = 'ARM64 [
-				compiler-api/throw-error ["ARM64 compiler received target:" job/target]
+				system-dialect/compiler/throw-error ["ARM64 compiler received target:" job/target]
 			]
 			target: system-target-ARM64
 ][
 		#either config/show = 'ARM-ELF-only [
 			unless job/target = 'ARM [
-				compiler-api/throw-error ["ARM compiler received target:" job/target]
+				system-dialect/compiler/throw-error ["ARM compiler received target:" job/target]
 			]
 			target: system-target-ARM
 ][
@@ -1718,7 +1718,7 @@ emitter: context [
 			'ARM64 system-target-ARM64
 		] job/target
 		unless target [
-			compiler-api/throw-error ["unsupported Red/System target:" job/target]
+			system-dialect/compiler/throw-error ["unsupported Red/System target:" job/target]
 		]
 ]
 ]

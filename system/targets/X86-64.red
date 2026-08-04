@@ -120,7 +120,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 			emitter/size-of? value: case [
 				type 	[operand]
 				'else 	[
-					value: first compiler-api/get-type operand
+					value: first system-dialect/compiler/get-type operand
 					either value = 'any-pointer! ['pointer!][value]
 				]
 			]
@@ -136,7 +136,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 
 	with-width-of: func [value body [block!] /alt /local old][
 		old: reduce [width signed?]
-		set-width compiler-api/unbox value
+		set-width system-dialect/compiler/unbox value
 		do body
 		set [width signed?] old
 		if all [alt object? value][					;-- casting for right operand
@@ -147,19 +147,19 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 
 	implicit-cast: func [arg alt? [logic!] /local right-width right-type target-type][
 		right-width: first get-width arg none
-		right-type: compiler-api/get-type arg
+		right-type: system-dialect/compiler/get-type arg
 		target-type: reduce [case [
 			width = 1 [either signed? ['int8!]['uint8!]]
 			width = 2 [either signed? ['int16!]['uint16!]]
 			width = 4 [either signed? ['integer!]['uint32!]]
-			width = 8 [first compiler-api/last-type]
+			width = 8 [first system-dialect/compiler/last-type]
 		]]
 
 		if any [
-			compiler-api/lossless-integer-cast? right-type target-type
+			system-dialect/compiler/lossless-integer-cast? right-type target-type
 			find [float! float32! float64!] first right-type
 		][
-			arg: compiler-api/make-action [
+			arg: make system-dialect/compiler/action-class [
 				action: 'type-cast
 				type: target-type
 				data: arg
@@ -173,7 +173,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 			any [
 				all [object? arg arg/action = 'null emitter/size-of? 'integer!]
 				all [
-					type: compiler-api/get-type arg
+					type: system-dialect/compiler/get-type arg
 					any [
 						all [cdecl type/1 = 'float32! 8]	;-- promote to C double
 						emitter/size-of? type
@@ -196,7 +196,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 	get-arguments-class: func [args [block!] /local c a b arg][
 		c: 1
 		foreach op [a b][
-			arg: either object? args/:c [compiler-api/cast args/:c][args/:c]
+			arg: either object? args/:c [system-dialect/compiler/cast args/:c][args/:c]
 			set op either arg = <last> [
 				 'reg								;-- value in accumulator
 			][
@@ -221,10 +221,10 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 	emit-call: func [name [word!] args [block!] /local spec fspec res type attribs][
 		if verbose >= 3 [print [">>>calling:" mold name mold args]]
 
-		fspec: select compiler-api/functions name
+		fspec: select system-dialect/compiler/functions name
 		spec: any [select emitter/symbols name next fspec]
 		type: either fspec/2 = 'routine [fspec/2][first spec]
-		attribs: compiler-api/get-attributes fspec/4
+		attribs: system-dialect/compiler/get-attributes fspec/4
 
 		switch type [
 			syscall [
@@ -237,7 +237,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 				switch/default name [
 					log-b [							;@@ needs a new function type...
 						emit-pop
-						emit-log-b first compiler-api/last-type
+						emit-log-b first system-dialect/compiler/last-type
 					]
 				][
 					emit-call-native args fspec spec attribs
@@ -253,22 +253,22 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 					push  [emit-push args/1]
 					pop	  [emit-pop]
 					throw [
-						compiler-api/check-throw
-						compiler-api/set-last-type [integer!]
-						either compiler-api/catch-attribut? [
+						system-dialect/compiler/check-throw
+						system-dialect/compiler/last-type: [integer!]
+						either system-dialect/compiler/catch-attribut? [
 							emit-throw args/1
 						][
 							emit-throw/thru args/1
 						]
 					]
 				] name
-				if name = 'not [res: compiler-api/get-type args/1]
+				if name = 'not [res: system-dialect/compiler/get-type args/1]
 			]
 			op [
 				res: either any [
-					compiler-api/any-float? compiler-api/resolve-expr-type args/1
-					float? compiler-api/unbox args/1
-					float? compiler-api/unbox args/2
+					system-dialect/compiler/any-float? system-dialect/compiler/resolve-expr-type args/1
+					float? system-dialect/compiler/unbox args/1
+					float? system-dialect/compiler/unbox args/2
 				][
 					emit-float-operation name args
 				][
@@ -278,8 +278,8 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 				unless find comparison-op name [	;-- comparison always return a logic!
 					res: any [
 						all [block? res res]
-						all [block? args/1 compiler-api/last-type]
-						compiler-api/get-type args/1	;-- other ops return type of the first argument
+						all [block? args/1 system-dialect/compiler/last-type]
+						system-dialect/compiler/get-type args/1	;-- other ops return type of the first argument
 					]
 				]
 			]
@@ -339,7 +339,7 @@ target: 'X86-64
 	saved-last-wide?: no
 
 	win64?: does [
-		(compiler-api/job-value 'ABI) = 'win64
+		system-dialect/compiler/job/ABI = 'win64
 	]
 
 	patch-floats-definition: func [mode [word!] /local value][
@@ -374,7 +374,7 @@ target: 'X86-64
 			rax [0]
 			rdx [2]
 		][
-			compiler-api/throw-error ["x86-64 indexed base register not supported yet:" base]
+			system-dialect/compiler/throw-error ["x86-64 indexed base register not supported yet:" base]
 		]
 		emit int-to-bin/to-bin8 scale + 8 + base-code			;-- SIB: scale, rcx index, base
 	]
@@ -392,20 +392,20 @@ target: 'X86-64
 		opcode [binary!]
 		/local spec
 	][
-		if object? name [name: compiler-api/unbox name]
+		if object? name [name: system-dialect/compiler/unbox name]
 		spec: either block? name [name][all [word? name select emitter/symbols name]]
 		if none? spec [
-			compiler-api/throw-error ["unknown variable:" name]
+			system-dialect/compiler/throw-error ["unknown variable:" name]
 		]
 		unless find [global constant] spec/1 [
-			compiler-api/throw-error ["x86-64 variable kind not supported yet:" mold spec/1]
+			system-dialect/compiler/throw-error ["x86-64 variable kind not supported yet:" mold spec/1]
 		]
 		emit opcode
 		emit-reloc-disp32 spec
 	]
 
 	import-var?: func [name [word! object! path!] /local spec][
-		if object? name [name: compiler-api/unbox name]
+		if object? name [name: system-dialect/compiler/unbox name]
 		unless word? name [return no]
 		spec: select emitter/symbols name
 		all [
@@ -418,10 +418,10 @@ target: 'X86-64
 		name [word! object!]
 		/local spec
 	][
-		if object? name [name: compiler-api/unbox name]
+		if object? name [name: system-dialect/compiler/unbox name]
 		spec: all [word? name select emitter/symbols name]
 		unless all [spec spec/1 = 'import-var][
-			compiler-api/throw-error ["x86-64 import variable expected:" name]
+			system-dialect/compiler/throw-error ["x86-64 import variable expected:" name]
 		]
 		emit #{488B05}								;-- MOV rax, [RIP+disp32]
 		emit-reloc-disp32 spec
@@ -457,7 +457,7 @@ target: 'X86-64
 			float64! [#{C5FB1000}]
 			float32! [#{C5FA1000}]
 		][
-			compiler-api/throw-error ["x86-64 import variable load type not supported yet:" mold type/1]
+			system-dialect/compiler/throw-error ["x86-64 import variable load type not supported yet:" mold type/1]
 		]
 		emit opcode
 		if into-ecx [emit #{58}]					;-- POP rax
@@ -468,14 +468,14 @@ target: 'X86-64
 		type [block!]
 		/local opcode
 	][
-		either compiler-api/any-float? type [
+		either system-dialect/compiler/any-float? type [
 			emit-import-var-address name
 			opcode: switch/default type/1 [
 				float!	 [#{C5FB1100}]
 				float64! [#{C5FB1100}]
 				float32! [#{C5FA1100}]
 			][
-				compiler-api/throw-error ["x86-64 import variable store type not supported yet:" mold type/1]
+				system-dialect/compiler/throw-error ["x86-64 import variable store type not supported yet:" mold type/1]
 			]
 			emit opcode
 		][
@@ -499,14 +499,14 @@ target: 'X86-64
 				function! [#{488908}]
 				subroutine! [#{488908}]
 			][
-				compiler-api/throw-error ["x86-64 import variable store type not supported yet:" mold type/1]
+				system-dialect/compiler/throw-error ["x86-64 import variable store type not supported yet:" mold type/1]
 			]
 			emit opcode
 		]
 	]
 
 	emit-load-int64-literal: func [value type [word!] /local hex][
-		hex: compiler-api/int64-hex value type
+		hex: system-dialect/compiler/int64-hex value type
 		emit #{48B8}								;-- MOV rax, imm64
 		emit reverse debase/base hex 16
 	]
@@ -522,8 +522,8 @@ target: 'X86-64
 			emitter/struct-ptr? fspec/4
 			all [
 				win64?
-				compiler-api/external-abi-call? fspec
-				ret: select fspec/4 compiler-api/return-def
+				system-dialect/compiler/external-abi-call? fspec
+				ret: select fspec/4 system-dialect/compiler/return-def
 				'value = last ret
 				size: emitter/struct-size? ret
 				not find [1 2 4 8] size
@@ -531,7 +531,7 @@ target: 'X86-64
 		]
 	]
 	external-abi?: func [fspec [block! none!]][
-		to logic! all [fspec compiler-api/external-abi-call? fspec]
+		to logic! all [fspec system-dialect/compiler/external-abi-call? fspec]
 	]
 	sysv-merge-class: func [classes [block!] index [integer!] class [word!] /local old][
 		old: pick classes index
@@ -552,7 +552,7 @@ target: 'X86-64
 		]
 	]
 	sysv-classify-type: func [type [block!] offset [integer!] classes [block!] /local resolved size class][
-		resolved: compiler-api/resolve-aliased type
+		resolved: system-dialect/compiler/resolve-aliased type
 		either all [
 			'value = last type
 			find [struct! union!] resolved/1
@@ -561,17 +561,17 @@ target: 'X86-64
 		][
 			size: emitter/size-of? type
 			unless size [size: emitter/size-of? resolved]
-			class: either compiler-api/any-float? resolved ['sse]['integer]
+			class: either system-dialect/compiler/any-float? resolved ['sse]['integer]
 			sysv-mark-class classes offset size class
 		]
 	]
 	sysv-classify-spec: func [spec [block!] base [integer!] classes [block!] /local payload members][
-		either compiler-api/union-spec? spec [
+		either system-dialect/compiler/union-spec? spec [
 			payload: emitter/union-payload-offset? spec
-			if compiler-api/tagged-union? spec [
+			if system-dialect/compiler/tagged-union? spec [
 				sysv-classify-type spec/2 base classes
 			]
-			members: compiler-api/union-members spec
+			members: system-dialect/compiler/union-members spec
 			foreach [name type] members [
 				sysv-classify-type type (base + payload) classes
 			]
@@ -582,7 +582,7 @@ target: 'X86-64
 		]
 	]
 	sysv-aggregate-classes: func [type [block!] /local resolved spec size slots classes][
-		resolved: compiler-api/resolve-aliased type
+		resolved: system-dialect/compiler/resolve-aliased type
 		spec: resolved/2
 		size: emitter/struct-size?/direct spec
 		if size > 16 [return [memory]]
@@ -610,8 +610,8 @@ target: 'X86-64
 	emit-normalize-sysv-return: func [fspec [block!] /local ret classes][
 		unless all [
 			not win64?
-			compiler-api/external-abi-call? fspec
-			ret: select fspec/4 compiler-api/return-def
+			system-dialect/compiler/external-abi-call? fspec
+			ret: select fspec/4 system-dialect/compiler/return-def
 			'value = last ret
 			not emitter/struct-ptr? fspec/4
 		][exit]
@@ -687,7 +687,7 @@ target: 'X86-64
 			foreach type types [
 				slot: slot + 1
 				either slot <= 4 [
-					either compiler-api/any-float? type [
+					either system-dialect/compiler/any-float? type [
 						either positive? stack-offset [
 							emit either type/1 = 'float32! [#{F30F10}][#{F20F10}]
 							emit-rsp-ref
@@ -771,7 +771,7 @@ target: 'X86-64
 					]
 					stack-offset: stack-offset + stack-width
 					stack-write-offset: stack-write-offset + stack-width
-				][either compiler-api/any-float? type [
+				][either system-dialect/compiler/any-float? type [
 					either float-reg < 8 [
 						either positive? stack-offset [
 							emit either type/1 = 'float32! [#{F30F10}][#{F20F10}]
@@ -952,7 +952,7 @@ target: 'X86-64
 		int-count: 0
 		float-count: 0
 		stack-count: 0
-		fspec: select compiler-api/functions function-name
+		fspec: select system-dialect/compiler/functions function-name
 		external?: external-abi? fspec
 		ret-ptr?: to logic! either fspec [
 			emitter/struct-ptr?/metadata locals fspec
@@ -1009,7 +1009,7 @@ target: 'X86-64
 							count: count + 1
 							either count <= 4 [
 								offset: offset - stack-width
-								either compiler-api/any-float? type [
+								either system-dialect/compiler/any-float? type [
 									emit #{4883EC08}		;-- SUB rsp, 8
 									emit either type/1 = 'float32! [#{F30F11}][#{F20F11}]
 									emit pick [#{45} #{4D} #{55} #{5D}] count
@@ -1083,7 +1083,7 @@ target: 'X86-64
 							]
 							patch-stack-offset name base
 							offset: base
-						][either compiler-api/any-float? type [
+						][either system-dialect/compiler/any-float? type [
 							either float-count < 8 [
 								offset: offset - stack-width
 								emit #{4883EC08}		;-- SUB rsp, 8
@@ -1139,7 +1139,7 @@ target: 'X86-64
 	]
 	register-argument-count?: func [name [word!] locals [block!] /local count arg type ret-ptr? agg-slots fspec][
 		count: 0
-		fspec: select compiler-api/functions name
+		fspec: select system-dialect/compiler/functions name
 		ret-ptr?: to logic! either fspec [
 			emitter/struct-ptr?/metadata locals fspec
 		][
@@ -1165,10 +1165,10 @@ target: 'X86-64
 		opcode [binary!]
 		/local offset wide-op
 	][
-		if object? name [name: compiler-api/unbox name]
+		if object? name [name: system-dialect/compiler/unbox name]
 		offset: emitter/local-offset? name
 		unless offset [
-			compiler-api/throw-error ["unknown local variable:" name]
+			system-dialect/compiler/throw-error ["unknown local variable:" name]
 		]
 		either all [offset >= -128 offset <= 127] [
 			emit opcode
@@ -1234,7 +1234,7 @@ target: 'X86-64
 	emit-load-ecx: func [value /local type][
 		case [
 			last-value? value [
-				type: compiler-api/resolve-aliased compiler-api/last-type
+				type: system-dialect/compiler/resolve-aliased system-dialect/compiler/last-type
 				emit either find [pointer! c-string! function! subroutine! struct! union! int64! uint64!] type/1 [
 					#{4889C1}						;-- MOV rcx, rax
 				][
@@ -1257,14 +1257,14 @@ target: 'X86-64
 						exit
 					]
 				]
-				compiler-api/throw-error ["x86-64 secondary operand not supported yet:" mold value]
+				system-dialect/compiler/throw-error ["x86-64 secondary operand not supported yet:" mold value]
 			]
 			integer? value [
 				emit #{B9}							;-- MOV ecx, imm32
 				emit int-to-bin/to-bin32 value
 			]
 			issue? value [
-				type: compiler-api/int64-literal-info value
+				type: system-dialect/compiler/int64-literal-info value
 				emit #{50}							;-- PUSH rax
 				emit-load-int64-literal value type/1
 				emit #{4889C1}						;-- MOV rcx, rax
@@ -1277,7 +1277,7 @@ target: 'X86-64
 				emit #{58}							;-- POP rax
 			]
 			object? value [
-				type: compiler-api/resolve-aliased value/type
+				type: system-dialect/compiler/resolve-aliased value/type
 				emit #{50}							;-- PUSH rax
 				emit-load value
 				emit either find [pointer! c-string! function! subroutine! struct! union! int64! uint64!] type/1 [
@@ -1294,15 +1294,15 @@ target: 'X86-64
 				emit #{58}							;-- POP rax
 			]
 			word? value [
-				type: compiler-api/get-type value
+				type: system-dialect/compiler/get-type value
 				unless block? type [
-					value: compiler-api/resolve-ns value
-					type: compiler-api/get-type value
+					value: system-dialect/compiler/resolve-ns value
+					type: system-dialect/compiler/get-type value
 				]
 				unless block? type [
-					compiler-api/throw-error ["x86-64 secondary operand has no type:" mold value]
+					system-dialect/compiler/throw-error ["x86-64 secondary operand has no type:" mold value]
 				]
-				type: compiler-api/resolve-aliased type
+				type: system-dialect/compiler/resolve-aliased type
 				if all [
 					not emitter/local-offset? value
 					import-var? value
@@ -1449,11 +1449,11 @@ target: 'X86-64
 						emit #{58}					;-- POP rax
 					]
 				][
-					compiler-api/throw-error ["x86-64 secondary operand type not supported yet:" mold type/1]
+					system-dialect/compiler/throw-error ["x86-64 secondary operand type not supported yet:" mold type/1]
 				]
 			]
 			path? value [
-				type: compiler-api/resolve-path-type value
+				type: system-dialect/compiler/resolve-path-type value
 				emit #{50}							;-- PUSH rax
 				emit-load value
 				emit either find [pointer! c-string! function! subroutine! struct! union! int64! uint64!] type/1 [
@@ -1464,7 +1464,7 @@ target: 'X86-64
 				emit #{58}							;-- POP rax
 			]
 			yes [
-				compiler-api/throw-error ["x86-64 secondary operand not supported yet:" mold value]
+				system-dialect/compiler/throw-error ["x86-64 secondary operand not supported yet:" mold value]
 			]
 		]
 	]
@@ -1473,7 +1473,7 @@ target: 'X86-64
 		name [word! object! block!]
 		opcode [binary!]
 	][
-		if object? name [name: compiler-api/unbox name]
+		if object? name [name: system-dialect/compiler/unbox name]
 		either block? name [
 			emit-global-ref name opcode
 		][
@@ -1481,7 +1481,7 @@ target: 'X86-64
 				emit-local-ref name opcode
 			][
 				either import-var? name [
-					emit-load-import-var name compiler-api/get-type name
+					emit-load-import-var name system-dialect/compiler/get-type name
 				][
 					emit-global-ref name opcode
 				]
@@ -1505,7 +1505,7 @@ target: 'X86-64
 	]
 	on-global-epilog: func [runtime? [logic!] type [word!]][
 		unless runtime? [
-			either (compiler-api/job-value 'need-main?) [
+			either system-dialect/compiler/job/need-main? [
 				emit #{4889EC}						;-- MOV rsp, rbp
 				emit-pop							;-- pop exceptions threshold slot
 				emit-pop							;-- pop exceptions address slot
@@ -1560,12 +1560,12 @@ target: 'X86-64
 				emit #{F20F1000}					;-- MOVSD xmm0, [rax]
 				emit #{F20F104808}				;-- MOVSD xmm1, [rax+8]
 			]
-			yes [compiler-api/throw-error ["unsupported SysV aggregate return classes:" mold classes]]
+			yes [system-dialect/compiler/throw-error ["unsupported SysV aggregate return classes:" mold classes]]
 		]
 	]
 	emit-hidden-return-copy: func [vars [block!] size [integer!]][
 		unless tag? vars/1 [
-			compiler-api/throw-error "Function has no aggregate return pointer"
+			system-dialect/compiler/throw-error "Function has no aggregate return pointer"
 		]
 		emit-rbp-ref vars/2 #{4C8B5D}			;-- MOV r11, [rbp+ret-ptr]
 		emit-copy-rax-to-r11 size
@@ -1598,13 +1598,13 @@ target: 'X86-64
 		/local vars ret-ptr? ret ret-size sysv-classes fspec
 	][
 		if slots [
-			fspec: select compiler-api/functions name
+			fspec: select system-dialect/compiler/functions name
 			ret-ptr?: to logic! either fspec [
 				emitter/struct-ptr?/metadata locals fspec
 			][
 				emitter/struct-ptr? locals
 			]
-			ret: select locals compiler-api/return-def
+			ret: select locals system-dialect/compiler/return-def
 			ret-size: emitter/struct-size? ret
 			either all [
 				not win64?
@@ -1637,7 +1637,7 @@ target: 'X86-64
 		emit #{C3}									;-- RET
 	]
 	emit-stack-align-prolog: func [args [block!] fspec [block!]][
-		if (compiler-api/job-value 'stack-align-16?) [
+		if system-dialect/compiler/job/stack-align-16? [
 			emit #{4889E0}							;-- MOV rax, rsp
 			emit #{4883E4F0}						;-- AND rsp, -16
 			emit #{4883EC10}						;-- SUB rsp, 16
@@ -1645,7 +1645,7 @@ target: 'X86-64
 		]
 	]
 	emit-stack-align-epilog: func [args [block!]][
-		if (compiler-api/job-value 'stack-align-16?) [
+		if system-dialect/compiler/job/stack-align-16? [
 			emit #{488B642408}						;-- MOV rsp, [rsp+8]
 		]
 	]
@@ -1657,56 +1657,56 @@ target: 'X86-64
 		/push
 		/local type to-width
 	][
-		type: compiler-api/get-type value/data
+		type: system-dialect/compiler/get-type value/data
 		case [
 			value/type/1 = 'logic! [
 				emit case [
-					any [compiler-api/int64? type compiler-api/any-pointer? type] [#{4885C0}]
-					all [compiler-api/integer-type? type (compiler-api/integer-width? type) = 1] [#{84C0}]
-					all [compiler-api/integer-type? type (compiler-api/integer-width? type) = 2] [#{6685C0}]
+					any [system-dialect/compiler/int64? type system-dialect/compiler/any-pointer? type] [#{4885C0}]
+					all [system-dialect/compiler/integer-type? type (system-dialect/compiler/integer-width? type) = 1] [#{84C0}]
+					all [system-dialect/compiler/integer-type? type (system-dialect/compiler/integer-width? type) = 2] [#{6685C0}]
 					yes [#{85C0}]
 				]
 				emit #{0F95C0}						;-- SETNZ al
 				emit #{0FB6C0}						;-- MOVZX eax, al
 			]
 			all [
-				compiler-api/any-pointer? value/type
-				compiler-api/signed-integer? type
-				not compiler-api/int64? type
+				system-dialect/compiler/any-pointer? value/type
+				system-dialect/compiler/signed-integer? type
+				not system-dialect/compiler/int64? type
 			][
 				emit #{4863C0}						;-- MOVSXD rax, eax
 			]
 			all [
-				compiler-api/integer-type? value/type
-				compiler-api/integer-type? type
+				system-dialect/compiler/integer-type? value/type
+				system-dialect/compiler/integer-type? type
 			][
-				to-width: compiler-api/integer-width? value/type
+				to-width: system-dialect/compiler/integer-width? value/type
 				if to-width < 4 [
 					emit case [
 						to-width = 1 [
-							either compiler-api/signed-integer? value/type [#{0FBEC0}][#{0FB6C0}]
+							either system-dialect/compiler/signed-integer? value/type [#{0FBEC0}][#{0FB6C0}]
 						]
 						yes [
-							either compiler-api/signed-integer? value/type [#{0FBFC0}][#{0FB7C0}]
+							either system-dialect/compiler/signed-integer? value/type [#{0FBFC0}][#{0FB7C0}]
 						]
 					]
 				]
 				if all [
 					value/type/1 = 'int64!
-					compiler-api/signed-integer? type
-					not compiler-api/int64? type
+					system-dialect/compiler/signed-integer? type
+					not system-dialect/compiler/int64? type
 				][
 					emit #{4863C0}					;-- MOVSXD rax, eax
 				]
 			]
 			all [
 				find [float! float32! float64!] value/type/1
-				compiler-api/integer-type? type
+				system-dialect/compiler/integer-type? type
 			][
 				either all [value/keep? value/type/1 = 'float32! type/1 = 'integer!][
 					emit #{C5F96EC0}				;-- VMOVD xmm0, eax
 				][
-					emit either compiler-api/int64? type [
+					emit either system-dialect/compiler/int64? type [
 						either value/type/1 = 'float32! [#{C4E1FA2AC0}][#{C4E1FB2AC0}]
 					][
 						either value/type/1 = 'float32! [#{C5FA2AC0}][#{C5FB2AC0}]
@@ -1714,13 +1714,13 @@ target: 'X86-64
 				]
 			]
 			all [
-				compiler-api/integer-type? value/type
+				system-dialect/compiler/integer-type? value/type
 				find [float! float32! float64!] type/1
 			][
 				either all [value/keep? value/type/1 = 'integer! type/1 = 'float32!][
 					emit #{C5F97EC0}				;-- VMOVD eax, xmm0
 				][
-					emit either compiler-api/int64? value/type [
+					emit either system-dialect/compiler/int64? value/type [
 						either type/1 = 'float32! [#{C4E1FA2CC0}][#{C4E1FB2CC0}]
 					][
 						either type/1 = 'float32! [#{C5FA2CC0}][#{C5FB2CC0}]
@@ -1744,7 +1744,7 @@ target: 'X86-64
 	emit-call-syscall: func [args [block!] fspec [block!] attribs [block! none!] /local pops n][
 		n: fspec/1
 		if n > 6 [
-			compiler-api/throw-error ["x86-64 syscall with too many args:" n]
+			system-dialect/compiler/throw-error ["x86-64 syscall with too many args:" n]
 		]
 		while [n > 0][
 			emit pick [
@@ -1804,13 +1804,13 @@ target: 'X86-64
 		attribs [block! none!]
 		/local n
 	][
-		call-variadic?: to logic! compiler-api/find-attribute fspec/4 'variadic
-		if all [compiler-api/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
+		call-variadic?: to logic! system-dialect/compiler/find-attribute fspec/4 'variadic
+		if all [system-dialect/compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
 		n: length? call-arg-types
 		emit-call-register-loads n
 		emit-align-call-stack
 		if win64? [emit-reserve-stack 4]
-		if all [not win64? compiler-api/find-attribute fspec/4 'variadic] [
+		if all [not win64? system-dialect/compiler/find-attribute fspec/4 'variadic] [
 			emit #{B0}								;-- MOV al, imm8 (SysV variadic FP register count)
 			emit int-to-bin/to-bin8 call-float-reg-count
 		]
@@ -1833,7 +1833,7 @@ target: 'X86-64
 		/routine-call name [word!]
 		/local n target
 	][
-		if all [compiler-api/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
+		if all [system-dialect/compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
 		n: length? call-arg-types
 		emit-call-register-loads n
 		emit-align-call-stack
@@ -1874,7 +1874,7 @@ target: 'X86-64
 		if verbose >= 3 [print [">>>emitting NOT" mold value]]
 
 		if object? value [boxed: value]
-		value: compiler-api/unbox value
+		value: system-dialect/compiler/unbox value
 		if block? value [value: <last>]
 
 		opcodes: [
@@ -1908,7 +1908,7 @@ target: 'X86-64
 					emit-casting boxed no
 					boxed/type/1
 				][
-					first compiler-api/resolve-aliased compiler-api/get-variable-spec value
+					first system-dialect/compiler/resolve-aliased system-dialect/compiler/get-variable-spec value
 				]
 				if find [pointer! c-string! struct! union!] type [
 					type: 'logic!
@@ -1918,9 +1918,9 @@ target: 'X86-64
 			tag! [
 				if boxed [
 					emit-casting boxed no
-					compiler-api/set-last-type  boxed/type
+					system-dialect/compiler/last-type:  boxed/type
 				]
-				switch (first compiler-api/last-type) opcodes
+				switch (first system-dialect/compiler/last-type) opcodes
 			]
 			string! [
 				emit-load value
@@ -1933,13 +1933,13 @@ target: 'X86-64
 					emit-casting boxed no
 					switch boxed/type/1 opcodes
 				][
-					type: compiler-api/resolve-path-type value
-					compiler-api/set-last-type  type
+					type: system-dialect/compiler/resolve-path-type value
+					system-dialect/compiler/last-type:  type
 					switch type/1 opcodes
 				]
 			]
 		]
-		type: any [all [boxed boxed/type] compiler-api/last-type]
+		type: any [all [boxed boxed/type] system-dialect/compiler/last-type]
 		if block? type [
 			switch type/1 [
 				byte!  [emit #{0FB6C0}]				;-- MOVZX eax, al
@@ -1959,22 +1959,22 @@ target: 'X86-64
 		args [block!]
 		/local right right-source imm? type wide? left-block? right-block? right-last? right-type scale right-loaded? right-signed? left-type mod? signed-op? ptr-wide-imm? cast-width cast-mask cast-sign
 	][
-		type: compiler-api/resolve-aliased compiler-api/resolve-expr-type args/1
-		if all [object? args/1 logic? args/1/keep?] [compiler-api/cast args/1]
+		type: system-dialect/compiler/resolve-aliased system-dialect/compiler/resolve-expr-type args/1
+		if all [object? args/1 logic? args/1/keep?] [system-dialect/compiler/cast args/1]
 		set-width/type type/1
-		left-block?: block? compiler-api/unbox args/1
+		left-block?: block? system-dialect/compiler/unbox args/1
 		right: either all [object? args/2 logic? args/2/keep?] [
-			compiler-api/cast args/2
+			system-dialect/compiler/cast args/2
 		][
-			compiler-api/unbox args/2
+			system-dialect/compiler/unbox args/2
 		]
 		right-block?: block? right
 		right-last?: last-value? right
 		right-loaded?: no
 		right-signed?: no
 		if any [right-block? right-last?] [
-			right-type: compiler-api/resolve-expr-type args/2
-			right-signed?: compiler-api/signed-integer? right-type
+			right-type: system-dialect/compiler/resolve-expr-type args/2
+			right-signed?: system-dialect/compiler/signed-integer? right-type
 			right-loaded?: yes
 		]
 		if char? right [right: to integer! right]
@@ -1984,20 +1984,20 @@ target: 'X86-64
 		if all [
 			imm?
 			object? args/2
-			compiler-api/integer-type? args/2/type
-			(cast-width: compiler-api/integer-width? args/2/type) < 4
+			system-dialect/compiler/integer-type? args/2/type
+			(cast-width: system-dialect/compiler/integer-width? args/2/type) < 4
 		][
 			cast-mask: either cast-width = 1 [255][65535]
 			right: right and cast-mask
-			if compiler-api/signed-integer? args/2/type [
+			if system-dialect/compiler/signed-integer? args/2/type [
 				cast-sign: either cast-width = 1 [128][32768]
 				if right >= cast-sign [right: right - (cast-mask + 1)]
 			]
 		]
 		if not imm? [
-			right-signed?: compiler-api/signed-integer? compiler-api/resolve-expr-type args/2
+			right-signed?: system-dialect/compiler/signed-integer? system-dialect/compiler/resolve-expr-type args/2
 		]
-		signed?: compiler-api/signed-integer? type
+		signed?: system-dialect/compiler/signed-integer? type
 		wide?: find [pointer! c-string! function! subroutine! struct! union! any-pointer! int64! uint64!] type/1
 		ptr-wide-imm?: find [pointer! c-string! function! subroutine! struct! union! any-pointer!] type/1
 		if any [right-block? right-last?][
@@ -2010,7 +2010,7 @@ target: 'X86-64
 		scale: 1
 		if all [
 			find [+ -] name
-			not compiler-api/any-pointer? compiler-api/resolve-expr-type args/2
+			not system-dialect/compiler/any-pointer? system-dialect/compiler/resolve-expr-type args/2
 		][
 			scale: switch/default type/1 [
 				pointer! [emitter/size-of? type/2/1]
@@ -2042,9 +2042,9 @@ target: 'X86-64
 		mod?: select mod-rem-func name
 		if any [name = divide-sym mod?] [
 			unless right-block? [emit-load-ecx right-source]
-			signed-op?: compiler-api/signed-integer? type
+			signed-op?: system-dialect/compiler/signed-integer? type
 			either signed-op? [
-				if all [compiler-api/overflow-check? width = 4 not wide?][
+				if all [system-dialect/compiler/overflow-check? width = 4 not wide?][
 					emit-overflow-check-division
 				]
 				emit either wide? [#{4899}][#{99}]		;-- CQO/CDQ
@@ -2073,7 +2073,7 @@ target: 'X86-64
 			]
 		]
 		if all [
-			compiler-api/overflow-check?
+			system-dialect/compiler/overflow-check?
 			name = first [<<]
 			imm?
 			find [1 2 4] width
@@ -2114,7 +2114,7 @@ target: 'X86-64
 					>>	[either wide? [emit #{48}][] emit either signed? [#{C1F8}][#{C1E8}] emit int-to-bin/to-bin8 right] ;-- SAR|SHR rax/eax, imm8
 					-**	[either wide? [emit #{48}][] emit #{C1E8} emit int-to-bin/to-bin8 right]	;-- SHR rax/eax, imm8
 				][
-					compiler-api/throw-error ["x86-64 integer op not supported yet:" mold name]
+					system-dialect/compiler/throw-error ["x86-64 integer op not supported yet:" mold name]
 				]
 			]
 			yes [
@@ -2134,11 +2134,11 @@ target: 'X86-64
 						]]								;-- SAR|SHR rax/eax, cl
 					-**	[emit either wide? [#{48D3E8}][#{D3E8}]]	;-- SHR rax/eax, cl
 				][
-					compiler-api/throw-error ["x86-64 integer op not supported yet:" mold name]
+					system-dialect/compiler/throw-error ["x86-64 integer op not supported yet:" mold name]
 				]
 			]
 		]
-		if all [compiler-api/overflow-check? find [+ - *] name not wide?][
+		if all [system-dialect/compiler/overflow-check? find [+ - *] name not wide?][
 			case [
 				width = 4 [
 					emit-overflow-jcc either any [signed? name = '*][#{00}][#{02}]
@@ -2173,11 +2173,11 @@ target: 'X86-64
 		last-math-op: name
 	]
 	emit-load-float-op: func [arg single? [logic!] /local value spec][
-		value: compiler-api/unbox arg
+		value: system-dialect/compiler/unbox arg
 		either float? value [
 			spec: emitter/store-value none value either single? [[float32!]][[float!]]
 			emit-float-ref spec/2 either single? [#{C5FA1005}][#{C5FB1005}]
-			compiler-api/set-last-type  either single? [[float32!]][[float!]]
+			system-dialect/compiler/last-type:  either single? [[float32!]][[float!]]
 		][
 			emit-load arg
 		]
@@ -2187,12 +2187,12 @@ target: 'X86-64
 		/local type right-type single? store-op cmp-op right-block? left-block? left-last? pre-saved? left-expr left-expr-type
 	][
 		if verbose >= 3 [print [">>>inlining float op:" mold name mold args]]
-		type: compiler-api/resolve-expr-type args/1
-		right-type: compiler-api/resolve-expr-type args/2
+		type: system-dialect/compiler/resolve-expr-type args/1
+		right-type: system-dialect/compiler/resolve-expr-type args/2
 		single?: to logic! any [type/1 = 'float32! right-type/1 = 'float32!]
-		left-expr: compiler-api/unbox args/1
-		left-expr-type: either block? left-expr [compiler-api/get-type left-expr][none]
-		right-block?: block? compiler-api/unbox args/2
+		left-expr: system-dialect/compiler/unbox args/1
+		left-expr-type: either block? left-expr [system-dialect/compiler/get-type left-expr][none]
+		right-block?: block? system-dialect/compiler/unbox args/2
 		left-block?: block? left-expr
 		left-last?: any [last-value? args/1 left-block?]
 		pre-saved?: last-saved?
@@ -2208,16 +2208,16 @@ target: 'X86-64
 					if all [
 						left-last?
 						any [
-							compiler-api/integer-type? compiler-api/last-type
-							all [object? args/1 compiler-api/integer-type? left-expr-type]
+							system-dialect/compiler/integer-type? system-dialect/compiler/last-type
+							all [object? args/1 system-dialect/compiler/integer-type? left-expr-type]
 						]
 					][
-						emit either compiler-api/int64? any [left-expr-type compiler-api/last-type] [
+						emit either system-dialect/compiler/int64? any [left-expr-type system-dialect/compiler/last-type] [
 							either type/1 = 'float32! [#{C4E1FA2AC0}][#{C4E1FB2AC0}]
 						][
 							either type/1 = 'float32! [#{C5FA2AC0}][#{C5FB2AC0}]
 						]
-						compiler-api/set-last-type  type
+						system-dialect/compiler/last-type:  type
 					]
 					either left-last? [
 						emit #{4883EC10}				;-- SUB rsp, 16
@@ -2246,16 +2246,16 @@ target: 'X86-64
 				if all [
 					left-last?
 					any [
-						compiler-api/integer-type? compiler-api/last-type
-						all [object? args/1 compiler-api/integer-type? left-expr-type]
+						system-dialect/compiler/integer-type? system-dialect/compiler/last-type
+						all [object? args/1 system-dialect/compiler/integer-type? left-expr-type]
 					]
 				][
-					emit either compiler-api/int64? any [left-expr-type compiler-api/last-type] [
+					emit either system-dialect/compiler/int64? any [left-expr-type system-dialect/compiler/last-type] [
 						either type/1 = 'float32! [#{C4E1FA2AC0}][#{C4E1FB2AC0}]
 					][
 						either type/1 = 'float32! [#{C5FA2AC0}][#{C5FB2AC0}]
 					]
-					compiler-api/set-last-type  type
+					system-dialect/compiler/last-type:  type
 				]
 				case [
 					all [left-block? right-block? pre-saved?][
@@ -2295,16 +2295,16 @@ target: 'X86-64
 				if all [
 					left-last?
 					any [
-						compiler-api/integer-type? compiler-api/last-type
-						all [object? args/1 compiler-api/integer-type? left-expr-type]
+						system-dialect/compiler/integer-type? system-dialect/compiler/last-type
+						all [object? args/1 system-dialect/compiler/integer-type? left-expr-type]
 					]
 				][
-					emit either compiler-api/int64? any [left-expr-type compiler-api/last-type] [
+					emit either system-dialect/compiler/int64? any [left-expr-type system-dialect/compiler/last-type] [
 						either type/1 = 'float32! [#{C4E1FA2AC0}][#{C4E1FB2AC0}]
 					][
 						either type/1 = 'float32! [#{C5FA2AC0}][#{C5FB2AC0}]
 					]
-					compiler-api/set-last-type  type
+					system-dialect/compiler/last-type:  type
 				]
 				case [
 					all [left-block? right-block? pre-saved?][
@@ -2345,12 +2345,12 @@ target: 'X86-64
 				]
 			]
 			yes [
-				compiler-api/throw-error "unsupported operation on floats"
+				system-dialect/compiler/throw-error "unsupported operation on floats"
 			]
 		]
 		unless find comparison-op name [
-			compiler-api/set-last-type  either single? [[float32!]][type]
-			return compiler-api/last-type
+			system-dialect/compiler/last-type:  either single? [[float32!]][type]
+			return system-dialect/compiler/last-type
 		]
 	]
 	emit-throw: func [value [integer! word!] /thru][
@@ -2407,7 +2407,7 @@ target: 'X86-64
 	]
 	emit-typed-int64-padding: func [fspec [block!] type [block!]][
 		if all [
-			compiler-api/find-attribute fspec/4 'typed
+			system-dialect/compiler/find-attribute fspec/4 'typed
 			find [int64! uint64!] type/1
 		][
 			emit #{8B442404}						;-- MOV eax, [rsp+4] ; high half of value
@@ -2415,11 +2415,11 @@ target: 'X86-64
 		]
 	]
 	emit-argument: func [arg fspec [block!] /local value arg-type argc hidden?][
-		argc: compiler-api/get-arity fspec/4
+		argc: system-dialect/compiler/get-arity fspec/4
 		hidden?: hidden-ret-ptr? fspec
 		if hidden? [argc: argc + 1]
 		if arg = #_ [
-			if compiler-api/find-attribute fspec/4 'typed [
+			if system-dialect/compiler/find-attribute fspec/4 'typed [
 				call-arg-index: call-arg-index + 1
 				append/only call-arg-types [integer!]
 				emit-push 0
@@ -2429,7 +2429,7 @@ target: 'X86-64
 		if any [
 			zero? call-arg-index
 			all [
-				not compiler-api/find-attribute fspec/4 'variadic
+				not system-dialect/compiler/find-attribute fspec/4 'variadic
 				call-arg-index >= argc
 			]
 		][
@@ -2444,14 +2444,14 @@ target: 'X86-64
 			emit-push arg
 			exit
 		]
-		arg-type: compiler-api/get-type arg
+		arg-type: system-dialect/compiler/get-type arg
 		append/only call-arg-types arg-type
-		value: compiler-api/unbox arg
+		value: system-dialect/compiler/unbox arg
 		if block? value [value: <last>]
 		either get-word? value [
 			value: to word! value
 			either emitter/local-offset? value [
-				either 'function! = first compiler-api/get-type value [
+				either 'function! = first system-dialect/compiler/get-type value [
 					emit-local-ref value #{488B45}	;-- MOV rax, [rbp+disp8]
 				][
 					emit-local-ref value #{488D45}	;-- LEA rax, [rbp+disp8]
@@ -2464,17 +2464,17 @@ target: 'X86-64
 					emit-reloc-disp32 emitter/get-symbol-ref value
 				]
 			]
-			compiler-api/set-last-type  arg-type
+			system-dialect/compiler/last-type:  arg-type
 			emit-push <last>
 		][
 			if object? arg [
 				emit-load arg
-				compiler-api/set-last-type  arg-type
+				system-dialect/compiler/last-type:  arg-type
 				emit-push <last>
 				emit-typed-int64-padding fspec arg-type
 				exit
 			]
-			if compiler-api/any-float? arg-type [
+			if system-dialect/compiler/any-float? arg-type [
 				emit-load arg
 				emit #{4883EC08}				;-- SUB rsp, 8
 				emit either arg-type/1 = 'float32! [#{C5FA110424}][#{C5FB110424}]
@@ -2482,18 +2482,18 @@ target: 'X86-64
 			]
 			either path? value [
 				emit-load value
-				compiler-api/set-last-type  arg-type
+				system-dialect/compiler/last-type:  arg-type
 				emit-push <last>
 			][
 				if last-value? value [
-					compiler-api/set-last-type  arg-type
+					system-dialect/compiler/last-type:  arg-type
 					emit-push <last>
 					emit-typed-int64-padding fspec arg-type
 					exit
 				]
 				either word? value [
 					emit-load value
-					compiler-api/set-last-type  arg-type
+					system-dialect/compiler/last-type:  arg-type
 					emit-push <last>
 					emit-typed-int64-padding fspec arg-type
 				][
@@ -2503,20 +2503,20 @@ target: 'X86-64
 					]
 					if string? value [
 						emit-load-literal [c-string!] value
-						compiler-api/set-last-type  arg-type
+						system-dialect/compiler/last-type:  arg-type
 						emit-push <last>
 						exit
 					]
 					if issue? value [
 						emit-load value
-						compiler-api/set-last-type  arg-type
+						system-dialect/compiler/last-type:  arg-type
 						emit-push <last>
 						emit-typed-int64-padding fspec arg-type
 						exit
 					]
 					if logic? value [value: either value [1][0]]
 					unless any [integer? value char? value][
-						compiler-api/throw-error ["x86-64 literal argument not supported yet:" mold value]
+						system-dialect/compiler/throw-error ["x86-64 literal argument not supported yet:" mold value]
 					]
 					emit-push value
 					emit-typed-int64-padding fspec arg-type
@@ -2529,7 +2529,7 @@ target: 'X86-64
 		case [
 			last-value? value []
 			object? value [
-				emit-load compiler-api/unbox value
+				emit-load system-dialect/compiler/unbox value
 				emit-casting value no
 			]
 			any [integer? value char? value logic? value] [
@@ -2542,20 +2542,20 @@ target: 'X86-64
 				]
 			]
 			issue? value [
-				either spec: compiler-api/int64-literal-info value [
+				either spec: system-dialect/compiler/int64-literal-info value [
 					emit-load-int64-literal value spec/1
 				][
 					type: either all [with cast/type/1 = 'float32!][[float32!]][[float!]]
 					spec: emitter/store-value none value type
 					emit-float-ref spec/2 either type/1 = 'float32! [#{C5FA1005}][#{C5FB1005}]
-					compiler-api/set-last-type  type
+					system-dialect/compiler/last-type:  type
 				]
 			]
 			float? value [
 				type: either all [with cast/type/1 = 'float32!][[float32!]][[float!]]
 				spec: emitter/store-value none value type
 				emit-float-ref spec/2 either type/1 = 'float32! [#{C5FA1005}][#{C5FB1005}]
-				compiler-api/set-last-type  type
+				system-dialect/compiler/last-type:  type
 			]
 			string? value [
 				emit-load-literal [c-string!] value
@@ -2563,7 +2563,7 @@ target: 'X86-64
 			path? value [
 				either all [
 					2 = length? value
-					spec: compiler-api/resolve-aliased compiler-api/resolve-type to word! value/1
+					spec: system-dialect/compiler/resolve-aliased system-dialect/compiler/resolve-type to word! value/1
 					find [struct! union!] spec/1
 					spec: spec/2
 					field: select spec value/2
@@ -2582,7 +2582,7 @@ target: 'X86-64
 			get-word? value [
 				value: to word! value
 				either emitter/local-offset? value [
-					either 'function! = first compiler-api/get-type value [
+					either 'function! = first system-dialect/compiler/get-type value [
 						emit-local-ref value #{488B45}	;-- MOV rax, [rbp+disp8]
 					][
 						emit-local-ref value #{488D45}	;-- LEA rax, [rbp+disp8]
@@ -2597,8 +2597,8 @@ target: 'X86-64
 				]
 			]
 			word? value [
-				type: compiler-api/get-type value
-				load-type: compiler-api/resolve-aliased type
+				type: system-dialect/compiler/get-type value
+				load-type: system-dialect/compiler/resolve-aliased type
 				either emitter/local-offset? value [
 					either all [
 						resolved-type: load-type
@@ -2608,7 +2608,7 @@ target: 'X86-64
 							'value = last type
 							'value = last resolved-type
 							all [
-								local-spec: select compiler-api/locals value
+								local-spec: select system-dialect/compiler/locals value
 								'value = last local-spec
 							]
 						]
@@ -2637,7 +2637,7 @@ target: 'X86-64
 						float64! [emit-float-ref value #{C5FB1045}]
 						float32! [emit-float-ref value #{C5FA1045}]
 					][
-						compiler-api/throw-error ["x86-64 local load type not supported yet:" mold type/1]
+						system-dialect/compiler/throw-error ["x86-64 local load type not supported yet:" mold type/1]
 					]
 					]
 				][
@@ -2667,20 +2667,20 @@ target: 'X86-64
 						float64! [emit-float-ref value #{C5FB1005}]
 						float32! [emit-float-ref value #{C5FA1005}]
 					][
-						compiler-api/throw-error ["x86-64 load type not supported yet:" mold type/1]
+						system-dialect/compiler/throw-error ["x86-64 load type not supported yet:" mold type/1]
 					]
 				]
 			]
 			yes [
-				compiler-api/throw-error ["x86-64 load not supported yet:" mold value]
+				system-dialect/compiler/throw-error ["x86-64 load not supported yet:" mold value]
 			]
 		]
 	]
 	emit-load-literal: func [type [block! none!] value /local spec][
-		unless type [type: compiler-api/get-type value]
+		unless type [type: system-dialect/compiler/get-type value]
 		spec: emitter/store-value none value type
 		emit-load-literal-ptr spec/2
-		compiler-api/set-last-type  type
+		system-dialect/compiler/last-type:  type
 	]
 	emit-load-literal-ptr: func [spec [block!]][
 		emit #{488D05}								;-- LEA rax, [RIP+disp32]
@@ -2689,8 +2689,8 @@ target: 'X86-64
 	emit-init-path: func [name [word! get-word!] /local type resolved-type local-spec][
 		if get-word? name [name: to word! name]
 		either emitter/local-offset? name [
-			type: compiler-api/get-type name
-			resolved-type: compiler-api/resolve-aliased type
+			type: system-dialect/compiler/get-type name
+			resolved-type: system-dialect/compiler/resolve-aliased type
 			either all [
 				find [struct! union!] resolved-type/1
 				any [
@@ -2698,7 +2698,7 @@ target: 'X86-64
 					'value = last type
 					'value = last resolved-type
 					all [
-						local-spec: select compiler-api/locals name
+						local-spec: select system-dialect/compiler/locals name
 						'value = last local-spec
 					]
 				]
@@ -2710,14 +2710,14 @@ target: 'X86-64
 		][
 			either import-var? name [
 				emit-import-var-address name
-				type: compiler-api/get-type name
-				resolved-type: compiler-api/resolve-aliased type
+				type: system-dialect/compiler/get-type name
+				resolved-type: system-dialect/compiler/resolve-aliased type
 				if find [struct! union!] resolved-type/1 [
 					emit #{488B00}						;-- MOV rax, [rax]
 				]
 			][
-				type: compiler-api/get-type name
-				resolved-type: compiler-api/resolve-aliased type
+				type: system-dialect/compiler/get-type name
+				resolved-type: system-dialect/compiler/resolve-aliased type
 				either all [
 					find [struct! union!] resolved-type/1
 					any [
@@ -2774,8 +2774,8 @@ target: 'X86-64
 			]
 			exit
 		]
-		type: compiler-api/get-variable-spec name
-		agg-type: compiler-api/resolve-aliased type
+		type: system-dialect/compiler/get-variable-spec name
+		agg-type: system-dialect/compiler/resolve-aliased type
 		store-type: either block? agg-type [agg-type][type]
 		if all [binary? value store-type/1 = 'float32!][
 			emit #{B8}								;-- MOV eax, imm32
@@ -2804,9 +2804,9 @@ target: 'X86-64
 		if all [
 			not last-value? value
 			find [string! paren! binary!] type?/word value
-			compiler-api/any-pointer? type
+			system-dialect/compiler/any-pointer? type
 		][
-			unless all [spec (compiler-api/job-value 'PIC?) not emitter/libc-init?][
+			unless all [spec system-dialect/compiler/job/PIC? not emitter/libc-init?][
 				either spec [
 					emit-load-literal-ptr spec/2
 				][
@@ -2818,13 +2818,13 @@ target: 'X86-64
 			not last-value? value
 			not find [string! paren! binary!] type?/word value
 		][
-			source-type: compiler-api/get-type value
+			source-type: system-dialect/compiler/get-type value
 			emit-load value
 			case [
 				all [
 					type/1 = 'int64!
-					compiler-api/signed-integer? source-type
-					not compiler-api/int64? source-type
+					system-dialect/compiler/signed-integer? source-type
+					not system-dialect/compiler/int64? source-type
 				][
 					emit #{4863C0}					;-- MOVSXD rax, eax
 				]
@@ -2868,7 +2868,7 @@ target: 'X86-64
 					function! [#{488945}]
 					subroutine! [#{488945}]
 				][
-					compiler-api/throw-error ["x86-64 local store type not supported yet:" mold type/1]
+					system-dialect/compiler/throw-error ["x86-64 local store type not supported yet:" mold type/1]
 				]
 			]
 			emit-local-ref name opcode
@@ -2901,7 +2901,7 @@ target: 'X86-64
 					function! [#{488905}]
 					subroutine! [#{488905}]
 				][
-					compiler-api/throw-error ["x86-64 store type not supported yet:" mold type/1]
+					system-dialect/compiler/throw-error ["x86-64 store type not supported yet:" mold type/1]
 				]
 			]
 			emit-global-ref name opcode
@@ -2936,20 +2936,20 @@ target: 'X86-64
 			]
 			pointer! [
 				spec: either parent [
-					compiler-api/resolve-type/with path/1 parent
+					system-dialect/compiler/resolve-type/with path/1 parent
 				][
 					emit-init-path path/1
-					compiler-api/resolve-type to word! path/1
+					system-dialect/compiler/resolve-type to word! path/1
 				]
 				mtype: spec/2
 				set-width/type mtype/1
 				size: emitter/size-of? mtype
-				signed?: compiler-api/signed-integer? mtype
+				signed?: system-dialect/compiler/signed-integer? mtype
 				idx: either path/2 = 'value [1][path/2]
 				either integer? idx [
 					offset: (idx - 1) * size
 					case [
-						compiler-api/any-float? mtype [
+						system-dialect/compiler/any-float? mtype [
 							either size = 4 [
 								either zero? offset [
 									emit #{C5FA1000}	;-- VMOVSS xmm0, [rax]
@@ -2966,7 +2966,7 @@ target: 'X86-64
 								]
 							]
 						]
-						all [size = 8 not compiler-api/any-float? mtype] [
+						all [size = 8 not system-dialect/compiler/any-float? mtype] [
 							either zero? offset [
 								emit #{488B00}		;-- MOV rax, [rax]
 							][
@@ -2974,7 +2974,7 @@ target: 'X86-64
 								emit int-to-bin/to-bin32 offset
 							]
 						]
-						all [size = 4 not compiler-api/any-float? mtype] [
+						all [size = 4 not system-dialect/compiler/any-float? mtype] [
 							either zero? offset [
 								emit #{8B00}		;-- MOV eax, [rax]
 							][
@@ -2982,7 +2982,7 @@ target: 'X86-64
 								emit int-to-bin/to-bin32 offset
 							]
 						]
-						all [size = 2 not compiler-api/any-float? mtype] [
+						all [size = 2 not system-dialect/compiler/any-float? mtype] [
 							either signed? [
 								either zero? offset [
 									emit #{0FBF00}	;-- MOVSX eax, word [rax]
@@ -2999,7 +2999,7 @@ target: 'X86-64
 								]
 							]
 						]
-						all [size = 1 not compiler-api/any-float? mtype] [
+						all [size = 1 not system-dialect/compiler/any-float? mtype] [
 							either signed? [
 								either zero? offset [
 									emit #{0FBE00}	;-- MOVSX eax, byte [rax]
@@ -3017,7 +3017,7 @@ target: 'X86-64
 							]
 						]
 						yes [
-							compiler-api/throw-error ["x86-64 pointer load type not supported yet:" mold mtype/1]
+							system-dialect/compiler/throw-error ["x86-64 pointer load type not supported yet:" mold mtype/1]
 						]
 					]
 				][
@@ -3025,7 +3025,7 @@ target: 'X86-64
 					emit #{FFC9}					;-- DEC ecx, one-based index
 					emit #{4863C9}				;-- MOVSXD rcx, ecx
 					case [
-						compiler-api/any-float? mtype [
+						system-dialect/compiler/any-float? mtype [
 							emit either size = 4 [
 								#{C5FA1004}			;-- VMOVSS xmm0, [rax+rcx*scale]
 							][
@@ -3033,36 +3033,36 @@ target: 'X86-64
 							]
 							emit-index-sib 'rax size
 						]
-						all [size = 8 not compiler-api/any-float? mtype] [
+						all [size = 8 not system-dialect/compiler/any-float? mtype] [
 							emit #{488B04}			;-- MOV rax, [rax+rcx*scale]
 							emit-index-sib 'rax size
 						]
-						all [size = 4 not compiler-api/any-float? mtype] [
+						all [size = 4 not system-dialect/compiler/any-float? mtype] [
 							emit #{8B04}			;-- MOV eax, [rax+rcx*scale]
 							emit-index-sib 'rax size
 						]
-						all [size = 2 not compiler-api/any-float? mtype] [
+						all [size = 2 not system-dialect/compiler/any-float? mtype] [
 							emit either signed? [#{0FBF04}][#{0FB704}]
 							emit-index-sib 'rax size
 						]
-						all [size = 1 not compiler-api/any-float? mtype] [
+						all [size = 1 not system-dialect/compiler/any-float? mtype] [
 							emit either signed? [#{0FBE04}][#{0FB604}]
 							emit-index-sib 'rax size
 						]
 						yes [
-							compiler-api/throw-error ["x86-64 pointer load type not supported yet:" mold mtype/1]
+							system-dialect/compiler/throw-error ["x86-64 pointer load type not supported yet:" mold mtype/1]
 						]
 					]
 				]
 			]
 			struct! union! [
-				spec: either parent [parent][second compiler-api/resolve-type to word! path/1]
+				spec: either parent [parent][second system-dialect/compiler/resolve-type to word! path/1]
 				unless parent [emit-init-path path/1]
-				mtype: compiler-api/resolve-type/with path/2 spec
+				mtype: system-dialect/compiler/resolve-type/with path/2 spec
 				set-width/type mtype/1
 				offset: emitter/member-offset? spec path/2
 				size: emitter/size-of? mtype
-				signed?: compiler-api/signed-integer? mtype
+				signed?: system-dialect/compiler/signed-integer? mtype
 				either all [
 					get-word? first head path
 					tail? skip path 2
@@ -3073,7 +3073,7 @@ target: 'X86-64
 					]
 				][
 				case [
-					compiler-api/any-float? mtype [
+					system-dialect/compiler/any-float? mtype [
 						either size = 4 [
 							either zero? offset [
 								emit #{C5FA1000}	;-- VMOVSS xmm0, [rax]
@@ -3090,7 +3090,7 @@ target: 'X86-64
 							]
 						]
 					]
-					all [size = 8 not compiler-api/any-float? mtype] [
+					all [size = 8 not system-dialect/compiler/any-float? mtype] [
 						either zero? offset [
 							emit #{488B00}			;-- MOV rax, [rax]
 						][
@@ -3098,7 +3098,7 @@ target: 'X86-64
 							emit int-to-bin/to-bin32 offset
 						]
 					]
-					all [size = 4 not compiler-api/any-float? mtype] [
+					all [size = 4 not system-dialect/compiler/any-float? mtype] [
 						either zero? offset [
 							emit #{8B00}			;-- MOV eax, [rax]
 						][
@@ -3106,7 +3106,7 @@ target: 'X86-64
 							emit int-to-bin/to-bin32 offset
 						]
 					]
-					all [size = 2 not compiler-api/any-float? mtype] [
+					all [size = 2 not system-dialect/compiler/any-float? mtype] [
 						either signed? [
 							either zero? offset [
 								emit #{0FBF00}		;-- MOVSX eax, word [rax]
@@ -3123,7 +3123,7 @@ target: 'X86-64
 							]
 						]
 					]
-					all [size = 1 not compiler-api/any-float? mtype] [
+					all [size = 1 not system-dialect/compiler/any-float? mtype] [
 						either signed? [
 							either zero? offset [
 								emit #{0FBE00}		;-- MOVSX eax, byte [rax]
@@ -3141,13 +3141,13 @@ target: 'X86-64
 						]
 					]
 					yes [
-						compiler-api/throw-error ["x86-64 path load type not supported yet:" mold mtype/1]
+						system-dialect/compiler/throw-error ["x86-64 path load type not supported yet:" mold mtype/1]
 					]
 				]
 				]
 			]
 			yes [
-				compiler-api/throw-error ["x86-64 load path type not supported yet:" mold type]
+				system-dialect/compiler/throw-error ["x86-64 load path type not supported yet:" mold type]
 			]
 		]
 	]
@@ -3202,15 +3202,15 @@ target: 'X86-64
 			]
 			pointer! [
 				spec: either parent [
-					compiler-api/resolve-type/with path/1 parent
+					system-dialect/compiler/resolve-type/with path/1 parent
 				][
-					compiler-api/resolve-type to word! path/1
+					system-dialect/compiler/resolve-type to word! path/1
 				]
 				mtype: spec/2
 				set-width/type mtype/1
 				size: emitter/size-of? mtype
 				idx: either path/2 = 'value [1][path/2]
-				source-type: either last-value? value [compiler-api/last-type][compiler-api/get-type value]
+				source-type: either last-value? value [system-dialect/compiler/last-type][system-dialect/compiler/get-type value]
 				last?: last-value? value
 				unless parent [
 					either last? [
@@ -3226,13 +3226,13 @@ target: 'X86-64
 					emit-load value
 					case [
 						all [
-							compiler-api/integer-type? source-type
+							system-dialect/compiler/integer-type? source-type
 							find [float! float32! float64!] mtype/1
 						][
 							emit either mtype/1 = 'float32! [
-								either compiler-api/int64? source-type [#{C4E1FA2AC0}][#{C5FA2AC0}]
+								either system-dialect/compiler/int64? source-type [#{C4E1FA2AC0}][#{C5FA2AC0}]
 							][
-								either compiler-api/int64? source-type [#{C4E1FB2AC0}][#{C5FB2AC0}]
+								either system-dialect/compiler/int64? source-type [#{C4E1FB2AC0}][#{C5FB2AC0}]
 							]
 						]
 						all [
@@ -3255,7 +3255,7 @@ target: 'X86-64
 				either integer? idx [
 					offset: (idx - 1) * size
 					case [
-						compiler-api/any-float? mtype [
+						system-dialect/compiler/any-float? mtype [
 							either size = 4 [
 								either zero? offset [
 									emit rejoin [#{C5FA11} base] ;-- VMOVSS [base], xmm0
@@ -3272,7 +3272,7 @@ target: 'X86-64
 								]
 							]
 						]
-						all [size = 8 not compiler-api/any-float? mtype] [
+						all [size = 8 not system-dialect/compiler/any-float? mtype] [
 							either zero? offset [
 								emit rejoin [#{4889} value-reg] ;-- MOV [base], r64
 							][
@@ -3280,7 +3280,7 @@ target: 'X86-64
 								emit int-to-bin/to-bin32 offset
 							]
 						]
-						all [size = 4 not compiler-api/any-float? mtype] [
+						all [size = 4 not system-dialect/compiler/any-float? mtype] [
 							either zero? offset [
 								emit rejoin [#{89} value-reg] ;-- MOV [base], r32
 							][
@@ -3288,7 +3288,7 @@ target: 'X86-64
 								emit int-to-bin/to-bin32 offset
 							]
 						]
-						all [size = 2 not compiler-api/any-float? mtype] [
+						all [size = 2 not system-dialect/compiler/any-float? mtype] [
 							either zero? offset [
 								emit rejoin [#{6689} value-reg] ;-- MOV [base], r16
 							][
@@ -3296,7 +3296,7 @@ target: 'X86-64
 								emit int-to-bin/to-bin32 offset
 							]
 						]
-						all [size = 1 not compiler-api/any-float? mtype] [
+						all [size = 1 not system-dialect/compiler/any-float? mtype] [
 							either zero? offset [
 								emit rejoin [#{88} value-reg] ;-- MOV [base], r8
 							][
@@ -3305,7 +3305,7 @@ target: 'X86-64
 							]
 						]
 						yes [
-							compiler-api/throw-error ["x86-64 pointer store type not supported yet:" mold mtype/1]
+							system-dialect/compiler/throw-error ["x86-64 pointer store type not supported yet:" mold mtype/1]
 						]
 					]
 				][
@@ -3313,7 +3313,7 @@ target: 'X86-64
 					emit #{FFC9}					;-- DEC ecx, one-based index
 					emit #{4863C9}				;-- MOVSXD rcx, ecx
 					case [
-						compiler-api/any-float? mtype [
+						system-dialect/compiler/any-float? mtype [
 							emit either size = 4 [
 								#{C5FA1104}
 							][
@@ -3321,31 +3321,31 @@ target: 'X86-64
 							]
 							emit-index-sib either last? ['rax]['rdx] size
 						]
-						all [size = 8 not compiler-api/any-float? mtype] [
+						all [size = 8 not system-dialect/compiler/any-float? mtype] [
 							emit either last? [#{488914}][#{488904}]
 							emit-index-sib either last? ['rax]['rdx] size
 						]
-						all [size = 4 not compiler-api/any-float? mtype] [
+						all [size = 4 not system-dialect/compiler/any-float? mtype] [
 							emit either last? [#{8914}][#{8904}]
 							emit-index-sib either last? ['rax]['rdx] size
 						]
-						all [size = 2 not compiler-api/any-float? mtype] [
+						all [size = 2 not system-dialect/compiler/any-float? mtype] [
 							emit either last? [#{668914}][#{668904}]
 							emit-index-sib either last? ['rax]['rdx] size
 						]
-						all [size = 1 not compiler-api/any-float? mtype] [
+						all [size = 1 not system-dialect/compiler/any-float? mtype] [
 							emit either last? [#{8814}][#{8804}]
 							emit-index-sib either last? ['rax]['rdx] size
 						]
 						yes [
-							compiler-api/throw-error ["x86-64 pointer store type not supported yet:" mold mtype/1]
+							system-dialect/compiler/throw-error ["x86-64 pointer store type not supported yet:" mold mtype/1]
 						]
 					]
 				]
 			]
 			struct! union! [
-				spec: either parent [parent][second compiler-api/resolve-type to word! path/1]
-				mtype: compiler-api/resolve-type/with path/2 spec
+				spec: either parent [parent][second system-dialect/compiler/resolve-type to word! path/1]
+				mtype: system-dialect/compiler/resolve-type/with path/2 spec
 				field: select spec path/2
 				set-width/type mtype/1
 				offset: emitter/member-offset? spec path/2
@@ -3361,7 +3361,7 @@ target: 'X86-64
 				][
 					exit
 				]
-				source-type: either last-value? value [compiler-api/last-type][compiler-api/get-type value]
+				source-type: either last-value? value [system-dialect/compiler/last-type][system-dialect/compiler/get-type value]
 				last?: last-value? value
 				if all [find [struct! union!] mtype/1 not aggregate-by-value?][size: stack-width]
 				if all [
@@ -3481,13 +3481,13 @@ target: 'X86-64
 					emit-load value
 					case [
 						all [
-							compiler-api/integer-type? source-type
+							system-dialect/compiler/integer-type? source-type
 							find [float! float32! float64!] mtype/1
 						][
 							emit either mtype/1 = 'float32! [
-								either compiler-api/int64? source-type [#{C4E1FA2AC0}][#{C5FA2AC0}]
+								either system-dialect/compiler/int64? source-type [#{C4E1FA2AC0}][#{C5FA2AC0}]
 							][
-								either compiler-api/int64? source-type [#{C4E1FB2AC0}][#{C5FB2AC0}]
+								either system-dialect/compiler/int64? source-type [#{C4E1FB2AC0}][#{C5FB2AC0}]
 							]
 						]
 						all [
@@ -3511,7 +3511,7 @@ target: 'X86-64
 					emit-store-union-tag spec path/2 either last? ['rax]['rdx]
 				]
 				case [
-					compiler-api/any-float? mtype [
+					system-dialect/compiler/any-float? mtype [
 						either size = 4 [
 							either zero? offset [
 								emit rejoin [#{C5FA11} base]	;-- VMOVSS [base], xmm0
@@ -3528,7 +3528,7 @@ target: 'X86-64
 							]
 						]
 					]
-					all [size = 8 not compiler-api/any-float? mtype] [
+					all [size = 8 not system-dialect/compiler/any-float? mtype] [
 						either zero? offset [
 							emit rejoin [#{4889} value-reg]	;-- MOV [base], r64
 						][
@@ -3536,7 +3536,7 @@ target: 'X86-64
 							emit int-to-bin/to-bin32 offset
 						]
 					]
-					all [size = 4 not compiler-api/any-float? mtype] [
+					all [size = 4 not system-dialect/compiler/any-float? mtype] [
 						either zero? offset [
 							emit rejoin [#{89} value-reg]	;-- MOV [base], r32
 						][
@@ -3544,7 +3544,7 @@ target: 'X86-64
 							emit int-to-bin/to-bin32 offset
 						]
 					]
-					all [size = 2 not compiler-api/any-float? mtype] [
+					all [size = 2 not system-dialect/compiler/any-float? mtype] [
 						either zero? offset [
 							emit rejoin [#{6689} value-reg]	;-- MOV [base], r16
 						][
@@ -3552,7 +3552,7 @@ target: 'X86-64
 							emit int-to-bin/to-bin32 offset
 						]
 					]
-					all [size = 1 not compiler-api/any-float? mtype] [
+					all [size = 1 not system-dialect/compiler/any-float? mtype] [
 						either zero? offset [
 							emit rejoin [#{88} value-reg]	;-- MOV [base], r8
 						][
@@ -3561,12 +3561,12 @@ target: 'X86-64
 						]
 					]
 					yes [
-						compiler-api/throw-error ["x86-64 path store type not supported yet:" mold mtype/1]
+						system-dialect/compiler/throw-error ["x86-64 path store type not supported yet:" mold mtype/1]
 					]
 				]
 			]
 			yes [
-				compiler-api/throw-error ["x86-64 store path type not supported yet:" mold type]
+				system-dialect/compiler/throw-error ["x86-64 store path type not supported yet:" mold type]
 			]
 		]
 	]
@@ -3577,10 +3577,10 @@ target: 'X86-64
 	][
 		if verbose >= 3 [print [">>>accessing path:" mold path]]
 		unless spec [
-			spec: second compiler-api/resolve-type to word! path/1
+			spec: second system-dialect/compiler/resolve-type to word! path/1
 			emit-init-path path/1
 		]
-		mtype: compiler-api/resolve-type/with path/2 spec
+		mtype: system-dialect/compiler/resolve-type/with path/2 spec
 		field: select spec path/2
 		offset: emitter/member-offset? spec path/2
 		if set-path? path [
@@ -3604,9 +3604,9 @@ target: 'X86-64
 			]
 		][
 			size: emitter/size-of? mtype
-			signed?: compiler-api/signed-integer? mtype
+			signed?: system-dialect/compiler/signed-integer? mtype
 			case [
-				compiler-api/any-float? mtype [
+				system-dialect/compiler/any-float? mtype [
 					either size = 4 [
 						either zero? offset [
 							emit #{C5FA1000}		;-- VMOVSS xmm0, [rax]
@@ -3623,7 +3623,7 @@ target: 'X86-64
 						]
 					]
 				]
-				all [size = 8 not compiler-api/any-float? mtype] [
+				all [size = 8 not system-dialect/compiler/any-float? mtype] [
 					either zero? offset [
 						emit #{488B00}				;-- MOV rax, [rax]
 					][
@@ -3631,7 +3631,7 @@ target: 'X86-64
 						emit int-to-bin/to-bin32 offset
 					]
 				]
-				all [size = 4 not compiler-api/any-float? mtype] [
+				all [size = 4 not system-dialect/compiler/any-float? mtype] [
 					either zero? offset [
 						emit #{8B00}				;-- MOV eax, [rax]
 					][
@@ -3639,7 +3639,7 @@ target: 'X86-64
 						emit int-to-bin/to-bin32 offset
 					]
 				]
-				all [size = 2 not compiler-api/any-float? mtype] [
+				all [size = 2 not system-dialect/compiler/any-float? mtype] [
 					either signed? [
 						either zero? offset [
 							emit #{0FBF00}			;-- MOVSX eax, word [rax]
@@ -3656,7 +3656,7 @@ target: 'X86-64
 						]
 					]
 				]
-				all [size = 1 not compiler-api/any-float? mtype] [
+				all [size = 1 not system-dialect/compiler/any-float? mtype] [
 					either signed? [
 						either zero? offset [
 							emit #{0FBE00}			;-- MOVSX eax, byte [rax]
@@ -3674,7 +3674,7 @@ target: 'X86-64
 					]
 				]
 				yes [
-					compiler-api/throw-error ["x86-64 nested path type not supported yet:" mold mtype/1]
+					system-dialect/compiler/throw-error ["x86-64 nested path type not supported yet:" mold mtype/1]
 				]
 			]
 		]
@@ -3732,7 +3732,7 @@ target: 'X86-64
 				emit either set? [#{4989C7}][#{4C8BC7}]
 			]
 			yes [
-				compiler-api/throw-error ["x86-64 system/cpu register not supported yet:" mold reg]
+				system-dialect/compiler/throw-error ["x86-64 system/cpu register not supported yet:" mold reg]
 			]
 		]
 	]
@@ -3792,7 +3792,7 @@ target: 'X86-64
 	]
 	emit-push-struct-ref: func [slots [integer!] /local offset][
 		if call-struct-temp-slots < slots [
-			compiler-api/throw-error "x86-64 struct argument temporary stack space was not reserved"
+			system-dialect/compiler/throw-error "x86-64 struct argument temporary stack space was not reserved"
 		]
 		offset: ((length? call-arg-types) + call-struct-temp-slots - slots) * stack-width
 		call-struct-temp-slots: call-struct-temp-slots - slots
@@ -3810,38 +3810,38 @@ target: 'X86-64
 	]
 	emit-store-union-tag: func [spec [block!] name [word!] reg [word!] /local id tag type][
 		if all [
-			compiler-api/tagged-union? spec
-			id: compiler-api/union-variant-id? spec name
+			system-dialect/compiler/tagged-union? spec
+			id: system-dialect/compiler/union-variant-id? spec name
 		][
-			tag: compiler-api/union-tag-type? spec
+			tag: system-dialect/compiler/union-tag-type? spec
 			type: tag/1
 			switch type [
 				uint8! [
 					emit switch/default reg [
 						rax [#{C600}]				;-- MOV byte [rax], imm8
 						rdx [#{C602}]				;-- MOV byte [rdx], imm8
-					][compiler-api/throw-error ["x86-64 union tag base register not supported:" reg]]
+					][system-dialect/compiler/throw-error ["x86-64 union tag base register not supported:" reg]]
 					emit int-to-bin/to-bin8 id
 				]
 				uint16! [
 					emit switch/default reg [
 						rax [#{66C700}]				;-- MOV word [rax], imm16
 						rdx [#{66C702}]				;-- MOV word [rdx], imm16
-					][compiler-api/throw-error ["x86-64 union tag base register not supported:" reg]]
+					][system-dialect/compiler/throw-error ["x86-64 union tag base register not supported:" reg]]
 					emit int-to-bin/to-bin16 id
 				]
 				uint32! [
 					emit switch/default reg [
 						rax [#{C700}]				;-- MOV dword [rax], imm32
 						rdx [#{C702}]				;-- MOV dword [rdx], imm32
-					][compiler-api/throw-error ["x86-64 union tag base register not supported:" reg]]
+					][system-dialect/compiler/throw-error ["x86-64 union tag base register not supported:" reg]]
 					emit int-to-bin/to-bin32 id
 				]
 			]
 		]
 	]
 	emit-load-union-tag: func [spec [block!] /local tag type][
-		tag: compiler-api/union-tag-type? spec
+		tag: system-dialect/compiler/union-tag-type? spec
 		type: tag/1
 		switch type [
 			uint8!  [emit #{0FB600}]
@@ -3995,22 +3995,22 @@ target: 'X86-64
 	emit-save-last: does [
 		last-saved?: yes
 		saved-last-wide?: any [
-			compiler-api/int64? compiler-api/last-type
-			compiler-api/any-pointer? compiler-api/last-type
-			find [function! subroutine! struct! union!] (first compiler-api/last-type)
+			system-dialect/compiler/int64? system-dialect/compiler/last-type
+			system-dialect/compiler/any-pointer? system-dialect/compiler/last-type
+			find [function! subroutine! struct! union!] (first system-dialect/compiler/last-type)
 		]
-		either compiler-api/any-float? compiler-api/last-type [
+		either system-dialect/compiler/any-float? system-dialect/compiler/last-type [
 			emit #{4883EC10}						;-- SUB rsp, 16
-			emit either (first compiler-api/last-type) = 'float32! [#{C5FA110424}][#{C5FB110424}]
+			emit either (first system-dialect/compiler/last-type) = 'float32! [#{C5FA110424}][#{C5FB110424}]
 		][
 			emit #{4883EC10}						;-- SUB rsp, 16
 			emit #{48890424}						;-- MOV [rsp], rax
 		]
 	]
 	emit-restore-last: does [
-		either compiler-api/any-float? compiler-api/last-type [
-			emit either (first compiler-api/last-type) = 'float32! [#{F30F10C8}][#{F20F10C8}] ;-- MOVS[S/D] xmm1, xmm0 ; right operand
-			emit either (first compiler-api/last-type) = 'float32! [#{C5FA100424}][#{C5FB100424}]
+		either system-dialect/compiler/any-float? system-dialect/compiler/last-type [
+			emit either (first system-dialect/compiler/last-type) = 'float32! [#{F30F10C8}][#{F20F10C8}] ;-- MOVS[S/D] xmm1, xmm0 ; right operand
+			emit either (first system-dialect/compiler/last-type) = 'float32! [#{C5FA100424}][#{C5FB100424}]
 			emit #{4883C410}						;-- ADD rsp, 16
 		][
 			emit #{4889C1}							;-- MOV rcx, rax ; right operand
@@ -4043,7 +4043,7 @@ target: 'X86-64
 	emit-get-pc: func [/local][
 		emit #{E800000000}							;-- CALL next
 		emit-pop									;-- get RIP in rax
-		compiler-api/set-last-type  [pointer! [byte!]]
+		system-dialect/compiler/last-type:  [pointer! [byte!]]
 		5											;-- return adjustment offset (CALL size)
 	]
 	emit-get-overflow: does [
@@ -4125,7 +4125,7 @@ target: 'X86-64
 		emit #{00}
 	]
 	emit-open-catch: func [body-size [integer!] global? [logic!]][
-		global?: all [global? not (compiler-api/job-value 'need-main?)]
+		global?: all [global? not system-dialect/compiler/job/need-main?]
 		either global? [
 			emit #{55}								;-- PUSH rbp
 			emit #{4889E5}							;-- MOV rbp, rsp
@@ -4159,7 +4159,7 @@ target: 'X86-64
 		callback? [logic!]
 		/local local-slots reg-count
 	][
-		global?: all [global? not (compiler-api/job-value 'need-main?)]
+		global?: all [global? not system-dialect/compiler/job/need-main?]
 		either global? [
 			emit #{488D65F0}						;-- LEA rsp, [rbp-16]
 			emit #{58}								;-- POP rax
@@ -4233,7 +4233,7 @@ target: 'X86-64
 					rounding  [13]
 					precision [0]					;-- SSE has no x87 precision-control field
 				][
-					compiler-api/throw-error ["invalid FPU option name:" option]
+					system-dialect/compiler/throw-error ["invalid FPU option name:" option]
 				]
 				either option = 'precision [
 					emit #{31C0}					;-- XOR eax, eax
@@ -4253,7 +4253,7 @@ target: 'X86-64
 					denormal	[8]
 					invalid-op  [7]
 				][
-					compiler-api/throw-error ["invalid FPU mask name:" mask]
+					system-dialect/compiler/throw-error ["invalid FPU mask name:" mask]
 				]
 				emit #{25}							;-- AND eax, 2^bit
 				emit int-to-bin/to-bin32 shift/left 1 bit
@@ -4280,7 +4280,7 @@ target: 'X86-64
 					bit: switch/default option [
 						rounding [13]
 					][
-						compiler-api/throw-error ["invalid FPU option name:" option]
+						system-dialect/compiler/throw-error ["invalid FPU option name:" option]
 					]
 					clear-mask: complement 24576
 					emit #{25}						;-- AND eax, ~6000h
@@ -4297,7 +4297,7 @@ target: 'X86-64
 						denormal	[8]
 						invalid-op  [7]
 					][
-						compiler-api/throw-error ["invalid FPU mask name:" mask]
+						system-dialect/compiler/throw-error ["invalid FPU mask name:" mask]
 					]
 					clear-mask: complement shift/left 1 bit
 					emit #{25}						;-- AND eax, ~(1 << bit)
@@ -4324,11 +4324,11 @@ target: 'X86-64
 		either tag? value [
 			either value = <last> [
 				either all [
-					block? compiler-api/last-type
-					compiler-api/any-float? compiler-api/last-type
+					block? system-dialect/compiler/last-type
+					system-dialect/compiler/any-float? system-dialect/compiler/last-type
 				][
 					emit #{4883EC08}				;-- SUB rsp, 8
-					emit either (first compiler-api/last-type) = 'float32! [#{F30F110424}][#{F20F110424}]
+					emit either (first system-dialect/compiler/last-type) = 'float32! [#{F30F110424}][#{F20F110424}]
 				][
 					emit #{50}						;-- PUSH rax
 				]

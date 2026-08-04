@@ -271,6 +271,16 @@ system-dialect: context [
 			alias 		 [raise-level-error "an alias"]	  ;-- alias declaration not allowed at this level
 		]
 
+		; Keep the original action blocks for compiler metadata, but use compact IDs
+		; in the hot compiler path so keyword dispatch does not evaluate a block.
+		keyword-dispatch: make hash! [
+			?? 1 as 2 assert 3 size? 4 overflow? 5 variant? 6
+			if 7 either 8 case 9 switch 10 until 11 while 12 loop 13
+			any 14 all 15 exit 16 return 17 break 18 continue 19 catch 20
+			declare 21 protect 22 use 23 null 24 context 25 with 26 comment 27
+			true 28 false 29 func 30 function 31 alias 32
+		]
+
 		calling-keywords: [								;-- keywords accepted in expr-call-stack
 			?? as assert size? overflow? variant? if either case switch until while any all
 			return catch
@@ -4028,6 +4038,43 @@ system-dialect: context [
 			name
 		]
 
+		dispatch-keyword: func [id [integer!]][
+			switch id [
+				1  [comp-print-debug]
+				2  [comp-as]
+				3  [comp-assert]
+				4  [comp-size?]
+				5  [comp-overflow?]
+				6  [comp-variant?]
+				7  [comp-if]
+				8  [comp-either]
+				9  [comp-case]
+				10 [comp-switch]
+				11 [comp-until]
+				12 [comp-while]
+				13 [comp-loop]
+				14 [comp-expression-list]
+				15 [comp-expression-list/_all]
+				16 [comp-exit]
+				17 [comp-exit/value]
+				18 [comp-break]
+				19 [comp-continue]
+				20 [comp-catch]
+				21 [comp-declare]
+				22 [comp-protect]
+				23 [comp-use]
+				24 [comp-null]
+				25 [comp-context]
+				26 [comp-with]
+				27 [comp-comment]
+				28 [also true pc: next pc]
+				29 [also false pc: next pc]
+				30 [raise-level-error "a function"]
+				31 [raise-level-error "a function"]
+				32 [raise-level-error "an alias"]
+			]
+		]
+
 		comp-word: func [
 			name [word!]
 			mode [integer!]							;-- 0: default, 1: override, 2: path, 3: check
@@ -4047,10 +4094,10 @@ system-dialect: context [
 			case [
 				all [
 					not all [local? name = 'context]
-					entry: select keywords name			;-- it's a reserved word
+					entry: select keyword-dispatch name	;-- it's a reserved word
 				][
 					if find calling-keywords name [push-call pc/1]
-					unless check-mode? [do entry]
+					unless check-mode? [dispatch-keyword entry]
 				]
 				any [
 					all [

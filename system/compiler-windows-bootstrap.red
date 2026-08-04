@@ -5,6 +5,7 @@ Red [
 	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"
 ]
 
+#include %../compiler/phase-timer.red
 #include %compiler-host.red
 #include %../compiler/host-compat.red
 #include %../compiler/int-to-bin.red

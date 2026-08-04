@@ -5267,10 +5267,12 @@ system-dialect: context [
 	]
 
 	comp-runtime-prolog: func [red? [logic!] payload [binary! none!] /local script ext src][
+		phase-timer/begin 'runtime-common
 		script: secure-clean-path runtime-path/common.reds
 		src: loader/process/own script
 		unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
 		compiler/run/runtime job src script
+		phase-timer/finish 'runtime-common
 
 		if red? [
 			if all [job/dev-mode? job/type = 'exe][
@@ -5291,10 +5293,12 @@ system-dialect: context [
 				compiler/run job loader/process red/sys-global %***sys-global.reds
 			]
 			if any [not job/dev-mode? job/libRedRT?][
+				phase-timer/begin 'runtime-red
 				script: secure-clean-path red-runtime-path/red.reds
 				src: loader/process/own script
 				unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
 				compiler/run job src script
+				phase-timer/finish 'runtime-red
 			]
 		]
 		if job/type = 'dll [
@@ -5474,6 +5478,7 @@ system-dialect: context [
 			file file-list sections result
 	][
 		comp-time: now/time/precise
+		phase-timer/begin 'backend-setup
 		link-time: none
 		output: none
 		buffer: none
@@ -5491,6 +5496,7 @@ system-dialect: context [
 		loader/connect-compiler-state compiler/definitions compiler/keywords-list
 		loader/init
 		emit-main-prolog
+		phase-timer/finish 'backend-setup
 
 		job/need-main?: to logic! any [
 			job/need-main?							;-- pass-thru if set in config file
@@ -5508,9 +5514,12 @@ system-dialect: context [
 			comp-start								;-- init libC properly
 		]
 		if opts/runtime? [
+			phase-timer/begin 'runtime-prolog
 			comp-runtime-prolog to logic! loaded all [loaded job-data/3]
+			phase-timer/finish 'runtime-prolog
 		]
 
+		phase-timer/begin 'user-code
 		set-verbose-level opts/verbosity
 		resources: either loaded [job-data/4][make block! 8]
 		if job/libRedRT-update? [libRedRT/init-extras]
@@ -5527,12 +5536,15 @@ system-dialect: context [
 		if not tail? next file-list [
 			compile-sources next file-list to logic! loaded job-data job resources
 		]
+		phase-timer/finish 'user-code
 		set-verbose-level 0
 		if opts/runtime? [comp-runtime-epilog]
 
+		phase-timer/begin 'backend-finalize
 		set-verbose-level opts/verbosity
 		compiler/finalize							;-- compile all functions
 		set-verbose-level 0
+		phase-timer/finish 'backend-finalize
 
 		if job/libRedRT-update? [libRedRT/save-extras]
 		comp-time: now/time/precise - comp-time
@@ -5545,6 +5557,7 @@ system-dialect: context [
 
 		if opts/link? [
 			link-time: now/time/precise
+			phase-timer/begin 'link-prepare
 			set in job 'symbols emitter/symbols
 			sections: compose/deep/only [
 				code   [- 	(emitter/code-buf)]
@@ -5574,7 +5587,10 @@ system-dialect: context [
 			if opts/debug? [
 				set in job 'debug-info reduce ['lines compiler/debug-lines]
 			]
+			phase-timer/finish 'link-prepare
+			phase-timer/begin 'link-build
 			output: linker/build job
+			phase-timer/finish 'link-build
 			link-time: now/time/precise - link-time
 		]
 

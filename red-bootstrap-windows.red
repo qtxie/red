@@ -8,9 +8,9 @@ compiler-root: system/options/path
 ; The core compiler does not load View, but it needs the datatype token to compile View targets.
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
-
-; Use the complete Red-hosted backend. Stage0 is not part of target selection.
-#include %system/compiler.red
+; This bootstrap emits Windows x64 PE files only. Keep cross-target formats and
+; the static object linker out of its compiled closure.
+#include %system/compiler-windows-bootstrap.red
 
 #include %compiler/modules.red
 #include %compiler/version.red
@@ -20,7 +20,6 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 #include %compiler/crush.red
 #include %compiler/frontend.red
 #include %compiler/bootstrap-options.red
-#include %system/formats/Mach-APP.red
 
 ; Interpreted bootstrap follows Stage0's deep binding operation. The AOT source
 ; materializes this field through frontend.red's nested include instead.
@@ -28,6 +27,8 @@ if none? red/redbin [do bind load %compiler/redbin-emitter.red red]
 
 ; Keep collection enabled while the compiler builds its large intermediate graphs.
 recycle/on
+set-compiler-series-frame-max: routine [bytes [integer!]][memory/s-max: bytes]
+set-compiler-series-frame-max 16777216
 
 bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
@@ -43,16 +44,11 @@ fail-command: func [message][
 
 join-file: func [base [file!] relative [file!]][append copy base relative]
 
-libRedRT-target: func [job [object!] /local os cpu][
-	os: compiler-system-job/job-get job 'OS
-	cpu: compiler-system-job/job-get job 'target
-	case [
-		all [os = 'Windows cpu = 'X86-64] ['Windows-X86-64-DLL]
-		all [os = 'Linux cpu = 'X86-64] ['Linux-X86-64-SO]
-		all [os = 'Linux cpu = 'ARM64] ['Linux-ARM64-SO]
-		all [os = 'macOS cpu = 'ARM64] ['Darwin-ARM64-SO]
-		true [none]
-	]
+libRedRT-target: func [job [object!]][
+	either all [
+		(compiler-system-job/job-get job 'OS) = 'Windows
+		(compiler-system-job/job-get job 'target) = 'X86-64
+	]['Windows-X86-64-DLL][none]
 ]
 
 libRedRT-output-dir: func [job [object!] /local dir][
@@ -69,10 +65,7 @@ configure-libRedRT-path: func [dir [file!]][
 libRedRT-ready?: func [job [object!] /local dir extension][
 	dir: libRedRT-output-dir job
 	configure-libRedRT-path dir
-	extension: switch/default compiler-system-job/job-get job 'OS [
-		Windows [%.dll]
-		macOS [%.dylib]
-	][%.so]
+	extension: %.dll
 	all [
 		exists? join-file dir to file! rejoin [form libRedRT/lib-file extension]
 		exists? join-file dir libRedRT/include-file
@@ -116,10 +109,9 @@ build-libRedRT: func [
 	compiler-system-job/normalize job
 
 	; Keep the runtime module set identical to Stage0's libRedRT build.
-	source: either all [
-		compiler-system-job/job-get job 'GUI-engine
-		find [Windows macOS Linux] compiler-system-job/job-get job 'OS
-	][[[Needs: [View CSV JSON]]]][[[Needs: [CSV JSON]]]]
+	source: either compiler-system-job/job-get job 'GUI-engine [
+		[[Needs: [View CSV JSON]]]
+	][[[Needs: [CSV JSON]]]]
 
 	print ["Compiling" join-file dir %libRedRT "..."]
 	set/any 'result try [compiler-frontend/compile source job]
@@ -137,7 +129,7 @@ build-libRedRT: func [
 		block? backend-result
 		file? backend-result/4
 		exists? backend-result/4
-	][fail-command "libRedRT build produced no dylib"]
+	][fail-command "libRedRT build produced no DLL"]
 	configure-libRedRT-path dir
 ]
 
@@ -180,7 +172,7 @@ read-source-marker: func [
 
 compile-source: func [
 	options [object!]
-	/local source marker job frontend-result backend-result saved-verbosity build-prefix packager-name
+	/local source marker job frontend-result backend-result saved-verbosity build-prefix
 ][
 	unless compiler-options/option-get options 'source [fail-command "missing source file"]
 	source: resolve-source-path compiler-options/option-get options 'source
@@ -193,6 +185,11 @@ compile-source: func [
 
 	job: compiler-options/to-job options
 	if error? :job [fail-command mold job]
+	unless all [
+		(compiler-system-job/job-get job 'OS) = 'Windows
+		(compiler-system-job/job-get job 'target) = 'X86-64
+		(compiler-system-job/job-get job 'format) = 'PE
+	][fail-command "this compiler supports only Windows-X86-64 PE targets"]
 	if none? compiler-system-job/job-get job 'dev-mode? [
 		compiler-system-job/job-set job 'dev-mode? false
 	]
@@ -216,9 +213,13 @@ compile-source: func [
 
 	print ["Compiling" source "..."]
 	either marker = red-system-marker [
+		phase-timer/begin 'red-system-total
 		system-dialect/compile/options source job
+		phase-timer/finish 'red-system-total
 	][
+		phase-timer/begin 'frontend
 		frontend-result: compiler-frontend/compile source job
+		phase-timer/finish 'frontend
 		print ["...frontend time    :" frontend-result/2]
 		if compiler-system-job/job-get job 'red-only? [
 			unless compiler-options/option-get options 'output [
@@ -232,19 +233,14 @@ compile-source: func [
 		]
 		saved-verbosity: compiler-system-job/job-get job 'verbosity
 		compiler-system-job/job-set job 'verbosity (max 0 saved-verbosity - 3)
+		phase-timer/begin 'backend-total
 		system-dialect/compile/options/loaded source job frontend-result
+		phase-timer/finish 'backend-total
 		compiler-system-job/job-set job 'verbosity saved-verbosity
 	]
 
 	backend-result: system-dialect/last-result
 	unless block? backend-result [fail-command "Red/System backend did not produce a result"]
-	if packager-name: compiler-system-job/job-get job 'packager [
-		switch/default packager-name [
-			Mach-APP [
-				poke backend-result 4 mach-app-packager/process job source backend-result/4
-			]
-		][fail-command rejoin ["unsupported packager: " packager-name]]
-	]
 	print [
 		"...native time      :" backend-result/1
 		"...link time        :" backend-result/2
@@ -255,9 +251,23 @@ compile-source: func [
 
 args: any [system/options/args []]
 unless block? args [args: copy []]
+compiler-profile-path: get-env "RED_COMPILER_PROFILE"
+phase-timer/reset
+phase-timer/active?: string? compiler-profile-path
+phase-timer/begin 'compiler-total
 options: compiler-options/parse-args args
 if error? :options [fail-command mold options]
 if compiler-options/option-get options 'help? [print-usage quit/return 0]
 if compiler-options/option-get options 'version? [print bootstrap-version quit/return 0]
 compile-source options
+phase-timer/finish 'compiler-total
+if phase-timer/active? [
+	phase-timer/report
+	print [
+		"...profile gc      : cycles:" system/state/GC/series-cycles
+		"nodes:" system/state/GC/nodes-cycles
+		"memory:" stats
+	]
+	write to file! compiler-profile-path mold/only phase-timer/snapshot
+]
 quit/return 0

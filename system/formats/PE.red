@@ -1334,23 +1334,38 @@ system-format-PE: context [
 		if job/debug? [
 			code-ptr: entry-point-address? job
 			if any [job/libRedRT? job/libRed? job/PIC?][code-ptr: code-ptr - to-integer defs/image/dll-base-address]
+			phase-timer/begin 'pe-debug-lines
 			linker/build-debug-lines job code-ptr
+			phase-timer/finish 'pe-debug-lines
+			phase-timer/begin 'pe-debug-functions
 			linker/build-debug-func-names job code-ptr
+			phase-timer/finish 'pe-debug-functions
 		]
 
+		phase-timer/begin 'pe-imports
 		build-import job								;-- populate import section buffer
+		phase-timer/finish 'pe-imports
 
 		if job/type = 'dll [build-export job]			;-- populate export section buffer
 
-		if find job/sections 'rsrc	[build-resource job]
+		if find job/sections 'rsrc	[
+			phase-timer/begin 'pe-resources
+			build-resource job
+			phase-timer/finish 'pe-resources
+		]
 
-		if any [PE64? find [dll drv] job/type] [build-reloc job]
+		if any [PE64? find [dll drv] job/type] [
+			phase-timer/begin 'pe-relocations
+			build-reloc job
+			phase-timer/finish 'pe-relocations
+		]
 
 		external-linker/prepare-pe-tls job
 			section-addr?/memory job 'data
 			base-address
 
 		out: job/buffer
+		phase-timer/begin 'pe-layout
 		append out defs/image/MSDOS-header
 		build-header job
 		build-opt-header job
@@ -1360,7 +1375,9 @@ system-format-PE: context [
 			append job/buffer spec/1
 		]
 		insert/dup tail job/buffer null pad-size? job/buffer
+		phase-timer/finish 'pe-layout
 
+		phase-timer/begin 'pe-resolve
 		resolve-import-refs job							;-- resolve DLL imports references
 		resolve-data-refs job							;-- resolve data references
 		;-- read-only static data lives in its own page-aligned section when
@@ -1377,6 +1394,7 @@ system-format-PE: context [
 			entry-point-address? job
 			(base-address + section-addr?/memory job 'data)
 			base-address
+		phase-timer/finish 'pe-resolve
 
 		linker/set-image-info/high
 		job
@@ -1390,10 +1408,12 @@ system-format-PE: context [
 
 		if job/show-func-map? [linker/show-funcs-map job entry-point-address? job]
 
+		phase-timer/begin 'pe-write-sections
 		foreach [name spec] job/sections [
 			pad: pad-size? spec/2
 			append job/buffer spec/2
 			insert/dup tail job/buffer null pad
 		]
+		phase-timer/finish 'pe-write-sections
 	]
 ]

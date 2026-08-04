@@ -17,10 +17,26 @@ The transition build produces an ordinary executable directly:
 
 ```powershell
 $compiler = Resolve-Path .\build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe
-& $compiler -r -d -t Windows-X86-64 `
+& $compiler -r -t Windows-X86-64 `
     -o build\self-hosting\red-bootstrap-next-x64.exe `
     red-bootstrap-windows.red
 ```
+
+The compiler executable is built in release mode without `-d`; this avoids
+embedding several megabytes of compiler source-line metadata. It still accepts
+`-d` when debug information is required in the program being compiled.
+
+Use the benchmark wrapper for a single profiled release/debug `hello.red` run:
+
+```powershell
+& .\tools\self_hosting\benchmark-compiler.ps1 `
+    -Compiler .\build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe `
+    -Runs 1 `
+    -OutputRoot .\build\compiler-benchmarks
+```
+
+The wrapper verifies the generated executable and writes raw logs, phase data,
+hashes, memory use, and a JSON report below the output directory.
 
 No `build.r`, pre-cap, encap, Rebol executable, or `red.r` invocation is
 involved in the normal self-hosted build.

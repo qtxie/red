@@ -6,7 +6,7 @@ Red [
 phase-timer: context [
 	active?: false
 	started: make map! 16
-	records: make block! 24
+	records: make block! 48
 
 	reset: does [
 		clear started
@@ -38,4 +38,10 @@ phase-timer: context [
 	]
 
 	snapshot: does [copy/deep records]
+
+	report: does [
+		foreach [name count duration] records [
+			print ["...profile phase   :" name "count:" count "time:" duration]
+		]
+	]
 ]

@@ -1708,13 +1708,13 @@ collector: context [
 			if verbose > 3 [stack-trace]
 			buf: "                                                               "
 			tm: platform/get-time yes yes
-			print [
+			if verbose > 0 [print [
 				"root: " block/rs-length? root "/" ***-root-size
 				", runs: " stats/cycles
 				", nodes-runs: " stats/nodes-cycles
 ;; run-all-comp2 has strange nodes-runs pattern: check!
 				", mem: " 	memory-info null 1
-			]
+			]]
 			if verbose > 1 [probe "^/marking..."]
 		]
 
@@ -1789,7 +1789,7 @@ collector: context [
 		#if debug? = yes [
 			tm: (platform/get-time yes yes) - tm - tm1
 			sprintf [buf ", mark: %.1fms, sweep: %.1fms" tm1 * 1000.0 tm * 1000.0]
-			probe [" => " memory-info null 1 buf]
+			if verbose > 0 [probe [" => " memory-info null 1 buf]]
 			if verbose > 0 [
 				print [
 					" pinned: " stats/pinned-frames

@@ -49,20 +49,17 @@ compiler-api: context [
 		get slot
 	]
 
-	functions: does [field 'functions []]
-	locals: does [field 'locals none]
-	globals: does [field 'globals []]
-	enumerations: does [field 'enumerations []]
+	functions: does [system-dialect/compiler/functions]
+	locals: does [system-dialect/compiler/locals]
+	globals: does [system-dialect/compiler/globals]
+	enumerations: does [system-dialect/compiler/enumerations]
 	; compiler-core.red stores the namespace path as rs-ns-path (not ns-path).
-	ns-path: does [field 'rs-ns-path none]
-	return-def: does [field 'return-def none]
-	overflow-check?: does [field 'overflow-check? false]
-	last-type: does [field 'last-type none]
-	set-last-type: func [value][set-field 'last-type value]
-	make-action: func [spec [block!] /local prototype][
-		prototype: field 'action-class none
-		either object? prototype [make prototype spec][none]
-	]
+	ns-path: does [system-dialect/compiler/rs-ns-path]
+	return-def: does [system-dialect/compiler/return-def]
+	overflow-check?: does [system-dialect/compiler/overflow-check?]
+	last-type: does [system-dialect/compiler/last-type]
+	set-last-type: func [value][system-dialect/compiler/last-type: value]
+	make-action: func [spec [block!]][make system-dialect/compiler/action-class spec]
 
 	invoke: func [
 		name [word!] args [block!] fallback
@@ -75,66 +72,89 @@ compiler-api: context [
 		either full [apply/all :fn args][apply :fn args]
 	]
 
-	any-float?: func [type [block!]][invoke 'any-float? reduce [type] false]
+	any-float?: func [type [block!]][system-dialect/compiler/any-float? type]
 	any-pointer?: func [type [block!] /with ts [block!]][
-		invoke/full 'any-pointer? reduce [type with ts] false
+		either with [
+			system-dialect/compiler/any-pointer?/with type ts
+		][system-dialect/compiler/any-pointer? type]
 	]
-	backtrack: func [value][invoke 'backtrack reduce [value] none]
-	canonical-type: func [type [block!]][invoke 'canonical-type reduce [type] type]
-	cast: func [obj [object!] /quiet][invoke/full 'cast reduce [obj quiet] obj]
-	catch-attribut?: does [invoke 'catch-attribut? [] false]
-	check-throw: does [invoke 'check-throw [] none]
-	check-variable-arity?: func [spec [block!]][invoke 'check-variable-arity? reduce [spec] false]
-	external-abi-call?: func [spec [block!]][invoke 'external-abi-call? reduce [spec] false]
+	backtrack: func [value][system-dialect/compiler/backtrack value]
+	canonical-type: func [type [block!]][system-dialect/compiler/canonical-type type]
+	cast: func [obj [object!] /quiet][
+		either quiet [system-dialect/compiler/cast/quiet obj][system-dialect/compiler/cast obj]
+	]
+	catch-attribut?: does [system-dialect/compiler/catch-attribut?]
+	check-throw: does [system-dialect/compiler/check-throw]
+	check-variable-arity?: func [spec [block!]][system-dialect/compiler/check-variable-arity? spec]
+	external-abi-call?: func [spec [block!]][system-dialect/compiler/external-abi-call? spec]
 	floats-in-condition?: func [condition [block!]][
-		invoke 'floats-in-condition? reduce [condition] false
+		system-dialect/compiler/floats-in-condition? condition
 	]
 	find-aliased: func [type [word!] /prefix /position][
-		invoke/full 'find-aliased reduce [type prefix position] none
+		case [
+			all [prefix position] [system-dialect/compiler/find-aliased/prefix/position type]
+			prefix [system-dialect/compiler/find-aliased/prefix type]
+			position [system-dialect/compiler/find-aliased/position type]
+			true [system-dialect/compiler/find-aliased type]
+		]
 	]
-	get-attributes: func [spec [block!]][invoke 'get-attributes reduce [spec] none]
-	find-attribute: func [spec [block!] name [word!]][invoke 'find-attribute reduce [spec name] false]
-	get-arity: func [spec [block!]][invoke 'get-arity reduce [spec] 0]
-	get-type: func [value][invoke 'get-type reduce [value] none]
-	get-variable-spec: func [name [word!]][invoke 'get-variable-spec reduce [name] none]
-	int-literal-hex: func [value type [word!]][invoke 'int-literal-hex reduce [value type] none]
-	int64-hex: func [value type [word!]][invoke 'int64-hex reduce [value type] none]
-	int64-literal-info: func [value][invoke 'int64-literal-info reduce [value] none]
-	int64?: func [type [block! word! integer! none!]][invoke 'int64? reduce [type] false]
-	integer-type?: func [type [block! word! integer! none!]][invoke 'integer-type? reduce [type] false]
-	integer-width?: func [type [block! word! integer! none!]][invoke 'integer-width? reduce [type] 0]
-	is-small-struct-float?: func [spec [block!]][invoke 'is-small-struct-float? reduce [spec] none]
-	literal?: func [value][invoke 'literal? reduce [value] false]
-	local-variable?: func [name [word!]][invoke 'local-variable? reduce [name] false]
+	get-attributes: func [spec [block!]][system-dialect/compiler/get-attributes spec]
+	find-attribute: func [spec [block!] name [word!]][system-dialect/compiler/find-attribute spec name]
+	get-arity: func [spec [block!]][system-dialect/compiler/get-arity spec]
+	get-type: func [value][system-dialect/compiler/get-type value]
+	get-variable-spec: func [name [word!]][system-dialect/compiler/get-variable-spec name]
+	int-literal-hex: func [value type [word!]][system-dialect/compiler/int-literal-hex value type]
+	int64-hex: func [value type [word!]][system-dialect/compiler/int64-hex value type]
+	int64-literal-info: func [value][system-dialect/compiler/int64-literal-info value]
+	int64?: func [type [block! word! integer! none!]][system-dialect/compiler/int64? type]
+	integer-type?: func [type [block! word! integer! none!]][system-dialect/compiler/integer-type? type]
+	integer-width?: func [type [block! word! integer! none!]][system-dialect/compiler/integer-width? type]
+	is-small-struct-float?: func [spec [block!]][system-dialect/compiler/is-small-struct-float? spec]
+	literal?: func [value][system-dialect/compiler/literal? value]
+	local-variable?: func [name [word!]][system-dialect/compiler/local-variable? name]
 	lossless-integer-cast?: func [from [block!] to [block!]][
-		invoke 'lossless-integer-cast? reduce [from to] false
+		system-dialect/compiler/lossless-integer-cast? from to
 	]
 	ns-prefix: func [name [word! path! set-word! set-path!] /set][
-		invoke/full 'ns-prefix reduce [name set] name
+		either set [system-dialect/compiler/ns-prefix/set name][system-dialect/compiler/ns-prefix name]
 	]
 	resolve-aliased: func [type [block!] /silent][
-		invoke/full 'resolve-aliased reduce [type silent] type
+		either silent [
+			system-dialect/compiler/resolve-aliased/silent type
+		][system-dialect/compiler/resolve-aliased type]
 	]
-	resolve-expr-type: func [expr /quiet][invoke/full 'resolve-expr-type reduce [expr quiet] none]
-	resolve-ns: func [name [word!] /path][invoke/full 'resolve-ns reduce [name path] name]
+	resolve-expr-type: func [expr /quiet][
+		either quiet [
+			system-dialect/compiler/resolve-expr-type/quiet expr
+		][system-dialect/compiler/resolve-expr-type expr]
+	]
+	resolve-ns: func [name [word!] /path][
+		either path [system-dialect/compiler/resolve-ns/path name][system-dialect/compiler/resolve-ns name]
+	]
 	resolve-path-type: func [path [path! get-path! set-path!] /parent prev][
-		invoke/full 'resolve-path-type reduce [path parent prev] none
+		either parent [
+			system-dialect/compiler/resolve-path-type/parent path prev
+		][system-dialect/compiler/resolve-path-type path]
 	]
-	resolve-type: func [name /with parent][invoke/full 'resolve-type reduce [name with parent] none]
-	signed-integer?: func [type [block! word! integer! none!]][invoke 'signed-integer? reduce [type] false]
-	tagged-union?: func [spec [block!]][invoke 'tagged-union? reduce [spec] false]
-	throw-error: func [err [word! string! block!]][invoke 'throw-error reduce [err] none]
-	unbox: func [value /deep][invoke/full 'unbox reduce [value deep] value]
-	union-members: func [spec [block!]][invoke 'union-members reduce [spec] spec]
-	union-spec?: func [spec [block!]][invoke 'union-spec? reduce [spec] false]
-	union-tag-type?: func [spec [block!]][invoke 'union-tag-type? reduce [spec] none]
+	resolve-type: func [name /with parent][
+		either with [system-dialect/compiler/resolve-type/with name parent][system-dialect/compiler/resolve-type name]
+	]
+	signed-integer?: func [type [block! word! integer! none!]][system-dialect/compiler/signed-integer? type]
+	tagged-union?: func [spec [block!]][system-dialect/compiler/tagged-union? spec]
+	throw-error: func [err [word! string! block!]][system-dialect/compiler/throw-error err]
+	unbox: func [value /deep][
+		either deep [system-dialect/compiler/unbox/deep value][system-dialect/compiler/unbox value]
+	]
+	union-members: func [spec [block!]][system-dialect/compiler/union-members spec]
+	union-spec?: func [spec [block!]][system-dialect/compiler/union-spec? spec]
+	union-tag-type?: func [spec [block!]][system-dialect/compiler/union-tag-type? spec]
 	union-variant-id?: func [spec [block!] name [word!]][
-		invoke 'union-variant-id? reduce [spec name] none
+		system-dialect/compiler/union-variant-id? spec name
 	]
 	union-variant-type?: func [spec [block!] name [word!]][
-		invoke 'union-variant-type? reduce [spec name] none
+		system-dialect/compiler/union-variant-type? spec name
 	]
-	variadic?: func [value][invoke 'variadic? reduce [value] false]
+	variadic?: func [value][system-dialect/compiler/variadic? value]
 ]
 
 configure-compiler-api: func [source [object!]][

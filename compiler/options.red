@@ -11,6 +11,7 @@ compiler-options: context [
 			source: none
 			release?: false
 			debug?: false
+			opt-level: 1
 			static?: false
 			no-runtime?: false
 			dynamic-lib?: false
@@ -79,6 +80,8 @@ compiler-options: context [
 					"-d" [options/debug?: true]
 					"--debug" [options/debug?: true]
 					"--debug-stabs" [options/debug?: true]
+					"-O0" [options/opt-level: 0]
+					"-O1" [options/opt-level: 1]
 					"-s" [options/static?: true]
 					"--static" [options/static?: true]
 					"-n" [options/no-runtime?: true]
@@ -157,6 +160,7 @@ compiler-options: context [
 		unless job [return make error! compiler-system-job/last-error/message]
 		overrides: copy any [options/config []]
 		repend overrides ['debug? options/debug?]
+		repend overrides ['opt-level options/opt-level]
 		repend overrides ['static-link? options/static?]
 		repend overrides ['runtime? not options/no-runtime?]
 		repend overrides ['red-only? options/red-only?]

@@ -13,6 +13,7 @@ compiler-options: context [
 			source: none
 			release?: false
 			debug?: false
+			opt-level: 1
 			red-only?: false
 			no-compress?: false
 			dll?: false
@@ -40,6 +41,8 @@ compiler-options: context [
 				find ["-V" "--version"] token [option-set options 'version? true]
 				find ["-r" "--release"] token [option-set options 'release? true]
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
+				token = "-O0" [option-set options 'opt-level 0]
+				token = "-O1" [option-set options 'opt-level 1]
 				find ["-dlib" "--dll"] token [option-set options 'dll? true]
 				find ["-u" "--update-libRedRT"] token [
 					option-set options 'update-libRedRT? true
@@ -81,6 +84,7 @@ compiler-options: context [
 		dev?: not any [release? update?]
 		overrides: reduce [
 			'debug? option-get options 'debug?
+			'opt-level option-get options 'opt-level
 			'static-link? false
 			'runtime? true
 			'red-only? option-get options 'red-only?

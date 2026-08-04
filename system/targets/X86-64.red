@@ -34,6 +34,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 	signed?: 	none								;-- TRUE => signed op, FALSE => unsigned op
 	last-saved?: no									;-- TRUE => operand saved in another register
 	saved-last-wide?: no
+	optimize?: none
 	by-value-args: none
 	last-math-op: none
 	last-red-frame: none							;-- memory slot holding the last Red frame pointer before an external call
@@ -663,6 +664,24 @@ target: 'X86-64
 		][
 			emit disp32-opcode
 			emit int-to-bin/to-bin32 offset
+		]
+	]
+	emit-base-ref: func [
+		zero-opcode [binary! none!]
+		disp8-opcode [binary!]
+		disp32-opcode [binary!]
+		offset [integer!]
+	][
+		case [
+			zero? offset [if zero-opcode [emit zero-opcode]]
+			all [optimize? offset >= -128 offset <= 127][
+				emit disp8-opcode
+				emit int-to-bin/to-bin8 offset
+			]
+			true [
+				emit disp32-opcode
+				emit int-to-bin/to-bin32 offset
+			]
 		]
 	]
 
@@ -2022,9 +2041,38 @@ target: 'X86-64
 					right: right * scale
 				][
 					unless right-loaded? [emit-load-ecx right-source]
-					if right-signed? [emit #{4863C9}]	;-- MOVSXD rcx, ecx
-					emit #{4869C9}					;-- IMUL rcx, rcx, imm32
-					emit int-to-bin/to-bin32 scale
+					either optimize? [
+						case [
+							scale = 2 [
+								emit either right-signed? [#{C1E1}][#{48C1E1}] ;-- SHL ecx/rcx, 1
+								emit #{01}
+							]
+							scale = 4 [
+								emit either right-signed? [#{C1E1}][#{48C1E1}] ;-- SHL ecx/rcx, 2
+								emit #{02}
+							]
+							scale = 8 [
+								emit either right-signed? [#{C1E1}][#{48C1E1}] ;-- SHL ecx/rcx, 3
+								emit #{03}
+							]
+							scale = 16 [
+								emit either right-signed? [#{C1E1}][#{48C1E1}] ;-- SHL ecx/rcx, 4
+								emit #{04}
+							]
+							scale <= 127 [
+								emit either right-signed? [#{6BC9}][#{486BC9}] ;-- IMUL ecx/rcx, imm8
+								emit int-to-bin/to-bin8 scale
+							]
+							true [
+								emit either right-signed? [#{69C9}][#{4869C9}] ;-- IMUL ecx/rcx, imm32
+								emit int-to-bin/to-bin32 scale
+							]
+						]
+					][
+						if right-signed? [emit #{4863C9}]	;-- MOVSXD rcx, ecx
+						emit #{4869C9}					;-- IMUL rcx, rcx, imm32
+						emit int-to-bin/to-bin32 scale
+					]
 					right-loaded?: yes
 				]
 			]
@@ -2093,8 +2141,13 @@ target: 'X86-64
 							emit-load-ecx right-source
 							emit #{4839C8}			;-- CMP rax, rcx
 						][
-							emit either wide? [#{483D}][#{3D}] ;-- CMP rax/eax, imm32
-							emit int-to-bin/to-bin32 right
+							either all [optimize? integer? right right >= -128 right <= 127][
+								emit either wide? [#{4883F8}][#{83F8}] ;-- CMP rax/eax, imm8
+								emit int-to-bin/to-bin8 right
+							][
+								emit either wide? [#{483D}][#{3D}] ;-- CMP rax/eax, imm32
+								emit int-to-bin/to-bin32 right
+							]
 						]
 					]
 					][
@@ -2104,12 +2157,30 @@ target: 'X86-64
 				]
 			imm? [
 				switch/default name [
-					+	[either wide? [emit #{48}][] emit #{05} emit int-to-bin/to-bin32 right]	;-- ADD rax/eax, imm32
-					-	[either wide? [emit #{48}][] emit #{2D} emit int-to-bin/to-bin32 right]	;-- SUB rax/eax, imm32
-					*	[either wide? [emit #{48}][] emit #{69C0} emit int-to-bin/to-bin32 right]	;-- IMUL rax/eax, rax/eax, imm32
-					and [either wide? [emit #{48}][] emit #{25} emit int-to-bin/to-bin32 right]	;-- AND rax/eax, imm32
-					or	[either wide? [emit #{48}][] emit #{0D} emit int-to-bin/to-bin32 right]	;-- OR rax/eax, imm32
-					xor [either wide? [emit #{48}][] emit #{35} emit int-to-bin/to-bin32 right]	;-- XOR rax/eax, imm32
+					+ [either all [optimize? integer? right right >= -128 right <= 127][
+						emit either wide? [#{4883C0}][#{83C0}]
+						emit int-to-bin/to-bin8 right
+					][either wide? [emit #{48}][] emit #{05} emit int-to-bin/to-bin32 right]] ;-- ADD rax/eax, imm
+					- [either all [optimize? integer? right right >= -128 right <= 127][
+						emit either wide? [#{4883E8}][#{83E8}]
+						emit int-to-bin/to-bin8 right
+					][either wide? [emit #{48}][] emit #{2D} emit int-to-bin/to-bin32 right]] ;-- SUB rax/eax, imm
+					* [either all [optimize? integer? right right >= -128 right <= 127][
+						emit either wide? [#{486BC0}][#{6BC0}]
+						emit int-to-bin/to-bin8 right
+					][either wide? [emit #{48}][] emit #{69C0} emit int-to-bin/to-bin32 right]] ;-- IMUL rax/eax, imm
+					and [either all [optimize? integer? right right >= -128 right <= 127][
+						emit either wide? [#{4883E0}][#{83E0}]
+						emit int-to-bin/to-bin8 right
+					][either wide? [emit #{48}][] emit #{25} emit int-to-bin/to-bin32 right]] ;-- AND rax/eax, imm
+					or [either all [optimize? integer? right right >= -128 right <= 127][
+						emit either wide? [#{4883C8}][#{83C8}]
+						emit int-to-bin/to-bin8 right
+					][either wide? [emit #{48}][] emit #{0D} emit int-to-bin/to-bin32 right]] ;-- OR rax/eax, imm
+					xor [either all [optimize? integer? right right >= -128 right <= 127][
+						emit either wide? [#{4883F0}][#{83F0}]
+						emit int-to-bin/to-bin8 right
+					][either wide? [emit #{48}][] emit #{35} emit int-to-bin/to-bin32 right]] ;-- XOR rax/eax, imm
 					<<	[either wide? [emit #{48}][] emit #{C1E0} emit int-to-bin/to-bin8 right]	;-- SHL rax/eax, imm8
 					>>	[either wide? [emit #{48}][] emit either signed? [#{C1F8}][#{C1E8}] emit int-to-bin/to-bin8 right] ;-- SAR|SHR rax/eax, imm8
 					-**	[either wide? [emit #{48}][] emit #{C1E8} emit int-to-bin/to-bin8 right]	;-- SHR rax/eax, imm8
@@ -2920,12 +2991,7 @@ target: 'X86-64
 				idx: path/2
 				either integer? idx [
 					offset: idx - 1
-					either zero? offset [
-						emit #{0FB600}				;-- MOVZX eax, byte [rax]
-					][
-						emit #{0FB680}				;-- MOVZX eax, byte [rax+disp32]
-						emit int-to-bin/to-bin32 offset
-					]
+					emit-base-ref #{0FB600} #{0FB640} #{0FB680} offset
 				][
 					emit-load-ecx idx
 					emit #{FFC9}					;-- DEC ecx, one-based index
@@ -2951,69 +3017,29 @@ target: 'X86-64
 					case [
 						system-dialect/compiler/any-float? mtype [
 							either size = 4 [
-								either zero? offset [
-									emit #{C5FA1000}	;-- VMOVSS xmm0, [rax]
-								][
-									emit #{C5FA1080}	;-- VMOVSS xmm0, [rax+disp32]
-									emit int-to-bin/to-bin32 offset
-								]
+								emit-base-ref #{C5FA1000} #{C5FA1040} #{C5FA1080} offset
 							][
-								either zero? offset [
-									emit #{C5FB1000}	;-- VMOVSD xmm0, [rax]
-								][
-									emit #{C5FB1080}	;-- VMOVSD xmm0, [rax+disp32]
-									emit int-to-bin/to-bin32 offset
-								]
+								emit-base-ref #{C5FB1000} #{C5FB1040} #{C5FB1080} offset
 							]
 						]
 						all [size = 8 not system-dialect/compiler/any-float? mtype] [
-							either zero? offset [
-								emit #{488B00}		;-- MOV rax, [rax]
-							][
-								emit #{488B80}		;-- MOV rax, [rax+disp32]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref #{488B00} #{488B40} #{488B80} offset
 						]
 						all [size = 4 not system-dialect/compiler/any-float? mtype] [
-							either zero? offset [
-								emit #{8B00}		;-- MOV eax, [rax]
-							][
-								emit #{8B80}		;-- MOV eax, [rax+disp32]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref #{8B00} #{8B40} #{8B80} offset
 						]
 						all [size = 2 not system-dialect/compiler/any-float? mtype] [
 							either signed? [
-								either zero? offset [
-									emit #{0FBF00}	;-- MOVSX eax, word [rax]
-								][
-									emit #{0FBF80}
-									emit int-to-bin/to-bin32 offset
-								]
+								emit-base-ref #{0FBF00} #{0FBF40} #{0FBF80} offset
 							][
-								either zero? offset [
-									emit #{0FB700}	;-- MOVZX eax, word [rax]
-								][
-									emit #{0FB780}
-									emit int-to-bin/to-bin32 offset
-								]
+								emit-base-ref #{0FB700} #{0FB740} #{0FB780} offset
 							]
 						]
 						all [size = 1 not system-dialect/compiler/any-float? mtype] [
 							either signed? [
-								either zero? offset [
-									emit #{0FBE00}	;-- MOVSX eax, byte [rax]
-								][
-									emit #{0FBE80}
-									emit int-to-bin/to-bin32 offset
-								]
+								emit-base-ref #{0FBE00} #{0FBE40} #{0FBE80} offset
 							][
-								either zero? offset [
-									emit #{0FB600}	;-- MOVZX eax, byte [rax]
-								][
-									emit #{0FB680}
-									emit int-to-bin/to-bin32 offset
-								]
+								emit-base-ref #{0FB600} #{0FB640} #{0FB680} offset
 							]
 						]
 						yes [
@@ -3067,77 +3093,34 @@ target: 'X86-64
 					get-word? first head path
 					tail? skip path 2
 				][
-					unless zero? offset [
-						emit #{488D80}				;-- LEA rax, [rax+disp32]
-						emit int-to-bin/to-bin32 offset
-					]
+					emit-base-ref none #{488D40} #{488D80} offset
 				][
 				case [
 					system-dialect/compiler/any-float? mtype [
 						either size = 4 [
-							either zero? offset [
-								emit #{C5FA1000}	;-- VMOVSS xmm0, [rax]
-							][
-								emit #{C5FA1080}	;-- VMOVSS xmm0, [rax+disp32]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref #{C5FA1000} #{C5FA1040} #{C5FA1080} offset
 						][
-							either zero? offset [
-								emit #{C5FB1000}	;-- VMOVSD xmm0, [rax]
-							][
-								emit #{C5FB1080}	;-- VMOVSD xmm0, [rax+disp32]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref #{C5FB1000} #{C5FB1040} #{C5FB1080} offset
 						]
 					]
 					all [size = 8 not system-dialect/compiler/any-float? mtype] [
-						either zero? offset [
-							emit #{488B00}			;-- MOV rax, [rax]
-						][
-							emit #{488B80}			;-- MOV rax, [rax+disp32]
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref #{488B00} #{488B40} #{488B80} offset
 					]
 					all [size = 4 not system-dialect/compiler/any-float? mtype] [
-						either zero? offset [
-							emit #{8B00}			;-- MOV eax, [rax]
-						][
-							emit #{8B80}			;-- MOV eax, [rax+disp32]
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref #{8B00} #{8B40} #{8B80} offset
 					]
 					all [size = 2 not system-dialect/compiler/any-float? mtype] [
 						either signed? [
-							either zero? offset [
-								emit #{0FBF00}		;-- MOVSX eax, word [rax]
-							][
-								emit #{0FBF80}		;-- MOVSX eax, word [rax+disp32]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref #{0FBF00} #{0FBF40} #{0FBF80} offset
 						][
-							either zero? offset [
-								emit #{0FB700}		;-- MOVZX eax, word [rax]
-							][
-								emit #{0FB780}		;-- MOVZX eax, word [rax+disp32]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref #{0FB700} #{0FB740} #{0FB780} offset
 						]
 					]
 					all [size = 1 not system-dialect/compiler/any-float? mtype] [
 						either signed? [
-							either zero? offset [
-								emit #{0FBE00}		;-- MOVSX eax, byte [rax]
-							][
-								emit #{0FBE80}		;-- MOVSX eax, byte [rax+disp32]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref #{0FBE00} #{0FBE40} #{0FBE80} offset
 						][
-							either zero? offset [
-								emit #{0FB600}		;-- MOVZX eax, byte [rax]
-							][
-								emit #{0FB680}		;-- MOVZX eax, byte [rax+disp32]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref #{0FB600} #{0FB640} #{0FB680} offset
 						]
 					]
 					yes [
@@ -3165,9 +3148,13 @@ target: 'X86-64
 				last?: last-value? value
 				unless parent [
 					either last? [
-						emit #{50}					;-- PUSH rax, save value
-						emit-init-path path/1
-						emit #{5A}					;-- POP rdx
+						either optimize? [
+							emit-init-path path/1		;-- assigned value is already in rdx
+						][
+							emit #{50}					;-- PUSH rax, save value
+							emit-init-path path/1
+							emit #{5A}					;-- POP rdx
+						]
 					][
 						emit-init-path path/1
 					]
@@ -3180,15 +3167,11 @@ target: 'X86-64
 				base: either last? [#{00}][#{02}]
 				either integer? idx [
 					offset: idx - 1
-					case [
-						zero? offset [
-							emit rejoin [#{88} either last? [#{10}][base]] ;-- MOV [base], r8
-						]
-						yes [
-							emit rejoin [#{88} either last? [#{90}][#{82}]]
-							emit int-to-bin/to-bin32 offset
-						]
-					]
+					emit-base-ref
+						rejoin [#{88} either last? [#{10}][base]]
+						rejoin [#{88} either last? [#{50}][#{42}]]
+						rejoin [#{88} either last? [#{90}][#{82}]]
+						offset
 				][
 					emit-load-ecx idx
 					emit #{FFC9}					;-- DEC ecx, one-based index
@@ -3214,9 +3197,13 @@ target: 'X86-64
 				last?: last-value? value
 				unless parent [
 					either last? [
-						emit #{50}					;-- PUSH rax, save value
-						emit-init-path path/1
-						emit #{5A}					;-- POP rdx
+						either optimize? [
+							emit-init-path path/1		;-- assigned value is already in rdx
+						][
+							emit #{50}					;-- PUSH rax, save value
+							emit-init-path path/1
+							emit #{5A}					;-- POP rdx
+						]
 					][
 						emit-init-path path/1
 					]
@@ -3257,52 +3244,46 @@ target: 'X86-64
 					case [
 						system-dialect/compiler/any-float? mtype [
 							either size = 4 [
-								either zero? offset [
-									emit rejoin [#{C5FA11} base] ;-- VMOVSS [base], xmm0
-								][
-									emit rejoin [#{C5FA11} either last? [#{80}][#{82}]]
-									emit int-to-bin/to-bin32 offset
-								]
+								emit-base-ref
+									rejoin [#{C5FA11} base]
+									rejoin [#{C5FA11} either last? [#{40}][#{42}]]
+									rejoin [#{C5FA11} either last? [#{80}][#{82}]]
+									offset
 							][
-								either zero? offset [
-									emit rejoin [#{C5FB11} base] ;-- VMOVSD [base], xmm0
-								][
-									emit rejoin [#{C5FB11} either last? [#{80}][#{82}]]
-									emit int-to-bin/to-bin32 offset
-								]
+								emit-base-ref
+									rejoin [#{C5FB11} base]
+									rejoin [#{C5FB11} either last? [#{40}][#{42}]]
+									rejoin [#{C5FB11} either last? [#{80}][#{82}]]
+									offset
 							]
 						]
 						all [size = 8 not system-dialect/compiler/any-float? mtype] [
-							either zero? offset [
-								emit rejoin [#{4889} value-reg] ;-- MOV [base], r64
-							][
-								emit rejoin [#{4889} either last? [#{90}][#{82}]]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref
+								rejoin [#{4889} value-reg]
+								rejoin [#{4889} either last? [#{50}][#{42}]]
+								rejoin [#{4889} either last? [#{90}][#{82}]]
+								offset
 						]
 						all [size = 4 not system-dialect/compiler/any-float? mtype] [
-							either zero? offset [
-								emit rejoin [#{89} value-reg] ;-- MOV [base], r32
-							][
-								emit rejoin [#{89} either last? [#{90}][#{82}]]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref
+								rejoin [#{89} value-reg]
+								rejoin [#{89} either last? [#{50}][#{42}]]
+								rejoin [#{89} either last? [#{90}][#{82}]]
+								offset
 						]
 						all [size = 2 not system-dialect/compiler/any-float? mtype] [
-							either zero? offset [
-								emit rejoin [#{6689} value-reg] ;-- MOV [base], r16
-							][
-								emit rejoin [#{6689} either last? [#{90}][#{82}]]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref
+								rejoin [#{6689} value-reg]
+								rejoin [#{6689} either last? [#{50}][#{42}]]
+								rejoin [#{6689} either last? [#{90}][#{82}]]
+								offset
 						]
 						all [size = 1 not system-dialect/compiler/any-float? mtype] [
-							either zero? offset [
-								emit rejoin [#{88} value-reg] ;-- MOV [base], r8
-							][
-								emit rejoin [#{88} either last? [#{90}][#{82}]]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref
+								rejoin [#{88} value-reg]
+								rejoin [#{88} either last? [#{50}][#{42}]]
+								rejoin [#{88} either last? [#{90}][#{82}]]
+								offset
 						]
 						yes [
 							system-dialect/compiler/throw-error ["x86-64 pointer store type not supported yet:" mold mtype/1]
@@ -3469,9 +3450,13 @@ target: 'X86-64
 				]
 				unless parent [
 					either last? [
-						emit #{52}					;-- PUSH rdx, save assigned value
-						emit-init-path path/1
-						emit #{5A}					;-- POP rdx
+						either optimize? [
+							emit-init-path path/1		;-- assigned value is already in rdx
+						][
+							emit #{52}					;-- PUSH rdx, save assigned value
+							emit-init-path path/1
+							emit #{5A}					;-- POP rdx
+						]
 					][
 						emit-init-path path/1
 					]
@@ -3513,52 +3498,46 @@ target: 'X86-64
 				case [
 					system-dialect/compiler/any-float? mtype [
 						either size = 4 [
-							either zero? offset [
-								emit rejoin [#{C5FA11} base]	;-- VMOVSS [base], xmm0
-							][
-								emit rejoin [#{C5FA11} either last? [#{80}][#{82}]]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref
+								rejoin [#{C5FA11} base]
+								rejoin [#{C5FA11} either last? [#{40}][#{42}]]
+								rejoin [#{C5FA11} either last? [#{80}][#{82}]]
+								offset
 						][
-							either zero? offset [
-								emit rejoin [#{C5FB11} base]	;-- VMOVSD [base], xmm0
-							][
-								emit rejoin [#{C5FB11} either last? [#{80}][#{82}]]
-								emit int-to-bin/to-bin32 offset
-							]
+							emit-base-ref
+								rejoin [#{C5FB11} base]
+								rejoin [#{C5FB11} either last? [#{40}][#{42}]]
+								rejoin [#{C5FB11} either last? [#{80}][#{82}]]
+								offset
 						]
 					]
 					all [size = 8 not system-dialect/compiler/any-float? mtype] [
-						either zero? offset [
-							emit rejoin [#{4889} value-reg]	;-- MOV [base], r64
-						][
-							emit rejoin [#{4889} either last? [#{90}][#{82}]]
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref
+							rejoin [#{4889} value-reg]
+							rejoin [#{4889} either last? [#{50}][#{42}]]
+							rejoin [#{4889} either last? [#{90}][#{82}]]
+							offset
 					]
 					all [size = 4 not system-dialect/compiler/any-float? mtype] [
-						either zero? offset [
-							emit rejoin [#{89} value-reg]	;-- MOV [base], r32
-						][
-							emit rejoin [#{89} either last? [#{90}][#{82}]]
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref
+							rejoin [#{89} value-reg]
+							rejoin [#{89} either last? [#{50}][#{42}]]
+							rejoin [#{89} either last? [#{90}][#{82}]]
+							offset
 					]
 					all [size = 2 not system-dialect/compiler/any-float? mtype] [
-						either zero? offset [
-							emit rejoin [#{6689} value-reg]	;-- MOV [base], r16
-						][
-							emit rejoin [#{6689} either last? [#{90}][#{82}]]
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref
+							rejoin [#{6689} value-reg]
+							rejoin [#{6689} either last? [#{50}][#{42}]]
+							rejoin [#{6689} either last? [#{90}][#{82}]]
+							offset
 					]
 					all [size = 1 not system-dialect/compiler/any-float? mtype] [
-						either zero? offset [
-							emit rejoin [#{88} value-reg]	;-- MOV [base], r8
-						][
-							emit rejoin [#{88} either last? [#{90}][#{82}]]
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref
+							rejoin [#{88} value-reg]
+							rejoin [#{88} either last? [#{50}][#{42}]]
+							rejoin [#{88} either last? [#{90}][#{82}]]
+							offset
 					]
 					yes [
 						system-dialect/compiler/throw-error ["x86-64 path store type not supported yet:" mold mtype/1]
@@ -3598,79 +3577,36 @@ target: 'X86-64
 				tail? skip path 2
 			]
 		][
-			unless zero? offset [
-				emit #{488D80}						;-- LEA rax, [rax+disp32]
-				emit int-to-bin/to-bin32 offset
-			]
+			emit-base-ref none #{488D40} #{488D80} offset
 		][
 			size: emitter/size-of? mtype
 			signed?: system-dialect/compiler/signed-integer? mtype
 			case [
 				system-dialect/compiler/any-float? mtype [
 					either size = 4 [
-						either zero? offset [
-							emit #{C5FA1000}		;-- VMOVSS xmm0, [rax]
-						][
-							emit #{C5FA1080}
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref #{C5FA1000} #{C5FA1040} #{C5FA1080} offset
 					][
-						either zero? offset [
-							emit #{C5FB1000}		;-- VMOVSD xmm0, [rax]
-						][
-							emit #{C5FB1080}
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref #{C5FB1000} #{C5FB1040} #{C5FB1080} offset
 					]
 				]
 				all [size = 8 not system-dialect/compiler/any-float? mtype] [
-					either zero? offset [
-						emit #{488B00}				;-- MOV rax, [rax]
-					][
-						emit #{488B80}
-						emit int-to-bin/to-bin32 offset
-					]
+					emit-base-ref #{488B00} #{488B40} #{488B80} offset
 				]
 				all [size = 4 not system-dialect/compiler/any-float? mtype] [
-					either zero? offset [
-						emit #{8B00}				;-- MOV eax, [rax]
-					][
-						emit #{8B80}
-						emit int-to-bin/to-bin32 offset
-					]
+					emit-base-ref #{8B00} #{8B40} #{8B80} offset
 				]
 				all [size = 2 not system-dialect/compiler/any-float? mtype] [
 					either signed? [
-						either zero? offset [
-							emit #{0FBF00}			;-- MOVSX eax, word [rax]
-						][
-							emit #{0FBF80}
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref #{0FBF00} #{0FBF40} #{0FBF80} offset
 					][
-						either zero? offset [
-							emit #{0FB700}			;-- MOVZX eax, word [rax]
-						][
-							emit #{0FB780}
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref #{0FB700} #{0FB740} #{0FB780} offset
 					]
 				]
 				all [size = 1 not system-dialect/compiler/any-float? mtype] [
 					either signed? [
-						either zero? offset [
-							emit #{0FBE00}			;-- MOVSX eax, byte [rax]
-						][
-							emit #{0FBE80}
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref #{0FBE00} #{0FBE40} #{0FBE80} offset
 					][
-						either zero? offset [
-							emit #{0FB600}			;-- MOVZX eax, byte [rax]
-						][
-							emit #{0FB680}
-							emit int-to-bin/to-bin32 offset
-						]
+						emit-base-ref #{0FB600} #{0FB640} #{0FB680} offset
 					]
 				]
 				yes [
@@ -4349,12 +4285,19 @@ target: 'X86-64
 				emit int-to-bin/to-bin8 value
 			][
 				either integer? value [
-					emit #{48B8}					;-- MOV rax, imm64
-					emit int-to-bin/to-bin64 value
+					either optimize? [
+						emit #{68}					;-- PUSH sign-extended imm32
+						emit int-to-bin/to-bin32 value
+					][
+						emit #{48B8}				;-- MOV rax, imm64
+						emit int-to-bin/to-bin64 value
+					]
 				][
 					emit-load value
 				]
-				emit #{50}							;-- PUSH rax
+				unless all [integer? value optimize?][
+					emit #{50}						;-- PUSH rax
+				]
 			]
 		]
 	]

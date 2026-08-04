@@ -34,7 +34,7 @@ bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
 
 print-usage: does [
-	print "Usage: red-bootstrap [-r] [-u] [-d] [-dlib] [-t target] [--red-only] [-o output] source.red|source.reds"
+	print "Usage: red-bootstrap [-r] [-u] [-d] [-O0|-O1] [-dlib] [-t target] [--red-only] [-o output] source.red|source.reds"
 ]
 
 fail-command: func [message][
@@ -102,6 +102,7 @@ build-libRedRT: func [
 	compiler-system-job/job-set job 'GUI-engine compiler-system-job/job-get app-job 'GUI-engine
 	compiler-system-job/job-set job 'draw-engine compiler-system-job/job-get app-job 'draw-engine
 	compiler-system-job/job-set job 'debug? compiler-system-job/job-get app-job 'debug?
+	compiler-system-job/job-set job 'opt-level compiler-system-job/job-get app-job 'opt-level
 	compiler-system-job/job-set job 'redbin-compress? compiler-system-job/job-get app-job 'redbin-compress?
 	compiler-system-job/job-set job 'compiler-version compiler-version
 	compiler-system-job/job-set job 'compiler-build-date compiler-build-date

@@ -46,6 +46,7 @@ system-dialect: context [
 		use-natives?:		no							;-- force use of native functions instead of C bindings
 		debug?:				no							;-- emit debug information into binary
 		debug-safe?:		yes							;-- try to avoid over-crashing on runtime debug reports
+		opt-level:			1							;-- 0 = legacy emitter, 1 = fast local optimizations
 		dev-mode?:		 	none						;-- yes => turn on developer mode (pre-build runtime, default), no => build a single binary
 		static-link?:		no							;-- yes => extension-less #import names resolve to static libs (.lib/.a) instead of dynamic (.dll/.so/.dylib)
 		need-main?:			no							;-- yes => emit a function prolog/epilog around global code

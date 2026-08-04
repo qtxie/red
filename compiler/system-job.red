@@ -13,6 +13,7 @@ compiler-system-job: context [
 		ABI: none
 		link?: false
 		debug?: false
+		opt-level: 1
 		build-prefix: %builds/
 		build-basename: none
 		build-suffix: none
@@ -74,6 +75,7 @@ compiler-system-job: context [
 			ABI: none
 			link?: false
 			debug?: false
+			opt-level: 1
 			build-prefix: %builds/
 			build-basename: none
 			build-suffix: none

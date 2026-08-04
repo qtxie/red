@@ -94,21 +94,38 @@ alloc-tail-unit: func [
 	p
 ]
 
-copy-cell: func [
-	src		[cell!]
-	dst		[cell!]
-	return: [red-value!]
-	/local
-		d s [int-ptr!]
+#either target = 'X86-64 [
+	copy-cell: func [
+		src		[cell!]
+		dst		[cell!]
+		return: [red-value!]
+		/local
+			d s [pointer! [int64!]]
+	][
+		if src = dst [return dst]
+		d: as [pointer! [int64!]] dst
+		s: as [pointer! [int64!]] src
+		d/1: s/1
+		d/2: s/2
+		dst
+	]
 ][
-	if src = dst [return dst]
-	d: as int-ptr! dst
-	s: as int-ptr! src
-	d/1: s/1											;@@ should use SIMD 128-bit copying when possible
-	d/2: s/2
-	d/3: s/3
-	d/4: s/4
-	dst
+	copy-cell: func [
+		src		[cell!]
+		dst		[cell!]
+		return: [red-value!]
+		/local
+			d s [int-ptr!]
+	][
+		if src = dst [return dst]
+		d: as int-ptr! dst
+		s: as int-ptr! src
+		d/1: s/1											;@@ should use SIMD 128-bit copying when possible
+		d/2: s/2
+		d/3: s/3
+		d/4: s/4
+		dst
+	]
 ]
 
 copy-part: func [		;-- copy part of the series!

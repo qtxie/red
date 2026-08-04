@@ -352,6 +352,16 @@ stack: context [										;-- call stack
 		assert arguments >= bottom
 		copy-cell last arguments
 	]
+
+	unwind-flush: does [								;-- unwind and discard a statement result
+		#if debug? = yes [if verbose > 0 [print-line "stack/unwind-flush"]]
+
+		assert cbottom < ctop
+		ctop: ctop - 1
+		arguments: ctop/prev
+		top: arguments
+		assert arguments >= bottom
+	]
 	
 	unroll-frames: func [
 		flags  [integer!]

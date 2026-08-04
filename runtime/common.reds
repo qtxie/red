@@ -275,6 +275,134 @@ type-check: func [
 	arg													;-- pass-thru argument
 ]
 
+set-top*: func [										;-- fused set-word from stack top
+	word	[red-word!]
+	return: [red-value!]
+	/local
+		value [red-value!]
+][
+	value: stack/get-top
+	if TYPE_OF(value) = TYPE_UNSET [
+		fire [TO_ERROR(script need-value) word]
+	]
+	_context/set word value
+]
+
+set-top-in*: func [									;-- fused function-local set-word
+	node	[node-handle!]
+	index	[integer!]
+	return: [red-value!]
+	/local
+		ctx	   [red-context!]
+		value  [red-value!]
+		values [series!]
+		slot   [red-value!]
+][
+	value: stack/get-top
+	ctx: TO_CTX(node)
+	if TYPE_OF(value) = TYPE_UNSET [
+		fire [TO_ERROR(script need-value) _hashtable/get-ctx-word ctx index]
+	]
+	slot: either ON_STACK?(ctx) [
+		(stack/get-values ctx/values) + index
+	][
+		values: resolve-series ctx/values
+		values/offset + index
+	]
+	copy-cell value slot
+]
+
+get-ptr*: func [										;-- global value slot without a stack push
+	word	 [red-word!]
+	return:  [red-value!]
+	/local
+		value [red-value!]
+][
+	value: _context/get word
+	if TYPE_OF(value) = TYPE_UNSET [
+		fire [TO_ERROR(script no-value) word]
+	]
+	value
+]
+
+set-top-flush*: func [								;-- set a global and discard the statement value
+	word	[red-word!]
+	/local
+		value [red-value!]
+][
+	value: stack/get-top
+	if TYPE_OF(value) = TYPE_UNSET [
+		fire [TO_ERROR(script need-value) word]
+	]
+	_context/set word value
+	stack/top: stack/arguments
+]
+
+set-top-in-flush*: func [							;-- set a local and discard the statement value
+	node	[node-handle!]
+	index	[integer!]
+	/local
+		ctx	   [red-context!]
+		value  [red-value!]
+		values [series!]
+		slot   [red-value!]
+][
+	value: stack/get-top
+	ctx: TO_CTX(node)
+	if TYPE_OF(value) = TYPE_UNSET [
+		fire [TO_ERROR(script need-value) _hashtable/get-ctx-word ctx index]
+	]
+	slot: either ON_STACK?(ctx) [
+		(stack/get-values ctx/values) + index
+	][
+		values: resolve-series ctx/values
+		values/offset + index
+	]
+	copy-cell value slot
+	stack/top: stack/arguments
+]
+
+set-in-ctx-flush*: func [							;-- set an object field and discard the statement value
+	node	[node-handle!]
+	index	[integer!]
+	/local
+		ctx	   [red-context!]
+		value  [red-value!]
+		w	   [red-word!]
+		values [series!]
+][
+	value: stack/get-top
+	ctx: TO_CTX(node)
+	if GET_CTX_TYPE(ctx) = CONTEXT_OBJECT [
+		w: _hashtable/get-ctx-word ctx index
+		w/header: w/header or flag-word-dirty
+	]
+	values: resolve-series ctx/values
+	copy-cell value values/offset + index
+	stack/top: stack/arguments
+]
+
+get-local-ptr*: func [								;-- local or object value slot without a stack push
+	node	[node-handle!]
+	index	[integer!]
+	return: [red-value!]
+	/local
+		ctx [red-context!]
+		s   [series!]
+][
+	ctx: TO_CTX(node)
+	if NULL_HANDLE?(ctx/values) [
+		s: _hashtable/get-ctx-words ctx
+		fire [TO_ERROR(script not-defined) s/offset + index]
+	]
+	either ON_STACK?(ctx) [
+		(stack/get-values ctx/values) + index
+	][
+		s: resolve-series ctx/values
+		s/offset + index
+	]
+]
+
 set-opt-refinement*: func [
 	value [red-value!]
 	idx	  [integer!]

@@ -599,6 +599,47 @@ red: context [
 			emit-push-from name original type [push-local push]
 		]
 	]
+
+	emit-set-top: func [name [any-word!] original [any-word!] /local obj ctx idx][
+		name: to word! name
+		obj: binding-of original
+		unless object? :obj [
+			if all [
+				1 < length? obj-stack
+				obj: attempt [safe-eval-object-path obj-stack]
+				not object? :obj
+			][obj: none]
+		]
+		case [
+			all [
+				object? :obj
+				rebol-gctx <> obj
+				ctx: select/same shadow-funcs obj
+				name <> 'self
+			][
+				emit 'set-top-in*							;-- function local
+				emit ctx
+				emit get-word-index name
+				insert-lf -3
+			]
+			all [
+				object? :obj
+				rebol-gctx <> obj
+				ctx: select-obj obj
+				attempt [idx: get-word-index/with name ctx]
+			][
+				emit 'word/set-in-ctx						;-- object field
+				emit either parent-object? obj ['octx][ctx]
+				emit idx
+				insert-lf -3
+			]
+			'else [
+				emit 'set-top*								;-- global word
+				emit prefix-exec name
+				insert-lf -2
+			]
+		]
+	]
 	
 	emit-get-word: func [name [word!] original [any-word!] /any? /literal /local new obj ctx][
 		either all [
@@ -714,8 +755,31 @@ red: context [
 	]
 	
 	emit-stack-reset: does [
-		emit 'stack/reset
-		insert-lf -1
+		unless find/only [stack/reset stack/unwind-flush] last output [
+			emit 'stack/reset
+			insert-lf -1
+		]
+	]
+
+	flush-statement-tail: does [
+		case [
+			'stack/unwind = last output [
+				change/only back tail output 'stack/unwind-flush
+			]
+			'stack/unwind-last = last output [
+				change/only back tail output 'stack/unwind-flush
+			]
+			'set-top* = pick tail output -2 [
+				change skip tail output -2 'set-top-flush*
+			]
+			'set-top-in* = pick tail output -3 [
+				change skip tail output -3 'set-top-in-flush*
+			]
+			'word/set-in-ctx = pick tail output -3 [
+				change skip tail output -3 'set-in-ctx-flush*
+			]
+			'else [emit-stack-reset]
+		]
 	]
 	
 	emit-dyn-check: does [
@@ -2890,35 +2954,53 @@ red: context [
 		]
 	]
 		
-	comp-if: does [
+	comp-if: has [cond][
 		emit-open-frame 'if
 		comp-expression/close-path
-		emit compose/deep [
-			either logic/false? [(set-last-none)]
+		either cond: take-fused-cond [
+			emit-fused-cond cond yes
+			append/only output copy [none/push-last]
+			comp-sub-block/bare 'if-body
+		][
+			emit compose/deep [
+				either logic/false? [(set-last-none)]
+			]
+			comp-sub-block 'if-body
 		]
-		comp-sub-block 'if-body							;-- compile TRUE block
 		emit-close-frame
 	]
 	
-	comp-unless: does [
+	comp-unless: has [cond][
 		emit-open-frame 'unless
 		comp-expression/close-path
-		emit [
-			either logic/false?
+		either cond: take-fused-cond [
+			emit-fused-cond cond yes
+			comp-sub-block/bare 'unless-body
+			append/only output copy [none/push-last]
+		][
+			emit [
+				either logic/false?
+			]
+			comp-sub-block 'unless-body
+			append/only output set-last-none
 		]
-		comp-sub-block 'unless-body						;-- compile FALSE block
-		append/only output set-last-none
 		emit-close-frame
 	]
 
-	comp-either: does [
+	comp-either: has [cond][
 		emit-open-frame 'either
 		comp-expression/close-path
-		emit [
-			either logic/true?
+		either cond: take-fused-cond [
+			emit-fused-cond cond no
+			comp-sub-block/bare 'either-true
+			comp-sub-block/bare 'either-false
+		][
+			emit [
+				either logic/true?
+			]
+			comp-sub-block 'either-true
+			comp-sub-block 'either-false
 		]
-		comp-sub-block 'either-true						;-- compile TRUE block
-		comp-sub-block 'either-false					;-- compile FALSE block
 		emit-close-frame
 	]
 	
@@ -2966,8 +3048,10 @@ red: context [
 		push-call 'until
 		comp-sub-block 'until-body						;-- compile body
 		pop-call
-		append/only last output 'logic/true?
-		new-line back tail last output on
+		unless fuse-cond-block last output [
+			append/only last output 'logic/true?
+			new-line back tail last output on
+		]
 		emit-close-frame
 	]
 	
@@ -2978,8 +3062,10 @@ red: context [
 		]
 		push-call 'while-cond
 		comp-sub-block 'while-condition					;-- compile condition
-		append/only last output 'logic/true?
-		new-line back tail last output on
+		unless fuse-cond-block last output [
+			append/only last output 'logic/true?
+			new-line back tail last output on
+		]
 		pop-call
 		push-call 'while
 		comp-sub-block 'while-body						;-- compile body
@@ -3002,13 +3088,11 @@ red: context [
 		insert-lf -1
 		emit-argument-type-check 1 'repeat 'stack/arguments
 
-		emit-open-frame 'set
-		emit-push-word name name						;-- push the word
 		emit [
-			integer/push 0
-			word/set									;-- initialize the counter word to 0
+			integer/push 0								;-- initialize the counter word to 0
 		]
-		emit-close-frame
+		insert-lf -2
+		emit-set-top name name
 
 		emit [loop integer/get stack/arguments]
 		insert-lf -3
@@ -4470,15 +4554,10 @@ red: context [
 			no-check?: yes
 		]
 		;-- General case: emit stack-oriented construction code --
-		emit-open-frame 'set
-		
-		either native [									;-- 1st argument
+		if native [										;-- native SET still needs its call frame
+			emit-open-frame 'set
 			pc: back pc
 			comp-expression								;-- fetch a value
-		][
-			unless obj-bound? [
-				emit-push-word name	original 			;-- push set-word
-			]
 		]
 		
 		push-call 'set
@@ -4523,18 +4602,10 @@ red: context [
 		
 		either native [
 			emit-native/with 'set [-1 -1 -1 -1]			;@@ refinement not handled yet
+			emit-close-frame
 		][
-			either all [obj-bound? ctx: select-obj obj][
-				emit 'word/set-in
-				emit either parent-object? obj ['octx][ctx] ;-- optional parametrized context reference (octx)
-				emit get-word-index/with name ctx
-				insert-lf -3
-			][
-				emit 'word/set
-				insert-lf -1
-			]
+			emit-set-top name original					;-- value is already on stack top
 		]
-		emit-close-frame
 	]
 
 	comp-word: func [
@@ -4668,14 +4739,203 @@ red: context [
 			name #"*"
 		]
 	]
+
+	fused-op-id: [
+	;--	prefix name			R/S op code			kind
+		add					OP_ADD				math
+		subtract			OP_SUB				math
+		multiply			OP_MUL				math
+		and~				OP_AND				math
+		or~					OP_OR				math
+		xor~				OP_XOR				math
+		equal?				COMP_EQUAL			cmp
+		not-equal?			COMP_NOT_EQUAL		cmp
+		strict-equal?		COMP_STRICT_EQUAL	cmp
+		lesser?				COMP_LESSER			cmp
+		lesser-or-equal?	COMP_LESSER_EQUAL	cmp
+		greater?			COMP_GREATER		cmp
+		greater-or-equal?	COMP_GREATER_EQUAL	cmp
+	]
+
+	fused-operand: func [token /local obj ctx idx name new][
+		case [
+			integer? :token [token]
+			all [
+				word? :token
+				not find functions get-prefix-func to word! token
+				not find intrinsics token
+				not find [true false yes no on off none] token
+			][
+				name: to word! token
+				if local-word? name [
+					return reduce [decorate-symbol/no-alias name]
+				]
+				obj: binding-of token
+				unless object? :obj [
+					if all [
+						1 < length? obj-stack
+						obj: attempt [safe-eval-object-path obj-stack]
+						not object? :obj
+					][obj: none]
+				]
+				case [
+					all [
+						object? :obj
+						rebol-gctx <> obj
+						ctx: select/same shadow-funcs obj
+					][
+						either all [not empty? ctx-stack ctx <> last ctx-stack][
+							none							;-- outer function context
+						][
+							reduce [decorate-symbol/no-alias name]
+						]
+					]
+					all [
+						object? :obj
+						rebol-gctx <> obj
+						ctx: select-obj obj
+						attempt [idx: get-word-index/with name ctx]
+					][
+						reduce [
+							'get-local-ptr*
+							either parent-object? obj ['octx][ctx]
+							idx
+						]
+					]
+					'else [
+						either all [new: select-ssa name not find-function new new][
+							none							;-- SSA-renamed value
+						][
+							add-symbol name
+							reduce ['get-ptr* prefix-exec name]
+						]
+					]
+				]
+			]
+			'else [none]
+		]
+	]
+
+	fused-cmp-mark: none
+	fused-cmp-end:  none
+
+	comp-fused-binop: func [/local end op name entry spec left right fname cnt][
+		end: search-expr-end pc
+		if 2 <> offset? pc end [return false]
+		op: pc/2
+		name: any [select op-actions op op]
+		unless entry: find/skip fused-op-id name 3 [return false]
+		spec: select functions name
+		unless spec [return false]
+		unless spec/1 = (either entry/3 = 'math ['action!]['native!]) [return false]
+
+		left:  fused-operand pc/1
+		right: fused-operand pc/3
+		if any [none? left none? right not block? left][return false]
+
+		add-symbol op: to word! op
+		fused-cmp-mark: if entry/3 = 'cmp [tail output]
+		fname: either entry/3 = 'math [
+			either integer? right ['actions/op2i*]['actions/op2*]
+		][
+			either integer? right ['actions/cmp2i*]['actions/cmp2*]
+		]
+		emit fname
+		emit entry/2
+		emit prefix-exec op
+		emit left
+		emit right
+		cnt: 3 + (length? left) + either block? right [length? right][1]
+		insert-lf negate cnt
+		fused-cmp-end: if fused-cmp-mark [tail output]
+
+		pc: next end
+		true
+	]
+
+	cond-arg?: func [token][
+		any [
+			integer? :token
+			all [path? :token 'exec = first :token]
+			:token = 'octx
+			:token = 'get-ptr*
+			:token = 'get-local-ptr*
+			all [word? :token #"~" = first mold :token]
+			all [word? :token find/match mold :token "ctx||"]
+			all [word? :token find/match mold :token "COMP_"]
+		]
+	]
+
+	fused-cond-call?: func [pos [block!]][
+		unless find/only reduce ['actions/cmp2* 'actions/cmp2i*] pos/1 [return no]
+		pos: next pos
+		while [not tail? pos][
+			unless cond-arg? pos/1 [return no]
+			pos: next pos
+		]
+		yes
+	]
+
+	take-fused-cond: func [/local tokens][
+		unless all [
+			fused-cmp-mark
+			fused-cmp-end
+			same? fused-cmp-end tail output
+			not same? fused-cmp-mark fused-cmp-end
+			fused-cond-call? fused-cmp-mark
+		][return none]
+		tokens: copy fused-cmp-mark
+		clear fused-cmp-mark
+		fused-cmp-mark: none
+		fused-cmp-end: none
+		tokens
+	]
+
+	emit-fused-cond: func [tokens [block!] not? [logic!]][
+		change/only tokens select/only reduce [
+			'actions/cmp2*  'actions/cmp2b*
+			'actions/cmp2i* 'actions/cmp2ib*
+		] tokens/1
+		append tokens pick [yes no] not?
+		new-line/all tokens off
+		emit 'either
+		emit tokens
+		insert-lf negate 1 + length? tokens
+	]
+
+	fuse-cond-block: func [blk [block!] /local pos start token][
+		pos: back tail blk
+		while [
+			all [not head? pos any [string? pos/1 comment-marker = pos/1]]
+		][
+			pos: back pos
+		]
+		unless 'stack/reset = pos/1 [return no]
+		start: pos
+		token: none
+		until [
+			if any [head? start 9 < offset? start pos][return no]
+			start: back start
+			token: start/1
+			any [
+				find/only reduce ['actions/cmp2* 'actions/cmp2i*] token
+				either cond-arg? token [no][return no]
+			]
+		]
+		change/only start either token = 'actions/cmp2* ['actions/cmp2b*]['actions/cmp2ib*]
+		change pos 'no
+		if all ['stack/reset = blk/1 2 = index? start][remove blk]
+		yes
+	]
 	
 	check-infix-operators: func [
 		root? [logic!]
 		/local name op pos end ops spec substitute cnt paths single?
 	][
 		if infix? pc [return false]						;-- infix op already processed,
-														;-- or used in prefix mode.
+												;-- or used in prefix mode.
 		if infix? next pc [
+			if comp-fused-binop [return true]
 			substitute: [
 				if paths < length? paths-stack [
 					emit [stack/push pos +]
@@ -5107,12 +5367,12 @@ red: context [
 		]
 		if root [
 			either tail? pc	[
-				unless find/only [stack/reset stack/unwind] last output [
+				unless find/only [stack/reset stack/unwind stack/unwind-flush] last output [
 					emit-dyn-check
 				]
 			][
 				if 'stack/reset <> last output [
-					emit-stack-reset					;-- clear stack from last root expression result
+					flush-statement-tail				;-- discard the non-tail statement value
 				]
 			]
 		]
@@ -5166,7 +5426,7 @@ red: context [
 		list
 	]
 	
-	comp-sub-block: func [origin [word!] /with body /local mark saved][
+	comp-sub-block: func [origin [word!] /bare /with body /local mark saved][
 		unless any [with block? pc/1][
 			throw-error [
 				"expected a block for" uppercase form origin
@@ -5181,8 +5441,12 @@ red: context [
 		pc: next saved									;-- step over block in source code				
 
 		convert-to-block mark
-		head insert last output [
-			stack/reset
+		either any [bare origin = 'func-body][
+			head last output
+		][
+			head insert last output [
+				stack/reset
+			]
 		]
 	]
 	

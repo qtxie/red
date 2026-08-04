@@ -565,6 +565,77 @@ recycle/off
 		--assert not crashed?
 		--assert found? find qt/output "1"
 
+	--test-- "fused-codegen-operations"
+		--compile-and-run-this {
+			Red []
+
+			verify: func [condition [logic!] label [string!]][
+				unless condition [print ["FAIL" label] quit/return 1]
+			]
+
+			global-a: 7
+			global-b: 5
+			global-a: global-a + global-b
+			verify global-a = 12 "global assignment"
+			set-global-tail: does [global-a: 13]
+			verify (set-global-tail) = 13 "global tail assignment"
+			global-a: 12
+
+			calc: func [a [integer!] b [integer!] /local value][
+				value: a + b
+				value: value * 3
+				value
+			]
+			verify (calc 2 3) = 15 "local assignment"
+			set-local-tail: has [value][value: 14]
+			verify (set-local-tail) = 14 "local tail assignment"
+
+			obj: object [
+				x: 2
+				y: 4
+				calc: does [x: x + y x: x * 2]
+			]
+			verify obj/calc = 12 "object assignment"
+
+			float-a: 1.5
+			float-b: 2.0
+			float-c: float-a + float-b
+			verify float-c = 3.5 "generic math fallback"
+
+			string-a: "same"
+			string-b: "same"
+			verify string-a = string-b "generic compare fallback"
+
+			big: 2147483647
+			promoted: big + 1
+			verify promoted = 2147483648.0 "overflow promotion"
+
+			score: 0
+			if global-b < global-a [score: score + 1]
+			unless global-a < global-b [score: score + 1]
+			either global-a == 12 [score: score + 1][score: 0]
+
+			index: 0
+			while [index < 3][index: index + 1]
+			until [index: index + 1 index == 5]
+			repeat item 2 [score: score + item]
+			verify all [score = 6 index = 5] "conditional and loop fusion"
+			positive-value?: func [value][value > 0]
+			verify all [positive-value? score positive-value? index] "all statement cleanup"
+			verify any [none positive-value? score] "any statement cleanup"
+
+			outer: func [left [integer!] /local inner][
+				inner: func [right [integer!]][left + right]
+				inner 4
+			]
+			verify (outer 6) = 10 "outer context fallback"
+
+			print "FUSED-CODEGEN-OK"
+		}
+		--assert compiled?
+		--assert not crashed?
+		--assert found? find qt/output "FUSED-CODEGEN-OK"
+
 ===end-group===
 
 ~~~end-file~~~ 

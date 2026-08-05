@@ -17,9 +17,10 @@ rs-o2-x64: context [
 	promoted-registers: make block! 4
 	promoted-entry-loads: make block! 4
 	loop-blocks: make block! 8
+	aligned-loop-blocks: make block! 4
 	folded-loads: make block! 8
-	call-relocations: make block! 8
-	encoded-call-patches: make block! 8
+	planned-relocations: make block! 8
+	encoded-relocation-patches: make block! 8
 	encoded-instruction-offsets: make block! 16
 	relaxed-branches: make block! 8
 	branch-relaxation-changed?: no
@@ -191,6 +192,18 @@ rs-o2-x64: context [
 				]
 			]
 		]
+	]
+
+	loop-has-global-store?: func [/local block instruction][
+		plan-loop-blocks
+		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			if find loop-blocks pick block rs-o2-ir/bb-id [
+				foreach instruction pick block rs-o2-ir/bb-instructions [
+					if (pick instruction rs-o2-ir/ins-opcode) = 'store-global [return yes]
+				]
+			]
+		]
+		no
 	]
 
 	local-reference-score: func [name [word!] /local score block weight instruction operand][
@@ -663,6 +676,24 @@ rs-o2-x64: context [
 					not pick stack-entry rs-o2-ir/stack-escaped?
 				][return fail-selection 'x64-unresolved-stack-offset]
 			]
+			opcode = 'load-global [
+				unless all [
+					result
+					(length? operands) = 1
+					operands/1/1 = 'global
+				][return fail-selection 'x64-global-load-shape]
+			]
+			opcode = 'store-global [
+				unless all [
+					(length? operands) = 2
+					operands/1/1 = 'global
+					operands/2/1 = 'vreg
+				][return fail-selection 'x64-global-store-shape]
+				operand: rs-o2-ir/vreg-type operands/2/2
+				unless any [supported-gpr-scalar? operand supported-float? operand][
+					return fail-selection 'x64-global-store-type
+				]
+			]
 			supported-binary-operation? opcode [
 				unless all [
 					result
@@ -735,43 +766,56 @@ rs-o2-x64: context [
 		yes
 	]
 
-	plan-call-relocations: func [
+	plan-relocations: func [
 		direct-chunk [block!]
-		/local calls refs block instruction position name spec ref relative start ending
+		/local ir-relocations refs relocation position id kind name addend instruction
+			opcode spec ref relative start ending valid-symbol?
 	][
-		clear call-relocations
-		calls: make block! 8
-		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
-			foreach instruction pick block rs-o2-ir/bb-instructions [
-				if (pick instruction rs-o2-ir/ins-opcode) = 'call [append/only calls instruction]
-			]
-		]
+		clear planned-relocations
+		ir-relocations: pick rs-o2-ir/current rs-o2-ir/fn-relocations
 		refs: direct-chunk/2
-		unless (length? calls) = length? refs [return fail-selection 'x64-call-relocation-count]
-		if empty? calls [return yes]
+		unless (length? ir-relocations) = length? refs [
+			return fail-selection 'x64-relocation-count
+		]
+		if empty? ir-relocations [return yes]
 		unless all [(length? direct-chunk) >= 3 integer? direct-chunk/3][
-			return fail-selection 'x64-call-relocation-base
+			return fail-selection 'x64-relocation-base
 		]
 		start: pick rs-o2-ir/current rs-o2-ir/fn-body-start
 		ending: pick rs-o2-ir/current rs-o2-ir/fn-body-end
 		position: refs
-		foreach instruction calls [
-			name: pick instruction rs-o2-ir/ins-operands
-			name: name/1/2
+		foreach relocation ir-relocations [
+			id: relocation/1
+			kind: relocation/2
+			name: relocation/3
+			addend: relocation/4
+			unless zero? addend [return fail-selection 'x64-relocation-addend]
+			instruction: rs-o2-ir/find-instruction id
+			unless instruction [return fail-selection 'x64-relocation-instruction]
+			opcode: pick instruction rs-o2-ir/ins-opcode
 			spec: select emitter/symbols name
 			ref: position/1
 			unless all [
 				spec
-				spec/1 = 'native
 				block? ref
 				not tail? ref
 				same? head ref spec/3
-			][return fail-selection 'x64-call-relocation-symbol]
+			][return fail-selection 'x64-relocation-symbol]
+			valid-symbol?: case [
+				kind = 'call-rel32 [all [opcode = 'call spec/1 = 'native]]
+				kind = 'rip-rel32 [
+					either opcode = 'store-global [
+						spec/1 = 'global
+					][all [opcode = 'load-global find [global constant] spec/1]]
+				]
+				true [no]
+			]
+			unless valid-symbol? [return fail-selection 'x64-relocation-symbol-type]
 			relative: ref/1 - direct-chunk/3 + 1
 			unless all [relative > start relative <= ending][
-				return fail-selection 'x64-call-relocation-range
+				return fail-selection 'x64-relocation-range
 			]
-			repend call-relocations [pick instruction rs-o2-ir/ins-id ref]
+			append/only planned-relocations reduce [id ref]
 			position: next position
 		]
 		yes
@@ -783,9 +827,10 @@ rs-o2-x64: context [
 		clear promoted-registers
 		clear promoted-entry-loads
 		clear loop-blocks
+		clear aligned-loop-blocks
 		clear folded-loads
-		clear call-relocations
-		clear encoded-call-patches
+		clear planned-relocations
+		clear encoded-relocation-patches
 		clear spilled-values
 		clear call-spilled-values
 		spill-frame-bytes: 0
@@ -796,9 +841,6 @@ rs-o2-x64: context [
 		gc-bitmap-original: none
 		gc-bitmap-offset: none
 		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
-		unless empty? pick rs-o2-ir/current rs-o2-ir/fn-relocations [
-			return fail-selection 'x64-ir-relocations
-		]
 		unless empty? pick rs-o2-ir/current rs-o2-ir/fn-safepoints [
 			return fail-selection 'x64-safepoints
 		]
@@ -821,7 +863,8 @@ rs-o2-x64: context [
 				unless validate-operands instruction [return no]
 			]
 		]
-		unless plan-call-relocations direct-chunk [return no]
+		if loop-has-global-store? [return fail-selection 'x64-global-store-loop]
+		unless plan-relocations direct-chunk [return no]
 		frameless?: all [(length? blocks) = 1 frameless-eligible?]
 		unless frameless? [plan-promoted-locals]
 		yes
@@ -1599,6 +1642,50 @@ rs-o2-x64: context [
 		emit-frame-modrm code src offset
 	]
 
+	emit-rip-load: func [
+		code [binary!]
+		type [block!]
+		destination [word!]
+		/local dst patch
+	][
+		either supported-float? type [
+			dst: xmm-register-code destination
+			append-byte code float-prefix type
+			emit-rex code no dst none 5
+			append code #{0F10}
+		][
+			dst: register-code destination
+			emit-rex code supported-wide-gpr? type dst none 5
+			append-byte code 139
+		]
+		emit-modrm code 0 dst 5
+		patch: (length? code) + 1
+		append code #{00000000}
+		patch
+	]
+
+	emit-rip-store: func [
+		code [binary!]
+		type [block!]
+		source [word!]
+		/local src patch
+	][
+		either supported-float? type [
+			src: xmm-register-code source
+			append-byte code float-prefix type
+			emit-rex code no src none 5
+			append code #{0F11}
+		][
+			src: register-code source
+			emit-rex code supported-wide-gpr? type src none 5
+			append-byte code 137
+		]
+		emit-modrm code 0 src 5
+		patch: (length? code) + 1
+		append code #{00000000}
+		patch
+	]
+
 	float-binary-opcode: func [opcode [word!]][
 		case [
 			opcode = rs-o2-ir/add-op [88]
@@ -2096,7 +2183,7 @@ rs-o2-x64: context [
 		patch: (length? code) + 1
 		append code #{00000000}
 		id: pick instruction rs-o2-ir/ins-id
-		rs-o2-ir/set-table-value encoded-call-patches id patch
+		rs-o2-ir/set-table-value encoded-relocation-patches id patch
 		result: pick instruction rs-o2-ir/ins-result
 		if result [
 			type: pick instruction rs-o2-ir/ins-type
@@ -2274,12 +2361,37 @@ rs-o2-x64: context [
 		code
 	]
 
+	canonical-loop-body: func [
+		condition-id [integer!]
+		blocks [block!]
+		visited [block!]
+		/local condition terminal operands body-id body body-terminal body-operands
+	][
+		if find visited condition-id [return none]
+		unless all [condition-id >= 1 condition-id <= length? blocks][return none]
+		condition: pick blocks condition-id
+		unless not empty? pick condition rs-o2-ir/bb-instructions [return none]
+		terminal: last pick condition rs-o2-ir/bb-instructions
+		unless (pick terminal rs-o2-ir/ins-opcode) = 'branch [return none]
+		operands: pick terminal rs-o2-ir/ins-operands
+		unless (length? operands) = 3 [return none]
+		body-id: operands/2/2
+		unless all [body-id >= 1 body-id <= length? blocks not find visited body-id][return none]
+		body: pick blocks body-id
+		unless not empty? pick body rs-o2-ir/bb-instructions [return none]
+		body-terminal: last pick body rs-o2-ir/bb-instructions
+		unless (pick body-terminal rs-o2-ir/ins-opcode) = 'jump [return none]
+		body-operands: pick body-terminal rs-o2-ir/ins-operands
+		unless all [(length? body-operands) = 1 body-operands/1/2 = condition-id][return none]
+		body-id
+	]
+
 	append-layout-block: func [
 		id [integer!]
 		blocks [block!]
 		visited [block!]
 		layout [block!]
-		/local block instruction opcode operands successor
+		/local block instruction opcode operands successor loop-body
 	][
 		if find visited id [return none]
 		append visited id
@@ -2290,7 +2402,11 @@ rs-o2-x64: context [
 		operands: pick instruction rs-o2-ir/ins-operands
 		case [
 			opcode = 'jump [
-				append-layout-block operands/1/2 blocks visited layout
+				loop-body: canonical-loop-body operands/1/2 blocks visited
+				either loop-body [
+					unless find aligned-loop-blocks loop-body [append aligned-loop-blocks loop-body]
+					append-layout-block loop-body blocks visited layout
+				][append-layout-block operands/1/2 blocks visited layout]
 			]
 			opcode = 'branch [
 				append-layout-block operands/2/2 blocks visited layout
@@ -2306,6 +2422,7 @@ rs-o2-x64: context [
 
 	layout-current-blocks: func [/local blocks layout visited block id][
 		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
+		clear aligned-loop-blocks
 		layout: make block! length? blocks
 		visited: make block! length? blocks
 		append-layout-block 1 blocks visited layout
@@ -2316,15 +2433,29 @@ rs-o2-x64: context [
 		layout
 	]
 
+	emit-code-alignment: func [
+		code [binary!]
+		base [integer!]
+		alignment [integer!]
+		/local remainder padding
+	][
+		remainder: (base + (length? code)) // alignment
+		if not zero? remainder [
+			padding: alignment - remainder
+			loop padding [append-byte code 144]
+		]
+	]
+
 	encode-body: func [
 		allocation [block!]
+		body-base [integer!]
 		/local code blocks block block-index block-id next-block next-id last-id labels fixups
 			instruction opcode operands result destination source left right offset local-register
 			constant-info constant-values immediate-constants left-value right-value target
-			memory-name left-memory-name memory-offset type source-type
+			memory-name left-memory-name memory-offset type source-type patch instruction-id
 	][
 		code: make binary! 128
-		clear encoded-call-patches
+		clear encoded-relocation-patches
 		clear encoded-instruction-offsets
 		labels: make block! 16
 		fixups: make block! 16
@@ -2343,10 +2474,12 @@ rs-o2-x64: context [
 				next-block: pick blocks (block-index + 1)
 				pick next-block rs-o2-ir/bb-id
 			][none]
+			if find aligned-loop-blocks block-id [emit-code-alignment code body-base 16]
 			rs-o2-ir/set-table-value labels block-id length? code
 			foreach instruction pick block rs-o2-ir/bb-instructions [
+				instruction-id: pick instruction rs-o2-ir/ins-id
 				rs-o2-ir/set-table-value encoded-instruction-offsets
-					pick instruction rs-o2-ir/ins-id
+					instruction-id
 					length? code
 				opcode: pick instruction rs-o2-ir/ins-opcode
 				operands: pick instruction rs-o2-ir/ins-operands
@@ -2401,6 +2534,20 @@ rs-o2-x64: context [
 								emit-xmm-frame-store code source-type offset source
 							][emit-gpr-frame-store code source-type offset source]
 						]
+					]
+					opcode = 'load-global [
+						destination: result-register allocation result
+						unless destination [return none]
+						patch: emit-rip-load code type destination
+						rs-o2-ir/set-table-value encoded-relocation-patches instruction-id patch
+						unless emit-spilled-result code allocation result destination [return none]
+					]
+					opcode = 'store-global [
+						source: materialize-value code allocation operands/2/2
+						unless source [return none]
+						source-type: rs-o2-ir/vreg-type operands/2/2
+						patch: emit-rip-store code source-type source
+						rs-o2-ir/set-table-value encoded-relocation-patches instruction-id patch
 					]
 					supported-binary-operation? opcode [
 						destination: result-register allocation result
@@ -2688,13 +2835,16 @@ rs-o2-x64: context [
 		yes
 	]
 
-	apply-call-relocations: func [direct-chunk [block!] /local start id ref patch][
-		if empty? call-relocations [return yes]
+	apply-relocations: func [direct-chunk [block!] /local start body-base relocation id ref patch][
+		if empty? planned-relocations [return yes]
 		start: pick rs-o2-ir/current rs-o2-ir/fn-body-start
-		foreach [id ref] call-relocations [
-			patch: rs-o2-ir/table-value encoded-call-patches id
-			unless integer? patch [return fail-selection 'x64-missing-call-patch]
-			ref/1: direct-chunk/3 + start + patch - 1
+		body-base: either frameless? [0][start]
+		foreach relocation planned-relocations [
+			id: relocation/1
+			ref: relocation/2
+			patch: rs-o2-ir/table-value encoded-relocation-patches id
+			unless integer? patch [return fail-selection 'x64-missing-relocation-patch]
+			ref/1: direct-chunk/3 + body-base + patch - 1
 		]
 		yes
 	]
@@ -2720,7 +2870,7 @@ rs-o2-x64: context [
 		selected
 	]
 
-	select-current: func [direct-chunk [block!] /local intervals allocation body pass][
+	select-current: func [direct-chunk [block!] /local intervals allocation body pass body-base][
 		unless validate-current direct-chunk [return none]
 		plan-folded-loads
 		intervals: build-intervals
@@ -2730,15 +2880,21 @@ rs-o2-x64: context [
 		unless allocation [return none]
 		plan-spill-slots intervals
 		unless plan-gc-metadata intervals allocation direct-chunk [return none]
+		body-base: 0
+		if all [(length? direct-chunk) >= 3 integer? direct-chunk/3][
+			body-base: (direct-chunk/3 - 1) + (either frameless? [
+				0
+			][pick rs-o2-ir/current rs-o2-ir/fn-body-start])
+		]
 		clear relaxed-branches
 		repeat pass 8 [
 			branch-relaxation-changed?: no
-			body: encode-body allocation
+			body: encode-body allocation body-base
 			unless binary? body [return none]
 			unless branch-relaxation-changed? [break]
 		]
 		if branch-relaxation-changed? [return fail-selection 'x64-branch-relaxation-limit]
-		unless apply-call-relocations direct-chunk [return none]
+		unless apply-relocations direct-chunk [return none]
 		replace-body direct-chunk body
 	]
 ]

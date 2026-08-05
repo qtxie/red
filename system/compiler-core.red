@@ -5351,7 +5351,6 @@ system-dialect: context [
 					rs-o2-ir/emit-load-local value ir-type
 				][
 					name: any [resolve-ns value value]
-					rs-o2-ir/mark-unsupported 'global-memory
 					rs-o2-ir/emit-load-global name ir-type
 				]
 			]
@@ -5369,7 +5368,6 @@ system-dialect: context [
 							rs-o2-ir/emit-store-local target rhs ir-type
 						][
 							name: any [resolve-ns target target]
-							rs-o2-ir/mark-unsupported 'global-memory
 							rs-o2-ir/emit-store-global name rhs ir-type
 						]
 					]

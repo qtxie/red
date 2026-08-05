@@ -462,12 +462,15 @@ rs-o2-ir: context [
 		value
 	]
 
-	emit-load-global: func [name [word!] type [block!]][
-		append-op 'load-global reduce [global-operand name] type 'read 'universal none no none
+	emit-load-global: func [name [word!] type [block!] /local result][
+		result: append-op 'load-global reduce [global-operand name] type 'read 'universal none no none
+		add-relocation pick current fn-instruction-count 'rip-rel32 name 0
+		result
 	]
 
 	emit-store-global: func [name [word!] value [integer!] type [block!]][
 		append-op 'store-global reduce [global-operand name vreg-operand value] none 'write 'universal none no reduce ['value-type copy/deep type]
+		add-relocation pick current fn-instruction-count 'rip-rel32 name 0
 		poke current fn-last-result value
 		poke current fn-last-type copy/deep type
 		value
@@ -487,7 +490,9 @@ rs-o2-ir: context [
 		operands: make block! (length? args) + 1
 		append/only operands symbol-operand name
 		foreach value args [append/only operands vreg-operand value]
-		append-op 'call operands type 'call 'universal none yes reduce ['callee name]
+		value: append-op 'call operands type 'call 'universal none yes reduce ['callee name]
+		add-relocation pick current fn-instruction-count 'call-rel32 name 0
+		value
 	]
 
 	emit-opaque: func [reason [word!] type [block! none!] /local result][
@@ -517,6 +522,15 @@ rs-o2-ir: context [
 		foreach block pick current fn-blocks [
 			foreach instruction pick block bb-instructions [
 				if (pick instruction ins-result) = id [return instruction]
+			]
+		]
+		none
+	]
+
+	find-instruction: func [id [integer!] /local block instruction][
+		foreach block pick current fn-blocks [
+			foreach instruction pick block bb-instructions [
+				if (pick instruction ins-id) = id [return instruction]
 			]
 		]
 		none
@@ -1256,6 +1270,7 @@ rs-o2-ir: context [
 
 	renumber-current: func [
 		/local block instruction id old-id id-map flag flag-map input output reloc safepoint mapped
+			relocations safepoints
 	][
 		id: 0
 		id-map: make block! 16
@@ -1280,14 +1295,24 @@ rs-o2-ir: context [
 				]
 			]
 		]
+		relocations: make block! length? pick current fn-relocations
 		foreach reloc pick current fn-relocations [
 			mapped: table-value id-map reloc/1
-			if mapped [reloc/1: mapped]
+			if mapped [
+				reloc/1: mapped
+				append/only relocations reloc
+			]
 		]
+		poke current fn-relocations relocations
+		safepoints: make block! length? pick current fn-safepoints
 		foreach safepoint pick current fn-safepoints [
 			mapped: table-value id-map safepoint/1
-			if mapped [safepoint/1: mapped]
+			if mapped [
+				safepoint/1: mapped
+				append/only safepoints safepoint
+			]
 		]
+		poke current fn-safepoints safepoints
 		poke current fn-instruction-count id
 		poke current fn-flag-count flag
 		poke current fn-last-flags either zero? flag [none][flag]
@@ -1338,7 +1363,7 @@ rs-o2-ir: context [
 		/local errors blocks block expected-block-id instructions instruction expected-id
 			defined flags-defined previous-seq operand result type flags-in flags-out
 			memory-in memory-out next-memory last-op predecessors predecessor
-			successors successor other
+			successors successor other reloc opcode operands
 	][
 		unless function-active? [return no]
 		errors: make block! 8
@@ -1449,6 +1474,47 @@ rs-o2-ir: context [
 				]
 			]
 		]
+		foreach reloc pick current fn-relocations [
+			either all [
+				block? reloc
+				(length? reloc) = 4
+				integer? reloc/1
+				word? reloc/2
+				word? reloc/3
+				integer? reloc/4
+			][
+				instruction: find-instruction reloc/1
+				either instruction [
+					opcode: pick instruction ins-opcode
+					operands: pick instruction ins-operands
+					unless case [
+						reloc/2 = 'call-rel32 [
+							all [
+								opcode = 'call
+								not empty? operands
+								operands/1 = symbol-operand reloc/3
+							]
+						]
+						reloc/2 = 'rip-rel32 [
+							all [
+								find [load-global store-global] opcode
+								not empty? operands
+								operands/1 = global-operand reloc/3
+							]
+						]
+						true [no]
+					][
+						verifier-error errors rejoin [
+							"relocation does not match instruction " reloc/1
+						]
+					]
+				][
+					verifier-error errors rejoin ["relocation has no instruction " reloc/1]
+				]
+			][
+				verifier-error errors "malformed relocation"
+			]
+		]
 		poke current fn-verifier-errors errors
 		either empty? errors [
 			yes
@@ -1496,7 +1562,7 @@ rs-o2-ir: context [
 	]
 
 	dump-current: func [
-		/local out block instruction result type reasons errors object safepoint
+		/local out block instruction result type reasons errors object reloc safepoint
 	][
 		unless function-active? [return copy ""]
 		out: make string! 1024
@@ -1531,6 +1597,12 @@ rs-o2-ir: context [
 		if integer? pick current fn-frame-bitmap-offset [
 			append out rejoin [
 				"  frame-bitmap: " pick current fn-frame-bitmap-offset newline
+			]
+		]
+		foreach reloc pick current fn-relocations [
+			append out rejoin [
+				"  relocation i" reloc/1 " " form reloc/2
+				" " form reloc/3 " addend=" reloc/4 newline
 			]
 		]
 		foreach safepoint pick current fn-safepoints [

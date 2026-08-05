@@ -232,13 +232,21 @@ loop-i: rs-o2-ir/emit-binary rs-o2-ir/add-op loop-i one i32 'pure
 rs-o2-ir/emit-store-local 'i loop-i i32
 rs-o2-ir/end-while while-state
 loop-i: rs-o2-ir/emit-load-local 'i i32
+while-body-block: pick (pick rs-o2-ir/current rs-o2-ir/fn-blocks) while-state/2
+while-body-first-instruction: first pick while-body-block rs-o2-ir/bb-instructions
 rs-o2-ir/set-direct-body-range 0 1
 while-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
-unless find while-selected/1 #{7D} [fail "while CFG short branch was not selected"]
-unless find while-selected/1 #{EB} [fail "while CFG short back edge was not selected"]
+unless find while-selected/1 #{7C} [fail "while CFG backward condition was not selected"]
+unless find while-selected/1 #{EB} [fail "while CFG initial condition jump was not selected"]
 unless find while-selected/1 #{448B4DF8} [fail "live-in promoted argument was not loaded"]
 if find while-selected/1 #{448B45F0} [fail "definitely assigned local was loaded at entry"]
 if find while-selected/1 #{0F9C} [fail "branch-only comparison materialized a logic value"]
+while-body-offset: rs-o2-ir/table-value
+	rs-o2-x64/encoded-instruction-offsets
+	pick while-body-first-instruction rs-o2-ir/ins-id
+unless all [integer? while-body-offset zero? (while-body-offset // 16)][
+	fail rejoin ["while body was not 16-byte aligned: " mold while-body-offset]
+]
 
 unless rs-o2-ir/begin-function 'if-cfg 'win64 i32 %machine-ir-smoke.red [
 	fail "if CFG function did not start"
@@ -828,6 +836,118 @@ unless all [register-clobber-relocs/1 > 1401 register-consumer-relocs/1 > 1406] 
 	fail "register-argument call relocations were not moved"
 ]
 
+unless rs-o2-ir/begin-function 'global-scalar-roundtrip 'win64 i32 %machine-ir-smoke.red [
+	fail "global scalar function did not start"
+]
+global-scalar-load: rs-o2-ir/emit-load-global 'global-scalar i32
+global-scalar-one: rs-o2-ir/emit-constant 1 i32
+global-scalar-result: rs-o2-ir/emit-binary
+	rs-o2-ir/add-op
+	global-scalar-load
+	global-scalar-one
+	i32
+	'pure
+rs-o2-ir/emit-store-global 'global-scalar global-scalar-result i32
+global-scalar-final: rs-o2-ir/emit-load-global 'global-scalar i32
+rs-o2-ir/set-direct-body-range 15 33
+global-scalar-relocs: reduce [1517 1523 1529]
+put emitter/symbols 'global-scalar reduce ['global 0 global-scalar-relocs]
+global-scalar-selected: rs-o2-ir/finish-function reduce [
+	#{554889E56A006A0068000000006A008B05000000008905000000008B0500000000C9C3}
+	reduce [global-scalar-relocs next global-scalar-relocs skip global-scalar-relocs 2]
+	1500
+]
+unless global-scalar-selected/1 = #{8B050000000083C0018905000000008B0500000000C3} [
+	fail rejoin ["global scalar bytes are wrong: " mold global-scalar-selected/1]
+]
+unless global-scalar-relocs = [1502 1511 1517] [
+	fail rejoin ["global scalar relocations are wrong: " mold global-scalar-relocs]
+]
+
+unless rs-o2-ir/begin-function 'global-pointer-roundtrip 'win64 ptr-type %machine-ir-smoke.red [
+	fail "global pointer function did not start"
+]
+global-pointer-load: rs-o2-ir/emit-load-global 'global-pointer ptr-type
+rs-o2-ir/emit-store-global 'global-pointer global-pointer-load ptr-type
+rs-o2-ir/set-direct-body-range 15 29
+global-pointer-relocs: reduce [1818 1825]
+put emitter/symbols 'global-pointer reduce ['global 0 global-pointer-relocs]
+global-pointer-selected: rs-o2-ir/finish-function reduce [
+	#{554889E56A006A0068000000006A00488B050000000048890500000000C9C3}
+	reduce [global-pointer-relocs next global-pointer-relocs]
+	1800
+]
+unless global-pointer-selected/1 = #{488B050000000048890500000000C3} [
+	fail rejoin ["global pointer bytes are wrong: " mold global-pointer-selected/1]
+]
+unless global-pointer-relocs = [1803 1810] [
+	fail rejoin ["global pointer relocations are wrong: " mold global-pointer-relocs]
+]
+
+unless rs-o2-ir/begin-function 'global-float-roundtrip 'win64 f64 %machine-ir-smoke.red [
+	fail "global float function did not start"
+]
+rs-o2-ir/add-stack-object 'global-float-value 'argument f64 8 8 'none
+rs-o2-ir/set-stack-offset 'global-float-value -40
+global-float-value: rs-o2-ir/emit-load-local 'global-float-value f64
+rs-o2-ir/emit-store-global 'global-float global-float-value f64
+global-float-load: rs-o2-ir/emit-load-global 'global-float f64
+rs-o2-ir/set-direct-body-range 15 31
+global-float-relocs: reduce [1919 1927]
+put emitter/symbols 'global-float reduce ['global 0 global-float-relocs]
+global-float-selected: rs-o2-ir/finish-function reduce [
+	#{554889E56A006A0068000000006A00F20F110500000000F20F100500000000C9C3}
+	reduce [global-float-relocs next global-float-relocs]
+	1900
+]
+unless global-float-selected/1 = #{F20F110500000000F20F100500000000C3} [
+	fail rejoin ["global float bytes are wrong: " mold global-float-selected/1]
+]
+unless global-float-relocs = [1904 1912] [
+	fail rejoin ["global float relocations are wrong: " mold global-float-relocs]
+]
+
+unless rs-o2-ir/begin-function 'global-loop-fallback 'win64 i32 %machine-ir-smoke.red [
+	fail "global loop fallback function did not start"
+]
+rs-o2-ir/add-stack-object 'global-loop-index 'local i32 4 4 'none
+rs-o2-ir/set-stack-offset 'global-loop-index -40
+global-loop-zero: rs-o2-ir/emit-constant 0 i32
+rs-o2-ir/emit-store-local 'global-loop-index global-loop-zero i32
+global-loop-state: rs-o2-ir/begin-while
+global-loop-index: rs-o2-ir/emit-load-local 'global-loop-index i32
+global-loop-limit: rs-o2-ir/emit-constant 4 i32
+global-loop-test: rs-o2-ir/emit-binary
+	rs-o2-ir/less-op
+	global-loop-index
+	global-loop-limit
+	logic-type
+	'pure
+rs-o2-ir/while-condition global-loop-state
+global-loop-value: rs-o2-ir/emit-load-global 'global-loop-scalar i32
+global-loop-one: rs-o2-ir/emit-constant 1 i32
+global-loop-value: rs-o2-ir/emit-binary
+	rs-o2-ir/add-op
+	global-loop-value
+	global-loop-one
+	i32
+	'pure
+rs-o2-ir/emit-store-global 'global-loop-scalar global-loop-value i32
+global-loop-index: rs-o2-ir/emit-load-local 'global-loop-index i32
+global-loop-index: rs-o2-ir/emit-binary
+	rs-o2-ir/add-op
+	global-loop-index
+	global-loop-one
+	i32
+	'pure
+rs-o2-ir/emit-store-local 'global-loop-index global-loop-index i32
+rs-o2-ir/end-while global-loop-state
+global-loop-result: rs-o2-ir/emit-load-local 'global-loop-index i32
+rs-o2-ir/set-direct-body-range 0 1
+global-loop-direct: reduce [#{CC} copy []]
+global-loop-selected: rs-o2-ir/finish-function global-loop-direct
+unless global-loop-selected/1 = #{CC} [fail "global loop did not retain direct code"]
+
 clear emitter/bits-buf
 foreach bitmap-word [1 0 1 0] [
 	append emitter/bits-buf int-to-bin/to-bin32 bitmap-word
@@ -875,11 +995,11 @@ rs-o2-ir/emit-opaque 'unsupported-smoke none
 fallback-direct: reduce [#{CC} copy []]
 fallback-selected: rs-o2-ir/finish-function fallback-direct
 unless fallback-selected/1 = #{CC} [fail "fallback bytes changed"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 35 [fail "final function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 35 [fail "final verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 34 [fail "final eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 34 [fail "final selection count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 1 [fail "final fallback count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 39 [fail "final function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 39 [fail "final verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 38 [fail "final eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 37 [fail "final selection count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 2 [fail "final fallback count"]
 
 rs-o2-ir/end-session
 dump-text: read dump-path
@@ -889,4 +1009,7 @@ unless find dump-text "dead-code-elimination 5 2" [fail "dead code was not remov
 unless find dump-text "%3:i32 = const 3" [fail "constant expression was not folded"]
 unless find dump-text "unreachable-blocks 11 8" [fail "constant branch block was not removed"]
 unless find dump-text "dead-code-elimination 8 5" [fail "constant branch compare was not removed"]
+unless find dump-text "rip-rel32 global-scalar addend=0" [fail "global relocation dump missing"]
+unless find dump-text "call-rel32 callee addend=0" [fail "call relocation dump missing"]
+unless find dump-text "x64-global-store-loop" [fail "global loop fallback reason missing"]
 print "machine-ir-smoke-ok"

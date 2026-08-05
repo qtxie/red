@@ -1706,7 +1706,10 @@ target: 'X86-64
 		emit #{4889E5}								;-- MOV rbp, rsp
 		emit #{6A00}								;-- PUSH 0		; catch ID
 		emit #{6A00}								;-- PUSH 0		; catch resume address
-		emit-push bitmap							;-- args/locals bitmap offset
+		either system-dialect/job/opt-level >= 2 [
+			emit #{68}								;-- fixed-width bitmap patch point
+			emit int-to-bin/to-bin32 bitmap
+		][emit-push bitmap]						;-- args/locals bitmap offset
 		emit #{6A00}								;-- last known parent Red frame
 		emit-arg-spills name locals
 		local-slots: (round/to/ceiling locals-size stack-width) / stack-width

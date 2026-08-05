@@ -3,7 +3,19 @@ Red [
 ]
 
 #include %../../../../compiler/int-to-bin.red
-emitter: context [symbols: make hash! 8]
+emitter: context [
+	symbols: make hash! 8
+	bits-buf: make binary! 32
+	ensure-bits-buf: does [unless binary? :bits-buf [bits-buf: make binary! 32]]
+	store-ptr-bitmap: func [list [block!] /local offset value][
+		ensure-bits-buf
+		offset: to integer! ((length? bits-buf) / 4)
+		foreach value list [
+			if integer? value [append bits-buf int-to-bin/to-bin32 value]
+		]
+		offset
+	]
+]
 #include %../../../../system/machine-ir.red
 
 fail: func [message [string!]][
@@ -816,6 +828,46 @@ unless all [register-clobber-relocs/1 > 1401 register-consumer-relocs/1 > 1406] 
 	fail "register-argument call relocations were not moved"
 ]
 
+clear emitter/bits-buf
+foreach bitmap-word [1 0 1 0] [
+	append emitter/bits-buf int-to-bin/to-bin32 bitmap-word
+]
+unless rs-o2-ir/begin-function 'gc-pointer-across-call 'win64 i32 %machine-ir-smoke.red [
+	fail "gc-pointer-across-call function did not start"
+]
+rs-o2-ir/set-frame-bitmap-offset 0
+rs-o2-ir/add-stack-object 'pointer-value 'argument ptr-type 8 8 'pointer
+rs-o2-ir/set-stack-offset 'pointer-value -40
+gc-live-pointer: rs-o2-ir/emit-load-local 'pointer-value ptr-type
+gc-inner-result: rs-o2-ir/emit-call 'gc-clobber-callee copy [] i32
+gc-outer-result: rs-o2-ir/emit-call
+	'gc-consumer-callee
+	reduce [gc-live-pointer gc-inner-result]
+	i32
+rs-o2-ir/set-direct-body-range 15 25
+gc-clobber-relocs: reduce [1616]
+gc-consumer-relocs: reduce [1621]
+put emitter/symbols 'gc-clobber-callee reduce ['native none gc-clobber-relocs]
+put emitter/symbols 'gc-consumer-callee reduce ['native none gc-consumer-relocs]
+gc-selected: rs-o2-ir/finish-function reduce [
+	#{554889E56A006A0068000000006A00E800000000E800000000C9C3}
+	reduce [gc-clobber-relocs gc-consumer-relocs]
+	1600
+]
+unless (copy/part at gc-selected/1 10 4) = #{04000000} [
+	fail rejoin ["GC bitmap prologue offset was not patched: " mold gc-selected/1]
+]
+unless (copy skip emitter/bits-buf 16) = #{01000000060000000100000020000000} [
+	fail rejoin ["extended GC bitmap is wrong: " mold emitter/bits-buf]
+]
+unless rs-o2-x64/gc-bitmap-list = [1 6 1 - 32] [
+	fail rejoin ["planned GC bitmap is wrong: " mold rs-o2-x64/gc-bitmap-list]
+]
+unless rs-o2-x64/gc-bitmap-offset = 4 [fail "GC bitmap word offset is wrong"]
+unless rs-o2-x64/call-spilled-values = reduce [gc-live-pointer] [
+	fail "managed pointer was not spilled across the call"
+]
+
 unless rs-o2-ir/begin-function 'fallback 'win64 none %machine-ir-smoke.red [
 	fail "fallback function did not start"
 ]
@@ -823,10 +875,10 @@ rs-o2-ir/emit-opaque 'unsupported-smoke none
 fallback-direct: reduce [#{CC} copy []]
 fallback-selected: rs-o2-ir/finish-function fallback-direct
 unless fallback-selected/1 = #{CC} [fail "fallback bytes changed"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 34 [fail "final function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 34 [fail "final verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 33 [fail "final eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 33 [fail "final selection count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 35 [fail "final function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 35 [fail "final verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 34 [fail "final eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 34 [fail "final selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 1 [fail "final fallback count"]
 
 rs-o2-ir/end-session

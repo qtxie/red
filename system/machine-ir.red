@@ -51,6 +51,7 @@ rs-o2-ir: context [
 	fn-selected?:        29
 	fn-allocation:       30
 	fn-selected-bytes:   31
+	fn-frame-bitmap-offset: 32
 
 
 	; Basic block record slots.
@@ -238,6 +239,7 @@ rs-o2-ir: context [
 			no
 			make block! 16
 			0
+			none
 		]
 		function-active?: yes
 		yes
@@ -686,6 +688,10 @@ rs-o2-ir: context [
 			poke current fn-body-start start
 			poke current fn-body-end ending
 		]
+	]
+
+	set-frame-bitmap-offset: func [offset [integer! none!]][
+		if function-active? [poke current fn-frame-bitmap-offset offset]
 	]
 
 	mark-stack-object-escaped: func [name [word!] /local object][
@@ -1490,7 +1496,7 @@ rs-o2-ir: context [
 	]
 
 	dump-current: func [
-		/local out block instruction result type reasons errors object
+		/local out block instruction result type reasons errors object safepoint
 	][
 		unless function-active? [return copy ""]
 		out: make string! 1024
@@ -1521,6 +1527,16 @@ rs-o2-ir: context [
 		]
 		unless empty? pick current fn-allocation [
 			append out rejoin ["  allocation: " mold/flat pick current fn-allocation newline]
+		]
+		if integer? pick current fn-frame-bitmap-offset [
+			append out rejoin [
+				"  frame-bitmap: " pick current fn-frame-bitmap-offset newline
+			]
+		]
+		foreach safepoint pick current fn-safepoints [
+			append out rejoin [
+				"  safepoint i" safepoint/1 " roots=" mold/flat safepoint/2 newline
+			]
 		]
 		foreach block pick current fn-blocks [
 			append out rejoin [

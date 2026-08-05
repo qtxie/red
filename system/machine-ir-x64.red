@@ -29,6 +29,9 @@ rs-o2-x64: context [
 	outgoing-frame-bytes: 0
 	spill-gpr-scratch: none
 	spill-xmm-scratch: none
+	gc-bitmap-list: none
+	gc-bitmap-original: none
+	gc-bitmap-offset: none
 
 	fail-selection: func [reason [word!]][
 		rs-o2-ir/mark-unsupported reason
@@ -789,6 +792,9 @@ rs-o2-x64: context [
 		outgoing-frame-bytes: 0
 		spill-gpr-scratch: none
 		spill-xmm-scratch: none
+		gc-bitmap-list: none
+		gc-bitmap-original: none
+		gc-bitmap-offset: none
 		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
 		unless empty? pick rs-o2-ir/current rs-o2-ir/fn-relocations [
 			return fail-selection 'x64-ir-relocations
@@ -1230,6 +1236,156 @@ rs-o2-x64: context [
 			spill-frame-bytes: round/to/ceiling total 16
 			frameless?: no
 		]
+	]
+
+	bitmap-word-at: func [word-offset [integer!] /local position][
+		emitter/ensure-bits-buf
+		position: (word-offset * 4) + 1
+		unless all [
+			position >= 1
+			(position + 3) <= length? emitter/bits-buf
+		][return none]
+		to integer! reverse copy/part at emitter/bits-buf position 4
+	]
+
+	read-frame-bitmap: func [
+		offset [integer!]
+		/local base cursor arg-slots local-slots arg-words local-words word
+	][
+		base: offset and 0FFFFFFFh
+		arg-slots: bitmap-word-at base
+		local-slots: bitmap-word-at base + 1
+		unless all [
+			integer? arg-slots
+			integer? local-slots
+			arg-slots >= 0
+			local-slots >= 0
+		][return none]
+		cursor: base + 2
+		arg-words: make block! 2
+		until [
+			word: bitmap-word-at cursor
+			unless integer? word [return none]
+			append arg-words word
+			cursor: cursor + 1
+			zero? word and 80000000h
+		]
+		local-words: make block! 2
+		until [
+			word: bitmap-word-at cursor
+			unless integer? word [return none]
+			append local-words word
+			cursor: cursor + 1
+			zero? word and 80000000h
+		]
+		reduce [arg-slots local-slots arg-words local-words]
+	]
+
+	normalize-bitmap-words: func [words [block!] /local index word][
+		if empty? words [append words 0]
+		repeat index length? words [
+			word: (pick words index) and 7FFFFFFFh
+			if index < length? words [word: word or 80000000h]
+			poke words index word
+		]
+		words
+	]
+
+	plan-gc-metadata: func [
+		intervals [block!]
+		allocation [block!]
+		direct-chunk [block!]
+		/local safepoints root-spills block instruction position roots interval id type
+			location offset original bitmap arg-slots local-slots arg-words local-words
+			local-index required-local-slots word-index bit-index word bytes
+	][
+		safepoints: pick rs-o2-ir/current rs-o2-ir/fn-safepoints
+		clear safepoints
+		root-spills: make block! 4
+		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				if (pick instruction rs-o2-ir/ins-opcode) = 'call [
+					position: (pick instruction rs-o2-ir/ins-id) * 2
+					roots: make block! 2
+					foreach interval intervals [
+						if all [
+							(pick interval interval-start) < position
+							(pick interval interval-end) > position
+						][
+							id: pick interval interval-id
+							type: rs-o2-ir/vreg-type id
+							if all [rs-o2-ir/valid-type? type type/6 <> 'none][
+								location: allocation-register allocation id
+								unless location = 'spill [
+									return fail-selection 'x64-gc-register-root
+								]
+								offset: spill-offset id
+								unless integer? offset [
+									return fail-selection 'x64-gc-spill-offset
+								]
+								append/only roots reduce ['vreg id 'frame offset type/6]
+								unless find root-spills id [append root-spills id]
+							]
+						]
+					]
+					rs-o2-ir/add-safepoint pick instruction rs-o2-ir/ins-id roots
+				]
+			]
+		]
+		if empty? root-spills [return yes]
+		original: pick rs-o2-ir/current rs-o2-ir/fn-frame-bitmap-offset
+		unless integer? original [return fail-selection 'x64-gc-bitmap-offset]
+		bytes: direct-chunk/1
+		unless all [
+			(length? bytes) >= 13
+			(copy/part at bytes 9 1) = #{68}
+		][return fail-selection 'x64-gc-bitmap-patch-point]
+		bitmap: read-frame-bitmap original
+		unless bitmap [return fail-selection 'x64-gc-bitmap-decode]
+		arg-slots: bitmap/1
+		local-slots: bitmap/2
+		arg-words: copy bitmap/3
+		local-words: copy bitmap/4
+		required-local-slots: local-slots
+		foreach id root-spills [
+			offset: spill-offset id
+			unless all [offset < 0 zero? offset // 8][
+				return fail-selection 'x64-gc-spill-alignment
+			]
+			local-index: ((to integer! ((absolute offset) / 8)) - 5) - arg-slots
+			if local-index < 0 [return fail-selection 'x64-gc-spill-range]
+			required-local-slots: max required-local-slots local-index + 1
+			word-index: (to integer! (local-index / 31)) + 1
+			while [(length? local-words) < word-index][append local-words 0]
+			bit-index: local-index // 31
+			word: (pick local-words word-index) and 7FFFFFFFh
+			word: word or (shift/left 1 bit-index)
+			poke local-words word-index word
+		]
+		normalize-bitmap-words arg-words
+		normalize-bitmap-words local-words
+		gc-bitmap-list: reduce [arg-slots required-local-slots]
+		foreach word arg-words [append gc-bitmap-list word]
+		append gc-bitmap-list '-
+		foreach word local-words [append gc-bitmap-list word]
+		gc-bitmap-original: original
+		yes
+	]
+
+	apply-gc-bitmap: func [selected [block!] /local offset flags bytes][
+		unless block? gc-bitmap-list [return yes]
+		offset: emitter/store-ptr-bitmap gc-bitmap-list
+		flags: gc-bitmap-original and 40000000h
+		if not zero? flags [offset: offset or flags]
+		bytes: selected/1
+		unless all [
+			(length? bytes) >= 13
+			(copy/part at bytes 9 1) = #{68}
+		][return fail-selection 'x64-gc-bitmap-patch-point]
+		change/part at bytes 10 int-to-bin/to-bin32 offset 4
+		gc-bitmap-offset: offset
+		rs-o2-ir/set-frame-bitmap-offset offset
+		yes
 	]
 
 	register-code: func [register [word!]][
@@ -2552,6 +2708,7 @@ rs-o2-x64: context [
 			bytes: copy body
 			append-byte bytes 195
 			poke selected 1 bytes
+			unless apply-gc-bitmap selected [return none]
 			return selected
 		]
 		bytes: make binary! (start + (length? body) + ((length? bytes) - ending))
@@ -2559,6 +2716,7 @@ rs-o2-x64: context [
 		append bytes body
 		append bytes skip direct-chunk/1 ending
 		poke selected 1 bytes
+		unless apply-gc-bitmap selected [return none]
 		selected
 	]
 
@@ -2571,6 +2729,7 @@ rs-o2-x64: context [
 		allocation: allocate-intervals intervals
 		unless allocation [return none]
 		plan-spill-slots intervals
+		unless plan-gc-metadata intervals allocation direct-chunk [return none]
 		clear relaxed-branches
 		repeat pass 8 [
 			branch-relaxation-changed?: no

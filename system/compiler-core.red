@@ -5190,7 +5190,7 @@ system-dialect: context [
 						block? type/2
 						not empty? type/2
 					][scale: emitter/size-of? type/2/1]
-					gc-kind: either find [pointer! c-string! struct! union!] kind ['pointer]['none]
+					gc-kind: either find [pointer! c-string! function! struct! union!] kind ['pointer]['none]
 					rs-o2-ir/make-type 'ptr emitter/target/ptr-size 'gpr no scale gc-kind
 				]
 				integer-type? type [
@@ -5434,7 +5434,7 @@ system-dialect: context [
 	]
 
 		o2-ir-begin-function: func [
-		name [word!] spec [block!] body [block!]
+		name [word!] spec [block!] body [block!] bitmap-offset [integer!]
 		/local return-spec return-type abi started?
 	][
 		unless rs-o2-ir/session? [return no]
@@ -5443,6 +5443,7 @@ system-dialect: context [
 		abi: either job/OS = 'Windows ['win64]['sysv]
 		started?: rs-o2-ir/begin-function name abi return-type script
 		if started? [
+			rs-o2-ir/set-frame-bitmap-offset bitmap-offset
 			if all [return-spec none? return-type][
 				rs-o2-ir/mark-unsupported 'unsupported-return-type
 			]
@@ -5461,7 +5462,7 @@ system-dialect: context [
 			init-struct-values spec
 			locals: spec
 			func-name: name
-			capture?: o2-ir-begin-function name spec body
+			capture?: o2-ir-begin-function name spec body offset
 			if capture? [capture-start: emitter/chunks/start]
 			if shadow-slot: in emitter/target 'reserve-fixed-shadow? [
 				set shadow-slot all [

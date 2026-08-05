@@ -441,24 +441,77 @@ that produces a reliable runtime win.
 
 ## Current Implementation Evidence
 
-As of Stage38, the experimental O2 path supports scalar Win64 and SysV direct
+As of Stage49, the experimental O2 path supports scalar Win64 and SysV direct
 calls with ABI register arguments, stack arguments, parallel register copies,
 and one function-level outgoing argument area. Values live across calls use
-typed spill slots; call lowering can reload those values directly into their
-later ABI argument registers after completing register-to-register copies. This
-covers source forms such as `consume-two value (one)` without falling back.
+typed spill slots; managed pointers live at safepoints are conservatively
+spilled and added to the runtime frame bitmap. Generic call and data relocation
+records are consumed after final layout, including RIP-relative scalar, pointer,
+`f32`, and `f64` global loads and stores. Final encoding also performs iterative
+branch relaxation and rewrites source/debug offsets from the selected byte
+layout.
 
-The focused Win64 register-argument-across-call benchmark records an O0 median
-of 0.25 seconds and an O2 median of 0.14 seconds over 15 interleaved samples, a
-median paired speedup of 1.85x. The report is at
-`build/generated-code-benchmarks/stage38-register-argument/20260806-004522/report.json`.
-Stage38 passes all 124 compiler-regression assertions and the full Red/System O2
-suite (10,582 tests and 12,647 assertions, zero failures).
+Stage48 prevents by-value structures and aliases of by-value structures from
+entering the scalar machine-IR path. Those functions currently fall back to the
+direct backend, preserving the Win64 aggregate calling convention until typed
+aggregate IR lowering is implemented. The focused 16-byte aggregate fixture
+prints `100` at both O0 and O2 with exit status zero.
 
-This evidence does not complete the plan. Generic relocation consumption, GC
-safepoint/root maps, unwind integration, aggregate and variadic ABI lowering,
-and emitted SysV binary validation remain required before O2 can leave its
-experimental state.
+Stage49 selects unaligned 128-bit loads and stores for exact 16-byte copies at
+O2. Calls to the hot `red>copy-cell` helper are specialized after normal argument
+evaluation and ABI register placement, eliminating the call while retaining O0
+and O1 behavior. Functions containing this direct-backend intrinsic are kept out
+of machine IR until the intrinsic and its XMM clobber are represented explicitly.
+
+The Stage46 selector handles `f32` and `f64` equality and ordered relational
+comparisons with `UCOMISS`/`UCOMISD`. It preserves Red/System unordered semantics:
+NaN is false for `=`, `<`, `>`, `<=`, and `>=`, and true for `<>`. Branch-only
+uses consume flags directly, including the required parity branch, without
+materializing a logic value. Stage47 adds an explicit same-width `bitcast` IR
+operation, initially used for representation-preserving `logic!` to `integer!`
+casts. The allocator coalesces comparison results and their cast results, so
+`as integer! a < b` does not add a machine instruction.
+
+The machine-IR smoke fixture has 43 functions, 42 eligible functions, 41 selected
+functions, and two intentional fallback cases. The executable float comparison
+fixture selects all twelve scalar logic-value functions, all six direct-branch
+functions, and all six integer-cast functions. It checks every condition with
+ordered and NaN operands; its O0 and O2 outputs are both `48` with exit status
+zero. The existing `float-test.reds` integer-cast comparison wrappers also select
+and its 1,950 assertions pass.
+
+Recorded emitted-program performance results include:
+
+- Stage38 Win64 register arguments across calls: O0 median 0.25 seconds and O2
+  median 0.14 seconds over 15 interleaved samples, with a 1.85x median paired
+  speedup. Report:
+  `build/generated-code-benchmarks/stage38-register-argument/20260806-004522/report.json`.
+- Stage46 Win64 floating comparison call loop: O0 median 0.48 seconds and O2
+  median 0.20 seconds over 31 interleaved samples, with a 2.39x median paired
+  speedup and identical output. Report:
+  `build/generated-code-benchmarks/stage46-float-compare/20260806-051734/report.json`.
+- Stage47 Win64 floating comparison integer-cast call loop: O0 median 0.47
+  seconds and O2 median 0.20 seconds over 31 interleaved samples, with a 2.34x
+  median paired speedup and identical output. Report:
+  `build/generated-code-benchmarks/stage47-float-compare-int/20260806-054410/report.json`.
+- Stage49 Win64 `copy-cell` call loop: O0 median 0.29 seconds and O2 median
+  0.12 seconds over 15 interleaved samples, with a 2.43x median paired speedup
+  and identical output. The O2 fixture contains two expected 128-bit copy
+  sequences and the O0 fixture contains none. Report:
+  `build/generated-code-benchmarks/stage49-copy-cell/20260806-062550/report.json`.
+
+Stage47 passes all 124 compiler-regression assertions and the full Windows x64
+Red/System O2 suite: 10,582 tests and 12,647 assertions with zero failures. The
+float-specific portions account for 1,950 `float!` and 1,308 `float32!`
+assertions, all passing. Stage49 bootstraps successfully in release mode; its
+focused O0/O2 `copy-cell` fixture prints `110` with exit status zero in both
+modes, and the machine-IR smoke fixture passes.
+
+This evidence does not complete the plan. Broad switch selection, aggregate and
+variadic ABI lowering through machine IR, exception/unwind integration, explicit
+stack operations, broader profile-driven runtime-helper specialization, emitted
+SysV binary validation, and the full cross-ABI runtime performance gate remain
+required before O2 can leave its experimental state.
 
 ## Rollout
 

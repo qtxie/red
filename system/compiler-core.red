@@ -5172,7 +5172,9 @@ system-dialect: context [
 			/local type kind width ir-kind scale gc-kind
 		][
 			if any [none? source-type empty? source-type none? source-type/1][return none]
+			if struct-by-value? source-type [return none]
 			type: resolve-aliased source-type
+			if struct-by-value? type [return none]
 			kind: type/1
 			case [
 				any-float? type [
@@ -5323,7 +5325,7 @@ system-dialect: context [
 
 	o2-ir-lower-expression: func [
 		value
-		/local type ir-type name target rhs left right op spec effect args arg result
+		/local type ir-type name target rhs left right op spec effect args arg result source-type
 	][
 		case [
 			integer? :value [
@@ -5398,6 +5400,9 @@ system-dialect: context [
 									if result [append args result]
 								]
 								ir-type: o2-ir-type-of value
+								if name = 'red>copy-cell [
+									rs-o2-ir/mark-unsupported 'copy-cell-intrinsic
+								]
 								unless o2-ir-call-selectable? spec args ir-type [
 									rs-o2-ir/mark-unsupported 'call-selection
 								]
@@ -5411,7 +5416,18 @@ system-dialect: context [
 			]
 			object? :value [
 				ir-type: o2-ir-type-from-type value/type
-				rs-o2-ir/emit-opaque 'type-cast ir-type
+				either all [value/action = 'type-cast ir-type][
+					result: o2-ir-lower-expression :value/data
+					source-type: all [result rs-o2-ir/vreg-type result]
+					either all [
+						source-type
+						source-type/1 = 'logic
+						ir-type/1 = 'i32
+						source-type/2 = ir-type/2
+					][
+						rs-o2-ir/emit-bitcast result ir-type
+					][rs-o2-ir/emit-opaque 'type-cast ir-type]
+				][rs-o2-ir/emit-opaque 'unsupported-action ir-type]
 			]
 			any-path? :value [rs-o2-ir/emit-opaque 'path-access none]
 			any [issue? :value get-word? :value] [

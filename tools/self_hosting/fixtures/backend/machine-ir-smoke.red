@@ -212,6 +212,86 @@ rs-o2-ir/set-direct-body-range 0 1
 sysv-f32-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
 unless sysv-f32-selected/1 = #{F30F59C1C3} [fail "SysV f32 argument bytes are wrong"]
 
+unless rs-o2-ir/begin-function 'win64-f64-equal 'win64 logic-type %machine-ir-smoke.red [
+	fail "Win64 f64 equality function did not start"
+]
+rs-o2-ir/add-stack-object 'a 'argument f64 8 8 'none
+rs-o2-ir/add-stack-object 'b 'argument f64 8 8 'none
+f64-equal-a: rs-o2-ir/emit-load-local 'a f64
+f64-equal-b: rs-o2-ir/emit-load-local 'b f64
+f64-equal-result: rs-o2-ir/emit-binary
+	rs-o2-ir/equal-op f64-equal-a f64-equal-b logic-type 'pure
+rs-o2-ir/set-direct-body-range 0 1
+f64-equal-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
+unless f64-equal-selected/1 = #{660F2EC10F94C00FB6C07B05B800000000C3} [
+	fail rejoin ["Win64 f64 equality bytes are wrong: " mold f64-equal-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'win64-f64-equal-integer 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 f64 integer equality function did not start"
+]
+rs-o2-ir/add-stack-object 'a 'argument f64 8 8 'none
+rs-o2-ir/add-stack-object 'b 'argument f64 8 8 'none
+f64-equal-integer-a: rs-o2-ir/emit-load-local 'a f64
+f64-equal-integer-b: rs-o2-ir/emit-load-local 'b f64
+f64-equal-logic: rs-o2-ir/emit-binary
+	rs-o2-ir/equal-op f64-equal-integer-a f64-equal-integer-b logic-type 'pure
+f64-equal-integer-result: rs-o2-ir/emit-bitcast f64-equal-logic i32
+rs-o2-ir/set-direct-body-range 0 1
+f64-equal-integer-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
+unless f64-equal-integer-selected/1 = #{660F2EC10F94C00FB6C07B05B800000000C3} [
+	fail rejoin [
+		"Win64 f64 integer equality bytes are wrong: "
+		mold f64-equal-integer-selected/1
+	]
+]
+
+unless rs-o2-ir/begin-function 'win64-f32-not-equal 'win64 logic-type %machine-ir-smoke.red [
+	fail "Win64 f32 inequality function did not start"
+]
+rs-o2-ir/add-stack-object 'a 'argument f32 4 4 'none
+rs-o2-ir/add-stack-object 'b 'argument f32 4 4 'none
+f32-not-equal-a: rs-o2-ir/emit-load-local 'a f32
+f32-not-equal-b: rs-o2-ir/emit-load-local 'b f32
+f32-not-equal-result: rs-o2-ir/emit-binary
+	rs-o2-ir/not-equal-op f32-not-equal-a f32-not-equal-b logic-type 'pure
+rs-o2-ir/set-direct-body-range 0 1
+f32-not-equal-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
+unless f32-not-equal-selected/1 = #{0F2EC10F95C00FB6C07B05B801000000C3} [
+	fail rejoin ["Win64 f32 inequality bytes are wrong: " mold f32-not-equal-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'win64-f64-less-branch 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 f64 branch function did not start"
+]
+rs-o2-ir/add-stack-object 'a 'argument f64 8 8 'none
+rs-o2-ir/add-stack-object 'b 'argument f64 8 8 'none
+rs-o2-ir/add-stack-object 'result 'local i32 4 4 'none
+rs-o2-ir/set-stack-offset 'a -16
+rs-o2-ir/set-stack-offset 'b -24
+rs-o2-ir/set-stack-offset 'result -8
+f64-branch-zero: rs-o2-ir/emit-constant 0 i32
+rs-o2-ir/emit-store-local 'result f64-branch-zero i32
+f64-branch-state: rs-o2-ir/begin-if
+f64-branch-a: rs-o2-ir/emit-load-local 'a f64
+f64-branch-b: rs-o2-ir/emit-load-local 'b f64
+f64-branch-test: rs-o2-ir/emit-binary
+	rs-o2-ir/less-op f64-branch-a f64-branch-b logic-type 'pure
+rs-o2-ir/if-condition f64-branch-state
+f64-branch-one: rs-o2-ir/emit-constant 1 i32
+rs-o2-ir/emit-store-local 'result f64-branch-one i32
+rs-o2-ir/end-if f64-branch-state
+f64-branch-result: rs-o2-ir/emit-load-local 'result i32
+rs-o2-ir/set-direct-body-range 0 1
+f64-branch-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
+unless find f64-branch-selected/1 #{660F2E} [fail "f64 branch did not emit UCOMISD"]
+unless any [find f64-branch-selected/1 #{7A} find f64-branch-selected/1 #{0F8A}] [
+	fail "f64 branch did not guard the unordered case"
+]
+if find f64-branch-selected/1 #{0F92} [
+	fail "branch-only f64 comparison materialized a logic value"
+]
+
 unless rs-o2-ir/begin-function 'while-cfg 'win64 i32 %machine-ir-smoke.red [
 	fail "while CFG function did not start"
 ]
@@ -995,10 +1075,10 @@ rs-o2-ir/emit-opaque 'unsupported-smoke none
 fallback-direct: reduce [#{CC} copy []]
 fallback-selected: rs-o2-ir/finish-function fallback-direct
 unless fallback-selected/1 = #{CC} [fail "fallback bytes changed"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 39 [fail "final function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 39 [fail "final verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 38 [fail "final eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 37 [fail "final selection count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 43 [fail "final function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 43 [fail "final verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 42 [fail "final eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 41 [fail "final selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 2 [fail "final fallback count"]
 
 rs-o2-ir/end-session

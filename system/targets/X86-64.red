@@ -43,7 +43,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 	last-red-frame: none							;-- memory slot holding the last Red frame pointer before an external call
 	verbose:  	0									;-- logs verbosity level
 
-	emit-casting: emit-call-syscall: emit-call-import: ;-- just pre-bind word to avoid contexts issue
+	emit-casting: emit-call-syscall: emit-call-import: emit-copy-cell-call: ;-- just pre-bind word to avoid contexts issue
 	emit-call-native: emit-not: emit-push: emit-pop:
 	emit-integer-operation: emit-float-operation:
 	emit-throw:	on-init: emit-alt-last: emit-log-b:
@@ -242,6 +242,11 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 					log-b [							;@@ needs a new function type...
 						emit-pop
 						emit-log-b first system-dialect/compiler/last-type
+					]
+					red>copy-cell [
+						unless all [opt-level >= 2 emit-copy-cell-call][
+							emit-call-native args fspec spec attribs
+						]
 					]
 				][
 					emit-call-native args fspec spec attribs
@@ -904,6 +909,30 @@ target: 'X86-64
 		call-top-arg-rax?: no
 	]
 
+	emit-copy-cell-call: func [/local n][
+		n: length? call-arg-types
+		unless n = 2 [return no]
+		emit-call-register-loads n
+		call-shadow-slots: 0
+		emit either win64? [
+			#{0F10010F11024889D0}           ;-- MOVUPS xmm0,[rcx] / MOVUPS [rdx],xmm0 / MOV rax,rdx
+		][
+			#{0F10070F11064889F0}           ;-- MOVUPS xmm0,[rdi] / MOVUPS [rsi],xmm0 / MOV rax,rsi
+		]
+		emit-call-stack-cleanup n
+		call-arg-index: max 0 call-arg-index - n
+		remove/part skip tail call-arg-types negate n n
+		call-stack-slots: 0
+		call-pad-slots: 0
+		call-extra-slots: 0
+		call-shadow-slots: 0
+		call-variadic?: no
+		call-float-reg-count: 0
+		call-struct-temp-slots: 0
+		call-top-arg-rax?: no
+		yes
+	]
+
 	emit-load-win64-arg-slot: func [index [integer!] /local src-offset][
 		either index <= 4 [
 			emit pick [
@@ -980,6 +1009,17 @@ target: 'X86-64
 		emitter/chunks/join reduce [code copy []] bodies
 	]
 	emit-copy-rax-to-r11: func [size [integer!] /local qwords remainder offset][
+		if all [
+			size = 16
+			system-dialect/job/opt-level >= 2
+		][
+			emit either win64? [
+				#{0F1028410F112B}       ;-- MOVUPS xmm5, [rax] / MOVUPS [r11], xmm5
+			][
+				#{440F1038450F113B}     ;-- MOVUPS xmm15, [rax] / MOVUPS [r11], xmm15
+			]
+			exit
+		]
 		qwords: to integer! (size / stack-width)
 		remainder: size // stack-width
 		repeat index qwords [

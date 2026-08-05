@@ -451,6 +451,10 @@ rs-o2-ir: context [
 		append-op 'const reduce [immediate-operand :value] type 'pure 'none none no none
 	]
 
+	emit-bitcast: func [value [integer!] type [block!]][
+		append-op 'bitcast reduce [vreg-operand value] type 'pure 'none none no none
+	]
+
 	emit-load-local: func [name [word!] type [block!]][
 		append-op 'load-local reduce [local-operand name] type 'read name none no none
 	]

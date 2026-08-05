@@ -356,6 +356,11 @@ rs-o2-x64: context [
 					all [operand-index = 1 rs-o2-ir/commutative-op? opcode]
 				]
 			]
+			all [
+				supported-float? type
+				rs-o2-ir/comparison-op? opcode
+				operand-index = 2
+			]
 		]
 	]
 
@@ -647,6 +652,17 @@ rs-o2-x64: context [
 					return fail-selection 'x64-copy-shape
 				]
 			]
+			opcode = 'bitcast [
+				unless all [result (length? operands) = 1 operands/1/1 = 'vreg][
+					return fail-selection 'x64-bitcast-shape
+				]
+				operand: rs-o2-ir/vreg-type operands/1/2
+				unless all [
+					supported-gpr-scalar? type
+					supported-gpr-scalar? operand
+					type/2 = operand/2
+				][return fail-selection 'x64-bitcast-type]
+			]
 			opcode = 'load-local [
 				unless all [result (length? operands) = 1 operands/1/1 = 'local][
 					return fail-selection 'x64-load-shape
@@ -728,8 +744,11 @@ rs-o2-x64: context [
 				][return fail-selection 'x64-comparison-shape]
 				left-type: rs-o2-ir/vreg-type operands/1/2
 				right-type: rs-o2-ir/vreg-type operands/2/2
-				unless all [supported-i32? left-type supported-i32? right-type][
-					return fail-selection 'x64-float-comparison
+				unless any [
+					all [supported-i32? left-type supported-i32? right-type]
+					all [supported-float? left-type left-type = right-type]
+				][
+					return fail-selection 'x64-comparison-type
 				]
 			]
 				opcode = 'call [
@@ -924,7 +943,7 @@ rs-o2-x64: context [
 						fixed: return-register pick instruction rs-o2-ir/ins-type
 					]
 					if all [
-						any [opcode = 'copy supported-binary-operation? opcode]
+						any [find [copy bitcast] opcode supported-binary-operation? opcode]
 						not empty? operands
 						operands/1/1 = 'vreg
 					][preferred: operands/1/2]
@@ -2158,6 +2177,35 @@ rs-o2-x64: context [
 		emit-frame-modrm code lhs offset
 	]
 
+	emit-xmm-compare: func [
+		code [binary!]
+		type [block!]
+		left [word!]
+		right [word!]
+		/local lhs rhs
+	][
+		lhs: xmm-register-code left
+		rhs: xmm-register-code right
+		if type/1 = 'f64 [append-byte code 102]
+		emit-rex code no lhs none rhs
+		append code #{0F2E}
+		emit-modrm code 192 lhs rhs
+	]
+
+	emit-xmm-compare-memory: func [
+		code [binary!]
+		type [block!]
+		left [word!]
+		offset [integer!]
+		/local lhs
+	][
+		lhs: xmm-register-code left
+		if type/1 = 'f64 [append-byte code 102]
+		emit-rex code no lhs none 5
+		append code #{0F2E}
+		emit-frame-modrm code lhs offset
+	]
+
 	emit-compare-memory-immediate: func [
 		code [binary!]
 		offset [integer!]
@@ -2227,17 +2275,35 @@ rs-o2-x64: context [
 		code
 	]
 
-	emit-materialized-condition: func [
+	float-condition-code: func [opcode [word! none!] /local code][
+		code: case [
+			opcode = rs-o2-ir/equal-op [4]
+			opcode = rs-o2-ir/not-equal-op [5]
+			opcode = rs-o2-ir/less-op [2]
+			opcode = rs-o2-ir/greater-op [7]
+			opcode = rs-o2-ir/less-or-equal-op [6]
+			opcode = rs-o2-ir/greater-or-equal-op [3]
+			true [none]
+		]
+		code
+	]
+
+	float-condition-needs-parity?: func [opcode [word! none!]][
+		to logic! any [
+			opcode = rs-o2-ir/equal-op
+			opcode = rs-o2-ir/not-equal-op
+			opcode = rs-o2-ir/less-op
+			opcode = rs-o2-ir/less-or-equal-op
+		]
+	]
+
+	emit-set-condition: func [
 		code [binary!]
-		opcode [word!]
+		condition [integer!]
 		destination [word!]
-		/local condition dst
+		/local dst
 	][
-		condition: condition-code opcode
-		unless integer? condition [return fail-selection 'x64-condition-code]
 		dst: register-code destination
-		; SETcc writes one byte; MOVZX makes the Red/System logic representation
-		; an explicit 32-bit 0/1 without disturbing the comparison flags first.
 		if find [esi edi] destination [append-byte code 64]
 		emit-rex code no none none dst
 		append-byte code 15
@@ -2248,6 +2314,42 @@ rs-o2-x64: context [
 		append-byte code 15
 		append-byte code 182
 		emit-modrm code 192 dst dst
+	]
+
+	emit-materialized-condition: func [
+		code [binary!]
+		opcode [word!]
+		destination [word!]
+		/local condition
+	][
+		condition: condition-code opcode
+		unless integer? condition [return fail-selection 'x64-condition-code]
+		; SETcc writes one byte; MOVZX makes the Red/System logic representation
+		; an explicit 32-bit 0/1 without disturbing the comparison flags first.
+		emit-set-condition code condition destination
+		yes
+	]
+
+	emit-materialized-float-condition: func [
+		code [binary!]
+		opcode [word!]
+		destination [word!]
+		/local condition patch skip-start correction
+	][
+		condition: float-condition-code opcode
+		unless integer? condition [return fail-selection 'x64-float-condition-code]
+		emit-set-condition code condition destination
+		if float-condition-needs-parity? opcode [
+			; UCOMI sets PF for unordered operands. Skip the correction for the
+			; overwhelmingly common ordered case without changing its flags.
+			append-byte code 123
+			patch: (length? code) + 1
+			append-byte code 0
+			skip-start: length? code
+			correction: either opcode = rs-o2-ir/not-equal-op [1][0]
+			emit-mov-immediate code destination correction
+			change/part at code patch int-to-bin/to-bin8 ((length? code) - skip-start) 1
+		]
 		yes
 	]
 
@@ -2278,9 +2380,10 @@ rs-o2-x64: context [
 		condition [integer!]
 		target [integer!]
 		instruction-id [integer!]
+		/key branch-key [integer!]
 		/local patch relaxation-id
 	][
-		relaxation-id: instruction-id * 2
+		relaxation-id: either key [branch-key][instruction-id * 2]
 		either find relaxed-branches relaxation-id [
 			append-byte code 112 + condition
 			patch: (length? code) + 1
@@ -2295,17 +2398,47 @@ rs-o2-x64: context [
 		]
 	]
 
+	emit-float-branch-control: func [
+		code [binary!]
+		fixups [block!]
+		opcode [word!]
+		condition [integer!]
+		true-id [integer!]
+		false-id [integer!]
+		next-id [integer! none!]
+		instruction-id [integer!]
+		/local unordered-id parity-key condition-key
+	][
+		unordered-id: either opcode = rs-o2-ir/not-equal-op [true-id][false-id]
+		parity-key: 0 - ((instruction-id * 2) + 1)
+		condition-key: 0 - (instruction-id * 2)
+		emit-near-condition/key code fixups 10 unordered-id instruction-id parity-key
+		emit-near-condition/key code fixups condition true-id instruction-id condition-key
+		unless false-id = next-id [emit-near-jump code fixups false-id instruction-id]
+		yes
+	]
+
 	emit-branch-control: func [
 		code [binary!]
 		fixups [block!]
 		instruction [block!]
 		next-id [integer! none!]
-		/local operands metadata opcode condition true-id false-id instruction-id
+		/local operands metadata opcode condition true-id false-id instruction-id definition
+			comparison-operands operand-type float?
 	][
 		operands: pick instruction rs-o2-ir/ins-operands
 		metadata: pick instruction rs-o2-ir/ins-metadata
 		opcode: select metadata 'condition
-		condition: condition-code opcode
+		definition: rs-o2-ir/find-vreg-definition operands/1/2
+		operand-type: none
+		if definition [
+			comparison-operands: pick definition rs-o2-ir/ins-operands
+			if all [not empty? comparison-operands comparison-operands/1/1 = 'vreg][
+				operand-type: rs-o2-ir/vreg-type comparison-operands/1/2
+			]
+		]
+		float?: to logic! all [operand-type supported-float? operand-type]
+		condition: either float? [float-condition-code opcode][condition-code opcode]
 		unless integer? condition [return fail-selection 'x64-condition-code]
 		instruction-id: pick instruction rs-o2-ir/ins-id
 		true-id: operands/2/2
@@ -2313,6 +2446,10 @@ rs-o2-x64: context [
 		case [
 			true-id = false-id [
 				unless true-id = next-id [emit-near-jump code fixups true-id instruction-id]
+			]
+			all [float? float-condition-needs-parity? opcode][
+				return emit-float-branch-control
+					code fixups opcode condition true-id false-id next-id instruction-id
 			]
 			true-id = next-id [
 				emit-near-condition code fixups (condition xor 1) false-id instruction-id
@@ -2502,6 +2639,13 @@ rs-o2-x64: context [
 						][emit-gpr-move code type destination source]
 						unless emit-spilled-result code allocation result destination [return none]
 					]
+					opcode = 'bitcast [
+						destination: result-register allocation result
+						source: materialize-value code allocation operands/1/2
+						unless all [destination source][return none]
+						emit-gpr-move code type destination source
+						unless emit-spilled-result code allocation result destination [return none]
+					]
 					opcode = 'load-local [
 						case [
 							folded-load-name result []
@@ -2649,6 +2793,7 @@ rs-o2-x64: context [
 						unless emit-spilled-result code allocation result destination [return none]
 					]
 					rs-o2-ir/comparison-op? opcode [
+						source-type: rs-o2-ir/vreg-type operands/1/2
 						memory-name: folded-load-name operands/2/2
 						memory-offset: none
 						unless memory-name [
@@ -2656,50 +2801,75 @@ rs-o2-x64: context [
 								memory-offset: spill-offset operands/2/2
 							]
 						]
-						left-value: all [
-							find immediate-constants operands/1/2
-							rs-o2-ir/table-value constant-values operands/1/2
-						]
-						right-value: all [
-							find immediate-constants operands/2/2
-							rs-o2-ir/table-value constant-values operands/2/2
-						]
-						case [
-							all [not none? left-value memory-name] [
-								memory-offset: stack-offset memory-name
-								emit-compare-memory-immediate code memory-offset left-value
+						either supported-float? source-type [
+							left: materialize-value code allocation operands/1/2
+							unless left [return none]
+							case [
+								memory-name [
+									memory-offset: stack-offset memory-name
+									emit-xmm-compare-memory code source-type left memory-offset
+								]
+								integer? memory-offset [
+									emit-xmm-compare-memory code source-type left memory-offset
+								]
+								true [
+									right: materialize-value code allocation operands/2/2
+									unless right [return none]
+									emit-xmm-compare code source-type left right
+								]
 							]
-							all [not none? left-value integer? memory-offset] [
-								emit-compare-memory-immediate code memory-offset left-value
+							if comparison-value-used? result [
+								destination: result-register allocation result
+								unless destination [return none]
+								unless emit-materialized-float-condition code opcode destination [return none]
+								unless emit-spilled-result code allocation result destination [return none]
 							]
-							not none? left-value [
-								right: materialize-value code allocation operands/2/2
-								unless right [return none]
-								emit-compare-immediate code right left-value
+						][
+							left-value: all [
+								find immediate-constants operands/1/2
+								rs-o2-ir/table-value constant-values operands/1/2
 							]
-							true [
-								left: materialize-value code allocation operands/1/2
-								unless left [return none]
-								case [
-									memory-name [
-										memory-offset: stack-offset memory-name
-										emit-compare-memory code left memory-offset
-									]
-									integer? memory-offset [emit-compare-memory code left memory-offset]
-									not none? right-value [emit-compare-immediate code left right-value]
-									true [
-										right: materialize-value code allocation operands/2/2
-										unless right [return none]
-										emit-compare-registers code left right
+							right-value: all [
+								find immediate-constants operands/2/2
+								rs-o2-ir/table-value constant-values operands/2/2
+							]
+							case [
+								all [not none? left-value memory-name] [
+									memory-offset: stack-offset memory-name
+									emit-compare-memory-immediate code memory-offset left-value
+								]
+								all [not none? left-value integer? memory-offset] [
+									emit-compare-memory-immediate code memory-offset left-value
+								]
+								not none? left-value [
+									right: materialize-value code allocation operands/2/2
+									unless right [return none]
+									emit-compare-immediate code right left-value
+								]
+								true [
+									left: materialize-value code allocation operands/1/2
+									unless left [return none]
+									case [
+										memory-name [
+											memory-offset: stack-offset memory-name
+											emit-compare-memory code left memory-offset
+										]
+										integer? memory-offset [emit-compare-memory code left memory-offset]
+										not none? right-value [emit-compare-immediate code left right-value]
+										true [
+											right: materialize-value code allocation operands/2/2
+											unless right [return none]
+											emit-compare-registers code left right
+										]
 									]
 								]
 							]
-						]
-						if comparison-value-used? result [
-							destination: result-register allocation result
-							unless destination [return none]
-							unless emit-materialized-condition code opcode destination [return none]
-							unless emit-spilled-result code allocation result destination [return none]
+							if comparison-value-used? result [
+								destination: result-register allocation result
+								unless destination [return none]
+								unless emit-materialized-condition code opcode destination [return none]
+								unless emit-spilled-result code allocation result destination [return none]
+							]
 						]
 					]
 					opcode = 'call [

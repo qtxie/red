@@ -441,7 +441,7 @@ that produces a reliable runtime win.
 
 ## Current Implementation Evidence
 
-As of Stage49, the experimental O2 path supports scalar Win64 and SysV direct
+As of Stage52, the experimental O2 path supports scalar Win64 and SysV direct
 calls with ABI register arguments, stack arguments, parallel register copies,
 and one function-level outgoing argument area. Values live across calls use
 typed spill slots; managed pointers live at safepoints are conservatively
@@ -462,6 +462,22 @@ O2. Calls to the hot `red>copy-cell` helper are specialized after normal argumen
 evaluation and ABI register placement, eliminating the call while retaining O0
 and O1 behavior. Functions containing this direct-backend intrinsic are kept out
 of machine IR until the intrinsic and its XMM clobber are represented explicitly.
+
+Stage51 adds O2 call-site fast paths for `red>resolve-node` and
+`red>resolve-series`. Both paths validate the positive handle against
+`node-registry/next`, load the current registry table, and resolve the physical
+node. `resolve-series` additionally rejects a freed null entry before loading the
+series pointer. Zero, out-of-range, and freed series handles branch to the normal
+helper call, preserving its diagnostics and failure behavior. Resolver call sites
+currently use the direct backend until their global-memory dependency and
+clobbers are explicit machine-IR operations.
+
+Stage52 keeps the existing dense-switch jump-table selection and adds a balanced
+signed comparison tree for sparse switches with at least twelve distinct cases.
+Duplicate case values retain the direct backend's original linear lowering. The
+focused fixture spans 31 negative and positive keys plus default holes; O0 and O2
+both print `9`, and disassembly confirms the O2 root comparison branches with
+signed `JL` into logarithmic subtrees.
 
 The Stage46 selector handles `f32` and `f64` equality and ordered relational
 comparisons with `UCOMISS`/`UCOMISD`. It preserves Red/System unordered semantics:
@@ -499,19 +515,29 @@ Recorded emitted-program performance results include:
   and identical output. The O2 fixture contains two expected 128-bit copy
   sequences and the O0 fixture contains none. Report:
   `build/generated-code-benchmarks/stage49-copy-cell/20260806-062550/report.json`.
+- Stage51 Win64 resolver call loop: O0 and O1 median 0.66 seconds and O2 median
+  0.24 seconds over 15 interleaved samples, with a 2.77x median paired speedup
+  and identical output. Disassembly confirms that valid handles take the inline
+  lookup while exceptional `resolve-series` handles retain the helper call.
+  Report:
+  `build/generated-code-benchmarks/stage51-resolvers/20260806-065744/report.json`.
+- Stage52 Win64 sparse-switch loop: O0 median 0.23 seconds, O1 median 0.22
+  seconds, and O2 median 0.14 seconds over 15 interleaved samples, with a 1.68x
+  median paired O2 speedup and identical output. Report:
+  `build/generated-code-benchmarks/stage52-sparse-switch/20260806-071807/report.json`.
 
-Stage47 passes all 124 compiler-regression assertions and the full Windows x64
-Red/System O2 suite: 10,582 tests and 12,647 assertions with zero failures. The
-float-specific portions account for 1,950 `float!` and 1,308 `float32!`
-assertions, all passing. Stage49 bootstraps successfully in release mode; its
-focused O0/O2 `copy-cell` fixture prints `110` with exit status zero in both
-modes, and the machine-IR smoke fixture passes.
+Stage52 bootstraps successfully in release mode, passes all 124 compiler-regression
+assertions, and passes the full Windows x64 Red/System O2 suite: 10,582 tests and
+12,647 assertions with zero failures. The focused O0/O2 resolver fixture covers
+valid, zero, negative, out-of-range, and freed handles; both modes print `8` with
+exit status zero. The machine-IR smoke fixture also passes.
 
-This evidence does not complete the plan. Broad switch selection, aggregate and
-variadic ABI lowering through machine IR, exception/unwind integration, explicit
-stack operations, broader profile-driven runtime-helper specialization, emitted
-SysV binary validation, and the full cross-ABI runtime performance gate remain
-required before O2 can leave its experimental state.
+This evidence does not complete the plan. Machine-IR switch modeling and
+selection, aggregate and variadic ABI lowering through machine IR,
+exception/unwind integration, explicit stack operations, machine-IR modeling of
+the current direct-backend intrinsics, emitted SysV binary validation, and the
+full cross-ABI runtime performance gate remain required before O2 can leave its
+experimental state.
 
 ## Rollout
 

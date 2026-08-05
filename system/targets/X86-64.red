@@ -44,6 +44,7 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 	verbose:  	0									;-- logs verbosity level
 
 	emit-casting: emit-call-syscall: emit-call-import: emit-copy-cell-call: ;-- just pre-bind word to avoid contexts issue
+	emit-resolve-node-call: emit-resolve-series-call: reset-specialized-call-state:
 	emit-call-native: emit-not: emit-push: emit-pop:
 	emit-integer-operation: emit-float-operation:
 	emit-throw:	on-init: emit-alt-last: emit-log-b:
@@ -247,6 +248,17 @@ target: little-endian?: struct-align: ptr-size: void-ptr: none ; TBD: document o
 						unless all [opt-level >= 2 emit-copy-cell-call][
 							emit-call-native args fspec spec attribs
 						]
+					]
+					red>resolve-node [
+						unless all [opt-level >= 2 emit-resolve-node-call][
+							emit-call-native args fspec spec attribs
+						]
+					]
+					red>resolve-series [
+						unless all [
+							opt-level >= 2
+							emit-resolve-series-call fspec spec
+						][emit-call-native args fspec spec attribs]
 					]
 				][
 					emit-call-native args fspec spec attribs
@@ -909,6 +921,97 @@ target: 'X86-64
 		call-top-arg-rax?: no
 	]
 
+	patch-specialized-forward-jump: func [position [integer!]][
+		change/part
+			at emitter/code-buf position
+			int-to-bin/to-bin32 ((length? emitter/code-buf) - position - 3)
+			4
+	]
+	reset-specialized-call-state: func [n [integer!]][
+		call-arg-index: max 0 call-arg-index - n
+		if positive? n [remove/part skip tail call-arg-types negate n n]
+		call-stack-slots: 0
+		call-pad-slots: 0
+		call-extra-slots: 0
+		call-shadow-slots: 0
+		call-variadic?: no
+		call-float-reg-count: 0
+		call-struct-temp-slots: 0
+		call-top-arg-rax?: no
+	]
+	emit-resolver-fast-path: func [
+		series? [logic!]
+		/local registry zero-patch range-patch freed-patch done-patch
+	][
+		registry: select emitter/symbols 'red>node-registry
+		unless all [registry registry/1 = 'global][return none]
+		emit either win64? [#{85C9}][#{85FF}]		;-- TEST ecx/ecx or edi/edi
+		emit #{0F84}
+		zero-patch: (length? emitter/code-buf) + 1
+		emit #{00000000}
+		emit-global-ref registry #{488B05}			;-- MOV rax, [RIP+node-registry]
+		emit either win64? [#{3B4814}][#{3B7814}] ;-- CMP ecx/edi, [rax+next]
+		emit #{0F83}								;-- JAE slow/null (also catches negatives)
+		range-patch: (length? emitter/code-buf) + 1
+		emit #{00000000}
+		emit #{488B00}							;-- MOV rax, [rax+entries]
+		emit either win64? [
+			#{4863C9488B44C8F8}					;-- MOVSXD rcx,ecx / MOV rax,[rax+rcx*8-8]
+		][
+			#{4863FF488B44F8F8}					;-- MOVSXD rdi,edi / MOV rax,[rax+rdi*8-8]
+		]
+		freed-patch: none
+		if series? [
+			emit #{4885C0}							;-- TEST rax, rax
+			emit #{0F84}
+			freed-patch: (length? emitter/code-buf) + 1
+			emit #{00000000}
+			emit #{488B00}							;-- MOV rax, [rax+node/value]
+		]
+		emit #{E9}
+		done-patch: (length? emitter/code-buf) + 1
+		emit #{00000000}
+		patch-specialized-forward-jump zero-patch
+		patch-specialized-forward-jump range-patch
+		if freed-patch [patch-specialized-forward-jump freed-patch]
+		done-patch
+	]
+	emit-resolve-node-call: func [/local n done-patch][
+		n: length? call-arg-types
+		unless n = 1 [return no]
+		unless select emitter/symbols 'red>node-registry [return no]
+		emit-call-register-loads n
+		call-shadow-slots: 0
+		done-patch: emit-resolver-fast-path no
+		unless done-patch [return no]
+		emit #{31C0}								;-- XOR eax, eax (invalid handle)
+		patch-specialized-forward-jump done-patch
+		emit-call-stack-cleanup n
+		reset-specialized-call-state n
+		yes
+	]
+	emit-resolve-series-call: func [
+		fspec [block!]
+		spec [block!]
+		/local n done-patch fixed-shadow?
+	][
+		n: length? call-arg-types
+		unless n = 1 [return no]
+		unless select emitter/symbols 'red>node-registry [return no]
+		emit-call-register-loads n
+		done-patch: emit-resolver-fast-path yes
+		unless done-patch [return no]
+		fixed-shadow?: use-fixed-call-shadow? yes
+		emit-align-call-stack
+		if all [win64? not fixed-shadow?] [emit-reserve-stack 4]
+		emit #{E8}								;-- CALL red>resolve-series slow path
+		emit-reloc-disp32 spec
+		emit-normalize-sysv-return fspec
+		emit-call-stack-cleanup n
+		patch-specialized-forward-jump done-patch
+		reset-specialized-call-state n
+		yes
+	]
 	emit-copy-cell-call: func [/local n][
 		n: length? call-arg-types
 		unless n = 2 [return no]
@@ -920,16 +1023,7 @@ target: 'X86-64
 			#{0F10070F11064889F0}           ;-- MOVUPS xmm0,[rdi] / MOVUPS [rsi],xmm0 / MOV rax,rsi
 		]
 		emit-call-stack-cleanup n
-		call-arg-index: max 0 call-arg-index - n
-		remove/part skip tail call-arg-types negate n n
-		call-stack-slots: 0
-		call-pad-slots: 0
-		call-extra-slots: 0
-		call-shadow-slots: 0
-		call-variadic?: no
-		call-float-reg-count: 0
-		call-struct-temp-slots: 0
-		call-top-arg-rax?: no
+		reset-specialized-call-state n
 		yes
 	]
 
@@ -946,25 +1040,102 @@ target: 'X86-64
 			emit-rbp-ref src-offset #{488B45}		;-- MOV rax, [rbp+disp]
 		]
 	]
+	patch-switch-rel32: func [
+		code [binary!]
+		position [integer!]
+		target [integer!]
+	][
+		change/part
+			at code position
+			int-to-bin/to-bin32 (target - (position + 3))
+			4
+	]
+	emit-sparse-switch-node: func [
+		entries [block!]
+		low [integer!]
+		high [integer!]
+		code [binary!]
+		fixups [block!]
+		/local middle entry-position value body-offset patch left-patch
+	][
+		middle: to integer! round/down ((low + high) / 2)
+		entry-position: (((middle - 1) * 2) + 1)
+		value: entries/:entry-position
+		body-offset: pick entries (entry-position + 1)
+		append code #{3D}							;-- CMP eax, case value
+		append code int-to-bin/to-bin32 value
+		append code #{0F84}						;-- JE case body
+		patch: (length? code) + 1
+		append code #{00000000}
+		repend fixups [patch body-offset]
+
+		if all [low = middle middle = high][
+			append code #{E9}						;-- JMP default body
+			patch: (length? code) + 1
+			append code #{00000000}
+			repend fixups [patch none]
+			exit
+		]
+
+		append code #{0F8C}						;-- JL left subtree/default
+		left-patch: (length? code) + 1
+		append code #{00000000}
+		either low < middle [
+			patch: none
+		][
+			patch: left-patch
+			repend fixups [patch none]
+		]
+
+		either middle < high [
+			emit-sparse-switch-node entries (middle + 1) high code fixups
+		][
+			append code #{E9}						;-- JMP default body
+			patch: (length? code) + 1
+			append code #{00000000}
+			repend fixups [patch none]
+		]
+		if low < middle [
+			patch-switch-rel32 code left-patch length? code
+			emit-sparse-switch-node entries low (middle - 1) code fixups
+		]
+	]
+	emit-sparse-switch-dispatch: func [
+		entries [block!]
+		bodies [block!]
+		/local code fixups count dispatch-size patch body-offset target
+	][
+		code: make binary! ((length? entries) * 9)
+		fixups: make block! length? entries
+		count: (length? entries) / 2
+		emit-sparse-switch-node entries 1 count code fixups
+		dispatch-size: length? code
+		foreach [patch body-offset] fixups [
+			target: dispatch-size + (either none? body-offset [
+				0
+			][
+				(length? bodies/1) - body-offset
+			])
+			patch-switch-rel32 code patch target
+		]
+		emitter/chunks/join reduce [code copy []] bodies
+	]
 	emit-switch-dispatch: func [
 		values [block!]
 		bodies [block!]
 		/local entries cursor value body-offset count min-value max-value span previous
-			code table-bytes dispatch-size default-displacement target-offset index
+			code table-bytes dispatch-size default-displacement target-offset index dense?
 	][
 		entries: make block! 16
 		cursor: values
 		while [not tail? cursor][
 			foreach value cursor/1 [
 				value: to integer! value
-				if negative? value [return none]
 				repend entries [value cursor/2]
 			]
 			cursor: skip cursor 2
 		]
 		count: (length? entries) / 2
-		if count < 32 [return none]
-
 		sort/skip entries 2
 		previous: none
 		foreach [value body-offset] entries [
@@ -973,11 +1144,19 @@ target: 'X86-64
 		]
 		min-value: entries/1
 		max-value: first skip tail entries -2
-		span: max-value - min-value
-		unless all [
-			span <= 255
-			(span + 1) <= (count * 2)
-		][return none]
+		dense?: all [count >= 32 not negative? min-value]
+		if dense? [
+			span: max-value - min-value
+			dense?: all [
+				span <= 255
+				(span + 1) <= (count * 2)
+			]
+		]
+		unless dense? [
+			return either count >= 12 [
+				emit-sparse-switch-dispatch entries bodies
+			][none]
+		]
 
 		table-bytes: (span + 1) * 4
 		dispatch-size: table-bytes + (either zero? min-value [27][32])

@@ -5403,6 +5403,9 @@ system-dialect: context [
 								if name = 'red>copy-cell [
 									rs-o2-ir/mark-unsupported 'copy-cell-intrinsic
 								]
+								if find [red>resolve-node red>resolve-series] name [
+									rs-o2-ir/mark-unsupported 'resolver-intrinsic
+								]
 								unless o2-ir-call-selectable? spec args ir-type [
 									rs-o2-ir/mark-unsupported 'call-selection
 								]

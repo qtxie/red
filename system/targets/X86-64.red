@@ -2088,7 +2088,7 @@ target: 'X86-64
 	emit-integer-operation: func [
 		name [word!]
 		args [block!]
-		/local right right-source imm? type wide? left-block? right-block? right-last? right-type scale right-loaded? right-signed? left-type mod? signed-op? ptr-wide-imm? cast-width cast-mask cast-sign
+		/local right right-source imm? type wide? left-block? right-block? right-last? right-type scale right-loaded? right-signed? left-type mod? signed-op? ptr-wide-imm? scale-immediate-overflow? cast-width cast-mask cast-sign
 	][
 		type: system-dialect/compiler/resolve-aliased system-dialect/compiler/resolve-expr-type args/1
 		if all [object? args/1 logic? args/1/keep?] [system-dialect/compiler/cast args/1]
@@ -2149,6 +2149,18 @@ target: 'X86-64
 				union!   [emitter/union-size? type/2]
 			][1]
 			if scale > 1 [
+				scale-immediate-overflow?: all [
+					imm?
+					any [
+						all [right > 0 right > (2147483647 / scale)]
+						all [right < 0 right < (-2147483648 / scale)]
+					]
+				]
+				if scale-immediate-overflow? [
+					imm?: no
+					right-signed?: system-dialect/compiler/signed-integer?
+						system-dialect/compiler/resolve-expr-type args/2
+				]
 				either imm? [
 					right: right * scale
 				][
@@ -2183,10 +2195,13 @@ target: 'X86-64
 								emit #{4869C9}				;-- IMUL rcx, rcx, imm32
 								emit int-to-bin/to-bin32 scale
 							]
-						]
-					][
-						if right-signed? [emit #{4863C9}]	;-- MOVSXD rcx, ecx
-						emit #{4869C9}					;-- IMUL rcx, rcx, imm32
+							]
+						][
+							if right-signed? [
+								emit #{4863C9}				;-- MOVSXD rcx, ecx
+								right-signed?: no
+							]
+							emit #{4869C9}					;-- IMUL rcx, rcx, imm32
 						emit int-to-bin/to-bin32 scale
 					]
 					right-loaded?: yes

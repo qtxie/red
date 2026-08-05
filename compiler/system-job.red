@@ -14,6 +14,7 @@ compiler-system-job: context [
 		link?: false
 		debug?: false
 		opt-level: 1
+		o2-ir-dump: none
 		build-prefix: %builds/
 		build-basename: none
 		build-suffix: none
@@ -76,6 +77,7 @@ compiler-system-job: context [
 			link?: false
 			debug?: false
 			opt-level: 1
+			o2-ir-dump: none
 			build-prefix: %builds/
 			build-basename: none
 			build-suffix: none

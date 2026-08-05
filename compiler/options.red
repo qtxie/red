@@ -12,6 +12,7 @@ compiler-options: context [
 			release?: false
 			debug?: false
 			opt-level: 1
+			o2-ir-dump: none
 			static?: false
 			no-runtime?: false
 			dynamic-lib?: false
@@ -83,6 +84,11 @@ compiler-options: context [
 					"-O0" [options/opt-level: 0]
 					"-O1" [options/opt-level: 1]
 					"-O2" [options/opt-level: 2]
+					"--dump-o2-ir" [
+						index: index + 1
+						if index > length? args [return missing-value token]
+						options/o2-ir-dump: to string! pick args index
+					]
 					"-s" [options/static?: true]
 					"--static" [options/static?: true]
 					"-n" [options/no-runtime?: true]
@@ -162,6 +168,7 @@ compiler-options: context [
 		overrides: copy any [options/config []]
 		repend overrides ['debug? options/debug?]
 		repend overrides ['opt-level options/opt-level]
+		repend overrides ['o2-ir-dump options/o2-ir-dump]
 		repend overrides ['static-link? options/static?]
 		repend overrides ['runtime? not options/no-runtime?]
 		repend overrides ['red-only? options/red-only?]

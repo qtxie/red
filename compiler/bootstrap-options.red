@@ -14,6 +14,7 @@ compiler-options: context [
 			release?: false
 			debug?: false
 			opt-level: 1
+			o2-ir-dump: none
 			red-only?: false
 			no-compress?: false
 			dll?: false
@@ -44,6 +45,11 @@ compiler-options: context [
 				token = "-O0" [option-set options 'opt-level 0]
 				token = "-O1" [option-set options 'opt-level 1]
 				token = "-O2" [option-set options 'opt-level 2]
+				token = "--dump-o2-ir" [
+					position: next position
+					if tail? position [return missing-value token]
+					option-set options 'o2-ir-dump to string! position/1
+				]
 				find ["-dlib" "--dll"] token [option-set options 'dll? true]
 				find ["-u" "--update-libRedRT"] token [
 					option-set options 'update-libRedRT? true
@@ -86,6 +92,7 @@ compiler-options: context [
 		overrides: reduce [
 			'debug? option-get options 'debug?
 			'opt-level option-get options 'opt-level
+			'o2-ir-dump option-get options 'o2-ir-dump
 			'static-link? false
 			'runtime? true
 			'red-only? option-get options 'red-only?

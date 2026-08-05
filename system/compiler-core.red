@@ -3,6 +3,8 @@ Red [
 	File:  %compiler-core.red
 ]
 
+#include %machine-ir.red
+
 ;-- Top-level cursor stack (not nested object field). Object-field series have
 ;-- been observed corrupted to integer (e.g. 10000) under Stage1 GC; a script
 ;-- global is always reachable from the collector roots.
@@ -47,6 +49,7 @@ system-dialect: context [
 		debug?:				no							;-- emit debug information into binary
 		debug-safe?:		yes							;-- try to avoid over-crashing on runtime debug reports
 		opt-level:			1							;-- 0 = legacy emitter, 1 = fast local optimizations
+		o2-ir-dump:		none						;-- optional typed O2 IR dump file
 		dev-mode?:		 	none						;-- yes => turn on developer mode (pre-build runtime, default), no => build a single binary
 		static-link?:		no							;-- yes => extension-less #import names resolve to static libs (.lib/.a) instead of dynamic (.dll/.so/.dylib)
 		need-main?:			no							;-- yes => emit a function prolog/epilog around global code
@@ -3371,14 +3374,17 @@ system-dialect: context [
 			]
 		]
 
-		comp-if: has [expr unused chunk][
+		comp-if: has [expr unused chunk ir-if][
 			pc: next pc
+			ir-if: rs-o2-ir/begin-if
 			expr: fetch-expression/final 'if			;-- compile expression
 			check-conditional 'if expr					;-- verify conditional expression
 			expr: process-logic-encoding expr no
+			if ir-if [rs-o2-ir/if-condition ir-if]
 			check-body pc/1								;-- check TRUE block
 
 			set [unused chunk] comp-block-chunked		;-- compile TRUE block
+			if ir-if [rs-o2-ir/end-if ir-if]
 			emitter/set-signed-state expr				;-- properly set signed/unsigned state
 
 			emitter/branch/over/on/parity				;-- insert IF branching
@@ -3700,18 +3706,21 @@ system-dialect: context [
 			<last>
 		]
 
-		comp-while: has [expr unused cond body offset bodies][
+		comp-while: has [expr unused cond body offset bodies ir-loop][
 			pc: next pc
 			check-body pc/1								;-- check condition block
 			check-body pc/2								;-- check body block
 			emitter/push-loop-jumps
+			ir-loop: rs-o2-ir/begin-while
 
 			push-loop 'while-cond
 			set [expr cond]   comp-block-chunked/test 'while	;-- Condition block
 			pop-loop
+			if ir-loop [rs-o2-ir/while-condition ir-loop]
 			push-loop 'while
 			set [unused body] comp-block-chunked		;-- Body block
 			pop-loop
+			if ir-loop [rs-o2-ir/end-while ir-loop]
 
 			if logic? expr/1 [expr: [<>]]				;-- re-encode test op
 			offset: emitter/branch/over body			;-- Jump to condition
@@ -4976,7 +4985,7 @@ system-dialect: context [
 
 		fetch-expression: func [
 			caller [any-word! issue! none! set-path!]
-			/final /thru /keep /local expr pass mark
+			/final /thru /keep /local expr pass mark ir-record? ir-expr ir-line
 		][
 			unless block? expr-call-stack [
 				print ["*** GC-BUG fetch-expression ecs type:" type? :expr-call-stack "value:" mold/flat/part :expr-call-stack 80]
@@ -5030,7 +5039,15 @@ system-dialect: context [
 			if final [
 				if verbose >= 3 [?? expr]
 				unless find [none! tag!] type?/word expr [
+					ir-record?: rs-o2-ir/function-active?
+					if ir-record? [
+						ir-expr: either any [series? :expr object? :expr] [
+							copy/deep :expr
+						][:expr]
+						ir-line: calc-line
+					]
 					comp-expression expr to logic! keep
+					if ir-record? [o2-ir-record-expression ir-expr ir-line]
 				]
 				clear mark
 			]
@@ -5150,14 +5167,302 @@ system-dialect: context [
 			no
 		]
 
+		o2-ir-type-from-type: func [
+			source-type [block! none!]
+			/local type kind width ir-kind scale gc-kind
+		][
+			if any [none? source-type empty? source-type none? source-type/1][return none]
+			type: resolve-aliased source-type
+			kind: type/1
+			case [
+				any-float? type [
+					either kind = 'float32! [
+						rs-o2-ir/make-type 'f32 4 'xmm yes 0 'none
+					][
+						rs-o2-ir/make-type 'f64 8 'xmm yes 0 'none
+					]
+				]
+				any-pointer? type [
+					scale: 1
+					if all [
+						kind = 'pointer!
+						(length? type) >= 2
+						block? type/2
+						not empty? type/2
+					][scale: emitter/size-of? type/2/1]
+					gc-kind: either find [pointer! c-string! struct! union!] kind ['pointer]['none]
+					rs-o2-ir/make-type 'ptr emitter/target/ptr-size 'gpr no scale gc-kind
+				]
+				integer-type? type [
+					width: integer-width? type
+					ir-kind: select [1 i8 2 i16 4 i32 8 i64] width
+					either ir-kind [
+						rs-o2-ir/make-type ir-kind width 'gpr signed-integer? type 0 'none
+					][none]
+				]
+				kind = 'logic! [rs-o2-ir/make-type 'logic 4 'gpr no 0 'none]
+				true [none]
+			]
+		]
+
+		o2-ir-type-of: func [value /local type][
+			set/any 'type try [get-type :value]
+			if error? :type [
+				rs-o2-ir/mark-unsupported 'type-resolution
+				return none
+			]
+			o2-ir-type-from-type type
+		]
+
+		o2-ir-add-stack-objects: func [spec [block!] /local cursor item kind ir-type size align][
+		cursor: spec
+		kind: 'argument
+		while [not tail? cursor][
+			item: cursor/1
+			case [
+				all [refinement? item item = /local] [
+					kind: 'local
+					cursor: next cursor
+				]
+				set-word? item [
+					cursor: either tail? next cursor [next cursor][skip cursor 2]
+				]
+				all [word? item not tail? next cursor block? cursor/2] [
+					ir-type: o2-ir-type-from-type cursor/2
+					if ir-type [
+						size: max 1 ir-type/2
+						align: min size emitter/target/stack-width
+						rs-o2-ir/add-stack-object item kind ir-type size align ir-type/6
+					]
+					unless ir-type [rs-o2-ir/mark-unsupported 'unsupported-stack-object-type]
+					cursor: skip cursor 2
+				]
+				true [cursor: next cursor]
+			]
+		]
+	]
+
+		o2-ir-ensure-stack-object: func [
+			name [word!]
+			ir-type [block!]
+			/local marker kind offset size align
+		][
+			kind: 'argument
+			if all [marker: find locals /local find next marker name][kind: 'local]
+			offset: select/skip emitter/stack name 2
+			size: max 1 ir-type/2
+			align: min size emitter/target/stack-width
+			rs-o2-ir/ensure-stack-object name kind ir-type size align ir-type/6 offset
+		]
+
+	o2-ir-scan-body: func [body [any-block!] /local item][
+		foreach item body [
+			case [
+				any-path? item [
+					case [
+						all [
+							(length? item) >= 2
+							item/1 = 'system
+							item/2 = 'stack
+						][rs-o2-ir/mark-unsupported 'explicit-stack]
+						all [
+							(length? item) >= 2
+							item/1 = 'system
+							item/2 = 'cpu
+						][rs-o2-ir/mark-unsupported 'direct-cpu-state]
+						true [rs-o2-ir/mark-unsupported 'path-access]
+					]
+				]
+				any-block? item [o2-ir-scan-body item]
+				issue? item [
+					unless any [int64-literal-info item #"." = first to string! item][
+						rs-o2-ir/mark-unsupported 'inline-directive
+					]
+				]
+				word? item [
+					if find [
+						either case switch until loop break continue
+						catch throw return exit use assert variant? overflow?
+					] item [rs-o2-ir/mark-unsupported 'control-flow]
+					if find [push pop] item [rs-o2-ir/mark-unsupported 'explicit-stack]
+				]
+				true []
+			]
+		]
+	]
+
+	o2-ir-call-scalar-type?: func [type][
+		all [
+			block? type
+			any [
+				all [find [i32 logic] type/1 type/2 = 4 type/3 = 'gpr]
+				all [find [i64 ptr] type/1 type/2 = 8 type/3 = 'gpr]
+				all [find [f32 f64] type/1 find [4 8] type/2 type/3 = 'xmm]
+			]
+		]
+	]
+
+	o2-ir-call-selectable?: func [
+		spec [block!]
+		args [block!]
+		return-type [block! none!]
+		/local value type
+	][
+		unless all [
+			spec/2 = 'native
+			(length? args) = spec/1
+			any [none? return-type o2-ir-call-scalar-type? return-type]
+			not find-attribute spec/4 'variadic
+		][return no]
+		foreach value args [
+			type: rs-o2-ir/vreg-type value
+			unless o2-ir-call-scalar-type? type [return no]
+		]
+		yes
+	]
+
+	o2-ir-lower-expression: func [
+		value
+		/local type ir-type name target rhs left right op spec effect args arg result
+	][
+		case [
+			integer? :value [
+				ir-type: o2-ir-type-of value
+				rs-o2-ir/emit-constant value ir-type
+			]
+			char? :value [
+				ir-type: o2-ir-type-of value
+				rs-o2-ir/emit-constant to integer! value ir-type
+			]
+			logic? :value [
+				ir-type: o2-ir-type-of value
+				rs-o2-ir/emit-constant either value [1][0] ir-type
+			]
+			float? :value [
+				ir-type: o2-ir-type-of value
+				rs-o2-ir/mark-unsupported 'floating-point-selection
+				rs-o2-ir/emit-constant value ir-type
+			]
+			word? :value [
+				ir-type: o2-ir-type-of value
+				if none? ir-type [return rs-o2-ir/emit-opaque 'unsupported-value-type none]
+				either local-variable? value [
+					o2-ir-ensure-stack-object value ir-type
+					rs-o2-ir/emit-load-local value ir-type
+				][
+					name: any [resolve-ns value value]
+					rs-o2-ir/mark-unsupported 'global-memory
+					rs-o2-ir/emit-load-global name ir-type
+				]
+			]
+			any-block? :value [
+				if empty? value [return rs-o2-ir/emit-opaque 'empty-expression none]
+				case [
+					set-word? value/1 [
+						target: to word! value/1
+						rhs: o2-ir-lower-expression value/2
+						ir-type: o2-ir-type-of target
+						if none? rhs [return rs-o2-ir/emit-opaque 'assignment-without-value ir-type]
+						if none? ir-type [return rs-o2-ir/emit-opaque 'unsupported-value-type none]
+						either local-variable? target [
+							o2-ir-ensure-stack-object target ir-type
+							rs-o2-ir/emit-store-local target rhs ir-type
+						][
+							name: any [resolve-ns target target]
+							rs-o2-ir/mark-unsupported 'global-memory
+							rs-o2-ir/emit-store-global name rhs ir-type
+						]
+					]
+					set-path? value/1 [rs-o2-ir/emit-opaque 'path-assignment none]
+					word? value/1 [
+						op: value/1
+						name: decorate-fun op
+						spec: select functions name
+						case [
+							all [spec spec/2 = 'op (length? value) >= 3] [
+								left: o2-ir-lower-expression value/2
+								right: o2-ir-lower-expression value/3
+								ir-type: o2-ir-type-of value
+								if any [none? left none? right none? ir-type][
+									return rs-o2-ir/emit-opaque 'unsupported-operator-input ir-type
+								]
+								effect: either any [
+									op = first [/]
+									op = first [//]
+									op = to word! "%"
+								]['may-trap]['pure]
+								rs-o2-ir/emit-binary op left right ir-type effect
+							]
+							spec [
+								args: make block! max 0 (length? value) - 1
+								foreach arg next value [
+									result: o2-ir-lower-expression arg
+									if result [append args result]
+								]
+								ir-type: o2-ir-type-of value
+								unless o2-ir-call-selectable? spec args ir-type [
+									rs-o2-ir/mark-unsupported 'call-selection
+								]
+								rs-o2-ir/emit-call name args ir-type
+							]
+							true [rs-o2-ir/emit-opaque 'unknown-call none]
+						]
+					]
+					true [rs-o2-ir/emit-opaque 'unsupported-expression none]
+				]
+			]
+			object? :value [
+				ir-type: o2-ir-type-from-type value/type
+				rs-o2-ir/emit-opaque 'type-cast ir-type
+			]
+			any-path? :value [rs-o2-ir/emit-opaque 'path-access none]
+			any [issue? :value get-word? :value] [
+				rs-o2-ir/emit-opaque 'literal-or-reference none
+			]
+			any [string? :value binary? :value] [
+				rs-o2-ir/emit-opaque 'literal-or-reference none
+			]
+			true [rs-o2-ir/emit-opaque 'unsupported-expression none]
+		]
+	]
+
+		o2-ir-record-expression: func [value line [integer!] /local result ir-type][
+		rs-o2-ir/set-source script line
+		result: o2-ir-lower-expression :value
+		ir-type: either result [o2-ir-type-of :value][none]
+		rs-o2-ir/set-last-result result ir-type
+	]
+
+		o2-ir-begin-function: func [
+		name [word!] spec [block!] body [block!]
+		/local return-spec return-type abi started?
+	][
+		unless rs-o2-ir/session? [return no]
+		return-spec: select spec return-def
+		return-type: o2-ir-type-from-type return-spec
+		abi: either job/OS = 'Windows ['win64]['sysv]
+		started?: rs-o2-ir/begin-function name abi return-type script
+		if started? [
+			if all [return-spec none? return-type][
+				rs-o2-ir/mark-unsupported 'unsupported-return-type
+			]
+			o2-ir-add-stack-objects spec
+			o2-ir-scan-body body
+		]
+		started?
+	]
+
 		comp-func-body: func [
 			name [word!] spec [block!] body [block!] offset [integer!]
-			/local args-sz local-sz expr ret shadow-slot
+			/local args-sz local-sz expr ret shadow-slot capture? capture-start body-start body-end
+				direct-chunk selected-chunk
 		][
 			inject-loop-variable spec body
 			init-struct-values spec
 			locals: spec
 			func-name: name
+			capture?: o2-ir-begin-function name spec body
+			if capture? [capture-start: emitter/chunks/start]
 			if shadow-slot: in emitter/target 'reserve-fixed-shadow? [
 				set shadow-slot all [
 					job/opt-level >= 2
@@ -5168,8 +5473,10 @@ system-dialect: context [
 
 			set [args-sz local-sz] emitter/enter name locals offset ;-- build function prolog
 			func-locals-sz: local-sz
+			if capture? [rs-o2-ir/set-stack-offsets emitter/stack]
 			clean-byte-locals spec
 			preprocess-subroutines spec body
+			if capture? [body-start: emitter/tail-ptr - capture-start]
 			pc: body
 
 			expr: comp-dialect							;-- compile function's body
@@ -5193,11 +5500,24 @@ system-dialect: context [
 					]
 				]
 			]
+			if capture? [
+				body-end: emitter/tail-ptr - capture-start
+				rs-o2-ir/set-direct-body-range body-start body-end
+			]
 			emitter/leave name locals args-sz local-sz ret ;-- build function epilog
 			if shadow-slot: in emitter/target 'reserve-fixed-shadow? [set shadow-slot no]
 			if shadow-slot: in emitter/target 'fixed-shadow-space? [set shadow-slot no]
 			remove-func-pointers
 			unless empty? subroutines [emitter/resolve-subrc-points subroutines]
+			if capture? [
+				direct-chunk: emitter/chunks/stop
+				selected-chunk: either job/debug? [
+					rs-o2-ir/finish-function/debug direct-chunk debug-lines
+				][
+					rs-o2-ir/finish-function direct-chunk
+				]
+				emitter/merge selected-chunk
+			]
 			clear locals-init
 			locals: func-name: func-locals-sz: none
 		]
@@ -5621,6 +5941,7 @@ system-dialect: context [
 		emitter/init opts/link? job
 
 		clean-up
+		rs-o2-ir/start-session job/opt-level job/target job/o2-ir-dump opts/verbosity job/debug?
 ;set-verbose-level 4
 		if opts/verbosity >= 10 [set-verbose-level opts/verbosity]
 		loader/connect-compiler-state compiler/definitions compiler/keywords-list
@@ -5673,6 +5994,7 @@ system-dialect: context [
 		phase-timer/begin 'backend-finalize
 		set-verbose-level opts/verbosity
 		compiler/finalize							;-- compile all functions
+		rs-o2-ir/end-session
 		set-verbose-level 0
 		phase-timer/finish 'backend-finalize
 

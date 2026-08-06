@@ -107,6 +107,7 @@ rs-o2-ir: context [
 	dump-path: none
 	verbose: 0
 	debug?: no
+	switch-depth: 0
 
 	make-type: func [
 		kind [word!]
@@ -242,12 +243,14 @@ rs-o2-ir: context [
 			none
 		]
 		function-active?: yes
+		switch-depth: 0
 		yes
 	]
 
 	abort-function: does [
 		current: rs-o2-ir-current-root: none
 		function-active?: no
+		switch-depth: 0
 	]
 
 	set-source: func [source-file [file! string! none!] line [integer!]][
@@ -499,6 +502,31 @@ rs-o2-ir: context [
 		value
 	]
 
+	emit-copy-cell: func [source [integer!] destination [integer!] type [block!]][
+		append-op
+			'copy-cell
+			reduce [
+				symbol-operand 'red>copy-cell
+				vreg-operand source
+				vreg-operand destination
+			]
+			type
+			'write
+			'universal
+			none
+			no
+			reduce ['bytes 16 'overlap 'load-before-store 'scratch-class 'xmm]
+	]
+
+	emit-phi: func [incoming [block!] type [block!] /local operands item][
+		operands: make block! ((length? incoming) * 2)
+		foreach item incoming [
+			append/only operands block-operand item/1
+			append/only operands vreg-operand item/2
+		]
+		append-op 'phi operands type 'pure 'none none no none
+	]
+
 	emit-opaque: func [reason [word!] type [block! none!] /local result][
 		mark-unsupported reason
 		result: append-op 'opaque reduce [symbol-operand reason] type 'opaque 'universal none yes reduce ['reason reason]
@@ -632,6 +660,136 @@ rs-o2-ir: context [
 		unless all [function-active? (length? state) = 3][return none]
 		emit-jump state/3
 		set-current-block state/3
+	]
+
+	begin-switch: func [
+		case-groups [block!]
+		explicit-default? [logic!]
+		/local selector selector-type seen values value case-ids block default-block done-block
+			operands index from-id
+	][
+		unless function-active? [return none]
+		if positive? switch-depth [
+			mark-unsupported 'nested-switch
+			return none
+		]
+		unless explicit-default? [
+			mark-unsupported 'switch-without-default
+			return none
+		]
+		selector: pick current fn-last-result
+		selector-type: pick current fn-last-type
+		unless all [
+			selector
+			valid-type? selector-type
+			selector-type/1 = 'i32
+			selector-type/2 = 4
+		][
+			mark-unsupported 'switch-selector-type
+			return none
+		]
+		seen: make block! 16
+		foreach values case-groups [
+			foreach value values [
+				value: to integer! value
+				if find seen value [
+					mark-unsupported 'duplicate-switch-value
+					return none
+				]
+				append seen value
+			]
+		]
+
+		from-id: current-block-id
+		case-ids: make block! length? case-groups
+		foreach values case-groups [
+			block: add-block 'switch-case
+			append case-ids pick block bb-id
+		]
+		default-block: add-block 'switch-default
+		done-block: add-block 'switch-exit
+		set-current-block from-id
+
+		operands: make block! (((length? seen) * 2) + 2)
+		append/only operands vreg-operand selector
+		index: 0
+		foreach values case-groups [
+			index: index + 1
+			foreach value values [
+				append/only operands immediate-operand to integer! value
+				append/only operands block-operand pick case-ids index
+			]
+		]
+		append/only operands block-operand pick default-block bb-id
+		append-op 'switch operands none 'control 'none none no reduce ['signed yes]
+		foreach index case-ids [add-edge from-id index]
+		add-edge from-id pick default-block bb-id
+		seal-current-block
+		switch-depth: switch-depth + 1
+		reduce [
+			case-ids
+			pick default-block bb-id
+			pick done-block bb-id
+			make block! ((length? case-ids) + 1)
+			1
+		]
+	]
+
+	begin-switch-case: func [state [block!] /local index][
+		unless all [function-active? (length? state) = 5][return none]
+		index: state/5
+		unless all [index >= 1 index <= length? state/1][
+			mark-unsupported 'switch-case-index
+			return none
+		]
+		set-current-block pick state/1 index
+		set-last-result none none
+	]
+
+	end-switch-case: func [state [block!] /local result type predecessor][
+		unless all [function-active? (length? state) = 5][return none]
+		result: pick current fn-last-result
+		type: pick current fn-last-type
+		predecessor: current-block-id
+		append/only state/4 reduce [predecessor result either type [copy/deep type][none]]
+		emit-jump state/3
+		poke state 5 (state/5 + 1)
+	]
+
+	begin-switch-default: func [state [block!]][
+		unless all [function-active? (length? state) = 5][return none]
+		set-current-block state/2
+		set-last-result none none
+	]
+
+	end-switch-default: func [state [block!] /local result type predecessor][
+		unless all [function-active? (length? state) = 5][return none]
+		result: pick current fn-last-result
+		type: pick current fn-last-type
+		predecessor: current-block-id
+		append/only state/4 reduce [predecessor result either type [copy/deep type][none]]
+		emit-jump state/3
+	]
+
+	end-switch: func [state [block!] /local incoming item result-type compatible? result][
+		unless all [function-active? (length? state) = 5][return none]
+		set-current-block state/3
+		incoming: state/4
+		result-type: none
+		compatible?: (length? incoming) = ((length? state/1) + 1)
+		foreach item incoming [
+			unless all [item/2 valid-type? item/3][compatible?: no]
+			if all [compatible? none? result-type][result-type: copy/deep item/3]
+			if all [compatible? result-type result-type <> item/3][compatible?: no]
+		]
+		result: either all [compatible? result-type][
+			emit-phi incoming result-type
+		][
+			set-last-result none none
+			none
+		]
+		switch-depth: max 0 (switch-depth - 1)
+		result
 	]
 
 	find-stack-object: func [name [word!] /local stack-entry][
@@ -1242,13 +1400,42 @@ rs-o2-ir: context [
 	]
 
 	pass-dead-code-elimination: func [
-		/local block instructions position instruction kept live result effect keep? operand found
+		/local block block-id instructions position instruction kept live result effect keep?
+			operand found definitions cross-live definition-block
 	][
+		definitions: make block! 16
+		cross-live: make block! 8
+		foreach block pick current fn-blocks [
+			block-id: pick block bb-id
+			foreach instruction pick block bb-instructions [
+				result: pick instruction ins-result
+				if result [set-table-value definitions result block-id]
+			]
+		]
+		foreach block pick current fn-blocks [
+			block-id: pick block bb-id
+			foreach instruction pick block bb-instructions [
+				foreach operand pick instruction ins-operands [
+					if operand/1 = 'vreg [
+						definition-block: table-value definitions operand/2
+						if all [definition-block definition-block <> block-id][
+							live: table-value cross-live definition-block
+							unless live [
+								live: make block! 4
+								set-table-value cross-live definition-block live
+							]
+							unless find live operand/2 [append live operand/2]
+						]
+					]
+				]
+			]
+		]
 		foreach block pick current fn-blocks [
 			instructions: pick block bb-instructions
 			position: tail instructions
 			kept: make block! length? instructions
-			live: make block! 16
+			live: table-value cross-live pick block bb-id
+			live: either live [copy live][make block! 16]
 			while [not head? position][
 				position: back position
 				instruction: position/1

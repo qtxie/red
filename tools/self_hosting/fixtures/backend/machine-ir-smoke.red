@@ -90,12 +90,40 @@ unless sysv-selected/1 = #{8D0437C3} [fail "SysV argument bytes are wrong"]
 unless rs-o2-ir/begin-function 'win64-pointer-identity 'win64 ptr-type %machine-ir-smoke.red [
 	fail "Win64 pointer identity function did not start"
 ]
-rs-o2-ir/add-stack-object 'value 'argument ptr-type 8 8 'none
+rs-o2-ir/add-stack-object 'value 'argument ptr-type 8 8 'pointer
 win-pointer-value: rs-o2-ir/emit-load-local 'value ptr-type
 rs-o2-ir/set-direct-body-range 0 1
 win-pointer-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
 unless win-pointer-selected/1 = #{4889C8C3} [
 	fail rejoin ["Win64 pointer identity bytes are wrong: " mold win-pointer-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'win64-copy-cell 'win64 ptr-type %machine-ir-smoke.red [
+	fail "Win64 copy-cell function did not start"
+]
+rs-o2-ir/add-stack-object 'source 'argument ptr-type 8 8 'pointer
+rs-o2-ir/add-stack-object 'destination 'argument ptr-type 8 8 'pointer
+win-copy-source: rs-o2-ir/emit-load-local 'source ptr-type
+win-copy-destination: rs-o2-ir/emit-load-local 'destination ptr-type
+win-copy-result: rs-o2-ir/emit-copy-cell win-copy-source win-copy-destination ptr-type
+rs-o2-ir/set-direct-body-range 0 1
+win-copy-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
+unless win-copy-selected/1 = #{0F10290F112A4889D0C3} [
+	fail rejoin ["Win64 copy-cell bytes are wrong: " mold win-copy-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'sysv-copy-cell 'sysv ptr-type %machine-ir-smoke.red [
+	fail "SysV copy-cell function did not start"
+]
+rs-o2-ir/add-stack-object 'source 'argument ptr-type 8 8 'pointer
+rs-o2-ir/add-stack-object 'destination 'argument ptr-type 8 8 'pointer
+sysv-copy-source: rs-o2-ir/emit-load-local 'source ptr-type
+sysv-copy-destination: rs-o2-ir/emit-load-local 'destination ptr-type
+sysv-copy-result: rs-o2-ir/emit-copy-cell sysv-copy-source sysv-copy-destination ptr-type
+rs-o2-ir/set-direct-body-range 0 1
+sysv-copy-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
+unless sysv-copy-selected/1 = #{440F103F440F113E4889F0C3} [
+	fail rejoin ["SysV copy-cell bytes are wrong: " mold sysv-copy-selected/1]
 ]
 
 unless rs-o2-ir/begin-function 'sysv-i64-identity 'sysv i64 %machine-ir-smoke.red [
@@ -1075,10 +1103,10 @@ rs-o2-ir/emit-opaque 'unsupported-smoke none
 fallback-direct: reduce [#{CC} copy []]
 fallback-selected: rs-o2-ir/finish-function fallback-direct
 unless fallback-selected/1 = #{CC} [fail "fallback bytes changed"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 43 [fail "final function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 43 [fail "final verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 42 [fail "final eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 41 [fail "final selection count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 45 [fail "final function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 45 [fail "final verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 44 [fail "final eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 43 [fail "final selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 2 [fail "final fallback count"]
 
 rs-o2-ir/end-session

@@ -3501,7 +3501,10 @@ system-dialect: context [
 			<last>
 		]
 
-		comp-switch: has [expr save-type spec value values body bodies list types default pos tagged-type tagged? id dispatch][
+		comp-switch: has [
+			expr save-type spec value values body bodies list types default pos tagged-type tagged?
+			id dispatch ir-shape ir-switch
+		][
 			pc: next pc
 			expr: fetch-expression/keep/final 'switch	;-- compile argument
 			if any [none? expr last-type = none-type][
@@ -3532,6 +3535,11 @@ system-dialect: context [
 				]
 			]
 			spec: head spec
+			ir-shape: o2-ir-switch-shape spec
+			ir-switch: none
+			if ir-shape [
+				ir-switch: rs-o2-ir/begin-switch ir-shape/1 ir-shape/2
+			]
 
 			;-- check syntax and store parts in different lists
 			unless parse spec [
@@ -3539,21 +3547,25 @@ system-dialect: context [
 					pos: copy value some [integer! | char!]
 					(repend values [value none])		;-- [value body-offset ...]
 					pos: block! (
+						if ir-switch [rs-o2-ir/begin-switch-case ir-switch]
 						last-type: none-type
 						fetch-into pos [				;-- compile action body
 							body: comp-block-chunked/bool
 							append/only list body/2
 							append/only types resolve-expr-type/quiet body/1
 						]
+						if ir-switch [rs-o2-ir/end-switch-case ir-switch]
 					)
 				]
 				opt [
 					'default pos: block! (
+						if ir-switch [rs-o2-ir/begin-switch-default ir-switch]
 						last-type: none-type
 						fetch-into pos [				;-- compile default body
 							default: comp-block-chunked/bool
 							append/only types resolve-expr-type/quiet default/1
 						]
+						if ir-switch [rs-o2-ir/end-switch-default ir-switch]
 					)
 				]
 			][
@@ -3585,6 +3597,7 @@ system-dialect: context [
 					bodies: emitter/chunks/join body bodies
 				]
 			]
+			if ir-switch [rs-o2-ir/end-switch ir-switch]
 
 			;-- construct tests + branching and insert them at head
 			last-type: save-type
@@ -5257,6 +5270,22 @@ system-dialect: context [
 			rs-o2-ir/ensure-stack-object name kind ir-type size align ir-type/6 offset
 		]
 
+	o2-ir-switch-shape: func [
+		spec [block!]
+		/local groups values explicit-default?
+	][
+		groups: make block! 8
+		explicit-default?: no
+		unless parse spec [
+			some [
+				copy values some [integer! | char!]
+				block! (append/only groups copy values)
+			]
+			opt ['default block! (explicit-default?: yes)]
+		][return none]
+		reduce [groups explicit-default?]
+	]
+
 	o2-ir-scan-body: func [body [any-block!] /local item][
 		foreach item body [
 			case [
@@ -5283,7 +5312,7 @@ system-dialect: context [
 				]
 				word? item [
 					if find [
-						either case switch until loop break continue
+						either case until loop break continue
 						catch throw return exit use assert variant? overflow?
 					] item [rs-o2-ir/mark-unsupported 'control-flow]
 					if find [push pop] item [rs-o2-ir/mark-unsupported 'explicit-stack]
@@ -5305,9 +5334,9 @@ system-dialect: context [
 	]
 
 	o2-ir-call-selectable?: func [
-		spec [block!]
-		args [block!]
-		return-type [block! none!]
+			spec [block!]
+			args [block!]
+			return-type [block! none!]
 		/local value type
 	][
 		unless all [
@@ -5321,6 +5350,29 @@ system-dialect: context [
 			unless o2-ir-call-scalar-type? type [return no]
 		]
 		yes
+	]
+
+	o2-ir-copy-cell-selectable?: func [
+			args [block!]
+			return-type [block! none!]
+			/local source-type destination-type
+		][
+			unless all [
+				(length? args) = 2
+				return-type
+				return-type/1 = 'ptr
+				return-type/2 = emitter/target/ptr-size
+			][return no]
+			source-type: rs-o2-ir/vreg-type args/1
+			destination-type: rs-o2-ir/vreg-type args/2
+			all [
+				source-type
+				destination-type
+				source-type/1 = 'ptr
+				destination-type/1 = 'ptr
+			source-type/2 = emitter/target/ptr-size
+			destination-type/2 = emitter/target/ptr-size
+		]
 	]
 
 	o2-ir-lower-expression: func [
@@ -5400,16 +5452,22 @@ system-dialect: context [
 									if result [append args result]
 								]
 								ir-type: o2-ir-type-of value
-								if name = 'red>copy-cell [
-									rs-o2-ir/mark-unsupported 'copy-cell-intrinsic
+								either name = 'red>copy-cell [
+									either o2-ir-copy-cell-selectable? args ir-type [
+										rs-o2-ir/emit-copy-cell args/1 args/2 ir-type
+									][
+										rs-o2-ir/mark-unsupported 'copy-cell-intrinsic
+										rs-o2-ir/emit-call name args ir-type
+									]
+								][
+									if find [red>resolve-node red>resolve-series] name [
+										rs-o2-ir/mark-unsupported 'resolver-intrinsic
+									]
+									unless o2-ir-call-selectable? spec args ir-type [
+										rs-o2-ir/mark-unsupported 'call-selection
+									]
+									rs-o2-ir/emit-call name args ir-type
 								]
-								if find [red>resolve-node red>resolve-series] name [
-									rs-o2-ir/mark-unsupported 'resolver-intrinsic
-								]
-								unless o2-ir-call-selectable? spec args ir-type [
-									rs-o2-ir/mark-unsupported 'call-selection
-								]
-								rs-o2-ir/emit-call name args ir-type
 							]
 							true [rs-o2-ir/emit-opaque 'unknown-call none]
 						]

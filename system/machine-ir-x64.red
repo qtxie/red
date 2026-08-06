@@ -33,6 +33,8 @@ rs-o2-x64: context [
 	gc-bitmap-list: none
 	gc-bitmap-original: none
 	gc-bitmap-offset: none
+	copy-cell-xmm-scratch: none
+	phi-edge-copies: make block! 8
 
 	fail-selection: func [reason [word!]][
 		rs-o2-ir/mark-unsupported reason
@@ -158,6 +160,15 @@ rs-o2-x64: context [
 		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
 				if (pick instruction rs-o2-ir/ins-opcode) = 'call [return yes]
+			]
+		]
+		no
+	]
+
+	function-has-copy-cell?: func [/local block instruction][
+		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				if (pick instruction rs-o2-ir/ins-opcode) = 'copy-cell [return yes]
 			]
 		]
 		no
@@ -461,7 +472,6 @@ rs-o2-x64: context [
 
 	frameless-eligible?: func [/local block instruction opcode operands stack-entry][
 		foreach stack-entry pick rs-o2-ir/current rs-o2-ir/fn-stack-objects [
-			unless (pick stack-entry rs-o2-ir/stack-gc-kind) = 'none [return no]
 			if pick stack-entry rs-o2-ir/stack-escaped? [return no]
 		]
 		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
@@ -491,8 +501,8 @@ rs-o2-x64: context [
 		registers
 	]
 
-	available-xmm-registers: does [
-		either (pick rs-o2-ir/current rs-o2-ir/fn-abi) = 'win64 [
+	available-xmm-registers: has [registers position][
+		registers: either (pick rs-o2-ir/current rs-o2-ir/fn-abi) = 'win64 [
 			copy [xmm0 xmm1 xmm2 xmm3 xmm4 xmm5]
 		][
 			copy [
@@ -500,6 +510,11 @@ rs-o2-x64: context [
 				xmm8 xmm9 xmm10 xmm11 xmm12 xmm13 xmm14 xmm15
 			]
 		]
+		if all [
+			copy-cell-xmm-scratch
+			position: find registers copy-cell-xmm-scratch
+		][remove position]
+		registers
 	]
 
 	call-argument-register: func [
@@ -616,7 +631,7 @@ rs-o2-x64: context [
 
 	validate-operands: func [
 		instruction [block!]
-		/local opcode operands stack-entry name result type operand left-type right-type
+		/local opcode operands stack-entry name result type operand left-type right-type position
 	][
 		opcode: pick instruction rs-o2-ir/ins-opcode
 		operands: pick instruction rs-o2-ir/ins-operands
@@ -751,6 +766,41 @@ rs-o2-x64: context [
 					return fail-selection 'x64-comparison-type
 				]
 			]
+			opcode = 'phi [
+				unless all [result not empty? operands even? length? operands][
+					return fail-selection 'x64-phi-shape
+				]
+				position: operands
+				while [not tail? position][
+					unless all [
+						position/1/1 = 'block
+						position/2/1 = 'vreg
+						(rs-o2-ir/vreg-type position/2/2) = type
+					][return fail-selection 'x64-phi-input]
+					position: skip position 2
+				]
+			]
+			opcode = 'switch [
+				operand: last operands
+				left-type: rs-o2-ir/vreg-type operands/1/2
+				unless all [
+					none? result
+					(length? operands) >= 4
+					even? length? operands
+					operands/1/1 = 'vreg
+					operand/1 = 'block
+					supported-i32? left-type
+				][return fail-selection 'x64-switch-shape]
+				position: next operands
+				while [(length? position) > 1][
+					unless all [
+						position/1/1 = 'imm
+						integer? position/1/2
+						position/2/1 = 'block
+					][return fail-selection 'x64-switch-case]
+					position: skip position 2
+				]
+			]
 				opcode = 'call [
 					unless all [
 						not empty? operands
@@ -758,7 +808,26 @@ rs-o2-x64: context [
 					][return fail-selection 'x64-call-shape]
 				foreach operand next operands [
 					unless operand/1 = 'vreg [return fail-selection 'x64-call-argument]
+					]
 				]
+			opcode = 'copy-cell [
+				unless all [
+					result
+					(length? operands) = 3
+					operands/1 = reduce ['symbol 'red>copy-cell]
+					operands/2/1 = 'vreg
+					operands/3/1 = 'vreg
+					supported-wide-gpr? type
+					type/1 = 'ptr
+				][return fail-selection 'x64-copy-cell-shape]
+				left-type: rs-o2-ir/vreg-type operands/2/2
+				right-type: rs-o2-ir/vreg-type operands/3/2
+				unless all [
+					supported-wide-gpr? left-type
+					supported-wide-gpr? right-type
+					left-type/1 = 'ptr
+					right-type/1 = 'ptr
+				][return fail-selection 'x64-copy-cell-type]
 			]
 			opcode = 'jump [
 				unless all [(length? operands) = 1 operands/1/1 = 'block][
@@ -859,6 +928,8 @@ rs-o2-x64: context [
 		gc-bitmap-list: none
 		gc-bitmap-original: none
 		gc-bitmap-offset: none
+		copy-cell-xmm-scratch: none
+		clear phi-edge-copies
 		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
 		unless empty? pick rs-o2-ir/current rs-o2-ir/fn-safepoints [
 			return fail-selection 'x64-safepoints
@@ -882,6 +953,11 @@ rs-o2-x64: context [
 				unless validate-operands instruction [return no]
 			]
 		]
+		if function-has-copy-cell? [
+			copy-cell-xmm-scratch: either (pick rs-o2-ir/current rs-o2-ir/fn-abi) = 'win64 [
+				'xmm5
+			]['xmm15]
+		]
 		if loop-has-global-store? [return fail-selection 'x64-global-store-loop]
 		unless plan-relocations direct-chunk [return no]
 		frameless?: all [(length? blocks) = 1 frameless-eligible?]
@@ -897,13 +973,15 @@ rs-o2-x64: context [
 	]
 
 	build-intervals: func [
-		/local intervals block instruction use-position definition-position operand interval
+		/local intervals blocks block instruction use-position definition-position operand interval
 			result opcode operands preferred fixed return-interval
 			store-targets register existing existing-fixed argument-index call-operand
+			position predecessor terminal phi-interval
 	][
 		intervals: make block! 16
+		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
 		if frameless? [
-			foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			foreach block blocks [
 				foreach instruction pick block rs-o2-ir/bb-instructions [
 					if (pick instruction rs-o2-ir/ins-opcode) = 'load-local [
 						operands: pick instruction rs-o2-ir/ins-operands
@@ -914,20 +992,35 @@ rs-o2-x64: context [
 				]
 			]
 		]
-		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+		foreach block blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
 				use-position: (pick instruction rs-o2-ir/ins-id) * 2
 				opcode: pick instruction rs-o2-ir/ins-opcode
 				operands: pick instruction rs-o2-ir/ins-operands
-				foreach operand operands [
-					if all [
-						operand/1 = 'vreg
-						none? folded-load-name operand/2
-					][
-						interval: find-interval intervals operand/2
-						unless interval [return fail-selection 'x64-undefined-interval]
+				either opcode = 'phi [
+					position: operands
+					while [not tail? position][
+						predecessor: pick blocks position/1/2
+						terminal: last pick predecessor rs-o2-ir/bb-instructions
+						use-position: (pick terminal rs-o2-ir/ins-id) * 2
+						interval: find-interval intervals position/2/2
+						unless interval [return fail-selection 'x64-undefined-phi-input]
 						if use-position > pick interval interval-end [
 							poke interval interval-end use-position
+						]
+						position: skip position 2
+					]
+				][
+					foreach operand operands [
+						if all [
+							operand/1 = 'vreg
+							none? folded-load-name operand/2
+						][
+							interval: find-interval intervals operand/2
+							unless interval [return fail-selection 'x64-undefined-interval]
+							if use-position > pick interval interval-end [
+								poke interval interval-end use-position
+							]
 						]
 					]
 				]
@@ -939,8 +1032,11 @@ rs-o2-x64: context [
 					if opcode = 'load-local [
 						fixed: promoted-register operands/1/2
 					]
-					if opcode = 'call [
+					if find [call copy-cell] opcode [
 						fixed: return-register pick instruction rs-o2-ir/ins-type
+					]
+					if all [opcode = 'phi (length? operands) >= 2][
+						preferred: operands/2/2
 					]
 					if all [
 						any [find [copy bitcast] opcode supported-binary-operation? opcode]
@@ -959,7 +1055,7 @@ rs-o2-x64: context [
 						]
 					]
 				]
-				if opcode = 'call [
+				if find [call copy-cell] opcode [
 					argument-index: 0
 					foreach call-operand next operands [
 						argument-index: argument-index + 1
@@ -975,7 +1071,7 @@ rs-o2-x64: context [
 			]
 		]
 		store-targets: make block! 8
-		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+		foreach block blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
 				if (pick instruction rs-o2-ir/ins-opcode) = 'store-local [
 					operands: pick instruction rs-o2-ir/ins-operands
@@ -999,7 +1095,7 @@ rs-o2-x64: context [
 				if none? pick interval interval-fixed [poke interval interval-fixed register]
 			]
 		]
-		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+		foreach block blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
 				if (pick instruction rs-o2-ir/ins-opcode) = 'return [
 					operands: pick instruction rs-o2-ir/ins-operands
@@ -1007,6 +1103,25 @@ rs-o2-x64: context [
 						return-interval: find-interval intervals operands/1/2
 						if all [return-interval none? pick return-interval interval-fixed][
 							poke return-interval interval-fixed return-register rs-o2-ir/vreg-type operands/1/2
+						]
+					]
+				]
+			]
+		]
+		foreach block blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				if (pick instruction rs-o2-ir/ins-opcode) = 'phi [
+					phi-interval: find-interval intervals pick instruction rs-o2-ir/ins-result
+					fixed: all [phi-interval pick phi-interval interval-fixed]
+					if fixed [
+						operands: pick instruction rs-o2-ir/ins-operands
+						position: operands
+						while [not tail? position][
+							interval: find-interval intervals position/2/2
+							if all [interval none? pick interval interval-fixed][
+								poke interval interval-fixed fixed
+							]
+							position: skip position 2
 						]
 					]
 				]
@@ -1661,6 +1776,50 @@ rs-o2-x64: context [
 		emit-frame-modrm code src offset
 	]
 
+	emit-pointer-modrm: func [
+		code [binary!]
+		reg [integer!]
+		base [integer!]
+	][
+		case [
+			(base and 7) = 4 [
+				emit-modrm code 0 reg base
+				append-byte code 36
+			]
+			(base and 7) = 5 [
+				emit-modrm code 64 reg base
+				append-byte code 0
+			]
+			true [emit-modrm code 0 reg base]
+		]
+	]
+
+	emit-xmm-pointer-load: func [
+		code [binary!]
+		destination [word!]
+		base [word!]
+		/local dst src
+	][
+		dst: xmm-register-code destination
+		src: register-code base
+		emit-rex code no dst none src
+		append code #{0F10}                       ;-- MOVUPS xmm, [base]
+		emit-pointer-modrm code dst src
+	]
+
+	emit-xmm-pointer-store: func [
+		code [binary!]
+		base [word!]
+		source [word!]
+		/local dst src
+	][
+		dst: register-code base
+		src: xmm-register-code source
+		emit-rex code no src none dst
+		append code #{0F11}                       ;-- MOVUPS [base], xmm
+		emit-pointer-modrm code src dst
+	]
+
 	emit-rip-load: func [
 		code [binary!]
 		type [block!]
@@ -1979,6 +2138,29 @@ rs-o2-x64: context [
 			][emit-gpr-frame-load code type target offset]
 		]
 		yes
+	]
+
+	emit-copy-cell-intrinsic: func [
+		code [binary!]
+		instruction [block!]
+		allocation [block!]
+		/local operands result type source destination result-location
+	][
+		unless copy-cell-xmm-scratch [return fail-selection 'x64-copy-cell-scratch]
+		unless emit-call-argument-moves code instruction allocation [return none]
+		operands: pick instruction rs-o2-ir/ins-operands
+		result: pick instruction rs-o2-ir/ins-result
+		type: pick instruction rs-o2-ir/ins-type
+		source: call-argument-register instruction 1
+		destination: call-argument-register instruction 2
+		result-location: result-register allocation result
+		unless all [source destination result-location][
+			return fail-selection 'x64-copy-cell-registers
+		]
+		emit-xmm-pointer-load code copy-cell-xmm-scratch source
+		emit-xmm-pointer-store code destination copy-cell-xmm-scratch
+		emit-gpr-move code type result-location destination
+		emit-spilled-result code allocation result result-location
 	]
 
 	binary-opcode: func [opcode [word!]][
@@ -2874,6 +3056,9 @@ rs-o2-x64: context [
 					]
 					opcode = 'call [
 						unless emit-direct-call code instruction allocation [return none]
+					]
+					opcode = 'copy-cell [
+						unless emit-copy-cell-intrinsic code instruction allocation [return none]
 					]
 					opcode = 'jump [
 						target: operands/1/2

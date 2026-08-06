@@ -441,7 +441,7 @@ that produces a reliable runtime win.
 
 ## Current Implementation Evidence
 
-As of Stage52, the experimental O2 path supports scalar Win64 and SysV direct
+As of Stage54, the experimental O2 path supports scalar Win64 and SysV direct
 calls with ABI register arguments, stack arguments, parallel register copies,
 and one function-level outgoing argument area. Values live across calls use
 typed spill slots; managed pointers live at safepoints are conservatively
@@ -460,8 +460,13 @@ prints `100` at both O0 and O2 with exit status zero.
 Stage49 selects unaligned 128-bit loads and stores for exact 16-byte copies at
 O2. Calls to the hot `red>copy-cell` helper are specialized after normal argument
 evaluation and ABI register placement, eliminating the call while retaining O0
-and O1 behavior. Functions containing this direct-backend intrinsic are kept out
-of machine IR until the intrinsic and its XMM clobber are represented explicitly.
+and O1 behavior. Stage54 represents this specialization as an explicit typed
+machine-IR operation with a universal-memory write dependency and load-before-
+store overlap semantics. The selector reserves `xmm5` on Win64 or `xmm15` on
+SysV for the 16-byte transfer, while the allocator places source, destination,
+and result through the normal ABI parallel-copy constraints. A non-escaping
+managed-pointer argument no longer forces a frame in functions with no calls or
+safepoints.
 
 Stage51 adds O2 call-site fast paths for `red>resolve-node` and
 `red>resolve-series`. Both paths validate the positive handle against
@@ -488,7 +493,7 @@ operation, initially used for representation-preserving `logic!` to `integer!`
 casts. The allocator coalesces comparison results and their cast results, so
 `as integer! a < b` does not add a machine instruction.
 
-The machine-IR smoke fixture has 43 functions, 42 eligible functions, 41 selected
+The machine-IR smoke fixture has 45 functions, 44 eligible functions, 43 selected
 functions, and two intentional fallback cases. The executable float comparison
 fixture selects all twelve scalar logic-value functions, all six direct-branch
 functions, and all six integer-cast functions. It checks every condition with
@@ -525,8 +530,14 @@ Recorded emitted-program performance results include:
   seconds, and O2 median 0.14 seconds over 15 interleaved samples, with a 1.68x
   median paired O2 speedup and identical output. Report:
   `build/generated-code-benchmarks/stage52-sparse-switch/20260806-071807/report.json`.
+- Stage54 Win64 machine-IR `copy-cell` wrapper loop: O0 and O1 median 0.44
+  seconds and O2 median 0.10 seconds over 15 interleaved samples, with a 4.48x
+  median paired speedup and identical output. The selected wrapper is frameless
+  and consists only of the 128-bit load, 128-bit store, result move, and return.
+  Report:
+  `build/generated-code-benchmarks/stage54-copy-cell-ir/20260806-082058/report.json`.
 
-Stage52 bootstraps successfully in release mode, passes all 124 compiler-regression
+Stage54 bootstraps successfully in release mode, passes all 124 compiler-regression
 assertions, and passes the full Windows x64 Red/System O2 suite: 10,582 tests and
 12,647 assertions with zero failures. The focused O0/O2 resolver fixture covers
 valid, zero, negative, out-of-range, and freed handles; both modes print `8` with
@@ -535,9 +546,9 @@ exit status zero. The machine-IR smoke fixture also passes.
 This evidence does not complete the plan. Machine-IR switch modeling and
 selection, aggregate and variadic ABI lowering through machine IR,
 exception/unwind integration, explicit stack operations, machine-IR modeling of
-the current direct-backend intrinsics, emitted SysV binary validation, and the
-full cross-ABI runtime performance gate remain required before O2 can leave its
-experimental state.
+the resolver intrinsics, emitted SysV binary validation, and the full cross-ABI
+runtime performance gate remain required before O2 can leave its experimental
+state.
 
 ## Rollout
 

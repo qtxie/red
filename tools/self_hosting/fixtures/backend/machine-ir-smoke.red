@@ -344,16 +344,16 @@ while-body-block: pick (pick rs-o2-ir/current rs-o2-ir/fn-blocks) while-state/2
 while-body-first-instruction: first pick while-body-block rs-o2-ir/bb-instructions
 rs-o2-ir/set-direct-body-range 0 1
 while-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
-unless find while-selected/1 #{7C} [fail "while CFG backward condition was not selected"]
-unless find while-selected/1 #{EB} [fail "while CFG initial condition jump was not selected"]
+unless find while-selected/1 #{0F8C} [fail "while CFG near backward condition was not selected"]
+unless find while-selected/1 #{E9} [fail "while CFG stable near jump was not selected"]
 unless find while-selected/1 #{448B4DF8} [fail "live-in promoted argument was not loaded"]
 if find while-selected/1 #{448B45F0} [fail "definitely assigned local was loaded at entry"]
 if find while-selected/1 #{0F9C} [fail "branch-only comparison materialized a logic value"]
 while-body-offset: rs-o2-ir/table-value
 	rs-o2-x64/encoded-instruction-offsets
 	pick while-body-first-instruction rs-o2-ir/ins-id
-unless all [integer? while-body-offset zero? (while-body-offset // 16)][
-	fail rejoin ["while body was not 16-byte aligned: " mold while-body-offset]
+unless all [integer? while-body-offset zero? (while-body-offset // 32)][
+	fail rejoin ["while body was not 32-byte aligned: " mold while-body-offset]
 ]
 
 unless rs-o2-ir/begin-function 'if-cfg 'win64 i32 %machine-ir-smoke.red [
@@ -426,6 +426,88 @@ long-result: rs-o2-ir/emit-load-local 'result i32
 rs-o2-ir/set-direct-body-range 0 1
 long-if-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
 unless find long-if-selected/1 #{0F85} [fail "long if CFG branch was incorrectly shortened"]
+
+unless rs-o2-ir/begin-function 'sparse-switch-cfg 'win64 i32 %machine-ir-smoke.red [
+	fail "sparse switch CFG function did not start"
+]
+rs-o2-ir/add-stack-object 'switch-selector 'argument i32 4 4 'none
+rs-o2-ir/add-stack-object 'switch-source 'argument i32 4 4 'none
+rs-o2-ir/set-stack-offset 'switch-selector -8
+rs-o2-ir/set-stack-offset 'switch-source -16
+sparse-switch-selector: rs-o2-ir/emit-load-local 'switch-selector i32
+sparse-switch-values: [-550 -450 -350 -250 -150 -50 50 150 250 350 450 550]
+sparse-switch-groups: make block! length? sparse-switch-values
+foreach sparse-switch-value sparse-switch-values [
+	append/only sparse-switch-groups reduce [sparse-switch-value]
+]
+sparse-switch-state: rs-o2-ir/begin-switch sparse-switch-groups yes
+unless sparse-switch-state [fail "sparse switch CFG was rejected"]
+repeat sparse-switch-index length? sparse-switch-values [
+	rs-o2-ir/begin-switch-case sparse-switch-state
+	sparse-switch-value: rs-o2-ir/emit-load-local 'switch-source i32
+	rs-o2-ir/end-switch-case sparse-switch-state
+]
+rs-o2-ir/begin-switch-default sparse-switch-state
+sparse-switch-default: rs-o2-ir/emit-load-local 'switch-source i32
+rs-o2-ir/end-switch-default sparse-switch-state
+sparse-switch-merged: rs-o2-ir/end-switch sparse-switch-state
+unless sparse-switch-merged [fail "sparse switch result was not merged"]
+sparse-switch-one: rs-o2-ir/emit-constant 1 i32
+sparse-switch-result: rs-o2-ir/emit-binary
+	rs-o2-ir/add-op
+	sparse-switch-merged
+	sparse-switch-one
+	i32
+	'pure
+rs-o2-ir/set-direct-body-range 0 1
+sparse-switch-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
+if sparse-switch-selected/1 = #{90} [fail "sparse switch retained direct code"]
+unless find sparse-switch-selected/1 #{0F8C} [fail "sparse switch tree has no signed left branch"]
+unless any [
+	find sparse-switch-selected/1 #{74}
+	find sparse-switch-selected/1 #{0F84}
+][fail "sparse switch tree has no equality branch"]
+unless find sparse-switch-selected/1 #{4489C0} [
+	fail rejoin ["sparse switch phi edge copy is missing: " mold sparse-switch-selected/1]
+]
+unless (length? rs-o2-x64/phi-edge-copies) = 26 [
+	fail rejoin ["sparse switch phi edge plan is wrong: " mold rs-o2-x64/phi-edge-copies]
+]
+
+unless rs-o2-ir/begin-function 'dense-switch-cfg 'win64 i32 %machine-ir-smoke.red [
+	fail "dense switch CFG function did not start"
+]
+rs-o2-ir/add-stack-object 'dense-switch-selector 'argument i32 4 4 'none
+rs-o2-ir/set-stack-offset 'dense-switch-selector -8
+dense-switch-selector: rs-o2-ir/emit-load-local 'dense-switch-selector i32
+dense-switch-groups: make block! 32
+repeat dense-switch-index 32 [
+	append/only dense-switch-groups reduce [dense-switch-index - 1]
+]
+dense-switch-state: rs-o2-ir/begin-switch dense-switch-groups yes
+unless dense-switch-state [fail "dense switch CFG was rejected"]
+repeat dense-switch-index 32 [
+	rs-o2-ir/begin-switch-case dense-switch-state
+	dense-switch-value: rs-o2-ir/emit-constant dense-switch-index i32
+	rs-o2-ir/end-switch-case dense-switch-state
+]
+rs-o2-ir/begin-switch-default dense-switch-state
+dense-switch-default: rs-o2-ir/emit-constant 99 i32
+rs-o2-ir/end-switch-default dense-switch-state
+dense-switch-result: rs-o2-ir/end-switch dense-switch-state
+rs-o2-ir/set-direct-body-range 0 1
+dense-switch-direct: reduce [#{CC} copy []]
+dense-switch-selected: rs-o2-ir/finish-function dense-switch-direct
+if dense-switch-selected/1 = #{CC} [fail "dense switch retained direct code"]
+unless find dense-switch-selected/1 #{4C8D1D09000000496304834C01D8FFE0} [
+	fail rejoin ["dense switch jump-table dispatch is missing: " mold dense-switch-selected/1]
+]
+unless find dense-switch-selected/1 #{31C0FFC0} [
+	fail "dense switch constant-one layout is missing"
+]
+unless (length? rs-o2-x64/jump-table-patches) = 32 [
+	fail rejoin ["dense switch table patch plan is wrong: " mold rs-o2-x64/jump-table-patches]
+]
 
 unless rs-o2-ir/begin-function 'memory-operand 'win64 i32 %machine-ir-smoke.red [
 	fail "memory operand function did not start"
@@ -1103,10 +1185,10 @@ rs-o2-ir/emit-opaque 'unsupported-smoke none
 fallback-direct: reduce [#{CC} copy []]
 fallback-selected: rs-o2-ir/finish-function fallback-direct
 unless fallback-selected/1 = #{CC} [fail "fallback bytes changed"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 45 [fail "final function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 45 [fail "final verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 44 [fail "final eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 43 [fail "final selection count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 47 [fail "final function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 47 [fail "final verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 46 [fail "final eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 45 [fail "final selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 2 [fail "final fallback count"]
 
 rs-o2-ir/end-session
@@ -1120,4 +1202,7 @@ unless find dump-text "dead-code-elimination 8 5" [fail "constant branch compare
 unless find dump-text "rip-rel32 global-scalar addend=0" [fail "global relocation dump missing"]
 unless find dump-text "call-rel32 callee addend=0" [fail "call relocation dump missing"]
 unless find dump-text "x64-global-store-loop" [fail "global loop fallback reason missing"]
+unless find dump-text "switch %1, -550, b2" [fail "sparse switch dump missing"]
+unless find dump-text " = phi b2," [fail "switch phi dump missing"]
+unless find dump-text "switch %1, 0, b2, 1, b3" [fail "dense switch dump missing"]
 print "machine-ir-smoke-ok"

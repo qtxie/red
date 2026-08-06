@@ -35,6 +35,8 @@ rs-o2-x64: context [
 	gc-bitmap-offset: none
 	copy-cell-xmm-scratch: none
 	phi-edge-copies: make block! 8
+	jump-table-patches: make block! 8
+	function-has-switch?: no
 
 	fail-selection: func [reason [word!]][
 		rs-o2-ir/mark-unsupported reason
@@ -430,6 +432,7 @@ rs-o2-x64: context [
 		plan-loop-blocks
 		has-call?: function-has-call?
 		registers: copy [r8d r9d r10d r11d]
+		if function-has-switch? [remove find registers 'r11d]
 		candidates: make block! 8
 		foreach stack-entry pick rs-o2-ir/current rs-o2-ir/fn-stack-objects [
 			name: pick stack-entry rs-o2-ir/stack-name
@@ -443,7 +446,7 @@ rs-o2-x64: context [
 				any [not has-call? local-written? name]
 			][
 				score: local-reference-score name
-				append/only candidates reduce [stack-entry score]
+				if score > 1 [append/only candidates reduce [stack-entry score]]
 			]
 		]
 		while [all [not empty? registers not empty? candidates]][
@@ -498,6 +501,7 @@ rs-o2-x64: context [
 		foreach register promoted-registers [
 			if position: find registers register [remove position]
 		]
+		if all [function-has-switch? position: find registers 'r11d][remove position]
 		registers
 	]
 
@@ -781,6 +785,7 @@ rs-o2-x64: context [
 				]
 			]
 			opcode = 'switch [
+				function-has-switch?: yes
 				operand: last operands
 				left-type: rs-o2-ir/vreg-type operands/1/2
 				unless all [
@@ -930,6 +935,8 @@ rs-o2-x64: context [
 		gc-bitmap-offset: none
 		copy-cell-xmm-scratch: none
 		clear phi-edge-copies
+		clear jump-table-patches
+		function-has-switch?: no
 		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
 		unless empty? pick rs-o2-ir/current rs-o2-ir/fn-safepoints [
 			return fail-selection 'x64-safepoints
@@ -1172,7 +1179,9 @@ rs-o2-x64: context [
 		/local candidates candidate
 	][
 		candidates: case [
-			register-class = 'gpr [[r11d r10d]]
+			register-class = 'gpr [
+				either function-has-switch? [copy [r10d]][copy [r11d r10d]]
+			]
 			register-class = 'xmm [
 				either (pick rs-o2-ir/current rs-o2-ir/fn-abi) = 'win64 [
 					[xmm5 xmm4]
@@ -1415,6 +1424,52 @@ rs-o2-x64: context [
 		]
 	]
 
+	plan-phi-edge-copies: func [
+		allocation [block!]
+		/local blocks block block-id instruction result type operands position
+			predecessor-id predecessor successors source existing source-location result-location
+	][
+		clear phi-edge-copies
+		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
+		foreach block blocks [
+			block-id: pick block rs-o2-ir/bb-id
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				if (pick instruction rs-o2-ir/ins-opcode) = 'phi [
+					result: pick instruction rs-o2-ir/ins-result
+					type: pick instruction rs-o2-ir/ins-type
+					result-location: allocation-register allocation result
+					unless result-location [return fail-selection 'x64-phi-result-allocation]
+					operands: pick instruction rs-o2-ir/ins-operands
+					position: operands
+					while [not tail? position][
+						predecessor-id: position/1/2
+						predecessor: pick blocks predecessor-id
+						successors: pick predecessor rs-o2-ir/bb-successors
+						unless all [(length? successors) = 1 successors/1 = block-id][
+							return fail-selection 'x64-phi-critical-edge
+						]
+						source: position/2/2
+						source-location: allocation-register allocation source
+						unless source-location [return fail-selection 'x64-phi-source-allocation]
+						unless all [
+							source-location = result-location
+							source-location <> 'spill
+						][
+							existing: rs-o2-ir/table-value phi-edge-copies predecessor-id
+							if existing [return fail-selection 'x64-multiple-phi-edge-copies]
+							rs-o2-ir/set-table-value
+								phi-edge-copies
+								predecessor-id
+								reduce [source result copy/deep type]
+						]
+						position: skip position 2
+					]
+				]
+			]
+		]
+		yes
+	]
+
 	bitmap-word-at: func [word-offset [integer!] /local position][
 		emitter/ensure-bits-buf
 		position: (word-offset * 4) + 1
@@ -1607,6 +1662,36 @@ rs-o2-x64: context [
 		emit-rex code no none none dst
 		append-byte code 184 + (dst and 7)
 		append code int-to-bin/to-bin32 value
+	]
+
+	flags-consumed-after?: func [instruction-id [integer!] /local block instruction][
+		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				if all [
+					(pick instruction rs-o2-ir/ins-id) > instruction-id
+					pick instruction rs-o2-ir/ins-flags-in
+				][return yes]
+			]
+		]
+		no
+	]
+
+	emit-constant-immediate: func [
+		code [binary!]
+		instruction [block!]
+		destination [word!]
+		value [integer!]
+		type [block!]
+	][
+		either all [
+			supported-i32? type
+			destination = 'eax
+			value = 1
+			empty? loop-blocks
+			not flags-consumed-after? pick instruction rs-o2-ir/ins-id
+		][
+			append code #{31C0FFC0}                 ;-- XOR EAX,EAX / INC EAX
+		][emit-mov-immediate code destination value]
 	]
 
 	emit-mov-register: func [code [binary!] destination [word!] source [word!] /local dst src][
@@ -1979,6 +2064,24 @@ rs-o2-x64: context [
 			emit-xmm-frame-store code type offset register
 		][emit-gpr-frame-store code type offset register]
 		yes
+	]
+
+	emit-phi-edge-copy: func [
+		code [binary!]
+		allocation [block!]
+		block-id [integer!]
+		/local copy-info source destination type
+	][
+		copy-info: rs-o2-ir/table-value phi-edge-copies block-id
+		unless copy-info [return yes]
+		source: materialize-value code allocation copy-info/1
+		destination: result-register allocation copy-info/2
+		unless all [source destination][return none]
+		type: copy-info/3
+		either supported-float? type [
+			emit-xmm-move code type destination source
+		][emit-gpr-move code type destination source]
+		emit-spilled-result code allocation copy-info/2 destination
 	]
 
 	emit-spill-frame-reserve: func [code [binary!] /local short?][
@@ -2431,16 +2534,23 @@ rs-o2-x64: context [
 		/local lhs short?
 	][
 		lhs: register-code left
-		either zero? value [
-			emit-rex code no lhs none lhs
-			append-byte code 133
-			emit-modrm code 192 lhs lhs
-		][
-			short?: all [value >= -128 value <= 127]
-			emit-rex code no none none lhs
-			append-byte code either short? [131][129]
-			emit-modrm code 192 7 lhs
-			append code either short? [int-to-bin/to-bin8 value][int-to-bin/to-bin32 value]
+		short?: all [value >= -128 value <= 127]
+		case [
+			zero? value [
+				emit-rex code no lhs none lhs
+				append-byte code 133
+				emit-modrm code 192 lhs lhs
+			]
+			all [left = 'eax not short?] [
+				append-byte code 61                  ;-- CMP EAX, imm32
+				append code int-to-bin/to-bin32 value
+			]
+			true [
+				emit-rex code no none none lhs
+				append-byte code either short? [131][129]
+				emit-modrm code 192 7 lhs
+				append code either short? [int-to-bin/to-bin8 value][int-to-bin/to-bin32 value]
+			]
 		]
 	]
 
@@ -2556,6 +2666,201 @@ rs-o2-x64: context [
 		]
 	]
 
+	emit-fixed-near-jump: func [
+		code [binary!]
+		fixups [block!]
+		target [integer!]
+		/local patch
+	][
+		append-byte code 233
+		patch: (length? code) + 1
+		append code #{00000000}
+		append/only fixups reduce [patch target length? code 4 none 0]
+	]
+
+	emit-fixed-near-condition: func [
+		code [binary!]
+		fixups [block!]
+		condition [integer!]
+		target [integer!]
+		/local patch
+	][
+		append-byte code 15
+		append-byte code 128 + condition
+		patch: (length? code) + 1
+		append code #{00000000}
+		append/only fixups reduce [patch target length? code 4 none 0]
+	]
+
+	patch-switch-local-rel32: func [
+		code [binary!]
+		position [integer!]
+		target [integer!]
+	][
+		change/part
+			at code position
+			int-to-bin/to-bin32 (target - (position + 3))
+			4
+	]
+
+	emit-sparse-switch-node: func [
+		code [binary!]
+		fixups [block!]
+		selector [word!]
+		entries [block!]
+		low [integer!]
+		high [integer!]
+		default-id [integer!]
+		/local middle entry-position value target left-patch
+	][
+		middle: to integer! round/down ((low + high) / 2)
+		entry-position: (((middle - 1) * 2) + 1)
+		value: pick entries entry-position
+		target: pick entries (entry-position + 1)
+		emit-compare-immediate code selector value
+		emit-fixed-near-condition code fixups 4 target
+
+		if all [low = middle middle = high][
+			emit-fixed-near-jump code fixups default-id
+			return yes
+		]
+
+		either low < middle [
+			append code #{0F8C}                    ;-- JL left subtree
+			left-patch: (length? code) + 1
+			append code #{00000000}
+		][
+			emit-fixed-near-condition code fixups 12 default-id
+		]
+
+		either middle < high [
+			unless emit-sparse-switch-node
+				code fixups selector entries (middle + 1) high default-id
+			[return none]
+		][
+			emit-fixed-near-jump code fixups default-id
+		]
+		if low < middle [
+			patch-switch-local-rel32 code left-patch length? code
+			unless emit-sparse-switch-node
+				code fixups selector entries low (middle - 1) default-id
+			[return none]
+		]
+		yes
+	]
+
+	vreg-used-after?: func [
+		id [integer!]
+		instruction-id [integer!]
+		/local block instruction operand
+	][
+		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				if (pick instruction rs-o2-ir/ins-id) > instruction-id [
+					foreach operand pick instruction rs-o2-ir/ins-operands [
+						if all [operand/1 = 'vreg operand/2 = id][return yes]
+					]
+				]
+			]
+		]
+		no
+	]
+
+	emit-dense-switch-control: func [
+		code [binary!]
+		fixups [block!]
+		instruction [block!]
+		allocation [block!]
+		entries [block!]
+		min-value [integer!]
+		span [integer!]
+		default-id [integer!]
+		/local operands selector-id selector lea-patch lea-end table-start index target patch
+	][
+		operands: pick instruction rs-o2-ir/ins-operands
+		selector-id: operands/1/2
+		if vreg-used-after? selector-id pick instruction rs-o2-ir/ins-id [
+			return fail-selection 'x64-dense-switch-selector-live
+		]
+		selector: materialize-value code allocation selector-id
+		unless selector = 'eax [return fail-selection 'x64-dense-switch-selector-register]
+
+		unless zero? min-value [
+			append-byte code 45                       ;-- SUB EAX, minimum case value
+			append code int-to-bin/to-bin32 min-value
+		]
+		append-byte code 61                           ;-- CMP EAX, normalized range
+		append code int-to-bin/to-bin32 span
+		emit-fixed-near-condition code fixups 7 default-id ;-- JA default
+
+		append code #{4C8D1D}                         ;-- LEA r11, [RIP+table]
+		lea-patch: (length? code) + 1
+		append code #{00000000}
+		lea-end: length? code
+		append code #{49630483}                       ;-- MOVSXD rax, dword [r11+rax*4]
+		append code #{4C01D8}                         ;-- ADD rax, r11
+		append code #{FFE0}                           ;-- JMP rax
+		table-start: length? code
+		change/part
+			at code lea-patch
+			int-to-bin/to-bin32 (table-start - lea-end)
+			4
+
+		repeat index (span + 1) [
+			target: select/skip entries ((min-value + index) - 1) 2
+			unless target [target: default-id]
+			patch: (length? code) + 1
+			append code #{00000000}
+			append/only jump-table-patches reduce [patch target table-start]
+		]
+		yes
+	]
+
+	emit-sparse-switch-control: func [
+		code [binary!]
+		fixups [block!]
+		instruction [block!]
+		allocation [block!]
+		/local operands position entries selector default-operand default-id count
+			previous value target min-value max-value span dense?
+	][
+		operands: pick instruction rs-o2-ir/ins-operands
+		entries: make block! length? operands
+		position: next operands
+		while [(length? position) > 1][
+			repend entries [position/1/2 position/2/2]
+			position: skip position 2
+		]
+		sort/skip entries 2
+		previous: none
+		foreach [value target] entries [
+			if all [integer? previous value = previous][
+				return fail-selection 'x64-duplicate-switch-value
+			]
+			previous: value
+		]
+		count: (length? entries) / 2
+		min-value: entries/1
+		max-value: first skip tail entries -2
+		dense?: all [count >= 32 not negative? min-value]
+		if dense? [
+			span: max-value - min-value
+			dense?: all [span <= 255 (span + 1) <= (count * 2)]
+		]
+		default-operand: last operands
+		default-id: default-operand/2
+		if dense? [
+			return emit-dense-switch-control
+				code fixups instruction allocation entries min-value span default-id
+		]
+		if count < 12 [return fail-selection 'x64-switch-small]
+
+		selector: materialize-value code allocation operands/1/2
+		unless selector [return none]
+		emit-sparse-switch-node
+			code fixups selector entries 1 count default-id
+	]
+
 	emit-near-condition: func [
 		code [binary!]
 		fixups [block!]
@@ -2668,6 +2973,8 @@ rs-o2-x64: context [
 					displacement + fixup/6
 				][displacement]
 				if all [
+					empty? aligned-loop-blocks
+					integer? fixup/5
 					short-displacement >= -128
 					short-displacement <= 127
 					not find relaxed-branches fixup/5
@@ -2676,6 +2983,19 @@ rs-o2-x64: context [
 					branch-relaxation-changed?: yes
 				]
 			]
+		]
+		code
+	]
+
+	patch-jump-tables: func [
+		code [binary!]
+		labels [block!]
+		/local entry target
+	][
+		foreach entry jump-table-patches [
+			target: rs-o2-ir/table-value labels entry/2
+			unless integer? target [return fail-selection 'x64-missing-jump-table-label]
+			change/part at code entry/1 int-to-bin/to-bin32 (target - entry/3) 4
 		]
 		code
 	]
@@ -2705,12 +3025,34 @@ rs-o2-x64: context [
 		body-id
 	]
 
+	simple-switch-merge: func [
+		block [block!]
+		blocks [block!]
+		/local successors successor arm terminal operands merge-id
+	][
+		successors: pick block rs-o2-ir/bb-successors
+		if empty? successors [return none]
+		merge-id: none
+		foreach successor successors [
+			arm: pick blocks successor
+			if empty? pick arm rs-o2-ir/bb-instructions [return none]
+			terminal: last pick arm rs-o2-ir/bb-instructions
+			unless (pick terminal rs-o2-ir/ins-opcode) = 'jump [return none]
+			operands: pick terminal rs-o2-ir/ins-operands
+			unless (length? operands) = 1 [return none]
+			either merge-id [
+				unless merge-id = operands/1/2 [return none]
+			][merge-id: operands/1/2]
+		]
+		merge-id
+	]
+
 	append-layout-block: func [
 		id [integer!]
 		blocks [block!]
 		visited [block!]
 		layout [block!]
-		/local block instruction opcode operands successor loop-body
+		/local block instruction opcode operands successor loop-body merge-id merge-pending? default-id
 	][
 		if find visited id [return none]
 		append visited id
@@ -2727,9 +3069,32 @@ rs-o2-x64: context [
 					append-layout-block loop-body blocks visited layout
 				][append-layout-block operands/1/2 blocks visited layout]
 			]
-			opcode = 'branch [
+				opcode = 'branch [
 				append-layout-block operands/2/2 blocks visited layout
 				append-layout-block operands/3/2 blocks visited layout
+			]
+			opcode = 'switch [
+				merge-id: simple-switch-merge block blocks
+				either merge-id [
+					merge-pending?: none? find visited merge-id
+					if merge-pending? [append visited merge-id]
+					default-id: last operands
+					default-id: default-id/2
+					append-layout-block default-id blocks visited layout
+					foreach successor pick block rs-o2-ir/bb-successors [
+						unless successor = default-id [
+							append-layout-block successor blocks visited layout
+						]
+					]
+					if merge-pending? [
+						remove find visited merge-id
+						append-layout-block merge-id blocks visited layout
+					]
+				][
+					foreach successor pick block rs-o2-ir/bb-successors [
+						append-layout-block successor blocks visited layout
+					]
+				]
 			]
 			true [
 				foreach successor pick block rs-o2-ir/bb-successors [
@@ -2768,7 +3133,7 @@ rs-o2-x64: context [
 	encode-body: func [
 		allocation [block!]
 		body-base [integer!]
-		/local code blocks block block-index block-id next-block next-id last-id labels fixups
+		/local code blocks block block-index block-id next-block next-id last-id labels fixups terminal
 			instruction opcode operands result destination source left right offset local-register
 			constant-info constant-values immediate-constants left-value right-value target
 			memory-name left-memory-name memory-offset type source-type patch instruction-id
@@ -2776,6 +3141,7 @@ rs-o2-x64: context [
 		code: make binary! 128
 		clear encoded-relocation-patches
 		clear encoded-instruction-offsets
+		clear jump-table-patches
 		labels: make block! 16
 		fixups: make block! 16
 		constant-info: constant-use-info
@@ -2793,8 +3159,9 @@ rs-o2-x64: context [
 				next-block: pick blocks (block-index + 1)
 				pick next-block rs-o2-ir/bb-id
 			][none]
-			if find aligned-loop-blocks block-id [emit-code-alignment code body-base 16]
+			if find aligned-loop-blocks block-id [emit-code-alignment code body-base 32]
 			rs-o2-ir/set-table-value labels block-id length? code
+			terminal: last pick block rs-o2-ir/bb-instructions
 			foreach instruction pick block rs-o2-ir/bb-instructions [
 				instruction-id: pick instruction rs-o2-ir/ins-id
 				rs-o2-ir/set-table-value encoded-instruction-offsets
@@ -2804,11 +3171,15 @@ rs-o2-x64: context [
 				operands: pick instruction rs-o2-ir/ins-operands
 				result: pick instruction rs-o2-ir/ins-result
 				type: pick instruction rs-o2-ir/ins-type
+				if same? instruction terminal [
+					unless emit-phi-edge-copy code allocation block-id [return none]
+				]
 				case [
 					opcode = 'const [
 						unless find immediate-constants result [
 							destination: result-register allocation result
-							emit-mov-immediate code destination operands/1/2
+							emit-constant-immediate
+								code instruction destination operands/1/2 type
 							unless emit-spilled-result code allocation result destination [return none]
 						]
 					]
@@ -3060,6 +3431,10 @@ rs-o2-x64: context [
 					opcode = 'copy-cell [
 						unless emit-copy-cell-intrinsic code instruction allocation [return none]
 					]
+					opcode = 'phi []
+					opcode = 'switch [
+						unless emit-sparse-switch-control code fixups instruction allocation [return none]
+					]
 					opcode = 'jump [
 						target: operands/1/2
 						unless target = next-id [
@@ -3099,7 +3474,8 @@ rs-o2-x64: context [
 			]
 		]
 		rs-o2-ir/set-table-value labels 0 length? code
-		patch-relative-branches code labels fixups
+		unless patch-relative-branches code labels fixups [return none]
+		patch-jump-tables code labels
 	]
 
 	rewrite-debug-lines: func [
@@ -3234,6 +3610,7 @@ rs-o2-x64: context [
 		allocation: allocate-intervals intervals
 		unless allocation [return none]
 		plan-spill-slots intervals
+		unless plan-phi-edge-copies allocation [return none]
 		unless plan-gc-metadata intervals allocation direct-chunk [return none]
 		body-base: 0
 		if all [(length? direct-chunk) >= 3 integer? direct-chunk/3][

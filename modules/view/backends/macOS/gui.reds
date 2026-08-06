@@ -2129,6 +2129,7 @@ OS-make-view: func [
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setStringValue:" caption]]
 		]
 		sym = field [
+			objc_msgSend [obj sel_getUid "setDelegate:" obj]
 			if bits and FACET_FLAGS_NO_BORDER <> 0 [
 				objc_msgSend [obj sel_getUid "setBordered:" false]
 			]

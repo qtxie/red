@@ -15,8 +15,10 @@ compiler-options: context [
 			debug?: false
 			opt-level: 1
 			o2-ir-dump: none
+			no-runtime?: false
 			red-only?: false
 			no-compress?: false
+			show-func-map?: false
 			dll?: false
 			update-libRedRT?: false
 			verbose: 0
@@ -45,6 +47,7 @@ compiler-options: context [
 				token = "-O0" [option-set options 'opt-level 0]
 				token = "-O1" [option-set options 'opt-level 1]
 				token = "-O2" [option-set options 'opt-level 2]
+				find ["-n" "--no-runtime"] token [option-set options 'no-runtime? true]
 				token = "--dump-o2-ir" [
 					position: next position
 					if tail? position [return missing-value token]
@@ -57,6 +60,7 @@ compiler-options: context [
 				]
 				token = "--red-only" [option-set options 'red-only? true]
 				token = "--no-compress" [option-set options 'no-compress? true]
+				token = "--show-func-map" [option-set options 'show-func-map? true]
 				find ["-t" "--target"] token [
 					position: next position
 					if tail? position [return missing-value token]
@@ -94,9 +98,10 @@ compiler-options: context [
 			'opt-level option-get options 'opt-level
 			'o2-ir-dump option-get options 'o2-ir-dump
 			'static-link? false
-			'runtime? true
+			'runtime? not option-get options 'no-runtime?
 			'red-only? option-get options 'red-only?
 			'redbin-compress? not option-get options 'no-compress?
+			'show-func-map? option-get options 'show-func-map?
 			'verbosity option-get options 'verbose
 			'dev-mode? dev?
 			'libRedRT-update? update?

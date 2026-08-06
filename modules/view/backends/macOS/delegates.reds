@@ -622,6 +622,34 @@ set-text: func [
 	]
 ]
 
+control-text-did-begin-editing: func [
+	[cdecl]
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	notif	[Cocoa-handle!]
+][
+	make-event self 0 EVT_FOCUS
+]
+
+control-text-did-end-editing: func [
+	[cdecl]
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	notif	[Cocoa-handle!]
+][
+	make-event self 0 EVT_UNFOCUS
+]
+
+control-text-did-change: func [
+	[cdecl]
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	notif	[Cocoa-handle!]
+][
+	set-text self objc_msgSend [self sel_getUid "stringValue"]
+	if loop-started? [make-event self 0 EVT_CHANGE]
+]
+
 text-did-end-editing: func [
 	[cdecl]
 	self	[Cocoa-handle!]

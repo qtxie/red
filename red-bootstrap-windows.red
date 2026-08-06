@@ -8,9 +8,13 @@ compiler-root: system/options/path
 ; The core compiler does not load View, but it needs the datatype token to compile View targets.
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
-; This bootstrap emits Windows x64 PE files only. Keep cross-target formats and
-; the static object linker out of its compiled closure.
-#include %system/compiler-windows-bootstrap.red
+; Keep the canonical Windows compiler small, while allowing focused bootstrap
+; wrappers to select another self-hosted backend.
+#either config/show = 'X86-64-only [
+	#include %system/compiler-windows-bootstrap.red
+][
+	#include %system/compiler.red
+]
 
 #include %compiler/modules.red
 #include %compiler/version.red
@@ -20,6 +24,9 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 #include %compiler/crush.red
 #include %compiler/frontend.red
 #include %compiler/bootstrap-options.red
+#if config/show = 'ARM64-Darwin-only [
+	#include %system/formats/Mach-APP.red
+]
 
 ; Interpreted bootstrap follows Stage0's deep binding operation. The AOT source
 ; materializes this field through frontend.red's nested include instead.
@@ -34,7 +41,7 @@ bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
 
 print-usage: does [
-	print "Usage: red-bootstrap [-r] [-u] [-d] [-O0|-O1|-O2] [--dump-o2-ir file] [-dlib] [-t target] [--red-only] [-o output] source.red|source.reds"
+	print "Usage: red-bootstrap [-r] [-u] [-d] [-O0|-O1|-O2] [--dump-o2-ir file] [-n|--no-runtime] [--show-func-map] [-dlib] [-t target] [--red-only] [-o output] source.red|source.reds"
 ]
 
 fail-command: func [message][
@@ -44,11 +51,14 @@ fail-command: func [message][
 
 join-file: func [base [file!] relative [file!]][append copy base relative]
 
-libRedRT-target: func [job [object!]][
-	either all [
-		(compiler-system-job/job-get job 'OS) = 'Windows
-		(compiler-system-job/job-get job 'target) = 'X86-64
-	]['Windows-X86-64-DLL][none]
+libRedRT-target: func [job [object!] /local os cpu][
+	os: compiler-system-job/job-get job 'OS
+	cpu: compiler-system-job/job-get job 'target
+	#either config/show = 'X86-64-only [
+		either all [os = 'Windows cpu = 'X86-64]['Windows-X86-64-DLL][none]
+	][
+		either all [os = 'macOS cpu = 'ARM64]['Darwin-ARM64-SO][none]
+	]
 ]
 
 libRedRT-output-dir: func [job [object!] /local dir][
@@ -65,7 +75,7 @@ configure-libRedRT-path: func [dir [file!]][
 libRedRT-ready?: func [job [object!] /local dir extension][
 	dir: libRedRT-output-dir job
 	configure-libRedRT-path dir
-	extension: %.dll
+	extension: #either config/show = 'X86-64-only [%.dll][%.dylib]
 	all [
 		exists? join-file dir to file! rejoin [form libRedRT/lib-file extension]
 		exists? join-file dir libRedRT/include-file
@@ -130,7 +140,9 @@ build-libRedRT: func [
 		block? backend-result
 		file? backend-result/4
 		exists? backend-result/4
-	][fail-command "libRedRT build produced no DLL"]
+	][fail-command #either config/show = 'X86-64-only [
+		"libRedRT build produced no DLL"
+	]["libRedRT build produced no dylib"]]
 	configure-libRedRT-path dir
 ]
 
@@ -173,7 +185,7 @@ read-source-marker: func [
 
 compile-source: func [
 	options [object!]
-	/local source marker job frontend-result backend-result saved-verbosity build-prefix
+	/local source marker job frontend-result backend-result saved-verbosity build-prefix packager-name
 ][
 	unless compiler-options/option-get options 'source [fail-command "missing source file"]
 	source: resolve-source-path compiler-options/option-get options 'source
@@ -186,11 +198,19 @@ compile-source: func [
 
 	job: compiler-options/to-job options
 	if error? :job [fail-command mold job]
-	unless all [
-		(compiler-system-job/job-get job 'OS) = 'Windows
-		(compiler-system-job/job-get job 'target) = 'X86-64
-		(compiler-system-job/job-get job 'format) = 'PE
-	][fail-command "this compiler supports only Windows-X86-64 PE targets"]
+	#either config/show = 'X86-64-only [
+		unless all [
+			(compiler-system-job/job-get job 'OS) = 'Windows
+			(compiler-system-job/job-get job 'target) = 'X86-64
+			(compiler-system-job/job-get job 'format) = 'PE
+		][fail-command "this compiler supports only Windows-X86-64 PE targets"]
+	][
+		unless all [
+			(compiler-system-job/job-get job 'OS) = 'macOS
+			(compiler-system-job/job-get job 'target) = 'ARM64
+			(compiler-system-job/job-get job 'format) = 'Mach-O
+		][fail-command "this compiler supports only Darwin ARM64 Mach-O targets"]
+	]
 	if none? compiler-system-job/job-get job 'dev-mode? [
 		compiler-system-job/job-set job 'dev-mode? false
 	]
@@ -242,6 +262,15 @@ compile-source: func [
 
 	backend-result: system-dialect/last-result
 	unless block? backend-result [fail-command "Red/System backend did not produce a result"]
+	#if config/show = 'ARM64-Darwin-only [
+		if packager-name: compiler-system-job/job-get job 'packager [
+			switch/default packager-name [
+				Mach-APP [
+					poke backend-result 4 mach-app-packager/process job source backend-result/4
+				]
+			][fail-command rejoin ["unsupported packager: " packager-name]]
+		]
+	]
 	print [
 		"...native time      :" backend-result/1
 		"...link time        :" backend-result/2

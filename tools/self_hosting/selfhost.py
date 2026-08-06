@@ -492,12 +492,14 @@ def _canonical_json(value: Any) -> str:
 
 def _write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_canonical_json(value), encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(_canonical_json(value))
 
 
 def _write_text(path: Path, value: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(value, encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(value)
 
 
 def _normalize_text(text: str, replacements: Mapping[str, str]) -> str:
@@ -611,8 +613,8 @@ def _run_command(
         values["source"]: "<SOURCE>",
     }
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "stdout.raw").write_text(stdout, encoding="utf-8", newline="\n")
-    (output_dir / "stderr.raw").write_text(stderr, encoding="utf-8", newline="\n")
+    _write_text(output_dir / "stdout.raw", stdout)
+    _write_text(output_dir / "stderr.raw", stderr)
     return {
         "command": rendered,
         "exit_code": exit_code,

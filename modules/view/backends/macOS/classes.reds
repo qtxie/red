@@ -173,6 +173,9 @@ add-droplist-handler: func [class [Cocoa-handle!]][
 ]
 
 add-text-field-handler: func [class [Cocoa-handle!]][
+	class_addMethod class sel_getUid "controlTextDidBeginEditing:" as int-ptr! :control-text-did-begin-editing "v@:@"
+	class_addMethod class sel_getUid "controlTextDidEndEditing:" as int-ptr! :control-text-did-end-editing "v@:@"
+	class_addMethod class sel_getUid "controlTextDidChange:" as int-ptr! :control-text-did-change "v@:@"
 	class_addMethod class sel_getUid "textDidChange:" as int-ptr! :text-did-change "v@:@"
 	class_addMethod class sel_getUid "textDidEndEditing:" as int-ptr! :text-did-end-editing "v@:@"
 	;class_addMethod class sel_getUid "textViewDidChangeSelection:" as int-ptr! :text-change-selection "v@:@"

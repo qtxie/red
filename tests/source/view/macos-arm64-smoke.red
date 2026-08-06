@@ -3,8 +3,13 @@ Red [
 	Needs: View
 ]
 
-marker: %macos-arm64-view-smoke.ok
-error-file: %macos-arm64-view-smoke.error
+output-dir: get-env "RED_VIEW_TEST_OUTPUT_DIR"
+marker: either string? output-dir [
+	to file! rejoin [output-dir "/macos-arm64-view-smoke.ok"]
+][%macos-arm64-view-smoke.ok]
+error-file: either string? output-dir [
+	to file! rejoin [output-dir "/macos-arm64-view-smoke.error"]
+][%macos-arm64-view-smoke.error]
 if exists? marker [delete marker]
 if exists? error-file [delete error-file]
 
@@ -33,6 +38,8 @@ click-count: 0
 create-count: 0
 clicker: none
 field-face: none
+area-face: none
+unicode-face: none
 check-face: none
 slider-face: none
 progress-face: none
@@ -42,9 +49,11 @@ tabs-face: none
 canvas: none
 window: none
 result: none
+secondary: none
+unicode-text: rejoin ["View " to char! 937 " " to char! 19990 to char! 30028]
 
 result: try/all [
-	window: view/no-wait [
+	window: view/no-wait/options [
 		title "Red Apple Silicon View smoke"
 		on-created [create-count: create-count + 1]
 		below
@@ -72,6 +81,14 @@ result: try/all [
 			fill-pen yellow
 			circle 90x60 22
 		]
+		unicode-face: text "" 260x24
+		area-face: area "" 260x60
+	][
+		menu: [
+			"File" [
+				"Smoke item" smoke-item
+			]
+		]
 	]
 ]
 if error? result [fail mold result]
@@ -86,13 +103,18 @@ do-actor clicker none 'click
 unless click-count = 1 [fail "click actor was not dispatched"]
 
 field-face/text: "updated"
+unicode-face/text: unicode-text
+area-face/text: unicode-text
 check-face/data: true
 slider-face/data: 70%
 progress-face/data: 80%
 list-face/selected: 2
 drop-face/selected: 2
 tabs-face/selected: 2
-show [field-face check-face slider-face progress-face list-face drop-face tabs-face]
+show [
+	field-face unicode-face area-face check-face slider-face progress-face
+	list-face drop-face tabs-face
+]
 
 repeat count 20 [
 	do-events/no-wait
@@ -101,11 +123,31 @@ repeat count 20 [
 
 unless all [
 	field-face/text = "updated"
+	unicode-face/text = unicode-text
+	area-face/text = unicode-text
 	check-face/data = true
 	list-face/selected = 2
 	drop-face/selected = 2
 	tabs-face/selected = 2
 ][fail "native facet update failed"]
+
+unless all [block? window/menu not empty? window/menu][fail "native menu was not created"]
+
+measured: size-text/with unicode-face unicode-text
+unless all [point2D? measured measured/x > 0.0 measured/y > 0.0][
+	fail "Unicode text measurement failed"
+]
+
+target-size: window/size + 20x20
+window/size: target-size
+show window
+repeat count 20 [do-events/no-wait wait 0.01]
+unless window/size = target-size [
+	fail rejoin [
+		"native window resize failed: target=" mold target-size
+		" actual=" mold window/size
+	]
+]
 
 snapshot: to-image canvas
 unless all [image? snapshot snapshot/size/x > 0 snapshot/size/y > 0][
@@ -115,6 +157,21 @@ unless all [image? snapshot snapshot/size/x > 0 snapshot/size/y > 0][
 corner: snapshot/(1x1)
 center: snapshot/(as-pair (snapshot/size/x / 2) (snapshot/size/y / 2))
 if corner = center [fail "Draw capture appears blank"]
+
+repeat count 5 [
+	secondary: view/no-wait [
+		title "Red Apple Silicon window stress"
+		base 48x32 20.80.140
+	]
+	repeat event-count 5 [do-events/no-wait wait 0.01]
+	unless all [block? secondary/state handle? secondary/state/1][
+		fail "secondary window has no native handle"
+	]
+	unview/only secondary
+	repeat event-count 5 [do-events/no-wait wait 0.01]
+	secondary: none
+	recycle
+]
 
 unview/all
 repeat count 20 [do-events/no-wait]

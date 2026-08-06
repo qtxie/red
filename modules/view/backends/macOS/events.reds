@@ -653,13 +653,13 @@ do-events: func [
 			]
 		    objc_msgSend [pool sel_getUid "drain"]
 	    ]
-	    unless loop-started? [
-		    objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
-			objc_msgSend [NSApp sel_getUid "finishLaunching"]
-		    loop-started?: yes
-	    ]
 	    timeout: objc_msgSend [objc_getClass "NSDate" sel_getUid "distantFuture"]
-    ]
+	]
+	unless loop-started? [
+		objc_msgSend [NSApp sel_getUid "finishLaunching"]
+		objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
+		loop-started?: yes
+	]
 	until [
 		pool: objc_msgSend [objc_getClass "NSAutoreleasePool" sel_getUid "alloc"]
 		objc_msgSend [pool sel_getUid "init"]

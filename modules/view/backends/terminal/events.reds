@@ -27,6 +27,19 @@ mouse-event?:		no
 mouse-x:			as float32! 0
 mouse-y:			as float32! 0
 event-loop-cnt:		0
+active-widget-event: as widget-event! 0
+
+get-widget-event: func [
+	evt		[red-event!]
+	return:	[widget-event!]
+][
+	#either all [OS = 'macOS ABI = 'apple-aarch64] [
+		assert active-widget-event <> as widget-event! 0
+		active-widget-event
+	][
+		as widget-event! evt/msg
+	]
+]
 
 map-pt-from-win: func [
 	g		[widget!]
@@ -66,7 +79,7 @@ get-event-face: func [
 		widget-evt [widget-event!]
 		g		[widget!]
 ][
-	widget-evt: as widget-event! evt/msg
+	widget-evt: get-widget-event evt
 	g: widget-evt/widget
 	assert g/face <> 0
 	copy-cell as cell! :g/face stack/push*
@@ -78,7 +91,7 @@ get-event-offset: func [
 	/local
 		widget-evt [widget-event!]
 ][
-	widget-evt: as widget-event! evt/msg
+	widget-evt: get-widget-event evt
 	as red-value! pair/push as-integer widget-evt/pt/x as-integer widget-evt/pt/y
 ]
 
@@ -88,7 +101,7 @@ get-event-key: func [
 	/local
 		widget-evt [widget-event!]
 ][
-	widget-evt: as widget-event! evt/msg
+	widget-evt: get-widget-event evt
 	as red-value! either evt/flags and SPECIAL_KEY = 0 [
 		char/push widget-evt/data
 	][
@@ -134,7 +147,7 @@ get-event-picked: func [
 	/local
 		e	[widget-event!]
 ][
-	e: as widget-event! evt/msg
+	e: get-widget-event evt
 	as red-value! switch evt/type [
 		EVT_WHEEL [float/push as float! e/fdata]
 		default	  [integer/push e/data]
@@ -179,10 +192,16 @@ make-event: func [
 		sym		[integer!]
 		state	[integer!]
 		gui-evt	[red-event! value]
+		previous-widget-event [widget-event!]
 		t?		[logic!]
 ][
+	#either all [OS = 'macOS ABI = 'apple-aarch64] [
+		previous-widget-event: active-widget-event
+		active-widget-event: widget-evt
+	][0]
+
 	gui-evt/header: TYPE_EVENT
-	gui-evt/msg:    as byte-ptr! widget-evt
+	gui-evt/msg:    #either all [OS = 'macOS ABI = 'apple-aarch64] [0][as byte-ptr! widget-evt]
 	gui-evt/flags:  flags
 	gui-evt/type:   evt
 
@@ -198,7 +217,10 @@ make-event: func [
 		stack/unwind
 	]
 	interpreter/tracing?: t?
-	
+	#either all [OS = 'macOS ABI = 'apple-aarch64] [
+		active-widget-event: previous-widget-event
+	][0]
+
 	stack/adjust-post-try
 	if system/thrown <> 0 [system/thrown: 0]
 

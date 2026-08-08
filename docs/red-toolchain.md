@@ -39,6 +39,21 @@ The compiler and linker are implemented in Red. Normal compilation does not
 call an external compiler, linker, or `codesign`. Mach-O executables and bundles
 receive the ad-hoc signature emitted by Red's Mach-O writer.
 
+## GitHub Actions
+
+`.github/workflows/build-macos-arm64.yml` builds and packages `red-toolchain`,
+the native GUI console, and the terminal CLI console on an Apple Silicon runner.
+Set the `RED_DARWIN_ARM64_BOOTSTRAP_URL` repository variable to the public URL
+of this bootstrap compiler:
+
+```text
+file:   red-bootstrap-stage2-darwin-arm64-bundle-sign
+sha256: 644bfb20fe52dcb054ed9c63324f31b139fd163904730bb78a08b72617ebc81c
+```
+
+The checksum is pinned in the workflow. Uploading a different compiler requires
+reviewing the replacement and updating the checksum in the workflow.
+
 ## Introspection
 
 ```sh

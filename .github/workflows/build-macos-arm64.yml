@@ -1,0 +1,114 @@
+name: Build macOS ARM64 binaries
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BOOTSTRAP_SHA256: 644bfb20fe52dcb054ed9c63324f31b139fd163904730bb78a08b72617ebc81c
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Verify native Apple Silicon runner
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$(uname -m)" = arm64
+
+    - name: Download pinned bootstrap compiler
+      shell: bash
+      env:
+        BOOTSTRAP_URL: ${{ vars.RED_DARWIN_ARM64_BOOTSTRAP_URL }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$BOOTSTRAP_URL" ]]; then
+          echo "Set the RED_DARWIN_ARM64_BOOTSTRAP_URL repository variable." >&2
+          exit 1
+        fi
+
+        bootstrap=build/bootstrap/red-bootstrap-darwin-arm64
+        mkdir -p "$(dirname "$bootstrap")"
+        curl --fail --location --retry 3 --retry-all-errors \
+          --output "$bootstrap" "$BOOTSTRAP_URL"
+        echo "$BOOTSTRAP_SHA256  $bootstrap" | shasum -a 256 --check
+        chmod 755 "$bootstrap"
+        file "$bootstrap" | grep -q 'Mach-O 64-bit.*arm64'
+
+    - name: Build standalone Red toolchain
+      shell: bash
+      run: |
+        set -euo pipefail
+        tools/self_hosting/build-red-toolchain.sh \
+          build/bootstrap/red-bootstrap-darwin-arm64 \
+          build/dist/red-toolchain
+
+    - name: Build GUI and CLI consoles
+      shell: bash
+      run: |
+        set -euo pipefail
+        compiler=build/dist/red-toolchain
+        "$compiler" -r -t macOS-ARM64 \
+          -o build/dist/gui-console \
+          environment/console/GUI/gui-console.red
+        "$compiler" -r -t Darwin-ARM64 \
+          -o build/dist/cli-console \
+          environment/console/CLI/console.red
+        chmod 755 \
+          build/dist/cli-console \
+          build/dist/gui-console.app/Contents/MacOS/gui-console
+
+    - name: Validate ARM64 outputs
+      shell: bash
+      run: |
+        set -euo pipefail
+        gui=build/dist/gui-console.app/Contents/MacOS/gui-console
+        test -x build/dist/red-toolchain
+        test -x build/dist/cli-console
+        test -x "$gui"
+        test -f build/dist/gui-console.app/Contents/Info.plist
+
+        build/dist/red-toolchain --self-check
+        for binary in build/dist/red-toolchain build/dist/cli-console "$gui"; do
+          file "$binary" | grep -q 'Mach-O 64-bit.*arm64'
+          otool -hv "$binary" | grep -q ARM64
+          otool -l "$binary" | grep -q LC_CODE_SIGNATURE
+          dyld_info -validate_only "$binary"
+        done
+        otool -L "$gui" | grep -q AppKit.framework
+
+    - name: Package binaries
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p build/packages
+        COPYFILE_DISABLE=1 tar -czf build/packages/red-toolchain-darwin-arm64.tar.gz \
+          -C build/dist red-toolchain
+        COPYFILE_DISABLE=1 tar -czf build/packages/gui-console-macos-arm64.tar.gz \
+          -C build/dist gui-console.app
+        COPYFILE_DISABLE=1 tar -czf build/packages/cli-console-darwin-arm64.tar.gz \
+          -C build/dist cli-console
+        cd build/packages
+        shasum -a 256 *.tar.gz > SHA256SUMS
+
+    - name: Upload macOS ARM64 binaries
+      uses: actions/upload-artifact@v7
+      with:
+        name: red-macos-arm64-binaries
+        path: build/packages/
+        if-no-files-found: error
+        retention-days: 14

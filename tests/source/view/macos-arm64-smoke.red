@@ -56,6 +56,9 @@ scroll-face: none
 calendar-face: none
 canvas: none
 rich-box: none
+console-font: none
+console-metrics-box: none
+console-metrics: none
 window: none
 result: none
 secondary: none
@@ -69,6 +72,18 @@ rich-box: make face! [
 	size: 160x40
 	data: make block! 4
 ]
+console-font: make font! [
+	name: system/view/fonts/fixed
+	size: 11
+]
+console-metrics-box: make face! [
+	type: 'rich-text
+	tabs: none
+	line-spacing: none
+	handles: none
+]
+console-metrics-box/font: console-font
+console-metrics-box/text: "XXXXXXXXXX"
 
 result: try/all [
 	window: view/no-wait/options [
@@ -177,6 +192,14 @@ unless all [
 	caret-before-end/x < caret-at-end/x
 	caret-before-end/y = caret-at-end/y
 ][fail "caret moved to a different line before end of text"]
+
+console-metrics: size-text console-metrics-box
+unless all [
+	point2D? console-metrics
+	console-metrics/x > 40.0
+	console-metrics/y > 0.0
+	console-metrics/x > (console-metrics/y * 3.0)
+][fail rejoin ["unconstrained rich-text measurement wrapped: " mold console-metrics]]
 
 measured: size-text/with unicode-face unicode-text
 unless all [point2D? measured measured/x > 0.0 measured/y > 0.0][

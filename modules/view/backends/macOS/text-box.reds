@@ -331,6 +331,7 @@ OS-text-box-layout: func [
 		w		[integer!]
 		h		[integer!]
 		sz		[NSSize! value]
+		advance	[NSSize! value]
 		attrs	[Cocoa-handle!]
 		objects	[Cocoa-handle-array!]
 		keys	[Cocoa-handle-array!]
@@ -385,8 +386,8 @@ OS-text-box-layout: func [
 
 		para: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
 		para: objc_msgSend [para sel_getUid "mutableCopy"]
-		sz: objc_msgSend_sz [nsfont sel_getUid "advancementForGlyph:" as NSUInteger! 32]	;-- #" "
-		objc_msgSend [para sel_getUid "setDefaultTabInterval:" sz/w * (as Cocoa-float! 4.0)]
+		advance: objc_msgSend_sz [nsfont sel_getUid "advancementForGlyph:" as NSUInteger! 32]	;-- #" "
+		objc_msgSend [para sel_getUid "setDefaultTabInterval:" advance/w * (as Cocoa-float! 4.0)]
 		objc_msgSend [para sel_getUid "setTabStops:" objc_msgSend [objc_getClass "NSArray" sel_getUid "array"]]
 
 		block/make-at state 6

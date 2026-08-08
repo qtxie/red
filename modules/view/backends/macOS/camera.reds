@@ -51,7 +51,10 @@ init-camera: func [
 	objc_msgSend [
 		layer sel_getUid "setBackgroundColor:" objc_msgSend [color sel_getUid "CGColor"]
 	]
-	objc_msgSend [layer sel_getUid "setAutoresizingMask:" NSViewWidthSizable or NSViewHeightSizable]
+	objc_msgSend [
+		layer sel_getUid "setAutoresizingMask:"
+		as NSUInteger! (NSViewWidthSizable or NSViewHeightSizable)
+	]
 
 	;-- get all devices name
 	devices: objc_msgSend [objc_getClass "AVCaptureDevice" sel_getUid "devicesWithMediaType:" AVMediaTypeVideo]
@@ -64,9 +67,9 @@ init-camera: func [
 	]
 	n: 0
 	while [n < cnt] [
-		dev: objc_msgSend [devices sel_getUid "objectAtIndex:" n]
+		dev: objc_msgSend [devices sel_getUid "objectAtIndex:" as NSUInteger! n]
 		name: objc_msgSend [dev sel_getUid "localizedName"]
-		size: as integer! objc_msgSend [name sel_getUid "lengthOfBytesUsingEncoding:" NSUTF8StringEncoding]
+		size: as integer! objc_msgSend [name sel_getUid "lengthOfBytesUsingEncoding:" as NSUInteger! NSUTF8StringEncoding]
 		cstr: as c-string! objc_msgSend [name sel_getUid "UTF8String"]
 		str: string/make-at ALLOC_TAIL(data) size Latin1
 		unicode/load-utf8-stream cstr size str null
@@ -93,7 +96,10 @@ init-camera: func [
 	objc_setAssociatedObject camera RedCameraImageKey   img-out OBJC_ASSOCIATION_ASSIGN
 
 	preview: objc_msgSend [objc_getClass "AVCaptureVideoPreviewLayer" sel_getUid "layerWithSession:" session]
-	objc_msgSend [preview sel_getUid "setAutoresizingMask:" NSViewWidthSizable or NSViewHeightSizable]
+	objc_msgSend [
+		preview sel_getUid "setAutoresizingMask:"
+		as NSUInteger! (NSViewWidthSizable or NSViewHeightSizable)
+	]
 	objc_msgSend [preview sel_getUid "setFrame:" rc/x rc/y rc/w rc/h]
 	objc_msgSend [layer sel_getUid "addSublayer:" preview]
 ]
@@ -112,7 +118,7 @@ select-camera: func [
 	devices: objc_getAssociatedObject camera RedCameraDevicesKey
 	cur-dev: objc_getAssociatedObject camera RedCameraDevInputKey		;-- current device input
 
-	dev: objc_msgSend [devices sel_getUid "objectAtIndex:" idx]
+	dev: objc_msgSend [devices sel_getUid "objectAtIndex:" as NSUInteger! idx]
 	dev-in: objc_msgSend [objc_getClass "AVCaptureDeviceInput" sel_getUid "deviceInputWithDevice:error:" dev 0]
 	if zero? dev-in [exit]
 
@@ -156,7 +162,7 @@ toggle-preview: func [
 
 still-image-handler: func [
 	[cdecl]
-	block	[int-ptr!]
+	block	[block_literal!]
 	buffer	[Cocoa-handle!]
 	error	[Cocoa-handle!]
 	/local
@@ -165,7 +171,7 @@ still-image-handler: func [
 ][
 	if error <> 0 [exit]		;-- error occur
 
-	values: get-face-values block/6
+	values: get-face-values as Cocoa-handle! block/value
 	data: objc_msgSend [
 		objc_getClass "AVCaptureStillImageOutput"
 		sel_getUid "jpegStillImageNSDataRepresentation:"

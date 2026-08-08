@@ -124,7 +124,7 @@ set-file-filter: func [
 			]
 			true [idx: 0]
 		]
-		if idx <> 0 [t: objc_msgSend [t sel_getUid "substringFromIndex:" idx]]
+		if idx <> 0 [t: objc_msgSend [t sel_getUid "substringFromIndex:" as NSUInteger! idx]]
 		objc_msgSend [allowed sel_getUid "addObject:" t]
 	]
 	objc_msgSend [panel sel_getUid "setAllowedFileTypes:" allowed]
@@ -181,7 +181,7 @@ request-file-handler: func [
 			blk: block/make-at as red-block! ret count
 			i: 0
 			while [i < count][
-				file: objc_msgSend [files sel_getUid "objectAtIndex:" i]
+				file: objc_msgSend [files sel_getUid "objectAtIndex:" as NSUInteger! i]
 				str: to-red-string file ALLOC_TAIL(blk)
 				set-type as red-value! str TYPE_FILE
 				if dir? [string/append-char GET_BUFFER(str) as-integer #"/"]
@@ -240,7 +240,7 @@ setup-filter-button: func [
 		head: head + 2
 		head >= tail
 	]
-	objc_msgSend [obj sel_getUid "selectItemAtIndex:" 0]
+	objc_msgSend [obj sel_getUid "selectItemAtIndex:" as NSInteger! 0]
 	objc_msgSend [obj sel_getUid "sizeToFit"]
 	objc_msgSend [panel sel_getUid "setAccessoryView:" obj]
 

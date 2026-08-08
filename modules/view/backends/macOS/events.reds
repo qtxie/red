@@ -23,8 +23,13 @@ Red/System [
 	EVT_DISPATCH										;-- allow DispatchMessage call only
 ]
 
-gui-evt: declare red-event!								;-- low-level event value slot
-gui-evt/header: TYPE_EVENT
+event-context!: alias struct! [
+	object	[Cocoa-handle!]
+	prev	[byte-ptr!]
+]
+
+active-event-context: as event-context! 0
+quit-event-loop?: no
 
 modal-loop-type: 0										;-- remanence of last EVT_MOVE or EVT_SIZE
 zoom-distance:	 0
@@ -190,11 +195,23 @@ push-face: func [
 	make-at handle as red-object! stack/push*
 ]
 
+get-event-object: func [
+	evt		[red-event!]
+	return: [Cocoa-handle!]
+][
+	#either ABI = 'apple-aarch64 [
+		assert active-event-context <> as event-context! 0
+		active-event-context/object
+	][
+		as Cocoa-handle! evt/msg
+	]
+]
+
 get-event-face: func [
 	evt		[red-event!]
 	return: [red-value!]
 ][
-	as red-value! push-face as Cocoa-handle! evt/msg
+	as red-value! push-face get-event-object evt
 ]
 
 get-event-window: func [
@@ -253,16 +270,18 @@ get-event-offset: func [
 		frame	[NSRect! value]
 		pt		[CGPoint! value]
 		v		[Cocoa-handle!]
+		obj		[Cocoa-handle!]
 ][
 	type: evt/type
+	obj: get-event-object evt
 	offset: as red-point2D! stack/push*
 	offset/header: TYPE_POINT2D
 	case [
 		type <= EVT_OVER [
-			event: objc_getAssociatedObject as Cocoa-handle! evt/msg RedNSEventKey
+			event: objc_getAssociatedObject obj RedNSEventKey
 			either zero? event [offset/x: as float32! 0.0 offset/y: as float32! 0.0][
 				pt: objc_msgSend_pt [event sel_getUid "locationInWindow"]
-				pt: objc_msgSend_pt [as Cocoa-handle! evt/msg sel_getUid "convertPoint:fromView:" pt/x pt/y 0]
+				pt: objc_msgSend_pt [obj sel_getUid "convertPoint:fromView:" pt/x pt/y 0]
 				offset/x: COCOA_TO_F32(pt/x)
 				offset/y: COCOA_TO_F32(pt/y)
 			]
@@ -272,7 +291,7 @@ get-event-offset: func [
 			type = EVT_MOVING
 			type = EVT_MOVE
 		][
-			rc: objc_msgSend_rect [as Cocoa-handle! evt/msg sel_getUid "frame"]
+			rc: objc_msgSend_rect [obj sel_getUid "frame"]
 			offset/x: COCOA_TO_F32(rc/x)
 			offset/y: (as float32! screen-size-y) - (COCOA_TO_F32(rc/y) + COCOA_TO_F32(rc/h))
 			as red-value! offset
@@ -281,9 +300,9 @@ get-event-offset: func [
 			type = EVT_SIZING
 			type = EVT_SIZE
 		][
-			v: objc_msgSend [as Cocoa-handle! evt/msg sel_getUid "contentView"]
+			v: objc_msgSend [obj sel_getUid "contentView"]
 			frame: objc_msgSend_rect [v sel_getUid "frame"]
-			either zero? objc_getAssociatedObject as Cocoa-handle! evt/msg RedPairSizeKey [
+			either zero? objc_getAssociatedObject obj RedPairSizeKey [
 				offset/x: COCOA_TO_F32(frame/w)
 				offset/y: COCOA_TO_F32(frame/h)
 			][
@@ -441,7 +460,7 @@ get-event-picked: func [
 		]
 		EVT_SCROLL [integer/push evt/flags >>> 4]
 		EVT_WHEEL [
-			event: objc_getAssociatedObject as Cocoa-handle! evt/msg RedNSEventKey
+			event: objc_getAssociatedObject get-event-object evt RedNSEventKey
 			d: as Cocoa-float! 0
 			if event <> 0 [
 				d: objc_msgSend_f32 [event sel_getUid "scrollingDeltaY"]
@@ -453,7 +472,7 @@ get-event-picked: func [
 		]
 		EVT_IME [to-red-string ime-text null]
 		EVT_DBL_CLICK [
-			obj: as Cocoa-handle! evt/msg
+			obj: get-event-object evt
 			if (object_getClass obj) = objc_getClass "RedTableView" [
 				n: as integer! objc_msgSend [obj sel_getUid "selectedRow"]
 				either n = -1 [none/push][integer/push n + 1]
@@ -505,9 +524,18 @@ make-event: func [
 		state  [integer!]
 		key	   [integer!]
 		char   [integer!]
+		gui-evt [red-event! value]
+		event-context [event-context! value]
 ][
+	#either ABI = 'apple-aarch64 [
+		event-context/object: obj
+		event-context/prev: as byte-ptr! active-event-context
+		active-event-context: :event-context
+	][0]
+
+	gui-evt/header: TYPE_EVENT
 	gui-evt/type:  evt
-	gui-evt/msg:   as byte-ptr! obj
+	gui-evt/msg:   #either ABI = 'apple-aarch64 [0][as byte-ptr! obj]
 	case [
 		evt = EVT_WHEEL [
 		gui-evt/flags: check-extra-keys flags	;-- pass event as flags for EVT_WHEEL
@@ -522,11 +550,14 @@ make-event: func [
 	state: EVT_DISPATCH
 	stack/mark-try-all words/_anon
 	catch CATCH_ALL_EXCEPTIONS [
-		#call [system/view/awake gui-evt]
+		#call [system/view/awake :gui-evt]
 		stack/unwind
 	]
 	stack/adjust-post-try
 	if system/thrown <> 0 [system/thrown: 0]
+	#either ABI = 'apple-aarch64 [
+		active-event-context: as event-context! event-context/prev
+	][0]
 
 	res: as red-word! stack/arguments
 	if TYPE_OF(res) = TYPE_WORD [
@@ -551,9 +582,9 @@ process-mouse-tracking: func [
 		pt: objc_msgSend_pt [objc_getClass "NSEvent" sel_getUid "mouseLocation"]
 		n: as integer! objc_msgSend [
 			objc_getClass "NSWindow" sel_getUid "windowNumberAtPoint:belowWindowWithWindowNumber:"
-			pt/x pt/y 0
+			pt/x pt/y as NSInteger! 0
 		]
-		w: objc_msgSend [NSApp sel_getUid "windowWithWindowNumber:" n]
+		w: objc_msgSend [NSApp sel_getUid "windowWithWindowNumber:" as NSInteger! n]
 	]
 	if w <> 0 [
 		v: objc_msgSend [w sel_getUid "contentView"]
@@ -603,28 +634,8 @@ close-pending-windows: func [/local n [integer!] p [Cocoa-handle-ptr!]][
 ]
 
 post-quit-msg: func [
-	/local
-		e	[Cocoa-handle!]
-		tm	[float!]
 ][
-	tm: objc_msgSend_fpret [
-		objc_msgSend [objc_getClass "NSProcessInfo" sel_getUid "processInfo"]
-		sel_getUid "systemUptime"
-	]
-	e: objc_msgSend [
-		objc_getClass "NSEvent"
-		sel_getUid "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
-		NSApplicationDefined
-		0 0		;-- NSZeroPoint
-		0
-		tm
-		0
-		objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
-		0
-		QuitMsgData
-		0
-	]
-	objc_msgSend [NSApp sel_getUid "postEvent:atStart:" e no]
+	quit-event-loop?: yes
 ]
 
 do-events: func [
@@ -638,6 +649,7 @@ do-events: func [
 ][
 	msg?: no
 	timeout: 0
+	quit-event-loop?: no
 
     unless no-wait? [
 		loop 10 [ ;; FIXME Consume some leftover events. Find a better solution !!!
@@ -683,8 +695,9 @@ do-events: func [
 			]
 		]
 		objc_msgSend [pool sel_getUid "drain"]
-		no-wait?
+		any [no-wait? quit-event-loop?]
 	]
+	quit-event-loop?: no
 
 	#if sub-system <> 'gui [
 		if zero? win-cnt [objc_msgSend [NSApp sel_getUid "deactivate"]]

@@ -728,6 +728,7 @@ system/view: context [
 			set/any 'result do-actor face event 'detect
 			if find [stop done] :result [return :result]
 		]
+		return false
 	]
 	
 	awake: function [event [event!] /with face /local result result2][	;@@ temporary until event:// is implemented
@@ -738,8 +739,11 @@ system/view: context [
 				set/any 'result do-safe [handler face event]
 				either event? :result [event: result][if :result [return :result]]
 			]
-			set/any 'result capture-events face event	;-- event capturing
-			if find [stop done] :result [return :result]
+			if capturing? [
+				set/any 'result capture-events face event	;-- event capturing
+				if find [stop done] :result [return :result]
+			]
+			false
 		]
 		
 		set/any 'result do-actor face event event/type
@@ -1153,7 +1157,9 @@ insert-event-func: function [
 	name [word!]
 	fun  [block! function!] "A function or a function body block"
 ][
-	if block? :fun [fun: apply :function [copy [face event] fun]]	;@@ compiler chokes on 'function call
+	if block? :fun [
+		fun: apply :function [copy [face [object!] event [event!]] fun]
+	]	;@@ compiler chokes on 'function call
 	if any [
 		find svh: system/view/handlers name
 		find/same svh :fun
@@ -1270,7 +1276,7 @@ alert: func [
 ;=== Global handlers ===
 
 ;-- Dragging face handler --
-insert-event-func 'dragging function [face event][
+insert-event-func 'dragging function [face [object!] event [event!]][
 	if all [
 		block? event/face/options
 		drag-evt: event/face/options/drag-on
@@ -1360,7 +1366,7 @@ insert-event-func 'enter [
 			button	  [event/type: 'click]
 		]
 	]
-	event
+	none
 ]
 
 ;-- Radio faces handler --
@@ -1377,7 +1383,7 @@ insert-event-func 'radio [
 		show face
 		event/type: 'change
 	]
-	event
+	none
 ]
 
 ;-- Reactors support handler --
@@ -1425,7 +1431,7 @@ insert-event-func 'field-sync [
 ]
 
 ;-- TAB key navigation handler
-insert-event-func 'tab function [face event][
+insert-event-func 'tab function [face [object!] event [event!]][
 	if all [
 		event/type = 'key-down
 		event/key = #"^-"
@@ -1459,12 +1465,12 @@ insert-event-func 'tab function [face event][
 		unless same? new face [set-focus new]
 		return 'stop
 	]
-	event
+	none
 ]
 
 #if config/GUI-engine = 'terminal [
 	;-- ESC key handler
-	insert-event-func 'esc function [face event][
+	insert-event-func 'esc function [face [object!] event [event!]][
 		if all [
 			event/type = 'key
 			event/key = #"^["

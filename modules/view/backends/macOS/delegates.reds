@@ -63,7 +63,8 @@ reset-cursor-rects: func [
 			sz: objc_msgSend_pt [self sel_getUid "contentSize"]
 		]
 		objc_msgSend [
-			self sel_getUid "addCursorRect:cursor:" 0 0 sz/x sz/y cur
+			self sel_getUid "addCursorRect:cursor:"
+			(as Cocoa-float! 0.0) (as Cocoa-float! 0.0) sz/x sz/y cur
 		]
 	]
 ]
@@ -132,7 +133,7 @@ button-mouse-down: func [
 		assert window <> 0
 		event: objc_msgSend [
 			window sel_getUid "nextEventMatchingMask:"
-			NSLeftMouseDownMask or NSLeftMouseUpMask or NSLeftMouseDraggedMask
+			as NSUInteger! (NSLeftMouseDownMask or NSLeftMouseUpMask or NSLeftMouseDraggedMask)
 		]
 		bound: objc_msgSend_rect [self sel_getUid "bounds"]
 		type: as integer! objc_msgSend [event sel_getUid "type"]
@@ -345,7 +346,7 @@ on-key-down: func [
 				chars <> 0
 				0 < as integer! objc_msgSend [chars sel_length]
 			][
-				key: as integer! objc_msgSend [chars sel_getUid "characterAtIndex:" 0]
+				key: as integer! objc_msgSend [chars sel_getUid "characterAtIndex:" as NSUInteger! 0]
 				make-event self key or flags EVT_KEY
 			]
 		]
@@ -497,7 +498,13 @@ scroller-change: func [
 		frac: objc_msgSend_fpret [sender sel_getUid "doubleValue"]
 		n: objc_getAssociatedObject sender RedAttachedWidgetKey
 		if n <> 0 [
-			values: as red-value! objc_msgSend [n sel_getUid "unsignedIntValue"]
+			values: as red-value! objc_msgSend [
+				n sel_getUid #either ABI = 'apple-aarch64 [
+					"unsignedLongLongValue"
+				][
+					"unsignedIntValue"
+				]
+			]
 			min:	as red-integer! values + SCROLLER_OBJ_MIN
 			max:	as red-integer! values + SCROLLER_OBJ_MAX
 			page:	as red-integer! values + SCROLLER_OBJ_PAGE
@@ -557,7 +564,7 @@ slider-change: func [
 	][
 		percent/rs-make-at as red-value! pos 0.0
 	]
-	val: objc_msgSend_fpret [self sel_getUid "floatValue"]
+	val: objc_msgSend_fpret [self sel_getUid "doubleValue"]
 	divisor: objc_msgSend_fpret [self sel_getUid "maxValue"]
 	pos/value: val / divisor
 
@@ -575,6 +582,7 @@ slider-change: func [
 calendar-change: func [
 	[cdecl]
 	self   [Cocoa-handle!]
+	cmd    [Cocoa-handle!]
 ][	
 	sync-calendar self
 	make-event self 0 EVT_CHANGE
@@ -611,7 +619,10 @@ set-text: func [
 			exit
 		]
 		out: unicode/get-cache str size + 1 * 4			;-- account for surrogate pairs and terminal NUL
-		objc_msgSend [text sel_getUid "getCString:maxLength:encoding:" out size + 1 * 2 NSUTF16LittleEndianStringEncoding]
+		objc_msgSend [
+			text sel_getUid "getCString:maxLength:encoding:"
+			out as NSUInteger! ((size + 1) * 2) NSUTF16LittleEndianStringEncoding
+		]
 		unicode/load-utf16 null size str no
 
 		face: push-face obj
@@ -775,7 +786,7 @@ selection-change: func [
 	if all [loop-started? idx >= 0][
 		res: make-event self idx + 1 EVT_SELECT
 		set-selected self idx + 1
-		set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" idx]
+		set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" as NSInteger! idx]
 		if res = EVT_DISPATCH [
 			make-event self idx + 1 EVT_CHANGE
 		]
@@ -1039,9 +1050,9 @@ should-terminate: func [
 	self	[Cocoa-handle!]
 	cmd		[Cocoa-handle!]
 	app		[Cocoa-handle!]
-	return: [NSInteger!]
+	return: [NSUInteger!]
 ][
-	#either sub-system = 'gui [as NSInteger! 1][as NSInteger! 0]	;-- 0: NSTerminateCancel
+	#either sub-system = 'gui [as NSUInteger! 1][as NSUInteger! 0]	;-- 0: NSTerminateCancel
 ]
 
 win-should-close: func [
@@ -1257,13 +1268,13 @@ render-text: func [
 	flags: either TYPE_OF(para) = TYPE_OBJECT [		;@@ TBD set alignment attribute
 		get-para-flags base para
 	][
-		2 or 4										;-- center
+		NSTextAlignmentCenter or 4
 	]
 
 	m: make-CGMatrix 1 0 0 -1 0 0
 	case [
-		flags and 1 <> 0 [m/tx: sz/w - rc/x]
-		flags and 2 <> 0 [temp: sz/w - rc/x m/tx: temp / as Cocoa-float! 2.0]
+		(flags and 3) = NSTextAlignmentRight [m/tx: sz/w - rc/x]
+		(flags and 3) = NSTextAlignmentCenter [temp: sz/w - rc/x m/tx: temp / as Cocoa-float! 2.0]
 		true [0]
 	]
 
@@ -1510,7 +1521,7 @@ insert-text-range*: func [
 	len: as integer! objc_msgSend [text sel_length]
 	idx: 0
 	while [idx < len][
-		key: as integer! objc_msgSend [text sel_getUid "characterAtIndex:" idx]
+		key: as integer! objc_msgSend [text sel_getUid "characterAtIndex:" as NSUInteger! idx]
 		make-event self key EVT_KEY
 		idx: idx + 1
 	]
@@ -1706,7 +1717,10 @@ hit-test*: func [
 				self sel_getUid "convertPoint:fromView:" x y
 				objc_msgSend [self sel_getUid "superview"]
 			]
-			pixel: objc_msgSend [rep sel_getUid "colorAtX:y:" as-integer pt/x as-integer pt/y]
+			pixel: objc_msgSend [
+				rep sel_getUid "colorAtX:y:"
+				as NSInteger! (as-integer pt/x) as NSInteger! (as-integer pt/y)
+			]
 			alpha: objc_msgSend_fpret [pixel sel_getUid "alphaComponent"]
 			if alpha = 0.0 [return as Cocoa-handle! 0]
 		]

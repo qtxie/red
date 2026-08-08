@@ -163,7 +163,7 @@ OS-draw-line: func [
 		pair: pair + 1
 	]
 	CGContextBeginPath ctx
-	CGContextAddLines ctx edges nb
+	CGContextAddLines ctx edges as NSUInteger! nb
 	CGContextStrokePath ctx
 ]
 
@@ -272,7 +272,7 @@ OS-draw-line-pattern: func [
 			start: start + 1
 		]
 	]
-	CGContextSetLineDash dc/raw as Cocoa-float! 0.0 dashes cnt
+	CGContextSetLineDash dc/raw as Cocoa-float! 0.0 dashes as NSUInteger! cnt
 ]
 
 get-shape-center: func [
@@ -500,7 +500,7 @@ OS-draw-triangle: func [
 	point/x: edges/x									;-- close the triangle
 	point/y: edges/y
 	CGContextBeginPath ctx
-	CGContextAddLines ctx edges 4
+	CGContextAddLines ctx edges as NSUInteger! 4
 	if dc/grad-pos? [check-gradient-poly dc edges 3]
 	CGContextClosePath ctx
 	do-draw-path dc
@@ -533,7 +533,7 @@ OS-draw-polygon: func [
 	GET_COCOA_XY(start point/x point/y)			;-- close the polygon
 
 	CGContextBeginPath ctx
-	CGContextAddLines ctx edges nb + 1
+	CGContextAddLines ctx edges as NSUInteger! (nb + 1)
 	if dc/grad-pos? [check-gradient-poly dc edges nb]
 	CGContextClosePath ctx
 	do-draw-path dc
@@ -801,8 +801,14 @@ draw-text-box: func [
 		CG-set-color dc/raw get-tuple-color color yes
 		CGContextFillRect dc/raw cg-pt/x cg-pt/y w h
 	]
-	objc_msgSend [layout sel_getUid "drawBackgroundForGlyphRange:atPoint:" idx len cg-pt/x cg-pt/y]
-	objc_msgSend [layout sel_getUid "drawGlyphsForGlyphRange:atPoint:" idx len cg-pt/x cg-pt/y]
+	objc_msgSend [
+		layout sel_getUid "drawBackgroundForGlyphRange:atPoint:"
+		as NSUInteger! idx as NSUInteger! len cg-pt/x cg-pt/y
+	]
+	objc_msgSend [
+		layout sel_getUid "drawGlyphsForGlyphRange:atPoint:"
+		as NSUInteger! idx as NSUInteger! len cg-pt/x cg-pt/y
+	]
 ]
 
 OS-draw-text: func [
@@ -1321,7 +1327,7 @@ OS-draw-grad-pen-old: func [
 	]
 
 	if dc/grad-pen <> 0 [CGGradientRelease dc/grad-pen]
-	dc/grad-pen: CGGradientCreateWithColorComponents dc/colorspace color pos count
+	dc/grad-pen: CGGradientCreateWithColorComponents dc/colorspace color pos as NSUInteger! count
 ]
 
 OS-draw-grad-pen: func [
@@ -1399,7 +1405,7 @@ OS-draw-grad-pen: func [
 	]
 
 	if ctx/grad-pen <> 0 [CGGradientRelease ctx/grad-pen]
-	ctx/grad-pen: CGGradientCreateWithColorComponents ctx/colorspace color pos count
+	ctx/grad-pen: CGGradientCreateWithColorComponents ctx/colorspace color pos as NSUInteger! count
 
 	;-- positions
 	unless skip-pos? [

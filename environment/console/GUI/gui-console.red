@@ -76,13 +76,13 @@ gui-console-ctx: context [
 				terminal/paint
 			]
 			on-scroll: func [face [object!] event [event!]][
-				terminal/scroll event
+				terminal/scroll event/key event/picked
 			]
 			on-wheel: func [face [object!] event [event!]][
 				either event/ctrl? [
-					terminal/zoom event
+					terminal/zoom-wheel event/picked
 				][
-					terminal/scroll event
+					terminal/scroll event/key event/picked
 				]
 			]
 			on-key: func [face [object!] event [event!]][
@@ -165,6 +165,12 @@ gui-console-ctx: context [
 
 	show-caret: func [][unless caret/enabled? [caret/enabled?: yes]]
 
+	resize-console: func [new-sz [pair!]][
+		console/size: new-sz
+		terminal/resize new-sz
+		terminal/adjust-console-size new-sz
+	]
+
 	win-menu: [
 		"File" [
 			"Run..."			run-file
@@ -236,9 +242,7 @@ gui-console-ctx: context [
 			]
 			on-resizing: function [face [object!] event [event!]][
 				new-sz: to-pair event/offset + 1x1
-				console/size: new-sz
-				terminal/resize new-sz
-				terminal/adjust-console-size new-sz
+				resize-console new-sz
 				unless system/view/auto-sync? [show face]
 			]
 			on-resize: :on-resizing
@@ -289,16 +293,19 @@ gui-console-ctx: context [
 		]
 
 		setup-faces
-		win/visible?: no					;-- hide it first to avoid flicker
+		win/visible?: any [
+			empty? system/script/args
+			not none? find system/options/args "--catch"
+		]
 		load-cfg
 
 		view/flags/no-wait win [resize]		;-- create window instance
 		console/init
 
 		apply-cfg
+		resize-console win/size
 		system/view/auto-sync?: yes
 		win/selected: console
-		if empty? system/script/args [win/visible?: yes]
 
 		svs: get-current-screen
 		svs/pane: next svs/pane				;-- proctect itself from unview/all

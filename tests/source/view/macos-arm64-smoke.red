@@ -36,6 +36,8 @@ unless all [
 
 click-count: 0
 create-count: 0
+time-count: 0
+timer-face: none
 clicker: none
 field-face: none
 area-face: none
@@ -46,22 +48,39 @@ progress-face: none
 drop-face: none
 list-face: none
 tabs-face: none
+left-align-face: none
+center-align-face: none
+right-align-face: none
+styled-face: none
+scroll-face: none
+calendar-face: none
 canvas: none
+rich-box: none
 window: none
 result: none
 secondary: none
+snapshot-file: either string? output-dir [
+	to file! rejoin [output-dir "/macos-arm64-view-smoke.png"]
+][%macos-arm64-view-smoke.png]
 unicode-text: rejoin ["View " to char! 937 " " to char! 19990 to char! 30028]
+rich-box: make face! [
+	type: 'rich-text
+	text: unicode-text
+	size: 160x40
+	data: make block! 4
+]
 
 result: try/all [
 	window: view/no-wait/options [
 		title "Red Apple Silicon View smoke"
 		on-created [create-count: create-count + 1]
 		below
-		text "Native controls" font-size 16
+		timer-face: text "Native controls" font-size 16 rate 20
+		on-time [time-count: time-count + 1 face/rate: none]
 		across
 		clicker: button "Dispatch" 100x28 [click-count: click-count + 1]
 		field-face: field "initial" 150x28
-		check-face: check "Enabled"
+		check-face: check "Enabled" tri-state
 		return
 		slider-face: slider 35% 150x24
 		progress-face: progress 45% 150x18
@@ -73,7 +92,7 @@ result: try/all [
 			"Second" [base 80x30 230.240.250]
 		]
 		return
-		canvas: base 180x120 white draw [
+		canvas: base 180x120 white cursor hand draw [
 			pen red
 			line 5x5 175x115
 			fill-pen blue
@@ -83,10 +102,22 @@ result: try/all [
 		]
 		unicode-face: text "" 260x24
 		area-face: area "" 260x60
+		return
+		left-align-face: text "ARM64" 120x24 white left
+		center-align-face: text "ARM64" 120x24 white center
+		right-align-face: text "ARM64" 120x24 white right
+		styled-face: text "Styled" 120x24 white underline strike
+		return
+		scroll-face: base 140x60 white scrollable draw [
+			pen blue
+			line 4x4 136x56
+		]
+		calendar-face: calendar 160x80
 	][
 		menu: [
 			"File" [
 				"Smoke item" smoke-item
+				"Untagged item"
 			]
 		]
 	]
@@ -99,6 +130,7 @@ repeat count 20 [
 ]
 
 unless create-count = 1 [fail "on-created actor was not dispatched"]
+unless time-count = 1 [fail "native time actor was not dispatched"]
 do-actor clicker none 'click
 unless click-count = 1 [fail "click actor was not dispatched"]
 
@@ -133,6 +165,19 @@ unless all [
 
 unless all [block? window/menu not empty? window/menu][fail "native menu was not created"]
 
+append canvas/draw reduce ['pen black 'text 4x4 rich-box]
+show canvas
+repeat count 10 [do-events/no-wait wait 0.01]
+
+caret-before-end: caret-to-offset rich-box (length? rich-box/text)
+caret-at-end: caret-to-offset rich-box (1 + (length? rich-box/text))
+unless all [
+	point2D? caret-before-end
+	point2D? caret-at-end
+	caret-before-end/x < caret-at-end/x
+	caret-before-end/y = caret-at-end/y
+][fail "caret moved to a different line before end of text"]
+
 measured: size-text/with unicode-face unicode-text
 unless all [point2D? measured measured/x > 0.0 measured/y > 0.0][
 	fail "Unicode text measurement failed"
@@ -157,6 +202,13 @@ unless all [image? snapshot snapshot/size/x > 0 snapshot/size/y > 0][
 corner: snapshot/(1x1)
 center: snapshot/(as-pair (snapshot/size/x / 2) (snapshot/size/y / 2))
 if corner = center [fail "Draw capture appears blank"]
+
+if exists? snapshot-file [delete snapshot-file]
+save/as snapshot-file snapshot 'png
+unless all [exists? snapshot-file not empty? read/binary snapshot-file][
+	fail "PNG encoding produced no data"
+]
+delete snapshot-file
 
 repeat count 5 [
 	secondary: view/no-wait [

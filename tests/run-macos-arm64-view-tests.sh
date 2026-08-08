@@ -102,7 +102,10 @@ fi
 	exit 1
 }
 
-chmod 755 "$executable"
+[ -x "$executable" ] || {
+	printf 'Bundle executable is not executable: %s\n' "$executable" >&2
+	exit 1
+}
 file "$executable" | grep -q 'Mach-O 64-bit executable arm64'
 otool -hv "$executable" | grep -q 'ARM64'
 otool -L "$executable" | grep -q 'AppKit.framework'

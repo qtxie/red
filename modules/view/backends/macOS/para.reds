@@ -39,7 +39,7 @@ change-para: func [
 				change-font hWnd face font type
 			][
 				flags: get-para-flags type para
-				objc_msgSend [hWnd sel_getUid "setAlignment:" flags and 3]
+				objc_msgSend [hWnd sel_getUid "setAlignment:" as NSInteger! (flags and 3)]
 			]
 		]
 		true [0]
@@ -107,8 +107,8 @@ get-para-flags: func [
 
 	flags:	0
 	left:	0000h								;-- DT_LEFT
-	right:  0001h								;-- DT_RIGHT
-	center: 0002h								;-- DT_CENTER
+	right:  NSTextAlignmentRight
+	center: NSTextAlignmentCenter
 	top:	0000h								;-- DT_TOP
 	middle: 0004h								;-- DT_VCENTER
 	bottom: 0008h								;-- DT_BOTTOM

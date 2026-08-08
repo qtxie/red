@@ -448,7 +448,7 @@ init: func [
 
 	set-defaults
 
-	objc_msgSend [NSApp sel_getUid "setActivationPolicy:" 0]
+	objc_msgSend [NSApp sel_getUid "setActivationPolicy:" as NSInteger! 0]
 
 	get-metrics
 	
@@ -463,7 +463,7 @@ set-logic-state: func [
 		values [red-block!]
 		flags  [integer!]
 		type   [integer!]
-		value  [integer!]
+		value  [NSInteger!]
 		tri?   [logic!]
 ][
 	if check? [
@@ -473,8 +473,8 @@ set-logic-state: func [
 	]
 	
 	type: TYPE_OF(state)
-	value: either all [check? tri? type = TYPE_NONE][NSMixedState][
-		as integer! switch type [
+	value: either all [check? tri? type = TYPE_NONE][as NSInteger! NSMixedState][
+		as NSInteger! switch type [
 			TYPE_NONE  [false]
 			TYPE_LOGIC [state/value]					;-- returns 0/1, matches the state flag
 			default	   [true]
@@ -608,7 +608,7 @@ change-size: func [
 	SET_PAIR_SIZE_FLAG(hWnd size)
 
 	if all [any [type = button type = toggle] rc/y > as Cocoa-float! 32.0][
-		objc_msgSend [hWnd sel_getUid "setBezelStyle:" NSRegularSquareBezelStyle]
+		objc_msgSend [hWnd sel_getUid "setBezelStyle:" as NSUInteger! NSRegularSquareBezelStyle]
 	]
 	either type = window [
 		frame: objc_msgSend_rect [hWnd sel_getUid "frame"]
@@ -737,6 +737,7 @@ update-z-order: func [
 		nb   [integer!]
 		s	 [series!]
 ][
+	if type = screen [exit]						;-- top-level children are NSWindow instances
 	s: GET_BUFFER(pane)
 	face: as red-object! s/offset + pane/head
 	tail: as red-object! s/tail
@@ -757,7 +758,7 @@ update-z-order: func [
 	arr: objc_msgSend [
 		objc_getClass "NSArray"
 		sel_getUid "arrayWithObjects:count:"
-		parr nb
+		parr as NSUInteger! nb
 	]
 	free as byte-ptr! parr
 	if any [type = window type = group-box] [parent: objc_msgSend [parent sel_getUid "contentView"]]
@@ -792,7 +793,7 @@ change-font: func [
 		storage: objc_msgSend [view sel_getUid "textStorage"]
 		objc_msgSend [
 			storage sel_getUid "setAttributes:range:"
-			attrs 0 objc_msgSend [storage sel_length]
+			attrs as NSUInteger! 0 objc_msgSend [storage sel_length]
 		]
 		objc_msgSend [view sel_getUid "setTypingAttributes:" attrs]
 	][
@@ -1107,7 +1108,7 @@ change-selection: func [
 			][
 				wnd: objc_msgSend [hWnd sel_getUid "documentView"]
 			]
-			objc_msgSend [wnd sel_getUid "setSelectedRange:" idx sz]
+			objc_msgSend [wnd sel_getUid "setSelectedRange:" as NSUInteger! idx as NSUInteger! sz]
 		]
 		type = camera [
 			either TYPE_OF(int) = TYPE_NONE [
@@ -1135,17 +1136,17 @@ change-selection: func [
 			if all [idx = -1 type = drop-down][		;-- deselect current item
 				idx: as integer! objc_msgSend [hWnd sel_getUid "indexOfSelectedItem"]
 				if idx <> -1 [
-					objc_msgSend [hWnd sel_getUid "deselectItemAtIndex:" idx]
+					objc_msgSend [hWnd sel_getUid "deselectItemAtIndex:" as NSInteger! idx]
 				]
 				exit
 			]
 			if any [sz < 0 sz < idx][exit]
 			either type = drop-list [
-				objc_msgSend [hWnd sel_getUid "selectItemAtIndex:" idx + 1]
+				objc_msgSend [hWnd sel_getUid "selectItemAtIndex:" as NSInteger! (idx + 1)]
 				selection: objc_msgSend [hWnd sel_getUid "titleOfSelectedItem"]
 				objc_msgSend [hWnd sel_getUid "setTitle:" selection]
 			][
-				objc_msgSend [hWnd sel_getUid "selectItemAtIndex:" idx]
+				objc_msgSend [hWnd sel_getUid "selectItemAtIndex:" as NSInteger! idx]
 				selection: objc_msgSend [hWnd sel_getUid "objectValueOfSelectedItem"]
 				objc_msgSend [hWnd sel_getUid "setObjectValue:" selection]
 			]
@@ -1206,7 +1207,7 @@ insert-list-item: func [
 		sel_getUid "insertItemWithObjectValue:atIndex:"
 	]
 	if pos > len [pos: len]
-	objc_msgSend [hWnd sel to-NSString item pos]
+	objc_msgSend [hWnd sel to-NSString item as NSInteger! pos]
 ]
 
 init-combo-box: func [
@@ -1250,7 +1251,7 @@ init-combo-box: func [
 	]
 
 	either drop-list? [
-		objc_msgSend [combo sel_getUid "selectItemAtIndex:" -1]
+		objc_msgSend [combo sel_getUid "selectItemAtIndex:" as NSInteger! -1]
 	][
 		either caption <> 0 [
 			objc_msgSend [combo sel_getUid "setStringValue:" caption]
@@ -1280,9 +1281,9 @@ to-NSDate: func [
 		sel_getUid "init"
 	]
 	
-	objc_msgSend [components sel_getUid "setDay:" DATE_GET_DAY(date/date)]
-	objc_msgSend [components sel_getUid "setMonth:" DATE_GET_MONTH(date/date)]
-	objc_msgSend [components sel_getUid "setYear:" cap-year DATE_GET_YEAR(date/date)]
+	objc_msgSend [components sel_getUid "setDay:" as NSInteger! DATE_GET_DAY(date/date)]
+	objc_msgSend [components sel_getUid "setMonth:" as NSInteger! DATE_GET_MONTH(date/date)]
+	objc_msgSend [components sel_getUid "setYear:" as NSInteger! (cap-year DATE_GET_YEAR(date/date))]
 	
 	calendar: objc_msgSend [
 		objc_msgSend [objc_getClass "NSCalendar" sel_getUid "alloc"]
@@ -1315,7 +1316,7 @@ sync-calendar: func [
 	
 	components: objc_msgSend [
 		calendar sel_getUid "components:fromDate:"
-		NSCalendarUnitDay or NSCalendarUnitMonth or NSCalendarUnitYear
+		as NSUInteger! (NSCalendarUnitDay or NSCalendarUnitMonth or NSCalendarUnitYear)
 		objc_msgSend [handle sel_getUid "dateValue"]
 	]
 	
@@ -1335,13 +1336,13 @@ init-calendar: func [
 	/local
 		dt [red-date! value]
 ][
-	objc_msgSend [calendar sel_getUid "setDatePickerMode:" NSDatePickerModeSingle]
-	objc_msgSend [calendar sel_getUid "setDatePickerStyle:" NSDatePickerStyleClockAndCalendar]
-	objc_msgSend [calendar sel_getUid "setDatePickerElements:" NSDatePickerElementFlagYearMonthDay]
+	objc_msgSend [calendar sel_getUid "setDatePickerMode:" as NSUInteger! NSDatePickerModeSingle]
+	objc_msgSend [calendar sel_getUid "setDatePickerStyle:" as NSUInteger! NSDatePickerStyleClockAndCalendar]
+	objc_msgSend [calendar sel_getUid "setDatePickerElements:" as NSUInteger! NSDatePickerElementFlagYearMonthDay]
 	
 	objc_msgSend [calendar sel_getUid "setTarget:" calendar]
 	objc_msgSend [calendar sel_getUid "setAction:" sel_getUid "calendar-change"]
-	objc_msgSend [calendar sel_getUid "sendActionOn:" NSLeftMouseDown]
+	objc_msgSend [calendar sel_getUid "sendActionOn:" as NSUInteger! NSLeftMouseDownMask]
 	
 	date/make-at as red-value! dt 1601 01 01 0.0 0 0 no no
 	objc_msgSend [calendar sel_getUid "setMinDate:" to-NSDate dt]
@@ -1383,7 +1384,7 @@ init-window: func [
 	window: objc_msgSend [
 		window
 		sel_getUid "initWithContentRect:styleMask:backing:defer:"
-		rect/x rect/y rect/w rect/h flags 2 0
+		rect/x rect/y rect/w rect/h as NSUInteger! flags as NSUInteger! 2 no
 	]
 
 	set-content-view window face
@@ -1391,12 +1392,12 @@ init-window: func [
 	if bits and FACET_FLAGS_NO_BORDER = 0 [
 		sel_Hidden: sel_getUid "setHidden:"
 		if bits and FACET_FLAGS_NO_MAX  <> 0 [
-			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 2] sel_Hidden yes]
+			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" as NSUInteger! 2] sel_Hidden yes]
 		]
 		if bits and FACET_FLAGS_NO_BTNS <> 0 [
-			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 0] sel_Hidden yes]
-			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 1] sel_Hidden yes]
-			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" 2] sel_Hidden yes]
+			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" as NSUInteger! 0] sel_Hidden yes]
+			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" as NSUInteger! 1] sel_Hidden yes]
+			objc_msgSend [objc_msgSend [window sel_getUid "standardWindowButton:" as NSUInteger! 2] sel_Hidden yes]
 		]
 		if all [
 			bits and FACET_FLAGS_NO_TITLE = 0
@@ -1405,7 +1406,7 @@ init-window: func [
 	]
 
 	if bits and FACET_FLAGS_POPUP  <> 0 [
-		objc_msgSend [window sel_getUid "setLevel:" CGWindowLevelForKey 5]		;-- FloatingWindowLevel
+		objc_msgSend [window sel_getUid "setLevel:" as NSInteger! CGWindowLevelForKey 5]	;-- FloatingWindowLevel
 	]
 
 	objc_msgSend [window sel_getUid "setDelegate:" window]
@@ -1456,7 +1457,10 @@ init-base-face: func [
 		]
 		store-face-to-obj obj face
 
-		objc_msgSend [obj sel_getUid "setAutoresizingMask:" NSViewWidthSizable or NSViewHeightSizable]
+		objc_msgSend [
+			obj sel_getUid "setAutoresizingMask:"
+			as NSUInteger! (NSViewWidthSizable or NSViewHeightSizable)
+		]
 		objc_msgSend [hwnd sel_getUid "setHasVerticalScroller:" yes]
 		objc_msgSend [hwnd sel_getUid "setHasHorizontalScroller:" yes]
 		objc_msgSend [hwnd sel_getUid "setDocumentView:" obj]
@@ -1505,7 +1509,7 @@ make-area: func [
 	rc/y: as Cocoa-float! 0.0
 
 	x: either border? [NSBezelBorder][NSNoBorder]
-	objc_msgSend [container sel_getUid "setBorderType:" x]
+	objc_msgSend [container sel_getUid "setBorderType:" as NSUInteger! x]
 	objc_msgSend [container sel_getUid "setAutohidesScrollers:" yes]
 	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
 	;objc_msgSend [container sel_getUid "setHasHorizontalScroller:" yes]
@@ -1561,7 +1565,7 @@ make-text-list: func [
 	objc_msgSend [column sel_getUid "setWidth:" rc/w]
 
 	obj: either border? [NSBezelBorder][NSNoBorder]
-	objc_msgSend [container sel_getUid "setBorderType:" obj]
+	objc_msgSend [container sel_getUid "setBorderType:" as NSUInteger! obj]
 	objc_msgSend [container sel_getUid "setAutohidesScrollers:" yes]
 	objc_msgSend [container sel_getUid "setHasHorizontalScroller:" yes]
 	objc_msgSend [container sel_getUid "setHasVerticalScroller:" yes]
@@ -1578,7 +1582,7 @@ make-text-list: func [
 
 	if TYPE_OF(menu) = TYPE_BLOCK [set-context-menu obj menu]
 
-	objc_msgSend [obj sel_getUid "setRowSizeStyle:" 0]
+	objc_msgSend [obj sel_getUid "setRowSizeStyle:" as NSUInteger! 0]
 	objc_msgSend [obj sel_getUid "setHeaderView:" 0]
 	objc_msgSend [obj sel_getUid "addTableColumn:" column]
 	objc_msgSend [obj sel_getUid "setDelegate:" obj]
@@ -1662,7 +1666,7 @@ update-combo-box: func [
 						str: as red-string! block/rs-abs-at blk index
 						loop part [
 							if TYPE_OF(str) = TYPE_STRING [
-								objc_msgSend [hWnd sel_getUid "removeItemAtIndex:" i]
+								objc_msgSend [hWnd sel_getUid "removeItemAtIndex:" as NSInteger! i]
 							]
 						]
 					]
@@ -1704,7 +1708,7 @@ update-combo-box: func [
 			]
 			i: index
 			if list? [index: index + 1]
-			objc_msgSend [hWnd sel_getUid "removeItemAtIndex:" index]
+			objc_msgSend [hWnd sel_getUid "removeItemAtIndex:" as NSInteger! index]
 			insert-list-item hWnd as red-string! value i list?
 		]
 		default [assert false]			;@@ raise a runtime error
@@ -1878,7 +1882,8 @@ parse-common-opts: func [
 							img: as red-image! w
 							nsimg: objc_msgSend [
 								OBJC_ALLOC("NSImage")
-								sel_getUid "initWithCGImage:size:" OS-image/to-cgimage img 0 0
+								sel_getUid "initWithCGImage:size:" OS-image/to-cgimage img
+								(as Cocoa-float! 0.0) (as Cocoa-float! 0.0)
 							]
 							pt/x: as Cocoa-float! IMAGE_WIDTH(img/size) / 2
 							pt/y: as Cocoa-float! IMAGE_HEIGHT(img/size) / 2
@@ -1927,7 +1932,7 @@ parse-common-opts: func [
 							]
 							objc_msgSend [
 								objc_msgSend [hWnd sel_getUid "cell"]
-								sel_getUid "setControlSize:" sym
+								sel_getUid "setControlSize:" as NSUInteger! sym
 							]
 							btn?: no
 						]
@@ -1948,7 +1953,7 @@ parse-common-opts: func [
 
 	if any [type = button type = toggle][
 		len: either btn? [NSRegularSquareBezelStyle][NSRoundedBezelStyle]
-		objc_msgSend [hWnd sel_getUid "setBezelStyle:" len]
+		objc_msgSend [hWnd sel_getUid "setBezelStyle:" as NSUInteger! len]
 	]
 ]
 
@@ -1959,6 +1964,7 @@ OS-refresh-window: func [hWnd [Cocoa-handle!]][0]
 OS-show-window: func [
 	hWnd [Cocoa-handle!]
 ][
+	objc_msgSend [hWnd sel_getUid "makeKeyAndOrderFront:" hWnd]
 	;make-event hWnd 0 EVT_SIZE
 	change-selection hWnd (as red-integer! get-face-values hWnd) + FACE_OBJ_SELECTED window
 ]
@@ -2164,7 +2170,7 @@ OS-make-view: func [
 				if all [sym = check bits and FACET_FLAGS_TRISTATE <> 0][
 					objc_msgSend [obj sel_getUid "setAllowsMixedState:" yes]
 				]
-				objc_msgSend [obj sel_getUid "setButtonType:" flags]
+				objc_msgSend [obj sel_getUid "setButtonType:" as NSUInteger! flags]
 				set-logic-state obj as red-logic! data sym = check
 			]
 			if TYPE_OF(img) = TYPE_IMAGE [change-image obj img sym]
@@ -2218,7 +2224,7 @@ OS-make-view: func [
 		sym = group-box [
 			set-content-view obj null
 			either zero? caption [
-				objc_msgSend [obj sel_getUid "setTitlePosition:" NSNoTitle]
+				objc_msgSend [obj sel_getUid "setTitlePosition:" as NSUInteger! NSNoTitle]
 			][
 				objc_msgSend [obj sel_getUid "setTitle:" caption]
 			]
@@ -2349,7 +2355,7 @@ OS-update-view: func [
 			objc_msgSend [hWnd2 sel_getUid "becomeFirstResponder"]
 			type: as integer! objc_msgSend [nsstr sel_getUid "length"]
 			hWnd: objc_msgSend [hWnd2 sel_getUid "currentEditor"]
-			objc_msgSend [hWnd sel_getUid "setSelectedRange:" type 0]
+			objc_msgSend [hWnd sel_getUid "setSelectedRange:" as NSUInteger! type as NSUInteger! 0]
 		]
 	]
 	if flags and FACET_FLAG_DRAW  <> 0 [

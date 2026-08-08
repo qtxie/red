@@ -5,6 +5,14 @@ Red [
 ]
 
 compiler-root: system/options/path
+#include %compiler/resource-store.red
+
+if value? 'toolchain-resource-index [
+	compiler-resource-store/install
+		toolchain-resource-index
+		toolchain-resource-data
+		toolchain-resource-manifest-sha256
+]
 ; The core compiler does not load View, but it needs the datatype token to compile View targets.
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
@@ -43,11 +51,30 @@ red-system-marker: first [Red/System]
 
 print-usage: does [
 	print "Usage: red-bootstrap [-r] [-u] [-d] [-O0|-O1|-O2] [--dump-o2-ir file] [-n|--no-runtime] [--show-func-map] [-dlib] [-t target] [--red-only] [-o output] source.red|source.reds"
+	print "       red-bootstrap --toolchain-info|--list-targets|--resource-manifest|--self-check"
 ]
 
 fail-command: func [message][
 	print ["*** Red command-line error:" message]
 	quit/return 1
+]
+
+focused-target: #either config/show = 'X86-64-only ["Windows-X86-64"]["Darwin-ARM64"]
+
+resource-count: does [
+	either compiler-resource-store/installed? [
+		divide length? compiler-resource-store/index 2
+	][0]
+]
+
+print-toolchain-info: does [
+	print ["name: red-toolchain"]
+	print ["version:" bootstrap-version]
+	print ["host:" focused-target]
+	print ["targets:" focused-target]
+	print ["standalone:" compiler-resource-store/installed?]
+	print ["resources:" resource-count]
+	print ["resource-manifest:" any [compiler-resource-store/manifest-sha256 "none"]]
 ]
 
 join-file: func [base [file!] relative [file!]][append copy base relative]
@@ -297,6 +324,17 @@ options: compiler-options/parse-args args
 if error? :options [fail-command mold options]
 if compiler-options/option-get options 'help? [print-usage quit/return 0]
 if compiler-options/option-get options 'version? [print bootstrap-version quit/return 0]
+if compiler-options/option-get options 'toolchain-info? [print-toolchain-info quit/return 0]
+if compiler-options/option-get options 'list-targets? [print focused-target quit/return 0]
+if compiler-options/option-get options 'resource-manifest? [
+	print any [compiler-resource-store/manifest-sha256 "none"]
+	quit/return either compiler-resource-store/installed? [0][1]
+]
+if compiler-options/option-get options 'self-check? [
+	unless compiler-resource-store/installed? [fail-command "resource archive is not installed"]
+	print ["resource-self-check: ok resources:" compiler-resource-store/self-check]
+	quit/return 0
+]
 compile-source options
 phase-timer/finish 'compiler-total
 if phase-timer/active? [

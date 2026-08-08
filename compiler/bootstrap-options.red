@@ -24,6 +24,10 @@ compiler-options: context [
 			verbose: 0
 			help?: false
 			version?: false
+			toolchain-info?: false
+			list-targets?: false
+			resource-manifest?: false
+			self-check?: false
 		]
 	]
 
@@ -42,6 +46,10 @@ compiler-options: context [
 			case [
 				find ["-h" "--help"] token [option-set options 'help? true]
 				find ["-V" "--version"] token [option-set options 'version? true]
+				token = "--toolchain-info" [option-set options 'toolchain-info? true]
+				token = "--list-targets" [option-set options 'list-targets? true]
+				token = "--resource-manifest" [option-set options 'resource-manifest? true]
+				token = "--self-check" [option-set options 'self-check? true]
 				find ["-r" "--release"] token [option-set options 'release? true]
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
 				token = "-O0" [option-set options 'opt-level 0]

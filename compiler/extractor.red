@@ -20,6 +20,16 @@ compiler-extractor: context [
 	scalars-with-view: none
 	extras: make block! 1
 
+	read-builtin-binary: func [path [file!] /local key][
+		key: clean-path/only join root path
+		either all [
+			compiler-resource-store/installed?
+			compiler-resource-store/exists? path
+		][
+			compiler-resource-store/read-binary path
+		][read/binary key]
+	]
+
 	fail: func [message [string! block!]][
 		do make error! rejoin ["compiler extractor: " form message]
 	]
@@ -56,7 +66,7 @@ compiler-extractor: context [
 		datatype-count: 0
 		action-count: 0
 		native-count: 0
-		values: transcode read/binary root/runtime/macros.reds
+		values: transcode read-builtin-binary %runtime/macros.reds
 		position: head values
 		found: 0
 		while [not tail? position][
@@ -120,7 +130,7 @@ compiler-extractor: context [
 	]
 
 	load-currencies: has [values system-body locale-body currencies-body list][
-		values: transcode read/binary root/environment/system.red
+		values: transcode read-builtin-binary %environment/system.red
 		system-body: find-context-body values 'system
 		unless system-body [fail "system context is missing from environment/system.red"]
 		locale-body: find-context-body system-body 'locale
@@ -134,7 +144,7 @@ compiler-extractor: context [
 
 	load-scalars: func [job [object! none!] /local config values source expanded raw spec name value][
 		config: any [job context [modules: copy []]]
-		values: transcode read/binary root/environment/scalars.red
+		values: transcode read-builtin-binary %environment/scalars.red
 		source: find values to set-word! 'internal!
 		unless source [fail "scalar declarations are missing from environment/scalars.red"]
 		expanded: compiler-preprocessor/expand/clean copy source config

@@ -27,6 +27,10 @@ system-dialect: context [
 	red-runtime-path: %runtime/
 	nl: 		  newline
 
+	builtin-source-path: func [path [file!]][
+		compiler-resource-store/source-path path
+	]
+
 	loader: compiler-system-loader
 
 	options-class: context [
@@ -5780,7 +5784,7 @@ system-dialect: context [
 		emitter/start-prolog
 		;emitter/target/on-init							;@@ required?
 
-		script: secure-clean-path runtime-path/start.reds
+		script: builtin-source-path runtime-path/start.reds
 		compiler/run/no-events job loader/process/own script script
 		emitter/start-epilog
 
@@ -5794,7 +5798,7 @@ system-dialect: context [
 
 	comp-runtime-prolog: func [red? [logic!] payload [binary! none!] /local script ext src][
 		phase-timer/begin 'runtime-common
-		script: secure-clean-path runtime-path/common.reds
+		script: builtin-source-path runtime-path/common.reds
 		src: loader/process/own script
 		unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
 		compiler/run/runtime job src script
@@ -5820,7 +5824,7 @@ system-dialect: context [
 			]
 			if any [not job/dev-mode? job/libRedRT?][
 				phase-timer/begin 'runtime-red
-				script: secure-clean-path red-runtime-path/red.reds
+				script: builtin-source-path red-runtime-path/red.reds
 				src: loader/process/own script
 				unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
 				compiler/run job src script
@@ -5921,7 +5925,7 @@ system-dialect: context [
 		header	[block!]
 		res		[block!]
 		file	[file!]
-		/local icon icon-file name value info main-path version-info-key base
+		/local icon icon-file name value info main-path version-info-key base asset-path
 	][
 		info: make block! 8
 		main-path: first split-path file
@@ -5940,7 +5944,13 @@ system-dialect: context [
 					either find [default flat] :icon [
 						compiler-assets/default-icon
 					][
-						join base icon-file
+						asset-path: join %system/assets/ icon-file
+						either all [
+							compiler-resource-store/installed?
+							compiler-resource-store/exists? asset-path
+						][
+							compiler-resource-store/read-binary asset-path
+						][join base icon-file]
 					]
 				]
 			][

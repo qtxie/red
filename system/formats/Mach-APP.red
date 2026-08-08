@@ -55,13 +55,24 @@ mach-app-packager: context [
 		icon-data: none
 		icon-file: clean-path append copy system/options/path
 			%system/assets/macOS/Resources/AppIcon.icns
-		if exists? icon-file [
-			icon-data: read/binary icon-file
+		either all [
+			compiler-resource-store/installed?
+			compiler-resource-store/exists? %system/assets/macOS/Resources/AppIcon.icns
+		][
+			icon-data: compiler-resource-store/read-binary
+				%system/assets/macOS/Resources/AppIcon.icns
+		][if exists? icon-file [icon-data: read/binary icon-file]]
+		if icon-data [
 			append/only resources reduce [%Resources/AppIcon.icns icon-data]
 		]
 
 		plist-file: clean-path append copy system/options/path %system/assets/macOS/Info.plist
-		data: read plist-file
+		data: either all [
+			compiler-resource-store/installed?
+			compiler-resource-store/exists? %system/assets/macOS/Info.plist
+		][
+			compiler-resource-store/read-text %system/assets/macOS/Info.plist
+		][read plist-file]
 		executable-name: mach-app-sign/executable-name name
 		identifier: rejoin ["org.redlang." mach-app-sign/identifier-component name]
 		replace/all data "$Red-App-Executable$" mach-app-sign/xml-escape executable-name

@@ -62,6 +62,16 @@ compiler-system-loader: context [
 	]
 
 	resolve-file: func [file [file!] /local base spelling][
+		if compiler-resource-store/virtual? file [
+			return compiler-resource-store/virtual-path file
+		]
+		if all [
+			relative-path? file
+			file? current-script
+			compiler-resource-store/virtual? current-script
+		][
+			return compiler-resource-store/resolve file current-script
+		]
 		spelling: to string! file
 		unless any [
 			all [not empty? spelling spelling/1 = #"/"]
@@ -415,7 +425,11 @@ compiler-system-loader: context [
 		if file? input [
 			path: resolve-file input
 			source-name: path
-			if error? set/any 'err try [src: read/binary path][
+			if error? set/any 'err try [
+				src: either compiler-resource-store/virtual? path [
+					compiler-resource-store/read-binary path
+				][read/binary path]
+			][
 				throw-error ["file access error:" mold path]
 			]
 			check-marker src

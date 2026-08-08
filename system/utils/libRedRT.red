@@ -52,8 +52,14 @@ libRedRT: context [
 		clean-path join system/options/path join %system/utils/ file
 	]
 
-	exports-data: get-source-path exports-file
-	exports-data: read/binary exports-data
+	exports-data: either all [
+		compiler-resource-store/installed?
+		compiler-resource-store/exists? %system/utils/libRedRT-exports.red
+	][
+		compiler-resource-store/read-binary %system/utils/libRedRT-exports.red
+	][
+		read/binary get-source-path exports-file
+	]
 	exports-data: transcode exports-data
 	funcs: first exports-data
 	vars: second exports-data
@@ -61,9 +67,13 @@ libRedRT: context [
 
 	get-include-file: func [job /local root data][
 		data: read get-path include-file
-		; Stage1 bootstrap is an exe: script/path may be none. Prefer options/path.
-		root: any [system/script/path system/options/path]
-		replace/all data "$ROOT-PATH$" remove mold root
+		root: either compiler-resource-store/installed? [
+			compiler-resource-store/virtual-prefix
+		][
+			; Stage1 bootstrap is an exe: script/path may be none. Prefer options/path.
+			remove mold any [system/script/path system/options/path]
+		]
+		replace/all data "$ROOT-PATH$" root
 		load data
 	]
 

@@ -25,6 +25,7 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 #include %compiler/frontend.red
 #include %compiler/bootstrap-options.red
 #if config/show = 'ARM64-Darwin-only [
+	#include %system/formats/Mach-APP-sign.red
 	#include %system/formats/Mach-APP.red
 ]
 
@@ -231,6 +232,13 @@ compile-source: func [
 		not compiler-system-job/job-get job 'libRedRT?
 		not libRedRT-ready? job
 	][build-libRedRT job]
+	#if config/show = 'ARM64-Darwin-only [
+		if packager-name: compiler-system-job/job-get job 'packager [
+			switch/default packager-name [
+				Mach-APP [mach-app-packager/prepare job source]
+			][fail-command rejoin ["unsupported packager: " packager-name]]
+		]
+	]
 
 	print ["Compiling" source "..."]
 	either marker = red-system-marker [

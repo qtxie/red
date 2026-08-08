@@ -74,12 +74,13 @@ stdout_log="$output_dir/$name.stdout.log"
 stderr_log="$output_dir/$name.stderr.log"
 marker="$output_dir/$name.ok"
 error_file="$output_dir/$name.error"
-signature_probe="$output_dir/$name.signature-probe"
+tampered_app="$output_dir/$name-tampered.app"
+signature_details=
 
 mkdir -p "$output_dir"
 rm -rf "$app"
-rm -f "$compile_log" "$stdout_log" "$stderr_log" "$marker" "$error_file" \
-	"$signature_probe"
+rm -f "$compile_log" "$stdout_log" "$stderr_log" "$marker" "$error_file"
+rm -rf "$tampered_app"
 
 cd "$repo"
 if ! "$compiler" -r -d --show-func-map -t macOS-ARM64 -o "$output_dir/$name" "$source_file" \
@@ -95,6 +96,10 @@ fi
 }
 [ -f "$plist" ] || {
 	printf 'Bundle Info.plist is missing: %s\n' "$plist" >&2
+	exit 1
+}
+[ -f "$app/Contents/_CodeSignature/CodeResources" ] || {
+	printf 'Bundle CodeResources is missing: %s\n' "$app/Contents/_CodeSignature/CodeResources" >&2
 	exit 1
 }
 [ ! -e "$runtime" ] || {
@@ -115,12 +120,22 @@ if otool -L "$executable" | grep -q 'libRedRT.dylib'; then
 fi
 dyld_info -validate_only "$executable"
 plutil -lint "$plist" >/dev/null
+plutil -lint "$app/Contents/_CodeSignature/CodeResources" >/dev/null
 [ "$(plutil -extract CFBundleExecutable raw -o - "$plist")" = "$name" ]
-cp "$executable" "$signature_probe"
-codesign --verify --strict --verbose=4 "$signature_probe"
-rm "$signature_probe"
-codesign --force --deep --sign - "$app" >/dev/null
 codesign --verify --deep --strict --verbose=4 "$app"
+signature_details=$(codesign --display --verbose=4 "$app" 2>&1)
+printf '%s\n' "$signature_details" | grep -q "Identifier=org.redlang.$name"
+printf '%s\n' "$signature_details" | grep -q 'Hash choices=sha1,sha256'
+printf '%s\n' "$signature_details" | grep -q 'Signature=adhoc'
+printf '%s\n' "$signature_details" | grep -q 'Sealed Resources version=2'
+
+cp -R "$app" "$tampered_app"
+printf 'tampered' >> "$tampered_app/Contents/Resources/AppIcon.icns"
+if codesign --verify --deep --strict "$tampered_app" >/dev/null 2>&1; then
+	printf 'Tampered bundle unexpectedly passed code-signature verification.\n' >&2
+	exit 1
+fi
+rm -rf "$tampered_app"
 
 console_user=$(stat -f %Su /dev/console)
 current_user=$(id -un)

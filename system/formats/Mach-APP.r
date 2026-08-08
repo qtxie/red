@@ -108,7 +108,8 @@ packager: context [
 		copy-icon src res-dir
 
 		plist: read-cache %system/assets/macOS/Info.plist
-		replace/all/case plist "$Red-App-Name$" name
+		replace/all/case plist "$Red-App-Executable$" name
+		replace/all/case plist "$Red-App-Identifier$" rejoin ["org.redlang." name]
 		write/binary contents-dir/Info.plist plist
 
 		log "all done!"

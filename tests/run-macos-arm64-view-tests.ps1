@@ -37,7 +37,8 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $app -PathType Containe
 
 $bundleExecutable = Join-Path $app "Contents\MacOS\$name"
 $bundleRuntime = Join-Path $app 'Contents\MacOS\libRedRT.dylib'
-foreach ($file in @($bundleExecutable, $bundleRuntime, (Join-Path $app 'Contents\Info.plist'))) {
+$bundleResources = Join-Path $app 'Contents\_CodeSignature\CodeResources'
+foreach ($file in @($bundleExecutable, $bundleRuntime, (Join-Path $app 'Contents\Info.plist'), $bundleResources)) {
 	if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
 		throw "Bundle artifact is missing: $file"
 	}
@@ -81,14 +82,17 @@ otool -L "`$runtime" | grep -q 'AppKit.framework'
 otool -D "`$runtime" | grep -q '@rpath/libRedRT.dylib'
 dyld_info -validate_only "`$exe"
 dyld_info -validate_only "`$runtime"
-cp "`$exe" '$name-executable-signature-probe'
 cp "`$runtime" '$name-runtime-signature-probe.dylib'
-codesign --verify --strict --verbose=4 '$name-executable-signature-probe'
 codesign --verify --strict --verbose=4 '$name-runtime-signature-probe.dylib'
-rm '$name-executable-signature-probe' '$name-runtime-signature-probe.dylib'
+rm '$name-runtime-signature-probe.dylib'
 plutil -lint '$name.app/Contents/Info.plist'
-codesign --force --deep --sign - '$name.app'
+plutil -lint '$name.app/Contents/_CodeSignature/CodeResources'
 codesign --verify --deep --strict --verbose=4 '$name.app'
+signature_details=`$(codesign --display --verbose=4 '$name.app' 2>&1)
+printf '%s\n' "`$signature_details" | grep -q 'Identifier=org.redlang.$name'
+printf '%s\n' "`$signature_details" | grep -q 'Hash choices=sha1,sha256'
+printf '%s\n' "`$signature_details" | grep -q 'Signature=adhoc'
+printf '%s\n' "`$signature_details" | grep -q 'Sealed Resources version=2'
 
 console_user=`$(stat -f %Su /dev/console)
 ssh_user=`$(id -un)

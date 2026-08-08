@@ -12,6 +12,12 @@ rs-o2-ir: context [
 	add-op:      '+
 	subtract-op: '-
 	multiply-op: '*
+	divide-op:               first [/]
+	modulo-op:               to word! "//"
+	remainder-op:            to word! "%"
+	left-shift-op:           '<<
+	right-shift-op:          '>>
+	unsigned-right-shift-op: '-**
 	equal-op:            to word! "="
 	not-equal-op:        to word! "<>"
 	less-op:             to word! "<"
@@ -131,6 +137,22 @@ rs-o2-ir: context [
 			integer? type/5
 			word? type/6
 		]
+	]
+
+	integer-division-op?: func [opcode [word!]][
+		any [
+			opcode = divide-op
+			opcode = remainder-op
+			opcode = modulo-op
+		]
+	]
+
+	modulus-op?: func [opcode [word!]][
+		opcode = modulo-op
+	]
+
+	remainder-result-op?: func [opcode [word!]][
+		any [opcode = modulo-op opcode = remainder-op]
 	]
 
 	make-operand: func [kind [word!] value][
@@ -458,6 +480,10 @@ rs-o2-ir: context [
 		append-op 'bitcast reduce [vreg-operand value] type 'pure 'none none no none
 	]
 
+	emit-log-b: func [value [integer!] type [block!]][
+		append-op 'log-b reduce [vreg-operand value] type 'pure 'none none yes none
+	]
+
 	emit-load-local: func [name [word!] type [block!]][
 		append-op 'load-local reduce [local-operand name] type 'read name none no none
 	]
@@ -483,6 +509,38 @@ rs-o2-ir: context [
 		value
 	]
 
+	emit-load-indirect: func [base [integer!] offset [integer!] type [block!]][
+		append-op
+			'load-indirect
+			reduce [vreg-operand base immediate-operand offset]
+			type
+			'read
+			'universal
+			none
+			no
+			none
+	]
+
+	emit-store-indirect: func [
+		base [integer!]
+		offset [integer!]
+		value [integer!]
+		type [block!]
+	][
+		append-op
+			'store-indirect
+			reduce [vreg-operand base immediate-operand offset vreg-operand value]
+			none
+			'write
+			'universal
+			none
+			no
+			reduce ['value-type copy/deep type]
+		poke current fn-last-result value
+		poke current fn-last-type copy/deep type
+		value
+	]
+
 	emit-binary: func [
 		opcode [word!]
 		left [integer!]
@@ -493,13 +551,50 @@ rs-o2-ir: context [
 		append-op opcode reduce [vreg-operand left vreg-operand right] type effect 'none none yes none
 	]
 
-	emit-call: func [name [word!] args [block!] type [block! none!] /local operands value][
+	emit-call: func [
+		name [word!]
+		args [block!]
+		type [block! none!]
+		/variadic
+		/local operands value metadata
+	][
 		operands: make block! (length? args) + 1
 		append/only operands symbol-operand name
 		foreach value args [append/only operands vreg-operand value]
-		value: append-op 'call operands type 'call 'universal none yes reduce ['callee name]
+		metadata: reduce ['callee name 'variadic to logic! variadic]
+		value: append-op 'call operands type 'call 'universal none yes metadata
 		add-relocation pick current fn-instruction-count 'call-rel32 name 0
 		value
+	]
+
+	emit-resolver: func [
+		name [word!]
+		handle [integer!]
+		type [block!]
+		/local opcode effect result instruction-id
+	][
+		opcode: case [
+			name = 'red>resolve-node ['resolve-node]
+			name = 'red>resolve-series ['resolve-series]
+			true [none]
+		]
+		unless opcode [return emit-opaque 'resolver-intrinsic type]
+		effect: either opcode = 'resolve-series ['call]['read]
+		result: append-op
+			opcode
+			reduce [symbol-operand name vreg-operand handle]
+			type
+			effect
+			'universal
+			none
+			yes
+			reduce ['registry 'red>node-registry 'slow-call (opcode = 'resolve-series)]
+		instruction-id: pick current fn-instruction-count
+		add-relocation instruction-id 'rip-rel32 'red>node-registry 0
+		if opcode = 'resolve-series [
+			add-relocation instruction-id 'call-rel32 name 0
+		]
+		result
 	]
 
 	emit-copy-cell: func [source [integer!] destination [integer!] type [block!]][
@@ -582,13 +677,21 @@ rs-o2-ir: context [
 		condition [integer!]
 		true-id [integer!]
 		false-id [integer!]
-		/local definition opcode flags from-id
+		/local definition opcode flags type from-id
 	][
 		definition: find-vreg-definition condition
 		opcode: all [definition pick definition ins-opcode]
 		flags: all [definition pick definition ins-flags-out]
 		unless all [opcode comparison-op? opcode flags][
-			mark-unsupported 'unsupported-branch-condition
+			type: vreg-type condition
+			opcode: 'truthy
+			flags: none
+			unless all [
+				valid-type? type
+				type/1 = 'logic
+				type/2 = 4
+				type/3 = 'gpr
+			][mark-unsupported 'unsupported-branch-condition]
 		]
 		from-id: current-block-id
 		append-op
@@ -660,6 +763,85 @@ rs-o2-ir: context [
 		unless all [function-active? (length? state) = 3][return none]
 		emit-jump state/3
 		set-current-block state/3
+	]
+
+	begin-short-circuit: func [
+		all? [logic!]
+		/local start-id true-block false-block done-block
+	][
+		unless function-active? [return none]
+		start-id: current-block-id
+		true-block: add-block 'short-circuit-true
+		false-block: add-block 'short-circuit-false
+		done-block: add-block 'short-circuit-exit
+		set-current-block start-id
+		reduce [
+			all?
+			pick true-block bb-id
+			pick false-block bb-id
+			pick done-block bb-id
+		]
+	]
+
+	short-circuit-condition: func [
+		state [block!]
+		last? [logic!]
+		/local condition type current-id next-block next-id true-id false-id
+	][
+		unless all [function-active? (length? state) = 4][return none]
+		condition: pick current fn-last-result
+		type: pick current fn-last-type
+		unless all [
+			condition
+			valid-type? type
+			type/1 = 'logic
+			type/2 = 4
+		][
+			mark-unsupported 'short-circuit-condition
+			return none
+		]
+		next-id: none
+		unless last? [
+			current-id: current-block-id
+			next-block: add-block 'short-circuit-next
+			next-id: pick next-block bb-id
+			set-current-block current-id
+		]
+		either state/1 [
+			true-id: any [next-id state/2]
+			false-id: state/3
+		][
+			true-id: state/2
+			false-id: any [next-id state/3]
+		]
+		emit-branch condition true-id false-id
+		if next-id [
+			set-current-block next-id
+			set-last-result none none
+		]
+		yes
+	]
+
+	end-short-circuit: func [
+		state [block!]
+		/local type true-value true-predecessor false-value false-predecessor incoming
+	][
+		unless all [function-active? (length? state) = 4][return none]
+		type: make-type 'logic 4 'gpr no 0 'none
+		set-current-block state/2
+		true-value: emit-constant 1 type
+		true-predecessor: current-block-id
+		emit-jump state/4
+		set-current-block state/3
+		false-value: emit-constant 0 type
+		false-predecessor: current-block-id
+		emit-jump state/4
+		set-current-block state/4
+		incoming: reduce [
+			reduce [true-predecessor true-value type]
+			reduce [false-predecessor false-value type]
+		]
+		emit-phi incoming type
 	]
 
 	begin-switch: func [
@@ -880,8 +1062,17 @@ rs-o2-ir: context [
 		no
 	]
 
-	add-relocation: func [instruction-id [integer!] kind [word!] symbol [word!] addend [integer!]][
-		append/only pick current fn-relocations reduce [instruction-id kind symbol addend]
+	add-relocation: func [
+		instruction-id [integer!]
+		kind [word!]
+		symbol [word!]
+		addend [integer!]
+		/local relocations
+	][
+		relocations: pick current fn-relocations
+		append/only relocations reduce [
+			instruction-id kind symbol addend (length? relocations) + 1
+		]
 	]
 
 	add-safepoint: func [instruction-id [integer!] roots [block!]][
@@ -1192,7 +1383,7 @@ rs-o2-ir: context [
 
 	pass-branch-folding: func [
 		/local block instruction operands true-id false-id condition definition opcode
-			left-definition right-definition left right type folded target
+			left-definition right-definition left right type folded target value
 	][
 		foreach block pick current fn-blocks [
 			instruction: last pick block bb-instructions
@@ -1207,23 +1398,30 @@ rs-o2-ir: context [
 					condition: operands/1/2
 					definition: find-vreg-definition condition
 					opcode: all [definition pick definition ins-opcode]
-					if all [definition comparison-op? opcode][
-						operands: pick definition ins-operands
-						left-definition: find-vreg-definition operands/1/2
-						right-definition: find-vreg-definition operands/2/2
-						if all [
-							left-definition
-							right-definition
-							(pick left-definition ins-opcode) = 'const
-							(pick right-definition ins-opcode) = 'const
-						][
-							left: pick left-definition ins-operands
-							right: pick right-definition ins-operands
-							left: left/1/2
-							right: right/1/2
-							type: vreg-type operands/1/2
-							folded: fold-binary opcode left right type
-							if folded [target: either zero? folded/2 [false-id][true-id]]
+					case [
+						all [definition opcode = 'const][
+							value: pick definition ins-operands
+							value: value/1/2
+							if integer? value [target: either zero? value [false-id][true-id]]
+						]
+						all [definition comparison-op? opcode][
+							operands: pick definition ins-operands
+							left-definition: find-vreg-definition operands/1/2
+							right-definition: find-vreg-definition operands/2/2
+							if all [
+								left-definition
+								right-definition
+								(pick left-definition ins-opcode) = 'const
+								(pick right-definition ins-opcode) = 'const
+							][
+								left: pick left-definition ins-operands
+								right: pick right-definition ins-operands
+								left: left/1/2
+								right: right/1/2
+								type: vreg-type operands/1/2
+								folded: fold-binary opcode left right type
+								if folded [target: either zero? folded/2 [false-id][true-id]]
+							]
 						]
 					]
 				]
@@ -1234,7 +1432,7 @@ rs-o2-ir: context [
 
 	pass-unreachable-blocks: func [
 		/local blocks reachable position id block successor mapping kept new-id
-			predecessors successors mapped instruction operand
+			predecessors successors mapped instruction operand opcode operands repaired
 	][
 		blocks: pick current fn-blocks
 		reachable: make block! length? blocks
@@ -1276,8 +1474,24 @@ rs-o2-ir: context [
 			]
 			poke block bb-successors successors
 			foreach instruction pick block bb-instructions [
-				foreach operand pick instruction ins-operands [
-					if operand/1 = 'block [operand/2: table-value mapping operand/2]
+				opcode: pick instruction ins-opcode
+				operands: pick instruction ins-operands
+				either opcode = 'phi [
+					repaired: make block! length? operands
+					position: operands
+					while [not tail? position][
+						mapped: table-value mapping position/1/2
+						if mapped [
+							append/only repaired block-operand mapped
+							append/only repaired copy position/2
+						]
+						position: skip position 2
+					]
+					poke instruction ins-operands repaired
+				][
+					foreach operand operands [
+						if operand/1 = 'block [operand/2: table-value mapping operand/2]
+					]
 				]
 			]
 		]
@@ -1668,11 +1882,13 @@ rs-o2-ir: context [
 		foreach reloc pick current fn-relocations [
 			either all [
 				block? reloc
-				(length? reloc) = 4
+				(length? reloc) = 5
 				integer? reloc/1
 				word? reloc/2
 				word? reloc/3
 				integer? reloc/4
+				integer? reloc/5
+				reloc/5 >= 1
 			][
 				instruction: find-instruction reloc/1
 				either instruction [
@@ -1680,17 +1896,31 @@ rs-o2-ir: context [
 					operands: pick instruction ins-operands
 					unless case [
 						reloc/2 = 'call-rel32 [
-							all [
-								opcode = 'call
-								not empty? operands
-								operands/1 = symbol-operand reloc/3
+							any [
+								all [
+									opcode = 'call
+									not empty? operands
+									operands/1 = symbol-operand reloc/3
+								]
+								all [
+									opcode = 'resolve-series
+									reloc/3 = 'red>resolve-series
+									not empty? operands
+									operands/1 = symbol-operand reloc/3
+								]
 							]
 						]
 						reloc/2 = 'rip-rel32 [
-							all [
-								find [load-global store-global] opcode
-								not empty? operands
-								operands/1 = global-operand reloc/3
+							any [
+								all [
+									find [load-global store-global] opcode
+									not empty? operands
+									operands/1 = global-operand reloc/3
+								]
+								all [
+									find [resolve-node resolve-series] opcode
+									reloc/3 = 'red>node-registry
+								]
 							]
 						]
 						true [no]
@@ -1880,6 +2110,7 @@ rs-o2-ir: context [
 				]
 			]
 		]
+		if all [selected-chunk not pick current fn-eligible?][selected-chunk: none]
 		either selected-chunk [
 			poke current fn-selected? yes
 			poke current fn-selected-bytes length? selected-chunk/1

@@ -36,6 +36,20 @@ red: context [
 		if null? node [return null]
 		node/value
 	]
+
+	resolve-node-ir: func [
+		handle [integer!]
+		return: [node!]
+	][
+		resolve-node handle
+	]
+
+	resolve-series-ir: func [
+		handle [integer!]
+		return: [int-ptr!]
+	][
+		resolve-series handle
+	]
 ]
 
 run-resolver-intrinsics: func [
@@ -54,19 +68,19 @@ run-resolver-intrinsics: func [
 	red/node-registry/next: 2
 	red/node-registry/free: 0
 
-	resolved: red/resolve-node 1
+	resolved: red/resolve-node-ir 1
 	if resolved/value/value = 37 [score: score + 1]
-	if null? red/resolve-node 0 [score: score + 1]
-	if null? red/resolve-node -1 [score: score + 1]
-	if null? red/resolve-node 2 [score: score + 1]
+	if null? red/resolve-node-ir 0 [score: score + 1]
+	if null? red/resolve-node-ir -1 [score: score + 1]
+	if null? red/resolve-node-ir 2 [score: score + 1]
 
-	series: red/resolve-series 1
+	series: red/resolve-series-ir 1
 	if series/value = 37 [score: score + 1]
-	if null? red/resolve-series 0 [score: score + 1]
+	if null? red/resolve-series-ir 0 [score: score + 1]
 
 	entry/value: null
-	if null? red/resolve-node 1 [score: score + 1]
-	if null? red/resolve-series 1 [score: score + 1]
+	if null? red/resolve-node-ir 1 [score: score + 1]
+	if null? red/resolve-series-ir 1 [score: score + 1]
 
 	free as byte-ptr! payload
 	free as byte-ptr! node

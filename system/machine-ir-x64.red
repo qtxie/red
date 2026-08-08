@@ -10,6 +10,8 @@ rs-o2-x64: context [
 	interval-register:  4
 	interval-preferred: 5
 	interval-fixed:     6
+	interval-call-live: 7
+	interval-call-fixed: 8
 
 	integer-registers: [eax ecx edx r8d r9d r10d r11d]
 	frameless?: no
@@ -20,14 +22,20 @@ rs-o2-x64: context [
 	aligned-loop-blocks: make block! 4
 	folded-loads: make block! 8
 	planned-relocations: make block! 8
+	selected-relocation-refs: make block! 8
+	dropped-relocation-refs: make block! 8
 	encoded-relocation-patches: make block! 8
 	encoded-instruction-offsets: make block! 16
 	relaxed-branches: make block! 8
 	branch-relaxation-changed?: no
 	spilled-values: make block! 8
 	call-spilled-values: make block! 8
+	used-callee-save-registers: make block! 4
+	callee-save-offsets: make block! 8
 	spill-frame-bytes: 0
 	outgoing-frame-bytes: 0
+	fixed-shadow-frame-merge?: no
+	released-call-argument-fixed?: no
 	spill-gpr-scratch: none
 	spill-xmm-scratch: none
 	gc-bitmap-list: none
@@ -37,6 +45,10 @@ rs-o2-x64: context [
 	phi-edge-copies: make block! 8
 	jump-table-patches: make block! 8
 	function-has-switch?: no
+	function-has-pointer-arithmetic?: no
+	function-needs-shift-count-register?: no
+	function-needs-division-registers?: no
+	pointer-index-scratch: 'r11d
 
 	fail-selection: func [reason [word!]][
 		rs-o2-ir/mark-unsupported reason
@@ -81,6 +93,41 @@ rs-o2-x64: context [
 
 	supported-gpr-scalar?: func [type][
 		any [supported-i32? type supported-logic? type supported-wide-gpr? type]
+	]
+
+	r11-scratch-reserved?: does [
+		any [function-has-switch? function-has-pointer-arithmetic?]
+	]
+
+	reserved-gpr-register?: func [register [word!]][
+		any [
+			all [function-needs-shift-count-register? register = 'ecx]
+			all [function-needs-division-registers? find [eax ecx edx] register]
+			all [r11-scratch-reserved? register = 'r11d]
+		]
+	]
+
+	callee-save-register-list: func [/local abi][
+		abi: pick rs-o2-ir/current rs-o2-ir/fn-abi
+		either abi = 'win64 [
+			copy [ebx esi edi r12d r13d r14d r15d]
+		][
+			copy [ebx r12d r13d r14d r15d]
+		]
+	]
+
+	callee-saved-register?: func [register [word!]][
+		find callee-save-register-list register
+	]
+
+	take-callee-save-register: func [free [block!] /local register position][
+		foreach register callee-save-register-list [
+			if all [not reserved-gpr-register? register position: find free register][
+				remove position
+				return register
+			]
+		]
+		none
 	]
 
 	find-stack-object: func [name [word!] /local stack-entry][
@@ -146,6 +193,18 @@ rs-o2-x64: context [
 		no
 	]
 
+	local-loaded?: func [name [word!] /local block instruction operands][
+		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				if (pick instruction rs-o2-ir/ins-opcode) = 'load-local [
+					operands: pick instruction rs-o2-ir/ins-operands
+					if all [not empty? operands operands/1/2 = name][return yes]
+				]
+			]
+		]
+		no
+	]
+
 	local-written?: func [name [word!] /local block instruction operands][
 		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
@@ -161,7 +220,28 @@ rs-o2-x64: context [
 	function-has-call?: func [/local block instruction][
 		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
-				if (pick instruction rs-o2-ir/ins-opcode) = 'call [return yes]
+				if find [call resolve-series] pick instruction rs-o2-ir/ins-opcode [return yes]
+			]
+		]
+		no
+	]
+
+	function-has-fixed-shadow-space?: func [
+		/local block instruction opcode operands spec
+	][
+		unless (pick rs-o2-ir/current rs-o2-ir/fn-abi) = 'win64 [return no]
+		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				opcode: pick instruction rs-o2-ir/ins-opcode
+				if find [call copy-cell resolve-node resolve-series] opcode [
+					operands: pick instruction rs-o2-ir/ins-operands
+					spec: all [not empty? operands select emitter/symbols operands/1/2]
+					if all [
+						spec
+						spec/1 = 'native
+						any [opcode <> 'call ((length? operands) - 1) <= 4]
+					][return yes]
+				]
 			]
 		]
 		no
@@ -431,18 +511,28 @@ rs-o2-x64: context [
 		if (length? pick rs-o2-ir/current rs-o2-ir/fn-blocks) = 1 [return none]
 		plan-loop-blocks
 		has-call?: function-has-call?
-		registers: copy [r8d r9d r10d r11d]
-		if function-has-switch? [remove find registers 'r11d]
+		registers: either has-call? [
+			callee-save-register-list
+		][
+			copy [r8d r9d r10d r11d]
+		]
+		if all [not has-call? r11-scratch-reserved?][remove find registers 'r11d]
 		candidates: make block! 8
 		foreach stack-entry pick rs-o2-ir/current rs-o2-ir/fn-stack-objects [
 			name: pick stack-entry rs-o2-ir/stack-name
 			type: pick stack-entry rs-o2-ir/stack-type
 			if all [
-				supported-i32? type
-				(pick stack-entry rs-o2-ir/stack-gc-kind) = 'none
+				any [
+					all [
+						supported-i32? type
+						(pick stack-entry rs-o2-ir/stack-gc-kind) = 'none
+					]
+					all [not has-call? valid-pointer-type? type]
+				]
 				not pick stack-entry rs-o2-ir/stack-escaped?
 				integer? pick stack-entry rs-o2-ir/stack-frame-offset
 				local-referenced? name
+				local-loaded? name
 				any [not has-call? local-written? name]
 			][
 				score: local-reference-score name
@@ -481,7 +571,7 @@ rs-o2-x64: context [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
 				opcode: pick instruction rs-o2-ir/ins-opcode
 				operands: pick instruction rs-o2-ir/ins-operands
-				if opcode = 'call [return no]
+				if find [call resolve-series] opcode [return no]
 				if opcode = 'store-local [return no]
 				if all [
 					opcode = 'load-local
@@ -492,16 +582,73 @@ rs-o2-x64: context [
 		yes
 	]
 
+	dense-switch-instruction?: func [
+		instruction [block!]
+		/local operands position count value min-value max-value span
+	][
+		operands: pick instruction rs-o2-ir/ins-operands
+		position: next operands
+		count: 0
+		min-value: none
+		max-value: none
+		while [(length? position) > 1][
+			value: position/1/2
+			unless integer? value [return no]
+			min-value: either none? min-value [value][min min-value value]
+			max-value: either none? max-value [value][max max-value value]
+			count: count + 1
+			position: skip position 2
+		]
+		unless all [count >= 5 not negative? min-value] [return no]
+		span: max-value - min-value
+		all [span <= 255 (span + 1) <= (count * 2)]
+	]
+
+	frameless-single-exit-control?: func [
+		/local blocks block instruction opcode return-count return-block layout saw-switch?
+	][
+		return-count: 0
+		return-block: none
+		saw-switch?: no
+		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
+		foreach block blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				opcode: pick instruction rs-o2-ir/ins-opcode
+				if opcode = 'switch [
+					unless dense-switch-instruction? instruction [return no]
+					saw-switch?: yes
+				]
+				if opcode = 'return [
+					return-count: return-count + 1
+					if return-count > 1 [return no]
+					return-block: pick block rs-o2-ir/bb-id
+				]
+			]
+		]
+		unless return-count = 1 [return no]
+		layout: layout-current-blocks
+		all [
+			saw-switch?
+			not empty? layout
+			(pick last layout rs-o2-ir/bb-id) = return-block
+		]
+	]
+
 	available-registers: has [registers register position][
 		registers: either (pick rs-o2-ir/current rs-o2-ir/fn-abi) = 'win64 [
 			copy [eax ecx edx r8d r9d r10d r11d]
 		][
 			copy [eax ecx edx esi edi r8d r9d r10d r11d]
 		]
+		if function-has-call? [append registers callee-save-register-list]
 		foreach register promoted-registers [
 			if position: find registers register [remove position]
 		]
-		if all [function-has-switch? position: find registers 'r11d][remove position]
+		foreach register copy registers [
+			if all [reserved-gpr-register? register position: find registers register][
+				remove position
+			]
+		]
 		registers
 	]
 
@@ -586,12 +733,17 @@ rs-o2-x64: context [
 	]
 
 	maximum-outgoing-frame-bytes: func [
-		/local maximum block instruction operands argument-index operand offset
+		/local maximum abi block instruction operands argument-index operand offset
 	][
-		maximum: 0
+		abi: pick rs-o2-ir/current rs-o2-ir/fn-abi
+		maximum: either all [
+			abi = 'win64
+			function-has-call?
+			not function-has-fixed-shadow-space?
+		][32][0]
 		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
-				if (pick instruction rs-o2-ir/ins-opcode) = 'call [
+				if find [call resolve-series] pick instruction rs-o2-ir/ins-opcode [
 					operands: pick instruction rs-o2-ir/ins-operands
 					argument-index: 0
 					foreach operand next operands [
@@ -616,6 +768,18 @@ rs-o2-x64: context [
 		]
 	]
 
+	supported-shift?: func [opcode [word!]][
+		any [
+			opcode = rs-o2-ir/left-shift-op
+			opcode = rs-o2-ir/right-shift-op
+			opcode = rs-o2-ir/unsigned-right-shift-op
+		]
+	]
+
+	supported-integer-division?: func [opcode [word!]][
+		rs-o2-ir/integer-division-op? opcode
+	]
+
 	supported-float-binary?: func [opcode [word!]][
 		any [
 			opcode = rs-o2-ir/add-op
@@ -626,7 +790,104 @@ rs-o2-x64: context [
 	]
 
 	supported-binary-operation?: func [opcode [word!]][
-		any [supported-binary? opcode supported-float-binary? opcode]
+		any [
+			supported-binary? opcode
+			supported-shift? opcode
+			supported-integer-division? opcode
+			supported-float-binary? opcode
+		]
+	]
+
+	constant-vreg-value: func [id [integer!] /local definition operands][
+		definition: rs-o2-ir/find-vreg-definition id
+		unless all [
+			definition
+			(pick definition rs-o2-ir/ins-opcode) = 'const
+			operands: pick definition rs-o2-ir/ins-operands
+			(length? operands) = 1
+			operands/1/1 = 'imm
+			integer? operands/1/2
+		][return none]
+		operands/1/2
+	]
+
+	signed-division-magic: func [
+		divisor [integer!]
+		/local odd shift
+	][
+		; Keep this first strength-reduction table deliberately small and audited.
+		; These positive odd bases cover the date/loop divisors that dominate the
+		; current generated-code profiles; all other constants retain IDIV.
+		unless divisor > 1 [return none]
+		odd: divisor
+		shift: 0
+		while [zero? (odd and 1)] [
+			odd: odd / 2
+			shift: shift + 1
+		]
+		case [
+			odd = 3 [reduce [1431655766 shift]]
+			odd = 5 [reduce [1717986919 shift + 1]]
+			odd = 9 [reduce [954437177 shift + 1]]
+			odd = 25 [reduce [1374389535 shift + 3]]
+			true [none]
+		]
+	]
+
+	scaled-pointer-offset: func [
+		opcode [word!]
+		value [integer!]
+		scale [integer!]
+		/local offset
+	][
+		unless all [scale > 0][return none]
+		unless all [
+			not all [value > 0 value > (2147483647 / scale)]
+			not all [value < 0 value < (-2147483648 / scale)]
+		][return none]
+		offset: value * scale
+		if opcode = rs-o2-ir/subtract-op [
+			; -2147483648 cannot be negated in the Red/System integer domain;
+			; let the register form handle that one representable displacement.
+			if offset = -2147483648 [return none]
+			offset: negate offset
+		]
+		offset
+	]
+
+	supported-pointer-arithmetic?: func [
+		instruction [block!]
+		/local opcode operands result type left-type right-type
+	][
+		opcode: pick instruction rs-o2-ir/ins-opcode
+		operands: pick instruction rs-o2-ir/ins-operands
+		result: pick instruction rs-o2-ir/ins-result
+		type: pick instruction rs-o2-ir/ins-type
+		unless all [
+			result
+			(length? operands) = 2
+			operands/1/1 = 'vreg
+			operands/2/1 = 'vreg
+			any [opcode = rs-o2-ir/add-op opcode = rs-o2-ir/subtract-op]
+		][return no]
+		left-type: rs-o2-ir/vreg-type operands/1/2
+		right-type: rs-o2-ir/vreg-type operands/2/2
+		to logic! all [
+			valid-pointer-type? type
+			type = left-type
+			supported-i32? right-type
+			right-type/5 = 0
+			type/5 > 0
+		]
+	]
+
+	valid-pointer-type?: func [type][
+		all [
+			rs-o2-ir/valid-type? type
+			type/1 = 'ptr
+			type/2 = 8
+			type/3 = 'gpr
+		]
 	]
 
 	return-register: func [type][
@@ -636,6 +897,8 @@ rs-o2-x64: context [
 	validate-operands: func [
 		instruction [block!]
 		/local opcode operands stack-entry name result type operand left-type right-type position
+			resolver-name metadata condition-kind condition-type variadic?
+			pointer-operation? pointer-constant shift-constant base-type value-type
 	][
 		opcode: pick instruction rs-o2-ir/ins-opcode
 		operands: pick instruction rs-o2-ir/ins-operands
@@ -680,7 +943,16 @@ rs-o2-x64: context [
 					supported-gpr-scalar? type
 					supported-gpr-scalar? operand
 					type/2 = operand/2
-				][return fail-selection 'x64-bitcast-type]
+			][return fail-selection 'x64-bitcast-type]
+			]
+			opcode = 'log-b [
+				unless all [result (length? operands) = 1 operands/1/1 = 'vreg][
+					return fail-selection 'x64-log-b-shape
+				]
+				operand: rs-o2-ir/vreg-type operands/1/2
+				unless all [supported-i32? type supported-i32? operand][
+					return fail-selection 'x64-log-b-type
+				]
 			]
 			opcode = 'load-local [
 				unless all [result (length? operands) = 1 operands/1/1 = 'local][
@@ -729,6 +1001,37 @@ rs-o2-x64: context [
 					return fail-selection 'x64-global-store-type
 				]
 			]
+			opcode = 'load-indirect [
+				unless all [
+					result
+					(length? operands) = 2
+					operands/1/1 = 'vreg
+					operands/2/1 = 'imm
+					integer? operands/2/2
+				][return fail-selection 'x64-indirect-load-shape]
+				base-type: rs-o2-ir/vreg-type operands/1/2
+				unless all [supported-wide-gpr? base-type base-type/1 = 'ptr][
+					return fail-selection 'x64-indirect-base-type
+				]
+			]
+			opcode = 'store-indirect [
+				unless all [
+					none? result
+					(length? operands) = 3
+					operands/1/1 = 'vreg
+					operands/2/1 = 'imm
+					integer? operands/2/2
+					operands/3/1 = 'vreg
+				][return fail-selection 'x64-indirect-store-shape]
+				base-type: rs-o2-ir/vreg-type operands/1/2
+				value-type: rs-o2-ir/vreg-type operands/3/2
+				unless all [supported-wide-gpr? base-type base-type/1 = 'ptr][
+					return fail-selection 'x64-indirect-base-type
+				]
+				unless any [supported-gpr-scalar? value-type supported-float? value-type][
+					return fail-selection 'x64-indirect-store-type
+				]
+			]
 			supported-binary-operation? opcode [
 				unless all [
 					result
@@ -738,20 +1041,50 @@ rs-o2-x64: context [
 				][return fail-selection 'x64-binary-shape]
 				left-type: rs-o2-ir/vreg-type operands/1/2
 				right-type: rs-o2-ir/vreg-type operands/2/2
-				unless either supported-float? type [
-					all [
-						supported-float-binary? opcode
-						left-type = type
-						right-type = type
+				if supported-shift? opcode [
+					shift-constant: constant-vreg-value operands/2/2
+					unless integer? shift-constant [
+						function-needs-shift-count-register?: yes
 					]
+				]
+				if supported-integer-division? opcode [
+					function-needs-division-registers?: yes
+				]
+				pointer-operation?: supported-pointer-arithmetic? instruction
+				if pointer-operation? [
+					function-has-pointer-arithmetic?: yes
+					pointer-constant: constant-vreg-value operands/2/2
+					if all [
+						not none? pointer-constant
+						none? scaled-pointer-offset opcode pointer-constant type/5
+					][return fail-selection 'x64-pointer-immediate-range]
+				]
+				either pointer-operation? [
+					; Pointer arithmetic has its own width and scale checks above.
 				][
-					all [
-						supported-i32? type
-						supported-binary? opcode
-						supported-i32? left-type
-						supported-i32? right-type
-					]
-				][return fail-selection 'x64-binary-type]
+					unless either supported-float? type [
+						all [
+							supported-float-binary? opcode
+							left-type = type
+							right-type = type
+						]
+					][
+						all [
+							supported-i32? type
+							any [
+								supported-binary? opcode
+								supported-shift? opcode
+								supported-integer-division? opcode
+							]
+							supported-i32? left-type
+							supported-i32? right-type
+							any [
+								not supported-integer-division? opcode
+								all [type/4 left-type/4 right-type/4]
+							]
+						]
+					][return fail-selection 'x64-binary-type]
+				]
 			]
 			rs-o2-ir/comparison-op? opcode [
 				unless all [
@@ -766,6 +1099,7 @@ rs-o2-x64: context [
 				unless any [
 					all [supported-i32? left-type supported-i32? right-type]
 					all [supported-float? left-type left-type = right-type]
+					all [valid-pointer-type? left-type left-type = right-type]
 				][
 					return fail-selection 'x64-comparison-type
 				]
@@ -811,10 +1145,34 @@ rs-o2-x64: context [
 						not empty? operands
 						operands/1/1 = 'symbol
 					][return fail-selection 'x64-call-shape]
-				foreach operand next operands [
-					unless operand/1 = 'vreg [return fail-selection 'x64-call-argument]
+					foreach operand next operands [
+						unless operand/1 = 'vreg [return fail-selection 'x64-call-argument]
 					]
+					metadata: pick instruction rs-o2-ir/ins-metadata
+					unless all [block? metadata find metadata 'variadic][
+						return fail-selection 'x64-call-metadata
+					]
+					variadic?: select metadata 'variadic
+					unless logic? variadic? [return fail-selection 'x64-call-metadata]
 				]
+			find [resolve-node resolve-series] opcode [
+				resolver-name: either opcode = 'resolve-node [
+					'red>resolve-node
+				]['red>resolve-series]
+				unless all [
+					result
+					(length? operands) = 2
+					operands/1/1 = 'symbol
+					operands/2/1 = 'vreg
+					operands/1/2 = resolver-name
+					supported-wide-gpr? type
+					type/1 = 'ptr
+				][return fail-selection 'x64-resolver-shape]
+				left-type: rs-o2-ir/vreg-type operands/2/2
+				unless supported-i32? left-type [
+					return fail-selection 'x64-resolver-handle-type
+				]
+			]
 			opcode = 'copy-cell [
 				unless all [
 					result
@@ -845,7 +1203,20 @@ rs-o2-x64: context [
 					operands/1/1 = 'vreg
 					operands/2/1 = 'block
 					operands/3/1 = 'block
-					pick instruction rs-o2-ir/ins-flags-in
+				][return fail-selection 'x64-branch-shape]
+				metadata: pick instruction rs-o2-ir/ins-metadata
+				condition-kind: select metadata 'condition
+				condition-type: rs-o2-ir/vreg-type operands/1/2
+				unless any [
+					all [
+						pick instruction rs-o2-ir/ins-flags-in
+						rs-o2-ir/comparison-op? condition-kind
+					]
+					all [
+						none? pick instruction rs-o2-ir/ins-flags-in
+						condition-kind = 'truthy
+						supported-logic? condition-type
+					]
 				][return fail-selection 'x64-branch-shape]
 			]
 			opcode = 'return [
@@ -861,55 +1232,111 @@ rs-o2-x64: context [
 
 	plan-relocations: func [
 		direct-chunk [block!]
-		/local ir-relocations refs relocation position id kind name addend instruction
-			opcode spec ref relative start ending valid-symbol?
+		/local ir-relocations refs relocation retained-ordinals source-ordinals ordinal
+			index id kind name addend instruction opcode spec ref candidate relative start
+			ending valid-symbol? matched-symbol? in-range-symbol?
 	][
 		clear planned-relocations
+		clear selected-relocation-refs
+		clear dropped-relocation-refs
 		ir-relocations: pick rs-o2-ir/current rs-o2-ir/fn-relocations
 		refs: direct-chunk/2
-		unless (length? ir-relocations) = length? refs [
-			return fail-selection 'x64-relocation-count
-		]
-		if empty? ir-relocations [return yes]
-		unless all [(length? direct-chunk) >= 3 integer? direct-chunk/3][
-			return fail-selection 'x64-relocation-base
+		if not empty? ir-relocations [
+			unless all [(length? direct-chunk) >= 3 integer? direct-chunk/3][
+				return fail-selection 'x64-relocation-base
+			]
 		]
 		start: pick rs-o2-ir/current rs-o2-ir/fn-body-start
 		ending: pick rs-o2-ir/current rs-o2-ir/fn-body-end
-		position: refs
+		retained-ordinals: make block! length? ir-relocations
+		source-ordinals: make block! length? ir-relocations
 		foreach relocation ir-relocations [
 			id: relocation/1
 			kind: relocation/2
 			name: relocation/3
 			addend: relocation/4
+			ordinal: relocation/5
+			unless all [
+				ordinal >= 1
+				none? find source-ordinals ordinal
+			][return fail-selection 'x64-relocation-ordinal]
+			append source-ordinals ordinal
 			unless zero? addend [return fail-selection 'x64-relocation-addend]
 			instruction: rs-o2-ir/find-instruction id
 			unless instruction [return fail-selection 'x64-relocation-instruction]
 			opcode: pick instruction rs-o2-ir/ins-opcode
 			spec: select emitter/symbols name
-			ref: position/1
 			unless all [
 				spec
-				block? ref
-				not tail? ref
-				same? head ref spec/3
+				block? spec/3
 			][return fail-selection 'x64-relocation-symbol]
 			valid-symbol?: case [
-				kind = 'call-rel32 [all [opcode = 'call spec/1 = 'native]]
+				kind = 'call-rel32 [
+					any [
+						all [opcode = 'call find [native import] spec/1]
+						all [
+							opcode = 'resolve-series
+							name = 'red>resolve-series
+							spec/1 = 'native
+						]
+					]
+				]
 				kind = 'rip-rel32 [
-					either opcode = 'store-global [
-						spec/1 = 'global
-					][all [opcode = 'load-global find [global constant] spec/1]]
+					case [
+						opcode = 'store-global [spec/1 = 'global]
+						opcode = 'load-global [find [global constant] spec/1]
+						find [resolve-node resolve-series] opcode [
+							all [name = 'red>node-registry spec/1 = 'global]
+						]
+						true [no]
+					]
 				]
 				true [no]
 			]
 			unless valid-symbol? [return fail-selection 'x64-relocation-symbol-type]
-			relative: ref/1 - direct-chunk/3 + 1
-			unless all [relative > start relative <= ending][
-				return fail-selection 'x64-relocation-range
+			; Direct lowering can register an outer call or assignment destination
+			; before lowering nested operands. Match by the owning symbol list, not
+			; by the IR evaluation-order ordinal.
+			ref: none
+			index: 0
+			matched-symbol?: no
+			in-range-symbol?: no
+			foreach candidate refs [
+				index: index + 1
+				if all [
+					block? candidate
+					not tail? candidate
+					same? head candidate spec/3
+				][
+					matched-symbol?: yes
+					relative: candidate/1 - direct-chunk/3 + 1
+					if all [relative > start relative <= ending][
+						in-range-symbol?: yes
+						if none? find retained-ordinals index [
+							ref: candidate
+							break
+						]
+					]
+				]
 			]
+			unless ref [
+				unless matched-symbol? [return fail-selection 'x64-relocation-symbol]
+				unless in-range-symbol? [return fail-selection 'x64-relocation-range]
+				return fail-selection 'x64-relocation-ordinal
+			]
+			append retained-ordinals index
 			append/only planned-relocations reduce [id ref]
-			position: next position
+			append/only selected-relocation-refs ref
+		]
+		index: 0
+		foreach ref refs [
+			index: index + 1
+			unless find retained-ordinals index [
+				unless all [block? ref not tail? ref][
+					return fail-selection 'x64-dropped-relocation-ref
+				]
+				append/only dropped-relocation-refs ref
+			]
 		]
 		yes
 	]
@@ -923,11 +1350,17 @@ rs-o2-x64: context [
 		clear aligned-loop-blocks
 		clear folded-loads
 		clear planned-relocations
+		clear selected-relocation-refs
+		clear dropped-relocation-refs
 		clear encoded-relocation-patches
 		clear spilled-values
 		clear call-spilled-values
+		clear used-callee-save-registers
+		clear callee-save-offsets
 		spill-frame-bytes: 0
 		outgoing-frame-bytes: 0
+		fixed-shadow-frame-merge?: no
+		released-call-argument-fixed?: no
 		spill-gpr-scratch: none
 		spill-xmm-scratch: none
 		gc-bitmap-list: none
@@ -937,6 +1370,9 @@ rs-o2-x64: context [
 		clear phi-edge-copies
 		clear jump-table-patches
 		function-has-switch?: no
+		function-has-pointer-arithmetic?: no
+		function-needs-shift-count-register?: no
+		function-needs-division-registers?: no
 		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
 		unless empty? pick rs-o2-ir/current rs-o2-ir/fn-safepoints [
 			return fail-selection 'x64-safepoints
@@ -967,7 +1403,15 @@ rs-o2-x64: context [
 		]
 		if loop-has-global-store? [return fail-selection 'x64-global-store-loop]
 		unless plan-relocations direct-chunk [return no]
-		frameless?: all [(length? blocks) = 1 frameless-eligible?]
+		frameless?: all [
+			not function-needs-shift-count-register?
+			not function-needs-division-registers?
+			any [
+				(length? blocks) = 1
+				all [function-has-switch? frameless-single-exit-control?]
+			]
+			frameless-eligible?
+		]
 		unless frameless? [plan-promoted-locals]
 		yes
 	]
@@ -987,18 +1431,6 @@ rs-o2-x64: context [
 	][
 		intervals: make block! 16
 		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
-		if frameless? [
-			foreach block blocks [
-				foreach instruction pick block rs-o2-ir/bb-instructions [
-					if (pick instruction rs-o2-ir/ins-opcode) = 'load-local [
-						operands: pick instruction rs-o2-ir/ins-operands
-						result: pick instruction rs-o2-ir/ins-result
-						fixed: argument-register operands/1/2
-						append/only intervals reduce [result 0 0 none none fixed]
-					]
-				]
-			]
-		]
 		foreach block blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
 				use-position: (pick instruction rs-o2-ir/ins-id) * 2
@@ -1037,16 +1469,20 @@ rs-o2-x64: context [
 					preferred: none
 					fixed: none
 					if opcode = 'load-local [
-						fixed: promoted-register operands/1/2
+						fixed: either frameless? [
+							argument-register operands/1/2
+						][
+							promoted-register operands/1/2
+						]
 					]
-					if find [call copy-cell] opcode [
+					if find [call copy-cell resolve-node resolve-series] opcode [
 						fixed: return-register pick instruction rs-o2-ir/ins-type
 					]
 					if all [opcode = 'phi (length? operands) >= 2][
 						preferred: operands/2/2
 					]
 					if all [
-						any [find [copy bitcast] opcode supported-binary-operation? opcode]
+						any [find [copy bitcast log-b] opcode supported-binary-operation? opcode]
 						not empty? operands
 						operands/1/1 = 'vreg
 					][preferred: operands/1/2]
@@ -1058,20 +1494,34 @@ rs-o2-x64: context [
 						]
 					][
 						append/only intervals reduce [
-							result definition-position definition-position none preferred fixed
+							result definition-position definition-position none preferred fixed no no
 						]
 					]
 				]
-				if find [call copy-cell] opcode [
+				if find [call copy-cell resolve-node resolve-series] opcode [
 					argument-index: 0
 					foreach call-operand next operands [
 						argument-index: argument-index + 1
 						interval: find-interval intervals call-operand/2
 						unless interval [return fail-selection 'x64-call-undefined-argument]
 						fixed: call-argument-register instruction argument-index
-						if fixed [
+						if all [
+							fixed
+							not find promoted-registers fixed
+							not all [
+								function-needs-shift-count-register?
+								fixed = 'ecx
+							]
+							not all [
+								function-needs-division-registers?
+								find [eax ecx edx] fixed
+							]
+						][
 							existing-fixed: pick interval interval-fixed
-							unless existing-fixed [poke interval interval-fixed fixed]
+							unless existing-fixed [
+								poke interval interval-fixed fixed
+								poke interval interval-call-fixed yes
+							]
 						]
 					]
 				]
@@ -1134,27 +1584,93 @@ rs-o2-x64: context [
 				]
 			]
 		]
-		intervals
+		mark-call-live-intervals intervals
 	]
 
-	plan-call-spills: func [
+	mark-call-live-intervals: func [
 		intervals [block!]
-		/local block instruction position interval id
+		/local block instruction position interval type
 	][
-		clear call-spilled-values
+		foreach interval intervals [poke interval interval-call-live no]
 		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
-				if (pick instruction rs-o2-ir/ins-opcode) = 'call [
+				if find [call resolve-series] pick instruction rs-o2-ir/ins-opcode [
 					position: (pick instruction rs-o2-ir/ins-id) * 2
 					foreach interval intervals [
 						if all [
 							(pick interval interval-start) < position
 							(pick interval interval-end) > position
-							not find promoted-registers pick interval interval-fixed
-						][
-							id: pick interval interval-id
-							unless find call-spilled-values id [append call-spilled-values id]
-						]
+						][poke interval interval-call-live yes]
+					]
+				]
+			]
+		]
+		; ABI argument registers are profitable hints, not whole-interval
+		; constraints. Keep a value that crosses an earlier call in a callee-save
+		; register and move it into the ABI register at its actual call site.
+		foreach interval intervals [
+			if all [
+				pick interval interval-call-live
+				pick interval interval-call-fixed
+			][
+				poke interval interval-fixed none
+				poke interval interval-call-fixed no
+				type: rs-o2-ir/vreg-type pick interval interval-id
+				if all [
+					rs-o2-ir/valid-type? type
+					type/3 = 'gpr
+					type/6 = 'none
+				][released-call-argument-fixed?: yes]
+			]
+		]
+		intervals
+	]
+
+	division-register-liveness-valid?: func [
+		intervals [block!]
+		/local block instruction position interval fixed
+	][
+		unless function-needs-division-registers? [return yes]
+		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
+			foreach instruction pick block rs-o2-ir/bb-instructions [
+				if supported-integer-division? pick instruction rs-o2-ir/ins-opcode [
+					position: (pick instruction rs-o2-ir/ins-id) * 2
+					foreach interval intervals [
+						fixed: pick interval interval-fixed
+						if all [
+							fixed
+							find [eax ecx edx] fixed
+							(pick interval interval-start) < position
+							(pick interval interval-end) > position
+						][return fail-selection 'x64-division-fixed-register-live]
+					]
+				]
+			]
+		]
+		yes
+	]
+
+	plan-call-spills: func [
+		intervals [block!]
+		/local interval id type fixed
+	][
+		clear call-spilled-values
+		foreach interval intervals [
+			if all [
+				pick interval interval-call-live
+				not find promoted-registers pick interval interval-fixed
+			][
+				id: pick interval interval-id
+				type: rs-o2-ir/vreg-type id
+				unless rs-o2-ir/valid-type? type [
+					return fail-selection 'x64-call-live-type
+				]
+				either any [type/3 <> 'gpr type/6 <> 'none][
+					append call-spilled-values id
+				][
+					fixed: pick interval interval-fixed
+					if all [fixed not callee-saved-register? fixed][
+						append call-spilled-values id
 					]
 				]
 			]
@@ -1180,7 +1696,7 @@ rs-o2-x64: context [
 	][
 		candidates: case [
 			register-class = 'gpr [
-				either function-has-switch? [copy [r10d]][copy [r11d r10d]]
+				either r11-scratch-reserved? [copy [r10d]][copy [r11d r10d]]
 			]
 			register-class = 'xmm [
 				either (pick rs-o2-ir/current rs-o2-ir/fn-abi) = 'win64 [
@@ -1279,7 +1795,7 @@ rs-o2-x64: context [
 		/local allocation free-gpr free-xmm active-gpr active-xmm free active interval
 			position active-interval start preferred preferred-register free-position
 			id register promoted-fixed? type register-class occupant-position occupant
-			victim-position victim
+			victim-position victim call-live?
 	][
 		allocation: make block! 16
 		free-gpr: available-registers
@@ -1302,13 +1818,19 @@ rs-o2-x64: context [
 				register-class = 'xmm [free: free-xmm active: active-xmm]
 				true [return fail-selection 'x64-register-class]
 			]
+			call-live?: to logic! all [
+				register-class = 'gpr
+				pick interval interval-call-live
+			]
 			start: pick interval interval-start
 			position: active
 			while [not tail? position][
 				active-interval: position/1
 				either (pick active-interval interval-end) < start [
 					register: pick active-interval interval-register
-					unless find free register [insert free register]
+					unless any [find free register reserved-gpr-register? register][
+						insert free register
+					]
 					remove position
 				][position: next position]
 			]
@@ -1332,26 +1854,42 @@ rs-o2-x64: context [
 							]
 							occupant-position: next occupant-position
 						]
-						unless all [
-							occupant
-							none? pick occupant interval-fixed
-							reserve-spill-scratch register-class intervals allocation free active
-							spill-active-register active register allocation
-						][return fail-selection 'x64-fixed-register-conflict]
+						either all [none? occupant reserved-gpr-register? register][
+							; A fixed interval may use an otherwise reserved register while idle.
+						][
+							unless all [
+								occupant
+								none? pick occupant interval-fixed
+								reserve-spill-scratch register-class intervals allocation free active
+								spill-active-register active register allocation
+							][return fail-selection 'x64-fixed-register-conflict]
+						]
 					]
 				]
 			][
 				preferred: pick interval interval-preferred
 				if preferred [
 					preferred-register: allocation-register allocation preferred
-					if all [preferred-register free-position: find free preferred-register][
+					if all [
+						preferred-register
+						any [not call-live? callee-saved-register? preferred-register]
+						free-position: find free preferred-register
+					][
 						register: free-position/1
 						remove free-position
 					]
 				]
 			]
+			if all [none? register call-live?][
+				register: take-callee-save-register free
+			]
 			if none? register [
-				either empty? free [
+				either call-live? [
+					unless reserve-spill-scratch register-class intervals allocation free active [
+						return fail-selection 'x64-spill-scratch
+					]
+					register: 'spill
+				][either empty? free [
 					unless reserve-spill-scratch register-class intervals allocation free active [
 						return fail-selection 'x64-spill-scratch
 					]
@@ -1379,7 +1917,7 @@ rs-o2-x64: context [
 						rs-o2-ir/set-table-value allocation pick victim interval-id 'spill
 						remove victim-position
 					][register: 'spill]
-				][register: take free]
+				][register: take free]]
 			]
 			poke interval interval-register register
 			repend allocation [pick interval interval-id register]
@@ -1391,17 +1929,44 @@ rs-o2-x64: context [
 
 	plan-spill-slots: func [
 		intervals [block!]
-		/local minimum stack-entry offset interval id type size name slot count total
+		/local minimum stack-entry offset interval id type size name slot count total register
+			fixed-shadow?
 	][
 		clear spilled-values
+		clear used-callee-save-registers
+		clear callee-save-offsets
 		spill-frame-bytes: 0
+		foreach register promoted-registers [
+			if all [
+				callee-saved-register? register
+				not find used-callee-save-registers register
+			][append used-callee-save-registers register]
+		]
+		foreach interval intervals [
+			register: pick interval interval-register
+			if all [
+				word? register
+				register <> 'spill
+				callee-saved-register? register
+				not find used-callee-save-registers register
+			][append used-callee-save-registers register]
+		]
 		minimum: -32
 		foreach stack-entry pick rs-o2-ir/current rs-o2-ir/fn-stack-objects [
 			offset: pick stack-entry rs-o2-ir/stack-frame-offset
 			if all [integer? offset offset < minimum][minimum: offset]
 		]
-		slot: minimum - 48
+		fixed-shadow?: function-has-fixed-shadow-space?
+		; A fixed Win64 shadow area already occupies the 32 bytes below the
+		; legacy frame. Moving RSP down exposes its old high slots for O2 saves;
+		; do not reserve another 48-byte gap before the first slot.
+		slot: either fixed-shadow? [minimum - 8][minimum - 48]
 		count: 0
+		foreach register used-callee-save-registers [
+			repend callee-save-offsets [register slot]
+			slot: slot - 8
+			count: count + 8
+		]
 		foreach interval intervals [
 			if (pick interval interval-register) = 'spill [
 				id: pick interval interval-id
@@ -1417,11 +1982,38 @@ rs-o2-x64: context [
 		]
 		outgoing-frame-bytes: maximum-outgoing-frame-bytes
 		total: outgoing-frame-bytes
-		if positive? count [total: total + 48 + count]
+		if positive? count [
+			total: total + count
+			unless fixed-shadow? [total: total + 48]
+		]
 		unless zero? total [
 			spill-frame-bytes: round/to/ceiling total 16
 			frameless?: no
 		]
+	]
+
+	plan-fixed-shadow-frame-merge: func [
+		direct-chunk [block!]
+		/local bytes start prefix
+	][
+		fixed-shadow-frame-merge?: no
+		unless all [
+			positive? spill-frame-bytes
+			spill-frame-bytes <= 95
+			function-has-fixed-shadow-space?
+			(length? direct-chunk) >= 1
+			binary? direct-chunk/1
+		][return yes]
+		bytes: direct-chunk/1
+		start: pick rs-o2-ir/current rs-o2-ir/fn-body-start
+		unless all [
+			integer? start
+			start >= 4
+			start <= length? bytes
+		][return yes]
+		prefix: copy/part at bytes (start - 3) 4
+		if prefix = #{4883EC20} [fixed-shadow-frame-merge?: yes]
+		yes
 	]
 
 	plan-phi-edge-copies: func [
@@ -1529,14 +2121,14 @@ rs-o2-x64: context [
 		direct-chunk [block!]
 		/local safepoints root-spills block instruction position roots interval id type
 			location offset original bitmap arg-slots local-slots arg-words local-words
-			local-index required-local-slots word-index bit-index word bytes
+			local-index required-local-slots word-index bit-index word bytes register
 	][
 		safepoints: pick rs-o2-ir/current rs-o2-ir/fn-safepoints
 		clear safepoints
 		root-spills: make block! 4
 		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
-				if (pick instruction rs-o2-ir/ins-opcode) = 'call [
+				if find [call resolve-series] pick instruction rs-o2-ir/ins-opcode [
 					position: (pick instruction rs-o2-ir/ins-id) * 2
 					roots: make block! 2
 					foreach interval intervals [
@@ -1579,6 +2171,16 @@ rs-o2-x64: context [
 		arg-words: copy bitmap/3
 		local-words: copy bitmap/4
 		required-local-slots: local-slots
+		foreach [register offset] callee-save-offsets [
+			unless all [offset < 0 zero? offset // 8][
+				return fail-selection 'x64-callee-save-alignment
+			]
+			local-index: ((to integer! ((absolute offset) / 8)) - 5) - arg-slots
+			if local-index < 0 [return fail-selection 'x64-callee-save-range]
+			required-local-slots: max required-local-slots local-index + 1
+			word-index: (to integer! (local-index / 31)) + 1
+			while [(length? local-words) < word-index][append local-words 0]
+		]
 		foreach id root-spills [
 			offset: spill-offset id
 			unless all [offset < 0 zero? offset // 8][
@@ -1621,7 +2223,11 @@ rs-o2-x64: context [
 	]
 
 	register-code: func [register [word!]][
-		select [eax 0 ecx 1 edx 2 esi 6 edi 7 r8d 8 r9d 9 r10d 10 r11d 11] register
+		select [
+			eax 0 ecx 1 edx 2 ebx 3 esi 6 edi 7
+			r8d 8 r9d 9 r10d 10 r11d 11
+			r12d 12 r13d 13 r14d 14 r15d 15
+		] register
 	]
 
 	xmm-register-code: func [register [word!]][
@@ -1718,6 +2324,161 @@ rs-o2-x64: context [
 		emit-modrm code 192 src dst
 	]
 
+	emit-movsxd-register: func [
+		code [binary!]
+		destination [word!]
+		source [word!]
+		/local dst src
+	][
+		dst: register-code destination
+		src: register-code source
+		unless all [integer? dst integer? src][return fail-selection 'x64-pointer-register]
+		emit-rex code yes dst none src
+		append-byte code 99
+		emit-modrm code 192 dst src
+		yes
+	]
+
+	emit-lea-base-displacement: func [
+		code [binary!]
+		destination [word!]
+		base [word!]
+		offset [integer!]
+		/local dst base-code low-base mode
+	][
+		dst: register-code destination
+		base-code: register-code base
+		unless all [integer? dst integer? base-code][return fail-selection 'x64-pointer-register]
+		low-base: base-code and 7
+		mode: case [
+			all [zero? offset low-base <> 5] [0]
+			all [offset >= -128 offset <= 127] [64]
+			true [128]
+		]
+		emit-rex code yes dst none base-code
+		append-byte code 141
+		emit-modrm code mode dst either low-base = 4 [4][base-code]
+		if low-base = 4 [append-byte code (32 + low-base)]
+		case [
+			mode = 64 [append code int-to-bin/to-bin8 offset]
+			mode = 128 [append code int-to-bin/to-bin32 offset]
+			true []
+		]
+		yes
+	]
+
+	emit-lea-indexed: func [
+		code [binary!]
+		destination [word!]
+		base [word!]
+		index [word!]
+		scale [integer!]
+		/local dst base-code index-code low-base scale-bits mode
+	][
+		dst: register-code destination
+		base-code: register-code base
+		index-code: register-code index
+		scale-bits: select [1 0 2 1 4 2 8 3] scale
+		unless all [
+			integer? dst
+			integer? base-code
+			integer? index-code
+			integer? scale-bits
+			(index-code and 7) <> 4
+		][return fail-selection 'x64-pointer-register]
+		low-base: base-code and 7
+		mode: either low-base = 5 [64][0]
+		emit-rex code yes dst index-code base-code
+		append-byte code 141
+		emit-modrm code mode dst 4
+		append-byte code (
+			(scale-bits * 64) + (((index-code and 7) * 8) + low-base)
+		)
+		if mode = 64 [append-byte code 0]
+		yes
+	]
+
+	emit-scale-pointer-index: func [
+		code [binary!]
+		register [word!]
+		scale [integer!]
+		/local reg shift short?
+	][
+		if scale = 1 [return yes]
+		reg: register-code register
+		unless integer? reg [return fail-selection 'x64-pointer-register]
+		shift: select [2 1 4 2 8 3 16 4 32 5 64 6 128 7] scale
+		either integer? shift [
+			emit-rex code yes none none reg
+			append-byte code 193
+			emit-modrm code 192 4 reg
+			append-byte code shift
+		][
+			short?: scale <= 127
+			emit-rex code yes reg none reg
+			append-byte code either short? [107][105]
+			emit-modrm code 192 reg reg
+			append code either short? [
+				int-to-bin/to-bin8 scale
+			][int-to-bin/to-bin32 scale]
+		]
+		yes
+	]
+
+	emit-pointer-arithmetic-widened: func [
+		code [binary!]
+		opcode [word!]
+		type [block!]
+		destination [word!]
+		base [word!]
+		scratch [word!]
+		/local scale scale-bits dst src
+	][
+		scale: type/5
+		either opcode = rs-o2-ir/add-op [
+			scale-bits: select [1 0 2 1 4 2 8 3] scale
+			either integer? scale-bits [
+				unless emit-lea-indexed code destination base scratch scale [return none]
+			][
+				unless emit-scale-pointer-index code scratch scale [return none]
+				unless emit-lea-indexed code destination base scratch 1 [return none]
+			]
+		][
+			unless emit-scale-pointer-index code scratch scale [return none]
+			emit-gpr-move code type destination base
+			dst: register-code destination
+			src: register-code scratch
+			emit-rex code yes src none dst
+			append-byte code 41
+			emit-modrm code 192 src dst
+		]
+		yes
+	]
+
+	emit-pointer-arithmetic-register: func [
+		code [binary!]
+		opcode [word!]
+		type [block!]
+		right-type [block!]
+		destination [word!]
+		base [word!]
+		index [word!]
+		/local scratch
+	][
+		scratch: pointer-index-scratch
+		either right-type/4 [
+			unless emit-movsxd-register code scratch index [return none]
+		][emit-mov-register code scratch index]
+		emit-pointer-arithmetic-widened code opcode type destination base scratch
+	]
+
+	emit-test-register: func [code [binary!] register [word!] /local reg][
+		reg: register-code register
+		emit-rex code no reg none reg
+		append-byte code 133
+		emit-modrm code 192 reg reg
+	]
+
 	emit-frame-modrm: func [code [binary!] reg [integer!] offset [integer!]][
 		either all [offset >= -128 offset <= 127][
 			emit-modrm code 64 reg 5
@@ -1726,6 +2487,34 @@ rs-o2-x64: context [
 			emit-modrm code 128 reg 5
 			append code int-to-bin/to-bin32 offset
 		]
+	]
+
+	emit-movsxd-frame: func [
+		code [binary!]
+		destination [word!]
+		offset [integer!]
+		/local dst
+	][
+		dst: register-code destination
+		unless integer? dst [return fail-selection 'x64-pointer-register]
+		emit-rex code yes dst none 5
+		append-byte code 99
+		emit-frame-modrm code dst offset
+		yes
+	]
+
+	emit-pointer-arithmetic-memory: func [
+		code [binary!]
+		opcode [word!]
+		type [block!]
+		destination [word!]
+		base [word!]
+		offset [integer!]
+		/local scratch
+	][
+		scratch: pointer-index-scratch
+		unless emit-movsxd-frame code scratch offset [return none]
+		emit-pointer-arithmetic-widened code opcode type destination base scratch
 	]
 
 	emit-frame-load: func [code [binary!] destination [word!] offset [integer!] /local dst][
@@ -1738,6 +2527,20 @@ rs-o2-x64: context [
 	emit-frame-store: func [code [binary!] offset [integer!] source [word!] /local src][
 		src: register-code source
 		emit-rex code no src none 5
+		append-byte code 137
+		emit-frame-modrm code src offset
+	]
+
+	emit-frame-load-wide: func [code [binary!] destination [word!] offset [integer!] /local dst][
+		dst: register-code destination
+		emit-rex code yes dst none 5
+		append-byte code 139
+		emit-frame-modrm code dst offset
+	]
+
+	emit-frame-store-wide: func [code [binary!] offset [integer!] source [word!] /local src][
+		src: register-code source
+		emit-rex code yes src none 5
 		append-byte code 137
 		emit-frame-modrm code src offset
 	]
@@ -1795,7 +2598,9 @@ rs-o2-x64: context [
 		/local src
 	][
 		src: register-code source
-		emit-rex code supported-wide-gpr? type src none 4
+		;-- Scalar ABI stack arguments occupy eight-byte slots. A full-slot store
+		;-- also forwards to the callee's qword slot copy without a width mismatch.
+		emit-rex code yes src none 4
 		append-byte code 137
 		emit-rsp-modrm code src offset
 	]
@@ -1833,6 +2638,21 @@ rs-o2-x64: context [
 		emit-modrm code 192 dst src
 	]
 
+	emit-xmm-to-gpr-bits: func [
+		code [binary!]
+		type [block!]
+		destination [word!]
+		source [word!]
+		/local dst src
+	][
+		dst: register-code destination
+		src: xmm-register-code source
+		append-byte code 102
+		emit-rex code type/1 = 'f64 src none dst
+		append code #{0F7E}
+		emit-modrm code 192 src dst
+	]
+
 	emit-xmm-frame-load: func [
 		code [binary!]
 		type [block!]
@@ -1861,22 +2681,92 @@ rs-o2-x64: context [
 		emit-frame-modrm code src offset
 	]
 
-	emit-pointer-modrm: func [
+	emit-pointer-displacement-modrm: func [
 		code [binary!]
 		reg [integer!]
 		base [integer!]
+		offset [integer!]
+		/local low-base mode
 	][
-		case [
-			(base and 7) = 4 [
-				emit-modrm code 0 reg base
-				append-byte code 36
-			]
-			(base and 7) = 5 [
-				emit-modrm code 64 reg base
-				append-byte code 0
-			]
-			true [emit-modrm code 0 reg base]
+		low-base: base and 7
+		mode: case [
+			all [zero? offset low-base <> 5] [0]
+			all [offset >= -128 offset <= 127] [64]
+			true [128]
 		]
+		emit-modrm code mode reg either low-base = 4 [4][base]
+		if low-base = 4 [append-byte code (32 + low-base)]
+		case [
+			mode = 64 [append code int-to-bin/to-bin8 offset]
+			mode = 128 [append code int-to-bin/to-bin32 offset]
+			true []
+		]
+	]
+
+	emit-pointer-modrm: func [code [binary!] reg [integer!] base [integer!]][
+		emit-pointer-displacement-modrm code reg base 0
+	]
+
+	emit-gpr-pointer-load: func [
+		code [binary!]
+		type [block!]
+		destination [word!]
+		base [word!]
+		offset [integer!]
+		/local dst src
+	][
+		dst: register-code destination
+		src: register-code base
+		emit-rex code supported-wide-gpr? type dst none src
+		append-byte code 139
+		emit-pointer-displacement-modrm code dst src offset
+	]
+
+	emit-gpr-pointer-store: func [
+		code [binary!]
+		type [block!]
+		base [word!]
+		offset [integer!]
+		source [word!]
+		/local dst src
+	][
+		dst: register-code base
+		src: register-code source
+		emit-rex code supported-wide-gpr? type src none dst
+		append-byte code 137
+		emit-pointer-displacement-modrm code src dst offset
+	]
+
+	emit-xmm-scalar-pointer-load: func [
+		code [binary!]
+		type [block!]
+		destination [word!]
+		base [word!]
+		offset [integer!]
+		/local dst src
+	][
+		dst: xmm-register-code destination
+		src: register-code base
+		append-byte code float-prefix type
+		emit-rex code no dst none src
+		append code #{0F10}
+		emit-pointer-displacement-modrm code dst src offset
+	]
+
+	emit-xmm-scalar-pointer-store: func [
+		code [binary!]
+		type [block!]
+		base [word!]
+		offset [integer!]
+		source [word!]
+		/local dst src
+	][
+		dst: register-code base
+		src: xmm-register-code source
+		append-byte code float-prefix type
+		emit-rex code no src none dst
+		append code #{0F11}
+		emit-pointer-displacement-modrm code src dst offset
 	]
 
 	emit-xmm-pointer-load: func [
@@ -1946,6 +2836,23 @@ rs-o2-x64: context [
 		emit-modrm code 0 src 5
 		patch: (length? code) + 1
 		append code #{00000000}
+		patch
+	]
+
+	record-encoded-relocation-patch: func [
+		instruction-id [integer!]
+		patch [integer!]
+		/local patches
+	][
+		patches: rs-o2-ir/table-value encoded-relocation-patches instruction-id
+		either patches [
+			append patches patch
+		][
+			rs-o2-ir/set-table-value
+				encoded-relocation-patches
+				instruction-id
+				reduce [patch]
+		]
 		patch
 	]
 
@@ -2085,6 +2992,16 @@ rs-o2-x64: context [
 	]
 
 	emit-spill-frame-reserve: func [code [binary!] /local short?][
+		if all [
+			(pick rs-o2-ir/current rs-o2-ir/fn-abi) = 'sysv
+			function-has-call?
+		][
+			; The legacy SysV emitter can enter native functions with either stack
+			; parity. Align once here so every selected outgoing call satisfies the
+			; ABI without per-call stack adjustments.
+			append code #{4883E4F0}
+		]
+		if fixed-shadow-frame-merge? [return yes]
 		if zero? spill-frame-bytes [return yes]
 		short?: spill-frame-bytes <= 127
 		append code either short? [#{4883EC}][#{4881EC}]
@@ -2094,31 +3011,72 @@ rs-o2-x64: context [
 		yes
 	]
 
-	emit-promoted-local-loads: func [code [binary!] /local name register offset][
+	emit-callee-save-registers: func [code [binary!] /local register offset][
+		foreach [register offset] callee-save-offsets [
+			unless integer? offset [return fail-selection 'x64-callee-save-offset]
+			emit-frame-store-wide code offset register
+		]
+		yes
+	]
+
+	emit-callee-restore-registers: func [code [binary!] /local register offset][
+		foreach [register offset] callee-save-offsets [
+			unless integer? offset [return fail-selection 'x64-callee-save-offset]
+			emit-frame-load-wide code register offset
+		]
+		yes
+	]
+
+	emit-promoted-local-loads: func [
+		code [binary!]
+		/local name register offset stack-entry type
+	][
 		foreach [name register] promoted-locals [
 			if find promoted-entry-loads name [
 				offset: stack-offset name
-				unless integer? offset [return fail-selection 'x64-unresolved-promoted-local]
-				emit-frame-load code register offset
+				stack-entry: find-stack-object name
+				unless all [integer? offset stack-entry][
+					return fail-selection 'x64-unresolved-promoted-local
+				]
+				type: pick stack-entry rs-o2-ir/stack-type
+				emit-gpr-frame-load code type register offset
 			]
 		]
 		yes
 	]
 
-	emit-promoted-local-stores: func [code [binary!] /local name register offset][
+	emit-promoted-local-stores: func [
+		code [binary!]
+		/local name register offset stack-entry type
+	][
 		foreach [name register] promoted-locals [
-			offset: stack-offset name
-			unless integer? offset [return fail-selection 'x64-unresolved-promoted-local]
-			emit-frame-store code offset register
+			unless callee-saved-register? register [
+				offset: stack-offset name
+				stack-entry: find-stack-object name
+				unless all [integer? offset stack-entry][
+					return fail-selection 'x64-unresolved-promoted-local
+				]
+				type: pick stack-entry rs-o2-ir/stack-type
+				emit-gpr-frame-store code type offset register
+			]
 		]
 		yes
 	]
 
-	emit-promoted-local-reloads: func [code [binary!] /local name register offset][
+	emit-promoted-local-reloads: func [
+		code [binary!]
+		/local name register offset stack-entry type
+	][
 		foreach [name register] promoted-locals [
-			offset: stack-offset name
-			unless integer? offset [return fail-selection 'x64-unresolved-promoted-local]
-			emit-frame-load code register offset
+			unless callee-saved-register? register [
+				offset: stack-offset name
+				stack-entry: find-stack-object name
+				unless all [integer? offset stack-entry][
+					return fail-selection 'x64-unresolved-promoted-local
+				]
+				type: pick stack-entry rs-o2-ir/stack-type
+				emit-gpr-frame-load code type register offset
+			]
 		]
 		yes
 	]
@@ -2243,6 +3201,44 @@ rs-o2-x64: context [
 		yes
 	]
 
+	emit-variadic-call-state: func [
+		code [binary!]
+		instruction [block!]
+		/local metadata operands arguments abi index count operand type source target registers
+	][
+		metadata: pick instruction rs-o2-ir/ins-metadata
+		unless all [block? metadata select metadata 'variadic][return yes]
+		operands: pick instruction rs-o2-ir/ins-operands
+		arguments: next operands
+		abi: pick rs-o2-ir/current rs-o2-ir/fn-abi
+		either abi = 'win64 [
+			registers: [ecx edx r8d r9d]
+			count: min 4 (length? arguments)
+			repeat index count [
+				operand: pick arguments index
+				type: rs-o2-ir/vreg-type operand/2
+				if supported-float? type [
+					source: call-argument-register instruction index
+					target: pick registers index
+					unless all [source target][return fail-selection 'x64-variadic-register]
+					emit-xmm-to-gpr-bits code type target source
+				]
+			]
+		][
+			count: 0
+			repeat index length? arguments [
+				operand: pick arguments index
+				type: rs-o2-ir/vreg-type operand/2
+				if all [supported-float? type call-argument-register instruction index][
+					count: count + 1
+				]
+			]
+			append-byte code 176
+			append-byte code count
+		]
+		yes
+	]
+
 	emit-copy-cell-intrinsic: func [
 		code [binary!]
 		instruction [block!]
@@ -2304,6 +3300,8 @@ rs-o2-x64: context [
 		any [
 			all [opcode = 'return index = 1]
 			all [supported-binary? opcode index = 2]
+			all [supported-shift? opcode index = 2]
+			all [supported-integer-division? opcode index = 2]
 			all [rs-o2-ir/comparison-op? opcode index = 2]
 			all [rs-o2-ir/commutative-op? opcode index = 1]
 		]
@@ -2337,6 +3335,133 @@ rs-o2-x64: context [
 			]
 		]
 		reduce [values candidates]
+	]
+
+	shift-group: func [opcode [word!] left-type [block!]][
+		case [
+			opcode = rs-o2-ir/left-shift-op [4]
+			opcode = rs-o2-ir/unsigned-right-shift-op [5]
+			opcode = rs-o2-ir/right-shift-op [either left-type/4 [7][5]]
+			true [none]
+		]
+	]
+
+	emit-shift-immediate: func [
+		code [binary!]
+		opcode [word!]
+		destination [word!]
+		left [word!]
+		value [integer!]
+		left-type [block!]
+		/local dst group
+	][
+		emit-mov-register code destination left
+		dst: register-code destination
+		group: shift-group opcode left-type
+		unless integer? group [return fail-selection 'x64-shift-immediate-encoding]
+		emit-rex code no none none dst
+		append-byte code 193
+		emit-modrm code 192 group dst
+		append code int-to-bin/to-bin8 value
+	]
+
+	emit-shift-register-count: func [
+		code [binary!]
+		opcode [word!]
+		destination [word!]
+		left-type [block!]
+		/local dst group
+	][
+		dst: register-code destination
+		group: shift-group opcode left-type
+		unless all [integer? dst integer? group][
+			return fail-selection 'x64-shift-register-encoding
+		]
+		emit-rex code no none none dst
+		append-byte code 211
+		emit-modrm code 192 group dst
+	]
+
+	emit-signed-i32-division: func [
+		code [binary!]
+		opcode [word!]
+		destination [word!]
+		left [word!]
+	][
+		if find [ecx edx] destination [
+			return fail-selection 'x64-division-result-register
+		]
+		emit-mov-register code 'eax left
+		append code #{99F7F9}                         ;-- CDQ / IDIV ECX
+		if rs-o2-ir/remainder-result-op? opcode [
+			append code #{89D0}                         ;-- MOV EAX, EDX
+		]
+		if rs-o2-ir/modulus-op? opcode [
+			; Match the direct backend's non-negative modulus for signed operands.
+			append code #{85C0790885C97902F7D901C8}
+		]
+		emit-mov-register code destination 'eax
+		yes
+	]
+
+	emit-signed-i32-magic-division: func [
+		code [binary!]
+		opcode [word!]
+		destination [word!]
+		left [word!]
+		divisor [integer!]
+		magic [block!]
+		/local shift
+	][
+		if find [ecx edx] destination [
+			return fail-selection 'x64-division-result-register
+		]
+		; The original dividend must survive the EAX/EDX multiply sequence.
+		if find [eax ecx edx] left [
+			return fail-selection 'x64-magic-left-register
+		]
+		unless all [(length? magic) >= 2 integer? magic/1 integer? magic/2][
+			return fail-selection 'x64-magic-constant
+		]
+		shift: magic/2
+		emit-mov-register code 'eax left
+		emit-mov-immediate code 'ecx magic/1
+		append code #{F7E9}                         ;-- IMUL ECX, signed EDX:EAX
+		append code #{89D0}                         ;-- MOV EAX, EDX
+		unless zero? shift [
+			append code #{C1F8}                       ;-- SAR EAX, shift
+			append-byte code shift
+		]
+		emit-mov-register code 'edx left
+		append code #{C1FA1F}                       ;-- SAR EDX, 31
+		append code #{29D0}                         ;-- SUB EAX, EDX
+		if rs-o2-ir/remainder-result-op? opcode [
+			emit-mov-immediate code 'ecx divisor
+			append code #{0FAFC1}                     ;-- IMUL EAX, ECX
+			emit-mov-register code 'edx left
+			append code #{29C2}                       ;-- SUB EDX, EAX
+			append code #{89D0}                       ;-- MOV EAX, EDX
+			if rs-o2-ir/modulus-op? opcode [
+				; Convert signed remainder to Red/System's non-negative // result.
+				append code #{89C2C1FA1F21CA01D0}
+			]
+		]
+		emit-mov-register code destination 'eax
+		yes
+	]
+
+	emit-log-b: func [
+		code [binary!]
+		destination [word!]
+		source [word!]
+		/local dst
+	][
+		emit-mov-register code destination source
+		dst: register-code destination
+		unless integer? dst [return fail-selection 'x64-log-b-encoding]
+		emit-rex code no dst none dst
+		append code #{0FBD}
+		emit-modrm code 192 dst dst
 	]
 
 	emit-binary-immediate: func [
@@ -2439,25 +3564,27 @@ rs-o2-x64: context [
 
 	emit-compare-registers: func [
 		code [binary!]
+		wide? [logic!]
 		left [word!]
 		right [word!]
 		/local lhs rhs
 	][
 		lhs: register-code left
 		rhs: register-code right
-		emit-rex code no rhs none lhs
+		emit-rex code wide? rhs none lhs
 		append-byte code 57
 		emit-modrm code 192 rhs lhs
 	]
 
 	emit-compare-memory: func [
 		code [binary!]
+		wide? [logic!]
 		left [word!]
 		offset [integer!]
 		/local lhs
 	][
 		lhs: register-code left
-		emit-rex code no lhs none 5
+		emit-rex code wide? lhs none 5
 		append-byte code 59
 		emit-frame-modrm code lhs offset
 	]
@@ -2493,11 +3620,13 @@ rs-o2-x64: context [
 
 	emit-compare-memory-immediate: func [
 		code [binary!]
+		wide? [logic!]
 		offset [integer!]
 		value [integer!]
 		/local short?
 	][
 		short?: all [value >= -128 value <= 127]
+		emit-rex code wide? none none 5
 		append-byte code either short? [131][129]
 		emit-frame-modrm code 7 offset
 		append code either short? [int-to-bin/to-bin8 value][int-to-bin/to-bin32 value]
@@ -2507,16 +3636,23 @@ rs-o2-x64: context [
 		code [binary!]
 		instruction [block!]
 		allocation [block!]
-		/local patch id result type source
+		/local patch id result type source operands callee spec abi
 	][
 		unless emit-promoted-local-stores code [return none]
 		unless emit-call-stack-arguments code instruction allocation [return none]
 		unless emit-call-argument-moves code instruction allocation [return none]
-		append-byte code 232
+		unless emit-variadic-call-state code instruction [return none]
+		operands: pick instruction rs-o2-ir/ins-operands
+		callee: operands/1/2
+		spec: select emitter/symbols callee
+		abi: pick rs-o2-ir/current rs-o2-ir/fn-abi
+		either all [abi = 'win64 spec spec/1 = 'import] [
+			append code #{FF15}
+		][append-byte code 232]
 		patch: (length? code) + 1
 		append code #{00000000}
 		id: pick instruction rs-o2-ir/ins-id
-		rs-o2-ir/set-table-value encoded-relocation-patches id patch
+		record-encoded-relocation-patch id patch
 		result: pick instruction rs-o2-ir/ins-result
 		if result [
 			type: pick instruction rs-o2-ir/ins-type
@@ -2527,8 +3663,86 @@ rs-o2-x64: context [
 		yes
 	]
 
+	emit-resolver-intrinsic: func [
+		code [binary!]
+		instruction [block!]
+		allocation [block!]
+		series? [logic!]
+		/local instruction-id result result-location abi handle expected-handle
+			global-patch patch slow-patches done-patch slow-target done-target
+	][
+		unless emit-call-argument-moves code instruction allocation [return none]
+		instruction-id: pick instruction rs-o2-ir/ins-id
+		result: pick instruction rs-o2-ir/ins-result
+		result-location: allocation-register allocation result
+		abi: pick rs-o2-ir/current rs-o2-ir/fn-abi
+		handle: call-argument-register instruction 1
+		expected-handle: either abi = 'win64 ['ecx]['edi]
+		unless all [
+			handle = expected-handle
+			find [eax spill] result-location
+		][return fail-selection 'x64-resolver-registers]
+
+		slow-patches: make block! 3
+		append code either abi = 'win64 [#{85C9}][#{85FF}] ;-- TEST handle, handle
+		append code #{0F84}                              ;-- JZ slow/null
+		patch: (length? code) + 1
+		append code #{00000000}
+		append slow-patches patch
+
+		append code #{488B05}                            ;-- MOV rax, [RIP+node-registry]
+		global-patch: (length? code) + 1
+		append code #{00000000}
+		record-encoded-relocation-patch instruction-id global-patch
+		append code either abi = 'win64 [
+			#{3B4814}                                     ;-- CMP ecx, [rax+next]
+		][
+			#{3B7814}                                     ;-- CMP edi, [rax+next]
+		]
+		append code #{0F83}                              ;-- JAE slow/null
+		patch: (length? code) + 1
+		append code #{00000000}
+		append slow-patches patch
+		append code #{488B00}                            ;-- MOV rax, [rax+entries]
+		append code either abi = 'win64 [
+			#{4863C9488B44C8F8}                         ;-- Resolve entry in rax
+		][
+			#{4863FF488B44F8F8}
+		]
+		if series? [
+			append code #{4885C0}                          ;-- TEST rax, rax
+			append code #{0F84}                            ;-- JZ slow
+			patch: (length? code) + 1
+			append code #{00000000}
+			append slow-patches patch
+			append code #{488B00}                          ;-- MOV rax, [rax+node/value]
+		]
+
+		append-byte code 233                            ;-- JMP done
+		done-patch: (length? code) + 1
+		append code #{00000000}
+		slow-target: length? code
+		foreach patch slow-patches [
+			patch-switch-local-rel32 code patch slow-target
+		]
+		either series? [
+			unless emit-promoted-local-stores code [return none]
+			append-byte code 232                          ;-- CALL resolve-series
+			patch: (length? code) + 1
+			append code #{00000000}
+			record-encoded-relocation-patch instruction-id patch
+			unless emit-promoted-local-reloads code [return none]
+		][
+			append code #{31C0}                           ;-- XOR eax, eax
+		]
+		done-target: length? code
+		patch-switch-local-rel32 code done-patch done-target
+		emit-spilled-result code allocation result 'eax
+	]
+
 	emit-compare-immediate: func [
 		code [binary!]
+		wide? [logic!]
 		left [word!]
 		value [integer!]
 		/local lhs short?
@@ -2537,16 +3751,17 @@ rs-o2-x64: context [
 		short?: all [value >= -128 value <= 127]
 		case [
 			zero? value [
-				emit-rex code no lhs none lhs
+				emit-rex code wide? lhs none lhs
 				append-byte code 133
 				emit-modrm code 192 lhs lhs
 			]
 			all [left = 'eax not short?] [
+				emit-rex code wide? none none lhs
 				append-byte code 61                  ;-- CMP EAX, imm32
 				append code int-to-bin/to-bin32 value
 			]
 			true [
-				emit-rex code no none none lhs
+				emit-rex code wide? none none lhs
 				append-byte code either short? [131][129]
 				emit-modrm code 192 7 lhs
 				append code either short? [int-to-bin/to-bin8 value][int-to-bin/to-bin32 value]
@@ -2565,6 +3780,25 @@ rs-o2-x64: context [
 			true [none]
 		]
 		code
+	]
+
+	pointer-condition-code: func [opcode [word! none!] /local code][
+		code: case [
+			opcode = rs-o2-ir/equal-op [4]
+			opcode = rs-o2-ir/not-equal-op [5]
+			opcode = rs-o2-ir/less-op [2]
+			opcode = rs-o2-ir/greater-op [7]
+			opcode = rs-o2-ir/less-or-equal-op [6]
+			opcode = rs-o2-ir/greater-or-equal-op [3]
+			true [none]
+		]
+		code
+	]
+
+	gpr-condition-code: func [opcode [word! none!] type [block! none!]][
+		either all [type valid-pointer-type? type] [
+			pointer-condition-code opcode
+		][condition-code opcode]
 	]
 
 	float-condition-code: func [opcode [word! none!] /local code][
@@ -2611,10 +3845,11 @@ rs-o2-x64: context [
 	emit-materialized-condition: func [
 		code [binary!]
 		opcode [word!]
+		type [block!]
 		destination [word!]
 		/local condition
 	][
-		condition: condition-code opcode
+		condition: gpr-condition-code opcode type
 		unless integer? condition [return fail-selection 'x64-condition-code]
 		; SETcc writes one byte; MOVZX makes the Red/System logic representation
 		; an explicit 32-bit 0/1 without disturbing the comparison flags first.
@@ -2717,7 +3952,7 @@ rs-o2-x64: context [
 		entry-position: (((middle - 1) * 2) + 1)
 		value: pick entries entry-position
 		target: pick entries (entry-position + 1)
-		emit-compare-immediate code selector value
+		emit-compare-immediate code no selector value
 		emit-fixed-near-condition code fixups 4 target
 
 		if all [low = middle middle = high][
@@ -2783,7 +4018,8 @@ rs-o2-x64: context [
 			return fail-selection 'x64-dense-switch-selector-live
 		]
 		selector: materialize-value code allocation selector-id
-		unless selector = 'eax [return fail-selection 'x64-dense-switch-selector-register]
+		unless selector [return none]
+		unless selector = 'eax [emit-mov-register code 'eax selector]
 
 		unless zero? min-value [
 			append-byte code 45                       ;-- SUB EAX, minimum case value
@@ -2842,7 +4078,7 @@ rs-o2-x64: context [
 		count: (length? entries) / 2
 		min-value: entries/1
 		max-value: first skip tail entries -2
-		dense?: all [count >= 32 not negative? min-value]
+		dense?: all [count >= 5 not negative? min-value]
 		if dense? [
 			span: max-value - min-value
 			dense?: all [span <= 255 (span + 1) <= (count * 2)]
@@ -2909,23 +4145,36 @@ rs-o2-x64: context [
 		code [binary!]
 		fixups [block!]
 		instruction [block!]
+		allocation [block!]
 		next-id [integer! none!]
 		/local operands metadata opcode condition true-id false-id instruction-id definition
-			comparison-operands operand-type float?
+			comparison-operands operand-type float? source
 	][
 		operands: pick instruction rs-o2-ir/ins-operands
 		metadata: pick instruction rs-o2-ir/ins-metadata
 		opcode: select metadata 'condition
-		definition: rs-o2-ir/find-vreg-definition operands/1/2
-		operand-type: none
-		if definition [
-			comparison-operands: pick definition rs-o2-ir/ins-operands
-			if all [not empty? comparison-operands comparison-operands/1/1 = 'vreg][
-				operand-type: rs-o2-ir/vreg-type comparison-operands/1/2
+		either opcode = 'truthy [
+			operand-type: rs-o2-ir/vreg-type operands/1/2
+			unless supported-logic? operand-type [return fail-selection 'x64-branch-condition-type]
+			source: materialize-value code allocation operands/1/2
+			unless source [return none]
+			emit-test-register code source
+			float?: no
+			condition: 5
+		][
+			definition: rs-o2-ir/find-vreg-definition operands/1/2
+			operand-type: none
+			if definition [
+				comparison-operands: pick definition rs-o2-ir/ins-operands
+				if all [not empty? comparison-operands comparison-operands/1/1 = 'vreg][
+					operand-type: rs-o2-ir/vreg-type comparison-operands/1/2
+				]
 			]
+			float?: to logic! all [operand-type supported-float? operand-type]
+			condition: either float? [
+				float-condition-code opcode
+			][gpr-condition-code opcode operand-type]
 		]
-		float?: to logic! all [operand-type supported-float? operand-type]
-		condition: either float? [float-condition-code opcode][condition-code opcode]
 		unless integer? condition [return fail-selection 'x64-condition-code]
 		instruction-id: pick instruction rs-o2-ir/ins-id
 		true-id: operands/2/2
@@ -3053,6 +4302,7 @@ rs-o2-x64: context [
 		visited [block!]
 		layout [block!]
 		/local block instruction opcode operands successor loop-body merge-id merge-pending? default-id
+			target target-block true-block false-block true-label false-label
 	][
 		if find visited id [return none]
 		append visited id
@@ -3063,15 +4313,58 @@ rs-o2-x64: context [
 		operands: pick instruction rs-o2-ir/ins-operands
 		case [
 			opcode = 'jump [
-				loop-body: canonical-loop-body operands/1/2 blocks visited
-				either loop-body [
-					unless find aligned-loop-blocks loop-body [append aligned-loop-blocks loop-body]
-					append-layout-block loop-body blocks visited layout
-				][append-layout-block operands/1/2 blocks visited layout]
+				target: operands/1/2
+				target-block: pick blocks target
+				either all [
+					find [short-circuit-true short-circuit-false] pick block rs-o2-ir/bb-label
+					(pick target-block rs-o2-ir/bb-label) = 'short-circuit-exit
+				][none][
+					loop-body: canonical-loop-body target blocks visited
+					either loop-body [
+						unless find aligned-loop-blocks loop-body [append aligned-loop-blocks loop-body]
+						append-layout-block loop-body blocks visited layout
+					][append-layout-block target blocks visited layout]
+				]
 			]
-				opcode = 'branch [
-				append-layout-block operands/2/2 blocks visited layout
-				append-layout-block operands/3/2 blocks visited layout
+			opcode = 'branch [
+				true-block: pick blocks operands/2/2
+				false-block: pick blocks operands/3/2
+				true-label: pick true-block rs-o2-ir/bb-label
+				false-label: pick false-block rs-o2-ir/bb-label
+				case [
+					all [
+						true-label = 'short-circuit-true
+						false-label = 'short-circuit-next
+					][
+						append-layout-block operands/3/2 blocks visited layout
+						append-layout-block operands/2/2 blocks visited layout
+					]
+					all [
+						true-label = 'short-circuit-next
+						false-label = 'short-circuit-false
+					][
+						append-layout-block operands/2/2 blocks visited layout
+						append-layout-block operands/3/2 blocks visited layout
+					]
+					all [
+						find [short-circuit-true short-circuit-false] true-label
+						find [short-circuit-true short-circuit-false] false-label
+					][
+						either true-label = 'short-circuit-false [
+							append-layout-block operands/2/2 blocks visited layout
+							append-layout-block operands/3/2 blocks visited layout
+						][
+							append-layout-block operands/3/2 blocks visited layout
+							append-layout-block operands/2/2 blocks visited layout
+						]
+						merge-id: simple-switch-merge block blocks
+						if merge-id [append-layout-block merge-id blocks visited layout]
+					]
+					true [
+						append-layout-block operands/2/2 blocks visited layout
+						append-layout-block operands/3/2 blocks visited layout
+					]
+				]
 			]
 			opcode = 'switch [
 				merge-id: simple-switch-merge block blocks
@@ -3134,9 +4427,10 @@ rs-o2-x64: context [
 		allocation [block!]
 		body-base [integer!]
 		/local code blocks block block-index block-id next-block next-id last-id labels fixups terminal
-			instruction opcode operands result destination source left right offset local-register
+			instruction opcode operands result destination source base left right offset local-register
 			constant-info constant-values immediate-constants left-value right-value target
-			memory-name left-memory-name memory-offset type source-type patch instruction-id
+			memory-name left-memory-name memory-offset type source-type right-type patch instruction-id
+			pointer-offset division-magic wide?
 	][
 		code: make binary! 128
 		clear encoded-relocation-patches
@@ -3148,6 +4442,7 @@ rs-o2-x64: context [
 		constant-values: constant-info/1
 		immediate-constants: constant-info/2
 		unless emit-spill-frame-reserve code [return none]
+		unless emit-callee-save-registers code [return none]
 		unless emit-promoted-local-loads code [return none]
 		blocks: layout-current-blocks
 		last-id: pick last blocks rs-o2-ir/bb-id
@@ -3199,6 +4494,13 @@ rs-o2-x64: context [
 						emit-gpr-move code type destination source
 						unless emit-spilled-result code allocation result destination [return none]
 					]
+					opcode = 'log-b [
+						destination: result-register allocation result
+						source: materialize-value code allocation operands/1/2
+						unless all [destination source][return none]
+						unless emit-log-b code destination source [return none]
+						unless emit-spilled-result code allocation result destination [return none]
+					]
 					opcode = 'load-local [
 						case [
 							folded-load-name result []
@@ -3236,7 +4538,7 @@ rs-o2-x64: context [
 						destination: result-register allocation result
 						unless destination [return none]
 						patch: emit-rip-load code type destination
-						rs-o2-ir/set-table-value encoded-relocation-patches instruction-id patch
+						record-encoded-relocation-patch instruction-id patch
 						unless emit-spilled-result code allocation result destination [return none]
 					]
 					opcode = 'store-global [
@@ -3244,7 +4546,131 @@ rs-o2-x64: context [
 						unless source [return none]
 						source-type: rs-o2-ir/vreg-type operands/2/2
 						patch: emit-rip-store code source-type source
-						rs-o2-ir/set-table-value encoded-relocation-patches instruction-id patch
+						record-encoded-relocation-patch instruction-id patch
+					]
+					opcode = 'load-indirect [
+						base: materialize-value code allocation operands/1/2
+						destination: result-register allocation result
+						unless all [base destination][return none]
+						offset: operands/2/2
+						either supported-float? type [
+							emit-xmm-scalar-pointer-load code type destination base offset
+						][emit-gpr-pointer-load code type destination base offset]
+						unless emit-spilled-result code allocation result destination [return none]
+					]
+					opcode = 'store-indirect [
+						source-type: rs-o2-ir/vreg-type operands/3/2
+						if all [
+							operands/1/2 <> operands/3/2
+							not supported-float? source-type
+							(allocation-register allocation operands/1/2) = 'spill
+							(allocation-register allocation operands/3/2) = 'spill
+						][return fail-selection 'x64-indirect-dual-gpr-spill]
+						base: materialize-value code allocation operands/1/2
+						source: materialize-value code allocation operands/3/2
+						unless all [base source][return none]
+						offset: operands/2/2
+						either supported-float? source-type [
+							emit-xmm-scalar-pointer-store code source-type base offset source
+						][emit-gpr-pointer-store code source-type base offset source]
+					]
+					supported-pointer-arithmetic? instruction [
+						destination: result-register allocation result
+						unless destination [return none]
+						memory-name: folded-load-name operands/2/2
+						right-value: all [
+							find immediate-constants operands/2/2
+							rs-o2-ir/table-value constant-values operands/2/2
+						]
+						either not none? right-value [
+							left: materialize-value code allocation operands/1/2
+							unless left [return none]
+							pointer-offset: scaled-pointer-offset opcode right-value type/5
+							unless integer? pointer-offset [
+								return fail-selection 'x64-pointer-immediate-range
+							]
+							unless emit-lea-base-displacement
+								code destination left pointer-offset
+							[return none]
+						][
+							either memory-name [
+								left: materialize-value code allocation operands/1/2
+								unless left [return none]
+								memory-offset: stack-offset memory-name
+								unless emit-pointer-arithmetic-memory
+									code opcode type destination left memory-offset
+								[return none]
+							][
+								if all [
+									(allocation-register allocation operands/1/2) = 'spill
+									(allocation-register allocation operands/2/2) = 'spill
+								][return fail-selection 'x64-pointer-double-spill]
+								left: materialize-value code allocation operands/1/2
+								right: materialize-value code allocation operands/2/2
+								unless all [left right][return none]
+								right-type: rs-o2-ir/vreg-type operands/2/2
+								unless emit-pointer-arithmetic-register
+									code opcode type right-type destination left right
+								[return none]
+							]
+						]
+						unless emit-spilled-result code allocation result destination [return none]
+					]
+					supported-integer-division? opcode [
+						destination: result-register allocation result
+						unless destination [return none]
+						if (allocation-register allocation operands/1/2) = 'ecx [
+							return fail-selection 'x64-division-left-in-count-register
+						]
+						right-value: constant-vreg-value operands/2/2
+						either integer? right-value [
+							left: materialize-value code allocation operands/1/2
+							unless left [return none]
+							division-magic: signed-division-magic right-value
+							either division-magic [
+								unless emit-signed-i32-magic-division
+									code opcode destination left right-value division-magic
+								[return none]
+							][
+								emit-mov-immediate code 'ecx right-value
+								unless emit-signed-i32-division code opcode destination left [return none]
+							]
+						][
+							right: materialize-value code allocation operands/2/2
+							unless right [return none]
+							emit-mov-register code 'ecx right
+							left: materialize-value code allocation operands/1/2
+							unless left [return none]
+							unless emit-signed-i32-division code opcode destination left [return none]
+						]
+						unless emit-spilled-result code allocation result destination [return none]
+					]
+					supported-shift? opcode [
+						destination: result-register allocation result
+						unless destination [return none]
+						right-value: constant-vreg-value operands/2/2
+						source-type: rs-o2-ir/vreg-type operands/1/2
+						either integer? right-value [
+							left: materialize-value code allocation operands/1/2
+							unless left [return none]
+							unless emit-shift-immediate
+								code opcode destination left right-value source-type
+							[return none]
+						][
+							if destination = 'ecx [
+								return fail-selection 'x64-shift-count-destination
+							]
+							right: materialize-value code allocation operands/2/2
+							unless right [return none]
+							emit-mov-register code 'ecx right
+							left: materialize-value code allocation operands/1/2
+							unless left [return none]
+							emit-mov-register code destination left
+							unless emit-shift-register-count
+								code opcode destination source-type
+							[return none]
+						]
+						unless emit-spilled-result code allocation result destination [return none]
 					]
 					supported-binary-operation? opcode [
 						destination: result-register allocation result
@@ -3307,39 +4733,63 @@ rs-o2-x64: context [
 									left: materialize-value code allocation operands/1/2
 									unless left [return none]
 									memory-offset: stack-offset memory-name
-									emit-binary-memory code opcode destination left memory-offset
+									unless emit-binary-memory code opcode destination left memory-offset [
+										return none
+									]
 								]
 								left-memory-name [
 									memory-offset: stack-offset left-memory-name
 									either not none? right-value [
 										emit-frame-load code destination memory-offset
-										emit-binary-immediate code opcode destination destination right-value
+										unless emit-binary-immediate code opcode destination destination right-value [
+											return none
+										]
 									][
 										right: materialize-value code allocation operands/2/2
 										unless right [return none]
-										emit-binary-memory code opcode destination right memory-offset
+										unless emit-binary-memory code opcode destination right memory-offset [
+											return none
+										]
+									]
+								]
+								not none? right-value [
+									left: materialize-value code allocation operands/1/2
+									unless left [return none]
+									unless emit-binary-immediate code opcode destination left right-value [
+										return none
 									]
 								]
 								integer? memory-offset [
 									left: materialize-value code allocation operands/1/2
 									unless left [return none]
-									emit-binary-memory code opcode destination left memory-offset
-								]
-								not none? right-value [
-									left: materialize-value code allocation operands/1/2
-									unless left [return none]
-									emit-binary-immediate code opcode destination left right-value
+									unless emit-binary-memory code opcode destination left memory-offset [
+										return none
+									]
 								]
 								all [not none? left-value rs-o2-ir/commutative-op? opcode][
 									right: materialize-value code allocation operands/2/2
 									unless right [return none]
-									emit-binary-immediate code opcode destination right left-value
+									unless emit-binary-immediate code opcode destination right left-value [
+										return none
+									]
 								]
 								true [
 									left: materialize-value code allocation operands/1/2
 									right: materialize-value code allocation operands/2/2
 									unless all [left right][return none]
-									emit-binary code opcode destination left right
+									either all [
+										destination = right
+										destination <> left
+										not rs-o2-ir/commutative-op? opcode
+										(allocation-register allocation operands/1/2) = 'spill
+									][
+										; The loaded spill scratch is dead after this use. Compute
+										; there first so the right operand is not overwritten.
+										unless emit-binary code opcode left left right [return none]
+										emit-mov-register code destination left
+									][
+										unless emit-binary code opcode destination left right [return none]
+									]
 								]
 							]
 						]
@@ -3347,6 +4797,7 @@ rs-o2-x64: context [
 					]
 					rs-o2-ir/comparison-op? opcode [
 						source-type: rs-o2-ir/vreg-type operands/1/2
+						wide?: supported-wide-gpr? source-type
 						memory-name: folded-load-name operands/2/2
 						memory-offset: none
 						unless memory-name [
@@ -3389,15 +4840,15 @@ rs-o2-x64: context [
 							case [
 								all [not none? left-value memory-name] [
 									memory-offset: stack-offset memory-name
-									emit-compare-memory-immediate code memory-offset left-value
+									emit-compare-memory-immediate code wide? memory-offset left-value
 								]
 								all [not none? left-value integer? memory-offset] [
-									emit-compare-memory-immediate code memory-offset left-value
+									emit-compare-memory-immediate code wide? memory-offset left-value
 								]
 								not none? left-value [
 									right: materialize-value code allocation operands/2/2
 									unless right [return none]
-									emit-compare-immediate code right left-value
+									emit-compare-immediate code wide? right left-value
 								]
 								true [
 									left: materialize-value code allocation operands/1/2
@@ -3405,14 +4856,18 @@ rs-o2-x64: context [
 									case [
 										memory-name [
 											memory-offset: stack-offset memory-name
-											emit-compare-memory code left memory-offset
+											emit-compare-memory code wide? left memory-offset
 										]
-										integer? memory-offset [emit-compare-memory code left memory-offset]
-										not none? right-value [emit-compare-immediate code left right-value]
+										not none? right-value [
+											emit-compare-immediate code wide? left right-value
+										]
+										integer? memory-offset [
+											emit-compare-memory code wide? left memory-offset
+										]
 										true [
 											right: materialize-value code allocation operands/2/2
 											unless right [return none]
-											emit-compare-registers code left right
+											emit-compare-registers code wide? left right
 										]
 									]
 								]
@@ -3420,13 +4875,21 @@ rs-o2-x64: context [
 							if comparison-value-used? result [
 								destination: result-register allocation result
 								unless destination [return none]
-								unless emit-materialized-condition code opcode destination [return none]
+								unless emit-materialized-condition
+									code opcode source-type destination
+								[return none]
 								unless emit-spilled-result code allocation result destination [return none]
 							]
 						]
 					]
 					opcode = 'call [
 						unless emit-direct-call code instruction allocation [return none]
+					]
+					opcode = 'resolve-node [
+						unless emit-resolver-intrinsic code instruction allocation no [return none]
+					]
+					opcode = 'resolve-series [
+						unless emit-resolver-intrinsic code instruction allocation yes [return none]
 					]
 					opcode = 'copy-cell [
 						unless emit-copy-cell-intrinsic code instruction allocation [return none]
@@ -3442,7 +4905,7 @@ rs-o2-x64: context [
 						]
 					]
 					opcode = 'branch [
-						unless emit-branch-control code fixups instruction next-id [return none]
+						unless emit-branch-control code fixups instruction allocation next-id [return none]
 					]
 					opcode = 'return [
 						unless empty? operands [
@@ -3474,8 +4937,10 @@ rs-o2-x64: context [
 			]
 		]
 		rs-o2-ir/set-table-value labels 0 length? code
+		unless emit-callee-restore-registers code [return none]
 		unless patch-relative-branches code labels fixups [return none]
-		patch-jump-tables code labels
+		unless patch-jump-tables code labels [return none]
+		code
 	]
 
 	rewrite-debug-lines: func [
@@ -3566,25 +5031,39 @@ rs-o2-x64: context [
 		yes
 	]
 
-	apply-relocations: func [direct-chunk [block!] /local start body-base relocation id ref patch][
+	apply-relocations: func [
+		direct-chunk [block!]
+		/local start body-base relocation id ref patch patches counts index
+	][
 		if empty? planned-relocations [return yes]
 		start: pick rs-o2-ir/current rs-o2-ir/fn-body-start
 		body-base: either frameless? [0][start]
+		counts: make block! 8
 		foreach relocation planned-relocations [
 			id: relocation/1
 			ref: relocation/2
-			patch: rs-o2-ir/table-value encoded-relocation-patches id
+			patches: rs-o2-ir/table-value encoded-relocation-patches id
+			index: any [rs-o2-ir/table-value counts id 0]
+			index: index + 1
+			rs-o2-ir/set-table-value counts id index
+			patch: all [block? patches pick patches index]
 			unless integer? patch [return fail-selection 'x64-missing-relocation-patch]
 			ref/1: direct-chunk/3 + body-base + patch - 1
 		]
 		yes
 	]
 
-	replace-body: func [direct-chunk [block!] body [binary!] /local bytes start ending selected][
+	commit-dropped-relocations: func [/local ref][
+		foreach ref reverse copy dropped-relocation-refs [remove ref]
+		yes
+	]
+
+	replace-body: func [direct-chunk [block!] body [binary!] /local bytes start ending selected prefix][
 		bytes: direct-chunk/1
 		start: pick rs-o2-ir/current rs-o2-ir/fn-body-start
 		ending: pick rs-o2-ir/current rs-o2-ir/fn-body-end
 		selected: copy direct-chunk
+		if (length? selected) >= 2 [poke selected 2 copy selected-relocation-refs]
 		if frameless? [
 			bytes: copy body
 			append-byte bytes 195
@@ -3593,7 +5072,11 @@ rs-o2-x64: context [
 			return selected
 		]
 		bytes: make binary! (start + (length? body) + ((length? bytes) - ending))
-		append bytes copy/part direct-chunk/1 start
+		prefix: copy/part direct-chunk/1 start
+		if fixed-shadow-frame-merge? [
+			poke prefix start (32 + spill-frame-bytes)
+		]
+		append bytes prefix
 		append bytes body
 		append bytes skip direct-chunk/1 ending
 		poke selected 1 bytes
@@ -3601,15 +5084,20 @@ rs-o2-x64: context [
 		selected
 	]
 
-	select-current: func [direct-chunk [block!] /local intervals allocation body pass body-base][
+	select-current: func [
+		direct-chunk [block!]
+		/local intervals allocation body pass body-base selected start ending blocks
+	][
 		unless validate-current direct-chunk [return none]
 		plan-folded-loads
 		intervals: build-intervals
 		unless intervals [return none]
+		unless division-register-liveness-valid? intervals [return none]
 		unless plan-call-spills intervals [return none]
 		allocation: allocate-intervals intervals
 		unless allocation [return none]
 		plan-spill-slots intervals
+		unless plan-fixed-shadow-frame-merge direct-chunk [return none]
 		unless plan-phi-edge-copies allocation [return none]
 		unless plan-gc-metadata intervals allocation direct-chunk [return none]
 		body-base: 0
@@ -3622,11 +5110,22 @@ rs-o2-x64: context [
 		repeat pass 8 [
 			branch-relaxation-changed?: no
 			body: encode-body allocation body-base
-			unless binary? body [return none]
+			unless all [binary? body pick rs-o2-ir/current rs-o2-ir/fn-eligible?][return none]
 			unless branch-relaxation-changed? [break]
 		]
 		if branch-relaxation-changed? [return fail-selection 'x64-branch-relaxation-limit]
+		start: pick rs-o2-ir/current rs-o2-ir/fn-body-start
+		ending: pick rs-o2-ir/current rs-o2-ir/fn-body-end
+		blocks: pick rs-o2-ir/current rs-o2-ir/fn-blocks
+		if all [
+			released-call-argument-fixed?
+			(length? blocks) = 1
+			(length? body) > (ending - start)
+		][return fail-selection 'x64-call-live-expansion]
 		unless apply-relocations direct-chunk [return none]
-		replace-body direct-chunk body
+		selected: replace-body direct-chunk body
+		unless selected [return none]
+		commit-dropped-relocations
+		selected
 	]
 ]

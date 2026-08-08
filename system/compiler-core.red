@@ -3749,16 +3749,19 @@ system-dialect: context [
 			<last>
 		]
 
-		comp-expression-list: func [/_all /local list offset bodies op][
+		comp-expression-list: func [/_all /local list offset bodies op ir-list][
 			pc: next pc
 			check-body pc/1								;-- check body block
+			ir-list: rs-o2-ir/begin-short-circuit to logic! _all
 
 			list: make block! 8
 			pc: fetch-into pc/1 [
 				while [not tail? pc][					;-- comp all expressions in chunks
 					append/only list comp-block-chunked/only/test pick [all any] to logic! _all
+					if ir-list [rs-o2-ir/short-circuit-condition ir-list tail? pc]
 				]
 			]
+			if ir-list [rs-o2-ir/end-short-circuit ir-list]
 			list: back tail list
 			set [offset bodies] emitter/chunks/make-boolean			;-- emit ending FALSE/TRUE block
 			if _all [emitter/branch/over/adjust bodies offset/1]	;-- conclude by a branch on TRUE
@@ -5054,9 +5057,7 @@ system-dialect: context [
 				unless find [none! tag!] type?/word expr [
 					ir-record?: rs-o2-ir/function-active?
 					if ir-record? [
-						ir-expr: either any [series? :expr object? :expr] [
-							copy/deep :expr
-						][:expr]
+						ir-expr: o2-ir-copy-expression :expr
 						ir-line: calc-line
 					]
 					comp-expression expr to logic! keep
@@ -5199,12 +5200,19 @@ system-dialect: context [
 				]
 				any-pointer? type [
 					scale: 1
-					if all [
-						kind = 'pointer!
-						(length? type) >= 2
-						block? type/2
-						not empty? type/2
-					][scale: emitter/size-of? type/2/1]
+					case [
+						all [
+							kind = 'pointer!
+							(length? type) >= 2
+							block? type/2
+							not empty? type/2
+						][scale: any [emitter/size-of? type/2/1 1]]
+						kind = 'struct! [
+							scale: any [emitter/member-offset? type/2 none 1]
+						]
+						kind = 'union! [scale: any [emitter/union-size? type/2 1]]
+						true []
+					]
 					gc-kind: either find [pointer! c-string! function! struct! union!] kind ['pointer]['none]
 					rs-o2-ir/make-type 'ptr emitter/target/ptr-size 'gpr no scale gc-kind
 				]
@@ -5220,14 +5228,32 @@ system-dialect: context [
 			]
 		]
 
-		o2-ir-type-of: func [value /local type][
-			set/any 'type try [get-type :value]
-			if error? :type [
-				rs-o2-ir/mark-unsupported 'type-resolution
-				return none
-			]
-			o2-ir-type-from-type type
+	o2-ir-type-of: func [value /local type][
+		set/any 'type try [get-type :value]
+		if error? :type [
+			rs-o2-ir/mark-unsupported 'type-resolution
+			return none
 		]
+		o2-ir-type-from-type type
+	]
+
+	o2-ir-bitcast-compatible?: func [
+		source-type [block! none!]
+		target-type [block! none!]
+	][
+		all [
+			source-type
+			target-type
+			source-type/2 = target-type/2
+			source-type/3 = target-type/3
+			any [
+				all [source-type/1 = 'ptr target-type/1 = 'ptr]
+				all [source-type/1 = 'i32 target-type/1 = 'i32]
+				all [source-type/1 = 'i64 target-type/1 = 'i64]
+				all [source-type/1 = 'logic target-type/1 = 'i32]
+			]
+		]
+	]
 
 		o2-ir-add-stack-objects: func [spec [block!] /local cursor item kind ir-type size align][
 		cursor: spec
@@ -5286,6 +5312,35 @@ system-dialect: context [
 		reduce [groups explicit-default?]
 	]
 
+	o2-ir-copy-expression: func [
+		value
+		/local result
+	][
+		case [
+			object? :value [
+				result: copy :value
+				result/type: o2-ir-copy-expression :value/type
+				result/data: o2-ir-copy-expression :value/data
+				result
+			]
+			any-block? :value [
+				result: copy :value
+				forall result [
+					if any [
+						object? :result/1
+						any-block? :result/1
+						path? :result/1
+					][
+						result/1: o2-ir-copy-expression :result/1
+					]
+				]
+				head result
+			]
+			path? :value [copy :value]
+			true [:value]
+		]
+	]
+
 	o2-ir-scan-body: func [body [any-block!] /local item][
 		foreach item body [
 			case [
@@ -5301,7 +5356,10 @@ system-dialect: context [
 							item/1 = 'system
 							item/2 = 'cpu
 						][rs-o2-ir/mark-unsupported 'direct-cpu-state]
-						true [rs-o2-ir/mark-unsupported 'path-access]
+						; Namespace-qualified symbols are normalized before expression
+						; recording. Any unresolved pointer/member path is rejected by
+						; o2-ir-lower-expression instead of this source-level scan.
+						true []
 					]
 				]
 				any-block? item [o2-ir-scan-body item]
@@ -5334,16 +5392,28 @@ system-dialect: context [
 	]
 
 	o2-ir-call-selectable?: func [
-			spec [block!]
-			args [block!]
-			return-type [block! none!]
+		spec [block!]
+		args [block!]
+		return-type [block! none!]
+		/variadic
 		/local value type
 	][
 		unless all [
-			spec/2 = 'native
-			(length? args) = spec/1
+			either variadic [
+				all [
+					find [native import] spec/2
+					spec/3 = 'cdecl
+					find-attribute spec/4 'variadic
+					(length? args) >= spec/1
+				]
+			][
+				all [
+					spec/2 = 'native
+					(length? args) = spec/1
+					not find-attribute spec/4 'variadic
+				]
+			]
 			any [none? return-type o2-ir-call-scalar-type? return-type]
-			not find-attribute spec/4 'variadic
 		][return no]
 		foreach value args [
 			type: rs-o2-ir/vreg-type value
@@ -5375,9 +5445,79 @@ system-dialect: context [
 		]
 	]
 
+	o2-ir-resolver-selectable?: func [
+		name [word!]
+		args [block!]
+		return-type [block! none!]
+		/local handle-type
+	][
+		unless all [
+			find [red>resolve-node red>resolve-series] name
+			(length? args) = 1
+			return-type
+			return-type/1 = 'ptr
+			return-type/2 = emitter/target/ptr-size
+			select emitter/symbols 'red>node-registry
+		][return no]
+		handle-type: rs-o2-ir/vreg-type args/1
+		all [
+			handle-type
+			handle-type/1 = 'i32
+			handle-type/2 = 4
+			handle-type/3 = 'gpr
+		]
+	]
+
+	o2-ir-lower-simple-path-assignment: func [
+		expression [any-block!]
+		/local path root source-type aggregate-type member-type member-ir-type offset rhs base
+	][
+		path: expression/1
+		unless all [
+			(length? expression) = 2
+			(length? path) = 2
+			word? path/1
+			word? path/2
+		][return rs-o2-ir/emit-opaque 'path-assignment none]
+
+		root: to word! path/1
+		unless local-variable? root [
+			return rs-o2-ir/emit-opaque 'path-assignment none
+		]
+		set/any 'source-type try [get-type root]
+		if any [error? :source-type none? :source-type][
+			return rs-o2-ir/emit-opaque 'path-assignment none
+		]
+		aggregate-type: resolve-aliased source-type
+		unless all [
+			block? aggregate-type
+			find [struct! union!] aggregate-type/1
+			block? aggregate-type/2
+		][return rs-o2-ir/emit-opaque 'path-assignment none]
+
+		set/any 'member-type try [
+			resolve-struct-member-type aggregate-type/2 path/2
+		]
+		if any [error? :member-type none? :member-type][
+			return rs-o2-ir/emit-opaque 'path-assignment none
+		]
+		member-ir-type: o2-ir-type-from-type member-type
+		unless member-ir-type [return rs-o2-ir/emit-opaque 'path-assignment none]
+		offset: emitter/member-offset? aggregate-type/2 path/2
+		unless integer? offset [return rs-o2-ir/emit-opaque 'path-assignment none]
+
+		; The direct compiler materializes the RHS before resolving the store path.
+		rhs: o2-ir-lower-expression expression/2
+		unless rhs [return rs-o2-ir/emit-opaque 'assignment-without-value member-ir-type]
+		base: o2-ir-lower-expression root
+		unless base [return rs-o2-ir/emit-opaque 'path-assignment member-ir-type]
+		rs-o2-ir/emit-store-indirect base offset rhs member-ir-type
+	]
+
 	o2-ir-lower-expression: func [
 		value
 		/local type ir-type name target rhs left right op spec effect args arg result source-type
+			call-values variadic-call?
 	][
 		case [
 			integer? :value [
@@ -5425,7 +5565,7 @@ system-dialect: context [
 							rs-o2-ir/emit-store-global name rhs ir-type
 						]
 					]
-					set-path? value/1 [rs-o2-ir/emit-opaque 'path-assignment none]
+					set-path? value/1 [o2-ir-lower-simple-path-assignment value]
 					word? value/1 [
 						op: value/1
 						name: decorate-fun op
@@ -5447,12 +5587,32 @@ system-dialect: context [
 							]
 							spec [
 								args: make block! max 0 (length? value) - 1
-								foreach arg next value [
+								variadic-call?: all [
+									(length? value) = 3
+									issue? value/2
+									value/2 = #variadic
+									block? value/3
+								]
+								call-values: either variadic-call? [
+									call-values: copy/deep value/3
+									promote-variadic name value/2 call-values
+									call-values
+								][next value]
+								foreach arg call-values [
 									result: o2-ir-lower-expression arg
 									if result [append args result]
 								]
 								ir-type: o2-ir-type-of value
-								either name = 'red>copy-cell [
+								either variadic-call? [
+									unless o2-ir-call-selectable?/variadic spec args ir-type [
+										rs-o2-ir/mark-unsupported 'call-selection
+									]
+									rs-o2-ir/emit-call/variadic name args ir-type
+								][either name = 'log-b [
+									either all [(length? args) = 1 ir-type][
+										rs-o2-ir/emit-log-b args/1 ir-type
+									][rs-o2-ir/emit-opaque 'log-b-intrinsic ir-type]
+								][either name = 'red>copy-cell [
 									either o2-ir-copy-cell-selectable? args ir-type [
 										rs-o2-ir/emit-copy-cell args/1 args/2 ir-type
 									][
@@ -5460,13 +5620,21 @@ system-dialect: context [
 										rs-o2-ir/emit-call name args ir-type
 									]
 								][
-									if find [red>resolve-node red>resolve-series] name [
-										rs-o2-ir/mark-unsupported 'resolver-intrinsic
+									either find [red>resolve-node red>resolve-series] name [
+										either o2-ir-resolver-selectable? name args ir-type [
+											rs-o2-ir/emit-resolver name args/1 ir-type
+										][
+											rs-o2-ir/mark-unsupported 'resolver-intrinsic
+											rs-o2-ir/emit-call name args ir-type
+										]
+									][
+										unless o2-ir-call-selectable? spec args ir-type [
+											rs-o2-ir/mark-unsupported 'call-selection
+										]
+										rs-o2-ir/emit-call name args ir-type
 									]
-									unless o2-ir-call-selectable? spec args ir-type [
-										rs-o2-ir/mark-unsupported 'call-selection
-									]
-									rs-o2-ir/emit-call name args ir-type
+								]
+								]
 								]
 							]
 							true [rs-o2-ir/emit-opaque 'unknown-call none]
@@ -5480,12 +5648,7 @@ system-dialect: context [
 				either all [value/action = 'type-cast ir-type][
 					result: o2-ir-lower-expression :value/data
 					source-type: all [result rs-o2-ir/vreg-type result]
-					either all [
-						source-type
-						source-type/1 = 'logic
-						ir-type/1 = 'i32
-						source-type/2 = ir-type/2
-					][
+					either o2-ir-bitcast-compatible? source-type ir-type [
 						rs-o2-ir/emit-bitcast result ir-type
 					][rs-o2-ir/emit-opaque 'type-cast ir-type]
 				][rs-o2-ir/emit-opaque 'unsupported-action ir-type]

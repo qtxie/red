@@ -38,6 +38,26 @@ Use the benchmark wrapper for a single profiled release/debug `hello.red` run:
 The wrapper verifies the generated executable and writes raw logs, phase data,
 hashes, memory use, and a JSON report below the output directory.
 
+Use `benchmark-generated-code.ps1` to compare emitted-program runtime. Linux x64
+programs built by a Windows-hosted compiler can run through one persistent WSL
+driver, which excludes WSL startup from every timed sample:
+
+```powershell
+& .\tools\self_hosting\benchmark-generated-code.ps1 `
+    -Compiler .\build\self-hosting\red-bootstrap-linux-x64.exe `
+    -Source .\tools\self_hosting\fixtures\benchmarks\integer-loop.reds `
+    -Target Linux-X86-64 `
+    -Optimizations O0,O2 `
+    -ProgramRuntime WSL `
+    -Runs 31
+```
+
+The harness verifies exit status, stdout, and stderr before warmup, rotates the
+optimization order for interleaved samples, and records wall time, CPU time,
+compiler and source hashes, target, WSL platform, and paired speedups in
+`report.json`. Use `-WslDistribution NAME` when the default distribution is not
+the intended test environment.
+
 No `build.r`, pre-cap, encap, Rebol executable, or `red.r` invocation is
 involved in the normal self-hosted build.
 

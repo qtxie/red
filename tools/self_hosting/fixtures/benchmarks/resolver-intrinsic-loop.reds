@@ -36,6 +36,20 @@ red: context [
 		if null? node [return null]
 		node/value
 	]
+
+	resolve-node-ir: func [
+		handle [integer!]
+		return: [node!]
+	][
+		resolve-node handle
+	]
+
+	resolve-series-ir: func [
+		handle [integer!]
+		return: [int-ptr!]
+	][
+		resolve-series handle
+	]
 ]
 
 hot-resolver-loop: func [
@@ -58,8 +72,8 @@ hot-resolver-loop: func [
 	red/node-registry/free: 0
 
 	while [index < iterations][
-		resolved: red/resolve-node 1
-		series: red/resolve-series 1
+		resolved: red/resolve-node-ir 1
+		series: red/resolve-series-ir 1
 		checksum: checksum + resolved/value/value + series/value
 		index: index + 1
 	]

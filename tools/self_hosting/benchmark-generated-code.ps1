@@ -14,6 +14,9 @@ param(
     [int]$CompileTimeoutSeconds = 900,
     [int]$ProgramTimeoutSeconds = 120,
     [int]$ExpectedExitCode = 0,
+    [ValidateSet("Native", "WSL")]
+    [string]$ProgramRuntime = "Native",
+    [string]$WslDistribution = "",
     [switch]$NoDebug
 )
 
@@ -102,6 +105,27 @@ function Get-Median {
     return ($sorted[$middle - 1] + $sorted[$middle]) / 2.0
 }
 
+function ConvertTo-WslPath {
+    param([string]$Path)
+
+    $arguments = [Collections.Generic.List[string]]::new()
+    if ($WslDistribution) {
+        foreach ($argument in @("-d", $WslDistribution)) { $arguments.Add($argument) }
+    }
+    foreach ($argument in @("-e", "wslpath", "-a", "-u", $Path)) {
+        $arguments.Add($argument)
+    }
+    $measurement = Invoke-CapturedProcess `
+        -FileName "wsl.exe" `
+        -Arguments $arguments.ToArray() `
+        -TimeoutSeconds 30
+    if ($measurement.TimedOut) { throw "wslpath timed out for $Path" }
+    if ($measurement.ExitCode -ne 0) {
+        throw "wslpath failed for ${Path}: $($measurement.Stderr.Trim())"
+    }
+    return $measurement.Stdout.Trim()
+}
+
 function Assert-ProgramBehavior {
     param(
         [string]$Optimization,
@@ -140,6 +164,9 @@ if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
 if ($Warmups -lt 0) { throw "Warmups cannot be negative" }
 if ($Runs -lt 1) { throw "Runs must be at least 1" }
 if ($Optimizations.Count -eq 0) { throw "At least one optimization level is required" }
+if ($ProgramRuntime -eq "WSL" -and $Target -like "Windows-*") {
+    throw "WSL program runtime requires a non-Windows target"
+}
 
 $duplicates = @($Optimizations | Group-Object | Where-Object Count -gt 1)
 if ($duplicates.Count -gt 0) { throw "Optimization levels must be unique" }
@@ -202,58 +229,122 @@ foreach ($optimization in $Optimizations) {
     }
 }
 
-$expectedBehavior = $null
 $verification = [Collections.Generic.List[object]]::new()
-foreach ($optimization in $Optimizations) {
-    $program = $compiled[$optimization]
-    $measurement = Invoke-CapturedProcess `
-        -FileName $program.OutputPath `
-        -Arguments $ProgramArguments `
-        -TimeoutSeconds $ProgramTimeoutSeconds
-    Assert-ProgramBehavior $optimization "verification" $measurement $expectedBehavior
-    if ($null -eq $expectedBehavior) {
-        $expectedBehavior = [pscustomobject]@{
+$samples = [Collections.Generic.List[object]]::new()
+$runtimeMetadata = [pscustomobject]@{
+    Kind = "Native"
+    Platform = [Environment]::OSVersion.VersionString
+}
+
+if ($ProgramRuntime -eq "WSL") {
+    $programs = [Collections.Generic.List[object]]::new()
+    foreach ($optimization in $Optimizations) {
+        $programs.Add([pscustomobject]@{
             Optimization = $optimization
+            Path = ConvertTo-WslPath $compiled[$optimization].OutputPath
+        })
+    }
+    $request = [pscustomobject]@{
+        Programs = $programs
+        ProgramArguments = $ProgramArguments
+        ProgramTimeoutSeconds = $ProgramTimeoutSeconds
+        ExpectedExitCode = $ExpectedExitCode
+        Warmups = $Warmups
+        Runs = $Runs
+    }
+    $requestPath = Join-Path $runRoot "wsl-runtime-request.json"
+    $request | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $requestPath -Encoding utf8NoBOM
+    $driverPath = Resolve-RepositoryPath "tools\self_hosting\benchmark-generated-code-wsl.py"
+    $driverArguments = [Collections.Generic.List[string]]::new()
+    if ($WslDistribution) {
+        foreach ($argument in @("-d", $WslDistribution)) { $driverArguments.Add($argument) }
+    }
+    foreach ($argument in @(
+        "-e",
+        "python3",
+        (ConvertTo-WslPath $driverPath),
+        "--request",
+        (ConvertTo-WslPath $requestPath)
+    )) {
+        $driverArguments.Add($argument)
+    }
+    $invocationCount = $Optimizations.Count * (1 + $Warmups + $Runs)
+    $driverTimeout = if ($ProgramTimeoutSeconds -eq 0) {
+        0
+    } else {
+        [Math]::Max(60, ($invocationCount * $ProgramTimeoutSeconds) + 30)
+    }
+    $measurement = Invoke-CapturedProcess `
+        -FileName "wsl.exe" `
+        -Arguments $driverArguments.ToArray() `
+        -TimeoutSeconds $driverTimeout
+    $driverStdoutPath = Join-Path $runRoot "wsl-runtime.stdout.log"
+    $driverStderrPath = Join-Path $runRoot "wsl-runtime.stderr.log"
+    Set-Content -LiteralPath $driverStdoutPath -Value $measurement.Stdout -Encoding utf8NoBOM
+    Set-Content -LiteralPath $driverStderrPath -Value $measurement.Stderr -Encoding utf8NoBOM
+    if ($measurement.TimedOut) {
+        throw "WSL runtime driver timed out after $driverTimeout seconds"
+    }
+    if ($measurement.ExitCode -ne 0) {
+        throw "WSL runtime driver failed with exit code $($measurement.ExitCode); see $driverStderrPath"
+    }
+    $runtimeResult = $measurement.Stdout | ConvertFrom-Json
+    $runtimeMetadata = $runtimeResult.Runtime
+    $runtimeMetadata | Add-Member -NotePropertyName Distribution -NotePropertyValue $WslDistribution
+    foreach ($item in $runtimeResult.Verification) { $verification.Add($item) }
+    foreach ($item in $runtimeResult.Samples) { $samples.Add($item) }
+} else {
+    $expectedBehavior = $null
+    foreach ($optimization in $Optimizations) {
+        $program = $compiled[$optimization]
+        $measurement = Invoke-CapturedProcess `
+            -FileName $program.OutputPath `
+            -Arguments $ProgramArguments `
+            -TimeoutSeconds $ProgramTimeoutSeconds
+        Assert-ProgramBehavior $optimization "verification" $measurement $expectedBehavior
+        if ($null -eq $expectedBehavior) {
+            $expectedBehavior = [pscustomobject]@{
+                Optimization = $optimization
+                Stdout = $measurement.Stdout
+                Stderr = $measurement.Stderr
+            }
+        }
+        $verification.Add([pscustomobject]@{
+            Optimization = $optimization
+            ExitCode = $measurement.ExitCode
             Stdout = $measurement.Stdout
             Stderr = $measurement.Stderr
+        })
+    }
+
+    for ($warmup = 1; $warmup -le $Warmups; $warmup++) {
+        foreach ($optimization in $Optimizations) {
+            $measurement = Invoke-CapturedProcess `
+                -FileName $compiled[$optimization].OutputPath `
+                -Arguments $ProgramArguments `
+                -TimeoutSeconds $ProgramTimeoutSeconds
+            Assert-ProgramBehavior $optimization "warmup $warmup" $measurement $expectedBehavior
         }
     }
-    $verification.Add([pscustomobject]@{
-        Optimization = $optimization
-        ExitCode = $measurement.ExitCode
-        Stdout = $measurement.Stdout
-        Stderr = $measurement.Stderr
-    })
-}
 
-for ($warmup = 1; $warmup -le $Warmups; $warmup++) {
-    foreach ($optimization in $Optimizations) {
-        $measurement = Invoke-CapturedProcess `
-            -FileName $compiled[$optimization].OutputPath `
-            -Arguments $ProgramArguments `
-            -TimeoutSeconds $ProgramTimeoutSeconds
-        Assert-ProgramBehavior $optimization "warmup $warmup" $measurement $expectedBehavior
-    }
-}
-
-$samples = [Collections.Generic.List[object]]::new()
-for ($run = 1; $run -le $Runs; $run++) {
-    $offset = ($run - 1) % $Optimizations.Count
-    for ($position = 0; $position -lt $Optimizations.Count; $position++) {
-        $optimization = $Optimizations[($offset + $position) % $Optimizations.Count]
-        $measurement = Invoke-CapturedProcess `
-            -FileName $compiled[$optimization].OutputPath `
-            -Arguments $ProgramArguments `
-            -TimeoutSeconds $ProgramTimeoutSeconds
-        Assert-ProgramBehavior $optimization "sample $run" $measurement $expectedBehavior
-        $samples.Add([pscustomobject]@{
-            Run = $run
-            Position = $position + 1
-            Optimization = $optimization
-            WallSeconds = $measurement.WallSeconds
-            CpuSeconds = $measurement.CpuSeconds
-            PeakWorkingSetBytes = $measurement.PeakWorkingSet
-        })
+    for ($run = 1; $run -le $Runs; $run++) {
+        $offset = ($run - 1) % $Optimizations.Count
+        for ($position = 0; $position -lt $Optimizations.Count; $position++) {
+            $optimization = $Optimizations[($offset + $position) % $Optimizations.Count]
+            $measurement = Invoke-CapturedProcess `
+                -FileName $compiled[$optimization].OutputPath `
+                -Arguments $ProgramArguments `
+                -TimeoutSeconds $ProgramTimeoutSeconds
+            Assert-ProgramBehavior $optimization "sample $run" $measurement $expectedBehavior
+            $samples.Add([pscustomobject]@{
+                Run = $run
+                Position = $position + 1
+                Optimization = $optimization
+                WallSeconds = $measurement.WallSeconds
+                CpuSeconds = $measurement.CpuSeconds
+                PeakWorkingSetBytes = $measurement.PeakWorkingSet
+            })
+        }
     }
 }
 
@@ -264,6 +355,7 @@ $summary = [Collections.Generic.List[object]]::new()
 foreach ($optimization in $Optimizations) {
     $optimizationSamples = @($samples | Where-Object Optimization -eq $optimization | Sort-Object Run)
     $wallValues = [double[]]@($optimizationSamples | ForEach-Object WallSeconds)
+    $cpuValues = [double[]]@($optimizationSamples | ForEach-Object CpuSeconds | Where-Object { $null -ne $_ })
     $ratios = [Collections.Generic.List[double]]::new()
     for ($index = 0; $index -lt $optimizationSamples.Count; $index++) {
         $baselineSeconds = [double]$baselineSamples[$index].WallSeconds
@@ -276,6 +368,7 @@ foreach ($optimization in $Optimizations) {
         Optimization = $optimization
         Samples = $optimizationSamples.Count
         MedianWallSeconds = [Math]::Round((Get-Median $wallValues), 9)
+        MedianCpuSeconds = if ($cpuValues.Count -eq 0) { $null } else { [Math]::Round((Get-Median $cpuValues), 9) }
         MedianPairedSpeedupVsBaseline = [Math]::Round((Get-Median $ratios.ToArray()), 6)
         OutputBytes = $compiled[$optimization].OutputBytes
         CompileWallSeconds = $compiled[$optimization].CompileWallSeconds
@@ -299,6 +392,7 @@ $report = [pscustomobject]@{
     Warmups = $Warmups
     Runs = $Runs
     ProgramArguments = $ProgramArguments
+    ProgramRuntime = $runtimeMetadata
     BaselineOptimization = $baselineOptimization
     Compilations = @($compiled.Values)
     Verification = $verification
@@ -308,5 +402,5 @@ $report = [pscustomobject]@{
 
 $reportPath = Join-Path $runRoot "report.json"
 $report | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $reportPath -Encoding utf8NoBOM
-$summary | Format-Table Optimization, Samples, MedianWallSeconds, MedianPairedSpeedupVsBaseline, OutputBytes, CompileWallSeconds
+$summary | Format-Table Optimization, Samples, MedianWallSeconds, MedianCpuSeconds, MedianPairedSpeedupVsBaseline, OutputBytes, CompileWallSeconds
 Write-Output "Report: $reportPath"

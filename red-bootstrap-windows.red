@@ -8,9 +8,13 @@ compiler-root: system/options/path
 ; The core compiler does not load View, but it needs the datatype token to compile View targets.
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
-; This bootstrap emits Windows x64 PE files only. Keep cross-target formats and
-; the static object linker out of its compiled closure.
-#include %system/compiler-windows-bootstrap.red
+; Keep the normal Windows bootstrap on its small PE-only closure. The focused
+; Linux x64 wrapper selects the ELF compiler and static linker instead.
+#either config/show = 'X86-64-ELF-only [
+	#include %system/compiler.red
+][
+	#include %system/compiler-windows-bootstrap.red
+]
 
 #include %compiler/modules.red
 #include %compiler/version.red
@@ -186,11 +190,19 @@ compile-source: func [
 
 	job: compiler-options/to-job options
 	if error? :job [fail-command mold job]
-	unless all [
-		(compiler-system-job/job-get job 'OS) = 'Windows
-		(compiler-system-job/job-get job 'target) = 'X86-64
-		(compiler-system-job/job-get job 'format) = 'PE
-	][fail-command "this compiler supports only Windows-X86-64 PE targets"]
+	#either config/show = 'X86-64-ELF-only [
+		unless all [
+			(compiler-system-job/job-get job 'OS) = 'Linux
+			(compiler-system-job/job-get job 'target) = 'X86-64
+			(compiler-system-job/job-get job 'format) = 'ELF
+		][fail-command "this compiler supports only Linux-X86-64 ELF targets"]
+	][
+		unless all [
+			(compiler-system-job/job-get job 'OS) = 'Windows
+			(compiler-system-job/job-get job 'target) = 'X86-64
+			(compiler-system-job/job-get job 'format) = 'PE
+		][fail-command "this compiler supports only Windows-X86-64 PE targets"]
+	]
 	if none? compiler-system-job/job-get job 'dev-mode? [
 		compiler-system-job/job-set job 'dev-mode? false
 	]

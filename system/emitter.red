@@ -830,7 +830,7 @@ emitter: context [
 		]
 	]
 
-	type-align?: func [type [word! block!] /local base alias][
+	type-align?: func [type [word! block!] /local base alias kind][
 		if block? type [
 			if all [
 				'value = last :type
@@ -842,6 +842,7 @@ emitter: context [
 			base: type/1
 		]
 		if word? type [base: type]
+		if kind: system-dialect/compiler/integer-kind type [base: kind]
 		case [
 			find [int8! uint8! byte!] base [1]
 			find [int16! uint16!] base [2]

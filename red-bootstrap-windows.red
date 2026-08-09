@@ -31,8 +31,6 @@ if none? red/redbin [do bind load %compiler/redbin-emitter.red red]
 
 ; Keep collection enabled while the compiler builds its large intermediate graphs.
 recycle/on
-set-compiler-series-frame-max: routine [bytes [integer!]][memory/s-max: bytes]
-set-compiler-series-frame-max 16777216
 
 bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
@@ -103,8 +101,9 @@ build-libRedRT: func [
 	compiler-system-job/job-set job 'link? true
 	compiler-system-job/job-set job 'unicode? true
 	compiler-system-job/job-set job 'red-pass? true
-	compiler-system-job/job-set job 'GUI-engine compiler-system-job/job-get app-job 'GUI-engine
-	compiler-system-job/job-set job 'draw-engine compiler-system-job/job-get app-job 'draw-engine
+	compiler-system-job/job-set job 'sub-system 'Console
+	compiler-system-job/job-set job 'GUI-engine none
+	compiler-system-job/job-set job 'draw-engine none
 	compiler-system-job/job-set job 'debug? compiler-system-job/job-get app-job 'debug?
 	compiler-system-job/job-set job 'opt-level compiler-system-job/job-get app-job 'opt-level
 	compiler-system-job/job-set job 'redbin-compress? compiler-system-job/job-get app-job 'redbin-compress?
@@ -112,11 +111,13 @@ build-libRedRT: func [
 	compiler-system-job/job-set job 'compiler-build-date compiler-build-date
 	compiler-system-job/job-set job 'compiler-git none
 	compiler-system-job/normalize job
+	; Development applications import environment functions from this runtime.
+	; Keep their bodies so reflection has the same semantics as release builds.
+	compiler-system-job/job-set job 'red-store-bodies? true
 
-	; Keep the runtime module set identical to Stage0's libRedRT build.
-	source: either compiler-system-job/job-get job 'GUI-engine [
-		[[Needs: [View CSV JSON]]]
-	][[[Needs: [CSV JSON]]]]
+	; The x64 bootstrap compiler uses a headless core runtime. Optional modules
+	; belong to applications, not to the compiler's development runtime.
+	source: [[]]
 
 	print ["Compiling" join-file dir %libRedRT "..."]
 	set/any 'result try [compiler-frontend/compile source job]

@@ -4767,9 +4767,6 @@ red: context [
 				not find [true false yes no on off none] token
 			][
 				name: to word! token
-				if local-word? name [
-					return reduce [decorate-symbol/no-alias name]
-				]
 				obj: binding-of token
 				unless object? :obj [
 					if all [
@@ -4801,6 +4798,13 @@ red: context [
 							either parent-object? obj ['octx][ctx]
 							idx
 						]
+					]
+					; Object fields take precedence over an auto-local with the same
+					; spelling. `function` collects object-body set-words as locals in
+					; the enclosing function, but normal word emission resolves the
+					; active object context first.
+					local-word? name [
+						reduce [decorate-symbol/no-alias name]
 					]
 					'else [
 						either all [new: select-ssa name not find-function new new][

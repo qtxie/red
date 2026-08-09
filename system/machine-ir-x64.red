@@ -1014,6 +1014,22 @@ rs-o2-x64: context [
 					return fail-selection 'x64-indirect-base-type
 				]
 			]
+			opcode = 'address-indirect [
+				unless all [
+					result
+					(length? operands) = 2
+					operands/1/1 = 'vreg
+					operands/2/1 = 'imm
+					integer? operands/2/2
+				][return fail-selection 'x64-indirect-address-shape]
+				base-type: rs-o2-ir/vreg-type operands/1/2
+				unless all [
+					supported-wide-gpr? base-type
+					base-type/1 = 'ptr
+					supported-wide-gpr? type
+					type/1 = 'ptr
+				][return fail-selection 'x64-indirect-address-type]
+			]
 			opcode = 'store-indirect [
 				unless all [
 					none? result
@@ -1047,7 +1063,7 @@ rs-o2-x64: context [
 						function-needs-shift-count-register?: yes
 					]
 				]
-				if supported-integer-division? opcode [
+				if all [supported-i32? type supported-integer-division? opcode][
 					function-needs-division-registers?: yes
 				]
 				pointer-operation?: supported-pointer-arithmetic? instruction
@@ -1482,7 +1498,7 @@ rs-o2-x64: context [
 						preferred: operands/2/2
 					]
 					if all [
-						any [find [copy bitcast log-b] opcode supported-binary-operation? opcode]
+						any [find [copy bitcast log-b address-indirect] opcode supported-binary-operation? opcode]
 						not empty? operands
 						operands/1/1 = 'vreg
 					][preferred: operands/1/2]
@@ -1633,7 +1649,10 @@ rs-o2-x64: context [
 		unless function-needs-division-registers? [return yes]
 		foreach block pick rs-o2-ir/current rs-o2-ir/fn-blocks [
 			foreach instruction pick block rs-o2-ir/bb-instructions [
-				if supported-integer-division? pick instruction rs-o2-ir/ins-opcode [
+				if all [
+					supported-i32? pick instruction rs-o2-ir/ins-type
+					supported-integer-division? pick instruction rs-o2-ir/ins-opcode
+				][
 					position: (pick instruction rs-o2-ir/ins-id) * 2
 					foreach interval intervals [
 						fixed: pick interval interval-fixed
@@ -2182,6 +2201,10 @@ rs-o2-x64: context [
 			while [(length? local-words) < word-index][append local-words 0]
 		]
 		foreach id root-spills [
+			type: rs-o2-ir/vreg-type id
+			unless rs-o2-ir/valid-type? type [
+				return fail-selection 'x64-gc-spill-type
+			]
 			offset: spill-offset id
 			unless all [offset < 0 zero? offset // 8][
 				return fail-selection 'x64-gc-spill-alignment
@@ -2191,10 +2214,12 @@ rs-o2-x64: context [
 			required-local-slots: max required-local-slots local-index + 1
 			word-index: (to integer! (local-index / 31)) + 1
 			while [(length? local-words) < word-index][append local-words 0]
-			bit-index: local-index // 31
-			word: (pick local-words word-index) and 7FFFFFFFh
-			word: word or (shift/left 1 bit-index)
-			poke local-words word-index word
+			if type/6 = 'pointer [
+				bit-index: local-index // 31
+				word: (pick local-words word-index) and 7FFFFFFFh
+				word: word or (shift/left 1 bit-index)
+				poke local-words word-index word
+			]
 		]
 		normalize-bitmap-words arg-words
 		normalize-bitmap-words local-words
@@ -3301,7 +3326,11 @@ rs-o2-x64: context [
 			all [opcode = 'return index = 1]
 			all [supported-binary? opcode index = 2]
 			all [supported-shift? opcode index = 2]
-			all [supported-integer-division? opcode index = 2]
+			all [
+				supported-i32? pick instruction rs-o2-ir/ins-type
+				supported-integer-division? opcode
+				index = 2
+			]
 			all [rs-o2-ir/comparison-op? opcode index = 2]
 			all [rs-o2-ir/commutative-op? opcode index = 1]
 		]
@@ -4558,6 +4587,14 @@ rs-o2-x64: context [
 						][emit-gpr-pointer-load code type destination base offset]
 						unless emit-spilled-result code allocation result destination [return none]
 					]
+					opcode = 'address-indirect [
+						base: materialize-value code allocation operands/1/2
+						destination: result-register allocation result
+						unless all [base destination][return none]
+						offset: operands/2/2
+						unless emit-lea-base-displacement code destination base offset [return none]
+						unless emit-spilled-result code allocation result destination [return none]
+					]
 					opcode = 'store-indirect [
 						source-type: rs-o2-ir/vreg-type operands/3/2
 						if all [
@@ -4616,7 +4653,7 @@ rs-o2-x64: context [
 						]
 						unless emit-spilled-result code allocation result destination [return none]
 					]
-					supported-integer-division? opcode [
+					all [supported-i32? type supported-integer-division? opcode][
 						destination: result-register allocation result
 						unless destination [return none]
 						if (allocation-register allocation operands/1/2) = 'ecx [

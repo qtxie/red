@@ -464,7 +464,7 @@ _function: context [
 			spec/head: 0
 		]
 		NORMALIZE_SERIES_HEAD_ALT(spec)
-		NORMALIZE_SERIES_HEAD_ALT(body)
+		if not null? body [NORMALIZE_SERIES_HEAD_ALT(body)]
 
 		node: alloc-unset-cells 5						;-- allocate this one first
 		f-ctx: either zero? ctx [_context/make spec yes no CONTEXT_FUNCTION][ctx] ;-- avoids a GC pass after this node is created

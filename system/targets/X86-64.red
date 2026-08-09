@@ -4893,15 +4893,30 @@ target: 'X86-64
 		if verbose >= 3 [print [">>>emitting ATOMIC-LOAD" mold order]]
 		emit #{8B00}								;-- MOV eax, [rax]
 	]
+	emit-atomic-scratch-save: does [
+		if win64? [
+			emit #{56}								;-- PUSH rsi
+			emit #{4883EC08}						;-- SUB rsp, 8 (preserve call alignment)
+		]
+	]
+	emit-atomic-scratch-restore: does [
+		if win64? [
+			emit #{4883C408}						;-- ADD rsp, 8
+			emit #{5E}								;-- POP rsi
+		]
+	]
 	emit-atomic-store: func [value order [word!]][
 		if verbose >= 3 [print [">>>emitting ATOMIC-STORE" mold value mold order]]
+		emit-atomic-scratch-save
 		emit #{4889C6}								;-- MOV rsi, rax
 		emit-load value
 		emit #{8906}								;-- MOV [rsi], eax
 		emit-atomic-fence
+		emit-atomic-scratch-restore
 	]
 	emit-atomic-math: func [op [word!] right-op old? [logic!] ret? [logic!] order [word!]][
 		if verbose >= 3 [print [">>>emitting ATOMIC-MATH-OP" mold op mold right-op mold ret? mold order]]
+		emit-atomic-scratch-save
 		emit #{4889C6}								;-- MOV rsi, rax
 		emit-load right-op
 		either any [old? ret?][
@@ -4945,9 +4960,11 @@ target: 'X86-64
 				and  [#{F02106}]					;-- LOCK AND [rsi], eax
 			]
 		]
+		emit-atomic-scratch-restore
 	]
 	emit-atomic-cas: func [check value ret? [logic!] order [word!]][
 		if verbose >= 3 [print [">>>emitting ATOMIC-CAS" mold check mold value ret? mold order]]
+		emit-atomic-scratch-save
 		emit #{4889C6}								;-- MOV rsi, rax
 		emit-load value
 		emit-move-path-alt							;-- load new value in edx
@@ -4957,6 +4974,7 @@ target: 'X86-64
 			emit #{0F94C0}							;-- SETE al
 			emit #{0FB6C0}							;-- MOVZX eax, al
 		]
+		emit-atomic-scratch-restore
 	]
 	emit-atomic-fence: does [
 		if verbose >= 3 [print ">>>emitting ATOMIC-FENCE"]

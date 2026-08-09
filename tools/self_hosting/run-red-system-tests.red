@@ -49,7 +49,7 @@ output-name: func [source [file!] output-type [word!] /local name suffix][
 compile-source: func [
 	source [file!]
 	output-type [word!]
-	/local output target command compiler-output status attempt log-file full-cmd
+	/local output target command status log-file full-cmd
 ][
 	output: output-name source output-type
 	target: join-file output-dir output
@@ -60,31 +60,19 @@ compile-source: func [
 		" -o " quoted target " " quoted source
 	]
 	print ["compile" source "->" target]
-	; Avoid call/wait/output: capturing Stage1 stdout via pipes can AV during
-	; high-warning compiles (e.g. fixed-int-test). Redirect to a log file instead.
-	; Retry because Stage1 still has occasional native-gen AVs.
-	attempt: 0
 	log-file: append copy target %.compile.log
-	until [
-		attempt: attempt + 1
-		if exists? target [delete target]
-		if exists? log-file [delete log-file]
-		; The compiler uses the Windows GUI subsystem, so CMD otherwise returns
-		; before the process exits. START /WAIT keeps the status and output file
-		; checks synchronized with the actual compiler process.
-		full-cmd: rejoin [{start "" /wait } command " > " quoted log-file " 2>&1"]
-		status: call/shell/wait full-cmd
-		any [
-			all [status = 0 exists? target]
-			attempt >= 5
-		]
-	]
+	if exists? target [delete target]
+	if exists? log-file [delete log-file]
+	; The compiler uses the Windows GUI subsystem, so CMD otherwise returns
+	; before the process exits. START /WAIT keeps the status and output file
+	; checks synchronized with the actual compiler process.
+	full-cmd: rejoin [{start "" /wait } command " > " quoted log-file " 2>&1"]
+	status: call/shell/wait full-cmd
 	unless all [status = 0 exists? target][
 		if exists? log-file [print read log-file]
-		print ["compiler failed for" source "status:" status "attempts:" attempt]
+		print ["compiler failed for" source "status:" status]
 		quit/return 1
 	]
-	if attempt > 1 [print ["compiled after" attempt "attempts:" source]]
 	target
 ]
 

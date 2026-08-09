@@ -118,6 +118,7 @@ system-dialect: context [
 		protected-values: make hash! 40					;-- protected scalar constants: [name value ...]
 		protect-mode:	 none							;-- name of the variable being declared as protected
 		aliased-types: 	 make hash!  10					;-- list of aliased type definitions
+		managed-handle-types: make hash! 4				;-- nominal integer aliases scanned as GC handles
 		keywords-list:	 make block! 20
 
 		resolve-alias?:  yes							;-- YES: instruct the type resolution function to reduce aliases
@@ -474,7 +475,8 @@ system-dialect: context [
 				with-alias-resolution off [type: resolve-expr-type value]
 			]
 
-			either alias: find-aliased/position type/1 [
+			alias: find-aliased/position type/1
+			either all [alias not integer-type? alias/2][
 				get-alias-id alias
 			][
 				type: any [resolve-aliased/silent type [integer!]]
@@ -856,44 +858,51 @@ system-dialect: context [
 			to logic! find any-float! type/1
 		]
 
-		canonical-type: func [type [block!]][
+		integer-kind: func [type [block! word! integer! none!] /local alias][
+			if any [none? type integer? type][return none]
+			if block? type [type: type/1]
+			if none? type [return none]
+			if find integer-types type [return type]
+			alias: find-aliased type
+			all [alias find integer-types alias/1 alias/1]
+		]
+
+		canonical-type: func [type [block!] /local kind][
+			kind: integer-kind type
+			if all [kind kind <> type/1][type: reduce [kind]]
 			if type/1 = 'int32! [return copy [integer!]]
 			type
 		]
 
 		integer-type?: func [type [block! word! integer! none!]][
+			to logic! integer-kind type
+		]
+
+		managed-handle-type?: func [type [block! word! integer! none!]][
 			if any [none? type integer? type][return false]
 			if block? type [type: type/1]
-			to logic! find integer-types type
+			to logic! all [word? type find managed-handle-types type]
 		]
 
 		int32-type?: func [type [block! word! integer! none!]][
-			if any [none? type integer? type][return false]
-			if block? type [type: type/1]
-			to logic! find [integer! int32!] type
+			to logic! find [integer! int32!] integer-kind type
 		]
 
 		integer-width?: func [type [block! word! integer! none!]][
-			if any [none? type integer? type][return none]
-			if block? type [type: type/1]
 			select [
 				byte! 1 uint8! 1 int8! 1
 				uint16! 2 int16! 2
 				integer! 4 int32! 4 uint32! 4
 				int64! 8 uint64! 8
-			] type
+			] integer-kind type
 		]
 
 		signed-integer?: func [type [block! word! integer! none!]][
-			if any [none? type integer? type][return false]
-			if block? type [type: type/1]
-			to logic! find signed-integers type
+			to logic! find signed-integers integer-kind type
 		]
 
 		unsigned-integer?: func [type [block! word! integer! none!]][
-			if any [none? type integer? type][return false]
-			if block? type [type: type/1]
-			to logic! find unsigned-integers type
+			to logic! find unsigned-integers integer-kind type
 		]
 
 		same-type?: func [type1 [block!] type2 [block!]][
@@ -930,9 +939,7 @@ system-dialect: context [
 		]
 
 		int64?: func [type [block! word! integer! none!]][
-			if any [none? type integer? type][return false]
-			if block? type [type: type/1]
-			to logic! find int64-types type
+			to logic! find int64-types integer-kind type
 		]
 
 		greater-decimal?: func [a [string!] b [string!]][
@@ -1280,7 +1287,7 @@ system-dialect: context [
 			]
 		]
 
-		get-type: func [value /local type name][
+		get-type: func [value /local type name alias][
 			switch/default type?/word value [
 				word! 	 [resolve-type value]
 				integer! [[integer!]]
@@ -1335,10 +1342,17 @@ system-dialect: context [
 						2 = length? value
 						word? value/1
 						word? value/2
-						value/1 = value/2
 						base-type? value/1
+						any [
+							value/1 = value/2
+							all [
+								integer-type? value/1
+								alias: find-aliased value/2
+								integer-type? alias
+							]
+						]
 					][
-						reduce [value/1]
+						reduce [either value/1 = value/2 [value/1][value/2]]
 					][switch/default value/1 [
 						struct!  [reduce pick [[value/2][value/1 value/2]] word? value/2]
 						union!   [reduce pick [[value/2][value/1 normalize-union-spec value/2]] word? value/2]
@@ -2270,14 +2284,17 @@ system-dialect: context [
 			]
 		]
 
-		preprocess-types: func [spec [block!] /local p type t][
+		preprocess-types: func [spec [block!] /local p type t aliased][
 			parse spec [
 				some [
 					p: word! type: block! (
 						t: type/1
 						case [
 							enum-type? t/1   [type/1/1: 'integer!]
-							not base-type? t [type/1: copy find-aliased t/1]
+							not base-type? t [
+								aliased: find-aliased t/1
+								unless integer-type? aliased [type/1: copy aliased]
+							]
 						]
 					)
 				]
@@ -3124,14 +3141,25 @@ system-dialect: context [
 			]
 		]
 
-		comp-alias: has [name pos][
+		comp-alias: has [name source-name pos scalar? definition managed? base-name][
 			unless set-word? pc/-1 [
 				throw-error "assignment expected for ALIAS"
 			]
-			unless find [struct! union! function!] pc/2 [
-				throw-error "ALIAS only allowed for struct!, union! and function!"
+			scalar?: integer-type? pc/2
+			unless any [scalar? find [struct! union! function!] pc/2][
+				throw-error "ALIAS only allowed for integer, struct!, union! and function! types"
 			]
-			name: to word! pc/-1
+			source-name: to word! pc/-1
+			name: source-name
+			managed?: any [
+				source-name = 'node-handle!
+				all [
+					scalar?
+					word? pc/2
+					base-name: any [find-aliased/prefix pc/2 pc/2]
+					find managed-handle-types base-name
+				]
+			]
 			store-ns-symbol name
 			if rs-ns-path [add-ns-symbol pc/-1]
 
@@ -3152,23 +3180,27 @@ system-dialect: context [
 				pc: back pc
 				throw-error "a base type name cannot be defined as an alias name"
 			]
-			if pc/2 = 'union! [
+			if all [not scalar? pc/2 = 'union!][
 				pc/3: normalize-union-spec pc/3
 			]
-			repend aliased-types [name reduce [pc/2 pc/3]]
-			switch pc/2 [
-				struct! [
-					unless catch [parse pos: pc/3 struct-syntax][
-						throw-error ["invalid struct syntax:" mold pos]
+			definition: either scalar? [reduce [integer-kind pc/2]][reduce [pc/2 pc/3]]
+			repend aliased-types [name definition]
+			if all [managed? not find managed-handle-types name][append managed-handle-types name]
+			unless scalar? [
+				switch pc/2 [
+					struct! [
+						unless catch [parse pos: pc/3 struct-syntax][
+							throw-error ["invalid struct syntax:" mold pos]
+						]
+					]
+					union! []
+					function! [
+						expand-func-specs pc/3
+						check-specs 'pointer pc/3
 					]
 				]
-				union! []
-				function! [
-					expand-func-specs pc/3
-					check-specs 'pointer pc/3
-				]
 			]
-			pc: skip pc 3
+			pc: skip pc either scalar? [2][3]
 			none
 		]
 
@@ -5183,10 +5215,11 @@ system-dialect: context [
 
 		o2-ir-type-from-type: func [
 			source-type [block! none!]
-			/local type kind width ir-kind scale gc-kind
+			/local type source-kind kind width ir-kind scale gc-kind
 		][
 			if any [none? source-type empty? source-type none? source-type/1][return none]
 			if struct-by-value? source-type [return none]
+			source-kind: source-type/1
 			type: resolve-aliased source-type
 			if struct-by-value? type [return none]
 			kind: type/1
@@ -5220,7 +5253,8 @@ system-dialect: context [
 					width: integer-width? type
 					ir-kind: select [1 i8 2 i16 4 i32 8 i64] width
 					either ir-kind [
-						rs-o2-ir/make-type ir-kind width 'gpr signed-integer? type 0 'none
+						gc-kind: either managed-handle-type? source-kind ['handle]['none]
+						rs-o2-ir/make-type ir-kind width 'gpr signed-integer? type 0 gc-kind
 					][none]
 				]
 				kind = 'logic! [rs-o2-ir/make-type 'logic 4 'gpr no 0 'none]
@@ -5228,8 +5262,11 @@ system-dialect: context [
 			]
 		]
 
-	o2-ir-type-of: func [value /local type][
+	o2-ir-type-of: func [value /local type saved-resolve-alias?][
+		saved-resolve-alias?: resolve-alias?
+		resolve-alias?: no
 		set/any 'type try [get-type :value]
+		resolve-alias?: saved-resolve-alias?
 		if error? :type [
 			rs-o2-ir/mark-unsupported 'type-resolution
 			return none
@@ -5323,20 +5360,20 @@ system-dialect: context [
 				result/data: o2-ir-copy-expression :value/data
 				result
 			]
+			any-path? :value [copy :value]
 			any-block? :value [
 				result: copy :value
 				forall result [
 					if any [
 						object? :result/1
 						any-block? :result/1
-						path? :result/1
+						any-path? :result/1
 					][
 						result/1: o2-ir-copy-expression :result/1
 					]
 				]
 				head result
 			]
-			path? :value [copy :value]
 			true [:value]
 		]
 	]
@@ -5468,50 +5505,70 @@ system-dialect: context [
 		]
 	]
 
-	o2-ir-lower-simple-path-assignment: func [
-		expression [any-block!]
-		/local path root source-type aggregate-type member-type member-ir-type offset rhs base
+	o2-ir-simple-local-member: func [
+		path [path! set-path!]
+		/local root source-type aggregate-type field-type member-type member-ir-type offset inline?
 	][
-		path: expression/1
 		unless all [
-			(length? expression) = 2
 			(length? path) = 2
 			word? path/1
 			word? path/2
-		][return rs-o2-ir/emit-opaque 'path-assignment none]
+		][return none]
 
 		root: to word! path/1
-		unless local-variable? root [
-			return rs-o2-ir/emit-opaque 'path-assignment none
-		]
-		set/any 'source-type try [get-type root]
-		if any [error? :source-type none? :source-type][
-			return rs-o2-ir/emit-opaque 'path-assignment none
-		]
+		unless local-variable? root [return none]
+		source-type: get-type root
+		unless source-type [return none]
 		aggregate-type: resolve-aliased source-type
 		unless all [
 			block? aggregate-type
 			find [struct! union!] aggregate-type/1
 			block? aggregate-type/2
-		][return rs-o2-ir/emit-opaque 'path-assignment none]
+		][return none]
 
-		set/any 'member-type try [
-			resolve-struct-member-type aggregate-type/2 path/2
+		field-type: select aggregate-type/2 path/2
+		member-type: resolve-struct-member-type aggregate-type/2 path/2
+		unless member-type [return none]
+		member-ir-type: o2-ir-type-from-type member-type
+		unless member-ir-type [return none]
+		offset: emitter/member-offset? aggregate-type/2 path/2
+		unless integer? offset [return none]
+		inline?: all [field-type struct-by-value? field-type]
+		reduce [root member-ir-type offset inline?]
+	]
+
+	o2-ir-lower-simple-path-access: func [
+		path [path!]
+		/local member base
+	][
+		member: o2-ir-simple-local-member path
+		unless member [return rs-o2-ir/emit-opaque 'path-access none]
+		base: o2-ir-lower-expression member/1
+		unless base [return rs-o2-ir/emit-opaque 'path-access member/2]
+		if member/4 [
+			return rs-o2-ir/emit-address-indirect base member/3 member/2
 		]
-		if any [error? :member-type none? :member-type][
+		rs-o2-ir/emit-load-indirect base member/3 member/2
+	]
+
+	o2-ir-lower-simple-path-assignment: func [
+		expression [any-block!]
+		/local path member rhs base
+	][
+		unless (length? expression) = 2 [
 			return rs-o2-ir/emit-opaque 'path-assignment none
 		]
-		member-ir-type: o2-ir-type-from-type member-type
-		unless member-ir-type [return rs-o2-ir/emit-opaque 'path-assignment none]
-		offset: emitter/member-offset? aggregate-type/2 path/2
-		unless integer? offset [return rs-o2-ir/emit-opaque 'path-assignment none]
+		path: expression/1
+		member: o2-ir-simple-local-member path
+		unless member [return rs-o2-ir/emit-opaque 'path-assignment none]
+		if member/4 [return rs-o2-ir/emit-opaque 'inline-member-assignment none]
 
 		; The direct compiler materializes the RHS before resolving the store path.
 		rhs: o2-ir-lower-expression expression/2
-		unless rhs [return rs-o2-ir/emit-opaque 'assignment-without-value member-ir-type]
-		base: o2-ir-lower-expression root
-		unless base [return rs-o2-ir/emit-opaque 'path-assignment member-ir-type]
-		rs-o2-ir/emit-store-indirect base offset rhs member-ir-type
+		unless rhs [return rs-o2-ir/emit-opaque 'assignment-without-value member/2]
+		base: o2-ir-lower-expression member/1
+		unless base [return rs-o2-ir/emit-opaque 'path-assignment member/2]
+		rs-o2-ir/emit-store-indirect base member/3 rhs member/2
 	]
 
 	o2-ir-lower-expression: func [
@@ -5548,6 +5605,8 @@ system-dialect: context [
 					rs-o2-ir/emit-load-global name ir-type
 				]
 			]
+			path? :value [o2-ir-lower-simple-path-access value]
+			any-path? :value [rs-o2-ir/emit-opaque 'path-access none]
 			any-block? :value [
 				if empty? value [return rs-o2-ir/emit-opaque 'empty-expression none]
 				case [
@@ -5653,7 +5712,6 @@ system-dialect: context [
 					][rs-o2-ir/emit-opaque 'type-cast ir-type]
 				][rs-o2-ir/emit-opaque 'unsupported-action ir-type]
 			]
-			any-path? :value [rs-o2-ir/emit-opaque 'path-access none]
 			any [issue? :value get-word? :value] [
 				rs-o2-ir/emit-opaque 'literal-or-reference none
 			]
@@ -5952,6 +6010,7 @@ system-dialect: context [
 		remove/part find emitter/symbols 'system 4
 		clear compiler/definitions
 		clear compiler/aliased-types
+		clear compiler/managed-handle-types
 		emitter/libc-init?: no
 	]
 
@@ -6040,6 +6099,7 @@ system-dialect: context [
 		clear compiler/definitions
 		clear compiler/enumerations
 		clear compiler/aliased-types
+		clear compiler/managed-handle-types
 		clear compiler/user-functions
 		clear compiler/expr-call-stack
 		clear compiler/locals-init

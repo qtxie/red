@@ -136,6 +136,7 @@ rs-o2-ir: context [
 			logic? type/4
 			integer? type/5
 			word? type/6
+			find [none pointer handle] type/6
 		]
 	]
 
@@ -516,6 +517,18 @@ rs-o2-ir: context [
 			type
 			'read
 			'universal
+			none
+			no
+				none
+	]
+
+	emit-address-indirect: func [base [integer!] offset [integer!] type [block!]][
+		append-op
+			'address-indirect
+			reduce [vreg-operand base immediate-operand offset]
+			type
+			'pure
+			'none
 			none
 			no
 			none

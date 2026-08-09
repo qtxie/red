@@ -30,6 +30,7 @@ i32: rs-o2-ir/make-type 'i32 4 'gpr yes 0 'none
 f32: rs-o2-ir/make-type 'f32 4 'xmm yes 0 'none
 f64: rs-o2-ir/make-type 'f64 8 'xmm yes 0 'none
 i64: rs-o2-ir/make-type 'i64 8 'gpr yes 0 'none
+handle-type: rs-o2-ir/make-type 'i32 4 'gpr yes 0 'handle
 ptr-type: rs-o2-ir/make-type 'ptr 8 'gpr no 4 'pointer
 byte-ptr-type: rs-o2-ir/make-type 'ptr 8 'gpr no 1 'pointer
 cell-ptr-type: rs-o2-ir/make-type 'ptr 8 'gpr no 16 'pointer
@@ -106,6 +107,18 @@ unless win64-indirect-float-selected/1 = #{F20F114908F20F10C1C3} [
 	fail rejoin ["Win64 indirect float store bytes are wrong: " mold win64-indirect-float-selected/1]
 ]
 
+unless rs-o2-ir/begin-function 'win64-indirect-address 'win64 cell-ptr-type %machine-ir-smoke.red [
+	fail "Win64 indirect address function did not start"
+]
+rs-o2-ir/add-stack-object 'address 'argument byte-ptr-type 8 8 'pointer
+win64-address-base: rs-o2-ir/emit-load-local 'address byte-ptr-type
+win64-address-result: rs-o2-ir/emit-address-indirect win64-address-base 12 cell-ptr-type
+rs-o2-ir/set-direct-body-range 0 1
+win64-indirect-address-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+unless win64-indirect-address-selected/1 = #{488D410CC3} [
+	fail rejoin ["Win64 indirect address bytes are wrong: " mold win64-indirect-address-selected/1]
+]
+
 unless rs-o2-ir/begin-function 'smoke 'win64 i32 %machine-ir-smoke.red [
 	fail "function did not start"
 ]
@@ -123,10 +136,10 @@ rs-o2-ir/set-direct-body-range 0 1
 selected: rs-o2-ir/finish-function direct
 
 unless selected/1 = #{B803000000C3} [fail "selected bytes are wrong"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 4 [fail "function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 4 [fail "verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 4 [fail "eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 4 [fail "selection count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 5 [fail "function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 5 [fail "verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 5 [fail "eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 5 [fail "selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 0 [fail "unexpected fallback"]
 unless loaded = 4 [fail "unexpected vreg numbering"]
 
@@ -1820,6 +1833,45 @@ unless rs-o2-x64/call-spilled-values = reduce [gc-live-pointer] [
 ]
 
 clear emitter/bits-buf
+foreach bitmap-word [1 0 0 0] [
+	append emitter/bits-buf int-to-bin/to-bin32 bitmap-word
+]
+unless rs-o2-ir/begin-function 'gc-handle-across-call 'win64 i32 %machine-ir-smoke.red [
+	fail "gc-handle-across-call function did not start"
+]
+rs-o2-ir/set-frame-bitmap-offset 0
+rs-o2-ir/add-stack-object 'handle-value 'argument handle-type 4 4 'handle
+rs-o2-ir/set-stack-offset 'handle-value -40
+gc-live-handle: rs-o2-ir/emit-load-local 'handle-value handle-type
+gc-handle-inner-result: rs-o2-ir/emit-call 'gc-handle-clobber-callee copy [] i32
+gc-handle-outer-result: rs-o2-ir/emit-call
+	'gc-handle-consumer-callee
+	reduce [gc-live-handle gc-handle-inner-result]
+	i32
+rs-o2-ir/set-direct-body-range 15 25
+gc-handle-clobber-relocs: reduce [1666]
+gc-handle-consumer-relocs: reduce [1671]
+put emitter/symbols 'gc-handle-clobber-callee reduce ['native none gc-handle-clobber-relocs]
+put emitter/symbols 'gc-handle-consumer-callee reduce ['native none gc-handle-consumer-relocs]
+gc-handle-selected: rs-o2-ir/finish-function reduce [
+	#{554889E56A006A0068000000006A00E800000000E800000000C9C3}
+	reduce [gc-handle-clobber-relocs gc-handle-consumer-relocs]
+	1650
+]
+unless (copy/part at gc-handle-selected/1 10 4) = #{04000000} [
+	fail rejoin ["handle GC bitmap prologue offset was not patched: " mold gc-handle-selected/1]
+]
+unless (copy skip emitter/bits-buf 16) = #{01000000010000000000000000000000} [
+	fail rejoin ["extended handle GC bitmap is wrong: " mold emitter/bits-buf]
+]
+unless rs-o2-x64/gc-bitmap-list = [1 1 0 - 0] [
+	fail rejoin ["planned handle GC bitmap is wrong: " mold rs-o2-x64/gc-bitmap-list]
+]
+unless rs-o2-x64/call-spilled-values = reduce [gc-live-handle] [
+	fail "managed handle was not spilled across the call"
+]
+
+clear emitter/bits-buf
 foreach bitmap-word [1 0 1 0] [
 	append emitter/bits-buf int-to-bin/to-bin32 bitmap-word
 ]
@@ -2007,6 +2059,38 @@ unless remainder-selected/1 = #{448B45D84489C0B967666666F7E989D0C1F8024489C2C1FA
 	fail rejoin ["signed immediate remainder bytes are wrong: " mold remainder-selected/1]
 ]
 
+unless rs-o2-ir/begin-function 'float-member-after-call 'win64 f64 %machine-ir-smoke.red [
+	fail "float member after call function did not start"
+]
+rs-o2-ir/add-stack-object 'item 'argument cell-ptr-type 8 8 'pointer
+rs-o2-ir/set-stack-offset 'item -40
+rs-o2-ir/add-stack-object 'divisor 'local f64 8 8 'none
+rs-o2-ir/set-stack-offset 'divisor -48
+float-member-call-item: rs-o2-ir/emit-load-local 'item cell-ptr-type
+float-member-call-result: rs-o2-ir/emit-call 'float-member-callee reduce [float-member-call-item] f64
+rs-o2-ir/emit-store-local 'divisor float-member-call-result f64
+float-member-base: rs-o2-ir/emit-load-local 'item cell-ptr-type
+float-member-value: rs-o2-ir/emit-load-indirect float-member-base 8 f64
+float-member-divisor: rs-o2-ir/emit-load-local 'divisor f64
+float-member-result: rs-o2-ir/emit-binary
+	rs-o2-ir/divide-op
+	float-member-value
+	float-member-divisor
+	f64
+	'may-trap
+rs-o2-ir/emit-store-indirect float-member-base 8 float-member-result f64
+float-member-return-base: rs-o2-ir/emit-load-local 'item cell-ptr-type
+float-member-return: rs-o2-ir/emit-load-indirect float-member-return-base 8 f64
+rs-o2-ir/set-direct-body-range 0 5
+float-member-relocs: reduce [2101]
+put emitter/symbols 'float-member-callee reduce ['native none float-member-relocs]
+float-member-selected: rs-o2-ir/finish-function reduce [
+	#{E800000000} reduce [float-member-relocs] 2100
+]
+unless float-member-selected/1 = #{488B4DD8E800000000F20F1145D0488B4DD8F20F104908F20F5EC8F20F114908488B4DD8F20F104108} [
+	fail rejoin ["float member after call bytes are wrong: " mold float-member-selected/1]
+]
+
 unless rs-o2-ir/begin-function 'fallback 'win64 none %machine-ir-smoke.red [
 	fail "fallback function did not start"
 ]
@@ -2014,10 +2098,10 @@ rs-o2-ir/emit-opaque 'unsupported-smoke none
 fallback-direct: reduce [#{CC} copy []]
 fallback-selected: rs-o2-ir/finish-function fallback-direct
 unless fallback-selected/1 = #{CC} [fail "fallback bytes changed"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 80 [fail "final function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 80 [fail "final verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 79 [fail "final eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 76 [fail "final selection count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 83 [fail "final function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 83 [fail "final verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 82 [fail "final eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 79 [fail "final selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 4 [fail "final fallback count"]
 
 rs-o2-ir/end-session
@@ -2047,5 +2131,7 @@ unless find dump-text "switch %1, 0, b2, 1, b3" [fail "dense switch dump missing
 unless find dump-text "resolve-node red>resolve-node" [fail "resolve-node dump missing"]
 unless find dump-text "resolve-series red>resolve-series" [fail "resolve-series dump missing"]
 unless find dump-text "i2 call-rel32 red>resolve-series" [fail "resolver slow-call relocation dump missing"]
+unless find dump-text "gc=handle frame=-40" [fail "managed handle stack type missing"]
+unless find dump-text "roots=[[vreg 1 frame -48 handle]]" [fail "managed handle safepoint missing"]
 unless find dump-text "log-b %1" [fail "log-b intrinsic dump missing"]
 print "machine-ir-smoke-ok"

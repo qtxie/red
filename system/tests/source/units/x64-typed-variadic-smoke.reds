@@ -48,16 +48,20 @@ Red/System [
 		score
 	]
 
-	score: check-typed [
-		as int8! -2
-		as uint8! 250
-		as int16! -300
-		as uint16! 60000
-		as int32! -123456
-		as uint32! 4294967295
-		as int64! -3
-		as uint64! 4294967295
+	run-typed: func [return: [integer!]][
+		check-typed [
+			as int8! -2
+			as uint8! 250
+			as int16! -300
+			as uint16! 60000
+			as int32! -123456
+			as uint32! 4294967295
+			as int64! -3
+			as uint64! 4294967295
+		]
 	]
+
+	score: run-typed
 
 	either score = 9 [
 		sys-exit 0

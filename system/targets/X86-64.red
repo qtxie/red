@@ -4215,6 +4215,9 @@ target: 'X86-64
 		/local classes class descriptors int-count float-count index base-type descriptor
 	][										;-- number of 64-bit stack slots
 		call-top-arg-rax?: no
+		; ABI slots can outnumber source arguments. The call state tracks both,
+		; so a following hidden-result or scalar argument must see this logical one.
+		call-arg-index: call-arg-index + 1
 		either sysv [
 			classes: sysv-aggregate-classes type
 			either classes/1 = 'memory [
@@ -4264,6 +4267,7 @@ target: 'X86-64
 	]
 	emit-push-struct-ref: func [slots [integer!] /local offset][
 		call-top-arg-rax?: no
+		call-arg-index: call-arg-index + 1
 		if call-struct-temp-slots < slots [
 			system-dialect/compiler/throw-error "x86-64 struct argument temporary stack space was not reserved"
 		]

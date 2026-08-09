@@ -3,6 +3,7 @@ Red [
 ]
 
 #include %../../../../compiler/int-to-bin.red
+#include %../../../../compiler/ieee-754.red
 emitter: context [
 	symbols: make hash! 8
 	bits-buf: make binary! 32
@@ -27,6 +28,8 @@ dump-path: clean-path %../../../../build/machine-ir-smoke.ir
 unless rs-o2-ir/start-session 2 'X86-64 dump-path 0 no [fail "session did not start"]
 
 i32: rs-o2-ir/make-type 'i32 4 'gpr yes 0 'none
+i8: rs-o2-ir/make-type 'i8 1 'gpr no 0 'none
+i16: rs-o2-ir/make-type 'i16 2 'gpr no 0 'none
 f32: rs-o2-ir/make-type 'f32 4 'xmm yes 0 'none
 f64: rs-o2-ir/make-type 'f64 8 'xmm yes 0 'none
 i64: rs-o2-ir/make-type 'i64 8 'gpr yes 0 'none
@@ -55,6 +58,61 @@ unless extended-xmm-bytes = #{F2450F10C1F2440F1055F8F2450F58C1} [
 	fail rejoin ["extended XMM REX bytes are wrong: " mold extended-xmm-bytes]
 ]
 
+float-constant-bytes: make binary! 32
+unless rs-o2-x64/emit-float-constant float-constant-bytes 'xmm9 1.5 f32 [
+	fail "f32 constant encoding failed"
+]
+unless rs-o2-x64/emit-float-constant float-constant-bytes 'xmm10 -0.0 f64 [
+	fail "f64 constant encoding failed"
+]
+unless float-constant-bytes = #{41BB0000C03F66450F6ECB49BB0000000000000080664D0F6ED3} [
+	fail rejoin ["float constant bytes are wrong: " mold float-constant-bytes]
+]
+
+integer-constant-bits: make binary! 24
+rs-o2-x64/emit-mov-immediate integer-constant-bits 'r10d #{FFFFFFFF}
+rs-o2-x64/emit-mov-immediate-wide integer-constant-bits 'r9d #{FFFFFFFF00000000}
+unless integer-constant-bits = #{41BAFFFFFFFF49B9FFFFFFFF00000000} [
+	fail rejoin ["integer constant bit encodings are wrong: " mold integer-constant-bits]
+]
+
+float-conversion-bytes: make binary! 32
+unless rs-o2-x64/emit-scalar-conversion float-conversion-bytes f64 'xmm9 i32 'eax [
+	fail "i32 to f64 conversion encoding failed"
+]
+unless rs-o2-x64/emit-scalar-conversion float-conversion-bytes i32 'r11d f64 'xmm10 [
+	fail "f64 to i32 conversion encoding failed"
+]
+unless rs-o2-x64/emit-scalar-conversion float-conversion-bytes f64 'xmm10 f32 'xmm9 [
+	fail "f32 to f64 conversion encoding failed"
+]
+unless rs-o2-x64/emit-scalar-conversion float-conversion-bytes f32 'xmm9 f64 'xmm10 [
+	fail "f64 to f32 conversion encoding failed"
+]
+unless float-conversion-bytes = #{F2440F2AC8F2450F2CDAF3450F5AD1F2450F5ACA} [
+	fail rejoin ["float conversion bytes are wrong: " mold float-conversion-bytes]
+]
+
+unless rs-o2-ir/begin-function 'win64-f64-constant 'win64 f64 %machine-ir-smoke.red [
+	fail "Win64 f64 constant function did not start"
+]
+win64-f64-constant: rs-o2-ir/emit-constant -0.0 f64
+rs-o2-ir/set-direct-body-range 0 1
+win64-f64-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+unless win64-f64-selected/1 = #{49BB000000000000008066490F6EC3C3} [
+	fail rejoin ["Win64 f64 constant selection is wrong: " mold win64-f64-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'sysv-f32-constant 'sysv f32 %machine-ir-smoke.red [
+	fail "SysV f32 constant function did not start"
+]
+sysv-f32-constant: rs-o2-ir/emit-constant 1.5 f32
+rs-o2-ir/set-direct-body-range 0 1
+sysv-f32-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+unless sysv-f32-selected/1 = #{41BB0000C03F66410F6EC3C3} [
+	fail rejoin ["SysV f32 constant selection is wrong: " mold sysv-f32-selected/1]
+]
+
 indirect-addressing-bytes: make binary! 64
 rs-o2-x64/emit-gpr-pointer-load indirect-addressing-bytes i32 'eax 'ecx 0
 rs-o2-x64/emit-gpr-pointer-store indirect-addressing-bytes i64 'r12d 120 'r9d
@@ -64,6 +122,28 @@ rs-o2-x64/emit-xmm-scalar-pointer-load indirect-addressing-bytes f64 'xmm9 'r13d
 rs-o2-x64/emit-xmm-scalar-pointer-store indirect-addressing-bytes f32 'r12d -4 'xmm10
 unless indirect-addressing-bytes = #{8B014D894C2478458B55004D8B9C2400040000F2450F104D08F3450F115424FC} [
 	fail rejoin ["indirect addressing bytes are wrong: " mold indirect-addressing-bytes]
+]
+
+aggregate-copy-bytes: make binary! 64
+rs-o2-x64/emit-aggregate-slot-load aggregate-copy-bytes 1 'r11d 'eax 0
+rs-o2-x64/emit-aggregate-slot-load aggregate-copy-bytes 2 'r11d 'eax 1
+rs-o2-x64/emit-aggregate-slot-load aggregate-copy-bytes 4 'r11d 'eax 3
+rs-o2-x64/emit-aggregate-slot-load aggregate-copy-bytes 8 'r11d 'eax 7
+rs-o2-x64/emit-aggregate-rsp-store aggregate-copy-bytes 1 0 'r11d
+rs-o2-x64/emit-aggregate-rsp-store aggregate-copy-bytes 2 1 'r11d
+rs-o2-x64/emit-aggregate-rsp-store aggregate-copy-bytes 4 3 'r11d
+rs-o2-x64/emit-aggregate-rsp-store aggregate-copy-bytes 8 7 'r11d
+rs-o2-x64/emit-gpr-pointer-store aggregate-copy-bytes i8 'eax 0 'esi
+rs-o2-x64/emit-gpr-pointer-store aggregate-copy-bytes i16 'r12d 2 'r9d
+unless aggregate-copy-bytes = #{440FB618440FB75801448B58034C8B580744881C246644895C240144895C24034C895C24074088306645894C2402} [
+	fail rejoin ["aggregate copy bytes are wrong: " mold aggregate-copy-bytes]
+]
+
+aggregate-composite-slot-bytes: make binary! 64
+rs-o2-x64/emit-aggregate-slot-load aggregate-composite-slot-bytes 3 'eax 'ecx 0
+rs-o2-x64/emit-aggregate-slot-load aggregate-composite-slot-bytes 7 'eax 'ecx 0
+unless aggregate-composite-slot-bytes = #{440FB759010FB70149C1E3084C09D8448B59038B0149C1E3184C09D8} [
+	fail rejoin ["aggregate composite slot bytes are wrong: " mold aggregate-composite-slot-bytes]
 ]
 
 unless rs-o2-ir/begin-function 'win64-indirect-store 'win64 i32 %machine-ir-smoke.red [
@@ -136,10 +216,10 @@ rs-o2-ir/set-direct-body-range 0 1
 selected: rs-o2-ir/finish-function direct
 
 unless selected/1 = #{B803000000C3} [fail "selected bytes are wrong"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 5 [fail "function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 5 [fail "verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 5 [fail "eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 5 [fail "selection count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 7 [fail "function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 7 [fail "verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 7 [fail "eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 7 [fail "selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 0 [fail "unexpected fallback"]
 unless loaded = 4 [fail "unexpected vreg numbering"]
 
@@ -999,6 +1079,26 @@ unless smoke-debug-lines/2 = reduce [102 10 1 108 20 1] [
 	]
 ]
 
+unless rs-o2-ir/begin-function 'immediate-left-memory 'win64 i32 %machine-ir-smoke.red [
+	fail "immediate plus memory function did not start"
+]
+foreach [name offset] [a -8 b -16 c -24 d -32 e -40][
+	rs-o2-ir/add-stack-object name 'argument i32 4 4 'none
+	rs-o2-ir/set-stack-offset name offset
+]
+immediate-left-value: rs-o2-ir/emit-constant 118 i32
+immediate-left-memory: rs-o2-ir/emit-load-local 'e i32
+immediate-left-result: rs-o2-ir/emit-binary
+	rs-o2-ir/add-op immediate-left-value immediate-left-memory i32 'pure
+rs-o2-ir/set-direct-body-range 0 1
+immediate-left-selected: rs-o2-ir/finish-function reduce [#{90} copy []]
+unless find immediate-left-selected/1 #{B8760000000345D8} [
+	fail rejoin [
+		"immediate plus frame-memory used an uninitialized register: "
+		mold immediate-left-selected/1
+	]
+]
+
 unless rs-o2-ir/begin-function 'float-memory-operand 'win64 f64 %machine-ir-smoke.red [
 	fail "float memory operand function did not start"
 ]
@@ -1496,11 +1596,16 @@ put emitter/symbols 'second-live-callee reduce ['native none second-live-relocs]
 two-call-selected: rs-o2-ir/finish-function reduce [
 	#{E800000000E800000000} reduce [first-live-relocs second-live-relocs] 1200
 ]
-unless rs-o2-x64/call-spilled-values = reduce [first-live-result] [
-	fail rejoin ["first call result was not planned as a spill: " mold rs-o2-x64/call-spilled-values]
+unless empty? rs-o2-x64/call-spilled-values [
+	fail rejoin ["first call result was unnecessarily spilled: " mold rs-o2-x64/call-spilled-values]
 ]
-unless find two-call-selected/1 #{8945D8} [fail "first call result was not stored after the call"]
-unless find two-call-selected/1 #{448B5DD8} [fail "first call result was not reloaded after the second call"]
+unless empty? rs-o2-x64/call-split-values [
+	fail rejoin ["integer call result was unnecessarily split: " mold rs-o2-x64/call-split-values]
+]
+unless rs-o2-x64/used-callee-save-registers = [ebx] [
+	fail rejoin ["first call result did not use EBX: " mold rs-o2-x64/used-callee-save-registers]
+]
+unless find two-call-selected/1 #{89C3} [fail "first call result was not moved from EAX to EBX"]
 unless all [first-live-relocs/1 > 1201 second-live-relocs/1 > 1206] [
 	fail "two-call relocations were not moved"
 ]
@@ -1541,9 +1646,9 @@ two-address-selected: rs-o2-ir/finish-function two-address-direct
 if two-address-selected/1 = two-address-direct/1 [
 	fail "two-address spill legalization retained direct code"
 ]
-unless find two-address-selected/1 #{4129C34489D8} [
+unless find two-address-selected/1 #{29C389D8} [
 	fail rejoin [
-		"two-address spill scratch sequence is missing: "
+		"two-address callee-save sequence is missing: "
 		mold two-address-selected/1
 	]
 ]
@@ -1601,15 +1706,24 @@ register-argument-selected: rs-o2-ir/finish-function reduce [
 	reduce [register-clobber-relocs register-consumer-relocs]
 	1400
 ]
-unless rs-o2-x64/call-spilled-values = reduce [live-register-float] [
+unless empty? rs-o2-x64/call-spilled-values [
 	fail rejoin [
 		"register arguments used unnecessary call spills: "
 		mold rs-o2-x64/call-spilled-values
 	]
 ]
-unless find register-argument-selected/1 #{89D9F20F104DD0E8} [
+unless rs-o2-x64/call-split-values = reduce [live-register-float] [
 	fail rejoin [
-		"register arguments were not moved from EBX/spill into ECX/XMM1: "
+		"live XMM argument did not split around the call: "
+		mold rs-o2-x64/call-split-values
+	]
+]
+unless all [
+	find register-argument-selected/1 #{F20F1145D0E8}
+	find register-argument-selected/1 #{F20F1045D089D9F20F10C8E8}
+][
+	fail rejoin [
+		"register arguments did not use a split XMM spill and ABI copies: "
 		mold register-argument-selected/1
 	]
 ]
@@ -1828,8 +1942,11 @@ unless rs-o2-x64/gc-bitmap-list = [1 1 1 - 1] [
 	fail rejoin ["planned GC bitmap is wrong: " mold rs-o2-x64/gc-bitmap-list]
 ]
 unless rs-o2-x64/gc-bitmap-offset = 4 [fail "GC bitmap word offset is wrong"]
-unless rs-o2-x64/call-spilled-values = reduce [gc-live-pointer] [
-	fail "managed pointer was not spilled across the call"
+unless all [
+	empty? rs-o2-x64/call-spilled-values
+	rs-o2-x64/call-split-values = reduce [gc-live-pointer]
+][
+	fail "managed pointer was not split across the call"
 ]
 
 clear emitter/bits-buf
@@ -1867,8 +1984,11 @@ unless (copy skip emitter/bits-buf 16) = #{01000000010000000000000000000000} [
 unless rs-o2-x64/gc-bitmap-list = [1 1 0 - 0] [
 	fail rejoin ["planned handle GC bitmap is wrong: " mold rs-o2-x64/gc-bitmap-list]
 ]
-unless rs-o2-x64/call-spilled-values = reduce [gc-live-handle] [
-	fail "managed handle was not spilled across the call"
+unless all [
+	empty? rs-o2-x64/call-spilled-values
+	rs-o2-x64/call-split-values = reduce [gc-live-handle]
+][
+	fail "managed handle was not split across the call"
 ]
 
 clear emitter/bits-buf
@@ -1900,8 +2020,14 @@ gc-resolver-selected: rs-o2-ir/finish-function reduce [
 	reduce [gc-resolver-registry-relocs gc-resolver-call-relocs]
 	1700
 ]
-unless find rs-o2-x64/call-spilled-values gc-resolver-live-pointer [
-	fail "managed pointer was not spilled across resolve-series"
+unless all [
+	empty? rs-o2-x64/call-spilled-values
+	find rs-o2-x64/call-split-values gc-resolver-live-pointer
+][
+	fail rejoin [
+		"managed pointer was not split across resolve-series: "
+		mold reduce [rs-o2-x64/call-spilled-values rs-o2-x64/call-split-values]
+	]
 ]
 unless all [
 	gc-resolver-selected/1 <> #{554889E56A006A0068000000006A0000000000000000000000C9C3}
@@ -2098,10 +2224,186 @@ rs-o2-ir/emit-opaque 'unsupported-smoke none
 fallback-direct: reduce [#{CC} copy []]
 fallback-selected: rs-o2-ir/finish-function fallback-direct
 unless fallback-selected/1 = #{CC} [fail "fallback bytes changed"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 83 [fail "final function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 83 [fail "final verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 82 [fail "final eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 79 [fail "final selection count"]
+agg16: rs-o2-ir/make-type 'agg 8 'gpr no 16 'none
+agg24: rs-o2-ir/make-type 'agg 8 'gpr no 24 'none
+
+unless rs-o2-ir/begin-function 'aggregate-copy-op 'win64 agg16 %machine-ir-smoke.red [
+	fail "aggregate copy function did not start"
+]
+rs-o2-ir/add-stack-object 'aggregate-copy-destination 'local agg16 16 8 'none
+rs-o2-ir/add-stack-object 'aggregate-copy-source 'local agg16 16 8 'none
+rs-o2-ir/set-stack-offset 'aggregate-copy-destination -16
+rs-o2-ir/set-stack-offset 'aggregate-copy-source -32
+aggregate-copy-destination: rs-o2-ir/emit-address-local 'aggregate-copy-destination agg16
+aggregate-copy-source: rs-o2-ir/emit-address-local 'aggregate-copy-source agg16
+aggregate-copy-result: rs-o2-ir/emit-copy-aggregate
+	aggregate-copy-destination aggregate-copy-source agg16
+rs-o2-ir/set-direct-body-range 0 1
+aggregate-copy-op-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+unless aggregate-copy-op-selected/1 = #{488D45F0488D4DE04C8B194C89184C8B59084C895808} [
+	fail rejoin ["aggregate copy operation bytes are wrong: " mold aggregate-copy-op-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'aggregate-register-result 'win64 agg16 %machine-ir-smoke.red [
+	fail "aggregate register-result function did not start"
+]
+aggregate-register-result: rs-o2-ir/emit-call/aggregate-result
+	'aggregate-register-callee copy [] agg16 'register 16 none
+rs-o2-ir/set-direct-body-range 0 5
+aggregate-register-relocs: reduce [2201]
+put emitter/symbols 'aggregate-register-callee reduce ['native none aggregate-register-relocs]
+aggregate-register-selected: rs-o2-ir/finish-function reduce [
+	#{E800000000} reduce [aggregate-register-relocs] 2200
+]
+unless aggregate-register-selected/1 = #{4883EC30E80000000048894424204889542428488D442420} [
+	fail rejoin ["aggregate register result bytes are wrong: " mold aggregate-register-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'aggregate-hidden-result 'win64 agg24 %machine-ir-smoke.red [
+	fail "aggregate hidden-result function did not start"
+]
+aggregate-hidden-temp: rs-o2-ir/emit-aggregate-temp 24
+aggregate-hidden-pointer: rs-o2-ir/emit-bitcast aggregate-hidden-temp ptr-type
+aggregate-hidden-result: rs-o2-ir/emit-call/aggregate-result
+	'aggregate-hidden-callee reduce [aggregate-hidden-pointer] agg24
+	'hidden 24 aggregate-hidden-temp
+rs-o2-ir/set-direct-body-range 0 5
+aggregate-hidden-relocs: reduce [2301]
+put emitter/symbols 'aggregate-hidden-callee reduce ['native none aggregate-hidden-relocs]
+aggregate-hidden-selected: rs-o2-ir/finish-function reduce [
+	#{E800000000} reduce [aggregate-hidden-relocs] 2300
+]
+unless aggregate-hidden-selected/1 = #{4883EC40488D4424204889C1E800000000488D442420} [
+	fail rejoin ["aggregate hidden result bytes are wrong: " mold aggregate-hidden-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'sysv-aggregate-register-argument 'sysv i32 %machine-ir-smoke.red [
+	fail "SysV aggregate register-argument function did not start"
+]
+rs-o2-ir/add-stack-object 'sysv-register-aggregate 'local agg16 16 8 'none
+rs-o2-ir/set-stack-offset 'sysv-register-aggregate -16
+sysv-register-aggregate: rs-o2-ir/emit-address-local 'sysv-register-aggregate agg16
+sysv-register-integer: rs-o2-ir/emit-load-aggregate-slot/abi-class
+	sysv-register-aggregate 0 8 'integer
+sysv-register-sse: rs-o2-ir/emit-load-aggregate-slot/abi-class
+	sysv-register-aggregate 8 8 'sse
+sysv-register-groups: make block! 1
+append/only sysv-register-groups reduce [
+	'start 1 'count 2 'mode 'register-or-stack
+	'classes [integer sse] 'size 16
+]
+sysv-register-result: rs-o2-ir/emit-call/argument-groups
+	'sysv-register-aggregate-callee
+	reduce [sysv-register-integer sysv-register-sse]
+	i32
+	sysv-register-groups
+rs-o2-ir/set-direct-body-range 0 5
+sysv-register-relocs: reduce [2401]
+put emitter/symbols 'sysv-register-aggregate-callee reduce ['import none sysv-register-relocs]
+sysv-register-selected: rs-o2-ir/finish-function reduce [
+	#{E800000000} reduce [sysv-register-relocs] 2400
+]
+unless (last rs-o2-x64/call-argument-locations) = [edi xmm0] [
+	fail rejoin [
+		"SysV mixed aggregate register locations are wrong: "
+		mold last rs-o2-x64/call-argument-locations
+	]
+]
+if sysv-register-selected/1 = #{E800000000} [
+	fail "SysV mixed aggregate register call fell back"
+]
+
+unless rs-o2-ir/begin-function 'sysv-aggregate-register-rollback 'sysv i32 %machine-ir-smoke.red [
+	fail "SysV aggregate register rollback function did not start"
+]
+sysv-rollback-values: make block! 8
+repeat sysv-rollback-index 5 [
+	append sysv-rollback-values rs-o2-ir/emit-constant sysv-rollback-index i32
+]
+rs-o2-ir/add-stack-object 'sysv-rollback-aggregate 'local agg16 16 8 'none
+rs-o2-ir/set-stack-offset 'sysv-rollback-aggregate -16
+sysv-rollback-aggregate: rs-o2-ir/emit-address-local 'sysv-rollback-aggregate agg16
+append sysv-rollback-values rs-o2-ir/emit-load-aggregate-slot/abi-class
+	sysv-rollback-aggregate 0 8 'integer
+append sysv-rollback-values rs-o2-ir/emit-load-aggregate-slot/abi-class
+	sysv-rollback-aggregate 8 8 'integer
+append sysv-rollback-values rs-o2-ir/emit-constant 6 i32
+sysv-rollback-groups: make block! 1
+append/only sysv-rollback-groups reduce [
+	'start 6 'count 2 'mode 'register-or-stack
+	'classes [integer integer] 'size 16
+]
+sysv-rollback-result: rs-o2-ir/emit-call/argument-groups
+	'sysv-rollback-callee sysv-rollback-values i32 sysv-rollback-groups
+rs-o2-ir/set-direct-body-range 0 5
+sysv-rollback-relocs: reduce [2501]
+put emitter/symbols 'sysv-rollback-callee reduce ['import none sysv-rollback-relocs]
+sysv-rollback-selected: rs-o2-ir/finish-function reduce [
+	#{E800000000} reduce [sysv-rollback-relocs] 2500
+]
+unless (last rs-o2-x64/call-argument-locations) = [edi esi edx ecx r8d 0 8 r9d] [
+	fail rejoin [
+		"SysV aggregate register rollback locations are wrong: "
+		mold last rs-o2-x64/call-argument-locations
+	]
+]
+unless rs-o2-x64/outgoing-frame-bytes = 16 [
+	fail rejoin ["SysV aggregate rollback frame is wrong: " rs-o2-x64/outgoing-frame-bytes]
+]
+if sysv-rollback-selected/1 = #{E800000000} [
+	fail "SysV aggregate register rollback call fell back"
+]
+
+unless rs-o2-ir/begin-function 'sysv-mixed-aggregate-result 'sysv agg16 %machine-ir-smoke.red [
+	fail "SysV mixed aggregate-result function did not start"
+]
+sysv-mixed-aggregate-result: rs-o2-ir/emit-call/aggregate-result/result-classes
+	'sysv-mixed-aggregate-result-callee copy [] agg16
+	'sysv-register 16 none [sse integer]
+rs-o2-ir/set-direct-body-range 0 5
+sysv-mixed-result-relocs: reduce [2601]
+put emitter/symbols 'sysv-mixed-aggregate-result-callee reduce ['import none sysv-mixed-result-relocs]
+sysv-mixed-result-selected: rs-o2-ir/finish-function reduce [
+	#{E800000000} reduce [sysv-mixed-result-relocs] 2600
+]
+unless sysv-mixed-result-selected/1 = #{4883E4F04883EC10E800000000F20F1104244889442408488D0424} [
+	fail rejoin ["SysV mixed aggregate result bytes are wrong: " mold sysv-mixed-result-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'win64-typed-list 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 typed-list function did not start"
+]
+typed-i8-value: rs-o2-ir/emit-constant -2 i8
+typed-i64-value: rs-o2-ir/emit-constant #{FFFFFFFF00000000} i64
+typed-f64-value: rs-o2-ir/emit-constant 1.5 f64
+typed-values: reduce [typed-i8-value typed-i64-value typed-f64-value]
+typed-list: rs-o2-ir/emit-typed-list typed-values [13 11 5]
+typed-list-instruction: rs-o2-ir/find-vreg-definition typed-list
+typed-count: rs-o2-ir/emit-constant 3 i32
+typed-result: rs-o2-ir/emit-call 'typed-list-callee reduce [typed-count typed-list] i32
+rs-o2-ir/emit-keepalive typed-values
+rs-o2-ir/set-direct-body-range 0 5
+typed-relocs: reduce [2701]
+put emitter/symbols 'typed-list-callee reduce ['native none typed-relocs]
+typed-selected: rs-o2-ir/finish-function reduce [
+	#{E800000000} reduce [typed-relocs] 2700
+]
+unless rs-o2-x64/outgoing-frame-bytes = 112 [
+	fail rejoin ["Win64 typed-list frame is wrong: " rs-o2-x64/outgoing-frame-bytes]
+]
+unless 32 = rs-o2-ir/table-value rs-o2-x64/aggregate-temp-offsets
+	pick typed-list-instruction rs-o2-ir/ins-id
+[
+	fail "Win64 typed-list temporary offset is wrong"
+]
+unless find typed-selected/1 #{E800000000} [
+	fail rejoin ["Win64 typed-list call is missing: " mold typed-selected/1]
+]
+
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 93 [fail "final function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 93 [fail "final verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 92 [fail "final eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 89 [fail "final selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 4 [fail "final fallback count"]
 
 rs-o2-ir/end-session

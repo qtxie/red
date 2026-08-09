@@ -481,12 +481,20 @@ rs-o2-ir: context [
 		append-op 'bitcast reduce [vreg-operand value] type 'pure 'none none no none
 	]
 
+	emit-convert: func [value [integer!] type [block!]][
+		append-op 'convert reduce [vreg-operand value] type 'pure 'none none no none
+	]
+
 	emit-log-b: func [value [integer!] type [block!]][
 		append-op 'log-b reduce [vreg-operand value] type 'pure 'none none yes none
 	]
 
 	emit-load-local: func [name [word!] type [block!]][
 		append-op 'load-local reduce [local-operand name] type 'read name none no none
+	]
+
+	emit-address-local: func [name [word!] type [block!]][
+		append-op 'address-local reduce [local-operand name] type 'pure 'none none no none
 	]
 
 	emit-store-local: func [name [word!] value [integer!] type [block!]][
@@ -534,6 +542,106 @@ rs-o2-ir: context [
 			none
 	]
 
+	emit-load-aggregate-slot: func [
+		base [integer!]
+		offset [integer!]
+		width [integer!]
+		/abi-class class [word!]
+		/local type value-class
+	][
+		value-class: either abi-class [class]['integer]
+		type: either value-class = 'sse [
+			make-type either width <= 4 ['f32]['f64]
+				either width <= 4 [4][8]
+				'xmm yes 0 'none
+		][make-type 'i64 8 'gpr no 0 'none]
+		append-op
+			'load-aggregate-slot
+			reduce [vreg-operand base immediate-operand offset]
+			type
+			'read
+			'universal
+			none
+			none? find [1 2 4 8] width
+			reduce ['width width 'class value-class]
+	]
+
+	emit-pack-aggregate: func [
+		base [integer!]
+		size [integer!]
+		/local type
+	][
+		type: make-type 'ptr 8 'gpr no 1 'none
+		append-op
+			'pack-aggregate
+			reduce [vreg-operand base]
+			type
+			'write
+			'universal
+			none
+			no
+			reduce ['size size]
+	]
+
+	emit-aggregate-temp: func [size [integer!] /local type][
+		type: make-type 'agg 8 'gpr no size 'none
+		append-op
+			'aggregate-temp
+			copy []
+			type
+			'pure
+			'none
+			none
+			no
+			reduce ['size size]
+	]
+
+	emit-typed-list: func [
+		values [block!]
+		type-ids [block!]
+		/local operands value type size
+	][
+		operands: make block! length? values
+		foreach value values [append/only operands vreg-operand value]
+		size: max 8 ((length? values) * 24)
+		type: make-type 'ptr 8 'gpr no 24 'none
+		append-op
+			'typed-list
+			operands
+			type
+			'write
+			'universal
+			none
+			no
+			reduce [
+				'count length? values
+				'size size
+				'type-ids copy type-ids
+			]
+	]
+
+	emit-keepalive: func [values [block!] /local operands value][
+		operands: make block! length? values
+		foreach value values [append/only operands vreg-operand value]
+		append-op 'keepalive operands none 'pure 'none none no none
+	]
+
+	emit-copy-aggregate: func [
+		destination [integer!]
+		source [integer!]
+		type [block!]
+	][
+		append-op
+			'copy-aggregate
+			reduce [vreg-operand destination vreg-operand source]
+			type
+			'write
+			'universal
+			none
+			no
+			reduce ['size type/5]
+	]
+
 	emit-store-indirect: func [
 		base [integer!]
 		offset [integer!]
@@ -569,12 +677,28 @@ rs-o2-ir: context [
 		args [block!]
 		type [block! none!]
 		/variadic
+		/aggregate-result mode [word!] size [integer!] temp [integer! none!]
+		/argument-groups groups [block!]
+		/result-classes classes [block! none!]
 		/local operands value metadata
 	][
 		operands: make block! (length? args) + 1
 		append/only operands symbol-operand name
 		foreach value args [append/only operands vreg-operand value]
-		metadata: reduce ['callee name 'variadic to logic! variadic]
+		metadata: reduce [
+			'callee name
+			'variadic to logic! variadic
+			'aggregate-result to logic! aggregate-result
+			'aggregate-groups either argument-groups [copy/deep groups][copy []]
+			'aggregate-classes either block? classes [copy/deep classes][none]
+		]
+		if aggregate-result [
+			repend metadata [
+				'aggregate-mode mode
+				'aggregate-size size
+				'aggregate-temp temp
+			]
+		]
 		value: append-op 'call operands type 'call 'universal none yes metadata
 		add-relocation pick current fn-instruction-count 'call-rel32 name 0
 		value
@@ -1964,6 +2088,7 @@ rs-o2-ir: context [
 		kind: type/1
 		case [
 			kind = 'ptr [rejoin ["ptr" type/2 "x" type/5 "/" type/6]]
+			kind = 'agg [rejoin ["aggref" type/5]]
 			find [i8 i16 i32 i64] kind [form kind]
 			find [f32 f64] kind [form kind]
 			kind = 'logic ["logic"]

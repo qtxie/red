@@ -5215,13 +5215,20 @@ system-dialect: context [
 
 		o2-ir-type-from-type: func [
 			source-type [block! none!]
-			/local type source-kind kind width ir-kind scale gc-kind
+			/local type source-kind kind width ir-kind scale gc-kind aggregate-size
 		][
 			if any [none? source-type empty? source-type none? source-type/1][return none]
-			if struct-by-value? source-type [return none]
 			source-kind: source-type/1
 			type: resolve-aliased source-type
-			if struct-by-value? type [return none]
+			if any [struct-by-value? source-type struct-by-value? type][
+				aggregate-size: case [
+					type/1 = 'struct! [emitter/struct-size?/direct type/2]
+					type/1 = 'union! [emitter/union-size? type/2]
+					true [none]
+				]
+				unless integer? aggregate-size [return none]
+				return rs-o2-ir/make-type 'agg 8 'gpr no aggregate-size 'none
+			]
 			kind: type/1
 			case [
 				any-float? type [
@@ -5288,9 +5295,46 @@ system-dialect: context [
 				all [source-type/1 = 'i32 target-type/1 = 'i32]
 				all [source-type/1 = 'i64 target-type/1 = 'i64]
 				all [source-type/1 = 'logic target-type/1 = 'i32]
+				all [source-type/1 = 'agg target-type/1 = 'ptr]
 			]
 		]
 	]
+
+	o2-ir-keep-bitcast-compatible?: func [
+		source-type [block! none!]
+		target-type [block! none!]
+	][
+		all [
+			source-type
+			target-type
+			source-type/2 = 4
+			target-type/2 = 4
+			any [
+				all [source-type/1 = 'i32 target-type/1 = 'f32]
+				all [source-type/1 = 'f32 target-type/1 = 'i32]
+			]
+		]
+	]
+
+	o2-ir-convert-compatible?: func [
+		source-type [block! none!]
+		target-type [block! none!]
+	][
+		all [
+			source-type
+			target-type
+			any [
+				all [source-type/1 = 'i32 find [f32 f64] target-type/1]
+				all [find [f32 f64] source-type/1 target-type/1 = 'i32]
+				all [source-type/1 = 'f32 target-type/1 = 'f64]
+				all [source-type/1 = 'f64 target-type/1 = 'f32]
+			]
+		]
+	]
+
+		o2-ir-storage-size: func [ir-type [block!]][
+			either ir-type/1 = 'agg [ir-type/5][ir-type/2]
+		]
 
 		o2-ir-add-stack-objects: func [spec [block!] /local cursor item kind ir-type size align][
 		cursor: spec
@@ -5308,7 +5352,7 @@ system-dialect: context [
 				all [word? item not tail? next cursor block? cursor/2] [
 					ir-type: o2-ir-type-from-type cursor/2
 					if ir-type [
-						size: max 1 ir-type/2
+					size: max 1 o2-ir-storage-size ir-type
 						align: min size emitter/target/stack-width
 						rs-o2-ir/add-stack-object item kind ir-type size align ir-type/6
 					]
@@ -5328,7 +5372,7 @@ system-dialect: context [
 			kind: 'argument
 			if all [marker: find locals /local find next marker name][kind: 'local]
 			offset: select/skip emitter/stack name 2
-			size: max 1 ir-type/2
+			size: max 1 o2-ir-storage-size ir-type
 			align: min size emitter/target/stack-width
 			rs-o2-ir/ensure-stack-object name kind ir-type size align ir-type/6 offset
 		]
@@ -5428,29 +5472,164 @@ system-dialect: context [
 		]
 	]
 
+	o2-ir-call-formal-types: func [
+		spec [block!]
+		/local cursor types item
+	][
+		cursor: spec/4
+		types: make block! spec/1
+		while [all [not tail? cursor (length? types) < spec/1]][
+			item: cursor/1
+			case [
+				set-word? item [break]
+				refinement? item [break]
+				all [word? item not tail? next cursor block? cursor/2][
+					append/only types cursor/2
+					cursor: skip cursor 2
+				]
+				true [cursor: next cursor]
+			]
+		]
+		types
+	]
+
+	o2-ir-append-call-argument: func [
+		args [block!]
+		groups [block!]
+		value [integer!]
+		formal-type [block! none!]
+		formal-source-type [block! none!]
+		spec [block!]
+		/local type slots index width chunks classes abi-classes mode start group
+	][
+		type: rs-o2-ir/vreg-type value
+		unless all [formal-type formal-type/1 = 'agg][
+			append args value
+			return no
+		]
+		unless all [type type/1 = 'agg formal-type/5 = type/5][
+			rs-o2-ir/mark-unsupported 'aggregate-argument-type
+			append args value
+			return yes
+		]
+		case [
+			spec/2 = 'native [
+				slots: to integer! round/ceiling (formal-type/5 / emitter/target/stack-width)
+				chunks: make block! slots
+				repeat index slots [
+					width: min emitter/target/stack-width
+						(formal-type/5 - ((index - 1) * emitter/target/stack-width))
+					append chunks rs-o2-ir/emit-load-aggregate-slot
+						value
+						((index - 1) * emitter/target/stack-width)
+						width
+				]
+				append args chunks
+			]
+			all [spec/2 = 'import job/OS <> 'Windows][
+				classes: all [formal-source-type emitter/target/sysv-aggregate-classes formal-source-type]
+				unless block? classes [
+					rs-o2-ir/mark-unsupported 'aggregate-call-abi
+					append args value
+					return yes
+				]
+				slots: to integer! round/ceiling (formal-type/5 / emitter/target/stack-width)
+				abi-classes: make block! slots
+				mode: either all [not empty? classes classes/1 = 'memory] ['stack]['register-or-stack]
+				either mode = 'stack [
+					loop slots [append abi-classes 'integer]
+				][append abi-classes copy classes]
+				start: (length? args) + 1
+				chunks: make block! slots
+				repeat index slots [
+					width: min emitter/target/stack-width
+						(formal-type/5 - ((index - 1) * emitter/target/stack-width))
+					append chunks rs-o2-ir/emit-load-aggregate-slot/abi-class
+						value
+						((index - 1) * emitter/target/stack-width)
+						width
+						pick abi-classes index
+				]
+				append args chunks
+				group: reduce [
+					'start start
+					'count slots
+					'mode mode
+					'classes copy/deep abi-classes
+					'size formal-type/5
+				]
+				append/only groups group
+			]
+			all [spec/2 = 'import job/OS = 'Windows][
+				either find [1 2 4 8] formal-type/5 [
+					append args rs-o2-ir/emit-load-aggregate-slot
+						value 0 formal-type/5
+				][
+					append args rs-o2-ir/emit-pack-aggregate value formal-type/5
+				]
+			]
+			true [
+				rs-o2-ir/mark-unsupported 'aggregate-call-abi
+				append args value
+			]
+		]
+		yes
+	]
+
+	o2-ir-aggregate-return-mode: func [
+		spec [block!]
+		type [block!]
+		/local slots classes return-type
+	][
+		slots: to integer! round/ceiling (type/5 / emitter/target/stack-width)
+		case [
+			spec/2 = 'native [reduce [either slots > 2 ['hidden]['register] none]]
+			all [spec/2 = 'import job/OS = 'Windows][
+				reduce [
+					either hidden-struct-return? spec slots type/5 ['hidden]['register]
+					none
+				]
+			]
+			all [spec/2 = 'import job/OS <> 'Windows][
+				return-type: select spec/4 return-def
+				classes: all [return-type emitter/target/sysv-aggregate-classes return-type]
+				either all [block? classes not empty? classes classes/1 <> 'memory][
+					reduce ['sysv-register copy/deep classes]
+				][reduce ['hidden none]]
+			]
+			true [none]
+		]
+	]
+
 	o2-ir-call-selectable?: func [
 		spec [block!]
 		args [block!]
 		return-type [block! none!]
 		/variadic
-		/local value type
+		/logical-count source-count [integer!]
+		/local value type argument-count
 	][
+		argument-count: either logical-count [source-count][length? args]
 		unless all [
 			either variadic [
 				all [
 					find [native import] spec/2
 					spec/3 = 'cdecl
 					find-attribute spec/4 'variadic
-					(length? args) >= spec/1
+					argument-count >= spec/1
 				]
 			][
 				all [
-					spec/2 = 'native
-					(length? args) = spec/1
+					find [native import] spec/2
+					argument-count = spec/1
 					not find-attribute spec/4 'variadic
 				]
 			]
-			any [none? return-type o2-ir-call-scalar-type? return-type]
+			any [
+				none? return-type
+				o2-ir-call-scalar-type? return-type
+				all [block? return-type return-type/1 = 'agg]
+			]
 		][return no]
 		foreach value args [
 			type: rs-o2-ir/vreg-type value
@@ -5508,6 +5687,7 @@ system-dialect: context [
 	o2-ir-simple-local-member: func [
 		path [path! set-path!]
 		/local root source-type aggregate-type field-type member-type member-ir-type offset inline?
+			tag-type tag-ir-type tag-id
 	][
 		unless all [
 			(length? path) = 2
@@ -5534,7 +5714,14 @@ system-dialect: context [
 		offset: emitter/member-offset? aggregate-type/2 path/2
 		unless integer? offset [return none]
 		inline?: all [field-type struct-by-value? field-type]
-		reduce [root member-ir-type offset inline?]
+		tag-ir-type: tag-id: none
+		if tagged-union? aggregate-type/2 [
+			tag-type: union-tag-type? aggregate-type/2
+			tag-ir-type: o2-ir-type-from-type tag-type
+			tag-id: union-variant-id? aggregate-type/2 path/2
+			unless all [tag-ir-type integer? tag-id] [return none]
+		]
+		reduce [root member-ir-type offset inline? tag-ir-type tag-id]
 	]
 
 	o2-ir-lower-simple-path-access: func [
@@ -5553,7 +5740,7 @@ system-dialect: context [
 
 	o2-ir-lower-simple-path-assignment: func [
 		expression [any-block!]
-		/local path member rhs base
+		/local path member rhs base tag-value
 	][
 		unless (length? expression) = 2 [
 			return rs-o2-ir/emit-opaque 'path-assignment none
@@ -5568,13 +5755,63 @@ system-dialect: context [
 		unless rhs [return rs-o2-ir/emit-opaque 'assignment-without-value member/2]
 		base: o2-ir-lower-expression member/1
 		unless base [return rs-o2-ir/emit-opaque 'path-assignment member/2]
+		if member/5 [
+			tag-value: rs-o2-ir/emit-constant member/6 member/5
+			unless tag-value [return rs-o2-ir/emit-opaque 'tagged-union-assignment member/2]
+			rs-o2-ir/emit-store-indirect base 0 tag-value member/5
+		]
 		rs-o2-ir/emit-store-indirect base member/3 rhs member/2
+	]
+
+	o2-ir-lower-typed-arguments: func [
+		encoded [block!]
+		/local count values type-ids position type-id padding result count-value pointer-type
+	][
+		unless zero? ((length? encoded) // 3) [
+			rs-o2-ir/mark-unsupported 'typed-argument-shape
+			return none
+		]
+		count: to integer! ((length? encoded) / 3)
+		values: make block! count
+		type-ids: make block! count
+		position: encoded
+		while [not tail? position][
+			type-id: position/1
+			padding: position/3
+			unless all [
+				integer? type-id
+				any [
+					padding = #_
+					all [integer? padding zero? padding]
+				]
+			][
+				rs-o2-ir/mark-unsupported 'typed-argument-shape
+				return none
+			]
+			result: o2-ir-lower-expression position/2
+			unless result [
+				rs-o2-ir/mark-unsupported 'typed-argument-value
+				return none
+			]
+			append values result
+			append type-ids type-id
+			position: skip position 3
+		]
+		count-value: rs-o2-ir/emit-constant count
+			rs-o2-ir/make-type 'i32 4 'gpr yes 0 'none
+		pointer-type: rs-o2-ir/emit-typed-list values type-ids
+		reduce [reduce [count-value pointer-type] values]
 	]
 
 	o2-ir-lower-expression: func [
 		value
 		/local type ir-type name target rhs left right op spec effect args arg result source-type
-			call-values variadic-call?
+			call-values call-tag variadic-call? typed-call? custom-call? typed-info typed-values
+			call-result lowered-count aggregate-call? formal-types formal-type
+			argument-index value-type destination rhs-type aggregate-result-mode
+			aggregate-result-temp aggregate-result-pointer aggregate-result-classes
+			aggregate-argument-groups aggregate-result-info slots literal-value
+			literal-hex literal-bits
 	][
 		case [
 			integer? :value [
@@ -5591,18 +5828,24 @@ system-dialect: context [
 			]
 			float? :value [
 				ir-type: o2-ir-type-of value
-				rs-o2-ir/mark-unsupported 'floating-point-selection
 				rs-o2-ir/emit-constant value ir-type
 			]
 			word? :value [
 				ir-type: o2-ir-type-of value
 				if none? ir-type [return rs-o2-ir/emit-opaque 'unsupported-value-type none]
-				either local-variable? value [
-					o2-ir-ensure-stack-object value ir-type
-					rs-o2-ir/emit-load-local value ir-type
+				either ir-type/1 = 'agg [
+					either local-variable? value [
+						o2-ir-ensure-stack-object value ir-type
+						rs-o2-ir/emit-address-local value ir-type
+					][rs-o2-ir/emit-opaque 'aggregate-global-address ir-type]
 				][
-					name: any [resolve-ns value value]
-					rs-o2-ir/emit-load-global name ir-type
+					either local-variable? value [
+						o2-ir-ensure-stack-object value ir-type
+						rs-o2-ir/emit-load-local value ir-type
+					][
+						name: any [resolve-ns value value]
+						rs-o2-ir/emit-load-global name ir-type
+					]
 				]
 			]
 			path? :value [o2-ir-lower-simple-path-access value]
@@ -5616,12 +5859,26 @@ system-dialect: context [
 						ir-type: o2-ir-type-of target
 						if none? rhs [return rs-o2-ir/emit-opaque 'assignment-without-value ir-type]
 						if none? ir-type [return rs-o2-ir/emit-opaque 'unsupported-value-type none]
-						either local-variable? target [
+						either all [local-variable? target ir-type/1 = 'agg][
 							o2-ir-ensure-stack-object target ir-type
-							rs-o2-ir/emit-store-local target rhs ir-type
+							rhs-type: rs-o2-ir/vreg-type rhs
+							unless all [rhs-type rhs-type/1 = 'agg rhs-type/5 = ir-type/5][
+								return rs-o2-ir/emit-opaque 'aggregate-assignment-type ir-type
+							]
+							destination: rs-o2-ir/emit-address-local target ir-type
+							rs-o2-ir/emit-copy-aggregate destination rhs ir-type
 						][
-							name: any [resolve-ns target target]
-							rs-o2-ir/emit-store-global name rhs ir-type
+							either local-variable? target [
+								o2-ir-ensure-stack-object target ir-type
+								rs-o2-ir/emit-store-local target rhs ir-type
+							][
+								either ir-type/1 = 'agg [
+									rs-o2-ir/emit-opaque 'aggregate-global-assignment ir-type
+								][
+									name: any [resolve-ns target target]
+									rs-o2-ir/emit-store-global name rhs ir-type
+								]
+							]
 						]
 					]
 					set-path? value/1 [o2-ir-lower-simple-path-assignment value]
@@ -5645,55 +5902,151 @@ system-dialect: context [
 								rs-o2-ir/emit-binary op left right ir-type effect
 							]
 							spec [
-								args: make block! max 0 (length? value) - 1
-								variadic-call?: all [
+								args: make block! max 0 ((length? value) - 1)
+								aggregate-argument-groups: make block! 2
+								lowered-count: 0
+								aggregate-call?: no
+								formal-types: o2-ir-call-formal-types spec
+								argument-index: 0
+								call-tag: all [
 									(length? value) = 3
 									issue? value/2
-									value/2 = #variadic
 									block? value/3
+									value/2
 								]
-								call-values: either variadic-call? [
+								variadic-call?: call-tag = #variadic
+								typed-call?: call-tag = #typed
+								custom-call?: call-tag = #custom
+								if custom-call? [
+									return rs-o2-ir/emit-opaque 'custom-call o2-ir-type-of value
+								]
+								either typed-call? [
+									typed-info: o2-ir-lower-typed-arguments value/3
+									unless typed-info [
+										return rs-o2-ir/emit-opaque 'typed-arguments o2-ir-type-of value
+									]
+									args: typed-info/1
+									typed-values: typed-info/2
+									lowered-count: length? args
+								][
+									call-values: either variadic-call? [
 									call-values: copy/deep value/3
 									promote-variadic name value/2 call-values
 									call-values
-								][next value]
-								foreach arg call-values [
-									result: o2-ir-lower-expression arg
-									if result [append args result]
+									][next value]
+									foreach arg call-values [
+										argument-index: argument-index + 1
+										formal-type: all [
+											argument-index <= length? formal-types
+											o2-ir-type-from-type pick formal-types argument-index
+										]
+										result: o2-ir-lower-expression arg
+										if result [
+											lowered-count: lowered-count + 1
+											value-type: rs-o2-ir/vreg-type result
+											if all [
+												formal-type
+												value-type
+												o2-ir-bitcast-compatible? value-type formal-type
+												value-type/1 <> formal-type/1
+											][
+												result: rs-o2-ir/emit-bitcast result formal-type
+											]
+											if o2-ir-append-call-argument
+												args aggregate-argument-groups result formal-type
+												pick formal-types argument-index spec
+											[
+												aggregate-call?: yes
+											]
+									]
+									]
 								]
 								ir-type: o2-ir-type-of value
-								either variadic-call? [
-									unless o2-ir-call-selectable?/variadic spec args ir-type [
+								if all [ir-type ir-type/1 = 'agg][
+									if any [variadic-call? typed-call?] [
+										return rs-o2-ir/emit-opaque 'aggregate-variable-arity-return ir-type
+									]
+									aggregate-result-info: o2-ir-aggregate-return-mode spec ir-type
+									unless aggregate-result-info [
+										return rs-o2-ir/emit-opaque 'aggregate-return-abi ir-type
+									]
+									aggregate-result-mode: aggregate-result-info/1
+									aggregate-result-classes: aggregate-result-info/2
+									aggregate-result-temp: none
+									if find [hidden] aggregate-result-mode [
+										aggregate-result-temp: rs-o2-ir/emit-aggregate-temp ir-type/5
+										aggregate-result-pointer: rs-o2-ir/make-type 'ptr
+											emitter/target/ptr-size 'gpr no 1 'none
+										insert args rs-o2-ir/emit-bitcast
+											aggregate-result-temp aggregate-result-pointer
+										foreach group aggregate-argument-groups [
+											poke group 2 ((select group 'start) + 1)
+										]
+									]
+									unless o2-ir-call-selectable?/logical-count
+										spec args ir-type lowered-count
+									[
+										rs-o2-ir/mark-unsupported 'call-selection
+									]
+									return rs-o2-ir/emit-call/aggregate-result/argument-groups/result-classes
+										name args ir-type
+										aggregate-result-mode ir-type/5 aggregate-result-temp
+										aggregate-argument-groups aggregate-result-classes
+								]
+								case [
+									typed-call? [
+										unless o2-ir-call-selectable?/logical-count
+											spec args ir-type lowered-count
+										[
+											rs-o2-ir/mark-unsupported 'call-selection
+										]
+										call-result: rs-o2-ir/emit-call name args ir-type
+										rs-o2-ir/emit-keepalive typed-values
+										call-result
+									]
+									variadic-call? [
+									unless all [
+										not aggregate-call?
+										o2-ir-call-selectable?/variadic/logical-count
+											spec args ir-type lowered-count
+									][
 										rs-o2-ir/mark-unsupported 'call-selection
 									]
 									rs-o2-ir/emit-call/variadic name args ir-type
-								][either name = 'log-b [
+									]
+									not empty? aggregate-argument-groups [
+										rs-o2-ir/emit-call/argument-groups
+											name args ir-type aggregate-argument-groups
+									]
+									name = 'log-b [
 									either all [(length? args) = 1 ir-type][
 										rs-o2-ir/emit-log-b args/1 ir-type
 									][rs-o2-ir/emit-opaque 'log-b-intrinsic ir-type]
-								][either name = 'red>copy-cell [
+									]
+									name = 'red>copy-cell [
 									either o2-ir-copy-cell-selectable? args ir-type [
 										rs-o2-ir/emit-copy-cell args/1 args/2 ir-type
 									][
 										rs-o2-ir/mark-unsupported 'copy-cell-intrinsic
 										rs-o2-ir/emit-call name args ir-type
 									]
-								][
-									either find [red>resolve-node red>resolve-series] name [
+									]
+									find [red>resolve-node red>resolve-series] name [
 										either o2-ir-resolver-selectable? name args ir-type [
 											rs-o2-ir/emit-resolver name args/1 ir-type
 										][
 											rs-o2-ir/mark-unsupported 'resolver-intrinsic
 											rs-o2-ir/emit-call name args ir-type
 										]
-									][
-										unless o2-ir-call-selectable? spec args ir-type [
+									]
+									true [
+										unless o2-ir-call-selectable?/logical-count
+											spec args ir-type lowered-count
+										[
 											rs-o2-ir/mark-unsupported 'call-selection
 										]
 										rs-o2-ir/emit-call name args ir-type
 									]
-								]
-								]
 								]
 							]
 							true [rs-o2-ir/emit-opaque 'unknown-call none]
@@ -5705,11 +6058,53 @@ system-dialect: context [
 			object? :value [
 				ir-type: o2-ir-type-from-type value/type
 				either all [value/action = 'type-cast ir-type][
-					result: o2-ir-lower-expression :value/data
-					source-type: all [result rs-o2-ir/vreg-type result]
-					either o2-ir-bitcast-compatible? source-type ir-type [
-						rs-o2-ir/emit-bitcast result ir-type
-					][rs-o2-ir/emit-opaque 'type-cast ir-type]
+					case [
+						all [
+							not value/keep?
+							any [
+								integer? :value/data
+								char? :value/data
+								logic? :value/data
+								all [issue? :value/data int64-literal-info value/data]
+							]
+							find [i8 i16 i32 i64] ir-type/1
+						][
+							either issue? :value/data [
+								literal-hex: int-literal-hex value/data value/type/1
+								literal-bits: head reverse debase/base literal-hex 16
+								rs-o2-ir/emit-constant literal-bits ir-type
+							][
+								literal-value: case [
+									integer? :value/data [value/data]
+									char? :value/data [to integer! value/data]
+									logic? :value/data [either value/data [1][0]]
+									true [0]
+								]
+								literal-value: rs-o2-ir/normalize-integer
+									literal-value ir-type/2 ir-type/4
+								rs-o2-ir/emit-constant literal-value ir-type
+							]
+						]
+						all [not value/keep? float? :value/data find [f32 f64] ir-type/1][
+							rs-o2-ir/emit-constant value/data ir-type
+						]
+						true [
+							result: o2-ir-lower-expression :value/data
+							source-type: all [result rs-o2-ir/vreg-type result]
+							case [
+								o2-ir-bitcast-compatible? source-type ir-type [
+									rs-o2-ir/emit-bitcast result ir-type
+								]
+								all [value/keep? o2-ir-keep-bitcast-compatible? source-type ir-type][
+									rs-o2-ir/emit-bitcast result ir-type
+								]
+								all [not value/keep? o2-ir-convert-compatible? source-type ir-type][
+									rs-o2-ir/emit-convert result ir-type
+								]
+								true [rs-o2-ir/emit-opaque 'type-cast ir-type]
+							]
+						]
+					]
 				][rs-o2-ir/emit-opaque 'unsupported-action ir-type]
 			]
 			any [issue? :value get-word? :value] [

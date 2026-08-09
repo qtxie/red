@@ -408,6 +408,12 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d -t Windows-X86-64
 
 Do not use the retired Stage0 path for normal validation.
 
+The `StageNN` names recorded below are build-lineage and evidence labels, not
+toolchain pins. Normal development bootstraps from the newest compatible,
+verified self-hosted stage. Use development mode and retain its matching
+`libRedRT.dll` when runtime sources have not changed; regenerate the runtime only
+when runtime code changes or a runtime-specific validation requires it.
+
 ## Runtime Benchmark Method
 
 1. Benchmark the emitted executable separately from compilation.
@@ -1309,6 +1315,51 @@ failures. The x64 suite must use the x64 `structlib.dll` artifact (the checked-i
 legacy `structlib.dll` is IA-32); the verified dependency used here is
 `build/self-hosting/x64-structlib/structlib.dll`.
 
+Stage169 adds typed aggregate call metadata and one pre-allocation argument
+location plan for SysV x64. Each aggregate records its flattened operand range,
+INTEGER/SSE classes, exact size, and whether it must be passed on the stack.
+The planner enforces the SysV all-registers-or-all-stack rollback rule before
+linear-scan allocation and shares that decision with outgoing-frame sizing and
+late encoding. Imported aggregate returns now cover RAX/RDX, XMM0/XMM1, mixed
+INTEGER/SSE class order, and hidden result buffers. The hidden pointer shifts
+subsequent aggregate groups as one unit.
+
+The focused Linux fixture calls a GCC-built shared library with mixed
+INTEGER/SSE, SSE/INTEGER, pure-SSE, register-pressure rollback, memory-class
+arguments, register returns, and a memory-class hidden return that also accepts
+a mixed aggregate argument. Its Stage169 O0 and O2 PIE executables both exit 0
+under Ubuntu 24.04 WSL. All nine wrapper functions are eligible and selected at
+O2. Disassembly of the hidden-return case confirms `RDI` holds the result
+buffer, `RSI` and `XMM0` hold the aggregate classes, and `EDX` holds the trailing
+scalar. The machine-IR smoke fixture now has 91 functions and independently
+checks mixed register placement, whole-aggregate rollback, and exact mixed
+return bytes.
+
+Stage172 extends aggregate lowering to native and imported Win64 calls and adds
+typed variadic-list construction, aggregate temporaries and copies, exact-width
+32/64-bit integer constants, floating-point constants, and 16-byte cell copies.
+The focused aggregate, imported-aggregate, floating-constant, cell-copy, and
+`#typed` programs produce identical O0/O2 results on Win64; the corresponding
+SysV aggregate and typed programs also exit successfully at both levels. The
+typed wrapper is selected at O2, and the machine-IR smoke has 93 verified
+functions with four intentional unsupported cases.
+
+Stage173 fixes two regressions exposed by the full Win64 suite. A commutative
+constant on the left of a folded frame-memory operand was marked for immediate
+encoding but then read from its uninitialized allocation register; selection now
+materializes the constant before the direct memory operation. Simple local
+tagged-union assignment now emits the required ordered variant-tag store before
+the payload store. The focused memory program prints `19`, `12`, and `123` at
+both O0 and O2, while the formerly failing union and aggregate-callback tests
+pass completely.
+
+Stage173 was bootstrapped in development mode from the newest compatible
+Stage172 compiler. Runtime sources were unchanged, and the matching
+`libRedRT.dll` remained byte-identical (SHA-256
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`). It passes
+all 124 compiler-regression assertions and the complete Windows x64 O2 suite:
+10,582 tests, 12,647 assertions, and zero failures.
+
 The generated-program runtime gate is positive with speed as the primary
 metric. A 31-sample register-pressure run measures an O2/O0 wall ratio of
 `0.671789` (32.821% faster; paired 95% interval `0.67..0.68`). The 12-workload
@@ -1318,10 +1369,11 @@ credible regression. Reports are under
 `build/generated-code-benchmark-suites/stage143-win64-pressure/` and
 `build/generated-code-benchmark-suites/stage143-win64-core/`.
 
-This evidence does not complete the plan. Aggregate ABI lowering, exception and
-unwind integration, explicit stack operations, GC stress, compiler-sized runtime
-coverage, emitted SysV full-suite differential testing, and the full cross-ABI
-performance gate remain required before O2 can leave its experimental state.
+This evidence does not complete the plan. Custom variadics, SysV callback-entry
+coverage, exception and unwind integration, explicit stack operations, GC
+stress, compiler-sized runtime coverage, emitted SysV full-suite differential
+testing, and the full cross-ABI performance gate remain required before O2 can
+leave its experimental state.
 
 ## Rollout
 

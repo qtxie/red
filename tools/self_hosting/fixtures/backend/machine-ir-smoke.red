@@ -836,6 +836,9 @@ rs-o2-ir/if-condition if-state
 if-value: rs-o2-ir/emit-load-local 'value i32
 rs-o2-ir/emit-store-local 'result if-value i32
 rs-o2-ir/end-if if-state
+unless none? (pick rs-o2-ir/current rs-o2-ir/fn-last-result) [
+	fail "if CFG retained a true-edge-only result"
+]
 if-result: rs-o2-ir/emit-load-local 'result i32
 rs-o2-ir/set-direct-body-range 0 1
 if-selected: rs-o2-ir/finish-function reduce [#{90} copy []]

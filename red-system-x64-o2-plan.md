@@ -1395,6 +1395,25 @@ therefore valid core runtime evidence for the successful artifact, but not a
 source-identical final bootstrap proof; the default-enablement audit below
 requires that exact-source rebuild.
 
+The exact-source fixed-point audit subsequently exposed one IR construction
+error: `end-if` retained a value defined only on the true edge, allowing an
+enclosing expression merge to build a phi whose input did not dominate every
+incoming edge. Red/System `if` is a statement, so `end-if` now clears the last
+result after entering the exit block. The focused nested `either`/`if` fixture
+prints `1`, `2`, and `0` at both O0 and O2, and the machine-IR smoke independently
+checks that no true-edge-only result survives `end-if`.
+
+The corrected Win64 development fixed point is
+`build/self-hosting/o2-ifphi-final-5b6efd8/red-bootstrap-ifphi-final-win64-o2-dev.exe`
+(SHA-256 `2C621A662C7BFD75698053C161F9467F14F27FD0256BCA9B7645D45FA65D7D7A`).
+Its IR dump has SHA-256
+`4DBF0577445587D0A37124EC59CA1E36C14C9C67B4CC9548E1E607CCC3BBCA55` and reports
+1,624 functions, all 1,624 verified, 768 eligible, 760 selected, and 864 direct
+fallbacks, with no verifier failure. This exact candidate passes all 124
+compiler-regression assertions and the complete Win64 Red/System suite: 10,582
+tests, 12,647 assertions, and zero failures. The controlled compiler-sized
+runtime comparison remains a separate default-enablement gate.
+
 Commit `45a569f6b` completes the planned control-flow and machine-state expansion:
 explicit `return` and `exit`, `if`/`either`/`case`/`switch`, `loop`/`until`/
 `while` with `break` and `continue`, nested and lexical `overflow?` flag scopes,

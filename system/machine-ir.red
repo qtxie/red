@@ -1930,6 +1930,9 @@ rs-o2-ir: context [
 		unless all [function-active? (length? state) = 3][return none]
 		emit-jump state/3
 		set-current-block state/3
+		; Red/System IF is a statement. Do not leak a value defined only on
+		; the true edge into a surrounding expression merge.
+		set-last-result none none
 	]
 
 	begin-either: func [/local condition-id true-block false-block done-block][

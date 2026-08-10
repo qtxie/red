@@ -5595,18 +5595,23 @@ red: context [
 	]
 	
 	comp-source: func [code [block!] /local user main saved saved-name mods][
+		phase-timer/begin 'red-lowering-init
 		output: make block! 10000
 		comp-init
+		phase-timer/finish 'red-lowering-init
 		
+		phase-timer/begin 'red-lowering-boot
 		pc: next compiler-preprocessor/expand/clean load-source/hidden %compiler/bootstrap-boot.red job
 		unless job/red-help? [clear-docstrings pc]
 		booting?: yes
 		comp-block
 		append output boot-extras
 		booting?: no
+		phase-timer/finish 'red-lowering-boot
 		
 		mods: tail output
 		append output [#user-code]
+		phase-timer/begin 'red-lowering-modules
 		foreach module needed [
 			module: clean-path module
 			saved: if script-path [copy script-path]
@@ -5626,18 +5631,25 @@ red: context [
 			include-stk: saved-include-stk
 			script-stk: saved-script-stk
 		]
+		phase-timer/finish 'red-lowering-modules
 
+		phase-timer/begin 'red-lowering-user
 		store-header code/1
 		pc: code										;-- compile user code
 		user: tail output
 		comp-block
 		append output [#user-code]
+		phase-timer/finish 'red-lowering-user
 		
 		main: output
 		output: make block! 1000
 		
+		phase-timer/begin 'red-lowering-bodies
 		comp-bodies										;-- compile deferred functions
+		phase-timer/finish 'red-lowering-bodies
+		phase-timer/begin 'red-redbin-finish
 		comp-finish
+		phase-timer/finish 'red-redbin-finish
 		;libRedRT/save-extras
 		
 		reduce [user mods main]
@@ -5659,7 +5671,10 @@ red: context [
 			]
 		]
 		
+		phase-timer/begin 'red-comp-source
 		set [user mark main] comp-source code
+		phase-timer/finish 'red-comp-source
+		phase-timer/begin 'red-output-assembly
 
 		defs: make block! 10'000
 		foreach [type cast][
@@ -5726,6 +5741,7 @@ red: context [
 		
 		output: out	
 		if verbose > 2 [?? output]
+		phase-timer/finish 'red-output-assembly
 	]
 	
 	comp-as-exe: func [code [block!] /local out user mods main defs][
@@ -5754,7 +5770,10 @@ red: context [
 		if all [job/dev-mode? not job/libRedRT?][
 			replace out <imports> libRedRT/get-include-file job
 		]
+		phase-timer/begin 'red-comp-source
 		set [user mods main] comp-source code
+		phase-timer/finish 'red-comp-source
+		phase-timer/begin 'red-output-assembly
 		
 		;-- assemble all parts together in right order
 		script: make block! 100'000
@@ -5797,6 +5816,7 @@ red: context [
 		change/only find last out <script> script		;-- inject compilation result in template
 		output: out
 		if verbose > 2 [?? output]
+		phase-timer/finish 'red-output-assembly
 	]
 	
 	clear-docstrings: func [script [block!] /local clean rule pos][
@@ -5995,16 +6015,23 @@ red: context [
 	][
 		verbose: opts/verbosity
 		job: opts
+		phase-timer/begin 'red-cleanup
 		clean-up
 		main-path: first split-path any [all [block? file system/options/path] file]
 		resources: make block! 8
+		phase-timer/finish 'red-cleanup
 
 		time: now/time/precise
+		phase-timer/begin 'red-load-source
 		src: load-source file
+		phase-timer/finish 'red-load-source
+		phase-timer/begin 'red-preprocess
 			compiler-system-job/job-set job 'red-pass? yes
 			process-config src/1
 			src: compiler-preprocessor/expand/clean src job
 			if job/show = 'expanded [probe next src]	;-- show postprocessed source file
+		phase-timer/finish 'red-preprocess
+		phase-timer/begin 'red-header-setup
 			process-fields src/1 next src
 			extracts/init job
 			if job/libRedRT? [libRedRT/init]
@@ -6026,11 +6053,14 @@ red: context [
 				shadow-funcs:	defs/12
 				make-keywords
 			]
+		phase-timer/finish 'red-header-setup
 			print [
 				"...GUI backend      :" either find job/modules 'View [job/GUI-engine][#"-"] nl
 				"...Modules          :" either empty? job/modules [#"-"][mold/only job/modules]
 			]
+		phase-timer/begin 'red-lowering
 			either job/type = 'dll [comp-as-lib src][comp-as-exe src]
+		phase-timer/finish 'red-lowering
 		time: now/time/precise - time
 		reduce [output time redbin/buffer resources]
 	]

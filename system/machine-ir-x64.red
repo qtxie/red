@@ -7452,23 +7452,58 @@ rs-o2-x64: context [
 
 	select-current: func [
 		direct-chunk [block!]
-		/local intervals allocation body pass body-base selected start ending blocks
+		/local intervals allocation body pass body-base selected start ending blocks ok? encoded?
 	][
-		unless validate-current direct-chunk [return none]
-		unless plan-call-argument-locations [return none]
+		phase-timer/begin 'o2-x64-validate
+		ok?: validate-current direct-chunk
+		phase-timer/finish 'o2-x64-validate
+		unless ok? [return none]
+		phase-timer/begin 'o2-x64-call-arguments
+		ok?: plan-call-argument-locations
+		phase-timer/finish 'o2-x64-call-arguments
+		unless ok? [return none]
+		phase-timer/begin 'o2-x64-folded-loads
 		plan-folded-loads
+		phase-timer/finish 'o2-x64-folded-loads
+		phase-timer/begin 'o2-x64-intervals
 		intervals: build-intervals
+		phase-timer/finish 'o2-x64-intervals
 		unless intervals [return none]
-		unless division-register-liveness-valid? intervals [return none]
-		unless plan-call-spills intervals [return none]
+		phase-timer/begin 'o2-x64-division-liveness
+		ok?: division-register-liveness-valid? intervals
+		phase-timer/finish 'o2-x64-division-liveness
+		unless ok? [return none]
+		phase-timer/begin 'o2-x64-call-spills
+		ok?: plan-call-spills intervals
+		phase-timer/finish 'o2-x64-call-spills
+		unless ok? [return none]
+		phase-timer/begin 'o2-x64-allocation
 		allocation: allocate-intervals intervals
+		phase-timer/finish 'o2-x64-allocation
 		unless allocation [return none]
+		phase-timer/begin 'o2-x64-spill-slots
 		plan-spill-slots intervals
-		unless plan-fixed-shadow-frame-merge direct-chunk [return none]
-		unless plan-phi-edge-copies allocation [return none]
-		unless plan-gc-metadata intervals allocation direct-chunk [return none]
-		unless rs-o2-ir/verify-current [return fail-selection 'x64-gc-safepoint-verification]
-		unless verify-planned-safepoints intervals [return none]
+		phase-timer/finish 'o2-x64-spill-slots
+		phase-timer/begin 'o2-x64-fixed-shadow
+		ok?: plan-fixed-shadow-frame-merge direct-chunk
+		phase-timer/finish 'o2-x64-fixed-shadow
+		unless ok? [return none]
+		phase-timer/begin 'o2-x64-phi-copies
+		ok?: plan-phi-edge-copies allocation
+		phase-timer/finish 'o2-x64-phi-copies
+		unless ok? [return none]
+		phase-timer/begin 'o2-x64-gc-plan
+		ok?: plan-gc-metadata intervals allocation direct-chunk
+		phase-timer/finish 'o2-x64-gc-plan
+		unless ok? [return none]
+		phase-timer/begin 'o2-x64-gc-ir-verify
+		ok?: rs-o2-ir/verify-current
+		phase-timer/finish 'o2-x64-gc-ir-verify
+		unless ok? [return fail-selection 'x64-gc-safepoint-verification]
+		phase-timer/begin 'o2-x64-safepoint-verify
+		ok?: verify-planned-safepoints intervals
+		phase-timer/finish 'o2-x64-safepoint-verify
+		unless ok? [return none]
 		body-base: 0
 		if all [(length? direct-chunk) >= 3 integer? direct-chunk/3][
 			body-base: (direct-chunk/3 - 1) + (either frameless? [
@@ -7476,12 +7511,19 @@ rs-o2-x64: context [
 			][pick rs-o2-ir/current rs-o2-ir/fn-body-start])
 		]
 		clear relaxed-branches
+		encoded?: yes
+		phase-timer/begin 'o2-x64-encode
 		repeat pass 8 [
 			branch-relaxation-changed?: no
 			body: encode-body allocation body-base
-			unless all [binary? body pick rs-o2-ir/current rs-o2-ir/fn-eligible?][return none]
+			unless all [binary? body pick rs-o2-ir/current rs-o2-ir/fn-eligible?][
+				encoded?: no
+				break
+			]
 			unless branch-relaxation-changed? [break]
 		]
+		phase-timer/finish 'o2-x64-encode
+		unless encoded? [return none]
 		if branch-relaxation-changed? [return fail-selection 'x64-branch-relaxation-limit]
 		start: pick rs-o2-ir/current rs-o2-ir/fn-body-start
 		ending: pick rs-o2-ir/current rs-o2-ir/fn-body-end
@@ -7491,10 +7533,17 @@ rs-o2-x64: context [
 			(length? blocks) = 1
 			(length? body) > (ending - start)
 		][return fail-selection 'x64-call-live-expansion]
-		unless apply-relocations direct-chunk [return none]
+		phase-timer/begin 'o2-x64-relocations
+		ok?: apply-relocations direct-chunk
+		phase-timer/finish 'o2-x64-relocations
+		unless ok? [return none]
+		phase-timer/begin 'o2-x64-replace
 		selected: replace-body direct-chunk body
+		phase-timer/finish 'o2-x64-replace
 		unless selected [return none]
+		phase-timer/begin 'o2-x64-commit-relocations
 		commit-dropped-relocations
+		phase-timer/finish 'o2-x64-commit-relocations
 		selected
 	]
 ]

@@ -13,18 +13,26 @@ phase-timer: context [
 		clear records
 	]
 
-	begin: func [name [word! string!]][
-		if active? [put started name now/precise/utc]
+	begin: func [name [word! string!] /local stack][
+		if active? [
+			stack: select started name
+			either block? stack [
+				append stack now/precise/utc
+			][
+				put started name reduce [now/precise/utc]
+			]
+		]
 	]
 
 	finish: func [
 		name [word! string!]
-		/local start-time duration record
+		/local stack start-time duration record
 	][
 		unless active? [return none]
-		unless start-time: select started name [
+		unless all [stack: select started name not empty? stack][
 			make error! rejoin ["phase was not started: " mold name]
 		]
+		start-time: take/last stack
 		duration: difference now/precise/utc start-time
 		record: find/skip records name 3
 		unless record [
@@ -33,8 +41,14 @@ phase-timer: context [
 		]
 		record/2: record/2 + 1
 		record/3: record/3 + duration
-		remove/key started name
 		duration
+	]
+
+	balanced?: does [
+		foreach [name stack] started [
+			unless empty? stack [return no]
+		]
+		yes
 	]
 
 	snapshot: does [copy/deep records]

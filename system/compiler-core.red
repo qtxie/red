@@ -5314,7 +5314,41 @@ system-dialect: context [
 			]
 		]
 
+	o2-ir-get-word-type: func [
+		value [get-word!]
+		/local name type resolved kind pointer-type
+	][
+		name: to word! value
+		unless local-variable? name [name: any [resolve-ns name name]]
+		type: any [
+			resolve-type name
+			all [ns-path resolve-type ns-prefix name]
+		]
+		unless type [
+			rs-o2-ir/mark-unsupported 'type-resolution
+			return none
+		]
+		resolved: resolve-aliased type
+		kind: resolved/1
+		case [
+			kind = 'function! [o2-ir-type-from-type resolved]
+			find [
+				integer! byte! int8! uint8! int16! uint16! int32! uint32!
+				int64! uint64! float! float32! pointer!
+			] kind [
+				pointer-type: compose/deep [pointer! [(kind)]]
+				o2-ir-type-from-type pointer-type
+			]
+			struct-by-value? resolved [o2-ir-type-from-type resolved]
+			true [
+				rs-o2-ir/mark-unsupported 'type-resolution
+				none
+			]
+		]
+	]
+
 	o2-ir-type-of: func [value /local type saved-resolve-alias?][
+		if get-word? :value [return o2-ir-get-word-type value]
 		saved-resolve-alias?: resolve-alias?
 		resolve-alias?: no
 		set/any 'type try [get-type :value]
@@ -6312,6 +6346,8 @@ system-dialect: context [
 			/local args-sz local-sz expr ret shadow-slot capture? capture-start body-start body-end
 				direct-chunk selected-chunk
 		][
+			phase-timer/begin 'rs-function-total
+			phase-timer/begin 'rs-function-prepare
 			inject-loop-variable spec body
 			init-struct-values spec
 			locals: spec
@@ -6325,15 +6361,19 @@ system-dialect: context [
 					not function-has-unstable-stack? body
 				]
 			]
+			phase-timer/finish 'rs-function-prepare
 
+			phase-timer/begin 'rs-direct-prolog
 			set [args-sz local-sz] emitter/enter name locals offset ;-- build function prolog
 			func-locals-sz: local-sz
 			if capture? [rs-o2-ir/set-stack-offsets emitter/stack]
 			clean-byte-locals spec
 			preprocess-subroutines spec body
 			if capture? [body-start: emitter/tail-ptr - capture-start]
+			phase-timer/finish 'rs-direct-prolog
 			pc: body
 
+			phase-timer/begin 'rs-body-lowering
 			expr: comp-dialect							;-- compile function's body
 
 			if ret: select spec return-def [
@@ -6359,22 +6399,32 @@ system-dialect: context [
 				body-end: emitter/tail-ptr - capture-start
 				rs-o2-ir/set-direct-body-range body-start body-end
 			]
+			phase-timer/finish 'rs-body-lowering
+			phase-timer/begin 'rs-direct-epilog
 			emitter/leave name locals args-sz local-sz ret ;-- build function epilog
 			if shadow-slot: in emitter/target 'reserve-fixed-shadow? [set shadow-slot no]
 			if shadow-slot: in emitter/target 'fixed-shadow-space? [set shadow-slot no]
 			remove-func-pointers
 			unless empty? subroutines [emitter/resolve-subrc-points subroutines]
+			phase-timer/finish 'rs-direct-epilog
 			if capture? [
 				direct-chunk: emitter/chunks/stop
+				phase-timer/begin 'rs-o2-finish
 				selected-chunk: either job/debug? [
 					rs-o2-ir/finish-function/debug direct-chunk debug-lines
 				][
 					rs-o2-ir/finish-function direct-chunk
 				]
+				phase-timer/finish 'rs-o2-finish
+				phase-timer/begin 'rs-o2-merge
 				emitter/merge selected-chunk
+				phase-timer/finish 'rs-o2-merge
 			]
+			phase-timer/begin 'rs-function-cleanup
 			clear locals-init
 			locals: func-name: func-locals-sz: none
+			phase-timer/finish 'rs-function-cleanup
+			phase-timer/finish 'rs-function-total
 		]
 
 		comp-natives: does [
@@ -6456,17 +6506,27 @@ system-dialect: context [
 			/no-header /runtime /no-events
 			/locals allow-runtime?
 		][
+			phase-timer/begin 'rs-run-total
 			job: obj
 			pc: src
 			script: secure-clean-path file
 			runtime: to logic! runtime
 			allow-runtime?: all [not no-events job/runtime?]
 
+			phase-timer/begin 'rs-run-config
 			unless job/red-pass? [process-config pc/2]
+			phase-timer/finish 'rs-run-config
+			phase-timer/begin 'rs-run-header
 			unless no-header [comp-header]
+			phase-timer/finish 'rs-run-header
 
+			phase-timer/begin 'rs-global-prolog
 			if allow-runtime? [emitter/target/on-global-prolog runtime job/type]
+			phase-timer/finish 'rs-global-prolog
+			phase-timer/begin 'rs-global-body
 			comp-dialect
+			phase-timer/finish 'rs-global-body
+			phase-timer/begin 'rs-global-epilog
 			if allow-runtime? [
 				case [
 					runtime [
@@ -6477,11 +6537,14 @@ system-dialect: context [
 					]
 				]
 			]
+			phase-timer/finish 'rs-global-epilog
+			phase-timer/finish 'rs-run-total
 		]
 
 		finalize: has [tmpl words][
 			if verbose >= 2 [print "^/---^/Compiling native functions^/---"]
 
+			phase-timer/begin 'rs-finalize-prepare
 			if job/type = 'dll [
 				if all [job/dev-mode? job/libRedRT?][
 					libRedRT/process job functions exports
@@ -6491,15 +6554,24 @@ system-dialect: context [
 				]
 				add-dll-callbacks 						;-- make sure they are defined
 			]
+			phase-timer/finish 'rs-finalize-prepare
+			phase-timer/begin 'rs-finalize-functions
 			comp-natives
+			phase-timer/finish 'rs-finalize-functions
+			phase-timer/begin 'rs-finalize-bitmaps
 			emitter/store-bitmaps to-logic all [
 				job/red-pass?
 				job/redbin-compress?
 				any [not value? 'compiler-crush compiler-crush/available?]
 			]
+			phase-timer/finish 'rs-finalize-bitmaps
+			phase-timer/begin 'rs-finalize-target
 			emitter/target/on-finalize
+			phase-timer/finish 'rs-finalize-target
 			if verbose >= 2 [print ""]
+			phase-timer/begin 'rs-finalize-relocations
 			emitter/reloc-native-calls
+			phase-timer/finish 'rs-finalize-relocations
 		]
 	]
 
@@ -6554,13 +6626,17 @@ system-dialect: context [
 		emitter/target/last-red-frame: emitter/store-value none 0 [integer!]
 	]
 
-	comp-start: has [script][
+	comp-start: has [script src][
 		emitter/libc-init?: yes
 		emitter/start-prolog
 		;emitter/target/on-init							;@@ required?
 
 		script: secure-clean-path runtime-path/start.reds
-		compiler/run/no-events job loader/process/own script script
+		phase-timer/begin 'rs-loader
+		src: loader/process/own script
+		phase-timer/finish 'rs-loader
+		unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
+		compiler/run/no-events job src script
 		emitter/start-epilog
 
 		;-- selective clean-up of compiler's internals
@@ -6575,7 +6651,9 @@ system-dialect: context [
 	comp-runtime-prolog: func [red? [logic!] payload [binary! none!] /local script ext src][
 		phase-timer/begin 'runtime-common
 		script: secure-clean-path runtime-path/common.reds
+		phase-timer/begin 'rs-loader
 		src: loader/process/own script
+		phase-timer/finish 'rs-loader
 		unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
 		compiler/run/runtime job src script
 		phase-timer/finish 'runtime-common
@@ -6596,12 +6674,17 @@ system-dialect: context [
 				emitter/access-path first [system/boot-data:] <last>
 			]
 			unless empty? red/sys-global [
-				compiler/run job loader/process red/sys-global %***sys-global.reds
+				phase-timer/begin 'rs-loader
+				src: loader/process red/sys-global
+				phase-timer/finish 'rs-loader
+				compiler/run job src %***sys-global.reds
 			]
 			if any [not job/dev-mode? job/libRedRT?][
 				phase-timer/begin 'runtime-red
 				script: secure-clean-path red-runtime-path/red.reds
+				phase-timer/begin 'rs-loader
 				src: loader/process/own script
+				phase-timer/finish 'rs-loader
 				unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
 				compiler/run job src script
 				phase-timer/finish 'runtime-red
@@ -6761,6 +6844,7 @@ system-dialect: context [
 	][
 		if not tail? files [
 			file: first files
+			phase-timer/begin 'rs-loader
 			either loaded? [
 				src: loader/process/with job-data/1 file
 			][
@@ -6768,6 +6852,7 @@ system-dialect: context [
 				unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
 				if job/OS = 'Windows [collect-resources src/2 resources file]
 			]
+			phase-timer/finish 'rs-loader
 			compiler/run job src file
 			compile-sources next files loaded? job-data job resources
 		]
@@ -6832,6 +6917,7 @@ system-dialect: context [
 		if job/libRedRT-update? [libRedRT/init-extras]
 
 		file: first file-list
+		phase-timer/begin 'rs-loader
 		either loaded [
 			src: loader/process/with job-data/1 file
 		][
@@ -6839,6 +6925,7 @@ system-dialect: context [
 			unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
 			if job/OS = 'Windows [collect-resources src/2 resources file]
 		]
+		phase-timer/finish 'rs-loader
 		compiler/run job src file
 		if not tail? next file-list [
 			compile-sources next file-list to logic! loaded job-data job resources

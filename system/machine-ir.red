@@ -3105,15 +3105,32 @@ rs-o2-ir: context [
 		repend pick current fn-pass-log [name before after]
 	]
 
-	run-pass: func [name [word!] body [block!] /local before after][
+	run-pass: func [name [word!] body [block!] /local before after phase verified?][
+		phase: none
+		if phase-timer/active? [
+			phase: rejoin ["o2-pass-" form name]
+			phase-timer/begin phase
+		]
 		before: pick current fn-instruction-count
+		phase-timer/begin 'o2-pass-body
 		do body
+		phase-timer/finish 'o2-pass-body
+		phase-timer/begin 'o2-pass-memory-dependencies
 		rebuild-current-memory-dependencies
+		phase-timer/finish 'o2-pass-memory-dependencies
+		phase-timer/begin 'o2-pass-renumber
 		renumber-current
+		phase-timer/finish 'o2-pass-renumber
+		phase-timer/begin 'o2-pass-stack-dependencies
 		rebuild-current-stack-dependencies
+		phase-timer/finish 'o2-pass-stack-dependencies
 		after: pick current fn-instruction-count
 		record-pass name before after
-		verify-current
+		phase-timer/begin 'o2-pass-verify
+		verified?: verify-current
+		phase-timer/finish 'o2-pass-verify
+		if phase [phase-timer/finish phase]
+		verified?
 	]
 
 	optimize-current: does [
@@ -4278,6 +4295,7 @@ rs-o2-ir: context [
 		poke stats stats-functions (pick stats stats-functions) + 1
 		poke stats stats-bytes (pick stats stats-bytes) + (length? direct-chunk/1)
 
+		phase-timer/begin 'o2-ir-finalize-cfg
 		block: pick current fn-current-block
 		unless block-terminated? block [
 			either block-reachable? pick block bb-id [
@@ -4294,8 +4312,15 @@ rs-o2-ir: context [
 
 		renumber-current
 		rebuild-current-stack-dependencies
+		phase-timer/finish 'o2-ir-finalize-cfg
+		phase-timer/begin 'o2-ir-verify
 		verified?: verify-current
-		if all [verified? pick current fn-eligible?][verified?: optimize-current]
+		phase-timer/finish 'o2-ir-verify
+		if all [verified? pick current fn-eligible?][
+			phase-timer/begin 'o2-ir-optimize
+			verified?: optimize-current
+			phase-timer/finish 'o2-ir-optimize
+		]
 		if verified? [
 			poke stats stats-verified (pick stats stats-verified) + 1
 		]
@@ -4305,11 +4330,15 @@ rs-o2-ir: context [
 			either all [debug? not debug] [
 				mark-unsupported 'debug-offsets
 			][
+				phase-timer/begin 'o2-x64-select
 				selected-chunk: rs-o2-x64/select-current direct-chunk
+				phase-timer/finish 'o2-x64-select
 				if all [selected-chunk debug] [
+					phase-timer/begin 'o2-debug-rewrite
 					unless rs-o2-x64/rewrite-debug-lines debug-lines direct-chunk [
 						selected-chunk: none
 					]
+					phase-timer/finish 'o2-debug-rewrite
 				]
 			]
 		]
@@ -4323,8 +4352,10 @@ rs-o2-ir: context [
 		]
 
 		if dump-path [
+			phase-timer/begin 'o2-ir-dump
 			dump: dump-current
 			write/append dump-path dump
+			phase-timer/finish 'o2-ir-dump
 		]
 		if all [verbose >= 3 not selected-chunk][
 			print [

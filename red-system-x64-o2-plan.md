@@ -1389,6 +1389,12 @@ adjacent Stage1-built `libRedRT.dll` remains
 faster, interval `0.464283..0.518892`) with no regression. The report is under
 `build/generated-code-benchmark-suites/atomicfix-current-win64/`.
 
+The report's recorded Git HEAD is `45a569f6b`, while this successful executable
+was built earlier, before the final target-file and atomic-fixture edits. It is
+therefore valid core runtime evidence for the successful artifact, but not a
+source-identical final bootstrap proof; the default-enablement audit below
+requires that exact-source rebuild.
+
 Commit `45a569f6b` completes the planned control-flow and machine-state expansion:
 explicit `return` and `exit`, `if`/`either`/`case`/`switch`, `loop`/`until`/
 `while` with `break` and `continue`, nested and lexical `overflow?` flag scopes,

@@ -647,6 +647,117 @@ target: 'X86-64
 			]
 		]
 	]
+	patch-local-rel32: func [patch [integer!] target [integer!]][
+		change/part at emitter/code-buf patch
+			int-to-bin/to-bin32 target - patch - branch-offset-size
+			branch-offset-size
+	]
+	emit-local-rel32: func [opcode [binary!] /local patch][
+		emit opcode
+		patch: (length? emitter/code-buf) + 1
+		emit #{00000000}
+		patch
+	]
+	emit-custom-register-loads: func [count-register [word!] /local opcodes patches index patch][
+		opcodes: either win64? [
+			[
+				#{498B4D10}						;-- MOV rcx, [r13+16]
+				#{498B5518}						;-- MOV rdx, [r13+24]
+				#{4D8B4520}						;-- MOV r8,  [r13+32]
+				#{4D8B4D28}						;-- MOV r9,  [r13+40]
+			]
+		][
+			[
+				#{498B7D10}						;-- MOV rdi, [r13+16]
+				#{498B7518}						;-- MOV rsi, [r13+24]
+				#{498B5520}						;-- MOV rdx, [r13+32]
+				#{498B4D28}						;-- MOV rcx, [r13+40]
+				#{4D8B4530}						;-- MOV r8,  [r13+48]
+				#{4D8B4D38}						;-- MOV r9,  [r13+56]
+			]
+		]
+		patches: make block! length? opcodes
+		index: 0
+		foreach opcode opcodes [
+			index: index + 1
+			emit #{4183FB}						;-- CMP r11d, argument-index
+			emit int-to-bin/to-bin8 index
+			append patches emit-local-rel32 #{0F8C}	;-- JL done
+			emit opcode
+		]
+		foreach patch patches [
+			patch-local-rel32 patch (length? emitter/code-buf) + 1
+		]
+	]
+	emit-custom-dynamic-header: func [count /local nonnegative no-overflow copy-done copy-back join no-pad loop-start source-offset shadow-offset register-count][
+		emit-load count
+		emit #{85C0}							;-- TEST eax, eax
+		nonnegative: emit-local-rel32 #{0F8D}		;-- JGE nonnegative
+		emit #{31C0}							;-- XOR eax, eax (invalid negative count => zero slots)
+		patch-local-rel32 nonnegative (length? emitter/code-buf) + 1
+		emit #{4189C3}						;-- MOV r11d, eax
+
+		; r12 preserves the stack position before the manually pushed values. r13
+		; addresses the saved nonvolatile registers and the immutable source values.
+		emit #{4154}							;-- PUSH r12
+		emit #{4155}							;-- PUSH r13
+		emit #{4989E5}						;-- MOV r13, rsp
+		emit #{4F8D64DD10}					;-- LEA r12, [r13+r11*8+16]
+
+		register-count: either win64? [4][6]
+		emit #{4589DA}						;-- MOV r10d, r11d
+		emit #{4183EA}						;-- SUB r10d, register-count
+		emit int-to-bin/to-bin8 register-count
+		emit #{4585D2}						;-- TEST r10d, r10d
+		no-overflow: emit-local-rel32 #{0F8E}		;-- JLE no-overflow
+
+		; For overflow calls the outgoing slot count has the same parity as the
+		; original count, so no additional alignment slot is needed.
+		emit either win64? [#{4489D8}][#{4489D0}]	;-- MOV eax, r11d/r10d
+		emit #{48C1E003}						;-- SHL rax, 3
+		emit #{4829C4}						;-- SUB rsp, rax
+
+		source-offset: 16 + (register-count * stack-width)
+		shadow-offset: either win64? [4 * stack-width][0]
+		emit #{31C9}							;-- XOR ecx, ecx
+		loop-start: (length? emitter/code-buf) + 1
+		emit #{4439D1}						;-- CMP ecx, r10d
+		copy-done: emit-local-rel32 #{0F8D}		;-- JGE copy-done
+		emit #{498B44CD}						;-- MOV rax, [r13+rcx*8+source]
+		emit int-to-bin/to-bin8 source-offset
+		emit #{488944CC}						;-- MOV [rsp+rcx*8+target], rax
+		emit int-to-bin/to-bin8 shadow-offset
+		emit #{FFC1}							;-- INC ecx
+		copy-back: emit-local-rel32 #{E9}
+		patch-local-rel32 copy-back loop-start
+		patch-local-rel32 copy-done (length? emitter/code-buf) + 1
+		join: emit-local-rel32 #{E9}
+
+		patch-local-rel32 no-overflow (length? emitter/code-buf) + 1
+		if win64? [emit #{4883EC20}]			;-- SUB rsp, 32-byte shadow area
+		emit #{41F6C301}						;-- TEST r11b, 1
+		no-pad: emit-local-rel32 #{0F84}			;-- JZ aligned
+		emit #{4883EC08}						;-- SUB rsp, 8
+		patch-local-rel32 no-pad (length? emitter/code-buf) + 1
+		patch-local-rel32 join (length? emitter/code-buf) + 1
+
+		emit-custom-register-loads 'r11d
+	]
+	emit-custom-dynamic-cleanup: does [
+		emit #{4C89E4}						;-- MOV rsp, r12
+		emit #{4D8B5508}						;-- MOV r10, [r13+8] (saved r12)
+		emit #{4D8B5D00}						;-- MOV r11, [r13]   (saved r13)
+		emit #{4D89D4}						;-- MOV r12, r10
+		emit #{4D89DD}						;-- MOV r13, r11
+	]
+	emit-custom-literal-header: func [count [integer!] /local index][
+		if negative? count [
+			system-dialect/compiler/throw-error "custom call argument count cannot be negative"
+		]
+		repeat index count [append/only call-arg-types [integer!]]
+		call-arg-index: call-arg-index + count
+		count
+	]
 	use-fixed-call-shadow?: func [eligible? [logic!]][
 		if all [
 			eligible?
@@ -659,6 +770,13 @@ target: 'X86-64
 			return yes
 		]
 		no
+	]
+	root-user-call-frame?: does [
+		all [
+			win64?
+			none? system-dialect/compiler/func-name
+			system-dialect/compiler/user-code?
+		]
 	]
 	emit-normalize-sysv-return: func [fspec [block!] /local ret classes][
 		unless all [
@@ -689,7 +807,9 @@ target: 'X86-64
 	]
 	emit-align-call-stack: func [/local live-slots source-offset target-offset][
 		live-slots: call-stack-slots + call-extra-slots + call-shadow-slots
-		call-pad-slots: either odd? live-slots [1][0]
+		call-pad-slots: either root-user-call-frame? [
+			either even? live-slots [1][0]
+		][either odd? live-slots [1][0]]
 		if positive? call-pad-slots [
 			emit-reserve-stack call-pad-slots
 			repeat index call-stack-slots [
@@ -1263,8 +1383,12 @@ target: 'X86-64
 			emit-rbp-ref (target + part) #{4C8955}	;-- MOV [rbp+target], r10
 		]
 	]
-	emit-store-sysv-float-arg: func [index [integer!] offset [integer!]][
-		emit #{F20F11}							;-- MOVSD [rbp+disp], xmmN
+	emit-store-sysv-float-arg: func [
+		index [integer!]
+		offset [integer!]
+		type [block!]
+	][
+		emit either type/1 = 'float32! [#{F30F11}][#{F20F11}]
 		either all [offset >= -128 offset <= 127] [
 			emit pick [#{45} #{4D} #{55} #{5D} #{65} #{6D} #{75} #{7D}] index
 			emit int-to-bin/to-bin8 offset
@@ -1400,7 +1524,7 @@ target: 'X86-64
 								foreach class classes [
 									either class = 'sse [
 										float-count: float-count + 1
-										emit-store-sysv-float-arg float-count base + (index * stack-width)
+										emit-store-sysv-float-arg float-count base + (index * stack-width) type
 									][
 										int-count: int-count + 1
 										emit-store-arg-slot int-count base + (index * stack-width)
@@ -1427,13 +1551,11 @@ target: 'X86-64
 							patch-stack-offset name base
 							offset: base
 						][either system-dialect/compiler/any-float? type [
-							either float-count < 8 [
-								offset: offset - stack-width
-								emit #{4883EC08}		;-- SUB rsp, 8
-								emit either type/1 = 'float32! [#{F30F11}][#{F20F11}]
-								emit pick [#{45} #{4D} #{55} #{5D} #{65} #{6D} #{75} #{7D}] float-count + 1
-								emit int-to-bin/to-bin8 offset
-								patch-stack-offset name offset
+								either float-count < 8 [
+									offset: offset - stack-width
+									emit #{4883EC08}		;-- SUB rsp, 8
+									emit-store-sysv-float-arg float-count + 1 offset type
+									patch-stack-offset name offset
 								float-count: float-count + 1
 							][
 								stack-offset: 16 + (stack-count * stack-width)
@@ -2152,14 +2274,28 @@ target: 'X86-64
 		fspec [block!]
 		spec [block!]
 		attribs [block! none!]
-		/local n
+		/local n custom? dynamic-custom?
 	][
+		custom?: args/1 = #custom
+		dynamic-custom?: no
 		call-variadic?: to logic! system-dialect/compiler/find-attribute fspec/4 'variadic
-		if all [system-dialect/compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
-		n: length? call-arg-types
-		emit-call-register-loads n
-		emit-align-call-stack
-		if win64? [emit-reserve-stack 4]
+		either custom? [
+			either integer? args/2/1 [
+				n: emit-custom-literal-header args/2/1
+			][
+				n: 0
+				dynamic-custom?: yes
+				emit-custom-dynamic-header args/2/1
+			]
+		][
+			if all [system-dialect/compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
+			n: length? call-arg-types
+		]
+		unless dynamic-custom? [
+			emit-call-register-loads n
+			emit-align-call-stack
+			if win64? [emit-reserve-stack 4]
+		]
 		if all [not win64? system-dialect/compiler/find-attribute fspec/4 'variadic] [
 			emit #{B0}								;-- MOV al, imm8 (SysV variadic FP register count)
 			emit int-to-bin/to-bin8 call-float-reg-count
@@ -2167,7 +2303,7 @@ target: 'X86-64
 		emit either win64? [#{FF15}][#{E8}]			;-- CALL [rip+disp32] / rel32
 		emit-reloc-disp32 spec
 		emit-normalize-sysv-return fspec
-		emit-call-stack-cleanup n
+		either dynamic-custom? [emit-custom-dynamic-cleanup][emit-call-stack-cleanup n]
 		call-arg-index: max 0 call-arg-index - n
 		remove/part skip tail call-arg-types negate n n
 		call-stack-slots: 0
@@ -2182,14 +2318,29 @@ target: 'X86-64
 	emit-call-native: func [
 		args [block!] fspec [block!] spec [block!] attribs [block! none!]
 		/routine-call name [word!]
-		/local n target fixed-shadow?
+		/local n target fixed-shadow? custom? dynamic-custom?
 	][
-		if all [system-dialect/compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
-		n: length? call-arg-types
-		emit-call-register-loads n
-		fixed-shadow?: use-fixed-call-shadow? not routine-call
-		emit-align-call-stack
-		if all [win64? not fixed-shadow?] [emit-reserve-stack 4]
+		custom?: args/1 = #custom
+		dynamic-custom?: no
+		fixed-shadow?: no
+		either custom? [
+			either integer? args/2/1 [
+				n: emit-custom-literal-header args/2/1
+			][
+				n: 0
+				dynamic-custom?: yes
+				emit-custom-dynamic-header args/2/1
+			]
+		][
+			if all [system-dialect/compiler/variadic? args/1 fspec/3 <> 'cdecl][emit-variadic-data args]
+			n: length? call-arg-types
+		]
+		unless dynamic-custom? [
+			emit-call-register-loads n
+			fixed-shadow?: use-fixed-call-shadow? (to logic! all [not routine-call not custom?])
+			emit-align-call-stack
+			if all [win64? not fixed-shadow?] [emit-reserve-stack 4]
+		]
 		either routine-call [
 			target: either all [2 <= length? fspec 'local = last fspec][
 				pick tail fspec -2
@@ -2211,7 +2362,7 @@ target: 'X86-64
 			emit-reloc-disp32 spec
 		]
 		emit-normalize-sysv-return fspec
-		emit-call-stack-cleanup n
+		either dynamic-custom? [emit-custom-dynamic-cleanup][emit-call-stack-cleanup n]
 		call-arg-index: max 0 call-arg-index - n
 		remove/part skip tail call-arg-types negate n n
 		call-stack-slots: 0
@@ -4842,8 +4993,17 @@ target: 'X86-64
 					emit-load value
 				]
 				unless all [integer? value optimize?][
-					emit #{50}						;-- PUSH rax
-					pushed-rax?: yes
+					either all [
+						not integer? value
+						block? system-dialect/compiler/last-type
+						system-dialect/compiler/any-float? system-dialect/compiler/last-type
+					][
+						emit #{4883EC08}				;-- SUB rsp, 8
+						emit either (first system-dialect/compiler/last-type) = 'float32! [#{F30F110424}][#{F20F110424}]
+					][
+						emit #{50}						;-- PUSH rax
+						pushed-rax?: yes
+					]
 				]
 			]
 		]
@@ -4897,37 +5057,32 @@ target: 'X86-64
 		if verbose >= 3 [print [">>>emitting ATOMIC-LOAD" mold order]]
 		emit #{8B00}								;-- MOV eax, [rax]
 	]
-	emit-atomic-scratch-save: does [
-		if win64? [
-			emit #{56}								;-- PUSH rsi
-			emit #{4883EC08}						;-- SUB rsp, 8 (preserve call alignment)
-		]
+	emit-atomic-save-pointer: does [
+		emit #{4883EC10}							;-- SUB rsp, 16 (preserve call alignment)
+		emit #{48890424}							;-- MOV [rsp], rax
 	]
-	emit-atomic-scratch-restore: does [
-		if win64? [
-			emit #{4883C408}						;-- ADD rsp, 8
-			emit #{5E}								;-- POP rsi
-		]
+	emit-atomic-restore-pointer: does [
+		emit #{4C8B1C24}							;-- MOV r11, [rsp]
+		emit #{4883C410}							;-- ADD rsp, 16
 	]
 	emit-atomic-store: func [value order [word!]][
 		if verbose >= 3 [print [">>>emitting ATOMIC-STORE" mold value mold order]]
-		emit-atomic-scratch-save
-		emit #{4889C6}								;-- MOV rsi, rax
+		emit-atomic-save-pointer
 		emit-load value
-		emit #{8906}								;-- MOV [rsi], eax
+		emit-atomic-restore-pointer
+		emit #{418903}								;-- MOV [r11], eax
 		emit-atomic-fence
-		emit-atomic-scratch-restore
 	]
 	emit-atomic-math: func [op [word!] right-op old? [logic!] ret? [logic!] order [word!]][
 		if verbose >= 3 [print [">>>emitting ATOMIC-MATH-OP" mold op mold right-op mold ret? mold order]]
-		emit-atomic-scratch-save
-		emit #{4889C6}								;-- MOV rsi, rax
+		emit-atomic-save-pointer
 		emit-load right-op
+		emit-atomic-restore-pointer
 		either any [old? ret?][
 			either find [add sub] op [
 				emit #{89C2}						;-- MOV edx, eax
 				if op = 'sub [emit #{F7D8}]			;-- NEG eax
-				emit #{F00FC106}					;-- LOCK XADD [rsi], eax
+				emit #{F0410FC103}				;-- LOCK XADD [r11], eax
 				if all [ret? not old?][
 					emit either op = 'add [
 						#{01D0}						;-- ADD eax, edx
@@ -4938,7 +5093,7 @@ target: 'X86-64
 			][
 				emit #{57}							;-- PUSH rdi
 				emit #{89C7}						;-- MOV edi, eax
-				emit #{8B06}						;-- MOV eax, [rsi]
+				emit #{418B03}					;-- MOV eax, [r11]
 				emit #{89C1}						;-- loop: MOV ecx, eax
 				if old? [emit #{89C2}]				;-- MOV edx, eax
 				switch op [
@@ -4946,7 +5101,7 @@ target: 'X86-64
 					xor [emit #{31F9}]				;-- XOR ecx, edi
 					and [emit #{21F9}]				;-- AND ecx, edi
 				]
-				emit #{F00FB10E}					;-- LOCK CMPXCHG [rsi], ecx
+				emit #{F0410FB10B}				;-- LOCK CMPXCHG [r11], ecx
 				emit either old? [#{75F4}][#{75F6}]	;-- JNE loop
 				emit either all [ret? not old?][
 					#{89C8}							;-- MOV eax, ecx
@@ -4957,28 +5112,28 @@ target: 'X86-64
 			]
 		][
 			emit switch op [
-				add  [#{F00106}]					;-- LOCK ADD [rsi], eax
-				sub  [#{F02906}]					;-- LOCK SUB [rsi], eax
-				or   [#{F00906}]					;-- LOCK OR  [rsi], eax
-				xor  [#{F03106}]					;-- LOCK XOR [rsi], eax
-				and  [#{F02106}]					;-- LOCK AND [rsi], eax
+				add  [#{F0410103}]				;-- LOCK ADD [r11], eax
+				sub  [#{F0412903}]				;-- LOCK SUB [r11], eax
+				or   [#{F0410903}]				;-- LOCK OR  [r11], eax
+				xor  [#{F0413103}]				;-- LOCK XOR [r11], eax
+				and  [#{F0412103}]				;-- LOCK AND [r11], eax
 			]
 		]
-		emit-atomic-scratch-restore
 	]
 	emit-atomic-cas: func [check value ret? [logic!] order [word!]][
 		if verbose >= 3 [print [">>>emitting ATOMIC-CAS" mold check mold value ret? mold order]]
-		emit-atomic-scratch-save
-		emit #{4889C6}								;-- MOV rsi, rax
+		emit-atomic-save-pointer
+		emit-load check								;-- evaluate check before new value
+		emit #{89442408}							;-- MOV [rsp + 8], eax
 		emit-load value
-		emit-move-path-alt							;-- load new value in edx
-		emit-load check								;-- load check value in eax
-		emit #{F00FB116}							;-- LOCK CMPXCHG [rsi], edx
+		emit #{89C2}								;-- MOV edx, eax
+		emit #{8B442408}							;-- MOV eax, [rsp + 8]
+		emit-atomic-restore-pointer
+		emit #{F0410FB113}						;-- LOCK CMPXCHG [r11], edx
 		if ret? [
 			emit #{0F94C0}							;-- SETE al
 			emit #{0FB6C0}							;-- MOVZX eax, al
 		]
-		emit-atomic-scratch-restore
 	]
 	emit-atomic-fence: does [
 		if verbose >= 3 [print ">>>emitting ATOMIC-FENCE"]

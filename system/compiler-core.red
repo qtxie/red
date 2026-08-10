@@ -5,21 +5,7 @@ Red [
 
 #include %machine-ir.red
 
-;-- Top-level cursor stack (not nested object field). Object-field series have
-;-- been observed corrupted to integer (e.g. 10000) under Stage1 GC; a script
-;-- global is always reachable from the collector roots.
-rs-pc-frame-stack: make block! 32
-;-- Permanent roots for per-context word tables (nested hash! values).
-rs-ns-word-tables: make block! 32
-;-- Namespace state as top-level roots (object fields corrupted under Stage1 GC
-;-- when only reachable via system-dialect object; same pattern as rs-ns-word-tables).
-rs-ns-path:  none										;-- namespaces access path
-rs-ns-stack: none										;-- namespaces resolution stack
-rs-ns-list:  make hash! 8								;-- namespaces definition list
-
 system-dialect: context [
-	rs-pc-frames: none								;-- unused; stack lives in rs-pc-frame-stack
-
 	verbose:  	  0										;-- logs verbosity level
 	job: 		  none									;-- reference the current job object
 	last-result: none								;-- last [compile-time link-time size output] tuple
@@ -107,11 +93,15 @@ system-dialect: context [
 		block-level: 	 0								;-- nesting level of input source block
 		catch-level:	 0								;-- nesting level of CATCH body block
 		overflow-check?: no								;-- yes => inside an OVERFLOW? block; backend hooks instrument math/shift/div ops
+		o2-ir-action-recorded?: no						;-- current expression was recorded by a system action
 		verbose:  	 	 0								;-- logs verbosity level
 
 		imports: 	   	 make block! 10					;-- list of imported functions
 		exports: 	   	 make block! 10					;-- list of exported symbols
 		natives:	   	 make hash!  40					;-- list of functions to compile [name [specs] [body]...]
+		ns-path:		 none							;-- namespaces access path
+		ns-stack:		 none							;-- namespaces resolution stack
+		ns-list:		 make hash!  8					;-- namespaces definition list [name [word type...]...]
 		sym-ctx-table:	 make hash!  100				;-- reverse lookup table for contexts
 		globals:  	   	 make map!   200					;-- globally defined symbols keyed by name
 		protected:		 make hash!  40					;-- list of protected symbols (read-only data)
@@ -422,7 +412,7 @@ system-dialect: context [
 			if find [">" ">=" "<>" ">>" ">>>"] v [return value]
 
 			while [pos: find v decoration][
-				unless find rs-ns-list to path! copy/part v pos [
+				unless find ns-list to path! copy/part v pos [
 					pos: next pos
 					v: append replace/all copy/part head v pos decoration slash pos
 					return transcode/one v
@@ -522,7 +512,11 @@ system-dialect: context [
 			none
 		]
 
-		system-action?: func [path [path!] /local expr port-type op ret? z?][
+		system-action?: func [
+			path [path!]
+			/local expr port-type op ret? z? ir-active? ir-line ir-pointer ir-check ir-value ir-type
+				check-expr value-expr
+		][
 			if path/1 = 'system [
 				switch/default path/2 [
 					stack [
@@ -594,8 +588,15 @@ system-dialect: context [
 					atomic [
 						switch/default path/3 [
 							fence [
+								ir-active?: rs-o2-ir/function-active?
+								if ir-active? [ir-line: calc-line]
 								pc: next pc
 								emitter/target/emit-atomic-fence
+								if ir-active? [
+									rs-o2-ir/set-source script ir-line
+									rs-o2-ir/emit-atomic-fence
+									o2-ir-action-recorded?: yes
+								]
 								true
 							]
 							cas [
@@ -614,8 +615,25 @@ system-dialect: context [
 									]
 								]
 								ret?: not empty? expr-call-stack
+								ir-active?: rs-o2-ir/function-active?
+								if ir-active? [
+									ir-line: calc-line
+									check-expr: o2-ir-copy-expression pc/2
+									value-expr: o2-ir-copy-expression pc/3
+								]
 								fetch-expression/final/keep 'atomic
+								if ir-active? [ir-pointer: pick rs-o2-ir/current rs-o2-ir/fn-last-result]
 								emitter/target/emit-atomic-cas pc/1 pc/2 ret? 'seq-cst
+								if ir-active? [
+									rs-o2-ir/set-source script ir-line
+									ir-check: o2-ir-lower-expression check-expr
+									ir-value: o2-ir-lower-expression value-expr
+									ir-type: o2-ir-type-from-type [logic!]
+									either all [ir-pointer ir-check ir-value ir-type][
+										rs-o2-ir/emit-atomic-cas ir-pointer ir-check ir-value ret? ir-type
+									][rs-o2-ir/emit-opaque 'atomic-cas-input ir-type]
+									o2-ir-action-recorded?: yes
+								]
 								last-type: [logic!]
 								pc: skip pc 2
 								true
@@ -625,8 +643,19 @@ system-dialect: context [
 								if 'pointer! <> first get-type pc/1 [
 									throw-error "system/atomic/load expects a pointer! as argument"
 								]
+								ir-active?: rs-o2-ir/function-active?
+								if ir-active? [ir-line: calc-line]
 								fetch-expression/final/keep 'atomic
+								if ir-active? [ir-pointer: pick rs-o2-ir/current rs-o2-ir/fn-last-result]
 								emitter/target/emit-atomic-load 'seq-cst
+								if ir-active? [
+									rs-o2-ir/set-source script ir-line
+									ir-type: o2-ir-type-from-type [integer!]
+									either all [ir-pointer ir-type][
+										rs-o2-ir/emit-atomic-load ir-pointer ir-type
+									][rs-o2-ir/emit-opaque 'atomic-load-input ir-type]
+									o2-ir-action-recorded?: yes
+								]
 								last-type: [integer!]
 								true
 							]
@@ -639,8 +668,23 @@ system-dialect: context [
 								if not int32-type? last-type: get-type pc/2 [
 									throw-error join err "an integer! as value argument"
 								]
+								ir-active?: rs-o2-ir/function-active?
+								if ir-active? [
+									ir-line: calc-line
+									value-expr: o2-ir-copy-expression pc/2
+								]
 								fetch-expression/final/keep 'atomic
+								if ir-active? [ir-pointer: pick rs-o2-ir/current rs-o2-ir/fn-last-result]
 								emitter/target/emit-atomic-store pc/1 'seq-cst
+								if ir-active? [
+									rs-o2-ir/set-source script ir-line
+									ir-value: o2-ir-lower-expression value-expr
+									ir-type: o2-ir-type-from-type [integer!]
+									either all [ir-pointer ir-value ir-type][
+										rs-o2-ir/emit-atomic-store ir-pointer ir-value ir-type
+									][rs-o2-ir/emit-opaque 'atomic-store-input none]
+									o2-ir-action-recorded?: yes
+								]
 								pc: next pc
 								true
 							]
@@ -654,8 +698,24 @@ system-dialect: context [
 									throw-error rejoin ["system/atomic/" op " expects an integer! as value argument"]
 								]
 								ret?: not empty? expr-call-stack
+								ir-active?: rs-o2-ir/function-active?
+								if ir-active? [
+									ir-line: calc-line
+									value-expr: o2-ir-copy-expression pc/2
+								]
 								fetch-expression/final/keep 'atomic
+								if ir-active? [ir-pointer: pick rs-o2-ir/current rs-o2-ir/fn-last-result]
 								emitter/target/emit-atomic-math op pc/1 path/4 = 'old ret? 'seq-cst
+								if ir-active? [
+									rs-o2-ir/set-source script ir-line
+									ir-value: o2-ir-lower-expression value-expr
+									ir-type: o2-ir-type-from-type [integer!]
+									either all [ir-pointer ir-value ir-type][
+										rs-o2-ir/emit-atomic-math
+										 op ir-pointer ir-value path/4 = 'old ret? ir-type
+									][rs-o2-ir/emit-opaque 'atomic-math-input either ret? [ir-type][none]]
+									o2-ir-action-recorded?: yes
+								]
 								last-type: [integer!]
 								pc: next pc
 								true
@@ -1316,7 +1376,7 @@ system-dialect: context [
 
 					if none? type: any [
 						resolve-type name
-						all [rs-ns-path resolve-type ns-prefix name]
+						all [ns-path resolve-type ns-prefix name]
 					][
 						throw-error ["undefined symbol:" mold value]
 					]
@@ -1392,7 +1452,7 @@ system-dialect: context [
 		]
 
 		enum-name?: func [name [word!]][
-			if rs-ns-path [name: ns-prefix name]
+			if ns-path [name: ns-prefix name]
 			to-logic find/skip enumerations name 3		;-- SELECT/SKIP on hash! unreliable!
 		]
 
@@ -1425,7 +1485,7 @@ system-dialect: context [
 		]
 
 		count-enum: func [name [word!] /local c][
-			if rs-ns-path [name: ns-prefix name]
+			if ns-path [name: ns-prefix name]
 			c: 0
 			foreach [id n v] enumerations [if name = id [c: c + 1]]
 			c
@@ -1435,7 +1495,7 @@ system-dialect: context [
 			identifier [word!] name [word! block!] value [integer! word!] /local list v
 		][
 			store-ns-symbol identifier
-			if rs-ns-path [
+			if ns-path [
 				add-ns-symbol to set-word! identifier
 				identifier: ns-prefix identifier
 			]
@@ -1443,7 +1503,7 @@ system-dialect: context [
 			if word? name [name: reduce [name]]
 			forall name [
 				store-ns-symbol name/1
-				if rs-ns-path [
+				if ns-path [
 					add-ns-symbol to set-word! name/1
 					name/1: ns-prefix name/1
 				]
@@ -1514,21 +1574,13 @@ system-dialect: context [
 			]
 		]
 
-		push-loop: func [type [word!]][unless block? loop-stack [loop-stack: make block! 1] append loop-stack type]
+		push-loop: func [type [word!]][append loop-stack type]
 
 		pop-loop: does [
-			unless block? loop-stack [
-				print ["*** GC-BUG loop-stack type:" type? :loop-stack "value:" mold/flat/part :loop-stack 80]
-				halt
-			]
 			remove back tail loop-stack
 		]
 
 		push-call: func [action [word! set-word! set-path!]][
-			unless block? expr-call-stack [
-				print ["*** GC-BUG expr-call-stack type:" type? :expr-call-stack "value:" mold/flat/part :expr-call-stack 80]
-				halt
-			]
 			append/only expr-call-stack action
 			if verbose >= 4 [
 				new-line/all expr-call-stack off
@@ -1720,39 +1772,33 @@ system-dialect: context [
 		]
 
 		store-ns-symbol: func [name [word!] /local pos][
-			if rs-ns-path [
+			if ns-path [
 				either pos: find/skip sym-ctx-table name 2 [
 					either block? pos/2 [
-						if find/only pos/2 rs-ns-path [exit]
+						if find/only pos/2 ns-path [exit]
 					][
-						if rs-ns-path = pos/2 [exit]
+						if ns-path = pos/2 [exit]
 						pos/2: reduce [pos/2]
 					]
-					append/only pos/2 copy rs-ns-path
+					append/only pos/2 copy ns-path
 					sort/compare/stable pos/2 :order-ctx-candidates
 				][
 					append sym-ctx-table name
-					append/only sym-ctx-table copy rs-ns-path
+					append/only sym-ctx-table copy ns-path
 				]
 			]
 		]
 
 		add-ns-symbol: func [name [set-word!] /local ctx ns words][
 			name: to word! name
-			words: all [ns: find/only rs-ns-list rs-ns-path second ns]
-			unless any-block? words [
-				words: make hash! 32
-				append rs-ns-word-tables words
-				either ns [change next ns words][repend rs-ns-list [copy rs-ns-path words]]
-			]
+			words: second find/only ns-list ns-path
 			if find words name [exit]
-			if block? rs-ns-stack [
-				ctx: tail rs-ns-stack
+			if block? ns-stack [
+				ctx: tail ns-stack
 				until [
 					ctx: back ctx
 					if all [
-						ns: find/only rs-ns-list to path! ctx/1
-						any-block? second ns
+						ns: find/only ns-list to path! ctx/1
 						find second ns name
 					][exit]
 					head? ctx
@@ -1825,7 +1871,7 @@ system-dialect: context [
 
 		ns-prefix: func [name [word! path! set-word! set-path!] /set][
 			if set-word? name [name: to word! name]
-			name: ns-join rs-ns-path name
+			name: ns-join ns-path name
 			either set [ns-decorate/set name][ns-decorate name]
 		]
 
@@ -2387,8 +2433,8 @@ system-dialect: context [
 		fetch-func: func [name /local specs type cc attribs offset fspec][
 			name: to word! name
 			store-ns-symbol name
-			if rs-ns-path [add-ns-symbol pc/-1]
-			if rs-ns-path [name: ns-prefix name]
+			if ns-path [add-ns-symbol pc/-1]
+			if ns-path [name: ns-prefix name]
 			check-func-name name
 
 			unless block? pc/3 [throw-error ["function" name "requires a body block!"]]
@@ -2428,8 +2474,8 @@ system-dialect: context [
 			emitter/add-native name
 			repend natives [
 				name specs pc/3 script
-				all [rs-ns-path copy rs-ns-path]
-				all [block? rs-ns-stack copy/deep rs-ns-stack]		;@@ /deep doesn't work on paths
+				all [ns-path copy ns-path]
+				all [block? ns-stack copy/deep ns-stack]		;@@ /deep doesn't work on paths
 				user-code?
 				offset
 			]
@@ -2513,7 +2559,7 @@ system-dialect: context [
 				unless any [word? sym path? sym][
 					throw-error ["invalid exported symbol:" mold sym]
 				]
-				if path? sym [sym: resolve-rs-ns-path sym]
+				if path? sym [sym: resolve-ns-path sym]
 				unless any [
 					find globals sym
 					entry: find-functions sym
@@ -2567,7 +2613,7 @@ system-dialect: context [
 								empty-import?: no
 								name: to word! name
 								store-ns-symbol name
-								if rs-ns-path [
+								if ns-path [
 									add-ns-symbol to set-word! name
 									name: ns-prefix name
 								]
@@ -2581,7 +2627,7 @@ system-dialect: context [
 									all [2 = length? spec find [pointer! struct!] spec/1 block? spec/2]
 								][
 									unless parse spec type-spec [throw-error err]
-									either rs-ns-path [
+									either ns-path [
 										add-ns-symbol specs/1
 										add-symbol ns-prefix to word! specs/1 none spec
 									][
@@ -2725,10 +2771,6 @@ system-dialect: context [
 			]
 			unless binary? code [throw-error "#inline directive requires a binary! argument"]
 			emitter/ensure-code-buf
-			unless binary? emitter/code-buf [
-				print ["*** DBG code-buf:" type? emitter/code-buf mold/flat emitter/code-buf]
-				throw-error ["code-buf corrupted" type? emitter/code-buf]
-			]
 			append emitter/code-buf code
 		]
 
@@ -2866,21 +2908,13 @@ system-dialect: context [
 
 			forall ns [
 				ns/1: either path? ctx: resolve-ns/path ns/1 [ctx][to path! ctx]
-				unless find/only rs-ns-list ns/1 [throw-error ["undefined context" ns/1]]
+				unless find/only ns-list ns/1 [throw-error ["undefined context" ns/1]]
 			]
 			with-ns: unique copy ns
 
 			list: make block! 8
 			foreach ns with-ns [
-				either empty? res: intersect list words: to block! second find/only rs-ns-list ns [
-					unless block? list [
-						print ["*** DBG list:" type? :list mold/flat :list]
-						throw-error ["comp-with list corrupted" type? :list]
-					]
-					unless any-block? words [
-						print ["*** DBG words:" type? :words mold/flat :words]
-						throw-error ["comp-with words corrupted" type? :words]
-					]
+				either empty? res: intersect list words: to block! second find/only ns-list ns [
 					append list words
 				][
 					throw-warning rejoin [
@@ -2892,32 +2926,19 @@ system-dialect: context [
 			]
 
 			list: copy with-ns
-			unless block? rs-ns-stack [rs-ns-stack: make block! 1]
-			unless block? rs-ns-stack [
-				print ["*** DBG rs-ns-stack:" type? :rs-ns-stack mold/flat :rs-ns-stack]
-				throw-error ["comp-with rs-ns-stack corrupted" type? :rs-ns-stack]
-			]
-			unless block? list [
-				print ["*** DBG list2:" type? :list mold/flat :list]
-				throw-error ["comp-with list2 corrupted" type? :list]
-			]
-			append rs-ns-stack list
+			if none? ns-stack [ns-stack: make block! 1]
+			append ns-stack list
 
 			fetch-into/root pc/3 [comp-dialect]
 
 			pc: skip pc 3
-			unless block? rs-ns-stack [
-				print ["*** GC-BUG rs-ns-stack type:" type? :rs-ns-stack "value:" mold/flat/part :rs-ns-stack 80]
-				print ["*** GC-BUG list type:" type? :list "value:" mold/flat/part :list 80]
-				halt
-			]
-			clear skip tail rs-ns-stack negate length? list
-			if all [block? rs-ns-stack empty? rs-ns-stack] [rs-ns-stack: none]
+			clear skip tail ns-stack negate length? list
+			if empty? ns-stack [ns-stack: none]
 
 			none
 		]
 
-		comp-context: has [name level h][
+		comp-context: has [name level][
 			unless block? pc/2 [throw-error "context specification block is missing"]
 			unless set-word? pc/-1 [throw-error "context's name setting is missing"]
 			unless zero? block-level [
@@ -2939,40 +2960,26 @@ system-dialect: context [
 			]
 			pc: next pc
 
-			unless block? rs-ns-stack [rs-ns-stack: make block! 1]
-			append rs-ns-stack to word! mold/flat name
+			if none? ns-stack [ns-stack: make block! 1]
+			append ns-stack to word! mold/flat name
 
-			;-- path? not just truthy: corrupted integer residues (e.g. 10000) are truthy
-			;-- and would make append fail with invalid argument: 10000.
-			either path? rs-ns-path [
-				append rs-ns-path to word! mold/flat name
+			either none? ns-path [
+				ns-path: to path! mold/flat name
 			][
-				rs-ns-path: to path! mold/flat name
+				append ns-path to word! mold/flat name
 			]
-			either find/only rs-ns-list rs-ns-path [
+			either find/only ns-list ns-path [
 				throw-error ["context" name "already defined"]
 			][
-				(
-					h: make hash! 32
-					append rs-ns-word-tables h
-					repend rs-ns-list [copy rs-ns-path h]
-				)
+				repend ns-list [copy ns-path make hash! 32]
 			]
 
 			fetch-into/root pc/1 [comp-dialect]
 
-			unless any-block? rs-ns-path [
-				print ["*** GC-BUG rs-ns-path type:" type? :rs-ns-path "value:" mold/flat/part :rs-ns-path 80]
-				halt
-			]
-			unless block? rs-ns-stack [
-				print ["*** GC-BUG rs-ns-stack(ctx) type:" type? :rs-ns-stack "value:" mold/flat/part :rs-ns-stack 80]
-				halt
-			]
-			remove back tail rs-ns-path
-			if empty? rs-ns-path [rs-ns-path: none]
-			remove back tail rs-ns-stack
-			if all [block? rs-ns-stack empty? rs-ns-stack] [rs-ns-stack: none]
+			remove back tail ns-path
+			if empty? ns-path [ns-path: none]
+			remove back tail ns-stack
+			if empty? ns-stack [ns-stack: none]
 
 			pc: next pc
 			none
@@ -3009,7 +3016,7 @@ system-dialect: context [
 				unless all [word? value type: resolve-aliased/silent reduce [value]][
 					throw-error ["DECLARE argument type" value "not found or not supported"]
 				]
-				if all [rs-ns-path ns: find-aliased/prefix value][value: ns]
+				if all [ns-path ns: find-aliased/prefix value][value: ns]
 				offset: 2
 				[type/1 value]
 			]
@@ -3161,11 +3168,11 @@ system-dialect: context [
 				]
 			]
 			store-ns-symbol name
-			if rs-ns-path [add-ns-symbol pc/-1]
+			if ns-path [add-ns-symbol pc/-1]
 
 			all [
 				not base-type? name
-				rs-ns-path
+				ns-path
 				name: ns-prefix name
 			]
 
@@ -3248,10 +3255,11 @@ system-dialect: context [
 			<last>
 		]
 
-		comp-exit: func [/value /local expr type ret][
+		comp-exit: func [/value /local expr type ret ir-line][
 			unless locals [
 				throw-error [pc/1 "is not allowed outside of a function"]
 			]
+			ir-line: calc-line
 			pc: next pc
 			ret: select-local-spec return-def
 
@@ -3269,6 +3277,10 @@ system-dialect: context [
 				if ret [throw-error "EXIT keyword is not compatible with declaring a return value"]
 			]
 			emitter/target/emit-jump-point emitter/exits
+			if rs-o2-ir/function-active? [
+				rs-o2-ir/set-source script ir-line
+				rs-o2-ir/emit-source-return to logic! value
+			]
 			ret
 		]
 
@@ -3311,7 +3323,7 @@ system-dialect: context [
 			none
 		]
 
-		comp-overflow?: has [unused body-chunk no-ovf-chunk ovf-arm combined saved][
+		comp-overflow?: has [unused body-chunk no-ovf-chunk ovf-arm combined saved ir-overflow][
 			pc: next pc
 			unless block? pc/1 [
 				backtrack 'overflow?
@@ -3321,8 +3333,10 @@ system-dialect: context [
 			saved: overflow-check?
 			overflow-check?: yes
 			append/only emitter/overflow-jumps make block! 1	;-- push fresh jump list (parallel to push-loop-jumps' idiom)
+			ir-overflow: rs-o2-ir/begin-overflow
 
 			set [unused body-chunk] comp-block-chunked	;-- compile body; backend hooks emit JCC into list
+			if ir-overflow [rs-o2-ir/end-overflow ir-overflow]
 
 			overflow-check?: saved
 
@@ -3426,7 +3440,10 @@ system-dialect: context [
 			<last>
 		]
 
-		comp-either: has [expr e-true e-false c-true c-false offset t-true t-false ret mark name fspec][
+		comp-either: has [
+			expr e-true e-false c-true c-false offset t-true t-false ret mark name fspec
+			ir-either
+		][
 			if all [
 				not empty? expr-call-stack
 				word? name: pick tail expr-call-stack -2
@@ -3437,15 +3454,19 @@ system-dialect: context [
 				throw-error "cannot nest EITHER inside an infix expression"
 			]
 			pc: next pc
+			ir-either: rs-o2-ir/begin-either
 			expr: fetch-expression/final 'either		;-- compile expression
 			check-conditional 'either expr				;-- verify conditional expression
 			expr: process-logic-encoding expr no
+			if ir-either [rs-o2-ir/either-condition ir-either]
 
 			check-body pc/1								;-- check TRUE block
 			check-body pc/2								;-- check FALSE block
 
 			set [e-true c-true]   comp-block-chunked	;-- compile TRUE block
+			if ir-either [rs-o2-ir/end-either-true ir-either]
 			set [e-false c-false] comp-block-chunked	;-- compile FALSE block
+			if ir-either [rs-o2-ir/end-either ir-either]
 
 			t-true:  resolve-expr-type/quiet e-true
 			t-false: resolve-expr-type/quiet e-false
@@ -3485,31 +3506,33 @@ system-dialect: context [
 			<last>
 		]
 
-		comp-case: has [cases list test body op bodies offset types][
+		comp-case: has [cases list test body op bodies offset types ir-case ir-arm][
 			unless block? cases: pc/2 [throw-error "missing CASE body block"]
 			pc: next pc
 			list:  make block! 8
 			types: make block! 8
+			ir-case: rs-o2-ir/begin-case
 
 			until [										;-- collect and pre-compile all cases
-				unless block? expr-call-stack [print ["*** DBG ecs-test" type? :expr-call-stack] expr-call-stack: make block! 10]
 				append expr-call-stack #test			;-- marker for disabling expression post-processing
 				fetch-into cases [						;-- compile case test
 					append/only list comp-block-chunked/only/test 'case
 					cases: pc							;-- set cursor after the expression
 				]
+				ir-arm: all [ir-case rs-o2-ir/case-condition ir-case]
 				clear find/last expr-call-stack #test
 
-				unless block? expr-call-stack [print ["*** DBG ecs-body" type? :expr-call-stack] expr-call-stack: make block! 10]
 				append expr-call-stack #body			;-- marker for enabling expression post-processing
 				last-type: none-type
 				fetch-into cases [						;-- compile case body
 					append/only list body: comp-block-chunked
 					append/only types resolve-expr-type/quiet body/1
 				]
+				if all [ir-case ir-arm][rs-o2-ir/end-case-body ir-case ir-arm]
 				clear find/last expr-call-stack #body
 				tail? cases: next cases
 			]
+			if ir-case [rs-o2-ir/end-case ir-case]
 
 			bodies: comp-chunked [raise-runtime-error 100] ;-- raise a runtime error if unmatched value
 
@@ -3668,6 +3691,7 @@ system-dialect: context [
 			if empty? loop-stack [throw-error "BREAK used with no loop"]
 			if 'while-cond = last :loop-stack [throw-error "BREAK cannot be used in WHILE condition block"]
 			emitter/target/emit-jump-point last :emitter/breaks
+			rs-o2-ir/emit-loop-break
 			pc: next pc
 			none
 		]
@@ -3682,6 +3706,7 @@ system-dialect: context [
 			][											;-- as the looping condition cannot be guessed.
 				emitter/cont-next						;-- jump at end for all others
 			]
+			rs-o2-ir/emit-loop-continue
 			pc: next pc
 			none
 		]
@@ -3704,7 +3729,7 @@ system-dialect: context [
 			repeat i loops [append pos reduce [to-word to string! append copy <L> i [integer!]]] ;-- add counters to locals
 		]
 
-		comp-loop: has [name expr body start counter vars pos][
+		comp-loop: has [name expr body start counter vars pos ir-loop][
 			pc: next pc
 			if tag? pc/1 [name: to-word to string! pc/1 remove pc] ;-- process loop's hidden counter variable
 
@@ -3719,8 +3744,10 @@ system-dialect: context [
 			push-loop 'loop
 			either locals [vars: name][counter: emitter/store-value none 0 [integer!]]
 			start: comp-chunked [emitter/target/emit-start-loop counter vars]
+			ir-loop: rs-o2-ir/begin-loop name
 			set [expr body] comp-block-chunked
 			pop-loop
+			if ir-loop [rs-o2-ir/end-loop ir-loop]
 
 			body: emitter/chunks/join start body
 			emitter/resolve-loop-jumps body 'cont-next
@@ -3735,13 +3762,15 @@ system-dialect: context [
 			<last>
 		]
 
-		comp-until: has [expr chunk][
+		comp-until: has [expr chunk ir-loop][
 			pc: next pc
 			check-body pc/1
 			emitter/push-loop-jumps
 			push-loop 'until
+			ir-loop: rs-o2-ir/begin-until
 			set [expr chunk] comp-block-chunked/test 'until
 			pop-loop
+			if ir-loop [rs-o2-ir/end-until ir-loop]
 			emitter/resolve-loop-jumps chunk 'cont-back
 			emitter/branch/back/on/parity chunk expr/1 floats-in-condition? expr
 			emitter/resolve-loop-jumps chunk 'breaks
@@ -3866,7 +3895,7 @@ system-dialect: context [
 					if all [locals ns not find globals ns][
 						throw-error ["variable" n "not declared"]
 					]
-					if all [rs-ns-path none? locals][add-ns-symbol pc/-1]
+					if all [ns-path none? locals][add-ns-symbol pc/-1]
 					if all [ns ns <> n][name: to set-word! ns]
 					check-func-name/only to word! name	;-- avoid clashing with an existing function name
 				]
@@ -3874,7 +3903,7 @@ system-dialect: context [
 			if set-path? name [
 				local?: local-variable? name/1			;-- path root shadowing a protected global?
 				unless any [name/1 = 'system local?][
-					name: resolve-rs-ns-path name			;-- may collapse the path to a set-word
+					name: resolve-ns-path name			;-- may collapse the path to a set-word
 				]
 				if all [
 					not local?							;-- writes through a local shadow are allowed
@@ -3935,15 +3964,15 @@ system-dialect: context [
 			]
 		]
 
-		resolve-rs-ns-path: func [path [path! set-path!] /local new pos][
+		resolve-ns-path: func [path [path! set-path!] /local new pos][
 			new: resolve-ns/path path/1					;-- try to prefix path/1
 
-			either find/only rs-ns-list to path! new [		;-- check if (prefixed) path/1 is a namespace
+			either find/only ns-list to path! new [		;-- check if (prefixed) path/1 is a namespace
 				new: to path! new
 				until [									;-- collect all ns prefixes from head
 					path: next path
 					append new path/1					;-- move each path value to new one
-					not find/only rs-ns-list new			;-- while the new path is still a namespace
+					not find/only ns-list new			;-- while the new path is still a namespace
 				]
 				new: ns-decorate new					;-- prefix and convert to word
 				unless tail? next path [				;-- if non-ns remains in path
@@ -3965,7 +3994,7 @@ system-dialect: context [
 
 			either all [
 				not local-variable? path/1
-				path: resolve-rs-ns-path path
+				path: resolve-ns-path path
 				word? path
 			][
 				if value: get-enumerator path [
@@ -4044,10 +4073,10 @@ system-dialect: context [
 		direct-match-ns: func [ctx [path!] name [word!] path /local ns][
 			if all [
 				any [
-					all [block? rs-ns-stack find/only rs-ns-stack ctx]
-					all [rs-ns-path find/only rs-ns-path ctx]
+					all [block? ns-stack find/only ns-stack ctx]
+					all [ns-path find/only ns-path ctx]
 				]
-				ns: find/only rs-ns-list ctx
+				ns: find/only ns-list ctx
 				find ns/2 name
 			][
 				if path [return ns-join to path! ctx name] ;-- if /path, defer word conversion
@@ -4056,8 +4085,8 @@ system-dialect: context [
 		]
 
 		match-ns: func [name [word!] ctx [word! path!] path /local pos][
-			unless block? rs-ns-stack [return name]
-			either pos: find rs-ns-stack either path? ctx [ctx/1][ctx][ ;-- match (1st) context with stack
+			if none? ns-stack [return name]
+			either pos: find ns-stack either path? ctx [ctx/1][ctx][ ;-- match (1st) context with stack
 				if path? ctx [							;-- context hierarchy to match with stack
 					foreach level ctx [					;-- match each context with next one on stack
 						if pos/1 <> level [return none]	;-- if doesn't match, prefix doesn't apply
@@ -4072,13 +4101,13 @@ system-dialect: context [
 		]
 
 		resolve-ns: func [name [word!] /path /local ctx pos value][
-			unless block? rs-ns-stack [return name]				;-- no current ns, pass-thru
+			if none? ns-stack [return name]					;-- no current ns, pass-thru
 
 			if ctx: find/skip sym-ctx-table name 2 [	;-- fetch context candidates
 				ctx: ctx/2								;-- SELECT/SKIP on hash! unreliable!
 				either block? ctx [						;-- more than one candidate
 					all [								;-- try direct matching first
-						pos: find/only ctx to path! transcode/one (mold rs-ns-stack)	;-- safer to-path conversion
+						pos: find/only ctx to path! transcode/one (mold ns-stack)	;-- safer to-path conversion
 						return either path [
 							ns-join to path! first pos name
 						][
@@ -4492,7 +4521,7 @@ system-dialect: context [
 			name [word!] args [block!]
 			/local
 				list type res left right dup var-arity? saved? arg expr spec fspec
-				types slots struct-type struct-slots struct-size
+				types slots struct-type struct-slots struct-size count-type
 		][
 			name: decorate-fun name
 			list: either variadic? args/1 [
@@ -4505,6 +4534,28 @@ system-dialect: context [
 			spec: functions/:name
 			slots: process-returned-struct name spec list
 			order-args name list						;-- reorder argument according to cconv
+
+			if args/1 = #custom [
+				unless (length? list) = 1 [
+					throw-error "custom call requires one argument-count expression"
+				]
+				expr: list/1
+				count-type: get-type expr
+				unless all [count-type int32-type? count-type][
+					throw-error "custom call argument count must be an integer!"
+				]
+				if all [integer? expr negative? expr][
+					throw-error "custom call argument count cannot be negative"
+				]
+				if block? unbox/deep expr [
+					comp-nested expr
+					args/2/1: <last>
+				]
+				if object? expr [
+					cast expr
+					args/2/1: <last>
+				]
+			]
 
 			if all [
 				args/1 <> #custom
@@ -5033,12 +5084,8 @@ system-dialect: context [
 
 		fetch-expression: func [
 			caller [any-word! issue! none! set-path!]
-			/final /thru /keep /local expr pass mark ir-record? ir-expr ir-line
+			/final /thru /keep /local expr pass mark ir-record? ir-expr ir-line ir-action-recorded?
 		][
-			unless block? expr-call-stack [
-				print ["*** GC-BUG fetch-expression ecs type:" type? :expr-call-stack "value:" mold/flat/part :expr-call-stack 80]
-				halt
-			]
 			mark: tail expr-call-stack
 			check-infix-operators
 
@@ -5083,6 +5130,8 @@ system-dialect: context [
 				throw-error "datatype not allowed"
 			]
 			set/any 'expr reduce-logic-tests expr
+			ir-action-recorded?: o2-ir-action-recorded?
+			if ir-action-recorded? [o2-ir-action-recorded?: no]
 
 			if final [
 				if verbose >= 3 [?? expr]
@@ -5093,7 +5142,7 @@ system-dialect: context [
 						ir-line: calc-line
 					]
 					comp-expression expr to logic! keep
-					if ir-record? [o2-ir-record-expression ir-expr ir-line]
+					if all [ir-record? not ir-action-recorded?][o2-ir-record-expression ir-expr ir-line]
 				]
 				clear mark
 			]
@@ -5111,10 +5160,6 @@ system-dialect: context [
 					throw-error "more than one expression found in parentheses"
 				]
 			][
-				unless block? expr-call-stack [
-					print ["*** GC-BUG ecs-mark type:" type? :expr-call-stack]
-					halt
-				]
 				mark: tail expr-call-stack
 				while [not tail? pc][
 					;if all [paren? pc/1 not infix? at pc 2][raise-paren-error]
@@ -5451,10 +5496,12 @@ system-dialect: context [
 				]
 				word? item [
 					if find [
-						either case until loop break continue
-						catch throw return exit use assert variant? overflow?
-					] item [rs-o2-ir/mark-unsupported 'control-flow]
-					if find [push pop] item [rs-o2-ir/mark-unsupported 'explicit-stack]
+						catch throw use assert variant?
+					] item [
+						rs-o2-ir/mark-unsupported to word! rejoin [form item "-control"]
+					]
+					; PUSH/POP are represented explicitly in machine IR. Other direct
+					; stack actions are handled by the path scanner above.
 				]
 				true []
 			]
@@ -5763,6 +5810,39 @@ system-dialect: context [
 		rs-o2-ir/emit-store-indirect base member/3 rhs member/2
 	]
 
+	o2-ir-lower-address-reference: func [
+		value [get-word! get-path!]
+		/local path name ir-type source-type spec member base
+	][
+		ir-type: o2-ir-type-of value
+		if none? ir-type [return rs-o2-ir/emit-opaque 'address-type none]
+		if get-path? value [
+			path: to path! value
+			if (length? path) > 1 [
+				member: o2-ir-simple-local-member path
+				unless member [return rs-o2-ir/emit-opaque 'address-path ir-type]
+				base: o2-ir-lower-expression member/1
+				unless base [return rs-o2-ir/emit-opaque 'address-path ir-type]
+				return rs-o2-ir/emit-address-indirect base member/3 ir-type
+			]
+			name: to word! path/1
+		]
+		if get-word? value [name: to word! value]
+		either local-variable? name [
+			source-type: o2-ir-type-of name
+			if none? source-type [return rs-o2-ir/emit-opaque 'address-source-type ir-type]
+			o2-ir-ensure-stack-object name source-type
+			rs-o2-ir/mark-stack-object-escaped name
+			rs-o2-ir/emit-address-local name ir-type
+		][
+			name: any [resolve-ns name name]
+			spec: select emitter/symbols name
+			either all [spec spec/1 = 'global][
+				rs-o2-ir/emit-address-global name ir-type
+			][rs-o2-ir/emit-opaque 'address-reference ir-type]
+		]
+	]
+
 	o2-ir-lower-typed-arguments: func [
 		encoded [block!]
 		/local count values type-ids position type-id padding result count-value pointer-type
@@ -5814,6 +5894,12 @@ system-dialect: context [
 			literal-hex literal-bits
 	][
 		case [
+			last-value? :value [
+				result: pick rs-o2-ir/current rs-o2-ir/fn-last-result
+				either result [
+					result
+				][rs-o2-ir/emit-opaque 'missing-materialized-value none]
+			]
 			integer? :value [
 				ir-type: o2-ir-type-of value
 				rs-o2-ir/emit-constant value ir-type
@@ -5887,6 +5973,20 @@ system-dialect: context [
 						name: decorate-fun op
 						spec: select functions name
 						case [
+							op = 'push [
+								either (length? value) = 2 [
+									result: o2-ir-lower-expression value/2
+									either result [
+										rs-o2-ir/emit-stack-push result
+									][rs-o2-ir/emit-opaque 'stack-push-value none]
+								][rs-o2-ir/emit-opaque 'stack-push-shape none]
+							]
+							op = 'pop [
+								ir-type: o2-ir-type-of value
+								either all [(length? value) = 1 ir-type][
+									rs-o2-ir/emit-stack-pop ir-type
+								][rs-o2-ir/emit-opaque 'stack-pop-shape ir-type]
+							]
 							all [spec spec/2 = 'op (length? value) >= 3] [
 								left: o2-ir-lower-expression value/2
 								right: o2-ir-lower-expression value/3
@@ -5899,7 +5999,27 @@ system-dialect: context [
 									op = first [//]
 									op = to word! "%"
 								]['may-trap]['pure]
-								rs-o2-ir/emit-binary op left right ir-type effect
+								rs-o2-ir/emit-source-binary op left right ir-type effect
+							]
+							op = 'not [
+								ir-type: o2-ir-type-of value
+								left: all [(length? value) = 2 o2-ir-lower-expression value/2]
+								value-type: all [left rs-o2-ir/vreg-type left]
+								case [
+									all [ir-type value-type ir-type/1 = 'logic value-type/1 = 'logic][
+										right: rs-o2-ir/emit-constant 0 value-type
+										rs-o2-ir/emit-source-binary
+											rs-o2-ir/equal-op left right ir-type 'pure
+									]
+									all [
+										ir-type value-type ir-type = value-type
+										find [i8 i16 i32 i64] value-type/1
+									][
+										right: rs-o2-ir/emit-constant -1 value-type
+										rs-o2-ir/emit-source-binary 'xor left right ir-type 'pure
+									]
+									true [rs-o2-ir/emit-opaque 'not-intrinsic ir-type]
+								]
 							]
 							spec [
 								args: make block! max 0 ((length? value) - 1)
@@ -5918,7 +6038,34 @@ system-dialect: context [
 								typed-call?: call-tag = #typed
 								custom-call?: call-tag = #custom
 								if custom-call? [
-									return rs-o2-ir/emit-opaque 'custom-call o2-ir-type-of value
+									ir-type: o2-ir-type-of value
+									unless (length? value/3) = 1 [
+										return rs-o2-ir/emit-opaque 'custom-call-shape ir-type
+									]
+									result: o2-ir-lower-expression value/3/1
+									unless result [
+										return rs-o2-ir/emit-opaque 'custom-call-count ir-type
+									]
+									literal-value: rs-o2-ir/constant-vreg-value result
+									if all [integer? literal-value literal-value < 0][
+										return rs-o2-ir/emit-opaque 'negative-custom-call-count ir-type
+									]
+									either spec/2 = 'routine [
+										target: op
+										if find/match form target "_local_" [
+											target: to word! skip form target 7
+										]
+										target: o2-ir-lower-expression target
+										unless target [
+											return rs-o2-ir/emit-opaque 'custom-call-target ir-type
+										]
+										return rs-o2-ir/emit-custom-call target yes literal-value result ir-type
+									][
+										unless find [native import] spec/2 [
+											return rs-o2-ir/emit-opaque 'custom-call-target ir-type
+										]
+										return rs-o2-ir/emit-custom-call name no literal-value result ir-type
+									]
 								]
 								either typed-call? [
 									typed-info: o2-ir-lower-typed-arguments value/3
@@ -5930,9 +6077,9 @@ system-dialect: context [
 									lowered-count: length? args
 								][
 									call-values: either variadic-call? [
-									call-values: copy/deep value/3
-									promote-variadic name value/2 call-values
-									call-values
+										call-values: copy/deep value/3
+										promote-variadic name value/2 call-values
+										call-values
 									][next value]
 									foreach arg call-values [
 										argument-index: argument-index + 1
@@ -5948,7 +6095,7 @@ system-dialect: context [
 												formal-type
 												value-type
 												o2-ir-bitcast-compatible? value-type formal-type
-												value-type/1 <> formal-type/1
+												value-type <> formal-type
 											][
 												result: rs-o2-ir/emit-bitcast result formal-type
 											]
@@ -5958,7 +6105,7 @@ system-dialect: context [
 											[
 												aggregate-call?: yes
 											]
-									]
+										]
 									]
 								]
 								ir-type: o2-ir-type-of value
@@ -6035,7 +6182,11 @@ system-dialect: context [
 										either o2-ir-resolver-selectable? name args ir-type [
 											rs-o2-ir/emit-resolver name args/1 ir-type
 										][
-											rs-o2-ir/mark-unsupported 'resolver-intrinsic
+											unless o2-ir-call-selectable?/logical-count
+												spec args ir-type lowered-count
+											[
+												rs-o2-ir/mark-unsupported 'call-selection
+											]
 											rs-o2-ir/emit-call name args ir-type
 										]
 									]
@@ -6059,6 +6210,15 @@ system-dialect: context [
 				ir-type: o2-ir-type-from-type value/type
 				either all [value/action = 'type-cast ir-type][
 					case [
+						all [
+							get-word? :value/data
+							ir-type/1 = 'ptr
+							name: to word! value/data
+							spec: select functions name
+							spec/2 = 'native
+						][
+							rs-o2-ir/emit-symbol-address name ir-type
+						]
 						all [
 							not value/keep?
 							any [
@@ -6107,7 +6267,9 @@ system-dialect: context [
 					]
 				][rs-o2-ir/emit-opaque 'unsupported-action ir-type]
 			]
-			any [issue? :value get-word? :value] [
+			get-word? :value [o2-ir-lower-address-reference value]
+			get-path? :value [o2-ir-lower-address-reference value]
+			issue? :value [
 				rs-o2-ir/emit-opaque 'literal-or-reference none
 			]
 			any [string? :value binary? :value] [
@@ -6127,8 +6289,9 @@ system-dialect: context [
 		o2-ir-begin-function: func [
 		name [word!] spec [block!] body [block!] bitmap-offset [integer!]
 		/local return-spec return-type abi started?
-	][
-		unless rs-o2-ir/session? [return no]
+		][
+			unless rs-o2-ir/session? [return no]
+			o2-ir-action-recorded?: no
 		return-spec: select spec return-def
 		return-type: o2-ir-type-from-type return-spec
 		abi: either job/OS = 'Windows ['win64]['sysv]
@@ -6224,8 +6387,8 @@ system-dialect: context [
 					]
 				]
 				script: origin
-				rs-ns-path: ns
-				rs-ns-stack: nss
+				ns-path: ns
+				ns-stack: nss
 				user-code?: user?
 				comp-func-body name spec body bits-offset
 			]
@@ -6463,8 +6626,8 @@ system-dialect: context [
 	]
 
 	clean-up: does [
-		rs-ns-path:
-		rs-ns-stack: none
+		compiler/ns-path:
+		compiler/ns-stack: none
 		compiler/func-name:
 		compiler/func-locals-sz:
 		compiler/locals: none
@@ -6485,10 +6648,9 @@ system-dialect: context [
 		clear compiler/imports
 		clear compiler/exports
 		clear compiler/natives
-		rs-ns-path: none
-		rs-ns-stack: none
-		clear rs-ns-list
-		clear rs-ns-word-tables
+		compiler/ns-path: none
+		compiler/ns-stack: none
+		clear compiler/ns-list
 		clear compiler/sym-ctx-table
 		clear compiler/globals
 		clear compiler/definitions

@@ -30,6 +30,8 @@ unless rs-o2-ir/start-session 2 'X86-64 dump-path 0 no [fail "session did not st
 i32: rs-o2-ir/make-type 'i32 4 'gpr yes 0 'none
 i8: rs-o2-ir/make-type 'i8 1 'gpr no 0 'none
 i16: rs-o2-ir/make-type 'i16 2 'gpr no 0 'none
+signed-i8: rs-o2-ir/make-type 'i8 1 'gpr yes 0 'none
+signed-i16: rs-o2-ir/make-type 'i16 2 'gpr yes 0 'none
 f32: rs-o2-ir/make-type 'f32 4 'xmm yes 0 'none
 f64: rs-o2-ir/make-type 'f64 8 'xmm yes 0 'none
 i64: rs-o2-ir/make-type 'i64 8 'gpr yes 0 'none
@@ -38,6 +40,38 @@ ptr-type: rs-o2-ir/make-type 'ptr 8 'gpr no 4 'pointer
 byte-ptr-type: rs-o2-ir/make-type 'ptr 8 'gpr no 1 'pointer
 cell-ptr-type: rs-o2-ir/make-type 'ptr 8 'gpr no 16 'pointer
 logic-type: rs-o2-ir/make-type 'logic 4 'gpr no 0 'none
+logic-memory-bytes: make binary! 32
+rs-o2-x64/emit-rip-load logic-memory-bytes logic-type 'r8d
+rs-o2-x64/emit-rip-store logic-memory-bytes logic-type 'r8d
+rs-o2-x64/emit-gpr-pointer-load logic-memory-bytes logic-type 'r8d 'r11d 0
+rs-o2-x64/emit-gpr-pointer-store logic-memory-bytes logic-type 'r11d 0 'r8d
+unless logic-memory-bytes = #{440FB6050000000044880500000000450FB603458803} [
+	fail rejoin ["logic memory bytes are wrong: " mold logic-memory-bytes]
+]
+narrow-memory-bytes: make binary! 80
+rs-o2-x64/emit-gpr-frame-load narrow-memory-bytes i8 'r8d -8
+rs-o2-x64/emit-gpr-frame-load narrow-memory-bytes signed-i8 'r9d -16
+rs-o2-x64/emit-gpr-frame-store narrow-memory-bytes i8 -24 'esi
+rs-o2-x64/emit-gpr-frame-store narrow-memory-bytes i16 -32 'r9d
+rs-o2-x64/emit-gpr-pointer-load narrow-memory-bytes i8 'r10d 'r11d 0
+rs-o2-x64/emit-gpr-pointer-load narrow-memory-bytes signed-i16 'eax 'r12d 2
+rs-o2-x64/emit-rip-load narrow-memory-bytes signed-i8 'r10d
+rs-o2-x64/emit-rip-store narrow-memory-bytes i16 'esi
+unless narrow-memory-bytes = #{440FB645F8440FBE4DF0408875E86644894DE0450FB613410FBF442402440FBE150000000066893500000000} [
+	fail rejoin ["narrow memory bytes are wrong: " mold narrow-memory-bytes]
+]
+narrow-conversion-bytes: make binary! 16
+rs-o2-x64/emit-normalize-narrow-register narrow-conversion-bytes i8 'r8d 'esi
+rs-o2-x64/emit-normalize-narrow-register narrow-conversion-bytes signed-i16 'eax 'r9d
+unless narrow-conversion-bytes = #{440FB6C6410FBFC1} [
+	fail rejoin ["narrow conversion bytes are wrong: " mold narrow-conversion-bytes]
+]
+unless (rs-o2-x64/gpr-condition-code rs-o2-ir/greater-op i8) = 7 [
+	fail "unsigned narrow comparison did not select JA"
+]
+unless (rs-o2-x64/gpr-condition-code rs-o2-ir/greater-op signed-i8) = 15 [
+	fail "signed narrow comparison did not select JG"
+]
 frame-pointer-index-bytes: make binary! 8
 unless rs-o2-x64/emit-movsxd-frame frame-pointer-index-bytes 'r11d -48 [
 	fail "frame pointer index encoding failed"
@@ -74,6 +108,27 @@ rs-o2-x64/emit-mov-immediate integer-constant-bits 'r10d #{FFFFFFFF}
 rs-o2-x64/emit-mov-immediate-wide integer-constant-bits 'r9d #{FFFFFFFF00000000}
 unless integer-constant-bits = #{41BAFFFFFFFF49B9FFFFFFFF00000000} [
 	fail rejoin ["integer constant bit encodings are wrong: " mold integer-constant-bits]
+]
+
+atomic-encoding-bytes: make binary! 64
+foreach operation [add sub or xor and] [
+	unless rs-o2-x64/emit-atomic-memory-register
+		atomic-encoding-bytes operation 'r11d 'r10d
+	[
+		fail rejoin ["atomic " operation " register encoding failed"]
+	]
+]
+unless rs-o2-x64/emit-atomic-xadd atomic-encoding-bytes 'r11d 'eax [
+	fail "atomic XADD encoding failed"
+]
+unless rs-o2-x64/emit-atomic-cmpxchg atomic-encoding-bytes 'r11d 'r10d [
+	fail "atomic CMPXCHG encoding failed"
+]
+unless rs-o2-x64/emit-neg-register atomic-encoding-bytes 'eax [
+	fail "atomic subtraction NEG encoding failed"
+]
+unless atomic-encoding-bytes = #{F0450113F0452913F0450913F0453113F0452113F0410FC103F0450FB113F7D8} [
+	fail rejoin ["atomic instruction encodings are wrong: " mold atomic-encoding-bytes]
 ]
 
 float-conversion-bytes: make binary! 32
@@ -2400,10 +2455,638 @@ unless find typed-selected/1 #{E800000000} [
 	fail rejoin ["Win64 typed-list call is missing: " mold typed-selected/1]
 ]
 
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 93 [fail "final function count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 93 [fail "final verification count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 92 [fail "final eligibility count"]
-unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 89 [fail "final selection count"]
+unless rs-o2-ir/begin-function 'win64-import-pointer-load 'win64 ptr-type %machine-ir-smoke.red [
+	fail "Win64 import pointer load function did not start"
+]
+win64-import-pointer-result: rs-o2-ir/emit-load-global 'win64-import-pointer ptr-type
+rs-o2-ir/set-direct-body-range 0 10
+win64-import-pointer-relocs: reduce [2801]
+put emitter/symbols 'win64-import-pointer reduce ['import-var none win64-import-pointer-relocs]
+win64-import-pointer-selected: rs-o2-ir/finish-function reduce [
+	#{00000000000000000000} reduce [win64-import-pointer-relocs] 2800
+]
+unless win64-import-pointer-selected/1 = #{488B0500000000488B00C3} [
+	fail rejoin [
+		"Win64 import pointer load bytes are wrong: "
+		mold win64-import-pointer-selected/1
+	]
+]
+
+unless rs-o2-ir/begin-function 'win64-import-integer-store 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 import integer store function did not start"
+]
+rs-o2-ir/add-stack-object 'value 'argument i32 4 4 'none
+win64-import-store-value: rs-o2-ir/emit-load-local 'value i32
+rs-o2-ir/emit-store-global 'win64-import-integer win64-import-store-value i32
+rs-o2-ir/set-direct-body-range 0 12
+win64-import-store-relocs: reduce [2901]
+put emitter/symbols 'win64-import-integer reduce ['import-var none win64-import-store-relocs]
+win64-import-store-selected: rs-o2-ir/finish-function reduce [
+	#{000000000000000000000000} reduce [win64-import-store-relocs] 2900
+]
+unless win64-import-store-selected/1 = #{4C8B1D0000000041890B89C8C3} [
+	fail rejoin [
+		"Win64 import integer store bytes are wrong: "
+		mold win64-import-store-selected/1
+	]
+]
+
+unless rs-o2-ir/begin-function 'sysv-import-float-load 'sysv f64 %machine-ir-smoke.red [
+	fail "SysV import float load function did not start"
+]
+sysv-import-float-result: rs-o2-ir/emit-load-global 'sysv-import-float f64
+rs-o2-ir/set-direct-body-range 0 12
+sysv-import-float-relocs: reduce [3001]
+put emitter/symbols 'sysv-import-float reduce ['import-var none sysv-import-float-relocs]
+sysv-import-float-selected: rs-o2-ir/finish-function reduce [
+	#{000000000000000000000000} reduce [sysv-import-float-relocs] 3000
+]
+unless sysv-import-float-selected/1 = #{4C8B1D00000000F2410F1003C3} [
+	fail rejoin [
+		"SysV import float load bytes are wrong: "
+		mold sysv-import-float-selected/1
+	]
+]
+
+unless rs-o2-ir/begin-function 'win64-explicit-return-dead 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 explicit return function did not start"
+]
+explicit-return-value: rs-o2-ir/emit-constant 7 i32
+rs-o2-ir/emit-source-return yes
+explicit-return-dead: rs-o2-ir/emit-constant 99 i32
+rs-o2-ir/set-direct-body-range 0 1
+explicit-return-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+unless explicit-return-selected/1 = #{B807000000C3} [
+	fail rejoin ["Win64 explicit return bytes are wrong: " mold explicit-return-selected/1]
+]
+
+unless rs-o2-ir/begin-function 'sysv-explicit-return-branch 'sysv i32 %machine-ir-smoke.red [
+	fail "SysV branch return function did not start"
+]
+rs-o2-ir/add-stack-object 'value 'argument i32 4 4 'none
+rs-o2-ir/set-stack-offset 'value -8
+explicit-branch-state: rs-o2-ir/begin-if
+explicit-branch-value: rs-o2-ir/emit-load-local 'value i32
+explicit-branch-zero: rs-o2-ir/emit-constant 0 i32
+explicit-branch-condition: rs-o2-ir/emit-binary
+	rs-o2-ir/less-op
+	explicit-branch-value
+	explicit-branch-zero
+	logic-type
+	'pure
+rs-o2-ir/if-condition explicit-branch-state
+explicit-branch-return: rs-o2-ir/emit-constant -11 i32
+rs-o2-ir/emit-source-return yes
+rs-o2-ir/end-if explicit-branch-state
+explicit-branch-fallthrough: rs-o2-ir/emit-constant 22 i32
+rs-o2-ir/set-direct-body-range 0 1
+explicit-branch-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+if explicit-branch-selected/1 = #{CC} [fail "SysV branch return fell back"]
+
+unless rs-o2-ir/begin-function 'win64-either-return 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 either return function did not start"
+]
+rs-o2-ir/add-stack-object 'value 'argument i32 4 4 'none
+rs-o2-ir/set-stack-offset 'value -8
+either-return-state: rs-o2-ir/begin-either
+either-return-value: rs-o2-ir/emit-load-local 'value i32
+either-return-zero: rs-o2-ir/emit-constant 0 i32
+either-return-condition: rs-o2-ir/emit-binary
+	rs-o2-ir/less-op
+	either-return-value
+	either-return-zero
+	logic-type
+	'pure
+rs-o2-ir/either-condition either-return-state
+either-return-early: rs-o2-ir/emit-constant -5 i32
+rs-o2-ir/emit-source-return yes
+rs-o2-ir/end-either-true either-return-state
+either-return-fallthrough: rs-o2-ir/emit-constant 9 i32
+either-return-result: rs-o2-ir/end-either either-return-state
+unless either-return-result [fail "either return value was not merged"]
+rs-o2-ir/set-direct-body-range 0 1
+either-return-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+if either-return-selected/1 = #{CC} [fail "Win64 either return fell back"]
+
+unless rs-o2-ir/begin-function 'win64-overflow-dual-constant 'win64 logic-type %machine-ir-smoke.red [
+	fail "Win64 dual-constant overflow function did not start"
+]
+dual-overflow-state: rs-o2-ir/begin-overflow
+dual-overflow-maximum: rs-o2-ir/emit-constant 2147483647 i32
+dual-overflow-one: rs-o2-ir/emit-constant 1 i32
+dual-overflow-result: rs-o2-ir/emit-source-binary
+	rs-o2-ir/add-op
+	dual-overflow-maximum
+	dual-overflow-one
+	i32
+	'pure
+dual-overflow-flag: rs-o2-ir/end-overflow dual-overflow-state
+dual-constant-info: rs-o2-x64/constant-use-info
+if find dual-constant-info/2 dual-overflow-maximum [
+	fail "both constant operands were elided as immediates"
+]
+unless find dual-constant-info/2 dual-overflow-one [
+	fail "right constant operand was not selected as the immediate"
+]
+rs-o2-ir/set-direct-body-range 0 1
+dual-overflow-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+if dual-overflow-selected/1 = #{CC} [fail "Win64 dual-constant overflow fell back"]
+unless find dual-overflow-selected/1 #{FFFFFF7F} [
+	fail "left overflow constant was not materialized"
+]
+
+unless rs-o2-ir/begin-function 'win64-overflow-store-commit 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 overflow store-commit function did not start"
+]
+rs-o2-ir/add-stack-object 'commit-value 'local i32 4 4 'none
+rs-o2-ir/set-stack-offset 'commit-value -8
+commit-initial: rs-o2-ir/emit-constant 2147483647 i32
+rs-o2-ir/emit-store-local 'commit-value commit-initial i32
+commit-overflow-state: rs-o2-ir/begin-overflow
+commit-loaded: rs-o2-ir/emit-load-local 'commit-value i32
+commit-one: rs-o2-ir/emit-constant 1 i32
+commit-sum: rs-o2-ir/emit-source-binary
+	rs-o2-ir/add-op commit-loaded commit-one i32 'pure
+rs-o2-ir/emit-store-local 'commit-value commit-sum i32
+commit-store-block: pick rs-o2-ir/current rs-o2-ir/fn-current-block
+commit-store-instruction: last pick commit-store-block rs-o2-ir/bb-instructions
+commit-overflow-flag: rs-o2-ir/end-overflow commit-overflow-state
+commit-result: rs-o2-ir/emit-load-local 'commit-value i32
+rs-o2-ir/set-direct-body-range 0 1
+commit-direct-chunk: reduce [#{CC} copy []]
+unless rs-o2-x64/validate-current commit-direct-chunk [
+	fail "Win64 overflow store-commit validation failed"
+]
+commit-promoted-register: rs-o2-x64/promoted-register 'commit-value
+unless commit-promoted-register [fail "overflow store-commit local was not promoted"]
+if rs-o2-x64/store-target-coalescing-safe?
+	commit-store-block commit-store-instruction 'commit-value commit-sum
+[
+	fail "control-edge store was considered safe to commit early"
+]
+commit-intervals: rs-o2-x64/build-intervals
+commit-sum-interval: rs-o2-x64/find-interval commit-intervals commit-sum
+unless commit-sum-interval [fail "overflow store result interval is missing"]
+if (pick commit-sum-interval rs-o2-x64/interval-fixed) = commit-promoted-register [
+	fail "overflow store result was precolored to the promoted local"
+]
+commit-selected: rs-o2-ir/finish-function commit-direct-chunk
+if commit-selected/1 = #{CC} [fail "Win64 overflow store-commit fell back"]
+
+unless rs-o2-ir/begin-function 'win64-handle-arithmetic-coercion 'win64 i32 none [
+	fail "handle arithmetic coercion function did not start"
+]
+rs-o2-ir/add-stack-object 'coercion-handle 'argument handle-type 4 4 'handle
+rs-o2-ir/add-stack-object 'coercion-value 'argument i32 4 4 'none
+rs-o2-ir/add-stack-object 'coercion-result 'local handle-type 4 4 'handle
+rs-o2-ir/set-stack-offset 'coercion-handle -40
+rs-o2-ir/set-stack-offset 'coercion-value -48
+rs-o2-ir/set-stack-offset 'coercion-result -8
+coercion-handle: rs-o2-ir/emit-load-local 'coercion-handle handle-type
+coercion-value: rs-o2-ir/emit-load-local 'coercion-value i32
+coercion-sum: rs-o2-ir/emit-source-binary
+	rs-o2-ir/add-op coercion-handle coercion-value handle-type 'pure
+coercion-sum-type: rs-o2-ir/vreg-type coercion-sum
+unless all [coercion-sum-type coercion-sum-type/6 = 'none][
+	fail "handle arithmetic result retained GC identity"
+]
+coercion-stored: rs-o2-ir/emit-store-local 'coercion-result coercion-sum handle-type
+coercion-stored-type: rs-o2-ir/vreg-type coercion-stored
+unless coercion-stored-type/6 = 'handle [
+	fail "handle assignment did not restore GC identity"
+]
+coercion-result: rs-o2-ir/emit-load-local 'coercion-result handle-type
+rs-o2-ir/set-direct-body-range 0 1
+coercion-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+if coercion-selected/1 = #{CC} [fail "handle arithmetic coercion fell back"]
+
+unless rs-o2-ir/begin-function 'relocation-value-numbering 'win64 ptr-type none [
+	fail "relocation value-numbering function did not start"
+]
+relocation-address-first: rs-o2-ir/emit-address-global 'relocation-global ptr-type
+relocation-address-second: rs-o2-ir/emit-address-global 'relocation-global ptr-type
+rs-o2-ir/emit-return relocation-address-second
+rs-o2-ir/pass-local-value-numbering
+relocation-address-copy: rs-o2-ir/find-instruction 2
+unless (pick relocation-address-copy rs-o2-ir/ins-opcode) = 'copy [
+	fail "duplicate global address was not value-numbered"
+]
+relocation-value-numbering-relocs: pick rs-o2-ir/current rs-o2-ir/fn-relocations
+unless all [
+	(length? relocation-value-numbering-relocs) = 1
+	relocation-value-numbering-relocs/1/1 = 1
+][
+	fail rejoin [
+		"rewritten global-address relocation was retained: "
+		mold relocation-value-numbering-relocs
+	]
+]
+rs-o2-ir/rebuild-current-stack-dependencies
+unless rs-o2-ir/verify-current [fail "value-numbered global address did not verify"]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'sysv-atomic-memory 'sysv i32 %machine-ir-smoke.red [
+	fail "SysV atomic memory function did not start"
+]
+rs-o2-ir/add-stack-object 'atomic-address 'argument ptr-type 8 8 'pointer
+rs-o2-ir/add-stack-object 'atomic-value 'argument i32 4 4 'none
+atomic-address: rs-o2-ir/emit-load-local 'atomic-address ptr-type
+atomic-value: rs-o2-ir/emit-load-local 'atomic-value i32
+rs-o2-ir/emit-atomic-store atomic-address atomic-value i32
+foreach operation [add sub or xor and] [
+	atomic-address: rs-o2-ir/emit-load-local 'atomic-address ptr-type
+	atomic-value: rs-o2-ir/emit-load-local 'atomic-value i32
+	rs-o2-ir/emit-atomic-math operation atomic-address atomic-value no no i32
+]
+atomic-address: rs-o2-ir/emit-load-local 'atomic-address ptr-type
+atomic-result: rs-o2-ir/emit-atomic-load atomic-address i32
+rs-o2-ir/emit-atomic-fence
+rs-o2-ir/emit-return atomic-result
+rs-o2-ir/set-direct-body-range 0 1
+atomic-memory-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+if atomic-memory-selected/1 = #{CC} [fail "SysV atomic memory function fell back"]
+foreach encoding [
+	#{458913} #{F0450113} #{F0452913} #{F0450913} #{F0453113} #{F0452113} #{0FAEF0}
+][
+	unless find atomic-memory-selected/1 encoding [
+		fail rejoin ["SysV atomic memory encoding is missing: " mold encoding]
+	]
+]
+
+unless rs-o2-ir/begin-function 'win64-atomic-xadd 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 atomic XADD function did not start"
+]
+rs-o2-ir/add-stack-object 'xadd-address 'argument ptr-type 8 8 'pointer
+rs-o2-ir/add-stack-object 'xadd-value 'argument i32 4 4 'none
+xadd-address: rs-o2-ir/emit-load-local 'xadd-address ptr-type
+xadd-value: rs-o2-ir/emit-load-local 'xadd-value i32
+xadd-old: rs-o2-ir/emit-atomic-math 'add xadd-address xadd-value yes yes i32
+xadd-address: rs-o2-ir/emit-load-local 'xadd-address ptr-type
+xadd-value: rs-o2-ir/emit-load-local 'xadd-value i32
+xadd-new: rs-o2-ir/emit-atomic-math 'sub xadd-address xadd-value no yes i32
+rs-o2-ir/emit-return xadd-new
+rs-o2-ir/set-direct-body-range 0 1
+atomic-xadd-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+if atomic-xadd-selected/1 = #{CC} [fail "Win64 atomic XADD function fell back"]
+unless find atomic-xadd-selected/1 #{F0410FC103} [fail "atomic XADD instruction is missing"]
+unless find atomic-xadd-selected/1 #{F7D8} [fail "atomic subtraction negation is missing"]
+
+unless rs-o2-ir/begin-function 'win64-atomic-bitwise-result 'win64 i32 %machine-ir-smoke.red [
+	fail "Win64 returned bitwise atomic function did not start"
+]
+rs-o2-ir/add-stack-object 'bitwise-address 'argument ptr-type 8 8 'pointer
+rs-o2-ir/add-stack-object 'bitwise-value 'argument i32 4 4 'none
+bitwise-address: rs-o2-ir/emit-load-local 'bitwise-address ptr-type
+bitwise-value: rs-o2-ir/emit-load-local 'bitwise-value i32
+bitwise-result: rs-o2-ir/emit-atomic-math 'or bitwise-address bitwise-value no yes i32
+rs-o2-ir/emit-return bitwise-result
+rs-o2-ir/set-direct-body-range 0 1
+atomic-bitwise-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+if atomic-bitwise-selected/1 = #{CC} [fail "Win64 returned bitwise atomic function fell back"]
+unless find atomic-bitwise-selected/1 #{F0410FB11375} [
+	fail "returned bitwise atomic CAS loop is missing"
+]
+
+unless rs-o2-ir/begin-function 'win64-atomic-cas 'win64 logic-type %machine-ir-smoke.red [
+	fail "Win64 atomic CAS function did not start"
+]
+rs-o2-ir/add-stack-object 'cas-address 'argument ptr-type 8 8 'pointer
+rs-o2-ir/add-stack-object 'cas-check 'argument i32 4 4 'none
+rs-o2-ir/add-stack-object 'cas-value 'argument i32 4 4 'none
+cas-address: rs-o2-ir/emit-load-local 'cas-address ptr-type
+cas-check: rs-o2-ir/emit-load-local 'cas-check i32
+cas-value: rs-o2-ir/emit-load-local 'cas-value i32
+cas-result: rs-o2-ir/emit-atomic-cas cas-address cas-check cas-value yes logic-type
+rs-o2-ir/emit-return cas-result
+rs-o2-ir/set-direct-body-range 0 1
+atomic-cas-selected: rs-o2-ir/finish-function reduce [#{CC} copy []]
+if atomic-cas-selected/1 = #{CC} [fail "Win64 atomic CAS function fell back"]
+unless find atomic-cas-selected/1 #{F0450FB113} [fail "atomic CMPXCHG instruction is missing"]
+unless find atomic-cas-selected/1 #{0F94} [fail "atomic CAS boolean materialization is missing"]
+
+unless rs-o2-ir/begin-function 'verifier-invalid-atomic-metadata 'win64 i32 none [
+	fail "invalid-atomic-metadata verifier function did not start"
+]
+rs-o2-ir/add-stack-object 'invalid-atomic-address 'argument ptr-type 8 8 'pointer
+invalid-atomic-address: rs-o2-ir/emit-load-local 'invalid-atomic-address ptr-type
+invalid-atomic-value: rs-o2-ir/emit-constant 1 i32
+invalid-atomic-result: rs-o2-ir/emit-atomic-math
+	'add invalid-atomic-address invalid-atomic-value no yes i32
+rs-o2-ir/emit-return invalid-atomic-result
+invalid-atomic-instruction: rs-o2-ir/find-instruction 3
+invalid-atomic-metadata: pick invalid-atomic-instruction rs-o2-ir/ins-metadata
+invalid-atomic-operation: find invalid-atomic-metadata 'operation
+invalid-atomic-operation/2: 'multiply
+if rs-o2-ir/verify-current [fail "verifier accepted invalid atomic metadata"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"invalid atomic metadata in instruction 3"
+[
+	fail "invalid atomic metadata verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-undefined-flags 'win64 i32 none [
+	fail "undefined-flags verifier function did not start"
+]
+undefined-flags-true: rs-o2-ir/add-block 'true
+undefined-flags-false: rs-o2-ir/add-block 'false
+rs-o2-ir/set-current-block 1
+undefined-flags-left: rs-o2-ir/emit-constant 1 i32
+undefined-flags-right: rs-o2-ir/emit-constant 2 i32
+undefined-flags-condition: rs-o2-ir/emit-binary
+	rs-o2-ir/less-op
+	undefined-flags-left
+	undefined-flags-right
+	logic-type
+	'pure
+rs-o2-ir/emit-branch
+	undefined-flags-condition
+	pick undefined-flags-true rs-o2-ir/bb-id
+	pick undefined-flags-false rs-o2-ir/bb-id
+undefined-flags-entry: pick (pick rs-o2-ir/current rs-o2-ir/fn-blocks) 1
+undefined-flags-branch: last pick undefined-flags-entry rs-o2-ir/bb-instructions
+poke undefined-flags-branch rs-o2-ir/ins-flags-in 999
+rs-o2-ir/set-current-block pick undefined-flags-true rs-o2-ir/bb-id
+undefined-flags-value: rs-o2-ir/emit-constant 1 i32
+rs-o2-ir/emit-return undefined-flags-value
+rs-o2-ir/set-current-block pick undefined-flags-false rs-o2-ir/bb-id
+undefined-flags-value: rs-o2-ir/emit-constant 0 i32
+rs-o2-ir/emit-return undefined-flags-value
+if rs-o2-ir/verify-current [fail "verifier accepted undefined flags"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors "undefined flag use f999" [
+	fail "undefined flag verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-clobbered-flags 'win64 i32 none [
+	fail "clobbered-flags verifier function did not start"
+]
+clobbered-flags-true: rs-o2-ir/add-block 'true
+clobbered-flags-false: rs-o2-ir/add-block 'false
+rs-o2-ir/set-current-block 1
+clobbered-flags-left: rs-o2-ir/emit-constant 1 i32
+clobbered-flags-right: rs-o2-ir/emit-constant 2 i32
+clobbered-flags-condition: rs-o2-ir/emit-binary
+	rs-o2-ir/less-op
+	clobbered-flags-left
+	clobbered-flags-right
+	logic-type
+	'pure
+clobbered-flags-other: rs-o2-ir/emit-binary
+	rs-o2-ir/equal-op
+	clobbered-flags-left
+	clobbered-flags-right
+	logic-type
+	'pure
+rs-o2-ir/emit-branch
+	clobbered-flags-condition
+	pick clobbered-flags-true rs-o2-ir/bb-id
+	pick clobbered-flags-false rs-o2-ir/bb-id
+rs-o2-ir/set-current-block pick clobbered-flags-true rs-o2-ir/bb-id
+clobbered-flags-value: rs-o2-ir/emit-constant 1 i32
+rs-o2-ir/emit-return clobbered-flags-value
+rs-o2-ir/set-current-block pick clobbered-flags-false rs-o2-ir/bb-id
+clobbered-flags-value: rs-o2-ir/emit-constant 0 i32
+rs-o2-ir/emit-return clobbered-flags-value
+if rs-o2-ir/verify-current [fail "verifier accepted clobbered flags"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors "flag f1 is not live at instruction 5" [
+	fail "clobbered flag verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-cross-block-flags 'win64 i32 none [
+	fail "cross-block-flags verifier function did not start"
+]
+cross-block-flags-consumer: rs-o2-ir/add-block 'consumer
+cross-block-flags-true: rs-o2-ir/add-block 'true
+cross-block-flags-false: rs-o2-ir/add-block 'false
+rs-o2-ir/set-current-block 1
+cross-block-flags-left: rs-o2-ir/emit-constant 1 i32
+cross-block-flags-right: rs-o2-ir/emit-constant 2 i32
+cross-block-flags-condition: rs-o2-ir/emit-binary
+	rs-o2-ir/less-op
+	cross-block-flags-left
+	cross-block-flags-right
+	logic-type
+	'pure
+rs-o2-ir/emit-jump pick cross-block-flags-consumer rs-o2-ir/bb-id
+rs-o2-ir/set-current-block pick cross-block-flags-consumer rs-o2-ir/bb-id
+rs-o2-ir/emit-branch
+	cross-block-flags-condition
+	pick cross-block-flags-true rs-o2-ir/bb-id
+	pick cross-block-flags-false rs-o2-ir/bb-id
+rs-o2-ir/set-current-block pick cross-block-flags-true rs-o2-ir/bb-id
+cross-block-flags-value: rs-o2-ir/emit-constant 1 i32
+rs-o2-ir/emit-return cross-block-flags-value
+rs-o2-ir/set-current-block pick cross-block-flags-false rs-o2-ir/bb-id
+cross-block-flags-value: rs-o2-ir/emit-constant 0 i32
+rs-o2-ir/emit-return cross-block-flags-value
+if rs-o2-ir/verify-current [fail "verifier accepted cross-block flags"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"flag f1 crosses basic block at instruction 5"
+[
+	fail "cross-block flag verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-missing-memory-input 'win64 i32 none [
+	fail "missing-memory-input verifier function did not start"
+]
+rs-o2-ir/add-stack-object 'memory-input-value 'argument i32 4 4 'none
+missing-memory-result: rs-o2-ir/emit-load-local 'memory-input-value i32
+rs-o2-ir/emit-return missing-memory-result
+missing-memory-instruction: rs-o2-ir/find-instruction 1
+poke missing-memory-instruction rs-o2-ir/ins-memory-in copy []
+if rs-o2-ir/verify-current [fail "verifier accepted missing memory input"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"memory input dependency mismatch in instruction 1 expected=[universal 0 memory-input-value 0] actual=[]"
+[
+	fail "missing memory input verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-duplicate-memory-version 'win64 i32 none [
+	fail "duplicate-memory-version verifier function did not start"
+]
+rs-o2-ir/add-stack-object 'memory-a 'local i32 4 4 'none
+rs-o2-ir/add-stack-object 'memory-b 'local i32 4 4 'none
+duplicate-memory-value: rs-o2-ir/emit-constant 1 i32
+rs-o2-ir/emit-store-local 'memory-a duplicate-memory-value i32
+rs-o2-ir/emit-store-local 'memory-b duplicate-memory-value i32
+rs-o2-ir/emit-return duplicate-memory-value
+duplicate-memory-store: rs-o2-ir/find-instruction 3
+poke duplicate-memory-store rs-o2-ir/ins-memory-out reduce [
+	'universal 0 'memory-b 1
+]
+if rs-o2-ir/verify-current [fail "verifier accepted duplicate memory version"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"duplicate memory definition m1 in instruction 3"
+[
+	fail "duplicate memory version verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-invalid-effect-alias 'win64 i32 none [
+	fail "invalid-effect-alias verifier function did not start"
+]
+invalid-effect-value: rs-o2-ir/emit-constant 1 i32
+rs-o2-ir/emit-return invalid-effect-value
+invalid-effect-instruction: rs-o2-ir/find-instruction 1
+poke invalid-effect-instruction rs-o2-ir/ins-alias 'universal
+if rs-o2-ir/verify-current [fail "verifier accepted invalid effect alias"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"non-memory effect has alias universal in instruction 1"
+[
+	fail "invalid effect alias verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-invalid-memory-merge 'win64 i32 none [
+	fail "invalid-memory-merge verifier function did not start"
+]
+invalid-memory-merge-block: rs-o2-ir/add-block 'merge
+rs-o2-ir/set-current-block 1
+rs-o2-ir/emit-jump pick invalid-memory-merge-block rs-o2-ir/bb-id
+rs-o2-ir/set-current-block pick invalid-memory-merge-block rs-o2-ir/bb-id
+invalid-memory-merge-value: rs-o2-ir/emit-constant 1 i32
+rs-o2-ir/emit-return invalid-memory-merge-value
+poke invalid-memory-merge-block rs-o2-ir/bb-memory-in reduce ['universal 0]
+if rs-o2-ir/verify-current [fail "verifier accepted invalid memory merge"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"invalid memory merge into block 2"
+[
+	fail "invalid memory merge verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-invalid-call-metadata 'win64 i32 none [
+	fail "invalid-call-metadata verifier function did not start"
+]
+invalid-call-result: rs-o2-ir/emit-call 'invalid-call-callee copy [] i32
+rs-o2-ir/emit-return invalid-call-result
+invalid-call-instruction: rs-o2-ir/find-instruction 1
+invalid-call-metadata: pick invalid-call-instruction rs-o2-ir/ins-metadata
+invalid-call-abi: find invalid-call-metadata 'abi
+invalid-call-abi/2: 'sysv
+if rs-o2-ir/verify-current [fail "verifier accepted invalid call metadata"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"invalid call metadata in instruction 1"
+[
+	fail "invalid call metadata verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-invalid-safepoint-root 'win64 i32 none [
+	fail "invalid-safepoint-root verifier function did not start"
+]
+invalid-safepoint-result: rs-o2-ir/emit-call 'invalid-safepoint-callee copy [] i32
+rs-o2-ir/emit-return invalid-safepoint-result
+rs-o2-ir/add-safepoint 1 reduce [
+	reduce ['vreg invalid-safepoint-result 'frame -8 'pointer]
+]
+if rs-o2-ir/verify-current [fail "verifier accepted invalid safepoint root"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"invalid safepoint root at instruction 1"
+[
+	fail "invalid safepoint root verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-stack-underflow 'win64 i32 none [
+	fail "stack-underflow verifier function did not start"
+]
+stack-underflow-result: rs-o2-ir/emit-stack-pop i32
+rs-o2-ir/emit-return stack-underflow-result
+rs-o2-ir/rebuild-current-stack-dependencies
+if rs-o2-ir/verify-current [fail "verifier accepted explicit stack underflow"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"stack underflow in instruction 1"
+[
+	fail "explicit stack underflow verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-stack-edge-mismatch 'win64 i32 none [
+	fail "stack-edge-mismatch verifier function did not start"
+]
+stack-edge-true: rs-o2-ir/add-block 'true
+stack-edge-false: rs-o2-ir/add-block 'false
+stack-edge-merge: rs-o2-ir/add-block 'merge
+rs-o2-ir/set-current-block 1
+stack-edge-left: rs-o2-ir/emit-constant 1 i32
+stack-edge-right: rs-o2-ir/emit-constant 2 i32
+stack-edge-condition: rs-o2-ir/emit-binary
+	rs-o2-ir/less-op
+	stack-edge-left
+	stack-edge-right
+	logic-type
+	'pure
+rs-o2-ir/emit-branch
+	stack-edge-condition
+	pick stack-edge-true rs-o2-ir/bb-id
+	pick stack-edge-false rs-o2-ir/bb-id
+rs-o2-ir/set-current-block pick stack-edge-true rs-o2-ir/bb-id
+stack-edge-value: rs-o2-ir/emit-constant 7 i32
+rs-o2-ir/emit-stack-push stack-edge-value
+rs-o2-ir/emit-jump pick stack-edge-merge rs-o2-ir/bb-id
+rs-o2-ir/set-current-block pick stack-edge-false rs-o2-ir/bb-id
+rs-o2-ir/emit-jump pick stack-edge-merge rs-o2-ir/bb-id
+rs-o2-ir/set-current-block pick stack-edge-merge rs-o2-ir/bb-id
+stack-edge-result: rs-o2-ir/emit-constant 9 i32
+rs-o2-ir/emit-return stack-edge-result
+rs-o2-ir/rebuild-current-stack-dependencies
+if rs-o2-ir/verify-current [fail "verifier accepted mismatched CFG stack depths"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"stack depth mismatch on edge b3->b4"
+[
+	fail "CFG stack-depth mismatch verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-invalid-custom-call-metadata 'win64 i32 none [
+	fail "invalid-custom-call-metadata verifier function did not start"
+]
+invalid-custom-count: rs-o2-ir/emit-constant 0 i32
+invalid-custom-result: rs-o2-ir/emit-custom-call
+	'invalid-custom-callee no 0 invalid-custom-count i32
+rs-o2-ir/emit-return invalid-custom-result
+rs-o2-ir/rebuild-current-stack-dependencies
+invalid-custom-instruction: rs-o2-ir/find-instruction 2
+invalid-custom-metadata: pick invalid-custom-instruction rs-o2-ir/ins-metadata
+invalid-custom-count-kind: find invalid-custom-metadata 'count-kind
+invalid-custom-count-kind/2: 'invalid
+if rs-o2-ir/verify-current [fail "verifier accepted invalid custom call metadata"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"invalid custom call metadata in instruction 2"
+[
+	fail "invalid custom call metadata verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless rs-o2-ir/begin-function 'verifier-symbolic-stack-call 'win64 i32 none [
+	fail "symbolic-stack-call verifier function did not start"
+]
+rs-o2-ir/add-stack-object 'symbolic-count 'argument i32 4 4 'none
+symbolic-count: rs-o2-ir/emit-load-local 'symbolic-count i32
+symbolic-value: rs-o2-ir/emit-constant 7 i32
+rs-o2-ir/emit-stack-push symbolic-value
+symbolic-custom-result: rs-o2-ir/emit-custom-call
+	'symbolic-custom-callee no none symbolic-count i32
+symbolic-call-result: rs-o2-ir/emit-call 'symbolic-ordinary-callee copy [] i32
+rs-o2-ir/emit-return symbolic-call-result
+rs-o2-ir/rebuild-current-stack-dependencies
+if rs-o2-ir/verify-current [fail "verifier accepted ABI call with symbolic stack depth"]
+unless find pick rs-o2-ir/current rs-o2-ir/fn-verifier-errors
+	"ABI call with active explicit stack in instruction 5"
+[
+	fail "symbolic stack ABI-call verifier error missing"
+]
+rs-o2-ir/abort-function
+
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-functions) = 106 [fail "final function count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-verified) = 106 [fail "final verification count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-eligible) = 105 [fail "final eligibility count"]
+unless (pick rs-o2-ir/stats rs-o2-ir/stats-selected) = 102 [fail "final selection count"]
 unless (pick rs-o2-ir/stats rs-o2-ir/stats-fallback) = 4 [fail "final fallback count"]
 
 rs-o2-ir/end-session
@@ -2436,4 +3119,13 @@ unless find dump-text "i2 call-rel32 red>resolve-series" [fail "resolver slow-ca
 unless find dump-text "gc=handle frame=-40" [fail "managed handle stack type missing"]
 unless find dump-text "roots=[[vreg 1 frame -48 handle]]" [fail "managed handle safepoint missing"]
 unless find dump-text "log-b %1" [fail "log-b intrinsic dump missing"]
+unless find dump-text "function win64-explicit-return-dead" [fail "explicit return dump missing"]
+unless find dump-text "function sysv-explicit-return-branch" [fail "branch return dump missing"]
+unless find dump-text "function win64-either-return" [fail "either return dump missing"]
+unless find dump-text "function win64-overflow-dual-constant" [fail "overflow constant dump missing"]
+unless find dump-text "function win64-overflow-store-commit" [fail "overflow store dump missing"]
+unless find dump-text "function win64-handle-arithmetic-coercion" [
+	fail "handle arithmetic coercion dump missing"
+]
+unless find dump-text "atomic=[order seq-cst operation add" [fail "atomic metadata dump missing"]
 print "machine-ir-smoke-ok"

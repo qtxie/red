@@ -53,8 +53,7 @@ compiler-api: context [
 	locals: does [system-dialect/compiler/locals]
 	globals: does [system-dialect/compiler/globals]
 	enumerations: does [system-dialect/compiler/enumerations]
-	; compiler-core.red stores the namespace path as rs-ns-path (not ns-path).
-	ns-path: does [system-dialect/compiler/rs-ns-path]
+	ns-path: does [system-dialect/compiler/ns-path]
 	return-def: does [system-dialect/compiler/return-def]
 	overflow-check?: does [system-dialect/compiler/overflow-check?]
 	last-type: does [system-dialect/compiler/last-type]
@@ -517,7 +516,7 @@ emitter: context [
 	store-global: func [
 		value type [word!] spec [block! word! none!]
 		/packed											;-- array elements use their natural size
-		/local size ptr by-val? pad-size list t f64? data-buf high-unicode? var
+		/local size ptr by-val? pad-size list t f64? data-buf high-unicode? var encoded
 	][
 		data-buf: active-buf							;-- shadows context word, keeps body target-agnostic
 		if any [none? data-buf not binary? data-buf][
@@ -560,7 +559,13 @@ emitter: context [
 					'else [size]
 				]
 				ptr: tail data-buf
-				value: debase/base system-dialect/compiler/int-literal-hex value type 16
+				encoded: system-dialect/compiler/int-literal-hex value type
+				value: debase/base encoded 16
+				unless binary? value [
+					system-dialect/compiler/throw-error [
+						"invalid encoded integer" mold encoded "for" type
+					]
+				]
 				either target/little-endian? [
 					value: tail value
 					loop size [append ptr (first value: skip value -1)]
@@ -660,7 +665,7 @@ emitter: context [
 			get-word! [
 				spec: any [
 					select symbols to word! value
-					all [system-dialect/compiler/rs-ns-path select symbols system-dialect/compiler/ns-prefix to word! value]
+					all [system-dialect/compiler/ns-path select symbols system-dialect/compiler/ns-prefix to word! value]
 				]
 				case [
 					spec/4 = '- [spec/4: make block! 1]

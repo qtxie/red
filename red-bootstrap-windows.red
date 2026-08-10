@@ -47,10 +47,25 @@ fail-command: func [message][
 join-file: func [base [file!] relative [file!]][append copy base relative]
 
 libRedRT-target: func [job [object!]][
-	either all [
-		(compiler-system-job/job-get job 'OS) = 'Windows
-		(compiler-system-job/job-get job 'target) = 'X86-64
-	]['Windows-X86-64-DLL][none]
+	case [
+		all [
+			(compiler-system-job/job-get job 'OS) = 'Windows
+			(compiler-system-job/job-get job 'target) = 'X86-64
+		]['Windows-X86-64-DLL]
+		all [
+			(compiler-system-job/job-get job 'OS) = 'Linux
+			(compiler-system-job/job-get job 'target) = 'X86-64
+		]['Linux-X86-64-SO]
+		true [none]
+	]
+]
+
+libRedRT-extension: func [job [object!]][
+	switch/default compiler-system-job/job-get job 'format [
+		PE [%.dll]
+		ELF [%.so]
+		Mach-O [%.dylib]
+	][%.dll]
 ]
 
 libRedRT-output-dir: func [job [object!] /local dir][
@@ -67,7 +82,7 @@ configure-libRedRT-path: func [dir [file!]][
 libRedRT-ready?: func [job [object!] /local dir extension][
 	dir: libRedRT-output-dir job
 	configure-libRedRT-path dir
-	extension: %.dll
+	extension: libRedRT-extension job
 	all [
 		exists? join-file dir to file! rejoin [form libRedRT/lib-file extension]
 		exists? join-file dir libRedRT/include-file
@@ -135,7 +150,7 @@ build-libRedRT: func [
 		block? backend-result
 		file? backend-result/4
 		exists? backend-result/4
-	][fail-command "libRedRT build produced no DLL"]
+	][fail-command "libRedRT build produced no shared library"]
 	configure-libRedRT-path dir
 ]
 

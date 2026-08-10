@@ -173,9 +173,12 @@ posix-startup-ctx: context [
 				#either target = 'ARM64 [
 					system/image/base: (as byte-ptr! ***-exec-image) - (as integer! system/image/base)
 				][
-					system/image/base: as byte-ptr!
-						#either target = 'IA-32 [system/cpu/ebx][system/cpu/r9]
-						- system/image/code
+					;-- X86-64 ELF R_X86_64_RELATIVE relocation already sets image/base.
+					#if target <> 'X86-64 [
+						system/image/base: as byte-ptr!
+							#either target = 'IA-32 [system/cpu/ebx][system/cpu/r9]
+							- system/image/code
+					]
 				]
 
 				***-init-system-image

@@ -1372,16 +1372,14 @@ insert-event-func 'enter [
 ;-- Radio faces handler --
 insert-event-func 'radio [
 	if all [
-		event/type = 'click
-		event/face/type = 'radio
+		find [click change] event/type
+		face/type = 'radio
 	][
-		face: event/face								;-- save face reference to avoid single-event corruption (#5278)
 		foreach f face/parent/pane [
-			if all [f/type = 'radio f/data][f/data: off show f]
+			if all [not same? f face f/type = 'radio f/data][f/data: off show f]
 		]
-		face/data: on
-		show face
-		event/type: 'change
+		unless face/data [face/data: on show face]
+		if event/type = 'click [event/type: 'change]
 	]
 	none
 ]

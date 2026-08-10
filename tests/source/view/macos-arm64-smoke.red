@@ -40,6 +40,7 @@ time-count: 0
 timer-face: none
 clicker: none
 field-face: none
+empty-field-face: none
 area-face: none
 unicode-face: none
 check-face: none
@@ -55,6 +56,11 @@ styled-face: none
 scroll-face: none
 calendar-face: none
 canvas: none
+base-text-face: none
+image-text-face: none
+radio-on: none
+radio-off: none
+radio-result: none
 rich-box: none
 console-font: none
 console-metrics-box: none
@@ -66,6 +72,7 @@ snapshot-file: either string? output-dir [
 	to file! rejoin [output-dir "/macos-arm64-view-smoke.png"]
 ][%macos-arm64-view-smoke.png]
 unicode-text: rejoin ["View " to char! 937 " " to char! 19990 to char! 30028]
+image-background: make image! [160x44 230.235.240]
 rich-box: make face! [
 	type: 'rich-text
 	text: unicode-text
@@ -95,6 +102,7 @@ result: try/all [
 		across
 		clicker: button "Dispatch" 100x28 [click-count: click-count + 1]
 		field-face: field "initial" 150x28
+		empty-field-face: field 150x28
 		check-face: check "Enabled" tri-state
 		return
 		slider-face: slider 35% 150x24
@@ -123,6 +131,13 @@ result: try/all [
 		right-align-face: text "ARM64" 120x24 white right
 		styled-face: text "Styled" 120x24 white underline strike
 		return
+		base-text-face: base "Base text" 160x44 white font-color black
+		image-text-face: image image-background "Image text" 160x44 font-color black
+		return
+		radio-on: radio "on" [radio-result/text: "on"]
+		radio-off: radio "off" [radio-result/text: "off"]
+		radio-result: field 170 "????"
+		return
 		scroll-face: base 140x60 white scrollable draw [
 			pen blue
 			line 4x4 136x56
@@ -146,8 +161,16 @@ repeat count 20 [
 
 unless create-count = 1 [fail "on-created actor was not dispatched"]
 unless time-count = 1 [fail "native time actor was not dispatched"]
+unless string? empty-field-face/text [fail "empty field text was not initialized"]
 do-actor clicker none 'click
 unless click-count = 1 [fail "click actor was not dispatched"]
+
+radio-on/data: on
+show radio-on
+do-actor radio-on none 'change
+unless all [radio-on/data radio-result/text = "on"][
+	fail "radio selection did not dispatch its change actor"
+]
 
 field-face/text: "updated"
 unicode-face/text: unicode-text
@@ -225,6 +248,23 @@ unless all [image? snapshot snapshot/size/x > 0 snapshot/size/y > 0][
 corner: snapshot/(1x1)
 center: snapshot/(as-pair (snapshot/size/x / 2) (snapshot/size/y / 2))
 if corner = center [fail "Draw capture appears blank"]
+
+text-visible?: func [face [object!] /local image background changed xy x y][
+	image: to-image face
+	background: image/(1x1)
+	changed: 0
+	repeat y image/size/y [
+		repeat x image/size/x [
+			xy: as-pair x y
+			if image/:xy <> background [changed: changed + 1]
+		]
+	]
+	changed > 10
+]
+unless text-visible? base-text-face [fail "base face text was not rendered"]
+unless text-visible? image-text-face [fail "image face text was not rendered"]
+
+if system/build/date/year = 1970 [fail "compiler build date is still the Unix epoch"]
 
 if exists? snapshot-file [delete snapshot-file]
 save/as snapshot-file snapshot 'png

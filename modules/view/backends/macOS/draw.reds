@@ -735,7 +735,7 @@ draw-text-at: func [
 		sel_getUid "ascender"
 	]
 	m/ty: m/ty + delta
-	CGContextSetTextMatrix ctx m/a m/b m/c m/d m/tx m/ty
+	CGContextSetTextMatrix ctx m
 	CTLineDraw line ctx
 
 	CFRelease str

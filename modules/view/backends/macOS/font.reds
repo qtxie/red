@@ -214,7 +214,7 @@ make-font-attrs: func [
 	values: object/get-values font
 	nscolor: to-NSColor as red-tuple! values + FONT_OBJ_COLOR
 	if zero? nscolor [
-		nscolor: objc_msgSend [objc_getClass "NSColor" sel_getUid "blackColor"]
+		nscolor: objc_msgSend [objc_getClass "NSColor" sel_getUid "controlTextColor"]
 	]
 	style: as red-word! values + FONT_OBJ_STYLE
 	len: switch TYPE_OF(style) [

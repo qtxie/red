@@ -162,6 +162,7 @@ add-window-handler: func [class [Cocoa-handle!]][
 
 add-button-handler: func [class [Cocoa-handle!]][
 	class_replaceMethod class sel_getUid "mouseDown:" as int-ptr! :button-mouse-down "v@:@"
+	class_addMethod class sel_getUid "button-click:" as int-ptr! :button-click "v@:@"
 ]
 
 add-slider-handler: func [class [Cocoa-handle!]][

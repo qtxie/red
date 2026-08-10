@@ -811,12 +811,7 @@ tagSIZE: alias struct! [
 		]
 		CGContextSetTextMatrix: "CGContextSetTextMatrix" [
 			ctx			[handle!]
-			a			[Cocoa-float!]
-			b			[Cocoa-float!]
-			c			[Cocoa-float!]
-			d			[Cocoa-float!]
-			tx			[Cocoa-float!]
-			ty			[Cocoa-float!]
+			m			[CGAffineTransform! value]
 		]
 		CGContextGetPathBoundingBox: "CGContextGetPathBoundingBox" [
 			ctx			[handle!]

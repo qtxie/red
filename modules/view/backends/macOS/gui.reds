@@ -2022,6 +2022,10 @@ OS-make-view: func [
 	bits: 	  get-flags as red-block! values + FACE_OBJ_FLAGS
 	sym: 	  symbol/resolve type/symbol
 	p:		  null
+	if all [sym = field TYPE_OF(str) = TYPE_NONE][
+		string/make-at as red-value! str 0 UCS-2
+		ownership/bind as red-value! str face _text
+	]
 
 	if TYPE_OF(offset) = TYPE_PAIR [as-point2D as red-pair! offset]
 
@@ -2175,8 +2179,8 @@ OS-make-view: func [
 			]
 			if TYPE_OF(img) = TYPE_IMAGE [change-image obj img sym]
 			if caption <> 0 [objc_msgSend [obj sel_getUid "setTitle:" caption]]
-			;objc_msgSend [obj sel_getUid "setTarget:" obj]
-			;objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
+			objc_msgSend [obj sel_getUid "setTarget:" obj]
+			objc_msgSend [obj sel_getUid "setAction:" sel_getUid "button-click:"]
 		]
 		any [
 			sym = panel
@@ -2265,6 +2269,9 @@ OS-make-view: func [
 
 	if parent <> 0 [
 		objc_msgSend [parent sel_getUid "addSubview:" obj]	;-- `addSubView:` will retain the obj
+		;-- AppKit selects the first radio when it joins a group. Restore the
+		;-- Red facet, whose default is none/off, after native group assignment.
+		if sym = radio [set-logic-state obj as red-logic! data no]
 		objc_msgSend [obj sel_getUid "release"]
 	]
 

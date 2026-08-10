@@ -150,7 +150,7 @@ button-mouse-down: func [
 				make-event self 0 EVT_LEFT_UP
 				if inside? [
 					inside?: false
-					button-click self
+					button-click self 0 self
 				]
 			]
 			default [0]
@@ -430,18 +430,22 @@ on-flags-changed: func [
 
 button-click: func [
 	[cdecl]
-	self [Cocoa-handle!]
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	sender	[Cocoa-handle!]
 	/local
 		w		[red-word!]
 		values	[red-value!]
+		data	[red-logic!]
 		type 	[integer!]
 		event	[integer!]
 ][	
 	values: get-face-values self
 	w: as red-word! values + FACE_OBJ_TYPE
+	data: as red-logic! values + FACE_OBJ_DATA
 	type: symbol/resolve w/symbol
 	
-	if type <> radio [objc_msgSend [self sel_getUid "setNextState"]]
+	if all [zero? cmd type <> radio][objc_msgSend [self sel_getUid "setNextState"]]
 	
 	event: case [
 		type = button [EVT_CLICK]
@@ -453,11 +457,11 @@ button-click: func [
 		]
 		all [
 			type = radio
-			NSOffState = objc_msgSend [self sel_getUid "state"] ;-- ignore double-click (fixes #4246)
+			any [TYPE_OF(data) <> TYPE_LOGIC not data/value] ;-- ignore repeated clicks (fixes #4246)
 		][
-			objc_msgSend [self sel_getUid "setNextState"]		;-- gets converted to CHANGE by high-level event handler
+			objc_msgSend [self sel_getUid "setState:" as NSInteger! NSOnState]
 			get-logic-state self
-			EVT_CLICK
+			EVT_CHANGE
 		]
 		true [0]
 	]
@@ -614,16 +618,16 @@ set-text: func [
 		if TYPE_OF(str) <> TYPE_STRING [
 			string/make-at as red-value! str size UCS-2
 		]
-		if size = 0 [
+		either size = 0 [
 			string/rs-reset str
-			exit
+		][
+			out: unicode/get-cache str size + 1 * 4			;-- account for surrogate pairs and terminal NUL
+			objc_msgSend [
+				text sel_getUid "getCString:maxLength:encoding:"
+				out as NSUInteger! ((size + 1) * 2) NSUTF16LittleEndianStringEncoding
+			]
+			unicode/load-utf16 null size str no
 		]
-		out: unicode/get-cache str size + 1 * 4			;-- account for surrogate pairs and terminal NUL
-		objc_msgSend [
-			text sel_getUid "getCString:maxLength:encoding:"
-			out as NSUInteger! ((size + 1) * 2) NSUTF16LittleEndianStringEncoding
-		]
-		unicode/load-utf16 null size str no
 
 		face: push-face obj
 		if TYPE_OF(face) = TYPE_OBJECT [
@@ -1252,7 +1256,9 @@ render-text: func [
 		keys: declare Cocoa-handle-array!
 		objects/v1: default-font
 		keys/v1: NSFontAttributeName
-		attrs: make-NSDictionary objects keys as NSUInteger! 1
+		objects/v2: objc_msgSend [objc_getClass "NSColor" sel_getUid "controlTextColor"]
+		keys/v2: NSForegroundColorAttributeName
+		attrs: make-NSDictionary objects keys as NSUInteger! 2
 	]
 
 	str: to-CFString text
@@ -1289,7 +1295,7 @@ render-text: func [
 	]
 	m/ty: m/ty + temp
 	line: CTLineCreateWithAttributedString attr
-	CGContextSetTextMatrix ctx m/a m/b m/c m/d m/tx m/ty
+	CGContextSetTextMatrix ctx m
 	CTLineDraw line ctx
 	CFRelease str
 	CFRelease attr

@@ -4,4 +4,4 @@ Red [
 ]
 
 compiler-version: 0.6.6
-compiler-build-date: 1-Jan-1970
+compiler-build-date: now/utc

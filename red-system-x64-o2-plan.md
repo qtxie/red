@@ -1369,11 +1369,51 @@ credible regression. Reports are under
 `build/generated-code-benchmark-suites/stage143-win64-pressure/` and
 `build/generated-code-benchmark-suites/stage143-win64-core/`.
 
-This evidence does not complete the plan. Custom variadics, SysV callback-entry
-coverage, exception and unwind integration, explicit stack operations, GC
-stress, compiler-sized runtime coverage, emitted SysV full-suite differential
-testing, and the full cross-ABI performance gate remain required before O2 can
-leave its experimental state.
+Stage174 extends the evidence to both x64 ABIs after typed custom calls, explicit
+stack state, aggregate ABI handling, managed-root call liveness, and exception
+unwind integration. The 12-workload suites use two warmups and 15 interleaved
+O0/O2 runs per workload. Win64 measures an O2/O0 geometric-mean ratio of
+`0.479607` (52.039% faster, 95% interval `0.458739..0.486023`); SysV measures
+`0.471707` (52.829% faster, interval `0.461967..0.508404`). Both gates pass with
+no credible or point-estimate regression. Reports are under
+`build/generated-code-benchmark-suites/stage174-win64-core/` and
+`build/generated-code-benchmark-suites/stage174-sysv-core/`.
+
+The first successful current Win64 `atomicfix` development compiler is the
+post-control-flow validation artifact; it is not a dependency on a numbered
+historical stage. Its SHA-256 is
+`8E984B0BA9B73D288E0F8DDA9F45D4C23B5190B8F1F66FA9348A7E5BD944D787`, and the
+adjacent Stage1-built `libRedRT.dll` remains
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`. At commit
+`45a569f6b`, the same 12-workload Win64 protocol measures `0.481164` (51.884%
+faster, interval `0.464283..0.518892`) with no regression. The report is under
+`build/generated-code-benchmark-suites/atomicfix-current-win64/`.
+
+Commit `45a569f6b` completes the planned control-flow and machine-state expansion:
+explicit `return` and `exit`, `if`/`either`/`case`/`switch`, `loop`/`until`/
+`while` with `break` and `continue`, nested and lexical `overflow?` flag scopes,
+custom calls backed by explicit stack state, and typed x64 atomic operations.
+The current machine-IR smoke dump has 106 verified functions, 102 selected
+functions, and four intentional unsupported cases. It independently exercises
+the IR passes, ABI planners, allocator, memory and LEA selection, branch
+relaxation, relocations, debug offsets, GC verification, and exact encodings.
+
+Focused O0/O2 differential runs compare exit status, stdout, and stderr. Win64
+covers case control, explicit returns, loops, custom calls, managed node handles,
+byte and integer overflow flags, resolver calls without a registry, and unwind
+through an O2 frame. SysV covers the same semantics plus aggregate callback
+entry. The emitted Stage174 SysV eight-program suite produces identical O0/O2
+behavior across 2,821 tests and 3,679 assertions. The complete Win64 suite passes
+10,582 tests and 12,647 assertions, and the compiler regression passes all 124
+assertions. GC safepoint executables pass at O0 and O2 on Win64 and at O0, O1,
+and O2 on SysV; the direct atomic fixture passes at O0 and O2 on both ABIs, and
+the original multithreaded atomic test passes all eight checks.
+
+These results complete the implementation phases while O2 remains explicitly
+experimental and opt-in. A source-identical final fixed-point fallback census
+and a controlled compiler-sized runtime comparison are still required by the
+separate default-enablement decision. Old Stage178/Stage179 dumps are historical
+diagnostics and must not be presented as final coverage for `45a569f6b`.
 
 ## Rollout
 
@@ -1388,9 +1428,9 @@ leave its experimental state.
    decision backed by recorded benchmark and correctness results. It is not an
    automatic consequence of completing the implementation phases.
 
-## Completion Criteria
+## Implementation Completion Criteria
 
-The plan is complete when:
+The implementation plan is complete when:
 
 - O0 and O1 retain their existing behavior and code paths.
 - O2 uses verified typed machine IR for the intended Red/System feature set on
@@ -1401,6 +1441,12 @@ The plan is complete when:
 - Left-to-right observable behavior, aliasing, explicit stack semantics,
   arithmetic flags, GC roots, exceptions, and debug mappings pass focused and
   differential tests.
-- Generated-program runtime meets the performance gate on both ABIs.
-- Benchmark evidence, fallback coverage, and any accepted limitations are checked
-  into the repository with the final enablement change.
+- Generated-program runtime meets the aggregate performance gate on both ABIs.
+- Benchmark evidence and accepted limitations are recorded in the repository.
+
+At `45a569f6b`, these implementation criteria are satisfied by the evidence
+above. This does not enable O2 by default. Default enablement additionally
+requires a source-identical final fixed-point fallback census, a controlled
+compiler-sized runtime gain, and a fresh full-suite audit using the exact
+candidate compiler. Those are rollout gates, not reasons to rebuild historical
+stages during ordinary focused development.

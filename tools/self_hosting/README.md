@@ -58,6 +58,26 @@ compiler and source hashes, target, WSL platform, and paired speedups in
 `report.json`. Use `-WslDistribution NAME` when the default distribution is not
 the intended test environment.
 
+For a focused Red/System check against the compiler sources in the worktree,
+use the interpreted x64 driver. This avoids rebuilding the bootstrap compiler
+when runtime sources have not changed:
+
+```powershell
+& D:\EE\QTool\red-console.exe `
+    .\tools\self_hosting\compile-x64-red-system.red `
+    Windows-X86-64 `
+    .\tools\self_hosting\fixtures\backend\case-control.reds `
+    .\build\case-control-O2.exe `
+    .\build\case-control-O2.ir `
+    O2
+```
+
+The driver accepts `Windows-X86-64` and `Linux-X86-64`, maps `O0`, `O1`, and
+`O2` explicitly to levels 0, 1, and 2, and always compiles in development mode.
+It is a focused source-validation tool, not a bootstrap artifact. Run compiler
+invocations serially: check that the previous compiler process has exited before
+starting another one.
+
 No `build.r`, pre-cap, encap, Rebol executable, or `red.r` invocation is
 involved in the normal self-hosted build.
 

@@ -1,0 +1,449 @@
+# Hybrid Red/System Codegen Execution Plan
+
+Status: architecture plan. Implementation starts only after the protocol and
+semantic coverage gates in phases 1 and 2 are satisfied.
+
+The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
+[the backend ownership audit](compiler-backend-ownership.md).
+
+## Objective
+
+Replace the Red implementation of Red/System native code generation with an
+embedded Red/System backend while retaining the existing Red semantic frontend
+and Red image linker:
+
+```text
+Red source -> Red frontend -> generated Red/System source
+                                |
+Red/System source -> Red semantic frontend -> RSIR
+                                            |
+                                   codegen-module routine!
+                                            |
+                                      RSCG object
+                                            |
+              embedded runtime RSCG ------>+----> RSCG merger
+                                                       |
+                                                linker adapter
+                                                       |
+                                                existing linker
+```
+
+The end state contains no emitter fallback. A release executable remains
+statically linked and has no new `libRedRT.dll` dependency.
+
+## Evidence and constraints
+
+The profiling work preceding this plan established:
+
+- a profiled release compiler spent about 82.6 seconds in accumulated
+  `rs-loader` work, about 36 seconds in backend finalization, and about 8 seconds
+  linking the small `hello.red` workload;
+- the runtime prolog dominates the compile because release mode loads and
+  compiles the runtime on every invocation;
+- current O2 machine IR is recorded alongside direct emitter work, uses direct
+  bytes for prolog/frame facts, and falls back per function;
+- current linker input is not a generic relocation table. It consumes nested
+  symbol reference lists, import callsite lists, compiler-owned debug function
+  specifications, and GC compatibility symbols;
+- `routine!` passes a `binary!` as a `red-binary!` cell, and series expansion can
+  invalidate a previously acquired data pointer.
+
+Consequently, native codegen alone cannot deliver the desired end-to-end speed.
+The same design must enable a relocatable, statically embedded runtime RSCG so
+release compilation skips the runtime loader and semantic frontend without
+switching to a runtime DLL.
+
+## Architectural decisions
+
+| Decision | Reason |
+| --- | --- |
+| whole-module routine call | avoids Red/R/S calls per function and enables module optimization |
+| four versioned messages | configuration and diagnostics need the same bounded ABI discipline |
+| target-parametric semantic IR | Red/System type layout depends on target, but machine details do not belong in frontend |
+| typed temporaries/slots, SSA in native MIR | moves CFG analysis, phi construction, and promotion out of Red |
+| no serialized frame/stack/liveness state | these facts become invalid when codegen changes layout |
+| relocatable RSCG, not final bytes | permits static runtime caching and multi-module linking |
+| native arena plus one output append | prevents Red-series relocation bugs and repeated expansion |
+| module-level `rsir` failure | a hidden per-function fallback would retain emitter dependencies indefinitely |
+| legacy linker adapter first | reduces initial scope while making every old encoding explicit and testable |
+| O0/O1 correctness before O2 | the current O2 path is experimental and is not the migration foundation |
+
+Three driver modes are allowed during migration:
+
+- `legacy`: current emitter only;
+- `shadow`: legacy output plus RSIR construction and verification, used for
+  differential evidence;
+- `rsir`: RSIR -> Red/System codegen -> RSCG -> linker, with unsupported input a
+  hard diagnostic and no emitter invocation.
+
+## Phase 0: baseline and dependency audit
+
+Deliverables:
+
+- retain phase timing for loader, semantic lowering, function finalization,
+  linker preparation, and linker build;
+- record compiler identity, optimization level, release/development mode,
+  runtime dependency list, wall time, CPU time, and peak memory with each run;
+- create a semantic ownership inventory for every direct call from
+  `compiler-core` into `emitter` or `target`;
+- classify all linker reads of emitter/compiler data, including magic runtime
+  symbols, imports, exports, debug, GC, PIC, and static-object paths.
+
+Exit criteria:
+
+- every dependency is assigned to frontend, RSIR, codegen, RSCG, adapter, or
+  linker; there is no "copy existing object" category;
+- baseline commands and raw reports are reproducible from a clean release
+  compiler build.
+
+The initial profiling and reverse audit are complete; the exhaustive ownership
+matrix remains part of phase 1 because it controls schema freeze.
+
+## Phase 1: protocol and semantic coverage
+
+Deliverables:
+
+- finish `docs/compiler-wire-format.md` from the ownership matrix;
+- enumerate stable numeric IDs for message sections, types, opcodes, effects,
+  calling conventions, relocations, diagnostics, and flags;
+- keep one declarative schema manifest, generate checked-in Red and Red/System
+  constants, and calculate a schema fingerprint;
+- build a feature matrix from `system/tests` covering scalar operations,
+  control flow, casts, pointers, structs/unions/arrays, function pointers,
+  namespaces, callbacks, imports/exports, variadic/typed/custom calls, atomics,
+  catch/throw, dynamic stack operations, GC handles, debug, PIC, and static
+  linking, plus target-bound `#inline`, port I/O, push/pop-all, and subroutines;
+- specify exact mappings for all Win64 relocation forms accepted by the current
+  PE linker.
+
+Tests:
+
+- schema-layout tests assert every record size and field offset in both
+  languages;
+- golden containers cover the smallest valid RSIR/RSCF/RSCG/RSDG messages;
+- malformed fixtures cover truncation, overlap, bad alignment, overflow,
+  unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
+  and unsupported relocations.
+
+Exit criteria:
+
+- every feature in the Windows x64 Red/System suite has an encoding and owner;
+- both language implementations agree on the schema fingerprint and golden
+  bytes;
+- no v1 record contains a Red value or optimizer-derived state.
+
+## Phase 2: bridge substrate
+
+Deliverables:
+
+- implement a Red/System checked reader with `checked-add`, `checked-multiply`,
+  bounded slice, little-endian load, ID lookup, and section lookup primitives;
+- implement native arenas with explicit capacity limits, alignment, growth,
+  allocation-failure propagation, and one cleanup path;
+- implement a deterministic RSCG/RSDG writer and self-verifier;
+- add the `codegen-module` routine with distinct-series checks and the no-GC
+  pointer lifetime protocol;
+- implement Red structural verifiers independently rather than sharing the
+  producer's unchecked accessors.
+
+Tests:
+
+- a bridge smoke backend consumes a minimal RSIR and returns a valid empty RSCG;
+- every malformed phase-1 fixture produces a stable status and bounded RSDG;
+- aliased inputs/outputs and nonzero output heads are rejected;
+- repeated calls under forced Red GC do not retain or corrupt series pointers;
+- the release compiler imports only system DLLs, verified with `dumpbin`.
+
+Exit criteria:
+
+- the bridge runs in a Stage1-built release compiler without `libRedRT.dll`;
+- all native allocations are released on every nonfatal path;
+- artifact output is committed once and is empty on failure.
+
+## Phase 3: complete RSIR frontend
+
+Deliverables:
+
+- introduce a backend-neutral semantic sink in `compiler-core`; direct emitter
+  calls are routed through explicit operations with typed inputs;
+- build module/type/signature/symbol/constant/import/export tables before body
+  serialization and assign stable IDs;
+- lower function bodies into typed CFG with explicit memory effects,
+  single-definition expression temporaries, mutable locals/merge slots,
+  explicit stack operations, calls, and source locations;
+- serialize directly into pre-sized binaries instead of constructing a second
+  tree of Red blocks;
+- use current `machine-ir.red` only as a differential oracle for covered
+  functions; do not serialize it and do not consume its direct byte chunks;
+- add the three mutually exclusive backend modes.
+
+Recommended slice order:
+
+1. module metadata, scalar types/constants/globals, straight-line integer code;
+2. locals, merge slots, loads/stores, comparisons, branches, and loops;
+3. direct/indirect calls and all Win64 scalar argument/return cases;
+4. pointers, field paths, arrays, aggregates and aggregate returns;
+5. dynamic stack, variadic/typed/custom calls and callbacks;
+6. atomics, exceptions, managed handles, debug, imports and exports;
+7. runtime-specific global prolog/epilog semantics.
+
+Tests and exit criteria:
+
+- each slice adds positive, negative, and malformed semantic fixtures before
+  moving to the next;
+- shadow mode produces deterministic, semantically valid RSIR for the entire
+  Windows x64 system suite;
+- RSIR creation has no reads from emitter addresses, stacks, chunks, bitmaps,
+  or symbol reference blocks;
+- legacy mode remains behaviorally unchanged.
+
+## Phase 4: Red/System internal MIR and verifier
+
+Deliverables:
+
+- decode immutable RSIR tables zero-copy where possible and build only derived
+  indexes in arenas;
+- construct predecessor lists, dominance, scalar use lists, memory SSA, stack
+  state, safepoint candidates, and liveness in Red/System;
+- promote eligible locals/merge slots and construct scalar SSA and phi nodes in
+  Red/System before optimization;
+- define a compact internal MIR that may change without wire-version changes;
+- implement pass manager accounting: verification after every mutating pass,
+  instruction counts, arena bytes, and per-pass time;
+- start with canonicalization, unreachable removal, trivial phi elimination,
+  constant folding, copy propagation, and dead-code elimination.
+
+Exit criteria:
+
+- unoptimized MIR round-trips to a stable textual dump for focused fixtures;
+- verifier rejects every invalid semantic relation before instruction selection;
+- optimization can be disabled completely and never changes diagnostics from
+  the frontend.
+
+## Phase 5: Windows x64 O0 codegen
+
+Deliverables:
+
+- Win64 instruction selection and encoding with no legacy target/emitter calls;
+- ABI classification from RSIR signatures, including hidden aggregate returns,
+  shadow space, alignment, callbacks, function pointers, and imported variables;
+- linear-scan or simpler correct-first allocation, callee-save handling, spill
+  slots, outgoing-call area, dynamic stack checks, and prolog/epilog generation;
+- final GC frame bitmap generation from arguments, locals, and allocated spill
+  roots, with the runtime compatibility symbol and patches;
+- RSCG symbols, typed relocations, imports, exports, function extents, debug
+  lines/parameters, and optional platform sections;
+- conservatively lower target-bound `#inline` fragments by spilling live values,
+  applying their opaque effect/clobber contract, emitting bytes, and importing
+  an optional conventional result.
+
+Tests:
+
+- instruction encoder unit vectors check exact bytes and displacement bounds;
+- ABI probes cover 0-N integer/XMM arguments, mixed arguments, nested calls,
+  small/large structs, callbacks, variadic/typed/custom calls, and return modes;
+- GC probes force collection with live handles in arguments, locals, callee-save
+  registers, and spills;
+- atomic and overflow edge cases run in both legacy and rsir modes.
+
+Exit criteria:
+
+- focused probes execute identically in legacy and rsir modes;
+- RSCG self-verifies without consulting frontend objects;
+- no selected function contains copied legacy prolog, body, epilog, or bitmap
+  bytes.
+
+## Phase 6: RSCG merger and linker adapter
+
+Deliverables:
+
+- deterministic alignment and merge of multiple code, rodata, data, BSS, and
+  platform sections;
+- local-ID remapping, strong/weak/undefined symbol resolution, import merging,
+  export conflict checking, and relocation source adjustment;
+- exact conversion of RSCG relocations to current linker symbol/import reference
+  structures for the first implementation;
+- extend `job/debug-info` to carry complete function records and argument type
+  bytes, removing the linker's dependency on `compiler/functions`;
+- retain existing PE resource and external static-object processing.
+
+Tests:
+
+- single- and multi-object fixtures reference code/data/rodata in both
+  directions and through imports;
+- zero-based RSCG offsets are checked against the linker's one-based legacy
+  convention;
+- import functions, import variables, renamed exports, duplicate symbols, PIC,
+  and data/rodata base relocations have focused tests;
+- linked output is inspected with `dumpbin` and then executed.
+
+Exit criteria:
+
+- an RSCG object saved to disk and loaded in a fresh compiler process links
+  without any semantic frontend state;
+- every relocation is either applied/mapped exactly once or produces a hard
+  diagnostic;
+- hello and the covered system-test slice link and run in `rsir` mode.
+
+## Phase 7: full O1 semantic parity
+
+Deliverables:
+
+- complete all remaining Windows x64 language and runtime operations;
+- port only mature, profitable optimization logic into Red/System after O0 is
+  stable; the experimental Red O2 implementation remains an oracle, not a
+  dependency;
+- support executable, DLL, no-runtime, debug, PIC, and existing static-link
+  combinations used by the suite;
+- make unsupported RSIR impossible for covered target/options rather than
+  adding fallback.
+
+Exit criteria:
+
+- all Windows x64 Red/System compiler/unit/static-link tests pass in `rsir` mode;
+- the Red compiler and its generated runtime sources compile in `rsir` mode;
+- debug stack traces, GC stress, imports/exports, and callbacks pass repeated
+  runs;
+- legacy and rsir compile-error behavior agrees at the frontend boundary.
+
+## Phase 8: precompiled static runtime RSCG
+
+Deliverables:
+
+- build the runtime as one or more relocatable RSCG objects during compiler
+  bootstrap, using the same codegen and verifier as user modules;
+- generate a versioned, declarative frontend interface manifest containing the
+  runtime type/function/global/alias/namespace/enumeration/managed-handle and
+  preprocessor-definition environment needed to analyze user code;
+- embed the verified bytes in the release compiler or package them as a
+  version-locked resource selected by the full cache key;
+- replace the current open global-code frame with explicit runtime-init,
+  user-init, finalizer, and startup-glue functions; the glue RSIR module owns the
+  final executable/DLL entry symbol and preserves initialization order;
+- keep program-specific Redbin boot payload and `red/sys-global` code/data in a
+  generated user or glue object, outside the shared runtime cache;
+- merge runtime and user objects at compile time and preserve all runtime magic
+  symbols, startup ordering, GC bitmaps, and image-info patches;
+- keep an explicit diagnostic path for cache mismatch; rebuilding through RSIR
+  is allowed, falling back to emitter is not.
+
+Exit criteria:
+
+- release `hello.red` does not load or semantically compile runtime Red/System
+  sources during the measured invocation;
+- importing the cached frontend interface produces the same semantic tables and
+  preprocessor behavior as processing runtime sources, checked by a normalized
+  manifest comparison;
+- the produced executable remains self-contained and has no `libRedRT.dll`
+  import;
+- cached and freshly generated runtime objects produce equivalent test results;
+- corrupt or mismatched embedded objects are rejected before linking.
+
+Bootstrap packaging sequence:
+
+1. the canonical Stage1 compiler builds a cacheless hybrid candidate;
+2. that candidate generates and verifies the target runtime RSCG plus frontend
+   interface manifest as an external bundle;
+3. Stage1 or the candidate builds the packaged compiler with that exact bundle
+   embedded, recording its content and configuration fingerprints;
+4. the packaged compiler regenerates the bundle and builds the next packaged
+   generation;
+5. bundle/schema fingerprints and the full test matrix must stabilize across
+   the two packaged generations.
+
+This sequence uses no Stage0/Rebol compiler. Keeping the bundle external until
+step 3 makes failures inspectable and avoids hiding a circular build dependency.
+
+## Phase 9: bootstrap, performance gates, and default switch
+
+Benchmark protocol:
+
+1. Build each candidate release compiler with the canonical Stage1 command:
+
+   ```powershell
+   build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+       -t Windows-X86-64 -o <candidate> <compiler-source>
+   ```
+
+2. Verify compiler dependencies with `dumpbin /dependents`.
+3. Warm once, then run at least five isolated `hello.red` release compilations
+   at the same optimization level; report median and range, not the best run.
+4. Record loader, RSIR serialization, routine decode/verify, each MIR pass,
+   selection/allocation/encode, merge/adapter, linker, wall time, peak memory,
+   IR size, RSCG size, allocation count, and cached-interface import time.
+5. Repeat on a call-heavy Red/System fixture, the runtime module, the system
+   suite aggregate, and a full compiler self-build.
+
+Proposed default-switch gates:
+
+- zero Windows x64 test regressions and zero silent fallbacks;
+- Red frontend plus RSIR serialization no more than 10% slower than the
+  corresponding legacy semantic phase;
+- native decode/optimization/codegen at most 25% of the measured legacy backend
+  time for the same module;
+- cached-runtime `hello.red` median wall time at most 50% of the recorded release
+  baseline, with peak memory no more than 1.5 times baseline;
+- cached runtime-interface import at most 10% of the corresponding fresh runtime
+  load/semantic time on the same compiler and machine;
+- two consecutive compiler generations pass the same suites, and schema/cache
+  fingerprints are reproducible;
+- release compiler and generated executables have the expected dependency set.
+
+After the gates pass:
+
+- switch Windows x64 default to `rsir`, retain `legacy` for one bounded audit
+  period, and collect any mismatch as a release blocker;
+- remove current O2 dual-work hooks first, then delete x64 emitter code only
+  after searches and instrumentation prove it is unreachable;
+- remove the legacy mode and compatibility adapter internals in separate commits
+  once the typed linker path, if adopted, has equivalent coverage.
+
+Other targets are subsequent projects. ARM64 is the next sensible backend, but
+the RSIR protocol must not claim target independence until a second backend has
+validated the abstractions.
+
+## Test layers
+
+| Layer | Main failure caught |
+| --- | --- |
+| schema/golden bytes | Red and Red/System ABI drift |
+| malformed corpus | bounds, overflow, ID and verifier bugs |
+| semantic shadow | frontend omissions and wrong ownership |
+| encoder vectors | machine-byte and relocation mistakes |
+| ABI/GC probes | calling convention and live-root corruption |
+| legacy differential execution | behavioral codegen regressions |
+| object reload/merge | hidden frontend/linker coupling |
+| system and Red suites | language/runtime integration |
+| two-generation bootstrap | compiler self-hosting instability |
+| performance harness | optimization that only moves or duplicates work |
+
+Byte-for-byte executable equality is useful where deterministic layout matches,
+but it is not the primary correctness oracle. Section layout may legitimately
+change. Runtime output, ABI probes, debug behavior, exported interfaces, and
+relocation inspection are authoritative.
+
+## Principal risks
+
+| Risk | Control |
+| --- | --- |
+| frontend silently reads emitter state | ownership matrix, `rsir` poison stubs, fresh-process object reload |
+| premature schema freeze | draft version until 100% Win64 feature coverage |
+| Red series moves during routine | native arenas, no-GC pointer window, one append |
+| aggregate/callback ABI mismatch | table-driven classifier and exhaustive probes |
+| GC roots lost in allocation | typed GC kinds, liveness verification, forced-GC tests |
+| legacy linker drops a relocation | per-kind mapping tests and reject-by-default adapter |
+| runtime cache becomes stale | complete cache key plus schema/build fingerprints |
+| cached code lacks frontend state/startup context | interface manifest plus explicit lifecycle/glue functions |
+| shadow mode distorts benchmarks | benchmark `legacy` and `rsir` separately; shadow is correctness-only |
+| optimizer work obscures parity | O0 first, pass-by-pass verifier, O1 gates before O2 |
+| bootstrap cycle breaks recovery | small commits, checked-in schema output, canonical Stage1 compiler |
+
+## Commit boundaries
+
+Each phase is split into reviewable commits with its tests, and every major
+completed task is committed as required by the repository workflow. Suggested
+major boundaries are: protocol/fixtures, reader/arena, writer/diagnostics,
+routine bridge, RSIR module tables, RSIR function CFG, MIR verifier, x64 scalar
+encoder, x64 ABI/frame/GC, RSCG merger, linker adapter, full coverage, runtime
+object cache, and default switch. The emitter deletion is never combined with
+the default switch.

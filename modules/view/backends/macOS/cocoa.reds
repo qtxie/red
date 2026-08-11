@@ -183,6 +183,9 @@ Red/System [
 	#define NSTextAlignmentCenter		2
 ]
 
+#define NSLineBreakByWordWrapping	0
+#define NSLineBreakByClipping		2
+
 #define kCFNumberIntType			9
 
 #define NSASCIIStringEncoding		1

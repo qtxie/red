@@ -1242,23 +1242,30 @@ render-text: func [
 		text	[red-string!]
 		font	[red-object!]
 		para	[red-object!]
+		type	[red-word!]
+		sym		[integer!]
 		flags	[integer!]
 		str		[Cocoa-handle!]
-		attr	[Cocoa-handle!]
-		nscolor [Cocoa-handle!]
 		attrs	[Cocoa-handle!]
+		mutable [Cocoa-handle!]
+		style	[Cocoa-handle!]
+		storage [Cocoa-handle!]
+		layout	[Cocoa-handle!]
+		container [Cocoa-handle!]
 		objects	[Cocoa-handle-array!]
 		keys	[Cocoa-handle-array!]
-		line	[Cocoa-handle!]
-		text-size [NSSize! value]
-		temp	[Cocoa-float!]
-		rc		[NSRect!]
-		m		[CGAffineTransform!]
+		range	[NSRange! value]
+		used	[NSRect! value]
+		origin	[CGPoint! value]
+		available [Cocoa-float!]
+		line-break [integer!]
 ][
 	text: as red-string! values + FACE_OBJ_TEXT
 	if TYPE_OF(text) <> TYPE_STRING [exit]
 
 	CGContextSaveGState ctx
+	type: as red-word! values + FACE_OBJ_TYPE
+	sym: symbol/resolve type/symbol
 	font: as red-object! values + FACE_OBJ_FONT
 	either TYPE_OF(font) = TYPE_OBJECT [
 		attrs: make-font-attrs font as red-object! none-value -1
@@ -1272,54 +1279,65 @@ render-text: func [
 		attrs: make-NSDictionary objects keys as NSUInteger! 2
 	]
 
-	str: to-CFString text
-	attr: CFAttributedStringCreate 0 str attrs
-	text-size: objc_msgSend_sz [attr sel_getUid "size"]
-	rc: declare NSRect!
-	rc/x: text-size/w
-	rc/y: text-size/h
-	rc/w: as Cocoa-float! 0.0
-	rc/h: as Cocoa-float! 0.0
-
 	para: as red-object! values + FACE_OBJ_PARA
-	flags: either TYPE_OF(para) = TYPE_OBJECT [		;@@ TBD set alignment attribute
-		get-para-flags base para
+	flags: either TYPE_OF(para) = TYPE_OBJECT [
+		get-para-flags sym para
 	][
-		NSTextAlignmentCenter or 4
+		either sym = base [NSTextAlignmentCenter or 4][NSTextAlignmentLeft]
+	]
+	line-break: either (flags and 20h) <> 0 [
+		NSLineBreakByWordWrapping
+	][
+		NSLineBreakByClipping
 	]
 
-	m: make-CGMatrix 1 0 0 -1 0 0
+	style: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
+	style: objc_msgSend [style sel_getUid "mutableCopy"]
+	objc_msgSend [style sel_getUid "setAlignment:" as NSInteger! (flags and 3)]
+	objc_msgSend [style sel_getUid "setLineBreakMode:" as NSInteger! line-break]
+	mutable: objc_msgSend [attrs sel_getUid "mutableCopy"]
+	objc_msgSend [mutable sel_getUid "setObject:forKey:" style NSParagraphStyleAttributeName]
+	objc_msgSend [attrs sel_getUid "release"]
+	objc_msgSend [style sel_getUid "release"]
+	attrs: mutable
+
+	str: to-NSString text
+	storage: objc_msgSend [
+		objc_msgSend [objc_getClass "NSTextStorage" sel_alloc]
+		sel_getUid "initWithString:attributes:" str attrs
+	]
+	container: objc_msgSend [
+		objc_msgSend [objc_getClass "NSTextContainer" sel_alloc]
+		sel_getUid "initWithSize:" sz/w (as Cocoa-float! 1.0e37)
+	]
+	objc_msgSend [container sel_getUid "setLineFragmentPadding:" as Cocoa-float! 0.0]
+	objc_msgSend [container sel_getUid "setLineBreakMode:" as NSInteger! line-break]
+	layout: objc_msgSend [objc_msgSend [objc_getClass "NSLayoutManager" sel_alloc] sel_init]
+	objc_msgSend [layout sel_getUid "addTextContainer:" container]
+	objc_msgSend [container sel_getUid "release"]
+	objc_msgSend [storage sel_getUid "addLayoutManager:" layout]
+	objc_msgSend [layout sel_getUid "release"]
+
+	range: objc_msgSend_range [layout sel_getUid "glyphRangeForTextContainer:" container]
+	used: objc_msgSend_rect [layout sel_getUid "usedRectForTextContainer:" container]
+	available: sz/h - used/h
+	origin/x: as Cocoa-float! 0.0
+	origin/y: (as Cocoa-float! 0.0) - used/y
 	case [
-		(flags and 3) = NSTextAlignmentRight [m/tx: sz/w - rc/x]
-		(flags and 3) = NSTextAlignmentCenter [temp: sz/w - rc/x m/tx: temp / as Cocoa-float! 2.0]
+		(flags and 4) <> 0 [origin/y: (available / as Cocoa-float! 2.0) - used/y]
+		(flags and 8) <> 0 [origin/y: available - used/y]
 		true [0]
 	]
+	objc_msgSend [
+		layout sel_getUid "drawBackgroundForGlyphRange:atPoint:"
+		range/idx range/len origin/x origin/y
+	]
+	objc_msgSend [
+		layout sel_getUid "drawGlyphsForGlyphRange:atPoint:"
+		range/idx range/len origin/x origin/y
+	]
 
-	case [
-		flags and 4 <> 0 [temp: sz/h - rc/y m/ty: temp / as Cocoa-float! 2.0]
-		flags and 8 <> 0 [m/ty: sz/h - rc/y]
-		true [0]
-	]
-	temp: objc_msgSend_f32 [
-		objc_msgSend [attrs sel_getUid "objectForKey:" NSFontAttributeName]
-		sel_getUid "ascender"
-	]
-	m/ty: m/ty + temp
-	line: CTLineCreateWithAttributedString attr
-	CGContextSetTextMatrix ctx m
-	CTLineDraw line ctx
-	CFRelease str
-	CFRelease attr
-	CFRelease line
-
-	attr: objc_msgSend [attrs sel_getUid "objectForKey:" NSStrikethroughStyleAttributeName]
-	if as logic! objc_msgSend [attr sel_getUid "boolValue"][
-		m/ty: m/ty - temp + (rc/y / as Cocoa-float! 2.0)
-		CGContextTranslateCTM ctx m/tx m/ty
-		CGContextMoveToPoint ctx as Cocoa-float! 0.0 as Cocoa-float! 0.0
-		CGContextAddLineToPoint ctx rc/x as Cocoa-float! 0.0
-		CGContextStrokePath ctx
-	]
+	objc_msgSend [storage sel_getUid "release"]
 	objc_msgSend [attrs sel_getUid "release"]
 	CGContextRestoreGState ctx
 ]
@@ -1825,7 +1843,7 @@ draw-rect*: func [
 	view-size/w: bounds/w
 	view-size/h: bounds/h
 	case [
-		sym = base [render-text ctx vals :view-size]
+		any [sym = base sym = text][render-text ctx vals :view-size]
 		sym = rich-text [
 			pos/header: TYPE_POINT2D
 			pos/x: F32_0 pos/y: F32_0

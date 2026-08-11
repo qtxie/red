@@ -107,6 +107,7 @@ make-font: func [
 		]
 		hFont <> 0
 	]
+	objc_msgSend [hFont sel_getUid "retain"]
 
 	blk: as red-block! values + FONT_OBJ_STATE
 	either TYPE_OF(blk) <> TYPE_BLOCK [
@@ -166,6 +167,7 @@ free-font: func [
 	if hFont <> 0 [
 		state: as red-block! (object/get-values font) + FONT_OBJ_STATE
 		state/header: TYPE_NONE
+		objc_msgSend [hFont sel_getUid "release"]
 	]
 ]
 

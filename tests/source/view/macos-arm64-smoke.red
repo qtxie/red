@@ -53,6 +53,10 @@ left-align-face: none
 center-align-face: none
 right-align-face: none
 styled-face: none
+top-align-face: none
+middle-align-face: none
+bottom-align-face: none
+multiline-align-face: none
 scroll-face: none
 calendar-face: none
 canvas: none
@@ -126,10 +130,15 @@ result: try/all [
 		unicode-face: text "" 260x24
 		area-face: area "" 260x60
 		return
-		left-align-face: text "ARM64" 120x24 white left
-		center-align-face: text "ARM64" 120x24 white center
-		right-align-face: text "ARM64" 120x24 white right
+		left-align-face: text "ARM64" 120x24 white left font-color black
+		center-align-face: text "ARM64" 120x24 white center font-color black
+		right-align-face: text "ARM64" 120x24 white right font-color black
 		styled-face: text "Styled" 120x24 white underline strike
+		return
+		top-align-face: text "Vertical" 100x64 white left top font-color black
+		middle-align-face: text "Vertical" 100x64 white left middle font-color black
+		bottom-align-face: text "Vertical" 100x64 white left bottom font-color black
+		multiline-align-face: base "Line one^/Line two" 100x64 white left top font-color black
 		return
 		base-text-face: base "Base text" 160x44 white font-color black
 		image-text-face: image image-background "Image text" 160x44 font-color black
@@ -263,6 +272,38 @@ text-visible?: func [face [object!] /local image background changed xy x y][
 ]
 unless text-visible? base-text-face [fail "base face text was not rendered"]
 unless text-visible? image-text-face [fail "image face text was not rendered"]
+
+dark-text-bounds: function [face [object!] /local image min-y max-y xy pixel][
+	image: to-image face
+	min-y: image/size/y
+	max-y: 0
+	repeat y image/size/y [
+		repeat x image/size/x [
+			xy: as-pair x y
+			pixel: image/:xy
+			if all [pixel/1 < 128 pixel/2 < 128 pixel/3 < 128][
+				min-y: min min-y y
+				max-y: max max-y y
+			]
+		]
+	]
+	reduce [min-y max-y]
+]
+
+top-bounds: dark-text-bounds top-align-face
+middle-bounds: dark-text-bounds middle-align-face
+bottom-bounds: dark-text-bounds bottom-align-face
+multiline-bounds: dark-text-bounds multiline-align-face
+unless all [
+	top-bounds/1 < middle-bounds/1
+	middle-bounds/1 < bottom-bounds/1
+	(multiline-bounds/2 - multiline-bounds/1) > (top-bounds/2 - top-bounds/1)
+][
+	fail rejoin [
+		"text alignment bounds are invalid: "
+		mold reduce [top-bounds middle-bounds bottom-bounds multiline-bounds]
+	]
+]
 
 if system/build/date/year = 1970 [fail "compiler build date is still the Unix epoch"]
 

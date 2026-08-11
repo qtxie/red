@@ -695,8 +695,8 @@ change-color: func [
 			if t = TYPE_NONE [clr: objc_msgSend [objc_getClass "NSColor" sel_getUid "textBackgroundColor"]]
 		]
 		type = text [
-			if t = TYPE_NONE [set?: no]
-			objc_msgSend [hWnd sel_getUid "setDrawsBackground:" set?]
+			set?: no
+			objc_msgSend [hWnd sel_getUid "setNeedsDisplay:" yes]
 		]
 		any [type = check type = radio][
 			hWnd: objc_msgSend [hWnd sel_getUid "cell"]
@@ -784,6 +784,11 @@ change-font: func [
 		pt		[CGPoint! value]
 ][
 	if TYPE_OF(font) <> TYPE_OBJECT [return no]
+	if any [type = base type = text][
+		get-font face font
+		objc_msgSend [hWnd sel_getUid "setNeedsDisplay:" yes]
+		return yes
+	]
 
 	attrs: make-font-attrs font face type
 	;objc_msgSend [attrs sel_getUid "autorelease"]
@@ -908,7 +913,7 @@ change-enabled: func [
 				]
 			]
 		]
-		all [type <> base type <> window type <> panel][
+		all [type <> base type <> text type <> window type <> panel][
 			objc_msgSend [hWnd sel_getUid "setEnabled:" enabled?]
 		]
 		true [0]
@@ -928,7 +933,7 @@ change-text: func [
 		cstr [c-string!]
 		str  [red-string!]
 ][
-	if type = base [
+	if any [type = base type = text][
 		objc_msgSend [hWnd sel_getUid "setNeedsDisplay:" yes]
 		exit
 	]
@@ -1434,6 +1439,7 @@ init-base-face: func [
 	size	[red-pair!]
 	values	[red-value!]
 	bits	[integer!]
+	type	[integer!]
 	return: [Cocoa-handle!]
 	/local
 		color	[red-tuple!]
@@ -1469,7 +1475,7 @@ init-base-face: func [
 		obj: hwnd
 	]
 
-	object_setInstanceVariable obj IVAR_RED_DATA base					;-- set a flag as we handle keyboard event differently in base face
+	object_setInstanceVariable obj IVAR_RED_DATA as Cocoa-handle! type	;-- base handles keyboard input differently
 
 	if TYPE_OF(opts) = TYPE_BLOCK [
 		word: as red-word! block/rs-head opts
@@ -2038,7 +2044,6 @@ OS-make-view: func [
 		][
 			class: "RedScrollView"
 		]
-		sym = text [class: "RedTextField"]
 		sym = field [
 			class: either bits and FACET_FLAGS_PASSWORD = 0 ["RedTextField"][
 				"RedSecureField"
@@ -2072,6 +2077,7 @@ OS-make-view: func [
 		any [
 			sym = panel
 			sym = base
+			sym = text
 			sym = rich-text
 		][
 			class: either bits and FACET_FLAGS_SCROLLABLE = 0 ["RedBase"]["RedScrollBase"]
@@ -2133,13 +2139,6 @@ OS-make-view: func [
 	parse-common-opts obj as red-block! values + FACE_OBJ_OPTIONS sym
 
 	case [
-		sym = text [
-			objc_msgSend [obj sel_getUid "setEditable:" false]
-			objc_msgSend [obj sel_getUid "setBordered:" false]
-			id: objc_msgSend [obj sel_getUid "cell"]
-			objc_msgSend [obj sel_getUid "setDrawsBackground:" false]
-			if caption <> 0 [objc_msgSend [obj sel_getUid "setStringValue:" caption]]
-		]
 		sym = field [
 			objc_msgSend [obj sel_getUid "setDelegate:" obj]
 			if bits and FACET_FLAGS_NO_BORDER <> 0 [
@@ -2187,11 +2186,12 @@ OS-make-view: func [
 		any [
 			sym = panel
 			sym = base
+			sym = text
 		][
-			init-base-face face obj menu size values bits
+			init-base-face face obj menu size values bits sym
 		]
 		sym = rich-text [
-			hWnd: init-base-face face obj menu size values bits
+			hWnd: init-base-face face obj menu size values bits sym
 			objc_setAssociatedObject hWnd RedRichTextKey hWnd OBJC_ASSOCIATION_ASSIGN
 		]
 		sym = tab-panel [

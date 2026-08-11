@@ -22,9 +22,10 @@ change-para: func [
 		cell  [Cocoa-handle!]
 ][
 	if TYPE_OF(para) <> TYPE_OBJECT [return no]
+	flags: get-para-flags type para
 
 	case [
-		any [type = base type = panel][
+		any [type = base type = panel type = text][
 			objc_msgSend [hWnd sel_getUid "setNeedsDisplay:" yes]
 		]
 		any [
@@ -33,20 +34,18 @@ change-para: func [
 			type = check
 			type = radio
 			type = field
-			type = text
 		][
 			either TYPE_OF(font) = TYPE_OBJECT [
 				change-font hWnd face font type
 			][
-				flags: get-para-flags type para
 				objc_msgSend [hWnd sel_getUid "setAlignment:" as NSInteger! (flags and 3)]
 			]
 		]
 		true [0]
 	]
-	if any [type = field type = text][
+	if type = field [
 		cell: objc_msgSend [hWnd sel_getUid "cell"]
-		objc_msgSend [cell sel_getUid "setWraps:" flags and 20h <> 0]
+		objc_msgSend [cell sel_getUid "setWraps:" (flags and 20h) <> 0]
 	]
 	yes
 ]

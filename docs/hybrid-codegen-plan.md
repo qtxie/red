@@ -1,10 +1,11 @@
 # Hybrid Red/System Codegen Execution Plan
 
 Status: implementation in progress. The draft schema generator, dual-language
-constants, compiler-core ownership gate, and checked common-container readers
-now have executable coverage. The protocol remains unfrozen until the Windows
-x64 feature blockers, message-level semantic verifiers, and malformed/golden
-fixtures satisfy the Phase 1 exit criteria.
+constants, compiler-core ownership gate, checked common-container readers, and
+independent RSCF, data-layout, string, file, checksum, and source-location
+verifiers now have executable coverage. The protocol remains unfrozen until
+the remaining Windows x64 feature blockers and message-level semantic fixtures
+satisfy the Phase 1 exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -103,6 +104,12 @@ The initial profiling, reverse audit, and exhaustive compiler-core ownership
 inventory are complete. Auditing implementation-side emitter/target behavior
 and linker consumption remains part of phase 1 because it controls schema
 freeze.
+
+The common container, RSCF configuration, Windows x64 data layout, canonical
+UTF-8 string tables, file checksums, and source-location ordering now have
+independent Red and Red/System verifiers with shared malformed corpora. These
+are protocol prerequisites only; they do not invoke the legacy emitter or
+constitute a partial backend execution path.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
 Its test reads `system/tests/run-all.r` as data and rejects any unclassified

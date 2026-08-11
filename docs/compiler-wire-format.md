@@ -149,8 +149,8 @@ declared message size and begins at its declared alignment. Payloads cannot
 overlap or move backwards. Every byte between the directory and payloads,
 between payloads, or after the final payload is zero padding.
 
-In v1.0, all 28 listed RSIR sections are required even when empty. RSCF requires
-its config section. RSCG requires kinds 1 through 14; kind 15
+In v1.0, all 29 listed RSIR sections are required even when empty. RSCF requires
+its config section. RSCG requires kinds 1 through 15; kind 16
 `unwind-functions` is known optional and carries the OPTIONAL flag when present.
 RSDG requires all three listed sections and at least one diagnostic record.
 
@@ -229,7 +229,7 @@ silently ignored. `DEBUG` is set exactly when the debug format is `RED`, and
 `RUNTIME_MODULE` are accepted independently. Worker count is 1, deterministic
 seed is 0, and all four reserved words are zero.
 
-`max-output-bytes` is at least `WIRE_RSCG_MINIMUM_SIZE` (currently 544).
+`max-output-bytes` is at least `WIRE_RSCG_MINIMUM_SIZE` (currently 576).
 `max-diagnostic-bytes` is either zero, which disables a detailed RSDG result,
 or at least `WIRE_RSDG_MINIMUM_SIZE` (currently 200). These minima are derived
 from the schema profiles by the generator rather than duplicated in either
@@ -307,6 +307,67 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-data-layout-reds-test.exe
 ```
 
+## Canonical strings and source metadata
+
+RSIR, RSCG, and RSDG use the same canonical string-table contract. String IDs
+are one-based and zero means absent. The `strings` section carries exactly the
+SORTED and DEDUPLICATED flags; `string-data` has zero flags. Every record is an
+`(offset, size)` slice relative to `string-data`, and the slices cover that byte
+section from offset zero to its end without a gap, overlap, or unreferenced
+trailing byte.
+
+String bytes are strict UTF-8 without terminators or embedded NUL bytes. Readers
+reject overlong encodings, UTF-16 surrogate code points, code points above
+`U+10FFFF`, bare continuation bytes, invalid lead bytes, and truncated 2-, 3-,
+or 4-byte sequences. Strings are strictly increasing by their raw canonical
+UTF-8 bytes. An explicit empty string is optional; when present it is the sole
+zero-length record, ID 1, with slice `(0, 0)`. An entirely empty string table is
+also valid.
+
+RSIR and RSCG use the same file table. The `files` section carries exactly the
+SORTED and DEDUPLICATED flags and is strictly ordered by path string ID. A path
+ID is nonzero, in range, and names a nonempty canonical string. Duplicate paths
+are invalid. `file-checksum-data` is a zero-flag raw byte section. Checksum kind
+0 is NONE and requires offset and size zero. Kind 1 is SHA-256 and requires a
+32-byte slice. SHA-256 slices occur contiguously in file-record order and cover
+the checksum byte section exactly. The verifier checks representation and
+coverage, not the digest against source bytes that are not part of the message.
+
+RSIR source-location IDs are one-based and zero means absent at reference
+sites. Every actual 16-byte source-location record names a valid file, has line
+and column at least 1, and has a zero-based byte offset. The section carries
+exactly the SORTED and DEDUPLICATED flags and is strictly ordered by
+`(file ID, byte offset, line, column)`. RSCG has no source-location table;
+its final debug-line records reference file IDs directly.
+
+`compiler/wire-string-table.red` and
+`system/codegen/wire-string-table.reds` independently enforce string
+canonicalization. `compiler/wire-file-source.red` and
+`system/codegen/wire-file-source.reds` independently enforce files, checksums,
+and source locations. Both native readers are allocation-free, expose views
+only after complete success, and preserve exact nested errors and absolute byte
+locations. The Red corpora currently cover four valid string tables with 30
+malformed cases and four valid file/source messages with 34 malformed cases.
+Run the cross-language suites with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-string-table-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-string-table-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-string-table-reds-test.exe `
+    tools\self_hosting\tests\wire-string-table-reds-test.reds
+build\self-hosting\wire-string-table-reds-test.exe
+
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-file-source-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-file-source-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-file-source-reds-test.exe `
+    tools\self_hosting\tests\wire-file-source-reds-test.reds
+build\self-hosting\wire-file-source-reds-test.exe
+```
+
 ## RSIR semantic module
 
 An RSIR message represents one complete relocatable module. Runtime and user
@@ -342,29 +403,30 @@ matrix is complete. All listed records consist only of 32-bit words.
 | 3 | strings | 8 | slices into string-data |
 | 4 | string-data | 1 | UTF-8 bytes, no terminators |
 | 5 | files | 16 | source path and optional checksum slice |
-| 6 | types | 40 | nominal and representation types |
-| 7 | fields | 32 | aggregate members and offsets |
-| 8 | signatures | 32 | return type, convention, attributes |
-| 9 | parameters | 32 | ordered signature parameters |
-| 10 | symbols | 32 | named declarations and definitions |
-| 11 | constants | 32 | scalar, byte, aggregate, address, or zero |
-| 12 | constant-data | 1 | raw scalar and aggregate bytes |
-| 13 | constant-parts | 32 | nested values and symbolic address parts |
-| 14 | globals | 32 | storage class and initializer |
-| 15 | imports | 24 | library/external name/symbol mapping |
-| 16 | exports | 16 | external name/symbol/ordinal mapping |
-| 17 | functions | 40 | signature and owned record ranges |
-| 18 | locals | 32 | arguments, locals, temporaries, GC kind |
-| 19 | blocks | 32 | instruction and outgoing-edge ranges |
-| 20 | edges | 24 | source, target, edge kind, case value |
-| 21 | values | 24 | typed single-definition temporary results |
-| 22 | instructions | 48 | opcode, results, operands, effects, source |
-| 23 | operands | 16 | typed references with opcode-specific aux |
-| 24 | calls | 32 | callee, signature, call attributes |
-| 25 | target-fragments | 32 | target-bound `#inline` byte slices |
-| 26 | source-locations | 16 | file, line, column, byte offset |
-| 27 | exception-regions | 24 | protected set, handler, and semantics |
-| 28 | exception-blocks | 8 | region-to-block membership |
+| 6 | file-checksum-data | 1 | raw source checksum bytes |
+| 7 | types | 40 | nominal and representation types |
+| 8 | fields | 32 | aggregate members and offsets |
+| 9 | signatures | 32 | return type, convention, attributes |
+| 10 | parameters | 32 | ordered signature parameters |
+| 11 | symbols | 32 | named declarations and definitions |
+| 12 | constants | 32 | scalar, byte, aggregate, address, or zero |
+| 13 | constant-data | 1 | raw scalar and aggregate bytes |
+| 14 | constant-parts | 32 | nested values and symbolic address parts |
+| 15 | globals | 32 | storage class and initializer |
+| 16 | imports | 24 | library/external name/symbol mapping |
+| 17 | exports | 16 | external name/symbol/ordinal mapping |
+| 18 | functions | 40 | signature and owned record ranges |
+| 19 | locals | 32 | arguments, locals, temporaries, GC kind |
+| 20 | blocks | 32 | instruction and outgoing-edge ranges |
+| 21 | edges | 24 | source, target, edge kind, case value |
+| 22 | values | 24 | typed single-definition temporary results |
+| 23 | instructions | 48 | opcode, results, operands, effects, source |
+| 24 | operands | 16 | typed references with opcode-specific aux |
+| 25 | calls | 32 | callee, signature, call attributes |
+| 26 | target-fragments | 32 | target-bound `#inline` byte slices |
+| 27 | source-locations | 16 | file, line, column, byte offset |
+| 28 | exception-regions | 24 | protected set, handler, and semantics |
+| 29 | exception-blocks | 8 | region-to-block membership |
 
 The important record shapes are:
 
@@ -463,10 +525,11 @@ merged with other RSCG objects and then adapted to the current Red linker.
 | 9 | exports | 16 | external name/symbol/ordinal mapping |
 | 10 | functions | 40 | code/frame/debug extents |
 | 11 | files | 16 | source files |
-| 12 | debug-lines | 20 | function-relative code positions |
-| 13 | debug-parameters | 16 | runtime argument type metadata |
-| 14 | gc-frames | 24 | final frame bitmap location and flags |
-| 15 | unwind-functions | 24 | optional platform unwind record ranges |
+| 12 | file-checksum-data | 1 | raw source checksum bytes |
+| 13 | debug-lines | 20 | function-relative code positions |
+| 14 | debug-parameters | 16 | runtime argument type metadata |
+| 15 | gc-frames | 24 | final frame bitmap location and flags |
+| 16 | unwind-functions | 24 | optional platform unwind record ranges |
 
 Record shapes:
 

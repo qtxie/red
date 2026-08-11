@@ -75,13 +75,21 @@ compiler-backend-feature-spec: [
 		]
 
 		strings-files-source [
-			status blocked
+			status specified
 			owners [frontend rsir rscg]
-			wire [RECORD/STRING RECORD/FILE RECORD/SOURCE_LOCATION]
-			tests ["system/tests/source/compiler/output-test.r"]
-			blockers [
-				"define checksum-kind IDs, UTF-8 validity, deduplication, and empty-string rules"
+			wire [
+				RECORD/STRING RECORD/FILE RECORD/SOURCE_LOCATION
+				CHECKSUM_KIND/ALL_VALUES STRING_TABLE_ERROR/ALL_VALUES
+				FILE_SOURCE_ERROR/ALL_VALUES
 			]
+			tests [
+				"tools/self_hosting/tests/wire-string-table-test.red"
+				"tools/self_hosting/tests/wire-string-table-reds-test.reds"
+				"tools/self_hosting/tests/wire-file-source-test.red"
+				"tools/self_hosting/tests/wire-file-source-reds-test.reds"
+				"system/tests/source/compiler/output-test.r"
+			]
+			blockers []
 		]
 
 		target-data-layout [

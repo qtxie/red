@@ -66,6 +66,17 @@ fixture-writer: context [
 		sections
 	]
 
+	set-section-flags: func [
+		sections [block!]
+		kind flags [integer!]
+		/local section
+	][
+		foreach section sections [
+			if section/1 = kind [section/2: flags return sections]
+		]
+		assert false ["fixture section not found for flags: " kind]
+	]
+
 	build: func [
 		magic [integer!]
 		target [integer!]
@@ -157,24 +168,36 @@ rsir-payloads: make map! reduce [
 	schema/WIRE_RSIR_SECTION_STRINGS fixture-writer/words [0 5]
 	schema/WIRE_RSIR_SECTION_STRING_DATA #{656D707479}
 ]
+rsir-sections: fixture-writer/sections-for schema/WIRE_MAGIC_RSIR rsir-payloads
+fixture-writer/set-section-flags rsir-sections schema/WIRE_RSIR_SECTION_STRINGS
+	(schema/WIRE_SECTION_FLAG_SORTED + schema/WIRE_SECTION_FLAG_DEDUPLICATED)
+fixture-writer/set-section-flags rsir-sections schema/WIRE_RSIR_SECTION_FILES
+	(schema/WIRE_SECTION_FLAG_SORTED + schema/WIRE_SECTION_FLAG_DEDUPLICATED)
+fixture-writer/set-section-flags rsir-sections schema/WIRE_RSIR_SECTION_SOURCE_LOCATIONS
+	(schema/WIRE_SECTION_FLAG_SORTED + schema/WIRE_SECTION_FLAG_DEDUPLICATED)
 rsir: fixture-writer/build
 	schema/WIRE_MAGIC_RSIR
 	schema/WIRE_TARGET_X86_64
 	schema/WIRE_ABI_WIN64
 	schema/WIRE_ENDIAN_LITTLE
 	8
-	fixture-writer/sections-for schema/WIRE_MAGIC_RSIR rsir-payloads
+	rsir-sections
 
 rscg-payloads: make map! reduce [
 	schema/WIRE_RSCG_SECTION_DATA_LAYOUT data-layout
 ]
+rscg-sections: fixture-writer/sections-for schema/WIRE_MAGIC_RSCG rscg-payloads
+fixture-writer/set-section-flags rscg-sections schema/WIRE_RSCG_SECTION_STRINGS
+	(schema/WIRE_SECTION_FLAG_SORTED + schema/WIRE_SECTION_FLAG_DEDUPLICATED)
+fixture-writer/set-section-flags rscg-sections schema/WIRE_RSCG_SECTION_FILES
+	(schema/WIRE_SECTION_FLAG_SORTED + schema/WIRE_SECTION_FLAG_DEDUPLICATED)
 rscg: fixture-writer/build
 	schema/WIRE_MAGIC_RSCG
 	schema/WIRE_TARGET_X86_64
 	schema/WIRE_ABI_WIN64
 	schema/WIRE_ENDIAN_LITTLE
 	8
-	fixture-writer/sections-for schema/WIRE_MAGIC_RSCG rscg-payloads
+	rscg-sections
 
 rsdg-payloads: make map! reduce [
 	schema/WIRE_RSDG_SECTION_STRINGS fixture-writer/words [0 7]
@@ -183,12 +206,19 @@ rsdg-payloads: make map! reduce [
 		3 3 3 1 0 0 0 0 0 0
 	]
 ]
+rsdg-sections: fixture-writer/sections-for schema/WIRE_MAGIC_RSDG rsdg-payloads
+fixture-writer/set-section-flags rsdg-sections schema/WIRE_RSDG_SECTION_STRINGS
+	(schema/WIRE_SECTION_FLAG_SORTED + schema/WIRE_SECTION_FLAG_DEDUPLICATED)
 rsdg: fixture-writer/build
 	schema/WIRE_MAGIC_RSDG
 	0 0 0 0
-	fixture-writer/sections-for schema/WIRE_MAGIC_RSDG rsdg-payloads
+	rsdg-sections
 
 rscg-optional-sections: fixture-writer/sections-for schema/WIRE_MAGIC_RSCG rscg-payloads
+fixture-writer/set-section-flags rscg-optional-sections schema/WIRE_RSCG_SECTION_STRINGS
+	(schema/WIRE_SECTION_FLAG_SORTED + schema/WIRE_SECTION_FLAG_DEDUPLICATED)
+fixture-writer/set-section-flags rscg-optional-sections schema/WIRE_RSCG_SECTION_FILES
+	(schema/WIRE_SECTION_FLAG_SORTED + schema/WIRE_SECTION_FLAG_DEDUPLICATED)
 append/only rscg-optional-sections reduce [
 	schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS
 	schema/WIRE_SECTION_FLAG_OPTIONAL
@@ -218,10 +248,10 @@ rscf-unknown-optional: fixture-writer/build
 
 foreach [name magic data section-count] reduce [
 	'RSCF schema/WIRE_MAGIC_RSCF rscf 1
-	'RSIR schema/WIRE_MAGIC_RSIR rsir 28
-	'RSCG schema/WIRE_MAGIC_RSCG rscg 14
+	'RSIR schema/WIRE_MAGIC_RSIR rsir 29
+	'RSCG schema/WIRE_MAGIC_RSCG rscg 15
 	'RSDG schema/WIRE_MAGIC_RSDG rsdg 3
-	'RSCG-OPTIONAL schema/WIRE_MAGIC_RSCG rscg-optional 15
+	'RSCG-OPTIONAL schema/WIRE_MAGIC_RSCG rscg-optional 16
 	'RSCF-UNKNOWN-OPTIONAL schema/WIRE_MAGIC_RSCF rscf-unknown-optional 2
 ][
 	result: verifier/verify/expect data magic
@@ -230,16 +260,16 @@ foreach [name magic data section-count] reduce [
 ]
 
 assert (checksum rscf 'SHA256) =
-	#{ABB6BD2479C902D373EBD8F3450F9D2E7043A7A7D8094665894AF904DE46DBB4}
+	#{670D7B139B069B4975072BE68EDE546983716A6CF36561C7A840100E9D7D9C6D}
 	"RSCF golden bytes changed"
 assert (checksum rsir 'SHA256) =
-	#{30D98AD9BD1976E100F683F9359CB8BE0AE052F089BFCEE856B3A55E8524580E}
+	#{E65C6DE819ACE2C2C4CFFF2868039632EE2816D6046F2451B9C74AAA4D864CF6}
 	"RSIR golden bytes changed"
 assert (checksum rscg 'SHA256) =
-	#{065D8F6CB28D02B9E4B4B55275D7EE9D7E06F20125B1C98A39A8C88AC76DFD58}
+	#{3AA8AE8CAC192201217831235736EBE527A5185AF8D32968AEB9F450C41BD1B6}
 	"RSCG golden bytes changed"
 assert (checksum rsdg 'SHA256) =
-	#{98EC8F7839B82F51EA428FFC05DCDE8C59FF7AF020EF5A42EB8EDFBD3FAF121F}
+	#{AD75FFB016D15E30F85B9B3B507C5A80EC75BC1C6F31F02A2A5742C54ACDAD09}
 	"RSDG golden bytes changed"
 
 fixture-mutations: context [
@@ -461,7 +491,7 @@ add-malformed 'PARTIAL-ZERO-TARGET schema/WIRE_MAGIC_RSDG
 	schema/WIRE_CONTAINER_ERROR_BAD_ABI bad
 
 bad: copy rscg-optional
-entry: fixture-mutations/entry-offset 15
+entry: fixture-mutations/entry-offset 16
 fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_FLAGS_OFFSET) 0
 add-malformed 'OPTIONAL-FLAG-MISSING schema/WIRE_MAGIC_RSCG
 	schema/WIRE_CONTAINER_ERROR_BAD_SECTION_FLAGS bad

@@ -40,32 +40,45 @@ foreach [name value] generator/constants compiler-wire-schema-spec [
 assert compiler-wire-schema/WIRE_HEADER_SIZE = 64 "wrong common header size"
 assert compiler-wire-schema/WIRE_DIRECTORY_SIZE = 32 "wrong directory size"
 assert compiler-wire-schema/WIRE_MAGIC_RSIR = 1380537170 "wrong RSIR magic encoding"
-assert compiler-wire-schema/WIRE_RSIR_REQUIRED_SECTION_COUNT = 28
+assert compiler-wire-schema/WIRE_RSIR_REQUIRED_SECTION_COUNT = 29
 	"wrong RSIR required section count"
-assert compiler-wire-schema/WIRE_RSCG_REQUIRED_SECTION_COUNT = 14
+assert compiler-wire-schema/WIRE_RSCG_REQUIRED_SECTION_COUNT = 15
 	"wrong RSCG required section count"
-assert compiler-wire-schema/WIRE_RSCG_KNOWN_SECTION_COUNT = 15
+assert compiler-wire-schema/WIRE_RSCG_KNOWN_SECTION_COUNT = 16
 	"wrong RSCG known section count"
 assert compiler-wire-schema/WIRE_RSCF_MINIMUM_SIZE = 160
 	"wrong minimum RSCF size"
-assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1024
+assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1056
 	"wrong minimum RSIR size"
-assert compiler-wire-schema/WIRE_RSCG_MINIMUM_SIZE = 544
+assert compiler-wire-schema/WIRE_RSCG_MINIMUM_SIZE = 576
 	"wrong minimum RSCG size"
 assert compiler-wire-schema/WIRE_RSDG_MINIMUM_SIZE = 200
 	"wrong minimum RSDG size"
 assert compiler-wire-schema/WIRE_RSIR_SECTION_STRING_DATA_ALIGNMENT = 1
 	"wrong byte-section alignment"
+assert compiler-wire-schema/WIRE_RSIR_SECTION_FILE_CHECKSUM_DATA = 6
+	"wrong RSIR checksum-data section ID"
+assert compiler-wire-schema/WIRE_RSCG_SECTION_FILE_CHECKSUM_DATA = 12
+	"wrong RSCG checksum-data section ID"
+assert compiler-wire-schema/WIRE_RSIR_SECTION_FILE_CHECKSUM_DATA_ALIGNMENT = 1
+	"wrong checksum byte-section alignment"
+assert compiler-wire-schema/WIRE_CHECKSUM_KIND_SHA256 = 1
+	"wrong SHA-256 checksum kind"
+assert compiler-wire-schema/WIRE_FILE_SOURCE_ERROR_DUPLICATE_SOURCE = 22
+	"file/source error enum changed"
 assert compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_REQUIRED = 0
 	"RSCG unwind section must be optional"
 assert compiler-wire-schema/WIRE_RSDG_SECTION_DIAGNOSTICS_CARDINALITY =
 	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
 	"RSDG diagnostics must be nonempty"
-assert compiler-wire-schema/profiles/RSIR/required-count = 28
+assert compiler-wire-schema/profiles/RSIR/required-count = 29
 	"generated Red RSIR profile is stale"
-assert compiler-wire-schema/profiles/RSCG/known-count = 15
+assert compiler-wire-schema/profiles/RSCG/known-count = 16
 	"generated Red RSCG profile is stale"
 assert compiler-wire-schema/profiles/RSCG/record-sizes/15 =
+	compiler-wire-schema/WIRE_RSCG_SECTION_GC_FRAMES_RECORD_SIZE
+	"generated Red required profile record size disagrees with constants"
+assert compiler-wire-schema/profiles/RSCG/record-sizes/16 =
 	compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_RECORD_SIZE
 	"generated Red profile record size disagrees with constants"
 assert compiler-wire-schema/profiles/RSDG/cardinalities/3 =

@@ -112,7 +112,10 @@ ABI, pointer size, and both feature-mask words must match exactly.
 The schema fingerprint is generated from the complete checked-in schema
 manifest, including enums, records, and message section profiles. It detects a
 compiler built with mismatched Red and Red/System schema constants; it is not a
-content checksum.
+content checksum. The generator takes the first 32 SHA-256 bits and clears the
+high bit so the value is always representable as a Red/System `integer!`. It
+constructs that signed-31-bit value bytewise and never passes through an
+overflowed or floating-point intermediate.
 
 ### Section directory
 
@@ -255,6 +258,53 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
     -o build\self-hosting\wire-rscf-reds-test.exe `
     tools\self_hosting\tests\wire-rscf-reds-test.reds
 build\self-hosting\wire-rscf-reds-test.exe
+```
+
+## Windows x64 data layout
+
+RSIR and RSCG each contain one required 32-byte `data-layout` record. It is a
+target contract, not a per-type layout table:
+
+| Word | Field | Windows x64 v1 |
+| ---: | --- | ---: |
+| 0 | address unit in bytes | 1 |
+| 1 | pointer size | 8 |
+| 2 | pointer alignment | 8 |
+| 3 | external call-stack alignment | 16 |
+| 4 | maximum natural scalar alignment | 8 |
+| 5 | maximum natural aggregate alignment | 8 |
+| 6 | integer register width | 8 |
+| 7 | flags | 0 |
+
+The scalar and aggregate values are maxima, not a requirement that every value
+be 8-byte aligned. For example, the current Windows x64 layout keeps a
+one-byte-only struct at size/alignment 1 while pointers, `int64!`, and
+`float64!` reach alignment 8. The independent 16-byte value is the Win64 call
+stack constraint. This distinction is why the earlier placeholder tuple with
+`max-scalar-alignment = 16` was rejected rather than frozen.
+
+The containing header is `X86_64`, `WIN64`, `LITTLE`, pointer size 8, with both
+feature masks zero. The record pointer size must equal the header pointer size.
+All eight payload words are decoded as signed-31-bit scalars before field
+semantics are checked, and flags are zero in v1. `compiler/wire-data-layout.red`
+and `system/codegen/wire-data-layout.reds` implement this contract independently
+for both message types. The output layout is published only after complete
+success. Payload failures report the verified directory ordinal, which is 2
+for RSIR and 1 for RSCG, plus the absolute byte offset.
+
+The Red corpus covers three valid messages (RSIR, RSCG, and RSCG with its known
+optional section) and 26 directed failures. Its generated Red/System test uses
+the same bytes and also proves that failures do not modify the output layout.
+Run both sides with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-data-layout-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-data-layout-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-data-layout-reds-test.exe `
+    tools\self_hosting\tests\wire-data-layout-reds-test.reds
+build\self-hosting\wire-data-layout-reds-test.exe
 ```
 
 ## RSIR semantic module

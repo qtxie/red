@@ -85,13 +85,15 @@ compiler-backend-feature-spec: [
 		]
 
 		target-data-layout [
-			status blocked
+			status specified
 			owners [frontend codegen]
-			wire [RECORD/DATA_LAYOUT]
-			tests ["system/tests/source/units/size-x64-test.reds"]
-			blockers [
-				"freeze the Windows x64 layout tuple and its equality rules with the header"
+			wire [RECORD/DATA_LAYOUT DATA_LAYOUT_ERROR/ALL_VALUES]
+			tests [
+				"tools/self_hosting/tests/wire-data-layout-test.red"
+				"tools/self_hosting/tests/wire-data-layout-reds-test.reds"
+				"system/tests/source/units/size-x64-test.reds"
 			]
+			blockers []
 		]
 
 		types-and-aggregate-layout [

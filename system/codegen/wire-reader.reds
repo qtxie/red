@@ -20,6 +20,8 @@ wire-section-slice!: alias struct! [
 	record-count [integer!]
 	record-size  [integer!]
 	flags        [integer!]
+	offset       [integer!]
+	ordinal      [integer!]
 ]
 
 wire-container-reader: context [
@@ -594,6 +596,8 @@ wire-container-reader: context [
 		slice/record-count: 0
 		slice/record-size: 1
 		slice/flags: 0
+		slice/offset: offset
+		slice/ordinal: 0
 		true
 	]
 
@@ -606,6 +610,7 @@ wire-container-reader: context [
 		return: [logic!]
 		/local count directory-offset ordinal entry-offset current offset size
 	][
+		if any [null? data null? slice][return false]
 		count: read-i31 data WIRE_HEADER_SECTION_COUNT_OFFSET
 		directory-offset: read-i31 data WIRE_HEADER_DIRECTORY_OFFSET_OFFSET
 		ordinal: 0
@@ -620,6 +625,8 @@ wire-container-reader: context [
 				slice/record-count: read-i31 data (entry-offset + WIRE_DIRECTORY_RECORD_COUNT_OFFSET)
 				slice/record-size: read-i31 data (entry-offset + WIRE_DIRECTORY_RECORD_SIZE_OFFSET)
 				slice/flags: read-i31 data (entry-offset + WIRE_DIRECTORY_FLAGS_OFFSET)
+				slice/offset: offset
+				slice/ordinal: ordinal + 1
 				return true
 			]
 			if current > kind [return false]

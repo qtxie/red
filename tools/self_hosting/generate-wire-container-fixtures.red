@@ -140,12 +140,19 @@ if code <> WIRE_CONTAINER_ERROR_SUCCESS [failures: failures + 1]
 unless wire-container-reader/find-verified-section wire-fixture-rscf WIRE_RSCF_SECTION_CONFIG slice [
 	failures: failures + 1
 ]
-if any [slice/size <> 64 slice/record-count <> 1 slice/record-size <> 64][
+if any [
+	slice/size <> 64
+	slice/record-count <> 1
+	slice/record-size <> 64
+	slice/offset <> 96
+	slice/ordinal <> 1
+][
 	failures: failures + 1
 ]
 unless wire-container-reader/checked-slice wire-fixture-rscf 160 96 64 slice [
 	failures: failures + 1
 ]
+if any [slice/offset <> 96 slice/ordinal <> 0][failures: failures + 1]
 if wire-container-reader/checked-slice wire-fixture-rscf 160 150 20 slice [
 	failures: failures + 1
 ]
@@ -159,6 +166,16 @@ if wire-container-reader/checked-slice wire-fixture-rscf 160 0 1 (as wire-sectio
 	failures: failures + 1
 ]
 if wire-container-reader/checked-slice (as byte-ptr! 0) 1 0 1 slice [
+	failures: failures + 1
+]
+if wire-container-reader/find-verified-section
+	wire-fixture-rscf WIRE_RSCF_SECTION_CONFIG (as wire-section-slice! 0)
+[
+	failures: failures + 1
+]
+if wire-container-reader/find-verified-section
+	(as byte-ptr! 0) WIRE_RSCF_SECTION_CONFIG slice
+[
 	failures: failures + 1
 ]
 

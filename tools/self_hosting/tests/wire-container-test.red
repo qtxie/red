@@ -136,7 +136,7 @@ fixture-writer: context [
 	]
 ]
 
-data-layout: fixture-writer/words [1 8 8 16 16 8 8 0]
+data-layout: fixture-writer/words [1 8 8 16 8 8 8 0]
 
 rscf-payloads: make map! reduce [
 	schema/WIRE_RSCF_SECTION_CONFIG fixture-writer/words [
@@ -230,16 +230,16 @@ foreach [name magic data section-count] reduce [
 ]
 
 assert (checksum rscf 'SHA256) =
-	#{3A5353D6038FB879C3B070B60231666B8AC03A7A92F432CF8CD2B76CFDF2EFA7}
+	#{ABB6BD2479C902D373EBD8F3450F9D2E7043A7A7D8094665894AF904DE46DBB4}
 	"RSCF golden bytes changed"
 assert (checksum rsir 'SHA256) =
-	#{37A6638BCEAEFB02CF27964F07DCA9FE11D62FF3D1D60BEB92B785B41990BE05}
+	#{30D98AD9BD1976E100F683F9359CB8BE0AE052F089BFCEE856B3A55E8524580E}
 	"RSIR golden bytes changed"
 assert (checksum rscg 'SHA256) =
-	#{C7412EB63FBA092AC0432EB002FC50BA548F737ABB48FBC855EDD07F9FED5188}
+	#{065D8F6CB28D02B9E4B4B55275D7EE9D7E06F20125B1C98A39A8C88AC76DFD58}
 	"RSCG golden bytes changed"
 assert (checksum rsdg 'SHA256) =
-	#{F207C19146F1DE76155A21E45791D9BB0887DAB841227551BCD38D6A5A953153}
+	#{98EC8F7839B82F51EA428FFC05DCDE8C59FF7AF020EF5A42EB8EDFBD3FAF121F}
 	"RSDG golden bytes changed"
 
 fixture-mutations: context [
@@ -485,6 +485,9 @@ assert result/valid? "valid RSCF was rejected before section lookup"
 section: verifier/find-section result schema/WIRE_RSCF_SECTION_CONFIG
 assert not none? section "verified RSCF config section was not found"
 assert (select section 'record-count) = 1 "verified RSCF config cardinality changed"
+assert (select section 'ordinal) = 1 "verified RSCF config ordinal changed"
+assert (select section 'entry-offset) = schema/WIRE_HEADER_SIZE
+	"verified RSCF config directory offset changed"
 
 invalid-with-section: copy rscf
 fixture-mutations/put-u32 invalid-with-section schema/WIRE_HEADER_TOTAL_SIZE_OFFSET 161

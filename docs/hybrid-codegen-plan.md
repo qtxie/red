@@ -135,6 +135,8 @@ Tests:
 - golden containers cover the smallest valid RSIR/RSCF/RSCG/RSDG messages;
 - independent Red and Red/System RSCF verifiers agree on target/config domains,
   feature masks, arena limits, flag consistency, errors, and byte locations;
+- independent data-layout verifiers freeze the Windows x64 header/layout tuple
+  for both RSIR and RSCG before type or ABI rules depend on it;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.

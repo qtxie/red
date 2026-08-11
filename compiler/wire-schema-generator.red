@@ -271,12 +271,18 @@ compiler-wire-schema-generator: context [
 		true
 	]
 
-	fingerprint: func [spec [block!] /local digest result][
+	fingerprint-from-digest: func [digest [binary!] /local result][
+		if (length? digest) < 4 [fail "wire schema digest is truncated"]
+		result: ((to integer! digest/1) and 127) * 16777216
+		result: result + ((to integer! digest/2) * 65536)
+		result: result + ((to integer! digest/3) * 256)
+		result + (to integer! digest/4)
+	]
+
+	fingerprint: func [spec [block!] /local digest][
 		validate spec
 		digest: checksum mold/flat/all spec 'SHA256
-		result: 0
-		repeat index 4 [result: (result * 256) + digest/:index]
-		result and 2147483647
+		fingerprint-from-digest digest
 	]
 
 	append-constant: func [

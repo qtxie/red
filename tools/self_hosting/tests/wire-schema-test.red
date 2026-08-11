@@ -14,6 +14,14 @@ assert: func [condition [logic!] message [string!]][
 
 generator: compiler-wire-schema-generator
 assert generator/validate compiler-wire-schema-spec "schema validation failed"
+assert (generator/fingerprint-from-digest #{00000000}) = 0
+	"zero fingerprint vector changed"
+assert (generator/fingerprint-from-digest #{01020304}) = 16909060
+	"ordinary fingerprint vector changed"
+assert (generator/fingerprint-from-digest #{80000000}) = 0
+	"fingerprint high bit was not cleared"
+assert (generator/fingerprint-from-digest #{FFFFFFFF}) = 2147483647
+	"maximum fingerprint vector changed"
 
 expected-red: generator/render-red compiler-wire-schema-spec
 expected-reds: generator/render-reds compiler-wire-schema-spec

@@ -321,6 +321,7 @@ generating?: all [
 unless generating? [
 	source-bytes: make binary! 65536
 	append source-bytes read %wire-rscf-test.red
+	append source-bytes read %wire-container-test.red
 	append source-bytes read %../generate-wire-rscf-fixtures.red
 	append source-bytes to binary! mold schema/WIRE_SCHEMA_FINGERPRINT
 	source-digest: enbase/base checksum source-bytes 'SHA256 16

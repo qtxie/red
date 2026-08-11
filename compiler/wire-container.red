@@ -276,6 +276,8 @@ compiler-wire-container: context [
 				]
 				put section name value
 			]
+			put section 'ordinal ordinal
+			put section 'entry-offset entry-offset
 
 			kind: select section 'kind
 			flags: select section 'flags

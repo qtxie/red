@@ -38,6 +38,14 @@ assert compiler-wire-schema/WIRE_RSCG_REQUIRED_SECTION_COUNT = 14
 	"wrong RSCG required section count"
 assert compiler-wire-schema/WIRE_RSCG_KNOWN_SECTION_COUNT = 15
 	"wrong RSCG known section count"
+assert compiler-wire-schema/WIRE_RSCF_MINIMUM_SIZE = 160
+	"wrong minimum RSCF size"
+assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1024
+	"wrong minimum RSIR size"
+assert compiler-wire-schema/WIRE_RSCG_MINIMUM_SIZE = 544
+	"wrong minimum RSCG size"
+assert compiler-wire-schema/WIRE_RSDG_MINIMUM_SIZE = 200
+	"wrong minimum RSDG size"
 assert compiler-wire-schema/WIRE_RSIR_SECTION_STRING_DATA_ALIGNMENT = 1
 	"wrong byte-section alignment"
 assert compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_REQUIRED = 0

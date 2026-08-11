@@ -41,23 +41,23 @@ compiler-backend-feature-spec: [
 		]
 
 		target-configuration [
-			status blocked
+			status specified
 			owners [frontend codegen]
 			wire [
 				RECORD/RSCF_CONFIG
 				TARGET/ALL_VALUES ABI/ALL_VALUES ENDIAN/ALL_VALUES
+				OPTIMIZATION_LEVEL/ALL_VALUES CPU_BASELINE/ALL_VALUES
 				CONFIG_FLAG/ALL_VALUES CODE_MODEL/ALL_VALUES
 				RELOCATION_MODEL/ALL_VALUES DEBUG_FORMAT/ALL_VALUES
+				RSCF_ERROR/ALL_VALUES
 			]
 			tests [
 				"tools/self_hosting/tests/wire-container-test.red"
+				"tools/self_hosting/tests/wire-rscf-test.red"
+				"tools/self_hosting/tests/wire-rscf-reds-test.reds"
 				"system/tests/source/units/size-x64-test.reds"
 			]
-			blockers [
-				"add stable optimization-level and CPU-baseline enums"
-				"freeze target/ABI/endian/pointer compatibility and config flag consistency"
-				"define zero/nonzero limits for output and diagnostic arenas"
-			]
+			blockers []
 		]
 
 		diagnostics [

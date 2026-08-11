@@ -118,6 +118,28 @@ compiler-wire-schema-generator: context [
 		select definition 'size
 	]
 
+	profile-minimum-size: func [
+		records [block!]
+		entries [block!]
+		/local required-count section record requirement cardinality alignment cursor size remainder
+	][
+		required-count: 0
+		foreach [section record requirement cardinality alignment] entries [
+			if requirement = 'REQUIRED [required-count: required-count + 1]
+		]
+		cursor: (record-size records 'HEADER)
+			+ (required-count * (record-size records 'DIRECTORY))
+		foreach [section record requirement cardinality alignment] entries [
+			if all [requirement = 'REQUIRED cardinality <> 'ANY][
+				remainder: cursor // alignment
+				if remainder <> 0 [cursor: cursor + alignment - remainder]
+				size: record-size records record
+				cursor: cursor + size
+			]
+		]
+		cursor
+	]
+
 	validate-profiles: func [
 		profiles [block!]
 		magics [block!]
@@ -273,7 +295,7 @@ compiler-wire-schema-generator: context [
 	constants: func [
 		spec [block!]
 		/local output version magics enums profiles records definition fields message entries
-			section record requirement cardinality alignment required-count prefix size value
+			section record requirement cardinality alignment required-count prefix size value minimum-size
 	][
 		validate spec
 		output: make block! 2048
@@ -316,6 +338,10 @@ compiler-wire-schema-generator: context [
 			append-constant output rejoin [
 				"WIRE_" upper-name message "_KNOWN_SECTION_COUNT"
 			] ((length? entries) / 5)
+			minimum-size: profile-minimum-size records entries
+			append-constant output rejoin [
+				"WIRE_" upper-name message "_MINIMUM_SIZE"
+			] minimum-size
 			foreach [section record requirement cardinality alignment] entries [
 				prefix: rejoin [
 					"WIRE_" upper-name message "_SECTION_" upper-name section

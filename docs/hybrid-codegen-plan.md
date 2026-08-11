@@ -133,6 +133,8 @@ Tests:
 - schema-layout tests assert every record size and field offset in both
   languages;
 - golden containers cover the smallest valid RSIR/RSCF/RSCG/RSDG messages;
+- independent Red and Red/System RSCF verifiers agree on target/config domains,
+  feature masks, arena limits, flag consistency, errors, and byte locations;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.

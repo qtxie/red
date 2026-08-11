@@ -209,6 +209,54 @@ RSCF has exactly one required `config` section containing one 64-byte record:
 Limits are checked before allocation. Optimization level selects a pass
 pipeline, not a different RSIR schema.
 
+The first v1 backend accepts only this target configuration:
+
+- header tuple `X86_64`, `WIN64`, `LITTLE`, pointer size 8;
+- optimization level `O0`, `O1`, or `O2`;
+- the four defined config flag bits and no others;
+- code model `SMALL`, relocation model `STATIC` or `PIC`, and debug format
+  `NONE` or `RED`;
+- CPU baseline `X86_64_BASE`.
+
+The config feature masks must equal the header feature masks. Both masks are
+zero in v1 until individual x86-64 feature bits and their legality rules are
+specified; a matching nonzero pair is therefore unsupported rather than
+silently ignored. `DEBUG` is set exactly when the debug format is `RED`, and
+`PIC` is set exactly when the relocation model is `PIC`. `DETERMINISTIC` and
+`RUNTIME_MODULE` are accepted independently. Worker count is 1, deterministic
+seed is 0, and all four reserved words are zero.
+
+`max-output-bytes` is at least `WIRE_RSCG_MINIMUM_SIZE` (currently 544).
+`max-diagnostic-bytes` is either zero, which disables a detailed RSDG result,
+or at least `WIRE_RSDG_MINIMUM_SIZE` (currently 200). These minima are derived
+from the schema profiles by the generator rather than duplicated in either
+verifier.
+
+`compiler/wire-rscf.red` and `system/codegen/wire-rscf.reds` implement the
+RSCF semantic checks independently. Validation is deterministic and stops at
+the first error: arguments, common container, target tuple, all 16 signed
+31-bit config words in record order, enum/flag domains, baseline and feature
+masks, allocation limits, worker/seed/reserved words, then debug and PIC
+consistency. A common-container failure becomes `RSCF_ERROR_INVALID_CONTAINER`
+while retaining its container error and exact location. Header errors use
+section 0; config errors use section ordinal 1 and the exact field byte offset.
+The output config is written only after complete success.
+
+The Red test covers four valid configurations and 28 directed semantic
+failures. Its generated Red/System test embeds the same bytes, compares RSCF
+and nested container errors plus byte locations, checks invalid pointers, and
+proves that failures do not modify the output config. Run both sides with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-rscf-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-rscf-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-rscf-reds-test.exe `
+    tools\self_hosting\tests\wire-rscf-reds-test.reds
+build\self-hosting\wire-rscf-reds-test.exe
+```
+
 ## RSIR semantic module
 
 An RSIR message represents one complete relocatable module. Runtime and user

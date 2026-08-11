@@ -26,6 +26,7 @@ Run the coverage gate without compiling a test executable:
 
 ```powershell
 D:\EE\QTool\red-console.exe tools\self_hosting\tests\backend-ownership-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\backend-feature-test.red
 ```
 
 The manifest records a replacement contract and an expected occurrence count
@@ -33,6 +34,13 @@ for every normalized emitter path. Counting occurrences matters: adding another
 use of an already-known API is new coupling and must not pass unnoticed. Red
 loads the source as data before the recursive scan, so comments and strings are
 not counted, while ordinary, get, set, and lit paths share one canonical key.
+
+The separate feature gate loads `system/tests/run-all.r` without executing it,
+classifies every Windows x64 unit file through
+`compiler/backend-feature-spec.red`, and proves that every wire enum value and
+record belongs to at least one feature. `blocked` is deliberate audit state, not
+an implementation fallback: each blocked entry carries the exact schema or
+ownership decision required before it can become `specified`.
 
 ## Dependency families
 

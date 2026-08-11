@@ -1,9 +1,10 @@
 # Hybrid Red/System Codegen Execution Plan
 
 Status: implementation in progress. The draft schema generator, dual-language
-constants, and compiler-core ownership gate now have executable coverage. The
-protocol remains unfrozen until the complete Windows x64 feature matrix,
-verifiers, and malformed/golden fixtures satisfy the Phase 1 exit criteria.
+constants, compiler-core ownership gate, and checked common-container readers
+now have executable coverage. The protocol remains unfrozen until the Windows
+x64 feature blockers, message-level semantic verifiers, and malformed/golden
+fixtures satisfy the Phase 1 exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -102,6 +103,13 @@ The initial profiling, reverse audit, and exhaustive compiler-core ownership
 inventory are complete. Auditing implementation-side emitter/target behavior
 and linker consumption remains part of phase 1 because it controls schema
 freeze.
+
+`compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
+Its test reads `system/tests/run-all.r` as data and rejects any unclassified
+Windows x64 unit file. It also requires every schema record and enum value to be
+owned by a feature. A `specified` feature means only that its wire contract is
+ready for independent verifier work; a `blocked` feature names the missing
+contract explicitly and cannot be counted as backend support.
 
 ## Phase 1: protocol and semantic coverage
 

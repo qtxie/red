@@ -86,8 +86,8 @@ Every message starts with this 64-byte header.
 | 4 | 2 | major version |
 | 6 | 2 | minor version |
 | 8 | 4 | header size, 64 in v1 |
-| 12 | 4 | container flags |
-| 16 | 4 | total message size |
+| 12 | 4 | container flags, zero in v1.0 |
+| 16 | 4 | total message size, exactly the input binary length |
 | 20 | 4 | section count |
 | 24 | 4 | section directory offset, 64 in v1 |
 | 28 | 4 | directory record size, 32 in v1 |
@@ -104,13 +104,15 @@ Target IDs start with `1 x86-64`, `2 ARM64`, `3 ARM32`, and `4 x86`. ABI IDs
 start with `1 Win64`, `2 SysV-x64`, `3 AAPCS64`, `4 AAPCS32`, and `5 Win32`.
 Endian IDs are `1 little` and `2 big`.
 
-`RSIR`, `RSCF`, and `RSCG` require a nonzero target and ABI. `RSDG` may use
-zero when the input failed before target validation. The RSIR and RSCF target,
+`RSIR`, `RSCF`, and `RSCG` require a nonzero target and ABI. `RSDG` may use an
+all-zero target/ABI/endian/pointer/features tuple when the input failed before
+target validation. A partially zero tuple is invalid. The RSIR and RSCF target,
 ABI, pointer size, and both feature-mask words must match exactly.
 
-The schema fingerprint is generated from the checked-in enum and record-layout
-manifest. It detects a compiler built with mismatched Red and Red/System schema
-constants; it is not a content checksum.
+The schema fingerprint is generated from the complete checked-in schema
+manifest, including enums, records, and message section profiles. It detects a
+compiler built with mismatched Red and Red/System schema constants; it is not a
+content checksum.
 
 ### Section directory
 
@@ -133,13 +135,56 @@ unknown optional sections may be ignored.
 
 For every section, checked multiplication must prove that
 `record-count * record-size == payload-size`. Byte sections use record size 1.
-The directory and all nonempty payloads fit inside the declared message size,
-meet alignment, and do not overlap. Padding bytes are zero.
+An empty section has offset, byte size, and record count zero while retaining
+its profile-defined record size and alignment. Known word-record sections have
+alignment 4 and known byte sections alignment 1. Unknown optional sections use
+a nonzero power-of-two alignment and nonzero record size.
+
+Directory records are in strictly increasing kind order. Nonempty payloads
+occur in that same order after the complete directory; each fits inside the
+declared message size and begins at its declared alignment. Payloads cannot
+overlap or move backwards. Every byte between the directory and payloads,
+between payloads, or after the final payload is zero padding.
+
+In v1.0, all 28 listed RSIR sections are required even when empty. RSCF requires
+its config section. RSCG requires kinds 1 through 14; kind 15
+`unwind-functions` is known optional and carries the OPTIONAL flag when present.
+RSDG requires all three listed sections and at least one diagnostic record.
 
 A major-version mismatch is fatal. A reader may accept an older or equal minor
 version only when it understands all required sections and flags. Producers
 emit tables in their specified stable order and zero every reserved field, so
 identical inputs and options produce byte-identical messages.
+
+### Checked implementations
+
+`compiler/wire-container.red` and `system/codegen/wire-reader.reds` implement
+the common-container checks independently. The native reader performs no
+unaligned integer loads: it reads bytes only after the header or directory range
+has been proved, uses checked signed-31-bit addition and multiplication, and
+exposes `find-verified-section` only for a buffer that has already passed the
+full verifier. This layer validates container structure, not RSIR graph/type
+semantics.
+
+The Red corpus builds and pins minimal RSCF, RSIR, RSCG, and RSDG byte streams,
+two forward-compatibility positives, 36 directed malformed cases, and every
+proper truncation of the four core messages. Its generated Red/System test
+embeds exactly those bytes and compares error code, byte offset, and section
+ordinal from the independent native verifier. Run both sides with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-container-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-container-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-container-reds-test.exe `
+    tools\self_hosting\tests\wire-container-reds-test.reds
+build\self-hosting\wire-container-reds-test.exe
+```
+
+The generated test carries a SHA-256 over its Red corpus source, generator, and
+schema fingerprint. The ordinary Red test rejects a stale cross-language
+fixture before it can silently lose a newly added malformed case.
 
 ## RSCF configuration
 

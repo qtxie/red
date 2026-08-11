@@ -32,6 +32,29 @@ foreach [name value] generator/constants compiler-wire-schema-spec [
 assert compiler-wire-schema/WIRE_HEADER_SIZE = 64 "wrong common header size"
 assert compiler-wire-schema/WIRE_DIRECTORY_SIZE = 32 "wrong directory size"
 assert compiler-wire-schema/WIRE_MAGIC_RSIR = 1380537170 "wrong RSIR magic encoding"
+assert compiler-wire-schema/WIRE_RSIR_REQUIRED_SECTION_COUNT = 28
+	"wrong RSIR required section count"
+assert compiler-wire-schema/WIRE_RSCG_REQUIRED_SECTION_COUNT = 14
+	"wrong RSCG required section count"
+assert compiler-wire-schema/WIRE_RSCG_KNOWN_SECTION_COUNT = 15
+	"wrong RSCG known section count"
+assert compiler-wire-schema/WIRE_RSIR_SECTION_STRING_DATA_ALIGNMENT = 1
+	"wrong byte-section alignment"
+assert compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_REQUIRED = 0
+	"RSCG unwind section must be optional"
+assert compiler-wire-schema/WIRE_RSDG_SECTION_DIAGNOSTICS_CARDINALITY =
+	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
+	"RSDG diagnostics must be nonempty"
+assert compiler-wire-schema/profiles/RSIR/required-count = 28
+	"generated Red RSIR profile is stale"
+assert compiler-wire-schema/profiles/RSCG/known-count = 15
+	"generated Red RSCG profile is stale"
+assert compiler-wire-schema/profiles/RSCG/record-sizes/15 =
+	compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_RECORD_SIZE
+	"generated Red profile record size disagrees with constants"
+assert compiler-wire-schema/profiles/RSDG/cardinalities/3 =
+	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
+	"generated Red profile cardinality disagrees with constants"
 assert compiler-wire-schema/WIRE_SCHEMA_FINGERPRINT = generator/fingerprint compiler-wire-schema-spec
 	"wrong schema fingerprint"
 
@@ -65,6 +88,29 @@ append select bad 'enums reduce [
 	'HEADER reduce ['SIZE 99]
 ]
 assert-rejected/constants bad "generated constant collision was accepted"
+
+bad: copy/deep compiler-wire-schema-spec
+profile: select select bad 'profiles 'RSIR
+entry: find profile 'TYPES
+entry/2: 'MISSING_RECORD
+assert-rejected bad "unknown profile record was accepted"
+
+bad: copy/deep compiler-wire-schema-spec
+profile: select select bad 'profiles 'RSIR
+remove/part find profile 'EXCEPTION_BLOCKS 5
+assert-rejected bad "incomplete section profile was accepted"
+
+bad: copy/deep compiler-wire-schema-spec
+profile: select select bad 'profiles 'RSIR
+entry: find profile 'MODULE
+entry/3: 'OPTIONAL
+assert-rejected bad "required section after optional section was accepted"
+
+bad: copy/deep compiler-wire-schema-spec
+profile: select select bad 'profiles 'RSIR
+entry: find profile 'MODULE
+entry/5: 3
+assert-rejected bad "non-power-of-two section alignment was accepted"
 
 print [
 	"PASS: compiler wire schema"

@@ -1,7 +1,9 @@
 # Hybrid Red/System Codegen Execution Plan
 
-Status: architecture plan. Implementation starts only after the protocol and
-semantic coverage gates in phases 1 and 2 are satisfied.
+Status: implementation in progress. The draft schema generator, dual-language
+constants, and compiler-core ownership gate now have executable coverage. The
+protocol remains unfrozen until the complete Windows x64 feature matrix,
+verifiers, and malformed/golden fixtures satisfy the Phase 1 exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -96,8 +98,10 @@ Exit criteria:
 - baseline commands and raw reports are reproducible from a clean release
   compiler build.
 
-The initial profiling and reverse audit are complete; the exhaustive ownership
-matrix remains part of phase 1 because it controls schema freeze.
+The initial profiling, reverse audit, and exhaustive compiler-core ownership
+inventory are complete. Auditing implementation-side emitter/target behavior
+and linker consumption remains part of phase 1 because it controls schema
+freeze.
 
 ## Phase 1: protocol and semantic coverage
 

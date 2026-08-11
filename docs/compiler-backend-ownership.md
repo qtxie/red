@@ -1,9 +1,11 @@
 # Compiler Backend Ownership Audit
 
-Status: pre-implementation audit. This groups the observed dependencies in
-`system/compiler-core.red`, `system/emitter.red`, `system/targets/X86-64.red`,
-and `system/linker.red`. The exhaustive call-site checklist must reach zero
-unclassified entries before the RSIR schema freezes.
+Status: executable migration audit. The dependency families below are backed by
+`compiler/backend-ownership-spec.red`. Its structural source test currently
+classifies all 145 emitter APIs and all 302 executable references in
+`system/compiler-core.red`; any added, removed, or unclassified reference fails
+the test. The remaining emitter, target, and linker implementation audit still
+controls whether the RSIR schema may freeze.
 
 See [the wire protocol](compiler-wire-format.md) and
 [the execution plan](hybrid-codegen-plan.md) for the resulting contracts.
@@ -19,6 +21,18 @@ then uses the direct byte chunk for prolog, GC, layout, debug, and fallback.
 The migration is complete only when `rsir` mode can poison all emitter buffers
 and target emit functions and still compile. Merely wrapping existing calls or
 serializing `machine-ir.red` would preserve the coupling.
+
+Run the coverage gate without compiling a test executable:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\backend-ownership-test.red
+```
+
+The manifest records a replacement contract and an expected occurrence count
+for every normalized emitter path. Counting occurrences matters: adding another
+use of an already-known API is new coupling and must not pass unnoticed. Red
+loads the source as data before the recursive scan, so comments and strings are
+not counted, while ordinary, get, set, and lit paths share one canonical key.
 
 ## Dependency families
 

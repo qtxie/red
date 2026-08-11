@@ -6,6 +6,20 @@ made until every Red/System semantic feature has an owner and a wire encoding.
 See also [the execution plan](hybrid-codegen-plan.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
 
+The authoritative draft schema is `compiler/wire-schema-spec.red`.
+`tools/self_hosting/generate-wire-schema.red` validates it and generates the
+checked-in Red constants at `compiler/wire-schema.red` and Red/System constants
+at `system/codegen/wire-schema.reds`. Regenerate and test it with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-schema.red
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-schema-test.red
+```
+
+The test rejects generated-file drift and malformed schema definitions. A
+separate Stage1-built Red/System smoke fixture includes the generated `#enum`
+and checks its version, magic, common layout, and fingerprint at runtime.
+
 This protocol is the in-process boundary between the Red implementation of the
 Red/System semantic frontend, the Red/System native code generator, and the
 existing Red linker. It defines four message kinds:

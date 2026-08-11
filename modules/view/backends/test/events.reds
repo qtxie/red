@@ -26,11 +26,15 @@ fake-event!: alias struct! [
 	y		[integer!]
 ]
 
+#if all [OS = 'macOS ABI = 'apple-aarch64] [
+	active-fake-event: declare fake-event!
+]
+
 get-event-window: func [
 	evt		[red-event!]
 	return: [red-value!]
 ][
-	null
+	as red-value! none-value
 ]
 
 get-event-face: func [
@@ -39,7 +43,11 @@ get-event-face: func [
 	/local
 		msg [fake-event!]
 ][
-	msg: as fake-event! evt/msg
+	msg: #either all [OS = 'macOS ABI = 'apple-aarch64] [
+		active-fake-event
+	][
+		as fake-event! evt/msg
+	]
 	as red-value! msg/face
 ]
 
@@ -55,6 +63,13 @@ get-event-key: func [
 	return: [red-value!]
 ][
 	as red-value! char/push evt/flags and FFFFh
+]
+
+get-event-orientation: func [
+	evt		[red-event!]
+	return: [red-value!]
+][
+	as red-value! none-value
 ]
 
 get-event-picked: func [
@@ -80,7 +95,8 @@ get-event-flags: func [
 	if evt/flags and EVT_FLAG_CTRL_DOWN	 <> 0 [block/rs-append blk as red-value! _control]
 	if evt/flags and EVT_FLAG_SHIFT_DOWN <> 0 [block/rs-append blk as red-value! _shift]
 	if evt/flags and EVT_FLAG_MENU_DOWN  <> 0 [block/rs-append blk as red-value! _alt]
-	as red-value! blk
+	if evt/flags and EVT_FLAG_CMD_DOWN	 <> 0 [block/rs-append blk as red-value! _command]	;-- unlike Windows/GTK: the headless
+	as red-value! blk																		;-- backend reports every settable flag
 ]
 
 get-event-flag: func [
@@ -89,6 +105,14 @@ get-event-flag: func [
 	return: [red-value!]
 ][
 	as red-value! logic/push flags and flag <> 0
+]
+
+OS-send-event: func [									;-- headless regression backend: OS injection is a no-op
+	evt		[red-event!]
+	queued?	[logic!]
+	return:	[logic!]
+][
+	false
 ]
 
 OS-make-event: func [
@@ -101,13 +125,17 @@ OS-make-event: func [
 		evt	  [fake-event!]
 ][
 	event: declare red-event!
-	evt:   declare fake-event!
+	evt:   #either all [OS = 'macOS ABI = 'apple-aarch64] [
+		active-fake-event
+	][
+		declare fake-event!
+	]
 	
 	event/header: TYPE_EVENT
 	event/flags: flags
 	set-event-type event name
 	
-	event/msg: as byte-ptr! evt
+	event/msg: #either all [OS = 'macOS ABI = 'apple-aarch64] [0][as byte-ptr! evt]
 	copy-cell as red-value! face as red-value! evt/face
 	
 	event

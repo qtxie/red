@@ -485,7 +485,10 @@ OS-image: context [
 			image: CGImageSourceCreateImageAtIndex image-data as Quartz-size! 0 null
 		]
 
-		unless edit? [return image]
+		unless edit? [
+			unless cgimage? [CFRelease image-data]	;-- the CGImage holds its own reference to the
+			return as int-ptr! image				;-- encoded bytes: the source is not needed anymore
+		]
 
 		alpha?: alpha-channel? image
 		color-space: CGColorSpaceCreateDeviceRGB
@@ -528,10 +531,15 @@ OS-image: context [
 		len		[integer!]
 		return: [node!]
 		/local
-			h	[int-ptr!]
+			h		[int-ptr!]
+			cfdata	[int-ptr!]
 	][
-		h: data-to-image CFDataCreateWithBytesNoCopy
-			null data as Quartz-CFIndex! len kCFAllocatorNull no no
+		;-- the CFData must OWN the encoded bytes: CGImageSource decodes lazily and keeps
+		;-- referencing them, while `data` points into a GC-managed Red binary buffer that
+		;-- can be reclaimed or moved before the image is rendered (image turns all black).
+		cfdata: CFDataCreate null data as Quartz-CFIndex! len
+		h: data-to-image as int-ptr! cfdata no no
+		CFRelease cfdata					;-- the CGImage retains what it needs from the source
 		make-node h null 0 (as integer! CGImageGetWidth h) (as integer! CGImageGetHeight h)
 	]
 

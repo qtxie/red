@@ -27,7 +27,7 @@ gui-evt/header: TYPE_EVENT
 modal-loop-type: 0										;-- remanence of last EVT_MOVE or EVT_SIZE
 zoom-distance:	 0
 special-key: 	-1										;-- <> -1 if a non-displayable key is pressed
-key-flags:		 0										;-- last key-flags, needed in mouseleave event
+inject-key-flags: -1									;-- >= 0 during a synthetic key dispatch (OS-send-event): the injected modifier bits to use instead of the physical GetKeyState (see key-extra-keys)
 utf16-char:		 0
 
 flags-blk: declare red-block!							;-- static block value for event/flags
@@ -462,6 +462,16 @@ check-extra-keys: func [
 	key
 ]
 
+key-extra-keys: func [									;-- modifier bits for a key event: injected ones (synthetic) else physical
+	return: [integer!]
+][
+	either inject-key-flags >= 0 [
+		inject-key-flags							;-- injected mods stay live for every event of the current synthetic
+	][												;-- dispatch: WM_KEYDOWN of a special key fires EVT_KEY_DOWN *and* a
+		check-extra-keys no							;-- forced EVT_KEY; both must see them. do-events masks the override
+	]												;-- (queued real keys read the physical state); OS-send-event restores it.
+]
+
 char-key?: func [
 	key	    [byte!]									;-- virtual key code
 	return: [logic!]
@@ -540,13 +550,13 @@ make-event: func [
 			][-1][map-left-right key msg/lParam]
 
 			VKEY_TO_CHAR(key)
-			gui-evt/flags: key or check-extra-keys no
+			gui-evt/flags: key or key-extra-keys
 		]
 		EVT_KEY_UP [
 			key: WIN32_U16(msg/wParam)
 			special-key: either char-key? as-byte key [-1][map-left-right key msg/lParam]
 			VKEY_TO_CHAR(key)
-			gui-evt/flags: key or check-extra-keys no
+			gui-evt/flags: key or key-extra-keys
 		]
 		EVT_KEY [
 			key: check-extra-keys no
@@ -636,6 +646,144 @@ make-event: func [
 		]
 	]
 	state
+]
+
+;-- Phase 3: send a synthetic `make event!` value into the OS loop (user-level automation).
+;-- We synthesize the Win32 message and Send/Post it to the target face's HWND, so it rides
+;-- the normal WndProc -> make-event -> awake path. Returns FALSE if the target has no live
+;-- handle or the event type isn't an OS-injectable one (click/select/change/... are
+;-- synthesized by View *from* these raw events).
+OS-send-event: func [
+	evt		[red-event!]
+	queued?	[logic!]
+	return:	[logic!]
+	/local
+		node   [node!]
+		s	   [series!]
+		cell   [red-value!]
+		obj	   [red-object!]
+		state  [red-block!]
+		hd	   [red-handle!]
+		hWnd   [handle!]
+		pr	   [red-pair!]
+		ofs	   [red-value!]
+		pt2d   [red-point2D!]
+		fx	   [float32!]
+		fy	   [float32!]
+		ofs?   [logic!]
+		wmsg   [integer!]
+		wParam [integer!]
+		lParam [integer!]
+		flags  [integer!]
+		mouse? [logic!]
+		x	   [integer!]
+		y	   [integer!]
+		mx	   [integer!]
+		my	   [integer!]
+		m	   [tagMSG value]
+		pt	   [tagPOINT value]
+		pk	   [red-integer!]
+		saved-keys [integer!]
+][
+	if (as integer! evt/msg) = 0 [return false]			;-- needs a target face (synthetic extras node)
+	node: resolve-node as integer! evt/msg
+	s:	  as series! node/value
+	cell: s/offset										;-- cell 0 = face
+	if TYPE_OF(cell) <> TYPE_OBJECT [return false]
+	obj:   as red-object! cell
+	state: as red-block! get-node-facet obj/ctx FACE_OBJ_STATE
+	if TYPE_OF(state) <> TYPE_BLOCK [return false]		;-- face not shown -> no OS handle
+	hd: as red-handle! block/rs-head state
+	if TYPE_OF(hd) <> TYPE_HANDLE [return false]
+	hWnd: as handle! hd/value
+
+	flags:  evt/flags
+	wParam: 0
+	mx:     0
+	my:     0
+	mouse?: yes
+	switch evt/type [
+		EVT_LEFT_DOWN	[wmsg: WM_LBUTTONDOWN	wParam: 0001h]		;-- MK_LBUTTON
+		EVT_LEFT_UP		[wmsg: WM_LBUTTONUP]
+		EVT_MIDDLE_DOWN	[wmsg: WM_MBUTTONDOWN	wParam: 0010h]		;-- MK_MBUTTON
+		EVT_MIDDLE_UP	[wmsg: WM_MBUTTONUP]
+		EVT_RIGHT_DOWN	[wmsg: WM_RBUTTONDOWN	wParam: 0002h]		;-- MK_RBUTTON
+		EVT_RIGHT_UP	[wmsg: WM_RBUTTONUP]
+		EVT_AUX_DOWN	[wmsg: WM_XBUTTONDOWN	wParam: 00010020h]	;-- XBUTTON1 (hi) + MK_XBUTTON1 (lo)
+		EVT_AUX_UP		[wmsg: WM_XBUTTONUP		wParam: 00010000h]	;-- XBUTTON1 (hi)
+		EVT_DBL_CLICK	[wmsg: WM_LBUTTONDBLCLK	wParam: 0001h]
+		EVT_WHEEL		[wmsg: WM_MOUSEWHEEL]
+		EVT_OVER		[
+			wmsg: WM_MOUSEMOVE
+			if flags and EVT_FLAG_AWAY <> 0 [wmsg: WM_MOUSELEAVE]	;-- the message the OS itself uses to
+		]															;-- report the pointer leaving the face
+		EVT_KEY_DOWN	[wmsg: WM_KEYDOWN	wParam: (VkKeyScan (flags and FFFFh)) and 00FFh	 mouse?: no]	;-- char -> virtual-key code
+		EVT_KEY_UP		[wmsg: WM_KEYUP		wParam: (VkKeyScan (flags and FFFFh)) and 00FFh	 mouse?: no]
+		EVT_KEY			[wmsg: WM_CHAR		wParam: flags and FFFFh	 mouse?: no]
+		default			[return false]								;-- not OS-injectable
+	]
+	lParam: 0
+	if mouse? [
+		if flags and EVT_FLAG_CTRL_DOWN  <> 0 [wParam: wParam or 0008h]	;-- MK_CONTROL
+		if flags and EVT_FLAG_SHIFT_DOWN <> 0 [wParam: wParam or 0004h]	;-- MK_SHIFT
+		if flags and EVT_FLAG_DOWN		 <> 0 [wParam: wParam or 0001h]	;-- MK_LBUTTON	buttons held during the event, decoded
+		if flags and EVT_FLAG_ALT_DOWN	 <> 0 [wParam: wParam or 0002h]	;-- MK_RBUTTON	 back by `process` (decode-down-flags);
+		if flags and EVT_FLAG_MID_DOWN	 <> 0 [wParam: wParam or 0010h]	;-- MK_MBUTTON	 dragging requires them on `over` events.
+		if flags and EVT_FLAG_AUX_DOWN	 <> 0 [wParam: wParam or 0020h]	;-- MK_XBUTTON1	ALT has no MK_ bit: not encodable
+		ofs: s/offset + 2								;-- cell 2 = offset (pair! or point2D!)
+		ofs?: no
+		if TYPE_OF(ofs) = TYPE_PAIR    [pr: as red-pair! ofs  fx: as float32! pr/x  fy: as float32! pr/y  ofs?: yes]
+		if TYPE_OF(ofs) = TYPE_POINT2D [pt2d: as red-point2D! ofs  fx: pt2d/x  fy: pt2d/y  ofs?: yes]
+		if ofs? [
+			;-- offset (logical) -> physical px. event/offset re-derives it via dpi-unscale, so it
+			;-- round-trips within +/-0.5 physical px -- pixel quantization, identical to a real
+			;-- mouse (exact at integer DPI scaling); not improvable without diverging from real events.
+			x: dpi-scale fx
+			y: dpi-scale fy
+			if evt/type = EVT_WHEEL [					;-- real WM_MOUSEWHEEL carries *screen* coords (get-event-offset converts them back)
+				pt/x: x
+				pt/y: y
+				ClientToScreen hWnd pt
+				x: pt/x
+				y: pt/y
+			]
+			if wmsg = WM_MOUSELEAVE [					;-- a leave carries no coordinates in lParam, so get-event-offset
+				pt/x: x									;-- reads the screen point from the MSG: fill it as the OS would
+				pt/y: y
+				ClientToScreen hWnd pt
+				mx: pt/x
+				my: pt/y
+			]
+			lParam: (y << 16) or (x and FFFFh)			;-- MAKELPARAM(x, y)
+		]
+		if evt/type = EVT_WHEEL [						;-- wheel delta: notches * 120 -> wParam hi-word
+			pk: as red-integer! (s/offset + 3)			;-- cell 3 = picked (notches)
+			if TYPE_OF(pk) = TYPE_INTEGER [wParam: wParam or ((pk/value * 120) << 16)]
+		]
+	]
+	if wmsg = WM_MOUSEMOVE [last-mouse-pt: -1]			;-- the repeat filter breaking the #4342 feedback loop must
+														;-- not swallow an injected motion: the caller asked for it
+	either queued? [
+		PostMessage hWnd wmsg wParam lParam				;-- async: post to the OS queue (fires under a live message pump)
+	][													;-- (async key modifiers fall back to physical state; see key-extra-keys)
+		m/hWnd:   hWnd									;-- sync: synthesize the MSG and dispatch through `process` (no pump needed)
+		m/msg:    wmsg
+		m/wParam: wParam
+		m/lParam: lParam
+		m/time:   0
+		m/x:      mx								;-- 0 unless the message carries its point there (WM_MOUSELEAVE);
+		m/y:      my								;-- PostMessage fills them with the physical cursor position instead
+		saved-keys: inject-key-flags					;-- save/restore: a nested send-event from an actor must not
+		unless mouse? [									;-- clobber the outer dispatch's injected modifiers
+			inject-key-flags: flags and (				;-- mouse buttons too: real key events report them (check-extra-keys)
+				EVT_FLAG_CTRL_DOWN or EVT_FLAG_SHIFT_DOWN or EVT_FLAG_MENU_DOWN
+				or EVT_FLAG_DOWN or EVT_FLAG_ALT_DOWN or EVT_FLAG_MID_DOWN or EVT_FLAG_AUX_DOWN
+			)
+		]
+		process m										;-- stays live across the whole dispatch: a special key's
+		inject-key-flags: saved-keys					;-- EVT_KEY_DOWN + forced EVT_KEY both read it (do-events masks it)
+	]
+	true
 ]
 
 call-custom-proc: func [
@@ -1763,22 +1911,20 @@ process: func [
 					TrackMouseEvent :track
 				]
 				make-event msg flags EVT_OVER
-				key-flags: flags
 			]
 			hover-saved: new
 			EVT_DISPATCH
 		]
 		WM_MOUSELEAVE [
-			last-mouse-pt: -1
-			make-event msg EVT_FLAG_AWAY or key-flags EVT_OVER
+			last-mouse-pt: -1							;-- modifiers from the physical keyboard for a real exit, buttons
+			flags: flags or EVT_FLAG_AWAY				;-- from the MK_ bits for an injected one, exactly as for a move
+			make-event msg flags EVT_OVER
 			if hWnd = hover-saved [hover-saved: null]
 			EVT_DISPATCH
 		]
 		WM_MOUSEWHEEL [
-			flags: 0
-			if (msg/wParam and win-wparam-from-low32 08h) <> win-wparam-from-low32 0 [flags: flags or EVT_FLAG_CTRL_DOWN]		;-- MK_CONTROL
-			if (msg/wParam and win-wparam-from-low32 04h) <> win-wparam-from-low32 0 [flags: flags or EVT_FLAG_SHIFT_DOWN]	;-- MK_SHIFT
-			make-event msg flags EVT_WHEEL
+			flags: decode-down-flags msg/wParam			;-- MK_* bits: modifier keys *and* buttons held
+			make-event msg flags EVT_WHEEL				;-- (the injected ones too, see OS-send-event)
 		]
 		WM_LBUTTONDOWN	[
 			menu-origin: null							;-- reset if user clicks on menu bar
@@ -1794,7 +1940,6 @@ process: func [
 				word: (as red-word! get-face-values hWnd) + FACE_OBJ_TYPE
 				if base = symbol/resolve word/symbol [ReleaseCapture]	;-- issue #4384
 			]
-			key-flags: flags
 			res: make-event msg flags EVT_LEFT_UP
 			prev-captured: null
 			res
@@ -1817,6 +1962,8 @@ process: func [
 		WM_RBUTTONUP	[make-event msg flags EVT_RIGHT_UP]
 		WM_MBUTTONDOWN	[make-event msg flags EVT_MIDDLE_DOWN]
 		WM_MBUTTONUP	[make-event msg flags EVT_MIDDLE_UP]
+		WM_XBUTTONDOWN	[make-event msg flags EVT_AUX_DOWN]
+		WM_XBUTTONUP	[make-event msg flags EVT_AUX_UP]
 		WM_KEYDOWN		[
 			res: make-event msg 0 EVT_KEY_DOWN
 			if res <> EVT_NO_DISPATCH [
@@ -1865,8 +2012,11 @@ do-events: func [
 		state [integer!]
 		msg?  [logic!]
 		saved [tagMSG]
+		saved-keys [integer!]
 ][
-	msg?: no
+	saved-keys: inject-key-flags				;-- a reentrant pump (do-events called from a synthetic key's
+	inject-key-flags: -1						;-- actor) must read physical modifiers for queued real keys,
+	msg?: no									;-- not the outer send-event's injected override; restored on exit
 	unless no-wait? [loop-cnt: loop-cnt + 1]
 
 	while [
@@ -1885,11 +2035,12 @@ do-events: func [
 			DispatchMessage :msg
 			current-msg: saved
 		]
-		if no-wait? [return msg?]
+		if no-wait? [inject-key-flags: saved-keys  return msg?]
 	]
 	unless no-wait? [
 		exit-loop: exit-loop - 1
 		if exit-loop > 0 [PostQuitMessage 0]
 	]
+	inject-key-flags: saved-keys
 	msg?
 ]

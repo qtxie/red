@@ -737,7 +737,7 @@ update-z-order: func [
 		nb   [integer!]
 		s	 [series!]
 ][
-	if type = screen [exit]						;-- top-level children are NSWindow instances
+	if type = screen-sym [exit]				;-- top-level children are NSWindow instances
 	s: GET_BUFFER(pane)
 	face: as red-object! s/offset + pane/head
 	tail: as red-object! s/tail
@@ -1120,8 +1120,8 @@ change-selection: func [
 		]
 		type = text-list [
 			hWnd: objc_msgSend [hWnd sel_getUid "documentView"]
-			if idx = -1 [
-				objc_msgSend [hWnd sel_getUid "deselectAll:" hWnd]
+			if idx < 0 [									;-- selected < 1 -> deselect; idx = selected - 1, so 0 -> -1, -1 -> -2, ...
+				objc_msgSend [hWnd sel_getUid "deselectAll:" hWnd]	;-- guarding only idx = -1 let -2 reach indexSetWithIndex: (NSRangeException)
 				exit
 			]
 			sz: -1 + as integer! objc_msgSend [hWnd sel_getUid "numberOfRows"]
@@ -1130,6 +1130,7 @@ change-selection: func [
 			objc_msgSend [
 				hWnd sel_getUid "selectRowIndexes:byExtendingSelection:" selection no
 			]
+			objc_msgSend [hWnd sel_getUid "scrollRowToVisible:" idx]	;-- bring the selected row into view (auto-scroll, matching Windows LB_SETCURSEL)
 		]
 		any [type = drop-list type = drop-down][
 			sz: -1 + as integer! objc_msgSend [hWnd sel_getUid "numberOfItems"]
@@ -1665,9 +1666,10 @@ update-combo-box: func [
 						if list? [i: i + 1]
 						str: as red-string! block/rs-abs-at blk index
 						loop part [
-							if TYPE_OF(str) = TYPE_STRING [
+							if TYPE_OF(str) = TYPE_STRING [		;-- the widget holds only the strings: one
 								objc_msgSend [hWnd sel_getUid "removeItemAtIndex:" as NSInteger! i]
-							]
+							]										;-- removal per string at the same index
+							str: str + 1							;-- advance through paired list values
 						]
 					]
 				]
@@ -2524,7 +2526,7 @@ OS-to-image: func [
 	word: as red-word! get-node-facet face/ctx FACE_OBJ_TYPE
 	type: symbol/resolve word/symbol
 	case [
-		type = screen [
+		type = screen-sym [
 			rect/left: 0 rect/top: 0 rect/right: 7F800000h rect/bottom: 7F800000h
 			bmp: CGWindowListCreateImage as NSRect! rect 1 0 0		;-- INF
 			ret: image/init-image as red-image! stack/push* OS-image/load-cgimage as int-ptr! bmp
@@ -2630,6 +2632,7 @@ OS-draw-face: func [
 fetch-screen-info: func [
 	screen	[Cocoa-handle!]
 	spec	[red-block!]
+	prim-h	[Cocoa-float!]
 	/local
 		blk	[red-block!]
 		s	[series!]
@@ -2645,7 +2648,7 @@ fetch-screen-info: func [
 	if scale <= (as Cocoa-float! 0.0) [scale: as Cocoa-float! 1.0]
 	width: as-integer (frame/w * scale)
 	height: as-integer (frame/h * scale)
-	pair/make-at alloc-tail s as-integer frame/x as-integer frame/y
+	pair/make-at alloc-tail s as-integer frame/x as-integer (prim-h - (frame/y + frame/h))
 	pair/make-at alloc-tail s width height
 	float/make-at alloc-tail s as-float scale
 	make-cocoa-handle-at as red-value! alloc-tail s screen handle/CLASS_MONITOR
@@ -2657,6 +2660,8 @@ OS-fetch-all-screens: func [
 		screens	[Cocoa-handle!]
 		screen	[Cocoa-handle!]
 		blk	[red-block!]
+		pframe	[NSRect! value]
+		prim-h	[Cocoa-float!]
 		n	[integer!]
 		i	[integer!]
 ][
@@ -2664,10 +2669,16 @@ OS-fetch-all-screens: func [
 	screens: objc_msgSend [objc_getClass "NSScreen" sel_getUid "screens"]
 	if screens = 0 [return blk]
 	n: as integer! objc_msgSend [screens sel_getUid "count"]
+	prim-h: as Cocoa-float! 0.0
+	if n > 0 [
+		screen: objc_msgSend [screens sel_getUid "objectAtIndex:" as NSUInteger! 0]
+		pframe: objc_msgSend_rect [screen sel_getUid "frame"]
+		prim-h: pframe/h
+	]
 	i: 0
 	while [i < n][
 		screen: objc_msgSend [screens sel_getUid "objectAtIndex:" as NSUInteger! i]
-		if screen <> 0 [fetch-screen-info screen blk]
+		if screen <> 0 [fetch-screen-info screen blk prim-h]
 		i: i + 1
 	]
 	blk

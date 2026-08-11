@@ -143,6 +143,7 @@ if all-tests-config/include-view? [
 	===start-group=== "View Engine Tests"
 		--run-test-file-quiet %source/view/base-self-test.red
 	===end-group===
+	do join root-dir %tests/run-view-headless-tests.r
 ]
 
 qt/script-header: "Red/System []"

@@ -913,11 +913,13 @@ OS-draw-arc: func [
 		rad-y		[Cocoa-float!]
 		angle-begin [Cocoa-float!]
 		angle-end	[Cocoa-float!]
+		begin-deg	[Cocoa-float!]
 		delta		[Cocoa-float!]
+		dir			[Cocoa-float!]
 		rad			[Cocoa-float!]
 		current		[Cocoa-float!]
 		drawn		[Cocoa-float!]
-		sweep		[integer!]
+		sweep		[Cocoa-float!]
 		i			[integer!]
 		closed?		[logic!]
 		pt			[red-point2D!]
@@ -929,36 +931,36 @@ OS-draw-arc: func [
 	radius: center + 1
 	GET_COCOA_XY(radius rad-x rad-y)
 	begin: as red-integer! radius + 1
-	angle-begin: rad * as Cocoa-float! begin/value
+	begin-deg: F32_TO_COCOA get-float32 begin
+	angle-begin: rad * begin-deg
 	angle: begin + 1
-	sweep: angle/value
-	i: begin/value + sweep
-	angle-end: rad * as Cocoa-float! i
+	sweep: F32_TO_COCOA get-float32 angle
+	angle-end: rad * (begin-deg + sweep)
 
 	closed?: angle < end
 
 	CGContextBeginPath ctx
 	if closed? [CGContextMoveToPoint ctx cx cy]
-	either any [sweep >= 360 sweep <= -360][
+	either any [sweep >= (as Cocoa-float! 359.999) sweep <= (as Cocoa-float! -359.999)][
 		CGContextAddEllipseInRect ctx cx - rad-x cy - rad-y rad-x * as Cocoa-float! 2.0 rad-y * as Cocoa-float! 2.0
 	][
 		either rad-x <> rad-y [								;-- elliptical arc
 			delta: as Cocoa-float! (PI / 2.0)
+			dir: either sweep < (as Cocoa-float! 0.0) [as Cocoa-float! -1.0][as Cocoa-float! 1.0]
 			drawn: as Cocoa-float! 0.0
 			i: 0
 			until [
 				current: angle-begin + drawn
 				rad: angle-end - current
-				either rad > delta [rad: delta][
-					if rad <= as Cocoa-float! 0.000001 [break]
-				]
+				if (rad * dir) > delta [rad: delta * dir]
+				if (rad * dir) <= (as Cocoa-float! 0.000001) [break]
 				_draw-arc ctx cx cy rad-x rad-y current current + rad zero? i closed?
 				drawn: drawn + rad
 				i: i + 1
 				i = 4
 			]
 		][
-			CGContextAddArc ctx cx cy rad-x angle-begin angle-end as-integer sweep < 0
+			CGContextAddArc ctx cx cy rad-x angle-begin angle-end as-integer (sweep < (as Cocoa-float! 0.0))
 		]
 	]
 	either closed? [

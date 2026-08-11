@@ -21,6 +21,19 @@ Red [
 
 event?: routine ["Returns true if the value is this type" value [any-type!] return: [logic!]][TYPE_OF(value) = TYPE_EVENT]
 
+send-event-os: routine [event [event!] queued? [logic!] return: [logic!]][
+	gui/OS-send-event event queued?
+]
+
+send-event: function [
+	"Sends a synthetic event! into the active GUI event loop"
+	event	[event!]
+	/no-wait "Post asynchronously to the OS queue (return without waiting) instead of dispatching synchronously"
+	return:	[logic!]						;-- TRUE if injected, FALSE if the target has no live handle or the type isn't OS-injectable
+][
+	send-event-os event to logic! no-wait
+]
+
 face?: function [
 	"Returns TRUE if the value is a face! object"
 	value	"Value to test"
@@ -533,7 +546,7 @@ face!: object [				;-- keep in sync with facet! enum
 				block? data
 				find [drop-list drop-down text-list field area] type
 				value: pick data selected
-				set-quiet 'text copy value
+				set-quiet 'text either series? value [copy value][form value]
 			]
 			
 			if all [not same? :old :new image? :old][system/view/platform/detach-image old]
@@ -1302,31 +1315,41 @@ insert-event-func 'dragging function [face [object!] event [event!]][
 			unless system/view/auto-sync? [show face]
 		][
 			if drag-info: face/state/4 [
+				done?: no
 				either type = 'over [
 					unless event/away? [
-						new: (any [face/offset 0x0]) + event/offset - drag-info/1
-						if face/offset <> new [
-							if box: drag-info/2 [new: min box/max max box/min new]
-							if face/offset <> new [face/offset: new]
-							set/any 'result do-actor face event 'drag ;-- avoid calling on-over actor
-							show face/parent
-							return :result
+						either any [
+							not find [down mid-down] drag-evt	;-- other buttons not reliably reported in motion events
+							find event/flags drag-evt
+							all [drag-evt = 'mid-down find event/flags 'down]	;-- terminal backend reports only `down` in motion events
+						][
+							new: (any [face/offset 0x0]) + event/offset - drag-info/1
+							if face/offset <> new [
+								if box: drag-info/2 [new: min box/max max box/min new]
+								if face/offset <> new [face/offset: new]
+								set/any 'result do-actor face event 'drag ;-- avoid calling on-over actor
+								show face/parent
+								return :result
+							]
+						][
+							done?: yes				;-- button no longer held: `up` event was lost (#5544)
 						]
 					]
 				][
-					if drag-evt = select [
+					done?: drag-evt = select [
 						up		down
 						mid-up	mid-down
 						alt-up	alt-down
 						aux-up	aux-down
-					] type [
-						do-actor face event 'drop
-						if face/state [face/state/4: none]
-						face/flags: all [
-							block? flags: face/flags
-							remove find flags 'all-over
-							flags
-						]
+					] type
+				]
+				if done? [
+					do-actor face event 'drop
+					if face/state [face/state/4: none]
+					face/flags: all [
+						block? flags: face/flags
+						remove find flags 'all-over
+						flags
 					]
 				]
 			]

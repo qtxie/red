@@ -74,10 +74,13 @@ mouse-entered: func [
 	self	[Cocoa-handle!]
 	cmd		[Cocoa-handle!]
 	event	[Cocoa-handle!]
+	/local
+		flags [integer!]
 ][
 	if zero? objc_getAssociatedObject self RedEnableKey [
 		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self 0 EVT_OVER
+		flags: mouse-state-flags event				;-- report the modifiers and buttons held, as the other
+		make-event self flags EVT_OVER				;-- backends do (a 0 here would abort a running drag)
 	]
 ]
 
@@ -86,10 +89,13 @@ mouse-exited: func [
 	self	[Cocoa-handle!]
 	cmd		[Cocoa-handle!]
 	event	[Cocoa-handle!]
+	/local
+		flags [integer!]
 ][
 	if zero? objc_getAssociatedObject self RedEnableKey [
 		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self EVT_FLAG_AWAY EVT_OVER
+		flags: (mouse-state-flags event) or EVT_FLAG_AWAY
+		make-event self flags EVT_OVER
 	]
 ]
 
@@ -100,12 +106,14 @@ mouse-moved: func [
 	event	[Cocoa-handle!]
 	/local
 		flags [integer!]
+		mods  [integer!]
 ][
 	if zero? objc_getAssociatedObject self RedEnableKey [
 		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 		flags: get-flags (as red-block! get-face-values self) + FACE_OBJ_FLAGS
 		if flags and FACET_FLAGS_ALL_OVER <> 0 [
-			make-event self 0 EVT_OVER
+			mods: mouse-state-flags event
+			make-event self mods EVT_OVER
 		]
 	]
 ]
@@ -144,7 +152,7 @@ button-mouse-down: func [
 		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 		switch type [
 			NSLeftMouseDragged [
-				make-event self 0 EVT_OVER
+				make-event self EVT_FLAG_DOWN EVT_OVER
 			]
 			NSLeftMouseUp [
 				make-event self 0 EVT_LEFT_UP
@@ -542,9 +550,12 @@ scroll-wheel: func [
 	self	[Cocoa-handle!]
 	cmd		[Cocoa-handle!]
 	event	[Cocoa-handle!]
+	/local
+		flags [integer!]
 ][
 	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-	make-event self event EVT_WHEEL
+	flags: check-extra-keys event				;-- make-event takes the flags, like every other event
+	make-event self flags EVT_WHEEL
 ]
 
 slider-change: func [
@@ -1703,8 +1714,14 @@ hit-test*: func [
 			ix: as integer! (pt/x * ratio)
 			ratio: (as Cocoa-float! h) / (as Cocoa-float! sz/y)
 			iy: as integer! (pt/y * ratio)
-			pixel-value: OS-image/get-pixel resolve-node img/node iy * w + ix
-			if pixel-value >>> 24 = 0 [return as Cocoa-handle! 0]
+			either any [ix < 0 iy < 0 ix >= w iy >= h][	;-- outside the image: no pixel to test, the
+				return v							;-- face takes the click
+			][
+				pixel-value: OS-image/get-pixel resolve-node img/node (iy * w) + ix
+				either pixel-value >>> 24 = 0 [return as Cocoa-handle! 0][	;-- transparent pixel: the click passes through
+					return v						;-- opaque one: the face takes it, whatever `color`
+				]									;-- is (an image face has no color: the check below
+			]										;-- would sample the cached bitmap and reject it)
 		]
 
 		clr: (as red-tuple! vals) + FACE_OBJ_COLOR

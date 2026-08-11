@@ -41,7 +41,7 @@ update-para: func [
 		mask   [integer!]
 ][
 	values: object/get-values face
-	state:	as red-block! values + FACE_OBJ_TYPE
+	state:	as red-block! values + FACE_OBJ_STATE	;-- none for a para! used in a draw block (#5469)
 	if TYPE_OF(state) <> TYPE_BLOCK [exit]
 	
 	type:	as red-word! values + FACE_OBJ_TYPE
@@ -51,7 +51,12 @@ update-para: func [
 	unless TYPE_OF(type) = TYPE_WORD [exit]				;@@ make it an error message
 	
 	case [
-		sym = base [mask: not 002Fh]
+		any [
+			sym = base
+			sym = rich-text									;-- same DT_* flags as `base` (get-para-flags)
+		][
+			mask: not 002Fh
+		]
 		any [
 			sym = button
 			sym = toggle
@@ -67,16 +72,20 @@ update-para: func [
 		][
 			mask: not 000040C3h
 		]
-		true [0]
+		true [mask: 0]									;-- no para flags in that face type's style
 	]
 	hWnd: get-face-handle face
-	either sym = area [
-		update-area-para hWnd face
-		values: object/get-values face
-	][
-		style: GetWindowLongPtr hWnd GWL_STYLE
-		style: style and (win-style-mask mask) or (win-style-mask get-para-flags sym para)
-		SetWindowLongPtr hWnd GWL_STYLE style
+	case [
+		sym = area [
+			update-area-para hWnd face
+			values: object/get-values face
+		]
+		zero? mask [0]									;-- leave the window style alone
+		true [
+			style: GetWindowLongPtr hWnd GWL_STYLE
+			style: style and (win-style-mask mask) or (win-style-mask get-para-flags sym para)
+			SetWindowLongPtr hWnd GWL_STYLE style
+		]
 	]
 	
 	int: as red-integer! (block/rs-head state) + 1

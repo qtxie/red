@@ -341,21 +341,14 @@ parser: context [
 			char   [red-char!]
 			bits   [red-bitset!]
 			s	   [series!]
+			p4 tbl [int-ptr!]
 			p	   [byte-ptr!]
 			phead  [byte-ptr!]
 			ptail  [byte-ptr!]
 			pbits  [byte-ptr!]
 			pos    [byte-ptr!]							;-- required by BS_TEST_BIT
-			p4	   [int-ptr!]
-			cp	   [integer!]
-			size   [integer!]
-			unit   [integer!]
-			type   [integer!]
-			res	   [integer!]
-			set?   [logic!]								;-- required by BS_TEST_BIT
-			not?   [logic!]
-			bin?   [logic!]
-			match? [logic!]
+			cp c u alt size unit type res len [integer!]
+			set? not? bin? match? [logic!]				;-- `set?` required by BS_TEST_BIT
 	][
 		s: GET_BUFFER(rules)
 		assert s/offset <= (s/tail - 2)
@@ -441,34 +434,69 @@ parser: context [
 				TYPE_CHAR [
 					char: as red-char! token
 					cp: char/value
+					tbl: case-folding/upper-table
+					if type = TYPE_BINARY [comp-op: COMP_STRICT_EQUAL]	;-- binary searches are byte-exact (see binary/match?)
+					if comp-op = COMP_EQUAL [alt: case-folding/change-char cp yes]	;-- uppercase-normalize the token
+					len: as-integer ptail - p
 
 					switch unit [
 						Latin1 [
-							while [p < ptail][
-								if p/value = as-byte cp [
-									return adjust-input-index input pos* 1 (as-integer p - phead)
+							either comp-op = COMP_EQUAL [
+								loop len [
+									c: as-integer p/1
+									u: tbl/c
+									if u <> 0 [c: u]		;-- uppercase-normalize the candidate
+									if c = alt [break]
+									p: p + 1
 								]
-								p: p + 1
+							][
+								either cp > FFh [p: p + len][	;-- token cannot occur in a Latin1 string
+									loop len [if p/1 = as-byte cp [break] p: p + 1]
+								]
 							]
 						]
 						UCS-2 [
-							while [p < ptail][
-								if (as-integer p/2) << 8 + p/1 = cp [
-									return adjust-input-index input pos* 1 ((as-integer p - phead) >> 1)
+							either cp > FFFFh [p: p + len][	;-- astral token cannot occur in a UCS-2 string
+								len: len / 2
+								either comp-op = COMP_EQUAL [
+									loop len [
+										c: (as-integer p/2) << 8 + (as-integer p/1)
+										u: tbl/c
+										if u <> 0 [c: u]	;-- uppercase-normalize the candidate
+										if c = alt [break]
+										p: p + 2
+									]
+								][
+									loop len [
+										c: (as-integer p/2) << 8 + (as-integer p/1)
+										if c = cp [break]
+										p: p + 2
+									]
 								]
-								p: p + 2
 							]
 						]
 						UCS-4 [
+							len: len / 4
 							p4: as int-ptr! p
-							while [p4 < as int-ptr! ptail][
-								if p4/value = cp [
-									return adjust-input-index input pos* 1 ((as-integer p4 - phead) >> 2)
+							either comp-op = COMP_EQUAL [
+								loop len [
+									c: p4/1
+									either c <= FFFFh [
+										u: tbl/c
+										if u <> 0 [c: u]	;-- uppercase-normalize the candidate
+									][
+										c: case-folding/change-char c yes
+									]
+									if c = alt [break]
+									p4: p4 + 1
 								]
-								p4: p4 + 1
+							][
+								loop len [if p4/1 = cp [break] p4: p4 + 1]
 							]
+							p: as byte-ptr! p4
 						]
 					]
+					if p < ptail [return adjust-input-index input pos* 1 ((as-integer p - phead) >> log-b unit)]
 				]
 				default [
 					PARSE_ERROR [TO_ERROR(script parse-rule) token]

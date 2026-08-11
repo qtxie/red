@@ -143,7 +143,7 @@ build-libRedRT: func [
 	compiler-system-job/job-set job 'opt-level compiler-system-job/job-get app-job 'opt-level
 	compiler-system-job/job-set job 'redbin-compress? compiler-system-job/job-get app-job 'redbin-compress?
 	compiler-system-job/job-set job 'compiler-version compiler-version
-	compiler-system-job/job-set job 'compiler-build-date compiler-build-date
+	compiler-system-job/job-set job 'compiler-build-date now/utc
 	compiler-system-job/job-set job 'compiler-git none
 	compiler-system-job/normalize job
 
@@ -249,7 +249,7 @@ compile-source: func [
 	compiler-system-job/job-set job 'red-pass? (marker = 'Red)
 	if compiler-options/option-get options 'dll? [compiler-system-job/job-set job 'type 'dll]
 	compiler-system-job/job-set job 'compiler-version compiler-version
-	compiler-system-job/job-set job 'compiler-build-date compiler-build-date
+	compiler-system-job/job-set job 'compiler-build-date now/utc
 	compiler-system-job/job-set job 'compiler-git none
 	build-prefix: compiler-system-job/job-get job 'build-prefix
 	unless empty? build-prefix [make-dir/deep build-prefix]

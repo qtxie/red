@@ -609,7 +609,7 @@ help-ctx: context [
 		"Print Red version information"
 		/debug "Print full Red and OS version information suitable for submitting issues"
 		/cc "Also copy to clipboard"
-		/local git plt txt
+		/local git plt txt platform
 	][
 		git: system/build/git
 		plt: os-info
@@ -628,9 +628,12 @@ help-ctx: context [
 				"Looks like this Red binary has been built from source.^/Please download latest build from our website:^/https://www.red-lang.org/p/download.html^/and try your code on it before submitting an issue."
 			]
 		][
+			platform: either system/platform = 'macOS [
+				form reduce [system/platform plt/version plt/arch]
+			][system/platform]
 			txt: reduce [
 				'Red system/version
-				'for system/platform
+				'for platform
 				'built any [all [git git/date] system/build/date]
 			]
 			if git [
@@ -643,4 +646,3 @@ help-ctx: context [
 	]
 
 ]
-

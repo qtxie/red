@@ -111,16 +111,17 @@ Red/System [
 	list-env: func [
 		return: [red-value!]							;-- return a map!
 		/local
-			handle	[integer!]
-			p-int	[int-ptr!]
-			env		[int-ptr!]
+			env		[str-array!]
 			str		[c-string!]
 			p		[c-string!]
 			blk		[red-block!]
 			len		[integer!]
 	][
-		env: as int-ptr! platform/environ
-		#if target = 'ARM [env: as int-ptr! env/value] ;@@ ???
+		#either OS = 'macOS [
+			env: platform/get-environ
+		][
+			env: as str-array! platform/environ
+		]
 
 		blk: null
 		len: 0
@@ -128,7 +129,7 @@ Red/System [
 		if env <> null [
 			blk: block/push-only* 100
 			while [
-				str: as c-string! env/1
+				str: env/item
 				str <> null
 			][
 				len: 0
@@ -289,7 +290,6 @@ check-arg-type: func [
 			int		[red-integer!]
 			str		[red-string!]
 			arch	[c-string!]
-			name	[c-string!]
 			mib2	[integer!]
 			mib		[integer!]
 			len		[integer!]
@@ -307,27 +307,15 @@ check-arg-type: func [
 		Gestalt gestaltSystemVersionMinor :minor
 		Gestalt gestaltSystemVersionBugFix :bugfix
 
-		str: string/load-at "macOS " 6 val UTF-8
-		name: switch major [
-			10 [
-				switch minor [
-					14 ["Mojave"]
-					13 ["High Sierra"]
-					12 ["Sierra"]
-					11 ["El Capitan"]
-					10 ["Yosemite"]
-					 9 ["Mavericks"]
-					 8 ["Mountain Lion"]
-					 7 ["Lion"]
-					 default ["Unsupported Version"]
-				]
-			]
-			default ["Unrecognized"]
-		]
-		string/concatenate-literal str name
+		str: string/load-at "macOS" 5 val UTF-8
 		_context/add-with ctx _context/add-global symbol/make "name" val
 
-		arch: "x86-64"
+		#switch target [
+			ARM64  [arch: "ARM64"]
+			X86-64 [arch: "x86-64"]
+			ARM     [arch: "ARM"]
+			#default [arch: "x86-32"]
+		]
 		word/make-at symbol/make arch val
 		_context/add-with ctx _context/add-global symbol/make "arch" val
 

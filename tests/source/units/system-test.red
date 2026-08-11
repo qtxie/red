@@ -27,5 +27,16 @@ Red [
 		
 ===end-group===
 
-~~~end-file~~~
+===start-group=== "environment native tests"
 
+	--test-- "list-env returns an environment map"
+		environment: list-env
+		--assert map? environment
+		--assert not empty? environment
+
+	--test-- "build date is initialized"
+		--assert system/build/date/year > 1970
+
+===end-group===
+
+~~~end-file~~~

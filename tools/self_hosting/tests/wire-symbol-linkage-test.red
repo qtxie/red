@@ -152,7 +152,7 @@ deferred-global-offset: select rich-global-section 'payload-offset
 foreach [field value] reduce [
 	schema/WIRE_RSIR_GLOBAL_INITIALIZER_CONSTANT_OFFSET 2147483647
 	schema/WIRE_RSIR_GLOBAL_ALIGNMENT_OFFSET 3
-	schema/WIRE_RSIR_GLOBAL_SECTION_CLASS_OFFSET 99
+	schema/WIRE_RSIR_GLOBAL_STORAGE_CLASS_OFFSET 99
 	schema/WIRE_RSIR_GLOBAL_FLAGS_OFFSET 127
 ][
 	fixture-mutations/put-u32 deferred-global-message (deferred-global-offset + field) value

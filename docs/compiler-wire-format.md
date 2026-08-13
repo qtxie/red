@@ -149,7 +149,7 @@ declared message size and begins at its declared alignment. Payloads cannot
 overlap or move backwards. Every byte between the directory and payloads,
 between payloads, or after the final payload is zero padding.
 
-In v1.0, all 29 listed RSIR sections are required even when empty. RSCF requires
+In v1.0, all 30 listed RSIR sections are required even when empty. RSCF requires
 its config section. RSCG requires kinds 1 through 16, including a nonempty
 `modules` table; kind 17 `unwind-functions` is known optional and carries the
 OPTIONAL flag when present. RSDG requires all three listed sections to be
@@ -415,23 +415,24 @@ matrix is complete. All listed records consist only of 32-bit words.
 | 10 | parameters | 32 | ordered signature parameters |
 | 11 | symbols | 32 | named declarations and definitions |
 | 12 | constants | 32 | scalar, byte, aggregate, address, or zero |
-| 13 | constant-data | 1 | raw scalar and aggregate bytes |
+| 13 | constant-data | 1 | scalar/storage bytes and address addends |
 | 14 | constant-parts | 32 | nested values and symbolic address parts |
-| 15 | globals | 32 | storage class and initializer |
-| 16 | imports | 24 | library/external name/symbol mapping |
-| 17 | exports | 16 | external name/symbol/ordinal mapping |
-| 18 | functions | 40 | signature and owned record ranges |
-| 19 | locals | 32 | arguments, locals, temporaries, merge slots |
-| 20 | blocks | 32 | instruction and outgoing-edge ranges |
-| 21 | edges | 24 | source, target, edge kind, case value |
-| 22 | values | 24 | typed single-definition temporary results |
-| 23 | instructions | 48 | opcode, results, operands, effects, source |
-| 24 | operands | 16 | typed references with opcode-specific aux |
-| 25 | calls | 32 | callee, signature, call attributes |
-| 26 | target-fragments | 32 | target-bound `#inline` byte slices |
-| 27 | source-locations | 16 | file, line, column, byte offset |
-| 28 | exception-regions | 24 | protected set, handler, and semantics |
-| 29 | exception-blocks | 8 | region-to-block membership |
+| 15 | constant-bindings | 8 | named constant symbol to constant mapping |
+| 16 | globals | 32 | storage class and initializer |
+| 17 | imports | 24 | library/external name/symbol mapping |
+| 18 | exports | 16 | external name/symbol/ordinal mapping |
+| 19 | functions | 40 | signature and owned record ranges |
+| 20 | locals | 32 | arguments, locals, temporaries, merge slots |
+| 21 | blocks | 32 | instruction and outgoing-edge ranges |
+| 22 | edges | 24 | source, target, edge kind, case value |
+| 23 | values | 24 | typed single-definition temporary results |
+| 24 | instructions | 48 | opcode, results, operands, effects, source |
+| 25 | operands | 16 | typed references with opcode-specific aux |
+| 26 | calls | 32 | callee, signature, call attributes |
+| 27 | target-fragments | 32 | target-bound `#inline` byte slices |
+| 28 | source-locations | 16 | file, line, column, byte offset |
+| 29 | exception-regions | 24 | protected set, handler, and semantics |
+| 30 | exception-blocks | 8 | region-to-block membership |
 
 The important record shapes are:
 
@@ -456,7 +457,7 @@ The important record shapes are:
   code, source location, reserved.
 - `symbols`: name string, kind, linkage, visibility, type/signature, flags,
   owner symbol, source location.
-- `globals`: symbol, type, initializer constant, alignment, section class,
+- `globals`: symbol, type, initializer constant, alignment, storage class,
   flags, source location, reserved.
 - `imports`: library string, external-name string, local symbol, effective
   calling convention, flags, source location.
@@ -465,6 +466,7 @@ The important record shapes are:
   auxiliary value. Integer and float bits live in `constant-data`.
 - `constant-parts`: parent constant, byte offset, type, part kind, child constant,
   target symbol, raw-addend data offset, flags.
+- `constant-bindings`: constant symbol and its value constant.
 - `functions`: symbol, signature, flags, first block, block count, entry block,
   first local, local count, source location, reserved.
 - `locals`: function, name string, type, kind, flags, alignment, source location,
@@ -769,10 +771,9 @@ location is optional. Linkage and visibility pairs are exact:
 may be imports. Function and global definition tables are sorted by symbol ID,
 contain no duplicate symbol, agree with the symbol's signature/type, and never
 define an imported symbol. This contract verifies the identity prefix of each
-global record, its source location, and its reserved word. Constant initializer
-identity, requested alignment, section class, and global flags deliberately
-remain opaque signed-31-bit values until the constants/globals contract freezes
-their domains and layout rules.
+global record, its source location, and its reserved word. The following
+constants/globals contract owns initializer identity, requested alignment,
+storage class, and global flags.
 
 Imports are sorted and unique by local symbol ID. Several local symbols may map
 to the same `(library, external-name)` pair, which preserves source aliases.
@@ -825,6 +826,88 @@ This verifier consumes RSIR only. Codegen later maps these semantic identities
 to RSCG symbols, imports, and exports; RSCG binding resolution, origin-module
 remapping, relocation ownership, final ordinals, and image-table construction
 remain in the object merger and linker-adapter contracts.
+
+### Constants, storage, and global initializers
+
+`compiler/wire-constant-initializer.red` and
+`system/codegen/wire-constant-initializer.reds` independently validate the
+constant graph after symbol/linkage validation. This is still semantic RSIR:
+it creates no output section, relocation ID, machine code, or legacy-emitter
+byte range.
+
+Constant IDs are one-based and topologically ordered. Every `VALUE` part names
+a smaller constant ID, which makes by-value cycles impossible in a single
+forward pass. A symbolic address edge is a delayed relocation and is not a
+constant-graph cycle. There are five constant kinds:
+
+| Kind | Representation |
+| --- | --- |
+| `ZERO` | typed all-zero value; no bytes, parts, or auxiliary value |
+| `SCALAR` | exact type-size bytes for logic, integer, or float |
+| `STORAGE` | pointer type plus element count and contiguous pointee bytes |
+| `AGGREGATE` | one typed `VALUE` part per struct field, or one active union field |
+| `ADDRESS` | one symbolic, constant-storage, or absolute address part |
+
+Logic bytes are canonical little-endian 0 or 1 with the remaining three bytes
+zero. Integer and float payloads preserve their exact bits. A `STORAGE`
+constant's auxiliary word is a positive element count and its byte size is
+exactly `count * pointee-size`. `C_STRING` storage has no parts, contains no
+embedded NUL, and ends in one NUL. Other storage may overlay typed parts at
+aligned, in-range, nonoverlapping offsets; every raw placeholder byte covered
+by such a part is zero.
+
+An aggregate has no direct byte slice. Struct parts follow field order and
+match each field's exact type and byte offset. A union has exactly one part;
+the auxiliary word is the selected field ID. Tagged-union tags are therefore
+derived from the selected field ordinal (`ordinal + 1`), while `ZERO` is the
+inactive tag-zero representation. Padding is implicitly zero rather than
+serialized as an additional semantic part.
+
+Part kinds are `VALUE`, `SYMBOL_ADDRESS`, `CONSTANT_ADDRESS`, and
+`ABSOLUTE_ADDRESS`. A symbol address may target only a function, global, or
+constant symbol. Function addresses use a `FUNCTION` type with the target
+signature; global and constant addresses use a pointer whose pointee is the
+target value type. A constant address targets only an earlier `STORAGE`
+constant with the same pointer type. Absolute addresses use a pointer or
+function type and must be nonzero; null is represented by `ZERO`.
+
+Every non-`VALUE` part consumes exactly eight bytes from `constant-data` in
+part order. Symbol and constant addends are canonical sign-extended 32-bit
+values. Absolute addresses may use all 64 bits. These bytes describe an
+address expression only; section placement and target relocation selection are
+codegen responsibilities.
+
+Named constants use the separate `constant-bindings` table. It carries exactly
+`SORTED | DEDUPLICATED`, is strictly ordered by symbol ID, has one entry for
+every `CONSTANT` symbol, and preserves exact symbol/constant type equality.
+This ordering is independent of the constant graph's topological order.
+
+A global initializer ID of zero means implicit zero initialization. A nonzero
+initializer has exactly the global's value type. Alignment zero means natural
+type alignment; an explicit alignment is a power of two, is at least natural,
+and does not exceed the target maximum aggregate alignment. The only v1 global
+storage class is `MUTABLE`, and global flags are zero. A source-level protected
+scalar is a frontend constant rather than mutable global storage; protected
+addressable storage is represented by constant storage and a constant symbol.
+
+Both verifiers decode every scalar field before following references, consume
+the constant-data and part sections without gaps, stop at the same first error,
+and publish all lower and local views only after complete success. The shared
+corpus contains three valid and 84 directed malformed messages, covers all 67
+status codes, exact byte locations, every scalar field, storage overlays,
+struct/raw-union/tagged-union values, all address forms, missing bindings, zero
+global initialization, null routine arguments, and poisoned native outputs.
+Run both sides with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-constant-initializer-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-constant-initializer-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-constant-initializer-reds-test.exe `
+    tools\self_hosting\tests\wire-constant-initializer-reds-test.reds
+build\self-hosting\wire-constant-initializer-reds-test.exe
+```
 
 `#inline` fragments are valid only when their target and ABI equal the message
 header. With the current source syntax they are conservatively modeled as an

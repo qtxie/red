@@ -3,9 +3,9 @@
 Status: implementation in progress. The draft schema generator, dual-language
 constants, compiler-core ownership gate, checked common-container readers, and
 independent RSCF, data-layout, string, file, checksum, source-location, type/
-aggregate-layout, and RSDG diagnostic verifiers now have executable coverage.
-The protocol remains
-unfrozen until
+aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
+constant/global-initializer, and RSDG diagnostic verifiers now have executable
+coverage. The protocol remains unfrozen until
 the remaining Windows x64 feature blockers and message-level semantic fixtures
 satisfy the Phase 1 exit criteria.
 
@@ -115,13 +115,18 @@ tagged-union layouts are also checked independently, including forward pointer
 recursion and topologically ordered by-value aggregate dependencies. Module
 roles, executable/DLL identity, lifecycle function references, glue shape, and
 RSCG multi-object symbol provenance are now checked independently as well.
+Function signatures and definitions, symbol/import/export identity, the
+topologically ordered constant graph, symbolic address expressions, named
+constant bindings, mutable global storage, and zero/explicit initializers are
+checked independently too.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every
 record to one nonzero routine status, and represents source/function/instruction
 context with explicit presence bits. These are protocol prerequisites only;
 they do not invoke the legacy emitter or constitute a partial backend execution
-path.
+path. They also do not produce direct code bytes; frontend RSIR production and
+native RSCG generation remain later work.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
 Its test reads `system/tests/run-all.r` as data and rejects any unclassified

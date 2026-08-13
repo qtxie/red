@@ -146,24 +146,26 @@ compiler-backend-feature-spec: [
 		]
 
 		constants-globals-initializers [
-			status blocked
+			status specified
 			owners [frontend rsir codegen rscg]
 			wire [
-				RECORD/RSIR_CONSTANT RECORD/RSIR_CONSTANT_PART RECORD/RSIR_GLOBAL
-				OPCODE/CONSTANT OPCODE/COPY
+				RECORD/RSIR_CONSTANT RECORD/RSIR_CONSTANT_PART
+				RECORD/RSIR_CONSTANT_BINDING RECORD/RSIR_GLOBAL
+				CONSTANT_KIND/ALL_VALUES CONSTANT_PART_KIND/ALL_VALUES
+				CONSTANT_FLAG/ALL_VALUES CONSTANT_PART_FLAG/ALL_VALUES
+				GLOBAL_STORAGE_CLASS/ALL_VALUES GLOBAL_FLAG/ALL_VALUES
+				CONSTANT_INITIALIZER_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-constant-initializer-test.red"
+				"tools/self_hosting/tests/wire-constant-initializer-reds-test.reds"
 				"system/tests/source/units/byte-test.reds"
 				"system/tests/source/units/fixed-int-test.reds"
 				"system/tests/source/units/float-test.reds"
 				"system/tests/source/units/float32-test.reds"
 				"system/tests/source/units/int64-test.reds"
 			]
-			blockers [
-				"add constant-kind and constant-part-kind enums"
-				"define global, constant, and part flags plus symbolic addend encoding"
-				"define cycle, overlap, padding, and exact-type initializer rules"
-			]
+			blockers []
 		]
 
 		symbols-imports-exports [
@@ -213,6 +215,7 @@ compiler-backend-feature-spec: [
 			wire [
 				RECORD/RSIR_VALUE RECORD/RSIR_INSTRUCTION RECORD/RSIR_OPERAND
 				VALUE_DEFINITION/ALL_VALUES OPERAND_KIND/ALL_VALUES
+				OPCODE/CONSTANT OPCODE/COPY
 				OPCODE/CONVERT OPCODE/BITCAST
 				OPCODE/ADD OPCODE/SUBTRACT OPCODE/MULTIPLY
 				OPCODE/DIVIDE OPCODE/REMAINDER OPCODE/MODULO

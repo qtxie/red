@@ -40,7 +40,7 @@ foreach [name value] generator/constants compiler-wire-schema-spec [
 assert compiler-wire-schema/WIRE_HEADER_SIZE = 64 "wrong common header size"
 assert compiler-wire-schema/WIRE_DIRECTORY_SIZE = 32 "wrong directory size"
 assert compiler-wire-schema/WIRE_MAGIC_RSIR = 1380537170 "wrong RSIR magic encoding"
-assert compiler-wire-schema/WIRE_RSIR_REQUIRED_SECTION_COUNT = 29
+assert compiler-wire-schema/WIRE_RSIR_REQUIRED_SECTION_COUNT = 30
 	"wrong RSIR required section count"
 assert compiler-wire-schema/WIRE_RSCG_REQUIRED_SECTION_COUNT = 16
 	"wrong RSCG required section count"
@@ -48,7 +48,7 @@ assert compiler-wire-schema/WIRE_RSCG_KNOWN_SECTION_COUNT = 17
 	"wrong RSCG known section count"
 assert compiler-wire-schema/WIRE_RSCF_MINIMUM_SIZE = 160
 	"wrong minimum RSCF size"
-assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1056
+assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1088
 	"wrong minimum RSIR size"
 assert compiler-wire-schema/WIRE_RSCG_MINIMUM_SIZE = 640
 	"wrong minimum RSCG size"
@@ -86,6 +86,14 @@ assert compiler-wire-schema/WIRE_DEBUG_TYPE_CODE_AGGREGATE = 100
 	"runtime aggregate debug type code changed"
 assert compiler-wire-schema/WIRE_FUNCTION_SIGNATURE_ERROR_BAD_LOCAL_COVERAGE = 54
 	"function/signature error enum changed"
+assert compiler-wire-schema/WIRE_CONSTANT_KIND_ADDRESS = 5
+	"constant kind enum changed"
+assert compiler-wire-schema/WIRE_CONSTANT_PART_KIND_ABSOLUTE_ADDRESS = 4
+	"constant part kind enum changed"
+assert compiler-wire-schema/WIRE_CONSTANT_INITIALIZER_ERROR_NONZERO_PART_PLACEHOLDER = 66
+	"constant/initializer error enum changed"
+assert compiler-wire-schema/WIRE_RSIR_CONSTANT_BINDING_SIZE = 8
+	"constant binding record size changed"
 assert none? in compiler-wire-schema 'WIRE_FUNCTION_FLAG_RED_INTERNAL
 	"legacy frontend red-internal state leaked into the wire ABI"
 assert compiler-wire-schema/WIRE_RSIR_TYPE_SIZE = 40
@@ -110,7 +118,7 @@ assert compiler-wire-schema/WIRE_RSCG_SECTION_MODULES_CARDINALITY =
 assert compiler-wire-schema/WIRE_RSDG_SECTION_DIAGNOSTICS_CARDINALITY =
 	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
 	"RSDG diagnostics must be nonempty"
-assert compiler-wire-schema/profiles/RSIR/required-count = 29
+assert compiler-wire-schema/profiles/RSIR/required-count = 30
 	"generated Red RSIR profile is stale"
 assert compiler-wire-schema/profiles/RSCG/known-count = 17
 	"generated Red RSCG profile is stale"

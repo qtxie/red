@@ -34,7 +34,7 @@ compiler-wire-symbol-linkage: context [
 		'type                 schema/WIRE_RSIR_GLOBAL_TYPE_OFFSET
 		'initializer-constant schema/WIRE_RSIR_GLOBAL_INITIALIZER_CONSTANT_OFFSET
 		'alignment            schema/WIRE_RSIR_GLOBAL_ALIGNMENT_OFFSET
-		'section-class        schema/WIRE_RSIR_GLOBAL_SECTION_CLASS_OFFSET
+		'storage-class        schema/WIRE_RSIR_GLOBAL_STORAGE_CLASS_OFFSET
 		'flags                schema/WIRE_RSIR_GLOBAL_FLAGS_OFFSET
 		'source-location      schema/WIRE_RSIR_GLOBAL_SOURCE_LOCATION_OFFSET
 		'reserved             schema/WIRE_RSIR_GLOBAL_RESERVED_OFFSET

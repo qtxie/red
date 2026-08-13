@@ -130,13 +130,19 @@ compiler-backend-feature-spec: [
 		]
 
 		module-lifecycle [
-			status blocked
-			owners [frontend rsir rscg linker]
-			wire [RECORD/RSIR_MODULE]
-			tests ["system/tests/source/units/x64-image-info-smoke.reds"]
-			blockers [
-				"define module flags and lifecycle requirements for exe, DLL, runtime, user, and glue modules"
+			status specified
+			owners [frontend rsir codegen rscg linker]
+			wire [
+				RECORD/RSIR_MODULE RECORD/RSCG_MODULE
+				MODULE_KIND/ALL_VALUES IMAGE_KIND/ALL_VALUES
+				MODULE_LIFECYCLE_ERROR/ALL_VALUES
 			]
+			tests [
+				"tools/self_hosting/tests/wire-module-lifecycle-test.red"
+				"tools/self_hosting/tests/wire-module-lifecycle-reds-test.reds"
+				"system/tests/source/units/x64-image-info-smoke.reds"
+			]
+			blockers []
 		]
 
 		constants-globals-initializers [

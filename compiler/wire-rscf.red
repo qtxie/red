@@ -13,7 +13,6 @@ compiler-wire-rscf: context [
 		schema/WIRE_CONFIG_FLAG_DEBUG
 		+ schema/WIRE_CONFIG_FLAG_PIC
 		+ schema/WIRE_CONFIG_FLAG_DETERMINISTIC
-		+ schema/WIRE_CONFIG_FLAG_RUNTIME_MODULE
 
 	config-fields: reduce [
 		'optimization-level    schema/WIRE_RSCF_CONFIG_OPTIMIZATION_LEVEL_OFFSET

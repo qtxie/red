@@ -112,8 +112,12 @@ UTF-8 string tables, file checksums, source-location ordering, and structured
 RSDG failures now have independent Red and Red/System verifiers with shared
 malformed corpora. Canonical representation types and natural struct/raw-union/
 tagged-union layouts are also checked independently, including forward pointer
-recursion and topologically ordered by-value aggregate dependencies. RSDG
-preserves primary/note producer order, binds every
+recursion and topologically ordered by-value aggregate dependencies. Module
+roles, executable/DLL identity, lifecycle function references, glue shape, and
+RSCG multi-object symbol provenance are now checked independently as well.
+Lifecycle fields declare module-owned functions, while explicit calls in the
+glue function remain the sole authority for execution order. RSDG preserves
+primary/note producer order, binds every
 record to one nonzero routine status, and represents source/function/instruction
 context with explicit presence bits. These are protocol prerequisites only;
 they do not invoke the legacy emitter or constitute a partial backend execution
@@ -158,6 +162,9 @@ Tests:
 - independent type/layout verifiers agree on canonical type domains, kind-
   specific detail fields, GC kinds, field ownership/order, and exact Windows x64
   aggregate layout without consulting emitter state;
+- independent module-lifecycle verifiers agree on module/image domains,
+  lifecycle reference bounds, glue shape, RSCG symbol provenance, and exact
+  error locations without synthesizing startup calls;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.
@@ -185,7 +192,8 @@ Deliverables:
 
 Tests:
 
-- a bridge smoke backend consumes a minimal RSIR and returns a valid empty RSCG;
+- a bridge smoke backend consumes a minimal RSIR and returns a valid no-code
+  RSCG containing the required module record;
 - every malformed phase-1 fixture produces a stable status and bounded RSDG;
 - aliased inputs/outputs and nonzero output heads are rejected;
 - repeated calls under forced Red GC do not retain or corrupt series pointers;
@@ -356,7 +364,8 @@ Deliverables:
   version-locked resource selected by the full cache key;
 - replace the current open global-code frame with explicit runtime-init,
   user-init, finalizer, and startup-glue functions; the glue RSIR module owns the
-  final executable/DLL entry symbol and preserves initialization order;
+  final executable or runtime-enabled DLL entry symbol and preserves
+  initialization order;
 - keep program-specific Redbin boot payload and `red/sys-global` code/data in a
   generated user or glue object, outside the shared runtime cache;
 - merge runtime and user objects at compile time and preserve all runtime magic

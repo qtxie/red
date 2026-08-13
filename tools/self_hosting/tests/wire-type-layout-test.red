@@ -14,7 +14,7 @@ build-type-layout-message: func [
 ][
 	payloads: make map! 32
 	put payloads schema/WIRE_RSIR_SECTION_MODULE
-		fixture-writer/words [1 0 0 0 0 0 0 0]
+		fixture-writer/words [1 2 1 0 0 0 0 0]
 	put payloads schema/WIRE_RSIR_SECTION_DATA_LAYOUT data-layout
 	put payloads schema/WIRE_RSIR_SECTION_STRINGS string-records
 	put payloads schema/WIRE_RSIR_SECTION_STRING_DATA string-data

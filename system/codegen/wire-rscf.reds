@@ -32,7 +32,6 @@ wire-rscf-reader: context [
 		WIRE_CONFIG_FLAG_DEBUG
 		+ WIRE_CONFIG_FLAG_PIC
 		+ WIRE_CONFIG_FLAG_DETERMINISTIC
-		+ WIRE_CONFIG_FLAG_RUNTIME_MODULE
 
 	set-error: func [
 		result [wire-rscf-result!]

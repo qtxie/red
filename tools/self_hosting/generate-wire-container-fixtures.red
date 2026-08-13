@@ -16,9 +16,9 @@ append-binary: func [output [string!] name [word!] data [binary!]][
 positive: reduce [
 	reduce ['RSCF schema/WIRE_MAGIC_RSCF rscf 1]
 	reduce ['RSIR schema/WIRE_MAGIC_RSIR rsir 29]
-	reduce ['RSCG schema/WIRE_MAGIC_RSCG rscg 15]
+	reduce ['RSCG schema/WIRE_MAGIC_RSCG rscg 16]
 	reduce ['RSDG schema/WIRE_MAGIC_RSDG rsdg 3]
-	reduce ['RSCG-OPTIONAL schema/WIRE_MAGIC_RSCG rscg-optional 16]
+	reduce ['RSCG-OPTIONAL schema/WIRE_MAGIC_RSCG rscg-optional 17]
 	reduce ['RSCF-UNKNOWN-OPTIONAL schema/WIRE_MAGIC_RSCF rscf-unknown-optional 2]
 ]
 

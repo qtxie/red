@@ -42,15 +42,15 @@ assert compiler-wire-schema/WIRE_DIRECTORY_SIZE = 32 "wrong directory size"
 assert compiler-wire-schema/WIRE_MAGIC_RSIR = 1380537170 "wrong RSIR magic encoding"
 assert compiler-wire-schema/WIRE_RSIR_REQUIRED_SECTION_COUNT = 29
 	"wrong RSIR required section count"
-assert compiler-wire-schema/WIRE_RSCG_REQUIRED_SECTION_COUNT = 15
+assert compiler-wire-schema/WIRE_RSCG_REQUIRED_SECTION_COUNT = 16
 	"wrong RSCG required section count"
-assert compiler-wire-schema/WIRE_RSCG_KNOWN_SECTION_COUNT = 16
+assert compiler-wire-schema/WIRE_RSCG_KNOWN_SECTION_COUNT = 17
 	"wrong RSCG known section count"
 assert compiler-wire-schema/WIRE_RSCF_MINIMUM_SIZE = 160
 	"wrong minimum RSCF size"
 assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1056
 	"wrong minimum RSIR size"
-assert compiler-wire-schema/WIRE_RSCG_MINIMUM_SIZE = 576
+assert compiler-wire-schema/WIRE_RSCG_MINIMUM_SIZE = 640
 	"wrong minimum RSCG size"
 assert compiler-wire-schema/WIRE_RSDG_MINIMUM_SIZE = 212
 	"wrong minimum RSDG size"
@@ -76,6 +76,12 @@ assert compiler-wire-schema/WIRE_TYPE_FLAG_C_STRING = 4
 	"type flag enum changed"
 assert compiler-wire-schema/WIRE_TYPE_LAYOUT_ERROR_NONZERO_RESERVED = 26
 	"type-layout error enum changed"
+assert compiler-wire-schema/WIRE_MODULE_KIND_GLUE = 4
+	"module-kind enum changed"
+assert compiler-wire-schema/WIRE_IMAGE_KIND_DYNAMIC_LIBRARY = 2
+	"image-kind enum changed"
+assert compiler-wire-schema/WIRE_MODULE_LIFECYCLE_ERROR_LIFECYCLE_SYMBOL_OWNER = 22
+	"module-lifecycle error enum changed"
 assert compiler-wire-schema/WIRE_RSIR_TYPE_SIZE = 40
 	"type record size changed"
 assert compiler-wire-schema/WIRE_RSIR_TYPE_RESERVED_0_OFFSET = 16
@@ -92,17 +98,20 @@ assert none? in compiler-wire-schema 'WIRE_TYPE_FLAG_NOMINAL
 	"source alias identity leaked into representation flags"
 assert compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_REQUIRED = 0
 	"RSCG unwind section must be optional"
+assert compiler-wire-schema/WIRE_RSCG_SECTION_MODULES_CARDINALITY =
+	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
+	"RSCG modules must be nonempty"
 assert compiler-wire-schema/WIRE_RSDG_SECTION_DIAGNOSTICS_CARDINALITY =
 	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
 	"RSDG diagnostics must be nonempty"
 assert compiler-wire-schema/profiles/RSIR/required-count = 29
 	"generated Red RSIR profile is stale"
-assert compiler-wire-schema/profiles/RSCG/known-count = 16
+assert compiler-wire-schema/profiles/RSCG/known-count = 17
 	"generated Red RSCG profile is stale"
 assert compiler-wire-schema/profiles/RSCG/record-sizes/15 =
 	compiler-wire-schema/WIRE_RSCG_SECTION_GC_FRAMES_RECORD_SIZE
 	"generated Red required profile record size disagrees with constants"
-assert compiler-wire-schema/profiles/RSCG/record-sizes/16 =
+assert compiler-wire-schema/profiles/RSCG/record-sizes/17 =
 	compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_RECORD_SIZE
 	"generated Red profile record size disagrees with constants"
 assert compiler-wire-schema/profiles/RSDG/cardinalities/3 =

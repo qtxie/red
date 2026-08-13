@@ -17,11 +17,13 @@ build-string-message: func [
 	case [
 		magic = schema/WIRE_MAGIC_RSIR [
 			put payloads schema/WIRE_RSIR_SECTION_MODULE
-				fixture-writer/words [1 0 0 0 0 0 0 0]
+				fixture-writer/words [0 2 1 0 0 0 0 0]
 			put payloads schema/WIRE_RSIR_SECTION_DATA_LAYOUT data-layout
 		]
 		magic = schema/WIRE_MAGIC_RSCG [
 			put payloads schema/WIRE_RSCG_SECTION_DATA_LAYOUT data-layout
+			put payloads schema/WIRE_RSCG_SECTION_MODULES
+				fixture-writer/words [0 2 1 0 0 0 0 0]
 		]
 		magic = schema/WIRE_MAGIC_RSDG [
 			put payloads schema/WIRE_RSDG_SECTION_DIAGNOSTICS

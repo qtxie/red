@@ -150,11 +150,11 @@ overlap or move backwards. Every byte between the directory and payloads,
 between payloads, or after the final payload is zero padding.
 
 In v1.0, all 29 listed RSIR sections are required even when empty. RSCF requires
-its config section. RSCG requires kinds 1 through 15; kind 16
-`unwind-functions` is known optional and carries the OPTIONAL flag when present.
-RSDG requires all three listed sections to be nonempty, including at least one
-string, one byte of string data, and one diagnostic record. Its smallest valid
-v1 message is therefore 212 bytes.
+its config section. RSCG requires kinds 1 through 16, including a nonempty
+`modules` table; kind 17 `unwind-functions` is known optional and carries the
+OPTIONAL flag when present. RSDG requires all three listed sections to be
+nonempty, including at least one string, one byte of string data, and one
+diagnostic record. Its smallest valid v1 message is therefore 212 bytes.
 
 A major-version mismatch is fatal. A reader may accept an older or equal minor
 version only when it understands all required sections and flags. Producers
@@ -172,7 +172,7 @@ full verifier. This layer validates container structure, not RSIR graph/type
 semantics.
 
 The Red corpus builds and pins minimal RSCF, RSIR, RSCG, and RSDG byte streams,
-two forward-compatibility positives, 38 directed malformed cases, and every
+two forward-compatibility positives, 39 directed malformed cases, and every
 proper truncation of the four core messages. Its generated Red/System test
 embeds exactly those bytes and compares error code, byte offset, and section
 ordinal from the independent native verifier. Run both sides with:
@@ -198,7 +198,7 @@ RSCF has exactly one required `config` section containing one 64-byte record:
 | Word | Field |
 | ---: | --- |
 | 0 | optimization level |
-| 1 | flags: debug, PIC, deterministic, runtime module |
+| 1 | flags: debug, PIC, deterministic |
 | 2 | code model |
 | 3 | relocation model |
 | 4 | debug format |
@@ -218,7 +218,7 @@ The first v1 backend accepts only this target configuration:
 
 - header tuple `X86_64`, `WIN64`, `LITTLE`, pointer size 8;
 - optimization level `O0`, `O1`, or `O2`;
-- the four defined config flag bits and no others;
+- the three defined config flag bits and no others;
 - code model `SMALL`, relocation model `STATIC` or `PIC`, and debug format
   `NONE` or `RED`;
 - CPU baseline `X86_64_BASE`.
@@ -227,11 +227,12 @@ The config feature masks must equal the header feature masks. Both masks are
 zero in v1 until individual x86-64 feature bits and their legality rules are
 specified; a matching nonzero pair is therefore unsupported rather than
 silently ignored. `DEBUG` is set exactly when the debug format is `RED`, and
-`PIC` is set exactly when the relocation model is `PIC`. `DETERMINISTIC` and
-`RUNTIME_MODULE` are accepted independently. Worker count is 1, deterministic
-seed is 0, and all four reserved words are zero.
+`PIC` is set exactly when the relocation model is `PIC`. `DETERMINISTIC` is the
+only remaining independent config flag. Worker count is 1, deterministic seed
+is 0, and all four reserved words are zero. Runtime-module identity is carried
+by the RSIR/RSCG module records, not by a configuration bit.
 
-`max-output-bytes` is at least `WIRE_RSCG_MINIMUM_SIZE` (currently 576).
+`max-output-bytes` is at least `WIRE_RSCG_MINIMUM_SIZE` (currently 640).
 `max-diagnostic-bytes` is either zero, which disables a detailed RSDG result,
 or at least `WIRE_RSDG_MINIMUM_SIZE` (currently 212). These minima are derived
 from the schema profiles by the generator rather than duplicated in either
@@ -434,9 +435,18 @@ matrix is complete. All listed records consist only of 32-bit words.
 
 The important record shapes are:
 
-- `module`: name string, flags, initializer function, finalizer function, entry
-  function, initialization priority, source location, reserved. Runtime, user,
-  and startup-glue modules therefore expose composable lifecycle functions.
+- `module`: optional name string, module kind, image kind, initializer function,
+  finalizer function, entry function, source location, and zero flags. Module
+  kind is one of `RUNTIME`, `USER`, `SUPPORT`, or `GLUE`; image kind is one of
+  `EXECUTABLE` or `DYNAMIC_LIBRARY`. A zero function ID means absent. RSIR has
+  exactly one module record. A non-glue module must not have an entry function;
+  a glue module must have exactly one entry and must not also declare an
+  initializer or finalizer. A non-glue initializer and finalizer may each be
+  absent or present. Anonymous modules use name ID zero; nonzero names must be
+  nonempty canonical strings. There is no implicit initialization priority.
+  Lifecycle fields declare module-owned functions for validation and object
+  discovery; the startup glue's explicit call graph is the authority for actual
+  initialization and finalization order.
 - `types`: kind, flags, size, alignment, reserved, kind-specific detail ID,
   reserved, first field, field count, GC kind. Signedness is a type flag;
   source names and aliases are not part of a representation record.
@@ -571,6 +581,46 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-type-layout-reds-test.exe
 ```
 
+### Module lifecycle and object provenance
+
+`compiler/wire-module-lifecycle.red` and
+`system/codegen/wire-module-lifecycle.reds` independently validate RSIR module
+metadata and RSCG multi-object provenance. RSIR contains exactly one module and
+its lifecycle IDs refer to its function table. Each codegen result starts with
+one corresponding RSCG module; the merger concatenates those records in input
+order, remaps lifecycle symbol IDs, and sets every symbol's one-based
+`origin-module`. A merged object may contain several modules but at most one
+`GLUE` module. The final-image check happens only after all inputs are known:
+an executable requires exactly one glue entry, while a DLL may have no entry or
+one entry owned by its sole glue module. Standalone runtime, user, and support
+objects therefore remain valid before final-image validation.
+
+All modules in one RSCG use the same image kind. Non-glue modules cannot own an
+entry symbol. A glue module owns exactly one entry and no initializer or
+finalizer. Non-glue initializer and finalizer fields are independent. RSCG
+lifecycle symbols must be owned by the module that names them. The later
+function/symbol contract additionally proves that these IDs denote defined
+functions with the required linkage and signatures; this verifier deliberately
+does not duplicate those checks.
+
+Both implementations validate in the same order and publish no views on
+failure: arguments and container, canonical strings and source metadata,
+signed scalar decoding, per-module domains and reference bounds, lifecycle
+shape and common image kind, then RSCG symbol origins and lifecycle ownership.
+The shared corpus has five valid messages and 24 directed malformed messages,
+covering every module-lifecycle error code and exact error location. Run both
+sides with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-module-lifecycle-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-module-lifecycle-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-module-lifecycle-reds-test.exe `
+    tools\self_hosting\tests\wire-module-lifecycle-reds-test.reds
+build\self-hosting\wire-module-lifecycle-reds-test.exe
+```
+
 `#inline` fragments are valid only when their target and ABI equal the message
 header. With the current source syntax they are conservatively modeled as an
 opaque memory/control barrier with caller-clobbered registers, unchanged stack
@@ -626,7 +676,8 @@ merged with other RSCG objects and then adapted to the current Red linker.
 | 13 | debug-lines | 20 | function-relative code positions |
 | 14 | debug-parameters | 16 | runtime argument type metadata |
 | 15 | gc-frames | 24 | final frame bitmap location and flags |
-| 16 | unwind-functions | 24 | optional platform unwind record ranges |
+| 16 | modules | 32 | input-module lifecycle and symbol ownership |
+| 17 | unwind-functions | 24 | optional platform unwind record ranges |
 
 Record shapes:
 
@@ -637,6 +688,15 @@ Record shapes:
 - `symbols`: name string, kind, binding, visibility, output section, section
   offset, size, alignment, flags, origin-module ID. Section zero denotes an
   absolute or unresolved symbol as determined by flags.
+- `modules`: optional name string, module kind, image kind, initializer/finalizer/
+  entry symbol IDs, zero flags, and zero reserved word. The section is required
+  and nonempty. RSCG contains one record for every merged RSIR/object input in
+  merge order; symbol `origin-module` and lifecycle symbol IDs are one-based
+  references into this table. All module image kinds must agree, and at most one
+  `GLUE` module may own an entry. After standalone objects have been merged, an
+  executable requires that glue entry and the adapter must not fall back to the
+  legacy start-of-CODE default. An entryless DLL remains valid; when a DLL entry
+  exists, the sole glue module owns it.
 - `relocations`: source section, source offset, relocation kind, target symbol,
   raw-addend-lo, raw-addend-hi, encoded width, flags.
 - `functions`: symbol, code section, code offset, code size, frame size, flags,
@@ -678,7 +738,10 @@ Existing startup generation opens a target-specific root frame around runtime
 and user global code. Cached modules cannot preserve an open byte range. Runtime
 and user global code are therefore lowered to explicit lifecycle functions, and
 the Red frontend emits a small startup-glue RSIR module that calls them in the
-declared order and owns the final `***_start`/DLL entry symbol.
+required order and owns the final `***_start` or runtime-enabled DLL entry
+symbol. Lifecycle fields make those functions discoverable and auditable;
+neither the merger nor linker derives hidden calls or ordering from module-table
+position.
 Program-specific Redbin boot payload and `red/sys-global` data/code belong to a
 generated user or glue object and are never baked into the shared runtime cache.
 

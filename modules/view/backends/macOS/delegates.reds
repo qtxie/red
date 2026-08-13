@@ -19,6 +19,16 @@ is-flipped: func [
 	true
 ]
 
+;-- Faces whose views take the keyboard themselves, instead of letting a native control handle it.
+;-- `text` is excluded on purpose: labels are RedBase views too, but must never take the focus away
+;-- from the faces above (the GUI console reads its input from a scrollable `rich-text`).
+base-keyboard-type?: func [
+	type	[Cocoa-handle!]							;-- IVAR_RED_DATA, set by init-base-face
+	return: [logic!]
+][
+	any [type = base type = panel type = rich-text]
+]
+
 accepts-first-responder: func [
 	[cdecl]
 	self	[Cocoa-handle!]
@@ -29,7 +39,7 @@ accepts-first-responder: func [
 ][
 	type: 0
 	object_getInstanceVariable self IVAR_RED_DATA :type
-	type = base
+	base-keyboard-type? type
 ]
 
 become-first-responder: func [
@@ -942,7 +952,7 @@ win-send-event: func [
 		type = NSKeyUp [
 			responder: objc_msgSend [self sel_getUid "firstResponder"]
 			object_getInstanceVariable responder IVAR_RED_DATA :view-type
-			if view-type = base [
+			if base-keyboard-type? view-type [
 				on-key-up responder 0 event
 				send?: no
 			]
@@ -951,7 +961,7 @@ win-send-event: func [
 			find?: yes
 			responder: objc_msgSend [self sel_getUid "firstResponder"]
 			object_getInstanceVariable responder IVAR_RED_DATA :view-type
-			either view-type <> base [
+			either not base-keyboard-type? view-type [
 				unless red-face? responder [
 					responder: objc_getAssociatedObject self RedFieldEditorKey
 					unless red-face? responder [find?: no]

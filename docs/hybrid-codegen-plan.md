@@ -118,7 +118,10 @@ RSCG multi-object symbol provenance are now checked independently as well.
 Function signatures and definitions, symbol/import/export identity, the
 topologically ordered constant graph, symbolic address expressions, named
 constant bindings, mutable global storage, and zero/explicit initializers are
-checked independently too.
+checked independently too. Scalar values, deterministic instruction/operand
+ownership, conversions, arithmetic, comparisons, shifts, checked overflow,
+managed-handle boundaries, and exact scalar effects are now specified for the
+same independent verification path.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every

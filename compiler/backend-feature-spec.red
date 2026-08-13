@@ -210,11 +210,13 @@ compiler-backend-feature-spec: [
 		]
 
 		scalar-values-and-operations [
-			status blocked
+			status specified
 			owners [rsir codegen]
 			wire [
 				RECORD/RSIR_VALUE RECORD/RSIR_INSTRUCTION RECORD/RSIR_OPERAND
-				VALUE_DEFINITION/ALL_VALUES OPERAND_KIND/ALL_VALUES
+				VALUE_DEFINITION/ALL_VALUES VALUE_FLAG/ALL_VALUES
+				OPERAND_KIND/ALL_VALUES OPERAND_FLAG/ALL_VALUES
+				INSTRUCTION_FLAG/ALL_VALUES SCALAR_OPERATION_ERROR/ALL_VALUES
 				OPCODE/CONSTANT OPCODE/COPY
 				OPCODE/CONVERT OPCODE/BITCAST
 				OPCODE/ADD OPCODE/SUBTRACT OPCODE/MULTIPLY
@@ -225,6 +227,8 @@ compiler-backend-feature-spec: [
 				COMPARE_KIND/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-scalar-operation-test.red"
+				"tools/self_hosting/tests/wire-scalar-operation-reds-test.reds"
 				"system/tests/source/units/cast-test.reds"
 				"system/tests/source/units/integer-test.reds"
 				"system/tests/source/units/logic-test.reds"
@@ -233,10 +237,7 @@ compiler-backend-feature-spec: [
 				"system/tests/source/units/not-test.reds"
 				"system/tests/source/units/overflow-test.reds"
 			]
-			blockers [
-				"define instruction, value, and operand flag masks and every subopcode domain"
-				"freeze overflow, signedness, shift-count, float, and conversion type tables"
-			]
+			blockers []
 		]
 
 		memory-and-aggregate-operations [

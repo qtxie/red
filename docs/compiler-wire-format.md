@@ -909,6 +909,153 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-constant-initializer-reds-test.exe
 ```
 
+### Values and scalar operations
+
+`compiler/wire-scalar-operation.red` and
+`system/codegen/wire-scalar-operation.reds` independently validate the three
+tables that form the common instruction substrate, then interpret only scalar
+opcodes 1 through 20. Opcodes 21 through 56 receive the common structural
+checks here but remain semantically owned by their later feature verifiers.
+This layer constructs no MIR, invokes no emitter, and emits no code bytes.
+
+All three section flag words are zero. `VALUE_FLAG` and `OPERAND_FLAG` contain
+only `NONE`. The only scalar instruction flag is `CHECKED`; all other bits are
+invalid. Every scalar operand auxiliary word is zero. A scalar instruction has
+alias `(NONE, 0)`. These closed domains prevent later consumers from assigning
+private meanings to reserved words.
+
+The instruction table is partitioned by blocks in block-table order. An empty
+block uses `(first-instruction, instruction-count) = (0, 0)`; a nonempty block
+starts at the next unowned instruction. Every instruction points back to that
+block, and the block ranges cover the table exactly. Operand ranges similarly
+partition the operand table in instruction order. Empty result and operand
+ranges are always `(0, 0)`; every nonempty range is contiguous and in bounds.
+
+Values are grouped by function in function-table order. A function first owns
+one `PARAMETER` value for each signature parameter, in parameter/local ordinal
+order. Its definition ID is the corresponding function-owned `ARGUMENT` local,
+not a signature-parameter ID, and its result ordinal is zero. Those values are
+followed by every instruction result in block/instruction/result order. An
+instruction result value names that instruction and its zero-based result
+ordinal. Types and function IDs agree in both directions, and the function
+groups cover the value table exactly. This deterministic ordering avoids
+adding redundant value ranges to function records.
+
+Common operands are references, never embedded host values. `VALUE`, `BLOCK`,
+and `LOCAL` references belong to the instruction's function. `CONSTANT`,
+`SYMBOL`, `TYPE`, and `FUNCTION` name their respective module tables;
+`TARGET_FRAGMENT` names that required section. Scalar operations accept only
+`VALUE` operands, except `CONSTANT`, whose sole operand is `CONSTANT`.
+
+The scalar shapes and type rules are:
+
+| Opcode | Operands | Result | Type rule |
+| --- | ---: | ---: | --- |
+| `CONSTANT` | 1 | 1 | constant and result have the exact same type |
+| `COPY` | 1 | 1 | operand and result have the exact same type |
+| `CONVERT` | 1 | 1 | legal numeric, truth, or address conversion below |
+| `BITCAST` | 1 | 1 | legal representation-preserving conversion below |
+| `ADD`, `SUBTRACT` | 2 | 1 or 2 | integer/float arithmetic, or pointer-left address arithmetic |
+| `MULTIPLY`, `DIVIDE` | 2 | 1 or 2 | matching integer representations or exact matching floats |
+| `REMAINDER`, `MODULO` | 2 | 1 or 2 | matching integer representations only |
+| `NEGATE` | 1 | 1 | integer or float |
+| `BIT_NOT` | 1 | 1 | integer |
+| `LOGIC_NOT` | 1 | 1 | exact canonical `LOGIC` |
+| shifts | 2 | 1 or 2 | integer value plus signed i32 count |
+| `BIT_AND`, `BIT_OR`, `BIT_XOR` | 2 | 1 | matching integers, or exact `LOGIC` |
+| `COMPARE` | 2 | 1 | compatible integer, float, address, or logic pair; result is `LOGIC` |
+
+Integer compatibility means equal size and signedness. GC kind does not change
+the numeric representation: a `HANDLE` may be paired with its ordinary signed
+i32 representation, but every arithmetic, bitwise, shift, or negate result is
+the corresponding `GC_KIND/NONE` integer. No operation manufactures a handle.
+Ordinary integer operands otherwise use one canonical representation type.
+Floating operands and results have one exact type, f32 or f64; implicit source
+coercions are serialized as explicit `CONVERT` instructions.
+
+Canonicality here is the producer-side type-interning invariant defined by the
+type-table contract. The scalar verifiers treat type IDs as representation
+identities after type-layout verification; they do not rescan the table for
+structurally duplicate scalar records.
+
+Pointer arithmetic requires a `POINTER` left operand. With an ordinary integer
+right operand, `ADD` and `SUBTRACT` multiply that integer by the verified
+pointee size. With a `POINTER` right operand they perform raw byte-address
+addition or subtraction without scaling. The result has the exact left pointer
+type. Function addresses are not arithmetic values. Comparisons accept two
+`POINTER` values or two `FUNCTION` values, use unsigned address ordering, and
+return canonical `LOGIC`; crossing those categories requires an explicit
+`BITCAST`. Logic comparisons permit all six
+comparison kinds; `false < true` under its canonical 0/1 representation.
+
+`REMAINDER` follows the dividend sign. `MODULO` is in `[0, abs(divisor))` for
+a nonzero divisor. Integer divide, remainder, and modulo by zero are trapping.
+Signed minimum divided by `-1` has the fixed-width minimum result, while its
+remainder and modulo are zero; a checked form additionally reports overflow.
+Float divide follows IEEE-754 rather than the integer trap rule. Float
+comparisons are ordered: with a NaN, `NOT_EQUAL` is true and every other kind
+is false.
+
+The shift count has the canonical ordinary signed-i32 type. Its effective value
+is the low `log2(bit-width)` bits, so counts are reduced modulo 8, 16, 32, or 64
+for the left representation. `SHIFT_RIGHT` is arithmetic for signed integers
+and logical for unsigned integers. `SHIFT_RIGHT_LOGICAL` always shifts the
+fixed-width bit pattern logically. This semantics is independent of a target's
+native shift masking.
+
+`CONVERT` performs a value conversion and rejects identical source/result type
+IDs. It permits ordinary integer width changes, logic to ordinary integer,
+ordinary integer or address to logic by comparison with zero, signed i32
+to/from f32 or f64, f32 to/from f64, and unequal-width ordinary integer to/from
+pointer or function address. Narrowing truncates low bits; widening uses the
+source integer signedness. Red/System deliberately does not define i64/u64
+to/from float conversion. A pointer/function converted to a narrower integer
+may therefore truncate.
+
+`BITCAST` preserves bits and rejects identical types. It permits changes among
+equal-width ordinary integer signedness, among pointer/function address types,
+between an address and an equal-width ordinary integer, and between signed i32
+and f32 for source `as ... keep`. Those equal-width cases are not also legal
+`CONVERT` forms. `BITCAST` never accepts `LOGIC`, aggregates, unequal widths, or
+a `HANDLE` source/result. Consequently neither conversion opcode can create,
+discard, or disguise a managed handle.
+
+`CHECKED` is valid only on integer `ADD`, `SUBTRACT`, `MULTIPLY`, `DIVIDE`,
+`REMAINDER`, `MODULO`, and `SHIFT_LEFT`. Such an instruction owns two results:
+ordinal zero is the ordinary fixed-width result and ordinal one is canonical
+`LOGIC`, true exactly when the mathematical result is not representable in the
+ordinary result type. Remainder and modulo also report overflow when their
+associated signed division is signed-minimum divided by `-1`. Division by zero
+remains a trap, not a checked result. The
+frontend implements lexical `overflow?` early exit with explicit CFG using
+this second result; the instruction flag carries no hidden control-flow state.
+
+Effects are exact rather than lower bounds. Integer divide, remainder, and
+modulo carry only `MAY_TRAP`. Floating arithmetic, floating comparison, and
+numeric conversions involving float also conservatively carry only
+`MAY_TRAP`, because the source exposes floating-point exception masks and
+status. Every other scalar instruction has zero effects. `MAY_TRAP` does not
+imply a memory alias, so every scalar alias remains `(NONE, 0)`.
+
+Both verifiers first validate the complete scalar representation of all three
+tables, then common references/ownership/ranges, then opcode semantics. They
+stop at the same first error and publish lower plus scalar views only after
+complete success. The shared corpus covers every status code, scalar record
+field, reference domain, ordering rule, opcode family, checked shape, handle
+boundary, pointer rule, conversion class, effect, and poisoned native output.
+Run both implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-scalar-operation-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-scalar-operation-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-scalar-operation-reds-test.exe `
+    tools\self_hosting\tests\wire-scalar-operation-reds-test.reds
+build\self-hosting\wire-scalar-operation-reds-test.exe
+```
+
 `#inline` fragments are valid only when their target and ABI equal the message
 header. With the current source syntax they are conservatively modeled as an
 opaque memory/control barrier with caller-clobbered registers, unchanged stack
@@ -938,7 +1085,8 @@ invariants:
   volatile access, atomic, trap, throw, or safepoint;
 - explicit stack operations are balanced on all ordinary exits, with dynamic
   counts represented by typed values;
-- managed pointer and handle types retain their GC kind through conversions;
+- pointer GC identity changes only through an explicit address conversion;
+  handle GC identity is never created, removed, or disguised by conversion;
 - target fragments match the target/ABI, remain in bounds, and carry the
   conservative effect and clobber contract required by their instruction.
 

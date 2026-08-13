@@ -167,21 +167,21 @@ compiler-backend-feature-spec: [
 		]
 
 		symbols-imports-exports [
-			status blocked
+			status specified
 			owners [frontend rsir rscg adapter linker]
 			wire [
-				RECORD/RSIR_SYMBOL RECORD/IMPORT RECORD/EXPORT
+				RECORD/RSIR_SYMBOL RECORD/RSIR_GLOBAL RECORD/IMPORT RECORD/EXPORT
 				SYMBOL_KIND/ALL_VALUES LINKAGE/ALL_VALUES VISIBILITY/ALL_VALUES
+				SYMBOL_LINKAGE_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-symbol-linkage-test.red"
+				"tools/self_hosting/tests/wire-symbol-linkage-reds-test.reds"
 				"system/tests/source/units/lib-test.reds"
 				"system/tests/source/units/namespace-test.reds"
 				"system/tests/source/units/use-test.reds"
 			]
-			blockers [
-				"define symbol/import/export flags, ownership, duplicate-name, and ordinal rules"
-				"freeze function versus variable import representation and required runtime roles"
-			]
+			blockers []
 		]
 
 		functions-signatures-locals [

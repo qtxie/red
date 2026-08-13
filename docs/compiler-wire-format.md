@@ -456,6 +456,11 @@ The important record shapes are:
   code, source location, reserved.
 - `symbols`: name string, kind, linkage, visibility, type/signature, flags,
   owner symbol, source location.
+- `globals`: symbol, type, initializer constant, alignment, section class,
+  flags, source location, reserved.
+- `imports`: library string, external-name string, local symbol, effective
+  calling convention, flags, source location.
+- `exports`: external-name string, local symbol, ordinal, flags.
 - `constants`: type, kind, flags, data offset, data size, first part, part count,
   auxiliary value. Integer and float bits live in `constant-data`.
 - `constant-parts`: parent constant, byte offset, type, part kind, child constant,
@@ -730,6 +735,96 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
     tools\self_hosting\tests\wire-module-lifecycle-reds-test.reds
 build\self-hosting\wire-module-lifecycle-reds-test.exe
 ```
+
+### Symbols, imports, exports, and definition coverage
+
+`compiler/wire-symbol-linkage.red` and
+`system/codegen/wire-symbol-linkage.reds` independently validate the RSIR
+identity and linkage layer after type, signature, function, and module
+verification. This layer does not generate code and does not assign output
+sections or final addresses. The native verifier is allocation-free and scans
+the sorted tables monotonically; exported-definition lookup is logarithmic.
+
+Symbol IDs are one-based records sorted by `(name-string ID, kind)`. Since the
+string table is canonical, this is also bytewise name order. A fully qualified
+namespace path uses `>` between source components. Names are nonempty. Kinds
+are `FUNCTION`, `GLOBAL`, `CONSTANT`, and `TYPE`. A `TYPE` name may coexist with
+one value name because the source language has separate type and value
+namespaces. Two `TYPE` records with the same name, or any two value-kind records
+with the same name, are duplicates.
+
+Every function symbol names a signature; every other symbol names a non-`VOID`
+canonical type. Symbol flags and `owner-symbol` are zero in v1. The source
+location is optional. Linkage and visibility pairs are exact:
+
+| Linkage | Visibility | Definition/import rule |
+| --- | --- | --- |
+| `LOCAL` | `HIDDEN` | function/global definition required |
+| `INTERNAL` | `HIDDEN` | function/global definition required |
+| `EXTERNAL` | `DEFAULT` | current-module definition or bodyless cross-module declaration |
+| `IMPORT` | `DEFAULT` | exactly one import record and no definition |
+| `WEAK` | `DEFAULT` | current-module definition required |
+
+`CONSTANT` and `TYPE` symbols are always `LOCAL`. Only functions and globals
+may be imports. Function and global definition tables are sorted by symbol ID,
+contain no duplicate symbol, agree with the symbol's signature/type, and never
+define an imported symbol. This contract verifies the identity prefix of each
+global record, its source location, and its reserved word. Constant initializer
+identity, requested alignment, section class, and global flags deliberately
+remain opaque signed-31-bit values until the constants/globals contract freezes
+their domains and layout rules.
+
+Imports are sorted and unique by local symbol ID. Several local symbols may map
+to the same `(library, external-name)` pair, which preserves source aliases.
+Library and external names are nonempty canonical strings. A function import's
+effective convention must equal its signature and must be `RED_SYSTEM`,
+`CDECL`, or `STDCALL`; `SYSCALL` is not a dynamic import convention. A variable
+import uses calling convention zero. Import flags are zero in v1 and the source
+location is optional.
+
+A `SYSCALL` function is a bodyless `EXTERNAL` declaration, never an import and
+never a function definition. Module initializer, finalizer, and entry IDs must
+resolve to strong current-module function definitions; weak and imported
+lifecycle functions are rejected. This is an ownership check only. The precise
+lifecycle ABI and startup call order remain properties of the later glue and
+call contracts.
+
+Exports exist only in a `DYNAMIC_LIBRARY` RSIR module. Records are sorted by
+external-name string ID; external names are nonempty and unique, while one
+symbol may intentionally have several differently named exports. The local
+symbol must be an `EXTERNAL` function or global with a current-module
+definition. RSIR export ordinals and flags are zero: target-specific ordinal
+assignment belongs to the final RSCG merge/linker step. An ordinary exported
+function uses `CDECL` or `STDCALL` plus `CALLBACK`. The runtime module may also
+export a private `RED_SYSTEM` function without `CALLBACK`, matching the current
+`libRedRT` interface.
+
+The `symbols`, `imports`, and `exports` sections carry both `SORTED` and
+`DEDUPLICATED`; the global section has zero flags, like the function section,
+and this layer proves its symbol-ID order and uniqueness. All fields in those
+tables are decoded as signed-31-bit scalars before semantic references are followed. Both verifiers
+stop at the same first error and publish string, file, layout, type, function,
+module, and symbol views only after complete success. The shared corpus has
+eight valid and 95 directed malformed RSIR messages. It covers all 69 status
+codes, every field, exact byte locations, function and variable imports,
+aliases, namespace names, weak definitions, external declarations, syscalls,
+runtime-private and callback exports, lifecycle strength, null arguments, and
+poisoned native outputs. Run both sides with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-symbol-linkage-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-symbol-linkage-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-symbol-linkage-reds-test.exe `
+    tools\self_hosting\tests\wire-symbol-linkage-reds-test.reds
+build\self-hosting\wire-symbol-linkage-reds-test.exe
+```
+
+This verifier consumes RSIR only. Codegen later maps these semantic identities
+to RSCG symbols, imports, and exports; RSCG binding resolution, origin-module
+remapping, relocation ownership, final ordinals, and image-table construction
+remain in the object merger and linker-adapter contracts.
 
 `#inline` fragments are valid only when their target and ABI equal the message
 header. With the current source syntax they are conservatively modeled as an

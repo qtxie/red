@@ -30,6 +30,7 @@ Red/System [
 
 gui-evt: declare red-event!								;-- low-level event value slot
 gui-evt/header: TYPE_EVENT
+active-event-widget: as handle! 0						;-- native widget for the synchronous awake dispatch
 
 modal-loop-type:	0									;-- remanence of last EVT_MOVE or EVT_SIZE
 zoom-distance:	 	0
@@ -52,6 +53,14 @@ evt-motion: context [
 
 char-keys: [
 	1000C400h C0FF0080h E0FFFF7Fh 0000F7FFh 00000000h 3F000000h 1F000080h 00FC7F38h
+]
+
+get-event-widget: func [
+	evt		[red-event!]
+	return:	[handle!]
+][
+	assert active-event-widget <> as handle! 0
+	active-event-widget
 ]
 
 keycode-special: [
@@ -486,7 +495,7 @@ get-event-face: func [
 	evt		[red-event!]
 	return: [red-value!]
 ][
-	as red-value! push-face as handle! evt/msg
+	as red-value! push-face get-event-widget evt
 ]
 
 get-event-window: func [
@@ -497,7 +506,7 @@ get-event-window: func [
 		face   [red-object!]
 ][
 	;; DEBUG: print ["get-event-windows: " evt/type " " evt/msg lf]
-	handle: gtk_widget_get_toplevel as handle! evt/msg
+	handle: gtk_widget_get_toplevel get-event-widget evt
 	as red-value! get-face-obj handle
 ]
 
@@ -535,7 +544,7 @@ get-event-offset: func [
 			pt/header: TYPE_POINT2D
 			pt/x: as float32! 0.0
 			pt/y: as float32! 0.0
-			widget: gtk_widget_get_toplevel as handle! evt/msg
+			widget: gtk_widget_get_toplevel get-event-widget evt
 			move: as window-move! g_object_get_qdata widget move-offset-id
 			if all [move <> null move/ready <> 0][
 				pt/x: as float32! move/x
@@ -550,7 +559,7 @@ get-event-offset: func [
 			offset: as red-pair! stack/push*
 			offset/header: TYPE_PAIR
 
-			widget: as handle! evt/msg
+			widget: get-event-widget evt
 			offset/x: GET-CONTAINER-W(widget)
 			offset/y: GET-CONTAINER-H(widget)
 			if null? GET-PAIR-SIZE(widget) [
@@ -714,7 +723,7 @@ get-event-picked: func [
 			]
 		]
 		EVT_WHEEL [
-			event: as GdkEventScroll! g_object_get_qdata as handle! evt/msg red-event-id
+			event: as GdkEventScroll! g_object_get_qdata get-event-widget evt red-event-id
 			delta: switch event/direction [
 				GDK_SCROLL_UP [1.0]
 				GDK_SCROLL_DOWN [-1.0]
@@ -820,8 +829,8 @@ OS-send-event: func [
 	;-- g_idle_add callback with the event params snapshotted as primitives (widget/type/mods/offset/
 	;-- picked) -- tracked as a follow-up. Native actuation itself is correct in both modes (it also
 	;-- happens on Windows via the pumped WndProc).
-	if (as integer! evt/msg) = 0 [return false]			;-- needs a target face (synthetic extras node)
-	node: resolve-node as integer! evt/msg
+	if evt/msg = 0 [return false]							;-- needs a target face (synthetic extras node)
+	node: resolve-node evt/msg
 	s:	  as series! node/value
 	cell: s/offset										;-- cell 0 = face
 	if TYPE_OF(cell) <> TYPE_OBJECT [return false]
@@ -952,9 +961,10 @@ make-event: func [
 		key	   [integer!]
 		char   [integer!]
 		type   [integer!]
+		previous-widget [handle!]
 ][
 	gui-evt/type:  evt
-	gui-evt/msg:   as byte-ptr! msg
+	gui-evt/msg:   0
 	gui-evt/flags: flags
 
 	;; DEBUG: print ["make-event:  down? " flags and EVT_FLAG_DOWN <> 0 lf]
@@ -1012,12 +1022,15 @@ make-event: func [
 		default	 [0]
 	]
 
+	previous-widget: active-event-widget
+	active-event-widget: msg
 	stack/mark-try-all words/_anon
 	res: as red-word! stack/arguments
 	catch CATCH_ALL_EXCEPTIONS [
 		#call [system/view/awake gui-evt]
 		stack/unwind
 	]
+	active-event-widget: previous-widget
 	stack/adjust-post-try
 	if system/thrown <> 0 [system/thrown: 0]
 	type: TYPE_OF(res)

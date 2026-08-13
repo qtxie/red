@@ -332,6 +332,26 @@ handle-speical-key: func [
 	][yes]
 ]
 
+;-- Faces for which RETURN reports a dedicated event instead of a key event. The
+;-- `enter` global handler in %view.red cannot do that conversion: handlers receive
+;-- the event by value, so its `event/type:` write cannot reach the dispatched event.
+return-key-event: func [
+	self	[Cocoa-handle!]
+	return: [integer!]									;-- 0 when the face takes RETURN as a key
+	/local
+		w		[red-word!]
+		type	[integer!]
+][
+	unless red-face? self [return 0]
+	w: as red-word! (get-face-values self) + FACE_OBJ_TYPE
+	type: symbol/resolve w/symbol
+	case [
+		any [type = field type = drop-down]	[EVT_ENTER]
+		type = button						[EVT_CLICK]
+		true								[0]
+	]
+]
+
 on-key-down: func [
 	[cdecl]
 	self	[Cocoa-handle!]
@@ -341,6 +361,7 @@ on-key-down: func [
 		key		[integer!]
 		chars	[Cocoa-handle!]
 		flags	[integer!]
+		evt		[integer!]
 ][
 	key: as integer! objc_msgSend [event sel_getUid "keyCode"]
 	key: either key >= 80h [0][translate-key key]
@@ -354,9 +375,14 @@ on-key-down: func [
 		][
 			if any [
 				key = 8 key = 9							;-- backspace
-				key = 13								;-- number enter
+				key = RED_VK_RETURN						;-- RETURN and Num Pad Enter
 			][
-				make-event self key or flags EVT_KEY
+				evt: either key = RED_VK_RETURN [return-key-event self][0]
+				either zero? evt [
+					make-event self key or flags EVT_KEY
+				][
+					make-event self flags evt
+				]
 				exit
 			]
 			chars: objc_msgSend [event sel_getUid "characters"]

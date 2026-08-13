@@ -17,19 +17,6 @@ flags-blk/head:		0
 flags-blk/node:		node-handle-of alloc-cells 4
 flags-blk/header:	TYPE_BLOCK
 
-fake-event!: alias struct! [
-	handle	[handle!]
-	face	[red-object! value]
-	type	[integer!]									;-- event type
-	time	[integer!]
-	x		[integer!]
-	y		[integer!]
-]
-
-#if all [OS = 'macOS ABI = 'apple-aarch64] [
-	active-fake-event: declare fake-event!
-]
-
 get-event-window: func [
 	evt		[red-event!]
 	return: [red-value!]
@@ -40,15 +27,8 @@ get-event-window: func [
 get-event-face: func [
 	evt		[red-event!]
 	return: [red-value!]
-	/local
-		msg [fake-event!]
 ][
-	msg: #either all [OS = 'macOS ABI = 'apple-aarch64] [
-		active-fake-event
-	][
-		as fake-event! evt/msg
-	]
-	as red-value! msg/face
+	as red-value! none-value
 ]
 
 get-event-offset: func [
@@ -122,21 +102,30 @@ OS-make-event: func [
 	return: [red-event!]
 	/local
 		event [red-event!]
-		evt	  [fake-event!]
+		node  [node!]
+		s	  [series!]
+		pr	  [red-pair!]
+		iv	  [red-integer!]
 ][
 	event: declare red-event!
-	evt:   #either all [OS = 'macOS ABI = 'apple-aarch64] [
-		active-fake-event
-	][
-		declare fake-event!
-	]
-	
 	event/header: TYPE_EVENT
-	event/flags: flags
+	event/flags: flags or EVT_FLAG_SYNTHETIC
 	set-event-type event name
-	
-	event/msg: #either all [OS = 'macOS ABI = 'apple-aarch64] [0][as byte-ptr! evt]
-	copy-cell as red-value! face as red-value! evt/face
+
+	;-- Keep the test event self-contained and GC-traceable just like `make event!`.
+	node: alloc-cells 4
+	s: as series! node/value
+	copy-cell as cell! face s/offset
+	copy-cell as cell! none-value (s/offset + 1)
+	pr: as red-pair! (s/offset + 2)
+	pr/header: TYPE_PAIR
+	pr/x: 10
+	pr/y: 10
+	iv: as red-integer! (s/offset + 3)
+	iv/header: TYPE_INTEGER
+	iv/value: 1
+	s/tail: s/offset + 4
+	event/msg: node-handle-of node
 	
 	event
 ]

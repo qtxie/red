@@ -2632,7 +2632,7 @@ OS-draw-face: func [
 fetch-screen-info: func [
 	screen	[Cocoa-handle!]
 	spec	[red-block!]
-	prim-h	[Cocoa-float!]
+	prim-h	[integer!]
 	/local
 		blk	[red-block!]
 		s	[series!]
@@ -2640,6 +2640,7 @@ fetch-screen-info: func [
 		scale	[Cocoa-float!]
 		width	[integer!]
 		height	[integer!]
+		y		[integer!]
 ][
 	blk: block/make-at as red-block! ALLOC_TAIL(spec) 4
 	s: GET_BUFFER(blk)
@@ -2648,7 +2649,8 @@ fetch-screen-info: func [
 	if scale <= (as Cocoa-float! 0.0) [scale: as Cocoa-float! 1.0]
 	width: as-integer (frame/w * scale)
 	height: as-integer (frame/h * scale)
-	pair/make-at alloc-tail s as-integer frame/x as-integer (prim-h - (frame/y + frame/h))
+	y: prim-h - (as-integer (frame/y + frame/h))
+	pair/make-at alloc-tail s as-integer frame/x y
 	pair/make-at alloc-tail s width height
 	float/make-at alloc-tail s as-float scale
 	make-cocoa-handle-at as red-value! alloc-tail s screen handle/CLASS_MONITOR
@@ -2661,7 +2663,7 @@ OS-fetch-all-screens: func [
 		screen	[Cocoa-handle!]
 		blk	[red-block!]
 		pframe	[NSRect! value]
-		prim-h	[Cocoa-float!]
+		prim-h	[integer!]
 		n	[integer!]
 		i	[integer!]
 ][
@@ -2669,11 +2671,11 @@ OS-fetch-all-screens: func [
 	screens: objc_msgSend [objc_getClass "NSScreen" sel_getUid "screens"]
 	if screens = 0 [return blk]
 	n: as integer! objc_msgSend [screens sel_getUid "count"]
-	prim-h: as Cocoa-float! 0.0
+	prim-h: 0
 	if n > 0 [
 		screen: objc_msgSend [screens sel_getUid "objectAtIndex:" as NSUInteger! 0]
 		pframe: objc_msgSend_rect [screen sel_getUid "frame"]
-		prim-h: pframe/h
+		prim-h: as-integer pframe/h
 	]
 	i: 0
 	while [i < n][

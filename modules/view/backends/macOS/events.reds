@@ -199,12 +199,8 @@ get-event-object: func [
 	evt		[red-event!]
 	return: [Cocoa-handle!]
 ][
-	#either ABI = 'apple-aarch64 [
-		assert active-event-context <> as event-context! 0
-		active-event-context/object
-	][
-		as Cocoa-handle! evt/msg
-	]
+	assert active-event-context <> as event-context! 0
+	active-event-context/object
 ]
 
 get-event-face: func [
@@ -574,8 +570,8 @@ OS-send-event: func [
 	;-- dispatch_async_f on the main queue) with the event params snapshotted as primitives -- tracked
 	;-- as a follow-up. Native actuation itself is correct in both modes (it also happens on Windows
 	;-- via the pumped WndProc).
-	if (as integer! evt/msg) = 0 [return false]			;-- needs a target face (synthetic extras node)
-	node: resolve-node as integer! evt/msg
+	if evt/msg = 0 [return false]							;-- needs a target face (synthetic extras node)
+	node: resolve-node evt/msg
 	s:	  as series! node/value
 	cell: s/offset										;-- cell 0 = face
 	if TYPE_OF(cell) <> TYPE_OBJECT [return false]
@@ -692,15 +688,13 @@ make-event: func [
 		gui-evt [red-event! value]
 		event-context [event-context! value]
 ][
-	#either ABI = 'apple-aarch64 [
-		event-context/object: obj
-		event-context/prev: as byte-ptr! active-event-context
-		active-event-context: :event-context
-	][0]
+	event-context/object: obj
+	event-context/prev: as byte-ptr! active-event-context
+	active-event-context: :event-context
 
 	gui-evt/header: TYPE_EVENT
 	gui-evt/type:  evt
-	gui-evt/msg:   #either ABI = 'apple-aarch64 [0][as byte-ptr! obj]
+	gui-evt/msg:   0
 	either evt = EVT_IME [
 			ime-text: flags
 			gui-evt/flags: 0
@@ -716,9 +710,7 @@ make-event: func [
 	]
 	stack/adjust-post-try
 	if system/thrown <> 0 [system/thrown: 0]
-	#either ABI = 'apple-aarch64 [
-		active-event-context: as event-context! event-context/prev
-	][0]
+	active-event-context: as event-context! event-context/prev
 
 	res: as red-word! stack/arguments
 	if TYPE_OF(res) = TYPE_WORD [

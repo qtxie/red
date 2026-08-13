@@ -23,6 +23,7 @@ paint: declare tagPAINTSTRUCT							;-- moved here from 'draw.reds'
 
 gui-evt: declare red-event!								;-- low-level event value slot
 gui-evt/header: TYPE_EVENT
+active-event-msg: as tagMSG 0							;-- native message for the synchronous awake dispatch
 
 modal-loop-type: 0										;-- remanence of last EVT_MOVE or EVT_SIZE
 zoom-distance:	 0
@@ -41,6 +42,14 @@ last-mouse-pt: -1
 
 char-keys: [
 	1000C400h C0FF0080h E0FFFF7Fh 0000F7FFh 00000000h 3F000000h 1F000080h 00FC7F38h
+]
+
+get-event-msg: func [
+	evt		[red-event!]
+	return:	[tagMSG]
+][
+	assert active-event-msg <> as tagMSG 0
+	active-event-msg
 ]
 
 make-at: func [
@@ -67,7 +76,7 @@ get-event-window: func [
 		handle [handle!]
 		msg    [tagMSG]
 ][
-	msg: as tagMSG evt/msg
+	msg: get-event-msg evt
 	handle: get-widget-handle msg
 	as red-value! either handle = as handle! -1 [		;-- filter out unwanted events
 		none-value
@@ -83,7 +92,7 @@ get-event-face: func [
 		handle [handle!]
 		msg    [tagMSG]
 ][
-	msg: as tagMSG evt/msg
+	msg: get-event-msg evt
 	handle: get-widget-handle msg
 	as red-value! either handle = as handle! -1 [		;-- filter out unwanted events
 		none-value
@@ -105,7 +114,7 @@ get-event-offset: func [
 		x	   [integer!]
 		y	   [integer!]
 ][
-	msg: as tagMSG evt/msg
+	msg: get-event-msg evt
 	case [
 		evt/type = EVT_WHEEL [
 			offset: as red-point2D! stack/push*
@@ -265,7 +274,7 @@ get-event-key: func [
 			]
 		]
 		EVT_SCROLL [
-			msg: as tagMSG evt/msg
+			msg: get-event-msg evt
 			either msg/msg = WM_VSCROLL [
 				switch WIN32_U16(msg/wParam) [
 					SB_LINEUP	[_up]
@@ -298,7 +307,7 @@ get-event-orientation: func [
 		msg  [tagMSG]
 ][
 	if evt/type = EVT_SCROLL [
-		msg: as tagMSG evt/msg
+		msg: get-event-msg evt
 		either msg/msg = WM_VSCROLL [
 			return as red-value! _vertical
 		][
@@ -321,7 +330,7 @@ get-event-picked: func [
 		idx	[integer!]
 		zd	[float!]
 ][
-	msg: as tagMSG evt/msg
+	msg: get-event-msg evt
 	
 	as red-value! switch evt/type [
 		EVT_ZOOM
@@ -527,9 +536,10 @@ make-event: func [
 		saved  [handle!]
 		t?	   [logic!]
 		cnt	   [integer!]
+		previous-msg [tagMSG]
 ][
 	gui-evt/type:  evt
-	gui-evt/msg:   as byte-ptr! msg
+	gui-evt/msg:   0
 	gui-evt/flags: 0
 
 	state: EVT_DISPATCH
@@ -619,6 +629,8 @@ make-event: func [
 		default	 [0]
 	]
 
+	previous-msg: active-event-msg
+	active-event-msg: msg
 	saved: msg/hWnd
 	stack/mark-try-all words/_anon
 	res: as red-word! stack/arguments
@@ -631,6 +643,7 @@ make-event: func [
 		stack/unwind
 	]
 	interpreter/tracing?: t?
+	active-event-msg: previous-msg
 	if loop-cnt < cnt [PostQuitMessage 0]
 	
 	stack/adjust-post-try
@@ -685,8 +698,8 @@ OS-send-event: func [
 		pk	   [red-integer!]
 		saved-keys [integer!]
 ][
-	if (as integer! evt/msg) = 0 [return false]			;-- needs a target face (synthetic extras node)
-	node: resolve-node as integer! evt/msg
+	if evt/msg = 0 [return false]							;-- needs a target face (synthetic extras node)
+	node: resolve-node evt/msg
 	s:	  as series! node/value
 	cell: s/offset										;-- cell 0 = face
 	if TYPE_OF(cell) <> TYPE_OBJECT [return false]

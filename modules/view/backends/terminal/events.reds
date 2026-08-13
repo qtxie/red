@@ -33,12 +33,8 @@ get-widget-event: func [
 	evt		[red-event!]
 	return:	[widget-event!]
 ][
-	#either all [OS = 'macOS ABI = 'apple-aarch64] [
-		assert active-widget-event <> as widget-event! 0
-		active-widget-event
-	][
-		as widget-event! evt/msg
-	]
+	assert active-widget-event <> as widget-event! 0
+	active-widget-event
 ]
 
 map-pt-from-win: func [
@@ -197,13 +193,11 @@ make-event: func [
 		previous-widget-event [widget-event!]
 		t?		[logic!]
 ][
-	#either all [OS = 'macOS ABI = 'apple-aarch64] [
-		previous-widget-event: active-widget-event
-		active-widget-event: widget-evt
-	][0]
+	previous-widget-event: active-widget-event
+	active-widget-event: widget-evt
 
 	gui-evt/header: TYPE_EVENT
-	gui-evt/msg:    #either all [OS = 'macOS ABI = 'apple-aarch64] [0][as byte-ptr! widget-evt]
+	gui-evt/msg:    0
 	gui-evt/flags:  flags
 	gui-evt/type:   evt
 
@@ -219,9 +213,7 @@ make-event: func [
 		stack/unwind
 	]
 	interpreter/tracing?: t?
-	#either all [OS = 'macOS ABI = 'apple-aarch64] [
-		active-widget-event: previous-widget-event
-	][0]
+	active-widget-event: previous-widget-event
 
 	stack/adjust-post-try
 	if system/thrown <> 0 [system/thrown: 0]

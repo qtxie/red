@@ -829,8 +829,8 @@ collector: context [
 				]
 				TYPE_EVENT [									;-- synthetic `make event!` value: msg encodes a stable node handle
 					evt: as red-event! value				;-- 00010000h = gui/EVT_FLAG_SYNTHETIC (View's platform.red; raw value here as the collector also compiles in core-only builds)
-					if all [(evt/flags and 00010000h) <> 0  (as integer! evt/msg) <> 0][
-						mark-block-node as int-ptr! :evt/msg
+					if all [(evt/flags and 00010000h) <> 0  evt/msg <> 0][
+						mark-block-node :evt/msg
 					]
 				]
 				default [0]

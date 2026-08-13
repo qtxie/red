@@ -341,8 +341,7 @@ red-hash!: alias struct! [
 red-event!: alias struct! [
 	header	[integer!]								;-- cell header
 	type	[integer!]								;-- symbol ID
-	msg		[#either all [OS = 'macOS ABI = 'apple-aarch64] [integer!][byte-ptr!]]
-												;-- low-level OS-specific structure or dispatch token
+	msg		[node-handle!]							;-- stable extras-node handle for synthetic events; zero for native events
 	flags	[integer!]								;-- bit array
 ]
 

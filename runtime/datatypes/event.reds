@@ -55,8 +55,8 @@ event: context [
 		v: null
 		if (evt/flags and gui/EVT_FLAG_SYNTHETIC) <> 0 [	;-- synthetic event (built via `make event!`)
 			s: null										;-- extras node [face window offset picked], null if none were given
-			if (as integer! evt/msg) <> 0 [
-				n: resolve-node as integer! evt/msg
+			if evt/msg <> 0 [
+				n: resolve-node evt/msg
 				s: as series! n/value
 			]
 			v: switch field [
@@ -153,7 +153,7 @@ event: context [
 		evt: as red-event! stack/push*
 		evt/header: TYPE_EVENT
 		evt/type:   0
-		evt/msg:    #either all [OS = 'macOS ABI = 'apple-aarch64] [0][null]
+		evt/msg:    0
 		evt/flags:  gui/EVT_FLAG_SYNTHETIC				;-- every make-event value is synthetic (marked by the GC, see runtime/collector.reds)
 		face:	    null
 		window:     null
@@ -255,11 +255,7 @@ event: context [
 			iv/header: TYPE_INTEGER
 			iv/value: pkd
 			s/tail: s/offset + 4
-			evt/msg: #either all [OS = 'macOS ABI = 'apple-aarch64] [
-				node-handle-of node
-			][
-				as byte-ptr! node-handle-of node
-			]
+			evt/msg: node-handle-of node
 		]
 		evt
 	]
@@ -367,6 +363,7 @@ event: context [
 	]
 	
 	init: does [
+		assert (size? red-event!) = (size? cell!)
 		datatype/register [
 			TYPE_EVENT
 			TYPE_VALUE

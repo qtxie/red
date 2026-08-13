@@ -4,8 +4,9 @@ Status: implementation in progress. The draft schema generator, dual-language
 constants, compiler-core ownership gate, checked common-container readers, and
 independent RSCF, data-layout, string, file, checksum, source-location, type/
 aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
-constant/global-initializer, and RSDG diagnostic verifiers now have executable
-coverage. The protocol remains unfrozen until
+constant/global-initializer, scalar-operation, memory/aggregate-operation, and
+RSDG diagnostic verifiers now have executable coverage. The protocol remains
+unfrozen until
 the remaining Windows x64 feature blockers and message-level semantic fixtures
 satisfy the Phase 1 exit criteria.
 
@@ -121,7 +122,10 @@ constant bindings, mutable global storage, and zero/explicit initializers are
 checked independently too. Scalar values, deterministic instruction/operand
 ownership, conversions, arithmetic, comparisons, shifts, checked overflow,
 managed-handle boundaries, and exact scalar effects are now specified for the
-same independent verification path.
+same independent verification path. Typed local/global/indirect memory access,
+canonical address paths, exact alias and volatile effects, by-value aggregate
+construction, overlap-safe aggregate copy, and explicit tagged-union state are
+now specified and checked on that path as well.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every
@@ -173,6 +177,12 @@ Tests:
 - independent module-lifecycle verifiers agree on module/image domains,
   lifecycle reference bounds, glue shape, RSCG symbol provenance, and exact
   error locations without synthesizing startup calls;
+- independent scalar-operation verifiers agree on deterministic value/operand
+  ownership, type rules, checked results, handle boundaries, exact effects, and
+  failure-atomic output views;
+- independent memory/aggregate verifiers agree on address decomposition,
+  storage compatibility, aliases, volatility, aggregate build/copy, explicit
+  union tags, nested errors, and exact byte locations without emitting code;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.

@@ -1077,7 +1077,10 @@ wire-scalar-operation-reader: context [
 			]
 			opcode: instruction-value verified-view instruction-id
 				WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
-			unless all [opcode >= WIRE_OPCODE_CONSTANT opcode <= WIRE_OPCODE_TARGET_FRAGMENT][
+			unless all [
+				opcode >= WIRE_OPCODE_CONSTANT
+				opcode <= WIRE_OPCODE_SET_UNION_VARIANT
+			][
 				return set-error result WIRE_SCALAR_OPERATION_ERROR_BAD_OPCODE
 					(record-base + WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET)
 					verified-view/instructions-ordinal

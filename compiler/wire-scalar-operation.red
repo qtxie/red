@@ -871,7 +871,10 @@ compiler-wire-scalar-operation: context [
 			]
 			opcode: instruction-value data view instruction-id
 				schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
-			unless all [opcode >= schema/WIRE_OPCODE_CONSTANT opcode <= schema/WIRE_OPCODE_TARGET_FRAGMENT][
+			unless all [
+				opcode >= schema/WIRE_OPCODE_CONSTANT
+				opcode <= schema/WIRE_OPCODE_SET_UNION_VARIANT
+			][
 				return reject result schema/WIRE_SCALAR_OPERATION_ERROR_BAD_OPCODE
 					(record-base + schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET)
 					view/instructions-ordinal

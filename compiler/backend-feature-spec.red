@@ -241,17 +241,20 @@ compiler-backend-feature-spec: [
 		]
 
 		memory-and-aggregate-operations [
-			status blocked
+			status specified
 			owners [rsir codegen]
 			wire [
 				OPCODE/LOAD_LOCAL OPCODE/STORE_LOCAL OPCODE/ADDRESS_LOCAL
 				OPCODE/LOAD_GLOBAL OPCODE/STORE_GLOBAL OPCODE/ADDRESS_GLOBAL
 				OPCODE/LOAD_INDIRECT OPCODE/STORE_INDIRECT OPCODE/ADDRESS_FIELD
 				OPCODE/AGGREGATE_BUILD OPCODE/AGGREGATE_COPY
+				OPCODE/LOAD_UNION_TAG OPCODE/SET_UNION_VARIANT
 				EFFECT_FLAG/READ EFFECT_FLAG/WRITE EFFECT_FLAG/VOLATILE
-				ALIAS_KIND/ALL_VALUES
+				ALIAS_KIND/ALL_VALUES MEMORY_AGGREGATE_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-memory-aggregate-test.red"
+				"tools/self_hosting/tests/wire-memory-aggregate-reds-test.reds"
 				"system/tests/source/units/c-string-test.reds"
 				"system/tests/source/units/float-pointer-test.reds"
 				"system/tests/source/units/get-pointer-test.reds"
@@ -260,9 +263,7 @@ compiler-backend-feature-spec: [
 				"system/tests/source/units/pointer-test.reds"
 				"system/tests/source/units/queue-test.reds"
 			]
-			blockers [
-				"freeze address-path, alias identity, volatility, union-tag, and aggregate-copy rules"
-			]
+			blockers []
 		]
 
 		control-flow [

@@ -75,7 +75,7 @@ control records:
 - integer and floating arithmetic, comparison, conversion, bitcast, overflow,
   and boolean materialization;
 - local/global/indirect loads and stores, addresses, pointer arithmetic, field
-  access, union tag loads, and variant checks;
+  access, explicit union tag loads, and variant updates;
 - direct, indirect, imported, syscall, callback, variadic, typed, custom, and
   runtime resolver calls;
 - if/either/case/switch, loops, break/continue, return/exit, throw/catch, and
@@ -88,6 +88,13 @@ control records:
 The frontend emits logical values and mutable slots. It does not decide register
 locations, shadow space, aggregate register classes, spill slots, jump widths,
 or instruction encodings.
+
+Address paths have one backend-neutral form: scalar `ADD` performs pointer
+indexing, each member step is `ADDRESS_FIELD`, and indirect loads/stores carry no
+fused displacement. Tagged-union activation is an explicit operation rather
+than an `ADDRESS_FIELD` side effect. Aggregate copy has overlap-safe `memmove`
+semantics and carries no frontend size, frame, or ABI hint. These choices keep
+target folding and placement in codegen without serializing direct code.
 
 ## Target-bound escape operations
 

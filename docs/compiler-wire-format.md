@@ -914,7 +914,7 @@ build\self-hosting\wire-constant-initializer-reds-test.exe
 `compiler/wire-scalar-operation.red` and
 `system/codegen/wire-scalar-operation.reds` independently validate the three
 tables that form the common instruction substrate, then interpret only scalar
-opcodes 1 through 20. Opcodes 21 through 56 receive the common structural
+opcodes 1 through 20. Opcodes 21 through 58 receive the common structural
 checks here but remain semantically owned by their later feature verifiers.
 This layer constructs no MIR, invokes no emitter, and emits no code bytes.
 
@@ -1054,6 +1054,96 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
     -o build\self-hosting\wire-scalar-operation-reds-test.exe `
     tools\self_hosting\tests\wire-scalar-operation-reds-test.reds
 build\self-hosting\wire-scalar-operation-reds-test.exe
+```
+
+### Memory and aggregate operations
+
+`compiler/wire-memory-aggregate.red` and
+`system/codegen/wire-memory-aggregate.reds` consume the fully verified scalar
+views and independently validate opcodes 21 through 31 plus 57 and 58. Opcodes
+32 through 56 remain structurally valid but are deferred to their own feature
+verifiers. This layer also constructs no MIR, invokes no emitter, and emits no
+direct or machine-code bytes.
+
+Every owned instruction has subopcode zero and instruction flags zero. Its
+shape, exact base effect, and alias are:
+
+| Opcode | Operands | Result | Effect | Alias |
+| --- | --- | --- | --- | --- |
+| `LOAD_LOCAL` | local | stored type | `READ` | `(LOCAL, local ID)` |
+| `STORE_LOCAL` | local, value | none | `WRITE` | `(LOCAL, local ID)` |
+| `ADDRESS_LOCAL` | local | ordinary pointer to stored type | none | `(NONE, 0)` |
+| `LOAD_GLOBAL` | global symbol | stored type | `READ` | `(GLOBAL, symbol ID)` |
+| `STORE_GLOBAL` | global symbol, value | none | `WRITE` | `(GLOBAL, symbol ID)` |
+| `ADDRESS_GLOBAL` | global symbol | ordinary pointer to stored type | none | `(NONE, 0)` |
+| `LOAD_INDIRECT` | pointer value | pointee type | `READ` | `(UNIVERSAL, 0)` |
+| `STORE_INDIRECT` | pointer value, stored value | none | `WRITE` | `(UNIVERSAL, 0)` |
+| `ADDRESS_FIELD` | aggregate pointer plus field auxiliary | pointer to field type | none | `(NONE, 0)` |
+| `AGGREGATE_BUILD` | ordered field values | aggregate value | none | `(NONE, 0)` |
+| `AGGREGATE_COPY` | destination pointer, source pointer | destination pointer | `READ + WRITE` | `(UNIVERSAL, 0)` |
+| `LOAD_UNION_TAG` | tagged-union pointer | declared tag type | `READ` | `(UNIVERSAL, 0)` |
+| `SET_UNION_VARIANT` | tagged-union pointer plus field auxiliary | none | `WRITE` | `(UNIVERSAL, 0)` |
+
+Local operands use `OPERAND_KIND/LOCAL`; global operands use
+`OPERAND_KIND/SYMBOL`; every other operand is a `VALUE`. Operand auxiliary is
+zero except on `ADDRESS_FIELD`, `AGGREGATE_BUILD`, and `SET_UNION_VARIANT`,
+where it is a one-based field ID. A global operand must name a symbol whose kind
+is `GLOBAL`, not merely an arbitrary symbol with a compatible type.
+
+Storage normally requires exact type identity. The sole representation bridge
+is between two equal-size, equal-signedness integer types when either side has
+`GC_KIND/HANDLE`. This permits the frontend's explicit managed-handle slot
+boundary without allowing arithmetic or conversion operations to manufacture a
+handle. Loads always return the exact declared local, global, or pointee type.
+
+Address formation has one canonical decomposition. Pointer indexing is scalar
+`ADD` and therefore uses the scalar pointer-scaling rule. Each member step is a
+separate `ADDRESS_FIELD` whose input pointer's pointee owns the named field and
+whose result is an ordinary pointer to that field's exact type. Indirect
+load/store has no fused byte-offset field. Nested paths compose these operations
+in order; a later MIR may fold them after verification, but RSIR never carries a
+frontend-selected displacement or direct-code fragment.
+
+`AGGREGATE_BUILD` constructs a by-value aggregate. A struct has exactly one
+operand for every owned field in ordinal order. A raw or tagged union has
+exactly one operand, and that operand's auxiliary field ID selects the active
+variant. `AGGREGATE_COPY` requires two values with the exact same pointer type,
+whose pointee is a struct or union, and returns that same destination pointer
+type. Its runtime semantics are overlap-safe, equivalent to `memmove`; neither
+size, frame placement, ABI class, nor alignment hints are serialized.
+
+Tagged-union state is explicit. `LOAD_UNION_TAG` accepts only a pointer to a
+`TAGGED` union and returns the union record's declared tag type.
+`SET_UNION_VARIANT` accepts a field owned by that same union and updates only the
+active tag; it does not address, initialize, or clear the payload. A frontend
+union payload write is represented by the explicit tag update followed by
+`ADDRESS_FIELD` and a typed store. `ADDRESS_FIELD` has no hidden tag side effect,
+and payload reads remain unchecked unless the frontend emits
+`LOAD_UNION_TAG` and an explicit comparison/control-flow check.
+
+Effects are exact. `VOLATILE` may be added only to local, global, or indirect
+loads/stores and to the two union-tag operations. It preserves the base
+`READ`/`WRITE` effect and ordering requirement but does not imply atomicity.
+`AGGREGATE_COPY` deliberately rejects `VOLATILE` in v1 because one instruction
+bit cannot state whether the source, destination, or both are volatile.
+Address formation and aggregate construction are pure.
+
+Both readers first run the scalar verifier into private output structs, then
+check owned instructions in table order, and publish all lower views only after
+complete success. The shared corpus contains two valid modules and 26 directed
+malformed modules covering every memory/aggregate status, nested scalar errors,
+exact section/byte locations, volatile forms, nested field paths, handles,
+tagged unions, and poisoned native outputs. Run both implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-memory-aggregate-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-memory-aggregate-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-memory-aggregate-reds-test.exe `
+    tools\self_hosting\tests\wire-memory-aggregate-reds-test.reds
+build\self-hosting\wire-memory-aggregate-reds-test.exe
 ```
 
 `#inline` fragments are valid only when their target and ABI equal the message

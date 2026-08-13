@@ -165,8 +165,6 @@ rscf: fixture-writer/build
 rsir-payloads: make map! reduce [
 	schema/WIRE_RSIR_SECTION_MODULE fixture-writer/words [1 0 0 0 0 0 0 0]
 	schema/WIRE_RSIR_SECTION_DATA_LAYOUT data-layout
-	schema/WIRE_RSIR_SECTION_STRINGS fixture-writer/words [0 5]
-	schema/WIRE_RSIR_SECTION_STRING_DATA #{656D707479}
 ]
 rsir-sections: fixture-writer/sections-for schema/WIRE_MAGIC_RSIR rsir-payloads
 fixture-writer/set-section-flags rsir-sections schema/WIRE_RSIR_SECTION_STRINGS
@@ -200,8 +198,8 @@ rscg: fixture-writer/build
 	rscg-sections
 
 rsdg-payloads: make map! reduce [
-	schema/WIRE_RSDG_SECTION_STRINGS fixture-writer/words [0 7]
-	schema/WIRE_RSDG_SECTION_STRING_DATA #{696E76616C6964}
+	schema/WIRE_RSDG_SECTION_STRINGS fixture-writer/words [0 1]
+	schema/WIRE_RSDG_SECTION_STRING_DATA #{78}
 	schema/WIRE_RSDG_SECTION_DIAGNOSTICS fixture-writer/words [
 		3 3 3 1 0 0 0 0 0 0
 	]
@@ -260,17 +258,24 @@ foreach [name magic data section-count] reduce [
 ]
 
 assert (checksum rscf 'SHA256) =
-	#{670D7B139B069B4975072BE68EDE546983716A6CF36561C7A840100E9D7D9C6D}
+	#{0E6D3B7F4DA6E979E6933FDFF8DA63B9F066953355E94EF04E82A40DA88665EE}
 	"RSCF golden bytes changed"
 assert (checksum rsir 'SHA256) =
-	#{E65C6DE819ACE2C2C4CFFF2868039632EE2816D6046F2451B9C74AAA4D864CF6}
+	#{D1FC239C6DC23AE48E37A423AFD9752A47854A891E4C56054383981D8E7C7D57}
 	"RSIR golden bytes changed"
 assert (checksum rscg 'SHA256) =
-	#{3AA8AE8CAC192201217831235736EBE527A5185AF8D32968AEB9F450C41BD1B6}
+	#{E2FC1F5D35749931FED1FA0BB5AD3380B6EBEB5D38426239D1A00AEAC2969B48}
 	"RSCG golden bytes changed"
 assert (checksum rsdg 'SHA256) =
-	#{AD75FFB016D15E30F85B9B3B507C5A80EC75BC1C6F31F02A2A5742C54ACDAD09}
+	#{74B1D1A3975BF666D9E98115DFDB51EA2CD87622146A9BE11C831878BE813CD0}
 	"RSDG golden bytes changed"
+assert (length? rsdg) = schema/WIRE_RSDG_MINIMUM_SIZE
+	"RSDG golden fixture is not the schema minimum"
+assert all [
+	(length? rscf) = schema/WIRE_RSCF_MINIMUM_SIZE
+	(length? rsir) = schema/WIRE_RSIR_MINIMUM_SIZE
+	(length? rscg) = schema/WIRE_RSCG_MINIMUM_SIZE
+]["RSCF, RSIR, or RSCG golden fixture is not the schema minimum"]
 
 fixture-mutations: context [
 	put-u16: func [data [binary!] offset [integer!] value [integer!]][
@@ -457,7 +462,10 @@ add-malformed 'NONZERO-RESERVED schema/WIRE_MAGIC_RSCF
 	schema/WIRE_CONTAINER_ERROR_NONZERO_RESERVED bad
 
 bad: copy rsdg
-poke bad 176 1
+result: verifier/verify/expect rsdg schema/WIRE_MAGIC_RSDG
+section: verifier/find-section result schema/WIRE_RSDG_SECTION_STRING_DATA
+padding-offset: (select section 'payload-offset) + (select section 'payload-size)
+poke bad (padding-offset + 1) 1
 add-malformed 'NONZERO-PADDING schema/WIRE_MAGIC_RSDG
 	schema/WIRE_CONTAINER_ERROR_NONZERO_PADDING bad
 
@@ -483,6 +491,29 @@ fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_PAYLOAD_OFFSET_OFFS
 fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_PAYLOAD_SIZE_OFFSET) 0
 fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_RECORD_COUNT_OFFSET) 0
 add-malformed 'NONEMPTY-CARDINALITY schema/WIRE_MAGIC_RSDG
+	schema/WIRE_CONTAINER_ERROR_BAD_SECTION_CARDINALITY bad
+
+bad: copy rsdg
+entry: fixture-mutations/entry-offset 1
+fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_PAYLOAD_OFFSET_OFFSET) 0
+fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_PAYLOAD_SIZE_OFFSET) 0
+fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_RECORD_COUNT_OFFSET) 0
+result: verifier/verify/expect rsdg schema/WIRE_MAGIC_RSDG
+section: verifier/find-section result schema/WIRE_RSDG_SECTION_STRINGS
+fixture-mutations/put-bytes bad (select section 'payload-offset)
+	#{0000000000000000}
+add-malformed 'RSDG-EMPTY-STRINGS schema/WIRE_MAGIC_RSDG
+	schema/WIRE_CONTAINER_ERROR_BAD_SECTION_CARDINALITY bad
+
+bad: copy rsdg
+entry: fixture-mutations/entry-offset 2
+fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_PAYLOAD_OFFSET_OFFSET) 0
+fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_PAYLOAD_SIZE_OFFSET) 0
+fixture-mutations/put-u32 bad (entry + schema/WIRE_DIRECTORY_RECORD_COUNT_OFFSET) 0
+result: verifier/verify/expect rsdg schema/WIRE_MAGIC_RSDG
+section: verifier/find-section result schema/WIRE_RSDG_SECTION_STRING_DATA
+fixture-mutations/put-bytes bad (select section 'payload-offset) #{00}
+add-malformed 'RSDG-EMPTY-STRING-DATA schema/WIRE_MAGIC_RSDG
 	schema/WIRE_CONTAINER_ERROR_BAD_SECTION_CARDINALITY bad
 
 bad: copy rsdg

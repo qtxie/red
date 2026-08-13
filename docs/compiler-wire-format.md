@@ -152,7 +152,9 @@ between payloads, or after the final payload is zero padding.
 In v1.0, all 29 listed RSIR sections are required even when empty. RSCF requires
 its config section. RSCG requires kinds 1 through 15; kind 16
 `unwind-functions` is known optional and carries the OPTIONAL flag when present.
-RSDG requires all three listed sections and at least one diagnostic record.
+RSDG requires all three listed sections to be nonempty, including at least one
+string, one byte of string data, and one diagnostic record. Its smallest valid
+v1 message is therefore 212 bytes.
 
 A major-version mismatch is fatal. A reader may accept an older or equal minor
 version only when it understands all required sections and flags. Producers
@@ -170,7 +172,7 @@ full verifier. This layer validates container structure, not RSIR graph/type
 semantics.
 
 The Red corpus builds and pins minimal RSCF, RSIR, RSCG, and RSDG byte streams,
-two forward-compatibility positives, 36 directed malformed cases, and every
+two forward-compatibility positives, 38 directed malformed cases, and every
 proper truncation of the four core messages. Its generated Red/System test
 embeds exactly those bytes and compares error code, byte offset, and section
 ordinal from the independent native verifier. Run both sides with:
@@ -231,7 +233,7 @@ seed is 0, and all four reserved words are zero.
 
 `max-output-bytes` is at least `WIRE_RSCG_MINIMUM_SIZE` (currently 576).
 `max-diagnostic-bytes` is either zero, which disables a detailed RSDG result,
-or at least `WIRE_RSDG_MINIMUM_SIZE` (currently 200). These minima are derived
+or at least `WIRE_RSDG_MINIMUM_SIZE` (currently 212). These minima are derived
 from the schema profiles by the generator rather than duplicated in either
 verifier.
 
@@ -322,7 +324,9 @@ reject overlong encodings, UTF-16 surrogate code points, code points above
 or 4-byte sequences. Strings are strictly increasing by their raw canonical
 UTF-8 bytes. An explicit empty string is optional; when present it is the sole
 zero-length record, ID 1, with slice `(0, 0)`. An entirely empty string table is
-also valid.
+also valid for RSIR and RSCG. RSDG is the profile exception: both its `strings`
+and `string-data` sections are nonempty because every diagnostic must carry a
+nonempty message.
 
 RSIR and RSCG use the same file table. The `files` section carries exactly the
 SORTED and DEDUPLICATED flags and is strictly ordered by path string ID. A path
@@ -610,14 +614,71 @@ linker ingestion path may remove these legacy encodings without changing RSCG.
 
 ## RSDG diagnostics
 
-RSDG contains `strings`, `string-data`, and 40-byte `diagnostics` records. A
-diagnostic record contains status code, severity, phase, message string, file,
-line, column, function symbol, instruction ID, and flags. IDs unavailable due to
-early validation failure are zero.
+RSDG is a failure result, not a successful-compilation log. A successful
+`codegen-module` call returns `WIRE_STATUS_SUCCESS` and leaves the diagnostics
+binary empty. When detailed diagnostics are enabled, a nonzero return may
+append one complete RSDG message. `max-diagnostic-bytes = 0` permits a nonzero
+status without that message.
 
-Routine return statuses are coarse and stable: success, invalid arguments,
-invalid configuration, invalid RSIR, unsupported target/feature, codegen
-failure, and invalid generated artifact. Detailed failures belong in RSDG.
+The `strings` section carries exactly SORTED and DEDUPLICATED, while
+`string-data` and `diagnostics` carry zero flags. Diagnostic records remain in
+producer order; they are neither sorted nor deduplicated because a primary
+error followed by its notes is an ordered causal sequence. Every 40-byte record
+contains status, severity, phase, message string ID, file ID, line, column,
+function symbol ID, instruction ID, and presence flags.
+
+The first record is the primary diagnostic and has ERROR or FATAL severity.
+Later records may use NOTE, WARNING, ERROR, or FATAL. Every record has the same
+nonzero status, and that status equals the routine return. SUCCESS is invalid
+inside RSDG. Each message string ID is in range and names a nonempty canonical
+UTF-8 string. Status and phase combinations are restricted as follows:
+
+| Status | Permitted phases |
+| --- | --- |
+| `INVALID_ARGUMENTS` | BRIDGE |
+| `INVALID_CONFIGURATION` | CONFIGURATION |
+| `INVALID_RSIR` | DECODE, VERIFY |
+| `UNSUPPORTED_TARGET` | CONFIGURATION, DECODE, VERIFY, SELECT, ENCODE |
+| `CODEGEN_FAILURE` | OPTIMIZE, SELECT, ALLOCATE, ENCODE |
+| `INVALID_ARTIFACT` | ARTIFACT |
+
+Context uses four presence bits. A field governed by an absent bit is zero; a
+field governed by a present bit is nonzero.
+
+| Flag | Fields and dependency |
+| --- | --- |
+| FILE | `file`; a file-only diagnostic leaves line and column zero |
+| SOURCE | `line` and `column`, both at least 1; requires FILE |
+| FUNCTION | `function-symbol` |
+| INSTRUCTION | `instruction`; requires FUNCTION |
+
+Any record with context flags requires a nonzero target tuple in the RSDG
+header. File, function, and instruction values are references into the input
+RSIR, not tables copied into RSDG. The standalone RSDG verifier checks their
+presence representation. The later bridge/RSIR verifier checks file bounds,
+that a function symbol denotes the owning function, and that an instruction ID
+exists in that function. This separation lets diagnostics report an RSIR that
+failed before all of those tables could be trusted.
+
+`compiler/wire-diagnostics.red` and
+`system/codegen/wire-diagnostics.reds` implement the semantic checks
+independently. The native verifier is allocation-free and changes its string
+and diagnostic views only after complete success. The shared corpus covers nine
+valid messages and 30 malformed messages, including every diagnostic error,
+nested container/string failures, exact error locations, scalar validation
+precedence, producer order, all context dependencies, and poisoned outputs on
+failure. Run both implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-diagnostics-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-diagnostic-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-diagnostics-reds-test.exe `
+    tools\self_hosting\tests\wire-diagnostics-reds-test.reds
+build\self-hosting\wire-diagnostics-reds-test.exe
+```
+
 Out-of-memory remains a host runtime failure if the Red runtime cannot append
 the completed native arena.
 

@@ -61,17 +61,20 @@ compiler-backend-feature-spec: [
 		]
 
 		diagnostics [
-			status blocked
+			status specified
 			owners [codegen frontend]
 			wire [
 				RECORD/RSDG_DIAGNOSTIC
 				STATUS/ALL_VALUES DIAGNOSTIC_SEVERITY/ALL_VALUES
-				DIAGNOSTIC_PHASE/ALL_VALUES
+				DIAGNOSTIC_PHASE/ALL_VALUES DIAGNOSTIC_FLAG/ALL_VALUES
+				DIAGNOSTIC_ERROR/ALL_VALUES
 			]
-			tests ["tools/self_hosting/tests/wire-container-test.red"]
-			blockers [
-				"define diagnostic flag mask and which file/function/instruction IDs may be zero"
+			tests [
+				"tools/self_hosting/tests/wire-container-test.red"
+				"tools/self_hosting/tests/wire-diagnostics-test.red"
+				"tools/self_hosting/tests/wire-diagnostics-reds-test.reds"
 			]
+			blockers []
 		]
 
 		strings-files-source [

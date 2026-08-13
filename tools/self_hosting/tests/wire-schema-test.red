@@ -52,7 +52,7 @@ assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1056
 	"wrong minimum RSIR size"
 assert compiler-wire-schema/WIRE_RSCG_MINIMUM_SIZE = 576
 	"wrong minimum RSCG size"
-assert compiler-wire-schema/WIRE_RSDG_MINIMUM_SIZE = 200
+assert compiler-wire-schema/WIRE_RSDG_MINIMUM_SIZE = 212
 	"wrong minimum RSDG size"
 assert compiler-wire-schema/WIRE_RSIR_SECTION_STRING_DATA_ALIGNMENT = 1
 	"wrong byte-section alignment"
@@ -66,6 +66,10 @@ assert compiler-wire-schema/WIRE_CHECKSUM_KIND_SHA256 = 1
 	"wrong SHA-256 checksum kind"
 assert compiler-wire-schema/WIRE_FILE_SOURCE_ERROR_DUPLICATE_SOURCE = 22
 	"file/source error enum changed"
+assert compiler-wire-schema/WIRE_DIAGNOSTIC_ERROR_CONTEXT_WITHOUT_TARGET = 23
+	"diagnostic error enum changed"
+assert compiler-wire-schema/WIRE_DIAGNOSTIC_FLAG_INSTRUCTION = 8
+	"diagnostic flag enum changed"
 assert compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_REQUIRED = 0
 	"RSCG unwind section must be optional"
 assert compiler-wire-schema/WIRE_RSDG_SECTION_DIAGNOSTICS_CARDINALITY =
@@ -84,6 +88,12 @@ assert compiler-wire-schema/profiles/RSCG/record-sizes/16 =
 assert compiler-wire-schema/profiles/RSDG/cardinalities/3 =
 	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
 	"generated Red profile cardinality disagrees with constants"
+assert compiler-wire-schema/profiles/RSDG/cardinalities/1 =
+	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
+	"RSDG strings must be nonempty"
+assert compiler-wire-schema/profiles/RSDG/cardinalities/2 =
+	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
+	"RSDG string data must be nonempty"
 assert compiler-wire-schema/WIRE_SCHEMA_FINGERPRINT = generator/fingerprint compiler-wire-schema-spec
 	"wrong schema fingerprint"
 

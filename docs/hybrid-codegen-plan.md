@@ -2,8 +2,9 @@
 
 Status: implementation in progress. The draft schema generator, dual-language
 constants, compiler-core ownership gate, checked common-container readers, and
-independent RSCF, data-layout, string, file, checksum, and source-location
-verifiers now have executable coverage. The protocol remains unfrozen until
+independent RSCF, data-layout, string, file, checksum, source-location, and
+RSDG diagnostic verifiers now have executable coverage. The protocol remains
+unfrozen until
 the remaining Windows x64 feature blockers and message-level semantic fixtures
 satisfy the Phase 1 exit criteria.
 
@@ -106,10 +107,13 @@ and linker consumption remains part of phase 1 because it controls schema
 freeze.
 
 The common container, RSCF configuration, Windows x64 data layout, canonical
-UTF-8 string tables, file checksums, and source-location ordering now have
-independent Red and Red/System verifiers with shared malformed corpora. These
-are protocol prerequisites only; they do not invoke the legacy emitter or
-constitute a partial backend execution path.
+UTF-8 string tables, file checksums, source-location ordering, and structured
+RSDG failures now have independent Red and Red/System verifiers with shared
+malformed corpora. RSDG preserves primary/note producer order, binds every
+record to one nonzero routine status, and represents source/function/instruction
+context with explicit presence bits. These are protocol prerequisites only;
+they do not invoke the legacy emitter or constitute a partial backend execution
+path.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
 Its test reads `system/tests/run-all.r` as data and rejects any unclassified
@@ -144,6 +148,9 @@ Tests:
   feature masks, arena limits, flag consistency, errors, and byte locations;
 - independent data-layout verifiers freeze the Windows x64 header/layout tuple
   for both RSIR and RSCG before type or ABI rules depend on it;
+- independent diagnostic verifiers agree on status/phase domains, primary and
+  follow-up ordering, message validity, context presence, errors, and byte
+  locations without requiring a trusted RSIR graph;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.

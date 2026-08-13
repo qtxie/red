@@ -116,6 +116,8 @@ utf8-boundary-data:
 	#{7FC280DFBFE0A080ED9FBFEE8080EFBFBFF0908080F48FBFBF}
 utf8-boundaries: build-string-message
 	schema/WIRE_MAGIC_RSIR utf8-boundary-records utf8-boundary-data
+nonempty-rsir: build-string-message schema/WIRE_MAGIC_RSIR
+	fixture-writer/words [0 5] #{656D707479}
 
 valid-string-tables: make block! 16
 add-valid-string-table: func [
@@ -126,7 +128,7 @@ add-valid-string-table: func [
 	append/only valid-string-tables reduce [name magic data]
 ]
 
-add-valid-string-table 'RSIR schema/WIRE_MAGIC_RSIR rsir
+add-valid-string-table 'RSIR schema/WIRE_MAGIC_RSIR nonempty-rsir
 add-valid-string-table 'RSCG-EMPTY schema/WIRE_MAGIC_RSCG rscg
 add-valid-string-table 'RSDG schema/WIRE_MAGIC_RSDG rsdg
 add-valid-string-table 'UTF8-BOUNDARIES schema/WIRE_MAGIC_RSIR utf8-boundaries
@@ -148,7 +150,7 @@ foreach fixture valid-string-tables [
 	assert object? result/table [fixture/1 " valid string table exposed no table"]
 ]
 
-rsir-string-sections: string-sections rsir schema/WIRE_MAGIC_RSIR
+rsir-string-sections: string-sections nonempty-rsir schema/WIRE_MAGIC_RSIR
 rsir-strings-section: rsir-string-sections/1
 rsir-data-section: rsir-string-sections/2
 rsir-strings-offset: select rsir-strings-section 'payload-offset
@@ -156,7 +158,7 @@ rsir-strings-ordinal: select rsir-strings-section 'ordinal
 rsir-data-offset: select rsir-data-section 'payload-offset
 rsir-data-ordinal: select rsir-data-section 'ordinal
 
-result: string-verifier/verify rsir schema/WIRE_MAGIC_RSIR
+result: string-verifier/verify nonempty-rsir schema/WIRE_MAGIC_RSIR
 assert all [
 	result/table/record-count = 1
 	result/table/records-offset = rsir-strings-offset
@@ -178,14 +180,14 @@ add-malformed-string-table: func [
 	]
 ]
 
-bad: copy rsir
+bad: copy nonempty-rsir
 fixture-mutations/put-u32 bad schema/WIRE_HEADER_SCHEMA_FINGERPRINT_OFFSET 0
 add-malformed-string-table 'INVALID-CONTAINER schema/WIRE_MAGIC_RSIR
 	schema/WIRE_STRING_TABLE_ERROR_INVALID_CONTAINER
 	schema/WIRE_CONTAINER_ERROR_BAD_SCHEMA_FINGERPRINT
 	schema/WIRE_HEADER_SCHEMA_FINGERPRINT_OFFSET 0 bad
 
-bad: copy rsir
+bad: copy nonempty-rsir
 fixture-mutations/put-u32 bad
 	((select rsir-strings-section 'entry-offset) + schema/WIRE_DIRECTORY_FLAGS_OFFSET)
 	0
@@ -195,7 +197,7 @@ add-malformed-string-table 'BAD-STRING-FLAGS schema/WIRE_MAGIC_RSIR
 	((select rsir-strings-section 'entry-offset) + schema/WIRE_DIRECTORY_FLAGS_OFFSET)
 	rsir-strings-ordinal bad
 
-bad: copy rsir
+bad: copy nonempty-rsir
 fixture-mutations/put-u32 bad
 	((select rsir-data-section 'entry-offset) + schema/WIRE_DIRECTORY_FLAGS_OFFSET)
 	schema/WIRE_SECTION_FLAG_SORTED
@@ -205,7 +207,7 @@ add-malformed-string-table 'BAD-DATA-FLAGS schema/WIRE_MAGIC_RSIR
 	((select rsir-data-section 'entry-offset) + schema/WIRE_DIRECTORY_FLAGS_OFFSET)
 	rsir-data-ordinal bad
 
-bad: copy rsir
+bad: copy nonempty-rsir
 fixture-mutations/put-bytes bad
 	(rsir-strings-offset + schema/WIRE_STRING_OFFSET_OFFSET) #{00000080}
 add-malformed-string-table 'SCALAR-RANGE-OFFSET schema/WIRE_MAGIC_RSIR
@@ -213,7 +215,7 @@ add-malformed-string-table 'SCALAR-RANGE-OFFSET schema/WIRE_MAGIC_RSIR
 	(rsir-strings-offset + schema/WIRE_STRING_OFFSET_OFFSET)
 	rsir-strings-ordinal bad
 
-bad: copy rsir
+bad: copy nonempty-rsir
 fixture-mutations/put-bytes bad
 	(rsir-strings-offset + schema/WIRE_STRING_SIZE_OFFSET) #{00000080}
 add-malformed-string-table 'SCALAR-RANGE-SIZE schema/WIRE_MAGIC_RSIR
@@ -221,7 +223,7 @@ add-malformed-string-table 'SCALAR-RANGE-SIZE schema/WIRE_MAGIC_RSIR
 	(rsir-strings-offset + schema/WIRE_STRING_SIZE_OFFSET)
 	rsir-strings-ordinal bad
 
-bad: copy rsir
+bad: copy nonempty-rsir
 fixture-mutations/put-u32 bad
 	(rsir-strings-offset + schema/WIRE_STRING_SIZE_OFFSET) 6
 add-malformed-string-table 'SLICE-RANGE schema/WIRE_MAGIC_RSIR
@@ -230,7 +232,7 @@ add-malformed-string-table 'SLICE-RANGE schema/WIRE_MAGIC_RSIR
 	(rsir-strings-offset + schema/WIRE_STRING_OFFSET_OFFSET)
 	rsir-strings-ordinal bad
 
-bad: copy rsir
+bad: copy nonempty-rsir
 fixture-mutations/put-u32 bad
 	(rsir-strings-offset + schema/WIRE_STRING_OFFSET_OFFSET) 2147483647
 fixture-mutations/put-u32 bad

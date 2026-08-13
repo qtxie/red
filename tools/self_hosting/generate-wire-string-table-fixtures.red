@@ -142,7 +142,7 @@ foreach fixture malformed-string-tables [
 	]
 ]
 
-rsir-view: string-verifier/verify rsir schema/WIRE_MAGIC_RSIR
+rsir-view: string-verifier/verify nonempty-rsir schema/WIRE_MAGIC_RSIR
 utf8-view: string-verifier/verify utf8-boundaries schema/WIRE_MAGIC_RSIR
 
 append output rejoin [{
@@ -150,7 +150,7 @@ result: declare wire-string-table-result!
 table: declare wire-string-table!
 slice: declare wire-string-slice!
 code: wire-string-table-reader/verify
-	string-valid-rsir } length? rsir { WIRE_MAGIC_RSIR result table
+	string-valid-rsir } length? nonempty-rsir { WIRE_MAGIC_RSIR result table
 if code <> WIRE_STRING_TABLE_ERROR_SUCCESS [failures: failures + 1]
 if any [
 	table/record-count <> 1
@@ -192,7 +192,7 @@ if any [not null? slice/data slice/size <> 0][failures: failures + 1]
 
 poison-table table
 code: wire-string-table-reader/verify
-	(as byte-ptr! 0) } length? rsir { WIRE_MAGIC_RSIR result table
+	(as byte-ptr! 0) } length? nonempty-rsir { WIRE_MAGIC_RSIR result table
 if code <> WIRE_STRING_TABLE_ERROR_INVALID_ARGUMENTS [failures: failures + 1]
 if any [
 	result/error <> WIRE_STRING_TABLE_ERROR_INVALID_ARGUMENTS
@@ -208,17 +208,17 @@ if code <> WIRE_STRING_TABLE_ERROR_INVALID_ARGUMENTS [failures: failures + 1]
 unless table-poisoned? table [failures: failures + 1]
 
 code: wire-string-table-reader/verify
-	string-valid-rsir } length? rsir { WIRE_MAGIC_RSIR result (as wire-string-table! 0)
+	string-valid-rsir } length? nonempty-rsir { WIRE_MAGIC_RSIR result (as wire-string-table! 0)
 if code <> WIRE_STRING_TABLE_ERROR_INVALID_ARGUMENTS [failures: failures + 1]
 
 code: wire-string-table-reader/verify
-	string-valid-rsir } length? rsir { WIRE_MAGIC_RSIR
+	string-valid-rsir } length? nonempty-rsir { WIRE_MAGIC_RSIR
 	(as wire-string-table-result! 0) table
 if code <> WIRE_STRING_TABLE_ERROR_INVALID_ARGUMENTS [failures: failures + 1]
 
 poison-table table
 code: wire-string-table-reader/verify
-	string-valid-rsir } length? rsir { WIRE_MAGIC_RSCF result table
+	string-valid-rsir } length? nonempty-rsir { WIRE_MAGIC_RSCF result table
 if code <> WIRE_STRING_TABLE_ERROR_UNSUPPORTED_MESSAGE [failures: failures + 1]
 if any [
 	result/container-error <> WIRE_CONTAINER_ERROR_SUCCESS

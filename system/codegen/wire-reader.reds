@@ -253,9 +253,7 @@ wire-container-reader: context [
 				][WIRE_SECTION_CARDINALITY_ANY]
 			]
 			magic = WIRE_MAGIC_RSDG [
-				either kind = WIRE_RSDG_SECTION_DIAGNOSTICS [
-					WIRE_SECTION_CARDINALITY_NONEMPTY
-				][WIRE_SECTION_CARDINALITY_ANY]
+				WIRE_SECTION_CARDINALITY_NONEMPTY
 			]
 			true [-1]
 		]

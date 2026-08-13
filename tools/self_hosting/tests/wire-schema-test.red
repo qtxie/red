@@ -82,6 +82,12 @@ assert compiler-wire-schema/WIRE_IMAGE_KIND_DYNAMIC_LIBRARY = 2
 	"image-kind enum changed"
 assert compiler-wire-schema/WIRE_MODULE_LIFECYCLE_ERROR_LIFECYCLE_SYMBOL_OWNER = 22
 	"module-lifecycle error enum changed"
+assert compiler-wire-schema/WIRE_DEBUG_TYPE_CODE_AGGREGATE = 100
+	"runtime aggregate debug type code changed"
+assert compiler-wire-schema/WIRE_FUNCTION_SIGNATURE_ERROR_BAD_LOCAL_COVERAGE = 54
+	"function/signature error enum changed"
+assert none? in compiler-wire-schema 'WIRE_FUNCTION_FLAG_RED_INTERNAL
+	"legacy frontend red-internal state leaked into the wire ABI"
 assert compiler-wire-schema/WIRE_RSIR_TYPE_SIZE = 40
 	"type record size changed"
 assert compiler-wire-schema/WIRE_RSIR_TYPE_RESERVED_0_OFFSET = 16

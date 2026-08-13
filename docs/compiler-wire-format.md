@@ -421,7 +421,7 @@ matrix is complete. All listed records consist only of 32-bit words.
 | 16 | imports | 24 | library/external name/symbol mapping |
 | 17 | exports | 16 | external name/symbol/ordinal mapping |
 | 18 | functions | 40 | signature and owned record ranges |
-| 19 | locals | 32 | arguments, locals, temporaries, GC kind |
+| 19 | locals | 32 | arguments, locals, temporaries, merge slots |
 | 20 | blocks | 32 | instruction and outgoing-edge ranges |
 | 21 | edges | 24 | source, target, edge kind, case value |
 | 22 | values | 24 | typed single-definition temporary results |
@@ -579,6 +579,116 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
     -o build\self-hosting\wire-type-layout-reds-test.exe `
     tools\self_hosting\tests\wire-type-layout-reds-test.reds
 build\self-hosting\wire-type-layout-reds-test.exe
+```
+
+### Function signatures, parameters, definitions, and locals
+
+`compiler/wire-function-signature.red` and
+`system/codegen/wire-function-signature.reds` independently validate the
+declaration and ownership layer needed before CFG and call verification. A
+signature is a reusable semantic interface. A function record is only a body
+definition; imports and bodyless declarations are represented by the later
+symbol/import contract and never by a zero-block function record.
+
+The effective calling convention is one of `RED_SYSTEM`, `CDECL`, `STDCALL`,
+or `SYSCALL`. Source attribute `red-internal` is deliberately absent from the
+wire format: it is legacy frontend state used while resolving an effective
+interface, not a second calling-convention authority. A runtime-private export
+therefore serializes as `RED_SYSTEM` without `CALLBACK`; a real external entry
+callback serializes as `CDECL` or `STDCALL` with `CALLBACK`.
+
+Signature flags are `VARIADIC`, `TYPED`, `CUSTOM`, `CALLBACK`, `NO_RETURN`, and
+`MAY_THROW`. At most one of the first three is set. `CALLBACK` cannot be
+combined with a variable-arity mode and is valid only with `CDECL` or
+`STDCALL`. `SYSCALL` cannot be variable-arity or a callback. `NO_RETURN` and
+`MAY_THROW` are declaration facts consumed by later control-flow and exception
+verification; this layer validates their bits but does not infer them from a
+partial function body.
+
+Every signature owns a contiguous slice of the global parameter table. Empty
+slices use `(first-parameter, parameter-count) = (0, 0)`; nonempty slices
+partition the table in signature order. Parameter ordinals are zero-based
+within the slice. Every parameter has a nonempty canonical name, a non-`VOID`
+type, zero flags and reserved word, an optional valid source location, and a
+runtime debug type code compatible with its canonical type.
+
+`logical-arity` counts source-level arguments rather than physical ABI
+operands:
+
+| Signature mode | Logical arity |
+| --- | ---: |
+| fixed ordinary signature | parameter count |
+| `CDECL VARIADIC` | named fixed-parameter count |
+| `TYPED` | 0 |
+| non-`CDECL VARIADIC` | 0 |
+| `CUSTOM` | 0 |
+
+The actual argument count for a variable call belongs to its later `RSIR_CALL`
+record. `CUSTOM` always declares zero parameters: its one source expression is
+the dynamic call-site count, not a callee formal. This remains true for JNI's
+`CDECL`/`STDCALL CUSTOM` function pointers; the calling convention selects the
+physical target ABI while `CUSTOM` selects the dynamic forwarding operation.
+
+For packed calls, a definition may expose any leading prefix of the receiver
+slots that the current targets pass. `TYPED` allows at most signed i32 `count`,
+then any pointer `list`, independently of whether its effective convention is
+`RED_SYSTEM`, `CDECL`, or `STDCALL`. Private `VARIADIC` allows at most signed
+i32 `count`, any pointer `list`, then signed i32 `byte-size`. Omitted trailing
+slots are legal because existing receivers do not always name every value.
+`CDECL VARIADIC` is the sole exception: it is not a packed protocol, and its
+parameter slice is the ordinary named C prefix. In particular, the new backend
+does not preserve the legacy x64 emitter's accidental flat `CDECL TYPED`
+triple expansion. The verifier checks representation types but does not encode
+register, stack, or shadow-space locations.
+
+Aggregate return types remain the semantic return type. A hidden ABI return
+pointer is derived later by codegen and is never serialized as a parameter or
+argument local, and it never changes `logical-arity`. This prevents frontend
+ABI lowering from becoming a second source of physical argument truth.
+
+Each function references an existing symbol and signature, has zero function
+flags and reserved word in v1, owns at least one contiguous block, identifies
+an entry inside that slice, and owns an empty or contiguous local slice.
+Function slices partition both tables in function order. Blocks point back to
+their owner, have zero record flags and reserved word, and carry an optional
+valid source location. Their instruction and outgoing-edge ranges are decoded
+as signed-31-bit scalars here but are deliberately left to the control-flow
+contract, which will validate terminators, edge sets, and range ownership.
+
+Local kinds are `ARGUMENT`, `LOCAL`, `TEMPORARY`, and `MERGE`. Arguments and
+ordinary locals require nonempty names; temporaries and merge slots may use
+name ID zero. Every local has a non-`VOID` type, zero flags, a zero-based
+ordinal in its function slice, and an optional source location. Alignment zero
+means natural alignment. A nonzero override is a power of two, is no smaller
+than the type alignment, and is no larger than the target stack alignment.
+The first locals of every definition exactly mirror all signature parameters
+by argument kind, name, and type; no later local may claim argument kind.
+
+Runtime debug codes preserve the existing debugger interface rather than
+duplicating canonical type IDs. Scalar codes are exact (`LOGIC` 1, signed i32
+2, floats 4/5, signed/unsigned fixed integers 11-17); unsigned one-byte values
+accept legacy `BYTE` 3 or `UINT8` 14. `C_STRING` is 6, function is 9, and
+by-value aggregates are 100. Ordinary canonical pointers accept source-level
+pointer aliases 7, 8, 10, or 100 because alias spelling is intentionally not
+part of the representation type table.
+
+Both verifiers decode every scalar field before following semantic references
+and stop at the first error in the same order. Native outputs are failure
+atomic: string, file, data-layout, type, and function views are copied only
+after complete success. The shared corpus contains six valid messages and 105
+directed malformed messages, covers all 55 error codes, every scalar field,
+all runtime debug codes, packed-protocol prefixes, multiple functions sharing
+a signature, poisoned outputs, null routine arguments, and exact error byte
+locations. Run both sides with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-function-signature-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-function-signature-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-function-signature-reds-test.exe `
+    tools\self_hosting\tests\wire-function-signature-reds-test.reds
+build\self-hosting\wire-function-signature-reds-test.exe
 ```
 
 ### Module lifecycle and object provenance

@@ -185,23 +185,26 @@ compiler-backend-feature-spec: [
 		]
 
 		functions-signatures-locals [
-			status blocked
+			status specified
 			owners [frontend rsir codegen]
 			wire [
 				RECORD/RSIR_SIGNATURE RECORD/RSIR_PARAMETER
-				RECORD/RSIR_FUNCTION RECORD/RSIR_LOCAL
+				RECORD/RSIR_FUNCTION RECORD/RSIR_LOCAL RECORD/RSIR_BLOCK
 				CALLING_CONVENTION/ALL_VALUES FUNCTION_FLAG/ALL_VALUES
-				LOCAL_KIND/ALL_VALUES
+				DEBUG_TYPE_CODE/ALL_VALUES LOCAL_KIND/ALL_VALUES
+				FUNCTION_SIGNATURE_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-function-signature-test.red"
+				"tools/self_hosting/tests/wire-function-signature-reds-test.reds"
 				"system/tests/source/units/function-test.reds"
 				"system/tests/source/units/infix-test.reds"
 				"system/tests/source/units/return-test.reds"
+				"system/tests/source/units/x64-variadic-smoke.reds"
+				"system/tests/source/units/x64-typed-variadic-smoke.reds"
+				"tools/self_hosting/fixtures/backend/custom-call.reds"
 			]
-			blockers [
-				"define signature, parameter, function, and local flag masks"
-				"freeze hidden-return, callback, variadic, typed, and custom logical arity rules"
-			]
+			blockers []
 		]
 
 		scalar-values-and-operations [

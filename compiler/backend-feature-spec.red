@@ -108,24 +108,25 @@ compiler-backend-feature-spec: [
 		]
 
 		types-and-aggregate-layout [
-			status blocked
+			status specified
 			owners [frontend rsir codegen]
 			wire [
 				RECORD/RSIR_TYPE RECORD/RSIR_FIELD
 				TYPE_KIND/ALL_VALUES TYPE_FLAG/ALL_VALUES GC_KIND/ALL_VALUES
+				TYPE_LAYOUT_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-type-layout-test.red"
+				"tools/self_hosting/tests/wire-type-layout-reds-test.reds"
 				"system/tests/source/units/alias-test.reds"
 				"system/tests/source/units/array-test.reds"
 				"system/tests/source/units/enum-test.reds"
 				"system/tests/source/units/protect-test.reds"
+				"system/tests/source/units/size-x64-test.reds"
 				"system/tests/source/units/struct-x64-test.reds"
 				"system/tests/source/units/union-test.reds"
 			]
-			blockers [
-				"define field flags and exact kind-specific zero/required fields"
-				"freeze packed, union, opaque, nominal, array, and managed-handle layout rules"
-			]
+			blockers []
 		]
 
 		module-lifecycle [

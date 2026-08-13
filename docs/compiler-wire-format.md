@@ -43,7 +43,7 @@ The boundary is useful only if each fact has exactly one authoritative owner.
 | Concern | Authoritative owner |
 | --- | --- |
 | loading, preprocessing, names, namespaces, type checking | Red frontend |
-| nominal types, target data layout, typed CFG, constants, imports, exports | RSIR |
+| canonical representation types, target data layout, typed CFG, constants, imports, exports | RSIR |
 | typed expression temporaries, mutable slots, explicit stack operations | RSIR |
 | scalar/memory SSA, phi nodes, stack-state propagation, liveness | codegen internal MIR |
 | instruction selection, ABI classification, register allocation | codegen |
@@ -408,7 +408,7 @@ matrix is complete. All listed records consist only of 32-bit words.
 | 4 | string-data | 1 | UTF-8 bytes, no terminators |
 | 5 | files | 16 | source path and optional checksum slice |
 | 6 | file-checksum-data | 1 | raw source checksum bytes |
-| 7 | types | 40 | nominal and representation types |
+| 7 | types | 40 | canonical representation types |
 | 8 | fields | 32 | aggregate members and offsets |
 | 9 | signatures | 32 | return type, convention, attributes |
 | 10 | parameters | 32 | ordered signature parameters |
@@ -437,8 +437,9 @@ The important record shapes are:
 - `module`: name string, flags, initializer function, finalizer function, entry
   function, initialization priority, source location, reserved. Runtime, user,
   and startup-glue modules therefore expose composable lifecycle functions.
-- `types`: kind, flags, size, alignment, name string, element type, element
-  count, first field, field count, GC kind. Signedness is a type flag.
+- `types`: kind, flags, size, alignment, reserved, kind-specific detail ID,
+  reserved, first field, field count, GC kind. Signedness is a type flag;
+  source names and aliases are not part of a representation record.
 - `signatures`: calling convention, flags, return type, first parameter,
   parameter count, logical arity, source location, reserved.
 - `parameters`: signature, name string, type, flags, ordinal, runtime debug type
@@ -479,6 +480,97 @@ and a target-fragment escape. ABI aggregate classes and physical argument
 locations are computed from types and signatures by codegen and never appear in
 RSIR.
 
+### Canonical type and aggregate layout
+
+The v1 `types` table carries backend representation identity, not Red/System
+source syntax. Type IDs are one-based wire identities. The producer interns a
+source type to one canonical ID and later `TYPE` symbols map source alias names
+to that ID. The verifier does not attempt recursive structural deduplication or
+graph isomorphism. In particular, transparent scalar aliases share their
+representation type, while the nominal `node-handle!` property is preserved by
+using a signed 4-byte integer record whose GC kind is `HANDLE`.
+
+There are exactly eight type kinds:
+
+| Kind | Flags | Size/alignment | Detail ID | Fields | GC kind |
+| --- | --- | --- | --- | --- | --- |
+| `VOID` | 0 | 0 / 0 | 0 | none | `NONE` |
+| `LOGIC` | 0 | 4 / 4 | 0 | none | `NONE` |
+| `INTEGER` | 0 or `SIGNED` | 1, 2, 4, or 8; alignment equals size | 0 | none | `NONE`, or `HANDLE` only for signed size 4 |
+| `FLOAT` | 0 | 4 / 4 or 8 / 8 | 0 | none | `NONE` |
+| `POINTER` | 0 or `C_STRING` | 8 / 8 | required type ID | none | `POINTER` |
+| `FUNCTION` | 0 | 8 / 8 | required signature ID | none | `POINTER` |
+| `STRUCT` | 0 | recomputed natural layout | 0 | nonempty owned range | `NONE` |
+| `UNION` | 0 or `TAGGED` | recomputed natural layout | tag type ID only when tagged | nonempty owned range | `NONE` |
+
+Both reserved type words are zero. `first-field` and `field-count` are zero for
+nonaggregates. Every struct or union owns a nonempty contiguous range. A pointer
+detail may refer to itself or a later type, which permits recursive reference
+graphs, but it is never zero, out of range, or `VOID`. `C_STRING` is the
+semantic distinction between a NUL-terminated byte string and an ordinary byte
+stream; its detail names an unsigned one-byte integer. Function detail names a
+signature record. Full signature semantics are verified by the later
+function/signature contract rather than duplicated here.
+
+Source `struct!` and `union!` values are references unless their type
+specification ends in `value`. The RSIR producer therefore serializes a
+reference as `POINTER` to the canonical aggregate type and serializes only the
+by-value representation as `STRUCT` or `UNION`. Every by-value aggregate field
+whose type is itself `STRUCT` or `UNION` must name a smaller type ID than its
+owner. Pointer edges may point forward. This single ordering rule rejects every
+by-value cycle and lets the native reader recompute all aggregate layouts in one
+forward, allocation-free pass.
+
+Each 32-byte field record contains owner type, nonempty canonical name string,
+type, byte offset, flags, zero-based ordinal, optional source location, and
+reserved. Flags and reserved are zero in v1. Field records are contiguous in
+owner and ordinal order, and ownership agrees in both directions. The frontend
+already rejects duplicate source member names; the backend verifier checks
+field-name representation but deliberately does not repeat name resolution.
+This keeps verification linear in the number of types and fields.
+
+Windows x64 struct layout starts at cursor zero. For each field in ordinal
+order, its offset is the cursor rounded up to the field alignment, then its size
+advances the cursor. Aggregate alignment is the maximum field alignment and
+final size is the cursor rounded up to that alignment. Windows x64 raw-union
+fields all have offset zero; size is the largest payload size rounded up to the
+largest payload alignment.
+
+A tagged union uses an unsigned tag of 1, 2, or 4 bytes for at most 255, 65535,
+or more variants respectively. The runtime tag for field ordinal `n` is
+`n + 1`, leaving zero as no active variant. The payload begins at the tag size
+rounded up to the largest payload alignment; every variant has that same byte
+offset. As in the existing Red/System ABI, the tag does not independently raise
+union alignment. Thus a 256-variant union containing only one-byte payloads has
+tag size 2, payload offset 2, alignment 1, and total size 3.
+
+Literal Red/System blocks/binaries currently described internally as `array!`
+are constant storage plus a pointer value, not fixed by-value array types; their
+length and bytes belong in the constant tables. `packed` is an old emitter data
+placement option, while `volatile` and `opaque` are instruction effect facts.
+None is a type flag. Source custom struct alignment is not encoded in v1 and
+requires an explicit future schema extension before it can be supported. These
+facts must not be smuggled into either reserved type word.
+
+`compiler/wire-type-layout.red` and
+`system/codegen/wire-type-layout.reds` independently validate this contract.
+The native reader performs no allocation or recursion and publishes string,
+file, layout, and type views only after complete success. The shared corpus
+covers three valid messages and 56 directed failures, including every error
+code, all signed-31-bit fields, poisoned native outputs, recursive pointer and
+by-value ordering, natural struct/raw/tagged-union layout, managed handles,
+`c-string!`, and the 255-to-256 tag-width boundary. Run both sides with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-type-layout-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-type-layout-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-type-layout-reds-test.exe `
+    tools\self_hosting\tests\wire-type-layout-reds-test.reds
+build\self-hosting\wire-type-layout-reds-test.exe
+```
+
 `#inline` fragments are valid only when their target and ABI equal the message
 header. With the current source syntax they are conservatively modeled as an
 opaque memory/control barrier with caller-clobbered registers, unchanged stack
@@ -502,7 +594,8 @@ invariants:
 - instruction operands/results and constant parts satisfy opcode type rules;
 - call arguments match the signature, including variadic, typed, custom,
   callback, indirect-call, and aggregate-return attributes;
-- aggregate fields and initializer parts fit their type layout without overlap;
+- aggregate fields have canonical natural offsets and sizes; initializer parts
+  fit that verified type layout without overlap;
 - effect/alias annotations agree with the opcode and cannot understate a call,
   volatile access, atomic, trap, throw, or safepoint;
 - explicit stack operations are balanced on all ordinary exits, with dynamic

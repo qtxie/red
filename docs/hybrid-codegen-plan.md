@@ -2,8 +2,9 @@
 
 Status: implementation in progress. The draft schema generator, dual-language
 constants, compiler-core ownership gate, checked common-container readers, and
-independent RSCF, data-layout, string, file, checksum, source-location, and
-RSDG diagnostic verifiers now have executable coverage. The protocol remains
+independent RSCF, data-layout, string, file, checksum, source-location, type/
+aggregate-layout, and RSDG diagnostic verifiers now have executable coverage.
+The protocol remains
 unfrozen until
 the remaining Windows x64 feature blockers and message-level semantic fixtures
 satisfy the Phase 1 exit criteria.
@@ -109,7 +110,10 @@ freeze.
 The common container, RSCF configuration, Windows x64 data layout, canonical
 UTF-8 string tables, file checksums, source-location ordering, and structured
 RSDG failures now have independent Red and Red/System verifiers with shared
-malformed corpora. RSDG preserves primary/note producer order, binds every
+malformed corpora. Canonical representation types and natural struct/raw-union/
+tagged-union layouts are also checked independently, including forward pointer
+recursion and topologically ordered by-value aggregate dependencies. RSDG
+preserves primary/note producer order, binds every
 record to one nonzero routine status, and represents source/function/instruction
 context with explicit presence bits. These are protocol prerequisites only;
 they do not invoke the legacy emitter or constitute a partial backend execution
@@ -151,6 +155,9 @@ Tests:
 - independent diagnostic verifiers agree on status/phase domains, primary and
   follow-up ordering, message validity, context presence, errors, and byte
   locations without requiring a trusted RSIR graph;
+- independent type/layout verifiers agree on canonical type domains, kind-
+  specific detail fields, GC kinds, field ownership/order, and exact Windows x64
+  aggregate layout without consulting emitter state;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.

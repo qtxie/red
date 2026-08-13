@@ -70,6 +70,26 @@ assert compiler-wire-schema/WIRE_DIAGNOSTIC_ERROR_CONTEXT_WITHOUT_TARGET = 23
 	"diagnostic error enum changed"
 assert compiler-wire-schema/WIRE_DIAGNOSTIC_FLAG_INSTRUCTION = 8
 	"diagnostic flag enum changed"
+assert compiler-wire-schema/WIRE_TYPE_KIND_UNION = 8
+	"type kind enum changed"
+assert compiler-wire-schema/WIRE_TYPE_FLAG_C_STRING = 4
+	"type flag enum changed"
+assert compiler-wire-schema/WIRE_TYPE_LAYOUT_ERROR_NONZERO_RESERVED = 26
+	"type-layout error enum changed"
+assert compiler-wire-schema/WIRE_RSIR_TYPE_SIZE = 40
+	"type record size changed"
+assert compiler-wire-schema/WIRE_RSIR_TYPE_RESERVED_0_OFFSET = 16
+	"first type reserved word moved"
+assert compiler-wire-schema/WIRE_RSIR_TYPE_DETAIL_ID_OFFSET = 20
+	"type detail ID moved"
+assert compiler-wire-schema/WIRE_RSIR_TYPE_RESERVED_1_OFFSET = 24
+	"second type reserved word moved"
+assert none? in compiler-wire-schema 'WIRE_TYPE_KIND_ARRAY
+	"source literal-array state leaked into the wire type domain"
+assert none? in compiler-wire-schema 'WIRE_TYPE_KIND_OPAQUE
+	"machine-IR opaque state leaked into the wire type domain"
+assert none? in compiler-wire-schema 'WIRE_TYPE_FLAG_NOMINAL
+	"source alias identity leaked into representation flags"
 assert compiler-wire-schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS_REQUIRED = 0
 	"RSCG unwind section must be optional"
 assert compiler-wire-schema/WIRE_RSDG_SECTION_DIAGNOSTICS_CARDINALITY =

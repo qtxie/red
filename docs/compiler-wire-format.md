@@ -472,8 +472,9 @@ The important record shapes are:
 - `locals`: function, name string, type, kind, flags, alignment, source location,
   ordinal. There is no frame-offset hint.
 - `edges`: source block, target block, edge kind, selector constant, ordinal,
-  flags. Edge kinds cover normal, true, false, switch case, default, exception,
-  and unreachable continuation.
+  flags. V1 accepts normal, true, false, switch case, default, and exception
+  edges. The `UNREACHABLE` enum value is reserved but rejected; unreachable
+  continuations use blocks and terminators rather than a synthetic edge kind.
 - `values`: definition kind, definition record ID, result ordinal, type, owning
   function, flags. Definition kinds include parameter and instruction. Values
   are single-definition expression temporaries, but mutable locals and synthetic
@@ -659,8 +660,8 @@ an entry inside that slice, and owns an empty or contiguous local slice.
 Function slices partition both tables in function order. Blocks point back to
 their owner, have zero record flags and reserved word, and carry an optional
 valid source location. Their instruction and outgoing-edge ranges are decoded
-as signed-31-bit scalars here but are deliberately left to the control-flow
-contract, which will validate terminators, edge sets, and range ownership.
+as signed-31-bit scalars here; the control-flow contract below validates
+terminators, edge sets, and range ownership.
 
 Local kinds are `ARGUMENT`, `LOCAL`, `TEMPORARY`, and `MERGE`. Arguments and
 ordinary locals require nonempty names; temporaries and merge slots may use
@@ -1146,6 +1147,90 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-memory-aggregate-reds-test.exe
 ```
 
+### Control flow
+
+`compiler/wire-control-flow.red` and
+`system/codegen/wire-control-flow.reds` consume the verified scalar tables and
+independently validate the block/edge graph plus the branch, jump, switch,
+return, and unreachable terminators. They do not construct MIR, call the
+legacy `machine-ir/verify-current`, invoke the emitter, or produce direct or
+machine-code bytes.
+
+The edge section has zero flags. Every edge word is first decoded as a
+signed-31-bit scalar. Source and target are nonzero blocks in the same function;
+edge flags are zero. `SWITCH_CASE` alone has a nonzero selector constant, while
+all other accepted kinds have selector zero. `EDGE_KIND_UNREACHABLE` remains a
+reserved schema value and is rejected in v1.
+
+Block edge slices partition the complete edge table in block order. An empty
+slice is `(0, 0)`; a nonempty slice starts at the next unowned edge. Every edge
+in the slice names that source block and has its zero-based slice ordinal.
+Ordinary edges precede an optional suffix of `EXCEPTION` edges. The ordinary
+prefix must exactly mirror the final terminator. Exception source regions,
+handler targets, stack state, and `THROW` operands/effects belong to the later
+exception contract; this layer admits the suffix without assigning those
+missing semantics.
+
+Every block is nonempty and contains exactly one terminator as its final
+instruction. An earlier terminator is invalid. The owned terminators have
+subopcode zero, instruction flags zero, no results, exact `CONTROL` effect, and
+alias `(NONE, 0)`. Their operands and ordinary edge prefixes are:
+
+| Terminator | Operands | Ordinary edges |
+| --- | --- | --- |
+| `JUMP` | `BLOCK target` | one `NORMAL` edge to target |
+| `BRANCH` | `VALUE logic`, `BLOCK true`, `BLOCK false` | `TRUE`, then `FALSE`, to those targets |
+| `SWITCH` | ordinary integer value, one or more `(CONSTANT, BLOCK)` cases, final `BLOCK` default | one `SWITCH_CASE` per case, then `DEFAULT` |
+| `RETURN` | none for `VOID`, otherwise one exact return-typed `VALUE` | none |
+| `UNREACHABLE` | none | none |
+
+Switch case constants have the selector's exact ordinary integer type. Cases
+remain in source order, and each case edge repeats the operand's constant ID.
+Two cases with the same fixed-width byte value are invalid even when they use
+different constant records or one uses canonical `ZERO`; no sorting or target
+jump-table decision is serialized. A signature with `NO_RETURN` rejects every
+`RETURN`. `THROW` is recognized as a final terminator and must have no ordinary
+edge, but its complete shape is intentionally deferred to exception
+verification.
+
+Parameter values dominate every block in their function. An instruction value
+used in the same block must be defined by an earlier instruction. Across
+blocks, its definition block must dominate the use in the ordinary CFG. The
+dominance graph has a synthetic root whose successors are the declared entry
+block and every block with zero ordinary in-degree. This treats detached
+unreachable continuations and exception-only handlers conservatively as roots.
+A closed detached cycle has no such root and is rejected, preventing vacuous
+dominance. Non-dominating branch merges use explicit typed mutable or `MERGE`
+locals; RSIR serializes no phi nodes, predecessor lists, dominator sets, or
+optimizer state.
+
+The native verifier is allocation-free and accepts caller-owned writable
+scratch. It requires at least one byte for every block in the module, indexed by
+global block ID, and may overwrite all those bytes. Null scratch or a negative
+size is `INVALID_ARGUMENTS`; a smaller nonnull buffer reports
+`INSUFFICIENT_WORKSPACE` after local wire/terminator checks and before graph
+closure. The Red verifier owns its temporary marks internally, so this status
+is native-call state rather than malformed RSIR.
+
+Both readers stop at the same first semantic error and publish all lower and
+control views only after complete success. The shared corpus contains three
+valid modules and 34 directed malformed modules covering control errors 1
+through 35, exact byte locations, edge partitions, every terminator shape,
+switch duplicates, virtual roots, direct-value dominance, deferred exception
+forms, and poisoned native outputs. The native test additionally covers error
+36 and every null output pointer. Run both implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-control-flow-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-control-flow-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-control-flow-reds-test.exe `
+    tools\self_hosting\tests\wire-control-flow-reds-test.reds
+build\self-hosting\wire-control-flow-reds-test.exe
+```
+
 `#inline` fragments are valid only when their target and ABI equal the message
 header. With the current source syntax they are conservatively modeled as an
 opaque memory/control barrier with caller-clobbered registers, unchanged stack
@@ -1165,7 +1250,8 @@ invariants:
 - every block has exactly one final terminator and its edge set matches that
   terminator;
 - temporary values have one definition and each direct use is dominated by that
-  definition; cross-edge values pass through typed mutable/merge slots;
+  definition; non-dominating merge values pass through typed mutable/merge
+  slots;
 - instruction operands/results and constant parts satisfy opcode type rules;
 - call arguments match the signature, including variadic, typed, custom,
   callback, indirect-call, and aggregate-return attributes;

@@ -267,24 +267,26 @@ compiler-backend-feature-spec: [
 		]
 
 		control-flow [
-			status blocked
+			status specified
 			owners [rsir codegen]
 			wire [
-				RECORD/RSIR_BLOCK RECORD/RSIR_EDGE EDGE_KIND/ALL_VALUES
+				RECORD/RSIR_BLOCK RECORD/RSIR_EDGE
+				EDGE_KIND/NORMAL EDGE_KIND/TRUE EDGE_KIND/FALSE
+				EDGE_KIND/SWITCH_CASE EDGE_KIND/DEFAULT EDGE_KIND/UNREACHABLE
 				OPCODE/BRANCH OPCODE/JUMP OPCODE/SWITCH
 				OPCODE/RETURN OPCODE/UNREACHABLE EFFECT_FLAG/CONTROL
+				CONTROL_FLOW_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-control-flow-test.red"
+				"tools/self_hosting/tests/wire-control-flow-reds-test.reds"
 				"system/tests/source/units/case-test.reds"
 				"system/tests/source/units/conditional-test.reds"
 				"system/tests/source/units/exit-test.reds"
 				"system/tests/source/units/return-test.reds"
 				"system/tests/source/units/switch-test.reds"
 			]
-			blockers [
-				"define block/edge flags and the exact terminator-to-edge/type table"
-				"freeze dominance, unreachable-continuation, and merge-slot ownership rules"
-			]
+			blockers []
 		]
 
 		calls-and-abi [
@@ -327,6 +329,7 @@ compiler-backend-feature-spec: [
 			owners [frontend rsir codegen]
 			wire [
 				RECORD/RSIR_EXCEPTION_REGION RECORD/RSIR_EXCEPTION_BLOCK
+				EDGE_KIND/EXCEPTION
 				OPCODE/THROW OPCODE/CATCH_ENTER OPCODE/CATCH_LEAVE
 				EFFECT_FLAG/THROW
 			]

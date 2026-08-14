@@ -89,6 +89,15 @@ The frontend emits logical values and mutable slots. It does not decide register
 locations, shadow space, aggregate register classes, spill slots, jump widths,
 or instruction encodings.
 
+Control-flow ownership follows the same boundary. The frontend chooses semantic
+blocks, ordered branch/switch targets, and explicit mutable or merge locals.
+RSIR owns those blocks, edges, and terminators. The independent CFG verifiers
+check edge partitioning, terminator correspondence, virtual unreachable roots,
+and direct-value dominance without consulting `machine-ir/verify-current` or
+emitter patch lists. Predecessor arrays, dominator trees, phi construction, and
+merge-slot promotion are derived later inside native MIR and are never
+serialized or copied from the legacy optimizer.
+
 Address paths have one backend-neutral form: scalar `ADD` performs pointer
 indexing, each member step is `ADDRESS_FIELD`, and indirect loads/stores carry no
 fused displacement. Tagged-union activation is an explicit operation rather

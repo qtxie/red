@@ -4,11 +4,10 @@ Status: implementation in progress. The draft schema generator, dual-language
 constants, compiler-core ownership gate, checked common-container readers, and
 independent RSCF, data-layout, string, file, checksum, source-location, type/
 aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
-constant/global-initializer, scalar-operation, memory/aggregate-operation, and
-RSDG diagnostic verifiers now have executable coverage. The protocol remains
-unfrozen until
-the remaining Windows x64 feature blockers and message-level semantic fixtures
-satisfy the Phase 1 exit criteria.
+constant/global-initializer, scalar-operation, memory/aggregate-operation,
+control-flow, and RSDG diagnostic verifiers now have executable coverage. The
+protocol remains unfrozen until the remaining Windows x64 feature blockers and
+message-level semantic fixtures satisfy the Phase 1 exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -125,15 +124,19 @@ managed-handle boundaries, and exact scalar effects are now specified for the
 same independent verification path. Typed local/global/indirect memory access,
 canonical address paths, exact alias and volatile effects, by-value aggregate
 construction, overlap-safe aggregate copy, and explicit tagged-union state are
-now specified and checked on that path as well.
+now specified and checked on that path as well. Block/edge partitioning, exact
+branch/jump/switch/return/unreachable shapes, virtual CFG roots, direct-value
+dominance, and explicit merge-slot ownership are now specified and checked too;
+exception-edge and `THROW` details remain owned by the blocked exception feature.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every
 record to one nonzero routine status, and represents source/function/instruction
 context with explicit presence bits. These are protocol prerequisites only;
 they do not invoke the legacy emitter or constitute a partial backend execution
-path. They also do not produce direct code bytes; frontend RSIR production and
-native RSCG generation remain later work.
+path. The control verifier is independent of legacy
+`machine-ir/verify-current`. These layers do not produce direct code bytes;
+frontend RSIR production and native RSCG generation remain later work.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
 Its test reads `system/tests/run-all.r` as data and rejects any unclassified
@@ -183,6 +186,9 @@ Tests:
 - independent memory/aggregate verifiers agree on address decomposition,
   storage compatibility, aliases, volatility, aggregate build/copy, explicit
   union tags, nested errors, and exact byte locations without emitting code;
+- independent control-flow verifiers agree on block/edge ownership, terminator
+  shape and edge order, switch constants, virtual roots, direct-value dominance,
+  explicit merge slots, workspace failure, and failure-atomic output views;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.

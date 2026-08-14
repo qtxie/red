@@ -1147,6 +1147,87 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-memory-aggregate-reds-test.exe
 ```
 
+### Atomic operations
+
+`compiler/wire-atomic.red` and `system/codegen/wire-atomic.reds` consume the
+verified scalar tables and independently validate opcodes 32 through 36. They
+construct no MIR, call neither `machine-ir/verify-current` nor the legacy
+emitter, and produce no direct or machine-code bytes. Atomic instructions use
+the common instruction and operand tables; v1 adds no atomic section and
+serializes no target instruction choice.
+
+The instruction `FLAGS` field is opcode-specific. Its low three bits contain
+one `ATOMIC_ORDER` value directly, selected with `ATOMIC_FLAG/ORDER_MASK` (7).
+`ATOMIC_FLAG/RETURN_OLD` (8) is the only additional bit. `ATOMIC_RMW` uses its
+`SUBOPCODE` for one of `ADD`, `SUBTRACT`, `BIT_AND`, `BIT_OR`, or `BIT_XOR`;
+every other atomic opcode has subopcode zero. `INSTRUCTION_FLAG/CHECKED` has no
+meaning on an atomic instruction.
+
+Legal orders are:
+
+| Opcode family | Legal `ATOMIC_ORDER` values |
+| --- | --- |
+| `ATOMIC_LOAD` | `RELAXED`, `ACQUIRE`, `SEQUENTIAL` |
+| `ATOMIC_STORE` | `RELAXED`, `RELEASE`, `SEQUENTIAL` |
+| `ATOMIC_RMW`, `ATOMIC_CAS` | all five values |
+| `ATOMIC_FENCE` | `ACQUIRE`, `RELEASE`, `ACQUIRE_RELEASE`, `SEQUENTIAL` |
+
+A relaxed fence is invalid because it creates no synchronization event. The
+single CAS order is its success order. Codegen derives the failure order:
+`RELEASE` becomes `RELAXED`, `ACQUIRE_RELEASE` becomes `ACQUIRE`, and the other
+three orders remain unchanged. The current `system/atomic` source forms emit
+`SEQUENTIAL`; the complete wire domain is frozen so later source syntax does
+not require a schema redesign.
+
+Every memory operand is a `VALUE`, has auxiliary zero, and uses one exact
+ordinary pointer to a canonical signed i32. The pointee has size and alignment
+four, `SIGNED`, and `GC_KIND/NONE`. Stored, RMW, expected, and desired values
+have that exact pointee type. A source pointer with another pointee type must be
+made explicit with a legal scalar conversion or bitcast before the atomic
+instruction; codegen never guesses the access width from source spelling.
+
+| Opcode | Operands | Result | Exact effect |
+| --- | --- | --- | --- |
+| `ATOMIC_LOAD` | address | signed i32 | `READ + ATOMIC` |
+| `ATOMIC_STORE` | address, value | none | `WRITE + ATOMIC` |
+| `ATOMIC_RMW` | address, value | optional signed i32 | `READ + WRITE + ATOMIC` |
+| `ATOMIC_CAS` | address, expected, desired | optional logic success value | `READ + WRITE + ATOMIC` |
+| `ATOMIC_FENCE` | none | none | `ATOMIC` |
+
+All five opcodes use alias `(UNIVERSAL, 0)`, including a fence. `VOLATILE` is
+rejected because `ATOMIC` already states the stronger observable operation;
+unknown, trap, call, stack, control, and opaque effects are rejected too.
+`ATOMIC_LOAD` keeps one SSA result even when the source expression discards it,
+because the atomic read itself remains observable. CAS may omit its success
+result. An RMW with a result returns the pre-operation value when `RETURN_OLD`
+is set and the post-operation value otherwise. An unused RMW has no result and
+must clear `RETURN_OLD`, canonicalizing the unobservable source refinement.
+
+The frontend guarantees that every runtime address is naturally four-byte
+aligned. That fact follows from the canonical pointee layout and is not repeated
+as an unprovable operand hint. The verifier checks the pointer and pointee type;
+it cannot prove an arbitrary runtime pointer value. Native codegen may assume
+the producer contract and need not synthesize a bytewise or lock-based fallback
+for a misaligned address.
+
+Both readers run the scalar verifier into private outputs, scan owned
+instructions in table order, and publish lower views only after complete
+success. The shared corpus contains two valid modules and 21 directed malformed
+modules. It covers all 17 atomic status codes, every RMW operation, every legal
+order family, old/new/unused results, exact effects and aliases, nested scalar
+errors, exact section/byte locations, and poisoned native outputs. Run both
+implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-atomic-test.red
+D:\EE\QTool\red-console.exe tools\self_hosting\generate-wire-atomic-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-atomic-reds-test.exe `
+    tools\self_hosting\tests\wire-atomic-reds-test.reds
+build\self-hosting\wire-atomic-reds-test.exe
+```
+
 ### Control flow
 
 `compiler/wire-control-flow.red` and

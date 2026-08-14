@@ -312,17 +312,22 @@ compiler-backend-feature-spec: [
 		]
 
 		atomics [
-			status blocked
+			status specified
 			owners [rsir codegen]
 			wire [
 				OPCODE/ATOMIC_LOAD OPCODE/ATOMIC_STORE OPCODE/ATOMIC_RMW
 				OPCODE/ATOMIC_CAS OPCODE/ATOMIC_FENCE
-				ATOMIC_ORDER/ALL_VALUES EFFECT_FLAG/ATOMIC
+				ATOMIC_ORDER/ALL_VALUES ATOMIC_RMW_OPERATION/ALL_VALUES
+				ATOMIC_FLAG/ALL_VALUES ATOMIC_ERROR/ALL_VALUES
+				EFFECT_FLAG/READ EFFECT_FLAG/WRITE EFFECT_FLAG/ATOMIC
+				ALIAS_KIND/UNIVERSAL
 			]
-			tests ["system/tests/source/units/atomic-test.reds"]
-			blockers [
-				"add atomic-RMW operation IDs and freeze legal order/type/result combinations"
+			tests [
+				"tools/self_hosting/tests/wire-atomic-test.red"
+				"tools/self_hosting/tests/wire-atomic-reds-test.reds"
+				"system/tests/source/units/atomic-test.reds"
 			]
+			blockers []
 		]
 
 		exceptions [

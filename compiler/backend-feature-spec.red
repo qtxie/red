@@ -408,23 +408,29 @@ compiler-backend-feature-spec: [
 		]
 
 		rscg-object-layout [
-			status blocked
+			status specified
 			owners [rscg adapter linker]
 			wire [
 				RECORD/RSCG_OUTPUT_SECTION RECORD/RSCG_SYMBOL RECORD/RSCG_FUNCTION
 				OUTPUT_SECTION_CLASS/ALL_VALUES SYMBOL_BINDING/ALL_VALUES
+				RSCG_OUTPUT_SECTION_FLAG/ALL_VALUES RSCG_SYMBOL_FLAG/ALL_VALUES
+				RSCG_FUNCTION_FLAG/ALL_VALUES RSCG_OBJECT_ERROR/ALL_VALUES
 			]
-			tests ["system/tests/source/units/x64-image-info-smoke.reds"]
-			blockers [
-				"define output-section, RSCG symbol, and function flag masks plus required named roles"
-				"freeze BSS, alignment, extent, duplicate symbol, and absolute/unresolved rules"
+			tests [
+				"tools/self_hosting/tests/wire-rscg-object-test.red"
+				"tools/self_hosting/tests/wire-rscg-object-reds-test.reds"
+				"system/tests/source/units/x64-image-info-smoke.reds"
 			]
+			blockers []
 		]
 
 		rscg-relocations-and-linker [
 			status blocked
 			owners [rscg adapter linker]
-			wire [RECORD/RSCG_RELOCATION RELOCATION_KIND/ALL_VALUES]
+			wire [
+				RECORD/RSCG_RELOCATION RELOCATION_KIND/ALL_VALUES
+				RSCG_RELOCATION_FLAG/ALL_VALUES RSCG_RELOCATION_ERROR/ALL_VALUES
+			]
 			tests [
 				"tools/self_hosting/fixtures/backend/global-memory.reds"
 				"tools/self_hosting/fixtures/backend/nested-relocation-order.reds"
@@ -440,6 +446,10 @@ compiler-backend-feature-spec: [
 			wire [
 				RECORD/RSCG_DEBUG_LINE RECORD/RSCG_DEBUG_PARAMETER
 				RECORD/RSCG_GC_FRAME RECORD/RSCG_UNWIND_FUNCTION
+				RSCG_DEBUG_PARAMETER_FLAG/ALL_VALUES
+				RSCG_GC_FRAME_FLAG/ALL_VALUES
+				RSCG_UNWIND_FUNCTION_FLAG/ALL_VALUES
+				RSCG_METADATA_ERROR/ALL_VALUES
 			]
 			tests [
 				"system/tests/source/compiler/output-test.r"

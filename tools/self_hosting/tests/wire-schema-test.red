@@ -158,6 +158,22 @@ assert compiler-wire-schema/WIRE_X64_REGISTER_R15 = 16
 	"x64 register enum changed"
 assert compiler-wire-schema/WIRE_TARGET_INTRINSIC_ERROR_BAD_SYSCALL_ARGUMENT_COUNT = 32
 	"target-intrinsic error enum changed"
+assert compiler-wire-schema/WIRE_RSCG_GC_FRAME_PROLOG_PATCH_OFFSET_OFFSET = 20
+	"GC-frame prolog patch offset moved"
+assert none? in compiler-wire-schema 'WIRE_RSCG_GC_FRAME_RESERVED_OFFSET
+	"obsolete GC-frame reserved field remains in the wire ABI"
+assert compiler-wire-schema/WIRE_RSCG_OUTPUT_SECTION_FLAG_NONE = 0
+	"RSCG output-section flag domain changed"
+assert compiler-wire-schema/WIRE_RSCG_SYMBOL_FLAG_UNDEFINED = 1
+	"RSCG undefined-symbol flag changed"
+assert compiler-wire-schema/WIRE_RSCG_GC_FRAME_FLAG_LIBRARY_IMAGE = 1
+	"RSCG library-image GC flag changed"
+assert compiler-wire-schema/WIRE_RSCG_OBJECT_ERROR_BAD_LIB_IMAGE_ROLE = 61
+	"RSCG object-layout error enum changed"
+assert compiler-wire-schema/WIRE_RSCG_RELOCATION_ERROR_DUPLICATE_EXPORT_NAME = 44
+	"RSCG relocation error enum changed"
+assert compiler-wire-schema/WIRE_RSCG_METADATA_ERROR_UNSUPPORTED_UNWIND = 39
+	"RSCG metadata error enum changed"
 assert compiler-wire-schema/profiles/RSCG/known-count = 17
 	"generated Red RSCG profile is stale"
 assert compiler-wire-schema/profiles/RSCG/record-sizes/15 =

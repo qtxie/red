@@ -1778,10 +1778,11 @@ Record shapes:
 - `output-sections`: name string, class, flags, alignment, data offset, file
   size, memory size, reserved. BSS has file size zero. Platform sections allow
   later `.pdata`, `.xdata`, `.eh_frame`, and similar data without changing the
-  container model.
+  container model, but the Windows x64 v1 verifier currently rejects that class.
 - `symbols`: name string, kind, binding, visibility, output section, section
   offset, size, alignment, flags, origin-module ID. Section zero denotes an
-  absolute or unresolved symbol as determined by flags.
+  unresolved symbol when the `UNDEFINED` flag is set. V1 does not accept
+  absolute symbols.
 - `modules`: optional name string, module kind, image kind, initializer/finalizer/
   entry symbol IDs, zero flags, and zero reserved word. The section is required
   and nonempty. RSCG contains one record for every merged RSIR/object input in
@@ -1797,8 +1798,56 @@ Record shapes:
   first debug line, debug line count, first debug parameter, parameter count.
 - `debug-lines`: function, function-relative code offset, file, line, column.
 - `gc-frames`: function, bitmap section, bitmap offset, bitmap size, flags,
-  reserved. The actual bitmap is already in output data and is also reachable
-  through the compatibility symbol expected by the runtime.
+  prolog patch offset. The actual bitmap is already in output data and is also
+  reachable through the compatibility symbol expected by the runtime.
+
+### Checked object layout
+
+`compiler/wire-rscg-object.red` and
+`system/codegen/wire-rscg-object.reds` independently validate the section,
+symbol, function, lifecycle, and runtime-role substrate before relocations or
+metadata are followed. They inspect existing RSCG bytes only; neither verifier
+generates machine code or calls the legacy emitter.
+
+Output sections are ordered by class and canonical name. Initialized CODE,
+RODATA, and DATA records own consecutive, gap-free slices of `output-data` and
+have equal file and memory sizes. BSS has zero data offset and file size but a
+nonzero memory size. V1 flags are zero, alignments are powers of two no greater
+than 4096, reserved words are zero, and initialized bytes have exactly one
+owner.
+
+Symbols are ordered by name, binding, and origin module. Local names may repeat
+only across distinct modules; non-local names may not repeat. A definition has
+a valid class-compatible section, aligned in-range extent, and cannot overlap
+another nonempty definition. An undefined symbol is non-local and has zero
+section, offset, size, and alignment. Every defined function symbol has exactly
+one ordered, nonoverlapping function record with the same section extent.
+Frame sizes are multiples of eight, function flags are zero, and debug ranges
+use canonical `(first, count)` ownership notation.
+
+Lifecycle references must resolve to defined function symbols. At most one
+module has the RUNTIME role. When present, that module owns exactly one local,
+hidden DATA symbol named `***-exec-image` with the exact 40-byte x64 execution
+image layout and exactly one `***-ptr-bitmaps` symbol with four-byte alignment.
+The four bytes immediately before the bitmap role are the zero compression
+header used by the current runtime. A DLL additionally requires the same
+40-byte shape under `***-lib-image`.
+
+Both native outputs and all dependency views are failure-atomic. The shared
+corpus contains two valid objects and one directed malformed binary for every
+object-layout error from 2 through 61; explicit invalid-argument tests complete
+coverage of all 62 status values. Run it with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-rscg-object-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-rscg-object-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-rscg-object-reds-test.exe `
+    tools\self_hosting\tests\wire-rscg-object-reds-test.reds
+build\self-hosting\wire-rscg-object-reds-test.exe
+```
 
 The codegen emits final GC bitmap bytes and all prolog/data relocations needed
 to reference them. Structured GC records do not replace those runtime bytes.

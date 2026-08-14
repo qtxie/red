@@ -149,6 +149,12 @@ Win64 syscall argument limit now have exact instruction, type, effect, alias,
 clobber, return, source, and data-ownership contracts. Independent Red and
 allocation-free Red/System target-intrinsic verifiers check those contracts
 against one shared malformed corpus.
+Canonical RSCG CODE/RODATA/DATA/BSS ownership, defined and unresolved symbols,
+function extents, lifecycle references, and the x64 runtime image/bitmap roles
+now have the same independent Red and failure-atomic Red/System verification.
+This layer validates serialized object structure only and still generates no
+machine-code bytes; relocation, debug, GC-frame, and unwind verification remain
+separate following milestones.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every

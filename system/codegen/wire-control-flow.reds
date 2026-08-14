@@ -187,6 +187,7 @@ wire-control-flow-reader: context [
 			opcode = WIRE_OPCODE_RETURN
 			opcode = WIRE_OPCODE_THROW
 			opcode = WIRE_OPCODE_UNREACHABLE
+			opcode = WIRE_OPCODE_SUBROUTINE_RETURN
 		]
 	]
 
@@ -197,6 +198,7 @@ wire-control-flow-reader: context [
 			opcode = WIRE_OPCODE_SWITCH
 			opcode = WIRE_OPCODE_RETURN
 			opcode = WIRE_OPCODE_UNREACHABLE
+			opcode = WIRE_OPCODE_SUBROUTINE_RETURN
 		]
 	]
 
@@ -332,7 +334,7 @@ wire-control-flow-reader: context [
 			status operand-id reference type-id owner-function signature-id
 			signature-flags return-type type-kind case-count case-index prior-index
 			constant-id prior-constant edge-id expected-kind
-			expected-target field actual expected [integer!]
+			expected-target outgoing-count field actual expected [integer!]
 	][
 		opcode: instruction-value scalar instruction-id WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
 		base: instruction-base scalar instruction-id
@@ -589,6 +591,27 @@ wire-control-flow-reader: context [
 					]
 				]
 				if ordinary-count <> 0 [
+					return set-error result WIRE_CONTROL_FLOW_ERROR_BAD_TERMINATOR_TARGET
+						((block-base functions block-id)
+							+ WIRE_RSIR_BLOCK_OUTGOING_EDGE_COUNT_OFFSET)
+						functions/blocks-ordinal
+				]
+			]
+
+			opcode = WIRE_OPCODE_SUBROUTINE_RETURN [
+				if operand-count > 1 [
+					return set-error result WIRE_CONTROL_FLOW_ERROR_BAD_OPERAND_COUNT
+						(base + WIRE_RSIR_INSTRUCTION_OPERAND_COUNT_OFFSET)
+						scalar/instructions-ordinal
+				]
+				if operand-count = 1 [
+					status: verify-operand-shape result scalar first-operand
+						WIRE_OPERAND_KIND_VALUE
+					if status <> WIRE_CONTROL_FLOW_ERROR_SUCCESS [return status]
+				]
+				outgoing-count: block-value functions block-id
+					WIRE_RSIR_BLOCK_OUTGOING_EDGE_COUNT_OFFSET
+				if outgoing-count <> 0 [
 					return set-error result WIRE_CONTROL_FLOW_ERROR_BAD_TERMINATOR_TARGET
 						((block-base functions block-id)
 							+ WIRE_RSIR_BLOCK_OUTGOING_EDGE_COUNT_OFFSET)

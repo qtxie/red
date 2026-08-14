@@ -150,6 +150,7 @@ compiler-wire-control-flow: context [
 			schema/WIRE_OPCODE_BRANCH schema/WIRE_OPCODE_JUMP
 			schema/WIRE_OPCODE_SWITCH schema/WIRE_OPCODE_RETURN
 			schema/WIRE_OPCODE_THROW schema/WIRE_OPCODE_UNREACHABLE
+			schema/WIRE_OPCODE_SUBROUTINE_RETURN
 		] opcode
 	]
 
@@ -157,7 +158,7 @@ compiler-wire-control-flow: context [
 		find reduce [
 			schema/WIRE_OPCODE_BRANCH schema/WIRE_OPCODE_JUMP
 			schema/WIRE_OPCODE_SWITCH schema/WIRE_OPCODE_RETURN
-			schema/WIRE_OPCODE_UNREACHABLE
+			schema/WIRE_OPCODE_UNREACHABLE schema/WIRE_OPCODE_SUBROUTINE_RETURN
 		] opcode
 	]
 
@@ -268,7 +269,7 @@ compiler-wire-control-flow: context [
 			operand-count ordinary-count first-edge failure operand-id reference
 			type-id owner-function signature-id signature-flags return-type
 			case-count case-index prior-index constant-id prior-constant edge-id
-			expected-kind expected-target
+			expected-kind expected-target outgoing-count
 	][
 		scalar-view: scalar-result/view
 		functions: scalar-result/functions
@@ -546,6 +547,26 @@ compiler-wire-control-flow: context [
 					]
 				]
 				if ordinary-count <> 0 [
+					return reject result schema/WIRE_CONTROL_FLOW_ERROR_BAD_TERMINATOR_TARGET
+						((block-base functions block-id)
+							+ schema/WIRE_RSIR_BLOCK_OUTGOING_EDGE_COUNT_OFFSET)
+						functions/blocks-ordinal
+				]
+			]
+			opcode = schema/WIRE_OPCODE_SUBROUTINE_RETURN [
+				if operand-count > 1 [
+					return reject result schema/WIRE_CONTROL_FLOW_ERROR_BAD_OPERAND_COUNT
+						(base + schema/WIRE_RSIR_INSTRUCTION_OPERAND_COUNT_OFFSET)
+						scalar-view/instructions-ordinal
+				]
+				if operand-count = 1 [
+					failure: verify-operand-shape data result scalar-view first-operand
+						schema/WIRE_OPERAND_KIND_VALUE
+					if failure [return failure]
+				]
+				outgoing-count: block-value data functions block-id
+					schema/WIRE_RSIR_BLOCK_OUTGOING_EDGE_COUNT_OFFSET
+				if outgoing-count <> 0 [
 					return reject result schema/WIRE_CONTROL_FLOW_ERROR_BAD_TERMINATOR_TARGET
 						((block-base functions block-id)
 							+ schema/WIRE_RSIR_BLOCK_OUTGOING_EDGE_COUNT_OFFSET)

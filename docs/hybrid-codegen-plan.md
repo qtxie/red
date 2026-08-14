@@ -5,8 +5,8 @@ constants, compiler-core ownership gate, checked common-container readers, and
 independent RSCF, data-layout, string, file, checksum, source-location, type/
 aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
 constant/global-initializer, scalar-operation, memory/aggregate-operation,
-control-flow, calls/ABI, atomic-operation, exception, and RSDG diagnostic
-verifiers now have executable coverage. The
+control-flow, calls/ABI, atomic-operation, subroutine, exception,
+explicit-stack, and RSDG diagnostic verifiers now have executable coverage. The
 protocol remains unfrozen until the remaining Windows x64 feature blockers and
 message-level semantic fixtures satisfy the Phase 1 exit criteria.
 
@@ -136,7 +136,12 @@ aliases, and the natural-alignment producer contract are independently checked
 as well. Exception region kinds and membership, exact handler nesting, entry
 and leave boundaries, exception-edge suffixes, `THROW`, `[catch]` call wrappers,
 callback boundaries, and conservative stack interaction are independently
-checked as well.
+checked as well. Named host-owned subroutine regions, effective signatures,
+dedicated returns, call ownership, recursion boundaries, and execution-region
+CFG isolation are independently checked too. Explicit stack instruction
+shapes, signed slot counts, exact/dynamic fixed-point joins, opaque
+`PUSH_ALL`/`POP_ALL` regions, custom-call consumption, and subroutine return
+depth are now checked on the same path with allocation-free native workspace.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every
@@ -211,6 +216,14 @@ Tests:
   FUNCTION catch-all semantics, throw/call placement, callback declarations,
   stack exclusions, nested errors, and exact byte locations without emitting
   code;
+- independent subroutine verifiers agree on host ownership, ordered block
+  membership, execution roots, ordinary-edge isolation, effective signatures,
+  dedicated returns, descriptor-only calls, recursion rules, nested errors,
+  and exact byte locations without emitting code;
+- independent explicit-stack verifiers agree on instruction shapes, signed
+  slot counts, exact/dynamic joins, save-region identity, custom-call
+  consumption, host epilog ownership, subroutine return depth, caller-owned
+  workspace, and failure-atomic views without emitting code;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.

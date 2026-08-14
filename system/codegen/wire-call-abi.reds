@@ -524,6 +524,15 @@ wire-call-abi-reader: context [
 				]
 				target-signature: signature-id
 			]
+			kind = WIRE_CALL_KIND_SUBROUTINE [
+				if operand-kind <> WIRE_OPERAND_KIND_SUBROUTINE [
+					return set-error result WIRE_CALL_ABI_ERROR_BAD_CALLEE_OPERAND
+						(operand-record-base + WIRE_RSIR_OPERAND_KIND_OFFSET)
+						scalar/operands-ordinal
+				]
+				; Ownership and the record signature belong to the subroutine layer.
+				target-signature: signature-id
+			]
 			true [
 				return set-error result WIRE_CALL_ABI_ERROR_UNSUPPORTED_CALL_KIND
 					(base + WIRE_RSIR_CALL_CALLEE_KIND_OFFSET) calls/calls-ordinal
@@ -575,7 +584,7 @@ wire-call-abi-reader: context [
 				(base + WIRE_RSIR_CALL_SIGNATURE_OFFSET) calls/calls-ordinal
 		]
 		kind: call-value calls call-id WIRE_RSIR_CALL_CALLEE_KIND_OFFSET
-		if any [kind = WIRE_CALL_KIND_CUSTOM kind = WIRE_CALL_KIND_SUBROUTINE][
+		if kind = WIRE_CALL_KIND_CUSTOM [
 			return set-error result WIRE_CALL_ABI_ERROR_UNSUPPORTED_CALL_KIND
 				(base + WIRE_RSIR_CALL_CALLEE_KIND_OFFSET) calls/calls-ordinal
 		]
@@ -584,6 +593,7 @@ wire-call-abi-reader: context [
 			kind = WIRE_CALL_KIND_INDIRECT
 			kind = WIRE_CALL_KIND_IMPORT
 			kind = WIRE_CALL_KIND_SYSCALL
+			kind = WIRE_CALL_KIND_SUBROUTINE
 		][
 			return set-error result WIRE_CALL_ABI_ERROR_BAD_CALLEE_KIND
 				(base + WIRE_RSIR_CALL_CALLEE_KIND_OFFSET) calls/calls-ordinal

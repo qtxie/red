@@ -2,7 +2,7 @@ Red [
 	Title: "Hybrid compiler RSIR exception tests"
 ]
 
-do %wire-call-abi-test.red
+do %wire-subroutine-test.red
 do %../../../compiler/wire-exception.red
 
 exception-verifier: compiler-wire-exception
@@ -309,6 +309,184 @@ rich-exception-message: build-exception-message exception-regions exception-memb
 	exception-blocks exception-values exception-instructions exception-operands
 	exception-edges exception-calls
 
+; Exception regions belong to an execution region, not merely to their host
+; function. These fixtures keep the host and both compiler-generated
+; subroutines in one function while exercising catch and propagation paths.
+subexception-signatures: copy subroutine-signatures
+append subexception-signatures fixture-writer/words reduce [
+	schema/WIRE_CALLING_CONVENTION_RED_SYSTEM schema/WIRE_FUNCTION_FLAG_MAY_THROW
+		1 0 0 0 0 0
+]
+subexception-plain-symbols: fixture-writer/words reduce [
+	control-id control-strings "fn-void" schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_LINKAGE_INTERNAL schema/WIRE_VISIBILITY_HIDDEN 2 0 0 0
+]
+subexception-throwing-symbols: fixture-writer/words reduce [
+	control-id control-strings "fn-void" schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_LINKAGE_INTERNAL schema/WIRE_VISIBILITY_HIDDEN 5 0 0 0
+]
+subexception-plain-functions: fixture-writer/words [
+	1 2 0 1 6 1 0 0 0 0
+]
+subexception-throwing-functions: fixture-writer/words [
+	1 5 0 1 6 1 0 0 0 0
+]
+subexception-catch-descriptors: fixture-writer/words reduce [
+	1 control-id control-strings "fn-main" 2 2 1 4 0 0
+	1 control-id control-strings "fn-no-return" 5 6 5 1 0 0
+]
+subexception-propagating-descriptors: fixture-writer/words reduce [
+	1 control-id control-strings "fn-main" 5 2 1 4 0 0
+	1 control-id control-strings "fn-no-return" 5 6 5 1 0 0
+]
+subexception-subroutine-members: fixture-writer/words [
+	1 2  1 3  1 4  1 5  2 6
+]
+subexception-blocks: fixture-writer/words [
+	1 0 1 2 0 0 0 0
+	1 0 3 3 1 1 0 0
+	1 0 6 2 2 2 0 0
+	1 0 8 2 0 0 0 0
+	1 0 10 2 0 0 0 0
+	1 0 12 1 0 0 0 0
+]
+subexception-edges: fixture-writer/words reduce [
+	2 3 schema/WIRE_EDGE_KIND_NORMAL 0 0 0
+	3 4 schema/WIRE_EDGE_KIND_NORMAL 0 0 0
+	3 5 schema/WIRE_EDGE_KIND_EXCEPTION 0 1 0
+]
+subexception-values: fixture-writer/words reduce [
+	schema/WIRE_VALUE_DEFINITION_INSTRUCTION 3 0 3 1 schema/WIRE_VALUE_FLAG_NONE
+]
+subexception-catch-instructions: fixture-writer/words reduce [
+	1 schema/WIRE_OPCODE_CALL 0 0 0 0 1 1 ordinary-call-effects
+		schema/WIRE_ALIAS_KIND_UNIVERSAL 0 0
+	1 schema/WIRE_OPCODE_RETURN 0 0 0 0 0 0 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	2 schema/WIRE_OPCODE_CONSTANT 0 0 1 1 2 1 0
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	2 schema/WIRE_OPCODE_CATCH_ENTER 0 0 0 0 3 2 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	2 schema/WIRE_OPCODE_JUMP 0 0 0 0 5 1 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	3 schema/WIRE_OPCODE_CALL 0 0 0 0 6 1 exception-call-effects
+		schema/WIRE_ALIAS_KIND_UNIVERSAL 0 0
+	3 schema/WIRE_OPCODE_JUMP 0 0 0 0 7 1 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	4 schema/WIRE_OPCODE_CATCH_LEAVE 0 0 0 0 8 1 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	4 schema/WIRE_OPCODE_SUBROUTINE_RETURN 0 0 0 0 0 0 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	5 schema/WIRE_OPCODE_CATCH_LEAVE 0 0 0 0 9 1 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	5 schema/WIRE_OPCODE_SUBROUTINE_RETURN 0 0 0 0 0 0 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+	6 schema/WIRE_OPCODE_SUBROUTINE_RETURN 0 0 0 0 0 0 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+]
+subexception-catch-operands: fixture-writer/words reduce [
+	schema/WIRE_OPERAND_KIND_SUBROUTINE 1 0 0
+	schema/WIRE_OPERAND_KIND_CONSTANT 1 0 0
+	schema/WIRE_OPERAND_KIND_BLOCK 5 0 0
+	schema/WIRE_OPERAND_KIND_VALUE 1 0 0
+	schema/WIRE_OPERAND_KIND_BLOCK 3 0 0
+	schema/WIRE_OPERAND_KIND_SUBROUTINE 2 0 0
+	schema/WIRE_OPERAND_KIND_BLOCK 4 0 0
+	schema/WIRE_OPERAND_KIND_BLOCK 5 0 0
+	schema/WIRE_OPERAND_KIND_BLOCK 5 0 0
+]
+subexception-catch-calls: fixture-writer/words reduce [
+	1 2 schema/WIRE_CALL_KIND_SUBROUTINE 1 0 0 0 0
+	6 5 schema/WIRE_CALL_KIND_SUBROUTINE 6 0 0 0 0
+]
+subexception-catch-regions: fixture-writer/words reduce [
+	1 1 1 5 schema/WIRE_EXCEPTION_REGION_KIND_FILTER
+		schema/WIRE_EXCEPTION_REGION_FLAG_CATCH_ALL
+]
+subexception-propagating-regions: fixture-writer/words reduce [
+	1 1 1 5 schema/WIRE_EXCEPTION_REGION_KIND_FILTER 0
+]
+subexception-exception-members: fixture-writer/words [1 3]
+
+subexception-propagating-instructions: copy subexception-catch-instructions
+base: ((1 - 1) * schema/WIRE_RSIR_INSTRUCTION_SIZE) + 1
+fixture-mutations/put-u32 subexception-propagating-instructions
+	((base - 1) + schema/WIRE_RSIR_INSTRUCTION_EFFECT_FLAGS_OFFSET)
+	exception-call-effects
+subexception-propagating-operands: copy subexception-catch-operands
+base: ((2 - 1) * schema/WIRE_RSIR_OPERAND_SIZE) + 1
+fixture-mutations/put-u32 subexception-propagating-operands
+	((base - 1) + schema/WIRE_RSIR_OPERAND_REFERENCE_OFFSET) 2
+subexception-propagating-calls: copy subexception-catch-calls
+base: ((1 - 1) * schema/WIRE_RSIR_CALL_SIZE) + 1
+fixture-mutations/put-u32 subexception-propagating-calls
+	((base - 1) + schema/WIRE_RSIR_CALL_SIGNATURE_OFFSET) 5
+
+build-subroutine-exception-message: func [
+	function-records symbol-records descriptors subroutine-members regions
+	exception-members instructions operands calls [binary!]
+	/local payloads sections section-kind
+][
+	payloads: make map! 112
+	put payloads schema/WIRE_RSIR_SECTION_MODULE
+		fixture-writer/words [0 2 1 0 0 0 0 0]
+	put payloads schema/WIRE_RSIR_SECTION_DATA_LAYOUT data-layout
+	put payloads schema/WIRE_RSIR_SECTION_STRINGS subroutine-strings/1
+	put payloads schema/WIRE_RSIR_SECTION_STRING_DATA subroutine-strings/2
+	put payloads schema/WIRE_RSIR_SECTION_TYPES subroutine-types
+	put payloads schema/WIRE_RSIR_SECTION_SIGNATURES subexception-signatures
+	put payloads schema/WIRE_RSIR_SECTION_PARAMETERS control-parameters
+	put payloads schema/WIRE_RSIR_SECTION_SYMBOLS symbol-records
+	put payloads schema/WIRE_RSIR_SECTION_CONSTANTS exception-constants
+	put payloads schema/WIRE_RSIR_SECTION_CONSTANT_DATA exception-constant-data
+	put payloads schema/WIRE_RSIR_SECTION_FUNCTIONS function-records
+	put payloads schema/WIRE_RSIR_SECTION_LOCALS subroutine-locals
+	put payloads schema/WIRE_RSIR_SECTION_BLOCKS subexception-blocks
+	put payloads schema/WIRE_RSIR_SECTION_EDGES subexception-edges
+	put payloads schema/WIRE_RSIR_SECTION_VALUES subexception-values
+	put payloads schema/WIRE_RSIR_SECTION_INSTRUCTIONS instructions
+	put payloads schema/WIRE_RSIR_SECTION_OPERANDS operands
+	put payloads schema/WIRE_RSIR_SECTION_CALLS calls
+	put payloads schema/WIRE_RSIR_SECTION_SUBROUTINES descriptors
+	put payloads schema/WIRE_RSIR_SECTION_SUBROUTINE_BLOCKS subroutine-members
+	put payloads schema/WIRE_RSIR_SECTION_EXCEPTION_REGIONS regions
+	put payloads schema/WIRE_RSIR_SECTION_EXCEPTION_BLOCKS exception-members
+	sections: fixture-writer/sections-for schema/WIRE_MAGIC_RSIR payloads
+	fixture-writer/set-section-flags sections schema/WIRE_RSIR_SECTION_STRINGS
+		string-verifier/expected-string-flags
+	fixture-writer/set-section-flags sections schema/WIRE_RSIR_SECTION_FILES
+		file-source-verifier/expected-index-flags
+	fixture-writer/set-section-flags sections
+		schema/WIRE_RSIR_SECTION_SOURCE_LOCATIONS
+		file-source-verifier/expected-index-flags
+	foreach section-kind reduce [
+		schema/WIRE_RSIR_SECTION_SYMBOLS
+		schema/WIRE_RSIR_SECTION_IMPORTS
+		schema/WIRE_RSIR_SECTION_EXPORTS
+	][
+		fixture-writer/set-section-flags sections section-kind
+			symbol-linkage-verifier/expected-index-flags
+	]
+	fixture-writer/set-section-flags sections
+		schema/WIRE_RSIR_SECTION_CONSTANT_BINDINGS
+		constant-initializer-verifier/expected-index-flags
+	fixture-writer/build schema/WIRE_MAGIC_RSIR schema/WIRE_TARGET_X86_64
+		schema/WIRE_ABI_WIN64 schema/WIRE_ENDIAN_LITTLE 8 sections
+]
+
+subroutine-catch-message: build-subroutine-exception-message
+	subexception-plain-functions subexception-plain-symbols
+	subexception-catch-descriptors subexception-subroutine-members
+	subexception-catch-regions subexception-exception-members
+	subexception-catch-instructions subexception-catch-operands
+	subexception-catch-calls
+subroutine-propagation-message: build-subroutine-exception-message
+	subexception-throwing-functions subexception-throwing-symbols
+	subexception-propagating-descriptors subexception-subroutine-members
+	subexception-propagating-regions subexception-exception-members
+	subexception-propagating-instructions subexception-propagating-operands
+	subexception-propagating-calls
+
 result: exception-verifier/verify rich-exception-message
 assert result/valid? [
 	"rich exception module rejected with error " result/error
@@ -350,16 +528,17 @@ exception-record-offset: func [section [map!] id size [integer!]][
 malformed-exceptions: make block! 4096
 add-malformed-exception: func [
 	name [word!]
-	expected-error expected-call expected-control expected-scalar expected-container
-	expected-string expected-file expected-layout expected-type expected-function
-	expected-module expected-symbol expected-constant expected-offset expected-section
-		[integer!]
+	expected-error expected-subroutine expected-call expected-control expected-scalar
+	expected-container expected-string expected-file expected-layout expected-type
+	expected-function expected-module expected-symbol expected-constant
+	expected-offset expected-section [integer!]
 	data [binary!]
 ][
 	append/only malformed-exceptions reduce [
-		name expected-error expected-call expected-control expected-scalar expected-container
-		expected-string expected-file expected-layout expected-type expected-function
-		expected-module expected-symbol expected-constant expected-offset expected-section data
+		name expected-error expected-subroutine expected-call expected-control
+		expected-scalar expected-container expected-string expected-file expected-layout
+		expected-type expected-function expected-module expected-symbol expected-constant
+		expected-offset expected-section data
 	]
 ]
 
@@ -368,6 +547,7 @@ add-exception-semantic-error: func [
 	data [binary!]
 ][
 	add-malformed-exception name expected-error
+		schema/WIRE_SUBROUTINE_ERROR_SUCCESS
 		schema/WIRE_CALL_ABI_ERROR_SUCCESS
 		schema/WIRE_CONTROL_FLOW_ERROR_SUCCESS
 		schema/WIRE_SCALAR_OPERATION_ERROR_SUCCESS
@@ -422,15 +602,20 @@ mutate-exception-operand: func [
 		schema/WIRE_RSIR_OPERAND_SIZE field value expected-error expected-field
 ]
 
-find-call-exception-fixture: func [name [word!] /local fixture][
-	foreach fixture malformed-call-abis [if fixture/1 = name [return fixture]]
-	assert false ["missing nested call fixture " name]
+find-subroutine-exception-fixture: func [name [word!] /local fixture][
+	foreach fixture malformed-subroutines [if fixture/1 = name [return fixture]]
+	assert false ["missing nested subroutine fixture " name]
 ]
 
-nested: find-call-exception-fixture 'BAD-CALL-SECTION-FLAGS
+nested: find-subroutine-exception-fixture 'BAD-SUBROUTINE-SECTION-FLAGS
+add-malformed-exception 'INVALID-SUBROUTINE schema/WIRE_EXCEPTION_ERROR_INVALID_CALL_ABI
+	nested/2 nested/3 nested/4 nested/5 nested/6 nested/7 nested/8 nested/9
+	nested/10 nested/11 nested/12 nested/13 nested/14 nested/15 nested/16 nested/17
+
+nested: find-subroutine-exception-fixture 'INVALID-CALL-ABI
 add-malformed-exception 'INVALID-CALL-ABI schema/WIRE_EXCEPTION_ERROR_INVALID_CALL_ABI
 	nested/2 nested/3 nested/4 nested/5 nested/6 nested/7 nested/8 nested/9
-	nested/10 nested/11 nested/12 nested/13 nested/14 nested/15 nested/16
+	nested/10 nested/11 nested/12 nested/13 nested/14 nested/15 nested/16 nested/17
 
 bad: copy rich-exception-message
 bad-offset: (select exception-region-section 'entry-offset)
@@ -832,15 +1017,53 @@ add-exception-semantic-error 'BAD-FUNCTION-REGION-SHAPE
 	schema/WIRE_EXCEPTION_ERROR_BAD_FUNCTION_REGION base
 	(select exception-block-section 'ordinal) bad
 
+subexception-region-section: control-section subroutine-catch-message
+	schema/WIRE_RSIR_SECTION_EXCEPTION_REGIONS
+subexception-operand-section: control-section subroutine-catch-message
+	schema/WIRE_RSIR_SECTION_OPERANDS
+subexception-signature-section: control-section subroutine-catch-message
+	schema/WIRE_RSIR_SECTION_SIGNATURES
+
+; A region cannot use a host-main handler for a protected block owned by a
+; compiler-generated subroutine, even though both blocks share function 1.
+bad: copy subroutine-catch-message
+base: select subexception-region-section 'payload-offset
+fixture-mutations/put-u32 bad
+	(base + schema/WIRE_RSIR_EXCEPTION_REGION_HANDLER_BLOCK_OFFSET) 1
+add-exception-semantic-error 'BAD-SUBROUTINE-REGION
+	schema/WIRE_EXCEPTION_ERROR_BAD_SUBROUTINE_REGION
+	(base + schema/WIRE_RSIR_EXCEPTION_REGION_HANDLER_BLOCK_OFFSET)
+	(select subexception-region-section 'ordinal) bad
+
+; A non-catch-all filter may propagate beyond its handler. The declaration
+; belongs to the enclosing subroutine signature, not the host function.
+bad: copy subroutine-catch-message
+base: select subexception-region-section 'payload-offset
+fixture-mutations/put-u32 bad
+	(base + schema/WIRE_RSIR_EXCEPTION_REGION_FLAGS_OFFSET) 0
+base: (select subexception-operand-section 'payload-offset)
+	+ schema/WIRE_RSIR_OPERAND_SIZE
+fixture-mutations/put-u32 bad
+	(base + schema/WIRE_RSIR_OPERAND_REFERENCE_OFFSET) 2
+base: (select subexception-signature-section 'payload-offset)
+	+ schema/WIRE_RSIR_SIGNATURE_SIZE
+add-exception-semantic-error 'BAD-SUBROUTINE-EXCEPTION-DECLARATION
+	schema/WIRE_EXCEPTION_ERROR_BAD_EXCEPTION_DECLARATION
+	(base + schema/WIRE_RSIR_SIGNATURE_FLAGS_OFFSET)
+	(select subexception-signature-section 'ordinal) bad
+
 valid-exceptions: reduce [
 	reduce ['RICH rich-exception-message]
-	reduce ['EMPTY rich-control-flow-message]
+	reduce ['SUBROUTINE-CATCH subroutine-catch-message]
+	reduce ['SUBROUTINE-PROPAGATION subroutine-propagation-message]
+	reduce ['EMPTY empty-subroutine-message]
 ]
 foreach fixture valid-exceptions [
 	result: exception-verifier/verify fixture/2
 	assert result/valid? [
 		fixture/1 " valid exception module rejected with " result/error
-		" call=" result/call-abi-error " at " result/error-offset ":" result/error-section
+		" subroutine=" result/subroutine-error " call=" result/call-abi-error
+		" at " result/error-offset ":" result/error-section
 	]
 ]
 
@@ -848,6 +1071,7 @@ result: exception-verifier/verify none
 assert to logic! all [
 	not result/valid?
 	result/error = schema/WIRE_EXCEPTION_ERROR_INVALID_ARGUMENTS
+	result/subroutine-error = schema/WIRE_SUBROUTINE_ERROR_SUCCESS
 	result/call-abi-error = schema/WIRE_CALL_ABI_ERROR_SUCCESS
 	result/error-offset = 0
 	result/error-section = 0
@@ -863,6 +1087,7 @@ assert to logic! all [
 	none? result/scalar-view
 	none? result/control-view
 	none? result/call-view
+	none? result/subroutine-view
 	none? result/view
 ]["non-binary exception input did not fail atomically"]
 
@@ -871,42 +1096,44 @@ covered-errors: reduce [
 	schema/WIRE_EXCEPTION_ERROR_INVALID_ARGUMENTS
 ]
 foreach fixture malformed-exceptions [
-	result: exception-verifier/verify fixture/17
+	result: exception-verifier/verify fixture/18
 	assert not result/valid? [fixture/1 " malformed exception module was accepted"]
 	assert result/error = fixture/2 [
 		fixture/1 " expected error " fixture/2 " got " result/error
 		" call=" result/call-abi-error " at " result/error-offset ":" result/error-section
 	]
 	assert to logic! all [
-		result/call-abi-error = fixture/3
-		result/control-flow-error = fixture/4
-		result/scalar-operation-error = fixture/5
-		result/container-error = fixture/6
-		result/string-error = fixture/7
-		result/file-source-error = fixture/8
-		result/data-layout-error = fixture/9
-		result/type-layout-error = fixture/10
-		result/function-signature-error = fixture/11
-		result/module-lifecycle-error = fixture/12
-		result/symbol-linkage-error = fixture/13
-		result/constant-initializer-error = fixture/14
-		result/error-offset = fixture/15
-		result/error-section = fixture/16
+		result/subroutine-error = fixture/3
+		result/call-abi-error = fixture/4
+		result/control-flow-error = fixture/5
+		result/scalar-operation-error = fixture/6
+		result/container-error = fixture/7
+		result/string-error = fixture/8
+		result/file-source-error = fixture/9
+		result/data-layout-error = fixture/10
+		result/type-layout-error = fixture/11
+		result/function-signature-error = fixture/12
+		result/module-lifecycle-error = fixture/13
+		result/symbol-linkage-error = fixture/14
+		result/constant-initializer-error = fixture/15
+		result/error-offset = fixture/16
+		result/error-section = fixture/17
 	][
 		fixture/1 " nested error or location changed: actual="
 		result/error-offset ":" result/error-section " expected="
-		fixture/15 ":" fixture/16
+		fixture/16 ":" fixture/17
 	]
 	assert to logic! all [
 		none? result/strings none? result/files none? result/layout
 		none? result/types none? result/functions none? result/modules
 		none? result/symbols none? result/constants none? result/scalar-view
-		none? result/control-view none? result/call-view none? result/view
+		none? result/control-view none? result/call-view
+		none? result/subroutine-view none? result/view
 	][fixture/1 " published output views on failure"]
 	append covered-errors fixture/2
 ]
 
-repeat code 53 [
+repeat code 54 [
 	assert not none? find covered-errors (code - 1) [
 		"exception error code not covered: " code - 1
 	]
@@ -919,6 +1146,7 @@ unless value? 'generating-wire-exception-fixtures? [
 	source-bytes: make binary! 8'388'608
 	foreach source-file [
 		%wire-exception-test.red
+		%wire-subroutine-test.red
 		%wire-call-abi-test.red
 		%wire-control-flow-test.red
 		%wire-scalar-operation-test.red
@@ -931,6 +1159,7 @@ unless value? 'generating-wire-exception-fixtures? [
 		%wire-file-source-test.red
 		%wire-string-table-test.red
 		%wire-container-test.red
+		%../generate-wire-subroutine-fixtures.red
 		%../generate-wire-exception-fixtures.red
 	][append source-bytes read source-file]
 	append source-bytes to binary! mold schema/WIRE_SCHEMA_FINGERPRINT

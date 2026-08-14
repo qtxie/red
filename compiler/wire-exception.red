@@ -5,12 +5,12 @@ Red [
 
 unless value? 'compiler-wire-schema [do %wire-schema.red]
 unless value? 'compiler-wire-container [do %wire-container.red]
-unless value? 'compiler-wire-call-abi [do %wire-call-abi.red]
+unless value? 'compiler-wire-subroutine [do %wire-subroutine.red]
 
 compiler-wire-exception: context [
 	schema: compiler-wire-schema
 	container: compiler-wire-container
-	call-verifier: compiler-wire-call-abi
+	subroutine-verifier: compiler-wire-subroutine
 
 	catch-effects: schema/WIRE_EFFECT_FLAG_CONTROL
 	throw-effects:
@@ -34,6 +34,7 @@ compiler-wire-exception: context [
 		make object! [
 			valid?: false
 			error: schema/WIRE_EXCEPTION_ERROR_SUCCESS
+			subroutine-error: schema/WIRE_SUBROUTINE_ERROR_SUCCESS
 			call-abi-error: schema/WIRE_CALL_ABI_ERROR_SUCCESS
 			control-flow-error: schema/WIRE_CONTROL_FLOW_ERROR_SUCCESS
 			scalar-operation-error: schema/WIRE_SCALAR_OPERATION_ERROR_SUCCESS
@@ -61,6 +62,7 @@ compiler-wire-exception: context [
 			scalar-view: none
 			control-view: none
 			call-view: none
+			subroutine-view: none
 			view: none
 		]
 	]
@@ -72,20 +74,21 @@ compiler-wire-exception: context [
 		result
 	]
 
-	inherit-call-result: func [result call-result [object!]][
-		result/header: call-result/header
-		result/call-abi-error: call-result/error
-		result/control-flow-error: call-result/control-flow-error
-		result/scalar-operation-error: call-result/scalar-operation-error
-		result/container-error: call-result/container-error
-		result/string-error: call-result/string-error
-		result/file-source-error: call-result/file-source-error
-		result/data-layout-error: call-result/data-layout-error
-		result/type-layout-error: call-result/type-layout-error
-		result/function-signature-error: call-result/function-signature-error
-		result/module-lifecycle-error: call-result/module-lifecycle-error
-		result/symbol-linkage-error: call-result/symbol-linkage-error
-		result/constant-initializer-error: call-result/constant-initializer-error
+	inherit-subroutine-result: func [result subroutine-result [object!]][
+		result/header: subroutine-result/header
+		result/subroutine-error: subroutine-result/error
+		result/call-abi-error: subroutine-result/call-abi-error
+		result/control-flow-error: subroutine-result/control-flow-error
+		result/scalar-operation-error: subroutine-result/scalar-operation-error
+		result/container-error: subroutine-result/container-error
+		result/string-error: subroutine-result/string-error
+		result/file-source-error: subroutine-result/file-source-error
+		result/data-layout-error: subroutine-result/data-layout-error
+		result/type-layout-error: subroutine-result/type-layout-error
+		result/function-signature-error: subroutine-result/function-signature-error
+		result/module-lifecycle-error: subroutine-result/module-lifecycle-error
+		result/symbol-linkage-error: subroutine-result/symbol-linkage-error
+		result/constant-initializer-error: subroutine-result/constant-initializer-error
 	]
 
 	section-flags-offset: func [section [map!]][
@@ -174,6 +177,44 @@ compiler-wire-exception: context [
 
 	signature-base: func [functions [object!] id [integer!]][
 		functions/signatures-offset + ((id - 1) * schema/WIRE_RSIR_SIGNATURE_SIZE)
+	]
+
+	block-subroutine: func [
+		data [binary!] subroutine-view [object!] block-id [integer!]
+	][
+		subroutine-verifier/region-for-block data subroutine-view block-id
+	]
+
+	effective-signature: func [
+		data [binary!] functions subroutine-view [object!] block-id [integer!]
+		/local subroutine-id function-id
+	][
+		subroutine-id: block-subroutine data subroutine-view block-id
+		either subroutine-id = 0 [
+			function-id: block-value data functions block-id
+				schema/WIRE_RSIR_BLOCK_FUNCTION_OFFSET
+			function-value data functions function-id
+				schema/WIRE_RSIR_FUNCTION_SIGNATURE_OFFSET
+		][
+			subroutine-verifier/subroutine-value data subroutine-view subroutine-id
+				schema/WIRE_RSIR_SUBROUTINE_SIGNATURE_OFFSET
+		]
+	]
+
+	execution-entry: func [
+		data [binary!] functions subroutine-view [object!] block-id [integer!]
+		/local subroutine-id function-id
+	][
+		subroutine-id: block-subroutine data subroutine-view block-id
+		either subroutine-id = 0 [
+			function-id: block-value data functions block-id
+				schema/WIRE_RSIR_BLOCK_FUNCTION_OFFSET
+			function-value data functions function-id
+				schema/WIRE_RSIR_FUNCTION_ENTRY_BLOCK_OFFSET
+		][
+			subroutine-verifier/subroutine-value data subroutine-view subroutine-id
+				schema/WIRE_RSIR_SUBROUTINE_ENTRY_BLOCK_OFFSET
+		]
 	]
 
 	valid-region-kind?: func [kind [integer!]][
@@ -380,15 +421,15 @@ compiler-wire-exception: context [
 	]
 
 	verify-catch-instruction: func [
-		data [binary!] result call-result exception-view [object!] instruction-id [integer!]
+		data [binary!] result subroutine-result exception-view [object!] instruction-id [integer!]
 		/local scalar functions types constants base opcode first-operand operand-count
 			handler region-id region-kind region-flags expected-count operand-id value-id
 			type-id actual alias-kind alias-id filter-catch-all?
 	][
-		scalar: call-result/scalar-view
-		functions: call-result/functions
-		types: call-result/types
-		constants: call-result/constants
+		scalar: subroutine-result/scalar-view
+		functions: subroutine-result/functions
+		types: subroutine-result/types
+		constants: subroutine-result/constants
 		base: instruction-base scalar instruction-id
 		opcode: instruction-value data scalar instruction-id
 			schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
@@ -520,11 +561,11 @@ compiler-wire-exception: context [
 	]
 
 	verify-throw-instruction: func [
-		data [binary!] result call-result [object!] instruction-id [integer!]
+		data [binary!] result subroutine-result [object!] instruction-id [integer!]
 		/local scalar types base first-operand value-id type-id actual alias-kind alias-id
 	][
-		scalar: call-result/scalar-view
-		types: call-result/types
+		scalar: subroutine-result/scalar-view
+		types: subroutine-result/types
 		base: instruction-base scalar instruction-id
 		if (instruction-value data scalar instruction-id
 			schema/WIRE_RSIR_INSTRUCTION_SUBOPCODE_OFFSET) <> 0 [
@@ -674,13 +715,13 @@ compiler-wire-exception: context [
 	]
 
 	verify-region-boundaries: func [
-		data [binary!] result call-result exception-view [object!]
+		data [binary!] result subroutine-result exception-view [object!]
 		/local functions scalar control edge-id kind source target region-id entered exited
 			entered-region source-enter block-id terminator opcode base
 	][
-		functions: call-result/functions
-		scalar: call-result/scalar-view
-		control: call-result/control-view
+		functions: subroutine-result/functions
+		scalar: subroutine-result/scalar-view
+		control: subroutine-result/control-view
 		edge-id: 1
 		while [edge-id <= control/edge-count][
 			kind: edge-value data control edge-id schema/WIRE_RSIR_EDGE_KIND_OFFSET
@@ -750,7 +791,10 @@ compiler-wire-exception: context [
 			terminator: block-terminator data functions scalar block-id
 			opcode: instruction-value data scalar terminator
 				schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
-			if opcode = schema/WIRE_OPCODE_RETURN [
+			if any [
+				opcode = schema/WIRE_OPCODE_RETURN
+				opcode = schema/WIRE_OPCODE_SUBROUTINE_RETURN
+			][
 				region-id: 1
 				while [region-id <= exception-view/region-count][
 					if region-contains-block? data exception-view region-id block-id [
@@ -768,12 +812,12 @@ compiler-wire-exception: context [
 	]
 
 	verify-catch-positions: func [
-		data [binary!] result call-result exception-view [object!]
+		data [binary!] result subroutine-result exception-view [object!]
 		/local functions scalar block-id instruction-id finish opcode prefix-count
 			seen-body? handler-region base
 	][
-		functions: call-result/functions
-		scalar: call-result/scalar-view
+		functions: subroutine-result/functions
+		scalar: subroutine-result/scalar-view
 		block-id: 1
 		while [block-id <= functions/block-count][
 			instruction-id: block-first-instruction data functions block-id
@@ -802,7 +846,7 @@ compiler-wire-exception: context [
 				all [
 					handler-region = 0
 					prefix-count > 0
-					not block-has-ordinary-incoming? data call-result/control-view block-id
+					not block-has-ordinary-incoming? data subroutine-result/control-view block-id
 				]
 			][
 				return reject result schema/WIRE_EXCEPTION_ERROR_BAD_CATCH_LEAVE_POSITION
@@ -850,15 +894,15 @@ compiler-wire-exception: context [
 	]
 
 	verify-function-region: func [
-		data [binary!] result call-result exception-view [object!] region-id enter-id [integer!]
+		data [binary!] result subroutine-result exception-view [object!] region-id enter-id [integer!]
 		/local functions scalar control handler member-id member-block enter-block
 			first count terminator ordinary-count first-edge normal-leave handler-count
 			normal-count normal-first normal-terminator handler-terminator normal-target
 			handler-target throw-id throw-count instruction-id finish opcode effect base
 	][
-		functions: call-result/functions
-		scalar: call-result/scalar-view
-		control: call-result/control-view
+		functions: subroutine-result/functions
+		scalar: subroutine-result/scalar-view
+		control: subroutine-result/control-view
 		count: region-value data exception-view region-id
 			schema/WIRE_RSIR_EXCEPTION_REGION_BLOCK_MEMBER_COUNT_OFFSET
 		if count <> 1 [
@@ -968,17 +1012,18 @@ compiler-wire-exception: context [
 	]
 
 	verify-throwing-blocks: func [
-		data [binary!] result call-result exception-view [object!]
+		data [binary!] result subroutine-result exception-view [object!]
 		/local functions scalar control calls block-id first count instruction-id finish
 			throw-id throw-count effect opcode terminator ordinary-count total-count
 			exception-count expected-count first-edge edge-id region-id expected-handler
-			caught? owner-function signature-id signature-flags call-id call-kind
-			call-signature calling-convention base region-handler
+			caught? signature-id signature-flags call-id call-kind call-signature
+			call-signature-flags calling-convention base subroutine-view
 	][
-		functions: call-result/functions
-		scalar: call-result/scalar-view
-		control: call-result/control-view
-		calls: call-result/view
+		functions: subroutine-result/functions
+		scalar: subroutine-result/scalar-view
+		control: subroutine-result/control-view
+		calls: subroutine-result/call-view
+		subroutine-view: subroutine-result/view
 		block-id: 1
 		while [block-id <= functions/block-count][
 			first: block-first-instruction data functions block-id
@@ -1077,10 +1122,7 @@ compiler-wire-exception: context [
 					region-id: region-id - 1
 				]
 
-				owner-function: block-value data functions block-id
-					schema/WIRE_RSIR_BLOCK_FUNCTION_OFFSET
-				signature-id: function-value data functions owner-function
-					schema/WIRE_RSIR_FUNCTION_SIGNATURE_OFFSET
+				signature-id: effective-signature data functions subroutine-view block-id
 				signature-flags: signature-value data functions signature-id
 					schema/WIRE_RSIR_SIGNATURE_FLAGS_OFFSET
 				if all [
@@ -1097,13 +1139,18 @@ compiler-wire-exception: context [
 					call-id: call-id-for-instruction data calls throw-id
 					call-kind: call-value data calls call-id schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET
 					call-signature: call-value data calls call-id schema/WIRE_RSIR_CALL_SIGNATURE_OFFSET
+					call-signature-flags: signature-value data functions call-signature
+						schema/WIRE_RSIR_SIGNATURE_FLAGS_OFFSET
 					calling-convention: signature-value data functions call-signature
 						schema/WIRE_RSIR_SIGNATURE_CALLING_CONVENTION_OFFSET
 					if any [
 						none? find reduce [
-							schema/WIRE_CALL_KIND_DIRECT schema/WIRE_CALL_KIND_INDIRECT
+							schema/WIRE_CALL_KIND_DIRECT
+							schema/WIRE_CALL_KIND_INDIRECT
+							schema/WIRE_CALL_KIND_SUBROUTINE
 						] call-kind
 						calling-convention <> schema/WIRE_CALLING_CONVENTION_RED_SYSTEM
+						(call-signature-flags and schema/WIRE_FUNCTION_FLAG_CUSTOM) <> 0
 					][
 						base: instruction-base scalar throw-id
 						return reject result schema/WIRE_EXCEPTION_ERROR_BAD_EXTERNAL_THROW
@@ -1124,12 +1171,12 @@ compiler-wire-exception: context [
 	]
 
 	verify-callbacks-and-stack: func [
-		data [binary!] result call-result exception-view [object!]
+		data [binary!] result subroutine-result exception-view [object!]
 		/local functions scalar function-id signature-id flags first count instruction-id
 			finish has-exception? stack-id opcode region-id base block-id effect
 	][
-		functions: call-result/functions
-		scalar: call-result/scalar-view
+		functions: subroutine-result/functions
+		scalar: subroutine-result/scalar-view
 		function-id: 1
 		while [function-id <= functions/function-count][
 			signature-id: function-value data functions function-id
@@ -1192,23 +1239,25 @@ compiler-wire-exception: context [
 
 	verify: func [
 		data
-		/local result call-result container-result regions members exception-view
-			call-view scalar functions control record-index record-base field-offset value
+		/local result subroutine-result container-result regions members exception-view
+			call-view subroutine-view scalar functions control record-index record-base
+			field-offset value
 			region-id function-id previous-function first count cursor finish member-id
 			block-id previous-block handler kind flags prior-id left right failure
 			instruction-id opcode enter-id previous-enter handler-first region-function
 			entry-block member-first has-incoming? edge-id edge-kind edge-source
-			terminator nested-region-id
+			terminator nested-region-id region-subroutine member-subroutine
+			handler-subroutine
 	][
 		result: make-result
 		unless binary? data [
 			return reject result schema/WIRE_EXCEPTION_ERROR_INVALID_ARGUMENTS 0 0
 		]
-		call-result: call-verifier/verify data
-		inherit-call-result result call-result
-		unless call-result/valid? [
+		subroutine-result: subroutine-verifier/verify data
+		inherit-subroutine-result result subroutine-result
+		unless subroutine-result/valid? [
 			return reject result schema/WIRE_EXCEPTION_ERROR_INVALID_CALL_ABI
-				call-result/error-offset call-result/error-section
+				subroutine-result/error-offset subroutine-result/error-section
 		]
 
 		container-result: container/verify/expect data schema/WIRE_MAGIC_RSIR
@@ -1240,10 +1289,11 @@ compiler-wire-exception: context [
 		exception-view/block-member-count: select members 'record-count
 		exception-view/block-member-record-size: select members 'record-size
 		exception-view/block-members-ordinal: select members 'ordinal
-		call-view: call-result/view
-		scalar: call-result/scalar-view
-		functions: call-result/functions
-		control: call-result/control-view
+		call-view: subroutine-result/call-view
+		subroutine-view: subroutine-result/view
+		scalar: subroutine-result/scalar-view
+		functions: subroutine-result/functions
+		control: subroutine-result/control-view
 
 		record-index: 0
 		while [record-index < exception-view/region-count][
@@ -1352,6 +1402,7 @@ compiler-wire-exception: context [
 					exception-view/regions-ordinal
 			]
 			previous-block: 0
+			region-subroutine: -1
 			member-id: first
 			while [member-id <= finish][
 				if (member-value data exception-view member-id
@@ -1389,8 +1440,19 @@ compiler-wire-exception: context [
 							+ schema/WIRE_RSIR_EXCEPTION_BLOCK_BLOCK_OFFSET)
 						exception-view/block-members-ordinal
 				]
-				entry-block: function-value data functions function-id
-					schema/WIRE_RSIR_FUNCTION_ENTRY_BLOCK_OFFSET
+				member-subroutine: block-subroutine data subroutine-view block-id
+				either region-subroutine = -1 [
+					region-subroutine: member-subroutine
+				][
+					if member-subroutine <> region-subroutine [
+						return reject result
+							schema/WIRE_EXCEPTION_ERROR_BAD_SUBROUTINE_REGION
+							((member-base exception-view member-id)
+								+ schema/WIRE_RSIR_EXCEPTION_BLOCK_BLOCK_OFFSET)
+							exception-view/block-members-ordinal
+					]
+				]
+				entry-block: execution-entry data functions subroutine-view block-id
 				if block-id = entry-block [
 					return reject result schema/WIRE_EXCEPTION_ERROR_BAD_REGION_ENTRY
 						((member-base exception-view member-id)
@@ -1399,6 +1461,12 @@ compiler-wire-exception: context [
 				]
 				previous-block: block-id
 				member-id: member-id + 1
+			]
+			handler-subroutine: block-subroutine data subroutine-view handler
+			if handler-subroutine <> region-subroutine [
+				return reject result schema/WIRE_EXCEPTION_ERROR_BAD_SUBROUTINE_REGION
+					(record-base + schema/WIRE_RSIR_EXCEPTION_REGION_HANDLER_BLOCK_OFFSET)
+					exception-view/regions-ordinal
 			]
 			cursor: finish + 1
 			region-id: region-id + 1
@@ -1453,9 +1521,9 @@ compiler-wire-exception: context [
 				any [
 					opcode = schema/WIRE_OPCODE_CATCH_ENTER
 					opcode = schema/WIRE_OPCODE_CATCH_LEAVE
-				][verify-catch-instruction data result call-result exception-view instruction-id]
+				][verify-catch-instruction data result subroutine-result exception-view instruction-id]
 				opcode = schema/WIRE_OPCODE_THROW [
-					verify-throw-instruction data result call-result instruction-id
+					verify-throw-instruction data result subroutine-result instruction-id
 				]
 				true [none]
 			]
@@ -1562,33 +1630,34 @@ compiler-wire-exception: context [
 			if (region-value data exception-view region-id
 				schema/WIRE_RSIR_EXCEPTION_REGION_KIND_OFFSET)
 				= schema/WIRE_EXCEPTION_REGION_KIND_FUNCTION [
-				failure: verify-function-region data result call-result exception-view
+				failure: verify-function-region data result subroutine-result exception-view
 					region-id enter-id
 				if failure [return failure]
 			]
 			region-id: region-id + 1
 		]
 
-		failure: verify-catch-positions data result call-result exception-view
+		failure: verify-catch-positions data result subroutine-result exception-view
 		if failure [return failure]
-		failure: verify-region-boundaries data result call-result exception-view
+		failure: verify-region-boundaries data result subroutine-result exception-view
 		if failure [return failure]
-		failure: verify-throwing-blocks data result call-result exception-view
+		failure: verify-throwing-blocks data result subroutine-result exception-view
 		if failure [return failure]
-		failure: verify-callbacks-and-stack data result call-result exception-view
+		failure: verify-callbacks-and-stack data result subroutine-result exception-view
 		if failure [return failure]
 
-		result/strings: call-result/strings
-		result/files: call-result/files
-		result/layout: call-result/layout
-		result/types: call-result/types
-		result/functions: call-result/functions
-		result/modules: call-result/modules
-		result/symbols: call-result/symbols
-		result/constants: call-result/constants
+		result/strings: subroutine-result/strings
+		result/files: subroutine-result/files
+		result/layout: subroutine-result/layout
+		result/types: subroutine-result/types
+		result/functions: subroutine-result/functions
+		result/modules: subroutine-result/modules
+		result/symbols: subroutine-result/symbols
+		result/constants: subroutine-result/constants
 		result/scalar-view: scalar
 		result/control-view: control
 		result/call-view: call-view
+		result/subroutine-view: subroutine-view
 		result/view: exception-view
 		result/valid?: true
 		result

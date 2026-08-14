@@ -433,6 +433,8 @@ matrix is complete. All listed records consist only of 32-bit words.
 | 28 | source-locations | 16 | file, line, column, byte offset |
 | 29 | exception-regions | 24 | protected set, handler, and semantics |
 | 30 | exception-blocks | 8 | region-to-block membership |
+| 31 | subroutines | 32 | host-owned subroutine declarations |
+| 32 | subroutine-blocks | 8 | subroutine-to-block membership |
 
 The important record shapes are:
 
@@ -494,6 +496,11 @@ The important record shapes are:
   `CATCH_ALL` is the sole flag.
 - `exception-blocks`: exception region and protected block. These records form
   the contiguous membership slices owned by `exception-regions`.
+- `subroutines`: host function, nonempty name string, effective signature,
+  entry block, first block-membership record, block-member count, source
+  location, and zero flags.
+- `subroutine-blocks`: subroutine and member block. These records form the
+  contiguous membership slices owned by `subroutines`.
 
 Core instruction families include constants and copies, conversions, integer
 and floating arithmetic, comparisons, aggregate construction/copy, address
@@ -1345,14 +1352,16 @@ The descriptor operand kind is the target-domain discriminator:
 | `IMPORT` | `SYMBOL`, imported function symbol ID | exactly one matching import record |
 | `INDIRECT` | `VALUE`, value ID | `FUNCTION` type whose detail is the call signature |
 | `SYSCALL` | `CONSTANT`, constant ID | signed i32 syscall number, nonnegative |
+| `SUBROUTINE` | `SUBROUTINE`, subroutine ID | same-host subroutine with the declared effective signature |
 
 `CALL_KIND_CUSTOM` is reserved and rejected. Custom forwarding is a signature
 mode (`FUNCTION_FLAG/CUSTOM`) that uses one ordinary signed-i32 count operand
 and the `STACK` effect; the values already pushed by explicit stack operations
-are not duplicated in the call slice. `CALL_KIND_SUBROUTINE` remains owned by
-the later explicit-stack contract. This keeps target provenance and dynamic
-forwarding orthogonal and supports direct, imported, and indirect custom
-targets without a second target encoding.
+are not duplicated in the call slice. `CALL_KIND_SUBROUTINE` instead uses a
+`SUBROUTINE` descriptor operand and no logical argument operands in v1; the
+subroutine verifier checks host ownership and exact signature identity. This
+keeps target provenance and dynamic forwarding orthogonal and supports direct,
+imported, and indirect custom targets without a second target encoding.
 
 The call record itself has zero flags and reserved words. A CALL has subopcode
 zero, instruction flags zero, one result exactly when the signature return type
@@ -1403,12 +1412,63 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-call-abi-reds-test.exe
 ```
 
+### Subroutines
+
+`compiler/wire-subroutine.red` and `system/codegen/wire-subroutine.reds`
+consume the verified call/ABI and control-flow views. They model named
+Red/System subroutines as additional execution roots inside one host function;
+they do not serialize copied prologs, frame offsets, selected instructions, or
+machine bytes.
+
+The `subroutines` and `subroutine-blocks` sections have zero flags. Subroutine
+records are ordered by host function and then by strictly increasing entry
+block. Names are nonempty and unique within a host. Every subroutine owns one
+nonempty contiguous membership slice, the slices partition the membership
+table, members are strictly ordered, and a block belongs to at most one
+subroutine. A host function's blocks outside those slices form its main
+execution region.
+
+The host entry and each subroutine entry are distinct CFG roots. A subroutine
+entry has no ordinary incoming edge, every member is reachable from that entry,
+and an ordinary edge stays wholly inside host-main or one subroutine region.
+Calls are the only transfer into a subroutine and are not represented as CFG
+edges. A `SUBROUTINE` call must target a subroutine owned by the caller's host,
+name its exact effective signature, and have no logical arguments. Direct self
+recursion is rejected; calls between different subroutines, including mutual
+recursion, are valid. A `SUBROUTINE` operand is legal only as that call's callee
+descriptor, so v1 has no subroutine address-taking convention.
+
+An effective subroutine signature uses the `RED_SYSTEM` convention, has no
+parameters or logical arity, and may carry only `MAY_THROW`. Its return is
+`VOID` or a nonaggregate canonical type. `SUBROUTINE_RETURN` has zero
+subopcode, flags, and results, exact `CONTROL` effect, and alias `(NONE, 0)`.
+It has no operand for `VOID` or one auxiliary-zero `VALUE` operand of the exact
+return type otherwise, has no outgoing edges, and is legal only in the matching
+subroutine region. Every declared subroutine has at least one such return.
+
+The shared Red and Red/System corpus covers empty, single and multiple roots,
+typed returns, mutual recursion, all 27 status values, nested verifier errors,
+exact byte locations, and failure-atomic output views. Run both implementations
+with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-subroutine-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-subroutine-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-subroutine-reds-test.exe `
+    tools\self_hosting\tests\wire-subroutine-reds-test.reds
+build\self-hosting\wire-subroutine-reds-test.exe
+```
+
 ### Exceptions
 
 `compiler/wire-exception.red` and `system/codegen/wire-exception.reds` consume
-the verified call/ABI, control-flow, scalar, type, function, and constant views.
-They validate exception regions and edges only; they construct no MIR, call no
-legacy verifier or emitter, and produce no direct or machine-code bytes.
+the verified subroutine, call/ABI, control-flow, scalar, type, function, and
+constant views. They validate exception regions and edges only; they construct
+no MIR, call no legacy verifier or emitter, and produce no direct or
+machine-code bytes.
 
 The `exception-regions` and `exception-blocks` sections have zero flags. Every
 record word is a signed-31-bit wire scalar. A region owns one nonempty,
@@ -1469,24 +1529,32 @@ The exception edges of a throwing block are the suffix after its ordinary
 edges. Their targets list active handlers innermost to outermost and stop at the
 first `CATCH_ALL` region. A block with no throwing instruction has no exception
 edge. If no active catch-all exists, the owning signature must declare
-`MAY_THROW`. A throwing call is limited in v1 to `DIRECT` or `INDIRECT` with a
-`RED_SYSTEM` signature; imported, syscall, C-ABI, custom, and subroutine throw
-paths are rejected rather than assigned an implicit unwind convention.
+`MAY_THROW`; for a subroutine block this is the subroutine's effective
+signature rather than the host signature. A throwing call is limited in v1 to
+`DIRECT`, `INDIRECT`, or same-host `SUBROUTINE` with a `RED_SYSTEM` signature.
+Imported, syscall, C-ABI, and custom throw paths are rejected rather than
+assigned an implicit unwind convention.
+
+An exception region is wholly inside one execution region: host-main or one
+subroutine. Its protected blocks and handler may not cross that boundary.
+Consequently, a subroutine may catch locally or propagate through a
+`MAY_THROW` effective signature without introducing an ordinary CFG edge to
+the caller.
 
 A signature cannot combine `CALLBACK` and `MAY_THROW`. A callback may still
 contain exceptions that are fully caught before its external boundary. A
 function with any region, catch/throw instruction, or `THROW` effect may not
 contain `STACK_ALLOC` through `POP_ALL`; a throwing call may not carry the
 `STACK` effect. This conservative v1 rule prevents a catch from bypassing an
-unserialized dynamic stack state. The later explicit-stack feature may relax
-it only after stack-state joins and unwind ownership are independently frozen.
+unserialized dynamic stack state. The explicit-stack verifier retains this
+function-wide exclusion even though stack joins are now independently checked.
 
 The native reader is allocation-free and reuses the control-flow reader's
 caller-owned workspace of at least one byte per block; exception verification
 requires no additional bytes. Both readers stop at the same first error and
 publish all lower plus exception views only after complete success. The shared
-corpus contains two valid modules and 52 directed malformed modules. Together
-with success and invalid arguments it covers all 53 exception status values,
+corpus contains four valid modules and 55 directed malformed modules. Together
+with success and invalid arguments it covers all 54 exception status values,
 exact nested errors and byte locations, region nesting and boundaries, handler
 edge order, both `FUNCTION` overlap and shape failures, poisoned outputs, and
 null native arguments.
@@ -1502,6 +1570,71 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
     -o build\self-hosting\wire-exception-reds-test.exe `
     tools\self_hosting\tests\wire-exception-reds-test.reds
 build\self-hosting\wire-exception-reds-test.exe
+```
+
+### Explicit stack
+
+`compiler/wire-stack.red` and `system/codegen/wire-stack.reds` consume the
+verified exception and subroutine views. This is a protocol verifier and
+abstract-state pass only: it emits no MIR, direct bytes, or machine code, and
+it does not call `machine-ir/verify-current` or the legacy emitter.
+
+All counts are target stack slots, not bytes. On Windows x64 one slot is eight
+bytes. The v1 instruction shapes are:
+
+| Opcode | Subopcode | Operands | Results | Exact effects |
+| --- | --- | --- | --- | --- |
+| `STACK_ALLOC` | `UNINITIALIZED` or `ZEROED` | one auxiliary-zero `VALUE` or `CONSTANT`, canonical signed i32 slot count | pointer to canonical signed i32 | `STACK` |
+| `STACK_FREE` | zero | one auxiliary-zero `VALUE` or `CONSTANT`, canonical signed i32 slot count | none | `STACK` |
+| `STACK_PUSH` | zero | one auxiliary-zero `VALUE` or `CONSTANT` of logic, integer, float, pointer, or function type | none | `STACK` |
+| `STACK_POP` | zero | none | canonical signed i32 | `STACK` |
+| `PUSH_ALL` | zero | none | none | `STACK | OPAQUE` |
+| `POP_ALL` | zero | none | none | `STACK | OPAQUE` |
+
+Every instruction has zero flags and alias `(NONE, 0)`. A statically known
+negative count is invalid. Static knowledge includes both a direct constant and
+a value produced by the canonical `CONSTANT` instruction; any other count is
+dynamic rather than guessed.
+
+The analysis domain at each block entry is an exact nonnegative slot depth or
+dynamic depth, plus an optional active `PUSH_ALL` identity and its saved outer
+state. Exact depth disagreement at a join widens to dynamic. Different active
+save identities, or active versus inactive paths, are a hard state mismatch.
+No stack or frame state is serialized in RSIR.
+
+`STACK_ALLOC` and `STACK_PUSH` increase depth; `STACK_FREE`, `STACK_POP`, and a
+custom call's explicit count decrease it. An unknown count makes the depth
+dynamic. Ordinary calls leave this abstract depth unchanged. A standard ABI
+call at nonzero depth is valid RSIR; native codegen is responsible for dynamic
+call alignment and shadow space.
+
+`PUSH_ALL` saves the outer state and starts an exact-zero relative region.
+Nesting is rejected in v1. `POP_ALL` requires exact relative depth zero and
+restores the saved state. Every terminal path rejects an active unmatched
+save. Host-function termination may otherwise retain a nonzero or dynamic
+relative depth because the generated function epilog restores the host stack;
+`SUBROUTINE_RETURN` instead requires exact depth zero.
+
+The native verifier is allocation-free. After the lower verifier chain it
+reuses caller-owned workspace and requires exactly 24 bytes per block for this
+pass; byte-wise little-endian state access permits an unaligned workspace.
+Insufficient capacity is stack error 23. All output views remain poisoned until
+the complete verification chain succeeds.
+
+The shared corpus has five valid and 22 directed malformed modules. Red covers
+all semantic statuses, while the native cases add exact, unaligned, and short
+workspace checks so all 24 stack status values are exercised. Run both
+implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-stack-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-stack-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-stack-reds-test.exe `
+    tools\self_hosting\tests\wire-stack-reds-test.reds
+build\self-hosting\wire-stack-reds-test.exe
 ```
 
 `#inline` fragments are valid only when their target and ABI equal the message
@@ -1532,8 +1665,8 @@ invariants:
   fit that verified type layout without overlap;
 - effect/alias annotations agree with the opcode and cannot understate a call,
   volatile access, atomic, trap, throw, or safepoint;
-- explicit stack operations are balanced on all ordinary exits, with dynamic
-  counts represented by typed values;
+- explicit stack joins preserve compatible save identities, exact depth
+  conflicts widen to dynamic, and subroutine returns restore exact depth zero;
 - pointer GC identity changes only through an explicit address conversion;
   handle GC identity is never created, removed, or disguised by conversion;
 - target fragments match the target/ABI, remain in bounds, and carry the

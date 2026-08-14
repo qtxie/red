@@ -623,10 +623,16 @@ mutate-call-operand 'BAD-SYSCALL-NUMBER
 mutate-call-record 'UNSUPPORTED-CALL-KIND 1 schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET
 	schema/WIRE_CALL_KIND_CUSTOM schema/WIRE_CALL_ABI_ERROR_UNSUPPORTED_CALL_KIND
 	schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET
-mutate-call-record 'UNSUPPORTED-SUBROUTINE-KIND 1
-	schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET schema/WIRE_CALL_KIND_SUBROUTINE
-	schema/WIRE_CALL_ABI_ERROR_UNSUPPORTED_CALL_KIND
-	schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET
+bad: copy rich-call-message
+base: call-record-offset call-calls-section 1 schema/WIRE_RSIR_CALL_SIZE
+fixture-mutations/put-u32 bad (base + schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET)
+	schema/WIRE_CALL_KIND_SUBROUTINE
+base: call-record-offset call-operands-section
+	(select call-callee-operands 'DIRECT-FIXED) schema/WIRE_RSIR_OPERAND_SIZE
+add-call-semantic-error 'BAD-SUBROUTINE-CALLEE
+	schema/WIRE_CALL_ABI_ERROR_BAD_CALLEE_OPERAND
+	(base + schema/WIRE_RSIR_OPERAND_KIND_OFFSET)
+	(select call-operands-section 'ordinal) bad
 
 throwing-call-message: copy rich-call-message
 base: call-record-offset call-signatures-section 1 schema/WIRE_RSIR_SIGNATURE_SIZE

@@ -351,21 +351,26 @@ compiler-backend-feature-spec: [
 		]
 
 		explicit-stack-and-subroutines [
-			status blocked
+			status specified
 			owners [frontend rsir codegen]
 			wire [
+				RECORD/RSIR_SUBROUTINE RECORD/RSIR_SUBROUTINE_BLOCK
 				OPCODE/STACK_ALLOC OPCODE/STACK_FREE OPCODE/STACK_PUSH OPCODE/STACK_POP
-				OPCODE/PUSH_ALL OPCODE/POP_ALL CALL_KIND/SUBROUTINE EFFECT_FLAG/STACK
+				OPCODE/PUSH_ALL OPCODE/POP_ALL OPCODE/SUBROUTINE_RETURN
+				STACK_ALLOCATION_MODE/ALL_VALUES OPERAND_KIND/SUBROUTINE
+				CALL_KIND/SUBROUTINE EFFECT_FLAG/STACK EFFECT_FLAG/OPAQUE
+				SUBROUTINE_ERROR/ALL_VALUES STACK_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-subroutine-test.red"
+				"tools/self_hosting/tests/wire-subroutine-reds-test.reds"
+				"tools/self_hosting/tests/wire-stack-test.red"
+				"tools/self_hosting/tests/wire-stack-reds-test.reds"
 				"system/tests/source/units/push-pop-test.reds"
 				"system/tests/source/units/queue-test.reds"
 				"system/tests/source/units/subroutine-test.reds"
 			]
-			blockers [
-				"freeze dynamic stack-state joins, alignment regions, and ordinary-exit balance"
-				"resolve subroutine definition ownership, address-taking, recursion, and exception interaction"
-			]
+			blockers []
 		]
 
 		target-intrinsics [

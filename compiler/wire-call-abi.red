@@ -490,6 +490,15 @@ compiler-wire-call-abi: context [
 				]
 				target-signature: signature-id
 			]
+			kind = schema/WIRE_CALL_KIND_SUBROUTINE [
+				unless operand-kind = schema/WIRE_OPERAND_KIND_SUBROUTINE [
+					return reject result schema/WIRE_CALL_ABI_ERROR_BAD_CALLEE_OPERAND
+						(operand-base-value + schema/WIRE_RSIR_OPERAND_KIND_OFFSET)
+						scalar-view/operands-ordinal
+				]
+				; The subroutine layer validates ownership and the declared signature.
+				target-signature: signature-id
+			]
 			true [
 				return reject result schema/WIRE_CALL_ABI_ERROR_UNSUPPORTED_CALL_KIND
 					(base + schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET)
@@ -548,9 +557,7 @@ compiler-wire-call-abi: context [
 		]
 		kind: call-value data call-view call-id
 			schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET
-		if find reduce [
-			schema/WIRE_CALL_KIND_CUSTOM schema/WIRE_CALL_KIND_SUBROUTINE
-		] kind [
+		if kind = schema/WIRE_CALL_KIND_CUSTOM [
 			return reject result schema/WIRE_CALL_ABI_ERROR_UNSUPPORTED_CALL_KIND
 				(base + schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET)
 				call-view/calls-ordinal
@@ -558,6 +565,7 @@ compiler-wire-call-abi: context [
 		unless find reduce [
 			schema/WIRE_CALL_KIND_DIRECT schema/WIRE_CALL_KIND_INDIRECT
 			schema/WIRE_CALL_KIND_IMPORT schema/WIRE_CALL_KIND_SYSCALL
+			schema/WIRE_CALL_KIND_SUBROUTINE
 		] kind [
 			return reject result schema/WIRE_CALL_ABI_ERROR_BAD_CALLEE_KIND
 				(base + schema/WIRE_RSIR_CALL_CALLEE_KIND_OFFSET)

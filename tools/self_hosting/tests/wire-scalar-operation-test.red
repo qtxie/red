@@ -1104,6 +1104,7 @@ assert to logic! all [
 	result/view/instruction-count = (scalar-next-instruction - 1)
 	result/view/operand-count = (scalar-next-operand - 1)
 	result/view/target-fragment-count = 1
+	result/view/subroutine-count = 0
 	result/functions/function-count = 2
 	result/constants/constant-count = 9
 ]["rich scalar module view changed"]

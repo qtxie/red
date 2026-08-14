@@ -3,10 +3,11 @@ Red/System [
 	File:  %wire-exception.reds
 ]
 
-#include %wire-call-abi.reds
+#include %wire-subroutine.reds
 
 wire-exception-result!: alias struct! [
 	error                      [integer!]
+	subroutine-error           [integer!]
 	call-abi-error             [integer!]
 	control-flow-error         [integer!]
 	scalar-operation-error     [integer!]
@@ -228,6 +229,48 @@ wire-exception-reader: context [
 		return: [integer!]
 	][
 		functions/signatures-offset + ((id - 1) * WIRE_RSIR_SIGNATURE_SIZE)
+	]
+
+	block-subroutine: func [
+		subroutines [wire-subroutine!]
+		block-id [integer!]
+		return: [integer!]
+	][
+		wire-subroutine-reader/region-for-block subroutines block-id
+	]
+
+	effective-signature: func [
+		functions [wire-function-signature!]
+		subroutines [wire-subroutine!]
+		block-id [integer!]
+		return: [integer!]
+		/local subroutine-id function-id [integer!]
+	][
+		subroutine-id: block-subroutine subroutines block-id
+		either subroutine-id = 0 [
+			function-id: block-value functions block-id WIRE_RSIR_BLOCK_FUNCTION_OFFSET
+			function-value functions function-id WIRE_RSIR_FUNCTION_SIGNATURE_OFFSET
+		][
+			wire-subroutine-reader/subroutine-value subroutines subroutine-id
+				WIRE_RSIR_SUBROUTINE_SIGNATURE_OFFSET
+		]
+	]
+
+	execution-entry: func [
+		functions [wire-function-signature!]
+		subroutines [wire-subroutine!]
+		block-id [integer!]
+		return: [integer!]
+		/local subroutine-id function-id [integer!]
+	][
+		subroutine-id: block-subroutine subroutines block-id
+		either subroutine-id = 0 [
+			function-id: block-value functions block-id WIRE_RSIR_BLOCK_FUNCTION_OFFSET
+			function-value functions function-id WIRE_RSIR_FUNCTION_ENTRY_BLOCK_OFFSET
+		][
+			wire-subroutine-reader/subroutine-value subroutines subroutine-id
+				WIRE_RSIR_SUBROUTINE_ENTRY_BLOCK_OFFSET
+		]
 	]
 
 	valid-region-kind?: func [kind [integer!] return: [logic!]][
@@ -829,7 +872,10 @@ wire-exception-reader: context [
 		while [block-id <= functions/block-count][
 			terminator: block-terminator functions block-id
 			opcode: instruction-value scalar terminator WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
-			if opcode = WIRE_OPCODE_RETURN [
+			if any [
+				opcode = WIRE_OPCODE_RETURN
+				opcode = WIRE_OPCODE_SUBROUTINE_RETURN
+			][
 				region-id: 1
 				while [region-id <= view/region-count][
 					if region-contains-block? view region-id block-id [
@@ -1052,11 +1098,12 @@ wire-exception-reader: context [
 		scalar [wire-scalar-operation!]
 		control [wire-control-flow!]
 		calls [wire-call-abi!]
+		subroutines [wire-subroutine!]
 		return: [integer!]
 		/local block-id first count instruction-id finish throw-id throw-count effect
 			opcode terminator ordinary-count total-count exception-count expected-count
-			first-edge edge-id region-id expected-handler owner-function signature-id
-			signature-flags call-id call-kind call-signature calling-convention base
+			first-edge edge-id region-id expected-handler signature-id signature-flags
+			call-id call-kind call-signature call-signature-flags calling-convention base
 			[integer!] caught? [logic!]
 	][
 		block-id: 1
@@ -1149,8 +1196,7 @@ wire-exception-reader: context [
 					region-id: region-id - 1
 				]
 
-				owner-function: block-value functions block-id WIRE_RSIR_BLOCK_FUNCTION_OFFSET
-				signature-id: function-value functions owner-function WIRE_RSIR_FUNCTION_SIGNATURE_OFFSET
+				signature-id: effective-signature functions subroutines block-id
 				signature-flags: signature-value functions signature-id WIRE_RSIR_SIGNATURE_FLAGS_OFFSET
 				if all [
 					not caught?
@@ -1165,14 +1211,18 @@ wire-exception-reader: context [
 					call-id: call-id-for-instruction calls throw-id
 					call-kind: call-value calls call-id WIRE_RSIR_CALL_CALLEE_KIND_OFFSET
 					call-signature: call-value calls call-id WIRE_RSIR_CALL_SIGNATURE_OFFSET
+					call-signature-flags: signature-value functions call-signature
+						WIRE_RSIR_SIGNATURE_FLAGS_OFFSET
 					calling-convention: signature-value functions call-signature
 						WIRE_RSIR_SIGNATURE_CALLING_CONVENTION_OFFSET
 					if any [
 						not (any [
 							call-kind = WIRE_CALL_KIND_DIRECT
 							call-kind = WIRE_CALL_KIND_INDIRECT
+							call-kind = WIRE_CALL_KIND_SUBROUTINE
 						])
 						calling-convention <> WIRE_CALLING_CONVENTION_RED_SYSTEM
+						(call-signature-flags and WIRE_FUNCTION_FLAG_CUSTOM) <> 0
 					][
 						base: instruction-base scalar throw-id
 						return set-error result WIRE_EXCEPTION_ERROR_BAD_EXTERNAL_THROW
@@ -1287,9 +1337,10 @@ wire-exception-reader: context [
 		scalar [wire-scalar-operation!]
 		control [wire-control-flow!]
 		calls [wire-call-abi!]
+		subroutines [wire-subroutine!]
 		exceptions [wire-exception!]
 		return: [integer!]
-		/local call-result [wire-call-abi-result!]
+		/local subroutine-result [wire-subroutine-result!]
 			verified-strings [wire-string-table!]
 			verified-files [wire-file-source!]
 			verified-layout [wire-data-layout!]
@@ -1301,6 +1352,7 @@ wire-exception-reader: context [
 			verified-scalar [wire-scalar-operation!]
 			verified-control [wire-control-flow!]
 			verified-calls [wire-call-abi!]
+			verified-subroutines [wire-subroutine!]
 			verified-exceptions [wire-exception!]
 			regions members [wire-section-slice!]
 			record [byte-ptr!]
@@ -1308,11 +1360,13 @@ wire-exception-reader: context [
 			previous-function first count cursor finish member-id block-id previous-block
 			handler kind flags prior-id left right instruction-id opcode enter-id
 			previous-enter handler-first region-function entry-block member-first edge-id
-			edge-kind edge-source terminator nested-region-id [integer!]
+			edge-kind edge-source terminator nested-region-id region-subroutine
+			member-subroutine handler-subroutine [integer!]
 			has-incoming? [logic!]
 	][
 		if null? result [return WIRE_EXCEPTION_ERROR_INVALID_ARGUMENTS]
 		result/error: WIRE_EXCEPTION_ERROR_SUCCESS
+		result/subroutine-error: WIRE_SUBROUTINE_ERROR_SUCCESS
 		result/call-abi-error: WIRE_CALL_ABI_ERROR_SUCCESS
 		result/control-flow-error: WIRE_CONTROL_FLOW_ERROR_SUCCESS
 		result/scalar-operation-error: WIRE_SCALAR_OPERATION_ERROR_SUCCESS
@@ -1344,12 +1398,13 @@ wire-exception-reader: context [
 			null? scalar
 			null? control
 			null? calls
+			null? subroutines
 			null? exceptions
 		][
 			return set-error result WIRE_EXCEPTION_ERROR_INVALID_ARGUMENTS 0 0
 		]
 
-		call-result: declare wire-call-abi-result!
+		subroutine-result: declare wire-subroutine-result!
 		verified-strings: declare wire-string-table!
 		verified-files: declare wire-file-source!
 		verified-layout: declare wire-data-layout!
@@ -1361,26 +1416,28 @@ wire-exception-reader: context [
 		verified-scalar: declare wire-scalar-operation!
 		verified-control: declare wire-control-flow!
 		verified-calls: declare wire-call-abi!
+		verified-subroutines: declare wire-subroutine!
 		verified-exceptions: declare wire-exception!
-		status: wire-call-abi-reader/verify data size workspace workspace-size
-			call-result verified-strings verified-files verified-layout verified-types
+		status: wire-subroutine-reader/verify data size workspace workspace-size
+			subroutine-result verified-strings verified-files verified-layout verified-types
 			verified-functions verified-modules verified-symbols verified-constants
-			verified-scalar verified-control verified-calls
-		result/call-abi-error: status
-		result/control-flow-error: call-result/control-flow-error
-		result/scalar-operation-error: call-result/scalar-operation-error
-		result/container-error: call-result/container-error
-		result/string-error: call-result/string-error
-		result/file-source-error: call-result/file-source-error
-		result/data-layout-error: call-result/data-layout-error
-		result/type-layout-error: call-result/type-layout-error
-		result/function-signature-error: call-result/function-signature-error
-		result/module-lifecycle-error: call-result/module-lifecycle-error
-		result/symbol-linkage-error: call-result/symbol-linkage-error
-		result/constant-initializer-error: call-result/constant-initializer-error
-		if status <> WIRE_CALL_ABI_ERROR_SUCCESS [
+			verified-scalar verified-control verified-calls verified-subroutines
+		result/subroutine-error: status
+		result/call-abi-error: subroutine-result/call-abi-error
+		result/control-flow-error: subroutine-result/control-flow-error
+		result/scalar-operation-error: subroutine-result/scalar-operation-error
+		result/container-error: subroutine-result/container-error
+		result/string-error: subroutine-result/string-error
+		result/file-source-error: subroutine-result/file-source-error
+		result/data-layout-error: subroutine-result/data-layout-error
+		result/type-layout-error: subroutine-result/type-layout-error
+		result/function-signature-error: subroutine-result/function-signature-error
+		result/module-lifecycle-error: subroutine-result/module-lifecycle-error
+		result/symbol-linkage-error: subroutine-result/symbol-linkage-error
+		result/constant-initializer-error: subroutine-result/constant-initializer-error
+		if status <> WIRE_SUBROUTINE_ERROR_SUCCESS [
 			return set-error result WIRE_EXCEPTION_ERROR_INVALID_CALL_ABI
-				call-result/error-offset call-result/error-section
+				subroutine-result/error-offset subroutine-result/error-section
 		]
 
 		regions: declare wire-section-slice!
@@ -1526,6 +1583,7 @@ wire-exception-reader: context [
 					verified-exceptions/regions-ordinal
 			]
 			previous-block: 0
+			region-subroutine: -1
 			member-id: first
 			while [member-id <= finish][
 				if (member-value verified-exceptions member-id
@@ -1566,8 +1624,18 @@ wire-exception-reader: context [
 							+ WIRE_RSIR_EXCEPTION_BLOCK_BLOCK_OFFSET)
 						verified-exceptions/block-members-ordinal
 				]
-				entry-block: function-value verified-functions function-id
-					WIRE_RSIR_FUNCTION_ENTRY_BLOCK_OFFSET
+				member-subroutine: block-subroutine verified-subroutines block-id
+				either region-subroutine = -1 [
+					region-subroutine: member-subroutine
+				][
+					if member-subroutine <> region-subroutine [
+						return set-error result WIRE_EXCEPTION_ERROR_BAD_SUBROUTINE_REGION
+							((member-base verified-exceptions member-id)
+								+ WIRE_RSIR_EXCEPTION_BLOCK_BLOCK_OFFSET)
+							verified-exceptions/block-members-ordinal
+					]
+				]
+				entry-block: execution-entry verified-functions verified-subroutines block-id
 				if block-id = entry-block [
 					return set-error result WIRE_EXCEPTION_ERROR_BAD_REGION_ENTRY
 						((member-base verified-exceptions member-id)
@@ -1576,6 +1644,12 @@ wire-exception-reader: context [
 				]
 				previous-block: block-id
 				member-id: member-id + 1
+			]
+			handler-subroutine: block-subroutine verified-subroutines handler
+			if handler-subroutine <> region-subroutine [
+				return set-error result WIRE_EXCEPTION_ERROR_BAD_SUBROUTINE_REGION
+					(record-base + WIRE_RSIR_EXCEPTION_REGION_HANDLER_BLOCK_OFFSET)
+					verified-exceptions/regions-ordinal
 			]
 			cursor: finish + 1
 			region-id: region-id + 1
@@ -1756,7 +1830,7 @@ wire-exception-reader: context [
 			verified-scalar verified-control
 		if status <> WIRE_EXCEPTION_ERROR_SUCCESS [return status]
 		status: verify-throwing-blocks result verified-exceptions verified-functions
-			verified-scalar verified-control verified-calls
+			verified-scalar verified-control verified-calls verified-subroutines
 		if status <> WIRE_EXCEPTION_ERROR_SUCCESS [return status]
 		status: verify-callbacks-and-stack result verified-exceptions verified-functions
 			verified-scalar
@@ -1773,6 +1847,7 @@ wire-exception-reader: context [
 		wire-scalar-operation-reader/copy-view scalar verified-scalar
 		wire-control-flow-reader/copy-view control verified-control
 		wire-call-abi-reader/copy-view calls verified-calls
+		wire-subroutine-reader/copy-view subroutines verified-subroutines
 		copy-view exceptions verified-exceptions
 		WIRE_EXCEPTION_ERROR_SUCCESS
 	]

@@ -40,7 +40,7 @@ foreach [name value] generator/constants compiler-wire-schema-spec [
 assert compiler-wire-schema/WIRE_HEADER_SIZE = 64 "wrong common header size"
 assert compiler-wire-schema/WIRE_DIRECTORY_SIZE = 32 "wrong directory size"
 assert compiler-wire-schema/WIRE_MAGIC_RSIR = 1380537170 "wrong RSIR magic encoding"
-assert compiler-wire-schema/WIRE_RSIR_REQUIRED_SECTION_COUNT = 30
+assert compiler-wire-schema/WIRE_RSIR_REQUIRED_SECTION_COUNT = 32
 	"wrong RSIR required section count"
 assert compiler-wire-schema/WIRE_RSCG_REQUIRED_SECTION_COUNT = 16
 	"wrong RSCG required section count"
@@ -48,7 +48,7 @@ assert compiler-wire-schema/WIRE_RSCG_KNOWN_SECTION_COUNT = 17
 	"wrong RSCG known section count"
 assert compiler-wire-schema/WIRE_RSCF_MINIMUM_SIZE = 160
 	"wrong minimum RSCF size"
-assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1088
+assert compiler-wire-schema/WIRE_RSIR_MINIMUM_SIZE = 1152
 	"wrong minimum RSIR size"
 assert compiler-wire-schema/WIRE_RSCG_MINIMUM_SIZE = 640
 	"wrong minimum RSCG size"
@@ -118,8 +118,30 @@ assert compiler-wire-schema/WIRE_RSCG_SECTION_MODULES_CARDINALITY =
 assert compiler-wire-schema/WIRE_RSDG_SECTION_DIAGNOSTICS_CARDINALITY =
 	compiler-wire-schema/WIRE_SECTION_CARDINALITY_NONEMPTY
 	"RSDG diagnostics must be nonempty"
-assert compiler-wire-schema/profiles/RSIR/required-count = 30
+assert compiler-wire-schema/profiles/RSIR/required-count = 32
 	"generated Red RSIR profile is stale"
+assert compiler-wire-schema/WIRE_RSIR_SECTION_SUBROUTINES = 31
+	"wrong RSIR subroutine section ID"
+assert compiler-wire-schema/WIRE_RSIR_SECTION_SUBROUTINE_BLOCKS = 32
+	"wrong RSIR subroutine-block section ID"
+assert compiler-wire-schema/WIRE_RSIR_SUBROUTINE_SIZE = 32
+	"wrong RSIR subroutine record size"
+assert compiler-wire-schema/WIRE_RSIR_SUBROUTINE_BLOCK_SIZE = 8
+	"wrong RSIR subroutine-block record size"
+assert compiler-wire-schema/WIRE_OPERAND_KIND_SUBROUTINE = 9
+	"wrong subroutine operand kind"
+assert compiler-wire-schema/WIRE_OPCODE_SUBROUTINE_RETURN = 59
+	"wrong subroutine-return opcode"
+assert compiler-wire-schema/WIRE_STACK_ALLOCATION_MODE_ZEROED = 1
+	"wrong zeroed stack-allocation mode"
+assert compiler-wire-schema/WIRE_SUBROUTINE_ERROR_BAD_SUBROUTINE_OPERAND = 25
+	"subroutine error enum changed"
+assert compiler-wire-schema/WIRE_SUBROUTINE_ERROR_BAD_SUBROUTINE_SOURCE_LOCATION = 26
+	"subroutine source-location error changed"
+assert compiler-wire-schema/WIRE_EXCEPTION_ERROR_BAD_SUBROUTINE_REGION = 53
+	"exception subroutine-region error changed"
+assert compiler-wire-schema/WIRE_STACK_ERROR_INSUFFICIENT_WORKSPACE = 23
+	"stack error enum changed"
 assert compiler-wire-schema/profiles/RSCG/known-count = 17
 	"generated Red RSCG profile is stale"
 assert compiler-wire-schema/profiles/RSCG/record-sizes/15 =

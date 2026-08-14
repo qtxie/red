@@ -37,6 +37,7 @@ wire-scalar-operation!: alias struct! [
 	operands-offset         [integer!]
 	operands-ordinal        [integer!]
 	target-fragment-count   [integer!]
+	subroutine-count        [integer!]
 ]
 
 wire-scalar-operation-reader: context [
@@ -806,6 +807,7 @@ wire-scalar-operation-reader: context [
 		destination/operands-offset: source/operands-offset
 		destination/operands-ordinal: source/operands-ordinal
 		destination/target-fragment-count: source/target-fragment-count
+		destination/subroutine-count: source/subroutine-count
 	]
 
 	verify: func [
@@ -832,7 +834,7 @@ wire-scalar-operation-reader: context [
 			verified-symbols [wire-symbol-linkage!]
 			verified-constants [wire-constant-initializer!]
 			verified-view [wire-scalar-operation!]
-			values instructions operands target-fragments [wire-section-slice!]
+			values instructions operands target-fragments subroutines [wire-section-slice!]
 			record [byte-ptr!]
 			status bad-relative record-index record-base value-id definition-kind
 			definition-id result-ordinal value-type function-id flags instruction-id
@@ -902,6 +904,7 @@ wire-scalar-operation-reader: context [
 		instructions: declare wire-section-slice!
 		operands: declare wire-section-slice!
 		target-fragments: declare wire-section-slice!
+		subroutines: declare wire-section-slice!
 		unless wire-container-reader/find-verified-section
 			data WIRE_RSIR_SECTION_VALUES values
 		[
@@ -925,6 +928,13 @@ wire-scalar-operation-reader: context [
 		]
 		unless wire-container-reader/find-verified-section
 			data WIRE_RSIR_SECTION_TARGET_FRAGMENTS target-fragments
+		[
+			result/container-error: WIRE_CONTAINER_ERROR_MISSING_REQUIRED_SECTION
+			return set-error result WIRE_SCALAR_OPERATION_ERROR_INVALID_CONTAINER
+				WIRE_HEADER_SIZE 0
+		]
+		unless wire-container-reader/find-verified-section
+			data WIRE_RSIR_SECTION_SUBROUTINES subroutines
 		[
 			result/container-error: WIRE_CONTAINER_ERROR_MISSING_REQUIRED_SECTION
 			return set-error result WIRE_SCALAR_OPERATION_ERROR_INVALID_CONTAINER
@@ -962,6 +972,7 @@ wire-scalar-operation-reader: context [
 		verified-view/operands-offset: operands/offset
 		verified-view/operands-ordinal: operands/ordinal
 		verified-view/target-fragment-count: target-fragments/record-count
+		verified-view/subroutine-count: subroutines/record-count
 
 		; Decode every signed scalar before following any reference.
 		record-index: 0
@@ -1079,7 +1090,7 @@ wire-scalar-operation-reader: context [
 				WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
 			unless all [
 				opcode >= WIRE_OPCODE_CONSTANT
-				opcode <= WIRE_OPCODE_SET_UNION_VARIANT
+				opcode <= WIRE_OPCODE_SUBROUTINE_RETURN
 			][
 				return set-error result WIRE_SCALAR_OPERATION_ERROR_BAD_OPCODE
 					(record-base + WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET)
@@ -1228,7 +1239,7 @@ wire-scalar-operation-reader: context [
 			kind: operand-value verified-view operand-id WIRE_RSIR_OPERAND_KIND_OFFSET
 			unless all [
 				kind >= WIRE_OPERAND_KIND_VALUE
-				kind <= WIRE_OPERAND_KIND_TARGET_FRAGMENT
+				kind <= WIRE_OPERAND_KIND_SUBROUTINE
 			][
 				return set-error result WIRE_SCALAR_OPERATION_ERROR_BAD_OPERAND_KIND
 					(record-base + WIRE_RSIR_OPERAND_KIND_OFFSET)
@@ -1244,7 +1255,10 @@ wire-scalar-operation-reader: context [
 				kind = WIRE_OPERAND_KIND_LOCAL [verified-functions/local-count]
 				kind = WIRE_OPERAND_KIND_TYPE [verified-types/type-count]
 				kind = WIRE_OPERAND_KIND_FUNCTION [verified-functions/function-count]
-				true [verified-view/target-fragment-count]
+				kind = WIRE_OPERAND_KIND_TARGET_FRAGMENT [
+					verified-view/target-fragment-count
+				]
+				true [verified-view/subroutine-count]
 			]
 			if any [reference <= 0 reference > reference-count][
 				return set-error result WIRE_SCALAR_OPERATION_ERROR_BAD_OPERAND_REFERENCE

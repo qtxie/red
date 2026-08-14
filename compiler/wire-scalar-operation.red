@@ -58,6 +58,7 @@ compiler-wire-scalar-operation: context [
 			operand-record-size: schema/WIRE_RSIR_OPERAND_SIZE
 			operands-ordinal: 0
 			target-fragment-count: 0
+			subroutine-count: 0
 		]
 	]
 
@@ -713,7 +714,7 @@ compiler-wire-scalar-operation: context [
 	verify: func [
 		data
 		/local result constants-result container-result values instructions operands
-			target-fragments view count base size ordinal fields record-index
+			target-fragments subroutines view count base size ordinal fields record-index
 			record-base field-name field-offset value value-id definition-kind
 			definition-id result-ordinal value-type function-id flags instruction-id
 			block-id opcode first-result result-count first-operand operand-count finish
@@ -741,7 +742,12 @@ compiler-wire-scalar-operation: context [
 		operands: container/find-section container-result schema/WIRE_RSIR_SECTION_OPERANDS
 		target-fragments:
 			container/find-section container-result schema/WIRE_RSIR_SECTION_TARGET_FRAGMENTS
-		if any [none? values none? instructions none? operands none? target-fragments][
+		subroutines:
+			container/find-section container-result schema/WIRE_RSIR_SECTION_SUBROUTINES
+		if any [
+			none? values none? instructions none? operands
+			none? target-fragments none? subroutines
+		][
 			result/container-error: schema/WIRE_CONTAINER_ERROR_MISSING_REQUIRED_SECTION
 			return reject result schema/WIRE_SCALAR_OPERATION_ERROR_INVALID_CONTAINER
 				schema/WIRE_HEADER_SIZE 0
@@ -772,6 +778,7 @@ compiler-wire-scalar-operation: context [
 		view/operand-record-size: select operands 'record-size
 		view/operands-ordinal: select operands 'ordinal
 		view/target-fragment-count: select target-fragments 'record-count
+		view/subroutine-count: select subroutines 'record-count
 
 		; Decode every signed scalar before following a semantic reference.
 		foreach [count base size ordinal fields] reduce [
@@ -873,7 +880,7 @@ compiler-wire-scalar-operation: context [
 				schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
 			unless all [
 				opcode >= schema/WIRE_OPCODE_CONSTANT
-				opcode <= schema/WIRE_OPCODE_SET_UNION_VARIANT
+				opcode <= schema/WIRE_OPCODE_SUBROUTINE_RETURN
 			][
 				return reject result schema/WIRE_SCALAR_OPERATION_ERROR_BAD_OPCODE
 					(record-base + schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET)
@@ -1001,7 +1008,10 @@ compiler-wire-scalar-operation: context [
 			record-base: record-offset view/operands-offset (operand-id - 1)
 				schema/WIRE_RSIR_OPERAND_SIZE
 			kind: operand-value data view operand-id schema/WIRE_RSIR_OPERAND_KIND_OFFSET
-			unless all [kind >= schema/WIRE_OPERAND_KIND_VALUE kind <= schema/WIRE_OPERAND_KIND_TARGET_FRAGMENT][
+			unless all [
+				kind >= schema/WIRE_OPERAND_KIND_VALUE
+				kind <= schema/WIRE_OPERAND_KIND_SUBROUTINE
+			][
 				return reject result schema/WIRE_SCALAR_OPERATION_ERROR_BAD_OPERAND_KIND
 					(record-base + schema/WIRE_RSIR_OPERAND_KIND_OFFSET)
 					view/operands-ordinal
@@ -1015,7 +1025,8 @@ compiler-wire-scalar-operation: context [
 				kind = schema/WIRE_OPERAND_KIND_LOCAL [constants-result/functions/local-count]
 				kind = schema/WIRE_OPERAND_KIND_TYPE [constants-result/types/type-count]
 				kind = schema/WIRE_OPERAND_KIND_FUNCTION [constants-result/functions/function-count]
-				true [view/target-fragment-count]
+				kind = schema/WIRE_OPERAND_KIND_TARGET_FRAGMENT [view/target-fragment-count]
+				true [view/subroutine-count]
 			]
 			if any [reference <= 0 reference > reference-count][
 				return reject result schema/WIRE_SCALAR_OPERATION_ERROR_BAD_OPERAND_REFERENCE

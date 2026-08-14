@@ -152,9 +152,13 @@ against one shared malformed corpus.
 Canonical RSCG CODE/RODATA/DATA/BSS ownership, defined and unresolved symbols,
 function extents, lifecycle references, and the x64 runtime image/bitmap roles
 now have the same independent Red and failure-atomic Red/System verification.
-This layer validates serialized object structure only and still generates no
-machine-code bytes; relocation, debug, GC-frame, and unwind verification remain
-separate following milestones.
+Typed `X64_REL32`, RIP-relative and IAT references, `ABSOLUTE64`
+data/rodata pointers, function and variable imports, and DLL exports are now
+independently verified too. The contract fixes canonical addends, zero
+placeholders, and PE `DIR64` ownership while leaving final post-merge range
+checks to the adapter. These layers only inspect serialized bytes and generate
+no machine code; debug, GC-frame, and unwind verification remain separate
+following milestones.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every

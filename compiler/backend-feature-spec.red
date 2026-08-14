@@ -425,19 +425,19 @@ compiler-backend-feature-spec: [
 		]
 
 		rscg-relocations-and-linker [
-			status blocked
+			status specified
 			owners [rscg adapter linker]
 			wire [
 				RECORD/RSCG_RELOCATION RELOCATION_KIND/ALL_VALUES
 				RSCG_RELOCATION_FLAG/ALL_VALUES RSCG_RELOCATION_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-rscg-relocation-test.red"
+				"tools/self_hosting/tests/wire-rscg-relocation-reds-test.reds"
 				"tools/self_hosting/fixtures/backend/global-memory.reds"
 				"tools/self_hosting/fixtures/backend/nested-relocation-order.reds"
 			]
-			blockers [
-				"audit every PE linker fixup and freeze width, addend, range, import-variable, data, and rodata mappings"
-			]
+			blockers []
 		]
 
 		rscg-debug-gc-unwind [

@@ -1849,6 +1849,63 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-rscg-object-reds-test.exe
 ```
 
+### Checked relocations and external linkage
+
+`compiler/wire-rscg-relocation.red` and
+`system/codegen/wire-rscg-relocation.reds` independently validate the typed
+Windows x64 relocation, import, and export layer on top of a verified RSCG
+object. Let `S` be the final target address, `A` the serialized raw addend, and
+`P` the final address of the first placeholder byte. V1 uses these mappings:
+
+| RSCG kind | Source class | Width | Target | Adapter value |
+| --- | --- | ---: | --- | --- |
+| `X64_REL32` | CODE | 4 | defined function | `S + A - (P + 4)` |
+| `X64_RIP_REL32` | CODE | 4 | defined function/global/constant, or imported function/global through its IAT slot | `S + A - (P + 4)` |
+| `ABSOLUTE32` | n/a | n/a | n/a | rejected on Windows x64 v1 |
+| `ABSOLUTE64` | RODATA or DATA | 8 | any defined symbol | `S + A`, plus one PE `DIR64` base-relocation entry |
+
+For an import, `S` is the address of the IAT slot rather than the address held
+in that slot. The merger and adapter own final `S` and `P`, so they also own the
+signed 32-bit range check after layout. An object verifier cannot prove that
+range before objects and linker-owned tables have been placed.
+
+Relocations are ordered by source section and offset, cannot overlap, and must
+fit initialized output bytes. All encoded placeholders are zero. Relative
+four-byte relocations serialize `A` as a canonical sign-extended 32-bit value
+in the 64-bit addend fields; `ABSOLUTE64` preserves the full 64-bit bit pattern.
+V1 relocation flags are zero.
+
+Imports are ordered by symbol ID and map distinct GLOBAL+UNDEFINED function or
+global symbols to nonempty library and external names. Imported functions use
+Red/System, cdecl, or stdcall; imported globals use calling convention zero.
+Every import is referenced by at least one `X64_RIP_REL32` relocation, and every
+referenced undefined symbol has exactly one import. An unused undefined
+declaration may remain in the symbol table without an import record. Import
+flags and source locations are zero in v1.
+
+Exports exist only in dynamic-library objects, are ordered by external-name
+string ID, and name distinct defined GLOBAL function or global symbols.
+Ordinals and export flags are zero in v1. The adapter preserves these explicit
+records; it does not infer exports from symbol visibility.
+
+Both implementations are failure-atomic and inspect existing bytes only. They
+do not generate or patch machine code and do not call the legacy emitter. The
+shared corpus contains three valid objects and 43 directed malformed binaries;
+explicit invalid-argument tests complete coverage of every status value from 0
+through 44. Regenerate and run it with:
+
+```powershell
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-rscg-relocation-fixtures.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\tests\wire-rscg-relocation-test.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-rscg-relocation-reds-test.exe `
+    tools\self_hosting\tests\wire-rscg-relocation-reds-test.reds
+build\self-hosting\wire-rscg-relocation-reds-test.exe
+```
+
 The codegen emits final GC bitmap bytes and all prolog/data relocations needed
 to reference them. Structured GC records do not replace those runtime bytes.
 Unwind sections are optional until the corresponding target and linker support

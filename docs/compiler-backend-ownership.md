@@ -112,16 +112,28 @@ rather than mislabeled as portable:
 
 | Construct | RSIR treatment | Conservative codegen rule |
 | --- | --- | --- |
-| `#inline` binary | target-fragment record plus instruction | exact target/ABI match; spill live values; opaque memory/control barrier; caller clobbers; unchanged stack |
-| `system/io/read` and `write` | typed port-I/O operations | target selects legal width/opcode; unsupported target is a diagnostic |
+| `#inline` binary | ordered target-fragment record plus instruction | exact target/ABI and source match; spill live values; opaque read/write/trap/control barrier; Win64 volatile clobbers; unchanged stack |
+| `system/io/read` and `write` | typed port-I/O operations | Windows x64 accepts byte and signed-i32 widths; unsupported shapes are diagnostics |
 | `system/stack/push-all` and `pop-all` | paired opaque stack operations | verify pairing/state; prevent motion across region |
-| get current PC | semantic intrinsic | codegen emits target sequence/relocation |
-| syscall number | syscall call kind | target ABI validates number and arguments |
+| stack top/frame address | explicit stack-address operations | return `pointer! [integer!]`; codegen derives RSP/RBP after final frame layout |
+| get current PC | semantic intrinsic returning `pointer! [byte!]` | codegen emits target sequence/relocation |
+| x64 CPU-register access | register-ID subopcode plus pointer-shaped value | reads allow RAX through R15; writes reject RSP/RBP so stack state stays codegen-owned |
+| syscall number | syscall call kind | nonnegative signed-i32 number; zero through six Win64 logical arguments |
 
 Current `#inline` syntax supplies only bytes and an optional return type. It has
 no declared clobber or memory effect. Version 1 must therefore use the full
 conservative contract above. Optimization may narrow it only after the language
 gains explicit declarations; decoding arbitrary bytes is not a verifier.
+Clobber ID `WIN64_VOLATILE` means RAX, RCX, RDX, R8-R11, XMM0-XMM5, and
+arithmetic condition codes; all nonvolatile registers and the entry RSP value
+must be preserved.
+
+The constant initializer owns a gap-free prefix of `constant-data`; ordered
+target-fragment records own the complete remaining suffix. Each nonempty slice
+is referenced exactly once, in record order, by a `TARGET_FRAGMENT`
+instruction. The descriptor and instruction agree on source and optional
+scalar/pointer/function result type. Validation never copies these bytes into a
+code buffer; only Phase 5 codegen may emit a verified fragment.
 
 ## Global lifecycle and runtime caching
 
@@ -187,8 +199,6 @@ silently ignore an optional-looking record when it affects generated code.
 
 The schema cannot freeze until these questions have executable answers:
 
-- exact semantics and result convention of `#inline` at root and function scope;
-- subroutine ownership, address-taking, and interaction with exceptions;
 - root-frame lifecycle for exe, DLL, driver, no-runtime, Red pass, and PIC modes;
 - full list of frontend state required by a cached runtime interface;
 - aggregate layout and call classification agreement for every Win64 case;

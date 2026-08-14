@@ -415,7 +415,7 @@ matrix is complete. All listed records consist only of 32-bit words.
 | 10 | parameters | 32 | ordered signature parameters |
 | 11 | symbols | 32 | named declarations and definitions |
 | 12 | constants | 32 | scalar, byte, aggregate, address, or zero |
-| 13 | constant-data | 1 | scalar/storage bytes and address addends |
+| 13 | constant-data | 1 | constant-owned prefix followed by target-fragment bytes |
 | 14 | constant-parts | 32 | nested values and symbolic address parts |
 | 15 | constant-bindings | 8 | named constant symbol to constant mapping |
 | 16 | globals | 32 | storage class and initializer |
@@ -429,7 +429,7 @@ matrix is complete. All listed records consist only of 32-bit words.
 | 24 | instructions | 48 | opcode, results, operands, effects, source |
 | 25 | operands | 16 | typed references with opcode-specific aux |
 | 26 | calls | 32 | callee, signature, call attributes |
-| 27 | target-fragments | 32 | target-bound `#inline` byte slices |
+| 27 | target-fragments | 32 | ordered target-bound `#inline` descriptors |
 | 28 | source-locations | 16 | file, line, column, byte offset |
 | 29 | exception-regions | 24 | protected set, handler, and semantics |
 | 30 | exception-blocks | 8 | region-to-block membership |
@@ -465,7 +465,8 @@ The important record shapes are:
   calling convention, flags, source location.
 - `exports`: external-name string, local symbol, ordinal, flags.
 - `constants`: type, kind, flags, data offset, data size, first part, part count,
-  auxiliary value. Integer and float bits live in `constant-data`.
+  auxiliary value. Integer and float bits live in the constant-owned prefix of
+  `constant-data`.
 - `constant-parts`: parent constant, byte offset, type, part kind, child constant,
   target symbol, raw-addend data offset, flags.
 - `constant-bindings`: constant symbol and its value constant.
@@ -490,7 +491,8 @@ The important record shapes are:
 - `calls`: instruction, signature, callee kind, callee descriptor operand, flags,
   first logical argument operand, argument count, reserved.
 - `target-fragments`: target, ABI, byte offset, byte size, return type, effect
-  flags, clobber class, source location. Bytes live in `constant-data`.
+  flags, clobber class, source location. Their ordered byte slices form the
+  complete suffix of `constant-data` after the constant-owned prefix.
 - `exception-regions`: function, first membership record, membership count,
   handler block, region kind, flags. Region kinds are `FILTER` and `FUNCTION`;
   `CATCH_ALL` is the sole flag.
@@ -506,9 +508,9 @@ Core instruction families include constants and copies, conversions, integer
 and floating arithmetic, comparisons, aggregate construction/copy, address
 calculation, typed loads/stores, atomics, calls, branches, switch, returns,
 exception control, keepalive, explicit stack push/pop, custom calls, port I/O,
-and a target-fragment escape. ABI aggregate classes and physical argument
-locations are computed from types and signatures by codegen and never appear in
-RSIR.
+stack/frame address reads, current-PC capture, x64 CPU-register access, and a
+target-fragment escape. ABI aggregate classes and physical argument locations
+are computed from types and signatures by codegen and never appear in RSIR.
 
 ### Canonical type and aggregate layout
 
@@ -890,6 +892,13 @@ values. Absolute addresses may use all 64 bits. These bytes describe an
 address expression only; section placement and target relocation selection are
 codegen responsibilities.
 
+Constants, storage, and address addends consume one gap-free prefix of
+`constant-data` in constant/part order. The constant verifier publishes the
+exclusive end of that prefix as `constant-data-owned-size`. If there are no
+target-fragment records, the prefix must cover the section. Otherwise the
+target-intrinsic verifier requires ordered nonempty fragment slices to start at
+that cursor and cover the complete remaining suffix without gaps or overlap.
+
 Named constants use the separate `constant-bindings` table. It carries exactly
 `SORTED | DEDUPLICATED`, is strictly ordered by symbol ID, has one entry for
 every `CONSTANT` symbol, and preserves exact symbol/constant type equality.
@@ -904,12 +913,13 @@ scalar is a frontend constant rather than mutable global storage; protected
 addressable storage is represented by constant storage and a constant symbol.
 
 Both verifiers decode every scalar field before following references, consume
-the constant-data and part sections without gaps, stop at the same first error,
-and publish all lower and local views only after complete success. The shared
-corpus contains three valid and 84 directed malformed messages, covers all 67
-status codes, exact byte locations, every scalar field, storage overlays,
-struct/raw-union/tagged-union values, all address forms, missing bindings, zero
-global initialization, null routine arguments, and poisoned native outputs.
+their constant-data prefix and the part section without gaps, stop at the same
+first error, and publish all lower and local views only after complete success.
+The shared corpus contains three valid and 84 directed malformed messages,
+covers all 67 status codes, exact byte locations, every scalar field, storage
+overlays, struct/raw-union/tagged-union values, all address forms, missing
+bindings, zero global initialization, null routine arguments, and poisoned
+native outputs.
 Run both sides with:
 
 ```powershell
@@ -927,7 +937,7 @@ build\self-hosting\wire-constant-initializer-reds-test.exe
 `compiler/wire-scalar-operation.red` and
 `system/codegen/wire-scalar-operation.reds` independently validate the three
 tables that form the common instruction substrate, then interpret only scalar
-opcodes 1 through 20. Opcodes 21 through 58 receive the common structural
+opcodes 1 through 20. Opcodes 21 through 63 receive the common structural
 checks here but remain semantically owned by their later feature verifiers.
 This layer constructs no MIR, invokes no emitter, and emits no code bytes.
 
@@ -1073,10 +1083,10 @@ build\self-hosting\wire-scalar-operation-reds-test.exe
 
 `compiler/wire-memory-aggregate.red` and
 `system/codegen/wire-memory-aggregate.reds` consume the fully verified scalar
-views and independently validate opcodes 21 through 31 plus 57 and 58. Opcodes
-32 through 56 remain structurally valid but are deferred to their own feature
-verifiers. This layer also constructs no MIR, invokes no emitter, and emits no
-direct or machine-code bytes.
+views and independently validate opcodes 21 through 31 plus 57 and 58. All
+other non-scalar opcodes remain structurally valid but are deferred to their
+own feature verifiers. This layer also constructs no MIR, invokes no emitter,
+and emits no direct or machine-code bytes.
 
 Every owned instruction has subopcode zero and instruction flags zero. Its
 shape, exact base effect, and alias are:
@@ -1590,6 +1600,7 @@ bytes. The v1 instruction shapes are:
 | `STACK_POP` | zero | none | canonical signed i32 | `STACK` |
 | `PUSH_ALL` | zero | none | none | `STACK | OPAQUE` |
 | `POP_ALL` | zero | none | none | `STACK | OPAQUE` |
+| `STACK_TOP`, `STACK_FRAME` | zero | none | ordinary pointer to canonical signed i32 | `STACK` |
 
 Every instruction has zero flags and alias `(NONE, 0)`. A statically known
 negative count is invalid. Static knowledge includes both a direct constant and
@@ -1621,9 +1632,9 @@ pass; byte-wise little-endian state access permits an unaligned workspace.
 Insufficient capacity is stack error 23. All output views remain poisoned until
 the complete verification chain succeeds.
 
-The shared corpus has five valid and 22 directed malformed modules. Red covers
+The shared corpus has six valid and 23 directed malformed modules. Red covers
 all semantic statuses, while the native cases add exact, unaligned, and short
-workspace checks so all 24 stack status values are exercised. Run both
+workspace checks so all 25 stack status values are exercised. Run both
 implementations with:
 
 ```powershell
@@ -1637,12 +1648,77 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-stack-reds-test.exe
 ```
 
-`#inline` fragments are valid only when their target and ABI equal the message
-header. With the current source syntax they are conservatively modeled as an
-opaque memory/control barrier with caller-clobbered registers, unchanged stack
-depth, and an optional conventional return value. Codegen spills live allocated
-values around the fragment. A future source-level clobber/effect declaration may
-narrow this behavior, but v1 never infers safety by decoding arbitrary bytes.
+### Windows x64 target intrinsics
+
+`compiler/wire-target-intrinsic.red` and
+`system/codegen/wire-target-intrinsic.reds` consume the complete explicit-stack
+verification chain and validate the remaining Windows x64 target escapes. They
+decode no fragment instruction bytes, construct no MIR, invoke neither
+`machine-ir/verify-current` nor the legacy emitter, and emit no direct or
+machine-code bytes.
+
+The `target-fragments` section has zero flags. Its records are in instruction-use
+order, match the message target and ABI exactly, and own consecutive nonempty
+slices beginning at the constant verifier's `constant-data-owned-size`. Those
+slices must cover the complete remaining `constant-data` suffix. A fragment
+return type is `VOID`, `LOGIC`, `INTEGER`, `FLOAT`, `POINTER`, or `FUNCTION`;
+aggregate returns are rejected. Every record has the exact effects `READ |
+WRITE | MAY_TRAP | CONTROL | OPAQUE`, clobber class `WIN64_VOLATILE`, and a
+valid source location.
+
+Every fragment is referenced exactly once, in record order, by one
+`TARGET_FRAGMENT` instruction with one auxiliary-zero `TARGET_FRAGMENT`
+operand. The instruction repeats the descriptor's exact effects, uses alias
+`(UNIVERSAL, 0)`, and has the same source location. A `VOID` fragment has no
+result; every other allowed fragment has one result of the descriptor's exact
+type. The absence of a `STACK` effect fixes the v1 stack-depth contract as
+unchanged. Codegen must spill live values for `WIN64_VOLATILE` and respect the
+opaque barrier before it may copy the verified bytes to its own native arena.
+`WIN64_VOLATILE` invalidates RAX, RCX, RDX, R8-R11, XMM0-XMM5, and arithmetic
+condition codes. The fragment must preserve RBX, RBP, RSI, RDI, R12-R15,
+XMM6-XMM15, and its entry RSP value; changing that set requires a new clobber
+class rather than reinterpretation of ID 1.
+
+The other target-owned instruction shapes are:
+
+| Opcode | Subopcode | Operands | Results | Exact effects and alias |
+| --- | --- | --- | --- | --- |
+| `PORT_READ` | zero | ordinary pointer to plain u8 or signed i32 | exact pointee value | `READ | VOLATILE | MAY_TRAP`, `(NONE, 0)` |
+| `PORT_WRITE` | zero | the same legal pointer plus an exact-pointee value | none | `WRITE | VOLATILE | MAY_TRAP`, `(NONE, 0)` |
+| `GET_PC` | zero | none | ordinary pointer to plain u8 | `OPAQUE`, `(NONE, 0)` |
+| `CPU_REGISTER_READ` | `RAX` through `R15` | none | ordinary pointer to signed i32 | `OPAQUE`, `(NONE, 0)` |
+| `CPU_REGISTER_WRITE` | `RAX` through `R15`, except `RSP` and `RBP` | ordinary pointer to signed i32 | none | `OPAQUE`, `(NONE, 0)` |
+
+All rows have zero instruction flags. Non-fragment operands are auxiliary-zero
+`VALUE` or `CONSTANT` references. Rejecting writes to `RSP` and `RBP` preserves
+the abstract stack/frame state for native frame construction; reads remain
+legal. `PORT_READ` and `PORT_WRITE` deliberately freeze only the source widths
+present on Windows x64 rather than accepting an arbitrary integer size.
+
+`SYSCALL` remains a `CALL_KIND`, so the lower call/ABI verifier owns its
+nonnegative signed-i32 number, legal logic/integer/pointer types, logical
+argument slice, and conservative call effects. The target verifier adds the
+x64 limit of zero through six logical arguments. V1 accepts every nonnegative
+signed-i32 syscall number; it carries no OS-version-specific allow-list.
+
+The native verifier is allocation-free and reuses the caller-owned stack
+workspace. Both implementations preserve poisoned output views until the full
+lower and target chain succeeds. The shared corpus has three valid and 31
+directed malformed modules and, with success and invalid arguments, covers all
+33 target-intrinsic status values, nested failures, exact byte locations,
+constant/fragment data ownership, every target opcode, and native workspace
+boundaries. Run both implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-target-intrinsic-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-target-intrinsic-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-target-intrinsic-reds-test.exe `
+    tools\self_hosting\tests\wire-target-intrinsic-reds-test.reds
+build\self-hosting\wire-target-intrinsic-reds-test.exe
+```
 
 ### RSIR semantic verification
 

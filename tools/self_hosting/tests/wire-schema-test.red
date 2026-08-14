@@ -142,6 +142,22 @@ assert compiler-wire-schema/WIRE_EXCEPTION_ERROR_BAD_SUBROUTINE_REGION = 53
 	"exception subroutine-region error changed"
 assert compiler-wire-schema/WIRE_STACK_ERROR_INSUFFICIENT_WORKSPACE = 23
 	"stack error enum changed"
+assert compiler-wire-schema/WIRE_STACK_ERROR_BAD_STACK_ADDRESS_TYPE = 24
+	"stack-address type error changed"
+assert compiler-wire-schema/WIRE_OPCODE_STACK_TOP = 60
+	"wrong stack-top opcode"
+assert compiler-wire-schema/WIRE_OPCODE_STACK_FRAME = 61
+	"wrong stack-frame opcode"
+assert compiler-wire-schema/WIRE_OPCODE_CPU_REGISTER_READ = 62
+	"wrong CPU-register-read opcode"
+assert compiler-wire-schema/WIRE_OPCODE_CPU_REGISTER_WRITE = 63
+	"wrong CPU-register-write opcode"
+assert compiler-wire-schema/WIRE_TARGET_CLOBBER_CLASS_WIN64_VOLATILE = 1
+	"wrong target-fragment clobber class"
+assert compiler-wire-schema/WIRE_X64_REGISTER_R15 = 16
+	"x64 register enum changed"
+assert compiler-wire-schema/WIRE_TARGET_INTRINSIC_ERROR_BAD_SYSCALL_ARGUMENT_COUNT = 32
+	"target-intrinsic error enum changed"
 assert compiler-wire-schema/profiles/RSCG/known-count = 17
 	"generated Red RSCG profile is stale"
 assert compiler-wire-schema/profiles/RSCG/record-sizes/15 =

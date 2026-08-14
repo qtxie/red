@@ -508,9 +508,13 @@ compiler-wire-stack: context [
 		while [instruction-id <= scalar/instruction-count][
 			opcode: instruction-value data scalar instruction-id
 				schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
-			if all [
-				opcode >= schema/WIRE_OPCODE_STACK_ALLOC
-				opcode <= schema/WIRE_OPCODE_POP_ALL
+			if any [
+				all [
+					opcode >= schema/WIRE_OPCODE_STACK_ALLOC
+					opcode <= schema/WIRE_OPCODE_POP_ALL
+				]
+				opcode = schema/WIRE_OPCODE_STACK_TOP
+				opcode = schema/WIRE_OPCODE_STACK_FRAME
 			][
 				base: instruction-base scalar instruction-id
 				subopcode: instruction-value data scalar instruction-id
@@ -572,6 +576,8 @@ compiler-wire-stack: context [
 				expected-results: either any [
 					opcode = schema/WIRE_OPCODE_STACK_ALLOC
 					opcode = schema/WIRE_OPCODE_STACK_POP
+					opcode = schema/WIRE_OPCODE_STACK_TOP
+					opcode = schema/WIRE_OPCODE_STACK_FRAME
 				][1][0]
 				operand-count: instruction-value data scalar instruction-id
 					schema/WIRE_RSIR_INSTRUCTION_OPERAND_COUNT_OFFSET
@@ -659,6 +665,18 @@ compiler-wire-stack: context [
 						not plain-signed-i32? data types type-id
 					][
 						return reject result schema/WIRE_STACK_ERROR_BAD_POP_TYPE
+							((value-base scalar first-result)
+								+ schema/WIRE_RSIR_VALUE_TYPE_OFFSET)
+							scalar/values-ordinal
+					]
+					if all [
+						find reduce [
+							schema/WIRE_OPCODE_STACK_TOP
+							schema/WIRE_OPCODE_STACK_FRAME
+						] opcode
+						not stack-pointer-type? data types type-id
+					][
+						return reject result schema/WIRE_STACK_ERROR_BAD_STACK_ADDRESS_TYPE
 							((value-base scalar first-result)
 								+ schema/WIRE_RSIR_VALUE_TYPE_OFFSET)
 							scalar/values-ordinal

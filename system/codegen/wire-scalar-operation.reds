@@ -775,6 +775,7 @@ wire-scalar-operation-reader: context [
 		destination/constants-ordinal: source/constants-ordinal
 		destination/constant-data: source/constant-data
 		destination/constant-data-size: source/constant-data-size
+		destination/constant-data-owned-size: source/constant-data-owned-size
 		destination/constant-data-offset: source/constant-data-offset
 		destination/constant-data-ordinal: source/constant-data-ordinal
 		destination/parts: source/parts
@@ -1090,7 +1091,7 @@ wire-scalar-operation-reader: context [
 				WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
 			unless all [
 				opcode >= WIRE_OPCODE_CONSTANT
-				opcode <= WIRE_OPCODE_SUBROUTINE_RETURN
+				opcode <= WIRE_OPCODE_CPU_REGISTER_WRITE
 			][
 				return set-error result WIRE_SCALAR_OPERATION_ERROR_BAD_OPCODE
 					(record-base + WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET)

@@ -258,11 +258,29 @@ host-epilog-operands: fixture-writer/words reduce [
 host-epilog-message: build-stack-message host-epilog-functions #{} #{}
 	host-epilog-blocks #{} #{} host-epilog-instructions host-epilog-operands #{}
 
+stack-address-functions: fixture-writer/words [2 1 0 1 1 1 0 0 0 0]
+stack-address-blocks: fixture-writer/words [1 0 1 3 0 0 0 0]
+stack-address-values: fixture-writer/words reduce [
+	schema/WIRE_VALUE_DEFINITION_INSTRUCTION 1 0 4 1 schema/WIRE_VALUE_FLAG_NONE
+	schema/WIRE_VALUE_DEFINITION_INSTRUCTION 2 0 4 1 schema/WIRE_VALUE_FLAG_NONE
+]
+stack-address-instructions: fixture-writer/words reduce [
+	1 schema/WIRE_OPCODE_STACK_TOP 0 0 1 1 0 0
+		stack-verifier/stack-effects schema/WIRE_ALIAS_KIND_NONE 0 0
+	1 schema/WIRE_OPCODE_STACK_FRAME 0 0 2 1 0 0
+		stack-verifier/stack-effects schema/WIRE_ALIAS_KIND_NONE 0 0
+	1 schema/WIRE_OPCODE_RETURN 0 0 0 0 0 0 catch-effects
+		schema/WIRE_ALIAS_KIND_NONE 0 0
+]
+stack-address-message: build-stack-message stack-address-functions #{} #{}
+	stack-address-blocks #{} stack-address-values stack-address-instructions #{} #{}
+
 valid-stacks: reduce [
 	reduce ['BALANCED balanced-stack-message]
 	reduce ['DYNAMIC-JOIN dynamic-join-message]
 	reduce ['SUBROUTINE balanced-subroutine-message]
 	reduce ['HOST-EPILOG host-epilog-message]
+	reduce ['STACK-ADDRESSES stack-address-message]
 	reduce ['EMPTY empty-subroutine-message]
 ]
 foreach fixture valid-stacks [
@@ -333,6 +351,16 @@ add-stack-semantic-error: func [
 		schema/WIRE_CONSTANT_INITIALIZER_ERROR_SUCCESS
 		expected-offset expected-section data
 ]
+
+stack-address-value-section:
+	stack-section stack-address-message schema/WIRE_RSIR_SECTION_VALUES
+bad: copy stack-address-message
+base: stack-record-offset stack-address-value-section 1 schema/WIRE_RSIR_VALUE_SIZE
+fixture-mutations/put-u32 bad (base + schema/WIRE_RSIR_VALUE_TYPE_OFFSET) 3
+add-stack-semantic-error 'BAD-STACK-ADDRESS-TYPE
+	schema/WIRE_STACK_ERROR_BAD_STACK_ADDRESS_TYPE
+	(base + schema/WIRE_RSIR_VALUE_TYPE_OFFSET)
+	(select stack-address-value-section 'ordinal) bad
 
 mutate-balanced-stack-record: func [
 	name [word!] section [map!] id size field value expected-error expected-field
@@ -653,9 +681,12 @@ foreach fixture malformed-stacks [
 ]
 
 ; INSUFFICIENT_WORKSPACE is native-only; Red covers every semantic status.
-repeat code 23 [
-	assert-stack (not none? find covered-stack-errors (code - 1)) rejoin [
-		"stack error code not covered: " code - 1
+repeat code 25 [
+	error-code: code - 1
+	if error-code <> schema/WIRE_STACK_ERROR_INSUFFICIENT_WORKSPACE [
+		assert-stack (not none? find covered-stack-errors error-code) rejoin [
+			"stack error code not covered: " error-code
+		]
 	]
 ]
 

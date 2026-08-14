@@ -639,7 +639,11 @@ wire-stack-reader: context [
 		instruction-id: 1
 		while [instruction-id <= scalar/instruction-count][
 			opcode: instruction-value scalar instruction-id WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
-			if all [opcode >= WIRE_OPCODE_STACK_ALLOC opcode <= WIRE_OPCODE_POP_ALL][
+			if any [
+				all [opcode >= WIRE_OPCODE_STACK_ALLOC opcode <= WIRE_OPCODE_POP_ALL]
+				opcode = WIRE_OPCODE_STACK_TOP
+				opcode = WIRE_OPCODE_STACK_FRAME
+			][
 				base: instruction-base scalar instruction-id
 				subopcode: instruction-value scalar instruction-id
 					WIRE_RSIR_INSTRUCTION_SUBOPCODE_OFFSET
@@ -700,6 +704,8 @@ wire-stack-reader: context [
 				expected-results: either any [
 					opcode = WIRE_OPCODE_STACK_ALLOC
 					opcode = WIRE_OPCODE_STACK_POP
+					opcode = WIRE_OPCODE_STACK_TOP
+					opcode = WIRE_OPCODE_STACK_FRAME
 				][1][0]
 				operand-count: instruction-value scalar instruction-id
 					WIRE_RSIR_INSTRUCTION_OPERAND_COUNT_OFFSET
@@ -781,6 +787,17 @@ wire-stack-reader: context [
 						not plain-signed-i32? types type-id
 					][
 						return set-error result WIRE_STACK_ERROR_BAD_POP_TYPE
+							((value-base scalar first-result) + WIRE_RSIR_VALUE_TYPE_OFFSET)
+							scalar/values-ordinal
+					]
+					if all [
+						any [
+							opcode = WIRE_OPCODE_STACK_TOP
+							opcode = WIRE_OPCODE_STACK_FRAME
+						]
+						not stack-pointer-type? types type-id
+					][
+						return set-error result WIRE_STACK_ERROR_BAD_STACK_ADDRESS_TYPE
 							((value-base scalar first-result) + WIRE_RSIR_VALUE_TYPE_OFFSET)
 							scalar/values-ordinal
 					]

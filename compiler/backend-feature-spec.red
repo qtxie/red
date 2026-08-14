@@ -350,16 +350,17 @@ compiler-backend-feature-spec: [
 			blockers []
 		]
 
-		explicit-stack-and-subroutines [
-			status specified
-			owners [frontend rsir codegen]
-			wire [
-				RECORD/RSIR_SUBROUTINE RECORD/RSIR_SUBROUTINE_BLOCK
-				OPCODE/STACK_ALLOC OPCODE/STACK_FREE OPCODE/STACK_PUSH OPCODE/STACK_POP
-				OPCODE/PUSH_ALL OPCODE/POP_ALL OPCODE/SUBROUTINE_RETURN
-				STACK_ALLOCATION_MODE/ALL_VALUES OPERAND_KIND/SUBROUTINE
-				CALL_KIND/SUBROUTINE EFFECT_FLAG/STACK EFFECT_FLAG/OPAQUE
-				SUBROUTINE_ERROR/ALL_VALUES STACK_ERROR/ALL_VALUES
+		 explicit-stack-and-subroutines [
+			 status specified
+			 owners [frontend rsir codegen]
+			 wire [
+				 RECORD/RSIR_SUBROUTINE RECORD/RSIR_SUBROUTINE_BLOCK
+				 OPCODE/STACK_ALLOC OPCODE/STACK_FREE OPCODE/STACK_PUSH OPCODE/STACK_POP
+				 OPCODE/PUSH_ALL OPCODE/POP_ALL OPCODE/SUBROUTINE_RETURN
+				 OPCODE/STACK_TOP OPCODE/STACK_FRAME
+				 STACK_ALLOCATION_MODE/ALL_VALUES OPERAND_KIND/SUBROUTINE
+				 CALL_KIND/SUBROUTINE EFFECT_FLAG/STACK EFFECT_FLAG/OPAQUE
+				 SUBROUTINE_ERROR/ALL_VALUES STACK_ERROR/ALL_VALUES
 			]
 			tests [
 				"tools/self_hosting/tests/wire-subroutine-test.red"
@@ -371,21 +372,29 @@ compiler-backend-feature-spec: [
 				"system/tests/source/units/subroutine-test.reds"
 			]
 			blockers []
-		]
+		 ]
 
 		target-intrinsics [
-			status blocked
+			status specified
 			owners [frontend rsir codegen]
 			wire [
 				RECORD/RSIR_TARGET_FRAGMENT
 				OPCODE/PORT_READ OPCODE/PORT_WRITE OPCODE/GET_PC OPCODE/TARGET_FRAGMENT
-				EFFECT_FLAG/OPAQUE
+				OPCODE/CPU_REGISTER_READ OPCODE/CPU_REGISTER_WRITE
+				TARGET_CLOBBER_CLASS/ALL_VALUES X64_REGISTER/ALL_VALUES
+				OPERAND_KIND/TARGET_FRAGMENT CALL_KIND/SYSCALL
+				EFFECT_FLAG/READ EFFECT_FLAG/WRITE EFFECT_FLAG/VOLATILE
+				EFFECT_FLAG/MAY_TRAP EFFECT_FLAG/CONTROL EFFECT_FLAG/OPAQUE
+				ALIAS_KIND/NONE ALIAS_KIND/UNIVERSAL TARGET_INTRINSIC_ERROR/ALL_VALUES
 			]
-			tests ["system/tests/source/units/system-test.reds"]
-			blockers [
-				"add target-fragment clobber IDs and freeze conservative effects and return convention"
-				"define legal port widths, syscall numbers, and target-specific intrinsic failures"
+			tests [
+				"tools/self_hosting/tests/wire-target-intrinsic-test.red"
+				"tools/self_hosting/tests/wire-target-intrinsic-reds-test.reds"
+				"system/tests/source/units/system-test.reds"
+				"tools/self_hosting/tests/wire-call-abi-test.red"
+				"tools/self_hosting/tests/wire-call-abi-reds-test.reds"
 			]
+			blockers []
 		]
 
 		gc-roots-and-keepalive [

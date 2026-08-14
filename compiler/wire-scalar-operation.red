@@ -880,7 +880,7 @@ compiler-wire-scalar-operation: context [
 				schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET
 			unless all [
 				opcode >= schema/WIRE_OPCODE_CONSTANT
-				opcode <= schema/WIRE_OPCODE_SUBROUTINE_RETURN
+				opcode <= schema/WIRE_OPCODE_CPU_REGISTER_WRITE
 			][
 				return reject result schema/WIRE_SCALAR_OPERATION_ERROR_BAD_OPCODE
 					(record-base + schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET)

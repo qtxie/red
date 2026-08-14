@@ -27,6 +27,7 @@ wire-constant-initializer!: alias struct! [
 	constants-ordinal    [integer!]
 	constant-data        [byte-ptr!]
 	constant-data-size   [integer!]
+	constant-data-owned-size [integer!]
 	constant-data-offset [integer!]
 	constant-data-ordinal [integer!]
 	parts                [byte-ptr!]
@@ -305,7 +306,7 @@ wire-constant-initializer-reader: context [
 			verified-functions [wire-function-signature!]
 			verified-modules [wire-module-lifecycle!]
 			verified-symbols [wire-symbol-linkage!]
-			constants constant-data parts bindings [wire-section-slice!]
+			constants constant-data parts bindings target-fragments [wire-section-slice!]
 			record direct-data [byte-ptr!]
 			status record-index bad-relative record-base constant-id constant-type
 			constant-kind flags data-offset data-size first-part owned-part-count
@@ -374,6 +375,7 @@ wire-constant-initializer-reader: context [
 		constant-data: declare wire-section-slice!
 		parts: declare wire-section-slice!
 		bindings: declare wire-section-slice!
+		target-fragments: declare wire-section-slice!
 		unless wire-container-reader/find-verified-section
 			data WIRE_RSIR_SECTION_CONSTANTS constants
 		[
@@ -397,6 +399,13 @@ wire-constant-initializer-reader: context [
 		]
 		unless wire-container-reader/find-verified-section
 			data WIRE_RSIR_SECTION_CONSTANT_BINDINGS bindings
+		[
+			result/container-error: WIRE_CONTAINER_ERROR_MISSING_REQUIRED_SECTION
+			return set-error result WIRE_CONSTANT_INITIALIZER_ERROR_INVALID_CONTAINER
+				WIRE_HEADER_SIZE 0
+		]
+		unless wire-container-reader/find-verified-section
+			data WIRE_RSIR_SECTION_TARGET_FRAGMENTS target-fragments
 		[
 			result/container-error: WIRE_CONTAINER_ERROR_MISSING_REQUIRED_SECTION
 			return set-error result WIRE_CONSTANT_INITIALIZER_ERROR_INVALID_CONTAINER
@@ -987,7 +996,10 @@ wire-constant-initializer-reader: context [
 				(parts/offset + ((part-cursor - 1) * WIRE_RSIR_CONSTANT_PART_SIZE))
 				parts/ordinal
 		]
-		if data-cursor <> constant-data/size [
+		if all [
+			target-fragments/record-count = 0
+			data-cursor <> constant-data/size
+		][
 			return set-error result WIRE_CONSTANT_INITIALIZER_ERROR_CONSTANT_DATA_COVERAGE
 				(constant-data/offset + data-cursor) constant-data/ordinal
 		]
@@ -1132,6 +1144,7 @@ wire-constant-initializer-reader: context [
 		view/constants-ordinal: constants/ordinal
 		view/constant-data: constant-data/data
 		view/constant-data-size: constant-data/size
+		view/constant-data-owned-size: data-cursor
 		view/constant-data-offset: constant-data/offset
 		view/constant-data-ordinal: constant-data/ordinal
 		view/parts: parts/data

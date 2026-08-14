@@ -52,6 +52,7 @@ compiler-wire-constant-initializer: context [
 			constants-ordinal: 0
 			constant-data-offset: 0
 			constant-data-size: 0
+			constant-data-owned-size: 0
 			constant-data-ordinal: 0
 			parts-offset: 0
 			part-count: 0
@@ -247,7 +248,7 @@ compiler-wire-constant-initializer: context [
 	verify: func [
 		data
 		/local result symbol-result container-result constants constant-data parts
-			bindings view record-index record-base field-name field-offset value
+			bindings target-fragments view record-index record-base field-name field-offset value
 			constant-id constant-type constant-kind flags data-offset data-size
 			first-part owned-part-count auxiliary part-cursor data-cursor finish
 			type-kind type-size type-alignment type-flags detail-id expected-size
@@ -277,7 +278,12 @@ compiler-wire-constant-initializer: context [
 		parts: container/find-section container-result schema/WIRE_RSIR_SECTION_CONSTANT_PARTS
 		bindings:
 			container/find-section container-result schema/WIRE_RSIR_SECTION_CONSTANT_BINDINGS
-		if any [none? constants none? constant-data none? parts none? bindings][
+		target-fragments:
+			container/find-section container-result schema/WIRE_RSIR_SECTION_TARGET_FRAGMENTS
+		if any [
+			none? constants none? constant-data none? parts none? bindings
+			none? target-fragments
+		][
 			result/container-error: schema/WIRE_CONTAINER_ERROR_MISSING_REQUIRED_SECTION
 			return reject result schema/WIRE_CONSTANT_INITIALIZER_ERROR_INVALID_CONTAINER
 				schema/WIRE_HEADER_SIZE 0
@@ -871,7 +877,11 @@ compiler-wire-constant-initializer: context [
 				(view/parts-offset + ((part-cursor - 1) * schema/WIRE_RSIR_CONSTANT_PART_SIZE))
 				view/parts-ordinal
 		]
-		if data-cursor <> view/constant-data-size [
+		view/constant-data-owned-size: data-cursor
+		if all [
+			(select target-fragments 'record-count) = 0
+			data-cursor <> view/constant-data-size
+		][
 			return reject result schema/WIRE_CONSTANT_INITIALIZER_ERROR_CONSTANT_DATA_COVERAGE
 				(view/constant-data-offset + data-cursor) view/constant-data-ordinal
 		]

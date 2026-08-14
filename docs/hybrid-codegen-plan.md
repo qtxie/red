@@ -6,9 +6,10 @@ independent RSCF, data-layout, string, file, checksum, source-location, type/
 aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
 constant/global-initializer, scalar-operation, memory/aggregate-operation,
 control-flow, calls/ABI, atomic-operation, subroutine, exception,
-explicit-stack, and RSDG diagnostic verifiers now have executable coverage. The
-protocol remains unfrozen until the remaining Windows x64 feature blockers and
-message-level semantic fixtures satisfy the Phase 1 exit criteria.
+explicit-stack, target-intrinsic, and RSDG diagnostic verifiers now have
+executable coverage. The protocol remains unfrozen until the remaining Windows
+x64 feature blockers and message-level semantic fixtures satisfy the Phase 1
+exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -141,7 +142,13 @@ dedicated returns, call ownership, recursion boundaries, and execution-region
 CFG isolation are independently checked too. Explicit stack instruction
 shapes, signed slot counts, exact/dynamic fixed-point joins, opaque
 `PUSH_ALL`/`POP_ALL` regions, custom-call consumption, and subroutine return
-depth are now checked on the same path with allocation-free native workspace.
+depth are now checked on the same path with allocation-free native workspace;
+stack-top and frame-address reads have explicit pointer result shapes. Target
+fragments, typed port I/O, current-PC capture, x64 CPU-register access, and the
+Win64 syscall argument limit now have exact instruction, type, effect, alias,
+clobber, return, source, and data-ownership contracts. Independent Red and
+allocation-free Red/System target-intrinsic verifiers check those contracts
+against one shared malformed corpus.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every
@@ -172,7 +179,7 @@ Deliverables:
   control flow, casts, pointers, structs/unions/arrays, function pointers,
   namespaces, callbacks, imports/exports, variadic/typed/custom calls, atomics,
   catch/throw, dynamic stack operations, GC handles, debug, PIC, and static
-  linking, plus target-bound `#inline`, port I/O, push/pop-all, and subroutines;
+linking, plus target-bound `#inline`, port I/O, push/pop-all, and subroutines;
 - specify exact mappings for all Win64 relocation forms accepted by the current
   PE linker.
 
@@ -224,6 +231,11 @@ Tests:
   slot counts, exact/dynamic joins, save-region identity, custom-call
   consumption, host epilog ownership, subroutine return depth, caller-owned
   workspace, and failure-atomic views without emitting code;
+- independent target-intrinsic verifiers agree on constant-data prefix/suffix
+  ownership, target/ABI-bound fragments, conservative effects and Win64
+  clobbers, typed port widths, current-PC and CPU-register shapes, sequential
+  fragment use, syscall argument limits, nested errors, and failure-atomic
+  views without decoding or emitting fragment bytes;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.
@@ -339,7 +351,10 @@ Deliverables:
   lines/parameters, and optional platform sections;
 - conservatively lower target-bound `#inline` fragments by spilling live values,
   applying their opaque effect/clobber contract, emitting bytes, and importing
-  an optional conventional result.
+  an optional conventional result;
+- lower typed port I/O, current-PC capture, CPU-register access, syscalls, and
+  explicit stack-address operations from verified semantic instructions; none
+  may import a frontend-selected instruction sequence.
 
 Tests:
 

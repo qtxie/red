@@ -331,18 +331,23 @@ compiler-backend-feature-spec: [
 		]
 
 		exceptions [
-			status blocked
+			status specified
 			owners [frontend rsir codegen]
 			wire [
 				RECORD/RSIR_EXCEPTION_REGION RECORD/RSIR_EXCEPTION_BLOCK
 				EDGE_KIND/EXCEPTION
 				OPCODE/THROW OPCODE/CATCH_ENTER OPCODE/CATCH_LEAVE
-				EFFECT_FLAG/THROW
+				EXCEPTION_REGION_KIND/ALL_VALUES
+				EXCEPTION_REGION_FLAG/ALL_VALUES EXCEPTION_ERROR/ALL_VALUES
+				EFFECT_FLAG/THROW EFFECT_FLAG/CONTROL EFFECT_FLAG/WRITE
+				FUNCTION_FLAG/MAY_THROW FUNCTION_FLAG/CALLBACK
 			]
-			tests ["system/tests/source/units/exceptions-test.reds"]
-			blockers [
-				"add exception-region kind/flag IDs and freeze handler-edge and stack-state semantics"
+			tests [
+				"tools/self_hosting/tests/wire-exception-test.red"
+				"tools/self_hosting/tests/wire-exception-reds-test.reds"
+				"system/tests/source/units/exceptions-test.reds"
 			]
+			blockers []
 		]
 
 		explicit-stack-and-subroutines [

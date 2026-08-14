@@ -5,8 +5,8 @@ constants, compiler-core ownership gate, checked common-container readers, and
 independent RSCF, data-layout, string, file, checksum, source-location, type/
 aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
 constant/global-initializer, scalar-operation, memory/aggregate-operation,
-control-flow, calls/ABI, atomic-operation, and RSDG diagnostic verifiers now
-have executable coverage. The
+control-flow, calls/ABI, atomic-operation, exception, and RSDG diagnostic
+verifiers now have executable coverage. The
 protocol remains unfrozen until the remaining Windows x64 feature blockers and
 message-level semantic fixtures satisfy the Phase 1 exit criteria.
 
@@ -133,8 +133,10 @@ conservative call effects, and derived Win64 aggregate/hidden-return rules are
 now specified and checked too. Atomic RMW operation IDs, legal memory orders,
 exact signed-i32 pointer/value/result shapes, old/new return behavior, effects,
 aliases, and the natural-alignment producer contract are independently checked
-as well. Exception-edge and `THROW` details remain owned by the blocked
-exception feature.
+as well. Exception region kinds and membership, exact handler nesting, entry
+and leave boundaries, exception-edge suffixes, `THROW`, `[catch]` call wrappers,
+callback boundaries, and conservative stack interaction are independently
+checked as well.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every
@@ -203,6 +205,11 @@ Tests:
 - independent atomic verifiers agree on RMW operation IDs, legal load/store/
   RMW/CAS/fence orders, exact signed-i32 address/value/result shapes, old/new
   result modes, effects, aliases, and exact byte locations without emitting
+  code;
+- independent exception verifiers agree on laminar region membership, handler
+  nesting, enter/leave boundaries, innermost-first exception edges, FILTER and
+  FUNCTION catch-all semantics, throw/call placement, callback declarations,
+  stack exclusions, nested errors, and exact byte locations without emitting
   code;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,

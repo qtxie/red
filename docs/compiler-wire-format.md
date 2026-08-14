@@ -489,6 +489,11 @@ The important record shapes are:
   first logical argument operand, argument count, reserved.
 - `target-fragments`: target, ABI, byte offset, byte size, return type, effect
   flags, clobber class, source location. Bytes live in `constant-data`.
+- `exception-regions`: function, first membership record, membership count,
+  handler block, region kind, flags. Region kinds are `FILTER` and `FUNCTION`;
+  `CATCH_ALL` is the sole flag.
+- `exception-blocks`: exception region and protected block. These records form
+  the contiguous membership slices owned by `exception-regions`.
 
 Core instruction families include constants and copies, conversions, integer
 and floating arithmetic, comparisons, aggregate construction/copy, address
@@ -1396,6 +1401,107 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
     -o build\self-hosting\wire-call-abi-reds-test.exe `
     tools\self_hosting\tests\wire-call-abi-reds-test.reds
 build\self-hosting\wire-call-abi-reds-test.exe
+```
+
+### Exceptions
+
+`compiler/wire-exception.red` and `system/codegen/wire-exception.reds` consume
+the verified call/ABI, control-flow, scalar, type, function, and constant views.
+They validate exception regions and edges only; they construct no MIR, call no
+legacy verifier or emitter, and produce no direct or machine-code bytes.
+
+The `exception-regions` and `exception-blocks` sections have zero flags. Every
+record word is a signed-31-bit wire scalar. A region owns one nonempty,
+contiguous slice of the complete membership table. Slices partition that table
+in region order; each member repeats its region ID, names a non-entry block in
+the same function, and is strictly ordered by block ID. A handler is a unique
+block in the same function, is outside its own protected set, and has no
+ordinary incoming edge.
+
+Regions are ordered by function and then by their unique `CATCH_ENTER`
+instruction. Two regions in one function are either disjoint or strictly
+nested; partial overlap is invalid. The handler of an inner region is inside
+exactly every proper outer region and no other region. A `FUNCTION` region may
+not overlap another region. These rules make reverse region order the canonical
+innermost-to-outermost handler order without serializing a second nesting tree.
+
+`CATCH_ENTER` and `CATCH_LEAVE` have subopcode, flags, and result count zero,
+exact `CONTROL` effect, and alias `(NONE, 0)`. Their first operand is `BLOCK`
+and names the region's handler; every catch operand has auxiliary zero.
+
+| Region/instruction | Remaining operands | Required region flag |
+| --- | --- | --- |
+| `FILTER` `CATCH_ENTER` | one signed-i32 `VALUE` threshold | `CATCH_ALL` exactly when the value is a direct scalar constant with raw bytes `FFFFFFFF` (`-1`) |
+| `FUNCTION` `CATCH_ENTER` | none | `CATCH_ALL` |
+| either `CATCH_LEAVE` | none | unchanged |
+
+A dynamic or non-`-1` filter is not guaranteed to catch and therefore clears
+`CATCH_ALL`, even if it may evaluate to `-1` at runtime. `FUNCTION` carries no
+threshold operand. It represents the source `[catch]` attribute, so codegen
+derives its internal `FFFFFFFEh` threshold and resumes after the throwing call;
+the runtime-only `FFFFFFFFh` root catch value is not serialized as that
+threshold.
+
+Every entry is the penultimate instruction of a two-instruction preheader and
+is followed by `JUMP` from outside the region to a member block. An ordinary
+edge may enter only that one region from its matching preheader. An ordinary
+edge that exits regions enters a distinct leave block whose prefix contains
+exactly one `CATCH_LEAVE` per exited region, innermost first. Extra, late, or
+misordered leaves are invalid, as are a mixed enter/exit edge, entry into two
+regions at once, or `RETURN` from inside a protected region. Every protected
+member has an ordinary predecessor from its region, its entry preheader, or, for
+a nested handler, the corresponding proper inner region.
+
+A `FUNCTION` region has one protected member block containing exactly one
+void-result throwing `CALL` followed by `JUMP`. Its entry preheader has two
+instructions. Its distinct normal-leave and handler blocks each contain
+`CATCH_LEAVE` followed by `JUMP`, and both jumps name the same continuation.
+This is the complete v1 `[catch]` call wrapper; it does not encode legacy frame
+offsets or copied prolog/epilog bytes.
+
+`THROW` has subopcode and flags zero, no result, and one auxiliary-zero `VALUE`
+operand of canonical signed-i32 type. Its exact effects are `CONTROL | THROW |
+WRITE`, and its alias is `(UNIVERSAL, 0)`. It is the final terminator. A throwing
+`CALL` is immediately before its block terminator. A block contains at most one
+instruction with `THROW` effect.
+
+The exception edges of a throwing block are the suffix after its ordinary
+edges. Their targets list active handlers innermost to outermost and stop at the
+first `CATCH_ALL` region. A block with no throwing instruction has no exception
+edge. If no active catch-all exists, the owning signature must declare
+`MAY_THROW`. A throwing call is limited in v1 to `DIRECT` or `INDIRECT` with a
+`RED_SYSTEM` signature; imported, syscall, C-ABI, custom, and subroutine throw
+paths are rejected rather than assigned an implicit unwind convention.
+
+A signature cannot combine `CALLBACK` and `MAY_THROW`. A callback may still
+contain exceptions that are fully caught before its external boundary. A
+function with any region, catch/throw instruction, or `THROW` effect may not
+contain `STACK_ALLOC` through `POP_ALL`; a throwing call may not carry the
+`STACK` effect. This conservative v1 rule prevents a catch from bypassing an
+unserialized dynamic stack state. The later explicit-stack feature may relax
+it only after stack-state joins and unwind ownership are independently frozen.
+
+The native reader is allocation-free and reuses the control-flow reader's
+caller-owned workspace of at least one byte per block; exception verification
+requires no additional bytes. Both readers stop at the same first error and
+publish all lower plus exception views only after complete success. The shared
+corpus contains two valid modules and 52 directed malformed modules. Together
+with success and invalid arguments it covers all 53 exception status values,
+exact nested errors and byte locations, region nesting and boundaries, handler
+edge order, both `FUNCTION` overlap and shape failures, poisoned outputs, and
+null native arguments.
+
+Run both implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-exception-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-exception-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-exception-reds-test.exe `
+    tools\self_hosting\tests\wire-exception-reds-test.reds
+build\self-hosting\wire-exception-reds-test.exe
 ```
 
 `#inline` fragments are valid only when their target and ABI equal the message

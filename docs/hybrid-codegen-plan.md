@@ -5,7 +5,8 @@ constants, compiler-core ownership gate, checked common-container readers, and
 independent RSCF, data-layout, string, file, checksum, source-location, type/
 aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
 constant/global-initializer, scalar-operation, memory/aggregate-operation,
-control-flow, and RSDG diagnostic verifiers now have executable coverage. The
+control-flow, calls/ABI, and RSDG diagnostic verifiers now have executable
+coverage. The
 protocol remains unfrozen until the remaining Windows x64 feature blockers and
 message-level semantic fixtures satisfy the Phase 1 exit criteria.
 
@@ -127,7 +128,10 @@ construction, overlap-safe aggregate copy, and explicit tagged-union state are
 now specified and checked on that path as well. Block/edge partitioning, exact
 branch/jump/switch/return/unreachable shapes, virtual CFG roots, direct-value
 dominance, and explicit merge-slot ownership are now specified and checked too;
-exception-edge and `THROW` details remain owned by the blocked exception feature.
+call descriptor domains, logical argument slices, variable-arity protocols,
+conservative call effects, and derived Win64 aggregate/hidden-return rules are
+now specified and checked too. Exception-edge and `THROW` details remain owned
+by the blocked exception feature.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every
@@ -189,6 +193,10 @@ Tests:
 - independent control-flow verifiers agree on block/edge ownership, terminator
   shape and edge order, switch constants, virtual roots, direct-value dominance,
   explicit merge slots, workspace failure, and failure-atomic output views;
+- independent call/ABI verifiers agree on callee descriptor domains, logical
+  argument slices, direct/import/indirect/syscall targets, variadic/typed/custom
+  protocols, callback signatures, conservative call effects, and derived Win64
+  aggregate/hidden-return rules without serializing physical ABI state;
 - malformed fixtures cover truncation, overlap, bad alignment, overflow,
   unknown required flags, invalid IDs, cyclic constants, bad CFG, type errors,
   and unsupported relocations.

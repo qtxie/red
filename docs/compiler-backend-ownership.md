@@ -56,7 +56,7 @@ ownership decision required before it can become `specified`.
 | chunks, merge, branch/over/back, jump lists | control-flow construction and patching | RSIR blocks/edges/terminators | CFG verifier and differential control tests |
 | loads, stores, casts, arithmetic, paths | instruction encoding during semantic walk | typed RSIR operations and values | no target emit call in rsir semantic path |
 | save/restore last, signed state, last math state | implicit register-stack-machine state | absent from RSIR; native MIR scheduling/allocation | poison legacy state during rsir tests |
-| call argument index/types/pad/shadow/temp fields | target ABI state while evaluating calls | logical arguments only; codegen ABI classifier | nested/mixed/aggregate call matrix |
+| call argument index/types/pad/shadow/temp fields | target ABI state while evaluating calls | callee descriptor plus logical arguments; codegen ABI classifier | nested/mixed/aggregate call matrix |
 | `enter`, `leave`, prolog/epilog, emitter stack | frame layout and function bytes | signatures/locals in RSIR; frame/encoding in codegen | frame and unwind/stack alignment probes |
 | pointer bitmap encode/store and bitmap buffer | GC argument/local frame description | GC kinds in RSIR; final bitmap after allocation in codegen | forced GC with spills/callee-saves |
 | tail pointer in debug records | source line to current code address | source location on RSIR instruction; final offset in RSCG | debug line/function tests |

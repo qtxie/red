@@ -485,7 +485,7 @@ The important record shapes are:
   location.
 - `operands`: kind, referenced ID, auxiliary ID/value, flags. Immediates name
   constants; opcode-specific auxiliary fields never contain host values.
-- `calls`: instruction, signature, callee kind, callee symbol/value, flags,
+- `calls`: instruction, signature, callee kind, callee descriptor operand, flags,
   first logical argument operand, argument count, reserved.
 - `target-fragments`: target, ABI, byte offset, byte size, return type, effect
   flags, clobber class, source location. Bytes live in `constant-data`.
@@ -1229,6 +1229,92 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
     -o build\self-hosting\wire-control-flow-reds-test.exe `
     tools\self_hosting\tests\wire-control-flow-reds-test.reds
 build\self-hosting\wire-control-flow-reds-test.exe
+```
+
+### Calls and Win64 ABI
+
+`compiler/wire-call-abi.red` and
+`system/codegen/wire-call-abi.reds` consume the verified control-flow tables
+and freeze the logical call contract. They do not lower arguments to registers,
+insert a hidden return pointer, or serialize stack/shadow-space facts. Those
+facts are derived by native codegen from the canonical type layout and the
+signature at the call site. The verifier chain currently accepts only
+`X86_64`, `WIN64`, little-endian, eight-byte-pointer messages. Data-layout
+verification rejects every other header before call validation; the call reader
+repeats those checks defensively.
+
+Every `CALL` instruction owns exactly one `RSIR_CALL` record, and every call
+record names a `CALL` instruction. The records are sorted by instruction ID and
+cover the complete CALL opcode set. `RSIR_CALL/CALLEE_REFERENCE` is an operand
+ID, not a function/import index. It must be the first operand of the CALL
+instruction; `FIRST_ARGUMENT_OPERAND` and `ARGUMENT_COUNT` describe the suffix
+after that descriptor. An empty argument suffix is `(0, 0)`. Argument operands
+are logical source values, never ABI-expanded slots or a hidden return pointer.
+
+The descriptor operand kind is the target-domain discriminator:
+
+| Call kind | Descriptor kind and reference | Required target |
+| --- | --- | --- |
+| `DIRECT` | `SYMBOL`, function symbol ID | local/internal/external/weak function symbol, not an import |
+| `IMPORT` | `SYMBOL`, imported function symbol ID | exactly one matching import record |
+| `INDIRECT` | `VALUE`, value ID | `FUNCTION` type whose detail is the call signature |
+| `SYSCALL` | `CONSTANT`, constant ID | signed i32 syscall number, nonnegative |
+
+`CALL_KIND_CUSTOM` is reserved and rejected. Custom forwarding is a signature
+mode (`FUNCTION_FLAG/CUSTOM`) that uses one ordinary signed-i32 count operand
+and the `STACK` effect; the values already pushed by explicit stack operations
+are not duplicated in the call slice. `CALL_KIND_SUBROUTINE` remains owned by
+the later explicit-stack contract. This keeps target provenance and dynamic
+forwarding orthogonal and supports direct, imported, and indirect custom
+targets without a second target encoding.
+
+The call record itself has zero flags and reserved words. A CALL has subopcode
+zero, instruction flags zero, one result exactly when the signature return type
+is non-`VOID`, and a result type exactly equal to that return type. Its alias is
+`(UNIVERSAL, 0)`. Calls conservatively require `CALL | READ | WRITE |
+MAY_TRAP | SAFEPOINT`; a custom call additionally requires `STACK`, and a
+signature marked `MAY_THROW` additionally requires `THROW`. Unknown effect bits,
+`CONTROL`, `ATOMIC`, `VOLATILE`, and `OPAQUE` are rejected. A non-throwing
+signature may not claim `THROW`.
+
+Fixed calls have exactly the signature parameter count and exact canonical
+argument types. `CDECL VARIADIC` calls have at least the named prefix; the
+prefix is exact and each tail value is non-`VOID` (a `float32` tail must already
+be promoted to the canonical 64-bit float). Private `VARIADIC` and `TYPED`
+calls carry any number of packable scalar/pointer/function values. `CUSTOM`
+calls carry exactly one signed-i32 count; a statically known negative count is
+invalid. Aggregate values are legal for fixed and C-variadic calls, but never
+for packed typed/private-variadic protocols.
+
+For the Windows x64 header (`X86_64` + `WIN64`), scalar, pointer, and function
+values occupy one ABI slot. A by-value struct/union of size 1, 2, 4, or 8 is an
+integer-class slot; larger external-ABI aggregates are passed indirectly by a
+codegen-created temporary. The same external rule makes a return aggregate
+larger than 8 bytes a hidden-return-pointer case. No such physical decision is
+written into RSIR, and the semantic result remains the canonical aggregate
+type. Syscalls accept only logic, integer, or pointer arguments and returns.
+Callback bits are checked through the target signature and remain valid only
+for CDECL/STDCALL function types; indirect callback calls use the same exact
+signature rule.
+
+Both readers first run the control-flow verifier, then apply these call rules
+with failure-atomic output views. The corpus covers direct runtime symbols,
+imports, indirect and callback values, syscalls, scalar and aggregate
+Win64-return/argument classes, C and private variadics, typed calls, and direct,
+imported, and indirect custom calls. It deliberately does not invoke
+`machine-ir/verify-current`, the legacy emitter, or any direct-code path.
+
+Run both implementations with:
+
+```powershell
+D:\EE\QTool\red-console.exe tools\self_hosting\tests\wire-call-abi-test.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-call-abi-fixtures.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-call-abi-reds-test.exe `
+    tools\self_hosting\tests\wire-call-abi-reds-test.reds
+build\self-hosting\wire-call-abi-reds-test.exe
 ```
 
 `#inline` fragments are valid only when their target and ABI equal the message

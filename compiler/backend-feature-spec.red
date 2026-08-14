@@ -290,24 +290,25 @@ compiler-backend-feature-spec: [
 		]
 
 		calls-and-abi [
-			status blocked
+			status specified
 			owners [frontend rsir codegen]
 			wire [
 				RECORD/RSIR_CALL OPCODE/CALL
 				CALL_KIND/DIRECT CALL_KIND/INDIRECT CALL_KIND/IMPORT
 				CALL_KIND/SYSCALL CALL_KIND/CUSTOM
 				EFFECT_FLAG/CALL EFFECT_FLAG/MAY_TRAP EFFECT_FLAG/SAFEPOINT
+				EFFECT_FLAG/READ EFFECT_FLAG/WRITE EFFECT_FLAG/STACK
+				CALL_ABI_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-call-abi-test.red"
+				"tools/self_hosting/tests/wire-call-abi-reds-test.reds"
 				"system/tests/source/units/function-test.reds"
 				"system/tests/source/units/lib-test.reds"
 				"system/tests/source/units/vararg-test.reds"
 				"tools/self_hosting/fixtures/backend/custom-call.reds"
 			]
-			blockers [
-				"define call flags, callee-reference domains, and logical argument slices"
-				"freeze all Win64 scalar/aggregate/hidden-return/callback/variadic/typed/custom cases"
-			]
+			blockers []
 		]
 
 		atomics [

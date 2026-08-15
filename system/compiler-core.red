@@ -9,8 +9,6 @@ Red [
 #include %../compiler/wire-schema.red
 #include %../compiler/wire-writer.red
 #include %../compiler/wire-container.red
-#include %../compiler/wire-string-table.red
-#include %../compiler/wire-diagnostics.red
 #include %../compiler/rsir-producer.red
 #include %../compiler/rsir-sink.red
 #include %../compiler/rscf-producer.red

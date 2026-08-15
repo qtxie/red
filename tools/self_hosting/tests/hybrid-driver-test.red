@@ -4,6 +4,7 @@ Red [
 
 #include %../../../system/compiler-windows-bootstrap.red
 #include %../../../compiler/wire-rscf.red
+#include %../../../compiler/wire-string-table.red
 #include %../../../compiler/wire-file-source.red
 #include %../../../compiler/wire-data-layout.red
 #include %../../../compiler/wire-module-lifecycle.red

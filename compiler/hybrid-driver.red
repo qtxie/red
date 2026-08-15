@@ -5,7 +5,7 @@ Red [
 
 unless value? 'compiler-wire-schema [do %wire-schema.red]
 unless value? 'compiler-rscf-producer [do %rscf-producer.red]
-unless value? 'compiler-wire-diagnostics [do %wire-diagnostics.red]
+unless value? 'compiler-wire-container [do %wire-container.red]
 
 ; The standard compiler installs no backend hooks. A hybrid package replaces
 ; both hooks together and sets installed? only after routine and adapter code
@@ -14,7 +14,9 @@ compiler-hybrid-driver: context [
 	schema: compiler-wire-schema
 	container: compiler-wire-container
 	config-producer: compiler-rscf-producer
-	diagnostic-verifier: compiler-wire-diagnostics
+	INDEX-FLAGS:
+		schema/WIRE_SECTION_FLAG_SORTED
+		+ schema/WIRE_SECTION_FLAG_DEDUPLICATED
 
 	ERROR-SUCCESS: 0
 	ERROR-NOT-INSTALLED: 1
@@ -66,41 +68,79 @@ compiler-hybrid-driver: context [
 	diagnostic-summary: func [
 		data [binary!]
 		expected-status [integer!]
-		/local summary verified view strings record-offset message-id string-record
-			string-offset string-size start
+		/local summary verified strings string-data diagnostics record-offset status
+			message-id string-record string-offset string-size data-size start
 	][
 		summary: make object! [valid?: true present?: false message: none]
 		if empty? data [return summary]
 		summary/present?: true
-		verified: diagnostic-verifier/verify data schema/WIRE_MAGIC_RSDG
+		verified: container/verify/expect data schema/WIRE_MAGIC_RSDG
 		unless verified/valid? [
 			summary/valid?: false
 			summary/message: rejoin [
-				"native codegen returned invalid RSDG error=" verified/error
+				"native codegen returned invalid RSDG container error=" verified/error
 				" at " verified/error-offset ":" verified/error-section
 			]
 			return summary
 		]
-		view: verified/view
-		if view/status <> expected-status [
+		strings: container/find-section verified schema/WIRE_RSDG_SECTION_STRINGS
+		string-data: container/find-section verified schema/WIRE_RSDG_SECTION_STRING_DATA
+		diagnostics: container/find-section verified schema/WIRE_RSDG_SECTION_DIAGNOSTICS
+		unless all [
+			map? strings
+			map? string-data
+			map? diagnostics
+			(select strings 'flags) = INDEX-FLAGS
+			(select string-data 'flags) = 0
+			(select diagnostics 'flags) = 0
+			(select strings 'record-count) > 0
+			(select diagnostics 'record-count) > 0
+		][
+			summary/valid?: false
+			summary/message: "native codegen returned an unusable RSDG section layout"
+			return summary
+		]
+		record-offset: select diagnostics 'payload-offset
+		status: container/read-i31 data
+			(record-offset + schema/WIRE_RSDG_DIAGNOSTIC_STATUS_OFFSET)
+		if any [none? status status <> expected-status][
 			summary/valid?: false
 			summary/message: rejoin [
 				"native codegen status " expected-status
-				" disagrees with RSDG status " view/status
+				" disagrees with RSDG status " any [status "invalid"]
 			]
 			return summary
 		]
-		strings: verified/strings
-		record-offset: view/records-offset
 		message-id: container/read-i31 data
 			(record-offset + schema/WIRE_RSDG_DIAGNOSTIC_MESSAGE_STRING_OFFSET)
-		string-record: strings/records-offset
-			+ ((message-id - 1) * schema/WIRE_STRING_SIZE)
+		unless all [
+			integer? message-id
+			message-id > 0
+			message-id <= (select strings 'record-count)
+		][
+			summary/valid?: false
+			summary/message: "native codegen returned an invalid RSDG message ID"
+			return summary
+		]
+		string-record: (select strings 'payload-offset)
+			+ ((message-id - 1) * (select strings 'record-size))
 		string-offset: container/read-i31 data
 			(string-record + schema/WIRE_STRING_OFFSET_OFFSET)
 		string-size: container/read-i31 data
 			(string-record + schema/WIRE_STRING_SIZE_OFFSET)
-		start: strings/data-offset + string-offset
+		data-size: select string-data 'payload-size
+		unless all [
+			integer? string-offset
+			integer? string-size
+			string-size > 0
+			string-size <= data-size
+			string-offset <= (data-size - string-size)
+		][
+			summary/valid?: false
+			summary/message: "native codegen returned an invalid RSDG message range"
+			return summary
+		]
+		start: (select string-data 'payload-offset) + string-offset
 		summary/message: to string! copy/part at data (start + 1) string-size
 		summary
 	]

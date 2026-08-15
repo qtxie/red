@@ -75,7 +75,9 @@ expect driver/3 "invoke-codegen" 1 "hybrid-driver-dynamic-call"
 expect driver/3 "invoke-adapter" 1 "hybrid-driver-dynamic-call"
 expect driver/3 "adapter-message" 1 "hybrid-driver-dynamic-call"
 expect driver/1 "config-producer/build" 1 "hybrid-driver"
-expect driver/1 "diagnostic-verifier/verify" 1 "hybrid-driver"
+expect driver/1 "container/verify/expect" 1 "hybrid-driver"
+expect driver/1 "container/find-section" 3 "hybrid-driver"
+expect driver/1 "diagnostic-verifier/verify" 0 "hybrid-driver"
 expect driver/2 "emitter" 0 "hybrid-driver"
 expect driver/2 "rs-o2-ir" 0 "hybrid-driver"
 expect driver/2 "linker" 0 "hybrid-driver"
@@ -173,6 +175,8 @@ foreach forbidden [
 	%compiler/wire-rscg-object.red
 	%compiler/wire-rscg-relocation.red
 	%compiler/wire-rscg-metadata.red
+	%compiler/wire-string-table.red
+	%compiler/wire-diagnostics.red
 ][
 	forbidden: clean-path to file! rejoin [root forbidden]
 	if find closure-files forbidden [

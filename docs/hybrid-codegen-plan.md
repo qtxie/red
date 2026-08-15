@@ -27,21 +27,32 @@ codegen, the adapter, and the linker exactly once. Native codegen remains the
 authoritative complete RSCG verifier; the product adapter now retains only the
 bounded container and consumed-field checks needed before mapping to the Red
 linker, while the six complete Red RSCG verifier modules remain test oracles.
+The same ownership rule now applies to failure diagnostics: native codegen
+self-verifies RSDG before committing it, and the product driver retains only
+the container, section, status, message-ID, and message-range checks needed to
+report the failure. The complete Red string-table and RSDG verifiers remain
+test oracles and are absent from the hybrid product closure.
 A recursive source-closure test rejects `compiler-core.red`, `emitter.red`,
-`machine-ir*.red`, and those six redundant verifier modules from the hybrid
+`machine-ir*.red`, and those eight redundant verifier modules from the hybrid
 backend package. That ownership move reduced the designated existing compiler's
 generated source from 4.50 MB to 3.84 MB and its Redbin payload from about 483 KB
 to about 424 KB; observed frontend-only time fell from 34.9 seconds to 22.9-25.6
 seconds. With an existing development runtime, direct O1 AOT builds of the
-current full entry take about 126-133 seconds, of which about 95-102 seconds is
+current full entry take about 123-133 seconds, of which about 95-102 seconds is
 still the existing compiler's native phase. A separate run that rebuilt
 `libRedRT.dll` took about 230 seconds wall time and is not comparable to the
-runtime-ready samples. The AOT path now also invokes installed driver hooks
-dynamically: direct calls were statically bound by the existing compiler to the
-fail-closed placeholders. The rebuilt executable codegens and links the current
-empty-function slice in roughly 16 ms and 32 ms respectively. This executable
-is still a prototype, not accepted H0: it does not become H0 until the same full
-source entry covers the complete self-host corpus and product behavior.
+runtime-ready samples. Removing the product-side Red RSDG verifier reduced a
+measured development image from 5,237,248 to 5,049,344 bytes. Its runtime-ready
+O1 build took 123.3 seconds, including 22.2 seconds in the frontend and 95.4
+seconds in the existing compiler's native phase; the native phase was
+effectively unchanged, so this result is a closure reduction rather than a
+compiler-build speed breakthrough. The AOT path now also invokes installed
+driver hooks dynamically: direct calls were statically bound by the existing
+compiler to the fail-closed placeholders. The rebuilt executable codegens and
+links the current empty-function slice in roughly 16 ms and 32 ms respectively.
+This executable is still a prototype, not accepted H0: it does not become H0
+until the same full source entry covers the complete self-host corpus and
+product behavior.
 The protocol remains unfrozen until the remaining Windows x64 feature blockers
 and message-level semantic fixtures satisfy the Phase 1 exit criteria.
 

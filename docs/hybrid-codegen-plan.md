@@ -165,6 +165,12 @@ as well. Nonempty unwind records are an explicit v1 unsupported error until
 the codegen and adapter implement `.pdata`/`.xdata`; they are never silently
 dropped. These layers only inspect serialized bytes and generate no machine
 code.
+Standalone USER and SUPPORT objects validate each GC frame against its
+explicit initialized-DATA slice without inventing runtime compatibility roles;
+only an object containing the RUNTIME module requires exact coverage of
+`***-ptr-bitmaps`. The merger must collect and remap standalone slices before
+applying that final runtime-role check. This distinction is part of the wire
+contract, not a codegen exception.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every
@@ -427,6 +433,8 @@ Deliverables:
 
 - deterministic alignment and merge of multiple code, rodata, data, BSS, and
   platform sections;
+- collect standalone GC bitmap slices into the runtime-owned bitmap role,
+  rewrite each frame's section/offset, and verify final exact coverage;
 - local-ID remapping, strong/weak/undefined symbol resolution, import merging,
   export conflict checking, and relocation source adjustment;
 - exact conversion of RSCG relocations to current linker symbol/import reference

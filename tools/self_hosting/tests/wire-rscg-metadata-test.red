@@ -67,11 +67,50 @@ valid-rscg-dll-metadata: build-rscg-object-message
 	rscg-dll-functions rscg-debug-lines rscg-debug-parameters
 	rscg-metadata-dll-gc-frames rscg-dll-modules #{}
 
+; Standalone objects have no runtime compatibility roles. Each frame owns an
+; explicit DATA slice; equal offsets in distinct DATA sections do not overlap.
+rscg-standalone-output-data: make binary! 104
+append rscg-standalone-output-data rscg-code
+append/dup rscg-standalone-output-data 0 40
+rscg-standalone-output-sections: fixture-writer/words reduce [
+	rscg-id rscg-object-strings ".text"
+		schema/WIRE_OUTPUT_SECTION_CLASS_CODE 0 16 0 64 64 0
+	rscg-id rscg-object-strings ".data"
+		schema/WIRE_OUTPUT_SECTION_CLASS_DATA 0 4 64 20 20 0
+	rscg-id rscg-object-strings "state"
+		schema/WIRE_OUTPUT_SECTION_CLASS_DATA 0 4 84 20 20 0
+]
+rscg-standalone-symbols: fixture-writer/words reduce [
+	rscg-id rscg-object-strings "entry"
+		schema/WIRE_SYMBOL_KIND_FUNCTION schema/WIRE_SYMBOL_BINDING_LOCAL
+		schema/WIRE_VISIBILITY_HIDDEN 1 0 32 16 0 1
+	rscg-id rscg-object-strings "init"
+		schema/WIRE_SYMBOL_KIND_FUNCTION schema/WIRE_SYMBOL_BINDING_LOCAL
+		schema/WIRE_VISIBILITY_HIDDEN 1 32 32 16 0 1
+]
+rscg-standalone-functions: fixture-writer/words [
+	1 1 0 32 0 0 0 0 0 0
+	2 1 32 32 0 0 0 0 0 0
+]
+rscg-standalone-gc-frames: fixture-writer/words [
+	1 2 4 16 0 9
+	2 3 4 16 0 9
+]
+rscg-standalone-modules: fixture-writer/words reduce [
+	rscg-id rscg-object-strings "fixture.reds"
+		schema/WIRE_MODULE_KIND_USER schema/WIRE_IMAGE_KIND_EXECUTABLE 0 0 0 0 0
+]
+valid-rscg-standalone-metadata: build-rscg-object-message
+	rscg-standalone-output-sections rscg-standalone-output-data
+	rscg-standalone-symbols #{} #{} #{} rscg-standalone-functions #{} #{}
+	rscg-standalone-gc-frames rscg-standalone-modules #{}
+
 valid-rscg-metadata-fixtures: reduce [
 	reduce ['STANDARD valid-rscg-metadata 3 3 2]
 	reduce ['BITMAP-31-32 valid-rscg-boundary-metadata 3 3 2]
 	reduce ['DYNAMIC-BITMAP valid-rscg-dynamic-metadata 3 3 2]
 	reduce ['DYNAMIC-LIBRARY valid-rscg-dll-metadata 2 1 2]
+	reduce ['STANDALONE-SPLIT valid-rscg-standalone-metadata 0 0 2]
 ]
 
 foreach fixture valid-rscg-metadata-fixtures [
@@ -114,6 +153,8 @@ metadata-functions-section: metadata-sections/4
 metadata-debug-lines-section: metadata-sections/5
 metadata-debug-parameters-section: metadata-sections/6
 metadata-gc-frames-section: metadata-sections/7
+standalone-sections: rscg-metadata-sections valid-rscg-standalone-metadata
+standalone-gc-frames-section: standalone-sections/7
 
 malformed-rscg-metadata: make block! 256
 add-malformed-rscg-metadata: func [
@@ -305,6 +346,14 @@ missing-sections: rscg-metadata-sections bad
 error-offset: rscg-record-offset missing-sections/4 2
 add-metadata-error 'MISSING-GC-FRAME schema/WIRE_RSCG_METADATA_ERROR_MISSING_GC_FRAME
 	error-offset (select missing-sections/4 'ordinal) bad
+
+bad: copy valid-rscg-standalone-metadata
+error-offset: (rscg-record-offset standalone-gc-frames-section 1)
+	+ schema/WIRE_RSCG_GC_FRAME_BITMAP_SECTION_OFFSET
+fixture-mutations/put-u32 bad error-offset 1
+add-metadata-error 'STANDALONE-BITMAP-NOT-DATA
+	schema/WIRE_RSCG_METADATA_ERROR_BAD_BITMAP_SECTION
+	error-offset (select standalone-gc-frames-section 'ordinal) bad
 
 foreach [name record field value expected-error] reduce [
 	'BAD-BITMAP-SECTION 1 schema/WIRE_RSCG_GC_FRAME_BITMAP_SECTION_OFFSET 2

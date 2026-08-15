@@ -1798,8 +1798,9 @@ Record shapes:
   first debug line, debug line count, first debug parameter, parameter count.
 - `debug-lines`: function, function-relative code offset, file, line, column.
 - `gc-frames`: function, bitmap section, bitmap offset, bitmap size, flags,
-  prolog patch offset. The actual bitmap is already in output data and is also
-  reachable through the compatibility symbol expected by the runtime.
+  prolog patch offset. The actual bitmap is already in initialized DATA. In a
+  standalone object the record owns that slice directly; after merger it is
+  also reachable through the compatibility symbol expected by the runtime.
 
 ### Checked object layout
 
@@ -1924,10 +1925,15 @@ Parameter ordinals are dense and zero-based per function, type codes are one of
 the frozen runtime debug codes, and v1 parameter flags are zero.
 
 Every defined function has exactly one GC-frame record, ordered by function ID.
-Its bitmap slice is four-byte aligned, lies in initialized DATA, and all frame
-slices are disjoint and exactly cover the `***-ptr-bitmaps` symbol. The symbol's
-preceding four-byte compression header remains outside those slices. A frame
-bitmap is the following little-endian sequence:
+Its bitmap slice is four-byte aligned, lies in initialized DATA, and does not
+overlap another slice in the same output section. Standalone USER and SUPPORT
+objects own these slices directly and need no runtime compatibility symbol.
+When an object contains the RUNTIME module, all frame slices lie in one DATA
+section and exactly cover `***-ptr-bitmaps`; the symbol's preceding four-byte
+compression header remains outside those slices. The merger collects standalone
+slices into that runtime-owned range and remaps their GC-frame section/offset
+fields before validating the merged object. A frame bitmap is the following
+little-endian sequence:
 
 ```text
 argument-slot-count

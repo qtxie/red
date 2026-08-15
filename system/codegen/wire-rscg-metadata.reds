@@ -237,7 +237,7 @@ wire-rscg-metadata-reader: context [
 			function-code-offset function-code-size patch-offset patch-section-offset
 			code-data-offset patch-data-offset relocation-id relocation-section
 			relocation-offset relocation-width prior-id prior-offset prior-size prior-end
-			role-cursor consumed [integer!]
+			prior-section role-cursor consumed [integer!]
 			bitmap-data code-data p [byte-ptr!]
 			unwind-present dynamic found [logic!]
 	][
@@ -562,10 +562,6 @@ wire-rscg-metadata-reader: context [
 		]
 
 		bitmap-symbol: object-view/bitmap-symbol
-		if all [object-view/function-count > 0 bitmap-symbol = 0][
-			return set-error result WIRE_RSCG_METADATA_ERROR_BAD_BITMAP_SECTION
-				view/gc-frames-offset view/gc-frames-ordinal
-		]
 	role-section: 0
 	role-offset: 0
 	role-size: 0
@@ -614,7 +610,17 @@ wire-rscg-metadata-reader: context [
 				(gc-frames/offset + record-offset + WIRE_RSCG_GC_FRAME_FLAGS_OFFSET)
 				gc-frames/ordinal
 		]
-		if any [bitmap-section <> role-section bitmap-section <= 0][
+		if any [
+			bitmap-section <= 0
+			bitmap-section > object-view/output-section-count
+			all [
+				bitmap-section <= object-view/output-section-count
+				(output-value object-view bitmap-section
+					WIRE_RSCG_OUTPUT_SECTION_CLASS_OFFSET)
+					<> WIRE_OUTPUT_SECTION_CLASS_DATA
+			]
+			all [bitmap-symbol <> 0 bitmap-section <> role-section]
+		][
 			return set-error result WIRE_RSCG_METADATA_ERROR_BAD_BITMAP_SECTION
 				(gc-frames/offset + record-offset + WIRE_RSCG_GC_FRAME_BITMAP_SECTION_OFFSET)
 				gc-frames/ordinal
@@ -792,23 +798,36 @@ wire-rscg-metadata-reader: context [
 		]
 	]
 
+	; Standalone objects own bitmap bytes through each explicit DATA slice.
+	; Runtime-containing objects additionally require compatibility-role coverage.
 	record-id: 1
 	while [record-id <= view/gc-frame-count][
 		record-offset: (record-id - 1) * WIRE_RSCG_GC_FRAME_SIZE
+		bitmap-section: gc-frame-value view record-id
+			WIRE_RSCG_GC_FRAME_BITMAP_SECTION_OFFSET
 		bitmap-offset: gc-frame-value view record-id WIRE_RSCG_GC_FRAME_BITMAP_OFFSET_OFFSET
 		bitmap-size: gc-frame-value view record-id WIRE_RSCG_GC_FRAME_BITMAP_SIZE_OFFSET
 		bitmap-end: bitmap-offset + bitmap-size
-		if any [bitmap-offset < role-offset bitmap-end > role-end][
+		if all [
+			bitmap-symbol <> 0
+			any [bitmap-offset < role-offset bitmap-end > role-end]
+		][
 			return set-error result WIRE_RSCG_METADATA_ERROR_BAD_BITMAP_ROLE_COVERAGE
 				(gc-frames/offset + record-offset + WIRE_RSCG_GC_FRAME_BITMAP_OFFSET_OFFSET)
 				gc-frames/ordinal
 		]
 		prior-id: 1
 		while [prior-id < record-id][
+			prior-section: gc-frame-value view prior-id
+				WIRE_RSCG_GC_FRAME_BITMAP_SECTION_OFFSET
 			prior-offset: gc-frame-value view prior-id WIRE_RSCG_GC_FRAME_BITMAP_OFFSET_OFFSET
 			prior-size: gc-frame-value view prior-id WIRE_RSCG_GC_FRAME_BITMAP_SIZE_OFFSET
 			prior-end: prior-offset + prior-size
-			if all [bitmap-offset < prior-end prior-offset < bitmap-end][
+			if all [
+				bitmap-section = prior-section
+				bitmap-offset < prior-end
+				prior-offset < bitmap-end
+			][
 				return set-error result WIRE_RSCG_METADATA_ERROR_BITMAP_OVERLAP
 					(gc-frames/offset + record-offset + WIRE_RSCG_GC_FRAME_BITMAP_OFFSET_OFFSET)
 					gc-frames/ordinal
@@ -818,30 +837,32 @@ wire-rscg-metadata-reader: context [
 		record-id: record-id + 1
 	]
 
-	role-cursor: role-offset
-	consumed: 0
-	while [consumed < view/gc-frame-count][
-		found: false
-		record-id: 1
-		while [record-id <= view/gc-frame-count][
-			if (gc-frame-value view record-id WIRE_RSCG_GC_FRAME_BITMAP_OFFSET_OFFSET)
-				= role-cursor [
-				role-cursor: role-cursor + (gc-frame-value view record-id
-					WIRE_RSCG_GC_FRAME_BITMAP_SIZE_OFFSET)
-				found: true
-				break
+	if bitmap-symbol <> 0 [
+		role-cursor: role-offset
+		consumed: 0
+		while [consumed < view/gc-frame-count][
+			found: false
+			record-id: 1
+			while [record-id <= view/gc-frame-count][
+				if (gc-frame-value view record-id WIRE_RSCG_GC_FRAME_BITMAP_OFFSET_OFFSET)
+					= role-cursor [
+					role-cursor: role-cursor + (gc-frame-value view record-id
+						WIRE_RSCG_GC_FRAME_BITMAP_SIZE_OFFSET)
+					found: true
+					break
+				]
+				record-id: record-id + 1
 			]
-			record-id: record-id + 1
+			unless found [break]
+			consumed: consumed + 1
 		]
-		unless found [break]
-		consumed: consumed + 1
-	]
-	if any [consumed <> view/gc-frame-count role-cursor <> role-end][
-		return set-error result WIRE_RSCG_METADATA_ERROR_BAD_BITMAP_ROLE_COVERAGE
-			(object-view/symbols-offset
-				+ (((bitmap-symbol - 1) * WIRE_RSCG_SYMBOL_SIZE)
-				+ WIRE_RSCG_SYMBOL_SIZE_OFFSET))
-			object-view/symbols-ordinal
+		if any [consumed <> view/gc-frame-count role-cursor <> role-end][
+			return set-error result WIRE_RSCG_METADATA_ERROR_BAD_BITMAP_ROLE_COVERAGE
+				(object-view/symbols-offset
+					+ (((bitmap-symbol - 1) * WIRE_RSCG_SYMBOL_SIZE)
+					+ WIRE_RSCG_SYMBOL_SIZE_OFFSET))
+				object-view/symbols-ordinal
+		]
 	]
 
 	if view/unwind-function-count > 0 [

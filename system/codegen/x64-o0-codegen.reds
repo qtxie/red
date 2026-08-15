@@ -90,20 +90,32 @@ wire-x64-o0-codegen: context [
 	module-shape?: func [
 		modules [wire-module-lifecycle!]
 		return: [logic!]
-		/local kind [integer!]
+		/local kind entry [integer!]
 	][
 		if modules/module-count <> 1 [return false]
 		kind: module-value modules WIRE_RSIR_MODULE_KIND_OFFSET
+		entry: module-value modules WIRE_RSIR_MODULE_ENTRY_FUNCTION_OFFSET
 		all [
-			any [kind = WIRE_MODULE_KIND_USER kind = WIRE_MODULE_KIND_SUPPORT]
+			any [
+				kind = WIRE_MODULE_KIND_USER
+				kind = WIRE_MODULE_KIND_SUPPORT
+				kind = WIRE_MODULE_KIND_GLUE
+			]
 			(module-value modules WIRE_RSIR_MODULE_IMAGE_KIND_OFFSET)
 				= WIRE_IMAGE_KIND_EXECUTABLE
 			(module-value modules WIRE_RSIR_MODULE_INITIALIZER_FUNCTION_OFFSET) = 0
 			(module-value modules WIRE_RSIR_MODULE_FINALIZER_FUNCTION_OFFSET) = 0
-			(module-value modules WIRE_RSIR_MODULE_ENTRY_FUNCTION_OFFSET) = 0
+			either kind = WIRE_MODULE_KIND_GLUE [entry = 1][entry = 0]
 			(module-value modules WIRE_RSIR_MODULE_SOURCE_LOCATION_OFFSET) = 0
 			(module-value modules WIRE_RSIR_MODULE_FLAGS_OFFSET) = 0
 		]
+	]
+
+	entry-module?: func [
+		modules [wire-module-lifecycle!]
+		return: [logic!]
+	][
+		(module-value modules WIRE_RSIR_MODULE_KIND_OFFSET) = WIRE_MODULE_KIND_GLUE
 	]
 
 	function-shape?: func [
@@ -291,6 +303,7 @@ wire-x64-o0-codegen: context [
 	write-output-sections: func [
 		writer [wire-container-writer!]
 		map [wire-codegen-string-map!]
+		function-size [integer!]
 		return: [integer!]
 		/local status [integer!]
 	][
@@ -301,14 +314,14 @@ wire-x64-o0-codegen: context [
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [status: wire-container-writer/append-u32 writer 16]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
-		if status = 0 [status: wire-container-writer/append-u32 writer wire-x64-encoder/EMPTY_VOID_FUNCTION_SIZE]
-		if status = 0 [status: wire-container-writer/append-u32 writer wire-x64-encoder/EMPTY_VOID_FUNCTION_SIZE]
+		if status = 0 [status: wire-container-writer/append-u32 writer function-size]
+		if status = 0 [status: wire-container-writer/append-u32 writer function-size]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [status: wire-container-writer/append-u32 writer map/data-section-name]
 		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_OUTPUT_SECTION_CLASS_DATA]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [status: wire-container-writer/append-u32 writer 4]
-		if status = 0 [status: wire-container-writer/append-u32 writer wire-x64-encoder/EMPTY_VOID_FUNCTION_SIZE]
+		if status = 0 [status: wire-container-writer/append-u32 writer function-size]
 		if status = 0 [status: wire-container-writer/append-u32 writer EMPTY_BITMAP_SIZE]
 		if status = 0 [status: wire-container-writer/append-u32 writer EMPTY_BITMAP_SIZE]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
@@ -318,6 +331,7 @@ wire-x64-o0-codegen: context [
 
 	write-output-data: func [
 		writer [wire-container-writer!]
+		entry? [logic!]
 		return: [integer!]
 		/local status [integer!]
 	][
@@ -325,46 +339,156 @@ wire-x64-o0-codegen: context [
 		if status <> 0 [return status]
 		status: wire-container-writer/ensure-section-start writer
 		if status <> 0 [return status]
-		status: wire-x64-encoder/encode-empty-void-function writer/arena
+		status: either entry? [
+			wire-x64-encoder/encode-empty-void-entry writer/arena
+		][
+			wire-x64-encoder/encode-empty-void-function writer/arena
+		]
 		if status <> wire-x64-encoder/ERROR_SUCCESS [return status]
 		status: wire-arena/append-zero writer/arena EMPTY_BITMAP_SIZE
 		if status <> wire-arena/ERROR_SUCCESS [return status]
 		wire-container-writer/end-section writer
 	]
 
-	write-symbol: func [
+	write-function-symbol-record: func [
 		writer [wire-container-writer!]
 		map [wire-codegen-string-map!]
+		function-size [integer!]
 		return: [integer!]
 		/local status [integer!]
 	][
-		status: wire-container-writer/start-section writer
-			WIRE_RSCG_SECTION_SYMBOLS WIRE_SECTION_FLAG_SORTED
-		if status = 0 [status: wire-container-writer/append-u32 writer map/function-name]
+		status: wire-container-writer/append-u32 writer map/function-name
 		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_SYMBOL_KIND_FUNCTION]
 		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_SYMBOL_BINDING_LOCAL]
 		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_VISIBILITY_HIDDEN]
 		if status = 0 [status: wire-container-writer/append-u32 writer 1]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
-		if status = 0 [status: wire-container-writer/append-u32 writer wire-x64-encoder/EMPTY_VOID_FUNCTION_SIZE]
+		if status = 0 [status: wire-container-writer/append-u32 writer function-size]
 		if status = 0 [status: wire-container-writer/append-u32 writer 16]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [status: wire-container-writer/append-u32 writer 1]
+		status
+	]
+
+	write-exit-symbol-record: func [
+		writer [wire-container-writer!]
+		map [wire-codegen-string-map!]
+		return: [integer!]
+		/local status [integer!]
+	][
+		status: wire-container-writer/append-u32 writer map/exit-symbol-name
+		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_SYMBOL_KIND_FUNCTION]
+		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_SYMBOL_BINDING_GLOBAL]
+		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_VISIBILITY_DEFAULT]
+		if status = 0 [status: wire-container-writer/append-u32 writer 0]
+		if status = 0 [status: wire-container-writer/append-u32 writer 0]
+		if status = 0 [status: wire-container-writer/append-u32 writer 0]
+		if status = 0 [status: wire-container-writer/append-u32 writer 0]
+		if status = 0 [
+			status: wire-container-writer/append-u32 writer WIRE_RSCG_SYMBOL_FLAG_UNDEFINED
+		]
+		if status = 0 [status: wire-container-writer/append-u32 writer 1]
+		status
+	]
+
+	write-symbols: func [
+		writer [wire-container-writer!]
+		map [wire-codegen-string-map!]
+		function-size function-symbol [integer!]
+		entry? [logic!]
+		return: [integer!]
+		/local status [integer!]
+	][
+		status: wire-container-writer/start-section writer
+			WIRE_RSCG_SECTION_SYMBOLS WIRE_SECTION_FLAG_SORTED
+		either any [not entry? function-symbol = 1][
+			if status = 0 [
+				status: write-function-symbol-record writer map function-size
+			]
+			if all [status = 0 entry?] [
+				status: write-exit-symbol-record writer map
+			]
+		][
+			if status = 0 [status: write-exit-symbol-record writer map]
+			if status = 0 [
+				status: write-function-symbol-record writer map function-size
+			]
+		]
+		if status <> 0 [return status]
+		wire-container-writer/end-section writer
+	]
+
+	write-relocations: func [
+		writer [wire-container-writer!]
+		exit-symbol [integer!]
+		entry? [logic!]
+		return: [integer!]
+		/local status [integer!]
+	][
+		status: wire-container-writer/start-section writer
+			WIRE_RSCG_SECTION_RELOCATIONS index-flags
+		if all [status = 0 entry?] [status: wire-container-writer/append-u32 writer 1]
+		if all [status = 0 entry?] [
+			status: wire-container-writer/append-u32 writer
+				wire-x64-encoder/EMPTY_VOID_ENTRY_RELOCATION_OFFSET
+		]
+		if all [status = 0 entry?] [
+			status: wire-container-writer/append-u32 writer
+				WIRE_RELOCATION_KIND_X64_RIP_REL32
+		]
+		if all [status = 0 entry?] [
+			status: wire-container-writer/append-u32 writer exit-symbol
+		]
+		if all [status = 0 entry?] [status: wire-container-writer/append-u32 writer 0]
+		if all [status = 0 entry?] [status: wire-container-writer/append-u32 writer 0]
+		if all [status = 0 entry?] [status: wire-container-writer/append-u32 writer 4]
+		if all [status = 0 entry?] [
+			status: wire-container-writer/append-u32 writer WIRE_RSCG_RELOCATION_FLAG_NONE
+		]
+		if status <> 0 [return status]
+		wire-container-writer/end-section writer
+	]
+
+	write-imports: func [
+		writer [wire-container-writer!]
+		map [wire-codegen-string-map!]
+		exit-symbol [integer!]
+		entry? [logic!]
+		return: [integer!]
+		/local status [integer!]
+	][
+		status: wire-container-writer/start-section writer
+			WIRE_RSCG_SECTION_IMPORTS index-flags
+		if all [status = 0 entry?] [
+			status: wire-container-writer/append-u32 writer map/exit-library-name
+		]
+		if all [status = 0 entry?] [
+			status: wire-container-writer/append-u32 writer map/exit-external-name
+		]
+		if all [status = 0 entry?] [
+			status: wire-container-writer/append-u32 writer exit-symbol
+		]
+		if all [status = 0 entry?] [
+			status: wire-container-writer/append-u32 writer WIRE_CALLING_CONVENTION_STDCALL
+		]
+		if all [status = 0 entry?] [status: wire-container-writer/append-u32 writer 0]
+		if all [status = 0 entry?] [status: wire-container-writer/append-u32 writer 0]
 		if status <> 0 [return status]
 		wire-container-writer/end-section writer
 	]
 
 	write-function: func [
 		writer [wire-container-writer!]
+		function-size function-symbol [integer!]
 		return: [integer!]
 		/local status [integer!]
 	][
 		status: wire-container-writer/start-section writer
 			WIRE_RSCG_SECTION_FUNCTIONS index-flags
-		if status = 0 [status: wire-container-writer/append-u32 writer 1]
+		if status = 0 [status: wire-container-writer/append-u32 writer function-symbol]
 		if status = 0 [status: wire-container-writer/append-u32 writer 1]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
-		if status = 0 [status: wire-container-writer/append-u32 writer wire-x64-encoder/EMPTY_VOID_FUNCTION_SIZE]
+		if status = 0 [status: wire-container-writer/append-u32 writer function-size]
 		if status = 0 [status: wire-container-writer/append-u32 writer wire-x64-encoder/EMPTY_VOID_FRAME_SIZE]
 		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_RSCG_FUNCTION_FLAG_NONE]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
@@ -399,6 +523,7 @@ wire-x64-o0-codegen: context [
 		writer [wire-container-writer!]
 		modules [wire-module-lifecycle!]
 		map [wire-codegen-string-map!]
+		entry-symbol [integer!]
 		return: [integer!]
 		/local status [integer!]
 	][
@@ -414,7 +539,7 @@ wire-x64-o0-codegen: context [
 		]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
-		if status = 0 [status: wire-container-writer/append-u32 writer 0]
+		if status = 0 [status: wire-container-writer/append-u32 writer entry-symbol]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status <> 0 [return status]
@@ -456,13 +581,25 @@ wire-x64-o0-codegen: context [
 		return: [integer!]
 		/local writer [wire-container-writer!]
 			map [wire-codegen-string-map!]
-			status module-name function-name [integer!]
+			entry? [logic!]
+			status module-name function-name function-size extra-count
+			function-symbol exit-symbol entry-symbol [integer!]
 	][
 		writer: declare wire-container-writer!
 		map: declare wire-codegen-string-map!
 		module-name: module-value modules WIRE_RSIR_MODULE_NAME_STRING_OFFSET
 		function-name: record-value symbols/symbols 1 WIRE_RSIR_SYMBOL_SIZE
 			WIRE_RSIR_SYMBOL_NAME_STRING_OFFSET
+		entry?: entry-module? modules
+		function-size: either entry? [
+			wire-x64-encoder/EMPTY_VOID_ENTRY_FUNCTION_SIZE
+		][wire-x64-encoder/EMPTY_VOID_FUNCTION_SIZE]
+		extra-count: either entry? [
+			wire-codegen-strings/ENTRY_EXTRA_COUNT
+		][wire-codegen-strings/BASE_EXTRA_COUNT]
+		function-symbol: 1
+		exit-symbol: 0
+		entry-symbol: 0
 		status: wire-container-writer/begin writer arena limit WIRE_RSCG_MINIMUM_SIZE
 			WIRE_MAGIC_RSCG target abi endian pointer-size features-low features-high
 			1 WIRE_RSCG_REQUIRED_SECTION_COUNT
@@ -470,24 +607,30 @@ wire-x64-o0-codegen: context [
 		status: write-layout writer layout
 		if status = 0 [
 			status: wire-codegen-strings/write-sections writer strings
-				module-name function-name map
+				module-name function-name extra-count map
 		]
-		if status = 0 [status: write-output-sections writer map]
-		if status = 0 [status: write-output-data writer]
-		if status = 0 [status: write-symbol writer map]
+		if all [status = 0 entry?] [
+			either map/function-name <= map/exit-symbol-name [
+				function-symbol: 1
+				exit-symbol: 2
+			][
+				function-symbol: 2
+				exit-symbol: 1
+			]
+			entry-symbol: function-symbol
+		]
+		if status = 0 [status: write-output-sections writer map function-size]
+		if status = 0 [status: write-output-data writer entry?]
 		if status = 0 [
-			status: wire-container-writer/empty-section writer
-				WIRE_RSCG_SECTION_RELOCATIONS index-flags
+			status: write-symbols writer map function-size function-symbol entry?
 		]
-		if status = 0 [
-			status: wire-container-writer/empty-section writer
-				WIRE_RSCG_SECTION_IMPORTS index-flags
-		]
+		if status = 0 [status: write-relocations writer exit-symbol entry?]
+		if status = 0 [status: write-imports writer map exit-symbol entry?]
 		if status = 0 [
 			status: wire-container-writer/empty-section writer
 				WIRE_RSCG_SECTION_EXPORTS index-flags
 		]
-		if status = 0 [status: write-function writer]
+		if status = 0 [status: write-function writer function-size function-symbol]
 		if status = 0 [
 			status: wire-container-writer/empty-section writer
 				WIRE_RSCG_SECTION_FILES index-flags
@@ -505,7 +648,7 @@ wire-x64-o0-codegen: context [
 				WIRE_RSCG_SECTION_DEBUG_PARAMETERS index-flags
 		]
 		if status = 0 [status: write-gc-frame writer]
-		if status = 0 [status: write-module writer modules map]
+		if status = 0 [status: write-module writer modules map entry-symbol]
 		if status = 0 [status: wire-container-writer/finish writer]
 		if status <> 0 [return BUILD_WRITER_ERROR]
 		status: verify-artifact arena/data arena/size

@@ -7015,7 +7015,7 @@ system-dialect: context [
 			clean-up
 			rsir-state: compiler-rsir-sink/new
 				none
-				compiler-wire-schema/WIRE_MODULE_KIND_USER
+				compiler-wire-schema/WIRE_MODULE_KIND_GLUE
 				compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
 		][
 			emitter/init opts/link? job

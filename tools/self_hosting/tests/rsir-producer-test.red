@@ -64,6 +64,23 @@ assert (container/read-u32 named (select module-section 'payload-offset)) = 3
 assert (container/read-u32 named (select symbol-section 'payload-offset)) = 2
 	"named function string ID is not canonical"
 
+glue: producer/build-empty-void-module
+	none "entry"
+	schema/WIRE_MODULE_KIND_GLUE
+	schema/WIRE_IMAGE_KIND_EXECUTABLE
+assert binary? glue "producer rejected a supported glue entry module"
+verify-rsir "glue" glue
+parsed: container/verify/expect glue schema/WIRE_MAGIC_RSIR
+module-section: container/find-section parsed schema/WIRE_RSIR_SECTION_MODULE
+module-offset: select module-section 'payload-offset
+assert all [
+	(container/read-u32 glue
+		(module-offset + schema/WIRE_RSIR_MODULE_KIND_OFFSET))
+		= schema/WIRE_MODULE_KIND_GLUE
+	(container/read-u32 glue
+		(module-offset + schema/WIRE_RSIR_MODULE_ENTRY_FUNCTION_OFFSET)) = 1
+]["glue module did not retain its sole entry function"]
+
 deduplicated: producer/build-empty-void-module
 	"same" "same"
 	schema/WIRE_MODULE_KIND_USER

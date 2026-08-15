@@ -22,7 +22,7 @@ cursor: declare wire-codegen-string-cursor!
 wire-codegen-strings/reset-cursor cursor
 item-id: 1
 status: wire-codegen-strings/advance strings/records strings/record-count
-	strings/data cursor
+	strings/data cursor wire-codegen-strings/BASE_EXTRA_COUNT
 while [status = wire-codegen-strings/ITEM_READY][
 	case [
 		item-id = 1 [
@@ -74,7 +74,7 @@ while [status = wire-codegen-strings/ITEM_READY][
 	]
 	item-id: item-id + 1
 	status: wire-codegen-strings/advance strings/records strings/record-count
-		strings/data cursor
+		strings/data cursor wire-codegen-strings/BASE_EXTRA_COUNT
 ]
 if status <> wire-codegen-strings/ITEM_DONE [failures: failures + 1]
 if item-id <> 5 [failures: failures + 1]
@@ -91,7 +91,8 @@ if status = 0 [
 		WIRE_RSCG_SECTION_DATA_LAYOUT 0
 ]
 if status = 0 [
-	status: wire-codegen-strings/write-sections writer strings 0 2 string-map
+	status: wire-codegen-strings/write-sections writer strings 0 2
+		wire-codegen-strings/BASE_EXTRA_COUNT string-map
 ]
 unless all [
 	status = 0

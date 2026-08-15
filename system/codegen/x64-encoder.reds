@@ -10,7 +10,9 @@ wire-x64-encoder: context [
 	ERROR_ARGUMENTS: 1
 
 	EMPTY_VOID_FUNCTION_SIZE:        17
+	EMPTY_VOID_ENTRY_FUNCTION_SIZE:  31
 	EMPTY_VOID_BITMAP_PATCH_OFFSET:   9
+	EMPTY_VOID_ENTRY_RELOCATION_OFFSET: 23
 	EMPTY_VOID_FRAME_SIZE:           32
 
 	emit-u8: func [
@@ -48,8 +50,9 @@ wire-x64-encoder: context [
 		ERROR_SUCCESS
 	]
 
-	encode-empty-void-function: func [
+	encode-empty-void: func [
 		arena [wire-arena!]
+		entry? [logic!]
 		return: [integer!]
 		/local start status [integer!]
 	][
@@ -67,9 +70,34 @@ wire-x64-encoder: context [
 		if status = ERROR_SUCCESS [status: emit-u32 arena 0]  ; bitmap patch
 		if status = ERROR_SUCCESS [status: emit-u8 arena 6Ah]
 		if status = ERROR_SUCCESS [status: emit-u8 arena 00h] ; parent frame
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 31h]
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena C9h] ; XOR ecx, ecx
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 48h]
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 83h]
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena ECh]
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 20h] ; shadow space
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena FFh]
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 15h]
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u32 arena 0] ; IAT relocation
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 31h]
+		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena C0h] ; unreachable fallback
 		if status = ERROR_SUCCESS [status: emit-u8 arena C9h] ; LEAVE
 		if status = ERROR_SUCCESS [status: emit-u8 arena C3h] ; RET
 		if status <> ERROR_SUCCESS [arena/size: start]
 		status
+	]
+
+	encode-empty-void-function: func [
+		arena [wire-arena!]
+		return: [integer!]
+	][
+		encode-empty-void arena false
+	]
+
+	encode-empty-void-entry: func [
+		arena [wire-arena!]
+		return: [integer!]
+	][
+		encode-empty-void arena true
 	]
 ]

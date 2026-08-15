@@ -86,7 +86,7 @@ artifact: system-dialect/last-rsir
 check binary? artifact "compiler-core did not return RSIR"
 check (length? artifact) = 1396 "compiler-core RSIR size changed"
 check (checksum artifact 'SHA256) =
-	#{8353248CDBC69D83181C09D2668C4DF1879503004D23C890B079953F2EEA8DBE}
+	#{FD80E5DEB0999934DDB1BCBBB724251B745341E53C32258566C659B03A0433DC}
 	"compiler-core RSIR bytes differ from the independent fixture"
 check none? system-dialect/last-result "RSIR compile published a legacy linker result"
 check not rs-o2-ir/session? "RSIR compile left a machine-IR session active"

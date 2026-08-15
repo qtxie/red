@@ -29,9 +29,13 @@ set-rsir-flags: func [sections [block!] /local kind][
 	sections
 ]
 
-build-rsir: func [payloads [map!] /local sections][
+build-rsir: func [
+	payloads [map!]
+	/module module-values [block!]
+	/local sections
+][
 	put payloads schema/WIRE_RSIR_SECTION_MODULE
-		fixture-writer/words [0 2 1 0 0 0 0 0]
+		fixture-writer/words any [module-values [0 2 1 0 0 0 0 0]]
 	put payloads schema/WIRE_RSIR_SECTION_DATA_LAYOUT data-layout
 	sections: set-rsir-flags
 		fixture-writer/sections-for schema/WIRE_MAGIC_RSIR payloads
@@ -104,6 +108,16 @@ put nonempty-rsir-payloads schema/WIRE_RSIR_SECTION_INSTRUCTIONS
 		schema/WIRE_EFFECT_FLAG_CONTROL schema/WIRE_ALIAS_KIND_NONE 0 0
 	]
 minimal-function-rsir: build-rsir nonempty-rsir-payloads
+glue-function-rsir: build-rsir/module copy nonempty-rsir-payloads [
+	0 4 1 0 0 1 0 0
+]
+late-function-strings: make-canonical-strings ["" "zz-entry"]
+late-name-rsir-payloads: copy nonempty-rsir-payloads
+put late-name-rsir-payloads schema/WIRE_RSIR_SECTION_STRINGS late-function-strings/1
+put late-name-rsir-payloads schema/WIRE_RSIR_SECTION_STRING_DATA late-function-strings/2
+late-name-glue-rsir: build-rsir/module late-name-rsir-payloads [
+	0 4 1 0 0 1 0 0
+]
 produced-minimal-function-rsir: compiler-rsir-producer/build-empty-void-module
 	none "fn"
 	schema/WIRE_MODULE_KIND_USER
@@ -112,6 +126,22 @@ assert binary? produced-minimal-function-rsir
 	"minimal RSIR producer rejected its supported fixture"
 assert produced-minimal-function-rsir = minimal-function-rsir
 	"minimal RSIR producer bytes differ from the independent fixture"
+produced-glue-function-rsir: compiler-rsir-producer/build-empty-void-module
+	none "fn"
+	schema/WIRE_MODULE_KIND_GLUE
+	schema/WIRE_IMAGE_KIND_EXECUTABLE
+assert binary? produced-glue-function-rsir
+	"minimal RSIR producer rejected its glue fixture"
+assert produced-glue-function-rsir = glue-function-rsir
+	"minimal RSIR glue producer bytes differ from the independent fixture"
+produced-late-name-glue-rsir: compiler-rsir-producer/build-empty-void-module
+	none "zz-entry"
+	schema/WIRE_MODULE_KIND_GLUE
+	schema/WIRE_IMAGE_KIND_EXECUTABLE
+assert binary? produced-late-name-glue-rsir
+	"minimal RSIR producer rejected its late-name glue fixture"
+assert produced-late-name-glue-rsir = late-name-glue-rsir
+	"minimal RSIR late-name glue producer bytes differ from the independent fixture"
 
 verify-rsir: func [name [string!] data [binary!] /local result][
 	result: compiler-wire-target-intrinsic/verify data
@@ -125,6 +155,8 @@ verify-rsir: func [name [string!] data [binary!] /local result][
 verify-rsir "empty" empty-rsir
 verify-rsir "empty-string" string-rsir
 verify-rsir "minimal-function" minimal-function-rsir
+verify-rsir "glue-function" glue-function-rsir
+verify-rsir "late-name-glue" late-name-glue-rsir
 
 empty-container-result: verifier/verify/expect empty-rsir schema/WIRE_MAGIC_RSIR
 empty-module-section: verifier/find-section
@@ -176,13 +208,14 @@ foreach [name config-data expected-valid?] reduce [
 build-rscg: func [
 	string-records string-data [binary!]
 	payloads [map!]
+	/module module-values [block!]
 	/local sections kind
 ][
 	put payloads schema/WIRE_RSCG_SECTION_DATA_LAYOUT data-layout
 	put payloads schema/WIRE_RSCG_SECTION_STRINGS string-records
 	put payloads schema/WIRE_RSCG_SECTION_STRING_DATA string-data
 	put payloads schema/WIRE_RSCG_SECTION_MODULES
-		fixture-writer/words [0 2 1 0 0 0 0 0]
+		fixture-writer/words any [module-values [0 2 1 0 0 0 0 0]]
 	sections: fixture-writer/sections-for schema/WIRE_MAGIC_RSCG payloads
 	foreach kind reduce [
 		schema/WIRE_RSCG_SECTION_STRINGS
@@ -246,6 +279,102 @@ expected-function-rscg: build-rscg function-rscg-strings/1
 	function-rscg-strings/2 function-rscg-payloads
 result: compiler-wire-rscg-metadata/verify expected-function-rscg
 assert result/valid? ["expected function RSCG rejected: " result/error]
+
+glue-rscg-strings: make-canonical-strings [
+	"" ".data" ".text" "ExitProcess" "fn" "kernel32.dll" "system-exit-process"
+]
+glue-data-section-name: select glue-rscg-strings/3 ".data"
+glue-code-section-name: select glue-rscg-strings/3 ".text"
+glue-function-name: select glue-rscg-strings/3 "fn"
+glue-exit-symbol-name: select glue-rscg-strings/3 "system-exit-process"
+glue-exit-library-name: select glue-rscg-strings/3 "kernel32.dll"
+glue-exit-external-name: select glue-rscg-strings/3 "ExitProcess"
+empty-void-entry-code: #{554889E56A006A0068000000006A0031C94883EC20FF150000000031C0C9C3}
+empty-void-entry-output: copy empty-void-entry-code
+append empty-void-entry-output empty-void-bitmap
+glue-rscg-payloads: make map! 24
+put glue-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_SECTIONS
+	fixture-writer/words reduce [
+		glue-code-section-name schema/WIRE_OUTPUT_SECTION_CLASS_CODE 0 16
+		0 31 31 0
+		glue-data-section-name schema/WIRE_OUTPUT_SECTION_CLASS_DATA 0 4
+		31 16 16 0
+	]
+put glue-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_DATA empty-void-entry-output
+put glue-rscg-payloads schema/WIRE_RSCG_SECTION_SYMBOLS
+	fixture-writer/words reduce [
+		glue-function-name schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_SYMBOL_BINDING_LOCAL schema/WIRE_VISIBILITY_HIDDEN
+		1 0 31 16 0 1
+		glue-exit-symbol-name schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_SYMBOL_BINDING_GLOBAL schema/WIRE_VISIBILITY_DEFAULT
+		0 0 0 0 schema/WIRE_RSCG_SYMBOL_FLAG_UNDEFINED 1
+	]
+put glue-rscg-payloads schema/WIRE_RSCG_SECTION_RELOCATIONS
+	fixture-writer/words reduce [
+		1 23 schema/WIRE_RELOCATION_KIND_X64_RIP_REL32 2 0 0 4 0
+	]
+put glue-rscg-payloads schema/WIRE_RSCG_SECTION_IMPORTS
+	fixture-writer/words reduce [
+		glue-exit-library-name glue-exit-external-name 2
+		schema/WIRE_CALLING_CONVENTION_STDCALL 0 0
+	]
+put glue-rscg-payloads schema/WIRE_RSCG_SECTION_FUNCTIONS
+	fixture-writer/words [1 1 0 31 32 0 0 0 0 0]
+put glue-rscg-payloads schema/WIRE_RSCG_SECTION_GC_FRAMES
+	fixture-writer/words [1 2 0 16 0 9]
+expected-glue-rscg: build-rscg/module
+	glue-rscg-strings/1 glue-rscg-strings/2 glue-rscg-payloads
+	[0 4 1 0 0 1 0 0]
+result: compiler-wire-rscg-metadata/verify expected-glue-rscg
+assert result/valid? ["expected glue RSCG rejected: " result/error]
+
+late-glue-rscg-strings: make-canonical-strings [
+	"" ".data" ".text" "ExitProcess" "kernel32.dll"
+	"system-exit-process" "zz-entry"
+]
+late-glue-data-section-name: select late-glue-rscg-strings/3 ".data"
+late-glue-code-section-name: select late-glue-rscg-strings/3 ".text"
+late-glue-function-name: select late-glue-rscg-strings/3 "zz-entry"
+late-glue-exit-symbol-name: select late-glue-rscg-strings/3 "system-exit-process"
+late-glue-exit-library-name: select late-glue-rscg-strings/3 "kernel32.dll"
+late-glue-exit-external-name: select late-glue-rscg-strings/3 "ExitProcess"
+late-glue-rscg-payloads: make map! 24
+put late-glue-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_SECTIONS
+	fixture-writer/words reduce [
+		late-glue-code-section-name schema/WIRE_OUTPUT_SECTION_CLASS_CODE 0 16
+		0 31 31 0
+		late-glue-data-section-name schema/WIRE_OUTPUT_SECTION_CLASS_DATA 0 4
+		31 16 16 0
+	]
+put late-glue-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_DATA empty-void-entry-output
+put late-glue-rscg-payloads schema/WIRE_RSCG_SECTION_SYMBOLS
+	fixture-writer/words reduce [
+		late-glue-exit-symbol-name schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_SYMBOL_BINDING_GLOBAL schema/WIRE_VISIBILITY_DEFAULT
+		0 0 0 0 schema/WIRE_RSCG_SYMBOL_FLAG_UNDEFINED 1
+		late-glue-function-name schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_SYMBOL_BINDING_LOCAL schema/WIRE_VISIBILITY_HIDDEN
+		1 0 31 16 0 1
+	]
+put late-glue-rscg-payloads schema/WIRE_RSCG_SECTION_RELOCATIONS
+	fixture-writer/words reduce [
+		1 23 schema/WIRE_RELOCATION_KIND_X64_RIP_REL32 1 0 0 4 0
+	]
+put late-glue-rscg-payloads schema/WIRE_RSCG_SECTION_IMPORTS
+	fixture-writer/words reduce [
+		late-glue-exit-library-name late-glue-exit-external-name 1
+		schema/WIRE_CALLING_CONVENTION_STDCALL 0 0
+	]
+put late-glue-rscg-payloads schema/WIRE_RSCG_SECTION_FUNCTIONS
+	fixture-writer/words [2 1 0 31 32 0 0 0 0 0]
+put late-glue-rscg-payloads schema/WIRE_RSCG_SECTION_GC_FRAMES
+	fixture-writer/words [1 2 0 16 0 9]
+expected-late-name-glue-rscg: build-rscg/module
+	late-glue-rscg-strings/1 late-glue-rscg-strings/2 late-glue-rscg-payloads
+	[0 4 1 0 0 2 0 0]
+result: compiler-wire-rscg-metadata/verify expected-late-name-glue-rscg
+assert result/valid? ["expected late-name glue RSCG rejected: " result/error]
 
 build-diagnostic: func [
 	status phase [integer!]
@@ -430,6 +559,8 @@ append output {#include %../../../compiler/int-to-bin.red
 append-fixture output "empty-rsir" empty-rsir
 append-fixture output "string-rsir" string-rsir
 append-fixture output "minimal-function-rsir" minimal-function-rsir
+append-fixture output "glue-function-rsir" glue-function-rsir
+append-fixture output "late-name-glue-rsir" late-name-glue-rsir
 append-fixture output "full-atomic-rsir" full-atomic-rsir
 append-fixture output "invalid-atomic-rsir" invalid-atomic-rsir
 append-fixture output "full-memory-rsir" full-memory-rsir
@@ -443,6 +574,8 @@ append-fixture output "minimum-output-config" minimum-output-config
 append-fixture output "unsupported-config" unsupported-config
 append-fixture output "expected-empty-rscg" expected-empty-rscg
 append-fixture output "expected-function-rscg" expected-function-rscg
+append-fixture output "expected-glue-rscg" expected-glue-rscg
+append-fixture output "expected-late-name-glue-rscg" expected-late-name-glue-rscg
 append-fixture output "expected-invalid-decode" expected-invalid-decode
 append-fixture output "expected-invalid-verify" expected-invalid-verify
 append-fixture output "expected-target-mismatch" expected-target-mismatch
@@ -551,6 +684,10 @@ check-invalid-alias: func [
 check-success "empty module" copy empty-rsir copy base-config expected-empty-rscg
 check-success "minimal void function" copy minimal-function-rsir copy base-config
 	expected-function-rscg
+check-success "minimal glue entry" copy glue-function-rsir copy base-config
+	expected-glue-rscg
+check-success "late-name glue symbol remap" copy late-name-glue-rsir copy base-config
+	expected-late-name-glue-rscg
 
 produced-minimal-function-rsir: compiler-rsir-producer/build-empty-void-module
 	none "fn"
@@ -562,6 +699,28 @@ check produced-minimal-function-rsir = minimal-function-rsir
 	"compiled Red RSIR producer differs from the independent fixture"
 check-success "frontend-produced minimal void function"
 	produced-minimal-function-rsir copy base-config expected-function-rscg
+
+produced-glue-function-rsir: compiler-rsir-producer/build-empty-void-module
+	none "fn"
+	compiler-wire-schema/WIRE_MODULE_KIND_GLUE
+	compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
+check binary? produced-glue-function-rsir
+	"compiled Red RSIR producer rejected its glue module"
+check produced-glue-function-rsir = glue-function-rsir
+	"compiled Red RSIR glue producer differs from the independent fixture"
+check-success "frontend-produced minimal glue entry"
+	produced-glue-function-rsir copy base-config expected-glue-rscg
+
+produced-late-name-glue-rsir: compiler-rsir-producer/build-empty-void-module
+	none "zz-entry"
+	compiler-wire-schema/WIRE_MODULE_KIND_GLUE
+	compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
+check binary? produced-late-name-glue-rsir
+	"compiled Red RSIR producer rejected its late-name glue module"
+check produced-late-name-glue-rsir = late-name-glue-rsir
+	"compiled Red RSIR late-name glue producer differs from the independent fixture"
+check-success "frontend-produced late-name glue entry"
+	produced-late-name-glue-rsir copy base-config expected-late-name-glue-rscg
 
 ir-storage: copy #{A5}
 append ir-storage empty-rsir

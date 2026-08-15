@@ -118,7 +118,7 @@ compiler-rsir-producer: context [
 		/limit max-bytes [integer!]
 		/local function-text function-bytes module-bytes
 			strings records data ordered module-id function-id payload-sizes
-			size writer status index-flags
+			size writer status index-flags entry-function
 	][
 		last-error: none
 		max-bytes: any [max-bytes DEFAULT-MAX-BYTES]
@@ -146,8 +146,9 @@ compiler-rsir-producer: context [
 		unless any [
 			module-kind = schema/WIRE_MODULE_KIND_USER
 			module-kind = schema/WIRE_MODULE_KIND_SUPPORT
+			module-kind = schema/WIRE_MODULE_KIND_GLUE
 		][
-			set-error ERROR-KIND "RSIR producer only supports USER or SUPPORT modules"
+			set-error ERROR-KIND "RSIR producer only supports USER, SUPPORT, or GLUE modules"
 			return none
 		]
 		unless image-kind = schema/WIRE_IMAGE_KIND_EXECUTABLE [
@@ -160,6 +161,7 @@ compiler-rsir-producer: context [
 		ordered: strings/3
 		module-id: either module-name [string-id ordered module-name][0]
 		function-id: string-id ordered function-text
+		entry-function: either module-kind = schema/WIRE_MODULE_KIND_GLUE [1][0]
 		if any [none? module-id none? function-id][
 			set-error ERROR-WRITER "RSIR producer lost a canonical string ID"
 			return none
@@ -200,7 +202,7 @@ compiler-rsir-producer: context [
 			return none
 		]
 		status: write-words-section writer schema/WIRE_RSIR_SECTION_MODULE 0 reduce [
-			module-id module-kind image-kind 0 0 0 0 0
+			module-id module-kind image-kind 0 0 entry-function 0 0
 		]
 		if status <> compiler-wire-writer/ERROR-SUCCESS [return set-error ERROR-WRITER "RSIR module section write failed"]
 		status: write-words-section writer schema/WIRE_RSIR_SECTION_DATA_LAYOUT 0 [1 8 8 16 8 8 8 0]

@@ -11,6 +11,9 @@ wire-codegen-string-map!: alias struct! [
 	code-section-name [integer!]
 	module-name       [integer!]
 	function-name     [integer!]
+	exit-external-name [integer!]
+	exit-library-name  [integer!]
+	exit-symbol-name   [integer!]
 ]
 
 wire-codegen-string-cursor!: alias struct! [
@@ -24,6 +27,7 @@ wire-codegen-string-cursor!: alias struct! [
 	has-extra     [integer!]
 	input-pointer [byte-ptr!]
 	extra-pointer [byte-ptr!]
+	extra-size    [integer!]
 	record-offset [integer!]
 	input-offset  [integer!]
 	input-size    [integer!]
@@ -42,14 +46,20 @@ wire-codegen-strings: context [
 
 	EXTRA_DATA_SECTION: 1
 	EXTRA_CODE_SECTION: 2
-	EXTRA_COUNT:        2
-	SECTION_NAME_SIZE:  5
+	EXTRA_EXIT_EXTERNAL: 3
+	EXTRA_EXIT_LIBRARY:  4
+	EXTRA_EXIT_SYMBOL:   5
+	BASE_EXTRA_COUNT:    2
+	ENTRY_EXTRA_COUNT:   5
 
 	reset-map: func [map [wire-codegen-string-map!]][
 		map/data-section-name: 0
 		map/code-section-name: 0
 		map/module-name: 0
 		map/function-name: 0
+		map/exit-external-name: 0
+		map/exit-library-name: 0
+		map/exit-symbol-name: 0
 	]
 
 	reset-cursor: func [cursor [wire-codegen-string-cursor!]][
@@ -63,6 +73,7 @@ wire-codegen-strings: context [
 		cursor/has-extra: 0
 		cursor/input-pointer: as byte-ptr! 0
 		cursor/extra-pointer: as byte-ptr! 0
+		cursor/extra-size: 0
 		cursor/record-offset: 0
 		cursor/input-offset: 0
 		cursor/input-size: 0
@@ -73,7 +84,21 @@ wire-codegen-strings: context [
 		case [
 			id = EXTRA_DATA_SECTION [as byte-ptr! ".data"]
 			id = EXTRA_CODE_SECTION [as byte-ptr! ".text"]
+			id = EXTRA_EXIT_EXTERNAL [as byte-ptr! "ExitProcess"]
+			id = EXTRA_EXIT_LIBRARY [as byte-ptr! "kernel32.dll"]
+			id = EXTRA_EXIT_SYMBOL [as byte-ptr! "system-exit-process"]
 			true [as byte-ptr! 0]
+		]
+	]
+
+	extra-length: func [id [integer!] return: [integer!]][
+		case [
+			id = EXTRA_DATA_SECTION [5]
+			id = EXTRA_CODE_SECTION [5]
+			id = EXTRA_EXIT_EXTERNAL [11]
+			id = EXTRA_EXIT_LIBRARY [12]
+			id = EXTRA_EXIT_SYMBOL [19]
+			true [0]
 		]
 	]
 
@@ -108,12 +133,18 @@ wire-codegen-strings: context [
 		record-count [integer!]
 		string-data [byte-ptr!]
 		cursor [wire-codegen-string-cursor!]
+		extra-limit [integer!]
 		return: [integer!]
 	][
-		if any [record-count < 0 null? cursor][return ITEM_ERROR]
+		if any [
+			record-count < 0
+			null? cursor
+			extra-limit < 0
+			extra-limit > ENTRY_EXTRA_COUNT
+		][return ITEM_ERROR]
 		if all [record-count > 0 null? records][return ITEM_ERROR]
 		cursor/has-input: either cursor/next-input-id <= record-count [1][0]
-		cursor/has-extra: either cursor/next-extra-id <= EXTRA_COUNT [1][0]
+		cursor/has-extra: either cursor/next-extra-id <= extra-limit [1][0]
 		if all [cursor/has-input = 0 cursor/has-extra = 0][return ITEM_DONE]
 
 		cursor/data: as byte-ptr! 0
@@ -122,6 +153,7 @@ wire-codegen-strings: context [
 		cursor/item-extra-id: 0
 		cursor/input-pointer: as byte-ptr! 0
 		cursor/input-size: 0
+		cursor/extra-size: 0
 		if cursor/has-input <> 0 [
 			cursor/record-offset: (cursor/next-input-id - 1) * WIRE_STRING_SIZE
 			cursor/input-offset: wire-container-reader/read-i31 records
@@ -136,11 +168,14 @@ wire-codegen-strings: context [
 		cursor/extra-pointer: either cursor/has-extra <> 0 [
 			extra-data cursor/next-extra-id
 		][as byte-ptr! 0]
+		if cursor/has-extra <> 0 [
+			cursor/extra-size: extra-length cursor/next-extra-id
+		]
 
 		case [
 			all [cursor/has-input <> 0 cursor/has-extra <> 0][
 				cursor/compare-result: compare-bytes cursor/input-pointer
-					cursor/input-size cursor/extra-pointer SECTION_NAME_SIZE
+					cursor/input-size cursor/extra-pointer cursor/extra-size
 				case [
 					cursor/compare-result < 0 [
 						cursor/data: cursor/input-pointer
@@ -150,7 +185,7 @@ wire-codegen-strings: context [
 					]
 					cursor/compare-result > 0 [
 						cursor/data: cursor/extra-pointer
-						cursor/size: SECTION_NAME_SIZE
+						cursor/size: cursor/extra-size
 						cursor/item-extra-id: cursor/next-extra-id
 						cursor/next-extra-id: cursor/next-extra-id + 1
 					]
@@ -172,7 +207,7 @@ wire-codegen-strings: context [
 			]
 			true [
 				cursor/data: cursor/extra-pointer
-				cursor/size: SECTION_NAME_SIZE
+				cursor/size: cursor/extra-size
 				cursor/item-extra-id: cursor/next-extra-id
 				cursor/next-extra-id: cursor/next-extra-id + 1
 			]
@@ -184,6 +219,7 @@ wire-codegen-strings: context [
 		writer [wire-container-writer!]
 		strings [wire-string-table!]
 		module-input-id function-input-id [integer!]
+		extra-limit [integer!]
 		map [wire-codegen-string-map!]
 		return: [integer!]
 		/local cursor [wire-codegen-string-cursor!]
@@ -197,6 +233,7 @@ wire-codegen-strings: context [
 		offset: 0
 		output-id: 1
 		next-status: advance strings/records strings/record-count strings/data cursor
+			extra-limit
 		while [next-status = ITEM_READY][
 			finish: wire-container-reader/checked-add offset cursor/size
 			if finish < 0 [return ERROR_OVERFLOW]
@@ -211,6 +248,15 @@ wire-codegen-strings: context [
 			if cursor/item-extra-id = EXTRA_CODE_SECTION [
 				map/code-section-name: output-id
 			]
+			if cursor/item-extra-id = EXTRA_EXIT_EXTERNAL [
+				map/exit-external-name: output-id
+			]
+			if cursor/item-extra-id = EXTRA_EXIT_LIBRARY [
+				map/exit-library-name: output-id
+			]
+			if cursor/item-extra-id = EXTRA_EXIT_SYMBOL [
+				map/exit-symbol-name: output-id
+			]
 			if all [
 				module-input-id > 0
 				cursor/item-input-id = module-input-id
@@ -222,6 +268,7 @@ wire-codegen-strings: context [
 			offset: finish
 			output-id: output-id + 1
 			next-status: advance strings/records strings/record-count strings/data cursor
+				extra-limit
 		]
 		if next-status <> ITEM_DONE [return ERROR_STATE]
 		if any [
@@ -229,6 +276,9 @@ wire-codegen-strings: context [
 			map/code-section-name = 0
 			all [module-input-id > 0 map/module-name = 0]
 			all [function-input-id > 0 map/function-name = 0]
+			all [extra-limit > BASE_EXTRA_COUNT map/exit-external-name = 0]
+			all [extra-limit > BASE_EXTRA_COUNT map/exit-library-name = 0]
+			all [extra-limit > BASE_EXTRA_COUNT map/exit-symbol-name = 0]
 		][return ERROR_STATE]
 		wire-container-writer/end-section writer
 	]
@@ -236,6 +286,7 @@ wire-codegen-strings: context [
 	write-data: func [
 		writer [wire-container-writer!]
 		strings [wire-string-table!]
+		extra-limit [integer!]
 		return: [integer!]
 		/local cursor [wire-codegen-string-cursor!]
 			status next-status [integer!]
@@ -246,10 +297,12 @@ wire-codegen-strings: context [
 		cursor: declare wire-codegen-string-cursor!
 		reset-cursor cursor
 		next-status: advance strings/records strings/record-count strings/data cursor
+			extra-limit
 		while [next-status = ITEM_READY][
 			status: wire-container-writer/append-bytes writer cursor/data cursor/size
 			if status <> 0 [return status]
 			next-status: advance strings/records strings/record-count strings/data cursor
+				extra-limit
 		]
 		if next-status <> ITEM_DONE [return ERROR_STATE]
 		wire-container-writer/end-section writer
@@ -259,6 +312,7 @@ wire-codegen-strings: context [
 		writer [wire-container-writer!]
 		strings [wire-string-table!]
 		module-input-id function-input-id [integer!]
+		extra-limit [integer!]
 		map [wire-codegen-string-map!]
 		return: [integer!]
 		/local status [integer!]
@@ -271,10 +325,13 @@ wire-codegen-strings: context [
 			module-input-id > strings/record-count
 			function-input-id <= 0
 			function-input-id > strings/record-count
+			extra-limit < BASE_EXTRA_COUNT
+			extra-limit > ENTRY_EXTRA_COUNT
 		][return ERROR_ARGUMENTS]
 		reset-map map
-		status: write-records writer strings module-input-id function-input-id map
+		status: write-records writer strings module-input-id function-input-id
+			extra-limit map
 		if status <> 0 [return status]
-		write-data writer strings
+		write-data writer strings extra-limit
 	]
 ]

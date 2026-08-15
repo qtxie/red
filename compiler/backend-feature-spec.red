@@ -35,6 +35,7 @@ compiler-backend-feature-spec: [
 			tests [
 				"tools/self_hosting/tests/wire-schema-test.red"
 				"tools/self_hosting/tests/wire-container-test.red"
+				"tools/self_hosting/tests/wire-writer-test.red"
 				"tools/self_hosting/tests/wire-container-reds-test.reds"
 			]
 			blockers []
@@ -140,6 +141,7 @@ compiler-backend-feature-spec: [
 			tests [
 				"tools/self_hosting/tests/wire-module-lifecycle-test.red"
 				"tools/self_hosting/tests/wire-module-lifecycle-reds-test.reds"
+				"tools/self_hosting/tests/rsir-producer-test.red"
 				"system/tests/source/units/x64-image-info-smoke.reds"
 			]
 			blockers []
@@ -199,6 +201,7 @@ compiler-backend-feature-spec: [
 			tests [
 				"tools/self_hosting/tests/wire-function-signature-test.red"
 				"tools/self_hosting/tests/wire-function-signature-reds-test.reds"
+				"tools/self_hosting/tests/rsir-producer-test.red"
 				"system/tests/source/units/function-test.reds"
 				"system/tests/source/units/infix-test.reds"
 				"system/tests/source/units/return-test.reds"

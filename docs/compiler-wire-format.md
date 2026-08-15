@@ -2198,8 +2198,21 @@ build\self-hosting\o2-ifphi-final-5b6efd8\red-bootstrap-ifphi-final-win64-o2-dev
 build\self-hosting\codegen-bridge-integration.exe
 ```
 
+The frontend-side seed lives in `compiler/wire-writer.red` and
+`compiler/rsir-producer.red`. The writer lays out a measured, bounded container
+in increasing section order and exposes no successful finish until all required
+directory entries are present. The producer currently accepts only the exact
+USER/SUPPORT executable, one hidden internal Red/System `void()` function, one
+block, one operand-free `RETURN` shape selected by codegen. It performs
+case-sensitive canonical string interning, writes all 32 RSIR sections, and
+returns `none` rather than a partial binary on any validation, size, or writer
+failure. This is a production serialization boundary, but not yet a
+`compiler-core` semantic sink or a general RSIR frontend.
+
 The corpus compares complete RSCG/RSDG bytes for both empty-module and minimal
-`void RETURN` generation, then covers common-container and semantic rejection,
+`void RETURN` generation. It also constructs the minimal RSIR at runtime with
+compiled Red code, compares it byte-for-byte with the independent fixture, and
+passes that binary through `codegen-module`. The remaining cases cover common-container and semantic rejection,
 target mismatch, valid but unsupported nonempty modules, bounded output,
 disabled diagnostics, all series alias pairs, nonzero input/output heads, full
 atomic and memory/aggregate modules, layer-specific semantic errors, and

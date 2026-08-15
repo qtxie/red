@@ -11,9 +11,12 @@ executable coverage. The bounded native arena/writer, aggregate RSIR verifier,
 and first `codegen-module` routine bridge also have cross-language integration
 coverage. An allocation-free canonical string merger and the first Windows x64
 machine-code slice now produce an exact, self-verified RSCG for one internal
-`void` function containing only `RETURN`. The protocol remains unfrozen until
-the remaining Windows x64 feature blockers and message-level semantic fixtures
-satisfy the Phase 1 exit criteria.
+`void` function containing only `RETURN`. A bounded Red container writer and
+minimal RSIR producer now create that exact semantic module without emitter or
+machine-IR input and pass it through the compiled routine integration test.
+The producer is not yet connected to `compiler-core`. The protocol remains
+unfrozen until the remaining Windows x64 feature blockers and message-level
+semantic fixtures satisfy the Phase 1 exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -189,7 +192,8 @@ path. The control verifier is independent of legacy
 `machine-ir/verify-current`. These layers do not produce direct code bytes. The
 first codegen slice described above is separate from these verifier layers: it
 is the first component allowed to emit machine bytes, and only for the exact
-one-function `void RETURN` shape. Frontend RSIR production, optimization, and
+one-function `void RETURN` shape. The first Red producer can serialize that
+same exact shape, but compiler-core semantic event routing, optimization, and
 all broader machine-code coverage remain later work.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
@@ -349,6 +353,16 @@ integration test; the canonical Stage1 binary must be rebuilt or advanced
 before this Phase 2 exit condition can be claimed.
 
 ## Phase 3: complete RSIR frontend
+
+Current implementation seed: `compiler/wire-writer.red` mirrors the bounded,
+monotonic section state machine used by the native writer, and
+`compiler/rsir-producer.red` serializes the exact supported anonymous or named
+USER/SUPPORT executable module into an exactly measured binary. It stages only
+the canonical string slices/data, writes every required section and flag, and
+returns no partial binary on failure. Its output is byte-identical to the
+independently constructed fixture and succeeds through the compiled routine.
+It does not yet receive semantic events from `compiler-core`; adding that sink
+is the next Phase 3 boundary.
 
 Deliverables:
 

@@ -10,6 +10,7 @@ do %../../compiler/wire-atomic.red
 do %../../compiler/wire-memory-aggregate.red
 do %../../compiler/wire-rscg-metadata.red
 do %../../compiler/wire-diagnostics.red
+do %../../compiler/rsir-producer.red
 
 index-flags:
 	schema/WIRE_SECTION_FLAG_SORTED
@@ -103,6 +104,14 @@ put nonempty-rsir-payloads schema/WIRE_RSIR_SECTION_INSTRUCTIONS
 		schema/WIRE_EFFECT_FLAG_CONTROL schema/WIRE_ALIAS_KIND_NONE 0 0
 	]
 minimal-function-rsir: build-rsir nonempty-rsir-payloads
+produced-minimal-function-rsir: compiler-rsir-producer/build-empty-void-module
+	none "fn"
+	schema/WIRE_MODULE_KIND_USER
+	schema/WIRE_IMAGE_KIND_EXECUTABLE
+assert binary? produced-minimal-function-rsir
+	"minimal RSIR producer rejected its supported fixture"
+assert produced-minimal-function-rsir = minimal-function-rsir
+	"minimal RSIR producer bytes differ from the independent fixture"
 
 verify-rsir: func [name [string!] data [binary!] /local result][
 	result: compiler-wire-target-intrinsic/verify data
@@ -374,6 +383,8 @@ append-fixture: func [output [string!] name [string!] data [binary!]][
 source-bytes: make binary! 262144
 foreach source-file [
 	%generate-codegen-bridge-fixtures.red
+	%../../compiler/wire-writer.red
+	%../../compiler/rsir-producer.red
 	%../../compiler/codegen-bridge.red
 	%../../system/codegen/codegen-bridge.reds
 	%../../system/codegen/x64-o0-codegen.reds
@@ -409,7 +420,11 @@ append output {Red [
 ; Do not edit. Inputs and exact native outputs are frozen by the Red corpus.
 }
 append output rejoin ["; Fixture source SHA256: " source-digest newline newline]
-append output {#include %../../../compiler/codegen-bridge.red
+append output {#include %../../../compiler/int-to-bin.red
+#include %../../../compiler/wire-schema.red
+#include %../../../compiler/wire-writer.red
+#include %../../../compiler/rsir-producer.red
+#include %../../../compiler/codegen-bridge.red
 
 }
 append-fixture output "empty-rsir" empty-rsir
@@ -536,6 +551,17 @@ check-invalid-alias: func [
 check-success "empty module" copy empty-rsir copy base-config expected-empty-rscg
 check-success "minimal void function" copy minimal-function-rsir copy base-config
 	expected-function-rscg
+
+produced-minimal-function-rsir: compiler-rsir-producer/build-empty-void-module
+	none "fn"
+	compiler-wire-schema/WIRE_MODULE_KIND_USER
+	compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
+check binary? produced-minimal-function-rsir
+	"compiled Red RSIR producer rejected its supported module"
+check produced-minimal-function-rsir = minimal-function-rsir
+	"compiled Red RSIR producer differs from the independent fixture"
+check-success "frontend-produced minimal void function"
+	produced-minimal-function-rsir copy base-config expected-function-rscg
 
 ir-storage: copy #{A5}
 append ir-storage empty-rsir

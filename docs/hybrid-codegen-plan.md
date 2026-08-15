@@ -516,6 +516,9 @@ Tests:
 
 Current implementation slice:
 
+- `compiler/rscf-producer.red` now derives a deterministic, bounded RSCF
+  message from the compiler job. It accepts only the Win64 O0/O1, non-debug,
+  non-PIC configuration that the current native codegen and adapter honor;
 - `compiler/rscg-linker-adapter.red` accepts one fully verified Windows x64
   GLUE object with `.text`, `.data`, one entry function, one GC bitmap, and one
   `kernel32.dll!ExitProcess` IAT relocation;

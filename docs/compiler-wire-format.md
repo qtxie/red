@@ -248,6 +248,13 @@ while retaining its container error and exact location. Header errors use
 section 0; config errors use section ordinal 1 and the exact field byte offset.
 The output config is written only after complete success.
 
+`compiler/rscf-producer.red` maps a compiler job to this record without using
+backend or emitter state. Its current configuration slice accepts Windows x64
+PE jobs at O0/O1 with debug and PIC disabled, requests deterministic codegen,
+fixes the v1 worker/feature/seed fields, and supplies bounded 16 MiB artifact
+and 64 KiB diagnostic arenas. Unsupported job settings fail before a message
+is emitted.
+
 The Red test covers four valid configurations and 28 directed semantic
 failures. Its generated Red/System test embeds the same bytes, compares RSCF
 and nested container errors plus byte locations, checks invalid pointers, and

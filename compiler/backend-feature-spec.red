@@ -56,6 +56,7 @@ compiler-backend-feature-spec: [
 				"tools/self_hosting/tests/wire-container-test.red"
 				"tools/self_hosting/tests/wire-rscf-test.red"
 				"tools/self_hosting/tests/wire-rscf-reds-test.reds"
+				"tools/self_hosting/tests/rscf-producer-test.red"
 				"system/tests/source/units/size-x64-test.reds"
 			]
 			blockers []

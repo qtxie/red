@@ -2229,11 +2229,12 @@ self-contained, while development builds follow the compiler's existing
 `libRedRT.dll` arrangement.
 
 The checked-in Phase 2 implementation retains the no-code path for an empty
-USER or SUPPORT module and adds the first real machine-code slice. After
+USER or SUPPORT module and adds the first real machine-code slices. After
 complete aggregate RSIR verification it accepts exactly one internal hidden
-`void()` function with one operand-free `RETURN`, emits the 17-byte USER/SUPPORT
-body or 31-byte GLUE entry plus its explicit exit import, builds a self-verified
-RSCG, and rejects every other valid nonempty module with
+empty `void()` function or signed `i32` literal return. It emits the 17/22-byte
+USER/SUPPORT body or 31/34-byte GLUE entry plus its explicit exit import; the i32
+GLUE entry passes the literal to `ExitProcess`. It builds a self-verified RSCG
+and rejects every other valid nonempty module with
 `CODEGEN_FAILURE` in SELECT and an empty artifact. No frontend verifier writes
 instructions, no direct-code chunk is accepted, and there is no legacy-emitter
 fallback on this path.

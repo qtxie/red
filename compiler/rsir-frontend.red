@@ -6,69 +6,28 @@ Red [
 unless value? 'int-to-bin [do %int-to-bin.red]
 
 compiler-rsir-frontend: context [
-	; RSIR values used directly by this frontend slice.
-	magic: 1380537170
-	target-x64: abi-win64: endian-little: 1
+	; Sizes used by both the measuring and writing passes.
 	header-size: 64
 	directory-size: 32
-	fingerprint: 1783469997
-	module-user: 2
-	module-support: 3
-	module-glue: 4
-	image-executable: 1
-	type-void: 1
-	type-integer: 3
-	type-signed: 1
-	gc-none: 0
-	call-red-system: 1
-	symbol-function: 1
-	linkage-internal: 2
-	visibility-hidden: 2
-	constant-scalar: 2
-	value-instruction: 2
-	value-no-flags: 0
-	operand-value: 1
-	operand-constant: 2
-	operand-no-flags: 0
-	effect-control: 256
-	alias-none: 0
-	op-constant: 1
-	op-return: 41
 
-	; name, flags, record size, alignment.  Indexed sections use flags 2 + 4.
+	; flags, record size, alignment. Indexed sections use flags 2 + 4.
 	sections: [
-		module               0 32 4
-		data-layout          0 32 4
-		strings              6  8 4
-		string-data          0  1 1
-		files                6 16 4
-		file-checksum-data   0  1 1
-		types                0 40 4
-		fields               0 32 4
-		signatures           0 32 4
-		parameters           0 32 4
-		symbols              6 32 4
-		constants            0 32 4
-		constant-data        0  1 1
-		constant-parts       0 32 4
-		constant-bindings    6  8 4
-		globals              0 32 4
-		imports              6 24 4
-		exports              6 16 4
-		functions            0 40 4
-		locals               0 32 4
-		blocks               0 32 4
-		edges                0 24 4
-		values               0 24 4
-		instructions         0 48 4
-		operands             0 16 4
-		calls                0 32 4
-		target-fragments     0 32 4
-		source-locations     6 16 4
-		exception-regions    0 24 4
-		exception-blocks     0  8 4
-		subroutines          0 32 4
-		subroutine-blocks    0  8 4
+		; module, data-layout, strings, string-data
+		0 32 4  0 32 4  6  8 4  0  1 1
+		; files, file-checksum-data, types, fields
+		6 16 4  0  1 1  0 40 4  0 32 4
+		; signatures, parameters, symbols, constants
+		0 32 4  0 32 4  6 32 4  0 32 4
+		; constant-data, constant-parts, constant-bindings, globals
+		0  1 1  0 32 4  6  8 4  0 32 4
+		; imports, exports, functions, locals
+		6 24 4  6 16 4  0 40 4  0 32 4
+		; blocks, edges, values, instructions
+		0 32 4  0 24 4  0 24 4  0 48 4
+		; operands, calls, target-fragments, source-locations
+		0 16 4  0 32 4  0 32 4  6 16 4
+		; exception-regions, exception-blocks, subroutines, subroutine-blocks
+		0 24 4  0  8 4  0 32 4  0  8 4
 	]
 
 	ERROR-ARGUMENTS: 1
@@ -124,14 +83,14 @@ compiler-rsir-frontend: context [
 		]
 		module-kind: kind
 		module-kind-id: switch/default kind [
-			user [module-user]
-			support [module-support]
-			glue [module-glue]
+			user [2]
+			support [3]
+			glue [4]
 		][throw-error ERROR-KIND "unsupported RSIR module kind"]
 		unless image = 'executable [
 			throw-error ERROR-KIND "unsupported RSIR image kind"
 		]
-		image-kind-id: image-executable
+		image-kind-id: 1
 
 		module-name: either name [copy name][none]
 		output-limit: limit
@@ -144,7 +103,7 @@ compiler-rsir-frontend: context [
 		][clear get table]
 		clear constant-data
 		emit-words types reduce [
-			type-void 0 0 0 0 0 0 0 0 gc-none
+			1 0 0 0 0 0 0 0 0 0              ; void
 		]
 	]
 
@@ -173,8 +132,8 @@ compiler-rsir-frontend: context [
 
 	emit-return: func [first-operand operand-count [integer!]][
 		emit-words instructions reduce [
-			1 op-return 0 0 0 0 first-operand operand-count
-			effect-control alias-none 0 0
+			1 41 0 0 0 0 first-operand operand-count
+			256 0 0 0
 		]
 		bump-block
 	]
@@ -190,18 +149,18 @@ compiler-rsir-frontend: context [
 		data-offset: length? constant-data
 
 		emit-words constants reduce [
-			2 constant-scalar 0 data-offset 4 0 0 0
+			2 2 0 data-offset 4 0 0 0
 		]
 		append constant-data int-to-bin/to-bin32 literal
 		emit-words values reduce [
-			value-instruction instruction-id 0 2 1 value-no-flags
+			2 instruction-id 0 2 1 0
 		]
 		emit-words instructions reduce [
-			1 op-constant 0 0 value-id 1 operand-id 1
-			0 alias-none 0 0
+			1 1 0 0 value-id 1 operand-id 1
+			0 0 0 0
 		]
 		emit-words operands reduce [
-			operand-constant constant-id 0 operand-no-flags
+			2 constant-id 0 0
 		]
 		bump-block
 		value-id
@@ -226,7 +185,7 @@ compiler-rsir-frontend: context [
 			value-id: emit-i32-constant expression
 			operand-id: next-id operands 16
 			emit-words operands reduce [
-				operand-value value-id 0 operand-no-flags
+				1 value-id 0 0
 			]
 			emit-return operand-id 1
 		]
@@ -250,14 +209,14 @@ compiler-rsir-frontend: context [
 		return-type: either kind = 'void [1][2]
 		if return-type = 2 [
 			emit-words types reduce [
-				type-integer type-signed 4 4 0 0 0 0 0 gc-none
+				3 1 4 4 0 0 0 0 0 0          ; signed i32
 			]
 		]
 		emit-words signatures reduce [
-			call-red-system 0 return-type 0 0 0 0 0
+			1 0 return-type 0 0 0 0 0
 		]
 		emit-words symbols reduce [
-			0 symbol-function linkage-internal visibility-hidden
+			0 1 2 2
 			1 0 0 0
 		]
 		emit-words functions [1 1 0 1 1 1 0 0 0 0]
@@ -339,7 +298,7 @@ compiler-rsir-frontend: context [
 
 	write-rsir: func [
 		/local strings module-id function-id entry symbols* module layout payloads
-			section-count directory size kind section flags record-size alignment
+			section-count directory size kind flags record-size alignment
 			payload payload-size offset count output padding
 	][
 		strings: canonical-strings
@@ -368,7 +327,7 @@ compiler-rsir-frontend: context [
 			functions #{} blocks #{} values instructions operands
 			#{} #{} #{} #{} #{} #{} #{}
 		]
-		section-count: (length? sections) / 4
+		section-count: (length? sections) / 3
 		unless (length? payloads) = section-count [
 			throw-error ERROR-SERIALIZE "incomplete RSIR section list"
 		]
@@ -379,14 +338,14 @@ compiler-rsir-frontend: context [
 		]
 		directory: make binary! (section-count * directory-size)
 		kind: 0
-		foreach [section flags record-size alignment] sections [
+		foreach [flags record-size alignment] sections [
 			kind: kind + 1
 			payload: pick payloads kind
 			payload-size: length? payload
 			offset: count: 0
 			if payload-size > 0 [
 				if (payload-size // record-size) <> 0 [
-					throw-error ERROR-SERIALIZE ["invalid" section "section size"]
+					throw-error ERROR-SERIALIZE "invalid RSIR section size"
 				]
 				size: align-size size alignment
 				offset: size
@@ -402,16 +361,16 @@ compiler-rsir-frontend: context [
 		]
 
 		output: make binary! size
-		append output int-to-bin/to-bin32 magic
+		append output int-to-bin/to-bin32 1380537170
 		append output int-to-bin/to-bin16 1
 		append output int-to-bin/to-bin16 0
 		emit-words output reduce [
 			header-size 0 size section-count header-size directory-size
-			target-x64 abi-win64 endian-little 8 0 0 1 fingerprint
+			1 1 1 8 0 0 1 1783469997
 		]
 		append output directory
 		kind: 0
-		foreach [section flags record-size alignment] sections [
+		foreach [flags record-size alignment] sections [
 			kind: kind + 1
 			payload: pick payloads kind
 			unless empty? payload [

@@ -1,5 +1,5 @@
 Red [
-	Title: "Fresh-process RSCG to PE linker integration"
+	Title: "Fresh-process i32 RSCG to PE linker integration"
 ]
 
 #include %../../../system/compiler-windows-bootstrap.red
@@ -30,8 +30,8 @@ fixture-file: clean-path to file! rejoin [
 ]
 unless exists? fixture-file [fail ["cannot locate generated RSCG fixtures: " fixture-file]]
 fixture-values: load/all read fixture-file
-artifact: select fixture-values to set-word! 'expected-late-name-glue-rscg
-unless binary? artifact [fail "generated late-name glue RSCG fixture is missing"]
+artifact: select fixture-values to set-word! 'expected-i32-glue-rscg
+unless binary? artifact [fail "generated i32 glue RSCG fixture is missing"]
 
 output: either all [
 	block? system/options/args
@@ -39,13 +39,13 @@ output: either all [
 ][
 	clean-path to-red-file to file! system/options/args/1
 ][
-	clean-path to file! rejoin [root %build/self-hosting/rscg-adapter-glue.exe]
+	clean-path to file! rejoin [root %build/self-hosting/rscg-adapter-i32.exe]
 ]
 set [output-dir output-name] split-path output
 
 base-job: compiler-system-job/new 'Windows-X86-64
 unless object? base-job [fail "could not create the Windows x64 linker job"]
-job: system-dialect/make-job base-job %rscg-adapter-glue.reds
+job: system-dialect/make-job base-job %rscg-adapter-i32.reds
 compiler-system-job/job-set job 'link? true
 compiler-system-job/job-set job 'runtime? false
 compiler-system-job/job-set job 'debug? false
@@ -79,7 +79,7 @@ if find job/sections 'reloc [
 
 process-output: make string! 0
 status: call/wait/output to-local-file linked process-output
-unless zero? status [fail ["linked RSCG executable returned " status]]
+unless status = 7 [fail ["linked RSCG executable returned " status " instead of 7"]]
 unless empty? process-output [fail ["linked RSCG executable wrote output: " mold process-output]]
 
-print ["PASS: fresh-process RSCG PE link and launch" linked]
+print ["PASS: fresh-process i32 RSCG PE link and launch" linked]

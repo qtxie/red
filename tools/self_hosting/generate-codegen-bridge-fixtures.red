@@ -19,6 +19,19 @@ compile-void-rsir: func [name [string!] kind [word!] /local source][
 	compiler-rsir-frontend/compile source none kind 'executable
 ]
 
+compile-i32-rsir: func [
+	name [string!]
+	kind [word!]
+	value [integer!]
+	/local source
+][
+	source: compose/deep [
+		Red/System []
+		(to set-word! name) func [return: [integer!]] [(value)]
+	]
+	compiler-rsir-frontend/compile source none kind 'executable
+]
+
 index-flags:
 	schema/WIRE_SECTION_FLAG_SORTED
 	+ schema/WIRE_SECTION_FLAG_DEDUPLICATED
@@ -140,6 +153,52 @@ assert binary? produced-late-name-glue-rsir
 	"RSIR frontend rejected its late-name glue fixture"
 assert produced-late-name-glue-rsir = late-name-glue-rsir
 	"RSIR late-name glue frontend bytes differ from the independent fixture"
+
+i32-rsir-payloads: copy nonempty-rsir-payloads
+put i32-rsir-payloads schema/WIRE_RSIR_SECTION_TYPES fixture-writer/words [
+	; void, signed i32
+	1 0 0 0 0 0 0 0 0 0
+	3 1 4 4 0 0 0 0 0 0
+]
+put i32-rsir-payloads schema/WIRE_RSIR_SECTION_SIGNATURES fixture-writer/words [
+	1 0 2 0 0 0 0 0
+]
+put i32-rsir-payloads schema/WIRE_RSIR_SECTION_CONSTANTS fixture-writer/words [
+	2 2 0 0 4 0 0 0
+]
+put i32-rsir-payloads schema/WIRE_RSIR_SECTION_CONSTANT_DATA
+	fixture-writer/words [7]
+put i32-rsir-payloads schema/WIRE_RSIR_SECTION_BLOCKS fixture-writer/words [
+	1 0 1 2 0 0 0 0
+]
+put i32-rsir-payloads schema/WIRE_RSIR_SECTION_VALUES fixture-writer/words [
+	2 1 0 2 1 0
+]
+put i32-rsir-payloads schema/WIRE_RSIR_SECTION_INSTRUCTIONS
+	fixture-writer/words reduce [
+		1 schema/WIRE_OPCODE_CONSTANT 0 0 1 1 1 1
+		0 schema/WIRE_ALIAS_KIND_NONE 0 0
+		1 schema/WIRE_OPCODE_RETURN 0 0 0 0 2 1
+		schema/WIRE_EFFECT_FLAG_CONTROL schema/WIRE_ALIAS_KIND_NONE 0 0
+	]
+put i32-rsir-payloads schema/WIRE_RSIR_SECTION_OPERANDS fixture-writer/words reduce [
+	schema/WIRE_OPERAND_KIND_CONSTANT 1 0 0
+	schema/WIRE_OPERAND_KIND_VALUE 1 0 0
+]
+i32-function-rsir: build-rsir i32-rsir-payloads
+i32-glue-rsir: build-rsir/module copy i32-rsir-payloads [
+	0 4 1 0 0 1 0 0
+]
+produced-i32-function-rsir: compile-i32-rsir "fn" 'user 7
+assert binary? produced-i32-function-rsir
+	"RSIR frontend rejected its i32 fixture"
+assert produced-i32-function-rsir = i32-function-rsir
+	"RSIR i32 frontend bytes differ from the independent fixture"
+produced-i32-glue-rsir: compile-i32-rsir "fn" 'glue 7
+assert binary? produced-i32-glue-rsir
+	"RSIR frontend rejected its i32 glue fixture"
+assert produced-i32-glue-rsir = i32-glue-rsir
+	"RSIR i32 glue frontend bytes differ from the independent fixture"
 
 verify-rsir: func [name [string!] data [binary!] /local result][
 	result: compiler-wire-target-intrinsic/verify data
@@ -326,6 +385,64 @@ expected-glue-rscg: build-rscg/module
 	[0 4 1 0 0 1 0 0]
 result: compiler-wire-rscg-metadata/verify expected-glue-rscg
 assert result/valid? ["expected glue RSCG rejected: " result/error]
+
+i32-code: #{554889E56A006A0068000000006A00B807000000C9C3}
+i32-output: copy i32-code
+append i32-output empty-void-bitmap
+i32-rscg-payloads: copy function-rscg-payloads
+put i32-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_SECTIONS
+	fixture-writer/words reduce [
+		code-section-name schema/WIRE_OUTPUT_SECTION_CLASS_CODE 0 16
+		0 22 22 0
+		data-section-name schema/WIRE_OUTPUT_SECTION_CLASS_DATA 0 4
+		22 16 16 0
+	]
+put i32-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_DATA i32-output
+put i32-rscg-payloads schema/WIRE_RSCG_SECTION_SYMBOLS
+	fixture-writer/words reduce [
+		output-function-name schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_SYMBOL_BINDING_LOCAL schema/WIRE_VISIBILITY_HIDDEN
+		1 0 22 16 0 1
+	]
+put i32-rscg-payloads schema/WIRE_RSCG_SECTION_FUNCTIONS
+	fixture-writer/words [1 1 0 22 32 0 0 0 0 0]
+expected-i32-rscg: build-rscg function-rscg-strings/1
+	function-rscg-strings/2 i32-rscg-payloads
+result: compiler-wire-rscg-metadata/verify expected-i32-rscg
+assert result/valid? ["expected i32 RSCG rejected: " result/error]
+
+i32-entry-code: #{554889E56A006A0068000000006A00B9070000004883EC20FF150000000031C0C9C3}
+i32-entry-output: copy i32-entry-code
+append i32-entry-output empty-void-bitmap
+i32-glue-rscg-payloads: copy glue-rscg-payloads
+put i32-glue-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_SECTIONS
+	fixture-writer/words reduce [
+		glue-code-section-name schema/WIRE_OUTPUT_SECTION_CLASS_CODE 0 16
+		0 34 34 0
+		glue-data-section-name schema/WIRE_OUTPUT_SECTION_CLASS_DATA 0 4
+		34 16 16 0
+	]
+put i32-glue-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_DATA i32-entry-output
+put i32-glue-rscg-payloads schema/WIRE_RSCG_SECTION_SYMBOLS
+	fixture-writer/words reduce [
+		glue-function-name schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_SYMBOL_BINDING_LOCAL schema/WIRE_VISIBILITY_HIDDEN
+		1 0 34 16 0 1
+		glue-exit-symbol-name schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_SYMBOL_BINDING_GLOBAL schema/WIRE_VISIBILITY_DEFAULT
+		0 0 0 0 schema/WIRE_RSCG_SYMBOL_FLAG_UNDEFINED 1
+	]
+put i32-glue-rscg-payloads schema/WIRE_RSCG_SECTION_RELOCATIONS
+	fixture-writer/words reduce [
+		1 26 schema/WIRE_RELOCATION_KIND_X64_RIP_REL32 2 0 0 4 0
+	]
+put i32-glue-rscg-payloads schema/WIRE_RSCG_SECTION_FUNCTIONS
+	fixture-writer/words [1 1 0 34 32 0 0 0 0 0]
+expected-i32-glue-rscg: build-rscg/module
+	glue-rscg-strings/1 glue-rscg-strings/2 i32-glue-rscg-payloads
+	[0 4 1 0 0 1 0 0]
+result: compiler-wire-rscg-metadata/verify expected-i32-glue-rscg
+assert result/valid? ["expected i32 glue RSCG rejected: " result/error]
 
 late-glue-rscg-strings: make-canonical-strings [
 	"" ".data" ".text" "ExitProcess" "kernel32.dll"
@@ -560,12 +677,27 @@ compile-void-rsir: func [name [string!] kind [word!] /local source][
 	compiler-rsir-frontend/compile source none kind 'executable
 ]
 
+compile-i32-rsir: func [
+	name [string!]
+	kind [word!]
+	value [integer!]
+	/local source
+][
+	source: compose/deep [
+		Red/System []
+		(to set-word! name) func [return: [integer!]] [(value)]
+	]
+	compiler-rsir-frontend/compile source none kind 'executable
+]
+
 }
 append-fixture output "empty-rsir" empty-rsir
 append-fixture output "string-rsir" string-rsir
 append-fixture output "minimal-function-rsir" minimal-function-rsir
 append-fixture output "glue-function-rsir" glue-function-rsir
 append-fixture output "late-name-glue-rsir" late-name-glue-rsir
+append-fixture output "i32-function-rsir" i32-function-rsir
+append-fixture output "i32-glue-rsir" i32-glue-rsir
 append-fixture output "full-atomic-rsir" full-atomic-rsir
 append-fixture output "invalid-atomic-rsir" invalid-atomic-rsir
 append-fixture output "full-memory-rsir" full-memory-rsir
@@ -581,6 +713,8 @@ append-fixture output "expected-empty-rscg" expected-empty-rscg
 append-fixture output "expected-function-rscg" expected-function-rscg
 append-fixture output "expected-glue-rscg" expected-glue-rscg
 append-fixture output "expected-late-name-glue-rscg" expected-late-name-glue-rscg
+append-fixture output "expected-i32-rscg" expected-i32-rscg
+append-fixture output "expected-i32-glue-rscg" expected-i32-glue-rscg
 append-fixture output "expected-invalid-decode" expected-invalid-decode
 append-fixture output "expected-invalid-verify" expected-invalid-verify
 append-fixture output "expected-target-mismatch" expected-target-mismatch
@@ -717,6 +851,22 @@ check produced-late-name-glue-rsir = late-name-glue-rsir
 	"compiled Red RSIR late-name glue frontend differs from the independent fixture"
 check-success "frontend-produced late-name glue entry"
 	produced-late-name-glue-rsir copy base-config expected-late-name-glue-rscg
+
+produced-i32-function-rsir: compile-i32-rsir "fn" 'user 7
+check binary? produced-i32-function-rsir
+	"compiled Red RSIR frontend rejected its i32 module"
+check produced-i32-function-rsir = i32-function-rsir
+	"compiled Red RSIR i32 frontend differs from the independent fixture"
+check-success "frontend-produced i32 function"
+	produced-i32-function-rsir copy base-config expected-i32-rscg
+
+produced-i32-glue-rsir: compile-i32-rsir "fn" 'glue 7
+check binary? produced-i32-glue-rsir
+	"compiled Red RSIR frontend rejected its i32 glue module"
+check produced-i32-glue-rsir = i32-glue-rsir
+	"compiled Red RSIR i32 glue frontend differs from the independent fixture"
+check-success "frontend-produced i32 glue entry"
+	produced-i32-glue-rsir copy base-config expected-i32-glue-rscg
 
 ir-storage: copy #{A5}
 append ir-storage empty-rsir

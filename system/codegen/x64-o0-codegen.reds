@@ -12,9 +12,13 @@ wire-x64-o0-codegen: context [
 	BUILD_SUCCESS:          0
 	BUILD_WRITER_ERROR:     1
 	BUILD_INVALID_ARTIFACT: 2
+	BUILD_UNSUPPORTED_SHAPE: 3
 
 	index-flags: WIRE_SECTION_FLAG_SORTED or WIRE_SECTION_FLAG_DEDUPLICATED
 	EMPTY_BITMAP_SIZE: 16
+	SHAPE_NONE:        0
+	SHAPE_VOID:        1
+	SHAPE_I32_LITERAL: 2
 
 	record-value: func [
 		records [byte-ptr!]
@@ -33,10 +37,8 @@ wire-x64-o0-codegen: context [
 		record-value modules/modules 1 modules/module-record-size field-offset
 	]
 
-	void-type?: func [types [wire-type-layout!] return: [logic!]][
+	void-type-record?: func [types [wire-type-layout!] return: [logic!]][
 		all [
-			types/type-count = 1
-			types/field-count = 0
 			(record-value types/types 1 WIRE_RSIR_TYPE_SIZE
 				WIRE_RSIR_TYPE_KIND_OFFSET) = WIRE_TYPE_KIND_VOID
 			(record-value types/types 1 WIRE_RSIR_TYPE_SIZE
@@ -60,8 +62,45 @@ wire-x64-o0-codegen: context [
 		]
 	]
 
-	void-signature?: func [
+	void-type?: func [types [wire-type-layout!] return: [logic!]][
+		all [
+			types/type-count = 1
+			types/field-count = 0
+			void-type-record? types
+		]
+	]
+
+	i32-types?: func [types [wire-type-layout!] return: [logic!]][
+		all [
+			types/type-count = 2
+			types/field-count = 0
+			void-type-record? types
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_KIND_OFFSET) = WIRE_TYPE_KIND_INTEGER
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_FLAGS_OFFSET) = WIRE_TYPE_FLAG_SIGNED
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_SIZE_OFFSET) = 4
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_ALIGNMENT_OFFSET) = 4
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_RESERVED_0_OFFSET) = 0
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_DETAIL_ID_OFFSET) = 0
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_RESERVED_1_OFFSET) = 0
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_FIRST_FIELD_OFFSET) = 0
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_FIELD_COUNT_OFFSET) = 0
+			(record-value types/types 2 WIRE_RSIR_TYPE_SIZE
+				WIRE_RSIR_TYPE_GC_KIND_OFFSET) = 0
+		]
+	]
+
+	signature?: func [
 		functions [wire-function-signature!]
+		return-type [integer!]
 		return: [logic!]
 	][
 		all [
@@ -73,7 +112,7 @@ wire-x64-o0-codegen: context [
 			(record-value functions/signatures 1 WIRE_RSIR_SIGNATURE_SIZE
 				WIRE_RSIR_SIGNATURE_FLAGS_OFFSET) = 0
 			(record-value functions/signatures 1 WIRE_RSIR_SIGNATURE_SIZE
-				WIRE_RSIR_SIGNATURE_RETURN_TYPE_OFFSET) = 1
+				WIRE_RSIR_SIGNATURE_RETURN_TYPE_OFFSET) = return-type
 			(record-value functions/signatures 1 WIRE_RSIR_SIGNATURE_SIZE
 				WIRE_RSIR_SIGNATURE_FIRST_PARAMETER_OFFSET) = 0
 			(record-value functions/signatures 1 WIRE_RSIR_SIGNATURE_SIZE
@@ -167,15 +206,12 @@ wire-x64-o0-codegen: context [
 		]
 	]
 
-	return-block?: func [
+	block-shape?: func [
 		functions [wire-function-signature!]
-		scalar [wire-scalar-operation!]
+		instruction-count [integer!]
 		return: [logic!]
 	][
 		all [
-			scalar/value-count = 0
-			scalar/instruction-count = 1
-			scalar/operand-count = 0
 			(record-value functions/blocks 1 WIRE_RSIR_BLOCK_SIZE
 				WIRE_RSIR_BLOCK_FUNCTION_OFFSET) = 1
 			(record-value functions/blocks 1 WIRE_RSIR_BLOCK_SIZE
@@ -183,7 +219,7 @@ wire-x64-o0-codegen: context [
 			(record-value functions/blocks 1 WIRE_RSIR_BLOCK_SIZE
 				WIRE_RSIR_BLOCK_FIRST_INSTRUCTION_OFFSET) = 1
 			(record-value functions/blocks 1 WIRE_RSIR_BLOCK_SIZE
-				WIRE_RSIR_BLOCK_INSTRUCTION_COUNT_OFFSET) = 1
+				WIRE_RSIR_BLOCK_INSTRUCTION_COUNT_OFFSET) = instruction-count
 			(record-value functions/blocks 1 WIRE_RSIR_BLOCK_SIZE
 				WIRE_RSIR_BLOCK_FIRST_OUTGOING_EDGE_OFFSET) = 0
 			(record-value functions/blocks 1 WIRE_RSIR_BLOCK_SIZE
@@ -192,6 +228,19 @@ wire-x64-o0-codegen: context [
 				WIRE_RSIR_BLOCK_SOURCE_LOCATION_OFFSET) = 0
 			(record-value functions/blocks 1 WIRE_RSIR_BLOCK_SIZE
 				WIRE_RSIR_BLOCK_RESERVED_OFFSET) = 0
+		]
+	]
+
+	void-return?: func [
+		functions [wire-function-signature!]
+		scalar [wire-scalar-operation!]
+		return: [logic!]
+	][
+		all [
+			scalar/value-count = 0
+			scalar/instruction-count = 1
+			scalar/operand-count = 0
+			block-shape? functions 1
 			(record-value scalar/instructions 1 WIRE_RSIR_INSTRUCTION_SIZE
 				WIRE_RSIR_INSTRUCTION_BLOCK_OFFSET) = 1
 			(record-value scalar/instructions 1 WIRE_RSIR_INSTRUCTION_SIZE
@@ -219,7 +268,43 @@ wire-x64-o0-codegen: context [
 		]
 	]
 
-	unused-inputs-empty?: func [
+	empty-constants?: func [
+		constants [wire-constant-initializer!]
+		return: [logic!]
+	][
+		all [
+			constants/constant-count = 0
+			constants/constant-data-size = 0
+			constants/constant-data-owned-size = 0
+		]
+	]
+
+	i32-literal-return?: func [
+		functions [wire-function-signature!]
+		constants [wire-constant-initializer!]
+		scalar [wire-scalar-operation!]
+		return: [logic!]
+	][
+		all [
+			constants/constant-count = 1
+			constants/constant-data-size = 4
+			constants/constant-data-owned-size = 4
+			scalar/value-count = 1
+			scalar/instruction-count = 2
+			scalar/operand-count = 2
+			block-shape? functions 2
+			(record-value constants/constants 1 WIRE_RSIR_CONSTANT_SIZE
+				WIRE_RSIR_CONSTANT_TYPE_OFFSET) = 2
+			(record-value constants/constants 1 WIRE_RSIR_CONSTANT_SIZE
+				WIRE_RSIR_CONSTANT_KIND_OFFSET) = WIRE_CONSTANT_KIND_SCALAR
+			(record-value scalar/instructions 1 WIRE_RSIR_INSTRUCTION_SIZE
+				WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET) = WIRE_OPCODE_CONSTANT
+			(record-value scalar/instructions 2 WIRE_RSIR_INSTRUCTION_SIZE
+				WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET) = WIRE_OPCODE_RETURN
+		]
+	]
+
+	other-inputs-empty?: func [
 		files [wire-file-source!]
 		symbols [wire-symbol-linkage!]
 		constants [wire-constant-initializer!]
@@ -238,8 +323,6 @@ wire-x64-o0-codegen: context [
 			symbols/global-count = 0
 			symbols/import-count = 0
 			symbols/export-count = 0
-			constants/constant-count = 0
-			constants/constant-data-size = 0
 			constants/part-count = 0
 			constants/binding-count = 0
 			scalar/target-fragment-count = 0
@@ -254,7 +337,7 @@ wire-x64-o0-codegen: context [
 		]
 	]
 
-	supports-empty-void?: func [
+	select-shape: func [
 		files [wire-file-source!]
 		types [wire-type-layout!]
 		functions [wire-function-signature!]
@@ -267,16 +350,27 @@ wire-x64-o0-codegen: context [
 		subroutines [wire-subroutine!]
 		exceptions [wire-exception!]
 		target-view [wire-target-intrinsic!]
-		return: [logic!]
+		return: [integer!]
 	][
-		all [
+		unless all [
 			module-shape? modules
-			void-type? types
-			void-signature? functions
 			function-shape? functions symbols
-			return-block? functions scalar
-			unused-inputs-empty? files symbols constants scalar control calls
+			other-inputs-empty? files symbols constants scalar control calls
 				subroutines exceptions target-view
+		][return SHAPE_NONE]
+		case [
+			all [
+				void-type? types
+				signature? functions 1
+				empty-constants? constants
+				void-return? functions scalar
+			][SHAPE_VOID]
+			all [
+				i32-types? types
+				signature? functions 2
+				i32-literal-return? functions constants scalar
+			][SHAPE_I32_LITERAL]
+			true [SHAPE_NONE]
 		]
 	]
 
@@ -332,6 +426,7 @@ wire-x64-o0-codegen: context [
 	write-output-data: func [
 		writer [wire-container-writer!]
 		entry? [logic!]
+		shape value [integer!]
 		return: [integer!]
 		/local status [integer!]
 	][
@@ -339,10 +434,22 @@ wire-x64-o0-codegen: context [
 		if status <> 0 [return status]
 		status: wire-container-writer/ensure-section-start writer
 		if status <> 0 [return status]
-		status: either entry? [
-			wire-x64-encoder/encode-empty-void-entry writer/arena
-		][
-			wire-x64-encoder/encode-empty-void-function writer/arena
+		case [
+			shape = SHAPE_VOID [
+				status: either entry? [
+					wire-x64-encoder/encode-empty-void-entry writer/arena
+				][
+					wire-x64-encoder/encode-empty-void-function writer/arena
+				]
+			]
+			shape = SHAPE_I32_LITERAL [
+				status: either entry? [
+					wire-x64-encoder/encode-i32-entry writer/arena value
+				][
+					wire-x64-encoder/encode-i32-function writer/arena value
+				]
+			]
+			true [status: wire-x64-encoder/ERROR_ARGUMENTS]
 		]
 		if status <> wire-x64-encoder/ERROR_SUCCESS [return status]
 		status: wire-arena/append-zero writer/arena EMPTY_BITMAP_SIZE
@@ -420,7 +527,7 @@ wire-x64-o0-codegen: context [
 
 	write-relocations: func [
 		writer [wire-container-writer!]
-		exit-symbol [integer!]
+		exit-symbol relocation-offset [integer!]
 		entry? [logic!]
 		return: [integer!]
 		/local status [integer!]
@@ -429,8 +536,7 @@ wire-x64-o0-codegen: context [
 			WIRE_RSCG_SECTION_RELOCATIONS index-flags
 		if all [status = 0 entry?] [status: wire-container-writer/append-u32 writer 1]
 		if all [status = 0 entry?] [
-			status: wire-container-writer/append-u32 writer
-				wire-x64-encoder/EMPTY_VOID_ENTRY_RELOCATION_OFFSET
+			status: wire-container-writer/append-u32 writer relocation-offset
 		]
 		if all [status = 0 entry?] [
 			status: wire-container-writer/append-u32 writer
@@ -489,7 +595,7 @@ wire-x64-o0-codegen: context [
 		if status = 0 [status: wire-container-writer/append-u32 writer 1]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [status: wire-container-writer/append-u32 writer function-size]
-		if status = 0 [status: wire-container-writer/append-u32 writer wire-x64-encoder/EMPTY_VOID_FRAME_SIZE]
+		if status = 0 [status: wire-container-writer/append-u32 writer wire-x64-encoder/FRAME_SIZE]
 		if status = 0 [status: wire-container-writer/append-u32 writer WIRE_RSCG_FUNCTION_FLAG_NONE]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
@@ -513,7 +619,7 @@ wire-x64-o0-codegen: context [
 		if status = 0 [status: wire-container-writer/append-u32 writer 0]
 		if status = 0 [
 			status: wire-container-writer/append-u32 writer
-				wire-x64-encoder/EMPTY_VOID_BITMAP_PATCH_OFFSET
+				wire-x64-encoder/BITMAP_PATCH_OFFSET
 		]
 		if status <> 0 [return status]
 		wire-container-writer/end-section writer
@@ -571,19 +677,21 @@ wire-x64-o0-codegen: context [
 			modules object-view relocations metadata
 	]
 
-	build-empty-void: func [
+	build-function: func [
 		arena [wire-arena!]
 		limit target abi endian pointer-size features-low features-high [integer!]
+		shape [integer!]
 		strings [wire-string-table!]
 		layout [wire-data-layout!]
 		modules [wire-module-lifecycle!]
 		symbols [wire-symbol-linkage!]
+		constants [wire-constant-initializer!]
 		return: [integer!]
 		/local writer [wire-container-writer!]
 			map [wire-codegen-string-map!]
 			entry? [logic!]
-			status module-name function-name function-size extra-count
-			function-symbol exit-symbol entry-symbol [integer!]
+			status module-name function-name function-size extra-count literal
+			function-symbol exit-symbol entry-symbol relocation-offset [integer!]
 	][
 		writer: declare wire-container-writer!
 		map: declare wire-codegen-string-map!
@@ -591,9 +699,29 @@ wire-x64-o0-codegen: context [
 		function-name: record-value symbols/symbols 1 WIRE_RSIR_SYMBOL_SIZE
 			WIRE_RSIR_SYMBOL_NAME_STRING_OFFSET
 		entry?: entry-module? modules
-		function-size: either entry? [
-			wire-x64-encoder/EMPTY_VOID_ENTRY_FUNCTION_SIZE
-		][wire-x64-encoder/EMPTY_VOID_FUNCTION_SIZE]
+		literal: 0
+		relocation-offset: 0
+		case [
+			shape = SHAPE_VOID [
+				function-size: either entry? [
+					wire-x64-encoder/EMPTY_VOID_ENTRY_FUNCTION_SIZE
+				][wire-x64-encoder/EMPTY_VOID_FUNCTION_SIZE]
+				if entry? [
+					relocation-offset:
+						wire-x64-encoder/EMPTY_VOID_ENTRY_RELOCATION_OFFSET
+				]
+			]
+			shape = SHAPE_I32_LITERAL [
+				function-size: either entry? [
+					wire-x64-encoder/I32_ENTRY_FUNCTION_SIZE
+				][wire-x64-encoder/I32_FUNCTION_SIZE]
+				literal: wire-container-reader/read-le32 constants/constant-data 0
+				if entry? [
+					relocation-offset: wire-x64-encoder/I32_ENTRY_RELOCATION_OFFSET
+				]
+			]
+			true [return BUILD_UNSUPPORTED_SHAPE]
+		]
 		extra-count: either entry? [
 			wire-codegen-strings/ENTRY_EXTRA_COUNT
 		][wire-codegen-strings/BASE_EXTRA_COUNT]
@@ -620,11 +748,13 @@ wire-x64-o0-codegen: context [
 			entry-symbol: function-symbol
 		]
 		if status = 0 [status: write-output-sections writer map function-size]
-		if status = 0 [status: write-output-data writer entry?]
+		if status = 0 [status: write-output-data writer entry? shape literal]
 		if status = 0 [
 			status: write-symbols writer map function-size function-symbol entry?
 		]
-		if status = 0 [status: write-relocations writer exit-symbol entry?]
+		if status = 0 [
+			status: write-relocations writer exit-symbol relocation-offset entry?
+		]
 		if status = 0 [status: write-imports writer map exit-symbol entry?]
 		if status = 0 [
 			status: wire-container-writer/empty-section writer

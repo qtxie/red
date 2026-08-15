@@ -435,17 +435,18 @@ Bridge-substrate implementation status:
 - `wire-rsir.reds` performs the shared decode once and applies target, atomic,
   and memory/aggregate checks over unpublished verified views. External views
   are copied only after all layers succeed;
-- an empty USER or SUPPORT module retains the no-code result. The first native
-  slice accepts exactly one internal hidden `void()` function with one block and
-  one `RETURN`; `x64-encoder.reds` emits 17 fixed bytes and
-  `x64-o0-codegen.reds` constructs and self-verifies its complete RSCG;
+- an empty USER or SUPPORT module retains the no-code result. The native slice
+  accepts exactly one internal hidden empty `void()` function or signed `i32`
+  literal return. `x64-encoder.reds` emits the 17/22-byte function or 31/34-byte
+  GLUE entry, and `x64-o0-codegen.reds` constructs and self-verifies its complete
+  RSCG. The GLUE form passes the literal directly to `ExitProcess`;
 - `wire-codegen-strings.reds` merges `.data` and `.text` into the verified input
   string table with two allocation-free scans, preserving canonical order,
   deduplicating names, and explicitly remapping input IDs. Every other valid
   nonempty module returns `CODEGEN_FAILURE` at SELECT with no artifact;
 - `generate-codegen-bridge-fixtures.red` first validates its RSIR, RSCG, and
   RSDG fixtures with the Red verifiers. Its compiled integration test pins exact
-  bytes for both the empty and one-function RSCG outputs and covers decode/
+  bytes for empty, void-function, and i32-function RSCG outputs and covers decode/
   verify/target/select/encode failures, output bounds, disabled diagnostics,
   all six series-alias pairs, nonzero heads, atomic and memory/aggregate view
   errors, and repeated forced GC;

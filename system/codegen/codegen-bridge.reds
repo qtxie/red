@@ -483,7 +483,7 @@ wire-codegen-bridge: context [
 		/local ir-data config-data [byte-ptr!]
 			ir-size config-size status phase target abi endian pointer-size
 			features-low features-high build-status artifact-capacity
-			diagnostic-capacity [integer!]
+			diagnostic-capacity function-shape [integer!]
 			empty-module-shape? [logic!]
 			config-result [wire-rscf-result!]
 			verified-config [wire-rscf-config!]
@@ -601,10 +601,15 @@ wire-codegen-bridge: context [
 		]
 		empty-module-shape?: empty-module? functions modules symbols constants scalar
 			target-view
+		function-shape: wire-x64-o0-codegen/SHAPE_NONE
+		unless empty-module-shape? [
+			function-shape: wire-x64-o0-codegen/select-shape files types functions
+				modules symbols constants scalar control calls subroutines exceptions
+				target-view
+		]
 		unless any [
 			empty-module-shape?
-			wire-x64-o0-codegen/supports-empty-void? files types functions modules
-				symbols constants scalar control calls subroutines exceptions target-view
+			(function-shape <> wire-x64-o0-codegen/SHAPE_NONE)
 		][
 			emit-diagnostic diagnostics verified-config/max-diagnostic-bytes
 				WIRE_STATUS_CODEGEN_FAILURE WIRE_DIAGNOSTIC_PHASE_SELECT
@@ -619,9 +624,10 @@ wire-codegen-bridge: context [
 				target abi endian pointer-size features-low features-high strings layout
 				modules
 		][
-			wire-x64-o0-codegen/build-empty-void output
+			wire-x64-o0-codegen/build-function output
 				verified-config/max-output-bytes target abi endian pointer-size
-				features-low features-high strings layout modules symbols
+				features-low features-high function-shape strings layout modules symbols
+				constants
 		]
 		if build-status <> BUILD_SUCCESS [
 			phase: either all [

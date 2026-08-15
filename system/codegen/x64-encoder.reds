@@ -11,9 +11,12 @@ wire-x64-encoder: context [
 
 	EMPTY_VOID_FUNCTION_SIZE:        17
 	EMPTY_VOID_ENTRY_FUNCTION_SIZE:  31
-	EMPTY_VOID_BITMAP_PATCH_OFFSET:   9
+	I32_FUNCTION_SIZE:               22
+	I32_ENTRY_FUNCTION_SIZE:         34
+	BITMAP_PATCH_OFFSET:              9
 	EMPTY_VOID_ENTRY_RELOCATION_OFFSET: 23
-	EMPTY_VOID_FRAME_SIZE:           32
+	I32_ENTRY_RELOCATION_OFFSET:        26
+	FRAME_SIZE:                      32
 
 	emit-u8: func [
 		arena [wire-arena!]
@@ -50,11 +53,13 @@ wire-x64-encoder: context [
 		ERROR_SUCCESS
 	]
 
-	encode-empty-void: func [
+	encode-function: func [
 		arena [wire-arena!]
 		entry? [logic!]
+		result? [logic!]
+		value [integer!]
 		return: [integer!]
-		/local start status [integer!]
+		/local start status opcode [integer!]
 	][
 		if null? arena [return ERROR_ARGUMENTS]
 		start: arena/size
@@ -70,8 +75,15 @@ wire-x64-encoder: context [
 		if status = ERROR_SUCCESS [status: emit-u32 arena 0]  ; bitmap patch
 		if status = ERROR_SUCCESS [status: emit-u8 arena 6Ah]
 		if status = ERROR_SUCCESS [status: emit-u8 arena 00h] ; parent frame
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 31h]
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena C9h] ; XOR ecx, ecx
+		if result? [
+			opcode: either entry? [B9h][B8h]           ; MOV ecx/eax, imm32
+			if status = ERROR_SUCCESS [status: emit-u8 arena opcode]
+			if status = ERROR_SUCCESS [status: emit-u32 arena value]
+		]
+		if all [status = ERROR_SUCCESS entry? not result?] [status: emit-u8 arena 31h]
+		if all [status = ERROR_SUCCESS entry? not result?] [
+			status: emit-u8 arena C9h                         ; XOR ecx, ecx
+		]
 		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 48h]
 		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 83h]
 		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena ECh]
@@ -91,13 +103,29 @@ wire-x64-encoder: context [
 		arena [wire-arena!]
 		return: [integer!]
 	][
-		encode-empty-void arena false
+		encode-function arena false false 0
 	]
 
 	encode-empty-void-entry: func [
 		arena [wire-arena!]
 		return: [integer!]
 	][
-		encode-empty-void arena true
+		encode-function arena true false 0
+	]
+
+	encode-i32-function: func [
+		arena [wire-arena!]
+		value [integer!]
+		return: [integer!]
+	][
+		encode-function arena false true value
+	]
+
+	encode-i32-entry: func [
+		arena [wire-arena!]
+		value [integer!]
+		return: [integer!]
+	][
+		encode-function arena true true value
 	]
 ]

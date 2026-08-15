@@ -33,6 +33,8 @@ compiler-hybrid-driver: context [
 
 	; Replaced by system/compiler-windows-hybrid-bootstrap.red. These defaults
 	; make an incomplete package fail closed rather than selecting legacy code.
+	; Call these slots through APPLY below: the bootstrap AOT compiler otherwise
+	; binds a direct call to these placeholder bodies before SET installs them.
 	invoke-codegen: func [ir config artifact diagnostics][
 		schema/WIRE_STATUS_INVALID_ARGUMENTS
 	]
@@ -123,7 +125,9 @@ compiler-hybrid-driver: context [
 		; The routine contract requires all four series nodes to be distinct.
 		artifact: make binary! 1
 		diagnostics: make binary! 1
-		set/any 'status try [invoke-codegen ir config artifact diagnostics]
+		set/any 'status try [
+			apply :invoke-codegen reduce [ir config artifact diagnostics]
+		]
 		if error? :status [
 			return set-error ERROR-CONTRACT
 				rejoin ["native codegen raised an error: " mold status] -1
@@ -177,7 +181,7 @@ compiler-hybrid-driver: context [
 				"RSIR linking requires the installed RSCG adapter" -1
 			return false
 		]
-		set/any 'adapted try [invoke-adapter artifact job]
+		set/any 'adapted try [apply :invoke-adapter reduce [artifact job]]
 		if error? :adapted [
 			set-error ERROR-CONTRACT
 				rejoin ["RSCG adapter raised an error: " mold adapted] last-status
@@ -189,7 +193,7 @@ compiler-hybrid-driver: context [
 			return false
 		]
 		unless adapted [
-			message: attempt [adapter-message]
+			message: attempt [apply :adapter-message []]
 			unless string? message [message: "RSCG adapter rejected the native artifact"]
 			set-error ERROR-ADAPTER message last-status
 			return false

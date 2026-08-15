@@ -5,14 +5,8 @@ Red [
 
 #include %compiler-windows-hybrid-core.red
 
-; The adapter independently verifies a serialized RSCG object, so every Red
-; verifier dependency is compiled into the hybrid package explicitly.
-#include %../compiler/wire-file-source.red
-#include %../compiler/wire-data-layout.red
-#include %../compiler/wire-module-lifecycle.red
-#include %../compiler/wire-rscg-object.red
-#include %../compiler/wire-rscg-relocation.red
-#include %../compiler/wire-rscg-metadata.red
+; Native codegen verifies complete RSCG semantics before returning. The Red
+; adapter retains bounded container and consumed-field checks only.
 #include %../compiler/rscg-linker-adapter.red
 #include %../compiler/codegen-bridge.red
 

@@ -13,6 +13,7 @@ compiler-options: context [
 			source: none
 			release?: false
 			debug?: false
+			no-runtime?: false
 			opt-level: 1
 			o2-ir-dump: none
 			red-only?: false
@@ -43,6 +44,7 @@ compiler-options: context [
 				find ["-V" "--version"] token [option-set options 'version? true]
 				find ["-r" "--release"] token [option-set options 'release? true]
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
+				find ["-n" "--no-runtime"] token [option-set options 'no-runtime? true]
 				token = "-O0" [option-set options 'opt-level 0]
 				token = "-O1" [option-set options 'opt-level 1]
 				token = "-O2" [option-set options 'opt-level 2]
@@ -100,7 +102,7 @@ compiler-options: context [
 			'opt-level option-get options 'opt-level
 			'o2-ir-dump option-get options 'o2-ir-dump
 			'static-link? false
-			'runtime? true
+			'runtime? not option-get options 'no-runtime?
 			'red-only? option-get options 'red-only?
 			'redbin-compress? not option-get options 'no-compress?
 			'verbosity option-get options 'verbose

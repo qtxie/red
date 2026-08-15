@@ -10,6 +10,7 @@ fail: func [message [string! block!]][
 inventory: context [
 	paths: none
 	words: none
+	get-words: none
 
 	add: func [table [map!] key [string!] /local count][
 		count: select table key
@@ -23,6 +24,7 @@ inventory: context [
 				root: first :value
 				if any-word? :root [add words form to word! :root]
 			]
+			get-word? :value [add get-words form to word! :value]
 			word? :value [add words form value]
 			any-block? :value [foreach item value [walk :item]]
 			true []
@@ -32,8 +34,9 @@ inventory: context [
 	scan: func [source [block!]][
 		paths: make map! 256
 		words: make map! 256
+		get-words: make map! 64
 		walk source
-		reduce [paths words]
+		reduce [paths words get-words]
 	]
 ]
 
@@ -65,8 +68,12 @@ expect core/2 "codegen-module" 0 "compiler-rsir-core"
 expect core/2 "finish-rscg" 1 "compiler-rsir-core"
 
 driver: inventory/scan load %../../../compiler/hybrid-driver.red
-expect driver/2 "invoke-codegen" 1 "hybrid-driver"
-expect driver/2 "invoke-adapter" 1 "hybrid-driver"
+expect driver/2 "invoke-codegen" 0 "hybrid-driver-static-call"
+expect driver/2 "invoke-adapter" 0 "hybrid-driver-static-call"
+expect driver/2 "adapter-message" 0 "hybrid-driver-static-call"
+expect driver/3 "invoke-codegen" 1 "hybrid-driver-dynamic-call"
+expect driver/3 "invoke-adapter" 1 "hybrid-driver-dynamic-call"
+expect driver/3 "adapter-message" 1 "hybrid-driver-dynamic-call"
 expect driver/1 "config-producer/build" 1 "hybrid-driver"
 expect driver/1 "diagnostic-verifier/verify" 1 "hybrid-driver"
 expect driver/2 "emitter" 0 "hybrid-driver"
@@ -160,14 +167,16 @@ foreach forbidden [
 	%system/emitter.red
 	%system/machine-ir.red
 	%system/machine-ir-x64.red
-	%compiler/frontend.red
-	%compiler/preprocessor.red
-	%compiler/extractor.red
-	%compiler/redbin.red
+	%compiler/wire-file-source.red
+	%compiler/wire-data-layout.red
+	%compiler/wire-module-lifecycle.red
+	%compiler/wire-rscg-object.red
+	%compiler/wire-rscg-relocation.red
+	%compiler/wire-rscg-metadata.red
 ][
 	forbidden: clean-path to file! rejoin [root forbidden]
 	if find closure-files forbidden [
-		fail ["hybrid source closure contains legacy backend " forbidden]
+		fail ["hybrid backend closure contains forbidden Red ownership " forbidden]
 	]
 ]
 

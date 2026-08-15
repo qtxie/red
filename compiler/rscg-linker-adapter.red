@@ -4,17 +4,38 @@ Red [
 ]
 
 unless value? 'int-to-bin [do %int-to-bin.red]
-unless value? 'compiler-wire-rscg-metadata [do %wire-rscg-metadata.red]
+unless value? 'compiler-wire-container [do %wire-container.red]
 
 ; This first compatibility slice is deliberately smaller than the RSCG
-; protocol. It accepts one verified Windows x64 glue entry and rejects every
-; unrepresentable feature before mutating the legacy linker job.
+; protocol. Native codegen verifies the complete RSCG semantics before return.
+; This adapter independently checks the container and every field it consumes,
+; then rejects every unrepresentable feature before mutating the linker job.
 compiler-rscg-linker-adapter: context [
 	schema: compiler-wire-schema
-	metadata-verifier: compiler-wire-rscg-metadata
-	object-verifier: compiler-wire-rscg-object
-	relocation-verifier: compiler-wire-rscg-relocation
 	container: compiler-wire-container
+	INDEX-FLAGS:
+		schema/WIRE_SECTION_FLAG_SORTED
+		+ schema/WIRE_SECTION_FLAG_DEDUPLICATED
+
+	section-spec: reduce [
+		'data-layout       schema/WIRE_RSCG_SECTION_DATA_LAYOUT
+		'strings           schema/WIRE_RSCG_SECTION_STRINGS
+		'string-data       schema/WIRE_RSCG_SECTION_STRING_DATA
+		'output-sections   schema/WIRE_RSCG_SECTION_OUTPUT_SECTIONS
+		'output-data       schema/WIRE_RSCG_SECTION_OUTPUT_DATA
+		'symbols           schema/WIRE_RSCG_SECTION_SYMBOLS
+		'relocations       schema/WIRE_RSCG_SECTION_RELOCATIONS
+		'imports           schema/WIRE_RSCG_SECTION_IMPORTS
+		'exports           schema/WIRE_RSCG_SECTION_EXPORTS
+		'functions         schema/WIRE_RSCG_SECTION_FUNCTIONS
+		'files             schema/WIRE_RSCG_SECTION_FILES
+		'file-checksums    schema/WIRE_RSCG_SECTION_FILE_CHECKSUM_DATA
+		'debug-lines       schema/WIRE_RSCG_SECTION_DEBUG_LINES
+		'debug-parameters  schema/WIRE_RSCG_SECTION_DEBUG_PARAMETERS
+		'gc-frames         schema/WIRE_RSCG_SECTION_GC_FRAMES
+		'modules           schema/WIRE_RSCG_SECTION_MODULES
+		'unwind            schema/WIRE_RSCG_SECTION_UNWIND_FUNCTIONS
+	]
 
 	ERROR-SUCCESS: 0
 	ERROR-ARGUMENTS: 1
@@ -80,19 +101,100 @@ compiler-rscg-linker-adapter: context [
 		]
 	]
 
+	open-view: func [
+		data [binary!]
+		/local verified header view name kind section
+	][
+		verified: container/verify/expect data schema/WIRE_MAGIC_RSCG
+		unless verified/valid? [
+			set-error/at ERROR-INVALID-RSCG
+				rejoin ["invalid RSCG container: " verified/error]
+				verified/error-offset verified/error-section
+			return none
+		]
+		header: verified/header
+		unless all [
+			(select header 'target) = schema/WIRE_TARGET_X86_64
+			(select header 'abi) = schema/WIRE_ABI_WIN64
+			(select header 'target-endian) = schema/WIRE_ENDIAN_LITTLE
+			(select header 'pointer-size) = 8
+			(select header 'feature-mask-low) = 0
+			(select header 'feature-mask-high) = 0
+		][
+			set-error ERROR-INVALID-RSCG
+				"RSCG linker adapter requires the baseline Windows x64 data layout"
+			return none
+		]
+
+		view: make object! [
+			container-result: none
+			data-layout: none
+			strings: none
+			string-data: none
+			output-sections: none
+			output-data: none
+			symbols: none
+			relocations: none
+			imports: none
+			exports: none
+			functions: none
+			files: none
+			file-checksums: none
+			debug-lines: none
+			debug-parameters: none
+			gc-frames: none
+			modules: none
+			unwind: none
+		]
+		view/container-result: verified
+		foreach [name kind] section-spec [
+			section: container/find-section verified kind
+			if all [name <> 'unwind none? section][
+				set-error ERROR-INVALID-RSCG "RSCG is missing a required adapter section"
+				return none
+			]
+			set in view name section
+		]
+		view
+	]
+
+	section-count: func [section [map! none!]][
+		either section [select section 'record-count][0]
+	]
+
+	section-flags: func [section [map! none!]][
+		either section [select section 'flags][0]
+	]
+
+	record-value: func [
+		data [binary!]
+		section [map! none!]
+		id field-offset [integer!]
+		/local count record-size record-offset
+	][
+		if none? section [return none]
+		count: select section 'record-count
+		if any [id <= 0 id > count][return none]
+		record-size: select section 'record-size
+		if any [field-offset < 0 (field-offset + 4) > record-size][return none]
+		record-offset: (select section 'payload-offset)
+			+ ((id - 1) * record-size)
+		container/read-i31 data (record-offset + field-offset)
+	]
+
 	string-at: func [
 		data [binary!]
-		strings [object!]
+		view [object!]
 		id [integer!]
-		/local record relative size bytes
+		/local relative size data-size bytes
 	][
-		if any [id <= 0 id > strings/record-count][return none]
-		record: strings/records-offset + ((id - 1) * schema/WIRE_STRING_SIZE)
-		relative: container/read-i31 data
-			(record + schema/WIRE_STRING_OFFSET_OFFSET)
-		size: container/read-i31 data (record + schema/WIRE_STRING_SIZE_OFFSET)
+		relative: record-value data view/strings id schema/WIRE_STRING_OFFSET_OFFSET
+		size: record-value data view/strings id schema/WIRE_STRING_SIZE_OFFSET
 		if any [none? relative none? size][return none]
-		bytes: copy/part at data (strings/data-offset + relative + 1) size
+		data-size: select view/string-data 'payload-size
+		if any [size > data-size relative > (data-size - size)][return none]
+		bytes: copy/part at data
+			((select view/string-data 'payload-offset) + relative + 1) size
 		to string! bytes
 	]
 
@@ -102,11 +204,17 @@ compiler-rscg-linker-adapter: context [
 		section-id [integer!]
 		/local relative size
 	][
-		relative: object-verifier/output-section-value data view section-id
+		relative: record-value data view/output-sections section-id
 			schema/WIRE_RSCG_OUTPUT_SECTION_DATA_OFFSET_OFFSET
-		size: object-verifier/output-section-value data view section-id
+		size: record-value data view/output-sections section-id
 			schema/WIRE_RSCG_OUTPUT_SECTION_FILE_SIZE_OFFSET
-		copy/part at data (view/output-data-offset + relative + 1) size
+		if any [none? relative none? size][return none]
+		if any [
+			size > (select view/output-data 'payload-size)
+			relative > ((select view/output-data 'payload-size) - size)
+		][return none]
+		copy/part at data
+			((select view/output-data 'payload-offset) + relative + 1) size
 	]
 
 	make-linker-sections: func [
@@ -142,16 +250,23 @@ compiler-rscg-linker-adapter: context [
 
 	prepare: func [
 		artifact job
-		/local verified object-view relocation-view metadata-view modules strings
-			section-id class code-section data-section name-id section-name
-			code data entry-symbol symbol-kind symbol-section symbol-offset symbol-size
-			function-symbol function-section function-offset function-size function-name
-			function-word gc-function bitmap-section bitmap-offset bitmap-size patch-offset
-			bitmap-word-offset import-symbol import-kind import-binding import-visibility
-			import-output import-flags library-id external-id library-name external-name
-			calling-convention import-record-flags import-source relocation-source-section
-			relocation-source-offset relocation-kind relocation-target relocation-addend-low
-			relocation-addend-high relocation-width relocation-flags prepared
+		/local view section-id class code-section data-section name-id section-name
+			output-flags output-alignment output-relative output-size output-memory
+			output-reserved output-cursor code data module-kind image-kind initializer
+			finalizer entry-symbol module-flags module-reserved symbol-kind
+			symbol-binding symbol-visibility symbol-section symbol-offset symbol-size
+			symbol-alignment symbol-flags symbol-origin function-symbol function-section
+			function-offset function-size function-frame-size function-flags
+			function-first-line function-line-count function-first-parameter
+			function-parameter-count function-name function-word gc-function
+			bitmap-section bitmap-offset bitmap-size gc-flags patch-offset
+			bitmap-word-offset import-symbol import-kind import-binding
+			import-visibility import-output import-offset import-size import-alignment
+			import-flags import-origin library-id external-id library-name external-name
+			calling-convention import-record-flags import-source
+			relocation-source-section relocation-source-offset relocation-kind
+			relocation-target relocation-addend-low relocation-addend-high
+			relocation-width relocation-flags prepared
 	][
 		last-error: none
 		last-result: none
@@ -164,64 +279,153 @@ compiler-rscg-linker-adapter: context [
 				"RSCG linker adapter supports only linked, runtime-free Windows x64 PE executables"
 		]
 
-		verified: metadata-verifier/verify artifact
-		unless verified/valid? [
-			return set-error/at ERROR-INVALID-RSCG
-				rejoin ["RSCG metadata verification failed: " verified/error]
-				verified/error-offset verified/error-section
-		]
-		object-view: verified/object-view
-		relocation-view: verified/relocation-view
-		metadata-view: verified/view
-		modules: verified/modules
-		strings: verified/strings
+		view: open-view artifact
+		unless object? view [return none]
+		module-kind: record-value artifact view/modules 1
+			schema/WIRE_RSCG_MODULE_KIND_OFFSET
+		image-kind: record-value artifact view/modules 1
+			schema/WIRE_RSCG_MODULE_IMAGE_KIND_OFFSET
+		initializer: record-value artifact view/modules 1
+			schema/WIRE_RSCG_MODULE_INITIALIZER_SYMBOL_OFFSET
+		finalizer: record-value artifact view/modules 1
+			schema/WIRE_RSCG_MODULE_FINALIZER_SYMBOL_OFFSET
+		entry-symbol: record-value artifact view/modules 1
+			schema/WIRE_RSCG_MODULE_ENTRY_SYMBOL_OFFSET
+		module-flags: record-value artifact view/modules 1
+			schema/WIRE_RSCG_MODULE_FLAGS_OFFSET
+		module-reserved: record-value artifact view/modules 1
+			schema/WIRE_RSCG_MODULE_RESERVED_OFFSET
 		unless all [
-			modules/glue-module = 1
-			modules/image-kind = schema/WIRE_IMAGE_KIND_EXECUTABLE
-			(object-verifier/module-value artifact modules 1
-				schema/WIRE_RSCG_MODULE_KIND_OFFSET) = schema/WIRE_MODULE_KIND_GLUE
+			module-kind = schema/WIRE_MODULE_KIND_GLUE
+			image-kind = schema/WIRE_IMAGE_KIND_EXECUTABLE
+			initializer = 0
+			finalizer = 0
+			integer? entry-symbol
+			entry-symbol > 0
+			entry-symbol <= (section-count view/symbols)
+			module-flags = 0
+			module-reserved = 0
 		][
 			return set-error ERROR-LIFECYCLE
-				"RSCG executable adapter requires one explicit GLUE module"
+				"RSCG executable adapter requires one explicit GLUE entry module"
 		]
-
 		unless all [
-			object-view/output-section-count = 2
-			object-view/symbol-count = 2
-			object-view/function-count = 1
-			relocation-view/relocation-count = 1
-			relocation-view/import-count = 1
-			relocation-view/export-count = 0
-			object-view/debug-line-count = 0
-			object-view/debug-parameter-count = 0
-			metadata-view/gc-frame-count = 1
-			metadata-view/unwind-function-count = 0
-			verified/files/file-count = 0
-			modules/module-count = 1
-			object-view/runtime-module = 0
+			(section-count view/data-layout) = 1
+			(section-count view/output-sections) = 2
+			(section-count view/symbols) = 2
+			(section-count view/functions) = 1
+			(section-count view/relocations) = 1
+			(section-count view/imports) = 1
+			(section-count view/exports) = 0
+			(section-count view/debug-lines) = 0
+			(section-count view/debug-parameters) = 0
+			(section-count view/gc-frames) = 1
+			(section-count view/files) = 0
+			(section-count view/file-checksums) = 0
+			(section-count view/modules) = 1
+			(section-count view/unwind) = 0
 		][
 			return set-error ERROR-UNSUPPORTED-FEATURE
 				"RSCG linker adapter slice supports one entry function, one exit import relocation, and no exports, debug, runtime, or unwind data"
 		]
+		unless all [
+			(section-flags view/data-layout) = 0
+			(section-flags view/strings) = INDEX-FLAGS
+			(section-flags view/string-data) = 0
+			(section-flags view/output-sections) = INDEX-FLAGS
+			(section-flags view/output-data) = 0
+			(section-flags view/symbols) = schema/WIRE_SECTION_FLAG_SORTED
+			(section-flags view/relocations) = INDEX-FLAGS
+			(section-flags view/imports) = INDEX-FLAGS
+			(section-flags view/exports) = INDEX-FLAGS
+			(section-flags view/functions) = INDEX-FLAGS
+			(section-flags view/files) = INDEX-FLAGS
+			(section-flags view/file-checksums) = 0
+			(section-flags view/debug-lines) = schema/WIRE_SECTION_FLAG_SORTED
+			(section-flags view/debug-parameters) = INDEX-FLAGS
+			(section-flags view/gc-frames) = INDEX-FLAGS
+			(section-flags view/modules) = 0
+			any [
+				none? view/unwind
+				(section-flags view/unwind) =
+					(schema/WIRE_SECTION_FLAG_OPTIONAL + INDEX-FLAGS)
+			]
+		][
+			return set-error ERROR-INVALID-RSCG
+				"RSCG adapter sections use unsupported ordering flags"
+		]
+		unless all [
+			(record-value artifact view/data-layout 1
+				schema/WIRE_DATA_LAYOUT_ADDRESS_UNIT_OFFSET) = 1
+			(record-value artifact view/data-layout 1
+				schema/WIRE_DATA_LAYOUT_POINTER_SIZE_OFFSET) = 8
+			(record-value artifact view/data-layout 1
+				schema/WIRE_DATA_LAYOUT_POINTER_ALIGNMENT_OFFSET) = 8
+			(record-value artifact view/data-layout 1
+				schema/WIRE_DATA_LAYOUT_STACK_ALIGNMENT_OFFSET) = 16
+			(record-value artifact view/data-layout 1
+				schema/WIRE_DATA_LAYOUT_MAX_SCALAR_ALIGNMENT_OFFSET) = 8
+			(record-value artifact view/data-layout 1
+				schema/WIRE_DATA_LAYOUT_MAX_AGGREGATE_ALIGNMENT_OFFSET) = 8
+			(record-value artifact view/data-layout 1
+				schema/WIRE_DATA_LAYOUT_INTEGER_REGISTER_WIDTH_OFFSET) = 8
+			(record-value artifact view/data-layout 1
+				schema/WIRE_DATA_LAYOUT_FLAGS_OFFSET) = 0
+		][
+			return set-error ERROR-INVALID-RSCG
+				"RSCG adapter received an incompatible data-layout record"
+		]
 
 		code-section: 0
 		data-section: 0
+		output-cursor: 0
 		section-id: 1
-		while [section-id <= object-view/output-section-count][
-			class: object-verifier/output-section-value artifact object-view section-id
+		while [section-id <= (section-count view/output-sections)][
+			class: record-value artifact view/output-sections section-id
 				schema/WIRE_RSCG_OUTPUT_SECTION_CLASS_OFFSET
-			name-id: object-verifier/output-section-value artifact object-view section-id
+			name-id: record-value artifact view/output-sections section-id
 				schema/WIRE_RSCG_OUTPUT_SECTION_NAME_STRING_OFFSET
-			section-name: string-at artifact strings name-id
+			output-flags: record-value artifact view/output-sections section-id
+				schema/WIRE_RSCG_OUTPUT_SECTION_FLAGS_OFFSET
+			output-alignment: record-value artifact view/output-sections section-id
+				schema/WIRE_RSCG_OUTPUT_SECTION_ALIGNMENT_OFFSET
+			output-relative: record-value artifact view/output-sections section-id
+				schema/WIRE_RSCG_OUTPUT_SECTION_DATA_OFFSET_OFFSET
+			output-size: record-value artifact view/output-sections section-id
+				schema/WIRE_RSCG_OUTPUT_SECTION_FILE_SIZE_OFFSET
+			output-memory: record-value artifact view/output-sections section-id
+				schema/WIRE_RSCG_OUTPUT_SECTION_MEMORY_SIZE_OFFSET
+			output-reserved: record-value artifact view/output-sections section-id
+				schema/WIRE_RSCG_OUTPUT_SECTION_RESERVED_OFFSET
+			section-name: either integer? name-id [string-at artifact view name-id][none]
+			unless all [
+				integer? class
+				integer? output-flags
+				integer? output-alignment
+				integer? output-relative
+				integer? output-size
+				integer? output-memory
+				integer? output-reserved
+				output-flags = schema/WIRE_RSCG_OUTPUT_SECTION_FLAG_NONE
+				output-relative = output-cursor
+				output-size > 0
+				output-memory = output-size
+				output-reserved = 0
+			][
+				return set-error ERROR-SECTION
+					"RSCG output section has an invalid initialized-data extent"
+			]
 			case [
 				all [
 					class = schema/WIRE_OUTPUT_SECTION_CLASS_CODE
 					section-name = ".text"
+					output-alignment = 16
 					code-section = 0
 				][code-section: section-id]
 				all [
 					class = schema/WIRE_OUTPUT_SECTION_CLASS_DATA
 					section-name = ".data"
+					output-alignment = 4
 					data-section = 0
 				][data-section: section-id]
 				true [
@@ -229,99 +433,150 @@ compiler-rscg-linker-adapter: context [
 						"RSCG linker adapter slice requires exactly one .text and one .data section"
 				]
 			]
+			output-cursor: output-cursor + output-size
 			section-id: section-id + 1
 		]
-		if any [code-section = 0 data-section = 0][
+		if any [
+			code-section = 0
+			data-section = 0
+			output-cursor <> (section-count view/output-data)
+		][
 			return set-error ERROR-SECTION
-				"RSCG linker adapter could not find its required output sections"
+				"RSCG linker adapter could not establish exact output-data coverage"
 		]
 
-		entry-symbol: object-verifier/module-value artifact modules 1
-			schema/WIRE_RSCG_MODULE_ENTRY_SYMBOL_OFFSET
-		unless all [entry-symbol > 0 entry-symbol <= object-view/symbol-count][
-			return set-error ERROR-LIFECYCLE
-				"RSCG adapter slice requires an explicit executable entry symbol"
-		]
-
-		symbol-kind: object-verifier/symbol-value artifact object-view entry-symbol
+		symbol-kind: record-value artifact view/symbols entry-symbol
 			schema/WIRE_RSCG_SYMBOL_KIND_OFFSET
-		symbol-section: object-verifier/symbol-value artifact object-view entry-symbol
+		symbol-binding: record-value artifact view/symbols entry-symbol
+			schema/WIRE_RSCG_SYMBOL_BINDING_OFFSET
+		symbol-visibility: record-value artifact view/symbols entry-symbol
+			schema/WIRE_RSCG_SYMBOL_VISIBILITY_OFFSET
+		symbol-section: record-value artifact view/symbols entry-symbol
 			schema/WIRE_RSCG_SYMBOL_OUTPUT_SECTION_OFFSET
-		symbol-offset: object-verifier/symbol-value artifact object-view entry-symbol
+		symbol-offset: record-value artifact view/symbols entry-symbol
 			schema/WIRE_RSCG_SYMBOL_SECTION_OFFSET_OFFSET
-		symbol-size: object-verifier/symbol-value artifact object-view entry-symbol
+		symbol-size: record-value artifact view/symbols entry-symbol
 			schema/WIRE_RSCG_SYMBOL_SIZE_OFFSET
+		symbol-alignment: record-value artifact view/symbols entry-symbol
+			schema/WIRE_RSCG_SYMBOL_ALIGNMENT_OFFSET
+		symbol-flags: record-value artifact view/symbols entry-symbol
+			schema/WIRE_RSCG_SYMBOL_FLAGS_OFFSET
+		symbol-origin: record-value artifact view/symbols entry-symbol
+			schema/WIRE_RSCG_SYMBOL_ORIGIN_MODULE_OFFSET
 		unless all [
 			symbol-kind = schema/WIRE_SYMBOL_KIND_FUNCTION
+			symbol-binding = schema/WIRE_SYMBOL_BINDING_LOCAL
+			symbol-visibility = schema/WIRE_VISIBILITY_HIDDEN
 			symbol-section = code-section
 			symbol-offset = 0
+			integer? symbol-size
+			symbol-size > 0
+			symbol-alignment = 16
+			symbol-flags = 0
+			symbol-origin = 1
 		][
 			return set-error ERROR-SYMBOL
 				"legacy PE executable entry must be a function at .text offset zero"
 		]
 
-		function-symbol: object-verifier/function-value artifact object-view 1
+		function-symbol: record-value artifact view/functions 1
 			schema/WIRE_RSCG_FUNCTION_SYMBOL_OFFSET
-		function-section: object-verifier/function-value artifact object-view 1
+		function-section: record-value artifact view/functions 1
 			schema/WIRE_RSCG_FUNCTION_CODE_SECTION_OFFSET
-		function-offset: object-verifier/function-value artifact object-view 1
+		function-offset: record-value artifact view/functions 1
 			schema/WIRE_RSCG_FUNCTION_CODE_OFFSET_OFFSET
-		function-size: object-verifier/function-value artifact object-view 1
+		function-size: record-value artifact view/functions 1
 			schema/WIRE_RSCG_FUNCTION_CODE_SIZE_OFFSET
+		function-frame-size: record-value artifact view/functions 1
+			schema/WIRE_RSCG_FUNCTION_FRAME_SIZE_OFFSET
+		function-flags: record-value artifact view/functions 1
+			schema/WIRE_RSCG_FUNCTION_FLAGS_OFFSET
+		function-first-line: record-value artifact view/functions 1
+			schema/WIRE_RSCG_FUNCTION_FIRST_DEBUG_LINE_OFFSET
+		function-line-count: record-value artifact view/functions 1
+			schema/WIRE_RSCG_FUNCTION_DEBUG_LINE_COUNT_OFFSET
+		function-first-parameter: record-value artifact view/functions 1
+			schema/WIRE_RSCG_FUNCTION_FIRST_DEBUG_PARAMETER_OFFSET
+		function-parameter-count: record-value artifact view/functions 1
+			schema/WIRE_RSCG_FUNCTION_DEBUG_PARAMETER_COUNT_OFFSET
 		unless all [
 			function-symbol = entry-symbol
 			function-section = code-section
 			function-offset = symbol-offset
 			function-size = symbol-size
+			integer? function-frame-size
+			function-flags = schema/WIRE_RSCG_FUNCTION_FLAG_NONE
+			function-first-line = 0
+			function-line-count = 0
+			function-first-parameter = 0
+			function-parameter-count = 0
 		][
 			return set-error ERROR-SYMBOL
 				"RSCG entry function extent does not match its symbol"
 		]
-		name-id: object-verifier/symbol-value artifact object-view entry-symbol
+		name-id: record-value artifact view/symbols entry-symbol
 			schema/WIRE_RSCG_SYMBOL_NAME_STRING_OFFSET
-		function-name: string-at artifact strings name-id
-		function-word: attempt [to word! function-name]
+		function-name: either integer? name-id [string-at artifact view name-id][none]
+		function-word: either string? function-name [attempt [to word! function-name]][none]
 		unless word? function-word [
 			return set-error ERROR-SYMBOL
 				"RSCG entry symbol name cannot be represented by the legacy linker"
 		]
 
-		import-symbol: relocation-verifier/import-value artifact relocation-view 1
+		import-symbol: record-value artifact view/imports 1
 			schema/WIRE_IMPORT_SYMBOL_OFFSET
-		import-kind: object-verifier/symbol-value artifact object-view import-symbol
-			schema/WIRE_RSCG_SYMBOL_KIND_OFFSET
-		import-binding: object-verifier/symbol-value artifact object-view import-symbol
-			schema/WIRE_RSCG_SYMBOL_BINDING_OFFSET
-		import-visibility: object-verifier/symbol-value artifact object-view import-symbol
-			schema/WIRE_RSCG_SYMBOL_VISIBILITY_OFFSET
-		import-output: object-verifier/symbol-value artifact object-view import-symbol
-			schema/WIRE_RSCG_SYMBOL_OUTPUT_SECTION_OFFSET
-		import-flags: object-verifier/symbol-value artifact object-view import-symbol
-			schema/WIRE_RSCG_SYMBOL_FLAGS_OFFSET
 		unless all [
+			integer? import-symbol
 			import-symbol > 0
-			import-symbol <= object-view/symbol-count
+			import-symbol <= (section-count view/symbols)
 			import-symbol <> entry-symbol
+		][
+			return set-error ERROR-IMPORT
+				"RSCG adapter slice requires one distinct imported symbol"
+		]
+		import-kind: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_KIND_OFFSET
+		import-binding: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_BINDING_OFFSET
+		import-visibility: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_VISIBILITY_OFFSET
+		import-output: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_OUTPUT_SECTION_OFFSET
+		import-offset: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_SECTION_OFFSET_OFFSET
+		import-size: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_SIZE_OFFSET
+		import-alignment: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_ALIGNMENT_OFFSET
+		import-flags: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_FLAGS_OFFSET
+		import-origin: record-value artifact view/symbols import-symbol
+			schema/WIRE_RSCG_SYMBOL_ORIGIN_MODULE_OFFSET
+		unless all [
 			import-kind = schema/WIRE_SYMBOL_KIND_FUNCTION
 			import-binding = schema/WIRE_SYMBOL_BINDING_GLOBAL
 			import-visibility = schema/WIRE_VISIBILITY_DEFAULT
 			import-output = 0
+			import-offset = 0
+			import-size = 0
+			import-alignment = 0
 			import-flags = schema/WIRE_RSCG_SYMBOL_FLAG_UNDEFINED
+			import-origin = 1
 		][
 			return set-error ERROR-IMPORT
 				"RSCG adapter slice requires one undefined global exit function"
 		]
-		library-id: relocation-verifier/import-value artifact relocation-view 1
+		library-id: record-value artifact view/imports 1
 			schema/WIRE_IMPORT_LIBRARY_STRING_OFFSET
-		external-id: relocation-verifier/import-value artifact relocation-view 1
+		external-id: record-value artifact view/imports 1
 			schema/WIRE_IMPORT_EXTERNAL_NAME_STRING_OFFSET
-		library-name: string-at artifact strings library-id
-		external-name: string-at artifact strings external-id
-		calling-convention: relocation-verifier/import-value artifact relocation-view 1
+		library-name: either integer? library-id [string-at artifact view library-id][none]
+		external-name: either integer? external-id [string-at artifact view external-id][none]
+		calling-convention: record-value artifact view/imports 1
 			schema/WIRE_IMPORT_CALLING_CONVENTION_OFFSET
-		import-record-flags: relocation-verifier/import-value artifact relocation-view 1
+		import-record-flags: record-value artifact view/imports 1
 			schema/WIRE_IMPORT_FLAGS_OFFSET
-		import-source: relocation-verifier/import-value artifact relocation-view 1
+		import-source: record-value artifact view/imports 1
 			schema/WIRE_IMPORT_SOURCE_LOCATION_OFFSET
 		unless all [
 			library-name = "kernel32.dll"
@@ -334,24 +589,27 @@ compiler-rscg-linker-adapter: context [
 				"RSCG executable entry must import kernel32.dll ExitProcess with stdcall"
 		]
 
-		relocation-source-section: relocation-verifier/relocation-value artifact
-			relocation-view 1 schema/WIRE_RSCG_RELOCATION_SOURCE_SECTION_OFFSET
-		relocation-source-offset: relocation-verifier/relocation-value artifact
-			relocation-view 1 schema/WIRE_RSCG_RELOCATION_SOURCE_OFFSET_OFFSET
-		relocation-kind: relocation-verifier/relocation-value artifact relocation-view 1
+		relocation-source-section: record-value artifact view/relocations 1
+			schema/WIRE_RSCG_RELOCATION_SOURCE_SECTION_OFFSET
+		relocation-source-offset: record-value artifact view/relocations 1
+			schema/WIRE_RSCG_RELOCATION_SOURCE_OFFSET_OFFSET
+		relocation-kind: record-value artifact view/relocations 1
 			schema/WIRE_RSCG_RELOCATION_KIND_OFFSET
-		relocation-target: relocation-verifier/relocation-value artifact relocation-view 1
+		relocation-target: record-value artifact view/relocations 1
 			schema/WIRE_RSCG_RELOCATION_TARGET_SYMBOL_OFFSET
-		relocation-addend-low: relocation-verifier/relocation-value artifact
-			relocation-view 1 schema/WIRE_RSCG_RELOCATION_RAW_ADDEND_LOW_OFFSET
-		relocation-addend-high: relocation-verifier/relocation-value artifact
-			relocation-view 1 schema/WIRE_RSCG_RELOCATION_RAW_ADDEND_HIGH_OFFSET
-		relocation-width: relocation-verifier/relocation-value artifact relocation-view 1
+		relocation-addend-low: record-value artifact view/relocations 1
+			schema/WIRE_RSCG_RELOCATION_RAW_ADDEND_LOW_OFFSET
+		relocation-addend-high: record-value artifact view/relocations 1
+			schema/WIRE_RSCG_RELOCATION_RAW_ADDEND_HIGH_OFFSET
+		relocation-width: record-value artifact view/relocations 1
 			schema/WIRE_RSCG_RELOCATION_ENCODED_WIDTH_OFFSET
-		relocation-flags: relocation-verifier/relocation-value artifact relocation-view 1
+		relocation-flags: record-value artifact view/relocations 1
 			schema/WIRE_RSCG_RELOCATION_FLAGS_OFFSET
 		unless all [
 			relocation-source-section = code-section
+			integer? relocation-source-offset
+			relocation-source-offset >= function-offset
+			relocation-source-offset <= (function-offset + function-size - 4)
 			relocation-kind = schema/WIRE_RELOCATION_KIND_X64_RIP_REL32
 			relocation-target = import-symbol
 			relocation-addend-low = 0
@@ -363,28 +621,47 @@ compiler-rscg-linker-adapter: context [
 				"RSCG exit import requires one zero-addend x64 RIP-relative relocation"
 		]
 
-		code: copy-output-section artifact object-view code-section
-		data: copy-output-section artifact object-view data-section
-		gc-function: metadata-verifier/gc-frame-value artifact metadata-view 1
+		code: copy-output-section artifact view code-section
+		data: copy-output-section artifact view data-section
+		unless all [binary? code binary? data][
+			return set-error ERROR-SECTION
+				"RSCG output section range cannot be represented by the linker"
+		]
+		unless all [
+			function-offset <= (length? code)
+			function-size <= ((length? code) - function-offset)
+		][
+			return set-error ERROR-SYMBOL
+				"RSCG function extent falls outside the code section"
+		]
+		gc-function: record-value artifact view/gc-frames 1
 			schema/WIRE_RSCG_GC_FRAME_FUNCTION_OFFSET
-		bitmap-section: metadata-verifier/gc-frame-value artifact metadata-view 1
+		bitmap-section: record-value artifact view/gc-frames 1
 			schema/WIRE_RSCG_GC_FRAME_BITMAP_SECTION_OFFSET
-		bitmap-offset: metadata-verifier/gc-frame-value artifact metadata-view 1
+		bitmap-offset: record-value artifact view/gc-frames 1
 			schema/WIRE_RSCG_GC_FRAME_BITMAP_OFFSET_OFFSET
-		bitmap-size: metadata-verifier/gc-frame-value artifact metadata-view 1
+		bitmap-size: record-value artifact view/gc-frames 1
 			schema/WIRE_RSCG_GC_FRAME_BITMAP_SIZE_OFFSET
-		patch-offset: metadata-verifier/gc-frame-value artifact metadata-view 1
+		gc-flags: record-value artifact view/gc-frames 1
+			schema/WIRE_RSCG_GC_FRAME_FLAGS_OFFSET
+		patch-offset: record-value artifact view/gc-frames 1
 			schema/WIRE_RSCG_GC_FRAME_PROLOG_PATCH_OFFSET_OFFSET
 		unless all [
 			gc-function = 1
 			bitmap-section = data-section
 			bitmap-offset = 0
 			bitmap-size = length? data
+			bitmap-size >= 16
+			zero? (bitmap-size // 4)
+			gc-flags = 0
+			integer? patch-offset
+			patch-offset > 0
+			patch-offset <= (function-size - 4)
 		][
 			return set-error ERROR-GC-FRAME
 				"RSCG adapter slice requires one standalone bitmap filling .data"
 		]
-		bitmap-word-offset: to integer! bitmap-offset / 4
+		bitmap-word-offset: (to integer! bitmap-offset) / 4
 		change/part at code (function-offset + patch-offset + 1)
 			int-to-bin/to-bin32 bitmap-word-offset 4
 

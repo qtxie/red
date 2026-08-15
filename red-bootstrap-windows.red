@@ -43,7 +43,7 @@ bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
 
 print-usage: does [
-	print "Usage: red-bootstrap [-r] [-u] [-d] [-O0|-O1|-O2] [--dump-o2-ir file] [-dlib] [-t target] [--red-only|--loaded-red output.reds] [-o output] source.red|source.reds"
+	print "Usage: red-bootstrap [-r] [-u] [-d] [-n] [-O0|-O1|-O2] [--dump-o2-ir file] [-dlib] [-t target] [--red-only|--loaded-red output.reds] [-o output] source.red|source.reds"
 ]
 
 fail-command: func [message][

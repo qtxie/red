@@ -2,6 +2,7 @@ Red [
 	Title: "Saved Red frontend artifact test"
 ]
 
+#include %../../../system/compiler-windows-common.red
 #include %../../../compiler/saved-frontend.red
 #include %../../../compiler/bootstrap-options.red
 
@@ -29,16 +30,25 @@ redbin: #{01020304}
 resources: [version [Title "test"]]
 
 parsed: compiler-options/parse-args [
-	"--loaded-red" "cached.reds" "-o" "compiler.exe" "compiler.red"
+	"--loaded-red" "cached.reds" "--no-runtime" "-o" "compiler.exe" "compiler.red"
 ]
 check all [
 	object? parsed
 	(compiler-options/option-get parsed 'loaded-red) = "cached.reds"
+	compiler-options/option-get parsed 'no-runtime?
 	(compiler-options/option-get parsed 'output) = "compiler.exe"
 	(compiler-options/option-get parsed 'source) = "compiler.red"
 ]["--loaded-red option parsing failed"]
 check error? compiler-options/parse-args ["--loaded-red"]
 	"--loaded-red without a value was accepted"
+runtime-job: compiler-options/to-job parsed
+check object? runtime-job "--no-runtime options did not produce a compiler job"
+check not compiler-system-job/job-get runtime-job 'runtime?
+	"--no-runtime did not disable the Red/System runtime"
+check object? compiler-system-job/apply-header runtime-job [Config: [runtime?: true]]
+	"could not apply a source header after --no-runtime"
+check not compiler-system-job/job-get runtime-job 'runtime?
+	"source header overrode the explicit --no-runtime command-line option"
 
 files: reduce [
 	base

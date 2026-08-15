@@ -22,7 +22,7 @@ fail-command: func [message][
 ]
 
 print-usage: does [
-	print "Usage: hybrid-backend [-r] [-d] [-O0|-O1] -t Windows-X86-64 --loaded-red generated.reds -o output.exe original.red"
+	print "Usage: hybrid-backend [-r] [-d] [-n] [-O0|-O1] -t Windows-X86-64 --loaded-red generated.reds -o output.exe original.red"
 ]
 
 strip-quotes: func [text [string!]][

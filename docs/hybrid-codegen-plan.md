@@ -1,7 +1,8 @@
 # Hybrid Red/System Codegen Execution Plan
 
-Status: implementation in progress. The draft schema generator, dual-language
-constants, compiler-core ownership gate, checked common-container readers, and
+Status: implementation in progress. The draft schema generator, matching Red
+and Red/System constants, compiler-core ownership gate, checked common-container
+readers, and
 independent RSCF, data-layout, string, file, checksum, source-location, type/
 aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
 constant/global-initializer, scalar-operation, memory/aggregate-operation,
@@ -18,17 +19,29 @@ writer and minimal RSIR producer create that semantic module without emitter or
 machine-IR input and pass it through the compiled routine integration test. An
 exclusive `compiler-rsir-core.red` path sends the same semantic event to the
 producer without compiling or initializing the legacy compiler core, emitter,
-or machine IR. The first
-failure-atomic linker adapter slice maps the verified GLUE object into the
+or machine IR. The first failure-atomic linker adapter slice maps the verified
+GLUE object into the
 legacy PE linker, and a fresh process loads, links, and executes the result
 without frontend semantic state. The strict driver now connects that slice to
-codegen, the adapter, and the linker exactly once. A recursive source-closure
-test rejects `compiler-core.red`, `emitter.red`, and `machine-ir*.red` from the
-hybrid package. The designated legacy compiler completes the hybrid compiler's
-frontend-only build in 34.9 seconds and writes a 4.50 MB generated Red/System
-source plus a 483 KB Redbin payload. Compiling even the smaller AOT integration
-package through the legacy native emitter still takes 3 minutes 25 seconds, so
-that native phase is a comparison baseline, not a valid fast-build route.
+codegen, the adapter, and the linker exactly once. Native codegen remains the
+authoritative complete RSCG verifier; the product adapter now retains only the
+bounded container and consumed-field checks needed before mapping to the Red
+linker, while the six complete Red RSCG verifier modules remain test oracles.
+A recursive source-closure test rejects `compiler-core.red`, `emitter.red`,
+`machine-ir*.red`, and those six redundant verifier modules from the hybrid
+backend package. That ownership move reduced the designated existing compiler's
+generated source from 4.50 MB to 3.84 MB and its Redbin payload from about 483 KB
+to about 424 KB; observed frontend-only time fell from 34.9 seconds to 22.9-25.6
+seconds. With an existing development runtime, direct O1 AOT builds of the
+current full entry take about 126-133 seconds, of which about 95-102 seconds is
+still the existing compiler's native phase. A separate run that rebuilt
+`libRedRT.dll` took about 230 seconds wall time and is not comparable to the
+runtime-ready samples. The AOT path now also invokes installed driver hooks
+dynamically: direct calls were statically bound by the existing compiler to the
+fail-closed placeholders. The rebuilt executable codegens and links the current
+empty-function slice in roughly 16 ms and 32 ms respectively. This executable
+is still a prototype, not accepted H0: it does not become H0 until the same full
+source entry covers the complete self-host corpus and product behavior.
 The protocol remains unfrozen until the remaining Windows x64 feature blockers
 and message-level semantic fixtures satisfy the Phase 1 exit criteria.
 
@@ -83,11 +96,28 @@ release, development, DLL, WindowLongPtr, and View native phases. Target
 conditions already encoded by the canonical runner are allowed; a hybrid-only
 failure allowlist is not.
 
-The same candidate must satisfy both compiler-build gates: the designated
-legacy compiler's frontend-only seed route plus hybrid backend, and hybrid
-generation N building N+1. Neither timed route may enter the legacy emitter
-native phase. The suite gate is rerun after runtime-object caching and again on
-the fixed-point generation used for release.
+The same complete hybrid compiler source tree must satisfy both direct
+compiler-build gates: the designated existing compiler building generation H0,
+and hybrid generation N building N+1. There is no reduced bootstrap compiler or
+separate minimal self-host source tree. "Complete" describes product behavior,
+not a license to retain Red implementations of backend work: H0 keeps the
+smallest practical Red frontend/linker/bridge closure and implements
+verification, optimization, code generation, and object construction in
+Red/System. The complete wall time of each compiler is counted; a saved-frontend
+split build is useful recovery evidence but cannot replace either gate. The
+suite gate is rerun after runtime-object caching and again on the fixed-point
+generation used for release.
+
+The primary old-to-H0 speed lever is therefore the amount of Red in `S`. Every
+Red module retained in H0 is lowered by the existing Red frontend and expands
+the generated Red/System program that its native phase must compile. Product
+closure reports track Red source bytes, expanded `.reds` bytes, Redbin bytes,
+and direct Red/System source bytes separately. A move counts only when the Red
+implementation leaves the product closure and the complete responsibility is
+owned by Red/System; renaming, saving, or skipping an incomplete Red module does
+not count. The practical target is a complete compiler with the minimum Red
+frontend, RSIR serialization, bridge, and linker ownership necessary for the
+product contract.
 
 ## Evidence and constraints
 
@@ -126,17 +156,32 @@ switching to a runtime DLL.
 | legacy linker adapter first | reduces initial scope while making every old encoding explicit and testable |
 | O0/O1 correctness before O2 | the current O2 path is experimental and is not the migration foundation |
 | source-closure exclusion | an uncalled legacy emitter still makes the compiler itself slow to build |
-| two fast bootstrap routes | legacy-seeded and hybrid-to-hybrid compiler evolution must both be fast |
+| one complete, Red-thin self-host source | the existing compiler and hybrid N rebuild the exact same full product; backend responsibilities are not duplicated in Red |
+| measure all source representations | fewer Red files matter only when expanded Red/System and complete wall time fall too |
 
-Two mutually exclusive driver modes are allowed during migration:
+The hybrid product has one backend path: RSIR -> Red/System codegen -> RSCG ->
+linker, with unsupported input a hard diagnostic. Legacy behavior is observed
+only through a separate existing-compiler executable used as an external seed
+and oracle. Migration-only dual-mode hooks are not part of the hybrid source
+closure and are removed before release. There is no same-invocation shadow
+mode; differential evidence comes from separate compiler processes.
 
-- `legacy`: current emitter only;
-- `rsir`: RSIR -> Red/System codegen -> RSCG -> linker, with unsupported input a
-  hard diagnostic and no emitter invocation.
+The source-closure inventory never defines a functionally smaller bootstrap
+target. It runs against the complete hybrid source to remove nonessential Red
+ownership, find unsupported language features, order implementation work, and
+prove that legacy backend dependencies are absent. Moving a responsibility from
+Red into Red/System is valid closure reduction; omitting that responsibility or
+building a reduced compiler is not. Until that complete source builds H0 and H0
+builds the same source as H1, the existing compiler remains the development
+compiler used to rebuild H0.
 
-There is no same-invocation shadow mode. Differential evidence comes from
-separate `legacy` and `rsir` runs so a production compile never performs both
-backend workloads.
+Runtime replacement of a context function is not sufficient evidence for this
+boundary. The designated existing AOT compiler can statically bind a direct
+call to the function body present when the context is compiled, ignoring a
+later `set in` replacement. Injectable migration hooks must be invoked through
+an explicitly dynamic function value and have an AOT integration test; final
+single-backend product calls should become direct once the injection boundary is
+no longer needed.
 
 ## Phase 0: baseline and dependency audit
 
@@ -439,7 +484,8 @@ Deliverables:
   tree of Red blocks;
 - never start or read `machine-ir.red` during an `rsir` compile; differential
   evidence uses separate legacy runs and never consumes direct byte chunks;
-- retain only the two mutually exclusive `legacy` and `rsir` backend modes.
+- expose no runtime backend selector in the hybrid compiler; its only lowering
+  destination is the RSIR semantic sink.
 
 Recommended slice order:
 
@@ -455,11 +501,12 @@ Tests and exit criteria:
 
 - each slice adds positive, negative, and malformed semantic fixtures before
   moving to the next;
-- `rsir` mode produces deterministic, semantically valid RSIR for the entire
-  Windows x64 system suite without also running `legacy`;
+- the hybrid compiler produces deterministic, semantically valid RSIR for the
+  entire Windows x64 system suite through its single backend path;
 - RSIR creation has no reads from emitter addresses, stacks, chunks, bitmaps,
   or symbol reference blocks;
-- legacy mode remains behaviorally unchanged.
+- separate runs of the designated existing compiler remain available only as a
+  differential oracle during migration.
 
 ## Phase 4: Red/System internal MIR and verifier
 
@@ -511,7 +558,8 @@ Tests:
   small/large structs, callbacks, variadic/typed/custom calls, and return modes;
 - GC probes force collection with live handles in arguments, locals, callee-save
   registers, and spills;
-- atomic and overflow edge cases run in both legacy and rsir modes.
+- atomic and overflow edge cases run separately through the designated existing
+  compiler and the hybrid compiler.
 
 Current implementation slice:
 
@@ -527,7 +575,8 @@ Current implementation slice:
 
 Exit criteria:
 
-- focused probes execute identically in legacy and rsir modes;
+- focused probes execute identically through separate existing-compiler and
+  hybrid-compiler processes;
 - RSCG self-verifies without consulting frontend objects;
 - no selected function contains copied legacy prolog, body, epilog, or bitmap
   bytes.
@@ -622,10 +671,12 @@ Exit criteria:
 
 - `run-all-tests-x64.r --binary <hybrid-compiler> --batch` exits zero, including
   all target-applicable Red/System and Red suites and every native subphase;
-- the Red compiler and its generated runtime sources compile in `rsir` mode;
+- the complete hybrid compiler and its generated runtime sources compile
+  through the hybrid compiler's single RSIR backend;
 - debug stack traces, GC stress, imports/exports, and callbacks pass repeated
   runs;
-- legacy and rsir compile-error behavior agrees at the frontend boundary.
+- hybrid and designated-existing-compiler compile-error behavior agrees at the
+  frontend boundary.
 
 ## Phase 8: precompiled static runtime RSCG
 
@@ -661,23 +712,30 @@ Exit criteria:
 - cached and freshly generated runtime objects produce equivalent test results;
 - corrupt or mismatched embedded objects are rejected before linking.
 
-Bootstrap packaging sequence:
+Bootstrap and packaging sequence:
 
-1. the existing compiler performs only its Red frontend pass for the hybrid
-   compiler and saves the generated Red/System source plus Redbin payload;
-2. the standalone hybrid Red/System path consumes that saved frontend result,
-   emits RSIR, invokes native codegen, and links the first hybrid-only candidate;
-3. the candidate generates and verifies the target runtime RSCG plus frontend
-   interface manifest as an external bundle;
-4. the candidate builds the next hybrid generation with that exact bundle,
-   recording its content and configuration fingerprints;
-5. the existing-compiler-seeded route and the hybrid-to-hybrid route are timed
-   independently, and neither may execute the legacy emitter native phase;
-6. bundle/schema fingerprints and the complete test matrix must stabilize
-   across two hybrid generations.
+1. freeze one complete hybrid compiler source set `S`, containing the full Red
+   frontend, thin RSIR bridge/linker ownership, native codegen, and required
+   runtime assets; aggressively minimize its Red closure without defining a
+   functionally reduced self-host variant;
+2. throughout pre-self-host development, the designated existing compiler
+   directly rebuilds all of `S` into H0 after each relevant implementation
+   change;
+3. once H0 accepts the full self-host corpus, H0 directly compiles the exact
+   same `S` into H1, then H1 compiles the same `S` into H2;
+4. compare configuration, schema, source, embedded-runtime, and generated-object
+   fingerprints across H1 and H2 and run the self-host smoke gates;
+5. after the H0 -> H1 -> H2 closure is stable, use the newest hybrid generation
+   for normal compiler development; keep the old executable outside the normal
+   build graph as recovery and differential evidence only;
+6. generate and verify the target runtime RSCG plus frontend interface manifest,
+   then require the complete suite matrix to stabilize across two release
+   generations.
 
-This sequence uses no Stage0/Rebol compiler. Keeping the bundle external until
-step 3 makes failures inspectable and avoids hiding a circular build dependency.
+This sequence uses no Stage0/Rebol compiler. A saved Red frontend output may be
+kept as a diagnostic checkpoint while H0 is incomplete, but it cannot create or
+validate a substitute bootstrap compiler and cannot satisfy any direct-build or
+self-host gate.
 
 The saved frontend boundary is a four-file artifact set: `<name>.reds`,
 `<name>.reds.redbin`, `<name>.reds.resources.red`, and
@@ -689,31 +747,29 @@ Red/System loader runs. A compiler containing the new frontend writes all four
 files directly; a pre-existing `--red-only` compiler can be followed by
 `tools/self_hosting/seal-saved-frontend.red` without invoking a native backend.
 
-The first Windows x64 development seed confirms this boundary reaches the
-independent compiler core: the existing compiler's frontend-only pass took
-25.826 seconds, sealing took 1.191 seconds, and the standalone seed loaded that
-set before hard-failing in 0.651 seconds at the intentionally unsupported
-Red/System runtime lifecycle. Its one-time legacy AOT build took 126.6 seconds
-and is diagnostic bootstrap cost, not a result accepted by either fast-build
-gate.
+The first Windows x64 development prototype confirms that the saved boundary
+reaches the independent compiler core: the existing compiler's frontend-only
+pass took 25.826 seconds, sealing took 1.191 seconds, and the standalone binary
+loaded that set before hard-failing in 0.651 seconds at the intentionally
+unsupported Red/System runtime lifecycle. This prototype is not H0 because its
+frontend/codegen coverage is incomplete. Its 126.6-second old-compiler AOT build
+is diagnostic data, not a self-host result.
 
-## Phase 9: bootstrap, performance gates, and default switch
+## Phase 9: bootstrap, performance gates, and release
 
 Benchmark protocol:
 
 1. Build each candidate through both compiler-build routes:
 
    ```powershell
-   <existing-compiler> --red-only -t Windows-X86-64 `
-       -o <candidate.reds> <compiler-source>
-   <hybrid-backend> --loaded-red <candidate.reds> `
-       -o <candidate.exe> <compiler-source>
-
+   <existing-compiler> -t Windows-X86-64 `
+       -o <hybrid-1.exe> <compiler-source>
    <hybrid-N> -t Windows-X86-64 -o <hybrid-N+1.exe> <compiler-source>
    ```
 
-   The first measurement includes both processes. A direct monolithic build by
-   the legacy emitter is diagnostic-only and cannot satisfy this gate.
+   Each measurement includes the complete direct build. The saved-frontend plus
+   standalone-backend route is recorded separately for diagnosis and recovery,
+   but cannot satisfy either compiler-build gate.
 2. Audit the hybrid source/include closure, then verify executable dependencies
    with `dumpbin /dependents`.
 3. Warm once, then run at least five isolated `hello.red` release compilations
@@ -732,7 +788,7 @@ Proposed default-switch gates:
 
 - zero Windows x64 test regressions and zero silent fallbacks;
 - zero legacy emitter or machine-IR files in the hybrid development package
-  closure, and zero legacy native-backend phases in either compiler-build route;
+  closure, and zero legacy native-backend phases in hybrid N -> N+1;
 - Red frontend plus RSIR serialization no more than 10% slower than the
   corresponding legacy semantic phase;
 - native decode/optimization/codegen at most 25% of the measured legacy backend
@@ -749,12 +805,12 @@ Proposed default-switch gates:
 
 After the gates pass:
 
-- switch Windows x64 default to `rsir`, retain `legacy` for one bounded audit
-  period, and collect any mismatch as a release blocker;
-- remove current O2 dual-work hooks first, then delete x64 emitter code only
-  after searches and instrumentation prove it is unreachable;
-- remove the legacy mode and compatibility adapter internals in separate commits
-  once the typed linker path, if adopted, has equivalent coverage.
+- ship the Windows x64 hybrid compiler with RSIR as its only backend path;
+- remove migration-only backend-mode and O2 dual-work hooks after searches and
+  source-closure tests prove they are absent from the product;
+- keep the designated old executable only as an external audit oracle; removal
+  of old x64 emitter sources is a separate repository cleanup after the typed
+  linker path, if adopted, has equivalent coverage.
 
 Other targets are subsequent projects. ARM64 is the next sensible backend, but
 the RSIR protocol must not claim target independence until a second backend has
@@ -769,10 +825,10 @@ validated the abstractions.
 | separate-run semantic differential | frontend omissions and wrong ownership |
 | encoder vectors | machine-byte and relocation mistakes |
 | ABI/GC probes | calling convention and live-root corruption |
-| legacy differential execution | behavioral codegen regressions |
+| external-compiler differential execution | behavioral codegen regressions |
 | object reload/merge | hidden frontend/linker coupling |
 | complete Red/System and Red suites | language/runtime/GUI/linking integration |
-| legacy-seeded compiler build | slow or circular first hybrid bootstrap |
+| existing-compiler H0 build | incomplete product source or slow first hybrid bootstrap |
 | hybrid N -> N+1 build | compiler self-hosting instability and iteration speed |
 | performance harness | optimization that only moves or duplicates work |
 
@@ -793,9 +849,9 @@ relocation inspection are authoritative.
 | legacy linker drops a relocation | per-kind mapping tests and reject-by-default adapter |
 | runtime cache becomes stale | complete cache key plus schema/build fingerprints |
 | cached code lacks frontend state/startup context | interface manifest plus explicit lifecycle/glue functions |
-| differential testing duplicates production work | run `legacy` and `rsir` as separate test processes; each production compile selects one mode |
+| differential testing duplicates production work | run the existing and hybrid compiler executables as separate processes; the hybrid product has only RSIR |
 | optimizer work obscures parity | O0 first, pass-by-pass verifier, O1 gates before O2 |
-| bootstrap cycle breaks recovery | small commits, checked-in schema output, canonical Stage1 compiler |
+| bootstrap cycle breaks recovery | small commits, checked-in schema output, frozen existing compiler |
 | unused legacy code keeps rebuilds slow | source-closure audit, not merely runtime poison tests |
 
 ## Commit boundaries
@@ -805,5 +861,5 @@ completed task is committed as required by the repository workflow. Suggested
 major boundaries are: protocol/fixtures, reader/arena, writer/diagnostics,
 routine bridge, RSIR module tables, RSIR function CFG, MIR verifier, x64 scalar
 encoder, x64 ABI/frame/GC, RSCG merger, linker adapter, full coverage, runtime
-object cache, and default switch. The emitter deletion is never combined with
-the default switch.
+object cache, and single-backend release. Removing historical emitter sources
+is never combined with the product-path switch.

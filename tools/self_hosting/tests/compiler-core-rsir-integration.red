@@ -1,8 +1,9 @@
 Red [
-	Title: "Compiler-core exclusive RSIR frontend integration"
+	Title: "RSIR-core exclusive frontend integration"
 ]
 
-#include %../../../system/compiler-windows-bootstrap.red
+#include %../../../system/compiler-windows-common.red
+#include %../../../system/compiler-rsir-core.red
 
 red-compiler-process-get: func [spec code [block!]][false]
 red-compiler-process-in: func [path word code [block!]][false]
@@ -36,39 +37,8 @@ unless source [
 unless source [fail ["cannot access RSIR integration fixture from: " system/options/path]]
 unless exists? source [fail ["cannot access RSIR integration fixture: " source]]
 
-code-before: copy emitter/code-buf
-data-before: copy emitter/data-buf
-rodata-before: copy emitter/rodata-buf
-bits-before: copy emitter/bits-buf
-symbols-before: copy/deep emitter/symbols
-pic-before: emitter/target/PIC?
-
-; Poison every legacy entry reachable for this source shape.  Successful
-; compilation proves that the RSIR path is selected before any of them run.
-emitter/init: func [link? job][fail "RSIR path invoked emitter/init"]
-emitter/add-native: func [name][fail "RSIR path invoked emitter/add-native"]
-emitter/encode-ptr-bitmap: func [locals /metadata fspec][
-	fail "RSIR path invoked emitter/encode-ptr-bitmap"
-]
-emitter/store-ptr-bitmap: func [list][fail "RSIR path invoked emitter/store-ptr-bitmap"]
-emitter/store-bitmaps: func [compress?][fail "RSIR path invoked emitter/store-bitmaps"]
-emitter/enter: func [name locals offset][fail "RSIR path invoked emitter/enter"]
-emitter/leave: func [name locals args-size locals-size return-spec][
-	fail "RSIR path invoked emitter/leave"
-]
-emitter/reloc-native-calls: does [fail "RSIR path invoked emitter/reloc-native-calls"]
-emitter/target/on-init: does [fail "RSIR path invoked target/on-init"]
-emitter/target/on-root-level-entry: does [fail "RSIR path invoked target/on-root-level-entry"]
-emitter/target/on-global-prolog: func [runtime? type][
-	fail "RSIR path invoked target/on-global-prolog"
-]
-emitter/target/on-global-epilog: func [runtime? type][
-	fail "RSIR path invoked target/on-global-epilog"
-]
-emitter/target/on-finalize: does [fail "RSIR path invoked target/on-finalize"]
-rs-o2-ir/start-session: func [opt-level target path verbosity debug-mode][
-	fail "RSIR path invoked machine-ir/start-session"
-]
+check not value? 'emitter "RSIR core installed the legacy emitter"
+check not value? 'rs-o2-ir "RSIR core installed the legacy machine IR"
 
 job: compiler-system-job/new 'Windows-X86-64
 unless object? job [fail "could not create the Windows x64 compilation job"]
@@ -83,19 +53,13 @@ compiler-system-job/job-set job 'dev-mode? false
 system-dialect/compile/options source job
 artifact: system-dialect/last-rsir
 
-check binary? artifact "compiler-core did not return RSIR"
-check (length? artifact) = 1396 "compiler-core RSIR size changed"
+check binary? artifact "RSIR core did not return RSIR"
+check (length? artifact) = 1396 "RSIR core output size changed"
 check (checksum artifact 'SHA256) =
 	#{FD80E5DEB0999934DDB1BCBBB724251B745341E53C32258566C659B03A0433DC}
-	"compiler-core RSIR bytes differ from the independent fixture"
+	"RSIR core bytes differ from the independent fixture"
 check none? system-dialect/last-result "RSIR compile published a legacy linker result"
-check not rs-o2-ir/session? "RSIR compile left a machine-IR session active"
-check not rs-o2-ir/function-active? "RSIR compile created a machine-IR function"
-check code-before = emitter/code-buf "RSIR compile changed the emitter code buffer"
-check data-before = emitter/data-buf "RSIR compile changed the emitter data buffer"
-check rodata-before = emitter/rodata-buf "RSIR compile changed the emitter rodata buffer"
-check bits-before = emitter/bits-buf "RSIR compile changed the emitter bitmap buffer"
-check symbols-before = emitter/symbols "RSIR compile changed the emitter symbol table"
-check pic-before = emitter/target/PIC? "RSIR compile changed the emitter target configuration"
+check not value? 'emitter "RSIR compile installed the legacy emitter"
+check not value? 'rs-o2-ir "RSIR compile installed the legacy machine IR"
 
-print "PASS: compiler-core exclusive RSIR frontend"
+print "PASS: RSIR-core exclusive frontend"

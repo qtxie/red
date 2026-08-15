@@ -3,17 +3,23 @@ Red [
 	File:  %compiler-core.red
 ]
 
-#include %machine-ir.red
 #include %../compiler/wire-schema.red
 #include %../compiler/wire-writer.red
+#include %../compiler/wire-container.red
+#include %../compiler/wire-string-table.red
+#include %../compiler/wire-diagnostics.red
 #include %../compiler/rsir-producer.red
 #include %../compiler/rsir-sink.red
+#include %../compiler/rscf-producer.red
+#include %../compiler/hybrid-driver.red
 
 system-dialect: context [
 	verbose:  	  0										;-- logs verbosity level
 	job: 		  none									;-- reference the current job object
 	last-result: none								;-- last [compile-time link-time size output] tuple
 	last-rsir: none									;-- last complete RSIR binary from the exclusive frontend path
+	last-rscg: none									;-- last native RSCG artifact from the exclusive backend path
+	last-diagnostics: none							;-- last native RSDG binary, empty on success
 	backend-mode: 'legacy							;-- active mode is fixed at compile entry
 	rsir-state: none									;-- current semantic sink state
 	runtime-path: %system/runtime/
@@ -6640,9 +6646,6 @@ system-dialect: context [
 			job/type <> 'exe [
 				compiler/throw-error "RSIR frontend currently supports only executable modules"
 			]
-			job/link? [
-				compiler/throw-error "RSIR frontend cannot link before the RSCG adapter exists"
-			]
 			job/runtime? [
 				compiler/throw-error "RSIR frontend does not yet support the Red/System runtime"
 			]
@@ -6665,6 +6668,9 @@ system-dialect: context [
 			any [job/need-main? job/red-only? job/libRed? job/libRedRT? job/libRedRT-update?][
 				compiler/throw-error "RSIR frontend received unsupported module lifecycle options"
 			]
+			all [job/link? not compiler-hybrid-driver/installed?][
+				compiler/throw-error "RSIR linking requires the Windows hybrid codegen package"
+			]
 			true [true]
 		]
 	]
@@ -6678,6 +6684,18 @@ system-dialect: context [
 			]
 		]
 		last-rsir: output
+	]
+
+	finish-rscg: func [/local output error][
+		output: compiler-hybrid-driver/generate last-rsir job
+		last-diagnostics: compiler-hybrid-driver/last-diagnostics
+		unless binary? output [
+			error: compiler-hybrid-driver/last-error
+			compiler/throw-error either error [error/message][
+				"native codegen failed without a diagnostic"
+			]
+		]
+		last-rscg: output
 	]
 
 	set-verbose-level: func [level [integer!]][
@@ -6986,7 +7004,7 @@ system-dialect: context [
 			job-data [block!]
 		/local
 			comp-time link-time err output src resources icon buffer buffer-size
-			file file-list sections result mode-slot
+			file file-list sections result mode-slot link-requested?
 	][
 		comp-time: now/time/precise
 		phase-timer/begin 'backend-setup
@@ -6995,6 +7013,8 @@ system-dialect: context [
 		buffer: none
 		last-result: none
 		last-rsir: none
+		last-rscg: none
+		last-diagnostics: none
 		rsir-state: none
 		file-list: either block? files [files][reduce [files]]
 
@@ -7078,6 +7098,11 @@ system-dialect: context [
 		set-verbose-level opts/verbosity
 		either rsir-mode? [
 			finish-rsir
+			if job/link? [
+				phase-timer/begin 'native-codegen
+				finish-rscg
+				phase-timer/finish 'native-codegen
+			]
 		][
 			compiler/finalize						;-- compile all functions
 			rs-o2-ir/end-session
@@ -7094,37 +7119,47 @@ system-dialect: context [
 			]
 		]
 
-		if all [not rsir-mode? opts/link?][
+		link-requested?: either rsir-mode? [job/link?][opts/link?]
+		if link-requested? [
 			link-time: now/time/precise
 			phase-timer/begin 'link-prepare
-			set in job 'symbols emitter/symbols
-			sections: compose/deep/only [
-				code   [- 	(emitter/code-buf)]
-				data   [- 	(emitter/data-buf)]
-				import [- - (compiler/imports)]
-			]
-			set in job 'sections sections
-			unless empty? emitter/rodata-buf [		;-- read-only data section, laid out between code and data
-				insert at sections 3 compose/deep/only [rodata [- (emitter/rodata-buf)]]
-			]
-			unless empty? compiler/exports [
-				append sections compose/deep/only [
-					export [- - (compiler/exports)]
+			either rsir-mode? [
+				unless compiler-hybrid-driver/adapt last-rscg job [
+					err: compiler-hybrid-driver/last-error
+					compiler/throw-error either err [err/message][
+						"RSCG adapter failed without a diagnostic"
+					]
 				]
-			]
-			if job/OS = 'Windows [
-				if icon: find resources 'icon [
-					insert skip icon 2 reduce ['group-icon icon/2]
+			][
+				set in job 'symbols emitter/symbols
+				sections: compose/deep/only [
+					code   [- 	(emitter/code-buf)]
+					data   [- 	(emitter/data-buf)]
+					import [- - (compiler/imports)]
 				]
-				append resources reduce ['manifest none]		;-- always use manifest file in DLL and EXE
-			]
-			unless empty? resources [
-				append sections compose/deep/only [
-					rsrc   [- - (resources)]
+				set in job 'sections sections
+				unless empty? emitter/rodata-buf [	;-- read-only data section, laid out between code and data
+					insert at sections 3 compose/deep/only [rodata [- (emitter/rodata-buf)]]
 				]
-			]
-			if opts/debug? [
-				set in job 'debug-info reduce ['lines compiler/debug-lines]
+				unless empty? compiler/exports [
+					append sections compose/deep/only [
+						export [- - (compiler/exports)]
+					]
+				]
+				if job/OS = 'Windows [
+					if icon: find resources 'icon [
+						insert skip icon 2 reduce ['group-icon icon/2]
+					]
+					append resources reduce ['manifest none]	;-- always use manifest file in DLL and EXE
+				]
+				unless empty? resources [
+					append sections compose/deep/only [
+						rsrc   [- - (resources)]
+					]
+				]
+				if opts/debug? [
+					set in job 'debug-info reduce ['lines compiler/debug-lines]
+				]
 			]
 			phase-timer/finish 'link-prepare
 			phase-timer/begin 'link-build
@@ -7135,9 +7170,9 @@ system-dialect: context [
 
 		set-verbose-level opts/verbosity
 		output-logs
-		if any [rsir-mode? opts/link? not opts/dev-mode?][clean-up]
+		if any [rsir-mode? link-requested? not opts/dev-mode?][clean-up]
 		set-verbose-level 0
-		unless rsir-mode? [
+		if any [not rsir-mode? link-requested?][
 			buffer: get in job 'buffer
 			buffer-size: either binary? buffer [length? buffer][0]
 			result: make block! 4

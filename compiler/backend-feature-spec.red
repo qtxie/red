@@ -6,6 +6,8 @@ Red [
 ; `specified` means the wire representation is complete enough to implement
 ; independent semantic verifiers. It does not mean frontend or codegen support
 ; exists. `blocked` entries name the contract that must be resolved first.
+; Final product acceptance is the strictly broader root runner:
+; run-all-tests-x64.r --binary <hybrid-compiler> --batch
 compiler-backend-feature-spec: [
 	target WINDOWS_X64
 	runner "system/tests/run-all.r"
@@ -57,6 +59,7 @@ compiler-backend-feature-spec: [
 				"tools/self_hosting/tests/wire-rscf-test.red"
 				"tools/self_hosting/tests/wire-rscf-reds-test.reds"
 				"tools/self_hosting/tests/rscf-producer-test.red"
+				"tools/self_hosting/tests/hybrid-driver-test.red"
 				"system/tests/source/units/size-x64-test.reds"
 			]
 			blockers []
@@ -145,6 +148,8 @@ compiler-backend-feature-spec: [
 				"tools/self_hosting/tests/rsir-producer-test.red"
 				"tools/self_hosting/tests/rsir-sink-test.red"
 				"tools/self_hosting/tests/compiler-core-rsir-integration.red"
+				"tools/self_hosting/tests/compiler-core-hybrid-driver-integration.red"
+				"tools/self_hosting/tests/hybrid-driver-ownership-test.red"
 				"tools/self_hosting/tests/codegen-bridge-integration.red"
 				"tools/self_hosting/tests/rscg-linker-adapter-test.red"
 				"tools/self_hosting/tests/rscg-linker-adapter-integration.red"
@@ -451,6 +456,7 @@ compiler-backend-feature-spec: [
 				"tools/self_hosting/tests/wire-rscg-relocation-reds-test.reds"
 				"tools/self_hosting/tests/rscg-linker-adapter-test.red"
 				"tools/self_hosting/tests/rscg-linker-adapter-integration.red"
+				"tools/self_hosting/tests/hybrid-driver-test.red"
 				"tools/self_hosting/tests/pe-empty-sections-test.red"
 				"tools/self_hosting/fixtures/backend/global-memory.reds"
 				"tools/self_hosting/fixtures/backend/nested-relocation-order.reds"

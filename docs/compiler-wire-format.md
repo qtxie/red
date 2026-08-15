@@ -2250,15 +2250,29 @@ shape selected by codegen. It performs case-sensitive canonical string
 interning, writes all 32 RSIR sections, and returns `none` rather than a partial
 binary on any validation, size, or writer failure.
 
-The first `compiler-core` semantic sink is now connected for that exact shape.
-The `rsir` mode is selected at compile entry, validates its target and lifecycle
-restrictions before emitter initialization, accepts only one empty function
-declaration at root, and publishes the completed message in
-`system-dialect/last-rsir`. It does not initialize the emitter, start the old
-machine-IR session, emit a main prolog, finalize native functions, or invoke the
-linker. Positive integration uses poison stubs for each reachable legacy entry;
-nonempty bodies and other root expressions are hard failures. This remains a
-narrow production boundary, not a general RSIR frontend.
+The independent `system/compiler-rsir-core.red` semantic frontend is connected
+for that exact shape. It requires `rsir` mode at compile entry, validates its
+target and lifecycle restrictions, accepts only one empty function declaration
+at root, and publishes the completed message in `system-dialect/last-rsir`. A
+no-link job stops at that serialized boundary. A linked job requires the
+installed Windows hybrid package, derives RSCF from the job, calls codegen once,
+validates and adapts RSCG once, then invokes the linker once. It publishes RSCG
+and empty-on-success RSDG through `last-rscg` and `last-diagnostics`, while
+`last-result` retains the legacy four-field result shape. The hybrid package's
+recursive source closure contains no legacy compiler core, emitter, or machine
+IR to initialize or call.
+
+`compiler/hybrid-driver.red` fails closed until both hooks are installed.
+`system/compiler-windows-hybrid-bootstrap.red` is the current integration
+binding: its wrappers call the native `codegen-module` routine and the
+independently verifying RSCG adapter. It shares the Windows loader, job, PE, and
+linker closure with the existing compiler while excluding `compiler-core.red`,
+`emitter.red`, and `machine-ir*.red`. The interpreted RSIR-core link integration
+injects the exact golden RSCG only because `routine!` cannot execute in the
+interpreter; the native bridge is compiled and byte-compared separately. The
+ownership audit pins one codegen, one adapter, and one linker call site and
+recursively rejects those legacy files. Nonempty bodies and other root
+expressions remain hard failures; this is still a narrow production boundary.
 
 The corpus compares complete RSCG/RSDG bytes for both empty-module and minimal
 `void RETURN` generation. It also constructs the minimal RSIR at runtime with

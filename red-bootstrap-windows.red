@@ -8,12 +8,18 @@ compiler-root: system/options/path
 ; The core compiler does not load View, but it needs the datatype token to compile View targets.
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
-; Keep the normal Windows bootstrap on its small PE-only closure. The focused
-; Linux x64 wrapper selects the ELF compiler and static linker instead.
-#either config/show = 'X86-64-ELF-only [
-	#include %system/compiler.red
+; Select exactly one backend closure at preprocess time. The hybrid entry must
+; not include the legacy emitter or machine IR even as unreachable source.
+#either config/show = 'X86-64-Hybrid-only [
+	#include %system/compiler-windows-hybrid-bootstrap.red
 ][
-	#include %system/compiler-windows-bootstrap.red
+	; Keep the normal Windows bootstrap on its small PE-only closure. The focused
+	; Linux x64 wrapper selects the ELF compiler and static linker instead.
+	#either config/show = 'X86-64-ELF-only [
+		#include %system/compiler.red
+	][
+		#include %system/compiler-windows-bootstrap.red
+	]
 ]
 
 #include %compiler/modules.red
@@ -42,6 +48,12 @@ print-usage: does [
 fail-command: func [message][
 	print ["*** Red command-line error:" message]
 	quit/return 1
+]
+
+configure-backend-mode: func [job [object!]][
+	#either config/show = 'X86-64-Hybrid-only [
+		compiler-system-job/job-set job 'backend-mode 'rsir
+	][none]
 ]
 
 join-file: func [base [file!] relative [file!]][append copy base relative]
@@ -108,6 +120,7 @@ build-libRedRT: func [
 
 	job: compiler-system-job/new target
 	unless job [fail-command compiler-system-job/last-error/message]
+	configure-backend-mode job
 	compiler-system-job/job-set job 'build-prefix dir
 	compiler-system-job/job-set job 'build-basename libRedRT/lib-file
 	compiler-system-job/job-set job 'type 'dll
@@ -206,6 +219,7 @@ compile-source: func [
 
 	job: compiler-options/to-job options
 	if error? :job [fail-command mold job]
+	configure-backend-mode job
 	#either config/show = 'X86-64-ELF-only [
 		unless all [
 			(compiler-system-job/job-get job 'OS) = 'Linux

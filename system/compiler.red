@@ -189,5 +189,6 @@ external-linker: context [
 	external-linker: static-link
 ]
 #include %emitter.red
+#include %machine-ir.red
 #include %utils/libRedRT.red
 #include %compiler-core.red

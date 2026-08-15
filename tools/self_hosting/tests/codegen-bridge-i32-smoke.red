@@ -1,47 +1,132 @@
 Red [
-	Title: "Hybrid codegen bridge i32 smoke test"
+	Title: "Compact hybrid codegen routine smoke test"
 ]
 
 #include %../../../compiler/int-to-bin.red
-#include %../../../compiler/wire-schema.red
 #include %../../../compiler/rsir-frontend.red
 #include %../../../compiler/codegen-bridge.red
-
-base-config: #{52534346010000004000000000000000A000000001000000400000002000000001000000010000000100000008000000000000000000000001000000AD974D6A010000000000000060000000400000000100000040000000040000000000000000000000000000000100000001000000000000000100000000000000000000000000100000000100010000000000000000000000000000000000000000000000}
 
 fail: func [message [string! block!]][
 	print ["FAIL:" either block? message [rejoin message][message]]
 	quit/return 1
 ]
 
-check-i32: func [
-	kind [word!]
-	expected-size [integer!]
-	expected-hash [binary!]
-	/local source ir artifact diagnostics status
-][
-	source: compose/deep [
-		Red/System []
-		fn: func [return: [integer!]] [7]
-	]
-	ir: compiler-rsir-frontend/compile source none kind 'executable
-	unless binary? ir [fail ["frontend rejected " kind " i32 module"]]
-	artifact: make binary! 1
-	diagnostics: make binary! 1
-	status: codegen-module ir copy base-config artifact diagnostics
-	unless status = 0 [fail [kind " bridge status=" status]]
-	unless empty? diagnostics [fail [kind " emitted diagnostics"]]
-	unless (length? artifact) = expected-size [
-		fail [kind " RSCG size=" length? artifact " expected=" expected-size]
-	]
-	unless (checksum artifact 'SHA256) = expected-hash [
-		fail [kind " RSCG digest changed"]
-	]
+check: func [condition [logic! none!] message [string! block!]][
+	unless condition [fail message]
 ]
 
-check-i32 'user 892
-	#{B448034016FECE89E66930094461487A42BEA7CBEAD8D841DA5F18054E13A1AA}
-check-i32 'glue 1068
-	#{A96CDA2A167FCDA4D96525741AFC776DEAA13A5F7EB670FE73BFFA14559D6494}
+word-at: func [data [binary!] offset [integer!] /local high][
+	high: to integer! pick data (offset + 4)
+	(to integer! pick data (offset + 1))
+		+ ((to integer! pick data (offset + 2)) * 256)
+		+ ((to integer! pick data (offset + 3)) * 65536)
+		+ (high * 16777216)
+]
 
-print "PASS: frontend -> RSIR -> native i32 codegen -> RSCG"
+generate: func [kind [word!] result [word!] /local source ir artifact status][
+	source: either result = 'void [
+		[Red/System [] fn: func [][]]
+	][
+		[Red/System [] fn: func [return: [integer!]][7]]
+	]
+	ir: compiler-rsir-frontend/compile source none kind 'executable
+	unless binary? ir [fail ["frontend rejected " kind " " result]]
+	artifact: make binary! 4096
+	status: codegen-module ir artifact 0
+	unless status = 0 [fail [kind " " result " codegen status=" status]]
+	reduce [ir artifact]
+]
+
+check-image: func [
+	kind result [word!]
+	expected-size expected-code-size expected-code-offset expected-exit-ref [integer!]
+	/local pair ir artifact entry? metadata-size names-start code-offset
+][
+	pair: generate kind result
+	ir: pair/1
+	artifact: pair/2
+	entry?: kind = 'glue
+	check (length? artifact) = expected-size [kind " " result " image size changed"]
+	check all [
+		(word-at artifact 0) = expected-size
+		(word-at artifact 4) = either entry? [3][1]
+		(word-at artifact 8) = either entry? [1][0]
+		(word-at artifact 12) = 1
+		(word-at artifact 16) = either entry? [1][0]
+		(word-at artifact 20) = either entry? [1][0]
+		(word-at artifact 28) = expected-code-offset
+		(word-at artifact 32) = expected-code-size
+		(word-at artifact 36) = 16
+	][kind " " result " image header changed"]
+	check all [
+		(word-at artifact 40) = 0
+		(word-at artifact 44) = 2
+		(word-at artifact 48) = 0
+		(word-at artifact 52) = expected-code-size
+		(word-at artifact 56) = 32
+		(word-at artifact 60) = 0
+		(word-at artifact 64) = 16
+		(word-at artifact 68) = 0
+		(word-at artifact 72) = 0
+	][kind " " result " function record changed"]
+	metadata-size: either entry? [104][76]
+	names-start: metadata-size
+	check (copy/part at artifact (names-start + 1) 2) = #{666E}
+		[kind " " result " function name changed"]
+	if entry? [
+		check all [
+			(word-at artifact 76) = 2
+			(word-at artifact 80) = 12
+			(word-at artifact 84) = 14
+			(word-at artifact 88) = 11
+			(word-at artifact 92) = 1
+			(word-at artifact 96) = 1
+			(word-at artifact 100) = expected-exit-ref
+			(copy/part at artifact 107 12) = #{6B65726E656C33322E646C6C}
+			(copy/part at artifact 119 11) = #{4578697450726F63657373}
+		][kind " " result " import record changed"]
+	]
+	code-offset: word-at artifact 28
+	check (word-at artifact (code-offset + 9)) = 0
+		[kind " " result " bitmap word offset changed"]
+	if result = 'i32 [
+		check (word-at artifact (code-offset + 16)) = 7
+			[kind " i32 literal changed"]
+	]
+	if entry? [
+		check (word-at artifact (code-offset + expected-exit-ref)) = 0
+			[kind " " result " exit relocation placeholder changed"]
+	]
+	check (copy at artifact (expected-size - 15)) =
+		#{00000000000000000000000000000000}
+		[kind " " result " bitmap is not zero initialized"]
+	artifact
+]
+
+check-image 'user 'void 116 17 80 0
+check-image 'glue 'void 192 31 144 23
+check-image 'user 'i32 120 22 80 0
+glue-i32: check-image 'glue 'i32 196 34 144 26
+
+ir: first generate 'glue 'i32
+small: make binary! 64
+check (codegen-module ir small 0) = 4 "bounded output was accepted"
+check empty? small "bounded-output failure committed bytes"
+
+bad: copy ir
+change/part bad int-to-bin/to-bin32 1 4
+artifact: make binary! 4096
+check (codegen-module bad artifact 0) = 2 "invalid RSIR size was accepted"
+check empty? artifact "invalid RSIR committed bytes"
+
+artifact: make binary! 4096
+check (codegen-module ir artifact 2) = 3 "unsupported opt level was accepted"
+check empty? artifact "unsupported opt level committed bytes"
+
+artifact: make binary! 4096
+append artifact 1
+before: copy artifact
+check (codegen-module ir artifact 0) = 1 "nonempty output was accepted"
+check artifact = before "invalid output mutation was not atomic"
+
+print "PASS: compact RSIR -> native x64 codegen -> linker image"

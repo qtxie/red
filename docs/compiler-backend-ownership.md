@@ -4,11 +4,11 @@ Status: executable migration audit. The dependency families below are backed by
 `compiler/backend-ownership-spec.red`. Its structural source test currently
 classifies all 145 emitter APIs and all 302 executable references in
 `system/compiler-core.red`; any added, removed, or unclassified reference fails
-the test. The remaining emitter, target, and linker implementation audit still
-controls whether the RSIR schema may freeze.
+the test. The remaining emitter, target, and linker audit controls which
+complete responsibility moves next into the direct hybrid path.
 
-See [the wire protocol](compiler-wire-format.md) and
-[the execution plan](hybrid-codegen-plan.md) for the resulting contracts.
+See [the execution plan](hybrid-codegen-plan.md) for the active architecture.
+The old generic wire document is a retired experiment, not a target design.
 
 ## Why this audit exists
 
@@ -35,37 +35,36 @@ use of an already-known API is new coupling and must not pass unnoticed. Red
 loads the source as data before the recursive scan, so comments and strings are
 not counted, while ordinary, get, set, and lit paths share one canonical key.
 
-The separate feature gate loads `system/tests/run-all.r` without executing it,
-classifies every Windows x64 unit file through
-`compiler/backend-feature-spec.red`, and proves that every wire enum value and
-record belongs to at least one feature. `blocked` is deliberate audit state, not
-an implementation fallback: each blocked entry carries the exact schema or
-ownership decision required before it can become `specified`.
+The separate feature gate loads `system/tests/run-all.r` without executing it
+and classifies every Windows x64 unit file through
+`compiler/backend-feature-spec.red`. `blocked` is deliberate audit state, not
+an implementation fallback: each blocked entry identifies the missing
+frontend, codegen, or linker ownership needed before it can become implemented.
 
 ## Dependency families
 
 | Current dependency | Current use | New owner/representation | Required proof |
 | --- | --- | --- | --- |
-| `emitter/datatypes`, `datatype-ID` | base-type tests and runtime debug type IDs | frontend type registry; parameter debug code in RSIR/RSCG | all types map without emitter object |
+| `emitter/datatypes`, `datatype-ID` | base-type tests and runtime debug type IDs | frontend type registry; native-image debug data | all types map without emitter object |
 | `ptr-size`, `stack-width`, default/struct alignment | pointer typing, layout, slot calculations | pure Red target-layout module; sizes serialized and recomputed by codegen | frontend/codegen layout hashes agree |
 | `size-of?`, struct/union size/slots, `member-offset?` | paths, literals, aggregate validation | pure type-layout service plus RSIR type/field records | exhaustive aggregate layout fixtures |
 | SysV aggregate classes and Win64 call slot fields | frontend rewrites physical arguments | removed from frontend; logical call/signature records | ABI classifier probes in codegen |
-| `store`, `store-value`, protected store, data/rodata buffers | global/literal materialization | RSIR constants/globals; RSCG output sections | nested/address initializer fixtures |
-| emitter symbols and `add-native` | definitions, addresses, code/data refs | RSIR symbols; RSCG symbols/relocations | object reload links with no compiler state |
-| emitter import/import-var reference blocks | import callsite patching | RSIR/RSCG imports plus typed relocations | function and variable import probes |
+| `store`, `store-value`, protected store, data/rodata buffers | global/literal materialization | RSIR constants/globals; native-image code/data | nested/address initializer fixtures |
+| emitter symbols and `add-native` | definitions, addresses, code/data refs | RSIR symbols; native-image symbols/references | image reload links with no compiler state |
+| emitter import/import-var reference blocks | import callsite patching | RSIR imports and native-image reference slices | function and variable import probes |
 | chunks, merge, branch/over/back, jump lists | control-flow construction and patching | RSIR blocks/edges/terminators | CFG verifier and differential control tests |
 | loads, stores, casts, arithmetic, paths | instruction encoding during semantic walk | typed RSIR operations and values | no target emit call in rsir semantic path |
 | save/restore last, signed state, last math state | implicit register-stack-machine state | absent from RSIR; native MIR scheduling/allocation | poison legacy state during rsir tests |
 | call argument index/types/pad/shadow/temp fields | target ABI state while evaluating calls | callee descriptor plus logical arguments; codegen ABI classifier | nested/mixed/aggregate call matrix |
 | `enter`, `leave`, prolog/epilog, emitter stack | frame layout and function bytes | signatures/locals in RSIR; frame/encoding in codegen | frame and unwind/stack alignment probes |
 | pointer bitmap encode/store and bitmap buffer | GC argument/local frame description | GC kinds in RSIR; final bitmap after allocation in codegen | forced GC with spills/callee-saves |
-| tail pointer in debug records | source line to current code address | source location on RSIR instruction; final offset in RSCG | debug line/function tests |
-| `reloc-native-calls`, native-ref duplicate symbols | final internal references | typed RSCG relocations; adapter mapping | each relocation applied exactly once |
+| tail pointer in debug records | source line to current code address | source location on RSIR instruction; final native-image offset | debug line/function tests |
+| `reloc-native-calls`, native-ref duplicate symbols | final internal references | function-owned native-image reference slices | each reference applied exactly once |
 | global prolog/epilog and `last-red-frame` | root frame spans runtime and user global code | explicit module init/fini plus generated startup glue | release exe/DLL startup equivalence |
 | target `on-finalize` | literal pools and target cleanup | codegen module finalization | empty/nonempty pool and range tests |
 | runtime `compiler/functions`, aliases, globals, definitions | seeds user semantic/preprocessor environment | cached frontend interface manifest | normalized cached/fresh state equality |
-| linker debug lookup of `compiler/functions` | arity and argument type arrays | complete RSCG debug parameters in `job/debug-info` | fresh-process RSCG link with debug |
-| linker magic runtime symbols | image info and GC bitmap patches | ordinary named RSCG symbols with required-role validation | missing/duplicate role diagnostics |
+| linker debug lookup of `compiler/functions` | arity and argument type arrays | native-image debug parameters in `job/debug-info` | fresh-process image link with debug |
+| linker magic runtime symbols | image info and GC bitmap patches | ordinary named native-image symbols | missing/duplicate role diagnostics |
 
 ## Structured semantic operations
 
@@ -148,13 +147,13 @@ A cached runtime machine-code blob cannot leave a frame open for later bytes,
 and it cannot seed frontend semantic state. The replacement is:
 
 1. bootstrap generates a declarative frontend interface manifest;
-2. bootstrap codegens runtime lifecycle functions into relocatable RSCG;
+2. bootstrap codegens runtime lifecycle functions into relocatable native images;
 3. a compile imports the manifest, then builds user RSIR with runtime symbols as
    external definitions owned by the runtime object;
 4. user global code becomes a user initializer function;
 5. a small glue RSIR module calls runtime and user lifecycle functions in stable
    priority order and defines the final entry symbol;
-6. the RSCG merger resolves all cross-module calls and data references.
+6. the native-image merger resolves all cross-module calls and data references.
 
 Program-specific Redbin boot payload and `red/sys-global` output remain generated
 user/glue inputs. Runtime cache identity includes a digest of output kind, GUI
@@ -164,7 +163,7 @@ value that can affect loaded source.
 Packaging is a two-stage self-host operation: canonical Stage1 first builds a
 cacheless hybrid compiler, that compiler generates the external runtime bundle,
 and a subsequent build embeds the verified bundle. The packaged compiler must
-regenerate the same schema and bundle fingerprints in the next generation. No
+regenerate the same bundle identity in the next generation. No
 Stage0/Rebol invocation is part of this path.
 
 The interface manifest must cover at least loader/compiler definitions, function
@@ -173,12 +172,12 @@ namespaces/contexts, managed handle kinds, and any compile-time constants used
 by later sources. It contains declarative values, never live Red bindings or
 series nodes.
 
-## Linker compatibility obligations
+## Direct linker obligations
 
-The initial RSCG adapter must reconstruct or replace every current encoding:
+`linker/load-codegen` must consume every required native-image field directly:
 
-- function definitions use one-based legacy entry addresses, while RSCG is
-  zero-based;
+- function definitions use one-based linker entry addresses, while native-image
+  code offsets are zero-based;
 - a referenced function may require both `native` and `native-ref` legacy
   entries;
 - x64 code references are PC-relative 32-bit patch positions;
@@ -190,14 +189,15 @@ The initial RSCG adapter must reconstruct or replace every current encoding:
   type bytes;
 - runtime image setup requires `***-ptr-bitmaps`, `***-exec-image`, and related
   named roles;
-- resources and external C objects remain existing linker inputs outside RSCG.
+- resources and external C objects remain existing linker inputs outside the
+  native image.
 
-Each mapping is reject-by-default and has a focused fixture. The adapter cannot
-silently ignore an optional-looking record when it affects generated code.
+The loader does not create an intermediate object model. Its table loops build
+the linker's sections, symbol hash, imports, and debug values directly.
 
-## Freeze blockers
+## Completion blockers
 
-The schema cannot freeze until these questions have executable answers:
+The product path is incomplete until these questions have executable answers:
 
 - root-frame lifecycle for exe, DLL, driver, no-runtime, Red pass, and PIC modes;
 - full list of frontend state required by a cached runtime interface;
@@ -208,6 +208,6 @@ The schema cannot freeze until these questions have executable answers:
   runtime symbols;
 - debug function and source-line behavior after multi-object merging.
 
-Resolving a blocker means adding its representation, verifier rule, focused
-fixture, and differential expected behavior. A prose-only assumption does not
-close it.
+Resolving a blocker means implementing its frontend representation, native
+lowering, direct linker handling where needed, focused fixture, and
+differential expected behavior. A prose-only assumption does not close it.

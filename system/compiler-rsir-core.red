@@ -3,23 +3,17 @@ Red [
 	File:  %compiler-rsir-core.red
 ]
 
-#include %../compiler/wire-schema.red
-#include %../compiler/wire-writer.red
-#include %../compiler/wire-container.red
-#include %../compiler/rsir-frontend.red
-#include %../compiler/rscf-producer.red
-#include %../compiler/hybrid-driver.red
-
-; This core is the independent hybrid frontend boundary.  It starts with the
-; smallest semantic slice accepted by the native backend and grows by moving
-; frontend semantics here, never by importing the legacy emitter or machine IR.
+; This core connects the compact frontend, native codegen, and linker directly.
+; It grows by moving complete semantics here, never by importing the legacy
+; emitter, machine IR, or a compatibility adapter.
 system-dialect: context [
+	MAX-CODE-BYTES: 16777216
 	verbose: 0
 	job: none
 	last-result: none
 	last-rsir: none
-	last-rscg: none
-	last-diagnostics: none
+	last-code: none
+	last-status: -1
 	backend-mode: 'rsir
 	loader: compiler-system-loader
 	options-class: compiler-system-job/prototype
@@ -97,9 +91,6 @@ system-dialect: context [
 			any [job/need-main? job/red-only? job/libRed? job/libRedRT? job/libRedRT-update?][
 				compiler/throw-error "RSIR frontend received unsupported module lifecycle options"
 			]
-			all [job/link? not compiler-hybrid-driver/installed?][
-				compiler/throw-error "RSIR linking requires the Windows hybrid codegen package"
-			]
 			true [true]
 		]
 	]
@@ -128,8 +119,8 @@ system-dialect: context [
 	reset-state: does [
 		last-result: none
 		last-rsir: none
-		last-rscg: none
-		last-diagnostics: none
+		last-code: none
+		last-status: -1
 		compiler/pc: none
 		clear compiler/definitions
 		clear compiler/keywords-list
@@ -166,16 +157,19 @@ system-dialect: context [
 		last-rsir: output
 	]
 
-	finish-rscg: func [/local output error][
-		output: compiler-hybrid-driver/generate last-rsir job
-		last-diagnostics: compiler-hybrid-driver/last-diagnostics
-		unless binary? output [
-			error: compiler-hybrid-driver/last-error
-			compiler/throw-error either error [error/message][
-				"native codegen failed without a diagnostic"
-			]
+	finish-code: func [/local output message][
+		output: make binary! MAX-CODE-BYTES
+		last-status: codegen-module last-rsir output job/opt-level
+		unless last-status = 0 [
+			message: switch/default last-status [
+				1 ["native codegen received invalid arguments"]
+				2 ["native codegen rejected invalid RSIR"]
+				3 ["native codegen does not support this RSIR yet"]
+				4 ["native codegen output exceeds its reserved buffer"]
+			]["native codegen returned an unknown status"]
+			compiler/throw-error message
 		]
-		last-rscg: output
+		last-code: output
 	]
 
 	; Kept as a frontend API while resource lowering is still outside the first
@@ -232,18 +226,18 @@ system-dialect: context [
 		link-time: none
 		if job/link? [
 			phase-timer/begin 'native-codegen
-			finish-rscg
+			finish-code
 			phase-timer/finish 'native-codegen
 			comp-time: now/time/precise - started
 			link-time: now/time/precise
-			phase-timer/begin 'link-prepare
-			unless compiler-hybrid-driver/adapt last-rscg job [
-				error: compiler-hybrid-driver/last-error
-				compiler/throw-error either error [error/message][
-					"RSCG adapter failed without a diagnostic"
+			phase-timer/begin 'link-load
+			unless linker/load-codegen job last-code [
+				compiler/throw-error any [
+					linker/codegen-error
+					"linker could not load native codegen output"
 				]
 			]
-			phase-timer/finish 'link-prepare
+			phase-timer/finish 'link-load
 			phase-timer/begin 'link-build
 			output: linker/build job
 			phase-timer/finish 'link-build

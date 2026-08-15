@@ -1,7 +1,12 @@
-# Hybrid Compiler Wire Protocol
+# Retired Hybrid Wire Experiment
 
-Status: design draft. Version 1 is not frozen and no compatibility promise is
-made until every Red/System semantic feature has an owner and a wire encoding.
+This document describes the generic container experiment that preceded the
+direct hybrid path. It is not the compiler architecture, is not included by the
+hybrid product, and must not guide new frontend, codegen, or linker work. The
+active design is [the direct execution plan](hybrid-codegen-plan.md): private
+fixed-order RSIR tables, direct native output, and no schema or adapter layer.
+
+Status: retired; retained temporarily as historical implementation notes.
 
 See also [the execution plan](hybrid-codegen-plan.md) and
 [the backend ownership audit](compiler-backend-ownership.md).

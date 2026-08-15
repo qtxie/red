@@ -1,131 +1,81 @@
 Red/System [
-	Title: "Hybrid compiler Windows x64 instruction encoder"
+	Title: "Windows x64 encoder for the hybrid compiler"
 	File:  %x64-encoder.reds
 ]
 
-#include %wire-arena.reds
+x64-encoder: context [
+	VOID_SIZE:       17
+	VOID_ENTRY_SIZE: 31
+	I32_SIZE:        22
+	I32_ENTRY_SIZE:  34
+	FRAME_SIZE:      32
+	BITMAP_OFFSET:    9
+	VOID_EXIT_REF:   23
+	I32_EXIT_REF:    26
 
-wire-x64-encoder: context [
-	ERROR_SUCCESS:   0
-	ERROR_ARGUMENTS: 1
-
-	EMPTY_VOID_FUNCTION_SIZE:        17
-	EMPTY_VOID_ENTRY_FUNCTION_SIZE:  31
-	I32_FUNCTION_SIZE:               22
-	I32_ENTRY_FUNCTION_SIZE:         34
-	BITMAP_PATCH_OFFSET:              9
-	EMPTY_VOID_ENTRY_RELOCATION_OFFSET: 23
-	I32_ENTRY_RELOCATION_OFFSET:        26
-	FRAME_SIZE:                      32
-
-	emit-u8: func [
-		arena [wire-arena!]
-		value [integer!]
-		return: [integer!]
-		/local status offset [integer!] destination [byte-ptr!]
-	][
-		if any [null? arena value < 0 value > 255][return ERROR_ARGUMENTS]
-		status: wire-arena/ensure arena 1
-		if status <> wire-arena/ERROR_SUCCESS [return status]
-		offset: arena/size
-		destination: arena/data + offset
-		destination/1: as byte! value
-		arena/size: offset + 1
-		ERROR_SUCCESS
+	write-i32: func [at [byte-ptr!] value [integer!]][
+		at/1: as byte! value
+		at/2: as byte! (value >>> 8)
+		at/3: as byte! (value >>> 16)
+		at/4: as byte! (value >>> 24)
 	]
 
-	emit-u32: func [
-		arena [wire-arena!]
-		value [integer!]
+	encode: func [
+		code [byte-ptr!]
+		capacity [integer!]
+		entry? result? [logic!]
+		value bitmap-word [integer!]
 		return: [integer!]
-		/local status offset [integer!] destination [byte-ptr!]
+		/local size [integer!] at [byte-ptr!]
 	][
-		if null? arena [return ERROR_ARGUMENTS]
-		status: wire-arena/ensure arena 4
-		if status <> wire-arena/ERROR_SUCCESS [return status]
-		offset: arena/size
-		destination: arena/data + offset
-		destination/1: as byte! value
-		destination/2: as byte! (value >>> 8)
-		destination/3: as byte! (value >>> 16)
-		destination/4: as byte! (value >>> 24)
-		arena/size: offset + 4
-		ERROR_SUCCESS
-	]
+		if null? code [return -1]
+		size: case [
+			all [entry? result?] [I32_ENTRY_SIZE]
+			entry? [VOID_ENTRY_SIZE]
+			result? [I32_SIZE]
+			true [VOID_SIZE]
+		]
+		if capacity < size [return -1]
 
-	encode-function: func [
-		arena [wire-arena!]
-		entry? [logic!]
-		result? [logic!]
-		value [integer!]
-		return: [integer!]
-		/local start status opcode [integer!]
-	][
-		if null? arena [return ERROR_ARGUMENTS]
-		start: arena/size
-		status: emit-u8 arena 55h                 ; PUSH rbp
-		if status = ERROR_SUCCESS [status: emit-u8 arena 48h]
-		if status = ERROR_SUCCESS [status: emit-u8 arena 89h]
-		if status = ERROR_SUCCESS [status: emit-u8 arena E5h] ; MOV rbp, rsp
-		if status = ERROR_SUCCESS [status: emit-u8 arena 6Ah]
-		if status = ERROR_SUCCESS [status: emit-u8 arena 00h] ; catch ID
-		if status = ERROR_SUCCESS [status: emit-u8 arena 6Ah]
-		if status = ERROR_SUCCESS [status: emit-u8 arena 00h] ; catch resume
-		if status = ERROR_SUCCESS [status: emit-u8 arena 68h] ; PUSH imm32
-		if status = ERROR_SUCCESS [status: emit-u32 arena 0]  ; bitmap patch
-		if status = ERROR_SUCCESS [status: emit-u8 arena 6Ah]
-		if status = ERROR_SUCCESS [status: emit-u8 arena 00h] ; parent frame
+		at: code
+		at/1: as byte! 55h                             ; push rbp
+		at/2: as byte! 48h
+		at/3: as byte! 89h
+		at/4: as byte! E5h                             ; mov rbp, rsp
+		at/5: as byte! 6Ah
+		at/6: as byte! 00h                             ; catch ID
+		at/7: as byte! 6Ah
+		at/8: as byte! 00h                             ; catch resume
+		at/9: as byte! 68h                             ; push bitmap word offset
+		write-i32 (at + 9) bitmap-word
+		at/14: as byte! 6Ah
+		at/15: as byte! 00h                            ; parent frame
+		at: at + 15
+
 		if result? [
-			opcode: either entry? [B9h][B8h]           ; MOV ecx/eax, imm32
-			if status = ERROR_SUCCESS [status: emit-u8 arena opcode]
-			if status = ERROR_SUCCESS [status: emit-u32 arena value]
+			at/1: as byte! either entry? [B9h][B8h]     ; mov ecx/eax, imm32
+			write-i32 (at + 1) value
+			at: at + 5
 		]
-		if all [status = ERROR_SUCCESS entry? not result?] [status: emit-u8 arena 31h]
-		if all [status = ERROR_SUCCESS entry? not result?] [
-			status: emit-u8 arena C9h                         ; XOR ecx, ecx
+		if all [entry? not result?] [
+			at/1: as byte! 31h
+			at/2: as byte! C9h                           ; xor ecx, ecx
+			at: at + 2
 		]
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 48h]
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 83h]
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena ECh]
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 20h] ; shadow space
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena FFh]
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 15h]
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u32 arena 0] ; IAT relocation
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena 31h]
-		if all [status = ERROR_SUCCESS entry?] [status: emit-u8 arena C0h] ; unreachable fallback
-		if status = ERROR_SUCCESS [status: emit-u8 arena C9h] ; LEAVE
-		if status = ERROR_SUCCESS [status: emit-u8 arena C3h] ; RET
-		if status <> ERROR_SUCCESS [arena/size: start]
-		status
-	]
-
-	encode-empty-void-function: func [
-		arena [wire-arena!]
-		return: [integer!]
-	][
-		encode-function arena false false 0
-	]
-
-	encode-empty-void-entry: func [
-		arena [wire-arena!]
-		return: [integer!]
-	][
-		encode-function arena true false 0
-	]
-
-	encode-i32-function: func [
-		arena [wire-arena!]
-		value [integer!]
-		return: [integer!]
-	][
-		encode-function arena false true value
-	]
-
-	encode-i32-entry: func [
-		arena [wire-arena!]
-		value [integer!]
-		return: [integer!]
-	][
-		encode-function arena true true value
+		if entry? [
+			at/1: as byte! 48h
+			at/2: as byte! 83h
+			at/3: as byte! ECh
+			at/4: as byte! 20h                           ; Win64 shadow space
+			at/5: as byte! FFh
+			at/6: as byte! 15h                           ; call [rip + rel32]
+			write-i32 (at + 6) 0
+			at/11: as byte! 31h
+			at/12: as byte! C0h                          ; unreachable fallback
+			at: at + 12
+		]
+		at/1: as byte! C9h                             ; leave
+		at/2: as byte! C3h                             ; ret
+		size
 	]
 ]

@@ -1,15 +1,10 @@
 Red [
-	Title: "Direct Red/System to RSIR frontend tests"
+	Title: "Compact Red/System IR frontend tests"
 ]
 
-do %../../../compiler/wire-target-intrinsic.red
-do %../../../compiler/wire-atomic.red
-do %../../../compiler/wire-memory-aggregate.red
 do %../../../compiler/rsir-frontend.red
 
-schema: compiler-wire-schema
 frontend: compiler-rsir-frontend
-container: compiler-wire-container
 
 assert: func [condition [logic!] message [string! block!]][
 	unless condition [
@@ -18,120 +13,104 @@ assert: func [condition [logic!] message [string! block!]][
 	]
 ]
 
+word-at: func [data [binary!] offset [integer!] /local high][
+	high: to integer! pick data (offset + 4)
+	(to integer! pick data (offset + 1))
+		+ ((to integer! pick data (offset + 2)) * 256)
+		+ ((to integer! pick data (offset + 3)) * 65536)
+		+ (high * 16777216)
+]
+
 compile-text: func [
 	text [string!]
-	module-kind [word!]
+	kind [word!]
 	/limit max-bytes [integer!]
-	/local source
 ][
-	source: load text
 	either limit [
-		frontend/compile/limit source none module-kind 'executable max-bytes
+		frontend/compile/limit load text none kind 'executable max-bytes
 	][
-		frontend/compile source none module-kind 'executable
+		frontend/compile load text none kind 'executable
 	]
 ]
 
-verify-rsir: func [name [string!] data [binary!] /local result][
-	result: compiler-wire-target-intrinsic/verify data
-	assert result/valid? [name " target verifier error=" result/error]
-	result: compiler-wire-atomic/verify data
-	assert result/valid? [name " atomic verifier error=" result/error]
-	result: compiler-wire-memory-aggregate/verify data
-	assert result/valid? [name " memory verifier error=" result/error]
-]
-
-void-rsir: compile-text
-	{Red/System [] fn: func [][]}
-	'user
-assert binary? void-rsir [
-	"frontend rejected an empty void function: " mold frontend/last-error
-]
+void-ir: compile-text {Red/System [] fn: func [][]} 'user
+assert binary? void-ir ["frontend rejected void function: " mold frontend/last-error]
 assert none? frontend/last-error "frontend retained an error after success"
-assert (length? void-rsir) = 1396 "empty void RSIR size changed"
-assert (checksum void-rsir 'SHA256) =
-	#{8353248CDBC69D83181C09D2668C4DF1879503004D23C890B079953F2EEA8DBE}
-	"empty void RSIR bytes changed"
-verify-rsir "void" void-rsir
-assert void-rsir = compile-text
-	{Red/System [] fn: function [][]}
-	'user
-	"func and function spellings produced different RSIR"
+assert (length? void-ir) = 78 "void RSIR is not compact"
+assert all [
+	(word-at void-ir 0) = 78
+	(word-at void-ir 4) = 1
+	(word-at void-ir 8) = 0
+	(word-at void-ir 12) = 0
+	(word-at void-ir 16) = 0
+	(word-at void-ir 20) = 1
+	(word-at void-ir 24) = 1
+	(word-at void-ir 28) = 2
+]["void RSIR header changed"]
+assert all [
+	(word-at void-ir 32) = 0
+	(word-at void-ir 36) = 2
+	(word-at void-ir 40) = 0
+	(word-at void-ir 44) = 1
+	(word-at void-ir 48) = 1
+	(word-at void-ir 52) = 0
+]["void function record changed"]
+assert all [
+	(word-at void-ir 56) = 2
+	(word-at void-ir 60) = 0
+	(word-at void-ir 64) = 0
+	(word-at void-ir 68) = 0
+	(word-at void-ir 72) = 0
+	(copy at void-ir 77) = #{666E}
+]["void instructions or name changed"]
+assert void-ir = compile-text {Red/System [] fn: function [][]} 'user
+	"func and function produced different RSIR"
 
-glue-rsir: compile-text
-	{Red/System [] fn: func [][]}
-	'glue
-assert binary? glue-rsir "frontend rejected a glue entry"
-verify-rsir "glue" glue-rsir
-parsed: container/verify/expect glue-rsir schema/WIRE_MAGIC_RSIR
-assert parsed/valid? "glue RSIR failed container verification"
-module-section: container/find-section parsed schema/WIRE_RSIR_SECTION_MODULE
-module-offset: select module-section 'payload-offset
-assert (container/read-u32 glue-rsir
-	(module-offset + schema/WIRE_RSIR_MODULE_ENTRY_FUNCTION_OFFSET)) = 1
+glue-ir: compile-text {Red/System [] fn: func [][]} 'glue
+assert all [(word-at glue-ir 4) = 3 (word-at glue-ir 8) = 1]
 	"glue module lost its entry function"
 
-i32-rsir: compile-text
-	{Red/System [] fn: func [return: [integer!]][7]}
-	'user
-assert binary? i32-rsir "frontend rejected an i32 literal result"
-verify-rsir "i32" i32-rsir
-assert i32-rsir = compile-text
+i32-ir: compile-text {Red/System [] fn: func [return: [integer!]][7]} 'user
+assert binary? i32-ir "frontend rejected i32 literal"
+assert (length? i32-ir) = 98 "i32 RSIR is not compact"
+assert all [
+	(word-at i32-ir 24) = 2
+	(word-at i32-ir 40) = 1
+	(word-at i32-ir 48) = 2
+	(word-at i32-ir 56) = 1
+	(word-at i32-ir 60) = 1
+	(word-at i32-ir 64) = 1
+	(word-at i32-ir 68) = 0
+	(word-at i32-ir 72) = 7
+	(word-at i32-ir 76) = 2
+	(word-at i32-ir 80) = 1
+	(word-at i32-ir 88) = 1
+]["i32 literal/return instructions changed"]
+assert i32-ir = compile-text
 	{Red/System [] fn: func [return: [int32!]][return 7]}
 	'user
 	"equivalent i32 source forms produced different RSIR"
 
-parsed: container/verify/expect i32-rsir schema/WIRE_MAGIC_RSIR
-assert parsed/valid? "i32 RSIR failed container verification"
-types-section: container/find-section parsed schema/WIRE_RSIR_SECTION_TYPES
-signature-section: container/find-section parsed schema/WIRE_RSIR_SECTION_SIGNATURES
-constant-section: container/find-section parsed schema/WIRE_RSIR_SECTION_CONSTANTS
-constant-data-section: container/find-section parsed schema/WIRE_RSIR_SECTION_CONSTANT_DATA
-block-section: container/find-section parsed schema/WIRE_RSIR_SECTION_BLOCKS
-value-section: container/find-section parsed schema/WIRE_RSIR_SECTION_VALUES
-instruction-section: container/find-section parsed schema/WIRE_RSIR_SECTION_INSTRUCTIONS
-operand-section: container/find-section parsed schema/WIRE_RSIR_SECTION_OPERANDS
-assert all [
-	(select types-section 'record-count) = 2
-	(select constant-section 'record-count) = 1
-	(select value-section 'record-count) = 1
-	(select instruction-section 'record-count) = 2
-	(select operand-section 'record-count) = 2
-]["i32 frontend emitted the wrong table cardinalities"]
-assert (container/read-u32 i32-rsir
-	((select signature-section 'payload-offset)
-		+ schema/WIRE_RSIR_SIGNATURE_RETURN_TYPE_OFFSET)) = 2
-	"i32 function signature has the wrong return type"
-assert (container/read-u32 i32-rsir
-	(select constant-data-section 'payload-offset)) = 7
-	"i32 literal bytes changed"
-assert (container/read-u32 i32-rsir
-	((select block-section 'payload-offset)
-		+ schema/WIRE_RSIR_BLOCK_INSTRUCTION_COUNT_OFFSET)) = 2
-	"i32 function block does not contain constant and return"
-assert (container/read-u32 i32-rsir
-	((select instruction-section 'payload-offset)
-		+ schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET)) = schema/WIRE_OPCODE_CONSTANT
-	"i32 literal did not lower to CONSTANT"
-assert (container/read-u32 i32-rsir
-	((select instruction-section 'payload-offset)
-		+ schema/WIRE_RSIR_INSTRUCTION_SIZE
-		+ schema/WIRE_RSIR_INSTRUCTION_OPCODE_OFFSET)) = schema/WIRE_OPCODE_RETURN
-	"i32 result did not lower to RETURN"
-
-named-rsir: frontend/compile
+named-ir: frontend/compile
 	load {Red/System [] fn: func [][]}
 	"z-module"
 	'support
 	'executable
-assert binary? named-rsir "frontend rejected a named support module"
-verify-rsir "named" named-rsir
+assert binary? named-ir "frontend rejected named support module"
+assert all [
+	(length? named-ir) = 86
+	(word-at named-ir 4) = 2
+	(word-at named-ir 16) = 8
+	(word-at named-ir 32) = 8
+	(copy/part at named-ir 77 8) = #{7A2D6D6F64756C65}
+	(copy at named-ir 85) = #{666E}
+]["named module string layout changed"]
 
 assert none? compile-text/limit
 	{Red/System [] fn: func [][]}
 	'user
-	1395
-	"frontend ignored its RSIR output limit"
+	77
+	"frontend ignored its output limit"
 assert frontend/last-error/code = frontend/ERROR-LIMIT
 	"frontend reported the wrong output-limit error"
 
@@ -140,13 +119,11 @@ assert none? frontend/compile
 	""
 	'user
 	'executable
-	"frontend accepted an empty present module name"
+	"frontend accepted an empty module name"
 assert frontend/last-error/code = frontend/ERROR-NAME
 	"frontend reported the wrong module-name error"
 
-assert none? compile-text
-	{Red/System []}
-	'user
+assert none? compile-text {Red/System []} 'user
 	"frontend accepted a module without a function"
 assert frontend/last-error/code = frontend/ERROR-FUNCTION-COUNT
 	"frontend reported the wrong missing-function error"
@@ -154,9 +131,9 @@ assert frontend/last-error/code = frontend/ERROR-FUNCTION-COUNT
 assert none? compile-text
 	{Red/System [] first: func [][] second: func [][]}
 	'user
-	"frontend accepted a second function outside its current slice"
+	"frontend accepted a second function"
 assert frontend/last-error/code = frontend/ERROR-FUNCTION-COUNT
-	"frontend reported the wrong duplicate-function error"
+	"frontend reported the wrong second-function error"
 
 assert none? compile-text
 	{Red/System [] fn: func [value [integer!]][]}
@@ -165,18 +142,14 @@ assert none? compile-text
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"frontend reported the wrong parameter error"
 
-assert none? compile-text
-	{Red/System [] fn: func [][1]}
-	'user
+assert none? compile-text {Red/System [] fn: func [][1]} 'user
 	"frontend accepted a value from a void function"
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"frontend reported the wrong void-body error"
 
-assert none? compile-text
-	{Red/System [] 1}
-	'user
+assert none? compile-text {Red/System [] 1} 'user
 	"frontend accepted a root expression"
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"frontend reported the wrong root-expression error"
 
-print "PASS: direct Red/System to RSIR frontend"
+print "PASS: compact Red/System IR frontend"

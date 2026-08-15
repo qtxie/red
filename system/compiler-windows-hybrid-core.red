@@ -4,8 +4,10 @@ Red [
 ]
 
 ; Keep the hybrid package's source closure independent of the legacy emitter
-; and per-function machine IR. Unsupported semantic paths fail in the RSIR
-; sink; they are never satisfied by compiling either legacy backend module.
+; and per-function machine IR. Unsupported semantics fail in the direct RSIR
+; frontend; neither legacy backend module is compiled into this entry.
 #include %compiler-windows-common.red
 #include %utils/libRedRT.red
+#include %../compiler/rsir-frontend.red
+#include %../compiler/codegen-bridge.red
 #include %compiler-rsir-core.red

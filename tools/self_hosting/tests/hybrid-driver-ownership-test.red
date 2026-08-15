@@ -1,5 +1,5 @@
 Red [
-	Title: "Exclusive hybrid compiler driver ownership audit"
+	Title: "Direct hybrid compiler source-closure audit"
 ]
 
 fail: func [message [string! block!]][
@@ -59,47 +59,39 @@ expect: func [
 ]
 
 core: inventory/scan load %../../../system/compiler-rsir-core.red
-expect core/1 "compiler-hybrid-driver/generate" 1 "compiler-rsir-core"
-expect core/1 "compiler-hybrid-driver/adapt" 1 "compiler-rsir-core"
+expect core/2 "codegen-module" 1 "compiler-rsir-core"
+expect core/1 "linker/load-codegen" 1 "compiler-rsir-core"
 expect core/1 "linker/build" 1 "compiler-rsir-core"
 expect core/1 "compiler-rscg-linker-adapter/adapt" 0 "compiler-rsir-core"
 expect core/1 "rs-o2-ir/verify-current" 0 "compiler-rsir-core"
-expect core/2 "codegen-module" 0 "compiler-rsir-core"
-expect core/2 "finish-rscg" 1 "compiler-rsir-core"
-
-driver: inventory/scan load %../../../compiler/hybrid-driver.red
-expect driver/2 "invoke-codegen" 0 "hybrid-driver-static-call"
-expect driver/2 "invoke-adapter" 0 "hybrid-driver-static-call"
-expect driver/2 "adapter-message" 0 "hybrid-driver-static-call"
-expect driver/3 "invoke-codegen" 1 "hybrid-driver-dynamic-call"
-expect driver/3 "invoke-adapter" 1 "hybrid-driver-dynamic-call"
-expect driver/3 "adapter-message" 1 "hybrid-driver-dynamic-call"
-expect driver/1 "config-producer/build" 1 "hybrid-driver"
-expect driver/1 "container/verify/expect" 1 "hybrid-driver"
-expect driver/1 "container/find-section" 3 "hybrid-driver"
-expect driver/1 "diagnostic-verifier/verify" 0 "hybrid-driver"
-expect driver/2 "emitter" 0 "hybrid-driver"
-expect driver/2 "rs-o2-ir" 0 "hybrid-driver"
-expect driver/2 "linker" 0 "hybrid-driver"
-expect driver/2 "verify-current" 0 "hybrid-driver"
+expect core/2 "finish-code" 1 "compiler-rsir-core"
+expect core/2 "schema" 0 "compiler-rsir-core"
+expect core/2 "adapter" 0 "compiler-rsir-core"
 
 package: inventory/scan load %../../../system/compiler-windows-hybrid-bootstrap.red
-expect package/2 "codegen-module" 1 "hybrid-package"
-expect package/1 "compiler-rscg-linker-adapter/adapt" 1 "hybrid-package"
+expect package/2 "codegen-module" 0 "hybrid-package"
+expect package/1 "compiler-rscg-linker-adapter/adapt" 0 "hybrid-package"
 expect package/2 "emitter" 0 "hybrid-package"
 expect package/2 "rs-o2-ir" 0 "hybrid-package"
 expect package/2 "linker" 0 "hybrid-package"
 expect package/2 "verify-current" 0 "hybrid-package"
+unless find read %../../../system/compiler-windows-hybrid-bootstrap.red
+	"#include %compiler-windows-hybrid-core.red"
+[
+	fail "hybrid package does not include its direct core"
+]
 
 native-bridge-text: read %../../../system/codegen/codegen-bridge.reds
 if find native-bridge-text "binary/rs-append" [
 	fail "native codegen bridge depends on non-exported binary/rs-append"
 ]
 unless all [
-	find native-bridge-text "commit-arena"
-	find native-bridge-text "GET_BUFFER(output)"
+	find native-bridge-text "GET_BUFFER(artifact)"
+	find native-bridge-text "x64-codegen/generate"
+	not find native-bridge-text "WIRE_"
+	not find native-bridge-text "wire-"
 ][
-	fail "native codegen bridge is missing its allocation-free output commit"
+	fail "native codegen bridge is not the direct compact path"
 ]
 
 include-directive: to issue! "include"
@@ -148,7 +140,6 @@ walk-include-file: func [
 	put closure-seen key true
 	append closure-files normalized
 	suffix: suffix? normalized
-	if suffix = %.reds [return none]
 	set/any 'source try [load/all read normalized]
 	if error? :source [fail ["cannot load hybrid closure file " normalized ": " mold source]]
 	base: first split-path normalized
@@ -169,6 +160,12 @@ foreach forbidden [
 	%system/emitter.red
 	%system/machine-ir.red
 	%system/machine-ir-x64.red
+	%compiler/wire-schema.red
+	%compiler/wire-writer.red
+	%compiler/wire-container.red
+	%compiler/rscf-producer.red
+	%compiler/hybrid-driver.red
+	%compiler/rscg-linker-adapter.red
 	%compiler/wire-file-source.red
 	%compiler/wire-data-layout.red
 	%compiler/wire-module-lifecycle.red
@@ -177,6 +174,14 @@ foreach forbidden [
 	%compiler/wire-rscg-metadata.red
 	%compiler/wire-string-table.red
 	%compiler/wire-diagnostics.red
+	%system/codegen/wire-schema.reds
+	%system/codegen/wire-reader.reds
+	%system/codegen/wire-writer.reds
+	%system/codegen/wire-rsir.reds
+	%system/codegen/wire-rscg-metadata.reds
+	%system/codegen/wire-diagnostics.reds
+	%system/codegen/wire-codegen-strings.reds
+	%system/codegen/x64-o0-codegen.reds
 ][
 	forbidden: clean-path to file! rejoin [root forbidden]
 	if find closure-files forbidden [
@@ -188,6 +193,11 @@ foreach required [
 	%system/compiler-windows-hybrid-core.red
 	%system/compiler-windows-common.red
 	%system/compiler-rsir-core.red
+	%system/linker.red
+	%system/codegen/codegen-bridge.reds
+	%system/codegen/x64-codegen.reds
+	%system/codegen/x64-encoder.reds
+	%compiler/rsir-frontend.red
 	%compiler/codegen-bridge.red
 	%compiler/saved-frontend.red
 	%red-bootstrap-windows-hybrid-backend.red
@@ -199,6 +209,6 @@ foreach required [
 ]
 
 print [
-	"PASS: exclusive hybrid compiler driver ownership"
+	"PASS: direct hybrid compiler source closure"
 	length? closure-files "source files"
 ]

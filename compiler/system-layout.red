@@ -40,7 +40,7 @@ compiler-system-layout: context [
 		struct! 1000 union! 1001
 	]
 
-	connect: func [target-service [object!] /compiler /local model pos][
+	connect: func [target-service [object!] /compiler /local model pos type][
 		target: target-service
 		compiler-mode?: to logic! compiler
 		model: copy types-model
@@ -158,7 +158,7 @@ compiler-system-layout: context [
 		]
 	]
 
-	aggregate-align?: func [spec [block!] /local alignment member-alignment][
+	aggregate-align?: func [spec [block!] /local alignment member-alignment name type][
 		if (union-spec? spec) [return union-payload-align? spec]
 		alignment: 1
 		foreach [name type] spec [
@@ -172,7 +172,7 @@ compiler-system-layout: context [
 		]
 	]
 
-	union-payload-align?: func [spec [block!] /local alignment member-alignment][
+	union-payload-align?: func [spec [block!] /local alignment member-alignment name type][
 		alignment: 1
 		foreach [name type] (union-members spec) [
 			member-alignment: type-align? type
@@ -190,7 +190,10 @@ compiler-system-layout: context [
 		]
 	]
 
-	union-size?: func [spec [block!] /local size alignment member-size member-alignment total][
+	union-size?: func [
+		spec [block!]
+		/local size alignment member-size member-alignment total name type
+	][
 		size: 0
 		alignment: 1
 		foreach [name type] (union-members spec) [
@@ -218,16 +221,18 @@ compiler-system-layout: context [
 		]
 	]
 
-	member-offset?: func [spec [block!] name [word! none!] /local offset alignment size][
+	member-offset?: func [
+		spec [block!]
+		name [word! none!]
+		/local offset alignment field type
+	][
 		if (union-spec? spec) [return union-member-offset? spec name]
 		offset: 0
 		foreach [field type] spec [
 			alignment: type-align? type
 			offset: align-offset? offset alignment
 			if field = name [return offset]
-			size: size-of? type
-			unless size [throw-error reduce ["invalid member type:" mold type]]
-			offset: offset + size
+			offset: offset + size-of? type
 		]
 		align-offset? offset aggregate-align? spec
 	]
@@ -331,7 +336,7 @@ compiler-system-layout: context [
 		]
 	]
 
-	struct-has-pointer?: func [spec [block!] /local found?][
+	struct-has-pointer?: func [spec [block!] /local found? name type][
 		found?: false
 		if block? spec/1 [spec: next spec]
 		foreach [name type] spec [
@@ -340,7 +345,7 @@ compiler-system-layout: context [
 		found?
 	]
 
-	union-has-pointer?: func [spec [block!] /local found?][
+	union-has-pointer?: func [spec [block!] /local found? name type][
 		found?: false
 		foreach [name type] (union-members spec) [
 			if type-has-pointer? type [found?: true break]

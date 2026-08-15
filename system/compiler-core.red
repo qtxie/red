@@ -3,6 +3,9 @@ Red [
 	File:  %compiler-core.red
 ]
 
+#include %../compiler/system-types.red
+#include %../compiler/system-target-model.red
+#include %../compiler/system-layout.red
 #include %../compiler/wire-schema.red
 #include %../compiler/wire-writer.red
 #include %../compiler/wire-container.red
@@ -490,7 +493,7 @@ system-dialect: context [
 						either type/2 [pick [int-ptr! byte-ptr!] int32-type? type/2]['ptr-ptr!]
 					]
 				][type/1]
-				select emitter/datatype-ID type
+				select compiler-system-layout/datatype-ID type
 			]
 		]
 
@@ -744,7 +747,7 @@ system-dialect: context [
 
 		base-type?: func [value][
 			if block? value [value: value/1]
-			to logic! find/skip emitter/datatypes value 3
+			compiler-system-layout/base-type? value
 		]
 
 		union-spec?: func [spec [block!]][
@@ -1441,7 +1444,7 @@ system-dialect: context [
 							find value get-word!
 							find value string!
 						]
-						type: either emitter/target/ptr-size = 8 [
+						type: either compiler-system-target-model/ptr-size = 8 [
 							either parse value [some string!] [[c-string!]][[uint64!]]
 						][[integer!]]
 					]
@@ -2176,7 +2179,7 @@ system-dialect: context [
 				spec: skip spec	2
 			]
 			if all [
-				find emitter/target/comparison-op name
+				find compiler-system-target-model/comparison-op name
 				not equal-types? list/1/1 list/2/1
 			][
 				case [
@@ -2200,8 +2203,8 @@ system-dialect: context [
 			]
 			if all [
 				any [
-					find emitter/target/comparison-op name
-					find emitter/target/bitwise-op name
+					find compiler-system-target-model/comparison-op name
+					find compiler-system-target-model/bitwise-op name
 				]
 				not equal-types? list/1/1 list/2/1		;-- allow implicit casting for math ops only
 			][
@@ -2211,7 +2214,7 @@ system-dialect: context [
 					"^/*** left:" join list/1/1 #"," "right:" list/2/1
 				]
 			]
-			if find emitter/target/math-op name	[
+			if find compiler-system-target-model/math-op name [
 				case [
 					any [
 						all [list/1/1 = 'byte! any-pointer? list/2]
@@ -3262,7 +3265,7 @@ system-dialect: context [
 				expr: fetch-expression 'size?
 				type: resolve-expr-type expr
 			]
-			emitter/get-size type expr
+			compiler-system-layout/get-size type expr
 		]
 
 		comp-variant?: has [expr type variant id][
@@ -3972,7 +3975,7 @@ system-dialect: context [
 						append args id: get-type-id expr
 						append/only args expr
 						append args pick [#_ 0] to logic! any [
-							id = emitter/datatype-ID/float!
+							id = compiler-system-layout/datatype-ID/float!
 							int64? type
 						]						;-- 32-bit padding
 					][
@@ -4423,8 +4426,8 @@ system-dialect: context [
 
 		process-returned-struct: func [name [word!] spec [block!] args [block!] /local alloc? slots size caller][
 			if all [
-				slots: emitter/struct-slots?/check spec/4
-				size: emitter/struct-size?/check spec/4
+				slots: compiler-system-layout/struct-slots?/check spec/4
+				size: compiler-system-layout/struct-size?/check spec/4
 				hidden-struct-return? spec slots size
 			][
 				unless caller: get-caller name [
@@ -4530,8 +4533,8 @@ system-dialect: context [
 				foreach expr list [
 					if all [scan-types not tag? expr block? scan-types/1 struct-by-value? scan-types/1][
 						struct-type: resolve-aliased scan-types/1
-						struct-slots: emitter/struct-slots?/direct struct-type/2
-						struct-size: emitter/struct-size?/direct struct-type/2
+						struct-slots: compiler-system-layout/struct-slots?/direct struct-type/2
+						struct-size: compiler-system-layout/struct-size?/direct struct-type/2
 						if all [
 							spec/2 = 'import
 							pass-struct-pointer?/aggregate spec struct-slots struct-size struct-type
@@ -4622,8 +4625,8 @@ system-dialect: context [
 						if type <> 'inline [
 							either all [types not tag? expr block? types/1 struct-by-value? types/1][
 								struct-type: resolve-aliased types/1
-								struct-slots: emitter/struct-slots?/direct struct-type/2
-								struct-size: emitter/struct-size?/direct struct-type/2
+								struct-slots: compiler-system-layout/struct-slots?/direct struct-type/2
+								struct-size: compiler-system-layout/struct-size?/direct struct-type/2
 								either all [
 									find [X86-64 ARM64] job/target
 									all [
@@ -4995,8 +4998,8 @@ system-dialect: context [
 					spec: select functions expr/1
 					hidden-struct-return?
 						spec
-						emitter/struct-slots?/check spec/4
-						emitter/struct-size?/check spec/4
+						compiler-system-layout/struct-slots?/check spec/4
+						compiler-system-layout/struct-size?/check spec/4
 					store?: no							;-- avoid emitting assignment code
 				]
 				if all [
@@ -5306,8 +5309,8 @@ system-dialect: context [
 			type: resolve-aliased source-type
 			if any [struct-by-value? source-type struct-by-value? type][
 				aggregate-size: case [
-					type/1 = 'struct! [emitter/struct-size?/direct type/2]
-					type/1 = 'union! [emitter/union-size? type/2]
+					type/1 = 'struct! [compiler-system-layout/struct-size?/direct type/2]
+					type/1 = 'union! [compiler-system-layout/union-size? type/2]
 					true [none]
 				]
 				unless integer? aggregate-size [return none]
@@ -5330,15 +5333,15 @@ system-dialect: context [
 							(length? type) >= 2
 							block? type/2
 							not empty? type/2
-						][scale: any [emitter/size-of? type/2/1 1]]
+						][scale: any [compiler-system-layout/size-of? type/2/1 1]]
 						kind = 'struct! [
-							scale: any [emitter/member-offset? type/2 none 1]
+							scale: any [compiler-system-layout/member-offset? type/2 none 1]
 						]
-						kind = 'union! [scale: any [emitter/union-size? type/2 1]]
+						kind = 'union! [scale: any [compiler-system-layout/union-size? type/2 1]]
 						true []
 					]
 					gc-kind: either find [pointer! c-string! function! struct! union!] kind ['pointer]['none]
-					rs-o2-ir/make-type 'ptr emitter/target/ptr-size 'gpr no scale gc-kind
+					rs-o2-ir/make-type 'ptr compiler-system-target-model/ptr-size 'gpr no scale gc-kind
 				]
 				integer-type? type [
 					width: integer-width? type
@@ -5471,7 +5474,7 @@ system-dialect: context [
 					ir-type: o2-ir-type-from-type cursor/2
 					if ir-type [
 					size: max 1 o2-ir-storage-size ir-type
-						align: min size emitter/target/stack-width
+						align: min size compiler-system-target-model/stack-width
 						rs-o2-ir/add-stack-object item kind ir-type size align ir-type/6
 					]
 					unless ir-type [rs-o2-ir/mark-unsupported 'unsupported-stack-object-type]
@@ -5491,7 +5494,7 @@ system-dialect: context [
 			if all [marker: find locals /local find next marker name][kind: 'local]
 			offset: select/skip emitter/stack name 2
 			size: max 1 o2-ir-storage-size ir-type
-			align: min size emitter/target/stack-width
+			align: min size compiler-system-target-model/stack-width
 			rs-o2-ir/ensure-stack-object name kind ir-type size align ir-type/6 offset
 		]
 
@@ -5634,14 +5637,14 @@ system-dialect: context [
 		]
 		case [
 			spec/2 = 'native [
-				slots: to integer! round/ceiling (formal-type/5 / emitter/target/stack-width)
+				slots: to integer! round/ceiling (formal-type/5 / compiler-system-target-model/stack-width)
 				chunks: make block! slots
 				repeat index slots [
-					width: min emitter/target/stack-width
-						(formal-type/5 - ((index - 1) * emitter/target/stack-width))
+					width: min compiler-system-target-model/stack-width
+						(formal-type/5 - ((index - 1) * compiler-system-target-model/stack-width))
 					append chunks rs-o2-ir/emit-load-aggregate-slot
 						value
-						((index - 1) * emitter/target/stack-width)
+						((index - 1) * compiler-system-target-model/stack-width)
 						width
 				]
 				append args chunks
@@ -5653,7 +5656,7 @@ system-dialect: context [
 					append args value
 					return yes
 				]
-				slots: to integer! round/ceiling (formal-type/5 / emitter/target/stack-width)
+				slots: to integer! round/ceiling (formal-type/5 / compiler-system-target-model/stack-width)
 				abi-classes: make block! slots
 				mode: either all [not empty? classes classes/1 = 'memory] ['stack]['register-or-stack]
 				either mode = 'stack [
@@ -5662,11 +5665,11 @@ system-dialect: context [
 				start: (length? args) + 1
 				chunks: make block! slots
 				repeat index slots [
-					width: min emitter/target/stack-width
-						(formal-type/5 - ((index - 1) * emitter/target/stack-width))
+					width: min compiler-system-target-model/stack-width
+						(formal-type/5 - ((index - 1) * compiler-system-target-model/stack-width))
 					append chunks rs-o2-ir/emit-load-aggregate-slot/abi-class
 						value
-						((index - 1) * emitter/target/stack-width)
+						((index - 1) * compiler-system-target-model/stack-width)
 						width
 						pick abi-classes index
 				]
@@ -5701,7 +5704,7 @@ system-dialect: context [
 		type [block!]
 		/local slots classes return-type
 	][
-		slots: to integer! round/ceiling (type/5 / emitter/target/stack-width)
+		slots: to integer! round/ceiling (type/5 / compiler-system-target-model/stack-width)
 		case [
 			spec/2 = 'native [reduce [either slots > 2 ['hidden]['register] none]]
 			all [spec/2 = 'import job/OS = 'Windows][
@@ -5767,7 +5770,7 @@ system-dialect: context [
 				(length? args) = 2
 				return-type
 				return-type/1 = 'ptr
-				return-type/2 = emitter/target/ptr-size
+				return-type/2 = compiler-system-target-model/ptr-size
 			][return no]
 			source-type: rs-o2-ir/vreg-type args/1
 			destination-type: rs-o2-ir/vreg-type args/2
@@ -5776,8 +5779,8 @@ system-dialect: context [
 				destination-type
 				source-type/1 = 'ptr
 				destination-type/1 = 'ptr
-			source-type/2 = emitter/target/ptr-size
-			destination-type/2 = emitter/target/ptr-size
+			source-type/2 = compiler-system-target-model/ptr-size
+			destination-type/2 = compiler-system-target-model/ptr-size
 		]
 	]
 
@@ -5792,7 +5795,7 @@ system-dialect: context [
 			(length? args) = 1
 			return-type
 			return-type/1 = 'ptr
-			return-type/2 = emitter/target/ptr-size
+			return-type/2 = compiler-system-target-model/ptr-size
 			select emitter/symbols 'red>node-registry
 		][return no]
 		handle-type: rs-o2-ir/vreg-type args/1
@@ -5831,7 +5834,7 @@ system-dialect: context [
 		unless member-type [return none]
 		member-ir-type: o2-ir-type-from-type member-type
 		unless member-ir-type [return none]
-		offset: emitter/member-offset? aggregate-type/2 path/2
+		offset: compiler-system-layout/member-offset? aggregate-type/2 path/2
 		unless integer? offset [return none]
 		inline?: all [field-type struct-by-value? field-type]
 		tag-ir-type: tag-id: none
@@ -6196,7 +6199,7 @@ system-dialect: context [
 									if find [hidden] aggregate-result-mode [
 										aggregate-result-temp: rs-o2-ir/emit-aggregate-temp ir-type/5
 										aggregate-result-pointer: rs-o2-ir/make-type 'ptr
-											emitter/target/ptr-size 'gpr no 1 'none
+											compiler-system-target-model/ptr-size 'gpr no 1 'none
 										insert args rs-o2-ir/emit-bitcast
 											aggregate-result-temp aggregate-result-pointer
 										foreach group aggregate-argument-groups [
@@ -7004,7 +7007,7 @@ system-dialect: context [
 			job-data [block!]
 		/local
 			comp-time link-time err output src resources icon buffer buffer-size
-			file file-list sections result mode-slot link-requested?
+			file file-list sections result mode-slot link-requested? frontend-target
 	][
 		comp-time: now/time/precise
 		phase-timer/begin 'backend-setup
@@ -7026,6 +7029,11 @@ system-dialect: context [
 		compiler/job: job
 		compiler/script: first file-list
 		compiler/pc: none
+		frontend-target: compiler-system-target-model/configure job/target
+		unless object? frontend-target [
+			compiler/throw-error compiler-system-target-model/last-error/message
+		]
+		compiler-system-layout/connect/compiler frontend-target
 		if all [rsir-mode? (length? file-list) <> 1][
 			compiler/throw-error "RSIR frontend supports exactly one source module"
 		]

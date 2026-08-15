@@ -18,23 +18,8 @@ compiler-backend-ownership-spec: [
 
 	dependencies [
 		frontend [
-			"emitter"                              1
-			"emitter/datatype-ID"                  1
-			"emitter/datatype-ID/float!"           1
-			"emitter/datatypes"                    1
-			"emitter/get-size"                     1
-			"emitter/member-offset?"               2
-			"emitter/size-of?"                     1
-			"emitter/struct-size?/check"           2
-			"emitter/struct-size?/direct"          3
-			"emitter/struct-slots?/check"          2
-			"emitter/struct-slots?/direct"         2
-			"emitter/target/bitwise-op"            1
-			"emitter/target/comparison-op"         2
-			"emitter/target/math-op"               1
-			"emitter/target/ptr-size"              7
-			"emitter/target/stack-width"          11
-			"emitter/union-size?"                  2
+			; Legacy verbosity propagation is driver state, not semantic input.
+			"emitter" 1
 		]
 
 		rsir [

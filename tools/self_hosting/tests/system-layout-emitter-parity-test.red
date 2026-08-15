@@ -3,9 +3,6 @@ Red [
 ]
 
 #include %../../../system/compiler-windows-bootstrap.red
-#include %../../../compiler/system-types.red
-#include %../../../compiler/system-target-model.red
-#include %../../../compiler/system-layout.red
 
 red-compiler-process-get: func [spec code [block!]][false]
 red-compiler-process-in: func [path word code [block!]][false]
@@ -170,5 +167,53 @@ pointer-struct: [address [pointer! [integer!]] count [integer!]]
 check-equal "pointer aggregate classification"
 	emitter/type-has-pointer? reduce ['struct! pointer-struct 'value]
 	compiler-system-layout/type-has-pointer? reduce ['struct! pointer-struct 'value]
+
+tiny-spec: [b1 [byte!]]
+small-spec: [one [integer!] two [integer!]]
+big-spec: [one [integer!] two [integer!] three [float!]]
+huge-spec: [
+	w1 [integer!] w2 [integer!] w3 [float!]
+	w4 [integer!] w5 [integer!] w6 [float!]
+]
+super-spec: [
+	f1 [float!] f2 [float!] f3 [float!]
+	f4 [float!] f5 [float!] f6 [float!]
+]
+foreach [name spec] reduce [
+	'tiny! tiny-spec 'small! small-spec 'big! big-spec
+	'huge! huge-spec 'super! super-spec
+][
+	append system-dialect/compiler/aliased-types name
+	append/only system-dialect/compiler/aliased-types reduce ['struct! spec]
+]
+
+nested1-spec: [f1 [integer!] sub [tiny! value] f2 [integer!]]
+nested2-spec: [f1 [integer!] sub [small! value] f2 [integer!]]
+nested3-spec: [f1 [integer!] sub [big! value] f2 [integer!]]
+nested4-spec: [g1 [integer!] sub [huge! value] g2 [integer!]]
+nested5-spec: [g1 [integer!] sub [super! value] g2 [integer!]]
+
+foreach [name spec] reduce [
+	'nested1! nested1-spec 'nested2! nested2-spec 'nested3! nested3-spec
+	'nested4! nested4-spec 'nested5! nested5-spec
+][
+	append system-dialect/compiler/aliased-types name
+	append/only system-dialect/compiler/aliased-types reduce ['struct! spec]
+	unless system-dialect/compiler/find-aliased name [
+		fail ["could not register aggregate alias: " mold name]
+	]
+	check-equal rejoin [name " alignment"]
+		emitter/type-align? reduce [name 'value]
+		compiler-system-layout/type-align? reduce [name 'value]
+	check-equal rejoin [name " direct size"]
+		emitter/struct-size?/direct spec
+		compiler-system-layout/struct-size?/direct spec
+	check-equal rejoin [name " sub offset"]
+		emitter/member-offset? spec 'sub
+		compiler-system-layout/member-offset? spec 'sub
+	check-equal rejoin [name " final size"]
+		emitter/member-offset? spec none
+		compiler-system-layout/member-offset? spec none
+]
 
 print "PASS: frontend type layout matches legacy emitter on Windows x64"

@@ -9,9 +9,11 @@ control-flow, calls/ABI, atomic-operation, subroutine, exception,
 explicit-stack, target-intrinsic, and RSDG diagnostic verifiers now have
 executable coverage. The bounded native arena/writer, aggregate RSIR verifier,
 and first `codegen-module` routine bridge also have cross-language integration
-coverage. The protocol remains unfrozen until the remaining Windows x64
-feature blockers and message-level semantic fixtures satisfy the Phase 1 exit
-criteria.
+coverage. An allocation-free canonical string merger and the first Windows x64
+machine-code slice now produce an exact, self-verified RSCG for one internal
+`void` function containing only `RETURN`. The protocol remains unfrozen until
+the remaining Windows x64 feature blockers and message-level semantic fixtures
+satisfy the Phase 1 exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -164,7 +166,13 @@ and the current empty Windows x64 unwind contract are independently verified
 as well. Nonempty unwind records are an explicit v1 unsupported error until
 the codegen and adapter implement `.pdata`/`.xdata`; they are never silently
 dropped. These layers only inspect serialized bytes and generate no machine
-code.
+code. The bridge now adds one deliberately narrow machine-code slice: a USER or
+SUPPORT executable module containing one internal hidden Red/System `void()`
+function, one block, and one operand-free `RETURN`. Red/System codegen emits the
+x64 prolog/epilog bytes, an empty GC bitmap, and complete RSCG section, symbol,
+function, frame, and module records. Every other valid nonempty RSIR still fails
+at SELECT. This path does not call `machine-ir/verify-current`, consume frontend
+direct-code fragments, or invoke the legacy emitter.
 Standalone USER and SUPPORT objects validate each GC frame against its
 explicit initialized-DATA slice without inventing runtime compatibility roles;
 only an object containing the RUNTIME module requires exact coverage of
@@ -179,9 +187,10 @@ context with explicit presence bits. These are protocol prerequisites only;
 they do not invoke the legacy emitter or constitute a partial backend execution
 path. The control verifier is independent of legacy
 `machine-ir/verify-current`. These layers do not produce direct code bytes. The
-Phase 2 smoke backend can produce only a self-verified no-code RSCG for an
-otherwise empty module; frontend RSIR production and machine-code RSCG
-generation remain later work.
+first codegen slice described above is separate from these verifier layers: it
+is the first component allowed to emit machine bytes, and only for the exact
+one-function `void RETURN` shape. Frontend RSIR production, optimization, and
+all broader machine-code coverage remain later work.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
 Its test reads `system/tests/run-all.r` as data and rejects any unclassified
@@ -287,8 +296,10 @@ Deliverables:
 
 Tests:
 
-- a bridge smoke backend consumes a minimal RSIR and returns a valid no-code
-  RSCG containing the required module record;
+- the bridge preserves a valid no-code RSCG for an empty module and produces a
+  real, self-verified RSCG for the exact one-function `void RETURN` slice;
+- every valid nonempty module outside that exact slice fails at SELECT without
+  committing an artifact;
 - every malformed phase-1 fixture produces a stable status and bounded RSDG;
 - aliased inputs/outputs and nonzero output heads are rejected;
 - repeated calls under forced Red GC do not retain or corrupt series pointers;
@@ -303,22 +314,28 @@ Exit criteria:
 Bridge-substrate implementation status:
 
 - `compiler/codegen-bridge.red` exposes the four-binary `routine!`, while
-  `system/codegen/codegen-bridge.reds` owns validation, diagnostics, the smoke
-  backend, and the single output commit;
+  `system/codegen/codegen-bridge.reds` owns validation, diagnostics, exact
+  subset selection, native backend dispatch, and the single output commit;
 - `wire-arena.reds` and `wire-writer.reds` provide bounded native allocation and
   deterministic RSCG/RSDG construction; every completed output is independently
   self-verified before it can cross the routine boundary;
 - `wire-rsir.reds` performs the shared decode once and applies target, atomic,
   and memory/aggregate checks over unpublished verified views. External views
   are copied only after all layers succeed;
-- the smoke backend accepts only a semantically valid empty USER or SUPPORT
-  module. Any valid nonempty module returns `CODEGEN_FAILURE` at SELECT and
-  produces no artifact; this is not a partial machine-code backend;
+- an empty USER or SUPPORT module retains the no-code result. The first native
+  slice accepts exactly one internal hidden `void()` function with one block and
+  one `RETURN`; `x64-encoder.reds` emits 17 fixed bytes and
+  `x64-o0-codegen.reds` constructs and self-verifies its complete RSCG;
+- `wire-codegen-strings.reds` merges `.data` and `.text` into the verified input
+  string table with two allocation-free scans, preserving canonical order,
+  deduplicating names, and explicitly remapping input IDs. Every other valid
+  nonempty module returns `CODEGEN_FAILURE` at SELECT with no artifact;
 - `generate-codegen-bridge-fixtures.red` first validates its RSIR, RSCG, and
   RSDG fixtures with the Red verifiers. Its compiled integration test pins exact
-  output bytes and covers decode/verify/target/select/encode failures, output
-  bounds, disabled diagnostics, all six series-alias pairs, nonzero heads,
-  atomic and memory/aggregate view errors, and repeated forced GC;
+  bytes for both the empty and one-function RSCG outputs and covers decode/
+  verify/target/select/encode failures, output bounds, disabled diagnostics,
+  all six series-alias pairs, nonzero heads, atomic and memory/aggregate view
+  errors, and repeated forced GC;
 - the release integration executable imports system DLLs only. `dumpbin`
   reports no `libRedRT.dll` dependency even when that DLL is present beside the
   executable.
@@ -419,6 +436,17 @@ Tests:
 - GC probes force collection with live handles in arguments, locals, callee-save
   registers, and spills;
 - atomic and overflow edge cases run in both legacy and rsir modes.
+
+Current implementation slice:
+
+- `x64-encoder.reds` transactionally emits the exact empty-`void` function
+  bytes, including a fixed-width GC bitmap patch point, and rolls its arena back
+  on bounded-output failure;
+- `x64-o0-codegen.reds` performs exact semantic selection, canonical string-ID
+  remapping, RSCG construction, and full native metadata self-verification;
+- this is a vertical protocol/codegen proof, not Phase 5 completion. It has no
+  operands, calls, register allocation, relocations, imports, debug records, or
+  linker execution yet, and unsupported inputs never fall back.
 
 Exit criteria:
 

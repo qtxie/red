@@ -1,5 +1,5 @@
 Red/System [
-	Title: "Hybrid compiler routine bridge and smoke codegen"
+	Title: "Hybrid compiler routine bridge and native codegen"
 	File:  %codegen-bridge.reds
 ]
 
@@ -8,6 +8,7 @@ Red/System [
 #include %wire-rsir.reds
 #include %wire-rscg-metadata.reds
 #include %wire-diagnostics.reds
+#include %x64-o0-codegen.reds
 
 wire-codegen-bridge: context [
 	BUILD_SUCCESS:          0
@@ -284,7 +285,7 @@ wire-codegen-bridge: context [
 					phase = WIRE_DIAGNOSTIC_PHASE_ENCODE
 			]["native codegen encoding failed"]
 			status = WIRE_STATUS_CODEGEN_FAILURE [
-				"smoke backend accepts only empty modules"
+				"unsupported RSIR codegen subset"
 			]
 			status = WIRE_STATUS_INVALID_ARTIFACT ["invalid generated artifact"]
 			true ["native codegen failed"]
@@ -451,6 +452,7 @@ wire-codegen-bridge: context [
 		/local ir-data config-data [byte-ptr!]
 			ir-size config-size status phase target abi endian pointer-size
 			features-low features-high build-status [integer!]
+			empty-module-shape? [logic!]
 			config-result [wire-rscf-result!]
 			verified-config [wire-rscf-config!]
 			container-result [wire-container-result!]
@@ -559,7 +561,13 @@ wire-codegen-bridge: context [
 				target abi endian pointer-size features-low features-high
 			return WIRE_STATUS_INVALID_RSIR
 		]
-		unless empty-module? functions modules symbols constants scalar target-view [
+		empty-module-shape?: empty-module? functions modules symbols constants scalar
+			target-view
+		unless any [
+			empty-module-shape?
+			wire-x64-o0-codegen/supports-empty-void? files types functions modules
+				symbols constants scalar control calls subroutines exceptions target-view
+		][
 			emit-diagnostic diagnostics verified-config/max-diagnostic-bytes
 				WIRE_STATUS_CODEGEN_FAILURE WIRE_DIAGNOSTIC_PHASE_SELECT
 				target abi endian pointer-size features-low features-high
@@ -568,8 +576,15 @@ wire-codegen-bridge: context [
 
 		output: declare wire-arena!
 		wire-arena/reset output
-		build-status: build-empty-rscg output verified-config/max-output-bytes
-			target abi endian pointer-size features-low features-high strings layout modules
+		build-status: either empty-module-shape? [
+			build-empty-rscg output verified-config/max-output-bytes
+				target abi endian pointer-size features-low features-high strings layout
+				modules
+		][
+			wire-x64-o0-codegen/build-empty-void output
+				verified-config/max-output-bytes target abi endian pointer-size
+				features-low features-high strings layout modules symbols
+		]
 		if build-status <> BUILD_SUCCESS [
 			phase: either all [
 				build-status = BUILD_WRITER_ERROR

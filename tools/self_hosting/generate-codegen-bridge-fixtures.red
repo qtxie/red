@@ -166,9 +166,9 @@ foreach [name config-data expected-valid?] reduce [
 
 build-rscg: func [
 	string-records string-data [binary!]
-	/local payloads sections kind
+	payloads [map!]
+	/local sections kind
 ][
-	payloads: make map! 24
 	put payloads schema/WIRE_RSCG_SECTION_DATA_LAYOUT data-layout
 	put payloads schema/WIRE_RSCG_SECTION_STRINGS string-records
 	put payloads schema/WIRE_RSCG_SECTION_STRING_DATA string-data
@@ -199,11 +199,44 @@ build-rscg: func [
 		sections
 ]
 
-expected-rscg: build-rscg #{} #{}
-result: compiler-wire-rscg-metadata/verify expected-rscg
-assert result/valid? ["expected RSCG rejected: " result/error]
-assert (length? expected-rscg) = schema/WIRE_RSCG_MINIMUM_SIZE
+expected-empty-rscg: build-rscg #{} #{} make map! 8
+result: compiler-wire-rscg-metadata/verify expected-empty-rscg
+assert result/valid? ["expected empty RSCG rejected: " result/error]
+assert (length? expected-empty-rscg) = schema/WIRE_RSCG_MINIMUM_SIZE
 	"empty RSCG size changed"
+
+function-rscg-strings: make-canonical-strings ["" ".data" ".text" "fn"]
+data-section-name: select function-rscg-strings/3 ".data"
+code-section-name: select function-rscg-strings/3 ".text"
+output-function-name: select function-rscg-strings/3 "fn"
+empty-void-code: #{554889E56A006A0068000000006A00C9C3}
+empty-void-bitmap: make binary! 16
+append/dup empty-void-bitmap 0 16
+empty-void-output: copy empty-void-code
+append empty-void-output empty-void-bitmap
+function-rscg-payloads: make map! 24
+put function-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_SECTIONS
+	fixture-writer/words reduce [
+		code-section-name schema/WIRE_OUTPUT_SECTION_CLASS_CODE 0 16
+		0 17 17 0
+		data-section-name schema/WIRE_OUTPUT_SECTION_CLASS_DATA 0 4
+		17 16 16 0
+	]
+put function-rscg-payloads schema/WIRE_RSCG_SECTION_OUTPUT_DATA empty-void-output
+put function-rscg-payloads schema/WIRE_RSCG_SECTION_SYMBOLS
+	fixture-writer/words reduce [
+		output-function-name schema/WIRE_SYMBOL_KIND_FUNCTION
+		schema/WIRE_SYMBOL_BINDING_LOCAL schema/WIRE_VISIBILITY_HIDDEN
+		1 0 17 16 0 1
+	]
+put function-rscg-payloads schema/WIRE_RSCG_SECTION_FUNCTIONS
+	fixture-writer/words [1 1 0 17 32 0 0 0 0 0]
+put function-rscg-payloads schema/WIRE_RSCG_SECTION_GC_FRAMES
+	fixture-writer/words [1 2 0 16 0 9]
+expected-function-rscg: build-rscg function-rscg-strings/1
+	function-rscg-strings/2 function-rscg-payloads
+result: compiler-wire-rscg-metadata/verify expected-function-rscg
+assert result/valid? ["expected function RSCG rejected: " result/error]
 
 build-diagnostic: func [
 	status phase [integer!]
@@ -247,7 +280,7 @@ expected-target-mismatch: build-diagnostic
 	schema/WIRE_ENDIAN_LITTLE 8 0 0
 expected-nonempty-failure: build-diagnostic
 	schema/WIRE_STATUS_CODEGEN_FAILURE schema/WIRE_DIAGNOSTIC_PHASE_SELECT
-	"smoke backend accepts only empty modules"
+	"unsupported RSIR codegen subset"
 	schema/WIRE_TARGET_X86_64 schema/WIRE_ABI_WIN64
 	schema/WIRE_ENDIAN_LITTLE 8 0 0
 expected-output-limit: build-diagnostic
@@ -343,6 +376,9 @@ foreach source-file [
 	%generate-codegen-bridge-fixtures.red
 	%../../compiler/codegen-bridge.red
 	%../../system/codegen/codegen-bridge.reds
+	%../../system/codegen/x64-o0-codegen.reds
+	%../../system/codegen/x64-encoder.reds
+	%../../system/codegen/wire-codegen-strings.reds
 	%../../system/codegen/wire-arena.reds
 	%../../system/codegen/wire-writer.reds
 	%../../system/codegen/wire-rsir.reds
@@ -390,7 +426,8 @@ append-fixture output "base-config" base-config
 append-fixture output "no-diagnostic-config" no-diagnostic-config
 append-fixture output "minimum-output-config" minimum-output-config
 append-fixture output "unsupported-config" unsupported-config
-append-fixture output "expected-rscg" expected-rscg
+append-fixture output "expected-empty-rscg" expected-empty-rscg
+append-fixture output "expected-function-rscg" expected-function-rscg
 append-fixture output "expected-invalid-decode" expected-invalid-decode
 append-fixture output "expected-invalid-verify" expected-invalid-verify
 append-fixture output "expected-target-mismatch" expected-target-mismatch
@@ -414,7 +451,7 @@ check: func [condition [logic!] message [string! block!]][
 
 check-success: func [
 	name [string!]
-	ir config [binary!]
+	ir config expected-artifact [binary!]
 	/local ir-before config-before ir-index config-index artifact diagnostics status
 ][
 	ir-before: copy ir
@@ -425,7 +462,13 @@ check-success: func [
 	diagnostics: make binary! 1
 	status: codegen-module ir config artifact diagnostics
 	check status = STATUS-SUCCESS [name " status=" status]
-	check artifact = expected-rscg [name " artifact bytes changed"]
+	unless artifact = expected-artifact [
+		print [name " artifact length=" length? artifact
+			" expected-length=" length? expected-artifact]
+		print ["actual=" mold/flat artifact]
+		print ["expected=" mold/flat expected-artifact]
+		quit/return 1
+	]
 	check empty? diagnostics [name " emitted diagnostics on success"]
 	check all [
 		ir = ir-before
@@ -490,7 +533,9 @@ check-invalid-alias: func [
 	][name " alias rejection mutated a series"]
 ]
 
-check-success "empty module" copy empty-rsir copy base-config
+check-success "empty module" copy empty-rsir copy base-config expected-empty-rscg
+check-success "minimal void function" copy minimal-function-rsir copy base-config
+	expected-function-rscg
 
 ir-storage: copy #{A5}
 append ir-storage empty-rsir
@@ -498,7 +543,7 @@ ir-at-offset: next ir-storage
 config-storage: copy #{5A}
 append config-storage base-config
 config-at-offset: next config-storage
-check-success "nonzero input heads" ir-at-offset config-at-offset
+check-success "nonzero input heads" ir-at-offset config-at-offset expected-empty-rscg
 check all [ir-storage/1 = 165 config-storage/1 = 90]
 	"nonzero-head success mutated input prefixes"
 
@@ -515,9 +560,6 @@ check-failure "invalid RSIR semantics"
 check-failure "RSIR/config target mismatch"
 	copy mismatched-rsir copy base-config STATUS-UNSUPPORTED-TARGET
 	expected-target-mismatch
-check-failure "valid unsupported nonempty module"
-	copy minimal-function-rsir copy base-config STATUS-CODEGEN-FAILURE
-	expected-nonempty-failure
 check-failure "valid full atomic module"
 	copy full-atomic-rsir copy base-config STATUS-CODEGEN-FAILURE
 	expected-nonempty-failure
@@ -586,6 +628,7 @@ recycle/on
 repeat iteration 16 [
 	recycle
 	check-success "forced-GC repeated call" copy empty-rsir copy base-config
+		expected-empty-rscg
 ]
 recycle/off
 

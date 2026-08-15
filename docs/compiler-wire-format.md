@@ -1802,6 +1802,37 @@ Record shapes:
   standalone object the record owns that slice directly; after merger it is
   also reachable through the compatibility symbol expected by the runtime.
 
+### Current native codegen slice
+
+The first executable Red/System backend slice accepts exactly one USER or
+SUPPORT executable module with one internal hidden Red/System `void()`
+function, no parameters or locals, one block, and one operand-free `RETURN`.
+All values, constants, globals, imports, exports, calls, edges, source records,
+target fragments, subroutines, and exception regions must be empty. This is an
+exact selector: any other valid nonempty RSIR returns a SELECT diagnostic and
+does not invoke another backend.
+
+`system/codegen/x64-encoder.reds` emits this 17-byte Windows x64 body:
+
+```text
+55 48 89 E5 6A 00 6A 00 68 00 00 00 00 6A 00 C9 C3
+```
+
+The four bytes beginning at function offset 9 are the zero bitmap placeholder;
+the preceding byte is `PUSH imm32`. The function record has a 32-byte frame.
+Its initialized DATA section contains the 16-byte empty bitmap: zero argument
+and local slot counts followed by one terminating zero word for each chain.
+
+The resulting RSCG owns `.text` and `.data` output sections, one local hidden
+function symbol, one function record, one GC-frame record, and the input module
+record. Relocation, import, export, file, and debug sections are empty. A
+two-pass allocation-free merge inserts or deduplicates `.data` and `.text` in
+the canonical input string table and remaps the module/function name IDs. The
+native metadata verifier checks the complete artifact before the routine makes
+its single binary append. Empty modules retain the earlier no-code RSCG path;
+neither path calls `machine-ir/verify-current`, consumes direct-code bytes, or
+falls back to the legacy emitter.
+
 ### Checked object layout
 
 `compiler/wire-rscg-object.red` and
@@ -2144,12 +2175,14 @@ The routine is compiled into the release compiler. It does not introduce a
 `libRedRT.dll` dependency; development builds follow the compiler's existing
 runtime arrangement.
 
-The checked-in Phase 2 implementation is deliberately a bridge smoke backend,
-not machine-code generation. After complete aggregate RSIR verification it
-accepts only an empty USER or SUPPORT module and returns a self-verified 640-byte
-no-code RSCG. A valid nonempty module returns `CODEGEN_FAILURE` in SELECT with
-an empty artifact. No frontend verifier writes instructions, no direct-code
-chunk is accepted, and there is no legacy-emitter fallback on this path.
+The checked-in Phase 2 implementation retains the no-code path for an empty
+USER or SUPPORT module and adds the first real machine-code slice. After
+complete aggregate RSIR verification it accepts exactly one internal hidden
+`void()` function with one operand-free `RETURN`, emits the 17-byte x64 body and
+its self-verified RSCG, and rejects every other valid nonempty module with
+`CODEGEN_FAILURE` in SELECT and an empty artifact. No frontend verifier writes
+instructions, no direct-code chunk is accepted, and there is no legacy-emitter
+fallback on this path.
 
 The implementation lives in `compiler/codegen-bridge.red` and
 `system/codegen/{codegen-bridge,wire-rsir,wire-arena,wire-writer}.reds`. Generate
@@ -2165,12 +2198,12 @@ build\self-hosting\o2-ifphi-final-5b6efd8\red-bootstrap-ifphi-final-win64-o2-dev
 build\self-hosting\codegen-bridge-integration.exe
 ```
 
-The corpus compares complete RSCG/RSDG bytes and covers successful empty-module
-generation, common-container and semantic rejection, target mismatch, valid
-but unsupported nonempty modules, bounded output, disabled diagnostics, all
-series alias pairs, nonzero input/output heads, full atomic and
-memory/aggregate modules, layer-specific semantic errors, and repeated calls
-under forced Red GC. The older canonical Stage1 executable currently stops in
+The corpus compares complete RSCG/RSDG bytes for both empty-module and minimal
+`void RETURN` generation, then covers common-container and semantic rejection,
+target mismatch, valid but unsupported nonempty modules, bounded output,
+disabled diagnostics, all series alias pairs, nonzero input/output heads, full
+atomic and memory/aggregate modules, layer-specific semantic errors, and
+repeated calls under forced Red GC. The older canonical Stage1 executable currently stops in
 the runtime definitions on scalar alias syntax, before compiling this routine;
 that bootstrap compatibility issue is tracked as a Phase 2 packaging exit
 condition rather than bypassed through Stage0.

@@ -398,6 +398,41 @@ wire-atomic-reader: context [
 		verify-alias result view instruction-id
 	]
 
+	; Validate the atomic layer over a scalar view that has already passed the
+	; shared RSIR verifier chain. This keeps the bridge to one common decode.
+	verify-view: func [
+		result [wire-atomic-result!]
+		types [wire-type-layout!]
+		view [wire-scalar-operation!]
+		return: [integer!]
+		/local status instruction-id [integer!]
+	][
+		if null? result [return WIRE_ATOMIC_ERROR_INVALID_ARGUMENTS]
+		result/error: WIRE_ATOMIC_ERROR_SUCCESS
+		result/scalar-operation-error: WIRE_SCALAR_OPERATION_ERROR_SUCCESS
+		result/container-error: WIRE_CONTAINER_ERROR_SUCCESS
+		result/string-error: WIRE_STRING_TABLE_ERROR_SUCCESS
+		result/file-source-error: WIRE_FILE_SOURCE_ERROR_SUCCESS
+		result/data-layout-error: WIRE_DATA_LAYOUT_ERROR_SUCCESS
+		result/type-layout-error: WIRE_TYPE_LAYOUT_ERROR_SUCCESS
+		result/function-signature-error: WIRE_FUNCTION_SIGNATURE_ERROR_SUCCESS
+		result/module-lifecycle-error: WIRE_MODULE_LIFECYCLE_ERROR_SUCCESS
+		result/symbol-linkage-error: WIRE_SYMBOL_LINKAGE_ERROR_SUCCESS
+		result/constant-initializer-error: WIRE_CONSTANT_INITIALIZER_ERROR_SUCCESS
+		result/error-offset: 0
+		result/error-section: 0
+		if any [null? types null? view][
+			return set-error result WIRE_ATOMIC_ERROR_INVALID_ARGUMENTS 0 0
+		]
+		instruction-id: 1
+		while [instruction-id <= view/instruction-count][
+			status: verify-atomic-instruction result types view instruction-id
+			if status <> WIRE_ATOMIC_ERROR_SUCCESS [return status]
+			instruction-id: instruction-id + 1
+		]
+		WIRE_ATOMIC_ERROR_SUCCESS
+	]
+
 	verify: func [
 		data [byte-ptr!]
 		size [integer!]

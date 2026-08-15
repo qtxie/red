@@ -7,9 +7,11 @@ aggregate-layout, function/signature, module-lifecycle, symbol/linkage,
 constant/global-initializer, scalar-operation, memory/aggregate-operation,
 control-flow, calls/ABI, atomic-operation, subroutine, exception,
 explicit-stack, target-intrinsic, and RSDG diagnostic verifiers now have
-executable coverage. The protocol remains unfrozen until the remaining Windows
-x64 feature blockers and message-level semantic fixtures satisfy the Phase 1
-exit criteria.
+executable coverage. The bounded native arena/writer, aggregate RSIR verifier,
+and first `codegen-module` routine bridge also have cross-language integration
+coverage. The protocol remains unfrozen until the remaining Windows x64
+feature blockers and message-level semantic fixtures satisfy the Phase 1 exit
+criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -170,8 +172,10 @@ record to one nonzero routine status, and represents source/function/instruction
 context with explicit presence bits. These are protocol prerequisites only;
 they do not invoke the legacy emitter or constitute a partial backend execution
 path. The control verifier is independent of legacy
-`machine-ir/verify-current`. These layers do not produce direct code bytes;
-frontend RSIR production and native RSCG generation remain later work.
+`machine-ir/verify-current`. These layers do not produce direct code bytes. The
+Phase 2 smoke backend can produce only a self-verified no-code RSCG for an
+otherwise empty module; frontend RSIR production and machine-code RSCG
+generation remain later work.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
 Its test reads `system/tests/run-all.r` as data and rejects any unclassified
@@ -289,6 +293,37 @@ Exit criteria:
 - the bridge runs in a Stage1-built release compiler without `libRedRT.dll`;
 - all native allocations are released on every nonfatal path;
 - artifact output is committed once and is empty on failure.
+
+Bridge-substrate implementation status:
+
+- `compiler/codegen-bridge.red` exposes the four-binary `routine!`, while
+  `system/codegen/codegen-bridge.reds` owns validation, diagnostics, the smoke
+  backend, and the single output commit;
+- `wire-arena.reds` and `wire-writer.reds` provide bounded native allocation and
+  deterministic RSCG/RSDG construction; every completed output is independently
+  self-verified before it can cross the routine boundary;
+- `wire-rsir.reds` performs the shared decode once and applies target, atomic,
+  and memory/aggregate checks over unpublished verified views. External views
+  are copied only after all layers succeed;
+- the smoke backend accepts only a semantically valid empty USER or SUPPORT
+  module. Any valid nonempty module returns `CODEGEN_FAILURE` at SELECT and
+  produces no artifact; this is not a partial machine-code backend;
+- `generate-codegen-bridge-fixtures.red` first validates its RSIR, RSCG, and
+  RSDG fixtures with the Red verifiers. Its compiled integration test pins exact
+  output bytes and covers decode/verify/target/select/encode failures, output
+  bounds, disabled diagnostics, all six series-alias pairs, nonzero heads,
+  atomic and memory/aggregate view errors, and repeated forced GC;
+- the release integration executable imports system DLLs only. `dumpbin`
+  reports no `libRedRT.dll` dependency even when that DLL is present beside the
+  executable.
+
+The comprehensive "every malformed Phase 1 fixture through the routine"
+matrix remains open. Packaging verification also remains open for the
+canonical `red-bootstrap-stage1-x64-gc-fixed.exe`: that older executable rejects
+the current runtime's scalar `alias integer!` declarations before reaching the
+bridge. The current optimized bootstrap compiles and runs the release
+integration test; the canonical Stage1 binary must be rebuilt or advanced
+before this Phase 2 exit condition can be claimed.
 
 ## Phase 3: complete RSIR frontend
 

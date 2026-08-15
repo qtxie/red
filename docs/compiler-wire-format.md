@@ -2138,6 +2138,37 @@ The routine is compiled into the release compiler. It does not introduce a
 `libRedRT.dll` dependency; development builds follow the compiler's existing
 runtime arrangement.
 
+The checked-in Phase 2 implementation is deliberately a bridge smoke backend,
+not machine-code generation. After complete aggregate RSIR verification it
+accepts only an empty USER or SUPPORT module and returns a self-verified 640-byte
+no-code RSCG. A valid nonempty module returns `CODEGEN_FAILURE` in SELECT with
+an empty artifact. No frontend verifier writes instructions, no direct-code
+chunk is accepted, and there is no legacy-emitter fallback on this path.
+
+The implementation lives in `compiler/codegen-bridge.red` and
+`system/codegen/{codegen-bridge,wire-rsir,wire-arena,wire-writer}.reds`. Generate
+and run the cross-language integration corpus with:
+
+```powershell
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-codegen-bridge-fixtures.red
+build\self-hosting\o2-ifphi-final-5b6efd8\red-bootstrap-ifphi-final-win64-o2-dev.exe `
+    -r -d -t Windows-X86-64 `
+    -o build\self-hosting\codegen-bridge-integration.exe `
+    tools\self_hosting\tests\codegen-bridge-integration.red
+build\self-hosting\codegen-bridge-integration.exe
+```
+
+The corpus compares complete RSCG/RSDG bytes and covers successful empty-module
+generation, common-container and semantic rejection, target mismatch, valid
+but unsupported nonempty modules, bounded output, disabled diagnostics, all
+series alias pairs, nonzero input/output heads, full atomic and
+memory/aggregate modules, layer-specific semantic errors, and repeated calls
+under forced Red GC. The older canonical Stage1 executable currently stops in
+the runtime definitions on scalar alias syntax, before compiling this routine;
+that bootstrap compatibility issue is tracked as a Phase 2 packaging exit
+condition rather than bypassed through Stage0.
+
 ## Freeze criteria
 
 Version 1 can be frozen only after all of the following are true:

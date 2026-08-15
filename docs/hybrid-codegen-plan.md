@@ -156,9 +156,13 @@ Typed `X64_REL32`, RIP-relative and IAT references, `ABSOLUTE64`
 data/rodata pointers, function and variable imports, and DLL exports are now
 independently verified too. The contract fixes canonical addends, zero
 placeholders, and PE `DIR64` ownership while leaving final post-merge range
-checks to the adapter. These layers only inspect serialized bytes and generate
-no machine code; debug, GC-frame, and unwind verification remain separate
-following milestones.
+checks to the adapter. Function-relative debug lines, dense debug-parameter
+ordinals, exact GC bitmap ownership, the x64 fixed-width prolog patch point,
+and the current empty Windows x64 unwind contract are independently verified
+as well. Nonempty unwind records are an explicit v1 unsupported error until
+the codegen and adapter implement `.pdata`/`.xdata`; they are never silently
+dropped. These layers only inspect serialized bytes and generate no machine
+code.
 Lifecycle fields declare module-owned functions, while explicit calls in the
 glue function remain the sole authority for execution order. RSDG preserves
 primary/note producer order, binds every

@@ -441,7 +441,7 @@ compiler-backend-feature-spec: [
 		]
 
 		rscg-debug-gc-unwind [
-			status blocked
+			status specified
 			owners [rscg adapter linker]
 			wire [
 				RECORD/RSCG_DEBUG_LINE RECORD/RSCG_DEBUG_PARAMETER
@@ -452,13 +452,12 @@ compiler-backend-feature-spec: [
 				RSCG_METADATA_ERROR/ALL_VALUES
 			]
 			tests [
+				"tools/self_hosting/tests/wire-rscg-metadata-test.red"
+				"tools/self_hosting/tests/wire-rscg-metadata-reds-test.reds"
 				"system/tests/source/compiler/output-test.r"
 				"tools/self_hosting/fixtures/backend/unwind-through-o2.reds"
 			]
-			blockers [
-				"define debug, GC-frame, and unwind flags and exact owned-range/bounds rules"
-				"freeze current Windows x64 unwind equivalence and merged debug offset behavior"
-			]
+			blockers []
 		]
 	]
 ]

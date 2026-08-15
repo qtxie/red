@@ -1906,11 +1906,73 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-rscg-relocation-reds-test.exe
 ```
 
+### Checked debug, GC, and unwind metadata
+
+`compiler/wire-rscg-metadata.red` and
+`system/codegen/wire-rscg-metadata.reds` independently validate metadata only
+after the complete object and relocation layers succeed. An object-layer bad
+debug range is preserved as the corresponding metadata range error; every
+other dependency failure becomes `INVALID_RELOCATIONS`. Native dependency and
+metadata views are published only after the whole operation succeeds.
+
+Debug-line records are ordered by function ID and function-relative code
+offset; equal offsets retain producer order. Every record names a valid
+function and file, lies inside the function code extent, and has a positive
+line number. Function `(first, count)` ranges form an exact, gap-free partition
+of the section. Debug-parameter ranges have the same exact ownership rule.
+Parameter ordinals are dense and zero-based per function, type codes are one of
+the frozen runtime debug codes, and v1 parameter flags are zero.
+
+Every defined function has exactly one GC-frame record, ordered by function ID.
+Its bitmap slice is four-byte aligned, lies in initialized DATA, and all frame
+slices are disjoint and exactly cover the `***-ptr-bitmaps` symbol. The symbol's
+preceding four-byte compression header remains outside those slices. A frame
+bitmap is the following little-endian sequence:
+
+```text
+argument-slot-count
+local-slot-count
+one or more 31-bit argument words
+one or more 31-bit local words
+```
+
+Bit 31 extends a word chain; bits 0 through 30 mark roots. A normal chain has
+exactly `max(1, ceil(slot-count / 31))` words, only non-final words carry the
+extension bit, and unused bits in the final word are zero. Thus 31 slots use
+one word while 32 slots use two. Exact first-argument words `0x40000000` and
+`0x20000000` are reserved for variadic and typed dynamic maps respectively;
+they require zero declared static argument slots and a one-word argument map.
+
+`prolog-patch-offset` is function-relative. The preceding byte is the x64
+`PUSH imm32` opcode `0x68`, its four-byte immediate is zero in RSCG, and no
+relocation may overlap it. The adapter later writes the validated bitmap word
+offset and preserves the `LIBRARY_IMAGE` selection flag. The metadata verifier
+only inspects these code bytes; it does not emit or patch them.
+
+Windows x64 v1 accepts an absent or empty unwind section. A nonempty section is
+`UNSUPPORTED_UNWIND`, matching the current PE output whose exception directory
+is empty. `.pdata`/`.xdata` records require a later codegen and adapter contract
+and may not be silently discarded.
+
+The shared corpus contains four valid objects, including 31/32-slot and dynamic
+bitmap cases, plus 38 directed malformed binaries. Explicit invalid-argument
+tests complete coverage of all metadata status values from 0 through 39. Run
+it with:
+
+```powershell
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\generate-wire-rscg-metadata-fixtures.red
+D:\EE\QTool\red-console.exe `
+    tools\self_hosting\tests\wire-rscg-metadata-test.red
+build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
+    -t Windows-X86-64 `
+    -o build\self-hosting\wire-rscg-metadata-reds-test.exe `
+    tools\self_hosting\tests\wire-rscg-metadata-reds-test.reds
+build\self-hosting\wire-rscg-metadata-reds-test.exe
+```
+
 The codegen emits final GC bitmap bytes and all prolog/data relocations needed
 to reference them. Structured GC records do not replace those runtime bytes.
-Unwind sections are optional until the corresponding target and linker support
-exists; v1 must match current Windows x64 behavior rather than invent metadata
-the linker silently drops.
 
 ### Multi-object merge
 

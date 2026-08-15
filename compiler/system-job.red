@@ -15,6 +15,7 @@ compiler-system-job: context [
 		debug?: false
 		opt-level: 1
 		o2-ir-dump: none
+		backend-mode: 'legacy
 		build-prefix: %builds/
 		build-basename: none
 		build-suffix: none
@@ -78,6 +79,7 @@ compiler-system-job: context [
 			debug?: false
 			opt-level: 1
 			o2-ir-dump: none
+			backend-mode: 'legacy
 			build-prefix: %builds/
 			build-basename: none
 			build-suffix: none

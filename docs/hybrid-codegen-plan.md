@@ -13,10 +13,12 @@ coverage. An allocation-free canonical string merger and the first Windows x64
 machine-code slice now produce an exact, self-verified RSCG for one internal
 `void` function containing only `RETURN`. A bounded Red container writer and
 minimal RSIR producer now create that exact semantic module without emitter or
-machine-IR input and pass it through the compiled routine integration test.
-The producer is not yet connected to `compiler-core`. The protocol remains
-unfrozen until the remaining Windows x64 feature blockers and message-level
-semantic fixtures satisfy the Phase 1 exit criteria.
+machine-IR input and pass it through the compiled routine integration test. An
+exclusive `rsir` compiler-core path now sends the same exact function semantic
+event to the producer before any emitter or machine-IR initialization. The
+linker adapter is not connected yet. The protocol remains unfrozen until the
+remaining Windows x64 feature blockers and message-level semantic fixtures
+satisfy the Phase 1 exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -83,13 +85,15 @@ switching to a runtime DLL.
 | legacy linker adapter first | reduces initial scope while making every old encoding explicit and testable |
 | O0/O1 correctness before O2 | the current O2 path is experimental and is not the migration foundation |
 
-Three driver modes are allowed during migration:
+Two mutually exclusive driver modes are allowed during migration:
 
 - `legacy`: current emitter only;
-- `shadow`: legacy output plus RSIR construction and verification, used for
-  differential evidence;
 - `rsir`: RSIR -> Red/System codegen -> RSCG -> linker, with unsupported input a
   hard diagnostic and no emitter invocation.
+
+There is no same-invocation shadow mode. Differential evidence comes from
+separate `legacy` and `rsir` runs so a production compile never performs both
+backend workloads.
 
 ## Phase 0: baseline and dependency audit
 
@@ -361,13 +365,19 @@ USER/SUPPORT executable module into an exactly measured binary. It stages only
 the canonical string slices/data, writes every required section and flag, and
 returns no partial binary on failure. Its output is byte-identical to the
 independently constructed fixture and succeeds through the compiled routine.
-It does not yet receive semantic events from `compiler-core`; adding that sink
-is the next Phase 3 boundary.
+`compiler/rsir-sink.red` now receives the first function-declaration semantic
+event from `compiler-core`, accepts exactly one empty `void()` function, and
+publishes the complete binary through `system-dialect/last-rsir`. Compiler entry
+validation restricts this slice to one Windows x64 Win64 executable module,
+O0/O1, no runtime, no debug, no link, and no Red-generated input. Unsupported
+options, root forms, signatures, bodies, and extra functions fail before the
+legacy emitter can run. The next Phase 3 boundary is expanding the sink's
+semantic table and instruction coverage.
 
 Deliverables:
 
-- introduce a backend-neutral semantic sink in `compiler-core`; direct emitter
-  calls are routed through explicit operations with typed inputs;
+- expand the backend-neutral semantic sink in `compiler-core`; remaining direct
+  emitter calls are routed through explicit operations with typed inputs;
 - build module/type/signature/symbol/constant/import/export tables before body
   serialization and assign stable IDs;
 - lower function bodies into typed CFG with explicit memory effects,
@@ -375,9 +385,9 @@ Deliverables:
   explicit stack operations, calls, and source locations;
 - serialize directly into pre-sized binaries instead of constructing a second
   tree of Red blocks;
-- use current `machine-ir.red` only as a differential oracle for covered
-  functions; do not serialize it and do not consume its direct byte chunks;
-- add the three mutually exclusive backend modes.
+- never start or read `machine-ir.red` during an `rsir` compile; differential
+  evidence uses separate legacy runs and never consumes direct byte chunks;
+- retain only the two mutually exclusive `legacy` and `rsir` backend modes.
 
 Recommended slice order:
 
@@ -393,8 +403,8 @@ Tests and exit criteria:
 
 - each slice adds positive, negative, and malformed semantic fixtures before
   moving to the next;
-- shadow mode produces deterministic, semantically valid RSIR for the entire
-  Windows x64 system suite;
+- `rsir` mode produces deterministic, semantically valid RSIR for the entire
+  Windows x64 system suite without also running `legacy`;
 - RSIR creation has no reads from emitter addresses, stacks, chunks, bitmaps,
   or symbol reference blocks;
 - legacy mode remains behaviorally unchanged.
@@ -627,7 +637,7 @@ validated the abstractions.
 | --- | --- |
 | schema/golden bytes | Red and Red/System ABI drift |
 | malformed corpus | bounds, overflow, ID and verifier bugs |
-| semantic shadow | frontend omissions and wrong ownership |
+| separate-run semantic differential | frontend omissions and wrong ownership |
 | encoder vectors | machine-byte and relocation mistakes |
 | ABI/GC probes | calling convention and live-root corruption |
 | legacy differential execution | behavioral codegen regressions |
@@ -653,7 +663,7 @@ relocation inspection are authoritative.
 | legacy linker drops a relocation | per-kind mapping tests and reject-by-default adapter |
 | runtime cache becomes stale | complete cache key plus schema/build fingerprints |
 | cached code lacks frontend state/startup context | interface manifest plus explicit lifecycle/glue functions |
-| shadow mode distorts benchmarks | benchmark `legacy` and `rsir` separately; shadow is correctness-only |
+| differential testing duplicates production work | run `legacy` and `rsir` as separate test processes; each production compile selects one mode |
 | optimizer work obscures parity | O0 first, pass-by-pass verifier, O1 gates before O2 |
 | bootstrap cycle breaks recovery | small commits, checked-in schema output, canonical Stage1 compiler |
 

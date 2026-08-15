@@ -4,11 +4,18 @@ Red [
 ]
 
 #include %machine-ir.red
+#include %../compiler/wire-schema.red
+#include %../compiler/wire-writer.red
+#include %../compiler/rsir-producer.red
+#include %../compiler/rsir-sink.red
 
 system-dialect: context [
 	verbose:  	  0										;-- logs verbosity level
 	job: 		  none									;-- reference the current job object
 	last-result: none								;-- last [compile-time link-time size output] tuple
+	last-rsir: none									;-- last complete RSIR binary from the exclusive frontend path
+	backend-mode: 'legacy							;-- active mode is fixed at compile entry
+	rsir-state: none									;-- current semantic sink state
 	runtime-path: %system/runtime/
 	red-runtime-path: %runtime/
 	nl: 		  newline
@@ -36,6 +43,7 @@ system-dialect: context [
 		debug-safe?:		yes							;-- try to avoid over-crashing on runtime debug reports
 		opt-level:			1							;-- 0 = legacy emitter, 1 = fast local optimizations
 		o2-ir-dump:		none						;-- optional typed O2 IR dump file
+		backend-mode:		'legacy						;-- legacy | rsir (mutually exclusive)
 		dev-mode?:		 	none						;-- yes => turn on developer mode (pre-build runtime, default), no => build a single binary
 		static-link?:		no							;-- yes => extension-less #import names resolve to static libs (.lib/.a) instead of dynamic (.dll/.so/.dylib)
 		need-main?:			no							;-- yes => emit a function prolog/epilog around global code
@@ -2420,6 +2428,19 @@ system-dialect: context [
 			emitter/store-ptr-bitmap list				;-- returns offset to caller
 		]
 
+		register-function-backend: func [
+			name [word!] specs fspec [block!]
+			/local offset
+		][
+			if system-dialect/rsir-mode? [return 0]
+			offset: encode-pointers/metadata name specs fspec
+			if all [job/libRedRT? job/type = 'dll][
+				offset: offset or to integer! #40000000		;-- set bit 30 flag on bitmap offset for libRedRT code
+			]
+			emitter/add-native name
+			offset
+		]
+
 		expand-func-specs: func [spec /local pos p type][
 			unless block? spec [exit]					;-- let check-specs report it
 			parse spec [any [
@@ -2438,6 +2459,13 @@ system-dialect: context [
 			check-func-name name
 
 			unless block? pc/3 [throw-error ["function" name "requires a body block!"]]
+			if system-dialect/rsir-mode? [
+				unless compiler-rsir-sink/add-function
+					system-dialect/rsir-state name pc/2 pc/3
+				[
+					throw-error compiler-rsir-sink/last-error/message
+				]
+			]
 			preprocess-use name specs: pc/2 pc/3
 			expand-func-specs specs
 			check-specs name specs
@@ -2467,11 +2495,7 @@ system-dialect: context [
 			]
 			add-function type reduce [name none specs] cc
 			fspec: second find-functions name
-			offset: encode-pointers/metadata name specs fspec
-			if all [job/libRedRT? job/type = 'dll][
-				offset: offset or to integer! #40000000		;-- set bit 30 flag on bitmap offset for libRedRT code
-			]
-			emitter/add-native name
+			offset: register-function-backend name specs fspec
 			repend natives [
 				name specs pc/3 script
 				all [ns-path copy ns-path]
@@ -5179,6 +5203,15 @@ system-dialect: context [
 		comp-dialect: has [expr][
 			block-level: 0
 			while [not tail? pc][
+				if system-dialect/rsir-mode? [
+					unless all [
+						set-word? pc/1
+						find [func function] pc/2
+					][
+						throw-error
+							"RSIR frontend currently supports only one empty function declaration"
+					]
+				]
 				case [
 					all [
 						issue? pc/1
@@ -5203,7 +5236,7 @@ system-dialect: context [
 					'else [set/any 'expr fetch-expression/final/keep none]
 				]
 				pop-calls
-				emitter/target/on-root-level-entry
+				unless system-dialect/rsir-mode? [emitter/target/on-root-level-entry]
 			]
 			expr
 		]
@@ -6521,13 +6554,15 @@ system-dialect: context [
 			phase-timer/finish 'rs-run-header
 
 			phase-timer/begin 'rs-global-prolog
-			if allow-runtime? [emitter/target/on-global-prolog runtime job/type]
+			if all [not system-dialect/rsir-mode? allow-runtime?][
+				emitter/target/on-global-prolog runtime job/type
+			]
 			phase-timer/finish 'rs-global-prolog
 			phase-timer/begin 'rs-global-body
 			comp-dialect
 			phase-timer/finish 'rs-global-body
 			phase-timer/begin 'rs-global-epilog
-			if allow-runtime? [
+			if all [not system-dialect/rsir-mode? allow-runtime?][
 				case [
 					runtime [
 						emitter/target/on-global-epilog yes	job/type ;-- postpone epilog event after comp-runtime-epilog
@@ -6575,33 +6610,111 @@ system-dialect: context [
 		]
 	]
 
+	rsir-mode?: does [backend-mode = 'rsir]
+	job-backend-mode: func [/local slot][
+		slot: in job 'backend-mode
+		either slot [get slot]['legacy]
+	]
+
+	validate-backend-mode: does [
+		case [
+			not find [legacy rsir] backend-mode [
+				compiler/throw-error ["unknown compiler backend mode:" backend-mode]
+			]
+			job-backend-mode <> backend-mode [
+				compiler/throw-error "source Config cannot change the active compiler backend"
+			]
+			backend-mode = 'legacy [return true]
+			job/OS <> 'Windows [
+				compiler/throw-error "RSIR frontend currently supports only Windows"
+			]
+			job/format <> 'PE [
+				compiler/throw-error "RSIR frontend currently supports only PE targets"
+			]
+			job/target <> 'X86-64 [
+				compiler/throw-error "RSIR frontend currently supports only X86-64"
+			]
+			job/ABI <> 'win64 [
+				compiler/throw-error "RSIR frontend currently supports only the Win64 ABI"
+			]
+			job/type <> 'exe [
+				compiler/throw-error "RSIR frontend currently supports only executable modules"
+			]
+			job/link? [
+				compiler/throw-error "RSIR frontend cannot link before the RSCG adapter exists"
+			]
+			job/runtime? [
+				compiler/throw-error "RSIR frontend does not yet support the Red/System runtime"
+			]
+			job/red-pass? [
+				compiler/throw-error "RSIR frontend does not yet support Red-generated modules"
+			]
+			any [job/PIC? job/PIE? job/static-link?] [
+				compiler/throw-error "RSIR frontend does not yet support PIC, PIE, or static linking"
+			]
+			any [job/debug? not none? job/o2-ir-dump] [
+				compiler/throw-error "RSIR frontend does not yet support debug or O2 IR output"
+			]
+			any [
+				not integer? job/opt-level
+				job/opt-level < 0
+				job/opt-level > 1
+			][
+				compiler/throw-error "RSIR frontend currently supports only O0 and O1"
+			]
+			any [job/need-main? job/red-only? job/libRed? job/libRedRT? job/libRedRT-update?][
+				compiler/throw-error "RSIR frontend received unsupported module lifecycle options"
+			]
+			true [true]
+		]
+	]
+
+	finish-rsir: func [/local output error][
+		output: compiler-rsir-sink/finish rsir-state
+		unless binary? output [
+			error: compiler-rsir-sink/last-error
+			compiler/throw-error either error [error/message][
+				"RSIR semantic sink failed without a diagnostic"
+			]
+		]
+		last-rsir: output
+	]
+
 	set-verbose-level: func [level [integer!]][
 		foreach ctx reduce [
 			self
 			loader
 			compiler
-			emitter
-			emitter/target
 			linker
 		][
 			ctx/verbose: level
+		]
+		unless rsir-mode? [
+			foreach ctx reduce [emitter emitter/target][ctx/verbose: level]
 		]
 	]
 
 	output-logs: does [
 		if verbose >= 1 [
+			either rsir-mode? [
+				print [
+					nl
+					"-- compiler/globals --" nl mold new-line/all/skip to-block compiler/globals yes 2 nl
+				]
+			][
 				print [
 					nl
 					"-- compiler/globals --" nl mold new-line/all/skip to-block compiler/globals yes 2 nl
 					"-- emitter/symbols --"  nl mold new-line/all/skip to-block emitter/symbols yes 2 nl
 				]
+			]
 		]
 		if verbose >= 2 [
 				print [
 					"-- compiler/functions --" nl mold new-line/all/skip to-block compiler/functions yes 2 nl
 				]
 		]
-		if verbose >= 6 [
+		if all [not rsir-mode? verbose >= 6][
 				print [
 					"-- emitter/code-buf --" nl mold emitter/code-buf nl
 					"-- emitter/data-buf --" nl mold emitter/data-buf nl
@@ -6748,7 +6861,11 @@ system-dialect: context [
 		clear compiler/debug-lines/records
 		clear compiler/debug-lines/files
 		compiler/reset-line-cache
-		clear emitter/symbols
+		either rsir-mode? [
+			rsir-state: none
+		][
+			clear emitter/symbols
+		]
 	]
 
 	process-config: func [header [block!] /local configured old-PIC?][
@@ -6756,9 +6873,12 @@ system-dialect: context [
 		unless configured [
 			compiler/throw-error compiler-system-job/last-error/message
 		]
-		old-PIC?: emitter/target/PIC?
-		emitter/target/PIC?: job/PIC?
-		if all [job/PIC? not old-PIC?][emitter/target/on-init]
+		validate-backend-mode
+		unless rsir-mode? [
+			old-PIC?: emitter/target/PIC?
+			emitter/target/PIC?: job/PIC?
+			if all [job/PIC? not old-PIC?][emitter/target/on-init]
+		]
 	]
 
 	make-job: func [opts [object!] file [file!] /local job blk pos][
@@ -6866,28 +6986,47 @@ system-dialect: context [
 			job-data [block!]
 		/local
 			comp-time link-time err output src resources icon buffer buffer-size
-			file file-list sections result
+			file file-list sections result mode-slot
 	][
 		comp-time: now/time/precise
 		phase-timer/begin 'backend-setup
 		link-time: none
 		output: none
 		buffer: none
+		last-result: none
+		last-rsir: none
+		rsir-state: none
 		file-list: either block? files [files][reduce [files]]
 
 		unless opts [opts: make options-class []]
 		normalize-code-model opts
 		job: make-job opts last :file-list			;-- last input filename is retained for output name
+		mode-slot: in job 'backend-mode
+		backend-mode: either mode-slot [get mode-slot]['legacy]
+		compiler/job: job
+		compiler/script: first file-list
+		compiler/pc: none
+		if all [rsir-mode? (length? file-list) <> 1][
+			compiler/throw-error "RSIR frontend supports exactly one source module"
+		]
+		validate-backend-mode
 		loader/job: job
-		emitter/init opts/link? job
-
-		clean-up
-		rs-o2-ir/start-session job/opt-level job/target job/o2-ir-dump opts/verbosity job/debug?
+		either rsir-mode? [
+			clean-up
+			rsir-state: compiler-rsir-sink/new
+				none
+				compiler-wire-schema/WIRE_MODULE_KIND_USER
+				compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
+		][
+			emitter/init opts/link? job
+			clean-up
+			rs-o2-ir/start-session job/opt-level job/target job/o2-ir-dump opts/verbosity job/debug?
+		]
 ;set-verbose-level 4
 		if opts/verbosity >= 10 [set-verbose-level opts/verbosity]
 		loader/connect-compiler-state compiler/definitions compiler/keywords-list
 		loader/init
-		emit-main-prolog
+		unless rsir-mode? [emit-main-prolog]
 		phase-timer/finish 'backend-setup
 
 		job/need-main?: to logic! any [
@@ -6899,13 +7038,14 @@ system-dialect: context [
 		]
 
 		if all [
+			not rsir-mode?
 			job/need-main?
 			not opts/use-natives?
 			opts/runtime?
 		][
 			comp-start								;-- init libC properly
 		]
-		if opts/runtime? [
+		if all [not rsir-mode? opts/runtime?][
 			phase-timer/begin 'runtime-prolog
 			comp-runtime-prolog to logic! loaded all [loaded job-data/3]
 			phase-timer/finish 'runtime-prolog
@@ -6914,7 +7054,7 @@ system-dialect: context [
 		phase-timer/begin 'user-code
 		set-verbose-level opts/verbosity
 		resources: either loaded [job-data/4][make block! 8]
-		if job/libRedRT-update? [libRedRT/init-extras]
+		if all [not rsir-mode? job/libRedRT-update?][libRedRT/init-extras]
 
 		file: first file-list
 		phase-timer/begin 'rs-loader
@@ -6923,7 +7063,7 @@ system-dialect: context [
 		][
 			src: loader/process file
 			unless src [do make error! rejoin ["Red/System loader: " mold loader/last-error]]
-			if job/OS = 'Windows [collect-resources src/2 resources file]
+			if all [not rsir-mode? job/OS = 'Windows][collect-resources src/2 resources file]
 		]
 		phase-timer/finish 'rs-loader
 		compiler/run job src file
@@ -6932,25 +7072,29 @@ system-dialect: context [
 		]
 		phase-timer/finish 'user-code
 		set-verbose-level 0
-		if opts/runtime? [comp-runtime-epilog]
+		if all [not rsir-mode? opts/runtime?][comp-runtime-epilog]
 
 		phase-timer/begin 'backend-finalize
 		set-verbose-level opts/verbosity
-		compiler/finalize							;-- compile all functions
-		rs-o2-ir/end-session
+		either rsir-mode? [
+			finish-rsir
+		][
+			compiler/finalize						;-- compile all functions
+			rs-o2-ir/end-session
+		]
 		set-verbose-level 0
 		phase-timer/finish 'backend-finalize
 
-		if job/libRedRT-update? [libRedRT/save-extras]
+		if all [not rsir-mode? job/libRedRT-update?][libRedRT/save-extras]
 		comp-time: now/time/precise - comp-time
-		if verbose >= 5 [
+		if all [not rsir-mode? verbose >= 5][
 			print [
 				"-- emitter/code-buf (empty addresses):"
 				nl mold emitter/code-buf nl
 			]
 		]
 
-		if opts/link? [
+		if all [not rsir-mode? opts/link?][
 			link-time: now/time/precise
 			phase-timer/begin 'link-prepare
 			set in job 'symbols emitter/symbols
@@ -6991,17 +7135,18 @@ system-dialect: context [
 
 		set-verbose-level opts/verbosity
 		output-logs
-		if any [opts/link? not opts/dev-mode?][clean-up]
+		if any [rsir-mode? opts/link? not opts/dev-mode?][clean-up]
 		set-verbose-level 0
-		buffer: get in job 'buffer
-
-		buffer-size: either binary? buffer [length? buffer][0]
-		result: make block! 4
-		append/only result comp-time
-		append/only result link-time
-		append/only result buffer-size
-		append/only result output
-		set in system-dialect 'last-result result
+		unless rsir-mode? [
+			buffer: get in job 'buffer
+			buffer-size: either binary? buffer [length? buffer][0]
+			result: make block! 4
+			append/only result comp-time
+			append/only result link-time
+			append/only result buffer-size
+			append/only result output
+			set in system-dialect 'last-result result
+		]
 		none
 	]
 ]

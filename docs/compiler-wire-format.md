@@ -2198,16 +2198,25 @@ build\self-hosting\o2-ifphi-final-5b6efd8\red-bootstrap-ifphi-final-win64-o2-dev
 build\self-hosting\codegen-bridge-integration.exe
 ```
 
-The frontend-side seed lives in `compiler/wire-writer.red` and
-`compiler/rsir-producer.red`. The writer lays out a measured, bounded container
-in increasing section order and exposes no successful finish until all required
-directory entries are present. The producer currently accepts only the exact
-USER/SUPPORT executable, one hidden internal Red/System `void()` function, one
-block, one operand-free `RETURN` shape selected by codegen. It performs
-case-sensitive canonical string interning, writes all 32 RSIR sections, and
-returns `none` rather than a partial binary on any validation, size, or writer
-failure. This is a production serialization boundary, but not yet a
-`compiler-core` semantic sink or a general RSIR frontend.
+The frontend-side seed lives in `compiler/wire-writer.red`,
+`compiler/rsir-producer.red`, and `compiler/rsir-sink.red`. The writer lays out a
+measured, bounded container in increasing section order and exposes no
+successful finish until all required directory entries are present. The
+producer currently accepts only the exact USER/SUPPORT executable, one hidden
+internal Red/System `void()` function, one block, one operand-free `RETURN`
+shape selected by codegen. It performs case-sensitive canonical string
+interning, writes all 32 RSIR sections, and returns `none` rather than a partial
+binary on any validation, size, or writer failure.
+
+The first `compiler-core` semantic sink is now connected for that exact shape.
+The `rsir` mode is selected at compile entry, validates its target and lifecycle
+restrictions before emitter initialization, accepts only one empty function
+declaration at root, and publishes the completed message in
+`system-dialect/last-rsir`. It does not initialize the emitter, start the old
+machine-IR session, emit a main prolog, finalize native functions, or invoke the
+linker. Positive integration uses poison stubs for each reachable legacy entry;
+nonempty bodies and other root expressions are hard failures. This remains a
+narrow production boundary, not a general RSIR frontend.
 
 The corpus compares complete RSCG/RSDG bytes for both empty-module and minimal
 `void RETURN` generation. It also constructs the minimal RSIR at runtime with

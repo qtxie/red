@@ -850,6 +850,17 @@ system-format-PE: context [
 		job/sections/reloc/2: out
 	]
 
+	has-relocations?: func [job [object!] /local name spec ref][
+		foreach [name spec] job/symbols [
+			either all [find [global native constant] spec/1 block? spec/4][
+				foreach ref spec/4 [return true]
+			][
+				unless PE64? [foreach ref spec/3 [return true]]
+			]
+		]
+		false
+	]
+
 	build-header: func [job [object!] /local fh][
 		if find [exe dll drv] job/type [append job/buffer defs/PE-signature]
 
@@ -889,9 +900,11 @@ system-format-PE: context [
 		code-page: ep-mem-page
 		code-base: code-page * memory-align
 
-		flags: (to integer! defs/dll-flags/nx-compat)
-			 or to integer! defs/dll-flags/dynamic-base
-		if PE64? [flags: flags or to integer! defs/dll-flags/high-entropy-VA]
+		flags: to integer! defs/dll-flags/nx-compat
+		if find job/sections 'reloc [
+			flags: flags or to integer! defs/dll-flags/dynamic-base
+			if PE64? [flags: flags or to integer! defs/dll-flags/high-entropy-VA]
+		]
 
 		if job/type = 'drv [flags: flags or to integer! defs/dll-flags/wdm-driver]
 
@@ -952,10 +965,12 @@ system-format-PE: context [
 		oh/loader-flags:		0						;-- reserved, must be zero
 		oh/data-dir-nb:			16
 		;-- data directory
-		oh/import-addr:			named-sect-addr? job 'import
-		oh/import-size:			10 * (2 + length? job/sections/import/3)
-		oh/IAT-addr:			named-sect-addr? job 'idata
-		oh/IAT-size:			length? job/sections/idata/2
+		if find job/sections 'import [
+			oh/import-addr:			named-sect-addr? job 'import
+			oh/import-size:			10 * (2 + length? job/sections/import/3)
+			oh/IAT-addr:			named-sect-addr? job 'idata
+			oh/IAT-size:			length? job/sections/idata/2
+		]
 		data-rva:				section-addr?/memory job 'data
 		crodata-rva:			any [
 			all [find job/sections 'crodata  section-addr?/memory job 'crodata]
@@ -968,7 +983,7 @@ system-format-PE: context [
 			oh/export-addr:		named-sect-addr? job 'export
 			oh/export-size:		length? job/sections/export/2
 		]
-		if any [PE64? find [dll drv] job/type] [
+		if find job/sections 'reloc [
 			oh/reloc-addr:		named-sect-addr? job 'reloc
 			oh/reloc-size:		length? job/sections/reloc/2
 		]
@@ -1294,7 +1309,7 @@ system-format-PE: context [
 		change next resource append out buf
 	]
 
-	build: func [job [object!] /local page out pad code-ptr][
+	build: func [job [object!] /local page out pad code-ptr import-pos][
 		clear imports-refs
 
 		PE64?: job/target = 'X86-64
@@ -1310,7 +1325,14 @@ system-format-PE: context [
 			pointer: pointer-64
 		]
 
-		if any [PE64? find [dll drv] job/type] [
+		if import-pos: find job/sections 'import [
+			if empty? import-pos/2/3 [remove/part import-pos 2]
+		]
+
+		if all [
+			any [PE64? find [dll drv] job/type]
+			has-relocations? job
+		][
 			append job/sections [reloc [- - -]]			;-- inject reloc section
 		]
 
@@ -1342,9 +1364,11 @@ system-format-PE: context [
 			phase-timer/finish 'pe-debug-functions
 		]
 
-		phase-timer/begin 'pe-imports
-		build-import job								;-- populate import section buffer
-		phase-timer/finish 'pe-imports
+		if find job/sections 'import [
+			phase-timer/begin 'pe-imports
+			build-import job							;-- populate import section buffer
+			phase-timer/finish 'pe-imports
+		]
 
 		if job/type = 'dll [build-export job]			;-- populate export section buffer
 
@@ -1354,7 +1378,7 @@ system-format-PE: context [
 			phase-timer/finish 'pe-resources
 		]
 
-		if any [PE64? find [dll drv] job/type] [
+		if find job/sections 'reloc [
 			phase-timer/begin 'pe-relocations
 			build-reloc job
 			phase-timer/finish 'pe-relocations

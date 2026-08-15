@@ -11,14 +11,19 @@ executable coverage. The bounded native arena/writer, aggregate RSIR verifier,
 and first `codegen-module` routine bridge also have cross-language integration
 coverage. An allocation-free canonical string merger and the first Windows x64
 machine-code slice now produce an exact, self-verified RSCG for one internal
-`void` function containing only `RETURN`. A bounded Red container writer and
-minimal RSIR producer now create that exact semantic module without emitter or
+`void` function containing only `RETURN`. A GLUE entry lowers that return to an
+explicit `ExitProcess(0)` import and RIP-relative RSCG relocation; ordinary
+USER/SUPPORT functions retain the original body. A bounded Red container
+writer and minimal RSIR producer create that semantic module without emitter or
 machine-IR input and pass it through the compiled routine integration test. An
-exclusive `rsir` compiler-core path now sends the same exact function semantic
-event to the producer before any emitter or machine-IR initialization. The
-linker adapter is not connected yet. The protocol remains unfrozen until the
-remaining Windows x64 feature blockers and message-level semantic fixtures
-satisfy the Phase 1 exit criteria.
+exclusive `rsir` compiler-core path sends the same semantic event to the
+producer before any emitter or machine-IR initialization. The first
+failure-atomic linker adapter slice maps the verified GLUE object into the
+legacy PE linker, and a fresh process loads, links, and executes the result
+without frontend semantic state. The compiler driver still stops after RSIR;
+general RSCG merging and driver connection remain open. The protocol remains
+unfrozen until the remaining Windows x64 feature blockers and message-level
+semantic fixtures satisfy the Phase 1 exit criteria.
 
 The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 [the backend ownership audit](compiler-backend-ownership.md).
@@ -173,13 +178,15 @@ and the current empty Windows x64 unwind contract are independently verified
 as well. Nonempty unwind records are an explicit v1 unsupported error until
 the codegen and adapter implement `.pdata`/`.xdata`; they are never silently
 dropped. These layers only inspect serialized bytes and generate no machine
-code. The bridge now adds one deliberately narrow machine-code slice: a USER or
-SUPPORT executable module containing one internal hidden Red/System `void()`
-function, one block, and one operand-free `RETURN`. Red/System codegen emits the
-x64 prolog/epilog bytes, an empty GC bitmap, and complete RSCG section, symbol,
-function, frame, and module records. Every other valid nonempty RSIR still fails
-at SELECT. This path does not call `machine-ir/verify-current`, consume frontend
-direct-code fragments, or invoke the legacy emitter.
+code. The bridge now adds one deliberately narrow machine-code slice: a USER,
+SUPPORT, or GLUE executable module containing one internal hidden Red/System
+`void()` function, one block, and one operand-free `RETURN`. Red/System codegen
+emits the x64 prolog/epilog bytes, an empty GC bitmap, and complete RSCG section,
+symbol, function, frame, and module records. GLUE additionally owns the explicit
+Windows process-termination import and relocation. Every other valid nonempty
+RSIR still fails at SELECT. This path does not call
+`machine-ir/verify-current`, consume frontend direct-code fragments, or invoke
+the legacy emitter.
 Standalone USER and SUPPORT objects validate each GC frame against its
 explicit initialized-DATA slice without inventing runtime compatibility roles;
 only an object containing the RUNTIME module requires exact coverage of
@@ -197,8 +204,9 @@ path. The control verifier is independent of legacy
 first codegen slice described above is separate from these verifier layers: it
 is the first component allowed to emit machine bytes, and only for the exact
 one-function `void RETURN` shape. The first Red producer can serialize that
-same exact shape, but compiler-core semantic event routing, optimization, and
-all broader machine-code coverage remain later work.
+same exact shape, and compiler-core routes the bounded empty-function event to
+it exclusively. Optimization and broader semantic/machine-code coverage remain
+later work.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
 Its test reads `system/tests/run-all.r` as data and rejects any unclassified
@@ -361,7 +369,7 @@ before this Phase 2 exit condition can be claimed.
 Current implementation seed: `compiler/wire-writer.red` mirrors the bounded,
 monotonic section state machine used by the native writer, and
 `compiler/rsir-producer.red` serializes the exact supported anonymous or named
-USER/SUPPORT executable module into an exactly measured binary. It stages only
+USER/SUPPORT/GLUE executable module into an exactly measured binary. It stages only
 the canonical string slices/data, writes every required section and flag, and
 returns no partial binary on failure. Its output is byte-identical to the
 independently constructed fixture and succeeds through the compiled routine.
@@ -469,8 +477,9 @@ Current implementation slice:
 - `x64-o0-codegen.reds` performs exact semantic selection, canonical string-ID
   remapping, RSCG construction, and full native metadata self-verification;
 - this is a vertical protocol/codegen proof, not Phase 5 completion. It has no
-  operands, calls, register allocation, relocations, imports, debug records, or
-  linker execution yet, and unsupported inputs never fall back.
+  operands, general calls, register allocation, exports, debug records, or
+  general relocation/import lowering. Its sole call-shaped operation is the
+  target-owned GLUE termination import, and unsupported inputs never fall back.
 
 Exit criteria:
 
@@ -504,6 +513,28 @@ Tests:
 - import functions, import variables, renamed exports, duplicate symbols, PIC,
   and data/rodata base relocations have focused tests;
 - linked output is inspected with `dumpbin` and then executed.
+
+Current implementation slice:
+
+- `compiler/rscg-linker-adapter.red` accepts one fully verified Windows x64
+  GLUE object with `.text`, `.data`, one entry function, one GC bitmap, and one
+  `kernel32.dll!ExitProcess` IAT relocation;
+- canonical RSCG symbol ordering may place the entry or import first. Codegen
+  remaps every function, lifecycle, relocation, and import reference, and the
+  adapter follows those IDs rather than assuming ordinal 1;
+- the adapter copies section buffers, patches the verified bitmap immediate,
+  converts relocation offset 23 to the legacy one-based callsite 24, and
+  commits no job mutation until all checks succeed;
+- the PE writer omits empty import/base-relocation sections before layout and
+  advertises relocation directories and ASLR flags only when a relocation
+  section exists. The linked slice has one real import/IAT and no empty
+  `.reloc`; `pe-empty-sections-test.red` covers the fully empty import/IAT/
+  relocation case;
+- `rscg-linker-adapter-integration.red` reads only serialized RSCG in a fresh
+  process, links it with the existing PE writer, and requires the resulting
+  executable to terminate with status 0. Multi-object merge, other relocation
+  kinds, general imports/exports/debug, and compiler-driver connection remain
+  Phase 6 work.
 
 Exit criteria:
 

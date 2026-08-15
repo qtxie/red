@@ -1804,15 +1804,16 @@ Record shapes:
 
 ### Current native codegen slice
 
-The first executable Red/System backend slice accepts exactly one USER or
-SUPPORT executable module with one internal hidden Red/System `void()`
+The first executable Red/System backend slice accepts exactly one USER,
+SUPPORT, or GLUE executable module with one internal hidden Red/System `void()`
 function, no parameters or locals, one block, and one operand-free `RETURN`.
 All values, constants, globals, imports, exports, calls, edges, source records,
 target fragments, subroutines, and exception regions must be empty. This is an
 exact selector: any other valid nonempty RSIR returns a SELECT diagnostic and
 does not invoke another backend.
 
-`system/codegen/x64-encoder.reds` emits this 17-byte Windows x64 body:
+For USER and SUPPORT modules, `system/codegen/x64-encoder.reds` emits this
+17-byte Windows x64 body:
 
 ```text
 55 48 89 E5 6A 00 6A 00 68 00 00 00 00 6A 00 C9 C3
@@ -1823,9 +1824,29 @@ the preceding byte is `PUSH imm32`. The function record has a 32-byte frame.
 Its initialized DATA section contains the 16-byte empty bitmap: zero argument
 and local slot counts followed by one terminating zero word for each chain.
 
+A GLUE executable entry cannot terminate a Windows process by returning from
+the raw PE entry point. Codegen therefore lowers the same semantic `RETURN` to
+`ExitProcess(0)` as a target-owned ABI operation and emits this 31-byte body:
+
+```text
+55 48 89 E5 6A 00 6A 00 68 00 00 00 00 6A 00
+31 C9 48 83 EC 20 FF 15 00 00 00 00 31 C0 C9 C3
+```
+
+The four-byte call placeholder begins at function offset 23. RSCG explicitly
+contains an undefined global function symbol, a `kernel32.dll` / `ExitProcess`
+stdcall import, and one zero-addend `X64_RIP_REL32` relocation; the linker does
+not infer or add the import. The fallback epilog after the no-return call keeps
+the function extent structurally complete. Canonical symbol ordering is
+recomputed after synthetic strings are merged, so lifecycle, function, import,
+and relocation records use remapped RSCG symbol IDs even when the entry sorts
+after the imported symbol.
+
 The resulting RSCG owns `.text` and `.data` output sections, one local hidden
 function symbol, one function record, one GC-frame record, and the input module
-record. Relocation, import, export, file, and debug sections are empty. A
+record. GLUE adds the explicit import symbol and relocation above; USER/SUPPORT
+relocation and import sections remain empty. Export, file, and debug sections
+are empty in either case. A
 two-pass allocation-free merge inserts or deduplicates `.data` and `.text` in
 the canonical input string table and remaps the module/function name IDs. The
 native metadata verifier checks the complete artifact before the routine makes
@@ -2046,8 +2067,9 @@ generated user or glue object and are never baked into the shared runtime cache.
 
 ### Existing linker adapter
 
-The first adapter deliberately supports the current linker instead of replacing
-it. It converts verified RSCG data as follows:
+The compatibility design deliberately supports the current linker instead of
+replacing it. The complete Phase 6 adapter will convert verified RSCG data as
+follows:
 
 - code, rodata, and data output sections become `job/sections` buffers;
 - defined symbols become legacy `native`, `native-ref`, `global`, or `constant`
@@ -2063,9 +2085,21 @@ it. It converts verified RSCG data as follows:
   consulting `system-dialect/compiler/functions`;
 - final image resources and external C object processing remain linker-owned.
 
-Every supported relocation kind has a documented mapping test. The adapter
-rejects a relocation it cannot represent; it never drops one. A later typed
-linker ingestion path may remove these legacy encodings without changing RSCG.
+The checked-in first slice is narrower: one Windows x64 executable GLUE module,
+one `.text`, one `.data`, one entry function at code offset zero, one standalone
+GC bitmap, and one `ExitProcess` import through a single `X64_RIP_REL32`
+relocation. It copies output buffers, patches the verified bitmap word, maps the
+zero-based relocation offset 23 to legacy callsite 24, and commits the linker
+job only after every check succeeds. It accepts either canonical ordering of
+the entry and imported symbol. All exports, runtime objects, unwind/debug data,
+other relocations/imports, PIC/static jobs, and multi-object inputs are hard
+errors rather than dropped records.
+
+`tools/self_hosting/tests/rscg-linker-adapter-integration.red` loads the RSCG
+fixture in a fresh process, invokes the existing PE linker, checks that a real
+import/IAT exists without an empty base-relocation section, and launches the
+result with exit status zero. A later typed linker ingestion path may remove
+the legacy encodings without changing RSCG.
 
 ## RSDG diagnostics
 
@@ -2178,8 +2212,9 @@ runtime arrangement.
 The checked-in Phase 2 implementation retains the no-code path for an empty
 USER or SUPPORT module and adds the first real machine-code slice. After
 complete aggregate RSIR verification it accepts exactly one internal hidden
-`void()` function with one operand-free `RETURN`, emits the 17-byte x64 body and
-its self-verified RSCG, and rejects every other valid nonempty module with
+`void()` function with one operand-free `RETURN`, emits the 17-byte USER/SUPPORT
+body or 31-byte GLUE entry plus its explicit exit import, builds a self-verified
+RSCG, and rejects every other valid nonempty module with
 `CODEGEN_FAILURE` in SELECT and an empty artifact. No frontend verifier writes
 instructions, no direct-code chunk is accepted, and there is no legacy-emitter
 fallback on this path.
@@ -2202,7 +2237,7 @@ The frontend-side seed lives in `compiler/wire-writer.red`,
 `compiler/rsir-producer.red`, and `compiler/rsir-sink.red`. The writer lays out a
 measured, bounded container in increasing section order and exposes no
 successful finish until all required directory entries are present. The
-producer currently accepts only the exact USER/SUPPORT executable, one hidden
+producer currently accepts only the exact USER/SUPPORT/GLUE executable, one hidden
 internal Red/System `void()` function, one block, one operand-free `RETURN`
 shape selected by codegen. It performs case-sensitive canonical string
 interning, writes all 32 RSIR sections, and returns `none` rather than a partial

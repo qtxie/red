@@ -10,7 +10,14 @@ do %../../compiler/wire-atomic.red
 do %../../compiler/wire-memory-aggregate.red
 do %../../compiler/wire-rscg-metadata.red
 do %../../compiler/wire-diagnostics.red
-do %../../compiler/rsir-producer.red
+do %../../compiler/rsir-frontend.red
+
+compile-void-rsir: func [name [string!] kind [word!] /local source][
+	source: compose/deep [
+		Red/System [] (to set-word! name) func [] []
+	]
+	compiler-rsir-frontend/compile source none kind 'executable
+]
 
 index-flags:
 	schema/WIRE_SECTION_FLAG_SORTED
@@ -118,30 +125,21 @@ put late-name-rsir-payloads schema/WIRE_RSIR_SECTION_STRING_DATA late-function-s
 late-name-glue-rsir: build-rsir/module late-name-rsir-payloads [
 	0 4 1 0 0 1 0 0
 ]
-produced-minimal-function-rsir: compiler-rsir-producer/build-empty-void-module
-	none "fn"
-	schema/WIRE_MODULE_KIND_USER
-	schema/WIRE_IMAGE_KIND_EXECUTABLE
+produced-minimal-function-rsir: compile-void-rsir "fn" 'user
 assert binary? produced-minimal-function-rsir
-	"minimal RSIR producer rejected its supported fixture"
+	"RSIR frontend rejected its supported fixture"
 assert produced-minimal-function-rsir = minimal-function-rsir
-	"minimal RSIR producer bytes differ from the independent fixture"
-produced-glue-function-rsir: compiler-rsir-producer/build-empty-void-module
-	none "fn"
-	schema/WIRE_MODULE_KIND_GLUE
-	schema/WIRE_IMAGE_KIND_EXECUTABLE
+	"RSIR frontend bytes differ from the independent fixture"
+produced-glue-function-rsir: compile-void-rsir "fn" 'glue
 assert binary? produced-glue-function-rsir
-	"minimal RSIR producer rejected its glue fixture"
+	"RSIR frontend rejected its glue fixture"
 assert produced-glue-function-rsir = glue-function-rsir
-	"minimal RSIR glue producer bytes differ from the independent fixture"
-produced-late-name-glue-rsir: compiler-rsir-producer/build-empty-void-module
-	none "zz-entry"
-	schema/WIRE_MODULE_KIND_GLUE
-	schema/WIRE_IMAGE_KIND_EXECUTABLE
+	"RSIR glue frontend bytes differ from the independent fixture"
+produced-late-name-glue-rsir: compile-void-rsir "zz-entry" 'glue
 assert binary? produced-late-name-glue-rsir
-	"minimal RSIR producer rejected its late-name glue fixture"
+	"RSIR frontend rejected its late-name glue fixture"
 assert produced-late-name-glue-rsir = late-name-glue-rsir
-	"minimal RSIR late-name glue producer bytes differ from the independent fixture"
+	"RSIR late-name glue frontend bytes differ from the independent fixture"
 
 verify-rsir: func [name [string!] data [binary!] /local result][
 	result: compiler-wire-target-intrinsic/verify data
@@ -513,7 +511,7 @@ source-bytes: make binary! 262144
 foreach source-file [
 	%generate-codegen-bridge-fixtures.red
 	%../../compiler/wire-writer.red
-	%../../compiler/rsir-producer.red
+	%../../compiler/rsir-frontend.red
 	%../../compiler/codegen-bridge.red
 	%../../system/codegen/codegen-bridge.reds
 	%../../system/codegen/x64-o0-codegen.reds
@@ -552,8 +550,15 @@ append output rejoin ["; Fixture source SHA256: " source-digest newline newline]
 append output {#include %../../../compiler/int-to-bin.red
 #include %../../../compiler/wire-schema.red
 #include %../../../compiler/wire-writer.red
-#include %../../../compiler/rsir-producer.red
+#include %../../../compiler/rsir-frontend.red
 #include %../../../compiler/codegen-bridge.red
+
+compile-void-rsir: func [name [string!] kind [word!] /local source][
+	source: compose/deep [
+		Red/System [] (to set-word! name) func [] []
+	]
+	compiler-rsir-frontend/compile source none kind 'executable
+]
 
 }
 append-fixture output "empty-rsir" empty-rsir
@@ -689,36 +694,27 @@ check-success "minimal glue entry" copy glue-function-rsir copy base-config
 check-success "late-name glue symbol remap" copy late-name-glue-rsir copy base-config
 	expected-late-name-glue-rscg
 
-produced-minimal-function-rsir: compiler-rsir-producer/build-empty-void-module
-	none "fn"
-	compiler-wire-schema/WIRE_MODULE_KIND_USER
-	compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
+produced-minimal-function-rsir: compile-void-rsir "fn" 'user
 check binary? produced-minimal-function-rsir
-	"compiled Red RSIR producer rejected its supported module"
+	"compiled Red RSIR frontend rejected its supported module"
 check produced-minimal-function-rsir = minimal-function-rsir
-	"compiled Red RSIR producer differs from the independent fixture"
+	"compiled Red RSIR frontend differs from the independent fixture"
 check-success "frontend-produced minimal void function"
 	produced-minimal-function-rsir copy base-config expected-function-rscg
 
-produced-glue-function-rsir: compiler-rsir-producer/build-empty-void-module
-	none "fn"
-	compiler-wire-schema/WIRE_MODULE_KIND_GLUE
-	compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
+produced-glue-function-rsir: compile-void-rsir "fn" 'glue
 check binary? produced-glue-function-rsir
-	"compiled Red RSIR producer rejected its glue module"
+	"compiled Red RSIR frontend rejected its glue module"
 check produced-glue-function-rsir = glue-function-rsir
-	"compiled Red RSIR glue producer differs from the independent fixture"
+	"compiled Red RSIR glue frontend differs from the independent fixture"
 check-success "frontend-produced minimal glue entry"
 	produced-glue-function-rsir copy base-config expected-glue-rscg
 
-produced-late-name-glue-rsir: compiler-rsir-producer/build-empty-void-module
-	none "zz-entry"
-	compiler-wire-schema/WIRE_MODULE_KIND_GLUE
-	compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
+produced-late-name-glue-rsir: compile-void-rsir "zz-entry" 'glue
 check binary? produced-late-name-glue-rsir
-	"compiled Red RSIR producer rejected its late-name glue module"
+	"compiled Red RSIR frontend rejected its late-name glue module"
 check produced-late-name-glue-rsir = late-name-glue-rsir
-	"compiled Red RSIR late-name glue producer differs from the independent fixture"
+	"compiled Red RSIR late-name glue frontend differs from the independent fixture"
 check-success "frontend-produced late-name glue entry"
 	produced-late-name-glue-rsir copy base-config expected-late-name-glue-rscg
 

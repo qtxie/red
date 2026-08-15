@@ -2252,20 +2252,17 @@ build\self-hosting\o2-ifphi-final-5b6efd8\red-bootstrap-ifphi-final-win64-o2-dev
 build\self-hosting\codegen-bridge-integration.exe
 ```
 
-The frontend-side seed lives in `compiler/wire-writer.red`,
-`compiler/rsir-producer.red`, and `compiler/rsir-sink.red`. The writer lays out a
-measured, bounded container in increasing section order and exposes no
-successful finish until all required directory entries are present. The
-producer currently accepts only the exact USER/SUPPORT/GLUE executable, one hidden
-internal Red/System `void()` function, one block, one operand-free `RETURN`
-shape selected by codegen. It performs case-sensitive canonical string
-interning, writes all 32 RSIR sections, and returns `none` rather than a partial
-binary on any validation, size, or writer failure.
+The frontend-side seed is `compiler/rsir-frontend.red`. It parses the supported
+Red/System source directly and accumulates semantic records in `binary!` tables;
+there is no producer, sink, event, or generic wire-writer boundary. It currently
+accepts an exact USER/SUPPORT/GLUE executable containing one hidden internal
+empty `void()` function or an `i32` literal return. It performs case-sensitive
+canonical string interning, measures and writes all 32 RSIR sections directly,
+and returns `none` rather than a partial binary on validation or size failure.
 
-The independent `system/compiler-rsir-core.red` semantic frontend is connected
-for that exact shape. It requires `rsir` mode at compile entry, validates its
-target and lifecycle restrictions, accepts only one empty function declaration
-at root, and publishes the completed message in `system-dialect/last-rsir`. A
+The independent `system/compiler-rsir-core.red` invokes that frontend once. It
+requires `rsir` mode at compile entry, validates target and lifecycle
+restrictions, and publishes the completed message in `system-dialect/last-rsir`. A
 no-link job stops at that serialized boundary. A linked job requires the
 installed Windows hybrid package, derives RSCF from the job, calls codegen once,
 validates and adapts RSCG once, then invokes the linker once. It publishes RSCG

@@ -6,8 +6,7 @@ Red [
 #include %../compiler/wire-schema.red
 #include %../compiler/wire-writer.red
 #include %../compiler/wire-container.red
-#include %../compiler/rsir-producer.red
-#include %../compiler/rsir-sink.red
+#include %../compiler/rsir-frontend.red
 #include %../compiler/rscf-producer.red
 #include %../compiler/hybrid-driver.red
 
@@ -22,7 +21,6 @@ system-dialect: context [
 	last-rscg: none
 	last-diagnostics: none
 	backend-mode: 'rsir
-	rsir-state: none
 	loader: compiler-system-loader
 	options-class: compiler-system-job/prototype
 
@@ -132,7 +130,6 @@ system-dialect: context [
 		last-rsir: none
 		last-rscg: none
 		last-diagnostics: none
-		rsir-state: none
 		compiler/pc: none
 		clear compiler/definitions
 		clear compiler/keywords-list
@@ -145,7 +142,7 @@ system-dialect: context [
 		validate-job
 	]
 
-	compile-module: func [source [block!] file [file!] /local header position name][
+	compile-rsir: func [source [block!] file [file!] /local output error][
 		compiler/script: clean-path file
 		compiler/pc: source
 		unless all [not tail? source source/1 = 'Red/System][
@@ -154,39 +151,16 @@ system-dialect: context [
 		unless all [not tail? next source block? source/2][
 			compiler/throw-error "missing Red/System program header"
 		]
-		header: source/2
-		unless parse header [any [set-word! skip]][
-			compiler/throw-error "invalid Red/System program header"
-		]
-		process-config header
-		position: skip source 2
-		compiler/pc: position
-		while [not tail? position][
-			compiler/pc: position
-			unless all [
-				(length? position) >= 4
-				set-word? position/1
-				find [func function] position/2
-				block? position/3
-				block? position/4
-			][
-				compiler/throw-error
-					"RSIR frontend currently supports only one empty function declaration"
-			]
-			name: to word! position/1
-			unless compiler-rsir-sink/add-function rsir-state name position/3 position/4 [
-				compiler/throw-error compiler-rsir-sink/last-error/message
-			]
-			position: skip position 4
-		]
-	]
-
-	finish-rsir: func [/local output error][
-		output: compiler-rsir-sink/finish rsir-state
+		process-config source/2
+		output: compiler-rsir-frontend/compile
+			source
+			none
+			'glue
+			'executable
 		unless binary? output [
-			error: compiler-rsir-sink/last-error
+			error: compiler-rsir-frontend/last-error
 			compiler/throw-error either error [error/message][
-				"RSIR semantic sink failed without a diagnostic"
+				"RSIR frontend failed without a diagnostic"
 			]
 		]
 		last-rsir: output
@@ -236,10 +210,6 @@ system-dialect: context [
 		loader/job: job
 		loader/connect-compiler-state compiler/definitions compiler/keywords-list
 		loader/init
-		rsir-state: compiler-rsir-sink/new
-			none
-			compiler-wire-schema/WIRE_MODULE_KIND_GLUE
-			compiler-wire-schema/WIRE_IMAGE_KIND_EXECUTABLE
 		set-verbose-level job/verbosity
 
 		phase-timer/begin 'rs-loader
@@ -255,8 +225,7 @@ system-dialect: context [
 		]
 
 		phase-timer/begin 'rsir-frontend
-		compile-module source file
-		finish-rsir
+		compile-rsir source file
 		phase-timer/finish 'rsir-frontend
 
 		output: none

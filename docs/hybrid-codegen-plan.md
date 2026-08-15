@@ -14,12 +14,13 @@ coverage. An allocation-free canonical string merger and the first Windows x64
 machine-code slice now produce an exact, self-verified RSCG for one internal
 `void` function containing only `RETURN`. A GLUE entry lowers that return to an
 explicit `ExitProcess(0)` import and RIP-relative RSCG relocation; ordinary
-USER/SUPPORT functions retain the original body. A bounded Red container
-writer and minimal RSIR producer create that semantic module without emitter or
-machine-IR input and pass it through the compiled routine integration test. An
-exclusive `compiler-rsir-core.red` path sends the same semantic event to the
-producer without compiling or initializing the legacy compiler core, emitter,
-or machine IR. The first failure-atomic linker adapter slice maps the verified
+USER/SUPPORT functions retain the original body. The compact
+`compiler/rsir-frontend.red` parses the first supported Red/System forms and
+writes their semantic tables directly into one RSIR `binary!`; it has no
+producer, sink, generic wire-writer, emitter, or machine-IR layer. The exclusive
+`compiler-rsir-core.red` path invokes that frontend without compiling or
+initializing the legacy compiler core, emitter, or machine IR. The first
+failure-atomic transitional linker adapter maps the verified
 GLUE object into the
 legacy PE linker, and a fresh process loads, links, and executes the result
 without frontend semantic state. The strict driver now connects that slice to
@@ -61,24 +62,21 @@ The detailed contracts are in [the wire protocol](compiler-wire-format.md) and
 
 ## Objective
 
-Replace the Red implementation of Red/System native code generation with an
-embedded Red/System backend while retaining the existing Red semantic frontend
-and Red image linker:
+Build a compact Red-side Red/System compiler around an embedded Red/System
+backend and a Red image linker. Reuse existing frontend or linker code only
+where it remains simpler than direct RSIR/RSCG handling:
 
 ```text
 Red source -> Red frontend -> generated Red/System source
                                 |
-Red/System source -> Red semantic frontend -> RSIR
-                                            |
-                                   codegen-module routine!
-                                            |
-                                      RSCG object
-                                            |
-              embedded runtime RSCG ------>+----> RSCG merger
-                                                       |
-                                                linker adapter
-                                                       |
-                                                existing linker
+Red/System source -> compact rs-compiler (Red) -> RSIR binary!
+                                                    |
+                                      codegen-module routine!
+                                            (Red/System)
+                                                    |
+                                               RSCG binary!
+                                                    |
+                                             Red linker
 ```
 
 The end state contains no emitter fallback. The development build must also
@@ -164,7 +162,7 @@ switching to a runtime DLL.
 | relocatable RSCG, not final bytes | permits static runtime caching and multi-module linking |
 | native arena plus one output append | prevents Red-series relocation bugs and repeated expansion |
 | module-level `rsir` failure | a hidden per-function fallback would retain emitter dependencies indefinitely |
-| legacy linker adapter first | reduces initial scope while making every old encoding explicit and testable |
+| direct RSCG linker input | avoids retaining a permanent adapter and legacy linker-only structures |
 | O0/O1 correctness before O2 | the current O2 path is experimental and is not the migration foundation |
 | source-closure exclusion | an uncalled legacy emitter still makes the compiler itself slow to build |
 | one complete, Red-thin self-host source | the existing compiler and hybrid N rebuild the exact same full product; backend responsibilities are not duplicated in Red |
@@ -302,10 +300,10 @@ path. The control verifier is independent of legacy
 `machine-ir/verify-current`. These layers do not produce direct code bytes. The
 first codegen slice described above is separate from these verifier layers: it
 is the first component allowed to emit machine bytes, and only for the exact
-one-function `void RETURN` shape. The first Red producer can serialize that
-same exact shape, and compiler-core routes the bounded empty-function event to
-it exclusively. Optimization and broader semantic/machine-code coverage remain
-later work.
+one-function `void RETURN` shape. The first compact Red frontend parses and
+serializes that same exact shape directly. `compiler-rsir-core` calls it once;
+there is no semantic-event or producer boundary between parsing and RSIR.
+Optimization and broader semantic/machine-code coverage remain later work.
 
 `compiler/backend-feature-spec.red` is the executable Phase 1 feature matrix.
 Its test reads `system/tests/run-all.r` as data and rejects any unclassified
@@ -465,38 +463,38 @@ before this Phase 2 exit condition can be claimed.
 
 ## Phase 3: complete RSIR frontend
 
-Current implementation seed: `compiler/wire-writer.red` mirrors the bounded,
-monotonic section state machine used by the native writer, and
-`compiler/rsir-producer.red` serializes the exact supported anonymous or named
-USER/SUPPORT/GLUE executable module into an exactly measured binary. It stages only
-the canonical string slices/data, writes every required section and flag, and
-returns no partial binary on failure. Its output is byte-identical to the
+Current implementation seed: `compiler/rsir-frontend.red` directly parses the
+exact supported anonymous or named USER/SUPPORT/GLUE executable module. It
+lowers an empty `void()` function or an `i32` literal return into semantic table
+binaries, lays out all 32 sections in increasing order, and returns no partial
+binary on failure. It does not call the generic wire writer or read the wire
+schema at runtime. Its empty-function output is byte-identical to the
 independently constructed fixture and succeeds through the compiled routine.
-`compiler/rsir-sink.red` now receives the first function-declaration semantic
-event from `compiler-core`, accepts exactly one empty `void()` function, and
-publishes the complete binary through `system-dialect/last-rsir`. Compiler entry
+`system/compiler-rsir-core.red` calls this frontend once and publishes the
+complete binary through `system-dialect/last-rsir`. Compiler entry
 validation restricts this slice to one Windows x64 Win64 executable module,
 O0/O1, no runtime, no debug, and no Red-generated input. No-link jobs publish
 RSIR only; linked jobs require the installed hybrid package and cannot fall
 back to the emitter. Unsupported options, root forms, signatures, bodies, and
-extra functions fail before the legacy emitter can run. The next Phase 3
-boundary is expanding the sink's semantic table and instruction coverage.
+extra functions fail without loading the legacy emitter. The next Phase 3
+boundary is expanding the direct frontend's semantic and instruction coverage.
 
 Deliverables:
 
-- expand the backend-neutral semantic sink in `compiler-core`; remaining direct
-  emitter calls are routed through explicit operations with typed inputs;
+- expand the compact parser and semantic lowering in `compiler/rsir-frontend.red`;
+  reuse old frontend code only when it reduces the resulting Red closure and
+  does not require emitter-shaped adapters;
 - build module/type/signature/symbol/constant/import/export tables before body
   serialization and assign stable IDs;
 - lower function bodies into typed CFG with explicit memory effects,
   single-definition expression temporaries, mutable locals/merge slots,
   explicit stack operations, calls, and source locations;
-- serialize directly into pre-sized binaries instead of constructing a second
-  tree of Red blocks;
+- keep semantic tables as `binary!` while lowering and serialize the measured
+  container directly, without a second tree, event sink, or generic writer;
 - never start or read `machine-ir.red` during an `rsir` compile; differential
   evidence uses separate legacy runs and never consumes direct byte chunks;
 - expose no runtime backend selector in the hybrid compiler; its only lowering
-  destination is the RSIR semantic sink.
+  destination is the RSIR binary.
 
 Recommended slice order:
 
@@ -592,7 +590,7 @@ Exit criteria:
 - no selected function contains copied legacy prolog, body, epilog, or bitmap
   bytes.
 
-## Phase 6: RSCG merger and linker adapter
+## Phase 6: RSCG merger and linker
 
 Deliverables:
 
@@ -602,8 +600,8 @@ Deliverables:
   rewrite each frame's section/offset, and verify final exact coverage;
 - local-ID remapping, strong/weak/undefined symbol resolution, import merging,
   export conflict checking, and relocation source adjustment;
-- exact conversion of RSCG relocations to current linker symbol/import reference
-  structures for the first implementation;
+- teach the Red linker to consume verified RSCG sections, symbols, imports, and
+  relocations directly; remove the transitional legacy reference conversion;
 - extend `job/debug-info` to carry complete function records and argument type
   bytes, removing the linker's dependency on `compiler/functions`;
 - retain existing PE resource and external static-object processing.
@@ -618,7 +616,7 @@ Tests:
   and data/rodata base relocations have focused tests;
 - linked output is inspected with `dumpbin` and then executed.
 
-Current implementation slice:
+Current transitional implementation slice:
 
 - `compiler/rscf-producer.red` now derives a deterministic, bounded RSCF
   message from the compiler job. It accepts only the Win64 O0/O1, non-debug,
@@ -634,15 +632,16 @@ Current implementation slice:
   shares loader, job, PE, and linker modules with the existing compiler, while
   its recursive source closure excludes the legacy compiler core and both
   legacy backend implementations;
-- `compiler/rscg-linker-adapter.red` accepts one fully verified Windows x64
-  GLUE object with `.text`, `.data`, one entry function, one GC bitmap, and one
-  `kernel32.dll!ExitProcess` IAT relocation;
+- `compiler/rscg-linker-adapter.red` temporarily accepts one fully verified
+  Windows x64 GLUE object with `.text`, `.data`, one entry function, one GC
+  bitmap, and one `kernel32.dll!ExitProcess` IAT relocation;
 - canonical RSCG symbol ordering may place the entry or import first. Codegen
   remaps every function, lifecycle, relocation, and import reference, and the
   adapter follows those IDs rather than assuming ordinal 1;
 - the adapter copies section buffers, patches the verified bitmap immediate,
   converts relocation offset 23 to the legacy one-based callsite 24, and
-  commits no job mutation until all checks succeed;
+  commits no job mutation until all checks succeed. This adapter is migration
+  scaffolding and is deleted once the linker consumes RSCG directly;
 - the PE writer omits empty import/base-relocation sections before layout and
   advertises relocation directories and ASLR flags only when a relocation
   section exists. The linked slice has one real import/IAT and no empty

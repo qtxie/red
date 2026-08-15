@@ -145,8 +145,7 @@ compiler-backend-feature-spec: [
 			tests [
 				"tools/self_hosting/tests/wire-module-lifecycle-test.red"
 				"tools/self_hosting/tests/wire-module-lifecycle-reds-test.reds"
-				"tools/self_hosting/tests/rsir-producer-test.red"
-				"tools/self_hosting/tests/rsir-sink-test.red"
+				"tools/self_hosting/tests/rsir-frontend-test.red"
 				"tools/self_hosting/tests/compiler-core-rsir-integration.red"
 				"tools/self_hosting/tests/compiler-core-hybrid-driver-integration.red"
 				"tools/self_hosting/tests/hybrid-driver-ownership-test.red"
@@ -214,8 +213,7 @@ compiler-backend-feature-spec: [
 			tests [
 				"tools/self_hosting/tests/wire-function-signature-test.red"
 				"tools/self_hosting/tests/wire-function-signature-reds-test.reds"
-				"tools/self_hosting/tests/rsir-producer-test.red"
-				"tools/self_hosting/tests/rsir-sink-test.red"
+				"tools/self_hosting/tests/rsir-frontend-test.red"
 				"tools/self_hosting/tests/compiler-core-rsir-integration.red"
 				"system/tests/source/units/function-test.reds"
 				"system/tests/source/units/infix-test.reds"

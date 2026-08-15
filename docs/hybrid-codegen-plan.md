@@ -679,6 +679,24 @@ Bootstrap packaging sequence:
 This sequence uses no Stage0/Rebol compiler. Keeping the bundle external until
 step 3 makes failures inspectable and avoids hiding a circular build dependency.
 
+The saved frontend boundary is a four-file artifact set: `<name>.reds`,
+`<name>.reds.redbin`, `<name>.reds.resources.red`, and
+`<name>.reds.manifest.red`. Manifest version 2 binds the original source,
+generated Red/System, Redbin, resources, target, and the sorted SHA-256 records
+of every frontend-expanded `#script` dependency recovered structurally from
+the generated source. `--loaded-red` verifies the complete set before the
+Red/System loader runs. A compiler containing the new frontend writes all four
+files directly; a pre-existing `--red-only` compiler can be followed by
+`tools/self_hosting/seal-saved-frontend.red` without invoking a native backend.
+
+The first Windows x64 development seed confirms this boundary reaches the
+independent compiler core: the existing compiler's frontend-only pass took
+25.826 seconds, sealing took 1.191 seconds, and the standalone seed loaded that
+set before hard-failing in 0.651 seconds at the intentionally unsupported
+Red/System runtime lifecycle. Its one-time legacy AOT build took 126.6 seconds
+and is diagnostic bootstrap cost, not a result accepted by either fast-build
+gate.
+
 ## Phase 9: bootstrap, performance gates, and default switch
 
 Benchmark protocol:
@@ -688,7 +706,7 @@ Benchmark protocol:
    ```powershell
    <existing-compiler> --red-only -t Windows-X86-64 `
        -o <candidate.reds> <compiler-source>
-   <hybrid-backend> --loaded-red <candidate.reds> <candidate.reds.redbin> `
+   <hybrid-backend> --loaded-red <candidate.reds> `
        -o <candidate.exe> <compiler-source>
 
    <hybrid-N> -t Windows-X86-64 -o <hybrid-N+1.exe> <compiler-source>
@@ -769,7 +787,7 @@ relocation inspection are authoritative.
 | --- | --- |
 | frontend silently reads emitter state | ownership matrix, `rsir` poison stubs, fresh-process object reload |
 | premature schema freeze | draft version until 100% Win64 feature coverage |
-| Red series moves during routine | native arenas, no-GC pointer window, one append |
+| Red series moves during routine | native arenas, pre-reserved output series, allocation-free tail commit |
 | aggregate/callback ABI mismatch | table-driven classifier and exhaustive probes |
 | GC roots lost in allocation | typed GC kinds, liveness verification, forced-GC tests |
 | legacy linker drops a relocation | per-kind mapping tests and reject-by-default adapter |

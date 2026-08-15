@@ -16,6 +16,7 @@ compiler-options: context [
 			opt-level: 1
 			o2-ir-dump: none
 			red-only?: false
+			loaded-red: none
 			no-compress?: false
 			dll?: false
 			update-libRedRT?: false
@@ -56,6 +57,11 @@ compiler-options: context [
 					option-set options 'release? true
 				]
 				token = "--red-only" [option-set options 'red-only? true]
+				token = "--loaded-red" [
+					position: next position
+					if tail? position [return missing-value token]
+					option-set options 'loaded-red to string! position/1
+				]
 				token = "--no-compress" [option-set options 'no-compress? true]
 				find ["-t" "--target"] token [
 					position: next position

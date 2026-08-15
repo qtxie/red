@@ -36,6 +36,33 @@ wire-codegen-bridge: context [
 		]
 	]
 
+	output-capacity: func [
+		output [red-binary!]
+		return: [integer!]
+		/local series [series!]
+	][
+		series: GET_BUFFER(output)
+		if null? series [return -1]
+		series/size - output/head
+	]
+
+	commit-arena: func [
+		output [red-binary!]
+		arena [wire-arena!]
+		return: [logic!]
+		/local series [series!] capacity [integer!] destination [byte-ptr!]
+	][
+		if any [null? output null? arena arena/size < 0][return false]
+		series: GET_BUFFER(output)
+		if null? series [return false]
+		capacity: series/size - output/head
+		if any [capacity < 0 arena/size > capacity][return false]
+		destination: (as byte-ptr! series/offset) + output/head
+		if arena/size > 0 [copy-memory destination arena/data arena/size]
+		series/tail: as cell! (destination + arena/size)
+		true
+	]
+
 	targets-match?: func [
 		ir config [byte-ptr!]
 		return: [logic!]
@@ -366,17 +393,21 @@ wire-codegen-bridge: context [
 		diagnostics [red-binary!]
 		limit status phase target abi endian pointer-size features-low features-high
 			[integer!]
+		return: [logic!]
 		/local arena [wire-arena!] build-status [integer!]
+			committed? [logic!]
 	][
-		if limit = 0 [exit]
+		if limit = 0 [return true]
 		arena: declare wire-arena!
 		wire-arena/reset arena
+		committed?: false
 		build-status: build-diagnostic arena limit status phase target abi endian
 			pointer-size features-low features-high
 		if build-status = wire-container-writer/ERROR_SUCCESS [
-			binary/rs-append diagnostics arena/data arena/size
+			committed?: commit-arena diagnostics arena
 		]
 		wire-arena/release arena
+		committed?
 	]
 
 	verify-rsir: func [
@@ -451,7 +482,8 @@ wire-codegen-bridge: context [
 		return: [integer!]
 		/local ir-data config-data [byte-ptr!]
 			ir-size config-size status phase target abi endian pointer-size
-			features-low features-high build-status [integer!]
+			features-low features-high build-status artifact-capacity
+			diagnostic-capacity [integer!]
 			empty-module-shape? [logic!]
 			config-result [wire-rscf-result!]
 			verified-config [wire-rscf-config!]
@@ -500,6 +532,12 @@ wire-codegen-bridge: context [
 				WIRE_STATUS_UNSUPPORTED_TARGET
 			][WIRE_STATUS_INVALID_CONFIGURATION]
 		]
+		artifact-capacity: output-capacity artifact
+		diagnostic-capacity: output-capacity diagnostics
+		if any [
+			artifact-capacity < verified-config/max-output-bytes
+			diagnostic-capacity < verified-config/max-diagnostic-bytes
+		][return WIRE_STATUS_INVALID_ARGUMENTS]
 
 		container-result: declare wire-container-result!
 		status: wire-container-reader/verify ir-data ir-size WIRE_MAGIC_RSIR
@@ -602,9 +640,16 @@ wire-codegen-bridge: context [
 			return status
 		]
 
-		; No input-series pointer is used after this point. The sole runtime call
-		; commits the already self-verified native arena atomically.
-		binary/rs-append artifact output/data output/size
+		; No input-series pointer is used after this point. The Red wrapper has
+		; already reserved the bounded output storage, so committing only copies
+		; verified bytes and advances the series tail. It cannot allocate or GC.
+		unless commit-arena artifact output [
+			wire-arena/release output
+			emit-diagnostic diagnostics verified-config/max-diagnostic-bytes
+				WIRE_STATUS_CODEGEN_FAILURE WIRE_DIAGNOSTIC_PHASE_ALLOCATE
+				target abi endian pointer-size features-low features-high
+			return WIRE_STATUS_CODEGEN_FAILURE
+		]
 		wire-arena/release output
 		WIRE_STATUS_SUCCESS
 	]

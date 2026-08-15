@@ -2175,15 +2175,15 @@ build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d `
 build\self-hosting\wire-diagnostics-reds-test.exe
 ```
 
-Out-of-memory remains a host runtime failure if the Red runtime cannot append
-the completed native arena.
+Out-of-memory remains a host runtime failure if the Red wrapper cannot reserve
+the configured output capacities or publish the completed native result.
 
 ## Routine bridge
 
-The initial entry point is status-returning and buffer-mutating:
+The public entry point is status-returning and buffer-mutating:
 
 ```red
-codegen-module: routine [
+codegen-module-native: routine [
     ir          [binary!]
     config      [binary!]
     artifact    [binary!]
@@ -2192,29 +2192,41 @@ codegen-module: routine [
 ]
 ```
 
-A `binary!` argument is passed as a `red-binary!` cell, not as raw bytes. The
-routine obtains the current head with `binary/rs-head` and the visible length
-with `binary/rs-length?`.
+The public `codegen-module` Red function keeps the same four arguments and
+status result while adapting its empty caller-owned outputs to those reserved
+native scratch buffers.
+
+A `binary!` routine argument is passed as a `red-binary!` cell, not as raw
+bytes. The public Red wrapper reserves the RSCF-bounded artifact and diagnostic
+capacities with `make binary!` while leaving both scratch series logically
+empty. The native `codegen-module-native` routine resolves those series and
+writes only within their already allocated storage.
 
 Bridge preconditions and memory rules are:
 
-1. All four series nodes are distinct. Artifact and diagnostics are empty and
-   at head zero. Aliasing is rejected before either output is cleared.
+1. All four public series nodes are distinct. Artifact and diagnostics are
+   empty and at head zero. Aliasing is rejected before scratch allocation.
 2. The routine snapshots input heads and lengths, validates both headers, and
-   checks RSIR/RSCF target equality.
+   checks RSIR/RSCF target equality. It also requires each reserved output
+   capacity to cover the corresponding verified RSCF limit.
 3. While a pointer into a Red series is live, codegen calls no Red runtime API
    that can allocate or trigger GC. Decode tables are zero-copy where useful;
    derived state and output use Red/System native arenas only.
 4. The complete RSCG or RSDG message is built and self-verified in a native
    arena. The input pointer is no longer used before committing output.
-5. Success performs one `binary/rs-append` to artifact and leaves diagnostics
-   empty. Failure leaves artifact empty and performs at most one append of a
-   complete RSDG message. Native arenas are then released.
-6. No pointer into any Red series or native arena survives the routine return.
+5. Native commit copies the complete message into reserved series storage and
+   advances its tail directly. It neither grows a Red series nor calls a Red
+   allocation API. Success commits only RSCG; failure commits at most one RSDG.
+6. After routine return, the Red wrapper appends the logical native results to
+   the caller-owned empty outputs. A failure still leaves artifact empty, and a
+   success still leaves diagnostics empty.
+7. No pointer into any Red series or native arena survives the routine return.
 
-The routine is compiled into the release compiler. It does not introduce a
-`libRedRT.dll` dependency; development builds follow the compiler's existing
-runtime arrangement.
+The routine is compiled into the release compiler. Development builds use only
+the existing exported `resolve-series` runtime ABI for output storage; they do
+not require the internal `binary/rs-append` symbol. Release builds remain
+self-contained, while development builds follow the compiler's existing
+`libRedRT.dll` arrangement.
 
 The checked-in Phase 2 implementation retains the no-code path for an empty
 USER or SUPPORT module and adds the first real machine-code slice. After

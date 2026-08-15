@@ -82,6 +82,17 @@ expect package/2 "rs-o2-ir" 0 "hybrid-package"
 expect package/2 "linker" 0 "hybrid-package"
 expect package/2 "verify-current" 0 "hybrid-package"
 
+native-bridge-text: read %../../../system/codegen/codegen-bridge.reds
+if find native-bridge-text "binary/rs-append" [
+	fail "native codegen bridge depends on non-exported binary/rs-append"
+]
+unless all [
+	find native-bridge-text "commit-arena"
+	find native-bridge-text "GET_BUFFER(output)"
+][
+	fail "native codegen bridge is missing its allocation-free output commit"
+]
+
 include-directive: to issue! "include"
 closure-seen: make map! 256
 closure-files: make block! 256
@@ -139,6 +150,9 @@ root: clean-path to file! rejoin [system/options/path %../../../]
 walk-include-file clean-path to file! rejoin [
 	root %system/compiler-windows-hybrid-bootstrap.red
 ]
+walk-include-file clean-path to file! rejoin [
+	root %red-bootstrap-windows-hybrid-backend.red
+]
 
 foreach forbidden [
 	%system/compiler-windows-bootstrap.red
@@ -146,6 +160,10 @@ foreach forbidden [
 	%system/emitter.red
 	%system/machine-ir.red
 	%system/machine-ir-x64.red
+	%compiler/frontend.red
+	%compiler/preprocessor.red
+	%compiler/extractor.red
+	%compiler/redbin.red
 ][
 	forbidden: clean-path to file! rejoin [root forbidden]
 	if find closure-files forbidden [
@@ -158,6 +176,8 @@ foreach required [
 	%system/compiler-windows-common.red
 	%system/compiler-rsir-core.red
 	%compiler/codegen-bridge.red
+	%compiler/saved-frontend.red
+	%red-bootstrap-windows-hybrid-backend.red
 ][
 	required: clean-path to file! rejoin [root required]
 	unless find closure-files required [

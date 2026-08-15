@@ -30,6 +30,7 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 #include %compiler/crush.red
 #include %compiler/frontend.red
 #include %compiler/bootstrap-options.red
+#include %compiler/saved-frontend.red
 
 ; Interpreted bootstrap follows Stage0's deep binding operation. The AOT source
 ; materializes this field through frontend.red's nested include instead.
@@ -42,7 +43,7 @@ bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
 
 print-usage: does [
-	print "Usage: red-bootstrap [-r] [-u] [-d] [-O0|-O1|-O2] [--dump-o2-ir file] [-dlib] [-t target] [--red-only] [-o output] source.red|source.reds"
+	print "Usage: red-bootstrap [-r] [-u] [-d] [-O0|-O1|-O2] [--dump-o2-ir file] [-dlib] [-t target] [--red-only|--loaded-red output.reds] [-o output] source.red|source.reds"
 ]
 
 fail-command: func [message][
@@ -207,6 +208,7 @@ read-source-marker: func [
 compile-source: func [
 	options [object!]
 	/local source marker job frontend-result backend-result saved-verbosity build-prefix
+		loaded-red loaded-path saved-output
 ][
 	unless compiler-options/option-get options 'source [fail-command "missing source file"]
 	source: resolve-source-path compiler-options/option-get options 'source
@@ -215,6 +217,13 @@ compile-source: func [
 	marker: read-source-marker source
 	unless any [marker = 'Red marker = red-system-marker][
 		fail-command "source must start with a Red or Red/System header"
+	]
+	loaded-red: compiler-options/option-get options 'loaded-red
+	if all [loaded-red compiler-options/option-get options 'red-only?][
+		fail-command "--loaded-red and --red-only are mutually exclusive"
+	]
+	if all [loaded-red marker <> 'Red][
+		fail-command "--loaded-red requires an original Red source file"
 	]
 
 	job: compiler-options/to-job options
@@ -256,23 +265,37 @@ compile-source: func [
 
 	print ["Compiling" source "..."]
 	either marker = red-system-marker [
+		if loaded-red [fail-command "--loaded-red cannot compile Red/System input"]
 		phase-timer/begin 'red-system-total
 		system-dialect/compile/options source job
 		phase-timer/finish 'red-system-total
 	][
-		phase-timer/begin 'frontend
-		frontend-result: compiler-frontend/compile source job
-		phase-timer/finish 'frontend
-		print ["...frontend time    :" frontend-result/2]
-		if compiler-system-job/job-get job 'red-only? [
-			unless compiler-options/option-get options 'output [
-				fail-command "--red-only requires -o output.reds"
+		either loaded-red [
+			loaded-path: resolve-source-path loaded-red
+			frontend-result: compiler-saved-frontend/load-artifacts
+				loaded-path source compiler-system-job/job-get job 'config-name
+			unless block? frontend-result [
+				fail-command compiler-saved-frontend/last-error/message
 			]
-			write to file! compiler-options/option-get options 'output mold/only frontend-result/1
-			write/binary to file! rejoin [
-				compiler-options/option-get options 'output ".redbin"
-			] frontend-result/3
-			return none
+			print ["...frontend cache   :" loaded-path]
+		][
+			phase-timer/begin 'frontend
+			frontend-result: compiler-frontend/compile source job
+			phase-timer/finish 'frontend
+			print ["...frontend time    :" frontend-result/2]
+			if compiler-system-job/job-get job 'red-only? [
+				unless compiler-options/option-get options 'output [
+					fail-command "--red-only requires -o output.reds"
+				]
+				saved-output: to file! compiler-options/option-get options 'output
+				unless compiler-saved-frontend/write-artifacts
+					saved-output source frontend-result/1 frontend-result/3
+					frontend-result/4 compiler-system-job/job-get job 'config-name
+				[
+					fail-command compiler-saved-frontend/last-error/message
+				]
+				return none
+			]
 		]
 		saved-verbosity: compiler-system-job/job-get job 'verbosity
 		compiler-system-job/job-set job 'verbosity (max 0 saved-verbosity - 3)

@@ -4,8 +4,9 @@ Red [
 ]
 
 compiler-system-layout: context [
-	target: compiler-system-target-class
+	target: compiler-system-target-model
 	datatypes: none
+	compiler-mode?: false
 
 	types-model: [
 		int8! 1 signed
@@ -39,8 +40,9 @@ compiler-system-layout: context [
 		struct! 1000 union! 1001
 	]
 
-	connect: func [target-service [object!] /local model pos][
+	connect: func [target-service [object!] /compiler /local model pos][
 		target: target-service
+		compiler-mode?: to logic! compiler
 		model: copy types-model
 		foreach type [
 			pointer! c-string! struct! union!
@@ -52,6 +54,75 @@ compiler-system-layout: context [
 		self
 	]
 
+	find-aliased: func [name [word!]][
+		either compiler-mode? [
+			system-dialect/compiler/find-aliased name
+		][compiler-system-types/find-aliased name]
+	]
+
+	integer-kind: func [type [word! block!]][
+		either compiler-mode? [
+			system-dialect/compiler/integer-kind type
+		][compiler-system-types/integer-kind type]
+	]
+
+	union-spec?: func [spec [block!]][
+		either compiler-mode? [
+			system-dialect/compiler/union-spec? spec
+		][compiler-system-types/union-spec? spec]
+	]
+
+	tagged-union?: func [spec [block!]][
+		either compiler-mode? [
+			system-dialect/compiler/tagged-union? spec
+		][compiler-system-types/tagged-union? spec]
+	]
+
+	union-members: func [spec [block!]][
+		either compiler-mode? [
+			system-dialect/compiler/union-members spec
+		][compiler-system-types/union-members spec]
+	]
+
+	union-variant-type?: func [spec [block!] name [word!]][
+		either compiler-mode? [
+			system-dialect/compiler/union-variant-type? spec name
+		][compiler-system-types/union-variant-type? spec name]
+	]
+
+	resolve-aliased: func [type [block!] /silent][
+		either compiler-mode? [
+			either silent [
+				system-dialect/compiler/resolve-aliased/silent type
+			][system-dialect/compiler/resolve-aliased type]
+		][
+			either silent [
+				compiler-system-types/resolve-aliased/silent type
+			][compiler-system-types/resolve-aliased type]
+		]
+	]
+
+	enumeration?: func [name [word!]][
+		to logic! either compiler-mode? [
+			find system-dialect/compiler/enumerations name
+		][find compiler-system-types/enumerations name]
+	]
+
+	return-definition: does [
+		either compiler-mode? [system-dialect/compiler/return-def][to set-word! 'return]
+	]
+
+	throw-error: func [message [string! block!]][
+		either compiler-mode? [
+			system-dialect/compiler/throw-error message
+		][compiler-system-types/throw-error message]
+	]
+
+	base-type?: func [value][
+		if block? value [value: value/1]
+		to logic! find/skip datatypes value 3
+	]
+
 	align-offset?: func [offset [integer!] alignment [integer!] /local over][
 		either zero? over: offset // alignment [
 			offset
@@ -60,11 +131,11 @@ compiler-system-layout: context [
 		]
 	]
 
-	type-align?: func [type [word! block!] /local base alias][
+	type-align?: func [type [word! block!] /local base alias kind][
 		if block? type [
 			if all [
 				'value = last type
-				alias: compiler-system-types/find-aliased type/1
+				alias: find-aliased type/1
 			][
 				if find [struct! union!] alias/1 [return aggregate-align? alias/2]
 				type: alias
@@ -72,6 +143,7 @@ compiler-system-layout: context [
 			base: type/1
 		]
 		if word? type [base: type]
+		if kind: integer-kind type [base: kind]
 		case [
 			find [int8! uint8! byte!] base [1]
 			find [int16! uint16!] base [2]
@@ -87,7 +159,7 @@ compiler-system-layout: context [
 	]
 
 	aggregate-align?: func [spec [block!] /local alignment member-alignment][
-		if (compiler-system-types/union-spec? spec) [return union-payload-align? spec]
+		if (union-spec? spec) [return union-payload-align? spec]
 		alignment: 1
 		foreach [name type] spec [
 			member-alignment: type-align? type
@@ -102,7 +174,7 @@ compiler-system-layout: context [
 
 	union-payload-align?: func [spec [block!] /local alignment member-alignment][
 		alignment: 1
-		foreach [name type] (compiler-system-types/union-members spec) [
+		foreach [name type] (union-members spec) [
 			member-alignment: type-align? type
 			if member-alignment > alignment [alignment: member-alignment]
 		]
@@ -110,7 +182,7 @@ compiler-system-layout: context [
 	]
 
 	union-payload-offset?: func [spec [block!] /local tag-size][
-		either (compiler-system-types/tagged-union? spec) [
+		either (tagged-union? spec) [
 			tag-size: size-of? spec/2
 			align-offset? tag-size union-payload-align? spec
 		][
@@ -121,10 +193,10 @@ compiler-system-layout: context [
 	union-size?: func [spec [block!] /local size alignment member-size member-alignment total][
 		size: 0
 		alignment: 1
-		foreach [name type] (compiler-system-types/union-members spec) [
+		foreach [name type] (union-members spec) [
 			member-size: size-of? type
 			unless member-size [
-				compiler-system-types/throw-error reduce ["invalid union member type:" mold type]
+				throw-error reduce ["invalid union member type:" mold type]
 			]
 			member-alignment: type-align? type
 			if member-size > size [size: member-size]
@@ -138,23 +210,23 @@ compiler-system-layout: context [
 		either none? name [
 			union-size? spec
 		][
-			type: compiler-system-types/union-variant-type? spec name
+			type: union-variant-type? spec name
 			unless type [
-				compiler-system-types/throw-error reduce ["invalid union member" to lit-word! name]
+				throw-error reduce ["invalid union member" to lit-word! name]
 			]
 			union-payload-offset? spec
 		]
 	]
 
 	member-offset?: func [spec [block!] name [word! none!] /local offset alignment size][
-		if (compiler-system-types/union-spec? spec) [return union-member-offset? spec name]
+		if (union-spec? spec) [return union-member-offset? spec name]
 		offset: 0
 		foreach [field type] spec [
 			alignment: type-align? type
 			offset: align-offset? offset alignment
 			if field = name [return offset]
 			size: size-of? type
-			unless size [compiler-system-types/throw-error reduce ["invalid member type:" mold type]]
+			unless size [throw-error reduce ["invalid member type:" mold type]]
 			offset: offset + size
 		]
 		align-offset? offset aggregate-align? spec
@@ -162,10 +234,10 @@ compiler-system-layout: context [
 
 	size-of?: func [type [word! block!] /local alias base][
 		if block? type [
-			if (compiler-system-types/union-spec? type) [return union-size? type]
+			if (union-spec? type) [return union-size? type]
 			if 'value = last type [
 				base: type/1
-				alias: all [word? base compiler-system-types/find-aliased base]
+				alias: all [word? base find-aliased base]
 				if alias [type: alias]
 				if find [struct! union!] type/1 [
 					return either type/1 = 'union! [
@@ -180,11 +252,22 @@ compiler-system-layout: context [
 		unless word? type [return none]
 		any [
 			select datatypes type
-			all [find compiler-system-types/enumerations type select datatypes 'integer!]
+			all [enumeration? type select datatypes 'integer!]
 			all [
-				alias: compiler-system-types/find-aliased type
+				alias: find-aliased type
 				select datatypes alias/1
 			]
+		]
+	]
+
+	get-size: func [type [block! word!] value][
+		case [
+			word? type [select datatypes type]
+			'array! = first head type [second head type]
+			type/1 = 'c-string! [reduce ['+ 1 reduce ['length? value]]]
+			type/1 = 'struct! [member-offset? type/2 none]
+			type/1 = 'union! [union-size? type/2]
+			true [select datatypes type/1]
 		]
 	]
 
@@ -193,15 +276,21 @@ compiler-system-layout: context [
 		'signed = third any [find datatypes type [- - -]]
 	]
 
-	struct-slots?: func [spec [block!] /direct /local size][
+	struct-slots?: func [spec [block!] /direct /check /local size][
+		if check [
+			unless all [
+				spec: select spec return-definition
+				'value = last :spec
+			][return none]
+		]
 		unless direct [
 			if not find [struct! union!] spec/1 [
-				spec: compiler-system-types/find-aliased spec/1
+				spec: find-aliased spec/1
 				if not find [struct! union!] spec/1 [return none]
 			]
 			spec: spec/2
 		]
-		size: either (compiler-system-types/union-spec? spec) [
+		size: either (union-spec? spec) [
 			union-size? spec
 		][
 			member-offset? spec none
@@ -209,19 +298,25 @@ compiler-system-layout: context [
 		to integer! round/ceiling (size / target/stack-width)
 	]
 
-	struct-size?: func [spec [block!] /direct][
+	struct-size?: func [spec [block!] /direct /check][
+		if check [
+			unless all [
+				spec: select spec return-definition
+				'value = last :spec
+			][return none]
+		]
 		unless direct [
 			if not find [struct! union!] spec/1 [
-				spec: compiler-system-types/find-aliased spec/1
+				spec: find-aliased spec/1
 				if not find [struct! union!] spec/1 [return none]
 			]
 			spec: spec/2
 		]
-		either (compiler-system-types/union-spec? spec) [union-size? spec][member-offset? spec none]
+		either (union-spec? spec) [union-size? spec][member-offset? spec none]
 	]
 
 	type-has-pointer?: func [type [block!] /local resolved][
-		resolved: compiler-system-types/resolve-aliased type
+		resolved: resolve-aliased type
 		case [
 			find [pointer! c-string! function!] resolved/1 [true]
 			all [resolved/1 = 'struct! 'value <> last resolved] [true]
@@ -247,7 +342,7 @@ compiler-system-layout: context [
 
 	union-has-pointer?: func [spec [block!] /local found?][
 		found?: false
-		foreach [name type] (compiler-system-types/union-members spec) [
+		foreach [name type] (union-members spec) [
 			if type-has-pointer? type [found?: true break]
 		]
 		found?

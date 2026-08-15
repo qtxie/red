@@ -13,6 +13,7 @@ compiler-root: system/options/path
 #include %compiler/int-to-bin.red
 #include %compiler/system-target-class.red
 #include %compiler/system-types.red
+#include %compiler/system-target-model.red
 #include %compiler/system-layout.red
 #include %compiler/system-emitter.red
 #include %compiler/system-diagnostics.red
@@ -78,11 +79,17 @@ check-system-job: has [linux windows priority invalid][
 	]
 ]
 
-check-system-target: has [target arguments classes][
+check-system-target: has [target model arguments classes][
 	target: make compiler-system-target-class []
+	model: compiler-system-target-model/configure 'X86-64
 	arguments: reduce [true 42]
 	classes: target/get-arguments-class arguments
 	either all [
+		object? model
+		model/target = 'X86-64
+		model/ptr-size = 8
+		model/stack-width = 8
+		model/struct-align-size = 8
 		(target/opposite? to word! "=") = to word! "<>"
 		(target/opposite? 'overflow?) = 'not-overflow?
 		(target/power-of-2? 1) = 0
@@ -124,6 +131,9 @@ check-system-types: has [types target layout alias tagged i64 min-i64 max-u64 wi
 		types/lossless-integer-cast? [uint16!] [integer!]
 		not types/lossless-integer-cast? [integer!] [uint32!]
 		alias = [uint64!]
+		types/int64? [machine-word]
+		(types/integer-width? [machine-word]) = 8
+		types/unsigned-integer? [machine-word]
 		types/tagged-union? tagged
 		(types/union-variant-id? tagged 'wide) = 2
 		(types/union-tag-type? tagged) = [uint8!]

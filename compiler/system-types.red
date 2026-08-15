@@ -41,49 +41,47 @@ compiler-system-types: context [
 		to logic! find base-types value
 	]
 
-	canonical-type: func [type [block!]][
+	integer-kind: func [type [block! word! integer! none!] /local alias][
+		if any [none? type integer? type][return none]
+		if block? type [type: type/1]
+		if find integer-types type [return type]
+		alias: find-aliased type
+		all [alias find integer-types alias/1 alias/1]
+	]
+
+	canonical-type: func [type [block!] /local kind][
+		kind: integer-kind type
+		if all [kind kind <> type/1][type: reduce [kind]]
 		either type/1 = 'int32! [copy [integer!]][type]
 	]
 
 	integer-type?: func [type [block! word! integer! none!]][
-		if any [none? type integer? type][return false]
-		if block? type [type: type/1]
-		to logic! find integer-types type
+		to logic! integer-kind type
 	]
 
 	int32-type?: func [type [block! word! integer! none!]][
-		if any [none? type integer? type][return false]
-		if block? type [type: type/1]
-		to logic! find [integer! int32!] type
+		to logic! find [integer! int32!] integer-kind type
 	]
 
 	integer-width?: func [type [block! word! integer! none!]][
-		if any [none? type integer? type][return none]
-		if block? type [type: type/1]
 		select [
 			byte! 1 uint8! 1 int8! 1
 			uint16! 2 int16! 2
 			integer! 4 int32! 4 uint32! 4
 			int64! 8 uint64! 8
-		] type
+		] integer-kind type
 	]
 
 	signed-integer?: func [type [block! word! integer! none!]][
-		if any [none? type integer? type][return false]
-		if block? type [type: type/1]
-		to logic! find signed-integers type
+		to logic! find signed-integers integer-kind type
 	]
 
 	unsigned-integer?: func [type [block! word! integer! none!]][
-		if any [none? type integer? type][return false]
-		if block? type [type: type/1]
-		to logic! find unsigned-integers type
+		to logic! find unsigned-integers integer-kind type
 	]
 
 	int64?: func [type [block! word! integer! none!]][
-		if any [none? type integer? type][return false]
-		if block? type [type: type/1]
-		to logic! find int64-types type
+		to logic! find int64-types integer-kind type
 	]
 
 	any-float?: func [type [block!]][

@@ -663,13 +663,51 @@ assert all [
 	(copy at import-call-ir 145) = to binary! "fixture.dllnative-callfn"
 ]["imported call did not use the direct negative import ID"]
 
-assert none? compile-text {
+import-load-ir: compile-text {
 	Red/System []
 	#import ["fixture.dll" stdcall [native-value: "native-value" [integer!]]]
 	fn: func [return: [integer!]][native-value]
-} 'user "frontend accepted an imported variable as a call target"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"frontend reported the wrong imported-variable call error"
+} 'user
+assert binary? import-load-ir [
+	"frontend rejected an imported variable load: " mold frontend/last-error
+]
+assert all [
+	(length? import-load-ir) = 145
+	(word-at import-load-ir 16) = 1
+	(word-at import-load-ir 20) = 2
+	(word-at import-load-ir 44) = -5
+	(word-at import-load-ir 48) = 0
+	(word-at import-load-ir 88) = 7
+	(word-at import-load-ir 92) = 1
+	(word-at import-load-ir 96) = 1
+	(word-at import-load-ir 104) = 3
+	(word-at import-load-ir 112) = 1
+	(copy at import-load-ir 121) = to binary! "fixture.dllnative-valuefn"
+]["imported variable load did not use its direct import ID"]
+
+import-store-ir: compile-text {
+	Red/System []
+	red: context [
+		#import ["fixture.dll" stdcall [boot?: "boot?" [logic!]]]
+	]
+	fn: func [][red/boot?: yes]
+} 'user
+assert binary? import-store-ir [
+	"frontend rejected an imported logic store: " mold frontend/last-error
+]
+assert all [
+	(length? import-store-ir) = 138
+	(word-at import-store-ir 16) = 1
+	(word-at import-store-ir 20) = 2
+	(word-at import-store-ir 44) = -11
+	(word-at import-store-ir 48) = 0
+	(word-at import-store-ir 88) = 8
+	(word-at import-store-ir 92) = 0
+	(word-at import-store-ir 96) = 1
+	(word-at import-store-ir 100) = 1
+	(word-at import-store-ir 104) = 2
+	(copy at import-store-ir 121) = to binary! "fixture.dllboot?fn"
+]["imported logic store did not use its direct import ID"]
 
 context-import-ir: compile-text {
 	Red/System []

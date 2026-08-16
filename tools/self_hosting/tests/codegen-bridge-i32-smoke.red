@@ -204,6 +204,62 @@ check (codegen-module import-ir import-image 0) = 0
 check import-image = user-i32
 	"unused import declarations changed native code"
 
+import-variable-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	red: context [
+		#import ["fixture.dll" stdcall [
+			native-value: "native-value" [integer!]
+			boot?: "boot?" [logic!]
+		]]
+	]
+	reader: func [return: [integer!]][red/native-value]
+	main: func [][red/boot?: yes]
+] 'glue
+check binary? import-variable-ir ["frontend rejected imported variable access: "
+	mold compiler-rsir-frontend/last-error]
+import-variable-image: make binary! 4096
+check (codegen-module import-variable-ir import-variable-image 0) = 0
+	"imported variable codegen failed"
+check all [
+	(length? import-variable-image) = 360
+	(word-at import-variable-image 8) = 2
+	(word-at import-variable-image 12) = 2
+	(word-at import-variable-image 16) = 3
+	(word-at import-variable-image 20) = 3
+	(word-at import-variable-image 24) = 61
+	(word-at import-variable-image 28) = 272
+	(word-at import-variable-image 32) = 70
+	(word-at import-variable-image 36) = 16
+	(word-at import-variable-image 40) = 0
+]["imported variable image header changed"]
+check all [
+	(word-at import-variable-image 52) = 44
+	(word-at import-variable-image 56) = 26
+	(word-at import-variable-image 88) = 0
+	(word-at import-variable-image 92) = 44
+	(word-at import-variable-image 116) = 10
+	(word-at import-variable-image 124) = 21
+	(word-at import-variable-image 128) = 12
+	(word-at import-variable-image 132) = 1
+	(word-at import-variable-image 136) = 1
+	(word-at import-variable-image 140) = 10
+	(word-at import-variable-image 148) = 33
+	(word-at import-variable-image 152) = 5
+	(word-at import-variable-image 156) = 2
+	(word-at import-variable-image 160) = 1
+	(word-at import-variable-image 188) = 62
+	(word-at import-variable-image 192) = 18
+	(word-at import-variable-image 196) = 36
+]["imported variable reference slices changed"]
+check (copy/part at import-variable-image 201 61) =
+	to binary! "readermainfixture.dllnative-valueboot?kernel32.dllExitProcess"
+	"imported variable names are not direct and contiguous"
+check (copy/part at import-variable-image 273 70) = #{
+	554889E56A006A0068000000006A00488B0500000000C7000100000031C9
+	4883EC20FF150000000031C0C9C3554889E56A006A0068000000006A0048
+	8B05000000008B00C9C3
+} "imported variable x64 encoding changed"
+
 global-ir: compiler-rsir-frontend/compile [
 	Red/System []
 	answer: 42

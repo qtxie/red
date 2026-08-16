@@ -14,6 +14,8 @@ x64-encoder: context [
 	I32_IMPORT_ARG_LITERAL: 7
 	I32_IMPORT_ARG_PARAM:   8
 	I32_GLOBAL:             9
+	I32_IMPORT_LOAD:       10
+	SCALAR_IMPORT_STORE:   11
 
 	VOID_SIZE:       17
 	VOID_ENTRY_SIZE: 31
@@ -32,6 +34,10 @@ x64-encoder: context [
 	IMPORT_CALL_ARG_PARAM_SIZE:   27
 	GLOBAL_SIZE:       23
 	GLOBAL_ENTRY_SIZE: 35
+	IMPORT_LOAD_SIZE:        26
+	IMPORT_LOAD_ENTRY_SIZE:  38
+	IMPORT_STORE_SIZE:       30
+	IMPORT_STORE_ENTRY_SIZE: 44
 	FRAME_SIZE:      32
 	BITMAP_OFFSET:    9
 	VOID_EXIT_REF:   23
@@ -46,6 +52,10 @@ x64-encoder: context [
 	IMPORT_CALL_ARG_LITERAL_EXIT_REF: 34
 	GLOBAL_REF:      17
 	GLOBAL_EXIT_REF: 27
+	IMPORT_LOAD_REF:       18
+	IMPORT_LOAD_EXIT_REF:  30
+	IMPORT_STORE_REF:      18
+	IMPORT_STORE_EXIT_REF: 36
 
 	write-i32: func [at [byte-ptr!] value [integer!]][
 		at/1: as byte! value
@@ -93,6 +103,10 @@ x64-encoder: context [
 			]
 			all [entry? shape = I32_GLOBAL] [GLOBAL_ENTRY_SIZE]
 			all [not entry? shape = I32_GLOBAL] [GLOBAL_SIZE]
+			all [entry? shape = I32_IMPORT_LOAD] [IMPORT_LOAD_ENTRY_SIZE]
+			all [not entry? shape = I32_IMPORT_LOAD] [IMPORT_LOAD_SIZE]
+			all [entry? shape = SCALAR_IMPORT_STORE] [IMPORT_STORE_ENTRY_SIZE]
+			all [not entry? shape = SCALAR_IMPORT_STORE] [IMPORT_STORE_SIZE]
 			true [return -1]
 		]
 		if capacity < size [return -1]
@@ -193,9 +207,28 @@ x64-encoder: context [
 				write-i32 (at + 2) 0
 				at: at + 6
 			]
+			shape = I32_IMPORT_LOAD [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 05h                       ; mov rax, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! 8Bh
+				at/9: as byte! either entry? [08h][00h] ; mov ecx/eax, [rax]
+				at: at + 9
+			]
+			shape = SCALAR_IMPORT_STORE [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 05h                       ; mov rax, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! C7h
+				at/9: as byte! 00h                       ; mov dword [rax], imm32
+				write-i32 (at + 9) value
+				at: at + 13
+			]
 			true []
 		]
-		if all [entry? shape = VOID] [
+		if all [entry? any [shape = VOID shape = SCALAR_IMPORT_STORE]][
 			at/1: as byte! 31h
 			at/2: as byte! C9h                           ; xor ecx, ecx
 			at: at + 2

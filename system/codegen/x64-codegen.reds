@@ -157,29 +157,38 @@ x64-codegen: context [
 		]
 	]
 
+	logical-kind: func [
+		ref [integer!]
+		data [byte-ptr!]
+		count [integer!]
+		return: [integer!]
+		/local record [rsir-type!]
+			steps kind [integer!]
+	][
+		if ref < 0 [return 0 - ref]
+		if any [ref = 0 ref > count][return 0]
+		steps: 0
+		while [steps < count][
+			record: as rsir-type! (data + ((ref - 1) * RSIR_TYPE_SIZE))
+			kind: record/kind
+			unless kind = -1 [return kind]
+			ref: record/target
+			if ref < 0 [return 0 - ref]
+			if any [ref = 0 ref > count][return 0]
+			steps: steps + 1
+		]
+		0
+	]
+
 	aggregate-ref?: func [
 		ref [integer!]
 		data [byte-ptr!]
 		count [integer!]
 		return: [logic!]
-		/local record [rsir-type!]
-			steps [integer!]
+		/local kind [integer!]
 	][
-		if ref <= 0 [return false]
-		steps: 0
-		while [steps < count][
-			record: as rsir-type! (data + ((ref - 1) * RSIR_TYPE_SIZE))
-			case [
-				record/kind = -1 [
-					ref: record/target
-					if ref <= 0 [return false]
-				]
-				any [record/kind = -2 record/kind = -3][return true]
-				true [return false]
-			]
-			steps: steps + 1
-		]
-		false
+		kind: logical-kind ref data count
+		any [kind = -2 kind = -3]
 	]
 
 	integer32-ref?: func [
@@ -187,23 +196,21 @@ x64-codegen: context [
 		data [byte-ptr!]
 		count [integer!]
 		return: [logic!]
-		/local record [rsir-type!]
-			steps kind [integer!]
+		/local kind [integer!]
 	][
-		if ref < 0 [return any [ref = -5 ref = -6]]
-		if any [ref = 0 ref > count][return false]
-		steps: 0
-		while [steps < count][
-			record: as rsir-type! (data + ((ref - 1) * RSIR_TYPE_SIZE))
-			kind: record/kind
-			if any [kind = 5 kind = 6][return true]
-			unless kind = -1 [return false]
-			ref: record/target
-			if ref < 0 [return any [ref = -5 ref = -6]]
-			if any [ref = 0 ref > count][return false]
-			steps: steps + 1
-		]
-		false
+		kind: logical-kind ref data count
+		any [kind = 5 kind = 6]
+	]
+
+	scalar32-ref?: func [
+		ref [integer!]
+		data [byte-ptr!]
+		count [integer!]
+		return: [logic!]
+		/local kind [integer!]
+	][
+		kind: logical-kind ref data count
+		any [kind = 5 kind = 6 kind = 11]
 	]
 
 	i32-function?: func [
@@ -361,6 +368,31 @@ x64-codegen: context [
 				instruction/immediate = 0
 			][x64-encoder/VOID]
 			all [
+				fn/return-type = 0
+				(fn/flags and (FUNCTION_FLAGS - 3)) = 0
+				parameter-count = 0
+				fn/instruction-count = 2
+				instruction/opcode = 8
+				instruction/result = 0
+				instruction/operand > 0
+				instruction/operand <= import-count
+			][
+				terminator: as rsir-instruction!
+					(instructions + RSIR_INSTRUCTION_SIZE)
+				unless all [
+					terminator/opcode = 2
+					terminator/result = 0
+					terminator/operand = 0
+					terminator/immediate = 0
+				][return INVALID_IR]
+				imported: as rsir-import! (import-data
+					+ ((instruction/operand - 1) * RSIR_IMPORT_SIZE))
+				either all [
+					imported/flags = 0
+					scalar32-ref? imported/type type-data type-count
+				][x64-encoder/SCALAR_IMPORT_STORE][UNSUPPORTED]
+			]
+			all [
 				i32-function? fn parameters type-data type-count 1
 				fn/instruction-count = 1
 				instruction/opcode = 3
@@ -376,6 +408,7 @@ x64-codegen: context [
 					instruction/opcode = 1
 					instruction/opcode = 5
 					instruction/opcode = 6
+					instruction/opcode = 7
 					all [instruction/opcode = 4 instruction/immediate = 0]
 				]
 			][
@@ -436,6 +469,20 @@ x64-codegen: context [
 						either integer32-ref? variable/type type-data type-count [
 							x64-encoder/I32_GLOBAL
 						][UNSUPPORTED]
+					]
+					instruction/opcode = 7 [
+						unless all [
+							instruction/result = (parameter-count + 1)
+							instruction/operand > 0
+							instruction/operand <= import-count
+							instruction/immediate = 0
+						][return INVALID_IR]
+						imported: as rsir-import! (import-data
+							+ ((instruction/operand - 1) * RSIR_IMPORT_SIZE))
+						either all [
+							imported/flags = 0
+							integer32-ref? imported/type type-data type-count
+						][x64-encoder/I32_IMPORT_LOAD][UNSUPPORTED]
 					]
 					true [UNSUPPORTED]
 				]
@@ -567,6 +614,18 @@ x64-codegen: context [
 			all [not entry? shape = x64-encoder/I32_GLOBAL][
 				x64-encoder/GLOBAL_SIZE
 			]
+			all [entry? shape = x64-encoder/I32_IMPORT_LOAD][
+				x64-encoder/IMPORT_LOAD_ENTRY_SIZE
+			]
+			all [not entry? shape = x64-encoder/I32_IMPORT_LOAD][
+				x64-encoder/IMPORT_LOAD_SIZE
+			]
+			all [entry? shape = x64-encoder/SCALAR_IMPORT_STORE][
+				x64-encoder/IMPORT_STORE_ENTRY_SIZE
+			]
+			all [not entry? shape = x64-encoder/SCALAR_IMPORT_STORE][
+				x64-encoder/IMPORT_STORE_SIZE
+			]
 			true [-1]
 		]
 	]
@@ -586,14 +645,25 @@ x64-codegen: context [
 				x64-encoder/IMPORT_CALL_ARG_LITERAL_EXIT_REF
 			]
 			shape = x64-encoder/I32_GLOBAL [x64-encoder/GLOBAL_EXIT_REF]
+			shape = x64-encoder/I32_IMPORT_LOAD [
+				x64-encoder/IMPORT_LOAD_EXIT_REF
+			]
+			shape = x64-encoder/SCALAR_IMPORT_STORE [
+				x64-encoder/IMPORT_STORE_EXIT_REF
+			]
 			true [-1]
 		]
 	]
 
 	import-reference: func [shape [integer!] return: [integer!]][
-		either shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
-			x64-encoder/IMPORT_CALL_ARG_LITERAL_REF
-		][x64-encoder/IMPORT_CALL_REF]
+		case [
+			shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
+				x64-encoder/IMPORT_CALL_ARG_LITERAL_REF
+			]
+			shape = x64-encoder/I32_IMPORT_LOAD [x64-encoder/IMPORT_LOAD_REF]
+			shape = x64-encoder/SCALAR_IMPORT_STORE [x64-encoder/IMPORT_STORE_REF]
+			true [x64-encoder/IMPORT_CALL_REF]
+		]
 	]
 
 	release: func [scratch [byte-ptr!] result [integer!] return: [integer!]][
@@ -1026,13 +1096,18 @@ x64-codegen: context [
 				shape = x64-encoder/I32_IMPORT
 				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
 				shape = x64-encoder/I32_IMPORT_ARG_PARAM
+				shape = x64-encoder/I32_IMPORT_LOAD
+				shape = x64-encoder/SCALAR_IMPORT_STORE
 			][
 				call-instruction: instruction
 				if shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
 					call-instruction: as rsir-instruction!
 						(function-instructions + RSIR_INSTRUCTION_SIZE)
 				]
-				import-id: 0 - call-instruction/operand
+				import-id: either any [
+					shape = x64-encoder/I32_IMPORT_LOAD
+					shape = x64-encoder/SCALAR_IMPORT_STORE
+				][instruction/operand][0 - call-instruction/operand]
 				import-refs/import-id: import-refs/import-id + 1
 			]
 			if shape = x64-encoder/I32_GLOBAL [
@@ -1353,6 +1428,7 @@ x64-codegen: context [
 						- (image-function/code-offset + call-next)
 					relative
 				]
+				shape = x64-encoder/SCALAR_IMPORT_STORE [instruction/immediate]
 				true [0]
 			]
 			argument: either any [
@@ -1372,8 +1448,13 @@ x64-codegen: context [
 				shape = x64-encoder/I32_IMPORT
 				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
 				shape = x64-encoder/I32_IMPORT_ARG_PARAM
+				shape = x64-encoder/I32_IMPORT_LOAD
+				shape = x64-encoder/SCALAR_IMPORT_STORE
 			][
-				import-id: 0 - call-instruction/operand
+				import-id: either any [
+					shape = x64-encoder/I32_IMPORT_LOAD
+					shape = x64-encoder/SCALAR_IMPORT_STORE
+				][instruction/operand][0 - call-instruction/operand]
 				reference-id: import-refs/import-id
 				references/reference-id: image-function/code-offset
 					+ (import-reference shape)

@@ -445,9 +445,9 @@ compiler-rsir-frontend: context [
 		case [
 			integer? value [ref: -5 low: value high: either value < 0 [-1][0]]
 			logic? value [ref: -11 low: either value [1][0]]
-			all [word? value find [true false] value][
+			all [word? value find [true false yes no] value][
 				ref: -11
-				low: either value = 'true [1][0]
+				low: either find [true yes] value [1][0]
 			]
 			value = 'as [
 				unless all [
@@ -479,9 +479,9 @@ compiler-rsir-frontend: context [
 						high: either value < 0 [-1][0]
 					]
 					all [
-						any [logic? value all [word? value find [true false] value]]
+						any [logic? value all [word? value find [true false yes no] value]]
 						kind = 'logic
-					][low: either any [value = true value = 'true][1][0]]
+					][low: either any [value = true find [true yes] value][1][0]]
 					true [
 						fail ERROR-UNSUPPORTED [
 							"global cast is not a static scalar: " mold type " " mold value
@@ -589,6 +589,7 @@ compiler-rsir-frontend: context [
 		params [block!]
 		flags [integer!]
 		/local expression value callee global-id position callee-params argument type ref
+			target kind
 			callee-return callee-flags param-count argument-id result-id before
 	][
 		before: length? instructions
@@ -597,8 +598,44 @@ compiler-rsir-frontend: context [
 			unless empty? params [
 				fail ERROR-UNSUPPORTED "void parameters are not lowered yet"
 			]
-			unless empty? body [
-				fail ERROR-UNSUPPORTED "void function body must be empty"
+			case [
+				empty? body []
+				all [
+					(length? body) = 2
+					any [set-word? body/1 set-path? body/1]
+				][
+					target: either set-word? body/1 [
+						to word! body/1
+					][to path! body/1]
+					callee: resolve-name target scope uses import-ids
+					unless integer? callee [
+						fail ERROR-REFERENCE ["unknown imported variable " mold target]
+					]
+					position: skip imports ((callee - 1) * 10)
+					unless position/5 = 'variable [
+						fail ERROR-REFERENCE ["import " mold target " is not a variable"]
+					]
+					kind: type-kind position/4 position/6 position/7
+					value: body/2
+					case [
+						all [find [i32 u32] kind integer? value] []
+						all [
+							kind = 'logic
+							any [logic? value all [word? value find [true false yes no] value]]
+						][value: either any [value = true find [true yes] value][1][0]]
+						true [
+							fail ERROR-UNSUPPORTED [
+								"imported variable store is not a 32-bit scalar: " mold body
+							]
+						]
+					]
+					emit instructions reduce [
+						8 0 callee value                  ; store imported scalar
+					]
+				]
+				true [
+					fail ERROR-UNSUPPORTED "void function body is not lowered yet"
+				]
 			]
 			emit instructions [2 0 0 0]                ; return void
 		][
@@ -670,6 +707,7 @@ compiler-rsir-frontend: context [
 					][
 						callee: resolve-name value scope uses function-ids
 						either integer? callee [
+							kind: 'function
 							position: skip functions ((callee - 1) * 8)
 							callee-return: position/6
 							callee-params: position/7
@@ -682,26 +720,41 @@ compiler-rsir-frontend: context [
 								]
 							]
 							position: skip imports ((callee - 1) * 10)
-							unless position/5 = 'function [
-								fail ERROR-REFERENCE ["import " mold value " is not a function"]
+							kind: position/5
+							if kind = 'function [
+								callee-return: position/8
+								callee-params: position/9
+								callee-flags: position/10
+								callee: 0 - callee
 							]
-							callee-return: position/8
-							callee-params: position/9
-							callee-flags: position/10
-							callee: 0 - callee
 						]
-						unless all [
-							integer32-ref? callee-return
-							(callee-flags and return-value-flag) = 0
-							empty? callee-params
+						either kind = 'variable [
+							unless find [i32 u32] (
+								type-kind position/4 position/6 position/7
+							)[
+								fail ERROR-REFERENCE [
+									"import " mold value " is not an i32 variable"
+								]
+							]
+							result-id: param-count + 1
+							emit instructions reduce [
+								7 result-id callee 0              ; load imported i32
+							]
 						][
-							fail ERROR-REFERENCE [
-								"function " mold value " does not take zero arguments and return i32"
+							unless all [
+								integer32-ref? callee-return
+								(callee-flags and return-value-flag) = 0
+								empty? callee-params
+							][
+								fail ERROR-REFERENCE [
+									"function " mold value
+									" does not take zero arguments and return i32"
+								]
 							]
-						]
-						result-id: param-count + 1
-						emit instructions reduce [
-							4 result-id callee 0               ; i32 call
+							result-id: param-count + 1
+							emit instructions reduce [
+								4 result-id callee 0               ; i32 call
+							]
 						]
 					]
 					if result-id = 0 [

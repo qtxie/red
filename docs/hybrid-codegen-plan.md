@@ -121,6 +121,14 @@ parameter, including same-library name sharing and exact contiguous relocation
 slices. The test grew substantially, so these figures are functional build
 measurements rather than a comparison with the preceding checkpoint.
 
+Imported scalar variables now use the same direct import IDs and reference
+slices as calls. An i32 load emits `mov rax,[rip+rel32]` followed by
+`mov eax,[rax]`; an i32/logic immediate store emits the corresponding IAT load
+followed by `mov dword [rax],imm32`. Codegen does not classify either operation
+as a call, so it allocates Win64 shadow space only if the executable entry later
+calls `ExitProcess`. One combined fixture verifies a qualified logic store, an
+i32 load, shared library-name bytes, and all three exact relocation offsets.
+
 The first global-access checkpoint adds one logical load instruction and emits
 `mov r32,[rip+rel32]` directly. Global records own their contiguous relocation
 slices; codegen uses each record's reference count first as a counter and then
@@ -216,11 +224,11 @@ data bytes
 Function, global, and import records own contiguous reference slices. This maps
 directly to the existing linker's native symbol and import reference lists, so the Red
 linker does not search all relocations for every symbol and does not construct
-an intermediate object model. Native codegen counts imported calls in one dense
-integer per input import, writes each used import's slice, then reuses that same
-integer as the slice cursor while encoding. Unused imports never enter the
-linker image; consecutive used imports from one source group reuse one library
-name range. A global record maps directly to the linker's existing
+an intermediate object model. Native codegen counts imported calls and variable
+accesses in one dense integer per input import, writes each used import's slice,
+then reuses that integer as the slice cursor while encoding. Unused imports
+never enter the linker image; consecutive used imports from one source group
+reuse one library name range. A global record maps directly to the linker's existing
 `[global data-offset refs]` symbol form; no linker-side global object is built.
 
 Both layouts may change while frontend, codegen, and linker are rebuilt
@@ -286,7 +294,9 @@ calling conventions, attributes, and function/subroutine type signatures are
 also implemented without a registry. Function and variable imports are written
 as direct logical records and validated natively; unused declarations do not
 enter the linker image. Zero/one-argument i32 imported calls now lower directly
-to Win64 IAT-indirect calls and contiguous linker references. Static i32 globals
+to Win64 IAT-indirect calls and contiguous linker references. Imported i32
+loads and i32/logic immediate stores use the same direct records and reference
+slices. Static i32 globals
 can now be read directly through RIP-relative loads and their own contiguous
 linker-reference slices. Basic Windows x64
 scalar, pointer, alias, plain-struct, and plain-union size/alignment is
@@ -374,11 +384,13 @@ slices; imports with no references are omitted. Static scalar and typed-pointer
 globals carry a logical type plus two value words. Native codegen computes their
 target layout, writes their data directly, and gives the linker direct global
 records.
-General call ABI lowering, imported variables, non-scalar and dynamic
-initializers, global stores and non-i32 accesses, constants, and empty
-static-library registration groups remain pending. Dynamic top-level
-initialization will lower through the normal instruction stream rather than a
-second initializer protocol.
+General call ABI lowering, pointer/non-32-bit imported-variable access,
+non-scalar and dynamic initializers, global stores and non-i32 accesses,
+constants, and empty static-library registration groups remain pending. The
+first real corpus operation after declarations is `red/boot?: yes`; its native
+logic store is implemented, while routing top-level expressions through the
+normal module-body instruction stream remains next. There will be no second
+initializer protocol.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

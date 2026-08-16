@@ -282,6 +282,75 @@ check all [
 		#{000000000000000000000000000000000000000000000000}
 ]["static aggregate alias was not laid out as a pointer global"]
 
+string-init-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	red-word!: alias struct! [header [integer!]]
+	red: context [
+		#import ["fixture.dll" stdcall [
+			load: "load" [text [c-string!] return: [red-word!]]
+			make: "make" [text [c-string!] return: [integer!]]
+		]]
+	]
+	body: red/load "<body>"
+	symbol: red/make "type"
+] 'glue
+check binary? string-init-ir ["frontend rejected string global initialization: "
+	mold compiler-rsir-frontend/last-error]
+string-init-image: make binary! 4096
+check (codegen-module string-init-ir string-init-image 0) = 0
+	"string global initialization codegen failed"
+check all [
+	(length? string-init-image) = 400
+	(word-at string-init-image 8) = 1
+	(word-at string-init-image 12) = 1
+	(word-at string-init-image 16) = 3
+	(word-at string-init-image 20) = 5
+	(word-at string-init-image 24) = 60
+	(word-at string-init-image 28) = 288
+	(word-at string-init-image 32) = 82
+	(word-at string-init-image 36) = 28
+	(word-at string-init-image 40) = 2
+	(word-at string-init-image 52) = 0
+	(word-at string-init-image 56) = 70
+]["string initialization image layout changed"]
+check all [
+	(word-at string-init-image 80) = 8
+	(word-at string-init-image 84) = 4
+	(word-at string-init-image 88) = 16
+	(word-at string-init-image 92) = 8
+	(word-at string-init-image 96) = 1
+	(word-at string-init-image 100) = 1
+	(word-at string-init-image 104) = 12
+	(word-at string-init-image 108) = 6
+	(word-at string-init-image 112) = 24
+	(word-at string-init-image 116) = 4
+	(word-at string-init-image 120) = 2
+	(word-at string-init-image 124) = 1
+	(word-at string-init-image 128) = 18
+	(word-at string-init-image 136) = 29
+	(word-at string-init-image 144) = 3
+	(word-at string-init-image 152) = 18
+	(word-at string-init-image 160) = 33
+	(word-at string-init-image 168) = 4
+	(word-at string-init-image 176) = 37
+	(word-at string-init-image 184) = 49
+	(word-at string-init-image 192) = 5
+]["string initialization reference slices changed"]
+check all [
+	(word-at string-init-image 200) = 35
+	(word-at string-init-image 204) = 54
+	(word-at string-init-image 208) = 28
+	(word-at string-init-image 212) = 48
+	(word-at string-init-image 216) = 62
+	(copy/part at string-init-image 221 60) =
+		to binary! "***-mainbodysymbolfixture.dllloadmakekernel32.dllExitProcess"
+	(copy/part at string-init-image 289 82) = #{
+		554889E56A006A0068000000006A004883EC20488D0D2C000000FF150000
+		000048890500000000488D0D1F000000FF150000000089050000000031C9
+		FF150000000031C0C9C33C626F64793E007479706500
+	}
+]["string/call/store code is not direct and contiguous"]
+
 import-ir: compiler-rsir-frontend/compile [
 	Red/System []
 	#import ["fixture.dll" stdcall [

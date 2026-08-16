@@ -31,10 +31,13 @@ compiler-rsir-frontend: context [
 	globals: make hash! 1024
 	global-data: make block! 1024
 	module-code: make binary! 256
+	strings: make binary! 256
+	string-ids: make hash! 128
 	function-count: 0
 	type-count: 0
 	import-count: 0
 	global-count: 0
+	module-value: 0
 
 	type-kinds: make hash! [
 		int8! i8 byte! u8 uint8! u8 int16! i16 uint16! u16
@@ -243,23 +246,45 @@ compiler-rsir-frontend: context [
 		][0]
 	]
 
-	integer32-ref?: func [ref [integer!] /local record kind name steps][
-		if ref < 0 [return any [ref = -5 ref = -6]]
-		if any [ref = 0 ref > type-count][return false]
+	ref-kind: func [ref [integer!] /local record kind name steps][
+		if ref < 0 [
+			if ref < -12 [return none]
+			return pick [i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer]
+				negate ref
+		]
+		if any [ref = 0 ref > type-count][return none]
 		steps: 0
 		while [steps < type-count][
 			record: skip types ((ref - 1) * 5)
 			kind: record/2
-			if find [i32 u32] kind [return true]
-			unless kind = 'alias [return false]
+			unless kind = 'alias [return kind]
 			name: record/3
 			if all [word? name kind: select type-kinds name][
-				return to logic! find [i32 u32] kind
+				return kind
 			]
-			unless ref: resolve-name name record/4 record/5 type-ids [return false]
+			unless ref: resolve-name name record/4 record/5 type-ids [return none]
 			steps: steps + 1
 		]
-		false
+		none
+	]
+
+	integer32-ref?: func [ref [integer!] /local kind][
+		kind: ref-kind ref
+		to logic! find [i32 u32] kind
+	]
+
+	pointer-ref?: func [ref [integer!] /local kind][
+		kind: ref-kind ref
+		to logic! find [pointer struct union function subroutine] kind
+	]
+
+	scalar-width: func [ref [integer!] /local kind][
+		kind: ref-kind ref
+		case [
+			find [i32 u32] kind [4]
+			find [pointer struct union function subroutine] kind [8]
+			true [0]
+		]
 	]
 
 	signature-flags: func [attributes [block!] /local flags convention item bit][
@@ -429,7 +454,8 @@ compiler-rsir-frontend: context [
 
 	set-global: func [
 		position scope uses [block!]
-		/local name id record value type kind ref low high after
+		/local name id record value type kind ref low high after callee callee-record
+			callee-return callee-params callee-flags bytes offset result
 	][
 		name: to word! position/1
 		id: select globals qualified scope name
@@ -490,6 +516,62 @@ compiler-rsir-frontend: context [
 					]
 				]
 				ref: type-ref type scope uses
+			]
+			all [
+				any [word? value path? value]
+				(length? position) >= 3
+				string? position/3
+			][
+				callee: resolve-name value scope uses function-ids
+				either integer? callee [
+					callee-record: skip functions ((callee - 1) * 8)
+					callee-return: callee-record/6
+					callee-params: callee-record/7
+					callee-flags: callee-record/8
+				][
+					callee: resolve-name value scope uses import-ids
+					unless integer? callee [
+						fail ERROR-REFERENCE ["unknown initializer function " mold value]
+					]
+					callee-record: skip imports ((callee - 1) * 10)
+					unless callee-record/5 = 'function [
+						fail ERROR-REFERENCE ["initializer target is not a function: " mold value]
+					]
+					callee-return: callee-record/8
+					callee-params: callee-record/9
+					callee-flags: callee-record/10
+					callee: negate callee
+				]
+				unless all [
+					callee-return <> 0
+					(callee-flags and return-value-flag) = 0
+					(length? callee-params) = 3
+					pointer-ref? callee-params/2
+					callee-params/3 = 0
+					scalar-width callee-return
+				][
+					fail ERROR-UNSUPPORTED [
+						"initializer function does not take c-string! and return a scalar: "
+						mold value
+					]
+				]
+				bytes: to binary! position/3
+				offset: select string-ids bytes
+				unless integer? offset [
+					offset: length? strings
+					repend string-ids [bytes offset]
+					append strings bytes
+					append strings 0
+				]
+				result: module-value + 1
+				emit module-code reduce [
+					9 result offset ((length? bytes) + 1)
+					4 (result + 1) callee result
+					10 0 id (result + 1)
+				]
+				module-value: result + 1
+				ref: callee-return
+				after: skip position 3
 			]
 			true [
 				fail ERROR-UNSUPPORTED [
@@ -1259,8 +1341,8 @@ compiler-rsir-frontend: context [
 		write-types type-output members
 		type-bytes: length? type-output
 		member-bytes: length? members
-		names: make binary! 256
-		output: make binary! (28 + type-bytes + member-bytes
+		names: copy strings
+		output: make binary! (28 + type-bytes + member-bytes + (length? strings)
 			+ (import-count * 64) + (global-count * 40) + (function-count * 96))
 		append/dup output 0 28
 		append output type-output
@@ -1441,10 +1523,13 @@ compiler-rsir-frontend: context [
 			clear globals
 			clear global-data
 			clear module-code
+			clear strings
+			clear string-ids
 			function-count: 0
 			type-count: 0
 			import-count: 0
 			global-count: 0
+			module-value: 0
 			compile-source source
 			write-rsir any [max-bytes DEFAULT-MAX-BYTES]
 		] 'rsir-error

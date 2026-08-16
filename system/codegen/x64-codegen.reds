@@ -140,6 +140,7 @@ x64-codegen: context [
 	VALUE_LITERAL: 1
 	VALUE_PARAM:   2
 	VALUE_RAX:     3
+	VALUE_STRING:  4
 
 	align: func [value boundary [integer!] return: [integer!]
 		/local remainder padding [integer!]
@@ -215,6 +216,77 @@ x64-codegen: context [
 	][
 		kind: logical-kind ref data count
 		any [kind = 5 kind = 6 kind = 11]
+	]
+
+	pointer-ref?: func [
+		ref [integer!]
+		data [byte-ptr!]
+		count [integer!]
+		return: [logic!]
+		/local kind [integer!]
+	][
+		kind: logical-kind ref data count
+		any [kind = 12 kind = -2 kind = -3 kind = -4 kind = -5]
+	]
+
+	scalar-width: func [
+		ref [integer!]
+		data [byte-ptr!]
+		count [integer!]
+		return: [integer!]
+		/local kind [integer!]
+	][
+		kind: logical-kind ref data count
+		case [
+			any [kind = 5 kind = 6][4]
+			any [kind = 12 kind = -2 kind = -3 kind = -4 kind = -5][8]
+			true [0]
+		]
+	]
+
+	cstring-function-width: func [
+		fn [rsir-function!]
+		parameters types [byte-ptr!]
+		type-count [integer!]
+		return: [integer!]
+		/local parameter [rsir-parameter!]
+			width [integer!]
+	][
+		width: scalar-width fn/return-type types type-count
+		unless all [
+			width > 0
+			(fn/flags and (FUNCTION_FLAGS - 3)) = 0
+			fn/parameter-count = 1
+		][return 0]
+		parameter: as rsir-parameter! (parameters
+			+ (fn/first-parameter * RSIR_PARAMETER_SIZE))
+		either all [
+			pointer-ref? parameter/type types type-count
+			parameter/flags = 0
+		][width][0]
+	]
+
+	cstring-import-width: func [
+		fn [rsir-import!]
+		parameters types [byte-ptr!]
+		type-count [integer!]
+		return: [integer!]
+		/local parameter [rsir-parameter!]
+			width [integer!]
+	][
+		width: scalar-width fn/type types type-count
+		unless all [
+			width > 0
+			(fn/flags and 3) <> 0
+			(fn/flags and (FUNCTION_FLAGS - 3)) = 0
+			fn/parameter-count = 1
+		][return 0]
+		parameter: as rsir-parameter! (parameters
+			+ (fn/first-parameter * RSIR_PARAMETER_SIZE))
+		either all [
+			pointer-ref? parameter/type types type-count
+			parameter/flags = 0
+		][width][0]
 	]
 
 	i32-function?: func [
@@ -349,19 +421,20 @@ x64-codegen: context [
 		instructions [byte-ptr!]
 		plans import-refs [int-ptr!]
 		parameters function-data import-data global-data type-data member-data
-			image-data [byte-ptr!]
-		type-count function-count import-count global-count [integer!]
+			image-data strings [byte-ptr!]
+		type-count function-count import-count global-count strings-size [integer!]
 		entry? [logic!]
-		global-reference-count [int-ptr!]
+		global-reference-count literal-size [int-ptr!]
 		return: [integer!]
 		/local instruction [rsir-instruction!]
 			callee [rsir-function!]
 			imported [rsir-import!]
 			variable [rsir-global!]
 			image-global [codegen-global!]
+			literal [byte-ptr!]
 			index form plan value-id value-kind next-value argument-kind
 			import-id global-id function-size part-size unused-size unused-align
-			parameter-count [integer!]
+			parameter-count value-width result-width target-width literal-end [integer!]
 			shadow? terminated? call? parameter-live? [logic!]
 	][
 		parameter-count: fn/parameter-count
@@ -382,6 +455,7 @@ x64-codegen: context [
 		next-value: parameter-count
 		value-id: 0
 		value-kind: VALUE_NONE
+		value-width: 0
 		unused-size: 0
 		unused-align: 0
 		shadow?: false
@@ -406,6 +480,7 @@ x64-codegen: context [
 					next-value: instruction/result
 					value-id: next-value
 					value-kind: VALUE_LITERAL
+					value-width: 4
 				]
 				instruction/opcode = 5 [
 					unless all [
@@ -418,6 +493,24 @@ x64-codegen: context [
 					next-value: instruction/result
 					value-id: next-value
 					value-kind: VALUE_LITERAL
+					value-width: 4
+				]
+				instruction/opcode = 9 [
+					unless all [
+						instruction/result = (next-value + 1)
+						instruction/operand >= 0
+						instruction/immediate > 0
+						instruction/immediate <= strings-size
+						instruction/operand <= (strings-size - instruction/immediate)
+					][return INVALID_IR]
+					literal-end: instruction/operand + instruction/immediate
+					literal: strings + (literal-end - 1)
+					if literal/1 <> as byte! 0 [return INVALID_IR]
+					if literal-end > literal-size/1 [literal-size/1: literal-end]
+					next-value: instruction/result
+					value-id: next-value
+					value-kind: VALUE_STRING
+					value-width: 8
 				]
 				instruction/opcode = 4 [
 					unless instruction/result = (next-value + 1)[return INVALID_IR]
@@ -433,6 +526,10 @@ x64-codegen: context [
 								value-kind = VALUE_RAX
 							][argument-kind: VALUE_RAX]
 							all [
+								instruction/immediate = value-id
+								value-kind = VALUE_STRING
+							][argument-kind: VALUE_STRING]
+							all [
 								instruction/immediate = 1
 								parameter-count = 1
 								parameter-live?
@@ -440,53 +537,71 @@ x64-codegen: context [
 							true [return INVALID_IR]
 						]
 					]
+					result-width: 0
 					either instruction/operand > 0 [
 						if instruction/operand > function-count [return INVALID_IR]
 						callee: as rsir-function! (function-data
 							+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
-						unless i32-function? callee parameters type-data type-count
-							either instruction/immediate = 0 [0][1] [
-							return UNSUPPORTED
-						]
-						form: case [
-							argument-kind = VALUE_NONE [x64-encoder/I32_CALL]
-							argument-kind = VALUE_LITERAL [
-								x64-encoder/I32_CALL_LITERAL
+						either argument-kind = VALUE_STRING [
+							result-width: cstring-function-width callee parameters
+								type-data type-count
+							if result-width = 0 [return UNSUPPORTED]
+							form: x64-encoder/CSTRING_CALL
+						][
+							unless i32-function? callee parameters type-data type-count
+								either instruction/immediate = 0 [0][1] [
+								return UNSUPPORTED
 							]
-							argument-kind = VALUE_PARAM [
-								x64-encoder/I32_CALL_PARAM
+							result-width: 4
+							form: case [
+								argument-kind = VALUE_NONE [x64-encoder/I32_CALL]
+								argument-kind = VALUE_LITERAL [
+									x64-encoder/I32_CALL_LITERAL
+								]
+								argument-kind = VALUE_PARAM [
+									x64-encoder/I32_CALL_PARAM
+								]
+								argument-kind = VALUE_RAX [
+									x64-encoder/I32_CALL_RAX
+								]
+								true [return INVALID_IR]
 							]
-							argument-kind = VALUE_RAX [
-								x64-encoder/I32_CALL_RAX
-							]
-							true [return INVALID_IR]
 						]
 					][
 						import-id: 0 - instruction/operand
 						if any [import-id <= 0 import-id > import-count][return INVALID_IR]
 						imported: as rsir-import! (import-data
 							+ ((import-id - 1) * RSIR_IMPORT_SIZE))
-						unless i32-import? imported parameters type-data type-count
-							either instruction/immediate = 0 [0][1] [
-							return UNSUPPORTED
-						]
-						form: case [
-							argument-kind = VALUE_NONE [x64-encoder/I32_IMPORT]
-							argument-kind = VALUE_LITERAL [
-								x64-encoder/I32_IMPORT_LITERAL
+						either argument-kind = VALUE_STRING [
+							result-width: cstring-import-width imported parameters
+								type-data type-count
+							if result-width = 0 [return UNSUPPORTED]
+							form: x64-encoder/CSTRING_IMPORT
+						][
+							unless i32-import? imported parameters type-data type-count
+								either instruction/immediate = 0 [0][1] [
+								return UNSUPPORTED
 							]
-							argument-kind = VALUE_PARAM [
-								x64-encoder/I32_IMPORT_PARAM
+							result-width: 4
+							form: case [
+								argument-kind = VALUE_NONE [x64-encoder/I32_IMPORT]
+								argument-kind = VALUE_LITERAL [
+									x64-encoder/I32_IMPORT_LITERAL
+								]
+								argument-kind = VALUE_PARAM [
+									x64-encoder/I32_IMPORT_PARAM
+								]
+								argument-kind = VALUE_RAX [
+									x64-encoder/I32_IMPORT_RAX
+								]
+								true [return INVALID_IR]
 							]
-							argument-kind = VALUE_RAX [
-								x64-encoder/I32_IMPORT_RAX
-							]
-							true [return INVALID_IR]
 						]
 					]
 					next-value: instruction/result
 					value-id: next-value
 					value-kind: VALUE_RAX
+					value-width: result-width
 					parameter-live?: false
 					call?: true
 				]
@@ -507,6 +622,7 @@ x64-codegen: context [
 					next-value: instruction/result
 					value-id: next-value
 					value-kind: VALUE_RAX
+					value-width: 4
 				]
 				instruction/opcode = 7 [
 					import-id: instruction/operand
@@ -526,6 +642,7 @@ x64-codegen: context [
 					next-value: instruction/result
 					value-id: next-value
 					value-kind: VALUE_RAX
+					value-width: 4
 				]
 				instruction/opcode = 8 [
 					import-id: instruction/operand
@@ -544,7 +661,25 @@ x64-codegen: context [
 					if value-kind = VALUE_RAX [
 						value-id: 0
 						value-kind: VALUE_NONE
+						value-width: 0
 					]
+				]
+				instruction/opcode = 10 [
+					global-id: instruction/operand
+					unless all [
+						instruction/result = 0
+						global-id > 0
+						global-id <= global-count
+						instruction/immediate = value-id
+						value-kind = VALUE_RAX
+					][return INVALID_IR]
+					variable: as rsir-global! (global-data
+						+ ((global-id - 1) * RSIR_GLOBAL_SIZE))
+					target-width: scalar-width variable/type type-data type-count
+					unless target-width = value-width [return UNSUPPORTED]
+					form: either target-width = 4 [
+						x64-encoder/I32_GLOBAL_STORE
+					][x64-encoder/PTR_GLOBAL_STORE]
 				]
 				instruction/opcode = 2 [
 					unless all [
@@ -673,10 +808,11 @@ x64-codegen: context [
 				parameter-bytes instruction-bytes
 				strings-start strings-size metadata-size member-count parameter-count
 				names-size function-names-size global-names-size code-offset code-size
-				data-offset image-data-size total-size
+				function-code-size literal-size data-offset image-data-size total-size
 				id record-offset next-instruction function-size entry-size code-cursor
 				name-cursor encoded value argument target call-next form plan
-				cursor-offset current-literal plan-index scratch-count exit-reference-id
+				cursor-offset current-literal current-string plan-index scratch-count
+				exit-reference-id
 				library-offset external-offset variable-mode import-id global-id reference-id
 				used-import-count image-import-count import-reference-count reference-count
 				import-names-size output-import-id first-reference last-library count
@@ -1041,6 +1177,7 @@ x64-codegen: context [
 		next-instruction: 1
 		function-names-size: 0
 		code-size: 0
+		literal-size: 0
 		entry-size: 0
 		global-reference-count: 0
 		while [id <= header/function-count][
@@ -1066,9 +1203,10 @@ x64-codegen: context [
 				(plans + (next-instruction - 1))
 				import-refs
 				parameter-data function-data import-data global-data
-				type-data member-data (output + IMAGE_HEADER_SIZE)
+				type-data member-data (output + IMAGE_HEADER_SIZE) strings
 				header/type-count header/function-count header/import-count
-				header/global-count current-entry? :global-reference-count
+				header/global-count strings-size current-entry?
+				:global-reference-count :literal-size
 			if function-size < 0 [return release scratch function-size]
 			image-function/code-size: function-size
 			image-function/frame-size: x64-encoder/FRAME_SIZE
@@ -1088,6 +1226,11 @@ x64-codegen: context [
 			return release scratch INVALID_IR
 		]
 		if all [entry? entry-size <= 0][return release scratch INVALID_IR]
+		function-code-size: code-size
+		if code-size > (2147483647 - literal-size)[
+			return release scratch OUTPUT_FULL
+		]
+		code-size: code-size + literal-size
 
 		used-import-count: 0
 		import-reference-count: 0
@@ -1341,6 +1484,7 @@ x64-codegen: context [
 			cursor: cursor + encoded
 			cursor-offset: cursor-offset + encoded
 			current-literal: 0
+			current-string: 0
 			plan-index: 1
 			while [plan-index <= ir-function/instruction-count][
 				instruction: as rsir-instruction! (function-instructions
@@ -1368,12 +1512,14 @@ x64-codegen: context [
 						]
 						current-literal: value
 					]
+					instruction/opcode = 9 [current-string: instruction/operand]
 					instruction/opcode = 4 [
 						if any [
 							form = x64-encoder/I32_CALL
 							form = x64-encoder/I32_CALL_LITERAL
 							form = x64-encoder/I32_CALL_PARAM
 							form = x64-encoder/I32_CALL_RAX
+							form = x64-encoder/CSTRING_CALL
 						][
 							target: instruction/operand
 							callee-record: as codegen-function! (output + IMAGE_HEADER_SIZE
@@ -1387,6 +1533,14 @@ x64-codegen: context [
 							form = x64-encoder/I32_CALL_LITERAL
 							form = x64-encoder/I32_IMPORT_LITERAL
 						][argument: current-literal]
+						if any [
+							form = x64-encoder/CSTRING_CALL
+							form = x64-encoder/CSTRING_IMPORT
+						][
+							argument: (function-code-size + current-string) - (
+								image-function/code-offset + cursor-offset + 7
+							)
+						]
 					]
 					instruction/opcode = 8 [value: instruction/immediate]
 					all [
@@ -1410,6 +1564,7 @@ x64-codegen: context [
 							form <= x64-encoder/I32_IMPORT_RAX]
 						form = x64-encoder/I32_IMPORT_LOAD
 						form = x64-encoder/SCALAR_IMPORT_STORE
+						form = x64-encoder/CSTRING_IMPORT
 					][
 						import-id: either instruction/opcode = 4 [
 							0 - instruction/operand
@@ -1419,7 +1574,11 @@ x64-codegen: context [
 							+ cursor-offset + (x64-encoder/reference-offset form)
 						import-refs/import-id: reference-id + 1
 					]
-					if form = x64-encoder/I32_GLOBAL [
+					if any [
+						form = x64-encoder/I32_GLOBAL
+						form = x64-encoder/I32_GLOBAL_STORE
+						form = x64-encoder/PTR_GLOBAL_STORE
+					][
 						global-id: instruction/operand
 						image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
 							+ (header/function-count * IMAGE_FUNCTION_SIZE)
@@ -1430,7 +1589,10 @@ x64-codegen: context [
 							+ cursor-offset + (x64-encoder/reference-offset form)
 						image-global/reference-count: image-global/reference-count + 1
 					]
-					if form >= x64-encoder/ENTRY_VOID [
+					if all [
+						form >= x64-encoder/ENTRY_VOID
+						form <= x64-encoder/ENTRY_LITERAL
+					][
 						if exit-reference-id <= 0 [return release scratch INVALID_IR]
 						references/exit-reference-id: image-function/code-offset
 							+ cursor-offset + (x64-encoder/reference-offset form)
@@ -1447,6 +1609,9 @@ x64-codegen: context [
 			id: id + 1
 		]
 		if all [entry? exit-reference-id <= 0][return release scratch INVALID_IR]
+		if literal-size > 0 [
+			copy-memory (code + function-code-size) strings literal-size
+		]
 		cursor: code + code-size
 		data-output: output + data-offset
 		while [cursor < data-output][

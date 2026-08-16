@@ -163,6 +163,19 @@ in `RCX`. A 300-byte fixture executes two imported stores in one ordinary
 three-instruction module function, a sequence the retired shape selector could
 not represent.
 
+Dynamic scalar globals now use the same stream. A string instruction names an
+offset and NUL-inclusive length in the RSIR tail but emits no code. Its call
+consumer writes `lea rcx,[rip+literal]` immediately before the direct or IAT
+call, leaves the 32-bit or pointer result in `RAX`, and the following global
+store writes that register directly. Codegen copies only the referenced string
+prefix once, immediately after all function code. There is no constant symbol,
+constant relocation, extra section, or linker lookup. The exact two-string
+bridge fixture has 70 bytes of function code and a 12-byte constant island.
+Its development build with the designated compiler took 25.1 seconds: 2.41
+seconds in the Red frontend, 19.07 seconds in native compilation, and 3.07
+seconds linking; the 1,643,008-byte executable passes all preceding image tests
+as well as the new path.
+
 ## Data Layout Rule
 
 RSIR is a private in-process format compiled as one source set with its only
@@ -189,7 +202,7 @@ The current RSIR is only the data that codegen consumes:
                       first parameter, parameter count, instruction count
 2 words per parameter: logical type reference, by-value flag
 4 words per instruction: typed opcode, result, operand, immediate
-raw library, external, and function-name bytes
+raw c-string literal bytes, then library, external, global, and function names
 ```
 
 The input `binary!` length supplies the total size. Sequential instruction
@@ -221,6 +234,10 @@ itself; there is no generic operand section. A positive call target is a
 one-based declared-function ID and a negative target is the negated one-based
 import ID. Zero means absent. The routine performs only the bounds and shape
 checks required for safe pointer traversal and then casts these arrays directly.
+String values use the same four-word instruction: operand and immediate are
+their tail offset and NUL-inclusive length. Because the frontend appends
+literals before names, the greatest consumed end offset is also the exact
+constant-island size; no literal table or string-ID translation is needed.
 
 The native linker image follows the same rule. Its current order is:
 
@@ -323,20 +340,22 @@ remain pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples; H0 scope still includes every Red/System
-feature and the full Red/System suite. A fresh `--red-only` generation of the direct
-hybrid source is 2,961,043 bytes. After includes and macros are expanded by the
-real Red/System loader, the structured audit finds 540 defined functions, 62
-contexts, 725 imported symbols, 79 aliases, 14 enums, 4,346 global assignments,
-and 4,298 unique global names. The imports comprise 57 source library groups,
+feature and the full Red/System suite. The current direct hybrid source is
+2,961,043 bytes. After includes and macros are expanded by the real Red/System
+loader, the structured audit finds 544 defined functions, 62 contexts, 725
+imported symbols, 79 aliases, 14 enums, 4,330 global assignments, and 4,282
+unique global names. The imports comprise 57 source library groups,
 712 functions, 13 variables, and 856 parameters. The dominant parameter type is `node-handle!`;
 some signatures use Red/System's shared-type form, such as
 `value argument [integer!]`. Context depth is at most two, while functions have
-up to 88 locals and substantial control flow. The direct declaration pass matches
+up to 96 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 550 ms under the interpreter after loading. Static scalar casts and the
+about 1.14 seconds under the interpreter after loading. Static scalar casts and the
 first runtime set-path assignment, `red/boot?: yes`, now continue through native
-layout and the linker. The complete corpus next stops at the dynamic initializer
-`_body: red/word/load "<body>"`.
+layout and the linker. String calls returning either pointers or i32 values now
+consume the complete `word/load` and `symbol/make` initialization runs. The
+complete corpus next stops at `stk-bottom: system/stack/top`, a pointer read from
+an imported variable.
 
 After that deliberate stop, the same audit serializes every current logical
 type without compiling bodies: 93 source-order type records and 424 member
@@ -400,16 +419,18 @@ call shapes emit IAT-indirect machine calls and direct contiguous relocation
 slices; imports with no references are omitted. Static scalar and typed-pointer
 globals carry a logical type plus two value words. Native codegen computes their
 target layout, writes their data directly, and gives the linker direct global
-records.
+records. One-argument c-string calls returning i32 or pointers now initialize
+globals through a direct `string`, `call`, `global-store` sequence and a compact
+code constant island.
 General call ABI lowering, pointer/non-32-bit imported-variable access,
-non-scalar and dynamic initializers, static-global stores and non-i32 accesses,
+non-scalar initializers, other dynamic initializers and non-i32 accesses,
 constants, and empty static-library registration groups remain pending. The
 first real runtime operation, `red/boot?: yes`, is emitted directly into the
 ordinary module-body function during the same traversal that folds static
 globals. The module-only fixture is 144 RSIR bytes and produces a 252-byte
 native image with one function and two instructions. There is no second
-initializer protocol; the next real-corpus operation is the dynamic call in
-`_body: red/word/load "<body>"`.
+initializer protocol; the next real-corpus operation is the imported pointer
+read in `stk-bottom: system/stack/top`.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

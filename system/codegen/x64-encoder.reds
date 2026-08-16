@@ -26,6 +26,10 @@ x64-encoder: context [
 	ENTRY_RAX: 19
 	ENTRY_PARAM: 20
 	ENTRY_LITERAL: 21
+	CSTRING_CALL: 22
+	CSTRING_IMPORT: 23
+	I32_GLOBAL_STORE: 24
+	PTR_GLOBAL_STORE: 25
 
 	SHADOW_FLAG: 256
 	FORM_MASK: 255
@@ -56,6 +60,10 @@ x64-encoder: context [
 			form = ENTRY_RAX [12]
 			form = ENTRY_PARAM [10]
 			form = ENTRY_LITERAL [15]
+			form = CSTRING_CALL [12]
+			form = CSTRING_IMPORT [13]
+			form = I32_GLOBAL_STORE [6]
+			form = PTR_GLOBAL_STORE [7]
 			true [-1]
 		]
 	]
@@ -73,6 +81,9 @@ x64-encoder: context [
 			form = ENTRY_RAX [4]
 			form = ENTRY_PARAM [2]
 			form = ENTRY_LITERAL [7]
+			form = CSTRING_IMPORT [9]
+			form = I32_GLOBAL_STORE [2]
+			form = PTR_GLOBAL_STORE [3]
 			true [-1]
 		]
 	]
@@ -83,6 +94,7 @@ x64-encoder: context [
 			form = I32_CALL_LITERAL [10]
 			form = I32_CALL_PARAM [5]
 			form = I32_CALL_RAX [7]
+			form = CSTRING_CALL [12]
 			true [-1]
 		]
 	]
@@ -219,10 +231,38 @@ x64-encoder: context [
 				write-i32 (at + 1) value
 				at: at + 5
 			]
+			form = CSTRING_CALL [
+				at/1: as byte! 48h
+				at/2: as byte! 8Dh
+				at/3: as byte! 0Dh                         ; lea rcx, [rip + rel32]
+				write-i32 (at + 3) argument
+				at/8: as byte! E8h
+				write-i32 (at + 8) value
+			]
+			form = CSTRING_IMPORT [
+				at/1: as byte! 48h
+				at/2: as byte! 8Dh
+				at/3: as byte! 0Dh                         ; lea rcx, [rip + rel32]
+				write-i32 (at + 3) argument
+				at/8: as byte! FFh
+				at/9: as byte! 15h                         ; call [rip + rel32]
+				write-i32 (at + 9) 0
+			]
+			form = I32_GLOBAL_STORE [
+				at/1: as byte! 89h
+				at/2: as byte! 05h                         ; mov [rip + rel32], eax
+				write-i32 (at + 2) 0
+			]
+			form = PTR_GLOBAL_STORE [
+				at/1: as byte! 48h
+				at/2: as byte! 89h
+				at/3: as byte! 05h                         ; mov [rip + rel32], rax
+				write-i32 (at + 3) 0
+			]
 			true [return -1]
 		]
 
-		if form >= ENTRY_VOID [
+		if all [form >= ENTRY_VOID form <= ENTRY_LITERAL][
 			at/1: as byte! FFh
 			at/2: as byte! 15h                           ; call [rip + rel32]
 			write-i32 (at + 2) 0
@@ -230,7 +270,7 @@ x64-encoder: context [
 			at/8: as byte! C0h                           ; unreachable fallback
 			at: at + 8
 		]
-		if form >= RETURN_VOID [
+		if all [form >= RETURN_VOID form <= ENTRY_LITERAL][
 			at/1: as byte! C9h                           ; leave
 			at/2: as byte! C3h                           ; ret
 		]

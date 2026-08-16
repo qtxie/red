@@ -105,6 +105,61 @@ assert all [
 	(copy at module-ir 121) = to binary! "fixture.dllboot?***-main"
 ]["module body did not use the ordinary function instruction stream"]
 
+string-init-ir: compile-text {
+	Red/System []
+	red-word!: alias struct! [header [integer!]]
+	red: context [
+		#import ["fixture.dll" stdcall [
+			load: "load" [text [c-string!] return: [red-word!]]
+			make: "make" [text [c-string!] return: [integer!]]
+		]]
+	]
+	body: red/load "<body>"
+	symbol: red/make "type"
+} 'glue
+assert binary? string-init-ir [
+	"frontend rejected string global initialization: " mold frontend/last-error
+]
+assert all [
+	(length? string-init-ir) = 365
+	(word-at string-init-ir 4) = 1
+	(word-at string-init-ir 8) = 1
+	(word-at string-init-ir 12) = 2
+	(word-at string-init-ir 16) = 1
+	(word-at string-init-ir 20) = 7
+	(word-at string-init-ir 24) = 2
+	(word-at string-init-ir 56) = 12
+	(word-at string-init-ir 88) = 12
+	(word-at string-init-ir 120) = 31
+	(word-at string-init-ir 140) = 35
+	(word-at string-init-ir 160) = 41
+]["string constants displaced direct RSIR records"]
+assert all [
+	(word-at string-init-ir 204) = 9
+	(word-at string-init-ir 208) = 1
+	(word-at string-init-ir 212) = 0
+	(word-at string-init-ir 216) = 7
+	(word-at string-init-ir 220) = 4
+	(word-at string-init-ir 224) = 2
+	(word-at string-init-ir 228) = -1
+	(word-at string-init-ir 232) = 1
+	(word-at string-init-ir 236) = 10
+	(word-at string-init-ir 244) = 1
+	(word-at string-init-ir 248) = 2
+	(word-at string-init-ir 252) = 9
+	(word-at string-init-ir 256) = 3
+	(word-at string-init-ir 260) = 7
+	(word-at string-init-ir 264) = 5
+	(word-at string-init-ir 268) = 4
+	(word-at string-init-ir 272) = 4
+	(word-at string-init-ir 276) = -2
+	(word-at string-init-ir 280) = 3
+	(word-at string-init-ir 284) = 10
+	(word-at string-init-ir 292) = 2
+	(word-at string-init-ir 296) = 4
+	(copy/part at string-init-ir 317 12) = #{3C626F64793E007479706500}
+]["string initialization is not a direct string/call/store stream"]
+
 i32-ir: compile-text {Red/System [] fn: func [return: [integer!]][7]} 'user
 assert binary? i32-ir "frontend rejected i32 literal"
 assert (length? i32-ir) = 90 "i32 RSIR is not compact"

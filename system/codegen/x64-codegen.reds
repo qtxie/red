@@ -44,6 +44,7 @@ rsir-global!: alias struct! [
 	name      [integer!]
 	name-size [integer!]
 	type      [integer!]
+	flags     [integer!]
 	low       [integer!]
 	high      [integer!]
 ]
@@ -127,7 +128,7 @@ x64-codegen: context [
 	RSIR_TYPE_SIZE:        20
 	RSIR_MEMBER_SIZE:       8
 	RSIR_IMPORT_SIZE:      32
-	RSIR_GLOBAL_SIZE:      20
+	RSIR_GLOBAL_SIZE:      24
 	RSIR_FUNCTION_SIZE:    36
 	RSIR_PARAMETER_SIZE:    8
 	RSIR_SWITCH_SIZE:      12
@@ -143,6 +144,8 @@ x64-codegen: context [
 	VARIADIC:      8
 	VARIABLE_FLAGS: 56
 	FUNCTION_FLAGS: 511
+	INLINE:          1
+	GLOBAL_REFERENCE: 2
 
 	OP_LITERAL:   1
 	OP_CONSTANT:  2
@@ -364,7 +367,7 @@ x64-codegen: context [
 				+ ((record/first-member + id) * RSIR_MEMBER_SIZE))
 			member-size: 0
 			member-align: 0
-			unless layout-type member/type (member/flags = 1) types members
+			unless layout-type member/type (member/flags = INLINE) types members
 				type-count (depth + 1) :member-size :member-align [
 				return false
 			]
@@ -394,7 +397,7 @@ x64-codegen: context [
 	][
 		size: 0
 		alignment: 0
-		either layout-type ref (flags = 1) types members type-count 0
+		either layout-type ref (flags = INLINE) types members type-count 0
 			:size :alignment [size][0]
 	]
 
@@ -406,7 +409,7 @@ x64-codegen: context [
 		/local width [integer!]
 	][
 		width: value-width ref flags types members type-count
-		all [width > 0 width <= 8 not all [flags = 1 aggregate-ref? ref types type-count]]
+		all [width > 0 width <= 8 not all [flags = INLINE aggregate-ref? ref types type-count]]
 	]
 
 	integer-type?: func [
@@ -566,7 +569,7 @@ x64-codegen: context [
 				+ ((record/first-member + id) * RSIR_MEMBER_SIZE))
 			member-size: 0
 			member-align: 0
-			unless layout-type member/type (member/flags = 1) types members
+			unless layout-type member/type (member/flags = INLINE) types members
 				type-count 0 :member-size :member-align [return false]
 			if kind = -2 [
 				offset: align offset member-align
@@ -589,6 +592,68 @@ x64-codegen: context [
 
 	slot-displacement: func [slot [integer!] return: [integer!]][
 		0 - (x64-encoder/BASE_FRAME_SIZE + (slot * 8))
+	]
+
+	storage-displacement: func [offsets [int-ptr!] slot [integer!] return: [integer!]][
+		offsets/slot
+	]
+
+	plan-storage: func [
+		fn [rsir-function!]
+		parameters types members [byte-ptr!]
+		type-count [integer!]
+		offsets [int-ptr!]
+		return: [integer!]
+		/local parameter [rsir-parameter!]
+			count index used size alignment [integer!]
+	][
+		count: fn/parameter-count + fn/local-count
+		index: 1
+		used: 0
+		while [index <= count][
+			parameter: as rsir-parameter! (parameters
+				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
+			size: 8
+			alignment: 8
+			if parameter/flags = INLINE [
+				size: 0
+				alignment: 0
+				unless layout-type parameter/type true types members type-count 0
+					:size :alignment [return INVALID_IR]
+			]
+			if used > (2147483647 - size)[return INVALID_IR]
+			used: align (used + size) alignment
+			if used < 0 [return INVALID_IR]
+			offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
+			index: index + 1
+		]
+		align used 8
+	]
+
+	clear-frame-storage: func [
+		code [byte-ptr!]
+		capacity displacement size [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] width encoded written [integer!]
+	][
+		written: 0
+		while [size > 0][
+			width: case [
+				size >= 8 [8]
+				size >= 4 [4]
+				size >= 2 [2]
+				true [1]
+			]
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/frame-store at (capacity - written)
+				x64-encoder/RAX displacement width
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			displacement: displacement + width
+			size: size - width
+		]
+		written
 	]
 
 	argument-register: func [index [integer!] return: [integer!]][
@@ -754,7 +819,7 @@ x64-codegen: context [
 	compile-function: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
-		stack-types stack-flags stack-kinds instruction-offsets instruction-depths
+		stack-types stack-flags stack-kinds storage-offsets instruction-offsets instruction-depths
 			entry-types entry-flags entry-kinds import-refs references [int-ptr!]
 		parameters functions imports globals types members switches image-data strings code
 			[byte-ptr!]
@@ -773,7 +838,8 @@ x64-codegen: context [
 			target-function [codegen-function!]
 			at [byte-ptr!]
 			index depth max-depth kind ref flags width signed source-slot target-slot
-			storage-count operation left-ref right-ref left-flags right-flags
+			storage-count storage-slots storage-bytes storage-size storage-align
+			operation left-ref right-ref left-flags right-flags
 			left-kind right-kind operation-width condition stride
 			encoded written frame-extra slot-bytes outgoing max-outgoing argument-index
 			argument-slot argument-width target return-ref first-parameter
@@ -781,10 +847,13 @@ x64-codegen: context [
 			member-type member-flags member-offset source-width target-width
 			result-index reference-id target-offset instruction-start case-index
 			operation-ref source-kind target-kind opcode parity keep-cast [integer!]
-			measure? fallthrough? valid? comparison? floating? [logic!]
+			measure? fallthrough? valid? comparison? floating? clear? [logic!]
 	][
 		measure?: null? code
 		storage-count: fn/parameter-count + fn/local-count
+		storage-bytes: plan-storage fn parameters types members type-count storage-offsets
+		if storage-bytes < 0 [return storage-bytes]
+		storage-slots: storage-bytes / 8
 		if any [
 			fn/return-type <> 0
 			not measure?
@@ -834,7 +903,7 @@ x64-codegen: context [
 			width: value-width parameter/type parameter/flags types members type-count
 			signed: either signed-type? parameter/type types type-count [1][0]
 			floating?: float-type? parameter/type types type-count
-			target-slot: slot-displacement index
+			target-slot: storage-displacement storage-offsets index
 			either index <= 4 [
 				at: as byte-ptr! 0
 				if not measure? [at: code + written]
@@ -861,6 +930,35 @@ x64-codegen: context [
 				encoded: x64-encoder/frame-store at (capacity - written)
 					x64-encoder/RAX target-slot width
 				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+			]
+			index: index + 1
+		]
+
+		clear?: false
+		index: fn/parameter-count + 1
+		while [index <= storage-count][
+			parameter: as rsir-parameter! (parameters
+				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
+			if parameter/flags = INLINE [
+				unless clear? [
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/clear-register at (capacity - written)
+						x64-encoder/RAX
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					clear?: true
+				]
+				storage-size: 0
+				storage-align: 0
+				unless layout-type parameter/type true types members type-count 0
+					:storage-size :storage-align [return INVALID_IR]
+				at: as byte-ptr! 0
+				if not measure? [at: code + written]
+				encoded: clear-frame-storage at (capacity - written)
+					storage-displacement storage-offsets index storage-size
+				if encoded < 0 [return encoded]
 				written: written + encoded
 			]
 			index: index + 1
@@ -932,7 +1030,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth)
+						x64-encoder/RAX slot-displacement (storage-slots + depth)
 						target-width
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -970,7 +1068,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth) 8
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 8
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 				]
@@ -993,7 +1091,8 @@ x64-codegen: context [
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: x64-encoder/frame-address at (capacity - written)
-								x64-encoder/RAX slot-displacement instruction/b
+								x64-encoder/RAX storage-displacement storage-offsets
+									instruction/b
 						]
 						instruction/a = GLOBAL_ADDRESS [
 							global-id: instruction/b
@@ -1058,7 +1157,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth) 8
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 8
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 				]
@@ -1073,7 +1172,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth) 8 0
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 8 0
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					at: as byte-ptr! 0
@@ -1089,11 +1188,11 @@ x64-codegen: context [
 					encoded: either floating? [
 						x64-encoder/xmm-frame-store at (capacity - written)
 							x64-encoder/XMM0 slot-displacement
-								(storage-count + depth) width
+								(storage-slots + depth) width
 					][
 						target-width: either width = 8 [8][4]
 						x64-encoder/frame-store at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-count + depth)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							target-width
 					]
 					if encoded < 0 [return OUTPUT_FULL]
@@ -1143,7 +1242,7 @@ x64-codegen: context [
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
 							x64-encoder/RAX slot-displacement
-								(storage-count + target-slot) 8 0
+								(storage-slots + target-slot) 8 0
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 
@@ -1151,7 +1250,7 @@ x64-codegen: context [
 						if not measure? [at: code + written]
 						encoded: either instruction/b = 1 [
 							load-operation-value at (capacity - written)
-								x64-encoder/RDX slot-displacement (storage-count + depth)
+								x64-encoder/RDX slot-displacement (storage-slots + depth)
 								stack-types/depth 0 8 types members type-count
 						][
 							x64-encoder/move-immediate at (capacity - written)
@@ -1186,7 +1285,7 @@ x64-codegen: context [
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement
-								(storage-count + target-slot) 8
+								(storage-slots + target-slot) 8
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
@@ -1214,10 +1313,10 @@ x64-codegen: context [
 					encoded: either floating? [
 						x64-encoder/xmm-frame-load at (capacity - written)
 							x64-encoder/XMM0 slot-displacement
-								(storage-count + depth) width
+								(storage-slots + depth) width
 					][
 						x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-count + depth)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							width signed
 					]
 					if encoded < 0 [return OUTPUT_FULL]
@@ -1225,7 +1324,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
-						x64-encoder/RDX slot-displacement (storage-count + depth - 1) 8 0
+						x64-encoder/RDX slot-displacement (storage-slots + depth - 1) 8 0
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					at: as byte-ptr! 0
@@ -1245,11 +1344,11 @@ x64-codegen: context [
 					encoded: either floating? [
 						x64-encoder/xmm-frame-store at (capacity - written)
 							x64-encoder/XMM0 slot-displacement
-								(storage-count + depth) width
+								(storage-slots + depth) width
 					][
 						target-width: either width = 8 [8][4]
 						x64-encoder/frame-store at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-count + depth)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							target-width
 					]
 					if encoded < 0 [return OUTPUT_FULL]
@@ -1272,7 +1371,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth) 8 0
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 8 0
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					at: as byte-ptr! 0
@@ -1284,7 +1383,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth) 8
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 8
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					stack-types/depth: member-type
@@ -1359,11 +1458,11 @@ x64-codegen: context [
 							encoded: either floating? [
 								x64-encoder/xmm-frame-load at (capacity - written)
 									(source-slot - 1) slot-displacement
-										(storage-count + argument-slot) argument-width
+										(storage-slots + argument-slot) argument-width
 							][
 								x64-encoder/frame-load at (capacity - written)
 									target-slot slot-displacement
-										(storage-count + argument-slot)
+										(storage-slots + argument-slot)
 									argument-width signed
 							]
 							if encoded < 0 [return OUTPUT_FULL]
@@ -1373,7 +1472,7 @@ x64-codegen: context [
 								if not measure? [at: code + written]
 								encoded: x64-encoder/frame-load at (capacity - written)
 									target-slot slot-displacement
-										(storage-count + argument-slot)
+										(storage-slots + argument-slot)
 									argument-width 0
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
@@ -1383,7 +1482,7 @@ x64-codegen: context [
 							if not measure? [at: code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
-									(storage-count + argument-slot)
+									(storage-slots + argument-slot)
 								argument-width signed
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
@@ -1441,11 +1540,11 @@ x64-codegen: context [
 						encoded: either floating? [
 							x64-encoder/xmm-frame-store at (capacity - written)
 								x64-encoder/XMM0 slot-displacement
-									(storage-count + depth) width
+									(storage-slots + depth) width
 						][
 							target-width: either width = 8 [8][4]
 							x64-encoder/frame-store at (capacity - written)
-								x64-encoder/RAX slot-displacement (storage-count + depth)
+								x64-encoder/RAX slot-displacement (storage-slots + depth)
 								target-width
 						]
 						if encoded < 0 [return OUTPUT_FULL]
@@ -1500,21 +1599,21 @@ x64-codegen: context [
 								if not measure? [at: code + written]
 								encoded: x64-encoder/frame-load at (capacity - written)
 									x64-encoder/RAX slot-displacement
-										(storage-count + depth) source-width signed
+										(storage-slots + depth) source-width signed
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/frame-store at (capacity - written)
 									x64-encoder/RAX slot-displacement
-										(storage-count + depth) target-width
+										(storage-slots + depth) target-width
 							]
 							source-kind = 5 [
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/frame-load at (capacity - written)
 									x64-encoder/RAX slot-displacement
-										(storage-count + depth) 4 1
+										(storage-slots + depth) 4 1
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 								at: as byte-ptr! 0
@@ -1527,14 +1626,14 @@ x64-codegen: context [
 								if not measure? [at: code + written]
 								encoded: x64-encoder/xmm-frame-store at (capacity - written)
 									x64-encoder/XMM0 slot-displacement
-										(storage-count + depth) target-width
+										(storage-slots + depth) target-width
 							]
 							target-kind = 5 [
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/xmm-frame-load at (capacity - written)
 									x64-encoder/XMM0 slot-displacement
-										(storage-count + depth) source-width
+										(storage-slots + depth) source-width
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 								at: as byte-ptr! 0
@@ -1547,14 +1646,14 @@ x64-codegen: context [
 								if not measure? [at: code + written]
 								encoded: x64-encoder/frame-store at (capacity - written)
 									x64-encoder/RAX slot-displacement
-										(storage-count + depth) 4
+										(storage-slots + depth) 4
 							]
 							true [
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/xmm-frame-load at (capacity - written)
 									x64-encoder/XMM0 slot-displacement
-										(storage-count + depth) source-width
+										(storage-slots + depth) source-width
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 								at: as byte-ptr! 0
@@ -1568,7 +1667,7 @@ x64-codegen: context [
 								if not measure? [at: code + written]
 								encoded: x64-encoder/xmm-frame-store at (capacity - written)
 									x64-encoder/XMM0 slot-displacement
-										(storage-count + depth) target-width
+										(storage-slots + depth) target-width
 							]
 						]
 					][
@@ -1576,7 +1675,7 @@ x64-codegen: context [
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-count + depth)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							source-width signed
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
@@ -1591,7 +1690,7 @@ x64-codegen: context [
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-count + depth)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							width
 					]
 					if encoded < 0 [return OUTPUT_FULL]
@@ -1621,7 +1720,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth) 4
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 4
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 				]
@@ -1640,7 +1739,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth) 8
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 8
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 				]
@@ -1660,7 +1759,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth)
+						x64-encoder/RAX slot-displacement (storage-slots + depth)
 						width signed
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -1673,7 +1772,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth)
+						x64-encoder/RAX slot-displacement (storage-slots + depth)
 						target-width
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -1697,7 +1796,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth)
+						x64-encoder/RAX slot-displacement (storage-slots + depth)
 						ref flags operation-width types members type-count
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -1728,7 +1827,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth)
+						x64-encoder/RAX slot-displacement (storage-slots + depth)
 						operation-width
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -1834,14 +1933,14 @@ x64-codegen: context [
 						if not measure? [at: code + written]
 						encoded: x64-encoder/xmm-frame-load at (capacity - written)
 							x64-encoder/XMM0 slot-displacement
-								(storage-count + target-slot) operation-width
+								(storage-slots + target-slot) operation-width
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/xmm-frame-load at (capacity - written)
 							x64-encoder/XMM1 slot-displacement
-								(storage-count + depth) operation-width
+								(storage-slots + depth) operation-width
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 						at: as byte-ptr! 0
@@ -1880,7 +1979,7 @@ x64-codegen: context [
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement
-						(storage-count + target-slot) left-ref left-flags
+						(storage-slots + target-slot) left-ref left-flags
 						operation-width types members type-count
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -1892,7 +1991,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
-						source-slot slot-displacement (storage-count + depth)
+						source-slot slot-displacement (storage-slots + depth)
 						right-ref right-flags operation-width types members type-count
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -2017,10 +2116,10 @@ x64-codegen: context [
 					encoded: either all [floating? not comparison?][
 						x64-encoder/xmm-frame-store at (capacity - written)
 							x64-encoder/XMM0 slot-displacement
-								(storage-count + depth) operation-width
+								(storage-slots + depth) operation-width
 					][
 						x64-encoder/frame-store at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-count + depth)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							operation-width
 					]
 					if encoded < 0 [return OUTPUT_FULL]
@@ -2068,7 +2167,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth) 4 0
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 4 0
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					depth: depth - 1
@@ -2118,7 +2217,7 @@ x64-codegen: context [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-count + depth)
+						x64-encoder/RAX slot-displacement (storage-slots + depth)
 						ref 0 operation-width types members type-count
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -2229,7 +2328,7 @@ x64-codegen: context [
 							if not measure? [at: code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RCX slot-displacement
-									(storage-count + depth) width
+									(storage-slots + depth) width
 								signed
 						]
 						if encoded < 0 [return OUTPUT_FULL]
@@ -2259,11 +2358,11 @@ x64-codegen: context [
 							encoded: either floating? [
 								x64-encoder/xmm-frame-load at (capacity - written)
 									x64-encoder/XMM0 slot-displacement
-										(storage-count + depth) width
+										(storage-slots + depth) width
 							][
 								x64-encoder/frame-load at (capacity - written)
 									x64-encoder/RAX slot-displacement
-										(storage-count + depth) width
+										(storage-slots + depth) width
 									signed
 							]
 							if encoded < 0 [return OUTPUT_FULL]
@@ -2289,9 +2388,14 @@ x64-codegen: context [
 		if fallthrough? [return INVALID_IR]
 
 		if measure? [
-			slot-bytes: (storage-count + max-depth) * 8
+			if max-depth > ((2147483647 - storage-bytes) / 8)[return OUTPUT_FULL]
+			slot-bytes: storage-bytes + (max-depth * 8)
+			if slot-bytes > (2147483647 - max-outgoing)[return OUTPUT_FULL]
 			frame-extra: align (slot-bytes + max-outgoing) 16
-			if frame-extra < 0 [return OUTPUT_FULL]
+			if any [
+				frame-extra < 0
+				frame-extra > (2147483647 - x64-encoder/BASE_FRAME_SIZE)
+			][return OUTPUT_FULL]
 			frame-size/1: x64-encoder/BASE_FRAME_SIZE + frame-extra
 			encoded: x64-encoder/allocate-frame null 0 frame-extra
 			if encoded < 0 [return OUTPUT_FULL]
@@ -2310,16 +2414,16 @@ x64-codegen: context [
 			ir-type [rsir-type!]
 			ir-member [rsir-member!]
 			ir-import [rsir-import!]
-			ir-global [rsir-global!]
+			ir-global target-global [rsir-global!]
 			ir-function [rsir-function!]
 			ir-parameter [rsir-parameter!]
 			image [codegen-header!]
 			image-function [codegen-function!]
-			image-global [codegen-global!]
+			image-global target-image-global [codegen-global!]
 			image-import [codegen-import!]
 			import-refs function-sizes function-frames instruction-offsets
 				instruction-depths entry-types entry-flags entry-kinds
-				stack-types stack-flags stack-kinds references [int-ptr!]
+				stack-types stack-flags stack-kinds storage-offsets references [int-ptr!]
 			type-data member-data import-data global-data function-data
 				parameter-data switch-data instruction-data strings function-instructions
 				name names-output code data-output cursor finish scratch [byte-ptr!]
@@ -2334,7 +2438,7 @@ x64-codegen: context [
 				global-reference-count used-import-count import-reference-count
 				image-import-count reference-count count first-reference last-library
 				library-offset external-offset output-import-id exit-reference-id
-				record-offset variable-mode written [integer!]
+				reference-id record-offset variable-mode written [integer!]
 			entry? current-entry? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
@@ -2380,7 +2484,10 @@ x64-codegen: context [
 					]
 				]
 				any [ir-type/kind = -2 ir-type/kind = -3][
-					if any [ir-type/target <> 0 ir-type/flags <> 0][return INVALID_IR]
+					if any [
+						ir-type/target <> 0 ir-type/flags <> 0
+						ir-type/member-count <= 0
+					][return INVALID_IR]
 				]
 				any [ir-type/kind = -4 ir-type/kind = -5][
 					if all [ir-type/target <> 0
@@ -2411,8 +2518,8 @@ x64-codegen: context [
 			ir-member: as rsir-member! (member-data + ((id - 1) * RSIR_MEMBER_SIZE))
 			if any [
 				not valid-type-ref? ir-member/type header/type-count
-				ir-member/flags < 0 ir-member/flags > 1
-				all [ir-member/flags = 1
+				ir-member/flags < 0 ir-member/flags > INLINE
+				all [ir-member/flags = INLINE
 					not aggregate-ref? ir-member/type type-data header/type-count]
 			][return INVALID_IR]
 			id: id + 1
@@ -2456,7 +2563,28 @@ x64-codegen: context [
 		id: 1
 		while [id <= header/global-count][
 			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
-			unless valid-type-ref? ir-global/type header/type-count [return INVALID_IR]
+			if any [
+				not valid-type-ref? ir-global/type header/type-count
+				ir-global/flags < 0 ir-global/flags > GLOBAL_REFERENCE
+				all [ir-global/flags = INLINE any [
+					not aggregate-ref? ir-global/type type-data header/type-count
+					ir-global/low <> 0 ir-global/high <> 0
+				]]
+				all [ir-global/flags = GLOBAL_REFERENCE any [
+					ir-global/low <= 0 ir-global/low > header/global-count
+					ir-global/low = id ir-global/high <> 0
+				]]
+			][return INVALID_IR]
+			if ir-global/flags = GLOBAL_REFERENCE [
+				target-global: as rsir-global! (global-data
+					+ ((ir-global/low - 1) * RSIR_GLOBAL_SIZE))
+				if any [
+					target-global/flags <> INLINE
+					not valid-type-ref? target-global/type header/type-count
+					not compatible-types? ir-global/type target-global/type type-data
+						header/type-count
+				][return INVALID_IR]
+			]
 			id: id + 1
 		]
 
@@ -2506,8 +2634,8 @@ x64-codegen: context [
 				+ ((id - 1) * RSIR_PARAMETER_SIZE))
 			if any [
 				not valid-type-ref? ir-parameter/type header/type-count
-				ir-parameter/flags < 0 ir-parameter/flags > 1
-				all [ir-parameter/flags = 1
+				ir-parameter/flags < 0 ir-parameter/flags > INLINE
+				all [ir-parameter/flags = INLINE
 					not aggregate-ref? ir-parameter/type type-data header/type-count]
 			][return INVALID_IR]
 			id: id + 1
@@ -2548,19 +2676,22 @@ x64-codegen: context [
 		]
 		global-names-size: 0
 		image-data-size: BITMAP_SIZE
+		global-reference-count: 0
 		id: 1
 		while [id <= header/global-count][
 			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
 			if any [
-				ir-global/name < 0 ir-global/name-size <= 0
+				ir-global/name < 0 ir-global/name-size < 0
 				ir-global/name-size > strings-size
 				ir-global/name > (strings-size - ir-global/name-size)
 			][return INVALID_IR]
 			global-size: 0
 			global-align: 0
-			unless layout-type ir-global/type false type-data member-data
+			unless layout-type ir-global/type (ir-global/flags = INLINE)
+				type-data member-data
 				header/type-count 0 :global-size :global-align [return INVALID_IR]
-			if all [global-size > 8 any [ir-global/low <> 0 ir-global/high <> 0]][
+			if all [ir-global/flags = 0 global-size > 8
+				any [ir-global/low <> 0 ir-global/high <> 0]][
 				return INVALID_IR
 			]
 			global-offset: align image-data-size global-align
@@ -2579,6 +2710,27 @@ x64-codegen: context [
 			global-names-size: global-names-size + ir-global/name-size
 			id: id + 1
 		]
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			if ir-global/flags = GLOBAL_REFERENCE [
+				image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+				if image-global/data-offset > 2147483646 [return OUTPUT_FULL]
+				target-image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					+ ((ir-global/low - 1) * IMAGE_GLOBAL_SIZE))
+				if any [
+					target-image-global/reference-count = 2147483647
+					global-reference-count = 2147483647
+				][return OUTPUT_FULL]
+				target-image-global/reference-count:
+					target-image-global/reference-count + 1
+				global-reference-count: global-reference-count + 1
+			]
+			id: id + 1
+		]
 
 		if header/function-count > ((2147483647 - header/import-count) / 3)[
 			return OUTPUT_FULL
@@ -2588,6 +2740,8 @@ x64-codegen: context [
 			return OUTPUT_FULL
 		]
 		scratch-count: scratch-count + (header/instruction-count * 8)
+		if parameter-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
+		scratch-count: scratch-count + parameter-count
 		if scratch-count > (2147483647 / 4)[return OUTPUT_FULL]
 		scratch: allocate (scratch-count * 4)
 		if null? scratch [return OUTPUT_FULL]
@@ -2603,6 +2757,7 @@ x64-codegen: context [
 		stack-types: entry-kinds + header/instruction-count
 		stack-flags: stack-types + header/instruction-count
 		stack-kinds: stack-flags + header/instruction-count
+		storage-offsets: stack-kinds + header/instruction-count
 		id: 1
 		while [id <= header/import-count][import-refs/id: 0 id: id + 1]
 
@@ -2610,7 +2765,6 @@ x64-codegen: context [
 		code-size: 0
 		literal-size: 0
 		entry-size: 0
-		global-reference-count: 0
 		next-instruction: 1
 		next-offset: 1
 		id: 1
@@ -2626,7 +2780,7 @@ x64-codegen: context [
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
 			function-size: compile-function ir-function function-instructions
-				stack-types stack-flags stack-kinds
+				stack-types stack-flags stack-kinds storage-offsets
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
@@ -2862,7 +3016,7 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
 			written: compile-function ir-function function-instructions
-				stack-types stack-flags stack-kinds
+				stack-types stack-flags stack-kinds storage-offsets
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
@@ -2896,7 +3050,16 @@ x64-codegen: context [
 				+ (header/function-count * IMAGE_FUNCTION_SIZE)
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			cursor: data-output + image-global/data-offset
-			case [
+			either ir-global/flags = GLOBAL_REFERENCE [
+				target-image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					+ ((ir-global/low - 1) * IMAGE_GLOBAL_SIZE))
+				reference-id: target-image-global/first-reference
+					+ target-image-global/reference-count
+				references/reference-id: 0 - (image-global/data-offset + 1)
+				target-image-global/reference-count:
+					target-image-global/reference-count + 1
+			][case [
 				image-global/data-size = 1 [cursor/1: as byte! ir-global/low]
 				image-global/data-size = 2 [
 					cursor/1: as byte! ir-global/low
@@ -2908,7 +3071,7 @@ x64-codegen: context [
 					x64-encoder/write-i32 (cursor + 4) ir-global/high
 				]
 				true [0]
-			]
+			]]
 			id: id + 1
 		]
 		release scratch total-size

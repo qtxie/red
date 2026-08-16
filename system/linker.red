@@ -47,6 +47,15 @@ linker: context [
 			+ (high * 16777216)
 	]
 
+	read-codegen-signed-word: func [data [binary!] offset [integer!] /local high][
+		if any [offset < 0 (offset + 4) > (length? data)][return none]
+		high: to integer! pick data (offset + 4)
+		(to integer! pick data (offset + 1))
+			+ ((to integer! pick data (offset + 2)) * 256)
+			+ ((to integer! pick data (offset + 3)) * 65536)
+			+ ((either high > 127 [high - 256][high]) * 16777216)
+	]
+
 	codegen-fail: func [message [string!]][
 		codegen-error: message
 		false
@@ -62,8 +71,9 @@ linker: context [
 			globals-start imports-start refs-start names-start data-offset expected remainder id index record
 			name-offset name-size function-offset function-size frame-size bitmap-offset
 			bitmap-size global-offset global-size first-reference count-reference reference-id reference
-			name-bytes name symbols refs imports functions library-offset library-size
+			name-bytes name symbols refs data-refs imports functions library-offset library-size
 			external-offset external-size library external last-library code data sections
+			data-reference
 	][
 		codegen-error: none
 		unless all [object? job binary? image (length? image) >= 44][
@@ -196,7 +206,7 @@ linker: context [
 			first-reference: read-codegen-word image (record + 16)
 			count-reference: read-codegen-word image (record + 20)
 			unless all [
-				integer? name-offset integer? name-size name-size > 0
+				integer? name-offset integer? name-size name-size >= 0
 				name-offset <= (names-size - name-size)
 				integer? global-offset global-offset >= 16
 				integer? global-size global-size >= 0
@@ -211,24 +221,44 @@ linker: context [
 					count-reference > (reference-count - first-reference + 1)
 				]]
 			][return codegen-fail "native global references exceed their table"]
-			name-bytes: copy/part at image (names-start + name-offset + 1) name-size
-			if find name-bytes 0 [return codegen-fail "native global name contains NUL"]
-			name: attempt [to word! to string! name-bytes]
-			unless word? name [return codegen-fail "native global name is not a Red word"]
+			either name-size = 0 [
+				name: to issue! rejoin ["rsir-global-" id]
+			][
+				name-bytes: copy/part at image (names-start + name-offset + 1) name-size
+				if find name-bytes 0 [
+					return codegen-fail "native global name contains NUL"
+				]
+				name: attempt [to word! to string! name-bytes]
+				unless word? name [
+					return codegen-fail "native global name is not a Red word"
+				]
+			]
 			if find symbols name [return codegen-fail "native codegen returned duplicate symbols"]
 			refs: make block! count-reference
+			data-refs: make block! count-reference
 			reference-id: first-reference
 			repeat index count-reference [
-				reference: read-codegen-word image
+				reference: read-codegen-signed-word image
 					(refs-start + ((reference-id - 1) * 4))
-				unless all [integer? reference reference <= (code-size - 4)][
-					return codegen-fail "native global reference exceeds code"
+				unless integer? reference [
+					return codegen-fail "native global reference is invalid"
 				]
-				append refs reference + 1
+				either negative? reference [
+					data-reference: (negate reference) - 1
+					unless all [
+						data-reference >= 0 data-reference <= (data-size - 8)
+					][return codegen-fail "native global reference exceeds data"]
+					append data-refs data-reference + 1
+				][
+					unless reference <= (code-size - 4) [
+						return codegen-fail "native global reference exceeds code"
+					]
+					append refs reference + 1
+				]
 				reference-id: reference-id + 1
 			]
 			append symbols name
-			append/only symbols reduce ['global global-offset refs]
+			append/only symbols reduce ['global global-offset refs data-refs]
 			id: id + 1
 		]
 

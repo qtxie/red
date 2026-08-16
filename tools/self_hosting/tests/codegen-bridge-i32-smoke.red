@@ -228,6 +228,18 @@ generate "explicit local assignment result" {
 	fn: func [return: [integer!] /local value [integer!]][value: 7]
 } 'user
 
+declared-local: generate "owned local aggregate" {
+	Red/System []
+	wide!: alias struct! [a [int64!] b [int64!] c [int64!]]
+	fn: func [return: [integer!] /local value [wide!]][
+		value: declare wide!
+		value/a: as int64! 73
+		as integer! value/a
+	]
+} 'user
+check (word-at declared-local/2 60) = 80
+	"inline aggregate storage did not contribute its exact size to the frame"
+
 generate "local shadows global" {
 	Red/System []
 	value: 1
@@ -236,6 +248,12 @@ generate "local shadows global" {
 
 generate "global load" {
 	Red/System [] answer: 42 fn: func [return: [integer!]][answer]
+} 'user
+
+generate "owned global aggregate" {
+	Red/System []
+	pair: declare struct! [left [integer!] right [integer!]]
+	fn: func [return: [integer!]][pair/left]
 } 'user
 
 generate "dynamic global store" {

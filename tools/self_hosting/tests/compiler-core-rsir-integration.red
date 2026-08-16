@@ -135,5 +135,7 @@ run-linked-fixture
 	%rsir-float-scalar-exit.reds %rsir-float-scalar-linked.exe "scalar float"
 run-linked-fixture
 	%rsir-address-index-exit.reds %rsir-address-index-linked.exe "address/index"
+run-linked-fixture
+	%rsir-declare-storage-exit.reds %rsir-declare-storage-linked.exe "DECLARE storage"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

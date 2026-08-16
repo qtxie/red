@@ -27,6 +27,7 @@ compiler-rsir-frontend: context [
 	types: make block! 256
 	type-ids: make hash! 128
 	pointer-types: make hash! 64
+	aggregate-types: make hash! 64
 	constants: make hash! 256
 	imports: make block! 256
 	import-ids: make hash! 256
@@ -74,6 +75,8 @@ compiler-rsir-frontend: context [
 	callback-flag: 64
 	objc-flag: 128
 	catch-flag: 256
+	inline-flag: 1
+	global-reference-flag: 2
 
 	; Semantic postfix operations. Operands are typed by the surrounding
 	; declaration tables; no source-specific value IDs cross the boundary.
@@ -182,6 +185,17 @@ compiler-rsir-frontend: context [
 		append locals ref
 		append locals flags
 		reduce [slot record]
+	]
+
+	add-hidden-global: func [ref flags [integer!] return: [integer!] /local id][
+		id: global-count + 1
+		append/only global-data make binary! 0
+		append global-data ref
+		append global-data flags
+		append global-data 0
+		append global-data 0
+		global-count: id
+		id
 	]
 
 	emit-local-address: func [output [binary!] slot [integer!]][
@@ -322,6 +336,52 @@ compiler-rsir-frontend: context [
 		id
 	]
 
+	validate-aggregate: func [
+		spec [block!]
+		/local position names field
+	][
+		unless all [not empty? spec ((length? spec) // 2) = 0][
+			fail ERROR-UNSUPPORTED "aggregate type requires field/type pairs"
+		]
+		names: make hash! 16
+		position: spec
+		while [not tail? position][
+			field: position/1
+			unless all [word? field block? position/2][
+				fail ERROR-UNSUPPORTED ["invalid aggregate member " mold field]
+			]
+			if select names field [
+				fail ERROR-DUPLICATE ["duplicate aggregate member " mold field]
+			]
+			repend names [field true]
+			position: skip position 2
+		]
+		true
+	]
+
+	intern-aggregate: func [
+		kind [word!]
+		spec scope uses [block!]
+		return: [integer!]
+		/local key id
+	][
+		unless find [struct union] kind [
+			fail ERROR-UNSUPPORTED "invalid aggregate type"
+		]
+		validate-aggregate spec
+		key: mold/flat reduce [kind spec scope uses]
+		if id: select aggregate-types key [return id]
+		id: type-count + 1
+		repend aggregate-types [key id]
+		append types none
+		append types kind
+		append/only types copy/deep spec
+		append/only types copy scope
+		append/only types copy/deep uses
+		type-count: id
+		id
+	]
+
 	type-kind: func [
 		type [block!]
 		scope uses [block!]
@@ -381,6 +441,17 @@ compiler-rsir-frontend: context [
 			fail ERROR-UNSUPPORTED "invalid type reference"
 		]
 		name: type/1
+		if all [
+			word? name
+			find [struct! union!] name
+			any [
+				all [(length? type) = 2 block? type/2]
+				all [(length? type) = 3 block? type/2 type/3 = 'value]
+			]
+		][
+			return intern-aggregate either name = 'struct! ['struct]['union]
+				type/2 scope uses
+		]
 		kind: type-kind type scope uses
 		unless kind [fail ERROR-UNSUPPORTED ["unsupported type " mold type]]
 		if all [word? name pointee: select builtin-pointees name][
@@ -400,12 +471,22 @@ compiler-rsir-frontend: context [
 		id
 	]
 
-	type-flags: func [type [block!] scope uses [block!] /local kind][
-		either all [(length? type) = 2 type/2 = 'value][
-			unless find [struct union] kind: type-kind type scope uses [
+	type-flags: func [type [block!] scope uses [block!] /local kind direct?][
+		direct?: all [
+			(length? type) = 3
+			word? type/1
+			find [struct! union!] type/1
+			block? type/2
+			type/3 = 'value
+		]
+		either any [all [(length? type) = 2 type/2 = 'value] direct?][
+			kind: either direct? [
+				either type/1 = 'struct! ['struct]['union]
+			][type-kind type scope uses]
+			unless find [struct union] kind [
 				fail ERROR-UNSUPPORTED "only aggregate types can be passed by value"
 			]
-			1
+			inline-flag
 		][0]
 	]
 
@@ -993,6 +1074,7 @@ compiler-rsir-frontend: context [
 								true ['subroutine]
 							]
 							type-spec: position/4
+							if find [struct union] kind [validate-aggregate type-spec]
 							position: skip position 4
 						]
 						any [word? position/3 path? position/3][
@@ -1099,6 +1181,7 @@ compiler-rsir-frontend: context [
 						append global-data none
 						append global-data 0
 						append global-data 0
+						append global-data 0
 					]
 					position: next position
 				]
@@ -1165,22 +1248,11 @@ compiler-rsir-frontend: context [
 					spec: position/3
 					scope: position/4
 					uses: position/5
-					unless ((length? spec) // 2) = 0 [
-						fail ERROR-UNSUPPORTED ["invalid aggregate type " mold position/1]
-					]
 					count: (length? spec) / 2
 					emit type-output reduce [code 0 0 first count]
 					while [not tail? spec][
 						field: spec/1
 						field-type: spec/2
-						unless all [
-							word? field
-							block? field-type
-						][
-							fail ERROR-UNSUPPORTED [
-								"invalid aggregate member " mold position/1
-							]
-						]
 						ref: type-ref field-type scope uses
 						flags: type-flags field-type scope uses
 						emit members reduce [ref flags]
@@ -1240,9 +1312,9 @@ compiler-rsir-frontend: context [
 		append output members
 		import-records: 33 + type-bytes + member-bytes
 		global-records: import-records + (import-count * 32)
-		function-records: global-records + (global-count * 20)
+		function-records: global-records + (global-count * 24)
 		append/dup output 0 (import-count * 32)
-		append/dup output 0 (global-count * 20)
+		append/dup output 0 (global-count * 24)
 		append/dup output 0 (function-count * 36)
 
 		position: imports
@@ -1298,7 +1370,7 @@ compiler-rsir-frontend: context [
 			unless integer? position/2 [
 				fail ERROR-UNSUPPORTED ["global type is unresolved: " to string! name]
 			]
-			record-offset: global-records + ((id - 1) * 20)
+			record-offset: global-records + ((id - 1) * 24)
 			change/part at output record-offset
 				int-to-bin/to-bin32 (length? names) 4
 			change/part at output (record-offset + 4)
@@ -1309,9 +1381,11 @@ compiler-rsir-frontend: context [
 				int-to-bin/to-bin32 position/3 4
 			change/part at output (record-offset + 16)
 				int-to-bin/to-bin32 position/4 4
+			change/part at output (record-offset + 20)
+				int-to-bin/to-bin32 position/5 4
 			append names name
 			id: id + 1
-			position: skip position 4
+			position: skip position 5
 		]
 
 		position: functions
@@ -1833,7 +1907,7 @@ compiler-rsir-frontend: context [
 		position: next position
 		if all [
 			word? token
-			find [pointer! struct! union! function!] token
+			find [pointer! struct! union! function! subroutine!] token
 			not tail? position
 			block? position/1
 		][
@@ -1937,9 +2011,9 @@ compiler-rsir-frontend: context [
 		id: resolve-name target scope uses globals
 		if integer? id [
 			emit instructions reduce [address-op global-address id 0]
-			position: skip global-data ((id - 1) * 4)
+			position: skip global-data ((id - 1) * 5)
 			last-type: any [position/2 0]
-			last-flags: 0
+			last-flags: position/3 and inline-flag
 			return true
 		]
 		id: import-variable-id target scope uses
@@ -2807,6 +2881,9 @@ compiler-rsir-frontend: context [
 				last-flags: 0
 				type-info/1
 			]
+			value = 'declare [
+				fail ERROR-CONTEXT "DECLARE requires an assignment target"
+			]
 			any [get-word? value get-path? value][
 				target: either get-word? value [to word! value][to path! value]
 				unless stack-address target scope uses instructions params locals [
@@ -3090,6 +3167,121 @@ compiler-rsir-frontend: context [
 		static?
 	]
 
+	stack-declaration: func [
+		position [block!]
+		target [word! path!]
+		storage [block! none!]
+		id [integer! none!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		fold? [logic!]
+		return: [block!]
+		/local type-info next-position ref kind aggregate? record hidden target-ref
+			target-flags
+	][
+		type-info: stack-read-type skip position 2 scope uses
+		next-position: type-info/1
+		ref: type-info/2
+		if type-info/3 <> 0 [
+			fail ERROR-UNSUPPORTED "DECLARE requires a reference type"
+		]
+		kind: ref-kind ref
+		aggregate?: not none? find [struct union] kind
+
+		unless aggregate? [
+			unless word? target [
+				fail ERROR-CONTEXT "scalar DECLARE requires a variable target"
+			]
+			either block? storage [
+				record: storage/2
+				either record/2 = 0 [
+					record/2: ref
+					record/3: 0
+				][unless all [
+					record/3 = 0
+					stack-type-compatible? record/2 ref
+				][fail ERROR-REFERENCE ["declaration changes type " mold target]]]
+			][
+				unless integer? id [
+					fail ERROR-REFERENCE ["unknown declaration target " mold target]
+				]
+				record: skip global-data ((id - 1) * 5)
+				either integer? record/2 [
+					unless stack-type-compatible? record/2 ref [
+						fail ERROR-REFERENCE ["declaration changes type " mold target]
+					]
+				][
+					record/2: ref
+					record/3: 0
+					record/4: 0
+					record/5: 0
+				]
+			]
+			last-type: 0
+			last-flags: 0
+			last-stopped?: false
+			return next-position
+		]
+
+		if all [fold? integer? id][
+			record: skip global-data ((id - 1) * 5)
+			unless integer? record/2 [
+				hidden: add-hidden-global ref inline-flag
+				record/2: ref
+				record/3: global-reference-flag
+				record/4: hidden
+				record/5: 0
+				last-type: 0
+				last-flags: 0
+				last-stopped?: false
+				return next-position
+			]
+		]
+
+		unless stack-address target scope uses instructions params locals [
+			fail ERROR-REFERENCE ["unknown assignment target " mold target]
+		]
+		target-ref: last-type
+		target-flags: last-flags
+		either function-active? [
+			hidden: add-hidden-local params locals ref inline-flag
+			emit-local-address instructions hidden/1
+		][
+			hidden: add-hidden-global ref inline-flag
+			emit instructions reduce [address-op global-address hidden 0]
+		]
+		emit instructions reduce [reference-op ref 0 0]
+		last-type: ref
+		last-flags: 0
+
+		either block? storage [
+			record: storage/2
+			either record/2 = 0 [
+				record/2: ref
+				record/3: 0
+			][unless coerce-stack record/2 record/3 instructions false [
+				fail ERROR-REFERENCE ["declaration changes type " mold target]
+			]]
+		][either integer? id [
+			record: skip global-data ((id - 1) * 5)
+			either integer? record/2 [
+				unless coerce-stack record/2 0 instructions false [
+					fail ERROR-REFERENCE ["declaration changes type " mold target]
+				]
+			][
+				record/2: ref
+				record/3: 0
+			]
+		][
+			unless coerce-stack target-ref target-flags instructions false [
+				fail ERROR-REFERENCE ["declaration changes type " mold target]
+			]
+		]]
+		emit instructions reduce [set-op 0 0 0]
+		next-position
+	]
+
 	stack-assignment: func [
 		position [block!]
 		scope uses [block!]
@@ -3106,8 +3298,12 @@ compiler-rsir-frontend: context [
 		][to path! position/1]
 		storage: either word? target [stack-storage-info target params locals][none]
 		id: either block? storage [none][resolve-name target scope uses globals]
+		if position/2 = 'declare [
+			return stack-declaration position target storage id scope uses instructions
+				params locals fold?
+		]
 		if all [fold? integer? id][
-			record: skip global-data ((id - 1) * 4)
+			record: skip global-data ((id - 1) * 5)
 			if all [
 				not integer? record/2
 				stack-static position scope uses
@@ -3118,8 +3314,9 @@ compiler-rsir-frontend: context [
 				]
 			][
 				record/2: static-ref
-				record/3: static-low
-				record/4: static-high
+				record/3: 0
+				record/4: static-low
+				record/5: static-high
 				last-type: 0
 				last-flags: 0
 				return static-next
@@ -3144,7 +3341,7 @@ compiler-rsir-frontend: context [
 				]
 			]
 		][either integer? id [
-			record: skip global-data ((id - 1) * 4)
+			record: skip global-data ((id - 1) * 5)
 			either integer? record/2 [
 				unless coerce-stack record/2 0 instructions false [
 					fail ERROR-REFERENCE ["global assignment changes type " mold target]
@@ -3345,6 +3542,7 @@ compiler-rsir-frontend: context [
 			clear types
 			clear type-ids
 			clear pointer-types
+			clear aggregate-types
 			clear constants
 			clear imports
 			clear import-ids

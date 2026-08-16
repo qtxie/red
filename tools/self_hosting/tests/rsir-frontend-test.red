@@ -47,7 +47,7 @@ layout-of: func [ir [binary!] /local types imports functions globals switches me
 	]
 	import-at: type-at + (types * 20) + (member-count * 8)
 	global-at: import-at + (imports * 32)
-	function-at: global-at + (globals * 20)
+	function-at: global-at + (globals * 24)
 	use-count: 0
 	id: 0
 	while [id < imports][
@@ -70,6 +70,10 @@ layout-of: func [ir [binary!] /local types imports functions globals switches me
 
 function-word: func [ir layout id field][
 	word-at ir (layout/4 + ((id - 1) * 36) + field)
+]
+
+global-word: func [ir layout id field][
+	word-at ir (layout/3 + ((id - 1) * 24) + field)
 ]
 
 instruction-word: func [ir layout id field][
@@ -279,6 +283,70 @@ assert all [
 	(instruction-word member-address-ir member-address-layout 3 4) = 1
 	(instruction-word member-address-ir member-address-layout 4 0) = 20
 ]["aggregate get-path introduced a source-shaped address operation"]
+
+scalar-declare-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local value [integer!]][
+		value: declare integer!
+		value: 7
+		value
+	]
+} 'user
+assert binary? scalar-declare-ir [
+	"scalar DECLARE failed: " mold frontend/last-error
+]
+scalar-declare-layout: layout-of scalar-declare-ir
+assert (ops-of scalar-declare-ir scalar-declare-layout) = [3 1 5 12 3 4 11]
+	"scalar DECLARE emitted runtime initialization"
+
+local-declare-ir: compile-text {
+	Red/System []
+	pair!: alias struct! [left [integer!] right [integer!]]
+	fn: func [return: [integer!] /local pair [pair!]][
+		pair: declare pair!
+		pair/left: 73
+		pair/left
+	]
+} 'user
+assert binary? local-declare-ir [
+	"local aggregate DECLARE failed: " mold frontend/last-error
+]
+local-declare-layout: layout-of local-declare-ir
+assert all [
+	(function-word local-declare-ir local-declare-layout 1 28) = 2
+	(word-at local-declare-ir (local-declare-layout/5 + 4)) = 0
+	(word-at local-declare-ir (local-declare-layout/5 + 12)) = 1
+	(copy/part ops-of local-declare-ir local-declare-layout 5) = [3 3 20 5 12]
+]["local DECLARE did not expose one pointer variable over one inline object"]
+
+global-declare-ir: compile-text {
+	Red/System []
+	pair-value: declare struct! [left [integer!] right [integer!]]
+	fn: func [return: [integer!]][pair-value/left]
+} 'user
+assert binary? global-declare-ir [
+	"global aggregate DECLARE failed: " mold frontend/last-error
+]
+global-declare-layout: layout-of global-declare-ir
+assert all [
+	(word-at global-declare-ir 8) = 1
+	(word-at global-declare-ir 24) = 2
+	(global-word global-declare-ir global-declare-layout 1 4) = 10
+	(global-word global-declare-ir global-declare-layout 1 12) = 2
+	(global-word global-declare-ir global-declare-layout 1 16) = 2
+	(global-word global-declare-ir global-declare-layout 2 4) = 0
+	(global-word global-declare-ir global-declare-layout 2 8)
+		= global-word global-declare-ir global-declare-layout 1 8
+	(global-word global-declare-ir global-declare-layout 2 12) = 1
+]["global DECLARE was not one static reference to one anonymous inline object"]
+
+assert none? compile-text {
+	Red/System []
+	empty!: alias struct! []
+	fn: func [return: [integer!]][0]
+} 'user "empty aggregate alias was accepted"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"empty aggregate alias reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []

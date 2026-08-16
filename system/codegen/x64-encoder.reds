@@ -4,58 +4,88 @@ Red/System [
 ]
 
 x64-encoder: context [
-	VOID:        0
-	I32_LITERAL: 1
-	I32_CALL:    2
-	I32_PARAM:   3
-	I32_CALL_ARG_LITERAL: 4
-	I32_CALL_ARG_PARAM:   5
-	I32_IMPORT:            6
-	I32_IMPORT_ARG_LITERAL: 7
-	I32_IMPORT_ARG_PARAM:   8
-	I32_GLOBAL:             9
-	I32_IMPORT_LOAD:       10
-	SCALAR_IMPORT_STORE:   11
+	NONE: 0
+	PROLOG: 1
+	SHADOW: 2
+	I32_CALL: 3
+	I32_CALL_LITERAL: 4
+	I32_CALL_PARAM: 5
+	I32_CALL_RAX: 6
+	I32_IMPORT: 7
+	I32_IMPORT_LITERAL: 8
+	I32_IMPORT_PARAM: 9
+	I32_IMPORT_RAX: 10
+	I32_GLOBAL: 11
+	I32_IMPORT_LOAD: 12
+	SCALAR_IMPORT_STORE: 13
+	RETURN_VOID: 14
+	RETURN_RAX: 15
+	RETURN_PARAM: 16
+	RETURN_LITERAL: 17
+	ENTRY_VOID: 18
+	ENTRY_RAX: 19
+	ENTRY_PARAM: 20
+	ENTRY_LITERAL: 21
 
-	VOID_SIZE:       17
-	VOID_ENTRY_SIZE: 31
-	I32_SIZE:         22
-	I32_ENTRY_SIZE:   34
-	CALL_SIZE:        22
-	CALL_ENTRY_SIZE:  36
-	PARAM_SIZE:       19
-	CALL_ARG_LITERAL_SIZE:       27
-	CALL_ARG_LITERAL_ENTRY_SIZE: 41
-	CALL_ARG_PARAM_SIZE:         22
-	IMPORT_CALL_SIZE:             27
-	IMPORT_CALL_ENTRY_SIZE:       37
-	IMPORT_CALL_ARG_LITERAL_SIZE: 32
-	IMPORT_CALL_ARG_LITERAL_ENTRY_SIZE: 42
-	IMPORT_CALL_ARG_PARAM_SIZE:   27
-	GLOBAL_SIZE:       23
-	GLOBAL_ENTRY_SIZE: 35
-	IMPORT_LOAD_SIZE:        26
-	IMPORT_LOAD_ENTRY_SIZE:  38
-	IMPORT_STORE_SIZE:       30
-	IMPORT_STORE_ENTRY_SIZE: 44
-	FRAME_SIZE:      32
-	BITMAP_OFFSET:    9
-	VOID_EXIT_REF:   23
-	I32_EXIT_REF:    26
-	CALL_EXIT_REF:   28
-	CALL_NEXT:       20
-	CALL_ARG_LITERAL_EXIT_REF: 33
-	CALL_ARG_LITERAL_NEXT:     25
-	IMPORT_CALL_REF:             21
-	IMPORT_CALL_EXIT_REF:        29
-	IMPORT_CALL_ARG_LITERAL_REF: 26
-	IMPORT_CALL_ARG_LITERAL_EXIT_REF: 34
-	GLOBAL_REF:      17
-	GLOBAL_EXIT_REF: 27
-	IMPORT_LOAD_REF:       18
-	IMPORT_LOAD_EXIT_REF:  30
-	IMPORT_STORE_REF:      18
-	IMPORT_STORE_EXIT_REF: 36
+	SHADOW_FLAG: 256
+	FORM_MASK: 255
+	FRAME_SIZE: 32
+	BITMAP_OFFSET: 9
+
+	form-size: func [form [integer!] return: [integer!]][
+		case [
+			form = NONE [0]
+			form = PROLOG [15]
+			form = SHADOW [4]
+			form = I32_CALL [5]
+			form = I32_CALL_LITERAL [10]
+			form = I32_CALL_PARAM [5]
+			form = I32_CALL_RAX [7]
+			form = I32_IMPORT [6]
+			form = I32_IMPORT_LITERAL [11]
+			form = I32_IMPORT_PARAM [6]
+			form = I32_IMPORT_RAX [8]
+			form = I32_GLOBAL [6]
+			form = I32_IMPORT_LOAD [9]
+			form = SCALAR_IMPORT_STORE [13]
+			form = RETURN_VOID [2]
+			form = RETURN_RAX [2]
+			form = RETURN_PARAM [4]
+			form = RETURN_LITERAL [7]
+			form = ENTRY_VOID [12]
+			form = ENTRY_RAX [12]
+			form = ENTRY_PARAM [10]
+			form = ENTRY_LITERAL [15]
+			true [-1]
+		]
+	]
+
+	reference-offset: func [form [integer!] return: [integer!]][
+		case [
+			form = I32_IMPORT [2]
+			form = I32_IMPORT_LITERAL [7]
+			form = I32_IMPORT_PARAM [2]
+			form = I32_IMPORT_RAX [4]
+			form = I32_GLOBAL [2]
+			form = I32_IMPORT_LOAD [3]
+			form = SCALAR_IMPORT_STORE [3]
+			form = ENTRY_VOID [4]
+			form = ENTRY_RAX [4]
+			form = ENTRY_PARAM [2]
+			form = ENTRY_LITERAL [7]
+			true [-1]
+		]
+	]
+
+	call-next: func [form [integer!] return: [integer!]][
+		case [
+			form = I32_CALL [5]
+			form = I32_CALL_LITERAL [10]
+			form = I32_CALL_PARAM [5]
+			form = I32_CALL_RAX [7]
+			true [-1]
+		]
+	]
 
 	write-i32: func [at [byte-ptr!] value [integer!]][
 		at/1: as byte! value
@@ -66,190 +96,144 @@ x64-encoder: context [
 
 	encode: func [
 		code [byte-ptr!]
-		capacity [integer!]
-		entry? [logic!]
-		shape [integer!]
-		value argument bitmap-word [integer!]
+		capacity form value argument [integer!]
 		return: [integer!]
-		/local size [integer!] at [byte-ptr!] imported? [logic!]
+		/local size [integer!] at [byte-ptr!]
 	][
 		if null? code [return -1]
-		imported?: any [
-			shape = I32_IMPORT
-			shape = I32_IMPORT_ARG_LITERAL
-			shape = I32_IMPORT_ARG_PARAM
-		]
-		size: case [
-			all [entry? shape = VOID] [VOID_ENTRY_SIZE]
-			all [entry? shape = I32_LITERAL] [I32_ENTRY_SIZE]
-			all [entry? shape = I32_CALL] [CALL_ENTRY_SIZE]
-			all [entry? shape = I32_CALL_ARG_LITERAL] [CALL_ARG_LITERAL_ENTRY_SIZE]
-			all [not entry? shape = VOID] [VOID_SIZE]
-			all [not entry? shape = I32_LITERAL] [I32_SIZE]
-			all [not entry? shape = I32_CALL] [CALL_SIZE]
-			all [not entry? shape = I32_PARAM] [PARAM_SIZE]
-			all [not entry? shape = I32_CALL_ARG_LITERAL] [CALL_ARG_LITERAL_SIZE]
-			all [not entry? shape = I32_CALL_ARG_PARAM] [CALL_ARG_PARAM_SIZE]
-			all [entry? shape = I32_IMPORT] [IMPORT_CALL_ENTRY_SIZE]
-			all [entry? shape = I32_IMPORT_ARG_LITERAL][
-				IMPORT_CALL_ARG_LITERAL_ENTRY_SIZE
-			]
-			all [not entry? shape = I32_IMPORT] [IMPORT_CALL_SIZE]
-			all [not entry? shape = I32_IMPORT_ARG_LITERAL][
-				IMPORT_CALL_ARG_LITERAL_SIZE
-			]
-			all [not entry? shape = I32_IMPORT_ARG_PARAM][
-				IMPORT_CALL_ARG_PARAM_SIZE
-			]
-			all [entry? shape = I32_GLOBAL] [GLOBAL_ENTRY_SIZE]
-			all [not entry? shape = I32_GLOBAL] [GLOBAL_SIZE]
-			all [entry? shape = I32_IMPORT_LOAD] [IMPORT_LOAD_ENTRY_SIZE]
-			all [not entry? shape = I32_IMPORT_LOAD] [IMPORT_LOAD_SIZE]
-			all [entry? shape = SCALAR_IMPORT_STORE] [IMPORT_STORE_ENTRY_SIZE]
-			all [not entry? shape = SCALAR_IMPORT_STORE] [IMPORT_STORE_SIZE]
-			true [return -1]
-		]
-		if capacity < size [return -1]
-
+		size: form-size form
+		if any [size < 0 capacity < size][return -1]
 		at: code
-		at/1: as byte! 55h                             ; push rbp
-		at/2: as byte! 48h
-		at/3: as byte! 89h
-		at/4: as byte! E5h                             ; mov rbp, rsp
-		at/5: as byte! 6Ah
-		at/6: as byte! 00h                             ; catch ID
-		at/7: as byte! 6Ah
-		at/8: as byte! 00h                             ; catch resume
-		at/9: as byte! 68h                             ; push bitmap word offset
-		write-i32 (at + 9) bitmap-word
-		at/14: as byte! 6Ah
-		at/15: as byte! 00h                            ; parent frame
-		at: at + 15
-		if imported? [
-			at/1: as byte! 48h
-			at/2: as byte! 83h
-			at/3: as byte! ECh
-			at/4: as byte! 20h                            ; Win64 shadow space
-			at: at + 4
-		]
 
 		case [
-			shape = I32_LITERAL [
-				at/1: as byte! either entry? [B9h][B8h] ; mov ecx/eax, imm32
-				write-i32 (at + 1) value
-				at: at + 5
+			form = PROLOG [
+				at/1: as byte! 55h                         ; push rbp
+				at/2: as byte! 48h
+				at/3: as byte! 89h
+				at/4: as byte! E5h                         ; mov rbp, rsp
+				at/5: as byte! 6Ah
+				at/6: as byte! 00h                         ; catch ID
+				at/7: as byte! 6Ah
+				at/8: as byte! 00h                         ; catch resume
+				at/9: as byte! 68h                         ; bitmap word offset
+				write-i32 (at + 9) argument
+				at/14: as byte! 6Ah
+				at/15: as byte! 00h                        ; parent frame
 			]
-			shape = I32_CALL [
-				at/1: as byte! E8h                       ; call rel32
-				write-i32 (at + 1) value
-				at: at + 5
-				if entry? [
-					at/1: as byte! 89h
-					at/2: as byte! C1h                   ; mov ecx, eax
-					at: at + 2
-				]
-			]
-			shape = I32_PARAM [
-				at/1: as byte! 89h
-				at/2: as byte! C8h                       ; mov eax, ecx
-				at: at + 2
-			]
-			shape = I32_CALL_ARG_LITERAL [
-				at/1: as byte! B9h                       ; mov ecx, imm32
-				write-i32 (at + 1) argument
-				at/6: as byte! E8h                       ; call rel32
-				write-i32 (at + 6) value
-				at: at + 10
-				if entry? [
-					at/1: as byte! 89h
-					at/2: as byte! C1h                   ; mov ecx, eax
-					at: at + 2
-				]
-			]
-			shape = I32_CALL_ARG_PARAM [
-				at/1: as byte! E8h                       ; RCX already holds argument
-				write-i32 (at + 1) value
-				at: at + 5
-			]
-			shape = I32_IMPORT [
-				at/1: as byte! FFh
-				at/2: as byte! 15h                       ; call [rip + rel32]
-				write-i32 (at + 2) 0
-				at: at + 6
-				if entry? [
-					at/1: as byte! 89h
-					at/2: as byte! C1h                   ; mov ecx, eax
-					at: at + 2
-				]
-			]
-			shape = I32_IMPORT_ARG_LITERAL [
-				at/1: as byte! B9h                       ; mov ecx, imm32
-				write-i32 (at + 1) argument
-				at/6: as byte! FFh
-				at/7: as byte! 15h                       ; call [rip + rel32]
-				write-i32 (at + 7) 0
-				at: at + 11
-				if entry? [
-					at/1: as byte! 89h
-					at/2: as byte! C1h                   ; mov ecx, eax
-					at: at + 2
-				]
-			]
-			shape = I32_IMPORT_ARG_PARAM [
-				at/1: as byte! FFh                       ; RCX already holds argument
-				at/2: as byte! 15h
-				write-i32 (at + 2) 0
-				at: at + 6
-			]
-			shape = I32_GLOBAL [
-				at/1: as byte! 8Bh
-				at/2: as byte! either entry? [0Dh][05h] ; mov ecx/eax, [rip + rel32]
-				write-i32 (at + 2) 0
-				at: at + 6
-			]
-			shape = I32_IMPORT_LOAD [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 05h                       ; mov rax, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! 8Bh
-				at/9: as byte! either entry? [08h][00h] ; mov ecx/eax, [rax]
-				at: at + 9
-			]
-			shape = SCALAR_IMPORT_STORE [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 05h                       ; mov rax, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! C7h
-				at/9: as byte! 00h                       ; mov dword [rax], imm32
-				write-i32 (at + 9) value
-				at: at + 13
-			]
-			true []
-		]
-		if all [entry? any [shape = VOID shape = SCALAR_IMPORT_STORE]][
-			at/1: as byte! 31h
-			at/2: as byte! C9h                           ; xor ecx, ecx
-			at: at + 2
-		]
-		if entry? [
-			unless imported? [
+			form = SHADOW [
 				at/1: as byte! 48h
 				at/2: as byte! 83h
 				at/3: as byte! ECh
-				at/4: as byte! 20h                       ; Win64 shadow space
-				at: at + 4
+				at/4: as byte! 20h                         ; Win64 shadow space
 			]
+			form = I32_CALL [
+				at/1: as byte! E8h
+				write-i32 (at + 1) value
+			]
+			form = I32_CALL_LITERAL [
+				at/1: as byte! B9h                         ; mov ecx, imm32
+				write-i32 (at + 1) argument
+				at/6: as byte! E8h
+				write-i32 (at + 6) value
+			]
+			form = I32_CALL_PARAM [
+				at/1: as byte! E8h                         ; RCX already holds argument
+				write-i32 (at + 1) value
+			]
+			form = I32_CALL_RAX [
+				at/1: as byte! 89h
+				at/2: as byte! C1h                         ; mov ecx, eax
+				at/3: as byte! E8h
+				write-i32 (at + 3) value
+			]
+			form = I32_IMPORT [
+				at/1: as byte! FFh
+				at/2: as byte! 15h                         ; call [rip + rel32]
+				write-i32 (at + 2) 0
+			]
+			form = I32_IMPORT_LITERAL [
+				at/1: as byte! B9h
+				write-i32 (at + 1) argument
+				at/6: as byte! FFh
+				at/7: as byte! 15h
+				write-i32 (at + 7) 0
+			]
+			form = I32_IMPORT_PARAM [
+				at/1: as byte! FFh
+				at/2: as byte! 15h                         ; RCX already holds argument
+				write-i32 (at + 2) 0
+			]
+			form = I32_IMPORT_RAX [
+				at/1: as byte! 89h
+				at/2: as byte! C1h                         ; mov ecx, eax
+				at/3: as byte! FFh
+				at/4: as byte! 15h
+				write-i32 (at + 4) 0
+			]
+			form = I32_GLOBAL [
+				at/1: as byte! 8Bh
+				at/2: as byte! 05h                         ; mov eax, [rip + rel32]
+				write-i32 (at + 2) 0
+			]
+			form = I32_IMPORT_LOAD [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! 8Bh
+				at/9: as byte! 00h                         ; mov eax, [rax]
+			]
+			form = SCALAR_IMPORT_STORE [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! C7h
+				at/9: as byte! 00h                         ; mov dword [rax], imm32
+				write-i32 (at + 9) value
+			]
+			any [form = RETURN_VOID form = RETURN_RAX] []
+			form = RETURN_PARAM [
+				at/1: as byte! 89h
+				at/2: as byte! C8h                         ; mov eax, ecx
+				at: at + 2
+			]
+			form = RETURN_LITERAL [
+				at/1: as byte! B8h                         ; mov eax, imm32
+				write-i32 (at + 1) value
+				at: at + 5
+			]
+			form = ENTRY_VOID [
+				at/1: as byte! 31h
+				at/2: as byte! C9h                         ; xor ecx, ecx
+				at: at + 2
+			]
+			form = ENTRY_RAX [
+				at/1: as byte! 89h
+				at/2: as byte! C1h                         ; mov ecx, eax
+				at: at + 2
+			]
+			form = ENTRY_PARAM []
+			form = ENTRY_LITERAL [
+				at/1: as byte! B9h                         ; mov ecx, imm32
+				write-i32 (at + 1) value
+				at: at + 5
+			]
+			true [return -1]
+		]
+
+		if form >= ENTRY_VOID [
 			at/1: as byte! FFh
 			at/2: as byte! 15h                           ; call [rip + rel32]
 			write-i32 (at + 2) 0
 			at/7: as byte! 31h
-			at/8: as byte! C0h                          ; unreachable fallback
+			at/8: as byte! C0h                           ; unreachable fallback
 			at: at + 8
 		]
-		at/1: as byte! C9h                             ; leave
-		at/2: as byte! C3h                             ; ret
+		if form >= RETURN_VOID [
+			at/1: as byte! C9h                           ; leave
+			at/2: as byte! C3h                           ; ret
+		]
 		size
 	]
 ]

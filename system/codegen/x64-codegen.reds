@@ -136,6 +136,10 @@ x64-codegen: context [
 	INVALID_IR:   -1
 	UNSUPPORTED:  -2
 	OUTPUT_FULL: -3
+	VALUE_NONE:    0
+	VALUE_LITERAL: 1
+	VALUE_PARAM:   2
+	VALUE_RAX:     3
 
 	align: func [value boundary [integer!] return: [integer!]
 		/local remainder padding [integer!]
@@ -340,330 +344,300 @@ x64-codegen: context [
 		true
 	]
 
-	shape-of: func [
+	select-function: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
-		parameters [byte-ptr!]
-		function-data import-data global-data [byte-ptr!]
-		type-data [byte-ptr!]
+		plans import-refs [int-ptr!]
+		parameters function-data import-data global-data type-data member-data
+			image-data [byte-ptr!]
 		type-count function-count import-count global-count [integer!]
+		entry? [logic!]
+		global-reference-count [int-ptr!]
 		return: [integer!]
-		/local instruction call terminator [rsir-instruction!]
+		/local instruction [rsir-instruction!]
 			callee [rsir-function!]
 			imported [rsir-import!]
 			variable [rsir-global!]
+			image-global [codegen-global!]
+			index form plan value-id value-kind next-value argument-kind
+			import-id global-id function-size part-size unused-size unused-align
 			parameter-count [integer!]
+			shadow? terminated? call? parameter-live? [logic!]
 	][
-		instruction: as rsir-instruction! instructions
 		parameter-count: fn/parameter-count
-		case [
+		unless any [
 			all [
 				fn/return-type = 0
 				(fn/flags and (FUNCTION_FLAGS - 3)) = 0
 				parameter-count = 0
-				fn/instruction-count = 1
-				instruction/opcode = 2
-				instruction/result = 0
-				instruction/operand = 0
-				instruction/immediate = 0
-			][x64-encoder/VOID]
-			all [
-				fn/return-type = 0
-				(fn/flags and (FUNCTION_FLAGS - 3)) = 0
-				parameter-count = 0
-				fn/instruction-count = 2
-				instruction/opcode = 8
-				instruction/result = 0
-				instruction/operand > 0
-				instruction/operand <= import-count
-			][
-				terminator: as rsir-instruction!
-					(instructions + RSIR_INSTRUCTION_SIZE)
-				unless all [
-					terminator/opcode = 2
-					terminator/result = 0
-					terminator/operand = 0
-					terminator/immediate = 0
-				][return INVALID_IR]
-				imported: as rsir-import! (import-data
-					+ ((instruction/operand - 1) * RSIR_IMPORT_SIZE))
-				either all [
-					imported/flags = 0
-					scalar32-ref? imported/type type-data type-count
-				][x64-encoder/SCALAR_IMPORT_STORE][UNSUPPORTED]
 			]
-			all [
-				i32-function? fn parameters type-data type-count 1
-				fn/instruction-count = 1
-				instruction/opcode = 3
-				instruction/result = 0
-				instruction/operand = 1
-				instruction/immediate = 0
-			][x64-encoder/I32_PARAM]
 			all [
 				parameter-count <= 1
 				i32-function? fn parameters type-data type-count parameter-count
-				fn/instruction-count = 2
-				any [
-					instruction/opcode = 1
-					instruction/opcode = 5
-					instruction/opcode = 6
-					instruction/opcode = 7
-					all [instruction/opcode = 4 instruction/immediate = 0]
-				]
-			][
-				terminator: as rsir-instruction!
-					(instructions + RSIR_INSTRUCTION_SIZE)
-				unless all [
-					terminator/opcode = 3
-					terminator/result = 0
-					terminator/operand = instruction/result
-					terminator/immediate = 0
-				][return INVALID_IR]
-				case [
-					all [
-						instruction/opcode = 1
-						instruction/result = (parameter-count + 1)
+			]
+		][return UNSUPPORTED]
+		if all [entry? parameter-count > 0][return UNSUPPORTED]
+
+		function-size: x64-encoder/form-size x64-encoder/PROLOG
+		next-value: parameter-count
+		value-id: 0
+		value-kind: VALUE_NONE
+		unused-size: 0
+		unused-align: 0
+		shadow?: false
+		terminated?: false
+		parameter-live?: parameter-count = 1
+		index: 1
+		while [index <= fn/instruction-count][
+			if terminated? [return INVALID_IR]
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			form: x64-encoder/NONE
+			plan: form
+			import-id: 0
+			global-id: 0
+			call?: false
+			case [
+				instruction/opcode = 1 [
+					unless all [
+						instruction/result = (next-value + 1)
 						instruction/operand = 0
-					][x64-encoder/I32_LITERAL]
-					all [
-						instruction/opcode = 5
-						instruction/result = (parameter-count + 1)
-						instruction/immediate = 0
-					][x64-encoder/I32_LITERAL]
-					all [
-						instruction/opcode = 4
-						instruction/result = (parameter-count + 1)
-						instruction/operand > 0
-						instruction/operand <= function-count
-						instruction/immediate = 0
-					][
-						callee: as rsir-function! (function-data
-							+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
-						either i32-function? callee parameters type-data type-count 0 [
-							x64-encoder/I32_CALL
-						][UNSUPPORTED]
-					]
-					all [
-						instruction/opcode = 4
-						instruction/result = (parameter-count + 1)
-						instruction/operand < 0
-						instruction/operand >= (0 - import-count)
-						instruction/immediate = 0
-					][
-						imported: as rsir-import! (import-data
-							+ (((0 - instruction/operand) - 1) * RSIR_IMPORT_SIZE))
-						either i32-import? imported parameters type-data type-count 0 [
-							x64-encoder/I32_IMPORT
-						][UNSUPPORTED]
-					]
-					instruction/opcode = 6 [
-						unless all [
-							instruction/result = (parameter-count + 1)
-							instruction/operand > 0
-							instruction/operand <= global-count
-							instruction/immediate = 0
-						][return INVALID_IR]
-						variable: as rsir-global! (global-data
-							+ ((instruction/operand - 1) * RSIR_GLOBAL_SIZE))
-						either integer32-ref? variable/type type-data type-count [
-							x64-encoder/I32_GLOBAL
-						][UNSUPPORTED]
-					]
-					instruction/opcode = 7 [
-						unless all [
-							instruction/result = (parameter-count + 1)
-							instruction/operand > 0
-							instruction/operand <= import-count
-							instruction/immediate = 0
-						][return INVALID_IR]
-						imported: as rsir-import! (import-data
-							+ ((instruction/operand - 1) * RSIR_IMPORT_SIZE))
-						either all [
-							imported/flags = 0
-							integer32-ref? imported/type type-data type-count
-						][x64-encoder/I32_IMPORT_LOAD][UNSUPPORTED]
-					]
-					true [UNSUPPORTED]
+					][return INVALID_IR]
+					next-value: instruction/result
+					value-id: next-value
+					value-kind: VALUE_LITERAL
 				]
-			]
-			all [
-				parameter-count <= 1
-				i32-function? fn parameters type-data type-count parameter-count
-				fn/instruction-count = 3
-				instruction/opcode = 1
-				instruction/result = (parameter-count + 1)
-				instruction/operand = 0
-			][
-				call: as rsir-instruction! (instructions + RSIR_INSTRUCTION_SIZE)
-				terminator: as rsir-instruction!
-					(instructions + (RSIR_INSTRUCTION_SIZE * 2))
-				unless all [
-					call/opcode = 4
-					call/result = (instruction/result + 1)
-					any [
-						all [call/operand > 0 call/operand <= function-count]
-						all [
-							call/operand < 0
-							call/operand >= (0 - import-count)
+				instruction/opcode = 5 [
+					unless all [
+						instruction/result = (next-value + 1)
+						instruction/immediate = 0
+						valid-type-ref? instruction/operand type-count
+						layout-type instruction/operand true type-data member-data
+							type-count 0 :unused-size :unused-align
+					][return INVALID_IR]
+					next-value: instruction/result
+					value-id: next-value
+					value-kind: VALUE_LITERAL
+				]
+				instruction/opcode = 4 [
+					unless instruction/result = (next-value + 1)[return INVALID_IR]
+					argument-kind: VALUE_NONE
+					if instruction/immediate <> 0 [
+						case [
+							all [
+								instruction/immediate = value-id
+								value-kind = VALUE_LITERAL
+							][argument-kind: VALUE_LITERAL]
+							all [
+								instruction/immediate = value-id
+								value-kind = VALUE_RAX
+							][argument-kind: VALUE_RAX]
+							all [
+								instruction/immediate = 1
+								parameter-count = 1
+								parameter-live?
+							][argument-kind: VALUE_PARAM]
+							true [return INVALID_IR]
 						]
 					]
-					call/immediate = instruction/result
-					terminator/opcode = 3
-					terminator/result = 0
-					terminator/operand = call/result
-					terminator/immediate = 0
-				][return INVALID_IR]
-				either call/operand > 0 [
-					callee: as rsir-function! (function-data
-						+ ((call/operand - 1) * RSIR_FUNCTION_SIZE))
-					either i32-function? callee parameters type-data type-count 1 [
-						x64-encoder/I32_CALL_ARG_LITERAL
-					][UNSUPPORTED]
-				][
-					imported: as rsir-import! (import-data
-						+ (((0 - call/operand) - 1) * RSIR_IMPORT_SIZE))
-					either i32-import? imported parameters type-data type-count 1 [
-						x64-encoder/I32_IMPORT_ARG_LITERAL
-					][UNSUPPORTED]
-				]
-			]
-			all [
-				i32-function? fn parameters type-data type-count 1
-				fn/instruction-count = 2
-				instruction/opcode = 4
-				instruction/result = 2
-				any [
-					all [
-						instruction/operand > 0
-						instruction/operand <= function-count
+					either instruction/operand > 0 [
+						if instruction/operand > function-count [return INVALID_IR]
+						callee: as rsir-function! (function-data
+							+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
+						unless i32-function? callee parameters type-data type-count
+							either instruction/immediate = 0 [0][1] [
+							return UNSUPPORTED
+						]
+						form: case [
+							argument-kind = VALUE_NONE [x64-encoder/I32_CALL]
+							argument-kind = VALUE_LITERAL [
+								x64-encoder/I32_CALL_LITERAL
+							]
+							argument-kind = VALUE_PARAM [
+								x64-encoder/I32_CALL_PARAM
+							]
+							argument-kind = VALUE_RAX [
+								x64-encoder/I32_CALL_RAX
+							]
+							true [return INVALID_IR]
+						]
+					][
+						import-id: 0 - instruction/operand
+						if any [import-id <= 0 import-id > import-count][return INVALID_IR]
+						imported: as rsir-import! (import-data
+							+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+						unless i32-import? imported parameters type-data type-count
+							either instruction/immediate = 0 [0][1] [
+							return UNSUPPORTED
+						]
+						form: case [
+							argument-kind = VALUE_NONE [x64-encoder/I32_IMPORT]
+							argument-kind = VALUE_LITERAL [
+								x64-encoder/I32_IMPORT_LITERAL
+							]
+							argument-kind = VALUE_PARAM [
+								x64-encoder/I32_IMPORT_PARAM
+							]
+							argument-kind = VALUE_RAX [
+								x64-encoder/I32_IMPORT_RAX
+							]
+							true [return INVALID_IR]
+						]
 					]
-					all [
-						instruction/operand < 0
-						instruction/operand >= (0 - import-count)
+					next-value: instruction/result
+					value-id: next-value
+					value-kind: VALUE_RAX
+					parameter-live?: false
+					call?: true
+				]
+				instruction/opcode = 6 [
+					global-id: instruction/operand
+					unless all [
+						instruction/result = (next-value + 1)
+						global-id > 0
+						global-id <= global-count
+						instruction/immediate = 0
+					][return INVALID_IR]
+					variable: as rsir-global! (global-data
+						+ ((global-id - 1) * RSIR_GLOBAL_SIZE))
+					unless integer32-ref? variable/type type-data type-count [
+						return UNSUPPORTED
+					]
+					form: x64-encoder/I32_GLOBAL
+					next-value: instruction/result
+					value-id: next-value
+					value-kind: VALUE_RAX
+				]
+				instruction/opcode = 7 [
+					import-id: instruction/operand
+					unless all [
+						instruction/result = (next-value + 1)
+						import-id > 0
+						import-id <= import-count
+						instruction/immediate = 0
+					][return INVALID_IR]
+					imported: as rsir-import! (import-data
+						+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+					unless all [
+						imported/flags = 0
+						integer32-ref? imported/type type-data type-count
+					][return UNSUPPORTED]
+					form: x64-encoder/I32_IMPORT_LOAD
+					next-value: instruction/result
+					value-id: next-value
+					value-kind: VALUE_RAX
+				]
+				instruction/opcode = 8 [
+					import-id: instruction/operand
+					unless all [
+						instruction/result = 0
+						import-id > 0
+						import-id <= import-count
+					][return INVALID_IR]
+					imported: as rsir-import! (import-data
+						+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+					unless all [
+						imported/flags = 0
+						scalar32-ref? imported/type type-data type-count
+					][return UNSUPPORTED]
+					form: x64-encoder/SCALAR_IMPORT_STORE
+					if value-kind = VALUE_RAX [
+						value-id: 0
+						value-kind: VALUE_NONE
 					]
 				]
-				instruction/immediate = 1
-			][
-				terminator: as rsir-instruction!
-					(instructions + RSIR_INSTRUCTION_SIZE)
-				unless all [
-					terminator/opcode = 3
-					terminator/result = 0
-					terminator/operand = 2
-					terminator/immediate = 0
-				][return INVALID_IR]
-				either instruction/operand > 0 [
-					callee: as rsir-function! (function-data
-						+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
-					either i32-function? callee parameters type-data type-count 1 [
-						x64-encoder/I32_CALL_ARG_PARAM
-					][INVALID_IR]
-				][
-					imported: as rsir-import! (import-data
-						+ (((0 - instruction/operand) - 1) * RSIR_IMPORT_SIZE))
-					either i32-import? imported parameters type-data type-count 1 [
-						x64-encoder/I32_IMPORT_ARG_PARAM
-					][INVALID_IR]
+				instruction/opcode = 2 [
+					unless all [
+						fn/return-type = 0
+						instruction/result = 0
+						instruction/operand = 0
+						instruction/immediate = 0
+						index = fn/instruction-count
+					][return INVALID_IR]
+					form: either entry? [x64-encoder/ENTRY_VOID][
+						x64-encoder/RETURN_VOID
+					]
+					terminated?: true
+					call?: entry?
 				]
+				instruction/opcode = 3 [
+					unless all [
+						fn/return-type <> 0
+						instruction/result = 0
+						instruction/immediate = 0
+						index = fn/instruction-count
+					][return INVALID_IR]
+					argument-kind: case [
+						all [
+							instruction/operand = value-id
+							value-kind = VALUE_LITERAL
+						][VALUE_LITERAL]
+						all [
+							instruction/operand = value-id
+							value-kind = VALUE_RAX
+						][VALUE_RAX]
+						all [
+							instruction/operand = 1
+							parameter-count = 1
+							parameter-live?
+						][VALUE_PARAM]
+						true [return INVALID_IR]
+					]
+					form: case [
+						all [entry? argument-kind = VALUE_LITERAL][
+								x64-encoder/ENTRY_LITERAL
+						]
+						all [entry? argument-kind = VALUE_RAX][
+								x64-encoder/ENTRY_RAX
+						]
+						all [entry? argument-kind = VALUE_PARAM][
+								x64-encoder/ENTRY_PARAM
+						]
+						argument-kind = VALUE_LITERAL [x64-encoder/RETURN_LITERAL]
+						argument-kind = VALUE_RAX [x64-encoder/RETURN_RAX]
+						argument-kind = VALUE_PARAM [x64-encoder/RETURN_PARAM]
+						true [return INVALID_IR]
+					]
+					terminated?: true
+					call?: entry?
+				]
+				true [return UNSUPPORTED]
 			]
-			true [UNSUPPORTED]
-		]
-	]
+			plan: form
 
-	machine-size: func [
-		entry? [logic!]
-		shape [integer!]
-		return: [integer!]
-	][
-		case [
-			all [entry? shape = x64-encoder/VOID] [x64-encoder/VOID_ENTRY_SIZE]
-			all [entry? shape = x64-encoder/I32_LITERAL] [x64-encoder/I32_ENTRY_SIZE]
-			all [entry? shape = x64-encoder/I32_CALL] [x64-encoder/CALL_ENTRY_SIZE]
-			all [entry? shape = x64-encoder/I32_CALL_ARG_LITERAL][
-				x64-encoder/CALL_ARG_LITERAL_ENTRY_SIZE
+			if import-id > 0 [
+				if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
+				import-refs/import-id: import-refs/import-id + 1
 			]
-			all [not entry? shape = x64-encoder/VOID][x64-encoder/VOID_SIZE]
-			all [not entry? shape = x64-encoder/I32_LITERAL][x64-encoder/I32_SIZE]
-			all [not entry? shape = x64-encoder/I32_CALL][x64-encoder/CALL_SIZE]
-			all [not entry? shape = x64-encoder/I32_PARAM][x64-encoder/PARAM_SIZE]
-			all [not entry? shape = x64-encoder/I32_CALL_ARG_LITERAL][
-				x64-encoder/CALL_ARG_LITERAL_SIZE
+			if global-id > 0 [
+				image-global: as codegen-global! (image-data
+					+ (function-count * IMAGE_FUNCTION_SIZE)
+					+ ((global-id - 1) * IMAGE_GLOBAL_SIZE))
+				if any [
+					image-global/reference-count = 2147483647
+					global-reference-count/1 = 2147483647
+				][return OUTPUT_FULL]
+				image-global/reference-count: image-global/reference-count + 1
+				global-reference-count/1: global-reference-count/1 + 1
 			]
-			all [not entry? shape = x64-encoder/I32_CALL_ARG_PARAM][
-				x64-encoder/CALL_ARG_PARAM_SIZE
+			if all [call? not shadow?][
+				plan: form + x64-encoder/SHADOW_FLAG
+				part-size: x64-encoder/form-size x64-encoder/SHADOW
+				if function-size > (2147483647 - part-size)[return OUTPUT_FULL]
+				function-size: function-size + part-size
+				shadow?: true
 			]
-			all [entry? shape = x64-encoder/I32_IMPORT][
-				x64-encoder/IMPORT_CALL_ENTRY_SIZE
-			]
-			all [entry? shape = x64-encoder/I32_IMPORT_ARG_LITERAL][
-				x64-encoder/IMPORT_CALL_ARG_LITERAL_ENTRY_SIZE
-			]
-			all [not entry? shape = x64-encoder/I32_IMPORT][
-				x64-encoder/IMPORT_CALL_SIZE
-			]
-			all [not entry? shape = x64-encoder/I32_IMPORT_ARG_LITERAL][
-				x64-encoder/IMPORT_CALL_ARG_LITERAL_SIZE
-			]
-			all [not entry? shape = x64-encoder/I32_IMPORT_ARG_PARAM][
-				x64-encoder/IMPORT_CALL_ARG_PARAM_SIZE
-			]
-			all [entry? shape = x64-encoder/I32_GLOBAL][
-				x64-encoder/GLOBAL_ENTRY_SIZE
-			]
-			all [not entry? shape = x64-encoder/I32_GLOBAL][
-				x64-encoder/GLOBAL_SIZE
-			]
-			all [entry? shape = x64-encoder/I32_IMPORT_LOAD][
-				x64-encoder/IMPORT_LOAD_ENTRY_SIZE
-			]
-			all [not entry? shape = x64-encoder/I32_IMPORT_LOAD][
-				x64-encoder/IMPORT_LOAD_SIZE
-			]
-			all [entry? shape = x64-encoder/SCALAR_IMPORT_STORE][
-				x64-encoder/IMPORT_STORE_ENTRY_SIZE
-			]
-			all [not entry? shape = x64-encoder/SCALAR_IMPORT_STORE][
-				x64-encoder/IMPORT_STORE_SIZE
-			]
-			true [-1]
+			plans/index: plan
+			part-size: x64-encoder/form-size form
+			if any [
+				part-size < 0
+				function-size > (2147483647 - part-size)
+			][return OUTPUT_FULL]
+			function-size: function-size + part-size
+			index: index + 1
 		]
-	]
-
-	exit-reference: func [shape [integer!] return: [integer!]][
-		case [
-			shape = x64-encoder/VOID [x64-encoder/VOID_EXIT_REF]
-			shape = x64-encoder/I32_LITERAL [x64-encoder/I32_EXIT_REF]
-			shape = x64-encoder/I32_CALL [x64-encoder/CALL_EXIT_REF]
-			shape = x64-encoder/I32_CALL_ARG_LITERAL [
-				x64-encoder/CALL_ARG_LITERAL_EXIT_REF
-			]
-			shape = x64-encoder/I32_IMPORT [
-				x64-encoder/IMPORT_CALL_EXIT_REF
-			]
-			shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
-				x64-encoder/IMPORT_CALL_ARG_LITERAL_EXIT_REF
-			]
-			shape = x64-encoder/I32_GLOBAL [x64-encoder/GLOBAL_EXIT_REF]
-			shape = x64-encoder/I32_IMPORT_LOAD [
-				x64-encoder/IMPORT_LOAD_EXIT_REF
-			]
-			shape = x64-encoder/SCALAR_IMPORT_STORE [
-				x64-encoder/IMPORT_STORE_EXIT_REF
-			]
-			true [-1]
-		]
-	]
-
-	import-reference: func [shape [integer!] return: [integer!]][
-		case [
-			shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
-				x64-encoder/IMPORT_CALL_ARG_LITERAL_REF
-			]
-			shape = x64-encoder/I32_IMPORT_LOAD [x64-encoder/IMPORT_LOAD_REF]
-			shape = x64-encoder/SCALAR_IMPORT_STORE [x64-encoder/IMPORT_STORE_REF]
-			true [x64-encoder/IMPORT_CALL_REF]
-		]
+		unless terminated? [return INVALID_IR]
+		function-size
 	]
 
 	release: func [scratch [byte-ptr!] result [integer!] return: [integer!]][
@@ -684,12 +658,12 @@ x64-codegen: context [
 			ir-global [rsir-global!]
 			ir-function [rsir-function!]
 			ir-parameter [rsir-parameter!]
-			instruction call-instruction [rsir-instruction!]
+			instruction [rsir-instruction!]
 			image [codegen-header!]
 			image-function callee-record [codegen-function!]
 			image-global [codegen-global!]
 			image-import [codegen-import!]
-			references import-refs [int-ptr!]
+			references import-refs plans function-plans [int-ptr!]
 			type-data member-data import-data global-data function-data
 				parameter-data instruction-data
 				function-instructions strings name
@@ -701,7 +675,8 @@ x64-codegen: context [
 				names-size function-names-size global-names-size code-offset code-size
 				data-offset image-data-size total-size
 				id record-offset next-instruction function-size entry-size code-cursor
-				name-cursor shape entry-shape encoded value argument target relative call-next
+				name-cursor encoded value argument target call-next form plan
+				cursor-offset current-literal plan-index scratch-count exit-reference-id
 				library-offset external-offset variable-mode import-id global-id reference-id
 				used-import-count image-import-count import-reference-count reference-count
 				import-names-size output-import-id first-reference last-library count
@@ -1047,17 +1022,19 @@ x64-codegen: context [
 			global-names-size: global-names-size + ir-global/name-size
 			id: id + 1
 		]
-		scratch: null
-		import-refs: as int-ptr! 0
-		if header/import-count > 0 [
-			scratch: allocate (header/import-count * 4)
-			if null? scratch [return OUTPUT_FULL]
-			import-refs: as int-ptr! scratch
-			id: 1
-			while [id <= header/import-count][
-				import-refs/id: 0
-				id: id + 1
-			]
+		if header/import-count > (2147483647 - header/instruction-count)[
+			return OUTPUT_FULL
+		]
+		scratch-count: header/import-count + header/instruction-count
+		if scratch-count > (2147483647 / 4)[return OUTPUT_FULL]
+		scratch: allocate (scratch-count * 4)
+		if null? scratch [return OUTPUT_FULL]
+		import-refs: as int-ptr! scratch
+		plans: import-refs + header/import-count
+		id: 1
+		while [id <= header/import-count][
+			import-refs/id: 0
+			id: id + 1
 		]
 
 		id: 1
@@ -1065,7 +1042,6 @@ x64-codegen: context [
 		function-names-size: 0
 		code-size: 0
 		entry-size: 0
-		entry-shape: -1
 		global-reference-count: 0
 		while [id <= header/function-count][
 			record-offset: (id - 1) * RSIR_FUNCTION_SIZE
@@ -1081,56 +1057,21 @@ x64-codegen: context [
 			][return release scratch INVALID_IR]
 			function-instructions: instruction-data
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
-			instruction: as rsir-instruction! function-instructions
-			shape: shape-of ir-function function-instructions
-				parameter-data function-data import-data global-data type-data
-				header/type-count header/function-count header/import-count
-				header/global-count
-			if shape < 0 [return release scratch shape]
-			if all [
-				shape = x64-encoder/I32_LITERAL
-				instruction/opcode = 5
-				not valid-type-ref? instruction/operand header/type-count
-			][return release scratch INVALID_IR]
-			if any [
-				shape = x64-encoder/I32_IMPORT
-				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
-				shape = x64-encoder/I32_IMPORT_ARG_PARAM
-				shape = x64-encoder/I32_IMPORT_LOAD
-				shape = x64-encoder/SCALAR_IMPORT_STORE
-			][
-				call-instruction: instruction
-				if shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
-					call-instruction: as rsir-instruction!
-						(function-instructions + RSIR_INSTRUCTION_SIZE)
-				]
-				import-id: either any [
-					shape = x64-encoder/I32_IMPORT_LOAD
-					shape = x64-encoder/SCALAR_IMPORT_STORE
-				][instruction/operand][0 - call-instruction/operand]
-				import-refs/import-id: import-refs/import-id + 1
-			]
-			if shape = x64-encoder/I32_GLOBAL [
-				global-id: instruction/operand
-				image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE)
-					+ ((global-id - 1) * IMAGE_GLOBAL_SIZE))
-				if any [
-					image-global/reference-count = 2147483647
-					global-reference-count = 2147483647
-				][return release scratch OUTPUT_FULL]
-				image-global/reference-count: image-global/reference-count + 1
-				global-reference-count: global-reference-count + 1
-			]
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
-			image-function/frame-size: shape
 			current-entry?: all [entry? id = header/entry-function]
-			if all [current-entry? ir-function/parameter-count > 0][
-				return release scratch UNSUPPORTED
-			]
-			function-size: machine-size current-entry? shape
-			if function-size < 0 [return release scratch UNSUPPORTED]
+			function-size: select-function
+				ir-function
+				function-instructions
+				(plans + (next-instruction - 1))
+				import-refs
+				parameter-data function-data import-data global-data
+				type-data member-data (output + IMAGE_HEADER_SIZE)
+				header/type-count header/function-count header/import-count
+				header/global-count current-entry? :global-reference-count
+			if function-size < 0 [return release scratch function-size]
+			image-function/code-size: function-size
+			image-function/frame-size: x64-encoder/FRAME_SIZE
 			if function-names-size > (2147483647 - ir-function/name-size) [
 				return release scratch INVALID_IR
 			]
@@ -1139,17 +1080,14 @@ x64-codegen: context [
 				return release scratch INVALID_IR
 			]
 			code-size: code-size + function-size
-			if current-entry? [
-				entry-size: function-size
-				entry-shape: shape
-			]
+			if current-entry? [entry-size: function-size]
 			next-instruction: next-instruction + ir-function/instruction-count
 			id: id + 1
 		]
 		if next-instruction <> (header/instruction-count + 1)[
 			return release scratch INVALID_IR
 		]
-		if all [entry? entry-shape < 0][return release scratch INVALID_IR]
+		if all [entry? entry-size <= 0][return release scratch INVALID_IR]
 
 		used-import-count: 0
 		import-reference-count: 0
@@ -1270,9 +1208,8 @@ x64-codegen: context [
 			ir-function: as rsir-function! (function-data + record-offset)
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
-			shape: image-function/frame-size
 			current-entry?: all [entry? id = header/entry-function]
-			function-size: machine-size current-entry? shape
+			function-size: image-function/code-size
 			image-function/name: name-cursor
 			image-function/name-size: ir-function/name-size
 			image-function/code-offset: either current-entry? [0][code-cursor]
@@ -1319,6 +1256,7 @@ x64-codegen: context [
 			id: id + 1
 		]
 		output-import-id: 0
+		exit-reference-id: 0
 		last-library: -1
 		library-offset: 0
 		id: 1
@@ -1368,7 +1306,7 @@ x64-codegen: context [
 			image-import/external-size: 11
 			image-import/first-reference: first-reference
 			image-import/reference-count: 1
-			references/first-reference: exit-reference entry-shape
+			exit-reference-id: first-reference
 			copy-memory (names-output + library-offset)
 				(as byte-ptr! "kernel32.dll") 12
 			copy-memory (names-output + external-offset)
@@ -1389,92 +1327,126 @@ x64-codegen: context [
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
 			function-instructions: instruction-data
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
-			instruction: as rsir-instruction! function-instructions
+			function-plans: plans + (next-instruction - 1)
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
-			shape: image-function/frame-size
-			call-instruction: instruction
-			if any [
-				shape = x64-encoder/I32_CALL_ARG_LITERAL
-				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
-			][
-				call-instruction: as rsir-instruction!
-					(function-instructions + RSIR_INSTRUCTION_SIZE)
+			current-entry?: all [entry? id = header/entry-function]
+			cursor: code + image-function/code-offset
+			cursor-offset: 0
+			encoded: x64-encoder/encode cursor image-function/code-size
+				x64-encoder/PROLOG 0 0
+			if encoded <> (x64-encoder/form-size x64-encoder/PROLOG)[
+				return release scratch OUTPUT_FULL
 			]
-			value: 0
-			argument: 0
-			value: case [
-				shape = x64-encoder/I32_LITERAL [
-					either instruction/opcode = 5 [
+			cursor: cursor + encoded
+			cursor-offset: cursor-offset + encoded
+			current-literal: 0
+			plan-index: 1
+			while [plan-index <= ir-function/instruction-count][
+				instruction: as rsir-instruction! (function-instructions
+					+ ((plan-index - 1) * RSIR_INSTRUCTION_SIZE))
+				plan: function-plans/plan-index
+				if (plan and x64-encoder/SHADOW_FLAG) <> 0 [
+					encoded: x64-encoder/encode cursor
+						(image-function/code-size - cursor-offset)
+						x64-encoder/SHADOW 0 0
+					if encoded <> (x64-encoder/form-size x64-encoder/SHADOW)[
+						return release scratch OUTPUT_FULL
+					]
+					cursor: cursor + encoded
+					cursor-offset: cursor-offset + encoded
+				]
+				form: plan and x64-encoder/FORM_MASK
+				value: 0
+				argument: 0
+				case [
+					instruction/opcode = 1 [current-literal: instruction/immediate]
+					instruction/opcode = 5 [
 						unless layout-type instruction/operand true type-data member-data
 							header/type-count 0 :value :argument [
 							return release scratch INVALID_IR
 						]
-						value
-					][instruction/immediate]
+						current-literal: value
+					]
+					instruction/opcode = 4 [
+						if any [
+							form = x64-encoder/I32_CALL
+							form = x64-encoder/I32_CALL_LITERAL
+							form = x64-encoder/I32_CALL_PARAM
+							form = x64-encoder/I32_CALL_RAX
+						][
+							target: instruction/operand
+							callee-record: as codegen-function! (output + IMAGE_HEADER_SIZE
+								+ ((target - 1) * IMAGE_FUNCTION_SIZE))
+							call-next: x64-encoder/call-next form
+							value: callee-record/code-offset - (
+								image-function/code-offset + cursor-offset + call-next
+							)
+						]
+						if any [
+							form = x64-encoder/I32_CALL_LITERAL
+							form = x64-encoder/I32_IMPORT_LITERAL
+						][argument: current-literal]
+					]
+					instruction/opcode = 8 [value: instruction/immediate]
+					all [
+						instruction/opcode = 3
+						any [
+							form = x64-encoder/RETURN_LITERAL
+							form = x64-encoder/ENTRY_LITERAL
+						]
+					][value: current-literal]
+					true []
 				]
-				any [
-					shape = x64-encoder/I32_CALL
-					shape = x64-encoder/I32_CALL_ARG_LITERAL
-					shape = x64-encoder/I32_CALL_ARG_PARAM
-				][
-					target: call-instruction/operand
-					callee-record: as codegen-function! (output + IMAGE_HEADER_SIZE
-						+ ((target - 1) * IMAGE_FUNCTION_SIZE))
-					call-next: either shape = x64-encoder/I32_CALL_ARG_LITERAL [
-						x64-encoder/CALL_ARG_LITERAL_NEXT
-					][x64-encoder/CALL_NEXT]
-					relative: callee-record/code-offset
-						- (image-function/code-offset + call-next)
-					relative
+				if form <> x64-encoder/NONE [
+					encoded: x64-encoder/encode cursor
+						(image-function/code-size - cursor-offset)
+						form value argument
+					if encoded <> (x64-encoder/form-size form)[
+						return release scratch OUTPUT_FULL
+					]
+					if any [
+						all [form >= x64-encoder/I32_IMPORT
+							form <= x64-encoder/I32_IMPORT_RAX]
+						form = x64-encoder/I32_IMPORT_LOAD
+						form = x64-encoder/SCALAR_IMPORT_STORE
+					][
+						import-id: either instruction/opcode = 4 [
+							0 - instruction/operand
+						][instruction/operand]
+						reference-id: import-refs/import-id
+						references/reference-id: image-function/code-offset
+							+ cursor-offset + (x64-encoder/reference-offset form)
+						import-refs/import-id: reference-id + 1
+					]
+					if form = x64-encoder/I32_GLOBAL [
+						global-id: instruction/operand
+						image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+							+ (header/function-count * IMAGE_FUNCTION_SIZE)
+							+ ((global-id - 1) * IMAGE_GLOBAL_SIZE))
+						reference-id: image-global/first-reference
+							+ image-global/reference-count
+						references/reference-id: image-function/code-offset
+							+ cursor-offset + (x64-encoder/reference-offset form)
+						image-global/reference-count: image-global/reference-count + 1
+					]
+					if form >= x64-encoder/ENTRY_VOID [
+						if exit-reference-id <= 0 [return release scratch INVALID_IR]
+						references/exit-reference-id: image-function/code-offset
+							+ cursor-offset + (x64-encoder/reference-offset form)
+					]
+					cursor: cursor + encoded
+					cursor-offset: cursor-offset + encoded
 				]
-				shape = x64-encoder/SCALAR_IMPORT_STORE [instruction/immediate]
-				true [0]
+				plan-index: plan-index + 1
 			]
-			argument: either any [
-				shape = x64-encoder/I32_CALL_ARG_LITERAL
-				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
-			][
-				instruction/immediate
-			][0]
-			current-entry?: all [entry? id = header/entry-function]
-			encoded: x64-encoder/encode
-				(code + image-function/code-offset)
-				image-function/code-size current-entry? shape value argument 0
-			if encoded <> image-function/code-size [
-				return release scratch OUTPUT_FULL
+			if cursor-offset <> image-function/code-size [
+				return release scratch INVALID_IR
 			]
-			if any [
-				shape = x64-encoder/I32_IMPORT
-				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
-				shape = x64-encoder/I32_IMPORT_ARG_PARAM
-				shape = x64-encoder/I32_IMPORT_LOAD
-				shape = x64-encoder/SCALAR_IMPORT_STORE
-			][
-				import-id: either any [
-					shape = x64-encoder/I32_IMPORT_LOAD
-					shape = x64-encoder/SCALAR_IMPORT_STORE
-				][instruction/operand][0 - call-instruction/operand]
-				reference-id: import-refs/import-id
-				references/reference-id: image-function/code-offset
-					+ (import-reference shape)
-				import-refs/import-id: reference-id + 1
-			]
-			if shape = x64-encoder/I32_GLOBAL [
-				global-id: instruction/operand
-				image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE)
-					+ ((global-id - 1) * IMAGE_GLOBAL_SIZE))
-				reference-id: image-global/first-reference
-					+ image-global/reference-count
-				references/reference-id: image-function/code-offset
-					+ x64-encoder/GLOBAL_REF
-				image-global/reference-count: image-global/reference-count + 1
-			]
-			image-function/frame-size: x64-encoder/FRAME_SIZE
 			next-instruction: next-instruction + ir-function/instruction-count
 			id: id + 1
 		]
+		if all [entry? exit-reference-id <= 0][return release scratch INVALID_IR]
 		cursor: code + code-size
 		data-output: output + data-offset
 		while [cursor < data-output][

@@ -71,7 +71,7 @@ For the current slice, USER empty-void and i32 RSIR are 74 and 90 bytes; their
 native images are 132 and 136 bytes. The corresponding GLUE streams are 126
 and 142 bytes because they also contain the ordinary module-body entry; their
 native images are 256 and 264 bytes. The two-source-function
-`main -> helper -> 41` sample is 210 RSIR bytes and produces a 316-byte image.
+`main -> helper -> 41` sample is 210 RSIR bytes and produces a 320-byte image.
 The source call remains directly encoded, while the actual module entry returns
 zero because no top-level expression invokes that source function.
 
@@ -129,10 +129,11 @@ measurements rather than a comparison with the preceding checkpoint.
 Imported scalar variables now use the same direct import IDs and reference
 slices as calls. An i32 load emits `mov rax,[rip+rel32]` followed by
 `mov eax,[rax]`; an i32/logic immediate store emits the corresponding IAT load
-followed by `mov dword [rax],imm32`. Codegen does not classify either operation
-as a call, so it allocates Win64 shadow space only if the executable entry later
-calls `ExitProcess`. One combined fixture verifies a qualified logic store, an
-i32 load, shared library-name bytes, and all three exact relocation offsets.
+followed by `mov dword [rax],imm32`. Neither operation is classified as a call.
+During linear selection, the first actual call in a function reserves one
+Win64 shadow area that every later call in that function reuses. One combined
+fixture verifies a qualified logic store, an i32 load, shared library-name
+bytes, and all three exact relocation offsets.
 
 The first global-access checkpoint adds one logical load instruction and emits
 `mov r32,[rip+rel32]` directly. Global records own their contiguous relocation
@@ -151,6 +152,16 @@ codegen lays that ordinary global out as one 8-byte pointer rather than copying
 the aggregate layout into the frontend. A later assignment is deliberately not
 folded over the initial data value because its ordering belongs to the normal
 module-body instruction stream.
+
+The native backend now traverses each function's instruction range rather than
+matching a whole-function shape. Its first pass writes one local integer
+encoding form per input instruction while counting exact code bytes and direct
+reference slices; its second pass writes those bytes. The forms never cross the
+routine boundary. Integer constants remain rematerializable until consumed,
+the current scalar result stays in `RAX`, and an untouched first parameter stays
+in `RCX`. A 300-byte fixture executes two imported stores in one ordinary
+three-instruction module function, a sequence the retired shape selector could
+not represent.
 
 ## Data Layout Rule
 
@@ -435,11 +446,13 @@ tests against separate runs of the existing compiler.
 
 ### 3.1 Multi-function Traversal
 
-- remove the one-function shape selector;
-- traverse every function and its owned instruction range;
-- place the executable entry at code offset zero while preserving function IDs;
-- emit function records and name bytes once;
-- group import references contiguously as expected by the linker image.
+Current checkpoint: the whole-function shape selector is removed. Codegen
+selects and measures every instruction in source order, then emits the entry at
+code offset zero without renumbering functions. Function records and names are
+written once, and global/import references retain direct contiguous slices.
+The current accumulator value model deliberately rejects a use after its
+volatile register has been clobbered; later slot allocation will broaden live
+ranges without changing RSIR.
 
 ### 3.2 MIR And CFG
 

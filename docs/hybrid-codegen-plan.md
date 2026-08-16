@@ -223,19 +223,21 @@ RSIR uses fixed-size records in one known sequence:
     counts and module properties
     logical types
     members and variants
-    function parameter type uses
     imports
     globals
     functions
-    function local type uses
+    parameter and local type uses
     static initializer items
     switch cases
     fixed-width instructions
     literal and linker-visible name bytes
 
 Counts locate each successive table. Source-order IDs index records directly.
-Slices are contiguous and store their first index and count only when random
-access is required.
+Import parameters are followed by each function's parameters and locals in
+one type-use table. A function's parameter and local slices are adjacent, so
+one storage index addresses both without an adapter or a second instruction
+family. Slices store their first index and count only when random access is
+required.
 
 Each instruction is four 32-bit words: operation and up to three direct
 operands. Stack values do not need result IDs or operand lists. Calls consume
@@ -479,18 +481,25 @@ Already retained:
 - initial name/scope/import/global/function traversal;
 - target layout ownership in Red/System;
 - proof that the existing compiler can build and execute the boundary.
+- typed postfix values and places with assignment results;
+- one contiguous parameter/local storage model with local type inference;
+- pointee-preserving pointer nodes and a distinct c-string logical type;
+- one semantic function compiler used for size measurement and emission;
+- primitive x64 encodings with no call/argument/source-shape combinations.
+- primary/prefix parsing followed by strict left-to-right postfix folding;
+- generic integer unary, math, shift, bitwise, comparison, and pointer-stride
+  lowering selected from logical operand types.
 
-To be replaced rather than extended:
+Still incomplete and therefore not an H0:
 
-- scalar-only and pointee-losing type records;
-- the four-word value-ID instructions numbered 1 through 14;
-- the VALUE_LITERAL, VALUE_PARAM, VALUE_RAX, and VALUE_STRING accumulator model;
-- argument preparation tied to position or source value shape;
-- combined x64 forms tied to call/return cases;
-- two-word scalar-only global initialization.
+- floating-point scalar operations and all structured-control operations;
+- complete aggregate, array, union, function-pointer, and initializer nodes;
+- complete Win64 scalar, floating, variadic, callback, and aggregate ABI paths;
+- system facilities, directives, output kinds, runtime image, and Red routines;
+- the full Red/System and Red correctness gates followed by H0/H1/H2.
 
-The next compiler source change is batch 1. The casted get-root initializer is
-deliberately not implemented as another prototype special case.
+The next source changes continue by semantic family from the feature matrix.
+No self-host identifier or isolated test shape defines an operation.
 
 ## Commit Boundaries
 

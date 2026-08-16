@@ -1,123 +1,25 @@
 Red/System [
-	Title: "Windows x64 encoder for the hybrid compiler"
+	Title: "Windows x64 primitive encoder for the hybrid compiler"
 	File:  %x64-encoder.reds
 ]
 
 x64-encoder: context [
-	NONE: 0
-	PROLOG: 1
-	SHADOW: 2
-	I32_CALL: 3
-	I32_CALL_LITERAL: 4
-	I32_CALL_PARAM: 5
-	I32_CALL_RAX: 6
-	I32_IMPORT: 7
-	I32_IMPORT_LITERAL: 8
-	I32_IMPORT_PARAM: 9
-	I32_IMPORT_RAX: 10
-	I32_GLOBAL: 11
-	I32_IMPORT_LOAD: 12
-	SCALAR_IMPORT_STORE: 13
-	RETURN_VOID: 14
-	RETURN_RAX: 15
-	RETURN_PARAM: 16
-	RETURN_LITERAL: 17
-	ENTRY_VOID: 18
-	ENTRY_RAX: 19
-	ENTRY_PARAM: 20
-	ENTRY_LITERAL: 21
-	CSTRING_CALL: 22
-	CSTRING_IMPORT: 23
-	I32_GLOBAL_STORE: 24
-	PTR_GLOBAL_STORE: 25
-	PTR_IMPORT_LOAD: 26
-	STACK_TOP: 27
-	I32_IMPORT_STORE: 28
-	PTR_IMPORT_STORE: 29
-	I32_IMPORT_MEMBER: 30
-	PTR_IMPORT_MEMBER: 31
-	PTR_ARG1_RAX: 32
-	I32_ARG2_LITERAL: 33
+	RAX: 0
+	RCX: 1
+	RDX: 2
+	RBX: 3
+	RSP: 4
+	RBP: 5
+	RSI: 6
+	RDI: 7
+	R8:  8
+	R9:  9
 
-	SHADOW_FLAG: 256
-	FORM_MASK: 255
-	FRAME_SIZE: 32
+	BASE_FRAME_SIZE: 32
 	BITMAP_OFFSET: 9
 
-	form-size: func [form [integer!] return: [integer!]][
-		case [
-			form = NONE [0]
-			form = PROLOG [15]
-			form = SHADOW [4]
-			form = I32_CALL [5]
-			form = I32_CALL_LITERAL [10]
-			form = I32_CALL_PARAM [5]
-			form = I32_CALL_RAX [7]
-			form = I32_IMPORT [6]
-			form = I32_IMPORT_LITERAL [11]
-			form = I32_IMPORT_PARAM [6]
-			form = I32_IMPORT_RAX [8]
-			form = I32_GLOBAL [6]
-			form = I32_IMPORT_LOAD [9]
-			form = SCALAR_IMPORT_STORE [13]
-			form = RETURN_VOID [2]
-			form = RETURN_RAX [2]
-			form = RETURN_PARAM [4]
-			form = RETURN_LITERAL [7]
-			form = ENTRY_VOID [12]
-			form = ENTRY_RAX [12]
-			form = ENTRY_PARAM [10]
-			form = ENTRY_LITERAL [15]
-			form = CSTRING_CALL [12]
-			form = CSTRING_IMPORT [13]
-			form = I32_GLOBAL_STORE [6]
-			form = PTR_GLOBAL_STORE [7]
-			form = PTR_IMPORT_LOAD [10]
-			form = STACK_TOP [3]
-			form = I32_IMPORT_STORE [9]
-			form = PTR_IMPORT_STORE [10]
-			form = I32_IMPORT_MEMBER [16]
-			form = PTR_IMPORT_MEMBER [17]
-			form = PTR_ARG1_RAX [3]
-			form = I32_ARG2_LITERAL [5]
-			true [-1]
-		]
-	]
-
-	reference-offset: func [form [integer!] return: [integer!]][
-		case [
-			form = I32_IMPORT [2]
-			form = I32_IMPORT_LITERAL [7]
-			form = I32_IMPORT_PARAM [2]
-			form = I32_IMPORT_RAX [4]
-			form = I32_GLOBAL [2]
-			form = I32_IMPORT_LOAD [3]
-			form = SCALAR_IMPORT_STORE [3]
-			form = ENTRY_VOID [4]
-			form = ENTRY_RAX [4]
-			form = ENTRY_PARAM [2]
-			form = ENTRY_LITERAL [7]
-			form = CSTRING_IMPORT [9]
-			form = I32_GLOBAL_STORE [2]
-			form = PTR_GLOBAL_STORE [3]
-			form = PTR_IMPORT_LOAD [3]
-			form = I32_IMPORT_STORE [3]
-			form = PTR_IMPORT_STORE [3]
-			form = I32_IMPORT_MEMBER [3]
-			form = PTR_IMPORT_MEMBER [3]
-			true [-1]
-		]
-	]
-
-	call-next: func [form [integer!] return: [integer!]][
-		case [
-			form = I32_CALL [5]
-			form = I32_CALL_LITERAL [10]
-			form = I32_CALL_PARAM [5]
-			form = I32_CALL_RAX [7]
-			form = CSTRING_CALL [12]
-			true [-1]
-		]
+	fits-i8?: func [value [integer!] return: [logic!]][
+		all [value >= -128 value <= 127]
 	]
 
 	write-i32: func [at [byte-ptr!] value [integer!]][
@@ -127,239 +29,651 @@ x64-encoder: context [
 		at/4: as byte! (value >>> 24)
 	]
 
-	encode: func [
+	write-i64: func [at [byte-ptr!] low high [integer!]][
+		write-i32 at low
+		write-i32 (at + 4) high
+	]
+
+	room?: func [code [byte-ptr!] capacity size [integer!] return: [logic!]][
+		any [null? code capacity >= size]
+	]
+
+	rex: func [wide? [logic!] reg rm [integer!] return: [integer!]
+		/local value [integer!]
+	][
+		value: 40h
+		if wide? [value: value + 8]
+		if reg >= 8 [value: value + 4]
+		if rm >= 8 [value: value + 1]
+		value
+	]
+
+	modrm: func [mode reg rm [integer!] return: [integer!]][
+		((mode << 6) or ((reg and 7) << 3)) or (rm and 7)
+	]
+
+	prolog: func [
 		code [byte-ptr!]
-		capacity form value argument [integer!]
+		capacity bitmap [integer!]
+		return: [integer!]
+		/local at [byte-ptr!]
+	][
+		unless room? code capacity 15 [return -1]
+		if null? code [return 15]
+		at: code
+		at/1: as byte! 55h                         ; push rbp
+		at/2: as byte! 48h
+		at/3: as byte! 89h
+		at/4: as byte! E5h                         ; mov rbp, rsp
+		at/5: as byte! 6Ah
+		at/6: as byte! 00h                         ; catch ID
+		at/7: as byte! 6Ah
+		at/8: as byte! 00h                         ; catch resume
+		at/9: as byte! 68h                         ; pointer bitmap word
+		write-i32 (at + 9) bitmap
+		at/14: as byte! 6Ah
+		at/15: as byte! 00h                        ; parent frame
+		15
+	]
+
+	allocate-frame: func [
+		code [byte-ptr!]
+		capacity size [integer!]
+		return: [integer!]
+		/local count [integer!] at [byte-ptr!]
+	][
+		if size = 0 [return 0]
+		if size < 0 [return -1]
+		count: either size <= 127 [4][7]
+		unless room? code capacity count [return -1]
+		if null? code [return count]
+		at: code
+		at/1: as byte! 48h
+		either count = 4 [
+			at/2: as byte! 83h
+			at/3: as byte! ECh
+			at/4: as byte! size
+		][
+			at/2: as byte! 81h
+			at/3: as byte! ECh
+			write-i32 (at + 3) size
+		]
+		count
+	]
+
+	move-immediate: func [
+		code [byte-ptr!]
+		capacity target width low high [integer!]
 		return: [integer!]
 		/local size [integer!] at [byte-ptr!]
 	][
-		if null? code [return -1]
-		size: form-size form
-		if any [size < 0 capacity < size][return -1]
+		unless all [target >= 0 target <= 15 any [width = 4 width = 8]][
+			return -1
+		]
+		size: either width = 8 [either target >= 8 [11][10]][
+			either target >= 8 [6][5]
+		]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
 		at: code
+		if target >= 8 [
+			at/1: as byte! either width = 8 [49h][41h]
+			at: at + 1
+		]
+		if all [width = 8 target < 8][
+			at/1: as byte! 48h
+			at: at + 1
+		]
+		at/1: as byte! (B8h + (target and 7))
+		either width = 8 [write-i64 (at + 1) low high][write-i32 (at + 1) low]
+		size
+	]
 
+	move-register: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) source target
+		size: either prefix = 40h [2][3]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! 89h
+		at/2: as byte! modrm 3 source target
+		size
+	]
+
+	binary-register: func [
+		code [byte-ptr!]
+		capacity opcode target source width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			any [width = 4 width = 8]
+			any [
+				opcode = 01h opcode = 09h opcode = 21h
+				opcode = 29h opcode = 31h opcode = 39h
+			]
+		][return -1]
+		prefix: rex (width = 8) source target
+		size: either prefix = 40h [2][3]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! opcode
+		at/2: as byte! modrm 3 source target
+		size
+	]
+
+	multiply-register: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) target source
+		size: either prefix = 40h [3][4]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! AFh
+		at/3: as byte! modrm 3 target source
+		size
+	]
+
+	multiply-immediate: func [
+		code [byte-ptr!]
+		capacity target source value width [integer!]
+		return: [integer!]
+		/local prefix immediate-size size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) target source
+		immediate-size: either fits-i8? value [1][4]
+		size: 2 + immediate-size
+		if prefix <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! either immediate-size = 1 [6Bh][69h]
+		at/2: as byte! modrm 3 target source
+		either immediate-size = 1 [at/3: as byte! value][write-i32 (at + 2) value]
+		size
+	]
+
+	shift-register: func [
+		code [byte-ptr!]
+		capacity target mode width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15
+			any [mode = 4 mode = 5 mode = 7]
+			any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) mode target
+		size: either prefix = 40h [2][3]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! D3h
+		at/2: as byte! modrm 3 mode target
+		size
+	]
+
+	shift-immediate: func [
+		code [byte-ptr!]
+		capacity target mode count width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15
+			any [mode = 4 mode = 5 mode = 7]
+			count >= 0 count <= 63
+			any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) mode target
+		size: either prefix = 40h [3][4]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! C1h
+		at/2: as byte! modrm 3 mode target
+		at/3: as byte! count
+		size
+	]
+
+	not-register: func [
+		code [byte-ptr!]
+		capacity target width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) 2 target
+		size: either prefix = 40h [2][3]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! F7h
+		at/2: as byte! modrm 3 2 target
+		size
+	]
+
+	condition-result: func [
+		code [byte-ptr!]
+		capacity condition [integer!]
+		return: [integer!]
+	][
+		unless all [condition >= 0 condition <= 15 room? code capacity 6][return -1]
+		if not null? code [
+			code/1: as byte! 0Fh
+			code/2: as byte! (90h + condition)
+			code/3: as byte! C0h
+			code/4: as byte! 0Fh
+			code/5: as byte! B6h
+			code/6: as byte! C0h
+		]
+		6
+	]
+
+	divide-register: func [
+		code [byte-ptr!]
+		capacity width signed [integer!]
+		return: [integer!]
+		/local size [integer!]
+	][
+		unless all [any [width = 4 width = 8] any [signed = 0 signed = 1]][return -1]
+		size: either signed = 1 [either width = 8 [5][3]][either width = 8 [5][4]]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
 		case [
-			form = PROLOG [
-				at/1: as byte! 55h                         ; push rbp
-				at/2: as byte! 48h
-				at/3: as byte! 89h
-				at/4: as byte! E5h                         ; mov rbp, rsp
-				at/5: as byte! 6Ah
-				at/6: as byte! 00h                         ; catch ID
-				at/7: as byte! 6Ah
-				at/8: as byte! 00h                         ; catch resume
-				at/9: as byte! 68h                         ; bitmap word offset
-				write-i32 (at + 9) argument
-				at/14: as byte! 6Ah
-				at/15: as byte! 00h                        ; parent frame
+			all [signed = 1 width = 4][
+				code/1: as byte! 99h
+				code/2: as byte! F7h
+				code/3: as byte! F9h
 			]
-			form = SHADOW [
-				at/1: as byte! 48h
-				at/2: as byte! 83h
-				at/3: as byte! ECh
-				at/4: as byte! 20h                         ; Win64 shadow space
+			all [signed = 1 width = 8][
+				code/1: as byte! 48h
+				code/2: as byte! 99h
+				code/3: as byte! 48h
+				code/4: as byte! F7h
+				code/5: as byte! F9h
 			]
-			form = I32_CALL [
-				at/1: as byte! E8h
-				write-i32 (at + 1) value
+			all [signed = 0 width = 4][
+				code/1: as byte! 31h
+				code/2: as byte! D2h
+				code/3: as byte! F7h
+				code/4: as byte! F1h
 			]
-			form = I32_CALL_LITERAL [
-				at/1: as byte! B9h                         ; mov ecx, imm32
-				write-i32 (at + 1) argument
-				at/6: as byte! E8h
-				write-i32 (at + 6) value
+			true [
+				code/1: as byte! 31h
+				code/2: as byte! D2h
+				code/3: as byte! 48h
+				code/4: as byte! F7h
+				code/5: as byte! F1h
 			]
-			form = I32_CALL_PARAM [
-				at/1: as byte! E8h                         ; RCX already holds argument
-				write-i32 (at + 1) value
-			]
-			form = I32_CALL_RAX [
-				at/1: as byte! 89h
-				at/2: as byte! C1h                         ; mov ecx, eax
-				at/3: as byte! E8h
-				write-i32 (at + 3) value
-			]
-			form = I32_IMPORT [
-				at/1: as byte! FFh
-				at/2: as byte! 15h                         ; call [rip + rel32]
-				write-i32 (at + 2) 0
-			]
-			form = I32_IMPORT_LITERAL [
-				at/1: as byte! B9h
-				write-i32 (at + 1) argument
-				at/6: as byte! FFh
-				at/7: as byte! 15h
-				write-i32 (at + 7) 0
-			]
-			form = I32_IMPORT_PARAM [
-				at/1: as byte! FFh
-				at/2: as byte! 15h                         ; RCX already holds argument
-				write-i32 (at + 2) 0
-			]
-			form = I32_IMPORT_RAX [
-				at/1: as byte! 89h
-				at/2: as byte! C1h                         ; mov ecx, eax
-				at/3: as byte! FFh
-				at/4: as byte! 15h
-				write-i32 (at + 4) 0
-			]
-			form = I32_GLOBAL [
-				at/1: as byte! 8Bh
-				at/2: as byte! 05h                         ; mov eax, [rip + rel32]
-				write-i32 (at + 2) 0
-			]
-			form = I32_IMPORT_LOAD [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! 8Bh
-				at/9: as byte! 00h                         ; mov eax, [rax]
-			]
-			form = SCALAR_IMPORT_STORE [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! C7h
-				at/9: as byte! 00h                         ; mov dword [rax], imm32
-				write-i32 (at + 9) value
-			]
-			any [form = RETURN_VOID form = RETURN_RAX] []
-			form = RETURN_PARAM [
-				at/1: as byte! 89h
-				at/2: as byte! C8h                         ; mov eax, ecx
-				at: at + 2
-			]
-			form = RETURN_LITERAL [
-				at/1: as byte! B8h                         ; mov eax, imm32
-				write-i32 (at + 1) value
-				at: at + 5
-			]
-			form = ENTRY_VOID [
-				at/1: as byte! 31h
-				at/2: as byte! C9h                         ; xor ecx, ecx
-				at: at + 2
-			]
-			form = ENTRY_RAX [
-				at/1: as byte! 89h
-				at/2: as byte! C1h                         ; mov ecx, eax
-				at: at + 2
-			]
-			form = ENTRY_PARAM []
-			form = ENTRY_LITERAL [
-				at/1: as byte! B9h                         ; mov ecx, imm32
-				write-i32 (at + 1) value
-				at: at + 5
-			]
-			form = CSTRING_CALL [
-				at/1: as byte! 48h
-				at/2: as byte! 8Dh
-				at/3: as byte! 0Dh                         ; lea rcx, [rip + rel32]
-				write-i32 (at + 3) argument
-				at/8: as byte! E8h
-				write-i32 (at + 8) value
-			]
-			form = CSTRING_IMPORT [
-				at/1: as byte! 48h
-				at/2: as byte! 8Dh
-				at/3: as byte! 0Dh                         ; lea rcx, [rip + rel32]
-				write-i32 (at + 3) argument
-				at/8: as byte! FFh
-				at/9: as byte! 15h                         ; call [rip + rel32]
-				write-i32 (at + 9) 0
-			]
-			form = I32_GLOBAL_STORE [
-				at/1: as byte! 89h
-				at/2: as byte! 05h                         ; mov [rip + rel32], eax
-				write-i32 (at + 2) 0
-			]
-			form = PTR_GLOBAL_STORE [
-				at/1: as byte! 48h
-				at/2: as byte! 89h
-				at/3: as byte! 05h                         ; mov [rip + rel32], rax
-				write-i32 (at + 3) 0
-			]
-			form = PTR_IMPORT_LOAD [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! 48h
-				at/9: as byte! 8Bh
-				at/10: as byte! 00h                        ; mov rax, [rax]
-			]
-			form = STACK_TOP [
-				at/1: as byte! 48h
-				at/2: as byte! 89h
-				at/3: as byte! E0h                         ; mov rax, rsp
-			]
-			form = I32_IMPORT_STORE [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 15h                         ; mov rdx, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! 89h
-				at/9: as byte! 02h                         ; mov [rdx], eax
-			]
-			form = PTR_IMPORT_STORE [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 15h                         ; mov rdx, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! 48h
-				at/9: as byte! 89h
-				at/10: as byte! 02h                        ; mov [rdx], rax
-			]
-			form = I32_IMPORT_MEMBER [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! 48h
-				at/9: as byte! 8Bh
-				at/10: as byte! 00h                        ; mov rax, [rax]
-				at/11: as byte! 8Bh
-				at/12: as byte! 80h                        ; mov eax, [rax + disp32]
-				write-i32 (at + 12) value
-			]
-			form = PTR_IMPORT_MEMBER [
-				at/1: as byte! 48h
-				at/2: as byte! 8Bh
-				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
-				write-i32 (at + 3) 0
-				at/8: as byte! 48h
-				at/9: as byte! 8Bh
-				at/10: as byte! 00h                        ; mov rax, [rax]
-				at/11: as byte! 48h
-				at/12: as byte! 8Bh
-				at/13: as byte! 80h                        ; mov rax, [rax + disp32]
-				write-i32 (at + 13) value
-			]
-			form = PTR_ARG1_RAX [
-				at/1: as byte! 48h
-				at/2: as byte! 89h
-				at/3: as byte! C1h                         ; mov rcx, rax
-			]
-			form = I32_ARG2_LITERAL [
-				at/1: as byte! BAh                         ; mov edx, imm32
-				write-i32 (at + 1) value
-			]
-			true [return -1]
-		]
-
-		if all [form >= ENTRY_VOID form <= ENTRY_LITERAL][
-			at/1: as byte! FFh
-			at/2: as byte! 15h                           ; call [rip + rel32]
-			write-i32 (at + 2) 0
-			at/7: as byte! 31h
-			at/8: as byte! C0h                           ; unreachable fallback
-			at: at + 8
-		]
-		if all [form >= RETURN_VOID form <= ENTRY_LITERAL][
-			at/1: as byte! C9h                           ; leave
-			at/2: as byte! C3h                           ; ret
 		]
 		size
+	]
+
+	sign-extend-register: func [
+		code [byte-ptr!]
+		capacity target [integer!]
+		return: [integer!]
+	][
+		unless all [target >= 0 target <= 15 room? code capacity 3][return -1]
+		if not null? code [
+			code/1: as byte! rex true target target
+			code/2: as byte! 63h
+			code/3: as byte! modrm 3 target target
+		]
+		3
+	]
+
+	frame-load: func [
+		code [byte-ptr!]
+		capacity target displacement width signed [integer!]
+		return: [integer!]
+		/local prefix opcode-size displacement-size size mode [integer!]
+			at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15
+			any [width = 1 width = 2 width = 4 width = 8]
+			any [signed = 0 signed = 1]
+		][return -1]
+		displacement-size: either fits-i8? displacement [1][4]
+		mode: either displacement-size = 1 [1][2]
+		opcode-size: either width <= 2 [2][1]
+		prefix: rex (width = 8) target RBP
+		size: opcode-size + 1 + displacement-size
+		if prefix <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		case [
+			width = 1 [
+				at/1: as byte! 0Fh
+				at/2: as byte! either signed = 1 [BEh][B6h]
+				at: at + 2
+			]
+			width = 2 [
+				at/1: as byte! 0Fh
+				at/2: as byte! either signed = 1 [BFh][B7h]
+				at: at + 2
+			]
+			true [at/1: as byte! 8Bh at: at + 1]
+		]
+		at/1: as byte! modrm mode target RBP
+		at: at + 1
+		either displacement-size = 1 [at/1: as byte! displacement][
+			write-i32 at displacement
+		]
+		size
+	]
+
+	frame-store: func [
+		code [byte-ptr!]
+		capacity source displacement width [integer!]
+		return: [integer!]
+		/local prefix-size prefix displacement-size size mode [integer!]
+			at [byte-ptr!]
+	][
+		unless all [
+			source >= 0 source <= 15
+			any [width = 1 width = 2 width = 4 width = 8]
+		][return -1]
+		displacement-size: either fits-i8? displacement [1][4]
+		mode: either displacement-size = 1 [1][2]
+		prefix: rex (width = 8) source RBP
+		prefix-size: 0
+		if width = 2 [prefix-size: prefix-size + 1]
+		if any [prefix <> 40h all [width = 1 source >= 4]][
+			prefix-size: prefix-size + 1
+		]
+		size: prefix-size + 1 + 1 + displacement-size
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if width = 2 [at/1: as byte! 66h at: at + 1]
+		if any [prefix <> 40h all [width = 1 source >= 4]][
+			at/1: as byte! prefix
+			at: at + 1
+		]
+		at/1: as byte! either width = 1 [88h][89h]
+		at/2: as byte! modrm mode source RBP
+		at: at + 2
+		either displacement-size = 1 [at/1: as byte! displacement][
+			write-i32 at displacement
+		]
+		size
+	]
+
+	frame-address: func [
+		code [byte-ptr!]
+		capacity target displacement [integer!]
+		return: [integer!]
+		/local displacement-size size mode [integer!] at [byte-ptr!]
+	][
+		unless all [target >= 0 target <= 15][return -1]
+		displacement-size: either fits-i8? displacement [1][4]
+		mode: either displacement-size = 1 [1][2]
+		size: 3 + displacement-size
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! rex true target RBP
+		at/2: as byte! 8Dh
+		at/3: as byte! modrm mode target RBP
+		at: at + 3
+		either displacement-size = 1 [at/1: as byte! displacement][
+			write-i32 at displacement
+		]
+		size
+	]
+
+	rip-address: func [
+		code [byte-ptr!]
+		capacity target displacement [integer!]
+		return: [integer!]
+	][
+		unless all [target >= 0 target <= 15 room? code capacity 7][return -1]
+		if not null? code [
+			code/1: as byte! rex true target RBP
+			code/2: as byte! 8Dh
+			code/3: as byte! modrm 0 target RBP
+			write-i32 (code + 3) displacement
+		]
+		7
+	]
+
+	rip-load: func [
+		code [byte-ptr!]
+		capacity target displacement [integer!]
+		return: [integer!]
+	][
+		unless all [target >= 0 target <= 15 room? code capacity 7][return -1]
+		if not null? code [
+			code/1: as byte! rex true target RBP
+			code/2: as byte! 8Bh
+			code/3: as byte! modrm 0 target RBP
+			write-i32 (code + 3) displacement
+		]
+		7
+	]
+
+	load-indirect: func [
+		code [byte-ptr!]
+		capacity width signed [integer!]
+		return: [integer!]
+		/local size [integer!]
+	][
+		unless all [
+			any [width = 1 width = 2 width = 4 width = 8]
+			any [signed = 0 signed = 1]
+		][return -1]
+		size: case [width <= 2 [3] width = 4 [2] true [3]]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		case [
+			width = 1 [
+				code/1: as byte! 0Fh
+				code/2: as byte! either signed = 1 [BEh][B6h]
+				code/3: as byte! 00h
+			]
+			width = 2 [
+				code/1: as byte! 0Fh
+				code/2: as byte! either signed = 1 [BFh][B7h]
+				code/3: as byte! 00h
+			]
+			width = 4 [code/1: as byte! 8Bh code/2: as byte! 00h]
+			true [
+				code/1: as byte! 48h
+				code/2: as byte! 8Bh
+				code/3: as byte! 00h
+			]
+		]
+		size
+	]
+
+	store-indirect: func [
+		code [byte-ptr!]
+		capacity width [integer!]
+		return: [integer!]
+		/local size [integer!]
+	][
+		size: case [
+			width = 1 [2]
+			width = 2 [3]
+			width = 4 [2]
+			width = 8 [3]
+			true [return -1]
+		]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		case [
+			width = 1 [code/1: as byte! 88h code/2: as byte! 02h]
+			width = 2 [
+				code/1: as byte! 66h
+				code/2: as byte! 89h
+				code/3: as byte! 02h
+			]
+			width = 4 [code/1: as byte! 89h code/2: as byte! 02h]
+			true [
+				code/1: as byte! 48h
+				code/2: as byte! 89h
+				code/3: as byte! 02h
+			]
+		]
+		size
+	]
+
+	add-immediate: func [
+		code [byte-ptr!]
+		capacity value [integer!]
+		return: [integer!]
+		/local size [integer!]
+	][
+		if value = 0 [return 0]
+		size: either fits-i8? value [4][6]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		code/1: as byte! 48h
+		either size = 4 [
+			code/2: as byte! 83h
+			code/3: as byte! C0h
+			code/4: as byte! value
+		][
+			code/2: as byte! 05h
+			write-i32 (code + 2) value
+		]
+		size
+	]
+
+	outgoing-store: func [
+		code [byte-ptr!]
+		capacity displacement width [integer!]
+		return: [integer!]
+		/local displacement-size size [integer!] at [byte-ptr!]
+	][
+		unless any [width = 4 width = 8][return -1]
+		displacement-size: either all [displacement >= 0 displacement <= 127][1][4]
+		size: either width = 8 [4][3]
+		size: size + displacement-size
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if width = 8 [at/1: as byte! 48h at: at + 1]
+		at/1: as byte! 89h
+		at/2: as byte! either displacement-size = 1 [44h][84h]
+		at/3: as byte! 24h
+		at: at + 3
+		either displacement-size = 1 [at/1: as byte! displacement][
+			write-i32 at displacement
+		]
+		size
+	]
+
+	call-relative: func [
+		code [byte-ptr!]
+		capacity displacement [integer!]
+		return: [integer!]
+	][
+		unless room? code capacity 5 [return -1]
+		if not null? code [
+			code/1: as byte! E8h
+			write-i32 (code + 1) displacement
+		]
+		5
+	]
+
+	call-import: func [
+		code [byte-ptr!]
+		capacity displacement [integer!]
+		return: [integer!]
+	][
+		unless room? code capacity 6 [return -1]
+		if not null? code [
+			code/1: as byte! FFh
+			code/2: as byte! 15h
+			write-i32 (code + 2) displacement
+		]
+		6
+	]
+
+	stack-top: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 3 [return -1]
+		if not null? code [
+			code/1: as byte! 48h
+			code/2: as byte! 89h
+			code/3: as byte! E0h
+		]
+		3
+	]
+
+	sign-extend-eax: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 3 [return -1]
+		if not null? code [
+			code/1: as byte! 48h
+			code/2: as byte! 63h
+			code/3: as byte! C0h                     ; movsxd rax, eax
+		]
+		3
+	]
+
+	clear-register: func [
+		code [byte-ptr!]
+		capacity target [integer!]
+		return: [integer!]
+		/local size [integer!]
+	][
+		unless all [target >= 0 target <= 15][return -1]
+		size: either target >= 8 [3][2]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		either target >= 8 [
+			code/1: as byte! 45h
+			code/2: as byte! 31h
+			code/3: as byte! modrm 3 target target
+		][
+			code/1: as byte! 31h
+			code/2: as byte! modrm 3 target target
+		]
+		size
+	]
+
+	leave-return: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 2 [return -1]
+		if not null? code [code/1: as byte! C9h code/2: as byte! C3h]
+		2
 	]
 ]

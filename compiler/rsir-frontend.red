@@ -25,6 +25,7 @@ compiler-rsir-frontend: context [
 	contexts: make hash! 32
 	types: make block! 256
 	type-ids: make hash! 128
+	pointer-types: make hash! 64
 	constants: make hash! 256
 	imports: make block! 256
 	import-ids: make hash! 256
@@ -32,21 +33,19 @@ compiler-rsir-frontend: context [
 	globals: make hash! 1024
 	global-data: make block! 1024
 	module-code: make binary! 256
+	function-code: make binary! 2048
 	strings: make binary! 256
 	string-ids: make hash! 128
 	function-count: 0
 	type-count: 0
-	implicit-type-count: 0
 	import-count: 0
-	implicit-import-count: 0
 	global-count: 0
-	module-value: 0
 
 	type-kinds: make hash! [
 		int8! i8 byte! u8 uint8! u8 int16! i16 uint16! u16
 		integer! i32 int32! i32 uint32! u32 int64! i64 uint64! u64
 		float32! f32 float! f64 float64! f64 logic! logic
-		pointer! pointer c-string! pointer struct! pointer union! pointer
+		pointer! pointer c-string! c-string struct! pointer union! pointer
 		function! pointer subroutine! pointer array! pointer
 		byte-ptr! pointer int-ptr! pointer ptr-ptr! pointer
 		float32-ptr! pointer
@@ -54,8 +53,15 @@ compiler-rsir-frontend: context [
 
 	type-codes: make hash! [
 		i8 1 u8 2 i16 3 u16 4 i32 5 u32 6 i64 7 u64 8
-		f32 9 f64 10 logic 11 pointer 12
+		f32 9 f64 10 logic 11 pointer 12 c-string 13
 		alias -1 struct -2 union -3 function -4 subroutine -5
+		pointer-node -6
+	]
+	builtin-pointees: make hash! [
+		byte-ptr! [byte!]
+		int-ptr! [integer!]
+		ptr-ptr! [pointer!]
+		float32-ptr! [float32!]
 	]
 
 	return-value-flag: 4
@@ -65,6 +71,48 @@ compiler-rsir-frontend: context [
 	callback-flag: 64
 	objc-flag: 128
 	catch-flag: 256
+
+	; Semantic postfix operations. Operands are typed by the surrounding
+	; declaration tables; no source-specific value IDs cross the boundary.
+	literal-op: 1
+	constant-op: 2
+	address-op: 3
+	load-op: 4
+	set-op: 5
+	member-op: 6
+	call-op: 7
+	cast-op: 8
+	size-op: 9
+	native-op: 10
+	return-op: 11
+	drop-op: 12
+	duplicate-op: 13
+	unary-op: 14
+	binary-op: 15
+
+	; Operation IDs follow the language families, not source spellings or x64
+	; encodings. The postfix stream preserves the specified left-to-right order.
+	not-operation: 1
+	binary-operations: make hash! [
+		+   1  -   2  *   3  /   4  %   5  //  6
+		<<  7  >>  8  >>> 9  or 10  xor 11  and 12
+		=  13  <> 14  >  15  <  16  >= 17  <= 18
+	]
+
+	local-address: 1
+	global-address: 2
+	import-address: 3
+	function-address: 4
+
+	stack-top-native: 1
+
+	last-type: 0
+	last-flags: 0
+	static?: false
+	static-ref: 0
+	static-low: 0
+	static-high: 0
+	static-next: none
 
 	emit: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
@@ -183,10 +231,27 @@ compiler-rsir-frontend: context [
 		none
 	]
 
+	intern-pointer: func [pointee [integer!] /local id kind][
+		kind: ref-kind pointee
+		unless find [i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 pointer] kind [
+			fail ERROR-UNSUPPORTED "pointer pointee type is unsupported"
+		]
+		if id: select pointer-types pointee [return id]
+		id: type-count + 1
+		repend pointer-types [pointee id]
+		append types none
+		append types 'pointer
+		append types pointee
+		append/only types copy []
+		append/only types copy []
+		type-count: id
+		id
+	]
+
 	type-kind: func [
 		type [block!]
 		scope uses [block!]
-		/local name kind id record steps
+		/local name kind id record steps target
 	][
 		unless all [not empty? type any [word? type/1 path? type/1]][return none]
 		name: type/1
@@ -200,7 +265,12 @@ compiler-rsir-frontend: context [
 				record: skip types ((id - 1) * 5)
 				kind: record/2
 				if kind <> 'alias [break]
-				name: record/3
+				target: record/3
+				if block? target [
+					kind: type-kind target record/4 record/5
+					break
+				]
+				name: target
 				if all [word? name kind: select type-kinds name][break]
 				unless id: resolve-name name record/4 record/5 type-ids [return none]
 			]
@@ -231,7 +301,7 @@ compiler-rsir-frontend: context [
 	type-ref: func [
 		type [block!]
 		scope uses [block!]
-		/local name kind code id
+		/local name kind code id pointee
 	][
 		unless all [not empty? type any [word? type/1 path? type/1]][
 			fail ERROR-UNSUPPORTED "invalid type reference"
@@ -239,6 +309,12 @@ compiler-rsir-frontend: context [
 		name: type/1
 		kind: type-kind type scope uses
 		unless kind [fail ERROR-UNSUPPORTED ["unsupported type " mold type]]
+		if all [word? name pointee: select builtin-pointees name][
+			return intern-pointer type-ref pointee scope uses
+		]
+		if all [word? name name = 'pointer! (length? type) = 2][
+			return intern-pointer type-ref type/2 scope uses
+		]
 		if all [
 			word? name
 			select type-kinds name
@@ -259,10 +335,10 @@ compiler-rsir-frontend: context [
 		][0]
 	]
 
-	ref-kind: func [ref [integer!] /local record kind name steps][
+	ref-kind: func [ref [integer!] /local record kind name steps target][
 		if ref < 0 [
-			if ref < -12 [return none]
-			return pick [i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer]
+			if ref < -13 [return none]
+			return pick [i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string]
 				negate ref
 		]
 		if any [ref = 0 ref > type-count][return none]
@@ -272,7 +348,9 @@ compiler-rsir-frontend: context [
 			record: skip types ((ref - 1) * 5)
 			kind: record/2
 			unless kind = 'alias [return kind]
-			name: record/3
+			target: record/3
+			if block? target [return type-kind target record/4 record/5]
+			name: target
 			if all [word? name kind: select type-kinds name][
 				return kind
 			]
@@ -282,23 +360,20 @@ compiler-rsir-frontend: context [
 		none
 	]
 
-	integer32-ref?: func [ref [integer!] /local kind][
-		kind: ref-kind ref
-		to logic! find [i32 u32] kind
-	]
-
-	pointer-ref?: func [ref [integer!] /local kind][
-		kind: ref-kind ref
-		to logic! find [pointer struct union function subroutine] kind
-	]
-
-	scalar-width: func [ref [integer!] /local kind][
-		kind: ref-kind ref
-		case [
-			find [i32 u32 logic] kind [4]
-			find [pointer struct union function subroutine] kind [8]
-			true [0]
+	canonical-ref: func [ref [integer!] /local record target steps][
+		if ref <= 0 [return ref]
+		steps: 0
+		while [steps < type-count][
+			if ref > type-count [return 0]
+			record: skip types ((ref - 1) * 5)
+			unless record/2 = 'alias [return ref]
+			target: record/3
+			target: either block? target [target][reduce [target]]
+			ref: type-ref target record/4 record/5
+			if ref <= 0 [return ref]
+			steps: steps + 1
 		]
+		fail ERROR-REFERENCE "cyclic type alias"
 	]
 
 	member-info: func [
@@ -313,8 +388,14 @@ compiler-rsir-frontend: context [
 			kind: record/2
 			if kind = 'alias [
 				target: record/3
-				if all [word? target select type-kinds target][return none]
-				unless ref: resolve-name target record/4 record/5 type-ids [return none]
+				if block? target [
+					ref: type-ref target record/4 record/5
+					if ref <= 0 [return none]
+				]
+				if not block? target [
+					if all [word? target select type-kinds target][return none]
+					unless ref: resolve-name target record/4 record/5 type-ids [return none]
+				]
 				steps: steps + 1
 				continue
 			]
@@ -360,7 +441,6 @@ compiler-rsir-frontend: context [
 		append/only types copy []
 		append/only types copy []
 		type-count: id
-		implicit-type-count: implicit-type-count + 1
 		id
 	]
 
@@ -390,7 +470,6 @@ compiler-rsir-frontend: context [
 		append imports none
 		append imports 0
 		import-count: id
-		implicit-import-count: implicit-import-count + 1
 		id
 	]
 
@@ -442,7 +521,8 @@ compiler-rsir-frontend: context [
 
 	read-signature: func [
 		spec scope uses [block!]
-		/local position names-start item name type params names flags ref type-flags-value
+		/local position names-start names-end item name type params locals names flags
+			ref type-flags-value
 			return-ref value? locals?
 	][
 		position: spec
@@ -456,6 +536,7 @@ compiler-rsir-frontend: context [
 		if all [not tail? position position/1 = 'red-internal][position: next position]
 
 		params: make block! 12
+		locals: make block! 12
 		names: make hash! 16
 		return-ref: 0
 		value?: false
@@ -499,11 +580,18 @@ compiler-rsir-frontend: context [
 						repend names [name true]
 						position: next position
 					]
+					names-end: position
 					either locals? [
+						ref: 0
+						type-flags-value: 0
 						if all [not tail? position block? position/1][
-							type-ref position/1 scope uses
-							type-flags position/1 scope uses
+							ref: type-ref position/1 scope uses
+							type-flags-value: type-flags position/1 scope uses
 							position: next position
+						]
+						while [names-start <> names-end][
+							repend locals [names-start/1 ref type-flags-value]
+							names-start: next names-start
 						]
 					][
 						unless all [not tail? position block? position/1][
@@ -523,7 +611,7 @@ compiler-rsir-frontend: context [
 				true [fail ERROR-UNSUPPORTED "function signature is unsupported"]
 			]
 		]
-		reduce [return-ref params flags]
+		reduce [return-ref params locals flags]
 	]
 
 	prepare-functions: func [/local record signature][
@@ -533,7 +621,8 @@ compiler-rsir-frontend: context [
 			record/6: signature/1
 			record/7: signature/2
 			record/8: signature/3
-			record: skip record 8
+			record/9: signature/4
+			record: skip record 10
 		]
 	]
 
@@ -543,406 +632,22 @@ compiler-rsir-frontend: context [
 			cc: record/8
 			either record/5 = 'function [
 				signature: read-signature record/4 record/6 record/7
-				if (signature/3 and 3) <> 0 [
+				unless empty? signature/3 [
+					fail ERROR-UNSUPPORTED "import signature cannot declare locals"
+				]
+				if (signature/4 and 3) <> 0 [
 					fail ERROR-UNSUPPORTED
 						"import calling convention is specified twice"
 				]
 				record/8: signature/1
 				record/9: signature/2
-				record/10: signature/3 + either cc = 'cdecl [1][2]
+				record/10: signature/4 + either cc = 'cdecl [1][2]
 			][
 				record/8: type-ref record/4 record/6 record/7
 				record/9: none
 				record/10: 0
 			]
 			record: skip record 10
-		]
-	]
-
-	set-global: func [
-		position scope uses [block!]
-		/local name id record value type kind ref low high after callee callee-record
-			callee-return callee-params callee-flags bytes offset result import-id
-			import-record width existing-ref argument member argument-import
-			argument-record first-width second-width literal
-			runtime? [logic!]
-	][
-		name: to word! position/1
-		id: resolve-name name scope uses globals
-		unless integer? id [fail ERROR-REFERENCE ["unknown global " mold name]]
-		record: skip global-data ((id - 1) * 4)
-		existing-ref: record/2
-		value: position/2
-		after: skip position 2
-		ref: 0
-		low: 0
-		high: 0
-		runtime?: false
-		case [
-			integer? value [ref: -5 low: value high: either value < 0 [-1][0]]
-			logic? value [ref: -11 low: either value [1][0]]
-			all [word? value find [true false yes no] value][
-				ref: -11
-				low: either find [true yes] value [1][0]
-			]
-			value = 'as [
-				unless all [
-					(length? position) >= 4
-					any [word? position/3 path? position/3]
-				][fail ERROR-UNSUPPORTED "static cast is missing its type or value"]
-				type: reduce [position/3]
-				after: skip position 3
-				if all [
-					word? position/3
-					find [pointer! struct! union! function!] position/3
-					block? after/1
-				][
-					append/only type after/1
-					after: next after
-				]
-				if tail? after [
-					fail ERROR-UNSUPPORTED "static cast is missing its value"
-				]
-				value: after/1
-				after: next after
-				kind: type-kind type scope uses
-				case [
-					all [
-						integer? value
-						find [i8 u8 i16 u16 i32 u32 i64 u64 pointer] kind
-					][
-						low: value
-						high: either value < 0 [-1][0]
-					]
-					all [
-						any [logic? value all [word? value find [true false yes no] value]]
-						kind = 'logic
-					][low: either any [value = true find [true yes] value][1][0]]
-					true [
-						fail ERROR-UNSUPPORTED [
-							"global cast is not a static scalar: " mold type " " mold value
-						]
-					]
-				]
-				ref: type-ref type scope uses
-			]
-			all [
-				any [word? value path? value]
-				integer? import-id: import-variable-id value scope uses
-				import-record: skip imports ((import-id - 1) * 10)
-			][
-				width: scalar-width import-record/8
-				if width = 0 [
-					fail ERROR-UNSUPPORTED [
-						"initializer import is not a register scalar: " mold value
-					]
-				]
-				result: module-value + 1
-				emit module-code reduce [
-					7 result import-id 0
-					10 0 id result
-				]
-				module-value: result
-				ref: import-record/8
-				runtime?: true
-			]
-			all [
-				any [word? value path? value]
-				(length? position) >= 3
-			][
-				callee: resolve-name value scope uses function-ids
-				either integer? callee [
-					callee-record: skip functions ((callee - 1) * 8)
-					callee-return: callee-record/6
-					callee-params: callee-record/7
-					callee-flags: callee-record/8
-				][
-					callee: resolve-name value scope uses import-ids
-					unless integer? callee [
-						fail ERROR-REFERENCE ["unknown initializer function " mold value]
-					]
-					callee-record: skip imports ((callee - 1) * 10)
-					unless callee-record/5 = 'function [
-						fail ERROR-REFERENCE ["initializer target is not a function: " mold value]
-					]
-					callee-return: callee-record/8
-					callee-params: callee-record/9
-					callee-flags: callee-record/10
-					callee: negate callee
-				]
-				width: scalar-width callee-return
-				unless all [
-					width > 0
-					(callee-flags and return-value-flag) = 0
-				][fail ERROR-UNSUPPORTED ["initializer call has no scalar result: " mold value]]
-				case [
-					all [
-						(length? callee-params) = 3
-						integer? literal: position/3
-					][
-						unless all [
-							integer32-ref? callee-return
-							integer32-ref? callee-params/2
-							callee-params/3 = 0
-						][fail ERROR-UNSUPPORTED [
-							"initializer function does not take and return a 32-bit integer: "
-							mold value
-						]]
-						result: module-value + 1
-						emit module-code reduce [
-							1 result 0 literal
-							4 (result + 1) callee result
-							10 0 id (result + 1)
-						]
-						module-value: result + 1
-						after: skip position 3
-					]
-					all [
-						(length? callee-params) = 3
-						string? position/3
-					][
-						unless all [
-							pointer-ref? callee-params/2
-							callee-params/3 = 0
-						][fail ERROR-UNSUPPORTED [
-							"initializer function does not take c-string!: " mold value
-						]]
-						bytes: to binary! position/3
-						offset: select string-ids bytes
-						unless integer? offset [
-							offset: length? strings
-							repend string-ids [bytes offset]
-							append strings bytes
-							append strings 0
-						]
-						result: module-value + 1
-						emit module-code reduce [
-							9 result offset ((length? bytes) + 1)
-							4 (result + 1) callee result
-							10 0 id (result + 1)
-						]
-						module-value: result + 1
-						after: skip position 3
-					]
-					all [
-						(length? callee-params) = 6
-						(length? position) >= 4
-						path? argument: position/3
-						(length? argument) = 2
-						any [
-							logic? literal: position/4
-							all [word? literal find [true false yes no] literal]
-						]
-					][
-						first-width: scalar-width callee-params/2
-						second-width: scalar-width callee-params/5
-						argument-import: import-variable-id argument/1 scope uses
-						unless integer? argument-import [
-							unless all [
-								callee < 0
-								argument/1 = 'system
-								argument/2 = 'boot-data
-							][fail ERROR-REFERENCE [
-								"unknown imported aggregate " mold argument/1
-							]]
-							argument-import: add-system-import callee-record/2 scope uses
-						]
-						argument-record: skip imports ((argument-import - 1) * 10)
-						member: member-info argument-record/8 to word! argument/2
-						unless all [
-							block? member
-							member/3 = 0
-							first-width = (scalar-width member/2)
-							first-width = 8
-							second-width = 4
-							callee-params/3 = 0
-							callee-params/6 = 0
-						][fail ERROR-UNSUPPORTED ["unsupported two-argument call " mold value]]
-						literal: either any [literal = true find [true yes] literal][1][0]
-						result: module-value + 1
-						emit module-code reduce [
-							13 result argument-import member/1
-							14 0 1 result
-							1 (result + 1) 0 literal
-							14 0 2 (result + 1)
-							4 (result + 2) callee 0
-							10 0 id (result + 2)
-						]
-						module-value: result + 2
-						after: skip position 4
-					]
-					true [fail ERROR-UNSUPPORTED ["unsupported initializer call " mold value]]
-				]
-				ref: callee-return
-				runtime?: true
-			]
-			true [
-				fail ERROR-UNSUPPORTED [
-					"global initializer is not a static scalar: " mold value
-				]
-			]
-		]
-		either integer? existing-ref [
-			unless runtime? [
-				fail ERROR-UNSUPPORTED ["global reassignment is not lowered yet: " mold name]
-			]
-			unless existing-ref = ref [
-				fail ERROR-UNSUPPORTED ["global reassignment changes type: " mold name]
-			]
-		][
-			record/2: ref
-			record/3: low
-			record/4: high
-		]
-		after
-	]
-
-	compile-import-set: func [
-		position scope uses [block!]
-		instructions [binary!]
-		module? [logic!]
-		/local target id record kind value result
-	][
-		unless all [
-			(length? position) >= 2
-			any [set-word? position/1 set-path? position/1]
-		][fail ERROR-UNSUPPORTED "imported variable assignment is incomplete"]
-		target: either set-word? position/1 [
-			to word! position/1
-		][to path! position/1]
-		id: import-variable-id target scope uses
-		unless integer? id [
-			fail ERROR-REFERENCE ["unknown imported variable " mold target]
-		]
-		record: skip imports ((id - 1) * 10)
-		kind: type-kind record/4 record/6 record/7
-		value: position/2
-		if all [
-			path? value
-			(length? value) = 3
-			value/1 = 'system
-			value/2 = 'stack
-			value/3 = 'top
-		][
-			unless (scalar-width record/8) = 8 [
-				fail ERROR-UNSUPPORTED "system/stack/top requires a pointer target"
-			]
-			result: either module? [module-value + 1][1]
-			emit instructions reduce [
-				11 result 0 0
-				12 0 id result
-			]
-			if module? [module-value: result]
-			return skip position 2
-		]
-		case [
-			all [find [i32 u32] kind integer? value] []
-			all [
-				kind = 'logic
-				any [logic? value all [word? value find [true false yes no] value]]
-			][value: either any [value = true find [true yes] value][1][0]]
-			true [
-				fail ERROR-UNSUPPORTED [
-					"imported variable store is not a 32-bit scalar: "
-					mold copy/part position 2
-				]
-			]
-		]
-		emit instructions reduce [8 0 id value]
-		skip position 2
-	]
-
-	compile-module: func [
-		values scope uses [block!]
-		/local position name child target next-uses import-id
-	][
-		position: values
-		while [not tail? position][
-			case [
-				all [
-					position/1 = 'comment
-					(length? position) >= 2
-				][position: skip position 2]
-				all [
-					issue? position/1
-					find [#script #include] position/1
-					(length? position) >= 2
-				][position: skip position 2]
-				all [issue? position/1 position/1 = #user-code][
-					position: next position
-				]
-				all [
-					issue? position/1
-					position/1 = #enum
-					(length? position) >= 3
-				][position: skip position 3]
-				all [
-					issue? position/1
-					position/1 = #import
-					(length? position) >= 2
-				][position: skip position 2]
-				all [
-					set-word? position/1
-					(length? position) >= 3
-					position/2 = 'alias
-				][
-					position: skip position either find [
-						struct! union! function! subroutine!
-					] position/3 [4][3]
-				]
-				all [
-					set-word? position/1
-					(length? position) >= 4
-					find [func function] position/2
-					block? position/3
-					block? position/4
-				][position: skip position 4]
-				all [
-					set-word? position/1
-					(length? position) >= 3
-					position/2 = 'context
-					block? position/3
-				][
-					name: to word! position/1
-					child: append copy scope name
-					compile-module position/3 child uses
-					position: skip position 3
-				]
-				all [
-					position/1 = 'with
-					(length? position) >= 3
-					any [word? position/2 path? position/2]
-					block? position/3
-				][
-					target: position/2
-					unless child: resolve-context target scope uses [
-						fail ERROR-CONTEXT ["unknown context " mold target]
-					]
-					next-uses: copy/deep uses
-					append/only next-uses child
-					compile-module position/3 scope next-uses
-					position: skip position 3
-				]
-				all [
-					set-word? position/1
-					(length? position) >= 2
-					integer? import-id: import-variable-id
-						to word! position/1 scope uses
-				][
-					position: compile-import-set position scope uses module-code true
-				]
-				all [set-word? position/1 (length? position) >= 2][
-					position: set-global position scope uses
-				]
-				all [set-path? position/1 (length? position) >= 2][
-					position: compile-import-set position scope uses module-code true
-				]
-				true [
-					fail ERROR-UNSUPPORTED [
-						"global expression is not lowered yet: " mold position/1
-					]
-				]
-			]
 		]
 	]
 
@@ -960,228 +665,30 @@ compiler-rsir-frontend: context [
 		append/only functions copy []
 		append functions 0
 		append/only functions copy []
+		append/only functions copy []
+		append functions 0
 		append functions 0
 		function-count: function-count + 1
 	]
 
-	compile-body: func [
-		return-ref [integer!]
-		body [block!]
-		scope uses [block!]
-		instructions [binary!]
-		params [block!]
-		flags [integer!]
-		/local expression value callee global-id position callee-params argument type ref
-			kind
-			callee-return callee-flags param-count argument-id result-id before
-	][
-		before: length? instructions
-		param-count: (length? params) / 3
-		either return-ref = 0 [
-			unless empty? params [
-				fail ERROR-UNSUPPORTED "void parameters are not lowered yet"
+	lower-functions: func [/local record body count][
+		clear function-code
+		record: functions
+		while [not tail? record][
+			body: record/3
+			count: either binary? body [
+				unless ((length? body) // 16) = 0 [
+					fail ERROR-UNSUPPORTED "invalid module instruction stream"
+				]
+				append function-code body
+				(length? body) / 16
+			][
+				stack-body record/6 body record/4 record/5 function-code
+					record/7 record/8 record/9
 			]
-			case [
-				empty? body []
-				all [
-					(length? body) = 2
-					any [set-word? body/1 set-path? body/1]
-				][
-					compile-import-set body scope uses instructions false
-				]
-				true [
-					fail ERROR-UNSUPPORTED "void function body is not lowered yet"
-				]
-			]
-			emit instructions [2 0 0 0]                ; return void
-		][
-			unless all [
-				integer32-ref? return-ref
-				(flags and return-value-flag) = 0
-				param-count <= 1
-				any [
-					empty? params
-					all [integer32-ref? params/2 params/3 = 0]
-				]
-			][fail ERROR-UNSUPPORTED "function body signature is not lowered yet"]
-			expression: either all [not empty? body body/1 = 'return][next body][body]
-			result-id: 0
-			case [
-				all [not empty? expression expression/1 = 'size?][
-					unless any [
-						all [
-							(length? expression) = 2
-							any [word? expression/2 path? expression/2]
-						]
-						all [
-							(length? expression) = 3
-							expression/2 = 'pointer!
-							block? expression/3
-						]
-					][fail ERROR-UNSUPPORTED "size? requires a logical type"]
-					type: copy next expression
-					ref: type-ref type scope uses
-					result-id: param-count + 1
-					emit instructions reduce [
-						5 result-id ref 0                     ; target size
-					]
-				]
-				(length? expression) = 1 [
-					value: expression/1
-					if all [
-						word? value
-						not empty? params
-						value = params/1
-					][
-						result-id: 1
-					]
-					if integer? value [
-						result-id: param-count + 1
-						emit instructions reduce [
-							1 result-id 0 value                ; i32 literal
-						]
-					]
-					if all [
-						result-id = 0
-						any [word? value path? value]
-						integer? global-id: resolve-name value scope uses globals
-					][
-						position: skip global-data ((global-id - 1) * 4)
-						unless integer32-ref? position/2 [
-							fail ERROR-UNSUPPORTED [
-								"global " mold value " is not an i32 value"
-							]
-						]
-						result-id: param-count + 1
-						emit instructions reduce [
-							6 result-id global-id 0            ; load global i32
-						]
-					]
-					if all [
-						result-id = 0
-						any [word? value path? value]
-					][
-						callee: resolve-name value scope uses function-ids
-						either integer? callee [
-							kind: 'function
-							position: skip functions ((callee - 1) * 8)
-							callee-return: position/6
-							callee-params: position/7
-							callee-flags: position/8
-						][
-							callee: resolve-name value scope uses import-ids
-							unless integer? callee [
-								fail ERROR-REFERENCE [
-									"unknown value or function " mold value
-								]
-							]
-							position: skip imports ((callee - 1) * 10)
-							kind: position/5
-							if kind = 'function [
-								callee-return: position/8
-								callee-params: position/9
-								callee-flags: position/10
-								callee: 0 - callee
-							]
-						]
-						either kind = 'variable [
-							unless find [i32 u32] (
-								type-kind position/4 position/6 position/7
-							)[
-								fail ERROR-REFERENCE [
-									"import " mold value " is not an i32 variable"
-								]
-							]
-							result-id: param-count + 1
-							emit instructions reduce [
-								7 result-id callee 0              ; load imported i32
-							]
-						][
-							unless all [
-								integer32-ref? callee-return
-								(callee-flags and return-value-flag) = 0
-								empty? callee-params
-							][
-								fail ERROR-REFERENCE [
-									"function " mold value
-									" does not take zero arguments and return i32"
-								]
-							]
-							result-id: param-count + 1
-							emit instructions reduce [
-								4 result-id callee 0               ; i32 call
-							]
-						]
-					]
-					if result-id = 0 [
-						fail ERROR-UNSUPPORTED "unsupported i32 return expression"
-					]
-				]
-				(length? expression) = 2 [
-					value: expression/1
-					unless any [word? value path? value][
-						fail ERROR-UNSUPPORTED "call target must be a function name"
-					]
-					callee: resolve-name value scope uses function-ids
-					either integer? callee [
-						position: skip functions ((callee - 1) * 8)
-						callee-return: position/6
-						callee-params: position/7
-						callee-flags: position/8
-					][
-						callee: resolve-name value scope uses import-ids
-						unless integer? callee [
-							fail ERROR-REFERENCE ["unknown function " mold value]
-						]
-						position: skip imports ((callee - 1) * 10)
-						unless position/5 = 'function [
-							fail ERROR-REFERENCE ["import " mold value " is not a function"]
-						]
-						callee-return: position/8
-						callee-params: position/9
-						callee-flags: position/10
-						callee: 0 - callee
-					]
-					unless all [
-						integer32-ref? callee-return
-						(callee-flags and return-value-flag) = 0
-						(length? callee-params) = 3
-						integer32-ref? callee-params/2
-						callee-params/3 = 0
-					][
-						fail ERROR-REFERENCE [
-							"function " mold value " does not take one argument and return i32"
-						]
-					]
-					argument: expression/2
-					argument-id: all [
-						word? argument
-						not empty? params
-						argument = params/1
-						1
-					]
-					unless integer? argument-id [
-						unless integer? argument [
-							fail ERROR-UNSUPPORTED "call argument must be an i32 literal or parameter"
-						]
-						argument-id: param-count + 1
-						emit instructions reduce [
-							1 argument-id 0 argument            ; i32 literal
-						]
-					]
-					result-id: max (param-count + 1) (argument-id + 1)
-					emit instructions reduce [
-						4 result-id callee argument-id        ; i32 call
-					]
-				]
-				true [
-					fail ERROR-UNSUPPORTED
-						"i32 body must return a value or direct call"
-				]
-			]
-			emit instructions reduce [3 0 result-id 0]   ; return i32
+			record/10: count
+			record: skip record 10
 		]
-		((length? instructions) - before) / 16
 	]
 
 	scan-enum: func [
@@ -1356,6 +863,15 @@ compiler-rsir-frontend: context [
 						fail ERROR-DUPLICATE ["duplicate alias " mold key]
 					]
 					case [
+						position/3 = 'pointer! [
+							unless all [
+								(length? position) >= 4
+								block? position/4
+							][fail ERROR-UNSUPPORTED "pointer alias is missing its pointee"]
+							kind: 'alias
+							type-spec: reduce [position/3 position/4]
+							position: skip position 4
+						]
 						find [struct! union! function! subroutine!] position/3 [
 							unless all [
 								(length? position) >= 4
@@ -1415,6 +931,8 @@ compiler-rsir-frontend: context [
 					append/only functions body
 					append/only functions copy scope
 					append/only functions copy/deep uses
+					append functions none
+					append functions none
 					append functions none
 					append functions none
 					append functions none
@@ -1497,7 +1015,7 @@ compiler-rsir-frontend: context [
 		prepare-imports
 		compile-module skip source 2 copy [] copy []
 		if module-kind = 3 [
-			emit module-code [2 0 0 0]
+			emit module-code reduce [return-op 0 0 0]
 			add-module-function
 		]
 		if all [module-kind <> 3 not empty? module-code][
@@ -1506,10 +1024,11 @@ compiler-rsir-frontend: context [
 		if function-count < 1 [
 			fail ERROR-FUNCTION-COUNT "RSIR module has no function"
 		]
+		lower-functions
 	]
 
 	write-types: func [type-output members [binary!] /local position kind spec scope uses
-		field field-type ref flags count code first signature params parameter
+		field field-type ref flags count code first signature params parameter target
 	][
 		first: 0
 		position: types
@@ -1518,12 +1037,18 @@ compiler-rsir-frontend: context [
 			case [
 				kind = 'alias [
 					code: select type-codes 'alias
+					target: either block? position/3 [position/3][reduce [position/3]]
 					emit type-output reduce [
 						code
-						type-ref reduce [position/3] position/4 position/5
+						type-ref target position/4 position/5
 						0
 						first
 						0
+					]
+				]
+				kind = 'pointer [
+					emit type-output reduce [
+						select type-codes 'pointer-node position/3 0 first 0
 					]
 				]
 				find [struct union] kind [
@@ -1556,12 +1081,15 @@ compiler-rsir-frontend: context [
 				]
 				find [function subroutine] kind [
 					signature: read-signature position/3 position/4 position/5
+					unless empty? signature/3 [
+						fail ERROR-UNSUPPORTED "function type cannot declare locals"
+					]
 					params: signature/2
 					count: (length? params) / 3
 					emit type-output reduce [
 						select type-codes kind
 						signature/1
-						signature/3
+						signature/4
 						first
 						count
 					]
@@ -1580,8 +1108,8 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	write-rsir: func [limit [integer!] /local output position name body
-		scope uses params flags record-offset param-count first-param count
+	write-rsir: func [limit [integer!] /local output position name
+		params locals flags record-offset param-count local-count first-param first-local
 		instruction-count size entry id parameter import-records global-records
 		function-records
 		library external last-library library-offset external-offset names
@@ -1594,7 +1122,8 @@ compiler-rsir-frontend: context [
 		member-bytes: length? members
 		names: copy strings
 		output: make binary! (28 + type-bytes + member-bytes + (length? strings)
-			+ (import-count * 64) + (global-count * 40) + (function-count * 96))
+			+ (length? function-code) + (import-count * 64)
+			+ (global-count * 40) + (function-count * 112))
 		append/dup output 0 28
 		append output type-output
 		append output members
@@ -1603,7 +1132,7 @@ compiler-rsir-frontend: context [
 		function-records: global-records + (global-count * 20)
 		append/dup output 0 (import-count * 32)
 		append/dup output 0 (global-count * 20)
-		append/dup output 0 (function-count * 28)
+		append/dup output 0 (function-count * 36)
 
 		position: imports
 		last-library: none
@@ -1675,13 +1204,17 @@ compiler-rsir-frontend: context [
 		]
 
 		position: functions
+		instruction-count: 0
 		id: 1
 		while [not tail? position][
 			name: position/1
 			params: position/7
-			flags: position/8
+			locals: position/8
+			flags: position/9
 			param-count: (length? params) / 3
-			record-offset: function-records + ((id - 1) * 28)
+			local-count: (length? locals) / 3
+			first-local: first-param + param-count
+			record-offset: function-records + ((id - 1) * 36)
 			change/part at output record-offset
 				int-to-bin/to-bin32 (length? names) 4
 			change/part at output (record-offset + 4)
@@ -1694,41 +1227,34 @@ compiler-rsir-frontend: context [
 				int-to-bin/to-bin32 first-param 4
 			change/part at output (record-offset + 20)
 				int-to-bin/to-bin32 param-count 4
+			change/part at output (record-offset + 24)
+				int-to-bin/to-bin32 first-local 4
+			change/part at output (record-offset + 28)
+				int-to-bin/to-bin32 local-count 4
+			change/part at output (record-offset + 32)
+				int-to-bin/to-bin32 position/10 4
 			parameter: params
 			while [not tail? parameter][
 				emit output reduce [parameter/2 parameter/3]
 				parameter: skip parameter 3
 			]
-			append names name
-			first-param: first-param + param-count
-			id: id + 1
-			position: skip position 8
-		]
-
-		position: functions
-		instruction-count: 0
-		id: 1
-		while [not tail? position][
-			body: position/3
-			scope: position/4
-			uses: position/5
-			params: position/7
-			flags: position/8
-			count: either binary? body [
-				unless ((length? body) // 16) = 0 [
-					fail ERROR-UNSUPPORTED "invalid module instruction stream"
+			parameter: locals
+			while [not tail? parameter][
+				if parameter/2 = 0 [
+					fail ERROR-UNSUPPORTED [
+						"local type is unresolved: " mold parameter/1
+					]
 				]
-				append output body
-				(length? body) / 16
-			][compile-body position/6 body scope uses output params flags]
-			record-offset: function-records + ((id - 1) * 28)
-			change/part at output (record-offset + 24)
-				int-to-bin/to-bin32 count 4
-			instruction-count: instruction-count + count
+				emit output reduce [parameter/2 parameter/3]
+				parameter: skip parameter 3
+			]
+			append names name
+			first-param: first-local + local-count
+			instruction-count: instruction-count + position/10
 			id: id + 1
-			position: skip position 8
+			position: skip position 10
 		]
-
+		append output function-code
 		append output names
 		size: length? output
 		if any [limit <= 0 size > limit] [
@@ -1743,6 +1269,770 @@ compiler-rsir-frontend: context [
 		change/part at output 21 int-to-bin/to-bin32 instruction-count 4
 		change/part at output 25 int-to-bin/to-bin32 global-count 4
 		output
+	]
+
+	; Bodies lower directly to typed postfix values and places.
+	resolve-stack-call: func [
+		value [word! path!]
+		scope uses [block!]
+		return: [integer! none!]
+		/local id record
+	][
+		id: resolve-name value scope uses function-ids
+		if integer? id [return id]
+		id: resolve-name value scope uses import-ids
+		unless integer? id [return none]
+		record: skip imports ((id - 1) * 10)
+		either record/5 = 'function [0 - id][none]
+	]
+
+	stack-type-compatible?: func [
+		expected actual [integer!]
+		return: [logic!]
+		/local expected-kind actual-kind
+	][
+		expected: canonical-ref expected
+		actual: canonical-ref actual
+		if expected = actual [return true]
+		if any [expected = 0 actual = 0] [return false]
+		expected-kind: ref-kind expected
+		actual-kind: ref-kind actual
+		either all [expected > 0 actual > 0][
+			false
+		][
+			expected-kind = actual-kind
+		]
+	]
+
+	integer-kind?: func [kind [word! none!] return: [logic!]][
+		not none? find [i8 u8 i16 u16 i32 u32 i64 u64] kind
+	]
+
+	float-kind?: func [kind [word! none!] return: [logic!]][
+		not none? find [f32 f64] kind
+	]
+
+	reference-kind?: func [kind [word! none!] return: [logic!]][
+		not none? find [pointer c-string struct union] kind
+	]
+
+	same-stack-type?: func [
+		left left-flags right right-flags [integer!]
+		return: [logic!]
+	][
+		all [
+			(canonical-ref left) = canonical-ref right
+			left-flags = right-flags
+		]
+	]
+
+	stack-unary: func [
+		operation [integer!]
+		instructions [binary!]
+		/local kind
+	][
+		kind: ref-kind last-type
+		unless all [
+			operation = not-operation
+			last-flags = 0
+			any [integer-kind? kind kind = 'logic]
+		][fail ERROR-REFERENCE "invalid operand type for not"]
+		emit instructions reduce [unary-op operation 0 0]
+	]
+
+	stack-binary: func [
+		operation left left-flags [integer!]
+		instructions [binary!]
+		/local right right-flags left-kind right-kind valid? comparison?
+	][
+		right: last-type
+		right-flags: last-flags
+		left-kind: ref-kind left
+		right-kind: ref-kind right
+		valid?: false
+		comparison?: operation >= 13
+
+		case [
+			operation <= 6 [
+				valid?: any [
+					all [
+						integer-kind? left-kind
+						integer-kind? right-kind
+						left-flags = 0
+						right-flags = 0
+					]
+					all [
+						float-kind? left-kind
+						left-kind = right-kind
+						left-flags = 0
+						right-flags = 0
+						any [operation <= 4 left-kind = 'f32]
+					]
+					all [
+						operation <= 2
+						reference-kind? left-kind
+						left-flags = 0
+						any [
+							all [integer-kind? right-kind right-flags = 0]
+							all [reference-kind? right-kind right-flags = 0]
+						]
+					]
+				]
+			]
+			operation <= 9 [
+				valid?: all [
+					integer-kind? left-kind
+					right-kind = 'i32
+					left-flags = 0
+					right-flags = 0
+				]
+			]
+			operation <= 12 [
+				valid?: all [
+					any [integer-kind? left-kind left-kind = 'logic]
+					same-stack-type? left left-flags right right-flags
+				]
+			]
+			comparison? [
+				valid?: all [
+					same-stack-type? left left-flags right right-flags
+					any [
+						integer-kind? left-kind
+						float-kind? left-kind
+						reference-kind? left-kind
+						all [left-kind = 'logic operation <= 14]
+					]
+				]
+			]
+			true [valid?: false]
+		]
+		unless valid? [fail ERROR-REFERENCE "incompatible binary operands"]
+		emit instructions reduce [binary-op operation 0 0]
+		either comparison? [
+			last-type: -11
+			last-flags: 0
+		][
+			last-type: left
+			last-flags: left-flags
+		]
+	]
+
+	stack-storage-info: func [
+		name [word!]
+		params [block!]
+		locals [block!]
+		return: [block! none!]
+		/local position index
+	][
+		position: params
+		index: 1
+		while [not tail? position][
+			if position/1 = name [return reduce [index position]]
+			position: skip position 3
+			index: index + 1
+		]
+		position: locals
+		while [not tail? position][
+			if position/1 = name [return reduce [index position]]
+			position: skip position 3
+			index: index + 1
+		]
+		none
+	]
+
+	stack-read-type: func [
+		position [block!]
+		scope uses [block!]
+		return: [block!]
+		/local type token
+	][
+		unless all [not tail? position any [word? position/1 path? position/1]][
+			fail ERROR-UNSUPPORTED "missing logical type"
+		]
+		token: position/1
+		type: reduce [token]
+		position: next position
+		if all [
+			word? token
+			find [pointer! struct! union! function!] token
+			not tail? position
+			block? position/1
+		][
+			append/only type position/1
+			position: next position
+		]
+		last-type: type-ref type scope uses
+		last-flags: type-flags type scope uses
+		reduce [position last-type last-flags]
+	]
+
+	stack-address: func [
+		target [word! path!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		return: [logic!]
+		/local id position member parts index base current flags info storage
+	][
+		if word? target [
+			storage: stack-storage-info target params locals
+			if block? storage [
+				emit instructions reduce [address-op local-address storage/1 0]
+				position: storage/2
+				last-type: position/2
+				last-flags: position/3
+				return true
+			]
+		]
+		id: resolve-name target scope uses globals
+		if integer? id [
+			emit instructions reduce [address-op global-address id 0]
+			position: skip global-data ((id - 1) * 4)
+			last-type: any [position/2 0]
+			last-flags: 0
+			return true
+		]
+		id: import-variable-id target scope uses
+		if integer? id [
+			emit instructions reduce [address-op import-address id 0]
+			position: skip imports ((id - 1) * 10)
+			last-type: position/8
+			last-flags: 0
+			return true
+		]
+		if word? target [return false]
+		parts: to block! target
+		if (length? parts) < 2 [return false]
+		base: parts/1
+		stack-value reduce [base] scope uses instructions params locals
+		current: last-type
+		flags: last-flags
+		index: 2
+		while [index <= length? parts][
+			member: to word! parts/:index
+			info: member-info current member
+			unless block? info [
+				fail ERROR-REFERENCE ["unknown member " mold member]
+			]
+			emit instructions reduce [member-op info/1 0 0]
+			current: info/2
+			flags: info/3
+			if index < length? parts [
+				emit instructions reduce [load-op 0 0 0]
+				flags: 0
+			]
+			index: index + 1
+		]
+		last-type: current
+		last-flags: flags
+		true
+	]
+
+	stack-call: func [
+		target [integer!]
+		value [word! path!]
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		return: [block!]
+		/local record return-ref parameters flags
+			parameter count expected position-after
+	][
+		either target > 0 [
+			record: skip functions ((target - 1) * 10)
+			return-ref: record/6
+			parameters: record/7
+			flags: record/9
+		][
+			record: skip imports (((0 - target) - 1) * 10)
+			return-ref: record/8
+			parameters: record/9
+			flags: record/10
+		]
+		count: 0
+		parameter: parameters
+		position-after: next position
+		while [not tail? parameter][
+			position-after: stack-value position-after scope uses instructions params locals
+			expected: parameter/2
+			unless stack-type-compatible? expected last-type [
+				fail ERROR-REFERENCE [
+					"argument type does not match function " mold value
+				]
+			]
+			count: count + 1
+			parameter: skip parameter 3
+		]
+		emit instructions reduce [call-op target count return-ref]
+		last-type: return-ref
+		last-flags: either return-ref = 0 [0][flags and return-value-flag]
+		position-after
+	]
+
+	stack-primary: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		return: [block!]
+		/local value type-info target-ref target-flags next-position target
+			id constant-key bytes offset inner
+	][
+		unless not tail? position [
+			fail ERROR-UNSUPPORTED "missing expression"
+		]
+		value: position/1
+		case [
+			paren? value [
+				inner: to block! value
+				if empty? inner [fail ERROR-UNSUPPORTED "empty expression"]
+				next-position: stack-value inner scope uses instructions params locals
+				unless tail? next-position [
+					fail ERROR-UNSUPPORTED "parenthesized expression is incomplete"
+				]
+				next position
+			]
+			value = 'not [
+				next-position: stack-value next position scope uses instructions params locals
+				stack-unary not-operation instructions
+				next-position
+			]
+			value = 'as [
+				unless (length? position) >= 2 [
+					fail ERROR-UNSUPPORTED "cast is missing its type"
+				]
+				type-info: stack-read-type next position scope uses
+				target-ref: type-info/2
+				target-flags: type-info/3
+				next-position: stack-value type-info/1 scope uses instructions params locals
+				emit instructions reduce [cast-op target-ref target-flags 0]
+				last-type: target-ref
+				last-flags: target-flags
+				next-position
+			]
+			value = 'size? [
+				type-info: stack-read-type next position scope uses
+				emit instructions reduce [size-op type-info/2 0 0]
+				last-type: -5
+				last-flags: 0
+				type-info/1
+			]
+			integer? value [
+				emit instructions reduce [
+					literal-op -5 value either value < 0 [-1][0]
+				]
+				last-type: -5
+				last-flags: 0
+				next position
+			]
+			char? value [
+				id: to integer! value
+				if id > 255 [fail ERROR-UNSUPPORTED "byte literal is out of range"]
+				emit instructions reduce [literal-op -2 id 0]
+				last-type: -2
+				last-flags: 0
+				next position
+			]
+			logic? value [
+				emit instructions reduce [literal-op -11 either value [1][0] 0]
+				last-type: -11
+				last-flags: 0
+				next position
+			]
+			all [word? value find [true false yes no] value][
+				emit instructions reduce [
+					literal-op -11 either find [true yes] value [1][0] 0
+				]
+				last-type: -11
+				last-flags: 0
+				next position
+			]
+			string? value [
+				bytes: to binary! value
+				offset: select string-ids bytes
+				unless integer? offset [
+					offset: length? strings
+					repend string-ids [bytes offset]
+					append strings bytes
+					append strings 0
+				]
+				emit instructions reduce [
+					constant-op -13 offset ((length? bytes) + 1)
+				]
+				last-type: -13
+				last-flags: 0
+				next position
+			]
+			all [
+				path? value
+				(length? value) = 3
+				value/1 = 'system
+				value/2 = 'stack
+				value/3 = 'top
+			][
+				emit instructions reduce [native-op stack-top-native 0 -12]
+				last-type: -12
+				last-flags: 0
+				next position
+			]
+			any [word? value path? value] [
+				constant-key: qualified scope value
+				id: select constants constant-key
+				either integer? id [
+					emit instructions reduce [literal-op -5 id either id < 0 [-1][0]]
+					last-type: -5
+					last-flags: 0
+					next position
+				][
+					target: resolve-stack-call value scope uses
+					either integer? target [
+						stack-call target value position scope uses instructions params locals
+					][
+						unless stack-address value scope uses instructions params locals [
+							fail ERROR-REFERENCE [
+								"unknown value or function " mold value
+							]
+						]
+						if last-type = 0 [
+							fail ERROR-REFERENCE ["value is used before initialization " mold value]
+						]
+						emit instructions reduce [load-op 0 0 0]
+						last-flags: 0
+						next position
+					]
+				]
+			]
+			true [
+				fail ERROR-UNSUPPORTED ["unsupported expression " mold value]
+			]
+		]
+	]
+
+	stack-value: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		return: [block!]
+		/local operation left left-flags
+	][
+		position: stack-primary position scope uses instructions params locals
+		while [not tail? position][
+			operation: select binary-operations position/1
+			unless integer? operation [break]
+			left: last-type
+			left-flags: last-flags
+			position: stack-primary next position scope uses instructions params locals
+			stack-binary operation left left-flags instructions
+		]
+		position
+	]
+
+	stack-static: func [
+		position [block!]
+		scope uses [block!]
+		return: [logic!]
+		/local value type-info next-position
+	][
+		static?: false
+		static-ref: 0
+		static-low: 0
+		static-high: 0
+		static-next: position
+		value: position/2
+		case [
+			integer? value [
+				static?: true
+				static-ref: -5
+				static-low: value
+				static-high: either value < 0 [-1][0]
+				static-next: skip position 2
+			]
+			char? value [
+				static-low: to integer! value
+				if static-low > 255 [
+					fail ERROR-UNSUPPORTED "byte literal is out of range"
+				]
+				static?: true
+				static-ref: -2
+				static-high: 0
+				static-next: skip position 2
+			]
+			logic? value [
+				static?: true
+				static-ref: -11
+				static-low: either value [1][0]
+				static-next: skip position 2
+			]
+			all [word? value find [true false yes no] value][
+				static?: true
+				static-ref: -11
+				static-low: either find [true yes] value [1][0]
+				static-next: skip position 2
+			]
+			value = 'as [
+				type-info: stack-read-type skip position 2 scope uses
+				next-position: type-info/1
+				if not tail? next-position [
+					value: next-position/1
+					if integer? value [
+						static?: true
+						static-ref: type-info/2
+						static-low: value
+						static-high: either value < 0 [-1][0]
+						static-next: next next-position
+					]
+					if all [
+						any [logic? value all [word? value find [true false yes no] value]]
+						ref-kind type-info/2 = 'logic
+					][
+						static?: true
+						static-ref: type-info/2
+						static-low: either any [
+							value = true
+							all [word? value find [true yes] value]
+						][1][0]
+						static-next: next next-position
+					]
+				]
+			]
+		]
+		static?
+	]
+
+	stack-assignment: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		fold? [logic!]
+		return: [block!]
+		/local target id record target-ref next-position storage
+	][
+		if (length? position) < 2 [fail ERROR-UNSUPPORTED "assignment value is missing"]
+		target: either set-word? position/1 [
+			to word! position/1
+		][to path! position/1]
+		storage: either word? target [stack-storage-info target params locals][none]
+		id: either block? storage [none][resolve-name target scope uses globals]
+		if all [fold? integer? id][
+			record: skip global-data ((id - 1) * 4)
+			if all [
+				not integer? record/2
+				stack-static position scope uses
+				static?
+				any [
+					tail? static-next
+					none? select binary-operations static-next/1
+				]
+			][
+				record/2: static-ref
+				record/3: static-low
+				record/4: static-high
+				last-type: 0
+				last-flags: 0
+				return static-next
+			]
+		]
+		unless stack-address target scope uses instructions params locals [
+			fail ERROR-REFERENCE ["unknown assignment target " mold target]
+		]
+		target-ref: last-type
+		next-position: stack-value next position scope uses instructions params locals
+		either block? storage [
+			record: storage/2
+			either record/2 = 0 [
+				record/2: last-type
+				record/3: last-flags
+			][
+				unless all [
+					stack-type-compatible? record/2 last-type
+					record/3 = last-flags
+				][fail ERROR-REFERENCE ["local assignment changes type " mold target]]
+			]
+		][either integer? id [
+			record: skip global-data ((id - 1) * 4)
+			either integer? record/2 [
+				unless stack-type-compatible? record/2 last-type [
+					fail ERROR-REFERENCE ["global assignment changes type " mold target]
+				]
+			][record/2: last-type]
+		][
+			unless stack-type-compatible? target-ref last-type [
+				fail ERROR-REFERENCE ["assignment changes type " mold target]
+			]
+		]]
+		emit instructions reduce [set-op 0 0 0]
+		next-position
+	]
+
+	stack-module: func [
+		values scope uses [block!]
+		/local position child target next-uses
+	][
+		position: values
+		while [not tail? position][
+			case [
+				all [position/1 = 'comment (length? position) >= 2][
+					position: skip position 2
+				]
+				all [
+					issue? position/1
+					find [#script #include] position/1
+					(length? position) >= 2
+				][position: skip position 2]
+				all [issue? position/1 position/1 = #user-code][
+					position: next position
+				]
+				all [
+					issue? position/1
+					position/1 = #enum
+					(length? position) >= 3
+				][position: skip position 3]
+				all [
+					issue? position/1
+					position/1 = #import
+					(length? position) >= 2
+				][position: skip position 2]
+				all [
+					set-word? position/1
+					(length? position) >= 3
+					position/2 = 'alias
+				][position: skip position either find [
+					pointer! struct! union! function! subroutine!
+				] position/3 [4][3]]
+				all [
+					set-word? position/1
+					(length? position) >= 4
+					find [func function] position/2
+					block? position/3
+					block? position/4
+				][position: skip position 4]
+				all [
+					set-word? position/1
+					(length? position) >= 3
+					position/2 = 'context
+					block? position/3
+				][
+					child: append copy scope to word! position/1
+					stack-module position/3 child uses
+					position: skip position 3
+				]
+				all [
+					position/1 = 'with
+					(length? position) >= 3
+					any [word? position/2 path? position/2]
+					block? position/3
+				][
+					target: position/2
+					unless child: resolve-context target scope uses [
+						fail ERROR-CONTEXT ["unknown context " mold target]
+					]
+					next-uses: copy/deep uses
+					append/only next-uses child
+					stack-module position/3 scope next-uses
+					position: skip position 3
+				]
+				any [set-word? position/1 set-path? position/1][
+					position: stack-assignment position scope uses module-code [] [] true
+					if last-type <> 0 [emit module-code reduce [drop-op 0 0 0]]
+				]
+				true [
+					position: stack-value position scope uses module-code [] []
+					if last-type <> 0 [
+						emit module-code reduce [drop-op 0 0 0]
+					]
+				]
+			]
+		]
+	]
+
+	stack-body: func [
+		return-ref [integer!]
+		body [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		flags [integer!]
+		return: [integer!]
+		/local position before result?
+	][
+		before: length? instructions
+		position: body
+		last-type: 0
+		last-flags: 0
+		if return-ref = 0 [
+			while [not tail? position][
+				either any [set-word? position/1 set-path? position/1][
+					position: stack-assignment position scope uses instructions params locals false
+				][
+					position: stack-value position scope uses instructions params locals
+				]
+				if last-type <> 0 [emit instructions reduce [drop-op 0 0 0]]
+			]
+			emit instructions reduce [return-op 0 0 0]
+			return to integer! (((length? instructions) - before) / 16)
+		]
+		if all [not tail? position position/1 = 'return][position: next position]
+		result?: false
+		while [not tail? position][
+			either any [set-word? position/1 set-path? position/1][
+				position: stack-assignment position scope uses instructions params locals false
+			][
+				position: stack-value position scope uses instructions params locals
+			]
+			either tail? position [
+				if last-type = 0 [fail ERROR-UNSUPPORTED "function result is missing"]
+				unless stack-type-compatible? return-ref last-type [
+					fail ERROR-REFERENCE "function result type does not match signature"
+				]
+				result?: true
+			][
+				if last-type <> 0 [emit instructions reduce [drop-op 0 0 0]]
+			]
+		]
+		unless result? [fail ERROR-UNSUPPORTED "function result is missing"]
+		emit instructions reduce [return-op return-ref flags 0]
+		to integer! (((length? instructions) - before) / 16)
+	]
+
+	set-global: func [
+		position scope uses [block!]
+	][
+		stack-assignment position scope uses module-code [] [] true
+	]
+
+	compile-import-set: func [
+		position scope uses [block!]
+		instructions [binary!]
+		module? [logic!]
+	][
+		stack-assignment position scope uses instructions [] [] module?
+	]
+
+	compile-module: func [
+		values scope uses [block!]
+	][
+		stack-module values scope uses
+	]
+
+	compile-body: func [
+		return-ref [integer!]
+		body [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		flags [integer!]
+	][
+		stack-body return-ref body scope uses instructions params locals flags
 	]
 
 	compile: func [
@@ -1768,6 +2058,7 @@ compiler-rsir-frontend: context [
 			clear contexts
 			clear types
 			clear type-ids
+			clear pointer-types
 			clear constants
 			clear imports
 			clear import-ids
@@ -1775,15 +2066,13 @@ compiler-rsir-frontend: context [
 			clear globals
 			clear global-data
 			clear module-code
+			clear function-code
 			clear strings
 			clear string-ids
 			function-count: 0
 			type-count: 0
-			implicit-type-count: 0
 			import-count: 0
-			implicit-import-count: 0
 			global-count: 0
-			module-value: 0
 			compile-source source
 			write-rsir any [max-bytes DEFAULT-MAX-BYTES]
 		] 'rsir-error

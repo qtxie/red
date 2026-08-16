@@ -1,112 +1,139 @@
 Red/System [
-	Title: "Hybrid compiler Windows x64 encoder tests"
+	Title: "Hybrid compiler Windows x64 primitive encoder tests"
 ]
 
 #include %../../../system/codegen/x64-encoder.reds
 
-expected-void: #{554889E56A006A0068000000006A00C9C3}
-expected-void-entry: #{554889E56A006A0068000000006A0031C94883EC20FF150000000031C0C9C3}
-expected-i32: #{554889E56A006A0068000000006A00B807000000C9C3}
-expected-i32-entry: #{554889E56A006A0068000000006A00B9070000004883EC20FF150000000031C0C9C3}
-expected-call: #{554889E56A006A0068000000006A00E810000000C9C3}
-expected-call-back: #{554889E56A006A0068000000006A00E8D6FFFFFFC9C3}
-expected-call-entry: #{554889E56A006A0068000000006A00E81000000089C14883EC20FF150000000031C0C9C3}
-expected-param: #{554889E56A006A0068000000006A0089C8C9C3}
-expected-call-arg: #{554889E56A006A0068000000006A00B92A000000E810000000C9C3}
-expected-call-arg-entry: #{554889E56A006A0068000000006A00B92A000000E81000000089C14883EC20FF150000000031C0C9C3}
-
 failures: 0
-code: allocate x64-encoder/CALL_ARG_LITERAL_ENTRY_SIZE
+code: allocate 128
 if null? code [quit 1]
 
-size: x64-encoder/encode code x64-encoder/VOID_SIZE false x64-encoder/VOID 0 0 0
-if size <> x64-encoder/VOID_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-void) size) <> 0 [
+size: x64-encoder/prolog code 128 0
+if size <> 15 [failures: failures + 1]
+size: x64-encoder/allocate-frame (code + 15) 113 48
+if size <> 4 [failures: failures + 1]
+size: x64-encoder/move-immediate (code + 19) 109 x64-encoder/RAX 4 42 0
+if size <> 5 [failures: failures + 1]
+size: x64-encoder/frame-store (code + 24) 104 x64-encoder/RAX -40 4
+if size <> 3 [failures: failures + 1]
+size: x64-encoder/frame-load (code + 27) 101 x64-encoder/RCX -40 4 1
+if size <> 3 [failures: failures + 1]
+size: x64-encoder/call-relative (code + 30) 98 -35
+if size <> 5 [failures: failures + 1]
+size: x64-encoder/leave-return (code + 35) 93
+if size <> 2 [failures: failures + 1]
+
+expected: #{
+	554889E56A006A0068000000006A00
+	4883EC30
+	B82A000000
+	8945D8
+	8B4DD8
+	E8DDFFFFFF
+	C9C3
+}
+if (compare-memory code (as byte-ptr! expected) 37) <> 0 [
 	failures: failures + 1
 ]
 
-size: x64-encoder/encode code x64-encoder/VOID_ENTRY_SIZE true x64-encoder/VOID 0 0 0
-if size <> x64-encoder/VOID_ENTRY_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-void-entry) size) <> 0 [
+if (x64-encoder/prolog null 0 0) <> 15 [failures: failures + 1]
+if (x64-encoder/allocate-frame null 0 128) <> 7 [failures: failures + 1]
+if (x64-encoder/move-immediate null 0 x64-encoder/R9 8 1 0) <> 11 [
 	failures: failures + 1
 ]
-if x64-encoder/VOID_EXIT_REF <> 23 [failures: failures + 1]
-
-size: x64-encoder/encode code x64-encoder/I32_SIZE false x64-encoder/I32_LITERAL 7 0 0
-if size <> x64-encoder/I32_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-i32) size) <> 0 [
+if (x64-encoder/move-register code 128 x64-encoder/RDX x64-encoder/RCX 8) <> 3 [
 	failures: failures + 1
 ]
-
-size: x64-encoder/encode code x64-encoder/I32_ENTRY_SIZE true x64-encoder/I32_LITERAL 7 0 0
-if size <> x64-encoder/I32_ENTRY_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-i32-entry) size) <> 0 [
-	failures: failures + 1
-]
-if x64-encoder/I32_EXIT_REF <> 26 [failures: failures + 1]
-
-size: x64-encoder/encode code x64-encoder/CALL_SIZE false x64-encoder/I32_CALL 16 0 0
-if size <> x64-encoder/CALL_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-call) size) <> 0 [
+if any [code/1 <> as byte! 48h code/2 <> as byte! 89h code/3 <> as byte! CAh][
 	failures: failures + 1
 ]
 
-size: x64-encoder/encode code x64-encoder/CALL_ENTRY_SIZE true x64-encoder/I32_CALL 16 0 0
-if size <> x64-encoder/CALL_ENTRY_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-call-entry) size) <> 0 [
+offset: 0
+size: x64-encoder/binary-register (code + offset) (128 - offset) 01h
+	x64-encoder/RAX x64-encoder/RDX 4
+if size <> 2 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/multiply-register (code + offset) (128 - offset)
+	x64-encoder/RAX x64-encoder/RDX 8
+if size <> 4 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/multiply-immediate (code + offset) (128 - offset)
+	x64-encoder/RDX x64-encoder/RDX 4 8
+if size <> 4 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/shift-register (code + offset) (128 - offset)
+	x64-encoder/RAX 7 4
+if size <> 2 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/shift-immediate (code + offset) (128 - offset)
+	x64-encoder/RAX 7 31 4
+if size <> 3 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/not-register (code + offset) (128 - offset) x64-encoder/RAX 4
+if size <> 2 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/condition-result (code + offset) (128 - offset) 4
+if size <> 6 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/divide-register (code + offset) (128 - offset) 4 1
+if size <> 3 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/sign-extend-register (code + offset) (128 - offset)
+	x64-encoder/RCX
+if size <> 3 [failures: failures + 1]
+offset: offset + size
+operations: #{
+	01D0
+	480FAFC2
+	486BD204
+	D3F8
+	C1F81F
+	F7D0
+	0F94C00FB6C0
+	99F7F9
+	4863C9
+}
+if any [offset <> 29 (compare-memory code (as byte-ptr! operations) offset) <> 0][
 	failures: failures + 1
 ]
-if x64-encoder/CALL_EXIT_REF <> 28 [failures: failures + 1]
-if x64-encoder/CALL_NEXT <> 20 [failures: failures + 1]
 
-size: x64-encoder/encode code x64-encoder/CALL_SIZE false x64-encoder/I32_CALL -42 0 0
-if size <> x64-encoder/CALL_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-call-back) size) <> 0 [
+size: x64-encoder/frame-address code 128 x64-encoder/RAX -40
+if any [size <> 4 code/1 <> as byte! 48h code/2 <> as byte! 8Dh][
+	failures: failures + 1
+]
+size: x64-encoder/rip-address code 128 x64-encoder/RAX 123
+if any [size <> 7 code/1 <> as byte! 48h code/2 <> as byte! 8Dh code/3 <> as byte! 05h][
+	failures: failures + 1
+]
+size: x64-encoder/rip-load code 128 x64-encoder/RDX -7
+if any [size <> 7 code/1 <> as byte! 48h code/2 <> as byte! 8Bh code/3 <> as byte! 15h][
 	failures: failures + 1
 ]
 
-size: x64-encoder/encode code (x64-encoder/VOID_SIZE - 1)
-	false x64-encoder/VOID 0 0 0
-if size <> -1 [failures: failures + 1]
+if (x64-encoder/load-indirect code 128 1 1) <> 3 [failures: failures + 1]
+if (x64-encoder/store-indirect code 128 8) <> 3 [failures: failures + 1]
+if (x64-encoder/add-immediate code 128 127) <> 4 [failures: failures + 1]
+if (x64-encoder/add-immediate code 128 128) <> 6 [failures: failures + 1]
+if (x64-encoder/outgoing-store code 128 32 8) <> 5 [failures: failures + 1]
+if (x64-encoder/call-import code 128 0) <> 6 [failures: failures + 1]
+if (x64-encoder/stack-top code 128) <> 3 [failures: failures + 1]
+if (x64-encoder/sign-extend-eax code 128) <> 3 [failures: failures + 1]
+if (x64-encoder/clear-register code 128 x64-encoder/R9) <> 3 [failures: failures + 1]
 
-size: x64-encoder/encode code x64-encoder/PARAM_SIZE
-	false x64-encoder/I32_PARAM 0 0 0
-if size <> x64-encoder/PARAM_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-param) size) <> 0 [
+if (x64-encoder/prolog code 14 0) <> -1 [failures: failures + 1]
+if (x64-encoder/frame-load code 128 x64-encoder/RAX 0 3 0) <> -1 [
 	failures: failures + 1
 ]
-
-size: x64-encoder/encode code x64-encoder/CALL_ARG_LITERAL_SIZE
-	false x64-encoder/I32_CALL_ARG_LITERAL 16 42 0
-if size <> x64-encoder/CALL_ARG_LITERAL_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-call-arg) size) <> 0 [
+if (x64-encoder/store-indirect code 128 3) <> -1 [failures: failures + 1]
+if (x64-encoder/binary-register code 128 02h 0 1 4) <> -1 [
 	failures: failures + 1
 ]
-
-size: x64-encoder/encode code x64-encoder/CALL_ARG_LITERAL_ENTRY_SIZE
-	true x64-encoder/I32_CALL_ARG_LITERAL 16 42 0
-if size <> x64-encoder/CALL_ARG_LITERAL_ENTRY_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-call-arg-entry) size) <> 0 [
-	failures: failures + 1
-]
-if x64-encoder/CALL_ARG_LITERAL_EXIT_REF <> 33 [failures: failures + 1]
-if x64-encoder/CALL_ARG_LITERAL_NEXT <> 25 [failures: failures + 1]
-
-size: x64-encoder/encode code x64-encoder/CALL_ARG_PARAM_SIZE
-	false x64-encoder/I32_CALL_ARG_PARAM 16 0 0
-if size <> x64-encoder/CALL_ARG_PARAM_SIZE [failures: failures + 1]
-if (compare-memory code (as byte-ptr! expected-call) size) <> 0 [
-	failures: failures + 1
-]
-
-size: x64-encoder/encode code x64-encoder/PARAM_SIZE
-	true x64-encoder/I32_PARAM 0 0 0
-if size <> -1 [failures: failures + 1]
+if (x64-encoder/condition-result code 128 16) <> -1 [failures: failures + 1]
 
 free code
 either failures = 0 [
-	print ["PASS: direct Windows x64 encoder" lf]
+	print ["PASS: primitive Windows x64 encoder" lf]
 ][
-	print ["FAIL: direct Windows x64 encoder failures=" failures lf]
+	print ["FAIL: primitive x64 encoder failures=" failures lf]
 ]
 quit failures

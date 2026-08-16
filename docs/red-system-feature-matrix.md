@@ -37,15 +37,15 @@ rules remain in Red/System codegen.
 | float! and float32! | Logical float types, typed stack values and XMM operations | units/float-test.reds, float32-test.reds, math-mixed-test.reds | pending |
 | c-string! | Pointer-to-byte semantics, one-based index, string constant object | units/c-string-test.reds, length-test.reds, lib-test.reds | pending |
 | pointer! and get-path | Pointee-preserving type, address/index/load/set/cast | compiler/pointer-test.r, units/pointer-test.reds, get-pointer-test.reds | pending |
-| Pointer and struct arithmetic | Generic binary operation plus native stride from logical layout | pointer tests, x64-pointer-parity-smoke.reds | pending |
+| Pointer and struct arithmetic | Generic binary operation plus native stride from logical layout | pointer tests, x64-pointer-parity-smoke.reds | replace |
 | Literal and binary arrays | Fixed-array logical type and initializer nodes | units/array-test.reds, protect-test.reds | pending |
 | struct! reference and value forms | Logical members, type-use flags, aggregate load/set/copy | units/struct-x64-test.reds, x64-struct-*.reds | pending |
 | union! raw form | Shared logical variants and maximum native layout | units/union-test.reds, x64-union-by-value-smoke.reds | pending |
 | Tagged unions and variant? | Variant metadata, native tag layout, generic member access and switch | x64-tagged-union-smoke.reds | pending |
 | Type casts and size? | Generic cast; native layout query from logical type | compiler/cast-test.r, units/cast-test.reds, size-x64-test.reds | replace |
-| Left-to-right expressions | Typed postfix emission in exact source order | compiler/cond-expr-test.r, infix-test.r, units/conditional-test.reds | pending |
-| Math, shifts and bitwise operations | Generic unary/binary operations selected by operand types | integer, fixed-int, modulo and math-mixed unit tests | pending |
-| Comparisons and not | Generic compare/unary operations producing logic! | compiler/not-test.r, units/not-test.reds, float comparison smokes | pending |
+| Left-to-right expressions | Typed postfix emission in exact source order | compiler/cond-expr-test.r, infix-test.r, units/conditional-test.reds | replace |
+| Math, shifts and bitwise operations | Generic unary/binary operations selected by operand types | integer, fixed-int, modulo and math-mixed unit tests | replace |
+| Comparisons and not | Generic compare/unary operations producing logic! | compiler/not-test.r, units/not-test.reds, float comparison smokes | replace |
 | Predeclared runtime functions and predicates | Frontend-known typed signatures; ordinary calls or semantic native operations | compiler/print-test.r, units/integer-test.reds, lib-test.reds | pending |
 | Function declarations and returns | Signature type, typed slots, instruction range and return | compiler/return-test.r, units/function-test.reds, return-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |

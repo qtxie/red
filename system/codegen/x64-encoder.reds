@@ -4,14 +4,22 @@ Red/System [
 ]
 
 x64-encoder: context [
+	VOID:        0
+	I32_LITERAL: 1
+	I32_CALL:    2
+
 	VOID_SIZE:       17
 	VOID_ENTRY_SIZE: 31
-	I32_SIZE:        22
-	I32_ENTRY_SIZE:  34
+	I32_SIZE:         22
+	I32_ENTRY_SIZE:   34
+	CALL_SIZE:        22
+	CALL_ENTRY_SIZE:  36
 	FRAME_SIZE:      32
 	BITMAP_OFFSET:    9
 	VOID_EXIT_REF:   23
 	I32_EXIT_REF:    26
+	CALL_EXIT_REF:   28
+	CALL_NEXT:       20
 
 	write-i32: func [at [byte-ptr!] value [integer!]][
 		at/1: as byte! value
@@ -23,17 +31,21 @@ x64-encoder: context [
 	encode: func [
 		code [byte-ptr!]
 		capacity [integer!]
-		entry? result? [logic!]
+		entry? [logic!]
+		shape [integer!]
 		value bitmap-word [integer!]
 		return: [integer!]
 		/local size [integer!] at [byte-ptr!]
 	][
 		if null? code [return -1]
 		size: case [
-			all [entry? result?] [I32_ENTRY_SIZE]
-			entry? [VOID_ENTRY_SIZE]
-			result? [I32_SIZE]
-			true [VOID_SIZE]
+			all [entry? shape = VOID] [VOID_ENTRY_SIZE]
+			all [entry? shape = I32_LITERAL] [I32_ENTRY_SIZE]
+			all [entry? shape = I32_CALL] [CALL_ENTRY_SIZE]
+			shape = VOID [VOID_SIZE]
+			shape = I32_LITERAL [I32_SIZE]
+			shape = I32_CALL [CALL_SIZE]
+			true [return -1]
 		]
 		if capacity < size [return -1]
 
@@ -52,12 +64,25 @@ x64-encoder: context [
 		at/15: as byte! 00h                            ; parent frame
 		at: at + 15
 
-		if result? [
-			at/1: as byte! either entry? [B9h][B8h]     ; mov ecx/eax, imm32
-			write-i32 (at + 1) value
-			at: at + 5
+		case [
+			shape = I32_LITERAL [
+				at/1: as byte! either entry? [B9h][B8h] ; mov ecx/eax, imm32
+				write-i32 (at + 1) value
+				at: at + 5
+			]
+			shape = I32_CALL [
+				at/1: as byte! E8h                       ; call rel32
+				write-i32 (at + 1) value
+				at: at + 5
+				if entry? [
+					at/1: as byte! 89h
+					at/2: as byte! C1h                   ; mov ecx, eax
+					at: at + 2
+				]
+			]
+			true []
 		]
-		if all [entry? not result?] [
+		if all [entry? shape = VOID] [
 			at/1: as byte! 31h
 			at/2: as byte! C9h                           ; xor ecx, ecx
 			at: at + 2

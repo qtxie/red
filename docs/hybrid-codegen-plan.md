@@ -39,8 +39,12 @@ rebcmdview.exe -s run-all-tests-x64.r --binary <hybrid-compiler.exe> --batch
 
 ## Current Foundation
 
-The current narrow slice accepts one top-level `void` or signed `i32` literal
-function. It exists to prove the architecture, not to define a smaller H0.
+The current narrow slice accepts source-ordered, zero-argument `void` and signed
+`i32` functions. An `i32` body can return a literal or directly call another
+supported function. Glue modules currently use the last declared function as
+their explicit entry ID; codegen still places that entry at code offset zero.
+This slice proves the architecture and multi-function traversal; it does not
+define a smaller H0.
 
 - `compiler/rsir-frontend.red` parses and writes RSIR directly.
 - `compiler/codegen-bridge.red` contains only the `routine!` declaration.
@@ -50,13 +54,13 @@ function. It exists to prove the architecture, not to define a smaller H0.
 - `system/linker.red/load-codegen` loads the image directly into linker state.
 
 For the current slice, empty-void and i32 RSIR are 78 and 98 bytes. A GLUE i32
-native image is 196 bytes. The new H0 compiled a no-runtime i32 executable in
-about 0.2 seconds; native codegen itself took about 11 ms, and the result exited
-with status 7.
+native image is 196 bytes. A two-function `main -> helper -> 41` program is 170
+RSIR bytes and produces a 252-byte native image. The rebuilt H0 compiled and
+linked that program in 114.8 ms, and the generated PE exited with status 41.
 
-The designated existing compiler built the complete current hybrid entry in
-90.8 seconds: 16.8 seconds frontend, 63.9 seconds native compilation, and 9.9
-seconds linking. The preceding wire/adapter entry took about 123.3 seconds:
+The designated existing compiler built the multi-function current hybrid entry
+in 90.1 seconds: 14.9 seconds frontend, 63.8 seconds native compilation, and
+11.0 seconds linking. The preceding wire/adapter entry took about 123.3 seconds:
 22.2 seconds frontend and 95.4 seconds native compilation. The focused routine
 smoke fell from roughly 43 seconds to roughly 7 seconds. These are development
 samples on the same machine and compiler, not final performance gates, but they
@@ -126,7 +130,7 @@ protocol.
 
 ## Phase 1: Direct Boundary
 
-Status: current major task.
+Status: complete in `900d3d1f0`.
 
 Deliverables:
 
@@ -149,10 +153,15 @@ Exit criteria:
 
 ## Phase 2: Real Frontend Core
 
+Status: current major task. Source-order top-level function IDs, duplicate
+detection, retained bodies, a second lowering pass, multi-function native
+traversal, and zero-argument direct calls are implemented. Contexts, complete
+signatures, and the rest of the real declaration corpus remain pending.
+
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples. The current generated corpus is about 3.8 MB
-and contains hundreds of functions, over a hundred contexts, imports, aliases,
-and substantial control flow.
+and 90,000 lines. A lexical audit finds more than 5,000 `func` occurrences plus
+`function`, contexts, imports, aliases, globals, and substantial control flow.
 
 ### 2.1 Declarations And Stable IDs
 

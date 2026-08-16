@@ -108,6 +108,44 @@ check-image 'glue 'void 192 31 144 23
 check-image 'user 'i32 120 22 80 0
 glue-i32: check-image 'glue 'i32 196 34 144 26
 
+call-source: [
+	Red/System []
+	helper: func [return: [integer!]][41]
+	main: func [return: [integer!]][helper]
+]
+call-ir: compiler-rsir-frontend/compile call-source none 'glue 'executable
+check binary? call-ir ["frontend rejected multi-function call: "
+	mold compiler-rsir-frontend/last-error]
+call-image: make binary! 4096
+check (codegen-module call-ir call-image 0) = 0 "multi-function codegen failed"
+check all [
+	(length? call-image) = 252
+	(word-at call-image 8) = 2
+	(word-at call-image 12) = 2
+	(word-at call-image 20) = 1
+	(word-at call-image 24) = 33
+	(word-at call-image 28) = 176
+	(word-at call-image 32) = 58
+]["multi-function image header changed"]
+check all [
+	(word-at call-image 40) = 0
+	(word-at call-image 44) = 6
+	(word-at call-image 48) = 36
+	(word-at call-image 52) = 22
+	(word-at call-image 76) = 6
+	(word-at call-image 80) = 4
+	(word-at call-image 84) = 0
+	(word-at call-image 88) = 36
+]["multi-function code layout changed"]
+check all [
+	(word-at call-image 112) = 10
+	(word-at call-image 120) = 22
+	(word-at call-image 136) = 28
+	(copy/part at call-image 141 10) = #{68656C7065726D61696E}
+	(word-at call-image (176 + 16)) = 16
+	(word-at call-image (176 + 36 + 16)) = 41
+]["direct call encoding or names changed"]
+
 ir: first generate 'glue 'i32
 small: make binary! 64
 check (codegen-module ir small 0) = 4 "bounded output was accepted"

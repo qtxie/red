@@ -128,12 +128,53 @@ assert none? compile-text {Red/System []} 'user
 assert frontend/last-error/code = frontend/ERROR-FUNCTION-COUNT
 	"frontend reported the wrong missing-function error"
 
-assert none? compile-text
-	{Red/System [] first: func [][] second: func [][]}
-	'user
-	"frontend accepted a second function"
-assert frontend/last-error/code = frontend/ERROR-FUNCTION-COUNT
-	"frontend reported the wrong second-function error"
+multi-ir: compile-text {
+	Red/System []
+	helper: func [return: [integer!]][41]
+	main: func [return: [integer!]][helper]
+} 'glue
+assert binary? multi-ir ["frontend rejected direct call: " mold frontend/last-error]
+assert (length? multi-ir) = 170 "multi-function RSIR size changed"
+assert all [
+	(word-at multi-ir 0) = 170
+	(word-at multi-ir 8) = 2
+	(word-at multi-ir 20) = 2
+	(word-at multi-ir 24) = 4
+	(word-at multi-ir 28) = 10
+]["multi-function RSIR header changed"]
+assert all [
+	(word-at multi-ir 32) = 0
+	(word-at multi-ir 36) = 6
+	(word-at multi-ir 44) = 1
+	(word-at multi-ir 48) = 2
+	(word-at multi-ir 56) = 6
+	(word-at multi-ir 60) = 4
+	(word-at multi-ir 68) = 3
+	(word-at multi-ir 72) = 2
+]["source-order function records changed"]
+assert all [
+	(word-at multi-ir 80) = 1
+	(word-at multi-ir 96) = 41
+	(word-at multi-ir 120) = 3
+	(word-at multi-ir 132) = 1
+	(copy at multi-ir 161) = #{68656C7065726D61696E}
+]["literal/call lowering or function names changed"]
+
+forward-ir: compile-text {
+	Red/System []
+	main: func [return: [integer!]][helper]
+	helper: func [return: [integer!]][41]
+} 'user
+assert binary? forward-ir "frontend did not resolve a forward function call"
+assert (word-at forward-ir 92) = 2 "forward call has the wrong stable function ID"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][]
+	fn: func [][]
+} 'user "frontend accepted a duplicate function"
+assert frontend/last-error/code = frontend/ERROR-DUPLICATE
+	"frontend reported the wrong duplicate-function error"
 
 assert none? compile-text
 	{Red/System [] fn: func [value [integer!]][]}

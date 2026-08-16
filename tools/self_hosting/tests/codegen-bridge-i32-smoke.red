@@ -188,6 +188,26 @@ generate "scaled pointer expression" {
 	][value + 2]
 } 'user
 
+generate "address and one-based pointer indexes" {
+	Red/System []
+	fn: func [
+		value [int64!]
+		index [integer!]
+		return: [integer!]
+		/local p [int-ptr!]
+	][
+		p: as int-ptr! :value
+		p/index: 7
+		p/2
+	]
+} 'user
+
+generate "aggregate member address" {
+	Red/System []
+	pair!: alias struct! [left [integer!] right [byte!]]
+	fn: func [pair [pair!] return: [int-ptr!]][:pair/right]
+} 'user
+
 generate "fifth stack argument" {
 	Red/System []
 	fifth: func [

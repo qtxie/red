@@ -183,6 +183,18 @@ row. Float aggregate and pointer paths, typed/variadic calls, the specified
 float32 remainder operation, and the complete float/float32/cast formal
 families remain required.
 
+The direct `rsir-address-index-exit.reds` gate executes 24 address checks
+through frontend, RSIR, native codegen, linker, and the generated PE. One
+`REFERENCE` conversion turns an existing place into a first-class pointer
+without machine work; one type-driven `INDEX` operation handles static and
+dynamic one-based indexing for pointers and c-strings. The gate covers local
+and global addresses, pointer-to-pointer values, zero/static/dynamic indexes,
+integer, byte and floating pointees, c-string constants, member get-paths, and
+nested pointer members. This is mechanism evidence, not completion of the
+address/aggregate rows: `declare` storage, literal arrays, protected data,
+inline aggregates, aggregate copy, unions, and the complete formal families
+remain required.
+
 ## Windows Linker Gate
 
 Applicable tests in system/tests/static-link include:

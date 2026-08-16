@@ -125,8 +125,22 @@ if any [size <> 7 code/1 <> as byte! 48h code/2 <> as byte! 8Bh code/3 <> as byt
 
 if (x64-encoder/load-indirect code 128 1 1) <> 3 [failures: failures + 1]
 if (x64-encoder/store-indirect code 128 8) <> 3 [failures: failures + 1]
-if (x64-encoder/add-immediate code 128 127) <> 4 [failures: failures + 1]
-if (x64-encoder/add-immediate code 128 128) <> 6 [failures: failures + 1]
+size: x64-encoder/add-immediate code 128 x64-encoder/RAX 127
+if any [
+	size <> 4 code/1 <> as byte! 48h code/2 <> as byte! 83h
+	code/3 <> as byte! C0h code/4 <> as byte! 7Fh
+][failures: failures + 1]
+size: x64-encoder/add-immediate code 128 x64-encoder/RDX 128
+if any [
+	size <> 7 code/1 <> as byte! 48h code/2 <> as byte! 81h
+	code/3 <> as byte! C2h code/4 <> as byte! 80h
+	code/5 <> as byte! 00h code/6 <> as byte! 00h code/7 <> as byte! 00h
+][failures: failures + 1]
+size: x64-encoder/add-immediate code 128 x64-encoder/R9 -1
+if any [
+	size <> 4 code/1 <> as byte! 49h code/2 <> as byte! 83h
+	code/3 <> as byte! C1h code/4 <> as byte! FFh
+][failures: failures + 1]
 if (x64-encoder/outgoing-store code 128 32 8) <> 5 [failures: failures + 1]
 if (x64-encoder/call-import code 128 0) <> 6 [failures: failures + 1]
 if (x64-encoder/stack-top code 128) <> 3 [failures: failures + 1]

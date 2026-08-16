@@ -96,6 +96,8 @@ compiler-rsir-frontend: context [
 	branch-op: 17
 	switch-op: 18
 	fail-op: 19
+	reference-op: 20
+	index-op: 21
 
 	; Operation IDs follow the language families, not source spellings or x64
 	; encodings. The postfix stream preserves the specified left-to-right order.
@@ -488,6 +490,41 @@ compiler-rsir-frontend: context [
 			return none
 		]
 		none
+	]
+
+	pointee-ref: func [ref [integer!] return: [integer! none!] /local base kind record][
+		base: canonical-ref ref
+		kind: ref-kind base
+		case [
+			kind = 'c-string [-2]
+			all [kind = 'pointer base > 0][
+				record: skip types ((base - 1) * 5)
+				either record/2 = 'pointer [record/3][none]
+			]
+			true [none]
+		]
+	]
+
+	address-reference-ref: func [
+		ref flags [integer!]
+		return: [integer! none!]
+		/local base kind
+	][
+		if flags <> 0 [return none]
+		base: canonical-ref ref
+		kind: ref-kind base
+		case [
+			integer-kind? kind [intern-pointer base]
+			float-kind? kind [intern-pointer base]
+			kind = 'pointer [intern-pointer -12]
+			true [none]
+		]
+	]
+
+	one-based-index-bits: func [value [integer!] return: [block!] /local low][
+		if value = -2147483648 [return reduce [2147483647 -1]]
+		low: value - 1
+		reduce [low either low < 0 [-1][0]]
 	]
 
 	add-system-type: func [scope uses [block!] /local key id][
@@ -1373,6 +1410,7 @@ compiler-rsir-frontend: context [
 		if any [expected = 0 actual = 0] [return false]
 		expected-kind: ref-kind expected
 		actual-kind: ref-kind actual
+		if any [reference-kind? expected-kind reference-kind? actual-kind][return false]
 		either all [expected > 0 actual > 0][
 			false
 		][
@@ -1883,7 +1921,8 @@ compiler-rsir-frontend: context [
 		params [block!]
 		locals [block!]
 		return: [logic!]
-		/local id position member parts index base current flags info storage
+		/local id position part parts index base current flags info storage kind
+			element bits place?
 	][
 		if word? target [
 			storage: stack-storage-info target params locals
@@ -1918,19 +1957,65 @@ compiler-rsir-frontend: context [
 		stack-value reduce [base] scope uses instructions params locals expression-value
 		current: last-type
 		flags: last-flags
+		place?: false
 		index: 2
 		while [index <= length? parts][
-			member: to word! parts/:index
-			info: member-info current member
-			unless block? info [
-				fail ERROR-REFERENCE ["unknown member " mold member]
-			]
-			emit instructions reduce [member-op info/1 0 0]
-			current: info/2
-			flags: info/3
-			if index < length? parts [
-				emit instructions reduce [load-op 0 0 0]
-				flags: 0
+			part: parts/:index
+			kind: ref-kind current
+			case [
+				find [struct union] kind [
+					unless word? part [
+						fail ERROR-REFERENCE ["aggregate member must be a word: " mold part]
+					]
+					if all [place? flags = 0][
+						emit instructions reduce [load-op 0 0 0]
+						place?: false
+					]
+					info: member-info current part
+					unless block? info [
+						fail ERROR-REFERENCE ["unknown member " mold part]
+					]
+					emit instructions reduce [member-op info/1 0 0]
+					current: info/2
+					flags: info/3
+					place?: true
+				]
+				find [pointer c-string] kind [
+					if place? [
+						emit instructions reduce [load-op 0 0 0]
+						flags: 0
+						place?: false
+					]
+					element: pointee-ref current
+					unless integer? element [
+						fail ERROR-REFERENCE ["pointer has no indexable pointee: " mold part]
+					]
+					case [
+						all [kind = 'pointer word? part part = 'value][
+							emit instructions reduce [index-op 0 0 0]
+						]
+						integer? part [
+							bits: one-based-index-bits part
+							emit instructions reduce [index-op bits/1 0 bits/2]
+						]
+						word? part [
+							stack-value reduce [part] scope uses instructions params locals
+								expression-value
+							unless all [
+								last-flags = 0
+								stack-type-compatible? -5 last-type
+							][fail ERROR-REFERENCE "pointer index must be an integer!"]
+							emit instructions reduce [index-op 0 1 0]
+						]
+						true [
+							fail ERROR-REFERENCE ["invalid pointer index " mold part]
+						]
+					]
+					current: element
+					flags: 0
+					place?: true
+				]
+				true [fail ERROR-REFERENCE ["value cannot be selected by path: " mold target]]
 			]
 			index: index + 1
 		]
@@ -2721,6 +2806,22 @@ compiler-rsir-frontend: context [
 				last-type: -5
 				last-flags: 0
 				type-info/1
+			]
+			any [get-word? value get-path? value][
+				target: either get-word? value [to word! value][to path! value]
+				unless stack-address target scope uses instructions params locals [
+					fail ERROR-REFERENCE ["unknown address target " mold value]
+				]
+				id: either get-path? value [
+					intern-pointer -5
+				][address-reference-ref last-type last-flags]
+				unless integer? id [
+					fail ERROR-REFERENCE ["value cannot be addressed " mold value]
+				]
+				emit instructions reduce [reference-op id 0 0]
+				last-type: id
+				last-flags: 0
+				next position
 			]
 			issue? value [
 				wide: wide-literal value

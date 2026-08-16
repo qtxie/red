@@ -200,6 +200,25 @@ assert binary? compile-text {
 	]
 } 'user "a pointer alias was incompatible with its canonical pointer type"
 
+pointer-cast-ir: compile-text {
+	Red/System []
+	to-bare: func [value [int-ptr!] return: [pointer!]][as pointer! value]
+	to-typed: func [value [pointer!] return: [int-ptr!]][as int-ptr! value]
+} 'user
+assert binary? pointer-cast-ir [
+	"explicit pointer casts failed: " mold frontend/last-error
+]
+pointer-cast-layout: layout-of pointer-cast-ir
+assert (ops-of pointer-cast-ir pointer-cast-layout) = [3 4 8 11 3 4 8 11]
+	"pointer pointee-changing casts were erased from the typed stream"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [value [pointer!] return: [int-ptr!]][value]
+} 'user "an untyped pointer implicitly changed its pointee type"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"implicit pointer pointee change reported the wrong error class"
+
 c-string-ir: compile-text {
 	Red/System []
 	fn: func [text [c-string!] return: [c-string!]][text]
@@ -209,6 +228,64 @@ assert all [
 	(function-word c-string-ir c-string-layout 1 8) = -13
 	(word-at c-string-ir c-string-layout/5) = -13
 ]["c-string collapsed into an untyped pointer"]
+
+address-index-ir: compile-text {
+	Red/System []
+	fn: func [
+		value [int64!]
+		index [integer!]
+		return: [integer!]
+		/local p [int-ptr!]
+	][
+		p: as int-ptr! :value
+		p/index: 7
+		p/2
+	]
+} 'user
+assert binary? address-index-ir [
+	"address and index lowering failed: " mold frontend/last-error
+]
+address-index-layout: layout-of address-index-ir
+assert all [
+	(ops-of address-index-ir address-index-layout) = [
+		3 3 20 8 5 12 3 4 3 4 21 1 5 12 3 4 21 4 11
+	]
+	(instruction-word address-index-ir address-index-layout 3 0) = 20
+	(instruction-word address-index-ir address-index-layout 11 8) = 1
+	(instruction-word address-index-ir address-index-layout 17 4) = 1
+	(instruction-word address-index-ir address-index-layout 17 8) = 0
+]["get-word and pointer indexes did not share REFERENCE/INDEX semantics"]
+
+pointer-value-ir: compile-text {
+	Red/System [] fn: func [p [int-ptr!] return: [integer!]][p/value]
+} 'user
+pointer-one-ir: compile-text {
+	Red/System [] fn: func [p [int-ptr!] return: [integer!]][p/1]
+} 'user
+assert pointer-value-ir = pointer-one-ir
+	"pointer/value is not exactly the same operation as pointer/1"
+
+member-address-ir: compile-text {
+	Red/System []
+	pair!: alias struct! [left [integer!] right [byte!]]
+	fn: func [pair [pair!] return: [int-ptr!]][:pair/right]
+} 'user
+assert binary? member-address-ir [
+	"aggregate get-path lowering failed: " mold frontend/last-error
+]
+member-address-layout: layout-of member-address-ir
+assert all [
+	(ops-of member-address-ir member-address-layout) = [3 4 6 20 11]
+	(instruction-word member-address-ir member-address-layout 3 4) = 1
+	(instruction-word member-address-ir member-address-layout 4 0) = 20
+]["aggregate get-path introduced a source-shaped address operation"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [p [int-ptr!] index [logic!] return: [integer!]][p/index]
+} 'user "pointer indexing accepted a non-integer! index"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid pointer index reported the wrong error class"
 
 call-ir: compile-text {
 	Red/System []

@@ -888,22 +888,26 @@ x64-encoder: context [
 
 	add-immediate: func [
 		code [byte-ptr!]
-		capacity value [integer!]
+		capacity target value [integer!]
 		return: [integer!]
-		/local size [integer!]
+		/local size [integer!] at [byte-ptr!]
 	][
+		if any [target < 0 target > 15][return -1]
 		if value = 0 [return 0]
-		size: either fits-i8? value [4][6]
+		size: either fits-i8? value [4][7]
 		unless room? code capacity size [return -1]
 		if null? code [return size]
-		code/1: as byte! 48h
+		at: code
+		at/1: as byte! rex true 0 target
+		at: at + 1
 		either size = 4 [
-			code/2: as byte! 83h
-			code/3: as byte! C0h
-			code/4: as byte! value
+			at/1: as byte! 83h
+			at/2: as byte! modrm 3 0 target
+			at/3: as byte! value
 		][
-			code/2: as byte! 05h
-			write-i32 (code + 2) value
+			at/1: as byte! 81h
+			at/2: as byte! modrm 3 0 target
+			write-i32 (at + 2) value
 		]
 		size
 	]

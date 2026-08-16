@@ -29,7 +29,7 @@ generate: func [kind [word!] result [word!] /local source ir artifact status][
 	][
 		[Red/System [] fn: func [return: [integer!]][7]]
 	]
-	ir: compiler-rsir-frontend/compile source none kind 'executable
+	ir: compiler-rsir-frontend/compile source kind
 	unless binary? ir [fail ["frontend rejected " kind " " result]]
 	artifact: make binary! 4096
 	status: codegen-module ir artifact 0
@@ -113,7 +113,7 @@ call-source: [
 	helper: func [return: [integer!]][41]
 	main: func [return: [integer!]][helper]
 ]
-call-ir: compiler-rsir-frontend/compile call-source none 'glue 'executable
+call-ir: compiler-rsir-frontend/compile call-source 'glue
 check binary? call-ir ["frontend rejected multi-function call: "
 	mold compiler-rsir-frontend/last-error]
 call-image: make binary! 4096
@@ -154,7 +154,7 @@ context-source: [
 	]
 	main: func [return: [integer!]][qualified/inside]
 ]
-context-ir: compiler-rsir-frontend/compile context-source none 'glue 'executable
+context-ir: compiler-rsir-frontend/compile context-source 'glue
 check binary? context-ir ["frontend rejected context calls: "
 	mold compiler-rsir-frontend/last-error]
 context-image: make binary! 4096
@@ -175,15 +175,87 @@ check all [
 	(copy/part at context-image (240 + 58 + 16 + 1) 4) = #{D6FFFFFF}
 ]["context code layout or relative calls changed"]
 
+parameter-source: [
+	Red/System []
+	node-handle!: alias integer!
+	helper: func [value [node-handle!] return: [integer!]][value]
+	main: func [return: [integer!]][helper 42]
+]
+parameter-ir: compiler-rsir-frontend/compile parameter-source 'glue
+check binary? parameter-ir ["frontend rejected one-parameter call: "
+	mold compiler-rsir-frontend/last-error]
+parameter-image: make binary! 4096
+check (codegen-module parameter-ir parameter-image 0) = 0
+	"one-parameter codegen failed"
+check all [
+	(length? parameter-image) = 252
+	(word-at parameter-image 8) = 2
+	(word-at parameter-image 12) = 2
+	(word-at parameter-image 20) = 1
+	(word-at parameter-image 24) = 33
+	(word-at parameter-image 28) = 176
+	(word-at parameter-image 32) = 60
+]["one-parameter image header changed"]
+check all [
+	(word-at parameter-image 40) = 0
+	(word-at parameter-image 44) = 6
+	(word-at parameter-image 48) = 41
+	(word-at parameter-image 52) = 19
+	(word-at parameter-image 76) = 6
+	(word-at parameter-image 80) = 4
+	(word-at parameter-image 84) = 0
+	(word-at parameter-image 88) = 41
+	(word-at parameter-image 136) = 33
+	(copy/part at parameter-image 141 10) = #{68656C7065726D61696E}
+]["one-parameter metadata changed"]
+check all [
+	(word-at parameter-image (176 + 16)) = 42
+	(word-at parameter-image (176 + 21)) = 16
+	(copy/part at parameter-image (176 + 41 + 16) 2) = #{89C8}
+]["one-parameter ABI encoding changed"]
+
+forward-parameter-source: [
+	Red/System []
+	node-handle!: alias integer!
+	identity: func [value [node-handle!] return: [integer!]][value]
+	relay: func [value [node-handle!] return: [integer!]][identity value]
+	main: func [return: [integer!]][relay 42]
+]
+forward-parameter-ir: compiler-rsir-frontend/compile
+	forward-parameter-source 'glue
+check binary? forward-parameter-ir ["frontend rejected parameter forwarding: "
+	mold compiler-rsir-frontend/last-error]
+forward-parameter-image: make binary! 4096
+check (codegen-module forward-parameter-ir forward-parameter-image 0) = 0
+	"parameter-forwarding codegen failed"
+check all [
+	(length? forward-parameter-image) = 324
+	(word-at forward-parameter-image 8) = 3
+	(word-at forward-parameter-image 12) = 3
+	(word-at forward-parameter-image 24) = 40
+	(word-at forward-parameter-image 28) = 224
+	(word-at forward-parameter-image 32) = 82
+	(word-at forward-parameter-image 48) = 41
+	(word-at forward-parameter-image 84) = 60
+	(word-at forward-parameter-image 120) = 0
+	(word-at forward-parameter-image 172) = 33
+]["parameter-forwarding metadata changed"]
+check all [
+	(word-at forward-parameter-image (224 + 16)) = 42
+	(word-at forward-parameter-image (224 + 21)) = 35
+	(copy/part at forward-parameter-image (224 + 41 + 16) 2) = #{89C8}
+	(copy/part at forward-parameter-image (224 + 60 + 16) 5) = #{E8D9FFFFFF}
+]["parameter-forwarding ABI encoding changed"]
+
 ir: first generate 'glue 'i32
 small: make binary! 64
 check (codegen-module ir small 0) = 4 "bounded output was accepted"
 check empty? small "bounded-output failure committed bytes"
 
 bad: copy ir
-change/part bad int-to-bin/to-bin32 1 4
+change/part bad int-to-bin/to-bin32 4 4
 artifact: make binary! 4096
-check (codegen-module bad artifact 0) = 2 "invalid RSIR size was accepted"
+check (codegen-module bad artifact 0) = 2 "invalid RSIR kind was accepted"
 check empty? artifact "invalid RSIR committed bytes"
 
 artifact: make binary! 4096

@@ -39,14 +39,16 @@ rebcmdview.exe -s run-all-tests-x64.r --binary <hybrid-compiler.exe> --batch
 
 ## Current Foundation
 
-The current narrow slice accepts source-ordered, zero-argument `void` and signed
-`i32` functions. An `i32` body can return a literal or directly call another
-supported function. Glue modules currently use the last declared function as
-their explicit entry ID; codegen still places that entry at code offset zero.
-Function declarations may live in nested `context` blocks; short names, explicit
-context paths, and `with` lookup scopes resolve to the same `>`-decorated symbol
-style used by Red/System. This slice proves the architecture and multi-function
-traversal; it does not define a smaller H0.
+The current narrow slice accepts source-ordered `() -> void`, `() -> i32`, and
+`(i32) -> i32` functions. Scalar aliases such as `node-handle!: alias integer!`
+resolve in lexical, path, and `with` scopes. An `i32` body can return a literal
+or parameter, or directly call another supported function with zero arguments
+or one literal/parameter argument. Glue modules use the last declared function
+as their explicit entry ID; codegen still places that entry at code offset zero.
+Function declarations may live in nested `context` blocks; short names,
+explicit context paths, and `with` lookup scopes resolve to the same
+`>`-decorated symbol style used by Red/System. This slice proves the
+architecture and multi-function traversal; it does not define a smaller H0.
 
 - `compiler/rsir-frontend.red` parses and writes RSIR directly.
 - `compiler/codegen-bridge.red` contains only the `routine!` declaration.
@@ -55,10 +57,11 @@ traversal; it does not define a smaller H0.
 - `system/codegen/x64-encoder.reds` writes x64 bytes into the reserved output.
 - `system/linker.red/load-codegen` loads the image directly into linker state.
 
-For the current slice, empty-void and i32 RSIR are 78 and 98 bytes. A GLUE i32
-native image is 196 bytes. A two-function `main -> helper -> 41` program is 170
-RSIR bytes and produces a 252-byte native image. The rebuilt H0 compiled and
-linked that program in 114.8 ms, and the generated PE exited with status 41.
+For the current slice, empty-void and i32 RSIR are 50 and 66 bytes. A GLUE i32
+native image is 196 bytes. Both the two-function `main -> helper -> 41` and
+`main -> identity 42` samples are 122 RSIR bytes and produce 252-byte native
+images. Their generated PEs exit with status 41 and 42 respectively. The
+previous rebuilt H0 compiled and linked the zero-argument sample in 114.8 ms.
 
 The designated existing compiler built the multi-function current hybrid entry
 in 90.1 seconds: 14.9 seconds frontend, 63.8 seconds native compilation, and
@@ -80,11 +83,23 @@ consumer. It is not a public object format. Consequently it has:
 - no repeated semantic verifier pipeline;
 - no compatibility adapter.
 
-The layout is a fixed header followed by fixed-width tables in one known order,
-then raw bytes. Counts in the header locate each table by addition. IDs are
-one-based where zero means absent. The routine performs only the bounds and
-shape checks required to avoid unsafe memory access and reject unsupported IR.
-After that it traverses table pointers directly.
+The current RSIR is only the data that codegen consumes:
+
+```text
+4 words: module kind, entry function, function count, instruction count
+4 words per function: name offset, name size, signature, instruction count
+4 words per instruction: typed opcode, result, operand, immediate
+raw function-name bytes
+```
+
+The input `binary!` length supplies the total size. Sequential instruction
+ranges are derived by addition, so they are not repeated in function records.
+The three currently implemented signatures are direct integer values; there is
+no signature registry. A one-argument call stores its argument value ID in the
+call instruction itself; there is no parameter or operand section. Function
+IDs and value IDs are one-based where zero means absent. The routine performs
+only the bounds and shape checks required for safe pointer traversal and then
+casts these arrays directly.
 
 The native linker image follows the same rule. Its current order is:
 
@@ -157,15 +172,15 @@ Exit criteria:
 
 Status: current major task. Source-order top-level function IDs, duplicate
 detection, retained bodies, a second lowering pass, multi-function native
-traversal, zero-argument direct calls, context-qualified names, and `with`
-resolution scopes are implemented. Complete signatures and the rest of the
-real declaration corpus remain pending.
+traversal, zero/one-argument direct calls, scalar aliases, context-qualified
+names, and `with` resolution scopes are implemented. Complete signatures and
+the rest of the real declaration corpus remain pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples. A fresh `--red-only` generation of the direct
-hybrid source is 2,829,208 bytes. The structured audit finds 516 defined
+hybrid source is 2,906,144 bytes. The structured audit finds 521 defined
 functions, 59 contexts, 378 imported symbols, two aliases, and one enum. Of the
-defined functions, 481 have one parameter, 34 have none, and the routine bridge
+defined functions, 486 have one parameter, 34 have none, and the routine bridge
 has three; the dominant parameter type is `node-handle!`. Context depth is at
 most two, while functions have up to 55 locals and substantial control flow.
 

@@ -1,11 +1,11 @@
 Red/System [
-	Title: "Compact RSIR to Windows x64 codegen tests"
+	Title: "Direct compact RSIR to Windows x64 codegen tests"
 ]
 
 #include %../../../system/codegen/x64-codegen.reds
 
 failures: 0
-ir: allocate 98
+ir: allocate 66
 output: allocate 256
 header: declare codegen-header!
 reference: as int-ptr! 0
@@ -17,34 +17,26 @@ put: func [data [byte-ptr!] offset value [integer!]][
 ]
 
 ; GLUE module containing fn: func [return: [integer!]][7]
-put ir 0 98
-put ir 4 3
+put ir 0 3
+put ir 4 1
 put ir 8 1
-put ir 12 0
+put ir 12 2
 put ir 16 0
-put ir 20 1
-put ir 24 2
+put ir 20 2
+put ir 24 1
 put ir 28 2
-put ir 32 0
-put ir 36 2
-put ir 40 1
-put ir 44 1
-put ir 48 2
+put ir 32 1
+put ir 36 1
+put ir 40 0
+put ir 44 7
+put ir 48 3
 put ir 52 0
 put ir 56 1
-put ir 60 1
-put ir 64 1
-put ir 68 0
-put ir 72 7
-put ir 76 2
-put ir 80 1
-put ir 84 0
-put ir 88 1
-put ir 92 0
-ir/97: as byte! 66h
-ir/98: as byte! 6Eh
+put ir 60 0
+ir/65: as byte! 66h
+ir/66: as byte! 6Eh
 
-size: x64-codegen/generate ir 98 output 256 0
+size: x64-codegen/generate ir 66 output 256 0
 if size <> 196 [failures: failures + 1]
 if failures = 0 [
 	header: as codegen-header! output
@@ -69,13 +61,13 @@ if failures = 0 [
 	if reference/1 <> 26 [failures: failures + 1]
 ]
 
-if (x64-codegen/generate ir 97 output 256 0) <> x64-codegen/INVALID_IR [
+if (x64-codegen/generate ir 65 output 256 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-if (x64-codegen/generate ir 98 output 256 2) <> x64-codegen/UNSUPPORTED [
+if (x64-codegen/generate ir 66 output 256 2) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
-if (x64-codegen/generate ir 98 output 64 0) <> x64-codegen/OUTPUT_FULL [
+if (x64-codegen/generate ir 66 output 64 0) <> x64-codegen/OUTPUT_FULL [
 	failures: failures + 1
 ]
 

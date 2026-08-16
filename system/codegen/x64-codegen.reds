@@ -6,28 +6,21 @@ Red/System [
 #include %x64-encoder.reds
 
 rsir-header!: alias struct! [
-	size             [integer!]
 	module-kind      [integer!]
 	entry-function   [integer!]
-	module-name      [integer!]
-	module-name-size [integer!]
 	function-count   [integer!]
 	instruction-count [integer!]
-	strings-size     [integer!]
 ]
 
 rsir-function!: alias struct! [
 	name              [integer!]
 	name-size         [integer!]
-	return-type       [integer!]
-	first-instruction [integer!]
+	signature         [integer!]
 	instruction-count [integer!]
-	flags             [integer!]
 ]
 
 rsir-instruction!: alias struct! [
 	opcode     [integer!]
-	value-type [integer!]
 	result     [integer!]
 	operand    [integer!]
 	immediate  [integer!]
@@ -68,9 +61,9 @@ codegen-import!: alias struct! [
 ]
 
 x64-codegen: context [
-	RSIR_HEADER_SIZE:      32
-	RSIR_FUNCTION_SIZE:    24
-	RSIR_INSTRUCTION_SIZE: 20
+	RSIR_HEADER_SIZE:      16
+	RSIR_FUNCTION_SIZE:    16
+	RSIR_INSTRUCTION_SIZE: 16
 
 	IMAGE_HEADER_SIZE:   40
 	IMAGE_FUNCTION_SIZE: 36
@@ -91,51 +84,117 @@ x64-codegen: context [
 	shape-of: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
+		function-data [byte-ptr!]
 		function-count [integer!]
 		return: [integer!]
-		/local instruction terminator [rsir-instruction!]
+		/local instruction call terminator [rsir-instruction!]
+			callee [rsir-function!]
+			parameter-count [integer!]
 	][
 		instruction: as rsir-instruction! instructions
+		parameter-count: either fn/signature = 2 [1][0]
 		case [
 			all [
-				fn/return-type = 0
+				fn/signature = 0
 				fn/instruction-count = 1
 				instruction/opcode = 2
-				instruction/value-type = 0
 				instruction/result = 0
 				instruction/operand = 0
 				instruction/immediate = 0
 			][x64-encoder/VOID]
 			all [
-				fn/return-type = 1
+				fn/signature = 2
+				fn/instruction-count = 1
+				instruction/opcode = 3
+				instruction/result = 0
+				instruction/operand = 1
+				instruction/immediate = 0
+			][x64-encoder/I32_PARAM]
+			all [
+				any [fn/signature = 1 fn/signature = 2]
 				fn/instruction-count = 2
+				any [
+					instruction/opcode = 1
+					all [instruction/opcode = 4 instruction/immediate = 0]
+				]
 			][
 				terminator: as rsir-instruction!
 					(instructions + RSIR_INSTRUCTION_SIZE)
 				unless all [
-					terminator/opcode = 2
-					terminator/value-type = 1
+					terminator/opcode = 3
 					terminator/result = 0
-					terminator/operand = 1
+					terminator/operand = instruction/result
 					terminator/immediate = 0
 				][return INVALID_IR]
 				case [
 					all [
 						instruction/opcode = 1
-						instruction/value-type = 1
-						instruction/result = 1
+						instruction/result = (parameter-count + 1)
 						instruction/operand = 0
 					][x64-encoder/I32_LITERAL]
 					all [
-						instruction/opcode = 3
-						instruction/value-type = 1
-						instruction/result = 1
+						instruction/opcode = 4
+						instruction/result = (parameter-count + 1)
 						instruction/operand > 0
 						instruction/operand <= function-count
 						instruction/immediate = 0
-					][x64-encoder/I32_CALL]
+					][
+						callee: as rsir-function! (function-data
+							+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
+						either callee/signature = 1 [
+							x64-encoder/I32_CALL
+						][UNSUPPORTED]
+					]
 					true [UNSUPPORTED]
 				]
+			]
+			all [
+				any [fn/signature = 1 fn/signature = 2]
+				fn/instruction-count = 3
+				instruction/opcode = 1
+				instruction/result = (parameter-count + 1)
+				instruction/operand = 0
+			][
+				call: as rsir-instruction! (instructions + RSIR_INSTRUCTION_SIZE)
+				terminator: as rsir-instruction!
+					(instructions + (RSIR_INSTRUCTION_SIZE * 2))
+				unless all [
+					call/opcode = 4
+					call/result = (instruction/result + 1)
+					call/operand > 0
+					call/operand <= function-count
+					call/immediate = instruction/result
+					terminator/opcode = 3
+					terminator/result = 0
+					terminator/operand = call/result
+					terminator/immediate = 0
+				][return INVALID_IR]
+				callee: as rsir-function! (function-data
+					+ ((call/operand - 1) * RSIR_FUNCTION_SIZE))
+				either callee/signature = 2 [
+					x64-encoder/I32_CALL_ARG_LITERAL
+				][UNSUPPORTED]
+			]
+			all [
+				fn/signature = 2
+				fn/instruction-count = 2
+				instruction/opcode = 4
+				instruction/result = 2
+				instruction/operand > 0
+				instruction/operand <= function-count
+				instruction/immediate = 1
+			][
+				terminator: as rsir-instruction!
+					(instructions + RSIR_INSTRUCTION_SIZE)
+				callee: as rsir-function! (function-data
+					+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
+				either all [
+					callee/signature = 2
+					terminator/opcode = 3
+					terminator/result = 0
+					terminator/operand = 2
+					terminator/immediate = 0
+				][x64-encoder/I32_CALL_ARG_PARAM][INVALID_IR]
 			]
 			true [UNSUPPORTED]
 		]
@@ -150,9 +209,19 @@ x64-codegen: context [
 			all [entry? shape = x64-encoder/VOID] [x64-encoder/VOID_ENTRY_SIZE]
 			all [entry? shape = x64-encoder/I32_LITERAL] [x64-encoder/I32_ENTRY_SIZE]
 			all [entry? shape = x64-encoder/I32_CALL] [x64-encoder/CALL_ENTRY_SIZE]
-			shape = x64-encoder/VOID [x64-encoder/VOID_SIZE]
-			shape = x64-encoder/I32_LITERAL [x64-encoder/I32_SIZE]
-			shape = x64-encoder/I32_CALL [x64-encoder/CALL_SIZE]
+			all [entry? shape = x64-encoder/I32_CALL_ARG_LITERAL][
+				x64-encoder/CALL_ARG_LITERAL_ENTRY_SIZE
+			]
+			all [not entry? shape = x64-encoder/VOID][x64-encoder/VOID_SIZE]
+			all [not entry? shape = x64-encoder/I32_LITERAL][x64-encoder/I32_SIZE]
+			all [not entry? shape = x64-encoder/I32_CALL][x64-encoder/CALL_SIZE]
+			all [not entry? shape = x64-encoder/I32_PARAM][x64-encoder/PARAM_SIZE]
+			all [not entry? shape = x64-encoder/I32_CALL_ARG_LITERAL][
+				x64-encoder/CALL_ARG_LITERAL_SIZE
+			]
+			all [not entry? shape = x64-encoder/I32_CALL_ARG_PARAM][
+				x64-encoder/CALL_ARG_PARAM_SIZE
+			]
 			true [-1]
 		]
 	]
@@ -162,6 +231,9 @@ x64-codegen: context [
 			shape = x64-encoder/VOID [x64-encoder/VOID_EXIT_REF]
 			shape = x64-encoder/I32_LITERAL [x64-encoder/I32_EXIT_REF]
 			shape = x64-encoder/I32_CALL [x64-encoder/CALL_EXIT_REF]
+			shape = x64-encoder/I32_CALL_ARG_LITERAL [
+				x64-encoder/CALL_ARG_LITERAL_EXIT_REF
+			]
 			true [-1]
 		]
 	]
@@ -173,8 +245,8 @@ x64-codegen: context [
 		capacity opt-level [integer!]
 		return: [integer!]
 		/local header [rsir-header!]
-			ir-function callee-function [rsir-function!]
-			instruction [rsir-instruction!]
+			ir-function [rsir-function!]
+			instruction call-instruction [rsir-instruction!]
 			image [codegen-header!]
 			image-function callee-record [codegen-function!]
 			image-import [codegen-import!]
@@ -182,10 +254,10 @@ x64-codegen: context [
 			function-data instruction-data function-instructions strings name
 				names-output code data-output
 				cursor finish [byte-ptr!]
-			function-bytes instruction-bytes strings-start metadata-size
+			function-bytes instruction-bytes strings-start strings-size metadata-size
 				names-size function-names-size code-offset code-size data-offset total-size
 				id record-offset next-instruction function-size entry-size code-cursor
-				name-cursor shape entry-shape encoded value target relative
+				name-cursor shape entry-shape encoded value argument target relative call-next
 				library-offset external-offset [integer!]
 			entry? current-entry? [logic!]
 	][
@@ -196,10 +268,8 @@ x64-codegen: context [
 
 		header: as rsir-header! data
 		if any [
-			header/size <> size
 			header/function-count <= 0
 			header/instruction-count <= 0
-			header/strings-size < 0
 		][return INVALID_IR]
 		if any [header/module-kind < 1 header/module-kind > 3][return INVALID_IR]
 		entry?: header/module-kind = 3
@@ -222,19 +292,17 @@ x64-codegen: context [
 		)[return INVALID_IR]
 		instruction-bytes: header/instruction-count * RSIR_INSTRUCTION_SIZE
 		strings-start: RSIR_HEADER_SIZE + function-bytes + instruction-bytes
-		if strings-start < 0 [return INVALID_IR]
-		if header/strings-size <> (size - strings-start) [return INVALID_IR]
-		if header/module-name-size < 0 [return INVALID_IR]
-		if header/module-name-size > 0 [
-			if any [
-				header/module-name < 0
-				header/module-name > (header/strings-size - header/module-name-size)
-			][return INVALID_IR]
-		]
+		strings-size: size - strings-start
 
 		function-data: data + RSIR_HEADER_SIZE
 		instruction-data: function-data + function-bytes
 		strings: data + strings-start
+		if any [
+			capacity < IMAGE_HEADER_SIZE
+			header/function-count > (
+				(capacity - IMAGE_HEADER_SIZE) / IMAGE_FUNCTION_SIZE
+			)
+		][return OUTPUT_FULL]
 
 		id: 1
 		next-instruction: 1
@@ -248,26 +316,25 @@ x64-codegen: context [
 			if any [
 				ir-function/name < 0
 				ir-function/name-size <= 0
-				ir-function/name-size > header/strings-size
-				ir-function/name > (header/strings-size - ir-function/name-size)
-				ir-function/first-instruction <> next-instruction
+				ir-function/name-size > strings-size
+				ir-function/name > (strings-size - ir-function/name-size)
+				ir-function/signature < 0
+				ir-function/signature > 2
 				ir-function/instruction-count <= 0
 				ir-function/instruction-count > (
 					header/instruction-count - next-instruction + 1
 				)
-				ir-function/flags <> 0
 			][return INVALID_IR]
 			function-instructions: instruction-data
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
-			shape: shape-of ir-function function-instructions header/function-count
+			shape: shape-of ir-function function-instructions
+				function-data header/function-count
 			if shape < 0 [return shape]
-			if shape = x64-encoder/I32_CALL [
-				instruction: as rsir-instruction! function-instructions
-				callee-function: as rsir-function! (function-data
-					+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
-				if callee-function/return-type <> 1 [return INVALID_IR]
-			]
+			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
+				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
+			image-function/frame-size: shape
 			current-entry?: all [entry? id = header/entry-function]
+			if all [current-entry? ir-function/signature = 2][return UNSUPPORTED]
 			function-size: machine-size current-entry? shape
 			if function-size < 0 [return UNSUPPORTED]
 			if function-names-size > (2147483647 - ir-function/name-size) [
@@ -339,18 +406,15 @@ x64-codegen: context [
 		while [id <= header/function-count][
 			record-offset: (id - 1) * RSIR_FUNCTION_SIZE
 			ir-function: as rsir-function! (function-data + record-offset)
-			function-instructions: instruction-data
-				+ ((ir-function/first-instruction - 1) * RSIR_INSTRUCTION_SIZE)
-			shape: shape-of ir-function function-instructions header/function-count
-			current-entry?: all [entry? id = header/entry-function]
-			function-size: machine-size current-entry? shape
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
+			shape: image-function/frame-size
+			current-entry?: all [entry? id = header/entry-function]
+			function-size: machine-size current-entry? shape
 			image-function/name: name-cursor
 			image-function/name-size: ir-function/name-size
 			image-function/code-offset: either current-entry? [0][code-cursor]
 			image-function/code-size: function-size
-			image-function/frame-size: x64-encoder/FRAME_SIZE
 			image-function/bitmap-offset: 0
 			image-function/bitmap-size: BITMAP_SIZE
 			image-function/first-reference: 0
@@ -395,33 +459,51 @@ x64-codegen: context [
 			cursor: cursor + 1
 		]
 		code: output + code-offset
+		next-instruction: 1
 		id: 1
 		while [id <= header/function-count][
 			ir-function: as rsir-function! (function-data
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
 			function-instructions: instruction-data
-				+ ((ir-function/first-instruction - 1) * RSIR_INSTRUCTION_SIZE)
+				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			instruction: as rsir-instruction! function-instructions
-			shape: shape-of ir-function function-instructions header/function-count
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
+			shape: image-function/frame-size
+			call-instruction: instruction
+			if shape = x64-encoder/I32_CALL_ARG_LITERAL [
+				call-instruction: as rsir-instruction!
+					(function-instructions + RSIR_INSTRUCTION_SIZE)
+			]
 			value: case [
 				shape = x64-encoder/I32_LITERAL [instruction/immediate]
-				shape = x64-encoder/I32_CALL [
-					target: instruction/operand
+				any [
+					shape = x64-encoder/I32_CALL
+					shape = x64-encoder/I32_CALL_ARG_LITERAL
+					shape = x64-encoder/I32_CALL_ARG_PARAM
+				][
+					target: call-instruction/operand
 					callee-record: as codegen-function! (output + IMAGE_HEADER_SIZE
 						+ ((target - 1) * IMAGE_FUNCTION_SIZE))
+					call-next: either shape = x64-encoder/I32_CALL_ARG_LITERAL [
+						x64-encoder/CALL_ARG_LITERAL_NEXT
+					][x64-encoder/CALL_NEXT]
 					relative: callee-record/code-offset
-						- (image-function/code-offset + x64-encoder/CALL_NEXT)
+						- (image-function/code-offset + call-next)
 					relative
 				]
 				true [0]
 			]
+			argument: either shape = x64-encoder/I32_CALL_ARG_LITERAL [
+				instruction/immediate
+			][0]
 			current-entry?: all [entry? id = header/entry-function]
 			encoded: x64-encoder/encode
 				(code + image-function/code-offset)
-				image-function/code-size current-entry? shape value 0
+				image-function/code-size current-entry? shape value argument 0
 			if encoded <> image-function/code-size [return OUTPUT_FULL]
+			image-function/frame-size: x64-encoder/FRAME_SIZE
+			next-instruction: next-instruction + ir-function/instruction-count
 			id: id + 1
 		]
 		cursor: code + code-size

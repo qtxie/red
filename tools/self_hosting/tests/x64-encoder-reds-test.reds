@@ -11,44 +11,47 @@ expected-i32-entry: #{554889E56A006A0068000000006A00B9070000004883EC20FF15000000
 expected-call: #{554889E56A006A0068000000006A00E810000000C9C3}
 expected-call-back: #{554889E56A006A0068000000006A00E8D6FFFFFFC9C3}
 expected-call-entry: #{554889E56A006A0068000000006A00E81000000089C14883EC20FF150000000031C0C9C3}
+expected-param: #{554889E56A006A0068000000006A0089C8C9C3}
+expected-call-arg: #{554889E56A006A0068000000006A00B92A000000E810000000C9C3}
+expected-call-arg-entry: #{554889E56A006A0068000000006A00B92A000000E81000000089C14883EC20FF150000000031C0C9C3}
 
 failures: 0
-code: allocate x64-encoder/CALL_ENTRY_SIZE
+code: allocate x64-encoder/CALL_ARG_LITERAL_ENTRY_SIZE
 if null? code [quit 1]
 
-size: x64-encoder/encode code x64-encoder/VOID_SIZE false x64-encoder/VOID 0 0
+size: x64-encoder/encode code x64-encoder/VOID_SIZE false x64-encoder/VOID 0 0 0
 if size <> x64-encoder/VOID_SIZE [failures: failures + 1]
 if (compare-memory code (as byte-ptr! expected-void) size) <> 0 [
 	failures: failures + 1
 ]
 
-size: x64-encoder/encode code x64-encoder/VOID_ENTRY_SIZE true x64-encoder/VOID 0 0
+size: x64-encoder/encode code x64-encoder/VOID_ENTRY_SIZE true x64-encoder/VOID 0 0 0
 if size <> x64-encoder/VOID_ENTRY_SIZE [failures: failures + 1]
 if (compare-memory code (as byte-ptr! expected-void-entry) size) <> 0 [
 	failures: failures + 1
 ]
 if x64-encoder/VOID_EXIT_REF <> 23 [failures: failures + 1]
 
-size: x64-encoder/encode code x64-encoder/I32_SIZE false x64-encoder/I32_LITERAL 7 0
+size: x64-encoder/encode code x64-encoder/I32_SIZE false x64-encoder/I32_LITERAL 7 0 0
 if size <> x64-encoder/I32_SIZE [failures: failures + 1]
 if (compare-memory code (as byte-ptr! expected-i32) size) <> 0 [
 	failures: failures + 1
 ]
 
-size: x64-encoder/encode code x64-encoder/I32_ENTRY_SIZE true x64-encoder/I32_LITERAL 7 0
+size: x64-encoder/encode code x64-encoder/I32_ENTRY_SIZE true x64-encoder/I32_LITERAL 7 0 0
 if size <> x64-encoder/I32_ENTRY_SIZE [failures: failures + 1]
 if (compare-memory code (as byte-ptr! expected-i32-entry) size) <> 0 [
 	failures: failures + 1
 ]
 if x64-encoder/I32_EXIT_REF <> 26 [failures: failures + 1]
 
-size: x64-encoder/encode code x64-encoder/CALL_SIZE false x64-encoder/I32_CALL 16 0
+size: x64-encoder/encode code x64-encoder/CALL_SIZE false x64-encoder/I32_CALL 16 0 0
 if size <> x64-encoder/CALL_SIZE [failures: failures + 1]
 if (compare-memory code (as byte-ptr! expected-call) size) <> 0 [
 	failures: failures + 1
 ]
 
-size: x64-encoder/encode code x64-encoder/CALL_ENTRY_SIZE true x64-encoder/I32_CALL 16 0
+size: x64-encoder/encode code x64-encoder/CALL_ENTRY_SIZE true x64-encoder/I32_CALL 16 0 0
 if size <> x64-encoder/CALL_ENTRY_SIZE [failures: failures + 1]
 if (compare-memory code (as byte-ptr! expected-call-entry) size) <> 0 [
 	failures: failures + 1
@@ -56,14 +59,48 @@ if (compare-memory code (as byte-ptr! expected-call-entry) size) <> 0 [
 if x64-encoder/CALL_EXIT_REF <> 28 [failures: failures + 1]
 if x64-encoder/CALL_NEXT <> 20 [failures: failures + 1]
 
-size: x64-encoder/encode code x64-encoder/CALL_SIZE false x64-encoder/I32_CALL -42 0
+size: x64-encoder/encode code x64-encoder/CALL_SIZE false x64-encoder/I32_CALL -42 0 0
 if size <> x64-encoder/CALL_SIZE [failures: failures + 1]
 if (compare-memory code (as byte-ptr! expected-call-back) size) <> 0 [
 	failures: failures + 1
 ]
 
 size: x64-encoder/encode code (x64-encoder/VOID_SIZE - 1)
-	false x64-encoder/VOID 0 0
+	false x64-encoder/VOID 0 0 0
+if size <> -1 [failures: failures + 1]
+
+size: x64-encoder/encode code x64-encoder/PARAM_SIZE
+	false x64-encoder/I32_PARAM 0 0 0
+if size <> x64-encoder/PARAM_SIZE [failures: failures + 1]
+if (compare-memory code (as byte-ptr! expected-param) size) <> 0 [
+	failures: failures + 1
+]
+
+size: x64-encoder/encode code x64-encoder/CALL_ARG_LITERAL_SIZE
+	false x64-encoder/I32_CALL_ARG_LITERAL 16 42 0
+if size <> x64-encoder/CALL_ARG_LITERAL_SIZE [failures: failures + 1]
+if (compare-memory code (as byte-ptr! expected-call-arg) size) <> 0 [
+	failures: failures + 1
+]
+
+size: x64-encoder/encode code x64-encoder/CALL_ARG_LITERAL_ENTRY_SIZE
+	true x64-encoder/I32_CALL_ARG_LITERAL 16 42 0
+if size <> x64-encoder/CALL_ARG_LITERAL_ENTRY_SIZE [failures: failures + 1]
+if (compare-memory code (as byte-ptr! expected-call-arg-entry) size) <> 0 [
+	failures: failures + 1
+]
+if x64-encoder/CALL_ARG_LITERAL_EXIT_REF <> 33 [failures: failures + 1]
+if x64-encoder/CALL_ARG_LITERAL_NEXT <> 25 [failures: failures + 1]
+
+size: x64-encoder/encode code x64-encoder/CALL_ARG_PARAM_SIZE
+	false x64-encoder/I32_CALL_ARG_PARAM 16 0 0
+if size <> x64-encoder/CALL_ARG_PARAM_SIZE [failures: failures + 1]
+if (compare-memory code (as byte-ptr! expected-call) size) <> 0 [
+	failures: failures + 1
+]
+
+size: x64-encoder/encode code x64-encoder/PARAM_SIZE
+	true x64-encoder/I32_PARAM 0 0 0
 if size <> -1 [failures: failures + 1]
 
 free code

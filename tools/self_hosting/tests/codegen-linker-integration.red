@@ -1,5 +1,5 @@
 Red [
-	Title: "Fresh-process native codegen image to PE linker integration"
+	Title: "Direct native codegen image to PE linker integration"
 ]
 
 #include %../../../system/compiler-windows-common.red
@@ -24,28 +24,26 @@ system-dialect: context [
 	]
 ]
 
-; Independently constructed image for main -> qualified>inside -> helper -> 42.
-artifact: make binary! 336
-emit artifact [336 3 3 3 1 1 59 240 80 16]
-emit artifact [0 16 36 22 32 0 16 0 0]
-emit artifact [16 16 58 22 32 0 16 0 0]
-emit artifact [32 4 0 36 32 0 16 0 0]
-emit artifact [36 12 48 11 1 1]
-emit artifact [28]
-append artifact to binary! "qualified>helperqualified>insidemainkernel32.dllExitProcess"
-append/dup artifact 0 (240 - length? artifact)
-append artifact #{554889E56A006A0068000000006A00E82600000089C14883EC20FF150000000031C0C9C3}
-append artifact #{554889E56A006A0068000000006A00B82A000000C9C3}
-append artifact #{554889E56A006A0068000000006A00E8D6FFFFFFC9C3}
-append/dup artifact 0 (336 - length? artifact)
-unless (length? artifact) = 336 [fail "independent native image has the wrong size"]
+; Independently constructed image for main -> identity 42.
+artifact: make binary! 252
+emit artifact [252 3 2 2 1 1 35 176 60 16]
+emit artifact [0 8 41 19 32 0 16 0 0]
+emit artifact [8 4 0 41 32 0 16 0 0]
+emit artifact [12 12 24 11 1 1]
+emit artifact [33]
+append artifact to binary! "identitymainkernel32.dllExitProcess"
+append/dup artifact 0 (176 - length? artifact)
+append artifact #{554889E56A006A0068000000006A00B92A000000E81000000089C14883EC20FF150000000031C0C9C3}
+append artifact #{554889E56A006A0068000000006A0089C8C9C3}
+append/dup artifact 0 (252 - length? artifact)
+unless (length? artifact) = 252 [fail "independent native image has the wrong size"]
 
 root: clean-path to file! rejoin [system/options/path %../../../]
 system/options/path: root
 output: either all [block? system/options/args not empty? system/options/args][
 	clean-path to-red-file to file! system/options/args/1
 ][
-	clean-path to file! rejoin [root %build/self-hosting/compact-linker-i32.exe]
+	clean-path to file! rejoin [root %build/self-hosting/compact-linker-parameter-i32.exe]
 ]
 set [output-dir output-name] split-path output
 
@@ -86,4 +84,4 @@ if find job/sections 'reloc [
 status: call/wait to-local-file linked
 unless status = 42 [fail ["linked executable returned " status " instead of 42"]]
 
-print ["PASS: compact context image -> direct PE linker -> exit 42" linked]
+print ["PASS: compact parameter image -> direct PE linker -> exit 42" linked]

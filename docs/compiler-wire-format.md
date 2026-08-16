@@ -2107,11 +2107,11 @@ the entry and imported symbol. All exports, runtime objects, unwind/debug data,
 other relocations/imports, PIC/static jobs, and multi-object inputs are hard
 errors rather than dropped records.
 
-`tools/self_hosting/tests/rscg-linker-adapter-integration.red` loads the RSCG
-fixture in a fresh process, invokes the existing PE linker, checks that a real
-import/IAT exists without an empty base-relocation section, and launches the
-result with exit status zero. A later typed linker ingestion path may remove
-the legacy encodings without changing RSCG.
+The retired adapter test was replaced by
+`tools/self_hosting/tests/codegen-linker-integration.red`. The current test
+loads the native codegen image directly, invokes the PE linker, checks that a
+real import/IAT exists without an empty base-relocation section, and launches
+the result with exit status 42.
 
 ## RSDG diagnostics
 

@@ -145,9 +145,7 @@ system-dialect: context [
 		process-config source/2
 		output: compiler-rsir-frontend/compile
 			source
-			none
 			'glue
-			'executable
 		unless binary? output [
 			error: compiler-rsir-frontend/last-error
 			compiler/throw-error either error [error/message][

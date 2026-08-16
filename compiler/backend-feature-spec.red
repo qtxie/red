@@ -151,7 +151,7 @@ compiler-backend-feature-spec: [
 				"tools/self_hosting/tests/hybrid-driver-ownership-test.red"
 				"tools/self_hosting/tests/codegen-bridge-integration.red"
 				"tools/self_hosting/tests/rscg-linker-adapter-test.red"
-				"tools/self_hosting/tests/rscg-linker-adapter-integration.red"
+				"tools/self_hosting/tests/codegen-linker-integration.red"
 				"system/tests/source/units/x64-image-info-smoke.reds"
 			]
 			blockers []
@@ -192,7 +192,7 @@ compiler-backend-feature-spec: [
 				"tools/self_hosting/tests/wire-symbol-linkage-test.red"
 				"tools/self_hosting/tests/wire-symbol-linkage-reds-test.reds"
 				"tools/self_hosting/tests/rscg-linker-adapter-test.red"
-				"tools/self_hosting/tests/rscg-linker-adapter-integration.red"
+				"tools/self_hosting/tests/codegen-linker-integration.red"
 				"system/tests/source/units/lib-test.reds"
 				"system/tests/source/units/namespace-test.reds"
 				"system/tests/source/units/use-test.reds"
@@ -453,7 +453,7 @@ compiler-backend-feature-spec: [
 				"tools/self_hosting/tests/wire-rscg-relocation-test.red"
 				"tools/self_hosting/tests/wire-rscg-relocation-reds-test.reds"
 				"tools/self_hosting/tests/rscg-linker-adapter-test.red"
-				"tools/self_hosting/tests/rscg-linker-adapter-integration.red"
+				"tools/self_hosting/tests/codegen-linker-integration.red"
 				"tools/self_hosting/tests/hybrid-driver-test.red"
 				"tools/self_hosting/tests/pe-empty-sections-test.red"
 				"tools/self_hosting/fixtures/backend/global-memory.reds"

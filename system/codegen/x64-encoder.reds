@@ -912,6 +912,122 @@ x64-encoder: context [
 		size
 	]
 
+	; RCX is the source address and RDX is the destination address. The
+	; operation advances both and uses RAX and R8 as volatile scratch.
+	copy-chunk: func [
+		code [byte-ptr!]
+		capacity width [integer!]
+		advance? [logic!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: move-register at (capacity - written) RAX RCX 8
+		if encoded < 0 [return -1]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: load-indirect at (capacity - written) width 0
+		if encoded < 0 [return -1]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: store-indirect at (capacity - written) width
+		if encoded < 0 [return -1]
+		written: written + encoded
+
+		if advance? [
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: add-immediate at (capacity - written) RCX width
+			if encoded < 0 [return -1]
+			written: written + encoded
+
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: add-immediate at (capacity - written) RDX width
+			if encoded < 0 [return -1]
+			written: written + encoded
+		]
+		written
+	]
+
+	copy-indirect: func [
+		code [byte-ptr!]
+		capacity size [integer!]
+		return: [integer!]
+		/local at [byte-ptr!]
+			encoded written remaining chunks width loop-start [integer!]
+	][
+		if size <= 0 [return -1]
+		written: 0
+		remaining: size
+		chunks: remaining / 8
+
+		either chunks >= 4 [
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: move-immediate at (capacity - written) R8 4 chunks 0
+			if encoded < 0 [return -1]
+			written: written + encoded
+			loop-start: written
+
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: copy-chunk at (capacity - written) 8 true
+			if encoded < 0 [return -1]
+			written: written + encoded
+
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: add-immediate at (capacity - written) R8 -1
+			if encoded < 0 [return -1]
+			written: written + encoded
+
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: test-register at (capacity - written) R8 8
+			if encoded < 0 [return -1]
+			written: written + encoded
+
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: jump-condition at (capacity - written) 5
+				(loop-start - (written + 6))
+			if encoded < 0 [return -1]
+			written: written + encoded
+			remaining: remaining - (chunks * 8)
+		][
+			while [remaining >= 8][
+				at: as byte-ptr! 0
+				if not null? code [at: code + written]
+				encoded: copy-chunk at (capacity - written) 8 (remaining > 8)
+				if encoded < 0 [return -1]
+				written: written + encoded
+				remaining: remaining - 8
+			]
+		]
+
+		while [remaining > 0][
+			width: case [
+				remaining >= 4 [4]
+				remaining >= 2 [2]
+				true [1]
+			]
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: copy-chunk at (capacity - written) width (remaining > width)
+			if encoded < 0 [return -1]
+			written: written + encoded
+			remaining: remaining - width
+		]
+		written
+	]
+
 	outgoing-store: func [
 		code [byte-ptr!]
 		capacity displacement width [integer!]

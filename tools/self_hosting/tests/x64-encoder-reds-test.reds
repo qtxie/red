@@ -125,6 +125,10 @@ if any [size <> 7 code/1 <> as byte! 48h code/2 <> as byte! 8Bh code/3 <> as byt
 
 if (x64-encoder/load-indirect code 128 1 1) <> 3 [failures: failures + 1]
 if (x64-encoder/store-indirect code 128 8) <> 3 [failures: failures + 1]
+if (x64-encoder/copy-indirect code 128 1) <> 8 [failures: failures + 1]
+if (x64-encoder/copy-indirect code 128 8) <> 9 [failures: failures + 1]
+if (x64-encoder/copy-indirect code 128 12) <> 24 [failures: failures + 1]
+if (x64-encoder/copy-indirect code 128 40) <> 36 [failures: failures + 1]
 size: x64-encoder/add-immediate code 128 x64-encoder/RAX 127
 if any [
 	size <> 4 code/1 <> as byte! 48h code/2 <> as byte! 83h
@@ -152,6 +156,7 @@ if (x64-encoder/frame-load code 128 x64-encoder/RAX 0 3 0) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/store-indirect code 128 3) <> -1 [failures: failures + 1]
+if (x64-encoder/copy-indirect code 128 0) <> -1 [failures: failures + 1]
 if (x64-encoder/binary-register code 128 02h 0 1 4) <> -1 [
 	failures: failures + 1
 ]

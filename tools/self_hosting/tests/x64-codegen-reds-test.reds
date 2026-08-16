@@ -70,6 +70,7 @@ void-ir: allocate 128
 local-ir: allocate 256
 pointer-ir: allocate 128
 arithmetic-ir: allocate 256
+aggregate-ir: allocate 512
 branch-ir: allocate 256
 merge-ir: allocate 256
 selection-ir: allocate 256
@@ -77,7 +78,7 @@ header: declare codegen-header!
 fn: declare codegen-function!
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
-	null? branch-ir null? merge-ir
+	null? aggregate-ir null? branch-ir null? merge-ir
 	null? selection-ir
 ][quit 1]
 
@@ -267,6 +268,74 @@ if (x64-codegen/generate arithmetic-ir 166 output 1024 0) <> x64-codegen/INVALID
 	failures: failures + 1
 ]
 
+; Two inline pair values occupy their own storage. LOAD exposes the source
+; address, SET copies its layout, and the assignment result remains the target.
+put aggregate-ir 0 1
+put aggregate-ir 4 0
+put aggregate-ir 8 1
+put aggregate-ir 12 0
+put aggregate-ir 16 1
+put aggregate-ir 20 21
+put aggregate-ir 24 0
+put aggregate-ir 28 0
+
+put aggregate-ir 32 -2
+put aggregate-ir 36 0
+put aggregate-ir 40 0
+put aggregate-ir 44 0
+put aggregate-ir 48 2
+put aggregate-ir 52 -5
+put aggregate-ir 56 0
+put aggregate-ir 60 -5
+put aggregate-ir 64 0
+
+put aggregate-ir 68 0
+put aggregate-ir 72 2
+put aggregate-ir 76 -5
+put aggregate-ir 80 0
+put aggregate-ir 84 0
+put aggregate-ir 88 0
+put aggregate-ir 92 0
+put aggregate-ir 96 2
+put aggregate-ir 100 21
+
+put aggregate-ir 104 1
+put aggregate-ir 108 1
+put aggregate-ir 112 1
+put aggregate-ir 116 1
+
+put-instruction aggregate-ir 120 3 1 1 0
+put-instruction aggregate-ir 136 6 0 0 0
+put-instruction aggregate-ir 152 1 -5 17 0
+put-instruction aggregate-ir 168 5 0 0 0
+put-instruction aggregate-ir 184 12 0 0 0
+put-instruction aggregate-ir 200 3 1 2 0
+put-instruction aggregate-ir 216 3 1 1 0
+put-instruction aggregate-ir 232 4 0 0 0
+put-instruction aggregate-ir 248 5 0 0 0
+put-instruction aggregate-ir 264 6 1 0 0
+put-instruction aggregate-ir 280 1 -5 29 0
+put-instruction aggregate-ir 296 5 0 0 0
+put-instruction aggregate-ir 312 12 0 0 0
+put-instruction aggregate-ir 328 3 1 2 0
+put-instruction aggregate-ir 344 6 0 0 0
+put-instruction aggregate-ir 360 4 0 0 0
+put-instruction aggregate-ir 376 3 1 2 0
+put-instruction aggregate-ir 392 6 1 0 0
+put-instruction aggregate-ir 408 4 0 0 0
+put-instruction aggregate-ir 424 15 1 0 0
+put-instruction aggregate-ir 440 11 -5 0 0
+aggregate-ir/457: as byte! 66h
+aggregate-ir/458: as byte! 6Eh
+
+size: x64-codegen/generate aggregate-ir 458 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + 44)
+	if fn/frame-size <> 64 [failures: failures + 1]
+	unless execute-selection? output 46 [failures: failures + 1]
+]
+
 ; fn: func [return: [integer!]][either true [return 7][return 9]]
 put branch-ir 0 1
 put branch-ir 4 0
@@ -447,6 +516,7 @@ free void-ir
 free local-ir
 free pointer-ir
 free arithmetic-ir
+free aggregate-ir
 free branch-ir
 free merge-ir
 free selection-ir

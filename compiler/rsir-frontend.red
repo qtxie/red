@@ -1571,6 +1571,16 @@ compiler-rsir-frontend: context [
 		source-kind: ref-kind last-type
 		target-kind: ref-kind expected
 		if all [
+			last-flags = 0
+			expected-flags <> 0
+			find [struct union] target-kind
+			find [struct union] source-kind
+			stack-type-compatible? expected last-type
+		][
+			last-type: expected
+			return true
+		]
+		if all [
 			allow-float-literal?
 			last-float-literal?
 			expected-flags = 0

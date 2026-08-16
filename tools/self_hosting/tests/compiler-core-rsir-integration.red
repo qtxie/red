@@ -137,5 +137,7 @@ run-linked-fixture
 	%rsir-address-index-exit.reds %rsir-address-index-linked.exe "address/index"
 run-linked-fixture
 	%rsir-declare-storage-exit.reds %rsir-declare-storage-linked.exe "DECLARE storage"
+run-linked-fixture
+	%rsir-aggregate-copy-exit.reds %rsir-aggregate-copy-linked.exe "aggregate copy"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

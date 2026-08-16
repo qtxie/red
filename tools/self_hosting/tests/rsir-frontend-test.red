@@ -319,6 +319,41 @@ assert all [
 	(copy/part ops-of local-declare-ir local-declare-layout 5) = [3 3 20 5 12]
 ]["local DECLARE did not expose one pointer variable over one inline object"]
 
+inline-copy-ir: compile-text {
+	Red/System []
+	pair!: alias struct! [left [integer!] right [integer!]]
+	box!: alias struct! [source [pair! value] target [pair! value]]
+	fn: func [return: [integer!] /local box [box!]][
+		box: declare box!
+		box/source/left: 17
+		box/target: box/source
+		box/target/right: 29
+		box/target/left + box/target/right
+	]
+} 'user
+assert binary? inline-copy-ir [
+	"inline aggregate assignment failed: " mold frontend/last-error
+]
+inline-copy-layout: layout-of inline-copy-ir
+inline-copy-ops: ops-of inline-copy-ir inline-copy-layout
+assert all [
+	(function-word inline-copy-ir inline-copy-layout 1 28) = 2
+	not none? find inline-copy-ops [3 4 6 3 4 6 4 5]
+]["inline aggregate assignment did not use ordinary ADDRESS/MEMBER/LOAD/SET semantics"]
+
+assert none? compile-text {
+	Red/System []
+	left!: alias struct! [value [integer!]]
+	right!: alias struct! [value [integer!]]
+	box!: alias struct! [target [left! value] source [right! value]]
+	fn: func [/local box [box!]][
+		box: declare box!
+		box/target: box/source
+	]
+} 'user "inline aggregate assignment accepted a different nominal type"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"incompatible inline aggregate assignment reported the wrong error class"
+
 global-declare-ir: compile-text {
 	Red/System []
 	pair-value: declare struct! [left [integer!] right [integer!]]

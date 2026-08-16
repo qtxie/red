@@ -206,6 +206,28 @@ x64-codegen: context [
 		]
 	]
 
+	i32-import?: func [
+		fn [rsir-import!]
+		parameters types [byte-ptr!]
+		type-count parameter-count [integer!]
+		return: [logic!]
+		/local parameter [rsir-parameter!]
+	][
+		unless all [
+			(fn/flags and 3) <> 0
+			(fn/flags and (FUNCTION_FLAGS - 3)) = 0
+			integer32-ref? fn/type types type-count
+			fn/parameter-count = parameter-count
+		][return false]
+		if parameter-count = 0 [return true]
+		parameter: as rsir-parameter! (parameters
+			+ (fn/first-parameter * RSIR_PARAMETER_SIZE))
+		all [
+			integer32-ref? parameter/type types type-count
+			parameter/flags = 0
+		]
+	]
+
 	layout-type: func [
 		ref [integer!]
 		inline? [logic!]
@@ -294,12 +316,13 @@ x64-codegen: context [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
 		parameters [byte-ptr!]
-		function-data [byte-ptr!]
+		function-data import-data [byte-ptr!]
 		type-data [byte-ptr!]
-		type-count function-count [integer!]
+		type-count function-count import-count [integer!]
 		return: [integer!]
 		/local instruction call terminator [rsir-instruction!]
 			callee [rsir-function!]
+			imported [rsir-import!]
 			parameter-count [integer!]
 	][
 		instruction: as rsir-instruction! instructions
@@ -365,6 +388,19 @@ x64-codegen: context [
 							x64-encoder/I32_CALL
 						][UNSUPPORTED]
 					]
+					all [
+						instruction/opcode = 4
+						instruction/result = (parameter-count + 1)
+						instruction/operand < 0
+						instruction/operand >= (0 - import-count)
+						instruction/immediate = 0
+					][
+						imported: as rsir-import! (import-data
+							+ (((0 - instruction/operand) - 1) * RSIR_IMPORT_SIZE))
+						either i32-import? imported parameters type-data type-count 0 [
+							x64-encoder/I32_IMPORT
+						][UNSUPPORTED]
+					]
 					true [UNSUPPORTED]
 				]
 			]
@@ -382,40 +418,71 @@ x64-codegen: context [
 				unless all [
 					call/opcode = 4
 					call/result = (instruction/result + 1)
-					call/operand > 0
-					call/operand <= function-count
+					any [
+						all [call/operand > 0 call/operand <= function-count]
+						all [
+							call/operand < 0
+							call/operand >= (0 - import-count)
+						]
+					]
 					call/immediate = instruction/result
 					terminator/opcode = 3
 					terminator/result = 0
 					terminator/operand = call/result
 					terminator/immediate = 0
 				][return INVALID_IR]
-				callee: as rsir-function! (function-data
-					+ ((call/operand - 1) * RSIR_FUNCTION_SIZE))
-				either i32-function? callee parameters type-data type-count 1 [
-					x64-encoder/I32_CALL_ARG_LITERAL
-				][UNSUPPORTED]
+				either call/operand > 0 [
+					callee: as rsir-function! (function-data
+						+ ((call/operand - 1) * RSIR_FUNCTION_SIZE))
+					either i32-function? callee parameters type-data type-count 1 [
+						x64-encoder/I32_CALL_ARG_LITERAL
+					][UNSUPPORTED]
+				][
+					imported: as rsir-import! (import-data
+						+ (((0 - call/operand) - 1) * RSIR_IMPORT_SIZE))
+					either i32-import? imported parameters type-data type-count 1 [
+						x64-encoder/I32_IMPORT_ARG_LITERAL
+					][UNSUPPORTED]
+				]
 			]
 			all [
 				i32-function? fn parameters type-data type-count 1
 				fn/instruction-count = 2
 				instruction/opcode = 4
 				instruction/result = 2
-				instruction/operand > 0
-				instruction/operand <= function-count
+				any [
+					all [
+						instruction/operand > 0
+						instruction/operand <= function-count
+					]
+					all [
+						instruction/operand < 0
+						instruction/operand >= (0 - import-count)
+					]
+				]
 				instruction/immediate = 1
 			][
 				terminator: as rsir-instruction!
 					(instructions + RSIR_INSTRUCTION_SIZE)
-				callee: as rsir-function! (function-data
-					+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
-				either all [
-					i32-function? callee parameters type-data type-count 1
+				unless all [
 					terminator/opcode = 3
 					terminator/result = 0
 					terminator/operand = 2
 					terminator/immediate = 0
-				][x64-encoder/I32_CALL_ARG_PARAM][INVALID_IR]
+				][return INVALID_IR]
+				either instruction/operand > 0 [
+					callee: as rsir-function! (function-data
+						+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
+					either i32-function? callee parameters type-data type-count 1 [
+						x64-encoder/I32_CALL_ARG_PARAM
+					][INVALID_IR]
+				][
+					imported: as rsir-import! (import-data
+						+ (((0 - instruction/operand) - 1) * RSIR_IMPORT_SIZE))
+					either i32-import? imported parameters type-data type-count 1 [
+						x64-encoder/I32_IMPORT_ARG_PARAM
+					][INVALID_IR]
+				]
 			]
 			true [UNSUPPORTED]
 		]
@@ -443,6 +510,21 @@ x64-codegen: context [
 			all [not entry? shape = x64-encoder/I32_CALL_ARG_PARAM][
 				x64-encoder/CALL_ARG_PARAM_SIZE
 			]
+			all [entry? shape = x64-encoder/I32_IMPORT][
+				x64-encoder/IMPORT_CALL_ENTRY_SIZE
+			]
+			all [entry? shape = x64-encoder/I32_IMPORT_ARG_LITERAL][
+				x64-encoder/IMPORT_CALL_ARG_LITERAL_ENTRY_SIZE
+			]
+			all [not entry? shape = x64-encoder/I32_IMPORT][
+				x64-encoder/IMPORT_CALL_SIZE
+			]
+			all [not entry? shape = x64-encoder/I32_IMPORT_ARG_LITERAL][
+				x64-encoder/IMPORT_CALL_ARG_LITERAL_SIZE
+			]
+			all [not entry? shape = x64-encoder/I32_IMPORT_ARG_PARAM][
+				x64-encoder/IMPORT_CALL_ARG_PARAM_SIZE
+			]
 			true [-1]
 		]
 	]
@@ -455,8 +537,25 @@ x64-codegen: context [
 			shape = x64-encoder/I32_CALL_ARG_LITERAL [
 				x64-encoder/CALL_ARG_LITERAL_EXIT_REF
 			]
+			shape = x64-encoder/I32_IMPORT [
+				x64-encoder/IMPORT_CALL_EXIT_REF
+			]
+			shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
+				x64-encoder/IMPORT_CALL_ARG_LITERAL_EXIT_REF
+			]
 			true [-1]
 		]
+	]
+
+	import-reference: func [shape [integer!] return: [integer!]][
+		either shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
+			x64-encoder/IMPORT_CALL_ARG_LITERAL_REF
+		][x64-encoder/IMPORT_CALL_REF]
+	]
+
+	release: func [scratch [byte-ptr!] result [integer!] return: [integer!]][
+		unless null? scratch [free scratch]
+		result
 	]
 
 	generate: func [
@@ -475,17 +574,19 @@ x64-codegen: context [
 			image [codegen-header!]
 			image-function callee-record [codegen-function!]
 			image-import [codegen-import!]
-			references [int-ptr!]
+			references import-refs [int-ptr!]
 			type-data member-data import-data function-data parameter-data instruction-data
 				function-instructions strings name
 				names-output code data-output
-				cursor finish [byte-ptr!]
+				cursor finish scratch [byte-ptr!]
 			type-bytes member-bytes import-bytes function-bytes parameter-bytes instruction-bytes
 				strings-start strings-size metadata-size member-count parameter-count
 				names-size function-names-size code-offset code-size data-offset total-size
 				id record-offset next-instruction function-size entry-size code-cursor
 				name-cursor shape entry-shape encoded value argument target relative call-next
-				library-offset external-offset variable-mode [integer!]
+				library-offset external-offset variable-mode import-id reference-id
+				used-import-count image-import-count import-reference-count reference-count
+				import-names-size output-import-id first-reference last-library count [integer!]
 			entry? current-entry? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
@@ -760,6 +861,18 @@ x64-codegen: context [
 				(capacity - IMAGE_HEADER_SIZE) / IMAGE_FUNCTION_SIZE
 			)
 		][return OUTPUT_FULL]
+		scratch: null
+		import-refs: as int-ptr! 0
+		if header/import-count > 0 [
+			scratch: allocate (header/import-count * 4)
+			if null? scratch [return OUTPUT_FULL]
+			import-refs: as int-ptr! scratch
+			id: 1
+			while [id <= header/import-count][
+				import-refs/id: 0
+				id: id + 1
+			]
+		]
 
 		id: 1
 		next-instruction: 1
@@ -778,31 +891,48 @@ x64-codegen: context [
 				ir-function/instruction-count > (
 					header/instruction-count - next-instruction + 1
 				)
-			][return INVALID_IR]
+			][return release scratch INVALID_IR]
 			function-instructions: instruction-data
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			instruction: as rsir-instruction! function-instructions
 			shape: shape-of ir-function function-instructions
-				parameter-data function-data type-data
-				header/type-count header/function-count
-			if shape < 0 [return shape]
+				parameter-data function-data import-data type-data
+				header/type-count header/function-count header/import-count
+			if shape < 0 [return release scratch shape]
 			if all [
 				shape = x64-encoder/I32_LITERAL
 				instruction/opcode = 5
 				not valid-type-ref? instruction/operand header/type-count
-			][return INVALID_IR]
+			][return release scratch INVALID_IR]
+			if any [
+				shape = x64-encoder/I32_IMPORT
+				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
+				shape = x64-encoder/I32_IMPORT_ARG_PARAM
+			][
+				call-instruction: instruction
+				if shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
+					call-instruction: as rsir-instruction!
+						(function-instructions + RSIR_INSTRUCTION_SIZE)
+				]
+				import-id: 0 - call-instruction/operand
+				import-refs/import-id: import-refs/import-id + 1
+			]
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			image-function/frame-size: shape
 			current-entry?: all [entry? id = header/entry-function]
-			if all [current-entry? ir-function/parameter-count > 0][return UNSUPPORTED]
+			if all [current-entry? ir-function/parameter-count > 0][
+				return release scratch UNSUPPORTED
+			]
 			function-size: machine-size current-entry? shape
-			if function-size < 0 [return UNSUPPORTED]
+			if function-size < 0 [return release scratch UNSUPPORTED]
 			if function-names-size > (2147483647 - ir-function/name-size) [
-				return INVALID_IR
+				return release scratch INVALID_IR
 			]
 			function-names-size: function-names-size + ir-function/name-size
-			if code-size > (2147483647 - function-size) [return INVALID_IR]
+			if code-size > (2147483647 - function-size)[
+				return release scratch INVALID_IR
+			]
 			code-size: code-size + function-size
 			if current-entry? [
 				entry-size: function-size
@@ -811,32 +941,82 @@ x64-codegen: context [
 			next-instruction: next-instruction + ir-function/instruction-count
 			id: id + 1
 		]
-		if next-instruction <> (header/instruction-count + 1) [return INVALID_IR]
-		if all [entry? entry-shape < 0][return INVALID_IR]
-
-		either entry? [
-			if header/function-count > (
-				(2147483647 - IMAGE_HEADER_SIZE - IMAGE_IMPORT_SIZE - 4)
-				/ IMAGE_FUNCTION_SIZE
-			)[return OUTPUT_FULL]
-		][
-			if header/function-count > (
-				(2147483647 - IMAGE_HEADER_SIZE) / IMAGE_FUNCTION_SIZE
-			)[return OUTPUT_FULL]
+		if next-instruction <> (header/instruction-count + 1)[
+			return release scratch INVALID_IR
 		]
+		if all [entry? entry-shape < 0][return release scratch INVALID_IR]
+
+		used-import-count: 0
+		import-reference-count: 0
+		import-names-size: 0
+		last-library: -1
+		id: 1
+		while [id <= header/import-count][
+			count: import-refs/id
+			if count > 0 [
+				ir-import: as rsir-import! (import-data
+					+ ((id - 1) * RSIR_IMPORT_SIZE))
+				used-import-count: used-import-count + 1
+				if import-reference-count > (2147483647 - count)[
+					return release scratch OUTPUT_FULL
+				]
+				import-reference-count: import-reference-count + count
+				if ir-import/library <> last-library [
+					if import-names-size > (2147483647 - ir-import/library-size)[
+						return release scratch OUTPUT_FULL
+					]
+					import-names-size: import-names-size + ir-import/library-size
+					last-library: ir-import/library
+				]
+				if import-names-size > (2147483647 - ir-import/external-size)[
+					return release scratch OUTPUT_FULL
+				]
+				import-names-size: import-names-size + ir-import/external-size
+			]
+			id: id + 1
+		]
+		image-import-count: used-import-count
+		reference-count: import-reference-count
+		if entry? [
+			image-import-count: image-import-count + 1
+			reference-count: reference-count + 1
+		]
+
+		if header/function-count > (
+			(2147483647 - IMAGE_HEADER_SIZE) / IMAGE_FUNCTION_SIZE
+		)[return release scratch OUTPUT_FULL]
 		metadata-size: IMAGE_HEADER_SIZE
 			+ (header/function-count * IMAGE_FUNCTION_SIZE)
-		if entry? [metadata-size: metadata-size + IMAGE_IMPORT_SIZE + 4]
+		if image-import-count > (
+			(2147483647 - metadata-size) / IMAGE_IMPORT_SIZE
+		)[return release scratch OUTPUT_FULL]
+		metadata-size: metadata-size + (image-import-count * IMAGE_IMPORT_SIZE)
+		if reference-count > ((2147483647 - metadata-size) / 4)[
+			return release scratch OUTPUT_FULL
+		]
+		metadata-size: metadata-size + (reference-count * 4)
 		names-size: function-names-size
+		if names-size > (2147483647 - import-names-size)[
+			return release scratch OUTPUT_FULL
+		]
+		names-size: names-size + import-names-size
 		if entry? [
-			if names-size > (2147483647 - 23) [return OUTPUT_FULL]
+			if names-size > (2147483647 - 23)[
+				return release scratch OUTPUT_FULL
+			]
 			names-size: names-size + 23
 		]
-		if metadata-size > (2147483647 - names-size - 15) [return OUTPUT_FULL]
+		if metadata-size > (2147483647 - names-size - 15)[
+			return release scratch OUTPUT_FULL
+		]
 		code-offset: align (metadata-size + names-size) 16
-		if code-offset > (2147483647 - code-size - 3) [return OUTPUT_FULL]
+		if code-offset > (2147483647 - code-size - 3)[
+			return release scratch OUTPUT_FULL
+		]
 		data-offset: align (code-offset + code-size) 4
-		if data-offset > (2147483647 - BITMAP_SIZE) [return OUTPUT_FULL]
+		if data-offset > (2147483647 - BITMAP_SIZE)[
+			return release scratch OUTPUT_FULL
+		]
 		total-size: data-offset + BITMAP_SIZE
 		if any [
 			metadata-size < 0
@@ -845,15 +1025,15 @@ x64-codegen: context [
 			data-offset < 0
 			total-size < 0
 			total-size > capacity
-		][return OUTPUT_FULL]
+		][return release scratch OUTPUT_FULL]
 
 		image: as codegen-header! output
 		image/size: total-size
 		image/module-kind: header/module-kind
 		image/entry-function: header/entry-function
 		image/function-count: header/function-count
-		image/import-count: either entry? [1][0]
-		image/reference-count: either entry? [1][0]
+		image/import-count: image-import-count
+		image/reference-count: reference-count
 		image/names-size: names-size
 		image/code-offset: code-offset
 		image/code-size: code-size
@@ -887,26 +1067,59 @@ x64-codegen: context [
 			id: id + 1
 		]
 
+		references: as int-ptr! (output + IMAGE_HEADER_SIZE
+			+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			+ (image-import-count * IMAGE_IMPORT_SIZE))
+		output-import-id: 0
+		first-reference: 1
+		last-library: -1
+		library-offset: 0
+		id: 1
+		while [id <= header/import-count][
+			count: import-refs/id
+			if count > 0 [
+				ir-import: as rsir-import! (import-data
+					+ ((id - 1) * RSIR_IMPORT_SIZE))
+				if ir-import/library <> last-library [
+					library-offset: name-cursor
+					copy-memory (names-output + name-cursor)
+						(strings + ir-import/library) ir-import/library-size
+					name-cursor: name-cursor + ir-import/library-size
+					last-library: ir-import/library
+				]
+				external-offset: name-cursor
+				copy-memory (names-output + name-cursor)
+					(strings + ir-import/external) ir-import/external-size
+				name-cursor: name-cursor + ir-import/external-size
+				image-import: as codegen-import! (output + IMAGE_HEADER_SIZE
+					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					+ (output-import-id * IMAGE_IMPORT_SIZE))
+				image-import/library: library-offset
+				image-import/library-size: ir-import/library-size
+				image-import/external: external-offset
+				image-import/external-size: ir-import/external-size
+				image-import/first-reference: first-reference
+				image-import/reference-count: count
+				import-refs/id: first-reference
+				first-reference: first-reference + count
+				output-import-id: output-import-id + 1
+			]
+			id: id + 1
+		]
+
 		if entry? [
-			image-import: as codegen-import!
-				(output + IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE))
-			library-offset: function-names-size
+			image-import: as codegen-import! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ (output-import-id * IMAGE_IMPORT_SIZE))
+			library-offset: name-cursor
 			external-offset: library-offset + 12
 			image-import/library: library-offset
 			image-import/library-size: 12
 			image-import/external: external-offset
 			image-import/external-size: 11
-			image-import/first-reference: 1
+			image-import/first-reference: first-reference
 			image-import/reference-count: 1
-			references: as int-ptr!
-				(output + IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE)
-					+ IMAGE_IMPORT_SIZE)
-			references/1: exit-reference entry-shape
-		]
-
-		if entry? [
+			references/first-reference: exit-reference entry-shape
 			copy-memory (names-output + library-offset)
 				(as byte-ptr! "kernel32.dll") 12
 			copy-memory (names-output + external-offset)
@@ -932,7 +1145,10 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			shape: image-function/frame-size
 			call-instruction: instruction
-			if shape = x64-encoder/I32_CALL_ARG_LITERAL [
+			if any [
+				shape = x64-encoder/I32_CALL_ARG_LITERAL
+				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
+			][
 				call-instruction: as rsir-instruction!
 					(function-instructions + RSIR_INSTRUCTION_SIZE)
 			]
@@ -943,7 +1159,7 @@ x64-codegen: context [
 					either instruction/opcode = 5 [
 						unless layout-type instruction/operand true type-data member-data
 							header/type-count 0 :value :argument [
-							return INVALID_IR
+							return release scratch INVALID_IR
 						]
 						value
 					][instruction/immediate]
@@ -965,14 +1181,30 @@ x64-codegen: context [
 				]
 				true [0]
 			]
-			argument: either shape = x64-encoder/I32_CALL_ARG_LITERAL [
+			argument: either any [
+				shape = x64-encoder/I32_CALL_ARG_LITERAL
+				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
+			][
 				instruction/immediate
 			][0]
 			current-entry?: all [entry? id = header/entry-function]
 			encoded: x64-encoder/encode
 				(code + image-function/code-offset)
 				image-function/code-size current-entry? shape value argument 0
-			if encoded <> image-function/code-size [return OUTPUT_FULL]
+			if encoded <> image-function/code-size [
+				return release scratch OUTPUT_FULL
+			]
+			if any [
+				shape = x64-encoder/I32_IMPORT
+				shape = x64-encoder/I32_IMPORT_ARG_LITERAL
+				shape = x64-encoder/I32_IMPORT_ARG_PARAM
+			][
+				import-id: 0 - call-instruction/operand
+				reference-id: import-refs/import-id
+				references/reference-id: image-function/code-offset
+					+ (import-reference shape)
+				import-refs/import-id: reference-id + 1
+			]
 			image-function/frame-size: x64-encoder/FRAME_SIZE
 			next-instruction: next-instruction + ir-function/instruction-count
 			id: id + 1
@@ -988,6 +1220,6 @@ x64-codegen: context [
 			data-output/1: as byte! 0
 			data-output: data-output + 1
 		]
-		total-size
+		release scratch total-size
 	]
 ]

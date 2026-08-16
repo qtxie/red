@@ -549,6 +549,39 @@ assert all [
 assert same? frontend/imports/2 frontend/imports/12
 	"one import group duplicated its library value"
 
+import-call-ir: compile-text {
+	Red/System []
+	#import ["fixture.dll" stdcall [
+		native-call: "native-call" [value [integer!] return: [integer!]]
+	]]
+	fn: func [return: [integer!]][native-call 7]
+} 'glue
+assert binary? import-call-ir ["frontend rejected an imported call: "
+	mold frontend/last-error]
+assert all [
+	(length? import-call-ir) = 164
+	(word-at import-call-ir 12) = 1
+	(word-at import-call-ir 16) = 1
+	(word-at import-call-ir 20) = 3
+	(word-at import-call-ir 40) = -5
+	(word-at import-call-ir 44) = 2
+	(word-at import-call-ir 52) = 1
+	(word-at import-call-ir 84) = -5
+	(word-at import-call-ir 92) = 1
+	(word-at import-call-ir 108) = 4
+	(word-at import-call-ir 116) = -1
+	(word-at import-call-ir 120) = 1
+	(copy at import-call-ir 141) = to binary! "fixture.dllnative-callfn"
+]["imported call did not use the direct negative import ID"]
+
+assert none? compile-text {
+	Red/System []
+	#import ["fixture.dll" stdcall [native-value: "native-value" [integer!]]]
+	fn: func [return: [integer!]][native-value]
+} 'user "frontend accepted an imported variable as a call target"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"frontend reported the wrong imported-variable call error"
+
 context-import-ir: compile-text {
 	Red/System []
 	base: context [value!: alias integer!]

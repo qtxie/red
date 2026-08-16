@@ -434,7 +434,7 @@ compiler-rsir-frontend: context [
 		params [block!]
 		flags [integer!]
 		/local expression value callee position callee-params argument type ref
-			param-count argument-id result-id before
+			callee-return callee-flags param-count argument-id result-id before
 	][
 		before: length? instructions
 		param-count: (length? params) / 3
@@ -498,14 +498,30 @@ compiler-rsir-frontend: context [
 						any [word? value path? value]
 					][
 						callee: resolve-name value scope uses function-ids
-						unless integer? callee [
-							fail ERROR-REFERENCE ["unknown value or function " mold value]
+						either integer? callee [
+							position: skip functions ((callee - 1) * 8)
+							callee-return: position/6
+							callee-params: position/7
+							callee-flags: position/8
+						][
+							callee: resolve-name value scope uses import-ids
+							unless integer? callee [
+								fail ERROR-REFERENCE [
+									"unknown value or function " mold value
+								]
+							]
+							position: skip imports ((callee - 1) * 10)
+							unless position/5 = 'function [
+								fail ERROR-REFERENCE ["import " mold value " is not a function"]
+							]
+							callee-return: position/8
+							callee-params: position/9
+							callee-flags: position/10
+							callee: 0 - callee
 						]
-						position: skip functions ((callee - 1) * 8)
-						callee-params: position/7
 						unless all [
-							integer32-ref? position/6
-							(position/8 and return-value-flag) = 0
+							integer32-ref? callee-return
+							(callee-flags and return-value-flag) = 0
 							empty? callee-params
 						][
 							fail ERROR-REFERENCE [
@@ -527,14 +543,28 @@ compiler-rsir-frontend: context [
 						fail ERROR-UNSUPPORTED "call target must be a function name"
 					]
 					callee: resolve-name value scope uses function-ids
-					unless integer? callee [
-						fail ERROR-REFERENCE ["unknown function " mold value]
+					either integer? callee [
+						position: skip functions ((callee - 1) * 8)
+						callee-return: position/6
+						callee-params: position/7
+						callee-flags: position/8
+					][
+						callee: resolve-name value scope uses import-ids
+						unless integer? callee [
+							fail ERROR-REFERENCE ["unknown function " mold value]
+						]
+						position: skip imports ((callee - 1) * 10)
+						unless position/5 = 'function [
+							fail ERROR-REFERENCE ["import " mold value " is not a function"]
+						]
+						callee-return: position/8
+						callee-params: position/9
+						callee-flags: position/10
+						callee: 0 - callee
 					]
-					position: skip functions ((callee - 1) * 8)
-					callee-params: position/7
 					unless all [
-						integer32-ref? position/6
-						(position/8 and return-value-flag) = 0
+						integer32-ref? callee-return
+						(callee-flags and return-value-flag) = 0
 						(length? callee-params) = 3
 						integer32-ref? callee-params/2
 						callee-params/3 = 0

@@ -10,6 +10,9 @@ x64-encoder: context [
 	I32_PARAM:   3
 	I32_CALL_ARG_LITERAL: 4
 	I32_CALL_ARG_PARAM:   5
+	I32_IMPORT:            6
+	I32_IMPORT_ARG_LITERAL: 7
+	I32_IMPORT_ARG_PARAM:   8
 
 	VOID_SIZE:       17
 	VOID_ENTRY_SIZE: 31
@@ -21,6 +24,11 @@ x64-encoder: context [
 	CALL_ARG_LITERAL_SIZE:       27
 	CALL_ARG_LITERAL_ENTRY_SIZE: 41
 	CALL_ARG_PARAM_SIZE:         22
+	IMPORT_CALL_SIZE:             27
+	IMPORT_CALL_ENTRY_SIZE:       37
+	IMPORT_CALL_ARG_LITERAL_SIZE: 32
+	IMPORT_CALL_ARG_LITERAL_ENTRY_SIZE: 42
+	IMPORT_CALL_ARG_PARAM_SIZE:   27
 	FRAME_SIZE:      32
 	BITMAP_OFFSET:    9
 	VOID_EXIT_REF:   23
@@ -29,6 +37,10 @@ x64-encoder: context [
 	CALL_NEXT:       20
 	CALL_ARG_LITERAL_EXIT_REF: 33
 	CALL_ARG_LITERAL_NEXT:     25
+	IMPORT_CALL_REF:             21
+	IMPORT_CALL_EXIT_REF:        29
+	IMPORT_CALL_ARG_LITERAL_REF: 26
+	IMPORT_CALL_ARG_LITERAL_EXIT_REF: 34
 
 	write-i32: func [at [byte-ptr!] value [integer!]][
 		at/1: as byte! value
@@ -44,9 +56,14 @@ x64-encoder: context [
 		shape [integer!]
 		value argument bitmap-word [integer!]
 		return: [integer!]
-		/local size [integer!] at [byte-ptr!]
+		/local size [integer!] at [byte-ptr!] imported? [logic!]
 	][
 		if null? code [return -1]
+		imported?: any [
+			shape = I32_IMPORT
+			shape = I32_IMPORT_ARG_LITERAL
+			shape = I32_IMPORT_ARG_PARAM
+		]
 		size: case [
 			all [entry? shape = VOID] [VOID_ENTRY_SIZE]
 			all [entry? shape = I32_LITERAL] [I32_ENTRY_SIZE]
@@ -58,6 +75,17 @@ x64-encoder: context [
 			all [not entry? shape = I32_PARAM] [PARAM_SIZE]
 			all [not entry? shape = I32_CALL_ARG_LITERAL] [CALL_ARG_LITERAL_SIZE]
 			all [not entry? shape = I32_CALL_ARG_PARAM] [CALL_ARG_PARAM_SIZE]
+			all [entry? shape = I32_IMPORT] [IMPORT_CALL_ENTRY_SIZE]
+			all [entry? shape = I32_IMPORT_ARG_LITERAL][
+				IMPORT_CALL_ARG_LITERAL_ENTRY_SIZE
+			]
+			all [not entry? shape = I32_IMPORT] [IMPORT_CALL_SIZE]
+			all [not entry? shape = I32_IMPORT_ARG_LITERAL][
+				IMPORT_CALL_ARG_LITERAL_SIZE
+			]
+			all [not entry? shape = I32_IMPORT_ARG_PARAM][
+				IMPORT_CALL_ARG_PARAM_SIZE
+			]
 			true [return -1]
 		]
 		if capacity < size [return -1]
@@ -76,6 +104,13 @@ x64-encoder: context [
 		at/14: as byte! 6Ah
 		at/15: as byte! 00h                            ; parent frame
 		at: at + 15
+		if imported? [
+			at/1: as byte! 48h
+			at/2: as byte! 83h
+			at/3: as byte! ECh
+			at/4: as byte! 20h                            ; Win64 shadow space
+			at: at + 4
+		]
 
 		case [
 			shape = I32_LITERAL [
@@ -115,6 +150,36 @@ x64-encoder: context [
 				write-i32 (at + 1) value
 				at: at + 5
 			]
+			shape = I32_IMPORT [
+				at/1: as byte! FFh
+				at/2: as byte! 15h                       ; call [rip + rel32]
+				write-i32 (at + 2) 0
+				at: at + 6
+				if entry? [
+					at/1: as byte! 89h
+					at/2: as byte! C1h                   ; mov ecx, eax
+					at: at + 2
+				]
+			]
+			shape = I32_IMPORT_ARG_LITERAL [
+				at/1: as byte! B9h                       ; mov ecx, imm32
+				write-i32 (at + 1) argument
+				at/6: as byte! FFh
+				at/7: as byte! 15h                       ; call [rip + rel32]
+				write-i32 (at + 7) 0
+				at: at + 11
+				if entry? [
+					at/1: as byte! 89h
+					at/2: as byte! C1h                   ; mov ecx, eax
+					at: at + 2
+				]
+			]
+			shape = I32_IMPORT_ARG_PARAM [
+				at/1: as byte! FFh                       ; RCX already holds argument
+				at/2: as byte! 15h
+				write-i32 (at + 2) 0
+				at: at + 6
+			]
 			true []
 		]
 		if all [entry? shape = VOID] [
@@ -123,16 +188,19 @@ x64-encoder: context [
 			at: at + 2
 		]
 		if entry? [
-			at/1: as byte! 48h
-			at/2: as byte! 83h
-			at/3: as byte! ECh
-			at/4: as byte! 20h                           ; Win64 shadow space
-			at/5: as byte! FFh
-			at/6: as byte! 15h                           ; call [rip + rel32]
-			write-i32 (at + 6) 0
-			at/11: as byte! 31h
-			at/12: as byte! C0h                          ; unreachable fallback
-			at: at + 12
+			unless imported? [
+				at/1: as byte! 48h
+				at/2: as byte! 83h
+				at/3: as byte! ECh
+				at/4: as byte! 20h                       ; Win64 shadow space
+				at: at + 4
+			]
+			at/1: as byte! FFh
+			at/2: as byte! 15h                           ; call [rip + rel32]
+			write-i32 (at + 2) 0
+			at/7: as byte! 31h
+			at/8: as byte! C0h                          ; unreachable fallback
+			at: at + 8
 		]
 		at/1: as byte! C9h                             ; leave
 		at/2: as byte! C3h                             ; ret

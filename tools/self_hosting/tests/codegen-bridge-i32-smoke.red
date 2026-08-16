@@ -173,6 +173,117 @@ check (codegen-module import-ir import-image 0) = 0
 check import-image = user-i32
 	"unused import declarations changed native code"
 
+import-call-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	#import ["fixture.dll" stdcall [
+		native-call: "native-call" [value [integer!] return: [integer!]]
+	]]
+	fn: func [return: [integer!]][native-call 7]
+] 'glue
+check binary? import-call-ir ["frontend rejected an imported call: "
+	mold compiler-rsir-frontend/last-error]
+import-call-image: make binary! 4096
+check (codegen-module import-call-ir import-call-image 0) = 0
+	"imported call codegen failed"
+check all [
+	(length? import-call-image) = 252
+	(word-at import-call-image 8) = 1
+	(word-at import-call-image 12) = 1
+	(word-at import-call-image 16) = 2
+	(word-at import-call-image 20) = 2
+	(word-at import-call-image 24) = 47
+	(word-at import-call-image 28) = 192
+	(word-at import-call-image 32) = 42
+]["imported call image header changed"]
+check all [
+	(word-at import-call-image 40) = 0
+	(word-at import-call-image 44) = 2
+	(word-at import-call-image 48) = 0
+	(word-at import-call-image 52) = 42
+	(word-at import-call-image 76) = 2
+	(word-at import-call-image 80) = 11
+	(word-at import-call-image 84) = 13
+	(word-at import-call-image 88) = 11
+	(word-at import-call-image 92) = 1
+	(word-at import-call-image 96) = 1
+	(word-at import-call-image 100) = 24
+	(word-at import-call-image 104) = 12
+	(word-at import-call-image 108) = 36
+	(word-at import-call-image 112) = 11
+	(word-at import-call-image 116) = 2
+	(word-at import-call-image 120) = 1
+	(word-at import-call-image 124) = 26
+	(word-at import-call-image 128) = 34
+]["imported call records or reference slices changed"]
+check (copy/part at import-call-image 133 47) =
+	to binary! "fnfixture.dllnative-callkernel32.dllExitProcess"
+	"imported call names are not direct and contiguous"
+check (copy/part at import-call-image 193 42) =
+	#{554889E56A006A0068000000006A004883EC20B907000000FF150000000089C1FF150000000031C0C9C3}
+	"imported call machine encoding changed"
+
+group-import-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	#import ["fixture.dll" stdcall [
+		first-call: "first" [return: [integer!]]
+		second-call: "second" [return: [integer!]]
+		unused-call: "unused" [return: [integer!]]
+	]]
+	helper: func [return: [integer!]][first-call]
+	main: func [return: [integer!]][second-call]
+] 'glue
+check binary? group-import-ir ["frontend rejected grouped imported calls: "
+	mold compiler-rsir-frontend/last-error]
+group-import-image: make binary! 4096
+check (codegen-module group-import-ir group-import-image 0) = 0
+	"grouped imported call codegen failed"
+check all [
+	(length? group-import-image) = 336
+	(word-at group-import-image 8) = 2
+	(word-at group-import-image 12) = 2
+	(word-at group-import-image 16) = 3
+	(word-at group-import-image 20) = 3
+	(word-at group-import-image 24) = 55
+	(word-at group-import-image 28) = 256
+	(word-at group-import-image 32) = 64
+	(word-at group-import-image 112) = 10
+	(word-at group-import-image 124) = 5
+	(word-at group-import-image 136) = 10
+	(word-at group-import-image 148) = 6
+	(word-at group-import-image 184) = 58
+	(word-at group-import-image 188) = 21
+	(word-at group-import-image 192) = 29
+]["grouped imports duplicated their library or lost a reference"]
+check (copy/part at group-import-image 197 55) =
+	to binary! "helpermainfixture.dllfirstsecondkernel32.dllExitProcess"
+	"grouped imported names are not compact"
+
+forward-import-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	#import ["fixture.dll" stdcall [
+		native-call: "native-call" [value [integer!] return: [integer!]]
+	]]
+	relay: func [value [integer!] return: [integer!]][native-call value]
+	main: func [return: [integer!]][relay 7]
+] 'glue
+check binary? forward-import-ir ["frontend rejected imported parameter forwarding: "
+	mold compiler-rsir-frontend/last-error]
+forward-import-image: make binary! 4096
+check (codegen-module forward-import-ir forward-import-image 0) = 0
+	"imported parameter-forwarding codegen failed"
+check all [
+	(length? forward-import-image) = 308
+	(word-at forward-import-image 16) = 2
+	(word-at forward-import-image 20) = 2
+	(word-at forward-import-image 24) = 54
+	(word-at forward-import-image 28) = 224
+	(word-at forward-import-image 32) = 68
+	(word-at forward-import-image 48) = 41
+	(word-at forward-import-image 52) = 27
+	(word-at forward-import-image 160) = 62
+	(word-at forward-import-image 164) = 33
+]["imported parameter forwarding lost its code or relocation"]
+
 layout-source: [
 	Red/System []
 	byte-alias!: alias byte!

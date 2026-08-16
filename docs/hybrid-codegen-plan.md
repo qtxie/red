@@ -110,6 +110,17 @@ direct import records, malformed-slice checks, layout cases, and linker-image
 assertions. These are functional test builds, not the H0 compiler-build timing
 gate.
 
+The first direct imported-call checkpoint keeps the existing four-word call
+instruction: a positive operand is a declared function ID and a negative
+operand is an import ID. The focused pure Red/System test builds in 1.603
+seconds and produces a 142,848-byte executable. The expanded routine test uses
+1.763 seconds in the frontend, 14.557 seconds in native compilation, and 1.765
+seconds in linking, producing a 1,185,280-byte executable. It verifies direct
+Win64 IAT calls for zero arguments, one literal argument, and one forwarded
+parameter, including same-library name sharing and exact contiguous relocation
+slices. The test grew substantially, so these figures are functional build
+measurements rather than a comparison with the preceding checkpoint.
+
 ## Data Layout Rule
 
 RSIR is a private in-process format compiled as one source set with its only
@@ -158,10 +169,10 @@ An import with zero flags is a variable; a function import carries its required
 or library-group table is needed. Consecutive records in one source group share
 the same library-name offset.
 A one-argument call stores its argument value ID in the call instruction
-itself; there is no generic operand section. Function IDs and value IDs are
-one-based where zero means absent. The routine performs only the bounds and
-shape checks required for safe pointer traversal and then casts these arrays
-directly.
+itself; there is no generic operand section. A positive call target is a
+one-based declared-function ID and a negative target is the negated one-based
+import ID. Zero means absent. The routine performs only the bounds and shape
+checks required for safe pointer traversal and then casts these arrays directly.
 
 The native linker image follows the same rule. Its current order is:
 
@@ -180,7 +191,11 @@ data bytes
 Function and import records own contiguous reference slices. This maps directly
 to the existing linker's native symbol and import reference lists, so the Red
 linker does not search all relocations for every symbol and does not construct
-an intermediate object model.
+an intermediate object model. Native codegen counts imported calls in one dense
+integer per input import, writes each used import's slice, then reuses that same
+integer as the slice cursor while encoding. Unused imports never enter the
+linker image; consecutive used imports from one source group reuse one library
+name range.
 
 Both layouts may change while frontend, codegen, and linker are rebuilt
 together. A stable cache format is a later requirement and will be designed
@@ -243,11 +258,12 @@ native bounds/kind validation are implemented. Direct return/parameter slices,
 calling conventions, attributes, and function/subroutine type signatures are
 also implemented without a registry. Function and variable imports are written
 as direct logical records and validated natively; unused declarations do not
-enter the linker image. Imported call lowering is still pending. Basic Windows x64 scalar,
-pointer, alias, plain-struct, and plain-union size/alignment is implemented and
-consumed by `size?`. Member access, arrays, tagged unions, explicit aggregate
-alignment, complete signature lowering and ABI classification, initializers,
-and function bodies remain pending.
+enter the linker image. Zero/one-argument i32 imported calls now lower directly
+to Win64 IAT-indirect calls and contiguous linker references. Basic Windows x64
+scalar, pointer, alias, plain-struct, and plain-union size/alignment is
+implemented and consumed by `size?`. Member access, arrays, tagged unions,
+explicit aggregate alignment, complete signature lowering and ABI
+classification, initializers, and general function bodies remain pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples; H0 scope still includes every Red/System
@@ -322,8 +338,11 @@ target layout in Red.
 Current checkpoint: every current self-host import is parsed into a direct
 logical function or variable record. Source groups share library-name bytes,
 function imports own direct parameter slices, and native codegen validates all
-record, type, flag, name, and slice bounds. Imported calls, relocations, globals,
-initializers, and empty static-library registration groups remain pending.
+record, type, flag, name, and slice bounds. The current i32 zero/one-argument
+call shapes emit IAT-indirect machine calls and direct contiguous relocation
+slices; imports with no references are omitted. General call ABI lowering,
+imported variables, globals, initializers, and empty static-library registration
+groups remain pending.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

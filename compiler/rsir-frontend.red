@@ -1382,6 +1382,87 @@ compiler-rsir-frontend: context [
 		not none? find [i8 u8 i16 u16 i32 u32 i64 u64] kind
 	]
 
+	integer-code: func [ref [integer!] return: [integer!] /local kind][
+		if all [ref < 0 ref >= -8][return negate ref]
+		kind: ref-kind ref
+		case [
+			kind = 'i8 [1]
+			kind = 'u8 [2]
+			kind = 'i16 [3]
+			kind = 'u16 [4]
+			kind = 'i32 [5]
+			kind = 'u32 [6]
+			kind = 'i64 [7]
+			kind = 'u64 [8]
+			true [0]
+		]
+	]
+
+	integer-code-widens?: func [
+		source target [integer!]
+		return: [logic!]
+		/local source-rank target-rank source-signed? target-signed?
+	][
+		if any [source = 0 target = 0][return false]
+		source-rank: to integer! ((source + 1) / 2)
+		target-rank: to integer! ((target + 1) / 2)
+		if target-rank <= source-rank [return false]
+		source-signed?: (source and 1) = 1
+		target-signed?: (target and 1) = 1
+		any [
+			source-signed? = target-signed?
+			all [not source-signed? target-signed?]
+		]
+	]
+
+	lossless-integer-cast?: func [
+		source target [integer!]
+		return: [logic!]
+		/local source-code target-code
+	][
+		if stack-type-compatible? target source [return true]
+		source-code: integer-code source
+		target-code: integer-code target
+		integer-code-widens? source-code target-code
+	]
+
+	integer-common-ref: func [
+		left right [integer!]
+		return: [integer!]
+		/local left-code right-code
+	][
+		if stack-type-compatible? left right [return left]
+		left-code: integer-code left
+		right-code: integer-code right
+		if integer-code-widens? right-code left-code [return left]
+		if integer-code-widens? left-code right-code [return right]
+		0
+	]
+
+	coerce-stack: func [
+		expected expected-flags [integer!]
+		instructions [binary!]
+		return: [logic!]
+	][
+		if all [
+			expected-flags = last-flags
+			stack-type-compatible? expected last-type
+		][
+			last-type: expected
+			last-flags: expected-flags
+			return true
+		]
+		unless all [
+			expected-flags = 0
+			last-flags = 0
+			lossless-integer-cast? last-type expected
+		][return false]
+		emit instructions reduce [cast-op expected 0 0]
+		last-type: expected
+		last-flags: 0
+		true
+	]
+
 	hex-digit: func [value [char!] return: [integer!] /local code][
 		code: to integer! value
 		case [
@@ -1518,7 +1599,7 @@ compiler-rsir-frontend: context [
 	stack-binary: func [
 		operation left left-flags [integer!]
 		instructions [binary!]
-		/local right right-flags left-kind right-kind valid? comparison?
+		/local right right-flags left-kind right-kind common valid? comparison?
 	][
 		right: last-type
 		right-flags: last-flags
@@ -1569,13 +1650,21 @@ compiler-rsir-frontend: context [
 				]
 			]
 			comparison? [
-				valid?: all [
-					same-stack-type? left left-flags right right-flags
-					any [
-						integer-kind? left-kind
-						float-kind? left-kind
-						reference-kind? left-kind
-						all [left-kind = 'logic operation <= 14]
+				common: either all [
+					left-flags = 0
+					right-flags = 0
+					integer-kind? left-kind
+					integer-kind? right-kind
+				][integer-common-ref left right][0]
+				valid?: any [
+					common <> 0
+					all [
+						same-stack-type? left left-flags right right-flags
+						any [
+							float-kind? left-kind
+							reference-kind? left-kind
+							all [left-kind = 'logic operation <= 14]
+						]
 					]
 				]
 			]
@@ -1714,7 +1803,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		return: [block!]
 		/local record return-ref parameters flags
-			parameter count expected position-after
+			parameter count expected expected-flags position-after
 	][
 		either target > 0 [
 			record: skip functions ((target - 1) * 10)
@@ -1734,7 +1823,8 @@ compiler-rsir-frontend: context [
 			position-after: stack-value position-after scope uses instructions params locals
 				expression-value
 			expected: parameter/2
-			unless stack-type-compatible? expected last-type [
+			expected-flags: parameter/3
+			unless coerce-stack expected expected-flags instructions [
 				fail ERROR-REFERENCE [
 					"argument type does not match function " mold value
 				]
@@ -2188,9 +2278,12 @@ compiler-rsir-frontend: context [
 		if last-stopped? [return after]
 		unless all [
 			last-type <> 0
-			stack-type-compatible? function-return last-type
+			coerce-stack function-return
+				(function-flags and return-value-flag) instructions
 		][fail ERROR-REFERENCE "RETURN value does not match the function type"]
-		emit instructions reduce [return-op function-return function-flags 0]
+		emit instructions reduce [
+			return-op function-return (function-flags and return-value-flag) 0
+		]
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -2690,7 +2783,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		fold? [logic!]
 		return: [block!]
-		/local target id record target-ref next-position storage
+		/local target id record target-ref target-flags next-position storage
 	][
 		if (length? position) < 2 [fail ERROR-UNSUPPORTED "assignment value is missing"]
 		target: either set-word? position/1 [
@@ -2721,6 +2814,7 @@ compiler-rsir-frontend: context [
 			fail ERROR-REFERENCE ["unknown assignment target " mold target]
 		]
 		target-ref: last-type
+		target-flags: last-flags
 		next-position: stack-value next position scope uses instructions params locals
 			expression-value
 		if last-stopped? [return next-position]
@@ -2730,20 +2824,19 @@ compiler-rsir-frontend: context [
 				record/2: last-type
 				record/3: last-flags
 			][
-				unless all [
-					stack-type-compatible? record/2 last-type
-					record/3 = last-flags
-				][fail ERROR-REFERENCE ["local assignment changes type " mold target]]
+				unless coerce-stack record/2 record/3 instructions [
+					fail ERROR-REFERENCE ["local assignment changes type " mold target]
+				]
 			]
 		][either integer? id [
 			record: skip global-data ((id - 1) * 4)
 			either integer? record/2 [
-				unless stack-type-compatible? record/2 last-type [
+				unless coerce-stack record/2 0 instructions [
 					fail ERROR-REFERENCE ["global assignment changes type " mold target]
 				]
 			][record/2: last-type]
 		][
-			unless stack-type-compatible? target-ref last-type [
+			unless coerce-stack target-ref target-flags instructions [
 				fail ERROR-REFERENCE ["assignment changes type " mold target]
 			]
 		]]
@@ -2843,7 +2936,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		flags [integer!]
 		return: [integer!]
-		/local before count
+		/local before count return-flags
 	][
 		before: length? instructions
 		function-base: to integer! (before / 16)
@@ -2863,10 +2956,11 @@ compiler-rsir-frontend: context [
 				if last-type = 0 [
 					fail ERROR-UNSUPPORTED "function result is missing"
 				]
-				unless stack-type-compatible? return-ref last-type [
+				return-flags: flags and return-value-flag
+				unless coerce-stack return-ref return-flags instructions [
 					fail ERROR-REFERENCE "function result type does not match signature"
 				]
-				emit instructions reduce [return-op return-ref flags 0]
+				emit instructions reduce [return-op return-ref return-flags 0]
 			]
 		]
 		count: to integer! (((length? instructions) - before) / 16)

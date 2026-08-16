@@ -415,6 +415,79 @@ enum-switch-layout: layout-of enum-switch-ir
 assert (switch-word enum-switch-ir enum-switch-layout 1 0) = 1
 	"enum symbol was not resolved as a compile-time SWITCH literal"
 
+widen-ir: compile-text {
+	Red/System []
+	widen: func [
+		small [int8!]
+		return: [int64!]
+		/local medium [int32!]
+	][
+		medium: small
+		medium
+	]
+} 'user
+assert binary? widen-ir ["lossless integer widening failed: " mold frontend/last-error]
+widen-layout: layout-of widen-ir
+assert all [
+	(ops-of widen-ir widen-layout) = [3 3 4 8 5 12 3 4 8 11]
+	(instruction-word widen-ir widen-layout 4 4) = -5
+	(instruction-word widen-ir widen-layout 9 4) = -7
+]["lossless assignment/return widening did not use ordinary CAST operations"]
+
+early-widen-ir: compile-text {
+	Red/System []
+	widen: func [value [int8!] return: [int64!]][return value]
+} 'user
+assert binary? early-widen-ir [
+	"explicit RETURN widening failed: " mold frontend/last-error
+]
+early-widen-layout: layout-of early-widen-ir
+assert all [
+	(ops-of early-widen-ir early-widen-layout) = [3 4 8 11]
+	(instruction-word early-widen-ir early-widen-layout 3 4) = -7
+]["explicit RETURN did not use the ordinary lossless CAST path"]
+
+widen-call-ir: compile-text {
+	Red/System []
+	take: func [value [int32!] return: [int32!]][value]
+	give: func [value [uint8!] return: [int32!]][take value]
+	c-id: func [[cdecl] return: [integer!]][7]
+} 'user
+assert binary? widen-call-ir [
+	"lossless argument widening failed: " mold frontend/last-error
+]
+widen-call-layout: layout-of widen-call-ir
+assert all [
+	(ops-of widen-call-ir widen-call-layout) = [3 4 11 3 4 8 7 11 1 11]
+	(instruction-word widen-call-ir widen-call-layout 6 4) = -5
+	(instruction-word widen-call-ir widen-call-layout 7 4) = 1
+	(function-word widen-call-ir widen-call-layout 3 12) = 1
+	(instruction-word widen-call-ir widen-call-layout 10 8) = 0
+]["argument widening or scalar calling-convention return flags are incorrect"]
+
+widen-compare-ir: compile-text {
+	Red/System []
+	equal?: func [value [int8!] return: [logic!]][value = -7]
+} 'user
+assert binary? widen-compare-ir [
+	"lossless comparison widening failed: " mold frontend/last-error
+]
+widen-compare-layout: layout-of widen-compare-ir
+assert (ops-of widen-compare-ir widen-compare-layout) = [3 4 1 15 11]
+	"integer comparison widening introduced a source-shaped operation"
+
+enum-widen-ir: compile-text {
+	Red/System []
+	#enum kind! [zero one]
+	widen: func [value [kind!] return: [int64!]][value]
+} 'user
+assert binary? enum-widen-ir ["enum widening failed: " mold frontend/last-error]
+enum-widen-layout: layout-of enum-widen-ir
+assert all [
+	(ops-of enum-widen-ir enum-widen-layout) = [3 4 8 11]
+	(instruction-word enum-widen-ir enum-widen-layout 3 4) = -7
+]["logical integer types did not participate in generic widening"]
+
 short-ir: compile-text {
 	Red/System []
 	fn: func [a [logic!] b [logic!] return: [logic!]][any [a b]]
@@ -529,6 +602,20 @@ assert none? compile-text {
 } 'user "local inference allowed its type to change"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"local type change reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	narrow: func [value [int32!] return: [int8!]][value]
+} 'user "implicit integer narrowing was accepted"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"implicit integer narrowing reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	change-sign: func [value [int8!] return: [uint16!]][value]
+} 'user "signed-to-unsigned widening was accepted"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"signed-to-unsigned widening reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []

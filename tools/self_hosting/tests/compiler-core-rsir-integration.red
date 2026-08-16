@@ -76,45 +76,60 @@ check none? system-dialect/last-result "RSIR compile published a legacy linker r
 check not value? 'emitter "RSIR compile installed the legacy emitter"
 check not value? 'rs-o2-ir "RSIR compile installed the legacy machine IR"
 
-selection-source: none
-foreach candidate reduce [
-	join system/options/path %../fixtures/backend/rsir-selection-exit.reds
-	join system/options/path %tools/self_hosting/fixtures/backend/rsir-selection-exit.reds
-	join system/options/path %../../tools/self_hosting/fixtures/backend/rsir-selection-exit.reds
-	join system/options/path %../../../tools/self_hosting/fixtures/backend/rsir-selection-exit.reds
+find-fixture: func [
+	name [file!]
+	return: [file! none!]
+	/local directory candidate
 ][
-	candidate: clean-path candidate
-	if exists? candidate [selection-source: candidate break]
+	foreach directory reduce [
+		join system/options/path %../fixtures/backend/
+		join system/options/path %tools/self_hosting/fixtures/backend/
+		join system/options/path %../../tools/self_hosting/fixtures/backend/
+		join system/options/path %../../../tools/self_hosting/fixtures/backend/
+	][
+		candidate: clean-path join directory name
+		if exists? candidate [return candidate]
+	]
+	none
 ]
-check all [file? selection-source exists? selection-source][
-	"cannot access selection fixture: " selection-source
-]
-root: first split-path selection-source
-repeat index 4 [root: clean-path join root %../]
-selection-output: clean-path to file! rejoin [
-	root %build/self-hosting/rsir-selection-linked.exe
-]
-set [output-dir output-name] split-path selection-output
 
-selection-job: compiler-system-job/new 'Windows-X86-64
-check object? selection-job "could not create the selection linker job"
-compiler-system-job/job-set selection-job 'backend-mode 'rsir
-compiler-system-job/job-set selection-job 'link? true
-compiler-system-job/job-set selection-job 'runtime? false
-compiler-system-job/job-set selection-job 'debug? false
-compiler-system-job/job-set selection-job 'opt-level 1
-compiler-system-job/job-set selection-job 'o2-ir-dump none
-compiler-system-job/job-set selection-job 'dev-mode? false
-compiler-system-job/job-set selection-job 'build-prefix output-dir
-compiler-system-job/job-set selection-job 'build-basename output-name
-compiler-system-job/job-set selection-job 'build-suffix none
+run-linked-fixture: func [
+	source-name output-name [file!]
+	label [string!]
+	/local fixture root output output-dir job linked status index
+][
+	fixture: find-fixture source-name
+	check all [file? fixture exists? fixture]["cannot access " label " fixture"]
+	root: first split-path fixture
+	repeat index 4 [root: clean-path join root %../]
+	output: clean-path to file! rejoin [root %build/self-hosting/ output-name]
+	set [output-dir output-name] split-path output
 
-system-dialect/compile/options selection-source selection-job
-linked: system-dialect/last-result/4
-check all [file? linked linked = selection-output exists? linked][
-	"RSIR selection fixture did not produce the requested PE"
+	job: compiler-system-job/new 'Windows-X86-64
+	check object? job ["could not create the " label " linker job"]
+	compiler-system-job/job-set job 'backend-mode 'rsir
+	compiler-system-job/job-set job 'link? true
+	compiler-system-job/job-set job 'runtime? false
+	compiler-system-job/job-set job 'debug? false
+	compiler-system-job/job-set job 'opt-level 1
+	compiler-system-job/job-set job 'o2-ir-dump none
+	compiler-system-job/job-set job 'dev-mode? false
+	compiler-system-job/job-set job 'build-prefix output-dir
+	compiler-system-job/job-set job 'build-basename output-name
+	compiler-system-job/job-set job 'build-suffix none
+
+	system-dialect/compile/options fixture job
+	linked: system-dialect/last-result/4
+	check all [file? linked linked = output exists? linked][
+		label " fixture did not produce the requested PE"
+	]
+	status: call/wait to-local-file linked
+	check status = 73 ["linked " label " executable returned " status]
 ]
-status: call/wait to-local-file linked
-check status = 73 ["linked CASE/SWITCH executable returned " status]
 
-print "PASS: direct RSIR core frontend -> native selection -> PE"
+run-linked-fixture
+	%rsir-selection-exit.reds %rsir-selection-linked.exe "CASE/SWITCH"
+run-linked-fixture
+	%rsir-fixed-integer-exit.reds %rsir-fixed-integer-linked.exe "fixed integer"
+
+print "PASS: direct RSIR core frontend -> native code -> PE"

@@ -419,6 +419,46 @@ x64-codegen: context [
 		all [kind >= 1 kind <= 8]
 	]
 
+	integer-kind-widens?: func [
+		source-kind target-kind [integer!]
+		return: [logic!]
+		/local source-rank target-rank [integer!]
+			source-signed? target-signed? [logic!]
+	][
+		if any [
+			source-kind < 1 source-kind > 8
+			target-kind < 1 target-kind > 8
+		][return false]
+		source-rank: (source-kind + 1) / 2
+		target-rank: (target-kind + 1) / 2
+		if target-rank <= source-rank [return false]
+		source-signed?: (source-kind and 1) = 1
+		target-signed?: (target-kind and 1) = 1
+		any [
+			source-signed? = target-signed?
+			all [not source-signed? target-signed?]
+		]
+	]
+
+	integer-common-ref: func [
+		left right [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [integer!]
+		/local left-kind right-kind [integer!]
+	][
+		left-kind: logical-kind left types count
+		right-kind: logical-kind right types count
+		if any [
+			left-kind < 1 left-kind > 8
+			right-kind < 1 right-kind > 8
+		][return 0]
+		if compatible-types? left right types count [return left]
+		if integer-kind-widens? right-kind left-kind [return left]
+		if integer-kind-widens? left-kind right-kind [return right]
+		0
+	]
+
 	reference-type?: func [
 		ref [integer!]
 		types [byte-ptr!]
@@ -686,7 +726,8 @@ x64-codegen: context [
 			argument-slot argument-width target return-ref first-parameter
 			parameter-count call-flags import-id global-id literal-end displacement
 			member-type member-flags member-offset source-width target-width
-			result-index reference-id target-offset instruction-start case-index [integer!]
+			result-index reference-id target-offset instruction-start case-index
+			operation-ref [integer!]
 			measure? fallthrough? valid? comparison? [logic!]
 	][
 		measure?: null? code
@@ -1398,6 +1439,7 @@ x64-codegen: context [
 					left-kind: logical-kind left-ref types type-count
 					right-kind: logical-kind right-ref types type-count
 					comparison?: operation >= EQUAL_OPERATION
+					operation-ref: 0
 					valid?: false
 					case [
 						operation <= MODULO_OPERATION [
@@ -1438,14 +1480,24 @@ x64-codegen: context [
 							]
 						]
 						comparison? [
-							valid?: all [
-								compatible-types? left-ref right-ref types type-count
-								left-flags = right-flags
-								any [
-									integer-type? left-ref types type-count
-									float-type? left-ref types type-count
-									reference-type? left-ref types type-count
-									all [left-kind = 11 operation <= NOT_EQUAL_OPERATION]
+							operation-ref: integer-common-ref left-ref right-ref
+								types type-count
+							valid?: any [
+								all [
+									left-flags = 0 right-flags = 0
+									operation-ref <> 0
+								]
+								all [
+									compatible-types? left-ref right-ref types type-count
+									left-flags = right-flags
+									any [
+										float-type? left-ref types type-count
+										reference-type? left-ref types type-count
+										all [
+											left-kind = 11
+											operation <= NOT_EQUAL_OPERATION
+										]
+									]
 								]
 							]
 						]
@@ -1461,12 +1513,13 @@ x64-codegen: context [
 						machine-value? right-ref right-flags types members type-count
 					][return UNSUPPORTED]
 
-					width: value-width left-ref left-flags types members type-count
+					ref: either operation-ref <> 0 [operation-ref][left-ref]
+					width: value-width ref left-flags types members type-count
 					operation-width: either any [
 						width = 8
-						reference-type? left-ref types type-count
+						reference-type? ref types type-count
 					][8][4]
-					signed: either signed-type? left-ref types type-count [1][0]
+					signed: either signed-type? ref types type-count [1][0]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)

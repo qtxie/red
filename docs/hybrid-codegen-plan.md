@@ -508,6 +508,14 @@ Already retained:
   table with fixed-width integer limbs;
 - switch comparison-chain emission with target-relative offsets, including
   byte, integer, and 64-bit scalar execution paths;
+- one fixed-width integer rule for lossless widening at assignments, calls,
+  explicit returns, and tail returns, represented by the ordinary cast
+  operation rather than a source-shaped adapter;
+- common integer comparison width and signedness selected from logical types,
+  with native loads performing the required sign or zero extension;
+- an executable fixed-integer gate covering every scalar width, arithmetic,
+  casts, mixed comparisons, scalar calling-convention returns, and eight Win64
+  integer arguments through the direct linker path;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
@@ -515,6 +523,8 @@ Still incomplete and therefore not an H0:
 
 - floating-point scalar operations and the remaining non-local control
   operations;
+- complete fixed-int/int64 formal coverage for aggregate fields and
+  typed/variadic ABI paths;
 - complete formal case/switch suite coverage, runtime diagnostic dispatch for
   fail, and dense switch jump-table selection;
 - complete aggregate, array, union, function-pointer, and initializer nodes;

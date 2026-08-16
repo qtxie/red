@@ -57,8 +57,8 @@ rules remain in Red/System codegen.
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
 | if, either, any and all | Generic branch/jump preserving a common stack prefix; compatible results share one typed virtual stack slot | units/conditional-test.reds, focused frontend/bridge/linked-PE control tests | replace |
 | loop, until and while | Generic branch/jump loops with explicit break/continue targets and ordinary hidden counters | integer and function units, focused frontend/bridge/linked-PE control tests | replace |
-| case | Ordered condition blocks and mandatory catch-all diagnostic | units/case-test.reds, compiler conditional tests | pending |
-| switch | Literal/target slice with explicit default semantics | units/switch-test.reds, enum and tagged-union tests | pending |
+| case | Ordered condition blocks, typed result merge, and non-returning fail on no match | units/case-test.reds, compiler conditional tests | pending |
+| switch | Typed literal/target slice with explicit default or fail semantics; x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests | pending |
 | exit, return, break and continue | Direct function or loop terminators through the shared jump/return core | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds | replace |
 | Subroutines | Function-local entry targets and subroutine call/return | units/subroutine-test.reds, x64-subroutine-smoke.reds | pending |
 | throw and catch statement | Catch regions and non-local transfer state | units/exceptions-test.reds, x64-catch-*.reds | pending |

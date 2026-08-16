@@ -146,6 +146,7 @@ The general control operations are:
 - jump;
 - branch;
 - switch, referencing a compact literal/target slice;
+- fail, a non-returning language/runtime error terminator;
 - return;
 - catch-region entry and exit;
 - throw;
@@ -154,6 +155,10 @@ The general control operations are:
 if, either, loops, any, all, and case lower to these operations. switch remains
 explicit so native codegen may choose a comparison chain or jump table from
 density without changing frontend semantics.
+
+In a runtime-free module, fail lowers to a native trap. Once the runtime image
+is present, the same terminator transfers to its diagnostic service; source
+constructs do not encode either policy.
 
 ### Calls
 
@@ -498,13 +503,20 @@ Already retained:
   tables, and matching target-entry stack depths and top types;
 - if, either, any, all, loop, while, until, early return/exit, break, and
   continue lowered through that shared control core;
+- ordered case selection lowered to branch/jump plus a non-returning fail
+  terminator, and switch selection represented by a compact typed literal/target
+  table with fixed-width integer limbs;
+- switch comparison-chain emission with target-relative offsets, including
+  byte, integer, and 64-bit scalar execution paths;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
 Still incomplete and therefore not an H0:
 
-- floating-point scalar operations, case, switch, and the remaining non-local
-  control operations;
+- floating-point scalar operations and the remaining non-local control
+  operations;
+- complete formal case/switch suite coverage, runtime diagnostic dispatch for
+  fail, and dense switch jump-table selection;
 - complete aggregate, array, union, function-pointer, and initializer nodes;
 - complete Win64 scalar, floating, variadic, callback, and aggregate ABI paths;
 - system facilities, directives, output kinds, runtime image, and Red routines;

@@ -65,7 +65,7 @@ artifact: system-dialect/last-rsir
 
 check binary? artifact "RSIR core did not return RSIR"
 check all [
-	(length? artifact) >= 28
+	(length? artifact) >= 32
 	(word-at artifact 0) = 3
 	(word-at artifact 4) > 0
 	(word-at artifact 4) <= word-at artifact 16
@@ -76,4 +76,45 @@ check none? system-dialect/last-result "RSIR compile published a legacy linker r
 check not value? 'emitter "RSIR compile installed the legacy emitter"
 check not value? 'rs-o2-ir "RSIR compile installed the legacy machine IR"
 
-print "PASS: direct RSIR core frontend"
+selection-source: none
+foreach candidate reduce [
+	join system/options/path %../fixtures/backend/rsir-selection-exit.reds
+	join system/options/path %tools/self_hosting/fixtures/backend/rsir-selection-exit.reds
+	join system/options/path %../../tools/self_hosting/fixtures/backend/rsir-selection-exit.reds
+	join system/options/path %../../../tools/self_hosting/fixtures/backend/rsir-selection-exit.reds
+][
+	candidate: clean-path candidate
+	if exists? candidate [selection-source: candidate break]
+]
+check all [file? selection-source exists? selection-source][
+	"cannot access selection fixture: " selection-source
+]
+root: first split-path selection-source
+repeat index 4 [root: clean-path join root %../]
+selection-output: clean-path to file! rejoin [
+	root %build/self-hosting/rsir-selection-linked.exe
+]
+set [output-dir output-name] split-path selection-output
+
+selection-job: compiler-system-job/new 'Windows-X86-64
+check object? selection-job "could not create the selection linker job"
+compiler-system-job/job-set selection-job 'backend-mode 'rsir
+compiler-system-job/job-set selection-job 'link? true
+compiler-system-job/job-set selection-job 'runtime? false
+compiler-system-job/job-set selection-job 'debug? false
+compiler-system-job/job-set selection-job 'opt-level 1
+compiler-system-job/job-set selection-job 'o2-ir-dump none
+compiler-system-job/job-set selection-job 'dev-mode? false
+compiler-system-job/job-set selection-job 'build-prefix output-dir
+compiler-system-job/job-set selection-job 'build-basename output-name
+compiler-system-job/job-set selection-job 'build-suffix none
+
+system-dialect/compile/options selection-source selection-job
+linked: system-dialect/last-result/4
+check all [file? linked linked = selection-output exists? linked][
+	"RSIR selection fixture did not produce the requested PE"
+]
+status: call/wait to-local-file linked
+check status = 73 ["linked CASE/SWITCH executable returned " status]
+
+print "PASS: direct RSIR core frontend -> native selection -> PE"

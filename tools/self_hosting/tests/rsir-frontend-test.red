@@ -29,15 +29,16 @@ compile-text: func [text [string!] kind [word!] /limit max [integer!]][
 
 ; Offsets are derived from counts, so adding an unrelated record does not
 ; turn semantic tests into whole-image byte-offset tests.
-layout-of: func [ir [binary!] /local types imports functions globals members
+layout-of: func [ir [binary!] /local types imports functions globals switches members
 	type-at member-count import-at global-at function-at use-count use-at
-	instruction-at strings-at id record
+	switch-at instruction-at strings-at id record
 ][
 	types: word-at ir 8
 	imports: word-at ir 12
 	functions: word-at ir 16
 	globals: word-at ir 24
-	type-at: 28
+	switches: word-at ir 28
+	type-at: 32
 	member-count: 0
 	id: 0
 	while [id < types][
@@ -61,9 +62,10 @@ layout-of: func [ir [binary!] /local types imports functions globals members
 		id: id + 1
 	]
 	use-at: function-at + (functions * 36)
-	instruction-at: use-at + (use-count * 8)
+	switch-at: use-at + (use-count * 8)
+	instruction-at: switch-at + (switches * 12)
 	strings-at: instruction-at + ((word-at ir 20) * 16)
-	reduce [type-at import-at global-at function-at use-at instruction-at strings-at]
+	reduce [type-at import-at global-at function-at use-at instruction-at strings-at switch-at]
 ]
 
 function-word: func [ir layout id field][
@@ -72,6 +74,10 @@ function-word: func [ir layout id field][
 
 instruction-word: func [ir layout id field][
 	word-at ir (layout/6 + ((id - 1) * 16) + field)
+]
+
+switch-word: func [ir layout id field][
+	word-at ir (layout/8 + ((id - 1) * 12) + field)
 ]
 
 ops-of: func [ir layout /local output id count][
@@ -317,6 +323,98 @@ assert all [
 	(instruction-word either-statement-ir either-statement-layout 5 8) = 1
 ]["statement EITHER did not reconcile different arm values on its edges"]
 
+case-ir: compile-text {
+	Red/System []
+	choose: func [value [integer!] return: [integer!]][
+		case [
+			value = 1 [11]
+			value = 2 [22]
+			true [33]
+		]
+	]
+} 'user
+assert binary? case-ir ["CASE lowering failed: " mold frontend/last-error]
+case-layout: layout-of case-ir
+assert all [
+	(word-at case-ir 28) = 0
+	(ops-of case-ir case-layout) = [
+		3 4 1 15 17 1 16
+		3 4 1 15 17 1 16
+		1 17 1 16 19 11
+	]
+	(instruction-word case-ir case-layout 5 4) = 8
+	(instruction-word case-ir case-layout 12 4) = 15
+	(instruction-word case-ir case-layout 16 4) = 19
+	(instruction-word case-ir case-layout 19 4) = 100
+]["CASE did not lower through generic branches and a non-returning failure"]
+
+switch-ir: compile-text {
+	Red/System []
+	choose: func [value [integer!] return: [integer!]][
+		switch value [1 2 [11] 3 [22] default [33]]
+	]
+} 'user
+assert binary? switch-ir ["SWITCH lowering failed: " mold frontend/last-error]
+switch-layout: layout-of switch-ir
+assert all [
+	(word-at switch-ir 28) = 3
+	(ops-of switch-ir switch-layout) = [3 4 18 1 16 1 16 1 11]
+	(instruction-word switch-ir switch-layout 3 4) = 0
+	(instruction-word switch-ir switch-layout 3 8) = 3
+	(instruction-word switch-ir switch-layout 3 12) = 8
+	(switch-word switch-ir switch-layout 1 0) = 1
+	(switch-word switch-ir switch-layout 1 8) = 4
+	(switch-word switch-ir switch-layout 2 0) = 2
+	(switch-word switch-ir switch-layout 2 8) = 4
+	(switch-word switch-ir switch-layout 3 0) = 3
+	(switch-word switch-ir switch-layout 3 8) = 6
+]["SWITCH did not preserve its compact literal/target slice"]
+
+switch-fail-ir: compile-text {
+	Red/System []
+	choose: func [value [integer!] return: [integer!]][switch value [1 [7]]]
+} 'user
+switch-fail-layout: layout-of switch-fail-ir
+assert all [
+	(ops-of switch-fail-ir switch-fail-layout) = [3 4 18 19 1 11]
+	(instruction-word switch-fail-ir switch-fail-layout 3 12) = 4
+	(instruction-word switch-fail-ir switch-fail-layout 4 4) = 101
+	(switch-word switch-fail-ir switch-fail-layout 1 8) = 5
+]["SWITCH without DEFAULT did not retain its required runtime failure edge"]
+
+wide-switch-ir: compile-text {
+	Red/System []
+	choose: func [return: [integer!]][
+		switch #u64h-0000000100000000 [
+			#u64h-0000000100000000 [7]
+			default [9]
+		]
+	]
+} 'user
+assert binary? wide-switch-ir [
+	"64-bit SWITCH lowering failed: " mold frontend/last-error
+]
+wide-switch-layout: layout-of wide-switch-ir
+assert all [
+	(instruction-word wide-switch-ir wide-switch-layout 1 4) = -7
+	(instruction-word wide-switch-ir wide-switch-layout 1 8) = 0
+	(instruction-word wide-switch-ir wide-switch-layout 1 12) = 1
+	(switch-word wide-switch-ir wide-switch-layout 1 0) = 0
+	(switch-word wide-switch-ir wide-switch-layout 1 4) = 1
+]["64-bit literals did not retain both limbs in SWITCH"]
+
+enum-switch-ir: compile-text {
+	Red/System []
+	#enum kind! [zero one two]
+	choose: func [value [integer!] return: [integer!]][
+		switch value [one [7] default [9]]
+	]
+} 'user
+assert binary? enum-switch-ir ["enum SWITCH lowering failed: " mold frontend/last-error]
+enum-switch-layout: layout-of enum-switch-ir
+assert (switch-word enum-switch-ir enum-switch-layout 1 0) = 1
+	"enum symbol was not resolved as a compile-time SWITCH literal"
+
 short-ir: compile-text {
 	Red/System []
 	fn: func [a [logic!] b [logic!] return: [logic!]][any [a b]]
@@ -452,6 +550,27 @@ assert none? compile-text {
 } 'user "expression EITHER accepted different block result types"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid EITHER results reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [return: [integer!]][case [true [1] false [false]]]
+} 'user "expression CASE accepted different block result types"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid CASE results reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [value [logic!]][switch value [1 []]]
+} 'user "SWITCH accepted a non-integer selector"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid SWITCH selector reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [value [integer!]][switch value [(1 + 2) []]]
+} 'user "SWITCH accepted a computed case value"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"non-literal SWITCH value reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []

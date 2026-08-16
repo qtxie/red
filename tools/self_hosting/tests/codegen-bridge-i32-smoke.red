@@ -108,6 +108,33 @@ generate "structured conditionals and early return" {
 	]
 } 'user
 
+generate "typed CASE selection" {
+	Red/System []
+	choose: func [value [integer!] return: [integer!]][
+		case [
+			value = 1 [11]
+			value = 2 [22]
+			true [33]
+		]
+	]
+} 'user
+
+generate "typed SWITCH dispatch" {
+	Red/System []
+	choose: func [value [integer!] return: [integer!]][
+		switch value [1 2 [11] 3 [22] default [33]]
+	]
+	choose-byte: func [value [byte!] return: [byte!]][
+		switch value [#"A" [#"B"] #"C" [#"D"] default [#"E"]]
+	]
+	choose-wide: func [return: [integer!]][
+		switch #u64h-0000000100000000 [
+			#u64h-0000000100000000 [7]
+			default [9]
+		]
+	]
+} 'user
+
 generate "void exit and statement arm reconciliation" {
 	Red/System []
 	stop: func [flag [logic!] /local value][

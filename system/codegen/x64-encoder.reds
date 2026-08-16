@@ -351,6 +351,19 @@ x64-encoder: context [
 		6
 	]
 
+	trap: func [
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+	][
+		unless room? code capacity 2 [return -1]
+		if not null? code [
+			code/1: as byte! 0Fh
+			code/2: as byte! 0Bh
+		]
+		2
+	]
+
 	divide-register: func [
 		code [byte-ptr!]
 		capacity width signed [integer!]

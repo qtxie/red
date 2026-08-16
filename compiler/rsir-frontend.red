@@ -35,6 +35,7 @@ compiler-rsir-frontend: context [
 	module-code: make binary! 256
 	module-locals: make block! 12
 	function-code: make binary! 2048
+	switches: make binary! 96
 	strings: make binary! 256
 	string-ids: make hash! 128
 	function-count: 0
@@ -92,6 +93,8 @@ compiler-rsir-frontend: context [
 	binary-op: 15
 	jump-op: 16
 	branch-op: 17
+	switch-op: 18
+	fail-op: 19
 
 	; Operation IDs follow the language families, not source spellings or x64
 	; encodings. The postfix stream preserves the specified left-to-right order.
@@ -151,6 +154,16 @@ compiler-rsir-frontend: context [
 
 	patch-control-drop: func [output [binary!] patch count [integer!]][
 		change/part at output (patch + 4) int-to-bin/to-bin32 count 4
+	]
+
+	emit-switch-case: func [low high [integer!] return: [integer!] /local patch][
+		patch: (length? switches) + 9
+		emit switches reduce [low high 0]
+		patch
+	]
+
+	patch-switch-case: func [patch target [integer!]][
+		change/part at switches patch int-to-bin/to-bin32 target 4
 	]
 
 	add-hidden-local: func [
@@ -1170,7 +1183,7 @@ compiler-rsir-frontend: context [
 		instruction-count size entry id parameter import-records global-records
 		function-records
 		library external last-library library-offset external-offset names
-		type-output members type-bytes member-bytes
+		type-output members type-bytes member-bytes switch-count
 	][
 		type-output: make binary! (type-count * 20)
 		members: make binary! 64
@@ -1178,13 +1191,15 @@ compiler-rsir-frontend: context [
 		type-bytes: length? type-output
 		member-bytes: length? members
 		names: copy strings
-		output: make binary! (28 + type-bytes + member-bytes + (length? strings)
+		switch-count: (length? switches) / 12
+		output: make binary! (32 + type-bytes + member-bytes + (length? switches)
+			+ (length? strings)
 			+ (length? function-code) + (import-count * 64)
 			+ (global-count * 40) + (function-count * 112))
-		append/dup output 0 28
+		append/dup output 0 32
 		append output type-output
 		append output members
-		import-records: 29 + type-bytes + member-bytes
+		import-records: 33 + type-bytes + member-bytes
 		global-records: import-records + (import-count * 32)
 		function-records: global-records + (global-count * 20)
 		append/dup output 0 (import-count * 32)
@@ -1311,6 +1326,7 @@ compiler-rsir-frontend: context [
 			id: id + 1
 			position: skip position 10
 		]
+		append output switches
 		append output function-code
 		append output names
 		size: length? output
@@ -1325,6 +1341,7 @@ compiler-rsir-frontend: context [
 		change/part at output 17 int-to-bin/to-bin32 function-count 4
 		change/part at output 21 int-to-bin/to-bin32 instruction-count 4
 		change/part at output 25 int-to-bin/to-bin32 global-count 4
+		change/part at output 29 int-to-bin/to-bin32 switch-count 4
 		output
 	]
 
@@ -1363,6 +1380,107 @@ compiler-rsir-frontend: context [
 
 	integer-kind?: func [kind [word! none!] return: [logic!]][
 		not none? find [i8 u8 i16 u16 i32 u32 i64 u64] kind
+	]
+
+	hex-digit: func [value [char!] return: [integer!] /local code][
+		code: to integer! value
+		case [
+			all [code >= 48 code <= 57][code - 48]
+			all [code >= 65 code <= 70][code - 55]
+			true [-1]
+		]
+	]
+
+	hex-word: func [digits [string!] return: [integer! none!] /local value digit][
+		value: 0
+		foreach character digits [
+			digit: hex-digit character
+			if digit < 0 [return none]
+			value: (value << 4) or digit
+		]
+		value
+	]
+
+	greater-digits?: func [left right [string!] return: [logic!]][
+		any [
+			(length? left) > (length? right)
+			all [(length? left) = (length? right) left > right]
+		]
+	]
+
+	decimal-bits: func [
+		digits [string!]
+		negative? [logic!]
+		return: [block! none!]
+		/local limbs carry value digit index low high
+	][
+		if empty? digits [return none]
+		limbs: copy [0 0 0 0]
+		foreach character digits [
+			digit: (to integer! character) - (to integer! #"0")
+			if any [digit < 0 digit > 9][return none]
+			carry: digit
+			repeat index 4 [
+				value: (limbs/:index * 10) + carry
+				limbs/:index: value and 65535
+				carry: to integer! (value / 65536)
+			]
+			if carry <> 0 [return none]
+		]
+		if negative? [
+			repeat index 4 [limbs/:index: 65535 - limbs/:index]
+			carry: 1
+			repeat index 4 [
+				value: limbs/:index + carry
+				limbs/:index: value and 65535
+				carry: to integer! (value / 65536)
+			]
+		]
+		low: (limbs/2 << 16) or limbs/1
+		high: (limbs/4 << 16) or limbs/3
+		reduce [low high]
+	]
+
+	wide-literal: func [
+		value
+		return: [block! none!]
+		/local spelling payload digits negative? bits low high ref
+	][
+		unless issue? value [return none]
+		spelling: form value
+		case [
+			find/match spelling "u64h-" [
+				payload: uppercase copy skip spelling 5
+				if any [empty? payload (length? payload) > 16][return none]
+				insert/dup payload #"0" (16 - length? payload)
+				high: hex-word copy/part payload 8
+				low: hex-word skip payload 8
+				unless all [integer? low integer? high][return none]
+				ref: either high < 0 [-8][-7]
+				reduce [ref low high]
+			]
+			find/match spelling "i64-" [
+				payload: skip spelling 4
+				negative?: all [not empty? payload payload/1 = #"n"]
+				if negative? [payload: next payload]
+				digits: copy payload
+				if greater-digits? digits either negative? [
+					"9223372036854775808"
+				]["9223372036854775807"][return none]
+				bits: decimal-bits digits negative?
+				if none? bits [return none]
+				reduce [-7 bits/1 bits/2]
+			]
+			find/match spelling "u64-" [
+				digits: copy skip spelling 4
+				if greater-digits? digits "18446744073709551615" [return none]
+				bits: decimal-bits digits false
+				if none? bits [return none]
+				ref: either bits/2 < 0 [-8][-7]
+				reduce [ref bits/1 bits/2]
+			]
+			true [none]
+		]
 	]
 
 	float-kind?: func [kind [word! none!] return: [logic!]][
@@ -1686,6 +1804,75 @@ compiler-rsir-frontend: context [
 		next body
 	]
 
+	finish-selection: func [
+		name [word!]
+		arms [block!]
+		instructions [binary!]
+		after [block!]
+		value-context [integer!]
+		return: [block!]
+		/local arm result-type result-flags flow? common? drop? target
+	][
+		result-type: 0
+		result-flags: 0
+		flow?: false
+		common?: true
+		arm: arms
+		while [not tail? arm][
+			unless arm/4 [
+				either flow? [
+					unless all [
+						result-type <> 0
+						arm/2 <> 0
+						same-stack-type? result-type result-flags arm/2 arm/3
+					][common?: false]
+				][
+					flow?: true
+					result-type: arm/2
+					result-flags: arm/3
+				]
+			]
+			arm: skip arm 4
+		]
+		unless common? [
+			result-type: 0
+			result-flags: 0
+		]
+
+		arm: arms
+		while [not tail? arm][
+			drop?: all [not arm/4 arm/2 <> 0 result-type = 0]
+			if integer? arm/1 [
+				patch-control-drop instructions arm/1 either drop? [1][0]
+			]
+			if all [none? arm/1 drop?][
+				emit instructions reduce [drop-op 0 0 0]
+			]
+			arm: skip arm 4
+		]
+		target: instruction-here instructions
+		arm: arms
+		while [not tail? arm][
+			if integer? arm/1 [patch-control instructions arm/1 target]
+			arm: skip arm 4
+		]
+
+		last-type: result-type
+		last-flags: result-flags
+		last-stopped?: not flow?
+		if all [
+			any [
+				value-context = expression-value
+				all [value-context = tail-value tail? after]
+			]
+			result-type = 0
+			not last-stopped?
+		][
+			fail ERROR-REFERENCE [uppercase form name " bodies do not have a common value"]
+		]
+		after
+	]
+
 	stack-either: func [
 		position scope uses [block!]
 		instructions [binary!]
@@ -1769,6 +1956,160 @@ compiler-rsir-frontend: context [
 			not last-stopped?
 		][fail ERROR-REFERENCE "EITHER blocks do not have a common value"]
 		after
+	]
+
+	stack-case: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		value-context [integer!]
+		return: [block!]
+		/local body after cursor action branch-patch jump-patch arms
+	][
+		unless all [(length? position) >= 2 block? position/2][
+			fail ERROR-UNSUPPORTED "CASE requires a condition/body block"
+		]
+		body: position/2
+		after: skip position 2
+		if empty? body [fail ERROR-UNSUPPORTED "CASE body is empty"]
+		arms: make block! 16
+		cursor: body
+		while [not tail? cursor][
+			action: stack-value cursor scope uses instructions params locals
+				expression-value
+			unless logical-value? last-type last-flags [
+				fail ERROR-REFERENCE "CASE requires logic conditions"
+			]
+			unless all [not tail? action block? action/1][
+				fail ERROR-UNSUPPORTED "CASE condition is missing its body block"
+			]
+			branch-patch: emit-control instructions branch-op 0
+			stack-block action/1 scope uses instructions params locals tail-value
+			jump-patch: none
+			unless last-stopped? [
+				jump-patch: emit-control instructions jump-op 0
+			]
+			repend arms [jump-patch last-type last-flags last-stopped?]
+			patch-control instructions branch-patch instruction-here instructions
+			cursor: next action
+		]
+		emit instructions reduce [fail-op 100 0 0]
+		finish-selection 'case arms instructions after value-context
+	]
+
+	switch-bits: func [
+		value scope [block!]
+		return: [block! none!]
+		/local key number wide
+	][
+		case [
+			integer? value [
+				reduce [value either value < 0 [-1][0]]
+			]
+			char? value [reduce [to integer! value 0]]
+			issue? value [
+				wide: wide-literal value
+				either block? wide [reduce [wide/2 wide/3]][none]
+			]
+			any [word? value path? value][
+				key: qualified scope value
+				number: select constants key
+				either integer? number [
+					reduce [number either number < 0 [-1][0]]
+				][none]
+			]
+			true [none]
+		]
+	]
+
+	stack-switch: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		value-context [integer!]
+		return: [block!]
+		/local spec-position spec after selector-kind cursor arms default-body
+			patches bits first-case case-count case-patch switch-patch default-target
+			arm-position arm target jump-patch results last-arm?
+	][
+		spec-position: stack-value next position scope uses instructions params locals
+			expression-value
+		selector-kind: ref-kind last-type
+		unless all [integer-kind? selector-kind last-flags = 0][
+			fail ERROR-REFERENCE "SWITCH requires an integer value"
+		]
+		unless all [not tail? spec-position block? spec-position/1][
+			fail ERROR-UNSUPPORTED "SWITCH is missing its body block"
+		]
+		spec: spec-position/1
+		after: next spec-position
+		if empty? spec [fail ERROR-UNSUPPORTED "SWITCH body is empty"]
+		first-case: (length? switches) / 12
+		case-count: 0
+		arms: make block! 8
+		default-body: none
+		cursor: spec
+		while [not tail? cursor][
+			if all [word? cursor/1 cursor/1 = 'default][
+				unless all [(length? cursor) = 2 block? cursor/2][
+					fail ERROR-UNSUPPORTED "DEFAULT must be the final SWITCH body"
+				]
+				default-body: cursor/2
+				cursor: tail cursor
+				break
+			]
+			patches: make block! 4
+			while [all [not tail? cursor not block? cursor/1]][
+				if all [word? cursor/1 cursor/1 = 'default][break]
+				bits: switch-bits cursor/1 scope
+				unless block? bits [
+					fail ERROR-UNSUPPORTED [
+						"SWITCH values must be integer literals: " mold cursor/1
+					]
+				]
+				case-patch: emit-switch-case bits/1 bits/2
+				append patches case-patch
+				case-count: case-count + 1
+				cursor: next cursor
+			]
+			unless all [not empty? patches not tail? cursor block? cursor/1][
+				fail ERROR-UNSUPPORTED "invalid SWITCH value/body group"
+			]
+			append/only arms reduce [patches cursor/1]
+			cursor: next cursor
+		]
+		if empty? arms [fail ERROR-UNSUPPORTED "SWITCH requires at least one value"]
+
+		switch-patch: (length? instructions) + 13
+		emit instructions reduce [switch-op first-case case-count 0]
+		if none? default-body [
+			default-target: instruction-here instructions
+			patch-control instructions switch-patch default-target
+			emit instructions reduce [fail-op 101 0 0]
+		]
+
+		results: make block! ((length? arms) * 4) + 4
+		arm-position: arms
+		while [not tail? arm-position][
+			arm: arm-position/1
+			target: instruction-here instructions
+			foreach case-patch arm/1 [patch-switch-case case-patch target]
+			stack-block arm/2 scope uses instructions params locals tail-value
+			last-arm?: all [tail? next arm-position none? default-body]
+			jump-patch: none
+			if all [not last-stopped? not last-arm?][
+				jump-patch: emit-control instructions jump-op 0
+			]
+			repend results [jump-patch last-type last-flags last-stopped?]
+			arm-position: next arm-position
+		]
+		if block? default-body [
+			default-target: instruction-here instructions
+			patch-control instructions switch-patch default-target
+			stack-block default-body scope uses instructions params locals tail-value
+			repend results [none last-type last-flags last-stopped?]
+		]
+		finish-selection 'switch results instructions after value-context
 	]
 
 	stack-conditions: func [
@@ -2057,7 +2398,7 @@ compiler-rsir-frontend: context [
 		value-context [integer!]
 		return: [block!]
 		/local value type-info target-ref target-flags next-position target
-			id constant-key bytes offset inner
+			id constant-key bytes offset inner wide
 	][
 		unless not tail? position [
 			fail ERROR-UNSUPPORTED "missing expression"
@@ -2070,6 +2411,12 @@ compiler-rsir-frontend: context [
 			]
 			value = 'either [
 				stack-either position scope uses instructions params locals value-context
+			]
+			value = 'case [
+				stack-case position scope uses instructions params locals value-context
+			]
+			value = 'switch [
+				stack-switch position scope uses instructions params locals value-context
 			]
 			value = 'any [
 				stack-conditions position scope uses instructions params locals true
@@ -2128,6 +2475,16 @@ compiler-rsir-frontend: context [
 				last-type: -5
 				last-flags: 0
 				type-info/1
+			]
+			issue? value [
+				wide: wide-literal value
+				unless block? wide [
+					fail ERROR-UNSUPPORTED ["unsupported issue literal " mold value]
+				]
+				emit instructions reduce [literal-op wide/1 wide/2 wide/3]
+				last-type: wide/1
+				last-flags: 0
+				next position
 			]
 			integer? value [
 				emit instructions reduce [
@@ -2247,7 +2604,7 @@ compiler-rsir-frontend: context [
 		position [block!]
 		scope uses [block!]
 		return: [logic!]
-		/local value type-info next-position
+		/local value type-info next-position wide
 	][
 		static?: false
 		static-ref: 0
@@ -2256,6 +2613,16 @@ compiler-rsir-frontend: context [
 		static-next: position
 		value: position/2
 		case [
+			issue? value [
+				wide: wide-literal value
+				if block? wide [
+					static?: true
+					static-ref: wide/1
+					static-low: wide/2
+					static-high: wide/3
+					static-next: skip position 2
+				]
+			]
 			integer? value [
 				static?: true
 				static-ref: -5
@@ -2578,6 +2945,7 @@ compiler-rsir-frontend: context [
 			clear module-code
 			clear module-locals
 			clear function-code
+			clear switches
 			clear strings
 			clear string-ids
 			function-count: 0

@@ -14,6 +14,8 @@ x64-encoder: context [
 	RDI: 7
 	R8:  8
 	R9:  9
+	XMM0: 0
+	XMM1: 1
 
 	BASE_FRAME_SIZE: 32
 	BITMAP_OFFSET: 9
@@ -496,6 +498,273 @@ x64-encoder: context [
 			write-i32 at displacement
 		]
 		size
+	]
+
+	xmm-prefix: func [width [integer!] return: [integer!]][
+		either width = 4 [F3h][either width = 8 [F2h][0]]
+	]
+
+	xmm-frame-load: func [
+		code [byte-ptr!]
+		capacity target displacement width [integer!]
+		return: [integer!]
+		/local prefix rex-byte displacement-size size mode [integer!]
+			at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		unless all [target >= 0 target <= 15 prefix <> 0][return -1]
+		displacement-size: either fits-i8? displacement [1][4]
+		mode: either displacement-size = 1 [1][2]
+		rex-byte: rex false target RBP
+		size: 4 + displacement-size
+		if rex-byte <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 10h
+		at/3: as byte! modrm mode target RBP
+		at: at + 3
+		either displacement-size = 1 [at/1: as byte! displacement][
+			write-i32 at displacement
+		]
+		size
+	]
+
+	xmm-frame-store: func [
+		code [byte-ptr!]
+		capacity source displacement width [integer!]
+		return: [integer!]
+		/local prefix rex-byte displacement-size size mode [integer!]
+			at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		unless all [source >= 0 source <= 15 prefix <> 0][return -1]
+		displacement-size: either fits-i8? displacement [1][4]
+		mode: either displacement-size = 1 [1][2]
+		rex-byte: rex false source RBP
+		size: 4 + displacement-size
+		if rex-byte <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 11h
+		at/3: as byte! modrm mode source RBP
+		at: at + 3
+		either displacement-size = 1 [at/1: as byte! displacement][
+			write-i32 at displacement
+		]
+		size
+	]
+
+	xmm-load-indirect: func [
+		code [byte-ptr!]
+		capacity target address width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size low [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		low: address and 7
+		unless all [
+			target >= 0 target <= 15 address >= 0 address <= 15
+			prefix <> 0 low <> 4 low <> 5
+		][return -1]
+		rex-byte: rex false target address
+		size: either rex-byte = 40h [4][5]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 10h
+		at/3: as byte! modrm 0 target address
+		size
+	]
+
+	xmm-store-indirect: func [
+		code [byte-ptr!]
+		capacity address source width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size low [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		low: address and 7
+		unless all [
+			address >= 0 address <= 15 source >= 0 source <= 15
+			prefix <> 0 low <> 4 low <> 5
+		][return -1]
+		rex-byte: rex false source address
+		size: either rex-byte = 40h [4][5]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 11h
+		at/3: as byte! modrm 0 source address
+		size
+	]
+
+	xmm-binary: func [
+		code [byte-ptr!]
+		capacity opcode target source width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15 prefix <> 0
+			any [opcode = 58h opcode = 5Ch opcode = 59h opcode = 5Eh]
+		][return -1]
+		rex-byte: rex false target source
+		size: either rex-byte = 40h [4][5]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! opcode
+		at/3: as byte! modrm 3 target source
+		size
+	]
+
+	xmm-compare: func [
+		code [byte-ptr!]
+		capacity left right width [integer!]
+		return: [integer!]
+		/local rex-byte size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			left >= 0 left <= 15 right >= 0 right <= 15
+			any [width = 4 width = 8]
+		][return -1]
+		rex-byte: rex false left right
+		size: 3
+		if width = 8 [size: size + 1]
+		if rex-byte <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if width = 8 [at/1: as byte! 66h at: at + 1]
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 2Eh
+		at/3: as byte! modrm 3 left right
+		size
+	]
+
+	xmm-convert: func [
+		code [byte-ptr!]
+		capacity target source source-width target-width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix source-width
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			prefix <> 0 source-width <> target-width
+			any [target-width = 4 target-width = 8]
+		][return -1]
+		rex-byte: rex false target source
+		size: either rex-byte = 40h [4][5]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 5Ah
+		at/3: as byte! modrm 3 target source
+		size
+	]
+
+	integer-to-xmm: func [
+		code [byte-ptr!]
+		capacity target source source-width target-width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix target-width
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			prefix <> 0 any [source-width = 4 source-width = 8]
+		][return -1]
+		rex-byte: rex (source-width = 8) target source
+		size: 5
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at/2: as byte! rex-byte
+		at/3: as byte! 0Fh
+		at/4: as byte! 2Ah
+		at/5: as byte! modrm 3 target source
+		size
+	]
+
+	xmm-to-integer: func [
+		code [byte-ptr!]
+		capacity target source source-width target-width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix source-width
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			prefix <> 0 any [target-width = 4 target-width = 8]
+		][return -1]
+		rex-byte: rex (target-width = 8) target source
+		size: 5
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at/2: as byte! rex-byte
+		at/3: as byte! 0Fh
+		at/4: as byte! 2Ch
+		at/5: as byte! modrm 3 target source
+		size
+	]
+
+	float-condition-result: func [
+		code [byte-ptr!]
+		capacity condition parity [integer!]
+		return: [integer!]
+	][
+		unless all [
+			condition >= 0 condition <= 15
+			any [parity = 0 parity = 1 parity = 2]
+		][return -1]
+		if parity = 0 [return condition-result code capacity condition]
+		unless room? code capacity 11 [return -1]
+		if not null? code [
+			code/1: as byte! 0Fh
+			code/2: as byte! (90h + condition)
+			code/3: as byte! C0h
+			code/4: as byte! 0Fh
+			code/5: as byte! either parity = 1 [9Bh][9Ah]
+			code/6: as byte! C2h
+			code/7: as byte! either parity = 1 [20h][08h]
+			code/8: as byte! D0h
+			code/9: as byte! 0Fh
+			code/10: as byte! B6h
+			code/11: as byte! C0h
+		]
+		11
 	]
 
 	frame-address: func [

@@ -131,5 +131,7 @@ run-linked-fixture
 	%rsir-selection-exit.reds %rsir-selection-linked.exe "CASE/SWITCH"
 run-linked-fixture
 	%rsir-fixed-integer-exit.reds %rsir-fixed-integer-linked.exe "fixed integer"
+run-linked-fixture
+	%rsir-float-scalar-exit.reds %rsir-float-scalar-linked.exe "scalar float"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

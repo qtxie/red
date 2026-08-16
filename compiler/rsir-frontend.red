@@ -4,6 +4,7 @@ Red [
 ]
 
 unless value? 'int-to-bin [do %int-to-bin.red]
+unless value? 'ieee-754 [do %ieee-754.red]
 
 compiler-rsir-frontend: context [
 	DEFAULT-MAX-BYTES: 16777216
@@ -117,6 +118,7 @@ compiler-rsir-frontend: context [
 
 	last-type: 0
 	last-flags: 0
+	last-float-literal?: false
 	last-stopped?: false
 	function-base: 0
 	function-return: 0
@@ -1442,7 +1444,9 @@ compiler-rsir-frontend: context [
 	coerce-stack: func [
 		expected expected-flags [integer!]
 		instructions [binary!]
+		allow-float-literal? [logic!]
 		return: [logic!]
+		/local source-kind target-kind
 	][
 		if all [
 			expected-flags = last-flags
@@ -1450,6 +1454,22 @@ compiler-rsir-frontend: context [
 		][
 			last-type: expected
 			last-flags: expected-flags
+			return true
+		]
+		source-kind: ref-kind last-type
+		target-kind: ref-kind expected
+		if all [
+			allow-float-literal?
+			last-float-literal?
+			expected-flags = 0
+			last-flags = 0
+			source-kind = 'f64
+			target-kind = 'f32
+		][
+			emit instructions reduce [cast-op expected 0 0]
+			last-type: expected
+			last-flags: 0
+			last-float-literal?: false
 			return true
 		]
 		unless all [
@@ -1460,6 +1480,7 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [cast-op expected 0 0]
 		last-type: expected
 		last-flags: 0
+		last-float-literal?: false
 		true
 	]
 
@@ -1564,8 +1585,63 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	little-word: func [data [binary!] return: [integer!]][
+		(to integer! data/1)
+			or ((to integer! data/2) << 8)
+			or ((to integer! data/3) << 16)
+			or ((to integer! data/4) << 24)
+	]
+
+	float-literal?: func [value return: [logic!]][
+		any [
+			float? value
+			all [issue? value not none? select ieee-754/special64 value]
+		]
+	]
+
+	float-bits: func [
+		value
+		kind [word!]
+		return: [block! none!]
+		/local bytes width low high
+	][
+		width: either kind = 'f32 [4][either kind = 'f64 [8][0]]
+		if width = 0 [return none]
+		bytes: either width = 4 [
+			ieee-754/to-binary32/rev value
+		][ieee-754/to-binary64/rev value]
+		unless all [binary? bytes (length? bytes) = width][return none]
+		low: little-word bytes
+		high: either width = 8 [little-word skip bytes 4][0]
+		reduce [low high]
+	]
+
 	float-kind?: func [kind [word! none!] return: [logic!]][
 		not none? find [f32 f64] kind
+	]
+
+	float-cast-compatible?: func [
+		source target [integer!]
+		keep? [logic!]
+		return: [logic!]
+		/local source-kind target-kind
+	][
+		source-kind: ref-kind source
+		target-kind: ref-kind target
+		unless any [float-kind? source-kind float-kind? target-kind][return true]
+		if keep? [
+			return any [
+				source-kind = target-kind
+				all [source-kind = 'i32 target-kind = 'f32]
+				all [source-kind = 'f32 target-kind = 'i32]
+			]
+		]
+		any [
+			source-kind = target-kind
+			all [float-kind? source-kind float-kind? target-kind]
+			all [source-kind = 'i32 float-kind? target-kind]
+			all [float-kind? source-kind target-kind = 'i32]
+		]
 	]
 
 	reference-kind?: func [kind [word! none!] return: [logic!]][
@@ -1672,6 +1748,7 @@ compiler-rsir-frontend: context [
 		]
 		unless valid? [fail ERROR-REFERENCE "incompatible binary operands"]
 		emit instructions reduce [binary-op operation 0 0]
+		last-float-literal?: false
 		either comparison? [
 			last-type: -11
 			last-flags: 0
@@ -1728,6 +1805,75 @@ compiler-rsir-frontend: context [
 		last-type: type-ref type scope uses
 		last-flags: type-flags type scope uses
 		reduce [position last-type last-flags]
+	]
+
+	stack-cast: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local type-info target-ref target-flags target-kind source keep? value
+			literal-end bits next-position source-ref source-flags source-literal?
+	][
+		type-info: stack-read-type next position scope uses
+		target-ref: type-info/2
+		target-flags: type-info/3
+		target-kind: ref-kind target-ref
+		source: type-info/1
+		keep?: false
+		if all [not tail? source source/1 = 'keep][
+			keep?: true
+			source: next source
+		]
+		if tail? source [fail ERROR-UNSUPPORTED "cast is missing its value"]
+		value: source/1
+		literal-end: next source
+		if all [
+			target-flags = 0
+			float-kind? target-kind
+			any [
+				all [not keep? any [float-literal? value integer? value]]
+				all [keep? target-kind = 'f32 integer? value]
+			]
+			any [tail? literal-end none? select binary-operations literal-end/1]
+		][
+			bits: either keep? [
+				reduce [value 0]
+			][
+				float-bits either integer? value [to float! value][value] target-kind
+			]
+			unless block? bits [fail ERROR-UNSUPPORTED "invalid floating-point literal"]
+			emit instructions reduce [literal-op target-ref bits/1 bits/2]
+			last-type: target-ref
+			last-flags: 0
+			last-float-literal?: all [target-kind = 'f64 float-literal? value]
+			return literal-end
+		]
+
+		next-position: stack-value source scope uses instructions params locals
+			expression-value
+		source-ref: last-type
+		source-flags: last-flags
+		source-literal?: last-float-literal?
+		if all [
+			any [float-kind? ref-kind source-ref float-kind? target-kind]
+			any [
+				target-flags <> 0
+				source-flags <> 0
+				not float-cast-compatible? source-ref target-ref keep?
+			]
+		][fail ERROR-REFERENCE "incompatible floating-point cast"]
+		unless all [
+			target-flags = source-flags
+			stack-type-compatible? target-ref source-ref
+		][
+			emit instructions reduce [cast-op target-ref target-flags either keep? [1][0]]
+		]
+		last-type: target-ref
+		last-flags: target-flags
+		last-float-literal?: all [source-literal? target-kind = 'f64]
+		next-position
 	]
 
 	stack-address: func [
@@ -1824,7 +1970,7 @@ compiler-rsir-frontend: context [
 				expression-value
 			expected: parameter/2
 			expected-flags: parameter/3
-			unless coerce-stack expected expected-flags instructions [
+			unless coerce-stack expected expected-flags instructions true [
 				fail ERROR-REFERENCE [
 					"argument type does not match function " mold value
 				]
@@ -1848,6 +1994,7 @@ compiler-rsir-frontend: context [
 		position: body
 		last-type: 0
 		last-flags: 0
+		last-float-literal?: false
 		last-stopped?: false
 		while [not tail? position][
 			last-stopped?: false
@@ -2279,7 +2426,7 @@ compiler-rsir-frontend: context [
 		unless all [
 			last-type <> 0
 			coerce-stack function-return
-				(function-flags and return-value-flag) instructions
+				(function-flags and return-value-flag) instructions false
 		][fail ERROR-REFERENCE "RETURN value does not match the function type"]
 		emit instructions reduce [
 			return-op function-return (function-flags and return-value-flag) 0
@@ -2490,32 +2637,48 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local value type-info target-ref target-flags next-position target
-			id constant-key bytes offset inner wide
+		/local value type-info next-position target id constant-key bytes offset
+			inner wide bits
 	][
 		unless not tail? position [
 			fail ERROR-UNSUPPORTED "missing expression"
 		]
 		value: position/1
+		last-float-literal?: false
 		last-stopped?: false
 		case [
 			value = 'if [
-				stack-if position scope uses instructions params locals
+				next-position: stack-if position scope uses instructions params locals
+				last-float-literal?: false
+				next-position
 			]
 			value = 'either [
-				stack-either position scope uses instructions params locals value-context
+				next-position: stack-either position scope uses instructions params locals
+					value-context
+				last-float-literal?: false
+				next-position
 			]
 			value = 'case [
-				stack-case position scope uses instructions params locals value-context
+				next-position: stack-case position scope uses instructions params locals
+					value-context
+				last-float-literal?: false
+				next-position
 			]
 			value = 'switch [
-				stack-switch position scope uses instructions params locals value-context
+				next-position: stack-switch position scope uses instructions params locals
+					value-context
+				last-float-literal?: false
+				next-position
 			]
 			value = 'any [
-				stack-conditions position scope uses instructions params locals true
+				next-position: stack-conditions position scope uses instructions params locals true
+				last-float-literal?: false
+				next-position
 			]
 			value = 'all [
-				stack-conditions position scope uses instructions params locals false
+				next-position: stack-conditions position scope uses instructions params locals false
+				last-float-literal?: false
+				next-position
 			]
 			value = 'return [
 				stack-return position scope uses instructions params locals
@@ -2546,21 +2709,11 @@ compiler-rsir-frontend: context [
 				next-position: stack-value next position scope uses instructions params locals
 					expression-value
 				stack-unary not-operation instructions
+				last-float-literal?: false
 				next-position
 			]
 			value = 'as [
-				unless (length? position) >= 2 [
-					fail ERROR-UNSUPPORTED "cast is missing its type"
-				]
-				type-info: stack-read-type next position scope uses
-				target-ref: type-info/2
-				target-flags: type-info/3
-				next-position: stack-value type-info/1 scope uses instructions params locals
-					expression-value
-				emit instructions reduce [cast-op target-ref target-flags 0]
-				last-type: target-ref
-				last-flags: target-flags
-				next-position
+				stack-cast position scope uses instructions params locals
 			]
 			value = 'size? [
 				type-info: stack-read-type next position scope uses
@@ -2571,12 +2724,28 @@ compiler-rsir-frontend: context [
 			]
 			issue? value [
 				wide: wide-literal value
-				unless block? wide [
-					fail ERROR-UNSUPPORTED ["unsupported issue literal " mold value]
+				either block? wide [
+					emit instructions reduce [literal-op wide/1 wide/2 wide/3]
+					last-type: wide/1
+				][
+					bits: either float-literal? value [float-bits value 'f64][none]
+					unless block? bits [
+						fail ERROR-UNSUPPORTED ["unsupported issue literal " mold value]
+					]
+					emit instructions reduce [literal-op -10 bits/1 bits/2]
+					last-type: -10
+					last-float-literal?: true
 				]
-				emit instructions reduce [literal-op wide/1 wide/2 wide/3]
-				last-type: wide/1
 				last-flags: 0
+				next position
+			]
+			float? value [
+				bits: float-bits value 'f64
+				unless block? bits [fail ERROR-UNSUPPORTED "invalid floating-point literal"]
+				emit instructions reduce [literal-op -10 bits/1 bits/2]
+				last-type: -10
+				last-flags: 0
+				last-float-literal?: true
 				next position
 			]
 			integer? value [
@@ -2640,7 +2809,7 @@ compiler-rsir-frontend: context [
 			any [word? value path? value] [
 				constant-key: qualified scope value
 				id: select constants constant-key
-				either integer? id [
+				next-position: either integer? id [
 					emit instructions reduce [literal-op -5 id either id < 0 [-1][0]]
 					last-type: -5
 					last-flags: 0
@@ -2663,6 +2832,8 @@ compiler-rsir-frontend: context [
 						next position
 					]
 				]
+				last-float-literal?: false
+				next-position
 			]
 			true [
 				fail ERROR-UNSUPPORTED ["unsupported expression " mold value]
@@ -2697,7 +2868,7 @@ compiler-rsir-frontend: context [
 		position [block!]
 		scope uses [block!]
 		return: [logic!]
-		/local value type-info next-position wide
+		/local value type-info next-position wide bits kind keep?
 	][
 		static?: false
 		static-ref: 0
@@ -2708,11 +2879,30 @@ compiler-rsir-frontend: context [
 		case [
 			issue? value [
 				wide: wide-literal value
-				if block? wide [
+				either block? wide [
 					static?: true
 					static-ref: wide/1
 					static-low: wide/2
 					static-high: wide/3
+					static-next: skip position 2
+				][
+					bits: either float-literal? value [float-bits value 'f64][none]
+					if block? bits [
+						static?: true
+						static-ref: -10
+						static-low: bits/1
+						static-high: bits/2
+						static-next: skip position 2
+					]
+				]
+			]
+			float? value [
+				bits: float-bits value 'f64
+				if block? bits [
+					static?: true
+					static-ref: -10
+					static-low: bits/1
+					static-high: bits/2
 					static-next: skip position 2
 				]
 			]
@@ -2748,18 +2938,42 @@ compiler-rsir-frontend: context [
 			value = 'as [
 				type-info: stack-read-type skip position 2 scope uses
 				next-position: type-info/1
+				keep?: false
+				if all [not tail? next-position next-position/1 = 'keep][
+					keep?: true
+					next-position: next next-position
+				]
 				if not tail? next-position [
 					value: next-position/1
-					if integer? value [
+					kind: ref-kind type-info/2
+					bits: none
+					if all [
+						float-kind? kind
+						any [
+							all [not keep? any [float-literal? value integer? value]]
+							all [keep? kind = 'f32 integer? value]
+						]
+					][
+						bits: either keep? [
+							reduce [value 0]
+						][float-bits either integer? value [to float! value][value] kind]
+					]
+					either block? bits [
+						static?: true
+						static-ref: type-info/2
+						static-low: bits/1
+						static-high: bits/2
+						static-next: next next-position
+					][if integer? value [
 						static?: true
 						static-ref: type-info/2
 						static-low: value
 						static-high: either value < 0 [-1][0]
 						static-next: next next-position
-					]
-					if all [
+					]]
+					if all [not static?
 						any [logic? value all [word? value find [true false yes no] value]]
-						ref-kind type-info/2 = 'logic
+						kind = 'logic
 					][
 						static?: true
 						static-ref: type-info/2
@@ -2824,19 +3038,19 @@ compiler-rsir-frontend: context [
 				record/2: last-type
 				record/3: last-flags
 			][
-				unless coerce-stack record/2 record/3 instructions [
+				unless coerce-stack record/2 record/3 instructions false [
 					fail ERROR-REFERENCE ["local assignment changes type " mold target]
 				]
 			]
 		][either integer? id [
 			record: skip global-data ((id - 1) * 4)
 			either integer? record/2 [
-				unless coerce-stack record/2 0 instructions [
+				unless coerce-stack record/2 0 instructions false [
 					fail ERROR-REFERENCE ["global assignment changes type " mold target]
 				]
 			][record/2: last-type]
 		][
-			unless coerce-stack target-ref target-flags instructions [
+			unless coerce-stack target-ref target-flags instructions false [
 				fail ERROR-REFERENCE ["assignment changes type " mold target]
 			]
 		]]
@@ -2957,7 +3171,7 @@ compiler-rsir-frontend: context [
 					fail ERROR-UNSUPPORTED "function result is missing"
 				]
 				return-flags: flags and return-value-flag
-				unless coerce-stack return-ref return-flags instructions [
+				unless coerce-stack return-ref return-flags instructions false [
 					fail ERROR-REFERENCE "function result type does not match signature"
 				]
 				emit instructions reduce [return-op return-ref return-flags 0]
@@ -3038,6 +3252,7 @@ compiler-rsir-frontend: context [
 			clear global-data
 			clear module-code
 			clear module-locals
+			last-float-literal?: false
 			clear function-code
 			clear switches
 			clear strings

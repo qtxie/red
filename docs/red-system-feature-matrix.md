@@ -34,7 +34,7 @@ rules remain in Red/System codegen.
 | Protected constant data | Read-only global plus flat typed initializer stream; frontend rejects writes | units/protect-test.reds, array-test.reds | pending |
 | logic!, byte!, integer! | Built-in logical types and generic scalar operations | units/logic-test.reds, byte-test.reds, integer-test.reds | pending |
 | Signed and unsigned fixed-width integers | Logical width/sign plus one lossless widening rule at typed boundaries; generic integer operations | units/fixed-int-test.reds, int64-test.reds, rsir-frontend-test.red, rsir-fixed-integer-exit.reds | replace |
-| float! and float32! | Logical float types, typed stack values and XMM operations | units/float-test.reds, float32-test.reds, math-mixed-test.reds | pending |
+| float! and float32! | Exact IEEE literal payloads, ordinary typed casts/binary operations, and target XMM selection | units/float-test.reds, float32-test.reds, math-mixed-test.reds, rsir-float-scalar-exit.reds | pending |
 | c-string! | Pointer-to-byte semantics, one-based index, string constant object | units/c-string-test.reds, length-test.reds, lib-test.reds | pending |
 | pointer! and get-path | Pointee-preserving type, address/index/load/set/cast | compiler/pointer-test.r, units/pointer-test.reds, get-pointer-test.reds | pending |
 | Pointer and struct arithmetic | Generic binary operation plus native stride from logical layout | pointer tests, x64-pointer-parity-smoke.reds | replace |
@@ -45,7 +45,7 @@ rules remain in Red/System codegen.
 | Type casts and size? | Generic cast; native layout query from logical type | compiler/cast-test.r, units/cast-test.reds, size-x64-test.reds | replace |
 | Left-to-right expressions | Typed postfix emission in exact source order | compiler/cond-expr-test.r, infix-test.r, units/conditional-test.reds | replace |
 | Math, shifts and bitwise operations | Generic unary/binary operations selected by operand types | integer, fixed-int, modulo and math-mixed unit tests | replace |
-| Comparisons and not | Generic compare/unary operations; integer comparison selects a lossless common width and signedness | compiler/not-test.r, units/not-test.reds, rsir-fixed-integer-exit.reds, float comparison smokes | replace |
+| Comparisons and not | Generic compare/unary operations; operand types select integer signedness or IEEE unordered behavior | compiler/not-test.r, units/not-test.reds, rsir-fixed-integer-exit.reds, rsir-float-scalar-exit.reds | replace |
 | Predeclared runtime functions and predicates | Frontend-known typed signatures; ordinary calls or semantic native operations | compiler/print-test.r, units/integer-test.reds, lib-test.reds | pending |
 | Function declarations and returns | Signature type, typed slots, instruction range and return | compiler/return-test.r, units/function-test.reds, return-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |
@@ -53,7 +53,7 @@ rules remain in Red/System codegen.
 | Function pointers and variables | Function signature type, symbol address, indirect call | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds | pending |
 | cdecl, stdcall and callback | Signature attributes and target ABI classifier | compiler/callback-test.r, fixed-int ABI cases, dylib tests | pending |
 | Variadic, typed and custom calls | Actual stack types/count plus signature attributes | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds | pending |
-| Win64 scalar call ABI | Native argument/result classifier and frame builder | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes | pending |
+| Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results and variadic float duplication | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds | pending |
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
 | if, either, any and all | Generic branch/jump preserving a common stack prefix; compatible results share one typed virtual stack slot | units/conditional-test.reds, focused frontend/bridge/linked-PE control tests | replace |
 | loop, until and while | Generic branch/jump loops with explicit break/continue targets and ordinary hidden counters | integer and function units, focused frontend/bridge/linked-PE control tests | replace |
@@ -173,6 +173,15 @@ mixed-width comparison, scalar cdecl/callback returns, and eight Win64 integer
 arguments. This is mechanism evidence, not row completion: aggregate field
 paths, typed/variadic calls, and the complete fixed-int/int64 formal families
 remain required.
+
+The direct `rsir-float-scalar-exit.reds` gate executes another 50 checks
+through the same path. It covers exact binary32/binary64 constants, arithmetic,
+all six comparisons including unordered NaN results, numeric and `keep` casts,
+globals, scalar returns, an imported scalar call, and mixed Win64 register/stack
+arguments. This proves the shared scalar mechanism, not completion of the float
+row. Float aggregate and pointer paths, typed/variadic calls, the specified
+float32 remainder operation, and the complete float/float32/cast formal
+families remain required.
 
 ## Windows Linker Gate
 

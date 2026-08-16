@@ -225,6 +225,15 @@ Recursive pointers are legal. Recursive by-value layout is rejected while
 walking the logical type graph. The result of that walk is cached in native
 arrays allocated once per module.
 
+Scalar instructions are type-polymorphic rather than duplicated by datatype.
+One literal operation carries a logical type and two raw value limbs, so
+binary32 and binary64 constants preserve their exact IEEE payload without a
+float-only representation. One cast operation carries its target type and the
+specified `keep` bit. One binary operation carries the language operation;
+the native selector chooses integer, pointer, or XMM instructions from the
+operand types. The frontend enforces the cast matrix, same-type floating
+arithmetic, and explicit narrowing rules before RSIR reaches codegen.
+
 ## Direct RSIR Order
 
 RSIR uses fixed-size records in one known sequence:
@@ -516,19 +525,25 @@ Already retained:
 - an executable fixed-integer gate covering every scalar width, arithmetic,
   casts, mixed comparisons, scalar calling-convention returns, and eight Win64
   integer arguments through the direct linker path;
+- exact IEEE binary32/binary64 literals, ordinary numeric and bit-preserving
+  casts, XMM arithmetic, parity-correct unordered comparisons, globals, scalar
+  returns, and argument-ordinal Win64 GPR/XMM lowering;
+- an executable floating-point gate covering 50 scalar results through the
+  same frontend, RSIR, codegen, linker, and generated-PE path;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
 Still incomplete and therefore not an H0:
 
-- floating-point scalar operations and the remaining non-local control
-  operations;
+- the specified float32 remainder operation, complete float aggregate/pointer
+  paths and formal float/float32/cast coverage;
+- the remaining non-local control operations;
 - complete fixed-int/int64 formal coverage for aggregate fields and
   typed/variadic ABI paths;
 - complete formal case/switch suite coverage, runtime diagnostic dispatch for
   fail, and dense switch jump-table selection;
 - complete aggregate, array, union, function-pointer, and initializer nodes;
-- complete Win64 scalar, floating, variadic, callback, and aggregate ABI paths;
+- complete Win64 typed/imported/variadic, callback, and aggregate ABI paths;
 - system facilities, directives, output kinds, runtime image, and Red routines;
 - the full Red/System and Red correctness gates followed by H0/H1/H2.
 

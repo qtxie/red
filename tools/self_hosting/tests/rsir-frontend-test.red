@@ -488,6 +488,72 @@ assert all [
 	(instruction-word enum-widen-ir enum-widen-layout 3 4) = -7
 ]["logical integer types did not participate in generic widening"]
 
+wide-float-ir: compile-text {
+	Red/System []
+	value: func [return: [float!]][1.5]
+} 'user
+assert binary? wide-float-ir ["float! literal failed: " mold frontend/last-error]
+wide-float-layout: layout-of wide-float-ir
+assert all [
+	(ops-of wide-float-ir wide-float-layout) = [1 11]
+	(instruction-word wide-float-ir wide-float-layout 1 4) = -10
+	(instruction-word wide-float-ir wide-float-layout 1 8) = 0
+	(instruction-word wide-float-ir wide-float-layout 1 12) = 1073217536
+]["float! literal did not retain its IEEE binary64 payload"]
+
+single-float-ir: compile-text {
+	Red/System []
+	value: func [return: [float32!]][as float32! 1.5]
+} 'user
+assert binary? single-float-ir ["float32! literal failed: " mold frontend/last-error]
+single-float-layout: layout-of single-float-ir
+assert all [
+	(ops-of single-float-ir single-float-layout) = [1 11]
+	(instruction-word single-float-ir single-float-layout 1 4) = -9
+	(instruction-word single-float-ir single-float-layout 1 8) = 1069547520
+	(instruction-word single-float-ir single-float-layout 1 12) = 0
+]["float32! literal was not directly typed at compile time"]
+
+float-expression-cast-ir: compile-text {
+	Red/System []
+	value: func [return: [float32!]][as float32! (1.0 + 2.0)]
+} 'user
+assert binary? float-expression-cast-ir [
+	"floating expression cast failed: " mold frontend/last-error
+]
+float-expression-cast-layout: layout-of float-expression-cast-ir
+assert (ops-of float-expression-cast-ir float-expression-cast-layout) = [1 1 15 8 11]
+	"float constant typing changed the specified expression boundary"
+
+float-cast-ir: compile-text {
+	Red/System []
+	to-wide: func [value [integer!] return: [float!]][as float! value]
+	bits: func [value [float32!] return: [integer!]][as integer! keep value]
+} 'user
+assert binary? float-cast-ir ["scalar float casts failed: " mold frontend/last-error]
+float-cast-layout: layout-of float-cast-ir
+assert all [
+	(ops-of float-cast-ir float-cast-layout) = [3 4 8 11 3 4 8 11]
+	(instruction-word float-cast-ir float-cast-layout 3 4) = -10
+	(instruction-word float-cast-ir float-cast-layout 3 12) = 0
+	(instruction-word float-cast-ir float-cast-layout 7 4) = -5
+	(instruction-word float-cast-ir float-cast-layout 7 12) = 1
+]["numeric and bit-preserving casts did not share the ordinary CAST operation"]
+
+float-argument-ir: compile-text {
+	Red/System []
+	take: func [value [float32!] return: [float32!]][value]
+	give: func [return: [float32!]][take 1.5]
+} 'user
+assert binary? float-argument-ir [
+	"implicit float32! literal argument failed: " mold frontend/last-error
+]
+float-argument-layout: layout-of float-argument-ir
+assert all [
+	(ops-of float-argument-ir float-argument-layout) = [3 4 11 1 8 7 11]
+	(instruction-word float-argument-ir float-argument-layout 5 4) = -9
+]["float32! argument literal coercion was not represented by CAST"]
+
 short-ir: compile-text {
 	Red/System []
 	fn: func [a [logic!] b [logic!] return: [logic!]][any [a b]]
@@ -616,6 +682,20 @@ assert none? compile-text {
 } 'user "signed-to-unsigned widening was accepted"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"signed-to-unsigned widening reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	add: func [a [float!] b [float32!] return: [float!]][a + b]
+} 'user "mixed float! and float32! arithmetic was accepted"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"mixed floating arithmetic reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	set-single: func [value [float32!]][value: 1.5]
+} 'user "float32! assignment accepted an implicit runtime narrowing"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"implicit float32! assignment narrowing reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []

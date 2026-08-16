@@ -1,609 +1,504 @@
 # Direct Hybrid Red/System Compiler Plan
 
-Status: implementation in progress. The production path is now direct:
-
-```text
-Red/System source
-    -> rs-compiler (Red)
-    -> compact RSIR binary!
-    -> codegen-module routine! (Red/System)
-    -> compact native linker image binary!
-    -> linker (Red)
-    -> PE
-```
-
-There is no legacy emitter fallback, shadow compilation, `verify-current`,
-direct-code field, event sink, producer/builder adapter, generic wire
-container, RSCF/RSDG message, RSCG adapter, or runtime schema lookup in this
-path.
-
-## Goal
-
-The product is one complete Windows x64 Red/Red/System compiler whose Red
-closure is small enough that both of these operations are fast:
-
-1. the designated existing compiler builds the complete hybrid compiler H0;
-2. hybrid generation Hn builds the same complete source as Hn+1.
-
-H0 is not a reduced bootstrap product. It becomes H0 only when it implements
-the complete compiler behavior needed by the repository. The existing compiler
-is used as the seed until that point, but no legacy backend source belongs to
-the hybrid product closure.
-
-The final correctness gate is the complete Red/System and Red test suite, not a
-small machine-code fixture:
-
-```powershell
-rebcmdview.exe -s run-all-tests-x64.r --binary <hybrid-compiler.exe> --batch
-```
-
-## Current Foundation
-
-The current narrow slice accepts source-ordered `() -> void`, `() -> i32`, and
-`(i32) -> i32` functions. Scalar aliases such as `node-handle!: alias integer!`
-resolve in lexical, path, and `with` scopes. An `i32` body can return a literal
-or parameter, or directly call another supported function with zero arguments
-or one literal/parameter argument. Glue modules append an ordinary `() -> void`
-module-body function named `***-main`. The header points to that function and
-codegen places it at code offset zero without renumbering source functions.
-Static declarations and runtime module operations are consumed in the same
-source traversal; the latter are already final RSIR instructions, not an
-initializer adapter or a second IR.
-Function declarations may live in nested `context` blocks; short names,
-explicit context paths, and `with` lookup scopes resolve to the same
-`>`-decorated symbol style used by Red/System. This slice proves the
-architecture and multi-function traversal; it does not define a smaller H0.
-All current aliases and enums receive source-order logical type IDs. The
-frontend writes only their logical kinds, references, member counts, and
-by-value flags; target sizes and offsets are deliberately absent. `size?` now
-writes the logical type reference as an instruction operand. Windows x64
-codegen computes the consumed scalar, pointer, plain-struct, and plain-union
-layout directly and passes the resulting size to the existing integer encoder.
-
-- `compiler/rsir-frontend.red` parses and writes RSIR directly.
-- `compiler/codegen-bridge.red` contains only the `routine!` declaration.
-- `system/codegen/codegen-bridge.reds` owns the Red series boundary.
-- `system/codegen/x64-codegen.reds` reads RSIR and writes the linker image.
-- `system/codegen/x64-encoder.reds` writes x64 bytes into the reserved output.
-- `system/linker.red/load-codegen` loads the image directly into linker state.
-
-For the current slice, USER empty-void and i32 RSIR are 74 and 90 bytes; their
-native images are 132 and 136 bytes. The corresponding GLUE streams are 126
-and 142 bytes because they also contain the ordinary module-body entry; their
-native images are 256 and 264 bytes. The two-source-function
-`main -> helper -> 41` sample is 210 RSIR bytes and produces a 320-byte image.
-The source call remains directly encoded, while the actual module entry returns
-zero because no top-level expression invokes that source function.
-
-The designated existing compiler built the multi-function current hybrid entry
-in 90.1 seconds: 14.9 seconds frontend, 63.8 seconds native compilation, and
-11.0 seconds linking. The preceding wire/adapter entry took about 123.3 seconds:
-22.2 seconds frontend and 95.4 seconds native compilation. The focused routine
-smoke fell from roughly 43 seconds to roughly 7 seconds. These are development
-samples on the same machine and compiler, not final performance gates, but they
-show that deleting the layers reduced real compiler-build work.
-
-For the current declaration-pass increment, regenerating the complete self-host
-Red/System corpus with `--red-only` took 16.53 seconds. The focused development
-frontend-plus-routine smoke took 1.11 seconds in the Red frontend, 8.55 seconds
-in native compilation, and 1.16 seconds in linking, producing an 801,792-byte
-executable. Before folding two single-use Red helpers into their callers, the
-same working tree took 13.35 seconds in native compilation and produced
-806,912 bytes. This is why the direct frontend keeps helper functions only when
-they represent reusable work.
-
-The source-order logical-type checkpoint builds the same focused development
-routine smoke in 12.05 seconds wall time and produces an 820,736-byte
-executable. A discarded prototype that calculated Win64 aggregate layouts in
-Red took 13.238 seconds and produced 915,456 bytes with the same command. It was
-removed: target layout belongs in Red/System codegen, both for a
-backend-independent IR and for a smaller, faster-to-build Red closure.
-
-The first native layout consumer builds the expanded focused routine smoke in
-13.156 seconds and produces a 926,720-byte development executable. The test
-itself now contains six layout functions, so this is a functional checkpoint,
-not a like-for-like compiler-build speed comparison. At runtime it verifies
-Win64 pointer, scalar alias, nested by-value struct, pointer-member struct,
-plain union, and recursive-pointer struct sizes; a recursive by-value struct is
-rejected without committing output.
-
-The direct-import native test builds in 1.555 seconds and produces a
-119,296-byte executable. The broader frontend/routine test uses 1.562 seconds
-in the frontend, 12.235 seconds in native compilation, and 1.620 seconds in
-linking, producing a 1,091,584-byte executable. It also contains callable types,
-direct import records, malformed-slice checks, layout cases, and linker-image
-assertions. These are functional test builds, not the H0 compiler-build timing
-gate.
-
-The first direct imported-call checkpoint keeps the existing four-word call
-instruction: a positive operand is a declared function ID and a negative
-operand is an import ID. The focused pure Red/System test builds in 1.603
-seconds and produces a 142,848-byte executable. The expanded routine test uses
-1.763 seconds in the frontend, 14.557 seconds in native compilation, and 1.765
-seconds in linking, producing a 1,185,280-byte executable. It verifies direct
-Win64 IAT calls for zero arguments, one literal argument, and one forwarded
-parameter, including same-library name sharing and exact contiguous relocation
-slices. The test grew substantially, so these figures are functional build
-measurements rather than a comparison with the preceding checkpoint.
-
-Imported scalar variables now use the same direct import IDs and reference
-slices as calls. An i32 load emits `mov rax,[rip+rel32]` followed by
-`mov eax,[rax]`; an i32/logic immediate store emits the corresponding IAT load
-followed by `mov dword [rax],imm32`. Neither operation is classified as a call.
-During linear selection, the first actual call in a function reserves one
-Win64 shadow area that every later call in that function reuses. One combined
-fixture verifies a qualified logic store, an i32 load, shared library-name
-bytes, and all three exact relocation offsets.
-
-The first global-access checkpoint adds one logical load instruction and emits
-`mov r32,[rip+rel32]` directly. Global records own their contiguous relocation
-slices; codegen uses each record's reference count first as a counter and then
-as its write cursor, so there is no temporary global-relocation table. The
-focused pure Red/System test builds in 2.11 seconds including native linking.
-The expanded development routine test builds in 18.3 seconds wall time: 2.02
-seconds frontend, 13.79 seconds native compilation, and 1.96 seconds linking.
-It verifies two functions reading one global as well as exact linker-image
-bytes and reference ordering.
-
-Static `as type literal` globals now consume their source expression directly
-and keep the target-independent logical type in RSIR. For example,
-`base: as cell! 0` remains a reference to the `cell!` aggregate alias; native
-codegen lays that ordinary global out as one 8-byte pointer rather than copying
-the aggregate layout into the frontend. A later assignment is deliberately not
-folded over the initial data value because its ordering belongs to the normal
-module-body instruction stream.
-
-The native backend now traverses each function's instruction range rather than
-matching a whole-function shape. Its first pass writes one local integer
-encoding form per input instruction while counting exact code bytes and direct
-reference slices; its second pass writes those bytes. The forms never cross the
-routine boundary. Integer constants remain rematerializable until consumed,
-the current scalar result stays in `RAX`, and an untouched first parameter stays
-in `RCX`. A 300-byte fixture executes two imported stores in one ordinary
-three-instruction module function, a sequence the retired shape selector could
-not represent.
-
-Dynamic scalar globals now use the same stream. A string instruction names an
-offset and NUL-inclusive length in the RSIR tail but emits no code. Its call
-consumer writes `lea rcx,[rip+literal]` immediately before the direct or IAT
-call, leaves the 32-bit or pointer result in `RAX`, and the following global
-store writes that register directly. Codegen copies only the referenced string
-prefix once, immediately after all function code. There is no constant symbol,
-constant relocation, extra section, or linker lookup. The exact two-string
-bridge fixture has 70 bytes of function code and a 12-byte constant island.
-Its development build with the designated compiler took 25.1 seconds: 2.41
-seconds in the Red frontend, 19.07 seconds in native compilation, and 3.07
-seconds linking; the 1,643,008-byte executable passes all preceding image tests
-as well as the new path.
-
-`with` assignments now resolve existing globals and imported variables before
-creating a declaration, so `with red [stk-bottom: ...]` writes the imported
-`red/stk-bottom` slot instead of inventing a root global. The first consumed
-Red/System intrinsic is `system/stack/top`: it emits `mov rax,rsp`, then a
-dynamic import store loads the target address through the IAT into `RDX` and
-writes `RAX`. The same scalar path also supports 64-bit imported-variable loads.
-The exact bridge build took 25.4 seconds and produced a 1,726,976-byte
-development executable; all preceding exact images remain unchanged.
-
-## Data Layout Rule
-
-RSIR is a private in-process format compiled as one source set with its only
-consumer. It is not a public object format. Consequently it has:
-
-- no magic value or version negotiation;
-- no named section directory;
-- no canonical string-ID remapping;
-- no generic reader/writer object;
-- no repeated semantic verifier pipeline;
-- no compatibility adapter.
-
-The current RSIR is only the data that codegen consumes:
-
-```text
-7 words: module kind, entry function, type count, import count,
-         function count, instruction count, global count
-5 words per type: kind, alias/return type, flags, first member, member count
-2 words per member: logical type reference, by-value flag
-8 words per import: library offset/size, external offset/size,
-                    logical type, flags, first parameter, parameter count
-5 words per global: name offset/size, logical type, initializer low/high
-7 words per function: name offset, name size, return type, flags,
-                      first parameter, parameter count, instruction count
-2 words per parameter: logical type reference, by-value flag
-4 words per instruction: typed opcode, result, operand, immediate
-raw c-string literal bytes, then library, external, global, and function names
-```
-
-The input `binary!` length supplies the total size. Sequential instruction
-ranges are derived by addition, so they are not repeated in function records.
-Members and parameters are contiguous in source order. Import parameters come
-first and declared-function parameters follow them in the same stream. Their
-first indices are written directly because layout and call lowering need random
-access; codegen never rescans preceding records to find a slice. Positive type
-references are source-order user type IDs and negative references are the
-twelve built-in logical kinds.
-No type/member names or target size/alignment/offset values cross the boundary.
-The `size?` instruction carries only one of those logical references; its
-target value is calculated once in native codegen when the integer machine
-instruction is written.
-Return and parameter types are direct logical references in each function or
-function-type record; there is no signature registry. One flags word carries
-the calling convention, by-value return bit, and codegen-relevant attributes.
-An import with zero flags is a variable; a function import carries its required
-`cdecl` or `stdcall` value in the low two bits, so no redundant import-kind word
-or library-group table is needed. Consecutive records in one source group share
-the same library-name offset.
-Global records likewise contain no target offset, size, alignment, storage kind,
-or initializer tag. Native codegen computes the Windows x64 object layout,
-places storage directly after the bitmap prefix, and writes the initializer at
-that offset. The two initializer words preserve the bits needed by scalar values
-without introducing a separate initializer table.
-A one-argument call stores its argument value ID in the call instruction
-itself; there is no generic operand section. A positive call target is a
-one-based declared-function ID and a negative target is the negated one-based
-import ID. Zero means absent. The routine performs only the bounds and shape
-checks required for safe pointer traversal and then casts these arrays directly.
-String values use the same four-word instruction: operand and immediate are
-their tail offset and NUL-inclusive length. Because the frontend appends
-literals before names, the greatest consumed end offset is also the exact
-constant-island size; no literal table or string-ID translation is needed.
-
-The native linker image follows the same rule. Its current order is:
-
-```text
-header
-function records
-global records
-import records
-reference offsets
-name bytes
-alignment padding
-code bytes
-alignment padding
-data bytes
-```
-
-Function, global, and import records own contiguous reference slices. This maps
-directly to the existing linker's native symbol and import reference lists, so the Red
-linker does not search all relocations for every symbol and does not construct
-an intermediate object model. Native codegen counts imported calls and variable
-accesses in one dense integer per input import, writes each used import's slice,
-then reuses that integer as the slice cursor while encoding. Unused imports
-never enter the linker image; consecutive used imports from one source group
-reuse one library name range. A global record maps directly to the linker's existing
-`[global data-offset refs]` symbol form; no linker-side global object is built.
-
-Both layouts may change while frontend, codegen, and linker are rebuilt
-together. A stable cache format is a later requirement and will be designed
-from measured cache needs, not by turning the internal IR into a general wire
-protocol.
-
-## Style And Performance Rules
-
-- Prefer source-order IDs. Determinism does not require lexical sorting.
-- Use `hash!` for name lookup in Red; never use `select` on a long pair block in
-  a hot symbol path.
-- Write table bytes directly. A helper must remove real repeated work, not hide
-  a constant or field offset behind another name.
-- Cast verified table starts to Red/System record structs once, then advance
-  pointers. Do not call a field reader for every scalar.
-- Reserve the routine output once and write into it in place. Do not allocate a
-  native artifact and copy it back into a Red series.
-- Keep target layout, register allocation, frame layout, instruction selection,
-  and encoding in Red/System.
-- Keep parsing, semantic name resolution, and the final PE linker in Red only
-  while that ownership remains smaller and clearer.
-- Do not serialize derived MIR facts such as liveness, physical registers,
-  frame offsets, branch widths, or spill slots.
-- An unsupported construct is a hard compiler error. It never invokes the old
-  emitter.
-
-## Phase 1: Direct Boundary
-
-Status: complete in `900d3d1f0`.
-
-Deliverables:
-
-- replace the generic RSIR container with header + tables + bytes;
-- pass only `ir`, `artifact`, and `opt-level` through `routine!`;
-- write native output directly into the reserved Red binary;
-- make `linker/load-codegen` the direct consumer;
-- remove schema, config/diagnostic messages, hybrid driver, and adapter from the
-  recursive hybrid source closure;
-- keep exact byte tests, bounded-output failure tests, and a real PE exit-code
-  test.
-
-Exit criteria:
-
-- recursive closure audit finds none of the retired wire/adapter modules;
-- the designated existing compiler builds the hybrid entry;
-- that executable compiles and links the supported fixture;
-- the generated PE executes with the expected status;
-- compiler-build timing is recorded.
-
-## Phase 2: Real Frontend Core
-
-Status: current major task. Source-order function, import, and global IDs;
-duplicate detection; retained specs and bodies; a separate lowering pass;
-multi-function native traversal; zero/one-argument direct calls; static scalar
-and typed-pointer globals; direct integer-call initializers; scalar
-aliases; source-order logical type records; context-qualified names; and `with`
-resolution scopes are implemented. The declaration pass also scans loader
-`#script` markers, enum constants, aggregate and function aliases, import
-groups, and global assignments. The direct logical type/member stream and its
-native bounds/kind validation are implemented. Direct return/parameter slices,
-calling conventions, attributes, and function/subroutine type signatures are
-also implemented without a registry. Function and variable imports are written
-as direct logical records and validated natively; unused declarations do not
-enter the linker image. Zero/one-argument i32 imported calls now lower directly
-to Win64 IAT-indirect calls and contiguous linker references. Imported i32
-loads and i32/logic immediate stores use the same direct records and reference
-slices. Static i32 globals
-can now be read directly through RIP-relative loads and their own contiguous
-linker-reference slices. Basic Windows x64
-scalar, pointer, alias, plain-struct, and plain-union size/alignment is
-implemented and consumed by `size?`. Imported aggregate pointer-member loads,
-two prepared scalar arguments, pointer-returning imported calls, dynamic
-pointer global stores, and literal-to-i32 calls now cover the boot-data and
-root-node initialization paths. General member paths,
-arrays, tagged unions, explicit aggregate alignment, complete signature
-lowering and ABI classification, other dynamic and non-scalar initializers,
-and general function bodies remain pending.
-
-The implementation order is driven by the actual generated self-host source,
-not isolated language examples; H0 scope still includes every Red/System
-feature and the full Red/System suite. The current direct hybrid source is
-2,961,043 bytes. After includes and macros are expanded by the real Red/System
-loader, the structured audit finds 547 defined functions, 62 contexts, 725
-source import symbols, 79 aliases, 14 enums, 4,338 global assignments, and
-4,288 unique global names. The imports comprise 57 source groups, 712
-functions, 13 variables, and 856 parameters; the frontend adds the
-compiler-defined `system` variable only when the boot-data path uses it. The
-dominant parameter type is `node-handle!`;
-some signatures use Red/System's shared-type form, such as
-`value argument [integer!]`. Context depth is at most two, while functions have
-up to 96 locals and substantial control flow. The direct declaration pass matches
-all independently audited function, context, import, alias, and enum counts in
-about 1.6 seconds under the interpreter after loading. Loader expansion plus
-the independent statistics walk currently takes about 24.6 seconds in the
-console and is reported separately from frontend time. Static scalar casts and
-the first runtime set-path assignment, `red/boot?: yes`, now continue through
-native layout and the linker. String calls returning either pointers or i32 values now
-consume the complete `word/load` and `symbol/make` initialization runs. The
-frontend now also consumes the `stk-bottom: system/stack/top` intrinsic/import
-store and the following
-`root-base: redbin/boot-load system/boot-data yes` reassignment. The latter is a
-direct imported aggregate-member, two-argument call, and global-store stream;
-the frontend materializes the old compiler's implicit `system`/`system!` ABI
-symbols without exposing a target offset in RSIR. Module-level `comment` forms
-are discarded during both passes. A direct literal/call/store sequence then
-consumes all 864 generated `get-root-node2` and `get-root-node` initializers
-without a new opcode or encoder form. The complete corpus next stops at the
-first casted call initializer, `ts||1068: as red-typeset! get-root 1707`.
-
-After that deliberate stop, the same audit serializes every current logical
-type without compiling bodies: 93 source-order types plus the on-demand
-`system!` ABI view produce 94 type records and 435 member records occupying
-5,360 bytes.
-
-Regenerate and inspect this corpus without native compilation:
-
-```powershell
-red-bootstrap-ifphi-final-win64-o2-dev.exe --red-only -d -t Windows-X86-64 `
-  -o build\self-hosting\compact-hybrid-direct-stream.reds red-bootstrap-windows-hybrid.red
-D:\EE\QTool\red-console.exe tools\self_hosting\audit-rsir-corpus.red
-```
-
-### 2.1 Declarations And Stable IDs
-
-Current checkpoint: declaration discovery traverses the complete current
-self-host source corpus and assigns source-order type, function, import, and
-global IDs. Logical
-type records retain kind, source spec, lexical scope, and `with` scopes without
-target layout. Import and static scalar global records now cross the direct RSIR
-boundary. The frontend keeps no global source-block adapter.
-
-- scan top-level declarations and contexts without creating an AST copy;
-- maintain qualified-name and local-scope `hash!` tables;
-- assign source-order IDs to types, globals, imports, and functions;
-- emit function records only after their signature is known;
-- retain unresolved body slices until declarations are complete;
-- detect duplicates at insertion time.
-
-Gate: the frontend emits every declaration in the complete H0 source and can
-resolve every referenced name, while bodies may still fail as unsupported.
-
-### 2.2 Types And Layout
-
-Current checkpoint: logical type/member serialization and native structural
-validation are complete for the current self-host source corpus. Native codegen
-computes the basic Win64 layout forms on demand, and `size?` is their first
-machine-code consumer. This does not yet complete the layout gate.
-
-- write only logical type/member records that native codegen consumes, directly
-  into the compact RSIR order; do not add a schema, section directory, or
-  frontend layout table;
-- base scalar, pointer, function-pointer, alias, enum, struct, union, and array
-  representations;
-- forward pointer references and by-value dependency ordering;
-- Windows x64 size/alignment/member offsets computed in Red/System codegen;
-- logical function signatures, callbacks, variadic imports, and return types;
-- GC kind attached to semantic types, not stack slots.
-
-Gate: layout results match the existing compiler across the complete applicable
-type/layout suite, without importing the emitter datatype table or calculating
-target layout in Red.
-
-### 2.3 Imports, Globals, And Constants
-
-Current checkpoint: every current self-host import is parsed into a direct
-logical function or variable record. Source groups share library-name bytes,
-function imports own direct parameter slices, and native codegen validates all
-record, type, flag, name, and slice bounds. The current i32 zero/one-argument
-call shapes emit direct or IAT-indirect machine calls and contiguous relocation
-slices; imports with no references are omitted. Static scalar and typed-pointer
-globals carry a logical type plus two value words. Native codegen computes their
-target layout, writes their data directly, and gives the linker direct global
-records. One-argument c-string calls returning i32 or pointers now initialize
-globals through a direct `string`, `call`, `global-store` sequence and a compact
-code constant island. Pointer imported-variable loads and register-valued
-import stores use the same direct import records and reference slices.
-The boot-data initializer now adds an imported aggregate-member load, prepares
-its pointer and logic arguments in semantic order, uses the ordinary call
-instruction, and stores the pointer result. Win64 register assignment and the
-`system!` member offset remain native codegen decisions. General call ABI
-lowering,
-non-scalar initializers, other dynamic initializers and non-i32 accesses,
-constants, and empty static-library registration groups remain pending. The
-first real runtime operation, `red/boot?: yes`, is emitted directly into the
-ordinary module-body function during the same traversal that folds static
-globals. The module-only fixture is 144 RSIR bytes and produces a 252-byte
-native image with one function and two instructions. There is no second
-initializer protocol. The same ordinary literal/call/store stream initializes
-the generated root-node handles. The next real-corpus boundary is a pointer
-cast around a one-argument call, `as red-typeset! get-root 1707`.
-
-- preserve `#import` library grouping and calling convention;
-- emit imported functions and variables directly;
-- lower scalar, string, aggregate, address, and zero initializers;
-- represent symbolic addresses as target-independent references;
-- assign all data ownership before function codegen.
-
-Gate: import/global/constant fixtures and the corresponding Red/System suite
-families pass through the new path.
-
-### 2.4 Functions And Scopes
-
-- parameters, locals, nested contexts, namespace paths, aliases, and function
-  variables;
-- direct and indirect calls with logical argument lists;
-- explicit result values and mutable local slots;
-- source locations only where required by diagnostics or debug output.
-
-Gate: every function in the complete H0 source lowers to typed RSIR with no
-emitter state and no source construct silently omitted.
-
-### 2.5 Control Flow And Effects
-
-- blocks for conditionals, `case`, `switch`, loops, break/continue, and return;
-- explicit targets in terminators; predecessor lists are derived natively;
-- load/store/address operations and conservative call effects;
-- exceptions, subroutines, explicit stack operations, atomics, and target
-  intrinsics in corpus-driven order.
-
-Gate: complete RSIR construction for the H0 source, plus differential semantic
-tests against separate runs of the existing compiler.
-
-## Phase 3: Native Backend
-
-### 3.1 Multi-function Traversal
-
-Current checkpoint: the whole-function shape selector is removed. Codegen
-selects and measures every instruction in source order, then emits the entry at
-code offset zero without renumbering functions. Function records and names are
-written once, and global/import references retain direct contiguous slices.
-The current accumulator value model deliberately rejects a use after its
-volatile register has been clobbered; later slot allocation will broaden live
-ranges without changing RSIR.
-
-### 3.2 MIR And CFG
-
-- build allocation-friendly native MIR from RSIR;
-- derive predecessors, dominators, merge values, and liveness in Red/System;
-- verify internal pass invariants with debug-only assertions, not a serialized
-  protocol verifier;
-- keep O0 straightforward and correct before adding optimization passes.
-
-### 3.3 Win64 Calls And Frames
-
-- scalar and aggregate argument classification;
-- shadow space, alignment, hidden return buffers, callbacks, and variadics;
-- callee-save handling, spills, GC root bitmaps, and unwind data;
-- internal, imported, indirect, syscall, and runtime resolver calls.
-
-### 3.4 Encoding And Optimization
-
-- integer, floating-point, memory, aggregate, branch, and call encodings;
-- branch relaxation after final block layout;
-- O1 local simplification, constant folding, dead code, and slot promotion;
-- O2 only after O0/O1 pass the complete suites; the retired legacy O2 path is
-  not a migration dependency.
-
-Gate: all Windows x64 Red/System tests pass with the old emitter absent from the
-process.
-
-## Phase 4: Runtime And Red Compilation
-
-Native codegen alone cannot make release Red compilation fast if every command
-reparses and recompiles the runtime. This phase adds:
-
-- a relocatable prebuilt runtime image generated by the same native backend;
-- a compact frontend interface containing only exported semantic state;
-- cache keys covering compiler generation, target, ABI, build mode, and runtime
-  source identity;
-- direct merge of runtime and user linker images;
-- explicit startup, initializer, finalizer, DLL, and callback ownership.
-
-Fresh and cached paths must produce equivalent runtime behavior. A runtime DLL
-may be measured as a development configuration, but it is not the release
-correctness solution.
-
-Gate: compiled and interpreted Red suites, release/development executables,
-DLLs, View, ABI probes, and runtime GC tests pass.
-
-## Phase 5: Bootstrap And Fixed Point
-
-Let `S` be the one complete hybrid compiler source set.
-
-1. Existing compiler builds `S` -> H0.
-2. H0 builds `S` -> H1.
-3. H1 builds `S` -> H2.
-4. H1 and H2 pass all suites.
-5. Compare deterministic compiler-owned artifacts and explain any executable
-   differences caused by timestamps or linker metadata.
-6. Measure old -> H0 and H1 -> H2 separately.
-
-There is no separate minimal bootstrap source. If old -> H0 is too slow, reduce
-the Red ownership in `S` or move another complete responsibility to Red/System;
-do not omit product behavior.
-
-## Verification
-
-Fast tests run on every semantic increment:
-
-- interpreted Red frontend byte tests;
-- direct Red/System encoder/codegen tests;
-- malformed length/range tests at the routine boundary;
-- direct linker image loading and actual PE execution;
-- recursive source-closure audit;
-- focused language-family differential tests.
-
-Broader tests run at milestones:
-
-- complete applicable Red/System compiler and unit suites;
-- complete compiled/interpreted Red suites;
-- release, development, DLL, View, ABI, and GC configurations;
-- old -> H0 and Hn -> Hn+1 builds;
-- five-run warm performance samples with median and range.
-
-Record frontend time, native time, linker time, wall time, generated Red/System
-bytes, executable size, peak memory, RSIR bytes, native-image bytes, and cache
-state. A change that merely moves work between phases is not a speedup.
+Status: architecture reset in progress.
+
+The stable outer path is:
+
+    Red/System source
+        -> rs-compiler (Red)
+        -> typed RSIR binary!
+        -> codegen-module routine! (Red/System)
+        -> direct linker image binary!
+        -> linker (Red)
+        -> PE/COFF output
+
+The current implementation proves that this boundary works, but its function
+body IR and x64 selector are a narrow prototype. They are not the base on which
+the rest of the language will be accumulated.
+
+## Completion Rule
+
+There is one complete hybrid compiler source set, S.
+
+1. The designated existing compiler builds S into H0.
+2. H0 builds the unchanged S into H1.
+3. H1 builds the unchanged S into H2.
+4. H1 and H2 pass the complete applicable Red/System and Red test suites.
+5. H1 and H2 compiler-owned output is deterministic.
+6. Existing-compiler-to-H0 and H1-to-H2 build times are measured separately.
+
+An incomplete executable is a prototype, not H0. There is no reduced bootstrap
+compiler that later acquires missing language features.
+
+Both seed compilation and self-compilation are performance requirements. The
+Red source closure must therefore stay small throughout development; it is not
+work postponed until after feature completeness.
+
+## Sources Of Truth
+
+Design and completeness follow this order:
+
+1. the implemented language described by
+   docs/red-system/red-system-specs.txt;
+2. the formal compiler and unit suites in system/tests/run-all.r;
+3. the applicable Windows x64 ABI and COFF/static-link tests;
+4. the complete compiler/runtime source corpus;
+5. focused regression fixtures.
+
+The specification and semantic dependency graph determine the architecture and
+implementation batches. Formal suites define the acceptance surface. The
+complete source corpus checks closure and timing, and may expose an omission,
+but it does not define a new operation. A source identifier, a particular
+argument position, or the shape of one initializer must never become an RSIR
+operation or an x64 encoding form.
+
+The Possible Evolutions section of the specification is not part of H0 unless
+the repository already implements and consumes a listed feature.
+
+The detailed mapping is maintained in
+docs/red-system-feature-matrix.md.
+
+## Non-Negotiable Shape
+
+The production source closure has:
+
+- no legacy emitter or machine-IR fallback;
+- no shadow compilation or verify-current path;
+- no direct-code escape field;
+- no event sink, builder protocol, adapter, or middleware pipeline;
+- no public wire format, schema registry, version negotiation, or runtime
+  field lookup;
+- no second Red backend representation between the frontend and routine!;
+- no target sizes, offsets, registers, frames, or ABI classifications in
+  RSIR.
+
+Frontend, codegen, and linker are rebuilt together. RSIR is their private
+in-process data layout and can change directly when its semantics change.
+
+## Language-Shaped Core
+
+The architecture follows Red/System semantics rather than C compiler
+conventions.
+
+### Left-To-Right Evaluation
+
+Red/System has no normal operator precedence and evaluates expressions from
+left to right. A typed postfix instruction stream represents that rule
+directly:
+
+- operands are emitted in source evaluation order;
+- an operation consumes its operands from the typed value stack;
+- parentheses recurse into the same emitter;
+- an infix function is handled by the parser rule that gives it its specified
+  precedence, then becomes an ordinary call;
+- no expression tree or precedence-recovery pass is required.
+
+The frontend therefore does not serialize an AST or SSA graph. Native codegen
+creates only the derived value and control-flow facts needed for machine code.
+
+### Values And Places
+
+Every read or write is expressed with the same small set of concepts:
+
+- a value is a typed scalar, pointer, function pointer, or aggregate value;
+- a place is a typed addressable storage location;
+- address identifies a local, global, import, constant, or function symbol;
+- member and index transform an address;
+- load turns a place into a value;
+- set writes a value and leaves that value as the language assignment result;
+- duplicate and drop express grouped assignments and unused results.
+
+All variable words, paths, get-paths, members, imported variables, pointer
+dereferences, and one-based indexes lower through this model. There are no
+separate global-load, import-member, pointer-arg1, or similar operations.
+
+Pointer and struct arithmetic carry logical pointee types. Codegen obtains the
+target stride from native layout, so the frontend never embeds a Windows size.
+
+For example, a casted call initializer has the semantic form:
+
+    address global ts
+    literal 1707
+    call get-root
+    cast red-typeset!
+    set
+    drop
+
+Nothing in that sequence depends on the names get-root or ts.
+
+### Structured Control
+
+Branches use instruction indexes as direct targets. Basic blocks are derived
+from entry points, branch targets, and terminators; no block directory is
+serialized.
+
+The value stack is empty at every basic-block boundary. A conditional
+expression that produces a value uses an ordinary compiler-created local for
+the merge. This keeps the Red frontend and O0 backend linear. Native
+slot-promotion removes the temporary when profitable.
+
+The general control operations are:
+
+- jump;
+- branch;
+- switch, referencing a compact literal/target slice;
+- return;
+- catch-region entry and exit;
+- throw;
+- subroutine call and return.
+
+if, either, loops, any, all, and case lower to these operations. switch remains
+explicit so native codegen may choose a comparison chain or jump table from
+density without changing frontend semantics.
+
+### Calls
+
+Arguments are already on the value stack in source evaluation order. One call
+operation contains:
+
+- a direct, imported, or indirect target;
+- a logical function signature;
+- the actual argument count.
+
+The signature supplies fixed parameter types and attributes. The actual stack
+types supply variadic arguments. The same call mechanism handles zero or many
+arguments, nested calls, callbacks, function variables, scalar and aggregate
+results, and hidden return buffers.
+
+Syscalls and Red callbacks remain distinct semantic operations because their
+runtime transitions are genuinely different. They still consume ordinary
+typed stack arguments.
+
+### Native Operations
+
+Language-defined native facilities use one native-operation family with stable
+semantic identifiers. It covers size?, length?, overflow state, stack,
+CPU/FPU, I/O, atomics, image information, push, pop, and assert.
+
+This is not a list keyed by source spelling in codegen. The Red frontend
+resolves spellings and paths to semantic native identifiers. Codegen switches
+only on operations that the language specification itself distinguishes.
+
+#inline references a literal byte slice and an optional logical return type.
+
+## Logical Types
+
+The frontend owns names, lexical scopes, inference, and type checking. RSIR
+contains only the logical structure native layout and ABI lowering require.
+
+Built-in scalar references distinguish:
+
+- logic and byte;
+- signed and unsigned fixed-width integers;
+- platform integer;
+- float32 and float64;
+- c-string;
+- untyped/null pointer forms.
+
+User type nodes represent:
+
+- pointer plus pointee type;
+- fixed literal array plus element type and count;
+- struct plus ordered member slice;
+- raw or tagged union plus ordered variant slice;
+- function signature plus return and parameter slices.
+
+A type use also records reference/value semantics where Red/System permits
+both, notably struct and union fields, arguments, and returns. Aliases, enum
+labels, member names, and local names remain frontend data unless a name must
+be exported or linked.
+
+Tagged-union metadata records logical variants and anonymous payload
+structure. Native codegen chooses tag width, payload offset, total alignment,
+and member offsets.
+
+Recursive pointers are legal. Recursive by-value layout is rejected while
+walking the logical type graph. The result of that walk is cached in native
+arrays allocated once per module.
+
+## Direct RSIR Order
+
+RSIR uses fixed-size records in one known sequence:
+
+    counts and module properties
+    logical types
+    members and variants
+    function parameter type uses
+    imports
+    globals
+    functions
+    function local type uses
+    static initializer items
+    switch cases
+    fixed-width instructions
+    literal and linker-visible name bytes
+
+Counts locate each successive table. Source-order IDs index records directly.
+Slices are contiguous and store their first index and count only when random
+access is required.
+
+Each instruction is four 32-bit words: operation and up to three direct
+operands. Stack values do not need result IDs or operand lists. Calls consume
+their arguments from the stack; branches name instruction indexes; switch
+cases use one shared compact table.
+
+Static initializer items form a flat preorder stream consumed together with
+the logical type. Scalar bits, symbol addresses with addends, byte slices,
+selected union variants, zero runs, and repetition are explicit; aggregate
+shape comes from the type graph rather than child pointers or another tree.
+Items contain no target padding or relocation kind. Dynamic initializers are
+ordinary module-body instructions and preserve source order.
+
+Only names needed by imports, exports, linker symbols, or requested debug data
+cross the boundary.
+
+The binary length is the outer bound. Production code performs one table-bound
+walk before casting table starts. Dynamic slice and ID checks are fused into
+the first decode that already consumes them; there is no verifier pass.
+Frontend type rules are not re-run in production codegen. Debug builds assert
+stack shape, branch targets, and internal pass invariants.
+
+There is no magic value, section-name directory, reader object, field getter,
+compatibility adapter, or canonical name remapping.
+
+## Red Frontend
+
+The frontend is one Red context with direct data ownership:
+
+1. expand includes, macros, enums, and conditional directives;
+2. scan declarations and contexts, assigning source-order IDs;
+3. retain body positions in the expanded source block without copying bodies;
+4. resolve aliases and complete the logical type graph;
+5. parse each body directly into the RSIR instruction binary;
+6. patch forward branch targets in place;
+7. append linker-visible names and literals;
+8. call the native routine.
+
+Name lookup uses hash! tables. Qualified names are constructed once at
+declaration or scope entry. Hot paths never search pair blocks with select.
+
+The frontend does not calculate layout, classify ABI arguments, build an AST,
+allocate registers, or construct linker objects.
+
+The loader may be reused where it already implements Red/System semantics
+directly. It should be simplified when old emitter-facing output or duplicate
+normalization is found; compatibility adapters are not retained merely to
+reuse a file unchanged.
+
+## Red/System Codegen
+
+The native routine owns all target-dependent work:
+
+1. cast the direct tables after the outer bounds walk;
+2. resolve and cache logical layouts;
+3. derive basic-block entries and typed stack effects;
+4. create compact native value, slot, and branch arrays in one allocation;
+5. classify Win64 arguments and returns from signatures;
+6. perform the selected optimization level in place;
+7. assign registers, stack slots, shadow space, and unwind state;
+8. select primitive x64 instructions and relax branches;
+9. reserve the linker image once and emit into it directly.
+
+The x64 encoder exposes primitive encodings and addressing forms. It must not
+grow combined semantic forms such as "call with first literal argument" or
+"return current parameter". Argument movement, calls, loads, stores, and
+returns are composed by the selector from ordinary primitives.
+
+O0 prioritizes complete, linear, correct lowering. O1 adds local constant
+folding, dead-value removal, slot promotion, and simple block cleanup. O2 is
+implemented only after O0 and O1 pass the complete suites; it is not a
+bootstrap dependency.
+
+Derived native arrays are codegen working memory, not a serialized second IR.
+They exist only where layout, control flow, ABI lowering, or allocation
+requires them.
+
+## Direct Linker Image
+
+Codegen emits the exact tables the Red linker consumes:
+
+- functions and their code/reference ranges;
+- mutable, read-only, and TLS globals;
+- imports grouped by library;
+- exports;
+- symbol and data relocations;
+- unwind and exception ranges;
+- code, constant, data, and metadata bytes.
+
+Every symbol owns a contiguous reference slice. The linker does not rescan all
+relocations per symbol and does not rebuild a generic object model.
+
+The linker remains responsible for PE/COFF policy, libraries, resources,
+subsystems, section placement, and final image writing. Its interface may be
+changed directly when the codegen image grows; no adapter preserves an
+obsolete shape.
+
+## Compile-Speed Rules
+
+- Keep only parsing, binding, type checking, and final linking in Red.
+- Traverse expanded source twice, without an AST copy.
+- Assign source-order IDs and use direct indexing.
+- Reserve large binaries and native scratch areas from counts or measured
+  estimates, then grow geometrically only when necessary.
+- Build table starts once; advance typed pointers in native loops.
+- Compute each target layout and ABI classification once.
+- Do not serialize facts that codegen can derive in one linear pass.
+- Do not repeatedly validate a trusted private IR.
+- Do not run a complete self-host corpus after each small change.
+- Record frontend, codegen, linker, total time, peak memory, and output size
+  separately.
+
+Release self-compilation must not depend on libRedRT.dll. A relocatable runtime
+image produced by the same backend is linked directly and cached by compiler
+generation, target, ABI, build mode, and runtime source identity. Development
+DLL mode remains useful for debugging, not as the release performance
+solution.
+
+## Implementation Order
+
+Each batch implements one orthogonal semantic mechanism through frontend,
+RSIR, codegen, linker where needed, and its complete associated test families.
+No batch is chosen because a particular self-host identifier happens to be
+next.
+
+### 1. Replace The Prototype Core
+
+- replace the scalar-only type records with the complete logical type graph;
+- replace the 14 current body operations with the typed stack operations;
+- replace combined x64 encoder forms with primitive encodings;
+- retain the direct binary! -> routine! -> linker image boundary;
+- port current exact-image and executable fixtures to the new semantics;
+- delete the old selector state machine in the same change, with no dual path.
+
+Gate: literals, locals, globals, imports, casts, generic loads/stores, direct
+and imported calls, and returns work without any operation that describes
+argument position or value origin.
+
+### 2. Scalar Expressions And Control
+
+- logic, byte, integer, every fixed-width integer, float32, and float64;
+- literal rules, casts, inference, left-to-right math, shifts, bitwise and
+  comparison operations;
+- locals, assignment results, if, either, loops, any, all, case, switch, break,
+  continue, exit, and return;
+- general block and stack analysis in native codegen.
+
+Gate: the matching compiler/unit suites and scalar x64 smokes pass.
+
+### 3. Addresses And Aggregate Values
+
+- c-strings, pointers, one-based indexing, pointer arithmetic, and get-paths;
+- literal arrays, binary data, protected data, and UTF-16 constants;
+- structs, raw/tagged unions, inline/reference fields, aggregate copy, and
+  anonymous variant payloads;
+- recursive layout, declare, member paths, size?, and symbolic static
+  initializers.
+
+Gate: pointer, array, c-string, protect, struct, union, cast, size, layout, and
+tagged-union suites pass.
+
+### 4. Complete Calls And Win64 ABI
+
+- shared argument types, signatures, inference, function variables and
+  pointers;
+- internal, imported, indirect, callback, cdecl/stdcall, variadic, typed, and
+  custom calls;
+- integer, int64, floating, mixed, register, stack, aggregate-by-value, and
+  hidden-return ABI paths;
+- callee-save state, shadow space, alignment, stack frames, GC maps, and
+  unwind data.
+
+Gate: function/callback/variadic suites and every applicable x64 ABI smoke
+pass.
+
+### 5. Non-Local Control And System Facilities
+
+- subroutines, catch regions, catch functions, throw propagation, and
+  system/thrown;
+- overflow state, explicit push/pop, stack/CPU/FPU/I/O/image facilities;
+- atomics with required ordering and target instructions;
+- syscalls and inline machine code.
+
+Gate: exception, subroutine, overflow, system, atomic, queue, push/pop, syscall,
+and inline probes pass.
+
+### 6. Source And Output Semantics
+
+- all loader/preprocessor directives and diagnostics;
+- imports, exports, DLL callbacks, executable/DLL/object/static-library modes;
+- Windows driver entry and output mode;
+- read-only data, TLS, resources, static libraries, alternate names, COMDAT,
+  CRT initialization, and applicable COFF relocations;
+- Red callback directives supplied by the Red compiler.
+
+Gate: compiler tests, DLL tests, Windows static-link tests, and focused
+directive probes pass.
+
+### 7. Runtime And Red
+
+- generate and cache the relocatable runtime image;
+- compile routines, #system, and #system-global through the same RSIR;
+- link startup, initializer, finalizer, GC, exceptions, callbacks, and View
+  resources;
+- run compiled and interpreted Red suites.
+
+Gate: all applicable Red tests pass in release and development configurations.
+
+### 8. H0, H1, H2
+
+- freeze the complete source set S;
+- build H0 with the designated existing compiler;
+- build H1 with H0 and H2 with H1;
+- run all correctness gates on H1 and H2;
+- compare deterministic artifacts;
+- publish stage timings and sizes.
+
+## Test Cadence
+
+Use the cheapest gate that can disprove the current change:
+
+1. interpreted Red frontend tests for parsing, binding, types, and exact RSIR;
+2. pure Red/System decoder/layout/selector tests;
+3. one focused native executable for the changed semantic family;
+4. the corresponding formal suite group;
+5. complete self-host source lowering only at batch milestones;
+6. all Red/System and Red suites only at release candidates.
+
+This cadence keeps feedback fast without weakening the final gate.
+
+Normal work must use Stage1 or the designated existing bootstrap executable.
+The retired Rebol Stage0 path is not part of verification.
+
+## Current Baseline
+
+Already retained:
+
+- the direct hybrid entry and small routine! bridge;
+- direct output reservation and linker consumption;
+- source-order declaration discovery;
+- initial name/scope/import/global/function traversal;
+- target layout ownership in Red/System;
+- proof that the existing compiler can build and execute the boundary.
+
+To be replaced rather than extended:
+
+- scalar-only and pointee-losing type records;
+- the four-word value-ID instructions numbered 1 through 14;
+- the VALUE_LITERAL, VALUE_PARAM, VALUE_RAX, and VALUE_STRING accumulator model;
+- argument preparation tied to position or source value shape;
+- combined x64 forms tied to call/return cases;
+- two-word scalar-only global initialization.
+
+The next compiler source change is batch 1. The casted get-root initializer is
+deliberately not implemented as another prototype special case.
 
 ## Commit Boundaries
 
-Use small recoverable commits after each completed responsibility:
+Make one reviewable commit after each completed batch or independently useful
+sub-batch. Every commit must:
 
-1. direct compact boundary and linker path;
-2. multi-function declarations and traversal;
-3. types and layouts;
-4. imports/globals/constants;
-5. locals/calls;
-6. CFG and control flow;
-7. Win64 ABI/frame/GC;
-8. full x64 instruction coverage;
-9. runtime image/cache;
-10. H0/H1/H2 and suite closure.
-
-Each commit includes the narrowest meaningful tests and must keep the hybrid
-source closure free of the legacy emitter, machine IR, and retired wire path.
+- compile with the designated existing compiler when native files changed;
+- pass its focused tests;
+- leave no fallback to the removed representation;
+- report timing when it materially changes the compiler source closure;
+- exclude user-owned unrelated worktree changes.

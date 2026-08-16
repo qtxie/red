@@ -50,8 +50,8 @@ check-image: func [
 	check all [
 		(word-at artifact 0) = expected-size
 		(word-at artifact 4) = either entry? [3][1]
-		(word-at artifact 8) = either entry? [1][0]
-		(word-at artifact 12) = 1
+		(word-at artifact 8) = either entry? [2][0]
+		(word-at artifact 12) = either entry? [2][1]
 		(word-at artifact 16) = either entry? [1][0]
 		(word-at artifact 20) = either entry? [1][0]
 		(word-at artifact 28) = expected-code-offset
@@ -62,36 +62,50 @@ check-image: func [
 	check all [
 		(word-at artifact 44) = 0
 		(word-at artifact 48) = 2
-		(word-at artifact 52) = 0
-		(word-at artifact 56) = expected-code-size
+		(word-at artifact 52) = either entry? [31][0]
+		(word-at artifact 56) = (expected-code-size - (either entry? [31][0]))
 		(word-at artifact 60) = 32
 		(word-at artifact 64) = 0
 		(word-at artifact 68) = 16
 		(word-at artifact 72) = 0
 		(word-at artifact 76) = 0
 	][kind " " result " function record changed"]
-	metadata-size: either entry? [108][80]
-	names-start: metadata-size
-	check (copy/part at artifact (names-start + 1) 2) = #{666E}
-		[kind " " result " function name changed"]
 	if entry? [
 		check all [
 			(word-at artifact 80) = 2
-			(word-at artifact 84) = 12
-			(word-at artifact 88) = 14
-			(word-at artifact 92) = 11
-			(word-at artifact 96) = 1
-			(word-at artifact 100) = 1
-			(word-at artifact 104) = expected-exit-ref
-			(copy/part at artifact 111 12) = #{6B65726E656C33322E646C6C}
-			(copy/part at artifact 123 11) = #{4578697450726F63657373}
+			(word-at artifact 84) = 8
+			(word-at artifact 88) = 0
+			(word-at artifact 92) = 31
+			(word-at artifact 96) = 32
+			(word-at artifact 100) = 0
+			(word-at artifact 104) = 16
+			(word-at artifact 108) = 0
+			(word-at artifact 112) = 0
+		][kind " " result " module-body function record changed"]
+	]
+	metadata-size: either entry? [144][80]
+	names-start: metadata-size
+	check (copy/part at artifact (names-start + 1) either entry? [10][2]) =
+		either entry? [to binary! "fn***-main"][#{666E}]
+		[kind " " result " function names changed"]
+	if entry? [
+		check all [
+			(word-at artifact 116) = 10
+			(word-at artifact 120) = 12
+			(word-at artifact 124) = 22
+			(word-at artifact 128) = 11
+			(word-at artifact 132) = 1
+			(word-at artifact 136) = 1
+			(word-at artifact 140) = expected-exit-ref
+			(copy/part at artifact 155 12) = #{6B65726E656C33322E646C6C}
+			(copy/part at artifact 167 11) = #{4578697450726F63657373}
 		][kind " " result " import record changed"]
 	]
 	code-offset: word-at artifact 28
 	check (word-at artifact (code-offset + 9)) = 0
 		[kind " " result " bitmap word offset changed"]
 	if result = 'i32 [
-		check (word-at artifact (code-offset + 16)) = 7
+		check (word-at artifact (code-offset + (either entry? [47][16]))) = 7
 			[kind " i32 literal changed"]
 	]
 	if entry? [
@@ -105,9 +119,50 @@ check-image: func [
 ]
 
 check-image 'user 'void 132 17 96 0
-check-image 'glue 'void 192 31 144 23
+check-image 'glue 'void 256 48 192 23
 user-i32: check-image 'user 'i32 136 22 96 0
-glue-i32: check-image 'glue 'i32 196 34 144 26
+glue-i32: check-image 'glue 'i32 264 53 192 23
+
+module-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	red: context [
+		#import ["fixture.dll" stdcall [boot?: "boot?" [logic!]]]
+	]
+	red/boot?: yes
+] 'glue
+check binary? module-ir ["frontend rejected module-body import store: "
+	mold compiler-rsir-frontend/last-error]
+module-image: make binary! 4096
+check (codegen-module module-ir module-image 0) = 0
+	"module-body import store codegen failed"
+check all [
+	(length? module-image) = 252
+	(word-at module-image 8) = 1
+	(word-at module-image 12) = 1
+	(word-at module-image 16) = 2
+	(word-at module-image 20) = 2
+	(word-at module-image 24) = 47
+	(word-at module-image 28) = 192
+	(word-at module-image 32) = 44
+	(word-at module-image 52) = 0
+	(word-at module-image 56) = 44
+	(word-at module-image 80) = 8
+	(word-at module-image 88) = 19
+	(word-at module-image 92) = 5
+	(word-at module-image 96) = 1
+	(word-at module-image 104) = 24
+	(word-at module-image 112) = 36
+	(word-at module-image 116) = 11
+	(word-at module-image 120) = 2
+	(word-at module-image 128) = 18
+	(word-at module-image 132) = 36
+	(copy/part at module-image 137 47) =
+		to binary! "***-mainfixture.dllboot?kernel32.dllExitProcess"
+	(copy/part at module-image 193 44) = #{
+		554889E56A006A0068000000006A00488B0500000000C7000100000031C9
+		4883EC20FF150000000031C0C9C3
+	}
+]["module-body store image is not direct or contiguous"]
 
 typed-source: [
 	Red/System []
@@ -221,43 +276,46 @@ import-variable-image: make binary! 4096
 check (codegen-module import-variable-ir import-variable-image 0) = 0
 	"imported variable codegen failed"
 check all [
-	(length? import-variable-image) = 360
-	(word-at import-variable-image 8) = 2
-	(word-at import-variable-image 12) = 2
+	(length? import-variable-image) = 424
+	(word-at import-variable-image 8) = 3
+	(word-at import-variable-image 12) = 3
 	(word-at import-variable-image 16) = 3
 	(word-at import-variable-image 20) = 3
-	(word-at import-variable-image 24) = 61
-	(word-at import-variable-image 28) = 272
-	(word-at import-variable-image 32) = 70
+	(word-at import-variable-image 24) = 69
+	(word-at import-variable-image 28) = 320
+	(word-at import-variable-image 32) = 87
 	(word-at import-variable-image 36) = 16
 	(word-at import-variable-image 40) = 0
 ]["imported variable image header changed"]
 check all [
-	(word-at import-variable-image 52) = 44
+	(word-at import-variable-image 52) = 31
 	(word-at import-variable-image 56) = 26
-	(word-at import-variable-image 88) = 0
-	(word-at import-variable-image 92) = 44
+	(word-at import-variable-image 88) = 57
+	(word-at import-variable-image 92) = 30
 	(word-at import-variable-image 116) = 10
-	(word-at import-variable-image 124) = 21
-	(word-at import-variable-image 128) = 12
-	(word-at import-variable-image 132) = 1
-	(word-at import-variable-image 136) = 1
-	(word-at import-variable-image 140) = 10
-	(word-at import-variable-image 148) = 33
-	(word-at import-variable-image 152) = 5
-	(word-at import-variable-image 156) = 2
-	(word-at import-variable-image 160) = 1
-	(word-at import-variable-image 188) = 62
-	(word-at import-variable-image 192) = 18
-	(word-at import-variable-image 196) = 36
+	(word-at import-variable-image 124) = 0
+	(word-at import-variable-image 128) = 31
+	(word-at import-variable-image 152) = 18
+	(word-at import-variable-image 160) = 29
+	(word-at import-variable-image 164) = 12
+	(word-at import-variable-image 176) = 18
+	(word-at import-variable-image 184) = 41
+	(word-at import-variable-image 188) = 5
+	(word-at import-variable-image 200) = 46
+	(word-at import-variable-image 208) = 58
+	(word-at import-variable-image 212) = 11
+	(word-at import-variable-image 224) = 49
+	(word-at import-variable-image 228) = 75
+	(word-at import-variable-image 232) = 23
 ]["imported variable reference slices changed"]
-check (copy/part at import-variable-image 201 61) =
-	to binary! "readermainfixture.dllnative-valueboot?kernel32.dllExitProcess"
+check (copy/part at import-variable-image 237 69) =
+	to binary!
+		"readermain***-mainfixture.dllnative-valueboot?kernel32.dllExitProcess"
 	"imported variable names are not direct and contiguous"
-check (copy/part at import-variable-image 273 70) = #{
-	554889E56A006A0068000000006A00488B0500000000C7000100000031C9
-	4883EC20FF150000000031C0C9C3554889E56A006A0068000000006A0048
-	8B05000000008B00C9C3
+check (copy/part at import-variable-image 321 87) = #{
+	554889E56A006A0068000000006A0031C94883EC20FF150000000031C0C9C3
+	554889E56A006A0068000000006A00488B05000000008B00C9C3554889E56A
+	006A0068000000006A00488B0500000000C70001000000C9C3
 } "imported variable x64 encoding changed"
 
 global-ir: compiler-rsir-frontend/compile [
@@ -314,33 +372,37 @@ shared-global-image: make binary! 4096
 check (codegen-module shared-global-ir shared-global-image 0) = 0
 	"shared global load codegen failed"
 check all [
-	(length? shared-global-image) = 304
-	(word-at shared-global-image 8) = 2
-	(word-at shared-global-image 12) = 2
+	(length? shared-global-image) = 372
+	(word-at shared-global-image 8) = 3
+	(word-at shared-global-image 12) = 3
 	(word-at shared-global-image 16) = 1
 	(word-at shared-global-image 20) = 3
-	(word-at shared-global-image 24) = 39
-	(word-at shared-global-image 28) = 224
-	(word-at shared-global-image 32) = 58
+	(word-at shared-global-image 24) = 47
+	(word-at shared-global-image 28) = 272
+	(word-at shared-global-image 32) = 77
 	(word-at shared-global-image 36) = 20
 	(word-at shared-global-image 40) = 1
 ]["shared global image header changed"]
 check all [
-	(word-at shared-global-image 52) = 35
+	(word-at shared-global-image 52) = 31
 	(word-at shared-global-image 56) = 23
-	(word-at shared-global-image 88) = 0
-	(word-at shared-global-image 92) = 35
+	(word-at shared-global-image 88) = 54
+	(word-at shared-global-image 92) = 23
 	(word-at shared-global-image 116) = 10
-	(word-at shared-global-image 124) = 16
-	(word-at shared-global-image 132) = 1
-	(word-at shared-global-image 136) = 2
-	(word-at shared-global-image 156) = 3
-	(word-at shared-global-image 160) = 1
-	(word-at shared-global-image 164) = 52
-	(word-at shared-global-image 168) = 17
-	(word-at shared-global-image 172) = 27
-	(copy/part at shared-global-image 177 39) =
-		to binary! "helpermainanswerkernel32.dllExitProcess"
+	(word-at shared-global-image 124) = 0
+	(word-at shared-global-image 128) = 31
+	(word-at shared-global-image 152) = 18
+	(word-at shared-global-image 160) = 16
+	(word-at shared-global-image 168) = 1
+	(word-at shared-global-image 172) = 2
+	(word-at shared-global-image 176) = 24
+	(word-at shared-global-image 184) = 36
+	(word-at shared-global-image 192) = 3
+	(word-at shared-global-image 200) = 48
+	(word-at shared-global-image 204) = 71
+	(word-at shared-global-image 208) = 23
+	(copy/part at shared-global-image 213 47) =
+		to binary! "helpermain***-mainanswerkernel32.dllExitProcess"
 ]["shared global reference slice is not direct and contiguous"]
 
 import-call-ir: compiler-rsir-frontend/compile [
@@ -356,41 +418,43 @@ import-call-image: make binary! 4096
 check (codegen-module import-call-ir import-call-image 0) = 0
 	"imported call codegen failed"
 check all [
-	(length? import-call-image) = 252
-	(word-at import-call-image 8) = 1
-	(word-at import-call-image 12) = 1
+	(length? import-call-image) = 320
+	(word-at import-call-image 8) = 2
+	(word-at import-call-image 12) = 2
 	(word-at import-call-image 16) = 2
 	(word-at import-call-image 20) = 2
-	(word-at import-call-image 24) = 47
-	(word-at import-call-image 28) = 192
-	(word-at import-call-image 32) = 42
+	(word-at import-call-image 24) = 55
+	(word-at import-call-image 28) = 240
+	(word-at import-call-image 32) = 63
 	(word-at import-call-image 40) = 0
 ]["imported call image header changed"]
 check all [
 	(word-at import-call-image 44) = 0
 	(word-at import-call-image 48) = 2
-	(word-at import-call-image 52) = 0
-	(word-at import-call-image 56) = 42
+	(word-at import-call-image 52) = 31
+	(word-at import-call-image 56) = 32
 	(word-at import-call-image 80) = 2
-	(word-at import-call-image 84) = 11
-	(word-at import-call-image 88) = 13
-	(word-at import-call-image 92) = 11
-	(word-at import-call-image 96) = 1
-	(word-at import-call-image 100) = 1
-	(word-at import-call-image 104) = 24
-	(word-at import-call-image 108) = 12
-	(word-at import-call-image 112) = 36
-	(word-at import-call-image 116) = 11
-	(word-at import-call-image 120) = 2
-	(word-at import-call-image 124) = 1
-	(word-at import-call-image 128) = 26
-	(word-at import-call-image 132) = 34
+	(word-at import-call-image 84) = 8
+	(word-at import-call-image 88) = 0
+	(word-at import-call-image 92) = 31
+	(word-at import-call-image 116) = 10
+	(word-at import-call-image 124) = 21
+	(word-at import-call-image 128) = 11
+	(word-at import-call-image 132) = 1
+	(word-at import-call-image 140) = 32
+	(word-at import-call-image 148) = 44
+	(word-at import-call-image 152) = 11
+	(word-at import-call-image 156) = 2
+	(word-at import-call-image 164) = 57
+	(word-at import-call-image 168) = 23
 ]["imported call records or reference slices changed"]
-check (copy/part at import-call-image 137 47) =
-	to binary! "fnfixture.dllnative-callkernel32.dllExitProcess"
+check (copy/part at import-call-image 173 55) =
+	to binary! "fn***-mainfixture.dllnative-callkernel32.dllExitProcess"
 	"imported call names are not direct and contiguous"
-check (copy/part at import-call-image 193 42) =
-	#{554889E56A006A0068000000006A004883EC20B907000000FF150000000089C1FF150000000031C0C9C3}
+check (copy/part at import-call-image 241 63) = #{
+	554889E56A006A0068000000006A0031C94883EC20FF150000000031C0C9C3
+	554889E56A006A0068000000006A004883EC20B907000000FF1500000000C9C3
+}
 	"imported call machine encoding changed"
 
 group-import-ir: compiler-rsir-frontend/compile [
@@ -409,24 +473,26 @@ group-import-image: make binary! 4096
 check (codegen-module group-import-ir group-import-image 0) = 0
 	"grouped imported call codegen failed"
 check all [
-	(length? group-import-image) = 336
-	(word-at group-import-image 8) = 2
-	(word-at group-import-image 12) = 2
+	(length? group-import-image) = 408
+	(word-at group-import-image 8) = 3
+	(word-at group-import-image 12) = 3
 	(word-at group-import-image 16) = 3
 	(word-at group-import-image 20) = 3
-	(word-at group-import-image 24) = 55
-	(word-at group-import-image 28) = 256
-	(word-at group-import-image 32) = 64
-	(word-at group-import-image 116) = 10
-	(word-at group-import-image 128) = 5
-	(word-at group-import-image 140) = 10
-	(word-at group-import-image 152) = 6
-	(word-at group-import-image 188) = 58
-	(word-at group-import-image 192) = 21
-	(word-at group-import-image 196) = 29
+	(word-at group-import-image 24) = 63
+	(word-at group-import-image 28) = 304
+	(word-at group-import-image 32) = 85
+	(word-at group-import-image 152) = 18
+	(word-at group-import-image 164) = 5
+	(word-at group-import-image 176) = 18
+	(word-at group-import-image 188) = 6
+	(word-at group-import-image 200) = 40
+	(word-at group-import-image 212) = 11
+	(word-at group-import-image 224) = 52
+	(word-at group-import-image 228) = 79
+	(word-at group-import-image 232) = 23
 ]["grouped imports duplicated their library or lost a reference"]
-check (copy/part at group-import-image 201 55) =
-	to binary! "helpermainfixture.dllfirstsecondkernel32.dllExitProcess"
+check (copy/part at group-import-image 237 63) =
+	to binary! "helpermain***-mainfixture.dllfirstsecondkernel32.dllExitProcess"
 	"grouped imported names are not compact"
 
 forward-import-ir: compiler-rsir-frontend/compile [
@@ -443,16 +509,25 @@ forward-import-image: make binary! 4096
 check (codegen-module forward-import-ir forward-import-image 0) = 0
 	"imported parameter-forwarding codegen failed"
 check all [
-	(length? forward-import-image) = 324
+	(length? forward-import-image) = 376
+	(word-at forward-import-image 8) = 3
+	(word-at forward-import-image 12) = 3
 	(word-at forward-import-image 16) = 2
 	(word-at forward-import-image 20) = 2
-	(word-at forward-import-image 24) = 54
-	(word-at forward-import-image 28) = 240
-	(word-at forward-import-image 32) = 68
-	(word-at forward-import-image 52) = 41
+	(word-at forward-import-image 24) = 62
+	(word-at forward-import-image 28) = 272
+	(word-at forward-import-image 32) = 85
+	(word-at forward-import-image 52) = 31
 	(word-at forward-import-image 56) = 27
-	(word-at forward-import-image 164) = 62
-	(word-at forward-import-image 168) = 33
+	(word-at forward-import-image 88) = 58
+	(word-at forward-import-image 92) = 27
+	(word-at forward-import-image 116) = 9
+	(word-at forward-import-image 124) = 0
+	(word-at forward-import-image 128) = 31
+	(word-at forward-import-image 200) = 52
+	(word-at forward-import-image 204) = 23
+	(copy/part at forward-import-image 209 62) =
+		to binary! "relaymain***-mainfixture.dllnative-callkernel32.dllExitProcess"
 ]["imported parameter forwarding lost its code or relocation"]
 
 layout-source: [
@@ -569,31 +644,33 @@ check binary? call-ir ["frontend rejected multi-function call: "
 call-image: make binary! 4096
 check (codegen-module call-ir call-image 0) = 0 "multi-function codegen failed"
 check all [
-	(length? call-image) = 268
-	(word-at call-image 8) = 2
-	(word-at call-image 12) = 2
+	(length? call-image) = 316
+	(word-at call-image 8) = 3
+	(word-at call-image 12) = 3
 	(word-at call-image 20) = 1
-	(word-at call-image 24) = 33
-	(word-at call-image 28) = 192
-	(word-at call-image 32) = 58
+	(word-at call-image 24) = 41
+	(word-at call-image 28) = 224
+	(word-at call-image 32) = 75
 ]["multi-function image header changed"]
 check all [
 	(word-at call-image 44) = 0
 	(word-at call-image 48) = 6
-	(word-at call-image 52) = 36
+	(word-at call-image 52) = 31
 	(word-at call-image 56) = 22
 	(word-at call-image 80) = 6
 	(word-at call-image 84) = 4
-	(word-at call-image 88) = 0
-	(word-at call-image 92) = 36
+	(word-at call-image 88) = 53
+	(word-at call-image 92) = 22
+	(word-at call-image 116) = 10
+	(word-at call-image 124) = 0
+	(word-at call-image 128) = 31
 ]["multi-function code layout changed"]
 check all [
-	(word-at call-image 116) = 10
-	(word-at call-image 124) = 22
-	(word-at call-image 140) = 28
-	(copy/part at call-image 145 10) = #{68656C7065726D61696E}
-	(word-at call-image (192 + 16)) = 16
-	(word-at call-image (192 + 36 + 16)) = 41
+	(word-at call-image 176) = 23
+	(copy/part at call-image 181 41) =
+		to binary! "helpermain***-mainkernel32.dllExitProcess"
+	(word-at call-image (224 + 31 + 16)) = 41
+	(copy/part at call-image (224 + 53 + 16 + 1) 4) = #{D6FFFFFF}
 ]["direct call encoding or names changed"]
 
 context-source: [
@@ -610,19 +687,21 @@ check binary? context-ir ["frontend rejected context calls: "
 context-image: make binary! 4096
 check (codegen-module context-ir context-image 0) = 0 "context codegen failed"
 check all [
-	(length? context-image) = 336
-	(word-at context-image 8) = 3
-	(word-at context-image 12) = 3
-	(word-at context-image 24) = 59
-	(word-at context-image 28) = 240
-	(word-at context-image 32) = 80
-	(word-at context-image 52) = 36
-	(word-at context-image 88) = 58
-	(word-at context-image 124) = 0
-	(word-at context-image 176) = 28
-	(word-at context-image (240 + 16)) = 38
-	(word-at context-image (240 + 36 + 16)) = 42
-	(copy/part at context-image (240 + 58 + 16 + 1) 4) = #{D6FFFFFF}
+	(length? context-image) = 404
+	(word-at context-image 8) = 4
+	(word-at context-image 12) = 4
+	(word-at context-image 24) = 67
+	(word-at context-image 28) = 288
+	(word-at context-image 32) = 97
+	(word-at context-image 52) = 31
+	(word-at context-image 88) = 53
+	(word-at context-image 124) = 75
+	(word-at context-image 160) = 0
+	(word-at context-image 164) = 31
+	(word-at context-image 212) = 23
+	(word-at context-image (288 + 31 + 16)) = 42
+	(copy/part at context-image (288 + 53 + 16 + 1) 4) = #{D6FFFFFF}
+	(copy/part at context-image (288 + 75 + 16 + 1) 4) = #{D6FFFFFF}
 ]["context code layout or relative calls changed"]
 
 parameter-source: [
@@ -638,30 +717,34 @@ parameter-image: make binary! 4096
 check (codegen-module parameter-ir parameter-image 0) = 0
 	"one-parameter codegen failed"
 check all [
-	(length? parameter-image) = 268
-	(word-at parameter-image 8) = 2
-	(word-at parameter-image 12) = 2
+	(length? parameter-image) = 320
+	(word-at parameter-image 8) = 3
+	(word-at parameter-image 12) = 3
 	(word-at parameter-image 20) = 1
-	(word-at parameter-image 24) = 33
-	(word-at parameter-image 28) = 192
-	(word-at parameter-image 32) = 60
+	(word-at parameter-image 24) = 41
+	(word-at parameter-image 28) = 224
+	(word-at parameter-image 32) = 77
 ]["one-parameter image header changed"]
 check all [
 	(word-at parameter-image 44) = 0
 	(word-at parameter-image 48) = 6
-	(word-at parameter-image 52) = 41
+	(word-at parameter-image 52) = 31
 	(word-at parameter-image 56) = 19
 	(word-at parameter-image 80) = 6
 	(word-at parameter-image 84) = 4
-	(word-at parameter-image 88) = 0
-	(word-at parameter-image 92) = 41
-	(word-at parameter-image 140) = 33
-	(copy/part at parameter-image 145 10) = #{68656C7065726D61696E}
+	(word-at parameter-image 88) = 50
+	(word-at parameter-image 92) = 27
+	(word-at parameter-image 116) = 10
+	(word-at parameter-image 124) = 0
+	(word-at parameter-image 128) = 31
+	(word-at parameter-image 176) = 23
+	(copy/part at parameter-image 181 41) =
+		to binary! "helpermain***-mainkernel32.dllExitProcess"
 ]["one-parameter metadata changed"]
 check all [
-	(word-at parameter-image (192 + 16)) = 42
-	(word-at parameter-image (192 + 21)) = 16
-	(copy/part at parameter-image (192 + 41 + 16) 2) = #{89C8}
+	(copy/part at parameter-image (224 + 31 + 15 + 1) 2) = #{89C8}
+	(word-at parameter-image (224 + 50 + 16)) = 42
+	(copy/part at parameter-image (224 + 50 + 21 + 1) 4) = #{D4FFFFFF}
 ]["one-parameter ABI encoding changed"]
 
 forward-parameter-source: [
@@ -679,22 +762,24 @@ forward-parameter-image: make binary! 4096
 check (codegen-module forward-parameter-ir forward-parameter-image 0) = 0
 	"parameter-forwarding codegen failed"
 check all [
-	(length? forward-parameter-image) = 324
-	(word-at forward-parameter-image 8) = 3
-	(word-at forward-parameter-image 12) = 3
-	(word-at forward-parameter-image 24) = 40
-	(word-at forward-parameter-image 28) = 224
-	(word-at forward-parameter-image 32) = 82
-	(word-at forward-parameter-image 52) = 41
-	(word-at forward-parameter-image 88) = 60
-	(word-at forward-parameter-image 124) = 0
-	(word-at forward-parameter-image 176) = 33
+	(length? forward-parameter-image) = 388
+	(word-at forward-parameter-image 8) = 4
+	(word-at forward-parameter-image 12) = 4
+	(word-at forward-parameter-image 24) = 48
+	(word-at forward-parameter-image 28) = 272
+	(word-at forward-parameter-image 32) = 99
+	(word-at forward-parameter-image 52) = 31
+	(word-at forward-parameter-image 88) = 50
+	(word-at forward-parameter-image 124) = 72
+	(word-at forward-parameter-image 160) = 0
+	(word-at forward-parameter-image 164) = 31
+	(word-at forward-parameter-image 212) = 23
 ]["parameter-forwarding metadata changed"]
 check all [
-	(word-at forward-parameter-image (224 + 16)) = 42
-	(word-at forward-parameter-image (224 + 21)) = 35
-	(copy/part at forward-parameter-image (224 + 41 + 16) 2) = #{89C8}
-	(copy/part at forward-parameter-image (224 + 60 + 16) 5) = #{E8D9FFFFFF}
+	(copy/part at forward-parameter-image (272 + 31 + 15 + 1) 2) = #{89C8}
+	(copy/part at forward-parameter-image (272 + 50 + 16) 5) = #{E8D9FFFFFF}
+	(word-at forward-parameter-image (272 + 72 + 16)) = 42
+	(copy/part at forward-parameter-image (272 + 72 + 21 + 1) 4) = #{D1FFFFFF}
 ]["parameter-forwarding ABI encoding changed"]
 
 ir: first generate 'glue 'i32

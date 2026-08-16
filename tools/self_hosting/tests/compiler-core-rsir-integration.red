@@ -4,6 +4,7 @@ Red [
 
 #include %../../../system/compiler-windows-common.red
 #include %../../../compiler/rsir-frontend.red
+#include %../../../compiler/codegen-bridge.red
 #include %../../../system/compiler-rsir-core.red
 
 red-compiler-process-get: func [spec code [block!]][false]
@@ -57,9 +58,9 @@ artifact: system-dialect/last-rsir
 check binary? artifact "RSIR core did not return RSIR"
 artifact-size: length? artifact
 artifact-hash: checksum artifact 'SHA256
-check artifact-size = 74 ["RSIR core output size changed: " artifact-size]
+check artifact-size = 126 ["RSIR core output size changed: " artifact-size]
 check artifact-hash =
-	#{816328BF27E97F6E0529C47FFA49F13F86F718AAEE3B9DA43EF46F3D4B50936A}
+	#{5C54348AB3717FA600A8BAE4880AF7434A78E3E37BE8FE549B86DE50122E6EE9}
 	["RSIR core bytes differ from the independent fixture: size=" artifact-size
 		" hash=" mold artifact-hash]
 check none? system-dialect/last-result "RSIR compile published a legacy linker result"

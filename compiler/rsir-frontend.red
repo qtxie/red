@@ -30,6 +30,7 @@ compiler-rsir-frontend: context [
 	import-ids: make hash! 256
 	globals: make hash! 1024
 	global-data: make block! 1024
+	module-code: make binary! 256
 	function-count: 0
 	type-count: 0
 	import-count: 0
@@ -502,7 +503,46 @@ compiler-rsir-frontend: context [
 		after
 	]
 
-	prepare-globals: func [
+	compile-import-set: func [
+		position scope uses [block!]
+		instructions [binary!]
+		/local target id record kind value
+	][
+		unless all [
+			(length? position) >= 2
+			any [set-word? position/1 set-path? position/1]
+		][fail ERROR-UNSUPPORTED "imported variable assignment is incomplete"]
+		target: either set-word? position/1 [
+			to word! position/1
+		][to path! position/1]
+		id: resolve-name target scope uses import-ids
+		unless integer? id [
+			fail ERROR-REFERENCE ["unknown imported variable " mold target]
+		]
+		record: skip imports ((id - 1) * 10)
+		unless record/5 = 'variable [
+			fail ERROR-REFERENCE ["import " mold target " is not a variable"]
+		]
+		kind: type-kind record/4 record/6 record/7
+		value: position/2
+		case [
+			all [find [i32 u32] kind integer? value] []
+			all [
+				kind = 'logic
+				any [logic? value all [word? value find [true false yes no] value]]
+			][value: either any [value = true find [true yes] value][1][0]]
+			true [
+				fail ERROR-UNSUPPORTED [
+					"imported variable store is not a 32-bit scalar: "
+					mold copy/part position 2
+				]
+			]
+		]
+		emit instructions reduce [8 0 id value]
+		skip position 2
+	]
+
+	compile-module: func [
 		values scope uses [block!]
 		/local position name child target next-uses
 	][
@@ -551,7 +591,7 @@ compiler-rsir-frontend: context [
 				][
 					name: to word! position/1
 					child: append copy scope name
-					prepare-globals position/3 child uses
+					compile-module position/3 child uses
 					position: skip position 3
 				]
 				all [
@@ -566,11 +606,14 @@ compiler-rsir-frontend: context [
 					]
 					next-uses: copy/deep uses
 					append/only next-uses child
-					prepare-globals position/3 scope next-uses
+					compile-module position/3 scope next-uses
 					position: skip position 3
 				]
 				all [set-word? position/1 (length? position) >= 2][
 					position: set-global position scope uses
+				]
+				all [set-path? position/1 (length? position) >= 2][
+					position: compile-import-set position scope uses module-code
 				]
 				true [
 					fail ERROR-UNSUPPORTED [
@@ -581,6 +624,24 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	add-module-function: func [/local key][
+		key: to word! "***-main"
+		if any [
+			select function-ids key
+			select import-ids key
+			select globals key
+		][fail ERROR-DUPLICATE "***-main is reserved for the module body"]
+		append/only functions to binary! "***-main"
+		append/only functions copy []
+		append/only functions module-code
+		append/only functions copy []
+		append/only functions copy []
+		append functions 0
+		append/only functions copy []
+		append functions 0
+		function-count: function-count + 1
+	]
+
 	compile-body: func [
 		return-ref [integer!]
 		body [block!]
@@ -589,7 +650,7 @@ compiler-rsir-frontend: context [
 		params [block!]
 		flags [integer!]
 		/local expression value callee global-id position callee-params argument type ref
-			target kind
+			kind
 			callee-return callee-flags param-count argument-id result-id before
 	][
 		before: length? instructions
@@ -604,34 +665,7 @@ compiler-rsir-frontend: context [
 					(length? body) = 2
 					any [set-word? body/1 set-path? body/1]
 				][
-					target: either set-word? body/1 [
-						to word! body/1
-					][to path! body/1]
-					callee: resolve-name target scope uses import-ids
-					unless integer? callee [
-						fail ERROR-REFERENCE ["unknown imported variable " mold target]
-					]
-					position: skip imports ((callee - 1) * 10)
-					unless position/5 = 'variable [
-						fail ERROR-REFERENCE ["import " mold target " is not a variable"]
-					]
-					kind: type-kind position/4 position/6 position/7
-					value: body/2
-					case [
-						all [find [i32 u32] kind integer? value] []
-						all [
-							kind = 'logic
-							any [logic? value all [word? value find [true false yes no] value]]
-						][value: either any [value = true find [true yes] value][1][0]]
-						true [
-							fail ERROR-UNSUPPORTED [
-								"imported variable store is not a 32-bit scalar: " mold body
-							]
-						]
-					]
-					emit instructions reduce [
-						8 0 callee value                  ; store imported scalar
-					]
+					compile-import-set body scope uses instructions
 				]
 				true [
 					fail ERROR-UNSUPPORTED "void function body is not lowered yet"
@@ -1128,7 +1162,14 @@ compiler-rsir-frontend: context [
 		scan-block skip source 2 copy [] copy []
 		prepare-functions
 		prepare-imports
-		prepare-globals skip source 2 copy [] copy []
+		compile-module skip source 2 copy [] copy []
+		if module-kind = 3 [
+			emit module-code [2 0 0 0]
+			add-module-function
+		]
+		if all [module-kind <> 3 not empty? module-code][
+			fail ERROR-UNSUPPORTED "runtime module body requires a glue module"
+		]
 		if function-count < 1 [
 			fail ERROR-FUNCTION-COUNT "RSIR module has no function"
 		]
@@ -1340,7 +1381,13 @@ compiler-rsir-frontend: context [
 			uses: position/5
 			params: position/7
 			flags: position/8
-			count: compile-body position/6 body scope uses output params flags
+			count: either binary? body [
+				unless ((length? body) // 16) = 0 [
+					fail ERROR-UNSUPPORTED "invalid module instruction stream"
+				]
+				append output body
+				(length? body) / 16
+			][compile-body position/6 body scope uses output params flags]
 			record-offset: function-records + ((id - 1) * 28)
 			change/part at output (record-offset + 24)
 				int-to-bin/to-bin32 count 4
@@ -1393,6 +1440,7 @@ compiler-rsir-frontend: context [
 			clear import-ids
 			clear globals
 			clear global-data
+			clear module-code
 			function-count: 0
 			type-count: 0
 			import-count: 0

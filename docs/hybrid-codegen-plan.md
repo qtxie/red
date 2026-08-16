@@ -43,8 +43,12 @@ The current narrow slice accepts source-ordered `() -> void`, `() -> i32`, and
 `(i32) -> i32` functions. Scalar aliases such as `node-handle!: alias integer!`
 resolve in lexical, path, and `with` scopes. An `i32` body can return a literal
 or parameter, or directly call another supported function with zero arguments
-or one literal/parameter argument. Glue modules use the last declared function
-as their explicit entry ID; codegen still places that entry at code offset zero.
+or one literal/parameter argument. Glue modules append an ordinary `() -> void`
+module-body function named `***-main`. The header points to that function and
+codegen places it at code offset zero without renumbering source functions.
+Static declarations and runtime module operations are consumed in the same
+source traversal; the latter are already final RSIR instructions, not an
+initializer adapter or a second IR.
 Function declarations may live in nested `context` blocks; short names,
 explicit context paths, and `with` lookup scopes resolve to the same
 `>`-decorated symbol style used by Red/System. This slice proves the
@@ -63,12 +67,13 @@ layout directly and passes the resulting size to the existing integer encoder.
 - `system/codegen/x64-encoder.reds` writes x64 bytes into the reserved output.
 - `system/linker.red/load-codegen` loads the image directly into linker state.
 
-For the current slice, empty-void and i32 RSIR are 74 and 90 bytes. A GLUE i32
-native image is 196 bytes. The two-function `main -> helper -> 41` sample is
-158 RSIR bytes; the typed `main -> identity 42` sample is 186 bytes. Both
-produce 268-byte native images. Their generated PEs exit with status 41 and 42
-respectively. The previous hybrid checkpoint compiled and linked the
-zero-argument sample in 114.8 ms.
+For the current slice, USER empty-void and i32 RSIR are 74 and 90 bytes; their
+native images are 132 and 136 bytes. The corresponding GLUE streams are 126
+and 142 bytes because they also contain the ordinary module-body entry; their
+native images are 256 and 264 bytes. The two-source-function
+`main -> helper -> 41` sample is 210 RSIR bytes and produces a 316-byte image.
+The source call remains directly encoded, while the actual module entry returns
+zero because no top-level expression invokes that source function.
 
 The designated existing compiler built the multi-function current hybrid entry
 in 90.1 seconds: 14.9 seconds frontend, 63.8 seconds native compilation, and
@@ -309,17 +314,18 @@ The implementation order is driven by the actual generated self-host source,
 not isolated language examples; H0 scope still includes every Red/System
 feature and the full Red/System suite. A fresh `--red-only` generation of the direct
 hybrid source is 2,961,043 bytes. After includes and macros are expanded by the
-real Red/System loader, the structured audit finds 538 defined functions, 62
-contexts, 725 imported symbols, 79 aliases, 14 enums, 4,336 global assignments,
-and 4,288 unique global names. The imports comprise 57 source library groups,
+real Red/System loader, the structured audit finds 540 defined functions, 62
+contexts, 725 imported symbols, 79 aliases, 14 enums, 4,346 global assignments,
+and 4,298 unique global names. The imports comprise 57 source library groups,
 712 functions, 13 variables, and 856 parameters. The dominant parameter type is `node-handle!`;
 some signatures use Red/System's shared-type form, such as
 `value argument [integer!]`. Context depth is at most two, while functions have
 up to 88 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 550 ms under the interpreter after loading. Static scalar casts now
-continue through native layout and the linker; the complete corpus stops at its
-first runtime set-path assignment, `red/boot?: yes`.
+about 550 ms under the interpreter after loading. Static scalar casts and the
+first runtime set-path assignment, `red/boot?: yes`, now continue through native
+layout and the linker. The complete corpus next stops at the dynamic initializer
+`_body: red/word/load "<body>"`.
 
 After that deliberate stop, the same audit serializes every current logical
 type without compiling bodies: 93 source-order type records and 424 member
@@ -385,12 +391,14 @@ globals carry a logical type plus two value words. Native codegen computes their
 target layout, writes their data directly, and gives the linker direct global
 records.
 General call ABI lowering, pointer/non-32-bit imported-variable access,
-non-scalar and dynamic initializers, global stores and non-i32 accesses,
+non-scalar and dynamic initializers, static-global stores and non-i32 accesses,
 constants, and empty static-library registration groups remain pending. The
-first real corpus operation after declarations is `red/boot?: yes`; its native
-logic store is implemented, while routing top-level expressions through the
-normal module-body instruction stream remains next. There will be no second
-initializer protocol.
+first real runtime operation, `red/boot?: yes`, is emitted directly into the
+ordinary module-body function during the same traversal that folds static
+globals. The module-only fixture is 144 RSIR bytes and produces a 252-byte
+native image with one function and two instructions. There is no second
+initializer protocol; the next real-corpus operation is the dynamic call in
+`_body: red/word/load "<body>"`.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

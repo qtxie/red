@@ -51,6 +51,14 @@ compiler-rsir-frontend: context [
 		alias -1 struct -2 union -3 function -4 subroutine -5
 	]
 
+	return-value-flag: 4
+	variadic-flag: 8
+	typed-flag: 16
+	custom-flag: 32
+	callback-flag: 64
+	objc-flag: 128
+	catch-flag: 256
+
 	emit: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
 	]
@@ -225,24 +233,208 @@ compiler-rsir-frontend: context [
 		id
 	]
 
+	type-flags: func [type [block!] scope uses [block!] /local kind][
+		either all [(length? type) = 2 type/2 = 'value][
+			unless find [struct union] kind: type-kind type scope uses [
+				fail ERROR-UNSUPPORTED "only aggregate types can be passed by value"
+			]
+			1
+		][0]
+	]
+
+	integer32-ref?: func [ref [integer!] /local record kind name steps][
+		if ref < 0 [return any [ref = -5 ref = -6]]
+		if any [ref = 0 ref > type-count][return false]
+		steps: 0
+		while [steps < type-count][
+			record: skip types ((ref - 1) * 5)
+			kind: record/2
+			if find [i32 u32] kind [return true]
+			unless kind = 'alias [return false]
+			name: record/3
+			if all [word? name kind: select type-kinds name][
+				return to logic! find [i32 u32] kind
+			]
+			unless ref: resolve-name name record/4 record/5 type-ids [return false]
+			steps: steps + 1
+		]
+		false
+	]
+
+	signature-flags: func [attributes [block!] /local flags convention item bit][
+		if (length? attributes) > 2 [
+			fail ERROR-UNSUPPORTED "too many function attributes"
+		]
+		if all [
+			(length? attributes) = 2
+			attributes/1 = attributes/2
+		][fail ERROR-UNSUPPORTED "duplicate function attribute"]
+		flags: 0
+		convention: 0
+		foreach item attributes [
+			unless word? item [fail ERROR-UNSUPPORTED "invalid function attribute"]
+			bit: 0
+			case [
+				item = 'cdecl [
+					if convention <> 0 [
+						fail ERROR-UNSUPPORTED "conflicting calling conventions"
+					]
+					convention: 1
+				]
+				item = 'stdcall [
+					if convention <> 0 [
+						fail ERROR-UNSUPPORTED "conflicting calling conventions"
+					]
+					convention: 2
+				]
+				item = 'variadic [bit: variadic-flag]
+				item = 'typed [bit: typed-flag]
+				item = 'custom [bit: custom-flag]
+				item = 'callback [bit: callback-flag]
+				item = 'objc [bit: objc-flag]
+				item = 'catch [bit: catch-flag]
+				item = 'infix []
+				item = 'red-internal []
+				true [fail ERROR-UNSUPPORTED ["unknown function attribute " mold item]]
+			]
+			if all [
+				bit >= variadic-flag
+				bit <= custom-flag
+				(flags and (variadic-flag + typed-flag + custom-flag)) <> 0
+			][fail ERROR-UNSUPPORTED "conflicting variable-arity attributes"]
+			flags: flags + bit
+		]
+		flags + convention
+	]
+
+	read-signature: func [
+		spec scope uses [block!]
+		/local position names-start item name type params names flags ref type-flags-value
+			return-ref value? locals?
+	][
+		position: spec
+		if all [not tail? position string? position/1][position: next position]
+		flags: 0
+		if all [not tail? position block? position/1][
+			flags: signature-flags position/1
+			position: next position
+		]
+		if all [not tail? position string? position/1][position: next position]
+		if all [not tail? position position/1 = 'red-internal][position: next position]
+
+		params: make block! 12
+		names: make hash! 16
+		return-ref: 0
+		value?: false
+		locals?: false
+		while [not tail? position][
+			item: position/1
+			case [
+				refinement? item [
+					unless all [item = /local not locals?][
+						fail ERROR-UNSUPPORTED "function refinement is unsupported"
+					]
+					locals?: true
+					position: next position
+				]
+				all [set-word? item not locals?][
+					unless all [
+						item = to set-word! 'return
+						not value?
+						(length? position) >= 2
+						block? position/2
+					][fail ERROR-UNSUPPORTED "invalid function return type"]
+					type: position/2
+					return-ref: type-ref type scope uses
+					if (type-flags type scope uses) = 1 [
+						flags: flags + return-value-flag
+					]
+					value?: true
+					position: skip position 2
+					if all [not tail? position string? position/1][position: next position]
+				]
+				word? item [
+					if all [value? not locals?][
+						fail ERROR-UNSUPPORTED "function parameter follows its return type"
+					]
+					names-start: position
+					while [all [not tail? position word? position/1]][
+						name: position/1
+						if select names name [
+							fail ERROR-UNSUPPORTED "duplicate function variable"
+						]
+						repend names [name true]
+						position: next position
+					]
+					either locals? [
+						if all [not tail? position block? position/1][
+							type-ref position/1 scope uses
+							type-flags position/1 scope uses
+							position: next position
+						]
+					][
+						unless all [not tail? position block? position/1][
+							fail ERROR-UNSUPPORTED "function parameter is missing its type"
+						]
+						type: position/1
+						ref: type-ref type scope uses
+						type-flags-value: type-flags type scope uses
+						while [names-start <> position][
+							repend params [names-start/1 ref type-flags-value]
+							names-start: next names-start
+						]
+						position: next position
+					]
+					if all [not tail? position string? position/1][position: next position]
+				]
+				true [fail ERROR-UNSUPPORTED "function signature is unsupported"]
+			]
+		]
+		reduce [return-ref params flags]
+	]
+
+	prepare-functions: func [/local record signature][
+		record: functions
+		while [not tail? record][
+			signature: read-signature record/2 record/4 record/5
+			record/6: signature/1
+			record/7: signature/2
+			record/8: signature/3
+			record: skip record 8
+		]
+	]
+
 	compile-body: func [
-		kind [word!]
+		return-ref [integer!]
 		body [block!]
 		scope uses [block!]
 		instructions [binary!]
 		params [block!]
+		flags [integer!]
 		/local expression value callee position callee-params argument type ref
 			param-count argument-id result-id before
 	][
 		before: length? instructions
-		either kind = 'void [
+		param-count: (length? params) / 3
+		either return-ref = 0 [
+			unless empty? params [
+				fail ERROR-UNSUPPORTED "void parameters are not lowered yet"
+			]
 			unless empty? body [
 				fail ERROR-UNSUPPORTED "void function body must be empty"
 			]
 			emit instructions [2 0 0 0]                ; return void
 		][
+			unless all [
+				integer32-ref? return-ref
+				(flags and return-value-flag) = 0
+				param-count <= 1
+				any [
+					empty? params
+					all [integer32-ref? params/2 params/3 = 0]
+				]
+			][fail ERROR-UNSUPPORTED "function body signature is not lowered yet"]
 			expression: either all [not empty? body body/1 = 'return][next body][body]
-			param-count: (length? params) / 2
 			result-id: 0
 			case [
 				all [not empty? expression expression/1 = 'size?][
@@ -287,10 +479,11 @@ compiler-rsir-frontend: context [
 						unless integer? callee [
 							fail ERROR-REFERENCE ["unknown value or function " mold value]
 						]
-						position: skip functions ((callee - 1) * 7)
+						position: skip functions ((callee - 1) * 8)
 						callee-params: position/7
 						unless all [
-							position/6 = 'i32
+							integer32-ref? position/6
+							(position/8 and return-value-flag) = 0
 							empty? callee-params
 						][
 							fail ERROR-REFERENCE [
@@ -315,11 +508,14 @@ compiler-rsir-frontend: context [
 					unless integer? callee [
 						fail ERROR-REFERENCE ["unknown function " mold value]
 					]
-					position: skip functions ((callee - 1) * 7)
+					position: skip functions ((callee - 1) * 8)
 					callee-params: position/7
 					unless all [
-						position/6 = 'i32
-						(length? callee-params) = 2
+						integer32-ref? position/6
+						(position/8 and return-value-flag) = 0
+						(length? callee-params) = 3
+						integer32-ref? callee-params/2
+						callee-params/3 = 0
 					][
 						fail ERROR-REFERENCE [
 							"function " mold value " does not take one argument and return i32"
@@ -562,6 +758,7 @@ compiler-rsir-frontend: context [
 					append/only functions copy/deep uses
 					append functions none
 					append functions none
+					append functions none
 					function-count: id
 					position: skip position 4
 				]
@@ -628,6 +825,7 @@ compiler-rsir-frontend: context [
 		]
 
 		scan-block skip source 2 copy [] copy []
+		prepare-functions
 		unless empty? global-blocks [
 			fail ERROR-UNSUPPORTED "global code lowering is unsupported"
 		]
@@ -636,9 +834,10 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	write-types: func [type-output fields [binary!] /local position kind spec scope uses
-		field field-type ref flags count code
+	write-types: func [type-output members [binary!] /local position kind spec scope uses
+		field field-type ref flags count code first signature params parameter
 	][
+		first: 0
 		position: types
 		while [not tail? position][
 			kind: position/2
@@ -648,6 +847,8 @@ compiler-rsir-frontend: context [
 					emit type-output reduce [
 						code
 						type-ref reduce [position/3] position/4 position/5
+						0
+						first
 						0
 					]
 				]
@@ -660,7 +861,7 @@ compiler-rsir-frontend: context [
 						fail ERROR-UNSUPPORTED ["invalid aggregate type " mold position/1]
 					]
 					count: (length? spec) / 2
-					emit type-output reduce [code 0 count]
+					emit type-output reduce [code 0 0 first count]
 					while [not tail? spec][
 						field: spec/1
 						field-type: spec/2
@@ -673,138 +874,108 @@ compiler-rsir-frontend: context [
 							]
 						]
 						ref: type-ref field-type scope uses
-						flags: either all [
-							(length? field-type) = 2
-							field-type/2 = 'value
-						][1][0]
-						if flags = 1 [
-							unless find [struct union]
-								(type-kind field-type scope uses) [
-								fail ERROR-UNSUPPORTED [
-									"only aggregate types can be passed by value"
-								]
-							]
-						]
-						emit fields reduce [ref flags]
+						flags: type-flags field-type scope uses
+						emit members reduce [ref flags]
 						spec: skip spec 2
 					]
+					first: first + count
 				]
 				find [function subroutine] kind [
-					emit type-output reduce [(select type-codes kind) 0 0]
+					signature: read-signature position/3 position/4 position/5
+					params: signature/2
+					count: (length? params) / 3
+					emit type-output reduce [
+						select type-codes kind
+						signature/1
+						signature/3
+						first
+						count
+					]
+					parameter: params
+					while [not tail? parameter][
+						emit members reduce [parameter/2 parameter/3]
+						parameter: skip parameter 3
+					]
+					first: first + count
 				]
 				true [
-					emit type-output reduce [(select type-codes kind) 0 0]
+					emit type-output reduce [(select type-codes kind) 0 0 first 0]
 				]
 			]
 			position: skip position 5
 		]
 	]
 
-	write-rsir: func [limit [integer!] /local output position name kind body
-		scope uses params name-offset record-offset param-count signature count
-		instruction-count size entry id record spec spec-position item type param-name
-		type-output fields type-bytes field-bytes
+	write-rsir: func [limit [integer!] /local output position name body
+		scope uses params flags name-offset record-offset param-count first-param count
+		instruction-count size entry id parameter
+		type-output members type-bytes member-bytes
 	][
-		record: functions
-		while [not tail? record][
-			spec: record/2
-			scope: record/4
-			uses: record/5
-			kind: 'void
-			params: make block! 2
-			spec-position: spec
-			while [not tail? spec-position][
-				item: spec-position/1
-				case [
-					all [
-						set-word? item
-						item = to set-word! 'return
-						(length? spec-position) >= 2
-						block? spec-position/2
-					][
-						unless kind: type-kind spec-position/2 scope uses [
-							fail ERROR-UNSUPPORTED "unsupported function return type"
-						]
-						spec-position: skip spec-position 2
-					]
-					all [
-						word? item
-						(length? spec-position) >= 2
-						block? spec-position/2
-					][
-						param-name: item
-						unless type: type-kind spec-position/2 scope uses [
-							fail ERROR-UNSUPPORTED "unsupported parameter type"
-						]
-						if find/skip params param-name 2 [
-							fail ERROR-UNSUPPORTED "duplicate function parameter"
-						]
-						repend params [param-name type]
-						spec-position: skip spec-position 2
-					]
-					true [fail ERROR-UNSUPPORTED "function signature is unsupported"]
-				]
-			]
-			unless any [
-				all [kind = 'void empty? params]
-				all [
-					kind = 'i32
-					((length? params) / 2) <= 1
-					any [empty? params params/2 = 'i32]
-				]
-			][fail ERROR-UNSUPPORTED "function signature is unsupported"]
-			record/6: kind
-			record/7: params
-			record: skip record 7
-		]
-
-		type-output: make binary! (type-count * 12)
-		fields: make binary! 64
-		write-types type-output fields
+		type-output: make binary! (type-count * 20)
+		members: make binary! 64
+		write-types type-output members
 		type-bytes: length? type-output
-		field-bytes: length? fields
-		output: make binary! (20 + type-bytes + field-bytes + (function-count * 80))
+		member-bytes: length? members
+		output: make binary! (20 + type-bytes + member-bytes + (function-count * 96))
 		append/dup output 0 20
 		append output type-output
-		append output fields
-		append/dup output 0 (function-count * 16)
+		append output members
+		append/dup output 0 (function-count * 28)
 		position: functions
-		instruction-count: 0
 		name-offset: 0
+		first-param: 0
 		id: 1
 		while [not tail? position][
 			name: position/1
-			kind: position/6
-			body: position/3
-			scope: position/4
-			uses: position/5
 			params: position/7
-			param-count: (length? params) / 2
-			signature: case [
-				kind = 'void [0]                       ; () -> void
-				param-count = 0 [1]                    ; () -> i32
-				true [2]                               ; (i32) -> i32
-			]
-			count: compile-body kind body scope uses output params
-			record-offset: 21 + type-bytes + field-bytes + ((id - 1) * 16)
+			flags: position/8
+			param-count: (length? params) / 3
+			record-offset: 21 + type-bytes + member-bytes + ((id - 1) * 28)
 			change/part at output record-offset
 				int-to-bin/to-bin32 name-offset 4
 			change/part at output (record-offset + 4)
 				int-to-bin/to-bin32 (length? name) 4
 			change/part at output (record-offset + 8)
-				int-to-bin/to-bin32 signature 4
+				int-to-bin/to-bin32 position/6 4
 			change/part at output (record-offset + 12)
-				int-to-bin/to-bin32 count 4
+				int-to-bin/to-bin32 flags 4
+			change/part at output (record-offset + 16)
+				int-to-bin/to-bin32 first-param 4
+			change/part at output (record-offset + 20)
+				int-to-bin/to-bin32 param-count 4
+			parameter: params
+			while [not tail? parameter][
+				emit output reduce [parameter/2 parameter/3]
+				parameter: skip parameter 3
+			]
 			name-offset: name-offset + (length? name)
+			first-param: first-param + param-count
+			id: id + 1
+			position: skip position 8
+		]
+
+		position: functions
+		instruction-count: 0
+		id: 1
+		while [not tail? position][
+			body: position/3
+			scope: position/4
+			uses: position/5
+			params: position/7
+			flags: position/8
+			count: compile-body position/6 body scope uses output params flags
+			record-offset: 21 + type-bytes + member-bytes + ((id - 1) * 28)
+			change/part at output (record-offset + 24)
+				int-to-bin/to-bin32 count 4
 			instruction-count: instruction-count + count
 			id: id + 1
-			position: skip position 7
+			position: skip position 8
 		]
 
 		position: functions
 		while [not tail? position][
 			append output position/1
-			position: skip position 7
+			position: skip position 8
 		]
 		size: length? output
 		if any [limit <= 0 size > limit] [

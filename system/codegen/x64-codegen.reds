@@ -16,10 +16,12 @@ rsir-header!: alias struct! [
 rsir-type!: alias struct! [
 	kind         [integer!]
 	target       [integer!]
+	flags        [integer!]
+	first-member [integer!]
 	member-count [integer!]
 ]
 
-rsir-field!: alias struct! [
+rsir-member!: alias struct! [
 	type  [integer!]
 	flags [integer!]
 ]
@@ -27,8 +29,16 @@ rsir-field!: alias struct! [
 rsir-function!: alias struct! [
 	name              [integer!]
 	name-size         [integer!]
-	signature         [integer!]
+	return-type       [integer!]
+	flags             [integer!]
+	first-parameter   [integer!]
+	parameter-count   [integer!]
 	instruction-count [integer!]
+]
+
+rsir-parameter!: alias struct! [
+	type  [integer!]
+	flags [integer!]
 ]
 
 rsir-instruction!: alias struct! [
@@ -74,10 +84,15 @@ codegen-import!: alias struct! [
 
 x64-codegen: context [
 	RSIR_HEADER_SIZE:      20
-	RSIR_TYPE_SIZE:        12
-	RSIR_FIELD_SIZE:        8
-	RSIR_FUNCTION_SIZE:    16
+	RSIR_TYPE_SIZE:        20
+	RSIR_MEMBER_SIZE:       8
+	RSIR_FUNCTION_SIZE:    28
+	RSIR_PARAMETER_SIZE:    8
 	RSIR_INSTRUCTION_SIZE: 16
+
+	RETURN_VALUE: 4
+	VARIABLE_FLAGS: 56
+	FUNCTION_FLAGS: 511
 
 	IMAGE_HEADER_SIZE:   40
 	IMAGE_FUNCTION_SIZE: 36
@@ -133,6 +148,51 @@ x64-codegen: context [
 		false
 	]
 
+	integer32-ref?: func [
+		ref [integer!]
+		data [byte-ptr!]
+		count [integer!]
+		return: [logic!]
+		/local record [rsir-type!]
+			steps kind [integer!]
+	][
+		if ref < 0 [return any [ref = -5 ref = -6]]
+		if any [ref = 0 ref > count][return false]
+		steps: 0
+		while [steps < count][
+			record: as rsir-type! (data + ((ref - 1) * RSIR_TYPE_SIZE))
+			kind: record/kind
+			if any [kind = 5 kind = 6][return true]
+			unless kind = -1 [return false]
+			ref: record/target
+			if ref < 0 [return any [ref = -5 ref = -6]]
+			if any [ref = 0 ref > count][return false]
+			steps: steps + 1
+		]
+		false
+	]
+
+	i32-function?: func [
+		fn [rsir-function!]
+		parameters types [byte-ptr!]
+		type-count parameter-count [integer!]
+		return: [logic!]
+		/local parameter [rsir-parameter!]
+	][
+		unless all [
+			integer32-ref? fn/return-type types type-count
+			(fn/flags and (FUNCTION_FLAGS - 3)) = 0
+			fn/parameter-count = parameter-count
+		][return false]
+		if parameter-count = 0 [return true]
+		parameter: as rsir-parameter! (parameters
+			+ (fn/first-parameter * RSIR_PARAMETER_SIZE))
+		all [
+			integer32-ref? parameter/type types type-count
+			parameter/flags = 0
+		]
+	]
+
 	layout-type: func [
 		ref [integer!]
 		inline? [logic!]
@@ -140,8 +200,8 @@ x64-codegen: context [
 		type-count depth [integer!]
 		size-out align-out [int-ptr!]
 		return: [logic!]
-		/local record prior [rsir-type!]
-			field [rsir-field!]
+		/local record [rsir-type!]
+			field [rsir-member!]
 			kind id field-index member-size member-align size alignment [integer!]
 	][
 		if any [ref = 0 depth > type-count][return false]
@@ -184,19 +244,13 @@ x64-codegen: context [
 			return true
 		]
 
-		field-index: 0
-		id: 1
-		while [id < ref][
-			prior: as rsir-type! (types + ((id - 1) * RSIR_TYPE_SIZE))
-			field-index: field-index + prior/member-count
-			id: id + 1
-		]
+		field-index: record/first-member
 		size: 0
 		alignment: 1
 		id: 0
 		while [id < record/member-count][
-			field: as rsir-field! (fields
-				+ ((field-index + id) * RSIR_FIELD_SIZE))
+			field: as rsir-member! (fields
+				+ ((field-index + id) * RSIR_MEMBER_SIZE))
 			member-size: 0
 			member-align: 0
 			unless layout-type field/type (field/flags = 1) types fields
@@ -226,18 +280,22 @@ x64-codegen: context [
 	shape-of: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
+		parameters [byte-ptr!]
 		function-data [byte-ptr!]
-		function-count [integer!]
+		type-data [byte-ptr!]
+		type-count function-count [integer!]
 		return: [integer!]
 		/local instruction call terminator [rsir-instruction!]
 			callee [rsir-function!]
 			parameter-count [integer!]
 	][
 		instruction: as rsir-instruction! instructions
-		parameter-count: either fn/signature = 2 [1][0]
+		parameter-count: fn/parameter-count
 		case [
 			all [
-				fn/signature = 0
+				fn/return-type = 0
+				(fn/flags and (FUNCTION_FLAGS - 3)) = 0
+				parameter-count = 0
 				fn/instruction-count = 1
 				instruction/opcode = 2
 				instruction/result = 0
@@ -245,7 +303,7 @@ x64-codegen: context [
 				instruction/immediate = 0
 			][x64-encoder/VOID]
 			all [
-				fn/signature = 2
+				i32-function? fn parameters type-data type-count 1
 				fn/instruction-count = 1
 				instruction/opcode = 3
 				instruction/result = 0
@@ -253,7 +311,8 @@ x64-codegen: context [
 				instruction/immediate = 0
 			][x64-encoder/I32_PARAM]
 			all [
-				any [fn/signature = 1 fn/signature = 2]
+				parameter-count <= 1
+				i32-function? fn parameters type-data type-count parameter-count
 				fn/instruction-count = 2
 				any [
 					instruction/opcode = 1
@@ -289,7 +348,7 @@ x64-codegen: context [
 					][
 						callee: as rsir-function! (function-data
 							+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
-						either callee/signature = 1 [
+						either i32-function? callee parameters type-data type-count 0 [
 							x64-encoder/I32_CALL
 						][UNSUPPORTED]
 					]
@@ -297,7 +356,8 @@ x64-codegen: context [
 				]
 			]
 			all [
-				any [fn/signature = 1 fn/signature = 2]
+				parameter-count <= 1
+				i32-function? fn parameters type-data type-count parameter-count
 				fn/instruction-count = 3
 				instruction/opcode = 1
 				instruction/result = (parameter-count + 1)
@@ -319,12 +379,12 @@ x64-codegen: context [
 				][return INVALID_IR]
 				callee: as rsir-function! (function-data
 					+ ((call/operand - 1) * RSIR_FUNCTION_SIZE))
-				either callee/signature = 2 [
+				either i32-function? callee parameters type-data type-count 1 [
 					x64-encoder/I32_CALL_ARG_LITERAL
 				][UNSUPPORTED]
 			]
 			all [
-				fn/signature = 2
+				i32-function? fn parameters type-data type-count 1
 				fn/instruction-count = 2
 				instruction/opcode = 4
 				instruction/result = 2
@@ -337,7 +397,7 @@ x64-codegen: context [
 				callee: as rsir-function! (function-data
 					+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
 				either all [
-					callee/signature = 2
+					i32-function? callee parameters type-data type-count 1
 					terminator/opcode = 3
 					terminator/result = 0
 					terminator/operand = 2
@@ -394,23 +454,24 @@ x64-codegen: context [
 		return: [integer!]
 		/local header [rsir-header!]
 			ir-type [rsir-type!]
-			ir-field [rsir-field!]
+			ir-member [rsir-member!]
 			ir-function [rsir-function!]
+			ir-parameter [rsir-parameter!]
 			instruction call-instruction [rsir-instruction!]
 			image [codegen-header!]
 			image-function callee-record [codegen-function!]
 			image-import [codegen-import!]
 			references [int-ptr!]
-			type-data field-data function-data instruction-data
+			type-data member-data function-data parameter-data instruction-data
 				function-instructions strings name
 				names-output code data-output
 				cursor finish [byte-ptr!]
-			type-bytes field-bytes function-bytes instruction-bytes
-				strings-start strings-size metadata-size field-count
+			type-bytes member-bytes function-bytes parameter-bytes instruction-bytes
+				strings-start strings-size metadata-size member-count parameter-count
 				names-size function-names-size code-offset code-size data-offset total-size
 				id record-offset next-instruction function-size entry-size code-cursor
 				name-cursor shape entry-shape encoded value argument target relative call-next
-				library-offset external-offset [integer!]
+				library-offset external-offset variable-mode [integer!]
 			entry? current-entry? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
@@ -441,78 +502,173 @@ x64-codegen: context [
 		]
 		type-bytes: header/type-count * RSIR_TYPE_SIZE
 		type-data: data + RSIR_HEADER_SIZE
-		field-data: type-data + type-bytes
-		field-count: 0
+		member-data: type-data + type-bytes
+		member-count: 0
 		id: 1
 		while [id <= header/type-count][
 			ir-type: as rsir-type! (type-data + ((id - 1) * RSIR_TYPE_SIZE))
-			if ir-type/member-count < 0 [return INVALID_IR]
+			if any [
+				ir-type/member-count < 0
+				ir-type/first-member <> member-count
+				ir-type/flags < 0
+				ir-type/flags > FUNCTION_FLAGS
+				(ir-type/flags and 3) = 3
+			][return INVALID_IR]
+			variable-mode: ir-type/flags and VARIABLE_FLAGS
+			unless any [
+				variable-mode = 0
+				variable-mode = 8
+				variable-mode = 16
+				variable-mode = 32
+			][return INVALID_IR]
 			case [
 				ir-type/kind = -1 [
 					if any [
+						ir-type/flags <> 0
 						ir-type/member-count <> 0
 						not valid-type-ref? ir-type/target header/type-count
 					][return INVALID_IR]
 				]
 				any [ir-type/kind = -2 ir-type/kind = -3][
-					if ir-type/target <> 0 [return INVALID_IR]
+					if any [
+						ir-type/target <> 0
+						ir-type/flags <> 0
+					][return INVALID_IR]
 				]
 				any [ir-type/kind = -4 ir-type/kind = -5][
 					if any [
-						ir-type/target <> 0
-						ir-type/member-count <> 0
+						all [
+							ir-type/target <> 0
+							not valid-type-ref? ir-type/target header/type-count
+						]
+						all [
+							(ir-type/flags and RETURN_VALUE) <> 0
+							any [
+								ir-type/target = 0
+								not aggregate-ref? ir-type/target type-data
+									header/type-count
+							]
+						]
 					][return INVALID_IR]
 				]
 				all [ir-type/kind > 0 ir-type/kind <= 12][
 					if any [
 						ir-type/target <> 0
+						ir-type/flags <> 0
 						ir-type/member-count <> 0
 					][return INVALID_IR]
 				]
 				true [return INVALID_IR]
 			]
-			if field-count > (2147483647 - ir-type/member-count) [
+			if member-count > (2147483647 - ir-type/member-count) [
 				return INVALID_IR
 			]
-			field-count: field-count + ir-type/member-count
+			member-count: member-count + ir-type/member-count
 			id: id + 1
 		]
-		if field-count > (
-			(size - RSIR_HEADER_SIZE - type-bytes) / RSIR_FIELD_SIZE
+		if member-count > (
+			(size - RSIR_HEADER_SIZE - type-bytes) / RSIR_MEMBER_SIZE
 		)[return INVALID_IR]
-		field-bytes: field-count * RSIR_FIELD_SIZE
+		member-bytes: member-count * RSIR_MEMBER_SIZE
 		id: 1
-		while [id <= field-count][
-			ir-field: as rsir-field! (field-data + ((id - 1) * RSIR_FIELD_SIZE))
+		while [id <= member-count][
+			ir-member: as rsir-member! (member-data
+				+ ((id - 1) * RSIR_MEMBER_SIZE))
 			if any [
-				not valid-type-ref? ir-field/type header/type-count
-				ir-field/flags < 0
-				ir-field/flags > 1
+				not valid-type-ref? ir-member/type header/type-count
+				ir-member/flags < 0
+				ir-member/flags > 1
 				all [
-					ir-field/flags = 1
-					not aggregate-ref? ir-field/type type-data header/type-count
+					ir-member/flags = 1
+					not aggregate-ref? ir-member/type type-data header/type-count
 				]
 			][return INVALID_IR]
 			id: id + 1
 		]
 		if header/function-count > (
-			(size - RSIR_HEADER_SIZE - type-bytes - field-bytes)
+			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes)
 			/ RSIR_FUNCTION_SIZE
 		)[
 			return INVALID_IR
 		]
 		function-bytes: header/function-count * RSIR_FUNCTION_SIZE
+		function-data: member-data + member-bytes
+		parameter-count: 0
+		next-instruction: 0
+		id: 1
+		while [id <= header/function-count][
+			ir-function: as rsir-function! (function-data
+				+ ((id - 1) * RSIR_FUNCTION_SIZE))
+			if any [
+				all [
+					ir-function/return-type <> 0
+					not valid-type-ref? ir-function/return-type header/type-count
+				]
+				ir-function/flags < 0
+				ir-function/flags > FUNCTION_FLAGS
+				(ir-function/flags and 3) = 3
+				ir-function/first-parameter <> parameter-count
+				ir-function/parameter-count < 0
+				ir-function/instruction-count <= 0
+			][return INVALID_IR]
+			variable-mode: ir-function/flags and VARIABLE_FLAGS
+			unless any [
+				variable-mode = 0
+				variable-mode = 8
+				variable-mode = 16
+				variable-mode = 32
+			][return INVALID_IR]
+			if all [
+				(ir-function/flags and RETURN_VALUE) <> 0
+				any [
+					ir-function/return-type = 0
+					not aggregate-ref? ir-function/return-type type-data
+						header/type-count
+				]
+			][return INVALID_IR]
+			if parameter-count > (2147483647 - ir-function/parameter-count) [
+				return INVALID_IR
+			]
+			parameter-count: parameter-count + ir-function/parameter-count
+			if next-instruction > (2147483647 - ir-function/instruction-count) [
+				return INVALID_IR
+			]
+			next-instruction: next-instruction + ir-function/instruction-count
+			id: id + 1
+		]
+		if next-instruction <> header/instruction-count [return INVALID_IR]
+		parameter-data: function-data + function-bytes
+		if parameter-count > (
+			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - function-bytes)
+			/ RSIR_PARAMETER_SIZE
+		)[return INVALID_IR]
+		parameter-bytes: parameter-count * RSIR_PARAMETER_SIZE
+		id: 1
+		while [id <= parameter-count][
+			ir-parameter: as rsir-parameter! (parameter-data
+				+ ((id - 1) * RSIR_PARAMETER_SIZE))
+			if any [
+				not valid-type-ref? ir-parameter/type header/type-count
+				ir-parameter/flags < 0
+				ir-parameter/flags > 1
+				all [
+					ir-parameter/flags = 1
+					not aggregate-ref? ir-parameter/type type-data header/type-count
+				]
+			][return INVALID_IR]
+			id: id + 1
+		]
 		if header/instruction-count > (
-			(size - RSIR_HEADER_SIZE - type-bytes - field-bytes - function-bytes)
+			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - function-bytes
+				- parameter-bytes)
 			/ RSIR_INSTRUCTION_SIZE
 		)[return INVALID_IR]
 		instruction-bytes: header/instruction-count * RSIR_INSTRUCTION_SIZE
-		strings-start: RSIR_HEADER_SIZE + type-bytes + field-bytes
-			+ function-bytes + instruction-bytes
+		instruction-data: parameter-data + parameter-bytes
+		strings-start: RSIR_HEADER_SIZE + type-bytes + member-bytes
+			+ function-bytes + parameter-bytes + instruction-bytes
 		strings-size: size - strings-start
 
-		function-data: field-data + field-bytes
-		instruction-data: function-data + function-bytes
 		strings: data + strings-start
 		if any [
 			capacity < IMAGE_HEADER_SIZE
@@ -535,9 +691,6 @@ x64-codegen: context [
 				ir-function/name-size <= 0
 				ir-function/name-size > strings-size
 				ir-function/name > (strings-size - ir-function/name-size)
-				ir-function/signature < 0
-				ir-function/signature > 2
-				ir-function/instruction-count <= 0
 				ir-function/instruction-count > (
 					header/instruction-count - next-instruction + 1
 				)
@@ -546,7 +699,8 @@ x64-codegen: context [
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			instruction: as rsir-instruction! function-instructions
 			shape: shape-of ir-function function-instructions
-				function-data header/function-count
+				parameter-data function-data type-data
+				header/type-count header/function-count
 			if shape < 0 [return shape]
 			if all [
 				shape = x64-encoder/I32_LITERAL
@@ -557,7 +711,7 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			image-function/frame-size: shape
 			current-entry?: all [entry? id = header/entry-function]
-			if all [current-entry? ir-function/signature = 2][return UNSUPPORTED]
+			if all [current-entry? ir-function/parameter-count > 0][return UNSUPPORTED]
 			function-size: machine-size current-entry? shape
 			if function-size < 0 [return UNSUPPORTED]
 			if function-names-size > (2147483647 - ir-function/name-size) [
@@ -703,7 +857,7 @@ x64-codegen: context [
 			value: case [
 				shape = x64-encoder/I32_LITERAL [
 					either instruction/opcode = 5 [
-						unless layout-type instruction/operand true type-data field-data
+						unless layout-type instruction/operand true type-data member-data
 							header/type-count 0 :value :argument [
 							return INVALID_IR
 						]

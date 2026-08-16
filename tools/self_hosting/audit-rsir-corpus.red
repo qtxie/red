@@ -269,10 +269,10 @@ unless all [
 	quit/return 1
 ]
 
-type-data: make binary! (compiler-rsir-frontend/type-count * 12)
-field-data: make binary! 1024
+type-data: make binary! (compiler-rsir-frontend/type-count * 20)
+member-data: make binary! 1024
 type-result: catch/name [
-	compiler-rsir-frontend/write-types type-data field-data
+	compiler-rsir-frontend/write-types type-data member-data
 	none
 ] 'rsir-error
 if type-result [
@@ -283,14 +283,14 @@ if type-result [
 	]
 	quit/return 1
 ]
-unless (length? type-data) = (compiler-rsir-frontend/type-count * 12) [
+unless (length? type-data) = (compiler-rsir-frontend/type-count * 20) [
 	print ["FAIL: incomplete logical type records" length? type-data]
 	quit/return 1
 ]
 print [
 	"logical-types" compiler-rsir-frontend/type-count
-	"fields" (length? field-data) / 8
-	"bytes" (length? type-data) + (length? field-data)
+	"members" (length? member-data) / 8
+	"bytes" (length? type-data) + (length? member-data)
 ]
 either binary? ir [
 	print ["frontend complete" length? ir "bytes in" now/time/precise - started]

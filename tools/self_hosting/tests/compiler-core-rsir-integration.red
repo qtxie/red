@@ -3,6 +3,7 @@ Red [
 ]
 
 #include %../../../system/compiler-windows-common.red
+#include %../../../compiler/rsir-frontend.red
 #include %../../../system/compiler-rsir-core.red
 
 red-compiler-process-get: func [spec code [block!]][false]
@@ -56,10 +57,11 @@ artifact: system-dialect/last-rsir
 check binary? artifact "RSIR core did not return RSIR"
 artifact-size: length? artifact
 artifact-hash: checksum artifact 'SHA256
-check artifact-size = 54 ["RSIR core output size changed: " artifact-size]
+check artifact-size = 66 ["RSIR core output size changed: " artifact-size]
 check artifact-hash =
-	#{38D1808E4DD6F033BA53E8D024CCA9DB4A5A04DD72C6BED9D3348A7BB9C2E733}
-	["RSIR core bytes differ from the independent fixture: " mold artifact-hash]
+	#{32A8F1086229218A16811DE0D0BCE9860F84F4C80910C0189C8CDD2AD69BBE2F}
+	["RSIR core bytes differ from the independent fixture: size=" artifact-size
+		" hash=" mold artifact-hash]
 check none? system-dialect/last-result "RSIR compile published a legacy linker result"
 check not value? 'emitter "RSIR compile installed the legacy emitter"
 check not value? 'rs-o2-ir "RSIR compile installed the legacy machine IR"

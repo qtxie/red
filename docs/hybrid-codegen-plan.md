@@ -63,11 +63,12 @@ layout directly and passes the resulting size to the existing integer encoder.
 - `system/codegen/x64-encoder.reds` writes x64 bytes into the reserved output.
 - `system/linker.red/load-codegen` loads the image directly into linker state.
 
-For the current slice, empty-void and i32 RSIR are 54 and 70 bytes. A GLUE i32
-native image is 196 bytes. Both the two-function `main -> helper -> 41` and
-`main -> identity 42` samples are 126 RSIR bytes and produce 252-byte native
-images. Their generated PEs exit with status 41 and 42 respectively. The
-previous rebuilt H0 compiled and linked the zero-argument sample in 114.8 ms.
+For the current slice, empty-void and i32 RSIR are 66 and 82 bytes. A GLUE i32
+native image is 196 bytes. The two-function `main -> helper -> 41` sample is
+150 RSIR bytes; the typed `main -> identity 42` sample is 178 bytes. Both
+produce 252-byte native images. Their generated PEs exit with status 41 and 42
+respectively. The previous hybrid checkpoint compiled and linked the
+zero-argument sample in 114.8 ms.
 
 The designated existing compiler built the multi-function current hybrid entry
 in 90.1 seconds: 14.9 seconds frontend, 63.8 seconds native compilation, and
@@ -77,7 +78,7 @@ smoke fell from roughly 43 seconds to roughly 7 seconds. These are development
 samples on the same machine and compiler, not final performance gates, but they
 show that deleting the layers reduced real compiler-build work.
 
-For the current declaration-pass increment, regenerating the complete H0
+For the current declaration-pass increment, regenerating the complete self-host
 Red/System corpus with `--red-only` took 16.53 seconds. The focused development
 frontend-plus-routine smoke took 1.11 seconds in the Red frontend, 8.55 seconds
 in native compilation, and 1.16 seconds in linking, producing an 801,792-byte
@@ -101,6 +102,12 @@ Win64 pointer, scalar alias, nested by-value struct, pointer-member struct,
 plain union, and recursive-pointer struct sizes; a recursive by-value struct is
 rejected without committing output.
 
+The direct-signature native test builds in 1.476 seconds and produces a
+114,688-byte executable. The broader frontend/routine test builds in 15.9
+seconds and produces a 1,037,824-byte executable; it also contains callable
+types, malformed-slice checks, layout cases, and linker-image assertions. These
+are functional test builds, not the H0 compiler-build timing gate.
+
 ## Data Layout Rule
 
 RSIR is a private in-process format compiled as one source set with its only
@@ -117,28 +124,34 @@ The current RSIR is only the data that codegen consumes:
 
 ```text
 5 words: module kind, entry function, type count, function count, instruction count
-3 words per type: kind, alias target or zero, member count
+5 words per type: kind, alias/return type, flags, first member, member count
 2 words per member: logical type reference, by-value flag
-4 words per function: name offset, name size, signature, instruction count
+7 words per function: name offset, name size, return type, flags,
+                      first parameter, parameter count, instruction count
+2 words per parameter: logical type reference, by-value flag
 4 words per instruction: typed opcode, result, operand, immediate
 raw function-name bytes
 ```
 
 The input `binary!` length supplies the total size. Sequential instruction
 ranges are derived by addition, so they are not repeated in function records.
-Members are contiguous in source type order; codegen derives each first member
-by accumulating the preceding counts. Positive type references are source-order
-user type IDs and negative references are the twelve built-in logical kinds.
+Members and parameters are contiguous in source order. Their first indices are
+written directly because aggregate layout and call lowering need random access;
+codegen never rescans preceding records to find a slice. Positive type
+references are source-order user type IDs and negative references are the
+twelve built-in logical kinds.
 No type/member names or target size/alignment/offset values cross the boundary.
 The `size?` instruction carries only one of those logical references; its
 target value is calculated once in native codegen when the integer machine
 instruction is written.
-The three currently implemented signatures are direct integer values; there is
-no signature registry. A one-argument call stores its argument value ID in the
-call instruction itself; there is no parameter or operand section. Function
-IDs and value IDs are one-based where zero means absent. The routine performs
-only the bounds and shape checks required for safe pointer traversal and then
-casts these arrays directly.
+Return and parameter types are direct logical references in each function or
+function-type record; there is no signature registry. One flags word carries
+the calling convention, by-value return bit, and codegen-relevant attributes.
+A one-argument call stores its argument value ID in the call instruction
+itself; there is no generic operand section. Function IDs and value IDs are
+one-based where zero means absent. The routine performs only the bounds and
+shape checks required for safe pointer traversal and then casts these arrays
+directly.
 
 The native linker image follows the same rule. Its current order is:
 
@@ -216,28 +229,31 @@ aliases; source-order logical type records; context-qualified names; and `with`
 resolution scopes are implemented. The declaration pass also scans loader
 `#script` markers, enum constants, aggregate and function aliases, import
 groups, and global assignments. The direct logical type/member stream and its
-native bounds/kind validation are implemented. Basic Windows x64 scalar,
+native bounds/kind validation are implemented. Direct return/parameter slices,
+calling conventions, attributes, and function/subroutine type signatures are
+also implemented without a registry. Basic Windows x64 scalar,
 pointer, alias, plain-struct, and plain-union size/alignment is implemented and
 consumed by `size?`. Member access, arrays, tagged unions, explicit aggregate
-alignment, complete signatures, initializers, and function bodies remain
-pending.
+alignment, complete signature lowering and ABI classification, initializers,
+and function bodies remain pending.
 
 The implementation order is driven by the actual generated self-host source,
-not isolated language examples. A fresh `--red-only` generation of the direct
+not isolated language examples; H0 scope still includes every Red/System
+feature and the full Red/System suite. A fresh `--red-only` generation of the direct
 hybrid source is 2,961,043 bytes. After includes and macros are expanded by the
-real Red/System loader, the structured audit finds 532 defined functions, 62
-contexts, 725 imported symbols, 75 aliases, 14 enums, 4,312 global assignments,
-and 4,264 unique global names. Of the defined functions, 490 have one
-parameter, 34 have none, and eight have two to five; the dominant parameter
-type is `node-handle!`. Context depth is at most two, while functions have up
-to 56 locals and substantial control flow. The direct declaration pass matches
+real Red/System loader, the structured audit finds 535 defined functions, 62
+contexts, 725 imported symbols, 76 aliases, 14 enums, 4,316 global assignments,
+and 4,268 unique global names. The dominant parameter type is `node-handle!`;
+some signatures use Red/System's shared-type form, such as
+`value argument [integer!]`. Context depth is at most two, while functions have
+up to 61 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 223 ms under the interpreter after loading, then fails explicitly at the
+about 400 ms under the interpreter after loading, then fails explicitly at the
 unimplemented global-code lowering boundary.
 
 After that deliberate stop, the same audit serializes every current logical
-type without compiling bodies: 89 source-order type records and 395 member
-records occupy 4,228 bytes.
+type without compiling bodies: 90 source-order type records and 402 member
+records occupy 5,016 bytes.
 
 Regenerate and inspect this corpus without native compilation:
 
@@ -249,8 +265,9 @@ D:\EE\QTool\red-console.exe tools\self_hosting\audit-rsir-corpus.red
 
 ### 2.1 Declarations And Stable IDs
 
-Current checkpoint: declaration discovery traverses the complete current H0
-corpus and assigns source-order type, function, import, and global IDs. Logical
+Current checkpoint: declaration discovery traverses the complete current
+self-host source corpus and assigns source-order type, function, import, and
+global IDs. Logical
 type records retain kind, source spec, lexical scope, and `with` scopes without
 target layout. Global source blocks and import records remain in Red frontend
 state and are rejected before RSIR output until 2.2 and 2.3 define their
@@ -269,9 +286,9 @@ resolve every referenced name, while bodies may still fail as unsupported.
 ### 2.2 Types And Layout
 
 Current checkpoint: logical type/member serialization and native structural
-validation are complete for the current H0 corpus. Native codegen computes the
-basic Win64 layout forms on demand, and `size?` is their first machine-code
-consumer. This does not yet complete the layout gate.
+validation are complete for the current self-host source corpus. Native codegen
+computes the basic Win64 layout forms on demand, and `size?` is their first
+machine-code consumer. This does not yet complete the layout gate.
 
 - write only logical type/member records that native codegen consumes, directly
   into the compact RSIR order; do not add a schema, section directory, or

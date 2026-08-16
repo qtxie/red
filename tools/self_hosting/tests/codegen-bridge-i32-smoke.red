@@ -137,6 +137,26 @@ check (codegen-module typed-ir typed-image 0) = 0
 check typed-image = user-i32
 	"unused logical type records changed native code"
 
+callable-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	small!: alias struct! [value [integer!]]
+	callback!: alias function! [
+		[cdecl]
+		input [integer!]
+		state [small! value]
+		return: [small! value]
+	]
+	worker!: alias subroutine! [[callback] value [uint32!]]
+	fn: func [return: [integer!]][7]
+] 'user
+check binary? callable-ir ["frontend rejected callable types: "
+	mold compiler-rsir-frontend/last-error]
+callable-image: make binary! 4096
+check (codegen-module callable-ir callable-image 0) = 0
+	"native codegen rejected direct callable signatures"
+check callable-image = user-i32
+	"unused callable signatures changed native code"
+
 layout-source: [
 	Red/System []
 	byte-alias!: alias byte!
@@ -210,22 +230,28 @@ check (codegen-module bad-type artifact 0) = 2 "zero alias target was accepted"
 check empty? artifact "bad alias target committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 29 int-to-bin/to-bin32 1 4
+change/part at bad-type 37 int-to-bin/to-bin32 1 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "alias members were accepted"
 check empty? artifact "bad alias member count committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 117 int-to-bin/to-bin32 2 4
+change/part at bad-type 165 int-to-bin/to-bin32 2 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "unknown member flag was accepted"
 check empty? artifact "bad member flag committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 113 int-to-bin/to-bin32 1 4
+change/part at bad-type 153 int-to-bin/to-bin32 1 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "scalar by-value member was accepted"
 check empty? artifact "bad by-value member committed bytes"
+
+bad-type: copy typed-ir
+change/part at bad-type 201 int-to-bin/to-bin32 1 4
+artifact: make binary! 4096
+check (codegen-module bad-type artifact 0) = 2 "noncontiguous parameter slice was accepted"
+check empty? artifact "bad parameter slice committed bytes"
 
 call-source: [
 	Red/System []

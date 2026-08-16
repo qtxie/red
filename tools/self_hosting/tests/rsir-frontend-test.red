@@ -482,6 +482,65 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"direct literal array argument reported the wrong error class"
 
+symbolic-ir: compile-text {
+	Red/System []
+	label: "Red"
+	labels: ["alpha" "beta"]
+	double: func [value [integer!] return: [integer!]][value * 2]
+	triple: func [value [integer!] return: [integer!]][value * 3]
+	functions: [:double :triple]
+	entry: :double
+	function-address: func [return: [pointer!]][:triple]
+} 'user
+assert binary? symbolic-ir [
+	"symbolic static initializers failed: " mold frontend/last-error
+]
+symbolic-layout: layout-of symbolic-ir
+labels-ref: global-word symbolic-ir symbolic-layout 2 8
+functions-ref: global-word symbolic-ir symbolic-layout 3 8
+assert all [
+	(word-at symbolic-ir 24) = 7
+	(global-word symbolic-ir symbolic-layout 1 8) = -13
+	(global-word symbolic-ir symbolic-layout 1 12) = 0
+	(global-word symbolic-ir symbolic-layout 1 16) = 0
+	(global-word symbolic-ir symbolic-layout 1 20) = 1
+	(initializer-word symbolic-ir symbolic-layout 1 0) = 2
+	(initializer-word symbolic-ir symbolic-layout 1 4) = 2
+	(initializer-word symbolic-ir symbolic-layout 1 8) = 5
+	(global-word symbolic-ir symbolic-layout 5 12) = 1
+	(initializer-word symbolic-ir symbolic-layout 7 0) = 3
+]["a static string was not one pointer plus one hidden byte object"]
+assert all [
+	(type-word symbolic-ir symbolic-layout labels-ref 0) = -7
+	(type-word symbolic-ir symbolic-layout labels-ref 4) = -13
+	(type-word symbolic-ir symbolic-layout labels-ref 8) = 8
+	(type-word symbolic-ir symbolic-layout labels-ref 16) = 2
+	(global-word symbolic-ir symbolic-layout 2 16) = 1
+	(global-word symbolic-ir symbolic-layout 2 20) = 2
+	(initializer-word symbolic-ir symbolic-layout 2 0) = 2
+	(initializer-word symbolic-ir symbolic-layout 2 4) = 2
+	(initializer-word symbolic-ir symbolic-layout 2 8) = 6
+	(initializer-word symbolic-ir symbolic-layout 3 8) = 7
+]["a string array did not lower to global-address slots"]
+assert all [
+	(type-word symbolic-ir symbolic-layout functions-ref 0) = -7
+	(type-word symbolic-ir symbolic-layout functions-ref 4) = -12
+	(type-word symbolic-ir symbolic-layout functions-ref 8) = 8
+	(type-word symbolic-ir symbolic-layout functions-ref 16) = 2
+	(global-word symbolic-ir symbolic-layout 3 16) = 3
+	(global-word symbolic-ir symbolic-layout 3 20) = 2
+	(initializer-word symbolic-ir symbolic-layout 4 0) = 2
+	(initializer-word symbolic-ir symbolic-layout 4 4) = 4
+	(initializer-word symbolic-ir symbolic-layout 4 8) = 1
+	(initializer-word symbolic-ir symbolic-layout 5 8) = 2
+	(global-word symbolic-ir symbolic-layout 4 8) = -12
+	(initializer-word symbolic-ir symbolic-layout 6 4) = 4
+	(initializer-word symbolic-ir symbolic-layout 6 8) = 1
+]["function addresses did not use the ordinary address initializer"]
+symbolic-ops: ops-of symbolic-ir symbolic-layout
+assert not none? find symbolic-ops [3 20 11]
+	"runtime function address did not use ADDRESS/REFERENCE"
+
 assert none? compile-text {
 	Red/System []
 	empty!: alias struct! []

@@ -693,29 +693,40 @@ x64-codegen: context [
 		valid-type-ref? result/1 count
 	]
 
-	valid-global-address-initializer?: func [
+	valid-static-address-initializer?: func [
 		initializer [rsir-initializer!]
-		expected owner global-count [integer!]
+		expected owner global-count function-count [integer!]
 		globals types [byte-ptr!]
 		type-count [integer!]
 		return: [logic!]
-		/local target [rsir-global!]
+		/local target [rsir-global!] kind [integer!]
 	][
 		if any [
 			initializer/kind <> ADDRESS_INITIALIZER
-			initializer/a <> GLOBAL_ADDRESS
 			initializer/c <> 0
-			initializer/b <= 0 initializer/b > global-count
-			initializer/b = owner
 		][return false]
-		target: as rsir-global! (globals
-			+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
-		all [
-			target/flags = INLINE
-			any [
-				expected = 0
-				compatible-types? expected target/type types type-count
+		case [
+			initializer/a = GLOBAL_ADDRESS [
+				if any [
+					initializer/b <= 0 initializer/b > global-count
+					initializer/b = owner
+				][return false]
+				target: as rsir-global! (globals
+					+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
+				all [
+					target/flags = INLINE
+					any [
+						expected = 0
+						compatible-types? expected target/type types type-count
+					]
+				]
 			]
+			initializer/a = FUNCTION_ADDRESS [
+				if any [initializer/b <= 0 initializer/b > function-count][return false]
+				kind: logical-kind expected types type-count
+				any [expected = 0 kind = 12 kind = -4 kind = -5]
+			]
+			true [false]
 		]
 	]
 
@@ -1402,12 +1413,27 @@ x64-codegen: context [
 							if any [import-id <= 0 import-id > import-count][return INVALID_IR]
 							imported: as rsir-import! (imports
 								+ ((import-id - 1) * RSIR_IMPORT_SIZE))
-							if imported/flags <> 0 [return INVALID_IR]
-							ref: imported/type
+							ref: either imported/flags = 0 [imported/type][-12]
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: x64-encoder/rip-load at (capacity - written)
 								x64-encoder/RAX 0
+						]
+						instruction/a = FUNCTION_ADDRESS [
+							target: instruction/b
+							if any [target <= 0 target > function-count][return INVALID_IR]
+							ref: -12
+							displacement: 0
+							if not measure? [
+								target-function: as codegen-function! (image-data
+									+ ((target - 1) * IMAGE_FUNCTION_SIZE))
+								displacement: target-function/code-offset
+									- (function-offset + written + 7)
+							]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/rip-address at (capacity - written)
+								x64-encoder/RAX displacement
 						]
 						true [return UNSUPPORTED]
 					]
@@ -2834,7 +2860,7 @@ x64-codegen: context [
 			ir-parameter [rsir-parameter!]
 			initializer [rsir-initializer!]
 			image [codegen-header!]
-			image-function [codegen-function!]
+			image-function target-image-function [codegen-function!]
 			image-global target-image-global [codegen-global!]
 			image-import [codegen-import!]
 			import-refs function-sizes function-frames instruction-offsets
@@ -3116,9 +3142,10 @@ x64-codegen: context [
 								initializer/kind = ADDRESS_INITIALIZER [
 									if any [
 										array-type/flags <> 8
-										not valid-global-address-initializer? initializer
-											array-type/target id header/global-count global-data
-											type-data header/type-count
+										not valid-static-address-initializer? initializer
+											array-type/target id header/global-count
+											header/function-count global-data type-data
+											header/type-count
 									][return INVALID_IR]
 								]
 								true [return INVALID_IR]
@@ -3139,9 +3166,10 @@ x64-codegen: context [
 						initializer/kind = ADDRESS_INITIALIZER [
 							if any [
 								ir-global/flags <> 0
-								not valid-global-address-initializer? initializer
-									ir-global/type id header/global-count global-data
-									type-data header/type-count
+								not valid-static-address-initializer? initializer
+									ir-global/type id header/global-count
+									header/function-count global-data type-data
+									header/type-count
 							][return INVALID_IR]
 						]
 						true [return INVALID_IR]
@@ -3205,6 +3233,14 @@ x64-codegen: context [
 		image-data-size: BITMAP_SIZE
 		global-reference-count: 0
 		id: 1
+		while [id <= header/function-count][
+			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
+				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
+			image-function/first-reference: 0
+			image-function/reference-count: 0
+			id: id + 1
+		]
+		id: 1
 		while [id <= header/global-count][
 			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
 			if any [
@@ -3246,15 +3282,31 @@ x64-codegen: context [
 						+ (header/function-count * IMAGE_FUNCTION_SIZE)
 						+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 					if image-global/data-offset > 2147483646 [return OUTPUT_FULL]
-					target-image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-						+ (header/function-count * IMAGE_FUNCTION_SIZE)
-						+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
-					if any [
-						target-image-global/reference-count = 2147483647
-						global-reference-count = 2147483647
-					][return OUTPUT_FULL]
-					target-image-global/reference-count:
-						target-image-global/reference-count + 1
+					case [
+						initializer/a = GLOBAL_ADDRESS [
+							target-image-global: as codegen-global! (output
+								+ IMAGE_HEADER_SIZE
+								+ (header/function-count * IMAGE_FUNCTION_SIZE)
+								+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
+							if target-image-global/reference-count = 2147483647 [
+								return OUTPUT_FULL
+							]
+							target-image-global/reference-count:
+								target-image-global/reference-count + 1
+						]
+						initializer/a = FUNCTION_ADDRESS [
+							target-image-function: as codegen-function! (output
+								+ IMAGE_HEADER_SIZE
+								+ ((initializer/b - 1) * IMAGE_FUNCTION_SIZE))
+							if target-image-function/reference-count = 2147483647 [
+								return OUTPUT_FULL
+							]
+							target-image-function/reference-count:
+								target-image-function/reference-count + 1
+						]
+						true [return INVALID_IR]
+					]
+					if global-reference-count = 2147483647 [return OUTPUT_FULL]
 					global-reference-count: global-reference-count + 1
 				]
 				initializer-id: initializer-id + 1
@@ -3436,6 +3488,7 @@ x64-codegen: context [
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
+			count: image-function/reference-count
 			current-entry?: all [entry? id = header/entry-function]
 			image-function/name: name-cursor
 			image-function/name-size: ir-function/name-size
@@ -3445,7 +3498,7 @@ x64-codegen: context [
 			image-function/bitmap-offset: 0
 			image-function/bitmap-size: BITMAP_SIZE
 			image-function/first-reference: 0
-			image-function/reference-count: 0
+			image-function/reference-count: count
 			unless current-entry? [code-cursor: code-cursor + function-sizes/id]
 			name: strings + ir-function/name
 			copy-memory (names-output + name-cursor) name ir-function/name-size
@@ -3472,6 +3525,16 @@ x64-codegen: context [
 			+ (header/global-count * IMAGE_GLOBAL_SIZE)
 			+ (image-import-count * IMAGE_IMPORT_SIZE))
 		first-reference: 1
+		id: 1
+		while [id <= header/function-count][
+			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
+				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
+			count: image-function/reference-count
+			image-function/first-reference: either count > 0 [first-reference][0]
+			first-reference: first-reference + count
+			image-function/reference-count: 0
+			id: id + 1
+		]
 		id: 1
 		while [id <= header/global-count][
 			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
@@ -3624,20 +3687,35 @@ x64-codegen: context [
 								]
 							]
 							initializer/kind = ADDRESS_INITIALIZER [
-								target-image-global: as codegen-global! (output
-									+ IMAGE_HEADER_SIZE
-									+ (header/function-count * IMAGE_FUNCTION_SIZE)
-									+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
-								reference-id: target-image-global/first-reference
-									+ target-image-global/reference-count
+								reference-id: 0
+								case [
+									initializer/a = GLOBAL_ADDRESS [
+										target-image-global: as codegen-global! (output
+											+ IMAGE_HEADER_SIZE
+											+ (header/function-count * IMAGE_FUNCTION_SIZE)
+											+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
+										reference-id: target-image-global/first-reference
+											+ target-image-global/reference-count
+										target-image-global/reference-count:
+											target-image-global/reference-count + 1
+									]
+									initializer/a = FUNCTION_ADDRESS [
+										target-image-function: as codegen-function! (output
+											+ IMAGE_HEADER_SIZE
+											+ ((initializer/b - 1) * IMAGE_FUNCTION_SIZE))
+										reference-id: target-image-function/first-reference
+											+ target-image-function/reference-count
+										target-image-function/reference-count:
+											target-image-function/reference-count + 1
+									]
+									true [return release scratch INVALID_IR]
+								]
 								if (image-global/data-offset + item-offset) > 2147483646 [
 									return release scratch OUTPUT_FULL
 								]
 								references/reference-id: 0 - (
 									image-global/data-offset + item-offset + 1
 								)
-								target-image-global/reference-count:
-									target-image-global/reference-count + 1
 							]
 							true [return release scratch INVALID_IR]
 						]

@@ -181,18 +181,32 @@ linker: context [
 			unless word? name [return codegen-fail "native function name is not a Red word"]
 			if find symbols name [return codegen-fail "native codegen returned duplicate symbols"]
 			refs: make block! count-reference
+			data-refs: make block! count-reference
 			reference-id: first-reference
 			repeat index count-reference [
-				reference: read-codegen-word image
+				reference: read-codegen-signed-word image
 					(refs-start + ((reference-id - 1) * 4))
-				unless all [integer? reference reference <= (code-size - 4)][
-					return codegen-fail "native function reference exceeds code"
+				unless integer? reference [
+					return codegen-fail "native function reference is invalid"
 				]
-				append refs reference + 1
+				either negative? reference [
+					data-reference: (negate reference) - 1
+					unless all [
+						data-reference >= 0 data-reference <= (data-size - 8)
+					][return codegen-fail "native function data reference exceeds data"]
+					append data-refs data-reference + 1
+				][
+					unless reference <= (code-size - 4) [
+						return codegen-fail "native function reference exceeds code"
+					]
+					append refs reference + 1
+				]
 				reference-id: reference-id + 1
 			]
 			append symbols name
-			append/only symbols reduce ['native (function-offset + 1) refs]
+			append/only symbols reduce [
+				'native (function-offset + 1) refs data-refs
+			]
 			id: id + 1
 		]
 

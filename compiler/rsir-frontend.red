@@ -209,7 +209,7 @@ compiler-rsir-frontend: context [
 	set-global-initializer: func [
 		record [block!]
 		values [block!]
-		/local count
+		/local count data
 	][
 		unless ((length? values) // 4) = 0 [
 			fail ERROR-UNSUPPORTED "invalid static initializer"
@@ -218,9 +218,23 @@ compiler-rsir-frontend: context [
 		unless all [count > 0 record/5 = 0][
 			fail ERROR-UNSUPPORTED "global value is already initialized"
 		]
-		record/4: (length? initializers) / 16
+		data: make binary! (count * 16)
+		emit data values
+		record/4: data
 		record/5: count
-		emit initializers values
+	]
+
+	write-initializers: func [/local position data][
+		clear initializers
+		position: global-data
+		while [not tail? position][
+			data: position/4
+			either binary? data [
+				position/4: (length? initializers) / 16
+				append initializers data
+			][position/4: 0]
+			position: skip position 5
+		]
 	]
 
 	emit-local-address: func [output [binary!] slot [integer!]][
@@ -1417,6 +1431,7 @@ compiler-rsir-frontend: context [
 		type-output: make binary! (type-count * 20)
 		members: make binary! 64
 		write-types type-output members
+		write-initializers
 		type-bytes: length? type-output
 		member-bytes: length? members
 		names: copy strings
@@ -1869,36 +1884,107 @@ compiler-rsir-frontend: context [
 		reduce [low high]
 	]
 
-	static-literal-bits: func [
+	add-static-bytes: func [
+		value [binary!]
+		/nul
+		return: [integer!]
+		/local data offset ref id record
+	][
+		data: copy value
+		if nul [append data 0]
+		offset: length? strings
+		append strings data
+		ref: intern-array -2 length? data 1
+		id: add-hidden-global ref inline-flag
+		record: skip global-data ((id - 1) * 5)
+		set-global-initializer record reduce [
+			bytes-initializer offset length? data 0
+		]
+		id
+	]
+
+	static-literal-info: func [
 		value
 		scope uses [block!]
 		return: [block! none!]
-		/local wide bits id key
+		/local wide bits id key target record ref
 	][
 		case [
 			issue? value [
 				wide: wide-literal value
-				if block? wide [return wide]
+				if block? wide [
+					return reduce [
+						wide/1 scalar-initializer wide/2 wide/3 0
+					]
+				]
 				bits: either float-literal? value [float-bits value 'f64][none]
-				if block? bits [return reduce [-10 bits/1 bits/2]]
+				if block? bits [
+					return reduce [-10 scalar-initializer bits/1 bits/2 0]
+				]
 			]
 			float? value [
 				bits: float-bits value 'f64
-				if block? bits [return reduce [-10 bits/1 bits/2]]
+				if block? bits [
+					return reduce [-10 scalar-initializer bits/1 bits/2 0]
+				]
 			]
-			integer? value [return reduce [-5 value either value < 0 [-1][0]]]
+			integer? value [
+				return reduce [
+					-5 scalar-initializer value either value < 0 [-1][0] 0
+				]
+			]
 			char? value [
 				id: to integer! value
-				if id <= 255 [return reduce [-2 id 0]]
+				if id <= 255 [return reduce [-2 scalar-initializer id 0 0]]
 			]
-			logic? value [return reduce [-11 either value [1][0] 0]]
+			logic? value [
+				return reduce [
+					-11 scalar-initializer either value [1][0] 0 0
+				]
+			]
 			all [word? value find [true false yes no] value][
-				return reduce [-11 either find [true yes] value [1][0] 0]
+				return reduce [
+					-11 scalar-initializer either find [true yes] value [1][0] 0 0
+				]
+			]
+			string? value [
+				id: add-static-bytes/nul to binary! value
+				return reduce [-13 address-initializer global-address id 0]
+			]
+			any [get-word? value get-path? value][
+				target: either get-word? value [to word! value][to path! value]
+				id: resolve-name target scope uses function-ids
+				if integer? id [
+					return reduce [-12 address-initializer function-address id 0]
+				]
+				id: resolve-name target scope uses import-ids
+				if integer? id [
+					record: skip imports ((id - 1) * 10)
+					if record/5 = 'function [
+						return reduce [-12 address-initializer import-address id 0]
+					]
+				]
+				id: resolve-name target scope uses globals
+				if integer? id [
+					record: skip global-data ((id - 1) * 5)
+					if integer? record/2 [
+						ref: address-reference-ref record/2 record/3
+						if integer? ref [
+							return reduce [
+								ref address-initializer global-address id 0
+							]
+						]
+					]
+				]
 			]
 			any [word? value path? value][
 				key: qualified scope value
 				id: select constants key
-				if integer? id [return reduce [-5 id either id < 0 [-1][0]]]
+				if integer? id [
+					return reduce [
+						-5 scalar-initializer id either id < 0 [-1][0] 0
+					]
+				]
 			]
 		]
 		none
@@ -1937,7 +2023,7 @@ compiler-rsir-frontend: context [
 		width: 0
 		uniform?: true
 		foreach item value [
-			info: static-literal-bits item scope uses
+			info: static-literal-info item scope uses
 			unless block? info [
 				fail ERROR-UNSUPPORTED ["invalid literal array item " mold item]
 			]
@@ -1951,7 +2037,7 @@ compiler-rsir-frontend: context [
 			][
 				if (canonical-ref element) <> canonical-ref info/1 [uniform?: false]
 			]
-			repend values [scalar-initializer info/2 info/3 0]
+			repend values [info/2 info/3 info/4 info/5]
 			count: count + 1
 		]
 		unless uniform? [
@@ -3141,7 +3227,7 @@ compiler-rsir-frontend: context [
 		value-context [integer!]
 		return: [block!]
 		/local value type-info next-position target id constant-key bytes offset
-			inner wide bits
+			inner wide bits call-target
 	][
 		unless not tail? position [
 			fail ERROR-UNSUPPORTED "missing expression"
@@ -3231,6 +3317,20 @@ compiler-rsir-frontend: context [
 			]
 			any [get-word? value get-path? value][
 				target: either get-word? value [to word! value][to path! value]
+				call-target: resolve-stack-call target scope uses
+				if integer? call-target [
+					emit instructions reduce [
+						address-op either call-target > 0 [
+							function-address
+						][import-address]
+						either call-target > 0 [call-target][0 - call-target]
+						0
+					]
+					emit instructions reduce [reference-op -12 0 0]
+					last-type: -12
+					last-flags: 0
+					return next position
+				]
 				unless stack-address target scope uses instructions params locals [
 					fail ERROR-REFERENCE ["unknown address target " mold value]
 				]
@@ -3409,6 +3509,22 @@ compiler-rsir-frontend: context [
 				static-flags: inline-flag
 				static-initializer: info/2
 				static-next: skip position 2
+			]
+			string? value [
+				info: static-literal-info value scope uses
+				static?: true
+				static-ref: info/1
+				static-initializer: reduce [info/2 info/3 info/4 info/5]
+				static-next: skip position 2
+			]
+			any [get-word? value get-path? value][
+				info: static-literal-info value scope uses
+				if block? info [
+					static?: true
+					static-ref: info/1
+					static-initializer: reduce [info/2 info/3 info/4 info/5]
+					static-next: skip position 2
+				]
 			]
 			issue? value [
 				wide: wide-literal value

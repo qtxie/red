@@ -11,6 +11,14 @@ Red/System [
 values: [10 20 30 40]
 floats: [1.5 2.5 3.5]
 bytes: #{09080706}
+message: "Red"
+labels: ["north" "south"]
+
+double: func [value [integer!] return: [integer!]][value * 2]
+triple: func [value [integer!] return: [integer!]][value * 3]
+
+functions: [:double :triple]
+entry: :double
 
 local-bytes: func [
 	return: [byte-ptr!]
@@ -45,8 +53,13 @@ main: func [
 	buffer: local-bytes
 	if buffer/1 = #"^(03)" [score: score + 1]
 	if buffer/3 = #"^(05)" [score: score + 1]
+	if message/2 = #"e" [score: score + 1]
+	if labels/1/1 = #"n" [score: score + 1]
+	if labels/2/1 = #"s" [score: score + 1]
+	if functions/1 = :double [score: score + 1]
+	if all [functions/2 = :triple entry = :double][score: score + 1]
 
-	either score = 13 [73][score]
+	either score = 18 [73][score]
 ]
 
 process-exit main

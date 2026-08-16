@@ -41,12 +41,12 @@ rsir-import!: alias struct! [
 ]
 
 rsir-global!: alias struct! [
-	name      [integer!]
-	name-size [integer!]
-	type      [integer!]
-	flags     [integer!]
-	low       [integer!]
-	high      [integer!]
+	name              [integer!]
+	name-size         [integer!]
+	type              [integer!]
+	flags             [integer!]
+	first-initializer [integer!]
+	initializer-count [integer!]
 ]
 
 rsir-function!: alias struct! [
@@ -64,6 +64,13 @@ rsir-function!: alias struct! [
 rsir-parameter!: alias struct! [
 	type  [integer!]
 	flags [integer!]
+]
+
+rsir-initializer!: alias struct! [
+	kind [integer!]
+	a    [integer!]
+	b    [integer!]
+	c    [integer!]
 ]
 
 rsir-instruction!: alias struct! [
@@ -131,6 +138,7 @@ x64-codegen: context [
 	RSIR_GLOBAL_SIZE:      24
 	RSIR_FUNCTION_SIZE:    36
 	RSIR_PARAMETER_SIZE:    8
+	RSIR_INITIALIZER_SIZE: 16
 	RSIR_SWITCH_SIZE:      12
 	RSIR_INSTRUCTION_SIZE: 16
 
@@ -145,8 +153,10 @@ x64-codegen: context [
 	VARIABLE_FLAGS: 56
 	FUNCTION_FLAGS: 511
 	INLINE:          1
-	GLOBAL_REFERENCE: 2
 	TAGGED_UNION:    1
+	SCALAR_INITIALIZER:  1
+	ADDRESS_INITIALIZER: 2
+	BYTES_INITIALIZER:   3
 
 	OP_LITERAL:   1
 	OP_CONSTANT:  2
@@ -267,6 +277,27 @@ x64-codegen: context [
 		any [kind = -2 kind = -3]
 	]
 
+	array-ref?: func [
+		ref [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [logic!]
+	][
+		(logical-kind ref types count) = -7
+	]
+
+	inline-object-ref?: func [
+		ref [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [logic!]
+	][
+		any [
+			aggregate-ref? ref types count
+			array-ref? ref types count
+		]
+	]
+
 	tag-width: func [count [integer!] return: [integer!]][
 		case [
 			count <= 0 [0]
@@ -308,7 +339,8 @@ x64-codegen: context [
 		types [byte-ptr!]
 		count [integer!]
 		return: [logic!]
-		/local left right left-kind right-kind [integer!]
+		/local left right left-kind right-kind target [integer!]
+			left-record right-record [rsir-type!]
 	][
 		if expected = actual [return true]
 		left: canonical-type expected types count
@@ -317,6 +349,23 @@ x64-codegen: context [
 		if left = right [return true]
 		left-kind: logical-kind left types count
 		right-kind: logical-kind right types count
+		if all [right-kind = -7 right > 0][
+			right-record: as rsir-type! (types + ((right - 1) * RSIR_TYPE_SIZE))
+			target: 0
+			case [
+				left-kind = 13 [target: -2]
+				all [left-kind = -6 left > 0][
+					left-record: as rsir-type! (types + ((left - 1) * RSIR_TYPE_SIZE))
+					target: left-record/target
+				]
+				true [0]
+			]
+			if all [
+				target <> 0
+				(canonical-type target types count)
+					= (canonical-type right-record/target types count)
+			][return true]
+		]
 		all [left-kind > 0 left-kind = right-kind]
 	]
 
@@ -351,6 +400,7 @@ x64-codegen: context [
 		return: [logic!]
 		/local record [rsir-type!] member [rsir-member!]
 			kind id member-size member-align size alignment tag-size payload-offset
+			element-size element-align
 				[integer!]
 	][
 		if any [ref = 0 depth > type-count][return false]
@@ -389,6 +439,27 @@ x64-codegen: context [
 		if kind = -6 [
 			size-out/1: 8
 			align-out/1: 8
+			return true
+		]
+		if kind = -7 [
+			unless all [
+				record/member-count > 0
+				any [record/flags = 1 record/flags = 2
+					record/flags = 4 record/flags = 8]
+			][return false]
+			unless inline? [
+				size-out/1: 8
+				align-out/1: 8
+				return true
+			]
+			element-size: 0
+			element-align: 0
+			unless layout-type record/target false types members type-count
+				(depth + 1) :element-size :element-align [return false]
+			unless element-size = record/flags [return false]
+			if record/member-count > (2147483647 / record/flags)[return false]
+			size-out/1: record/member-count * record/flags
+			align-out/1: record/flags
 			return true
 		]
 		unless any [kind = -2 kind = -3][return false]
@@ -435,6 +506,24 @@ x64-codegen: context [
 		size-out/1: size
 		align-out/1: alignment
 		true
+	]
+
+	logical-size: func [
+		ref [integer!]
+		types members [byte-ptr!]
+		type-count [integer!]
+		return: [integer!]
+		/local base size alignment [integer!] record [rsir-type!]
+	][
+		base: canonical-type ref types type-count
+		if base = 0 [return 0]
+		if all [base > 0 (logical-kind base types type-count) = -7][
+			record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
+			return record/member-count
+		]
+		size: 0
+		alignment: 0
+		either layout-type ref true types members type-count 0 :size :alignment [size][0]
 	]
 
 	union-payload-offset: func [
@@ -485,7 +574,8 @@ x64-codegen: context [
 		/local width [integer!]
 	][
 		width: value-width ref flags types members type-count
-		all [width > 0 width <= 8 not all [flags = INLINE aggregate-ref? ref types type-count]]
+		all [width > 0 width <= 8
+			not all [flags = INLINE inline-object-ref? ref types type-count]]
 	]
 
 	integer-type?: func [
@@ -547,7 +637,7 @@ x64-codegen: context [
 		/local kind [integer!]
 	][
 		kind: logical-kind ref types count
-		any [kind = 12 kind = 13 kind = -2 kind = -3 kind = -6]
+		any [kind = 12 kind = 13 kind = -2 kind = -3 kind = -6 kind = -7]
 	]
 
 	pointer-stride: func [
@@ -564,6 +654,11 @@ x64-codegen: context [
 		size: 0
 		alignment: 0
 		case [
+			kind = -7 [
+				record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
+				size: record/flags
+				unless any [size = 1 size = 2 size = 4 size = 8][return 0]
+			]
 			kind = -6 [
 			record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
 			unless layout-type record/target true types members count 0 :size :alignment [
@@ -592,10 +687,57 @@ x64-codegen: context [
 		if base = 0 [return false]
 		kind: logical-kind base types count
 		if kind = 13 [result/1: -2 return true]
-		unless all [kind = -6 base > 0][return false]
+		unless all [any [kind = -6 kind = -7] base > 0][return false]
 		record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
 		result/1: record/target
 		valid-type-ref? result/1 count
+	]
+
+	valid-global-address-initializer?: func [
+		initializer [rsir-initializer!]
+		expected owner global-count [integer!]
+		globals types [byte-ptr!]
+		type-count [integer!]
+		return: [logic!]
+		/local target [rsir-global!]
+	][
+		if any [
+			initializer/kind <> ADDRESS_INITIALIZER
+			initializer/a <> GLOBAL_ADDRESS
+			initializer/c <> 0
+			initializer/b <= 0 initializer/b > global-count
+			initializer/b = owner
+		][return false]
+		target: as rsir-global! (globals
+			+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
+		all [
+			target/flags = INLINE
+			any [
+				expected = 0
+				compatible-types? expected target/type types type-count
+			]
+		]
+	]
+
+	write-static-scalar: func [
+		target [byte-ptr!]
+		width low high [integer!]
+		return: [logic!]
+	][
+		case [
+			width = 1 [target/1: as byte! low]
+			width = 2 [
+				target/1: as byte! low
+				target/2: as byte! (low >>> 8)
+			]
+			width = 4 [x64-encoder/write-i32 target low]
+			width = 8 [
+				x64-encoder/write-i32 target low
+				x64-encoder/write-i32 (target + 4) high
+			]
+			true [return false]
+		]
+		true
 	]
 
 	load-operation-value: func [
@@ -1249,6 +1391,7 @@ x64-codegen: context [
 							global: as rsir-global! (globals
 								+ ((global-id - 1) * RSIR_GLOBAL_SIZE))
 							ref: global/type
+							flags: global/flags
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: x64-encoder/rip-address at (capacity - written)
@@ -1317,7 +1460,7 @@ x64-codegen: context [
 					flags: stack-flags/depth
 					either all [
 						flags = INLINE
-						aggregate-ref? ref types type-count
+						inline-object-ref? ref types type-count
 					][
 						stack-flags/depth: 0
 						stack-kinds/depth: VALUE
@@ -1966,12 +2109,9 @@ x64-codegen: context [
 				]
 				instruction/op = OP_SIZE [
 					ref: instruction/a
-					width: 0
-					flags: 0
-					unless all [
-						valid-type-ref? ref type-count
-						layout-type ref true types members type-count 0 :width :flags
-					][return INVALID_IR]
+					unless valid-type-ref? ref type-count [return INVALID_IR]
+					width: logical-size ref types members type-count
+					if width <= 0 [return INVALID_IR]
 					depth: depth + 1
 					if depth > max-depth [max-depth: depth]
 					stack-types/depth: -5
@@ -2686,12 +2826,13 @@ x64-codegen: context [
 		capacity opt-level [integer!]
 		return: [integer!]
 		/local header [rsir-header!]
-			ir-type [rsir-type!]
+			ir-type array-type [rsir-type!]
 			ir-member [rsir-member!]
 			ir-import [rsir-import!]
 			ir-global target-global [rsir-global!]
 			ir-function [rsir-function!]
 			ir-parameter [rsir-parameter!]
+			initializer [rsir-initializer!]
 			image [codegen-header!]
 			image-function [codegen-function!]
 			image-global target-image-global [codegen-global!]
@@ -2701,11 +2842,12 @@ x64-codegen: context [
 				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
 				tag-widths storage-offsets references [int-ptr!]
 			type-data member-data import-data global-data function-data
-				parameter-data switch-data instruction-data strings function-instructions
+				parameter-data initializer-data switch-data instruction-data strings
+				function-instructions
 				name names-output code data-output cursor finish scratch [byte-ptr!]
 			type-bytes member-bytes import-bytes global-bytes function-bytes
-				parameter-bytes switch-bytes instruction-bytes remaining member-count parameter-count
-				next-parameter
+				parameter-bytes initializer-bytes switch-bytes instruction-bytes remaining
+				member-count parameter-count initializer-count next-parameter
 				strings-size metadata-size function-names-size global-names-size
 				import-names-size names-size code-offset code-size function-code-size
 				literal-size data-offset image-data-size total-size scratch-count
@@ -2714,8 +2856,9 @@ x64-codegen: context [
 				global-reference-count used-import-count import-reference-count
 				image-import-count reference-count count first-reference last-library
 				library-offset external-offset output-import-id exit-reference-id
-				reference-id record-offset variable-mode written [integer!]
-			entry? current-entry? [logic!]
+				reference-id record-offset variable-mode written base initializer-id
+				slot-width item-offset [integer!]
+			entry? current-entry? array? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
 			return INVALID_IR
@@ -2782,14 +2925,24 @@ x64-codegen: context [
 						return INVALID_IR
 					]
 				]
+				ir-type/kind = -7 [
+					if any [
+						not valid-type-ref? ir-type/target header/type-count
+						ir-type/member-count <= 0
+						not any [ir-type/flags = 1 ir-type/flags = 2
+							ir-type/flags = 4 ir-type/flags = 8]
+					][return INVALID_IR]
+				]
 				all [ir-type/kind > 0 ir-type/kind <= 13][
 					if any [ir-type/target <> 0 ir-type/flags <> 0
 						ir-type/member-count <> 0][return INVALID_IR]
 				]
 				true [return INVALID_IR]
 			]
-			if member-count > (2147483647 - ir-type/member-count)[return INVALID_IR]
-			member-count: member-count + ir-type/member-count
+			if ir-type/kind <> -7 [
+				if member-count > (2147483647 - ir-type/member-count)[return INVALID_IR]
+				member-count: member-count + ir-type/member-count
+			]
 			id: id + 1
 		]
 		if member-count > (remaining / RSIR_MEMBER_SIZE)[return INVALID_IR]
@@ -2843,31 +2996,25 @@ x64-codegen: context [
 		global-bytes: header/global-count * RSIR_GLOBAL_SIZE
 		global-data: import-data + import-bytes
 		remaining: remaining - global-bytes
+		initializer-count: 0
 		id: 1
 		while [id <= header/global-count][
 			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
 			if any [
 				not valid-type-ref? ir-global/type header/type-count
-				ir-global/flags < 0 ir-global/flags > GLOBAL_REFERENCE
-				all [ir-global/flags = INLINE any [
-					not aggregate-ref? ir-global/type type-data header/type-count
-					ir-global/low <> 0 ir-global/high <> 0
-				]]
-				all [ir-global/flags = GLOBAL_REFERENCE any [
-					ir-global/low <= 0 ir-global/low > header/global-count
-					ir-global/low = id ir-global/high <> 0
-				]]
+				ir-global/flags < 0 ir-global/flags > INLINE
+				all [ir-global/flags = INLINE
+					not inline-object-ref? ir-global/type type-data header/type-count]
+				ir-global/first-initializer < 0 ir-global/initializer-count < 0
+				all [ir-global/initializer-count = 0
+					ir-global/first-initializer <> 0]
+				all [ir-global/initializer-count > 0
+					ir-global/first-initializer <> initializer-count]
 			][return INVALID_IR]
-			if ir-global/flags = GLOBAL_REFERENCE [
-				target-global: as rsir-global! (global-data
-					+ ((ir-global/low - 1) * RSIR_GLOBAL_SIZE))
-				if any [
-					target-global/flags <> INLINE
-					not valid-type-ref? target-global/type header/type-count
-					not compatible-types? ir-global/type target-global/type type-data
-						header/type-count
-				][return INVALID_IR]
+			if initializer-count > (2147483647 - ir-global/initializer-count)[
+				return INVALID_IR
 			]
+			initializer-count: initializer-count + ir-global/initializer-count
 			id: id + 1
 		]
 
@@ -2924,9 +3071,89 @@ x64-codegen: context [
 			id: id + 1
 		]
 
+		if initializer-count > (remaining / RSIR_INITIALIZER_SIZE)[return INVALID_IR]
+		initializer-bytes: initializer-count * RSIR_INITIALIZER_SIZE
+		initializer-data: parameter-data + parameter-bytes
+		remaining: remaining - initializer-bytes
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			base: canonical-type ir-global/type type-data header/type-count
+			array?: all [
+				ir-global/flags = INLINE
+				base > 0
+				(logical-kind base type-data header/type-count) = -7
+			]
+			if all [array? ir-global/initializer-count = 0][return INVALID_IR]
+			if ir-global/initializer-count > 0 [
+				initializer: as rsir-initializer! (initializer-data
+					+ (ir-global/first-initializer * RSIR_INITIALIZER_SIZE))
+				either array? [
+					array-type: as rsir-type! (type-data
+						+ ((base - 1) * RSIR_TYPE_SIZE))
+					either initializer/kind = BYTES_INITIALIZER [
+						if any [
+							ir-global/initializer-count <> 1
+							initializer/a < 0 initializer/c <> 0
+							array-type/flags <> 1
+							initializer/b <> array-type/member-count
+							(canonical-type array-type/target type-data header/type-count)
+								<> -2
+						][return INVALID_IR]
+					][
+						if ir-global/initializer-count <> array-type/member-count [
+							return INVALID_IR
+						]
+						initializer-id: 0
+						while [initializer-id < ir-global/initializer-count][
+							initializer: as rsir-initializer! (initializer-data
+								+ ((ir-global/first-initializer + initializer-id)
+									* RSIR_INITIALIZER_SIZE))
+							case [
+								initializer/kind = SCALAR_INITIALIZER [
+									if initializer/c <> 0 [return INVALID_IR]
+								]
+								initializer/kind = ADDRESS_INITIALIZER [
+									if any [
+										array-type/flags <> 8
+										not valid-global-address-initializer? initializer
+											array-type/target id header/global-count global-data
+											type-data header/type-count
+									][return INVALID_IR]
+								]
+								true [return INVALID_IR]
+							]
+							initializer-id: initializer-id + 1
+						]
+					]
+				][
+					if ir-global/initializer-count <> 1 [return INVALID_IR]
+					case [
+						initializer/kind = SCALAR_INITIALIZER [
+							if any [
+								initializer/c <> 0 ir-global/flags <> 0
+								not machine-value? ir-global/type 0 type-data member-data
+									header/type-count
+							][return INVALID_IR]
+						]
+						initializer/kind = ADDRESS_INITIALIZER [
+							if any [
+								ir-global/flags <> 0
+								not valid-global-address-initializer? initializer
+									ir-global/type id header/global-count global-data
+									type-data header/type-count
+							][return INVALID_IR]
+						]
+						true [return INVALID_IR]
+					]
+				]
+			]
+			id: id + 1
+		]
+
 		if header/switch-count > (remaining / RSIR_SWITCH_SIZE)[return INVALID_IR]
 		switch-bytes: header/switch-count * RSIR_SWITCH_SIZE
-		switch-data: parameter-data + parameter-bytes
+		switch-data: initializer-data + initializer-bytes
 		remaining: remaining - switch-bytes
 
 		if header/instruction-count > (remaining / RSIR_INSTRUCTION_SIZE)[
@@ -2937,6 +3164,23 @@ x64-codegen: context [
 		remaining: remaining - instruction-bytes
 		strings: instruction-data + instruction-bytes
 		strings-size: remaining
+
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			if ir-global/initializer-count > 0 [
+				initializer: as rsir-initializer! (initializer-data
+					+ (ir-global/first-initializer * RSIR_INITIALIZER_SIZE))
+				if all [
+					initializer/kind = BYTES_INITIALIZER
+					any [
+						initializer/b > strings-size
+						initializer/a > (strings-size - initializer/b)
+					]
+				][return INVALID_IR]
+			]
+			id: id + 1
+		]
 
 		id: 1
 		while [id <= header/import-count][
@@ -2973,10 +3217,6 @@ x64-codegen: context [
 			unless layout-type ir-global/type (ir-global/flags = INLINE)
 				type-data member-data
 				header/type-count 0 :global-size :global-align [return INVALID_IR]
-			if all [ir-global/flags = 0 global-size > 8
-				any [ir-global/low <> 0 ir-global/high <> 0]][
-				return INVALID_IR
-			]
 			global-offset: align image-data-size global-align
 			if any [global-offset < 0 global-offset > (2147483647 - global-size)
 				global-names-size > (2147483647 - ir-global/name-size)][
@@ -2996,21 +3236,28 @@ x64-codegen: context [
 		id: 1
 		while [id <= header/global-count][
 			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
-			if ir-global/flags = GLOBAL_REFERENCE [
-				image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE)
-					+ ((id - 1) * IMAGE_GLOBAL_SIZE))
-				if image-global/data-offset > 2147483646 [return OUTPUT_FULL]
-				target-image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE)
-					+ ((ir-global/low - 1) * IMAGE_GLOBAL_SIZE))
-				if any [
-					target-image-global/reference-count = 2147483647
-					global-reference-count = 2147483647
-				][return OUTPUT_FULL]
-				target-image-global/reference-count:
-					target-image-global/reference-count + 1
-				global-reference-count: global-reference-count + 1
+			initializer-id: 0
+			while [initializer-id < ir-global/initializer-count][
+				initializer: as rsir-initializer! (initializer-data
+					+ ((ir-global/first-initializer + initializer-id)
+						* RSIR_INITIALIZER_SIZE))
+				if initializer/kind = ADDRESS_INITIALIZER [
+					image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+						+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+					if image-global/data-offset > 2147483646 [return OUTPUT_FULL]
+					target-image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+						+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
+					if any [
+						target-image-global/reference-count = 2147483647
+						global-reference-count = 2147483647
+					][return OUTPUT_FULL]
+					target-image-global/reference-count:
+						target-image-global/reference-count + 1
+					global-reference-count: global-reference-count + 1
+				]
+				initializer-id: initializer-id + 1
 			]
 			id: id + 1
 		]
@@ -3346,28 +3593,59 @@ x64-codegen: context [
 				+ (header/function-count * IMAGE_FUNCTION_SIZE)
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			cursor: data-output + image-global/data-offset
-			either ir-global/flags = GLOBAL_REFERENCE [
-				target-image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE)
-					+ ((ir-global/low - 1) * IMAGE_GLOBAL_SIZE))
-				reference-id: target-image-global/first-reference
-					+ target-image-global/reference-count
-				references/reference-id: 0 - (image-global/data-offset + 1)
-				target-image-global/reference-count:
-					target-image-global/reference-count + 1
-			][case [
-				image-global/data-size = 1 [cursor/1: as byte! ir-global/low]
-				image-global/data-size = 2 [
-					cursor/1: as byte! ir-global/low
-					cursor/2: as byte! (ir-global/low >>> 8)
+			base: canonical-type ir-global/type type-data header/type-count
+			array?: all [
+				ir-global/flags = INLINE
+				base > 0
+				(logical-kind base type-data header/type-count) = -7
+			]
+			slot-width: image-global/data-size
+			if array? [
+				array-type: as rsir-type! (type-data + ((base - 1) * RSIR_TYPE_SIZE))
+				slot-width: array-type/flags
+			]
+			if ir-global/initializer-count > 0 [
+				initializer: as rsir-initializer! (initializer-data
+					+ (ir-global/first-initializer * RSIR_INITIALIZER_SIZE))
+				either initializer/kind = BYTES_INITIALIZER [
+					copy-memory cursor (strings + initializer/a) initializer/b
+				][
+					initializer-id: 0
+					item-offset: 0
+					while [initializer-id < ir-global/initializer-count][
+						initializer: as rsir-initializer! (initializer-data
+							+ ((ir-global/first-initializer + initializer-id)
+								* RSIR_INITIALIZER_SIZE))
+						case [
+							initializer/kind = SCALAR_INITIALIZER [
+								unless write-static-scalar (cursor + item-offset) slot-width
+									initializer/a initializer/b [
+									return release scratch INVALID_IR
+								]
+							]
+							initializer/kind = ADDRESS_INITIALIZER [
+								target-image-global: as codegen-global! (output
+									+ IMAGE_HEADER_SIZE
+									+ (header/function-count * IMAGE_FUNCTION_SIZE)
+									+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
+								reference-id: target-image-global/first-reference
+									+ target-image-global/reference-count
+								if (image-global/data-offset + item-offset) > 2147483646 [
+									return release scratch OUTPUT_FULL
+								]
+								references/reference-id: 0 - (
+									image-global/data-offset + item-offset + 1
+								)
+								target-image-global/reference-count:
+									target-image-global/reference-count + 1
+							]
+							true [return release scratch INVALID_IR]
+						]
+						initializer-id: initializer-id + 1
+						item-offset: item-offset + slot-width
+					]
 				]
-				image-global/data-size = 4 [x64-encoder/write-i32 cursor ir-global/low]
-				image-global/data-size = 8 [
-					x64-encoder/write-i32 cursor ir-global/low
-					x64-encoder/write-i32 (cursor + 4) ir-global/high
-				]
-				true [0]
-			]]
+			]
 			id: id + 1
 		]
 		release scratch total-size

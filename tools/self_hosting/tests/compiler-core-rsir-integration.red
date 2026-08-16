@@ -141,5 +141,7 @@ run-linked-fixture
 	%rsir-aggregate-copy-exit.reds %rsir-aggregate-copy-linked.exe "aggregate copy"
 run-linked-fixture
 	%rsir-tagged-union-exit.reds %rsir-tagged-union-linked.exe "tagged union"
+run-linked-fixture
+	%rsir-literal-array-exit.reds %rsir-literal-array-linked.exe "literal array"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

@@ -27,6 +27,7 @@ compiler-rsir-frontend: context [
 	types: make block! 256
 	type-ids: make hash! 128
 	pointer-types: make hash! 64
+	array-types: make hash! 32
 	aggregate-types: make hash! 64
 	constants: make hash! 256
 	imports: make block! 256
@@ -37,6 +38,7 @@ compiler-rsir-frontend: context [
 	module-code: make binary! 256
 	module-locals: make block! 12
 	function-code: make binary! 2048
+	initializers: make binary! 256
 	switches: make binary! 96
 	strings: make binary! 256
 	string-ids: make hash! 128
@@ -59,7 +61,7 @@ compiler-rsir-frontend: context [
 		i8 1 u8 2 i16 3 u16 4 i32 5 u32 6 i64 7 u64 8
 		f32 9 f64 10 logic 11 pointer 12 c-string 13
 		alias -1 struct -2 union -3 function -4 subroutine -5
-		pointer-node -6
+		pointer-node -6 array -7
 	]
 	builtin-pointees: make hash! [
 		byte-ptr! [byte!]
@@ -76,8 +78,10 @@ compiler-rsir-frontend: context [
 	objc-flag: 128
 	catch-flag: 256
 	inline-flag: 1
-	global-reference-flag: 2
 	tagged-type-flag: 1
+	scalar-initializer: 1
+	address-initializer: 2
+	bytes-initializer: 3
 
 	; Semantic postfix operations. Operands are typed by the surrounding
 	; declaration tables; no source-specific value IDs cross the boundary.
@@ -136,6 +140,8 @@ compiler-rsir-frontend: context [
 	static-ref: 0
 	static-low: 0
 	static-high: 0
+	static-flags: 0
+	static-initializer: none
 	static-next: none
 
 	emit: func [output [binary!] values [block!] /local value][
@@ -198,6 +204,23 @@ compiler-rsir-frontend: context [
 		append global-data 0
 		global-count: id
 		id
+	]
+
+	set-global-initializer: func [
+		record [block!]
+		values [block!]
+		/local count
+	][
+		unless ((length? values) // 4) = 0 [
+			fail ERROR-UNSUPPORTED "invalid static initializer"
+		]
+		count: (length? values) / 4
+		unless all [count > 0 record/5 = 0][
+			fail ERROR-UNSUPPORTED "global value is already initialized"
+		]
+		record/4: (length? initializers) / 16
+		record/5: count
+		emit initializers values
 	]
 
 	emit-local-address: func [output [binary!] slot [integer!]][
@@ -334,6 +357,34 @@ compiler-rsir-frontend: context [
 		append types pointee
 		append/only types copy []
 		append/only types copy []
+		type-count: id
+		id
+	]
+
+	intern-array: func [
+		element count width [integer!]
+		return: [integer!]
+		/local key id kind
+	][
+		kind: ref-kind element
+		unless all [
+			count > 0
+			find [1 2 4 8] width
+			find [
+			i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string
+			] kind
+		][
+			fail ERROR-UNSUPPORTED "literal array element type is unsupported"
+		]
+		key: mold/flat reduce [element count width]
+		if id: select array-types key [return id]
+		id: type-count + 1
+		repend array-types [key id]
+		append types none
+		append types 'array
+		append types element
+		append types count
+		append types width
 		type-count: id
 		id
 	]
@@ -574,6 +625,13 @@ compiler-rsir-frontend: context [
 		all [record/2 = 'union tagged-union? record/2 record/3]
 	]
 
+	array-info: func [ref [integer!] return: [block! none!] /local record][
+		ref: canonical-ref ref
+		if any [ref <= 0 ref > type-count][return none]
+		record: skip types ((ref - 1) * 5)
+		either record/2 = 'array [reduce [record/3 record/4 record/5]][none]
+	]
+
 	member-info: func [
 		ref [integer!]
 		name [word!]
@@ -623,6 +681,10 @@ compiler-rsir-frontend: context [
 		kind: ref-kind base
 		case [
 			kind = 'c-string [-2]
+			kind = 'array [
+				record: skip types ((base - 1) * 5)
+				record/3
+			]
 			all [kind = 'pointer base > 0][
 				record: skip types ((base - 1) * 5)
 				either record/2 = 'pointer [record/3][none]
@@ -1289,6 +1351,11 @@ compiler-rsir-frontend: context [
 						select type-codes 'pointer-node position/3 0 first 0
 					]
 				]
+				kind = 'array [
+					emit type-output reduce [
+						select type-codes 'array position/3 position/5 first position/4
+					]
+				]
 				find [struct union] kind [
 					code: select type-codes kind
 					definition: position/3
@@ -1354,7 +1421,8 @@ compiler-rsir-frontend: context [
 		member-bytes: length? members
 		names: copy strings
 		switch-count: (length? switches) / 12
-		output: make binary! (32 + type-bytes + member-bytes + (length? switches)
+		output: make binary! (32 + type-bytes + member-bytes + (length? initializers)
+			+ (length? switches)
 			+ (length? strings)
 			+ (length? function-code) + (import-count * 64)
 			+ (global-count * 40) + (function-count * 112))
@@ -1490,6 +1558,7 @@ compiler-rsir-frontend: context [
 			id: id + 1
 			position: skip position 10
 		]
+		append output initializers
 		append output switches
 		append output function-code
 		append output names
@@ -1524,6 +1593,16 @@ compiler-rsir-frontend: context [
 		either record/5 = 'function [0 - id][none]
 	]
 
+	array-pointer-compatible?: func [
+		expected actual [integer!]
+		return: [logic!]
+		/local info target
+	][
+		unless info: array-info actual [return false]
+		unless target: pointee-ref expected [return false]
+		(canonical-ref target) = canonical-ref info/1
+	]
+
 	stack-type-compatible?: func [
 		expected actual [integer!]
 		return: [logic!]
@@ -1535,6 +1614,7 @@ compiler-rsir-frontend: context [
 		if any [expected = 0 actual = 0] [return false]
 		expected-kind: ref-kind expected
 		actual-kind: ref-kind actual
+		if array-pointer-compatible? expected actual [return true]
 		if any [reference-kind? expected-kind reference-kind? actual-kind][return false]
 		either all [expected > 0 actual > 0][
 			false
@@ -1789,6 +1869,117 @@ compiler-rsir-frontend: context [
 		reduce [low high]
 	]
 
+	static-literal-bits: func [
+		value
+		scope uses [block!]
+		return: [block! none!]
+		/local wide bits id key
+	][
+		case [
+			issue? value [
+				wide: wide-literal value
+				if block? wide [return wide]
+				bits: either float-literal? value [float-bits value 'f64][none]
+				if block? bits [return reduce [-10 bits/1 bits/2]]
+			]
+			float? value [
+				bits: float-bits value 'f64
+				if block? bits [return reduce [-10 bits/1 bits/2]]
+			]
+			integer? value [return reduce [-5 value either value < 0 [-1][0]]]
+			char? value [
+				id: to integer! value
+				if id <= 255 [return reduce [-2 id 0]]
+			]
+			logic? value [return reduce [-11 either value [1][0] 0]]
+			all [word? value find [true false yes no] value][
+				return reduce [-11 either find [true yes] value [1][0] 0]
+			]
+			any [word? value path? value][
+				key: qualified scope value
+				id: select constants key
+				if integer? id [return reduce [-5 id either id < 0 [-1][0]]]
+			]
+		]
+		none
+	]
+
+	static-literal-width: func [ref [integer!] return: [integer!] /local kind][
+		kind: ref-kind ref
+		case [
+			find [i8 u8] kind [1]
+			find [i16 u16] kind [2]
+			find [i32 u32 f32 logic] kind [4]
+			find [i64 u64 f64 pointer c-string] kind [8]
+			true [0]
+		]
+	]
+
+	array-literal-info: func [
+		value [block! binary!]
+		scope uses [block!]
+		return: [block!]
+		/local values item info element count offset width item-width uniform?
+	][
+		if empty? value [fail ERROR-UNSUPPORTED "literal array is empty"]
+		if binary? value [
+			offset: length? strings
+			append strings value
+			return reduce [
+				intern-array -2 length? value 1
+				reduce [bytes-initializer offset length? value 0]
+			]
+		]
+
+		values: make block! ((length? value) * 4)
+		element: 0
+		count: 0
+		width: 0
+		uniform?: true
+		foreach item value [
+			info: static-literal-bits item scope uses
+			unless block? info [
+				fail ERROR-UNSUPPORTED ["invalid literal array item " mold item]
+			]
+			item-width: static-literal-width info/1
+			if item-width = 0 [
+				fail ERROR-UNSUPPORTED ["invalid literal array item " mold item]
+			]
+			if item-width > width [width: item-width]
+			either element = 0 [
+				element: info/1
+			][
+				if (canonical-ref element) <> canonical-ref info/1 [uniform?: false]
+			]
+			repend values [scalar-initializer info/2 info/3 0]
+			count: count + 1
+		]
+		unless uniform? [
+			if width < 4 [width: 4]
+			element: either width = 8 [-8][-5]
+		]
+		reduce [intern-array element count width values]
+	]
+
+	stack-array-literal: func [
+		position scope uses [block!]
+		instructions [binary!]
+		return: [block!]
+		/local info id record
+	][
+		info: array-literal-info position/1 scope uses
+		id: add-hidden-global info/1 inline-flag
+		record: skip global-data ((id - 1) * 5)
+		set-global-initializer record info/2
+		emit instructions reduce [address-op global-address id 0]
+		emit instructions reduce [load-op 0 0 0]
+		last-type: info/1
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		next position
+	]
+
 	float-kind?: func [kind [word! none!] return: [logic!]][
 		not none? find [f32 f64] kind
 	]
@@ -1818,7 +2009,7 @@ compiler-rsir-frontend: context [
 	]
 
 	reference-kind?: func [kind [word! none!] return: [logic!]][
-		not none? find [pointer c-string struct union] kind
+		not none? find [pointer c-string struct union array] kind
 	]
 
 	same-stack-type?: func [
@@ -2120,7 +2311,7 @@ compiler-rsir-frontend: context [
 					flags: info/3
 					place?: true
 				]
-				find [pointer c-string] kind [
+				find [pointer c-string array] kind [
 					if place? [
 						emit instructions reduce [load-op 0 0 0]
 						flags: 0
@@ -2899,6 +3090,48 @@ compiler-rsir-frontend: context [
 		skip position 2
 	]
 
+	stack-size: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local value storage id record ref info type-info
+	][
+		if tail? position [fail ERROR-UNSUPPORTED "SIZE? requires a type or array"]
+		value: position/1
+		ref: none
+		if word? value [
+			storage: stack-storage-info value params locals
+			if block? storage [
+				record: storage/2
+				if integer? record/2 [ref: record/2]
+			]
+		]
+		if all [none? ref any [word? value path? value]][
+			id: resolve-name value scope uses globals
+			if integer? id [
+				record: skip global-data ((id - 1) * 5)
+				if integer? record/2 [ref: record/2]
+			]
+		]
+		info: either integer? ref [array-info ref][none]
+		if block? info [
+			emit instructions reduce [size-op ref 0 0]
+			last-type: -5
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next position
+		]
+		type-info: stack-read-type position scope uses
+		emit instructions reduce [size-op type-info/2 0 0]
+		last-type: -5
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		type-info/1
+	]
+
 	stack-primary: func [
 		position [block!]
 		scope uses [block!]
@@ -2991,11 +3224,7 @@ compiler-rsir-frontend: context [
 				stack-cast position scope uses instructions params locals
 			]
 			value = 'size? [
-				type-info: stack-read-type next position scope uses
-				emit instructions reduce [size-op type-info/2 0 0]
-				last-type: -5
-				last-flags: 0
-				type-info/1
+				stack-size next position scope uses instructions params locals
 			]
 			value = 'declare [
 				fail ERROR-CONTEXT "DECLARE requires an assignment target"
@@ -3162,15 +3391,25 @@ compiler-rsir-frontend: context [
 		position [block!]
 		scope uses [block!]
 		return: [logic!]
-		/local value type-info next-position wide bits kind keep?
+		/local value type-info next-position wide bits kind keep? info
 	][
 		static?: false
 		static-ref: 0
 		static-low: 0
 		static-high: 0
+		static-flags: 0
+		static-initializer: none
 		static-next: position
 		value: position/2
 		case [
+			any [block? value binary? value][
+				info: array-literal-info value scope uses
+				static?: true
+				static-ref: info/1
+				static-flags: inline-flag
+				static-initializer: info/2
+				static-next: skip position 2
+			]
 			issue? value [
 				wide: wide-literal value
 				either block? wide [
@@ -3280,6 +3519,11 @@ compiler-rsir-frontend: context [
 				]
 			]
 		]
+		if all [static? none? static-initializer][
+			static-initializer: reduce [
+				scalar-initializer static-low static-high 0
+			]
+		]
 		static?
 	]
 
@@ -3345,9 +3589,10 @@ compiler-rsir-frontend: context [
 			unless integer? record/2 [
 				hidden: add-hidden-global ref inline-flag
 				record/2: ref
-				record/3: global-reference-flag
-				record/4: hidden
-				record/5: 0
+				record/3: 0
+				set-global-initializer record reduce [
+					address-initializer global-address hidden 0
+				]
 				last-type: 0
 				last-flags: 0
 				last-stopped?: false
@@ -3430,9 +3675,8 @@ compiler-rsir-frontend: context [
 				]
 			][
 				record/2: static-ref
-				record/3: 0
-				record/4: static-low
-				record/5: static-high
+				record/3: static-flags
+				set-global-initializer record static-initializer
 				last-type: 0
 				last-flags: 0
 				return static-next
@@ -3443,8 +3687,15 @@ compiler-rsir-frontend: context [
 		]
 		target-ref: last-type
 		target-flags: last-flags
-		next-position: stack-value next position scope uses instructions params locals
-			expression-value
+		if (ref-kind target-ref) = 'array [
+			fail ERROR-REFERENCE "a literal array pointer cannot be reassigned"
+		]
+		next-position: either any [block? position/2 binary? position/2][
+			stack-array-literal next position scope uses instructions
+		][
+			stack-value next position scope uses instructions params locals
+				expression-value
+		]
 		if last-stopped? [return next-position]
 		either block? storage [
 			record: storage/2
@@ -3658,6 +3909,7 @@ compiler-rsir-frontend: context [
 			clear types
 			clear type-ids
 			clear pointer-types
+			clear array-types
 			clear aggregate-types
 			clear constants
 			clear imports
@@ -3669,6 +3921,7 @@ compiler-rsir-frontend: context [
 			clear module-locals
 			last-float-literal?: false
 			clear function-code
+			clear initializers
 			clear switches
 			clear strings
 			clear string-ids

@@ -6,7 +6,7 @@ do %../../../compiler/rsir-frontend.red
 
 frontend: compiler-rsir-frontend
 
-assert: func [condition [logic!] message [string! block!]][
+assert: func [condition [logic! none!] message [string! block!]][
 	unless condition [
 		print ["FAIL:" either block? message [rejoin message][message]]
 		quit/return 1
@@ -31,7 +31,7 @@ compile-text: func [text [string!] kind [word!] /limit max [integer!]][
 ; turn semantic tests into whole-image byte-offset tests.
 layout-of: func [ir [binary!] /local types imports functions globals switches members
 	type-at member-count import-at global-at function-at use-count use-at
-	switch-at instruction-at strings-at id record
+	initializer-count initializer-at switch-at instruction-at strings-at id record
 ][
 	types: word-at ir 8
 	imports: word-at ir 12
@@ -42,7 +42,9 @@ layout-of: func [ir [binary!] /local types imports functions globals switches me
 	member-count: 0
 	id: 0
 	while [id < types][
-		member-count: member-count + word-at ir (type-at + (id * 20) + 16)
+		if (word-at ir (type-at + (id * 20))) <> -7 [
+			member-count: member-count + word-at ir (type-at + (id * 20) + 16)
+		]
 		id: id + 1
 	]
 	import-at: type-at + (types * 20) + (member-count * 8)
@@ -62,14 +64,29 @@ layout-of: func [ir [binary!] /local types imports functions globals switches me
 		id: id + 1
 	]
 	use-at: function-at + (functions * 36)
-	switch-at: use-at + (use-count * 8)
+	initializer-count: 0
+	id: 0
+	while [id < globals][
+		initializer-count: initializer-count
+			+ word-at ir (global-at + (id * 24) + 20)
+		id: id + 1
+	]
+	initializer-at: use-at + (use-count * 8)
+	switch-at: initializer-at + (initializer-count * 16)
 	instruction-at: switch-at + (switches * 12)
 	strings-at: instruction-at + ((word-at ir 20) * 16)
-	reduce [type-at import-at global-at function-at use-at instruction-at strings-at switch-at]
+	reduce [
+		type-at import-at global-at function-at use-at instruction-at strings-at
+		switch-at initializer-at
+	]
 ]
 
 function-word: func [ir layout id field][
 	word-at ir (layout/4 + ((id - 1) * 36) + field)
+]
+
+type-word: func [ir layout id field][
+	word-at ir (layout/1 + ((id - 1) * 20) + field)
 ]
 
 global-word: func [ir layout id field][
@@ -82,6 +99,10 @@ instruction-word: func [ir layout id field][
 
 switch-word: func [ir layout id field][
 	word-at ir (layout/8 + ((id - 1) * 12) + field)
+]
+
+initializer-word: func [ir layout id field][
+	word-at ir (layout/9 + ((id - 1) * 16) + field)
 ]
 
 ops-of: func [ir layout /local output id count][
@@ -367,13 +388,99 @@ assert all [
 	(word-at global-declare-ir 8) = 1
 	(word-at global-declare-ir 24) = 2
 	(global-word global-declare-ir global-declare-layout 1 4) = 10
-	(global-word global-declare-ir global-declare-layout 1 12) = 2
-	(global-word global-declare-ir global-declare-layout 1 16) = 2
+	(global-word global-declare-ir global-declare-layout 1 12) = 0
+	(global-word global-declare-ir global-declare-layout 1 16) = 0
+	(global-word global-declare-ir global-declare-layout 1 20) = 1
 	(global-word global-declare-ir global-declare-layout 2 4) = 0
 	(global-word global-declare-ir global-declare-layout 2 8)
 		= global-word global-declare-ir global-declare-layout 1 8
 	(global-word global-declare-ir global-declare-layout 2 12) = 1
+	(global-word global-declare-ir global-declare-layout 2 20) = 0
+	(initializer-word global-declare-ir global-declare-layout 1 0) = 2
+	(initializer-word global-declare-ir global-declare-layout 1 4) = 2
+	(initializer-word global-declare-ir global-declare-layout 1 8) = 2
 ]["global DECLARE was not one static reference to one anonymous inline object"]
+
+array-ir: compile-text {
+	Red/System []
+	values: [10 20 30]
+	bytes: #{090807}
+	mixed: [#"A" 2 true]
+	fn: func [return: [integer!] /local p [byte-ptr!]][
+		values/2: 25
+		p: #{030405}
+		(size? values) + values/2 + bytes/1 + p/3
+	]
+} 'user
+assert binary? array-ir ["literal arrays failed: " mold frontend/last-error]
+array-layout: layout-of array-ir
+values-ref: global-word array-ir array-layout 1 8
+bytes-ref: global-word array-ir array-layout 2 8
+mixed-ref: global-word array-ir array-layout 3 8
+assert all [
+	(word-at array-ir 24) = 4
+	(type-word array-ir array-layout values-ref 0) = -7
+	(type-word array-ir array-layout values-ref 4) = -5
+	(type-word array-ir array-layout values-ref 8) = 4
+	(type-word array-ir array-layout values-ref 16) = 3
+	(global-word array-ir array-layout 1 12) = 1
+	(global-word array-ir array-layout 1 16) = 0
+	(global-word array-ir array-layout 1 20) = 3
+	(initializer-word array-ir array-layout 1 0) = 1
+	(initializer-word array-ir array-layout 1 4) = 10
+	(initializer-word array-ir array-layout 2 4) = 20
+	(initializer-word array-ir array-layout 3 4) = 30
+]["integer literal array did not lower to one typed inline object"]
+assert all [
+	(type-word array-ir array-layout bytes-ref 0) = -7
+	(type-word array-ir array-layout bytes-ref 4) = -2
+	(type-word array-ir array-layout bytes-ref 8) = 1
+	(type-word array-ir array-layout bytes-ref 16) = 3
+	(global-word array-ir array-layout 2 12) = 1
+	(global-word array-ir array-layout 2 16) = 3
+	(global-word array-ir array-layout 2 20) = 1
+	(initializer-word array-ir array-layout 4 0) = 3
+	(initializer-word array-ir array-layout 4 4) = 0
+	(initializer-word array-ir array-layout 4 8) = 3
+]["binary literal did not use the compact byte initializer"]
+assert all [
+	(type-word array-ir array-layout mixed-ref 0) = -7
+	(type-word array-ir array-layout mixed-ref 4) = -5
+	(type-word array-ir array-layout mixed-ref 8) = 4
+	(type-word array-ir array-layout mixed-ref 16) = 3
+	(initializer-word array-ir array-layout 5 4) = 65
+	(initializer-word array-ir array-layout 6 4) = 2
+	(initializer-word array-ir array-layout 7 4) = 1
+	not none? find ops-of array-ir array-layout 9
+	not none? find ops-of array-ir array-layout 21
+]["mixed scalar array or array SIZE?/INDEX semantics were lost"]
+assert all [
+	(global-word array-ir array-layout 4 4) = 0
+	(global-word array-ir array-layout 4 8) = bytes-ref
+	(global-word array-ir array-layout 4 12) = 1
+	(global-word array-ir array-layout 4 16) = 7
+	(global-word array-ir array-layout 4 20) = 1
+	(initializer-word array-ir array-layout 8 0) = 3
+	(initializer-word array-ir array-layout 8 4) = 3
+	(initializer-word array-ir array-layout 8 8) = 3
+]["function-local binary did not reuse one hidden static array object"]
+
+assert none? compile-text {
+	Red/System []
+	values: [1 2]
+	values: [3 4]
+	fn: func [][]
+} 'user "a literal array pointer was reassigned"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"literal array reassignment reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	receive: func [values [int-ptr!]][]
+	fn: func [][receive [1 2]]
+} 'user "a literal array was passed directly as an argument"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"direct literal array argument reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []

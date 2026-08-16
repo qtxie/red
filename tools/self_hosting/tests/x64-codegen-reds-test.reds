@@ -72,14 +72,17 @@ pointer-ir: allocate 128
 arithmetic-ir: allocate 256
 aggregate-ir: allocate 512
 tagged-ir: allocate 384
+array-ir: allocate 256
 branch-ir: allocate 256
 merge-ir: allocate 256
 selection-ir: allocate 256
 header: declare codegen-header!
 fn: declare codegen-function!
+image-global: declare codegen-global!
+array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
-	null? aggregate-ir null? tagged-ir null? branch-ir null? merge-ir
+	null? aggregate-ir null? tagged-ir null? array-ir null? branch-ir null? merge-ir
 	null? selection-ir
 ][quit 1]
 
@@ -568,6 +571,90 @@ if (x64-codegen/generate selection-ir 194 output 1024 0) <> x64-codegen/INVALID_
 ]
 put selection-ir 180 101
 
+; One array type owns no member records. Its logical count and slot width drive
+; both static layout and the flat scalar initializer slice.
+put array-ir 0 1
+put array-ir 4 0
+put array-ir 8 1
+put array-ir 12 0
+put array-ir 16 1
+put array-ir 20 1
+put array-ir 24 1
+put array-ir 28 0
+
+put array-ir 32 -7
+put array-ir 36 -5
+put array-ir 40 4
+put array-ir 44 0
+put array-ir 48 3
+
+put array-ir 52 0
+put array-ir 56 6
+put array-ir 60 1
+put array-ir 64 1
+put array-ir 68 0
+put array-ir 72 3
+
+put array-ir 76 6
+put array-ir 80 2
+put array-ir 84 0
+put array-ir 88 0
+put array-ir 92 0
+put array-ir 96 0
+put array-ir 100 0
+put array-ir 104 0
+put array-ir 108 1
+
+put array-ir 112 1
+put array-ir 116 10
+put array-ir 120 0
+put array-ir 124 0
+put array-ir 128 1
+put array-ir 132 20
+put array-ir 136 0
+put array-ir 140 0
+put array-ir 144 1
+put array-ir 148 30
+put array-ir 152 0
+put array-ir 156 0
+
+put-instruction array-ir 160 11 0 0 0
+array-ir/177: as byte! 76h
+array-ir/178: as byte! 61h
+array-ir/179: as byte! 6Ch
+array-ir/180: as byte! 75h
+array-ir/181: as byte! 65h
+array-ir/182: as byte! 73h
+array-ir/183: as byte! 66h
+array-ir/184: as byte! 6Eh
+
+size: x64-codegen/generate array-ir 184 output 1024 0
+if size <= 0 [
+	failures: failures + 1
+]
+if size > 0 [
+	header: as codegen-header! output
+	image-global: as codegen-global! (output + x64-codegen/IMAGE_HEADER_SIZE
+		+ x64-codegen/IMAGE_FUNCTION_SIZE)
+	array-values: as int-ptr! (output + header/size - header/data-size
+		+ image-global/data-offset)
+	if any [
+		header/global-count <> 1
+		image-global/data-size <> 12
+		array-values/1 <> 10 array-values/2 <> 20 array-values/3 <> 30
+	][failures: failures + 1]
+]
+put array-ir 40 3
+if (x64-codegen/generate array-ir 184 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put array-ir 40 4
+put array-ir 112 3
+if (x64-codegen/generate array-ir 184 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put array-ir 112 1
+
 ; Trimming the true edge and dropping the false value reconciles a
 ; value-less EITHER without emitting a native move.
 put merge-ir 120 7
@@ -585,6 +672,7 @@ free pointer-ir
 free arithmetic-ir
 free aggregate-ir
 free tagged-ir
+free array-ir
 free branch-ir
 free merge-ir
 free selection-ir

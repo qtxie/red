@@ -206,6 +206,102 @@ assert all [
 	(word-at parameter-ir 104) = 2
 ]["one-parameter direct stream changed"]
 
+logical-types-ir: compile-text {
+	Red/System []
+	byte-alias!: alias byte!
+	small!: alias struct! [
+		mark [byte-alias!]
+		count [integer!]
+		wide [uint64!]
+	]
+	nested!: alias struct! [
+		head [byte!]
+		sub [small! value]
+		tail [uint16!]
+	]
+	refs!: alias struct! [
+		sub [small!]
+		ptr [pointer! [integer!]]
+	]
+	#enum choice! [CHOICE_ZERO CHOICE_FOUR: 4 CHOICE_FIVE]
+	fn: func [][]
+} 'user
+assert binary? logical-types-ir [
+	"frontend rejected logical types: " mold frontend/last-error
+]
+assert frontend/type-count = 5 "type declarations lost source-order IDs"
+byte-alias: frontend/types
+small: skip frontend/types 5
+nested: skip frontend/types 10
+refs: skip frontend/types 15
+choice: skip frontend/types 20
+assert all [
+	(select frontend/type-ids 'byte-alias!) = 1
+	(select frontend/type-ids 'small!) = 2
+	(select frontend/type-ids 'nested!) = 3
+	(select frontend/type-ids 'refs!) = 4
+	(select frontend/type-ids 'choice!) = 5
+] "type IDs are not source ordered"
+assert all [
+	byte-alias/2 = 'alias
+	byte-alias/3 = 'byte!
+	small/2 = 'struct
+	small/3 = [
+		mark [byte-alias!]
+		count [integer!]
+		wide [uint64!]
+	]
+	nested/2 = 'struct
+	refs/2 = 'struct
+	choice/2 = 'i32
+	(frontend/type-kind [byte-alias!] [] []) = 'u8
+	(frontend/type-kind [small!] [] []) = 'pointer
+	(frontend/type-kind [small! value] [] []) = 'struct
+	(frontend/type-kind [pointer! [integer!]] [] []) = 'pointer
+	(select frontend/constants 'CHOICE_ZERO) = 0
+	(select frontend/constants 'CHOICE_FOUR) = 4
+	(select frontend/constants 'CHOICE_FIVE) = 5
+] "logical type declarations or aliases changed"
+
+recursive-ir: compile-text {
+	Red/System []
+	node-ref!: alias node!
+	node!: alias struct! [next [node-ref!]]
+	peer!: alias struct! [node [node!] self [peer!]]
+	fn: func [][]
+} 'user
+assert binary? recursive-ir [
+	"frontend rejected recursive logical types: " mold frontend/last-error
+]
+node-ref: frontend/types
+node: skip frontend/types 5
+peer: skip frontend/types 10
+assert all [
+	node-ref/2 = 'alias
+	node-ref/3 = 'node!
+	node/3 = [next [node-ref!]]
+	peer/3 = [node [node!] self [peer!]]
+	(frontend/type-kind [node-ref!] [] []) = 'pointer
+	(frontend/type-kind [node-ref! value] [] []) = 'struct
+] "forward alias or recursive logical type changed"
+
+assert none? compile-text {
+	Red/System []
+	a!: alias b!
+	b!: alias a!
+	fn: func [value [a!] return: [integer!]][value]
+} 'user "frontend accepted a cyclic alias"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"frontend reported the wrong cyclic-alias error"
+
+assert none? compile-text {
+	Red/System []
+	broken!: alias struct!
+	fn: func [][]
+} 'user "frontend accepted an aggregate alias without a spec"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"frontend reported the wrong incomplete-alias error"
+
 script-ir: compile-text {
 	Red/System []
 	#script %expanded-source.reds
@@ -233,7 +329,7 @@ assert all [
 	frontend/function-count = 1
 	frontend/import-count = 1
 	frontend/global-count = 1
-	((length? frontend/aliases) / 2) = 3
+	frontend/type-count = 3
 	((length? frontend/constants) / 2) = 3
 	(select frontend/constants 'FLAG_ZERO) = 0
 	(select frontend/constants 'FLAG_FOUR) = 4

@@ -46,8 +46,8 @@ frontend, codegen, or linker ownership needed before it can become implemented.
 | Current dependency | Current use | New owner/representation | Required proof |
 | --- | --- | --- | --- |
 | `emitter/datatypes`, `datatype-ID` | base-type tests and runtime debug type IDs | frontend type registry; native-image debug data | all types map without emitter object |
-| `ptr-size`, `stack-width`, default/struct alignment | pointer typing, layout, slot calculations | pure Red target-layout module; sizes serialized and recomputed by codegen | frontend/codegen layout hashes agree |
-| `size-of?`, struct/union size/slots, `member-offset?` | paths, literals, aggregate validation | pure type-layout service plus RSIR type/field records | exhaustive aggregate layout fixtures |
+| `ptr-size`, `stack-width`, default/struct alignment | pointer typing, layout, slot calculations | logical pointer types in RSIR; target sizes calculated by codegen | native layouts match each target ABI |
+| `size-of?`, struct/union size/slots, `member-offset?` | paths, literals, aggregate validation | logical RSIR type/field records; aggregate layout in codegen | exhaustive aggregate layout fixtures |
 | SysV aggregate classes and Win64 call slot fields | frontend rewrites physical arguments | removed from frontend; logical call/signature records | ABI classifier probes in codegen |
 | `store`, `store-value`, protected store, data/rodata buffers | global/literal materialization | RSIR constants/globals; native-image code/data | nested/address initializer fixtures |
 | emitter symbols and `add-native` | definitions, addresses, code/data refs | RSIR symbols; native-image symbols/references | image reload links with no compiler state |

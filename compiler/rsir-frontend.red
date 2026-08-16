@@ -23,15 +23,27 @@ compiler-rsir-frontend: context [
 	functions: make block! 96
 	function-ids: make hash! 48
 	contexts: make hash! 32
-	aliases: make hash! 128
+	types: make block! 256
+	type-ids: make hash! 128
 	constants: make hash! 256
 	imports: make block! 256
 	import-ids: make hash! 256
 	globals: make hash! 1024
 	global-blocks: make block! 64
 	function-count: 0
+	type-count: 0
 	import-count: 0
 	global-count: 0
+
+	type-kinds: make hash! [
+		int8! i8 byte! u8 uint8! u8 int16! i16 uint16! u16
+		integer! i32 int32! i32 uint32! u32 int64! i64 uint64! u64
+		float32! f32 float! f64 float64! f64 logic! logic
+		pointer! pointer c-string! pointer struct! pointer union! pointer
+		function! pointer subroutine! pointer array! pointer
+		byte-ptr! pointer int-ptr! pointer ptr-ptr! pointer
+		float32-ptr! pointer
+	]
 
 	emit: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
@@ -70,34 +82,35 @@ compiler-rsir-frontend: context [
 		output
 	]
 
-	resolve-function: func [
+	resolve-name: func [
 		value [word! path!]
 		scope uses [block!]
+		names [hash!]
 		/local depth key id imported
 	][
 		if path? value [
-			if id: select function-ids qualified copy [] value [return id]
+			if id: select names qualified copy [] value [return id]
 			depth: length? scope
 			while [depth > 0][
 				key: qualified copy/part scope depth value
-				if id: select function-ids key [return id]
+				if id: select names key [return id]
 				depth: depth - 1
 			]
 			foreach imported uses [
 				key: qualified imported value
-				if id: select function-ids key [return id]
+				if id: select names key [return id]
 			]
 			return none
 		]
 		depth: length? scope
 		while [depth >= 0][
 			key: qualified copy/part scope depth value
-			if id: select function-ids key [return id]
+			if id: select names key [return id]
 			depth: depth - 1
 		]
 		foreach imported uses [
 			key: qualified imported value
-			if id: select function-ids key [return id]
+			if id: select names key [return id]
 		]
 		none
 	]
@@ -142,34 +155,46 @@ compiler-rsir-frontend: context [
 	type-kind: func [
 		type [block!]
 		scope uses [block!]
-		/local name depth key kind imported
+		/local name kind id record steps
 	][
-		unless all [(length? type) = 1 any [word? type/1 path? type/1]][return none]
+		unless all [not empty? type any [word? type/1 path? type/1]][return none]
 		name: type/1
-		if all [word? name any [name = 'integer! name = 'int32!]][return 'i32]
-		if path? name [
-			if kind: select aliases qualified copy [] name [return kind]
-			depth: length? scope
-			while [depth > 0][
-				key: qualified copy/part scope depth name
-				if kind: select aliases key [return kind]
-				depth: depth - 1
+		kind: all [word? name select type-kinds name]
+		unless kind [
+			unless id: resolve-name name scope uses type-ids [return none]
+			steps: 0
+			forever [
+				steps: steps + 1
+				if steps > type-count [fail ERROR-REFERENCE "cyclic type alias"]
+				record: skip types ((id - 1) * 5)
+				kind: record/2
+				if kind <> 'alias [break]
+				name: record/3
+				if all [word? name kind: select type-kinds name][break]
+				unless id: resolve-name name record/4 record/5 type-ids [return none]
 			]
-			foreach imported uses [
-				if kind: select aliases qualified imported name [return kind]
+		]
+		case [
+			find [struct union] kind [
+				case [
+					(length? type) = 1 ['pointer]
+					all [(length? type) = 2 type/2 = 'value][kind]
+					true [none]
+				]
 			]
-			return none
+			find [function subroutine] kind [
+				either (length? type) = 1 ['pointer][none]
+			]
+			kind = 'pointer [
+				case [
+					(length? type) = 1 [kind]
+					all [(length? type) = 2 block? type/2][kind]
+					true [none]
+				]
+			]
+			(length? type) = 1 [kind]
+			true [none]
 		]
-		depth: length? scope
-		while [depth >= 0][
-			key: qualified copy/part scope depth name
-			if kind: select aliases key [return kind]
-			depth: depth - 1
-		]
-		foreach imported uses [
-			if kind: select aliases qualified imported name [return kind]
-		]
-		none
 	]
 
 	compile-body: func [
@@ -211,7 +236,7 @@ compiler-rsir-frontend: context [
 						result-id = 0
 						any [word? value path? value]
 					][
-						callee: resolve-function value scope uses
+						callee: resolve-name value scope uses function-ids
 						unless integer? callee [
 							fail ERROR-REFERENCE ["unknown value or function " mold value]
 						]
@@ -239,7 +264,7 @@ compiler-rsir-frontend: context [
 					unless any [word? value path? value][
 						fail ERROR-UNSUPPORTED "call target must be a function name"
 					]
-					callee: resolve-function value scope uses
+					callee: resolve-name value scope uses function-ids
 					unless integer? callee [
 						fail ERROR-REFERENCE ["unknown function " mold value]
 					]
@@ -287,11 +312,18 @@ compiler-rsir-frontend: context [
 	scan-enum: func [
 		name [word!]
 		values scope [block!]
-		/local key position item value constant-key
+		/local key position item value constant-key id
 	][
 		key: qualified scope name
-		if select aliases key [fail ERROR-DUPLICATE ["duplicate type " mold key]]
-		repend aliases [key 'i32]
+		if select type-ids key [fail ERROR-DUPLICATE ["duplicate type " mold key]]
+		id: type-count + 1
+		repend type-ids [key id]
+		append types key
+		append types 'i32
+		append/only types values
+		append/only types copy scope
+		append/only types copy []
+		type-count: id
 		value: 0
 		position: values
 		while [not tail? position][
@@ -381,7 +413,7 @@ compiler-rsir-frontend: context [
 	scan-block: func [
 		values scope uses [block!]
 		/local position name spec body child key kind target next-uses code?
-			spelling id
+			spelling id type-spec
 	][
 		code?: false
 		position: values
@@ -422,22 +454,39 @@ compiler-rsir-frontend: context [
 					position/2 = 'alias
 				][
 					key: qualified scope to word! position/1
-					if select aliases key [
+					if select type-ids key [
 						fail ERROR-DUPLICATE ["duplicate alias " mold key]
 					]
 					case [
-						all [
-							find [struct! union!] position/3
-							(length? position) >= 4
-							block? position/4
-						][kind: 'pointer position: skip position 4]
+						find [struct! union! function! subroutine!] position/3 [
+							unless all [
+								(length? position) >= 4
+								block? position/4
+							][fail ERROR-UNSUPPORTED "alias type is missing its spec"]
+							kind: case [
+								position/3 = 'struct! ['struct]
+								position/3 = 'union! ['union]
+								position/3 = 'function! ['function]
+								true ['subroutine]
+							]
+							type-spec: position/4
+							position: skip position 4
+						]
 						any [word? position/3 path? position/3][
-							kind: any [type-kind reduce [position/3] scope uses 'other]
+							kind: 'alias
+							type-spec: position/3
 							position: skip position 3
 						]
 						true [fail ERROR-UNSUPPORTED "invalid alias declaration"]
 					]
-					repend aliases [key kind]
+					id: type-count + 1
+					repend type-ids [key id]
+					append types key
+					append types kind
+					append/only types type-spec
+					append/only types copy scope
+					append/only types copy/deep uses
+					type-count: id
 				]
 				all [
 					set-word? position/1
@@ -670,13 +719,15 @@ compiler-rsir-frontend: context [
 			clear functions
 			clear function-ids
 			clear contexts
-			clear aliases
+			clear types
+			clear type-ids
 			clear constants
 			clear imports
 			clear import-ids
 			clear globals
 			clear global-blocks
 			function-count: 0
+			type-count: 0
 			import-count: 0
 			global-count: 0
 			compile-source source

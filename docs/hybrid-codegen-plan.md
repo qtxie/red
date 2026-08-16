@@ -49,6 +49,9 @@ Function declarations may live in nested `context` blocks; short names,
 explicit context paths, and `with` lookup scopes resolve to the same
 `>`-decorated symbol style used by Red/System. This slice proves the
 architecture and multi-function traversal; it does not define a smaller H0.
+All current aliases and enums also receive source-order logical type IDs. Their
+unmodified aggregate/function specs stay in frontend state until the native
+consumer is implemented; target sizes and offsets are deliberately absent.
 
 - `compiler/rsir-frontend.red` parses and writes RSIR directly.
 - `compiler/codegen-bridge.red` contains only the `routine!` declaration.
@@ -79,6 +82,13 @@ executable. Before folding two single-use Red helpers into their callers, the
 same working tree took 13.35 seconds in native compilation and produced
 806,912 bytes. This is why the direct frontend keeps helper functions only when
 they represent reusable work.
+
+The source-order logical-type checkpoint builds the same focused development
+routine smoke in 12.05 seconds wall time and produces an 820,736-byte
+executable. A discarded prototype that calculated Win64 aggregate layouts in
+Red took 13.238 seconds and produced 915,456 bytes with the same command. It was
+removed: target layout belongs in Red/System codegen, both for a
+backend-independent IR and for a smaller, faster-to-build Red closure.
 
 ## Data Layout Rule
 
@@ -182,11 +192,12 @@ Exit criteria:
 Status: current major task. Source-order function, import, and global IDs;
 duplicate detection; retained specs and bodies; a separate lowering pass;
 multi-function native traversal; zero/one-argument direct calls; scalar
-aliases; context-qualified names; and `with` resolution scopes are
-implemented. The declaration pass also scans loader `#script` markers, enum
-constants, struct aliases, import groups, and global assignments without
-serializing data that codegen does not consume yet. Complete types, layouts,
-signatures, initializers, and function bodies remain pending.
+aliases; source-order logical type records; context-qualified names; and `with`
+resolution scopes are implemented. The declaration pass also scans loader
+`#script` markers, enum constants, aggregate and function aliases, import
+groups, and global assignments without serializing data that codegen does not
+consume yet. Type/member serialization, native layouts, complete signatures,
+initializers, and function bodies remain pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples. A fresh `--red-only` generation of the direct
@@ -198,7 +209,7 @@ parameter, 34 have none, and seven have two to five; the dominant parameter
 type is `node-handle!`. Context depth is at most two, while functions have up
 to 55 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 234 ms under the interpreter after loading, then fails explicitly at the
+about 240 ms under the interpreter after loading, then fails explicitly at the
 unimplemented global-code lowering boundary.
 
 Regenerate and inspect this corpus without native compilation:
@@ -212,11 +223,11 @@ D:\EE\QTool\red-console.exe tools\self_hosting\audit-rsir-corpus.red
 ### 2.1 Declarations And Stable IDs
 
 Current checkpoint: declaration discovery traverses the complete current H0
-corpus and assigns function, import, and global IDs. Type declarations are
-registered for name resolution, but their final source-order records and
-layouts belong to 2.2. Global source blocks and import records remain in Red
-frontend state and are rejected before RSIR output until 2.2 and 2.3 define
-their consumed representation.
+corpus and assigns source-order type, function, import, and global IDs. Logical
+type records retain kind, source spec, lexical scope, and `with` scopes without
+target layout. Global source blocks and import records remain in Red frontend
+state and are rejected before RSIR output until 2.2 and 2.3 define their
+consumed representation.
 
 - scan top-level declarations and contexts without creating an AST copy;
 - maintain qualified-name and local-scope `hash!` tables;
@@ -230,15 +241,19 @@ resolve every referenced name, while bodies may still fail as unsupported.
 
 ### 2.2 Types And Layout
 
+- write only logical type/member records that native codegen consumes, directly
+  into the compact RSIR order; do not add a schema, section directory, or
+  frontend layout table;
 - base scalar, pointer, function-pointer, alias, enum, struct, union, and array
   representations;
 - forward pointer references and by-value dependency ordering;
-- Windows x64 size/alignment/member offsets in a small frontend layout service;
+- Windows x64 size/alignment/member offsets computed in Red/System codegen;
 - logical function signatures, callbacks, variadic imports, and return types;
 - GC kind attached to semantic types, not stack slots.
 
 Gate: layout results match the existing compiler across the complete applicable
-type/layout suite, without importing the emitter datatype table.
+type/layout suite, without importing the emitter datatype table or calculating
+target layout in Red.
 
 ### 2.3 Imports, Globals, And Constants
 

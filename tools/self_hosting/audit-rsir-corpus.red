@@ -249,14 +249,14 @@ unless all [
 	compiler-rsir-frontend/function-count = select counts "functions"
 	compiler-rsir-frontend/import-count = select counts "import-symbols"
 	((length? compiler-rsir-frontend/contexts) / 2) = select counts "contexts"
-	((length? compiler-rsir-frontend/aliases) / 2) =
+	compiler-rsir-frontend/type-count =
 		((select counts "aliases") + select counts "enums")
 ][
 	print [
 		"FAIL: direct frontend declaration counts"
 		compiler-rsir-frontend/function-count
 		compiler-rsir-frontend/import-count
-		((length? compiler-rsir-frontend/aliases) / 2)
+		compiler-rsir-frontend/type-count
 		((length? compiler-rsir-frontend/contexts) / 2)
 	]
 	if compiler-rsir-frontend/last-error [
@@ -275,7 +275,7 @@ either binary? ir [
 		"frontend stopped after"
 		compiler-rsir-frontend/function-count "functions,"
 		compiler-rsir-frontend/import-count "imports,"
-		((length? compiler-rsir-frontend/aliases) / 2) "aliases,"
+		compiler-rsir-frontend/type-count "types,"
 		((length? compiler-rsir-frontend/contexts) / 2) "contexts,"
 		compiler-rsir-frontend/global-count "globals in"
 		now/time/precise - started

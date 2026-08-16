@@ -121,6 +121,16 @@ parameter, including same-library name sharing and exact contiguous relocation
 slices. The test grew substantially, so these figures are functional build
 measurements rather than a comparison with the preceding checkpoint.
 
+The first global-access checkpoint adds one logical load instruction and emits
+`mov r32,[rip+rel32]` directly. Global records own their contiguous relocation
+slices; codegen uses each record's reference count first as a counter and then
+as its write cursor, so there is no temporary global-relocation table. The
+focused pure Red/System test builds in 2.11 seconds including native linking.
+The expanded development routine test builds in 18.3 seconds wall time: 2.02
+seconds frontend, 13.79 seconds native compilation, and 1.96 seconds linking.
+It verifies two functions reading one global as well as exact linker-image
+bytes and reference ordering.
+
 ## Data Layout Rule
 
 RSIR is a private in-process format compiled as one source set with its only
@@ -268,7 +278,9 @@ calling conventions, attributes, and function/subroutine type signatures are
 also implemented without a registry. Function and variable imports are written
 as direct logical records and validated natively; unused declarations do not
 enter the linker image. Zero/one-argument i32 imported calls now lower directly
-to Win64 IAT-indirect calls and contiguous linker references. Basic Windows x64
+to Win64 IAT-indirect calls and contiguous linker references. Static i32 globals
+can now be read directly through RIP-relative loads and their own contiguous
+linker-reference slices. Basic Windows x64
 scalar, pointer, alias, plain-struct, and plain-union size/alignment is
 implemented and consumed by `size?`. Member access, arrays, tagged unions,
 explicit aggregate alignment, complete signature lowering and ABI
@@ -354,9 +366,10 @@ slices; imports with no references are omitted. Static integer and logic globals
 carry a logical type plus two value words. Native codegen computes their target
 layout, writes their data directly, and gives the linker direct global records.
 General call ABI lowering, imported variables, non-scalar and dynamic
-initializers, global accesses, constants, and empty static-library registration
-groups remain pending. Dynamic top-level initialization will lower through the
-normal instruction stream rather than a second initializer protocol.
+initializers, global stores and non-i32 accesses, constants, and empty
+static-library registration groups remain pending. Dynamic top-level
+initialization will lower through the normal instruction stream rather than a
+second initializer protocol.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

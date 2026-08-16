@@ -15,6 +15,7 @@ reference: as int-ptr! 0
 global-value: as int-ptr! 0
 expected-code: #{554889E56A006A0068000000006A00B9070000004883EC20FF150000000031C0C9C3}
 import-code: #{554889E56A006A0068000000006A004883EC20B907000000FF150000000089C1FF150000000031C0C9C3}
+global-code: #{554889E56A006A0068000000006A008B0500000000C9C3}
 if any [null? ir null? output][quit 1]
 
 put: func [data [byte-ptr!] offset value [integer!]][
@@ -165,7 +166,7 @@ if size = 252 [
 	]
 ]
 
-; USER module containing answer: 42 and fn: func [return: [integer!]][7]
+; USER module containing answer: 42 and fn: func [return: [integer!]][answer]
 global-ir: allocate 116
 if null? global-ir [quit 1]
 put global-ir 0 1
@@ -187,10 +188,10 @@ put global-ir 60 0
 put global-ir 64 0
 put global-ir 68 0
 put global-ir 72 2
-put global-ir 76 1
+put global-ir 76 6
 put global-ir 80 1
-put global-ir 84 0
-put global-ir 88 7
+put global-ir 84 1
+put global-ir 88 0
 put global-ir 92 3
 put global-ir 96 0
 put global-ir 100 1
@@ -198,14 +199,14 @@ put global-ir 104 0
 copy-memory (global-ir + 108) (as byte-ptr! "answerfn") 8
 
 size: x64-codegen/generate global-ir 116 output 512 0
-if size <> 156 [failures: failures + 1]
-if size = 156 [
+if size <> 172 [failures: failures + 1]
+if size = 172 [
 	header: as codegen-header! output
 	if any [
 		header/global-count <> 1
 		header/names-size <> 8
-		header/code-offset <> 112
-		header/code-size <> 22
+		header/code-offset <> 128
+		header/code-size <> 23
 		header/data-size <> 20
 	][failures: failures + 1]
 	image-global: as codegen-global! (output + 80)
@@ -214,16 +215,26 @@ if size = 156 [
 		image-global/name-size <> 6
 		image-global/data-offset <> 16
 		image-global/data-size <> 4
-		image-global/first-reference <> 0
-		image-global/reference-count <> 0
+		image-global/first-reference <> 1
+		image-global/reference-count <> 1
 	][failures: failures + 1]
-	if (compare-memory (output + 104) (as byte-ptr! "fnanswer") 8) <> 0 [
+	reference: as int-ptr! (output + 104)
+	if reference/1 <> 17 [failures: failures + 1]
+	if (compare-memory (output + 108) (as byte-ptr! "fnanswer") 8) <> 0 [
 		failures: failures + 1
 	]
-	global-value: as int-ptr! (output + 152)
+	if (compare-memory (output + 128) (as byte-ptr! global-code) 23) <> 0 [
+		failures: failures + 1
+	]
+	global-value: as int-ptr! (output + 168)
 	if global-value/1 <> 42 [failures: failures + 1]
 ]
 put global-ir 36 0
+if (x64-codegen/generate global-ir 116 output 512 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put global-ir 36 -5
+put global-ir 84 2
 if (x64-codegen/generate global-ir 116 output 512 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]

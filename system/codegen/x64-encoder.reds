@@ -13,6 +13,7 @@ x64-encoder: context [
 	I32_IMPORT:            6
 	I32_IMPORT_ARG_LITERAL: 7
 	I32_IMPORT_ARG_PARAM:   8
+	I32_GLOBAL:             9
 
 	VOID_SIZE:       17
 	VOID_ENTRY_SIZE: 31
@@ -29,6 +30,8 @@ x64-encoder: context [
 	IMPORT_CALL_ARG_LITERAL_SIZE: 32
 	IMPORT_CALL_ARG_LITERAL_ENTRY_SIZE: 42
 	IMPORT_CALL_ARG_PARAM_SIZE:   27
+	GLOBAL_SIZE:       23
+	GLOBAL_ENTRY_SIZE: 35
 	FRAME_SIZE:      32
 	BITMAP_OFFSET:    9
 	VOID_EXIT_REF:   23
@@ -41,6 +44,8 @@ x64-encoder: context [
 	IMPORT_CALL_EXIT_REF:        29
 	IMPORT_CALL_ARG_LITERAL_REF: 26
 	IMPORT_CALL_ARG_LITERAL_EXIT_REF: 34
+	GLOBAL_REF:      17
+	GLOBAL_EXIT_REF: 27
 
 	write-i32: func [at [byte-ptr!] value [integer!]][
 		at/1: as byte! value
@@ -86,6 +91,8 @@ x64-encoder: context [
 			all [not entry? shape = I32_IMPORT_ARG_PARAM][
 				IMPORT_CALL_ARG_PARAM_SIZE
 			]
+			all [entry? shape = I32_GLOBAL] [GLOBAL_ENTRY_SIZE]
+			all [not entry? shape = I32_GLOBAL] [GLOBAL_SIZE]
 			true [return -1]
 		]
 		if capacity < size [return -1]
@@ -177,6 +184,12 @@ x64-encoder: context [
 			shape = I32_IMPORT_ARG_PARAM [
 				at/1: as byte! FFh                       ; RCX already holds argument
 				at/2: as byte! 15h
+				write-i32 (at + 2) 0
+				at: at + 6
+			]
+			shape = I32_GLOBAL [
+				at/1: as byte! 8Bh
+				at/2: as byte! either entry? [0Dh][05h] ; mov ecx/eax, [rip + rel32]
 				write-i32 (at + 2) 0
 				at: at + 6
 			]

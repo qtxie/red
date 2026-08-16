@@ -178,7 +178,7 @@ global-ir: compiler-rsir-frontend/compile [
 	Red/System []
 	answer: 42
 	ready?: true
-	fn: func [return: [integer!]][7]
+	fn: func [return: [integer!]][answer]
 ] 'user
 check binary? global-ir ["frontend rejected static globals: "
 	mold compiler-rsir-frontend/last-error]
@@ -186,13 +186,13 @@ global-image: make binary! 4096
 check (codegen-module global-ir global-image 0) = 0
 	"static global codegen failed"
 check all [
-	(length? global-image) = 192
+	(length? global-image) = 208
 	(word-at global-image 12) = 1
 	(word-at global-image 16) = 0
-	(word-at global-image 20) = 0
+	(word-at global-image 20) = 1
 	(word-at global-image 24) = 14
-	(word-at global-image 28) = 144
-	(word-at global-image 32) = 22
+	(word-at global-image 28) = 160
+	(word-at global-image 32) = 23
 	(word-at global-image 36) = 24
 	(word-at global-image 40) = 2
 ]["static global image header changed"]
@@ -201,15 +201,61 @@ check all [
 	(word-at global-image 84) = 6
 	(word-at global-image 88) = 16
 	(word-at global-image 92) = 4
+	(word-at global-image 96) = 1
+	(word-at global-image 100) = 1
 	(word-at global-image 104) = 8
 	(word-at global-image 108) = 6
 	(word-at global-image 112) = 20
 	(word-at global-image 116) = 4
-	(copy/part at global-image 129 14) = to binary! "fnanswerready?"
-	(copy/part at global-image 169 16) = #{00000000000000000000000000000000}
-	(word-at global-image 184) = 42
-	(word-at global-image 188) = 1
-]["static global layout or initializer changed"]
+	(word-at global-image 128) = 17
+	(copy/part at global-image 133 14) = to binary! "fnanswerready?"
+	(copy/part at global-image 161 23) =
+		#{554889E56A006A0068000000006A008B0500000000C9C3}
+	(copy/part at global-image 185 16) = #{00000000000000000000000000000000}
+	(word-at global-image 200) = 42
+	(word-at global-image 204) = 1
+]["static global load, layout, or initializer changed"]
+
+shared-global-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	answer: 42
+	helper: func [return: [integer!]][answer]
+	main: func [return: [integer!]][answer]
+] 'glue
+check binary? shared-global-ir ["frontend rejected shared global loads: "
+	mold compiler-rsir-frontend/last-error]
+shared-global-image: make binary! 4096
+check (codegen-module shared-global-ir shared-global-image 0) = 0
+	"shared global load codegen failed"
+check all [
+	(length? shared-global-image) = 304
+	(word-at shared-global-image 8) = 2
+	(word-at shared-global-image 12) = 2
+	(word-at shared-global-image 16) = 1
+	(word-at shared-global-image 20) = 3
+	(word-at shared-global-image 24) = 39
+	(word-at shared-global-image 28) = 224
+	(word-at shared-global-image 32) = 58
+	(word-at shared-global-image 36) = 20
+	(word-at shared-global-image 40) = 1
+]["shared global image header changed"]
+check all [
+	(word-at shared-global-image 52) = 35
+	(word-at shared-global-image 56) = 23
+	(word-at shared-global-image 88) = 0
+	(word-at shared-global-image 92) = 35
+	(word-at shared-global-image 116) = 10
+	(word-at shared-global-image 124) = 16
+	(word-at shared-global-image 132) = 1
+	(word-at shared-global-image 136) = 2
+	(word-at shared-global-image 156) = 3
+	(word-at shared-global-image 160) = 1
+	(word-at shared-global-image 164) = 52
+	(word-at shared-global-image 168) = 17
+	(word-at shared-global-image 172) = 27
+	(copy/part at shared-global-image 177 39) =
+		to binary! "helpermainanswerkernel32.dllExitProcess"
+]["shared global reference slice is not direct and contiguous"]
 
 import-call-ir: compiler-rsir-frontend/compile [
 	Red/System []

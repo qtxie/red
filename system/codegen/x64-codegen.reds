@@ -337,13 +337,14 @@ x64-codegen: context [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
 		parameters [byte-ptr!]
-		function-data import-data [byte-ptr!]
+		function-data import-data global-data [byte-ptr!]
 		type-data [byte-ptr!]
-		type-count function-count import-count [integer!]
+		type-count function-count import-count global-count [integer!]
 		return: [integer!]
 		/local instruction call terminator [rsir-instruction!]
 			callee [rsir-function!]
 			imported [rsir-import!]
+			variable [rsir-global!]
 			parameter-count [integer!]
 	][
 		instruction: as rsir-instruction! instructions
@@ -374,6 +375,7 @@ x64-codegen: context [
 				any [
 					instruction/opcode = 1
 					instruction/opcode = 5
+					instruction/opcode = 6
 					all [instruction/opcode = 4 instruction/immediate = 0]
 				]
 			][
@@ -420,6 +422,19 @@ x64-codegen: context [
 							+ (((0 - instruction/operand) - 1) * RSIR_IMPORT_SIZE))
 						either i32-import? imported parameters type-data type-count 0 [
 							x64-encoder/I32_IMPORT
+						][UNSUPPORTED]
+					]
+					instruction/opcode = 6 [
+						unless all [
+							instruction/result = (parameter-count + 1)
+							instruction/operand > 0
+							instruction/operand <= global-count
+							instruction/immediate = 0
+						][return INVALID_IR]
+						variable: as rsir-global! (global-data
+							+ ((instruction/operand - 1) * RSIR_GLOBAL_SIZE))
+						either integer32-ref? variable/type type-data type-count [
+							x64-encoder/I32_GLOBAL
 						][UNSUPPORTED]
 					]
 					true [UNSUPPORTED]
@@ -546,6 +561,12 @@ x64-codegen: context [
 			all [not entry? shape = x64-encoder/I32_IMPORT_ARG_PARAM][
 				x64-encoder/IMPORT_CALL_ARG_PARAM_SIZE
 			]
+			all [entry? shape = x64-encoder/I32_GLOBAL][
+				x64-encoder/GLOBAL_ENTRY_SIZE
+			]
+			all [not entry? shape = x64-encoder/I32_GLOBAL][
+				x64-encoder/GLOBAL_SIZE
+			]
 			true [-1]
 		]
 	]
@@ -564,6 +585,7 @@ x64-codegen: context [
 			shape = x64-encoder/I32_IMPORT_ARG_LITERAL [
 				x64-encoder/IMPORT_CALL_ARG_LITERAL_EXIT_REF
 			]
+			shape = x64-encoder/I32_GLOBAL [x64-encoder/GLOBAL_EXIT_REF]
 			true [-1]
 		]
 	]
@@ -610,10 +632,10 @@ x64-codegen: context [
 				data-offset image-data-size total-size
 				id record-offset next-instruction function-size entry-size code-cursor
 				name-cursor shape entry-shape encoded value argument target relative call-next
-				library-offset external-offset variable-mode import-id reference-id
+				library-offset external-offset variable-mode import-id global-id reference-id
 				used-import-count image-import-count import-reference-count reference-count
 				import-names-size output-import-id first-reference last-library count
-				global-size global-align global-offset [integer!]
+				global-size global-align global-offset global-reference-count [integer!]
 			entry? current-entry? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
@@ -949,6 +971,8 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			image-global/data-offset: global-offset
 			image-global/data-size: global-size
+			image-global/first-reference: 0
+			image-global/reference-count: 0
 			image-data-size: global-offset + global-size
 			global-names-size: global-names-size + ir-global/name-size
 			id: id + 1
@@ -972,6 +996,7 @@ x64-codegen: context [
 		code-size: 0
 		entry-size: 0
 		entry-shape: -1
+		global-reference-count: 0
 		while [id <= header/function-count][
 			record-offset: (id - 1) * RSIR_FUNCTION_SIZE
 			ir-function: as rsir-function! (function-data + record-offset)
@@ -988,8 +1013,9 @@ x64-codegen: context [
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			instruction: as rsir-instruction! function-instructions
 			shape: shape-of ir-function function-instructions
-				parameter-data function-data import-data type-data
+				parameter-data function-data import-data global-data type-data
 				header/type-count header/function-count header/import-count
+				header/global-count
 			if shape < 0 [return release scratch shape]
 			if all [
 				shape = x64-encoder/I32_LITERAL
@@ -1008,6 +1034,18 @@ x64-codegen: context [
 				]
 				import-id: 0 - call-instruction/operand
 				import-refs/import-id: import-refs/import-id + 1
+			]
+			if shape = x64-encoder/I32_GLOBAL [
+				global-id: instruction/operand
+				image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					+ ((global-id - 1) * IMAGE_GLOBAL_SIZE))
+				if any [
+					image-global/reference-count = 2147483647
+					global-reference-count = 2147483647
+				][return release scratch OUTPUT_FULL]
+				image-global/reference-count: image-global/reference-count + 1
+				global-reference-count: global-reference-count + 1
 			]
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
@@ -1068,8 +1106,15 @@ x64-codegen: context [
 			id: id + 1
 		]
 		image-import-count: used-import-count
-		reference-count: import-reference-count
+		if global-reference-count > (2147483647 - import-reference-count)[
+			return release scratch OUTPUT_FULL
+		]
+		reference-count: global-reference-count + import-reference-count
 		if entry? [
+			if any [
+				image-import-count = 2147483647
+				reference-count = 2147483647
+			][return release scratch OUTPUT_FULL]
 			image-import-count: image-import-count + 1
 			reference-count: reference-count + 1
 		]
@@ -1176,8 +1221,6 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			image-global/name: name-cursor
 			image-global/name-size: ir-global/name-size
-			image-global/first-reference: 0
-			image-global/reference-count: 0
 			copy-memory (names-output + name-cursor)
 				(strings + ir-global/name) ir-global/name-size
 			name-cursor: name-cursor + ir-global/name-size
@@ -1188,8 +1231,19 @@ x64-codegen: context [
 			+ (header/function-count * IMAGE_FUNCTION_SIZE)
 			+ (header/global-count * IMAGE_GLOBAL_SIZE)
 			+ (image-import-count * IMAGE_IMPORT_SIZE))
-		output-import-id: 0
 		first-reference: 1
+		id: 1
+		while [id <= header/global-count][
+			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			count: image-global/reference-count
+			image-global/first-reference: either count > 0 [first-reference][0]
+			first-reference: first-reference + count
+			image-global/reference-count: 0
+			id: id + 1
+		]
+		output-import-id: 0
 		last-library: -1
 		library-offset: 0
 		id: 1
@@ -1324,6 +1378,17 @@ x64-codegen: context [
 				references/reference-id: image-function/code-offset
 					+ (import-reference shape)
 				import-refs/import-id: reference-id + 1
+			]
+			if shape = x64-encoder/I32_GLOBAL [
+				global-id: instruction/operand
+				image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					+ ((global-id - 1) * IMAGE_GLOBAL_SIZE))
+				reference-id: image-global/first-reference
+					+ image-global/reference-count
+				references/reference-id: image-function/code-offset
+					+ x64-encoder/GLOBAL_REF
+				image-global/reference-count: image-global/reference-count + 1
 			]
 			image-function/frame-size: x64-encoder/FRAME_SIZE
 			next-instruction: next-instruction + ir-function/instruction-count

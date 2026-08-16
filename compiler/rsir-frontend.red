@@ -546,7 +546,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params [block!]
 		flags [integer!]
-		/local expression value callee position callee-params argument type ref
+		/local expression value callee global-id position callee-params argument type ref
 			callee-return callee-flags param-count argument-id result-id before
 	][
 		before: length? instructions
@@ -604,6 +604,22 @@ compiler-rsir-frontend: context [
 						result-id: param-count + 1
 						emit instructions reduce [
 							1 result-id 0 value                ; i32 literal
+						]
+					]
+					if all [
+						result-id = 0
+						any [word? value path? value]
+						integer? global-id: resolve-name value scope uses globals
+					][
+						position: skip global-data ((global-id - 1) * 4)
+						unless integer32-ref? position/2 [
+							fail ERROR-UNSUPPORTED [
+								"global " mold value " is not an i32 value"
+							]
+						]
+						result-id: param-count + 1
+						emit instructions reduce [
+							6 result-id global-id 0            ; load global i32
 						]
 					]
 					if all [

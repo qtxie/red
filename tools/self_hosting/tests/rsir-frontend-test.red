@@ -522,7 +522,7 @@ static-globals-ir: compile-text {
 	Red/System []
 	answer: 42
 	ready?: true
-	fn: func [return: [integer!]][7]
+	fn: func [return: [integer!]][answer]
 } 'user
 assert binary? static-globals-ir [
 	"frontend rejected static scalar globals: " mold frontend/last-error
@@ -539,6 +539,10 @@ assert all [
 	(word-at static-globals-ir 56) = -11
 	(word-at static-globals-ir 60) = 1
 	(word-at static-globals-ir 68) = 12
+	(word-at static-globals-ir 96) = 6
+	(word-at static-globals-ir 100) = 1
+	(word-at static-globals-ir 104) = 1
+	(word-at static-globals-ir 112) = 3
 	(copy at static-globals-ir 129) = to binary! "answerready?fn"
 ]["static global stream changed"]
 

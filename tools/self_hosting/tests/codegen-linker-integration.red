@@ -24,21 +24,22 @@ system-dialect: context [
 	]
 ]
 
-; Independently constructed image for main -> identity 42 and answer: 42.
-artifact: make binary! 304
-emit artifact [304 3 2 2 1 1 41 224 60 20 1]
-emit artifact [0 8 41 19 32 0 16 0 0]
-emit artifact [8 4 0 41 32 0 16 0 0]
-emit artifact [12 6 16 4 0 0]
-emit artifact [18 12 30 11 1 1]
-emit artifact [33]
+; Independently constructed image for main -> answer and answer: 42.
+artifact: make binary! 300
+emit artifact [300 3 2 2 1 2 41 224 54 20 1]
+emit artifact [0 8 35 19 32 0 16 0 0]
+emit artifact [8 4 0 35 32 0 16 0 0]
+emit artifact [12 6 16 4 1 1]
+emit artifact [18 12 30 11 2 1]
+emit artifact [17 27]
 append artifact to binary! "identitymainanswerkernel32.dllExitProcess"
 append/dup artifact 0 (224 - length? artifact)
-append artifact #{554889E56A006A0068000000006A00B92A000000E81000000089C14883EC20FF150000000031C0C9C3}
+append artifact #{554889E56A006A0068000000006A008B0D000000004883EC20FF150000000031C0C9C3}
 append artifact #{554889E56A006A0068000000006A0089C8C9C3}
+append/dup artifact 0 (280 - length? artifact)
 append/dup artifact 0 16
 append artifact #{2A000000}
-unless (length? artifact) = 304 [fail "independent native image has the wrong size"]
+unless (length? artifact) = 300 [fail "independent native image has the wrong size"]
 
 root: clean-path to file! rejoin [system/options/path %../../../]
 system/options/path: root
@@ -80,7 +81,7 @@ if linker/load-codegen job bad-global [fail "linker accepted a duplicate global 
 
 unless linker/load-codegen job artifact [fail linker/codegen-error]
 answer: select job/symbols 'answer
-unless all [block? answer answer/1 = 'global answer/2 = 16 empty? answer/3][
+unless all [block? answer answer/1 = 'global answer/2 = 16 answer/3 = [18]][
 	fail "native global did not become a direct linker symbol"
 ]
 data-section: select job/sections 'data

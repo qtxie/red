@@ -16,12 +16,14 @@ compiler-rsir-frontend: context [
 	ERROR-UNSUPPORTED: 6
 	ERROR-DUPLICATE: 7
 	ERROR-REFERENCE: 8
+	ERROR-CONTEXT: 9
 
 	last-error: none
 	module-name: none
 	module-kind: 0
-	functions: make block! 48
+	functions: make block! 80
 	function-ids: make hash! 48
+	contexts: make hash! 32
 	function-count: 0
 
 	emit: func [output [binary!] values [block!] /local value][
@@ -40,6 +42,96 @@ compiler-rsir-frontend: context [
 		all [not empty? name not find to binary! name 0]
 	]
 
+	qualified: func [scope [block!] value [word! path!] /local output item][
+		output: make string! 48
+		foreach item scope [
+			unless empty? output [append output ">"]
+			append output form item
+		]
+		foreach item either path? value [to block! value][reduce [value]][
+			unless empty? output [append output ">"]
+			append output form item
+		]
+		to word! output
+	]
+
+	extend-scope: func [scope [block!] value [word! path!] /local output item][
+		output: copy scope
+		foreach item either path? value [to block! value][reduce [value]][
+			append output item
+		]
+		output
+	]
+
+	resolve-function: func [
+		value [word! path!]
+		scope uses [block!]
+		/local depth key id imported
+	][
+		if path? value [
+			if id: select function-ids qualified copy [] value [return id]
+			depth: length? scope
+			while [depth > 0][
+				key: qualified copy/part scope depth value
+				if id: select function-ids key [return id]
+				depth: depth - 1
+			]
+			foreach imported uses [
+				key: qualified imported value
+				if id: select function-ids key [return id]
+			]
+			return none
+		]
+		depth: length? scope
+		while [depth >= 0][
+			key: qualified copy/part scope depth value
+			if id: select function-ids key [return id]
+			depth: depth - 1
+		]
+		foreach imported uses [
+			key: qualified imported value
+			if id: select function-ids key [return id]
+		]
+		none
+	]
+
+	resolve-context: func [
+		value [word! path!]
+		scope uses [block!]
+		/local depth key imported
+	][
+		if path? value [
+			key: qualified copy [] value
+			if select contexts key [return extend-scope copy [] value]
+			depth: length? scope
+			while [depth > 0][
+				key: qualified copy/part scope depth value
+				if select contexts key [
+					return extend-scope copy/part scope depth value
+				]
+				depth: depth - 1
+			]
+			foreach imported uses [
+				key: qualified imported value
+				if select contexts key [return extend-scope imported value]
+			]
+			return none
+		]
+		depth: length? scope
+		while [depth >= 0][
+			key: qualified copy/part scope depth value
+			if select contexts key [
+				return extend-scope copy/part scope depth value
+			]
+			depth: depth - 1
+		]
+		foreach imported uses [
+			key: qualified imported value
+			if select contexts key [return extend-scope imported value]
+		]
+		none
+	]
+
 	return-kind: func [spec [block!]][
 		if empty? spec [return 'void]
 		unless all [
@@ -54,6 +146,7 @@ compiler-rsir-frontend: context [
 	compile-body: func [
 		kind [word!]
 		body [block!]
+		scope uses [block!]
 		instructions [binary!]
 		/local value callee position
 	][
@@ -75,12 +168,12 @@ compiler-rsir-frontend: context [
 						1 1 1 0 value                         ; literal -> value 1
 					]
 				]
-				word? value [
-					callee: select function-ids value
+				any [word? value path? value] [
+					callee: resolve-function value scope uses
 					unless integer? callee [
 						fail ERROR-REFERENCE ["unknown function " mold value]
 					]
-					position: skip functions ((callee - 1) * 3)
+					position: skip functions ((callee - 1) * 5)
 					unless position/2 = 'i32 [
 						fail ERROR-REFERENCE [
 							"function " mold value " does not return i32"
@@ -103,9 +196,11 @@ compiler-rsir-frontend: context [
 	compile-function: func [
 		name [set-word!]
 		spec body [block!]
+		scope uses [block!]
 		/local kind spelling key id
 	][
-		spelling: form key: to word! name
+		key: qualified scope to word! name
+		spelling: form key
 		unless valid-name? spelling [
 			fail ERROR-NAME "invalid RSIR function name"
 		]
@@ -121,10 +216,71 @@ compiler-rsir-frontend: context [
 		append functions spelling
 		append functions kind
 		append/only functions body
+		append/only functions copy scope
+		append/only functions copy/deep uses
 		function-count: id
 	]
 
-	compile-source: func [source [block!] /local header position name spec body][
+	scan-block: func [
+		values scope uses [block!]
+		/local position name spec body child key target next-uses
+	][
+		position: values
+		while [not tail? position][
+			case [
+				all [
+					set-word? position/1
+					(length? position) >= 4
+					find [func function] position/2
+					block? position/3
+					block? position/4
+				][
+					name: position/1
+					spec: position/3
+					body: position/4
+					compile-function name spec body scope uses
+					position: skip position 4
+				]
+				all [
+					set-word? position/1
+					(length? position) >= 3
+					position/2 = 'context
+					block? position/3
+				][
+					name: to word! position/1
+					key: qualified scope name
+					if select contexts key [
+						fail ERROR-DUPLICATE ["duplicate context " mold key]
+					]
+					repend contexts [key true]
+					child: append copy scope name
+					scan-block position/3 child uses
+					position: skip position 3
+				]
+				all [
+					position/1 = 'with
+					(length? position) >= 3
+					any [word? position/2 path? position/2]
+					block? position/3
+				][
+					target: position/2
+					unless child: resolve-context target scope uses [
+						fail ERROR-CONTEXT ["unknown context " mold target]
+					]
+					next-uses: copy/deep uses
+					append/only next-uses child
+					scan-block position/3 scope next-uses
+					position: skip position 3
+				]
+				true [
+					fail ERROR-UNSUPPORTED
+						"RSIR frontend requires function or context declarations"
+				]
+			]
+		]
+	]
+
+	compile-source: func [source [block!] /local header][
 		unless all [not tail? source source/1 = 'Red/System] [
 			fail ERROR-ARGUMENTS "source is not a Red/System program"
 		]
@@ -136,25 +292,14 @@ compiler-rsir-frontend: context [
 			fail ERROR-ARGUMENTS "invalid Red/System program header"
 		]
 
-		position: skip source 2
-		unless parse position [
-			any [
-				set name set-word!
-				['func | 'function]
-				set spec block!
-				set body block!
-				(compile-function name spec body)
-			]
-		][
-			fail ERROR-UNSUPPORTED "RSIR frontend requires top-level function declarations"
-		]
+		scan-block skip source 2 copy [] copy []
 		if function-count < 1 [
 			fail ERROR-FUNCTION-COUNT "RSIR module has no function"
 		]
 	]
 
 	write-rsir: func [limit [integer!] /local module strings records instructions output
-		position name kind body name-bytes name-offset first-instruction count
+		position name kind body scope uses name-bytes name-offset first-instruction count
 		instruction-count size entry
 	][
 		module: either module-name [to binary! module-name][#{}]
@@ -168,17 +313,19 @@ compiler-rsir-frontend: context [
 			name: position/1
 			kind: position/2
 			body: position/3
+			scope: position/4
+			uses: position/5
 			name-bytes: to binary! name
 			name-offset: length? strings
 			append strings name-bytes
-			count: compile-body kind body instructions
+			count: compile-body kind body scope uses instructions
 			emit records reduce [
 				name-offset length? name-bytes
 				either kind = 'void [0][1]
 				first-instruction count 0
 			]
 			first-instruction: first-instruction + count
-			position: skip position 3
+			position: skip position 5
 		]
 		instruction-count: first-instruction - 1
 
@@ -228,6 +375,7 @@ compiler-rsir-frontend: context [
 			module-name: either name [copy name][none]
 			clear functions
 			clear function-ids
+			clear contexts
 			function-count: 0
 			compile-source source
 			write-rsir any [max-bytes DEFAULT-MAX-BYTES]

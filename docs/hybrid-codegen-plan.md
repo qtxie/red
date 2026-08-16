@@ -43,8 +43,10 @@ The current narrow slice accepts source-ordered, zero-argument `void` and signed
 `i32` functions. An `i32` body can return a literal or directly call another
 supported function. Glue modules currently use the last declared function as
 their explicit entry ID; codegen still places that entry at code offset zero.
-This slice proves the architecture and multi-function traversal; it does not
-define a smaller H0.
+Function declarations may live in nested `context` blocks; short names, explicit
+context paths, and `with` lookup scopes resolve to the same `>`-decorated symbol
+style used by Red/System. This slice proves the architecture and multi-function
+traversal; it does not define a smaller H0.
 
 - `compiler/rsir-frontend.red` parses and writes RSIR directly.
 - `compiler/codegen-bridge.red` contains only the `routine!` declaration.
@@ -155,13 +157,25 @@ Exit criteria:
 
 Status: current major task. Source-order top-level function IDs, duplicate
 detection, retained bodies, a second lowering pass, multi-function native
-traversal, and zero-argument direct calls are implemented. Contexts, complete
-signatures, and the rest of the real declaration corpus remain pending.
+traversal, zero-argument direct calls, context-qualified names, and `with`
+resolution scopes are implemented. Complete signatures and the rest of the
+real declaration corpus remain pending.
 
 The implementation order is driven by the actual generated self-host source,
-not isolated language examples. The current generated corpus is about 3.8 MB
-and 90,000 lines. A lexical audit finds more than 5,000 `func` occurrences plus
-`function`, contexts, imports, aliases, globals, and substantial control flow.
+not isolated language examples. A fresh `--red-only` generation of the direct
+hybrid source is 2,829,208 bytes. The structured audit finds 516 defined
+functions, 59 contexts, 378 imported symbols, two aliases, and one enum. Of the
+defined functions, 481 have one parameter, 34 have none, and the routine bridge
+has three; the dominant parameter type is `node-handle!`. Context depth is at
+most two, while functions have up to 55 locals and substantial control flow.
+
+Regenerate and inspect this corpus without native compilation:
+
+```powershell
+red-bootstrap-ifphi-final-win64-o2-dev.exe --red-only -d -t Windows-X86-64 `
+  -o build\self-hosting\compact-hybrid-current.reds red-bootstrap-windows-hybrid.red
+D:\EE\QTool\red-console.exe tools\self_hosting\audit-rsir-corpus.red
+```
 
 ### 2.1 Declarations And Stable IDs
 

@@ -176,6 +176,54 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-DUPLICATE
 	"frontend reported the wrong duplicate-function error"
 
+context-ir: compile-text {
+	Red/System []
+	qualified: context [
+		helper: func [return: [integer!]][42]
+		inside: func [return: [integer!]][helper]
+	]
+	main: func [return: [integer!]][qualified/inside]
+} 'glue
+assert binary? context-ir ["frontend rejected context calls: " mold frontend/last-error]
+assert all [
+	(length? context-ir) = 260
+	(word-at context-ir 8) = 3
+	(word-at context-ir 20) = 3
+	(word-at context-ir 24) = 6
+	(word-at context-ir 28) = 36
+	(word-at context-ir 32) = 0
+	(word-at context-ir 56) = 16
+	(word-at context-ir 80) = 32
+	(word-at context-ir 156) = 1
+	(word-at context-ir 196) = 2
+	(copy at context-ir 225) =
+		#{7175616C69666965643E68656C7065727175616C69666965643E696E736964656D61696E}
+]["context naming, resolution, or source-order IDs changed"]
+
+assert none? compile-text {
+	Red/System []
+	with missing [fn: func [][]]
+} 'user "frontend accepted an unknown WITH context"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"frontend reported the wrong WITH-context error"
+
+with-ir: compile-text {
+	Red/System []
+	base: context [helper: func [return: [integer!]][43]]
+	with base [inside: func [return: [integer!]][helper]]
+	main: func [return: [integer!]][inside]
+} 'glue
+assert binary? with-ir ["frontend rejected WITH resolution: " mold frontend/last-error]
+assert all [
+	(length? with-ir) = 245
+	(word-at with-ir 20) = 3
+	(word-at with-ir 56) = 11
+	(word-at with-ir 60) = 6
+	(word-at with-ir 156) = 1
+	(word-at with-ir 196) = 2
+	(copy at with-ir 225) = #{626173653E68656C706572696E736964656D61696E}
+]["WITH changed declaration scope or imported-name resolution"]
+
 assert none? compile-text
 	{Red/System [] fn: func [value [integer!]][]}
 	'user

@@ -9,6 +9,7 @@ expected-void-entry: #{554889E56A006A0068000000006A0031C94883EC20FF150000000031C
 expected-i32: #{554889E56A006A0068000000006A00B807000000C9C3}
 expected-i32-entry: #{554889E56A006A0068000000006A00B9070000004883EC20FF150000000031C0C9C3}
 expected-call: #{554889E56A006A0068000000006A00E810000000C9C3}
+expected-call-back: #{554889E56A006A0068000000006A00E8D6FFFFFFC9C3}
 expected-call-entry: #{554889E56A006A0068000000006A00E81000000089C14883EC20FF150000000031C0C9C3}
 
 failures: 0
@@ -54,6 +55,12 @@ if (compare-memory code (as byte-ptr! expected-call-entry) size) <> 0 [
 ]
 if x64-encoder/CALL_EXIT_REF <> 28 [failures: failures + 1]
 if x64-encoder/CALL_NEXT <> 20 [failures: failures + 1]
+
+size: x64-encoder/encode code x64-encoder/CALL_SIZE false x64-encoder/I32_CALL -42 0
+if size <> x64-encoder/CALL_SIZE [failures: failures + 1]
+if (compare-memory code (as byte-ptr! expected-call-back) size) <> 0 [
+	failures: failures + 1
+]
 
 size: x64-encoder/encode code (x64-encoder/VOID_SIZE - 1)
 	false x64-encoder/VOID 0 0

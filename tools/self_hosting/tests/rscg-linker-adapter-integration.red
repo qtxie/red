@@ -24,18 +24,21 @@ system-dialect: context [
 	]
 ]
 
-; Independently constructed compact image for: fn: func [return: [integer!]][7]
-; The GLUE body passes 7 to kernel32.dll/ExitProcess.
-artifact: make binary! 196
-emit artifact [196 3 1 1 1 1 25 144 34 16]
-emit artifact [0 2 0 34 32 0 16 0 0]
-emit artifact [2 12 14 11 1 1]
-emit artifact [26]
-append artifact #{666E6B65726E656C33322E646C6C4578697450726F63657373}
-append/dup artifact 0 (144 - length? artifact)
-append artifact #{554889E56A006A0068000000006A00B9070000004883EC20FF150000000031C0C9C3}
-append/dup artifact 0 (196 - length? artifact)
-unless (length? artifact) = 196 [fail "independent native image has the wrong size"]
+; Independently constructed image for main -> qualified>inside -> helper -> 42.
+artifact: make binary! 336
+emit artifact [336 3 3 3 1 1 59 240 80 16]
+emit artifact [0 16 36 22 32 0 16 0 0]
+emit artifact [16 16 58 22 32 0 16 0 0]
+emit artifact [32 4 0 36 32 0 16 0 0]
+emit artifact [36 12 48 11 1 1]
+emit artifact [28]
+append artifact to binary! "qualified>helperqualified>insidemainkernel32.dllExitProcess"
+append/dup artifact 0 (240 - length? artifact)
+append artifact #{554889E56A006A0068000000006A00E82600000089C14883EC20FF150000000031C0C9C3}
+append artifact #{554889E56A006A0068000000006A00B82A000000C9C3}
+append artifact #{554889E56A006A0068000000006A00E8D6FFFFFFC9C3}
+append/dup artifact 0 (336 - length? artifact)
+unless (length? artifact) = 336 [fail "independent native image has the wrong size"]
 
 root: clean-path to file! rejoin [system/options/path %../../../]
 system/options/path: root
@@ -81,6 +84,6 @@ if find job/sections 'reloc [
 ]
 
 status: call/wait to-local-file linked
-unless status = 7 [fail ["linked executable returned " status " instead of 7"]]
+unless status = 42 [fail ["linked executable returned " status " instead of 42"]]
 
-print ["PASS: compact native image -> direct PE linker -> exit 7" linked]
+print ["PASS: compact context image -> direct PE linker -> exit 42" linked]

@@ -146,6 +146,35 @@ check all [
 	(word-at call-image (176 + 36 + 16)) = 41
 ]["direct call encoding or names changed"]
 
+context-source: [
+	Red/System []
+	qualified: context [
+		helper: func [return: [integer!]][42]
+		inside: func [return: [integer!]][helper]
+	]
+	main: func [return: [integer!]][qualified/inside]
+]
+context-ir: compiler-rsir-frontend/compile context-source none 'glue 'executable
+check binary? context-ir ["frontend rejected context calls: "
+	mold compiler-rsir-frontend/last-error]
+context-image: make binary! 4096
+check (codegen-module context-ir context-image 0) = 0 "context codegen failed"
+check all [
+	(length? context-image) = 336
+	(word-at context-image 8) = 3
+	(word-at context-image 12) = 3
+	(word-at context-image 24) = 59
+	(word-at context-image 28) = 240
+	(word-at context-image 32) = 80
+	(word-at context-image 48) = 36
+	(word-at context-image 84) = 58
+	(word-at context-image 120) = 0
+	(word-at context-image 172) = 28
+	(word-at context-image (240 + 16)) = 38
+	(word-at context-image (240 + 36 + 16)) = 42
+	(copy/part at context-image (240 + 58 + 16 + 1) 4) = #{D6FFFFFF}
+]["context code layout or relative calls changed"]
+
 ir: first generate 'glue 'i32
 small: make binary! 64
 check (codegen-module ir small 0) = 4 "bounded output was accepted"

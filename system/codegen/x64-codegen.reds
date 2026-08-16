@@ -12,6 +12,7 @@ rsir-header!: alias struct! [
 	import-count     [integer!]
 	function-count   [integer!]
 	instruction-count [integer!]
+	global-count     [integer!]
 ]
 
 rsir-type!: alias struct! [
@@ -36,6 +37,14 @@ rsir-import!: alias struct! [
 	flags            [integer!]
 	first-parameter  [integer!]
 	parameter-count  [integer!]
+]
+
+rsir-global!: alias struct! [
+	name      [integer!]
+	name-size [integer!]
+	type      [integer!]
+	low       [integer!]
+	high      [integer!]
 ]
 
 rsir-function!: alias struct! [
@@ -71,6 +80,7 @@ codegen-header!: alias struct! [
 	code-offset     [integer!]
 	code-size       [integer!]
 	data-size       [integer!]
+	global-count    [integer!]
 ]
 
 codegen-function!: alias struct! [
@@ -85,6 +95,15 @@ codegen-function!: alias struct! [
 	reference-count [integer!]
 ]
 
+codegen-global!: alias struct! [
+	name            [integer!]
+	name-size       [integer!]
+	data-offset     [integer!]
+	data-size       [integer!]
+	first-reference [integer!]
+	reference-count [integer!]
+]
+
 codegen-import!: alias struct! [
 	library         [integer!]
 	library-size    [integer!]
@@ -95,10 +114,11 @@ codegen-import!: alias struct! [
 ]
 
 x64-codegen: context [
-	RSIR_HEADER_SIZE:      24
+	RSIR_HEADER_SIZE:      28
 	RSIR_TYPE_SIZE:        20
 	RSIR_MEMBER_SIZE:       8
 	RSIR_IMPORT_SIZE:      32
+	RSIR_GLOBAL_SIZE:      20
 	RSIR_FUNCTION_SIZE:    28
 	RSIR_PARAMETER_SIZE:    8
 	RSIR_INSTRUCTION_SIZE: 16
@@ -107,8 +127,9 @@ x64-codegen: context [
 	VARIABLE_FLAGS: 56
 	FUNCTION_FLAGS: 511
 
-	IMAGE_HEADER_SIZE:   40
+	IMAGE_HEADER_SIZE:   44
 	IMAGE_FUNCTION_SIZE: 36
+	IMAGE_GLOBAL_SIZE:   24
 	IMAGE_IMPORT_SIZE:   24
 	BITMAP_SIZE:         16
 
@@ -568,25 +589,31 @@ x64-codegen: context [
 			ir-type [rsir-type!]
 			ir-member [rsir-member!]
 			ir-import [rsir-import!]
+			ir-global [rsir-global!]
 			ir-function [rsir-function!]
 			ir-parameter [rsir-parameter!]
 			instruction call-instruction [rsir-instruction!]
 			image [codegen-header!]
 			image-function callee-record [codegen-function!]
+			image-global [codegen-global!]
 			image-import [codegen-import!]
 			references import-refs [int-ptr!]
-			type-data member-data import-data function-data parameter-data instruction-data
+			type-data member-data import-data global-data function-data
+				parameter-data instruction-data
 				function-instructions strings name
 				names-output code data-output
 				cursor finish scratch [byte-ptr!]
-			type-bytes member-bytes import-bytes function-bytes parameter-bytes instruction-bytes
+			type-bytes member-bytes import-bytes global-bytes function-bytes
+				parameter-bytes instruction-bytes
 				strings-start strings-size metadata-size member-count parameter-count
-				names-size function-names-size code-offset code-size data-offset total-size
+				names-size function-names-size global-names-size code-offset code-size
+				data-offset image-data-size total-size
 				id record-offset next-instruction function-size entry-size code-cursor
 				name-cursor shape entry-shape encoded value argument target relative call-next
 				library-offset external-offset variable-mode import-id reference-id
 				used-import-count image-import-count import-reference-count reference-count
-				import-names-size output-import-id first-reference last-library count [integer!]
+				import-names-size output-import-id first-reference last-library count
+				global-size global-align global-offset [integer!]
 			entry? current-entry? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
@@ -598,6 +625,7 @@ x64-codegen: context [
 		if any [
 			header/type-count < 0
 			header/import-count < 0
+			header/global-count < 0
 			header/function-count <= 0
 			header/instruction-count <= 0
 		][return INVALID_IR]
@@ -754,14 +782,30 @@ x64-codegen: context [
 			parameter-count: parameter-count + ir-import/parameter-count
 			id: id + 1
 		]
-		if header/function-count > (
+		if header/global-count > (
 			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - import-bytes)
+			/ RSIR_GLOBAL_SIZE
+		)[return INVALID_IR]
+		global-bytes: header/global-count * RSIR_GLOBAL_SIZE
+		global-data: import-data + import-bytes
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data
+				+ ((id - 1) * RSIR_GLOBAL_SIZE))
+			unless valid-type-ref? ir-global/type header/type-count [
+				return INVALID_IR
+			]
+			id: id + 1
+		]
+		if header/function-count > (
+			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - import-bytes
+				- global-bytes)
 			/ RSIR_FUNCTION_SIZE
 		)[
 			return INVALID_IR
 		]
 		function-bytes: header/function-count * RSIR_FUNCTION_SIZE
-		function-data: import-data + import-bytes
+		function-data: global-data + global-bytes
 		next-instruction: 0
 		id: 1
 		while [id <= header/function-count][
@@ -808,7 +852,7 @@ x64-codegen: context [
 		parameter-data: function-data + function-bytes
 		if parameter-count > (
 			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - import-bytes
-				- function-bytes)
+				- global-bytes - function-bytes)
 			/ RSIR_PARAMETER_SIZE
 		)[return INVALID_IR]
 		parameter-bytes: parameter-count * RSIR_PARAMETER_SIZE
@@ -829,13 +873,13 @@ x64-codegen: context [
 		]
 		if header/instruction-count > (
 			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - import-bytes
-				- function-bytes - parameter-bytes)
+				- global-bytes - function-bytes - parameter-bytes)
 			/ RSIR_INSTRUCTION_SIZE
 		)[return INVALID_IR]
 		instruction-bytes: header/instruction-count * RSIR_INSTRUCTION_SIZE
 		instruction-data: parameter-data + parameter-bytes
 		strings-start: RSIR_HEADER_SIZE + type-bytes + member-bytes + import-bytes
-			+ function-bytes + parameter-bytes + instruction-bytes
+			+ global-bytes + function-bytes + parameter-bytes + instruction-bytes
 		strings-size: size - strings-start
 
 		strings: data + strings-start
@@ -855,12 +899,60 @@ x64-codegen: context [
 			][return INVALID_IR]
 			id: id + 1
 		]
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data
+				+ ((id - 1) * RSIR_GLOBAL_SIZE))
+			if any [
+				ir-global/name < 0
+				ir-global/name-size <= 0
+				ir-global/name-size > strings-size
+				ir-global/name > (strings-size - ir-global/name-size)
+			][return INVALID_IR]
+			id: id + 1
+		]
 		if any [
 			capacity < IMAGE_HEADER_SIZE
 			header/function-count > (
 				(capacity - IMAGE_HEADER_SIZE) / IMAGE_FUNCTION_SIZE
 			)
 		][return OUTPUT_FULL]
+		metadata-size: IMAGE_HEADER_SIZE
+			+ (header/function-count * IMAGE_FUNCTION_SIZE)
+		if header/global-count > (
+			(capacity - metadata-size) / IMAGE_GLOBAL_SIZE
+		)[return OUTPUT_FULL]
+		global-names-size: 0
+		image-data-size: BITMAP_SIZE
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data
+				+ ((id - 1) * RSIR_GLOBAL_SIZE))
+			global-size: 0
+			global-align: 0
+			unless layout-type ir-global/type true type-data member-data
+				header/type-count 0 :global-size :global-align [
+				return INVALID_IR
+			]
+			if all [
+				global-size > 8
+				any [ir-global/low <> 0 ir-global/high <> 0]
+			][return INVALID_IR]
+			global-offset: align image-data-size global-align
+			if any [
+				global-offset < 0
+				global-offset > (2147483647 - global-size)
+				global-names-size > (2147483647 - ir-global/name-size)
+			][return OUTPUT_FULL]
+			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			image-global/data-offset: global-offset
+			image-global/data-size: global-size
+			image-data-size: global-offset + global-size
+			global-names-size: global-names-size + ir-global/name-size
+			id: id + 1
+		]
 		scratch: null
 		import-refs: as int-ptr! 0
 		if header/import-count > 0 [
@@ -987,6 +1079,10 @@ x64-codegen: context [
 		)[return release scratch OUTPUT_FULL]
 		metadata-size: IMAGE_HEADER_SIZE
 			+ (header/function-count * IMAGE_FUNCTION_SIZE)
+		if header/global-count > (
+			(2147483647 - metadata-size) / IMAGE_GLOBAL_SIZE
+		)[return release scratch OUTPUT_FULL]
+		metadata-size: metadata-size + (header/global-count * IMAGE_GLOBAL_SIZE)
 		if image-import-count > (
 			(2147483647 - metadata-size) / IMAGE_IMPORT_SIZE
 		)[return release scratch OUTPUT_FULL]
@@ -996,6 +1092,10 @@ x64-codegen: context [
 		]
 		metadata-size: metadata-size + (reference-count * 4)
 		names-size: function-names-size
+		if names-size > (2147483647 - global-names-size)[
+			return release scratch OUTPUT_FULL
+		]
+		names-size: names-size + global-names-size
 		if names-size > (2147483647 - import-names-size)[
 			return release scratch OUTPUT_FULL
 		]
@@ -1014,10 +1114,10 @@ x64-codegen: context [
 			return release scratch OUTPUT_FULL
 		]
 		data-offset: align (code-offset + code-size) 4
-		if data-offset > (2147483647 - BITMAP_SIZE)[
+		if data-offset > (2147483647 - image-data-size)[
 			return release scratch OUTPUT_FULL
 		]
-		total-size: data-offset + BITMAP_SIZE
+		total-size: data-offset + image-data-size
 		if any [
 			metadata-size < 0
 			names-size < 0
@@ -1037,7 +1137,8 @@ x64-codegen: context [
 		image/names-size: names-size
 		image/code-offset: code-offset
 		image/code-size: code-size
-		image/data-size: BITMAP_SIZE
+		image/data-size: image-data-size
+		image/global-count: header/global-count
 
 
 		names-output: output + metadata-size
@@ -1066,9 +1167,26 @@ x64-codegen: context [
 			name-cursor: name-cursor + ir-function/name-size
 			id: id + 1
 		]
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data
+				+ ((id - 1) * RSIR_GLOBAL_SIZE))
+			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			image-global/name: name-cursor
+			image-global/name-size: ir-global/name-size
+			image-global/first-reference: 0
+			image-global/reference-count: 0
+			copy-memory (names-output + name-cursor)
+				(strings + ir-global/name) ir-global/name-size
+			name-cursor: name-cursor + ir-global/name-size
+			id: id + 1
+		]
 
 		references: as int-ptr! (output + IMAGE_HEADER_SIZE
 			+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			+ (header/global-count * IMAGE_GLOBAL_SIZE)
 			+ (image-import-count * IMAGE_IMPORT_SIZE))
 		output-import-id: 0
 		first-reference: 1
@@ -1093,6 +1211,7 @@ x64-codegen: context [
 				name-cursor: name-cursor + ir-import/external-size
 				image-import: as codegen-import! (output + IMAGE_HEADER_SIZE
 					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					+ (header/global-count * IMAGE_GLOBAL_SIZE)
 					+ (output-import-id * IMAGE_IMPORT_SIZE))
 				image-import/library: library-offset
 				image-import/library-size: ir-import/library-size
@@ -1110,6 +1229,7 @@ x64-codegen: context [
 		if entry? [
 			image-import: as codegen-import! (output + IMAGE_HEADER_SIZE
 				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ (header/global-count * IMAGE_GLOBAL_SIZE)
 				+ (output-import-id * IMAGE_IMPORT_SIZE))
 			library-offset: name-cursor
 			external-offset: library-offset + 12
@@ -1215,10 +1335,36 @@ x64-codegen: context [
 			cursor/1: as byte! 0
 			cursor: cursor + 1
 		]
-		finish: data-output + BITMAP_SIZE
-		while [data-output < finish][
-			data-output/1: as byte! 0
-			data-output: data-output + 1
+		finish: data-output + image-data-size
+		cursor: data-output
+		while [cursor < finish][
+			cursor/1: as byte! 0
+			cursor: cursor + 1
+		]
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data
+				+ ((id - 1) * RSIR_GLOBAL_SIZE))
+			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			cursor: data-output + image-global/data-offset
+			case [
+				image-global/data-size = 1 [cursor/1: as byte! ir-global/low]
+				image-global/data-size = 2 [
+					cursor/1: as byte! ir-global/low
+					cursor/2: as byte! (ir-global/low >>> 8)
+				]
+				image-global/data-size = 4 [
+					x64-encoder/write-i32 cursor ir-global/low
+				]
+				image-global/data-size = 8 [
+					x64-encoder/write-i32 cursor ir-global/low
+					x64-encoder/write-i32 (cursor + 4) ir-global/high
+				]
+				true [0]
+			]
+			id: id + 1
 		]
 		release scratch total-size
 	]

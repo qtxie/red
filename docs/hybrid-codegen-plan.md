@@ -63,10 +63,10 @@ layout directly and passes the resulting size to the existing integer encoder.
 - `system/codegen/x64-encoder.reds` writes x64 bytes into the reserved output.
 - `system/linker.red/load-codegen` loads the image directly into linker state.
 
-For the current slice, empty-void and i32 RSIR are 70 and 86 bytes. A GLUE i32
+For the current slice, empty-void and i32 RSIR are 74 and 90 bytes. A GLUE i32
 native image is 196 bytes. The two-function `main -> helper -> 41` sample is
-154 RSIR bytes; the typed `main -> identity 42` sample is 182 bytes. Both
-produce 252-byte native images. Their generated PEs exit with status 41 and 42
+158 RSIR bytes; the typed `main -> identity 42` sample is 186 bytes. Both
+produce 268-byte native images. Their generated PEs exit with status 41 and 42
 respectively. The previous hybrid checkpoint compiled and linked the
 zero-argument sample in 114.8 ms.
 
@@ -136,12 +136,13 @@ consumer. It is not a public object format. Consequently it has:
 The current RSIR is only the data that codegen consumes:
 
 ```text
-6 words: module kind, entry function, type count, import count,
-         function count, instruction count
+7 words: module kind, entry function, type count, import count,
+         function count, instruction count, global count
 5 words per type: kind, alias/return type, flags, first member, member count
 2 words per member: logical type reference, by-value flag
 8 words per import: library offset/size, external offset/size,
                     logical type, flags, first parameter, parameter count
+5 words per global: name offset/size, logical type, initializer low/high
 7 words per function: name offset, name size, return type, flags,
                       first parameter, parameter count, instruction count
 2 words per parameter: logical type reference, by-value flag
@@ -168,6 +169,11 @@ An import with zero flags is a variable; a function import carries its required
 `cdecl` or `stdcall` value in the low two bits, so no redundant import-kind word
 or library-group table is needed. Consecutive records in one source group share
 the same library-name offset.
+Global records likewise contain no target offset, size, alignment, storage kind,
+or initializer tag. Native codegen computes the Windows x64 object layout,
+places storage directly after the bitmap prefix, and writes the initializer at
+that offset. The two initializer words preserve the bits needed by scalar values
+without introducing a separate initializer table.
 A one-argument call stores its argument value ID in the call instruction
 itself; there is no generic operand section. A positive call target is a
 one-based declared-function ID and a negative target is the negated one-based
@@ -179,6 +185,7 @@ The native linker image follows the same rule. Its current order is:
 ```text
 header
 function records
+global records
 import records
 reference offsets
 name bytes
@@ -188,14 +195,15 @@ alignment padding
 data bytes
 ```
 
-Function and import records own contiguous reference slices. This maps directly
-to the existing linker's native symbol and import reference lists, so the Red
+Function, global, and import records own contiguous reference slices. This maps
+directly to the existing linker's native symbol and import reference lists, so the Red
 linker does not search all relocations for every symbol and does not construct
 an intermediate object model. Native codegen counts imported calls in one dense
 integer per input import, writes each used import's slice, then reuses that same
 integer as the slice cursor while encoding. Unused imports never enter the
 linker image; consecutive used imports from one source group reuse one library
-name range.
+name range. A global record maps directly to the linker's existing
+`[global data-offset refs]` symbol form; no linker-side global object is built.
 
 Both layouts may change while frontend, codegen, and linker are rebuilt
 together. A stable cache format is a later requirement and will be designed
@@ -249,7 +257,8 @@ Exit criteria:
 
 Status: current major task. Source-order function, import, and global IDs;
 duplicate detection; retained specs and bodies; a separate lowering pass;
-multi-function native traversal; zero/one-argument direct calls; scalar
+multi-function native traversal; zero/one-argument direct calls; static
+integer/logic globals; scalar
 aliases; source-order logical type records; context-qualified names; and `with`
 resolution scopes are implemented. The declaration pass also scans loader
 `#script` markers, enum constants, aggregate and function aliases, import
@@ -263,7 +272,8 @@ to Win64 IAT-indirect calls and contiguous linker references. Basic Windows x64
 scalar, pointer, alias, plain-struct, and plain-union size/alignment is
 implemented and consumed by `size?`. Member access, arrays, tagged unions,
 explicit aggregate alignment, complete signature lowering and ABI
-classification, initializers, and general function bodies remain pending.
+classification, dynamic and non-scalar initializers, and general function bodies
+remain pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples; H0 scope still includes every Red/System
@@ -277,8 +287,9 @@ some signatures use Red/System's shared-type form, such as
 `value argument [integer!]`. Context depth is at most two, while functions have
 up to 64 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 472 ms under the interpreter after loading, then fails explicitly at the
-unimplemented global-code lowering boundary.
+about 472 ms under the interpreter after loading. Static integer/logic globals
+now continue through native layout and the linker; the complete corpus stops
+explicitly at its first dynamic global initializer.
 
 After that deliberate stop, the same audit serializes every current logical
 type without compiling bodies: 91 source-order type records and 411 member
@@ -298,9 +309,8 @@ Current checkpoint: declaration discovery traverses the complete current
 self-host source corpus and assigns source-order type, function, import, and
 global IDs. Logical
 type records retain kind, source spec, lexical scope, and `with` scopes without
-target layout. Import records now cross the direct RSIR boundary; global source
-blocks remain in Red frontend state and are rejected before RSIR output until
-their consumed representation is implemented.
+target layout. Import and static scalar global records now cross the direct RSIR
+boundary. The frontend keeps no global source-block adapter.
 
 - scan top-level declarations and contexts without creating an AST copy;
 - maintain qualified-name and local-scope `hash!` tables;
@@ -340,9 +350,13 @@ logical function or variable record. Source groups share library-name bytes,
 function imports own direct parameter slices, and native codegen validates all
 record, type, flag, name, and slice bounds. The current i32 zero/one-argument
 call shapes emit IAT-indirect machine calls and direct contiguous relocation
-slices; imports with no references are omitted. General call ABI lowering,
-imported variables, globals, initializers, and empty static-library registration
-groups remain pending.
+slices; imports with no references are omitted. Static integer and logic globals
+carry a logical type plus two value words. Native codegen computes their target
+layout, writes their data directly, and gives the linker direct global records.
+General call ABI lowering, imported variables, non-scalar and dynamic
+initializers, global accesses, constants, and empty static-library registration
+groups remain pending. Dynamic top-level initialization will lower through the
+normal instruction stream rather than a second initializer protocol.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

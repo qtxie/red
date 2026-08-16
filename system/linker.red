@@ -57,16 +57,16 @@ linker: context [
 	load-codegen: func [
 		job [object!]
 		image [binary!]
-		/local size kind entry function-count import-count reference-count names-size
-			code-offset code-size data-size functions-size imports-size refs-size
-			imports-start refs-start names-start data-offset expected remainder id index record
+		/local size kind entry function-count global-count import-count reference-count names-size
+			code-offset code-size data-size functions-size globals-size imports-size refs-size
+			globals-start imports-start refs-start names-start data-offset expected remainder id index record
 			name-offset name-size function-offset function-size frame-size bitmap-offset
-			bitmap-size first-reference count-reference reference-id reference
+			bitmap-size global-offset global-size first-reference count-reference reference-id reference
 			name-bytes name symbols refs imports functions library-offset library-size
 			external-offset external-size library external last-library code data sections
 	][
 		codegen-error: none
-		unless all [object? job binary? image (length? image) >= 40][
+		unless all [object? job binary? image (length? image) >= 44][
 			return codegen-fail "native codegen returned a truncated image"
 		]
 		size: read-codegen-word image 0
@@ -79,31 +79,37 @@ linker: context [
 		code-offset: read-codegen-word image 28
 		code-size: read-codegen-word image 32
 		data-size: read-codegen-word image 36
+		global-count: read-codegen-word image 40
 		unless all [
 			integer? size integer? kind integer? entry integer? function-count
 			integer? import-count integer? reference-count integer? names-size
-			integer? code-offset integer? code-size integer? data-size
+			integer? code-offset integer? code-size integer? data-size integer? global-count
 			size = length? image
 			kind = 3
 			function-count > 0
 			entry > 0 entry <= function-count
-			import-count >= 0 reference-count >= 0 names-size > 0
+			global-count >= 0 import-count >= 0 reference-count >= 0 names-size > 0
 			code-size > 0 data-size >= 0
 		][return codegen-fail "native codegen returned an invalid image header"]
 
-		if function-count > ((size - 40) / 36) [
+		if function-count > ((size - 44) / 36) [
 			return codegen-fail "native codegen function table exceeds its image"
 		]
 		functions-size: function-count * 36
-		if import-count > ((size - 40 - functions-size) / 24) [
+		globals-start: 44 + functions-size
+		if global-count > ((size - globals-start) / 24) [
+			return codegen-fail "native codegen global table exceeds its image"
+		]
+		globals-size: global-count * 24
+		imports-start: globals-start + globals-size
+		if import-count > ((size - imports-start) / 24) [
 			return codegen-fail "native codegen import table exceeds its image"
 		]
 		imports-size: import-count * 24
-		if reference-count > ((size - 40 - functions-size - imports-size) / 4) [
+		if reference-count > ((size - imports-start - imports-size) / 4) [
 			return codegen-fail "native codegen reference table exceeds its image"
 		]
 		refs-size: reference-count * 4
-		imports-start: 40 + functions-size
 		refs-start: imports-start + imports-size
 		names-start: refs-start + refs-size
 		if names-size > (size - names-start) [
@@ -125,10 +131,10 @@ linker: context [
 			return codegen-fail "native codegen data does not finish its image"
 		]
 
-		symbols: make hash! (function-count * 2)
+		symbols: make hash! ((function-count + global-count) * 2)
 		id: 1
 		while [id <= function-count][
-			record: 40 + ((id - 1) * 36)
+			record: 44 + ((id - 1) * 36)
 			name-offset: read-codegen-word image record
 			name-size: read-codegen-word image (record + 4)
 			function-offset: read-codegen-word image (record + 8)
@@ -163,7 +169,7 @@ linker: context [
 			if find name-bytes 0 [return codegen-fail "native function name contains NUL"]
 			name: attempt [to word! to string! name-bytes]
 			unless word? name [return codegen-fail "native function name is not a Red word"]
-			if find symbols name [return codegen-fail "native codegen returned duplicate functions"]
+			if find symbols name [return codegen-fail "native codegen returned duplicate symbols"]
 			refs: make block! count-reference
 			reference-id: first-reference
 			repeat index count-reference [
@@ -177,6 +183,52 @@ linker: context [
 			]
 			append symbols name
 			append/only symbols reduce ['native (function-offset + 1) refs]
+			id: id + 1
+		]
+
+		id: 1
+		while [id <= global-count][
+			record: globals-start + ((id - 1) * 24)
+			name-offset: read-codegen-word image record
+			name-size: read-codegen-word image (record + 4)
+			global-offset: read-codegen-word image (record + 8)
+			global-size: read-codegen-word image (record + 12)
+			first-reference: read-codegen-word image (record + 16)
+			count-reference: read-codegen-word image (record + 20)
+			unless all [
+				integer? name-offset integer? name-size name-size > 0
+				name-offset <= (names-size - name-size)
+				integer? global-offset global-offset >= 16
+				integer? global-size global-size >= 0
+				global-offset <= (data-size - global-size)
+				integer? first-reference integer? count-reference count-reference >= 0
+			][return codegen-fail "native codegen returned an invalid global record"]
+			if any [
+				all [count-reference = 0 first-reference <> 0]
+				all [count-reference > 0 any [
+					first-reference <= 0
+					first-reference > reference-count
+					count-reference > (reference-count - first-reference + 1)
+				]]
+			][return codegen-fail "native global references exceed their table"]
+			name-bytes: copy/part at image (names-start + name-offset + 1) name-size
+			if find name-bytes 0 [return codegen-fail "native global name contains NUL"]
+			name: attempt [to word! to string! name-bytes]
+			unless word? name [return codegen-fail "native global name is not a Red word"]
+			if find symbols name [return codegen-fail "native codegen returned duplicate symbols"]
+			refs: make block! count-reference
+			reference-id: first-reference
+			repeat index count-reference [
+				reference: read-codegen-word image
+					(refs-start + ((reference-id - 1) * 4))
+				unless all [integer? reference reference <= (code-size - 4)][
+					return codegen-fail "native global reference exceeds code"
+				]
+				append refs reference + 1
+				reference-id: reference-id + 1
+			]
+			append symbols name
+			append/only symbols reduce ['global global-offset refs]
 			id: id + 1
 		]
 

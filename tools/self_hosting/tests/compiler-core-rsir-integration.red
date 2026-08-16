@@ -57,9 +57,9 @@ artifact: system-dialect/last-rsir
 check binary? artifact "RSIR core did not return RSIR"
 artifact-size: length? artifact
 artifact-hash: checksum artifact 'SHA256
-check artifact-size = 70 ["RSIR core output size changed: " artifact-size]
+check artifact-size = 74 ["RSIR core output size changed: " artifact-size]
 check artifact-hash =
-	#{AEA00B34B356177FA01B36FD521720EBA710DE57E8DBB9008967419FED7633AA}
+	#{816328BF27E97F6E0529C47FFA49F13F86F718AAEE3B9DA43EF46F3D4B50936A}
 	["RSIR core bytes differ from the independent fixture: size=" artifact-size
 		" hash=" mold artifact-hash]
 check none? system-dialect/last-result "RSIR compile published a legacy linker result"

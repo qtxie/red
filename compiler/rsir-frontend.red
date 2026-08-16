@@ -29,7 +29,7 @@ compiler-rsir-frontend: context [
 	imports: make block! 256
 	import-ids: make hash! 256
 	globals: make hash! 1024
-	global-blocks: make block! 64
+	global-data: make block! 1024
 	function-count: 0
 	type-count: 0
 	import-count: 0
@@ -426,6 +426,119 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	set-global: func [
+		name [word!]
+		value
+		scope [block!]
+		/local id record ref low high
+	][
+		id: select globals qualified scope name
+		unless integer? id [fail ERROR-REFERENCE ["unknown global " mold name]]
+		record: skip global-data ((id - 1) * 4)
+		ref: 0
+		low: 0
+		high: 0
+		case [
+			integer? value [ref: -5 low: value high: either value < 0 [-1][0]]
+			logic? value [ref: -11 low: either value [1][0]]
+			all [word? value find [true false] value][
+				ref: -11
+				low: either value = 'true [1][0]
+			]
+			true [
+				fail ERROR-UNSUPPORTED [
+					"global initializer is not a static scalar: " mold value
+				]
+			]
+		]
+		if all [integer? record/2 record/2 <> ref][
+			fail ERROR-UNSUPPORTED ["global type changed: " mold name]
+		]
+		record/2: ref
+		record/3: low
+		record/4: high
+	]
+
+	prepare-globals: func [
+		values scope uses [block!]
+		/local position name child target next-uses
+	][
+		position: values
+		while [not tail? position][
+			case [
+				all [
+					issue? position/1
+					find [#script #include] position/1
+					(length? position) >= 2
+				][position: skip position 2]
+				all [issue? position/1 position/1 = #user-code][
+					position: next position
+				]
+				all [
+					issue? position/1
+					position/1 = #enum
+					(length? position) >= 3
+				][position: skip position 3]
+				all [
+					issue? position/1
+					position/1 = #import
+					(length? position) >= 2
+				][position: skip position 2]
+				all [
+					set-word? position/1
+					(length? position) >= 3
+					position/2 = 'alias
+				][
+					position: skip position either find [
+						struct! union! function! subroutine!
+					] position/3 [4][3]
+				]
+				all [
+					set-word? position/1
+					(length? position) >= 4
+					find [func function] position/2
+					block? position/3
+					block? position/4
+				][position: skip position 4]
+				all [
+					set-word? position/1
+					(length? position) >= 3
+					position/2 = 'context
+					block? position/3
+				][
+					name: to word! position/1
+					child: append copy scope name
+					prepare-globals position/3 child uses
+					position: skip position 3
+				]
+				all [
+					position/1 = 'with
+					(length? position) >= 3
+					any [word? position/2 path? position/2]
+					block? position/3
+				][
+					target: position/2
+					unless child: resolve-context target scope uses [
+						fail ERROR-CONTEXT ["unknown context " mold target]
+					]
+					next-uses: copy/deep uses
+					append/only next-uses child
+					prepare-globals position/3 scope next-uses
+					position: skip position 3
+				]
+				all [set-word? position/1 (length? position) >= 2][
+					set-global to word! position/1 position/2 scope
+					position: skip position 2
+				]
+				true [
+					fail ERROR-UNSUPPORTED [
+						"global expression is not lowered yet: " mold position/1
+					]
+				]
+			]
+		]
+	]
+
 	compile-body: func [
 		return-ref [integer!]
 		body [block!]
@@ -684,7 +797,11 @@ compiler-rsir-frontend: context [
 				][fail ERROR-UNSUPPORTED "invalid import declaration"]
 				name: to word! entry/1
 				key: qualified scope name
-				if any [select import-ids key select function-ids key][
+				if any [
+					select import-ids key
+					select function-ids key
+					select globals key
+				][
 					fail ERROR-DUPLICATE ["duplicate import " mold key]
 				]
 				unless valid-name? entry/2 [
@@ -721,10 +838,9 @@ compiler-rsir-frontend: context [
 
 	scan-block: func [
 		values scope uses [block!]
-		/local position name spec body child key kind target next-uses code?
+		/local position name spec body child key kind target next-uses
 			spelling id type-spec
 	][
-		code?: false
 		position: values
 		while [not tail? position][
 			case [
@@ -735,7 +851,6 @@ compiler-rsir-frontend: context [
 					file? position/2
 				][position: skip position 2]
 				all [issue? position/1 position/1 = #user-code][
-					code?: true
 					position: next position
 				]
 				all [
@@ -812,7 +927,11 @@ compiler-rsir-frontend: context [
 					unless valid-name? spelling [
 						fail ERROR-NAME "invalid RSIR function name"
 					]
-					if any [select function-ids key select import-ids key][
+					if any [
+						select function-ids key
+						select import-ids key
+						select globals key
+					][
 						fail ERROR-DUPLICATE ["duplicate function " mold key]
 					]
 					id: function-count + 1
@@ -861,20 +980,25 @@ compiler-rsir-frontend: context [
 				]
 				set-word? position/1 [
 					key: qualified scope to word! position/1
+					if any [select function-ids key select import-ids key][
+						fail ERROR-DUPLICATE ["duplicate global " mold key]
+					]
 					unless select globals key [
 						global-count: global-count + 1
 						repend globals [key global-count]
+						spelling: form key
+						unless valid-name? spelling [
+							fail ERROR-NAME "invalid RSIR global name"
+						]
+						append/only global-data to binary! spelling
+						append global-data none
+						append global-data 0
+						append global-data 0
 					]
-					code?: true
 					position: next position
 				]
-				true [code?: true position: next position]
+				true [position: next position]
 			]
-		]
-		if code? [
-			append/only global-blocks values
-			append/only global-blocks copy scope
-			append/only global-blocks copy/deep uses
 		]
 	]
 
@@ -893,9 +1017,7 @@ compiler-rsir-frontend: context [
 		scan-block skip source 2 copy [] copy []
 		prepare-functions
 		prepare-imports
-		unless empty? global-blocks [
-			fail ERROR-UNSUPPORTED "global code lowering is unsupported"
-		]
+		prepare-globals skip source 2 copy [] copy []
 		if function-count < 1 [
 			fail ERROR-FUNCTION-COUNT "RSIR module has no function"
 		]
@@ -975,7 +1097,8 @@ compiler-rsir-frontend: context [
 
 	write-rsir: func [limit [integer!] /local output position name body
 		scope uses params flags record-offset param-count first-param count
-		instruction-count size entry id parameter import-records function-records
+		instruction-count size entry id parameter import-records global-records
+		function-records
 		library external last-library library-offset external-offset names
 		type-output members type-bytes member-bytes
 	][
@@ -985,14 +1108,16 @@ compiler-rsir-frontend: context [
 		type-bytes: length? type-output
 		member-bytes: length? members
 		names: make binary! 256
-		output: make binary! (24 + type-bytes + member-bytes
-			+ (import-count * 64) + (function-count * 96))
-		append/dup output 0 24
+		output: make binary! (28 + type-bytes + member-bytes
+			+ (import-count * 64) + (global-count * 40) + (function-count * 96))
+		append/dup output 0 28
 		append output type-output
 		append output members
-		import-records: 25 + type-bytes + member-bytes
-		function-records: import-records + (import-count * 32)
+		import-records: 29 + type-bytes + member-bytes
+		global-records: import-records + (import-count * 32)
+		function-records: global-records + (global-count * 20)
 		append/dup output 0 (import-count * 32)
+		append/dup output 0 (global-count * 20)
 		append/dup output 0 (function-count * 28)
 
 		position: imports
@@ -1039,6 +1164,29 @@ compiler-rsir-frontend: context [
 			first-param: first-param + param-count
 			id: id + 1
 			position: skip position 10
+		]
+
+		position: global-data
+		id: 1
+		while [not tail? position][
+			name: position/1
+			unless integer? position/2 [
+				fail ERROR-UNSUPPORTED ["global type is unresolved: " to string! name]
+			]
+			record-offset: global-records + ((id - 1) * 20)
+			change/part at output record-offset
+				int-to-bin/to-bin32 (length? names) 4
+			change/part at output (record-offset + 4)
+				int-to-bin/to-bin32 (length? name) 4
+			change/part at output (record-offset + 8)
+				int-to-bin/to-bin32 position/2 4
+			change/part at output (record-offset + 12)
+				int-to-bin/to-bin32 position/3 4
+			change/part at output (record-offset + 16)
+				int-to-bin/to-bin32 position/4 4
+			append names name
+			id: id + 1
+			position: skip position 4
 		]
 
 		position: functions
@@ -1102,6 +1250,7 @@ compiler-rsir-frontend: context [
 		change/part at output 13 int-to-bin/to-bin32 import-count 4
 		change/part at output 17 int-to-bin/to-bin32 function-count 4
 		change/part at output 21 int-to-bin/to-bin32 instruction-count 4
+		change/part at output 25 int-to-bin/to-bin32 global-count 4
 		output
 	]
 
@@ -1132,7 +1281,7 @@ compiler-rsir-frontend: context [
 			clear imports
 			clear import-ids
 			clear globals
-			clear global-blocks
+			clear global-data
 			function-count: 0
 			type-count: 0
 			import-count: 0

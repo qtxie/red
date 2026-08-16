@@ -133,6 +133,16 @@ compiler-rsir-frontend: context [
 		none
 	]
 
+	import-variable-id: func [
+		value [word! path!]
+		scope uses [block!]
+		/local id record
+	][
+		unless id: resolve-name value scope uses import-ids [return none]
+		record: skip imports ((id - 1) * 10)
+		either record/5 = 'variable [id][none]
+	]
+
 	resolve-context: func [
 		value [word! path!]
 		scope uses [block!]
@@ -455,10 +465,11 @@ compiler-rsir-frontend: context [
 	set-global: func [
 		position scope uses [block!]
 		/local name id record value type kind ref low high after callee callee-record
-			callee-return callee-params callee-flags bytes offset result
+			callee-return callee-params callee-flags bytes offset result import-id
+			import-record width
 	][
 		name: to word! position/1
-		id: select globals qualified scope name
+		id: resolve-name name scope uses globals
 		unless integer? id [fail ERROR-REFERENCE ["unknown global " mold name]]
 		record: skip global-data ((id - 1) * 4)
 		if integer? record/2 [
@@ -516,6 +527,25 @@ compiler-rsir-frontend: context [
 					]
 				]
 				ref: type-ref type scope uses
+			]
+			all [
+				any [word? value path? value]
+				integer? import-id: import-variable-id value scope uses
+				import-record: skip imports ((import-id - 1) * 10)
+			][
+				width: scalar-width import-record/8
+				if width = 0 [
+					fail ERROR-UNSUPPORTED [
+						"initializer import is not a register scalar: " mold value
+					]
+				]
+				result: module-value + 1
+				emit module-code reduce [
+					7 result import-id 0
+					10 0 id result
+				]
+				module-value: result
+				ref: import-record/8
 			]
 			all [
 				any [word? value path? value]
@@ -588,7 +618,8 @@ compiler-rsir-frontend: context [
 	compile-import-set: func [
 		position scope uses [block!]
 		instructions [binary!]
-		/local target id record kind value
+		module? [logic!]
+		/local target id record kind value result
 	][
 		unless all [
 			(length? position) >= 2
@@ -597,16 +628,31 @@ compiler-rsir-frontend: context [
 		target: either set-word? position/1 [
 			to word! position/1
 		][to path! position/1]
-		id: resolve-name target scope uses import-ids
+		id: import-variable-id target scope uses
 		unless integer? id [
 			fail ERROR-REFERENCE ["unknown imported variable " mold target]
 		]
 		record: skip imports ((id - 1) * 10)
-		unless record/5 = 'variable [
-			fail ERROR-REFERENCE ["import " mold target " is not a variable"]
-		]
 		kind: type-kind record/4 record/6 record/7
 		value: position/2
+		if all [
+			path? value
+			(length? value) = 3
+			value/1 = 'system
+			value/2 = 'stack
+			value/3 = 'top
+		][
+			unless (scalar-width record/8) = 8 [
+				fail ERROR-UNSUPPORTED "system/stack/top requires a pointer target"
+			]
+			result: either module? [module-value + 1][1]
+			emit instructions reduce [
+				11 result 0 0
+				12 0 id result
+			]
+			if module? [module-value: result]
+			return skip position 2
+		]
 		case [
 			all [find [i32 u32] kind integer? value] []
 			all [
@@ -626,7 +672,7 @@ compiler-rsir-frontend: context [
 
 	compile-module: func [
 		values scope uses [block!]
-		/local position name child target next-uses
+		/local position name child target next-uses import-id
 	][
 		position: values
 		while [not tail? position][
@@ -691,11 +737,19 @@ compiler-rsir-frontend: context [
 					compile-module position/3 scope next-uses
 					position: skip position 3
 				]
+				all [
+					set-word? position/1
+					(length? position) >= 2
+					integer? import-id: import-variable-id
+						to word! position/1 scope uses
+				][
+					position: compile-import-set position scope uses module-code true
+				]
 				all [set-word? position/1 (length? position) >= 2][
 					position: set-global position scope uses
 				]
 				all [set-path? position/1 (length? position) >= 2][
-					position: compile-import-set position scope uses module-code
+					position: compile-import-set position scope uses module-code true
 				]
 				true [
 					fail ERROR-UNSUPPORTED [
@@ -747,7 +801,7 @@ compiler-rsir-frontend: context [
 					(length? body) = 2
 					any [set-word? body/1 set-path? body/1]
 				][
-					compile-import-set body scope uses instructions
+					compile-import-set body scope uses instructions false
 				]
 				true [
 					fail ERROR-UNSUPPORTED "void function body is not lowered yet"
@@ -1206,11 +1260,15 @@ compiler-rsir-frontend: context [
 					position: skip position 3
 				]
 				set-word? position/1 [
-					key: qualified scope to word! position/1
-					if any [select function-ids key select import-ids key][
-						fail ERROR-DUPLICATE ["duplicate global " mold key]
-					]
-					unless select globals key [
+					name: to word! position/1
+					key: qualified scope name
+					unless any [
+						import-variable-id name scope uses
+						resolve-name name scope uses globals
+					][
+						if any [select function-ids key select import-ids key][
+							fail ERROR-DUPLICATE ["duplicate global " mold key]
+						]
 						global-count: global-count + 1
 						repend globals [key global-count]
 						spelling: form key

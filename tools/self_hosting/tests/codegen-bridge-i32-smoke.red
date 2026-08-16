@@ -351,6 +351,95 @@ check all [
 	}
 ]["string/call/store code is not direct and contiguous"]
 
+imported-pointer-init-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	cell!: alias struct! [value [integer!]]
+	red: context [
+		#import ["fixture.dll" stdcall [top: "top" [cell!]]]
+	]
+	bottom: red/top
+] 'glue
+check binary? imported-pointer-init-ir [
+	"frontend rejected imported pointer initialization: "
+	mold compiler-rsir-frontend/last-error
+]
+imported-pointer-init-image: make binary! 4096
+check (codegen-module imported-pointer-init-ir imported-pointer-init-image 0) = 0
+	"imported pointer initialization codegen failed"
+check all [
+	(length? imported-pointer-init-image) = 296
+	(word-at imported-pointer-init-image 8) = 1
+	(word-at imported-pointer-init-image 12) = 1
+	(word-at imported-pointer-init-image 16) = 2
+	(word-at imported-pointer-init-image 20) = 3
+	(word-at imported-pointer-init-image 24) = 51
+	(word-at imported-pointer-init-image 28) = 224
+	(word-at imported-pointer-init-image 32) = 48
+	(word-at imported-pointer-init-image 36) = 24
+	(word-at imported-pointer-init-image 40) = 1
+	(word-at imported-pointer-init-image 56) = 48
+]["imported pointer initialization image layout changed"]
+check all [
+	(word-at imported-pointer-init-image 80) = 8
+	(word-at imported-pointer-init-image 84) = 6
+	(word-at imported-pointer-init-image 88) = 16
+	(word-at imported-pointer-init-image 92) = 8
+	(word-at imported-pointer-init-image 96) = 1
+	(word-at imported-pointer-init-image 100) = 1
+	(word-at imported-pointer-init-image 152) = 28
+	(word-at imported-pointer-init-image 156) = 18
+	(word-at imported-pointer-init-image 160) = 40
+	(copy/part at imported-pointer-init-image 165 51) =
+		to binary! "***-mainbottomfixture.dlltopkernel32.dllExitProcess"
+	(copy/part at imported-pointer-init-image 225 48) = #{
+		554889E56A006A0068000000006A00488B0500000000488B004889050000
+		00004883EC2031C9FF150000000031C0C9C3
+	}
+	(copy at imported-pointer-init-image 273) =
+		#{000000000000000000000000000000000000000000000000}
+]["imported pointer load/store code is not direct and contiguous"]
+
+stack-top-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	red: context [
+		#import ["fixture.dll" stdcall [
+			stk-bottom: "stk-bottom" [int-ptr!]
+		]]
+	]
+	with red [stk-bottom: system/stack/top]
+] 'glue
+check binary? stack-top-ir ["frontend rejected system/stack/top: "
+	mold compiler-rsir-frontend/last-error]
+stack-top-image: make binary! 4096
+check (codegen-module stack-top-ir stack-top-image 0) = 0
+	"system/stack/top codegen failed"
+check all [
+	(length? stack-top-image) = 252
+	(word-at stack-top-image 8) = 1
+	(word-at stack-top-image 12) = 1
+	(word-at stack-top-image 16) = 2
+	(word-at stack-top-image 20) = 2
+	(word-at stack-top-image 24) = 52
+	(word-at stack-top-image 28) = 192
+	(word-at stack-top-image 32) = 44
+	(word-at stack-top-image 36) = 16
+	(word-at stack-top-image 40) = 0
+	(word-at stack-top-image 56) = 44
+	(word-at stack-top-image 80) = 8
+	(word-at stack-top-image 88) = 19
+	(word-at stack-top-image 92) = 10
+	(word-at stack-top-image 96) = 1
+	(word-at stack-top-image 100) = 1
+	(word-at stack-top-image 128) = 21
+	(word-at stack-top-image 132) = 36
+	(copy/part at stack-top-image 137 52) =
+		to binary! "***-mainfixture.dllstk-bottomkernel32.dllExitProcess"
+	(copy/part at stack-top-image 193 44) = #{
+		554889E56A006A0068000000006A004889E0488B15000000004889024883
+		EC2031C9FF150000000031C0C9C3
+	}
+]["system/stack/top code is not direct and contiguous"]
+
 import-ir: compiler-rsir-frontend/compile [
 	Red/System []
 	#import ["fixture.dll" stdcall [

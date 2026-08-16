@@ -634,15 +634,17 @@ x64-codegen: context [
 					][return INVALID_IR]
 					imported: as rsir-import! (import-data
 						+ ((import-id - 1) * RSIR_IMPORT_SIZE))
-					unless all [
-						imported/flags = 0
-						integer32-ref? imported/type type-data type-count
-					][return UNSUPPORTED]
-					form: x64-encoder/I32_IMPORT_LOAD
+					target-width: scalar-width imported/type type-data type-count
+					unless all [imported/flags = 0 target-width > 0][
+						return UNSUPPORTED
+					]
+					form: either target-width = 4 [
+						x64-encoder/I32_IMPORT_LOAD
+					][x64-encoder/PTR_IMPORT_LOAD]
 					next-value: instruction/result
 					value-id: next-value
 					value-kind: VALUE_RAX
-					value-width: 4
+					value-width: target-width
 				]
 				instruction/opcode = 8 [
 					import-id: instruction/operand
@@ -680,6 +682,39 @@ x64-codegen: context [
 					form: either target-width = 4 [
 						x64-encoder/I32_GLOBAL_STORE
 					][x64-encoder/PTR_GLOBAL_STORE]
+				]
+				instruction/opcode = 11 [
+					unless all [
+						instruction/result = (next-value + 1)
+						instruction/operand = 0
+						instruction/immediate = 0
+					][return INVALID_IR]
+					form: x64-encoder/STACK_TOP
+					next-value: instruction/result
+					value-id: next-value
+					value-kind: VALUE_RAX
+					value-width: 8
+				]
+				instruction/opcode = 12 [
+					import-id: instruction/operand
+					unless all [
+						instruction/result = 0
+						import-id > 0
+						import-id <= import-count
+						instruction/immediate = value-id
+						value-kind = VALUE_RAX
+					][return INVALID_IR]
+					imported: as rsir-import! (import-data
+						+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+					target-width: scalar-width imported/type type-data type-count
+					unless all [
+						imported/flags = 0
+						target-width > 0
+						target-width = value-width
+					][return UNSUPPORTED]
+					form: either target-width = 4 [
+						x64-encoder/I32_IMPORT_STORE
+					][x64-encoder/PTR_IMPORT_STORE]
 				]
 				instruction/opcode = 2 [
 					unless all [
@@ -1565,6 +1600,9 @@ x64-codegen: context [
 						form = x64-encoder/I32_IMPORT_LOAD
 						form = x64-encoder/SCALAR_IMPORT_STORE
 						form = x64-encoder/CSTRING_IMPORT
+						form = x64-encoder/PTR_IMPORT_LOAD
+						form = x64-encoder/I32_IMPORT_STORE
+						form = x64-encoder/PTR_IMPORT_STORE
 					][
 						import-id: either instruction/opcode = 4 [
 							0 - instruction/operand

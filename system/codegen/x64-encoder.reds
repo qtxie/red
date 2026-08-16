@@ -30,6 +30,10 @@ x64-encoder: context [
 	CSTRING_IMPORT: 23
 	I32_GLOBAL_STORE: 24
 	PTR_GLOBAL_STORE: 25
+	PTR_IMPORT_LOAD: 26
+	STACK_TOP: 27
+	I32_IMPORT_STORE: 28
+	PTR_IMPORT_STORE: 29
 
 	SHADOW_FLAG: 256
 	FORM_MASK: 255
@@ -64,6 +68,10 @@ x64-encoder: context [
 			form = CSTRING_IMPORT [13]
 			form = I32_GLOBAL_STORE [6]
 			form = PTR_GLOBAL_STORE [7]
+			form = PTR_IMPORT_LOAD [10]
+			form = STACK_TOP [3]
+			form = I32_IMPORT_STORE [9]
+			form = PTR_IMPORT_STORE [10]
 			true [-1]
 		]
 	]
@@ -84,6 +92,9 @@ x64-encoder: context [
 			form = CSTRING_IMPORT [9]
 			form = I32_GLOBAL_STORE [2]
 			form = PTR_GLOBAL_STORE [3]
+			form = PTR_IMPORT_LOAD [3]
+			form = I32_IMPORT_STORE [3]
+			form = PTR_IMPORT_STORE [3]
 			true [-1]
 		]
 	]
@@ -258,6 +269,37 @@ x64-encoder: context [
 				at/2: as byte! 89h
 				at/3: as byte! 05h                         ; mov [rip + rel32], rax
 				write-i32 (at + 3) 0
+			]
+			form = PTR_IMPORT_LOAD [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! 48h
+				at/9: as byte! 8Bh
+				at/10: as byte! 00h                        ; mov rax, [rax]
+			]
+			form = STACK_TOP [
+				at/1: as byte! 48h
+				at/2: as byte! 89h
+				at/3: as byte! E0h                         ; mov rax, rsp
+			]
+			form = I32_IMPORT_STORE [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 15h                         ; mov rdx, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! 89h
+				at/9: as byte! 02h                         ; mov [rdx], eax
+			]
+			form = PTR_IMPORT_STORE [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 15h                         ; mov rdx, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! 48h
+				at/9: as byte! 89h
+				at/10: as byte! 02h                        ; mov [rdx], rax
 			]
 			true [return -1]
 		]

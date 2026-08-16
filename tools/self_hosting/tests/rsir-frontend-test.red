@@ -160,6 +160,72 @@ assert all [
 	(copy/part at string-init-ir 317 12) = #{3C626F64793E007479706500}
 ]["string initialization is not a direct string/call/store stream"]
 
+imported-pointer-init-ir: compile-text {
+	Red/System []
+	cell!: alias struct! [value [integer!]]
+	red: context [
+		#import ["fixture.dll" stdcall [top: "top" [cell!]]]
+	]
+	bottom: red/top
+} 'glue
+assert binary? imported-pointer-init-ir [
+	"frontend rejected imported pointer initialization: " mold frontend/last-error
+]
+assert all [
+	(length? imported-pointer-init-ir) = 212
+	(word-at imported-pointer-init-ir 4) = 1
+	(word-at imported-pointer-init-ir 8) = 1
+	(word-at imported-pointer-init-ir 12) = 1
+	(word-at imported-pointer-init-ir 16) = 1
+	(word-at imported-pointer-init-ir 20) = 3
+	(word-at imported-pointer-init-ir 24) = 1
+	(word-at imported-pointer-init-ir 72) = 1
+	(word-at imported-pointer-init-ir 88) = 14
+	(word-at imported-pointer-init-ir 96) = 1
+	(word-at imported-pointer-init-ir 108) = 20
+	(word-at imported-pointer-init-ir 132) = 3
+	(word-at imported-pointer-init-ir 136) = 7
+	(word-at imported-pointer-init-ir 140) = 1
+	(word-at imported-pointer-init-ir 144) = 1
+	(word-at imported-pointer-init-ir 152) = 10
+	(word-at imported-pointer-init-ir 160) = 1
+	(word-at imported-pointer-init-ir 164) = 1
+	(copy at imported-pointer-init-ir 185) =
+		to binary! "fixture.dlltopbottom***-main"
+]["imported pointer initialization is not a direct load/store stream"]
+
+stack-top-ir: compile-text {
+	Red/System []
+	red: context [
+		#import ["fixture.dll" stdcall [
+			stk-bottom: "stk-bottom" [int-ptr!]
+		]]
+	]
+	with red [stk-bottom: system/stack/top]
+} 'glue
+assert binary? stack-top-ir [
+	"frontend rejected system/stack/top: " mold frontend/last-error
+]
+assert all [
+	(length? stack-top-ir) = 165
+	(word-at stack-top-ir 4) = 1
+	(word-at stack-top-ir 8) = 0
+	(word-at stack-top-ir 12) = 1
+	(word-at stack-top-ir 16) = 1
+	(word-at stack-top-ir 20) = 3
+	(word-at stack-top-ir 24) = 0
+	(word-at stack-top-ir 44) = -12
+	(word-at stack-top-ir 60) = 21
+	(word-at stack-top-ir 84) = 3
+	(word-at stack-top-ir 88) = 11
+	(word-at stack-top-ir 92) = 1
+	(word-at stack-top-ir 104) = 12
+	(word-at stack-top-ir 112) = 1
+	(word-at stack-top-ir 116) = 1
+	(copy at stack-top-ir 137) =
+		to binary! "fixture.dllstk-bottom***-main"
+]["system/stack/top is not a direct intrinsic/import-store stream"]
+
 i32-ir: compile-text {Red/System [] fn: func [return: [integer!]][7]} 'user
 assert binary? i32-ir "frontend rejected i32 literal"
 assert (length? i32-ir) = 90 "i32 RSIR is not compact"

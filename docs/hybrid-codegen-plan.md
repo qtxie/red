@@ -176,6 +176,15 @@ seconds in the Red frontend, 19.07 seconds in native compilation, and 3.07
 seconds linking; the 1,643,008-byte executable passes all preceding image tests
 as well as the new path.
 
+`with` assignments now resolve existing globals and imported variables before
+creating a declaration, so `with red [stk-bottom: ...]` writes the imported
+`red/stk-bottom` slot instead of inventing a root global. The first consumed
+Red/System intrinsic is `system/stack/top`: it emits `mov rax,rsp`, then a
+dynamic import store loads the target address through the IAT into `RDX` and
+writes `RAX`. The same scalar path also supports 64-bit imported-variable loads.
+The exact bridge build took 25.4 seconds and produced a 1,726,976-byte
+development executable; all preceding exact images remain unchanged.
+
 ## Data Layout Rule
 
 RSIR is a private in-process format compiled as one source set with its only
@@ -343,7 +352,7 @@ not isolated language examples; H0 scope still includes every Red/System
 feature and the full Red/System suite. The current direct hybrid source is
 2,961,043 bytes. After includes and macros are expanded by the real Red/System
 loader, the structured audit finds 544 defined functions, 62 contexts, 725
-imported symbols, 79 aliases, 14 enums, 4,330 global assignments, and 4,282
+imported symbols, 79 aliases, 14 enums, 4,334 global assignments, and 4,284
 unique global names. The imports comprise 57 source library groups,
 712 functions, 13 variables, and 856 parameters. The dominant parameter type is `node-handle!`;
 some signatures use Red/System's shared-type form, such as
@@ -354,8 +363,9 @@ about 1.14 seconds under the interpreter after loading. Static scalar casts and 
 first runtime set-path assignment, `red/boot?: yes`, now continue through native
 layout and the linker. String calls returning either pointers or i32 values now
 consume the complete `word/load` and `symbol/make` initialization runs. The
-complete corpus next stops at `stk-bottom: system/stack/top`, a pointer read from
-an imported variable.
+frontend now also consumes the `stk-bottom: system/stack/top` intrinsic/import
+store. The complete corpus next stops at the reassignment
+`root-base: redbin/boot-load system/boot-data yes`.
 
 After that deliberate stop, the same audit serializes every current logical
 type without compiling bodies: 93 source-order type records and 424 member
@@ -421,8 +431,9 @@ globals carry a logical type plus two value words. Native codegen computes their
 target layout, writes their data directly, and gives the linker direct global
 records. One-argument c-string calls returning i32 or pointers now initialize
 globals through a direct `string`, `call`, `global-store` sequence and a compact
-code constant island.
-General call ABI lowering, pointer/non-32-bit imported-variable access,
+code constant island. Pointer imported-variable loads and register-valued
+import stores use the same direct import records and reference slices.
+General call ABI lowering,
 non-scalar initializers, other dynamic initializers and non-i32 accesses,
 constants, and empty static-library registration groups remain pending. The
 first real runtime operation, `red/boot?: yes`, is emitted directly into the
@@ -430,7 +441,8 @@ ordinary module-body function during the same traversal that folds static
 globals. The module-only fixture is 144 RSIR bytes and produces a 252-byte
 native image with one function and two instructions. There is no second
 initializer protocol; the next real-corpus operation is the imported pointer
-read in `stk-bottom: system/stack/top`.
+result and two-argument call in
+`root-base: redbin/boot-load system/boot-data yes`.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

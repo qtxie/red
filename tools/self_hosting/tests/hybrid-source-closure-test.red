@@ -62,7 +62,6 @@ core: inventory/scan load %../../../system/compiler-rsir-core.red
 expect core/2 "codegen-module" 1 "compiler-rsir-core"
 expect core/1 "linker/load-codegen" 1 "compiler-rsir-core"
 expect core/1 "linker/build" 1 "compiler-rsir-core"
-expect core/1 "compiler-rscg-linker-adapter/adapt" 0 "compiler-rsir-core"
 expect core/1 "rs-o2-ir/verify-current" 0 "compiler-rsir-core"
 expect core/2 "finish-code" 1 "compiler-rsir-core"
 expect core/2 "schema" 0 "compiler-rsir-core"
@@ -70,7 +69,6 @@ expect core/2 "adapter" 0 "compiler-rsir-core"
 
 package: inventory/scan load %../../../system/compiler-windows-hybrid-bootstrap.red
 expect package/2 "codegen-module" 0 "hybrid-package"
-expect package/1 "compiler-rscg-linker-adapter/adapt" 0 "hybrid-package"
 expect package/2 "emitter" 0 "hybrid-package"
 expect package/2 "rs-o2-ir" 0 "hybrid-package"
 expect package/2 "linker" 0 "hybrid-package"
@@ -160,28 +158,6 @@ foreach forbidden [
 	%system/emitter.red
 	%system/machine-ir.red
 	%system/machine-ir-x64.red
-	%compiler/wire-schema.red
-	%compiler/wire-writer.red
-	%compiler/wire-container.red
-	%compiler/rscf-producer.red
-	%compiler/hybrid-driver.red
-	%compiler/rscg-linker-adapter.red
-	%compiler/wire-file-source.red
-	%compiler/wire-data-layout.red
-	%compiler/wire-module-lifecycle.red
-	%compiler/wire-rscg-object.red
-	%compiler/wire-rscg-relocation.red
-	%compiler/wire-rscg-metadata.red
-	%compiler/wire-string-table.red
-	%compiler/wire-diagnostics.red
-	%system/codegen/wire-schema.reds
-	%system/codegen/wire-reader.reds
-	%system/codegen/wire-writer.reds
-	%system/codegen/wire-rsir.reds
-	%system/codegen/wire-rscg-metadata.reds
-	%system/codegen/wire-diagnostics.reds
-	%system/codegen/wire-codegen-strings.reds
-	%system/codegen/x64-o0-codegen.reds
 ][
 	forbidden: clean-path to file! rejoin [root forbidden]
 	if find closure-files forbidden [

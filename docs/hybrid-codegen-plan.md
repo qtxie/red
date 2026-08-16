@@ -489,6 +489,8 @@ Already retained:
 - primary/prefix parsing followed by strict left-to-right postfix folding;
 - generic integer unary, math, shift, bitwise, comparison, and pointer-stride
   lowering selected from logical operand types.
+- the retired wire/schema/driver/adapter experiment and its generated test
+  closure have been removed from the repository.
 
 Still incomplete and therefore not an H0:
 

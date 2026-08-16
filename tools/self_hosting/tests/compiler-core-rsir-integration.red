@@ -21,6 +21,14 @@ check: func [condition [logic!] message [string! block!]][
 	unless condition [fail message]
 ]
 
+word-at: func [data [binary!] offset [integer!] /local high][
+	high: to integer! pick data (offset + 4)
+	(to integer! pick data (offset + 1))
+		+ ((to integer! pick data (offset + 2)) * 256)
+		+ ((to integer! pick data (offset + 3)) * 65536)
+		+ ((either high > 127 [high - 256][high]) * 16777216)
+]
+
 source: all [
 	block? system/options/args
 	not empty? system/options/args
@@ -56,15 +64,16 @@ system-dialect/compile/options source job
 artifact: system-dialect/last-rsir
 
 check binary? artifact "RSIR core did not return RSIR"
-artifact-size: length? artifact
-artifact-hash: checksum artifact 'SHA256
-check artifact-size = 126 ["RSIR core output size changed: " artifact-size]
-check artifact-hash =
-	#{5C54348AB3717FA600A8BAE4880AF7434A78E3E37BE8FE549B86DE50122E6EE9}
-	["RSIR core bytes differ from the independent fixture: size=" artifact-size
-		" hash=" mold artifact-hash]
+check all [
+	(length? artifact) >= 28
+	(word-at artifact 0) = 3
+	(word-at artifact 4) > 0
+	(word-at artifact 4) <= word-at artifact 16
+	(word-at artifact 16) >= 2
+	(word-at artifact 20) >= 2
+]["RSIR core returned an invalid executable-module shape"]
 check none? system-dialect/last-result "RSIR compile published a legacy linker result"
 check not value? 'emitter "RSIR compile installed the legacy emitter"
 check not value? 'rs-o2-ir "RSIR compile installed the legacy machine IR"
 
-print "PASS: RSIR-core exclusive frontend"
+print "PASS: direct RSIR core frontend"

@@ -268,6 +268,30 @@ unless all [
 	]
 	quit/return 1
 ]
+
+type-data: make binary! (compiler-rsir-frontend/type-count * 12)
+field-data: make binary! 1024
+type-result: catch/name [
+	compiler-rsir-frontend/write-types type-data field-data
+	none
+] 'rsir-error
+if type-result [
+	print [
+		"FAIL: direct logical type stream"
+		compiler-rsir-frontend/last-error/code
+		compiler-rsir-frontend/last-error/message
+	]
+	quit/return 1
+]
+unless (length? type-data) = (compiler-rsir-frontend/type-count * 12) [
+	print ["FAIL: incomplete logical type records" length? type-data]
+	quit/return 1
+]
+print [
+	"logical-types" compiler-rsir-frontend/type-count
+	"fields" (length? field-data) / 8
+	"bytes" (length? type-data) + (length? field-data)
+]
 either binary? ir [
 	print ["frontend complete" length? ir "bytes in" now/time/precise - started]
 ][

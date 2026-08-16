@@ -105,8 +105,67 @@ check-image: func [
 
 check-image 'user 'void 116 17 80 0
 check-image 'glue 'void 192 31 144 23
-check-image 'user 'i32 120 22 80 0
+user-i32: check-image 'user 'i32 120 22 80 0
 glue-i32: check-image 'glue 'i32 196 34 144 26
+
+typed-source: [
+	Red/System []
+	byte-alias!: alias byte!
+	small!: alias struct! [
+		mark [byte-alias!]
+		count [integer!]
+		wide [uint64!]
+	]
+	nested!: alias struct! [
+		head [byte!]
+		sub [small! value]
+		tail [uint16!]
+	]
+	refs!: alias struct! [
+		sub [small!]
+		ptr [pointer! [integer!]]
+	]
+	#enum choice! [CHOICE_ZERO CHOICE_FOUR: 4 CHOICE_FIVE]
+	fn: func [return: [integer!]][7]
+]
+typed-ir: compiler-rsir-frontend/compile typed-source 'user
+check binary? typed-ir ["frontend rejected logical type stream: "
+	mold compiler-rsir-frontend/last-error]
+typed-image: make binary! 4096
+check (codegen-module typed-ir typed-image 0) = 0
+	"native codegen rejected logical type records"
+check typed-image = user-i32
+	"unused logical type records changed native code"
+
+bad-type: copy typed-ir
+change/part at bad-type 21 int-to-bin/to-bin32 -99 4
+artifact: make binary! 4096
+check (codegen-module bad-type artifact 0) = 2 "unknown logical type kind was accepted"
+check empty? artifact "bad logical type kind committed bytes"
+
+bad-type: copy typed-ir
+change/part at bad-type 25 int-to-bin/to-bin32 0 4
+artifact: make binary! 4096
+check (codegen-module bad-type artifact 0) = 2 "zero alias target was accepted"
+check empty? artifact "bad alias target committed bytes"
+
+bad-type: copy typed-ir
+change/part at bad-type 29 int-to-bin/to-bin32 1 4
+artifact: make binary! 4096
+check (codegen-module bad-type artifact 0) = 2 "alias members were accepted"
+check empty? artifact "bad alias member count committed bytes"
+
+bad-type: copy typed-ir
+change/part at bad-type 117 int-to-bin/to-bin32 2 4
+artifact: make binary! 4096
+check (codegen-module bad-type artifact 0) = 2 "unknown member flag was accepted"
+check empty? artifact "bad member flag committed bytes"
+
+bad-type: copy typed-ir
+change/part at bad-type 113 int-to-bin/to-bin32 1 4
+artifact: make binary! 4096
+check (codegen-module bad-type artifact 0) = 2 "scalar by-value member was accepted"
+check empty? artifact "bad by-value member committed bytes"
 
 call-source: [
 	Red/System []

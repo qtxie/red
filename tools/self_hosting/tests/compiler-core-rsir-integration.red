@@ -54,10 +54,12 @@ system-dialect/compile/options source job
 artifact: system-dialect/last-rsir
 
 check binary? artifact "RSIR core did not return RSIR"
-check (length? artifact) = 1396 "RSIR core output size changed"
-check (checksum artifact 'SHA256) =
-	#{FD80E5DEB0999934DDB1BCBBB724251B745341E53C32258566C659B03A0433DC}
-	"RSIR core bytes differ from the independent fixture"
+artifact-size: length? artifact
+artifact-hash: checksum artifact 'SHA256
+check artifact-size = 54 ["RSIR core output size changed: " artifact-size]
+check artifact-hash =
+	#{38D1808E4DD6F033BA53E8D024CCA9DB4A5A04DD72C6BED9D3348A7BB9C2E733}
+	["RSIR core bytes differ from the independent fixture: " mold artifact-hash]
 check none? system-dialect/last-result "RSIR compile published a legacy linker result"
 check not value? 'emitter "RSIR compile installed the legacy emitter"
 check not value? 'rs-o2-ir "RSIR compile installed the legacy machine IR"

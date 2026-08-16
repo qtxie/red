@@ -49,9 +49,9 @@ Function declarations may live in nested `context` blocks; short names,
 explicit context paths, and `with` lookup scopes resolve to the same
 `>`-decorated symbol style used by Red/System. This slice proves the
 architecture and multi-function traversal; it does not define a smaller H0.
-All current aliases and enums also receive source-order logical type IDs. Their
-unmodified aggregate/function specs stay in frontend state until the native
-consumer is implemented; target sizes and offsets are deliberately absent.
+All current aliases and enums receive source-order logical type IDs. The
+frontend writes only their logical kinds, references, member counts, and
+by-value flags; target sizes and offsets are deliberately absent.
 
 - `compiler/rsir-frontend.red` parses and writes RSIR directly.
 - `compiler/codegen-bridge.red` contains only the `routine!` declaration.
@@ -60,9 +60,9 @@ consumer is implemented; target sizes and offsets are deliberately absent.
 - `system/codegen/x64-encoder.reds` writes x64 bytes into the reserved output.
 - `system/linker.red/load-codegen` loads the image directly into linker state.
 
-For the current slice, empty-void and i32 RSIR are 50 and 66 bytes. A GLUE i32
+For the current slice, empty-void and i32 RSIR are 54 and 70 bytes. A GLUE i32
 native image is 196 bytes. Both the two-function `main -> helper -> 41` and
-`main -> identity 42` samples are 122 RSIR bytes and produce 252-byte native
+`main -> identity 42` samples are 126 RSIR bytes and produce 252-byte native
 images. Their generated PEs exit with status 41 and 42 respectively. The
 previous rebuilt H0 compiled and linked the zero-argument sample in 114.8 ms.
 
@@ -105,7 +105,9 @@ consumer. It is not a public object format. Consequently it has:
 The current RSIR is only the data that codegen consumes:
 
 ```text
-4 words: module kind, entry function, function count, instruction count
+5 words: module kind, entry function, type count, function count, instruction count
+3 words per type: kind, alias target or zero, member count
+2 words per member: logical type reference, by-value flag
 4 words per function: name offset, name size, signature, instruction count
 4 words per instruction: typed opcode, result, operand, immediate
 raw function-name bytes
@@ -113,6 +115,10 @@ raw function-name bytes
 
 The input `binary!` length supplies the total size. Sequential instruction
 ranges are derived by addition, so they are not repeated in function records.
+Members are contiguous in source type order; codegen derives each first member
+by accumulating the preceding counts. Positive type references are source-order
+user type IDs and negative references are the twelve built-in logical kinds.
+No type/member names or target size/alignment/offset values cross the boundary.
 The three currently implemented signatures are direct integer values; there is
 no signature registry. A one-argument call stores its argument value ID in the
 call instruction itself; there is no parameter or operand section. Function
@@ -195,22 +201,26 @@ multi-function native traversal; zero/one-argument direct calls; scalar
 aliases; source-order logical type records; context-qualified names; and `with`
 resolution scopes are implemented. The declaration pass also scans loader
 `#script` markers, enum constants, aggregate and function aliases, import
-groups, and global assignments without serializing data that codegen does not
-consume yet. Type/member serialization, native layouts, complete signatures,
-initializers, and function bodies remain pending.
+groups, and global assignments. The direct logical type/member stream and its
+native bounds/kind validation are implemented. Native layouts, complete
+signatures, initializers, and function bodies remain pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples. A fresh `--red-only` generation of the direct
 hybrid source is 2,961,043 bytes. After includes and macros are expanded by the
-real Red/System loader, the structured audit finds 530 defined functions, 62
-contexts, 725 imported symbols, 73 aliases, 14 enums, 4,310 global assignments,
-and 4,262 unique global names. Of the defined functions, 489 have one
-parameter, 34 have none, and seven have two to five; the dominant parameter
+real Red/System loader, the structured audit finds 532 defined functions, 62
+contexts, 725 imported symbols, 75 aliases, 14 enums, 4,312 global assignments,
+and 4,264 unique global names. Of the defined functions, 490 have one
+parameter, 34 have none, and eight have two to five; the dominant parameter
 type is `node-handle!`. Context depth is at most two, while functions have up
-to 55 locals and substantial control flow. The direct declaration pass matches
+to 56 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 240 ms under the interpreter after loading, then fails explicitly at the
+about 223 ms under the interpreter after loading, then fails explicitly at the
 unimplemented global-code lowering boundary.
+
+After that deliberate stop, the same audit serializes every current logical
+type without compiling bodies: 89 source-order type records and 395 member
+records occupy 4,228 bytes.
 
 Regenerate and inspect this corpus without native compilation:
 
@@ -240,6 +250,9 @@ Gate: the frontend emits every declaration in the complete H0 source and can
 resolve every referenced name, while bodies may still fail as unsupported.
 
 ### 2.2 Types And Layout
+
+Current checkpoint: logical type/member serialization and native structural
+validation are complete for the current H0 corpus. Target layout remains next.
 
 - write only logical type/member records that native codegen consumes, directly
   into the compact RSIR order; do not add a schema, section directory, or

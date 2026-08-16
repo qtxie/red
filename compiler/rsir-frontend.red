@@ -45,6 +45,12 @@ compiler-rsir-frontend: context [
 		float32-ptr! pointer
 	]
 
+	type-codes: make hash! [
+		i8 1 u8 2 i16 3 u16 4 i32 5 u32 6 i64 7 u64 8
+		f32 9 f64 10 logic 11 pointer 12
+		alias -1 struct -2 union -3 function -4 subroutine -5
+	]
+
 	emit: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
 	]
@@ -195,6 +201,28 @@ compiler-rsir-frontend: context [
 			(length? type) = 1 [kind]
 			true [none]
 		]
+	]
+
+	type-ref: func [
+		type [block!]
+		scope uses [block!]
+		/local name kind code id
+	][
+		unless all [not empty? type any [word? type/1 path? type/1]][
+			fail ERROR-UNSUPPORTED "invalid type reference"
+		]
+		name: type/1
+		kind: type-kind type scope uses
+		unless kind [fail ERROR-UNSUPPORTED ["unsupported type " mold type]]
+		if all [
+			word? name
+			select type-kinds name
+			code: select type-codes kind
+		][return negate code]
+		unless id: resolve-name name scope uses type-ids [
+			fail ERROR-REFERENCE ["unknown type " mold name]
+		]
+		id
 	]
 
 	compile-body: func [
@@ -589,9 +617,74 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	write-types: func [type-output fields [binary!] /local position kind spec scope uses
+		field field-type ref flags count code
+	][
+		position: types
+		while [not tail? position][
+			kind: position/2
+			case [
+				kind = 'alias [
+					code: select type-codes 'alias
+					emit type-output reduce [
+						code
+						type-ref reduce [position/3] position/4 position/5
+						0
+					]
+				]
+				find [struct union] kind [
+					code: select type-codes kind
+					spec: position/3
+					scope: position/4
+					uses: position/5
+					unless ((length? spec) // 2) = 0 [
+						fail ERROR-UNSUPPORTED ["invalid aggregate type " mold position/1]
+					]
+					count: (length? spec) / 2
+					emit type-output reduce [code 0 count]
+					while [not tail? spec][
+						field: spec/1
+						field-type: spec/2
+						unless all [
+							word? field
+							block? field-type
+						][
+							fail ERROR-UNSUPPORTED [
+								"invalid aggregate member " mold position/1
+							]
+						]
+						ref: type-ref field-type scope uses
+						flags: either all [
+							(length? field-type) = 2
+							field-type/2 = 'value
+						][1][0]
+						if flags = 1 [
+							unless find [struct union]
+								(type-kind field-type scope uses) [
+								fail ERROR-UNSUPPORTED [
+									"only aggregate types can be passed by value"
+								]
+							]
+						]
+						emit fields reduce [ref flags]
+						spec: skip spec 2
+					]
+				]
+				find [function subroutine] kind [
+					emit type-output reduce [(select type-codes kind) 0 0]
+				]
+				true [
+					emit type-output reduce [(select type-codes kind) 0 0]
+				]
+			]
+			position: skip position 5
+		]
+	]
+
 	write-rsir: func [limit [integer!] /local output position name kind body
 		scope uses params name-offset record-offset param-count signature count
 		instruction-count size entry id record spec spec-position item type param-name
+		type-output fields type-bytes field-bytes
 	][
 		record: functions
 		while [not tail? record][
@@ -646,8 +739,16 @@ compiler-rsir-frontend: context [
 			record: skip record 7
 		]
 
-		output: make binary! (16 + (function-count * 80))
-		append/dup output 0 (16 + (function-count * 16))
+		type-output: make binary! (type-count * 12)
+		fields: make binary! 64
+		write-types type-output fields
+		type-bytes: length? type-output
+		field-bytes: length? fields
+		output: make binary! (20 + type-bytes + field-bytes + (function-count * 80))
+		append/dup output 0 20
+		append output type-output
+		append output fields
+		append/dup output 0 (function-count * 16)
 		position: functions
 		instruction-count: 0
 		name-offset: 0
@@ -666,7 +767,7 @@ compiler-rsir-frontend: context [
 				true [2]                               ; (i32) -> i32
 			]
 			count: compile-body kind body scope uses output params
-			record-offset: 17 + ((id - 1) * 16)
+			record-offset: 21 + type-bytes + field-bytes + ((id - 1) * 16)
 			change/part at output record-offset
 				int-to-bin/to-bin32 name-offset 4
 			change/part at output (record-offset + 4)
@@ -693,8 +794,9 @@ compiler-rsir-frontend: context [
 		entry: either module-kind = 3 [function-count][0]
 		change/part output int-to-bin/to-bin32 module-kind 4
 		change/part at output 5 int-to-bin/to-bin32 entry 4
-		change/part at output 9 int-to-bin/to-bin32 function-count 4
-		change/part at output 13 int-to-bin/to-bin32 instruction-count 4
+		change/part at output 9 int-to-bin/to-bin32 type-count 4
+		change/part at output 13 int-to-bin/to-bin32 function-count 4
+		change/part at output 17 int-to-bin/to-bin32 instruction-count 4
 		output
 	]
 

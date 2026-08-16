@@ -326,7 +326,7 @@ Exit criteria:
 Status: current major task. Source-order function, import, and global IDs;
 duplicate detection; retained specs and bodies; a separate lowering pass;
 multi-function native traversal; zero/one-argument direct calls; static scalar
-and typed-pointer globals; scalar
+and typed-pointer globals; direct integer-call initializers; scalar
 aliases; source-order logical type records; context-qualified names; and `with`
 resolution scopes are implemented. The declaration pass also scans loader
 `#script` markers, enum constants, aggregate and function aliases, import
@@ -343,8 +343,9 @@ can now be read directly through RIP-relative loads and their own contiguous
 linker-reference slices. Basic Windows x64
 scalar, pointer, alias, plain-struct, and plain-union size/alignment is
 implemented and consumed by `size?`. Imported aggregate pointer-member loads,
-two prepared scalar arguments, pointer-returning imported calls, and dynamic
-pointer global stores now cover the boot-data path. General member paths,
+two prepared scalar arguments, pointer-returning imported calls, dynamic
+pointer global stores, and literal-to-i32 calls now cover the boot-data and
+root-node initialization paths. General member paths,
 arrays, tagged unions, explicit aggregate alignment, complete signature
 lowering and ABI classification, other dynamic and non-scalar initializers,
 and general function bodies remain pending.
@@ -363,8 +364,8 @@ some signatures use Red/System's shared-type form, such as
 `value argument [integer!]`. Context depth is at most two, while functions have
 up to 96 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 0.8 seconds under the interpreter after loading. Loader expansion plus
-the independent statistics walk currently takes about 23 seconds in the
+about 1.6 seconds under the interpreter after loading. Loader expansion plus
+the independent statistics walk currently takes about 24.6 seconds in the
 console and is reported separately from frontend time. Static scalar casts and
 the first runtime set-path assignment, `red/boot?: yes`, now continue through
 native layout and the linker. String calls returning either pointers or i32 values now
@@ -374,8 +375,11 @@ store and the following
 `root-base: redbin/boot-load system/boot-data yes` reassignment. The latter is a
 direct imported aggregate-member, two-argument call, and global-store stream;
 the frontend materializes the old compiler's implicit `system`/`system!` ABI
-symbols without exposing a target offset in RSIR. The complete corpus next
-stops at the first unlowered module expression, `comment`.
+symbols without exposing a target offset in RSIR. Module-level `comment` forms
+are discarded during both passes. A direct literal/call/store sequence then
+consumes all 864 generated `get-root-node2` and `get-root-node` initializers
+without a new opcode or encoder form. The complete corpus next stops at the
+first casted call initializer, `ts||1068: as red-typeset! get-root 1707`.
 
 After that deliberate stop, the same audit serializes every current logical
 type without compiling bodies: 93 source-order types plus the on-demand
@@ -436,7 +440,7 @@ Current checkpoint: every current self-host import is parsed into a direct
 logical function or variable record. Source groups share library-name bytes,
 function imports own direct parameter slices, and native codegen validates all
 record, type, flag, name, and slice bounds. The current i32 zero/one-argument
-call shapes emit IAT-indirect machine calls and direct contiguous relocation
+call shapes emit direct or IAT-indirect machine calls and contiguous relocation
 slices; imports with no references are omitted. Static scalar and typed-pointer
 globals carry a logical type plus two value words. Native codegen computes their
 target layout, writes their data directly, and gives the linker direct global
@@ -455,8 +459,9 @@ first real runtime operation, `red/boot?: yes`, is emitted directly into the
 ordinary module-body function during the same traversal that folds static
 globals. The module-only fixture is 144 RSIR bytes and produces a 252-byte
 native image with one function and two instructions. There is no second
-initializer protocol. The next real-corpus boundary is the unlowered `comment`
-module expression after the boot-data initialization run.
+initializer protocol. The same ordinary literal/call/store stream initializes
+the generated root-node handles. The next real-corpus boundary is a pointer
+cast around a one-argument call, `as red-typeset! get-root 1707`.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

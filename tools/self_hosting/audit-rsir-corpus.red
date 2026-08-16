@@ -131,6 +131,9 @@ walk: func [
 	while [not tail? position][
 		value: position/1
 		case [
+			all [value = 'comment not tail? next position][
+				position: skip position 2
+			]
 			all [
 				set-word? value
 				not tail? next position

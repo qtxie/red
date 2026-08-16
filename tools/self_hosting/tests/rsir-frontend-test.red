@@ -62,6 +62,15 @@ assert all [
 ]["void function stream changed"]
 assert void-ir = compile-text {Red/System [] fn: function [][]} 'user
 	"func and function produced different RSIR"
+assert void-ir = compile-text {
+	Red/System []
+	comment [
+		hidden!: alias integer!
+		hidden: func [][]
+	]
+	comment "ignored"
+	fn: func [][]
+} 'user "comment contents entered the direct RSIR stream"
 
 glue-ir: compile-text {Red/System [] fn: func [][]} 'glue
 assert all [
@@ -193,6 +202,40 @@ assert all [
 	(copy at imported-pointer-init-ir 185) =
 		to binary! "fixture.dlltopbottom***-main"
 ]["imported pointer initialization is not a direct load/store stream"]
+
+node-call-ir: compile-text {
+	Red/System []
+	node-handle!: alias integer!
+	#import ["fixture.dll" stdcall [
+		get-root-node2: "get-root-node2" [
+			idx [integer!]
+			return: [node-handle!]
+		]
+	]]
+	ctx: get-root-node2 96
+} 'glue
+assert binary? node-call-ir [
+	"frontend rejected integer call initialization: " mold frontend/last-error
+]
+assert all [
+	frontend/type-count = 1
+	frontend/import-count = 1
+	frontend/global-count = 1
+	frontend/module-value = 2
+	frontend/global-data/2 = select frontend/type-ids 'node-handle!
+	(length? frontend/module-code) = 64
+	(word-at frontend/module-code 0) = 1
+	(word-at frontend/module-code 4) = 1
+	(word-at frontend/module-code 12) = 96
+	(word-at frontend/module-code 16) = 4
+	(word-at frontend/module-code 20) = 2
+	(word-at frontend/module-code 24) = -1
+	(word-at frontend/module-code 28) = 1
+	(word-at frontend/module-code 32) = 10
+	(word-at frontend/module-code 40) = 1
+	(word-at frontend/module-code 44) = 2
+	(word-at frontend/module-code 48) = 2
+]["integer call initialization is not a direct literal/call/store stream"]
 
 stack-top-ir: compile-text {
 	Red/System []

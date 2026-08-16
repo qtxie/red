@@ -399,6 +399,69 @@ check all [
 		#{000000000000000000000000000000000000000000000000}
 ]["imported pointer load/store code is not direct and contiguous"]
 
+node-call-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	node-handle!: alias integer!
+	#import ["fixture.dll" stdcall [
+		get-root-node2: "get-root-node2" [
+			idx [integer!]
+			return: [node-handle!]
+		]
+	]]
+	ctx: get-root-node2 96
+] 'glue
+check binary? node-call-ir ["frontend rejected integer call initialization: "
+	mold compiler-rsir-frontend/last-error]
+node-call-image: make binary! 4096
+check (codegen-module node-call-ir node-call-image 0) = 0
+	"integer call initialization codegen failed"
+check all [
+	(length? node-call-image) = 292
+	(word-at node-call-image 8) = 1
+	(word-at node-call-image 12) = 1
+	(word-at node-call-image 16) = 2
+	(word-at node-call-image 20) = 3
+	(word-at node-call-image 24) = 59
+	(word-at node-call-image 28) = 224
+	(word-at node-call-image 32) = 48
+	(word-at node-call-image 36) = 20
+	(word-at node-call-image 40) = 1
+	(word-at node-call-image 56) = 48
+]["integer call initialization image layout changed"]
+check all [
+	(word-at node-call-image 80) = 8
+	(word-at node-call-image 84) = 3
+	(word-at node-call-image 88) = 16
+	(word-at node-call-image 92) = 4
+	(word-at node-call-image 96) = 1
+	(word-at node-call-image 100) = 1
+	(word-at node-call-image 104) = 11
+	(word-at node-call-image 108) = 11
+	(word-at node-call-image 112) = 22
+	(word-at node-call-image 116) = 14
+	(word-at node-call-image 120) = 2
+	(word-at node-call-image 124) = 1
+	(word-at node-call-image 128) = 36
+	(word-at node-call-image 132) = 12
+	(word-at node-call-image 136) = 48
+	(word-at node-call-image 140) = 11
+	(word-at node-call-image 144) = 3
+	(word-at node-call-image 148) = 1
+]["integer call initialization symbol slices changed"]
+check all [
+	(word-at node-call-image 152) = 32
+	(word-at node-call-image 156) = 26
+	(word-at node-call-image 160) = 40
+	(copy/part at node-call-image 165 59) =
+		to binary! "***-mainctxfixture.dllget-root-node2kernel32.dllExitProcess"
+	(copy/part at node-call-image 225 48) = #{
+		554889E56A006A0068000000006A004883EC20B960000000FF150000000089
+		050000000031C9FF150000000031C0C9C3
+	}
+	(copy at node-call-image 273) =
+		#{0000000000000000000000000000000000000000}
+]["integer call initialization code is not direct and contiguous"]
+
 stack-top-ir: compiler-rsir-frontend/compile [
 	Red/System []
 	red: context [

@@ -678,6 +678,27 @@ compiler-rsir-frontend: context [
 				case [
 					all [
 						(length? callee-params) = 3
+						integer? literal: position/3
+					][
+						unless all [
+							integer32-ref? callee-return
+							integer32-ref? callee-params/2
+							callee-params/3 = 0
+						][fail ERROR-UNSUPPORTED [
+							"initializer function does not take and return a 32-bit integer: "
+							mold value
+						]]
+						result: module-value + 1
+						emit module-code reduce [
+							1 result 0 literal
+							4 (result + 1) callee result
+							10 0 id (result + 1)
+						]
+						module-value: result + 1
+						after: skip position 3
+					]
+					all [
+						(length? callee-params) = 3
 						string? position/3
 					][
 						unless all [
@@ -838,6 +859,10 @@ compiler-rsir-frontend: context [
 		position: values
 		while [not tail? position][
 			case [
+				all [
+					position/1 = 'comment
+					(length? position) >= 2
+				][position: skip position 2]
 				all [
 					issue? position/1
 					find [#script #include] position/1
@@ -1289,6 +1314,10 @@ compiler-rsir-frontend: context [
 		position: values
 		while [not tail? position][
 			case [
+				all [
+					position/1 = 'comment
+					(length? position) >= 2
+				][position: skip position 2]
 				all [
 					issue? position/1
 					position/1 = #script

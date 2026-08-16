@@ -158,6 +158,36 @@ check (codegen-module callable-ir callable-image 0) = 0
 check callable-image = user-i32
 	"unused callable signatures changed native code"
 
+pointer-global-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	cell!: alias struct! [value [integer!]]
+	base: as cell! 0
+	fn: func [return: [integer!]][7]
+] 'user
+check binary? pointer-global-ir ["frontend rejected a static pointer global: "
+	mold compiler-rsir-frontend/last-error]
+pointer-global-image: make binary! 4096
+check (codegen-module pointer-global-ir pointer-global-image 0) = 0
+	"static pointer global codegen failed"
+check all [
+	(length? pointer-global-image) = 160
+	(word-at pointer-global-image 20) = 0
+	(word-at pointer-global-image 24) = 6
+	(word-at pointer-global-image 28) = 112
+	(word-at pointer-global-image 32) = 22
+	(word-at pointer-global-image 36) = 24
+	(word-at pointer-global-image 40) = 1
+	(word-at pointer-global-image 80) = 2
+	(word-at pointer-global-image 84) = 4
+	(word-at pointer-global-image 88) = 16
+	(word-at pointer-global-image 92) = 8
+	(word-at pointer-global-image 96) = 0
+	(word-at pointer-global-image 100) = 0
+	(copy/part at pointer-global-image 105 6) = to binary! "fnbase"
+	(copy at pointer-global-image 137) =
+		#{000000000000000000000000000000000000000000000000}
+]["static aggregate alias was not laid out as a pointer global"]
+
 import-ir: compiler-rsir-frontend/compile [
 	Red/System []
 	#import ["fixture.dll" stdcall [

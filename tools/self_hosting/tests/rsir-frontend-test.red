@@ -546,13 +546,56 @@ assert all [
 	(copy at static-globals-ir 129) = to binary! "answerready?fn"
 ]["static global stream changed"]
 
-assert none? compile-text {
+cast-global-ir: compile-text {
 	Red/System []
 	value: as integer! 1
 	fn: func [][]
+} 'user
+assert binary? cast-global-ir [
+	"frontend rejected a static scalar cast: " mold frontend/last-error
+]
+assert all [
+	(length? cast-global-ir) = 99
+	(word-at cast-global-ir 24) = 1
+	(word-at cast-global-ir 36) = -5
+	(word-at cast-global-ir 40) = 1
+]["static scalar cast did not become direct global data"]
+
+typed-global-ir: compile-text {
+	Red/System []
+	cell!: alias struct! [value [integer!]]
+	base: as cell! 0
+	fn: func [return: [integer!]][7]
+} 'user
+assert binary? typed-global-ir [
+	"frontend rejected a static typed global: " mold frontend/last-error
+]
+assert all [
+	(length? typed-global-ir) = 142
+	(word-at typed-global-ir 8) = 1
+	(word-at typed-global-ir 24) = 1
+	(word-at typed-global-ir 28) = -2
+	(word-at typed-global-ir 44) = 1
+	(word-at typed-global-ir 48) = -5
+	(word-at typed-global-ir 64) = 1
+	(copy at typed-global-ir 137) = to binary! "basefn"
+]["typed global stream changed"]
+
+assert none? compile-text {
+	Red/System []
+	value: get-value
+	get-value: func [return: [integer!]][1]
 } 'user "frontend accepted an unlowered dynamic global initializer"
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"frontend reported the wrong dynamic-global error"
+assert none? compile-text {
+	Red/System []
+	value: 1
+	value: 2
+	fn: func [][]
+} 'user "frontend folded a runtime global reassignment into static data"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"frontend reported the wrong global-reassignment error"
 
 import-ir: compile-text {
 	Red/System []

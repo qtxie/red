@@ -131,6 +131,14 @@ seconds frontend, 13.79 seconds native compilation, and 1.96 seconds linking.
 It verifies two functions reading one global as well as exact linker-image
 bytes and reference ordering.
 
+Static `as type literal` globals now consume their source expression directly
+and keep the target-independent logical type in RSIR. For example,
+`base: as cell! 0` remains a reference to the `cell!` aggregate alias; native
+codegen lays that ordinary global out as one 8-byte pointer rather than copying
+the aggregate layout into the frontend. A later assignment is deliberately not
+folded over the initial data value because its ordering belongs to the normal
+module-body instruction stream.
+
 ## Data Layout Rule
 
 RSIR is a private in-process format compiled as one source set with its only
@@ -267,8 +275,8 @@ Exit criteria:
 
 Status: current major task. Source-order function, import, and global IDs;
 duplicate detection; retained specs and bodies; a separate lowering pass;
-multi-function native traversal; zero/one-argument direct calls; static
-integer/logic globals; scalar
+multi-function native traversal; zero/one-argument direct calls; static scalar
+and typed-pointer globals; scalar
 aliases; source-order logical type records; context-qualified names; and `with`
 resolution scopes are implemented. The declaration pass also scans loader
 `#script` markers, enum constants, aggregate and function aliases, import
@@ -291,21 +299,21 @@ The implementation order is driven by the actual generated self-host source,
 not isolated language examples; H0 scope still includes every Red/System
 feature and the full Red/System suite. A fresh `--red-only` generation of the direct
 hybrid source is 2,961,043 bytes. After includes and macros are expanded by the
-real Red/System loader, the structured audit finds 535 defined functions, 62
-contexts, 725 imported symbols, 77 aliases, 14 enums, 4,317 global assignments,
-and 4,269 unique global names. The imports comprise 57 source library groups,
+real Red/System loader, the structured audit finds 538 defined functions, 62
+contexts, 725 imported symbols, 79 aliases, 14 enums, 4,336 global assignments,
+and 4,288 unique global names. The imports comprise 57 source library groups,
 712 functions, 13 variables, and 856 parameters. The dominant parameter type is `node-handle!`;
 some signatures use Red/System's shared-type form, such as
 `value argument [integer!]`. Context depth is at most two, while functions have
-up to 64 locals and substantial control flow. The direct declaration pass matches
+up to 88 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 472 ms under the interpreter after loading. Static integer/logic globals
-now continue through native layout and the linker; the complete corpus stops
-explicitly at its first dynamic global initializer.
+about 550 ms under the interpreter after loading. Static scalar casts now
+continue through native layout and the linker; the complete corpus stops at its
+first runtime set-path assignment, `red/boot?: yes`.
 
 After that deliberate stop, the same audit serializes every current logical
-type without compiling bodies: 91 source-order type records and 411 member
-records occupy 5,108 bytes.
+type without compiling bodies: 93 source-order type records and 424 member
+records occupy 5,252 bytes.
 
 Regenerate and inspect this corpus without native compilation:
 
@@ -362,9 +370,10 @@ logical function or variable record. Source groups share library-name bytes,
 function imports own direct parameter slices, and native codegen validates all
 record, type, flag, name, and slice bounds. The current i32 zero/one-argument
 call shapes emit IAT-indirect machine calls and direct contiguous relocation
-slices; imports with no references are omitted. Static integer and logic globals
-carry a logical type plus two value words. Native codegen computes their target
-layout, writes their data directly, and gives the linker direct global records.
+slices; imports with no references are omitted. Static scalar and typed-pointer
+globals carry a logical type plus two value words. Native codegen computes their
+target layout, writes their data directly, and gives the linker direct global
+records.
 General call ABI lowering, imported variables, non-scalar and dynamic
 initializers, global stores and non-i32 accesses, constants, and empty
 static-library registration groups remain pending. Dynamic top-level

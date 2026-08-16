@@ -427,14 +427,18 @@ compiler-rsir-frontend: context [
 	]
 
 	set-global: func [
-		name [word!]
-		value
-		scope [block!]
-		/local id record ref low high
+		position scope uses [block!]
+		/local name id record value type kind ref low high after
 	][
+		name: to word! position/1
 		id: select globals qualified scope name
 		unless integer? id [fail ERROR-REFERENCE ["unknown global " mold name]]
 		record: skip global-data ((id - 1) * 4)
+		if integer? record/2 [
+			fail ERROR-UNSUPPORTED ["global reassignment is not lowered yet: " mold name]
+		]
+		value: position/2
+		after: skip position 2
 		ref: 0
 		low: 0
 		high: 0
@@ -445,18 +449,57 @@ compiler-rsir-frontend: context [
 				ref: -11
 				low: either value = 'true [1][0]
 			]
+			value = 'as [
+				unless all [
+					(length? position) >= 4
+					any [word? position/3 path? position/3]
+				][fail ERROR-UNSUPPORTED "static cast is missing its type or value"]
+				type: reduce [position/3]
+				after: skip position 3
+				if all [
+					word? position/3
+					find [pointer! struct! union! function!] position/3
+					block? after/1
+				][
+					append/only type after/1
+					after: next after
+				]
+				if tail? after [
+					fail ERROR-UNSUPPORTED "static cast is missing its value"
+				]
+				value: after/1
+				after: next after
+				kind: type-kind type scope uses
+				case [
+					all [
+						integer? value
+						find [i8 u8 i16 u16 i32 u32 i64 u64 pointer] kind
+					][
+						low: value
+						high: either value < 0 [-1][0]
+					]
+					all [
+						any [logic? value all [word? value find [true false] value]]
+						kind = 'logic
+					][low: either any [value = true value = 'true][1][0]]
+					true [
+						fail ERROR-UNSUPPORTED [
+							"global cast is not a static scalar: " mold type " " mold value
+						]
+					]
+				]
+				ref: type-ref type scope uses
+			]
 			true [
 				fail ERROR-UNSUPPORTED [
 					"global initializer is not a static scalar: " mold value
 				]
 			]
 		]
-		if all [integer? record/2 record/2 <> ref][
-			fail ERROR-UNSUPPORTED ["global type changed: " mold name]
-		]
 		record/2: ref
 		record/3: low
 		record/4: high
+		after
 	]
 
 	prepare-globals: func [
@@ -527,8 +570,7 @@ compiler-rsir-frontend: context [
 					position: skip position 3
 				]
 				all [set-word? position/1 (length? position) >= 2][
-					set-global to word! position/1 position/2 scope
-					position: skip position 2
+					position: set-global position scope uses
 				]
 				true [
 					fail ERROR-UNSUPPORTED [

@@ -952,7 +952,7 @@ x64-codegen: context [
 				+ ((id - 1) * RSIR_GLOBAL_SIZE))
 			global-size: 0
 			global-align: 0
-			unless layout-type ir-global/type true type-data member-data
+			unless layout-type ir-global/type false type-data member-data
 				header/type-count 0 :global-size :global-align [
 				return INVALID_IR
 			]

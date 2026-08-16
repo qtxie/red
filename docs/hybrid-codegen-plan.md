@@ -132,10 +132,14 @@ Branches use instruction indexes as direct targets. Basic blocks are derived
 from entry points, branch targets, and terminators; no block directory is
 serialized.
 
-The value stack is empty at every basic-block boundary. A conditional
-expression that produces a value uses an ordinary compiler-created local for
-the merge. This keeps the Red frontend and O0 backend linear. Native
-slot-promotion removes the temporary when profitable.
+A branch consumes only its condition. Both successors retain the same common
+stack prefix, which is required when control appears in an assignment, call
+argument, or right operand. Compatible conditional arms leave their result at
+the same virtual stack depth, so no phi object, hidden local, or native move is
+needed. A value-less merge trims the unused arm value on its incoming edge;
+that changes only the abstract stack depth and emits no machine instruction.
+Codegen records the depth, type, flags, and place/value kind at each branch
+target and restores them when linear decoding enters a non-fallthrough block.
 
 The general control operations are:
 
@@ -294,7 +298,8 @@ The native routine owns all target-dependent work:
 1. cast the direct tables after the outer bounds walk;
 2. resolve and cache logical layouts;
 3. derive basic-block entries and typed stack effects;
-4. create compact native value, slot, and branch arrays in one allocation;
+4. create compact native value, slot, branch-entry, and offset arrays in one
+   allocation;
 5. classify Win64 arguments and returns from signatures;
 6. perform the selected optimization level in place;
 7. assign registers, stack slots, shadow space, and unwind state;
@@ -489,12 +494,17 @@ Already retained:
 - primary/prefix parsing followed by strict left-to-right postfix folding;
 - generic integer unary, math, shift, bitwise, comparison, and pointer-stride
   lowering selected from logical operand types.
+- function-local jump/branch targets with fixed near x64 forms, native offset
+  tables, and matching target-entry stack depths and top types;
+- if, either, any, all, loop, while, until, early return/exit, break, and
+  continue lowered through that shared control core;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
 Still incomplete and therefore not an H0:
 
-- floating-point scalar operations and all structured-control operations;
+- floating-point scalar operations, case, switch, and the remaining non-local
+  control operations;
 - complete aggregate, array, union, function-pointer, and initializer nodes;
 - complete Win64 scalar, floating, variadic, callback, and aggregate ABI paths;
 - system facilities, directives, output kinds, runtime image, and Red routines;

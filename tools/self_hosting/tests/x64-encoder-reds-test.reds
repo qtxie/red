@@ -75,6 +75,16 @@ offset: offset + size
 size: x64-encoder/condition-result (code + offset) (128 - offset) 4
 if size <> 6 [failures: failures + 1]
 offset: offset + size
+size: x64-encoder/test-register (code + offset) (128 - offset)
+	x64-encoder/RAX 4
+if size <> 2 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/jump-relative (code + offset) (128 - offset) -5
+if size <> 5 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/jump-condition (code + offset) (128 - offset) 4 7
+if size <> 6 [failures: failures + 1]
+offset: offset + size
 size: x64-encoder/divide-register (code + offset) (128 - offset) 4 1
 if size <> 3 [failures: failures + 1]
 offset: offset + size
@@ -90,10 +100,13 @@ operations: #{
 	C1F81F
 	F7D0
 	0F94C00FB6C0
+	85C0
+	E9FBFFFFFF
+	0F8407000000
 	99F7F9
 	4863C9
 }
-if any [offset <> 29 (compare-memory code (as byte-ptr! operations) offset) <> 0][
+if any [offset <> 42 (compare-memory code (as byte-ptr! operations) offset) <> 0][
 	failures: failures + 1
 ]
 
@@ -129,6 +142,11 @@ if (x64-encoder/binary-register code 128 02h 0 1 4) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/condition-result code 128 16) <> -1 [failures: failures + 1]
+if (x64-encoder/test-register code 128 x64-encoder/RAX 2) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/jump-relative code 4 0) <> -1 [failures: failures + 1]
+if (x64-encoder/jump-condition code 128 16 0) <> -1 [failures: failures + 1]
 
 free code
 either failures = 0 [

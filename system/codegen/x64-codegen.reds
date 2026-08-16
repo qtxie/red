@@ -151,6 +151,8 @@ x64-codegen: context [
 	OP_DUPLICATE: 13
 	OP_UNARY:    14
 	OP_BINARY:   15
+	OP_JUMP:     16
+	OP_BRANCH:   17
 
 	NOT_OPERATION:       1
 	ADD_OPERATION:       1
@@ -617,7 +619,8 @@ x64-codegen: context [
 	compile-function: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
-		stack-types stack-flags stack-kinds import-refs references [int-ptr!]
+		stack-types stack-flags stack-kinds instruction-offsets instruction-depths
+			entry-types entry-flags entry-kinds import-refs references [int-ptr!]
 		parameters functions imports globals types members image-data strings code
 			[byte-ptr!]
 		type-count function-count import-count global-count strings-size
@@ -640,8 +643,8 @@ x64-codegen: context [
 			argument-slot argument-width target return-ref first-parameter
 			parameter-count call-flags import-id global-id literal-end displacement
 			member-type member-flags member-offset source-width target-width
-			result-index reference-id [integer!]
-			measure? terminated? valid? comparison? [logic!]
+			result-index reference-id target-offset [integer!]
+			measure? fallthrough? valid? comparison? [logic!]
 	][
 		measure?: null? code
 		storage-count: fn/parameter-count + fn/local-count
@@ -660,8 +663,15 @@ x64-codegen: context [
 		depth: 0
 		max-depth: 0
 		max-outgoing: 0
-		terminated?: false
+		fallthrough?: true
 		written: 0
+		if measure? [
+			index: 1
+			while [index <= fn/instruction-count][
+				instruction-depths/index: -1
+				index: index + 1
+			]
+		]
 		at: as byte-ptr! 0
 		if not measure? [at: code + written]
 		encoded: x64-encoder/prolog at (capacity - written) 0
@@ -715,7 +725,43 @@ x64-codegen: context [
 
 		index: 1
 		while [index <= fn/instruction-count][
-			if terminated? [return INVALID_IR]
+			either fallthrough? [
+				if measure? [
+					if all [
+						instruction-depths/index >= 0
+						instruction-depths/index <> depth
+					][return INVALID_IR]
+					if all [
+						instruction-depths/index >= 0
+						depth > 0
+						any [
+							not compatible-types? entry-types/index stack-types/depth
+								types type-count
+							entry-flags/index <> stack-flags/depth
+							entry-kinds/index <> stack-kinds/depth
+						]
+					][return INVALID_IR]
+				]
+			][
+				depth: either instruction-depths/index >= 0 [
+					instruction-depths/index
+				][0]
+				if depth > 0 [
+					stack-types/depth: entry-types/index
+					stack-flags/depth: entry-flags/index
+					stack-kinds/depth: entry-kinds/index
+				]
+			]
+			if measure? [
+				instruction-depths/index: depth
+				if depth > 0 [
+					entry-types/index: stack-types/depth
+					entry-flags/index: stack-flags/depth
+					entry-kinds/index: stack-kinds/depth
+				]
+			]
+			if measure? [instruction-offsets/index: written]
+			fallthrough?: true
 			instruction: as rsir-instruction! (instructions
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
 			case [
@@ -1520,17 +1566,117 @@ x64-codegen: context [
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 				]
+				instruction/op = OP_JUMP [
+					target: instruction/a
+					unless all [
+						target > 0 target <= fn/instruction-count
+						instruction/b >= 0 instruction/b <= depth
+						instruction/c = 0
+					][return INVALID_IR]
+					depth: depth - instruction/b
+					if measure? [
+						if all [
+							instruction-depths/target >= 0
+							instruction-depths/target <> depth
+						][return INVALID_IR]
+						if all [
+							instruction-depths/target >= 0
+							depth > 0
+							any [
+								not compatible-types? entry-types/target stack-types/depth
+									types type-count
+								entry-flags/target <> stack-flags/depth
+								entry-kinds/target <> stack-kinds/depth
+							]
+						][return INVALID_IR]
+						instruction-depths/target: depth
+						if depth > 0 [
+							entry-types/target: stack-types/depth
+							entry-flags/target: stack-flags/depth
+							entry-kinds/target: stack-kinds/depth
+						]
+					]
+					displacement: 0
+					if not measure? [
+						target-offset: index + 1
+						displacement: instruction-offsets/target
+							- instruction-offsets/target-offset
+					]
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/jump-relative at (capacity - written)
+						displacement
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					fallthrough?: false
+				]
+				instruction/op = OP_BRANCH [
+					target: instruction/a
+					unless all [
+						target > 0 target <= fn/instruction-count
+						any [instruction/b = 0 instruction/b = 1]
+						instruction/c = 0 depth > 0
+						stack-kinds/depth = VALUE
+						compatible-types? -11 stack-types/depth types type-count
+						stack-flags/depth = 0
+					][return INVALID_IR]
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/frame-load at (capacity - written)
+						x64-encoder/RAX slot-displacement (storage-count + depth) 4 0
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					depth: depth - 1
+					if measure? [
+						if all [
+							instruction-depths/target >= 0
+							instruction-depths/target <> depth
+						][return INVALID_IR]
+						if all [
+							instruction-depths/target >= 0
+							depth > 0
+							any [
+								not compatible-types? entry-types/target stack-types/depth
+									types type-count
+								entry-flags/target <> stack-flags/depth
+								entry-kinds/target <> stack-kinds/depth
+							]
+						][return INVALID_IR]
+						instruction-depths/target: depth
+						if depth > 0 [
+							entry-types/target: stack-types/depth
+							entry-flags/target: stack-flags/depth
+							entry-kinds/target: stack-kinds/depth
+						]
+					]
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/test-register at (capacity - written)
+						x64-encoder/RAX 4
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					displacement: 0
+					if not measure? [
+						target-offset: index + 1
+						displacement: instruction-offsets/target
+							- instruction-offsets/target-offset
+					]
+					condition: either instruction/b = 1 [5][4]
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/jump-condition at (capacity - written)
+						condition displacement
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+				]
 				instruction/op = OP_RETURN [
-					unless index = fn/instruction-count [return INVALID_IR]
 					return-ref: instruction/a
 					if return-ref <> fn/return-type [return INVALID_IR]
-					either return-ref = 0 [
-						if depth <> 0 [return INVALID_IR]
-					][
-						if any [depth <> 1 stack-kinds/1 <> VALUE][return INVALID_IR]
+					if return-ref <> 0 [
+						if any [depth < 1 stack-kinds/depth <> VALUE][return INVALID_IR]
 						unless all [
-							compatible-types? return-ref stack-types/1 types type-count
-							stack-flags/1 = instruction/b
+							compatible-types? return-ref stack-types/depth types type-count
+							stack-flags/depth = instruction/b
 						][return INVALID_IR]
 					]
 					either entry? [
@@ -1547,7 +1693,7 @@ x64-codegen: context [
 							if not measure? [at: code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RCX slot-displacement
-									(storage-count + 1) width
+									(storage-count + depth) width
 								signed
 						]
 						if encoded < 0 [return OUTPUT_FULL]
@@ -1575,7 +1721,7 @@ x64-codegen: context [
 							if not measure? [at: code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
-									(storage-count + 1) width
+									(storage-count + depth) width
 								signed
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
@@ -1587,13 +1733,17 @@ x64-codegen: context [
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					depth: 0
-					terminated?: true
+					fallthrough?: false
 				]
 				true [return UNSUPPORTED]
 			]
 			index: index + 1
 		]
-		unless terminated? [return INVALID_IR]
+		if measure? [
+			target-offset: fn/instruction-count + 1
+			instruction-offsets/target-offset: written
+		]
+		if fallthrough? [return INVALID_IR]
 
 		if measure? [
 			slot-bytes: (storage-count + max-depth) * 8
@@ -1624,8 +1774,9 @@ x64-codegen: context [
 			image-function [codegen-function!]
 			image-global [codegen-global!]
 			image-import [codegen-import!]
-			import-refs function-sizes function-frames stack-types stack-flags
-				stack-kinds references [int-ptr!]
+			import-refs function-sizes function-frames instruction-offsets
+				instruction-depths entry-types entry-flags entry-kinds
+				stack-types stack-flags stack-kinds references [int-ptr!]
 			type-data member-data import-data global-data function-data
 				parameter-data instruction-data strings function-instructions
 				name names-output code data-output cursor finish scratch [byte-ptr!]
@@ -1635,7 +1786,7 @@ x64-codegen: context [
 				strings-size metadata-size function-names-size global-names-size
 				import-names-size names-size code-offset code-size function-code-size
 				literal-size data-offset image-data-size total-size scratch-count
-				id next-instruction instruction-count function-size entry-size
+				id next-instruction next-offset instruction-count function-size entry-size
 				code-cursor name-cursor global-size global-align global-offset
 				global-reference-count used-import-count import-reference-count
 				image-import-count reference-count count first-reference last-library
@@ -1880,17 +2031,27 @@ x64-codegen: context [
 			id: id + 1
 		]
 
-		if header/instruction-count > ((2147483647 - header/import-count
-			- (header/function-count * 2)) / 3)[return OUTPUT_FULL]
-		scratch-count: header/import-count + (header/function-count * 2)
-			+ (header/instruction-count * 3)
+		if header/function-count > ((2147483647 - header/import-count) / 3)[
+			return OUTPUT_FULL
+		]
+		scratch-count: header/import-count + (header/function-count * 3)
+		if header/instruction-count > ((2147483647 - scratch-count) / 8)[
+			return OUTPUT_FULL
+		]
+		scratch-count: scratch-count + (header/instruction-count * 8)
 		if scratch-count > (2147483647 / 4)[return OUTPUT_FULL]
 		scratch: allocate (scratch-count * 4)
 		if null? scratch [return OUTPUT_FULL]
 		import-refs: as int-ptr! scratch
 		function-sizes: import-refs + header/import-count
 		function-frames: function-sizes + header/function-count
-		stack-types: function-frames + header/function-count
+		instruction-offsets: function-frames + header/function-count
+		instruction-depths: instruction-offsets + header/instruction-count
+			+ header/function-count
+		entry-types: instruction-depths + header/instruction-count
+		entry-flags: entry-types + header/instruction-count
+		entry-kinds: entry-flags + header/instruction-count
+		stack-types: entry-kinds + header/instruction-count
 		stack-flags: stack-types + header/instruction-count
 		stack-kinds: stack-flags + header/instruction-count
 		id: 1
@@ -1902,6 +2063,7 @@ x64-codegen: context [
 		entry-size: 0
 		global-reference-count: 0
 		next-instruction: 1
+		next-offset: 1
 		id: 1
 		while [id <= header/function-count][
 			ir-function: as rsir-function! (function-data
@@ -1915,7 +2077,12 @@ x64-codegen: context [
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
 			function-size: compile-function ir-function function-instructions
-				stack-types stack-flags stack-kinds import-refs null
+				stack-types stack-flags stack-kinds
+				(instruction-offsets + (next-offset - 1))
+				(instruction-depths + (next-instruction - 1))
+				(entry-types + (next-instruction - 1))
+				(entry-flags + (next-instruction - 1))
+				(entry-kinds + (next-instruction - 1)) import-refs null
 				parameter-data function-data import-data global-data type-data member-data
 				(output + IMAGE_HEADER_SIZE) strings null
 				header/type-count header/function-count header/import-count
@@ -1931,6 +2098,7 @@ x64-codegen: context [
 			code-size: code-size + function-size
 			if current-entry? [entry-size: function-size]
 			next-instruction: next-instruction + ir-function/instruction-count
+			next-offset: next-offset + ir-function/instruction-count + 1
 			id: id + 1
 		]
 		function-code-size: code-size
@@ -2134,6 +2302,7 @@ x64-codegen: context [
 		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
 		code: output + code-offset
 		next-instruction: 1
+		next-offset: 1
 		id: 1
 		while [id <= header/function-count][
 			ir-function: as rsir-function! (function-data
@@ -2144,7 +2313,12 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
 			written: compile-function ir-function function-instructions
-				stack-types stack-flags stack-kinds import-refs references
+				stack-types stack-flags stack-kinds
+				(instruction-offsets + (next-offset - 1))
+				(instruction-depths + (next-instruction - 1))
+				(entry-types + (next-instruction - 1))
+				(entry-flags + (next-instruction - 1))
+				(entry-kinds + (next-instruction - 1)) import-refs references
 				parameter-data function-data import-data global-data type-data member-data
 				(output + IMAGE_HEADER_SIZE) strings
 				(code + image-function/code-offset)
@@ -2154,6 +2328,7 @@ x64-codegen: context [
 				:global-reference-count :literal-size (function-frames + (id - 1))
 			if written <> image-function/code-size [return release scratch INVALID_IR]
 			next-instruction: next-instruction + ir-function/instruction-count
+			next-offset: next-offset + ir-function/instruction-count + 1
 			id: id + 1
 		]
 

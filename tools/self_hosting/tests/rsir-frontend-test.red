@@ -276,6 +276,123 @@ assert all [
 	(instruction-word byte-ir byte-layout 1 8) = 65
 ]["byte literal did not retain its logical byte type"]
 
+if-ir: compile-text {
+	Red/System []
+	fn: func [flag [logic!] return: [integer!] /local value][
+		value: 0
+		if flag [value: 7]
+		value
+	]
+} 'user
+assert binary? if-ir ["IF lowering failed: " mold frontend/last-error]
+if-layout: layout-of if-ir
+assert all [
+	(ops-of if-ir if-layout) = [3 1 5 12 3 4 17 3 1 5 12 3 4 11]
+	(instruction-word if-ir if-layout 7 4) = 12
+	(instruction-word if-ir if-layout 7 8) = 0
+]["IF did not lower to a false branch over an ordinary body"]
+
+either-ir: compile-text {
+	Red/System []
+	fn: func [flag [logic!] return: [integer!]][either flag [11][22]]
+} 'user
+assert binary? either-ir ["EITHER lowering failed: " mold frontend/last-error]
+either-layout: layout-of either-ir
+assert all [
+	(function-word either-ir either-layout 1 28) = 0
+	(ops-of either-ir either-layout) = [3 4 17 1 16 1 11]
+	(instruction-word either-ir either-layout 3 4) = 6
+	(instruction-word either-ir either-layout 5 4) = 7
+	(instruction-word either-ir either-layout 5 8) = 0
+]["value-returning EITHER did not merge at one typed stack depth"]
+
+either-statement-ir: compile-text {
+	Red/System []
+	fn: func [flag [logic!]][either flag [1][true]]
+} 'user
+either-statement-layout: layout-of either-statement-ir
+assert all [
+	(function-word either-statement-ir either-statement-layout 1 28) = 0
+	(ops-of either-statement-ir either-statement-layout) = [3 4 17 1 16 1 12 11]
+	(instruction-word either-statement-ir either-statement-layout 5 8) = 1
+]["statement EITHER did not reconcile different arm values on its edges"]
+
+short-ir: compile-text {
+	Red/System []
+	fn: func [a [logic!] b [logic!] return: [logic!]][any [a b]]
+} 'user
+short-layout: layout-of short-ir
+assert all [
+	(function-word short-ir short-layout 1 28) = 0
+	(ops-of short-ir short-layout) = [
+		3 4 17 3 4 16 1 11
+	]
+	(instruction-word short-ir short-layout 3 8) = 1
+	(instruction-word short-ir short-layout 3 4) = 7
+	(instruction-word short-ir short-layout 6 4) = 8
+]["ANY did not merge its short-circuit result on the typed stack"]
+
+single-all-ir: compile-text {
+	Red/System []
+	fn: func [value [logic!] return: [logic!]][all [value]]
+} 'user
+single-all-layout: layout-of single-all-ir
+assert all [
+	(function-word single-all-ir single-all-layout 1 28) = 0
+	(ops-of single-all-ir single-all-layout) = [3 4 11]
+]["a one-condition ALL retained unnecessary control or merge work"]
+
+loops-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local i value][
+		i: 0
+		value: 0
+		loop 5 [
+			i: i + 1
+			if i = 2 [continue]
+			value: value + 1
+			if i = 4 [break]
+		]
+		while [i: i - 1 i > 0][value: value + 1]
+		until [i: i + 1 i = 2]
+		value
+	]
+} 'user
+assert binary? loops-ir ["loop lowering failed: " mold frontend/last-error]
+loops-layout: layout-of loops-ir
+assert all [
+	(function-word loops-ir loops-layout 1 28) = 3
+	not none? find ops-of loops-ir loops-layout 16
+	not none? find ops-of loops-ir loops-layout 17
+]["structured loops did not share the generic jump/branch core"]
+
+return-ir: compile-text {
+	Red/System []
+	fn: func [value [integer!] return: [integer!]][
+		if value > 0 [return 7]
+		9
+	]
+} 'user
+assert binary? return-ir ["early RETURN lowering failed: " mold frontend/last-error]
+return-layout: layout-of return-ir
+assert (ops-of return-ir return-layout) = [3 4 1 15 17 1 11 1 11]
+	"an early RETURN became a special conditional form"
+
+exit-ir: compile-text {
+	Red/System []
+	fn: func [flag [logic!] /local value][
+		value: 1
+		if flag [exit]
+		value: 2
+	]
+} 'user
+assert binary? exit-ir ["early EXIT lowering failed: " mold frontend/last-error]
+exit-layout: layout-of exit-ir
+assert all [
+	(ops-of exit-ir exit-layout) = [3 1 5 12 3 4 17 11 3 1 5 12 11]
+	(instruction-word exit-ir exit-layout 8 4) = 0
+]["EXIT did not use the ordinary void function terminator"]
+
 glue-ir: compile-text {Red/System [] fn: func [][]} 'glue
 glue-layout: layout-of glue-ir
 assert all [
@@ -321,6 +438,45 @@ assert none? compile-text {
 } 'user "integer arithmetic accepted a logic operand"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid binary operands reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][if 1 []]
+} 'user "IF accepted a non-logic condition"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid IF condition reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [return: [integer!]][either true [1][false]]
+} 'user "expression EITHER accepted different block result types"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid EITHER results reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][break]
+} 'user "BREAK was accepted outside a loop"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"invalid BREAK context reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][while [continue true][]]
+} 'user "CONTINUE was accepted inside a WHILE condition block"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"invalid WHILE condition transfer reported the wrong error class"
+
+assert none? compile-text {Red/System [] exit fn: func [][]} 'user
+	"EXIT was accepted outside a function"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"invalid EXIT context reported the wrong error class"
+
+assert none? compile-text {
+	Red/System [] fn: func [return: [integer!]][exit]
+} 'user "EXIT was accepted in a value-returning function"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"incompatible EXIT reported the wrong error class"
 
 assert none? compile-text/limit {Red/System [] fn: func [][]} 'user 32
 	"frontend ignored its output limit"

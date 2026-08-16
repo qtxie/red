@@ -304,6 +304,53 @@ x64-encoder: context [
 		6
 	]
 
+	test-register: func [
+		code [byte-ptr!]
+		capacity target width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) target target
+		size: either prefix = 40h [2][3]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! 85h
+		at/2: as byte! modrm 3 target target
+		size
+	]
+
+	jump-relative: func [
+		code [byte-ptr!]
+		capacity displacement [integer!]
+		return: [integer!]
+	][
+		unless room? code capacity 5 [return -1]
+		if not null? code [
+			code/1: as byte! E9h
+			write-i32 (code + 1) displacement
+		]
+		5
+	]
+
+	jump-condition: func [
+		code [byte-ptr!]
+		capacity condition displacement [integer!]
+		return: [integer!]
+	][
+		unless all [condition >= 0 condition <= 15 room? code capacity 6][return -1]
+		if not null? code [
+			code/1: as byte! 0Fh
+			code/2: as byte! (80h + condition)
+			write-i32 (code + 2) displacement
+		]
+		6
+	]
+
 	divide-register: func [
 		code [byte-ptr!]
 		capacity width signed [integer!]

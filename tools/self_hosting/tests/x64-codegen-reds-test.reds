@@ -24,10 +24,13 @@ void-ir: allocate 128
 local-ir: allocate 256
 pointer-ir: allocate 128
 arithmetic-ir: allocate 256
+branch-ir: allocate 256
+merge-ir: allocate 256
 header: declare codegen-header!
 fn: declare codegen-function!
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
+	null? branch-ir null? merge-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -212,11 +215,105 @@ if (x64-codegen/generate arithmetic-ir 162 output 1024 0) <> x64-codegen/INVALID
 	failures: failures + 1
 ]
 
+; fn: func [return: [integer!]][either true [return 7][return 9]]
+put branch-ir 0 1
+put branch-ir 4 0
+put branch-ir 8 0
+put branch-ir 12 0
+put branch-ir 16 1
+put branch-ir 20 6
+put branch-ir 24 0
+put branch-ir 28 0
+put branch-ir 32 2
+put branch-ir 36 -5
+put branch-ir 40 0
+put branch-ir 44 0
+put branch-ir 48 0
+put branch-ir 52 0
+put branch-ir 56 0
+put branch-ir 60 6
+put-instruction branch-ir 64 1 -11 1 0
+put-instruction branch-ir 80 17 5 0 0
+put-instruction branch-ir 96 1 -5 7 0
+put-instruction branch-ir 112 11 -5 0 0
+put-instruction branch-ir 128 1 -5 9 0
+put-instruction branch-ir 144 11 -5 0 0
+branch-ir/161: as byte! 66h
+branch-ir/162: as byte! 6Eh
+
+size: x64-codegen/generate branch-ir 162 output 1024 0
+if size <= 0 [failures: failures + 1]
+put branch-ir 84 7
+if (x64-codegen/generate branch-ir 162 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put branch-ir 84 5
+put branch-ir 88 2
+if (x64-codegen/generate branch-ir 162 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put branch-ir 88 0
+put branch-ir 68 -5
+if (x64-codegen/generate branch-ir 162 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put branch-ir 68 -11
+put branch-ir 84 4
+if (x64-codegen/generate branch-ir 162 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
+; A typed stack merge accepts matching arm values and rejects equal-depth
+; edges whose top values have different logical types.
+put merge-ir 0 1
+put merge-ir 4 0
+put merge-ir 8 0
+put merge-ir 12 0
+put merge-ir 16 1
+put merge-ir 20 7
+put merge-ir 24 0
+put merge-ir 28 0
+put merge-ir 32 2
+put merge-ir 36 0
+put merge-ir 40 0
+put merge-ir 44 0
+put merge-ir 48 0
+put merge-ir 52 0
+put merge-ir 56 0
+put merge-ir 60 7
+put-instruction merge-ir 64 1 -11 1 0
+put-instruction merge-ir 80 17 5 0 0
+put-instruction merge-ir 96 1 -5 7 0
+put-instruction merge-ir 112 16 6 0 0
+put-instruction merge-ir 128 1 -5 9 0
+put-instruction merge-ir 144 12 0 0 0
+put-instruction merge-ir 160 11 0 0 0
+merge-ir/177: as byte! 66h
+merge-ir/178: as byte! 6Eh
+
+if (x64-codegen/generate merge-ir 178 output 1024 0) <= 0 [failures: failures + 1]
+put merge-ir 132 -11
+if (x64-codegen/generate merge-ir 178 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
+; Trimming the true edge and dropping the false value reconciles a
+; value-less EITHER without emitting a native move.
+put merge-ir 116 7
+put merge-ir 120 1
+if (x64-codegen/generate merge-ir 178 output 1024 0) <= 0 [failures: failures + 1]
+put merge-ir 120 2
+if (x64-codegen/generate merge-ir 178 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
 free output
 free void-ir
 free local-ir
 free pointer-ir
 free arithmetic-ir
+free branch-ir
+free merge-ir
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

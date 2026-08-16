@@ -96,6 +96,53 @@ generate "logic operation families" {
 	fn: func [a [logic!] b [logic!] return: [logic!]][not (a and b xor false)]
 } 'user
 
+generate "structured conditionals and early return" {
+	Red/System []
+	choose: func [value [integer!] return: [integer!]][
+		if value > 0 [return 7]
+		9
+	]
+	main: func [flag [logic!] return: [integer!] /local value][
+		value: either flag [choose 1][choose 0]
+		value
+	]
+} 'user
+
+generate "void exit and statement arm reconciliation" {
+	Red/System []
+	stop: func [flag [logic!] /local value][
+		value: 1
+		if flag [exit]
+		either flag [value][false]
+		value: 2
+	]
+} 'user
+
+generate "short-circuit condition lists" {
+	Red/System []
+	main: func [a [logic!] b [logic!] return: [logic!] /local value][
+		value: any [a b]
+		all [value not b]
+	]
+} 'user
+
+generate "structured integer loops" {
+	Red/System []
+	main: func [return: [integer!] /local i value][
+		i: 0
+		value: 0
+		loop 5 [
+			i: i + 1
+			if i = 2 [continue]
+			value: value + 1
+			if i = 4 [break]
+		]
+		while [i: i - 1 i > 0][value: value + 1]
+		until [i: i + 1 i = 2]
+		value
+	]
+} 'user
+
 generate "fixed-width integer expression" {
 	Red/System []
 	fn: func [return: [int64!]][(as int64! 1) + 2]

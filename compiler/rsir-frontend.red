@@ -33,6 +33,7 @@ compiler-rsir-frontend: context [
 	globals: make hash! 1024
 	global-data: make block! 1024
 	module-code: make binary! 256
+	module-locals: make block! 12
 	function-code: make binary! 2048
 	strings: make binary! 256
 	string-ids: make hash! 128
@@ -89,6 +90,8 @@ compiler-rsir-frontend: context [
 	duplicate-op: 13
 	unary-op: 14
 	binary-op: 15
+	jump-op: 16
+	branch-op: 17
 
 	; Operation IDs follow the language families, not source spellings or x64
 	; encodings. The postfix stream preserves the specified left-to-right order.
@@ -105,9 +108,18 @@ compiler-rsir-frontend: context [
 	function-address: 4
 
 	stack-top-native: 1
+	statement-value: 0
+	expression-value: 1
+	tail-value: 2
 
 	last-type: 0
 	last-flags: 0
+	last-stopped?: false
+	function-base: 0
+	function-return: 0
+	function-flags: 0
+	function-active?: false
+	loops: make block! 8
 	static?: false
 	static-ref: 0
 	static-low: 0
@@ -116,6 +128,51 @@ compiler-rsir-frontend: context [
 
 	emit: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
+	]
+
+	instruction-here: func [output [binary!] return: [integer!]][
+		1 + to integer! (((length? output) / 16) - function-base)
+	]
+
+	emit-control: func [
+		output [binary!]
+		op sense [integer!]
+		return: [integer!]
+		/local patch
+	][
+		patch: (length? output) + 5
+		emit output reduce [op 0 sense 0]
+		patch
+	]
+
+	patch-control: func [output [binary!] patch target [integer!]][
+		change/part at output patch int-to-bin/to-bin32 target 4
+	]
+
+	patch-control-drop: func [output [binary!] patch count [integer!]][
+		change/part at output (patch + 4) int-to-bin/to-bin32 count 4
+	]
+
+	add-hidden-local: func [
+		params locals [block!]
+		ref flags [integer!]
+		return: [block!]
+		/local slot record
+	][
+		slot: 1 + to integer! (((length? params) + (length? locals)) / 3)
+		record: tail locals
+		append locals none
+		append locals ref
+		append locals flags
+		reduce [slot record]
+	]
+
+	emit-local-address: func [output [binary!] slot [integer!]][
+		emit output reduce [address-op local-address slot 0]
+	]
+
+	logical-value?: func [ref flags [integer!] return: [logic!]][
+		all [stack-type-compatible? -11 ref flags = 0]
 	]
 
 	fail: func [code [integer!] message [string! block!] /local error][
@@ -665,7 +722,7 @@ compiler-rsir-frontend: context [
 		append/only functions copy []
 		append functions 0
 		append/only functions copy []
-		append/only functions copy []
+		append/only functions copy module-locals
 		append functions 0
 		append functions 0
 		function-count: function-count + 1
@@ -1505,7 +1562,7 @@ compiler-rsir-frontend: context [
 		parts: to block! target
 		if (length? parts) < 2 [return false]
 		base: parts/1
-		stack-value reduce [base] scope uses instructions params locals
+		stack-value reduce [base] scope uses instructions params locals expression-value
 		current: last-type
 		flags: last-flags
 		index: 2
@@ -1557,6 +1614,7 @@ compiler-rsir-frontend: context [
 		position-after: next position
 		while [not tail? parameter][
 			position-after: stack-value position-after scope uses instructions params locals
+				expression-value
 			expected: parameter/2
 			unless stack-type-compatible? expected last-type [
 				fail ERROR-REFERENCE [
@@ -1572,12 +1630,431 @@ compiler-rsir-frontend: context [
 		position-after
 	]
 
+	stack-block: func [
+		body scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		value-context [integer!]
+		/local position next-position keep? stopped?
+	][
+		position: body
+		last-type: 0
+		last-flags: 0
+		last-stopped?: false
+		while [not tail? position][
+			last-stopped?: false
+			either any [set-word? position/1 set-path? position/1][
+				next-position: stack-assignment position scope uses instructions
+					params locals false
+			][
+				next-position: stack-value position scope uses instructions params locals
+					value-context
+			]
+			stopped?: last-stopped?
+			keep?: all [value-context = tail-value tail? next-position]
+			unless keep? [
+				if last-type <> 0 [emit instructions reduce [drop-op 0 0 0]]
+				last-type: 0
+				last-flags: 0
+			]
+			position: next-position
+			last-stopped?: all [tail? position stopped?]
+		]
+	]
+
+	stack-if: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local body patch
+	][
+		body: stack-value next position scope uses instructions params locals
+			expression-value
+		unless logical-value? last-type last-flags [
+			fail ERROR-REFERENCE "IF requires a logic value"
+		]
+		unless all [not tail? body block? body/1][
+			fail ERROR-UNSUPPORTED "IF is missing its body block"
+		]
+		patch: emit-control instructions branch-op 0
+		stack-block body/1 scope uses instructions params locals statement-value
+		patch-control instructions patch instruction-here instructions
+		last-type: 0
+		last-flags: 0
+		last-stopped?: false
+		next body
+	]
+
+	stack-either: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		value-context [integer!]
+		return: [block!]
+		/local arms after branch-patch jump-patch drop-count
+			true-type true-flags false-type false-flags
+			result-type result-flags
+			true-value? false-value? true-stopped? false-stopped?
+	][
+		arms: stack-value next position scope uses instructions params locals
+			expression-value
+		unless logical-value? last-type last-flags [
+			fail ERROR-REFERENCE "EITHER requires a logic value"
+		]
+		unless all [
+			(length? arms) >= 2 block? arms/1 block? arms/2
+		][fail ERROR-UNSUPPORTED "EITHER requires two body blocks"]
+		after: skip arms 2
+
+		branch-patch: emit-control instructions branch-op 0
+		stack-block arms/1 scope uses instructions params locals tail-value
+		true-type: last-type
+		true-flags: last-flags
+		true-stopped?: last-stopped?
+		true-value?: all [not true-stopped? true-type <> 0]
+		jump-patch: none
+		unless true-stopped? [
+			jump-patch: emit-control instructions jump-op 0
+		]
+
+		patch-control instructions branch-patch instruction-here instructions
+		stack-block arms/2 scope uses instructions params locals tail-value
+		false-type: last-type
+		false-flags: last-flags
+		false-stopped?: last-stopped?
+		false-value?: all [not false-stopped? false-type <> 0]
+
+		result-type: 0
+		result-flags: 0
+		case [
+			all [true-value? false-stopped?][
+				result-type: true-type
+				result-flags: true-flags
+			]
+			all [false-value? true-stopped?][
+				result-type: false-type
+				result-flags: false-flags
+			]
+			all [
+				true-value? false-value?
+				same-stack-type? true-type true-flags false-type false-flags
+			][
+				result-type: true-type
+				result-flags: true-flags
+			]
+			true [0]
+		]
+
+		if integer? jump-patch [
+			drop-count: either all [true-value? result-type = 0][1][0]
+			patch-control-drop instructions jump-patch drop-count
+		]
+		if all [false-value? result-type = 0][
+			emit instructions reduce [drop-op 0 0 0]
+		]
+		if integer? jump-patch [
+			patch-control instructions jump-patch instruction-here instructions
+		]
+
+		last-type: result-type
+		last-flags: result-flags
+		last-stopped?: all [true-stopped? false-stopped?]
+		if all [
+			any [
+				value-context = expression-value
+				all [value-context = tail-value tail? after]
+			]
+			result-type = 0
+			not last-stopped?
+		][fail ERROR-REFERENCE "EITHER blocks do not have a common value"]
+		after
+	]
+
+	stack-conditions: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		any? [logic!]
+		return: [block!]
+		/local body after cursor patches patch decided jump-patch
+	][
+		unless all [(length? position) >= 2 block? position/2][
+			fail ERROR-UNSUPPORTED "ANY/ALL requires a condition block"
+		]
+		body: position/2
+		after: skip position 2
+		if empty? body [
+			emit instructions reduce [literal-op -11 either any? [0][1] 0]
+			last-type: -11
+			last-flags: 0
+			last-stopped?: false
+			return after
+		]
+		patches: make block! 4
+		cursor: body
+		cursor: stack-value cursor scope uses instructions params locals
+			expression-value
+		unless logical-value? last-type last-flags [
+			fail ERROR-REFERENCE "ANY/ALL requires logic values"
+		]
+		if tail? cursor [
+			last-stopped?: false
+			return after
+		]
+		patch: emit-control instructions branch-op either any? [1][0]
+		append patches patch
+		while [not tail? cursor][
+			cursor: stack-value cursor scope uses instructions params locals
+				expression-value
+			unless logical-value? last-type last-flags [
+				fail ERROR-REFERENCE "ANY/ALL requires logic values"
+			]
+			unless tail? cursor [
+				patch: emit-control instructions branch-op either any? [1][0]
+				append patches patch
+			]
+		]
+
+		decided: either any? [1][0]
+		jump-patch: emit-control instructions jump-op 0
+		foreach patch patches [
+			patch-control instructions patch instruction-here instructions
+		]
+		emit instructions reduce [literal-op -11 decided 0]
+		patch-control instructions jump-patch instruction-here instructions
+		last-type: -11
+		last-flags: 0
+		last-stopped?: false
+		after
+	]
+
+	stack-return: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local after
+	][
+		unless function-active? [
+			fail ERROR-CONTEXT "RETURN used outside a function"
+		]
+		if function-return = 0 [
+			fail ERROR-UNSUPPORTED "RETURN requires a value-returning function"
+		]
+		after: stack-value next position scope uses instructions params locals
+			expression-value
+		if last-stopped? [return after]
+		unless all [
+			last-type <> 0
+			stack-type-compatible? function-return last-type
+		][fail ERROR-REFERENCE "RETURN value does not match the function type"]
+		emit instructions reduce [return-op function-return function-flags 0]
+		last-type: 0
+		last-flags: 0
+		last-stopped?: true
+		after
+	]
+
+	stack-exit: func [position [block!] instructions [binary!] return: [block!]][
+		unless function-active? [
+			fail ERROR-CONTEXT "EXIT used outside a function"
+		]
+		if function-return <> 0 [
+			fail ERROR-REFERENCE "EXIT is incompatible with a function result"
+		]
+		emit instructions reduce [return-op 0 0 0]
+		last-type: 0
+		last-flags: 0
+		last-stopped?: true
+		next position
+	]
+
+	open-loop: func [
+		continue-target [integer!]
+		condition? [logic!]
+		return: [block!]
+		/local record
+	][
+		record: reduce [continue-target make block! 2 make block! 2 condition?]
+		append/only loops record
+		record
+	]
+
+	close-loop: func [][
+		remove back tail loops
+	]
+
+	patch-controls: func [
+		instructions [binary!]
+		patches [block!]
+		target [integer!]
+		/local patch
+	][
+		foreach patch patches [patch-control instructions patch target]
+	]
+
+	stack-break: func [
+		position [block!]
+		instructions [binary!]
+		return: [block!]
+		/local loop-state patch
+	][
+		if empty? loops [fail ERROR-CONTEXT "BREAK used outside a loop"]
+		loop-state: last loops
+		if loop-state/4 [fail ERROR-CONTEXT "BREAK used in a WHILE condition block"]
+		patch: emit-control instructions jump-op 0
+		append loop-state/3 patch
+		last-type: 0
+		last-flags: 0
+		last-stopped?: true
+		next position
+	]
+
+	stack-continue: func [
+		position [block!]
+		instructions [binary!]
+		return: [block!]
+		/local loop-state patch
+	][
+		if empty? loops [fail ERROR-CONTEXT "CONTINUE used outside a loop"]
+		loop-state: last loops
+		if loop-state/4 [fail ERROR-CONTEXT "CONTINUE used in a WHILE condition block"]
+		patch: emit-control instructions jump-op 0
+		either loop-state/1 > 0 [
+			patch-control instructions patch loop-state/1
+		][append loop-state/2 patch]
+		last-type: 0
+		last-flags: 0
+		last-stopped?: true
+		next position
+	]
+
+	stack-loop: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local after local-info slot test-target exit-patch loop-state jump-patch
+	][
+		local-info: add-hidden-local params locals -5 0
+		slot: local-info/1
+		emit-local-address instructions slot
+		after: stack-value next position scope uses instructions params locals
+			expression-value
+		unless all [(ref-kind last-type) = 'i32 last-flags = 0][
+			fail ERROR-REFERENCE "LOOP requires an integer value"
+		]
+		unless all [not tail? after block? after/1][
+			fail ERROR-UNSUPPORTED "LOOP is missing its body block"
+		]
+		emit instructions reduce [set-op 0 0 0]
+		emit instructions reduce [drop-op 0 0 0]
+
+		test-target: instruction-here instructions
+		emit-local-address instructions slot
+		emit instructions reduce [load-op 0 0 0]
+		emit instructions reduce [literal-op -5 0 0]
+		emit instructions reduce [binary-op 15 0 0]
+		exit-patch: emit-control instructions branch-op 0
+
+		loop-state: open-loop 0 false
+		stack-block after/1 scope uses instructions params locals statement-value
+		loop-state/1: instruction-here instructions
+		patch-controls instructions loop-state/2 loop-state/1
+
+		emit-local-address instructions slot
+		emit-local-address instructions slot
+		emit instructions reduce [load-op 0 0 0]
+		emit instructions reduce [literal-op -5 1 0]
+		emit instructions reduce [binary-op 2 0 0]
+		emit instructions reduce [set-op 0 0 0]
+		emit instructions reduce [drop-op 0 0 0]
+		jump-patch: emit-control instructions jump-op 0
+		patch-control instructions jump-patch test-target
+
+		patch-control instructions exit-patch instruction-here instructions
+		patch-controls instructions loop-state/3 instruction-here instructions
+		close-loop
+		last-type: 0
+		last-flags: 0
+		last-stopped?: false
+		next after
+	]
+
+	stack-while: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local condition body test-target exit-patch loop-state jump-patch target
+	][
+		unless all [
+			(length? position) >= 3 block? position/2 block? position/3
+		][fail ERROR-UNSUPPORTED "WHILE requires condition and body blocks"]
+		condition: position/2
+		body: position/3
+		test-target: instruction-here instructions
+		open-loop 0 true
+		stack-block condition scope uses instructions params locals tail-value
+		close-loop
+		unless logical-value? last-type last-flags [
+			fail ERROR-REFERENCE "WHILE condition block must end in a logic value"
+		]
+		exit-patch: emit-control instructions branch-op 0
+
+		loop-state: open-loop test-target false
+		stack-block body scope uses instructions params locals statement-value
+		patch-controls instructions loop-state/2 test-target
+		jump-patch: emit-control instructions jump-op 0
+		patch-control instructions jump-patch test-target
+		target: instruction-here instructions
+		patch-control instructions exit-patch target
+		patch-controls instructions loop-state/3 target
+		close-loop
+		last-type: 0
+		last-flags: 0
+		last-stopped?: false
+		skip position 3
+	]
+
+	stack-until: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local body start loop-state patch target
+	][
+		unless all [(length? position) >= 2 block? position/2][
+			fail ERROR-UNSUPPORTED "UNTIL requires a body block"
+		]
+		body: position/2
+		if empty? body [fail ERROR-UNSUPPORTED "UNTIL body is empty"]
+		start: instruction-here instructions
+		loop-state: open-loop start false
+		stack-block body scope uses instructions params locals tail-value
+		unless logical-value? last-type last-flags [
+			fail ERROR-REFERENCE "UNTIL body must end in a logic value"
+		]
+		patch-controls instructions loop-state/2 start
+		patch: emit-control instructions branch-op 0
+		patch-control instructions patch start
+		target: instruction-here instructions
+		patch-controls instructions loop-state/3 target
+		close-loop
+		last-type: 0
+		last-flags: 0
+		last-stopped?: false
+		skip position 2
+	]
+
 	stack-primary: func [
 		position [block!]
 		scope uses [block!]
 		instructions [binary!]
 		params [block!]
 		locals [block!]
+		value-context [integer!]
 		return: [block!]
 		/local value type-info target-ref target-flags next-position target
 			id constant-key bytes offset inner
@@ -1586,11 +2063,40 @@ compiler-rsir-frontend: context [
 			fail ERROR-UNSUPPORTED "missing expression"
 		]
 		value: position/1
+		last-stopped?: false
 		case [
+			value = 'if [
+				stack-if position scope uses instructions params locals
+			]
+			value = 'either [
+				stack-either position scope uses instructions params locals value-context
+			]
+			value = 'any [
+				stack-conditions position scope uses instructions params locals true
+			]
+			value = 'all [
+				stack-conditions position scope uses instructions params locals false
+			]
+			value = 'return [
+				stack-return position scope uses instructions params locals
+			]
+			value = 'exit [stack-exit position instructions]
+			value = 'loop [
+				stack-loop position scope uses instructions params locals
+			]
+			value = 'while [
+				stack-while position scope uses instructions params locals
+			]
+			value = 'until [
+				stack-until position scope uses instructions params locals
+			]
+			value = 'break [stack-break position instructions]
+			value = 'continue [stack-continue position instructions]
 			paren? value [
 				inner: to block! value
 				if empty? inner [fail ERROR-UNSUPPORTED "empty expression"]
 				next-position: stack-value inner scope uses instructions params locals
+					expression-value
 				unless tail? next-position [
 					fail ERROR-UNSUPPORTED "parenthesized expression is incomplete"
 				]
@@ -1598,6 +2104,7 @@ compiler-rsir-frontend: context [
 			]
 			value = 'not [
 				next-position: stack-value next position scope uses instructions params locals
+					expression-value
 				stack-unary not-operation instructions
 				next-position
 			]
@@ -1609,6 +2116,7 @@ compiler-rsir-frontend: context [
 				target-ref: type-info/2
 				target-flags: type-info/3
 				next-position: stack-value type-info/1 scope uses instructions params locals
+					expression-value
 				emit instructions reduce [cast-op target-ref target-flags 0]
 				last-type: target-ref
 				last-flags: target-flags
@@ -1718,16 +2226,18 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params [block!]
 		locals [block!]
+		value-context [integer!]
 		return: [block!]
 		/local operation left left-flags
 	][
-		position: stack-primary position scope uses instructions params locals
+		position: stack-primary position scope uses instructions params locals value-context
 		while [not tail? position][
 			operation: select binary-operations position/1
 			unless integer? operation [break]
 			left: last-type
 			left-flags: last-flags
 			position: stack-primary next position scope uses instructions params locals
+				expression-value
 			stack-binary operation left left-flags instructions
 		]
 		position
@@ -1845,6 +2355,8 @@ compiler-rsir-frontend: context [
 		]
 		target-ref: last-type
 		next-position: stack-value next position scope uses instructions params locals
+			expression-value
+		if last-stopped? [return next-position]
 		either block? storage [
 			record: storage/2
 			either record/2 = 0 [
@@ -1940,11 +2452,13 @@ compiler-rsir-frontend: context [
 					position: skip position 3
 				]
 				any [set-word? position/1 set-path? position/1][
-					position: stack-assignment position scope uses module-code [] [] true
+					position: stack-assignment position scope uses module-code
+						[] module-locals true
 					if last-type <> 0 [emit module-code reduce [drop-op 0 0 0]]
 				]
 				true [
-					position: stack-value position scope uses module-code [] []
+					position: stack-value position scope uses module-code [] module-locals
+						statement-value
 					if last-type <> 0 [
 						emit module-code reduce [drop-op 0 0 0]
 					]
@@ -1962,45 +2476,35 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		flags [integer!]
 		return: [integer!]
-		/local position before result?
+		/local before count
 	][
 		before: length? instructions
-		position: body
+		function-base: to integer! (before / 16)
+		function-return: return-ref
+		function-flags: flags
+		function-active?: true
+		clear loops
 		last-type: 0
 		last-flags: 0
-		if return-ref = 0 [
-			while [not tail? position][
-				either any [set-word? position/1 set-path? position/1][
-					position: stack-assignment position scope uses instructions params locals false
-				][
-					position: stack-value position scope uses instructions params locals
+		last-stopped?: false
+		either return-ref = 0 [
+			stack-block body scope uses instructions params locals statement-value
+			unless last-stopped? [emit instructions reduce [return-op 0 0 0]]
+		][
+			stack-block body scope uses instructions params locals tail-value
+			unless last-stopped? [
+				if last-type = 0 [
+					fail ERROR-UNSUPPORTED "function result is missing"
 				]
-				if last-type <> 0 [emit instructions reduce [drop-op 0 0 0]]
-			]
-			emit instructions reduce [return-op 0 0 0]
-			return to integer! (((length? instructions) - before) / 16)
-		]
-		if all [not tail? position position/1 = 'return][position: next position]
-		result?: false
-		while [not tail? position][
-			either any [set-word? position/1 set-path? position/1][
-				position: stack-assignment position scope uses instructions params locals false
-			][
-				position: stack-value position scope uses instructions params locals
-			]
-			either tail? position [
-				if last-type = 0 [fail ERROR-UNSUPPORTED "function result is missing"]
 				unless stack-type-compatible? return-ref last-type [
 					fail ERROR-REFERENCE "function result type does not match signature"
 				]
-				result?: true
-			][
-				if last-type <> 0 [emit instructions reduce [drop-op 0 0 0]]
+				emit instructions reduce [return-op return-ref flags 0]
 			]
 		]
-		unless result? [fail ERROR-UNSUPPORTED "function result is missing"]
-		emit instructions reduce [return-op return-ref flags 0]
-		to integer! (((length? instructions) - before) / 16)
+		count: to integer! (((length? instructions) - before) / 16)
+		function-active?: false
+		count
 	]
 
 	set-global: func [
@@ -2020,6 +2524,11 @@ compiler-rsir-frontend: context [
 	compile-module: func [
 		values scope uses [block!]
 	][
+		function-base: 0
+		function-return: 0
+		function-flags: 0
+		function-active?: false
+		clear loops
 		stack-module values scope uses
 	]
 
@@ -2043,6 +2552,7 @@ compiler-rsir-frontend: context [
 	][
 		last-error: none
 		result: catch/name [
+			function-active?: false
 			module-kind: case [
 				kind = 'user [1]
 				kind = 'support [2]
@@ -2066,6 +2576,7 @@ compiler-rsir-frontend: context [
 			clear globals
 			clear global-data
 			clear module-code
+			clear module-locals
 			clear function-code
 			clear strings
 			clear string-ids

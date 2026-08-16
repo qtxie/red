@@ -28,6 +28,7 @@ compiler-rsir-frontend: context [
 	constants: make hash! 256
 	imports: make block! 256
 	import-ids: make hash! 256
+	libraries: make hash! 32
 	globals: make hash! 1024
 	global-data: make block! 1024
 	module-code: make binary! 256
@@ -35,7 +36,9 @@ compiler-rsir-frontend: context [
 	string-ids: make hash! 128
 	function-count: 0
 	type-count: 0
+	implicit-type-count: 0
 	import-count: 0
+	implicit-import-count: 0
 	global-count: 0
 	module-value: 0
 
@@ -265,6 +268,7 @@ compiler-rsir-frontend: context [
 		if any [ref = 0 ref > type-count][return none]
 		steps: 0
 		while [steps < type-count][
+			if ref > type-count [return none]
 			record: skip types ((ref - 1) * 5)
 			kind: record/2
 			unless kind = 'alias [return kind]
@@ -291,10 +295,103 @@ compiler-rsir-frontend: context [
 	scalar-width: func [ref [integer!] /local kind][
 		kind: ref-kind ref
 		case [
-			find [i32 u32] kind [4]
+			find [i32 u32 logic] kind [4]
 			find [pointer struct union function subroutine] kind [8]
 			true [0]
 		]
+	]
+
+	member-info: func [
+		ref [integer!]
+		name [word!]
+		/local record kind target spec index steps
+	][
+		if any [ref <= 0 ref > type-count][return none]
+		steps: 0
+		while [steps < type-count][
+			record: skip types ((ref - 1) * 5)
+			kind: record/2
+			if kind = 'alias [
+				target: record/3
+				if all [word? target select type-kinds target][return none]
+				unless ref: resolve-name target record/4 record/5 type-ids [return none]
+				steps: steps + 1
+				continue
+			]
+			unless find [struct union] kind [return none]
+			spec: record/3
+			index: 0
+			while [not tail? spec][
+				if spec/1 = name [
+					return reduce [
+						index
+						type-ref spec/2 record/4 record/5
+						type-flags spec/2 record/4 record/5
+					]
+				]
+				index: index + 1
+				spec: skip spec 2
+			]
+			return none
+		]
+		none
+	]
+
+	add-system-type: func [scope uses [block!] /local key id][
+		if id: resolve-name 'system! scope uses type-ids [return id]
+		key: to word! "system!"
+		id: type-count + 1
+		repend type-ids [key id]
+		append types key
+		append types 'struct
+		append/only types [
+			args-count [integer!]
+			args-list [byte-ptr!]
+			env-vars [byte-ptr!]
+			stack [byte-ptr!]
+			pc [byte-ptr!]
+			cpu [byte-ptr!]
+			fpu [byte-ptr!]
+			alias [integer!]
+			words [integer!]
+			thrown [integer!]
+			boot-data [byte-ptr!]
+		]
+		append/only types copy []
+		append/only types copy []
+		type-count: id
+		implicit-type-count: implicit-type-count + 1
+		id
+	]
+
+	add-system-import: func [
+		library [binary!]
+		scope uses [block!]
+		/local key external ref id
+	][
+		key: to word! "system"
+		if any [
+			select import-ids key
+			select function-ids key
+			select globals key
+		][fail ERROR-DUPLICATE "system is already declared"]
+		external: to binary! "system"
+		ref: add-system-type scope uses
+		id: import-count + 1
+		repend import-ids [key id]
+		append imports key
+		append/only imports library
+		append/only imports external
+		append/only imports [system!]
+		append imports 'variable
+		append/only imports scope
+		append/only imports uses
+		append imports ref
+		append imports none
+		append imports 0
+		import-count: id
+		implicit-import-count: implicit-import-count + 1
+		id
 	]
 
 	signature-flags: func [attributes [block!] /local flags convention item bit][
@@ -466,20 +563,21 @@ compiler-rsir-frontend: context [
 		position scope uses [block!]
 		/local name id record value type kind ref low high after callee callee-record
 			callee-return callee-params callee-flags bytes offset result import-id
-			import-record width
+			import-record width existing-ref argument member argument-import
+			argument-record first-width second-width literal
+			runtime? [logic!]
 	][
 		name: to word! position/1
 		id: resolve-name name scope uses globals
 		unless integer? id [fail ERROR-REFERENCE ["unknown global " mold name]]
 		record: skip global-data ((id - 1) * 4)
-		if integer? record/2 [
-			fail ERROR-UNSUPPORTED ["global reassignment is not lowered yet: " mold name]
-		]
+		existing-ref: record/2
 		value: position/2
 		after: skip position 2
 		ref: 0
 		low: 0
 		high: 0
+		runtime?: false
 		case [
 			integer? value [ref: -5 low: value high: either value < 0 [-1][0]]
 			logic? value [ref: -11 low: either value [1][0]]
@@ -546,11 +644,11 @@ compiler-rsir-frontend: context [
 				]
 				module-value: result
 				ref: import-record/8
+				runtime?: true
 			]
 			all [
 				any [word? value path? value]
 				(length? position) >= 3
-				string? position/3
 			][
 				callee: resolve-name value scope uses function-ids
 				either integer? callee [
@@ -572,36 +670,90 @@ compiler-rsir-frontend: context [
 					callee-flags: callee-record/10
 					callee: negate callee
 				]
+				width: scalar-width callee-return
 				unless all [
-					callee-return <> 0
+					width > 0
 					(callee-flags and return-value-flag) = 0
-					(length? callee-params) = 3
-					pointer-ref? callee-params/2
-					callee-params/3 = 0
-					scalar-width callee-return
-				][
-					fail ERROR-UNSUPPORTED [
-						"initializer function does not take c-string! and return a scalar: "
-						mold value
+				][fail ERROR-UNSUPPORTED ["initializer call has no scalar result: " mold value]]
+				case [
+					all [
+						(length? callee-params) = 3
+						string? position/3
+					][
+						unless all [
+							pointer-ref? callee-params/2
+							callee-params/3 = 0
+						][fail ERROR-UNSUPPORTED [
+							"initializer function does not take c-string!: " mold value
+						]]
+						bytes: to binary! position/3
+						offset: select string-ids bytes
+						unless integer? offset [
+							offset: length? strings
+							repend string-ids [bytes offset]
+							append strings bytes
+							append strings 0
+						]
+						result: module-value + 1
+						emit module-code reduce [
+							9 result offset ((length? bytes) + 1)
+							4 (result + 1) callee result
+							10 0 id (result + 1)
+						]
+						module-value: result + 1
+						after: skip position 3
 					]
+					all [
+						(length? callee-params) = 6
+						(length? position) >= 4
+						path? argument: position/3
+						(length? argument) = 2
+						any [
+							logic? literal: position/4
+							all [word? literal find [true false yes no] literal]
+						]
+					][
+						first-width: scalar-width callee-params/2
+						second-width: scalar-width callee-params/5
+						argument-import: import-variable-id argument/1 scope uses
+						unless integer? argument-import [
+							unless all [
+								callee < 0
+								argument/1 = 'system
+								argument/2 = 'boot-data
+							][fail ERROR-REFERENCE [
+								"unknown imported aggregate " mold argument/1
+							]]
+							argument-import: add-system-import callee-record/2 scope uses
+						]
+						argument-record: skip imports ((argument-import - 1) * 10)
+						member: member-info argument-record/8 to word! argument/2
+						unless all [
+							block? member
+							member/3 = 0
+							first-width = (scalar-width member/2)
+							first-width = 8
+							second-width = 4
+							callee-params/3 = 0
+							callee-params/6 = 0
+						][fail ERROR-UNSUPPORTED ["unsupported two-argument call " mold value]]
+						literal: either any [literal = true find [true yes] literal][1][0]
+						result: module-value + 1
+						emit module-code reduce [
+							13 result argument-import member/1
+							14 0 1 result
+							1 (result + 1) 0 literal
+							14 0 2 (result + 1)
+							4 (result + 2) callee 0
+							10 0 id (result + 2)
+						]
+						module-value: result + 2
+						after: skip position 4
+					]
+					true [fail ERROR-UNSUPPORTED ["unsupported initializer call " mold value]]
 				]
-				bytes: to binary! position/3
-				offset: select string-ids bytes
-				unless integer? offset [
-					offset: length? strings
-					repend string-ids [bytes offset]
-					append strings bytes
-					append strings 0
-				]
-				result: module-value + 1
-				emit module-code reduce [
-					9 result offset ((length? bytes) + 1)
-					4 (result + 1) callee result
-					10 0 id (result + 1)
-				]
-				module-value: result + 1
 				ref: callee-return
-				after: skip position 3
+				runtime?: true
 			]
 			true [
 				fail ERROR-UNSUPPORTED [
@@ -609,9 +761,18 @@ compiler-rsir-frontend: context [
 				]
 			]
 		]
-		record/2: ref
-		record/3: low
-		record/4: high
+		either integer? existing-ref [
+			unless runtime? [
+				fail ERROR-UNSUPPORTED ["global reassignment is not lowered yet: " mold name]
+			]
+			unless existing-ref = ref [
+				fail ERROR-UNSUPPORTED ["global reassignment changes type: " mold name]
+			]
+		][
+			record/2: ref
+			record/3: low
+			record/4: high
+		]
 		after
 	]
 
@@ -1048,7 +1209,7 @@ compiler-rsir-frontend: context [
 
 	scan-imports: func [
 		definitions scope uses [block!]
-		/local position library cc entries entry name key external spec kind id
+		/local position library canonical cc entries entry name key external spec kind id
 	][
 		if empty? definitions [fail ERROR-UNSUPPORTED "import block is empty"]
 		position: definitions
@@ -1063,6 +1224,9 @@ compiler-rsir-frontend: context [
 				fail ERROR-NAME "invalid import library name"
 			]
 			library: to binary! position/1
+			either canonical: select libraries library [
+				library: canonical
+			][repend libraries [library library]]
 			cc: position/2
 			entries: position/3
 			if empty? entries [
@@ -1578,6 +1742,7 @@ compiler-rsir-frontend: context [
 			clear constants
 			clear imports
 			clear import-ids
+			clear libraries
 			clear globals
 			clear global-data
 			clear module-code
@@ -1585,7 +1750,9 @@ compiler-rsir-frontend: context [
 			clear string-ids
 			function-count: 0
 			type-count: 0
+			implicit-type-count: 0
 			import-count: 0
+			implicit-import-count: 0
 			global-count: 0
 			module-value: 0
 			compile-source source

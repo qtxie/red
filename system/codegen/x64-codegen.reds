@@ -238,7 +238,7 @@ x64-codegen: context [
 	][
 		kind: logical-kind ref data count
 		case [
-			any [kind = 5 kind = 6][4]
+			any [kind = 5 kind = 6 kind = 11][4]
 			any [kind = 12 kind = -2 kind = -3 kind = -4 kind = -5][8]
 			true [0]
 		]
@@ -286,6 +286,61 @@ x64-codegen: context [
 		either all [
 			pointer-ref? parameter/type types type-count
 			parameter/flags = 0
+		][width][0]
+	]
+
+	call2-function-width: func [
+		fn [rsir-function!]
+		parameters types [byte-ptr!]
+		type-count first-width second-width [integer!]
+		return: [integer!]
+		/local parameter [rsir-parameter!]
+			width [integer!]
+	][
+		width: scalar-width fn/return-type types type-count
+		unless all [
+			width > 0
+			(fn/flags and (FUNCTION_FLAGS - 3)) = 0
+			fn/parameter-count = 2
+		][return 0]
+		parameter: as rsir-parameter! (parameters
+			+ (fn/first-parameter * RSIR_PARAMETER_SIZE))
+		unless all [
+			parameter/flags = 0
+			(scalar-width parameter/type types type-count) = first-width
+		][return 0]
+		parameter: parameter + 1
+		either all [
+			parameter/flags = 0
+			(scalar-width parameter/type types type-count) = second-width
+		][width][0]
+	]
+
+	call2-import-width: func [
+		fn [rsir-import!]
+		parameters types [byte-ptr!]
+		type-count first-width second-width [integer!]
+		return: [integer!]
+		/local parameter [rsir-parameter!]
+			width [integer!]
+	][
+		width: scalar-width fn/type types type-count
+		unless all [
+			width > 0
+			(fn/flags and 3) <> 0
+			(fn/flags and (FUNCTION_FLAGS - 3)) = 0
+			fn/parameter-count = 2
+		][return 0]
+		parameter: as rsir-parameter! (parameters
+			+ (fn/first-parameter * RSIR_PARAMETER_SIZE))
+		unless all [
+			parameter/flags = 0
+			(scalar-width parameter/type types type-count) = first-width
+		][return 0]
+		parameter: parameter + 1
+		either all [
+			parameter/flags = 0
+			(scalar-width parameter/type types type-count) = second-width
 		][width][0]
 	]
 
@@ -416,6 +471,62 @@ x64-codegen: context [
 		true
 	]
 
+	layout-member: func [
+		ref index [integer!]
+		types fields [byte-ptr!]
+		type-count [integer!]
+		offset-out [int-ptr!]
+		return: [integer!]
+		/local record [rsir-type!]
+			field [rsir-member!]
+			steps kind id offset member-size member-align width [integer!]
+	][
+		if any [ref <= 0 ref > type-count index < 0][return -1]
+		steps: 0
+		while [steps < type-count][
+			if ref > type-count [return -1]
+			record: as rsir-type! (types + ((ref - 1) * RSIR_TYPE_SIZE))
+			kind: record/kind
+			unless kind = -1 [break]
+			ref: record/target
+			if ref <= 0 [return 0]
+			steps: steps + 1
+		]
+		if kind = -1 [return -1]
+		unless any [kind = -2 kind = -3][return 0]
+		if index >= record/member-count [return -1]
+
+		offset: 0
+		id: 0
+		while [id <= index][
+			field: as rsir-member! (fields
+				+ ((record/first-member + id) * RSIR_MEMBER_SIZE))
+			member-size: 0
+			member-align: 0
+			unless layout-type field/type (field/flags = 1) types fields
+				type-count 0 :member-size :member-align [
+				return -1
+			]
+			if kind = -2 [
+				offset: align offset member-align
+				if offset < 0 [return -1]
+			]
+			if id = index [
+				if field/flags <> 0 [return 0]
+				width: scalar-width field/type types type-count
+				if width = 0 [return 0]
+				offset-out/1: offset
+				return width
+			]
+			if kind = -2 [
+				if offset > (2147483647 - member-size)[return -1]
+				offset: offset + member-size
+			]
+			id: id + 1
+		]
+		-1
+	]
+
 	select-function: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
@@ -434,7 +545,8 @@ x64-codegen: context [
 			literal [byte-ptr!]
 			index form plan value-id value-kind next-value argument-kind
 			import-id global-id function-size part-size unused-size unused-align
-			parameter-count value-width result-width target-width literal-end [integer!]
+			parameter-count value-width result-width target-width literal-end
+			member-offset pending-arguments first-width second-width [integer!]
 			shadow? terminated? call? parameter-live? [logic!]
 	][
 		parameter-count: fn/parameter-count
@@ -456,6 +568,9 @@ x64-codegen: context [
 		value-id: 0
 		value-kind: VALUE_NONE
 		value-width: 0
+		pending-arguments: 0
+		first-width: 0
+		second-width: 0
 		unused-size: 0
 		unused-align: 0
 		shadow?: false
@@ -513,9 +628,21 @@ x64-codegen: context [
 					value-width: 8
 				]
 				instruction/opcode = 4 [
-					unless instruction/result = (next-value + 1)[return INVALID_IR]
+					unless all [
+						instruction/result = (next-value + 1)
+						any [
+							pending-arguments = 0
+							all [
+								pending-arguments = 2
+								instruction/immediate = 0
+							]
+						]
+					][return INVALID_IR]
 					argument-kind: VALUE_NONE
-					if instruction/immediate <> 0 [
+					if all [
+						pending-arguments = 0
+						instruction/immediate <> 0
+					][
 						case [
 							all [
 								instruction/immediate = value-id
@@ -542,29 +669,38 @@ x64-codegen: context [
 						if instruction/operand > function-count [return INVALID_IR]
 						callee: as rsir-function! (function-data
 							+ ((instruction/operand - 1) * RSIR_FUNCTION_SIZE))
-						either argument-kind = VALUE_STRING [
-							result-width: cstring-function-width callee parameters
-								type-data type-count
-							if result-width = 0 [return UNSUPPORTED]
-							form: x64-encoder/CSTRING_CALL
-						][
-							unless i32-function? callee parameters type-data type-count
-								either instruction/immediate = 0 [0][1] [
-								return UNSUPPORTED
+						case [
+							pending-arguments = 2 [
+								result-width: call2-function-width callee parameters
+									type-data type-count first-width second-width
+								if result-width = 0 [return UNSUPPORTED]
+								form: x64-encoder/I32_CALL
 							]
-							result-width: 4
-							form: case [
-								argument-kind = VALUE_NONE [x64-encoder/I32_CALL]
-								argument-kind = VALUE_LITERAL [
-									x64-encoder/I32_CALL_LITERAL
+							argument-kind = VALUE_STRING [
+								result-width: cstring-function-width callee parameters
+									type-data type-count
+								if result-width = 0 [return UNSUPPORTED]
+								form: x64-encoder/CSTRING_CALL
+							]
+							true [
+								unless i32-function? callee parameters type-data type-count
+									either instruction/immediate = 0 [0][1] [
+									return UNSUPPORTED
 								]
-								argument-kind = VALUE_PARAM [
-									x64-encoder/I32_CALL_PARAM
+								result-width: 4
+								form: case [
+									argument-kind = VALUE_NONE [x64-encoder/I32_CALL]
+									argument-kind = VALUE_LITERAL [
+										x64-encoder/I32_CALL_LITERAL
+									]
+									argument-kind = VALUE_PARAM [
+										x64-encoder/I32_CALL_PARAM
+									]
+									argument-kind = VALUE_RAX [
+										x64-encoder/I32_CALL_RAX
+									]
+									true [return INVALID_IR]
 								]
-								argument-kind = VALUE_RAX [
-									x64-encoder/I32_CALL_RAX
-								]
-								true [return INVALID_IR]
 							]
 						]
 					][
@@ -572,29 +708,38 @@ x64-codegen: context [
 						if any [import-id <= 0 import-id > import-count][return INVALID_IR]
 						imported: as rsir-import! (import-data
 							+ ((import-id - 1) * RSIR_IMPORT_SIZE))
-						either argument-kind = VALUE_STRING [
-							result-width: cstring-import-width imported parameters
-								type-data type-count
-							if result-width = 0 [return UNSUPPORTED]
-							form: x64-encoder/CSTRING_IMPORT
-						][
-							unless i32-import? imported parameters type-data type-count
-								either instruction/immediate = 0 [0][1] [
-								return UNSUPPORTED
+						case [
+							pending-arguments = 2 [
+								result-width: call2-import-width imported parameters
+									type-data type-count first-width second-width
+								if result-width = 0 [return UNSUPPORTED]
+								form: x64-encoder/I32_IMPORT
 							]
-							result-width: 4
-							form: case [
-								argument-kind = VALUE_NONE [x64-encoder/I32_IMPORT]
-								argument-kind = VALUE_LITERAL [
-									x64-encoder/I32_IMPORT_LITERAL
+							argument-kind = VALUE_STRING [
+								result-width: cstring-import-width imported parameters
+									type-data type-count
+								if result-width = 0 [return UNSUPPORTED]
+								form: x64-encoder/CSTRING_IMPORT
+							]
+							true [
+								unless i32-import? imported parameters type-data type-count
+									either instruction/immediate = 0 [0][1] [
+									return UNSUPPORTED
 								]
-								argument-kind = VALUE_PARAM [
-									x64-encoder/I32_IMPORT_PARAM
+								result-width: 4
+								form: case [
+									argument-kind = VALUE_NONE [x64-encoder/I32_IMPORT]
+									argument-kind = VALUE_LITERAL [
+										x64-encoder/I32_IMPORT_LITERAL
+									]
+									argument-kind = VALUE_PARAM [
+										x64-encoder/I32_IMPORT_PARAM
+									]
+									argument-kind = VALUE_RAX [
+										x64-encoder/I32_IMPORT_RAX
+									]
+									true [return INVALID_IR]
 								]
-								argument-kind = VALUE_RAX [
-									x64-encoder/I32_IMPORT_RAX
-								]
-								true [return INVALID_IR]
 							]
 						]
 					]
@@ -602,6 +747,7 @@ x64-codegen: context [
 					value-id: next-value
 					value-kind: VALUE_RAX
 					value-width: result-width
+					pending-arguments: 0
 					parameter-live?: false
 					call?: true
 				]
@@ -716,12 +862,66 @@ x64-codegen: context [
 						x64-encoder/I32_IMPORT_STORE
 					][x64-encoder/PTR_IMPORT_STORE]
 				]
+				instruction/opcode = 13 [
+					import-id: instruction/operand
+					unless all [
+						instruction/result = (next-value + 1)
+						import-id > 0
+						import-id <= import-count
+						instruction/immediate >= 0
+					][return INVALID_IR]
+					imported: as rsir-import! (import-data
+						+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+					unless imported/flags = 0 [return UNSUPPORTED]
+					member-offset: 0
+					result-width: layout-member imported/type instruction/immediate
+						type-data member-data type-count :member-offset
+					if result-width < 0 [return INVALID_IR]
+					if result-width = 0 [return UNSUPPORTED]
+					form: either result-width = 4 [
+						x64-encoder/I32_IMPORT_MEMBER
+					][x64-encoder/PTR_IMPORT_MEMBER]
+					next-value: instruction/result
+					value-id: next-value
+					value-kind: VALUE_RAX
+					value-width: result-width
+				]
+				instruction/opcode = 14 [
+					unless all [
+						instruction/result = 0
+						instruction/immediate = value-id
+					][return INVALID_IR]
+					case [
+						all [
+							instruction/operand = 1
+							pending-arguments = 0
+							value-kind = VALUE_RAX
+							value-width = 8
+						][
+							form: x64-encoder/PTR_ARG1_RAX
+							first-width: value-width
+							pending-arguments: 1
+						]
+						all [
+							instruction/operand = 2
+							pending-arguments = 1
+							value-kind = VALUE_LITERAL
+							value-width = 4
+						][
+							form: x64-encoder/I32_ARG2_LITERAL
+							second-width: value-width
+							pending-arguments: 2
+						]
+						true [return UNSUPPORTED]
+					]
+				]
 				instruction/opcode = 2 [
 					unless all [
 						fn/return-type = 0
 						instruction/result = 0
 						instruction/operand = 0
 						instruction/immediate = 0
+						pending-arguments = 0
 						index = fn/instruction-count
 					][return INVALID_IR]
 					form: either entry? [x64-encoder/ENTRY_VOID][
@@ -735,6 +935,7 @@ x64-codegen: context [
 						fn/return-type <> 0
 						instruction/result = 0
 						instruction/immediate = 0
+						pending-arguments = 0
 						index = fn/instruction-count
 					][return INVALID_IR]
 					argument-kind: case [
@@ -1577,6 +1778,18 @@ x64-codegen: context [
 							)
 						]
 					]
+					instruction/opcode = 13 [
+						import-id: instruction/operand
+						ir-import: as rsir-import! (import-data
+							+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+						target: layout-member ir-import/type instruction/immediate
+							type-data member-data header/type-count :value
+						if target <= 0 [return release scratch INVALID_IR]
+					]
+					all [
+						instruction/opcode = 14
+						form = x64-encoder/I32_ARG2_LITERAL
+					][value: current-literal]
 					instruction/opcode = 8 [value: instruction/immediate]
 					all [
 						instruction/opcode = 3
@@ -1603,6 +1816,8 @@ x64-codegen: context [
 						form = x64-encoder/PTR_IMPORT_LOAD
 						form = x64-encoder/I32_IMPORT_STORE
 						form = x64-encoder/PTR_IMPORT_STORE
+						form = x64-encoder/I32_IMPORT_MEMBER
+						form = x64-encoder/PTR_IMPORT_MEMBER
 					][
 						import-id: either instruction/opcode = 4 [
 							0 - instruction/operand

@@ -34,6 +34,10 @@ x64-encoder: context [
 	STACK_TOP: 27
 	I32_IMPORT_STORE: 28
 	PTR_IMPORT_STORE: 29
+	I32_IMPORT_MEMBER: 30
+	PTR_IMPORT_MEMBER: 31
+	PTR_ARG1_RAX: 32
+	I32_ARG2_LITERAL: 33
 
 	SHADOW_FLAG: 256
 	FORM_MASK: 255
@@ -72,6 +76,10 @@ x64-encoder: context [
 			form = STACK_TOP [3]
 			form = I32_IMPORT_STORE [9]
 			form = PTR_IMPORT_STORE [10]
+			form = I32_IMPORT_MEMBER [16]
+			form = PTR_IMPORT_MEMBER [17]
+			form = PTR_ARG1_RAX [3]
+			form = I32_ARG2_LITERAL [5]
 			true [-1]
 		]
 	]
@@ -95,6 +103,8 @@ x64-encoder: context [
 			form = PTR_IMPORT_LOAD [3]
 			form = I32_IMPORT_STORE [3]
 			form = PTR_IMPORT_STORE [3]
+			form = I32_IMPORT_MEMBER [3]
+			form = PTR_IMPORT_MEMBER [3]
 			true [-1]
 		]
 	]
@@ -300,6 +310,40 @@ x64-encoder: context [
 				at/8: as byte! 48h
 				at/9: as byte! 89h
 				at/10: as byte! 02h                        ; mov [rdx], rax
+			]
+			form = I32_IMPORT_MEMBER [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! 48h
+				at/9: as byte! 8Bh
+				at/10: as byte! 00h                        ; mov rax, [rax]
+				at/11: as byte! 8Bh
+				at/12: as byte! 80h                        ; mov eax, [rax + disp32]
+				write-i32 (at + 12) value
+			]
+			form = PTR_IMPORT_MEMBER [
+				at/1: as byte! 48h
+				at/2: as byte! 8Bh
+				at/3: as byte! 05h                         ; mov rax, [rip + rel32]
+				write-i32 (at + 3) 0
+				at/8: as byte! 48h
+				at/9: as byte! 8Bh
+				at/10: as byte! 00h                        ; mov rax, [rax]
+				at/11: as byte! 48h
+				at/12: as byte! 8Bh
+				at/13: as byte! 80h                        ; mov rax, [rax + disp32]
+				write-i32 (at + 13) value
+			]
+			form = PTR_ARG1_RAX [
+				at/1: as byte! 48h
+				at/2: as byte! 89h
+				at/3: as byte! C1h                         ; mov rcx, rax
+			]
+			form = I32_ARG2_LITERAL [
+				at/1: as byte! BAh                         ; mov edx, imm32
+				write-i32 (at + 1) value
 			]
 			true [return -1]
 		]

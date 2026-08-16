@@ -440,6 +440,77 @@ check all [
 	}
 ]["system/stack/top code is not direct and contiguous"]
 
+boot-load-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	red: context [
+		cell!: alias struct! [value [integer!]]
+		root-base: as cell! 0
+		redbin: context [
+			#import ["fixture.dll" stdcall [
+				boot-load: "boot-load" [
+					payload [pointer! [byte!]]
+					keep? [logic!]
+					return: [cell!]
+				]
+			]]
+		]
+	]
+	with red [root-base: redbin/boot-load system/boot-data yes]
+] 'glue
+check binary? boot-load-ir ["frontend rejected boot-load initialization: "
+	mold compiler-rsir-frontend/last-error]
+boot-load-image: make binary! 4096
+check (codegen-module boot-load-ir boot-load-image 0) = 0
+	"boot-load initialization codegen failed"
+check all [
+	(length? boot-load-image) = 368
+	(word-at boot-load-image 8) = 1
+	(word-at boot-load-image 12) = 1
+	(word-at boot-load-image 16) = 3
+	(word-at boot-load-image 20) = 4
+	(word-at boot-load-image 24) = 70
+	(word-at boot-load-image 28) = 272
+	(word-at boot-load-image 32) = 69
+	(word-at boot-load-image 36) = 24
+	(word-at boot-load-image 40) = 1
+	(word-at boot-load-image 56) = 69
+]["boot-load image layout changed"]
+check all [
+	(word-at boot-load-image 80) = 8
+	(word-at boot-load-image 84) = 13
+	(word-at boot-load-image 88) = 16
+	(word-at boot-load-image 92) = 8
+	(word-at boot-load-image 96) = 1
+	(word-at boot-load-image 100) = 1
+	(word-at boot-load-image 104) = 21
+	(word-at boot-load-image 112) = 32
+	(word-at boot-load-image 116) = 9
+	(word-at boot-load-image 120) = 2
+	(word-at boot-load-image 128) = 21
+	(word-at boot-load-image 136) = 41
+	(word-at boot-load-image 140) = 6
+	(word-at boot-load-image 144) = 3
+	(word-at boot-load-image 152) = 47
+	(word-at boot-load-image 160) = 59
+	(word-at boot-load-image 164) = 11
+	(word-at boot-load-image 168) = 4
+]["boot-load symbol slices changed"]
+check all [
+	(word-at boot-load-image 176) = 53
+	(word-at boot-load-image 180) = 46
+	(word-at boot-load-image 184) = 18
+	(word-at boot-load-image 188) = 61
+	(copy/part at boot-load-image 193 70) =
+		to binary! "***-mainred>root-basefixture.dllboot-loadsystemkernel32.dllExitProcess"
+	(copy/part at boot-load-image 273 69) = #{
+		554889E56A006A0068000000006A00488B0500000000488B00488B804800
+		00004889C1BA010000004883EC20FF15000000004889050000000031C9FF
+		150000000031C0C9C3
+	}
+	(copy at boot-load-image 345) =
+		#{000000000000000000000000000000000000000000000000}
+]["boot-load member/call/store code is not direct and contiguous"]
+
 import-ir: compiler-rsir-frontend/compile [
 	Red/System []
 	#import ["fixture.dll" stdcall [

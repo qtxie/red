@@ -226,6 +226,57 @@ assert all [
 		to binary! "fixture.dllstk-bottom***-main"
 ]["system/stack/top is not a direct intrinsic/import-store stream"]
 
+boot-load-ir: compile-text {
+	Red/System []
+	red: context [
+		cell!: alias struct! [value [integer!]]
+		root-base: as cell! 0
+		redbin: context [
+			#import ["fixture.dll" stdcall [
+				boot-load: "boot-load" [
+					payload [pointer! [byte!]]
+					keep? [logic!]
+					return: [cell!]
+				]
+			]]
+		]
+	]
+	with red [root-base: redbin/boot-load system/boot-data yes]
+} 'glue
+assert binary? boot-load-ir [
+	"frontend rejected boot-load initialization: " mold frontend/last-error
+]
+assert all [
+	(length? boot-load-ir) = 451
+	frontend/type-count = 2
+	frontend/implicit-type-count = 1
+	frontend/import-count = 2
+	frontend/implicit-import-count = 1
+	frontend/global-count = 1
+	(word-at boot-load-ir 164) = (word-at boot-load-ir 196)
+	(word-at frontend/module-code 0) = 13
+	(word-at frontend/module-code 4) = 1
+	(word-at frontend/module-code 8) = 2
+	(word-at frontend/module-code 12) = 10
+	(word-at frontend/module-code 16) = 14
+	(word-at frontend/module-code 24) = 1
+	(word-at frontend/module-code 28) = 1
+	(word-at frontend/module-code 32) = 1
+	(word-at frontend/module-code 36) = 2
+	(word-at frontend/module-code 44) = 1
+	(word-at frontend/module-code 48) = 14
+	(word-at frontend/module-code 56) = 2
+	(word-at frontend/module-code 60) = 2
+	(word-at frontend/module-code 64) = 4
+	(word-at frontend/module-code 68) = 3
+	(word-at frontend/module-code 72) = -1
+	(word-at frontend/module-code 76) = 0
+	(word-at frontend/module-code 80) = 10
+	(word-at frontend/module-code 88) = 1
+	(word-at frontend/module-code 92) = 3
+	(word-at frontend/module-code 96) = 2
+]["boot-load is not a direct member/arguments/call/store stream"]
+
 i32-ir: compile-text {Red/System [] fn: func [return: [integer!]][7]} 'user
 assert binary? i32-ir "frontend rejected i32 literal"
 assert (length? i32-ir) = 90 "i32 RSIR is not compact"

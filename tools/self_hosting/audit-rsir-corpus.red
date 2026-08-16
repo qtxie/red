@@ -247,10 +247,11 @@ started: now/time/precise
 ir: compiler-rsir-frontend/compile source 'glue
 unless all [
 	compiler-rsir-frontend/function-count = select counts "functions"
-	compiler-rsir-frontend/import-count = select counts "import-symbols"
+	compiler-rsir-frontend/import-count =
+		((select counts "import-symbols") + compiler-rsir-frontend/implicit-import-count)
 	((length? compiler-rsir-frontend/contexts) / 2) = select counts "contexts"
-	compiler-rsir-frontend/type-count =
-		((select counts "aliases") + select counts "enums")
+	compiler-rsir-frontend/type-count = ((select counts "aliases")
+		+ (select counts "enums") + compiler-rsir-frontend/implicit-type-count)
 ][
 	print [
 		"FAIL: direct frontend declaration counts"
@@ -307,6 +308,8 @@ print [
 	"import-groups" import-groups
 	"functions" import-functions
 	"variables" import-variables
+	"implicit" compiler-rsir-frontend/implicit-import-count
+	"implicit-types" compiler-rsir-frontend/implicit-type-count
 	"parameters" import-parameters
 ]
 

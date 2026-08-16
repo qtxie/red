@@ -342,34 +342,45 @@ slices. Static i32 globals
 can now be read directly through RIP-relative loads and their own contiguous
 linker-reference slices. Basic Windows x64
 scalar, pointer, alias, plain-struct, and plain-union size/alignment is
-implemented and consumed by `size?`. Member access, arrays, tagged unions,
-explicit aggregate alignment, complete signature lowering and ABI
-classification, dynamic and non-scalar initializers, and general function bodies
-remain pending.
+implemented and consumed by `size?`. Imported aggregate pointer-member loads,
+two prepared scalar arguments, pointer-returning imported calls, and dynamic
+pointer global stores now cover the boot-data path. General member paths,
+arrays, tagged unions, explicit aggregate alignment, complete signature
+lowering and ABI classification, other dynamic and non-scalar initializers,
+and general function bodies remain pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples; H0 scope still includes every Red/System
 feature and the full Red/System suite. The current direct hybrid source is
 2,961,043 bytes. After includes and macros are expanded by the real Red/System
-loader, the structured audit finds 544 defined functions, 62 contexts, 725
-imported symbols, 79 aliases, 14 enums, 4,334 global assignments, and 4,284
-unique global names. The imports comprise 57 source library groups,
-712 functions, 13 variables, and 856 parameters. The dominant parameter type is `node-handle!`;
+loader, the structured audit finds 547 defined functions, 62 contexts, 725
+source import symbols, 79 aliases, 14 enums, 4,338 global assignments, and
+4,288 unique global names. The imports comprise 57 source groups, 712
+functions, 13 variables, and 856 parameters; the frontend adds the
+compiler-defined `system` variable only when the boot-data path uses it. The
+dominant parameter type is `node-handle!`;
 some signatures use Red/System's shared-type form, such as
 `value argument [integer!]`. Context depth is at most two, while functions have
 up to 96 locals and substantial control flow. The direct declaration pass matches
 all independently audited function, context, import, alias, and enum counts in
-about 1.14 seconds under the interpreter after loading. Static scalar casts and the
-first runtime set-path assignment, `red/boot?: yes`, now continue through native
-layout and the linker. String calls returning either pointers or i32 values now
+about 0.8 seconds under the interpreter after loading. Loader expansion plus
+the independent statistics walk currently takes about 23 seconds in the
+console and is reported separately from frontend time. Static scalar casts and
+the first runtime set-path assignment, `red/boot?: yes`, now continue through
+native layout and the linker. String calls returning either pointers or i32 values now
 consume the complete `word/load` and `symbol/make` initialization runs. The
 frontend now also consumes the `stk-bottom: system/stack/top` intrinsic/import
-store. The complete corpus next stops at the reassignment
-`root-base: redbin/boot-load system/boot-data yes`.
+store and the following
+`root-base: redbin/boot-load system/boot-data yes` reassignment. The latter is a
+direct imported aggregate-member, two-argument call, and global-store stream;
+the frontend materializes the old compiler's implicit `system`/`system!` ABI
+symbols without exposing a target offset in RSIR. The complete corpus next
+stops at the first unlowered module expression, `comment`.
 
 After that deliberate stop, the same audit serializes every current logical
-type without compiling bodies: 93 source-order type records and 424 member
-records occupy 5,252 bytes.
+type without compiling bodies: 93 source-order types plus the on-demand
+`system!` ABI view produce 94 type records and 435 member records occupying
+5,360 bytes.
 
 Regenerate and inspect this corpus without native compilation:
 
@@ -433,16 +444,19 @@ records. One-argument c-string calls returning i32 or pointers now initialize
 globals through a direct `string`, `call`, `global-store` sequence and a compact
 code constant island. Pointer imported-variable loads and register-valued
 import stores use the same direct import records and reference slices.
-General call ABI lowering,
+The boot-data initializer now adds an imported aggregate-member load, prepares
+its pointer and logic arguments in semantic order, uses the ordinary call
+instruction, and stores the pointer result. Win64 register assignment and the
+`system!` member offset remain native codegen decisions. General call ABI
+lowering,
 non-scalar initializers, other dynamic initializers and non-i32 accesses,
 constants, and empty static-library registration groups remain pending. The
 first real runtime operation, `red/boot?: yes`, is emitted directly into the
 ordinary module-body function during the same traversal that folds static
 globals. The module-only fixture is 144 RSIR bytes and produces a 252-byte
 native image with one function and two instructions. There is no second
-initializer protocol; the next real-corpus operation is the imported pointer
-result and two-argument call in
-`root-base: redbin/boot-load system/boot-data yes`.
+initializer protocol. The next real-corpus boundary is the unlowered `comment`
+module expression after the boot-data initialization run.
 
 - preserve `#import` library grouping and calling convention;
 - emit imported functions and variables directly;

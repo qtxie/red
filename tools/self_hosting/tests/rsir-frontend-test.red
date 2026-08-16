@@ -550,17 +550,75 @@ assert all [
 	(switch-word switch-ir switch-layout 3 8) = 6
 ]["SWITCH did not preserve its compact literal/target slice"]
 
-switch-fail-ir: compile-text {
+switch-miss-ir: compile-text {
 	Red/System []
-	choose: func [value [integer!] return: [integer!]][switch value [1 [7]]]
+	choose: func [value [integer!] return: [integer!] /local result [integer!]][
+		result: 7
+		switch value [1 [result: 9]]
+		result
+	]
 } 'user
-switch-fail-layout: layout-of switch-fail-ir
+assert binary? switch-miss-ir [
+	"SWITCH missing-case continuation failed: " mold frontend/last-error
+]
+switch-miss-layout: layout-of switch-miss-ir
+switch-miss-ops: ops-of switch-miss-ir switch-miss-layout
 assert all [
-	(ops-of switch-fail-ir switch-fail-layout) = [3 4 18 19 1 11]
-	(instruction-word switch-fail-ir switch-fail-layout 3 12) = 4
-	(instruction-word switch-fail-ir switch-fail-layout 4 4) = 101
-	(switch-word switch-fail-ir switch-fail-layout 1 8) = 5
-]["SWITCH without DEFAULT did not retain its required runtime failure edge"]
+	none? find switch-miss-ops 19
+	not none? find switch-miss-ops 16
+]["statement SWITCH without DEFAULT did not preserve its no-match continuation"]
+
+tagged-ir: compile-text {
+	Red/System []
+	event!: alias union! [
+		[variant]
+		mouse [x [integer!] y [integer!]]
+		key [integer!]
+	]
+	inspect: func [return: [integer!] /local event [event!] score [integer!]][
+		event: declare event!
+		event/mouse/x: 10
+		score: either variant? event 'mouse [1][0]
+		switch event [
+			mouse [score: score + 2]
+			key [score: score + 4]
+		]
+		score
+	]
+} 'user
+assert binary? tagged-ir ["tagged union lowering failed: " mold frontend/last-error]
+tagged-layout: layout-of tagged-ir
+tagged-ops: ops-of tagged-ir tagged-layout
+tagged-member-at: 32 + ((word-at tagged-ir 8) * 20)
+tagged-write?: false
+repeat id word-at tagged-ir 20 [
+	if all [
+		(instruction-word tagged-ir tagged-layout id 0) = 6
+		(instruction-word tagged-ir tagged-layout id 8) = 1
+	][tagged-write?: true]
+]
+assert all [
+	(word-at tagged-ir 8) = 2
+	(word-at tagged-ir 32) = -3
+	(word-at tagged-ir 40) = 1
+	(word-at tagged-ir 48) = 2
+	(word-at tagged-ir tagged-member-at) = 2
+	(word-at tagged-ir (tagged-member-at + 4)) = 1
+	(word-at tagged-ir (tagged-member-at + 8)) = -5
+	(word-at tagged-ir (tagged-member-at + 12)) = 0
+	tagged-write?
+	not none? find tagged-ops 22
+	(switch-word tagged-ir tagged-layout 1 0) = 1
+	(switch-word tagged-ir tagged-layout 2 0) = 2
+]["tagged union did not retain one tagged layout and ordinary member/tag operations"]
+
+assert none? compile-text {
+	Red/System []
+	raw!: alias union! [value [integer!]]
+	fn: func [raw [raw!] return: [logic!]][variant? raw 'value]
+} 'user "VARIANT? accepted a raw union"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"raw union VARIANT? reported the wrong error class"
 
 wide-switch-ir: compile-text {
 	Red/System []

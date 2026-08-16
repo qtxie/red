@@ -146,6 +146,7 @@ x64-codegen: context [
 	FUNCTION_FLAGS: 511
 	INLINE:          1
 	GLOBAL_REFERENCE: 2
+	TAGGED_UNION:    1
 
 	OP_LITERAL:   1
 	OP_CONSTANT:  2
@@ -168,6 +169,7 @@ x64-codegen: context [
 	OP_FAIL:     19
 	OP_REFERENCE: 20
 	OP_INDEX:     21
+	OP_TAG:       22
 
 	NOT_OPERATION:       1
 	ADD_OPERATION:       1
@@ -265,6 +267,42 @@ x64-codegen: context [
 		any [kind = -2 kind = -3]
 	]
 
+	tag-width: func [count [integer!] return: [integer!]][
+		case [
+			count <= 0 [0]
+			count <= 255 [1]
+			count <= 65535 [2]
+			true [4]
+		]
+	]
+
+	tagged-union?: func [
+		ref [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [logic!]
+		/local base [integer!] record [rsir-type!]
+	][
+		base: canonical-type ref types count
+		if base <= 0 [return false]
+		record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
+		all [record/kind = -3 record/flags = TAGGED_UNION]
+	]
+
+	union-tag-width: func [
+		ref [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [integer!]
+		/local base [integer!] record [rsir-type!]
+	][
+		base: canonical-type ref types count
+		if base <= 0 [return 0]
+		record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
+		unless all [record/kind = -3 record/flags = TAGGED_UNION][return 0]
+		tag-width record/member-count
+	]
+
 	compatible-types?: func [
 		expected actual [integer!]
 		types [byte-ptr!]
@@ -312,7 +350,8 @@ x64-codegen: context [
 		size-out align-out [int-ptr!]
 		return: [logic!]
 		/local record [rsir-type!] member [rsir-member!]
-			kind id member-size member-align size alignment [integer!]
+			kind id member-size member-align size alignment tag-size payload-offset
+				[integer!]
 	][
 		if any [ref = 0 depth > type-count][return false]
 		kind: 0
@@ -381,11 +420,48 @@ x64-codegen: context [
 			]
 			id: id + 1
 		]
+		if all [kind = -3 record/flags = TAGGED_UNION][
+			tag-size: tag-width record/member-count
+			if tag-size = 0 [return false]
+			payload-offset: align tag-size alignment
+			if any [payload-offset < 0 payload-offset > (2147483647 - size)][
+				return false
+			]
+			size: payload-offset + size
+			if tag-size > alignment [alignment: tag-size]
+		]
 		size: align size alignment
 		if size < 0 [return false]
 		size-out/1: size
 		align-out/1: alignment
 		true
+	]
+
+	union-payload-offset: func [
+		record [rsir-type!]
+		types members [byte-ptr!]
+		type-count [integer!]
+		return: [integer!]
+		/local member [rsir-member!]
+			id member-size member-align alignment width [integer!]
+	][
+		if record/flags = 0 [return 0]
+		unless record/flags = TAGGED_UNION [return -1]
+		alignment: 1
+		id: 0
+		while [id < record/member-count][
+			member: as rsir-member! (members
+				+ ((record/first-member + id) * RSIR_MEMBER_SIZE))
+			member-size: 0
+			member-align: 0
+			unless layout-type member/type (member/flags = INLINE) types members
+				type-count 0 :member-size :member-align [return -1]
+			if member-align > alignment [alignment: member-align]
+			id: id + 1
+		]
+		width: tag-width record/member-count
+		if width = 0 [return -1]
+		align width alignment
 	]
 
 	value-width: func [
@@ -563,6 +639,10 @@ x64-codegen: context [
 		unless any [kind = -2 kind = -3][return false]
 		if index >= record/member-count [return false]
 		offset: 0
+		if kind = -3 [
+			offset: union-payload-offset record types members type-count
+			if offset < 0 [return false]
+		]
 		id: 0
 		while [id <= index][
 			member: as rsir-member! (members
@@ -592,6 +672,51 @@ x64-codegen: context [
 
 	slot-displacement: func [slot [integer!] return: [integer!]][
 		0 - (x64-encoder/BASE_FRAME_SIZE + (slot * 8))
+	]
+
+	emit-variant-tags: func [
+		code [byte-ptr!]
+		capacity head tag-base instruction-count [integer!]
+		instructions [byte-ptr!]
+		tag-next tag-slots tag-widths [int-ptr!]
+		return: [integer!]
+		/local at [byte-ptr!] instruction [rsir-instruction!]
+			node width encoded written steps [integer!]
+	][
+		written: 0
+		steps: 0
+		node: head
+		while [node > 0][
+			if any [node > instruction-count steps >= instruction-count][return -1]
+			instruction: as rsir-instruction! (instructions
+				+ ((node - 1) * RSIR_INSTRUCTION_SIZE))
+			width: tag-widths/node
+			if any [instruction/b <= 0 tag-slots/node <= 0
+				not any [width = 1 width = 2 width = 4]][return -1]
+
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/frame-load at (capacity - written)
+				x64-encoder/RDX slot-displacement (tag-base + tag-slots/node) 8 0
+			if encoded < 0 [return encoded]
+			written: written + encoded
+
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/move-immediate at (capacity - written)
+				x64-encoder/RAX 4 instruction/b 0
+			if encoded < 0 [return encoded]
+			written: written + encoded
+
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/store-indirect at (capacity - written) width
+			if encoded < 0 [return encoded]
+			written: written + encoded
+			node: tag-next/node
+			steps: steps + 1
+		]
+		written
 	]
 
 	storage-displacement: func [offsets [int-ptr!] slot [integer!] return: [integer!]][
@@ -786,8 +911,8 @@ x64-codegen: context [
 
 	merge-target: func [
 		target depth instruction-count [integer!]
-		instruction-depths entry-types entry-flags entry-kinds
-			stack-types stack-flags stack-kinds [int-ptr!]
+		instruction-depths entry-types entry-flags entry-kinds entry-tags
+			stack-types stack-flags stack-kinds stack-tags [int-ptr!]
 		types [byte-ptr!]
 		type-count [integer!]
 		return: [logic!]
@@ -805,6 +930,7 @@ x64-codegen: context [
 					types type-count
 				entry-flags/target <> stack-flags/depth
 				entry-kinds/target <> stack-kinds/depth
+				entry-tags/target <> stack-tags/depth
 			]
 		][return false]
 		instruction-depths/target: depth
@@ -812,6 +938,7 @@ x64-codegen: context [
 			entry-types/target: stack-types/depth
 			entry-flags/target: stack-flags/depth
 			entry-kinds/target: stack-kinds/depth
+			entry-tags/target: stack-tags/depth
 		]
 		true
 	]
@@ -819,8 +946,9 @@ x64-codegen: context [
 	compile-function: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
-		stack-types stack-flags stack-kinds storage-offsets instruction-offsets instruction-depths
-			entry-types entry-flags entry-kinds import-refs references [int-ptr!]
+		stack-types stack-flags stack-kinds stack-tags storage-offsets
+			instruction-offsets instruction-depths entry-types entry-flags entry-kinds
+			entry-tags tag-next tag-slots tag-widths import-refs references [int-ptr!]
 		parameters functions imports globals types members switches image-data strings code
 			[byte-ptr!]
 		type-count function-count import-count global-count switch-count strings-size
@@ -839,6 +967,7 @@ x64-codegen: context [
 			at [byte-ptr!]
 			index depth max-depth kind ref flags width signed source-slot target-slot
 			storage-count storage-slots storage-bytes storage-size storage-align
+			tag-head tag-count tag-capacity tag-base tag-width-value
 			operation left-ref right-ref left-flags right-flags
 			left-kind right-kind operation-width condition stride
 			encoded written frame-extra slot-bytes outgoing max-outgoing argument-index
@@ -851,10 +980,24 @@ x64-codegen: context [
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy? [logic!]
 	][
 		measure?: null? code
+		tag-capacity: 0
+		index: 1
+		while [index <= fn/instruction-count][
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			if all [instruction/op = OP_MEMBER instruction/b > 0][
+				tag-capacity: tag-capacity + 1
+			]
+			index: index + 1
+		]
 		storage-count: fn/parameter-count + fn/local-count
 		storage-bytes: plan-storage fn parameters types members type-count storage-offsets
 		if storage-bytes < 0 [return storage-bytes]
 		storage-slots: storage-bytes / 8
+		tag-base: storage-slots
+		if storage-slots > (2147483647 - tag-capacity)[return OUTPUT_FULL]
+		storage-slots: storage-slots + tag-capacity
+		tag-count: 0
 		if any [
 			fn/return-type <> 0
 			not measure?
@@ -981,6 +1124,7 @@ x64-codegen: context [
 								types type-count
 							entry-flags/index <> stack-flags/depth
 							entry-kinds/index <> stack-kinds/depth
+							entry-tags/index <> stack-tags/depth
 						]
 					][return INVALID_IR]
 				]
@@ -992,6 +1136,7 @@ x64-codegen: context [
 					stack-types/depth: entry-types/index
 					stack-flags/depth: entry-flags/index
 					stack-kinds/depth: entry-kinds/index
+					stack-tags/depth: entry-tags/index
 				]
 			]
 			if measure? [
@@ -1000,6 +1145,7 @@ x64-codegen: context [
 					entry-types/index: stack-types/depth
 					entry-flags/index: stack-flags/depth
 					entry-kinds/index: stack-kinds/depth
+					entry-tags/index: stack-tags/depth
 				]
 			]
 			if measure? [instruction-offsets/index: written]
@@ -1019,6 +1165,7 @@ x64-codegen: context [
 					stack-types/depth: ref
 					stack-flags/depth: 0
 					stack-kinds/depth: VALUE
+					stack-tags/depth: 0
 					width: value-width ref 0 types members type-count
 					target-width: either width = 8 [8][4]
 					at: as byte-ptr! 0
@@ -1055,6 +1202,7 @@ x64-codegen: context [
 					stack-types/depth: ref
 					stack-flags/depth: 0
 					stack-kinds/depth: VALUE
+					stack-tags/depth: 0
 					displacement: 0
 					if not measure? [
 						displacement: (function-code-size + instruction/b)
@@ -1155,6 +1303,7 @@ x64-codegen: context [
 					stack-types/depth: ref
 					stack-flags/depth: flags
 					stack-kinds/depth: PLACE
+					stack-tags/depth: 0
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
@@ -1221,6 +1370,7 @@ x64-codegen: context [
 					stack-types/depth: instruction/a
 					stack-flags/depth: 0
 					stack-kinds/depth: VALUE
+					stack-tags/depth: 0
 				]
 				instruction/op = OP_INDEX [
 					unless any [instruction/b = 0 instruction/b = 1][return INVALID_IR]
@@ -1311,6 +1461,7 @@ x64-codegen: context [
 						stack-kinds/depth <> VALUE][return INVALID_IR]
 					target-ref: stack-types/target-slot
 					target-flags: stack-flags/target-slot
+					tag-head: stack-tags/target-slot
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					aggregate-copy?: all [
@@ -1400,9 +1551,16 @@ x64-codegen: context [
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: emit-variant-tags at (capacity - written) tag-head tag-base
+						fn/instruction-count instructions tag-next tag-slots tag-widths
+					if encoded < 0 [return encoded]
+					written: written + encoded
+					stack-tags/depth: 0
 				]
 				instruction/op = OP_MEMBER [
-					if depth <= 0 [return INVALID_IR]
+					if any [depth <= 0 instruction/c <> 0][return INVALID_IR]
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					unless any [
@@ -1415,12 +1573,41 @@ x64-codegen: context [
 					member-offset: 0
 					unless layout-member ref instruction/a types members type-count
 						:member-type :member-flags :member-offset [return INVALID_IR]
+					tag-width-value: 0
+					if instruction/b <> 0 [
+						unless all [
+							instruction/b = (instruction/a + 1)
+							tagged-union? ref types type-count
+						][return INVALID_IR]
+						tag-width-value: union-tag-width ref types type-count
+						if tag-width-value = 0 [return INVALID_IR]
+					]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth) 8 0
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+					if instruction/b <> 0 [
+						tag-count: tag-count + 1
+						if tag-count > tag-capacity [return INVALID_IR]
+						either measure? [
+							tag-next/index: stack-tags/depth
+							tag-slots/index: tag-count
+							tag-widths/index: tag-width-value
+						][unless all [
+							tag-next/index = stack-tags/depth
+							tag-slots/index = tag-count
+							tag-widths/index = tag-width-value
+						][return INVALID_IR]]
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-store at (capacity - written)
+							x64-encoder/RAX slot-displacement (tag-base + tag-count) 8
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						stack-tags/depth: index
+					]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/add-immediate at (capacity - written)
@@ -1436,6 +1623,36 @@ x64-codegen: context [
 					stack-types/depth: member-type
 					stack-flags/depth: member-flags
 					stack-kinds/depth: PLACE
+				]
+				instruction/op = OP_TAG [
+					if any [
+						instruction/a <> 0 instruction/b <> 0 instruction/c <> 0
+						depth <= 0 stack-kinds/depth <> VALUE
+						stack-flags/depth <> 0
+					][return INVALID_IR]
+					width: union-tag-width stack-types/depth types type-count
+					if width = 0 [return INVALID_IR]
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/frame-load at (capacity - written)
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 8 0
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/load-indirect at (capacity - written) width 0
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/frame-store at (capacity - written)
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 4
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					stack-types/depth: -5
+					stack-flags/depth: 0
+					stack-kinds/depth: VALUE
+					stack-tags/depth: 0
 				]
 				instruction/op = OP_CALL [
 					target: instruction/a
@@ -1580,6 +1797,7 @@ x64-codegen: context [
 						stack-types/depth: return-ref
 						stack-flags/depth: flags
 						stack-kinds/depth: VALUE
+						stack-tags/depth: 0
 						width: value-width return-ref flags types members type-count
 						floating?: float-type? return-ref types type-count
 						at: as byte-ptr! 0
@@ -1744,6 +1962,7 @@ x64-codegen: context [
 					written: written + encoded
 					stack-types/depth: instruction/a
 					stack-flags/depth: instruction/b
+					stack-tags/depth: 0
 				]
 				instruction/op = OP_SIZE [
 					ref: instruction/a
@@ -1758,6 +1977,7 @@ x64-codegen: context [
 					stack-types/depth: -5
 					stack-flags/depth: 0
 					stack-kinds/depth: VALUE
+					stack-tags/depth: 0
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/move-immediate at (capacity - written)
@@ -1778,6 +1998,7 @@ x64-codegen: context [
 					stack-types/depth: instruction/c
 					stack-flags/depth: 0
 					stack-kinds/depth: VALUE
+					stack-tags/depth: 0
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/stack-top at (capacity - written)
@@ -1799,6 +2020,7 @@ x64-codegen: context [
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					kind: stack-kinds/depth
+					tag-head: stack-tags/depth
 					width: either kind = PLACE [8][
 						value-width ref flags types members type-count
 					]
@@ -1815,6 +2037,7 @@ x64-codegen: context [
 					stack-types/depth: ref
 					stack-flags/depth: flags
 					stack-kinds/depth: kind
+					stack-tags/depth: tag-head
 					target-width: either width = 8 [8][4]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
@@ -1878,6 +2101,7 @@ x64-codegen: context [
 						operation-width
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+					stack-tags/depth: 0
 				]
 				instruction/op = OP_BINARY [
 					if any [
@@ -2158,6 +2382,7 @@ x64-codegen: context [
 					stack-types/depth: ref
 					stack-flags/depth: flags
 					stack-kinds/depth: VALUE
+					stack-tags/depth: 0
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: either all [floating? not comparison?][
@@ -2182,8 +2407,8 @@ x64-codegen: context [
 					depth: depth - instruction/b
 					if measure? [
 						unless merge-target target depth fn/instruction-count
-							instruction-depths entry-types entry-flags entry-kinds
-							stack-types stack-flags stack-kinds types type-count [
+							instruction-depths entry-types entry-flags entry-kinds entry-tags
+							stack-types stack-flags stack-kinds stack-tags types type-count [
 							return INVALID_IR
 						]
 					]
@@ -2220,8 +2445,8 @@ x64-codegen: context [
 					depth: depth - 1
 					if measure? [
 						unless merge-target target depth fn/instruction-count
-							instruction-depths entry-types entry-flags entry-kinds
-							stack-types stack-flags stack-kinds types type-count [
+							instruction-depths entry-types entry-flags entry-kinds entry-tags
+							stack-types stack-flags stack-kinds stack-tags types type-count [
 							return INVALID_IR
 						]
 					]
@@ -2280,8 +2505,8 @@ x64-codegen: context [
 						]
 						if measure? [
 							unless merge-target target depth fn/instruction-count
-								instruction-depths entry-types entry-flags entry-kinds
-								stack-types stack-flags stack-kinds types type-count [
+								instruction-depths entry-types entry-flags entry-kinds entry-tags
+								stack-types stack-flags stack-kinds stack-tags types type-count [
 								return INVALID_IR
 							]
 						]
@@ -2317,8 +2542,8 @@ x64-codegen: context [
 					target: instruction/c
 					if measure? [
 						unless merge-target target depth fn/instruction-count
-							instruction-depths entry-types entry-flags entry-kinds
-							stack-types stack-flags stack-kinds types type-count [
+							instruction-depths entry-types entry-flags entry-kinds entry-tags
+							stack-types stack-flags stack-kinds stack-tags types type-count [
 							return INVALID_IR
 						]
 					]
@@ -2432,11 +2657,14 @@ x64-codegen: context [
 			target-offset: fn/instruction-count + 1
 			instruction-offsets/target-offset: written
 		]
+		if tag-count <> tag-capacity [return INVALID_IR]
 		if fallthrough? [return INVALID_IR]
 
 		if measure? [
-			if max-depth > ((2147483647 - storage-bytes) / 8)[return OUTPUT_FULL]
-			slot-bytes: storage-bytes + (max-depth * 8)
+			if storage-slots > (2147483647 / 8)[return OUTPUT_FULL]
+			slot-bytes: storage-slots * 8
+			if max-depth > ((2147483647 - slot-bytes) / 8)[return OUTPUT_FULL]
+			slot-bytes: slot-bytes + (max-depth * 8)
 			if slot-bytes > (2147483647 - max-outgoing)[return OUTPUT_FULL]
 			frame-extra: align (slot-bytes + max-outgoing) 16
 			if any [
@@ -2469,8 +2697,9 @@ x64-codegen: context [
 			image-global target-image-global [codegen-global!]
 			image-import [codegen-import!]
 			import-refs function-sizes function-frames instruction-offsets
-				instruction-depths entry-types entry-flags entry-kinds
-				stack-types stack-flags stack-kinds storage-offsets references [int-ptr!]
+				instruction-depths entry-types entry-flags entry-kinds entry-tags
+				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
+				tag-widths storage-offsets references [int-ptr!]
 			type-data member-data import-data global-data function-data
 				parameter-data switch-data instruction-data strings function-instructions
 				name names-output code data-output cursor finish scratch [byte-ptr!]
@@ -2530,9 +2759,16 @@ x64-codegen: context [
 						return INVALID_IR
 					]
 				]
-				any [ir-type/kind = -2 ir-type/kind = -3][
+				ir-type/kind = -2 [
 					if any [
 						ir-type/target <> 0 ir-type/flags <> 0
+						ir-type/member-count <= 0
+					][return INVALID_IR]
+				]
+				ir-type/kind = -3 [
+					if any [
+						ir-type/target <> 0
+						not any [ir-type/flags = 0 ir-type/flags = TAGGED_UNION]
 						ir-type/member-count <= 0
 					][return INVALID_IR]
 				]
@@ -2783,10 +3019,10 @@ x64-codegen: context [
 			return OUTPUT_FULL
 		]
 		scratch-count: header/import-count + (header/function-count * 3)
-		if header/instruction-count > ((2147483647 - scratch-count) / 8)[
+		if header/instruction-count > ((2147483647 - scratch-count) / 13)[
 			return OUTPUT_FULL
 		]
-		scratch-count: scratch-count + (header/instruction-count * 8)
+		scratch-count: scratch-count + (header/instruction-count * 13)
 		if parameter-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
 		scratch-count: scratch-count + parameter-count
 		if scratch-count > (2147483647 / 4)[return OUTPUT_FULL]
@@ -2801,10 +3037,15 @@ x64-codegen: context [
 		entry-types: instruction-depths + header/instruction-count
 		entry-flags: entry-types + header/instruction-count
 		entry-kinds: entry-flags + header/instruction-count
-		stack-types: entry-kinds + header/instruction-count
+		entry-tags: entry-kinds + header/instruction-count
+		stack-types: entry-tags + header/instruction-count
 		stack-flags: stack-types + header/instruction-count
 		stack-kinds: stack-flags + header/instruction-count
-		storage-offsets: stack-kinds + header/instruction-count
+		stack-tags: stack-kinds + header/instruction-count
+		tag-next: stack-tags + header/instruction-count
+		tag-slots: tag-next + header/instruction-count
+		tag-widths: tag-slots + header/instruction-count
+		storage-offsets: tag-widths + header/instruction-count
 		id: 1
 		while [id <= header/import-count][import-refs/id: 0 id: id + 1]
 
@@ -2827,12 +3068,16 @@ x64-codegen: context [
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
 			function-size: compile-function ir-function function-instructions
-				stack-types stack-flags stack-kinds storage-offsets
+				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
 				(entry-flags + (next-instruction - 1))
-				(entry-kinds + (next-instruction - 1)) import-refs null
+				(entry-kinds + (next-instruction - 1))
+				(entry-tags + (next-instruction - 1))
+				(tag-next + (next-instruction - 1))
+				(tag-slots + (next-instruction - 1))
+				(tag-widths + (next-instruction - 1)) import-refs null
 				parameter-data function-data import-data global-data type-data member-data
 				switch-data (output + IMAGE_HEADER_SIZE) strings null
 				header/type-count header/function-count header/import-count
@@ -3063,12 +3308,16 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
 			written: compile-function ir-function function-instructions
-				stack-types stack-flags stack-kinds storage-offsets
+				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
 				(entry-flags + (next-instruction - 1))
-				(entry-kinds + (next-instruction - 1)) import-refs references
+				(entry-kinds + (next-instruction - 1))
+				(entry-tags + (next-instruction - 1))
+				(tag-next + (next-instruction - 1))
+				(tag-slots + (next-instruction - 1))
+				(tag-widths + (next-instruction - 1)) import-refs references
 				parameter-data function-data import-data global-data type-data member-data
 				switch-data (output + IMAGE_HEADER_SIZE) strings
 				(code + image-function/code-offset)

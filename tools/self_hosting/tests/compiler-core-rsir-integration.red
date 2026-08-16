@@ -139,5 +139,7 @@ run-linked-fixture
 	%rsir-declare-storage-exit.reds %rsir-declare-storage-linked.exe "DECLARE storage"
 run-linked-fixture
 	%rsir-aggregate-copy-exit.reds %rsir-aggregate-copy-linked.exe "aggregate copy"
+run-linked-fixture
+	%rsir-tagged-union-exit.reds %rsir-tagged-union-linked.exe "tagged union"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

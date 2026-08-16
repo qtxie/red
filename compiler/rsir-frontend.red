@@ -77,6 +77,7 @@ compiler-rsir-frontend: context [
 	catch-flag: 256
 	inline-flag: 1
 	global-reference-flag: 2
+	tagged-type-flag: 1
 
 	; Semantic postfix operations. Operands are typed by the surrounding
 	; declaration tables; no source-specific value IDs cross the boundary.
@@ -101,6 +102,7 @@ compiler-rsir-frontend: context [
 	fail-op: 19
 	reference-op: 20
 	index-op: 21
+	tag-op: 22
 
 	; Operation IDs follow the language families, not source spellings or x64
 	; encodings. The postfix stream preserves the specified left-to-right order.
@@ -336,15 +338,29 @@ compiler-rsir-frontend: context [
 		id
 	]
 
+	tagged-union?: func [kind [word!] spec [block!] return: [logic!]][
+		all [
+			kind = 'union
+			not empty? spec
+			block? spec/1
+			spec/1 = [variant]
+		]
+	]
+
+	aggregate-members: func [kind [word!] spec [block!] return: [block!]][
+		either tagged-union? kind spec [next spec][spec]
+	]
+
 	validate-aggregate: func [
+		kind [word!]
 		spec [block!]
 		/local position names field
 	][
-		unless all [not empty? spec ((length? spec) // 2) = 0][
+		position: aggregate-members kind spec
+		unless all [not empty? position ((length? position) // 2) = 0][
 			fail ERROR-UNSUPPORTED "aggregate type requires field/type pairs"
 		]
 		names: make hash! 16
-		position: spec
 		while [not tail? position][
 			field: position/1
 			unless all [word? field block? position/2][
@@ -368,7 +384,7 @@ compiler-rsir-frontend: context [
 		unless find [struct union] kind [
 			fail ERROR-UNSUPPORTED "invalid aggregate type"
 		]
-		validate-aggregate spec
+		validate-aggregate kind spec
 		key: mold/flat reduce [kind spec scope uses]
 		if id: select aggregate-types key [return id]
 		id: type-count + 1
@@ -490,6 +506,26 @@ compiler-rsir-frontend: context [
 		][0]
 	]
 
+	member-type-info: func [
+		kind [word!]
+		spec field-type scope uses [block!]
+		return: [block!]
+		/local member-kind
+	][
+		member-kind: type-kind field-type scope uses
+		if all [tagged-union? kind spec none? member-kind][
+			validate-aggregate 'struct field-type
+			return reduce [
+				intern-aggregate 'struct field-type scope uses
+				inline-flag
+			]
+		]
+		reduce [
+			type-ref field-type scope uses
+			type-flags field-type scope uses
+		]
+	]
+
 	ref-kind: func [ref [integer!] /local record kind name steps target][
 		if ref < 0 [
 			if ref < -13 [return none]
@@ -531,10 +567,17 @@ compiler-rsir-frontend: context [
 		fail ERROR-REFERENCE "cyclic type alias"
 	]
 
+	tagged-union-ref?: func [ref [integer!] return: [logic!] /local record][
+		ref: canonical-ref ref
+		if any [ref <= 0 ref > type-count][return false]
+		record: skip types ((ref - 1) * 5)
+		all [record/2 = 'union tagged-union? record/2 record/3]
+	]
+
 	member-info: func [
 		ref [integer!]
 		name [word!]
-		/local record kind target spec index steps
+		/local record kind target definition spec index steps info
 	][
 		if any [ref <= 0 ref > type-count][return none]
 		steps: 0
@@ -555,14 +598,16 @@ compiler-rsir-frontend: context [
 				continue
 			]
 			unless find [struct union] kind [return none]
-			spec: record/3
+			definition: record/3
+			spec: aggregate-members kind definition
 			index: 0
 			while [not tail? spec][
 				if spec/1 = name [
+					info: member-type-info kind definition spec/2 record/4 record/5
 					return reduce [
 						index
-						type-ref spec/2 record/4 record/5
-						type-flags spec/2 record/4 record/5
+						info/1
+						info/2
 					]
 				]
 				index: index + 1
@@ -1074,7 +1119,7 @@ compiler-rsir-frontend: context [
 								true ['subroutine]
 							]
 							type-spec: position/4
-							if find [struct union] kind [validate-aggregate type-spec]
+							if find [struct union] kind [validate-aggregate kind type-spec]
 							position: skip position 4
 						]
 						any [word? position/3 path? position/3][
@@ -1219,8 +1264,9 @@ compiler-rsir-frontend: context [
 		lower-functions
 	]
 
-	write-types: func [type-output members [binary!] /local position kind spec scope uses
-		field field-type ref flags count code first signature params parameter target
+	write-types: func [type-output members [binary!] /local position kind definition
+		spec scope uses field field-type info ref flags count code first signature
+		params parameter target
 	][
 		first: 0
 		position: types
@@ -1245,16 +1291,21 @@ compiler-rsir-frontend: context [
 				]
 				find [struct union] kind [
 					code: select type-codes kind
-					spec: position/3
+					definition: position/3
+					spec: aggregate-members kind definition
 					scope: position/4
 					uses: position/5
 					count: (length? spec) / 2
-					emit type-output reduce [code 0 0 first count]
+					emit type-output reduce [
+						code 0 either tagged-union? kind definition [tagged-type-flag][0]
+						first count
+					]
 					while [not tail? spec][
 						field: spec/1
 						field-type: spec/2
-						ref: type-ref field-type scope uses
-						flags: type-flags field-type scope uses
+						info: member-type-info kind definition field-type scope uses
+						ref: info/1
+						flags: info/2
 						emit members reduce [ref flags]
 						spec: skip spec 2
 					]
@@ -2004,6 +2055,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params [block!]
 		locals [block!]
+		/write
 		return: [logic!]
 		/local id position part parts index base current flags info storage kind
 			element bits place?
@@ -2059,7 +2111,11 @@ compiler-rsir-frontend: context [
 					unless block? info [
 						fail ERROR-REFERENCE ["unknown member " mold part]
 					]
-					emit instructions reduce [member-op info/1 0 0]
+					emit instructions reduce [
+						member-op info/1 either all [
+							write tagged-union-ref? current
+						][info/1 + 1][0] 0
+					]
 					current: info/2
 					flags: info/3
 					place?: true
@@ -2428,22 +2484,60 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	stack-variant: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local after ref name info
+	][
+		after: stack-value next position scope uses instructions params locals
+			expression-value
+		ref: last-type
+		unless all [last-flags = 0 tagged-union-ref? ref][
+			fail ERROR-REFERENCE "VARIANT? requires a tagged union value"
+		]
+		unless all [not tail? after lit-word? after/1][
+			fail ERROR-UNSUPPORTED "VARIANT? requires a literal variant name"
+		]
+		name: to word! after/1
+		info: member-info ref name
+		unless block? info [
+			fail ERROR-REFERENCE ["unknown union variant " mold name]
+		]
+		emit instructions reduce [tag-op 0 0 0]
+		emit instructions reduce [literal-op -5 (info/1 + 1) 0]
+		emit instructions reduce [binary-op 13 0 0]
+		last-type: -11
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		next after
+	]
+
 	stack-switch: func [
 		position scope uses [block!]
 		instructions [binary!]
 		params locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local spec-position spec after selector-kind cursor arms default-body
+		/local spec-position spec after selector-ref selector-kind cursor arms default-body
 			patches bits first-case case-count case-patch switch-patch default-target
-			arm-position arm target jump-patch results last-arm?
+			arm-position arm target jump-patch missing-jump results last-arm? info
+			tagged-selector?
 	][
 		spec-position: stack-value next position scope uses instructions params locals
 			expression-value
+		selector-ref: last-type
 		selector-kind: ref-kind last-type
-		unless all [integer-kind? selector-kind last-flags = 0][
-			fail ERROR-REFERENCE "SWITCH requires an integer value"
-		]
+		tagged-selector?: all [last-flags = 0 tagged-union-ref? selector-ref]
+		either tagged-selector? [
+			emit instructions reduce [tag-op 0 0 0]
+			last-type: -5
+			last-flags: 0
+		][unless all [integer-kind? selector-kind last-flags = 0][
+			fail ERROR-REFERENCE "SWITCH requires an integer or tagged union value"
+		]]
 		unless all [not tail? spec-position block? spec-position/1][
 			fail ERROR-UNSUPPORTED "SWITCH is missing its body block"
 		]
@@ -2467,10 +2561,13 @@ compiler-rsir-frontend: context [
 			patches: make block! 4
 			while [all [not tail? cursor not block? cursor/1]][
 				if all [word? cursor/1 cursor/1 = 'default][break]
-				bits: switch-bits cursor/1 scope
+				bits: either tagged-selector? [
+					info: all [word? cursor/1 member-info selector-ref cursor/1]
+					either block? info [reduce [info/1 + 1 0]][none]
+				][switch-bits cursor/1 scope]
 				unless block? bits [
 					fail ERROR-UNSUPPORTED [
-						"SWITCH values must be integer literals: " mold cursor/1
+						"invalid SWITCH value: " mold cursor/1
 					]
 				]
 				case-patch: emit-switch-case bits/1 bits/2
@@ -2488,13 +2585,17 @@ compiler-rsir-frontend: context [
 
 		switch-patch: (length? instructions) + 13
 		emit instructions reduce [switch-op first-case case-count 0]
+		missing-jump: none
 		if none? default-body [
 			default-target: instruction-here instructions
 			patch-control instructions switch-patch default-target
-			emit instructions reduce [fail-op 101 0 0]
+			missing-jump: emit-control instructions jump-op 0
 		]
 
 		results: make block! ((length? arms) * 4) + 4
+		if integer? missing-jump [
+			repend results [missing-jump 0 0 false]
+		]
 		arm-position: arms
 		while [not tail? arm-position][
 			arm: arm-position/1
@@ -2836,6 +2937,11 @@ compiler-rsir-frontend: context [
 			value = 'switch [
 				next-position: stack-switch position scope uses instructions params locals
 					value-context
+				last-float-literal?: false
+				next-position
+			]
+			value = 'variant? [
+				next-position: stack-variant position scope uses instructions params locals
 				last-float-literal?: false
 				next-position
 			]
@@ -3249,7 +3355,7 @@ compiler-rsir-frontend: context [
 			]
 		]
 
-		unless stack-address target scope uses instructions params locals [
+		unless stack-address/write target scope uses instructions params locals [
 			fail ERROR-REFERENCE ["unknown assignment target " mold target]
 		]
 		target-ref: last-type
@@ -3332,7 +3438,7 @@ compiler-rsir-frontend: context [
 				return static-next
 			]
 		]
-		unless stack-address target scope uses instructions params locals [
+		unless stack-address/write target scope uses instructions params locals [
 			fail ERROR-REFERENCE ["unknown assignment target " mold target]
 		]
 		target-ref: last-type

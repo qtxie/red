@@ -71,6 +71,7 @@ local-ir: allocate 256
 pointer-ir: allocate 128
 arithmetic-ir: allocate 256
 aggregate-ir: allocate 512
+tagged-ir: allocate 384
 branch-ir: allocate 256
 merge-ir: allocate 256
 selection-ir: allocate 256
@@ -78,7 +79,7 @@ header: declare codegen-header!
 fn: declare codegen-function!
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
-	null? aggregate-ir null? branch-ir null? merge-ir
+	null? aggregate-ir null? tagged-ir null? branch-ir null? merge-ir
 	null? selection-ir
 ][quit 1]
 
@@ -336,6 +337,72 @@ if size > 0 [
 	unless execute-selection? output 46 [failures: failures + 1]
 ]
 
+; A tagged union stores its tag before the aligned shared payload. A write
+; marks variant 1 after storing 73; TAG plus the payload must therefore be 74.
+put tagged-ir 0 1
+put tagged-ir 4 0
+put tagged-ir 8 1
+put tagged-ir 12 0
+put tagged-ir 16 1
+put tagged-ir 20 13
+put tagged-ir 24 0
+put tagged-ir 28 0
+
+put tagged-ir 32 -3
+put tagged-ir 36 0
+put tagged-ir 40 1
+put tagged-ir 44 0
+put tagged-ir 48 1
+put tagged-ir 52 -5
+put tagged-ir 56 0
+
+put tagged-ir 60 0
+put tagged-ir 64 2
+put tagged-ir 68 -5
+put tagged-ir 72 0
+put tagged-ir 76 0
+put tagged-ir 80 0
+put tagged-ir 84 0
+put tagged-ir 88 1
+put tagged-ir 92 13
+
+put tagged-ir 96 1
+put tagged-ir 100 1
+
+put-instruction tagged-ir 104 3 1 1 0
+put-instruction tagged-ir 120 6 0 1 0
+put-instruction tagged-ir 136 1 -5 73 0
+put-instruction tagged-ir 152 5 0 0 0
+put-instruction tagged-ir 168 12 0 0 0
+put-instruction tagged-ir 184 3 1 1 0
+put-instruction tagged-ir 200 4 0 0 0
+put-instruction tagged-ir 216 22 0 0 0
+put-instruction tagged-ir 232 3 1 1 0
+put-instruction tagged-ir 248 6 0 0 0
+put-instruction tagged-ir 264 4 0 0 0
+put-instruction tagged-ir 280 15 1 0 0
+put-instruction tagged-ir 296 11 -5 0 0
+tagged-ir/313: as byte! 66h
+tagged-ir/314: as byte! 6Eh
+
+size: x64-codegen/generate tagged-ir 314 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + 44)
+	if fn/frame-size <> 64 [failures: failures + 1]
+	unless execute-selection? output 74 [failures: failures + 1]
+]
+put tagged-ir 40 0
+if (x64-codegen/generate tagged-ir 314 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put tagged-ir 40 1
+put tagged-ir 128 2
+if (x64-codegen/generate tagged-ir 314 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put tagged-ir 128 1
+
 ; fn: func [return: [integer!]][either true [return 7][return 9]]
 put branch-ir 0 1
 put branch-ir 4 0
@@ -517,6 +584,7 @@ free local-ir
 free pointer-ir
 free arithmetic-ir
 free aggregate-ir
+free tagged-ir
 free branch-ir
 free merge-ir
 free selection-ir

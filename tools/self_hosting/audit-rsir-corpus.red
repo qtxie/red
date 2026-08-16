@@ -1,10 +1,19 @@
 Red [
-	Title: "Audit declaration and signature shapes in a Red/System corpus"
+	Title: "Audit loader-expanded Red/System corpus and direct frontend progress"
 ]
 
-current-corpus: clean-path %../../build/self-hosting/compact-hybrid-current.reds
+root: clean-path %../../
+do append copy root %compiler/target-registry.red
+do append copy root %compiler/system-job.red
+do append copy root %compiler/lexer.red
+do append copy root %compiler/system-source.red
+do append copy root %compiler/system-loader.red
+do append copy root %compiler/int-to-bin.red
+do append copy root %compiler/rsir-frontend.red
+
+current-corpus: append copy root %build/self-hosting/compact-hybrid-direct-stream.reds
 source-file: either exists? current-corpus [current-corpus][
-	clean-path %../../build/self-hosting/red-bootstrap-hybrid-thin.reds
+	append copy root %build/self-hosting/red-bootstrap-hybrid-thin.reds
 ]
 if all [block? system/options/args not empty? system/options/args][
 	source-file: clean-path to file! system/options/args/1
@@ -94,7 +103,7 @@ scan-spec: func [
 scan-imports: func [values [block!] /local position][
 	position: values
 	while [not tail? position][
-		if all [
+		either all [
 			set-word? position/1
 			not tail? next position
 			string? position/2
@@ -104,9 +113,10 @@ scan-imports: func [values [block!] /local position][
 			inc counts "import-symbols"
 			scan-spec position/3 false
 			position: skip position 3
+		][
+			if block? position/1 [scan-imports position/1]
+			position: next position
 		]
-		if all [not tail? position block? position/1][scan-imports position/1]
-		position: next position
 	]
 ]
 
@@ -194,16 +204,35 @@ walk: func [
 	]
 ]
 
+job: compiler-system-job/new 'Windows-X86-64
+compiler-system-job/job-set job 'dev-mode? true
+compiler-system-job/job-set job 'red-pass? true
+compiler-system-job/job-set job 'runtime? false
+compiler-system-job/job-set job 'unicode? true
+compiler-system-job/job-set job 'debug? false
+compiler-system-job/job-set job 'opt-level 1
+
+compiler-system-loader/job: job
+compiler-system-loader/connect-compiler-state make block! 32 make block! 32
+compiler-system-loader/init
+
 started: now/time/precise
 source-bytes: read/binary source-file
-source: load/all source-bytes
+source: compiler-system-loader/process source-file
 unless block? source [
-	print ["could not load corpus:" source-file]
+	print [
+		"could not expand corpus:" source-file
+		mold compiler-system-loader/last-error
+	]
 	quit/return 1
 ]
 walk source 0 0
 
-print ["corpus" source-file "bytes" length? source-bytes "load+scan" now/time/precise - started]
+print [
+	"corpus" source-file
+	"bytes" length? source-bytes
+	"expand+scan" now/time/precise - started
+]
 foreach [name count] counts [print [name count]]
 print ["max-args" max-args]
 print ["max-locals" max-locals]
@@ -213,3 +242,47 @@ foreach [name count] argument-counts [print ["arguments" name count]]
 foreach [name count] local-counts [print ["locals" name count]]
 foreach [name count] return-types [print ["return" name count]]
 foreach [name count] types [print ["type" name count]]
+
+started: now/time/precise
+ir: compiler-rsir-frontend/compile source 'glue
+unless all [
+	compiler-rsir-frontend/function-count = select counts "functions"
+	compiler-rsir-frontend/import-count = select counts "import-symbols"
+	((length? compiler-rsir-frontend/contexts) / 2) = select counts "contexts"
+	((length? compiler-rsir-frontend/aliases) / 2) =
+		((select counts "aliases") + select counts "enums")
+][
+	print [
+		"FAIL: direct frontend declaration counts"
+		compiler-rsir-frontend/function-count
+		compiler-rsir-frontend/import-count
+		((length? compiler-rsir-frontend/aliases) / 2)
+		((length? compiler-rsir-frontend/contexts) / 2)
+	]
+	if compiler-rsir-frontend/last-error [
+		print [
+			"frontend error"
+			compiler-rsir-frontend/last-error/code
+			compiler-rsir-frontend/last-error/message
+		]
+	]
+	quit/return 1
+]
+either binary? ir [
+	print ["frontend complete" length? ir "bytes in" now/time/precise - started]
+][
+	print [
+		"frontend stopped after"
+		compiler-rsir-frontend/function-count "functions,"
+		compiler-rsir-frontend/import-count "imports,"
+		((length? compiler-rsir-frontend/aliases) / 2) "aliases,"
+		((length? compiler-rsir-frontend/contexts) / 2) "contexts,"
+		compiler-rsir-frontend/global-count "globals in"
+		now/time/precise - started
+	]
+	print [
+		"frontend error"
+		compiler-rsir-frontend/last-error/code
+		compiler-rsir-frontend/last-error/message
+	]
+]

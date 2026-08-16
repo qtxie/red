@@ -71,6 +71,15 @@ smoke fell from roughly 43 seconds to roughly 7 seconds. These are development
 samples on the same machine and compiler, not final performance gates, but they
 show that deleting the layers reduced real compiler-build work.
 
+For the current declaration-pass increment, regenerating the complete H0
+Red/System corpus with `--red-only` took 16.53 seconds. The focused development
+frontend-plus-routine smoke took 1.11 seconds in the Red frontend, 8.55 seconds
+in native compilation, and 1.16 seconds in linking, producing an 801,792-byte
+executable. Before folding two single-use Red helpers into their callers, the
+same working tree took 13.35 seconds in native compilation and produced
+806,912 bytes. This is why the direct frontend keeps helper functions only when
+they represent reusable work.
+
 ## Data Layout Rule
 
 RSIR is a private in-process format compiled as one source set with its only
@@ -170,29 +179,44 @@ Exit criteria:
 
 ## Phase 2: Real Frontend Core
 
-Status: current major task. Source-order top-level function IDs, duplicate
-detection, retained bodies, a second lowering pass, multi-function native
-traversal, zero/one-argument direct calls, scalar aliases, context-qualified
-names, and `with` resolution scopes are implemented. Complete signatures and
-the rest of the real declaration corpus remain pending.
+Status: current major task. Source-order function, import, and global IDs;
+duplicate detection; retained specs and bodies; a separate lowering pass;
+multi-function native traversal; zero/one-argument direct calls; scalar
+aliases; context-qualified names; and `with` resolution scopes are
+implemented. The declaration pass also scans loader `#script` markers, enum
+constants, struct aliases, import groups, and global assignments without
+serializing data that codegen does not consume yet. Complete types, layouts,
+signatures, initializers, and function bodies remain pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples. A fresh `--red-only` generation of the direct
-hybrid source is 2,906,144 bytes. The structured audit finds 521 defined
-functions, 59 contexts, 378 imported symbols, two aliases, and one enum. Of the
-defined functions, 486 have one parameter, 34 have none, and the routine bridge
-has three; the dominant parameter type is `node-handle!`. Context depth is at
-most two, while functions have up to 55 locals and substantial control flow.
+hybrid source is 2,961,043 bytes. After includes and macros are expanded by the
+real Red/System loader, the structured audit finds 530 defined functions, 62
+contexts, 725 imported symbols, 73 aliases, 14 enums, 4,310 global assignments,
+and 4,262 unique global names. Of the defined functions, 489 have one
+parameter, 34 have none, and seven have two to five; the dominant parameter
+type is `node-handle!`. Context depth is at most two, while functions have up
+to 55 locals and substantial control flow. The direct declaration pass matches
+all independently audited function, context, import, alias, and enum counts in
+about 234 ms under the interpreter after loading, then fails explicitly at the
+unimplemented global-code lowering boundary.
 
 Regenerate and inspect this corpus without native compilation:
 
 ```powershell
 red-bootstrap-ifphi-final-win64-o2-dev.exe --red-only -d -t Windows-X86-64 `
-  -o build\self-hosting\compact-hybrid-current.reds red-bootstrap-windows-hybrid.red
+  -o build\self-hosting\compact-hybrid-direct-stream.reds red-bootstrap-windows-hybrid.red
 D:\EE\QTool\red-console.exe tools\self_hosting\audit-rsir-corpus.red
 ```
 
 ### 2.1 Declarations And Stable IDs
+
+Current checkpoint: declaration discovery traverses the complete current H0
+corpus and assigns function, import, and global IDs. Type declarations are
+registered for name resolution, but their final source-order records and
+layouts belong to 2.2. Global source blocks and import records remain in Red
+frontend state and are rejected before RSIR output until 2.2 and 2.3 define
+their consumed representation.
 
 - scan top-level declarations and contexts without creating an AST copy;
 - maintain qualified-name and local-scope `hash!` tables;

@@ -206,6 +206,52 @@ assert all [
 	(word-at parameter-ir 104) = 2
 ]["one-parameter direct stream changed"]
 
+script-ir: compile-text {
+	Red/System []
+	#script %expanded-source.reds
+	fn: func [][]
+} 'user
+assert script-ir = void-ir "loader script metadata changed RSIR"
+
+declaration-source: {
+	Red/System []
+	#script %expanded-source.reds
+	node-handle!: alias integer!
+	record!: alias struct! [value [integer!]]
+	#enum flags! [FLAG_ZERO FLAG_FOUR: 4 FLAG_FIVE]
+	#import ["fixture.dll" stdcall [
+		native-call: "native-call" [value [integer!] return: [integer!]]
+	]]
+	root-value: 1
+	fn: func [return: [integer!]][1]
+}
+assert none? compile-text declaration-source 'user
+	"frontend silently lowered unsupported declarations"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"declaration scan reported the wrong lowering error"
+assert all [
+	frontend/function-count = 1
+	frontend/import-count = 1
+	frontend/global-count = 1
+	((length? frontend/aliases) / 2) = 3
+	((length? frontend/constants) / 2) = 3
+	(select frontend/constants 'FLAG_ZERO) = 0
+	(select frontend/constants 'FLAG_FOUR) = 4
+	(select frontend/constants 'FLAG_FIVE) = 5
+	(select frontend/import-ids 'native-call) = 1
+	(select frontend/globals 'root-value) = 1
+]["declaration pass stopped before the complete source block"]
+
+assert none? compile-text {
+	Red/System []
+	#import ["fixture.dll" stdcall [native-call: "native-call" [[]]]]
+	fn: func [][]
+} 'user "frontend silently omitted an import"
+assert all [
+	frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	frontend/last-error/message = "import lowering is unsupported"
+] "frontend reported the wrong import-lowering boundary"
+
 assert none? compile-text
 	{Red/System [] fn: func [value [integer!]][]}
 	'user

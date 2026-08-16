@@ -23,8 +23,15 @@ compiler-rsir-frontend: context [
 	functions: make block! 96
 	function-ids: make hash! 48
 	contexts: make hash! 32
-	aliases: make hash! 16
+	aliases: make hash! 128
+	constants: make hash! 256
+	imports: make block! 256
+	import-ids: make hash! 256
+	globals: make hash! 1024
+	global-blocks: make block! 64
 	function-count: 0
+	import-count: 0
+	global-count: 0
 
 	emit: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
@@ -208,10 +215,10 @@ compiler-rsir-frontend: context [
 						unless integer? callee [
 							fail ERROR-REFERENCE ["unknown value or function " mold value]
 						]
-						position: skip functions ((callee - 1) * 6)
-						callee-params: position/6
+						position: skip functions ((callee - 1) * 7)
+						callee-params: position/7
 						unless all [
-							position/2 = 'i32
+							position/6 = 'i32
 							empty? callee-params
 						][
 							fail ERROR-REFERENCE [
@@ -236,10 +243,10 @@ compiler-rsir-frontend: context [
 					unless integer? callee [
 						fail ERROR-REFERENCE ["unknown function " mold value]
 					]
-					position: skip functions ((callee - 1) * 6)
-					callee-params: position/6
+					position: skip functions ((callee - 1) * 7)
+					callee-params: position/7
 					unless all [
-						position/2 = 'i32
+						position/6 = 'i32
 						(length? callee-params) = 2
 					][
 						fail ERROR-REFERENCE [
@@ -277,94 +284,160 @@ compiler-rsir-frontend: context [
 		((length? instructions) - before) / 16
 	]
 
-	compile-function: func [
-		name [set-word!]
-		spec body [block!]
-		scope uses [block!]
-		/local kind params spelling key id position item type param-name
+	scan-enum: func [
+		name [word!]
+		values scope [block!]
+		/local key position item value constant-key
 	][
-		key: qualified scope to word! name
-		spelling: form key
-		unless valid-name? spelling [
-			fail ERROR-NAME "invalid RSIR function name"
-		]
-		if select function-ids key [
-			fail ERROR-DUPLICATE ["duplicate function " mold key]
-		]
-		kind: 'void
-		params: make block! 2
-		position: spec
+		key: qualified scope name
+		if select aliases key [fail ERROR-DUPLICATE ["duplicate type " mold key]]
+		repend aliases [key 'i32]
+		value: 0
+		position: values
 		while [not tail? position][
 			item: position/1
 			case [
-				all [
-					set-word? item
-					item = to set-word! 'return
-					(length? position) >= 2
-					block? position/2
-				][
-					unless kind: type-kind position/2 scope uses [
-						fail ERROR-UNSUPPORTED "unsupported function return type"
+				word? item [position: next position]
+				all [set-word? item (length? position) >= 2][
+					item: to word! item
+					case [
+						integer? position/2 [value: position/2]
+						word? position/2 [
+							constant-key: qualified scope position/2
+							unless integer? value: select constants constant-key [
+								fail ERROR-REFERENCE [
+									"unknown enum value " mold position/2
+								]
+							]
+						]
+						true [fail ERROR-UNSUPPORTED "invalid enum value"]
 					]
 					position: skip position 2
 				]
-				all [
-					word? item
-					(length? position) >= 2
-					block? position/2
-				][
-					param-name: item
-					unless type: type-kind position/2 scope uses [
-						fail ERROR-UNSUPPORTED "unsupported parameter type"
-					]
-					if find/skip params param-name 2 [
-						fail ERROR-UNSUPPORTED "duplicate function parameter"
-					]
-					repend params [param-name type]
-					position: skip position 2
-				]
-				true [fail ERROR-UNSUPPORTED "function signature is unsupported"]
+				true [fail ERROR-UNSUPPORTED "invalid enum declaration"]
 			]
+			constant-key: qualified scope item
+			if select constants constant-key [
+				fail ERROR-DUPLICATE ["duplicate enum name " mold constant-key]
+			]
+			repend constants [constant-key value]
+			value: value + 1
 		]
-		if any [
-			((length? params) / 2) > 1
-			all [kind = 'void not empty? params]
-		][fail ERROR-UNSUPPORTED "function signature is unsupported"]
-		id: function-count + 1
-		repend function-ids [key id]
-		append/only functions to binary! spelling
-		append functions kind
-		append/only functions body
-		append/only functions copy scope
-		append/only functions copy/deep uses
-		append/only functions params
-		function-count: id
+	]
+
+	scan-imports: func [
+		definitions scope [block!]
+		/local position library cc entries entry name key external spec kind id
+	][
+		position: definitions
+		while [not tail? position][
+			unless all [
+				(length? position) >= 3
+				string? position/1
+				find [cdecl stdcall] position/2
+				block? position/3
+			][fail ERROR-UNSUPPORTED "invalid import group"]
+			library: position/1
+			cc: position/2
+			entries: position/3
+			entry: entries
+			while [not tail? entry][
+				unless all [
+					(length? entry) >= 3
+					set-word? entry/1
+					string? entry/2
+					block? entry/3
+				][fail ERROR-UNSUPPORTED "invalid import declaration"]
+				name: to word! entry/1
+				key: qualified scope name
+				if any [select import-ids key select function-ids key][
+					fail ERROR-DUPLICATE ["duplicate import " mold key]
+				]
+				external: entry/2
+				spec: entry/3
+				kind: either any [
+					all [(length? spec) = 1 not block? spec/1]
+					all [
+						(length? spec) = 2
+						find [pointer! struct!] spec/1
+						block? spec/2
+					]
+				]['variable]['function]
+				id: import-count + 1
+				repend import-ids [key id]
+				append imports key
+				append/only imports library
+				append/only imports external
+				append imports cc
+				append/only imports spec
+				append imports kind
+				import-count: id
+				entry: skip entry 3
+			]
+			position: skip position 3
+		]
 	]
 
 	scan-block: func [
 		values scope uses [block!]
-		/local position name spec body child key kind target next-uses
+		/local position name spec body child key kind target next-uses code?
+			spelling id
 	][
+		code?: false
 		position: values
 		while [not tail? position][
 			case [
 				all [
+					issue? position/1
+					position/1 = #script
+					(length? position) >= 2
+					file? position/2
+				][position: skip position 2]
+				all [issue? position/1 position/1 = #user-code][
+					code?: true
+					position: next position
+				]
+				all [
+					issue? position/1
+					position/1 = #enum
+					(length? position) >= 3
+					word? position/2
+					block? position/3
+				][
+					scan-enum position/2 position/3 scope
+					position: skip position 3
+				]
+				all [
+					issue? position/1
+					position/1 = #import
+					(length? position) >= 2
+					block? position/2
+				][
+					scan-imports position/2 scope
+					position: skip position 2
+				]
+				all [
 					set-word? position/1
 					(length? position) >= 3
 					position/2 = 'alias
-					any [word? position/3 path? position/3]
 				][
 					key: qualified scope to word! position/1
 					if select aliases key [
 						fail ERROR-DUPLICATE ["duplicate alias " mold key]
 					]
-					unless kind: type-kind reduce [position/3] scope uses [
-						fail ERROR-UNSUPPORTED [
-							"unsupported alias target " mold position/3
+					case [
+						all [
+							find [struct! union!] position/3
+							(length? position) >= 4
+							block? position/4
+						][kind: 'pointer position: skip position 4]
+						any [word? position/3 path? position/3][
+							kind: any [type-kind reduce [position/3] scope uses 'other]
+							position: skip position 3
 						]
+						true [fail ERROR-UNSUPPORTED "invalid alias declaration"]
 					]
 					repend aliases [key kind]
-					position: skip position 3
 				]
 				all [
 					set-word? position/1
@@ -376,7 +449,24 @@ compiler-rsir-frontend: context [
 					name: position/1
 					spec: position/3
 					body: position/4
-					compile-function name spec body scope uses
+					key: qualified scope to word! name
+					spelling: form key
+					unless valid-name? spelling [
+						fail ERROR-NAME "invalid RSIR function name"
+					]
+					if any [select function-ids key select import-ids key][
+						fail ERROR-DUPLICATE ["duplicate function " mold key]
+					]
+					id: function-count + 1
+					repend function-ids [key id]
+					append/only functions to binary! spelling
+					append/only functions spec
+					append/only functions body
+					append/only functions copy scope
+					append/only functions copy/deep uses
+					append functions none
+					append functions none
+					function-count: id
 					position: skip position 4
 				]
 				all [
@@ -410,11 +500,22 @@ compiler-rsir-frontend: context [
 					scan-block position/3 scope next-uses
 					position: skip position 3
 				]
-				true [
-					fail ERROR-UNSUPPORTED
-						"RSIR frontend requires function or context declarations"
+				set-word? position/1 [
+					key: qualified scope to word! position/1
+					unless select globals key [
+						global-count: global-count + 1
+						repend globals [key global-count]
+					]
+					code?: true
+					position: next position
 				]
+				true [code?: true position: next position]
 			]
+		]
+		if code? [
+			append/only global-blocks values
+			append/only global-blocks copy scope
+			append/only global-blocks copy/deep uses
 		]
 	]
 
@@ -431,6 +532,9 @@ compiler-rsir-frontend: context [
 		]
 
 		scan-block skip source 2 copy [] copy []
+		unless empty? global-blocks [
+			fail ERROR-UNSUPPORTED "global code lowering is unsupported"
+		]
 		if function-count < 1 [
 			fail ERROR-FUNCTION-COUNT "RSIR module has no function"
 		]
@@ -438,8 +542,61 @@ compiler-rsir-frontend: context [
 
 	write-rsir: func [limit [integer!] /local output position name kind body
 		scope uses params name-offset record-offset param-count signature count
-		instruction-count size entry id
+		instruction-count size entry id record spec spec-position item type param-name
 	][
+		record: functions
+		while [not tail? record][
+			spec: record/2
+			scope: record/4
+			uses: record/5
+			kind: 'void
+			params: make block! 2
+			spec-position: spec
+			while [not tail? spec-position][
+				item: spec-position/1
+				case [
+					all [
+						set-word? item
+						item = to set-word! 'return
+						(length? spec-position) >= 2
+						block? spec-position/2
+					][
+						unless kind: type-kind spec-position/2 scope uses [
+							fail ERROR-UNSUPPORTED "unsupported function return type"
+						]
+						spec-position: skip spec-position 2
+					]
+					all [
+						word? item
+						(length? spec-position) >= 2
+						block? spec-position/2
+					][
+						param-name: item
+						unless type: type-kind spec-position/2 scope uses [
+							fail ERROR-UNSUPPORTED "unsupported parameter type"
+						]
+						if find/skip params param-name 2 [
+							fail ERROR-UNSUPPORTED "duplicate function parameter"
+						]
+						repend params [param-name type]
+						spec-position: skip spec-position 2
+					]
+					true [fail ERROR-UNSUPPORTED "function signature is unsupported"]
+				]
+			]
+			unless any [
+				all [kind = 'void empty? params]
+				all [
+					kind = 'i32
+					((length? params) / 2) <= 1
+					any [empty? params params/2 = 'i32]
+				]
+			][fail ERROR-UNSUPPORTED "function signature is unsupported"]
+			record/6: kind
+			record/7: params
+			record: skip record 7
+		]
+
 		output: make binary! (16 + (function-count * 80))
 		append/dup output 0 (16 + (function-count * 16))
 		position: functions
@@ -448,11 +605,11 @@ compiler-rsir-frontend: context [
 		id: 1
 		while [not tail? position][
 			name: position/1
-			kind: position/2
+			kind: position/6
 			body: position/3
 			scope: position/4
 			uses: position/5
-			params: position/6
+			params: position/7
 			param-count: (length? params) / 2
 			signature: case [
 				kind = 'void [0]                       ; () -> void
@@ -472,13 +629,13 @@ compiler-rsir-frontend: context [
 			name-offset: name-offset + (length? name)
 			instruction-count: instruction-count + count
 			id: id + 1
-			position: skip position 6
+			position: skip position 7
 		]
 
 		position: functions
 		while [not tail? position][
 			append output position/1
-			position: skip position 6
+			position: skip position 7
 		]
 		size: length? output
 		if any [limit <= 0 size > limit] [
@@ -514,8 +671,18 @@ compiler-rsir-frontend: context [
 			clear function-ids
 			clear contexts
 			clear aliases
+			clear constants
+			clear imports
+			clear import-ids
+			clear globals
+			clear global-blocks
 			function-count: 0
+			import-count: 0
+			global-count: 0
 			compile-source source
+			if import-count > 0 [
+				fail ERROR-UNSUPPORTED "import lowering is unsupported"
+			]
 			write-rsir any [max-bytes DEFAULT-MAX-BYTES]
 		] 'rsir-error
 		either same? result last-error [none][result]

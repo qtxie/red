@@ -89,10 +89,13 @@ x64-codegen: context [
 	OUTPUT_FULL: -3
 
 	align: func [value boundary [integer!] return: [integer!]
-		/local remainder [integer!]
+		/local remainder padding [integer!]
 	][
+		if any [value < 0 boundary <= 0][return -1]
 		remainder: value // boundary
-		either remainder = 0 [value][value + (boundary - remainder)]
+		if remainder = 0 [return value]
+		padding: boundary - remainder
+		either value > (2147483647 - padding) [-1][value + padding]
 	]
 
 	valid-type-ref?: func [
@@ -130,6 +133,96 @@ x64-codegen: context [
 		false
 	]
 
+	layout-type: func [
+		ref [integer!]
+		inline? [logic!]
+		types fields [byte-ptr!]
+		type-count depth [integer!]
+		size-out align-out [int-ptr!]
+		return: [logic!]
+		/local record prior [rsir-type!]
+			field [rsir-field!]
+			kind id field-index member-size member-align size alignment [integer!]
+	][
+		if any [ref = 0 depth > type-count][return false]
+		kind: 0
+		either ref < 0 [
+			kind: 0 - ref
+		][
+			if ref > type-count [return false]
+			record: as rsir-type! (types + ((ref - 1) * RSIR_TYPE_SIZE))
+			kind: record/kind
+		]
+
+		if kind > 0 [
+			size: case [
+				kind <= 2 [1]
+				kind <= 4 [2]
+				any [kind = 5 kind = 6 kind = 9 kind = 11][4]
+				any [kind = 7 kind = 8 kind = 10 kind = 12][8]
+				true [0]
+			]
+			if size = 0 [return false]
+			size-out/1: size
+			align-out/1: size
+			return true
+		]
+
+		if kind = -1 [
+			return layout-type record/target inline? types fields type-count
+				(depth + 1) size-out align-out
+		]
+		if any [kind = -4 kind = -5][
+			size-out/1: 8
+			align-out/1: 8
+			return true
+		]
+		unless any [kind = -2 kind = -3][return false]
+		unless inline? [
+			size-out/1: 8
+			align-out/1: 8
+			return true
+		]
+
+		field-index: 0
+		id: 1
+		while [id < ref][
+			prior: as rsir-type! (types + ((id - 1) * RSIR_TYPE_SIZE))
+			field-index: field-index + prior/member-count
+			id: id + 1
+		]
+		size: 0
+		alignment: 1
+		id: 0
+		while [id < record/member-count][
+			field: as rsir-field! (fields
+				+ ((field-index + id) * RSIR_FIELD_SIZE))
+			member-size: 0
+			member-align: 0
+			unless layout-type field/type (field/flags = 1) types fields
+				type-count (depth + 1) :member-size :member-align [
+				return false
+			]
+			if member-align > alignment [alignment: member-align]
+			either kind = -2 [
+				size: align size member-align
+				if any [
+					size < 0
+					size > (2147483647 - member-size)
+				][return false]
+				size: size + member-size
+			][
+				if member-size > size [size: member-size]
+			]
+			id: id + 1
+		]
+		size: align size alignment
+		if size < 0 [return false]
+		size-out/1: size
+		align-out/1: alignment
+		true
+	]
+
 	shape-of: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
@@ -164,6 +257,7 @@ x64-codegen: context [
 				fn/instruction-count = 2
 				any [
 					instruction/opcode = 1
+					instruction/opcode = 5
 					all [instruction/opcode = 4 instruction/immediate = 0]
 				]
 			][
@@ -180,6 +274,11 @@ x64-codegen: context [
 						instruction/opcode = 1
 						instruction/result = (parameter-count + 1)
 						instruction/operand = 0
+					][x64-encoder/I32_LITERAL]
+					all [
+						instruction/opcode = 5
+						instruction/result = (parameter-count + 1)
+						instruction/immediate = 0
 					][x64-encoder/I32_LITERAL]
 					all [
 						instruction/opcode = 4
@@ -445,9 +544,15 @@ x64-codegen: context [
 			][return INVALID_IR]
 			function-instructions: instruction-data
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
+			instruction: as rsir-instruction! function-instructions
 			shape: shape-of ir-function function-instructions
 				function-data header/function-count
 			if shape < 0 [return shape]
+			if all [
+				shape = x64-encoder/I32_LITERAL
+				instruction/opcode = 5
+				not valid-type-ref? instruction/operand header/type-count
+			][return INVALID_IR]
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			image-function/frame-size: shape
@@ -593,8 +698,18 @@ x64-codegen: context [
 				call-instruction: as rsir-instruction!
 					(function-instructions + RSIR_INSTRUCTION_SIZE)
 			]
+			value: 0
+			argument: 0
 			value: case [
-				shape = x64-encoder/I32_LITERAL [instruction/immediate]
+				shape = x64-encoder/I32_LITERAL [
+					either instruction/opcode = 5 [
+						unless layout-type instruction/operand true type-data field-data
+							header/type-count 0 :value :argument [
+							return INVALID_IR
+						]
+						value
+					][instruction/immediate]
+				]
 				any [
 					shape = x64-encoder/I32_CALL
 					shape = x64-encoder/I32_CALL_ARG_LITERAL

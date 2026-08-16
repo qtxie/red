@@ -51,7 +51,10 @@ explicit context paths, and `with` lookup scopes resolve to the same
 architecture and multi-function traversal; it does not define a smaller H0.
 All current aliases and enums receive source-order logical type IDs. The
 frontend writes only their logical kinds, references, member counts, and
-by-value flags; target sizes and offsets are deliberately absent.
+by-value flags; target sizes and offsets are deliberately absent. `size?` now
+writes the logical type reference as an instruction operand. Windows x64
+codegen computes the consumed scalar, pointer, plain-struct, and plain-union
+layout directly and passes the resulting size to the existing integer encoder.
 
 - `compiler/rsir-frontend.red` parses and writes RSIR directly.
 - `compiler/codegen-bridge.red` contains only the `routine!` declaration.
@@ -90,6 +93,14 @@ Red took 13.238 seconds and produced 915,456 bytes with the same command. It was
 removed: target layout belongs in Red/System codegen, both for a
 backend-independent IR and for a smaller, faster-to-build Red closure.
 
+The first native layout consumer builds the expanded focused routine smoke in
+13.156 seconds and produces a 926,720-byte development executable. The test
+itself now contains six layout functions, so this is a functional checkpoint,
+not a like-for-like compiler-build speed comparison. At runtime it verifies
+Win64 pointer, scalar alias, nested by-value struct, pointer-member struct,
+plain union, and recursive-pointer struct sizes; a recursive by-value struct is
+rejected without committing output.
+
 ## Data Layout Rule
 
 RSIR is a private in-process format compiled as one source set with its only
@@ -119,6 +130,9 @@ Members are contiguous in source type order; codegen derives each first member
 by accumulating the preceding counts. Positive type references are source-order
 user type IDs and negative references are the twelve built-in logical kinds.
 No type/member names or target size/alignment/offset values cross the boundary.
+The `size?` instruction carries only one of those logical references; its
+target value is calculated once in native codegen when the integer machine
+instruction is written.
 The three currently implemented signatures are direct integer values; there is
 no signature registry. A one-argument call stores its argument value ID in the
 call instruction itself; there is no parameter or operand section. Function
@@ -202,8 +216,11 @@ aliases; source-order logical type records; context-qualified names; and `with`
 resolution scopes are implemented. The declaration pass also scans loader
 `#script` markers, enum constants, aggregate and function aliases, import
 groups, and global assignments. The direct logical type/member stream and its
-native bounds/kind validation are implemented. Native layouts, complete
-signatures, initializers, and function bodies remain pending.
+native bounds/kind validation are implemented. Basic Windows x64 scalar,
+pointer, alias, plain-struct, and plain-union size/alignment is implemented and
+consumed by `size?`. Member access, arrays, tagged unions, explicit aggregate
+alignment, complete signatures, initializers, and function bodies remain
+pending.
 
 The implementation order is driven by the actual generated self-host source,
 not isolated language examples. A fresh `--red-only` generation of the direct
@@ -252,7 +269,9 @@ resolve every referenced name, while bodies may still fail as unsupported.
 ### 2.2 Types And Layout
 
 Current checkpoint: logical type/member serialization and native structural
-validation are complete for the current H0 corpus. Target layout remains next.
+validation are complete for the current H0 corpus. Native codegen computes the
+basic Win64 layout forms on demand, and `size?` is their first machine-code
+consumer. This does not yet complete the layout gate.
 
 - write only logical type/member records that native codegen consumes, directly
   into the compact RSIR order; do not add a schema, section directory, or

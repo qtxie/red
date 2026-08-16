@@ -137,6 +137,66 @@ check (codegen-module typed-ir typed-image 0) = 0
 check typed-image = user-i32
 	"unused logical type records changed native code"
 
+layout-source: [
+	Red/System []
+	byte-alias!: alias byte!
+	small!: alias struct! [
+		mark [byte-alias!]
+		count [integer!]
+		wide [uint64!]
+	]
+	nested!: alias struct! [
+		head [byte!]
+		sub [small! value]
+		tail [uint16!]
+	]
+	refs!: alias struct! [
+		sub [small!]
+		ptr [pointer! [integer!]]
+	]
+	choice!: alias union! [
+		small [small! value]
+		wide [uint64!]
+	]
+	node!: alias struct! [next [node!]]
+	pointer-size: func [return: [integer!]][size? pointer! [integer!]]
+	small-size: func [return: [integer!]][size? small!]
+	nested-size: func [return: [integer!]][size? nested!]
+	refs-size: func [return: [integer!]][size? refs!]
+	choice-size: func [return: [integer!]][size? choice!]
+	node-size: func [return: [integer!]][size? node!]
+]
+layout-ir: compiler-rsir-frontend/compile layout-source 'user
+check binary? layout-ir ["frontend rejected native layout source: "
+	mold compiler-rsir-frontend/last-error]
+layout-image: make binary! 4096
+check (codegen-module layout-ir layout-image 0) = 0
+	"native layout codegen failed"
+expected-sizes: [8 16 32 16 16 8]
+code-base: word-at layout-image 28
+repeat id length? expected-sizes [
+	record: 40 + ((id - 1) * 36)
+	code-offset: word-at layout-image (record + 8)
+	actual-size: word-at layout-image (code-base + code-offset + 16)
+	check actual-size = expected-sizes/:id [
+		"native layout mismatch for function " id
+		": code-offset=" code-offset
+		" expected=" expected-sizes/:id
+		" actual=" actual-size
+	]
+]
+
+cyclic-layout-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	loop!: alias struct! [self [loop! value]]
+	fn: func [return: [integer!]][size? loop!]
+] 'user
+check binary? cyclic-layout-ir "frontend rejected logical by-value cycle too early"
+artifact: make binary! 4096
+check (codegen-module cyclic-layout-ir artifact 0) = 2
+	"native layout accepted a recursive by-value aggregate"
+check empty? artifact "recursive by-value layout committed bytes"
+
 bad-type: copy typed-ir
 change/part at bad-type 21 int-to-bin/to-bin32 -99 4
 artifact: make binary! 4096

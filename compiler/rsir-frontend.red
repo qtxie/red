@@ -231,7 +231,7 @@ compiler-rsir-frontend: context [
 		scope uses [block!]
 		instructions [binary!]
 		params [block!]
-		/local expression value callee position callee-params argument
+		/local expression value callee position callee-params argument type ref
 			param-count argument-id result-id before
 	][
 		before: length? instructions
@@ -245,6 +245,25 @@ compiler-rsir-frontend: context [
 			param-count: (length? params) / 2
 			result-id: 0
 			case [
+				all [not empty? expression expression/1 = 'size?][
+					unless any [
+						all [
+							(length? expression) = 2
+							any [word? expression/2 path? expression/2]
+						]
+						all [
+							(length? expression) = 3
+							expression/2 = 'pointer!
+							block? expression/3
+						]
+					][fail ERROR-UNSUPPORTED "size? requires a logical type"]
+					type: copy next expression
+					ref: type-ref type scope uses
+					result-id: param-count + 1
+					emit instructions reduce [
+						5 result-id ref 0                     ; target size
+					]
+				]
 				(length? expression) = 1 [
 					value: expression/1
 					if all [

@@ -296,6 +296,51 @@ assert all [
 	(select frontend/constants 'CHOICE_FIVE) = 5
 ] "logical type declarations or aliases changed"
 
+layout-ir: compile-text {
+	Red/System []
+	byte-alias!: alias byte!
+	small!: alias struct! [
+		mark [byte-alias!]
+		count [integer!]
+		wide [uint64!]
+	]
+	fn: func [return: [integer!]][size? small!]
+} 'user
+assert binary? layout-ir ["frontend rejected size?: " mold frontend/last-error]
+assert all [
+	(length? layout-ir) = 118
+	(word-at layout-ir 8) = 2
+	(word-at layout-ir 16) = 2
+	(word-at layout-ir 20) = -1
+	(word-at layout-ir 24) = -2
+	(word-at layout-ir 32) = -2
+	(word-at layout-ir 40) = 3
+	(word-at layout-ir 84) = 5
+	(word-at layout-ir 88) = 1
+	(word-at layout-ir 92) = 2
+	(word-at layout-ir 96) = 0
+	(word-at layout-ir 100) = 3
+	(word-at layout-ir 108) = 1
+] "size? did not keep target layout behind a logical type reference"
+
+pointer-size-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!]][size? pointer! [integer!]]
+} 'user
+assert all [
+	binary? pointer-size-ir
+	(length? pointer-size-ir) = 70
+	(word-at pointer-size-ir 36) = 5
+	(word-at pointer-size-ir 44) = -12
+] "parameterized pointer size? did not use the builtin logical type"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [return: [integer!]][size? 1]
+} 'user "frontend accepted a non-type size? operand"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"frontend reported the wrong size? operand error"
+
 recursive-ir: compile-text {
 	Red/System []
 	node-ref!: alias node!

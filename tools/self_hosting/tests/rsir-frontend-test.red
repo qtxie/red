@@ -36,27 +36,28 @@ compile-text: func [
 void-ir: compile-text {Red/System [] fn: func [][]} 'user
 assert binary? void-ir ["frontend rejected void function: " mold frontend/last-error]
 assert none? frontend/last-error "frontend retained an error after success"
-assert (length? void-ir) = 66 "void RSIR is not compact"
+assert (length? void-ir) = 70 "void RSIR is not compact"
 assert all [
 	(word-at void-ir 0) = 1
 	(word-at void-ir 4) = 0
 	(word-at void-ir 8) = 0
-	(word-at void-ir 12) = 1
+	(word-at void-ir 12) = 0
 	(word-at void-ir 16) = 1
+	(word-at void-ir 20) = 1
 ]["void RSIR header changed"]
 assert all [
-	(word-at void-ir 20) = 0
-	(word-at void-ir 24) = 2
-	(word-at void-ir 28) = 0
+	(word-at void-ir 24) = 0
+	(word-at void-ir 28) = 2
 	(word-at void-ir 32) = 0
 	(word-at void-ir 36) = 0
 	(word-at void-ir 40) = 0
-	(word-at void-ir 44) = 1
-	(word-at void-ir 48) = 2
-	(word-at void-ir 52) = 0
+	(word-at void-ir 44) = 0
+	(word-at void-ir 48) = 1
+	(word-at void-ir 52) = 2
 	(word-at void-ir 56) = 0
 	(word-at void-ir 60) = 0
-	(copy at void-ir 65) = #{666E}
+	(word-at void-ir 64) = 0
+	(copy at void-ir 69) = #{666E}
 ]["void function stream changed"]
 assert void-ir = compile-text {Red/System [] fn: function [][]} 'user
 	"func and function produced different RSIR"
@@ -67,18 +68,18 @@ assert all [(word-at glue-ir 0) = 3 (word-at glue-ir 4) = 1]
 
 i32-ir: compile-text {Red/System [] fn: func [return: [integer!]][7]} 'user
 assert binary? i32-ir "frontend rejected i32 literal"
-assert (length? i32-ir) = 82 "i32 RSIR is not compact"
+assert (length? i32-ir) = 86 "i32 RSIR is not compact"
 assert all [
-	(word-at i32-ir 16) = 2
-	(word-at i32-ir 28) = -5
-	(word-at i32-ir 32) = 0
-	(word-at i32-ir 40) = 0
-	(word-at i32-ir 44) = 2
-	(word-at i32-ir 48) = 1
+	(word-at i32-ir 20) = 2
+	(word-at i32-ir 32) = -5
+	(word-at i32-ir 36) = 0
+	(word-at i32-ir 44) = 0
+	(word-at i32-ir 48) = 2
 	(word-at i32-ir 52) = 1
-	(word-at i32-ir 60) = 7
-	(word-at i32-ir 64) = 3
-	(word-at i32-ir 72) = 1
+	(word-at i32-ir 56) = 1
+	(word-at i32-ir 64) = 7
+	(word-at i32-ir 68) = 3
+	(word-at i32-ir 76) = 1
 ]["i32 literal/return stream changed"]
 assert i32-ir = compile-text
 	{Red/System [] fn: func [return: [int32!]][return 7]}
@@ -101,28 +102,29 @@ multi-ir: compile-text {
 	main: func [return: [integer!]][helper]
 } 'glue
 assert binary? multi-ir ["frontend rejected direct call: " mold frontend/last-error]
-assert (length? multi-ir) = 150 "multi-function RSIR size changed"
+assert (length? multi-ir) = 154 "multi-function RSIR size changed"
 assert all [
 	(word-at multi-ir 0) = 3
 	(word-at multi-ir 4) = 2
 	(word-at multi-ir 8) = 0
-	(word-at multi-ir 12) = 2
-	(word-at multi-ir 16) = 4
-	(word-at multi-ir 20) = 0
-	(word-at multi-ir 24) = 6
-	(word-at multi-ir 28) = -5
-	(word-at multi-ir 44) = 2
-	(word-at multi-ir 48) = 6
-	(word-at multi-ir 52) = 4
-	(word-at multi-ir 56) = -5
-	(word-at multi-ir 72) = 2
+	(word-at multi-ir 12) = 0
+	(word-at multi-ir 16) = 2
+	(word-at multi-ir 20) = 4
+	(word-at multi-ir 24) = 0
+	(word-at multi-ir 28) = 6
+	(word-at multi-ir 32) = -5
+	(word-at multi-ir 48) = 2
+	(word-at multi-ir 52) = 6
+	(word-at multi-ir 56) = 4
+	(word-at multi-ir 60) = -5
+	(word-at multi-ir 76) = 2
 ]["multi-function header or records changed"]
 assert all [
-	(word-at multi-ir 76) = 1
-	(word-at multi-ir 88) = 41
-	(word-at multi-ir 108) = 4
-	(word-at multi-ir 116) = 1
-	(copy at multi-ir 141) = #{68656C7065726D61696E}
+	(word-at multi-ir 80) = 1
+	(word-at multi-ir 92) = 41
+	(word-at multi-ir 112) = 4
+	(word-at multi-ir 120) = 1
+	(copy at multi-ir 145) = #{68656C7065726D61696E}
 ]["literal/call lowering or function names changed"]
 
 forward-ir: compile-text {
@@ -131,7 +133,7 @@ forward-ir: compile-text {
 	helper: func [return: [integer!]][41]
 } 'user
 assert binary? forward-ir "frontend did not resolve a forward function call"
-assert (word-at forward-ir 84) = 2 "forward call has the wrong function ID"
+assert (word-at forward-ir 88) = 2 "forward call has the wrong function ID"
 
 assert none? compile-text {
 	Red/System []
@@ -151,17 +153,18 @@ context-ir: compile-text {
 } 'glue
 assert binary? context-ir ["frontend rejected context calls: " mold frontend/last-error]
 assert all [
-	(length? context-ir) = 236
+	(length? context-ir) = 240
 	(word-at context-ir 4) = 3
 	(word-at context-ir 8) = 0
-	(word-at context-ir 12) = 3
-	(word-at context-ir 16) = 6
-	(word-at context-ir 20) = 0
-	(word-at context-ir 48) = 16
-	(word-at context-ir 76) = 32
-	(word-at context-ir 144) = 1
-	(word-at context-ir 176) = 2
-	(copy at context-ir 201) =
+	(word-at context-ir 12) = 0
+	(word-at context-ir 16) = 3
+	(word-at context-ir 20) = 6
+	(word-at context-ir 24) = 0
+	(word-at context-ir 52) = 16
+	(word-at context-ir 80) = 32
+	(word-at context-ir 148) = 1
+	(word-at context-ir 180) = 2
+	(copy at context-ir 205) =
 		#{7175616C69666965643E68656C7065727175616C69666965643E696E736964656D61696E}
 ]["context naming, resolution, or source-order IDs changed"]
 
@@ -180,13 +183,13 @@ with-ir: compile-text {
 } 'glue
 assert binary? with-ir ["frontend rejected WITH resolution: " mold frontend/last-error]
 assert all [
-	(length? with-ir) = 221
-	(word-at with-ir 12) = 3
-	(word-at with-ir 24) = 11
-	(word-at with-ir 52) = 6
-	(word-at with-ir 144) = 1
-	(word-at with-ir 176) = 2
-	(copy at with-ir 201) = #{626173653E68656C706572696E736964656D61696E}
+	(length? with-ir) = 225
+	(word-at with-ir 16) = 3
+	(word-at with-ir 28) = 11
+	(word-at with-ir 56) = 6
+	(word-at with-ir 148) = 1
+	(word-at with-ir 180) = 2
+	(copy at with-ir 205) = #{626173653E68656C706572696E736964656D61696E}
 ]["WITH changed declaration scope or imported-name resolution"]
 
 parameter-ir: compile-text {
@@ -197,34 +200,34 @@ parameter-ir: compile-text {
 } 'glue
 assert binary? parameter-ir ["frontend rejected scalar alias parameter: " mold frontend/last-error]
 assert all [
-	(length? parameter-ir) = 178
+	(length? parameter-ir) = 182
 	(word-at parameter-ir 8) = 1
-	(word-at parameter-ir 16) = 4
-	(word-at parameter-ir 20) = -1
-	(word-at parameter-ir 24) = -5
-	(word-at parameter-ir 28) = 0
-	(word-at parameter-ir 36) = 0
+	(word-at parameter-ir 20) = 4
+	(word-at parameter-ir 24) = -1
+	(word-at parameter-ir 28) = -5
+	(word-at parameter-ir 32) = 0
 	(word-at parameter-ir 40) = 0
-	(word-at parameter-ir 44) = 6
-	(word-at parameter-ir 48) = -5
-	(word-at parameter-ir 56) = 0
-	(word-at parameter-ir 60) = 1
+	(word-at parameter-ir 44) = 0
+	(word-at parameter-ir 48) = 6
+	(word-at parameter-ir 52) = -5
+	(word-at parameter-ir 60) = 0
 	(word-at parameter-ir 64) = 1
-	(word-at parameter-ir 68) = 6
-	(word-at parameter-ir 84) = 1
-	(word-at parameter-ir 88) = 0
-	(word-at parameter-ir 92) = 3
-	(word-at parameter-ir 96) = 1
-	(word-at parameter-ir 104) = 3
-	(word-at parameter-ir 112) = 1
-	(word-at parameter-ir 120) = 1
-	(word-at parameter-ir 132) = 42
-	(word-at parameter-ir 136) = 4
-	(word-at parameter-ir 140) = 2
-	(word-at parameter-ir 144) = 1
+	(word-at parameter-ir 68) = 1
+	(word-at parameter-ir 72) = 6
+	(word-at parameter-ir 88) = 1
+	(word-at parameter-ir 92) = 0
+	(word-at parameter-ir 96) = 3
+	(word-at parameter-ir 100) = 1
+	(word-at parameter-ir 108) = 3
+	(word-at parameter-ir 116) = 1
+	(word-at parameter-ir 124) = 1
+	(word-at parameter-ir 136) = 42
+	(word-at parameter-ir 140) = 4
+	(word-at parameter-ir 144) = 2
 	(word-at parameter-ir 148) = 1
-	(word-at parameter-ir 152) = 3
-	(word-at parameter-ir 160) = 2
+	(word-at parameter-ir 152) = 1
+	(word-at parameter-ir 156) = 3
+	(word-at parameter-ir 164) = 2
 ]["one-parameter direct stream changed"]
 
 logical-types-ir: compile-text {
@@ -252,37 +255,38 @@ assert binary? logical-types-ir [
 ]
 assert frontend/type-count = 5 "type declarations lost source-order IDs"
 assert all [
-	(length? logical-types-ir) = 230
+	(length? logical-types-ir) = 234
 	(word-at logical-types-ir 8) = 5
-	(word-at logical-types-ir 12) = 1
+	(word-at logical-types-ir 12) = 0
 	(word-at logical-types-ir 16) = 1
-	(word-at logical-types-ir 20) = -1
-	(word-at logical-types-ir 24) = -2
-	(word-at logical-types-ir 32) = 0
+	(word-at logical-types-ir 20) = 1
+	(word-at logical-types-ir 24) = -1
+	(word-at logical-types-ir 28) = -2
 	(word-at logical-types-ir 36) = 0
-	(word-at logical-types-ir 40) = -2
-	(word-at logical-types-ir 52) = 0
-	(word-at logical-types-ir 56) = 3
-	(word-at logical-types-ir 60) = -2
-	(word-at logical-types-ir 72) = 3
+	(word-at logical-types-ir 40) = 0
+	(word-at logical-types-ir 44) = -2
+	(word-at logical-types-ir 56) = 0
+	(word-at logical-types-ir 60) = 3
+	(word-at logical-types-ir 64) = -2
 	(word-at logical-types-ir 76) = 3
-	(word-at logical-types-ir 80) = -2
-	(word-at logical-types-ir 92) = 6
-	(word-at logical-types-ir 96) = 2
-	(word-at logical-types-ir 100) = 5
-	(word-at logical-types-ir 112) = 8
-	(word-at logical-types-ir 116) = 0
+	(word-at logical-types-ir 80) = 3
+	(word-at logical-types-ir 84) = -2
+	(word-at logical-types-ir 96) = 6
+	(word-at logical-types-ir 100) = 2
+	(word-at logical-types-ir 104) = 5
+	(word-at logical-types-ir 116) = 8
+	(word-at logical-types-ir 120) = 0
 ] "logical type records changed"
 assert all [
-	(word-at logical-types-ir 120) = 1
-	(word-at logical-types-ir 128) = -5
-	(word-at logical-types-ir 136) = -8
-	(word-at logical-types-ir 144) = -2
-	(word-at logical-types-ir 152) = 2
-	(word-at logical-types-ir 156) = 1
-	(word-at logical-types-ir 160) = -4
-	(word-at logical-types-ir 168) = 2
-	(word-at logical-types-ir 176) = -12
+	(word-at logical-types-ir 124) = 1
+	(word-at logical-types-ir 132) = -5
+	(word-at logical-types-ir 140) = -8
+	(word-at logical-types-ir 148) = -2
+	(word-at logical-types-ir 156) = 2
+	(word-at logical-types-ir 160) = 1
+	(word-at logical-types-ir 164) = -4
+	(word-at logical-types-ir 172) = 2
+	(word-at logical-types-ir 180) = -12
 ] "logical member records changed"
 byte-alias: frontend/types
 small: skip frontend/types 5
@@ -336,28 +340,28 @@ assert binary? callable-types-ir [
 	"frontend rejected callable logical types: " mold frontend/last-error
 ]
 assert all [
-	(length? callable-types-ir) = 166
-	(word-at callable-types-ir 20) = -2
-	(word-at callable-types-ir 32) = 0
-	(word-at callable-types-ir 36) = 1
-	(word-at callable-types-ir 40) = -4
-	(word-at callable-types-ir 44) = 1
-	(word-at callable-types-ir 48) = 5
-	(word-at callable-types-ir 52) = 1
-	(word-at callable-types-ir 56) = 3
-	(word-at callable-types-ir 60) = -5
-	(word-at callable-types-ir 64) = 0
-	(word-at callable-types-ir 68) = 64
-	(word-at callable-types-ir 72) = 4
-	(word-at callable-types-ir 76) = 1
+	(length? callable-types-ir) = 170
+	(word-at callable-types-ir 24) = -2
+	(word-at callable-types-ir 36) = 0
+	(word-at callable-types-ir 40) = 1
+	(word-at callable-types-ir 44) = -4
+	(word-at callable-types-ir 48) = 1
+	(word-at callable-types-ir 52) = 5
+	(word-at callable-types-ir 56) = 1
+	(word-at callable-types-ir 60) = 3
+	(word-at callable-types-ir 64) = -5
+	(word-at callable-types-ir 68) = 0
+	(word-at callable-types-ir 72) = 64
+	(word-at callable-types-ir 76) = 4
+	(word-at callable-types-ir 80) = 1
 ]["callable type records changed"]
 assert all [
-	(word-at callable-types-ir 80) = -5
-	(word-at callable-types-ir 88) = -5
-	(word-at callable-types-ir 96) = -5
-	(word-at callable-types-ir 104) = 1
+	(word-at callable-types-ir 84) = -5
+	(word-at callable-types-ir 92) = -5
+	(word-at callable-types-ir 100) = -5
 	(word-at callable-types-ir 108) = 1
-	(word-at callable-types-ir 112) = -6
+	(word-at callable-types-ir 112) = 1
+	(word-at callable-types-ir 116) = -6
 ]["callable parameter slices changed"]
 
 cdecl-ir: compile-text {
@@ -366,13 +370,13 @@ cdecl-ir: compile-text {
 } 'user
 assert all [
 	binary? cdecl-ir
-	(length? cdecl-ir) = 74
-	(word-at cdecl-ir 28) = -5
-	(word-at cdecl-ir 32) = 1
-	(word-at cdecl-ir 36) = 0
-	(word-at cdecl-ir 40) = 1
-	(word-at cdecl-ir 48) = -5
-	(word-at cdecl-ir 52) = 0
+	(length? cdecl-ir) = 78
+	(word-at cdecl-ir 32) = -5
+	(word-at cdecl-ir 36) = 1
+	(word-at cdecl-ir 40) = 0
+	(word-at cdecl-ir 44) = 1
+	(word-at cdecl-ir 52) = -5
+	(word-at cdecl-ir 56) = 0
 ]["declared function signature is not direct logical data"]
 
 internal-signature: frontend/read-signature
@@ -395,20 +399,20 @@ layout-ir: compile-text {
 } 'user
 assert binary? layout-ir ["frontend rejected size?: " mold frontend/last-error]
 assert all [
-	(length? layout-ir) = 146
+	(length? layout-ir) = 150
 	(word-at layout-ir 8) = 2
-	(word-at layout-ir 16) = 2
-	(word-at layout-ir 20) = -1
-	(word-at layout-ir 24) = -2
-	(word-at layout-ir 40) = -2
-	(word-at layout-ir 52) = 0
-	(word-at layout-ir 56) = 3
-	(word-at layout-ir 112) = 5
-	(word-at layout-ir 116) = 1
-	(word-at layout-ir 120) = 2
-	(word-at layout-ir 124) = 0
-	(word-at layout-ir 128) = 3
-	(word-at layout-ir 136) = 1
+	(word-at layout-ir 20) = 2
+	(word-at layout-ir 24) = -1
+	(word-at layout-ir 28) = -2
+	(word-at layout-ir 44) = -2
+	(word-at layout-ir 56) = 0
+	(word-at layout-ir 60) = 3
+	(word-at layout-ir 116) = 5
+	(word-at layout-ir 120) = 1
+	(word-at layout-ir 124) = 2
+	(word-at layout-ir 128) = 0
+	(word-at layout-ir 132) = 3
+	(word-at layout-ir 140) = 1
 ] "size? did not keep target layout behind a logical type reference"
 
 pointer-size-ir: compile-text {
@@ -417,9 +421,9 @@ pointer-size-ir: compile-text {
 } 'user
 assert all [
 	binary? pointer-size-ir
-	(length? pointer-size-ir) = 82
-	(word-at pointer-size-ir 48) = 5
-	(word-at pointer-size-ir 56) = -12
+	(length? pointer-size-ir) = 86
+	(word-at pointer-size-ir 52) = 5
+	(word-at pointer-size-ir 60) = -12
 ] "parameterized pointer size? did not use the builtin logical type"
 
 assert none? compile-text {
@@ -504,15 +508,71 @@ assert all [
 	(select frontend/globals 'root-value) = 1
 ]["declaration pass stopped before the complete source block"]
 
+import-ir: compile-text {
+	Red/System []
+	#import ["fixture.dll" stdcall [
+		native-call: "native-call" [value [integer!] return: [integer!]]
+		native-value: "native-value" [integer!]
+	]]
+	fn: func [return: [integer!]][1]
+} 'user
+assert binary? import-ir ["frontend rejected direct imports: " mold frontend/last-error]
+assert all [
+	(length? import-ir) = 192
+	(word-at import-ir 12) = 2
+	(word-at import-ir 16) = 1
+	(word-at import-ir 20) = 2
+	(word-at import-ir 24) = 0
+	(word-at import-ir 28) = 11
+	(word-at import-ir 32) = 11
+	(word-at import-ir 36) = 11
+	(word-at import-ir 40) = -5
+	(word-at import-ir 44) = 2
+	(word-at import-ir 48) = 0
+	(word-at import-ir 52) = 1
+]["import header or function record changed"]
+assert all [
+	(word-at import-ir 56) = 0
+	(word-at import-ir 60) = 11
+	(word-at import-ir 64) = 22
+	(word-at import-ir 68) = 12
+	(word-at import-ir 72) = -5
+	(word-at import-ir 76) = 0
+	(word-at import-ir 80) = 1
+	(word-at import-ir 84) = 0
+	(word-at import-ir 88) = 34
+	(word-at import-ir 96) = -5
+	(word-at import-ir 104) = 1
+	(word-at import-ir 116) = -5
+	(copy at import-ir 157) = to binary! "fixture.dllnative-callnative-valuefn"
+]["direct import grouping, signatures, or names changed"]
+assert same? frontend/imports/2 frontend/imports/12
+	"one import group duplicated its library value"
+
+context-import-ir: compile-text {
+	Red/System []
+	base: context [value!: alias integer!]
+	with base [
+		#import ["fixture.dll" cdecl [
+			native-call: "native-call" [value [value!] return: [value!]]
+		]]
+		fn: func [return: [integer!]][1]
+	]
+} 'user
+assert all [
+	binary? context-import-ir
+	frontend/imports/8 = 1
+	frontend/imports/9 = [value 1 0]
+	frontend/imports/10 = 1
+]["WITH import lost its shared type-resolution scope"]
+
 assert none? compile-text {
 	Red/System []
-	#import ["fixture.dll" stdcall [native-call: "native-call" [[]]]]
+	#import ["fixture.lib" cdecl []]
 	fn: func [][]
-} 'user "frontend silently omitted an import"
-assert all [
-	frontend/last-error/code = frontend/ERROR-UNSUPPORTED
-	frontend/last-error/message = "import lowering is unsupported"
-] "frontend reported the wrong import-lowering boundary"
+} 'user "frontend silently omitted an empty import group"
+assert frontend/last-error/message = "empty import group is unsupported"
+	"frontend reported the wrong empty-import boundary"
 
 assert none? compile-text
 	{Red/System [] fn: func [value [integer!]][]}

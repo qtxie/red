@@ -404,6 +404,28 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	prepare-imports: func [/local record signature cc][
+		record: imports
+		while [not tail? record][
+			cc: record/8
+			either record/5 = 'function [
+				signature: read-signature record/4 record/6 record/7
+				if (signature/3 and 3) <> 0 [
+					fail ERROR-UNSUPPORTED
+						"import calling convention is specified twice"
+				]
+				record/8: signature/1
+				record/9: signature/2
+				record/10: signature/3 + either cc = 'cdecl [1][2]
+			][
+				record/8: type-ref record/4 record/6 record/7
+				record/9: none
+				record/10: 0
+			]
+			record: skip record 10
+		]
+	]
+
 	compile-body: func [
 		return-ref [integer!]
 		body [block!]
@@ -601,9 +623,10 @@ compiler-rsir-frontend: context [
 	]
 
 	scan-imports: func [
-		definitions scope [block!]
+		definitions scope uses [block!]
 		/local position library cc entries entry name key external spec kind id
 	][
+		if empty? definitions [fail ERROR-UNSUPPORTED "import block is empty"]
 		position: definitions
 		while [not tail? position][
 			unless all [
@@ -612,9 +635,15 @@ compiler-rsir-frontend: context [
 				find [cdecl stdcall] position/2
 				block? position/3
 			][fail ERROR-UNSUPPORTED "invalid import group"]
-			library: position/1
+			unless valid-name? position/1 [
+				fail ERROR-NAME "invalid import library name"
+			]
+			library: to binary! position/1
 			cc: position/2
 			entries: position/3
+			if empty? entries [
+				fail ERROR-UNSUPPORTED "empty import group is unsupported"
+			]
 			entry: entries
 			while [not tail? entry][
 				unless all [
@@ -628,7 +657,10 @@ compiler-rsir-frontend: context [
 				if any [select import-ids key select function-ids key][
 					fail ERROR-DUPLICATE ["duplicate import " mold key]
 				]
-				external: entry/2
+				unless valid-name? entry/2 [
+					fail ERROR-NAME "invalid external import name"
+				]
+				external: to binary! entry/2
 				spec: entry/3
 				kind: either any [
 					all [(length? spec) = 1 not block? spec/1]
@@ -643,9 +675,13 @@ compiler-rsir-frontend: context [
 				append imports key
 				append/only imports library
 				append/only imports external
-				append imports cc
 				append/only imports spec
 				append imports kind
+				append/only imports scope
+				append/only imports uses
+				append imports cc
+				append imports none
+				append imports none
 				import-count: id
 				entry: skip entry 3
 			]
@@ -688,7 +724,7 @@ compiler-rsir-frontend: context [
 					(length? position) >= 2
 					block? position/2
 				][
-					scan-imports position/2 scope
+					scan-imports position/2 scope uses
 					position: skip position 2
 				]
 				all [
@@ -826,6 +862,7 @@ compiler-rsir-frontend: context [
 
 		scan-block skip source 2 copy [] copy []
 		prepare-functions
+		prepare-imports
 		unless empty? global-blocks [
 			fail ERROR-UNSUPPORTED "global code lowering is unsupported"
 		]
@@ -907,8 +944,9 @@ compiler-rsir-frontend: context [
 	]
 
 	write-rsir: func [limit [integer!] /local output position name body
-		scope uses params flags name-offset record-offset param-count first-param count
-		instruction-count size entry id parameter
+		scope uses params flags record-offset param-count first-param count
+		instruction-count size entry id parameter import-records function-records
+		library external last-library library-offset external-offset names
 		type-output members type-bytes member-bytes
 	][
 		type-output: make binary! (type-count * 20)
@@ -916,23 +954,73 @@ compiler-rsir-frontend: context [
 		write-types type-output members
 		type-bytes: length? type-output
 		member-bytes: length? members
-		output: make binary! (20 + type-bytes + member-bytes + (function-count * 96))
-		append/dup output 0 20
+		names: make binary! 256
+		output: make binary! (24 + type-bytes + member-bytes
+			+ (import-count * 64) + (function-count * 96))
+		append/dup output 0 24
 		append output type-output
 		append output members
+		import-records: 25 + type-bytes + member-bytes
+		function-records: import-records + (import-count * 32)
+		append/dup output 0 (import-count * 32)
 		append/dup output 0 (function-count * 28)
-		position: functions
-		name-offset: 0
+
+		position: imports
+		last-library: none
+		library-offset: 0
 		first-param: 0
+		id: 1
+		while [not tail? position][
+			library: position/2
+			external: position/3
+			unless same? library last-library [
+				library-offset: length? names
+				append names library
+				last-library: library
+			]
+			external-offset: length? names
+			append names external
+			params: position/9
+			param-count: either block? params [(length? params) / 3][0]
+			record-offset: import-records + ((id - 1) * 32)
+			change/part at output record-offset
+				int-to-bin/to-bin32 library-offset 4
+			change/part at output (record-offset + 4)
+				int-to-bin/to-bin32 (length? library) 4
+			change/part at output (record-offset + 8)
+				int-to-bin/to-bin32 external-offset 4
+			change/part at output (record-offset + 12)
+				int-to-bin/to-bin32 (length? external) 4
+			change/part at output (record-offset + 16)
+				int-to-bin/to-bin32 position/8 4
+			change/part at output (record-offset + 20)
+				int-to-bin/to-bin32 position/10 4
+			change/part at output (record-offset + 24)
+				int-to-bin/to-bin32 first-param 4
+			change/part at output (record-offset + 28)
+				int-to-bin/to-bin32 param-count 4
+			if block? params [
+				parameter: params
+				while [not tail? parameter][
+					emit output reduce [parameter/2 parameter/3]
+					parameter: skip parameter 3
+				]
+			]
+			first-param: first-param + param-count
+			id: id + 1
+			position: skip position 10
+		]
+
+		position: functions
 		id: 1
 		while [not tail? position][
 			name: position/1
 			params: position/7
 			flags: position/8
 			param-count: (length? params) / 3
-			record-offset: 21 + type-bytes + member-bytes + ((id - 1) * 28)
+			record-offset: function-records + ((id - 1) * 28)
 			change/part at output record-offset
-				int-to-bin/to-bin32 name-offset 4
+				int-to-bin/to-bin32 (length? names) 4
 			change/part at output (record-offset + 4)
 				int-to-bin/to-bin32 (length? name) 4
 			change/part at output (record-offset + 8)
@@ -948,7 +1036,7 @@ compiler-rsir-frontend: context [
 				emit output reduce [parameter/2 parameter/3]
 				parameter: skip parameter 3
 			]
-			name-offset: name-offset + (length? name)
+			append names name
 			first-param: first-param + param-count
 			id: id + 1
 			position: skip position 8
@@ -964,7 +1052,7 @@ compiler-rsir-frontend: context [
 			params: position/7
 			flags: position/8
 			count: compile-body position/6 body scope uses output params flags
-			record-offset: 21 + type-bytes + member-bytes + ((id - 1) * 28)
+			record-offset: function-records + ((id - 1) * 28)
 			change/part at output (record-offset + 24)
 				int-to-bin/to-bin32 count 4
 			instruction-count: instruction-count + count
@@ -972,11 +1060,7 @@ compiler-rsir-frontend: context [
 			position: skip position 8
 		]
 
-		position: functions
-		while [not tail? position][
-			append output position/1
-			position: skip position 8
-		]
+		append output names
 		size: length? output
 		if any [limit <= 0 size > limit] [
 			fail ERROR-LIMIT "RSIR output exceeds its limit"
@@ -985,8 +1069,9 @@ compiler-rsir-frontend: context [
 		change/part output int-to-bin/to-bin32 module-kind 4
 		change/part at output 5 int-to-bin/to-bin32 entry 4
 		change/part at output 9 int-to-bin/to-bin32 type-count 4
-		change/part at output 13 int-to-bin/to-bin32 function-count 4
-		change/part at output 17 int-to-bin/to-bin32 instruction-count 4
+		change/part at output 13 int-to-bin/to-bin32 import-count 4
+		change/part at output 17 int-to-bin/to-bin32 function-count 4
+		change/part at output 21 int-to-bin/to-bin32 instruction-count 4
 		output
 	]
 
@@ -1023,9 +1108,6 @@ compiler-rsir-frontend: context [
 			import-count: 0
 			global-count: 0
 			compile-source source
-			if import-count > 0 [
-				fail ERROR-UNSUPPORTED "import lowering is unsupported"
-			]
 			write-rsir any [max-bytes DEFAULT-MAX-BYTES]
 		] 'rsir-error
 		either same? result last-error [none][result]

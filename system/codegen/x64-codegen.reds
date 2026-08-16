@@ -9,6 +9,7 @@ rsir-header!: alias struct! [
 	module-kind      [integer!]
 	entry-function   [integer!]
 	type-count       [integer!]
+	import-count     [integer!]
 	function-count   [integer!]
 	instruction-count [integer!]
 ]
@@ -24,6 +25,17 @@ rsir-type!: alias struct! [
 rsir-member!: alias struct! [
 	type  [integer!]
 	flags [integer!]
+]
+
+rsir-import!: alias struct! [
+	library         [integer!]
+	library-size    [integer!]
+	external        [integer!]
+	external-size   [integer!]
+	type             [integer!]
+	flags            [integer!]
+	first-parameter  [integer!]
+	parameter-count  [integer!]
 ]
 
 rsir-function!: alias struct! [
@@ -83,9 +95,10 @@ codegen-import!: alias struct! [
 ]
 
 x64-codegen: context [
-	RSIR_HEADER_SIZE:      20
+	RSIR_HEADER_SIZE:      24
 	RSIR_TYPE_SIZE:        20
 	RSIR_MEMBER_SIZE:       8
+	RSIR_IMPORT_SIZE:      32
 	RSIR_FUNCTION_SIZE:    28
 	RSIR_PARAMETER_SIZE:    8
 	RSIR_INSTRUCTION_SIZE: 16
@@ -455,6 +468,7 @@ x64-codegen: context [
 		/local header [rsir-header!]
 			ir-type [rsir-type!]
 			ir-member [rsir-member!]
+			ir-import [rsir-import!]
 			ir-function [rsir-function!]
 			ir-parameter [rsir-parameter!]
 			instruction call-instruction [rsir-instruction!]
@@ -462,11 +476,11 @@ x64-codegen: context [
 			image-function callee-record [codegen-function!]
 			image-import [codegen-import!]
 			references [int-ptr!]
-			type-data member-data function-data parameter-data instruction-data
+			type-data member-data import-data function-data parameter-data instruction-data
 				function-instructions strings name
 				names-output code data-output
 				cursor finish [byte-ptr!]
-			type-bytes member-bytes function-bytes parameter-bytes instruction-bytes
+			type-bytes member-bytes import-bytes function-bytes parameter-bytes instruction-bytes
 				strings-start strings-size metadata-size member-count parameter-count
 				names-size function-names-size code-offset code-size data-offset total-size
 				id record-offset next-instruction function-size entry-size code-cursor
@@ -482,6 +496,7 @@ x64-codegen: context [
 		header: as rsir-header! data
 		if any [
 			header/type-count < 0
+			header/import-count < 0
 			header/function-count <= 0
 			header/instruction-count <= 0
 		][return INVALID_IR]
@@ -585,15 +600,67 @@ x64-codegen: context [
 			][return INVALID_IR]
 			id: id + 1
 		]
-		if header/function-count > (
+		if header/import-count > (
 			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes)
+			/ RSIR_IMPORT_SIZE
+		)[return INVALID_IR]
+		import-bytes: header/import-count * RSIR_IMPORT_SIZE
+		import-data: member-data + member-bytes
+		parameter-count: 0
+		id: 1
+		while [id <= header/import-count][
+			ir-import: as rsir-import! (import-data
+				+ ((id - 1) * RSIR_IMPORT_SIZE))
+			if any [
+				ir-import/flags < 0
+				ir-import/flags > FUNCTION_FLAGS
+				(ir-import/flags and 3) = 3
+				ir-import/first-parameter <> parameter-count
+				ir-import/parameter-count < 0
+			][return INVALID_IR]
+			either ir-import/flags = 0 [
+				if any [
+					not valid-type-ref? ir-import/type header/type-count
+					ir-import/parameter-count <> 0
+				][return INVALID_IR]
+			][
+				if any [
+					(ir-import/flags and 3) = 0
+					all [
+						ir-import/type <> 0
+						not valid-type-ref? ir-import/type header/type-count
+					]
+				][return INVALID_IR]
+				variable-mode: ir-import/flags and VARIABLE_FLAGS
+				unless any [
+					variable-mode = 0
+					variable-mode = 8
+					variable-mode = 16
+					variable-mode = 32
+				][return INVALID_IR]
+				if all [
+					(ir-import/flags and RETURN_VALUE) <> 0
+					any [
+						ir-import/type = 0
+						not aggregate-ref? ir-import/type type-data
+							header/type-count
+					]
+				][return INVALID_IR]
+			]
+			if parameter-count > (2147483647 - ir-import/parameter-count) [
+				return INVALID_IR
+			]
+			parameter-count: parameter-count + ir-import/parameter-count
+			id: id + 1
+		]
+		if header/function-count > (
+			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - import-bytes)
 			/ RSIR_FUNCTION_SIZE
 		)[
 			return INVALID_IR
 		]
 		function-bytes: header/function-count * RSIR_FUNCTION_SIZE
-		function-data: member-data + member-bytes
-		parameter-count: 0
+		function-data: import-data + import-bytes
 		next-instruction: 0
 		id: 1
 		while [id <= header/function-count][
@@ -639,7 +706,8 @@ x64-codegen: context [
 		if next-instruction <> header/instruction-count [return INVALID_IR]
 		parameter-data: function-data + function-bytes
 		if parameter-count > (
-			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - function-bytes)
+			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - import-bytes
+				- function-bytes)
 			/ RSIR_PARAMETER_SIZE
 		)[return INVALID_IR]
 		parameter-bytes: parameter-count * RSIR_PARAMETER_SIZE
@@ -659,17 +727,33 @@ x64-codegen: context [
 			id: id + 1
 		]
 		if header/instruction-count > (
-			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - function-bytes
-				- parameter-bytes)
+			(size - RSIR_HEADER_SIZE - type-bytes - member-bytes - import-bytes
+				- function-bytes - parameter-bytes)
 			/ RSIR_INSTRUCTION_SIZE
 		)[return INVALID_IR]
 		instruction-bytes: header/instruction-count * RSIR_INSTRUCTION_SIZE
 		instruction-data: parameter-data + parameter-bytes
-		strings-start: RSIR_HEADER_SIZE + type-bytes + member-bytes
+		strings-start: RSIR_HEADER_SIZE + type-bytes + member-bytes + import-bytes
 			+ function-bytes + parameter-bytes + instruction-bytes
 		strings-size: size - strings-start
 
 		strings: data + strings-start
+		id: 1
+		while [id <= header/import-count][
+			ir-import: as rsir-import! (import-data
+				+ ((id - 1) * RSIR_IMPORT_SIZE))
+			if any [
+				ir-import/library < 0
+				ir-import/library-size <= 0
+				ir-import/library-size > strings-size
+				ir-import/library > (strings-size - ir-import/library-size)
+				ir-import/external < 0
+				ir-import/external-size <= 0
+				ir-import/external-size > strings-size
+				ir-import/external > (strings-size - ir-import/external-size)
+			][return INVALID_IR]
+			id: id + 1
+		]
 		if any [
 			capacity < IMAGE_HEADER_SIZE
 			header/function-count > (

@@ -5,7 +5,7 @@ Red/System [
 #include %../../../system/codegen/x64-codegen.reds
 
 failures: 0
-ir: allocate 82
+ir: allocate 86
 output: allocate 256
 header: declare codegen-header!
 reference: as int-ptr! 0
@@ -20,27 +20,28 @@ put: func [data [byte-ptr!] offset value [integer!]][
 put ir 0 3
 put ir 4 1
 put ir 8 0
-put ir 12 1
-put ir 16 2
-put ir 20 0
-put ir 24 2
-put ir 28 -5
-put ir 32 0
+put ir 12 0
+put ir 16 1
+put ir 20 2
+put ir 24 0
+put ir 28 2
+put ir 32 -5
 put ir 36 0
 put ir 40 0
-put ir 44 2
-put ir 48 1
+put ir 44 0
+put ir 48 2
 put ir 52 1
-put ir 56 0
-put ir 60 7
-put ir 64 3
-put ir 68 0
-put ir 72 1
-put ir 76 0
-ir/81: as byte! 66h
-ir/82: as byte! 6Eh
+put ir 56 1
+put ir 60 0
+put ir 64 7
+put ir 68 3
+put ir 72 0
+put ir 76 1
+put ir 80 0
+ir/85: as byte! 66h
+ir/86: as byte! 6Eh
 
-size: x64-codegen/generate ir 82 output 256 0
+size: x64-codegen/generate ir 86 output 256 0
 if size <> 196 [failures: failures + 1]
 if failures = 0 [
 	header: as codegen-header! output
@@ -65,17 +66,17 @@ if failures = 0 [
 	if reference/1 <> 26 [failures: failures + 1]
 ]
 
-if (x64-codegen/generate ir 81 output 256 0) <> x64-codegen/INVALID_IR [
+if (x64-codegen/generate ir 85 output 256 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-if (x64-codegen/generate ir 82 output 256 2) <> x64-codegen/UNSUPPORTED [
+if (x64-codegen/generate ir 86 output 256 2) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
-if (x64-codegen/generate ir 82 output 64 0) <> x64-codegen/OUTPUT_FULL [
+if (x64-codegen/generate ir 86 output 64 0) <> x64-codegen/OUTPUT_FULL [
 	failures: failures + 1
 ]
-put ir 32 512
-if (x64-codegen/generate ir 82 output 256 0) <> x64-codegen/INVALID_IR [
+put ir 36 512
+if (x64-codegen/generate ir 86 output 256 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 

@@ -269,6 +269,47 @@ unless all [
 	quit/return 1
 ]
 
+import-functions: 0
+import-variables: 0
+import-parameters: 0
+import-groups: 0
+last-library: none
+record: compiler-rsir-frontend/imports
+while [not tail? record][
+	unless same? record/2 last-library [
+		import-groups: import-groups + 1
+		last-library: record/2
+	]
+	either record/5 = 'function [
+		unless all [
+			block? record/9
+			find [1 2] (record/10 and 3)
+		][
+			print ["FAIL: unprepared function import" record/1]
+			quit/return 1
+		]
+		import-functions: import-functions + 1
+		import-parameters: import-parameters + ((length? record/9) / 3)
+	][
+		unless all [integer? record/8 none? record/9 record/10 = 0][
+			print ["FAIL: unprepared variable import" record/1]
+			quit/return 1
+		]
+		import-variables: import-variables + 1
+	]
+	record: skip record 10
+]
+unless (import-functions + import-variables) = compiler-rsir-frontend/import-count [
+	print "FAIL: incomplete direct import records"
+	quit/return 1
+]
+print [
+	"import-groups" import-groups
+	"functions" import-functions
+	"variables" import-variables
+	"parameters" import-parameters
+]
+
 type-data: make binary! (compiler-rsir-frontend/type-count * 20)
 member-data: make binary! 1024
 type-result: catch/name [

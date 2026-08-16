@@ -157,6 +157,22 @@ check (codegen-module callable-ir callable-image 0) = 0
 check callable-image = user-i32
 	"unused callable signatures changed native code"
 
+import-ir: compiler-rsir-frontend/compile [
+	Red/System []
+	#import ["fixture.dll" stdcall [
+		native-call: "native-call" [value [integer!] return: [integer!]]
+		native-value: "native-value" [integer!]
+	]]
+	fn: func [return: [integer!]][7]
+] 'user
+check binary? import-ir ["frontend rejected direct imports: "
+	mold compiler-rsir-frontend/last-error]
+import-image: make binary! 4096
+check (codegen-module import-ir import-image 0) = 0
+	"native codegen rejected direct import declarations"
+check import-image = user-i32
+	"unused import declarations changed native code"
+
 layout-source: [
 	Red/System []
 	byte-alias!: alias byte!
@@ -218,40 +234,47 @@ check (codegen-module cyclic-layout-ir artifact 0) = 2
 check empty? artifact "recursive by-value layout committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 21 int-to-bin/to-bin32 -99 4
+change/part at bad-type 25 int-to-bin/to-bin32 -99 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "unknown logical type kind was accepted"
 check empty? artifact "bad logical type kind committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 25 int-to-bin/to-bin32 0 4
+change/part at bad-type 29 int-to-bin/to-bin32 0 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "zero alias target was accepted"
 check empty? artifact "bad alias target committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 37 int-to-bin/to-bin32 1 4
+change/part at bad-type 41 int-to-bin/to-bin32 1 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "alias members were accepted"
 check empty? artifact "bad alias member count committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 165 int-to-bin/to-bin32 2 4
+change/part at bad-type 169 int-to-bin/to-bin32 2 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "unknown member flag was accepted"
 check empty? artifact "bad member flag committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 153 int-to-bin/to-bin32 1 4
+change/part at bad-type 157 int-to-bin/to-bin32 1 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "scalar by-value member was accepted"
 check empty? artifact "bad by-value member committed bytes"
 
 bad-type: copy typed-ir
-change/part at bad-type 201 int-to-bin/to-bin32 1 4
+change/part at bad-type 205 int-to-bin/to-bin32 1 4
 artifact: make binary! 4096
 check (codegen-module bad-type artifact 0) = 2 "noncontiguous parameter slice was accepted"
 check empty? artifact "bad parameter slice committed bytes"
+
+bad-import: copy import-ir
+change/part at bad-import 49 int-to-bin/to-bin32 1 4
+artifact: make binary! 4096
+check (codegen-module bad-import artifact 0) = 2
+	"noncontiguous import parameter slice was accepted"
+check empty? artifact "bad import parameter slice committed bytes"
 
 call-source: [
 	Red/System []

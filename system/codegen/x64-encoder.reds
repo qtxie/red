@@ -14,6 +14,8 @@ x64-encoder: context [
 	RDI: 7
 	R8:  8
 	R9:  9
+	R10: 10
+	R11: 11
 	XMM0: 0
 	XMM1: 1
 
@@ -500,6 +502,78 @@ x64-encoder: context [
 		size
 	]
 
+	register-load: func [
+		code [byte-ptr!]
+		capacity target base displacement [integer!]
+		return: [integer!]
+		/local base-code displacement-size mode size [integer!] at [byte-ptr!]
+	][
+		unless all [target >= 0 target <= 15 base >= 0 base <= 15][return -1]
+		base-code: base and 7
+		displacement-size: case [
+			all [displacement = 0 base-code <> 5][0]
+			fits-i8? displacement [1]
+			true [4]
+		]
+		mode: case [
+			displacement-size = 0 [0]
+			displacement-size = 1 [1]
+			true [2]
+		]
+		size: 3 + displacement-size
+		if base-code = 4 [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! rex true target base
+		at/2: as byte! 8Bh
+		at/3: as byte! modrm mode target base
+		at: at + 3
+		if base-code = 4 [at/1: as byte! 24h at: at + 1]
+		case [
+			displacement-size = 1 [at/1: as byte! displacement]
+			displacement-size = 4 [write-i32 at displacement]
+			true [0]
+		]
+		size
+	]
+
+	register-store: func [
+		code [byte-ptr!]
+		capacity source base displacement [integer!]
+		return: [integer!]
+		/local base-code displacement-size mode size [integer!] at [byte-ptr!]
+	][
+		unless all [source >= 0 source <= 15 base >= 0 base <= 15][return -1]
+		base-code: base and 7
+		displacement-size: case [
+			all [displacement = 0 base-code <> 5][0]
+			fits-i8? displacement [1]
+			true [4]
+		]
+		mode: case [
+			displacement-size = 0 [0]
+			displacement-size = 1 [1]
+			true [2]
+		]
+		size: 3 + displacement-size
+		if base-code = 4 [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! rex true source base
+		at/2: as byte! 89h
+		at/3: as byte! modrm mode source base
+		at: at + 3
+		if base-code = 4 [at/1: as byte! 24h at: at + 1]
+		case [
+			displacement-size = 1 [at/1: as byte! displacement]
+			displacement-size = 4 [write-i32 at displacement]
+			true [0]
+		]
+		size
+	]
+
 	xmm-prefix: func [width [integer!] return: [integer!]][
 		either width = 4 [F3h][either width = 8 [F2h][0]]
 	]
@@ -975,6 +1049,46 @@ x64-encoder: context [
 			at/2: as byte! modrm 3 0 target
 			write-i32 (at + 2) value
 		]
+		size
+	]
+
+	and-immediate: func [
+		code [byte-ptr!]
+		capacity target value [integer!]
+		return: [integer!]
+		/local immediate-size size [integer!] at [byte-ptr!]
+	][
+		unless all [target >= 0 target <= 15][return -1]
+		immediate-size: either fits-i8? value [1][4]
+		size: 3 + immediate-size
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! rex true 4 target
+		at/2: as byte! either immediate-size = 1 [83h][81h]
+		at/3: as byte! modrm 3 4 target
+		either immediate-size = 1 [at/4: as byte! value][write-i32 (at + 3) value]
+		size
+	]
+
+	compare-immediate: func [
+		code [byte-ptr!]
+		capacity target value [integer!]
+		return: [integer!]
+		/local prefix immediate-size size [integer!] at [byte-ptr!]
+	][
+		unless all [target >= 0 target <= 15][return -1]
+		prefix: rex false 7 target
+		immediate-size: either fits-i8? value [1][4]
+		size: 2 + immediate-size
+		if prefix <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! either immediate-size = 1 [83h][81h]
+		at/2: as byte! modrm 3 7 target
+		either immediate-size = 1 [at/3: as byte! value][write-i32 (at + 2) value]
 		size
 	]
 

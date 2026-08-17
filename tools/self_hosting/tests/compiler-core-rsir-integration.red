@@ -163,5 +163,7 @@ run-linked-fixture
 	%rsir-infix-exit.reds %rsir-infix-linked.exe "infix functions"
 run-linked-fixture
 	%rsir-push-pop-exit.reds %rsir-push-pop-linked.exe "PUSH/POP"
+run-linked-fixture
+	%rsir-custom-call-exit.reds %rsir-custom-call-linked.exe "custom call"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

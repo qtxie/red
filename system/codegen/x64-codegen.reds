@@ -1277,6 +1277,266 @@ x64-codegen: context [
 		true
 	]
 
+	emit-custom-argument: func [
+		code [byte-ptr!]
+		capacity target count displacement [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written load-size [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/compare-immediate at (capacity - written)
+			x64-encoder/R8 count
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		load-size: x64-encoder/register-load null 0 target x64-encoder/R10 displacement
+		if load-size < 0 [return OUTPUT_FULL]
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/jump-condition at (capacity - written) 12 load-size
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/register-load at (capacity - written)
+			target x64-encoder/R10 displacement
+		if encoded < 0 [return OUTPUT_FULL]
+		written + encoded
+	]
+
+	emit-custom-setup: func [
+		code [byte-ptr!]
+		capacity count-displacement [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written clear-size loop-start patch displacement
+			[integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/R8 count-displacement 4 1
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/test-register at (capacity - written) x64-encoder/R8 4
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		clear-size: x64-encoder/clear-register null 0 x64-encoder/R8
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/jump-condition at (capacity - written) 13 clear-size
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/clear-register at (capacity - written) x64-encoder/R8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/R9 x64-encoder/RSP 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/RAX x64-encoder/R8 4
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/sign-extend-register at (capacity - written)
+			x64-encoder/RAX
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/shift-immediate at (capacity - written)
+			x64-encoder/RAX 4 3 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/binary-register at (capacity - written)
+			01h x64-encoder/RAX x64-encoder/R9 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX count-displacement 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/RCX x64-encoder/R8 4
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RCX -4
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/test-register at (capacity - written) x64-encoder/RCX 4
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		clear-size: x64-encoder/clear-register null 0 x64-encoder/RCX
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/jump-condition at (capacity - written) 13 clear-size
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/clear-register at (capacity - written) x64-encoder/RCX
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/RAX x64-encoder/RCX 4
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/sign-extend-register at (capacity - written)
+			x64-encoder/RAX
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/shift-immediate at (capacity - written)
+			x64-encoder/RAX 4 3 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RAX 32
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/binary-register at (capacity - written)
+			29h x64-encoder/RSP x64-encoder/RAX 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/and-immediate at (capacity - written)
+			x64-encoder/RSP -16
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/R10 x64-encoder/R9 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/R10 32
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/stack-address at (capacity - written) x64-encoder/RDX 32
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/test-register at (capacity - written) x64-encoder/RCX 4
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+
+		patch: written + 2
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/jump-condition at (capacity - written) 14 0
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		loop-start: written
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/register-load at (capacity - written)
+			x64-encoder/RAX x64-encoder/R10 0
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/register-store at (capacity - written)
+			x64-encoder/RAX x64-encoder/RDX 0
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/R10 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RDX 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RCX -1
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/test-register at (capacity - written) x64-encoder/RCX 4
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		displacement: loop-start - (written + 6)
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/jump-condition at (capacity - written) 15 displacement
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		if not null? code [
+			x64-encoder/write-i32 (code + patch) (written - (patch + 4))
+		]
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/R10 x64-encoder/R9 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: emit-custom-argument at (capacity - written) x64-encoder/R9 4 24
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: emit-custom-argument at (capacity - written) x64-encoder/RDX 2 8
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: emit-custom-argument at (capacity - written) x64-encoder/RCX 1 0
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: emit-custom-argument at (capacity - written) x64-encoder/R8 3 16
+		if encoded < 0 [return encoded]
+		written + encoded
+	]
+
 	compile-function: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
@@ -1309,7 +1569,7 @@ x64-codegen: context [
 			operation left-ref right-ref left-flags right-flags
 			left-kind right-kind operation-width condition stride
 			encoded written frame-extra slot-bytes outgoing outgoing-end max-outgoing
-			argument-index argument-base callee-slot
+			argument-index argument-base callee-slot native-stack-slot
 			argument-slot argument-width physical-slot target return-ref first-parameter
 			parameter-count call-flags import-id global-id literal-end displacement
 			member-type member-flags member-offset source-width target-width
@@ -1321,10 +1581,11 @@ x64-codegen: context [
 			record-offset [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
-			typed-call? list-call? [logic!]
+			typed-call? custom-call? list-call? unstable-stack? [logic!]
 	][
 		measure?: null? code
 		tag-capacity: 0
+		unstable-stack?: false
 		index: 1
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
@@ -1332,6 +1593,10 @@ x64-codegen: context [
 			if all [instruction/op = OP_MEMBER instruction/b > 0][
 				tag-capacity: tag-capacity + 1
 			]
+			if all [
+				instruction/op = OP_NATIVE
+				any [instruction/a = 2 instruction/a = 3]
+			][unstable-stack?: true]
 			index: index + 1
 		]
 		storage-count: fn/parameter-count + fn/local-count
@@ -1342,6 +1607,12 @@ x64-codegen: context [
 			function-count import-count type-count storage-bytes
 			layouts member-offsets result-offsets
 		if storage-bytes < 0 [return storage-bytes]
+		native-stack-slot: 0
+		if unstable-stack? [
+			if storage-bytes > (2147483647 - 8)[return OUTPUT_FULL]
+			storage-bytes: storage-bytes + 8
+			native-stack-slot: storage-bytes / 8
+		]
 		storage-slots: storage-bytes / 8
 		tag-base: storage-slots
 		if storage-slots > (2147483647 - tag-capacity)[return OUTPUT_FULL]
@@ -2140,7 +2411,7 @@ x64-codegen: context [
 						call-parameters: members
 					]]
 					call-mode: call-flags and VARIABLE_FLAGS
-					if call-mode = CUSTOM [return UNSUPPORTED]
+					custom-call?: call-mode = CUSTOM
 					unless typed-call? = (call-mode = TYPED) [return INVALID_IR]
 					packed-call?: all [
 						call-mode = VARIADIC
@@ -2227,6 +2498,17 @@ x64-codegen: context [
 						argument-index >= 0 argument-index <= depth
 						any [indirect? typed-call? instruction/c = return-ref]
 						any [
+							not custom-call?
+							all [
+								argument-index = 1
+								depth > 0
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								(logical-kind stack-types/depth types type-count) = 5
+							]
+						]
+						any [
+							custom-call?
 							list-call?
 							argument-index = parameter-count
 							all [call-mode = VARIADIC
@@ -2244,8 +2526,10 @@ x64-codegen: context [
 					]
 					hidden-return?: win64-hidden-return? return-ref call-flags
 						types members type-count layouts member-offsets
+					if all [custom-call? hidden-return?][return UNSUPPORTED]
 					hidden-shift: either hidden-return? [1][0]
 					physical-count: case [
+						custom-call? [0]
 						typed-call? [2]
 						packed-call? [3]
 						true [argument-index]
@@ -2255,7 +2539,7 @@ x64-codegen: context [
 					if physical-count > (((2147483647 - 32) / 8) + 4)[
 						return OUTPUT_FULL
 					]
-					outgoing: 32
+					outgoing: either custom-call? [0][32]
 					if physical-count > 4 [
 						outgoing: outgoing + ((physical-count - 4) * 8)
 					]
@@ -2277,10 +2561,46 @@ x64-codegen: context [
 					]
 					temp-offset: align outgoing 16
 					if temp-offset < 0 [return OUTPUT_FULL]
+					if all [unstable-stack? not custom-call?][
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/move-register at (capacity - written)
+							x64-encoder/RAX x64-encoder/RSP 8
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-store at (capacity - written)
+							x64-encoder/RAX slot-displacement native-stack-slot 8
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						value-size: 0
+						if not measure? [value-size: frame-size/1]
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/move-immediate at (capacity - written)
+							x64-encoder/RAX 8 value-size 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/binary-register at (capacity - written)
+							29h x64-encoder/RSP x64-encoder/RAX 8
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/and-immediate at (capacity - written)
+							x64-encoder/RSP -16
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 
 					; Copy indirect aggregates before loading volatile argument registers.
 					source-slot: 1
-					while [all [not list-call? source-slot <= argument-index]][
+					while [all [
+						not custom-call? not list-call? source-slot <= argument-index
+					]][
 						argument-slot: argument-base + source-slot
 						ref: stack-types/argument-slot
 						flags: stack-flags/argument-slot
@@ -2540,7 +2860,9 @@ x64-codegen: context [
 					]
 					temp-offset: align outgoing 16
 					source-slot: 1
-					while [all [not list-call? source-slot <= argument-index]][
+					while [all [
+						not custom-call? not list-call? source-slot <= argument-index
+					]][
 						argument-slot: argument-base + source-slot
 						ref: stack-types/argument-slot
 						flags: stack-flags/argument-slot
@@ -2669,12 +2991,23 @@ x64-codegen: context [
 						written: written + encoded
 					]
 					if indirect? [
+						target-slot: either custom-call? [
+							x64-encoder/R11
+						][x64-encoder/RAX]
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RAX slot-displacement
+							target-slot slot-displacement
 								(storage-slots + callee-slot) 8 0
 						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					if custom-call? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: emit-custom-setup at (capacity - written)
+							slot-displacement (storage-slots + depth)
+						if encoded < 0 [return encoded]
 						written: written + encoded
 					]
 					displacement: 0
@@ -2696,7 +3029,7 @@ x64-codegen: context [
 						]
 						true [
 							encoded: x64-encoder/call-register at
-								(capacity - written) x64-encoder/RAX
+								(capacity - written) target-slot
 						]
 					]
 					if encoded < 0 [return OUTPUT_FULL]
@@ -2711,6 +3044,23 @@ x64-codegen: context [
 						]
 					]
 					written: written + encoded
+					if custom-call? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-load at (capacity - written)
+							x64-encoder/RSP slot-displacement
+								(storage-slots + depth) 8 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					if all [unstable-stack? not custom-call?][
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-load at (capacity - written)
+							x64-encoder/RSP slot-displacement native-stack-slot 8 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 					depth: result-index
 					if return-ref <> 0 [
 						depth: depth + 1

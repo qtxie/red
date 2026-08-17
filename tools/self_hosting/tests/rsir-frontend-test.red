@@ -1897,4 +1897,70 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"valueless PUSH reported the wrong error class"
 
+custom-ir: compile-text {
+	Red/System []
+	target: func [[custom] return: [integer!]][41]
+	caller: func [return: [integer!]][target 0]
+} 'user
+assert binary? custom-ir ["custom call lowering failed: " mold frontend/last-error]
+custom-layout: layout-of custom-ir
+assert all [
+	(function-word custom-ir custom-layout 1 12) = 32
+	(ops-of custom-ir custom-layout) = [1 11 1 7 11]
+	(instruction-word custom-ir custom-layout 4 4) = 1
+	(instruction-word custom-ir custom-layout 4 8) = 1
+	(instruction-word custom-ir custom-layout 4 12) = -5
+]["custom count was not an ordinary CALL operand"]
+
+dynamic-custom-ir: compile-text {
+	Red/System []
+	count: func [return: [integer!]][2]
+	target: func [[custom] return: [integer!]][41]
+	caller: func [return: [integer!]][target count]
+} 'user
+assert binary? dynamic-custom-ir [
+	"dynamic custom count lowering failed: " mold frontend/last-error
+]
+dynamic-custom-layout: layout-of dynamic-custom-ir
+assert all [
+	(ops-of dynamic-custom-ir dynamic-custom-layout) = [1 11 1 11 7 7 11]
+	(instruction-word dynamic-custom-ir dynamic-custom-layout 5 4) = 1
+	(instruction-word dynamic-custom-ir dynamic-custom-layout 5 8) = 0
+	(instruction-word dynamic-custom-ir dynamic-custom-layout 6 4) = 2
+	(instruction-word dynamic-custom-ir dynamic-custom-layout 6 8) = 1
+]["dynamic custom count bypassed ordinary expression lowering"]
+
+indirect-custom-ir: compile-text {
+	Red/System []
+	custom!: alias function! [[custom] return: [integer!]]
+	target: func [value [integer!] return: [integer!]][value]
+	caller: func [return: [integer!] /local fn [custom!]][
+		fn: as custom! :target
+		push 7
+		fn 1
+	]
+} 'user
+assert binary? indirect-custom-ir [
+	"indirect custom call lowering failed: " mold frontend/last-error
+]
+indirect-custom-layout: layout-of indirect-custom-ir
+assert all [
+	(instruction-word indirect-custom-ir indirect-custom-layout
+		((word-at indirect-custom-ir 20) - 1) 0) = 7
+	(instruction-word indirect-custom-ir indirect-custom-layout
+		((word-at indirect-custom-ir 20) - 1) 4) = 0
+	(instruction-word indirect-custom-ir indirect-custom-layout
+		((word-at indirect-custom-ir 20) - 1) 8) = 1
+	(instruction-word indirect-custom-ir indirect-custom-layout
+		((word-at indirect-custom-ir 20) - 1) 12) > 0
+]["indirect custom call lost its function signature or count operand"]
+
+assert none? compile-text {
+	Red/System []
+	target: func [[custom] return: [integer!]][41]
+	caller: func [return: [integer!]][target true]
+} 'user "custom call accepted a non-integer count"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid custom count reported the wrong error class"
+
 print "PASS: typed postfix Red/System frontend"

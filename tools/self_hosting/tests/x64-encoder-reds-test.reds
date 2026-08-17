@@ -130,6 +130,26 @@ if any [
 	code/3 <> as byte! 84h code/4 <> as byte! 24h code/5 <> as byte! 80h
 	code/6 <> as byte! 00h code/7 <> as byte! 00h code/8 <> as byte! 00h
 ][failures: failures + 1]
+size: x64-encoder/register-load code 128 x64-encoder/R9 x64-encoder/R10 24
+expected: #{4D8B4A18}
+if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/register-store code 128 x64-encoder/R9 x64-encoder/R10 24
+expected: #{4D894A18}
+if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/register-load code 128 x64-encoder/RAX x64-encoder/RSP 32
+expected: #{488B442420}
+if any [size <> 5 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/register-store code 128 x64-encoder/RAX x64-encoder/RSP 32
+expected: #{4889442420}
+if any [size <> 5 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
 size: x64-encoder/rip-address code 128 x64-encoder/RAX 123
 if any [size <> 7 code/1 <> as byte! 48h code/2 <> as byte! 8Dh code/3 <> as byte! 05h][
 	failures: failures + 1
@@ -161,6 +181,16 @@ if any [
 	size <> 4 code/1 <> as byte! 49h code/2 <> as byte! 83h
 	code/3 <> as byte! C1h code/4 <> as byte! FFh
 ][failures: failures + 1]
+size: x64-encoder/and-immediate code 128 x64-encoder/RSP -16
+expected: #{4883E4F0}
+if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/compare-immediate code 128 x64-encoder/R8 4
+expected: #{4183F804}
+if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
 if (x64-encoder/outgoing-store code 128 32 8) <> 5 [failures: failures + 1]
 size: x64-encoder/outgoing-immediate-store code 128 32 12345678h
 expected: #{C744242078563412}
@@ -215,6 +245,16 @@ if (x64-encoder/frame-load code 128 x64-encoder/RAX 0 3 0) <> -1 [
 if (x64-encoder/store-indirect code 128 3) <> -1 [failures: failures + 1]
 if (x64-encoder/copy-indirect code 128 0) <> -1 [failures: failures + 1]
 if (x64-encoder/stack-address code 128 x64-encoder/RAX -1) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/register-load code 3 x64-encoder/R9 x64-encoder/R10 24) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/register-store code 128 16 x64-encoder/RAX 0) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/and-immediate code 128 16 0) <> -1 [failures: failures + 1]
+if (x64-encoder/compare-immediate code 3 x64-encoder/R8 4) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/outgoing-immediate-store code 128 -1 0) <> -1 [

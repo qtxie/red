@@ -3061,6 +3061,34 @@ compiler-rsir-frontend: context [
 		true
 	]
 
+	stack-custom-call: func [
+		target [integer!]
+		value [word! path!]
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return-ref signature-ref [integer!]
+		return: [block!]
+		/local position-after
+	][
+		position-after: stack-value next position scope uses instructions params locals
+			expression-value
+		unless all [
+			not last-stopped?
+			last-flags = 0
+			stack-type-compatible? -5 last-type
+		][fail ERROR-REFERENCE ["custom call count must be an integer!: " mold value]]
+		emit instructions reduce [
+			call-op target 1 either target = 0 [signature-ref][return-ref]
+		]
+		last-type: return-ref
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		position-after
+	]
+
 	stack-call: func [
 		target [integer!]
 		value [word! path!]
@@ -3086,15 +3114,21 @@ compiler-rsir-frontend: context [
 		]
 		mode: flags and (variadic-flag + typed-flag + custom-flag)
 		if mode <> 0 [
-			unless any [mode = variadic-flag mode = typed-flag][
-				fail ERROR-UNSUPPORTED "custom calls are not implemented"
-			]
-			either mode = variadic-flag [
-				return stack-variadic-call target value position scope uses instructions
-					params locals return-ref parameters flags 0
-			][
-				return stack-typed-call target value position scope uses instructions
-					params locals return-ref parameters flags (call-signature-ref target)
+			case [
+				mode = variadic-flag [
+					return stack-variadic-call target value position scope uses instructions
+						params locals return-ref parameters flags 0
+				]
+				mode = typed-flag [
+					return stack-typed-call target value position scope uses instructions
+						params locals return-ref parameters flags
+						(call-signature-ref target)
+				]
+				mode = custom-flag [
+					return stack-custom-call target value position scope uses instructions
+						params locals return-ref 0
+				]
+				true [fail ERROR-UNSUPPORTED "unsupported call attributes"]
 			]
 		]
 		count: 0
@@ -3365,15 +3399,20 @@ compiler-rsir-frontend: context [
 		parameters: signature/2
 		mode: signature/4 and (variadic-flag + typed-flag + custom-flag)
 		if mode <> 0 [
-			unless any [mode = variadic-flag mode = typed-flag][
-				fail ERROR-UNSUPPORTED "custom calls are not implemented"
-			]
-			either mode = variadic-flag [
-				return stack-variadic-call 0 value position scope uses instructions params
-					locals return-ref parameters signature/4 signature-ref
-			][
-				return stack-typed-call 0 value position scope uses instructions params
-					locals return-ref parameters signature/4 signature-ref
+			case [
+				mode = variadic-flag [
+					return stack-variadic-call 0 value position scope uses instructions
+						params locals return-ref parameters signature/4 signature-ref
+				]
+				mode = typed-flag [
+					return stack-typed-call 0 value position scope uses instructions params
+						locals return-ref parameters signature/4 signature-ref
+				]
+				mode = custom-flag [
+					return stack-custom-call 0 value position scope uses instructions params
+						locals return-ref signature-ref
+				]
+				true [fail ERROR-UNSUPPORTED "unsupported call attributes"]
 			]
 		]
 		count: 0

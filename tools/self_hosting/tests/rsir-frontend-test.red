@@ -2025,6 +2025,89 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid CPU register value reported the wrong error class"
 
+atomic-ir: compile-text {
+	Red/System []
+	atomic-ptr!: alias pointer! [integer!]
+	operations: func [
+		value [atomic-ptr!]
+		return: [integer!]
+	][
+		system/atomic/fence
+		system/atomic/store value 1
+		system/atomic/load value
+		system/atomic/cas value 1 2
+		system/atomic/add value 1
+		system/atomic/sub value 1
+		system/atomic/or value 1
+		system/atomic/xor value 1
+		system/atomic/and value 1
+		system/atomic/add/old value 1
+		system/atomic/sub/old value 1
+		system/atomic/or/old value 1
+		system/atomic/xor/old value 1
+		system/atomic/and/old value 1
+		system/atomic/load value
+	]
+} 'user
+assert binary? atomic-ir [
+	"system/atomic lowering failed: " mold frontend/last-error
+]
+atomic-layout: layout-of atomic-ir
+atomic-effects: make block! 48
+repeat id word-at atomic-ir 20 [
+	if (instruction-word atomic-ir atomic-layout id 0) = 10 [
+		repend atomic-effects [
+			instruction-word atomic-ir atomic-layout id 4
+			instruction-word atomic-ir atomic-layout id 8
+			instruction-word atomic-ir atomic-layout id 12
+		]
+	]
+]
+assert atomic-effects = [
+	17 0 0
+	19 0 0
+	18 0 -5
+	20 0 -11
+	21 1 -5 21 2 -5 21 3 -5 21 4 -5 21 5 -5
+	21 9 -5 21 10 -5 21 11 -5 21 12 -5 21 13 -5
+	18 0 -5
+]["system/atomic did not retain one direct typed native family"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [value [pointer! [byte!]]][system/atomic/load value]
+} 'user "system/atomic/load accepted a non-integer pointer"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid atomic load pointer reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [value [pointer! [integer!]]][system/atomic/store value true]
+} 'user "system/atomic/store accepted a non-integer value"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid atomic store value reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [value [pointer! [integer!]]][system/atomic/cas value false 1]
+} 'user "system/atomic/cas accepted a non-integer check value"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid atomic CAS check reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [value [pointer! [integer!]]][system/atomic/multiply value 2]
+} 'user "system/atomic accepted an unknown operation"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"unknown atomic operation reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [value [pointer! [integer!]]][system/atomic/add/new value 2]
+} 'user "system/atomic accepted an unknown refinement"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"unknown atomic refinement reported the wrong error class"
+
 assert none? compile-text {
 	Red/System []
 	fn: func [return: [pointer! [integer!]]][

@@ -67,7 +67,7 @@ rules remain in Red/System codegen.
 | push, pop and stack controls | Native-operation IDs with explicit stack effects | units/push-pop-test.reds, x64-stack-smoke.reds | pending |
 | args, environment, CPU, FPU, I/O and image | Native-operation IDs; target implementation in codegen/runtime | units/system-test.reds, x64-cpu-register and image-info smokes | pending |
 | system/alias and system/words | Frontend semantic aliases and direct resolved symbol paths | units/system-test.reds, namespace tests and complete runtime corpus | pending |
-| Atomic load/store/CAS/math/fence | Typed native operations with ordering semantics | units/atomic-test.reds, queue-test.reds, x64-atomic-direct.reds | pending |
+| Atomic load/store/CAS/math/fence | Typed native operations with ordering semantics | units/atomic-test.reds, queue-test.reds, x64-atomic-direct.reds, rsir-atomic-exit.reds | pending |
 | #import functions and variables | Direct import records and generic address/call operations | dylib compiler/unit tests, x64-import-var-*.reds | replace |
 | #syscall | Syscall declaration plus typed syscall operation | x64-syscall-smoke.reds and focused diagnostics | pending |
 | #call | Red callback operation supplied only by embedded Red compilation | focused Red #system/routine probes | pending |
@@ -204,6 +204,15 @@ also verifies maximum-size layout and offset-zero overlap. This is mechanism
 evidence only. Literal arrays, aggregate copy, tagged-union tags and payloads,
 by-value aggregate ABI, and the complete struct/union formal families remain
 required.
+
+The direct `rsir-atomic-exit.reds` gate covers the complete specified atomic
+operation family through frontend, RSIR, native codegen, linker, and the
+generated PE: sequentially consistent fence/load/store, CAS success and
+failure, add/sub/or/xor/and with both new-value and `/old` results, and a
+struct-member address. Primitive encoder tests additionally require the x64
+`LOCK`, `XADD`, `CMPXCHG`, and `MFENCE` bytes. This proves the direct target
+mechanism, not row completion: the multithreaded atomic and queue formal
+families still require the runtime/thread source closure and must pass intact.
 
 ## Windows Linker Gate
 

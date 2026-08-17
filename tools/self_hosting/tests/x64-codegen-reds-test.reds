@@ -103,6 +103,7 @@ recursive-pointer-ir: allocate 160
 recursive-value-ir: allocate 144
 stack-ir: allocate 160
 system-ir: allocate 256
+atomic-ir: allocate 272
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -113,7 +114,7 @@ if any [
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
-	null? stack-ir null? system-ir
+	null? stack-ir null? system-ir null? atomic-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -1211,7 +1212,7 @@ if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 put stack-ir 92 0
-put stack-ir 88 17
+put stack-ir 88 22
 if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
@@ -1298,6 +1299,65 @@ if (x64-codegen/generate system-ir 170 output 1024 0) <> x64-codegen/INVALID_IR 
 	failures: failures + 1
 ]
 
+; Atomic math consumes an ordinary pointer and value pair. The /old bit is
+; semantic metadata on the native operation, not a source-shaped instruction.
+put atomic-ir 0 1
+put atomic-ir 4 0
+put atomic-ir 8 1
+put atomic-ir 12 0
+put atomic-ir 16 1
+put atomic-ir 20 9
+put atomic-ir 24 0
+put atomic-ir 28 0
+
+put atomic-ir 32 -6
+put atomic-ir 36 -5
+put atomic-ir 40 0
+put atomic-ir 44 0
+put atomic-ir 48 0
+
+put atomic-ir 52 0
+put atomic-ir 56 2
+put atomic-ir 60 -5
+put atomic-ir 64 0
+put atomic-ir 68 0
+put atomic-ir 72 0
+put atomic-ir 76 0
+put atomic-ir 80 1
+put atomic-ir 84 9
+
+put atomic-ir 88 -5
+put atomic-ir 92 0
+
+put-instruction atomic-ir 96 1 -5 7 0
+put-instruction atomic-ir 112 3 1 1 0
+put-instruction atomic-ir 128 5 0 0 0
+put-instruction atomic-ir 144 12 0 0 0
+put-instruction atomic-ir 160 3 1 1 0
+put-instruction atomic-ir 176 20 1 0 0
+put-instruction atomic-ir 192 1 -5 5 0
+put-instruction atomic-ir 208 10 21 9 -5
+put-instruction atomic-ir 224 11 -5 0 0
+atomic-ir/241: as byte! 66h
+atomic-ir/242: as byte! 6Eh
+
+size: x64-codegen/generate atomic-ir 242 output 1024 0
+if any [size <= 0 not execute-first? output 7][failures: failures + 1]
+put atomic-ir 216 0
+if (x64-codegen/generate atomic-ir 242 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put atomic-ir 216 9
+put atomic-ir 220 -11
+if (x64-codegen/generate atomic-ir 242 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put atomic-ir 220 -5
+put atomic-ir 36 -2
+if (x64-codegen/generate atomic-ir 242 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
 free output
 free void-ir
 free local-ir
@@ -1317,6 +1377,7 @@ free recursive-pointer-ir
 free recursive-value-ir
 free stack-ir
 free system-ir
+free atomic-ir
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

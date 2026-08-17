@@ -1864,7 +1864,7 @@ x64-codegen: context [
 			record-offset [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
-			typed-call? custom-call? list-call? unstable-stack? [logic!]
+			typed-call? custom-call? list-call? unstable-stack? atomic-old? [logic!]
 	][
 		measure?: null? code
 		tag-capacity: 0
@@ -3611,13 +3611,19 @@ x64-codegen: context [
 					written: written + encoded
 				]
 				instruction/op = OP_NATIVE [
-					unless any [
-						instruction/b = 0
-						all [
-							instruction/a >= 14 instruction/a <= 15
-							instruction/b >= 0 instruction/b <= 15
+					valid?: case [
+						all [instruction/a >= 14 instruction/a <= 15][
+							all [instruction/b >= 0 instruction/b <= 15]
 						]
-					][return INVALID_IR]
+						instruction/a = 21 [
+							any [
+								all [instruction/b >= 1 instruction/b <= 5]
+								all [instruction/b >= 9 instruction/b <= 13]
+							]
+						]
+						true [instruction/b = 0]
+					]
+					unless valid? [return INVALID_IR]
 					switch instruction/a [
 						1 [						;-- system/stack/top
 							unless all [
@@ -3950,6 +3956,289 @@ x64-codegen: context [
 							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						17 [					;-- system/atomic/fence
+							unless instruction/c = 0 [return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/memory-fence at (capacity - written)
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						18 [					;-- system/atomic/load
+							unless all [
+								instruction/c = -5
+								depth > 0
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								(logical-kind stack-types/depth types type-count) = -6
+								pointee-type stack-types/depth types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 8 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/register-load-indirect at
+								(capacity - written) x64-encoder/RAX x64-encoder/RAX 4 1
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							stack-types/depth: -5
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+						]
+						19 [					;-- system/atomic/store
+							target-slot: depth - 1
+							unless all [
+								instruction/c = 0
+								depth > 1
+								stack-kinds/target-slot = VALUE
+								stack-flags/target-slot = 0
+								(logical-kind stack-types/target-slot types type-count) = -6
+								pointee-type stack-types/target-slot types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								(canonical-type stack-types/depth types type-count) = -5
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RDX slot-displacement
+									(storage-slots + target-slot) 8 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 4 1
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/register-store-indirect at
+								(capacity - written) x64-encoder/RDX x64-encoder/RAX 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/memory-fence at (capacity - written)
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							depth: depth - 2
+						]
+						20 [					;-- system/atomic/cas
+							target-slot: depth - 2
+							source-slot: depth - 1
+							unless all [
+								instruction/c = -11
+								depth > 2
+								stack-kinds/target-slot = VALUE
+								stack-flags/target-slot = 0
+								(logical-kind stack-types/target-slot types type-count) = -6
+								pointee-type stack-types/target-slot types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+								stack-kinds/source-slot = VALUE
+								stack-flags/source-slot = 0
+								(canonical-type stack-types/source-slot types type-count) = -5
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								(canonical-type stack-types/depth types type-count) = -5
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RDX slot-displacement
+									(storage-slots + target-slot) 8 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + source-slot) 4 1
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RCX slot-displacement
+									(storage-slots + depth) 4 1
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/atomic-compare-exchange at
+								(capacity - written) x64-encoder/RDX x64-encoder/RCX
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/condition-result at
+								(capacity - written) 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							last-math-operation: 0
+							depth: depth - 2
+							stack-types/depth: -11
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						21 [					;-- system/atomic/<math>
+							target-slot: depth - 1
+							operation: instruction/b and 7
+							atomic-old?: (instruction/b and 8) <> 0
+							unless all [
+								instruction/c = -5
+								operation >= 1 operation <= 5
+								depth > 1
+								stack-kinds/target-slot = VALUE
+								stack-flags/target-slot = 0
+								(logical-kind stack-types/target-slot types type-count) = -6
+								pointee-type stack-types/target-slot types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								(canonical-type stack-types/depth types type-count) = -5
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RDX slot-displacement
+									(storage-slots + target-slot) 8 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RCX slot-displacement
+									(storage-slots + depth) 4 1
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							case [
+								operation <= 2 [
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/move-register at
+										(capacity - written) x64-encoder/RAX x64-encoder/RCX 4
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									if operation = 2 [
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: x64-encoder/negate-register at
+											(capacity - written) x64-encoder/RAX 4
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/atomic-exchange-add at
+										(capacity - written) x64-encoder/RDX x64-encoder/RAX
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									if not atomic-old? [
+										opcode: either operation = 1 [01h][29h]
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: x64-encoder/binary-register at
+											(capacity - written) opcode x64-encoder/RAX
+											x64-encoder/RCX 4
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+								]
+								true [
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/register-load-indirect at
+										(capacity - written) x64-encoder/RAX x64-encoder/RDX 4 1
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									target-offset: written
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/move-register at
+										(capacity - written) x64-encoder/R11 x64-encoder/RAX 4
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									opcode: case [
+										operation = 3 [09h]
+										operation = 4 [31h]
+										true [21h]
+									]
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/binary-register at
+										(capacity - written) opcode x64-encoder/R11
+										x64-encoder/RCX 4
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/atomic-compare-exchange at
+										(capacity - written) x64-encoder/RDX x64-encoder/R11
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/jump-condition at
+										(capacity - written) 5
+										(target-offset - (written + 6))
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									if not atomic-old? [
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: x64-encoder/move-register at
+											(capacity - written) x64-encoder/RAX
+											x64-encoder/R11 4
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+								]
+							]
+							last-math-operation: case [
+								operation = 1 [ADD_OPERATION]
+								operation = 2 [SUBTRACT_OPERATION]
+								operation = 3 [OR_OPERATION]
+								operation = 4 [XOR_OPERATION]
+								true [AND_OPERATION]
+							]
+							depth: depth - 1
+							stack-types/depth: -5
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: x64-encoder/frame-store at (capacity - written)

@@ -150,6 +150,48 @@ expected: #{4889442420}
 if any [size <> 5 (compare-memory code (as byte-ptr! expected) size) <> 0][
 	failures: failures + 1
 ]
+size: x64-encoder/register-load-indirect code 128 x64-encoder/R9
+	x64-encoder/R10 4 0
+expected: #{458B0A}
+if any [size <> 3 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/register-load-indirect code 128 x64-encoder/RAX
+	x64-encoder/RBP 2 1
+expected: #{0FBF4500}
+if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/register-store-indirect code 128 x64-encoder/R13
+	x64-encoder/R9 4
+expected: #{45894D00}
+if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+offset: 0
+size: x64-encoder/atomic-binary (code + offset) (128 - offset) 01h
+	x64-encoder/RDX x64-encoder/R10
+if size <> 4 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/atomic-exchange-add (code + offset) (128 - offset)
+	x64-encoder/RDX x64-encoder/RAX
+if size <> 4 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/atomic-compare-exchange (code + offset) (128 - offset)
+	x64-encoder/R13 x64-encoder/R11
+if size <> 6 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/memory-fence (code + offset) (128 - offset)
+if size <> 3 [failures: failures + 1]
+offset: offset + size
+size: x64-encoder/negate-register (code + offset) (128 - offset)
+	x64-encoder/R9 4
+if size <> 3 [failures: failures + 1]
+offset: offset + size
+expected: #{F0440112F00FC102F0450FB15D000FAEF041F7D9}
+if any [offset <> 20 (compare-memory code (as byte-ptr! expected) offset) <> 0][
+	failures: failures + 1
+]
 size: x64-encoder/rip-address code 128 x64-encoder/RAX 123
 if any [size <> 7 code/1 <> as byte! 48h code/2 <> as byte! 8Dh code/3 <> as byte! 05h][
 	failures: failures + 1
@@ -270,6 +312,22 @@ if (x64-encoder/register-load code 3 x64-encoder/R9 x64-encoder/R10 24) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/register-store code 128 16 x64-encoder/RAX 0) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/register-load-indirect code 128 16 x64-encoder/RAX 4 0) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/register-store-indirect code 128 x64-encoder/RAX
+	x64-encoder/RCX 3) <> -1 [failures: failures + 1]
+if (x64-encoder/atomic-binary code 128 02h x64-encoder/RAX
+	x64-encoder/RCX) <> -1 [failures: failures + 1]
+if (x64-encoder/atomic-exchange-add code 128 16 x64-encoder/RAX) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/atomic-compare-exchange code 3 x64-encoder/RAX
+	x64-encoder/RCX) <> -1 [failures: failures + 1]
+if (x64-encoder/memory-fence code 2) <> -1 [failures: failures + 1]
+if (x64-encoder/negate-register code 128 x64-encoder/RAX 2) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/and-immediate code 128 16 0) <> -1 [failures: failures + 1]

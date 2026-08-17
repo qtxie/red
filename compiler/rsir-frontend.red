@@ -149,6 +149,15 @@ compiler-rsir-frontend: context [
 	cpu-register-native: 14
 	cpu-register-set-native: 15
 	cpu-overflow-native: 16
+	atomic-fence-native: 17
+	atomic-load-native: 18
+	atomic-store-native: 19
+	atomic-cas-native: 20
+	atomic-math-native: 21
+	atomic-old-flag: 8
+	atomic-operations: make hash! [
+		add 1 sub 2 or 3 xor 4 and 5
+	]
 	cpu-register-ids: make hash! [
 		rax 0 rcx 1 rdx 2 rbx 3 rsp 4 rbp 5 rsi 6 rdi 7
 		r8 8 r9 9 r10 10 r11 11 r12 12 r13 13 r14 14 r15 15
@@ -4207,6 +4216,154 @@ compiler-rsir-frontend: context [
 		type-info/1
 	]
 
+	integer-pointer-value?: func [
+		ref flags [integer!]
+		return: [logic!]
+		/local pointee
+	][
+		if any [flags <> 0 (ref-kind ref) <> 'pointer][return false]
+		pointee: pointee-ref ref
+		all [integer? pointee (canonical-ref pointee) = -5]
+	]
+
+	stack-atomic: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local path count operation next-position old?
+	][
+		path: position/1
+		count: length? path
+		if all [count = 3 path/3 = 'fence][
+			emit instructions reduce [native-op atomic-fence-native 0 0]
+			last-type: 0
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next position
+		]
+		if all [count = 3 path/3 = 'load][
+			next-position: stack-value next position scope uses instructions
+				params locals expression-value
+			unless all [
+				not last-stopped?
+				integer-pointer-value? last-type last-flags
+			][
+				fail ERROR-REFERENCE
+					"system/atomic/load expects pointer! [integer!]"
+			]
+			emit instructions reduce [native-op atomic-load-native 0 -5]
+			last-type: -5
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next-position
+		]
+		if all [count = 3 path/3 = 'store][
+			next-position: stack-value next position scope uses instructions
+				params locals expression-value
+			unless all [
+				not last-stopped?
+				integer-pointer-value? last-type last-flags
+			][
+				fail ERROR-REFERENCE
+					"system/atomic/store expects pointer! [integer!]"
+			]
+			next-position: stack-value next-position scope uses instructions
+				params locals expression-value
+			unless all [
+				not last-stopped?
+				last-flags = 0
+				(canonical-ref last-type) = -5
+			][
+				fail ERROR-REFERENCE
+					"system/atomic/store expects an integer! value"
+			]
+			emit instructions reduce [native-op atomic-store-native 0 0]
+			last-type: 0
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next-position
+		]
+		if all [count = 3 path/3 = 'cas][
+			next-position: stack-value next position scope uses instructions
+				params locals expression-value
+			unless all [
+				not last-stopped?
+				integer-pointer-value? last-type last-flags
+			][
+				fail ERROR-REFERENCE
+					"system/atomic/cas expects pointer! [integer!]"
+			]
+			next-position: stack-value next-position scope uses instructions
+				params locals expression-value
+			unless all [
+				not last-stopped?
+				last-flags = 0
+				(canonical-ref last-type) = -5
+			][
+				fail ERROR-REFERENCE
+					"system/atomic/cas expects an integer! check value"
+			]
+			next-position: stack-value next-position scope uses instructions
+				params locals expression-value
+			unless all [
+				not last-stopped?
+				last-flags = 0
+				(canonical-ref last-type) = -5
+			][
+				fail ERROR-REFERENCE
+					"system/atomic/cas expects an integer! new value"
+			]
+			emit instructions reduce [native-op atomic-cas-native 0 -11]
+			last-type: -11
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next-position
+		]
+		operation: either count >= 3 [select atomic-operations path/3][none]
+		old?: all [count = 4 path/4 = 'old]
+		unless all [
+			integer? operation
+			any [count = 3 old?]
+		][fail ERROR-REFERENCE "invalid system/atomic access"]
+		next-position: stack-value next position scope uses instructions
+			params locals expression-value
+		unless all [
+			not last-stopped?
+			integer-pointer-value? last-type last-flags
+		][
+			fail ERROR-REFERENCE [
+				"system/atomic/" path/3 " expects pointer! [integer!]"
+			]
+		]
+		next-position: stack-value next-position scope uses instructions
+			params locals expression-value
+		unless all [
+			not last-stopped?
+			last-flags = 0
+			(canonical-ref last-type) = -5
+		][
+			fail ERROR-REFERENCE [
+				"system/atomic/" path/3 " expects an integer! value"
+			]
+		]
+		emit instructions reduce [
+			native-op atomic-math-native
+			operation + (either old? [atomic-old-flag][0])
+			-5
+		]
+		last-type: -5
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		next-position
+	]
+
 	stack-system-path: func [
 		position [block!]
 		scope uses [block!]
@@ -4254,6 +4411,9 @@ compiler-rsir-frontend: context [
 			last-float-literal?: false
 			last-stopped?: false
 			return next position
+		]
+		if path/2 = 'atomic [
+			return stack-atomic position scope uses instructions params locals
 		]
 		unless path/2 = 'stack [return none]
 		case [

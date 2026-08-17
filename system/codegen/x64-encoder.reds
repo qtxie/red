@@ -16,6 +16,10 @@ x64-encoder: context [
 	R9:  9
 	R10: 10
 	R11: 11
+	R12: 12
+	R13: 13
+	R14: 14
+	R15: 15
 	XMM0: 0
 	XMM1: 1
 
@@ -288,6 +292,26 @@ x64-encoder: context [
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
 		at/1: as byte! F7h
 		at/2: as byte! modrm 3 2 target
+		size
+	]
+
+	negate-register: func [
+		code [byte-ptr!]
+		capacity target width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) 3 target
+		size: either prefix = 40h [2][3]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! F7h
+		at/2: as byte! modrm 3 3 target
 		size
 	]
 
@@ -572,6 +596,161 @@ x64-encoder: context [
 			true [0]
 		]
 		size
+	]
+
+	register-load-indirect: func [
+		code [byte-ptr!]
+		capacity target address width signed [integer!]
+		return: [integer!]
+		/local prefix base-code mode opcode-size size [integer!]
+			prefix-needed? [logic!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 address >= 0 address <= 15
+			any [width = 1 width = 2 width = 4 width = 8]
+			any [signed = 0 signed = 1]
+		][return -1]
+		base-code: address and 7
+		mode: either base-code = 5 [1][0]
+		opcode-size: either width <= 2 [2][1]
+		prefix: rex (width = 8) target address
+		prefix-needed?: any [prefix <> 40h all [width = 1 target >= 4]]
+		size: opcode-size + 1
+		if prefix-needed? [size: size + 1]
+		if base-code = 4 [size: size + 1]
+		if base-code = 5 [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix-needed? [at/1: as byte! prefix at: at + 1]
+		case [
+			width = 1 [
+				at/1: as byte! 0Fh
+				at/2: as byte! either signed = 1 [BEh][B6h]
+				at: at + 2
+			]
+			width = 2 [
+				at/1: as byte! 0Fh
+				at/2: as byte! either signed = 1 [BFh][B7h]
+				at: at + 2
+			]
+			true [at/1: as byte! 8Bh at: at + 1]
+		]
+		at/1: as byte! modrm mode target address
+		at: at + 1
+		if base-code = 4 [at/1: as byte! 24h at: at + 1]
+		if base-code = 5 [at/1: as byte! 00h]
+		size
+	]
+
+	register-store-indirect: func [
+		code [byte-ptr!]
+		capacity address source width [integer!]
+		return: [integer!]
+		/local prefix base-code mode size [integer!]
+			prefix-needed? [logic!] at [byte-ptr!]
+	][
+		unless all [
+			address >= 0 address <= 15 source >= 0 source <= 15
+			any [width = 1 width = 2 width = 4 width = 8]
+		][return -1]
+		base-code: address and 7
+		mode: either base-code = 5 [1][0]
+		prefix: rex (width = 8) source address
+		prefix-needed?: any [prefix <> 40h all [width = 1 source >= 4]]
+		size: 2
+		if width = 2 [size: size + 1]
+		if prefix-needed? [size: size + 1]
+		if base-code = 4 [size: size + 1]
+		if base-code = 5 [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if width = 2 [at/1: as byte! 66h at: at + 1]
+		if prefix-needed? [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! either width = 1 [88h][89h]
+		at/2: as byte! modrm mode source address
+		at: at + 2
+		if base-code = 4 [at/1: as byte! 24h at: at + 1]
+		if base-code = 5 [at/1: as byte! 00h]
+		size
+	]
+
+	atomic-register-memory: func [
+		code [byte-ptr!]
+		capacity opcode extension address source [integer!]
+		return: [integer!]
+		/local prefix base-code mode size [integer!]
+			extended? [logic!] at [byte-ptr!]
+	][
+		unless all [
+			opcode >= 0 opcode <= 255 extension >= 0 extension <= 255
+			address >= 0 address <= 15 source >= 0 source <= 15
+		][return -1]
+		extended?: extension <> 0
+		base-code: address and 7
+		mode: either base-code = 5 [1][0]
+		prefix: rex false source address
+		size: either extended? [4][3]
+		if prefix <> 40h [size: size + 1]
+		if base-code = 4 [size: size + 1]
+		if base-code = 5 [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! F0h
+		at: at + 1
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! opcode
+		at: at + 1
+		if extended? [at/1: as byte! extension at: at + 1]
+		at/1: as byte! modrm mode source address
+		at: at + 1
+		if base-code = 4 [at/1: as byte! 24h at: at + 1]
+		if base-code = 5 [at/1: as byte! 00h]
+		size
+	]
+
+	atomic-binary: func [
+		code [byte-ptr!]
+		capacity opcode address source [integer!]
+		return: [integer!]
+	][
+		unless any [
+			opcode = 01h opcode = 09h opcode = 21h
+			opcode = 29h opcode = 31h
+		][return -1]
+		atomic-register-memory code capacity opcode 0 address source
+	]
+
+	atomic-exchange-add: func [
+		code [byte-ptr!]
+		capacity address source [integer!]
+		return: [integer!]
+	][
+		atomic-register-memory code capacity 0Fh C1h address source
+	]
+
+	atomic-compare-exchange: func [
+		code [byte-ptr!]
+		capacity address source [integer!]
+		return: [integer!]
+	][
+		atomic-register-memory code capacity 0Fh B1h address source
+	]
+
+	memory-fence: func [
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+	][
+		unless room? code capacity 3 [return -1]
+		if not null? code [
+			code/1: as byte! 0Fh
+			code/2: as byte! AEh
+			code/3: as byte! F0h
+		]
+		3
 	]
 
 	xmm-prefix: func [width [integer!] return: [integer!]][
@@ -964,66 +1143,16 @@ x64-encoder: context [
 		code [byte-ptr!]
 		capacity width signed [integer!]
 		return: [integer!]
-		/local size [integer!]
 	][
-		unless all [
-			any [width = 1 width = 2 width = 4 width = 8]
-			any [signed = 0 signed = 1]
-		][return -1]
-		size: case [width <= 2 [3] width = 4 [2] true [3]]
-		unless room? code capacity size [return -1]
-		if null? code [return size]
-		case [
-			width = 1 [
-				code/1: as byte! 0Fh
-				code/2: as byte! either signed = 1 [BEh][B6h]
-				code/3: as byte! 00h
-			]
-			width = 2 [
-				code/1: as byte! 0Fh
-				code/2: as byte! either signed = 1 [BFh][B7h]
-				code/3: as byte! 00h
-			]
-			width = 4 [code/1: as byte! 8Bh code/2: as byte! 00h]
-			true [
-				code/1: as byte! 48h
-				code/2: as byte! 8Bh
-				code/3: as byte! 00h
-			]
-		]
-		size
+		register-load-indirect code capacity RAX RAX width signed
 	]
 
 	store-indirect: func [
 		code [byte-ptr!]
 		capacity width [integer!]
 		return: [integer!]
-		/local size [integer!]
 	][
-		size: case [
-			width = 1 [2]
-			width = 2 [3]
-			width = 4 [2]
-			width = 8 [3]
-			true [return -1]
-		]
-		unless room? code capacity size [return -1]
-		if null? code [return size]
-		case [
-			width = 1 [code/1: as byte! 88h code/2: as byte! 02h]
-			width = 2 [
-				code/1: as byte! 66h
-				code/2: as byte! 89h
-				code/3: as byte! 02h
-			]
-			width = 4 [code/1: as byte! 89h code/2: as byte! 02h]
-			true [
-				code/1: as byte! 48h
-				code/2: as byte! 89h
-				code/3: as byte! 02h
-			]
-		]
-		size
+		register-store-indirect code capacity RDX RAX width
 	]
 
 	add-immediate: func [

@@ -1098,6 +1098,23 @@ x64-encoder: context [
 		5
 	]
 
+	call-register: func [
+		code [byte-ptr!]
+		capacity register [integer!]
+		return: [integer!]
+		/local size [integer!] at [byte-ptr!]
+	][
+		unless all [register >= 0 register <= 15][return -1]
+		size: either register >= 8 [3][2]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if register >= 8 [at/1: as byte! 41h at: at + 1]
+		at/1: as byte! FFh
+		at/2: as byte! modrm 3 2 register
+		size
+	]
+
 	call-import: func [
 		code [byte-ptr!]
 		capacity displacement [integer!]

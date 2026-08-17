@@ -163,6 +163,15 @@ if any [
 ][failures: failures + 1]
 if (x64-encoder/outgoing-store code 128 32 8) <> 5 [failures: failures + 1]
 if (x64-encoder/call-import code 128 0) <> 6 [failures: failures + 1]
+size: x64-encoder/call-register code 128 x64-encoder/RAX
+if any [size <> 2 code/1 <> as byte! FFh code/2 <> as byte! D0h][
+	failures: failures + 1
+]
+size: x64-encoder/call-register code 128 x64-encoder/R9
+if any [
+	size <> 3 code/1 <> as byte! 41h code/2 <> as byte! FFh
+	code/3 <> as byte! D1h
+][failures: failures + 1]
 if (x64-encoder/stack-top code 128) <> 3 [failures: failures + 1]
 if (x64-encoder/sign-extend-eax code 128) <> 3 [failures: failures + 1]
 if (x64-encoder/clear-register code 128 x64-encoder/R9) <> 3 [failures: failures + 1]
@@ -185,6 +194,10 @@ if (x64-encoder/test-register code 128 x64-encoder/RAX 2) <> -1 [
 ]
 if (x64-encoder/jump-relative code 4 0) <> -1 [failures: failures + 1]
 if (x64-encoder/jump-condition code 128 16 0) <> -1 [failures: failures + 1]
+if (x64-encoder/call-register code 1 x64-encoder/RAX) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/call-register code 128 16) <> -1 [failures: failures + 1]
 
 free code
 either failures = 0 [

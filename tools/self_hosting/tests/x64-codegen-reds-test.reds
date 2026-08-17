@@ -90,6 +90,8 @@ pointer-ir: allocate 128
 arithmetic-ir: allocate 256
 aggregate-ir: allocate 512
 abi-ir: allocate 1024
+indirect-ir: allocate 320
+null-function-ir: allocate 192
 tagged-ir: allocate 384
 array-ir: allocate 256
 branch-ir: allocate 256
@@ -103,7 +105,8 @@ image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
-	null? aggregate-ir null? abi-ir null? tagged-ir null? array-ir null? branch-ir
+	null? aggregate-ir null? abi-ir null? indirect-ir null? null-function-ir
+	null? tagged-ir null? array-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
 ][quit 1]
 
@@ -459,6 +462,126 @@ if size > 0 [
 	if header/function-count <> 2 [failures: failures + 1]
 	unless execute-first? output 77 [failures: failures + 1]
 ]
+
+; A function address is an ordinary typed value. The caller keeps it below
+; one argument, CALL consumes both slots, and the callee returns 41 + 1.
+put indirect-ir 0 1
+put indirect-ir 4 0
+put indirect-ir 8 1
+put indirect-ir 12 0
+put indirect-ir 16 2
+put indirect-ir 20 10
+put indirect-ir 24 0
+put indirect-ir 28 0
+
+put indirect-ir 32 -4
+put indirect-ir 36 -5
+put indirect-ir 40 0
+put indirect-ir 44 0
+put indirect-ir 48 1
+
+put indirect-ir 52 -5
+put indirect-ir 56 0
+
+put indirect-ir 60 0
+put indirect-ir 64 1
+put indirect-ir 68 -5
+put indirect-ir 72 0
+put indirect-ir 76 0
+put indirect-ir 80 0
+put indirect-ir 84 0
+put indirect-ir 88 0
+put indirect-ir 92 5
+
+put indirect-ir 96 1
+put indirect-ir 100 1
+put indirect-ir 104 -5
+put indirect-ir 108 0
+put indirect-ir 112 0
+put indirect-ir 116 1
+put indirect-ir 120 1
+put indirect-ir 124 0
+put indirect-ir 128 5
+
+put indirect-ir 132 -5
+put indirect-ir 136 0
+
+put-instruction indirect-ir 140 3 4 2 1
+put-instruction indirect-ir 156 20 1 0 0
+put-instruction indirect-ir 172 1 -5 41 0
+put-instruction indirect-ir 188 7 0 1 1
+put-instruction indirect-ir 204 11 -5 0 0
+
+put-instruction indirect-ir 220 3 1 1 0
+put-instruction indirect-ir 236 4 0 0 0
+put-instruction indirect-ir 252 1 -5 1 0
+put-instruction indirect-ir 268 15 1 0 0
+put-instruction indirect-ir 284 11 -5 0 0
+indirect-ir/301: as byte! 6Dh
+indirect-ir/302: as byte! 69h
+
+size: x64-codegen/generate indirect-ir 302 output 1024 0
+if size <= 0 [
+	failures: failures + 1
+]
+if size > 0 [
+	header: as codegen-header! output
+	if header/function-count <> 2 [failures: failures + 1]
+	unless execute-first? output 42 [failures: failures + 1]
+]
+put indirect-ir 200 -5
+if (x64-codegen/generate indirect-ir 302 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put indirect-ir 200 1
+
+; NULL is typeless until the frontend coerces it to a declared reference.
+; The native core preserves the zero bits while changing only the stack type.
+put null-function-ir 0 1
+put null-function-ir 4 0
+put null-function-ir 8 1
+put null-function-ir 12 0
+put null-function-ir 16 1
+put null-function-ir 20 5
+put null-function-ir 24 0
+put null-function-ir 28 0
+
+put null-function-ir 32 -4
+put null-function-ir 36 -5
+put null-function-ir 40 0
+put null-function-ir 44 0
+put null-function-ir 48 0
+
+put null-function-ir 52 0
+put null-function-ir 56 1
+put null-function-ir 60 -11
+put null-function-ir 64 0
+put null-function-ir 68 0
+put null-function-ir 72 0
+put null-function-ir 76 0
+put null-function-ir 80 0
+put null-function-ir 84 5
+
+put-instruction null-function-ir 88 1 -14 0 0
+put-instruction null-function-ir 104 8 1 0 0
+put-instruction null-function-ir 120 1 -14 0 0
+put-instruction null-function-ir 136 15 13 0 0
+put-instruction null-function-ir 152 11 -11 0 0
+null-function-ir/169: as byte! 6Eh
+
+size: x64-codegen/generate null-function-ir 169 output 1024 0
+if size <= 0 [
+	failures: failures + 1
+]
+if size > 0 [
+	unless execute-selection? output 1 [failures: failures + 1]
+]
+put null-function-ir 108 -2
+if (x64-codegen/generate null-function-ir 169 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put null-function-ir 108 1
 
 ; A tagged union stores its tag before the aligned shared payload. A write
 ; marks variant 1 after storing 73; TAG plus the payload must therefore be 74.
@@ -900,6 +1023,8 @@ free pointer-ir
 free arithmetic-ir
 free aggregate-ir
 free abi-ir
+free indirect-ir
+free null-function-ir
 free tagged-ir
 free array-ir
 free branch-ir

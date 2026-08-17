@@ -514,7 +514,7 @@ symbolic-ir: compile-text {
 	triple: func [value [integer!] return: [integer!]][value * 3]
 	functions: [:double :triple]
 	entry: :double
-	function-address: func [return: [pointer!]][:triple]
+	function-address: func [return: [pointer!]][as pointer! :triple]
 } 'user
 assert binary? symbolic-ir [
 	"symbolic static initializers failed: " mold frontend/last-error
@@ -522,6 +522,7 @@ assert binary? symbolic-ir [
 symbolic-layout: layout-of symbolic-ir
 labels-ref: global-word symbolic-ir symbolic-layout 2 8
 functions-ref: global-word symbolic-ir symbolic-layout 3 8
+functions-element-ref: type-word symbolic-ir symbolic-layout functions-ref 4
 assert all [
 	(word-at symbolic-ir 24) = 7
 	(global-word symbolic-ir symbolic-layout 1 8) = -13
@@ -548,7 +549,8 @@ assert all [
 ]["a string array did not lower to global-address slots"]
 assert all [
 	(type-word symbolic-ir symbolic-layout functions-ref 0) = -7
-	(type-word symbolic-ir symbolic-layout functions-ref 4) = -12
+	(type-word symbolic-ir symbolic-layout functions-element-ref 0) = -4
+	(type-word symbolic-ir symbolic-layout functions-element-ref 4) = -5
 	(type-word symbolic-ir symbolic-layout functions-ref 8) = 8
 	(type-word symbolic-ir symbolic-layout functions-ref 16) = 2
 	(global-word symbolic-ir symbolic-layout 3 16) = 3
@@ -557,13 +559,158 @@ assert all [
 	(initializer-word symbolic-ir symbolic-layout 4 4) = 4
 	(initializer-word symbolic-ir symbolic-layout 4 8) = 1
 	(initializer-word symbolic-ir symbolic-layout 5 8) = 2
-	(global-word symbolic-ir symbolic-layout 4 8) = -12
+	(global-word symbolic-ir symbolic-layout 4 8) = functions-element-ref
 	(initializer-word symbolic-ir symbolic-layout 6 4) = 4
 	(initializer-word symbolic-ir symbolic-layout 6 8) = 1
 ]["function addresses did not use the ordinary address initializer"]
 symbolic-ops: ops-of symbolic-ir symbolic-layout
-assert not none? find symbolic-ops [3 20 11]
-	"runtime function address did not use ADDRESS/REFERENCE"
+assert not none? find symbolic-ops [3 20 8 11]
+	"runtime function address did not use ADDRESS/REFERENCE/CAST"
+
+function-value-ir: compile-text {
+	Red/System []
+	op!: alias function! [value [integer!] return: [integer!]]
+	box!: alias struct! [apply [op!]]
+	inc: func [value [integer!] return: [integer!]][value + 1]
+	run: func [return: [integer!] /local fn [op!] holder [box!]][
+		holder: declare box!
+		holder/apply: as op! :inc
+		fn: as op! :inc
+		if :fn = null [return 0]
+		fn 41
+		holder/apply 40
+	]
+} 'user
+assert binary? function-value-ir [
+	"typed function values failed: " mold frontend/last-error
+]
+function-value-layout: layout-of function-value-ir
+function-type: 0
+function-call: 0
+repeat id word-at function-value-ir 8 [
+	if (type-word function-value-ir function-value-layout id 0) = -4 [
+		function-type: id
+	]
+]
+repeat id word-at function-value-ir 20 [
+	if all [
+		(instruction-word function-value-ir function-value-layout id 0) = 7
+		(instruction-word function-value-ir function-value-layout id 4) = 0
+	][function-call: id]
+]
+assert all [
+	function-type > 0
+	function-call > 0
+	(instruction-word function-value-ir function-value-layout function-call 12)
+		= function-type
+	not none? find ops-of function-value-ir function-value-layout 6
+	not none? find ops-of function-value-ir function-value-layout 20
+	]
+	"function values did not lower to typed ADDRESS/REFERENCE/LOAD/CALL"
+
+function-global-ir: compile-text {
+	Red/System []
+	op!: alias function! [value [integer!] return: [integer!]]
+	inc: func [value [integer!] return: [integer!]][value + 1]
+	op-global: as op! :inc
+	run: func [return: [integer!]][op-global 41]
+} 'user
+assert binary? function-global-ir [
+	"global function value failed: " mold frontend/last-error
+]
+function-global-layout: layout-of function-global-ir
+assert all [
+	(word-at function-global-ir 24) = 1
+	(global-word function-global-ir function-global-layout 1 20) = 1
+	(initializer-word function-global-ir function-global-layout 1 0) = 2
+	(initializer-word function-global-ir function-global-layout 1 4) = 4
+	(initializer-word function-global-ir function-global-layout 1 8) = 1
+	not none? find ops-of function-global-ir function-global-layout 7
+]["global function value was not one typed static relocation and indirect CALL"]
+
+assert binary? compile-text {
+	Red/System []
+	op!: alias function! [value [integer!] return: [integer!]]
+	nullable: func [return: [logic!] /local fn [op!]][
+		fn: null
+		:fn = null
+	]
+} 'user "implicit null function assignment was rejected"
+
+assert binary? compile-text {
+	Red/System []
+	inc: func [value [integer!] return: [integer!]][value + 1]
+	address: func [return: [integer!]][as integer! :inc]
+} 'user "function-to-integer cast was rejected"
+
+assert none? compile-text {
+	Red/System []
+	inc: func [value [integer!] return: [integer!]][value + 1]
+	bad: func [return: [byte!]][as byte! :inc]
+} 'user "function-to-byte cast was accepted"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid function cast reported the wrong error class"
+
+callback-ir: compile-text {
+	Red/System []
+	#import [
+		"foo.dll" cdecl [
+			foo: "foo" [
+				fun [function! [a [integer!] b [integer!] return: [logic!]]]
+				return: [integer!]
+			]
+		]
+	]
+	compare: func [[cdecl] left [integer!] right [integer!] return: [logic!]][
+		left <= right
+	]
+	run: func [return: [integer!]][foo :compare]
+} 'user
+assert binary? callback-ir [
+	"callback function signature was rejected: " mold frontend/last-error
+]
+callback-call: 0
+repeat id word-at callback-ir 20 [
+	if all [
+		(instruction-word callback-ir (layout-of callback-ir) id 0) = 7
+		(instruction-word callback-ir (layout-of callback-ir) id 4) < 0
+	][callback-call: id]
+]
+assert callback-call > 0 "callback did not lower through an imported CALL"
+
+assert none? compile-text {
+	Red/System []
+	#import [
+		"foo.dll" cdecl [
+			foo: "foo" [
+				fun [function! [a [integer!] b [integer!] return: [logic!]]]
+				return: [integer!]
+			]
+		]
+	]
+	compare: func [[cdecl] left [integer!] return: [logic!]][left <> 0]
+	run: func [][foo :compare]
+} 'user "a callback signature mismatch was accepted"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"function signature mismatch reported the wrong error class"
+
+assert binary? compile-text {
+	Red/System []
+	op!: alias function! [value [integer!] return: [integer!]]
+	wrong: func [value [byte!] return: [integer!]][value]
+	bad: func [return: [integer!] /local fn [op!]][
+		fn: as op! :wrong
+		fn 4
+	]
+} 'user "explicit function-to-function cast was rejected"
+
+assert none? compile-text {
+	Red/System []
+	op!: alias function! [value [integer!] return: [integer!]]
+	bad: func [return: [integer!]][as op! null]
+} 'user "explicit null function cast was accepted"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"explicit null function cast reported the wrong error class"
 
 protect-ir: compile-text {
 	Red/System []

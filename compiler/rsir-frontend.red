@@ -29,6 +29,7 @@ compiler-rsir-frontend: context [
 	pointer-types: make hash! 64
 	array-types: make hash! 32
 	aggregate-types: make hash! 64
+	function-types: make hash! 64
 	constants: make hash! 256
 	protected: make hash! 64
 	protected-values: make hash! 64
@@ -61,7 +62,7 @@ compiler-rsir-frontend: context [
 
 	type-codes: make hash! [
 		i8 1 u8 2 i16 3 u16 4 i32 5 u32 6 i64 7 u64 8
-		f32 9 f64 10 logic 11 pointer 12 c-string 13
+		f32 9 f64 10 logic 11 pointer 12 c-string 13 null 14
 		alias -1 struct -2 union -3 function -4 subroutine -5
 		pointer-node -6 array -7
 	]
@@ -79,6 +80,8 @@ compiler-rsir-frontend: context [
 	callback-flag: 64
 	objc-flag: 128
 	catch-flag: 256
+	call-shape-flags: return-value-flag + variadic-flag + typed-flag
+		+ custom-flag + objc-flag
 	inline-flag: 1
 	protected-flag: 2
 	tagged-type-flag: 1
@@ -388,7 +391,7 @@ compiler-rsir-frontend: context [
 			count > 0
 			find [1 2 4 8] width
 			find [
-			i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string
+			i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string function
 			] kind
 		][
 			fail ERROR-UNSUPPORTED "literal array element type is unsupported"
@@ -536,6 +539,12 @@ compiler-rsir-frontend: context [
 			return intern-aggregate either name = 'struct! ['struct]['union]
 				type/2 scope uses
 		]
+		if all [
+			word? name
+			name = 'function!
+			(length? type) = 2
+			block? type/2
+		][return intern-function-type type/2 scope uses]
 		kind: type-kind type scope uses
 		unless kind [fail ERROR-UNSUPPORTED ["unsupported type " mold type]]
 		if all [word? name pointee: select builtin-pointees name][
@@ -596,8 +605,10 @@ compiler-rsir-frontend: context [
 
 	ref-kind: func [ref [integer!] /local record kind name steps target][
 		if ref < 0 [
-			if ref < -13 [return none]
-			return pick [i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string]
+			if ref < -14 [return none]
+			return pick [
+				i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string null
+			]
 				negate ref
 		]
 		if any [ref = 0 ref > type-count][return none]
@@ -926,6 +937,102 @@ compiler-rsir-frontend: context [
 			]
 		]
 		reduce [return-ref params locals flags]
+	]
+
+	resolved-signature?: func [value return: [logic!]][
+		all [
+			block? value
+			(length? value) = 4
+			integer? value/1
+			block? value/2
+			block? value/3
+			integer? value/4
+		]
+	]
+
+	signature-key: func [signature [block!] /local key parameter][
+		key: make block! ((length? signature/2) + 2)
+		append key canonical-ref signature/1
+		append key signature/4
+		parameter: signature/2
+		while [not tail? parameter][
+			append key canonical-ref parameter/2
+			append key parameter/3
+			parameter: skip parameter 3
+		]
+		mold/flat key
+	]
+
+	intern-function-signature: func [
+		signature scope uses [block!]
+		return: [integer!]
+		/local key id
+	][
+		unless empty? signature/3 [
+			fail ERROR-UNSUPPORTED "function type cannot declare locals"
+		]
+		key: signature-key signature
+		if id: select function-types key [return id]
+		id: type-count + 1
+		repend function-types [key id]
+		append types none
+		append types 'function
+		append/only types copy/deep signature
+		append/only types copy scope
+		append/only types copy/deep uses
+		type-count: id
+		id
+	]
+
+	intern-function-type: func [
+		spec scope uses [block!]
+		return: [integer!]
+	][
+		intern-function-signature (read-signature spec scope uses) scope uses
+	]
+
+	prepare-types: func [/local position signature key id][
+		position: types
+		id: 1
+		while [not tail? position][
+			if position/2 = 'function [
+				signature: either resolved-signature? position/3 [
+					position/3
+				][read-signature position/3 position/4 position/5]
+				unless empty? signature/3 [
+					fail ERROR-UNSUPPORTED "function type cannot declare locals"
+				]
+				position/3: signature
+				key: signature-key signature
+				unless select function-types key [
+					repend function-types [key id]
+				]
+			]
+			position: skip position 5
+			id: id + 1
+		]
+	]
+
+	function-signature: func [ref [integer!] return: [block! none!] /local record][
+		ref: canonical-ref ref
+		if any [ref <= 0 ref > type-count][return none]
+		record: skip types ((ref - 1) * 5)
+		unless record/2 = 'function [return none]
+		either resolved-signature? record/3 [record/3][none]
+	]
+
+	call-signature-ref: func [target [integer!] return: [integer!] /local record][
+		either target > 0 [
+			record: skip functions ((target - 1) * 10)
+			intern-function-signature reduce [
+				record/6 record/7 copy [] record/9
+			] copy [] copy []
+		][
+			record: skip imports (((0 - target) - 1) * 10)
+			intern-function-signature reduce [
+				record/8 record/9 copy [] record/10
+			] copy [] copy []
+		]
 	]
 
 	prepare-functions: func [/local record signature][
@@ -1361,6 +1468,7 @@ compiler-rsir-frontend: context [
 		]
 
 		scan-block skip source 2 copy [] copy []
+		prepare-types
 		prepare-functions
 		prepare-imports
 		compile-module skip source 2 copy [] copy []
@@ -1430,7 +1538,12 @@ compiler-rsir-frontend: context [
 					first: first + count
 				]
 				find [function subroutine] kind [
-					signature: read-signature position/3 position/4 position/5
+					signature: either kind = 'function [
+						position/3
+					][read-signature position/3 position/4 position/5]
+					unless block? signature [
+						fail ERROR-REFERENCE "function type signature is unresolved"
+					]
 					unless empty? signature/3 [
 						fail ERROR-UNSUPPORTED "function type cannot declare locals"
 					]
@@ -1655,8 +1768,52 @@ compiler-rsir-frontend: context [
 		(canonical-ref target) = canonical-ref info/1
 	]
 
-	stack-type-compatible?: func [
+	address-kind?: func [kind [word! none!] return: [logic!]][
+		not none? find [pointer c-string struct union array] kind
+	]
+
+	reference-kind?: func [kind [word! none!] return: [logic!]][
+		not none? find [pointer c-string struct union array function null] kind
+	]
+
+	function-signatures-compatible?: func [
+		expected actual depth [integer!]
+		return: [logic!]
+		/local left right left-parameter right-parameter
+	][
+		if depth > type-count [return false]
+		left: function-signature expected
+		right: function-signature actual
+		unless all [block? left block? right][return false]
+		if (left/4 and call-shape-flags) <> (right/4 and call-shape-flags)[
+			return false
+		]
+		either left/1 = 0 [
+			if right/1 <> 0 [return false]
+		][
+			if any [
+				right/1 = 0
+				not stack-type-compatible-at? left/1 right/1 (depth + 1)
+			][return false]
+		]
+		if (length? left/2) <> length? right/2 [return false]
+		left-parameter: left/2
+		right-parameter: right/2
+		while [not tail? left-parameter][
+			if any [
+				left-parameter/3 <> right-parameter/3
+				not stack-type-compatible-at? left-parameter/2 right-parameter/2
+					(depth + 1)
+			][return false]
+			left-parameter: skip left-parameter 3
+			right-parameter: skip right-parameter 3
+		]
+		true
+	]
+
+	stack-type-compatible-at?: func [
 		expected actual [integer!]
+		depth [integer!]
 		return: [logic!]
 		/local expected-kind actual-kind
 	][
@@ -1666,13 +1823,26 @@ compiler-rsir-frontend: context [
 		if any [expected = 0 actual = 0] [return false]
 		expected-kind: ref-kind expected
 		actual-kind: ref-kind actual
+		if any [expected-kind = 'null actual-kind = 'null][
+			return all [reference-kind? expected-kind reference-kind? actual-kind]
+		]
 		if array-pointer-compatible? expected actual [return true]
+		if all [expected-kind = 'function actual-kind = 'function][
+			return function-signatures-compatible? expected actual depth
+		]
 		if any [reference-kind? expected-kind reference-kind? actual-kind][return false]
 		either all [expected > 0 actual > 0][
 			false
 		][
 			expected-kind = actual-kind
 		]
+	]
+
+	stack-type-compatible?: func [
+		expected actual [integer!]
+		return: [logic!]
+	][
+		stack-type-compatible-at? expected actual 0
 	]
 
 	integer-kind?: func [kind [word! none!] return: [logic!]][
@@ -1747,6 +1917,14 @@ compiler-rsir-frontend: context [
 			expected-flags = last-flags
 			stack-type-compatible? expected last-type
 		][
+			if all [
+				(canonical-ref expected) <> canonical-ref last-type
+				any [
+					last-type = -14
+					(ref-kind expected) = 'function
+					(ref-kind last-type) = 'function
+				]
+			][emit instructions reduce [cast-op expected expected-flags 0]]
 			last-type: expected
 			last-flags: expected-flags
 			return true
@@ -2006,13 +2184,15 @@ compiler-rsir-frontend: context [
 				target: either get-word? value [to word! value][to path! value]
 				id: resolve-name target scope uses function-ids
 				if integer? id [
-					return reduce [-12 address-initializer function-address id 0]
+					ref: call-signature-ref id
+					return reduce [ref address-initializer function-address id 0]
 				]
 				id: resolve-name target scope uses import-ids
 				if integer? id [
 					record: skip imports ((id - 1) * 10)
 					if record/5 = 'function [
-						return reduce [-12 address-initializer import-address id 0]
+						ref: call-signature-ref (0 - id)
+						return reduce [ref address-initializer import-address id 0]
 					]
 				]
 				id: resolve-name target scope uses globals
@@ -2049,7 +2229,7 @@ compiler-rsir-frontend: context [
 			find [i8 u8] kind [1]
 			find [i16 u16] kind [2]
 			find [i32 u32 f32 logic] kind [4]
-			find [i64 u64 f64 pointer c-string] kind [8]
+			find [i64 u64 f64 pointer c-string function null] kind [8]
 			true [0]
 		]
 	]
@@ -2148,10 +2328,6 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	reference-kind?: func [kind [word! none!] return: [logic!]][
-		not none? find [pointer c-string struct union array] kind
-	]
-
 	same-stack-type?: func [
 		left left-flags right right-flags [integer!]
 		return: [logic!]
@@ -2206,11 +2382,11 @@ compiler-rsir-frontend: context [
 					]
 					all [
 						operation <= 2
-						reference-kind? left-kind
+						address-kind? left-kind
 						left-flags = 0
 						any [
 							all [integer-kind? right-kind right-flags = 0]
-							all [reference-kind? right-kind right-flags = 0]
+							all [address-kind? right-kind right-flags = 0]
 						]
 					]
 				]
@@ -2239,10 +2415,22 @@ compiler-rsir-frontend: context [
 				valid?: any [
 					common <> 0
 					all [
+						operation <= 14
+						left-flags = 0
+						right-flags = 0
+						any [left-kind = 'null right-kind = 'null]
+						reference-kind? left-kind
+						reference-kind? right-kind
+					]
+					all [
 						same-stack-type? left left-flags right right-flags
 						any [
 							float-kind? left-kind
-							reference-kind? left-kind
+							address-kind? left-kind
+							all [
+								find [function null] left-kind
+								operation <= 14
+							]
 							all [left-kind = 'logic operation <= 14]
 						]
 					]
@@ -2318,7 +2506,8 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		return: [block!]
 		/local type-info target-ref target-flags target-kind source keep? value
-			literal-end bits next-position source-ref source-flags source-literal?
+			literal-end bits next-position source-ref source-flags source-kind
+			source-literal? valid?
 	][
 		type-info: stack-read-type next position scope uses
 		target-ref: type-info/2
@@ -2359,7 +2548,23 @@ compiler-rsir-frontend: context [
 			expression-value
 		source-ref: last-type
 		source-flags: last-flags
+		source-kind: ref-kind source-ref
 		source-literal?: last-float-literal?
+		if source-ref = -14 [
+			fail ERROR-REFERENCE "null cannot be explicitly cast"
+		]
+		if any [source-kind = 'function target-kind = 'function][
+			valid?: either source-kind = 'function [
+				not none? find [i32 pointer function] target-kind
+			][
+				any [
+					source-kind = 'i32
+					not none? find [c-string pointer struct union array function]
+						source-kind
+				]
+			]
+			unless valid? [fail ERROR-REFERENCE "invalid function pointer cast"]
+		]
 		if all [
 			any [float-kind? ref-kind source-ref float-kind? target-kind]
 			any [
@@ -2371,6 +2576,13 @@ compiler-rsir-frontend: context [
 		unless all [
 			target-flags = source-flags
 			stack-type-compatible? target-ref source-ref
+			any [
+				(canonical-ref target-ref) = canonical-ref source-ref
+				all [
+					(ref-kind target-ref) <> 'function
+					(ref-kind source-ref) <> 'function
+				]
+			]
 		][
 			emit instructions reduce [cast-op target-ref target-flags either keep? [1][0]]
 		]
@@ -2533,6 +2745,49 @@ compiler-rsir-frontend: context [
 			parameter: skip parameter 3
 		]
 		emit instructions reduce [call-op target count return-ref]
+		last-type: return-ref
+		last-flags: 0
+		position-after
+	]
+
+	stack-indirect-call: func [
+		value [word! path!]
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local signature signature-ref return-ref parameters parameter
+			count expected expected-flags position-after
+	][
+		signature-ref: canonical-ref last-type
+		signature: function-signature signature-ref
+		unless block? signature [
+			fail ERROR-REFERENCE ["value is not callable " mold value]
+		]
+		if (signature/4 and (variadic-flag + typed-flag + custom-flag)) <> 0 [
+			fail ERROR-UNSUPPORTED "variable-arity indirect call is not implemented"
+		]
+		emit instructions reduce [load-op 0 0 0]
+		return-ref: signature/1
+		parameters: signature/2
+		count: 0
+		parameter: parameters
+		position-after: next position
+		while [not tail? parameter][
+			position-after: stack-value position-after scope uses instructions params locals
+				expression-value
+			expected: parameter/2
+			expected-flags: parameter/3
+			unless coerce-stack expected expected-flags instructions true [
+				fail ERROR-REFERENCE [
+					"argument type does not match function value " mold value
+				]
+			]
+			count: count + 1
+			parameter: skip parameter 3
+		]
+		emit instructions reduce [call-op 0 count signature-ref]
 		last-type: return-ref
 		last-flags: 0
 		position-after
@@ -3371,20 +3626,26 @@ compiler-rsir-frontend: context [
 				target: either get-word? value [to word! value][to path! value]
 				call-target: resolve-stack-call target scope uses
 				if integer? call-target [
+					id: call-signature-ref call-target
 					emit instructions reduce [
 						address-op either call-target > 0 [
 							function-address
 						][import-address]
 						either call-target > 0 [call-target][0 - call-target]
-						0
+						id
 					]
-					emit instructions reduce [reference-op -12 0 0]
-					last-type: -12
+					emit instructions reduce [reference-op id 0 0]
+					last-type: id
 					last-flags: 0
 					return next position
 				]
 				unless stack-address target scope uses instructions params locals [
 					fail ERROR-REFERENCE ["unknown address target " mold value]
+				]
+				if all [get-word? value (ref-kind last-type) = 'function][
+					emit instructions reduce [load-op 0 0 0]
+					last-flags: 0
+					return next position
 				]
 				id: either get-path? value [
 					intern-pointer -5
@@ -3453,6 +3714,12 @@ compiler-rsir-frontend: context [
 				last-flags: 0
 				next position
 			]
+			value = 'null [
+				emit instructions reduce [literal-op -14 0 0]
+				last-type: -14
+				last-flags: 0
+				next position
+			]
 			string? value [
 				bytes: to binary! value
 				offset: select string-ids bytes
@@ -3512,9 +3779,13 @@ compiler-rsir-frontend: context [
 						if last-type = 0 [
 							fail ERROR-REFERENCE ["value is used before initialization " mold value]
 						]
-						emit instructions reduce [load-op 0 0 0]
-						last-flags: 0
-						next position
+						either (ref-kind last-type) = 'function [
+							stack-indirect-call value position scope uses instructions params locals
+						][
+							emit instructions reduce [load-op 0 0 0]
+							last-flags: 0
+							next position
+						]
 					]
 				]
 				last-float-literal?: false
@@ -3554,7 +3825,7 @@ compiler-rsir-frontend: context [
 		scope uses [block!]
 		protected? [logic!]
 		return: [logic!]
-		/local value type-info next-position wide bits kind keep? info id
+		/local value type-info next-position wide bits kind source-kind keep? info id
 	][
 		static?: false
 		static-ref: 0
@@ -3706,6 +3977,21 @@ compiler-rsir-frontend: context [
 						static-initializer: reduce [
 							address-initializer global-address id 0
 						]
+						static-next: next next-position
+					]
+					if all [
+						not static?
+						any [get-word? value get-path? value]
+						info: static-literal-info value scope uses protected?
+					][
+						source-kind: ref-kind info/1
+						if all [
+							source-kind = 'function
+							none? find [i32 pointer function] kind
+						][fail ERROR-REFERENCE "invalid function pointer cast"]
+						static?: true
+						static-ref: type-info/2
+						static-initializer: reduce [info/2 info/3 info/4 info/5]
 						static-next: next next-position
 					]
 				]
@@ -3957,6 +4243,9 @@ compiler-rsir-frontend: context [
 		either block? storage [
 			record: storage/2
 			either record/2 = 0 [
+				if last-type = -14 [
+					fail ERROR-REFERENCE "null needs an explicit target type"
+				]
 				record/2: last-type
 				record/3: last-flags
 			][
@@ -3970,7 +4259,12 @@ compiler-rsir-frontend: context [
 				unless coerce-stack record/2 0 instructions false [
 					fail ERROR-REFERENCE ["global assignment changes type " mold target]
 				]
-			][record/2: last-type]
+			][
+				if last-type = -14 [
+					fail ERROR-REFERENCE "null needs an explicit target type"
+				]
+				record/2: last-type
+			]
 		][
 			unless coerce-stack target-ref target-flags instructions false [
 				fail ERROR-REFERENCE ["assignment changes type " mold target]
@@ -4170,6 +4464,7 @@ compiler-rsir-frontend: context [
 			clear pointer-types
 			clear array-types
 			clear aggregate-types
+			clear function-types
 			clear constants
 			clear protected
 			clear protected-values

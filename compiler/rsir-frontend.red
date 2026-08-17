@@ -2716,17 +2716,27 @@ compiler-rsir-frontend: context [
 		params [block!]
 		locals [block!]
 		return: [block!]
-		/local record return-ref parameters
+		/local record return-ref parameters flags mode
 			parameter count expected expected-flags position-after
 	][
 		either target > 0 [
 			record: skip functions ((target - 1) * 10)
 			return-ref: record/6
 			parameters: record/7
+			flags: record/9
 		][
 			record: skip imports (((0 - target) - 1) * 10)
 			return-ref: record/8
 			parameters: record/9
+			flags: record/10
+		]
+		mode: flags and (variadic-flag + typed-flag + custom-flag)
+		if mode <> 0 [
+			unless mode = variadic-flag [
+				fail ERROR-UNSUPPORTED "typed and custom calls are not implemented"
+			]
+			return stack-variadic-call target value position scope uses instructions
+				params locals return-ref parameters flags 0
 		]
 		count: 0
 		parameter: parameters
@@ -2750,6 +2760,100 @@ compiler-rsir-frontend: context [
 		position-after
 	]
 
+	packed-variadic-signature?: func [
+		parameters [block!]
+		return: [logic!]
+		/local count tail-parameter
+	][
+		count: (length? parameters) / 3
+		unless any [count = 2 count = 3][return false]
+		unless all [
+			parameters/3 = 0
+			(ref-kind parameters/2) = 'i32
+			parameters/6 = 0
+			(ref-kind parameters/5) = 'pointer
+		][return false]
+		if count = 3 [
+			tail-parameter: skip parameters 6
+			unless all [
+				tail-parameter/3 = 0
+				(ref-kind tail-parameter/2) = 'i32
+			][return false]
+		]
+		true
+	]
+
+	stack-variadic-call: func [
+		target [integer!]
+		value [word! path!]
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return-ref [integer!]
+		parameters [block!]
+		flags signature-ref [integer!]
+		return: [block!]
+		/local cursor next-value parameter count expected expected-flags cdecl?
+	][
+		unless all [(length? position) >= 2 block? position/2][
+			fail ERROR-UNSUPPORTED ["variadic call requires an argument block: " mold value]
+		]
+		cdecl?: (flags and 3) = 1
+		unless any [
+			cdecl?
+			all [target < 0 empty? parameters]
+			all [target >= 0 packed-variadic-signature? parameters]
+		][
+			fail ERROR-UNSUPPORTED [
+				"variadic function must declare count, list, and optional size: "
+				mold value
+			]
+		]
+		cursor: position/2
+		parameter: parameters
+		count: 0
+		while [not tail? cursor][
+			next-value: stack-value cursor scope uses instructions params locals
+				expression-value
+			if last-type = 0 [
+				fail ERROR-REFERENCE ["variadic argument has no value: " mold value]
+			]
+			count: count + 1
+			either all [cdecl? not tail? parameter][
+				expected: parameter/2
+				expected-flags: parameter/3
+				unless coerce-stack expected expected-flags instructions true [
+					fail ERROR-REFERENCE [
+						"argument type does not match function " mold value
+					]
+				]
+				parameter: skip parameter 3
+			][
+				if all [
+					cdecl?
+					(flags and objc-flag) = 0
+					(ref-kind last-type) = 'f32
+				][
+					emit instructions reduce [cast-op -10 0 0]
+					last-type: -10
+					last-flags: 0
+					last-float-literal?: false
+				]
+			]
+			cursor: next-value
+		]
+		if all [cdecl? not tail? parameter][
+			fail ERROR-REFERENCE ["not enough arguments for function " mold value]
+		]
+		emit instructions reduce [
+			call-op target count either target = 0 [signature-ref][return-ref]
+		]
+		last-type: return-ref
+		last-flags: 0
+		skip position 2
+	]
+
 	stack-indirect-call: func [
 		value [word! path!]
 		position [block!]
@@ -2757,7 +2861,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local signature signature-ref return-ref parameters parameter
+		/local signature signature-ref return-ref parameters mode parameter
 			count expected expected-flags position-after
 	][
 		signature-ref: canonical-ref last-type
@@ -2765,12 +2869,17 @@ compiler-rsir-frontend: context [
 		unless block? signature [
 			fail ERROR-REFERENCE ["value is not callable " mold value]
 		]
-		if (signature/4 and (variadic-flag + typed-flag + custom-flag)) <> 0 [
-			fail ERROR-UNSUPPORTED "variable-arity indirect call is not implemented"
-		]
 		emit instructions reduce [load-op 0 0 0]
 		return-ref: signature/1
 		parameters: signature/2
+		mode: signature/4 and (variadic-flag + typed-flag + custom-flag)
+		if mode <> 0 [
+			unless mode = variadic-flag [
+				fail ERROR-UNSUPPORTED "typed and custom calls are not implemented"
+			]
+			return stack-variadic-call 0 value position scope uses instructions params
+				locals return-ref parameters signature/4 signature-ref
+		]
 		count: 0
 		parameter: parameters
 		position-after: next position

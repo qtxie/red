@@ -157,6 +157,7 @@ x64-codegen: context [
 	OBJC:        128
 	CALL_SHAPE_FLAGS: RETURN_VALUE + VARIADIC + TYPED + CUSTOM + OBJC
 	VARIABLE_FLAGS: 56
+	CDECL:          1
 	FUNCTION_FLAGS: 511
 	INLINE:          1
 	PROTECTED:       2
@@ -1292,9 +1293,9 @@ x64-codegen: context [
 			result-index reference-id target-offset instruction-start case-index
 			operation-ref source-kind target-kind opcode parity keep-cast
 			aggregate-width value-size result-offset temp-offset hidden-shift
-			physical-count [integer!]
+			physical-count call-mode list-size list-capacity [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
-			return-value? hidden-return? aggregate-argument? indirect? [logic!]
+			return-value? hidden-return? aggregate-argument? indirect? packed-call? [logic!]
 	][
 		measure?: null? code
 		tag-capacity: 0
@@ -2100,12 +2101,48 @@ x64-codegen: context [
 						call-flags: signature/flags
 						call-parameters: members
 					]]
+					call-mode: call-flags and VARIABLE_FLAGS
+					if any [call-mode = TYPED call-mode = CUSTOM][return UNSUPPORTED]
+					packed-call?: all [
+						call-mode = VARIADIC
+						(call-flags and 3) <> CDECL
+					]
+					if packed-call? [
+						either target < 0 [
+							unless parameter-count = 0 [return INVALID_IR]
+						][
+							unless any [parameter-count = 2 parameter-count = 3][
+								return INVALID_IR
+							]
+							parameter: as rsir-parameter! (call-parameters
+								+ (first-parameter * RSIR_PARAMETER_SIZE))
+							unless all [parameter/flags = 0
+								(logical-kind parameter/type types type-count) = 5][
+								return INVALID_IR
+							]
+							parameter: as rsir-parameter! (call-parameters
+								+ ((first-parameter + 1) * RSIR_PARAMETER_SIZE))
+							unless all [parameter/flags = 0
+								address-kind? (logical-kind parameter/type types type-count)][
+								return INVALID_IR
+							]
+							if parameter-count = 3 [
+								parameter: as rsir-parameter! (call-parameters
+									+ ((first-parameter + 2) * RSIR_PARAMETER_SIZE))
+								unless all [parameter/flags = 0
+									(logical-kind parameter/type types type-count) = 5][
+									return INVALID_IR
+								]
+							]
+						]
+					]
 					unless all [
 						argument-index >= 0 argument-index <= depth
 						any [indirect? instruction/c = return-ref]
 						any [
+							packed-call?
 							argument-index = parameter-count
-							all [(call-flags and VARIADIC) <> 0
+							all [call-mode = VARIADIC
 								argument-index >= parameter-count]
 						]
 					][return INVALID_IR]
@@ -2121,8 +2158,9 @@ x64-codegen: context [
 					hidden-return?: win64-hidden-return? return-ref call-flags
 						types members type-count layouts member-offsets
 					hidden-shift: either hidden-return? [1][0]
-					if argument-index > (2147483647 - hidden-shift)[return OUTPUT_FULL]
-					physical-count: argument-index + hidden-shift
+					physical-count: either packed-call? [3][argument-index]
+					if physical-count > (2147483647 - hidden-shift)[return OUTPUT_FULL]
+					physical-count: physical-count + hidden-shift
 					if physical-count > (((2147483647 - 32) / 8) + 4)[
 						return OUTPUT_FULL
 					]
@@ -2151,7 +2189,7 @@ x64-codegen: context [
 
 					; Copy indirect aggregates before loading volatile argument registers.
 					source-slot: 1
-					while [source-slot <= argument-index][
+					while [all [not packed-call? source-slot <= argument-index]][
 						argument-slot: argument-base + source-slot
 						ref: stack-types/argument-slot
 						flags: stack-flags/argument-slot
@@ -2222,9 +2260,68 @@ x64-codegen: context [
 						source-slot: source-slot + 1
 					]
 
+					if packed-call? [
+						if argument-index > (2147483647 / 8)[return OUTPUT_FULL]
+						list-size: argument-index * 8
+						list-capacity: either list-size < 8 [8][list-size]
+						if temp-offset > (2147483647 - list-capacity)[return OUTPUT_FULL]
+						outgoing-end: temp-offset + list-capacity
+						if outgoing-end > max-outgoing [max-outgoing: outgoing-end]
+						source-slot: 1
+						while [source-slot <= argument-index][
+							argument-slot: argument-base + source-slot
+							ref: stack-types/argument-slot
+							flags: stack-flags/argument-slot
+							unless all [
+								stack-kinds/argument-slot = VALUE
+								flags = 0
+								machine-value? ref flags types members type-count
+									layouts member-offsets
+							][return INVALID_IR]
+							width: value-width ref flags types members type-count
+								layouts member-offsets
+							if width <= 0 [return UNSUPPORTED]
+							signed: either signed-type? ref types type-count [1][0]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + argument-slot) width signed
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/outgoing-store at (capacity - written)
+								(temp-offset + ((source-slot - 1) * 8)) 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							source-slot: source-slot + 1
+						]
+						target-slot: argument-register (hidden-shift + 1)
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/move-immediate at (capacity - written)
+							target-slot 4 argument-index 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						target-slot: argument-register (hidden-shift + 2)
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/stack-address at (capacity - written)
+							target-slot temp-offset
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						target-slot: argument-register (hidden-shift + 3)
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/move-immediate at (capacity - written)
+							target-slot 4 list-size 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 					temp-offset: align outgoing 16
 					source-slot: 1
-					while [source-slot <= argument-index][
+					while [all [not packed-call? source-slot <= argument-index]][
 						argument-slot: argument-base + source-slot
 						ref: stack-types/argument-slot
 						flags: stack-flags/argument-slot
@@ -3498,8 +3595,8 @@ x64-codegen: context [
 				(ir-type/flags and 3) = 3
 			][return INVALID_IR]
 			variable-mode: ir-type/flags and VARIABLE_FLAGS
-			unless any [variable-mode = 0 variable-mode = 8
-				variable-mode = 16 variable-mode = 32][return INVALID_IR]
+			unless any [variable-mode = 0 variable-mode = VARIADIC
+				variable-mode = TYPED variable-mode = CUSTOM][return INVALID_IR]
 			case [
 				ir-type/kind = -1 [
 					if any [ir-type/flags <> 0 ir-type/member-count <> 0
@@ -3580,6 +3677,9 @@ x64-codegen: context [
 				ir-import/first-parameter <> parameter-count
 				ir-import/parameter-count < 0
 			][return INVALID_IR]
+			variable-mode: ir-import/flags and VARIABLE_FLAGS
+			unless any [variable-mode = 0 variable-mode = VARIADIC
+				variable-mode = TYPED variable-mode = CUSTOM][return INVALID_IR]
 			either ir-import/flags = 0 [
 				if any [not valid-type-ref? ir-import/type header/type-count
 					ir-import/parameter-count <> 0][return INVALID_IR]
@@ -3642,6 +3742,9 @@ x64-codegen: context [
 				ir-function/local-count < 0
 				ir-function/instruction-count <= 0
 			][return INVALID_IR]
+			variable-mode: ir-function/flags and VARIABLE_FLAGS
+			unless any [variable-mode = 0 variable-mode = VARIADIC
+				variable-mode = TYPED variable-mode = CUSTOM][return INVALID_IR]
 			if parameter-count > (2147483647 - ir-function/parameter-count)[
 				return INVALID_IR
 			]

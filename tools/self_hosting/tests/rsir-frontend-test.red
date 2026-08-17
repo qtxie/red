@@ -833,6 +833,175 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid pointer index reported the wrong error class"
 
+variadic-ir: compile-text {
+	Red/System []
+	collect: func [
+		[variadic]
+		count [integer!]
+		list [int-ptr!]
+		size [integer!]
+		return: [integer!]
+	][count]
+	main: func [return: [integer!]][collect [11 22 33]]
+} 'user
+assert binary? variadic-ir [
+	"native variadic call failed: " mold frontend/last-error
+]
+variadic-layout: layout-of variadic-ir
+assert all [
+	(function-word variadic-ir variadic-layout 1 12) = 8
+	(function-word variadic-ir variadic-layout 1 20) = 3
+	(ops-of variadic-ir variadic-layout) = [3 4 11 1 1 1 7 11]
+	(instruction-word variadic-ir variadic-layout 7 4) = 1
+	(instruction-word variadic-ir variadic-layout 7 8) = 3
+	(instruction-word variadic-ir variadic-layout 7 12) = -5
+]["native variadic arguments did not remain one source-order CALL payload"]
+
+assert binary? compile-text {
+	Red/System []
+	collect: func [
+		[variadic]
+		count [integer!]
+		list [int-ptr!]
+		return: [integer!]
+	][count]
+	main: func [return: [integer!]][collect []]
+} 'user "native variadic count/list signature or empty argument block was rejected"
+
+import-variadic-ir: compile-text {
+	Red/System []
+	#import [
+		"foo.dll" stdcall [
+			sink: "sink" [[variadic] return: [integer!]]
+		]
+	]
+	main: func [return: [integer!]][sink [11 22]]
+} 'user
+assert binary? import-variadic-ir [
+	"imported native variadic call failed: " mold frontend/last-error
+]
+import-variadic-layout: layout-of import-variadic-ir
+import-variadic-call: 0
+repeat id word-at import-variadic-ir 20 [
+	if (instruction-word import-variadic-ir import-variadic-layout id 0) = 7 [
+		import-variadic-call: id
+	]
+]
+assert all [
+	(word-at import-variadic-ir (import-variadic-layout/2 + 20)) = 10
+	import-variadic-call > 0
+	(instruction-word import-variadic-ir import-variadic-layout
+		import-variadic-call 4) < 0
+	(instruction-word import-variadic-ir import-variadic-layout
+		import-variadic-call 8) = 2
+]["imported variadic calls did not use the implicit packed ABI"]
+
+assert none? compile-text {
+	Red/System []
+	#import [
+		"foo.dll" stdcall [
+			bad: "bad" [[variadic] count [integer!] list [int-ptr!]]
+		]
+	]
+	main: func [return: [integer!]][bad [1]]
+} 'user "imported variadic declaration incorrectly accepted native parameters"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"invalid imported variadic declaration reported the wrong error class"
+
+cdecl-variadic-ir: compile-text {
+	Red/System []
+	sink: func [
+		[cdecl variadic]
+		fixed [integer!]
+		return: [integer!]
+	][fixed]
+	main: func [return: [integer!]][sink [1 as float32! 2.0]]
+} 'user
+assert binary? cdecl-variadic-ir [
+	"cdecl variadic call failed: " mold frontend/last-error
+]
+cdecl-variadic-layout: layout-of cdecl-variadic-ir
+cdecl-variadic-call: 0
+cdecl-variadic-promotion: 0
+repeat id word-at cdecl-variadic-ir 20 [
+	either (instruction-word cdecl-variadic-ir cdecl-variadic-layout id 0) = 7 [
+		cdecl-variadic-call: id
+	][
+		if all [
+			(instruction-word cdecl-variadic-ir cdecl-variadic-layout id 0) = 8
+			(instruction-word cdecl-variadic-ir cdecl-variadic-layout id 4) = -10
+		][cdecl-variadic-promotion: id]
+	]
+]
+assert all [
+	(function-word cdecl-variadic-ir cdecl-variadic-layout 1 12) = 9
+	cdecl-variadic-call > 0
+	cdecl-variadic-promotion > 0
+	(instruction-word cdecl-variadic-ir cdecl-variadic-layout
+		cdecl-variadic-call 8) = 2
+]["cdecl variadic prefix checking or float promotion is incorrect"]
+
+indirect-variadic-ir: compile-text {
+	Red/System []
+	variadic-op!: alias function! [
+		[variadic]
+		count [integer!]
+		list [int-ptr!]
+		size [integer!]
+		return: [integer!]
+	]
+	collect: func [
+		[variadic]
+		count [integer!]
+		list [int-ptr!]
+		size [integer!]
+		return: [integer!]
+	][count]
+	main: func [return: [integer!] /local fn [variadic-op!]][
+		fn: as variadic-op! :collect
+		fn [4 5]
+	]
+} 'user
+assert binary? indirect-variadic-ir [
+	"indirect native variadic call failed: " mold frontend/last-error
+]
+indirect-variadic-layout: layout-of indirect-variadic-ir
+indirect-variadic-call: 0
+repeat id word-at indirect-variadic-ir 20 [
+	if all [
+		(instruction-word indirect-variadic-ir indirect-variadic-layout id 0) = 7
+		(instruction-word indirect-variadic-ir indirect-variadic-layout id 4) = 0
+	][indirect-variadic-call: id]
+]
+assert all [
+	indirect-variadic-call > 0
+	(instruction-word indirect-variadic-ir indirect-variadic-layout
+		indirect-variadic-call 8) = 2
+	(instruction-word indirect-variadic-ir indirect-variadic-layout
+		indirect-variadic-call 12) > 0
+]["indirect variadic CALL lost its function signature or source argument count"]
+
+assert none? compile-text {
+	Red/System []
+	bad: func [[variadic] value [integer!] return: [integer!]][value]
+	main: func [return: [integer!]][bad [1]]
+} 'user "native variadic call accepted a non-variadic callee signature"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"invalid native variadic signature reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	collect: func [
+		[variadic]
+		count [integer!]
+		list [int-ptr!]
+		return: [integer!]
+	][count]
+	main: func [return: [integer!]][collect 1]
+} 'user "native variadic call accepted a non-block argument"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"non-block variadic call reported the wrong error class"
+
 call-ir: compile-text {
 	Red/System []
 	id: func [value [integer!] return: [integer!]][value]

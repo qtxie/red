@@ -91,6 +91,8 @@ arithmetic-ir: allocate 256
 aggregate-ir: allocate 512
 abi-ir: allocate 1024
 indirect-ir: allocate 320
+variadic-ir: allocate 512
+import-variadic-ir: allocate 256
 null-function-ir: allocate 192
 tagged-ir: allocate 384
 array-ir: allocate 256
@@ -105,7 +107,8 @@ image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
-	null? aggregate-ir null? abi-ir null? indirect-ir null? null-function-ir
+	null? aggregate-ir null? abi-ir null? indirect-ir null? variadic-ir
+	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
 ][quit 1]
@@ -534,6 +537,159 @@ if (x64-codegen/generate indirect-ir 302 output 1024 0) <> x64-codegen/INVALID_I
 	failures: failures + 1
 ]
 put indirect-ir 200 1
+
+; Native variadic CALL keeps source values in the postfix stream. The caller
+; packs them into one forward-order uint64 list and passes count/list/size.
+; The callee returns list/1 + list/2 + count + size = 51.
+put variadic-ir 0 1
+put variadic-ir 4 0
+put variadic-ir 8 1
+put variadic-ir 12 0
+put variadic-ir 16 2
+put variadic-ir 20 22
+put variadic-ir 24 0
+put variadic-ir 28 0
+
+put variadic-ir 32 -6
+put variadic-ir 36 -8
+put variadic-ir 40 0
+put variadic-ir 44 0
+put variadic-ir 48 0
+
+put variadic-ir 52 0
+put variadic-ir 56 4
+put variadic-ir 60 -5
+put variadic-ir 64 0
+put variadic-ir 68 0
+put variadic-ir 72 0
+put variadic-ir 76 0
+put variadic-ir 80 0
+put variadic-ir 84 4
+
+put variadic-ir 88 4
+put variadic-ir 92 8
+put variadic-ir 96 -5
+put variadic-ir 100 8
+put variadic-ir 104 0
+put variadic-ir 108 3
+put variadic-ir 112 3
+put variadic-ir 116 0
+put variadic-ir 120 18
+
+put variadic-ir 124 -5
+put variadic-ir 128 0
+put variadic-ir 132 1
+put variadic-ir 136 0
+put variadic-ir 140 -5
+put variadic-ir 144 0
+
+put-instruction variadic-ir 148 1 -5 11 0
+put-instruction variadic-ir 164 1 -5 22 0
+put-instruction variadic-ir 180 7 2 2 -5
+put-instruction variadic-ir 196 11 -5 0 0
+
+put-instruction variadic-ir 212 3 1 2 0
+put-instruction variadic-ir 228 4 0 0 0
+put-instruction variadic-ir 244 21 0 0 0
+put-instruction variadic-ir 260 4 0 0 0
+put-instruction variadic-ir 276 8 -5 0 0
+put-instruction variadic-ir 292 3 1 2 0
+put-instruction variadic-ir 308 4 0 0 0
+put-instruction variadic-ir 324 21 1 0 0
+put-instruction variadic-ir 340 4 0 0 0
+put-instruction variadic-ir 356 8 -5 0 0
+put-instruction variadic-ir 372 15 1 0 0
+put-instruction variadic-ir 388 3 1 1 0
+put-instruction variadic-ir 404 4 0 0 0
+put-instruction variadic-ir 420 15 1 0 0
+put-instruction variadic-ir 436 3 1 3 0
+put-instruction variadic-ir 452 4 0 0 0
+put-instruction variadic-ir 468 15 1 0 0
+put-instruction variadic-ir 484 11 -5 0 0
+variadic-ir/501: as byte! 6Dh
+variadic-ir/502: as byte! 61h
+variadic-ir/503: as byte! 69h
+variadic-ir/504: as byte! 6Eh
+variadic-ir/505: as byte! 76h
+variadic-ir/506: as byte! 61h
+variadic-ir/507: as byte! 72h
+variadic-ir/508: as byte! 69h
+variadic-ir/509: as byte! 61h
+variadic-ir/510: as byte! 64h
+variadic-ir/511: as byte! 69h
+variadic-ir/512: as byte! 63h
+
+size: x64-codegen/generate variadic-ir 512 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	header: as codegen-header! output
+	if header/function-count <> 2 [failures: failures + 1]
+	unless execute-first? output 51 [failures: failures + 1]
+]
+put variadic-ir 132 -5
+if (x64-codegen/generate variadic-ir 512 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put variadic-ir 132 1
+
+; Imported native variadic functions have no count/list declaration in IR.
+; Their flags still select the same packed call ABI at the call site.
+put import-variadic-ir 0 1
+put import-variadic-ir 4 0
+put import-variadic-ir 8 0
+put import-variadic-ir 12 1
+put import-variadic-ir 16 1
+put import-variadic-ir 20 4
+put import-variadic-ir 24 0
+put import-variadic-ir 28 0
+
+put import-variadic-ir 32 0
+put import-variadic-ir 36 7
+put import-variadic-ir 40 7
+put import-variadic-ir 44 4
+put import-variadic-ir 48 -5
+put import-variadic-ir 52 10
+put import-variadic-ir 56 0
+put import-variadic-ir 60 0
+
+put import-variadic-ir 64 11
+put import-variadic-ir 68 4
+put import-variadic-ir 72 -5
+put import-variadic-ir 76 0
+put import-variadic-ir 80 0
+put import-variadic-ir 84 0
+put import-variadic-ir 88 0
+put import-variadic-ir 92 0
+put import-variadic-ir 96 4
+
+put-instruction import-variadic-ir 100 1 -5 11 0
+put-instruction import-variadic-ir 116 1 -5 22 0
+put-instruction import-variadic-ir 132 7 -1 2 -5
+put-instruction import-variadic-ir 148 11 -5 0 0
+import-variadic-ir/165: as byte! 66h
+import-variadic-ir/166: as byte! 6Fh
+import-variadic-ir/167: as byte! 6Fh
+import-variadic-ir/168: as byte! 2Eh
+import-variadic-ir/169: as byte! 64h
+import-variadic-ir/170: as byte! 6Ch
+import-variadic-ir/171: as byte! 6Ch
+import-variadic-ir/172: as byte! 73h
+import-variadic-ir/173: as byte! 69h
+import-variadic-ir/174: as byte! 6Eh
+import-variadic-ir/175: as byte! 6Bh
+import-variadic-ir/176: as byte! 6Dh
+import-variadic-ir/177: as byte! 61h
+import-variadic-ir/178: as byte! 69h
+import-variadic-ir/179: as byte! 6Eh
+
+size: x64-codegen/generate import-variadic-ir 179 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	header: as codegen-header! output
+	if any [header/function-count <> 1 header/import-count <> 1][
+		failures: failures + 1
+	]
+]
 
 ; NULL is typeless until the frontend coerces it to a declared reference.
 ; The native core preserves the zero bits while changing only the stack type.
@@ -1024,6 +1180,7 @@ free arithmetic-ir
 free aggregate-ir
 free abi-ir
 free indirect-ir
+free variadic-ir
 free null-function-ir
 free tagged-ir
 free array-ir

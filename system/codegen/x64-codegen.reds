@@ -1537,6 +1537,288 @@ x64-codegen: context [
 		written + encoded
 	]
 
+	emit-stack-pointer: func [
+		code [byte-ptr!]
+		capacity source displacement [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/RAX source 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX displacement 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written + encoded
+	]
+
+	emit-stack-set: func [
+		code [byte-ptr!]
+		capacity target displacement [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RAX displacement 8 0
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			target x64-encoder/RAX 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written + encoded
+	]
+
+	emit-stack-align: func [
+		code [byte-ptr!]
+		capacity displacement [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/RAX x64-encoder/RSP 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/and-immediate at (capacity - written)
+			x64-encoder/RSP -16
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX displacement 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written + encoded
+	]
+
+	emit-stack-allocate: func [
+		code [byte-ptr!]
+		capacity displacement [integer!]
+		clear? [logic!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RAX displacement 4 0
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/sign-extend-register at (capacity - written)
+			x64-encoder/RAX
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		if clear? [
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/move-register at (capacity - written)
+				x64-encoder/RCX x64-encoder/RAX 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/shift-immediate at (capacity - written)
+			x64-encoder/RAX 4 3 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/binary-register at (capacity - written)
+			29h x64-encoder/RSP x64-encoder/RAX 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+
+		if clear? [
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/move-register at (capacity - written)
+				x64-encoder/R9 x64-encoder/RDI 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/move-register at (capacity - written)
+				x64-encoder/RDI x64-encoder/RSP 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/clear-register at (capacity - written)
+				x64-encoder/RAX
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/repeat-store-quad at (capacity - written)
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/move-register at (capacity - written)
+				x64-encoder/RDI x64-encoder/R9 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/RAX x64-encoder/RSP 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX displacement 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written + encoded
+	]
+
+	emit-stack-free: func [
+		code [byte-ptr!]
+		capacity displacement [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RAX displacement 4 0
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/sign-extend-register at (capacity - written)
+			x64-encoder/RAX
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/shift-immediate at (capacity - written)
+			x64-encoder/RAX 4 3 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/binary-register at (capacity - written)
+			01h x64-encoder/RSP x64-encoder/RAX 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written + encoded
+	]
+
+	emit-stack-all: func [
+		code [byte-ptr!]
+		capacity [integer!]
+		restore? [logic!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written register [integer!]
+	][
+		written: 0
+		either restore? [
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/fxrstor-stack at (capacity - written)
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/register-load at (capacity - written)
+				x64-encoder/RAX x64-encoder/RSP 512
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/move-register at (capacity - written)
+				x64-encoder/RSP x64-encoder/RAX 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/pop-flags at (capacity - written)
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			register: 15
+			while [register >= 0][
+				if register <> x64-encoder/RSP [
+					at: as byte-ptr! 0
+					if not null? code [at: code + written]
+					encoded: x64-encoder/pop-register at (capacity - written)
+						register
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+				]
+				register: register - 1
+			]
+		][
+			register: 0
+			while [register <= 15][
+				if register <> x64-encoder/RSP [
+					at: as byte-ptr! 0
+					if not null? code [at: code + written]
+					encoded: x64-encoder/push-register at (capacity - written)
+						register
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+				]
+				register: register + 1
+			]
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/push-flags at (capacity - written)
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/move-register at (capacity - written)
+				x64-encoder/RAX x64-encoder/RSP 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/and-immediate at (capacity - written)
+				x64-encoder/RSP -16
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/allocate-frame at (capacity - written) 528
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/fxsave-stack at (capacity - written)
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/register-store at (capacity - written)
+				x64-encoder/RAX x64-encoder/RSP 512
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+		written
+	]
+
 	compile-function: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
@@ -1595,7 +1877,11 @@ x64-codegen: context [
 			]
 			if all [
 				instruction/op = OP_NATIVE
-				any [instruction/a = 2 instruction/a = 3]
+				any [
+					instruction/a = 2
+					instruction/a = 3
+					all [instruction/a >= 5 instruction/a <= 12]
+				]
 			][unstable-stack?: true]
 			index: index + 1
 		]
@@ -3316,7 +3602,7 @@ x64-codegen: context [
 				instruction/op = OP_NATIVE [
 					unless instruction/b = 0 [return INVALID_IR]
 					switch instruction/a [
-						1 [
+						1 [						;-- system/stack/top
 							unless all [
 								valid-type-ref? instruction/c type-count
 								pointee-type instruction/c types type-count :target-ref
@@ -3330,18 +3616,13 @@ x64-codegen: context [
 							stack-tags/depth: 0
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
-							encoded: x64-encoder/stack-top at (capacity - written)
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: x64-encoder/frame-store at (capacity - written)
-								x64-encoder/RAX slot-displacement
-									(storage-slots + depth) 8
-							if encoded < 0 [return OUTPUT_FULL]
+							encoded: emit-stack-pointer at (capacity - written)
+								x64-encoder/RSP slot-displacement
+									(storage-slots + depth)
+							if encoded < 0 [return encoded]
 							written: written + encoded
 						]
-						2 [
+						2 [						;-- PUSH
 							unless instruction/c = 0 [return INVALID_IR]
 							unless all [
 								depth > 0
@@ -3366,7 +3647,7 @@ x64-codegen: context [
 							written: written + encoded
 							depth: depth - 1
 						]
-						3 [
+						3 [						;-- POP
 							unless instruction/c = 0 [return INVALID_IR]
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
@@ -3386,6 +3667,161 @@ x64-codegen: context [
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4
 							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						4 [						;-- system/stack/frame
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+							][return INVALID_IR]
+							depth: depth + 1
+							if depth > max-depth [max-depth: depth]
+							stack-types/depth: instruction/c
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-pointer at (capacity - written)
+								x64-encoder/RBP slot-displacement
+									(storage-slots + depth)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+						]
+						5 [						;-- system/stack/top:
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+								depth > 0
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								compatible-types? instruction/c stack-types/depth
+									types type-count
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-set at (capacity - written)
+								x64-encoder/RSP slot-displacement
+									(storage-slots + depth)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							stack-types/depth: instruction/c
+							stack-tags/depth: 0
+						]
+						6 [						;-- system/stack/frame:
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+								depth > 0
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								compatible-types? instruction/c stack-types/depth
+									types type-count
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-set at (capacity - written)
+								x64-encoder/RBP slot-displacement
+									(storage-slots + depth)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							stack-types/depth: instruction/c
+							stack-tags/depth: 0
+						]
+						7 [						;-- system/stack/align
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+							][return INVALID_IR]
+							depth: depth + 1
+							if depth > max-depth [max-depth: depth]
+							stack-types/depth: instruction/c
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-align at (capacity - written)
+								slot-displacement (storage-slots + depth)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+						]
+						8 [						;-- system/stack/allocate
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+								depth > 0
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								(logical-kind stack-types/depth types type-count) = 5
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-allocate at (capacity - written)
+								slot-displacement (storage-slots + depth) false
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							stack-types/depth: instruction/c
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+						]
+						9 [						;-- system/stack/allocate/zero
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+								depth > 0
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								(logical-kind stack-types/depth types type-count) = 5
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-allocate at (capacity - written)
+								slot-displacement (storage-slots + depth) true
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							stack-types/depth: instruction/c
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+						]
+						10 [					;-- system/stack/free
+							unless all [
+								instruction/c = 0
+								depth > 0
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								(logical-kind stack-types/depth types type-count) = 5
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-free at (capacity - written)
+								slot-displacement (storage-slots + depth)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							depth: depth - 1
+						]
+						11 [					;-- system/stack/push-all
+							unless instruction/c = 0 [return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-all at (capacity - written) false
+							if encoded < 0 [return encoded]
+							written: written + encoded
+						]
+						12 [					;-- system/stack/pop-all
+							unless instruction/c = 0 [return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: emit-stack-all at (capacity - written) true
+							if encoded < 0 [return encoded]
 							written: written + encoded
 						]
 						default [return UNSUPPORTED]

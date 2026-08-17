@@ -234,6 +234,25 @@ size: x64-encoder/pop-register code 128 x64-encoder/R9
 if any [
 	size <> 2 code/1 <> as byte! 41h code/2 <> as byte! 59h
 ][failures: failures + 1]
+size: x64-encoder/push-flags code 128
+if any [size <> 1 code/1 <> as byte! 9Ch][failures: failures + 1]
+size: x64-encoder/pop-flags code 128
+if any [size <> 1 code/1 <> as byte! 9Dh][failures: failures + 1]
+size: x64-encoder/fxsave-stack code 128
+expected: #{0FAE0424}
+if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/fxrstor-stack code 128
+expected: #{0FAE0C24}
+if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/repeat-store-quad code 128
+expected: #{F348AB}
+if any [size <> 3 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
 if (x64-encoder/stack-top code 128) <> 3 [failures: failures + 1]
 if (x64-encoder/sign-extend-eax code 128) <> 3 [failures: failures + 1]
 if (x64-encoder/clear-register code 128 x64-encoder/R9) <> 3 [failures: failures + 1]
@@ -284,6 +303,11 @@ if (x64-encoder/pop-register code 0 x64-encoder/RAX) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/pop-register code 128 16) <> -1 [failures: failures + 1]
+if (x64-encoder/push-flags code 0) <> -1 [failures: failures + 1]
+if (x64-encoder/pop-flags code 0) <> -1 [failures: failures + 1]
+if (x64-encoder/fxsave-stack code 3) <> -1 [failures: failures + 1]
+if (x64-encoder/fxrstor-stack code 3) <> -1 [failures: failures + 1]
+if (x64-encoder/repeat-store-quad code 2) <> -1 [failures: failures + 1]
 
 free code
 either failures = 0 [

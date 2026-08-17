@@ -136,6 +136,15 @@ compiler-rsir-frontend: context [
 	stack-top-native: 1
 	stack-push-native: 2
 	stack-pop-native: 3
+	stack-frame-native: 4
+	stack-top-set-native: 5
+	stack-frame-set-native: 6
+	stack-align-native: 7
+	stack-allocate-native: 8
+	stack-allocate-zero-native: 9
+	stack-free-native: 10
+	stack-push-all-native: 11
+	stack-pop-all-native: 12
 	statement-value: 0
 	expression-value: 1
 	tail-value: 2
@@ -4169,6 +4178,160 @@ compiler-rsir-frontend: context [
 		type-info/1
 	]
 
+	stack-system-path: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block! none!]
+		/local path count next-position pointer-ref
+	][
+		unless path? position/1 [return none]
+		path: position/1
+		unless all [
+			(length? path) >= 2
+			path/1 = 'system
+			path/2 = 'stack
+		][return none]
+		count: length? path
+		case [
+			all [count = 3 path/3 = 'top][
+				pointer-ref: intern-pointer -5
+				emit instructions reduce [native-op stack-top-native 0 pointer-ref]
+				last-type: pointer-ref
+				last-flags: 0
+				last-float-literal?: false
+				last-stopped?: false
+				next position
+			]
+			all [count = 3 path/3 = 'frame][
+				pointer-ref: intern-pointer -5
+				emit instructions reduce [native-op stack-frame-native 0 pointer-ref]
+				last-type: pointer-ref
+				last-flags: 0
+				last-float-literal?: false
+				last-stopped?: false
+				next position
+			]
+			all [count = 3 path/3 = 'align][
+				pointer-ref: intern-pointer -5
+				emit instructions reduce [native-op stack-align-native 0 pointer-ref]
+				last-type: pointer-ref
+				last-flags: 0
+				last-float-literal?: false
+				last-stopped?: false
+				next position
+			]
+			all [
+				any [
+					all [count = 3 path/3 = 'allocate]
+					all [
+						count = 4
+						path/3 = 'allocate
+						path/4 = 'zero
+					]
+				]
+			][
+				next-position: stack-value next position scope uses instructions
+					params locals expression-value
+				unless all [
+					not last-stopped?
+					last-flags = 0
+					(ref-kind last-type) = 'i32
+				][
+					fail ERROR-REFERENCE
+						"system/stack/allocate expects an integer! argument"
+				]
+				pointer-ref: intern-pointer -5
+				emit instructions reduce [
+					native-op either count = 4 [
+						stack-allocate-zero-native
+					][stack-allocate-native]
+					0 pointer-ref
+				]
+				last-type: pointer-ref
+				last-flags: 0
+				last-float-literal?: false
+				last-stopped?: false
+				next-position
+			]
+			all [count = 3 path/3 = 'free][
+				next-position: stack-value next position scope uses instructions
+					params locals expression-value
+				unless all [
+					not last-stopped?
+					last-flags = 0
+					(ref-kind last-type) = 'i32
+				][
+					fail ERROR-REFERENCE
+						"system/stack/free expects an integer! argument"
+				]
+				emit instructions reduce [native-op stack-free-native 0 0]
+				last-type: 0
+				last-flags: 0
+				last-float-literal?: false
+				last-stopped?: false
+				next-position
+			]
+			all [count = 3 path/3 = 'push-all][
+				emit instructions reduce [native-op stack-push-all-native 0 0]
+				last-type: 0
+				last-flags: 0
+				last-float-literal?: false
+				last-stopped?: false
+				next position
+			]
+			all [count = 3 path/3 = 'pop-all][
+				emit instructions reduce [native-op stack-pop-all-native 0 0]
+				last-type: 0
+				last-flags: 0
+				last-float-literal?: false
+				last-stopped?: false
+				next position
+			]
+			true [fail ERROR-REFERENCE "invalid system/stack access"]
+		]
+	]
+
+	stack-system-assignment: func [
+		position [block!]
+		target [word! path!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block! none!]
+		/local pointer-ref next-position
+	][
+		unless all [
+			path? target
+			(length? target) >= 2
+			target/1 = 'system
+			target/2 = 'stack
+		][return none]
+		unless all [
+			(length? target) = 3
+			any [target/3 = 'top target/3 = 'frame]
+		][fail ERROR-REFERENCE "invalid system/stack assignment"]
+		pointer-ref: intern-pointer -5
+		next-position: stack-value next position scope uses instructions params locals
+			expression-value
+		if last-stopped? [return next-position]
+		unless coerce-stack pointer-ref 0 instructions false [
+			fail ERROR-REFERENCE "system/stack assignment expects pointer! [integer!]"
+		]
+		emit instructions reduce [
+			native-op either target/3 = 'top [
+				stack-top-set-native
+			][stack-frame-set-native]
+			0 pointer-ref
+		]
+		last-type: pointer-ref
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		next-position
+	]
+
 	stack-push: func [
 		position scope uses [block!]
 		instructions [binary!]
@@ -4425,17 +4588,9 @@ compiler-rsir-frontend: context [
 			]
 			all [
 				path? value
-				(length? value) = 3
-				value/1 = 'system
-				value/2 = 'stack
-				value/3 = 'top
-			][
-				id: intern-pointer -5
-				emit instructions reduce [native-op stack-top-native 0 id]
-				last-type: id
-				last-flags: 0
-				next position
-			]
+				next-position: stack-system-path position scope uses instructions
+					params locals
+			][next-position]
 			any [word? value path? value] [
 				protected-info: resolve-name value scope uses protected-values
 				if block? protected-info [
@@ -4891,6 +5046,9 @@ compiler-rsir-frontend: context [
 		target: either set-word? position/1 [
 			to word! position/1
 		][to path! position/1]
+		next-position: stack-system-assignment position target scope uses instructions
+			params locals
+		if block? next-position [return next-position]
 		storage: either word? target [stack-storage-info target params locals][none]
 		id: either block? storage [none][resolve-name target scope uses globals]
 		if all [

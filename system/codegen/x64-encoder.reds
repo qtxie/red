@@ -1337,6 +1337,54 @@ x64-encoder: context [
 		size
 	]
 
+	push-flags: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 1 [return -1]
+		if not null? code [code/1: as byte! 9Ch]
+		1
+	]
+
+	pop-flags: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 1 [return -1]
+		if not null? code [code/1: as byte! 9Dh]
+		1
+	]
+
+	fxsave-stack: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 4 [return -1]
+		if not null? code [
+			code/1: as byte! 0Fh
+			code/2: as byte! AEh
+			code/3: as byte! 04h
+			code/4: as byte! 24h
+		]
+		4
+	]
+
+	fxrstor-stack: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 4 [return -1]
+		if not null? code [
+			code/1: as byte! 0Fh
+			code/2: as byte! AEh
+			code/3: as byte! 0Ch
+			code/4: as byte! 24h
+		]
+		4
+	]
+
+	repeat-store-quad: func [
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+	][
+		unless room? code capacity 3 [return -1]
+		if not null? code [
+			code/1: as byte! F3h
+			code/2: as byte! 48h
+			code/3: as byte! ABh
+		]
+		3
+	]
+
 	stack-top: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
 		unless room? code capacity 3 [return -1]
 		if not null? code [

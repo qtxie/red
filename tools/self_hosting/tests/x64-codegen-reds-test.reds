@@ -1208,7 +1208,7 @@ if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 put stack-ir 92 0
-put stack-ir 88 4
+put stack-ir 88 13
 if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]

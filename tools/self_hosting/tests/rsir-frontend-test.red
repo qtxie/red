@@ -1889,6 +1889,96 @@ assert all [
 	(instruction-word stack-top-ir stack-top-layout 1 12) > 0
 ]["system/stack/top lost its pointer! [integer!] result type"]
 
+stack-system-ir: compile-text {
+	Red/System []
+	read-frame: func [
+		return: [pointer! [integer!]]
+	][system/stack/frame]
+	align-stack: func [
+		return: [pointer! [integer!]]
+	][system/stack/align]
+	allocate-stack: func [
+		slots [integer!]
+		return: [pointer! [integer!]]
+	][system/stack/allocate slots]
+	allocate-zero-stack: func [
+		slots [integer!]
+		return: [pointer! [integer!]]
+	][system/stack/allocate/zero slots]
+	release-stack: func [slots [integer!]][system/stack/free slots]
+	restore-top: func [
+		saved [pointer! [integer!]]
+		return: [pointer! [integer!]]
+	][system/stack/top: saved]
+	restore-frame: func [
+		saved [pointer! [integer!]]
+		return: [pointer! [integer!]]
+	][system/stack/frame: saved]
+	save-registers: func [][
+		system/stack/push-all
+		system/stack/pop-all
+	]
+} 'user
+assert binary? stack-system-ir [
+	"system/stack family lowering failed: " mold frontend/last-error
+]
+stack-system-layout: layout-of stack-system-ir
+assert all [
+	(ops-of stack-system-ir stack-system-layout) = [
+		10 11 10 11
+		3 4 10 11 3 4 10 11 3 4 10 11
+		3 4 10 11 3 4 10 11 10 10 11
+	]
+	(instruction-word stack-system-ir stack-system-layout 1 4) = 4
+	(instruction-word stack-system-ir stack-system-layout 3 4) = 7
+	(instruction-word stack-system-ir stack-system-layout 7 4) = 8
+	(instruction-word stack-system-ir stack-system-layout 11 4) = 9
+	(instruction-word stack-system-ir stack-system-layout 15 4) = 10
+	(instruction-word stack-system-ir stack-system-layout 19 4) = 5
+	(instruction-word stack-system-ir stack-system-layout 23 4) = 6
+	(instruction-word stack-system-ir stack-system-layout 25 4) = 11
+	(instruction-word stack-system-ir stack-system-layout 26 4) = 12
+	(instruction-word stack-system-ir stack-system-layout 7 12) > 0
+	(instruction-word stack-system-ir stack-system-layout 15 12) = 0
+]["system/stack family did not keep its direct typed postfix effects"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [return: [pointer! [integer!]]][
+		system/stack/allocate true
+	]
+} 'user "system/stack/allocate accepted a non-integer argument"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid stack allocation argument reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/stack/free as int64! 1]
+} 'user "system/stack/free accepted a non-integer! argument"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid stack free argument reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/stack/align: null]
+} 'user "system/stack/align accepted assignment"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid stack assignment reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/stack/top: 1]
+} 'user "system/stack/top accepted a non-pointer assignment"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid stack pointer assignment reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/stack/allocate/clear 1]
+} 'user "system/stack accepted an unknown allocation refinement"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid stack refinement reported the wrong error class"
+
 assert none? compile-text {
 	Red/System []
 	sink: func [][]

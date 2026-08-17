@@ -145,6 +145,14 @@ compiler-rsir-frontend: context [
 	stack-free-native: 10
 	stack-push-all-native: 11
 	stack-pop-all-native: 12
+	program-counter-native: 13
+	cpu-register-native: 14
+	cpu-register-set-native: 15
+	cpu-overflow-native: 16
+	cpu-register-ids: make hash! [
+		rax 0 rcx 1 rdx 2 rbx 3 rsp 4 rbp 5 rsi 6 rdi 7
+		r8 8 r9 9 r10 10 r11 11 r12 12 r13 13 r14 14 r15 15
+	]
 	statement-value: 0
 	expression-value: 1
 	tail-value: 2
@@ -174,6 +182,14 @@ compiler-rsir-frontend: context [
 
 	emit: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
+	]
+
+	emit-before: func [output [binary!] values [block!] /local position][
+		position: tail values
+		while [not head? position][
+			position: back position
+			insert output int-to-bin/to-bin32 position/1
+		]
 	]
 
 	instruction-here: func [output [binary!] return: [integer!]][
@@ -2122,6 +2138,7 @@ compiler-rsir-frontend: context [
 		expected expected-flags [integer!]
 		instructions [binary!]
 		allow-float-literal? [logic!]
+		/before position [binary!]
 		return: [logic!]
 		/local source-kind target-kind
 	][
@@ -2136,7 +2153,11 @@ compiler-rsir-frontend: context [
 					(ref-kind expected) = 'function
 					(ref-kind last-type) = 'function
 				]
-			][emit instructions reduce [cast-op expected expected-flags 0]]
+			][either before [
+				emit-before position reduce [cast-op expected expected-flags 0]
+			][
+				emit instructions reduce [cast-op expected expected-flags 0]
+			]]
 			last-type: expected
 			last-flags: expected-flags
 			return true
@@ -2161,7 +2182,11 @@ compiler-rsir-frontend: context [
 			source-kind = 'f64
 			target-kind = 'f32
 		][
-			emit instructions reduce [cast-op expected 0 0]
+			either before [
+				emit-before position reduce [cast-op expected 0 0]
+			][
+				emit instructions reduce [cast-op expected 0 0]
+			]
 			last-type: expected
 			last-flags: 0
 			last-float-literal?: false
@@ -2172,7 +2197,11 @@ compiler-rsir-frontend: context [
 			last-flags = 0
 			lossless-integer-cast? last-type expected
 		][return false]
-		emit instructions reduce [cast-op expected 0 0]
+		either before [
+			emit-before position reduce [cast-op expected 0 0]
+		][
+			emit instructions reduce [cast-op expected 0 0]
+		]
 		last-type: expected
 		last-flags: 0
 		last-float-literal?: false
@@ -4027,12 +4056,12 @@ compiler-rsir-frontend: context [
 	][
 		local-info: add-hidden-local params locals -5 0
 		slot: local-info/1
-		emit-local-address instructions slot
 		after: stack-value next position scope uses instructions params locals
 			expression-value
 		unless all [(ref-kind last-type) = 'i32 last-flags = 0][
 			fail ERROR-REFERENCE "LOOP requires an integer value"
 		]
+		emit-local-address instructions slot
 		unless all [not tail? after block? after/1][
 			fail ERROR-UNSUPPORTED "LOOP is missing its body block"
 		]
@@ -4052,10 +4081,10 @@ compiler-rsir-frontend: context [
 		patch-controls instructions loop-state/2 loop-state/1
 
 		emit-local-address instructions slot
-		emit-local-address instructions slot
 		emit instructions reduce [load-op 0 0 0]
 		emit instructions reduce [literal-op -5 1 0]
 		emit instructions reduce [binary-op 2 0 0]
+		emit-local-address instructions slot
 		emit instructions reduce [set-op 0 0 0]
 		emit instructions reduce [drop-op 0 0 0]
 		jump-patch: emit-control instructions jump-op 0
@@ -4184,16 +4213,49 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block! none!]
-		/local path count next-position pointer-ref
+		/local path count next-position pointer-ref register
 	][
 		unless path? position/1 [return none]
 		path: position/1
 		unless all [
 			(length? path) >= 2
 			path/1 = 'system
-			path/2 = 'stack
 		][return none]
 		count: length? path
+		if path/2 = 'pc [
+			unless count = 2 [fail ERROR-REFERENCE "invalid system/pc access"]
+			pointer-ref: intern-pointer -15
+			emit instructions reduce [
+				native-op program-counter-native 0 pointer-ref
+			]
+			last-type: pointer-ref
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next position
+		]
+		if path/2 = 'cpu [
+			unless count = 3 [fail ERROR-REFERENCE "invalid system/cpu access"]
+			either path/3 = 'overflow? [
+				emit instructions reduce [native-op cpu-overflow-native 0 -11]
+				last-type: -11
+			][
+				register: select cpu-register-ids path/3
+				unless integer? register [
+					fail ERROR-REFERENCE ["unknown x64 CPU register " mold path/3]
+				]
+				pointer-ref: intern-pointer -5
+				emit instructions reduce [
+					native-op cpu-register-native register pointer-ref
+				]
+				last-type: pointer-ref
+			]
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next position
+		]
+		unless path/2 = 'stack [return none]
 		case [
 			all [count = 3 path/3 = 'top][
 				pointer-ref: intern-pointer -5
@@ -4300,14 +4362,44 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block! none!]
-		/local pointer-ref next-position
+		/local pointer-ref next-position register
 	][
 		unless all [
 			path? target
 			(length? target) >= 2
 			target/1 = 'system
-			target/2 = 'stack
 		][return none]
+		if target/2 = 'pc [
+			fail ERROR-REFERENCE "cannot modify system/pc"
+		]
+		if target/2 = 'cpu [
+			unless (length? target) = 3 [
+				fail ERROR-REFERENCE "invalid system/cpu assignment"
+			]
+			if target/3 = 'overflow? [
+				fail ERROR-REFERENCE "cannot modify system/cpu/overflow?"
+			]
+			register: select cpu-register-ids target/3
+			unless integer? register [
+				fail ERROR-REFERENCE ["unknown x64 CPU register " mold target/3]
+			]
+			pointer-ref: intern-pointer -5
+			next-position: stack-value next position scope uses instructions
+				params locals expression-value
+			if last-stopped? [return next-position]
+			unless coerce-stack pointer-ref 0 instructions false [
+				fail ERROR-REFERENCE "system/cpu assignment expects pointer! [integer!]"
+			]
+			emit instructions reduce [
+				native-op cpu-register-set-native register pointer-ref
+			]
+			last-type: pointer-ref
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next-position
+		]
+		unless target/2 = 'stack [return none]
 		unless all [
 			(length? target) = 3
 			any [target/3 = 'top target/3 = 'frame]
@@ -4868,7 +4960,7 @@ compiler-rsir-frontend: context [
 		fold? [logic!]
 		return: [block!]
 		/local type-info next-position ref kind aggregate? record hidden target-ref
-			target-flags
+			target-flags source-ref source-flags address-position
 	][
 		type-info: stack-read-type skip position 2 scope uses
 		next-position: type-info/1
@@ -4930,11 +5022,6 @@ compiler-rsir-frontend: context [
 			]
 		]
 
-		unless stack-address/write target scope uses instructions params locals [
-			fail ERROR-REFERENCE ["unknown assignment target " mold target]
-		]
-		target-ref: last-type
-		target-flags: last-flags
 		either function-active? [
 			hidden: add-hidden-local params locals ref inline-flag
 			emit-local-address instructions hidden/1
@@ -4945,19 +5032,31 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [reference-op ref 0 0]
 		last-type: ref
 		last-flags: 0
+		source-ref: last-type
+		source-flags: last-flags
+		address-position: tail instructions
+		unless stack-address/write target scope uses instructions params locals [
+			fail ERROR-REFERENCE ["unknown assignment target " mold target]
+		]
+		target-ref: last-type
+		target-flags: last-flags
+		last-type: source-ref
+		last-flags: source-flags
 
 		either block? storage [
 			record: storage/2
 			either record/2 = 0 [
 				record/2: ref
 				record/3: 0
-			][unless coerce-stack record/2 record/3 instructions false [
+			][unless coerce-stack/before record/2 record/3 instructions false
+				address-position [
 				fail ERROR-REFERENCE ["declaration changes type " mold target]
 			]]
 		][either integer? id [
 			record: skip global-data ((id - 1) * 5)
 			either integer? record/2 [
-				unless coerce-stack record/2 0 instructions false [
+				unless coerce-stack/before record/2 0 instructions false
+					address-position [
 					fail ERROR-REFERENCE ["declaration changes type " mold target]
 				]
 			][
@@ -4965,7 +5064,8 @@ compiler-rsir-frontend: context [
 				record/3: 0
 			]
 		][
-			unless coerce-stack target-ref target-flags instructions false [
+			unless coerce-stack/before target-ref target-flags instructions false
+				address-position [
 				fail ERROR-REFERENCE ["declaration changes type " mold target]
 			]
 		]]
@@ -5041,6 +5141,7 @@ compiler-rsir-frontend: context [
 		fold? [logic!]
 		return: [block!]
 		/local target id record target-ref target-flags next-position storage
+			source-ref source-flags source-float-literal? address-position
 	][
 		if (length? position) < 2 [fail ERROR-UNSUPPORTED "assignment value is missing"]
 		target: either set-word? position/1 [
@@ -5093,6 +5194,17 @@ compiler-rsir-frontend: context [
 				return static-next
 			]
 		]
+		next-position: either any [block? position/2 binary? position/2][
+			stack-array-literal next position scope uses instructions
+		][
+			stack-value next position scope uses instructions params locals
+				expression-value
+		]
+		if last-stopped? [return next-position]
+		source-ref: last-type
+		source-flags: last-flags
+		source-float-literal?: last-float-literal?
+		address-position: tail instructions
 		unless stack-address/write target scope uses instructions params locals [
 			fail ERROR-REFERENCE ["unknown assignment target " mold target]
 		]
@@ -5101,13 +5213,9 @@ compiler-rsir-frontend: context [
 		if (ref-kind target-ref) = 'array [
 			fail ERROR-REFERENCE "a literal array pointer cannot be reassigned"
 		]
-		next-position: either any [block? position/2 binary? position/2][
-			stack-array-literal next position scope uses instructions
-		][
-			stack-value next position scope uses instructions params locals
-				expression-value
-		]
-		if last-stopped? [return next-position]
+		last-type: source-ref
+		last-flags: source-flags
+		last-float-literal?: source-float-literal?
 		either block? storage [
 			record: storage/2
 			either record/2 = 0 [
@@ -5117,14 +5225,16 @@ compiler-rsir-frontend: context [
 				record/2: last-type
 				record/3: last-flags
 			][
-				unless coerce-stack record/2 record/3 instructions false [
+				unless coerce-stack/before record/2 record/3 instructions false
+					address-position [
 					fail ERROR-REFERENCE ["local assignment changes type " mold target]
 				]
 			]
 		][either integer? id [
 			record: skip global-data ((id - 1) * 5)
 			either integer? record/2 [
-				unless coerce-stack record/2 0 instructions false [
+				unless coerce-stack/before record/2 0 instructions false
+					address-position [
 					fail ERROR-REFERENCE ["global assignment changes type " mold target]
 				]
 			][
@@ -5134,7 +5244,8 @@ compiler-rsir-frontend: context [
 				record/2: last-type
 			]
 		][
-			unless coerce-stack target-ref target-flags instructions false [
+			unless coerce-stack/before target-ref target-flags instructions false
+				address-position [
 				fail ERROR-REFERENCE ["assignment changes type " mold target]
 			]
 		]]

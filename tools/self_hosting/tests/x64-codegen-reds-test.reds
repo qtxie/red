@@ -102,6 +102,7 @@ selection-ir: allocate 256
 recursive-pointer-ir: allocate 160
 recursive-value-ir: allocate 144
 stack-ir: allocate 160
+system-ir: allocate 256
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -112,7 +113,7 @@ if any [
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
-	null? stack-ir
+	null? stack-ir null? system-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -187,8 +188,8 @@ put local-ir 64 7
 
 put local-ir 68 -5
 put local-ir 72 0
-put-instruction local-ir 76 3 1 1 0
-put-instruction local-ir 92 1 -5 7 0
+put-instruction local-ir 76 1 -5 7 0
+put-instruction local-ir 92 3 1 1 0
 put-instruction local-ir 108 5 0 0 0
 put-instruction local-ir 124 12 0 0 0
 put-instruction local-ir 140 3 1 1 0
@@ -308,7 +309,7 @@ put aggregate-ir 4 0
 put aggregate-ir 8 1
 put aggregate-ir 12 0
 put aggregate-ir 16 1
-put aggregate-ir 20 21
+put aggregate-ir 20 23
 put aggregate-ir 24 0
 put aggregate-ir 28 0
 
@@ -330,38 +331,40 @@ put aggregate-ir 84 0
 put aggregate-ir 88 0
 put aggregate-ir 92 0
 put aggregate-ir 96 2
-put aggregate-ir 100 21
+put aggregate-ir 100 23
 
 put aggregate-ir 104 1
 put aggregate-ir 108 1
 put aggregate-ir 112 1
 put aggregate-ir 116 1
 
-put-instruction aggregate-ir 120 3 1 1 0
-put-instruction aggregate-ir 136 6 0 0 0
-put-instruction aggregate-ir 152 1 -5 17 0
+put-instruction aggregate-ir 120 1 -5 17 0
+put-instruction aggregate-ir 136 3 1 1 0
+put-instruction aggregate-ir 152 6 0 0 0
 put-instruction aggregate-ir 168 5 0 0 0
 put-instruction aggregate-ir 184 12 0 0 0
-put-instruction aggregate-ir 200 3 1 2 0
-put-instruction aggregate-ir 216 3 1 1 0
-put-instruction aggregate-ir 232 4 0 0 0
+put-instruction aggregate-ir 200 3 1 1 0
+put-instruction aggregate-ir 216 4 0 0 0
+put-instruction aggregate-ir 232 3 1 2 0
 put-instruction aggregate-ir 248 5 0 0 0
-put-instruction aggregate-ir 264 6 1 0 0
+put-instruction aggregate-ir 264 12 0 0 0
 put-instruction aggregate-ir 280 1 -5 29 0
-put-instruction aggregate-ir 296 5 0 0 0
-put-instruction aggregate-ir 312 12 0 0 0
-put-instruction aggregate-ir 328 3 1 2 0
-put-instruction aggregate-ir 344 6 0 0 0
-put-instruction aggregate-ir 360 4 0 0 0
-put-instruction aggregate-ir 376 3 1 2 0
-put-instruction aggregate-ir 392 6 1 0 0
-put-instruction aggregate-ir 408 4 0 0 0
-put-instruction aggregate-ir 424 15 1 0 0
-put-instruction aggregate-ir 440 11 -5 0 0
-aggregate-ir/457: as byte! 66h
-aggregate-ir/458: as byte! 6Eh
+put-instruction aggregate-ir 296 3 1 2 0
+put-instruction aggregate-ir 312 6 1 0 0
+put-instruction aggregate-ir 328 5 0 0 0
+put-instruction aggregate-ir 344 12 0 0 0
+put-instruction aggregate-ir 360 3 1 2 0
+put-instruction aggregate-ir 376 6 0 0 0
+put-instruction aggregate-ir 392 4 0 0 0
+put-instruction aggregate-ir 408 3 1 2 0
+put-instruction aggregate-ir 424 6 1 0 0
+put-instruction aggregate-ir 440 4 0 0 0
+put-instruction aggregate-ir 456 15 1 0 0
+put-instruction aggregate-ir 472 11 -5 0 0
+aggregate-ir/489: as byte! 66h
+aggregate-ir/490: as byte! 6Eh
 
-size: x64-codegen/generate aggregate-ir 458 output 1024 0
+size: x64-codegen/generate aggregate-ir 490 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
@@ -419,19 +422,19 @@ put abi-ir 152 1
 put abi-ir 156 1
 put abi-ir 160 1
 
-put-instruction abi-ir 164 3 1 1 0
-put-instruction abi-ir 180 6 0 0 0
-put-instruction abi-ir 196 1 -5 7 0
+put-instruction abi-ir 164 1 -5 7 0
+put-instruction abi-ir 180 3 1 1 0
+put-instruction abi-ir 196 6 0 0 0
 put-instruction abi-ir 212 5 0 0 0
 put-instruction abi-ir 228 12 0 0 0
-put-instruction abi-ir 244 3 1 1 0
-put-instruction abi-ir 260 6 1 0 0
-put-instruction abi-ir 276 1 -5 8 0
+put-instruction abi-ir 244 1 -5 8 0
+put-instruction abi-ir 260 3 1 1 0
+put-instruction abi-ir 276 6 1 0 0
 put-instruction abi-ir 292 5 0 0 0
 put-instruction abi-ir 308 12 0 0 0
-put-instruction abi-ir 324 3 1 1 0
-put-instruction abi-ir 340 6 2 0 0
-put-instruction abi-ir 356 1 -5 9 0
+put-instruction abi-ir 324 1 -5 9 0
+put-instruction abi-ir 340 3 1 1 0
+put-instruction abi-ir 356 6 2 0 0
 put-instruction abi-ir 372 5 0 0 0
 put-instruction abi-ir 388 12 0 0 0
 put-instruction abi-ir 404 3 1 1 0
@@ -445,9 +448,9 @@ put-instruction abi-ir 516 4 0 0 0
 put-instruction abi-ir 532 15 1 0 0
 put-instruction abi-ir 548 11 -5 0 0
 
-put-instruction abi-ir 564 3 1 1 0
-put-instruction abi-ir 580 6 0 0 0
-put-instruction abi-ir 596 1 -5 70 0
+put-instruction abi-ir 564 1 -5 70 0
+put-instruction abi-ir 580 3 1 1 0
+put-instruction abi-ir 596 6 0 0 0
 put-instruction abi-ir 612 5 0 0 0
 put-instruction abi-ir 628 12 0 0 0
 put-instruction abi-ir 644 3 1 1 0
@@ -773,9 +776,9 @@ put tagged-ir 92 13
 put tagged-ir 96 1
 put tagged-ir 100 1
 
-put-instruction tagged-ir 104 3 1 1 0
-put-instruction tagged-ir 120 6 0 1 0
-put-instruction tagged-ir 136 1 -5 73 0
+put-instruction tagged-ir 104 1 -5 73 0
+put-instruction tagged-ir 120 3 1 1 0
+put-instruction tagged-ir 136 6 0 1 0
 put-instruction tagged-ir 152 5 0 0 0
 put-instruction tagged-ir 168 12 0 0 0
 put-instruction tagged-ir 184 3 1 1 0
@@ -1208,11 +1211,92 @@ if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 put stack-ir 92 0
-put stack-ir 88 13
+put stack-ir 88 17
 if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
 put stack-ir 88 2
+
+; PC, general registers, and overflow flags are typed native effects. Their
+; machine state is consumed immediately, without a source-shaped adapter.
+put system-ir 0 1
+put system-ir 4 0
+put system-ir 8 1
+put system-ir 12 0
+put system-ir 16 1
+put system-ir 20 4
+put system-ir 24 0
+put system-ir 28 0
+
+put system-ir 32 -6
+put system-ir 36 -15
+put system-ir 40 0
+put system-ir 44 0
+put system-ir 48 0
+
+put system-ir 52 0
+put system-ir 56 2
+put system-ir 60 -11
+put system-ir 64 0
+put system-ir 68 0
+put system-ir 72 0
+put system-ir 76 0
+put system-ir 80 0
+put system-ir 84 4
+
+put-instruction system-ir 88 10 13 0 1
+put-instruction system-ir 104 1 -14 0 0
+put-instruction system-ir 120 15 14 0 0
+put-instruction system-ir 136 11 -11 0 0
+system-ir/153: as byte! 66h
+system-ir/154: as byte! 6Eh
+
+size: x64-codegen/generate system-ir 154 output 1024 0
+if any [size <= 0 not execute-first? output 1][failures: failures + 1]
+put system-ir 36 -5
+if (x64-codegen/generate system-ir 154 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
+; system/cpu/rcx: 42 followed immediately by system/cpu/rcx returns 42.
+put system-ir 20 5
+put system-ir 36 -5
+put system-ir 60 1
+put system-ir 84 5
+put-instruction system-ir 88 1 1 42 0
+put-instruction system-ir 104 10 15 1 1
+put-instruction system-ir 120 12 0 0 0
+put-instruction system-ir 136 10 14 1 1
+put-instruction system-ir 152 11 1 0 0
+system-ir/169: as byte! 66h
+system-ir/170: as byte! 6Eh
+
+size: x64-codegen/generate system-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 42][failures: failures + 1]
+put system-ir 112 16
+if (x64-codegen/generate system-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put system-ir 112 1
+
+; ADD sets OF while the division family has no usable OF result.
+put system-ir 60 -11
+put-instruction system-ir 88 1 -5 2147483647 0
+put-instruction system-ir 104 1 -5 1 0
+put-instruction system-ir 120 15 1 0 0
+put-instruction system-ir 136 10 16 0 -11
+put-instruction system-ir 152 11 -11 0 0
+size: x64-codegen/generate system-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 1][failures: failures + 1]
+
+put-instruction system-ir 104 1 -5 -1 -1
+put-instruction system-ir 120 15 4 0 0
+size: x64-codegen/generate system-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 0][failures: failures + 1]
+put system-ir 148 0
+if (x64-codegen/generate system-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
 
 free output
 free void-ir
@@ -1232,6 +1316,7 @@ free selection-ir
 free recursive-pointer-ir
 free recursive-value-ir
 free stack-ir
+free system-ir
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

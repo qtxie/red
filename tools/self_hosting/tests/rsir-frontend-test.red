@@ -172,9 +172,9 @@ assert all [
 	(function-word local-ir local-layout 1 28) = 1
 	(function-word local-ir local-layout 1 32) = 7
 	(word-at local-ir local-layout/5) = -5
-	(ops-of local-ir local-layout) = [3 1 5 12 3 4 11]
-	(instruction-word local-ir local-layout 1 4) = 1
-	(instruction-word local-ir local-layout 1 8) = 1
+	(ops-of local-ir local-layout) = [1 3 5 12 3 4 11]
+	(instruction-word local-ir local-layout 2 4) = 1
+	(instruction-word local-ir local-layout 2 8) = 1
 ]["local inference did not use the ordinary address/load/set model"]
 
 explicit-local-ir: compile-text {
@@ -184,7 +184,7 @@ explicit-local-ir: compile-text {
 explicit-layout: layout-of explicit-local-ir
 assert all [
 	(function-word explicit-local-ir explicit-layout 1 28) = 1
-	(ops-of explicit-local-ir explicit-layout) = [3 1 5 11]
+	(ops-of explicit-local-ir explicit-layout) = [1 3 5 11]
 ]["assignment result was discarded inside the assignment operation"]
 
 shadow-ir: compile-text {
@@ -195,8 +195,8 @@ shadow-ir: compile-text {
 shadow-layout: layout-of shadow-ir
 assert all [
 	(word-at shadow-ir 24) = 1
-	(instruction-word shadow-ir shadow-layout 1 4) = 1
-	(instruction-word shadow-ir shadow-layout 1 8) = 1
+	(instruction-word shadow-ir shadow-layout 2 4) = 1
+	(instruction-word shadow-ir shadow-layout 2 8) = 1
 ]["a global captured a homonymous local"]
 
 pointer-ir: compile-text {
@@ -277,10 +277,10 @@ assert binary? address-index-ir [
 address-index-layout: layout-of address-index-ir
 assert all [
 	(ops-of address-index-ir address-index-layout) = [
-		3 3 20 8 5 12 3 4 3 4 21 1 5 12 3 4 21 4 11
+		3 20 8 3 5 12 1 3 4 3 4 21 5 12 3 4 21 4 11
 	]
-	(instruction-word address-index-ir address-index-layout 3 0) = 20
-	(instruction-word address-index-ir address-index-layout 11 8) = 1
+	(instruction-word address-index-ir address-index-layout 2 0) = 20
+	(instruction-word address-index-ir address-index-layout 12 8) = 1
 	(instruction-word address-index-ir address-index-layout 17 4) = 1
 	(instruction-word address-index-ir address-index-layout 17 8) = 0
 ]["get-word and pointer indexes did not share REFERENCE/INDEX semantics"]
@@ -321,7 +321,7 @@ assert binary? scalar-declare-ir [
 	"scalar DECLARE failed: " mold frontend/last-error
 ]
 scalar-declare-layout: layout-of scalar-declare-ir
-assert (ops-of scalar-declare-ir scalar-declare-layout) = [3 1 5 12 3 4 11]
+assert (ops-of scalar-declare-ir scalar-declare-layout) = [1 3 5 12 3 4 11]
 	"scalar DECLARE emitted runtime initialization"
 
 local-declare-ir: compile-text {
@@ -341,7 +341,7 @@ assert all [
 	(function-word local-declare-ir local-declare-layout 1 28) = 2
 	(word-at local-declare-ir (local-declare-layout/5 + 4)) = 0
 	(word-at local-declare-ir (local-declare-layout/5 + 12)) = 1
-	(copy/part ops-of local-declare-ir local-declare-layout 5) = [3 3 20 5 12]
+	(copy/part ops-of local-declare-ir local-declare-layout 5) = [3 20 3 5 12]
 ]["local DECLARE did not expose one pointer variable over one inline object"]
 
 inline-copy-ir: compile-text {
@@ -363,7 +363,7 @@ inline-copy-layout: layout-of inline-copy-ir
 inline-copy-ops: ops-of inline-copy-ir inline-copy-layout
 assert all [
 	(function-word inline-copy-ir inline-copy-layout 1 28) = 2
-	not none? find inline-copy-ops [3 4 6 3 4 6 4 5]
+	not none? find inline-copy-ops [3 4 6 4 3 4 6 5]
 ]["inline aggregate assignment did not use ordinary ADDRESS/MEMBER/LOAD/SET semantics"]
 
 aggregate-call-ir: compile-text {
@@ -1248,7 +1248,7 @@ if-ir: compile-text {
 assert binary? if-ir ["IF lowering failed: " mold frontend/last-error]
 if-layout: layout-of if-ir
 assert all [
-	(ops-of if-ir if-layout) = [3 1 5 12 3 4 17 3 1 5 12 3 4 11]
+	(ops-of if-ir if-layout) = [1 3 5 12 3 4 17 1 3 5 12 3 4 11]
 	(instruction-word if-ir if-layout 7 4) = 12
 	(instruction-word if-ir if-layout 7 8) = 0
 ]["IF did not lower to a false branch over an ordinary body"]
@@ -1442,8 +1442,8 @@ widen-ir: compile-text {
 assert binary? widen-ir ["lossless integer widening failed: " mold frontend/last-error]
 widen-layout: layout-of widen-ir
 assert all [
-	(ops-of widen-ir widen-layout) = [3 3 4 8 5 12 3 4 8 11]
-	(instruction-word widen-ir widen-layout 4 4) = -5
+	(ops-of widen-ir widen-layout) = [3 4 8 3 5 12 3 4 8 11]
+	(instruction-word widen-ir widen-layout 3 4) = -5
 	(instruction-word widen-ir widen-layout 9 4) = -7
 ]["lossless assignment/return widening did not use ordinary CAST operations"]
 
@@ -1639,7 +1639,7 @@ exit-ir: compile-text {
 assert binary? exit-ir ["early EXIT lowering failed: " mold frontend/last-error]
 exit-layout: layout-of exit-ir
 assert all [
-	(ops-of exit-ir exit-layout) = [3 1 5 12 3 4 17 11 3 1 5 12 11]
+	(ops-of exit-ir exit-layout) = [1 3 5 12 3 4 17 11 1 3 5 12 11]
 	(instruction-word exit-ir exit-layout 8 4) = 0
 ]["EXIT did not use the ordinary void function terminator"]
 
@@ -1941,6 +1941,89 @@ assert all [
 	(instruction-word stack-system-ir stack-system-layout 7 12) > 0
 	(instruction-word stack-system-ir stack-system-layout 15 12) = 0
 ]["system/stack family did not keep its direct typed postfix effects"]
+
+cpu-system-ir: compile-text {
+	Red/System []
+	current-pc: func [return: [byte-ptr!]][system/pc]
+	overflowed?: func [return: [logic!]][system/cpu/overflow?]
+	touch-registers: func [
+		value [int-ptr!]
+		return: [int-ptr!]
+	][
+		system/cpu/rax: value
+		system/cpu/rcx: value
+		system/cpu/rdx: value
+		system/cpu/rbx: value
+		system/cpu/rsp: value
+		system/cpu/rbp: value
+		system/cpu/rsi: value
+		system/cpu/rdi: value
+		system/cpu/r8: value
+		system/cpu/r9: value
+		system/cpu/r10: value
+		system/cpu/r11: value
+		system/cpu/r12: value
+		system/cpu/r13: value
+		system/cpu/r14: value
+		system/cpu/r15: value
+		system/cpu/r15
+	]
+} 'user
+assert binary? cpu-system-ir [
+	"system/pc and system/cpu lowering failed: " mold frontend/last-error
+]
+cpu-system-layout: layout-of cpu-system-ir
+cpu-system-ops: ops-of cpu-system-ir cpu-system-layout
+cpu-effects: make block! 64
+repeat id word-at cpu-system-ir 20 [
+	if (instruction-word cpu-system-ir cpu-system-layout id 0) = 10 [
+		repend cpu-effects [
+			instruction-word cpu-system-ir cpu-system-layout id 4
+			instruction-word cpu-system-ir cpu-system-layout id 8
+			instruction-word cpu-system-ir cpu-system-layout id 12
+		]
+	]
+]
+pc-ref: cpu-effects/3
+cpu-ref: cpu-effects/9
+expected-effects: reduce [13 0 pc-ref 16 0 -11]
+repeat register 16 [repend expected-effects [15 register - 1 cpu-ref]]
+repend expected-effects [14 15 cpu-ref]
+assert all [
+	pc-ref > 0
+	cpu-ref > 0
+	pc-ref <> cpu-ref
+	cpu-effects = expected-effects
+	(copy/part at cpu-system-ops 5 4) = [3 4 10 12]
+]["system/pc and system/cpu did not retain direct typed register effects"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/pc: null]
+} 'user "system/pc accepted assignment"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"system/pc assignment reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/cpu/overflow?: true]
+} 'user "system/cpu/overflow? accepted assignment"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"system/cpu/overflow? assignment reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/cpu/r16]
+} 'user "system/cpu accepted an unknown x64 register"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"unknown x64 register reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/cpu/rax: 1]
+} 'user "system/cpu accepted a non-pointer register value"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid CPU register value reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []

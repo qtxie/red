@@ -1850,6 +1850,7 @@ x64-codegen: context [
 			tag-head tag-count tag-capacity tag-base tag-width-value
 			operation left-ref right-ref left-flags right-flags
 			left-kind right-kind operation-width condition stride
+			last-math-operation
 			encoded written frame-extra slot-bytes outgoing outgoing-end max-outgoing
 			argument-index argument-base callee-slot native-stack-slot
 			argument-slot argument-width physical-slot target return-ref first-parameter
@@ -1868,6 +1869,7 @@ x64-codegen: context [
 		measure?: null? code
 		tag-capacity: 0
 		unstable-stack?: false
+		last-math-operation: 0
 		index: 1
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
@@ -1881,6 +1883,10 @@ x64-codegen: context [
 					instruction/a = 2
 					instruction/a = 3
 					all [instruction/a >= 5 instruction/a <= 12]
+					all [instruction/a = 15 any [
+						instruction/b = x64-encoder/RSP
+						instruction/b = x64-encoder/RBP
+					]]
 				]
 			][unstable-stack?: true]
 			index: index + 1
@@ -2439,14 +2445,16 @@ x64-codegen: context [
 					stack-kinds/depth: PLACE
 				]
 				instruction/op = OP_SET [
-					target-slot: depth - 1
-					if any [depth < 2 stack-kinds/target-slot <> PLACE
-						stack-kinds/depth <> VALUE][return INVALID_IR]
+					; VALUE PLACE -> VALUE
+					source-slot: depth - 1
+					target-slot: depth
+					if any [depth < 2 stack-kinds/source-slot <> VALUE
+						stack-kinds/target-slot <> PLACE][return INVALID_IR]
 					target-ref: stack-types/target-slot
 					target-flags: stack-flags/target-slot
 					tag-head: stack-tags/target-slot
-					ref: stack-types/depth
-					flags: stack-flags/depth
+					ref: stack-types/source-slot
+					flags: stack-flags/source-slot
 					aggregate-copy?: all [
 						target-flags = INLINE flags = 0
 						aggregate-ref? target-ref types type-count
@@ -2463,7 +2471,8 @@ x64-codegen: context [
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RCX slot-displacement (storage-slots + depth) 8 0
+							x64-encoder/RCX slot-displacement
+								(storage-slots + source-slot) 8 0
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 						at: as byte-ptr! 0
@@ -2477,7 +2486,7 @@ x64-codegen: context [
 						encoded: x64-encoder/copy-indirect at (capacity - written) copy-size
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-						depth: target-slot
+						depth: source-slot
 						stack-types/depth: target-ref
 						stack-flags/depth: 0
 						stack-kinds/depth: VALUE
@@ -2497,10 +2506,11 @@ x64-codegen: context [
 						encoded: either floating? [
 							x64-encoder/xmm-frame-load at (capacity - written)
 								x64-encoder/XMM0 slot-displacement
-									(storage-slots + depth) width
+									(storage-slots + source-slot) width
 						][
 							x64-encoder/frame-load at (capacity - written)
-								x64-encoder/RAX slot-displacement (storage-slots + depth)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + source-slot)
 								width signed
 						]
 						if encoded < 0 [return OUTPUT_FULL]
@@ -2508,7 +2518,8 @@ x64-codegen: context [
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RDX slot-displacement (storage-slots + depth - 1) 8 0
+							x64-encoder/RDX slot-displacement
+								(storage-slots + target-slot) 8 0
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 						at: as byte-ptr! 0
@@ -2519,7 +2530,7 @@ x64-codegen: context [
 						][x64-encoder/store-indirect at (capacity - written) width]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-						depth: depth - 1
+						depth: source-slot
 						stack-types/depth: ref
 						stack-flags/depth: flags
 						stack-kinds/depth: VALUE
@@ -3600,7 +3611,13 @@ x64-codegen: context [
 					written: written + encoded
 				]
 				instruction/op = OP_NATIVE [
-					unless instruction/b = 0 [return INVALID_IR]
+					unless any [
+						instruction/b = 0
+						all [
+							instruction/a >= 14 instruction/a <= 15
+							instruction/b >= 0 instruction/b <= 15
+						]
+					][return INVALID_IR]
 					switch instruction/a [
 						1 [						;-- system/stack/top
 							unless all [
@@ -3822,6 +3839,123 @@ x64-codegen: context [
 							if not measure? [at: code + written]
 							encoded: emit-stack-all at (capacity - written) true
 							if encoded < 0 [return encoded]
+							written: written + encoded
+						]
+						13 [					;-- system/pc
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -2
+							][return INVALID_IR]
+							depth: depth + 1
+							if depth > max-depth [max-depth: depth]
+							stack-types/depth: instruction/c
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/call-relative at (capacity - written) 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/pop-register at (capacity - written)
+								x64-encoder/RAX
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						14 [					;-- system/cpu/<register>
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+							][return INVALID_IR]
+							depth: depth + 1
+							if depth > max-depth [max-depth: depth]
+							stack-types/depth: instruction/c
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+							if instruction/b <> x64-encoder/RAX [
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/move-register at (capacity - written)
+									x64-encoder/RAX instruction/b 8
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						15 [					;-- system/cpu/<register>:
+							unless all [
+								valid-type-ref? instruction/c type-count
+								pointee-type instruction/c types type-count :target-ref
+								(canonical-type target-ref types type-count) = -5
+								depth > 0 stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								compatible-types? instruction/c stack-types/depth
+									types type-count
+							][return INVALID_IR]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 8 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							if instruction/b <> x64-encoder/RAX [
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/move-register at (capacity - written)
+									instruction/b x64-encoder/RAX 8
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							stack-types/depth: instruction/c
+							stack-flags/depth: 0
+							stack-tags/depth: 0
+						]
+						16 [					;-- system/cpu/overflow?
+							unless instruction/c = -11 [return INVALID_IR]
+							depth: depth + 1
+							if depth > max-depth [max-depth: depth]
+							stack-types/depth: -11
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: either all [
+								last-math-operation >= DIVIDE_OPERATION
+								last-math-operation <= MODULO_OPERATION
+							][
+								x64-encoder/move-immediate at (capacity - written)
+									x64-encoder/RAX 4 0 0
+							][
+								x64-encoder/condition-result at (capacity - written) 0
+							]
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 4
+							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
 						default [return UNSUPPORTED]
@@ -4202,6 +4336,7 @@ x64-codegen: context [
 						written: written + encoded
 					]
 					]
+					unless floating? [last-math-operation: operation]
 
 					depth: depth - 1
 					either comparison? [

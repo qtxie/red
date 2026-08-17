@@ -166,6 +166,8 @@ run-linked-fixture
 run-linked-fixture
 	%rsir-stack-system-exit.reds %rsir-stack-system-linked.exe "system/stack"
 run-linked-fixture
+	%rsir-cpu-system-exit.reds %rsir-cpu-system-linked.exe "system/pc and system/cpu"
+run-linked-fixture
 	%rsir-custom-call-exit.reds %rsir-custom-call-linked.exe "custom call"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

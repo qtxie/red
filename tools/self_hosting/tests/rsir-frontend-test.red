@@ -89,6 +89,10 @@ type-word: func [ir layout id field][
 	word-at ir (layout/1 + ((id - 1) * 20) + field)
 ]
 
+member-word: func [ir layout id field][
+	word-at ir (layout/1 + ((word-at ir 8) * 20) + ((id - 1) * 8) + field)
+]
+
 global-word: func [ir layout id field][
 	word-at ir (layout/3 + ((id - 1) * 24) + field)
 ]
@@ -457,7 +461,7 @@ assert all [
 ]["integer literal array did not lower to one typed inline object"]
 assert all [
 	(type-word array-ir array-layout bytes-ref 0) = -7
-	(type-word array-ir array-layout bytes-ref 4) = -2
+	(type-word array-ir array-layout bytes-ref 4) = -15
 	(type-word array-ir array-layout bytes-ref 8) = 1
 	(type-word array-ir array-layout bytes-ref 16) = 3
 	(global-word array-ir array-layout 2 12) = 1
@@ -572,12 +576,13 @@ function-value-ir: compile-text {
 	op!: alias function! [value [integer!] return: [integer!]]
 	box!: alias struct! [apply [op!]]
 	inc: func [value [integer!] return: [integer!]][value + 1]
+	functions: [:inc]
 	run: func [return: [integer!] /local fn [op!] holder [box!]][
 		holder: declare box!
 		holder/apply: as op! :inc
-		fn: as op! :inc
+		fn: as op! functions/1
 		if :fn = null [return 0]
-		fn 41
+		if (fn 41) <> 42 [return 0]
 		holder/apply 40
 	]
 } 'user
@@ -775,7 +780,7 @@ repeat id word-at protect-ir 20 [
 assert all [
 	not none? find protect-literals [-5 60 0]
 	not none? find protect-literals [-10 0 1071644672]
-	not none? find protect-literals [-2 90 0]
+	not none? find protect-literals [-15 90 0]
 ]["protected scalar constants were not folded to ordinary typed literals"]
 
 assert none? compile-text {
@@ -1002,6 +1007,65 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"non-block variadic call reported the wrong error class"
 
+typed-ir: compile-text {
+	Red/System []
+	typed-value!: alias struct! [
+		type [integer!]
+		_align0 [integer!]
+		value [int-ptr!]
+		_padding [integer!]
+		_align1 [integer!]
+	]
+	sample!: alias struct! [value [integer!]]
+	sink: func [
+		[typed]
+		count [integer!]
+		list [typed-value!]
+		return: [integer!]
+	][count]
+	main: func [return: [integer!] /local item [sample!]][
+		item: declare sample!
+		sink [
+			#"A"
+			as uint8! 250
+			as int8! -2
+			-123456
+			as float32! 1.5
+			2.0
+			"text"
+			as int64! -3
+			as uint64! FFFFFFFFh
+			item
+		]
+	]
+} 'user
+assert binary? typed-ir ["typed call failed: " mold frontend/last-error]
+typed-layout: layout-of typed-ir
+typed-call: 0
+repeat id word-at typed-ir 20 [
+	if (instruction-word typed-ir typed-layout id 0) = 7 [typed-call: id]
+]
+typed-metadata: instruction-word typed-ir typed-layout typed-call 12
+typed-first: 1 + type-word typed-ir typed-layout typed-metadata 12
+typed-arguments: copy []
+repeat id type-word typed-ir typed-layout typed-metadata 16 [
+	repend typed-arguments [
+		member-word typed-ir typed-layout (typed-first + id - 1) 0
+		member-word typed-ir typed-layout (typed-first + id - 1) 4
+	]
+]
+assert all [
+	typed-call > 0
+	(instruction-word typed-ir typed-layout typed-call 8) = 10
+	(type-word typed-ir typed-layout typed-metadata 0) = -8
+	(type-word typed-ir typed-layout typed-metadata 16) = 10
+	(type-word typed-ir typed-layout
+		(type-word typed-ir typed-layout typed-metadata 4) 0) = -4
+	typed-arguments = [
+		-15 3 -2 14 -1 13 -5 2 -9 4 -10 5 -13 6 -7 11 -8 12 2 1002
+	]
+]["typed call metadata lost source types or runtime type IDs: " mold typed-arguments]
+
 call-ir: compile-text {
 	Red/System []
 	id: func [value [integer!] return: [integer!]][value]
@@ -1065,12 +1129,14 @@ assert all [
 
 byte-ir: compile-text {
 	Red/System []
+	letter: #"B"
 	fn: func [return: [byte!]][#"A"]
 } 'user
 byte-layout: layout-of byte-ir
 assert all [
-	(function-word byte-ir byte-layout 1 8) = -2
-	(instruction-word byte-ir byte-layout 1 4) = -2
+	(global-word byte-ir byte-layout 1 8) = -15
+	(function-word byte-ir byte-layout 1 8) = -15
+	(instruction-word byte-ir byte-layout 1 4) = -15
 	(instruction-word byte-ir byte-layout 1 8) = 65
 ]["byte literal did not retain its logical byte type"]
 

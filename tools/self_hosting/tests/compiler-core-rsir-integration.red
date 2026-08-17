@@ -34,6 +34,11 @@ source: all [
 	not empty? system/options/args
 	clean-path to-red-file to file! system/options/args/1
 ]
+only-fixture: all [
+	block? system/options/args
+	(length? system/options/args) >= 2
+	to file! system/options/args/2
+]
 unless source [
 	foreach candidate reduce [
 		join system/options/path %../fixtures/backend/rsir-empty-void.reds
@@ -100,6 +105,7 @@ run-linked-fixture: func [
 	label [string!]
 	/local fixture root output output-dir job linked status index
 ][
+	if all [only-fixture source-name <> only-fixture][return none]
 	fixture: find-fixture source-name
 	check all [file? fixture exists? fixture]["cannot access " label " fixture"]
 	root: first split-path fixture
@@ -149,5 +155,7 @@ run-linked-fixture
 	%rsir-protect-exit.reds %rsir-protect-linked.exe "protected data"
 run-linked-fixture
 	%rsir-aggregate-abi-exit.reds %rsir-aggregate-abi-linked.exe "aggregate ABI"
+run-linked-fixture
+	%rsir-typed-call-exit.reds %rsir-typed-call-linked.exe "typed call"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

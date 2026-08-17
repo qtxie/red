@@ -239,7 +239,7 @@ x64-codegen: context [
 	valid-type-ref?: func [ref count [integer!] return: [logic!]][
 		any [
 			all [ref > 0 ref <= count]
-			all [ref < 0 ref >= -14]
+			all [ref < 0 ref >= -15]
 		]
 	]
 
@@ -250,17 +250,24 @@ x64-codegen: context [
 		return: [integer!]
 		/local record [rsir-type!] steps [integer!]
 	][
-		if ref < 0 [return ref]
+		if ref < 0 [return either ref = -15 [-2][ref]]
 		steps: 0
 		while [steps < count][
 			if any [ref <= 0 ref > count][return 0]
 			record: as rsir-type! (types + ((ref - 1) * RSIR_TYPE_SIZE))
 			unless record/kind = -1 [return ref]
 			ref: record/target
-			if ref < 0 [return ref]
+			if ref < 0 [return either ref = -15 [-2][ref]]
 			steps: steps + 1
 		]
 		0
+	]
+
+	typed-runtime-id?: func [id [integer!] return: [logic!]][
+		any [
+			all [id >= 1 id <= 17]
+			id >= 1000
+		]
 	]
 
 	logical-kind: func [
@@ -434,6 +441,7 @@ x64-codegen: context [
 			cached? [logic!]
 	][
 		if any [ref = 0 depth > type-count][return false]
+		if ref = -15 [ref: -2]
 		cache: as int-ptr! 0
 		cached?: false
 		kind: 0
@@ -482,6 +490,10 @@ x64-codegen: context [
 			any [kind = -4 kind = -5 kind = -6][
 				size: 8
 				alignment: 8
+			]
+			kind = -8 [
+				size: 0
+				alignment: 1
 			]
 			kind = -7 [
 				unless all [
@@ -795,6 +807,7 @@ x64-codegen: context [
 		if base = 0 [return false]
 		kind: logical-kind base types count
 		if kind = 13 [result/1: -2 return true]
+		if any [kind = -2 kind = -3][result/1: base return true]
 		unless all [any [kind = -6 kind = -7] base > 0][return false]
 		record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
 		result/1: record/target
@@ -1013,8 +1026,9 @@ x64-codegen: context [
 		layouts member-offsets offsets [int-ptr!]
 		return: [integer!]
 		/local instruction [rsir-instruction!]
-			callee [rsir-function!] imported [rsir-import!] signature [rsir-type!]
-			index target import-id ref flags size [integer!]
+			callee [rsir-function!] imported [rsir-import!]
+			signature metadata [rsir-type!]
+			index target import-id ref flags size signature-ref [integer!]
 	][
 		index: 1
 		while [index <= fn/instruction-count][
@@ -1023,6 +1037,17 @@ x64-codegen: context [
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
 			if instruction/op = OP_CALL [
 				target: instruction/a
+				signature-ref: instruction/c
+				if all [
+					signature-ref > 0
+					(logical-kind signature-ref types type-count) = -8
+				][
+					signature-ref: canonical-type signature-ref types type-count
+					if signature-ref <= 0 [return INVALID_IR]
+					metadata: as rsir-type! (types
+						+ ((signature-ref - 1) * RSIR_TYPE_SIZE))
+					signature-ref: metadata/target
+				]
 				ref: 0
 				flags: 0
 				either target > 0 [
@@ -1040,11 +1065,11 @@ x64-codegen: context [
 					flags: imported/flags
 				][
 					if any [
-						not valid-type-ref? instruction/c type-count
-						(logical-kind instruction/c types type-count) <> -4
+						not valid-type-ref? signature-ref type-count
+						(logical-kind signature-ref types type-count) <> -4
 					][return INVALID_IR]
 					signature: as rsir-type! (types
-						+ (((canonical-type instruction/c types type-count) - 1)
+						+ (((canonical-type signature-ref types type-count) - 1)
 							* RSIR_TYPE_SIZE))
 					ref: signature/target
 					flags: signature/flags
@@ -1273,7 +1298,8 @@ x64-codegen: context [
 			parameter [rsir-parameter!]
 			callee [rsir-function!]
 			imported [rsir-import!]
-			signature [rsir-type!]
+			signature typed-metadata list-type [rsir-type!]
+			typed-member [rsir-member!]
 			global [rsir-global!]
 			image-global [codegen-global!]
 			target-function [codegen-function!]
@@ -1293,9 +1319,11 @@ x64-codegen: context [
 			result-index reference-id target-offset instruction-start case-index
 			operation-ref source-kind target-kind opcode parity keep-cast
 			aggregate-width value-size result-offset temp-offset hidden-shift
-			physical-count call-mode list-size list-capacity [integer!]
+			physical-count call-mode list-size list-capacity signature-ref
+			record-offset [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
-			return-value? hidden-return? aggregate-argument? indirect? packed-call? [logic!]
+			return-value? hidden-return? aggregate-argument? indirect? packed-call?
+			typed-call? list-call? [logic!]
 	][
 		measure?: null? code
 		tag-capacity: 0
@@ -2063,6 +2091,18 @@ x64-codegen: context [
 					target: instruction/a
 					argument-index: instruction/b
 					indirect?: target = 0
+					signature-ref: instruction/c
+					typed-call?: all [
+						signature-ref > 0
+						(logical-kind signature-ref types type-count) = -8
+					]
+					if typed-call? [
+						target-ref: canonical-type signature-ref types type-count
+						if target-ref <= 0 [return INVALID_IR]
+						typed-metadata: as rsir-type! (types
+							+ ((target-ref - 1) * RSIR_TYPE_SIZE))
+						signature-ref: typed-metadata/target
+					]
 					return-ref: 0
 					first-parameter: 0
 					parameter-count: 0
@@ -2089,11 +2129,11 @@ x64-codegen: context [
 						call-flags: imported/flags
 					][
 						if any [
-							not valid-type-ref? instruction/c type-count
-							(logical-kind instruction/c types type-count) <> -4
+							not valid-type-ref? signature-ref type-count
+							(logical-kind signature-ref types type-count) <> -4
 						][return INVALID_IR]
 						signature: as rsir-type! (types
-							+ (((canonical-type instruction/c types type-count) - 1)
+							+ (((canonical-type signature-ref types type-count) - 1)
 								* RSIR_TYPE_SIZE))
 						return-ref: signature/target
 						first-parameter: signature/first-member
@@ -2102,11 +2142,13 @@ x64-codegen: context [
 						call-parameters: members
 					]]
 					call-mode: call-flags and VARIABLE_FLAGS
-					if any [call-mode = TYPED call-mode = CUSTOM][return UNSUPPORTED]
+					if call-mode = CUSTOM [return UNSUPPORTED]
+					unless typed-call? = (call-mode = TYPED) [return INVALID_IR]
 					packed-call?: all [
 						call-mode = VARIADIC
 						(call-flags and 3) <> CDECL
 					]
+					list-call?: any [packed-call? typed-call?]
 					if packed-call? [
 						either target < 0 [
 							unless parameter-count = 0 [return INVALID_IR]
@@ -2136,11 +2178,58 @@ x64-codegen: context [
 							]
 						]
 					]
+					if typed-call? [
+						unless all [
+							typed-metadata/member-count = argument-index
+							parameter-count = 2
+						][return INVALID_IR]
+						parameter: as rsir-parameter! (call-parameters
+							+ (first-parameter * RSIR_PARAMETER_SIZE))
+						unless all [
+							parameter/flags = 0
+							(logical-kind parameter/type types type-count) = 5
+						][return INVALID_IR]
+						parameter: as rsir-parameter! (call-parameters
+							+ ((first-parameter + 1) * RSIR_PARAMETER_SIZE))
+						target-ref: 0
+						unless all [
+							parameter/flags = 0
+							pointee-type parameter/type types type-count :target-ref
+						][return INVALID_IR]
+						target-ref: canonical-type target-ref types type-count
+						if target-ref <= 0 [return INVALID_IR]
+						list-type: as rsir-type! (types
+							+ ((target-ref - 1) * RSIR_TYPE_SIZE))
+						unless all [
+							list-type/kind = -2
+							any [
+								list-type/member-count = 3
+								list-type/member-count = 4
+								list-type/member-count = 5
+							]
+							(aggregate-size target-ref types members type-count
+								layouts member-offsets) = 24
+						][return INVALID_IR]
+						typed-member: as rsir-member! (members
+							+ (list-type/first-member * RSIR_MEMBER_SIZE))
+						unless all [
+							typed-member/flags = 0
+							(logical-kind typed-member/type types type-count) = 5
+						][return INVALID_IR]
+						if list-type/member-count >= 4 [
+							typed-member: as rsir-member! (members
+								+ ((list-type/first-member + 1) * RSIR_MEMBER_SIZE))
+							unless all [
+								typed-member/flags = 0
+								(logical-kind typed-member/type types type-count) = 5
+							][return INVALID_IR]
+						]
+					]
 					unless all [
 						argument-index >= 0 argument-index <= depth
-						any [indirect? instruction/c = return-ref]
+						any [indirect? typed-call? instruction/c = return-ref]
 						any [
-							packed-call?
+							list-call?
 							argument-index = parameter-count
 							all [call-mode = VARIADIC
 								argument-index >= parameter-count]
@@ -2158,7 +2247,11 @@ x64-codegen: context [
 					hidden-return?: win64-hidden-return? return-ref call-flags
 						types members type-count layouts member-offsets
 					hidden-shift: either hidden-return? [1][0]
-					physical-count: either packed-call? [3][argument-index]
+					physical-count: case [
+						typed-call? [2]
+						packed-call? [3]
+						true [argument-index]
+					]
 					if physical-count > (2147483647 - hidden-shift)[return OUTPUT_FULL]
 					physical-count: physical-count + hidden-shift
 					if physical-count > (((2147483647 - 32) / 8) + 4)[
@@ -2175,7 +2268,7 @@ x64-codegen: context [
 							callee-slot <= 0
 							stack-kinds/callee-slot <> VALUE
 							stack-flags/callee-slot <> 0
-							not compatible-types? instruction/c stack-types/callee-slot
+							not compatible-types? signature-ref stack-types/callee-slot
 								types type-count
 						][return INVALID_IR]
 						argument-base: callee-slot
@@ -2189,7 +2282,7 @@ x64-codegen: context [
 
 					; Copy indirect aggregates before loading volatile argument registers.
 					source-slot: 1
-					while [all [not packed-call? source-slot <= argument-index]][
+					while [all [not list-call? source-slot <= argument-index]][
 						argument-slot: argument-base + source-slot
 						ref: stack-types/argument-slot
 						flags: stack-flags/argument-slot
@@ -2319,9 +2412,137 @@ x64-codegen: context [
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
+					if typed-call? [
+						if argument-index > (2147483647 / 24)[return OUTPUT_FULL]
+						list-size: argument-index * 24
+						list-capacity: either list-size < 8 [8][list-size]
+						if temp-offset > (2147483647 - list-capacity)[
+							return OUTPUT_FULL
+						]
+						outgoing-end: temp-offset + list-capacity
+						if outgoing-end > max-outgoing [max-outgoing: outgoing-end]
+						source-slot: 1
+						while [source-slot <= argument-index][
+							argument-slot: argument-base + source-slot
+							ref: stack-types/argument-slot
+							flags: stack-flags/argument-slot
+							typed-member: as rsir-member! (members
+								+ ((typed-metadata/first-member + source-slot - 1)
+									* RSIR_MEMBER_SIZE))
+							unless all [
+								stack-kinds/argument-slot = VALUE
+								flags = 0
+								compatible-types? typed-member/type ref types type-count
+								machine-value? ref flags types members type-count
+									layouts member-offsets
+								typed-runtime-id? typed-member/flags
+							][return INVALID_IR]
+							width: value-width ref flags types members type-count
+								layouts member-offsets
+							if width <= 0 [return UNSUPPORTED]
+							record-offset: temp-offset + ((source-slot - 1) * 24)
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/outgoing-immediate-store
+								at (capacity - written) record-offset typed-member/flags
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/outgoing-immediate-store
+								at (capacity - written) (record-offset + 4) 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							floating?: float-type? ref types type-count
+							either floating? [
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/xmm-frame-load at (capacity - written)
+									x64-encoder/XMM0 slot-displacement
+									(storage-slots + argument-slot) width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/xmm-outgoing-store at
+									(capacity - written) x64-encoder/XMM0
+									(record-offset + 8) width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								if width = 4 [
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/outgoing-immediate-store at
+										(capacity - written) (record-offset + 12) 0
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+								]
+							][
+								signed: either signed-type? ref types type-count [1][0]
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/frame-load at (capacity - written)
+									x64-encoder/RAX slot-displacement
+									(storage-slots + argument-slot) width signed
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/outgoing-store at
+									(capacity - written) (record-offset + 8) 8
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							kind: logical-kind ref types type-count
+							either any [kind = 7 kind = 8][
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/frame-load at (capacity - written)
+									x64-encoder/RAX
+									((slot-displacement (storage-slots + argument-slot)) + 4)
+									4 0
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/outgoing-store at
+									(capacity - written) (record-offset + 16) 4
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							][
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/outgoing-immediate-store at
+									(capacity - written) (record-offset + 16) 0
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/outgoing-immediate-store at
+								(capacity - written) (record-offset + 20) 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							source-slot: source-slot + 1
+						]
+						target-slot: argument-register (hidden-shift + 1)
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/move-immediate at (capacity - written)
+							target-slot 4 argument-index 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						target-slot: argument-register (hidden-shift + 2)
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/stack-address at (capacity - written)
+							target-slot temp-offset
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 					temp-offset: align outgoing 16
 					source-slot: 1
-					while [all [not packed-call? source-slot <= argument-index]][
+					while [all [not list-call? source-slot <= argument-index]][
 						argument-slot: argument-base + source-slot
 						ref: stack-types/argument-slot
 						flags: stack-flags/argument-slot
@@ -3559,7 +3780,7 @@ x64-codegen: context [
 				image-import-count reference-count count first-reference last-library
 				library-offset external-offset output-import-id exit-reference-id
 				reference-id record-offset variable-mode written base initializer-id
-				slot-width item-offset [integer!]
+				slot-width item-offset member-id [integer!]
 			entry? current-entry? array? protected? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
@@ -3635,6 +3856,14 @@ x64-codegen: context [
 							ir-type/flags = 4 ir-type/flags = 8]
 					][return INVALID_IR]
 				]
+				ir-type/kind = -8 [
+					if any [
+						ir-type/flags <> 0
+						ir-type/target <= 0
+						not valid-type-ref? ir-type/target header/type-count
+						(logical-kind ir-type/target type-data header/type-count) <> -4
+					][return INVALID_IR]
+				]
 				all [ir-type/kind > 0 ir-type/kind <= 14][
 					if any [ir-type/target <> 0 ir-type/flags <> 0
 						ir-type/member-count <> 0][return INVALID_IR]
@@ -3652,14 +3881,32 @@ x64-codegen: context [
 		member-data: type-data + type-bytes
 		remaining: remaining - member-bytes
 		id: 1
-		while [id <= member-count][
-			ir-member: as rsir-member! (member-data + ((id - 1) * RSIR_MEMBER_SIZE))
-			if any [
-				not valid-type-ref? ir-member/type header/type-count
-				ir-member/flags < 0 ir-member/flags > INLINE
-				all [ir-member/flags = INLINE
-					not aggregate-ref? ir-member/type type-data header/type-count]
-			][return INVALID_IR]
+		while [id <= header/type-count][
+			ir-type: as rsir-type! (type-data + ((id - 1) * RSIR_TYPE_SIZE))
+			if ir-type/kind <> -7 [
+				member-id: ir-type/first-member
+				while [member-id < (ir-type/first-member + ir-type/member-count)][
+					ir-member: as rsir-member! (member-data
+						+ (member-id * RSIR_MEMBER_SIZE))
+					if not valid-type-ref? ir-member/type header/type-count [
+						return INVALID_IR
+					]
+					either ir-type/kind = -8 [
+						unless typed-runtime-id? ir-member/flags [return INVALID_IR]
+					][
+						if any [
+							ir-member/flags < 0
+							ir-member/flags > INLINE
+							all [
+								ir-member/flags = INLINE
+								not aggregate-ref? ir-member/type type-data
+									header/type-count
+							]
+						][return INVALID_IR]
+					]
+					member-id: member-id + 1
+				]
+			]
 			id: id + 1
 		]
 

@@ -564,6 +564,39 @@ x64-encoder: context [
 		size
 	]
 
+	xmm-outgoing-store: func [
+		code [byte-ptr!]
+		capacity source displacement width [integer!]
+		return: [integer!]
+		/local prefix rex-byte displacement-size size mode [integer!]
+			at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		unless all [source >= 0 source <= 15 prefix <> 0 displacement >= 0][
+			return -1
+		]
+		displacement-size: either fits-i8? displacement [1][4]
+		mode: either displacement-size = 1 [1][2]
+		rex-byte: rex false source RSP
+		size: 5 + displacement-size
+		if rex-byte <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 11h
+		at/3: as byte! modrm mode source RSP
+		at/4: as byte! 24h
+		at: at + 4
+		either displacement-size = 1 [at/1: as byte! displacement][
+			write-i32 at displacement
+		]
+		size
+	]
+
 	xmm-load-indirect: func [
 		code [byte-ptr!]
 		capacity target address width [integer!]
@@ -1082,6 +1115,33 @@ x64-encoder: context [
 		either displacement-size = 1 [at/1: as byte! displacement][
 			write-i32 at displacement
 		]
+		size
+	]
+
+	outgoing-immediate-store: func [
+		code [byte-ptr!]
+		capacity displacement value [integer!]
+		return: [integer!]
+		/local displacement-size size [integer!] at [byte-ptr!]
+	][
+		if displacement < 0 [return -1]
+		displacement-size: either displacement <= 127 [1][4]
+		size: 7 + displacement-size
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! C7h
+		at/2: as byte! either displacement-size = 1 [44h][84h]
+		at/3: as byte! 24h
+		at: at + 3
+		either displacement-size = 1 [
+			at/1: as byte! displacement
+			at: at + 1
+		][
+			write-i32 at displacement
+			at: at + 4
+		]
+		write-i32 at value
 		size
 	]
 

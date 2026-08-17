@@ -11,6 +11,8 @@ Red/System [
 double: func [value [integer!] return: [integer!]][value * 2]
 triple: func [value [integer!] return: [integer!]][value * 3]
 
+int-fn!: alias function! [value [integer!] return: [integer!]]
+
 nums: protect [10 20 30 40]
 floats: protect [1.5 2.5 3.5]
 message: protect "protected"
@@ -36,7 +38,7 @@ sum: func [return: [integer!] /local index total [integer!]][
 	total
 ]
 
-main: func [return: [integer!] /local score [integer!]][
+main: func [return: [integer!] /local score [integer!] operation [int-fn!]][
 	score: 0
 	if (size? nums) = 4 [score: score + 1]
 	if nums/2 = 20 [score: score + 1]
@@ -48,8 +50,10 @@ main: func [return: [integer!] /local score [integer!]][
 	if bytes/3 = #"^(EE)" [score: score + 1]
 	if labels/1/1 = #"a" [score: score + 1]
 	if labels/2/1 = #"b" [score: score + 1]
-	if functions/1 = :double [score: score + 1]
-	if functions/2 = :triple [score: score + 1]
+	operation: as int-fn! functions/1
+	if (operation 2) = 4 [score: score + 1]
+	operation: as int-fn! functions/2
+	if (operation 2) = 6 [score: score + 1]
 	if cast/1 = #"A" [score: score + 1]
 	if cast/2 = #"B" [score: score + 1]
 	if RATE = 60 [score: score + 1]

@@ -162,6 +162,26 @@ if any [
 	code/3 <> as byte! C1h code/4 <> as byte! FFh
 ][failures: failures + 1]
 if (x64-encoder/outgoing-store code 128 32 8) <> 5 [failures: failures + 1]
+size: x64-encoder/outgoing-immediate-store code 128 32 12345678h
+expected: #{C744242078563412}
+if any [size <> 8 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/outgoing-immediate-store code 128 128 12345678h
+expected: #{C784248000000078563412}
+if any [size <> 11 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-outgoing-store code 128 x64-encoder/XMM0 32 4
+expected: #{F30F11442420}
+if any [size <> 6 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-outgoing-store code 128 9 128 8
+expected: #{F2440F118C2480000000}
+if any [size <> 10 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
 if (x64-encoder/call-import code 128 0) <> 6 [failures: failures + 1]
 size: x64-encoder/call-register code 128 x64-encoder/RAX
 if any [size <> 2 code/1 <> as byte! FFh code/2 <> as byte! D0h][
@@ -183,6 +203,12 @@ if (x64-encoder/frame-load code 128 x64-encoder/RAX 0 3 0) <> -1 [
 if (x64-encoder/store-indirect code 128 3) <> -1 [failures: failures + 1]
 if (x64-encoder/copy-indirect code 128 0) <> -1 [failures: failures + 1]
 if (x64-encoder/stack-address code 128 x64-encoder/RAX -1) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/outgoing-immediate-store code 128 -1 0) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/xmm-outgoing-store code 128 x64-encoder/XMM0 0 2) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/binary-register code 128 02h 0 1 4) <> -1 [

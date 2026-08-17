@@ -17,8 +17,10 @@ labels: ["north" "south"]
 double: func [value [integer!] return: [integer!]][value * 2]
 triple: func [value [integer!] return: [integer!]][value * 3]
 
+int-fn!: alias function! [value [integer!] return: [integer!]]
+
 functions: [:double :triple]
-entry: :double
+entry: as int-fn! :double
 
 local-bytes: func [
 	return: [byte-ptr!]
@@ -31,6 +33,7 @@ local-bytes: func [
 main: func [
 	return: [integer!]
 	/local score index [integer!] integers [int-ptr!] buffer [byte-ptr!]
+		operation [int-fn!]
 ][
 	score: 0
 	if (size? values) = 4 [score: score + 1]
@@ -56,8 +59,10 @@ main: func [
 	if message/2 = #"e" [score: score + 1]
 	if labels/1/1 = #"n" [score: score + 1]
 	if labels/2/1 = #"s" [score: score + 1]
-	if functions/1 = :double [score: score + 1]
-	if all [functions/2 = :triple entry = :double][score: score + 1]
+	operation: as int-fn! functions/1
+	if (operation 2) = 4 [score: score + 1]
+	operation: as int-fn! functions/2
+	if all [(operation 2) = 6 (entry 2) = 4][score: score + 1]
 
 	either score = 18 [73][score]
 ]

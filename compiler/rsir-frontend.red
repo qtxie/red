@@ -30,6 +30,8 @@ compiler-rsir-frontend: context [
 	array-types: make hash! 32
 	aggregate-types: make hash! 64
 	function-types: make hash! 64
+	typed-call-types: make hash! 64
+	alias-type-ids: make hash! 64
 	constants: make hash! 256
 	protected: make hash! 64
 	protected-values: make hash! 64
@@ -49,9 +51,10 @@ compiler-rsir-frontend: context [
 	type-count: 0
 	import-count: 0
 	global-count: 0
+	alias-count: 0
 
 	type-kinds: make hash! [
-		int8! i8 byte! u8 uint8! u8 int16! i16 uint16! u16
+		int8! i8 byte! byte uint8! u8 int16! i16 uint16! u16
 		integer! i32 int32! i32 uint32! u32 int64! i64 uint64! u64
 		float32! f32 float! f64 float64! f64 logic! logic
 		pointer! pointer c-string! c-string struct! pointer union! pointer
@@ -62,9 +65,9 @@ compiler-rsir-frontend: context [
 
 	type-codes: make hash! [
 		i8 1 u8 2 i16 3 u16 4 i32 5 u32 6 i64 7 u64 8
-		f32 9 f64 10 logic 11 pointer 12 c-string 13 null 14
+		f32 9 f64 10 logic 11 pointer 12 c-string 13 null 14 byte 15
 		alias -1 struct -2 union -3 function -4 subroutine -5
-		pointer-node -6 array -7
+		pointer-node -6 array -7 typed-call -8
 	]
 	builtin-pointees: make hash! [
 		byte-ptr! [byte!]
@@ -366,7 +369,7 @@ compiler-rsir-frontend: context [
 
 	intern-pointer: func [pointee [integer!] /local id kind][
 		kind: ref-kind pointee
-		unless find [i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 pointer] kind [
+		unless find [i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 pointer] kind [
 			fail ERROR-UNSUPPORTED "pointer pointee type is unsupported"
 		]
 		if id: select pointer-types pointee [return id]
@@ -391,7 +394,7 @@ compiler-rsir-frontend: context [
 			count > 0
 			find [1 2 4 8] width
 			find [
-			i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string function
+				i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string function
 			] kind
 		][
 			fail ERROR-UNSUPPORTED "literal array element type is unsupported"
@@ -605,9 +608,9 @@ compiler-rsir-frontend: context [
 
 	ref-kind: func [ref [integer!] /local record kind name steps target][
 		if ref < 0 [
-			if ref < -14 [return none]
+			if ref < -15 [return none]
 			return pick [
-				i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string null
+				i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string null byte
 			]
 				negate ref
 		]
@@ -708,7 +711,7 @@ compiler-rsir-frontend: context [
 		base: canonical-ref ref
 		kind: ref-kind base
 		case [
-			kind = 'c-string [-2]
+			kind = 'c-string [-15]
 			kind = 'array [
 				record: skip types ((base - 1) * 5)
 				record/3
@@ -717,7 +720,73 @@ compiler-rsir-frontend: context [
 				record: skip types ((base - 1) * 5)
 				either record/2 = 'pointer [record/3][none]
 			]
+			find [struct union] kind [base]
 			true [none]
+		]
+	]
+
+	typed-pointer-id: func [
+		ref [integer!]
+		return: [integer!]
+		/local base record target kind
+	][
+		base: canonical-ref ref
+		target: none
+		if all [base > 0 base <= type-count][
+			record: skip types ((base - 1) * 5)
+			if record/2 = 'pointer [target: record/3]
+		]
+		unless integer? target [return 10]
+		kind: ref-kind target
+		case [
+			kind = 'i32 [8]
+			kind = 'pointer [10]
+			true [7]
+		]
+	]
+
+	typed-type-id: func [
+		ref [integer!]
+		return: [integer!]
+		/local record target alias-id kind
+	][
+		if ref = 0 [return 8]
+		if all [ref > 0 ref <= type-count][
+			record: skip types ((ref - 1) * 5)
+			alias-id: select alias-type-ids record/1
+			if all [integer? alias-id alias-id > 1000][
+				return alias-id
+			]
+			if record/2 = 'alias [
+				target: either block? record/3 [
+					type-ref record/3 record/4 record/5
+				][
+					type-ref reduce [record/3] record/4 record/5
+				]
+				return typed-type-id target
+			]
+		]
+		kind: ref-kind ref
+		case [
+			kind = 'logic [1]
+			kind = 'i32 [2]
+			kind = 'byte [3]
+			kind = 'u8 [14]
+			kind = 'f32 [4]
+			kind = 'f64 [5]
+			kind = 'c-string [6]
+			kind = 'pointer [typed-pointer-id ref]
+			kind = 'function [9]
+			kind = 'i64 [11]
+			kind = 'u64 [12]
+			kind = 'i8 [13]
+			kind = 'i16 [15]
+			kind = 'u16 [16]
+			kind = 'u32 [17]
+			kind = 'struct [1000]
+			kind = 'union [1001]
+			kind = 'null [8]
+			true [0]
 		]
 	]
 
@@ -1035,6 +1104,25 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	intern-typed-call: func [
+		signature [integer!]
+		arguments [block!]
+		return: [integer!]
+		/local key id
+	][
+		key: mold/flat reduce [signature arguments]
+		if id: select typed-call-types key [return id]
+		id: type-count + 1
+		repend typed-call-types [key id]
+		append types key
+		append types 'typed-call
+		append/only types copy arguments
+		append/only types copy []
+		append/only types copy []
+		type-count: id
+		id
+	]
+
 	prepare-functions: func [/local record signature][
 		record: functions
 		while [not tail? record][
@@ -1238,7 +1326,7 @@ compiler-rsir-frontend: context [
 	scan-block: func [
 		values scope uses [block!]
 		/local position name spec body child key kind target next-uses
-			spelling id type-spec protected-id
+			spelling id type-spec protected-id alias-target-ref alias-id
 	][
 		position: values
 		while [not tail? position][
@@ -1324,6 +1412,17 @@ compiler-rsir-frontend: context [
 					append/only types copy scope
 					append/only types copy/deep uses
 					type-count: id
+					alias-count: alias-count + 1
+					alias-id: 0
+					alias-target-ref: either kind = 'alias [
+						type-ref either block? type-spec [
+							type-spec
+						][reduce [type-spec]] scope uses
+					][id]
+					unless integer-kind? ref-kind alias-target-ref [
+						alias-id: 1000 + alias-count
+					]
+					repend alias-type-ids [key alias-id]
 				]
 				all [
 					set-word? position/1
@@ -1487,7 +1586,7 @@ compiler-rsir-frontend: context [
 
 	write-types: func [type-output members [binary!] /local position kind definition
 		spec scope uses field field-type info ref flags count code first signature
-		params parameter target
+		params parameter target typed-arguments typed-argument
 	][
 		first: 0
 		position: types
@@ -1504,6 +1603,23 @@ compiler-rsir-frontend: context [
 						first
 						0
 					]
+				]
+				kind = 'typed-call [
+					typed-arguments: position/3
+					count: ((length? typed-arguments) - 1) / 2
+					emit type-output reduce [
+						select type-codes 'typed-call
+						typed-arguments/1
+						0
+						first
+						count
+					]
+					typed-argument: skip typed-arguments 1
+					while [not tail? typed-argument][
+						emit members reduce [typed-argument/1 typed-argument/2]
+						typed-argument: skip typed-argument 2
+					]
+					first: first + count
 				]
 				kind = 'pointer [
 					emit type-output reduce [
@@ -1846,7 +1962,7 @@ compiler-rsir-frontend: context [
 	]
 
 	integer-kind?: func [kind [word! none!] return: [logic!]][
-		not none? find [i8 u8 i16 u16 i32 u32 i64 u64] kind
+		not none? find [i8 byte u8 i16 u16 i32 u32 i64 u64] kind
 	]
 
 	integer-code: func [ref [integer!] return: [integer!] /local kind][
@@ -1854,6 +1970,7 @@ compiler-rsir-frontend: context [
 		kind: ref-kind ref
 		case [
 			kind = 'i8 [1]
+			kind = 'byte [2]
 			kind = 'u8 [2]
 			kind = 'i16 [3]
 			kind = 'u16 [4]
@@ -2120,7 +2237,7 @@ compiler-rsir-frontend: context [
 		if nul? [append data 0]
 		offset: length? strings
 		append strings data
-		ref: intern-array -2 length? data 1
+		ref: intern-array -15 length? data 1
 		id: add-hidden-global ref (
 			inline-flag + either protected? [protected-flag][0]
 		)
@@ -2164,7 +2281,7 @@ compiler-rsir-frontend: context [
 			]
 			char? value [
 				id: to integer! value
-				if id <= 255 [return reduce [-2 scalar-initializer id 0 0]]
+				if id <= 255 [return reduce [-15 scalar-initializer id 0 0]]
 			]
 			logic? value [
 				return reduce [
@@ -2226,7 +2343,7 @@ compiler-rsir-frontend: context [
 	static-literal-width: func [ref [integer!] return: [integer!] /local kind][
 		kind: ref-kind ref
 		case [
-			find [i8 u8] kind [1]
+			find [i8 byte u8] kind [1]
 			find [i16 u16] kind [2]
 			find [i32 u32 f32 logic] kind [4]
 			find [i64 u64 f64 pointer c-string function null] kind [8]
@@ -2246,7 +2363,7 @@ compiler-rsir-frontend: context [
 			offset: length? strings
 			append strings value
 			return reduce [
-				intern-array -2 length? value 1
+				intern-array -15 length? value 1
 				reduce [bytes-initializer offset length? value 0]
 			]
 		]
@@ -2507,7 +2624,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local type-info target-ref target-flags target-kind source keep? value
 			literal-end bits next-position source-ref source-flags source-kind
-			source-literal? valid?
+			source-literal? valid? address-source?
 	][
 		type-info: stack-read-type next position scope uses
 		target-ref: type-info/2
@@ -2544,8 +2661,22 @@ compiler-rsir-frontend: context [
 			return literal-end
 		]
 
-		next-position: stack-value source scope uses instructions params locals
-			expression-value
+		address-source?: false
+		if all [
+			target-kind = 'function
+			any [word? source/1 path? source/1]
+			not any [get-word? source/1 get-path? source/1]
+		][
+			address-source?: stack-address source/1 scope uses instructions params locals
+			if address-source? [
+				emit instructions reduce [load-op 0 0 0]
+				next-position: next source
+			]
+		]
+		unless address-source? [
+			next-position: stack-value source scope uses instructions params locals
+				expression-value
+		]
 		source-ref: last-type
 		source-flags: last-flags
 		source-kind: ref-kind source-ref
@@ -2732,11 +2863,16 @@ compiler-rsir-frontend: context [
 		]
 		mode: flags and (variadic-flag + typed-flag + custom-flag)
 		if mode <> 0 [
-			unless mode = variadic-flag [
-				fail ERROR-UNSUPPORTED "typed and custom calls are not implemented"
+			unless any [mode = variadic-flag mode = typed-flag][
+				fail ERROR-UNSUPPORTED "custom calls are not implemented"
 			]
-			return stack-variadic-call target value position scope uses instructions
-				params locals return-ref parameters flags 0
+			either mode = variadic-flag [
+				return stack-variadic-call target value position scope uses instructions
+					params locals return-ref parameters flags 0
+			][
+				return stack-typed-call target value position scope uses instructions
+					params locals return-ref parameters flags (call-signature-ref target)
+			]
 		]
 		count: 0
 		parameter: parameters
@@ -2771,7 +2907,7 @@ compiler-rsir-frontend: context [
 			parameters/3 = 0
 			(ref-kind parameters/2) = 'i32
 			parameters/6 = 0
-			(ref-kind parameters/5) = 'pointer
+			find [pointer struct union] ref-kind parameters/5
 		][return false]
 		if count = 3 [
 			tail-parameter: skip parameters 6
@@ -2781,6 +2917,90 @@ compiler-rsir-frontend: context [
 			][return false]
 		]
 		true
+	]
+
+	typed-list-signature?: func [
+		parameters [block!]
+		return: [logic!]
+		/local target base record spec field-spec field-count field-ref
+	][
+		unless (length? parameters) = 6 [return false]
+		unless all [
+			parameters/3 = 0
+			(ref-kind parameters/2) = 'i32
+			parameters/6 = 0
+		][return false]
+		unless target: pointee-ref parameters/5 [return false]
+		base: canonical-ref target
+		unless all [base > 0 base <= type-count][return false]
+		record: skip types ((base - 1) * 5)
+		unless record/2 = 'struct [return false]
+		spec: aggregate-members record/2 record/3
+		field-count: (length? spec) / 2
+		unless any [field-count = 3 field-count = 4 field-count = 5][
+			return false
+		]
+		field-ref: type-ref spec/2 record/4 record/5
+		unless (ref-kind field-ref) = 'i32 [return false]
+		if field-count >= 4 [
+			field-spec: skip spec 2
+			field-ref: type-ref field-spec/2 record/4 record/5
+			unless (ref-kind field-ref) = 'i32 [return false]
+		]
+		true
+	]
+
+	stack-typed-call: func [
+		target [integer!]
+		value [word! path!]
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return-ref [integer!]
+		parameters [block!]
+		flags signature-ref [integer!]
+		return: [block!]
+		/local cursor next-value arguments count type-id
+	][
+		unless all [(length? position) >= 2 block? position/2][
+			fail ERROR-UNSUPPORTED [
+				"typed call requires an argument block: " mold value
+			]
+		]
+		unless typed-list-signature? parameters [
+			fail ERROR-UNSUPPORTED [
+				"typed function must declare count and typed-value list: " mold value
+			]
+		]
+		arguments: reduce [signature-ref]
+		cursor: position/2
+		count: 0
+		while [not tail? cursor][
+			next-value: stack-value cursor scope uses instructions params locals
+				expression-value
+			unless all [last-type <> 0 last-flags = 0][
+				fail ERROR-UNSUPPORTED [
+					"typed argument must be a scalar or reference value: " mold value
+				]
+			]
+			type-id: typed-type-id last-type
+			unless type-id > 0 [
+				fail ERROR-UNSUPPORTED [
+					"typed argument has no runtime type ID: " mold value
+				]
+			]
+			append arguments last-type
+			append arguments type-id
+			count: count + 1
+			cursor: next-value
+		]
+		emit instructions reduce [
+			call-op target count intern-typed-call signature-ref arguments
+		]
+		last-type: return-ref
+		last-flags: 0
+		skip position 2
 	]
 
 	stack-variadic-call: func [
@@ -2874,11 +3094,16 @@ compiler-rsir-frontend: context [
 		parameters: signature/2
 		mode: signature/4 and (variadic-flag + typed-flag + custom-flag)
 		if mode <> 0 [
-			unless mode = variadic-flag [
-				fail ERROR-UNSUPPORTED "typed and custom calls are not implemented"
+			unless any [mode = variadic-flag mode = typed-flag][
+				fail ERROR-UNSUPPORTED "custom calls are not implemented"
 			]
-			return stack-variadic-call 0 value position scope uses instructions params
-				locals return-ref parameters signature/4 signature-ref
+			either mode = variadic-flag [
+				return stack-variadic-call 0 value position scope uses instructions params
+					locals return-ref parameters signature/4 signature-ref
+			][
+				return stack-typed-call 0 value position scope uses instructions params
+					locals return-ref parameters signature/4 signature-ref
+			]
 		]
 		count: 0
 		parameter: parameters
@@ -3804,8 +4029,8 @@ compiler-rsir-frontend: context [
 			char? value [
 				id: to integer! value
 				if id > 255 [fail ERROR-UNSUPPORTED "byte literal is out of range"]
-				emit instructions reduce [literal-op -2 id 0]
-				last-type: -2
+				emit instructions reduce [literal-op -15 id 0]
+				last-type: -15
 				last-flags: 0
 				next position
 			]
@@ -4011,7 +4236,7 @@ compiler-rsir-frontend: context [
 					fail ERROR-UNSUPPORTED "byte literal is out of range"
 				]
 				static?: true
-				static-ref: -2
+				static-ref: -15
 				static-high: 0
 				static-next: skip position 2
 			]
@@ -4574,6 +4799,8 @@ compiler-rsir-frontend: context [
 			clear array-types
 			clear aggregate-types
 			clear function-types
+			clear typed-call-types
+			clear alias-type-ids
 			clear constants
 			clear protected
 			clear protected-values
@@ -4594,6 +4821,7 @@ compiler-rsir-frontend: context [
 			type-count: 0
 			import-count: 0
 			global-count: 0
+			alias-count: 0
 			compile-source source
 			write-rsir any [max-bytes DEFAULT-MAX-BYTES]
 		] 'rsir-error

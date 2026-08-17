@@ -502,7 +502,8 @@ Already retained:
 - direct output reservation and linker consumption;
 - source-order declaration discovery;
 - initial name/scope/import/global/function traversal;
-- target layout ownership in Red/System;
+- target layout ownership in Red/System, with one module-owned native cache for
+  inline/reference size and alignment plus direct member offsets;
 - proof that the existing compiler can build and execute the boundary.
 - typed postfix values and places with assignment results;
 - one contiguous parameter/local storage model with local type inference;

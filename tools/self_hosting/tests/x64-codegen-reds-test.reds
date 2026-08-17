@@ -95,6 +95,8 @@ array-ir: allocate 256
 branch-ir: allocate 256
 merge-ir: allocate 256
 selection-ir: allocate 256
+recursive-pointer-ir: allocate 160
+recursive-value-ir: allocate 144
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -102,7 +104,7 @@ array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
 	null? aggregate-ir null? abi-ir null? tagged-ir null? array-ir null? branch-ir
-	null? merge-ir null? selection-ir
+	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -810,6 +812,87 @@ if (x64-codegen/generate merge-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
+; A struct may contain a reference to itself because the reference layout is
+; complete without walking the pointee inline.
+put recursive-pointer-ir 0 1
+put recursive-pointer-ir 4 0
+put recursive-pointer-ir 8 2
+put recursive-pointer-ir 12 0
+put recursive-pointer-ir 16 1
+put recursive-pointer-ir 20 1
+put recursive-pointer-ir 24 0
+put recursive-pointer-ir 28 0
+
+put recursive-pointer-ir 32 -2
+put recursive-pointer-ir 36 0
+put recursive-pointer-ir 40 0
+put recursive-pointer-ir 44 0
+put recursive-pointer-ir 48 1
+
+put recursive-pointer-ir 52 -6
+put recursive-pointer-ir 56 1
+put recursive-pointer-ir 60 0
+put recursive-pointer-ir 64 1
+put recursive-pointer-ir 68 0
+
+put recursive-pointer-ir 72 2
+put recursive-pointer-ir 76 0
+
+put recursive-pointer-ir 80 0
+put recursive-pointer-ir 84 2
+put recursive-pointer-ir 88 0
+put recursive-pointer-ir 92 0
+put recursive-pointer-ir 96 0
+put recursive-pointer-ir 100 0
+put recursive-pointer-ir 104 0
+put recursive-pointer-ir 108 0
+put recursive-pointer-ir 112 1
+put-instruction recursive-pointer-ir 116 11 0 0 0
+recursive-pointer-ir/133: as byte! 66h
+recursive-pointer-ir/134: as byte! 6Eh
+
+if (x64-codegen/generate recursive-pointer-ir 134 output 1024 0) <= 0 [
+	failures: failures + 1
+]
+
+; A by-value edge requires the complete child layout, so a self edge is an
+; invalid type graph even when no function happens to use that type.
+put recursive-value-ir 0 1
+put recursive-value-ir 4 0
+put recursive-value-ir 8 1
+put recursive-value-ir 12 0
+put recursive-value-ir 16 1
+put recursive-value-ir 20 1
+put recursive-value-ir 24 0
+put recursive-value-ir 28 0
+
+put recursive-value-ir 32 -2
+put recursive-value-ir 36 0
+put recursive-value-ir 40 0
+put recursive-value-ir 44 0
+put recursive-value-ir 48 1
+
+put recursive-value-ir 52 1
+put recursive-value-ir 56 1
+
+put recursive-value-ir 60 0
+put recursive-value-ir 64 2
+put recursive-value-ir 68 0
+put recursive-value-ir 72 0
+put recursive-value-ir 76 0
+put recursive-value-ir 80 0
+put recursive-value-ir 84 0
+put recursive-value-ir 88 0
+put recursive-value-ir 92 1
+put-instruction recursive-value-ir 96 11 0 0 0
+recursive-value-ir/113: as byte! 66h
+recursive-value-ir/114: as byte! 6Eh
+
+if (x64-codegen/generate recursive-value-ir 114 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
 free output
 free void-ir
 free local-ir
@@ -822,6 +905,8 @@ free array-ir
 free branch-ir
 free merge-ir
 free selection-ir
+free recursive-pointer-ir
+free recursive-value-ir
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

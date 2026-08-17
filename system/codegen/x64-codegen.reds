@@ -402,14 +402,18 @@ x64-codegen: context [
 		inline? [logic!]
 		types members [byte-ptr!]
 		type-count depth [integer!]
-		size-out align-out [int-ptr!]
+		layouts member-offsets size-out align-out [int-ptr!]
 		return: [logic!]
 		/local record [rsir-type!] member [rsir-member!]
-			kind id member-size member-align size alignment tag-size payload-offset
-			element-size element-align
+			cache offset-slot [int-ptr!]
+			kind id mode member-size member-align size alignment tag-size
+			payload-offset element-size element-align
 				[integer!]
+			cached? [logic!]
 	][
 		if any [ref = 0 depth > type-count][return false]
+		cache: as int-ptr! 0
+		cached?: false
 		kind: 0
 		either ref < 0 [
 			kind: 0 - ref
@@ -417,98 +421,137 @@ x64-codegen: context [
 			if ref > type-count [return false]
 			record: as rsir-type! (types + ((ref - 1) * RSIR_TYPE_SIZE))
 			kind: record/kind
-		]
-
-		if kind > 0 [
-			size: case [
-				kind <= 2 [1]
-				kind <= 4 [2]
-				any [kind = 5 kind = 6 kind = 9 kind = 11][4]
-				any [kind = 7 kind = 8 kind = 10 kind = 12 kind = 13][8]
-				true [0]
+			if not null? as byte-ptr! layouts [
+				mode: either inline? [0][2]
+				cache: layouts + (((ref - 1) * 4) + mode)
+				if cache/1 <> 0 [
+					if cache/1 < 0 [return false]
+					size-out/1: cache/1
+					align-out/1: cache/2
+					return true
+				]
+				cache/1: -1
+				cached?: true
 			]
-			if size = 0 [return false]
-			size-out/1: size
-			align-out/1: size
-			return true
-		]
-
-		if kind = -1 [
-			return layout-type record/target inline? types members type-count
-				(depth + 1) size-out align-out
-		]
-		if any [kind = -4 kind = -5][
-			size-out/1: 8
-			align-out/1: 8
-			return true
-		]
-		if kind = -6 [
-			size-out/1: 8
-			align-out/1: 8
-			return true
-		]
-		if kind = -7 [
-			unless all [
-				record/member-count > 0
-				any [record/flags = 1 record/flags = 2
-					record/flags = 4 record/flags = 8]
-			][return false]
-			unless inline? [
-				size-out/1: 8
-				align-out/1: 8
-				return true
-			]
-			element-size: 0
-			element-align: 0
-			unless layout-type record/target false types members type-count
-				(depth + 1) :element-size :element-align [return false]
-			unless element-size = record/flags [return false]
-			if record/member-count > (2147483647 / record/flags)[return false]
-			size-out/1: record/member-count * record/flags
-			align-out/1: record/flags
-			return true
-		]
-		unless any [kind = -2 kind = -3][return false]
-		unless inline? [
-			size-out/1: 8
-			align-out/1: 8
-			return true
 		]
 
 		size: 0
 		alignment: 1
-		id: 0
-		while [id < record/member-count][
-			member: as rsir-member! (members
-				+ ((record/first-member + id) * RSIR_MEMBER_SIZE))
-			member-size: 0
-			member-align: 0
-			unless layout-type member/type (member/flags = INLINE) types members
-				type-count (depth + 1) :member-size :member-align [
-				return false
+		case [
+			kind > 0 [
+				size: case [
+					kind <= 2 [1]
+					kind <= 4 [2]
+					any [kind = 5 kind = 6 kind = 9 kind = 11][4]
+					any [kind = 7 kind = 8 kind = 10 kind = 12 kind = 13][8]
+					true [0]
+				]
+				if size = 0 [return false]
+				alignment: size
 			]
-			if member-align > alignment [alignment: member-align]
-			either kind = -2 [
-				size: align size member-align
-				if any [size < 0 size > (2147483647 - member-size)][return false]
-				size: size + member-size
-			][
-				if member-size > size [size: member-size]
+			kind = -1 [
+				unless layout-type record/target inline? types members type-count
+					(depth + 1) layouts member-offsets :size :alignment [
+					return false
+				]
 			]
-			id: id + 1
+			any [kind = -4 kind = -5 kind = -6][
+				size: 8
+				alignment: 8
+			]
+			kind = -7 [
+				unless all [
+					record/member-count > 0
+					any [record/flags = 1 record/flags = 2
+						record/flags = 4 record/flags = 8]
+				][return false]
+				either inline? [
+					element-size: 0
+					element-align: 0
+					unless layout-type record/target false types members type-count
+						(depth + 1) layouts member-offsets
+						:element-size :element-align [return false]
+					unless element-size = record/flags [return false]
+					if record/member-count > (2147483647 / record/flags)[
+						return false
+					]
+					size: record/member-count * record/flags
+					alignment: record/flags
+				][
+					size: 8
+					alignment: 8
+				]
+			]
+			any [kind = -2 kind = -3][
+				either inline? [
+					size: 0
+					alignment: 1
+					id: 0
+					while [id < record/member-count][
+						member: as rsir-member! (members
+							+ ((record/first-member + id) * RSIR_MEMBER_SIZE))
+						member-size: 0
+						member-align: 0
+						unless layout-type member/type (member/flags = INLINE)
+							types members type-count (depth + 1) layouts member-offsets
+							:member-size :member-align [return false]
+						if member-align > alignment [alignment: member-align]
+						either kind = -2 [
+							size: align size member-align
+							if any [
+								size < 0
+								size > (2147483647 - member-size)
+							][return false]
+							if not null? as byte-ptr! member-offsets [
+								offset-slot: (member-offsets + record/first-member) + id
+								offset-slot/1: size
+							]
+							size: size + member-size
+						][
+							if member-size > size [size: member-size]
+							if all [
+								record/flags = 0
+								not null? as byte-ptr! member-offsets
+							][
+								offset-slot: (member-offsets + record/first-member) + id
+								offset-slot/1: 0
+							]
+						]
+						id: id + 1
+					]
+					if all [kind = -3 record/flags = TAGGED_UNION][
+						tag-size: tag-width record/member-count
+						if tag-size = 0 [return false]
+						payload-offset: align tag-size alignment
+						if any [
+							payload-offset < 0
+							payload-offset > (2147483647 - size)
+						][return false]
+						size: payload-offset + size
+						if tag-size > alignment [alignment: tag-size]
+						if not null? as byte-ptr! member-offsets [
+							offset-slot: member-offsets + record/first-member
+							id: 0
+							while [id < record/member-count][
+								offset-slot/1: payload-offset
+								offset-slot: offset-slot + 1
+								id: id + 1
+							]
+						]
+					]
+					size: align size alignment
+					if size < 0 [return false]
+				][
+					size: 8
+					alignment: 8
+				]
+			]
+			true [return false]
 		]
-		if all [kind = -3 record/flags = TAGGED_UNION][
-			tag-size: tag-width record/member-count
-			if tag-size = 0 [return false]
-			payload-offset: align tag-size alignment
-			if any [payload-offset < 0 payload-offset > (2147483647 - size)][
-				return false
-			]
-			size: payload-offset + size
-			if tag-size > alignment [alignment: tag-size]
+		if cached? [
+			cache/1: size
+			cache/2: alignment
 		]
-		size: align size alignment
-		if size < 0 [return false]
 		size-out/1: size
 		align-out/1: alignment
 		true
@@ -518,6 +561,7 @@ x64-codegen: context [
 		ref [integer!]
 		types members [byte-ptr!]
 		type-count [integer!]
+		layouts member-offsets [int-ptr!]
 		return: [integer!]
 		/local base size alignment [integer!] record [rsir-type!]
 	][
@@ -529,57 +573,33 @@ x64-codegen: context [
 		]
 		size: 0
 		alignment: 0
-		either layout-type ref true types members type-count 0 :size :alignment [size][0]
-	]
-
-	union-payload-offset: func [
-		record [rsir-type!]
-		types members [byte-ptr!]
-		type-count [integer!]
-		return: [integer!]
-		/local member [rsir-member!]
-			id member-size member-align alignment width [integer!]
-	][
-		if record/flags = 0 [return 0]
-		unless record/flags = TAGGED_UNION [return -1]
-		alignment: 1
-		id: 0
-		while [id < record/member-count][
-			member: as rsir-member! (members
-				+ ((record/first-member + id) * RSIR_MEMBER_SIZE))
-			member-size: 0
-			member-align: 0
-			unless layout-type member/type (member/flags = INLINE) types members
-				type-count 0 :member-size :member-align [return -1]
-			if member-align > alignment [alignment: member-align]
-			id: id + 1
-		]
-		width: tag-width record/member-count
-		if width = 0 [return -1]
-		align width alignment
+		either layout-type ref true types members type-count 0 layouts member-offsets
+			:size :alignment [size][0]
 	]
 
 	value-width: func [
 		ref flags [integer!]
 		types members [byte-ptr!]
 		type-count [integer!]
+		layouts member-offsets [int-ptr!]
 		return: [integer!]
 		/local size alignment [integer!]
 	][
 		size: 0
 		alignment: 0
 		either layout-type ref (flags = INLINE) types members type-count 0
-			:size :alignment [size][0]
+			layouts member-offsets :size :alignment [size][0]
 	]
 
 	machine-value?: func [
 		ref flags [integer!]
 		types members [byte-ptr!]
 		type-count [integer!]
+		layouts member-offsets [int-ptr!]
 		return: [logic!]
 		/local width [integer!]
 	][
-		width: value-width ref flags types members type-count
+		width: value-width ref flags types members type-count layouts member-offsets
 		all [width > 0 width <= 8
 			not all [flags = INLINE inline-object-ref? ref types type-count]]
 	]
@@ -592,23 +612,26 @@ x64-codegen: context [
 		ref [integer!]
 		types members [byte-ptr!]
 		type-count [integer!]
+		layouts member-offsets [int-ptr!]
 		return: [integer!]
 		/local size alignment [integer!]
 	][
 		unless aggregate-ref? ref types type-count [return 0]
 		size: 0
 		alignment: 0
-		either layout-type ref true types members type-count 0 :size :alignment [size][0]
+		either layout-type ref true types members type-count 0 layouts member-offsets
+			:size :alignment [size][0]
 	]
 
 	win64-aggregate-width: func [
 		ref [integer!]
 		types members [byte-ptr!]
 		type-count [integer!]
+		layouts member-offsets [int-ptr!]
 		return: [integer!]
 		/local size [integer!]
 	][
-		size: aggregate-size ref types members type-count
+		size: aggregate-size ref types members type-count layouts member-offsets
 		either win64-register-size? size [size][0]
 	]
 
@@ -616,12 +639,14 @@ x64-codegen: context [
 		ref flags [integer!]
 		types members [byte-ptr!]
 		type-count [integer!]
+		layouts member-offsets [int-ptr!]
 		return: [logic!]
 	][
 		all [
 			(flags and RETURN_VALUE) <> 0
 			aggregate-ref? ref types type-count
-			(win64-aggregate-width ref types members type-count) = 0
+			(win64-aggregate-width ref types members type-count
+				layouts member-offsets) = 0
 		]
 	]
 
@@ -691,6 +716,7 @@ x64-codegen: context [
 		ref [integer!]
 		types members [byte-ptr!]
 		count [integer!]
+		layouts member-offsets [int-ptr!]
 		return: [integer!]
 		/local base kind size alignment [integer!] record [rsir-type!]
 	][
@@ -707,13 +733,15 @@ x64-codegen: context [
 				unless any [size = 1 size = 2 size = 4 size = 8][return 0]
 			]
 			kind = -6 [
-			record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
-			unless layout-type record/target true types members count 0 :size :alignment [
-				return 0
+				record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
+				unless layout-type record/target true types members count 0
+					layouts member-offsets :size :alignment [
+					return 0
+				]
 			]
-		]
 			any [kind = -2 kind = -3][
-				unless layout-type base true types members count 0 :size :alignment [
+				unless layout-type base true types members count 0 layouts member-offsets
+					:size :alignment [
 					return 0
 				]
 			]
@@ -803,10 +831,12 @@ x64-codegen: context [
 		capacity target displacement ref flags operation-width [integer!]
 		types members [byte-ptr!]
 		type-count [integer!]
+		layouts member-offsets [int-ptr!]
 		return: [integer!]
 		/local source-width signed encoded written [integer!] at [byte-ptr!]
 	][
 		source-width: value-width ref flags types members type-count
+			layouts member-offsets
 		if source-width <= 0 [return -1]
 		signed: either signed-type? ref types type-count [1][0]
 		encoded: x64-encoder/frame-load code capacity target displacement
@@ -827,47 +857,27 @@ x64-codegen: context [
 		ref index [integer!]
 		types members [byte-ptr!]
 		type-count [integer!]
+		member-offsets [int-ptr!]
 		type-out flags-out offset-out [int-ptr!]
 		return: [logic!]
 		/local record [rsir-type!] member [rsir-member!]
-			base kind id offset member-size member-align [integer!]
+			offset-slot [int-ptr!] base kind [integer!]
 	][
+		if null? as byte-ptr! member-offsets [return false]
 		base: canonical-type ref types type-count
 		if any [base <= 0 index < 0][return false]
 		record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
 		kind: record/kind
 		unless any [kind = -2 kind = -3][return false]
 		if index >= record/member-count [return false]
-		offset: 0
-		if kind = -3 [
-			offset: union-payload-offset record types members type-count
-			if offset < 0 [return false]
-		]
-		id: 0
-		while [id <= index][
-			member: as rsir-member! (members
-				+ ((record/first-member + id) * RSIR_MEMBER_SIZE))
-			member-size: 0
-			member-align: 0
-			unless layout-type member/type (member/flags = INLINE) types members
-				type-count 0 :member-size :member-align [return false]
-			if kind = -2 [
-				offset: align offset member-align
-				if offset < 0 [return false]
-			]
-			if id = index [
-				type-out/1: member/type
-				flags-out/1: member/flags
-				offset-out/1: offset
-				return true
-			]
-			if kind = -2 [
-				if offset > (2147483647 - member-size)[return false]
-				offset: offset + member-size
-			]
-			id: id + 1
-		]
-		false
+		member: as rsir-member! (members
+			+ ((record/first-member + index) * RSIR_MEMBER_SIZE))
+		offset-slot: (member-offsets + record/first-member) + index
+		if offset-slot/1 < 0 [return false]
+		type-out/1: member/type
+		flags-out/1: member/flags
+		offset-out/1: offset-slot/1
+		true
 	]
 
 	slot-displacement: func [slot [integer!] return: [integer!]][
@@ -927,7 +937,7 @@ x64-codegen: context [
 		fn [rsir-function!]
 		parameters types members [byte-ptr!]
 		type-count [integer!]
-		offsets [int-ptr!]
+		layouts member-offsets offsets [int-ptr!]
 		return: [integer!]
 		/local parameter [rsir-parameter!]
 			count index used size alignment [integer!]
@@ -935,7 +945,7 @@ x64-codegen: context [
 		count: fn/parameter-count + fn/local-count
 		index: 1
 		used: either win64-hidden-return? fn/return-type fn/flags
-			types members type-count [8][0]
+			types members type-count layouts member-offsets [8][0]
 		while [index <= count][
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
@@ -945,7 +955,7 @@ x64-codegen: context [
 				size: 0
 				alignment: 0
 				unless layout-type parameter/type true types members type-count 0
-					:size :alignment [return INVALID_IR]
+					layouts member-offsets :size :alignment [return INVALID_IR]
 				if all [
 					index <= fn/parameter-count
 					not win64-register-size? size
@@ -967,7 +977,7 @@ x64-codegen: context [
 		fn [rsir-function!]
 		instructions functions imports types members [byte-ptr!]
 		function-count import-count type-count used [integer!]
-		offsets [int-ptr!]
+		layouts member-offsets offsets [int-ptr!]
 		return: [integer!]
 		/local instruction [rsir-instruction!]
 			callee [rsir-function!] imported [rsir-import!]
@@ -998,6 +1008,7 @@ x64-codegen: context [
 				]
 				if (flags and RETURN_VALUE) <> 0 [
 					size: aggregate-size ref types members type-count
+						layouts member-offsets
 					if any [size <= 0 used > (2147483647 - size)][
 						return INVALID_IR
 					]
@@ -1203,6 +1214,7 @@ x64-codegen: context [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
 		stack-types stack-flags stack-kinds stack-tags storage-offsets result-offsets
+			layouts member-offsets
 			instruction-offsets instruction-depths entry-types entry-flags entry-kinds
 			entry-tags tag-next tag-slots tag-widths import-refs references [int-ptr!]
 		parameters functions imports globals types members switches image-data strings code
@@ -1251,10 +1263,12 @@ x64-codegen: context [
 			index: index + 1
 		]
 		storage-count: fn/parameter-count + fn/local-count
-		storage-bytes: plan-storage fn parameters types members type-count storage-offsets
+		storage-bytes: plan-storage fn parameters types members type-count
+			layouts member-offsets storage-offsets
 		if storage-bytes < 0 [return storage-bytes]
 		storage-bytes: plan-call-results fn instructions functions imports types members
-			function-count import-count type-count storage-bytes result-offsets
+			function-count import-count type-count storage-bytes
+			layouts member-offsets result-offsets
 		if storage-bytes < 0 [return storage-bytes]
 		storage-slots: storage-bytes / 8
 		tag-base: storage-slots
@@ -1265,16 +1279,18 @@ x64-codegen: context [
 		either return-value? [
 			if any [
 				fn/return-type = 0
-				(aggregate-size fn/return-type types members type-count) <= 0
+				(aggregate-size fn/return-type types members type-count
+					layouts member-offsets) <= 0
 			][return INVALID_IR]
 		][
 			if all [
 				fn/return-type <> 0
 				not machine-value? fn/return-type 0 types members type-count
+					layouts member-offsets
 			][return UNSUPPORTED]
 		]
 		hidden-return?: win64-hidden-return? fn/return-type fn/flags
-			types members type-count
+			types members type-count layouts member-offsets
 		if all [entry? fn/parameter-count <> 0][return UNSUPPORTED]
 
 		depth: 0
@@ -1321,15 +1337,17 @@ x64-codegen: context [
 			either aggregate-argument? [
 				unless aggregate-ref? parameter/type types type-count [return INVALID_IR]
 				aggregate-width: win64-aggregate-width parameter/type
-					types members type-count
+					types members type-count layouts member-offsets
 				width: either aggregate-width = 0 [8][aggregate-width]
 				signed: 0
 				floating?: false
 			][
-				unless machine-value? parameter/type 0 types members type-count [
+				unless machine-value? parameter/type 0 types members type-count
+					layouts member-offsets [
 					return UNSUPPORTED
 				]
 				width: value-width parameter/type 0 types members type-count
+					layouts member-offsets
 				signed: either signed-type? parameter/type types type-count [1][0]
 				floating?: float-type? parameter/type types type-count
 			]
@@ -1384,7 +1402,9 @@ x64-codegen: context [
 				storage-size: 0
 				storage-align: 0
 				unless layout-type parameter/type true types members type-count 0
-					:storage-size :storage-align [return INVALID_IR]
+					layouts member-offsets :storage-size :storage-align [
+					return INVALID_IR
+				]
 				at: as byte-ptr! 0
 				if not measure? [at: code + written]
 				encoded: clear-frame-storage at (capacity - written)
@@ -1446,6 +1466,7 @@ x64-codegen: context [
 					unless all [
 						valid-type-ref? ref type-count
 						machine-value? ref 0 types members type-count
+							layouts member-offsets
 					][return INVALID_IR]
 					depth: depth + 1
 					if depth > max-depth [max-depth: depth]
@@ -1454,6 +1475,7 @@ x64-codegen: context [
 					stack-kinds/depth: VALUE
 					stack-tags/depth: 0
 					width: value-width ref 0 types members type-count
+						layouts member-offsets
 					target-width: either width = 8 [8][4]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
@@ -1530,7 +1552,7 @@ x64-codegen: context [
 								instruction/b <= fn/parameter-count
 								parameter/flags = INLINE
 								(win64-aggregate-width parameter/type types members
-									type-count) = 0
+									type-count layouts member-offsets) = 0
 							][
 								x64-encoder/frame-load at (capacity - written)
 									x64-encoder/RAX
@@ -1636,10 +1658,12 @@ x64-codegen: context [
 						stack-flags/depth: 0
 						stack-kinds/depth: VALUE
 					][
-						unless machine-value? ref flags types members type-count [
+						unless machine-value? ref flags types members type-count
+							layouts member-offsets [
 							return UNSUPPORTED
 						]
 						width: value-width ref flags types members type-count
+							layouts member-offsets
 						signed: either signed-type? ref types type-count [1][0]
 						floating?: float-type? ref types type-count
 						at: as byte-ptr! 0
@@ -1680,6 +1704,7 @@ x64-codegen: context [
 						valid-type-ref? instruction/a type-count
 						reference-type? instruction/a types type-count
 						machine-value? instruction/a 0 types members type-count
+							layouts member-offsets
 					][return INVALID_IR]
 					stack-types/depth: instruction/a
 					stack-flags/depth: 0
@@ -1701,6 +1726,7 @@ x64-codegen: context [
 					member-type: 0
 					unless pointee-type ref types type-count :member-type [return INVALID_IR]
 					stride: pointer-stride ref types members type-count
+						layouts member-offsets
 					if stride <= 0 [return UNSUPPORTED]
 					if instruction/b = 1 [
 						if any [
@@ -1727,6 +1753,7 @@ x64-codegen: context [
 							load-operation-value at (capacity - written)
 								x64-encoder/RDX slot-displacement (storage-slots + depth)
 								stack-types/depth 0 8 types members type-count
+								layouts member-offsets
 						][
 							x64-encoder/move-immediate at (capacity - written)
 								x64-encoder/RDX 8 instruction/a instruction/c
@@ -1788,7 +1815,9 @@ x64-codegen: context [
 						copy-size: 0
 						copy-align: 0
 						unless layout-type target-ref true types members type-count 0
-							:copy-size :copy-align [return INVALID_IR]
+							layouts member-offsets :copy-size :copy-align [
+							return INVALID_IR
+						]
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
@@ -1815,8 +1844,10 @@ x64-codegen: context [
 							compatible-types? target-ref ref types type-count
 							target-flags = flags
 							machine-value? ref flags types members type-count
+								layouts member-offsets
 						][return INVALID_IR]
 						width: value-width ref flags types members type-count
+							layouts member-offsets
 						signed: either signed-type? ref types type-count [1][0]
 						floating?: float-type? ref types type-count
 						at: as byte-ptr! 0
@@ -1886,6 +1917,7 @@ x64-codegen: context [
 					member-flags: 0
 					member-offset: 0
 					unless layout-member ref instruction/a types members type-count
+						member-offsets
 						:member-type :member-flags :member-offset [return INVALID_IR]
 					tag-width-value: 0
 					if instruction/b <> 0 [
@@ -2009,11 +2041,12 @@ x64-codegen: context [
 						unless all [
 							return-ref <> 0
 							aggregate-ref? return-ref types type-count
-							(aggregate-size return-ref types members type-count) > 0
+							(aggregate-size return-ref types members type-count
+								layouts member-offsets) > 0
 						][return INVALID_IR]
 					]
 					hidden-return?: win64-hidden-return? return-ref call-flags
-						types members type-count
+						types members type-count layouts member-offsets
 					hidden-shift: either hidden-return? [1][0]
 					if argument-index > (2147483647 - hidden-shift)[return OUTPUT_FULL]
 					physical-count: argument-index + hidden-shift
@@ -2053,21 +2086,23 @@ x64-codegen: context [
 									compatible-types? parameter/type ref types type-count
 									parameter/flags = flags
 								][return INVALID_IR]
-								unless machine-value? ref flags types members type-count [
+								unless machine-value? ref flags types members type-count
+									layouts member-offsets [
 									return UNSUPPORTED
 								]
 							]
 						][
-							unless machine-value? ref flags types members type-count [
+							unless machine-value? ref flags types members type-count
+								layouts member-offsets [
 								return UNSUPPORTED
 							]
 						]
 						if aggregate-argument? [
 							aggregate-width: win64-aggregate-width parameter/type
-								types members type-count
+								types members type-count layouts member-offsets
 							if aggregate-width = 0 [
 								value-size: aggregate-size parameter/type
-									types members type-count
+									types members type-count layouts member-offsets
 								if any [
 									value-size <= 0
 									temp-offset > (2147483647 - value-size)
@@ -2115,14 +2150,14 @@ x64-codegen: context [
 							aggregate-argument?: parameter/flags = INLINE
 							if aggregate-argument? [
 								aggregate-width: win64-aggregate-width parameter/type
-									types members type-count
+									types members type-count layouts member-offsets
 							]
 						]
 						physical-slot: source-slot + hidden-shift
 						either aggregate-argument? [
 							either aggregate-width = 0 [
 								value-size: aggregate-size parameter/type
-									types members type-count
+									types members type-count layouts member-offsets
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/stack-address at (capacity - written)
@@ -2170,6 +2205,7 @@ x64-codegen: context [
 							]
 						][
 							argument-width: value-width ref flags types members type-count
+								layouts member-offsets
 							signed: either signed-type? ref types type-count [1][0]
 							floating?: float-type? ref types type-count
 							either physical-slot <= 4 [
@@ -2265,7 +2301,7 @@ x64-codegen: context [
 						either return-value? [
 							result-offset: result-offsets/index
 							aggregate-width: win64-aggregate-width return-ref
-								types members type-count
+								types members type-count layouts member-offsets
 							if any [
 								result-offset >= 0
 								all [aggregate-width = 0 not hidden-return?]
@@ -2290,10 +2326,12 @@ x64-codegen: context [
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 8
 						][
-							unless machine-value? return-ref 0 types members type-count [
+							unless machine-value? return-ref 0 types members type-count
+								layouts member-offsets [
 								return UNSUPPORTED
 							]
 							width: value-width return-ref 0 types members type-count
+								layouts member-offsets
 							floating?: float-type? return-ref types type-count
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
@@ -2317,14 +2355,17 @@ x64-codegen: context [
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					source-width: value-width ref flags types members type-count
+						layouts member-offsets
 					target-width: value-width instruction/a instruction/b
-						types members type-count
+						types members type-count layouts member-offsets
 					keep-cast: instruction/c
 					unless all [
 						valid-type-ref? instruction/a type-count
 						any [keep-cast = 0 keep-cast = 1]
 						machine-value? ref flags types members type-count
+							layouts member-offsets
 						machine-value? instruction/a instruction/b types members type-count
+							layouts member-offsets
 					][return UNSUPPORTED]
 					source-kind: logical-kind ref types type-count
 					target-kind: logical-kind instruction/a types type-count
@@ -2464,6 +2505,7 @@ x64-codegen: context [
 					ref: instruction/a
 					unless valid-type-ref? ref type-count [return INVALID_IR]
 					width: logical-size ref types members type-count
+						layouts member-offsets
 					if width <= 0 [return INVALID_IR]
 					depth: depth + 1
 					if depth > max-depth [max-depth: depth]
@@ -2516,6 +2558,7 @@ x64-codegen: context [
 					tag-head: stack-tags/depth
 					width: either kind = PLACE [8][
 						value-width ref flags types members type-count
+							layouts member-offsets
 					]
 					signed: either signed-type? ref types type-count [1][0]
 					at: as byte-ptr! 0
@@ -2553,14 +2596,17 @@ x64-codegen: context [
 						flags = 0
 						any [integer-type? ref types type-count kind = 11]
 						machine-value? ref flags types members type-count
+							layouts member-offsets
 					][return INVALID_IR]
 					width: value-width ref flags types members type-count
+						layouts member-offsets
 					operation-width: either width = 8 [8][4]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth)
 						ref flags operation-width types members type-count
+						layouts member-offsets
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					either kind = 11 [
@@ -2687,11 +2733,14 @@ x64-codegen: context [
 					]
 					unless all [
 						machine-value? left-ref left-flags types members type-count
+							layouts member-offsets
 						machine-value? right-ref right-flags types members type-count
+							layouts member-offsets
 					][return UNSUPPORTED]
 
 					either floating? [
 						width: value-width left-ref left-flags types members type-count
+							layouts member-offsets
 						operation-width: width
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
@@ -2734,6 +2783,7 @@ x64-codegen: context [
 					][
 					ref: either operation-ref <> 0 [operation-ref][left-ref]
 					width: value-width ref left-flags types members type-count
+						layouts member-offsets
 					operation-width: either any [
 						width = 8
 						reference-type? ref types type-count
@@ -2744,7 +2794,7 @@ x64-codegen: context [
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement
 						(storage-slots + target-slot) left-ref left-flags
-						operation-width types members type-count
+						operation-width types members type-count layouts member-offsets
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 
@@ -2757,6 +2807,7 @@ x64-codegen: context [
 					encoded: load-operation-value at (capacity - written)
 						source-slot slot-displacement (storage-slots + depth)
 						right-ref right-flags operation-width types members type-count
+						layouts member-offsets
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 
@@ -2765,6 +2816,7 @@ x64-codegen: context [
 						integer-type? right-ref types type-count
 					][
 						stride: pointer-stride left-ref types members type-count
+							layouts member-offsets
 						if stride <= 0 [return UNSUPPORTED]
 						if stride <> 1 [
 							at: as byte-ptr! 0
@@ -2978,12 +3030,13 @@ x64-codegen: context [
 					][return INVALID_IR]
 					ref: stack-types/depth
 					width: value-width ref 0 types members type-count
+						layouts member-offsets
 					operation-width: either width = 8 [8][4]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth)
-						ref 0 operation-width types members type-count
+						ref 0 operation-width types members type-count layouts member-offsets
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					depth: depth - 1
@@ -3073,7 +3126,7 @@ x64-codegen: context [
 					return-ref: instruction/a
 					return-value?: (fn/flags and RETURN_VALUE) <> 0
 					hidden-return?: win64-hidden-return? fn/return-type fn/flags
-						types members type-count
+						types members type-count layouts member-offsets
 					if any [
 						return-ref <> fn/return-type
 						instruction/c <> 0
@@ -3094,7 +3147,7 @@ x64-codegen: context [
 								compatible-types? return-ref stack-types/depth types type-count
 								stack-flags/depth = instruction/b
 								machine-value? return-ref instruction/b
-									types members type-count
+									types members type-count layouts member-offsets
 							][return INVALID_IR]
 						]
 					]
@@ -3107,6 +3160,7 @@ x64-codegen: context [
 								x64-encoder/RCX
 						][
 							width: value-width return-ref instruction/b types members type-count
+								layouts member-offsets
 							signed: either signed-type? return-ref types type-count [1][0]
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
@@ -3136,7 +3190,7 @@ x64-codegen: context [
 						if return-ref <> 0 [
 							either return-value? [
 								aggregate-width: win64-aggregate-width return-ref
-									types members type-count
+									types members type-count layouts member-offsets
 								either hidden-return? [
 									at: as byte-ptr! 0
 									if not measure? [at: code + written]
@@ -3153,7 +3207,7 @@ x64-codegen: context [
 									if encoded < 0 [return OUTPUT_FULL]
 									written: written + encoded
 									value-size: aggregate-size return-ref
-										types members type-count
+										types members type-count layouts member-offsets
 									if value-size <= 0 [return INVALID_IR]
 									at: as byte-ptr! 0
 									if not measure? [at: code + written]
@@ -3182,7 +3236,7 @@ x64-codegen: context [
 								]
 							][
 								width: value-width return-ref instruction/b
-									types members type-count
+									types members type-count layouts member-offsets
 								signed: either signed-type? return-ref types type-count [1][0]
 								floating?: float-type? return-ref types type-count
 								at: as byte-ptr! 0
@@ -3260,7 +3314,8 @@ x64-codegen: context [
 			import-refs function-sizes function-frames instruction-offsets
 				instruction-depths entry-types entry-flags entry-kinds entry-tags
 				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
-				tag-widths result-offsets storage-offsets references [int-ptr!]
+				tag-widths result-offsets storage-offsets layouts member-offsets
+				references [int-ptr!]
 			type-data member-data import-data global-data function-data
 				parameter-data initializer-data switch-data instruction-data strings
 				function-instructions
@@ -3557,7 +3612,7 @@ x64-codegen: context [
 								initializer/c <> 0
 								(ir-global/flags and INLINE) <> 0
 								not machine-value? ir-global/type 0 type-data member-data
-									header/type-count
+									header/type-count null null
 							][return INVALID_IR]
 						]
 						initializer/kind = ADDRESS_INITIALIZER [
@@ -3650,7 +3705,9 @@ x64-codegen: context [
 			global-align: 0
 			unless layout-type ir-global/type ((ir-global/flags and INLINE) <> 0)
 				type-data member-data
-				header/type-count 0 :global-size :global-align [return INVALID_IR]
+				header/type-count 0 null null :global-size :global-align [
+					return INVALID_IR
+				]
 			protected?: (ir-global/flags and PROTECTED) <> 0
 			either protected? [
 				global-offset: align image-rodata-size global-align
@@ -3732,6 +3789,12 @@ x64-codegen: context [
 		scratch-count: scratch-count + (header/instruction-count * 14)
 		if parameter-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
 		scratch-count: scratch-count + parameter-count
+		if header/type-count > ((2147483647 - scratch-count) / 4)[
+			return OUTPUT_FULL
+		]
+		scratch-count: scratch-count + (header/type-count * 4)
+		if member-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
+		scratch-count: scratch-count + member-count
 		if scratch-count > (2147483647 / 4)[return OUTPUT_FULL]
 		scratch: allocate (scratch-count * 4)
 		if null? scratch [return OUTPUT_FULL]
@@ -3754,8 +3817,25 @@ x64-codegen: context [
 		tag-widths: tag-slots + header/instruction-count
 		result-offsets: tag-widths + header/instruction-count
 		storage-offsets: result-offsets + header/instruction-count
+		layouts: storage-offsets + parameter-count
+		member-offsets: layouts + (header/type-count * 4)
 		id: 1
 		while [id <= header/import-count][import-refs/id: 0 id: id + 1]
+		count: header/type-count * 4
+		id: 1
+		while [id <= count][layouts/id: 0 id: id + 1]
+		id: 1
+		while [id <= member-count][member-offsets/id: -1 id: id + 1]
+		id: 1
+		while [id <= header/type-count][
+			global-size: 0
+			global-align: 0
+			unless layout-type id true type-data member-data header/type-count 0
+				layouts member-offsets :global-size :global-align [
+				return release scratch INVALID_IR
+			]
+			id: id + 1
+		]
 
 		function-names-size: 0
 		code-size: 0
@@ -3778,6 +3858,7 @@ x64-codegen: context [
 			function-size: compile-function ir-function function-instructions
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(result-offsets + (next-instruction - 1))
+				layouts member-offsets
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
@@ -4036,6 +4117,7 @@ x64-codegen: context [
 			written: compile-function ir-function function-instructions
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(result-offsets + (next-instruction - 1))
+				layouts member-offsets
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))

@@ -1116,6 +1116,103 @@ assert all [
 	(instruction-word prefix-ir prefix-layout 9 4) = 1
 ]["a prefix call argument did not retain its specified infix precedence"]
 
+infix-ir: compile-text {
+	Red/System []
+	avg: func ["Average two values" [infix] a [integer!] b [integer!] return: [integer!]][
+		a + b
+	]
+	main: func [return: [integer!]][10 avg 6 + 2]
+} 'user
+assert binary? infix-ir ["infix function failed: " mold frontend/last-error]
+infix-layout: layout-of infix-ir
+assert all [
+	(word-at infix-ir 16) = 2
+	(function-word infix-ir infix-layout 1 12) = 0
+	(ops-of infix-ir infix-layout) = [3 4 3 4 15 11 1 1 7 1 15 11]
+	(instruction-word infix-ir infix-layout 9 4) = 1
+	(instruction-word infix-ir infix-layout 9 8) = 2
+	(instruction-word infix-ir infix-layout 9 12) = -5
+	(word-at infix-ir 0) = 1
+]["infix syntax did not lower to an ordinary two-argument call"]
+
+infix-prefix-ir: compile-text {
+	Red/System []
+	avg: func [[infix] a [integer!] b [integer!] return: [integer!]][a + b]
+	main: func [return: [integer!]][avg 10 6]
+} 'user
+assert binary? infix-prefix-ir [
+	"infix prefix form failed: " mold frontend/last-error
+]
+assert (ops-of infix-prefix-ir layout-of infix-prefix-ir) = [
+	3 4 3 4 15 11 1 1 7 11
+]["infix prefix form was not retained when no left operand existed"]
+
+import-infix-ir: compile-text {
+	Red/System []
+	#import [
+		"foo.dll" cdecl [
+			combine: "combine" [[infix] a [integer!] b [integer!] return: [integer!]]
+		]
+	]
+	main: func [return: [integer!]][10 combine 6]
+} 'user
+assert binary? import-infix-ir [
+	"imported infix function failed: " mold frontend/last-error
+]
+import-infix-layout: layout-of import-infix-ir
+assert all [
+	(word-at import-infix-ir (import-infix-layout/2 + 20)) = 1
+	(ops-of import-infix-ir import-infix-layout) = [1 1 7 11]
+	(instruction-word import-infix-ir import-infix-layout 3 4) = -1
+	(instruction-word import-infix-ir import-infix-layout 3 8) = 2
+]["imported infix syntax did not retain the ordinary import CALL shape"]
+
+infix-shadow-ir: compile-text {
+	Red/System []
+	choose: func [[infix] a [integer!] b [integer!] return: [integer!]][a + b]
+	ns: context [
+		choose: func [value [integer!] return: [integer!]][value]
+		main: func [return: [integer!]][1 choose 2]
+	]
+} 'user
+assert binary? infix-shadow-ir [
+	"ordinary function failed to shadow infix function: " mold frontend/last-error
+]
+infix-shadow-layout: layout-of infix-shadow-ir
+infix-shadow-call: 0
+repeat id word-at infix-shadow-ir 20 [
+	if (instruction-word infix-shadow-ir infix-shadow-layout id 0) = 7 [
+		infix-shadow-call: id
+	]
+]
+assert all [
+	infix-shadow-call > 0
+	(instruction-word infix-shadow-ir infix-shadow-layout infix-shadow-call 4) = 2
+	(instruction-word infix-shadow-ir infix-shadow-layout infix-shadow-call 8) = 1
+]["infix lookup bypassed lexical shadowing"]
+
+assert none? compile-text {
+	Red/System [] bad: func [[infix] a [integer!]][a]
+} 'user "infix accepted a one-argument function"
+assert frontend/last-error/code = frontend/ERROR-ARGUMENTS
+	"infix arity failure reported the wrong error class"
+
+assert none? compile-text {
+	Red/System [] bad: func [[infix] a [integer!] b [integer!] c [integer!]][a]
+} 'user "infix accepted a three-argument function"
+assert frontend/last-error/code = frontend/ERROR-ARGUMENTS
+	"infix three-argument failure reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	ns: context [
+		add: func [[infix] a [integer!] b [integer!] return: [integer!]][a + b]
+	]
+	main: func [return: [integer!]][1 ns/add 2]
+} 'user "infix accepted path call syntax"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"infix path call failure reported the wrong error class"
+
 not-ir: compile-text {
 	Red/System []
 	fn: func [return: [logic!]][not 1 = 2]

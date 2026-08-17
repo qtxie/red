@@ -23,6 +23,7 @@ compiler-rsir-frontend: context [
 	module-kind: 0
 	functions: make block! 96
 	function-ids: make hash! 48
+	infix-targets: make hash! 16
 	contexts: make hash! 32
 	types: make block! 256
 	type-ids: make hash! 128
@@ -895,6 +896,25 @@ compiler-rsir-frontend: context [
 		id
 	]
 
+	infix-spec?: func [spec [block!] return: [logic!] /local position][
+		position: spec
+		if all [not tail? position string? position/1][position: next position]
+		to logic! all [
+			not tail? position
+			block? position/1
+			find position/1 'infix
+		]
+	]
+
+	check-infix-arity: func [name signature [block!] /local count][
+		count: (length? signature/2) / 3
+		unless count = 2 [
+			fail ERROR-ARGUMENTS [
+				"infix function requires 2 arguments, found " count "for" form name
+			]
+		]
+	]
+
 	signature-flags: func [attributes [block!] /local flags convention item bit][
 		if (length? attributes) > 2 [
 			fail ERROR-UNSUPPORTED "too many function attributes"
@@ -1175,24 +1195,29 @@ compiler-rsir-frontend: context [
 		id
 	]
 
-	prepare-functions: func [/local record signature][
+	prepare-functions: func [/local record signature id][
 		record: functions
+		id: 1
 		while [not tail? record][
 			signature: read-signature record/2 record/4 record/5
+			if find infix-targets id [check-infix-arity record/1 signature]
 			record/6: signature/1
 			record/7: signature/2
 			record/8: signature/3
 			record/9: signature/4
+			id: id + 1
 			record: skip record 10
 		]
 	]
 
-	prepare-imports: func [/local record signature cc][
+	prepare-imports: func [/local record signature cc id][
 		record: imports
+		id: -1
 		while [not tail? record][
 			cc: record/8
 			either record/5 = 'function [
 				signature: read-signature record/4 record/6 record/7
+				if find infix-targets id [check-infix-arity record/1 signature]
 				unless empty? signature/3 [
 					fail ERROR-UNSUPPORTED "import signature cannot declare locals"
 				]
@@ -1208,6 +1233,7 @@ compiler-rsir-frontend: context [
 				record/9: none
 				record/10: 0
 			]
+			id: id - 1
 			record: skip record 10
 		]
 	]
@@ -1358,6 +1384,9 @@ compiler-rsir-frontend: context [
 				]['variable]['function]
 				id: import-count + 1
 				repend import-ids [key id]
+				if all [kind = 'function infix-spec? spec][
+					append infix-targets (0 - id)
+				]
 				append imports key
 				append/only imports library
 				append/only imports external
@@ -1501,6 +1530,7 @@ compiler-rsir-frontend: context [
 					]
 					id: function-count + 1
 					repend function-ids [key id]
+					if infix-spec? spec [append infix-targets id]
 					append/only functions to binary! spelling
 					append/only functions spec
 					append/only functions body
@@ -3087,6 +3117,54 @@ compiler-rsir-frontend: context [
 		position-after
 	]
 
+	stack-infix-call: func [
+		target [integer!]
+		value [word! path!]
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local record return-ref parameters expected expected-flags position-after
+	][
+		if path? value [
+			fail ERROR-UNSUPPORTED "infix functions cannot be called using a path"
+		]
+		either target > 0 [
+			record: skip functions ((target - 1) * 10)
+			return-ref: record/6
+			parameters: record/7
+		][
+			record: skip imports (((0 - target) - 1) * 10)
+			return-ref: record/8
+			parameters: record/9
+		]
+		unless last-type <> 0 [
+			fail ERROR-REFERENCE ["infix function is missing its left argument " mold value]
+		]
+		expected: parameters/2
+		expected-flags: parameters/3
+		unless coerce-stack expected expected-flags instructions true [
+			fail ERROR-REFERENCE ["left argument does not match infix function " mold value]
+		]
+		position-after: stack-primary next position scope uses instructions params locals
+			expression-value
+		unless all [not last-stopped? last-type <> 0][
+			fail ERROR-REFERENCE ["infix function is missing its right argument " mold value]
+		]
+		expected: parameters/5
+		expected-flags: parameters/6
+		unless coerce-stack expected expected-flags instructions true [
+			fail ERROR-REFERENCE ["right argument does not match infix function " mold value]
+		]
+		emit instructions reduce [call-op target 2 return-ref]
+		last-type: return-ref
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		position-after
+	]
+
 	packed-variadic-signature?: func [
 		parameters [block!]
 		return: [logic!]
@@ -4342,17 +4420,26 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local operation left left-flags
+		/local operation left left-flags infix-target
 	][
 		position: stack-primary position scope uses instructions params locals value-context
 		while [not tail? position][
 			operation: select binary-operations position/1
-			unless integer? operation [break]
-			left: last-type
-			left-flags: last-flags
-			position: stack-primary next position scope uses instructions params locals
-				expression-value
-			stack-binary operation left left-flags instructions
+			either integer? operation [
+				left: last-type
+				left-flags: last-flags
+				position: stack-primary next position scope uses instructions params locals
+					expression-value
+				stack-binary operation left left-flags instructions
+			][
+				infix-target: none
+				if any [word? position/1 path? position/1][
+					infix-target: resolve-stack-call position/1 scope uses
+				]
+				unless all [integer? infix-target find infix-targets infix-target][break]
+				position: stack-infix-call infix-target position/1 position
+					scope uses instructions params locals
+			]
 		]
 		position
 	]
@@ -5014,6 +5101,7 @@ compiler-rsir-frontend: context [
 
 			clear functions
 			clear function-ids
+			clear infix-targets
 			clear contexts
 			clear types
 			clear type-ids

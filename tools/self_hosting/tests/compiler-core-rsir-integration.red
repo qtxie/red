@@ -159,5 +159,7 @@ run-linked-fixture
 	%rsir-typed-call-exit.reds %rsir-typed-call-linked.exe "typed call"
 run-linked-fixture
 	%rsir-use-subroutine-exit.reds %rsir-use-subroutine-linked.exe "USE/subroutine"
+run-linked-fixture
+	%rsir-infix-exit.reds %rsir-infix-linked.exe "infix functions"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

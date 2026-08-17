@@ -134,6 +134,8 @@ compiler-rsir-frontend: context [
 	function-address: 4
 
 	stack-top-native: 1
+	stack-push-native: 2
+	stack-pop-native: 3
 	statement-value: 0
 	expression-value: 1
 	tail-value: 2
@@ -4128,6 +4130,26 @@ compiler-rsir-frontend: context [
 		type-info/1
 	]
 
+	stack-push: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local position-after
+	][
+		position-after: stack-value next position scope uses instructions params locals
+			expression-value
+		unless all [not last-stopped? last-type <> 0][
+			fail ERROR-REFERENCE "PUSH requires a value"
+		]
+		emit instructions reduce [native-op stack-push-native 0 0]
+		last-type: 0
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		position-after
+	]
+
 	stack-primary: func [
 		position [block!]
 		scope uses [block!]
@@ -4233,6 +4255,17 @@ compiler-rsir-frontend: context [
 			]
 			value = 'size? [
 				stack-size next position scope uses instructions params locals
+			]
+			value = 'push [
+				stack-push position scope uses instructions params locals
+			]
+			value = 'pop [
+				emit instructions reduce [native-op stack-pop-native 0 0]
+				last-type: -5
+				last-flags: 0
+				last-float-literal?: false
+				last-stopped?: false
+				next position
 			]
 			value = 'declare [
 				fail ERROR-CONTEXT "DECLARE requires an assignment target"
@@ -4358,8 +4391,9 @@ compiler-rsir-frontend: context [
 				value/2 = 'stack
 				value/3 = 'top
 			][
-				emit instructions reduce [native-op stack-top-native 0 -12]
-				last-type: -12
+				id: intern-pointer -5
+				emit instructions reduce [native-op stack-top-native 0 id]
+				last-type: id
 				last-flags: 0
 				next position
 			]

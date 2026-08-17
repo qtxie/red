@@ -1189,6 +1189,40 @@ x64-encoder: context [
 		6
 	]
 
+	push-register: func [
+		code [byte-ptr!]
+		capacity register [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [register >= 0 register <= 15][return -1]
+		prefix: rex false 0 register
+		size: either prefix = 40h [1][2]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! (50h + (register and 7))
+		size
+	]
+
+	pop-register: func [
+		code [byte-ptr!]
+		capacity register [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [register >= 0 register <= 15][return -1]
+		prefix: rex false 0 register
+		size: either prefix = 40h [1][2]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! (58h + (register and 7))
+		size
+	]
+
 	stack-top: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
 		unless room? code capacity 3 [return -1]
 		if not null? code [

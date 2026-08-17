@@ -1855,4 +1855,46 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-CONTEXT
 	"recursive subroutine reported the wrong error class"
 
+stack-ir: compile-text {
+	Red/System []
+	roundtrip: func [return: [integer!]][
+		push 7 * 6
+		pop + 1
+	]
+} 'user
+assert binary? stack-ir ["PUSH/POP lowering failed: " mold frontend/last-error]
+stack-layout: layout-of stack-ir
+assert all [
+	(ops-of stack-ir stack-layout) = [1 1 15 10 10 1 15 11]
+	(instruction-word stack-ir stack-layout 4 4) = 2
+	(instruction-word stack-ir stack-layout 4 8) = 0
+	(instruction-word stack-ir stack-layout 4 12) = 0
+	(instruction-word stack-ir stack-layout 5 4) = 3
+	(instruction-word stack-ir stack-layout 5 8) = 0
+	(instruction-word stack-ir stack-layout 5 12) = 0
+]["PUSH/POP did not use the ordinary typed postfix stream"]
+
+stack-top-ir: compile-text {
+	Red/System []
+	top: func [return: [pointer! [integer!]]][system/stack/top]
+} 'user
+assert binary? stack-top-ir [
+	"system/stack/top lowering failed: " mold frontend/last-error
+]
+stack-top-layout: layout-of stack-top-ir
+assert all [
+	(ops-of stack-top-ir stack-top-layout) = [10 11]
+	(instruction-word stack-top-ir stack-top-layout 1 4) = 1
+	(instruction-word stack-top-ir stack-top-layout 1 8) = 0
+	(instruction-word stack-top-ir stack-top-layout 1 12) > 0
+]["system/stack/top lost its pointer! [integer!] result type"]
+
+assert none? compile-text {
+	Red/System []
+	sink: func [][]
+	fn: func [][push sink]
+} 'user "PUSH accepted an expression without a value"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"valueless PUSH reported the wrong error class"
+
 print "PASS: typed postfix Red/System frontend"

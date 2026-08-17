@@ -101,6 +101,7 @@ merge-ir: allocate 256
 selection-ir: allocate 256
 recursive-pointer-ir: allocate 160
 recursive-value-ir: allocate 144
+stack-ir: allocate 160
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -111,6 +112,7 @@ if any [
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
+	null? stack-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -1172,6 +1174,46 @@ if (x64-codegen/generate recursive-value-ir 114 output 1024 0)
 	failures: failures + 1
 ]
 
+; Native stack operations consume and produce ordinary typed postfix values.
+put stack-ir 0 1
+put stack-ir 4 0
+put stack-ir 8 0
+put stack-ir 12 0
+put stack-ir 16 1
+put stack-ir 20 4
+put stack-ir 24 0
+put stack-ir 28 0
+
+put stack-ir 32 0
+put stack-ir 36 2
+put stack-ir 40 -5
+put stack-ir 44 0
+put stack-ir 48 0
+put stack-ir 52 0
+put stack-ir 56 0
+put stack-ir 60 0
+put stack-ir 64 4
+
+put-instruction stack-ir 68 1 -5 42 0
+put-instruction stack-ir 84 10 2 0 0
+put-instruction stack-ir 100 10 3 0 0
+put-instruction stack-ir 116 11 -5 0 0
+stack-ir/133: as byte! 66h
+stack-ir/134: as byte! 6Eh
+
+size: x64-codegen/generate stack-ir 134 output 1024 0
+if any [size <= 0 not execute-first? output 42][failures: failures + 1]
+put stack-ir 92 1
+if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put stack-ir 92 0
+put stack-ir 88 4
+if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/UNSUPPORTED [
+	failures: failures + 1
+]
+put stack-ir 88 2
+
 free output
 free void-ir
 free local-ir
@@ -1189,6 +1231,7 @@ free merge-ir
 free selection-ir
 free recursive-pointer-ir
 free recursive-value-ir
+free stack-ir
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

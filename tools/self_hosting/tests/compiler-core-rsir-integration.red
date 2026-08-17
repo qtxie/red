@@ -157,5 +157,7 @@ run-linked-fixture
 	%rsir-aggregate-abi-exit.reds %rsir-aggregate-abi-linked.exe "aggregate ABI"
 run-linked-fixture
 	%rsir-typed-call-exit.reds %rsir-typed-call-linked.exe "typed call"
+run-linked-fixture
+	%rsir-use-subroutine-exit.reds %rsir-use-subroutine-linked.exe "USE/subroutine"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

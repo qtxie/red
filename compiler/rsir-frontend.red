@@ -30,6 +30,7 @@ compiler-rsir-frontend: context [
 	array-types: make hash! 32
 	aggregate-types: make hash! 64
 	function-types: make hash! 64
+	subroutine-types: make hash! 16
 	typed-call-types: make hash! 64
 	alias-type-ids: make hash! 64
 	constants: make hash! 256
@@ -145,6 +146,12 @@ compiler-rsir-frontend: context [
 	function-flags: 0
 	function-active?: false
 	loops: make block! 8
+	; Function-local lexical constructs are lowered while the postfix stream is
+	; built. USE slots stay in the frame table, while their names are tombstoned
+	; when the lexical body ends; subroutine bodies are expanded at call sites.
+	use-local-slots: make hash! 32
+	subroutine-bodies: make block! 32
+	subroutine-stack: make block! 8
 	static?: false
 	static-ref: 0
 	static-low: 0
@@ -196,11 +203,13 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local slot record
 	][
-		slot: 1 + to integer! (((length? params) + (length? locals)) / 3)
+		slot: 1 + ((length? params) / 3) + storage-local-count locals
 		record: tail locals
 		append locals none
 		append locals ref
 		append locals flags
+		; Hidden temporaries have no source name, so they remain usable only
+		; through the instruction slot returned here.
 		reduce [slot record]
 	]
 
@@ -248,6 +257,20 @@ compiler-rsir-frontend: context [
 
 	emit-local-address: func [output [binary!] slot [integer!]][
 		emit output reduce [address-op local-address slot 0]
+	]
+
+	storage-local?: func [record [block!] return: [logic!]][
+		(ref-kind record/2) <> 'subroutine
+	]
+
+	storage-local-count: func [locals [block!] return: [integer!] /local count record][
+		count: 0
+		record: locals
+		while [not tail? record][
+			if storage-local? record [count: count + 1]
+			record: skip record 3
+		]
+		count
 	]
 
 	logical-value?: func [ref flags [integer!] return: [logic!]][
@@ -548,6 +571,11 @@ compiler-rsir-frontend: context [
 			(length? type) = 2
 			block? type/2
 		][return intern-function-type type/2 scope uses]
+		if all [
+			word? name
+			name = 'subroutine!
+			(length? type) = 1
+		][return intern-subroutine-type scope uses]
 		kind: type-kind type scope uses
 		unless kind [fail ERROR-UNSUPPORTED ["unsupported type " mold type]]
 		if all [word? name pointee: select builtin-pointees name][
@@ -954,6 +982,9 @@ compiler-rsir-frontend: context [
 					][fail ERROR-UNSUPPORTED "invalid function return type"]
 					type: position/2
 					return-ref: type-ref type scope uses
+					if (ref-kind return-ref) = 'subroutine [
+						fail ERROR-UNSUPPORTED "subroutine! cannot be returned"
+					]
 					if (type-flags type scope uses) = 1 [
 						flags: flags + return-value-flag
 					]
@@ -994,6 +1025,9 @@ compiler-rsir-frontend: context [
 						type: position/1
 						ref: type-ref type scope uses
 						type-flags-value: type-flags type scope uses
+						if (ref-kind ref) = 'subroutine [
+							fail ERROR-UNSUPPORTED "subroutine! is only allowed for locals"
+						]
 						while [names-start <> position][
 							repend params [names-start/1 ref type-flags-value]
 							names-start: next names-start
@@ -1058,6 +1092,24 @@ compiler-rsir-frontend: context [
 		return: [integer!]
 	][
 		intern-function-signature (read-signature spec scope uses) scope uses
+	]
+
+	intern-subroutine-type: func [
+		scope uses [block!]
+		return: [integer!]
+		/local key id
+	][
+		key: mold/flat reduce [scope uses]
+		if id: select subroutine-types key [return id]
+		id: type-count + 1
+		repend subroutine-types [key id]
+		append types none
+		append types 'subroutine
+		append/only types copy []
+		append/only types copy scope
+		append/only types copy/deep uses
+		type-count: id
+		id
 	]
 
 	prepare-types: func [/local position signature key id][
@@ -1797,7 +1849,7 @@ compiler-rsir-frontend: context [
 			locals: position/8
 			flags: position/9
 			param-count: (length? params) / 3
-			local-count: (length? locals) / 3
+			local-count: storage-local-count locals
 			first-local: first-param + param-count
 			record-offset: function-records + ((id - 1) * 36)
 			change/part at output record-offset
@@ -1825,12 +1877,14 @@ compiler-rsir-frontend: context [
 			]
 			parameter: locals
 			while [not tail? parameter][
-				if parameter/2 = 0 [
+				if all [storage-local? parameter parameter/2 = 0][
 					fail ERROR-UNSUPPORTED [
 						"local type is unresolved: " mold parameter/1
 					]
 				]
-				emit output reduce [parameter/2 parameter/3]
+				if storage-local? parameter [
+					emit output reduce [parameter/2 parameter/3]
+				]
 				parameter: skip parameter 3
 			]
 			append names name
@@ -2584,10 +2638,144 @@ compiler-rsir-frontend: context [
 		position: locals
 		while [not tail? position][
 			if position/1 = name [return reduce [index position]]
+			if storage-local? position [index: index + 1]
 			position: skip position 3
-			index: index + 1
 		]
 		none
+	]
+
+	subroutine-body: func [
+		name [word!]
+		return: [block! none!]
+		/local position
+	][
+		position: find/skip subroutine-bodies name 2
+		either position [position/2][none]
+	]
+
+	set-subroutine-body: func [
+		name [word!]
+		body [block!]
+		/local position
+	][
+		position: find/skip subroutine-bodies name 2
+		either position [
+			change/only next position copy/deep body
+		][
+			append subroutine-bodies name
+			append/only subroutine-bodies copy/deep body
+		]
+	]
+
+	stack-use: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		return: [block!]
+		/local spec body cursor names-start name ref flags record-index record
+			active-records stopped?
+	][
+		unless function-active? [
+			fail ERROR-CONTEXT "USE is only allowed inside a function"
+		]
+		unless all [
+			(length? position) >= 3
+			block? position/2
+			block? position/3
+		][fail ERROR-UNSUPPORTED "USE requires a local specification and body"]
+		spec: position/2
+		body: position/3
+		active-records: make block! 8
+		cursor: spec
+		while [not tail? cursor][
+			unless word? cursor/1 [
+				fail ERROR-UNSUPPORTED ["invalid USE local " mold cursor/1]
+			]
+			names-start: cursor
+			while [all [not tail? cursor word? cursor/1]][
+				if refinement? cursor/1 [
+					fail ERROR-UNSUPPORTED "USE does not accept refinements"
+				]
+				cursor: next cursor
+			]
+			unless all [not tail? cursor block? cursor/1][
+				fail ERROR-UNSUPPORTED "USE local is missing its type"
+			]
+			ref: type-ref cursor/1 scope uses
+			flags: type-flags cursor/1 scope uses
+			if (ref-kind ref) = 'subroutine [
+				fail ERROR-UNSUPPORTED "subroutines cannot be defined by USE"
+			]
+			while [names-start <> cursor][
+				name: names-start/1
+				if stack-storage-info name params locals [
+					fail ERROR-DUPLICATE ["duplicate USE local " mold name]
+				]
+				record-index: select use-local-slots name
+				either integer? record-index [
+					record: skip locals ((record-index - 1) * 3)
+					unless all [
+						stack-type-compatible? record/2 ref
+						record/3 = flags
+					][
+						fail ERROR-REFERENCE [
+							"conflicting USE local type " mold name
+						]
+					]
+					record/1: name
+				][
+					record-index: 1 + ((length? locals) / 3)
+					repend use-local-slots [name record-index]
+					append locals name
+					append locals ref
+					append locals flags
+				]
+				append active-records record-index
+				names-start: next names-start
+			]
+			cursor: next cursor
+		]
+		stack-block body scope uses instructions params locals statement-value
+		stopped?: last-stopped?
+		; The slots remain available for a later same-name USE, but their source
+		; names leave the active lexical environment with this body.
+		foreach record-index active-records [
+			record: skip locals ((record-index - 1) * 3)
+			record/1: none
+		]
+		last-type: 0
+		last-flags: 0
+		last-stopped?: stopped?
+		skip position 3
+	]
+
+	stack-subroutine: func [
+		position [block!]
+		name [word!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		value-context [integer!]
+		return: [block!]
+		/local body body-context
+	][
+		body: subroutine-body name
+		unless block? body [
+			fail ERROR-REFERENCE ["subroutine is used before its definition " mold name]
+		]
+		if find subroutine-stack name [
+			fail ERROR-CONTEXT ["recursive subroutine " mold name]
+		]
+		append subroutine-stack name
+		body-context: either value-context = statement-value [
+			statement-value
+		][tail-value]
+		stack-block body scope uses instructions params locals body-context
+		remove find subroutine-stack name
+		next position
 	]
 
 	stack-read-type: func [
@@ -2737,6 +2925,9 @@ compiler-rsir-frontend: context [
 		if word? target [
 			storage: stack-storage-info target params locals
 			if block? storage [
+				if (ref-kind storage/2/2) = 'subroutine [
+					fail ERROR-REFERENCE ["subroutine has no address " mold target]
+				]
 				emit instructions reduce [address-op local-address storage/1 0]
 				position: storage/2
 				last-type: position/2
@@ -3869,6 +4060,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local value type-info next-position target id constant-key bytes offset
 			inner wide bits call-target protected-info
+			storage
 	][
 		unless not tail? position [
 			fail ERROR-UNSUPPORTED "missing expression"
@@ -3876,6 +4068,14 @@ compiler-rsir-frontend: context [
 		value: position/1
 		last-float-literal?: false
 		last-stopped?: false
+		if all [
+			word? value
+			storage: stack-storage-info value params locals
+			(ref-kind storage/2/2) = 'subroutine
+		][
+			return stack-subroutine position value scope uses instructions params locals
+				value-context
+		]
 		case [
 			value = 'if [
 				next-position: stack-if position scope uses instructions params locals
@@ -3930,6 +4130,9 @@ compiler-rsir-frontend: context [
 			]
 			value = 'break [stack-break position instructions]
 			value = 'continue [stack-continue position instructions]
+			value = 'use [
+				stack-use position scope uses instructions params locals
+			]
 			paren? value [
 				inner: to block! value
 				if empty? inner [fail ERROR-UNSUPPORTED "empty expression"]
@@ -4530,6 +4733,19 @@ compiler-rsir-frontend: context [
 		][to path! position/1]
 		storage: either word? target [stack-storage-info target params locals][none]
 		id: either block? storage [none][resolve-name target scope uses globals]
+		if all [
+			block? storage
+			(ref-kind storage/2/2) = 'subroutine
+		][
+			unless block? position/2 [
+				fail ERROR-REFERENCE ["subroutine requires a body block " mold target]
+			]
+			set-subroutine-body target position/2
+			last-type: 0
+			last-flags: 0
+			last-stopped?: false
+			return skip position 2
+		]
 		if position/2 = 'protect [
 			return stack-protect position target scope uses fold?
 		]
@@ -4708,6 +4924,9 @@ compiler-rsir-frontend: context [
 		function-flags: flags
 		function-active?: true
 		clear loops
+		clear use-local-slots
+		clear subroutine-bodies
+		clear subroutine-stack
 		last-type: 0
 		last-flags: 0
 		last-stopped?: false
@@ -4731,6 +4950,9 @@ compiler-rsir-frontend: context [
 		]
 		count: to integer! (((length? instructions) - before) / 16)
 		function-active?: false
+		clear use-local-slots
+		clear subroutine-bodies
+		clear subroutine-stack
 		count
 	]
 
@@ -4799,6 +5021,7 @@ compiler-rsir-frontend: context [
 			clear array-types
 			clear aggregate-types
 			clear function-types
+			clear subroutine-types
 			clear typed-call-types
 			clear alias-type-ids
 			clear constants
@@ -4817,6 +5040,9 @@ compiler-rsir-frontend: context [
 			clear switches
 			clear strings
 			clear string-ids
+			clear use-local-slots
+			clear subroutine-bodies
+			clear subroutine-stack
 			function-count: 0
 			type-count: 0
 			import-count: 0

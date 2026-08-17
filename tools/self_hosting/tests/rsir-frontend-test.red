@@ -1690,4 +1690,72 @@ assert none? compile-text {Red/System []} 'user
 assert frontend/last-error/code = frontend/ERROR-FUNCTION-COUNT
 	"missing function reported the wrong error class"
 
+use-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local value [integer!]][
+		value: 1
+		use [outer [integer!]][
+			outer: 2
+			use [inner [integer!]][
+				inner: 3
+				value: value + outer + inner
+			]
+		]
+		use [outer [integer!]][
+			outer: 4
+			value: value + outer
+		]
+		value
+	]
+} 'user
+assert binary? use-ir ["nested USE lowering failed: " mold frontend/last-error]
+use-layout: layout-of use-ir
+assert (function-word use-ir use-layout 1 28) = 3
+	"non-overlapping same-name USE locals did not share their frame slot"
+
+subroutine-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local value [integer!] step [subroutine!]][
+		value: 2
+		step: [value: value + 3]
+		step
+		value
+	]
+} 'user
+assert binary? subroutine-ir [
+	"subroutine lowering failed: " mold frontend/last-error
+]
+subroutine-layout: layout-of subroutine-ir
+assert all [
+	(function-word subroutine-ir subroutine-layout 1 28) = 1
+	not none? find ops-of subroutine-ir subroutine-layout 15
+]["subroutine lowering introduced storage or missed the ordinary postfix body"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][use [step [subroutine!]][]]
+} 'user "USE accepted a subroutine local"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"USE subroutine local reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][
+		use [value [integer!]][]
+		use [value [logic!]][]
+	]
+} 'user "USE reused one frame slot with conflicting types"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"conflicting USE local types reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local step [subroutine!]][
+		step: [step]
+		step
+	]
+} 'user "recursive subroutine unexpectedly compiled"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"recursive subroutine reported the wrong error class"
+
 print "PASS: typed postfix Red/System frontend"

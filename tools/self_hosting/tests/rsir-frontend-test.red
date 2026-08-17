@@ -362,6 +362,30 @@ assert all [
 	not none? find inline-copy-ops [3 4 6 3 4 6 4 5]
 ]["inline aggregate assignment did not use ordinary ADDRESS/MEMBER/LOAD/SET semantics"]
 
+aggregate-call-ir: compile-text {
+	Red/System []
+	pair!: alias struct! [left [integer!] right [integer!]]
+	copy-value: func [
+		input [pair! value]
+		return: [pair! value]
+	][return input]
+	forward: func [input [pair!] return: [pair! value]][copy-value input]
+} 'user
+assert binary? aggregate-call-ir [
+	"aggregate call/return lowering failed: " mold frontend/last-error
+]
+aggregate-call-layout: layout-of aggregate-call-ir
+assert all [
+	(function-word aggregate-call-ir aggregate-call-layout 1 12) = 4
+	(function-word aggregate-call-ir aggregate-call-layout 2 12) = 4
+	(word-at aggregate-call-ir (aggregate-call-layout/5 + 4)) = 1
+	(word-at aggregate-call-ir (aggregate-call-layout/5 + 12)) = 0
+	(ops-of aggregate-call-ir aggregate-call-layout) = [3 4 11 3 4 7 11]
+	(instruction-word aggregate-call-ir aggregate-call-layout 3 8) = 0
+	(instruction-word aggregate-call-ir aggregate-call-layout 6 8) = 1
+	(instruction-word aggregate-call-ir aggregate-call-layout 7 8) = 0
+]["aggregate VALUE escaped its signature into runtime stack flags"]
+
 assert none? compile-text {
 	Red/System []
 	left!: alias struct! [value [integer!]]

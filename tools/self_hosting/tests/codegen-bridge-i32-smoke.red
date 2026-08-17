@@ -15,6 +15,8 @@ check: func [condition [logic! none!] message [string! block!]][
 	unless condition [fail message]
 ]
 
+codegen-header-size: 48
+
 word-at: func [data [binary!] offset [integer!] /local high][
 	high: to integer! pick data (offset + 4)
 	(to integer! pick data (offset + 1))
@@ -45,7 +47,7 @@ generate: func [
 		(word-at artifact 36) >= 16
 	][name " image header is inconsistent"]
 	count: word-at artifact 12
-	function-at: 44
+	function-at: codegen-header-size
 	id: 0
 	while [id < count][
 		frame: word-at artifact (function-at + (id * 36) + 16)
@@ -61,7 +63,8 @@ void: generate "void" {Red/System [] fn: func [][]} 'user
 literal: generate "literal" {
 	Red/System [] fn: func [return: [integer!]][7]
 } 'user
-check (word-at literal/2 60) = 48 "literal used an unexpected frame shape"
+check (word-at literal/2 (codegen-header-size + 16)) = 48
+	"literal used an unexpected frame shape"
 
 generate "direct call" {
 	Red/System []
@@ -217,11 +220,44 @@ generate "fifth stack argument" {
 	main: func [return: [integer!]][fifth 1 2 3 4 9]
 } 'user
 
+generate "Win64 aggregate value ABI" {
+	Red/System []
+	tiny!: alias struct! [item [byte!]]
+	pair!: alias struct! [left [integer!] right [integer!]]
+	triple!: alias struct! [one [byte!] two [byte!] three [byte!]]
+	medium!: alias struct! [one [integer!] two [integer!] three [integer!]]
+	large!: alias struct! [
+		one [int64!] two [int64!] three [int64!] four [int64!] five [int64!]
+	]
+	direct: func [value [pair! value] return: [pair! value]][value]
+	hidden: func [value [medium! value] return: [medium! value]][value]
+	boundary: func [
+		a [integer!] b [integer!] c [integer!] d [integer!]
+		value [large! value] tail [integer!]
+		return: [large! value]
+	][value]
+	make: func [base [integer!] return: [triple! value]
+		/local value [triple! value]
+	][
+		value/one: as byte! base
+		value
+	]
+	combine: func [
+		left [triple! value] right [triple! value]
+		return: [integer!]
+	][(as integer! left/one) + (as integer! right/one)]
+	main: func [value [pair!] return: [integer!]][
+		direct value
+		combine make 1 make 2
+	]
+} 'user
+
 local: generate "inferred local" {
 	Red/System []
 	fn: func [return: [integer!] /local value][value: 7 value]
 } 'user
-check (word-at local/2 60) = 64 "local storage was mixed with the value stack"
+check (word-at local/2 (codegen-header-size + 16)) = 64
+	"local storage was mixed with the value stack"
 
 generate "explicit local assignment result" {
 	Red/System []
@@ -237,7 +273,7 @@ declared-local: generate "owned local aggregate" {
 		as integer! value/a
 	]
 } 'user
-check (word-at declared-local/2 60) = 80
+check (word-at declared-local/2 (codegen-header-size + 16)) = 80
 	"inline aggregate storage did not contribute its exact size to the frame"
 
 generate "local shadows global" {

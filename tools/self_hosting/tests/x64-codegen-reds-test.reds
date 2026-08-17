@@ -64,6 +64,24 @@ execute-selection?: func [
 	result = expected
 ]
 
+execute-first?: func [
+	image [byte-ptr!]
+	expected [integer!]
+	return: [logic!]
+	/local header [codegen-header!] fn [codegen-function!]
+		code [byte-ptr!] result [integer!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	if header/code-size > 4096 [return false]
+	code: VirtualAlloc (as byte-ptr! 0) 4096 3000h 40h
+	if null? code [return false]
+	copy-memory code (image + header/code-offset) header/code-size
+	result: run-selection (code + fn/code-offset)
+	VirtualFree code 0 8000h
+	result = expected
+]
+
 failures: 0
 output: allocate 1024
 void-ir: allocate 128
@@ -71,6 +89,7 @@ local-ir: allocate 256
 pointer-ir: allocate 128
 arithmetic-ir: allocate 256
 aggregate-ir: allocate 512
+abi-ir: allocate 1024
 tagged-ir: allocate 384
 array-ir: allocate 256
 branch-ir: allocate 256
@@ -82,8 +101,8 @@ image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
-	null? aggregate-ir null? tagged-ir null? array-ir null? branch-ir null? merge-ir
-	null? selection-ir
+	null? aggregate-ir null? abi-ir null? tagged-ir null? array-ir null? branch-ir
+	null? merge-ir null? selection-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -338,6 +357,105 @@ if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if fn/frame-size <> 64 [failures: failures + 1]
 	unless execute-selection? output 46 [failures: failures + 1]
+]
+
+; A 12-byte struct is copied into caller-owned argument storage and returned
+; through the hidden first pointer. The callee changes its copy to 70; adding
+; the untouched caller value 7 proves both directions of value isolation.
+put abi-ir 0 1
+put abi-ir 4 0
+put abi-ir 8 1
+put abi-ir 12 0
+put abi-ir 16 2
+put abi-ir 20 33
+put abi-ir 24 0
+put abi-ir 28 0
+
+put abi-ir 32 -2
+put abi-ir 36 0
+put abi-ir 40 0
+put abi-ir 44 0
+put abi-ir 48 3
+
+put abi-ir 52 -5
+put abi-ir 56 0
+put abi-ir 60 -5
+put abi-ir 64 0
+put abi-ir 68 -5
+put abi-ir 72 0
+
+put abi-ir 76 0
+put abi-ir 80 4
+put abi-ir 84 -5
+put abi-ir 88 0
+put abi-ir 92 0
+put abi-ir 96 0
+put abi-ir 100 0
+put abi-ir 104 1
+put abi-ir 108 25
+
+put abi-ir 112 4
+put abi-ir 116 2
+put abi-ir 120 1
+put abi-ir 124 4
+put abi-ir 128 1
+put abi-ir 132 1
+put abi-ir 136 2
+put abi-ir 140 0
+put abi-ir 144 8
+
+put abi-ir 148 1
+put abi-ir 152 1
+put abi-ir 156 1
+put abi-ir 160 1
+
+put-instruction abi-ir 164 3 1 1 0
+put-instruction abi-ir 180 6 0 0 0
+put-instruction abi-ir 196 1 -5 7 0
+put-instruction abi-ir 212 5 0 0 0
+put-instruction abi-ir 228 12 0 0 0
+put-instruction abi-ir 244 3 1 1 0
+put-instruction abi-ir 260 6 1 0 0
+put-instruction abi-ir 276 1 -5 8 0
+put-instruction abi-ir 292 5 0 0 0
+put-instruction abi-ir 308 12 0 0 0
+put-instruction abi-ir 324 3 1 1 0
+put-instruction abi-ir 340 6 2 0 0
+put-instruction abi-ir 356 1 -5 9 0
+put-instruction abi-ir 372 5 0 0 0
+put-instruction abi-ir 388 12 0 0 0
+put-instruction abi-ir 404 3 1 1 0
+put-instruction abi-ir 420 4 0 0 0
+put-instruction abi-ir 436 7 2 1 1
+put-instruction abi-ir 452 6 0 0 0
+put-instruction abi-ir 468 4 0 0 0
+put-instruction abi-ir 484 3 1 1 0
+put-instruction abi-ir 500 6 0 0 0
+put-instruction abi-ir 516 4 0 0 0
+put-instruction abi-ir 532 15 1 0 0
+put-instruction abi-ir 548 11 -5 0 0
+
+put-instruction abi-ir 564 3 1 1 0
+put-instruction abi-ir 580 6 0 0 0
+put-instruction abi-ir 596 1 -5 70 0
+put-instruction abi-ir 612 5 0 0 0
+put-instruction abi-ir 628 12 0 0 0
+put-instruction abi-ir 644 3 1 1 0
+put-instruction abi-ir 660 4 0 0 0
+put-instruction abi-ir 676 11 1 0 0
+abi-ir/693: as byte! 6Dh
+abi-ir/694: as byte! 61h
+abi-ir/695: as byte! 69h
+abi-ir/696: as byte! 6Eh
+abi-ir/697: as byte! 69h
+abi-ir/698: as byte! 64h
+
+size: x64-codegen/generate abi-ir 698 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	header: as codegen-header! output
+	if header/function-count <> 2 [failures: failures + 1]
+	unless execute-first? output 77 [failures: failures + 1]
 ]
 
 ; A tagged union stores its tag before the aligned shared payload. A write
@@ -698,6 +816,7 @@ free local-ir
 free pointer-ir
 free arithmetic-ir
 free aggregate-ir
+free abi-ir
 free tagged-ir
 free array-ir
 free branch-ir

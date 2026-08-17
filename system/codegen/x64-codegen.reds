@@ -584,6 +584,47 @@ x64-codegen: context [
 			not all [flags = INLINE inline-object-ref? ref types type-count]]
 	]
 
+	win64-register-size?: func [size [integer!] return: [logic!]][
+		any [size = 1 size = 2 size = 4 size = 8]
+	]
+
+	aggregate-size: func [
+		ref [integer!]
+		types members [byte-ptr!]
+		type-count [integer!]
+		return: [integer!]
+		/local size alignment [integer!]
+	][
+		unless aggregate-ref? ref types type-count [return 0]
+		size: 0
+		alignment: 0
+		either layout-type ref true types members type-count 0 :size :alignment [size][0]
+	]
+
+	win64-aggregate-width: func [
+		ref [integer!]
+		types members [byte-ptr!]
+		type-count [integer!]
+		return: [integer!]
+		/local size [integer!]
+	][
+		size: aggregate-size ref types members type-count
+		either win64-register-size? size [size][0]
+	]
+
+	win64-hidden-return?: func [
+		ref flags [integer!]
+		types members [byte-ptr!]
+		type-count [integer!]
+		return: [logic!]
+	][
+		all [
+			(flags and RETURN_VALUE) <> 0
+			aggregate-ref? ref types type-count
+			(win64-aggregate-width ref types members type-count) = 0
+		]
+	]
+
 	integer-type?: func [
 		ref [integer!]
 		types [byte-ptr!]
@@ -893,7 +934,8 @@ x64-codegen: context [
 	][
 		count: fn/parameter-count + fn/local-count
 		index: 1
-		used: 0
+		used: either win64-hidden-return? fn/return-type fn/flags
+			types members type-count [8][0]
 		while [index <= count][
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
@@ -904,11 +946,66 @@ x64-codegen: context [
 				alignment: 0
 				unless layout-type parameter/type true types members type-count 0
 					:size :alignment [return INVALID_IR]
+				if all [
+					index <= fn/parameter-count
+					not win64-register-size? size
+				][
+					size: 8
+					alignment: 8
+				]
 			]
 			if used > (2147483647 - size)[return INVALID_IR]
 			used: align (used + size) alignment
 			if used < 0 [return INVALID_IR]
 			offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
+			index: index + 1
+		]
+		align used 8
+	]
+
+	plan-call-results: func [
+		fn [rsir-function!]
+		instructions functions imports types members [byte-ptr!]
+		function-count import-count type-count used [integer!]
+		offsets [int-ptr!]
+		return: [integer!]
+		/local instruction [rsir-instruction!]
+			callee [rsir-function!] imported [rsir-import!]
+			index target import-id ref flags size [integer!]
+	][
+		index: 1
+		while [index <= fn/instruction-count][
+			offsets/index: 0
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			if instruction/op = OP_CALL [
+				target: instruction/a
+				ref: 0
+				flags: 0
+				either target > 0 [
+					if target > function-count [return INVALID_IR]
+					callee: as rsir-function! (functions
+						+ ((target - 1) * RSIR_FUNCTION_SIZE))
+					ref: callee/return-type
+					flags: callee/flags
+				][
+					import-id: 0 - target
+					if any [import-id <= 0 import-id > import-count][return INVALID_IR]
+					imported: as rsir-import! (imports
+						+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+					ref: imported/type
+					flags: imported/flags
+				]
+				if (flags and RETURN_VALUE) <> 0 [
+					size: aggregate-size ref types members type-count
+					if any [size <= 0 used > (2147483647 - size)][
+						return INVALID_IR
+					]
+					used: align (used + size) 16
+					if used < 0 [return INVALID_IR]
+					offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
+				]
+			]
 			index: index + 1
 		]
 		align used 8
@@ -1105,7 +1202,7 @@ x64-codegen: context [
 	compile-function: func [
 		fn [rsir-function!]
 		instructions [byte-ptr!]
-		stack-types stack-flags stack-kinds stack-tags storage-offsets
+		stack-types stack-flags stack-kinds stack-tags storage-offsets result-offsets
 			instruction-offsets instruction-depths entry-types entry-flags entry-kinds
 			entry-tags tag-next tag-slots tag-widths import-refs references [int-ptr!]
 		parameters functions imports globals types members switches image-data strings code
@@ -1129,14 +1226,18 @@ x64-codegen: context [
 			tag-head tag-count tag-capacity tag-base tag-width-value
 			operation left-ref right-ref left-flags right-flags
 			left-kind right-kind operation-width condition stride
-			encoded written frame-extra slot-bytes outgoing max-outgoing argument-index
-			argument-slot argument-width target return-ref first-parameter
+			encoded written frame-extra slot-bytes outgoing outgoing-end max-outgoing
+			argument-index
+			argument-slot argument-width physical-slot target return-ref first-parameter
 			parameter-count call-flags import-id global-id literal-end displacement
 			member-type member-flags member-offset source-width target-width
 			target-ref target-flags copy-size copy-align
 			result-index reference-id target-offset instruction-start case-index
-			operation-ref source-kind target-kind opcode parity keep-cast [integer!]
-			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy? [logic!]
+			operation-ref source-kind target-kind opcode parity keep-cast
+			aggregate-width value-size result-offset temp-offset hidden-shift
+			physical-count [integer!]
+			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
+			return-value? hidden-return? aggregate-argument? [logic!]
 	][
 		measure?: null? code
 		tag-capacity: 0
@@ -1152,21 +1253,28 @@ x64-codegen: context [
 		storage-count: fn/parameter-count + fn/local-count
 		storage-bytes: plan-storage fn parameters types members type-count storage-offsets
 		if storage-bytes < 0 [return storage-bytes]
+		storage-bytes: plan-call-results fn instructions functions imports types members
+			function-count import-count type-count storage-bytes result-offsets
+		if storage-bytes < 0 [return storage-bytes]
 		storage-slots: storage-bytes / 8
 		tag-base: storage-slots
 		if storage-slots > (2147483647 - tag-capacity)[return OUTPUT_FULL]
 		storage-slots: storage-slots + tag-capacity
 		tag-count: 0
-		if any [
-			fn/return-type <> 0
-			not measure?
+		return-value?: (fn/flags and RETURN_VALUE) <> 0
+		either return-value? [
+			if any [
+				fn/return-type = 0
+				(aggregate-size fn/return-type types members type-count) <= 0
+			][return INVALID_IR]
 		][
 			if all [
 				fn/return-type <> 0
-				not machine-value? fn/return-type
-					(fn/flags and RETURN_VALUE) types members type-count
+				not machine-value? fn/return-type 0 types members type-count
 			][return UNSUPPORTED]
 		]
+		hidden-return?: win64-hidden-return? fn/return-type fn/flags
+			types members type-count
 		if all [entry? fn/parameter-count <> 0][return UNSUPPORTED]
 
 		depth: 0
@@ -1195,33 +1303,53 @@ x64-codegen: context [
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 		]
+		if hidden-return? [
+			at: as byte-ptr! 0
+			if not measure? [at: code + written]
+			encoded: x64-encoder/frame-store at (capacity - written)
+				x64-encoder/RCX (0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
 
+		hidden-shift: either hidden-return? [1][0]
 		index: 1
 		while [index <= fn/parameter-count][
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
-			unless machine-value? parameter/type parameter/flags types members type-count [
-				return UNSUPPORTED
+			aggregate-argument?: parameter/flags = INLINE
+			either aggregate-argument? [
+				unless aggregate-ref? parameter/type types type-count [return INVALID_IR]
+				aggregate-width: win64-aggregate-width parameter/type
+					types members type-count
+				width: either aggregate-width = 0 [8][aggregate-width]
+				signed: 0
+				floating?: false
+			][
+				unless machine-value? parameter/type 0 types members type-count [
+					return UNSUPPORTED
+				]
+				width: value-width parameter/type 0 types members type-count
+				signed: either signed-type? parameter/type types type-count [1][0]
+				floating?: float-type? parameter/type types type-count
 			]
-			width: value-width parameter/type parameter/flags types members type-count
-			signed: either signed-type? parameter/type types type-count [1][0]
-			floating?: float-type? parameter/type types type-count
 			target-slot: storage-displacement storage-offsets index
-			either index <= 4 [
+			physical-slot: index + hidden-shift
+			either physical-slot <= 4 [
 				at: as byte-ptr! 0
 				if not measure? [at: code + written]
 				encoded: either floating? [
 					x64-encoder/xmm-frame-store at (capacity - written)
-						(index - 1) target-slot width
+						(physical-slot - 1) target-slot width
 				][
-					source-slot: argument-register index
+					source-slot: argument-register physical-slot
 					x64-encoder/frame-store at (capacity - written)
 						source-slot target-slot width
 				]
 				if encoded < 0 [return OUTPUT_FULL]
 				written: written + encoded
 			][
-				displacement: 48 + ((index - 5) * 8)
+				displacement: 48 + ((physical-slot - 5) * 8)
 				at: as byte-ptr! 0
 				if not measure? [at: code + written]
 				encoded: x64-encoder/frame-load at (capacity - written)
@@ -1398,9 +1526,20 @@ x64-codegen: context [
 							flags: parameter/flags
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
-							encoded: x64-encoder/frame-address at (capacity - written)
-								x64-encoder/RAX storage-displacement storage-offsets
-									instruction/b
+							encoded: either all [
+								instruction/b <= fn/parameter-count
+								parameter/flags = INLINE
+								(win64-aggregate-width parameter/type types members
+									type-count) = 0
+							][
+								x64-encoder/frame-load at (capacity - written)
+									x64-encoder/RAX
+									storage-displacement storage-offsets instruction/b 8 0
+							][
+								x64-encoder/frame-address at (capacity - written)
+									x64-encoder/RAX
+									storage-displacement storage-offsets instruction/b
+							]
 						]
 						instruction/a = GLOBAL_ADDRESS [
 							global-id: instruction/b
@@ -1865,76 +2004,230 @@ x64-codegen: context [
 								argument-index >= parameter-count]
 						]
 					][return INVALID_IR]
+					return-value?: (call-flags and RETURN_VALUE) <> 0
+					if return-value? [
+						unless all [
+							return-ref <> 0
+							aggregate-ref? return-ref types type-count
+							(aggregate-size return-ref types members type-count) > 0
+						][return INVALID_IR]
+					]
+					hidden-return?: win64-hidden-return? return-ref call-flags
+						types members type-count
+					hidden-shift: either hidden-return? [1][0]
+					if argument-index > (2147483647 - hidden-shift)[return OUTPUT_FULL]
+					physical-count: argument-index + hidden-shift
+					if physical-count > (((2147483647 - 32) / 8) + 4)[
+						return OUTPUT_FULL
+					]
 					outgoing: 32
-					if argument-index > 4 [outgoing: outgoing + ((argument-index - 4) * 8)]
+					if physical-count > 4 [
+						outgoing: outgoing + ((physical-count - 4) * 8)
+					]
 					if outgoing > max-outgoing [max-outgoing: outgoing]
 					result-index: depth - argument-index
+					temp-offset: align outgoing 16
+					if temp-offset < 0 [return OUTPUT_FULL]
+
+					; Copy indirect aggregates before loading volatile argument registers.
 					source-slot: 1
 					while [source-slot <= argument-index][
 						argument-slot: result-index + source-slot
 						ref: stack-types/argument-slot
 						flags: stack-flags/argument-slot
 						if stack-kinds/argument-slot <> VALUE [return INVALID_IR]
+						aggregate-argument?: false
 						either source-slot <= parameter-count [
 							parameter: as rsir-parameter! (parameters
 								+ ((first-parameter + source-slot - 1)
 									* RSIR_PARAMETER_SIZE))
-							unless all [
-								compatible-types? parameter/type ref types type-count
-								parameter/flags = flags
-							][return INVALID_IR]
-						][0]
-						unless machine-value? ref flags types members type-count [
-							return UNSUPPORTED
-						]
-						argument-width: value-width ref flags types members type-count
-						signed: either signed-type? ref types type-count [1][0]
-						floating?: float-type? ref types type-count
-						either source-slot <= 4 [
-							target-slot: argument-register source-slot
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: either floating? [
-								x64-encoder/xmm-frame-load at (capacity - written)
-									(source-slot - 1) slot-displacement
-										(storage-slots + argument-slot) argument-width
+							aggregate-argument?: parameter/flags = INLINE
+							either aggregate-argument? [
+								unless all [
+									flags = 0
+									aggregate-ref? ref types type-count
+									compatible-types? parameter/type ref types type-count
+								][return INVALID_IR]
 							][
-								x64-encoder/frame-load at (capacity - written)
-									target-slot slot-displacement
-										(storage-slots + argument-slot)
-									argument-width signed
+								unless all [
+									compatible-types? parameter/type ref types type-count
+									parameter/flags = flags
+								][return INVALID_IR]
+								unless machine-value? ref flags types members type-count [
+									return UNSUPPORTED
+								]
 							]
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-							if all [floating? (call-flags and VARIADIC) <> 0][
+						][
+							unless machine-value? ref flags types members type-count [
+								return UNSUPPORTED
+							]
+						]
+						if aggregate-argument? [
+							aggregate-width: win64-aggregate-width parameter/type
+								types members type-count
+							if aggregate-width = 0 [
+								value-size: aggregate-size parameter/type
+									types members type-count
+								if any [
+									value-size <= 0
+									temp-offset > (2147483647 - value-size)
+								][return OUTPUT_FULL]
+								outgoing-end: temp-offset + value-size
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/frame-load at (capacity - written)
-									target-slot slot-displacement
-										(storage-slots + argument-slot)
-									argument-width 0
+									x64-encoder/RCX slot-displacement
+										(storage-slots + argument-slot) 8 0
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/stack-address at (capacity - written)
+									x64-encoder/RDX temp-offset
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/copy-indirect at
+									(capacity - written) value-size
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								if outgoing-end > max-outgoing [max-outgoing: outgoing-end]
+								temp-offset: align outgoing-end 16
+								if temp-offset < 0 [return OUTPUT_FULL]
+							]
+						]
+						source-slot: source-slot + 1
+					]
+
+					temp-offset: align outgoing 16
+					source-slot: 1
+					while [source-slot <= argument-index][
+						argument-slot: result-index + source-slot
+						ref: stack-types/argument-slot
+						flags: stack-flags/argument-slot
+						aggregate-argument?: false
+						aggregate-width: 0
+						if source-slot <= parameter-count [
+							parameter: as rsir-parameter! (parameters
+								+ ((first-parameter + source-slot - 1)
+									* RSIR_PARAMETER_SIZE))
+							aggregate-argument?: parameter/flags = INLINE
+							if aggregate-argument? [
+								aggregate-width: win64-aggregate-width parameter/type
+									types members type-count
+							]
+						]
+						physical-slot: source-slot + hidden-shift
+						either aggregate-argument? [
+							either aggregate-width = 0 [
+								value-size: aggregate-size parameter/type
+									types members type-count
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/stack-address at (capacity - written)
+									x64-encoder/RAX temp-offset
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								argument-width: 8
+							][
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/frame-load at (capacity - written)
+									x64-encoder/RAX slot-displacement
+										(storage-slots + argument-slot) 8 0
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/load-indirect at
+									(capacity - written) aggregate-width 0
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								argument-width: aggregate-width
+							]
+							target-width: either argument-width = 8 [8][4]
+							either physical-slot <= 4 [
+								target-slot: argument-register physical-slot
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/move-register at (capacity - written)
+									target-slot x64-encoder/RAX target-width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							][
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/outgoing-store at (capacity - written)
+									(32 + ((physical-slot - 5) * 8))
+									target-width
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 							]
+							if aggregate-width = 0 [
+								outgoing-end: temp-offset + value-size
+								temp-offset: align outgoing-end 16
+							]
 						][
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: x64-encoder/frame-load at (capacity - written)
-								x64-encoder/RAX slot-displacement
-									(storage-slots + argument-slot)
-								argument-width signed
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							target-width: either argument-width = 8 [8][4]
-							encoded: x64-encoder/outgoing-store at (capacity - written)
-								(32 + ((source-slot - 5) * 8))
-								target-width
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
+							argument-width: value-width ref flags types members type-count
+							signed: either signed-type? ref types type-count [1][0]
+							floating?: float-type? ref types type-count
+							either physical-slot <= 4 [
+								target-slot: argument-register physical-slot
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: either floating? [
+									x64-encoder/xmm-frame-load at (capacity - written)
+										(physical-slot - 1) slot-displacement
+											(storage-slots + argument-slot) argument-width
+								][
+									x64-encoder/frame-load at (capacity - written)
+										target-slot slot-displacement
+											(storage-slots + argument-slot)
+										argument-width signed
+								]
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								if all [floating? (call-flags and VARIADIC) <> 0][
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/frame-load at (capacity - written)
+										target-slot slot-displacement
+											(storage-slots + argument-slot)
+										argument-width 0
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+								]
+							][
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/frame-load at (capacity - written)
+									x64-encoder/RAX slot-displacement
+										(storage-slots + argument-slot)
+									argument-width signed
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								target-width: either argument-width = 8 [8][4]
+								encoded: x64-encoder/outgoing-store at (capacity - written)
+									(32 + ((physical-slot - 5) * 8))
+									target-width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
 						]
 						source-slot: source-slot + 1
+					]
+					if hidden-return? [
+						result-offset: result-offsets/index
+						if result-offset >= 0 [return INVALID_IR]
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-address at (capacity - written)
+							x64-encoder/RCX result-offset
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
 					]
 					displacement: 0
 					if all [not measure? target > 0][
@@ -1964,28 +2257,56 @@ x64-codegen: context [
 					written: written + encoded
 					depth: result-index
 					if return-ref <> 0 [
-						flags: either (call-flags and RETURN_VALUE) <> 0 [1][0]
-						unless machine-value? return-ref flags types members type-count [
-							return UNSUPPORTED
-						]
 						depth: depth + 1
 						stack-types/depth: return-ref
-						stack-flags/depth: flags
+						stack-flags/depth: 0
 						stack-kinds/depth: VALUE
 						stack-tags/depth: 0
-						width: value-width return-ref flags types members type-count
-						floating?: float-type? return-ref types type-count
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: either floating? [
-							x64-encoder/xmm-frame-store at (capacity - written)
-								x64-encoder/XMM0 slot-displacement
-									(storage-slots + depth) width
+						either return-value? [
+							result-offset: result-offsets/index
+							aggregate-width: win64-aggregate-width return-ref
+								types members type-count
+							if any [
+								result-offset >= 0
+								all [aggregate-width = 0 not hidden-return?]
+							][return INVALID_IR]
+							if not hidden-return? [
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/frame-store at (capacity - written)
+									x64-encoder/RAX result-offset aggregate-width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-address at (capacity - written)
+								x64-encoder/RAX result-offset
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 8
 						][
-							target-width: either width = 8 [8][4]
-							x64-encoder/frame-store at (capacity - written)
-								x64-encoder/RAX slot-displacement (storage-slots + depth)
-								target-width
+							unless machine-value? return-ref 0 types members type-count [
+								return UNSUPPORTED
+							]
+							width: value-width return-ref 0 types members type-count
+							floating?: float-type? return-ref types type-count
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: either floating? [
+								x64-encoder/xmm-frame-store at (capacity - written)
+									x64-encoder/XMM0 slot-displacement
+										(storage-slots + depth) width
+							][
+								target-width: either width = 8 [8][4]
+								x64-encoder/frame-store at (capacity - written)
+									x64-encoder/RAX slot-displacement
+										(storage-slots + depth) target-width
+							]
 						]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
@@ -2750,13 +3071,32 @@ x64-codegen: context [
 				]
 				instruction/op = OP_RETURN [
 					return-ref: instruction/a
-					if return-ref <> fn/return-type [return INVALID_IR]
+					return-value?: (fn/flags and RETURN_VALUE) <> 0
+					hidden-return?: win64-hidden-return? fn/return-type fn/flags
+						types members type-count
+					if any [
+						return-ref <> fn/return-type
+						instruction/c <> 0
+						all [return-ref = 0 instruction/b <> 0]
+						all [entry? return-value?]
+					][return INVALID_IR]
 					if return-ref <> 0 [
 						if any [depth < 1 stack-kinds/depth <> VALUE][return INVALID_IR]
-						unless all [
-							compatible-types? return-ref stack-types/depth types type-count
-							stack-flags/depth = instruction/b
-						][return INVALID_IR]
+						either return-value? [
+							unless all [
+								instruction/b = 0
+								stack-flags/depth = 0
+								aggregate-ref? stack-types/depth types type-count
+								compatible-types? return-ref stack-types/depth types type-count
+							][return INVALID_IR]
+						][
+							unless all [
+								compatible-types? return-ref stack-types/depth types type-count
+								stack-flags/depth = instruction/b
+								machine-value? return-ref instruction/b
+									types members type-count
+							][return INVALID_IR]
+						]
 					]
 					either entry? [
 						if max-outgoing < 32 [max-outgoing: 32]
@@ -2794,20 +3134,68 @@ x64-codegen: context [
 						written: written + encoded
 					][
 						if return-ref <> 0 [
-							width: value-width return-ref instruction/b types members type-count
-							signed: either signed-type? return-ref types type-count [1][0]
-							floating?: float-type? return-ref types type-count
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: either floating? [
-								x64-encoder/xmm-frame-load at (capacity - written)
-									x64-encoder/XMM0 slot-displacement
-										(storage-slots + depth) width
+							either return-value? [
+								aggregate-width: win64-aggregate-width return-ref
+									types members type-count
+								either hidden-return? [
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/frame-load at (capacity - written)
+										x64-encoder/RCX slot-displacement
+											(storage-slots + depth) 8 0
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/frame-load at (capacity - written)
+										x64-encoder/RDX
+										(0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8 0
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									value-size: aggregate-size return-ref
+										types members type-count
+									if value-size <= 0 [return INVALID_IR]
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/copy-indirect at
+										(capacity - written) value-size
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/frame-load at (capacity - written)
+										x64-encoder/RAX
+										(0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8 0
+								][
+									if aggregate-width = 0 [return INVALID_IR]
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/frame-load at (capacity - written)
+										x64-encoder/RAX slot-displacement
+											(storage-slots + depth) 8 0
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/load-indirect at
+										(capacity - written) aggregate-width 0
+								]
 							][
-								x64-encoder/frame-load at (capacity - written)
-									x64-encoder/RAX slot-displacement
-										(storage-slots + depth) width
-									signed
+								width: value-width return-ref instruction/b
+									types members type-count
+								signed: either signed-type? return-ref types type-count [1][0]
+								floating?: float-type? return-ref types type-count
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: either floating? [
+									x64-encoder/xmm-frame-load at (capacity - written)
+										x64-encoder/XMM0 slot-displacement
+											(storage-slots + depth) width
+								][
+									x64-encoder/frame-load at (capacity - written)
+										x64-encoder/RAX slot-displacement
+											(storage-slots + depth) width signed
+								]
 							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
@@ -2872,7 +3260,7 @@ x64-codegen: context [
 			import-refs function-sizes function-frames instruction-offsets
 				instruction-depths entry-types entry-flags entry-kinds entry-tags
 				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
-				tag-widths storage-offsets references [int-ptr!]
+				tag-widths result-offsets storage-offsets references [int-ptr!]
 			type-data member-data import-data global-data function-data
 				parameter-data initializer-data switch-data instruction-data strings
 				function-instructions
@@ -3338,10 +3726,10 @@ x64-codegen: context [
 			return OUTPUT_FULL
 		]
 		scratch-count: header/import-count + (header/function-count * 3)
-		if header/instruction-count > ((2147483647 - scratch-count) / 13)[
+		if header/instruction-count > ((2147483647 - scratch-count) / 14)[
 			return OUTPUT_FULL
 		]
-		scratch-count: scratch-count + (header/instruction-count * 13)
+		scratch-count: scratch-count + (header/instruction-count * 14)
 		if parameter-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
 		scratch-count: scratch-count + parameter-count
 		if scratch-count > (2147483647 / 4)[return OUTPUT_FULL]
@@ -3364,7 +3752,8 @@ x64-codegen: context [
 		tag-next: stack-tags + header/instruction-count
 		tag-slots: tag-next + header/instruction-count
 		tag-widths: tag-slots + header/instruction-count
-		storage-offsets: tag-widths + header/instruction-count
+		result-offsets: tag-widths + header/instruction-count
+		storage-offsets: result-offsets + header/instruction-count
 		id: 1
 		while [id <= header/import-count][import-refs/id: 0 id: id + 1]
 
@@ -3388,6 +3777,7 @@ x64-codegen: context [
 			current-entry?: all [entry? id = header/entry-function]
 			function-size: compile-function ir-function function-instructions
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
+				(result-offsets + (next-instruction - 1))
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
@@ -3645,6 +4035,7 @@ x64-codegen: context [
 			current-entry?: all [entry? id = header/entry-function]
 			written: compile-function ir-function function-instructions
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
+				(result-offsets + (next-instruction - 1))
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))

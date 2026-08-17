@@ -489,6 +489,10 @@ This cadence keeps feedback fast without weakening the final gate.
 
 Normal work must use Stage1 or the designated existing bootstrap executable.
 The retired Rebol Stage0 path is not part of verification.
+Ordinary native checks use development mode: omit `-r`, keep the Stage1-built
+`libRedRT.dll` beside the output, and use at most `-O1` when an optimized build
+is needed. Release mode is reserved for gates that specifically require a
+standalone artifact; `-O2` is not part of bootstrap feedback.
 
 ## Current Baseline
 
@@ -530,6 +534,11 @@ Already retained:
   returns, and argument-ordinal Win64 GPR/XMM lowering;
 - an executable floating-point gate covering 50 scalar results through the
   same frontend, RSIR, codegen, linker, and generated-PE path;
+- one signature-driven Win64 aggregate classifier shared by internal and
+  imported direct calls, with 1/2/4/8-byte register values, caller-owned copies
+  for other parameter sizes, hidden result pointers, and stable nested-call
+  results; internal executable coverage spans structs and unions from one to
+  forty bytes, register and stack boundaries, and source-copy isolation;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
@@ -542,8 +551,9 @@ Still incomplete and therefore not an H0:
   typed/variadic ABI paths;
 - complete formal case/switch suite coverage, runtime diagnostic dispatch for
   fail, and dense switch jump-table selection;
-- complete aggregate, array, union, function-pointer, and initializer nodes;
-- complete Win64 typed/imported/variadic, callback, and aggregate ABI paths;
+- remaining aggregate and array initializers and function-pointer nodes;
+- complete Win64 imported/variadic aggregate, indirect-call, callback, and
+  formal ABI coverage;
 - system facilities, directives, output kinds, runtime image, and Red routines;
 - the full Red/System and Red correctness gates followed by H0/H1/H2.
 

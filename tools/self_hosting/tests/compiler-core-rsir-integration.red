@@ -37,6 +37,7 @@ source: all [
 unless source [
 	foreach candidate reduce [
 		join system/options/path %../fixtures/backend/rsir-empty-void.reds
+		join system/options/path %../tools/self_hosting/fixtures/backend/rsir-empty-void.reds
 		join system/options/path %tools/self_hosting/fixtures/backend/rsir-empty-void.reds
 		join system/options/path %../../tools/self_hosting/fixtures/backend/rsir-empty-void.reds
 	][
@@ -83,6 +84,7 @@ find-fixture: func [
 ][
 	foreach directory reduce [
 		join system/options/path %../fixtures/backend/
+		join system/options/path %../tools/self_hosting/fixtures/backend/
 		join system/options/path %tools/self_hosting/fixtures/backend/
 		join system/options/path %../../tools/self_hosting/fixtures/backend/
 		join system/options/path %../../../tools/self_hosting/fixtures/backend/
@@ -145,5 +147,7 @@ run-linked-fixture
 	%rsir-literal-array-exit.reds %rsir-literal-array-linked.exe "literal array"
 run-linked-fixture
 	%rsir-protect-exit.reds %rsir-protect-linked.exe "protected data"
+run-linked-fixture
+	%rsir-aggregate-abi-exit.reds %rsir-aggregate-abi-linked.exe "aggregate ABI"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

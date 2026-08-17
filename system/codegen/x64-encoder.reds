@@ -790,6 +790,39 @@ x64-encoder: context [
 		size
 	]
 
+	stack-address: func [
+		code [byte-ptr!]
+		capacity target displacement [integer!]
+		return: [integer!]
+		/local displacement-size size mode [integer!] at [byte-ptr!]
+	][
+		unless all [target >= 0 target <= 15 displacement >= 0][return -1]
+		displacement-size: case [
+			displacement = 0 [0]
+			fits-i8? displacement [1]
+			true [4]
+		]
+		mode: case [
+			displacement-size = 0 [0]
+			displacement-size = 1 [1]
+			true [2]
+		]
+		size: 4 + displacement-size
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! rex true target RSP
+		at/2: as byte! 8Dh
+		at/3: as byte! modrm mode target RSP
+		at/4: as byte! 24h
+		case [
+			displacement-size = 1 [at/5: as byte! displacement]
+			displacement-size = 4 [write-i32 (at + 4) displacement]
+			true [0]
+		]
+		size
+	]
+
 	rip-address: func [
 		code [byte-ptr!]
 		capacity target displacement [integer!]

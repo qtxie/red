@@ -2504,19 +2504,17 @@ compiler-rsir-frontend: context [
 		params [block!]
 		locals [block!]
 		return: [block!]
-		/local record return-ref parameters flags
+		/local record return-ref parameters
 			parameter count expected expected-flags position-after
 	][
 		either target > 0 [
 			record: skip functions ((target - 1) * 10)
 			return-ref: record/6
 			parameters: record/7
-			flags: record/9
 		][
 			record: skip imports (((0 - target) - 1) * 10)
 			return-ref: record/8
 			parameters: record/9
-			flags: record/10
 		]
 		count: 0
 		parameter: parameters
@@ -2536,7 +2534,7 @@ compiler-rsir-frontend: context [
 		]
 		emit instructions reduce [call-op target count return-ref]
 		last-type: return-ref
-		last-flags: either return-ref = 0 [0][flags and return-value-flag]
+		last-flags: 0
 		position-after
 	]
 
@@ -3013,7 +3011,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local after
+		/local after return-flags
 	][
 		unless function-active? [
 			fail ERROR-CONTEXT "RETURN used outside a function"
@@ -3024,14 +3022,14 @@ compiler-rsir-frontend: context [
 		after: stack-value next position scope uses instructions params locals
 			expression-value
 		if last-stopped? [return after]
+		return-flags: either (function-flags and return-value-flag) <> 0 [
+			inline-flag
+		][0]
 		unless all [
 			last-type <> 0
-			coerce-stack function-return
-				(function-flags and return-value-flag) instructions false
+			coerce-stack function-return return-flags instructions false
 		][fail ERROR-REFERENCE "RETURN value does not match the function type"]
-		emit instructions reduce [
-			return-op function-return (function-flags and return-value-flag) 0
-		]
+		emit instructions reduce [return-op function-return last-flags 0]
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -4094,11 +4092,13 @@ compiler-rsir-frontend: context [
 				if last-type = 0 [
 					fail ERROR-UNSUPPORTED "function result is missing"
 				]
-				return-flags: flags and return-value-flag
+				return-flags: either (flags and return-value-flag) <> 0 [
+					inline-flag
+				][0]
 				unless coerce-stack return-ref return-flags instructions false [
 					fail ERROR-REFERENCE "function result type does not match signature"
 				]
-				emit instructions reduce [return-op return-ref return-flags 0]
+				emit instructions reduce [return-op return-ref last-flags 0]
 			]
 		]
 		count: to integer! (((length? instructions) - before) / 16)

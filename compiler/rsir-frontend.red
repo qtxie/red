@@ -118,6 +118,7 @@ compiler-rsir-frontend: context [
 	reference-op: 20
 	index-op: 21
 	tag-op: 22
+	overflow-op: 23
 
 	; Operation IDs follow the language families, not source spellings or x64
 	; encodings. The postfix stream preserves the specified left-to-right order.
@@ -175,6 +176,7 @@ compiler-rsir-frontend: context [
 	function-flags: 0
 	function-active?: false
 	loops: make block! 8
+	overflows: make block! 8
 	; Function-local lexical constructs are lowered while the postfix stream is
 	; built. USE slots stay in the frame table, while their names are tombstoned
 	; when the lexical body ends; subroutine bodies are expanded at call sites.
@@ -2325,6 +2327,23 @@ compiler-rsir-frontend: context [
 			or ((to integer! data/4) << 24)
 	]
 
+	integer-literal-since: func [
+		output [binary!]
+		offset [integer!]
+		return: [integer! none!]
+		/local instruction ref value high
+	][
+		unless (length? output) = (offset + 16) [return none]
+		instruction: at output (offset + 1)
+		unless (little-word instruction) = literal-op [return none]
+		ref: little-word skip instruction 4
+		unless (ref-kind ref) = 'i32 [return none]
+		value: little-word skip instruction 8
+		high: little-word skip instruction 12
+		unless high = (either value < 0 [-1][0]) [return none]
+		value
+	]
+
 	float-literal?: func [value return: [logic!]][
 		any [
 			float? value
@@ -2604,8 +2623,10 @@ compiler-rsir-frontend: context [
 
 	stack-binary: func [
 		operation left left-flags [integer!]
+		right-start [integer!]
 		instructions [binary!]
 		/local right right-flags left-kind right-kind common valid? comparison?
+			scope-state anchor overflow-data right-literal shift-limit tracked?
 	][
 		right: last-type
 		right-flags: last-flags
@@ -2689,7 +2710,41 @@ compiler-rsir-frontend: context [
 			true [valid?: false]
 		]
 		unless valid? [fail ERROR-REFERENCE "incompatible binary operands"]
-		emit instructions reduce [binary-op operation 0 0]
+
+		anchor: 0
+		overflow-data: 0
+		tracked?: false
+		unless empty? overflows [
+			scope-state: last overflows
+			if block? scope-state [
+				case [
+					all [operation <= 3 integer-kind? left-kind][
+						tracked?: true
+					]
+					all [
+						operation >= 4
+						operation <= 6
+						left-kind = 'i32
+					][tracked?: true]
+					operation = 7 [
+						right-literal: integer-literal-since instructions right-start
+						if integer? right-literal [
+							shift-limit: either find [i64 u64] left-kind [63][31]
+							if all [right-literal > 0 right-literal <= shift-limit][
+								tracked?: true
+								overflow-data: right-literal
+							]
+						]
+					]
+					true [0]
+				]
+				if tracked? [
+					anchor: scope-state/1
+					scope-state/3: scope-state/3 + 1
+				]
+			]
+		]
+		emit instructions reduce [binary-op operation anchor overflow-data]
 		last-float-literal?: false
 		either comparison? [
 			last-type: -11
@@ -2849,10 +2904,13 @@ compiler-rsir-frontend: context [
 			fail ERROR-CONTEXT ["recursive subroutine " mold name]
 		]
 		append subroutine-stack name
+		; A subroutine is called code even though its body is expanded here.
+		append/only overflows none
 		body-context: either value-context = statement-value [
 			statement-value
 		][tail-value]
 		stack-block body scope uses instructions params locals body-context
+		remove back tail overflows
 		remove find subroutine-stack name
 		next position
 	]
@@ -3515,6 +3573,59 @@ compiler-rsir-frontend: context [
 			position: next-position
 			last-stopped?: all [tail? position stopped?]
 		]
+	]
+
+	stack-overflow: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local scope-state stopped? jump-patch target
+	][
+		unless all [(length? position) >= 2 block? position/2][
+			fail ERROR-UNSUPPORTED "OVERFLOW? requires a body block"
+		]
+		scope-state: reduce [
+			instruction-here instructions
+			(length? instructions) + 5
+			0
+		]
+		append/only overflows scope-state
+		emit instructions reduce [overflow-op 0 0 0]
+		stack-block position/2 scope uses instructions params locals statement-value
+		stopped?: last-stopped?
+		remove back tail overflows
+
+		either scope-state/3 = 0 [
+			unless stopped? [
+				emit instructions reduce [literal-op -11 0 0]
+			]
+		][
+			either stopped? [
+				target: instruction-here instructions
+				patch-control instructions scope-state/2 target
+				emit instructions reduce [literal-op -11 1 0]
+			][
+				emit instructions reduce [literal-op -11 0 0]
+				jump-patch: emit-control instructions jump-op 0
+				target: instruction-here instructions
+				patch-control instructions scope-state/2 target
+				emit instructions reduce [literal-op -11 1 0]
+				patch-control instructions jump-patch instruction-here instructions
+			]
+		]
+
+		either all [scope-state/3 = 0 stopped?][
+			last-type: 0
+			last-flags: 0
+			last-stopped?: true
+		][
+			last-type: -11
+			last-flags: 0
+			last-stopped?: false
+		]
+		last-float-literal?: false
+		skip position 2
 	]
 
 	stack-if: func [
@@ -4631,6 +4742,9 @@ compiler-rsir-frontend: context [
 				value-context
 		]
 		case [
+			value = 'overflow? [
+				stack-overflow position scope uses instructions params locals
+			]
 			value = 'if [
 				next-position: stack-if position scope uses instructions params locals
 				last-float-literal?: false
@@ -4900,7 +5014,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local operation left left-flags infix-target
+		/local operation left left-flags infix-target right-start
 	][
 		position: stack-primary position scope uses instructions params locals value-context
 		while [not tail? position][
@@ -4908,9 +5022,10 @@ compiler-rsir-frontend: context [
 			either integer? operation [
 				left: last-type
 				left-flags: last-flags
+				right-start: length? instructions
 				position: stack-primary next position scope uses instructions params locals
 					expression-value
-				stack-binary operation left left-flags instructions
+				stack-binary operation left left-flags right-start instructions
 			][
 				infix-target: none
 				if any [word? position/1 path? position/1][
@@ -5513,6 +5628,7 @@ compiler-rsir-frontend: context [
 		function-flags: flags
 		function-active?: true
 		clear loops
+		clear overflows
 		clear use-local-slots
 		clear subroutine-bodies
 		clear subroutine-stack
@@ -5539,6 +5655,7 @@ compiler-rsir-frontend: context [
 		]
 		count: to integer! (((length? instructions) - before) / 16)
 		function-active?: false
+		clear overflows
 		clear use-local-slots
 		clear subroutine-bodies
 		clear subroutine-stack
@@ -5567,6 +5684,7 @@ compiler-rsir-frontend: context [
 		function-flags: 0
 		function-active?: false
 		clear loops
+		clear overflows
 		stack-module values scope uses
 	]
 
@@ -5626,6 +5744,7 @@ compiler-rsir-frontend: context [
 			clear module-locals
 			last-float-literal?: false
 			clear function-code
+			clear overflows
 			clear initializers
 			clear switches
 			clear strings

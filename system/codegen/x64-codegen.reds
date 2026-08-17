@@ -191,6 +191,7 @@ x64-codegen: context [
 	OP_REFERENCE: 20
 	OP_INDEX:     21
 	OP_TAG:       22
+	OP_OVERFLOW:  23
 
 	NOT_OPERATION:       1
 	ADD_OPERATION:       1
@@ -926,6 +927,162 @@ x64-codegen: context [
 
 	slot-displacement: func [slot [integer!] return: [integer!]][
 		0 - (x64-encoder/BASE_FRAME_SIZE + (slot * 8))
+	]
+
+	jump-condition-to: func [
+		code [byte-ptr!]
+		capacity condition target current [integer!]
+		return: [integer!]
+		/local displacement [integer!]
+	][
+		displacement: either null? code [0][(target - current) - 6]
+		x64-encoder/jump-condition code capacity condition displacement
+	]
+
+	division-overflow-check: func [
+		code [byte-ptr!]
+		capacity target current [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written tail-size [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/compare-immediate at (capacity - written)
+			x64-encoder/RAX 80000000h
+		if encoded < 0 [return encoded]
+		written: written + encoded
+
+		tail-size: x64-encoder/compare-immediate null 0 x64-encoder/RCX -1
+		if tail-size < 0 [return tail-size]
+		tail-size: tail-size + 6
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/jump-condition at (capacity - written) 5 tail-size
+		if encoded < 0 [return encoded]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/compare-immediate at (capacity - written)
+			x64-encoder/RCX -1
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: jump-condition-to at (capacity - written) 4 target
+			(current + written)
+		if encoded < 0 [return encoded]
+		written + encoded
+	]
+
+	shift-overflow-check: func [
+		code [byte-ptr!]
+		capacity source-width operation-width signed count target current [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written alignment original mode [integer!]
+	][
+		unless all [
+			any [source-width = 1 source-width = 2 source-width = 4 source-width = 8]
+			any [operation-width = 4 operation-width = 8]
+			source-width <= operation-width
+			any [signed = 0 signed = 1]
+			count > 0 count < (operation-width * 8)
+		][return -1]
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/move-register at (capacity - written)
+			x64-encoder/RDX x64-encoder/RAX operation-width
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		original: x64-encoder/RAX
+		alignment: (operation-width - source-width) * 8
+		if alignment > 0 [
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/shift-immediate at (capacity - written)
+				x64-encoder/RDX 4 alignment operation-width
+			if encoded < 0 [return encoded]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/move-register at (capacity - written)
+				x64-encoder/R8 x64-encoder/RDX operation-width
+			if encoded < 0 [return encoded]
+			written: written + encoded
+			original: x64-encoder/R8
+		]
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/shift-immediate at (capacity - written)
+			x64-encoder/RDX 4 count operation-width
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		mode: either signed = 1 [7][5]
+		encoded: x64-encoder/shift-immediate at (capacity - written)
+			x64-encoder/RDX mode count operation-width
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/binary-register at (capacity - written)
+			39h x64-encoder/RDX original operation-width
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: jump-condition-to at (capacity - written) 5 target
+			(current + written)
+		if encoded < 0 [return encoded]
+		written + encoded
+	]
+
+	narrow-overflow-check: func [
+		code [byte-ptr!]
+		capacity width signed target current [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written lower upper condition [integer!]
+	][
+		unless all [any [width = 1 width = 2] any [signed = 0 signed = 1]][
+			return -1
+		]
+		upper: case [
+			width = 1 [either signed = 1 [127][255]]
+			true [either signed = 1 [32767][65535]]
+		]
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/compare-immediate at (capacity - written)
+			x64-encoder/RAX upper
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		condition: either signed = 1 [15][7]
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: jump-condition-to at (capacity - written) condition target
+			(current + written)
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		if signed = 1 [
+			lower: either width = 1 [-128][-32768]
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: x64-encoder/compare-immediate at (capacity - written)
+				x64-encoder/RAX lower
+			if encoded < 0 [return encoded]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not null? code [at: code + written]
+			encoded: jump-condition-to at (capacity - written) 12 target
+				(current + written)
+			if encoded < 0 [return encoded]
+			written: written + encoded
+		]
+		written
 	]
 
 	emit-variant-tags: func [
@@ -1834,6 +1991,7 @@ x64-codegen: context [
 		global-reference-count literal-size frame-size [int-ptr!]
 		return: [integer!]
 		/local instruction [rsir-instruction!]
+			overflow-scope [rsir-instruction!]
 			switch-case [rsir-switch!]
 			parameter [rsir-parameter!]
 			callee [rsir-function!]
@@ -1861,10 +2019,11 @@ x64-codegen: context [
 			operation-ref source-kind target-kind opcode parity keep-cast
 			aggregate-width value-size result-offset temp-offset hidden-shift
 			physical-count call-mode list-size list-capacity signature-ref
-			record-offset [integer!]
+			record-offset overflow-anchor base-depth overflow-limit [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
-			typed-call? custom-call? list-call? unstable-stack? atomic-old? [logic!]
+			typed-call? custom-call? list-call? unstable-stack? atomic-old?
+			tracked? [logic!]
 	][
 		measure?: null? code
 		tag-capacity: 0
@@ -4346,9 +4505,21 @@ x64-codegen: context [
 					written: written + encoded
 					stack-tags/depth: 0
 				]
+				instruction/op = OP_OVERFLOW [
+					unless all [
+						instruction/b = 0 instruction/c = 0
+						any [
+							instruction/a = 0
+							all [
+								instruction/a > index
+								instruction/a <= fn/instruction-count
+							]
+						]
+					][return INVALID_IR]
+				]
 				instruction/op = OP_BINARY [
 					if any [
-						instruction/b <> 0 instruction/c <> 0
+						instruction/b < 0 instruction/c < 0
 						instruction/a < ADD_OPERATION
 						instruction/a > LESS_EQUAL_OPERATION
 						depth < 2
@@ -4442,6 +4613,60 @@ x64-codegen: context [
 						float-type? left-ref types type-count
 						float-type? right-ref types type-count
 					]
+					tracked?: instruction/b <> 0
+					either tracked? [
+						overflow-anchor: instruction/b
+						unless all [overflow-anchor < index overflow-anchor > 0][
+							return INVALID_IR
+						]
+						overflow-scope: as rsir-instruction! (instructions
+							+ ((overflow-anchor - 1) * RSIR_INSTRUCTION_SIZE))
+						target: overflow-scope/a
+						unless all [
+							overflow-scope/op = OP_OVERFLOW
+							overflow-scope/b = 0 overflow-scope/c = 0
+							target > index target <= fn/instruction-count
+							not floating?
+						][return INVALID_IR]
+						valid?: false
+						case [
+							operation <= MULTIPLY_OPERATION [
+								valid?: all [
+									instruction/c = 0
+									integer-type? left-ref types type-count
+								]
+							]
+							operation <= MODULO_OPERATION [
+								valid?: all [
+									instruction/c = 0 left-kind = 5
+								]
+							]
+							operation = SHIFT_LEFT_OPERATION [
+								overflow-limit: either any [
+									left-kind = 7 left-kind = 8
+								][63][31]
+								valid?: all [
+									instruction/c > 0
+									instruction/c <= overflow-limit
+								]
+							]
+							true [valid?: false]
+						]
+						unless valid? [return INVALID_IR]
+						base-depth: instruction-depths/overflow-anchor
+						unless all [base-depth >= 0 base-depth <= (depth - 2)][
+							return INVALID_IR
+						]
+						if measure? [
+							unless merge-target target base-depth fn/instruction-count
+								instruction-depths entry-types entry-flags entry-kinds entry-tags
+								stack-types stack-flags stack-kinds stack-tags types type-count [
+								return INVALID_IR
+							]
+						]
+					][
+						if instruction/c <> 0 [return INVALID_IR]
+					]
 					unless all [
 						machine-value? left-ref left-flags types members type-count
 							layouts member-offsets
@@ -4500,6 +4725,11 @@ x64-codegen: context [
 						reference-type? ref types type-count
 					][8][4]
 					signed: either signed-type? ref types type-count [1][0]
+					target-offset: 0
+					if all [tracked? not measure?][
+						target-offset: instruction-start
+							+ (instruction-offsets/target - instruction-offsets/index)
+					]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
@@ -4539,6 +4769,27 @@ x64-codegen: context [
 						]
 					]
 
+					if tracked? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: case [
+							all [
+								operation >= DIVIDE_OPERATION
+								operation <= MODULO_OPERATION
+							][
+								division-overflow-check at (capacity - written)
+									target-offset written
+							]
+							operation = SHIFT_LEFT_OPERATION [
+								shift-overflow-check at (capacity - written) width
+									operation-width signed instruction/c target-offset written
+							]
+							true [0]
+						]
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					case [
@@ -4551,8 +4802,13 @@ x64-codegen: context [
 								29h x64-encoder/RAX x64-encoder/RDX operation-width
 						]
 						operation = MULTIPLY_OPERATION [
-							encoded: x64-encoder/multiply-register at (capacity - written)
-								x64-encoder/RAX x64-encoder/RDX operation-width
+							encoded: either all [tracked? signed = 0][
+								x64-encoder/unsigned-multiply-register at
+									(capacity - written) x64-encoder/RDX operation-width
+							][
+								x64-encoder/multiply-register at (capacity - written)
+									x64-encoder/RAX x64-encoder/RDX operation-width
+							]
 						]
 						all [
 							operation >= DIVIDE_OPERATION
@@ -4562,8 +4818,13 @@ x64-codegen: context [
 								operation-width signed
 						]
 						operation = SHIFT_LEFT_OPERATION [
-							encoded: x64-encoder/shift-register at (capacity - written)
-								x64-encoder/RAX 4 operation-width
+							encoded: either tracked? [
+								x64-encoder/shift-immediate at (capacity - written)
+									x64-encoder/RAX 4 instruction/c operation-width
+							][
+								x64-encoder/shift-register at (capacity - written)
+									x64-encoder/RAX 4 operation-width
+							]
 						]
 						operation = SHIFT_RIGHT_OPERATION [
 							encoded: x64-encoder/shift-register at (capacity - written)
@@ -4593,6 +4854,24 @@ x64-codegen: context [
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+
+					if all [tracked? operation <= MULTIPLY_OPERATION][
+						condition: either signed = 1 [0][2]
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: jump-condition-to at (capacity - written) condition
+							target-offset written
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						if width < 4 [
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: narrow-overflow-check at (capacity - written)
+								width signed target-offset written
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+					]
 
 					if operation = REMAINDER_OPERATION [
 						at: as byte-ptr! 0

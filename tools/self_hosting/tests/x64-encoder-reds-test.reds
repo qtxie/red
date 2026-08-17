@@ -57,6 +57,10 @@ size: x64-encoder/multiply-register (code + offset) (128 - offset)
 	x64-encoder/RAX x64-encoder/RDX 8
 if size <> 4 [failures: failures + 1]
 offset: offset + size
+size: x64-encoder/unsigned-multiply-register (code + offset) (128 - offset)
+	x64-encoder/RDX 8
+if size <> 3 [failures: failures + 1]
+offset: offset + size
 size: x64-encoder/multiply-immediate (code + offset) (128 - offset)
 	x64-encoder/RDX x64-encoder/RDX 4 8
 if size <> 4 [failures: failures + 1]
@@ -95,6 +99,7 @@ offset: offset + size
 operations: #{
 	01D0
 	480FAFC2
+	48F7E2
 	486BD204
 	D3F8
 	C1F81F
@@ -106,7 +111,7 @@ operations: #{
 	99F7F9
 	4863C9
 }
-if any [offset <> 42 (compare-memory code (as byte-ptr! operations) offset) <> 0][
+if any [offset <> 45 (compare-memory code (as byte-ptr! operations) offset) <> 0][
 	failures: failures + 1
 ]
 
@@ -341,6 +346,9 @@ if (x64-encoder/xmm-outgoing-store code 128 x64-encoder/XMM0 0 2) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/binary-register code 128 02h 0 1 4) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/unsigned-multiply-register code 128 x64-encoder/RAX 2) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/condition-result code 128 16) <> -1 [failures: failures + 1]

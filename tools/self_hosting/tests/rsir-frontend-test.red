@@ -85,6 +85,19 @@ function-word: func [ir layout id field][
 	word-at ir (layout/4 + ((id - 1) * 36) + field)
 ]
 
+function-instruction-word: func [
+	ir layout function-id instruction-id field
+	/local id global-id
+][
+	global-id: instruction-id
+	id: 1
+	while [id < function-id][
+		global-id: global-id + function-word ir layout id 32
+		id: id + 1
+	]
+	instruction-word ir layout global-id field
+]
+
 type-word: func [ir layout id field][
 	word-at ir (layout/1 + ((id - 1) * 20) + field)
 ]
@@ -2024,6 +2037,217 @@ assert none? compile-text {
 } 'user "system/cpu accepted a non-pointer register value"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid CPU register value reported the wrong error class"
+
+overflow-ir: compile-text {
+	Red/System []
+	overflows-internally: func [return: [integer!]][2147483647 + 1]
+	checked: func [
+		value count [integer!]
+		return: [logic!]
+		/local result [integer!] flag [logic!]
+	][
+		flag: overflow? [
+			result: value + (1 + 2)
+			result: result << 3
+			result: result << count
+			result: result / -1
+			result: overflows-internally
+		]
+		flag
+	]
+} 'user
+assert binary? overflow-ir [
+	"overflow? lowering failed: " mold frontend/last-error
+]
+overflow-layout: layout-of overflow-ir
+overflow-anchor: 0
+overflow-anchor-count: 0
+checked-count: function-word overflow-ir overflow-layout 2 32
+repeat id checked-count [
+	if (function-instruction-word overflow-ir overflow-layout 2 id 0) = 23 [
+		overflow-anchor: id
+		overflow-anchor-count: overflow-anchor-count + 1
+	]
+]
+assert overflow-anchor-count = 1
+	"overflow? did not lower to one direct lexical scope anchor"
+assert all [
+	(function-instruction-word overflow-ir overflow-layout 1 3 0) = 15
+	(function-instruction-word overflow-ir overflow-layout 1 3 8) = 0
+	(function-instruction-word overflow-ir overflow-layout 1 3 12) = 0
+]["ordinary called function math was marked as caller overflow work"]
+
+tracked-adds: 0
+tracked-divisions: 0
+literal-shifts: 0
+runtime-shifts: 0
+repeat id checked-count [
+	if (function-instruction-word overflow-ir overflow-layout 2 id 0) = 15 [
+		operation: function-instruction-word overflow-ir overflow-layout 2 id 4
+		anchor: function-instruction-word overflow-ir overflow-layout 2 id 8
+		data: function-instruction-word overflow-ir overflow-layout 2 id 12
+		case [
+			operation = 1 [
+				if all [anchor = overflow-anchor data = 0][
+					tracked-adds: tracked-adds + 1
+				]
+			]
+			operation = 4 [
+				if all [anchor = overflow-anchor data = 0][
+					tracked-divisions: tracked-divisions + 1
+				]
+			]
+			operation = 7 [
+				either all [anchor = overflow-anchor data = 3][
+					literal-shifts: literal-shifts + 1
+				][
+					if all [anchor = 0 data = 0][
+						runtime-shifts: runtime-shifts + 1
+					]
+				]
+			]
+			true [0]
+		]
+	]
+]
+overflow-target: function-instruction-word overflow-ir overflow-layout 2
+	overflow-anchor 4
+assert all [
+	tracked-adds = 2
+	tracked-divisions = 1
+	literal-shifts = 1
+	runtime-shifts = 1
+	overflow-target > overflow-anchor
+	overflow-target <= checked-count
+	(function-instruction-word overflow-ir overflow-layout 2 overflow-target 0) = 1
+	(function-instruction-word overflow-ir overflow-layout 2 overflow-target 4) = -11
+	(function-instruction-word overflow-ir overflow-layout 2 overflow-target 8) = 1
+]["overflow? did not retain direct typed operation and true-edge metadata"]
+
+nested-overflow-ir: compile-text {
+	Red/System []
+	fn: func [
+		return: [logic!]
+		/local value [integer!] inner? [logic!]
+	][
+		overflow? [
+			inner?: overflow? [value: 2147483647 + 1]
+			value: value + 0
+		]
+	]
+} 'user
+assert binary? nested-overflow-ir [
+	"nested overflow? lowering failed: " mold frontend/last-error
+]
+nested-layout: layout-of nested-overflow-ir
+nested-anchors: make block! 2
+nested-binaries: make block! 2
+repeat id function-word nested-overflow-ir nested-layout 1 32 [
+	operation: function-instruction-word nested-overflow-ir nested-layout 1 id 0
+	case [
+		operation = 23 [append nested-anchors id]
+		operation = 15 [
+			append nested-binaries function-instruction-word
+				nested-overflow-ir nested-layout 1 id 8
+		]
+		true [0]
+	]
+]
+assert all [
+	(length? nested-anchors) = 2
+	nested-binaries = reduce [nested-anchors/2 nested-anchors/1]
+]["nested overflow? scopes were not kept lexically independent"]
+
+subroutine-overflow-ir: compile-text {
+	Red/System []
+	fn: func [
+		return: [logic!]
+		/local value [integer!] step [subroutine!]
+	][
+		step: [value: 2147483647 + 1]
+		overflow? [step]
+	]
+} 'user
+assert binary? subroutine-overflow-ir [
+	"subroutine overflow? isolation failed: " mold frontend/last-error
+]
+subroutine-overflow-layout: layout-of subroutine-overflow-ir
+subroutine-anchor: 0
+subroutine-binary: 0
+repeat id function-word subroutine-overflow-ir subroutine-overflow-layout 1 32 [
+	operation: function-instruction-word subroutine-overflow-ir
+		subroutine-overflow-layout 1 id 0
+	case [
+		operation = 23 [subroutine-anchor: id]
+		operation = 15 [subroutine-binary: id]
+		true [0]
+	]
+]
+assert all [
+	subroutine-anchor > 0
+	(function-instruction-word subroutine-overflow-ir subroutine-overflow-layout
+		1 subroutine-anchor 4) = 0
+	subroutine-binary > 0
+	(function-instruction-word subroutine-overflow-ir subroutine-overflow-layout
+		1 subroutine-binary 8) = 0
+]["expanded subroutine math leaked into its caller's overflow? scope"]
+
+untracked-overflow-ir: compile-text {
+	Red/System []
+	fn: func [
+		count [integer!]
+		return: [logic!]
+		/local value [integer!] real [float!]
+	][
+		overflow? [
+			real: 1.0 + 2.0
+			value: value << count
+		]
+	]
+} 'user
+assert binary? untracked-overflow-ir [
+	"untracked overflow? lowering failed: " mold frontend/last-error
+]
+untracked-layout: layout-of untracked-overflow-ir
+untracked-anchor: 0
+untracked-binaries: 0
+repeat id function-word untracked-overflow-ir untracked-layout 1 32 [
+	operation: function-instruction-word untracked-overflow-ir
+		untracked-layout 1 id 0
+	case [
+		operation = 23 [untracked-anchor: id]
+		operation = 15 [
+			untracked-binaries: untracked-binaries + 1
+			assert all [
+				(function-instruction-word untracked-overflow-ir untracked-layout
+					1 id 8) = 0
+				(function-instruction-word untracked-overflow-ir untracked-layout
+					1 id 12) = 0
+			]["runtime shift or float math received overflow metadata"]
+		]
+		true [0]
+	]
+]
+assert all [
+	untracked-anchor > 0
+	untracked-binaries = 2
+	(function-instruction-word untracked-overflow-ir untracked-layout
+		1 untracked-anchor 4) = 0
+]["an overflow? body without tracked math did not remain a direct false result"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][overflow? 1]
+} 'user "overflow? accepted a non-block body"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"invalid overflow? body reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][overflow?]
+} 'user "overflow? accepted a missing body"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"missing overflow? body reported the wrong error class"
 
 atomic-ir: compile-text {
 	Red/System []

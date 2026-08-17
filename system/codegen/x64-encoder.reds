@@ -205,6 +205,27 @@ x64-encoder: context [
 		size
 	]
 
+	unsigned-multiply-register: func [
+		code [byte-ptr!]
+		capacity source width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			source >= 0 source <= 15
+			any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) 4 source
+		size: either prefix = 40h [2][3]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! F7h
+		at/2: as byte! modrm 3 4 source
+		size
+	]
+
 	multiply-immediate: func [
 		code [byte-ptr!]
 		capacity target source value width [integer!]

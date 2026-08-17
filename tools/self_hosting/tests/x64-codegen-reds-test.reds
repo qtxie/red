@@ -104,6 +104,7 @@ recursive-value-ir: allocate 144
 stack-ir: allocate 160
 system-ir: allocate 256
 atomic-ir: allocate 272
+overflow-ir: allocate 272
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -114,7 +115,7 @@ if any [
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
-	null? stack-ir null? system-ir null? atomic-ir
+	null? stack-ir null? system-ir null? atomic-ir null? overflow-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -1299,6 +1300,64 @@ if (x64-codegen/generate system-ir 170 output 1024 0) <> x64-codegen/INVALID_IR 
 	failures: failures + 1
 ]
 
+; false or overflow? [2147483647 + 1]. The overflow edge enters with the
+; scope's original stack depth, leaving the outer logic operand intact.
+put overflow-ir 0 1
+put overflow-ir 4 0
+put overflow-ir 8 0
+put overflow-ir 12 0
+put overflow-ir 16 1
+put overflow-ir 20 11
+put overflow-ir 24 0
+put overflow-ir 28 0
+
+put overflow-ir 32 0
+put overflow-ir 36 2
+put overflow-ir 40 -11
+put overflow-ir 44 0
+put overflow-ir 48 0
+put overflow-ir 52 0
+put overflow-ir 56 0
+put overflow-ir 60 0
+put overflow-ir 64 11
+
+put-instruction overflow-ir 68 1 -11 0 0
+put-instruction overflow-ir 84 23 9 0 0
+put-instruction overflow-ir 100 1 -5 2147483647 0
+put-instruction overflow-ir 116 1 -5 1 0
+put-instruction overflow-ir 132 15 1 2 0
+put-instruction overflow-ir 148 12 0 0 0
+put-instruction overflow-ir 164 1 -11 0 0
+put-instruction overflow-ir 180 16 10 0 0
+put-instruction overflow-ir 196 1 -11 1 0
+put-instruction overflow-ir 212 15 10 0 0
+put-instruction overflow-ir 228 11 -11 0 0
+overflow-ir/245: as byte! 66h
+overflow-ir/246: as byte! 6Eh
+
+size: x64-codegen/generate overflow-ir 246 output 1024 0
+if any [size <= 0 not execute-first? output 1][failures: failures + 1]
+put overflow-ir 108 1
+size: x64-codegen/generate overflow-ir 246 output 1024 0
+if any [size <= 0 not execute-first? output 0][failures: failures + 1]
+put overflow-ir 108 2147483647
+
+put overflow-ir 88 0
+if (x64-codegen/generate overflow-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put overflow-ir 88 9
+put overflow-ir 140 5
+if (x64-codegen/generate overflow-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put overflow-ir 140 2
+put overflow-ir 144 1
+if (x64-codegen/generate overflow-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put overflow-ir 144 0
+
 ; Atomic math consumes an ordinary pointer and value pair. The /old bit is
 ; semantic metadata on the native operation, not a source-shaped instruction.
 put atomic-ir 0 1
@@ -1378,6 +1437,7 @@ free recursive-value-ir
 free stack-ir
 free system-ir
 free atomic-ir
+free overflow-ir
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

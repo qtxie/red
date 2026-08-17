@@ -36,6 +36,11 @@ linker: context [
 	cpu-class: 		'IA-32							;-- default target
 	verbose: 		0								;-- logs verbosity level
 	codegen-error: none
+	codegen-header-size: 48
+	codegen-global-size: 28
+	codegen-protected: 2
+	data-reference-base: -2147483648
+	rodata-reference-base: -1073741824
 
 	read-codegen-word: func [data [binary!] offset [integer!] /local high][
 		if any [offset < 0 (offset + 4) > (length? data)][return none]
@@ -67,16 +72,18 @@ linker: context [
 		job [object!]
 		image [binary!]
 		/local size kind entry function-count global-count import-count reference-count names-size
-			code-offset code-size data-size functions-size globals-size imports-size refs-size
-			globals-start imports-start refs-start names-start data-offset expected remainder id index record
+			code-offset code-size rodata-size data-size functions-size globals-size imports-size
+			refs-size globals-start imports-start refs-start names-start rodata-offset data-offset
+			expected remainder id index record
 			name-offset name-size function-offset function-size frame-size bitmap-offset
-			bitmap-size global-offset global-size first-reference count-reference reference-id reference
+			bitmap-size global-offset global-size global-flags first-reference count-reference
+			reference-id reference
 			name-bytes name symbols refs data-refs imports functions library-offset library-size
-			external-offset external-size library external last-library code data sections
-			data-reference
+			external-offset external-size library external last-library code rodata data sections
+			data-reference symbol-type
 	][
 		codegen-error: none
-		unless all [object? job binary? image (length? image) >= 44][
+		unless all [object? job binary? image (length? image) >= codegen-header-size][
 			return codegen-fail "native codegen returned a truncated image"
 		]
 		size: read-codegen-word image 0
@@ -90,27 +97,29 @@ linker: context [
 		code-size: read-codegen-word image 32
 		data-size: read-codegen-word image 36
 		global-count: read-codegen-word image 40
+		rodata-size: read-codegen-word image 44
 		unless all [
 			integer? size integer? kind integer? entry integer? function-count
 			integer? import-count integer? reference-count integer? names-size
 			integer? code-offset integer? code-size integer? data-size integer? global-count
+			integer? rodata-size
 			size = length? image
 			kind = 3
 			function-count > 0
 			entry > 0 entry <= function-count
 			global-count >= 0 import-count >= 0 reference-count >= 0 names-size > 0
-			code-size > 0 data-size >= 0
+			code-size > 0 rodata-size >= 0 data-size >= 0
 		][return codegen-fail "native codegen returned an invalid image header"]
 
-		if function-count > ((size - 44) / 36) [
+		if function-count > ((size - codegen-header-size) / 36) [
 			return codegen-fail "native codegen function table exceeds its image"
 		]
 		functions-size: function-count * 36
-		globals-start: 44 + functions-size
-		if global-count > ((size - globals-start) / 24) [
+		globals-start: codegen-header-size + functions-size
+		if global-count > ((size - globals-start) / codegen-global-size) [
 			return codegen-fail "native codegen global table exceeds its image"
 		]
-		globals-size: global-count * 24
+		globals-size: global-count * codegen-global-size
 		imports-start: globals-start + globals-size
 		if import-count > ((size - imports-start) / 24) [
 			return codegen-fail "native codegen import table exceeds its image"
@@ -134,7 +143,13 @@ linker: context [
 		if code-size > (size - code-offset) [
 			return codegen-fail "native codegen code exceeds its image"
 		]
-		data-offset: code-offset + code-size
+		rodata-offset: code-offset + code-size
+		remainder: rodata-offset // 4
+		if remainder <> 0 [rodata-offset: rodata-offset + 4 - remainder]
+		unless rodata-size <= (size - rodata-offset) [
+			return codegen-fail "native codegen read-only data exceeds its image"
+		]
+		data-offset: rodata-offset + rodata-size
 		remainder: data-offset // 4
 		if remainder <> 0 [data-offset: data-offset + 4 - remainder]
 		unless all [data-size <= (size - data-offset) size = (data-offset + data-size)][
@@ -144,7 +159,7 @@ linker: context [
 		symbols: make hash! ((function-count + global-count) * 2)
 		id: 1
 		while [id <= function-count][
-			record: 44 + ((id - 1) * 36)
+			record: codegen-header-size + ((id - 1) * 36)
 			name-offset: read-codegen-word image record
 			name-size: read-codegen-word image (record + 4)
 			function-offset: read-codegen-word image (record + 8)
@@ -190,11 +205,19 @@ linker: context [
 					return codegen-fail "native function reference is invalid"
 				]
 				either negative? reference [
-					data-reference: (negate reference) - 1
-					unless all [
-						data-reference >= 0 data-reference <= (data-size - 8)
-					][return codegen-fail "native function data reference exceeds data"]
-					append data-refs data-reference + 1
+					either reference < rodata-reference-base [
+						data-reference: reference - data-reference-base
+						unless data-reference <= (data-size - 8) [
+							return codegen-fail "native function reference exceeds data"
+						]
+						append data-refs data-reference + 1
+					][
+						data-reference: reference - rodata-reference-base
+						unless data-reference <= (rodata-size - 8) [
+							return codegen-fail "native function reference exceeds read-only data"
+						]
+						append data-refs negate (data-reference + 1)
+					]
 				][
 					unless reference <= (code-size - 4) [
 						return codegen-fail "native function reference exceeds code"
@@ -212,21 +235,31 @@ linker: context [
 
 		id: 1
 		while [id <= global-count][
-			record: globals-start + ((id - 1) * 24)
+			record: globals-start + ((id - 1) * codegen-global-size)
 			name-offset: read-codegen-word image record
 			name-size: read-codegen-word image (record + 4)
 			global-offset: read-codegen-word image (record + 8)
 			global-size: read-codegen-word image (record + 12)
 			first-reference: read-codegen-word image (record + 16)
 			count-reference: read-codegen-word image (record + 20)
+			global-flags: read-codegen-word image (record + 24)
 			unless all [
 				integer? name-offset integer? name-size name-size >= 0
 				name-offset <= (names-size - name-size)
-				integer? global-offset global-offset >= 16
+				integer? global-offset
 				integer? global-size global-size >= 0
-				global-offset <= (data-size - global-size)
+				integer? global-flags any [global-flags = 0 global-flags = codegen-protected]
 				integer? first-reference integer? count-reference count-reference >= 0
 			][return codegen-fail "native codegen returned an invalid global record"]
+			either global-flags = codegen-protected [
+				unless all [
+					global-offset >= 0 global-offset <= (rodata-size - global-size)
+				][return codegen-fail "native constant exceeds read-only data"]
+			][
+				unless all [
+					global-offset >= 16 global-offset <= (data-size - global-size)
+				][return codegen-fail "native global exceeds writable data"]
+			]
 			if any [
 				all [count-reference = 0 first-reference <> 0]
 				all [count-reference > 0 any [
@@ -258,11 +291,19 @@ linker: context [
 					return codegen-fail "native global reference is invalid"
 				]
 				either negative? reference [
-					data-reference: (negate reference) - 1
-					unless all [
-						data-reference >= 0 data-reference <= (data-size - 8)
-					][return codegen-fail "native global reference exceeds data"]
-					append data-refs data-reference + 1
+					either reference < rodata-reference-base [
+						data-reference: reference - data-reference-base
+						unless data-reference <= (data-size - 8) [
+							return codegen-fail "native global reference exceeds data"
+						]
+						append data-refs data-reference + 1
+					][
+						data-reference: reference - rodata-reference-base
+						unless data-reference <= (rodata-size - 8) [
+							return codegen-fail "native global reference exceeds read-only data"
+						]
+						append data-refs negate (data-reference + 1)
+					]
 				][
 					unless reference <= (code-size - 4) [
 						return codegen-fail "native global reference exceeds code"
@@ -271,8 +312,9 @@ linker: context [
 				]
 				reference-id: reference-id + 1
 			]
+			symbol-type: either global-flags = codegen-protected ['constant]['global]
 			append symbols name
-			append/only symbols reduce ['global global-offset refs data-refs]
+			append/only symbols reduce [symbol-type global-offset refs data-refs]
 			id: id + 1
 		]
 
@@ -328,10 +370,15 @@ linker: context [
 		]
 
 		code: copy/part at image (code-offset + 1) code-size
+		rodata: copy/part at image (rodata-offset + 1) rodata-size
 		data: copy/part at image (data-offset + 1) data-size
-		sections: make block! 6
+		sections: make block! 8
 		append sections 'code
 		append/only sections reduce ['- code]
+		unless empty? rodata [
+			append sections 'rodata
+			append/only sections reduce ['- rodata]
+		]
 		append sections 'data
 		append/only sections reduce ['- data]
 		unless empty? imports [

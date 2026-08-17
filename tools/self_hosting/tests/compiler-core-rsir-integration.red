@@ -143,5 +143,7 @@ run-linked-fixture
 	%rsir-tagged-union-exit.reds %rsir-tagged-union-linked.exe "tagged union"
 run-linked-fixture
 	%rsir-literal-array-exit.reds %rsir-literal-array-linked.exe "literal array"
+run-linked-fixture
+	%rsir-protect-exit.reds %rsir-protect-linked.exe "protected data"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

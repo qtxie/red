@@ -27,9 +27,10 @@ system-dialect: context [
 ; Independently constructed image for main -> answer and answer: 42.
 artifact: make binary! 300
 emit artifact [300 3 2 2 1 2 41 224 54 20 1]
+emit artifact [0]
 emit artifact [0 8 35 19 32 0 16 0 0]
 emit artifact [8 4 0 35 32 0 16 0 0]
-emit artifact [12 6 16 4 1 1]
+emit artifact [12 6 16 4 1 1 0]
 emit artifact [18 12 30 11 2 1]
 emit artifact [17 27]
 append artifact to binary! "identitymainanswerkernel32.dllExitProcess"
@@ -71,13 +72,17 @@ compiler-system-job/job-set job 'build-suffix none
 compiler-system-job/job-set job 'verbosity 0
 
 bad-global: copy artifact
-change/part at bad-global 125 int-to-bin/to-bin32 0 4
+change/part at bad-global 129 int-to-bin/to-bin32 0 4
 if linker/load-codegen job bad-global [fail "linker accepted a global inside the bitmap"]
 
 bad-global: copy artifact
-change/part at bad-global 117 int-to-bin/to-bin32 0 4
-change/part at bad-global 121 int-to-bin/to-bin32 8 4
+change/part at bad-global 121 int-to-bin/to-bin32 0 4
+change/part at bad-global 125 int-to-bin/to-bin32 8 4
 if linker/load-codegen job bad-global [fail "linker accepted a duplicate global symbol"]
+
+bad-global: copy artifact
+change/part at bad-global 145 int-to-bin/to-bin32 1 4
+if linker/load-codegen job bad-global [fail "linker accepted an invalid global section flag"]
 
 unless linker/load-codegen job artifact [fail linker/codegen-error]
 answer: select job/symbols 'answer
@@ -88,6 +93,25 @@ data-section: select job/sections 'data
 unless all [block? data-section data-section/2 = #{000000000000000000000000000000002A000000}][
 	fail "native global initializer changed in the linker data section"
 ]
+
+protected-artifact: copy/part artifact 280
+append protected-artifact #{2A000000}
+append/dup protected-artifact 0 16
+change/part at protected-artifact 37 int-to-bin/to-bin32 16 4
+change/part at protected-artifact 45 int-to-bin/to-bin32 4 4
+change/part at protected-artifact 129 int-to-bin/to-bin32 0 4
+change/part at protected-artifact 145 int-to-bin/to-bin32 2 4
+unless linker/load-codegen job protected-artifact [fail linker/codegen-error]
+answer: select job/symbols 'answer
+unless all [block? answer answer/1 = 'constant answer/2 = 0 answer/3 = [18]][
+	fail "native constant did not become a direct read-only linker symbol"
+]
+rodata-section: select job/sections 'rodata
+data-section: select job/sections 'data
+unless all [
+	block? rodata-section rodata-section/2 = #{2A000000}
+	block? data-section data-section/2 = #{00000000000000000000000000000000}
+][fail "native read-only and writable data were not split directly"]
 linked: linker/build job
 unless all [file? linked exists? linked][fail ["linker did not write output: " mold linked]]
 unless linked = output [fail ["linker wrote an unexpected path: " linked]]
@@ -104,4 +128,23 @@ if find job/sections 'reloc [
 status: call/wait to-local-file linked
 unless status = 42 [fail ["linked executable returned " status " instead of 42"]]
 
-print ["PASS: compact parameter/global image -> direct PE linker -> exit 42" linked]
+; The same code reference now derives the constant address and writes one byte.
+; The PE page, rather than a compiler-side qualifier, must reject the write.
+fault-artifact: copy protected-artifact
+change/part at fault-artifact 173 int-to-bin/to-bin32 18 4
+change/part at fault-artifact 240 #{488D0D00000000C60100} 10
+unless linker/load-codegen job fault-artifact [fail linker/codegen-error]
+fault-output: clean-path to file! rejoin [root %build/self-hosting/compact-linker-protect-fault.exe]
+set [output-dir output-name] split-path fault-output
+compiler-system-job/job-set job 'build-prefix output-dir
+compiler-system-job/job-set job 'build-basename output-name
+fault-linked: linker/build job
+unless all [file? fault-linked fault-linked = fault-output exists? fault-linked][
+	fail "linker did not write the protected-write fault probe"
+]
+status: call/wait to-local-file fault-linked
+unless status = -1073741819 [
+	fail ["write to read-only data returned " status " instead of an access violation"]
+]
+
+print ["PASS: compact writable/read-only image -> direct PE linker -> exit 42" linked]

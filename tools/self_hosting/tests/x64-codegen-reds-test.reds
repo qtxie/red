@@ -113,7 +113,7 @@ size: x64-codegen/generate void-ir 86 output 1024 0
 if size <> 132 [failures: failures + 1]
 if size > 0 [
 	header: as codegen-header! output
-	fn: as codegen-function! (output + 44)
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if any [
 		header/size <> size
 		header/module-kind <> 1
@@ -174,7 +174,7 @@ if size <= 0 [
 ]
 if size > 0 [
 	header: as codegen-header! output
-	fn: as codegen-function! (output + 44)
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if any [
 		header/code-size <= 17
 		fn/frame-size <> 64
@@ -259,7 +259,7 @@ arithmetic-ir/166: as byte! 6Eh
 size: x64-codegen/generate arithmetic-ir 166 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
-	fn: as codegen-function! (output + 44)
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if any [fn/frame-size <> 48 fn/code-size <= 17][failures: failures + 1]
 ]
 put arithmetic-ir 88 -11
@@ -335,7 +335,7 @@ aggregate-ir/458: as byte! 6Eh
 size: x64-codegen/generate aggregate-ir 458 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
-	fn: as codegen-function! (output + 44)
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if fn/frame-size <> 64 [failures: failures + 1]
 	unless execute-selection? output 46 [failures: failures + 1]
 ]
@@ -391,7 +391,7 @@ tagged-ir/314: as byte! 6Eh
 size: x64-codegen/generate tagged-ir 314 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
-	fn: as codegen-function! (output + 44)
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if fn/frame-size <> 64 [failures: failures + 1]
 	unless execute-selection? output 74 [failures: failures + 1]
 ]
@@ -640,10 +640,37 @@ if size > 0 [
 		+ image-global/data-offset)
 	if any [
 		header/global-count <> 1
+		header/rodata-size <> 0
+		image-global/flags <> 0
+		image-global/data-offset <> x64-codegen/BITMAP_SIZE
 		image-global/data-size <> 12
 		array-values/1 <> 10 array-values/2 <> 20 array-values/3 <> 30
 	][failures: failures + 1]
 ]
+put array-ir 64 3
+size: x64-codegen/generate array-ir 184 output 1024 0
+if size <= 0 [
+	failures: failures + 1
+]
+if size > 0 [
+	header: as codegen-header! output
+	image-global: as codegen-global! (output + x64-codegen/IMAGE_HEADER_SIZE
+		+ x64-codegen/IMAGE_FUNCTION_SIZE)
+	array-values: as int-ptr! (output + header/size - header/data-size
+		- header/rodata-size + image-global/data-offset)
+	if any [
+		header/rodata-size <> 12
+		header/data-size <> x64-codegen/BITMAP_SIZE
+		image-global/flags <> x64-codegen/PROTECTED
+		image-global/data-offset <> 0
+		array-values/1 <> 10 array-values/2 <> 20 array-values/3 <> 30
+	][failures: failures + 1]
+]
+put array-ir 64 4
+if (x64-codegen/generate array-ir 184 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put array-ir 64 1
 put array-ir 40 3
 if (x64-codegen/generate array-ir 184 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1

@@ -541,6 +541,112 @@ symbolic-ops: ops-of symbolic-ir symbolic-layout
 assert not none? find symbolic-ops [3 20 11]
 	"runtime function address did not use ADDRESS/REFERENCE"
 
+protect-ir: compile-text {
+	Red/System []
+	nums: protect [10 20 30]
+	truth: protect true
+	msg: protect "Red"
+	bin: protect #{C0FFEE}
+	cast: protect as byte-ptr! "AB"
+	typed: protect as int32! 7
+	RATE: protect 60
+	HALF: protect 0.5
+	LETTER: protect #"Z"
+	table: [1 RATE 3]
+	read-rate: func [return: [integer!]][RATE + nums/2]
+	read-half: func [return: [float!]][HALF]
+	read-letter: func [return: [byte!]][LETTER]
+	read-truth: func [return: [logic!]][truth]
+} 'user
+assert binary? protect-ir ["PROTECT lowering failed: " mold frontend/last-error]
+protect-layout: layout-of protect-ir
+assert all [
+	(word-at protect-ir 24) = 9
+	(global-word protect-ir protect-layout 1 12) = 3
+	(global-word protect-ir protect-layout 1 16) = 0
+	(global-word protect-ir protect-layout 1 20) = 3
+	(global-word protect-ir protect-layout 2 8) = -11
+	(global-word protect-ir protect-layout 2 12) = 2
+	(global-word protect-ir protect-layout 2 16) = 3
+	(global-word protect-ir protect-layout 2 20) = 1
+	(global-word protect-ir protect-layout 3 8) = -13
+	(global-word protect-ir protect-layout 3 12) = 2
+	(global-word protect-ir protect-layout 4 12) = 3
+	(global-word protect-ir protect-layout 5 12) = 2
+	(global-word protect-ir protect-layout 6 12) = 2
+	(global-word protect-ir protect-layout 7 12) = 1
+	(global-word protect-ir protect-layout 8 12) = 3
+	(global-word protect-ir protect-layout 9 12) = 3
+]["PROTECT did not preserve the scalar/reference storage distinction"]
+assert all [
+	(initializer-word protect-ir protect-layout 4 0) = 1
+	(initializer-word protect-ir protect-layout 4 4) = 1
+	(initializer-word protect-ir protect-layout 5 0) = 2
+	(initializer-word protect-ir protect-layout 5 4) = 2
+	(initializer-word protect-ir protect-layout 5 8) = 8
+	(initializer-word protect-ir protect-layout 7 0) = 2
+	(initializer-word protect-ir protect-layout 7 4) = 2
+	(initializer-word protect-ir protect-layout 7 8) = 9
+	(initializer-word protect-ir protect-layout 8 0) = 1
+	(initializer-word protect-ir protect-layout 8 4) = 7
+	(initializer-word protect-ir protect-layout 10 4) = 60
+]["protected values did not use the ordinary flat initializer stream"]
+protect-literals: make block! 32
+repeat id word-at protect-ir 20 [
+	if (instruction-word protect-ir protect-layout id 0) = 1 [
+		repend protect-literals [
+			instruction-word protect-ir protect-layout id 4
+			instruction-word protect-ir protect-layout id 8
+			instruction-word protect-ir protect-layout id 12
+		]
+	]
+]
+assert all [
+	not none? find protect-literals [-5 60 0]
+	not none? find protect-literals [-10 0 1071644672]
+	not none? find protect-literals [-2 90 0]
+]["protected scalar constants were not folded to ordinary typed literals"]
+
+assert none? compile-text {
+	Red/System [] RATE: protect 60 RATE: 61 fn: func [][]
+} 'user "a protected scalar was reassigned"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"protected scalar reassignment reported the wrong error class"
+
+assert none? compile-text {
+	Red/System [] values: protect [1 2] values/1: 0 fn: func [][]
+} 'user "a protected path was written directly"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"protected path write reported the wrong error class"
+
+assert binary? compile-text {
+	Red/System []
+	values: protect [1 2]
+	shadow: func [return: [integer!] /local values][values: 3 values: values + 1 values]
+	derived-write: func [/local p [int-ptr!]][p: values p/1: 0]
+} 'user ["local shadow or derived pointer lost ordinary value semantics: " mold frontend/last-error]
+
+assert none? compile-text {
+	Red/System []
+	ns: context [values: protect [1 2]]
+	ns/values/1: 0
+	fn: func [][]
+} 'user "a namespace-qualified protected path was written"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"qualified protected path write reported the wrong error class"
+
+assert none? compile-text {
+	Red/System [] value: protect (1 + 2) fn: func [][]
+} 'user "PROTECT accepted a computed expression"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"nonliteral PROTECT value reported the wrong error class"
+
+assert none? compile-text {
+	Red/System [] fn: func [][value: protect 1]
+} 'user "PROTECT was accepted inside a function"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"local PROTECT reported the wrong error class"
+
 assert none? compile-text {
 	Red/System []
 	empty!: alias struct! []

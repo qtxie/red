@@ -98,6 +98,7 @@ codegen-header!: alias struct! [
 	code-size       [integer!]
 	data-size       [integer!]
 	global-count    [integer!]
+	rodata-size     [integer!]
 ]
 
 codegen-function!: alias struct! [
@@ -119,6 +120,7 @@ codegen-global!: alias struct! [
 	data-size       [integer!]
 	first-reference [integer!]
 	reference-count [integer!]
+	flags           [integer!]
 ]
 
 codegen-import!: alias struct! [
@@ -142,9 +144,9 @@ x64-codegen: context [
 	RSIR_SWITCH_SIZE:      12
 	RSIR_INSTRUCTION_SIZE: 16
 
-	IMAGE_HEADER_SIZE:   44
+	IMAGE_HEADER_SIZE:   48
 	IMAGE_FUNCTION_SIZE: 36
-	IMAGE_GLOBAL_SIZE:   24
+	IMAGE_GLOBAL_SIZE:   28
 	IMAGE_IMPORT_SIZE:   24
 	BITMAP_SIZE:         16
 
@@ -153,7 +155,11 @@ x64-codegen: context [
 	VARIABLE_FLAGS: 56
 	FUNCTION_FLAGS: 511
 	INLINE:          1
+	PROTECTED:       2
 	TAGGED_UNION:    1
+	DATA_REFERENCE_TAG:   80000000h
+	RODATA_REFERENCE_TAG: C0000000h
+	REFERENCE_OFFSET_MASK: 3FFFFFFFh
 	SCALAR_INITIALIZER:  1
 	ADDRESS_INITIALIZER: 2
 	BYTES_INITIALIZER:   3
@@ -714,7 +720,7 @@ x64-codegen: context [
 				target: as rsir-global! (globals
 					+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
 				all [
-					target/flags = INLINE
+					(target/flags and INLINE) <> 0
 					any [
 						expected = 0
 						compatible-types? expected target/type types type-count
@@ -1402,7 +1408,7 @@ x64-codegen: context [
 							global: as rsir-global! (globals
 								+ ((global-id - 1) * RSIR_GLOBAL_SIZE))
 							ref: global/type
-							flags: global/flags
+							flags: global/flags and INLINE
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: x64-encoder/rip-address at (capacity - written)
@@ -2870,13 +2876,15 @@ x64-codegen: context [
 			type-data member-data import-data global-data function-data
 				parameter-data initializer-data switch-data instruction-data strings
 				function-instructions
-				name names-output code data-output cursor finish scratch [byte-ptr!]
+				name names-output code rodata-output data-output cursor finish scratch
+				[byte-ptr!]
 			type-bytes member-bytes import-bytes global-bytes function-bytes
 				parameter-bytes initializer-bytes switch-bytes instruction-bytes remaining
 				member-count parameter-count initializer-count next-parameter
 				strings-size metadata-size function-names-size global-names-size
 				import-names-size names-size code-offset code-size function-code-size
-				literal-size data-offset image-data-size total-size scratch-count
+				literal-size rodata-offset data-offset image-rodata-size image-data-size
+				total-size scratch-count
 				id next-instruction next-offset instruction-count function-size entry-size
 				code-cursor name-cursor global-size global-align global-offset
 				global-reference-count used-import-count import-reference-count
@@ -2884,7 +2892,7 @@ x64-codegen: context [
 				library-offset external-offset output-import-id exit-reference-id
 				reference-id record-offset variable-mode written base initializer-id
 				slot-width item-offset [integer!]
-			entry? current-entry? array? [logic!]
+			entry? current-entry? array? protected? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
 			return INVALID_IR
@@ -3028,8 +3036,8 @@ x64-codegen: context [
 			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
 			if any [
 				not valid-type-ref? ir-global/type header/type-count
-				ir-global/flags < 0 ir-global/flags > INLINE
-				all [ir-global/flags = INLINE
+				ir-global/flags < 0 ir-global/flags > (INLINE or PROTECTED)
+				all [(ir-global/flags and INLINE) <> 0
 					not inline-object-ref? ir-global/type type-data header/type-count]
 				ir-global/first-initializer < 0 ir-global/initializer-count < 0
 				all [ir-global/initializer-count = 0
@@ -3106,7 +3114,7 @@ x64-codegen: context [
 			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
 			base: canonical-type ir-global/type type-data header/type-count
 			array?: all [
-				ir-global/flags = INLINE
+				(ir-global/flags and INLINE) <> 0
 				base > 0
 				(logical-kind base type-data header/type-count) = -7
 			]
@@ -3158,14 +3166,15 @@ x64-codegen: context [
 					case [
 						initializer/kind = SCALAR_INITIALIZER [
 							if any [
-								initializer/c <> 0 ir-global/flags <> 0
+								initializer/c <> 0
+								(ir-global/flags and INLINE) <> 0
 								not machine-value? ir-global/type 0 type-data member-data
 									header/type-count
 							][return INVALID_IR]
 						]
 						initializer/kind = ADDRESS_INITIALIZER [
 							if any [
-								ir-global/flags <> 0
+								(ir-global/flags and INLINE) <> 0
 								not valid-static-address-initializer? initializer
 									ir-global/type id header/global-count
 									header/function-count global-data type-data
@@ -3230,6 +3239,7 @@ x64-codegen: context [
 			return OUTPUT_FULL
 		]
 		global-names-size: 0
+		image-rodata-size: 0
 		image-data-size: BITMAP_SIZE
 		global-reference-count: 0
 		id: 1
@@ -3250,10 +3260,15 @@ x64-codegen: context [
 			][return INVALID_IR]
 			global-size: 0
 			global-align: 0
-			unless layout-type ir-global/type (ir-global/flags = INLINE)
+			unless layout-type ir-global/type ((ir-global/flags and INLINE) <> 0)
 				type-data member-data
 				header/type-count 0 :global-size :global-align [return INVALID_IR]
-			global-offset: align image-data-size global-align
+			protected?: (ir-global/flags and PROTECTED) <> 0
+			either protected? [
+				global-offset: align image-rodata-size global-align
+			][
+				global-offset: align image-data-size global-align
+			]
 			if any [global-offset < 0 global-offset > (2147483647 - global-size)
 				global-names-size > (2147483647 - ir-global/name-size)][
 				return OUTPUT_FULL
@@ -3265,7 +3280,12 @@ x64-codegen: context [
 			image-global/data-size: global-size
 			image-global/first-reference: 0
 			image-global/reference-count: 0
-			image-data-size: global-offset + global-size
+			image-global/flags: ir-global/flags and PROTECTED
+			either protected? [
+				image-rodata-size: global-offset + global-size
+			][
+				image-data-size: global-offset + global-size
+			]
 			global-names-size: global-names-size + ir-global/name-size
 			id: id + 1
 		]
@@ -3281,7 +3301,7 @@ x64-codegen: context [
 					image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
 						+ (header/function-count * IMAGE_FUNCTION_SIZE)
 						+ ((id - 1) * IMAGE_GLOBAL_SIZE))
-					if image-global/data-offset > 2147483646 [return OUTPUT_FULL]
+					if image-global/data-offset > REFERENCE_OFFSET_MASK [return OUTPUT_FULL]
 					case [
 						initializer/a = GLOBAL_ADDRESS [
 							target-image-global: as codegen-global! (output
@@ -3459,7 +3479,12 @@ x64-codegen: context [
 		if any [code-offset < 0 code-offset > (2147483647 - code-size - 3)][
 			return release scratch OUTPUT_FULL
 		]
-		data-offset: align (code-offset + code-size) 4
+		rodata-offset: align (code-offset + code-size) 4
+		if any [
+			rodata-offset < 0
+			rodata-offset > (2147483647 - image-rodata-size - 3)
+		][return release scratch OUTPUT_FULL]
+		data-offset: align (rodata-offset + image-rodata-size) 4
 		if any [data-offset < 0 data-offset > (2147483647 - image-data-size)][
 			return release scratch OUTPUT_FULL
 		]
@@ -3478,6 +3503,7 @@ x64-codegen: context [
 		image/code-size: code-size
 		image/data-size: image-data-size
 		image/global-count: header/global-count
+		image/rodata-size: image-rodata-size
 
 		names-output: output + metadata-size
 		name-cursor: 0
@@ -3643,6 +3669,10 @@ x64-codegen: context [
 
 		if literal-size > 0 [copy-memory (code + function-code-size) strings literal-size]
 		cursor: code + code-size
+		rodata-output: output + rodata-offset
+		while [cursor < rodata-output][cursor/1: as byte! 0 cursor: cursor + 1]
+		finish: rodata-output + image-rodata-size
+		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
 		data-output: output + data-offset
 		while [cursor < data-output][cursor/1: as byte! 0 cursor: cursor + 1]
 		finish: data-output + image-data-size
@@ -3655,10 +3685,14 @@ x64-codegen: context [
 			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
 				+ (header/function-count * IMAGE_FUNCTION_SIZE)
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
-			cursor: data-output + image-global/data-offset
+			either (image-global/flags and PROTECTED) <> 0 [
+				cursor: rodata-output + image-global/data-offset
+			][
+				cursor: data-output + image-global/data-offset
+			]
 			base: canonical-type ir-global/type type-data header/type-count
 			array?: all [
-				ir-global/flags = INLINE
+				(ir-global/flags and INLINE) <> 0
 				base > 0
 				(logical-kind base type-data header/type-count) = -7
 			]
@@ -3710,12 +3744,14 @@ x64-codegen: context [
 									]
 									true [return release scratch INVALID_IR]
 								]
-								if (image-global/data-offset + item-offset) > 2147483646 [
+								global-offset: image-global/data-offset + item-offset
+								if global-offset > REFERENCE_OFFSET_MASK [
 									return release scratch OUTPUT_FULL
 								]
-								references/reference-id: 0 - (
-									image-global/data-offset + item-offset + 1
-								)
+								references/reference-id: either
+									(image-global/flags and PROTECTED) <> 0 [
+										RODATA_REFERENCE_TAG or global-offset
+									][DATA_REFERENCE_TAG or global-offset]
 							]
 							true [return release scratch INVALID_IR]
 						]

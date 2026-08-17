@@ -30,6 +30,8 @@ compiler-rsir-frontend: context [
 	array-types: make hash! 32
 	aggregate-types: make hash! 64
 	constants: make hash! 256
+	protected: make hash! 64
+	protected-values: make hash! 64
 	imports: make block! 256
 	import-ids: make hash! 256
 	libraries: make hash! 32
@@ -78,6 +80,7 @@ compiler-rsir-frontend: context [
 	objc-flag: 128
 	catch-flag: 256
 	inline-flag: 1
+	protected-flag: 2
 	tagged-type-flag: 1
 	scalar-initializer: 1
 	address-initializer: 2
@@ -1089,6 +1092,7 @@ compiler-rsir-frontend: context [
 					select import-ids key
 					select function-ids key
 					select globals key
+					select protected key
 				][
 					fail ERROR-DUPLICATE ["duplicate import " mold key]
 				]
@@ -1127,7 +1131,7 @@ compiler-rsir-frontend: context [
 	scan-block: func [
 		values scope uses [block!]
 		/local position name spec body child key kind target next-uses
-			spelling id type-spec
+			spelling id type-spec protected-id
 	][
 		position: values
 		while [not tail? position][
@@ -1233,6 +1237,7 @@ compiler-rsir-frontend: context [
 						select function-ids key
 						select import-ids key
 						select globals key
+						select protected key
 					][
 						fail ERROR-DUPLICATE ["duplicate function " mold key]
 					]
@@ -1282,10 +1287,42 @@ compiler-rsir-frontend: context [
 					scan-block position/3 scope next-uses
 					position: skip position 3
 				]
+				all [
+					set-word? position/1
+					(length? position) >= 3
+					position/2 = 'protect
+				][
+					name: to word! position/1
+					key: qualified scope name
+					if any [
+						select function-ids key
+						select import-ids key
+						select globals key
+						select protected key
+					][fail ERROR-DUPLICATE ["duplicate protected value " mold key]]
+					protected-id: 0
+					unless protected-scalar? position/3 [
+						global-count: global-count + 1
+						protected-id: global-count
+						repend globals [key global-count]
+						spelling: form key
+						unless valid-name? spelling [
+							fail ERROR-NAME "invalid RSIR global name"
+						]
+						append/only global-data to binary! spelling
+						append global-data none
+						append global-data 0
+						append global-data 0
+						append global-data 0
+					]
+					repend protected [key protected-id]
+					position: next position
+				]
 				set-word? position/1 [
 					name: to word! position/1
 					key: qualified scope name
 					unless any [
+						select protected key
 						import-variable-id name scope uses
 						resolve-name name scope uses globals
 					][
@@ -1867,6 +1904,17 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	protected-scalar?: func [value return: [logic!] /local wide][
+		case [
+			any [integer? value float? value char? value][true]
+			issue? value [
+				wide: wide-literal value
+				any [block? wide float-literal? value]
+			]
+			true [false]
+		]
+	]
+
 	float-bits: func [
 		value
 		kind [word!]
@@ -1886,16 +1934,18 @@ compiler-rsir-frontend: context [
 
 	add-static-bytes: func [
 		value [binary!]
-		/nul
+		nul? protected? [logic!]
 		return: [integer!]
 		/local data offset ref id record
 	][
 		data: copy value
-		if nul [append data 0]
+		if nul? [append data 0]
 		offset: length? strings
 		append strings data
 		ref: intern-array -2 length? data 1
-		id: add-hidden-global ref inline-flag
+		id: add-hidden-global ref (
+			inline-flag + either protected? [protected-flag][0]
+		)
 		record: skip global-data ((id - 1) * 5)
 		set-global-initializer record reduce [
 			bytes-initializer offset length? data 0
@@ -1906,8 +1956,9 @@ compiler-rsir-frontend: context [
 	static-literal-info: func [
 		value
 		scope uses [block!]
+		protected? [logic!]
 		return: [block! none!]
-		/local wide bits id key target record ref
+		/local wide bits id key target record ref protected-info
 	][
 		case [
 			issue? value [
@@ -1948,7 +1999,7 @@ compiler-rsir-frontend: context [
 				]
 			]
 			string? value [
-				id: add-static-bytes/nul to binary! value
+				id: add-static-bytes to binary! value true protected?
 				return reduce [-13 address-initializer global-address id 0]
 			]
 			any [get-word? value get-path? value][
@@ -1978,6 +2029,8 @@ compiler-rsir-frontend: context [
 				]
 			]
 			any [word? value path? value][
+				protected-info: resolve-name value scope uses protected-values
+				if block? protected-info [return copy protected-info]
 				key: qualified scope value
 				id: select constants key
 				if integer? id [
@@ -2004,6 +2057,7 @@ compiler-rsir-frontend: context [
 	array-literal-info: func [
 		value [block! binary!]
 		scope uses [block!]
+		protected? [logic!]
 		return: [block!]
 		/local values item info element count offset width item-width uniform?
 	][
@@ -2023,7 +2077,7 @@ compiler-rsir-frontend: context [
 		width: 0
 		uniform?: true
 		foreach item value [
-			info: static-literal-info item scope uses
+			info: static-literal-info item scope uses protected?
 			unless block? info [
 				fail ERROR-UNSUPPORTED ["invalid literal array item " mold item]
 			]
@@ -2053,7 +2107,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local info id record
 	][
-		info: array-literal-info position/1 scope uses
+		info: array-literal-info position/1 scope uses false
 		id: add-hidden-global info/1 inline-flag
 		record: skip global-data ((id - 1) * 5)
 		set-global-initializer record info/2
@@ -3227,7 +3281,7 @@ compiler-rsir-frontend: context [
 		value-context [integer!]
 		return: [block!]
 		/local value type-info next-position target id constant-key bytes offset
-			inner wide bits call-target
+			inner wide bits call-target protected-info
 	][
 		unless not tail? position [
 			fail ERROR-UNSUPPORTED "missing expression"
@@ -3430,6 +3484,16 @@ compiler-rsir-frontend: context [
 				next position
 			]
 			any [word? value path? value] [
+				protected-info: resolve-name value scope uses protected-values
+				if block? protected-info [
+					emit instructions reduce [
+						literal-op protected-info/1 protected-info/3 protected-info/4
+					]
+					last-type: protected-info/1
+					last-flags: 0
+					last-float-literal?: float-kind? ref-kind last-type
+					return next position
+				]
 				constant-key: qualified scope value
 				id: select constants constant-key
 				next-position: either integer? id [
@@ -3490,8 +3554,9 @@ compiler-rsir-frontend: context [
 	stack-static: func [
 		position [block!]
 		scope uses [block!]
+		protected? [logic!]
 		return: [logic!]
-		/local value type-info next-position wide bits kind keep? info
+		/local value type-info next-position wide bits kind keep? info id
 	][
 		static?: false
 		static-ref: 0
@@ -3503,7 +3568,7 @@ compiler-rsir-frontend: context [
 		value: position/2
 		case [
 			any [block? value binary? value][
-				info: array-literal-info value scope uses
+				info: array-literal-info value scope uses protected?
 				static?: true
 				static-ref: info/1
 				static-flags: inline-flag
@@ -3511,14 +3576,14 @@ compiler-rsir-frontend: context [
 				static-next: skip position 2
 			]
 			string? value [
-				info: static-literal-info value scope uses
+				info: static-literal-info value scope uses protected?
 				static?: true
 				static-ref: info/1
 				static-initializer: reduce [info/2 info/3 info/4 info/5]
 				static-next: skip position 2
 			]
 			any [get-word? value get-path? value][
-				info: static-literal-info value scope uses
+				info: static-literal-info value scope uses protected?
 				if block? info [
 					static?: true
 					static-ref: info/1
@@ -3630,6 +3695,19 @@ compiler-rsir-frontend: context [
 							value = true
 							all [word? value find [true yes] value]
 						][1][0]
+						static-next: next next-position
+					]
+					if all [
+						not static?
+						string? value
+						find [pointer c-string] kind
+					][
+						id: add-static-bytes to binary! value true protected?
+						static?: true
+						static-ref: type-info/2
+						static-initializer: reduce [
+							address-initializer global-address id 0
+						]
 						static-next: next next-position
 					]
 				]
@@ -3759,6 +3837,65 @@ compiler-rsir-frontend: context [
 		next-position
 	]
 
+	protected-target?: func [
+		target [word! path!]
+		scope uses params locals [block!]
+		return: [logic!]
+		/local parts count candidate
+	][
+		parts: either word? target [reduce [target]][to block! target]
+		if block? stack-storage-info parts/1 params locals [return false]
+		count: length? parts
+		while [count > 0][
+			candidate: either count = 1 [
+				parts/1
+			][to path! copy/part parts count]
+			if integer? resolve-name candidate scope uses protected [return true]
+			count: count - 1
+		]
+		false
+	]
+
+	stack-protect: func [
+		position [block!]
+		target [word! path!]
+		scope uses [block!]
+		fold? [logic!]
+		return: [block!]
+		/local key info id record next-position
+	][
+		unless all [fold? word? target (length? position) >= 3][
+			fail ERROR-CONTEXT "PROTECT is only allowed on a new global value"
+		]
+		key: qualified scope target
+		id: resolve-name target scope uses protected
+		unless integer? id [
+			fail ERROR-CONTEXT "PROTECT must immediately follow a new global name"
+		]
+		either id = 0 [
+			info: static-literal-info position/3 scope uses true
+			unless all [block? info info/2 = scalar-initializer][
+				fail ERROR-UNSUPPORTED "PROTECT expects a literal value"
+			]
+			append protected-values key
+			append/only protected-values copy info
+			next-position: skip position 3
+		][
+			unless stack-static next position scope uses true [
+				fail ERROR-UNSUPPORTED "PROTECT expects a literal value"
+			]
+			record: skip global-data ((id - 1) * 5)
+			record/2: static-ref
+			record/3: static-flags or protected-flag
+			set-global-initializer record static-initializer
+			next-position: static-next
+		]
+		last-type: 0
+		last-flags: 0
+		last-stopped?: false
+		next-position
+	]
+
 	stack-assignment: func [
 		position [block!]
 		scope uses [block!]
@@ -3775,6 +3912,12 @@ compiler-rsir-frontend: context [
 		][to path! position/1]
 		storage: either word? target [stack-storage-info target params locals][none]
 		id: either block? storage [none][resolve-name target scope uses globals]
+		if position/2 = 'protect [
+			return stack-protect position target scope uses fold?
+		]
+		if protected-target? target scope uses params locals [
+			fail ERROR-REFERENCE ["cannot modify protected data " mold target]
+		]
 		if position/2 = 'declare [
 			return stack-declaration position target storage id scope uses instructions
 				params locals fold?
@@ -3783,7 +3926,7 @@ compiler-rsir-frontend: context [
 			record: skip global-data ((id - 1) * 5)
 			if all [
 				not integer? record/2
-				stack-static position scope uses
+				stack-static position scope uses false
 				static?
 				any [
 					tail? static-next
@@ -4028,6 +4171,8 @@ compiler-rsir-frontend: context [
 			clear array-types
 			clear aggregate-types
 			clear constants
+			clear protected
+			clear protected-values
 			clear imports
 			clear import-ids
 			clear libraries

@@ -310,6 +310,28 @@ generate "import store" {
 	red/boot?: yes
 } 'glue
 
+generate "equivalent aggregate aliases" {
+	Red/System []
+	left!: alias struct! [value [integer!]]
+	right!: alias struct! [value [integer!]]
+	take-right: func [item [right!] return: [integer!]][item/value]
+	forward: func [item [left!] return: [integer!]][take-right item]
+} 'user
+
+generate "Red-internal packed variadic import" {
+	Red/System []
+	#import [
+		"fixture.dll" stdcall [
+			sink: "sink" [
+				[variadic red-internal]
+				count [integer!]
+				list [pointer! [uint64!]]
+			]
+		]
+	]
+	sink [11 22]
+} 'glue
+
 generate "c-string call" {
 	Red/System []
 	red: context [

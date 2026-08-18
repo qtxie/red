@@ -246,8 +246,7 @@ redbin: context [
 			data: to-nibbles value
 			either data/1 [emit-tag/mod 'TYPE_MONEY][emit-tag 'TYPE_MONEY]
 			append buffer data/2
-			; Stage0's string-to-binary conversion preserves packed bytes. Red's
-			; conversion is UTF-8, so append each character code explicitly.
+			; Packed money digits are already raw bytes.
 			foreach byte data/3 [emit-byte to integer! byte]
 			exit
 		]

@@ -4,7 +4,7 @@ Red [
 
 #include %../../../system/compiler-windows-common.red
 
-do %../../../compiler/rsir-frontend.red
+#include %../../../compiler/rsir-frontend.red
 
 rsir-source-audit: context [
 	last-error: none

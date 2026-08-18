@@ -748,18 +748,58 @@ assert all [
 	(instruction-word aggregate-call-ir aggregate-call-layout 7 8) = 0
 ]["aggregate VALUE escaped its signature into runtime stack flags"]
 
-assert none? compile-text {
+aggregate-alias-ir: compile-text {
 	Red/System []
 	left!: alias struct! [value [integer!]]
 	right!: alias struct! [value [integer!]]
+	box!: alias struct! [target [left! value] source [right! value]]
+	take-right: func [item [right!] return: [integer!]][item/value]
+	fn: func [/local box [box!]][
+		box: declare box!
+		box/target: box/source
+		take-right as left! box
+	]
+} 'user
+assert binary? aggregate-alias-ir [
+	"equivalent aggregate aliases failed: " mold frontend/last-error
+]
+aggregate-alias-layout: layout-of aggregate-alias-ir
+assert all [
+	(type-word aggregate-alias-ir aggregate-alias-layout 1 0) = -2
+	(type-word aggregate-alias-ir aggregate-alias-layout 2 0) = -1
+	(type-word aggregate-alias-ir aggregate-alias-layout 2 4) = 1
+]["equivalent aggregate aliases were serialized as duplicate definitions"]
+
+assert none? compile-text {
+	Red/System []
+	left!: alias struct! [value [integer!]]
+	right!: alias struct! [value [byte!]]
 	box!: alias struct! [target [left! value] source [right! value]]
 	fn: func [/local box [box!]][
 		box: declare box!
 		box/target: box/source
 	]
-} 'user "inline aggregate assignment accepted a different nominal type"
+} 'user "inline aggregate assignment accepted a different definition"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"incompatible inline aggregate assignment reported the wrong error class"
+
+comment-ir: compile-text {
+	Red/System []
+	comment {ignored root text}
+	value: func [return: [integer!]][
+		comment [unknown ignored words]
+		if true [comment "ignored nested text"]
+		7
+	]
+} 'user
+assert binary? comment-ir ["COMMENT statement failed: " mold frontend/last-error]
+
+assert none? compile-text {
+	Red/System []
+	value: func [return: [integer!]][1 + comment {not an expression} 2]
+} 'user "COMMENT was accepted inside an expression"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"COMMENT expression misuse reported the wrong error class"
 
 global-declare-ir: compile-text {
 	Red/System []
@@ -948,6 +988,71 @@ assert all [
 	(instruction-word mutable-string-ir mutable-string-layout 2 4) = -13
 ]["c-string literal did not use writable hidden byte storage"]
 
+unicode-string: make string! 1
+append unicode-string to char! 256
+unicode-bytes: to binary! unicode-string
+assert unicode-bytes = #{C480} "test host did not encode U+0100 as UTF-8"
+append unicode-bytes 0
+unicode-string-ir: frontend/compile compose/deep [
+	Red/System []
+	read-unicode: func [return: [byte!] /local text [c-string!]][
+		text: (unicode-string)
+		text/2
+	]
+	unicode-size: func [return: [integer!]][size? (unicode-string)]
+] 'user
+assert binary? unicode-string-ir [
+	"Unicode c-string literal failed: " mold frontend/last-error
+]
+unicode-string-layout: layout-of unicode-string-ir
+unicode-string-offset: initializer-word
+	unicode-string-ir unicode-string-layout 1 4
+unicode-string-size: initializer-word unicode-string-ir unicode-string-layout 1 8
+unicode-size-literals: 0
+repeat id word-at unicode-string-ir 20 [
+	if all [
+		(instruction-word unicode-string-ir unicode-string-layout id 0) = 1
+		(instruction-word unicode-string-ir unicode-string-layout id 4) = -5
+		(instruction-word unicode-string-ir unicode-string-layout id 8) = 3
+	][unicode-size-literals: unicode-size-literals + 1]
+]
+assert all [
+	(word-at unicode-string-ir 24) = 1
+	(initializer-word unicode-string-ir unicode-string-layout 1 0) = 3
+	unicode-string-size = 3
+	(copy/part at unicode-string-ir
+		(unicode-string-layout/7 + unicode-string-offset + 1)
+		unicode-string-size) = unicode-bytes
+	unicode-size-literals = 1
+]["Unicode c-string literal was not encoded as UTF-8"]
+
+packed-string-ir: compile-text {
+	Red/System []
+	read-packed: func [return: [byte!] /local text [c-string!]][
+		text: as c-string! #{00838000}
+		text/2
+	]
+} 'user
+assert binary? packed-string-ir [
+	"binary-to-c-string cast failed: " mold frontend/last-error
+]
+packed-string-layout: layout-of packed-string-ir
+packed-string-offset: initializer-word packed-string-ir packed-string-layout 1 4
+packed-string-size: initializer-word packed-string-ir packed-string-layout 1 8
+assert all [
+	(word-at packed-string-ir 24) = 1
+	(initializer-word packed-string-ir packed-string-layout 1 0) = 3
+	packed-string-size = 4
+	(copy/part at packed-string-ir
+		(packed-string-layout/7 + packed-string-offset + 1)
+		packed-string-size) = #{00838000}
+	(instruction-word packed-string-ir packed-string-layout 1 0) = 3
+	(instruction-word packed-string-ir packed-string-layout 1 8) = 1
+	(instruction-word packed-string-ir packed-string-layout 2 0) = 20
+	(instruction-word packed-string-ir packed-string-layout 2 4) = -13
+	none? find ops-of packed-string-ir packed-string-layout 8
+]["explicit binary-to-c-string cast did not preserve raw bytes"]
+
 assert none? compile-text {
 	Red/System []
 	values: [1 2]
@@ -1110,6 +1215,21 @@ assert none? compile-text {
 } 'user "function-to-byte cast was accepted"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid function cast reported the wrong error class"
+
+system-aggregate-root-ir: compile-text {
+	Red/System []
+	system!: alias struct! [boot-data [byte-ptr!]]
+	#import [
+		"runtime.dll" cdecl [
+			system: "system" [system!]
+		]
+	]
+	system/boot-data: #{0102}
+	read-boot-data: func [return: [byte-ptr!]][system/boot-data]
+} 'glue
+assert binary? system-aggregate-root-ir [
+	"root imported aggregate field assignment failed: " mold frontend/last-error
+]
 
 callback-ir: compile-text {
 	Red/System []
@@ -1367,6 +1487,33 @@ assert none? compile-text {
 } 'user "imported variadic declaration incorrectly accepted native parameters"
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"invalid imported variadic declaration reported the wrong error class"
+
+red-internal-variadic-ir: compile-text {
+	Red/System []
+	#import [
+		"foo.dll" stdcall [
+			sink: "sink" [
+				[variadic red-internal]
+				count [integer!]
+				list [int-ptr!]
+				return: [integer!]
+			]
+		]
+	]
+	main: func [return: [integer!]][sink [11 22]]
+} 'user
+assert binary? red-internal-variadic-ir [
+	"Red-internal variadic import failed: " mold frontend/last-error
+]
+red-internal-variadic-layout: layout-of red-internal-variadic-ir
+assert all [
+	(word-at red-internal-variadic-ir
+		(red-internal-variadic-layout/2 + 20)) = 522
+	(word-at red-internal-variadic-ir
+		(red-internal-variadic-layout/2 + 24)) = 0
+	(word-at red-internal-variadic-ir
+		(red-internal-variadic-layout/2 + 28)) = 2
+]["Red-internal variadic import lost its packed signature"]
 
 cdecl-variadic-ir: compile-text {
 	Red/System []
@@ -3153,6 +3300,87 @@ assert all [
 	(function-instruction-word exception-ir exception-layout
 		1 (throw-index - 1) 0) = 5
 ]["catch/throw did not lower to one paired lexical region"]
+
+shared-exception-ir: compile-text {
+	Red/System []
+	system!: alias struct! [thrown [integer!]]
+	#import [
+		"runtime.dll" stdcall [
+			system: "system" [system!]
+		]
+	]
+	fn: func [return: [integer!]][
+		system/thrown: 0
+		catch 5 [throw 1]
+		system/thrown
+	]
+} 'user
+assert binary? shared-exception-ir [
+	"shared exception lowering failed: " mold frontend/last-error
+]
+shared-exception-layout: layout-of shared-exception-ir
+shared-import-addresses: 0
+shared-global-addresses: 0
+shared-thrown-members: 0
+repeat id function-word shared-exception-ir shared-exception-layout 1 32 [
+	operation: function-instruction-word shared-exception-ir
+		shared-exception-layout 1 id 0
+	if operation = 3 [
+		case [
+			(function-instruction-word shared-exception-ir
+				shared-exception-layout 1 id 4) = 3 [
+				shared-import-addresses: shared-import-addresses + 1
+			]
+			(function-instruction-word shared-exception-ir
+				shared-exception-layout 1 id 4) = 2 [
+				shared-global-addresses: shared-global-addresses + 1
+			]
+			true [0]
+		]
+	]
+	if operation = 6 [shared-thrown-members: shared-thrown-members + 1]
+]
+assert all [
+	(word-at shared-exception-ir 12) = 1
+	(word-at shared-exception-ir 24) = 0
+	shared-import-addresses = 3
+	shared-global-addresses = 0
+	shared-thrown-members = 3
+]["imported system/thrown was not used as the exception state"]
+
+owned-exception-ir: compile-text {
+	Red/System []
+	system!: alias struct! [thrown [integer!]]
+	system: declare system!
+	fn: func [return: [integer!]][
+		system/thrown: 0
+		catch 5 [throw 1]
+		system/thrown
+	]
+} 'user
+assert binary? owned-exception-ir [
+	"owned exception lowering failed: " mold frontend/last-error
+]
+owned-exception-layout: layout-of owned-exception-ir
+owned-system-addresses: 0
+owned-thrown-members: 0
+repeat id function-word owned-exception-ir owned-exception-layout 1 32 [
+	operation: function-instruction-word owned-exception-ir
+		owned-exception-layout 1 id 0
+	if all [
+		operation = 3
+		(function-instruction-word owned-exception-ir
+			owned-exception-layout 1 id 4) = 2
+		(function-instruction-word owned-exception-ir
+			owned-exception-layout 1 id 8) = 1
+	][owned-system-addresses: owned-system-addresses + 1]
+	if operation = 6 [owned-thrown-members: owned-thrown-members + 1]
+]
+assert all [
+	(word-at owned-exception-ir 24) = 2
+	owned-system-addresses = 3
+	owned-thrown-members = 3
+]["runtime-owned system/thrown gained a hidden duplicate global"]
 
 catch-function-ir: compile-text {
 	Red/System []

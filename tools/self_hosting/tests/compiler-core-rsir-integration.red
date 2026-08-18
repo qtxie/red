@@ -61,6 +61,19 @@ unless exists? source [fail ["cannot access RSIR integration fixture: " source]]
 check not value? 'emitter "RSIR core installed the legacy emitter"
 check not value? 'rs-o2-ir "RSIR core installed the legacy machine IR"
 
+resources: make block! 8
+system-dialect/collect-resources [
+	Title: "RSIR resource test"
+	Version: 1.2.3
+] resources source
+icons: select resources 'icon
+check all [
+	block? icons
+	(length? icons) = 1
+	binary? icons/1
+	(select resources 'version) = [Title "RSIR resource test" Version 1.2.3]
+]["RSIR core did not preserve the Windows resource model"]
+
 job: compiler-system-job/new 'Windows-X86-64
 unless object? job [fail "could not create the Windows x64 compilation job"]
 compiler-system-job/job-set job 'backend-mode 'rsir

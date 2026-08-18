@@ -71,8 +71,12 @@ system-dialect: context [
 			not find [exe dll] job/type [
 				compiler/throw-error "RSIR frontend currently supports only executable and DLL modules"
 			]
-			job/red-pass? [
-				compiler/throw-error "RSIR frontend does not yet support Red-generated modules"
+			all [
+				job/red-pass?
+				not all [job/dev-mode? job/runtime? job/type = 'exe]
+			][
+				compiler/throw-error
+					"RSIR frontend currently supports Red development executables"
 			]
 			any [job/PIC? job/PIE? job/static-link?] [
 				compiler/throw-error "RSIR frontend does not yet support PIC, PIE, or static linking"
@@ -168,13 +172,69 @@ system-dialect: context [
 		last-code: output
 	]
 
-	; Kept as a frontend API while resource lowering is still outside the first
-	; RSIR slice. The backend fails closed before silently dropping such data.
-	collect-resources: func [header [block!] resources [block!] file [file!]][
-		if any [select header first [Icon:] select header first [Version:]][
-			compiler/script: file
-			compiler/throw-error "RSIR frontend does not yet support Windows resources"
+	collect-resources: func [
+		header resources [block!]
+		file [file!]
+		/local icon icon-file name value info main-path base
+	][
+		info: make block! 8
+		main-path: first split-path file
+		base: join system/options/path %system/assets/
+
+		append resources 'icon
+		either icon: select header first [Icon:][
+			either any-word? :icon [
+				icon-file: select [
+					default %red.ico
+					flat    %red.ico
+					old     %red-3D.ico
+					mono    %red-mono.ico
+				] :icon
+				unless icon-file [
+					compiler/script: file
+					compiler/throw-error ["unknown built-in icon:" mold :icon]
+				]
+				append/only resources reduce [
+					either find [default flat] :icon [
+						compiler-assets/default-icon
+					][join base icon-file]
+				]
+			][
+				icon: either file? icon [reduce [icon]][icon]
+				unless block? icon [
+					compiler/script: file
+					compiler/throw-error "Icon must be a file or block of files"
+				]
+				foreach icon-file icon [
+					unless file? icon-file [
+						compiler/script: file
+						compiler/throw-error "Icon block accepts only files"
+					]
+					icon-file: either loader/relative-path? icon-file [
+						join main-path icon-file
+					][icon-file]
+					unless exists? icon-file [
+						compiler/script: file
+						compiler/throw-error ["cannot find icon:" icon-file]
+					]
+					append info icon-file
+				]
+				append/only resources info
+			]
+		][append/only resources reduce [compiler-assets/default-icon]]
+
+		info: make block! 8
+		foreach name [
+			Title: Version: Company: Comments: Notes:
+			Rights: Trademarks: ProductName: ProductVersion:
+		][
+			if value: select header name [
+				append info to word! name
+				append/only info value
+			]
 		]
+		append resources 'version
+		append/only resources info
 		resources
 	]
 
@@ -183,7 +243,7 @@ system-dialect: context [
 		/options opts [object!]
 		/loaded job-data [block!]
 		/local started comp-time file-list file source runtime-source runtime-file
-			output link-time buffer-size result error
+			output link-time buffer-size result error payload resources icon
 	][
 		started: now/time/precise
 		reset-state
@@ -198,6 +258,13 @@ system-dialect: context [
 		compiler/job: job
 		compiler/script: file
 		validate-job
+		if all [job/red-pass? not loaded][
+			compiler/throw-error "Red-generated modules require loaded frontend data"
+		]
+		if all [job/red-pass? not binary? job-data/3][
+			compiler/throw-error "Red-generated module is missing its Redbin payload"
+		]
+		resources: either loaded [copy/deep job-data/4][make block! 8]
 		loader/job: job
 		loader/connect-compiler-state compiler/definitions compiler/keywords-list
 		loader/init
@@ -230,9 +297,22 @@ system-dialect: context [
 				rejoin ["Red/System loader: " error/message]
 			]["Red/System loader failed without a diagnostic"]
 		]
+		unless loaded [collect-resources source/2 resources file]
 		process-config source/2
 
 		if runtime-source [
+			if job/red-pass? [
+				payload: job-data/3
+				append runtime-source #import
+				append/only runtime-source [
+					"libRedRT.dll" stdcall [
+						__red-boot: "red/boot" []
+					]
+				]
+				append runtime-source '__red-boot
+				append/only runtime-source first [system/boot-data:]
+				append/only runtime-source payload
+			]
 			append runtime-source #user-code
 			append runtime-source skip source 2
 			if job/type = 'exe [append runtime-source '***-normal-exit]
@@ -257,6 +337,13 @@ system-dialect: context [
 					linker/codegen-error
 					"linker could not load native codegen output"
 				]
+			]
+			if icon: find resources 'icon [
+				insert skip icon 2 reduce ['group-icon icon/2]
+			]
+			append resources reduce ['manifest none]
+			append get in job 'sections compose/deep/only [
+				rsrc [- - (resources)]
 			]
 			phase-timer/finish 'link-load
 			phase-timer/begin 'link-build

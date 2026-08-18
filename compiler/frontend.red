@@ -366,12 +366,9 @@ red: context [
 				to-nibbles digits
 			]
 		]
-		; Keep a string here because generated Red/System money/push calls expect a
-		; c-string. Redbin emitters must copy these character codes byte by byte;
-		; converting the string to binary would UTF-8-expand values above 7Fh.
-		out: make string! 11
+		out: make binary! 11
 		foreach [high low] src [
-			append out to char! add
+			append out add
 				shift/left (to integer! high - #"0") 4
 				to integer! low - #"0"
 		]
@@ -1060,7 +1057,7 @@ red: context [
 				]
 				decorate-exec-ctx entry/3
 			]
-			'null
+			0
 		]
 	]
 	
@@ -2262,8 +2259,8 @@ red: context [
 					; R/S accepts word! true/false, not logic! values.
 					emit pick [true false] money-data/1
 					emit money-data/2
-					emit money-data/3
-					insert-lf -4
+					emit compose [as c-string! (money-data/3)]
+					insert-lf -6
 				]
 				ref? :value [
 					idx: redbin/emit-string/root value
@@ -4293,7 +4290,7 @@ red: context [
 				]
 				all [with not empty? locals-stack not compact?][	;-- only if in a function's body
 					fctx: get-func-ctx name ctx-name
-					if fctx = 'null [fctx: ctx-name]		;-- path-generated wrapper fallback
+					if fctx = 0 [fctx: ctx-name]			;-- path-generated wrapper fallback
 					emit reduce [							;-- special case for path-generated wrapper functions
 						'stack/mark-func
 						decorate-exec-ctx decorate-symbol name

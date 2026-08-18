@@ -175,10 +175,11 @@ x64-codegen: context [
 	CALLBACK:      64
 	OBJC:        128
 	CATCH_FLAG:  256
+	RED_INTERNAL: 512
 	CALL_SHAPE_FLAGS: RETURN_VALUE + VARIADIC + TYPED + CUSTOM + OBJC
 	CATCH_CONFLICT_FLAGS: CDECL + STDCALL + VARIADIC + TYPED + CUSTOM + CALLBACK + OBJC
 	VARIABLE_FLAGS: 56
-	FUNCTION_FLAGS: 511
+	FUNCTION_FLAGS: 1023
 	INLINE:          1
 	PROTECTED:       2
 	TAGGED_UNION:    1
@@ -3260,7 +3261,10 @@ x64-codegen: context [
 					]
 					list-call?: any [packed-call? typed-call?]
 					if packed-call? [
-						either target < 0 [
+						either all [
+							target < 0
+							(call-flags and RED_INTERNAL) = 0
+						][
 							unless parameter-count = 0 [return INVALID_IR]
 						][
 							unless any [parameter-count = 2 parameter-count = 3][

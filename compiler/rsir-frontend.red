@@ -31,6 +31,7 @@ compiler-rsir-frontend: context [
 	pointer-types: make hash! 64
 	array-types: make hash! (2 * 64)
 	aggregate-types: make hash! 64
+	canonical-types: make hash! 64
 	function-types: make hash! 64
 	subroutine-types: make hash! 16
 	typed-call-types: make hash! 64
@@ -94,6 +95,7 @@ compiler-rsir-frontend: context [
 	callback-flag: 64
 	objc-flag: 128
 	catch-flag: 256
+	red-internal-flag: 512
 	call-shape-flags: return-value-flag + variadic-flag + typed-flag
 		+ custom-flag + objc-flag
 	inline-flag: 1
@@ -821,11 +823,29 @@ compiler-rsir-frontend: context [
 		none
 	]
 
+	type-label: func [
+		ref flags [integer!]
+		return: [string!]
+		/local record name kind output
+	][
+		name: none
+		if all [ref > 0 ref <= type-count][
+			record: skip types ((ref - 1) * 5)
+			name: record/1
+		]
+		kind: ref-kind ref
+		output: form any [name kind 'unknown]
+		if flags = inline-flag [append output " value"]
+		output
+	]
+
 	canonical-ref: func [ref [integer!] /local record target steps][
 		if ref <= 0 [return ref]
 		steps: 0
 		while [steps < type-count][
 			if ref > type-count [return 0]
+			target: select canonical-types ref
+			if integer? target [return target]
 			record: skip types ((ref - 1) * 5)
 			unless record/2 = 'alias [return ref]
 			target: record/3
@@ -1008,61 +1028,6 @@ compiler-rsir-frontend: context [
 		reduce [low either low < 0 [-1][0]]
 	]
 
-	add-system-type: func [scope uses [block!] /local key id][
-		if id: resolve-name 'system! scope uses type-ids [return id]
-		key: to word! "system!"
-		id: type-count + 1
-		repend type-ids [key id]
-		append types key
-		append types 'struct
-		append/only types [
-			args-count [integer!]
-			args-list [byte-ptr!]
-			env-vars [byte-ptr!]
-			stack [byte-ptr!]
-			pc [byte-ptr!]
-			cpu [byte-ptr!]
-			fpu [byte-ptr!]
-			alias [integer!]
-			words [integer!]
-			thrown [integer!]
-			boot-data [byte-ptr!]
-		]
-		append/only types copy []
-		append/only types copy []
-		type-count: id
-		id
-	]
-
-	add-system-import: func [
-		library [binary!]
-		scope uses [block!]
-		/local key external ref id
-	][
-		key: to word! "system"
-		if any [
-			select import-ids key
-			select function-ids key
-			select globals key
-		][fail ERROR-DUPLICATE "system is already declared"]
-		external: to binary! "system"
-		ref: add-system-type scope uses
-		id: import-count + 1
-		repend import-ids [key id]
-		append imports key
-		append/only imports library
-		append/only imports external
-		append/only imports [system!]
-		append imports 'variable
-		append/only imports scope
-		append/only imports uses
-		append imports ref
-		append imports none
-		append imports 0
-		import-count: id
-		id
-	]
-
 	infix-spec?: func [spec [block!] return: [logic!] /local position][
 		position: spec
 		if all [not tail? position string? position/1][position: next position]
@@ -1118,7 +1083,7 @@ compiler-rsir-frontend: context [
 				item = 'objc [bit: objc-flag]
 				item = 'catch [bit: catch-flag]
 				item = 'infix []
-				item = 'red-internal []
+				item = 'red-internal [bit: red-internal-flag]
 				true [fail ERROR-UNSUPPORTED ["unknown function attribute " mold item]]
 			]
 			if all [
@@ -1145,7 +1110,13 @@ compiler-rsir-frontend: context [
 			position: next position
 		]
 		if all [not tail? position string? position/1][position: next position]
-		if all [not tail? position position/1 = 'red-internal][position: next position]
+		if all [not tail? position position/1 = 'red-internal][
+			if (flags and red-internal-flag) <> 0 [
+				fail ERROR-UNSUPPORTED "duplicate function attribute"
+			]
+			flags: flags + red-internal-flag
+			position: next position
+		]
 
 		params: make block! 12
 		locals: make block! 12
@@ -1863,6 +1834,15 @@ compiler-rsir-frontend: context [
 					]
 					id: type-count + 1
 					repend type-ids [key id]
+					if find [struct union] kind [
+						spelling: mold/flat reduce [kind type-spec scope uses]
+						target: select aggregate-types spelling
+						unless integer? target [
+							target: id
+							repend aggregate-types [spelling id]
+						]
+						repend canonical-types [id target]
+					]
 					append types key
 					append types kind
 					append/only types type-spec
@@ -2125,25 +2105,32 @@ compiler-rsir-frontend: context [
 					]
 				]
 				find [struct union] kind [
-					code: select type-codes kind
-					definition: record/3
-					spec: aggregate-members kind definition
-					scope: record/4
-					uses: record/5
-					count: (length? spec) / 2
-					emit type-output reduce [
-						code 0 either tagged-union? kind definition [tagged-type-flag][0]
-						first count
+					target: select canonical-types id
+					either all [integer? target target <> id][
+						emit type-output reduce [
+							select type-codes 'alias target 0 first 0
+						]
+					][
+						code: select type-codes kind
+						definition: record/3
+						spec: aggregate-members kind definition
+						scope: record/4
+						uses: record/5
+						count: (length? spec) / 2
+						emit type-output reduce [
+							code 0 either tagged-union? kind definition [tagged-type-flag][0]
+							first count
+						]
+						while [not tail? spec][
+							field-type: spec/2
+							info: member-type-info kind definition field-type scope uses
+							ref: info/1
+							flags: info/2
+							emit members reduce [ref flags]
+							spec: skip spec 2
+						]
+						first: first + count
 					]
-					while [not tail? spec][
-						field-type: spec/2
-						info: member-type-info kind definition field-type scope uses
-						ref: info/1
-						flags: info/2
-						emit members reduce [ref flags]
-						spec: skip spec 2
-					]
-					first: first + count
 				]
 				find [function subroutine] kind [
 					signature: record/3
@@ -3469,7 +3456,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local type-info target-ref target-flags target-kind source keep? value
 			literal-end bits next-position source-ref source-flags source-kind
-			source-literal? valid? address-source?
+			source-literal? valid? address-source? id
 	][
 		type-info: stack-read-type next position scope uses
 		target-ref: type-info/2
@@ -3484,6 +3471,20 @@ compiler-rsir-frontend: context [
 		if tail? source [fail ERROR-UNSUPPORTED "cast is missing its value"]
 		value: source/1
 		literal-end: next source
+		if all [
+			binary? value
+			target-flags = 0
+			find [c-string pointer] target-kind
+		][
+			id: add-static-bytes value false false
+			emit instructions reduce [address-op global-address id 0]
+			emit instructions reduce [reference-op target-ref 0 0]
+			last-type: target-ref
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return literal-end
+		]
 		if all [
 			target-flags = 0
 			float-kind? target-kind
@@ -3734,6 +3735,36 @@ compiler-rsir-frontend: context [
 		true
 	]
 
+	stack-thrown-address: func [
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		/local id storage
+	][
+		storage: stack-storage-info 'system params locals
+		id: resolve-name 'system scope uses globals
+		if all [not block? storage not integer? id][
+			id: resolve-name 'system scope uses import-ids
+		]
+		if all [not block? storage not integer? id][
+			id: resolve-name 'system scope uses function-ids
+		]
+		either any [block? storage integer? id][
+			unless stack-address/write first [system/thrown]
+				scope uses instructions params locals [
+				fail ERROR-REFERENCE "system/thrown requires an aggregate variable"
+			]
+			unless all [last-flags = 0 (ref-kind last-type) = 'i32][
+				fail ERROR-REFERENCE "system/thrown must be an integer! member"
+			]
+		][
+			id: ensure-thrown-global
+			emit instructions reduce [address-op global-address id 0]
+			last-type: -5
+			last-flags: 0
+		]
+	]
+
 	stack-custom-call: func [
 		target [integer!]
 		value [word! path!]
@@ -3814,7 +3845,9 @@ compiler-rsir-frontend: context [
 			expected-flags: parameter/3
 			unless coerce-stack expected expected-flags instructions true [
 				fail ERROR-REFERENCE [
-					"argument type does not match function " mold value
+					"argument " mold parameter/1 " expects "
+					type-label expected expected-flags ", got "
+					type-label last-type last-flags " in " mold value
 				]
 			]
 			count: count + 1
@@ -4003,8 +4036,15 @@ compiler-rsir-frontend: context [
 		cdecl?: (flags and 3) = 1
 		unless any [
 			cdecl?
-			all [target < 0 empty? parameters]
-			all [target >= 0 packed-variadic-signature? parameters]
+			all [
+				target < 0
+				empty? parameters
+				(flags and red-internal-flag) = 0
+			]
+			all [
+				packed-variadic-signature? parameters
+				any [target >= 0 (flags and red-internal-flag) <> 0]
+			]
 		][
 			fail ERROR-UNSUPPORTED [
 				"variadic function must declare count, list, and optional size: "
@@ -4129,6 +4169,13 @@ compiler-rsir-frontend: context [
 		last-stopped?: false
 		while [not tail? position][
 			last-stopped?: false
+			if position/1 = 'comment [
+				unless (length? position) >= 2 [
+					fail ERROR-UNSUPPORTED "COMMENT is missing its value"
+				]
+				position: skip position 2
+				continue
+			]
 			either any [set-word? position/1 set-path? position/1][
 				next-position: stack-assignment position scope uses instructions
 					params locals false
@@ -4242,7 +4289,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local after id
+		/local after
 	][
 		after: stack-value next position scope uses instructions params locals
 			expression-value
@@ -4250,8 +4297,7 @@ compiler-rsir-frontend: context [
 		unless all [last-flags = 0 (ref-kind last-type) = 'i32][
 			fail ERROR-REFERENCE "THROW expects an integer! ID"
 		]
-		id: ensure-thrown-global
-		emit instructions reduce [address-op global-address id 0]
+		stack-thrown-address scope uses instructions params locals
 		emit instructions reduce [set-op 0 0 0]
 		emit instructions reduce [throw-op 0 0 0]
 		last-type: 0
@@ -5244,11 +5290,8 @@ compiler-rsir-frontend: context [
 		]
 		if path/2 = 'thrown [
 			unless count = 2 [fail ERROR-REFERENCE "invalid system/thrown access"]
-			id: ensure-thrown-global
-			emit instructions reduce [address-op global-address id 0]
+			stack-thrown-address scope uses instructions params locals
 			emit instructions reduce [load-op 0 0 0]
-			last-type: -5
-			last-flags: 0
 			last-float-literal?: false
 			last-stopped?: false
 			return next position
@@ -5413,11 +5456,8 @@ compiler-rsir-frontend: context [
 			unless all [last-flags = 0 (ref-kind last-type) = 'i32][
 				fail ERROR-REFERENCE "system/thrown expects an integer! value"
 			]
-			id: ensure-thrown-global
-			emit instructions reduce [address-op global-address id 0]
+			stack-thrown-address scope uses instructions params locals
 			emit instructions reduce [set-op 0 0 0]
-			last-type: -5
-			last-flags: 0
 			last-float-literal?: false
 			last-stopped?: false
 			return next-position
@@ -6649,6 +6689,7 @@ compiler-rsir-frontend: context [
 			clear pointer-types
 			clear array-types
 			clear aggregate-types
+			clear canonical-types
 			clear function-types
 			clear subroutine-types
 			clear typed-call-types

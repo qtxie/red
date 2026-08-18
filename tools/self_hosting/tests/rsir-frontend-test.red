@@ -267,12 +267,42 @@ pointer-cast-layout: layout-of pointer-cast-ir
 assert (ops-of pointer-cast-ir pointer-cast-layout) = [3 4 8 11 3 4 8 11]
 	"pointer pointee-changing casts were erased from the typed stream"
 
+bracketed-pointer-cast-ir: compile-text {
+	Red/System []
+	to-typed: func [value [pointer!] return: [int-ptr!]][
+		as [pointer! [integer!]] value
+	]
+} 'user
+assert binary? bracketed-pointer-cast-ir [
+	"bracketed pointer cast failed: " mold frontend/last-error
+]
+bracketed-pointer-cast-layout: layout-of bracketed-pointer-cast-ir
+assert (ops-of bracketed-pointer-cast-ir bracketed-pointer-cast-layout) = [3 4 8 11]
+	"bracketed logical type did not use the shared cast path"
+
 assert none? compile-text {
 	Red/System []
 	fn: func [value [pointer!] return: [int-ptr!]][value]
 } 'user "an untyped pointer implicitly changed its pointee type"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"implicit pointer pointee change reported the wrong error class"
+
+pointer-compare-ir: compile-text {
+	Red/System []
+	same-address?: func [
+		left [pointer!]
+		right [pointer! [integer!]]
+		return: [logic!]
+	][
+		left = right
+	]
+} 'user
+assert binary? pointer-compare-ir [
+	"different pointer pointees could not be compared: " mold frontend/last-error
+]
+pointer-compare-layout: layout-of pointer-compare-ir
+assert (ops-of pointer-compare-ir pointer-compare-layout) = [3 4 3 4 15 11]
+	"pointer category comparison did not use the shared binary operation"
 
 c-string-ir: compile-text {
 	Red/System []
@@ -1730,6 +1760,23 @@ assert all [
 	(instruction-word single-float-ir single-float-layout 1 8) = 1069547520
 	(instruction-word single-float-ir single-float-layout 1 12) = 0
 ]["float32! literal was not directly typed at compile time"]
+
+mixed-float-ir: compile-text {
+	Red/System []
+	mixed: func [
+		x [float32!]
+		e [float32!]
+		return: [float32!]
+	][
+		as float32! -1.0 * x * e
+	]
+} 'user
+assert binary? mixed-float-ir [
+	"mixed float!/float32! arithmetic failed: " mold frontend/last-error
+]
+mixed-float-layout: layout-of mixed-float-ir
+assert (ops-of mixed-float-ir mixed-float-layout) = [1 3 4 15 3 4 15 11]
+	"mixed floating arithmetic did not retain one typed binary path"
 
 float-expression-cast-ir: compile-text {
 	Red/System []

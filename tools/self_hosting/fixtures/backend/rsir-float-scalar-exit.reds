@@ -123,6 +123,23 @@ global-score: func [return: [integer!] /local score [integer!]][
 	score
 ]
 
+mixed-arithmetic-score: func [
+	return: [integer!]
+	/local score [integer!] wide [float!] single [float32!]
+][
+	score: 0
+	wide: 2.25
+	single: as float32! 1.5
+	if (wide + single) = (as float32! 3.75) [score: score + 1]
+	if (single + wide) = (as float32! 3.75) [score: score + 1]
+	if (wide * single) = (as float32! 3.375) [score: score + 1]
+	if (single / wide) = (as float32! (1.5 / 2.25)) [score: score + 1]
+	if (as float32! -1.0 * single * single) = (as float32! -2.25) [
+		score: score + 1
+	]
+	score
+]
+
 main: func [return: [integer!] /local score [integer!]][
 	score: wide-score
 	score: score + single-score
@@ -130,12 +147,13 @@ main: func [return: [integer!] /local score [integer!]][
 	score: score + mixed-abi-score
 		1 2.5 (as float32! 3.5) 4 5.5 (as float32! 6.5) 7 8.5
 	score: score + global-score
+	score: score + mixed-arithmetic-score
 	if (return-wide 9.25) = 9.25 [score: score + 1]
 	if (return-single as float32! 10.25) = (as float32! 10.25) [
 		score: score + 1
 	]
 	if (cosine 0.0) = 1.0 [score: score + 1]
-	either score = 50 [73][score]
+	either score = 55 [73][score]
 ]
 
 process-exit main

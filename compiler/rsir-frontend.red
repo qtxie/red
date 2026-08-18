@@ -2591,6 +2591,17 @@ compiler-rsir-frontend: context [
 		not none? find [f32 f64] kind
 	]
 
+	float-common-ref: func [
+		left right [integer!]
+		return: [integer!]
+		/local left-kind right-kind
+	][
+		left-kind: ref-kind left
+		right-kind: ref-kind right
+		unless all [float-kind? left-kind float-kind? right-kind][return 0]
+		either any [left-kind = 'f32 right-kind = 'f32][-9][-10]
+	]
+
 	float-cast-compatible?: func [
 		source target [integer!]
 		keep? [logic!]
@@ -2625,6 +2636,16 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	same-reference-category?: func [
+		left-kind right-kind [word! none!]
+		return: [logic!]
+	][
+		all [
+			left-kind = right-kind
+			not none? find [pointer c-string struct union function array] left-kind
+		]
+	]
+
 	stack-unary: func [
 		operation [integer!]
 		instructions [binary!]
@@ -2652,9 +2673,11 @@ compiler-rsir-frontend: context [
 		right-kind: ref-kind right
 		valid?: false
 		comparison?: operation >= 13
+		common: 0
 
 		case [
 			operation <= 6 [
+				common: float-common-ref left right
 				valid?: any [
 					all [
 						integer-kind? left-kind
@@ -2663,11 +2686,10 @@ compiler-rsir-frontend: context [
 						right-flags = 0
 					]
 					all [
-						float-kind? left-kind
-						left-kind = right-kind
+						common <> 0
 						left-flags = 0
 						right-flags = 0
-						any [operation <= 4 left-kind = 'f32]
+						any [operation <= 4 common = -9]
 					]
 					all [
 						operation <= 2
@@ -2712,6 +2734,11 @@ compiler-rsir-frontend: context [
 						reference-kind? right-kind
 					]
 					all [
+						left-flags = right-flags
+						same-reference-category? left-kind right-kind
+						any [left-kind <> 'function operation <= 14]
+					]
+					all [
 						same-stack-type? left left-flags right right-flags
 						any [
 							float-kind? left-kind
@@ -2727,7 +2754,12 @@ compiler-rsir-frontend: context [
 			]
 			true [valid?: false]
 		]
-		unless valid? [fail ERROR-REFERENCE "incompatible binary operands"]
+		unless valid? [
+			fail ERROR-REFERENCE [
+				"incompatible binary operands for operation " operation ": "
+				left-kind "/" left-flags " and " right-kind "/" right-flags
+			]
+		]
 
 		anchor: 0
 		overflow-data: 0
@@ -2768,7 +2800,7 @@ compiler-rsir-frontend: context [
 			last-type: -11
 			last-flags: 0
 		][
-			last-type: left
+			last-type: either common <> 0 [common][left]
 			last-flags: left-flags
 		]
 	]
@@ -2939,20 +2971,28 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local type token
 	][
-		unless all [not tail? position any [word? position/1 path? position/1]][
+		if tail? position [
 			fail ERROR-UNSUPPORTED "missing logical type"
 		]
 		token: position/1
-		type: reduce [token]
-		position: next position
-		if all [
-			word? token
-			find [pointer! struct! union! function! subroutine!] token
-			not tail? position
-			block? position/1
-		][
-			append/only type position/1
+		either block? token [
+			type: token
 			position: next position
+		][
+			unless any [word? token path? token][
+				fail ERROR-UNSUPPORTED "missing logical type"
+			]
+			type: reduce [token]
+			position: next position
+			if all [
+				word? token
+				find [pointer! struct! union! function! subroutine!] token
+				not tail? position
+				block? position/1
+			][
+				append/only type position/1
+				position: next position
+			]
 		]
 		last-type: type-ref type scope uses
 		last-flags: type-flags type scope uses

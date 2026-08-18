@@ -372,6 +372,25 @@ x64-codegen: context [
 		]
 	]
 
+	same-reference-category?: func [
+		left-kind right-kind [integer!]
+		return: [logic!]
+	][
+		any [
+			all [
+				any [left-kind = 12 left-kind = -6]
+				any [right-kind = 12 right-kind = -6]
+			]
+			all [
+				left-kind = right-kind
+				any [
+					left-kind = 13 left-kind = -2 left-kind = -3
+					left-kind = -4 left-kind = -7
+				]
+			]
+		]
+	]
+
 	compatible-types?: func [
 		expected actual [integer!]
 		types [byte-ptr!]
@@ -741,6 +760,22 @@ x64-codegen: context [
 		if integer-kind-widens? right-kind left-kind [return left]
 		if integer-kind-widens? left-kind right-kind [return right]
 		0
+	]
+
+	float-common-ref: func [
+		left right [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [integer!]
+		/local left-kind right-kind [integer!]
+	][
+		left-kind: logical-kind left types count
+		right-kind: logical-kind right types count
+		unless all [
+			any [left-kind = 9 left-kind = 10]
+			any [right-kind = 9 right-kind = 10]
+		][return 0]
+		either any [left-kind = 9 right-kind = 9][-9][-10]
 	]
 
 	reference-type?: func [
@@ -4746,6 +4781,8 @@ x64-codegen: context [
 					valid?: false
 					case [
 						operation <= MODULO_OPERATION [
+							operation-ref: float-common-ref left-ref right-ref
+								types type-count
 							valid?: any [
 								all [
 									integer-type? left-ref types type-count
@@ -4753,10 +4790,9 @@ x64-codegen: context [
 									left-flags = 0 right-flags = 0
 								]
 								all [
-									float-type? left-ref types type-count
-									compatible-types? left-ref right-ref types type-count
+									operation-ref <> 0
 									left-flags = 0 right-flags = 0
-									any [operation <= DIVIDE_OPERATION left-kind = 9]
+									any [operation <= DIVIDE_OPERATION operation-ref = -9]
 								]
 								all [
 									operation <= SUBTRACT_OPERATION
@@ -4790,17 +4826,22 @@ x64-codegen: context [
 									left-flags = 0 right-flags = 0
 									operation-ref <> 0
 								]
-							all [
-								compatible-types? left-ref right-ref types type-count
-								left-flags = right-flags
-								any [
-									operation <= NOT_EQUAL_OPERATION
-									all [
-										left-kind <> 14 right-kind <> 14
-										left-kind <> -4 right-kind <> -4
-									]
+								all [
+									left-flags = right-flags
+									same-reference-category? left-kind right-kind
+									any [left-kind <> -4 operation <= NOT_EQUAL_OPERATION]
 								]
-								any [
+								all [
+									compatible-types? left-ref right-ref types type-count
+									left-flags = right-flags
+									any [
+										operation <= NOT_EQUAL_OPERATION
+										all [
+											left-kind <> 14 right-kind <> 14
+											left-kind <> -4 right-kind <> -4
+										]
+									]
+									any [
 										float-type? left-ref types type-count
 										reference-type? left-ref types type-count
 										all [
@@ -4880,23 +4921,44 @@ x64-codegen: context [
 					][return UNSUPPORTED]
 
 					either floating? [
-						width: value-width left-ref left-flags types members type-count
+						ref: either operation-ref <> 0 [operation-ref][left-ref]
+						width: value-width ref 0 types members type-count
 							layouts member-offsets
 						operation-width: width
+						source-width: value-width left-ref left-flags types members
+							type-count layouts member-offsets
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/xmm-frame-load at (capacity - written)
 							x64-encoder/XMM0 slot-displacement
-								(storage-slots + target-slot) operation-width
+								(storage-slots + target-slot) source-width
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
+						if source-width <> operation-width [
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/xmm-convert at (capacity - written)
+								x64-encoder/XMM0 x64-encoder/XMM0 source-width operation-width
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						source-width: value-width right-ref right-flags types members
+							type-count layouts member-offsets
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: x64-encoder/xmm-frame-load at (capacity - written)
 							x64-encoder/XMM1 slot-displacement
-								(storage-slots + depth) operation-width
+								(storage-slots + depth) source-width
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
+						if source-width <> operation-width [
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/xmm-convert at (capacity - written)
+								x64-encoder/XMM1 x64-encoder/XMM1 source-width operation-width
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						either comparison? [
@@ -5117,7 +5179,9 @@ x64-codegen: context [
 						flags: 0
 						operation-width: 4
 					][
-						ref: left-ref
+						ref: either all [floating? operation-ref <> 0][
+							operation-ref
+						][left-ref]
 						flags: left-flags
 					]
 					stack-types/depth: ref

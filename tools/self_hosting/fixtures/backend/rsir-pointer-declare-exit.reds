@@ -41,6 +41,7 @@ local-link: func [
 	link: declare ptr-ptr!
 	value/value: 71
 	link/value: as pointer! value
+	if link/value <> value [return -1]
 	read-back: as int-ptr! link/value
 	read-back/value
 ]
@@ -54,9 +55,10 @@ main: func [
 	if local-value <> 73 [return 2]
 	if (pointer-depth 3) <> 4 [return 3]
 	link/value: as pointer! value
+	if link/value <> value [return 4]
 	read-back: as int-ptr! link/value
-	if read-back/value <> 73 [return 4]
-	if local-link <> 71 [return 5]
+	if read-back/value <> 73 [return 5]
+	if local-link <> 71 [return 6]
 	73
 ]
 

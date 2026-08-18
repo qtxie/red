@@ -39,6 +39,11 @@ only-fixture: all [
 	(length? system/options/args) >= 2
 	to file! system/options/args/2
 ]
+source-runtime?: all [
+	block? system/options/args
+	(length? system/options/args) >= 3
+	system/options/args/3 = "runtime"
+]
 unless source [
 	foreach candidate reduce [
 		join system/options/path %../fixtures/backend/rsir-empty-void.reds
@@ -60,7 +65,7 @@ job: compiler-system-job/new 'Windows-X86-64
 unless object? job [fail "could not create the Windows x64 compilation job"]
 compiler-system-job/job-set job 'backend-mode 'rsir
 compiler-system-job/job-set job 'link? false
-compiler-system-job/job-set job 'runtime? false
+compiler-system-job/job-set job 'runtime? to logic! source-runtime?
 compiler-system-job/job-set job 'debug? false
 compiler-system-job/job-set job 'opt-level 1
 compiler-system-job/job-set job 'o2-ir-dump none

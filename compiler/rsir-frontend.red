@@ -51,6 +51,7 @@ compiler-rsir-frontend: context [
 	strings: make binary! 256
 	string-ids: make hash! 128
 	function-count: 0
+	context-count: 0
 	type-count: 0
 	import-count: 0
 	global-count: 0
@@ -364,37 +365,72 @@ compiler-rsir-frontend: context [
 		output
 	]
 
+	root-qualified?: func [value [word! path!]][
+		all [
+			path? value
+			(length? value) > 2
+			value/1 = 'system
+			value/2 = 'words
+		]
+	]
+
+	root-name: func [value [path!] /local parts][
+		parts: skip to block! value 2
+		either (length? parts) = 1 [parts/1][to path! copy parts]
+	]
+
+	context-rank: func [scope [block!] /local key rank][
+		if empty? scope [return 0]
+		key: qualified
+			(copy/part scope ((length? scope) - 1))
+			(last scope)
+		rank: select contexts key
+		any [rank 0]
+	]
+
+	resolve-used-name: func [
+		value [word! path!]
+		uses [block!]
+		names [hash!]
+		/local found best imported key candidate rank
+	][
+		found: none
+		best: -1
+		foreach imported uses [
+			key: qualified imported value
+			candidate: select names key
+			unless none? candidate [
+				rank: context-rank imported
+				if rank > best [
+					found: candidate
+					best: rank
+				]
+			]
+		]
+		found
+	]
+
 	resolve-name: func [
 		value [word! path!]
 		scope uses [block!]
 		names [hash!]
-		/local depth key id imported
+		/local depth key id
 	][
-		if path? value [
-			if id: select names qualified copy [] value [return id]
-			depth: length? scope
-			while [depth > 0][
-				key: qualified copy/part scope depth value
-				if id: select names key [return id]
-				depth: depth - 1
-			]
-			foreach imported uses [
-				key: qualified imported value
-				if id: select names key [return id]
-			]
-			return none
+		if root-qualified? value [
+			value: root-name value
+			key: qualified copy [] value
+			return select names key
 		]
 		depth: length? scope
-		while [depth >= 0][
+		while [depth > 0][
 			key: qualified copy/part scope depth value
 			if id: select names key [return id]
 			depth: depth - 1
 		]
-		foreach imported uses [
-			key: qualified imported value
-			if id: select names key [return id]
-		]
-		none
+		id: resolve-used-name value uses names
+		unless none? id [return id]
+		key: qualified copy [] value
+		select names key
 	]
 
 	import-variable-id: func [
@@ -410,38 +446,80 @@ compiler-rsir-frontend: context [
 	resolve-context: func [
 		value [word! path!]
 		scope uses [block!]
-		/local depth key imported
+		/local depth key imported id found best
 	][
-		if path? value [
+		if root-qualified? value [
+			value: root-name value
 			key: qualified copy [] value
 			if select contexts key [return extend-scope copy [] value]
-			depth: length? scope
-			while [depth > 0][
-				key: qualified copy/part scope depth value
-				if select contexts key [
-					return extend-scope copy/part scope depth value
-				]
-				depth: depth - 1
-			]
-			foreach imported uses [
-				key: qualified imported value
-				if select contexts key [return extend-scope imported value]
-			]
 			return none
 		]
 		depth: length? scope
-		while [depth >= 0][
+		while [depth > 0][
 			key: qualified copy/part scope depth value
 			if select contexts key [
 				return extend-scope copy/part scope depth value
 			]
 			depth: depth - 1
 		]
+		found: none
+		best: -1
 		foreach imported uses [
 			key: qualified imported value
-			if select contexts key [return extend-scope imported value]
+			id: select contexts key
+			if all [integer? id id > best][
+				found: extend-scope imported value
+				best: id
+			]
 		]
+		if block? found [return found]
+		key: qualified copy [] value
+		if select contexts key [return extend-scope copy [] value]
 		none
+	]
+
+	resolve-with: func [
+		target [word! path! block!]
+		scope uses [block!]
+		/local values result value child
+	][
+		values: either block? target [target][reduce [target]]
+		if empty? values [fail ERROR-CONTEXT "WITH requires a context"]
+		result: make block! length? values
+		foreach value values [
+			unless any [word? value path? value][
+				fail ERROR-CONTEXT ["invalid WITH context " mold value]
+			]
+			unless child: resolve-context value scope uses [
+				fail ERROR-CONTEXT ["unknown context " mold value]
+			]
+			unless find/only result child [append/only result child]
+		]
+		result
+	]
+
+	used-value?: func [
+		value [word! path!]
+		uses [block!]
+		count [integer!]
+		/local active
+	][
+		if count = 0 [return false]
+		active: skip uses ((length? uses) - count)
+		not none? any [
+			resolve-used-name value active globals
+			resolve-used-name value active import-ids
+			resolve-used-name value active function-ids
+			resolve-used-name value active protected
+			resolve-used-name value active constants
+			resolve-used-name value active contexts
+		]
+	]
+
+	import-variable-key?: func [key [word!] /local id record][
+		unless id: select import-ids key [return false]
+		record: skip imports ((id - 1) * 10)
+		record/5 = 'variable
 	]
 
 	intern-pointer: func [pointee [integer!] /local id kind][
@@ -1427,8 +1505,8 @@ compiler-rsir-frontend: context [
 					case [
 						integer? after-labels/1 [value: after-labels/1]
 						word? after-labels/1 [
-							constant-key: qualified scope after-labels/1
-							unless integer? value: select constants constant-key [
+							unless integer? value: resolve-name
+								after-labels/1 scope [] constants [
 								fail ERROR-REFERENCE [
 									"unknown enum value " mold after-labels/1
 								]
@@ -1534,6 +1612,7 @@ compiler-rsir-frontend: context [
 
 	scan-block: func [
 		values scope uses [block!]
+		with-count [integer!]
 		/local position name spec body child key kind target next-uses
 			spelling id type-spec protected-id alias-id
 	][
@@ -1578,7 +1657,7 @@ compiler-rsir-frontend: context [
 					position/2 = 'alias
 				][
 					key: qualified scope to word! position/1
-					if select type-ids key [
+					if any [select type-ids key select contexts key][
 						fail ERROR-DUPLICATE ["duplicate alias " mold key]
 					]
 					case [
@@ -1645,6 +1724,8 @@ compiler-rsir-frontend: context [
 						select import-ids key
 						select globals key
 						select protected key
+						select constants key
+						select contexts key
 					][
 						fail ERROR-DUPLICATE ["duplicate function " mold key]
 					]
@@ -1672,27 +1753,35 @@ compiler-rsir-frontend: context [
 				][
 					name: to word! position/1
 					key: qualified scope name
-					if select contexts key [
+					if any [
+						select contexts key
+						select function-ids key
+						select import-ids key
+						select globals key
+						select protected key
+						select constants key
+						select type-ids key
+					][
 						fail ERROR-DUPLICATE ["duplicate context " mold key]
 					]
-					repend contexts [key true]
+					context-count: context-count + 1
+					repend contexts [key context-count]
 					child: append copy scope name
-					scan-block position/3 child uses
+					scan-block position/3 child uses 0
 					position: skip position 3
 				]
 				all [
 					position/1 = 'with
 					(length? position) >= 3
-					any [word? position/2 path? position/2]
+					any [word? position/2 path? position/2 block? position/2]
 					block? position/3
 				][
 					target: position/2
-					unless child: resolve-context target scope uses [
-						fail ERROR-CONTEXT ["unknown context " mold target]
-					]
+					child: resolve-with target scope uses
 					next-uses: copy/deep uses
-					append/only next-uses child
+					append next-uses child
 					scan-block position/3 scope next-uses
+						(with-count + (length? child))
 					position: skip position 3
 				]
 				all [
@@ -1707,6 +1796,8 @@ compiler-rsir-frontend: context [
 						select import-ids key
 						select globals key
 						select protected key
+						select constants key
+						select contexts key
 					][fail ERROR-DUPLICATE ["duplicate protected value " mold key]]
 					protected-id: 0
 					unless protected-scalar? position/3 [
@@ -1730,11 +1821,17 @@ compiler-rsir-frontend: context [
 					name: to word! position/1
 					key: qualified scope name
 					unless any [
+						select globals key
 						select protected key
-						import-variable-id name scope uses
-						resolve-name name scope uses globals
+						import-variable-key? key
+						used-value? name uses with-count
 					][
-						if any [select function-ids key select import-ids key][
+						if any [
+							select function-ids key
+							select import-ids key
+							select constants key
+							select contexts key
+						][
 							fail ERROR-DUPLICATE ["duplicate global " mold key]
 						]
 						global-count: global-count + 1
@@ -1768,7 +1865,7 @@ compiler-rsir-frontend: context [
 			fail ERROR-ARGUMENTS "invalid Red/System program header"
 		]
 
-		scan-block skip source 2 copy [] copy []
+		scan-block skip source 2 copy [] copy [] 0
 		prepare-types
 		prepare-functions
 		prepare-imports
@@ -2562,8 +2659,7 @@ compiler-rsir-frontend: context [
 			any [word? value path? value][
 				protected-info: resolve-name value scope uses protected-values
 				if block? protected-info [return copy protected-info]
-				key: qualified scope value
-				id: select constants key
+				id: resolve-name value scope uses constants
 				if integer? id [
 					return reduce [
 						-5 scalar-initializer id either id < 0 [-1][0] 0
@@ -3170,30 +3266,13 @@ compiler-rsir-frontend: context [
 		next-position
 	]
 
-	stack-address: func [
+	stack-symbol-address: func [
 		target [word! path!]
 		scope uses [block!]
 		instructions [binary!]
-		params [block!]
-		locals [block!]
-		/write
 		return: [logic!]
-		/local id position part parts index base current flags info storage kind
-			element bits place?
+		/local id position
 	][
-		if word? target [
-			storage: stack-storage-info target params locals
-			if block? storage [
-				if (ref-kind storage/2/2) = 'subroutine [
-					fail ERROR-REFERENCE ["subroutine has no address " mold target]
-				]
-				emit instructions reduce [address-op local-address storage/1 0]
-				position: storage/2
-				last-type: position/2
-				last-flags: position/3
-				return true
-			]
-		]
 		id: resolve-name target scope uses globals
 		if integer? id [
 			emit instructions reduce [address-op global-address id 0]
@@ -3210,15 +3289,64 @@ compiler-rsir-frontend: context [
 			last-flags: 0
 			return true
 		]
-		if word? target [return false]
-		parts: to block! target
-		if (length? parts) < 2 [return false]
-		base: parts/1
-		stack-value reduce [base] scope uses instructions params locals expression-value
-		current: last-type
-		flags: last-flags
+		false
+	]
+
+	stack-address: func [
+		target [word! path!]
+		scope uses [block!]
+		instructions [binary!]
+		params [block!]
+		locals [block!]
+		/write
+		return: [logic!]
+		/local position part parts index prefix base candidate current flags info
+			storage kind element bits place?
+	][
+		parts: either path? target [to block! target][none]
+		base: either block? parts [parts/1][target]
 		place?: false
-		index: 2
+		if all [word? base not root-qualified? target][
+			storage: stack-storage-info base params locals
+			if block? storage [
+				if (ref-kind storage/2/2) = 'subroutine [
+					fail ERROR-REFERENCE ["subroutine has no address " mold target]
+				]
+				emit instructions reduce [address-op local-address storage/1 0]
+				position: storage/2
+				last-type: position/2
+				last-flags: position/3
+				if word? target [return true]
+				current: last-type
+				flags: last-flags
+				place?: true
+				index: 2
+			]
+		]
+		unless place? [
+			if stack-symbol-address target scope uses instructions [return true]
+			if word? target [return false]
+			if (length? parts) < 2 [return false]
+			prefix: (length? parts) - 1
+			while [prefix >= 2][
+				candidate: to path! copy/part parts prefix
+				if stack-symbol-address candidate scope uses instructions [
+					current: last-type
+					flags: last-flags
+					place?: true
+					index: prefix + 1
+					break
+				]
+				prefix: prefix - 1
+			]
+			unless place? [
+				stack-value reduce [base] scope uses instructions params locals
+					expression-value
+				current: last-type
+				flags: last-flags
+				index: 2
+			]
+		]
 		while [index <= length? parts][
 			part: parts/:index
 			kind: ref-kind current
@@ -4066,9 +4194,9 @@ compiler-rsir-frontend: context [
 	]
 
 	switch-bits: func [
-		value scope [block!]
+		value scope uses [block!]
 		return: [block! none!]
-		/local key number wide
+		/local number wide
 	][
 		case [
 			integer? value [
@@ -4080,8 +4208,7 @@ compiler-rsir-frontend: context [
 				either block? wide [reduce [wide/2 wide/3]][none]
 			]
 			any [word? value path? value][
-				key: qualified scope value
-				number: select constants key
+				number: resolve-name value scope uses constants
 				either integer? number [
 					reduce [number either number < 0 [-1][0]]
 				][none]
@@ -4174,7 +4301,7 @@ compiler-rsir-frontend: context [
 				bits: either tagged-selector? [
 					info: all [word? cursor/1 member-info selector-ref cursor/1]
 					either block? info [reduce [info/1 + 1 0]][none]
-				][switch-bits cursor/1 scope]
+				][switch-bits cursor/1 scope uses]
 				unless block? bits [
 					fail ERROR-UNSUPPORTED [
 						"invalid SWITCH value: " mold cursor/1
@@ -4523,7 +4650,7 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		return: [block!]
 		/local value storage id record ref info type-info kind bytes wide
-			constant-key scratch next-position
+			scratch next-position
 	][
 		if tail? position [fail ERROR-UNSUPPORTED "SIZE? requires a type or value"]
 		value: position/1
@@ -4587,8 +4714,7 @@ compiler-rsir-frontend: context [
 			]
 		]
 		if all [none? ref word? value][
-			constant-key: qualified scope value
-			if integer? select constants constant-key [ref: -5]
+			if integer? resolve-name value scope uses constants [ref: -5]
 		]
 		if all [none? ref path? value][
 			scratch: make binary! 64
@@ -5058,7 +5184,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local value type-info next-position target id constant-key bytes offset
+		/local value type-info next-position target id bytes offset
 			inner wide bits call-target protected-info
 			storage
 	][
@@ -5312,8 +5438,7 @@ compiler-rsir-frontend: context [
 					last-float-literal?: float-kind? ref-kind last-type
 					return next position
 				]
-				constant-key: qualified scope value
-				id: select constants constant-key
+				id: resolve-name value scope uses constants
 				next-position: either integer? id [
 					emit instructions reduce [literal-op -5 id either id < 0 [-1][0]]
 					last-type: -5
@@ -5934,15 +6059,13 @@ compiler-rsir-frontend: context [
 				all [
 					position/1 = 'with
 					(length? position) >= 3
-					any [word? position/2 path? position/2]
+					any [word? position/2 path? position/2 block? position/2]
 					block? position/3
 				][
 					target: position/2
-					unless child: resolve-context target scope uses [
-						fail ERROR-CONTEXT ["unknown context " mold target]
-					]
+					child: resolve-with target scope uses
 					next-uses: copy/deep uses
-					append/only next-uses child
+					append next-uses child
 					stack-module position/3 scope next-uses
 					position: skip position 3
 				]
@@ -6110,6 +6233,7 @@ compiler-rsir-frontend: context [
 			clear subroutine-bodies
 			clear subroutine-stack
 			function-count: 0
+			context-count: 0
 			type-count: 0
 			import-count: 0
 			global-count: 0

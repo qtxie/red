@@ -419,6 +419,94 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"referenced aggregate get-word reported the wrong error class"
 
+namespace-selection-ir: compile-text {
+	Red/System []
+	cell!: alias struct! [value [integer!]]
+	ns: context [
+		text: "red"
+		cell: declare cell!
+	]
+	read-byte: func [return: [byte!]][ns/text/1]
+	read-field: func [return: [integer!]][ns/cell/value]
+} 'user
+assert binary? namespace-selection-ir [
+	"namespace selection failed: " mold frontend/last-error
+]
+namespace-selection-layout: layout-of namespace-selection-ir
+namespace-selection-ops: ops-of namespace-selection-ir namespace-selection-layout
+assert all [
+	not none? find namespace-selection-ops 21
+	not none? find namespace-selection-ops 6
+]["namespace-qualified storage did not continue through INDEX/MEMBER"]
+
+namespace-shadow-ir: compile-text {
+	Red/System []
+	ns: context [value: 99]
+	read: func [ns [int-ptr!] return: [integer!]][ns/value]
+} 'user
+assert binary? namespace-shadow-ir [
+	"namespace local shadow failed: " mold frontend/last-error
+]
+namespace-shadow-layout: layout-of namespace-shadow-ir
+assert all [
+	(function-instruction-word namespace-shadow-ir namespace-shadow-layout 1 1 0) = 3
+	(function-instruction-word namespace-shadow-ir namespace-shadow-layout 1 1 4) = 1
+]["a namespace-qualified symbol captured a homonymous local path"]
+
+namespace-binding-ir: compile-text {
+	Red/System []
+	value: 10
+	first: context [
+		value: 20
+		slot: 21
+		inside: func [return: [integer!]][value]
+	]
+	second: context [
+		value: 30
+		slot: 31
+	]
+	root-value: func [return: [integer!]][system/words/value]
+	first-value: func [return: [integer!]][first/value]
+	with [second first][
+		selected-value: func [return: [integer!]][value]
+		write-selected: func [][slot: 32]
+	]
+} 'user
+assert binary? namespace-binding-ir [
+	"namespace binding failed: " mold frontend/last-error
+]
+namespace-binding-layout: layout-of namespace-binding-ir
+assert all [
+	(word-at namespace-binding-ir 24) = 5
+	(function-instruction-word namespace-binding-ir namespace-binding-layout 1 1 4) = 2
+	(function-instruction-word namespace-binding-ir namespace-binding-layout 1 1 8) = 2
+	(function-instruction-word namespace-binding-ir namespace-binding-layout 2 1 8) = 1
+	(function-instruction-word namespace-binding-ir namespace-binding-layout 3 1 8) = 2
+	(function-instruction-word namespace-binding-ir namespace-binding-layout 4 1 8) = 4
+	(function-instruction-word namespace-binding-ir namespace-binding-layout 5 2 8) = 5
+]["namespace, WITH, or system/words resolved to the wrong global slot"]
+
+namespace-with-child-ir: compile-text {
+	Red/System []
+	base: context [value: 1]
+	with base [
+		child: context [
+			value: 2
+			read: func [return: [integer!]][value]
+		]
+	]
+	read-base: func [return: [integer!]][base/value]
+} 'user
+assert binary? namespace-with-child-ir [
+	"namespace nested under WITH failed: " mold frontend/last-error
+]
+namespace-with-child-layout: layout-of namespace-with-child-ir
+assert all [
+	(word-at namespace-with-child-ir 24) = 2
+	(function-instruction-word namespace-with-child-ir namespace-with-child-layout 1 1 8) = 2
+	(function-instruction-word namespace-with-child-ir namespace-with-child-layout 2 1 8) = 1
+]["an inherited WITH captured a nearer child namespace definition"]
+
 pointer-value-ir: compile-text {
 	Red/System [] fn: func [p [int-ptr!] return: [integer!]][p/value]
 } 'user

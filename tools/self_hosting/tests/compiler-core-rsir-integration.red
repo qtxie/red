@@ -150,6 +150,8 @@ run-linked-fixture
 run-linked-fixture
 	%rsir-address-index-exit.reds %rsir-address-index-linked.exe "address/index"
 run-linked-fixture
+	%rsir-size-exit.reds %rsir-size-linked.exe "SIZE?"
+run-linked-fixture
 	%rsir-declare-storage-exit.reds %rsir-declare-storage-linked.exe "DECLARE storage"
 run-linked-fixture
 	%rsir-pointer-declare-exit.reds %rsir-pointer-declare-linked.exe "pointer DECLARE"

@@ -3984,11 +3984,24 @@ x64-codegen: context [
 				]
 				instruction/op = OP_SIZE [
 					ref: instruction/a
-					unless valid-type-ref? ref type-count [return INVALID_IR]
+					unless all [
+						valid-type-ref? ref type-count
+						any [instruction/b = 0 instruction/b = 1]
+					][return INVALID_IR]
+					either instruction/b = 0 [
+						if instruction/c <> 0 [return INVALID_IR]
+						depth: depth + 1
+					][
+						unless all [
+							depth > 0
+							stack-kinds/depth = VALUE
+							stack-types/depth = ref
+							stack-flags/depth = instruction/c
+						][return INVALID_IR]
+					]
 					width: logical-size ref types members type-count
 						layouts member-offsets
 					if width <= 0 [return INVALID_IR]
-					depth: depth + 1
 					if depth > max-depth [max-depth: depth]
 					stack-types/depth: -5
 					stack-flags/depth: 0
@@ -3996,10 +4009,24 @@ x64-codegen: context [
 					stack-tags/depth: 0
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
-					encoded: x64-encoder/move-immediate at (capacity - written)
-						x64-encoder/RAX 4 width 0
+					kind: logical-kind ref types type-count
+					either all [instruction/b = 1 kind = 13][
+						encoded: x64-encoder/frame-load at (capacity - written)
+							x64-encoder/RAX slot-displacement
+								(storage-slots + depth) 8 0
+					][
+						encoded: x64-encoder/move-immediate at (capacity - written)
+							x64-encoder/RAX 4 width 0
+					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+					if all [instruction/b = 1 kind = 13][
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/c-string-size at (capacity - written)
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)

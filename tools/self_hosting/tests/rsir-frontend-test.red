@@ -169,6 +169,28 @@ assert void-ir = compile-text {
 	fn: func [][]
 } 'user "comments entered the semantic stream"
 
+alias-reflection-ir: compile-text {
+	Red/System []
+	sample!: alias struct! [value [integer!]]
+	type-id: func [return: [integer!]][system/alias/sample!]
+} 'user
+assert binary? alias-reflection-ir [
+	"system/alias reflection failed: " mold frontend/last-error
+]
+alias-reflection-layout: layout-of alias-reflection-ir
+assert all [
+	(ops-of alias-reflection-ir alias-reflection-layout) = [1 11]
+	(instruction-word alias-reflection-ir alias-reflection-layout 1 4) = -5
+	(instruction-word alias-reflection-ir alias-reflection-layout 1 8) > 1000
+]["system/alias reflection did not lower directly to its integer type ID"]
+
+assert none? compile-text {
+	Red/System []
+	type-id: func [return: [integer!]][system/alias/missing!]
+} 'user "undefined system/alias reflection was accepted"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"undefined system/alias reflection reported the wrong error class"
+
 literal-ir: compile-text {
 	Red/System []
 	fn: func [return: [integer!]][7]
@@ -542,6 +564,27 @@ assert all [
 	(initializer-word global-pointer-declare-ir global-pointer-declare-layout 1 4) = 2
 	(initializer-word global-pointer-declare-ir global-pointer-declare-layout 1 8) = 2
 ]["global pointer DECLARE was not one static pointer to one pointee slot"]
+
+size-ir: compile-text {
+	Red/System []
+	sample!: alias struct! [value [integer!]]
+	sample: declare sample!
+	text: "Red"
+	fixed-size: func [return: [integer!]][size? sample]
+	member-size: func [return: [integer!]][size? sample/value]
+	text-size: func [return: [integer!]][size? text]
+	literal-size: func [return: [integer!]][size? "Red"]
+} 'user
+assert binary? size-ir ["SIZE? value lowering failed: " mold frontend/last-error]
+size-layout: layout-of size-ir
+assert all [
+	(ops-of size-ir size-layout) = [9 11 9 11 3 4 9 11 1 11]
+	(instruction-word size-ir size-layout 1 8) = 0
+	(instruction-word size-ir size-layout 3 4) = -5
+	(instruction-word size-ir size-layout 7 4) = -13
+	(instruction-word size-ir size-layout 7 8) = 1
+	(instruction-word size-ir size-layout 9 8) = 4
+]["SIZE? did not distinguish static layouts from dynamic c-string values"]
 
 array-ir: compile-text {
 	Red/System []
@@ -1650,6 +1693,20 @@ assert all [
 	(switch-word wide-switch-ir wide-switch-layout 1 4) = 1
 ]["64-bit literals did not retain both limbs in SWITCH"]
 
+positive-wide-ir: compile-text {
+	Red/System []
+	value: func [return: [int64!]][#i64-4294967296]
+} 'user
+assert binary? positive-wide-ir [
+	"positive signed 64-bit literal failed: " mold frontend/last-error
+]
+positive-wide-layout: layout-of positive-wide-ir
+assert all [
+	(instruction-word positive-wide-ir positive-wide-layout 1 4) = -7
+	(instruction-word positive-wide-ir positive-wide-layout 1 8) = 0
+	(instruction-word positive-wide-ir positive-wide-layout 1 12) = 1
+]["positive signed 64-bit literal did not retain both limbs"]
+
 enum-switch-ir: compile-text {
 	Red/System []
 	#enum kind! [zero one two]
@@ -1661,6 +1718,26 @@ assert binary? enum-switch-ir ["enum SWITCH lowering failed: " mold frontend/las
 enum-switch-layout: layout-of enum-switch-ir
 assert (switch-word enum-switch-ir enum-switch-layout 1 0) = 1
 	"enum symbol was not resolved as a compile-time SWITCH literal"
+
+enum-shared-value-ir: compile-text {
+	Red/System []
+	#enum values! [first: second: 10 third fourth: fifth: 20 sixth]
+	sum: func [return: [integer!]][
+		first + second + third + fourth + fifth + sixth
+	]
+} 'user
+assert binary? enum-shared-value-ir [
+	"shared enum value lowering failed: " mold frontend/last-error
+]
+enum-shared-value-layout: layout-of enum-shared-value-ir
+assert all [
+	(instruction-word enum-shared-value-ir enum-shared-value-layout 1 8) = 10
+	(instruction-word enum-shared-value-ir enum-shared-value-layout 2 8) = 10
+	(instruction-word enum-shared-value-ir enum-shared-value-layout 4 8) = 11
+	(instruction-word enum-shared-value-ir enum-shared-value-layout 6 8) = 20
+	(instruction-word enum-shared-value-ir enum-shared-value-layout 8 8) = 20
+	(instruction-word enum-shared-value-ir enum-shared-value-layout 10 8) = 21
+]["a chained enum assignment did not bind every label to the shared value"]
 
 widen-ir: compile-text {
 	Red/System []

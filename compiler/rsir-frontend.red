@@ -833,10 +833,15 @@ compiler-rsir-frontend: context [
 		/local record target alias-id kind
 	][
 		if ref = 0 [return 8]
+		kind: ref-kind ref
 		if all [ref > 0 ref <= type-count][
 			record: skip types ((ref - 1) * 5)
 			alias-id: select alias-type-ids record/1
-			if all [integer? alias-id alias-id > 1000][
+			if all [
+				integer? alias-id
+				alias-id > 1000
+				not integer-kind? kind
+			][
 				return alias-id
 			]
 			if record/2 = 'alias [
@@ -848,7 +853,6 @@ compiler-rsir-frontend: context [
 				return typed-type-id target
 			]
 		]
-		kind: ref-kind ref
 		case [
 			kind = 'logic [1]
 			kind = 'i32 [2]
@@ -1337,7 +1341,7 @@ compiler-rsir-frontend: context [
 	scan-enum: func [
 		name [word!]
 		values scope [block!]
-		/local key position item value constant-key id
+		/local key position labels after-labels next-position item value constant-key id
 	][
 		key: qualified scope name
 		if select type-ids key [fail ERROR-DUPLICATE ["duplicate type " mold key]]
@@ -1352,33 +1356,48 @@ compiler-rsir-frontend: context [
 		value: 0
 		position: values
 		while [not tail? position][
-			item: position/1
 			case [
-				word? item [position: next position]
-				all [set-word? item (length? position) >= 2][
-					item: to word! item
+				word? position/1 [
+					labels: position
+					after-labels: next position
+					next-position: after-labels
+				]
+				set-word? position/1 [
+					labels: position
+					after-labels: position
+					while [all [not tail? after-labels set-word? after-labels/1]][
+						after-labels: next after-labels
+					]
+					if tail? after-labels [
+						fail ERROR-UNSUPPORTED "enum value is missing"
+					]
 					case [
-						integer? position/2 [value: position/2]
-						word? position/2 [
-							constant-key: qualified scope position/2
+						integer? after-labels/1 [value: after-labels/1]
+						word? after-labels/1 [
+							constant-key: qualified scope after-labels/1
 							unless integer? value: select constants constant-key [
 								fail ERROR-REFERENCE [
-									"unknown enum value " mold position/2
+									"unknown enum value " mold after-labels/1
 								]
 							]
 						]
 						true [fail ERROR-UNSUPPORTED "invalid enum value"]
 					]
-					position: skip position 2
+					next-position: next after-labels
 				]
 				true [fail ERROR-UNSUPPORTED "invalid enum declaration"]
 			]
-			constant-key: qualified scope item
-			if select constants constant-key [
-				fail ERROR-DUPLICATE ["duplicate enum name " mold constant-key]
+			while [labels <> after-labels][
+				item: to word! labels/1
+				constant-key: qualified scope item
+				if select constants constant-key [
+					fail ERROR-DUPLICATE ["duplicate enum name " mold constant-key]
+				]
+				repend constants [constant-key value]
+				labels: next labels
 			]
-			repend constants [constant-key value]
 			value: value + 1
+			position: next-position
 		]
 	]
 
@@ -1463,7 +1482,7 @@ compiler-rsir-frontend: context [
 	scan-block: func [
 		values scope uses [block!]
 		/local position name spec body child key kind target next-uses
-			spelling id type-spec protected-id alias-target-ref alias-id
+			spelling id type-spec protected-id alias-id
 	][
 		position: values
 		while [not tail? position][
@@ -1550,15 +1569,7 @@ compiler-rsir-frontend: context [
 					append/only types copy/deep uses
 					type-count: id
 					alias-count: alias-count + 1
-					alias-id: 0
-					alias-target-ref: either kind = 'alias [
-						type-ref either block? type-spec [
-							type-spec
-						][reduce [type-spec]] scope uses
-					][id]
-					unless integer-kind? ref-kind alias-target-ref [
-						alias-id: 1000 + alias-count
-					]
+					alias-id: 1000 + alias-count
 					repend alias-type-ids [key alias-id]
 				]
 				all [
@@ -2316,7 +2327,7 @@ compiler-rsir-frontend: context [
 			]
 			find/match spelling "i64-" [
 				payload: skip spelling 4
-				negative?: all [not empty? payload payload/1 = #"n"]
+				negative?: to logic! all [not empty? payload payload/1 = #"n"]
 				if negative? [payload: next payload]
 				digits: copy payload
 				if greater-digits? digits either negative? [
@@ -4454,11 +4465,56 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local value storage id record ref info type-info
+		/local value storage id record ref info type-info kind bytes wide
+			constant-key scratch next-position
 	][
-		if tail? position [fail ERROR-UNSUPPORTED "SIZE? requires a type or array"]
+		if tail? position [fail ERROR-UNSUPPORTED "SIZE? requires a type or value"]
 		value: position/1
+		kind: either any [word? value path? value][
+			type-kind reduce [value] scope uses
+		][none]
+		if kind [
+			type-info: stack-read-type position scope uses
+			emit instructions reduce [size-op type-info/2 0 0]
+			last-type: -5
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return type-info/1
+		]
+		if string? value [
+			bytes: to binary! value
+			emit instructions reduce [literal-op -5 ((length? bytes) + 1) 0]
+			last-type: -5
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next position
+		]
 		ref: none
+		case [
+			integer? value [ref: -5]
+			char? value [
+				if (to integer! value) > 255 [
+					fail ERROR-UNSUPPORTED "byte literal is out of range"
+				]
+				ref: -15
+			]
+			float? value [ref: -10]
+			logic? value [ref: -11]
+			issue? value [
+				wide: wide-literal value
+				either block? wide [ref: wide/1][
+					if float-literal? value [ref: -10]
+				]
+			]
+			all [word? value find [true false yes no] value][ref: -11]
+			value = 'null [ref: -14]
+			any [block? value binary? value][
+				info: array-literal-info value scope uses false
+				ref: info/1
+			]
+		]
 		if word? value [
 			storage: stack-storage-info value params locals
 			if block? storage [
@@ -4473,8 +4529,17 @@ compiler-rsir-frontend: context [
 				if integer? record/2 [ref: record/2]
 			]
 		]
-		info: either integer? ref [array-info ref][none]
-		if block? info [
+		if all [none? ref word? value][
+			constant-key: qualified scope value
+			if integer? select constants constant-key [ref: -5]
+		]
+		if all [none? ref path? value][
+			scratch: make binary! 64
+			if stack-address value scope uses scratch params locals [
+				ref: last-type
+			]
+		]
+		if all [integer? ref (ref-kind ref) <> 'c-string][
 			emit instructions reduce [size-op ref 0 0]
 			last-type: -5
 			last-flags: 0
@@ -4482,13 +4547,17 @@ compiler-rsir-frontend: context [
 			last-stopped?: false
 			return next position
 		]
-		type-info: stack-read-type position scope uses
-		emit instructions reduce [size-op type-info/2 0 0]
+		next-position: stack-primary position scope uses instructions params locals
+			expression-value
+		unless all [not last-stopped? last-type <> 0][
+			fail ERROR-REFERENCE "SIZE? requires a value"
+		]
+		emit instructions reduce [size-op last-type 1 last-flags]
 		last-type: -5
 		last-flags: 0
 		last-float-literal?: false
 		last-stopped?: false
-		type-info/1
+		next-position
 	]
 
 	integer-pointer-value?: func [
@@ -4654,6 +4723,21 @@ compiler-rsir-frontend: context [
 			path/1 = 'system
 		][return none]
 		count: length? path
+		if path/2 = 'alias [
+			unless all [count = 3 word? path/3][
+				fail ERROR-REFERENCE "invalid system/alias access"
+			]
+			id: resolve-name path/3 scope uses alias-type-ids
+			unless integer? id [
+				fail ERROR-REFERENCE ["undefined alias name " mold path/3]
+			]
+			emit instructions reduce [literal-op -5 id 0]
+			last-type: -5
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next position
+		]
 		if path/2 = 'thrown [
 			unless count = 2 [fail ERROR-REFERENCE "invalid system/thrown access"]
 			id: ensure-thrown-global

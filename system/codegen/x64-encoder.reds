@@ -374,6 +374,30 @@ x64-encoder: context [
 		size
 	]
 
+	c-string-size: func [
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+	][
+		unless room? code capacity 17 [return -1]
+		if null? code [return 17]
+		code/1:  as byte! 31h                    ; xor edx, edx
+		code/2:  as byte! D2h
+		code/3:  as byte! FFh                    ; next: inc edx
+		code/4:  as byte! C2h
+		code/5:  as byte! 80h                    ; cmp byte [rax + rdx - 1], 0
+		code/6:  as byte! 7Ch
+		code/7:  as byte! 10h
+		code/8:  as byte! FFh
+		code/9:  as byte! 00h
+		code/10: as byte! 0Fh                    ; jne next
+		code/11: as byte! 85h
+		write-i32 (code + 11) -13
+		code/16: as byte! 89h                    ; mov eax, edx
+		code/17: as byte! D0h
+		17
+	]
+
 	jump-relative: func [
 		code [byte-ptr!]
 		capacity displacement [integer!]

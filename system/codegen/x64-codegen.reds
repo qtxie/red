@@ -14,6 +14,7 @@ rsir-header!: alias struct! [
 	instruction-count [integer!]
 	global-count      [integer!]
 	switch-count      [integer!]
+	export-count      [integer!]
 ]
 
 rsir-type!: alias struct! [
@@ -61,6 +62,12 @@ rsir-function!: alias struct! [
 	instruction-count [integer!]
 ]
 
+rsir-export!: alias struct! [
+	symbol    [integer!]
+	name      [integer!]
+	name-size [integer!]
+]
+
 rsir-parameter!: alias struct! [
 	type  [integer!]
 	flags [integer!]
@@ -99,6 +106,7 @@ codegen-header!: alias struct! [
 	data-size       [integer!]
 	global-count    [integer!]
 	rodata-size     [integer!]
+	export-count    [integer!]
 ]
 
 codegen-function!: alias struct! [
@@ -132,22 +140,30 @@ codegen-import!: alias struct! [
 	reference-count [integer!]
 ]
 
+codegen-export!: alias struct! [
+	symbol    [integer!]
+	name      [integer!]
+	name-size [integer!]
+]
+
 x64-codegen: context [
-	RSIR_HEADER_SIZE:      32
+	RSIR_HEADER_SIZE:      36
 	RSIR_TYPE_SIZE:        20
 	RSIR_MEMBER_SIZE:       8
 	RSIR_IMPORT_SIZE:      32
 	RSIR_GLOBAL_SIZE:      24
 	RSIR_FUNCTION_SIZE:    36
+	RSIR_EXPORT_SIZE:      12
 	RSIR_PARAMETER_SIZE:    8
 	RSIR_INITIALIZER_SIZE: 16
 	RSIR_SWITCH_SIZE:      12
 	RSIR_INSTRUCTION_SIZE: 16
 
-	IMAGE_HEADER_SIZE:   48
+	IMAGE_HEADER_SIZE:   52
 	IMAGE_FUNCTION_SIZE: 36
 	IMAGE_GLOBAL_SIZE:   28
 	IMAGE_IMPORT_SIZE:   24
+	IMAGE_EXPORT_SIZE:   12
 	BITMAP_SIZE:         16
 
 	CDECL:          1
@@ -6019,27 +6035,30 @@ x64-codegen: context [
 			ir-import [rsir-import!]
 			ir-global target-global [rsir-global!]
 			ir-function [rsir-function!]
+			ir-export [rsir-export!]
 			ir-parameter [rsir-parameter!]
 			initializer [rsir-initializer!]
 			image [codegen-header!]
 			image-function target-image-function [codegen-function!]
 			image-global target-image-global [codegen-global!]
 			image-import [codegen-import!]
+			image-export [codegen-export!]
 			import-refs function-sizes function-frames function-outgoing instruction-offsets
 				instruction-depths catch-depths entry-types entry-flags entry-kinds entry-tags
 				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
 				tag-widths result-offsets storage-offsets layouts member-offsets
 				references [int-ptr!]
-			type-data member-data import-data global-data function-data
+			type-data member-data import-data global-data function-data export-data
 				parameter-data initializer-data switch-data instruction-data strings
 				function-instructions
 				name names-output code rodata-output data-output cursor finish scratch
 				[byte-ptr!]
-			type-bytes member-bytes import-bytes global-bytes function-bytes
+			type-bytes member-bytes import-bytes global-bytes function-bytes export-bytes
 				parameter-bytes initializer-bytes switch-bytes instruction-bytes remaining
 				member-count parameter-count initializer-count next-parameter
 				strings-size metadata-size function-names-size global-names-size
-				import-names-size names-size code-offset code-size function-code-size
+				import-names-size export-names-size names-size code-offset code-size
+				function-code-size
 				literal-size rodata-offset data-offset image-rodata-size image-data-size
 				total-size scratch-count
 				id next-instruction next-offset instruction-count function-size entry-size
@@ -6059,9 +6078,11 @@ x64-codegen: context [
 		header: as rsir-header! data
 		if any [
 			header/type-count < 0 header/import-count < 0 header/global-count < 0
-			header/switch-count < 0
+			header/switch-count < 0 header/export-count < 0
 			header/function-count <= 0 header/instruction-count <= 0
-			header/module-kind < 1 header/module-kind > 3
+			header/module-kind < 1 header/module-kind > 4
+			all [header/module-kind = 4 header/export-count = 0]
+			all [header/module-kind <> 4 header/export-count <> 0]
 		][return INVALID_IR]
 		entry?: header/module-kind = 3
 		if any [
@@ -6282,9 +6303,26 @@ x64-codegen: context [
 		]
 		if instruction-count <> header/instruction-count [return INVALID_IR]
 
+		if header/export-count > (remaining / RSIR_EXPORT_SIZE)[return INVALID_IR]
+		export-bytes: header/export-count * RSIR_EXPORT_SIZE
+		export-data: function-data + function-bytes
+		remaining: remaining - export-bytes
+		id: 1
+		while [id <= header/export-count][
+			ir-export: as rsir-export! (export-data + ((id - 1) * RSIR_EXPORT_SIZE))
+			if any [
+				ir-export/symbol = 0
+				all [ir-export/symbol > 0
+					ir-export/symbol > header/function-count]
+				all [ir-export/symbol < 0
+					ir-export/symbol < (0 - header/global-count)]
+			][return INVALID_IR]
+			id: id + 1
+		]
+
 		if parameter-count > (remaining / RSIR_PARAMETER_SIZE)[return INVALID_IR]
 		parameter-bytes: parameter-count * RSIR_PARAMETER_SIZE
-		parameter-data: function-data + function-bytes
+		parameter-data: export-data + export-bytes
 		remaining: remaining - parameter-bytes
 		id: 1
 		while [id <= parameter-count][
@@ -6424,6 +6462,20 @@ x64-codegen: context [
 				ir-import/external-size > strings-size
 				ir-import/external > (strings-size - ir-import/external-size)
 			][return INVALID_IR]
+			id: id + 1
+		]
+
+		export-names-size: 0
+		id: 1
+		while [id <= header/export-count][
+			ir-export: as rsir-export! (export-data + ((id - 1) * RSIR_EXPORT_SIZE))
+			if any [
+				ir-export/name < 0 ir-export/name-size <= 0
+				ir-export/name-size > strings-size
+				ir-export/name > (strings-size - ir-export/name-size)
+				export-names-size > (2147483647 - ir-export/name-size)
+			][return INVALID_IR]
+			export-names-size: export-names-size + ir-export/name-size
 			id: id + 1
 		]
 
@@ -6817,11 +6869,19 @@ x64-codegen: context [
 			return release scratch OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (image-import-count * IMAGE_IMPORT_SIZE)
+		if header/export-count > ((2147483647 - metadata-size) / IMAGE_EXPORT_SIZE)[
+			return release scratch OUTPUT_FULL
+		]
+		metadata-size: metadata-size + (header/export-count * IMAGE_EXPORT_SIZE)
 		if reference-count > ((2147483647 - metadata-size) / 4)[
 			return release scratch OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (reference-count * 4)
 		names-size: function-names-size + global-names-size + import-names-size
+		if names-size > (2147483647 - export-names-size)[
+			return release scratch OUTPUT_FULL
+		]
+		names-size: names-size + export-names-size
 		if entry? [names-size: names-size + 23]
 		if any [names-size < 0 metadata-size > (2147483647 - names-size - 15)][
 			return release scratch OUTPUT_FULL
@@ -6855,6 +6915,7 @@ x64-codegen: context [
 		image/data-size: image-data-size
 		image/global-count: header/global-count
 		image/rodata-size: image-rodata-size
+		image/export-count: header/export-count
 
 		names-output: output + metadata-size
 		name-cursor: 0
@@ -6900,7 +6961,8 @@ x64-codegen: context [
 		references: as int-ptr! (output + IMAGE_HEADER_SIZE
 			+ (header/function-count * IMAGE_FUNCTION_SIZE)
 			+ (header/global-count * IMAGE_GLOBAL_SIZE)
-			+ (image-import-count * IMAGE_IMPORT_SIZE))
+			+ (image-import-count * IMAGE_IMPORT_SIZE)
+			+ (header/export-count * IMAGE_EXPORT_SIZE))
 		first-reference: 1
 		id: 1
 		while [id <= header/function-count][
@@ -6977,6 +7039,23 @@ x64-codegen: context [
 			exit-reference-id: first-reference
 			copy-memory (names-output + library-offset) (as byte-ptr! "kernel32.dll") 12
 			copy-memory (names-output + external-offset) (as byte-ptr! "ExitProcess") 11
+		]
+
+		id: 1
+		while [id <= header/export-count][
+			ir-export: as rsir-export! (export-data + ((id - 1) * RSIR_EXPORT_SIZE))
+			image-export: as codegen-export! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ (header/global-count * IMAGE_GLOBAL_SIZE)
+				+ (image-import-count * IMAGE_IMPORT_SIZE)
+				+ ((id - 1) * IMAGE_EXPORT_SIZE))
+			image-export/symbol: ir-export/symbol
+			image-export/name: name-cursor
+			image-export/name-size: ir-export/name-size
+			copy-memory (names-output + name-cursor)
+				(strings + ir-export/name) ir-export/name-size
+			name-cursor: name-cursor + ir-export/name-size
+			id: id + 1
 		]
 
 		cursor: names-output + names-size

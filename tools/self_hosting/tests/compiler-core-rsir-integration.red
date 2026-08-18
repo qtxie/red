@@ -76,7 +76,7 @@ artifact: system-dialect/last-rsir
 
 check binary? artifact "RSIR core did not return RSIR"
 check all [
-	(length? artifact) >= 32
+	(length? artifact) >= 36
 	(word-at artifact 0) = 3
 	(word-at artifact 4) > 0
 	(word-at artifact 4) <= word-at artifact 16

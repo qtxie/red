@@ -84,29 +84,29 @@ execute-first?: func [
 
 failures: 0
 output: allocate 1024
-void-ir: allocate 128
-local-ir: allocate 256
-pointer-ir: allocate 128
-arithmetic-ir: allocate 256
-aggregate-ir: allocate 512
-abi-ir: allocate 1024
-indirect-ir: allocate 320
-variadic-ir: allocate 512
-import-variadic-ir: allocate 256
-null-function-ir: allocate 192
-tagged-ir: allocate 384
-array-ir: allocate 256
-branch-ir: allocate 256
-merge-ir: allocate 256
-selection-ir: allocate 256
-recursive-pointer-ir: allocate 160
-recursive-value-ir: allocate 144
-stack-ir: allocate 160
-log-b-ir: allocate 128
-system-ir: allocate 256
-atomic-ir: allocate 272
-overflow-ir: allocate 272
-exception-ir: allocate 256
+void-ir: allocate 132
+local-ir: allocate 260
+pointer-ir: allocate 132
+arithmetic-ir: allocate 260
+aggregate-ir: allocate 516
+abi-ir: allocate 1028
+indirect-ir: allocate 324
+variadic-ir: allocate 516
+import-variadic-ir: allocate 260
+null-function-ir: allocate 196
+tagged-ir: allocate 388
+array-ir: allocate 260
+branch-ir: allocate 260
+merge-ir: allocate 260
+selection-ir: allocate 260
+recursive-pointer-ir: allocate 164
+recursive-value-ir: allocate 148
+stack-ir: allocate 164
+log-b-ir: allocate 132
+system-ir: allocate 260
+atomic-ir: allocate 276
+overflow-ir: allocate 276
+exception-ir: allocate 260
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -130,21 +130,22 @@ put void-ir 16 1
 put void-ir 20 1
 put void-ir 24 0
 put void-ir 28 0
-
 put void-ir 32 0
-put void-ir 36 2
-put void-ir 40 0
+
+put void-ir 36 0
+put void-ir 40 2
 put void-ir 44 0
 put void-ir 48 0
 put void-ir 52 0
 put void-ir 56 0
 put void-ir 60 0
-put void-ir 64 1
-put-instruction void-ir 68 11 0 0 0
-void-ir/85: as byte! 66h
-void-ir/86: as byte! 6Eh
+put void-ir 64 0
+put void-ir 68 1
+put-instruction void-ir 72 11 0 0 0
+void-ir/89: as byte! 66h
+void-ir/90: as byte! 6Eh
 
-size: x64-codegen/generate void-ir 86 output 1024 0
+size: x64-codegen/generate void-ir 90 output 1024 0
 if size <> 132 [failures: failures + 1]
 if size > 0 [
 	header: as codegen-header! output
@@ -161,13 +162,13 @@ if size > 0 [
 	][failures: failures + 1]
 ]
 
-if (x64-codegen/generate void-ir 85 output 1024 0) <> x64-codegen/INVALID_IR [
+if (x64-codegen/generate void-ir 89 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-if (x64-codegen/generate void-ir 86 output 64 0) <> x64-codegen/OUTPUT_FULL [
+if (x64-codegen/generate void-ir 90 output 64 0) <> x64-codegen/OUTPUT_FULL [
 	failures: failures + 1
 ]
-if (x64-codegen/generate void-ir 86 output 1024 2) <> x64-codegen/UNSUPPORTED [
+if (x64-codegen/generate void-ir 90 output 1024 2) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
 
@@ -180,30 +181,31 @@ put local-ir 16 1
 put local-ir 20 7
 put local-ir 24 0
 put local-ir 28 0
-
 put local-ir 32 0
-put local-ir 36 2
-put local-ir 40 -5
-put local-ir 44 0
+
+put local-ir 36 0
+put local-ir 40 2
+put local-ir 44 -5
 put local-ir 48 0
 put local-ir 52 0
 put local-ir 56 0
-put local-ir 60 1
-put local-ir 64 7
+put local-ir 60 0
+put local-ir 64 1
+put local-ir 68 7
 
-put local-ir 68 -5
-put local-ir 72 0
-put-instruction local-ir 76 1 -5 7 0
-put-instruction local-ir 92 3 1 1 0
-put-instruction local-ir 108 5 0 0 0
-put-instruction local-ir 124 12 0 0 0
-put-instruction local-ir 140 3 1 1 0
-put-instruction local-ir 156 4 0 0 0
-put-instruction local-ir 172 11 -5 0 0
-local-ir/189: as byte! 66h
-local-ir/190: as byte! 6Eh
+put local-ir 72 -5
+put local-ir 76 0
+put-instruction local-ir 80 1 -5 7 0
+put-instruction local-ir 96 3 1 1 0
+put-instruction local-ir 112 5 0 0 0
+put-instruction local-ir 128 12 0 0 0
+put-instruction local-ir 144 3 1 1 0
+put-instruction local-ir 160 4 0 0 0
+put-instruction local-ir 176 11 -5 0 0
+local-ir/193: as byte! 66h
+local-ir/194: as byte! 6Eh
 
-size: x64-codegen/generate local-ir 190 output 1024 0
+size: x64-codegen/generate local-ir 194 output 1024 0
 if size <= 0 [
 	failures: failures + 1
 ]
@@ -218,16 +220,16 @@ if size > 0 [
 ]
 
 ; first-local and local-count describe one contiguous function storage slice.
-put local-ir 56 1
-if (x64-codegen/generate local-ir 190 output 1024 0) <> x64-codegen/INVALID_IR [
+put local-ir 60 1
+if (x64-codegen/generate local-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put local-ir 56 0
-put local-ir 68 0
-if (x64-codegen/generate local-ir 190 output 1024 0) <> x64-codegen/INVALID_IR [
+put local-ir 60 0
+put local-ir 72 0
+if (x64-codegen/generate local-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put local-ir 68 -5
+put local-ir 72 -5
 
 ; Unused pointer node: logical pointee information must be accepted without
 ; changing code generated for the same function.
@@ -239,28 +241,29 @@ put pointer-ir 16 1
 put pointer-ir 20 1
 put pointer-ir 24 0
 put pointer-ir 28 0
-put pointer-ir 32 -6
-put pointer-ir 36 -5
-put pointer-ir 40 0
+put pointer-ir 32 0
+put pointer-ir 36 -6
+put pointer-ir 40 -5
 put pointer-ir 44 0
 put pointer-ir 48 0
 put pointer-ir 52 0
-put pointer-ir 56 2
-put pointer-ir 60 0
+put pointer-ir 56 0
+put pointer-ir 60 2
 put pointer-ir 64 0
 put pointer-ir 68 0
 put pointer-ir 72 0
 put pointer-ir 76 0
 put pointer-ir 80 0
-put pointer-ir 84 1
-put-instruction pointer-ir 88 11 0 0 0
-pointer-ir/105: as byte! 66h
-pointer-ir/106: as byte! 6Eh
+put pointer-ir 84 0
+put pointer-ir 88 1
+put-instruction pointer-ir 92 11 0 0 0
+pointer-ir/109: as byte! 66h
+pointer-ir/110: as byte! 6Eh
 
-size: x64-codegen/generate pointer-ir 106 output 1024 0
+size: x64-codegen/generate pointer-ir 110 output 1024 0
 if size <> 132 [failures: failures + 1]
-put pointer-ir 36 0
-if (x64-codegen/generate pointer-ir 106 output 1024 0) <> x64-codegen/INVALID_IR [
+put pointer-ir 40 0
+if (x64-codegen/generate pointer-ir 110 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
@@ -274,36 +277,37 @@ put arithmetic-ir 20 6
 put arithmetic-ir 24 0
 put arithmetic-ir 28 0
 put arithmetic-ir 32 0
-put arithmetic-ir 36 2
-put arithmetic-ir 40 -5
-put arithmetic-ir 44 0
+put arithmetic-ir 36 0
+put arithmetic-ir 40 2
+put arithmetic-ir 44 -5
 put arithmetic-ir 48 0
 put arithmetic-ir 52 0
 put arithmetic-ir 56 0
 put arithmetic-ir 60 0
-put arithmetic-ir 64 6
-put-instruction arithmetic-ir 68 1 -5 1 0
-put-instruction arithmetic-ir 84 1 -5 2 0
-put-instruction arithmetic-ir 100 15 1 0 0
-put-instruction arithmetic-ir 116 1 -5 3 0
-put-instruction arithmetic-ir 132 15 3 0 0
-put-instruction arithmetic-ir 148 11 -5 0 0
-arithmetic-ir/165: as byte! 66h
-arithmetic-ir/166: as byte! 6Eh
+put arithmetic-ir 64 0
+put arithmetic-ir 68 6
+put-instruction arithmetic-ir 72 1 -5 1 0
+put-instruction arithmetic-ir 88 1 -5 2 0
+put-instruction arithmetic-ir 104 15 1 0 0
+put-instruction arithmetic-ir 120 1 -5 3 0
+put-instruction arithmetic-ir 136 15 3 0 0
+put-instruction arithmetic-ir 152 11 -5 0 0
+arithmetic-ir/169: as byte! 66h
+arithmetic-ir/170: as byte! 6Eh
 
-size: x64-codegen/generate arithmetic-ir 166 output 1024 0
+size: x64-codegen/generate arithmetic-ir 170 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if any [fn/frame-size <> 48 fn/code-size <= 17][failures: failures + 1]
 ]
-put arithmetic-ir 88 -11
-if (x64-codegen/generate arithmetic-ir 166 output 1024 0) <> x64-codegen/INVALID_IR [
+put arithmetic-ir 92 -11
+if (x64-codegen/generate arithmetic-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put arithmetic-ir 88 -5
-put arithmetic-ir 104 19
-if (x64-codegen/generate arithmetic-ir 166 output 1024 0) <> x64-codegen/INVALID_IR [
+put arithmetic-ir 92 -5
+put arithmetic-ir 108 19
+if (x64-codegen/generate arithmetic-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
@@ -317,59 +321,60 @@ put aggregate-ir 16 1
 put aggregate-ir 20 23
 put aggregate-ir 24 0
 put aggregate-ir 28 0
+put aggregate-ir 32 0
 
-put aggregate-ir 32 -2
-put aggregate-ir 36 0
+put aggregate-ir 36 -2
 put aggregate-ir 40 0
 put aggregate-ir 44 0
-put aggregate-ir 48 2
-put aggregate-ir 52 -5
-put aggregate-ir 56 0
-put aggregate-ir 60 -5
-put aggregate-ir 64 0
-
+put aggregate-ir 48 0
+put aggregate-ir 52 2
+put aggregate-ir 56 -5
+put aggregate-ir 60 0
+put aggregate-ir 64 -5
 put aggregate-ir 68 0
-put aggregate-ir 72 2
-put aggregate-ir 76 -5
-put aggregate-ir 80 0
+
+put aggregate-ir 72 0
+put aggregate-ir 76 2
+put aggregate-ir 80 -5
 put aggregate-ir 84 0
 put aggregate-ir 88 0
 put aggregate-ir 92 0
-put aggregate-ir 96 2
-put aggregate-ir 100 23
+put aggregate-ir 96 0
+put aggregate-ir 100 2
+put aggregate-ir 104 23
 
-put aggregate-ir 104 1
 put aggregate-ir 108 1
 put aggregate-ir 112 1
 put aggregate-ir 116 1
+put aggregate-ir 120 1
 
-put-instruction aggregate-ir 120 1 -5 17 0
-put-instruction aggregate-ir 136 3 1 1 0
-put-instruction aggregate-ir 152 6 0 0 0
-put-instruction aggregate-ir 168 5 0 0 0
-put-instruction aggregate-ir 184 12 0 0 0
-put-instruction aggregate-ir 200 3 1 1 0
-put-instruction aggregate-ir 216 4 0 0 0
-put-instruction aggregate-ir 232 3 1 2 0
-put-instruction aggregate-ir 248 5 0 0 0
-put-instruction aggregate-ir 264 12 0 0 0
-put-instruction aggregate-ir 280 1 -5 29 0
-put-instruction aggregate-ir 296 3 1 2 0
-put-instruction aggregate-ir 312 6 1 0 0
-put-instruction aggregate-ir 328 5 0 0 0
-put-instruction aggregate-ir 344 12 0 0 0
-put-instruction aggregate-ir 360 3 1 2 0
-put-instruction aggregate-ir 376 6 0 0 0
-put-instruction aggregate-ir 392 4 0 0 0
-put-instruction aggregate-ir 408 3 1 2 0
-put-instruction aggregate-ir 424 6 1 0 0
-put-instruction aggregate-ir 440 4 0 0 0
-put-instruction aggregate-ir 456 15 1 0 0
-put-instruction aggregate-ir 472 11 -5 0 0
-aggregate-ir/489: as byte! 66h
-aggregate-ir/490: as byte! 6Eh
+put-instruction aggregate-ir 124 1 -5 17 0
+put-instruction aggregate-ir 140 3 1 1 0
+put-instruction aggregate-ir 156 6 0 0 0
+put-instruction aggregate-ir 172 5 0 0 0
+put-instruction aggregate-ir 188 12 0 0 0
+put-instruction aggregate-ir 204 3 1 1 0
+put-instruction aggregate-ir 220 4 0 0 0
+put-instruction aggregate-ir 236 3 1 2 0
+put-instruction aggregate-ir 252 5 0 0 0
+put-instruction aggregate-ir 268 12 0 0 0
+put-instruction aggregate-ir 284 1 -5 29 0
+put-instruction aggregate-ir 300 3 1 2 0
+put-instruction aggregate-ir 316 6 1 0 0
+put-instruction aggregate-ir 332 5 0 0 0
+put-instruction aggregate-ir 348 12 0 0 0
+put-instruction aggregate-ir 364 3 1 2 0
+put-instruction aggregate-ir 380 6 0 0 0
+put-instruction aggregate-ir 396 4 0 0 0
+put-instruction aggregate-ir 412 3 1 2 0
+put-instruction aggregate-ir 428 6 1 0 0
+put-instruction aggregate-ir 444 4 0 0 0
+put-instruction aggregate-ir 460 15 1 0 0
+put-instruction aggregate-ir 476 11 -5 0 0
+aggregate-ir/493: as byte! 66h
+aggregate-ir/494: as byte! 6Eh
 
-size: x64-codegen/generate aggregate-ir 490 output 1024 0
+size: x64-codegen/generate aggregate-ir 494 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
@@ -388,87 +393,88 @@ put abi-ir 16 2
 put abi-ir 20 33
 put abi-ir 24 0
 put abi-ir 28 0
+put abi-ir 32 0
 
-put abi-ir 32 -2
-put abi-ir 36 0
+put abi-ir 36 -2
 put abi-ir 40 0
 put abi-ir 44 0
-put abi-ir 48 3
+put abi-ir 48 0
+put abi-ir 52 3
 
-put abi-ir 52 -5
-put abi-ir 56 0
-put abi-ir 60 -5
-put abi-ir 64 0
-put abi-ir 68 -5
-put abi-ir 72 0
-
+put abi-ir 56 -5
+put abi-ir 60 0
+put abi-ir 64 -5
+put abi-ir 68 0
+put abi-ir 72 -5
 put abi-ir 76 0
-put abi-ir 80 4
-put abi-ir 84 -5
-put abi-ir 88 0
+
+put abi-ir 80 0
+put abi-ir 84 4
+put abi-ir 88 -5
 put abi-ir 92 0
 put abi-ir 96 0
 put abi-ir 100 0
-put abi-ir 104 1
-put abi-ir 108 25
+put abi-ir 104 0
+put abi-ir 108 1
+put abi-ir 112 25
 
-put abi-ir 112 4
-put abi-ir 116 2
-put abi-ir 120 1
-put abi-ir 124 4
-put abi-ir 128 1
+put abi-ir 116 4
+put abi-ir 120 2
+put abi-ir 124 1
+put abi-ir 128 4
 put abi-ir 132 1
-put abi-ir 136 2
-put abi-ir 140 0
-put abi-ir 144 8
+put abi-ir 136 1
+put abi-ir 140 2
+put abi-ir 144 0
+put abi-ir 148 8
 
-put abi-ir 148 1
 put abi-ir 152 1
 put abi-ir 156 1
 put abi-ir 160 1
+put abi-ir 164 1
 
-put-instruction abi-ir 164 1 -5 7 0
-put-instruction abi-ir 180 3 1 1 0
-put-instruction abi-ir 196 6 0 0 0
-put-instruction abi-ir 212 5 0 0 0
-put-instruction abi-ir 228 12 0 0 0
-put-instruction abi-ir 244 1 -5 8 0
-put-instruction abi-ir 260 3 1 1 0
-put-instruction abi-ir 276 6 1 0 0
-put-instruction abi-ir 292 5 0 0 0
-put-instruction abi-ir 308 12 0 0 0
-put-instruction abi-ir 324 1 -5 9 0
-put-instruction abi-ir 340 3 1 1 0
-put-instruction abi-ir 356 6 2 0 0
-put-instruction abi-ir 372 5 0 0 0
-put-instruction abi-ir 388 12 0 0 0
-put-instruction abi-ir 404 3 1 1 0
-put-instruction abi-ir 420 4 0 0 0
-put-instruction abi-ir 436 7 2 1 1
-put-instruction abi-ir 452 6 0 0 0
-put-instruction abi-ir 468 4 0 0 0
-put-instruction abi-ir 484 3 1 1 0
-put-instruction abi-ir 500 6 0 0 0
-put-instruction abi-ir 516 4 0 0 0
-put-instruction abi-ir 532 15 1 0 0
-put-instruction abi-ir 548 11 -5 0 0
+put-instruction abi-ir 168 1 -5 7 0
+put-instruction abi-ir 184 3 1 1 0
+put-instruction abi-ir 200 6 0 0 0
+put-instruction abi-ir 216 5 0 0 0
+put-instruction abi-ir 232 12 0 0 0
+put-instruction abi-ir 248 1 -5 8 0
+put-instruction abi-ir 264 3 1 1 0
+put-instruction abi-ir 280 6 1 0 0
+put-instruction abi-ir 296 5 0 0 0
+put-instruction abi-ir 312 12 0 0 0
+put-instruction abi-ir 328 1 -5 9 0
+put-instruction abi-ir 344 3 1 1 0
+put-instruction abi-ir 360 6 2 0 0
+put-instruction abi-ir 376 5 0 0 0
+put-instruction abi-ir 392 12 0 0 0
+put-instruction abi-ir 408 3 1 1 0
+put-instruction abi-ir 424 4 0 0 0
+put-instruction abi-ir 440 7 2 1 1
+put-instruction abi-ir 456 6 0 0 0
+put-instruction abi-ir 472 4 0 0 0
+put-instruction abi-ir 488 3 1 1 0
+put-instruction abi-ir 504 6 0 0 0
+put-instruction abi-ir 520 4 0 0 0
+put-instruction abi-ir 536 15 1 0 0
+put-instruction abi-ir 552 11 -5 0 0
 
-put-instruction abi-ir 564 1 -5 70 0
-put-instruction abi-ir 580 3 1 1 0
-put-instruction abi-ir 596 6 0 0 0
-put-instruction abi-ir 612 5 0 0 0
-put-instruction abi-ir 628 12 0 0 0
-put-instruction abi-ir 644 3 1 1 0
-put-instruction abi-ir 660 4 0 0 0
-put-instruction abi-ir 676 11 1 0 0
-abi-ir/693: as byte! 6Dh
-abi-ir/694: as byte! 61h
-abi-ir/695: as byte! 69h
-abi-ir/696: as byte! 6Eh
-abi-ir/697: as byte! 69h
-abi-ir/698: as byte! 64h
+put-instruction abi-ir 568 1 -5 70 0
+put-instruction abi-ir 584 3 1 1 0
+put-instruction abi-ir 600 6 0 0 0
+put-instruction abi-ir 616 5 0 0 0
+put-instruction abi-ir 632 12 0 0 0
+put-instruction abi-ir 648 3 1 1 0
+put-instruction abi-ir 664 4 0 0 0
+put-instruction abi-ir 680 11 1 0 0
+abi-ir/697: as byte! 6Dh
+abi-ir/698: as byte! 61h
+abi-ir/699: as byte! 69h
+abi-ir/700: as byte! 6Eh
+abi-ir/701: as byte! 69h
+abi-ir/702: as byte! 64h
 
-size: x64-codegen/generate abi-ir 698 output 1024 0
+size: x64-codegen/generate abi-ir 702 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
 	header: as codegen-header! output
@@ -486,54 +492,55 @@ put indirect-ir 16 2
 put indirect-ir 20 10
 put indirect-ir 24 0
 put indirect-ir 28 0
+put indirect-ir 32 0
 
-put indirect-ir 32 -4
-put indirect-ir 36 -5
-put indirect-ir 40 0
+put indirect-ir 36 -4
+put indirect-ir 40 -5
 put indirect-ir 44 0
-put indirect-ir 48 1
+put indirect-ir 48 0
+put indirect-ir 52 1
 
-put indirect-ir 52 -5
-put indirect-ir 56 0
-
+put indirect-ir 56 -5
 put indirect-ir 60 0
-put indirect-ir 64 1
-put indirect-ir 68 -5
-put indirect-ir 72 0
+
+put indirect-ir 64 0
+put indirect-ir 68 1
+put indirect-ir 72 -5
 put indirect-ir 76 0
 put indirect-ir 80 0
 put indirect-ir 84 0
 put indirect-ir 88 0
-put indirect-ir 92 5
+put indirect-ir 92 0
+put indirect-ir 96 5
 
-put indirect-ir 96 1
 put indirect-ir 100 1
-put indirect-ir 104 -5
-put indirect-ir 108 0
+put indirect-ir 104 1
+put indirect-ir 108 -5
 put indirect-ir 112 0
-put indirect-ir 116 1
+put indirect-ir 116 0
 put indirect-ir 120 1
-put indirect-ir 124 0
-put indirect-ir 128 5
+put indirect-ir 124 1
+put indirect-ir 128 0
+put indirect-ir 132 5
 
-put indirect-ir 132 -5
-put indirect-ir 136 0
+put indirect-ir 136 -5
+put indirect-ir 140 0
 
-put-instruction indirect-ir 140 3 4 2 1
-put-instruction indirect-ir 156 20 1 0 0
-put-instruction indirect-ir 172 1 -5 41 0
-put-instruction indirect-ir 188 7 0 1 1
-put-instruction indirect-ir 204 11 -5 0 0
+put-instruction indirect-ir 144 3 4 2 1
+put-instruction indirect-ir 160 20 1 0 0
+put-instruction indirect-ir 176 1 -5 41 0
+put-instruction indirect-ir 192 7 0 1 1
+put-instruction indirect-ir 208 11 -5 0 0
 
-put-instruction indirect-ir 220 3 1 1 0
-put-instruction indirect-ir 236 4 0 0 0
-put-instruction indirect-ir 252 1 -5 1 0
-put-instruction indirect-ir 268 15 1 0 0
-put-instruction indirect-ir 284 11 -5 0 0
-indirect-ir/301: as byte! 6Dh
-indirect-ir/302: as byte! 69h
+put-instruction indirect-ir 224 3 1 1 0
+put-instruction indirect-ir 240 4 0 0 0
+put-instruction indirect-ir 256 1 -5 1 0
+put-instruction indirect-ir 272 15 1 0 0
+put-instruction indirect-ir 288 11 -5 0 0
+indirect-ir/305: as byte! 6Dh
+indirect-ir/306: as byte! 69h
 
-size: x64-codegen/generate indirect-ir 302 output 1024 0
+size: x64-codegen/generate indirect-ir 306 output 1024 0
 if size <= 0 [
 	failures: failures + 1
 ]
@@ -542,11 +549,11 @@ if size > 0 [
 	if header/function-count <> 2 [failures: failures + 1]
 	unless execute-first? output 42 [failures: failures + 1]
 ]
-put indirect-ir 200 -5
-if (x64-codegen/generate indirect-ir 302 output 1024 0) <> x64-codegen/INVALID_IR [
+put indirect-ir 204 -5
+if (x64-codegen/generate indirect-ir 306 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put indirect-ir 200 1
+put indirect-ir 204 1
 
 ; Native variadic CALL keeps source values in the postfix stream. The caller
 ; packs them into one forward-order uint64 list and passes count/list/size.
@@ -559,88 +566,89 @@ put variadic-ir 16 2
 put variadic-ir 20 22
 put variadic-ir 24 0
 put variadic-ir 28 0
+put variadic-ir 32 0
 
-put variadic-ir 32 -6
-put variadic-ir 36 -8
-put variadic-ir 40 0
+put variadic-ir 36 -6
+put variadic-ir 40 -8
 put variadic-ir 44 0
 put variadic-ir 48 0
-
 put variadic-ir 52 0
-put variadic-ir 56 4
-put variadic-ir 60 -5
-put variadic-ir 64 0
+
+put variadic-ir 56 0
+put variadic-ir 60 4
+put variadic-ir 64 -5
 put variadic-ir 68 0
 put variadic-ir 72 0
 put variadic-ir 76 0
 put variadic-ir 80 0
-put variadic-ir 84 4
-
+put variadic-ir 84 0
 put variadic-ir 88 4
-put variadic-ir 92 8
-put variadic-ir 96 -5
-put variadic-ir 100 8
-put variadic-ir 104 0
-put variadic-ir 108 3
+
+put variadic-ir 92 4
+put variadic-ir 96 8
+put variadic-ir 100 -5
+put variadic-ir 104 8
+put variadic-ir 108 0
 put variadic-ir 112 3
-put variadic-ir 116 0
-put variadic-ir 120 18
+put variadic-ir 116 3
+put variadic-ir 120 0
+put variadic-ir 124 18
 
-put variadic-ir 124 -5
-put variadic-ir 128 0
-put variadic-ir 132 1
-put variadic-ir 136 0
-put variadic-ir 140 -5
-put variadic-ir 144 0
+put variadic-ir 128 -5
+put variadic-ir 132 0
+put variadic-ir 136 1
+put variadic-ir 140 0
+put variadic-ir 144 -5
+put variadic-ir 148 0
 
-put-instruction variadic-ir 148 1 -5 11 0
-put-instruction variadic-ir 164 1 -5 22 0
-put-instruction variadic-ir 180 7 2 2 -5
-put-instruction variadic-ir 196 11 -5 0 0
+put-instruction variadic-ir 152 1 -5 11 0
+put-instruction variadic-ir 168 1 -5 22 0
+put-instruction variadic-ir 184 7 2 2 -5
+put-instruction variadic-ir 200 11 -5 0 0
 
-put-instruction variadic-ir 212 3 1 2 0
-put-instruction variadic-ir 228 4 0 0 0
-put-instruction variadic-ir 244 21 0 0 0
-put-instruction variadic-ir 260 4 0 0 0
-put-instruction variadic-ir 276 8 -5 0 0
-put-instruction variadic-ir 292 3 1 2 0
-put-instruction variadic-ir 308 4 0 0 0
-put-instruction variadic-ir 324 21 1 0 0
-put-instruction variadic-ir 340 4 0 0 0
-put-instruction variadic-ir 356 8 -5 0 0
-put-instruction variadic-ir 372 15 1 0 0
-put-instruction variadic-ir 388 3 1 1 0
-put-instruction variadic-ir 404 4 0 0 0
-put-instruction variadic-ir 420 15 1 0 0
-put-instruction variadic-ir 436 3 1 3 0
-put-instruction variadic-ir 452 4 0 0 0
-put-instruction variadic-ir 468 15 1 0 0
-put-instruction variadic-ir 484 11 -5 0 0
-variadic-ir/501: as byte! 6Dh
-variadic-ir/502: as byte! 61h
-variadic-ir/503: as byte! 69h
-variadic-ir/504: as byte! 6Eh
-variadic-ir/505: as byte! 76h
+put-instruction variadic-ir 216 3 1 2 0
+put-instruction variadic-ir 232 4 0 0 0
+put-instruction variadic-ir 248 21 0 0 0
+put-instruction variadic-ir 264 4 0 0 0
+put-instruction variadic-ir 280 8 -5 0 0
+put-instruction variadic-ir 296 3 1 2 0
+put-instruction variadic-ir 312 4 0 0 0
+put-instruction variadic-ir 328 21 1 0 0
+put-instruction variadic-ir 344 4 0 0 0
+put-instruction variadic-ir 360 8 -5 0 0
+put-instruction variadic-ir 376 15 1 0 0
+put-instruction variadic-ir 392 3 1 1 0
+put-instruction variadic-ir 408 4 0 0 0
+put-instruction variadic-ir 424 15 1 0 0
+put-instruction variadic-ir 440 3 1 3 0
+put-instruction variadic-ir 456 4 0 0 0
+put-instruction variadic-ir 472 15 1 0 0
+put-instruction variadic-ir 488 11 -5 0 0
+variadic-ir/505: as byte! 6Dh
 variadic-ir/506: as byte! 61h
-variadic-ir/507: as byte! 72h
-variadic-ir/508: as byte! 69h
-variadic-ir/509: as byte! 61h
-variadic-ir/510: as byte! 64h
-variadic-ir/511: as byte! 69h
-variadic-ir/512: as byte! 63h
+variadic-ir/507: as byte! 69h
+variadic-ir/508: as byte! 6Eh
+variadic-ir/509: as byte! 76h
+variadic-ir/510: as byte! 61h
+variadic-ir/511: as byte! 72h
+variadic-ir/512: as byte! 69h
+variadic-ir/513: as byte! 61h
+variadic-ir/514: as byte! 64h
+variadic-ir/515: as byte! 69h
+variadic-ir/516: as byte! 63h
 
-size: x64-codegen/generate variadic-ir 512 output 1024 0
+size: x64-codegen/generate variadic-ir 516 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
 	header: as codegen-header! output
 	if header/function-count <> 2 [failures: failures + 1]
 	unless execute-first? output 51 [failures: failures + 1]
 ]
-put variadic-ir 132 -5
-if (x64-codegen/generate variadic-ir 512 output 1024 0) <> x64-codegen/INVALID_IR [
+put variadic-ir 136 -5
+if (x64-codegen/generate variadic-ir 516 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put variadic-ir 132 1
+put variadic-ir 136 1
 
 ; Imported native variadic functions have no count/list declaration in IR.
 ; Their flags still select the same packed call ABI at the call site.
@@ -652,47 +660,48 @@ put import-variadic-ir 16 1
 put import-variadic-ir 20 4
 put import-variadic-ir 24 0
 put import-variadic-ir 28 0
-
 put import-variadic-ir 32 0
-put import-variadic-ir 36 7
-put import-variadic-ir 40 7
-put import-variadic-ir 44 4
-put import-variadic-ir 48 -5
-put import-variadic-ir 52 10
-put import-variadic-ir 56 0
-put import-variadic-ir 60 0
 
-put import-variadic-ir 64 11
-put import-variadic-ir 68 4
-put import-variadic-ir 72 -5
-put import-variadic-ir 76 0
+put import-variadic-ir 36 0
+put import-variadic-ir 40 7
+put import-variadic-ir 44 7
+put import-variadic-ir 48 4
+put import-variadic-ir 52 -5
+put import-variadic-ir 56 10
+put import-variadic-ir 60 0
+put import-variadic-ir 64 0
+
+put import-variadic-ir 68 11
+put import-variadic-ir 72 4
+put import-variadic-ir 76 -5
 put import-variadic-ir 80 0
 put import-variadic-ir 84 0
 put import-variadic-ir 88 0
 put import-variadic-ir 92 0
-put import-variadic-ir 96 4
+put import-variadic-ir 96 0
+put import-variadic-ir 100 4
 
-put-instruction import-variadic-ir 100 1 -5 11 0
-put-instruction import-variadic-ir 116 1 -5 22 0
-put-instruction import-variadic-ir 132 7 -1 2 -5
-put-instruction import-variadic-ir 148 11 -5 0 0
-import-variadic-ir/165: as byte! 66h
-import-variadic-ir/166: as byte! 6Fh
-import-variadic-ir/167: as byte! 6Fh
-import-variadic-ir/168: as byte! 2Eh
-import-variadic-ir/169: as byte! 64h
-import-variadic-ir/170: as byte! 6Ch
-import-variadic-ir/171: as byte! 6Ch
-import-variadic-ir/172: as byte! 73h
-import-variadic-ir/173: as byte! 69h
-import-variadic-ir/174: as byte! 6Eh
-import-variadic-ir/175: as byte! 6Bh
-import-variadic-ir/176: as byte! 6Dh
-import-variadic-ir/177: as byte! 61h
-import-variadic-ir/178: as byte! 69h
-import-variadic-ir/179: as byte! 6Eh
+put-instruction import-variadic-ir 104 1 -5 11 0
+put-instruction import-variadic-ir 120 1 -5 22 0
+put-instruction import-variadic-ir 136 7 -1 2 -5
+put-instruction import-variadic-ir 152 11 -5 0 0
+import-variadic-ir/169: as byte! 66h
+import-variadic-ir/170: as byte! 6Fh
+import-variadic-ir/171: as byte! 6Fh
+import-variadic-ir/172: as byte! 2Eh
+import-variadic-ir/173: as byte! 64h
+import-variadic-ir/174: as byte! 6Ch
+import-variadic-ir/175: as byte! 6Ch
+import-variadic-ir/176: as byte! 73h
+import-variadic-ir/177: as byte! 69h
+import-variadic-ir/178: as byte! 6Eh
+import-variadic-ir/179: as byte! 6Bh
+import-variadic-ir/180: as byte! 6Dh
+import-variadic-ir/181: as byte! 61h
+import-variadic-ir/182: as byte! 69h
+import-variadic-ir/183: as byte! 6Eh
 
-size: x64-codegen/generate import-variadic-ir 179 output 1024 0
+size: x64-codegen/generate import-variadic-ir 183 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
 	header: as codegen-header! output
@@ -711,43 +720,44 @@ put null-function-ir 16 1
 put null-function-ir 20 5
 put null-function-ir 24 0
 put null-function-ir 28 0
+put null-function-ir 32 0
 
-put null-function-ir 32 -4
-put null-function-ir 36 -5
-put null-function-ir 40 0
+put null-function-ir 36 -4
+put null-function-ir 40 -5
 put null-function-ir 44 0
 put null-function-ir 48 0
-
 put null-function-ir 52 0
-put null-function-ir 56 1
-put null-function-ir 60 -11
-put null-function-ir 64 0
+
+put null-function-ir 56 0
+put null-function-ir 60 1
+put null-function-ir 64 -11
 put null-function-ir 68 0
 put null-function-ir 72 0
 put null-function-ir 76 0
 put null-function-ir 80 0
-put null-function-ir 84 5
+put null-function-ir 84 0
+put null-function-ir 88 5
 
-put-instruction null-function-ir 88 1 -14 0 0
-put-instruction null-function-ir 104 8 1 0 0
-put-instruction null-function-ir 120 1 -14 0 0
-put-instruction null-function-ir 136 15 13 0 0
-put-instruction null-function-ir 152 11 -11 0 0
-null-function-ir/169: as byte! 6Eh
+put-instruction null-function-ir 92 1 -14 0 0
+put-instruction null-function-ir 108 8 1 0 0
+put-instruction null-function-ir 124 1 -14 0 0
+put-instruction null-function-ir 140 15 13 0 0
+put-instruction null-function-ir 156 11 -11 0 0
+null-function-ir/173: as byte! 6Eh
 
-size: x64-codegen/generate null-function-ir 169 output 1024 0
+size: x64-codegen/generate null-function-ir 173 output 1024 0
 if size <= 0 [
 	failures: failures + 1
 ]
 if size > 0 [
 	unless execute-selection? output 1 [failures: failures + 1]
 ]
-put null-function-ir 108 -2
-if (x64-codegen/generate null-function-ir 169 output 1024 0)
+put null-function-ir 112 -2
+if (x64-codegen/generate null-function-ir 173 output 1024 0)
 	<> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put null-function-ir 108 1
+put null-function-ir 112 1
 
 ; A tagged union stores its tag before the aligned shared payload. A write
 ; marks variant 1 after storing 73; TAG plus the payload must therefore be 74.
@@ -759,61 +769,62 @@ put tagged-ir 16 1
 put tagged-ir 20 13
 put tagged-ir 24 0
 put tagged-ir 28 0
+put tagged-ir 32 0
 
-put tagged-ir 32 -3
-put tagged-ir 36 0
-put tagged-ir 40 1
-put tagged-ir 44 0
-put tagged-ir 48 1
-put tagged-ir 52 -5
-put tagged-ir 56 0
-
+put tagged-ir 36 -3
+put tagged-ir 40 0
+put tagged-ir 44 1
+put tagged-ir 48 0
+put tagged-ir 52 1
+put tagged-ir 56 -5
 put tagged-ir 60 0
-put tagged-ir 64 2
-put tagged-ir 68 -5
-put tagged-ir 72 0
+
+put tagged-ir 64 0
+put tagged-ir 68 2
+put tagged-ir 72 -5
 put tagged-ir 76 0
 put tagged-ir 80 0
 put tagged-ir 84 0
-put tagged-ir 88 1
-put tagged-ir 92 13
+put tagged-ir 88 0
+put tagged-ir 92 1
+put tagged-ir 96 13
 
-put tagged-ir 96 1
 put tagged-ir 100 1
+put tagged-ir 104 1
 
-put-instruction tagged-ir 104 1 -5 73 0
-put-instruction tagged-ir 120 3 1 1 0
-put-instruction tagged-ir 136 6 0 1 0
-put-instruction tagged-ir 152 5 0 0 0
-put-instruction tagged-ir 168 12 0 0 0
-put-instruction tagged-ir 184 3 1 1 0
-put-instruction tagged-ir 200 4 0 0 0
-put-instruction tagged-ir 216 22 0 0 0
-put-instruction tagged-ir 232 3 1 1 0
-put-instruction tagged-ir 248 6 0 0 0
-put-instruction tagged-ir 264 4 0 0 0
-put-instruction tagged-ir 280 15 1 0 0
-put-instruction tagged-ir 296 11 -5 0 0
-tagged-ir/313: as byte! 66h
-tagged-ir/314: as byte! 6Eh
+put-instruction tagged-ir 108 1 -5 73 0
+put-instruction tagged-ir 124 3 1 1 0
+put-instruction tagged-ir 140 6 0 1 0
+put-instruction tagged-ir 156 5 0 0 0
+put-instruction tagged-ir 172 12 0 0 0
+put-instruction tagged-ir 188 3 1 1 0
+put-instruction tagged-ir 204 4 0 0 0
+put-instruction tagged-ir 220 22 0 0 0
+put-instruction tagged-ir 236 3 1 1 0
+put-instruction tagged-ir 252 6 0 0 0
+put-instruction tagged-ir 268 4 0 0 0
+put-instruction tagged-ir 284 15 1 0 0
+put-instruction tagged-ir 300 11 -5 0 0
+tagged-ir/317: as byte! 66h
+tagged-ir/318: as byte! 6Eh
 
-size: x64-codegen/generate tagged-ir 314 output 1024 0
+size: x64-codegen/generate tagged-ir 318 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if fn/frame-size <> 64 [failures: failures + 1]
 	unless execute-selection? output 74 [failures: failures + 1]
 ]
-put tagged-ir 40 0
-if (x64-codegen/generate tagged-ir 314 output 1024 0) <> x64-codegen/INVALID_IR [
+put tagged-ir 44 0
+if (x64-codegen/generate tagged-ir 318 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put tagged-ir 40 1
-put tagged-ir 128 2
-if (x64-codegen/generate tagged-ir 314 output 1024 0) <> x64-codegen/INVALID_IR [
+put tagged-ir 44 1
+put tagged-ir 132 2
+if (x64-codegen/generate tagged-ir 318 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put tagged-ir 128 1
+put tagged-ir 132 1
 
 ; fn: func [return: [integer!]][either true [return 7][return 9]]
 put branch-ir 0 1
@@ -825,42 +836,43 @@ put branch-ir 20 6
 put branch-ir 24 0
 put branch-ir 28 0
 put branch-ir 32 0
-put branch-ir 36 2
-put branch-ir 40 -5
-put branch-ir 44 0
+put branch-ir 36 0
+put branch-ir 40 2
+put branch-ir 44 -5
 put branch-ir 48 0
 put branch-ir 52 0
 put branch-ir 56 0
 put branch-ir 60 0
-put branch-ir 64 6
-put-instruction branch-ir 68 1 -11 1 0
-put-instruction branch-ir 84 17 5 0 0
-put-instruction branch-ir 100 1 -5 7 0
-put-instruction branch-ir 116 11 -5 0 0
-put-instruction branch-ir 132 1 -5 9 0
-put-instruction branch-ir 148 11 -5 0 0
-branch-ir/165: as byte! 66h
-branch-ir/166: as byte! 6Eh
+put branch-ir 64 0
+put branch-ir 68 6
+put-instruction branch-ir 72 1 -11 1 0
+put-instruction branch-ir 88 17 5 0 0
+put-instruction branch-ir 104 1 -5 7 0
+put-instruction branch-ir 120 11 -5 0 0
+put-instruction branch-ir 136 1 -5 9 0
+put-instruction branch-ir 152 11 -5 0 0
+branch-ir/169: as byte! 66h
+branch-ir/170: as byte! 6Eh
 
-size: x64-codegen/generate branch-ir 166 output 1024 0
+size: x64-codegen/generate branch-ir 170 output 1024 0
 if size <= 0 [failures: failures + 1]
-put branch-ir 88 7
-if (x64-codegen/generate branch-ir 166 output 1024 0) <> x64-codegen/INVALID_IR [
+put branch-ir 92 7
+if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put branch-ir 88 5
-put branch-ir 92 2
-if (x64-codegen/generate branch-ir 166 output 1024 0) <> x64-codegen/INVALID_IR [
+put branch-ir 92 5
+put branch-ir 96 2
+if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put branch-ir 92 0
-put branch-ir 72 -5
-if (x64-codegen/generate branch-ir 166 output 1024 0) <> x64-codegen/INVALID_IR [
+put branch-ir 96 0
+put branch-ir 76 -5
+if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put branch-ir 72 -11
-put branch-ir 88 4
-if (x64-codegen/generate branch-ir 166 output 1024 0) <> x64-codegen/INVALID_IR [
+put branch-ir 76 -11
+put branch-ir 92 4
+if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
@@ -875,27 +887,28 @@ put merge-ir 20 7
 put merge-ir 24 0
 put merge-ir 28 0
 put merge-ir 32 0
-put merge-ir 36 2
-put merge-ir 40 0
+put merge-ir 36 0
+put merge-ir 40 2
 put merge-ir 44 0
 put merge-ir 48 0
 put merge-ir 52 0
 put merge-ir 56 0
 put merge-ir 60 0
-put merge-ir 64 7
-put-instruction merge-ir 68 1 -11 1 0
-put-instruction merge-ir 84 17 5 0 0
-put-instruction merge-ir 100 1 -5 7 0
-put-instruction merge-ir 116 16 6 0 0
-put-instruction merge-ir 132 1 -5 9 0
-put-instruction merge-ir 148 12 0 0 0
-put-instruction merge-ir 164 11 0 0 0
-merge-ir/181: as byte! 66h
-merge-ir/182: as byte! 6Eh
+put merge-ir 64 0
+put merge-ir 68 7
+put-instruction merge-ir 72 1 -11 1 0
+put-instruction merge-ir 88 17 5 0 0
+put-instruction merge-ir 104 1 -5 7 0
+put-instruction merge-ir 120 16 6 0 0
+put-instruction merge-ir 136 1 -5 9 0
+put-instruction merge-ir 152 12 0 0 0
+put-instruction merge-ir 168 11 0 0 0
+merge-ir/185: as byte! 66h
+merge-ir/186: as byte! 6Eh
 
-if (x64-codegen/generate merge-ir 182 output 1024 0) <= 0 [failures: failures + 1]
-put merge-ir 136 -11
-if (x64-codegen/generate merge-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+if (x64-codegen/generate merge-ir 186 output 1024 0) <= 0 [failures: failures + 1]
+put merge-ir 140 -11
+if (x64-codegen/generate merge-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
@@ -910,75 +923,76 @@ put selection-ir 20 7
 put selection-ir 24 0
 put selection-ir 28 1
 put selection-ir 32 0
-put selection-ir 36 2
-put selection-ir 40 -5
-put selection-ir 44 0
+put selection-ir 36 0
+put selection-ir 40 2
+put selection-ir 44 -5
 put selection-ir 48 0
 put selection-ir 52 0
 put selection-ir 56 0
 put selection-ir 60 0
-put selection-ir 64 7
-put selection-ir 68 2
-put selection-ir 72 0
-put selection-ir 76 5
-put-instruction selection-ir 80 1 -5 2 0
-put-instruction selection-ir 96 18 0 1 3
-put-instruction selection-ir 112 1 -5 9 0
-put-instruction selection-ir 128 11 -5 0 0
-put-instruction selection-ir 144 1 -5 7 0
-put-instruction selection-ir 160 11 -5 0 0
-put-instruction selection-ir 176 19 101 0 0
-selection-ir/193: as byte! 66h
-selection-ir/194: as byte! 6Eh
+put selection-ir 64 0
+put selection-ir 68 7
+put selection-ir 72 2
+put selection-ir 76 0
+put selection-ir 80 5
+put-instruction selection-ir 84 1 -5 2 0
+put-instruction selection-ir 100 18 0 1 3
+put-instruction selection-ir 116 1 -5 9 0
+put-instruction selection-ir 132 11 -5 0 0
+put-instruction selection-ir 148 1 -5 7 0
+put-instruction selection-ir 164 11 -5 0 0
+put-instruction selection-ir 180 19 101 0 0
+selection-ir/197: as byte! 66h
+selection-ir/198: as byte! 6Eh
 
-if (x64-codegen/generate selection-ir 194 output 1024 0) <= 0 [
+if (x64-codegen/generate selection-ir 198 output 1024 0) <= 0 [
 	failures: failures + 1
 ]
 unless execute-selection? output 7 [failures: failures + 1]
-put selection-ir 88 9
-if (x64-codegen/generate selection-ir 194 output 1024 0) <= 0 [
+put selection-ir 92 9
+if (x64-codegen/generate selection-ir 198 output 1024 0) <= 0 [
 	failures: failures + 1
 ]
 unless execute-selection? output 9 [failures: failures + 1]
-put selection-ir 88 2
+put selection-ir 92 2
 
-put selection-ir 84 -7
-if (x64-codegen/generate selection-ir 194 output 1024 0) <= 0 [
+put selection-ir 88 -7
+if (x64-codegen/generate selection-ir 198 output 1024 0) <= 0 [
 	failures: failures + 1
 ]
 unless execute-selection? output 7 [failures: failures + 1]
 
-put selection-ir 84 -2
-put selection-ir 88 65
-put selection-ir 68 65
-if (x64-codegen/generate selection-ir 194 output 1024 0) <= 0 [
+put selection-ir 88 -2
+put selection-ir 92 65
+put selection-ir 72 65
+if (x64-codegen/generate selection-ir 198 output 1024 0) <= 0 [
 	failures: failures + 1
 ]
 unless execute-selection? output 7 [failures: failures + 1]
-put selection-ir 84 -5
-put selection-ir 88 2
-put selection-ir 68 2
+put selection-ir 88 -5
+put selection-ir 92 2
+put selection-ir 72 2
 
-put selection-ir 100 1
-if (x64-codegen/generate selection-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
-	failures: failures + 1
-]
-put selection-ir 100 0
-put selection-ir 104 2
-if (x64-codegen/generate selection-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
-	failures: failures + 1
-]
 put selection-ir 104 1
-put selection-ir 76 0
-if (x64-codegen/generate selection-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
+if (x64-codegen/generate selection-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put selection-ir 76 5
-put selection-ir 180 0
-if (x64-codegen/generate selection-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
+put selection-ir 104 0
+put selection-ir 108 2
+if (x64-codegen/generate selection-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put selection-ir 180 101
+put selection-ir 108 1
+put selection-ir 80 0
+if (x64-codegen/generate selection-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put selection-ir 80 5
+put selection-ir 184 0
+if (x64-codegen/generate selection-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put selection-ir 184 101
 
 ; One array type owns no member records. Its logical count and slot width drive
 ; both static layout and the flat scalar initializer slice.
@@ -990,54 +1004,55 @@ put array-ir 16 1
 put array-ir 20 1
 put array-ir 24 1
 put array-ir 28 0
+put array-ir 32 0
 
-put array-ir 32 -7
-put array-ir 36 -5
-put array-ir 40 4
-put array-ir 44 0
-put array-ir 48 3
+put array-ir 36 -7
+put array-ir 40 -5
+put array-ir 44 4
+put array-ir 48 0
+put array-ir 52 3
 
-put array-ir 52 0
-put array-ir 56 6
-put array-ir 60 1
+put array-ir 56 0
+put array-ir 60 6
 put array-ir 64 1
-put array-ir 68 0
-put array-ir 72 3
+put array-ir 68 1
+put array-ir 72 0
+put array-ir 76 3
 
-put array-ir 76 6
-put array-ir 80 2
-put array-ir 84 0
+put array-ir 80 6
+put array-ir 84 2
 put array-ir 88 0
 put array-ir 92 0
 put array-ir 96 0
 put array-ir 100 0
 put array-ir 104 0
-put array-ir 108 1
-
+put array-ir 108 0
 put array-ir 112 1
-put array-ir 116 10
-put array-ir 120 0
+
+put array-ir 116 1
+put array-ir 120 10
 put array-ir 124 0
-put array-ir 128 1
-put array-ir 132 20
-put array-ir 136 0
+put array-ir 128 0
+put array-ir 132 1
+put array-ir 136 20
 put array-ir 140 0
-put array-ir 144 1
-put array-ir 148 30
-put array-ir 152 0
+put array-ir 144 0
+put array-ir 148 1
+put array-ir 152 30
 put array-ir 156 0
+put array-ir 160 0
 
-put-instruction array-ir 160 11 0 0 0
-array-ir/177: as byte! 76h
-array-ir/178: as byte! 61h
-array-ir/179: as byte! 6Ch
-array-ir/180: as byte! 75h
-array-ir/181: as byte! 65h
-array-ir/182: as byte! 73h
-array-ir/183: as byte! 66h
-array-ir/184: as byte! 6Eh
+put-instruction array-ir 164 11 0 0 0
+array-ir/181: as byte! 76h
+array-ir/182: as byte! 61h
+array-ir/183: as byte! 6Ch
+array-ir/184: as byte! 75h
+array-ir/185: as byte! 65h
+array-ir/186: as byte! 73h
+array-ir/187: as byte! 66h
+array-ir/188: as byte! 6Eh
 
-size: x64-codegen/generate array-ir 184 output 1024 0
+size: x64-codegen/generate array-ir 188 output 1024 0
 if size <= 0 [
 	failures: failures + 1
 ]
@@ -1056,8 +1071,8 @@ if size > 0 [
 		array-values/1 <> 10 array-values/2 <> 20 array-values/3 <> 30
 	][failures: failures + 1]
 ]
-put array-ir 64 3
-size: x64-codegen/generate array-ir 184 output 1024 0
+put array-ir 68 3
+size: x64-codegen/generate array-ir 188 output 1024 0
 if size <= 0 [
 	failures: failures + 1
 ]
@@ -1075,29 +1090,29 @@ if size > 0 [
 		array-values/1 <> 10 array-values/2 <> 20 array-values/3 <> 30
 	][failures: failures + 1]
 ]
-put array-ir 64 4
-if (x64-codegen/generate array-ir 184 output 1024 0) <> x64-codegen/INVALID_IR [
+put array-ir 68 4
+if (x64-codegen/generate array-ir 188 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put array-ir 64 1
-put array-ir 40 3
-if (x64-codegen/generate array-ir 184 output 1024 0) <> x64-codegen/INVALID_IR [
+put array-ir 68 1
+put array-ir 44 3
+if (x64-codegen/generate array-ir 188 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put array-ir 40 4
-put array-ir 112 3
-if (x64-codegen/generate array-ir 184 output 1024 0) <> x64-codegen/INVALID_IR [
+put array-ir 44 4
+put array-ir 116 3
+if (x64-codegen/generate array-ir 188 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put array-ir 112 1
+put array-ir 116 1
 
 ; Trimming the true edge and dropping the false value reconciles a
 ; value-less EITHER without emitting a native move.
-put merge-ir 120 7
-put merge-ir 124 1
-if (x64-codegen/generate merge-ir 182 output 1024 0) <= 0 [failures: failures + 1]
-put merge-ir 124 2
-if (x64-codegen/generate merge-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+put merge-ir 124 7
+put merge-ir 128 1
+if (x64-codegen/generate merge-ir 186 output 1024 0) <= 0 [failures: failures + 1]
+put merge-ir 128 2
+if (x64-codegen/generate merge-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
@@ -1111,36 +1126,37 @@ put recursive-pointer-ir 16 1
 put recursive-pointer-ir 20 1
 put recursive-pointer-ir 24 0
 put recursive-pointer-ir 28 0
+put recursive-pointer-ir 32 0
 
-put recursive-pointer-ir 32 -2
-put recursive-pointer-ir 36 0
+put recursive-pointer-ir 36 -2
 put recursive-pointer-ir 40 0
 put recursive-pointer-ir 44 0
-put recursive-pointer-ir 48 1
+put recursive-pointer-ir 48 0
+put recursive-pointer-ir 52 1
 
-put recursive-pointer-ir 52 -6
-put recursive-pointer-ir 56 1
-put recursive-pointer-ir 60 0
-put recursive-pointer-ir 64 1
-put recursive-pointer-ir 68 0
+put recursive-pointer-ir 56 -6
+put recursive-pointer-ir 60 1
+put recursive-pointer-ir 64 0
+put recursive-pointer-ir 68 1
+put recursive-pointer-ir 72 0
 
-put recursive-pointer-ir 72 2
-put recursive-pointer-ir 76 0
-
+put recursive-pointer-ir 76 2
 put recursive-pointer-ir 80 0
-put recursive-pointer-ir 84 2
-put recursive-pointer-ir 88 0
+
+put recursive-pointer-ir 84 0
+put recursive-pointer-ir 88 2
 put recursive-pointer-ir 92 0
 put recursive-pointer-ir 96 0
 put recursive-pointer-ir 100 0
 put recursive-pointer-ir 104 0
 put recursive-pointer-ir 108 0
-put recursive-pointer-ir 112 1
-put-instruction recursive-pointer-ir 116 11 0 0 0
-recursive-pointer-ir/133: as byte! 66h
-recursive-pointer-ir/134: as byte! 6Eh
+put recursive-pointer-ir 112 0
+put recursive-pointer-ir 116 1
+put-instruction recursive-pointer-ir 120 11 0 0 0
+recursive-pointer-ir/137: as byte! 66h
+recursive-pointer-ir/138: as byte! 6Eh
 
-if (x64-codegen/generate recursive-pointer-ir 134 output 1024 0) <= 0 [
+if (x64-codegen/generate recursive-pointer-ir 138 output 1024 0) <= 0 [
 	failures: failures + 1
 ]
 
@@ -1154,30 +1170,31 @@ put recursive-value-ir 16 1
 put recursive-value-ir 20 1
 put recursive-value-ir 24 0
 put recursive-value-ir 28 0
+put recursive-value-ir 32 0
 
-put recursive-value-ir 32 -2
-put recursive-value-ir 36 0
+put recursive-value-ir 36 -2
 put recursive-value-ir 40 0
 put recursive-value-ir 44 0
-put recursive-value-ir 48 1
-
+put recursive-value-ir 48 0
 put recursive-value-ir 52 1
-put recursive-value-ir 56 1
 
-put recursive-value-ir 60 0
-put recursive-value-ir 64 2
-put recursive-value-ir 68 0
+put recursive-value-ir 56 1
+put recursive-value-ir 60 1
+
+put recursive-value-ir 64 0
+put recursive-value-ir 68 2
 put recursive-value-ir 72 0
 put recursive-value-ir 76 0
 put recursive-value-ir 80 0
 put recursive-value-ir 84 0
 put recursive-value-ir 88 0
-put recursive-value-ir 92 1
-put-instruction recursive-value-ir 96 11 0 0 0
-recursive-value-ir/113: as byte! 66h
-recursive-value-ir/114: as byte! 6Eh
+put recursive-value-ir 92 0
+put recursive-value-ir 96 1
+put-instruction recursive-value-ir 100 11 0 0 0
+recursive-value-ir/117: as byte! 66h
+recursive-value-ir/118: as byte! 6Eh
 
-if (x64-codegen/generate recursive-value-ir 114 output 1024 0)
+if (x64-codegen/generate recursive-value-ir 118 output 1024 0)
 	<> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
@@ -1191,36 +1208,37 @@ put stack-ir 16 1
 put stack-ir 20 4
 put stack-ir 24 0
 put stack-ir 28 0
-
 put stack-ir 32 0
-put stack-ir 36 2
-put stack-ir 40 -5
-put stack-ir 44 0
+
+put stack-ir 36 0
+put stack-ir 40 2
+put stack-ir 44 -5
 put stack-ir 48 0
 put stack-ir 52 0
 put stack-ir 56 0
 put stack-ir 60 0
-put stack-ir 64 4
+put stack-ir 64 0
+put stack-ir 68 4
 
-put-instruction stack-ir 68 1 -5 42 0
-put-instruction stack-ir 84 10 2 0 0
-put-instruction stack-ir 100 10 3 0 0
-put-instruction stack-ir 116 11 -5 0 0
-stack-ir/133: as byte! 66h
-stack-ir/134: as byte! 6Eh
+put-instruction stack-ir 72 1 -5 42 0
+put-instruction stack-ir 88 10 2 0 0
+put-instruction stack-ir 104 10 3 0 0
+put-instruction stack-ir 120 11 -5 0 0
+stack-ir/137: as byte! 66h
+stack-ir/138: as byte! 6Eh
 
-size: x64-codegen/generate stack-ir 134 output 1024 0
+size: x64-codegen/generate stack-ir 138 output 1024 0
 if any [size <= 0 not execute-first? output 42][failures: failures + 1]
-put stack-ir 92 1
-if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/INVALID_IR [
+put stack-ir 96 1
+if (x64-codegen/generate stack-ir 138 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put stack-ir 92 0
-put stack-ir 88 23
-if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/UNSUPPORTED [
+put stack-ir 96 0
+put stack-ir 92 23
+if (x64-codegen/generate stack-ir 138 output 1024 0) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
-put stack-ir 88 2
+put stack-ir 92 2
 
 ; LOG-B consumes one integer value and replaces it with an integer! result.
 put log-b-ir 0 1
@@ -1231,35 +1249,36 @@ put log-b-ir 16 1
 put log-b-ir 20 3
 put log-b-ir 24 0
 put log-b-ir 28 0
-
 put log-b-ir 32 0
-put log-b-ir 36 2
-put log-b-ir 40 -5
-put log-b-ir 44 0
+
+put log-b-ir 36 0
+put log-b-ir 40 2
+put log-b-ir 44 -5
 put log-b-ir 48 0
 put log-b-ir 52 0
 put log-b-ir 56 0
 put log-b-ir 60 0
-put log-b-ir 64 3
+put log-b-ir 64 0
+put log-b-ir 68 3
 
-put-instruction log-b-ir 68 1 -5 256 0
-put-instruction log-b-ir 84 10 22 0 -5
-put-instruction log-b-ir 100 11 -5 0 0
-log-b-ir/117: as byte! 6Ch
-log-b-ir/118: as byte! 62h
+put-instruction log-b-ir 72 1 -5 256 0
+put-instruction log-b-ir 88 10 22 0 -5
+put-instruction log-b-ir 104 11 -5 0 0
+log-b-ir/121: as byte! 6Ch
+log-b-ir/122: as byte! 62h
 
-size: x64-codegen/generate log-b-ir 118 output 1024 0
+size: x64-codegen/generate log-b-ir 122 output 1024 0
 if any [size <= 0 not execute-first? output 8][failures: failures + 1]
-put log-b-ir 72 -11
-if (x64-codegen/generate log-b-ir 118 output 1024 0) <> x64-codegen/INVALID_IR [
+put log-b-ir 76 -11
+if (x64-codegen/generate log-b-ir 122 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put log-b-ir 72 -5
-put log-b-ir 96 -11
-if (x64-codegen/generate log-b-ir 118 output 1024 0) <> x64-codegen/INVALID_IR [
+put log-b-ir 76 -5
+put log-b-ir 100 -11
+if (x64-codegen/generate log-b-ir 122 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put log-b-ir 96 -5
+put log-b-ir 100 -5
 
 ; PC, general registers, and overflow flags are typed native effects. Their
 ; machine state is consumed immediately, without a source-shaped adapter.
@@ -1271,74 +1290,75 @@ put system-ir 16 1
 put system-ir 20 4
 put system-ir 24 0
 put system-ir 28 0
+put system-ir 32 0
 
-put system-ir 32 -6
-put system-ir 36 -15
-put system-ir 40 0
+put system-ir 36 -6
+put system-ir 40 -15
 put system-ir 44 0
 put system-ir 48 0
-
 put system-ir 52 0
-put system-ir 56 2
-put system-ir 60 -11
-put system-ir 64 0
+
+put system-ir 56 0
+put system-ir 60 2
+put system-ir 64 -11
 put system-ir 68 0
 put system-ir 72 0
 put system-ir 76 0
 put system-ir 80 0
-put system-ir 84 4
+put system-ir 84 0
+put system-ir 88 4
 
-put-instruction system-ir 88 10 13 0 1
-put-instruction system-ir 104 1 -14 0 0
-put-instruction system-ir 120 15 14 0 0
-put-instruction system-ir 136 11 -11 0 0
-system-ir/153: as byte! 66h
-system-ir/154: as byte! 6Eh
+put-instruction system-ir 92 10 13 0 1
+put-instruction system-ir 108 1 -14 0 0
+put-instruction system-ir 124 15 14 0 0
+put-instruction system-ir 140 11 -11 0 0
+system-ir/157: as byte! 66h
+system-ir/158: as byte! 6Eh
 
-size: x64-codegen/generate system-ir 154 output 1024 0
+size: x64-codegen/generate system-ir 158 output 1024 0
 if any [size <= 0 not execute-first? output 1][failures: failures + 1]
-put system-ir 36 -5
-if (x64-codegen/generate system-ir 154 output 1024 0) <> x64-codegen/INVALID_IR [
+put system-ir 40 -5
+if (x64-codegen/generate system-ir 158 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
 ; system/cpu/rcx: 42 followed immediately by system/cpu/rcx returns 42.
 put system-ir 20 5
-put system-ir 36 -5
-put system-ir 60 1
-put system-ir 84 5
-put-instruction system-ir 88 1 1 42 0
-put-instruction system-ir 104 10 15 1 1
-put-instruction system-ir 120 12 0 0 0
-put-instruction system-ir 136 10 14 1 1
-put-instruction system-ir 152 11 1 0 0
-system-ir/169: as byte! 66h
-system-ir/170: as byte! 6Eh
+put system-ir 40 -5
+put system-ir 64 1
+put system-ir 88 5
+put-instruction system-ir 92 1 1 42 0
+put-instruction system-ir 108 10 15 1 1
+put-instruction system-ir 124 12 0 0 0
+put-instruction system-ir 140 10 14 1 1
+put-instruction system-ir 156 11 1 0 0
+system-ir/173: as byte! 66h
+system-ir/174: as byte! 6Eh
 
-size: x64-codegen/generate system-ir 170 output 1024 0
+size: x64-codegen/generate system-ir 174 output 1024 0
 if any [size <= 0 not execute-first? output 42][failures: failures + 1]
-put system-ir 112 16
-if (x64-codegen/generate system-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
+put system-ir 116 16
+if (x64-codegen/generate system-ir 174 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put system-ir 112 1
+put system-ir 116 1
 
 ; ADD sets OF while the division family has no usable OF result.
-put system-ir 60 -11
-put-instruction system-ir 88 1 -5 2147483647 0
-put-instruction system-ir 104 1 -5 1 0
-put-instruction system-ir 120 15 1 0 0
-put-instruction system-ir 136 10 16 0 -11
-put-instruction system-ir 152 11 -11 0 0
-size: x64-codegen/generate system-ir 170 output 1024 0
+put system-ir 64 -11
+put-instruction system-ir 92 1 -5 2147483647 0
+put-instruction system-ir 108 1 -5 1 0
+put-instruction system-ir 124 15 1 0 0
+put-instruction system-ir 140 10 16 0 -11
+put-instruction system-ir 156 11 -11 0 0
+size: x64-codegen/generate system-ir 174 output 1024 0
 if any [size <= 0 not execute-first? output 1][failures: failures + 1]
 
-put-instruction system-ir 104 1 -5 -1 -1
-put-instruction system-ir 120 15 4 0 0
-size: x64-codegen/generate system-ir 170 output 1024 0
+put-instruction system-ir 108 1 -5 -1 -1
+put-instruction system-ir 124 15 4 0 0
+size: x64-codegen/generate system-ir 174 output 1024 0
 if any [size <= 0 not execute-first? output 0][failures: failures + 1]
-put system-ir 148 0
-if (x64-codegen/generate system-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
+put system-ir 152 0
+if (x64-codegen/generate system-ir 174 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
@@ -1352,53 +1372,54 @@ put overflow-ir 16 1
 put overflow-ir 20 11
 put overflow-ir 24 0
 put overflow-ir 28 0
-
 put overflow-ir 32 0
-put overflow-ir 36 2
-put overflow-ir 40 -11
-put overflow-ir 44 0
+
+put overflow-ir 36 0
+put overflow-ir 40 2
+put overflow-ir 44 -11
 put overflow-ir 48 0
 put overflow-ir 52 0
 put overflow-ir 56 0
 put overflow-ir 60 0
-put overflow-ir 64 11
+put overflow-ir 64 0
+put overflow-ir 68 11
 
-put-instruction overflow-ir 68 1 -11 0 0
-put-instruction overflow-ir 84 23 9 0 0
-put-instruction overflow-ir 100 1 -5 2147483647 0
-put-instruction overflow-ir 116 1 -5 1 0
-put-instruction overflow-ir 132 15 1 2 0
-put-instruction overflow-ir 148 12 0 0 0
-put-instruction overflow-ir 164 1 -11 0 0
-put-instruction overflow-ir 180 16 10 0 0
-put-instruction overflow-ir 196 1 -11 1 0
-put-instruction overflow-ir 212 15 10 0 0
-put-instruction overflow-ir 228 11 -11 0 0
-overflow-ir/245: as byte! 66h
-overflow-ir/246: as byte! 6Eh
+put-instruction overflow-ir 72 1 -11 0 0
+put-instruction overflow-ir 88 23 9 0 0
+put-instruction overflow-ir 104 1 -5 2147483647 0
+put-instruction overflow-ir 120 1 -5 1 0
+put-instruction overflow-ir 136 15 1 2 0
+put-instruction overflow-ir 152 12 0 0 0
+put-instruction overflow-ir 168 1 -11 0 0
+put-instruction overflow-ir 184 16 10 0 0
+put-instruction overflow-ir 200 1 -11 1 0
+put-instruction overflow-ir 216 15 10 0 0
+put-instruction overflow-ir 232 11 -11 0 0
+overflow-ir/249: as byte! 66h
+overflow-ir/250: as byte! 6Eh
 
-size: x64-codegen/generate overflow-ir 246 output 1024 0
+size: x64-codegen/generate overflow-ir 250 output 1024 0
 if any [size <= 0 not execute-first? output 1][failures: failures + 1]
-put overflow-ir 108 1
-size: x64-codegen/generate overflow-ir 246 output 1024 0
+put overflow-ir 112 1
+size: x64-codegen/generate overflow-ir 250 output 1024 0
 if any [size <= 0 not execute-first? output 0][failures: failures + 1]
-put overflow-ir 108 2147483647
+put overflow-ir 112 2147483647
 
-put overflow-ir 88 0
-if (x64-codegen/generate overflow-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+put overflow-ir 92 0
+if (x64-codegen/generate overflow-ir 250 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put overflow-ir 88 9
-put overflow-ir 140 5
-if (x64-codegen/generate overflow-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+put overflow-ir 92 9
+put overflow-ir 144 5
+if (x64-codegen/generate overflow-ir 250 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put overflow-ir 140 2
-put overflow-ir 144 1
-if (x64-codegen/generate overflow-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+put overflow-ir 144 2
+put overflow-ir 148 1
+if (x64-codegen/generate overflow-ir 250 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put overflow-ir 144 0
+put overflow-ir 148 0
 
 ; Atomic math consumes an ordinary pointer and value pair. The /old bit is
 ; semantic metadata on the native operation, not a source-shaped instruction.
@@ -1410,52 +1431,53 @@ put atomic-ir 16 1
 put atomic-ir 20 9
 put atomic-ir 24 0
 put atomic-ir 28 0
+put atomic-ir 32 0
 
-put atomic-ir 32 -6
-put atomic-ir 36 -5
-put atomic-ir 40 0
+put atomic-ir 36 -6
+put atomic-ir 40 -5
 put atomic-ir 44 0
 put atomic-ir 48 0
-
 put atomic-ir 52 0
-put atomic-ir 56 2
-put atomic-ir 60 -5
-put atomic-ir 64 0
+
+put atomic-ir 56 0
+put atomic-ir 60 2
+put atomic-ir 64 -5
 put atomic-ir 68 0
 put atomic-ir 72 0
 put atomic-ir 76 0
-put atomic-ir 80 1
-put atomic-ir 84 9
+put atomic-ir 80 0
+put atomic-ir 84 1
+put atomic-ir 88 9
 
-put atomic-ir 88 -5
-put atomic-ir 92 0
+put atomic-ir 92 -5
+put atomic-ir 96 0
 
-put-instruction atomic-ir 96 1 -5 7 0
-put-instruction atomic-ir 112 3 1 1 0
-put-instruction atomic-ir 128 5 0 0 0
-put-instruction atomic-ir 144 12 0 0 0
-put-instruction atomic-ir 160 3 1 1 0
-put-instruction atomic-ir 176 20 1 0 0
-put-instruction atomic-ir 192 1 -5 5 0
-put-instruction atomic-ir 208 10 21 9 -5
-put-instruction atomic-ir 224 11 -5 0 0
-atomic-ir/241: as byte! 66h
-atomic-ir/242: as byte! 6Eh
+put-instruction atomic-ir 100 1 -5 7 0
+put-instruction atomic-ir 116 3 1 1 0
+put-instruction atomic-ir 132 5 0 0 0
+put-instruction atomic-ir 148 12 0 0 0
+put-instruction atomic-ir 164 3 1 1 0
+put-instruction atomic-ir 180 20 1 0 0
+put-instruction atomic-ir 196 1 -5 5 0
+put-instruction atomic-ir 212 10 21 9 -5
+put-instruction atomic-ir 228 11 -5 0 0
+atomic-ir/245: as byte! 66h
+atomic-ir/246: as byte! 6Eh
 
-size: x64-codegen/generate atomic-ir 242 output 1024 0
+size: x64-codegen/generate atomic-ir 246 output 1024 0
 if any [size <= 0 not execute-first? output 7][failures: failures + 1]
-put atomic-ir 216 0
-if (x64-codegen/generate atomic-ir 242 output 1024 0) <> x64-codegen/INVALID_IR [
+put atomic-ir 220 0
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put atomic-ir 216 9
-put atomic-ir 220 -11
-if (x64-codegen/generate atomic-ir 242 output 1024 0) <> x64-codegen/INVALID_IR [
+put atomic-ir 220 9
+put atomic-ir 224 -11
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put atomic-ir 220 -5
-put atomic-ir 36 -2
-if (x64-codegen/generate atomic-ir 242 output 1024 0) <> x64-codegen/INVALID_IR [
+put atomic-ir 224 -5
+put atomic-ir 40 -2
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 
@@ -1469,63 +1491,64 @@ put exception-ir 16 1
 put exception-ir 20 7
 put exception-ir 24 0
 put exception-ir 28 0
-
 put exception-ir 32 0
-put exception-ir 36 2
-put exception-ir 40 -5
-put exception-ir 44 0
+
+put exception-ir 36 0
+put exception-ir 40 2
+put exception-ir 44 -5
 put exception-ir 48 0
 put exception-ir 52 0
 put exception-ir 56 0
 put exception-ir 60 0
-put exception-ir 64 7
+put exception-ir 64 0
+put exception-ir 68 7
 
-put-instruction exception-ir 68 1 -5 1 0
-put-instruction exception-ir 84 24 5 1 0
-put-instruction exception-ir 100 1 -5 1 0
-put-instruction exception-ir 116 26 0 0 0
-put-instruction exception-ir 132 25 2 1 0
-put-instruction exception-ir 148 1 -5 73 0
-put-instruction exception-ir 164 11 -5 0 0
-exception-ir/181: as byte! 66h
-exception-ir/182: as byte! 6Eh
+put-instruction exception-ir 72 1 -5 1 0
+put-instruction exception-ir 88 24 5 1 0
+put-instruction exception-ir 104 1 -5 1 0
+put-instruction exception-ir 120 26 0 0 0
+put-instruction exception-ir 136 25 2 1 0
+put-instruction exception-ir 152 1 -5 73 0
+put-instruction exception-ir 168 11 -5 0 0
+exception-ir/185: as byte! 66h
+exception-ir/186: as byte! 6Eh
 
-size: x64-codegen/generate exception-ir 182 output 1024 0
+size: x64-codegen/generate exception-ir 186 output 1024 0
 if any [size <= 0 not execute-selection? output 73][failures: failures + 1]
-put exception-ir 88 6
-if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 92 6
+if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put exception-ir 88 5
-put exception-ir 92 2
-if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 92 5
+put exception-ir 96 2
+if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put exception-ir 92 1
-put exception-ir 72 -11
-if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 96 1
+put exception-ir 76 -11
+if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put exception-ir 72 -5
-put exception-ir 104 -11
-if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 76 -5
+put exception-ir 108 -11
+if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put exception-ir 104 -5
+put exception-ir 108 -5
 
 ; JUMP carries only the number of lexical catch records it exits.
-put exception-ir 108 73
-put-instruction exception-ir 116 16 6 1 1
-size: x64-codegen/generate exception-ir 182 output 1024 0
+put exception-ir 112 73
+put-instruction exception-ir 120 16 6 1 1
+size: x64-codegen/generate exception-ir 186 output 1024 0
 if any [size <= 0 not execute-selection? output 73][failures: failures + 1]
-put exception-ir 128 0
-if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 132 0
+if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
-put exception-ir 128 1
+put exception-ir 132 1
 
-put exception-ir 44 (x64-codegen/CATCH_FLAG + x64-codegen/CDECL)
-if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 48 (x64-codegen/CATCH_FLAG + x64-codegen/CDECL)
+if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 

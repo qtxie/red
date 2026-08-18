@@ -36,8 +36,9 @@ linker: context [
 	cpu-class: 		'IA-32							;-- default target
 	verbose: 		0								;-- logs verbosity level
 	codegen-error: none
-	codegen-header-size: 48
+	codegen-header-size: 52
 	codegen-global-size: 28
+	codegen-export-size: 12
 	codegen-protected: 2
 	data-reference-base: -2147483648
 	rodata-reference-base: -1073741824
@@ -71,16 +72,19 @@ linker: context [
 	load-codegen: func [
 		job [object!]
 		image [binary!]
-		/local size kind entry function-count global-count import-count reference-count names-size
+		/local size kind entry function-count global-count import-count export-count
+			reference-count names-size expected-kind
 			code-offset code-size rodata-size data-size functions-size globals-size imports-size
-			refs-size globals-start imports-start refs-start names-start rodata-offset data-offset
+			exports-size refs-size globals-start imports-start exports-start refs-start
+			names-start rodata-offset data-offset
 			expected remainder id index record
 			name-offset name-size function-offset function-size frame-size bitmap-offset
 			bitmap-base bitmap-size global-offset global-size global-flags first-reference count-reference
 			reference-id reference
 			name-bytes name symbols refs data-refs imports functions library-offset library-size
 			external-offset external-size library external last-library code rodata data sections
-			data-reference symbol-type
+			data-reference symbol-type symbol-id internal exports export-names
+			function-names global-names
 	][
 		codegen-error: none
 		unless all [object? job binary? image (length? image) >= codegen-header-size][
@@ -98,16 +102,26 @@ linker: context [
 		data-size: read-codegen-word image 36
 		global-count: read-codegen-word image 40
 		rodata-size: read-codegen-word image 44
+		export-count: read-codegen-word image 48
+		expected-kind: case [
+			job/type = 'exe [3]
+			job/type = 'dll [4]
+			true [0]
+		]
 		unless all [
 			integer? size integer? kind integer? entry integer? function-count
 			integer? import-count integer? reference-count integer? names-size
 			integer? code-offset integer? code-size integer? data-size integer? global-count
-			integer? rodata-size
+			integer? rodata-size integer? export-count
 			size = length? image
-			kind = 3
+			expected-kind > 0 kind = expected-kind
 			function-count > 0
-			entry > 0 entry <= function-count
-			global-count >= 0 import-count >= 0 reference-count >= 0 names-size > 0
+			any [
+				all [kind = 3 entry > 0 entry <= function-count export-count = 0]
+				all [kind = 4 entry = 0 export-count > 0]
+			]
+			global-count >= 0 import-count >= 0 export-count >= 0
+			reference-count >= 0 names-size > 0
 			code-size > 0 rodata-size >= 0 data-size >= 0
 		][return codegen-fail "native codegen returned an invalid image header"]
 
@@ -125,11 +139,16 @@ linker: context [
 			return codegen-fail "native codegen import table exceeds its image"
 		]
 		imports-size: import-count * 24
-		if reference-count > ((size - imports-start - imports-size) / 4) [
+		exports-start: imports-start + imports-size
+		if export-count > ((size - exports-start) / codegen-export-size) [
+			return codegen-fail "native codegen export table exceeds its image"
+		]
+		exports-size: export-count * codegen-export-size
+		if reference-count > ((size - exports-start - exports-size) / 4) [
 			return codegen-fail "native codegen reference table exceeds its image"
 		]
 		refs-size: reference-count * 4
-		refs-start: imports-start + imports-size
+		refs-start: exports-start + exports-size
 		names-start: refs-start + refs-size
 		if names-size > (size - names-start) [
 			return codegen-fail "native codegen names exceed their image"
@@ -157,6 +176,8 @@ linker: context [
 		]
 
 		symbols: make hash! ((function-count + global-count) * 2)
+		function-names: make block! function-count
+		global-names: make block! global-count
 		bitmap-base: 0
 		id: 1
 		while [id <= function-count][
@@ -198,6 +219,7 @@ linker: context [
 			name: attempt [to word! to string! name-bytes]
 			unless word? name [return codegen-fail "native function name is not a Red word"]
 			if find symbols name [return codegen-fail "native codegen returned duplicate symbols"]
+			append function-names name
 			refs: make block! count-reference
 			data-refs: make block! count-reference
 			reference-id: first-reference
@@ -284,6 +306,7 @@ linker: context [
 				]
 			]
 			if find symbols name [return codegen-fail "native codegen returned duplicate symbols"]
+			append global-names name
 			refs: make block! count-reference
 			data-refs: make block! count-reference
 			reference-id: first-reference
@@ -378,6 +401,44 @@ linker: context [
 			id: id + 1
 		]
 
+		exports: make block! (export-count * 2)
+		export-names: make hash! export-count
+		id: 1
+		while [id <= export-count][
+			record: exports-start + ((id - 1) * codegen-export-size)
+			symbol-id: read-codegen-signed-word image record
+			external-offset: read-codegen-word image (record + 4)
+			external-size: read-codegen-word image (record + 8)
+			unless all [
+				integer? symbol-id symbol-id <> 0
+				integer? external-offset external-offset >= 0
+				integer? external-size external-size > 0
+				external-offset <= (names-size - external-size)
+				any [
+					all [symbol-id > 0 symbol-id <= function-count]
+					all [symbol-id < 0 symbol-id >= (0 - global-count)]
+				]
+			][return codegen-fail "native codegen returned an invalid export record"]
+			external: to string! copy/part at image
+				(names-start + external-offset + 1) external-size
+			if find to binary! external 0 [
+				return codegen-fail "native export name contains NUL"
+			]
+			if find/case export-names external [
+				return codegen-fail "native codegen returned duplicate export names"
+			]
+			append/only export-names external
+			internal: either symbol-id > 0 [
+				pick function-names symbol-id
+			][pick global-names (0 - symbol-id)]
+			unless word? internal [
+				return codegen-fail "native codegen exports an anonymous symbol"
+			]
+			append exports internal
+			append exports external
+			id: id + 1
+		]
+
 		code: copy/part at image (code-offset + 1) code-size
 		rodata: copy/part at image (rodata-offset + 1) rodata-size
 		data: copy/part at image (data-offset + 1) data-size
@@ -393,6 +454,10 @@ linker: context [
 		unless empty? imports [
 			append sections 'import
 			append/only sections reduce ['- '- imports]
+		]
+		unless empty? exports [
+			append sections 'export
+			append/only sections reduce ['- '- exports]
 		]
 		set in job 'sections sections
 		set in job 'symbols symbols
@@ -772,7 +837,7 @@ linker: context [
 
 		external-linker/merge job					;-- merge optional external C objects
 
-		clean-imports job/sections/import
+		if find job/sections 'import [clean-imports job/sections/import]
 
 		emit-system-file job
 

@@ -709,7 +709,7 @@ system-format-PE: context [
 		job [object!]
 		/local
 			spec NPT out names ptr EAT-len sym-nb dll-name-offset ordinal ed
-			code-base data-base ro-base buffer names-ptr rva-ptr
+			code-base data-base ro-base buffer names-ptr rva-ptr dll-name extension
 	][
 		spec: 		job/sections/export
 		NPT: 		make block! 32
@@ -728,11 +728,11 @@ system-format-PE: context [
 		]
 
 		dll-name-offset: length? names
-		append names rejoin [							;-- store DLL name
-			last split-path job/build-basename
-			select defs/extensions job/type
-			null
-		]
+		dll-name: copy last split-path job/build-basename	;-- store DLL name
+		extension: any [job/build-suffix select defs/extensions job/type]
+		unless extension = suffix? dll-name [append dll-name extension]
+		append names dll-name
+		append names null
 
 		ed: make-struct export-directory none			;-- Export Directory Table
 		ed/flags:				0						;-- reserved

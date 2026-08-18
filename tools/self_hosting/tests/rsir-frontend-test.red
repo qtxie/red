@@ -42,8 +42,8 @@ compile-text: func [
 
 ; Offsets are derived from counts, so adding an unrelated record does not
 ; turn semantic tests into whole-image byte-offset tests.
-layout-of: func [ir [binary!] /local types imports functions globals switches members
-	type-at member-count import-at global-at function-at use-count use-at
+layout-of: func [ir [binary!] /local types imports functions globals switches exports members
+	type-at member-count import-at global-at function-at export-at use-count use-at
 	initializer-count initializer-at switch-at instruction-at strings-at id record
 ][
 	types: word-at ir 8
@@ -51,7 +51,8 @@ layout-of: func [ir [binary!] /local types imports functions globals switches me
 	functions: word-at ir 16
 	globals: word-at ir 24
 	switches: word-at ir 28
-	type-at: 32
+	exports: word-at ir 32
+	type-at: 36
 	member-count: 0
 	id: 0
 	while [id < types][
@@ -63,6 +64,7 @@ layout-of: func [ir [binary!] /local types imports functions globals switches me
 	import-at: type-at + (types * 20) + (member-count * 8)
 	global-at: import-at + (imports * 32)
 	function-at: global-at + (globals * 24)
+	export-at: function-at + (functions * 36)
 	use-count: 0
 	id: 0
 	while [id < imports][
@@ -76,7 +78,7 @@ layout-of: func [ir [binary!] /local types imports functions globals switches me
 		use-count: use-count + word-at ir (record + 28)
 		id: id + 1
 	]
-	use-at: function-at + (functions * 36)
+	use-at: export-at + (exports * 12)
 	initializer-count: 0
 	id: 0
 	while [id < globals][
@@ -90,7 +92,7 @@ layout-of: func [ir [binary!] /local types imports functions globals switches me
 	strings-at: instruction-at + ((word-at ir 20) * 16)
 	reduce [
 		type-at import-at global-at function-at use-at instruction-at strings-at
-		switch-at initializer-at
+		switch-at initializer-at export-at
 	]
 ]
 
@@ -133,6 +135,10 @@ switch-word: func [ir layout id field][
 
 initializer-word: func [ir layout id field][
 	word-at ir (layout/9 + ((id - 1) * 16) + field)
+]
+
+export-word: func [ir layout id field][
+	word-at ir (layout/10 + ((id - 1) * 12) + field)
 ]
 
 ops-of: func [ir layout /local output id count][
@@ -1983,7 +1989,7 @@ tagged-ir: compile-text {
 assert binary? tagged-ir ["tagged union lowering failed: " mold frontend/last-error]
 tagged-layout: layout-of tagged-ir
 tagged-ops: ops-of tagged-ir tagged-layout
-tagged-member-at: 32 + ((word-at tagged-ir 8) * 20)
+tagged-member-at: 36 + ((word-at tagged-ir 8) * 20)
 tagged-write?: false
 repeat id word-at tagged-ir 20 [
 	if all [
@@ -1993,9 +1999,9 @@ repeat id word-at tagged-ir 20 [
 ]
 assert all [
 	(word-at tagged-ir 8) = 2
-	(word-at tagged-ir 32) = -3
-	(word-at tagged-ir 40) = 1
-	(word-at tagged-ir 48) = 2
+	(word-at tagged-ir 36) = -3
+	(word-at tagged-ir 44) = 1
+	(word-at tagged-ir 52) = 2
 	(word-at tagged-ir tagged-member-at) = 2
 	(word-at tagged-ir (tagged-member-at + 4)) = 1
 	(word-at tagged-ir (tagged-member-at + 8)) = -5
@@ -2352,6 +2358,54 @@ assert all [
 	(function-word glue-ir glue-layout 2 32) = 1
 	(ops-of glue-ir glue-layout) = [11 11]
 ]["glue entry was not an ordinary function"]
+
+library-ir: compile-text {
+	Red/System []
+	value: 1
+	value: value + 1
+	#user-code
+	value: value + 2
+	answer: func [return: [integer!]][value]
+	#export stdcall [answer "answer-v1" value]
+} 'library
+assert binary? library-ir [
+	"shared library lowering failed: " mold frontend/last-error
+]
+library-layout: layout-of library-ir
+first-export-name: to string! copy/part at library-ir
+	(library-layout/7 + (export-word library-ir library-layout 1 4) + 1)
+	(export-word library-ir library-layout 1 8)
+second-export-name: to string! copy/part at library-ir
+	(library-layout/7 + (export-word library-ir library-layout 2 4) + 1)
+	(export-word library-ir library-layout 2 8)
+assert all [
+	(word-at library-ir 0) = 4
+	(word-at library-ir 4) = 0
+	(word-at library-ir 16) = 7
+	(word-at library-ir 32) = 2
+	(function-word library-ir library-layout 1 12) = 66
+	(function-word library-ir library-layout 6 32) > 1
+	(function-word library-ir library-layout 7 32) > 1
+	(export-word library-ir library-layout 1 0) = 1
+	(export-word library-ir library-layout 2 0) = -1
+	first-export-name = "answer-v1"
+	second-export-name = "value"
+]["shared library exports or boot/user module boundaries lost their semantics"]
+
+assert none? compile-text {
+	Red/System []
+	answer: func [return: [integer!]][1]
+} 'library "a shared library without #export was accepted"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"missing library export reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	answer: func [return: [integer!]][1]
+	#export [answer]
+} 'glue "an executable accepted #export"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"executable #export reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []

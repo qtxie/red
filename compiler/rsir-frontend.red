@@ -22,14 +22,14 @@ compiler-rsir-frontend: context [
 	last-error: none
 	module-kind: 0
 	debug?: false
-	functions: make block! 96
-	function-ids: make hash! 48
+	functions: make block! (10 * 256)
+	function-ids: make hash! (2 * 256)
 	infix-targets: make hash! 16
 	contexts: make hash! 32
-	types: make block! 256
+	types: make block! (5 * 128)
 	type-ids: make hash! 128
 	pointer-types: make hash! 64
-	array-types: make hash! 32
+	array-types: make hash! (2 * 64)
 	aggregate-types: make hash! 64
 	function-types: make hash! 64
 	subroutine-types: make hash! 16
@@ -38,17 +38,25 @@ compiler-rsir-frontend: context [
 	constants: make hash! 256
 	protected: make hash! 64
 	protected-values: make hash! 64
-	imports: make block! 256
+	imports: make block! (10 * 64)
 	import-ids: make hash! 256
 	libraries: make hash! 32
+	exports: make block! (5 * 32)
+	export-names: make hash! 32
 	globals: make hash! 1024
-	global-data: make block! 1024
-	module-code: make binary! 256
+	global-data: make block! (5 * 384)
+	boot-code: make binary! (16 * 1024)
+	boot-locals: make block! 12
+	module-code: make binary! (16 * 1024)
 	module-locals: make block! 12
-	function-code: make binary! 2048
-	initializers: make binary! 256
-	switches: make binary! 96
-	strings: make binary! 256
+	active-module-code: none
+	active-module-locals: none
+	split-module?: false
+	user-code?: false
+	function-code: make binary! (1024 * 1024)
+	initializers: make binary! (16 * 256)
+	switches: make binary! (12 * 128)
+	strings: make binary! (2 * 1024)
 	function-count: 0
 	context-count: 0
 	type-count: 0
@@ -1477,24 +1485,32 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	add-module-function: func [/local key][
-		key: to word! "***-main"
+	add-module-function: func [
+		name [word!]
+		code [binary!]
+		locals [block!]
+		/local key id
+	][
+		key: name
 		if any [
 			select function-ids key
 			select import-ids key
 			select globals key
-		][fail ERROR-DUPLICATE "***-main is reserved for the module body"]
-		append/only functions to binary! "***-main"
+		][fail ERROR-DUPLICATE [form name " is reserved for the module body"]]
+		id: function-count + 1
+		repend function-ids [key id]
+		append/only functions to binary! form name
 		append/only functions copy []
-		append/only functions module-code
+		append/only functions code
 		append/only functions copy []
 		append/only functions copy []
 		append functions 0
 		append/only functions copy []
-		append/only functions copy module-locals
+		append/only functions copy locals
 		append functions 0
 		append functions 0
-		function-count: function-count + 1
+		function-count: id
+		id
 	]
 
 	lower-functions: func [/local record body count][
@@ -1658,6 +1674,108 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	scan-exports: func [
+		position scope uses [block!]
+		return: [block!]
+		/local cursor convention list symbol external
+	][
+		unless module-kind = 4 [
+			fail ERROR-CONTEXT "#export requires a shared library module"
+		]
+		cursor: next position
+		convention: 1
+		if all [not tail? cursor word? cursor/1][
+			unless find [cdecl stdcall] cursor/1 [
+				fail ERROR-UNSUPPORTED [
+					"invalid export calling convention " mold cursor/1
+				]
+			]
+			convention: either cursor/1 = 'cdecl [1][2]
+			cursor: next cursor
+		]
+		unless all [not tail? cursor block? cursor/1][
+			fail ERROR-ARGUMENTS "#export expects a block of symbols"
+		]
+		list: cursor/1
+		if empty? list [fail ERROR-ARGUMENTS "#export block is empty"]
+		while [not tail? list][
+			symbol: list/1
+			unless any [word? symbol path? symbol][
+				fail ERROR-NAME ["invalid exported symbol " mold symbol]
+			]
+			external: none
+			if all [(length? list) >= 2 string? list/2][
+				external: list/2
+				unless valid-name? external [
+					fail ERROR-NAME "invalid external export name"
+				]
+				list: next list
+			]
+			append/only exports symbol
+			append/only exports copy scope
+			append/only exports copy/deep uses
+			append exports convention
+			append/only exports either external [to binary! external][none]
+			list: next list
+		]
+		next cursor
+	]
+
+	add-library-callbacks: func [/local declarations code name spec][
+		declarations: [
+			on-load        [handle [pointer! [integer!]]]
+			on-unload      [handle [pointer! [integer!]]]
+			on-new-thread  [handle [pointer! [integer!]]]
+			on-exit-thread [handle [pointer! [integer!]]]
+		]
+		code: make block! 16
+		foreach [name spec] declarations [
+			unless select function-ids name [
+				repend code [to set-word! name 'func copy/deep spec copy []]
+			]
+		]
+		unless empty? code [scan-block code copy [] copy [] 0]
+	]
+
+	prepare-exports: func [
+		/local position symbol scope uses convention external id record flags internal
+	][
+		position: exports
+		while [not tail? position][
+			symbol: position/1
+			scope: position/2
+			uses: position/3
+			convention: position/4
+			external: position/5
+			id: resolve-name symbol scope uses function-ids
+			either integer? id [
+				record: skip functions ((id - 1) * 10)
+				flags: record/9
+				if (flags and catch-flag) <> 0 [
+					fail ERROR-UNSUPPORTED "a catch function cannot be exported"
+				]
+				record/9: (((flags and -4) or convention) or callback-flag)
+				internal: record/1
+			][
+				id: resolve-name symbol scope uses globals
+				unless integer? id [
+					fail ERROR-REFERENCE ["undefined exported symbol " mold symbol]
+				]
+				record: skip global-data ((id - 1) * 5)
+				internal: record/1
+				id: 0 - id
+			]
+			if none? external [external: copy internal]
+			if find/case export-names external [
+				fail ERROR-DUPLICATE ["duplicate external export " to string! external]
+			]
+			append/only export-names external
+			position/1: id
+			position/5: external
+			position: skip position 5
+		]
+	]
+
 	scan-block: func [
 		values scope uses [block!]
 		with-count [integer!]
@@ -1679,6 +1797,9 @@ compiler-rsir-frontend: context [
 				][position: skip position 2]
 				all [issue? position/1 position/1 = #user-code][
 					position: next position
+				]
+				all [issue? position/1 position/1 = #export][
+					position: scan-exports position scope uses
 				]
 				all [
 					issue? position/1
@@ -1901,7 +2022,7 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	compile-source: func [source [block!] /local header][
+	compile-source: func [source [block!] /local header body][
 		unless all [not tail? source source/1 = 'Red/System] [
 			fail ERROR-ARGUMENTS "source is not a Red/System program"
 		]
@@ -1913,16 +2034,36 @@ compiler-rsir-frontend: context [
 			fail ERROR-ARGUMENTS "invalid Red/System program header"
 		]
 
-		scan-block skip source 2 copy [] copy [] 0
+		body: skip source 2
+		scan-block body copy [] copy [] 0
+		if module-kind = 4 [
+			if empty? exports [
+				fail ERROR-CONTEXT "a shared library must export at least one symbol"
+			]
+			add-library-callbacks
+		]
 		prepare-types
 		prepare-functions
 		prepare-imports
-		compile-module skip source 2 copy [] copy []
-		if module-kind = 3 [
-			emit module-code reduce [return-op 0 0 0]
-			add-module-function
+		prepare-exports
+		split-module?: to logic! all [module-kind = 4 find body #user-code]
+		user-code?: false
+		active-module-code: either split-module? [boot-code][module-code]
+		active-module-locals: either split-module? [boot-locals][module-locals]
+		compile-module body copy [] copy []
+		case [
+			module-kind = 3 [
+				emit module-code reduce [return-op 0 0 0]
+				add-module-function '***-main module-code module-locals
+			]
+			module-kind = 4 [
+				emit boot-code reduce [return-op 0 0 0]
+				add-module-function '***-boot-rs boot-code boot-locals
+				emit module-code reduce [return-op 0 0 0]
+				add-module-function '***-main module-code module-locals
+			]
 		]
-		if all [module-kind <> 3 not empty? module-code][
+		if all [module-kind < 3 any [not empty? boot-code not empty? module-code]][
 			fail ERROR-UNSUPPORTED "runtime module body requires a glue module"
 		]
 		if function-count < 1 [
@@ -2039,7 +2180,7 @@ compiler-rsir-frontend: context [
 	write-rsir: func [limit [integer!] /local output position name
 		params locals flags record-offset param-count local-count first-param first-local
 		instruction-count size entry id parameter import-records global-records
-		function-records
+		function-records export-records export-count
 		library external last-library library-offset external-offset names
 		type-output members type-bytes member-bytes switch-count
 	][
@@ -2051,20 +2192,23 @@ compiler-rsir-frontend: context [
 		member-bytes: length? members
 		names: copy strings
 		switch-count: (length? switches) / 12
-		output: make binary! (32 + type-bytes + member-bytes + (length? initializers)
+		export-count: (length? exports) / 5
+		output: make binary! (36 + type-bytes + member-bytes + (length? initializers)
 			+ (length? switches)
 			+ (length? strings)
 			+ (length? function-code) + (import-count * 64)
-			+ (global-count * 40) + (function-count * 112))
-		append/dup output 0 32
+			+ (global-count * 40) + (function-count * 112) + (export-count * 24))
+		append/dup output 0 36
 		append output type-output
 		append output members
-		import-records: 33 + type-bytes + member-bytes
+		import-records: 37 + type-bytes + member-bytes
 		global-records: import-records + (import-count * 32)
 		function-records: global-records + (global-count * 24)
+		export-records: function-records + (function-count * 36)
 		append/dup output 0 (import-count * 32)
 		append/dup output 0 (global-count * 24)
 		append/dup output 0 (function-count * 36)
+		append/dup output 0 (export-count * 12)
 
 		position: imports
 		last-library: none
@@ -2190,6 +2334,21 @@ compiler-rsir-frontend: context [
 			id: id + 1
 			position: skip position 10
 		]
+
+		position: exports
+		id: 1
+		while [not tail? position][
+			name: position/5
+			record-offset: export-records + ((id - 1) * 12)
+			change/part at output record-offset int-to-bin/to-bin32 position/1 4
+			change/part at output (record-offset + 4)
+				int-to-bin/to-bin32 (length? names) 4
+			change/part at output (record-offset + 8)
+				int-to-bin/to-bin32 (length? name) 4
+			append names name
+			id: id + 1
+			position: skip position 5
+		]
 		append output initializers
 		append output switches
 		append output function-code
@@ -2207,6 +2366,7 @@ compiler-rsir-frontend: context [
 		change/part at output 21 int-to-bin/to-bin32 instruction-count 4
 		change/part at output 25 int-to-bin/to-bin32 global-count 4
 		change/part at output 29 int-to-bin/to-bin32 switch-count 4
+		change/part at output 33 int-to-bin/to-bin32 export-count 4
 		output
 	]
 
@@ -6241,6 +6401,16 @@ compiler-rsir-frontend: context [
 					(length? position) >= 2
 				][position: skip position 2]
 				all [issue? position/1 position/1 = #user-code][
+					if split-module? [
+						user-code?: not user-code?
+						active-module-code: either user-code? [module-code][boot-code]
+						active-module-locals: either user-code? [module-locals][boot-locals]
+					]
+					position: next position
+				]
+				all [issue? position/1 position/1 = #export][
+					position: next position
+					if all [not tail? position word? position/1][position: next position]
 					position: next position
 				]
 				all [
@@ -6291,15 +6461,16 @@ compiler-rsir-frontend: context [
 					position: skip position 3
 				]
 				any [set-word? position/1 set-path? position/1][
-					position: stack-assignment position scope uses module-code
-						[] module-locals true
-					if last-type <> 0 [emit module-code reduce [drop-op 0 0 0]]
+					position: stack-assignment position scope uses active-module-code
+						[] active-module-locals true
+					if last-type <> 0 [emit active-module-code reduce [drop-op 0 0 0]]
 				]
 				true [
-					position: stack-value position scope uses module-code [] module-locals
+					position: stack-value position scope uses active-module-code
+						[] active-module-locals
 						statement-value
 					if last-type <> 0 [
-						emit module-code reduce [drop-op 0 0 0]
+						emit active-module-code reduce [drop-op 0 0 0]
 					]
 				]
 			]
@@ -6462,6 +6633,7 @@ compiler-rsir-frontend: context [
 				kind = 'user [1]
 				kind = 'support [2]
 				kind = 'glue [3]
+				kind = 'library [4]
 				true [0]
 			]
 			if module-kind = 0 [
@@ -6487,10 +6659,18 @@ compiler-rsir-frontend: context [
 			clear imports
 			clear import-ids
 			clear libraries
+			clear exports
+			clear export-names
 			clear globals
 			clear global-data
+			clear boot-code
+			clear boot-locals
 			clear module-code
 			clear module-locals
+			active-module-code: module-code
+			active-module-locals: module-locals
+			split-module?: false
+			user-code?: false
 			last-float-literal?: false
 			clear function-code
 			clear overflows

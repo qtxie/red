@@ -15,7 +15,7 @@ check: func [condition [logic! none!] message [string! block!]][
 	unless condition [fail message]
 ]
 
-codegen-header-size: 48
+codegen-header-size: 52
 
 word-at: func [data [binary!] offset [integer!] /local high][
 	high: to integer! pick data (offset + 4)

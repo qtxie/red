@@ -68,8 +68,8 @@ system-dialect: context [
 			job/ABI <> 'win64 [
 				compiler/throw-error "RSIR frontend currently supports only the Win64 ABI"
 			]
-			job/type <> 'exe [
-				compiler/throw-error "RSIR frontend currently supports only executable modules"
+			not find [exe dll] job/type [
+				compiler/throw-error "RSIR frontend currently supports only executable and DLL modules"
 			]
 			job/red-pass? [
 				compiler/throw-error "RSIR frontend does not yet support Red-generated modules"
@@ -141,9 +141,9 @@ system-dialect: context [
 		unless all [not tail? next source block? source/2][
 			compiler/throw-error "missing Red/System program header"
 		]
-		output: compiler-rsir-frontend/compile
-			source
-			'glue
+		output: compiler-rsir-frontend/compile source either job/type = 'dll [
+			'library
+		]['glue]
 		unless binary? output [
 			error: compiler-rsir-frontend/last-error
 			compiler/throw-error either error [error/message][
@@ -233,8 +233,9 @@ system-dialect: context [
 		process-config source/2
 
 		if runtime-source [
+			append runtime-source #user-code
 			append runtime-source skip source 2
-			append runtime-source '***-normal-exit
+			if job/type = 'exe [append runtime-source '***-normal-exit]
 			source: runtime-source
 		]
 

@@ -53,24 +53,25 @@ put ir 16 1
 put ir 20 3
 put ir 24 0
 put ir 28 0
-
 put ir 32 0
-put ir 36 2
-put ir 40 -11
-put ir 44 0
+
+put ir 36 0
+put ir 40 2
+put ir 44 -11
 put ir 48 0
 put ir 52 0
 put ir 56 0
 put ir 60 0
-put ir 64 3
+put ir 64 0
+put ir 68 3
 
-put-instruction ir 68 1 -15 255 0
-put-instruction ir 84 8 -11 0 0
-put-instruction ir 100 11 -11 0 0
-ir/117: as byte! 66h
-ir/118: as byte! 6Eh
+put-instruction ir 72 1 -15 255 0
+put-instruction ir 88 8 -11 0 0
+put-instruction ir 104 11 -11 0 0
+ir/121: as byte! 66h
+ir/122: as byte! 6Eh
 
-size: x64-codegen/generate ir 118 image 1024 1
+size: x64-codegen/generate ir 122 image 1024 1
 if size <= 0 [
 	print ["FAIL: logic cast RSIR status=" size lf]
 	quit 1

@@ -32,59 +32,60 @@ put ir 16 1
 put ir 20 1
 put ir 24 4
 put ir 28 0
+put ir 32 0
 
-put ir 32 -6
-put ir 36 -7
-put ir 40 0
+put ir 36 -6
+put ir 40 -7
 put ir 44 0
 put ir 48 0
+put ir 52 0
 
-put ir 52 -2
-put ir 56 0
+put ir 56 -2
 put ir 60 0
 put ir 64 0
-put ir 68 2
+put ir 68 0
+put ir 72 2
 
-put ir 72 -5
-put ir 76 0
-put ir 80 -5
-put ir 84 0
+put ir 76 -5
+put ir 80 0
+put ir 84 -5
+put ir 88 0
 
-put-global ir 88 0 1 2 0 0 1
-put-global ir 112 1 1 2 0 1 1
-put-global ir 136 0 0 -7 0 0 0
-put-global ir 160 0 0 -7 0 0 0
+put-global ir 92 0 1 2 0 0 1
+put-global ir 116 1 1 2 0 1 1
+put-global ir 140 0 0 -7 0 0 0
+put-global ir 164 0 0 -7 0 0 0
 
-put ir 184 2
 put ir 188 2
-put ir 192 0
+put ir 192 2
 put ir 196 0
 put ir 200 0
 put ir 204 0
 put ir 208 0
 put ir 212 0
-put ir 216 1
+put ir 216 0
+put ir 220 1
 
-put ir 220 2
 put ir 224 2
-put ir 228 3
-put ir 232 1
-put ir 236 2
+put ir 228 2
+put ir 232 3
+put ir 236 1
 put ir 240 2
-put ir 244 4
-put ir 248 1
+put ir 244 2
+put ir 248 4
+put ir 252 1
 
-put ir 252 11
-put ir 256 0
+put ir 256 11
 put ir 260 0
 put ir 264 0
+put ir 268 0
 
-ir/269: as byte! 61h
-ir/270: as byte! 62h
-ir/271: as byte! 66h
-ir/272: as byte! 6Eh
+ir/273: as byte! 61h
+ir/274: as byte! 62h
+ir/275: as byte! 66h
+ir/276: as byte! 6Eh
 
-size: x64-codegen/generate ir 272 image 1024 1
+size: x64-codegen/generate ir 276 image 1024 1
 if size <= 0 [
 	print ["FAIL: static global layout RSIR status=" size lf]
 	quit 1

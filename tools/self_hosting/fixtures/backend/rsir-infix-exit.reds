@@ -24,6 +24,8 @@ add-infix: func [
 	a + b
 ]
 
+initial-score: 2 add-infix 3
+
 double: func [
 	value [integer!]
 	return: [integer!]
@@ -42,16 +44,16 @@ accept-infix: func [
 ]
 
 main: func [return: [integer!] /local score [integer!]][
-	score: 0
+	score: initial-score
 	score: score + (2 add-infix 3)
 	score: score + (2 add-infix 3 + 4)
 	score: score + (2 add-infix (3 + 4))
 	score: score + add-infix 2 3
 	score: score + (2 add-infix double 3)
 	score: score + (2 add-infix 3 add-infix 4)
-	"infix" accept-infix (score = 45)
+	"infix" accept-infix (score = 50)
 	either all [
-		score = 45
+		score = 50
 		seen = 1
 		("same" compare-infix "same") = 0
 	][73][score]

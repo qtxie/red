@@ -165,14 +165,15 @@ The old PowerShell ABI runner is evidence for the intended cases, not the final
 driver, because it invokes the retired Stage0 path. A Stage1/hybrid-native
 runner must execute every applicable x64 source directly.
 
-The direct `rsir-fixed-integer-exit.reds` gate currently executes 40 scalar
+The direct `rsir-fixed-integer-exit.reds` gate currently executes 49 scalar
 checks through frontend, RSIR, native codegen, linker, and the generated PE. It
 covers all eight fixed widths, signed and unsigned arithmetic, 64-bit division
-and shifts, explicit truncation, lossless assignment/call/return widening,
-mixed-width comparison, scalar cdecl/callback returns, and eight Win64 integer
-arguments. This is mechanism evidence, not row completion: aggregate field
-paths, typed/variadic calls, and the complete fixed-int/int64 formal families
-remain required.
+and shifts, direct binary-logarithm selection at every logical integer width,
+explicit truncation, lossless assignment/call/return widening, mixed-width
+comparison, scalar cdecl/callback returns, and eight Win64 integer arguments.
+This is mechanism evidence, not row completion: aggregate field paths,
+typed/variadic calls, and the complete fixed-int/int64 formal families remain
+required.
 
 The direct `rsir-float-scalar-exit.reds` gate executes another 50 checks
 through the same path. It covers exact binary32/binary64 constants, arithmetic,
@@ -183,12 +184,13 @@ row. Float aggregate and pointer paths, typed/variadic calls, the specified
 float32 remainder operation, and the complete float/float32/cast formal
 families remain required.
 
-The direct `rsir-address-index-exit.reds` gate executes 24 address checks
+The direct `rsir-address-index-exit.reds` gate executes 29 address checks
 through frontend, RSIR, native codegen, linker, and the generated PE. One
 `REFERENCE` conversion turns an existing place into a first-class pointer
 without machine work; one type-driven `INDEX` operation handles static and
 dynamic one-based indexing for pointers and c-strings. The gate covers local
-and global addresses, pointer-to-pointer values, zero/static/dynamic indexes,
+and global addresses, generic pointer slots, integer-left raw address
+arithmetic, pointer-left scaled arithmetic, zero/static/dynamic indexes,
 integer, byte and floating pointees, c-string constants, member get-paths, and
 nested pointer members. This is mechanism evidence, not completion of the
 address/aggregate rows: `declare` storage, literal arrays, protected data,

@@ -221,6 +221,28 @@ x64-encoder: context [
 		size
 	]
 
+	bit-scan-reverse: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) target source
+		size: either prefix = 40h [3][4]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! BDh
+		at/3: as byte! modrm 3 target source
+		size
+	]
+
 	unsigned-multiply-register: func [
 		code [byte-ptr!]
 		capacity source width [integer!]

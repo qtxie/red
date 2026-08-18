@@ -163,6 +163,7 @@ compiler-rsir-frontend: context [
 	atomic-store-native: 19
 	atomic-cas-native: 20
 	atomic-math-native: 21
+	log-b-native: 22
 	atomic-old-flag: 8
 	atomic-operations: make hash! [
 		add 1 sub 2 or 3 xor 4 and 5
@@ -2250,6 +2251,11 @@ compiler-rsir-frontend: context [
 		if any [expected-kind = 'null actual-kind = 'null][
 			return all [reference-kind? expected-kind reference-kind? actual-kind]
 		]
+		if all [
+			any [expected = -12 actual = -12]
+			expected-kind = 'pointer
+			actual-kind = 'pointer
+		][return true]
 		if array-pointer-compatible? expected actual [return true]
 		if all [expected-kind = 'function actual-kind = 'function][
 			return function-signatures-compatible? expected actual depth
@@ -2803,6 +2809,22 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	common-stack-ref: func [
+		left left-flags right right-flags [integer!]
+		return: [integer!]
+		/local left-kind right-kind
+	][
+		if same-stack-type? left left-flags right right-flags [return left]
+		unless all [left-flags = 0 right-flags = 0][return 0]
+		left-kind: ref-kind left
+		right-kind: ref-kind right
+		case [
+			all [left-kind = 'null reference-kind? right-kind][right]
+			all [right-kind = 'null reference-kind? left-kind][left]
+			true [0]
+		]
+	]
+
 	same-reference-category?: func [
 		left-kind right-kind [word! none!]
 		return: [logic!]
@@ -2860,11 +2882,14 @@ compiler-rsir-frontend: context [
 					]
 					all [
 						operation <= 2
-						address-kind? left-kind
 						left-flags = 0
+						right-flags = 0
 						any [
-							all [integer-kind? right-kind right-flags = 0]
-							all [address-kind? right-kind right-flags = 0]
+							all [
+								address-kind? left-kind
+								any [integer-kind? right-kind address-kind? right-kind]
+							]
+							all [left-kind = 'i32 address-kind? right-kind]
 						]
 					]
 				]
@@ -3314,6 +3339,8 @@ compiler-rsir-frontend: context [
 				all [
 					(ref-kind target-ref) <> 'function
 					(ref-kind source-ref) <> 'function
+					(canonical-ref target-ref) <> -12
+					(canonical-ref source-ref) <> -12
 				]
 			]
 		][
@@ -4072,7 +4099,7 @@ compiler-rsir-frontend: context [
 		after [block!]
 		value-context [integer!]
 		return: [block!]
-		/local arm result-type result-flags flow? common? drop? target
+		/local arm result-type result-flags common-ref flow? common? drop? target
 	][
 		result-type: 0
 		result-flags: 0
@@ -4082,11 +4109,13 @@ compiler-rsir-frontend: context [
 		while [not tail? arm][
 			unless arm/4 [
 				either flow? [
-					unless all [
-						result-type <> 0
-						arm/2 <> 0
-						same-stack-type? result-type result-flags arm/2 arm/3
-					][common?: false]
+					common-ref: either all [result-type <> 0 arm/2 <> 0][
+						common-stack-ref result-type result-flags arm/2 arm/3
+					][0]
+					either common-ref = 0 [common?: false][
+						result-type: common-ref
+						result-flags: arm/3
+					]
 				][
 					flow?: true
 					result-type: arm/2
@@ -4142,7 +4171,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local arms after arm-context branch-patch jump-patch drop-count
 			true-type true-flags false-type false-flags
-			result-type result-flags
+			result-type result-flags common-ref
 			true-value? false-value? true-stopped? false-stopped?
 	][
 		arms: stack-value next position scope uses instructions params locals
@@ -4179,6 +4208,9 @@ compiler-rsir-frontend: context [
 
 		result-type: 0
 		result-flags: 0
+		common-ref: either all [true-value? false-value?][
+			common-stack-ref true-type true-flags false-type false-flags
+		][0]
 		case [
 			all [true-value? false-stopped?][
 				result-type: true-type
@@ -4188,11 +4220,8 @@ compiler-rsir-frontend: context [
 				result-type: false-type
 				result-flags: false-flags
 			]
-			all [
-				true-value? false-value?
-				same-stack-type? true-type true-flags false-type false-flags
-			][
-				result-type: true-type
+			common-ref <> 0 [
+				result-type: common-ref
 				result-flags: true-flags
 			]
 			true [0]
@@ -5249,6 +5278,28 @@ compiler-rsir-frontend: context [
 		position-after
 	]
 
+	stack-log-b: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local position-after
+	][
+		position-after: stack-value next position scope uses instructions params locals
+			expression-value
+		unless all [
+			not last-stopped?
+			last-flags = 0
+			integer-kind? ref-kind last-type
+		][fail ERROR-REFERENCE "LOG-B expects an integer value"]
+		emit instructions reduce [native-op log-b-native 0 -5]
+		last-type: -5
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		position-after
+	]
+
 	stack-primary: func [
 		position [block!]
 		scope uses [block!]
@@ -5376,6 +5427,9 @@ compiler-rsir-frontend: context [
 				last-float-literal?: false
 				last-stopped?: false
 				next position
+			]
+			value = 'log-b [
+				stack-log-b position scope uses instructions params locals
 			]
 			value = 'declare [
 				fail ERROR-CONTEXT "DECLARE requires an assignment target"
@@ -5965,6 +6019,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local target id record target-ref target-flags next-position storage
 			source-ref source-flags source-float-literal? address-position owner
+			continues? infix-target
 	][
 		if (length? position) < 2 [fail ERROR-UNSUPPORTED "assignment value is missing"]
 		target: either set-word? position/1 [
@@ -6006,17 +6061,29 @@ compiler-rsir-frontend: context [
 				not integer? record/2
 				stack-static position scope uses false
 				static?
-				any [
-					tail? static-next
-					none? select binary-operations static-next/1
-				]
 			][
-				record/2: static-ref
-				record/3: static-flags
-				set-global-initializer record static-initializer
-				last-type: 0
-				last-flags: 0
-				return static-next
+				continues?: false
+				unless tail? static-next [
+					continues?: integer? select binary-operations static-next/1
+					if all [
+						not continues?
+						any [word? static-next/1 path? static-next/1]
+					][
+						infix-target: resolve-stack-call static-next/1 scope uses
+						continues?: to logic! all [
+							integer? infix-target
+							find infix-targets infix-target
+						]
+					]
+				]
+				unless continues? [
+					record/2: static-ref
+					record/3: static-flags
+					set-global-initializer record static-initializer
+					last-type: 0
+					last-flags: 0
+					return static-next
+				]
 			]
 		]
 		next-position: either any [block? position/2 binary? position/2][

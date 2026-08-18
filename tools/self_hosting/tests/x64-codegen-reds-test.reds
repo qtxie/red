@@ -102,6 +102,7 @@ selection-ir: allocate 256
 recursive-pointer-ir: allocate 160
 recursive-value-ir: allocate 144
 stack-ir: allocate 160
+log-b-ir: allocate 128
 system-ir: allocate 256
 atomic-ir: allocate 272
 overflow-ir: allocate 272
@@ -116,7 +117,8 @@ if any [
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
-	null? stack-ir null? system-ir null? atomic-ir null? overflow-ir null? exception-ir
+	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
+	null? exception-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -1214,11 +1216,50 @@ if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 put stack-ir 92 0
-put stack-ir 88 22
+put stack-ir 88 23
 if (x64-codegen/generate stack-ir 134 output 1024 0) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
 put stack-ir 88 2
+
+; LOG-B consumes one integer value and replaces it with an integer! result.
+put log-b-ir 0 1
+put log-b-ir 4 0
+put log-b-ir 8 0
+put log-b-ir 12 0
+put log-b-ir 16 1
+put log-b-ir 20 3
+put log-b-ir 24 0
+put log-b-ir 28 0
+
+put log-b-ir 32 0
+put log-b-ir 36 2
+put log-b-ir 40 -5
+put log-b-ir 44 0
+put log-b-ir 48 0
+put log-b-ir 52 0
+put log-b-ir 56 0
+put log-b-ir 60 0
+put log-b-ir 64 3
+
+put-instruction log-b-ir 68 1 -5 256 0
+put-instruction log-b-ir 84 10 22 0 -5
+put-instruction log-b-ir 100 11 -5 0 0
+log-b-ir/117: as byte! 6Ch
+log-b-ir/118: as byte! 62h
+
+size: x64-codegen/generate log-b-ir 118 output 1024 0
+if any [size <= 0 not execute-first? output 8][failures: failures + 1]
+put log-b-ir 72 -11
+if (x64-codegen/generate log-b-ir 118 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put log-b-ir 72 -5
+put log-b-ir 96 -11
+if (x64-codegen/generate log-b-ir 118 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put log-b-ir 96 -5
 
 ; PC, general registers, and overflow flags are typed native effects. Their
 ; machine state is consumed immediately, without a source-shaped adapter.
@@ -1506,6 +1547,7 @@ free selection-ir
 free recursive-pointer-ir
 free recursive-value-ir
 free stack-ir
+free log-b-ir
 free system-ir
 free atomic-ir
 free overflow-ir

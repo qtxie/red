@@ -305,6 +305,24 @@ assert all [
 	(word-at pointer-ir (pointer-layout/5 + 8)) = 2
 ]["pointer aliases lost their canonical pointee type"]
 
+generic-pointer-ir: compile-text {
+	Red/System []
+	store: func [slot [ptr-ptr!] value [int-ptr!]][slot/value: value]
+	load: func [slot [ptr-ptr!] return: [int-ptr!]][slot/value]
+} 'user
+assert binary? generic-pointer-ir [
+	"generic pointer slot rejected a typed pointer: " mold frontend/last-error
+]
+assert none? find (ops-of generic-pointer-ir layout-of generic-pointer-ir) 8
+	"generic pointer compatibility emitted a representation-preserving cast"
+
+assert none? compile-text {
+	Red/System []
+	bad: func [target [int-ptr!] source [byte-ptr!]][target: source]
+} 'user "distinct typed pointers became implicitly compatible"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"typed pointer mismatch reported the wrong error class"
+
 assert binary? compile-text {
 	Red/System []
 	int-ref!: alias pointer! [integer!]
@@ -339,13 +357,6 @@ bracketed-pointer-cast-layout: layout-of bracketed-pointer-cast-ir
 assert (ops-of bracketed-pointer-cast-ir bracketed-pointer-cast-layout) = [3 4 8 11]
 	"bracketed logical type did not use the shared cast path"
 
-assert none? compile-text {
-	Red/System []
-	fn: func [value [pointer!] return: [int-ptr!]][value]
-} 'user "an untyped pointer implicitly changed its pointee type"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"implicit pointer pointee change reported the wrong error class"
-
 pointer-compare-ir: compile-text {
 	Red/System []
 	same-address?: func [
@@ -362,6 +373,35 @@ assert binary? pointer-compare-ir [
 pointer-compare-layout: layout-of pointer-compare-ir
 assert (ops-of pointer-compare-ir pointer-compare-layout) = [3 4 3 4 15 11]
 	"pointer category comparison did not use the shared binary operation"
+
+mixed-address-ir: compile-text {
+	Red/System []
+	raw-add: func [value [integer!] address [int-ptr!] return: [integer!]][
+		value + address
+	]
+	raw-subtract: func [value [integer!] address [int-ptr!] return: [integer!]][
+		value - address
+	]
+	scaled-add: func [address [int-ptr!] offset [integer!] return: [int-ptr!]][
+		address + offset
+	]
+} 'user
+assert binary? mixed-address-ir [
+	"mixed address arithmetic failed: " mold frontend/last-error
+]
+mixed-address-layout: layout-of mixed-address-ir
+assert (ops-of mixed-address-ir mixed-address-layout) = [
+	3 4 3 4 15 11
+	3 4 3 4 15 11
+	3 4 3 4 15 11
+]["mixed address arithmetic did not use the ordinary typed binary operation"]
+
+assert none? compile-text {
+	Red/System []
+	bad: func [value [byte!] address [int-ptr!] return: [byte!]][value + address]
+} 'user "byte! unexpectedly accepted an address operand"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid byte/address arithmetic reported the wrong error class"
 
 c-string-ir: compile-text {
 	Red/System []
@@ -1495,6 +1535,19 @@ assert all [
 	(word-at infix-ir 0) = 1
 ]["infix syntax did not lower to an ordinary two-argument call"]
 
+global-infix-ir: compile-text {
+	Red/System []
+	add: func [[infix] left [integer!] right [integer!] return: [integer!]][
+		left + right
+	]
+	value: 2 add 3
+} 'glue
+assert binary? global-infix-ir [
+	"global infix initializer failed: " mold frontend/last-error
+]
+assert not none? find (ops-of global-infix-ir layout-of global-infix-ir) 7
+	"global literal folding consumed the left operand of an infix expression"
+
 infix-prefix-ir: compile-text {
 	Red/System []
 	avg: func [[infix] a [integer!] b [integer!] return: [integer!]][a + b]
@@ -1677,6 +1730,25 @@ assert all [
 	(ops-of either-statement-ir either-statement-layout) = [3 4 17 1 12 16 1 12 11]
 	(instruction-word either-statement-ir either-statement-layout 6 8) = 0
 ]["statement EITHER did not discard each unused arm value directly"]
+
+null-selection-ir: compile-text {
+	Red/System []
+	handle!: alias pointer! [integer!]
+	from-either: func [flag [logic!] value [handle!] return: [handle!]][
+		either flag [value][null]
+	]
+	from-case: func [flag [logic!] value [handle!] return: [handle!]][
+		case [flag [null] true [value]]
+	]
+	from-switch: func [key [integer!] value [handle!] return: [handle!]][
+		switch key [0 [null] default [value]]
+	]
+} 'user
+assert binary? null-selection-ir [
+	"reference/null selection failed: " mold frontend/last-error
+]
+assert none? find (ops-of null-selection-ir layout-of null-selection-ir) 8
+	"reference/null selection emitted a representation-preserving cast"
 
 nested-selection-statements-ir: compile-text {
 	Red/System []
@@ -2475,6 +2547,54 @@ assert all [
 	(instruction-word stack-ir stack-layout 5 8) = 0
 	(instruction-word stack-ir stack-layout 5 12) = 0
 ]["PUSH/POP did not use the ordinary typed postfix stream"]
+
+log-b-ir: compile-text {
+	Red/System []
+	bits: func [
+		a [byte!] b [int8!] c [uint8!] d [int16!] e [uint16!]
+		f [integer!] g [uint32!] h [int64!] i [uint64!]
+		return: [integer!]
+	][
+		log-b a
+		log-b b
+		log-b c
+		log-b d
+		log-b e
+		log-b f
+		log-b g
+		log-b h
+		log-b i
+	]
+	precedence: func [return: [integer!]][log-b 4 + 4]
+} 'user
+assert binary? log-b-ir ["LOG-B lowering failed: " mold frontend/last-error]
+log-b-layout: layout-of log-b-ir
+log-b-effects: make block! 27
+repeat id word-at log-b-ir 20 [
+	if (instruction-word log-b-ir log-b-layout id 0) = 10 [
+		repend log-b-effects [
+			instruction-word log-b-ir log-b-layout id 4
+			instruction-word log-b-ir log-b-layout id 8
+			instruction-word log-b-ir log-b-layout id 12
+		]
+	]
+]
+assert log-b-effects = [
+	22 0 -5 22 0 -5 22 0 -5 22 0 -5 22 0 -5
+	22 0 -5 22 0 -5 22 0 -5 22 0 -5 22 0 -5
+]["LOG-B did not retain one direct native operation for the integer family"]
+assert (ops-of log-b-ir log-b-layout) = [
+	3 4 10 12 3 4 10 12 3 4 10 12 3 4 10 12 3 4 10 12
+	3 4 10 12 3 4 10 12 3 4 10 12 3 4 10 11
+	1 1 15 10 11
+]["LOG-B did not consume one full prefix argument expression"]
+
+assert none? compile-text {
+	Red/System []
+	bad: func [return: [integer!]][log-b true]
+} 'user "LOG-B accepted a non-integer value"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid LOG-B operand reported the wrong error class"
 
 stack-top-ir: compile-text {
 	Red/System []

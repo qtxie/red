@@ -412,6 +412,11 @@ x64-codegen: context [
 		if any [left-kind = 14 right-kind = 14][
 			return all [reference-kind? left-kind reference-kind? right-kind]
 		]
+		if all [
+			any [left = -12 right = -12]
+			any [left-kind = 12 left-kind = -6]
+			any [right-kind = 12 right-kind = -6]
+		][return true]
 		if all [right-kind = -7 right > 0][
 			right-record: as rsir-type! (types + ((right - 1) * RSIR_TYPE_SIZE))
 			target: 0
@@ -1561,27 +1566,29 @@ x64-codegen: context [
 		return: [logic!]
 	][
 		if any [target <= 0 target > instruction-count][return false]
-		if all [
-			instruction-depths/target >= 0
-			instruction-depths/target <> depth
-		][return false]
-		if all [
-			instruction-depths/target >= 0
-			depth > 0
-			any [
-				not compatible-types? entry-types/target stack-types/depth
-					types type-count
-				entry-flags/target <> stack-flags/depth
-				entry-kinds/target <> stack-kinds/depth
-				entry-tags/target <> stack-tags/depth
+		either instruction-depths/target >= 0 [
+			if instruction-depths/target <> depth [return false]
+			if depth > 0 [
+				if any [
+					not compatible-types? entry-types/target stack-types/depth
+						types type-count
+					entry-flags/target <> stack-flags/depth
+					entry-kinds/target <> stack-kinds/depth
+					entry-tags/target <> stack-tags/depth
+				][return false]
+				if all [
+					(logical-kind entry-types/target types type-count) = 14
+					(logical-kind stack-types/depth types type-count) <> 14
+				][entry-types/target: stack-types/depth]
 			]
-		][return false]
-		instruction-depths/target: depth
-		if depth > 0 [
-			entry-types/target: stack-types/depth
-			entry-flags/target: stack-flags/depth
-			entry-kinds/target: stack-kinds/depth
-			entry-tags/target: stack-tags/depth
+		][
+			instruction-depths/target: depth
+			if depth > 0 [
+				entry-types/target: stack-types/depth
+				entry-flags/target: stack-flags/depth
+				entry-kinds/target: stack-kinds/depth
+				entry-tags/target: stack-tags/depth
+			]
 		]
 		true
 	]
@@ -2533,22 +2540,29 @@ x64-codegen: context [
 				fallthrough?: true
 			]
 			either fallthrough? [
-				if measure? [
-					if all [
-						instruction-depths/index >= 0
-						instruction-depths/index <> depth
-					][return INVALID_IR]
-					if all [
-						instruction-depths/index >= 0
-						depth > 0
-						any [
-							not compatible-types? entry-types/index stack-types/depth
-								types type-count
-							entry-flags/index <> stack-flags/depth
-							entry-kinds/index <> stack-kinds/depth
-							entry-tags/index <> stack-tags/depth
+				if instruction-depths/index >= 0 [
+					if measure? [
+						if instruction-depths/index <> depth [return INVALID_IR]
+						if depth > 0 [
+							if any [
+								not compatible-types? entry-types/index stack-types/depth
+									types type-count
+								entry-flags/index <> stack-flags/depth
+								entry-kinds/index <> stack-kinds/depth
+								entry-tags/index <> stack-tags/depth
+							][return INVALID_IR]
+							if all [
+								(logical-kind entry-types/index types type-count) = 14
+								(logical-kind stack-types/depth types type-count) <> 14
+							][entry-types/index: stack-types/depth]
 						]
-					][return INVALID_IR]
+					]
+					if depth > 0 [
+						stack-types/depth: entry-types/index
+						stack-flags/depth: entry-flags/index
+						stack-kinds/depth: entry-kinds/index
+						stack-tags/depth: entry-tags/index
+					]
 				]
 			][
 				depth: either instruction-depths/index >= 0 [
@@ -4752,6 +4766,43 @@ x64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
+						22 [					;-- LOG-B
+							unless all [
+								instruction/c = -5
+								depth > 0
+								stack-kinds/depth = VALUE
+								stack-flags/depth = 0
+								integer-type? stack-types/depth types type-count
+							][return INVALID_IR]
+							width: value-width stack-types/depth 0 types members
+								type-count layouts member-offsets
+							operation-width: either width = 8 [8][4]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: load-operation-value at (capacity - written)
+								x64-encoder/RAX slot-displacement (storage-slots + depth)
+								stack-types/depth 0 operation-width types members
+								type-count layouts member-offsets
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/bit-scan-reverse at (capacity - written)
+								x64-encoder/RAX x64-encoder/RAX operation-width
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							stack-types/depth: -5
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
 						default [return UNSUPPORTED]
 					]
 				]
@@ -4904,11 +4955,19 @@ x64-codegen: context [
 								]
 								all [
 									operation <= SUBTRACT_OPERATION
-									address-type? left-ref types type-count
 									left-flags = 0 right-flags = 0
 									any [
-										integer-type? right-ref types type-count
-										address-type? right-ref types type-count
+										all [
+											address-type? left-ref types type-count
+											any [
+												integer-type? right-ref types type-count
+												address-type? right-ref types type-count
+											]
+										]
+										all [
+											left-kind = 5
+											address-type? right-ref types type-count
+										]
 									]
 								]
 							]

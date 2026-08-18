@@ -49,6 +49,8 @@ address-score: func [
 	if pp/value = (as pointer! p) [score: score + 1]
 	copy: as int-ptr! pp/value
 	if copy/value = 43 [score: score + 1]
+	pp/value: :global-cell
+	if p/value = 17 [score: score + 1]
 
 	p: :global-cell
 	if p/value = 17 [score: score + 1]
@@ -65,6 +67,11 @@ address-score: func [
 	if p/index = 22 [score: score + 1]
 	q: p + 1
 	if q/0 = 11 [score: score + 1]
+	p: as int-ptr! 1000h
+	scalar: 3 + p
+	if scalar = 1003h [score: score + 1]
+	scalar: 2 - p
+	if scalar = FFFFF002h [score: score + 1]
 
 	bytes: as byte-ptr! :wide
 	bytes/1: #"A"
@@ -107,7 +114,7 @@ address-score: func [
 	holder/slot/value: 82
 	if scalar = 82 [score: score + 1]
 
-	either score = 26 [73][score]
+	either score = 29 [73][score]
 ]
 
 process-exit address-score

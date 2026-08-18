@@ -134,6 +134,23 @@ conversion-score: func [
 	score
 ]
 
+log-score: func [
+	return: [integer!]
+	/local score [integer!]
+][
+	score: 0
+	if (log-b as byte! 128) = 7 [score: score + 1]
+	if (log-b as int8! 64) = 6 [score: score + 1]
+	if (log-b as uint8! 128) = 7 [score: score + 1]
+	if (log-b as int16! 16384) = 14 [score: score + 1]
+	if (log-b as uint16! 32768) = 15 [score: score + 1]
+	if (log-b 40000000h) = 30 [score: score + 1]
+	if (log-b as uint32! 80000000h) = 31 [score: score + 1]
+	if (log-b as int64! 0000010000000000h) = 40 [score: score + 1]
+	if (log-b as uint64! 8000000000000000h) = 63 [score: score + 1]
+	score
+]
+
 abi-score: func [
 	[cdecl]
 	a [int8!] b [uint8!] c [int16!] d [uint16!]
@@ -161,6 +178,7 @@ main: func [
 	score: score + small-score
 	score: score + wide-score
 	score: score + conversion-score
+	score: score + log-score
 	score: score + abi-score
 		as int8! -2
 		as uint8! 250
@@ -170,7 +188,7 @@ main: func [
 		as uint32! FFFFFFFFh
 		as int64! -3
 		as uint64! FFFFFFFFFFFFFFFFh
-	either score = 40 [73][score]
+	either score = 49 [73][score]
 ]
 
 quit main

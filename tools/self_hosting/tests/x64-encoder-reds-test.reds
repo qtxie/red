@@ -8,7 +8,7 @@ failures: 0
 code: allocate 128
 if null? code [quit 1]
 
-size: x64-encoder/prolog code 128 0
+size: x64-encoder/prolog code 128 0 0
 if size <> 15 [failures: failures + 1]
 size: x64-encoder/allocate-frame (code + 15) 113 48
 if size <> 4 [failures: failures + 1]
@@ -36,7 +36,7 @@ if (compare-memory code (as byte-ptr! expected) 37) <> 0 [
 	failures: failures + 1
 ]
 
-if (x64-encoder/prolog null 0 0) <> 15 [failures: failures + 1]
+if (x64-encoder/prolog null 0 0 0) <> 15 [failures: failures + 1]
 if (x64-encoder/allocate-frame null 0 128) <> 7 [failures: failures + 1]
 if (x64-encoder/move-immediate null 0 x64-encoder/R9 8 1 0) <> 11 [
 	failures: failures + 1
@@ -300,11 +300,27 @@ expected: #{F348AB}
 if any [size <> 3 (compare-memory code (as byte-ptr! expected) size) <> 0][
 	failures: failures + 1
 ]
+size: x64-encoder/prolog code 128 0 -2
+if any [size <> 15 code/6 <> as byte! FEh][failures: failures + 1]
+if (x64-encoder/prolog code 128 0 -3) <> -1 [failures: failures + 1]
+size: x64-encoder/throw-unwind code 128 false
+expected: #{8B55F839C27303C9EBF64C8B5DF04D85DB7502415B41FFE3}
+if any [size <> 24 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/throw-unwind code 128 true
+expected: #{C98B55F839C27303C9EBF64C8B5DF04D85DB7502415B41FFE3}
+if any [size <> 25 (compare-memory code (as byte-ptr! expected) size) <> 0][
+	failures: failures + 1
+]
+if (x64-encoder/throw-unwind null 0 false) <> 24 [failures: failures + 1]
+if (x64-encoder/throw-unwind code 23 false) <> -1 [failures: failures + 1]
+if (x64-encoder/throw-unwind code 24 true) <> -1 [failures: failures + 1]
 if (x64-encoder/stack-top code 128) <> 3 [failures: failures + 1]
 if (x64-encoder/sign-extend-eax code 128) <> 3 [failures: failures + 1]
 if (x64-encoder/clear-register code 128 x64-encoder/R9) <> 3 [failures: failures + 1]
 
-if (x64-encoder/prolog code 14 0) <> -1 [failures: failures + 1]
+if (x64-encoder/prolog code 14 0 0) <> -1 [failures: failures + 1]
 if (x64-encoder/frame-load code 128 x64-encoder/RAX 0 3 0) <> -1 [
 	failures: failures + 1
 ]

@@ -2249,6 +2249,153 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"missing overflow? body reported the wrong error class"
 
+exception-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!]][
+		system/thrown: 0
+		catch 5 [throw 1]
+		system/thrown
+	]
+} 'user
+assert binary? exception-ir ["exception lowering failed: " mold frontend/last-error]
+exception-layout: layout-of exception-ir
+catch-index: 0
+end-catch-index: 0
+throw-index: 0
+repeat id function-word exception-ir exception-layout 1 32 [
+	operation: function-instruction-word exception-ir exception-layout 1 id 0
+	case [
+		operation = 24 [catch-index: id]
+		operation = 25 [end-catch-index: id]
+		operation = 26 [throw-index: id]
+		true [0]
+	]
+]
+assert all [
+	(word-at exception-ir 24) = 1
+	(global-word exception-ir exception-layout 1 8) = -5
+	catch-index > 0
+	end-catch-index > catch-index
+	throw-index > catch-index
+	throw-index < end-catch-index
+	(function-instruction-word exception-ir exception-layout
+		1 catch-index 4) = end-catch-index
+	(function-instruction-word exception-ir exception-layout 1 catch-index 8) = 1
+	(function-instruction-word exception-ir exception-layout
+		1 end-catch-index 4) = catch-index
+	(function-instruction-word exception-ir exception-layout 1 end-catch-index 8) = 1
+	(function-instruction-word exception-ir exception-layout 1 throw-index 4) = 0
+	(function-instruction-word exception-ir exception-layout
+		1 (throw-index - 1) 0) = 5
+]["catch/throw did not lower to one paired lexical region"]
+
+catch-function-ir: compile-text {
+	Red/System []
+	raiser: func [][throw 7]
+	guard: func [[catch]][raiser]
+} 'user
+assert binary? catch-function-ir [
+	"catch function lowering failed: " mold frontend/last-error
+]
+catch-function-layout: layout-of catch-function-ir
+assert all [
+	(function-word catch-function-ir catch-function-layout 2 12) = 256
+	(word-at catch-function-ir 24) = 1
+	not none? find ops-of catch-function-ir catch-function-layout 26
+]["the catch function attribute did not remain a direct function flag"]
+
+nested-catch-ir: compile-text {
+	Red/System []
+	fn: func [][catch 5 [catch 2 [throw 1]]]
+} 'user
+assert binary? nested-catch-ir [
+	"nested catch lowering failed: " mold frontend/last-error
+]
+nested-catch-layout: layout-of nested-catch-ir
+open-levels: make block! 4
+close-levels: make block! 4
+repeat id function-word nested-catch-ir nested-catch-layout 1 32 [
+	operation: function-instruction-word nested-catch-ir nested-catch-layout 1 id 0
+	case [
+		operation = 24 [
+			append open-levels function-instruction-word nested-catch-ir
+				nested-catch-layout 1 id 8
+		]
+		operation = 25 [
+			append close-levels function-instruction-word nested-catch-ir
+				nested-catch-layout 1 id 8
+		]
+		true [0]
+	]
+]
+assert all [open-levels = [1 2] close-levels = [2 1]][
+	"nested catch levels did not follow lexical nesting"
+]
+
+catch-jump-ir: compile-text {
+	Red/System []
+	fn: func [][loop 1 [catch 5 [catch 2 [break]]]]
+} 'user
+assert binary? catch-jump-ir [
+	"catch control exit lowering failed: " mold frontend/last-error
+]
+catch-jump-layout: layout-of catch-jump-ir
+catch-unwind: 0
+repeat id word-at catch-jump-ir 20 [
+	if all [
+		(instruction-word catch-jump-ir catch-jump-layout id 0) = 16
+		(instruction-word catch-jump-ir catch-jump-layout id 12) = 2
+	][catch-unwind: catch-unwind + 1]
+]
+assert catch-unwind = 1 "BREAK did not carry its two exited catch records"
+
+global-catch-ir: compile-text {
+	Red/System []
+	catch 3 [throw 1]
+} 'glue
+assert all [
+	binary? global-catch-ir
+	not none? find ops-of global-catch-ir layout-of global-catch-ir 24
+	not none? find ops-of global-catch-ir layout-of global-catch-ir 26
+]["global catch/throw did not lower inside the executable module function"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][catch true []]
+} 'user "catch accepted a non-integer filter"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid catch filter reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][throw true]
+} 'user "throw accepted a non-integer ID"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid throw ID reported the wrong error class"
+
+global-throw-ir: compile-text {
+	Red/System []
+	throw 1
+} 'glue
+assert all [
+	binary? global-throw-ir
+	not none? find ops-of global-throw-ir layout-of global-throw-ir 26
+]["uncaught global THROW did not lower for the root exception barrier"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [[catch cdecl]][]
+} 'user "catch was combined with a calling convention"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"catch attribute conflict reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][system/thrown: true]
+} 'user "system/thrown accepted a non-integer assignment"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid system/thrown assignment reported the wrong error class"
+
 atomic-ir: compile-text {
 	Red/System []
 	atomic-ptr!: alias pointer! [integer!]

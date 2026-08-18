@@ -150,14 +150,18 @@ x64-codegen: context [
 	IMAGE_IMPORT_SIZE:   24
 	BITMAP_SIZE:         16
 
+	CDECL:          1
+	STDCALL:        2
 	RETURN_VALUE:  4
 	VARIADIC:      8
 	TYPED:        16
 	CUSTOM:       32
+	CALLBACK:      64
 	OBJC:        128
+	CATCH_FLAG:  256
 	CALL_SHAPE_FLAGS: RETURN_VALUE + VARIADIC + TYPED + CUSTOM + OBJC
+	CATCH_CONFLICT_FLAGS: CDECL + STDCALL + VARIADIC + TYPED + CUSTOM + CALLBACK + OBJC
 	VARIABLE_FLAGS: 56
-	CDECL:          1
 	FUNCTION_FLAGS: 511
 	INLINE:          1
 	PROTECTED:       2
@@ -192,6 +196,9 @@ x64-codegen: context [
 	OP_INDEX:     21
 	OP_TAG:       22
 	OP_OVERFLOW:  23
+	OP_CATCH:     24
+	OP_END_CATCH: 25
+	OP_THROW:     26
 
 	NOT_OPERATION:       1
 	ADD_OPERATION:       1
@@ -1395,6 +1402,115 @@ x64-codegen: context [
 		written + encoded
 	]
 
+	emit-catch-open: func [
+		code [byte-ptr!]
+		capacity record-slot filter-slot target current [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written displacement [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RAX -8 8 0
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX slot-displacement record-slot 8
+		if encoded < 0 [return encoded]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RAX -16 8 0
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX slot-displacement (record-slot + 1) 8
+		if encoded < 0 [return encoded]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RSP slot-displacement (record-slot + 2) 8
+		if encoded < 0 [return encoded]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RAX slot-displacement filter-slot 4 0
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX -8 4
+		if encoded < 0 [return encoded]
+		written: written + encoded
+
+		displacement: either null? code [0][target - (current + written + 7)]
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/rip-address at (capacity - written)
+			x64-encoder/RAX displacement
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX -16 8
+		if encoded < 0 [return encoded]
+		written + encoded
+	]
+
+	emit-catch-restore: func [
+		code [byte-ptr!]
+		capacity record-slot [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written [integer!]
+	][
+		written: 0
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RAX slot-displacement record-slot 8 0
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX -8 8
+		if encoded < 0 [return encoded]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RAX slot-displacement (record-slot + 1) 8 0
+		if encoded < 0 [return encoded]
+		written: written + encoded
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-store at (capacity - written)
+			x64-encoder/RAX -16 8
+		if encoded < 0 [return encoded]
+		written: written + encoded
+
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: x64-encoder/frame-load at (capacity - written)
+			x64-encoder/RSP slot-displacement (record-slot + 2) 8 0
+		if encoded < 0 [return encoded]
+		written + encoded
+	]
+
 	release: func [scratch [byte-ptr!] result [integer!] return: [integer!]][
 		unless null? scratch [free scratch]
 		result
@@ -1981,7 +2097,7 @@ x64-codegen: context [
 		instructions [byte-ptr!]
 		stack-types stack-flags stack-kinds stack-tags storage-offsets result-offsets
 			layouts member-offsets
-			instruction-offsets instruction-depths entry-types entry-flags entry-kinds
+			instruction-offsets instruction-depths catch-depths entry-types entry-flags entry-kinds
 			entry-tags tag-next tag-slots tag-widths import-refs references [int-ptr!]
 		parameters functions imports globals types members switches image-data strings code
 			[byte-ptr!]
@@ -1992,6 +2108,7 @@ x64-codegen: context [
 		return: [integer!]
 		/local instruction [rsir-instruction!]
 			overflow-scope [rsir-instruction!]
+			catch-scope [rsir-instruction!]
 			switch-case [rsir-switch!]
 			parameter [rsir-parameter!]
 			callee [rsir-function!]
@@ -2019,7 +2136,9 @@ x64-codegen: context [
 			operation-ref source-kind target-kind opcode parity keep-cast
 			aggregate-width value-size result-offset temp-offset hidden-shift
 			physical-count call-mode list-size list-capacity signature-ref
-			record-offset overflow-anchor base-depth overflow-limit [integer!]
+			record-offset overflow-anchor base-depth overflow-limit
+			catch-level catch-capacity catch-base catch-record catch-unwind
+			catch-threshold allocation-size [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
@@ -2027,12 +2146,49 @@ x64-codegen: context [
 	][
 		measure?: null? code
 		tag-capacity: 0
+		catch-level: 0
+		catch-capacity: 0
 		unstable-stack?: false
 		last-math-operation: 0
 		index: 1
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			catch-depths/index: catch-level
+			if instruction/op = OP_CATCH [
+				catch-unwind: catch-level + 1
+				unless all [
+					instruction/a > index instruction/a <= fn/instruction-count
+					instruction/b = catch-unwind
+					instruction/c = 0
+				][return INVALID_IR]
+				catch-scope: as rsir-instruction! (instructions
+					+ ((instruction/a - 1) * RSIR_INSTRUCTION_SIZE))
+				unless all [
+					catch-scope/op = OP_END_CATCH
+					catch-scope/a = index
+					catch-scope/b = instruction/b
+					catch-scope/c = 0
+				][return INVALID_IR]
+				catch-level: catch-level + 1
+				if catch-level > catch-capacity [catch-capacity: catch-level]
+			]
+			if instruction/op = OP_END_CATCH [
+				unless all [
+					catch-level > 0 instruction/b = catch-level instruction/c = 0
+					instruction/a > 0 instruction/a < index
+				][return INVALID_IR]
+				catch-scope: as rsir-instruction! (instructions
+					+ ((instruction/a - 1) * RSIR_INSTRUCTION_SIZE))
+				unless all [
+					catch-scope/op = OP_CATCH catch-scope/a = index
+					catch-scope/b = instruction/b
+				][return INVALID_IR]
+				catch-level: catch-level - 1
+			]
+			if all [instruction/op = OP_JUMP any [
+				instruction/c < 0 instruction/c > catch-level
+			]][return INVALID_IR]
 			if all [instruction/op = OP_MEMBER instruction/b > 0][
 				tag-capacity: tag-capacity + 1
 			]
@@ -2050,6 +2206,7 @@ x64-codegen: context [
 			][unstable-stack?: true]
 			index: index + 1
 		]
+		if catch-level <> 0 [return INVALID_IR]
 		storage-count: fn/parameter-count + fn/local-count
 		storage-bytes: plan-storage fn parameters types members type-count
 			layouts member-offsets storage-offsets
@@ -2068,6 +2225,9 @@ x64-codegen: context [
 		tag-base: storage-slots
 		if storage-slots > (2147483647 - tag-capacity)[return OUTPUT_FULL]
 		storage-slots: storage-slots + tag-capacity
+		catch-base: storage-slots
+		if catch-capacity > ((2147483647 - storage-slots) / 3)[return OUTPUT_FULL]
+		storage-slots: storage-slots + (catch-capacity * 3)
 		tag-count: 0
 		return-value?: (fn/flags and RETURN_VALUE) <> 0
 		either return-value? [
@@ -2099,12 +2259,56 @@ x64-codegen: context [
 				index: index + 1
 			]
 		]
+		if entry? [
+			at: as byte-ptr! 0
+			if not measure? [at: code + written]
+			encoded: x64-encoder/prolog at (capacity - written) 0 -1
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+
+			at: as byte-ptr! 0
+			if not measure? [at: code + written]
+			encoded: x64-encoder/allocate-frame at (capacity - written) 32
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+
+			target-offset: x64-encoder/frame-store null 0
+				x64-encoder/RAX -16 8
+			if target-offset < 0 [return OUTPUT_FULL]
+			displacement: target-offset + 5
+			at: as byte-ptr! 0
+			if not measure? [at: code + written]
+			encoded: x64-encoder/rip-address at (capacity - written)
+				x64-encoder/RAX displacement
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not measure? [at: code + written]
+			encoded: x64-encoder/frame-store at (capacity - written)
+				x64-encoder/RAX -16 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+
+			at: as byte-ptr! 0
+			if not measure? [at: code + written]
+			encoded: x64-encoder/call-relative at (capacity - written) 2
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: as byte-ptr! 0
+			if not measure? [at: code + written]
+			encoded: x64-encoder/trap at (capacity - written)
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+
+		catch-threshold: either (fn/flags and CATCH_FLAG) <> 0 [-2][0]
 		at: as byte-ptr! 0
 		if not measure? [at: code + written]
-		encoded: x64-encoder/prolog at (capacity - written) 0
+		encoded: x64-encoder/prolog at (capacity - written) 0 catch-threshold
 		if encoded < 0 [return OUTPUT_FULL]
 		written: written + encoded
 
+		allocation-size: 0
 		if not measure? [
 			frame-extra: frame-size/1 - x64-encoder/BASE_FRAME_SIZE
 			if frame-extra < 0 [return INVALID_IR]
@@ -2112,6 +2316,7 @@ x64-codegen: context [
 			encoded: x64-encoder/allocate-frame at (capacity - written) frame-extra
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
+			allocation-size: encoded
 		]
 		if hidden-return? [
 			at: as byte-ptr! 0
@@ -4506,13 +4711,15 @@ x64-codegen: context [
 					stack-tags/depth: 0
 				]
 				instruction/op = OP_OVERFLOW [
+					target: instruction/a
 					unless all [
 						instruction/b = 0 instruction/c = 0
 						any [
-							instruction/a = 0
+							target = 0
 							all [
-								instruction/a > index
-								instruction/a <= fn/instruction-count
+								target > index
+								target <= fn/instruction-count
+								catch-depths/target = catch-depths/index
 							]
 						]
 					][return INVALID_IR]
@@ -4933,13 +5140,98 @@ x64-codegen: context [
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 				]
+				instruction/op = OP_CATCH [
+					target: instruction/a
+					catch-level: instruction/b
+					catch-unwind: catch-level - 1
+					unless all [
+						target > index target <= fn/instruction-count
+						catch-level > 0 catch-level <= catch-capacity
+						instruction/c = 0
+						catch-depths/index = catch-unwind
+						catch-depths/target = catch-level
+						depth > 0 stack-kinds/depth = VALUE
+						stack-flags/depth = 0
+						compatible-types? -5 stack-types/depth types type-count
+					][return INVALID_IR]
+					catch-record: catch-base + ((catch-level - 1) * 3) + 1
+					target-offset: 0
+					if not measure? [
+						target-offset: instruction-offsets/target + allocation-size
+					]
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: emit-catch-open at (capacity - written)
+						catch-record (storage-slots + depth) target-offset written
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					depth: depth - 1
+					if measure? [
+						unless merge-target target depth fn/instruction-count
+							instruction-depths entry-types entry-flags entry-kinds entry-tags
+							stack-types stack-flags stack-kinds stack-tags types type-count [
+							return INVALID_IR
+						]
+					]
+				]
+				instruction/op = OP_END_CATCH [
+					catch-level: instruction/b
+					unless all [
+						instruction/a > 0 instruction/a < index
+						catch-level > 0 catch-level <= catch-capacity
+						instruction/c = 0
+						catch-depths/index = catch-level
+					][return INVALID_IR]
+					catch-record: catch-base + ((catch-level - 1) * 3) + 1
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: emit-catch-restore at (capacity - written) catch-record
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+				]
+				instruction/op = OP_THROW [
+					unless all [
+						instruction/a = 0 instruction/b = 0 instruction/c = 0
+						depth > 0 stack-kinds/depth = VALUE
+						stack-flags/depth = 0
+						compatible-types? -5 stack-types/depth types type-count
+					][return INVALID_IR]
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/frame-load at (capacity - written)
+						x64-encoder/RAX slot-displacement (storage-slots + depth) 4 0
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					depth: depth - 1
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/throw-unwind at (capacity - written)
+						((fn/flags and CATCH_FLAG) <> 0)
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					fallthrough?: false
+				]
 				instruction/op = OP_JUMP [
 					target: instruction/a
+					catch-level: catch-depths/index
+					catch-unwind: catch-level - instruction/c
 					unless all [
 						target > 0 target <= fn/instruction-count
 						instruction/b >= 0 instruction/b <= depth
-						instruction/c = 0
+						instruction/c >= 0 instruction/c <= catch-level
+						catch-depths/target = catch-unwind
 					][return INVALID_IR]
+					catch-unwind: instruction/c
+					while [catch-unwind > 0][
+						catch-record: catch-base + ((catch-level - 1) * 3) + 1
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: emit-catch-restore at (capacity - written) catch-record
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						catch-level: catch-level - 1
+						catch-unwind: catch-unwind - 1
+					]
 					depth: depth - instruction/b
 					if measure? [
 						unless merge-target target depth fn/instruction-count
@@ -4966,6 +5258,7 @@ x64-codegen: context [
 					target: instruction/a
 					unless all [
 						target > 0 target <= fn/instruction-count
+						catch-depths/target = catch-depths/index
 						any [instruction/b = 0 instruction/b = 1]
 						instruction/c = 0 depth > 0
 						stack-kinds/depth = VALUE
@@ -5037,7 +5330,10 @@ x64-codegen: context [
 						switch-case: as rsir-switch! (switches
 							+ ((instruction/a + case-index) * RSIR_SWITCH_SIZE))
 						target: switch-case/target
-						if any [target <= 0 target > fn/instruction-count][
+						if any [
+							target <= 0 target > fn/instruction-count
+							catch-depths/target <> catch-depths/index
+						][
 							return INVALID_IR
 						]
 						if measure? [
@@ -5077,6 +5373,7 @@ x64-codegen: context [
 					]
 
 					target: instruction/c
+					if catch-depths/target <> catch-depths/index [return INVALID_IR]
 					if measure? [
 						unless merge-target target depth fn/instruction-count
 							instruction-depths entry-types entry-flags entry-kinds entry-tags
@@ -5303,7 +5600,7 @@ x64-codegen: context [
 			image-global target-image-global [codegen-global!]
 			image-import [codegen-import!]
 			import-refs function-sizes function-frames instruction-offsets
-				instruction-depths entry-types entry-flags entry-kinds entry-tags
+				instruction-depths catch-depths entry-types entry-flags entry-kinds entry-tags
 				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
 				tag-widths result-offsets storage-offsets layouts member-offsets
 				references [int-ptr!]
@@ -5529,6 +5826,10 @@ x64-codegen: context [
 					not valid-type-ref? ir-function/return-type header/type-count]
 				ir-function/flags < 0 ir-function/flags > FUNCTION_FLAGS
 				(ir-function/flags and 3) = 3
+				all [
+					(ir-function/flags and CATCH_FLAG) <> 0
+					(ir-function/flags and CATCH_CONFLICT_FLAGS) <> 0
+				]
 				ir-function/first-parameter <> parameter-count
 				ir-function/parameter-count < 0
 				ir-function/local-count < 0
@@ -5806,10 +6107,10 @@ x64-codegen: context [
 			return OUTPUT_FULL
 		]
 		scratch-count: header/import-count + (header/function-count * 3)
-		if header/instruction-count > ((2147483647 - scratch-count) / 14)[
+		if header/instruction-count > ((2147483647 - scratch-count) / 15)[
 			return OUTPUT_FULL
 		]
-		scratch-count: scratch-count + (header/instruction-count * 14)
+		scratch-count: scratch-count + (header/instruction-count * 15)
 		if parameter-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
 		scratch-count: scratch-count + parameter-count
 		if header/type-count > ((2147483647 - scratch-count) / 4)[
@@ -5827,7 +6128,8 @@ x64-codegen: context [
 		instruction-offsets: function-frames + header/function-count
 		instruction-depths: instruction-offsets + header/instruction-count
 			+ header/function-count
-		entry-types: instruction-depths + header/instruction-count
+		catch-depths: instruction-depths + header/instruction-count
+		entry-types: catch-depths + header/instruction-count
 		entry-flags: entry-types + header/instruction-count
 		entry-kinds: entry-flags + header/instruction-count
 		entry-tags: entry-kinds + header/instruction-count
@@ -5884,6 +6186,7 @@ x64-codegen: context [
 				layouts member-offsets
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
+				(catch-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
 				(entry-flags + (next-instruction - 1))
 				(entry-kinds + (next-instruction - 1))
@@ -6143,6 +6446,7 @@ x64-codegen: context [
 				layouts member-offsets
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
+				(catch-depths + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
 				(entry-flags + (next-instruction - 1))
 				(entry-kinds + (next-instruction - 1))

@@ -170,6 +170,8 @@ run-linked-fixture
 run-linked-fixture
 	%rsir-overflow-exit.reds %rsir-overflow-linked.exe "overflow?"
 run-linked-fixture
+	%rsir-exceptions-exit.reds %rsir-exceptions-linked.exe "exceptions"
+run-linked-fixture
 	%rsir-atomic-exit.reds %rsir-atomic-linked.exe "system/atomic"
 run-linked-fixture
 	%rsir-custom-call-exit.reds %rsir-custom-call-linked.exe "custom call"

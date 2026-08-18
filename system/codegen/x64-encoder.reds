@@ -62,10 +62,11 @@ x64-encoder: context [
 
 	prolog: func [
 		code [byte-ptr!]
-		capacity bitmap [integer!]
+		capacity bitmap catch-id [integer!]
 		return: [integer!]
 		/local at [byte-ptr!]
 	][
+		unless any [catch-id = 0 catch-id = -1 catch-id = -2][return -1]
 		unless room? code capacity 15 [return -1]
 		if null? code [return 15]
 		at: code
@@ -74,7 +75,7 @@ x64-encoder: context [
 		at/3: as byte! 89h
 		at/4: as byte! E5h                         ; mov rbp, rsp
 		at/5: as byte! 6Ah
-		at/6: as byte! 00h                         ; catch ID
+		at/6: as byte! catch-id                    ; catch ID
 		at/7: as byte! 6Ah
 		at/8: as byte! 00h                         ; catch resume
 		at/9: as byte! 68h                         ; pointer bitmap word
@@ -398,6 +399,45 @@ x64-encoder: context [
 			write-i32 (code + 2) displacement
 		]
 		6
+	]
+
+	throw-unwind: func [
+		code [byte-ptr!]
+		capacity [integer!]
+		skip-current? [logic!]
+		return: [integer!]
+		/local size [integer!] at [byte-ptr!]
+	][
+		size: either skip-current? [25][24]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if skip-current? [at/1: as byte! C9h at: at + 1]
+		at/1:  as byte! 8Bh                       ; mov edx, [rbp-8]
+		at/2:  as byte! 55h
+		at/3:  as byte! F8h
+		at/4:  as byte! 39h                       ; cmp edx, eax
+		at/5:  as byte! C2h
+		at/6:  as byte! 73h                       ; jae found
+		at/7:  as byte! 03h
+		at/8:  as byte! C9h                       ; leave
+		at/9:  as byte! EBh                       ; retry in parent frame
+		at/10: as byte! F6h
+		at/11: as byte! 4Ch                       ; found: mov r11, [rbp-16]
+		at/12: as byte! 8Bh
+		at/13: as byte! 5Dh
+		at/14: as byte! F0h
+		at/15: as byte! 4Dh                       ; test r11, r11
+		at/16: as byte! 85h
+		at/17: as byte! DBh
+		at/18: as byte! 75h                       ; resume address is installed
+		at/19: as byte! 02h
+		at/20: as byte! 41h                       ; [catch] resumes after the call
+		at/21: as byte! 5Bh
+		at/22: as byte! 41h                       ; jmp r11
+		at/23: as byte! FFh
+		at/24: as byte! E3h
+		size
 	]
 
 	trap: func [

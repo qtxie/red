@@ -119,6 +119,9 @@ compiler-rsir-frontend: context [
 	index-op: 21
 	tag-op: 22
 	overflow-op: 23
+	catch-op: 24
+	end-catch-op: 25
+	throw-op: 26
 
 	; Operation IDs follow the language families, not source spellings or x64
 	; encodings. The postfix stream preserves the specified left-to-right order.
@@ -177,6 +180,8 @@ compiler-rsir-frontend: context [
 	function-active?: false
 	loops: make block! 8
 	overflows: make block! 8
+	catches: make block! 8
+	thrown-global: 0
 	; Function-local lexical constructs are lowered while the postfix stream is
 	; built. USE slots stay in the frame table, while their names are tombstoned
 	; when the lexical body ends; subroutine bodies are expanded at call sites.
@@ -226,6 +231,10 @@ compiler-rsir-frontend: context [
 		change/part at output (patch + 4) int-to-bin/to-bin32 count 4
 	]
 
+	patch-control-catches: func [output [binary!] patch count [integer!]][
+		change/part at output (patch + 8) int-to-bin/to-bin32 count 4
+	]
+
 	emit-switch-case: func [low high [integer!] return: [integer!] /local patch][
 		patch: (length? switches) + 9
 		emit switches reduce [low high 0]
@@ -261,6 +270,11 @@ compiler-rsir-frontend: context [
 		append global-data 0
 		global-count: id
 		id
+	]
+
+	ensure-thrown-global: func [return: [integer!]][
+		if thrown-global = 0 [thrown-global: add-hidden-global -5 0]
+		thrown-global
 	]
 
 	set-global-initializer: func [
@@ -956,6 +970,9 @@ compiler-rsir-frontend: context [
 	signature-flags: func [attributes [block!] /local flags convention item bit][
 		if (length? attributes) > 2 [
 			fail ERROR-UNSUPPORTED "too many function attributes"
+		]
+		if all [find attributes 'catch (length? attributes) <> 1][
+			fail ERROR-UNSUPPORTED "catch cannot be combined with another function attribute"
 		]
 		if all [
 			(length? attributes) = 2
@@ -3628,6 +3645,66 @@ compiler-rsir-frontend: context [
 		skip position 2
 	]
 
+	stack-catch: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local body anchor patch level target
+	][
+		body: stack-value next position scope uses instructions params locals
+			expression-value
+		unless all [
+			not last-stopped?
+			last-flags = 0
+			(ref-kind last-type) = 'i32
+		][fail ERROR-REFERENCE "CATCH expects an integer! filter"]
+		unless all [not tail? body block? body/1][
+			fail ERROR-UNSUPPORTED "CATCH requires a body block"
+		]
+
+		anchor: instruction-here instructions
+		level: 1 + length? catches
+		patch: (length? instructions) + 5
+		emit instructions reduce [catch-op 0 level 0]
+		append/only catches reduce [anchor level]
+		stack-block body/1 scope uses instructions params locals statement-value
+		remove back tail catches
+
+		target: instruction-here instructions
+		patch-control instructions patch target
+		emit instructions reduce [end-catch-op anchor level 0]
+		last-type: 0
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		next body
+	]
+
+	stack-throw: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local after id
+	][
+		after: stack-value next position scope uses instructions params locals
+			expression-value
+		if last-stopped? [return after]
+		unless all [last-flags = 0 (ref-kind last-type) = 'i32][
+			fail ERROR-REFERENCE "THROW expects an integer! ID"
+		]
+		id: ensure-thrown-global
+		emit instructions reduce [address-op global-address id 0]
+		emit instructions reduce [set-op 0 0 0]
+		emit instructions reduce [throw-op 0 0 0]
+		last-type: 0
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: true
+		after
+	]
+
 	stack-if: func [
 		position scope uses [block!]
 		instructions [binary!]
@@ -4113,7 +4190,9 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local record
 	][
-		record: reduce [continue-target make block! 2 make block! 2 condition?]
+		record: reduce [
+			continue-target make block! 2 make block! 2 condition? length? catches
+		]
 		append/only loops record
 		record
 	]
@@ -4141,6 +4220,7 @@ compiler-rsir-frontend: context [
 		loop-state: last loops
 		if loop-state/4 [fail ERROR-CONTEXT "BREAK used in a WHILE condition block"]
 		patch: emit-control instructions jump-op 0
+		patch-control-catches instructions patch ((length? catches) - loop-state/5)
 		append loop-state/3 patch
 		last-type: 0
 		last-flags: 0
@@ -4158,6 +4238,7 @@ compiler-rsir-frontend: context [
 		loop-state: last loops
 		if loop-state/4 [fail ERROR-CONTEXT "CONTINUE used in a WHILE condition block"]
 		patch: emit-control instructions jump-op 0
+		patch-control-catches instructions patch ((length? catches) - loop-state/5)
 		either loop-state/1 > 0 [
 			patch-control instructions patch loop-state/1
 		][append loop-state/2 patch]
@@ -4481,7 +4562,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block! none!]
-		/local path count next-position pointer-ref register
+		/local path count next-position pointer-ref register id
 	][
 		unless path? position/1 [return none]
 		path: position/1
@@ -4490,6 +4571,17 @@ compiler-rsir-frontend: context [
 			path/1 = 'system
 		][return none]
 		count: length? path
+		if path/2 = 'thrown [
+			unless count = 2 [fail ERROR-REFERENCE "invalid system/thrown access"]
+			id: ensure-thrown-global
+			emit instructions reduce [address-op global-address id 0]
+			emit instructions reduce [load-op 0 0 0]
+			last-type: -5
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next position
+		]
 		if path/2 = 'pc [
 			unless count = 2 [fail ERROR-REFERENCE "invalid system/pc access"]
 			pointer-ref: intern-pointer -15
@@ -4633,13 +4725,32 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block! none!]
-		/local pointer-ref next-position register
+		/local pointer-ref next-position register id
 	][
 		unless all [
 			path? target
 			(length? target) >= 2
 			target/1 = 'system
 		][return none]
+		if target/2 = 'thrown [
+			unless (length? target) = 2 [
+				fail ERROR-REFERENCE "invalid system/thrown assignment"
+			]
+			next-position: stack-value next position scope uses instructions params locals
+				expression-value
+			if last-stopped? [return next-position]
+			unless all [last-flags = 0 (ref-kind last-type) = 'i32][
+				fail ERROR-REFERENCE "system/thrown expects an integer! value"
+			]
+			id: ensure-thrown-global
+			emit instructions reduce [address-op global-address id 0]
+			emit instructions reduce [set-op 0 0 0]
+			last-type: -5
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next-position
+		]
 		if target/2 = 'pc [
 			fail ERROR-REFERENCE "cannot modify system/pc"
 		]
@@ -4742,6 +4853,12 @@ compiler-rsir-frontend: context [
 				value-context
 		]
 		case [
+			value = 'catch [
+				stack-catch position scope uses instructions params locals
+			]
+			value = 'throw [
+				stack-throw position scope uses instructions params locals
+			]
 			value = 'overflow? [
 				stack-overflow position scope uses instructions params locals
 			]
@@ -5629,6 +5746,7 @@ compiler-rsir-frontend: context [
 		function-active?: true
 		clear loops
 		clear overflows
+		clear catches
 		clear use-local-slots
 		clear subroutine-bodies
 		clear subroutine-stack
@@ -5656,6 +5774,7 @@ compiler-rsir-frontend: context [
 		count: to integer! (((length? instructions) - before) / 16)
 		function-active?: false
 		clear overflows
+		clear catches
 		clear use-local-slots
 		clear subroutine-bodies
 		clear subroutine-stack
@@ -5685,6 +5804,7 @@ compiler-rsir-frontend: context [
 		function-active?: false
 		clear loops
 		clear overflows
+		clear catches
 		stack-module values scope uses
 	]
 
@@ -5745,6 +5865,7 @@ compiler-rsir-frontend: context [
 			last-float-literal?: false
 			clear function-code
 			clear overflows
+			clear catches
 			clear initializers
 			clear switches
 			clear strings
@@ -5756,6 +5877,7 @@ compiler-rsir-frontend: context [
 			type-count: 0
 			import-count: 0
 			global-count: 0
+			thrown-global: 0
 			alias-count: 0
 			compile-source source
 			write-rsir any [max-bytes DEFAULT-MAX-BYTES]

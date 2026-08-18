@@ -105,6 +105,7 @@ stack-ir: allocate 160
 system-ir: allocate 256
 atomic-ir: allocate 272
 overflow-ir: allocate 272
+exception-ir: allocate 256
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -115,7 +116,7 @@ if any [
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
-	null? stack-ir null? system-ir null? atomic-ir null? overflow-ir
+	null? stack-ir null? system-ir null? atomic-ir null? overflow-ir null? exception-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -1417,6 +1418,76 @@ if (x64-codegen/generate atomic-ir 242 output 1024 0) <> x64-codegen/INVALID_IR 
 	failures: failures + 1
 ]
 
+; A lexical CATCH owns one fixed frame record. THROW resumes at END_CATCH,
+; which restores the previous threshold, resume address, and stack pointer.
+put exception-ir 0 1
+put exception-ir 4 0
+put exception-ir 8 0
+put exception-ir 12 0
+put exception-ir 16 1
+put exception-ir 20 7
+put exception-ir 24 0
+put exception-ir 28 0
+
+put exception-ir 32 0
+put exception-ir 36 2
+put exception-ir 40 -5
+put exception-ir 44 0
+put exception-ir 48 0
+put exception-ir 52 0
+put exception-ir 56 0
+put exception-ir 60 0
+put exception-ir 64 7
+
+put-instruction exception-ir 68 1 -5 1 0
+put-instruction exception-ir 84 24 5 1 0
+put-instruction exception-ir 100 1 -5 1 0
+put-instruction exception-ir 116 26 0 0 0
+put-instruction exception-ir 132 25 2 1 0
+put-instruction exception-ir 148 1 -5 73 0
+put-instruction exception-ir 164 11 -5 0 0
+exception-ir/181: as byte! 66h
+exception-ir/182: as byte! 6Eh
+
+size: x64-codegen/generate exception-ir 182 output 1024 0
+if any [size <= 0 not execute-selection? output 73][failures: failures + 1]
+put exception-ir 88 6
+if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put exception-ir 88 5
+put exception-ir 92 2
+if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put exception-ir 92 1
+put exception-ir 72 -11
+if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put exception-ir 72 -5
+put exception-ir 104 -11
+if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put exception-ir 104 -5
+
+; JUMP carries only the number of lexical catch records it exits.
+put exception-ir 108 73
+put-instruction exception-ir 116 16 6 1 1
+size: x64-codegen/generate exception-ir 182 output 1024 0
+if any [size <= 0 not execute-selection? output 73][failures: failures + 1]
+put exception-ir 128 0
+if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put exception-ir 128 1
+
+put exception-ir 44 (x64-codegen/CATCH_FLAG + x64-codegen/CDECL)
+if (x64-codegen/generate exception-ir 182 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
 free output
 free void-ir
 free local-ir
@@ -1438,6 +1509,7 @@ free stack-ir
 free system-ir
 free atomic-ir
 free overflow-ir
+free exception-ir
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

@@ -76,7 +76,7 @@ linker: context [
 			refs-size globals-start imports-start refs-start names-start rodata-offset data-offset
 			expected remainder id index record
 			name-offset name-size function-offset function-size frame-size bitmap-offset
-			bitmap-size global-offset global-size global-flags first-reference count-reference
+			bitmap-base bitmap-size global-offset global-size global-flags first-reference count-reference
 			reference-id reference
 			name-bytes name symbols refs data-refs imports functions library-offset library-size
 			external-offset external-size library external last-library code rodata data sections
@@ -157,6 +157,7 @@ linker: context [
 		]
 
 		symbols: make hash! ((function-count + global-count) * 2)
+		bitmap-base: 0
 		id: 1
 		while [id <= function-count][
 			record: codegen-header-size + ((id - 1) * 36)
@@ -179,6 +180,8 @@ linker: context [
 				bitmap-offset <= (data-size - bitmap-size)
 				integer? first-reference integer? count-reference count-reference >= 0
 			][return codegen-fail "native codegen returned an invalid function record"]
+			if id = 1 [bitmap-base: bitmap-offset]
+			if bitmap-offset < bitmap-base [bitmap-base: bitmap-offset]
 			if any [
 				all [count-reference = 0 first-reference <> 0]
 				all [count-reference > 0 any [
@@ -316,6 +319,12 @@ linker: context [
 			append symbols name
 			append/only symbols reduce [symbol-type global-offset refs data-refs]
 			id: id + 1
+		]
+		; The codegen image owns the shared bitmap data at this offset. Expose
+		; its base through the linker symbol table only for runtime modules.
+		if all [job/runtime? not find symbols '***-ptr-bitmaps][
+			append symbols '***-ptr-bitmaps
+			append/only symbols reduce ['global bitmap-base copy [] copy []]
 		]
 
 		imports: make block! (import-count * 2)

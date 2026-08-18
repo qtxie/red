@@ -21,6 +21,7 @@ compiler-rsir-frontend: context [
 
 	last-error: none
 	module-kind: 0
+	debug?: false
 	functions: make block! 96
 	function-ids: make hash! 48
 	infix-targets: make hash! 16
@@ -3388,12 +3389,10 @@ compiler-rsir-frontend: context [
 		parameters [block!]
 		flags signature-ref [integer!]
 		return: [block!]
-		/local cursor next-value arguments count type-id
+		/local cursor next-value arguments count type-id block-arguments? position-after
 	][
-		unless all [(length? position) >= 2 block? position/2][
-			fail ERROR-UNSUPPORTED [
-				"typed call requires an argument block: " mold value
-			]
+		unless (length? position) >= 2 [
+			fail ERROR-REFERENCE ["typed call is missing its argument: " mold value]
 		]
 		unless typed-list-signature? parameters [
 			fail ERROR-UNSUPPORTED [
@@ -3401,9 +3400,10 @@ compiler-rsir-frontend: context [
 			]
 		]
 		arguments: reduce [signature-ref]
-		cursor: position/2
+		block-arguments?: block? position/2
+		cursor: either block-arguments? [position/2][next position]
 		count: 0
-		while [not tail? cursor][
+		while [all [not tail? cursor any [block-arguments? count = 0]]][
 			next-value: stack-value cursor scope uses instructions params locals
 				expression-value
 			unless all [last-type <> 0 last-flags = 0][
@@ -3422,12 +3422,13 @@ compiler-rsir-frontend: context [
 			count: count + 1
 			cursor: next-value
 		]
+		position-after: either block-arguments? [skip position 2][cursor]
 		emit instructions reduce [
 			call-op target count intern-typed-call signature-ref arguments
 		]
 		last-type: return-ref
 		last-flags: 0
-		skip position 2
+		position-after
 	]
 
 	stack-variadic-call: func [
@@ -3442,9 +3443,10 @@ compiler-rsir-frontend: context [
 		flags signature-ref [integer!]
 		return: [block!]
 		/local cursor next-value parameter count expected expected-flags cdecl?
+			block-arguments? position-after
 	][
-		unless all [(length? position) >= 2 block? position/2][
-			fail ERROR-UNSUPPORTED ["variadic call requires an argument block: " mold value]
+		unless (length? position) >= 2 [
+			fail ERROR-REFERENCE ["variadic call is missing its argument: " mold value]
 		]
 		cdecl?: (flags and 3) = 1
 		unless any [
@@ -3457,10 +3459,11 @@ compiler-rsir-frontend: context [
 				mold value
 			]
 		]
-		cursor: position/2
+		block-arguments?: block? position/2
+		cursor: either block-arguments? [position/2][next position]
 		parameter: parameters
 		count: 0
-		while [not tail? cursor][
+		while [all [not tail? cursor any [block-arguments? count = 0]]][
 			next-value: stack-value cursor scope uses instructions params locals
 				expression-value
 			if last-type = 0 [
@@ -3493,12 +3496,13 @@ compiler-rsir-frontend: context [
 		if all [cdecl? not tail? parameter][
 			fail ERROR-REFERENCE ["not enough arguments for function " mold value]
 		]
+		position-after: either block-arguments? [skip position 2][cursor]
 		emit instructions reduce [
 			call-op target count either target = 0 [signature-ref][return-ref]
 		]
 		last-type: return-ref
 		last-flags: 0
-		skip position 2
+		position-after
 	]
 
 	stack-indirect-call: func [
@@ -3705,6 +3709,33 @@ compiler-rsir-frontend: context [
 		after
 	]
 
+	stack-assert: func [
+		position scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local after before patch
+	][
+		before: length? instructions
+		after: stack-value next position scope uses instructions params locals
+			expression-value
+		unless all [not last-stopped? logical-value? last-type last-flags][
+			fail ERROR-REFERENCE "ASSERT requires a logic value"
+		]
+		either debug? [
+			patch: emit-control instructions branch-op 1
+			emit instructions reduce [fail-op 98 0 0]
+			patch-control instructions patch instruction-here instructions
+		][
+			clear at instructions (before + 1)
+		]
+		last-type: 0
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		after
+	]
+
 	stack-if: func [
 		position scope uses [block!]
 		instructions [binary!]
@@ -3804,7 +3835,7 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local arms after branch-patch jump-patch drop-count
+		/local arms after arm-context branch-patch jump-patch drop-count
 			true-type true-flags false-type false-flags
 			result-type result-flags
 			true-value? false-value? true-stopped? false-stopped?
@@ -3818,9 +3849,13 @@ compiler-rsir-frontend: context [
 			(length? arms) >= 2 block? arms/1 block? arms/2
 		][fail ERROR-UNSUPPORTED "EITHER requires two body blocks"]
 		after: skip arms 2
+		arm-context: either any [
+			value-context = expression-value
+			all [value-context = tail-value tail? after]
+		][tail-value][statement-value]
 
 		branch-patch: emit-control instructions branch-op 0
-		stack-block arms/1 scope uses instructions params locals tail-value
+		stack-block arms/1 scope uses instructions params locals arm-context
 		true-type: last-type
 		true-flags: last-flags
 		true-stopped?: last-stopped?
@@ -3831,7 +3866,7 @@ compiler-rsir-frontend: context [
 		]
 
 		patch-control instructions branch-patch instruction-here instructions
-		stack-block arms/2 scope uses instructions params locals tail-value
+		stack-block arms/2 scope uses instructions params locals arm-context
 		false-type: last-type
 		false-flags: last-flags
 		false-stopped?: last-stopped?
@@ -3889,7 +3924,7 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local body after cursor action branch-patch jump-patch arms
+		/local body after arm-context cursor action branch-patch jump-patch arms
 	][
 		unless all [(length? position) >= 2 block? position/2][
 			fail ERROR-UNSUPPORTED "CASE requires a condition/body block"
@@ -3897,6 +3932,10 @@ compiler-rsir-frontend: context [
 		body: position/2
 		after: skip position 2
 		if empty? body [fail ERROR-UNSUPPORTED "CASE body is empty"]
+		arm-context: either any [
+			value-context = expression-value
+			all [value-context = tail-value tail? after]
+		][tail-value][statement-value]
 		arms: make block! 16
 		cursor: body
 		while [not tail? cursor][
@@ -3909,7 +3948,7 @@ compiler-rsir-frontend: context [
 				fail ERROR-UNSUPPORTED "CASE condition is missing its body block"
 			]
 			branch-patch: emit-control instructions branch-op 0
-			stack-block action/1 scope uses instructions params locals tail-value
+			stack-block action/1 scope uses instructions params locals arm-context
 			jump-patch: none
 			unless last-stopped? [
 				jump-patch: emit-control instructions jump-op 0
@@ -3984,7 +4023,7 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local spec-position spec after selector-ref selector-kind cursor arms default-body
+		/local spec-position spec after arm-context selector-ref selector-kind cursor arms default-body
 			patches bits first-case case-count case-patch switch-patch default-target
 			arm-position arm target jump-patch missing-jump results last-arm? info
 			tagged-selector?
@@ -4007,6 +4046,10 @@ compiler-rsir-frontend: context [
 		spec: spec-position/1
 		after: next spec-position
 		if empty? spec [fail ERROR-UNSUPPORTED "SWITCH body is empty"]
+		arm-context: either any [
+			value-context = expression-value
+			all [value-context = tail-value tail? after]
+		][tail-value][statement-value]
 		first-case: (length? switches) / 12
 		case-count: 0
 		arms: make block! 8
@@ -4064,7 +4107,7 @@ compiler-rsir-frontend: context [
 			arm: arm-position/1
 			target: instruction-here instructions
 			foreach case-patch arm/1 [patch-switch-case case-patch target]
-			stack-block arm/2 scope uses instructions params locals tail-value
+			stack-block arm/2 scope uses instructions params locals arm-context
 			last-arm?: all [tail? next arm-position none? default-body]
 			jump-patch: none
 			if all [not last-stopped? not last-arm?][
@@ -4076,7 +4119,7 @@ compiler-rsir-frontend: context [
 		if block? default-body [
 			default-target: instruction-here instructions
 			patch-control instructions switch-patch default-target
-			stack-block default-body scope uses instructions params locals tail-value
+			stack-block default-body scope uses instructions params locals arm-context
 			repend results [none last-type last-flags last-stopped?]
 		]
 		finish-selection 'switch results instructions after value-context
@@ -4853,6 +4896,9 @@ compiler-rsir-frontend: context [
 				value-context
 		]
 		case [
+			value = 'assert [
+				stack-assert position scope uses instructions params locals
+			]
 			value = 'catch [
 				stack-catch position scope uses instructions params locals
 			]
@@ -5351,8 +5397,8 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		fold? [logic!]
 		return: [block!]
-		/local type-info next-position ref kind aggregate? record hidden target-ref
-			target-flags source-ref source-flags address-position
+		/local type-info next-position ref kind aggregate? pointer? storage-ref storage-flags
+			record hidden target-ref target-flags source-ref source-flags address-position
 	][
 		type-info: stack-read-type skip position 2 scope uses
 		next-position: type-info/1
@@ -5362,8 +5408,9 @@ compiler-rsir-frontend: context [
 		]
 		kind: ref-kind ref
 		aggregate?: not none? find [struct union] kind
+		pointer?: kind = 'pointer
 
-		unless aggregate? [
+		unless any [aggregate? pointer?] [
 			unless word? target [
 				fail ERROR-CONTEXT "scalar DECLARE requires a variable target"
 			]
@@ -5398,10 +5445,16 @@ compiler-rsir-frontend: context [
 			return next-position
 		]
 
+		storage-ref: either pointer? [pointee-ref ref][ref]
+		unless integer? storage-ref [
+			fail ERROR-UNSUPPORTED ["DECLARE pointer has no storable pointee: " mold target]
+		]
+		storage-flags: either find [struct union] ref-kind storage-ref [inline-flag][0]
+
 		if all [fold? integer? id][
 			record: skip global-data ((id - 1) * 5)
 			unless integer? record/2 [
-				hidden: add-hidden-global ref inline-flag
+				hidden: add-hidden-global storage-ref storage-flags
 				record/2: ref
 				record/3: 0
 				set-global-initializer record reduce [
@@ -5415,10 +5468,10 @@ compiler-rsir-frontend: context [
 		]
 
 		either function-active? [
-			hidden: add-hidden-local params locals ref inline-flag
+			hidden: add-hidden-local params locals storage-ref storage-flags
 			emit-local-address instructions hidden/1
 		][
-			hidden: add-hidden-global ref inline-flag
+			hidden: add-hidden-global storage-ref storage-flags
 			emit instructions reduce [address-op global-address hidden 0]
 		]
 		emit instructions reduce [reference-op ref 0 0]
@@ -5823,10 +5876,12 @@ compiler-rsir-frontend: context [
 	compile: func [
 		source [block!]
 		kind [word!]
+		/debug
 		/limit max-bytes [integer!]
 		/local result
 	][
 		last-error: none
+		debug?: to logic! debug
 		result: catch/name [
 			function-active?: false
 			module-kind: case [

@@ -21,9 +21,22 @@ word-at: func [data [binary!] offset [integer!] /local high][
 		+ ((either high > 127 [high - 256][high]) * 16777216)
 ]
 
-compile-text: func [text [string!] kind [word!] /limit max [integer!]][
-	either limit [frontend/compile/limit load text kind max][
-		frontend/compile load text kind
+compile-text: func [
+	text [string!]
+	kind [word!]
+	/debug
+	/limit max [integer!]
+	/local source
+][
+	source: load text
+	either debug [
+		either limit [frontend/compile/debug/limit source kind max][
+			frontend/compile/debug source kind
+		]
+	][
+		either limit [frontend/compile/limit source kind max][
+			frontend/compile source kind
+		]
 	]
 ]
 
@@ -357,6 +370,42 @@ assert all [
 	(copy/part ops-of local-declare-ir local-declare-layout 5) = [3 20 3 5 12]
 ]["local DECLARE did not expose one pointer variable over one inline object"]
 
+local-pointer-declare-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local value [pointer! [integer!]]][
+		value: declare pointer! [integer!]
+		value/value: 73
+		value/value
+	]
+} 'user
+assert binary? local-pointer-declare-ir [
+	"local pointer DECLARE failed: " mold frontend/last-error
+]
+local-pointer-declare-layout: layout-of local-pointer-declare-ir
+assert all [
+	(function-word local-pointer-declare-ir local-pointer-declare-layout 1 28) = 2
+	(word-at local-pointer-declare-ir (local-pointer-declare-layout/5 + 8)) = -5
+	(word-at local-pointer-declare-ir (local-pointer-declare-layout/5 + 12)) = 0
+	(copy/part ops-of local-pointer-declare-ir local-pointer-declare-layout 5)
+		= [3 20 3 5 12]
+]["local pointer DECLARE did not address one pointee-typed storage slot"]
+
+local-pointer-pointer-ir: compile-text {
+	Red/System []
+	fn: func [/local value [pointer! [pointer!]]][
+		value: declare pointer! [pointer!]
+	]
+} 'user
+assert binary? local-pointer-pointer-ir [
+	"local pointer-to-pointer DECLARE failed: " mold frontend/last-error
+]
+local-pointer-pointer-layout: layout-of local-pointer-pointer-ir
+assert all [
+	(function-word local-pointer-pointer-ir local-pointer-pointer-layout 1 28) = 2
+	(word-at local-pointer-pointer-ir (local-pointer-pointer-layout/5 + 8)) = -12
+	(word-at local-pointer-pointer-ir (local-pointer-pointer-layout/5 + 12)) = 0
+]["pointer-to-pointer DECLARE did not reserve one pointer-sized pointee slot"]
+
 inline-copy-ir: compile-text {
 	Red/System []
 	pair!: alias struct! [left [integer!] right [integer!]]
@@ -441,6 +490,28 @@ assert all [
 	(initializer-word global-declare-ir global-declare-layout 1 4) = 2
 	(initializer-word global-declare-ir global-declare-layout 1 8) = 2
 ]["global DECLARE was not one static reference to one anonymous inline object"]
+
+global-pointer-declare-ir: compile-text {
+	Red/System []
+	value: declare pointer! [integer!]
+	fn: func [][]
+} 'user
+assert binary? global-pointer-declare-ir [
+	"global pointer DECLARE failed: " mold frontend/last-error
+]
+global-pointer-declare-layout: layout-of global-pointer-declare-ir
+assert all [
+	(word-at global-pointer-declare-ir 24) = 2
+	(global-word global-pointer-declare-ir global-pointer-declare-layout 1 12) = 0
+	(global-word global-pointer-declare-ir global-pointer-declare-layout 1 20) = 1
+	(global-word global-pointer-declare-ir global-pointer-declare-layout 2 4) = 0
+	(global-word global-pointer-declare-ir global-pointer-declare-layout 2 8) = -5
+	(global-word global-pointer-declare-ir global-pointer-declare-layout 2 12) = 0
+	(global-word global-pointer-declare-ir global-pointer-declare-layout 2 20) = 0
+	(initializer-word global-pointer-declare-ir global-pointer-declare-layout 1 0) = 2
+	(initializer-word global-pointer-declare-ir global-pointer-declare-layout 1 4) = 2
+	(initializer-word global-pointer-declare-ir global-pointer-declare-layout 1 8) = 2
+]["global pointer DECLARE was not one static pointer to one pointee slot"]
 
 array-ir: compile-text {
 	Red/System []
@@ -1007,7 +1078,7 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"invalid native variadic signature reported the wrong error class"
 
-assert none? compile-text {
+scalar-variadic-ir: compile-text {
 	Red/System []
 	collect: func [
 		[variadic]
@@ -1016,9 +1087,22 @@ assert none? compile-text {
 		return: [integer!]
 	][count]
 	main: func [return: [integer!]][collect 1]
-} 'user "native variadic call accepted a non-block argument"
-assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
-	"non-block variadic call reported the wrong error class"
+} 'user
+assert binary? scalar-variadic-ir [
+	"scalar native variadic call failed: " mold frontend/last-error
+]
+scalar-variadic-layout: layout-of scalar-variadic-ir
+scalar-variadic-call: 0
+repeat id word-at scalar-variadic-ir 20 [
+	if (instruction-word scalar-variadic-ir scalar-variadic-layout id 0) = 7 [
+		scalar-variadic-call: id
+	]
+]
+assert all [
+	scalar-variadic-call > 0
+	(instruction-word scalar-variadic-ir scalar-variadic-layout
+		scalar-variadic-call 8) = 1
+]["scalar native variadic call lost its single expression"]
 
 typed-ir: compile-text {
 	Red/System []
@@ -1078,6 +1162,46 @@ assert all [
 		-15 3 -2 14 -1 13 -5 2 -9 4 -10 5 -13 6 -7 11 -8 12 2 1002
 	]
 ]["typed call metadata lost source types or runtime type IDs: " mold typed-arguments]
+
+typed-scalar-ir: compile-text {
+	Red/System []
+	typed-value!: alias struct! [
+		type [integer!]
+		_align0 [integer!]
+		value [int-ptr!]
+		_padding [integer!]
+		_align1 [integer!]
+	]
+	sink: func [
+		[typed]
+		count [integer!]
+		list [typed-value!]
+		return: [integer!]
+	][count]
+	main: func [return: [integer!]][
+		sink 40 + 2
+		sink [42]
+	]
+} 'user
+assert binary? typed-scalar-ir [
+	"scalar typed call failed: " mold frontend/last-error
+]
+typed-scalar-layout: layout-of typed-scalar-ir
+typed-single-calls: copy []
+repeat id word-at typed-scalar-ir 20 [
+	if (instruction-word typed-scalar-ir typed-scalar-layout id 0) = 7 [
+		repend typed-single-calls [
+			instruction-word typed-scalar-ir typed-scalar-layout id 8
+			instruction-word typed-scalar-ir typed-scalar-layout id 12
+		]
+	]
+]
+assert all [
+	(length? typed-single-calls) = 4
+	typed-single-calls/1 = 1
+	typed-single-calls/3 = 1
+	typed-single-calls/2 = typed-single-calls/4
+]["scalar and one-item-block typed calls did not share one call shape"]
 
 call-ir: compile-text {
 	Red/System []
@@ -1237,6 +1361,46 @@ assert all [
 	(instruction-word not-ir not-layout 4 4) = 1
 ]["not did not consume one complete prefix argument expression"]
 
+release-assert-ir: compile-text {
+	Red/System []
+	predicate: func [return: [logic!]][true]
+	fn: func [][assert predicate]
+} 'user
+release-without-assert-ir: compile-text {
+	Red/System []
+	predicate: func [return: [logic!]][true]
+	fn: func [][]
+} 'user
+assert release-assert-ir = release-without-assert-ir
+	"release ASSERT left instructions or metadata in RSIR"
+
+debug-assert-ir: compile-text/debug {
+	Red/System []
+	predicate: func [return: [logic!]][true]
+	fn: func [][assert predicate]
+} 'user
+assert binary? debug-assert-ir [
+	"debug ASSERT lowering failed: " mold frontend/last-error
+]
+debug-assert-layout: layout-of debug-assert-ir
+assert all [
+	(function-word debug-assert-ir debug-assert-layout 2 32) = 4
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 1 0) = 7
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 2 0) = 17
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 2 4) = 4
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 2 8) = 1
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 3 0) = 19
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 3 4) = 98
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 4 0) = 11
+]["debug ASSERT did not use the shared branch/fail path"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [][assert 1]
+} 'user "ASSERT accepted a non-logic condition"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"invalid ASSERT condition reported the wrong error class"
+
 byte-ir: compile-text {
 	Red/System []
 	letter: #"B"
@@ -1287,9 +1451,36 @@ either-statement-ir: compile-text {
 either-statement-layout: layout-of either-statement-ir
 assert all [
 	(function-word either-statement-ir either-statement-layout 1 28) = 0
-	(ops-of either-statement-ir either-statement-layout) = [3 4 17 1 16 1 12 11]
-	(instruction-word either-statement-ir either-statement-layout 5 8) = 1
-]["statement EITHER did not reconcile different arm values on its edges"]
+	(ops-of either-statement-ir either-statement-layout) = [3 4 17 1 12 16 1 12 11]
+	(instruction-word either-statement-ir either-statement-layout 6 8) = 0
+]["statement EITHER did not discard each unused arm value directly"]
+
+nested-selection-statements-ir: compile-text {
+	Red/System []
+	from-either: func [flag [logic!]][
+		either flag [case [true [1] true [true]]][
+			switch 1 [1 [1] default [true]]
+		]
+	]
+	from-case: func [flag [logic!]][
+		case [true [either flag [1][true]]]
+	]
+	from-switch: func [flag [logic!]][
+		switch 1 [1 [either flag [1][true]] default [0]]
+	]
+} 'user
+assert binary? nested-selection-statements-ir [
+	"nested statement selections failed: " mold frontend/last-error
+]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [flag [logic!] return: [integer!]][
+		either flag [case [true [1] true [true]]][1]
+	]
+} 'user "value-returning nested selections accepted unlike arm types"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"nested selection value mismatch reported the wrong error class"
 
 case-ir: compile-text {
 	Red/System []

@@ -3,6 +3,8 @@ Red [
 	File:  %compiler-rsir-core.red
 ]
 
+runtime-path: %system/runtime/
+
 ; This core connects the compact frontend, native codegen, and linker directly.
 ; It grows by moving complete semantics here, never by importing the legacy
 ; emitter, machine IR, or a compatibility adapter.
@@ -68,9 +70,6 @@ system-dialect: context [
 			]
 			job/type <> 'exe [
 				compiler/throw-error "RSIR frontend currently supports only executable modules"
-			]
-			job/runtime? [
-				compiler/throw-error "RSIR frontend does not yet support the Red/System runtime"
 			]
 			job/red-pass? [
 				compiler/throw-error "RSIR frontend does not yet support Red-generated modules"
@@ -142,7 +141,6 @@ system-dialect: context [
 		unless all [not tail? next source block? source/2][
 			compiler/throw-error "missing Red/System program header"
 		]
-		process-config source/2
 		output: compiler-rsir-frontend/compile
 			source
 			'glue
@@ -184,7 +182,8 @@ system-dialect: context [
 		files [file! block!]
 		/options opts [object!]
 		/loaded job-data [block!]
-		/local started comp-time file-list file source output link-time buffer-size result error
+		/local started comp-time file-list file source runtime-source runtime-file
+			output link-time buffer-size result error
 	][
 		started: now/time/precise
 		reset-state
@@ -204,6 +203,22 @@ system-dialect: context [
 		loader/init
 		set-verbose-level job/verbosity
 
+		runtime-source: none
+		if job/runtime? [
+			runtime-file: secure-clean-path runtime-path/common.reds
+			compiler/script: runtime-file
+			phase-timer/begin 'runtime-loader
+			runtime-source: loader/process runtime-file
+			phase-timer/finish 'runtime-loader
+			unless block? runtime-source [
+				error: loader/last-error
+				compiler/throw-error either error [
+					rejoin ["Red/System runtime loader: " error/message]
+				]["Red/System runtime loader failed without a diagnostic"]
+			]
+		]
+
+		compiler/script: file
 		phase-timer/begin 'rs-loader
 		either loaded [
 			source: loader/process/with job-data/1 file
@@ -214,6 +229,13 @@ system-dialect: context [
 			compiler/throw-error either error [
 				rejoin ["Red/System loader: " error/message]
 			]["Red/System loader failed without a diagnostic"]
+		]
+		process-config source/2
+
+		if runtime-source [
+			append runtime-source skip source 2
+			append runtime-source '***-normal-exit
+			source: runtime-source
 		]
 
 		phase-timer/begin 'rsir-frontend

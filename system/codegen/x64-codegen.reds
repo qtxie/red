@@ -394,7 +394,7 @@ x64-codegen: context [
 			right-record: as rsir-type! (types + ((right - 1) * RSIR_TYPE_SIZE))
 			target: 0
 			case [
-				left-kind = 13 [target: -2]
+				left-kind = 13 [target: -15]
 				all [left-kind = -6 left > 0][
 					left-record: as rsir-type! (types + ((left - 1) * RSIR_TYPE_SIZE))
 					target: left-record/target
@@ -812,7 +812,7 @@ x64-codegen: context [
 		base: canonical-type ref types count
 		if base = 0 [return false]
 		kind: logical-kind base types count
-		if kind = 13 [result/1: -2 return true]
+		if kind = 13 [result/1: -15 return true]
 		if any [kind = -2 kind = -3][result/1: base return true]
 		unless all [any [kind = -6 kind = -7] base > 0][return false]
 		record: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
@@ -826,7 +826,7 @@ x64-codegen: context [
 		globals types [byte-ptr!]
 		type-count [integer!]
 		return: [logic!]
-		/local target [rsir-global!] kind [integer!]
+		/local target [rsir-global!] kind pointee [integer!]
 	][
 		if any [
 			initializer/kind <> ADDRESS_INITIALIZER
@@ -840,13 +840,11 @@ x64-codegen: context [
 				][return false]
 				target: as rsir-global! (globals
 					+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
-				all [
-					(target/flags and INLINE) <> 0
-					any [
-						expected = 0
-						compatible-types? expected target/type types type-count
-					]
-				]
+				if expected = 0 [return true]
+				if compatible-types? expected target/type types type-count [return true]
+				pointee: 0
+				unless pointee-type expected types type-count :pointee [return false]
+				compatible-types? pointee target/type types type-count
 			]
 			initializer/a = FUNCTION_ADDRESS [
 				if any [initializer/b <= 0 initializer/b > function-count][return false]

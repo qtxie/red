@@ -103,6 +103,7 @@ find-fixture: func [
 run-linked-fixture: func [
 	source-name output-name [file!]
 	label [string!]
+	/runtime
 	/local fixture root output output-dir job linked status index
 ][
 	if all [only-fixture source-name <> only-fixture][return none]
@@ -117,7 +118,7 @@ run-linked-fixture: func [
 	check object? job ["could not create the " label " linker job"]
 	compiler-system-job/job-set job 'backend-mode 'rsir
 	compiler-system-job/job-set job 'link? true
-	compiler-system-job/job-set job 'runtime? false
+	compiler-system-job/job-set job 'runtime? to logic! runtime
 	compiler-system-job/job-set job 'debug? false
 	compiler-system-job/job-set job 'opt-level 1
 	compiler-system-job/job-set job 'o2-ir-dump none
@@ -145,6 +146,8 @@ run-linked-fixture
 	%rsir-address-index-exit.reds %rsir-address-index-linked.exe "address/index"
 run-linked-fixture
 	%rsir-declare-storage-exit.reds %rsir-declare-storage-linked.exe "DECLARE storage"
+run-linked-fixture
+	%rsir-pointer-declare-exit.reds %rsir-pointer-declare-linked.exe "pointer DECLARE"
 run-linked-fixture
 	%rsir-aggregate-copy-exit.reds %rsir-aggregate-copy-linked.exe "aggregate copy"
 run-linked-fixture
@@ -175,5 +178,7 @@ run-linked-fixture
 	%rsir-atomic-exit.reds %rsir-atomic-linked.exe "system/atomic"
 run-linked-fixture
 	%rsir-custom-call-exit.reds %rsir-custom-call-linked.exe "custom call"
+run-linked-fixture/runtime
+	%rsir-runtime-exit.reds %rsir-runtime-linked.exe "Red/System runtime"
 
 print "PASS: direct RSIR core frontend -> native code -> PE"

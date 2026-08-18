@@ -175,7 +175,7 @@ main: func [
 	score: score + check-float32 [as float32! 1.5]
 	score: score + check-float [2.5]
 	sink: as typed-sink! :check-one
-	score: score + (sink [123])
+	score: score + (sink 120 + 3)
 	either score = 23 [73][score]
 ]
 

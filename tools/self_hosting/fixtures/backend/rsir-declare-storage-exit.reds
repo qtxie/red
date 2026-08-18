@@ -26,6 +26,8 @@ raw!: alias union! [
 global-pair: declare pair!
 global-holder: declare holder!
 global-holder/pair: declare pair!
+global-value: declare int-ptr!
+global-link: declare ptr-ptr!
 
 frame-depth: func [
 	depth [integer!]
@@ -45,11 +47,46 @@ frame-depth: func [
 	]
 ]
 
+pointer-depth: func [
+	depth [integer!]
+	return: [integer!]
+	/local value [int-ptr!] result [integer!]
+][
+	value: declare int-ptr!
+	value/value: depth
+	either depth = 0 [
+		1
+	][
+		result: pointer-depth (depth - 1)
+		if value/value <> depth [return -1]
+		result + 1
+	]
+]
+
+pointer-link: func [
+	return: [integer!]
+	/local value [int-ptr!] link [ptr-ptr!] read-back [int-ptr!]
+][
+	value: declare int-ptr!
+	link: declare ptr-ptr!
+	value/value: 41
+	link/value: as pointer! value
+	read-back: as int-ptr! link/value
+	either read-back/value = 41 [1][0]
+]
+
 main: func [
 	return: [integer!]
 	/local score [integer!] pair [pair!] holder [holder!] raw [raw!]
+		read-back [int-ptr!]
 ][
 	score: 0
+	if global-value/value = 0 [score: score + 1]
+	global-value/value: 40
+	if global-value/value = 40 [score: score + 1]
+	global-link/value: as pointer! global-value
+	read-back: as int-ptr! global-link/value
+	if read-back/value = 40 [score: score + 1]
 	if global-pair/left = 0 [score: score + 1]
 	if global-pair/right = 0 [score: score + 1]
 	global-pair/left: 10
@@ -78,7 +115,9 @@ main: func [
 	if raw/wide = (as int64! 31) [score: score + 1]
 
 	if (frame-depth 3) = 4 [score: score + 1]
-	either score = 15 [73][score]
+	if (pointer-depth 3) = 4 [score: score + 1]
+	if pointer-link = 1 [score: score + 1]
+	either score = 20 [73][score]
 ]
 
 process-exit main

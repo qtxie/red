@@ -146,6 +146,12 @@ ops-of: func [ir layout /local output id count][
 	output
 ]
 
+op-count: func [operations [block!] operation [integer!] /local count value][
+	count: 0
+	foreach value operations [if value = operation [count: count + 1]]
+	count
+]
+
 void-ir: compile-text {Red/System [] fn: func [][]} 'user
 assert binary? void-ir ["void function failed: " mold frontend/last-error]
 void-layout: layout-of void-ir
@@ -2326,8 +2332,9 @@ subroutine-ir: compile-text {
 	Red/System []
 	fn: func [return: [integer!] /local value [integer!] step [subroutine!]][
 		value: 2
-		step: [value: value + 3]
 		step
+		step
+		step: [value: value + 3]
 		value
 	]
 } 'user
@@ -2335,10 +2342,39 @@ assert binary? subroutine-ir [
 	"subroutine lowering failed: " mold frontend/last-error
 ]
 subroutine-layout: layout-of subroutine-ir
+subroutine-ops: ops-of subroutine-ir subroutine-layout
+subroutine-entry: 0
+subroutine-main: 0
+subroutine-call-target: 0
+repeat id function-word subroutine-ir subroutine-layout 1 32 [
+	operation: function-instruction-word subroutine-ir subroutine-layout 1 id 0
+	case [
+		all [
+			operation = 27
+			(function-instruction-word subroutine-ir subroutine-layout 1 id 4) = 1
+		][subroutine-entry: id]
+		all [
+			operation = 27
+			(function-instruction-word subroutine-ir subroutine-layout 1 id 4) = 0
+		][subroutine-main: id]
+		operation = 28 [
+			subroutine-call-target: function-instruction-word
+				subroutine-ir subroutine-layout 1 id 4
+		]
+		true [0]
+	]
+]
 assert all [
 	(function-word subroutine-ir subroutine-layout 1 28) = 1
-	not none? find ops-of subroutine-ir subroutine-layout 15
-]["subroutine lowering introduced storage or missed the ordinary postfix body"]
+	(first subroutine-ops) = 16
+	(op-count subroutine-ops 15) = 1
+	(op-count subroutine-ops 27) = 2
+	(op-count subroutine-ops 28) = 2
+	(op-count subroutine-ops 29) = 1
+	subroutine-entry > 0
+	subroutine-main > subroutine-entry
+	subroutine-call-target = subroutine-entry
+]["subroutine body was not emitted once with direct calls and a separate main path"]
 
 assert none? compile-text {
 	Red/System []
@@ -2366,6 +2402,60 @@ assert none? compile-text {
 } 'user "recursive subroutine unexpectedly compiled"
 assert frontend/last-error/code = frontend/ERROR-CONTEXT
 	"recursive subroutine reported the wrong error class"
+
+assert none? compile-text {
+	Red/System []
+	fn: func [/local first second [subroutine!]][
+		first: [second]
+		second: [first]
+		first
+	]
+} 'user "indirectly recursive subroutines unexpectedly compiled"
+assert frontend/last-error/code = frontend/ERROR-CONTEXT
+	"indirect subroutine recursion reported the wrong error class"
+
+subroutine-inferred-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local step [subroutine!] value][
+		step: [value: 1]
+		step
+		value
+	]
+} 'user
+assert binary? subroutine-inferred-ir [
+	"a subroutine could not establish an untyped local: " mold frontend/last-error
+]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local step [subroutine!] value][
+		value: 1
+		step: [value: value * 2]
+		step
+		value
+	]
+} 'user "a subroutine read a local typed only by the main path"
+assert all [
+	frontend/last-error/code = frontend/ERROR-REFERENCE
+	not none? find frontend/last-error/message "type declaration missing"
+]["cross-boundary inferred local reported the wrong subroutine diagnostic"]
+
+assert none? compile-text {
+	Red/System []
+	fn: func [
+		input [float!]
+		return: [integer!]
+		/local step [subroutine!] value
+	][
+		value: as integer! input
+		step: [push as integer! value]
+		0
+	]
+} 'user "PUSH read a local typed only by the main path"
+assert all [
+	frontend/last-error/code = frontend/ERROR-REFERENCE
+	not none? find frontend/last-error/message "type declaration missing"
+]["nested cross-boundary local read reported the wrong subroutine diagnostic"]
 
 stack-ir: compile-text {
 	Red/System []

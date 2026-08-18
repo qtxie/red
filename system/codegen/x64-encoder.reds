@@ -110,6 +110,21 @@ x64-encoder: context [
 		count
 	]
 
+	adjust-stack: func [
+		code [byte-ptr!]
+		capacity amount [integer!]
+		return: [integer!]
+	][
+		unless room? code capacity 7 [return -1]
+		if not null? code [
+			code/1: as byte! 48h
+			code/2: as byte! 81h
+			code/3: as byte! C4h
+			write-i32 (code + 3) amount
+		]
+		7
+	]
+
 	move-immediate: func [
 		code [byte-ptr!]
 		capacity target width low high [integer!]
@@ -1644,5 +1659,11 @@ x64-encoder: context [
 		unless room? code capacity 2 [return -1]
 		if not null? code [code/1: as byte! C9h code/2: as byte! C3h]
 		2
+	]
+
+	return-near: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 1 [return -1]
+		if not null? code [code/1: as byte! C3h]
+		1
 	]
 ]

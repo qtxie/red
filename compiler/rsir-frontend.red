@@ -124,6 +124,9 @@ compiler-rsir-frontend: context [
 	catch-op: 24
 	end-catch-op: 25
 	throw-op: 26
+	entry-op: 27
+	subroutine-call-op: 28
+	subroutine-return-op: 29
 
 	; Operation IDs follow the language families, not source spellings or x64
 	; encodings. The postfix stream preserves the specified left-to-right order.
@@ -186,10 +189,14 @@ compiler-rsir-frontend: context [
 	thrown-global: 0
 	; Function-local lexical constructs are lowered while the postfix stream is
 	; built. USE slots stay in the frame table, while their names are tombstoned
-	; when the lexical body ends; subroutine bodies are expanded at call sites.
+	; when the lexical body ends. Subroutine bodies precede the main body and are
+	; emitted once, with direct intra-function calls.
 	use-local-slots: make hash! 32
-	subroutine-bodies: make block! 32
-	subroutine-stack: make block! 8
+	; name [body entry result stopped? state]
+	subroutines: make hash! 32
+	subroutine-order: make block! 16
+	active-subroutine: none
+	subroutine-inferred: make hash! 16
 	static?: false
 	static-ref: 0
 	static-low: 0
@@ -2988,26 +2995,81 @@ compiler-rsir-frontend: context [
 		none
 	]
 
-	subroutine-body: func [
-		name [word!]
-		return: [block! none!]
-		/local position
+	collect-subroutines: func [
+		body [block!]
+		params locals [block!]
+		/local position name storage
 	][
-		position: find/skip subroutine-bodies name 2
-		either position [position/2][none]
+		position: body
+		while [not tail? position][
+			name: none
+			storage: none
+			either all [
+				set-word? position/1
+				(length? position) >= 2
+				block? position/2
+				name: to word! position/1
+				storage: stack-storage-info name params locals
+				block? storage
+				(ref-kind storage/2/2) = 'subroutine
+			][
+				if select subroutines name [
+					fail ERROR-DUPLICATE ["duplicate subroutine name: " mold name]
+				]
+				append subroutines name
+				append/only subroutines reduce [copy/deep position/2 0 0 false 0]
+				; A definition is data for this function. Its body is compiled by
+				; the function-level pass, not recursively collected here.
+				position: skip position 2
+			][
+				if block? position/1 [
+					collect-subroutines position/1 params locals
+				]
+				position: next position
+			]
+		]
 	]
 
-	set-subroutine-body: func [
+	order-subroutine: func [
 		name [word!]
-		body [block!]
-		/local position
+		/local record
 	][
-		position: find/skip subroutine-bodies name 2
-		either position [
-			change/only next position copy/deep body
-		][
-			append subroutine-bodies name
-			append/only subroutine-bodies copy/deep body
+		record: select subroutines name
+		unless block? record [fail ERROR-REFERENCE ["undefined subroutine " mold name]]
+		case [
+			record/5 = 3 [exit]
+			record/5 = 2 [exit]
+			record/5 = 1 [fail ERROR-CONTEXT ["recursive subroutine " mold name]]
+			true [0]
+		]
+		record/5: 1
+		order-subroutine-body record/1
+		record/5: 2
+		append subroutine-order name
+	]
+
+	order-subroutine-body: func [
+		body [block!]
+		/local position name record
+	][
+		position: body
+		while [not tail? position][
+			name: none
+			either all [
+				set-word? position/1
+				(length? position) >= 2
+				block? position/2
+				name: to word! position/1
+				select subroutines name
+			][
+				position: skip position 2
+			][
+				if all [word? position/1 record: select subroutines position/1][
+					order-subroutine position/1
+				]
+				if block? position/1 [order-subroutine-body position/1]
+				position: next position
+			]
 		]
 	]
 
@@ -3098,30 +3160,27 @@ compiler-rsir-frontend: context [
 	stack-subroutine: func [
 		position [block!]
 		name [word!]
-		scope uses [block!]
 		instructions [binary!]
-		params [block!]
-		locals [block!]
-		value-context [integer!]
 		return: [block!]
-		/local body body-context
+		/local record
 	][
-		body: subroutine-body name
-		unless block? body [
+		record: select subroutines name
+		unless block? record [
+			fail ERROR-REFERENCE ["undefined subroutine " mold name]
+		]
+		unless record/5 = 3 [
+			if name = active-subroutine [
+				fail ERROR-CONTEXT ["recursive subroutine " mold name]
+			]
 			fail ERROR-REFERENCE ["subroutine is used before its definition " mold name]
 		]
-		if find subroutine-stack name [
-			fail ERROR-CONTEXT ["recursive subroutine " mold name]
+		emit instructions reduce [
+			subroutine-call-op record/2 record/3 (either record/4 [1][0])
 		]
-		append subroutine-stack name
-		; A subroutine is called code even though its body is expanded here.
-		append/only overflows none
-		body-context: either value-context = statement-value [
-			statement-value
-		][tail-value]
-		stack-block body scope uses instructions params locals body-context
-		remove back tail overflows
-		remove find subroutine-stack name
+		last-type: record/3
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: record/4
 		next position
 	]
 
@@ -3301,7 +3360,7 @@ compiler-rsir-frontend: context [
 		/write
 		return: [logic!]
 		/local position part parts index prefix base candidate current flags info
-			storage kind element bits place?
+			storage kind element bits place? owner
 	][
 		parts: either path? target [to block! target][none]
 		base: either block? parts [parts/1][target]
@@ -3311,6 +3370,20 @@ compiler-rsir-frontend: context [
 			if block? storage [
 				if (ref-kind storage/2/2) = 'subroutine [
 					fail ERROR-REFERENCE ["subroutine has no address " mold target]
+				]
+				owner: select subroutine-inferred base
+				if all [
+					not write
+					word? active-subroutine
+					any [
+						storage/2/2 = 0
+						all [word? owner owner <> active-subroutine]
+					]
+				][
+					fail ERROR-REFERENCE [
+						"type declaration missing for variable " mold base
+						" used in subroutine " mold active-subroutine
+					]
 				]
 				emit instructions reduce [address-op local-address storage/1 0]
 				position: storage/2
@@ -5199,8 +5272,7 @@ compiler-rsir-frontend: context [
 			storage: stack-storage-info value params locals
 			(ref-kind storage/2/2) = 'subroutine
 		][
-			return stack-subroutine position value scope uses instructions params locals
-				value-context
+			return stack-subroutine position value instructions
 		]
 		case [
 			value = 'assert [
@@ -5892,7 +5964,7 @@ compiler-rsir-frontend: context [
 		fold? [logic!]
 		return: [block!]
 		/local target id record target-ref target-flags next-position storage
-			source-ref source-flags source-float-literal? address-position
+			source-ref source-flags source-float-literal? address-position owner
 	][
 		if (length? position) < 2 [fail ERROR-UNSUPPORTED "assignment value is missing"]
 		target: either set-word? position/1 [
@@ -5910,7 +5982,9 @@ compiler-rsir-frontend: context [
 			unless block? position/2 [
 				fail ERROR-REFERENCE ["subroutine requires a body block " mold target]
 			]
-			set-subroutine-body target position/2
+			unless select subroutines target [
+				fail ERROR-REFERENCE ["undefined subroutine " mold target]
+			]
 			last-type: 0
 			last-flags: 0
 			last-stopped?: false
@@ -5972,6 +6046,10 @@ compiler-rsir-frontend: context [
 			either record/2 = 0 [
 				if last-type = -14 [
 					fail ERROR-REFERENCE "null needs an explicit target type"
+				]
+				if all [word? target word? active-subroutine][
+					owner: active-subroutine
+					repend subroutine-inferred [target owner]
 				]
 				record/2: last-type
 				record/3: last-flags
@@ -6085,6 +6163,49 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	compile-subroutines: func [
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		/local jump-patch main-entry record marker result stopped? name
+	][
+		if empty? subroutines [exit]
+		clear subroutine-order
+		foreach [name record] subroutines [order-subroutine name]
+		jump-patch: emit-control instructions jump-op 0
+		foreach name subroutine-order [
+			record: select subroutines name
+			record/2: instruction-here instructions
+			marker: length? instructions
+			emit instructions reduce [entry-op 1 0 0]
+			clear loops
+			clear overflows
+			clear catches
+			active-subroutine: name
+			stack-block record/1 scope uses instructions params locals tail-value
+			stopped?: last-stopped?
+			result: either stopped? [0][last-type]
+			if all [result <> 0 last-flags <> 0][
+				fail ERROR-UNSUPPORTED "cannot return an aggregate value from a subroutine"
+			]
+			record/3: result
+			record/4: stopped?
+			record/5: 3
+			change/part at instructions (marker + 9)
+				int-to-bin/to-bin32 result 4
+			change/part at instructions (marker + 13)
+				int-to-bin/to-bin32 (either stopped? [1][0]) 4
+			emit instructions reduce [subroutine-return-op result 0 0]
+			active-subroutine: none
+		]
+		main-entry: instruction-here instructions
+		emit instructions reduce [entry-op 0 0 0]
+		patch-control instructions jump-patch main-entry
+		clear loops
+		clear overflows
+		clear catches
+	]
+
 	stack-body: func [
 		return-ref [integer!]
 		body [block!]
@@ -6105,8 +6226,12 @@ compiler-rsir-frontend: context [
 		clear overflows
 		clear catches
 		clear use-local-slots
-		clear subroutine-bodies
-		clear subroutine-stack
+		clear subroutines
+		clear subroutine-order
+		active-subroutine: none
+		clear subroutine-inferred
+		collect-subroutines body params locals
+		compile-subroutines scope uses instructions params locals
 		last-type: 0
 		last-flags: 0
 		last-stopped?: false
@@ -6133,8 +6258,10 @@ compiler-rsir-frontend: context [
 		clear overflows
 		clear catches
 		clear use-local-slots
-		clear subroutine-bodies
-		clear subroutine-stack
+		clear subroutines
+		clear subroutine-order
+		active-subroutine: none
+		clear subroutine-inferred
 		count
 	]
 
@@ -6230,8 +6357,10 @@ compiler-rsir-frontend: context [
 			clear strings
 			clear string-ids
 			clear use-local-slots
-			clear subroutine-bodies
-			clear subroutine-stack
+			clear subroutines
+			clear subroutine-order
+			active-subroutine: none
+			clear subroutine-inferred
 			function-count: 0
 			context-count: 0
 			type-count: 0

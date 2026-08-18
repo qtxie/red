@@ -10,6 +10,8 @@ Red/System [
 
 outside: 73
 
+plus-one: func [value [integer!] return: [integer!]][value + 1]
+
 compute: func [return: [integer!] /local value [integer!] step [subroutine!]][
 	value: 2
 	step: [value: value + 3]
@@ -44,6 +46,37 @@ subroutine-value: func [return: [integer!] /local answer [subroutine!]][
 	answer
 ]
 
+forward-value: func [
+	return: [integer!]
+	/local answer [subroutine!] result [integer!]
+][
+	result: 1 + answer
+	answer: [plus-one 71]
+	result
+]
+
+repeat-step: func [
+	return: [integer!]
+	/local step [subroutine!] value [integer!]
+][
+	value: 0
+	step: [value: value + 1]
+	step
+	step
+	value
+]
+
+float-value: func [return: [float!] /local answer [subroutine!]][
+	answer: [36.5 + 36.5]
+	answer
+]
+
+inferred-value: func [return: [integer!] /local answer [subroutine!] value][
+	answer: [value: 73]
+	answer
+	value
+]
+
 use-scope: func [return: [integer!]][
 	use [outside [integer!]][outside: 1]
 	outside
@@ -63,7 +96,14 @@ main: func [return: [integer!] /local score [integer!] value [integer!]][
 	if value = 73 [score: score + 1]
 	value: use-scope
 	if value = 73 [score: score + 1]
-	either score = 6 [73][score]
+	value: forward-value
+	if value = 73 [score: score + 1]
+	value: repeat-step
+	if value = 2 [score: score + 1]
+	if float-value = 73.0 [score: score + 1]
+	value: inferred-value
+	if value = 73 [score: score + 1]
+	either score = 10 [73][score]
 ]
 
 process-exit main

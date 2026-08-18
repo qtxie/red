@@ -225,6 +225,37 @@ assert all [
 	(instruction-word local-ir local-layout 2 8) = 1
 ]["local inference did not use the ordinary address/load/set model"]
 
+unused-local-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local unused][7]
+} 'user
+assert binary? unused-local-ir [
+	"unused local pruning failed: " mold frontend/last-error
+]
+unused-local-layout: layout-of unused-local-ir
+assert all [
+	(function-word unused-local-ir unused-local-layout 1 28) = 0
+	(ops-of unused-local-ir unused-local-layout) = [1 11]
+]["an unused local retained runtime storage"]
+
+local-order-ir: compile-text {
+	Red/System []
+	fn: func [return: [integer!] /local unused first second][
+		second: 2
+		first: 1
+		first + second
+	]
+} 'user
+assert binary? local-order-ir [
+	"out-of-order local inference failed: " mold frontend/last-error
+]
+local-order-layout: layout-of local-order-ir
+assert all [
+	(function-word local-order-ir local-order-layout 1 28) = 2
+	(instruction-word local-order-ir local-order-layout 2 8) = 2
+	(instruction-word local-order-ir local-order-layout 6 8) = 1
+]["unused local pruning changed the declaration-order slots of used locals"]
+
 explicit-local-ir: compile-text {
 	Red/System []
 	fn: func [return: [integer!] /local value [integer!]][value: 7]
@@ -362,6 +393,31 @@ assert all [
 	(instruction-word address-index-ir address-index-layout 17 4) = 1
 	(instruction-word address-index-ir address-index-layout 17 8) = 0
 ]["get-word and pointer indexes did not share REFERENCE/INDEX semantics"]
+
+inline-address-ir: compile-text {
+	Red/System []
+	pair!: alias struct! [first [integer!] second [integer!]]
+	address: func [
+		return: [int-ptr!]
+		/local value [pair! value]
+	][
+		as int-ptr! :value
+	]
+} 'user
+assert binary? inline-address-ir [
+	"inline aggregate address failed: " mold frontend/last-error
+]
+inline-address-layout: layout-of inline-address-ir
+assert (ops-of inline-address-ir inline-address-layout) = [3 20 11]
+	"inline aggregate address did not use the ordinary place reference"
+
+assert none? compile-text {
+	Red/System []
+	pair!: alias struct! [value [integer!]]
+	address: func [value [pair!] return: [int-ptr!]][as int-ptr! :value]
+} 'user "a referenced aggregate exposed the address of its pointer slot"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"referenced aggregate get-word reported the wrong error class"
 
 pointer-value-ir: compile-text {
 	Red/System [] fn: func [p [int-ptr!] return: [integer!]][p/value]
@@ -1615,10 +1671,28 @@ assert binary? switch-miss-ir [
 ]
 switch-miss-layout: layout-of switch-miss-ir
 switch-miss-ops: ops-of switch-miss-ir switch-miss-layout
+switch-miss-fail: index? find switch-miss-ops 19
 assert all [
-	none? find switch-miss-ops 19
-	not none? find switch-miss-ops 16
-]["statement SWITCH without DEFAULT did not preserve its no-match continuation"]
+	integer? switch-miss-fail
+	(instruction-word switch-miss-ir switch-miss-layout switch-miss-fail 4) = 101
+]["statement SWITCH without DEFAULT did not raise runtime error 101 on no match"]
+
+switch-value-ir: compile-text {
+	Red/System []
+	choose: func [value [integer!] return: [integer!]][
+		switch value [1 [7]]
+	]
+} 'user
+assert binary? switch-value-ir [
+	"value SWITCH without DEFAULT failed: " mold frontend/last-error
+]
+switch-value-layout: layout-of switch-value-ir
+switch-value-ops: ops-of switch-value-ir switch-value-layout
+switch-value-fail: index? find switch-value-ops 19
+assert all [
+	integer? switch-value-fail
+	(instruction-word switch-value-ir switch-value-layout switch-value-fail 4) = 101
+]["value SWITCH without DEFAULT lost its non-returning no-match path"]
 
 tagged-ir: compile-text {
 	Red/System []
@@ -1660,9 +1734,21 @@ assert all [
 	(word-at tagged-ir (tagged-member-at + 12)) = 0
 	tagged-write?
 	not none? find tagged-ops 22
+	none? find tagged-ops 19
 	(switch-word tagged-ir tagged-layout 1 0) = 1
 	(switch-word tagged-ir tagged-layout 2 0) = 2
 ]["tagged union did not retain one tagged layout and ordinary member/tag operations"]
+
+assert none? compile-text {
+	Red/System []
+	event!: alias union! [[variant] mouse [integer!] key [integer!]]
+	inspect: func [return: [integer!] /local event [event!]][
+		event: declare event!
+		switch event [mouse [1] key [2]]
+	]
+} 'user "a non-exhaustive tagged SWITCH produced a value without DEFAULT"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"tagged SWITCH value flow reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []
@@ -1920,6 +2006,23 @@ assert all [
 	(ops-of single-all-ir single-all-layout) = [3 4 11]
 ]["a one-condition ALL retained unnecessary control or merge work"]
 
+condition-statement-ir: compile-text {
+	Red/System []
+	touch: func [][]
+	all-unit: func [return: [logic!]][all [true touch]]
+	any-unit: func [return: [logic!]][any [false touch]]
+} 'user
+assert binary? condition-statement-ir [
+	"ANY/ALL statement unit failed: " mold frontend/last-error
+]
+condition-statement-layout: layout-of condition-statement-ir
+assert all [
+	(function-word condition-statement-ir condition-statement-layout 2 8) = -11
+	(function-word condition-statement-ir condition-statement-layout 3 8) = -11
+	(instruction-word condition-statement-ir condition-statement-layout 5 8) = 1
+	(instruction-word condition-statement-ir condition-statement-layout 12 8) = 0
+]["ANY/ALL did not materialize the identity value after a final statement"]
+
 loops-ir: compile-text {
 	Red/System []
 	fn: func [return: [integer!] /local i value][
@@ -1981,13 +2084,6 @@ assert all [
 	(function-word glue-ir glue-layout 2 32) = 1
 	(ops-of glue-ir glue-layout) = [11 11]
 ]["glue entry was not an ordinary function"]
-
-assert none? compile-text {
-	Red/System []
-	fn: func [/local value][]
-} 'user "an uninitialized untyped local was accepted"
-assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
-	"unresolved local reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []

@@ -144,6 +144,8 @@ run-linked-fixture: func [
 run-linked-fixture
 	%rsir-selection-exit.reds %rsir-selection-linked.exe "CASE/SWITCH"
 run-linked-fixture
+	%rsir-condition-statement-exit.reds %rsir-condition-statement-linked.exe "ANY/ALL statements"
+run-linked-fixture
 	%rsir-fixed-integer-exit.reds %rsir-fixed-integer-linked.exe "fixed integer"
 run-linked-fixture
 	%rsir-float-scalar-exit.reds %rsir-float-scalar-linked.exe "scalar float"

@@ -31,6 +31,7 @@ address-score: func [
 		text [c-string!]
 		fp [pointer! [float!]]
 		pair [pair!]
+		inline-pair [pair! value]
 		holder [holder!]
 ][
 	score: 0
@@ -93,6 +94,10 @@ address-score: func [
 	if field/value = 71 [score: score + 1]
 	field/value: 72
 	if pair/left = 72 [score: score + 1]
+	inline-pair/left: 91
+	field: as int-ptr! :inline-pair
+	if field/value = 91 [score: score + 1]
+	if field = :inline-pair/left [score: score + 1]
 
 	wide: as int64! 0
 	scalar: 81
@@ -102,7 +107,7 @@ address-score: func [
 	holder/slot/value: 82
 	if scalar = 82 [score: score + 1]
 
-	either score = 24 [73][score]
+	either score = 26 [73][score]
 ]
 
 process-exit address-score

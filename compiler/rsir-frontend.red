@@ -881,9 +881,13 @@ compiler-rsir-frontend: context [
 		return: [integer! none!]
 		/local base kind
 	][
-		if flags <> 0 [return none]
 		base: canonical-ref ref
 		kind: ref-kind base
+		if all [
+			flags = inline-flag
+			find [struct union] kind
+		][return intern-pointer -5]
+		if flags <> 0 [return none]
 		case [
 			integer-kind? kind [intern-pointer base]
 			float-kind? kind [intern-pointer base]
@@ -1214,6 +1218,54 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	collect-local-uses: func [
+		body [block!]
+		candidates used [hash!]
+		/local value name parts
+	][
+		foreach value body [
+			name: none
+			case [
+				any [word? value set-word? value get-word? value][
+					name: to word! value
+				]
+				any [path? value set-path? value get-path? value][
+					parts: to block! value
+					if all [not empty? parts word? parts/1][name: parts/1]
+				]
+				any [block? value paren? value][
+					collect-local-uses to block! value candidates used
+				]
+			]
+			if all [
+				word? name
+				find candidates name
+				not find used name
+			][append used name]
+		]
+	]
+
+	prune-unused-locals: func [
+		locals body [block!]
+		/local candidates used position
+	][
+		if empty? locals [exit]
+		candidates: make hash! ((length? locals) / 3)
+		position: locals
+		while [not tail? position][
+			append candidates position/1
+			position: skip position 3
+		]
+		used: make hash! (length? candidates)
+		collect-local-uses body candidates used
+		position: locals
+		while [not tail? position][
+			either find used position/1 [
+				position: skip position 3
+			][position: remove/part position 3]
+		]
+	]
+
 	function-signature: func [ref [integer!] return: [block! none!] /local record][
 		ref: canonical-ref ref
 		if any [ref <= 0 ref > type-count][return none]
@@ -1260,6 +1312,7 @@ compiler-rsir-frontend: context [
 		id: 1
 		while [not tail? record][
 			signature: read-signature record/2 record/4 record/5
+			prune-unused-locals signature/3 record/3
 			if find infix-targets id [check-infix-arity record/1 signature]
 			record/6: signature/1
 			record/7: signature/2
@@ -4146,7 +4199,9 @@ compiler-rsir-frontend: context [
 		if none? default-body [
 			default-target: instruction-here instructions
 			patch-control instructions switch-patch default-target
-			missing-jump: emit-control instructions jump-op 0
+			either tagged-selector? [
+				missing-jump: emit-control instructions jump-op 0
+			][emit instructions reduce [fail-op 101 0 0]]
 		]
 
 		results: make block! ((length? arms) * 4) + 4
@@ -4198,27 +4253,29 @@ compiler-rsir-frontend: context [
 		]
 		patches: make block! 4
 		cursor: body
-		cursor: stack-value cursor scope uses instructions params locals
-			expression-value
-		unless logical-value? last-type last-flags [
-			fail ERROR-REFERENCE "ANY/ALL requires logic values"
-		]
-		if tail? cursor [
-			last-stopped?: false
-			return after
-		]
-		patch: emit-control instructions branch-op either any? [1][0]
-		append patches patch
 		while [not tail? cursor][
 			cursor: stack-value cursor scope uses instructions params locals
 				expression-value
-			unless logical-value? last-type last-flags [
-				fail ERROR-REFERENCE "ANY/ALL requires logic values"
+			either logical-value? last-type last-flags [
+				unless tail? cursor [
+					patch: emit-control instructions branch-op either any? [1][0]
+					append patches patch
+				]
+			][
+				unless all [last-type = 0 not last-stopped?][
+					fail ERROR-REFERENCE "ANY/ALL requires logic values"
+				]
+				; A statement contributes the identity value without short-circuiting.
+				if tail? cursor [
+					emit instructions reduce [literal-op -11 either any? [0][1] 0]
+					last-type: -11
+					last-flags: 0
+				]
 			]
-			unless tail? cursor [
-				patch: emit-control instructions branch-op either any? [1][0]
-				append patches patch
-			]
+		]
+		if empty? patches [
+			last-stopped?: false
+			return after
 		]
 
 		decided: either any? [1][0]

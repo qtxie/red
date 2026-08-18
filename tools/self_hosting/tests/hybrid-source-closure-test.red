@@ -149,6 +149,9 @@ walk-include-file clean-path to file! rejoin [
 	root %system/compiler-windows-hybrid-bootstrap.red
 ]
 walk-include-file clean-path to file! rejoin [
+	root %red-system-hybrid-windows.red
+]
+walk-include-file clean-path to file! rejoin [
 	root %red-bootstrap-windows-hybrid-backend.red
 ]
 
@@ -175,7 +178,9 @@ foreach required [
 	%system/codegen/x64-encoder.reds
 	%compiler/rsir-frontend.red
 	%compiler/codegen-bridge.red
+	%compiler/bootstrap-options.red
 	%compiler/saved-frontend.red
+	%red-system-hybrid-windows.red
 	%red-bootstrap-windows-hybrid-backend.red
 ][
 	required: clean-path to file! rejoin [root required]

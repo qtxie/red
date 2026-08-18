@@ -284,6 +284,38 @@ assert all [
 	(instruction-word shadow-ir shadow-layout 2 8) = 1
 ]["a global captured a homonymous local"]
 
+lexical-shadow-ir: compile-text {
+	Red/System []
+	#enum values! [choice]
+	worker: func [return: [integer!]][5]
+	constant-shadow: func [return: [integer!] /local choice][
+		choice: 11
+		choice
+	]
+	function-shadow: func [return: [integer!] /local worker][
+		worker: 13
+		worker
+	]
+} 'user
+assert binary? lexical-shadow-ir [
+	"lexical value shadowing failed: " mold frontend/last-error
+]
+lexical-shadow-layout: layout-of lexical-shadow-ir
+constant-shadow-ops: copy []
+repeat id function-word lexical-shadow-ir lexical-shadow-layout 2 32 [
+	append constant-shadow-ops function-instruction-word
+		lexical-shadow-ir lexical-shadow-layout 2 id 0
+]
+function-shadow-ops: copy []
+repeat id function-word lexical-shadow-ir lexical-shadow-layout 3 32 [
+	append function-shadow-ops function-instruction-word
+		lexical-shadow-ir lexical-shadow-layout 3 id 0
+]
+assert all [
+	constant-shadow-ops = [1 3 5 12 3 4 11]
+	function-shadow-ops = [1 3 5 12 3 4 11]
+]["a module constant or function bypassed a homonymous local"]
+
 pointer-ir: compile-text {
 	Red/System []
 	int-ref!: alias pointer! [integer!]
@@ -484,6 +516,22 @@ assert all [
 	not none? find namespace-selection-ops 21
 	not none? find namespace-selection-ops 6
 ]["namespace-qualified storage did not continue through INDEX/MEMBER"]
+
+qualified-key-ir: compile-text {
+	Red/System []
+	a>b: 11
+	a: context [b: 13]
+	read: func [return: [integer!]][a>b + a/b]
+} 'user
+assert binary? qualified-key-ir [
+	"qualified key identity failed: " mold frontend/last-error
+]
+qualified-key-layout: layout-of qualified-key-ir
+assert all [
+	(word-at qualified-key-ir 24) = 2
+	(function-instruction-word qualified-key-ir qualified-key-layout 1 1 8) = 1
+	(function-instruction-word qualified-key-ir qualified-key-layout 1 3 8) = 2
+]["a source word collided with a namespace-qualified symbol"]
 
 namespace-shadow-ir: compile-text {
 	Red/System []
@@ -755,6 +803,31 @@ assert all [
 	(initializer-word global-pointer-declare-ir global-pointer-declare-layout 1 8) = 2
 ]["global pointer DECLARE was not one static pointer to one pointee slot"]
 
+static-address-cast-ir: compile-text {
+	Red/System []
+	parts!: alias struct! [low [integer!] high [integer!]]
+	wide: #i64-4294967298
+	view: as parts! :wide
+	fn: func [][]
+} 'user
+assert binary? static-address-cast-ir [
+	"static address cast failed: " mold frontend/last-error
+]
+static-address-cast-layout: layout-of static-address-cast-ir
+static-address-source: initializer-word
+	static-address-cast-ir static-address-cast-layout 2 12
+assert all [
+	(word-at static-address-cast-ir 24) = 2
+	(initializer-word static-address-cast-ir static-address-cast-layout 2 0) = 2
+	(initializer-word static-address-cast-ir static-address-cast-layout 2 4) = 2
+	(initializer-word static-address-cast-ir static-address-cast-layout 2 8) = 1
+	static-address-source > 0
+	(type-word static-address-cast-ir static-address-cast-layout
+		static-address-source 0) = -6
+	(type-word static-address-cast-ir static-address-cast-layout
+		static-address-source 4) = -7
+]["static address cast lost its source pointer type"]
+
 size-ir: compile-text {
 	Red/System []
 	sample!: alias struct! [value [integer!]]
@@ -839,6 +912,35 @@ assert all [
 	(initializer-word array-ir array-layout 8 4) = 3
 	(initializer-word array-ir array-layout 8 8) = 3
 ]["function-local binary did not reuse one hidden static array object"]
+
+mutable-string-ir: compile-text {
+	Red/System []
+	change: func [return: [byte!] /local text [c-string!]][
+		text: "A"
+		text/1: #"B"
+		text/1
+	]
+} 'user
+assert binary? mutable-string-ir [
+	"mutable c-string literal failed: " mold frontend/last-error
+]
+mutable-string-layout: layout-of mutable-string-ir
+mutable-string-ref: global-word mutable-string-ir mutable-string-layout 1 8
+mutable-string-ops: ops-of mutable-string-ir mutable-string-layout
+assert all [
+	(word-at mutable-string-ir 24) = 1
+	(type-word mutable-string-ir mutable-string-layout mutable-string-ref 0) = -7
+	(type-word mutable-string-ir mutable-string-layout mutable-string-ref 4) = -15
+	(global-word mutable-string-ir mutable-string-layout 1 4) = 0
+	(global-word mutable-string-ir mutable-string-layout 1 12) = 1
+	(global-word mutable-string-ir mutable-string-layout 1 20) = 1
+	(initializer-word mutable-string-ir mutable-string-layout 1 0) = 3
+	(initializer-word mutable-string-ir mutable-string-layout 1 8) = 2
+	none? find mutable-string-ops 2
+	not none? find mutable-string-ops 20
+	not none? find mutable-string-ops 21
+	(instruction-word mutable-string-ir mutable-string-layout 2 4) = -13
+]["c-string literal did not use writable hidden byte storage"]
 
 assert none? compile-text {
 	Red/System []

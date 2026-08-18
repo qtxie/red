@@ -49,7 +49,6 @@ compiler-rsir-frontend: context [
 	initializers: make binary! 256
 	switches: make binary! 96
 	strings: make binary! 256
-	string-ids: make hash! 128
 	function-count: 0
 	context-count: 0
 	type-count: 0
@@ -210,11 +209,17 @@ compiler-rsir-frontend: context [
 		foreach value values [append output int-to-bin/to-bin32 value]
 	]
 
-	emit-before: func [output [binary!] values [block!] /local position][
-		position: tail values
-		while [not head? position][
-			position: back position
-			insert output int-to-bin/to-bin32 position/1
+	emit-before: func [
+		output [binary!]
+		offset [integer!]
+		values [block!]
+		/local count value
+	][
+		count: (length? values) * 4
+		insert/dup at output offset 0 count
+		foreach value values [
+			change/part at output offset int-to-bin/to-bin32 value 4
+			offset: offset + 4
 		]
 	]
 
@@ -258,17 +263,16 @@ compiler-rsir-frontend: context [
 	add-hidden-local: func [
 		params locals [block!]
 		ref flags [integer!]
-		return: [block!]
-		/local slot record
+		return: [integer!]
+		/local slot
 	][
 		slot: 1 + ((length? params) / 3) + storage-local-count locals
-		record: tail locals
 		append locals none
 		append locals ref
 		append locals flags
 		; Hidden temporaries have no source name, so they remain usable only
 		; through the instruction slot returned here.
-		reduce [slot record]
+		slot
 	]
 
 	add-hidden-global: func [ref flags [integer!] return: [integer!] /local id][
@@ -349,26 +353,34 @@ compiler-rsir-frontend: context [
 	]
 
 	valid-name?: func [name [string!]][
-		all [not empty? name not find to binary! name 0]
+		all [not empty? name not find name #"^(00)"]
 	]
 
 	qualified: func [scope [block!] value [word! path!] /local output item][
+		if all [empty? scope word? value][return value]
 		output: make string! 48
 		foreach item scope [
 			unless empty? output [append output ">"]
 			append output form item
 		]
-		foreach item either path? value [to block! value][reduce [value]][
+		either path? value [
+			foreach item value [
+				unless empty? output [append output ">"]
+				append output form item
+			]
+		][
 			unless empty? output [append output ">"]
-			append output form item
+			append output form value
 		]
-		to word! output
+		output
 	]
 
 	extend-scope: func [scope [block!] value [word! path!] /local output item][
 		output: copy scope
-		foreach item either path? value [to block! value][reduce [value]][
-			append output item
+		either path? value [
+			foreach item value [append output item]
+		][
+			append output value
 		]
 		output
 	]
@@ -524,7 +536,7 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	import-variable-key?: func [key [word!] /local id record][
+	import-variable-key?: func [key [word! string!] /local id record][
 		unless id: select import-ids key [return false]
 		record: skip imports ((id - 1) * 10)
 		record/5 = 'variable
@@ -1282,24 +1294,52 @@ compiler-rsir-frontend: context [
 		id
 	]
 
-	prepare-types: func [/local position signature key id][
-		position: types
+	prepare-types: func [/local record kind target definition spec scope uses
+		signature key info id
+	][
 		id: 1
-		while [not tail? position][
-			if position/2 = 'function [
-				signature: either resolved-signature? position/3 [
-					position/3
-				][read-signature position/3 position/4 position/5]
-				unless empty? signature/3 [
-					fail ERROR-UNSUPPORTED "function type cannot declare locals"
+		while [id <= type-count][
+			record: skip types ((id - 1) * 5)
+			kind: record/2
+			case [
+				kind = 'alias [
+					target: record/3
+					scope: record/4
+					uses: record/5
+					target: either block? target [target][reduce [target]]
+					type-ref target scope uses
 				]
-				position/3: signature
-				key: signature-key signature
-				unless select function-types key [
-					repend function-types [key id]
+				find [struct union] kind [
+					definition: record/3
+					spec: aggregate-members kind definition
+					scope: record/4
+					uses: record/5
+					while [not tail? spec][
+						info: member-type-info kind definition spec/2 scope uses
+						spec: skip spec 2
+					]
 				]
+				find [function subroutine] kind [
+					target: record/3
+					scope: record/4
+					uses: record/5
+					signature: either resolved-signature? target [
+						target
+					][read-signature target scope uses]
+					unless empty? signature/3 [
+						fail ERROR-UNSUPPORTED "function type cannot declare locals"
+					]
+					record: skip types ((id - 1) * 5)
+					record/3: signature
+					if kind = 'function [
+						key: signature-key signature
+						unless select function-types key [
+							repend function-types [key id]
+						]
+					]
+				]
+				true [0]
 			]
-			position: skip position 5
 			id: id + 1
 		]
 	]
@@ -1889,30 +1929,35 @@ compiler-rsir-frontend: context [
 			fail ERROR-FUNCTION-COUNT "RSIR module has no function"
 		]
 		lower-functions
+		prepare-types
 	]
 
-	write-types: func [type-output members [binary!] /local position kind definition
-		spec scope uses field field-type info ref flags count code first signature
-		params parameter target typed-arguments typed-argument
+	write-types: func [type-output members [binary!] /local record kind definition
+		spec scope uses field-type info ref flags count code first signature
+		params parameter target typed-arguments typed-argument id
 	][
 		first: 0
-		position: types
-		while [not tail? position][
-			kind: position/2
+		id: 1
+		while [id <= type-count][
+			record: skip types ((id - 1) * 5)
+			kind: record/2
 			case [
 				kind = 'alias [
 					code: select type-codes 'alias
-					target: either block? position/3 [position/3][reduce [position/3]]
+					target: record/3
+					scope: record/4
+					uses: record/5
+					target: either block? target [target][reduce [target]]
 					emit type-output reduce [
 						code
-						type-ref target position/4 position/5
+						type-ref target scope uses
 						0
 						first
 						0
 					]
 				]
 				kind = 'typed-call [
-					typed-arguments: position/3
+					typed-arguments: record/3
 					count: ((length? typed-arguments) - 1) / 2
 					emit type-output reduce [
 						select type-codes 'typed-call
@@ -1930,27 +1975,26 @@ compiler-rsir-frontend: context [
 				]
 				kind = 'pointer [
 					emit type-output reduce [
-						select type-codes 'pointer-node position/3 0 first 0
+						select type-codes 'pointer-node record/3 0 first 0
 					]
 				]
 				kind = 'array [
 					emit type-output reduce [
-						select type-codes 'array position/3 position/5 first position/4
+						select type-codes 'array record/3 record/5 first record/4
 					]
 				]
 				find [struct union] kind [
 					code: select type-codes kind
-					definition: position/3
+					definition: record/3
 					spec: aggregate-members kind definition
-					scope: position/4
-					uses: position/5
+					scope: record/4
+					uses: record/5
 					count: (length? spec) / 2
 					emit type-output reduce [
 						code 0 either tagged-union? kind definition [tagged-type-flag][0]
 						first count
 					]
 					while [not tail? spec][
-						field: spec/1
 						field-type: spec/2
 						info: member-type-info kind definition field-type scope uses
 						ref: info/1
@@ -1961,10 +2005,8 @@ compiler-rsir-frontend: context [
 					first: first + count
 				]
 				find [function subroutine] kind [
-					signature: either kind = 'function [
-						position/3
-					][read-signature position/3 position/4 position/5]
-					unless block? signature [
+					signature: record/3
+					unless resolved-signature? signature [
 						fail ERROR-REFERENCE "function type signature is unresolved"
 					]
 					unless empty? signature/3 [
@@ -1988,9 +2030,9 @@ compiler-rsir-frontend: context [
 				]
 				true [
 					emit type-output reduce [(select type-codes kind) 0 0 first 0]
-				]
+					]
 			]
-			position: skip position 5
+			id: id + 1
 		]
 	]
 
@@ -2075,7 +2117,7 @@ compiler-rsir-frontend: context [
 		while [not tail? position][
 			name: position/1
 			unless integer? position/2 [
-				fail ERROR-UNSUPPORTED ["global type is unresolved: " to string! name]
+				fail ERROR-UNSUPPORTED ["global type is unresolved: " mold name]
 			]
 			record-offset: global-records + ((id - 1) * 24)
 			change/part at output record-offset
@@ -2341,7 +2383,7 @@ compiler-rsir-frontend: context [
 		expected expected-flags [integer!]
 		instructions [binary!]
 		allow-float-literal? [logic!]
-		/before position [binary!]
+		/before offset [integer!]
 		return: [logic!]
 		/local source-kind target-kind
 	][
@@ -2357,7 +2399,7 @@ compiler-rsir-frontend: context [
 					(ref-kind last-type) = 'function
 				]
 			][either before [
-				emit-before position reduce [cast-op expected expected-flags 0]
+				emit-before instructions offset reduce [cast-op expected expected-flags 0]
 			][
 				emit instructions reduce [cast-op expected expected-flags 0]
 			]]
@@ -2386,7 +2428,7 @@ compiler-rsir-frontend: context [
 			target-kind = 'f32
 		][
 			either before [
-				emit-before position reduce [cast-op expected 0 0]
+				emit-before instructions offset reduce [cast-op expected 0 0]
 			][
 				emit instructions reduce [cast-op expected 0 0]
 			]
@@ -2401,7 +2443,7 @@ compiler-rsir-frontend: context [
 			lossless-integer-cast? last-type expected
 		][return false]
 		either before [
-			emit-before position reduce [cast-op expected 0 0]
+			emit-before instructions offset reduce [cast-op expected 0 0]
 		][
 			emit instructions reduce [cast-op expected 0 0]
 		]
@@ -3002,28 +3044,43 @@ compiler-rsir-frontend: context [
 		params [block!]
 		locals [block!]
 		return: [block! none!]
-		/local position index
+		/local position slot offset
 	][
 		position: params
-		index: 1
+		slot: 1
+		offset: 1
 		while [not tail? position][
-			if position/1 = name [return reduce [index position]]
+			if position/1 = name [return reduce [slot offset]]
 			position: skip position 3
-			index: index + 1
+			slot: slot + 1
+			offset: offset + 3
 		]
 		position: locals
+		offset: 1
 		while [not tail? position][
-			if position/1 = name [return reduce [index position]]
-			if storage-local? position [index: index + 1]
+			if position/1 = name [return reduce [slot (0 - offset)]]
+			if storage-local? position [slot: slot + 1]
 			position: skip position 3
+			offset: offset + 3
 		]
 		none
+	]
+
+	storage-record: func [
+		storage params locals [block!]
+		return: [block!]
+		/local offset
+	][
+		offset: storage/2
+		either offset > 0 [
+			skip params (offset - 1)
+		][skip locals ((0 - offset) - 1)]
 	]
 
 	collect-subroutines: func [
 		body [block!]
 		params locals [block!]
-		/local position name storage
+		/local position name storage record
 	][
 		position: body
 		while [not tail? position][
@@ -3036,7 +3093,8 @@ compiler-rsir-frontend: context [
 				name: to word! position/1
 				storage: stack-storage-info name params locals
 				block? storage
-				(ref-kind storage/2/2) = 'subroutine
+				record: storage-record storage params locals
+				(ref-kind record/2) = 'subroutine
 			][
 				if select subroutines name [
 					fail ERROR-DUPLICATE ["duplicate subroutine name: " mold name]
@@ -3395,7 +3453,8 @@ compiler-rsir-frontend: context [
 		if all [word? base not root-qualified? target][
 			storage: stack-storage-info base params locals
 			if block? storage [
-				if (ref-kind storage/2/2) = 'subroutine [
+				position: storage-record storage params locals
+				if (ref-kind position/2) = 'subroutine [
 					fail ERROR-REFERENCE ["subroutine has no address " mold target]
 				]
 				owner: select subroutine-inferred base
@@ -3403,7 +3462,7 @@ compiler-rsir-frontend: context [
 					not write
 					word? active-subroutine
 					any [
-						storage/2/2 = 0
+						position/2 = 0
 						all [word? owner owner <> active-subroutine]
 					]
 				][
@@ -3413,7 +3472,6 @@ compiler-rsir-frontend: context [
 					]
 				]
 				emit instructions reduce [address-op local-address storage/1 0]
-				position: storage/2
 				last-type: position/2
 				last-flags: position/3
 				if word? target [return true]
@@ -3682,7 +3740,7 @@ compiler-rsir-frontend: context [
 	typed-list-signature?: func [
 		parameters [block!]
 		return: [logic!]
-		/local target base record spec field-spec field-count field-ref
+		/local target base record spec scope uses field-spec field-count field-ref
 	][
 		unless (length? parameters) = 6 [return false]
 		unless all [
@@ -3696,15 +3754,17 @@ compiler-rsir-frontend: context [
 		record: skip types ((base - 1) * 5)
 		unless record/2 = 'struct [return false]
 		spec: aggregate-members record/2 record/3
+		scope: record/4
+		uses: record/5
 		field-count: (length? spec) / 2
 		unless any [field-count = 3 field-count = 4 field-count = 5][
 			return false
 		]
-		field-ref: type-ref spec/2 record/4 record/5
+		field-ref: type-ref spec/2 scope uses
 		unless (ref-kind field-ref) = 'i32 [return false]
 		if field-count >= 4 [
 			field-spec: skip spec 2
-			field-ref: type-ref field-spec/2 record/4 record/5
+			field-ref: type-ref field-spec/2 scope uses
 			unless (ref-kind field-ref) = 'i32 [return false]
 		]
 		true
@@ -4633,10 +4693,9 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local after local-info slot test-target exit-patch loop-state jump-patch
+		/local after slot test-target exit-patch loop-state jump-patch
 	][
-		local-info: add-hidden-local params locals -5 0
-		slot: local-info/1
+		slot: add-hidden-local params locals -5 0
 		after: stack-value next position scope uses instructions params locals
 			expression-value
 		unless all [(ref-kind last-type) = 'i32 last-flags = 0][
@@ -4804,7 +4863,7 @@ compiler-rsir-frontend: context [
 		if word? value [
 			storage: stack-storage-info value params locals
 			if block? storage [
-				record: storage/2
+				record: storage-record storage params locals
 				if integer? record/2 [ref: record/2]
 			]
 		]
@@ -5308,9 +5367,9 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local value type-info next-position target id bytes offset
+		/local value type-info next-position target id
 			inner wide bits call-target protected-info
-			storage
+			storage record
 	][
 		unless not tail? position [
 			fail ERROR-UNSUPPORTED "missing expression"
@@ -5321,7 +5380,8 @@ compiler-rsir-frontend: context [
 		if all [
 			word? value
 			storage: stack-storage-info value params locals
-			(ref-kind storage/2/2) = 'subroutine
+			record: storage-record storage params locals
+			(ref-kind record/2) = 'subroutine
 		][
 			return stack-subroutine position value instructions
 		]
@@ -5533,17 +5593,9 @@ compiler-rsir-frontend: context [
 				next position
 			]
 			string? value [
-				bytes: to binary! value
-				offset: select string-ids bytes
-				unless integer? offset [
-					offset: length? strings
-					repend string-ids [bytes offset]
-					append strings bytes
-					append strings 0
-				]
-				emit instructions reduce [
-					constant-op -13 offset ((length? bytes) + 1)
-				]
+				id: add-static-bytes to binary! value true false
+				emit instructions reduce [address-op global-address id 0]
+				emit instructions reduce [reference-op -13 0 0]
 				last-type: -13
 				last-flags: 0
 				next position
@@ -5554,6 +5606,27 @@ compiler-rsir-frontend: context [
 					params locals
 			][next-position]
 			any [word? value path? value] [
+				storage: either word? value [
+					stack-storage-info value params locals
+				][none]
+				if block? storage [
+					unless stack-address value scope uses instructions params locals [
+						fail ERROR-REFERENCE ["unknown local value " mold value]
+					]
+					if last-type = 0 [
+						fail ERROR-REFERENCE [
+							"value is used before initialization " mold value
+						]
+					]
+					either (ref-kind last-type) = 'function [
+						return stack-indirect-call value position scope uses
+							instructions params locals
+					][
+						emit instructions reduce [load-op 0 0 0]
+						last-flags: 0
+						return next position
+					]
+				]
 				protected-info: resolve-name value scope uses protected-values
 				if block? protected-info [
 					emit instructions reduce [
@@ -5805,7 +5878,7 @@ compiler-rsir-frontend: context [
 						][fail ERROR-REFERENCE "invalid function pointer cast"]
 						static?: true
 						static-ref: type-info/2
-						static-initializer: reduce [info/2 info/3 info/4 info/5]
+						static-initializer: reduce [info/2 info/3 info/4 info/1]
 						static-next: next next-position
 					]
 				]
@@ -5830,7 +5903,7 @@ compiler-rsir-frontend: context [
 		fold? [logic!]
 		return: [block!]
 		/local type-info next-position ref kind aggregate? pointer? storage-ref storage-flags
-			record hidden target-ref target-flags source-ref source-flags address-position
+			record hidden target-ref target-flags source-ref source-flags address-offset
 	][
 		type-info: stack-read-type skip position 2 scope uses
 		next-position: type-info/1
@@ -5847,7 +5920,7 @@ compiler-rsir-frontend: context [
 				fail ERROR-CONTEXT "scalar DECLARE requires a variable target"
 			]
 			either block? storage [
-				record: storage/2
+				record: storage-record storage params locals
 				either record/2 = 0 [
 					record/2: ref
 					record/3: 0
@@ -5887,6 +5960,7 @@ compiler-rsir-frontend: context [
 			record: skip global-data ((id - 1) * 5)
 			unless integer? record/2 [
 				hidden: add-hidden-global storage-ref storage-flags
+				record: skip global-data ((id - 1) * 5)
 				record/2: ref
 				record/3: 0
 				set-global-initializer record reduce [
@@ -5901,7 +5975,7 @@ compiler-rsir-frontend: context [
 
 		either function-active? [
 			hidden: add-hidden-local params locals storage-ref storage-flags
-			emit-local-address instructions hidden/1
+			emit-local-address instructions hidden
 		][
 			hidden: add-hidden-global storage-ref storage-flags
 			emit instructions reduce [address-op global-address hidden 0]
@@ -5911,7 +5985,7 @@ compiler-rsir-frontend: context [
 		last-flags: 0
 		source-ref: last-type
 		source-flags: last-flags
-		address-position: tail instructions
+		address-offset: index? tail instructions
 		unless stack-address/write target scope uses instructions params locals [
 			fail ERROR-REFERENCE ["unknown assignment target " mold target]
 		]
@@ -5921,19 +5995,19 @@ compiler-rsir-frontend: context [
 		last-flags: source-flags
 
 		either block? storage [
-			record: storage/2
+			record: storage-record storage params locals
 			either record/2 = 0 [
 				record/2: ref
 				record/3: 0
 			][unless coerce-stack/before record/2 record/3 instructions false
-				address-position [
+				address-offset [
 				fail ERROR-REFERENCE ["declaration changes type " mold target]
 			]]
 		][either integer? id [
 			record: skip global-data ((id - 1) * 5)
 			either integer? record/2 [
 				unless coerce-stack/before record/2 0 instructions false
-					address-position [
+					address-offset [
 					fail ERROR-REFERENCE ["declaration changes type " mold target]
 				]
 			][
@@ -5942,7 +6016,7 @@ compiler-rsir-frontend: context [
 			]
 		][
 			unless coerce-stack/before target-ref target-flags instructions false
-				address-position [
+				address-offset [
 				fail ERROR-REFERENCE ["declaration changes type " mold target]
 			]
 		]]
@@ -6018,7 +6092,7 @@ compiler-rsir-frontend: context [
 		fold? [logic!]
 		return: [block!]
 		/local target id record target-ref target-flags next-position storage
-			source-ref source-flags source-float-literal? address-position owner
+			source-ref source-flags source-float-literal? address-offset owner
 			continues? infix-target
 	][
 		if (length? position) < 2 [fail ERROR-UNSUPPORTED "assignment value is missing"]
@@ -6032,7 +6106,8 @@ compiler-rsir-frontend: context [
 		id: either block? storage [none][resolve-name target scope uses globals]
 		if all [
 			block? storage
-			(ref-kind storage/2/2) = 'subroutine
+			record: storage-record storage params locals
+			(ref-kind record/2) = 'subroutine
 		][
 			unless block? position/2 [
 				fail ERROR-REFERENCE ["subroutine requires a body block " mold target]
@@ -6077,6 +6152,7 @@ compiler-rsir-frontend: context [
 					]
 				]
 				unless continues? [
+					record: skip global-data ((id - 1) * 5)
 					record/2: static-ref
 					record/3: static-flags
 					set-global-initializer record static-initializer
@@ -6096,7 +6172,7 @@ compiler-rsir-frontend: context [
 		source-ref: last-type
 		source-flags: last-flags
 		source-float-literal?: last-float-literal?
-		address-position: tail instructions
+		address-offset: index? tail instructions
 		unless stack-address/write target scope uses instructions params locals [
 			fail ERROR-REFERENCE ["unknown assignment target " mold target]
 		]
@@ -6109,7 +6185,7 @@ compiler-rsir-frontend: context [
 		last-flags: source-flags
 		last-float-literal?: source-float-literal?
 		either block? storage [
-			record: storage/2
+			record: storage-record storage params locals
 			either record/2 = 0 [
 				if last-type = -14 [
 					fail ERROR-REFERENCE "null needs an explicit target type"
@@ -6122,7 +6198,7 @@ compiler-rsir-frontend: context [
 				record/3: last-flags
 			][
 				unless coerce-stack/before record/2 record/3 instructions false
-					address-position [
+					address-offset [
 					fail ERROR-REFERENCE ["local assignment changes type " mold target]
 				]
 			]
@@ -6130,7 +6206,7 @@ compiler-rsir-frontend: context [
 			record: skip global-data ((id - 1) * 5)
 			either integer? record/2 [
 				unless coerce-stack/before record/2 0 instructions false
-					address-position [
+					address-offset [
 					fail ERROR-REFERENCE ["global assignment changes type " mold target]
 				]
 			][
@@ -6141,7 +6217,7 @@ compiler-rsir-frontend: context [
 			]
 		][
 			unless coerce-stack/before target-ref target-flags instructions false
-				address-position [
+				address-offset [
 				fail ERROR-REFERENCE ["assignment changes type " mold target]
 			]
 		]]
@@ -6422,7 +6498,6 @@ compiler-rsir-frontend: context [
 			clear initializers
 			clear switches
 			clear strings
-			clear string-ids
 			clear use-local-slots
 			clear subroutines
 			clear subroutine-order

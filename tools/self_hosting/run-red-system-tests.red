@@ -26,7 +26,10 @@ compiler-executable: get-env "RED_SYSTEM_COMPILER"
 compiler-arguments: any [get-env "RED_SYSTEM_COMPILER_ARGUMENTS" ""]
 structlib-file: any [get-env "RED_SYSTEM_STRUCTLIB" join-file source-dir %libs/structlib.dll]
 x64?: not none? find compiler-arguments "X86-64"
-run-only?: not none? find system/options/args "--run-only"
+arguments: any [system/options/args copy []]
+run-only?: not none? find arguments "--run-only"
+use-existing-dlls?: not none? find arguments "--use-existing-dlls"
+compile-failures: 0
 
 quoted: func [value][
 	; Prefer root-relative local paths for Stage1 path joining.
@@ -49,7 +52,7 @@ output-name: func [source [file!] output-type [word!] /local name suffix][
 compile-source: func [
 	source [file!]
 	output-type [word!]
-	/local output target command status log-file full-cmd
+	/local output target command status log-file
 ][
 	output: output-name source output-type
 	target: join-file output-dir output
@@ -63,15 +66,14 @@ compile-source: func [
 	log-file: append copy target %.compile.log
 	if exists? target [delete target]
 	if exists? log-file [delete log-file]
-	; The compiler uses the Windows GUI subsystem, so CMD otherwise returns
-	; before the process exits. START /WAIT keeps the status and output file
-	; checks synchronized with the actual compiler process.
-	full-cmd: rejoin [{start "" /wait } command " > " quoted log-file " 2>&1"]
-	status: call/shell/wait full-cmd
+	status: call/shell/wait rejoin [
+		command " > " quoted log-file " 2>&1"
+	]
 	unless all [status = 0 exists? target][
 		if exists? log-file [print read log-file]
 		print ["compiler failed for" source "status:" status]
-		quit/return 1
+		compile-failures: compile-failures + 1
+		return none
 	]
 	target
 ]
@@ -107,13 +109,26 @@ either run-only? [
 		append/only compiled executable
 	]
 ][
-	compile-source join-file source-dir %libtest-dll1.reds 'dll
-	compile-source join-file source-dir %libtest-dll2.reds 'dll
+	unless use-existing-dlls? [
+		compile-source join-file source-dir %libtest-dll1.reds 'dll
+		compile-source join-file source-dir %libtest-dll2.reds 'dll
+	]
+	if use-existing-dlls? [
+		foreach dependency [%libtest-dll1.dll %libtest-dll2.dll][
+			unless exists? join-file output-dir dependency [
+				print ["missing existing test dependency:" dependency]
+				compile-failures: compile-failures + 1
+			]
+		]
+	]
 	write/binary join-file output-dir %structlib.dll read/binary to file! structlib-file
 
 	foreach relative unit-sources [
-		append/only compiled relative
-		append/only compiled compile-source join-file source-dir relative 'exe
+		executable: compile-source join-file source-dir relative 'exe
+		if file? executable [
+			append/only compiled relative
+			append/only compiled executable
+		]
 	]
 ]
 
@@ -156,5 +171,6 @@ print [
 	"assertions" total-asserts
 	"passed" total-passes
 	"failed" total-failures
+	"compile-failures" compile-failures
 ]
-quit/return either zero? total-failures [0][1]
+quit/return either zero? (total-failures + compile-failures) [0][1]

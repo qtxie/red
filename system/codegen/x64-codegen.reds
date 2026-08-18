@@ -863,17 +863,50 @@ x64-codegen: context [
 		valid-type-ref? result/1 count
 	]
 
+	static-address-cast-compatible?: func [
+		target source [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [logic!]
+		/local target-kind source-kind [integer!]
+	][
+		if compatible-types? target source types count [return true]
+		target-kind: logical-kind target types count
+		source-kind: logical-kind source types count
+		case [
+			any [source-kind = 12 source-kind = -6][
+				any [
+					target-kind = 5 target-kind = 12 target-kind = 13
+					target-kind = -2 target-kind = -3 target-kind = -4
+					target-kind = -6 target-kind = -7
+				]
+			]
+			source-kind = -4 [
+				any [
+					target-kind = 5 target-kind = 12
+					target-kind = -4 target-kind = -6
+				]
+			]
+			true [false]
+		]
+	]
+
 	valid-static-address-initializer?: func [
 		initializer [rsir-initializer!]
 		expected owner global-count function-count [integer!]
 		globals types [byte-ptr!]
 		type-count [integer!]
 		return: [logic!]
-		/local target [rsir-global!] kind pointee [integer!]
+		/local target [rsir-global!] kind pointee source [integer!]
 	][
-		if any [
-			initializer/kind <> ADDRESS_INITIALIZER
+		if initializer/kind <> ADDRESS_INITIALIZER [return false]
+		source: either initializer/c = 0 [expected][initializer/c]
+		if all [
 			initializer/c <> 0
+			any [
+				not valid-type-ref? source type-count
+				not static-address-cast-compatible? expected source types type-count
+			]
 		][return false]
 		case [
 			initializer/a = GLOBAL_ADDRESS [
@@ -883,16 +916,16 @@ x64-codegen: context [
 				][return false]
 				target: as rsir-global! (globals
 					+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
-				if expected = 0 [return true]
-				if compatible-types? expected target/type types type-count [return true]
+				if source = 0 [return true]
+				if compatible-types? source target/type types type-count [return true]
 				pointee: 0
-				unless pointee-type expected types type-count :pointee [return false]
+				unless pointee-type source types type-count :pointee [return false]
 				compatible-types? pointee target/type types type-count
 			]
 			initializer/a = FUNCTION_ADDRESS [
 				if any [initializer/b <= 0 initializer/b > function-count][return false]
-				kind: logical-kind expected types type-count
-				any [expected = 0 kind = 12 kind = -4 kind = -5]
+				kind: logical-kind source types type-count
+				any [source = 0 kind = 12 kind = -4 kind = -5 kind = -6]
 			]
 			true [false]
 		]
@@ -922,6 +955,7 @@ x64-codegen: context [
 	load-operation-value: func [
 		code [byte-ptr!]
 		capacity target displacement ref flags operation-width [integer!]
+		zero-extend? [logic!]
 		types members [byte-ptr!]
 		type-count [integer!]
 		layouts member-offsets [int-ptr!]
@@ -931,7 +965,9 @@ x64-codegen: context [
 		source-width: value-width ref flags types members type-count
 			layouts member-offsets
 		if source-width <= 0 [return -1]
-		signed: either signed-type? ref types type-count [1][0]
+		signed: either zero-extend? [0][
+			either signed-type? ref types type-count [1][0]
+		]
 		encoded: x64-encoder/frame-load code capacity target displacement
 			source-width signed
 		if encoded < 0 [return encoded]
@@ -2189,7 +2225,7 @@ x64-codegen: context [
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
-			tracked? [logic!]
+			tracked? zero-extend? [logic!]
 	][
 		measure?: null? code
 		sub-frame: either measure? [8][
@@ -2892,7 +2928,7 @@ x64-codegen: context [
 						encoded: either instruction/b = 1 [
 							load-operation-value at (capacity - written)
 								x64-encoder/RDX slot-displacement (storage-slots + depth)
-								stack-types/depth 0 8 types members type-count
+								stack-types/depth 0 8 false types members type-count
 								layouts member-offsets
 						][
 							x64-encoder/move-immediate at (capacity - written)
@@ -3668,6 +3704,7 @@ x64-codegen: context [
 							]
 						]
 						physical-slot: source-slot + hidden-shift
+						; Win64 stack arguments always occupy complete 8-byte slots.
 						either aggregate-argument? [
 							either aggregate-width = 0 [
 								value-size: aggregate-size parameter/type
@@ -3709,7 +3746,7 @@ x64-codegen: context [
 								if not measure? [at: code + written]
 								encoded: x64-encoder/outgoing-store at (capacity - written)
 									(32 + ((physical-slot - 5) * 8))
-									target-width
+									8
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 							]
@@ -3759,10 +3796,9 @@ x64-codegen: context [
 								written: written + encoded
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
-								target-width: either argument-width = 8 [8][4]
 								encoded: x64-encoder/outgoing-store at (capacity - written)
 									(32 + ((physical-slot - 5) * 8))
-									target-width
+									8
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 							]
@@ -4057,19 +4093,40 @@ x64-codegen: context [
 							source-width signed
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-						if all [target-width = 8 source-width < 8 signed = 1][
+						either target-kind = 11 [
+							width: either source-width = 8 [8][4]
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
-							encoded: x64-encoder/sign-extend-eax at (capacity - written)
+							encoded: x64-encoder/test-register at (capacity - written)
+								x64-encoder/RAX width
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/condition-result at
+								(capacity - written) 5
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at
+								(capacity - written) x64-encoder/RAX
+								slot-displacement (storage-slots + depth) 4
+						][
+							if all [target-width = 8 source-width < 8 signed = 1][
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/sign-extend-eax at (capacity - written)
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							width: either target-width = 8 [8][4]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement (storage-slots + depth)
+								width
 						]
-						width: either target-width = 8 [8][4]
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/frame-store at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-slots + depth)
-							width
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -4781,7 +4838,7 @@ x64-codegen: context [
 							if not measure? [at: code + written]
 							encoded: load-operation-value at (capacity - written)
 								x64-encoder/RAX slot-displacement (storage-slots + depth)
-								stack-types/depth 0 operation-width types members
+								stack-types/depth 0 operation-width false types members
 								type-count layouts member-offsets
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
@@ -4865,7 +4922,7 @@ x64-codegen: context [
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth)
-						ref flags operation-width types members type-count
+						ref flags operation-width false types members type-count
 						layouts member-offsets
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -5158,6 +5215,7 @@ x64-codegen: context [
 						width = 8
 						reference-type? ref types type-count
 					][8][4]
+					zero-extend?: operation = SHIFT_LOGICAL_OPERATION
 					signed: either signed-type? ref types type-count [1][0]
 					target-offset: 0
 					if all [tracked? not measure?][
@@ -5169,7 +5227,8 @@ x64-codegen: context [
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement
 						(storage-slots + target-slot) left-ref left-flags
-						operation-width types members type-count layouts member-offsets
+						operation-width zero-extend? types members type-count
+						layouts member-offsets
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 
@@ -5181,8 +5240,8 @@ x64-codegen: context [
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
 						source-slot slot-displacement (storage-slots + depth)
-						right-ref right-flags operation-width types members type-count
-						layouts member-offsets
+						right-ref right-flags operation-width false types members
+						type-count layouts member-offsets
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 
@@ -5261,8 +5320,9 @@ x64-codegen: context [
 							]
 						]
 						operation = SHIFT_RIGHT_OPERATION [
+							condition: either signed = 1 [7][5]
 							encoded: x64-encoder/shift-register at (capacity - written)
-								x64-encoder/RAX 7 operation-width
+								x64-encoder/RAX condition operation-width
 						]
 						operation = SHIFT_LOGICAL_OPERATION [
 							encoded: x64-encoder/shift-register at (capacity - written)
@@ -5549,7 +5609,8 @@ x64-codegen: context [
 					if not measure? [at: code + written]
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth)
-						ref 0 operation-width types members type-count layouts member-offsets
+						ref 0 operation-width false types members type-count
+						layouts member-offsets
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					depth: depth - 1
@@ -5921,6 +5982,31 @@ x64-codegen: context [
 		written
 	]
 
+	place-global-data: func [
+		global [codegen-global!]
+		rodata-size data-size [int-ptr!]
+		return: [integer!]
+		/local offset alignment [integer!]
+	][
+		alignment: global/name
+		either (global/flags and PROTECTED) <> 0 [
+			offset: align rodata-size/1 alignment
+		][
+			offset: align data-size/1 alignment
+		]
+		if any [
+			offset < 0
+			offset > (2147483647 - global/data-size)
+		][return OUTPUT_FULL]
+		global/data-offset: offset
+		either (global/flags and PROTECTED) <> 0 [
+			rodata-size/1: offset + global/data-size
+		][
+			data-size/1: offset + global/data-size
+		]
+		0
+	]
+
 	generate: func [
 		data [byte-ptr!]
 		size [integer!]
@@ -5962,7 +6048,8 @@ x64-codegen: context [
 				image-import-count reference-count count first-reference last-library
 				library-offset external-offset output-import-id exit-reference-id
 				reference-id record-offset variable-mode written base initializer-id
-				slot-width item-offset member-id [integer!]
+				slot-width item-offset member-id owner child root current placed
+					status [integer!]
 			entry? current-entry? array? protected? [logic!]
 	][
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
@@ -6372,30 +6459,155 @@ x64-codegen: context [
 				header/type-count 0 null null :global-size :global-align [
 					return INVALID_IR
 				]
-			protected?: (ir-global/flags and PROTECTED) <> 0
-			either protected? [
-				global-offset: align image-rodata-size global-align
-			][
-				global-offset: align image-data-size global-align
-			]
-			if any [global-offset < 0 global-offset > (2147483647 - global-size)
-				global-names-size > (2147483647 - ir-global/name-size)][
+			if global-names-size > (2147483647 - ir-global/name-size) [
 				return OUTPUT_FULL
 			]
 			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
 				+ (header/function-count * IMAGE_FUNCTION_SIZE)
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
-			image-global/data-offset: global-offset
+			; Name fields hold alignment and owner only until final metadata is copied.
+			image-global/name: global-align
+			image-global/name-size: 0
+			image-global/data-offset: 0
 			image-global/data-size: global-size
 			image-global/first-reference: 0
 			image-global/reference-count: 0
 			image-global/flags: ir-global/flags and PROTECTED
-			either protected? [
-				image-rodata-size: global-offset + global-size
-			][
-				image-data-size: global-offset + global-size
-			]
 			global-names-size: global-names-size + ir-global/name-size
+			id: id + 1
+		]
+
+		; A uniquely referenced anonymous global is the static payload owned by
+		; its earlier pointer slot. Keep that object next to its owner without
+		; adding ownership records to RSIR.
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			initializer-id: 0
+			while [initializer-id < ir-global/initializer-count][
+				initializer: as rsir-initializer! (initializer-data
+					+ ((ir-global/first-initializer + initializer-id)
+						* RSIR_INITIALIZER_SIZE))
+				if all [
+					initializer/kind = ADDRESS_INITIALIZER
+					initializer/a = GLOBAL_ADDRESS
+				][
+					target-image-global: as codegen-global! (output
+						+ IMAGE_HEADER_SIZE
+						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+						+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
+					if target-image-global/reference-count = 2147483647 [
+						return OUTPUT_FULL
+					]
+					target-image-global/reference-count:
+						target-image-global/reference-count + 1
+				]
+				initializer-id: initializer-id + 1
+			]
+			id: id + 1
+		]
+		id: 1
+		while [id <= header/global-count][
+			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			initializer-id: 0
+			while [initializer-id < ir-global/initializer-count][
+				initializer: as rsir-initializer! (initializer-data
+					+ ((ir-global/first-initializer + initializer-id)
+						* RSIR_INITIALIZER_SIZE))
+				if all [
+					initializer/kind = ADDRESS_INITIALIZER
+					initializer/a = GLOBAL_ADDRESS
+					initializer/b > id
+				][
+					target-global: as rsir-global! (global-data
+						+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
+					target-image-global: as codegen-global! (output
+						+ IMAGE_HEADER_SIZE
+						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+						+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
+					if all [
+						target-global/name-size = 0
+						target-image-global/reference-count = 1
+					][target-image-global/name-size: id]
+				]
+				initializer-id: initializer-id + 1
+			]
+			id: id + 1
+		]
+
+		id: header/global-count
+		while [id > 0][
+			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			image-global/first-reference: 0
+			image-global/reference-count: 0
+			id: id - 1
+		]
+		id: header/global-count
+		while [id > 0][
+			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			owner: image-global/name-size
+			if owner > 0 [
+				target-image-global: as codegen-global! (output
+					+ IMAGE_HEADER_SIZE
+					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					+ ((owner - 1) * IMAGE_GLOBAL_SIZE))
+				image-global/reference-count: target-image-global/first-reference
+				target-image-global/first-reference: id
+			]
+			id: id - 1
+		]
+
+		placed: 0
+		id: 1
+		while [id <= header/global-count][
+			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			if image-global/name-size = 0 [
+				root: id
+				current: id
+				while [current > 0][
+					image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+						+ ((current - 1) * IMAGE_GLOBAL_SIZE))
+					status: place-global-data image-global
+						:image-rodata-size :image-data-size
+					if status <> 0 [return status]
+					placed: placed + 1
+					child: image-global/first-reference
+					either child > 0 [
+						current: child
+					][
+						while [all [
+							current <> root
+							image-global/reference-count = 0
+						]][
+							current: image-global/name-size
+							image-global: as codegen-global! (output
+								+ IMAGE_HEADER_SIZE
+								+ (header/function-count * IMAGE_FUNCTION_SIZE)
+								+ ((current - 1) * IMAGE_GLOBAL_SIZE))
+						]
+						either current = root [
+							current: 0
+						][current: image-global/reference-count]
+					]
+				]
+			]
+			id: id + 1
+		]
+		if placed <> header/global-count [return INVALID_IR]
+		id: 1
+		while [id <= header/global-count][
+			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
+				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			image-global/first-reference: 0
+			image-global/reference-count: 0
 			id: id + 1
 		]
 		id: 1

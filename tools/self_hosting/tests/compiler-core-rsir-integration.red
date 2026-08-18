@@ -165,10 +165,16 @@ run-linked-fixture
 	%rsir-tagged-union-exit.reds %rsir-tagged-union-linked.exe "tagged union"
 run-linked-fixture
 	%rsir-literal-array-exit.reds %rsir-literal-array-linked.exe "literal array"
+run-linked-fixture/runtime
+	%rsir-cstring-write-exit.reds %rsir-cstring-write-linked.exe "writable c-string literal"
+run-linked-fixture/runtime
+	%rsir-logic-cast-exit.reds %rsir-logic-cast-linked.exe "logic casts"
 run-linked-fixture
 	%rsir-protect-exit.reds %rsir-protect-linked.exe "protected data"
 run-linked-fixture
 	%rsir-aggregate-abi-exit.reds %rsir-aggregate-abi-linked.exe "aggregate ABI"
+run-linked-fixture
+	%rsir-win64-stack-slot-exit.reds %rsir-win64-stack-slot-linked.exe "Win64 stack slots"
 run-linked-fixture
 	%rsir-typed-call-exit.reds %rsir-typed-call-linked.exe "typed call"
 run-linked-fixture

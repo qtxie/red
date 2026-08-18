@@ -32,7 +32,7 @@ output-name: func [source [file!] /local name][
 
 compile-source: func [
 	source [file!]
-	/local output target command status log-file full-cmd
+	/local output target command status log-file
 ][
 	output: output-name source
 	target: join-file output-dir output
@@ -45,11 +45,9 @@ compile-source: func [
 	log-file: append copy target %.compile.log
 	if exists? target [delete target]
 	if exists? log-file [delete log-file]
-	; The compiler uses the Windows GUI subsystem, so CMD otherwise returns
-	; before the process exits. START /WAIT keeps the status and output file
-	; checks synchronized with the actual compiler process.
-	full-cmd: rejoin [{start "" /wait } command " > " quoted log-file " 2>&1"]
-	status: call/shell/wait full-cmd
+	status: call/shell/wait rejoin [
+		command " > " quoted log-file " 2>&1"
+	]
 	unless all [status = 0 exists? target][
 		if exists? log-file [print read log-file]
 		print ["compiler failed for" source "status:" status]

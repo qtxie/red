@@ -176,10 +176,12 @@ x64-codegen: context [
 	OBJC:        128
 	CATCH_FLAG:  256
 	RED_INTERNAL: 512
+	NO_RETURN:   1024
 	CALL_SHAPE_FLAGS: RETURN_VALUE + VARIADIC + TYPED + CUSTOM + OBJC
 	CATCH_CONFLICT_FLAGS: CDECL + STDCALL + VARIADIC + TYPED + CUSTOM + CALLBACK + OBJC
 	VARIABLE_FLAGS: 56
-	FUNCTION_FLAGS: 1023
+	CALLABLE_FLAGS: 1023
+	FUNCTION_FLAGS: CALLABLE_FLAGS + NO_RETURN
 	INLINE:          1
 	PROTECTED:       2
 	TAGGED_UNION:    1
@@ -452,6 +454,22 @@ x64-codegen: context [
 			][return true]
 		]
 		all [left-kind > 0 left-kind = right-kind]
+	]
+
+	merge-compatible-types?: func [
+		left right [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [logic!]
+		/local left-kind right-kind
+	][
+		if compatible-types? left right types count [return true]
+		left-kind: logical-kind left types count
+		right-kind: logical-kind right types count
+		all [
+			left-kind = right-kind
+			any [left-kind = -6 left-kind = -2 left-kind = -3]
+		]
 	]
 
 	signed-type?: func [
@@ -747,6 +765,10 @@ x64-codegen: context [
 		all [kind >= 1 kind <= 8]
 	]
 
+	address-integer-kind?: func [kind [integer!] return: [logic!]][
+		any [kind = 5 kind = 6 kind = 7 kind = 8]
+	]
+
 	integer-kind-widens?: func [
 		source-kind target-kind [integer!]
 		return: [logic!]
@@ -891,16 +913,18 @@ x64-codegen: context [
 		target-kind: logical-kind target types count
 		source-kind: logical-kind source types count
 		case [
-			any [source-kind = 12 source-kind = -6][
+			any [source-kind = 12 source-kind = 13 source-kind = -6][
 				any [
-					target-kind = 5 target-kind = 12 target-kind = 13
+					address-integer-kind? target-kind
+					target-kind = 12 target-kind = 13
 					target-kind = -2 target-kind = -3 target-kind = -4
 					target-kind = -6 target-kind = -7
 				]
 			]
 			source-kind = -4 [
 				any [
-					target-kind = 5 target-kind = 12
+					address-integer-kind? target-kind
+					target-kind = 12
 					target-kind = -4 target-kind = -6
 				]
 			]
@@ -1623,16 +1647,12 @@ x64-codegen: context [
 			if instruction-depths/target <> depth [return false]
 			if depth > 0 [
 				if any [
-					not compatible-types? entry-types/target stack-types/depth
+					not merge-compatible-types? entry-types/target stack-types/depth
 						types type-count
 					entry-flags/target <> stack-flags/depth
 					entry-kinds/target <> stack-kinds/depth
 					entry-tags/target <> stack-tags/depth
 				][return false]
-				if all [
-					(logical-kind entry-types/target types type-count) = 14
-					(logical-kind stack-types/depth types type-count) <> 14
-				][entry-types/target: stack-types/depth]
 			]
 		][
 			instruction-depths/target: depth
@@ -2598,16 +2618,12 @@ x64-codegen: context [
 						if instruction-depths/index <> depth [return INVALID_IR]
 						if depth > 0 [
 							if any [
-								not compatible-types? entry-types/index stack-types/depth
+								not merge-compatible-types? entry-types/index stack-types/depth
 									types type-count
 								entry-flags/index <> stack-flags/depth
 								entry-kinds/index <> stack-kinds/depth
 								entry-tags/index <> stack-tags/depth
 							][return INVALID_IR]
-							if all [
-								(logical-kind entry-types/index types type-count) = 14
-								(logical-kind stack-types/depth types type-count) <> 14
-							][entry-types/index: stack-types/depth]
 						]
 					]
 					if depth > 0 [
@@ -3964,6 +3980,9 @@ x64-codegen: context [
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
+					if all [target > 0 (call-flags and NO_RETURN) <> 0][
+						fallthrough?: false
+					]
 				]
 				instruction/op = OP_CAST [
 					if any [depth <= 0 stack-kinds/depth <> VALUE][return INVALID_IR]
@@ -3993,11 +4012,14 @@ x64-codegen: context [
 					]
 					if any [source-kind = -4 target-kind = -4][
 						valid?: either source-kind = -4 [
-							any [target-kind = 5 target-kind = 12
+							any [
+								address-integer-kind? target-kind
+								target-kind = 12
 								target-kind = -6 target-kind = -4]
 						][
 							any [
-								source-kind = 5 source-kind = 12 source-kind = 13
+								address-integer-kind? source-kind
+								source-kind = 12 source-kind = 13
 								source-kind = 14
 								source-kind = -2 source-kind = -3 source-kind = -4
 								source-kind = -6 source-kind = -7
@@ -4025,7 +4047,16 @@ x64-codegen: context [
 						]
 						unless valid? [return INVALID_IR]
 					]
-					either floating? [
+					valid?: all [
+						not floating?
+						flags = 0 instruction/b = 0
+						source-width = target-width
+						any [
+							all [reference-kind? source-kind reference-kind? target-kind]
+							any [source-kind = -4 target-kind = -4]
+						]
+					]
+					either valid? [encoded: 0][either floating? [
 						case [
 							any [keep-cast = 1 source-kind = target-kind][
 								signed: either signed-type? ref types type-count [1][0]
@@ -4147,7 +4178,7 @@ x64-codegen: context [
 								x64-encoder/RAX slot-displacement (storage-slots + depth)
 								width
 						]
-					]
+					]]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					stack-types/depth: instruction/a
@@ -5074,6 +5105,15 @@ x64-codegen: context [
 									left-flags = right-flags
 									same-reference-category? left-kind right-kind
 									any [left-kind <> -4 operation <= NOT_EQUAL_OPERATION]
+								]
+								all [
+									left-flags = 0 right-flags = 0
+									any [
+										all [left-kind = -7 compatible-types? right-ref left-ref
+											types type-count]
+										all [right-kind = -7 compatible-types? left-ref right-ref
+											types type-count]
+									]
 								]
 								all [
 									compatible-types? left-ref right-ref types type-count
@@ -6106,7 +6146,7 @@ x64-codegen: context [
 			ir-type: as rsir-type! (type-data + ((id - 1) * RSIR_TYPE_SIZE))
 			if any [
 				ir-type/member-count < 0 ir-type/first-member <> member-count
-				ir-type/flags < 0 ir-type/flags > FUNCTION_FLAGS
+				ir-type/flags < 0 ir-type/flags > CALLABLE_FLAGS
 				(ir-type/flags and 3) = 3
 			][return INVALID_IR]
 			variable-mode: ir-type/flags and VARIABLE_FLAGS
@@ -6213,7 +6253,7 @@ x64-codegen: context [
 		while [id <= header/import-count][
 			ir-import: as rsir-import! (import-data + ((id - 1) * RSIR_IMPORT_SIZE))
 			if any [
-				ir-import/flags < 0 ir-import/flags > FUNCTION_FLAGS
+				ir-import/flags < 0 ir-import/flags > CALLABLE_FLAGS
 				(ir-import/flags and 3) = 3
 				ir-import/first-parameter <> parameter-count
 				ir-import/parameter-count < 0

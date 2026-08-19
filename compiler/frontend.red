@@ -6084,5 +6084,17 @@ red-compiler-process-call: func [body [block!] global? [logic!]][
 	red/process-call-directive body global?
 ]
 
+red-compiler-expand-call: func [
+	body [block!]
+	global? [logic!]
+	/local mark expanded
+][
+	mark: tail red/output
+	red/process-call-directive body global?
+	expanded: copy/deep mark
+	clear mark
+	expanded
+]
+
 compiler-frontend: red
 compiler-redbin-emitter: red/redbin

@@ -278,6 +278,89 @@ assert all [
 	(ops-of explicit-local-ir explicit-layout) = [1 3 5 11]
 ]["assignment result was discarded inside the assignment operation"]
 
+grouped-local-ir: compile-text {
+	Red/System []
+	fn: func [
+		seed [integer!]
+		return: [integer!]
+		/local first second [integer!]
+	][
+		first: second: seed
+		first + second
+	]
+} 'user
+assert binary? grouped-local-ir [
+	"local assignment grouping failed: " mold frontend/last-error
+]
+grouped-local-layout: layout-of grouped-local-ir
+assert all [
+	(function-word grouped-local-ir grouped-local-layout 1 28) = 2
+	(op-count ops-of grouped-local-ir grouped-local-layout frontend/set-op) = 2
+	(op-count ops-of grouped-local-ir grouped-local-layout frontend/load-op) = 4
+]["assignment grouping did not pass one computed value through ordinary assignments"]
+
+grouped-global-ir: compile-text {
+	Red/System []
+	c: len: 0
+	fn: func [return: [integer!]][c + len]
+} 'user
+assert binary? grouped-global-ir [
+	"literal assignment grouping failed: " mold frontend/last-error
+]
+grouped-global-layout: layout-of grouped-global-ir
+assert all [
+	(word-at grouped-global-ir 24) = 2
+	(global-word grouped-global-ir grouped-global-layout 1 20) = 1
+	(global-word grouped-global-ir grouped-global-layout 2 20) = 1
+	(initializer-word grouped-global-ir grouped-global-layout 1 8) = 0
+	(initializer-word grouped-global-ir grouped-global-layout 2 8) = 0
+]["literal assignment grouping did not initialize every global directly"]
+
+pointer-either-ir: compile-text {
+	Red/System []
+	cell!: alias struct! [value [integer!]]
+	fn: func [
+		condition [logic!]
+		wide [int-ptr!]
+		narrow [byte-ptr!]
+		return: [cell!]
+	][
+		as cell! either condition [wide][narrow]
+	]
+} 'user
+assert binary? pointer-either-ir [
+	"typed-pointer EITHER failed: " mold frontend/last-error
+]
+pointer-either-layout: layout-of pointer-either-ir
+assert all [
+	(op-count ops-of pointer-either-ir pointer-either-layout frontend/branch-op) = 1
+	(op-count ops-of pointer-either-ir pointer-either-layout frontend/jump-op) = 1
+	(op-count ops-of pointer-either-ir pointer-either-layout frontend/cast-op) = 1
+]["typed-pointer EITHER did not merge before its explicit cast"]
+
+aggregate-either-ir: compile-text {
+	Red/System []
+	none!: alias struct! [header [integer!]]
+	object!: alias struct! [header [integer!] node [integer!]]
+	fn: func [
+		condition [logic!]
+		none-value [none!]
+		object [object!]
+		return: [pointer!]
+	][
+		as pointer! either condition [none-value][object]
+	]
+} 'user
+assert binary? aggregate-either-ir [
+	"aggregate-reference EITHER failed: " mold frontend/last-error
+]
+aggregate-either-layout: layout-of aggregate-either-ir
+assert all [
+	(op-count ops-of aggregate-either-ir aggregate-either-layout frontend/branch-op) = 1
+	(op-count ops-of aggregate-either-ir aggregate-either-layout frontend/jump-op) = 1
+	(op-count ops-of aggregate-either-ir aggregate-either-layout frontend/cast-op) = 1
+]["aggregate-reference EITHER did not preserve one pointer-valued join"]
+
 shadow-ir: compile-text {
 	Red/System []
 	value: 1
@@ -321,6 +404,53 @@ assert all [
 	constant-shadow-ops = [1 3 5 12 3 4 11]
 	function-shadow-ops = [1 3 5 12 3 4 11]
 ]["a module constant or function bypassed a homonymous local"]
+
+category-shadow-ir: compile-text {
+	Red/System []
+	free: func [value [integer!] return: [integer!]][value]
+	red: context [
+		externals: context [
+			free: 1
+			size: 2
+			store: func [return: [logic!]][free < size]
+			address: func [return: [int-ptr!]][:free]
+		]
+	]
+} 'user
+assert binary? category-shadow-ir [
+	"cross-category lexical shadowing failed: " mold frontend/last-error
+]
+category-shadow-layout: layout-of category-shadow-ir
+category-store-id: select frontend/function-ids "red>externals>store"
+assert all [
+	integer? category-store-id
+	(function-word category-shadow-ir category-shadow-layout category-store-id 32) = 6
+]["an outer function shadowed a nearer context variable"]
+
+keyword-shadow-ir: compile-text {
+	Red/System []
+	ns: context [
+		overflow?: func [value [integer!] return: [logic!]][value > 0]
+		positive?: func [value [integer!] return: [logic!]][overflow? value]
+	]
+} 'user
+assert binary? keyword-shadow-ir [
+	"a context function failed to shadow a language keyword: "
+	mold frontend/last-error
+]
+keyword-shadow-layout: layout-of keyword-shadow-ir
+keyword-shadow-call?: false
+keyword-shadow-overflow?: false
+repeat id function-word keyword-shadow-ir keyword-shadow-layout 2 32 [
+	operation: function-instruction-word keyword-shadow-ir keyword-shadow-layout 2 id 0
+	if all [
+		operation = 7
+		(function-instruction-word keyword-shadow-ir keyword-shadow-layout 2 id 4) = 1
+	][keyword-shadow-call?: true]
+	if operation = 23 [keyword-shadow-overflow?: true]
+]
+assert all [keyword-shadow-call? not keyword-shadow-overflow?]
+	"a bound keyword spelling did not call its context function"
 
 pointer-ir: compile-text {
 	Red/System []
@@ -492,8 +622,27 @@ assert binary? inline-address-ir [
 	"inline aggregate address failed: " mold frontend/last-error
 ]
 inline-address-layout: layout-of inline-address-ir
-assert (ops-of inline-address-ir inline-address-layout) = [3 20 11]
-	"inline aggregate address did not use the ordinary place reference"
+assert (ops-of inline-address-ir inline-address-layout) = [3 20 8 11]
+	"inline aggregate address did not retain its type through the explicit cast"
+
+inline-argument-ir: compile-text {
+	Red/System []
+	pair!: alias struct! [first [integer!] second [integer!]]
+	read-first: func [value [pair!] return: [integer!]][value/first]
+	caller: func [return: [integer!] /local value [pair! value]][
+		value/first: 7
+		read-first :value
+	]
+} 'user
+assert binary? inline-argument-ir [
+	"inline aggregate address argument failed: " mold frontend/last-error
+]
+inline-argument-layout: layout-of inline-argument-ir
+assert all [
+	(op-count ops-of inline-argument-ir inline-argument-layout frontend/reference-op) = 1
+	(op-count ops-of inline-argument-ir inline-argument-layout frontend/cast-op) = 0
+	(op-count ops-of inline-argument-ir inline-argument-layout frontend/call-op) = 1
+]["inline aggregate address lost its aggregate type before the call"]
 
 assert none? compile-text {
 	Red/System []
@@ -586,6 +735,30 @@ assert all [
 	(function-instruction-word namespace-binding-ir namespace-binding-layout 5 2 8) = 5
 ]["namespace, WITH, or system/words resolved to the wrong global slot"]
 
+forward-context-function-ir: compile-text {
+	Red/System []
+	red: context [
+		block: context [
+			select-action: func [
+				return: [function! [value [integer!] return: [integer!]]]
+			][
+				as function! [value [integer!] return: [integer!]]
+					actions/get-action-ptr
+			]
+		]
+		actions: context [
+			get-action-ptr: func [value [integer!] return: [integer!]][value]
+		]
+	]
+} 'user
+assert binary? forward-context-function-ir [
+	"forward sibling context function cast failed: " mold frontend/last-error
+]
+forward-context-function-layout: layout-of forward-context-function-ir
+assert not none? find
+	ops-of forward-context-function-ir forward-context-function-layout [3 20 11]
+	"a bare context function cast did not lower its callable address"
+
 namespace-with-child-ir: compile-text {
 	Red/System []
 	base: context [value: 1]
@@ -606,6 +779,51 @@ assert all [
 	(function-instruction-word namespace-with-child-ir namespace-with-child-layout 1 1 8) = 2
 	(function-instruction-word namespace-with-child-ir namespace-with-child-layout 2 1 8) = 1
 ]["an inherited WITH captured a nearer child namespace definition"]
+
+function-with-ir: compile-text {
+	Red/System []
+	first: context [value: 20]
+	second: context [value: 30]
+	read: func [return: [integer!] /local result][
+		result: 0
+		with [first second][result: value]
+		result
+	]
+} 'user
+assert binary? function-with-ir [
+	"function-body WITH failed: " mold frontend/last-error
+]
+function-with-layout: layout-of function-with-ir
+function-with-selected?: false
+repeat id function-word function-with-ir function-with-layout 1 32 [
+	if all [
+		(function-instruction-word function-with-ir function-with-layout 1 id 0)
+			= frontend/address-op
+		(function-instruction-word function-with-ir function-with-layout 1 id 4)
+			= frontend/global-address
+		(function-instruction-word function-with-ir function-with-layout 1 id 8) = 2
+	][function-with-selected?: true]
+]
+assert function-with-selected?
+	"function-body WITH did not select the last-defined active context"
+
+context-member-declaration-ir: compile-text {
+	Red/System []
+	errors: context [_throw: 0]
+	initialize: func [][errors/throw: 1]
+	read: func [return: [integer!]][errors/throw]
+} 'user
+assert binary? context-member-declaration-ir [
+	"context member declaration in a function failed: " mold frontend/last-error
+]
+context-member-declaration-layout: layout-of context-member-declaration-ir
+assert all [
+	(word-at context-member-declaration-ir 24) = 2
+	(function-instruction-word context-member-declaration-ir
+		context-member-declaration-layout 1 2 8) = 2
+	(function-instruction-word context-member-declaration-ir
+		context-member-declaration-layout 2 1 8) = 2
+]["a function-root context assignment did not declare one qualified global"]
 
 pointer-value-ir: compile-text {
 	Red/System [] fn: func [p [int-ptr!] return: [integer!]][p/value]
@@ -1062,6 +1280,38 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"literal array reassignment reported the wrong error class"
 
+array-cursor-ir: compile-text {
+	Red/System []
+	names-buf: protect ["zero" "one"]
+	advance: func [/local names][
+		names: names-buf
+		names: names + 1
+	]
+} 'user
+assert binary? array-cursor-ir [
+	"a cursor derived from literal array storage could not be reassigned: "
+	mold frontend/last-error
+]
+
+array-pointer-comparison-ir: compile-text {
+	Red/System []
+	values: protect [1 2 3]
+	past?: func [end [int-ptr!] return: [logic!]][
+		values + size? values > end
+	]
+} 'user
+assert binary? array-pointer-comparison-ir [
+	"literal array cursor comparison failed: " mold frontend/last-error
+]
+
+assert none? compile-text {
+	Red/System []
+	values: [1 2 3]
+	bad: func [end [byte-ptr!] return: [logic!]][values > end]
+} 'user "a literal array compared with a pointer to another element type"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"array pointer mismatch reported the wrong error class"
+
 assert none? compile-text {
 	Red/System []
 	receive: func [values [int-ptr!]][]
@@ -1130,6 +1380,25 @@ assert all [
 symbolic-ops: ops-of symbolic-ir symbolic-layout
 assert not none? find symbolic-ops [3 20 8 11]
 	"runtime function address did not use ADDRESS/REFERENCE/CAST"
+
+mixed-address-array-ir: compile-text {
+	Red/System []
+	values: ["one" 1 "two"]
+	fn: func [][]
+} 'user
+assert binary? mixed-address-array-ir [
+	"mixed address literal array failed: " mold frontend/last-error
+]
+mixed-address-layout: layout-of mixed-address-array-ir
+mixed-address-ref: global-word mixed-address-array-ir mixed-address-layout 1 8
+assert all [
+	(type-word mixed-address-array-ir mixed-address-layout mixed-address-ref 4) = -8
+	(type-word mixed-address-array-ir mixed-address-layout mixed-address-ref 8) = 8
+	(initializer-word mixed-address-array-ir mixed-address-layout 1 0) = 2
+	(initializer-word mixed-address-array-ir mixed-address-layout 1 12) = -13
+	(initializer-word mixed-address-array-ir mixed-address-layout 3 0) = 2
+	(initializer-word mixed-address-array-ir mixed-address-layout 3 12) = -13
+]["mixed address literal array lost its source types or 64-bit slot layout"]
 
 function-value-ir: compile-text {
 	Red/System []
@@ -1202,6 +1471,27 @@ assert binary? compile-text {
 	]
 } 'user "implicit null function assignment was rejected"
 
+contextual-null-ir: compile-text {
+	Red/System []
+	take-byte: func [value [byte!]][value: value]
+	take-integer: func [value [integer!]][value: value]
+	take-logic: func [value [logic!]][value: value]
+	take-float: func [value [float!]][value: value]
+	take-pointer: func [value [pointer! [integer!]]][value: value]
+	use: func [][
+		take-byte null
+		take-integer null
+		take-logic null
+		take-float null
+		take-pointer null
+	]
+} 'user
+assert binary? contextual-null-ir [
+	"contextual null literal failed: " mold frontend/last-error
+]
+assert none? find (ops-of contextual-null-ir layout-of contextual-null-ir) 8
+	"contextual null literal emitted a runtime cast"
+
 assert binary? compile-text {
 	Red/System []
 	inc: func [value [integer!] return: [integer!]][value + 1]
@@ -1215,6 +1505,27 @@ assert none? compile-text {
 } 'user "function-to-byte cast was accepted"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid function cast reported the wrong error class"
+
+function-integer-cast-ir: compile-text {
+	Red/System []
+	callback!: alias function! [[custom] return: [integer!]]
+	address: func [return: [uint64!]][as uint64! :address]
+	from-table: func [
+		table [pointer! [uint64!]]
+		/local callback [callback!]
+	][callback: as callback! table/1]
+} 'user
+assert binary? function-integer-cast-ir [
+	"32/64-bit integer function cast failed: " mold frontend/last-error
+]
+
+assert none? compile-text {
+	Red/System []
+	callback!: alias function! [return: [integer!]]
+	bad: func [value [uint16!] return: [callback!]][as callback! value]
+} 'user "a 16-bit integer was accepted as a function address"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"narrow integer function cast reported the wrong error class"
 
 system-aggregate-root-ir: compile-text {
 	Red/System []
@@ -2002,8 +2313,42 @@ null-selection-ir: compile-text {
 assert binary? null-selection-ir [
 	"reference/null selection failed: " mold frontend/last-error
 ]
-assert none? find (ops-of null-selection-ir layout-of null-selection-ir) 8
-	"reference/null selection emitted a representation-preserving cast"
+assert (op-count ops-of null-selection-ir layout-of null-selection-ir
+	frontend/cast-op) = 2
+	"a leading null arm did not retain its polymorphic reference type"
+
+null-aggregate-selection-ir: compile-text {
+	Red/System []
+	cell!: alias struct! [header [integer!] data [integer!]]
+	block!: alias struct! [header [integer!] head [integer!]]
+	choose: func [
+		flag [logic!]
+		source [cell!]
+		return: [block!]
+		/local out [block!]
+	][
+		out: either flag [null][source]
+		out
+	]
+	cast-selection: func [flag [logic!] source [cell!] return: [cell!]][
+		as cell! either flag [null][source]
+	]
+} 'user
+assert binary? null-aggregate-selection-ir [
+	"polymorphic null selection failed: " mold frontend/last-error
+]
+assert (op-count ops-of null-aggregate-selection-ir
+	layout-of null-aggregate-selection-ir frontend/cast-op) = 2
+	"polymorphic null selections were not contextualized exactly once"
+
+assert none? compile-text {
+	Red/System []
+	cell!: alias struct! [header [integer!] data [integer!]]
+	block!: alias struct! [header [integer!] head [integer!]]
+	bad: func [source [cell!] /local out [block!]][out: source]
+} 'user "distinct struct references became implicitly compatible"
+assert frontend/last-error/code = frontend/ERROR-REFERENCE
+	"struct reference mismatch reported the wrong error class"
 
 nested-selection-statements-ir: compile-text {
 	Red/System []
@@ -2115,6 +2460,25 @@ assert all [
 	(instruction-word switch-value-ir switch-value-layout switch-value-fail 4) = 101
 ]["value SWITCH without DEFAULT lost its non-returning no-match path"]
 
+switch-assert-tail-ir: compile-text {
+	Red/System []
+	choose: func [value [integer!] return: [integer!]][
+		switch value [1 [7] default [assert false]]
+	]
+} 'user
+assert binary? switch-assert-tail-ir [
+	"tail ASSERT false did not terminate a value SWITCH edge: "
+	mold frontend/last-error
+]
+switch-assert-tail-layout: layout-of switch-assert-tail-ir
+switch-assert-tail-ops: ops-of switch-assert-tail-ir switch-assert-tail-layout
+switch-assert-tail-fail: index? find switch-assert-tail-ops 19
+assert all [
+	integer? switch-assert-tail-fail
+	(instruction-word switch-assert-tail-ir switch-assert-tail-layout
+		switch-assert-tail-fail 4) = 98
+]["tail ASSERT false did not use the assertion failure terminator"]
+
 tagged-ir: compile-text {
 	Red/System []
 	event!: alias union! [
@@ -2225,6 +2589,21 @@ assert binary? enum-switch-ir ["enum SWITCH lowering failed: " mold frontend/las
 enum-switch-layout: layout-of enum-switch-ir
 assert (switch-word enum-switch-ir enum-switch-layout 1 0) = 1
 	"enum symbol was not resolved as a compile-time SWITCH literal"
+
+enum-bitwise-ir: compile-text {
+	Red/System []
+	#enum encoding! [Latin1: 1 UCS-2: 2 UCS-4: 4]
+	flags: func [unit [encoding!] return: [integer!]][F0h or unit]
+} 'user
+assert binary? enum-bitwise-ir [
+	"enum bitwise compatibility failed: " mold frontend/last-error
+]
+enum-bitwise-layout: layout-of enum-bitwise-ir
+assert all [
+	(type-word enum-bitwise-ir enum-bitwise-layout 1 0) = 5
+	(ops-of enum-bitwise-ir enum-bitwise-layout) = [1 3 4 15 11]
+	(instruction-word enum-bitwise-ir enum-bitwise-layout 4 4) = 10
+]["enum identity or integer compatibility was lost during bitwise lowering"]
 
 enum-shared-value-ir: compile-text {
 	Red/System []
@@ -2539,6 +2918,93 @@ assert all [
 	second-export-name = "value"
 ]["shared library exports or boot/user module boundaries lost their semantics"]
 
+runtime-library-ir: frontend/compile/runtime load {
+	Red/System []
+	red: context [
+		state: 1
+		boot: func [value [integer!] return: [integer!]][value]
+	]
+	exec: context [
+		helper: func [][]
+		nested: context [hidden: func [][]]
+	]
+} 'library [
+	red/boot "red/boot"
+	red/state "red/state"
+]
+assert binary? runtime-library-ir [
+	"runtime library lowering failed: " mold frontend/last-error
+]
+runtime-library-layout: layout-of runtime-library-ir
+runtime-boot-id: select frontend/function-ids "red>boot"
+runtime-helper-id: select frontend/function-ids "exec>helper"
+runtime-first-export-name: to string! copy/part at runtime-library-ir
+	(runtime-library-layout/7
+		+ (export-word runtime-library-ir runtime-library-layout 1 4) + 1)
+	(export-word runtime-library-ir runtime-library-layout 1 8)
+runtime-second-export-name: to string! copy/part at runtime-library-ir
+	(runtime-library-layout/7
+		+ (export-word runtime-library-ir runtime-library-layout 2 4) + 1)
+	(export-word runtime-library-ir runtime-library-layout 2 8)
+runtime-third-export-name: to string! copy/part at runtime-library-ir
+	(runtime-library-layout/7
+		+ (export-word runtime-library-ir runtime-library-layout 3 4) + 1)
+	(export-word runtime-library-ir runtime-library-layout 3 8)
+assert all [
+	(word-at runtime-library-ir 32) = 3
+	(function-word runtime-library-ir runtime-library-layout runtime-boot-id 12) = 578
+	(function-word runtime-library-ir runtime-library-layout runtime-helper-id 12) = 578
+	(export-word runtime-library-ir runtime-library-layout 1 0) = runtime-boot-id
+	(export-word runtime-library-ir runtime-library-layout 2 0) < 0
+	(export-word runtime-library-ir runtime-library-layout 3 0) = runtime-helper-id
+	runtime-first-export-name = "red/boot"
+	runtime-second-export-name = "red/state"
+	runtime-third-export-name = "helper"
+	frontend/runtime-functions = [red/boot exec/helper]
+	block? select frontend/runtime-specs (to word! "red>boot")
+	block? select frontend/runtime-specs (to word! "exec>nested>hidden")
+]["runtime exports did not use ordinary library resolution and the private Red ABI"]
+
+red-compiler-process-typecheck: func [spec [word! block!]][none]
+red-compiler-expand-call: func [body [block!] global? [logic!]][copy []]
+empty-directive-ir: frontend/compile/runtime load {
+	Red/System []
+	answer: func [return: [integer!] /local value [integer!]][
+		#typecheck answer
+		#call []
+		value: 42
+		value
+	]
+} 'library [answer "answer"]
+assert binary? empty-directive-ir [
+	"empty statement directive lowering failed: " mold frontend/last-error
+]
+
+runtime-variadic-ir: frontend/compile/runtime load {
+	Red/System []
+	pack: func [
+		[variadic]
+		count [integer!]
+		list [int-ptr!]
+		return: [integer!]
+	][count]
+	call-pack: func [return: [integer!]][pack [11 22]]
+} 'library [pack "pack"]
+assert binary? runtime-variadic-ir [
+	"runtime variadic export failed: " mold frontend/last-error
+]
+runtime-variadic-layout: layout-of runtime-variadic-ir
+runtime-pack-id: select frontend/function-ids 'pack
+assert (function-word runtime-variadic-ir runtime-variadic-layout runtime-pack-id 12) = 586
+	"runtime variadic export lost its packed private ABI"
+
+assert none? frontend/compile/runtime load {
+	Red/System []
+	answer: func [return: [integer!]][1]
+} 'glue [answer "answer"] "runtime exports were accepted by a non-library module"
+assert frontend/last-error/code = frontend/ERROR-KIND
+	"invalid runtime module kind reported the wrong error class"
+
 assert none? compile-text {
 	Red/System []
 	answer: func [return: [integer!]][1]
@@ -2567,6 +3033,94 @@ assert none? compile-text {
 } 'user "pointer! accepted a pointee forbidden by the specification"
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"invalid pointer pointee reported the wrong error class"
+
+c-string-pointer-ir: compile-text {
+	Red/System []
+	identity: func [
+		value [pointer! [c-string!]]
+		return: [pointer! [c-string!]]
+	][value]
+} 'user
+assert binary? c-string-pointer-ir [
+	"pointer! [c-string!] failed: " mold frontend/last-error
+]
+c-string-pointer-layout: layout-of c-string-pointer-ir
+assert all [
+	(type-word c-string-pointer-ir c-string-pointer-layout 1 0) = -6
+	(type-word c-string-pointer-ir c-string-pointer-layout 1 4) = -13
+]["pointer! [c-string!] did not retain its one-byte logical pointee"]
+
+constant-array-ir: compile-text {
+	Red/System []
+	#enum flags! [first-flag: 1 second-flag: 2]
+	values: [(first-flag or second-flag) (second-flag + first-flag * 4)]
+	read: func [return: [integer!]][values/1]
+} 'user
+assert binary? constant-array-ir [
+	"constant expressions in literal arrays failed: " mold frontend/last-error
+]
+constant-array-layout: layout-of constant-array-ir
+assert all [
+	(initializer-word constant-array-ir constant-array-layout 1 4) = 3
+	(initializer-word constant-array-ir constant-array-layout 2 4) = 12
+]["literal array constants did not follow left-to-right Red/System evaluation"]
+
+u16-ir: compile-text {
+	Red/System []
+	wide: func [return: [c-string!]][#u16 "A😀"]
+} 'user
+assert binary? u16-ir ["#u16 lowering failed: " mold frontend/last-error]
+u16-layout: layout-of u16-ir
+assert all [
+	(function-word u16-ir u16-layout 1 8) = -13
+	not none? find u16-ir #{41003DD800DE0000}
+]["#u16 did not retain c-string! semantics over terminated UTF-16LE data"]
+
+assert none? compile-text {
+	Red/System []
+	bad: func [return: [c-string!]][#u16 1]
+} 'user "#u16 accepted a non-string argument"
+assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
+	"invalid #u16 argument reported the wrong error class"
+
+build-date-source: [
+	Red/System []
+	build-stamp: func [return: [c-string!]][#build-date]
+]
+build-date-ir: frontend/compile build-date-source 'user
+assert binary? build-date-ir [
+	"#build-date lowering failed: " mold frontend/last-error
+]
+build-date-text: build-date-source/6/1
+assert all [
+	string? build-date-text
+	not empty? build-date-text
+	not none? find build-date-ir to binary! build-date-text
+]["#build-date was not lowered to the current UTC timestamp string"]
+
+script-marker-ir: compile-text {
+	Red/System []
+	#script %outer.reds
+	marked: func [return: [integer!]][
+		(#script %inner.reds 40 #script %expression.reds + 2 #script in-memory)
+	]
+	#script in-memory
+} 'user
+assert binary? script-marker-ir [
+	"#script source markers failed: " mold frontend/last-error
+]
+assert script-marker-ir = compile-text {
+	Red/System []
+	marked: func [return: [integer!]][40 + 2]
+} 'user "#script source markers changed the generated IR"
+
+assert none? compile-text {
+	Red/System []
+	#script 1
+	marked: func [][]
+} 'user "#script accepted a non-file source"
+assert frontend/last-error/code = frontend/ERROR-ARGUMENTS
+	"invalid #script source reported the wrong error class"
 
 assert none? compile-text {
 	Red/System []
@@ -2750,6 +3304,40 @@ assert all [
 	subroutine-main > subroutine-entry
 	subroutine-call-target = subroutine-entry
 ]["subroutine body was not emitted once with direct calls and a separate main path"]
+
+subroutine-optional-result-ir: compile-text {
+	Red/System []
+	stop: func [][]
+	fn: func [
+		flag [logic!]
+		/local result [integer!] step [subroutine!]
+	][
+		result: 0
+		step: [
+			case [
+				flag [result: 1]
+				true [stop]
+			]
+		]
+		step
+	]
+} 'user
+assert binary? subroutine-optional-result-ir [
+	"optional subroutine result inference failed: " mold frontend/last-error
+]
+subroutine-optional-layout: layout-of subroutine-optional-result-ir
+subroutine-optional-call: 0
+repeat id function-word subroutine-optional-result-ir subroutine-optional-layout 2 32 [
+	if (function-instruction-word subroutine-optional-result-ir
+		subroutine-optional-layout 2 id 0) = 28 [
+		subroutine-optional-call: id
+	]
+]
+assert all [
+	subroutine-optional-call > 0
+	(function-instruction-word subroutine-optional-result-ir
+		subroutine-optional-layout 2 subroutine-optional-call 8) = 0
+]["mixed value/void subroutine tail did not infer a void result"]
 
 assert none? compile-text {
 	Red/System []
@@ -3392,10 +3980,36 @@ assert binary? catch-function-ir [
 ]
 catch-function-layout: layout-of catch-function-ir
 assert all [
-	(function-word catch-function-ir catch-function-layout 2 12) = 256
+	((function-word catch-function-ir catch-function-layout 2 12) and 256) = 256
+	((function-word catch-function-ir catch-function-layout 2 12) and 1024) = 1024
 	(word-at catch-function-ir 24) = 1
 	not none? find ops-of catch-function-ir catch-function-layout 26
 ]["the catch function attribute did not remain a direct function flag"]
+
+no-return-ir: compile-text {
+	Red/System []
+	choose: func [
+		flag [logic!]
+		return: [integer!]
+	][
+		either flag [1][abort]
+	]
+	abort: func [][raiser]
+	raiser: func [][throw 7]
+	finish: func [][exit]
+	answer: func [return: [integer!]][return 1]
+} 'user
+assert binary? no-return-ir [
+	"no-return dependency lowering failed: " mold frontend/last-error
+]
+no-return-layout: layout-of no-return-ir
+assert all [
+	((function-word no-return-ir no-return-layout 1 12) and 1024) = 0
+	((function-word no-return-ir no-return-layout 2 12) and 1024) = 1024
+	((function-word no-return-ir no-return-layout 3 12) and 1024) = 1024
+	((function-word no-return-ir no-return-layout 4 12) and 1024) = 0
+	((function-word no-return-ir no-return-layout 5 12) and 1024) = 0
+]["no-return inference did not distinguish unwinding from normal returns"]
 
 nested-catch-ir: compile-text {
 	Red/System []

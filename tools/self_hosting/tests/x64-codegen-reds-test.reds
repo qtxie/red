@@ -96,6 +96,7 @@ import-variadic-ir: allocate 260
 null-function-ir: allocate 196
 tagged-ir: allocate 388
 array-ir: allocate 260
+array-compare-ir: allocate 228
 branch-ir: allocate 260
 merge-ir: allocate 260
 selection-ir: allocate 260
@@ -107,6 +108,7 @@ system-ir: allocate 260
 atomic-ir: allocate 276
 overflow-ir: allocate 276
 exception-ir: allocate 260
+no-return-ir: allocate 148
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -115,10 +117,10 @@ if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
 	null? aggregate-ir null? abi-ir null? indirect-ir null? variadic-ir
 	null? import-variadic-ir null? null-function-ir
-	null? tagged-ir null? array-ir null? branch-ir
+	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
-	null? exception-ir
+	null? exception-ir null? no-return-ir
 ][quit 1]
 
 ; USER module: fn: func [][]
@@ -1106,6 +1108,55 @@ if (x64-codegen/generate array-ir 188 output 1024 0) <> x64-codegen/INVALID_IR [
 ]
 put array-ir 116 1
 
+; Literal arrays compare as pointers only when their element types match.
+put array-compare-ir 0 1
+put array-compare-ir 4 0
+put array-compare-ir 8 2
+put array-compare-ir 12 0
+put array-compare-ir 16 1
+put array-compare-ir 20 5
+put array-compare-ir 24 0
+put array-compare-ir 28 0
+put array-compare-ir 32 0
+
+put array-compare-ir 36 -7
+put array-compare-ir 40 -5
+put array-compare-ir 44 4
+put array-compare-ir 48 0
+put array-compare-ir 52 3
+
+put array-compare-ir 56 -6
+put array-compare-ir 60 -5
+put array-compare-ir 64 0
+put array-compare-ir 68 0
+put array-compare-ir 72 0
+
+put array-compare-ir 76 0
+put array-compare-ir 80 2
+put array-compare-ir 84 -11
+put array-compare-ir 88 0
+put array-compare-ir 92 0
+put array-compare-ir 96 0
+put array-compare-ir 100 0
+put array-compare-ir 104 0
+put array-compare-ir 108 5
+
+put-instruction array-compare-ir 112 1 1 0 0
+put-instruction array-compare-ir 128 13 0 0 0
+put-instruction array-compare-ir 144 8 2 0 0
+put-instruction array-compare-ir 160 15 15 0 0
+put-instruction array-compare-ir 176 11 -11 0 0
+array-compare-ir/193: as byte! 66h
+array-compare-ir/194: as byte! 6Eh
+
+size: x64-codegen/generate array-compare-ir 194 output 1024 0
+if any [size <= 0 not execute-first? output 0][failures: failures + 1]
+put array-compare-ir 60 -15
+if (x64-codegen/generate array-compare-ir 194 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
 ; Trimming the true edge and dropping the false value reconciles a
 ; value-less EITHER without emitting a native move.
 put merge-ir 124 7
@@ -1552,6 +1603,51 @@ if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_
 	failures: failures + 1
 ]
 
+; A direct call to a concrete no-return function terminates the caller CFG.
+put no-return-ir 0 1
+put no-return-ir 4 0
+put no-return-ir 8 0
+put no-return-ir 12 0
+put no-return-ir 16 2
+put no-return-ir 20 2
+put no-return-ir 24 0
+put no-return-ir 28 0
+put no-return-ir 32 0
+
+put no-return-ir 36 0
+put no-return-ir 40 2
+put no-return-ir 44 0
+put no-return-ir 48 0
+put no-return-ir 52 0
+put no-return-ir 56 0
+put no-return-ir 60 0
+put no-return-ir 64 0
+put no-return-ir 68 1
+
+put no-return-ir 72 2
+put no-return-ir 76 2
+put no-return-ir 80 0
+put no-return-ir 84 x64-codegen/NO_RETURN
+put no-return-ir 88 0
+put no-return-ir 92 0
+put no-return-ir 96 0
+put no-return-ir 100 0
+put no-return-ir 104 1
+
+put-instruction no-return-ir 108 7 2 0 0
+put-instruction no-return-ir 124 19 1 0 0
+no-return-ir/141: as byte! 66h
+no-return-ir/142: as byte! 31h
+no-return-ir/143: as byte! 66h
+no-return-ir/144: as byte! 32h
+
+size: x64-codegen/generate no-return-ir 144 output 1024 0
+if size <= 0 [failures: failures + 1]
+put no-return-ir 84 0
+if (x64-codegen/generate no-return-ir 144 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
 free output
 free void-ir
 free local-ir
@@ -1564,6 +1660,7 @@ free variadic-ir
 free null-function-ir
 free tagged-ir
 free array-ir
+free array-compare-ir
 free branch-ir
 free merge-ir
 free selection-ir
@@ -1575,6 +1672,7 @@ free system-ir
 free atomic-ir
 free overflow-ir
 free exception-ir
+free no-return-ir
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

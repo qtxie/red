@@ -5,6 +5,7 @@ Red [
 
 unless value? 'int-to-bin [do %int-to-bin.red]
 unless value? 'ieee-754 [do %ieee-754.red]
+unless value? 'unicode [do %unicode.red]
 
 compiler-rsir-frontend: context [
 	DEFAULT-MAX-BYTES: 16777216
@@ -22,6 +23,9 @@ compiler-rsir-frontend: context [
 	last-error: none
 	module-kind: 0
 	debug?: false
+	runtime-library?: false
+	runtime-functions: make block! 512
+	runtime-specs: make map! 1024
 	functions: make block! (10 * 256)
 	function-ids: make map! 256
 	call-ids: make map! 512
@@ -48,6 +52,9 @@ compiler-rsir-frontend: context [
 	resolved-globals: make map! 64
 	resolved-literals: make map! 32
 	resolved-protected: make map! 16
+	resolved-value-kinds: make map! 64
+	resolved-value-ids: make map! 64
+	resolved-value-id: none
 	imports: make block! (10 * 64)
 	import-ids: make map! 256
 	libraries: make map! 32
@@ -64,6 +71,8 @@ compiler-rsir-frontend: context [
 	split-module?: false
 	user-code?: false
 	function-code: make binary! (1024 * 1024)
+	function-states: make block! 256
+	no-return-functions: make map! 64
 	initializers: make binary! (16 * 256)
 	switches: make binary! (12 * 128)
 	strings: make binary! (2 * 1024)
@@ -105,6 +114,7 @@ compiler-rsir-frontend: context [
 	objc-flag: 128
 	catch-flag: 256
 	red-internal-flag: 512
+	no-return-flag: 1024
 	call-shape-flags: return-value-flag + variadic-flag + typed-flag
 		+ custom-flag + objc-flag
 	inline-flag: 1
@@ -193,6 +203,7 @@ compiler-rsir-frontend: context [
 	statement-value: 0
 	expression-value: 1
 	tail-value: 2
+	inferred-value: 3
 
 	last-type: 0
 	last-flags: 0
@@ -202,8 +213,10 @@ compiler-rsir-frontend: context [
 	function-return: 0
 	function-flags: 0
 	function-active?: false
+	function-returns?: false
 	function-scope: none
 	function-uses: none
+	active-function: none
 	loops: make block! 8
 	overflows: make block! 8
 	catches: make block! 8
@@ -243,6 +256,32 @@ compiler-rsir-frontend: context [
 			change/part at output offset int-to-bin/to-bin32 value 4
 			offset: offset + 4
 		]
+	]
+
+	read-i32: func [data [binary!] offset [integer!] return: [integer!] /local high][
+		high: to integer! pick data (offset + 3)
+		(to integer! pick data offset)
+			+ ((to integer! pick data (offset + 1)) * 256)
+			+ ((to integer! pick data (offset + 2)) * 65536)
+			+ ((either high > 127 [high - 256][high]) * 16777216)
+	]
+
+	retag-null-literal: func [
+		instructions [binary!]
+		target [integer!]
+		end [integer! none!]
+		return: [logic!]
+		/local start
+	][
+		end: any [end index? tail instructions]
+		start: end - 16
+		unless all [
+			start > 0
+			(read-i32 instructions start) = literal-op
+			(read-i32 instructions (start + 4)) = -14
+		][return false]
+		change/part at instructions (start + 4) int-to-bin/to-bin32 target 4
+		true
 	]
 
 	instruction-here: func [output [binary!] return: [integer!]][
@@ -302,6 +341,24 @@ compiler-rsir-frontend: context [
 		append/only global-data make binary! 0
 		append global-data ref
 		append global-data flags
+		append global-data 0
+		append global-data 0
+		global-count: id
+		id
+	]
+
+	add-global: func [
+		key [word! string!]
+		return: [integer!]
+		/local id spelling
+	][
+		spelling: form key
+		unless valid-name? spelling [fail ERROR-NAME "invalid RSIR global name"]
+		id: global-count + 1
+		put globals key id
+		append/only global-data to binary! spelling
+		append global-data none
+		append global-data 0
 		append global-data 0
 		append global-data 0
 		global-count: id
@@ -482,6 +539,88 @@ compiler-rsir-frontend: context [
 		clear resolved-globals
 		clear resolved-literals
 		clear resolved-protected
+		clear resolved-value-kinds
+		clear resolved-value-ids
+	]
+
+	exact-value-kind: func [
+		key [word! string!]
+		return: [integer!]
+		/local id record
+	][
+		if find literal-values key [
+			resolved-value-id: select literal-values key
+			return 1
+		]
+		if id: select call-ids key [resolved-value-id: id return 2]
+		if id: select globals key [resolved-value-id: id return 3]
+		if id: select import-ids key [
+			record: skip imports ((id - 1) * 10)
+			if record/5 = 'variable [resolved-value-id: id return 4]
+		]
+		resolved-value-id: none
+		0
+	]
+
+	resolve-value-kind: func [
+		value [word! path!]
+		scope uses [block!]
+		return: [integer!]
+		/local cache-key depth key kind imported rank best best-kind best-id root?
+	][
+		cache-key: either word? value [value][form value]
+		if all [
+			function-active?
+			same? scope function-scope
+			same? uses function-uses
+			find resolved-value-kinds cache-key
+		][
+			kind: select resolved-value-kinds cache-key
+			resolved-value-id: select resolved-value-ids cache-key
+			return kind
+		]
+		kind: 0
+		root?: root-qualified? value
+		if root? [
+			value: root-name value
+			kind: exact-value-kind qualified copy [] value
+		]
+		if all [kind = 0 not root?][
+			depth: length? scope
+			while [depth > 0][
+				key: qualified copy/part scope depth value
+				kind: exact-value-kind key
+				if kind <> 0 [break]
+				depth: depth - 1
+			]
+		]
+		if all [kind = 0 not root?][
+			best: -1
+			best-kind: 0
+			best-id: none
+			foreach imported uses [
+				key: qualified imported value
+				kind: exact-value-kind key
+				if kind <> 0 [
+					rank: context-rank imported
+					if rank > best [
+						best: rank
+						best-kind: kind
+						best-id: resolved-value-id
+					]
+				]
+			]
+			kind: best-kind
+			resolved-value-id: best-id
+		]
+		if all [kind = 0 not root?][
+			kind: exact-value-kind qualified copy [] value
+		]
+		if all [function-active? same? scope function-scope same? uses function-uses][
+			put resolved-value-kinds cache-key kind
+			if kind <> 0 [put resolved-value-ids cache-key resolved-value-id]
+		]
+		kind
 	]
 
 	name-cache: func [
@@ -586,6 +725,43 @@ compiler-rsir-frontend: context [
 		result
 	]
 
+	context-member-key: func [
+		value [path!]
+		scope uses [block!]
+		return: [word! string! none!]
+		/local parts count parent member child
+	][
+		parts: to block! value
+		count: length? parts
+		if count < 2 [return none]
+		member: last parts
+		unless word? member [return none]
+		parent: either count = 2 [parts/1][to path! copy/part parts (count - 1)]
+		unless any [word? parent path? parent][return none]
+		child: resolve-context parent scope uses
+		if block? child [qualified child member]
+	]
+
+	add-context-global: func [
+		value [path!]
+		scope uses [block!]
+		return: [integer! none!]
+		/local key
+	][
+		unless key: context-member-key value scope uses [return none]
+		if any [
+			select globals key
+			select function-ids key
+			select import-ids key
+			select protected key
+			select literal-values key
+			select contexts key
+			select type-ids key
+		][return none]
+		clear-resolved-names
+		add-global key
+	]
+
 	used-value?: func [
 		value [word! path!]
 		uses [block!]
@@ -612,7 +788,7 @@ compiler-rsir-frontend: context [
 
 	intern-pointer: func [pointee [integer!] /local id kind][
 		kind: ref-kind pointee
-		unless find [i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 pointer] kind [
+		unless find [i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 pointer c-string] kind [
 			fail ERROR-UNSUPPORTED "pointer pointee type is unsupported"
 		]
 		if id: select pointer-types pointee [return id]
@@ -1088,7 +1264,7 @@ compiler-rsir-frontend: context [
 		if all [
 			flags = inline-flag
 			find [struct union] kind
-		][return intern-pointer -5]
+		][return base]
 		if flags <> 0 [return none]
 		case [
 			integer-kind? kind [intern-pointer base]
@@ -1585,24 +1761,102 @@ compiler-rsir-frontend: context [
 		id
 	]
 
-	lower-functions: func [/local record body count][
+	collect-call-dependencies: func [
+		body scope uses [block!]
+		local-names seen [map!]
+		dependencies [block!]
+		/local value base target
+	][
+		foreach value body [
+			case [
+				any [word? value path? value][
+					base: either word? value [value][value/1]
+					if all [word? base not select local-names base][
+						target: resolve-name value scope uses call-ids
+						if all [
+							integer? target
+							target > 0
+							not select seen target
+						][
+							put seen target true
+							append dependencies target
+						]
+					]
+				]
+				any [block? value paren? value][
+					collect-call-dependencies to block! value scope uses
+						local-names seen dependencies
+				]
+				true [0]
+			]
+		]
+	]
+
+	collect-local-names: func [
+		records [block!]
+		names [map!]
+		/local record
+	][
+		record: records
+		while [not tail? record][
+			if word? record/1 [put names record/1 true]
+			record: skip record 3
+		]
+	]
+
+	lower-function: func [
+		id [integer!]
+		/local record body code count dependencies seen local-names target returns?
+	][
+		if (pick function-states id) <> 0 [exit]
+		poke function-states id 1
+		record: skip functions ((id - 1) * 10)
+		body: record/3
+		either binary? body [
+			unless ((length? body) // 16) = 0 [
+				fail ERROR-UNSUPPORTED "invalid module instruction stream"
+			]
+			record/10: (length? body) / 16
+		][
+			dependencies: make block! 16
+			seen: make map! 16
+			local-names: make map! 16
+			collect-local-names record/7 local-names
+			collect-local-names record/8 local-names
+			collect-call-dependencies body record/4 record/5
+				local-names seen dependencies
+			foreach target dependencies [
+				if (pick function-states target) = 0 [lower-function target]
+			]
+
+			active-function: record/1
+			code: make binary! ((length? body) * 16)
+			count: stack-body record/6 body record/4 record/5 code
+				record/7 record/8 record/9
+			returns?: function-returns?
+			record/3: code
+			record/10: count
+			unless returns? [put no-return-functions id true]
+		]
+		poke function-states id 2
+	]
+
+	lower-functions: func [/local id record][
 		clear function-code
+		clear function-states
+		clear no-return-functions
+		append/dup function-states 0 function-count
+		id: 1
+		while [id <= function-count][
+			lower-function id
+			id: id + 1
+		]
 		record: functions
 		while [not tail? record][
-			body: record/3
-			count: either binary? body [
-				unless ((length? body) // 16) = 0 [
-					fail ERROR-UNSUPPORTED "invalid module instruction stream"
-				]
-				append function-code body
-				(length? body) / 16
-			][
-				stack-body record/6 body record/4 record/5 function-code
-					record/7 record/8 record/9
-			]
-			record/10: count
+			append function-code record/3
 			record: skip record 10
 		]
+		active-function: none
 	]
 
 	scan-enum: func [
@@ -1619,7 +1873,7 @@ compiler-rsir-frontend: context [
 		append/only types values
 		append/only types copy scope
 		append/only types copy []
-		append canonical-refs id
+		append canonical-refs -5
 		append ref-kinds 'i32
 		type-count: id
 		value: 0
@@ -1796,6 +2050,63 @@ compiler-rsir-frontend: context [
 		next cursor
 	]
 
+	add-runtime-export: func [
+		symbol [word! path!]
+		external [string!]
+	][
+		unless valid-name? external [
+			fail ERROR-NAME "invalid external runtime export name"
+		]
+		append/only exports symbol
+		append/only exports copy []
+		append/only exports copy []
+		append exports 2
+		append/only exports to binary! external
+	]
+
+	add-runtime-exports: func [
+		definitions [block!]
+		/local position symbol external
+	][
+		unless zero? ((length? definitions) // 2) [
+			fail ERROR-ARGUMENTS "runtime exports require symbol/name pairs"
+		]
+		position: definitions
+		while [not tail? position][
+			symbol: position/1
+			external: position/2
+			unless any [word? symbol path? symbol][
+				fail ERROR-NAME ["invalid runtime export " mold symbol]
+			]
+			unless string? external [
+				fail ERROR-NAME ["invalid external runtime export " mold external]
+			]
+			add-runtime-export symbol external
+			position: skip position 2
+		]
+	]
+
+	prepare-runtime-functions: func [
+		/local record spelling key symbol external
+	][
+		record: functions
+		while [not tail? record][
+			spelling: to string! copy record/1
+			key: to word! spelling
+			put runtime-specs key copy/deep record/2
+			if all [
+				find/match spelling "exec>"
+				not find skip spelling 5 ">"
+			][
+				external: copy skip spelling 5
+				replace/all spelling ">" "/"
+				symbol: transcode/one spelling
+				add-runtime-export symbol external
+			]
+			record: skip record 10
+		]
+	]
+
 	add-library-callbacks: func [/local declarations code name spec][
 		declarations: [
 			on-load        [handle [pointer! [integer!]]]
@@ -1830,6 +2141,12 @@ compiler-rsir-frontend: context [
 					fail ERROR-UNSUPPORTED "a catch function cannot be exported"
 				]
 				record/9: (((flags and -4) or convention) or callback-flag)
+				if runtime-library? [
+					record/9: record/9 or red-internal-flag
+					unless find/only runtime-functions symbol [
+						append/only runtime-functions symbol
+					]
+				]
 				internal: record/1
 			][
 				id: resolve-name symbol scope uses globals
@@ -1851,6 +2168,29 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	skip-script: func [
+		position [block!]
+		return: [block!]
+	][
+		while [
+			all [
+				not tail? position
+				issue? position/1
+				position/1 = #script
+			]
+		][
+			unless (length? position) >= 2 [
+				fail ERROR-ARGUMENTS "#script is missing its source"
+			]
+			unless any [
+				file? position/2
+				position/2 = 'in-memory
+			][fail ERROR-ARGUMENTS "#script requires a file source"]
+			position: skip position 2
+		]
+		position
+	]
+
 	scan-block: func [
 		values scope uses [block!]
 		with-count [integer!]
@@ -1867,9 +2207,7 @@ compiler-rsir-frontend: context [
 				all [
 					issue? position/1
 					position/1 = #script
-					(length? position) >= 2
-					file? position/2
-				][position: skip position 2]
+				][position: skip-script position]
 				all [issue? position/1 position/1 = #user-code][
 					position: next position
 				]
@@ -2060,20 +2398,7 @@ compiler-rsir-frontend: context [
 						select contexts key
 					][fail ERROR-DUPLICATE ["duplicate protected value " mold key]]
 					protected-id: 0
-					unless protected-scalar? position/3 [
-						global-count: global-count + 1
-						protected-id: global-count
-						put globals key global-count
-						spelling: form key
-						unless valid-name? spelling [
-							fail ERROR-NAME "invalid RSIR global name"
-						]
-						append/only global-data to binary! spelling
-						append global-data none
-						append global-data 0
-						append global-data 0
-						append global-data 0
-					]
+					unless protected-scalar? position/3 [protected-id: add-global key]
 					put protected key protected-id
 					position: next position
 				]
@@ -2094,17 +2419,7 @@ compiler-rsir-frontend: context [
 						][
 							fail ERROR-DUPLICATE ["duplicate global " mold key]
 						]
-						global-count: global-count + 1
-						put globals key global-count
-						spelling: form key
-						unless valid-name? spelling [
-							fail ERROR-NAME "invalid RSIR global name"
-						]
-						append/only global-data to binary! spelling
-						append global-data none
-						append global-data 0
-						append global-data 0
-						append global-data 0
+						add-global key
 					]
 					position: next position
 				]
@@ -2113,7 +2428,11 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	compile-source: func [source [block!] /local header body][
+	compile-source: func [
+		source [block!]
+		runtime-exports [block! none!]
+		/local header body
+	][
 		unless all [not tail? source source/1 = 'Red/System] [
 			fail ERROR-ARGUMENTS "source is not a Red/System program"
 		]
@@ -2127,6 +2446,7 @@ compiler-rsir-frontend: context [
 
 		body: skip source 2
 		scan-block body copy [] copy [] 0
+		if runtime-exports [add-runtime-exports runtime-exports]
 		if module-kind = 4 [
 			if empty? exports [
 				fail ERROR-CONTEXT "a shared library must export at least one symbol"
@@ -2135,6 +2455,7 @@ compiler-rsir-frontend: context [
 		]
 		prepare-types
 		prepare-functions
+		if runtime-exports [prepare-runtime-functions]
 		prepare-imports
 		prepare-exports
 		split-module?: to logic! all [module-kind = 4 find body #user-code]
@@ -2387,6 +2708,7 @@ compiler-rsir-frontend: context [
 			params: position/7
 			locals: position/8
 			flags: position/9
+			if select no-return-functions id [flags: flags or no-return-flag]
 			param-count: (length? params) / 3
 			local-count: storage-local-count locals
 			first-local: first-param + param-count
@@ -2477,6 +2799,35 @@ compiler-rsir-frontend: context [
 	][
 		id: resolve-name value scope uses call-ids
 		either integer? id [id][none]
+	]
+
+	stack-call-address: func [
+		value [word! path!]
+		scope uses [block!]
+		instructions [binary!]
+		return: [logic!]
+		/local base target ref
+	][
+		base: either path? value [value/1][value]
+		if all [
+			word? base
+			not root-qualified? value
+			block? stack-storage-info base
+		][return false]
+		unless (resolve-value-kind value scope uses) = 2 [return false]
+		target: resolved-value-id
+		ref: call-signature-ref target
+		emit instructions reduce [
+			address-op either target > 0 [function-address][import-address]
+			either target > 0 [target][0 - target]
+			ref
+		]
+		emit instructions reduce [reference-op ref 0 0]
+		last-type: ref
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		true
 	]
 
 	array-pointer-compatible?: func [
@@ -2575,6 +2926,32 @@ compiler-rsir-frontend: context [
 		not none? find [i8 byte u8 i16 u16 i32 u32 i64 u64] kind
 	]
 
+	address-integer-kind?: func [kind [word! none!] return: [logic!]][
+		not none? find [i32 u32 i64 u64] kind
+	]
+
+	function-cast-compatible?: func [
+		source target [word! none!]
+		return: [logic!]
+	][
+		case [
+			source = 'function [
+				any [
+					address-integer-kind? target
+					not none? find [pointer function] target
+				]
+			]
+			target = 'function [
+				any [
+					address-integer-kind? source
+					not none? find [c-string pointer struct union array function]
+						source
+				]
+			]
+			true [true]
+		]
+	]
+
 	integer-code: func [ref [integer!] return: [integer!] /local kind][
 		if all [ref < 0 ref >= -8][return negate ref]
 		kind: ref-kind ref
@@ -2641,6 +3018,24 @@ compiler-rsir-frontend: context [
 		return: [logic!]
 		/local source-kind target-kind
 	][
+		target-kind: ref-kind expected
+		if all [
+			expected-flags = 0
+			last-flags = 0
+			last-type = -14
+			any [
+				reference-kind? target-kind
+				integer-kind? target-kind
+				target-kind = 'logic
+				float-kind? target-kind
+			]
+			retag-null-literal instructions expected either before [offset][none]
+		][
+			last-type: expected
+			last-flags: 0
+			last-float-literal?: false
+			return true
+		]
 		if all [
 			expected-flags = last-flags
 			stack-type-compatible? expected last-type
@@ -2662,7 +3057,6 @@ compiler-rsir-frontend: context [
 			return true
 		]
 		source-kind: ref-kind last-type
-		target-kind: ref-kind expected
 		if all [
 			last-flags = 0
 			expected-flags <> 0
@@ -2839,6 +3233,14 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	null-literal?: func [value return: [logic!]][
+		while [paren? value][
+			unless (length? value) = 1 [return false]
+			value: value/1
+		]
+		value = 'null
+	]
+
 	protected-scalar?: func [value return: [logic!] /local wide][
 		case [
 			any [integer? value float? value char? value][true]
@@ -2986,6 +3388,72 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	constant-operation: func [
+		left operation right
+		return: [block! none!]
+		/local result
+	][
+		set/any 'result try [
+			switch operation [
+				1  [left + right]
+				2  [left - right]
+				3  [left * right]
+				4  [left / right]
+				5  [left % right]
+				6  [left // right]
+				7  [left << right]
+				8  [left >> right]
+				9  [left >>> right]
+				10 [left or right]
+				11 [left xor right]
+				12 [left and right]
+			]
+		]
+		either error? :result [none][reduce [:result]]
+	]
+
+	constant-operand: func [
+		value scope uses [block!]
+		return: [block! none!]
+		/local literal
+	][
+		case [
+			any [integer? value float? value char? value logic? value][reduce [value]]
+			all [word? value find [true false yes no] value][
+				reduce [not none? find [true yes] value]
+			]
+			value = 'null [reduce [0]]
+			any [word? value path? value][
+				literal: resolve-name value scope uses literal-values
+				either integer? literal [reduce [literal]][none]
+			]
+			paren? value [constant-expression value scope uses]
+			true [none]
+		]
+	]
+
+	constant-expression: func [
+		value [paren!]
+		scope uses [block!]
+		return: [block! none!]
+		/local position left right operation result
+	][
+		if empty? value [return none]
+		unless left: constant-operand value/1 scope uses [return none]
+		left: left/1
+		position: next value
+		while [not tail? position][
+			if (length? position) < 2 [return none]
+			operation: select binary-operations position/1
+			unless all [integer? operation operation <= 12][return none]
+			unless right: constant-operand position/2 scope uses [return none]
+			unless result: constant-operation left operation right/1 [return none]
+			left: result/1
+			position: skip position 2
+		]
+		reduce [left]
+	]
+
 	array-literal-info: func [
 		value [block! binary!]
 		scope uses [block!]
@@ -3009,6 +3477,10 @@ compiler-rsir-frontend: context [
 		width: 0
 		uniform?: true
 		foreach item value [
+			if paren? item [
+				info: constant-expression item scope uses
+				if block? info [item: info/1]
+			]
 			info: static-literal-info item scope uses protected?
 			unless block? info [
 				fail ERROR-UNSUPPORTED ["invalid literal array item " mold item]
@@ -3018,6 +3490,7 @@ compiler-rsir-frontend: context [
 				fail ERROR-UNSUPPORTED ["invalid literal array item " mold item]
 			]
 			if item-width > width [width: item-width]
+			if info/2 = address-initializer [info/5: info/1]
 			either element = 0 [
 				element: info/1
 			][
@@ -3110,9 +3583,14 @@ compiler-rsir-frontend: context [
 		unless all [left-flags = 0 right-flags = 0][return 0]
 		left-kind: ref-kind left
 		right-kind: ref-kind right
+		; Null stays polymorphic when it is the selection's first live type.
 		case [
-			all [left-kind = 'null reference-kind? right-kind][right]
+			all [left-kind = 'null reference-kind? right-kind][left]
 			all [right-kind = 'null reference-kind? left-kind][left]
+			all [
+				left-kind = right-kind
+				find [pointer struct union] left-kind
+			][left]
 			true [0]
 		]
 	]
@@ -3223,6 +3701,14 @@ compiler-rsir-frontend: context [
 						any [left-kind <> 'function operation <= 14]
 					]
 					all [
+						left-flags = 0
+						right-flags = 0
+						any [
+							array-pointer-compatible? left right
+							array-pointer-compatible? right left
+						]
+					]
+					all [
 						same-stack-type? left left-flags right right-flags
 						any [
 							float-kind? left-kind
@@ -3241,7 +3727,11 @@ compiler-rsir-frontend: context [
 		unless valid? [
 			fail ERROR-REFERENCE [
 				"incompatible binary operands for operation " operation ": "
-				left-kind "/" left-flags " and " right-kind "/" right-flags
+				type-label left left-flags " and " type-label right right-flags
+				any [
+					all [active-function rejoin [" in " to string! active-function]]
+					""
+				]
 			]
 		]
 
@@ -3499,6 +3989,32 @@ compiler-rsir-frontend: context [
 		skip position 3
 	]
 
+	stack-with: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local target body child next-uses stopped?
+	][
+		unless all [
+			(length? position) >= 3
+			any [word? position/2 path? position/2 block? position/2]
+			block? position/3
+		][fail ERROR-CONTEXT "WITH requires a context and body block"]
+		target: position/2
+		body: position/3
+		child: resolve-with target scope uses
+		next-uses: copy/deep uses
+		append next-uses child
+		stack-block body scope next-uses instructions params locals statement-value
+		stopped?: last-stopped?
+		last-type: 0
+		last-flags: 0
+		last-stopped?: stopped?
+		skip position 3
+	]
+
 	stack-subroutine: func [
 		position [block!]
 		name [word!]
@@ -3568,7 +4084,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local type-info target-ref target-flags target-kind source keep? value
 			literal-end bits next-position source-ref source-flags source-kind
-			source-literal? valid? address-source? id
+			source-literal? address-source? id
 	][
 		type-info: stack-read-type next position scope uses
 		target-ref: type-info/2
@@ -3625,10 +4141,15 @@ compiler-rsir-frontend: context [
 			any [word? source/1 path? source/1]
 			not any [get-word? source/1 get-path? source/1]
 		][
-			address-source?: stack-address source/1 scope uses instructions params locals
-			if address-source? [
-				emit instructions reduce [load-op 0 0 0]
+			address-source?: stack-call-address source/1 scope uses instructions
+			either address-source? [
 				next-position: next source
+			][
+				address-source?: stack-address source/1 scope uses instructions params locals
+				if address-source? [
+					emit instructions reduce [load-op 0 0 0]
+					next-position: next source
+				]
 			]
 		]
 		unless address-source? [
@@ -3639,20 +4160,14 @@ compiler-rsir-frontend: context [
 		source-flags: last-flags
 		source-kind: ref-kind source-ref
 		source-literal?: last-float-literal?
-		if source-ref = -14 [
+		if all [source-ref = -14 null-literal? value][
 			fail ERROR-REFERENCE "null cannot be explicitly cast"
 		]
-		if any [source-kind = 'function target-kind = 'function][
-			valid?: either source-kind = 'function [
-				not none? find [i32 pointer function] target-kind
-			][
-				any [
-					source-kind = 'i32
-					not none? find [c-string pointer struct union array function]
-						source-kind
-				]
+		unless function-cast-compatible? source-kind target-kind [
+			fail ERROR-REFERENCE [
+				"invalid function pointer cast from" source-kind "to" target-kind
+				"in" any [active-function "module body"]
 			]
-			unless valid? [fail ERROR-REFERENCE "invalid function pointer cast"]
 		]
 		if all [
 			any [float-kind? ref-kind source-ref float-kind? target-kind]
@@ -3672,6 +4187,7 @@ compiler-rsir-frontend: context [
 					(ref-kind source-ref) <> 'function
 					(canonical-ref target-ref) <> -12
 					(canonical-ref source-ref) <> -12
+					(canonical-ref source-ref) <> -14
 				]
 			]
 		][
@@ -3901,8 +4417,12 @@ compiler-rsir-frontend: context [
 		last-type: return-ref
 		last-flags: 0
 		last-float-literal?: false
-		last-stopped?: false
+		last-stopped?: direct-no-return? target
 		position-after
+	]
+
+	direct-no-return?: func [target [integer!] return: [logic!]][
+		to logic! all [target > 0 select no-return-functions target]
 	]
 
 	stack-call: func [
@@ -3968,6 +4488,8 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [call-op target count return-ref]
 		last-type: return-ref
 		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: direct-no-return? target
 		position-after
 	]
 
@@ -4015,7 +4537,7 @@ compiler-rsir-frontend: context [
 		last-type: return-ref
 		last-flags: 0
 		last-float-literal?: false
-		last-stopped?: false
+		last-stopped?: direct-no-return? target
 		position-after
 	]
 
@@ -4125,6 +4647,8 @@ compiler-rsir-frontend: context [
 		]
 		last-type: return-ref
 		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: direct-no-return? target
 		position-after
 	]
 
@@ -4206,6 +4730,8 @@ compiler-rsir-frontend: context [
 		]
 		last-type: return-ref
 		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: direct-no-return? target
 		position-after
 	]
 
@@ -4255,7 +4781,9 @@ compiler-rsir-frontend: context [
 			expected-flags: parameter/3
 			unless coerce-stack expected expected-flags instructions true [
 				fail ERROR-REFERENCE [
-					"argument type does not match function value " mold value
+					"argument " mold parameter/1 " expects "
+					type-label expected expected-flags ", got "
+					type-label last-type last-flags " in " mold value
 				]
 			]
 			count: count + 1
@@ -4264,6 +4792,8 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [call-op 0 count signature-ref]
 		last-type: return-ref
 		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
 		position-after
 	]
 
@@ -4296,7 +4826,13 @@ compiler-rsir-frontend: context [
 					value-context
 			]
 			stopped?: last-stopped?
-			keep?: all [value-context = tail-value tail? next-position]
+			keep?: all [
+				tail? next-position
+				any [
+					value-context = tail-value
+					value-context = inferred-value
+				]
+			]
 			unless keep? [
 				if last-type <> 0 [emit instructions reduce [drop-op 0 0 0]]
 				last-type: 0
@@ -4423,14 +4959,35 @@ compiler-rsir-frontend: context [
 		position scope uses [block!]
 		instructions [binary!]
 		params locals [block!]
+		value-context [integer!]
 		return: [block!]
-		/local after before patch
+		/local after before patch never?
 	][
+		never?: all [
+			any [
+				value-context = tail-value
+				value-context = inferred-value
+			]
+			(length? position) >= 2
+			any [
+				position/2 = false
+				all [word? position/2 find [false no] position/2]
+			]
+		]
 		before: length? instructions
 		after: stack-value next position scope uses instructions params locals
 			expression-value
 		unless all [not last-stopped? logical-value? last-type last-flags][
 			fail ERROR-REFERENCE "ASSERT requires a logic value"
+		]
+		if never? [
+			clear at instructions (before + 1)
+			emit instructions reduce [fail-op 98 0 0]
+			last-type: 0
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: true
+			return after
 		]
 		either debug? [
 			patch: emit-control instructions branch-op 1
@@ -4444,6 +5001,80 @@ compiler-rsir-frontend: context [
 		last-float-literal?: false
 		last-stopped?: false
 		after
+	]
+
+	stack-u16: func [
+		position [block!]
+		instructions [binary!]
+		return: [block!]
+		/local data id
+	][
+		unless all [(length? position) >= 2 string? position/2][
+			fail ERROR-UNSUPPORTED "#u16 can only be applied to a literal string"
+		]
+		data: unicode/to-utf16le position/2
+		append data #{0000}
+		id: add-static-bytes data false false
+		emit instructions reduce [address-op global-address id 0]
+		emit instructions reduce [reference-op -13 0 0]
+		last-type: -13
+		last-flags: 0
+		last-float-literal?: false
+		last-stopped?: false
+		skip position 2
+	]
+
+	expand-red-directive: func [
+		position [block!]
+		return: [logic!]
+		/local directive checks expanded resolved?
+	][
+		directive: position/1
+		case [
+			directive = #get [
+				unless (length? position) >= 2 [
+					fail ERROR-ARGUMENTS "#get is missing its argument"
+				]
+				resolved?: red-compiler-process-get position/2 position
+				unless resolved? [
+					fail ERROR-REFERENCE ["cannot resolve #get path " mold position/2]
+				]
+				true
+			]
+			directive = #in [
+				unless (length? position) >= 3 [
+					fail ERROR-ARGUMENTS "#in is missing its path or word"
+				]
+				resolved?: red-compiler-process-in position/2 position/3 position
+				unless resolved? [
+					fail ERROR-REFERENCE ["cannot resolve #in path " mold position/2]
+				]
+				true
+			]
+			directive = #typecheck [
+				unless (length? position) >= 2 [
+					fail ERROR-ARGUMENTS "#typecheck is missing its argument"
+				]
+				checks: red-compiler-process-typecheck position/2
+				remove/part position 2
+				if block? checks [insert position checks]
+				false
+			]
+			directive = #call [
+				unless all [
+					(length? position) >= 2
+					block? position/2
+				][fail ERROR-ARGUMENTS "#call requires a call block"]
+				expanded: red-compiler-expand-call position/2 true
+				unless block? expanded [
+					fail ERROR-REFERENCE "Red compiler could not expand #call"
+				]
+				remove/part position 2
+				insert position expanded
+				false
+			]
+			true [fail ERROR-UNSUPPORTED ["unsupported Red directive " mold directive]]
+		]
 	]
 
 	stack-if: func [
@@ -4561,10 +5192,11 @@ compiler-rsir-frontend: context [
 			(length? arms) >= 2 block? arms/1 block? arms/2
 		][fail ERROR-UNSUPPORTED "EITHER requires two body blocks"]
 		after: skip arms 2
-		arm-context: either any [
-			value-context = expression-value
-			all [value-context = tail-value tail? after]
-		][tail-value][statement-value]
+		arm-context: case [
+			value-context = expression-value [tail-value]
+			tail? after [value-context]
+			true [statement-value]
+		]
 
 		branch-patch: emit-control instructions branch-op 0
 		stack-block arms/1 scope uses instructions params locals arm-context
@@ -4626,7 +5258,14 @@ compiler-rsir-frontend: context [
 			]
 			result-type = 0
 			not last-stopped?
-		][fail ERROR-REFERENCE "EITHER blocks do not have a common value"]
+		][fail ERROR-REFERENCE [
+			"EITHER blocks do not have a common value"
+			any [
+				all [active-function rejoin [" in " to string! active-function]]
+				""
+			]
+			rejoin [" (" true-type "/" true-flags ", " false-type "/" false-flags ")"]
+		]]
 		after
 	]
 
@@ -4644,10 +5283,11 @@ compiler-rsir-frontend: context [
 		body: position/2
 		after: skip position 2
 		if empty? body [fail ERROR-UNSUPPORTED "CASE body is empty"]
-		arm-context: either any [
-			value-context = expression-value
-			all [value-context = tail-value tail? after]
-		][tail-value][statement-value]
+		arm-context: case [
+			value-context = expression-value [tail-value]
+			tail? after [value-context]
+			true [statement-value]
+		]
 		arms: make block! 16
 		cursor: body
 		while [not tail? cursor][
@@ -4757,10 +5397,11 @@ compiler-rsir-frontend: context [
 		spec: spec-position/1
 		after: next spec-position
 		if empty? spec [fail ERROR-UNSUPPORTED "SWITCH body is empty"]
-		arm-context: either any [
-			value-context = expression-value
-			all [value-context = tail-value tail? after]
-		][tail-value][statement-value]
+		arm-context: case [
+			value-context = expression-value [tail-value]
+			tail? after [value-context]
+			true [statement-value]
+		]
 		first-case: (length? switches) / 12
 		case-count: 0
 		arms: make block! 8
@@ -4922,6 +5563,7 @@ compiler-rsir-frontend: context [
 			coerce-stack function-return return-flags instructions false
 		][fail ERROR-REFERENCE "RETURN value does not match the function type"]
 		emit instructions reduce [return-op function-return last-flags 0]
+		function-returns?: true
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -4936,6 +5578,7 @@ compiler-rsir-frontend: context [
 			fail ERROR-REFERENCE "EXIT is incompatible with a function result"
 		]
 		emit instructions reduce [return-op 0 0 0]
+		function-returns?: true
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -5671,6 +6314,84 @@ compiler-rsir-frontend: context [
 		position-after
 	]
 
+	stack-named-value: func [
+		position [block!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		return: [block!]
+		/local value storage literal value-kind next-position target
+	][
+		value: position/1
+		storage: either word? value [stack-storage-info value][none]
+		if block? storage [
+			unless stack-address value scope uses instructions params locals [
+				fail ERROR-REFERENCE ["unknown local value " mold value]
+			]
+			if last-type = 0 [
+				fail ERROR-REFERENCE [
+					"value is used before initialization " mold value
+				]
+			]
+			either (ref-kind last-type) = 'function [
+				return stack-indirect-call value position scope uses
+					instructions params locals
+			][
+				emit instructions reduce [load-op 0 0 0]
+				last-flags: 0
+				return next position
+			]
+		]
+		value-kind: resolve-value-kind value scope uses
+		literal: either value-kind = 1 [resolved-value-id][none]
+		if block? literal [
+			emit instructions reduce [
+				literal-op literal/1 literal/3 literal/4
+			]
+			last-type: literal/1
+			last-flags: 0
+			last-float-literal?: float-kind? ref-kind last-type
+			return next position
+		]
+		next-position: either all [value-kind = 1 integer? literal][
+			emit instructions reduce [
+				literal-op -5 literal either literal < 0 [-1][0]
+			]
+			last-type: -5
+			last-flags: 0
+			next position
+		][
+			target: either value-kind = 2 [resolved-value-id][none]
+			either integer? target [
+				stack-call target value position scope uses instructions params locals
+			][
+				unless stack-address value scope uses instructions params locals [
+					fail ERROR-REFERENCE [
+						"unknown value or function " mold value
+						any [
+							all [active-function rejoin [
+								" in " (to string! active-function)
+							]]
+							""
+						]
+					]
+				]
+				if last-type = 0 [
+					fail ERROR-REFERENCE ["value is used before initialization " mold value]
+				]
+				either (ref-kind last-type) = 'function [
+					stack-indirect-call value position scope uses instructions params locals
+				][
+					emit instructions reduce [load-op 0 0 0]
+					last-flags: 0
+					next position
+				]
+			]
+		]
+		last-float-literal?: false
+		next-position
+	]
+
 	stack-primary: func [
 		position [block!]
 		scope uses [block!]
@@ -5680,26 +6401,68 @@ compiler-rsir-frontend: context [
 		value-context [integer!]
 		return: [block!]
 		/local value type-info next-position target id
-			inner wide bits call-target literal
-			storage record
+			inner wide bits storage record bound? expression?
 	][
 		unless not tail? position [
 			fail ERROR-UNSUPPORTED "missing expression"
 		]
+		if all [issue? position/1 position/1 = #script][
+			position: skip-script position
+			if tail? position [
+				last-type: 0
+				last-flags: 0
+				last-stopped?: false
+				return position
+			]
+		]
 		value: position/1
 		last-float-literal?: false
 		last-stopped?: false
+		if all [issue? value value = #build-date][
+			change position mold now/utc
+			return stack-primary position scope uses instructions params locals value-context
+		]
+		if all [
+			runtime-library?
+			issue? value
+			find [#get #in #typecheck #call] value
+		][
+			expression?: expand-red-directive position
+			unless expression? [
+				last-type: 0
+				last-flags: 0
+				last-stopped?: false
+				return position
+			]
+			if tail? position [
+				last-type: 0
+				last-flags: 0
+				return position
+			]
+			return stack-primary position scope uses instructions params locals value-context
+		]
 		if all [
 			word? value
-			storage: stack-storage-info value
+			block? storage: stack-storage-info value
 			record: storage-record storage
 			(ref-kind record/2) = 'subroutine
 		][
 			return stack-subroutine position value instructions
 		]
+		bound?: to logic! all [
+			word? value
+			any [
+				block? storage
+				(resolve-value-kind value scope uses) <> 0
+			]
+		]
 		case [
+			all [issue? value value = #u16][stack-u16 position instructions]
+			all [bound? word? value][
+				stack-named-value position scope uses instructions params locals
+			]
 			value = 'assert [
-				stack-assert position scope uses instructions params locals
+				stack-assert position scope uses instructions params locals value-context
 			]
 			value = 'catch [
 				stack-catch position scope uses instructions params locals
@@ -5766,6 +6529,9 @@ compiler-rsir-frontend: context [
 			value = 'use [
 				stack-use position scope uses instructions params locals
 			]
+			value = 'with [
+				stack-with position scope uses instructions params locals
+			]
 			paren? value [
 				inner: to block! value
 				if empty? inner [fail ERROR-UNSUPPORTED "empty expression"]
@@ -5808,19 +6574,7 @@ compiler-rsir-frontend: context [
 			]
 			any [get-word? value get-path? value][
 				target: either get-word? value [to word! value][to path! value]
-				call-target: resolve-stack-call target scope uses
-				if integer? call-target [
-					id: call-signature-ref call-target
-					emit instructions reduce [
-						address-op either call-target > 0 [
-							function-address
-						][import-address]
-						either call-target > 0 [call-target][0 - call-target]
-						id
-					]
-					emit instructions reduce [reference-op id 0 0]
-					last-type: id
-					last-flags: 0
+				if stack-call-address target scope uses instructions [
 					return next position
 				]
 				unless stack-address target scope uses instructions params locals [
@@ -5918,68 +6672,7 @@ compiler-rsir-frontend: context [
 					params locals
 			][next-position]
 			any [word? value path? value] [
-				storage: either word? value [
-					stack-storage-info value
-				][none]
-				if block? storage [
-					unless stack-address value scope uses instructions params locals [
-						fail ERROR-REFERENCE ["unknown local value " mold value]
-					]
-					if last-type = 0 [
-						fail ERROR-REFERENCE [
-							"value is used before initialization " mold value
-						]
-					]
-					either (ref-kind last-type) = 'function [
-						return stack-indirect-call value position scope uses
-							instructions params locals
-					][
-						emit instructions reduce [load-op 0 0 0]
-						last-flags: 0
-						return next position
-					]
-				]
-				literal: resolve-name value scope uses literal-values
-				if block? literal [
-					emit instructions reduce [
-						literal-op literal/1 literal/3 literal/4
-					]
-					last-type: literal/1
-					last-flags: 0
-					last-float-literal?: float-kind? ref-kind last-type
-					return next position
-				]
-				next-position: either integer? literal [
-					emit instructions reduce [
-						literal-op -5 literal either literal < 0 [-1][0]
-					]
-					last-type: -5
-					last-flags: 0
-					next position
-				][
-					target: resolve-stack-call value scope uses
-					either integer? target [
-						stack-call target value position scope uses instructions params locals
-					][
-						unless stack-address value scope uses instructions params locals [
-							fail ERROR-REFERENCE [
-								"unknown value or function " mold value
-							]
-						]
-						if last-type = 0 [
-							fail ERROR-REFERENCE ["value is used before initialization " mold value]
-						]
-						either (ref-kind last-type) = 'function [
-							stack-indirect-call value position scope uses instructions params locals
-						][
-							emit instructions reduce [load-op 0 0 0]
-							last-flags: 0
-							next position
-						]
-					]
-				]
-				last-float-literal?: false
-				next-position
+				stack-named-value position scope uses instructions params locals
 			]
 			true [
 				fail ERROR-UNSUPPORTED ["unsupported expression " mold value]
@@ -5999,6 +6692,10 @@ compiler-rsir-frontend: context [
 	][
 		position: stack-primary position scope uses instructions params locals value-context
 		while [not tail? position][
+			if all [issue? position/1 position/1 = #script][
+				position: skip-script position
+				if tail? position [break]
+			]
 			operation: select binary-operations position/1
 			either integer? operation [
 				left: last-type
@@ -6185,10 +6882,11 @@ compiler-rsir-frontend: context [
 						info: static-literal-info value scope uses protected?
 					][
 						source-kind: ref-kind info/1
-						if all [
-							source-kind = 'function
-							none? find [i32 pointer function] kind
-						][fail ERROR-REFERENCE "invalid function pointer cast"]
+					unless function-cast-compatible? source-kind kind [
+						fail ERROR-REFERENCE [
+							"invalid function pointer cast from" source-kind "to" kind
+						]
+					]
 						static?: true
 						static-ref: type-info/2
 						static-initializer: reduce [info/2 info/3 info/4 info/1]
@@ -6395,6 +7093,31 @@ compiler-rsir-frontend: context [
 		next-position
 	]
 
+	expand-assignments: func [
+		position [block!]
+		/local targets last-target value output
+	][
+		targets: make block! 4
+		last-target: position
+		while [all [
+			(length? last-target) >= 2
+			set-word? last-target/2
+		]][
+			append targets last-target/1
+			last-target: next last-target
+		]
+		value: either any [
+			find [integer! float! char! logic!] type?/word last-target/2
+			find [true false] last-target/2
+		][last-target/2][to word! last-target/1]
+
+		remove/part position last-target
+		last-target: skip position 2
+		output: make block! ((length? targets) * 2)
+		foreach target targets [repend output [target value]]
+		insert last-target output
+	]
+
 	stack-assignment: func [
 		position [block!]
 		scope uses [block!]
@@ -6408,6 +7131,9 @@ compiler-rsir-frontend: context [
 			continues? infix-target
 	][
 		if (length? position) < 2 [fail ERROR-UNSUPPORTED "assignment value is missing"]
+		if all [set-word? position/1 set-word? position/2][
+			expand-assignments position
+		]
 		target: either set-word? position/1 [
 			to word! position/1
 		][to path! position/1]
@@ -6438,6 +7164,12 @@ compiler-rsir-frontend: context [
 		if protected-target? target scope uses params locals [
 			fail ERROR-REFERENCE ["cannot modify protected data " mold target]
 		]
+		if all [
+			none? id
+			path? target
+			word? target/1
+			none? stack-storage-info target/1
+		][id: add-context-global target scope uses]
 		if position/2 = 'declare [
 			return stack-declaration position target storage id scope uses instructions
 				params locals fold?
@@ -6490,7 +7222,10 @@ compiler-rsir-frontend: context [
 		]
 		target-ref: last-type
 		target-flags: last-flags
-		if (ref-kind target-ref) = 'array [
+		if all [
+			(ref-kind target-ref) = 'array
+			target-flags = inline-flag
+		][
 			fail ERROR-REFERENCE "a literal array pointer cannot be reassigned"
 		]
 		last-type: source-ref
@@ -6546,6 +7281,9 @@ compiler-rsir-frontend: context [
 			case [
 				all [position/1 = 'comment (length? position) >= 2][
 					position: skip position 2
+				]
+				all [issue? position/1 position/1 = #script][
+					position: skip-script position
 				]
 				all [
 					issue? position/1
@@ -6648,7 +7386,7 @@ compiler-rsir-frontend: context [
 			clear overflows
 			clear catches
 			active-subroutine: name
-			stack-block record/1 scope uses instructions params locals tail-value
+			stack-block record/1 scope uses instructions params locals inferred-value
 			stopped?: last-stopped?
 			result: either stopped? [0][last-type]
 			if all [result <> 0 last-flags <> 0][
@@ -6688,6 +7426,7 @@ compiler-rsir-frontend: context [
 		function-return: return-ref
 		function-flags: flags
 		function-active?: true
+		function-returns?: false
 		function-scope: scope
 		function-uses: uses
 		clear-resolved-names
@@ -6707,7 +7446,10 @@ compiler-rsir-frontend: context [
 		last-stopped?: false
 		either return-ref = 0 [
 			stack-block body scope uses instructions params locals statement-value
-			unless last-stopped? [emit instructions reduce [return-op 0 0 0]]
+			unless last-stopped? [
+				emit instructions reduce [return-op 0 0 0]
+				function-returns?: true
+			]
 		][
 			stack-block body scope uses instructions params locals tail-value
 			unless last-stopped? [
@@ -6721,6 +7463,7 @@ compiler-rsir-frontend: context [
 					fail ERROR-REFERENCE "function result type does not match signature"
 				]
 				emit instructions reduce [return-op return-ref last-flags 0]
+				function-returns?: true
 			]
 		]
 		count: to integer! (((length? instructions) - before) / 16)
@@ -6781,16 +7524,19 @@ compiler-rsir-frontend: context [
 	compile: func [
 		source [block!]
 		kind [word!]
+		/runtime runtime-exports [block!]
 		/debug
 		/limit max-bytes [integer!]
 		/local result
 	][
 		last-error: none
 		debug?: to logic! debug
+		runtime-library?: to logic! runtime
 		result: catch/name [
 			function-active?: false
 			function-scope: none
 			function-uses: none
+			active-function: none
 			clear-resolved-names
 			module-kind: case [
 				kind = 'user [1]
@@ -6802,7 +7548,12 @@ compiler-rsir-frontend: context [
 			if module-kind = 0 [
 				fail ERROR-KIND "unsupported RSIR module kind"
 			]
+			if all [runtime-library? module-kind <> 4][
+				fail ERROR-KIND "runtime exports require a shared library module"
+			]
 
+			clear runtime-functions
+			clear runtime-specs
 			clear functions
 			clear function-ids
 			clear call-ids
@@ -6840,6 +7591,8 @@ compiler-rsir-frontend: context [
 			user-code?: false
 			last-float-literal?: false
 			clear function-code
+			clear function-states
+			clear no-return-functions
 			clear overflows
 			clear catches
 			clear initializers
@@ -6858,7 +7611,7 @@ compiler-rsir-frontend: context [
 			global-count: 0
 			thrown-global: 0
 			alias-count: 0
-			compile-source source
+			compile-source source either runtime-library? [runtime-exports][none]
 			write-rsir any [max-bytes DEFAULT-MAX-BYTES]
 		] 'rsir-error
 		either same? result last-error [none][result]

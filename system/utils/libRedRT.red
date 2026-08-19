@@ -153,8 +153,53 @@ libRedRT: context [
 		sym
 	]
 
-	compiler-name: func [value [word! path!]][
-		either path? value [system-dialect/compiler/path-to-word value][to word! value]
+	compiler-name: func [value [word! path!] /local spelling][
+		spelling: form value
+		replace/all spelling "/" ">"
+		to word! spelling
+	]
+
+	runtime-exports: func [
+		job
+		/local selected output file data extra def type
+	][
+		selected: copy funcs
+		if find [Windows macOS] job/OS [
+			foreach def [
+				red/image/push
+				red/image/acquire-buffer
+				red/image/release-buffer
+			][
+				unless find/only selected def [append/only selected def]
+			]
+		]
+		file: get-path extras-file
+		if exists? file [
+			data: transcode read/binary file
+			foreach extra data [
+				unless find/only selected extra [append/only selected extra]
+			]
+		]
+		output: make block! (2 * ((length? selected) + ((length? vars) / 2)))
+		foreach def selected [
+			unless all [none? job/GUI-engine def = 'exec/gui/OS-alert][
+				repend output [def undecorate def]
+			]
+		]
+		foreach [def type] vars [repend output [def undecorate def]]
+		output
+	]
+
+	make-import-spec: func [value [block!] /local spec attrs pos][
+		spec: relativize-red-types copy/deep value
+		attrs: either block? spec/1 [spec/1][
+			all [string? spec/1 block? spec/2 spec/2]
+		]
+		either attrs [
+			unless find attrs 'red-internal [append attrs 'red-internal]
+		][insert/only spec [red-internal]]
+		if pos: find spec /local [clear pos]
+		spec
 	]
 
 	relativize-red-types: func [spec [block!] /local pos value spelling][
@@ -250,16 +295,10 @@ libRedRT: context [
 		tree
 	]
 
-	process: func [job functions exports /local name list pos tmpl words lits file base-dir lib-name globals contexts][
-		if find [Windows macOS] job/OS [
-			append funcs [
-				red/image/push
-				red/image/acquire-buffer
-				red/image/release-buffer
-			]
-		]
-		make-exports functions exports job
-
+	save-files: func [
+		job function-list specs
+		/local name list pos tmpl words lits file lib-name globals contexts ctx spec
+	][
 		clear imports
 		clear template
 		lib-name: rejoin [
@@ -307,7 +346,7 @@ libRedRT: context [
 			]
 
 		]
-		foreach def funcs [								;-- functions
+		foreach def function-list [					;-- functions
 			unless all [none? job/GUI-engine def = 'exec/gui/OS-alert] [
 				ctx: next def
 				list: imports
@@ -335,18 +374,22 @@ libRedRT: context [
 				new-line back tail pos yes
 				name: compiler-name def
 				append pos undecorate def
-
-				spec: relativize-red-types copy/deep functions/:name/4
-				clear find spec /local
-				append/only pos spec
+				unless spec: select specs name [
+					print ["*** libRedRT Error: definition not found for" def]
+					halt
+				]
+				append/only pos make-import-spec spec
 			]
 		]
 
 		list: third second find imports #import			;-- aliased functions
 		foreach [new old] aliased [
-			spec: relativize-red-types copy/deep functions/(compiler-name old)/4
-			clear find spec /local
-			repend list [to set-word! new form undecorate old spec]
+			name: compiler-name old
+			unless spec: select specs name [
+				print ["*** libRedRT Error: definition not found for" old]
+				halt
+			]
+			repend list [to set-word! new form undecorate old make-import-spec spec]
 			new-line skip tail list -3 yes
 		]
 
@@ -455,6 +498,23 @@ libRedRT: context [
 
 		file: get-path defs-file
 		write clean-path file tmpl
+	]
+
+	process: func [
+		job functions exports
+		/local name entry specs
+	][
+		if find [Windows macOS] job/OS [
+			append funcs [
+				red/image/push
+				red/image/acquire-buffer
+				red/image/release-buffer
+			]
+		]
+		make-exports functions exports job
+		specs: make map! (length? functions)
+		foreach [name entry] functions [put specs name entry/4]
+		save-files job funcs specs
 	]
 
 ]

@@ -3,8 +3,15 @@ Red [
 ]
 
 #include %../../../compiler/int-to-bin.red
+#include %../../../compiler/ieee-754.red
+#include %../../../compiler/unicode.red
 #include %../../../compiler/rsir-frontend.red
 #include %../../../compiler/codegen-bridge.red
+
+red-compiler-process-get: func [spec code [block!]][false]
+red-compiler-process-in: func [path word code [block!]][false]
+red-compiler-process-typecheck: func [spec [word! block!]][none]
+red-compiler-expand-call: func [body [block!] global? [logic!]][copy []]
 
 fail: func [message [string! block!]][
 	print ["FAIL:" either block? message [rejoin message][message]]
@@ -346,6 +353,22 @@ generate "native layout" {
 	Red/System []
 	cell!: alias struct! [mark [byte!] value [integer!]]
 	fn: func [return: [integer!]][size? cell!]
+} 'user
+
+generate "heterogeneous literal address array" {
+	Red/System []
+	values: ["one" 1 "two"]
+	fn: func [][]
+} 'user
+
+generate "function address integer casts" {
+	Red/System []
+	callback!: alias function! [[custom] return: [integer!]]
+	address: func [return: [uint64!]][as uint64! :address]
+	from-table: func [
+		table [pointer! [uint64!]]
+		/local callback [callback!]
+	][callback: as callback! table/1]
 } 'user
 
 c-string: generate "c-string type" {

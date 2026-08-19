@@ -4,6 +4,7 @@ Red [
 ]
 
 runtime-path: %system/runtime/
+red-runtime-path: %runtime/
 
 ; This core connects the compact frontend, native codegen, and linker directly.
 ; It grows by moving complete semantics here, never by importing the legacy
@@ -71,12 +72,20 @@ system-dialect: context [
 			not find [exe dll] job/type [
 				compiler/throw-error "RSIR frontend currently supports only executable and DLL modules"
 			]
-			all [
+			all [job/libRedRT? not all [
 				job/red-pass?
-				not all [job/dev-mode? job/runtime? job/type = 'exe]
-			][
+				job/dev-mode?
+				job/runtime?
+				job/type = 'dll
+			]][
+				compiler/throw-error "invalid libRedRT shared-library lifecycle"
+			]
+			all [job/red-pass? not any [
+				all [job/dev-mode? job/runtime? job/type = 'exe not job/libRedRT?]
+				all [job/dev-mode? job/runtime? job/type = 'dll job/libRedRT?]
+			]][
 				compiler/throw-error
-					"RSIR frontend currently supports Red development executables"
+					"RSIR frontend currently supports Red development executables and libRedRT"
 			]
 			any [job/PIC? job/PIE? job/static-link?] [
 				compiler/throw-error "RSIR frontend does not yet support PIC, PIE, or static linking"
@@ -91,7 +100,7 @@ system-dialect: context [
 			][
 				compiler/throw-error "RSIR frontend currently supports only O0 and O1"
 			]
-			any [job/need-main? job/red-only? job/libRed? job/libRedRT? job/libRedRT-update?][
+			any [job/need-main? job/red-only? job/libRed? job/libRedRT-update?][
 				compiler/throw-error "RSIR frontend received unsupported module lifecycle options"
 			]
 			true [true]
@@ -136,7 +145,10 @@ system-dialect: context [
 		validate-job
 	]
 
-	compile-rsir: func [source [block!] file [file!] /local output error][
+	compile-rsir: func [
+		source [block!] file [file!]
+		/local output error runtime-exports
+	][
 		compiler/script: clean-path file
 		compiler/pc: source
 		unless all [not tail? source source/1 = 'Red/System][
@@ -145,9 +157,14 @@ system-dialect: context [
 		unless all [not tail? next source block? source/2][
 			compiler/throw-error "missing Red/System program header"
 		]
-		output: compiler-rsir-frontend/compile source either job/type = 'dll [
-			'library
-		]['glue]
+		output: either job/libRedRT? [
+			runtime-exports: libRedRT/runtime-exports job
+			compiler-rsir-frontend/compile/runtime source 'library runtime-exports
+		][
+			compiler-rsir-frontend/compile source either job/type = 'dll [
+				'library
+			]['glue]
+		]
 		unless binary? output [
 			error: compiler-rsir-frontend/last-error
 			compiler/throw-error either error [error/message][
@@ -243,6 +260,7 @@ system-dialect: context [
 		/options opts [object!]
 		/loaded job-data [block!]
 		/local started comp-time file-list file source runtime-source runtime-file
+			red-runtime-source red-runtime-file sys-global-source
 			output link-time buffer-size result error payload resources icon
 	][
 		started: now/time/precise
@@ -283,6 +301,32 @@ system-dialect: context [
 					rejoin ["Red/System runtime loader: " error/message]
 				]["Red/System runtime loader failed without a diagnostic"]
 			]
+			if job/libRedRT? [
+				sys-global-source: none
+				unless empty? red/sys-global [
+					compiler/script: %***sys-global.reds
+					phase-timer/begin 'rs-loader
+					sys-global-source: loader/process red/sys-global
+					phase-timer/finish 'rs-loader
+					unless block? sys-global-source [
+						error: loader/last-error
+						compiler/throw-error either error [
+							rejoin ["Red/System #system-global loader: " error/message]
+						]["Red/System #system-global loader failed without a diagnostic"]
+					]
+				]
+				red-runtime-file: secure-clean-path red-runtime-path/red.reds
+				compiler/script: red-runtime-file
+				phase-timer/begin 'runtime-red-loader
+				red-runtime-source: loader/process red-runtime-file
+				phase-timer/finish 'runtime-red-loader
+				unless block? red-runtime-source [
+					error: loader/last-error
+					compiler/throw-error either error [
+						rejoin ["Red runtime loader: " error/message]
+					]["Red runtime loader failed without a diagnostic"]
+				]
+			]
 		]
 
 		compiler/script: file
@@ -303,15 +347,21 @@ system-dialect: context [
 		if runtime-source [
 			if job/red-pass? [
 				payload: job-data/3
-				append runtime-source #import
-				append/only runtime-source [
-					"libRedRT.dll" stdcall [
-						__red-boot: "red/boot" []
+				unless job/libRedRT? [
+					append runtime-source #import
+					append/only runtime-source [
+						"libRedRT.dll" stdcall [
+							__red-boot: "red/boot" []
+						]
 					]
+					append runtime-source '__red-boot
 				]
-				append runtime-source '__red-boot
 				append/only runtime-source first [system/boot-data:]
 				append/only runtime-source payload
+				if job/libRedRT? [
+					if sys-global-source [append runtime-source skip sys-global-source 2]
+					append runtime-source skip red-runtime-source 2
+				]
 			]
 			append runtime-source #user-code
 			append runtime-source skip source 2
@@ -349,6 +399,14 @@ system-dialect: context [
 			phase-timer/begin 'link-build
 			output: linker/build job
 			phase-timer/finish 'link-build
+			if all [job/libRedRT? file? output exists? output][
+				phase-timer/begin 'libRedRT-files
+				libRedRT/save-files
+					job
+					compiler-rsir-frontend/runtime-functions
+					compiler-rsir-frontend/runtime-specs
+				phase-timer/finish 'libRedRT-files
+			]
 			link-time: now/time/precise - link-time
 		]
 

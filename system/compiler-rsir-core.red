@@ -42,7 +42,10 @@ system-dialect: context [
 				][reform err]
 				"^/*** in file:" mold script
 			]
-			if pc [print ["*** near:" mold copy/part pc 8]]
+			if pc [
+				print ["*** at line:" compiler-system-diagnostics/line-of pc]
+				print ["*** near:" mold copy/part pc 8]
+			]
 			quit-on-error
 		]
 	]
@@ -134,6 +137,7 @@ system-dialect: context [
 		last-code: none
 		last-status: -1
 		compiler/pc: none
+		compiler-system-diagnostics/reset
 		clear compiler/definitions
 		clear compiler/keywords-list
 	]
@@ -157,6 +161,7 @@ system-dialect: context [
 		unless all [not tail? next source block? source/2][
 			compiler/throw-error "missing Red/System program header"
 		]
+		compiler-rsir-frontend/definitions: compiler/definitions
 		output: either job/libRedRT? [
 			runtime-exports: libRedRT/runtime-exports job
 			compiler-rsir-frontend/compile/runtime source 'library runtime-exports
@@ -165,8 +170,12 @@ system-dialect: context [
 				'library
 			]['glue]
 		]
+		foreach warning compiler-rsir-frontend/warnings [
+			print ["*** Warning:" warning]
+		]
 		unless binary? output [
 			error: compiler-rsir-frontend/last-error
+			if all [error error/position][compiler/pc: error/position]
 			compiler/throw-error either error [error/message][
 				"RSIR frontend failed without a diagnostic"
 			]
@@ -364,7 +373,7 @@ system-dialect: context [
 				]
 			]
 			append runtime-source #user-code
-			append runtime-source skip source 2
+			append/only runtime-source skip source 2
 			if job/type = 'exe [append runtime-source '***-normal-exit]
 			source: runtime-source
 		]

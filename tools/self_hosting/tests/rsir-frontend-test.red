@@ -346,9 +346,9 @@ aggregate-either-ir: compile-text {
 		condition [logic!]
 		none-value [none!]
 		object [object!]
-		return: [pointer!]
+		return: [byte-ptr!]
 	][
-		as pointer! either condition [none-value][object]
+		as byte-ptr! either condition [none-value][object]
 	]
 } 'user
 assert binary? aggregate-either-ir [
@@ -502,8 +502,8 @@ assert binary? compile-text {
 
 pointer-cast-ir: compile-text {
 	Red/System []
-	to-bare: func [value [int-ptr!] return: [pointer!]][as pointer! value]
-	to-typed: func [value [pointer!] return: [int-ptr!]][as int-ptr! value]
+	to-byte: func [value [int-ptr!] return: [byte-ptr!]][as byte-ptr! value]
+	to-int: func [value [byte-ptr!] return: [int-ptr!]][as int-ptr! value]
 } 'user
 assert binary? pointer-cast-ir [
 	"explicit pointer casts failed: " mold frontend/last-error
@@ -1349,7 +1349,7 @@ symbolic-ir: compile-text {
 	triple: func [value [integer!] return: [integer!]][value * 3]
 	functions: [:double :triple]
 	entry: :double
-	function-address: func [return: [pointer!]][as pointer! :triple]
+	function-address: func [return: [byte-ptr!]][as byte-ptr! :triple]
 } 'user
 assert binary? symbolic-ir [
 	"symbolic static initializers failed: " mold frontend/last-error
@@ -2842,22 +2842,15 @@ assert all [
 	(ops-of single-all-ir single-all-layout) = [3 4 11]
 ]["a one-condition ALL retained unnecessary control or merge work"]
 
-condition-statement-ir: compile-text {
+condition-statements-ir: compile-text {
 	Red/System []
 	touch: func [][]
 	all-unit: func [return: [logic!]][all [true touch]]
 	any-unit: func [return: [logic!]][any [false touch]]
 } 'user
-assert binary? condition-statement-ir [
-	"ANY/ALL statement unit failed: " mold frontend/last-error
+assert binary? condition-statements-ir [
+	"ANY/ALL statement identity failed: " mold frontend/last-error
 ]
-condition-statement-layout: layout-of condition-statement-ir
-assert all [
-	(function-word condition-statement-ir condition-statement-layout 2 8) = -11
-	(function-word condition-statement-ir condition-statement-layout 3 8) = -11
-	(instruction-word condition-statement-ir condition-statement-layout 5 8) = 1
-	(instruction-word condition-statement-ir condition-statement-layout 12 8) = 0
-]["ANY/ALL did not materialize the identity value after a final statement"]
 
 loops-ir: compile-text {
 	Red/System []
@@ -4334,5 +4327,185 @@ assert none? compile-text {
 } 'user "custom call accepted a non-integer count"
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid custom count reported the wrong error class"
+
+diagnostic-ir: compile-text {
+	Red/System []
+	value: as integer! 1
+	identity: func [n [integer!] return: [integer!]][as integer! n]
+} 'user
+assert binary? diagnostic-ir [
+	"same-type casts failed: " mold frontend/last-error
+]
+assert all [
+	(length? frontend/warnings) = 2
+	frontend/warnings/1 =
+		"type casting from integer! to integer! is not necessary"
+	frontend/warnings/2 =
+		"type casting from integer! to integer! is not necessary"
+]["same-type casts did not report canonical warnings"]
+
+assert none? compile-text {
+	Red/System []
+	foo: func [][]
+	bad: as byte! :foo
+} 'user "a function address was cast to byte!"
+assert frontend/last-error/message =
+	"type casting from function! to byte! is not allowed"
+	"static function cast did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	bad: as byte! 1.0
+} 'user "a float! literal was cast to byte!"
+assert frontend/last-error/message =
+	"type casting from float! to byte! is not allowed"
+	"static float cast did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	bad: as byte! "text"
+} 'user "a c-string! literal was cast to byte!"
+assert frontend/last-error/message =
+	"type casting from c-string! to byte! is not allowed"
+	"static c-string cast did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	p: declare pointer! [integer!]
+	bad: as byte! p
+} 'user "a pointer! value was cast to byte!"
+assert frontend/last-error/message =
+	"type casting from pointer! to byte! is not allowed"
+	"dynamic pointer cast did not report the canonical error"
+
+assert none? compile-text {Red/System [] if 1 []} 'user
+	"IF accepted a non-conditional expression"
+assert frontend/last-error/message = "IF requires a conditional expression"
+	"IF did not report the canonical conditional error"
+
+assert none? compile-text {Red/System [] either 1 [][]} 'user
+	"EITHER accepted a non-conditional expression"
+assert frontend/last-error/message = "EITHER requires a conditional expression"
+	"EITHER did not report the canonical conditional error"
+
+assert none? compile-text {Red/System [] until [1]} 'user
+	"UNTIL accepted a non-conditional tail expression"
+assert frontend/last-error/message =
+	"UNTIL requires a conditional expression as last expression"
+	"UNTIL did not report the canonical conditional error"
+
+assert none? compile-text {Red/System [] while [1][]} 'user
+	"WHILE accepted a non-conditional tail expression"
+assert frontend/last-error/message =
+	"WHILE requires a conditional expression as last expression"
+	"WHILE did not report the canonical conditional error"
+
+assert none? compile-text {Red/System [] all [true 1]} 'user
+	"ALL accepted a non-conditional value"
+assert frontend/last-error/message = "ALL requires a conditional expression"
+	"ALL did not report the canonical conditional error"
+
+assert none? compile-text {Red/System [] any [false 1]} 'user
+	"ANY accepted a non-conditional value"
+assert frontend/last-error/message = "ANY requires a conditional expression"
+	"ANY did not report the canonical conditional error"
+
+assert none? compile-text {Red/System [] return} 'user
+	"RETURN was accepted outside a function"
+assert frontend/last-error/message =
+	"return is not allowed outside of a function"
+	"RETURN outside a function did not report the canonical error"
+
+assert none? compile-text {Red/System [] exit} 'user
+	"EXIT was accepted outside a function"
+assert frontend/last-error/message = "exit is not allowed outside of a function"
+	"EXIT outside a function did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	foo: func [][return]
+} 'user "RETURN was accepted in a function without a result"
+assert frontend/last-error/message =
+	"RETURN keyword used without return: declaration in foo"
+	"void RETURN did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	foo: func [return: [integer!]][return]
+} 'user "RETURN was accepted without an argument"
+assert frontend/last-error/message = "return is missing an argument"
+	"missing RETURN argument did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	foo: func [return: [integer!]][return true]
+} 'user "RETURN accepted an incompatible result"
+assert frontend/last-error/message = "wrong return type in function: foo"
+	"RETURN type mismatch did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	take: func [value [integer!]][]
+	take true
+} 'user "a direct call accepted an incompatible argument"
+assert frontend/last-error/message = "argument type mismatch on calling: take"
+	"direct call mismatch did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	receive: func [values [int-ptr!]][]
+	receive [1]
+} 'user "a direct call accepted a literal array"
+assert frontend/last-error/message =
+	"literal arrays cannot be passed as argument"
+	"direct literal array did not report the canonical error"
+
+assert none? compile-text {
+	Red/System []
+	typed-value!: alias struct! [
+		type [integer!]
+		_align0 [integer!]
+		value [int-ptr!]
+		_padding [integer!]
+		_align1 [integer!]
+	]
+	receive: func [[typed] count [integer!] list [typed-value!]][]
+	receive [[1]]
+} 'user "a typed call accepted a nested literal array"
+assert frontend/last-error/message =
+	"literal arrays cannot be passed as argument"
+	["typed literal array did not report the canonical error: "
+		mold frontend/last-error]
+
+typed-array-ir: compile-text {
+	Red/System []
+	typed-value!: alias struct! [
+		type [integer!]
+		_align0 [integer!]
+		value [int-ptr!]
+		_padding [integer!]
+		_align1 [integer!]
+	]
+	a: [1]
+	b: [:a]
+	receive: func [[typed] count [integer!] list [typed-value!]][]
+	main: func [][
+		receive b
+		receive [a]
+	]
+} 'user
+assert binary? typed-array-ir [
+	"typed array pointer arguments failed: " mold frontend/last-error
+]
+
+assert none? compile-text {
+	Red/System []
+	d!: alias struct! [i [integer!]]
+	d: declare d!
+	d: as d! as pointer! d
+} 'user "AS accepted POINTER! without a pointee type block"
+assert frontend/last-error/message =
+	"invalid target type casting: [pointer! d]"
+	"invalid compound cast target did not report the canonical error"
 
 print "PASS: typed postfix Red/System frontend"

@@ -143,13 +143,14 @@ for ($run = 1; $run -le $Runs; $run++) {
     }
 
     $combined = $measurement.Stdout + "`n" + $measurement.Stderr
-    $gcMatch = [Regex]::Match($combined, "(?m)^\.\.\.profile gc\s*:\s*cycles:\s*(\d+)\s+nodes:\s*(\d+)(?:\s+mark-seconds:\s*([0-9.]+)\s+sweep-seconds:\s*([0-9.]+))?\s+memory:\s*([^\r\n]+)")
-    $phaseMatches = [Regex]::Matches($combined, "(?m)^\.\.\.profile phase\s*:\s*([^\s]+)\s+count:\s*(\d+)\s+time:\s*([^\s]+)")
+    $gcMatch = [Regex]::Match($combined, "(?m)^\.\.\.profile gc\s*:\s*cycles:\s*(\d+)\s+nodes:\s*(\d+)(?:\s+mark-seconds:\s*([0-9.]+)\s+sweep-seconds:\s*([0-9.]+))?(?:\s+last-pinned-frames:\s*(\d+)\s+last-pinned-bytes:\s*(\d+))?\s+memory:\s*([^\r\n]+)")
+    $phaseMatches = [Regex]::Matches($combined, "(?m)^\.\.\.profile phase\s*:\s*([^\s]+)\s+count:\s*(\d+)\s+time:\s*([^\s]+)(?:\s+gc-cycles:\s*(\d+))?")
     $phases = [ordered]@{}
     foreach ($phaseMatch in $phaseMatches) {
         $phases[$phaseMatch.Groups[1].Value] = [pscustomobject]@{
             Count = [int]$phaseMatch.Groups[2].Value
             Seconds = [TimeSpan]::Parse($phaseMatch.Groups[3].Value).TotalSeconds
+            GcCycles = if ($phaseMatch.Groups[4].Success) { [int]$phaseMatch.Groups[4].Value } else { $null }
         }
     }
     $results.Add([pscustomobject]@{
@@ -165,6 +166,8 @@ for ($run = 1; $run -le $Runs; $run++) {
         GcNodeCycles         = if ($gcMatch.Success) { [int]$gcMatch.Groups[2].Value } else { $null }
         GcMarkSeconds        = if ($gcMatch.Success -and $gcMatch.Groups[3].Success) { [double]$gcMatch.Groups[3].Value } else { $null }
         GcSweepSeconds       = if ($gcMatch.Success -and $gcMatch.Groups[4].Success) { [double]$gcMatch.Groups[4].Value } else { $null }
+        GcLastPinnedFrames   = if ($gcMatch.Success -and $gcMatch.Groups[5].Success) { [int]$gcMatch.Groups[5].Value } else { $null }
+        GcLastPinnedBytes    = if ($gcMatch.Success -and $gcMatch.Groups[6].Success) { [int64]$gcMatch.Groups[6].Value } else { $null }
         Phases               = $phases
         OutputExists         = $outputExists
         OutputBytes          = if ($outputExists) { (Get-Item -LiteralPath $outputPath).Length } else { $null }

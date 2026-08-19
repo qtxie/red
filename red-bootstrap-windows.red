@@ -332,6 +332,8 @@ if phase-timer/active? [
 	print [
 		"...profile gc      : cycles:" system/state/GC/series-cycles
 		"nodes:" system/state/GC/nodes-cycles
+		"last-pinned-frames:" system/state/GC/pinned-frames
+		"last-pinned-bytes:" system/state/GC/pinned-bytes
 		"memory:" stats
 	]
 	write to file! compiler-profile-path mold/only phase-timer/snapshot

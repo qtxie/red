@@ -71,7 +71,7 @@ put-instruction ir 104 11 -11 0 0
 ir/121: as byte! 66h
 ir/122: as byte! 6Eh
 
-size: x64-codegen/generate ir 122 image 1024 1
+size: x64-codegen/generate ir 122 image 1024 0
 if size <= 0 [
 	print ["FAIL: logic cast RSIR status=" size lf]
 	quit 1

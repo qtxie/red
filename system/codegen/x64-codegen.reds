@@ -456,6 +456,65 @@ x64-codegen: context [
 		all [left-kind > 0 left-kind = right-kind]
 	]
 
+	integer-pointer-type: func [
+		types [byte-ptr!]
+		count [integer!]
+		return: [integer!]
+		/local id [integer!] record [rsir-type!]
+	][
+		id: 1
+		while [id <= count][
+			record: as rsir-type! (types + ((id - 1) * RSIR_TYPE_SIZE))
+			if all [
+				record/kind = -6
+				(canonical-type record/target types count) = -5
+			][return id]
+			id: id + 1
+		]
+		0
+	]
+
+	cpu-register-id: func [
+		name [byte-ptr!]
+		size [integer!]
+		return: [integer!]
+	][
+		if any [null? name size < 2 size > 3 name/1 <> as byte! 72h][return -1]
+		case [
+			size = 2 [
+				case [
+					name/2 = as byte! 38h [x64-encoder/R8]
+					name/2 = as byte! 39h [x64-encoder/R9]
+					true [-1]
+				]
+			]
+			name/2 = as byte! 31h [
+				case [
+					name/3 = as byte! 30h [x64-encoder/R10]
+					name/3 = as byte! 31h [x64-encoder/R11]
+					name/3 = as byte! 32h [x64-encoder/R12]
+					name/3 = as byte! 33h [x64-encoder/R13]
+					name/3 = as byte! 34h [x64-encoder/R14]
+					name/3 = as byte! 35h [x64-encoder/R15]
+					true [-1]
+				]
+			]
+			true [
+				case [
+					all [name/2 = as byte! 61h name/3 = as byte! 78h][x64-encoder/RAX]
+					all [name/2 = as byte! 63h name/3 = as byte! 78h][x64-encoder/RCX]
+					all [name/2 = as byte! 64h name/3 = as byte! 78h][x64-encoder/RDX]
+					all [name/2 = as byte! 62h name/3 = as byte! 78h][x64-encoder/RBX]
+					all [name/2 = as byte! 73h name/3 = as byte! 70h][x64-encoder/RSP]
+					all [name/2 = as byte! 62h name/3 = as byte! 70h][x64-encoder/RBP]
+					all [name/2 = as byte! 73h name/3 = as byte! 69h][x64-encoder/RSI]
+					all [name/2 = as byte! 64h name/3 = as byte! 69h][x64-encoder/RDI]
+					true [-1]
+				]
+			]
+		]
+	]
+
 	merge-compatible-types?: func [
 		left right [integer!]
 		types [byte-ptr!]
@@ -2248,6 +2307,7 @@ x64-codegen: context [
 			sub-frame
 			argument-index argument-base callee-slot native-stack-slot
 			argument-slot argument-width physical-slot target return-ref first-parameter
+			register-id cpu-pointer-ref
 			parameter-count call-flags import-id global-id literal-end displacement
 			member-type member-flags member-offset source-width target-width
 			target-ref target-flags copy-size copy-align
@@ -2278,6 +2338,7 @@ x64-codegen: context [
 		sub-entry-count: 0
 		unstable-stack?: false
 		last-math-operation: 0
+		cpu-pointer-ref: 0
 		index: 1
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
@@ -2374,12 +2435,21 @@ x64-codegen: context [
 					instruction/a = 2
 					instruction/a = 3
 					all [instruction/a >= 5 instruction/a <= 12]
-					all [instruction/a = 15 any [
-						instruction/b = x64-encoder/RSP
-						instruction/b = x64-encoder/RBP
-					]]
 				]
 			][unstable-stack?: true]
+			if all [
+				instruction/op = OP_NATIVE
+				instruction/a = 15
+				instruction/b >= 0 instruction/c > 0
+				instruction/c <= strings-size
+				instruction/b <= (strings-size - instruction/c)
+			][
+				register-id: cpu-register-id (strings + instruction/b) instruction/c
+				if any [
+					register-id = x64-encoder/RSP
+					register-id = x64-encoder/RBP
+				][unstable-stack?: true]
+			]
 			index: index + 1
 		]
 		if any [
@@ -4240,7 +4310,11 @@ x64-codegen: context [
 				instruction/op = OP_NATIVE [
 					valid?: case [
 						all [instruction/a >= 14 instruction/a <= 15][
-							all [instruction/b >= 0 instruction/b <= 15]
+							all [
+								instruction/b >= 0 instruction/c > 0
+								instruction/c <= strings-size
+								instruction/b <= (strings-size - instruction/c)
+							]
 						]
 						instruction/a = 21 [
 							any [
@@ -4251,6 +4325,15 @@ x64-codegen: context [
 						true [instruction/b = 0]
 					]
 					unless valid? [return INVALID_IR]
+					if all [instruction/a >= 14 instruction/a <= 15][
+						register-id: cpu-register-id
+							(strings + instruction/b) instruction/c
+						if register-id < 0 [return UNSUPPORTED]
+						if cpu-pointer-ref = 0 [
+							cpu-pointer-ref: integer-pointer-type types type-count
+						]
+						if cpu-pointer-ref = 0 [return INVALID_IR]
+					]
 					switch instruction/a [
 						1 [						;-- system/stack/top
 							unless all [
@@ -4506,22 +4589,17 @@ x64-codegen: context [
 							written: written + encoded
 						]
 						14 [					;-- system/cpu/<register>
-							unless all [
-								valid-type-ref? instruction/c type-count
-								pointee-type instruction/c types type-count :target-ref
-								(canonical-type target-ref types type-count) = -5
-							][return INVALID_IR]
 							depth: depth + 1
 							if depth > max-depth [max-depth: depth]
-							stack-types/depth: instruction/c
+							stack-types/depth: cpu-pointer-ref
 							stack-flags/depth: 0
 							stack-kinds/depth: VALUE
 							stack-tags/depth: 0
-							if instruction/b <> x64-encoder/RAX [
+							if register-id <> x64-encoder/RAX [
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/move-register at (capacity - written)
-									x64-encoder/RAX instruction/b 8
+									x64-encoder/RAX register-id 8
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 							]
@@ -4535,12 +4613,9 @@ x64-codegen: context [
 						]
 						15 [					;-- system/cpu/<register>:
 							unless all [
-								valid-type-ref? instruction/c type-count
-								pointee-type instruction/c types type-count :target-ref
-								(canonical-type target-ref types type-count) = -5
 								depth > 0 stack-kinds/depth = VALUE
 								stack-flags/depth = 0
-								compatible-types? instruction/c stack-types/depth
+								compatible-types? cpu-pointer-ref stack-types/depth
 									types type-count
 							][return INVALID_IR]
 							at: as byte-ptr! 0
@@ -4550,15 +4625,15 @@ x64-codegen: context [
 									(storage-slots + depth) 8 0
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
-							if instruction/b <> x64-encoder/RAX [
+							if register-id <> x64-encoder/RAX [
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/move-register at (capacity - written)
-									instruction/b x64-encoder/RAX 8
+									register-id x64-encoder/RAX 8
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 							]
-							stack-types/depth: instruction/c
+							stack-types/depth: cpu-pointer-ref
 							stack-flags/depth: 0
 							stack-tags/depth: 0
 						]
@@ -6118,7 +6193,7 @@ x64-codegen: context [
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
 			return INVALID_IR
 		]
-		if any [opt-level < 0 opt-level > 1][return UNSUPPORTED]
+		if opt-level <> 0 [return UNSUPPORTED]
 		header: as rsir-header! data
 		if any [
 			header/type-count < 0 header/import-count < 0 header/global-count < 0

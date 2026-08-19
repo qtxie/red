@@ -34,8 +34,9 @@ compiler-options: context [
 		make error! rejoin ["missing value for " option]
 	]
 
-	parse-args: func [args [block! none!] /local options position token][
+	parse-args: func [args [block! none!] /hybrid /local options position token][
 		options: make-options
+		if hybrid [option-set options 'opt-level 0]
 		either block? args [position: args][position: copy []]
 		while [not tail? position][
 			token: to string! position/1
@@ -46,7 +47,11 @@ compiler-options: context [
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
 				find ["-n" "--no-runtime"] token [option-set options 'no-runtime? true]
 				token = "-O0" [option-set options 'opt-level 0]
-				token = "-O1" [option-set options 'opt-level 1]
+				token = "-O1" [
+					either hybrid [
+						return make error! "hybrid codegen supports O0 and O2, not O1"
+					][option-set options 'opt-level 1]
+				]
 				token = "-O2" [option-set options 'opt-level 2]
 				token = "--dump-o2-ir" [
 					position: next position

@@ -43,7 +43,11 @@ bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
 
 print-usage: does [
-	print "Usage: red-bootstrap [-r] [-u] [-d] [-n] [-O0|-O1|-O2] [--dump-o2-ir file] [-dlib] [-t target] [--red-only|--loaded-red output.reds] [-o output] source.red|source.reds"
+	#either config/show = 'X86-64-Hybrid-only [
+		print "Usage: red-bootstrap [-r] [-u] [-d] [-n] [-O0|-O2] [-dlib] [-t Windows-X86-64] [--red-only|--loaded-red output.reds] [-o output] source.red|source.reds"
+	][
+		print "Usage: red-bootstrap [-r] [-u] [-d] [-n] [-O0|-O1|-O2] [--dump-o2-ir file] [-dlib] [-t target] [--red-only|--loaded-red output.reds] [-o output] source.red|source.reds"
+	]
 ]
 
 fail-command: func [message][
@@ -321,7 +325,11 @@ compiler-profile-path: get-env "RED_COMPILER_PROFILE"
 phase-timer/reset
 phase-timer/active?: string? compiler-profile-path
 phase-timer/begin 'compiler-total
-options: compiler-options/parse-args args
+#either config/show = 'X86-64-Hybrid-only [
+	options: compiler-options/parse-args/hybrid args
+][
+	options: compiler-options/parse-args args
+]
 if error? :options [fail-command mold options]
 if compiler-options/option-get options 'help? [print-usage quit/return 0]
 if compiler-options/option-get options 'version? [print bootstrap-version quit/return 0]

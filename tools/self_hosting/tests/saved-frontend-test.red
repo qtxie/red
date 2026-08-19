@@ -41,6 +41,14 @@ check all [
 ]["--loaded-red option parsing failed"]
 check error? compiler-options/parse-args ["--loaded-red"]
 	"--loaded-red without a value was accepted"
+hybrid-options: compiler-options/parse-args/hybrid []
+check (compiler-options/option-get hybrid-options 'opt-level) = 0
+	"hybrid options did not default to O0"
+check error? compiler-options/parse-args/hybrid ["-O1"]
+	"hybrid options accepted the removed O1 level"
+hybrid-options: compiler-options/parse-args/hybrid ["-O2"]
+check (compiler-options/option-get hybrid-options 'opt-level) = 2
+	"hybrid options did not retain O2 for native validation"
 runtime-job: compiler-options/to-job parsed
 check object? runtime-job "--no-runtime options did not produce a compiler job"
 check not compiler-system-job/job-get runtime-job 'runtime?

@@ -10,7 +10,7 @@ Red [
 red-compiler-process-get: func [spec code [block!]][false]
 red-compiler-process-in: func [path word code [block!]][false]
 red-compiler-process-typecheck: func [spec [word! block!]][none]
-red-compiler-process-call: func [body [block!] global? [logic!]][none]
+red-compiler-expand-call: func [body [block!] global? [logic!]][copy []]
 
 fail: func [message [string! block!]][
 	print ["FAIL:" either block? message [rejoin message][message]]
@@ -80,7 +80,7 @@ compiler-system-job/job-set job 'backend-mode 'rsir
 compiler-system-job/job-set job 'link? false
 compiler-system-job/job-set job 'runtime? to logic! source-runtime?
 compiler-system-job/job-set job 'debug? false
-compiler-system-job/job-set job 'opt-level 1
+compiler-system-job/job-set job 'opt-level 0
 compiler-system-job/job-set job 'o2-ir-dump none
 compiler-system-job/job-set job 'dev-mode? false
 
@@ -138,7 +138,7 @@ run-linked-fixture: func [
 	compiler-system-job/job-set job 'link? true
 	compiler-system-job/job-set job 'runtime? to logic! runtime
 	compiler-system-job/job-set job 'debug? false
-	compiler-system-job/job-set job 'opt-level 1
+	compiler-system-job/job-set job 'opt-level 0
 	compiler-system-job/job-set job 'o2-ir-dump none
 	compiler-system-job/job-set job 'dev-mode? false
 	compiler-system-job/job-set job 'build-prefix output-dir

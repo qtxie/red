@@ -98,10 +98,13 @@ system-dialect: context [
 			]
 			any [
 				not integer? job/opt-level
-				job/opt-level < 0
-				job/opt-level > 1
+				not find [0 2] job/opt-level
 			][
-				compiler/throw-error "RSIR frontend currently supports only O0 and O1"
+				compiler/throw-error "hybrid codegen supports O0 and O2, not O1"
+			]
+			job/opt-level = 2 [
+				compiler/throw-error
+					"hybrid O2 remains closed until its first native optimization is enabled"
 			]
 			any [job/need-main? job/red-only? job/libRed? job/libRedRT-update?][
 				compiler/throw-error "RSIR frontend received unsupported module lifecycle options"

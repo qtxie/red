@@ -173,6 +173,9 @@ if (x64-codegen/generate void-ir 90 output 64 0) <> x64-codegen/OUTPUT_FULL [
 if (x64-codegen/generate void-ir 90 output 1024 2) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
+if (x64-codegen/generate void-ir 90 output 1024 1) <> x64-codegen/UNSUPPORTED [
+	failures: failures + 1
+]
 
 ; fn: func [return: [integer!] /local value][value: 7 value]
 put local-ir 0 1
@@ -1376,23 +1379,32 @@ if (x64-codegen/generate system-ir 158 output 1024 0) <> x64-codegen/INVALID_IR 
 ; system/cpu/rcx: 42 followed immediately by system/cpu/rcx returns 42.
 put system-ir 20 5
 put system-ir 40 -5
+put system-ir 56 3
 put system-ir 64 1
 put system-ir 88 5
 put-instruction system-ir 92 1 1 42 0
-put-instruction system-ir 108 10 15 1 1
+put-instruction system-ir 108 10 15 0 3
 put-instruction system-ir 124 12 0 0 0
-put-instruction system-ir 140 10 14 1 1
+put-instruction system-ir 140 10 14 0 3
 put-instruction system-ir 156 11 1 0 0
-system-ir/173: as byte! 66h
-system-ir/174: as byte! 6Eh
+system-ir/173: as byte! 72h
+system-ir/174: as byte! 63h
+system-ir/175: as byte! 78h
+system-ir/176: as byte! 66h
+system-ir/177: as byte! 6Eh
 
-size: x64-codegen/generate system-ir 174 output 1024 0
+size: x64-codegen/generate system-ir 177 output 1024 0
 if any [size <= 0 not execute-first? output 42][failures: failures + 1]
-put system-ir 116 16
-if (x64-codegen/generate system-ir 174 output 1024 0) <> x64-codegen/INVALID_IR [
+system-ir/175: as byte! 7Ah
+if (x64-codegen/generate system-ir 177 output 1024 0) <> x64-codegen/UNSUPPORTED [
 	failures: failures + 1
 ]
-put system-ir 116 1
+system-ir/175: as byte! 78h
+put system-ir 96 -5
+if (x64-codegen/generate system-ir 177 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put system-ir 96 1
 
 ; ADD sets OF while the division family has no usable OF result.
 put system-ir 64 -11
@@ -1401,15 +1413,15 @@ put-instruction system-ir 108 1 -5 1 0
 put-instruction system-ir 124 15 1 0 0
 put-instruction system-ir 140 10 16 0 -11
 put-instruction system-ir 156 11 -11 0 0
-size: x64-codegen/generate system-ir 174 output 1024 0
+size: x64-codegen/generate system-ir 177 output 1024 0
 if any [size <= 0 not execute-first? output 1][failures: failures + 1]
 
 put-instruction system-ir 108 1 -5 -1 -1
 put-instruction system-ir 124 15 4 0 0
-size: x64-codegen/generate system-ir 174 output 1024 0
+size: x64-codegen/generate system-ir 177 output 1024 0
 if any [size <= 0 not execute-first? output 0][failures: failures + 1]
 put system-ir 152 0
-if (x64-codegen/generate system-ir 174 output 1024 0) <> x64-codegen/INVALID_IR [
+if (x64-codegen/generate system-ir 177 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 

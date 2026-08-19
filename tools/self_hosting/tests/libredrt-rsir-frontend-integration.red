@@ -42,7 +42,7 @@ compiler-system-job/job-set job 'sub-system 'Console
 compiler-system-job/job-set job 'GUI-engine none
 compiler-system-job/job-set job 'draw-engine none
 compiler-system-job/job-set job 'debug? false
-compiler-system-job/job-set job 'opt-level 1
+compiler-system-job/job-set job 'opt-level 0
 compiler-system-job/job-set job 'redbin-compress? true
 compiler-system-job/job-set job 'compiler-version compiler-version
 compiler-system-job/job-set job 'compiler-build-date compiler-build-date

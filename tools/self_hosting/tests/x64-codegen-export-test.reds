@@ -68,7 +68,7 @@ put-instruction ir 152 11 -5 0 0
 copy-memory (ir + 168) (as byte-ptr! "valueansweranswer-v1value") 25
 
 put ir 100 -1
-if (x64-codegen/generate ir 193 image 1024 1) <> x64-codegen/INVALID_IR [
+if (x64-codegen/generate ir 193 image 1024 0) <> x64-codegen/INVALID_IR [
 	print ["FAIL: x64 codegen accepted a negative export name offset" lf]
 	free ir
 	free image
@@ -76,7 +76,7 @@ if (x64-codegen/generate ir 193 image 1024 1) <> x64-codegen/INVALID_IR [
 ]
 put ir 100 11
 
-size: x64-codegen/generate ir 193 image 1024 1
+size: x64-codegen/generate ir 193 image 1024 0
 if size <= 0 [
 	print ["FAIL: shared library export RSIR status=" size lf]
 	quit 1

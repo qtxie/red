@@ -11,7 +11,7 @@ recycle/on
 compiler-version: "0.1.0"
 
 print-usage: does [
-	print "Usage: red-system-hybrid-windows [-n] [-O0|-O1] [-dlib] -t Windows-X86-64 [-o output] source.reds"
+	print "Usage: red-system-hybrid-windows [-n] [-O0|-O2] [-dlib] -t Windows-X86-64 [-o output] source.reds"
 ]
 
 fail-command: func [message][
@@ -51,7 +51,7 @@ compile-source: func [options [object!] /local source job prefix result][
 
 args: any [system/options/args copy []]
 unless block? args [args: copy []]
-options: compiler-options/parse-args args
+options: compiler-options/parse-args/hybrid args
 if error? :options [fail-command mold options]
 if compiler-options/option-get options 'help? [print-usage quit/return 0]
 if compiler-options/option-get options 'version? [print compiler-version quit/return 0]

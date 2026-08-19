@@ -83,6 +83,8 @@ compiler-rsir-frontend: context [
 	initializers: make binary! (16 * 256)
 	switches: make binary! (12 * 128)
 	strings: make binary! (2 * 1024)
+	native-names: make map! 32
+	native-name-patches: make block! 32
 	function-count: 0
 	context-count: 0
 	type-count: 0
@@ -208,10 +210,6 @@ compiler-rsir-frontend: context [
 	atomic-operations: make map! [
 		add 1 sub 2 or 3 xor 4 and 5
 	]
-	cpu-register-ids: make map! [
-		rax 0 rcx 1 rdx 2 rbx 3 rsp 4 rbp 5 rsi 6 rdi 7
-		r8 8 r9 9 r10 10 r11 11 r12 12 r13 13 r14 14 r15 15
-	]
 	statement-value: 0
 	expression-value: 1
 	tail-value: 2
@@ -254,6 +252,39 @@ compiler-rsir-frontend: context [
 
 	emit: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
+	]
+
+	emit-native-register: func [
+		instructions [binary!]
+		operation [integer!]
+		name [word!]
+	][
+		append/only native-name-patches instructions
+		append native-name-patches (length? instructions) + 9
+		append native-name-patches name
+		emit instructions reduce [native-op operation 0 0]
+	]
+
+	finish-native-names: func [
+		/local patch info bytes code offset
+	][
+		clear native-names
+		patch: native-name-patches
+		while [not tail? patch][
+			info: select native-names patch/3
+			unless block? info [
+				bytes: to binary! form patch/3
+				info: reduce [length? strings length? bytes]
+				put native-names patch/3 info
+				append strings bytes
+			]
+			code: patch/1
+			offset: patch/2
+			change/part at code offset int-to-bin/to-bin32 info/1 4
+			change/part at code (offset + 4) int-to-bin/to-bin32 info/2 4
+			patch: skip patch 3
+		]
+		clear native-name-patches
 	]
 
 	emit-before: func [
@@ -1970,6 +2001,7 @@ compiler-rsir-frontend: context [
 			lower-function id
 			id: id + 1
 		]
+		finish-native-names
 		record: functions
 		while [not tail? record][
 			append function-code record/3
@@ -6301,7 +6333,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block! none!]
-		/local path count next-position pointer-ref register id
+		/local path count next-position pointer-ref id
 	][
 		unless path? position/1 [return none]
 		path: position/1
@@ -6346,19 +6378,15 @@ compiler-rsir-frontend: context [
 			return next position
 		]
 		if path/2 = 'cpu [
-			unless count = 3 [fail ERROR-REFERENCE "invalid system/cpu access"]
+			unless all [count = 3 word? path/3][
+				fail ERROR-REFERENCE "invalid system/cpu access"
+			]
 			either path/3 = 'overflow? [
 				emit instructions reduce [native-op cpu-overflow-native 0 -11]
 				last-type: -11
 			][
-				register: select cpu-register-ids path/3
-				unless integer? register [
-					fail ERROR-REFERENCE ["unknown x64 CPU register " mold path/3]
-				]
 				pointer-ref: intern-pointer -5
-				emit instructions reduce [
-					native-op cpu-register-native register pointer-ref
-				]
+				emit-native-register instructions cpu-register-native path/3
 				last-type: pointer-ref
 			]
 			last-flags: 0
@@ -6476,7 +6504,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block! none!]
-		/local pointer-ref next-position register id
+		/local pointer-ref next-position id
 	][
 		unless all [
 			path? target
@@ -6503,26 +6531,17 @@ compiler-rsir-frontend: context [
 			fail ERROR-REFERENCE "cannot modify system/pc"
 		]
 		if target/2 = 'cpu [
-			unless (length? target) = 3 [
+			unless all [(length? target) = 3 word? target/3][
 				fail ERROR-REFERENCE "invalid system/cpu assignment"
 			]
 			if target/3 = 'overflow? [
 				fail ERROR-REFERENCE "cannot modify system/cpu/overflow?"
 			]
-			register: select cpu-register-ids target/3
-			unless integer? register [
-				fail ERROR-REFERENCE ["unknown x64 CPU register " mold target/3]
-			]
 			pointer-ref: intern-pointer -5
 			next-position: stack-value next position scope uses instructions
 				params locals expression-value
 			if last-stopped? [return next-position]
-			unless coerce-stack pointer-ref 0 instructions false [
-				fail ERROR-REFERENCE "system/cpu assignment expects pointer! [integer!]"
-			]
-			emit instructions reduce [
-				native-op cpu-register-set-native register pointer-ref
-			]
+			emit-native-register instructions cpu-register-set-native target/3
 			last-type: pointer-ref
 			last-flags: 0
 			last-float-literal?: false
@@ -7905,6 +7924,8 @@ compiler-rsir-frontend: context [
 			clear initializers
 			clear switches
 			clear strings
+			clear native-names
+			clear native-name-patches
 			clear use-local-slots
 			clear function-storage
 			clear subroutines

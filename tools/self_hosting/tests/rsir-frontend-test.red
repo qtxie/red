@@ -129,6 +129,12 @@ instruction-word: func [ir layout id field][
 	word-at ir (layout/6 + ((id - 1) * 16) + field)
 ]
 
+instruction-bytes: func [ir layout id /local offset size][
+	offset: instruction-word ir layout id 8
+	size: instruction-word ir layout id 12
+	copy/part at ir (layout/7 + offset + 1) size
+]
+
 switch-word: func [ir layout id field][
 	word-at ir (layout/8 + ((id - 1) * 12) + field)
 ]
@@ -2996,9 +3002,26 @@ assert all [
 	block? select frontend/runtime-specs (to word! "exec>nested>hidden")
 ]["runtime exports did not use ordinary library resolution and the private Red ABI"]
 
+red-get-count: red-in-count: 0
+red-get-spec: red-in-path: red-in-word: none
+red-compiler-process-get: func [spec code [block!]][
+	red-get-count: red-get-count + 1
+	red-get-spec: spec
+	remove/part code 2
+	insert code 41
+	true
+]
+red-compiler-process-in: func [path word code [block!]][
+	red-in-count: red-in-count + 1
+	red-in-path: copy path
+	red-in-word: word
+	remove/part code 3
+	insert code 42
+	true
+]
 red-compiler-process-typecheck: func [spec [word! block!]][none]
 red-compiler-expand-call: func [body [block!] global? [logic!]][copy []]
-empty-directive-ir: frontend/compile/runtime load {
+empty-directive-ir: frontend/compile/runtime/red load {
 	Red/System []
 	answer: func [return: [integer!] /local value [integer!]][
 		#typecheck answer
@@ -3010,6 +3033,20 @@ empty-directive-ir: frontend/compile/runtime load {
 assert binary? empty-directive-ir [
 	"empty statement directive lowering failed: " mold frontend/last-error
 ]
+
+red-directive-ir: frontend/compile/red load {
+	Red/System []
+	get-value: func [return: [integer!]][#get answer]
+	in-value: func [return: [integer!]][#in system/catalog/errors script]
+} 'glue
+assert all [
+	binary? red-directive-ir
+	red-get-count = 1
+	red-in-count = 1
+	red-get-spec = 'answer
+	red-in-path = to path! [system catalog errors]
+	red-in-word = 'script
+]["Red-generated directives were not expanded under the Red pass"]
 
 runtime-variadic-ir: frontend/compile/runtime load {
 	Red/System []
@@ -3619,6 +3656,7 @@ assert binary? cpu-system-ir [
 cpu-system-layout: layout-of cpu-system-ir
 cpu-system-ops: ops-of cpu-system-ir cpu-system-layout
 cpu-effects: make block! 64
+cpu-register-effects: make block! 64
 repeat id word-at cpu-system-ir 20 [
 	if (instruction-word cpu-system-ir cpu-system-layout id 0) = 10 [
 		repend cpu-effects [
@@ -3626,20 +3664,32 @@ repeat id word-at cpu-system-ir 20 [
 			instruction-word cpu-system-ir cpu-system-layout id 8
 			instruction-word cpu-system-ir cpu-system-layout id 12
 		]
+		if find [14 15] instruction-word cpu-system-ir cpu-system-layout id 4 [
+			append cpu-register-effects
+				instruction-word cpu-system-ir cpu-system-layout id 4
+			append/only cpu-register-effects
+				to string! instruction-bytes cpu-system-ir cpu-system-layout id
+		]
 	]
 ]
 pc-ref: cpu-effects/3
-cpu-ref: cpu-effects/9
-expected-effects: reduce [13 0 pc-ref 16 0 -11]
-repeat register 16 [repend expected-effects [15 register - 1 cpu-ref]]
-repend expected-effects [14 15 cpu-ref]
+cpu-ref: function-word cpu-system-ir cpu-system-layout 3 8
+expected-effects: make block! 40
+foreach name [
+	"rax" "rcx" "rdx" "rbx" "rsp" "rbp" "rsi" "rdi"
+	"r8" "r9" "r10" "r11" "r12" "r13" "r14" "r15"
+][repend expected-effects [15 name]]
+repend expected-effects [14 "r15"]
 assert all [
 	pc-ref > 0
 	cpu-ref > 0
 	pc-ref <> cpu-ref
-	cpu-effects = expected-effects
+	(copy/part cpu-effects 6) = reduce [13 0 pc-ref 16 0 -11]
+	(type-word cpu-system-ir cpu-system-layout cpu-ref 0) = -6
+	(type-word cpu-system-ir cpu-system-layout cpu-ref 4) = -5
+	cpu-register-effects = expected-effects
 	(copy/part at cpu-system-ops 5 4) = [3 4 10 12]
-]["system/pc and system/cpu did not retain direct typed register effects"]
+]["system/pc and system/cpu did not retain machine-independent register effects"]
 
 assert none? compile-text {
 	Red/System []
@@ -3655,19 +3705,22 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"system/cpu/overflow? assignment reported the wrong error class"
 
-assert none? compile-text {
+unknown-cpu-ir: compile-text {
 	Red/System []
 	fn: func [][system/cpu/r16]
-} 'user "system/cpu accepted an unknown x64 register"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"unknown x64 register reported the wrong error class"
+} 'user
+assert binary? unknown-cpu-ir
+	"the machine-independent frontend rejected a target register name"
+unknown-cpu-layout: layout-of unknown-cpu-ir
+assert (to string! instruction-bytes unknown-cpu-ir unknown-cpu-layout 1) = "r16"
+	"the machine-independent frontend did not retain the register name"
 
-assert none? compile-text {
+invalid-cpu-value-ir: compile-text {
 	Red/System []
 	fn: func [][system/cpu/rax: 1]
-} 'user "system/cpu accepted a non-pointer register value"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid CPU register value reported the wrong error class"
+} 'user
+assert binary? invalid-cpu-value-ir
+	"CPU register value checking was not transferred to native codegen"
 
 overflow-ir: compile-text {
 	Red/System []

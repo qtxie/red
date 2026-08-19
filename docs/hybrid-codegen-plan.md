@@ -6,7 +6,7 @@ The stable outer path is:
 
     Red/System source
         -> rs-compiler (Red)
-        -> typed RSIR binary!
+        -> dense machine-independent RSIR binary!
         -> codegen-module routine! (Red/System)
         -> direct linker image binary!
         -> linker (Red)
@@ -83,7 +83,7 @@ conventions.
 ### Left-To-Right Evaluation
 
 Red/System has no normal operator precedence and evaluates expressions from
-left to right. A typed postfix instruction stream represents that rule
+left to right. A dense postfix instruction stream represents that rule
 directly:
 
 - operands are emitted in source evaluation order;
@@ -184,16 +184,21 @@ Language-defined native facilities use one native-operation family with stable
 semantic identifiers. It covers size?, length?, overflow state, stack,
 CPU/FPU, I/O, atomics, image information, push, pop, and assert.
 
-This is not a list keyed by source spelling in codegen. The Red frontend
-resolves spellings and paths to semantic native identifiers. Codegen switches
-only on operations that the language specification itself distinguishes.
+The Red frontend resolves the language facility to a semantic native operation.
+Target-independent leaf names stay symbolic. For example, `system/cpu/rax`
+stores the register name in RSIR; only x64 codegen maps it to a physical
+register number. Codegen switches only on distinctions made by the language
+specification, never on a source-specific special case.
 
 #inline references a literal byte slice and an optional logical return type.
 
 ## Logical Types
 
-The frontend owns names, lexical scopes, inference, and type checking. RSIR
-contains only the logical structure native layout and ABI lowering require.
+The frontend owns source syntax, declarations, lexical scopes, and binding
+names to source-order IDs. Red/System codegen owns expression inference, type
+compatibility, implicit conversion, legality checks, and result-type merging.
+RSIR contains the declared logical type graph and syntax-resolved operations
+needed to do that work without retaining a Red AST.
 
 Built-in scalar references distinguish:
 
@@ -212,10 +217,12 @@ User type nodes represent:
 - raw or tagged union plus ordered variant slice;
 - function signature plus return and parameter slices.
 
-A type use also records reference/value semantics where Red/System permits
-both, notably struct and union fields, arguments, and returns. Aliases, enum
-labels, member names, and local names remain frontend data unless a name must
-be exported or linked.
+A type use records explicit source annotations and reference/value syntax where
+Red/System permits both, notably struct and union fields, arguments, and
+returns. Alias names, enum labels, member names, and local names are bound by
+the frontend; canonical aliases, inferred local types, and expression types
+are derived once by codegen. Names remain frontend data unless a later
+operation, diagnostic, export, or link requires them.
 
 Tagged-union metadata records logical variants and anonymous payload
 structure. Native codegen chooses tag width, payload offset, total alignment,
@@ -230,9 +237,10 @@ One literal operation carries a logical type and two raw value limbs, so
 binary32 and binary64 constants preserve their exact IEEE payload without a
 float-only representation. One cast operation carries its target type and the
 specified `keep` bit. One binary operation carries the language operation;
-the native selector chooses integer, pointer, or XMM instructions from the
-operand types. The frontend enforces the cast matrix, same-type floating
-arithmetic, and explicit narrowing rules before RSIR reaches codegen.
+codegen derives its operand and result types, checks the cast matrix and
+narrowing rules, inserts required coercions in native working state, then
+selects integer, pointer, or XMM instructions. Those rules have one production
+owner: codegen.
 
 ## Direct RSIR Order
 
@@ -275,8 +283,11 @@ cross the boundary.
 The binary length is the outer bound. Production code performs one table-bound
 walk before casting table starts. Dynamic slice and ID checks are fused into
 the first decode that already consumes them; there is no verifier pass.
-Frontend type rules are not re-run in production codegen. Debug builds assert
-stack shape, branch targets, and internal pass invariants.
+The frontend validates only source and IR shape that it must know to parse.
+Codegen performs semantic checks while deriving stack and control-flow facts;
+the same rule is not retained as a production check in Red. Source positions
+cross the boundary as compact indexes where backend diagnostics need them.
+Debug builds may additionally assert internal pass invariants.
 
 There is no magic value, section-name directory, reader object, field getter,
 compatibility adapter, or canonical name remapping.
@@ -288,17 +299,21 @@ The frontend is one Red context with direct data ownership:
 1. expand includes, macros, enums, and conditional directives;
 2. scan declarations and contexts, assigning source-order IDs;
 3. retain body positions in the expanded source block without copying bodies;
-4. resolve aliases and complete the logical type graph;
-5. parse each body directly into the RSIR instruction binary;
-6. patch forward branch targets in place;
-7. append linker-visible names and literals;
+4. encode declared type syntax and bind lexical names to IDs;
+5. parse each body directly into a dense left-to-right RSIR instruction binary;
+6. record source control structure and symbolic targets without merging value
+   types or choosing machine operations;
+7. append only required literals, symbols, target-leaf names, and diagnostics;
 8. call the native routine.
 
-Name lookup uses hash! tables. Qualified names are constructed once at
-declaration or scope entry. Hot paths never search pair blocks with select.
+Name-to-value lookup uses map! tables; hash! is reserved for actual sets.
+Qualified names are constructed once at declaration or scope entry. Hot paths
+never search pair blocks with select.
 
-The frontend does not calculate layout, classify ABI arguments, build an AST,
-allocate registers, or construct linker objects.
+The frontend does not infer expression or local types, enforce operand, cast,
+call, assignment, or return compatibility, fold runtime expressions, calculate
+layout, build CFG state, classify ABI arguments, allocate registers, or
+construct linker objects.
 
 The loader may be reused where it already implements Red/System semantics
 directly. It should be simplified when old emitter-facing output or duplicate
@@ -310,25 +325,38 @@ reuse a file unchanged.
 The native routine owns all target-dependent work:
 
 1. cast the direct tables after the outer bounds walk;
-2. resolve and cache logical layouts;
-3. derive basic-block entries and typed stack effects;
-4. create compact native value, slot, branch-entry, and offset arrays in one
+2. canonicalize declared types and infer unresolved local and value types;
+3. check operations, calls, casts, assignments, returns, and branch merges;
+4. resolve and cache logical layouts and derive basic-block entries;
+5. create compact native value, slot, branch-entry, and offset arrays in one
    allocation;
-5. classify Win64 arguments and returns from signatures;
-6. perform the selected optimization level in place;
-7. assign registers, stack slots, shadow space, and unwind state;
-8. select primitive x64 instructions and relax branches;
-9. reserve the linker image once and emit into it directly.
+6. classify Win64 arguments and returns from signatures;
+7. perform the selected optimization level in place;
+8. assign registers, stack slots, shadow space, and unwind state;
+9. select primitive x64 instructions and relax branches;
+10. reserve the linker image once and emit into it directly.
 
 The x64 encoder exposes primitive encodings and addressing forms. It must not
 grow combined semantic forms such as "call with first literal argument" or
 "return current parameter". Argument movement, calls, loads, stores, and
 returns are composed by the selector from ordinary primitives.
 
-O0 prioritizes complete, linear, correct lowering. O1 adds local constant
-folding, dead-value removal, slot promotion, and simple block cleanup. O2 is
-implemented only after O0 and O1 pass the complete suites; it is not a
-bootstrap dependency.
+There are exactly two optimization levels:
+
+- O0 is the default bootstrap and development path. It performs only linear
+  analysis and inexpensive selector work: direct immediates and addresses,
+  short encodings, zero-cost coercions, obvious move elimination, and a fast
+  value-location stack. It must compile quickly and produce code at least as
+  good as the old pure Red compiler's default O1 path.
+- O2 enables a small Pareto set of high-value cross-instruction analyses:
+  constant and copy propagation, local and temporary register promotion,
+  redundant load/store elimination, address folding, call-argument move
+  coalescing, branch simplification, and unreachable-block removal.
+
+O1 is invalid, not an alias. O2 is not exposed until at least one real native
+optimization changes generated code and passes its correctness and performance
+gate; it must never silently run the O0 path. Global SSA, aggressive inlining,
+complex loop transforms, and vectorization are outside the initial O2 scope.
 
 Derived native arrays are codegen working memory, not a serialized second IR.
 They exist only where layout, control flow, ABI lowering, or allocation
@@ -356,7 +384,8 @@ obsolete shape.
 
 ## Compile-Speed Rules
 
-- Keep only parsing, binding, type checking, and final linking in Red.
+- Keep only preprocessing, declaration parsing, lexical binding, static
+  initializer encoding, and final linking in Red.
 - Traverse expanded source twice, without an AST copy.
 - Assign source-order IDs and use direct indexing.
 - Reserve large binaries and native scratch areas from counts or measured
@@ -478,7 +507,7 @@ Gate: all applicable Red tests pass in release and development configurations.
 
 Use the cheapest gate that can disprove the current change:
 
-1. interpreted Red frontend tests for parsing, binding, types, and exact RSIR;
+1. interpreted Red frontend tests for parsing, binding, and exact dense RSIR;
 2. pure Red/System decoder/layout/selector tests;
 3. one focused native executable for the changed semantic family;
 4. the corresponding formal suite group;
@@ -487,12 +516,19 @@ Use the cheapest gate that can disprove the current change:
 
 This cadence keeps feedback fast without weakening the final gate.
 
-Normal work must use Stage1 or the designated existing bootstrap executable.
-The retired Rebol Stage0 path is not part of verification.
-Ordinary native checks use development mode: omit `-r`, keep the Stage1-built
-`libRedRT.dll` beside the output, and use at most `-O1` when an optimized build
-is needed. Release mode is reserved for gates that specifically require a
-standalone artifact; `-O2` is not part of bootstrap feedback.
+Normal work must use the designated existing bootstrap executable or the latest
+proven hybrid generation, never an intermediate Stage1 executable. The retired
+Rebol Stage0 path is not part of verification.
+Ordinary native checks use development mode: omit `-r`, keep the designated
+bootstrap's `libRedRT.dll` beside the output, and use the default `-O0` feedback
+path. Release mode is reserved for gates that specifically require a standalone
+artifact. O2 has a separate performance build and never participates in normal
+Hn-to-Hn+1 feedback measurement.
+
+Self-compilation timing uses one known-good matching `libRedRT.dll`,
+`libRedRT-defs.red`, and `libRedRT-include.red` set. Rebuilding libRedRT and
+measuring the compiler are separate gates, so runtime image-layout regressions
+cannot contaminate compiler-speed results.
 
 ## Current Baseline
 
@@ -505,7 +541,7 @@ Already retained:
 - target layout ownership in Red/System, with one module-owned native cache for
   inline/reference size and alignment plus direct member offsets;
 - proof that the existing compiler can build and execute the boundary.
-- typed postfix values and places with assignment results;
+- dense postfix values and places with backend-derived types and assignment results;
 - one contiguous parameter/local storage model with local type inference;
 - pointee-preserving pointer nodes and a distinct c-string logical type;
 - one semantic function compiler used for size measurement and emission;

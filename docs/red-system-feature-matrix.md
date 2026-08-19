@@ -22,16 +22,16 @@ rules remain in Red/System codegen.
 | Specification family | Direct mechanism | Primary repository evidence | Status |
 | --- | --- | --- | --- |
 | Source header, delimiters, comments, free-form syntax | Loader normalization followed by direct token cursor | compiler/compiles-ok-test.r, compiler/output-test.r, compiler/regression-test-rsc.r | audit |
-| Integer, character, hex, binary, string and null literals | Typed literal emission and constant bytes | compiler/int-literals-test.r, units/integer-test.reds, byte-test.reds, null-test.reds | replace |
+| Integer, character, hex, binary, string and null literals | Dense literal forms and constant bytes; codegen derives contextual types | compiler/int-literals-test.r, units/integer-test.reds, byte-test.reds, null-test.reds | replace |
 | #define and parameterized macros | Existing loader expansion before declaration scan | compiler/define-test.reds, compiler/regression-test-rsc.r | audit |
 | #enum | Loader assigns labels; frontend keeps labels and resolved integer type | compiler/enum-test.r, units/enum-test.reds | audit |
 | #include, #if, #either and #switch | Existing source-order loader expansion with source positions | namespace include tests, compiler/regression-test-rsc.r, focused directive probes | audit |
 | #verbose | Loader/compiler diagnostic state only; no RSIR operation | focused positive and invalid-level probes | pending |
 | Global, function, use and context scopes | Source-order IDs plus hash! lookup and lexical scope chain | compiler/namespace-test.r, units/namespace-test.reds, use-test.reds | replace |
 | with scopes and path-qualified symbols | Resolved frontend scope chain; direct symbol IDs | complete compiler corpus and focused namespace fixtures | replace |
-| Aliases and type inference | Frontend-only names resolving to logical types; inferred local slot types | compiler/alias-test.r, inference-test.r, units/alias-test.reds | replace |
-| Global and local variables | Global records and typed function slots; address/load/set | compiler/compiles-ok-test.r, x64-local-smoke.reds | replace |
-| Protected constant data | Read-only global plus flat typed initializer stream; frontend rejects writes | units/protect-test.reds, array-test.reds | pending |
+| Aliases and type inference | Frontend binds alias names and slots; codegen canonicalizes aliases and infers local/value types | compiler/alias-test.r, inference-test.r, units/alias-test.reds | replace |
+| Global and local variables | Global records and function slots; codegen derives types for address/load/set | compiler/compiles-ok-test.r, x64-local-smoke.reds | replace |
+| Protected constant data | Read-only global plus flat initializer stream; codegen rejects writes | units/protect-test.reds, array-test.reds | pending |
 | logic!, byte!, integer! | Built-in logical types and generic scalar operations | units/logic-test.reds, byte-test.reds, integer-test.reds | pending |
 | Signed and unsigned fixed-width integers | Logical width/sign plus one lossless widening rule at typed boundaries; generic integer operations | units/fixed-int-test.reds, int64-test.reds, rsir-frontend-test.red, rsir-fixed-integer-exit.reds | replace |
 | float! and float32! | Exact IEEE literal payloads, ordinary typed casts/binary operations, and target XMM selection | units/float-test.reds, float32-test.reds, math-mixed-test.reds, rsir-float-scalar-exit.reds | pending |
@@ -42,12 +42,12 @@ rules remain in Red/System codegen.
 | struct! reference and value forms | Logical members, type-use flags, aggregate load/set/copy | units/struct-x64-test.reds, x64-struct-*.reds | pending |
 | union! raw form | Shared logical variants and maximum native layout | units/union-test.reds, x64-union-by-value-smoke.reds | pending |
 | Tagged unions and variant? | Variant metadata, native tag layout, generic member access and switch | x64-tagged-union-smoke.reds | pending |
-| Type casts and size? | Generic cast; native layout query from logical type | compiler/cast-test.r, units/cast-test.reds, size-x64-test.reds | replace |
-| Left-to-right expressions | Typed postfix emission in exact source order | compiler/cond-expr-test.r, infix-test.r, units/conditional-test.reds | replace |
+| Type casts and size? | Explicit cast intent; codegen checks the cast matrix and queries native layout | compiler/cast-test.r, units/cast-test.reds, size-x64-test.reds | replace |
+| Left-to-right expressions | Dense postfix syntax in exact source order; codegen derives stack types | compiler/cond-expr-test.r, infix-test.r, units/conditional-test.reds | replace |
 | Math, shifts and bitwise operations | Generic unary/binary operations selected by operand types | integer, fixed-int, modulo and math-mixed unit tests | replace |
 | Comparisons and not | Generic compare/unary operations; operand types select integer signedness or IEEE unordered behavior | compiler/not-test.r, units/not-test.reds, rsir-fixed-integer-exit.reds, rsir-float-scalar-exit.reds | replace |
 | Predeclared runtime functions and predicates | Frontend-known typed signatures; ordinary calls or semantic native operations | compiler/print-test.r, units/integer-test.reds, lib-test.reds | pending |
-| Function declarations and returns | Signature type, typed slots, instruction range and return | compiler/return-test.r, units/function-test.reds, return-test.reds | replace |
+| Function declarations and returns | Declared signature, slots, instruction range, and backend-checked return | compiler/return-test.r, units/function-test.reds, return-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |
 | Direct and imported calls | One stack call with target, signature and actual count | units/function-test.reds, x64-function-smoke.reds, x64-import-smoke.reds | replace |
 | Function pointers and variables | Function signature type, symbol address, indirect call | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds | pending |
@@ -55,7 +55,7 @@ rules remain in Red/System codegen.
 | Variadic, typed and custom calls | Actual stack types/count plus signature attributes | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds | pending |
 | Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results and variadic float duplication | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds | pending |
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
-| if, either, any and all | Generic branch/jump preserving a common stack prefix; compatible results share one typed virtual stack slot | units/conditional-test.reds, focused frontend/bridge/linked-PE control tests | replace |
+| if, either, any and all | Generic branch/jump; codegen derives common stack prefixes and merges compatible results | units/conditional-test.reds, focused frontend/bridge/linked-PE control tests | replace |
 | loop, until and while | Generic branch/jump loops with explicit break/continue targets and ordinary hidden counters | integer and function units, focused frontend/bridge/linked-PE control tests | replace |
 | case | Ordered condition blocks, typed result merge, and non-returning fail on no match | units/case-test.reds, compiler conditional tests | pending |
 | switch | Typed literal/target slice with explicit default or fail semantics; x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests | pending |
@@ -65,7 +65,7 @@ rules remain in Red/System codegen.
 | catch function attribute | Signature flag and resume point after throwing call | units/exceptions-test.reds, x64-catch-runtime.reds | pending |
 | overflow? and CPU overflow state | Native arithmetic flags tracked as an explicit effect | units/overflow-test.reds, x64-overflow and mixed-overflow smokes | pending |
 | push, pop and stack controls | Native-operation IDs with explicit stack effects | units/push-pop-test.reds, x64-stack-smoke.reds | pending |
-| args, environment, CPU, FPU, I/O and image | Native-operation IDs; target implementation in codegen/runtime | units/system-test.reds, x64-cpu-register and image-info smokes | pending |
+| args, environment, CPU, FPU, I/O and image | Native-operation IDs plus symbolic target leaf names; target mapping and checks in codegen/runtime | units/system-test.reds, x64-cpu-register and image-info smokes | pending |
 | system/alias and system/words | Frontend semantic aliases and direct resolved symbol paths | units/system-test.reds, namespace tests and complete runtime corpus | pending |
 | Atomic load/store/CAS/math/fence | Typed native operations with ordering semantics | units/atomic-test.reds, queue-test.reds, x64-atomic-direct.reds, rsir-atomic-exit.reds | pending |
 | #import functions and variables | Direct import records and generic address/call operations | dylib compiler/unit tests, x64-import-var-*.reds | replace |
@@ -79,7 +79,7 @@ rules remain in Red/System codegen.
 | Windows driver entry/output | Target output policy and specified on-load entry signature | focused driver build/header diagnostics | pending |
 | Runtime startup, GC and callbacks | Relocatable runtime image and direct linker merge | Red runtime tests, x64 runtime/catch/callback smokes | pending |
 | Red routine/#system integration | Same frontend and RSIR through the Red compiler | complete compiled and interpreted Red suites | pending |
-| Compile-time diagnostics | Frontend checks with source positions; no backend retry | compiler/comp-err-test.r and negative focused probes | pending |
+| Compile-time diagnostics | Syntax/binding diagnostics in frontend; semantic diagnostics in codegen using compact source positions; no retry | compiler/comp-err-test.r and negative focused probes | pending |
 
 ## Formal Suite Inventory
 
@@ -162,7 +162,7 @@ grouped by the mechanism they verify:
   x64-variadic-smoke.reds and x64-write.reds.
 
 The old PowerShell ABI runner is evidence for the intended cases, not the final
-driver, because it invokes the retired Stage0 path. A Stage1/hybrid-native
+driver, because it invokes the retired Stage0 path. A hybrid-native
 runner must execute every applicable x64 source directly.
 
 The direct `rsir-fixed-integer-exit.reds` gate currently executes 49 scalar
@@ -264,7 +264,7 @@ A row changes to retained only when all of the following hold:
 
 1. the feature lowers through the general mechanism named in the matrix;
 2. positive tests compile, link and execute;
-3. negative tests fail in the frontend with the intended diagnostic class;
+3. negative tests fail in the single owning layer with the intended diagnostic class;
 4. target layout or ABI cases match the Windows x64 rule;
 5. no legacy emitter, compatibility adapter or source-name special case is
    reachable;

@@ -22,7 +22,7 @@ fail-command: func [message][
 ]
 
 print-usage: does [
-	print "Usage: hybrid-backend [-r] [-d] [-n] [-O0|-O1] -t Windows-X86-64 --loaded-red generated.reds -o output.exe original.red"
+	print "Usage: hybrid-backend [-r] [-d] [-n] [-O0|-O2] -t Windows-X86-64 --loaded-red generated.reds -o output.exe original.red"
 ]
 
 strip-quotes: func [text [string!]][
@@ -98,7 +98,7 @@ compile-saved: func [options [object!] /local source saved job frontend-result r
 args: any [system/options/args copy []]
 unless block? args [args: copy []]
 phase-timer/reset
-options: compiler-options/parse-args args
+options: compiler-options/parse-args/hybrid args
 if error? :options [fail-command mold options]
 if compiler-options/option-get options 'help? [print-usage quit/return 0]
 if compiler-options/option-get options 'version? [print backend-version quit/return 0]

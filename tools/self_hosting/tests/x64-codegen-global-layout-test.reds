@@ -85,7 +85,7 @@ ir/274: as byte! 62h
 ir/275: as byte! 66h
 ir/276: as byte! 6Eh
 
-size: x64-codegen/generate ir 276 image 1024 1
+size: x64-codegen/generate ir 276 image 1024 0
 if size <= 0 [
 	print ["FAIL: static global layout RSIR status=" size lf]
 	quit 1

@@ -570,12 +570,15 @@ assert (ops-of mixed-address-ir mixed-address-layout) = [
 	3 4 3 4 15 11
 ]["mixed address arithmetic did not use the ordinary typed binary operation"]
 
-assert none? compile-text {
+invalid-address-ir: compile-text {
 	Red/System []
 	bad: func [value [byte!] address [int-ptr!] return: [byte!]][value + address]
-} 'user "byte! unexpectedly accepted an address operand"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid byte/address arithmetic reported the wrong error class"
+} 'user
+assert binary? invalid-address-ir [
+	"frontend rejected backend-owned byte/address legality: " mold frontend/last-error
+]
+assert (ops-of invalid-address-ir layout-of invalid-address-ir) = [3 4 3 4 15 11]
+	"invalid address arithmetic did not remain one dense binary operation"
 
 c-string-ir: compile-text {
 	Red/System []
@@ -1331,13 +1334,18 @@ assert binary? array-pointer-comparison-ir [
 	"literal array cursor comparison failed: " mold frontend/last-error
 ]
 
-assert none? compile-text {
+invalid-array-comparison-ir: compile-text {
 	Red/System []
 	values: [1 2 3]
 	bad: func [end [byte-ptr!] return: [logic!]][values > end]
-} 'user "a literal array compared with a pointer to another element type"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"array pointer mismatch reported the wrong error class"
+} 'user
+assert binary? invalid-array-comparison-ir [
+	"frontend rejected backend-owned array comparison legality: "
+	mold frontend/last-error
+]
+assert not none? find
+	(ops-of invalid-array-comparison-ir layout-of invalid-array-comparison-ir) 15
+	"invalid array comparison did not reach the generic binary operation"
 
 assert none? compile-text {
 	Red/System []
@@ -3214,12 +3222,39 @@ sign-change-layout: layout-of sign-change-ir
 assert (ops-of sign-change-ir sign-change-layout) = [3 4 11]
 	"integer sign change introduced a frontend CAST"
 
-assert none? compile-text {
+mixed-float-binary-ir: compile-text {
 	Red/System []
-	add: func [a [float!] b [float32!] return: [float!]][a + b]
-} 'user "mixed float! and float32! arithmetic was accepted"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"mixed floating arithmetic reported the wrong error class"
+	add: func [a [float!] b [float32!] return: [float32!]][a + b]
+} 'user
+assert binary? mixed-float-binary-ir [
+	"frontend rejected backend-owned floating legality: " mold frontend/last-error
+]
+assert (ops-of mixed-float-binary-ir layout-of mixed-float-binary-ir) = [
+	3 4 3 4 15 11
+]["mixed floating arithmetic did not remain one dense binary operation"]
+
+reverse-mixed-float-ir: compile-text {
+	Red/System []
+	add: func [a [float32!] b [float!] return: [float32!]][a + b]
+} 'user
+assert binary? reverse-mixed-float-ir [
+	"frontend rejected reverse mixed floating arithmetic: " mold frontend/last-error
+]
+assert (ops-of reverse-mixed-float-ir layout-of reverse-mixed-float-ir) = [
+	3 4 3 4 15 11
+]["reverse mixed floating arithmetic did not remain one dense binary operation"]
+
+mixed-float-comparison-ir: compile-text {
+	Red/System []
+	equal?: func [a [float!] b [float32!] return: [logic!]][a = b]
+} 'user
+assert binary? mixed-float-comparison-ir [
+	"frontend rejected backend-owned float comparison legality: "
+	mold frontend/last-error
+]
+assert (ops-of mixed-float-comparison-ir layout-of mixed-float-comparison-ir) = [
+	3 4 3 4 15 11
+]["mixed floating comparison did not remain one dense binary operation"]
 
 assert none? compile-text {
 	Red/System []
@@ -3228,12 +3263,25 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"implicit float32! assignment narrowing reported the wrong error class"
 
-assert none? compile-text {
+invalid-binary-ir: compile-text {
 	Red/System []
 	fn: func [return: [integer!]][1 + true]
-} 'user "integer arithmetic accepted a logic operand"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid binary operands reported the wrong error class"
+} 'user
+assert binary? invalid-binary-ir [
+	"frontend rejected backend-owned binary legality: " mold frontend/last-error
+]
+assert (ops-of invalid-binary-ir layout-of invalid-binary-ir) = [1 1 15 11]
+	"invalid scalar arithmetic did not remain one dense binary operation"
+
+invalid-unary-ir: compile-text {
+	Red/System []
+	fn: func [value [float!] return: [float!]][not value]
+} 'user
+assert binary? invalid-unary-ir [
+	"frontend rejected backend-owned unary legality: " mold frontend/last-error
+]
+assert (ops-of invalid-unary-ir layout-of invalid-unary-ir) = [3 4 14 11]
+	"invalid scalar NOT did not remain one dense unary operation"
 
 assert none? compile-text {
 	Red/System []

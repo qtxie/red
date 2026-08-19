@@ -113,6 +113,7 @@ void-ir: allocate 132
 local-ir: allocate 260
 pointer-ir: allocate 132
 arithmetic-ir: allocate 260
+expression-ir: allocate 260
 aggregate-ir: allocate 516
 abi-ir: allocate 1028
 widening-ir: allocate 676
@@ -141,6 +142,7 @@ image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
+	null? expression-ir
 	null? aggregate-ir null? abi-ir null? widening-ir null? indirect-ir null? variadic-ir
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
@@ -339,6 +341,147 @@ if (x64-codegen/generate arithmetic-ir 170 output 1024 0) <> x64-codegen/INVALID
 put arithmetic-ir 92 -5
 put arithmetic-ir 108 19
 if (x64-codegen/generate arithmetic-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
+; Scalar operator legality and result types are owned by native codegen.
+; fn: func [return: [float!]][1.0 + 2.0]
+put expression-ir 0 1
+put expression-ir 4 0
+put expression-ir 8 0
+put expression-ir 12 0
+put expression-ir 16 1
+put expression-ir 20 4
+put expression-ir 24 0
+put expression-ir 28 0
+put expression-ir 32 0
+put expression-ir 36 0
+put expression-ir 40 2
+put expression-ir 44 -10
+put expression-ir 48 0
+put expression-ir 52 0
+put expression-ir 56 0
+put expression-ir 60 0
+put expression-ir 64 0
+put expression-ir 68 4
+put-instruction expression-ir 72 1 -10 0 1072693248
+put-instruction expression-ir 88 1 -10 0 1073741824
+put-instruction expression-ir 104 15 1 0 0
+put-instruction expression-ir 120 11 -10 0 0
+expression-ir/137: as byte! 66h
+expression-ir/138: as byte! 6Eh
+
+if (x64-codegen/generate expression-ir 138 output 1024 0) <= 0 [
+	print ["expression f64 arithmetic failed" lf]
+	failures: failures + 1
+]
+
+; Arithmetic follows the existing common-float rule: either float32! operand
+; selects float32! machine operations and a float32! result.
+put expression-ir 92 -9
+put expression-ir 96 40000000h
+put expression-ir 44 -9
+put expression-ir 124 -9
+if (x64-codegen/generate expression-ir 138 output 1024 0) <= 0 [
+	print ["expression mixed f64/f32 arithmetic failed" lf]
+	failures: failures + 1
+]
+
+; Comparisons still require matching floating-point types.
+put expression-ir 108 13
+put expression-ir 44 -11
+put expression-ir 124 -11
+if (x64-codegen/generate expression-ir 138 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	print ["expression mixed float comparison was accepted" lf]
+	failures: failures + 1
+]
+
+; Reversing the widths retains the same float32! common result.
+put expression-ir 76 -9
+put expression-ir 80 3F800000h
+put expression-ir 92 -10
+put expression-ir 96 0
+put expression-ir 100 1073741824
+put expression-ir 108 1
+put expression-ir 44 -9
+put expression-ir 124 -9
+if (x64-codegen/generate expression-ir 138 output 1024 0) <= 0 [
+	print ["expression mixed f32/f64 arithmetic failed" lf]
+	failures: failures + 1
+]
+
+; Execute both mixed orders with values that distinguish conversion before the
+; operation from conversion after it.
+put expression-ir 20 6
+put expression-ir 44 -11
+put expression-ir 68 6
+put-instruction expression-ir 72 1 -10 10000000h 41700000h
+put-instruction expression-ir 88 1 -9 CB800000h 0
+put-instruction expression-ir 104 15 1 0 0
+put-instruction expression-ir 120 1 -9 0 0
+put-instruction expression-ir 136 15 13 0 0
+put-instruction expression-ir 152 11 -11 0 0
+expression-ir/169: as byte! 66h
+expression-ir/170: as byte! 6Eh
+size: x64-codegen/generate expression-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["expression mixed f64/f32 conversion failed" lf]
+	failures: failures + 1
+]
+
+put-instruction expression-ir 72 1 -9 CB800000h 0
+put-instruction expression-ir 88 1 -10 10000000h 41700000h
+size: x64-codegen/generate expression-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["expression mixed f32/f64 conversion failed" lf]
+	failures: failures + 1
+]
+
+; float! does not support remainder or modulo.
+put expression-ir 20 4
+put expression-ir 44 -10
+put expression-ir 68 4
+put-instruction expression-ir 72 1 -10 0 1072693248
+put-instruction expression-ir 88 1 -10 0 1073741824
+put-instruction expression-ir 104 15 6 0 0
+put-instruction expression-ir 120 11 -10 0 0
+expression-ir/137: as byte! 66h
+expression-ir/138: as byte! 6Eh
+if (x64-codegen/generate expression-ir 138 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	print ["expression float modulo was accepted" lf]
+	failures: failures + 1
+]
+
+; Reuse the module for NOT: integer and logic are valid, float is not.
+put expression-ir 20 3
+put expression-ir 44 -5
+put expression-ir 68 3
+put-instruction expression-ir 72 1 -5 1 0
+put-instruction expression-ir 88 14 1 0 0
+put-instruction expression-ir 104 11 -5 0 0
+expression-ir/121: as byte! 66h
+expression-ir/122: as byte! 6Eh
+size: x64-codegen/generate expression-ir 122 output 1024 0
+if any [size <= 0 not execute-first? output -2][
+	print ["expression integer NOT failed" lf]
+	failures: failures + 1
+]
+put expression-ir 76 -11
+put expression-ir 44 -11
+put expression-ir 108 -11
+size: x64-codegen/generate expression-ir 122 output 1024 0
+if any [size <= 0 not execute-first? output 0][
+	print ["expression logic NOT failed" lf]
+	failures: failures + 1
+]
+put expression-ir 76 -10
+put expression-ir 44 -10
+put expression-ir 108 -10
+if (x64-codegen/generate expression-ir 122 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	print ["expression float NOT was accepted" lf]
 	failures: failures + 1
 ]
 
@@ -1841,6 +1984,7 @@ free void-ir
 free local-ir
 free pointer-ir
 free arithmetic-ir
+free expression-ir
 free aggregate-ir
 free abi-ir
 free widening-ir

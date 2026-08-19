@@ -34,7 +34,7 @@ rules remain in Red/System codegen.
 | Protected constant data | Read-only global plus flat initializer stream; codegen rejects writes | units/protect-test.reds, array-test.reds | pending |
 | logic!, byte!, integer! | Built-in logical types and generic scalar operations | units/logic-test.reds, byte-test.reds, integer-test.reds | pending |
 | Signed and unsigned fixed-width integers | Logical producer/sink types plus one codegen-owned lossless widening rule at typed boundaries; generic integer operations | units/fixed-int-test.reds, int64-test.reds, rsir-frontend-test.red, rsir-fixed-integer-exit.reds | replace |
-| float! and float32! | Exact IEEE literal payloads, ordinary typed casts/binary operations, and target XMM selection | units/float-test.reds, float32-test.reds, math-mixed-test.reds, rsir-float-scalar-exit.reds | pending |
+| float! and float32! | Exact IEEE literal payloads and ordinary typed operations; native codegen derives common math width, performs operand conversion, and selects XMM forms | units/float-test.reds, float32-test.reds, math-mixed-test.reds, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | c-string! | Pointer-to-byte semantics, one-based index, string constant object | units/c-string-test.reds, length-test.reds, lib-test.reds | pending |
 | pointer! and get-path | Pointee-preserving type, address/index/load/set/cast | compiler/pointer-test.r, units/pointer-test.reds, get-pointer-test.reds | pending |
 | Pointer and struct arithmetic | Generic binary operation plus native stride from logical layout | pointer tests, x64-pointer-parity-smoke.reds | replace |
@@ -44,8 +44,8 @@ rules remain in Red/System codegen.
 | Tagged unions and variant? | Variant metadata, native tag layout, generic member access and switch | x64-tagged-union-smoke.reds | pending |
 | Type casts and size? | Explicit cast intent; codegen checks the cast matrix and queries native layout | compiler/cast-test.r, units/cast-test.reds, size-x64-test.reds | replace |
 | Left-to-right expressions | Dense postfix syntax in exact source order; codegen derives stack types | compiler/cond-expr-test.r, infix-test.r, units/conditional-test.reds | replace |
-| Math, shifts and bitwise operations | Generic unary/binary operations selected by operand types | integer, fixed-int, modulo and math-mixed unit tests | replace |
-| Comparisons and not | Generic compare/unary operations; operand types select integer signedness or IEEE unordered behavior | compiler/not-test.r, units/not-test.reds, rsir-fixed-integer-exit.reds, rsir-float-scalar-exit.reds | replace |
+| Math, shifts and bitwise operations | One dense binary operation plus lexical overflow metadata; native codegen owns operand legality, result type, coercion, and instruction selection | integer, fixed-int, modulo and math-mixed unit tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
+| Comparisons and not | Dense binary/unary operations with a parser-only shadow result; native codegen owns operand legality and selects integer signedness or IEEE unordered behavior | compiler/not-test.r, units/not-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, rsir-fixed-integer-exit.reds, rsir-float-scalar-exit.reds | replace |
 | Predeclared runtime functions and predicates | Frontend-known typed signatures; ordinary calls or semantic native operations | compiler/print-test.r, units/integer-test.reds, lib-test.reds | pending |
 | Function declarations and returns | Declared signature, slots, instruction range, and backend-checked return | compiler/return-test.r, units/function-test.reds, return-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |

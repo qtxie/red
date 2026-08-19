@@ -1163,22 +1163,6 @@ compiler-rsir-frontend: context [
 		kind
 	]
 
-	type-label: func [
-		ref flags [integer!]
-		return: [string!]
-		/local record name kind output
-	][
-		name: none
-		if all [ref > 0 ref <= type-count][
-			record: skip types ((ref - 1) * 5)
-			name: record/1
-		]
-		kind: ref-kind ref
-		output: form any [name kind 'unknown]
-		if flags = inline-flag [append output " value"]
-		output
-	]
-
 	type-spelling: func [ref [integer!] return: [string!] /local kind][
 		kind: ref-kind ref
 		switch/default kind [
@@ -3074,10 +3058,6 @@ compiler-rsir-frontend: context [
 		(canonical-ref target) = canonical-ref info/1
 	]
 
-	address-kind?: func [kind [word! none!] return: [logic!]][
-		not none? find [pointer c-string struct union array] kind
-	]
-
 	reference-kind?: func [kind [word! none!] return: [logic!]][
 		not none? find [pointer c-string struct union array function null] kind
 	]
@@ -3748,17 +3728,6 @@ compiler-rsir-frontend: context [
 		not none? find [f32 f64] kind
 	]
 
-	float-common-ref: func [
-		left right [integer!]
-		return: [integer!]
-		/local left-kind right-kind
-	][
-		left-kind: ref-kind left
-		right-kind: ref-kind right
-		unless all [float-kind? left-kind float-kind? right-kind][return 0]
-		either any [left-kind = 'f32 right-kind = 'f32][-9][-10]
-	]
-
 	float-cast-compatible?: func [
 		source target [integer!]
 		keep? [logic!]
@@ -3814,145 +3783,16 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	same-reference-category?: func [
-		left-kind right-kind [word! none!]
-		return: [logic!]
-	][
-		all [
-			left-kind = right-kind
-			not none? find [pointer c-string struct union function array] left-kind
-		]
-	]
-
-	stack-unary: func [
-		operation [integer!]
-		instructions [binary!]
-		/local kind
-	][
-		kind: ref-kind last-type
-		unless all [
-			operation = not-operation
-			last-flags = 0
-			any [integer-kind? kind kind = 'logic]
-		][fail ERROR-REFERENCE "invalid operand type for not"]
-		emit instructions reduce [unary-op operation 0 0]
-	]
-
 	stack-binary: func [
 		operation left left-flags [integer!]
 		right-start [integer!]
 		instructions [binary!]
-		/local right right-flags left-kind right-kind common valid? comparison?
+		/local left-kind right-kind comparison?
 			scope-state anchor overflow-data right-literal shift-limit tracked?
 	][
-		right: last-type
-		right-flags: last-flags
 		left-kind: ref-kind left
-		right-kind: ref-kind right
-		valid?: false
+		right-kind: ref-kind last-type
 		comparison?: operation >= 13
-		common: 0
-
-		case [
-			operation <= 6 [
-				common: float-common-ref left right
-				valid?: any [
-					all [
-						integer-kind? left-kind
-						integer-kind? right-kind
-						left-flags = 0
-						right-flags = 0
-					]
-					all [
-						common <> 0
-						left-flags = 0
-						right-flags = 0
-						any [operation <= 4 common = -9]
-					]
-					all [
-						operation <= 2
-						left-flags = 0
-						right-flags = 0
-						any [
-							all [
-								address-kind? left-kind
-								any [integer-kind? right-kind address-kind? right-kind]
-							]
-							all [left-kind = 'i32 address-kind? right-kind]
-						]
-					]
-				]
-			]
-			operation <= 9 [
-				valid?: all [
-					integer-kind? left-kind
-					right-kind = 'i32
-					left-flags = 0
-					right-flags = 0
-				]
-			]
-			operation <= 12 [
-				valid?: all [
-					any [integer-kind? left-kind left-kind = 'logic]
-					same-stack-type? left left-flags right right-flags
-				]
-			]
-			comparison? [
-				common: either all [
-					left-flags = 0
-					right-flags = 0
-					integer-kind? left-kind
-					integer-kind? right-kind
-				][left][0]
-				valid?: any [
-					common <> 0
-					all [
-						operation <= 14
-						left-flags = 0
-						right-flags = 0
-						any [left-kind = 'null right-kind = 'null]
-						reference-kind? left-kind
-						reference-kind? right-kind
-					]
-					all [
-						left-flags = right-flags
-						same-reference-category? left-kind right-kind
-						any [left-kind <> 'function operation <= 14]
-					]
-					all [
-						left-flags = 0
-						right-flags = 0
-						any [
-							array-pointer-compatible? left right
-							array-pointer-compatible? right left
-						]
-					]
-					all [
-						same-stack-type? left left-flags right right-flags
-						any [
-							float-kind? left-kind
-							address-kind? left-kind
-							all [
-								find [function null] left-kind
-								operation <= 14
-							]
-							all [left-kind = 'logic operation <= 14]
-						]
-					]
-				]
-			]
-			true [valid?: false]
-		]
-		unless valid? [
-			fail ERROR-REFERENCE [
-				"incompatible binary operands for operation " operation ": "
-				type-label left left-flags " and " type-label right right-flags
-				any [
-					all [active-function rejoin [" in " to string! active-function]]
-					""
-				]
-			]
-		]
 
 		anchor: 0
 		overflow-data: 0
@@ -3961,15 +3801,24 @@ compiler-rsir-frontend: context [
 			scope-state: last overflows
 			if block? scope-state [
 				case [
-					all [operation <= 3 integer-kind? left-kind][
+					all [
+						operation <= 3
+						left-flags = 0
+						integer-kind? left-kind
+					][
 						tracked?: true
 					]
 					all [
 						operation >= 4
 						operation <= 6
+						left-flags = 0
 						left-kind = 'i32
 					][tracked?: true]
-					operation = 7 [
+					all [
+						operation = 7
+						left-flags = 0
+						integer-kind? left-kind
+					][
 						right-literal: integer-literal-since instructions right-start
 						if integer? right-literal [
 							shift-limit: either find [i64 u64] left-kind [63][31]
@@ -3993,7 +3842,10 @@ compiler-rsir-frontend: context [
 			last-type: -11
 			last-flags: 0
 		][
-			last-type: either common <> 0 [common][left]
+			if all [float-kind? left-kind float-kind? right-kind][
+				left: either any [left-kind = 'f32 right-kind = 'f32][-9][-10]
+			]
+			last-type: left
 			last-flags: left-flags
 		]
 	]
@@ -6782,7 +6634,7 @@ compiler-rsir-frontend: context [
 			value = 'not [
 				next-position: stack-value next position scope uses instructions params locals
 					expression-value
-				stack-unary not-operation instructions
+				emit instructions reduce [unary-op not-operation 0 0]
 				last-float-literal?: false
 				next-position
 			]

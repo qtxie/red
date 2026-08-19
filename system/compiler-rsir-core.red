@@ -388,11 +388,11 @@ system-dialect: context [
 
 		output: none
 		link-time: none
+		phase-timer/begin 'native-codegen
+		finish-code
+		phase-timer/finish 'native-codegen
+		comp-time: now/time/precise - started
 		if job/link? [
-			phase-timer/begin 'native-codegen
-			finish-code
-			phase-timer/finish 'native-codegen
-			comp-time: now/time/precise - started
 			link-time: now/time/precise
 			phase-timer/begin 'link-load
 			unless linker/load-codegen job last-code [

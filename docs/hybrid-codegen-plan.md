@@ -547,8 +547,13 @@ Already retained:
 - one semantic function compiler used for size measurement and emission;
 - primitive x64 encodings with no call/argument/source-shape combinations.
 - primary/prefix parsing followed by strict left-to-right postfix folding;
-- generic integer unary, math, shift, bitwise, comparison, and pointer-stride
-  lowering selected from logical operand types.
+- one dense unary operation and one dense binary operation for all scalar
+  families; the Red frontend records syntax plus lexical overflow metadata and
+  keeps only the shallow result projection needed to continue parsing, while
+  native codegen alone validates runtime operands, derives the authoritative
+  result type, performs coercion, and selects integer, pointer, or XMM code;
+- native codegen runs for both linked and no-link jobs, so omitting the linker
+  cannot bypass backend semantic validation;
 - function-local jump/branch targets with fixed near x64 forms, native offset
   tables, and matching target-entry stack depths and top types;
 - if, either, any, all, loop, while, until, early return/exit, break, and
@@ -568,8 +573,9 @@ Already retained:
   casts, mixed comparisons, scalar calling-convention returns, and eight Win64
   integer arguments through the direct linker path;
 - exact IEEE binary32/binary64 literals, ordinary numeric and bit-preserving
-  casts, XMM arithmetic, parity-correct unordered comparisons, globals, scalar
-  returns, and argument-ordinal Win64 GPR/XMM lowering;
+  casts, common-width XMM arithmetic including both mixed operand orders,
+  parity-correct unordered comparisons, globals, scalar returns, and
+  argument-ordinal Win64 GPR/XMM lowering;
 - an executable floating-point gate covering 50 scalar results through the
   same frontend, RSIR, codegen, linker, and generated-PE path;
 - one signature-driven Win64 aggregate classifier shared by internal and

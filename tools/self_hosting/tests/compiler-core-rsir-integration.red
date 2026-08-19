@@ -3,6 +3,7 @@ Red [
 ]
 
 #include %../../../system/compiler-windows-common.red
+#include %../../../compiler/system-diagnostics.red
 #include %../../../compiler/rsir-frontend.red
 #include %../../../compiler/codegen-bridge.red
 #include %../../../system/compiler-rsir-core.red
@@ -88,6 +89,8 @@ system-dialect/compile/options source job
 artifact: system-dialect/last-rsir
 
 check binary? artifact "RSIR core did not return RSIR"
+check binary? system-dialect/last-code "no-link RSIR compile skipped native codegen"
+check system-dialect/last-status = 0 "no-link native codegen did not complete"
 check all [
 	(length? artifact) >= 36
 	(word-at artifact 0) = 3

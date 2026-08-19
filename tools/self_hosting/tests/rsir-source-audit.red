@@ -28,7 +28,7 @@ rsir-source-audit: context [
 		compiler-system-job/job-set job 'opt-level 1
 		compiler-system-job/job-set job 'o2-ir-dump none
 
-		definitions: make block! 32
+		definitions: make hash! 32
 		keywords: make block! 32
 		compiler-system-loader/job: job
 		compiler-system-loader/connect-compiler-state definitions keywords

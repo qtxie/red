@@ -10,7 +10,7 @@ compiler-extractor: context [
 	root: compiler-root
 	enum-directive: to issue! "enum"
 	enum-names: [datatypes! actions! natives!]
-	definitions: make hash! 512
+	definitions: make map! 512
 	datatype-count: 0
 	action-count: 0
 	native-count: 0
@@ -42,8 +42,7 @@ compiler-extractor: context [
 				word? :item [name: item]
 				true [fail ["invalid enum item: " mold item]]
 			]
-			append definitions name
-			append definitions id
+			put definitions name id
 			id: id + 1
 			count: count + 1
 			position: next position

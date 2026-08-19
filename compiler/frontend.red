@@ -45,10 +45,10 @@ red: context [
 	included-list: make block! 20
 	script-stk:	   make block! 10
 	needed:		   make block! 4
-	symbols:	   make hash! 1000
+	symbols:	   make map! 1000
 	globals:	   make hash! 1000						;-- words defined in global context
-	aliases: 	   make hash! 100
-	contexts:	   make hash! 100						;-- storage for statically compiled contexts
+	aliases: 	   make map! 100
+	contexts:	   make map! 100						;-- storage for statically compiled contexts
 	ctx-stack:	   make block! 8						;-- contexts access path
 	shadow-funcs:  make block! 1000						;-- shadow functions contexts [symbol object! ctx...]
 	objects:	   make block! 600						;-- shadow objects contexts [name object! ctx...]
@@ -720,7 +720,7 @@ red: context [
 
 	emit-open-frame: func [name [word!] /with type ctx-name /local symbol][
 		symbol: either name = 'try-all ['try][name]
-		unless find symbols symbol [add-symbol symbol]
+		unless select symbols symbol [add-symbol symbol]
 		either any [
 			type = 'function!
 			'function! = all [
@@ -1131,7 +1131,7 @@ red: context [
 	]
 	
 	decorate-symbol: func [name [word!] /no-alias /local pos text result cleaned][
-		if all [not no-alias not local-word? name pos: find/case/skip aliases name 2][name: pos/2]
+		if all [not no-alias not local-word? name pos: select/case aliases name][name: pos]
 		cleaned: clean-lf-flag name
 		text: append copy "~" form cleaned
 		set/any 'result try [to word! text]
@@ -1170,23 +1170,23 @@ red: context [
 	]
 	
 	add-symbol: func [name [word!] /only /with original /local sym id alias pos][
-		unless find/case symbols name [
-			if find symbols name [
-				if find/case/skip aliases name 2 [exit]
+		unless select/case symbols name [
+			if select symbols name [
+				if select/case aliases name [exit]
 				alias: decorate-series-var name
-				repend aliases [name alias]
+				put/case aliases name alias
 			]
 			; A global symbol alias must not depend on the current function's
 			; locals. Otherwise a same-spelled local suppresses the declaration
 			; alias while later global references still emit it.
-			pos: find/case/skip aliases name 2
+			pos: select/case aliases name
 			sym: either pos [
-				decorate-symbol/no-alias pos/2
+				decorate-symbol/no-alias pos
 			][
 				decorate-symbol/no-alias name
 			]
-			id: 1 + ((length? symbols) / 2)
-			unless only [repend symbols [name reduce [sym id]]]
+			id: 1 + length? symbols
+			unless only [put/case symbols name reduce [sym id]]
 			repend sym-table [
 				to set-word! sym 'word/load mold any [original name]
 			]
@@ -1202,7 +1202,7 @@ red: context [
 			to word! rejoin ["issue-" enbase/base to binary! spelling 16]
 		][result]
 		sym: decorate-symbol name
-		unless any [find/case symbols name find sym-table to set-word! sym][
+		unless any [select/case symbols name find sym-table to set-word! sym][
 			repend sym-table [to set-word! sym 'word/load spelling]
 			root-slots: root-slots + 1
 			new-line skip tail sym-table -3 on
@@ -1227,7 +1227,7 @@ red: context [
 			local-word? name
 			find globals name
 		][
-			repend globals [name 'unset!]
+			append globals name
 		]
 	]
 
@@ -1240,8 +1240,8 @@ red: context [
 	]
 	
 	add-context: func [ctx [block!] /local name][
-		append contexts name: decorate-series-var 'ctx
-		append/only contexts ctx
+		name: decorate-series-var 'ctx
+		put contexts name ctx
 		name
 	]
 	
@@ -4090,11 +4090,12 @@ red: context [
 					in first obj last path
 				][
 					pos: words-of first obj
-					either select contexts ctx [
-						clear select contexts ctx
-						append select contexts ctx pos
+					entry: select contexts ctx
+					either entry [
+						clear entry
+						append entry pos
 					][
-						repend contexts [ctx copy pos]
+						put contexts ctx copy pos
 					]
 					index: (index? find pos last path) - 1
 				][
@@ -4710,7 +4711,7 @@ red: context [
 				; as defined so get-word/get can load the value (function-test fun-ref-4).
 				find functions name
 			][
-				unless find/case symbols name [add-symbol name]
+				unless select/case symbols name [add-symbol name]
 				do emit-word
 			]
 			'else [
@@ -6038,9 +6039,9 @@ red: context [
 				defs: libRedRT/get-definitions
 				append clear functions defs/1
 				;redbin/index:	defs/2
-				globals:		defs/3
+				globals:		make hash! defs/3
 				objects:		compose/deep bind objects: defs/4 red
-				contexts:		defs/5
+				contexts:		make map! defs/5
 				actions:		defs/6
 				op-actions:		defs/7
 				foreach w defs/8 [add-symbol w]

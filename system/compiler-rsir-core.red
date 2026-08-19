@@ -24,7 +24,7 @@ system-dialect: context [
 		job: none
 		pc: none
 		script: none
-		definitions: make block! 32
+		definitions: make hash! 32
 		keywords-list: make block! 32
 		verbose: 0
 

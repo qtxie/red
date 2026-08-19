@@ -8,15 +8,15 @@ Red [
 compiler-system-loader: context [
 	verbose: 	  0
 	include-list: make hash! 20
-	defs:		  make block! 100
-	definitions:  make block! 100
+	macros:		  make map! 100
+	definitions:  make hash! 100
 	keywords-list: make block! 0
 	job:          none
 	last-error:   none
 	root-path:    none
 
 	connect-compiler-state: func [
-		compiler-definitions [block!]
+		compiler-definitions [block! hash!]
 		compiler-keywords [block!]
 	][
 		definitions: compiler-definitions
@@ -49,12 +49,11 @@ compiler-system-loader: context [
 	init: does [
 		root-path: copy system/options/path
 		clear include-list
-		clear defs
+		clear macros
 		clear scripts-stk
 		clear definitions
 		last-error: none
 		current-script: line: none
-		insert defs <no-match>					;-- required to avoid empty rule (causes infinite loop)
 	]
 
 	relative-path?: func [file [file!]][
@@ -180,6 +179,31 @@ compiler-system-loader: context [
 		]
 	]
 
+	expand-definition: func [
+		position [series!]
+		/local definition args value end
+	][
+		unless definition: select macros position/1 [return next position]
+		args: definition/2
+		value: definition/3
+		if block? args [
+			unless all [not tail? next position paren? position/2][
+				position/1: definition/1
+				return next position
+			]
+			end: skip position 2
+			inject args value position end
+			return position
+		]
+		end: next position
+		either block? value [
+			change/part position copy-deep value end
+		][
+			change/part position :value end
+		]
+		position
+	]
+
 	expand-string: func [src [string! binary!] /local lf-count ws i prev ins?][
 		if verbose > 0 [print "running string preprocessor..."]
 
@@ -209,9 +233,9 @@ compiler-system-loader: context [
 	expand-block: func [
 		src [block!]
 		/own
-		/local blk rule name value args s e opr then-block else-block cases body p
+		/local blk macro-rule name value args s e opr then-block else-block cases body p
 			saved stack header mark idx prev enum-value enum-name enum-names line-rule
-			recurse condition nested
+			definition recurse condition nested
 	][
 		#process off
 		if verbose > 0 [print "running block preprocessor..."]
@@ -240,12 +264,16 @@ compiler-system-loader: context [
 				do store-line
 			) :s
 		]
+		definition: [
+			s: word! (s: expand-definition s) :s
+		]
 		recurse: [
 			saved: reduce [s e]
-			parse/case value rule: [
+			parse/case value macro-rule: [
 				some [
-					defs
-					| nested: [block! | paren!] :nested into rule
+					definition
+					| nested: [block! | paren!] :nested into macro-rule
+					| p: [path! | get-path! | set-path!] :p into [some [definition | skip]]
 					| skip
 				]								;-- resolve macros recursively
 			]
@@ -259,13 +287,7 @@ compiler-system-loader: context [
 		parse/case src blk: [
 			s: (do store-line)
 			while [
-				defs								;-- resolve definitions in a single pass
-				| s: set value word! (
-					s: either p: find definitions value [
-						s/1: p/1
-						s
-					][next s]
-				) :s
+				definition							;-- resolve definitions in a single pass
 				| s: #define set name word! (args: none) [
 					set args paren! set value [block! | paren!]
 					| set value skip
@@ -276,29 +298,12 @@ compiler-system-loader: context [
 					if find definitions name [
 						print ["*** Warning:" name "macro in R/S is redefined"]
 					]
-					append definitions name
-					case [
-						args [
-							do recurse
-							rule: copy/deep [s: _ paren! e: (e: inject _ quote _ s e) :s]
-							rule/5/3: to block! :args
-							rule/5/5: :value
-						]
-						block? value [
-							do recurse
-							rule: copy/deep [s: _ e: (e: change/part s copy/deep _ e) :s]
-							rule/4/5: :value
-						]
-						'else [
-							if word? value [value: to lit-word! value]
-							rule: copy/deep [s: _ e: (e: change/part s _ e) :s]
-							rule/4/4: :value
-						]
+					if any [block? value paren? value][do recurse]
+					unless select macros name [
+						append definitions name
+						args: either paren? args [to block! args][none]
+						put macros name reduce [name args :value]
 					]
-					rule/2: to lit-word! name
-
-					either tag? defs/1 [remove defs][append defs '|]
-					append defs rule
 					remove/part s e
 				) :s
 				| s: #enum word! set value skip e: (
@@ -383,7 +388,7 @@ compiler-system-loader: context [
 						]
 					]
 				)
-				| p: [path! | get-path! | set-path!] :p into [some [defs | skip]] ;-- process macros in paths
+				| p: [path! | get-path! | set-path!] :p into [some [definition | skip]] ;-- process macros in paths
 				
 				| s: (if any [block? s/1 paren? s/1][append/only stack copy [1]])
 				  p: [block! | paren!] :p into blk

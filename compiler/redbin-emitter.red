@@ -10,7 +10,7 @@ redbin: context [
 	sym-string:	make binary! 10'000
 	sym-offsets: make block!  1'000						;-- byte offset of each symbol in sym-string
 	symbols:	make hash! 	 1'000						;-- symbol spellings
-	contexts:	make hash!	 1'000						;-- [name [symbols] index ...]
+	contexts:	make map!	 1'000						;-- name [[symbols] index]
 	index:		0
 	
 	stats:		make block! 100
@@ -349,9 +349,9 @@ redbin: context [
 		
 		ctx-field: -1
 		idx: -1
-		if all [ctx entry: find contexts ctx][
-			if pos: find entry/2 to word! word [
-				ctx-field: entry/3
+		if all [ctx entry: select contexts ctx][
+			if pos: find entry/1 to word! word [
+				ctx-field: entry/2
 				idx: (index? pos) - 1
 			]
 		]
@@ -505,7 +505,7 @@ redbin: context [
 		name [word!] spec [block!] stack? [logic!] self? [logic!] type [word!] /root
 		/local flags
 	][
-		repend contexts [name copy spec index]			;-- COPY to avoid late word decorations
+		put contexts name reduce [copy spec index]		;-- COPY to avoid late word decorations
 		flags: select [function 1 object 2] type
 		if stack? [flags: flags or 4]
 		if self?  [flags: flags or 8]

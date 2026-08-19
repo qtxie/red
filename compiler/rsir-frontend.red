@@ -23,28 +23,37 @@ compiler-rsir-frontend: context [
 	module-kind: 0
 	debug?: false
 	functions: make block! (10 * 256)
-	function-ids: make hash! (2 * 256)
+	function-ids: make map! 256
+	call-ids: make map! 512
 	infix-targets: make hash! 16
-	contexts: make hash! 32
+	contexts: make map! 32
 	types: make block! (5 * 128)
-	type-ids: make hash! 128
-	pointer-types: make hash! 64
-	array-types: make hash! (2 * 64)
-	aggregate-types: make hash! 64
-	canonical-types: make hash! 64
-	function-types: make hash! 64
-	subroutine-types: make hash! 16
-	typed-call-types: make hash! 64
-	alias-type-ids: make hash! 64
-	constants: make hash! 256
-	protected: make hash! 64
-	protected-values: make hash! 64
+	type-ids: make map! 128
+	pointer-types: make map! 64
+	array-types: make map! 64
+	aggregate-types: make map! 64
+	canonical-refs: make block! 128
+	ref-kinds: make block! 128
+	function-types: make map! 64
+	function-call-types: make block! 256
+	import-call-types: make block! 256
+	subroutine-types: make map! 16
+	typed-call-types: make map! 64
+	alias-type-ids: make map! 64
+	literal-values: make map! 256
+	protected: make map! 64
+	resolved-functions: make map! 64
+	resolved-imports: make map! 64
+	resolved-calls: make map! 64
+	resolved-globals: make map! 64
+	resolved-literals: make map! 32
+	resolved-protected: make map! 16
 	imports: make block! (10 * 64)
-	import-ids: make hash! 256
-	libraries: make hash! 32
+	import-ids: make map! 256
+	libraries: make map! 32
 	exports: make block! (5 * 32)
 	export-names: make hash! 32
-	globals: make hash! 1024
+	globals: make map! 1024
 	global-data: make block! (5 * 384)
 	boot-code: make binary! (16 * 1024)
 	boot-locals: make block! 12
@@ -65,7 +74,7 @@ compiler-rsir-frontend: context [
 	global-count: 0
 	alias-count: 0
 
-	type-kinds: make hash! [
+	type-kinds: make map! [
 		int8! i8 byte! byte uint8! u8 int16! i16 uint16! u16
 		integer! i32 int32! i32 uint32! u32 int64! i64 uint64! u64
 		float32! f32 float! f64 float64! f64 logic! logic
@@ -75,13 +84,13 @@ compiler-rsir-frontend: context [
 		float32-ptr! pointer
 	]
 
-	type-codes: make hash! [
+	type-codes: make map! [
 		i8 1 u8 2 i16 3 u16 4 i32 5 u32 6 i64 7 u64 8
 		f32 9 f64 10 logic 11 pointer 12 c-string 13 null 14 byte 15
 		alias -1 struct -2 union -3 function -4 subroutine -5
 		pointer-node -6 array -7 typed-call -8
 	]
-	builtin-pointees: make hash! [
+	builtin-pointees: make map! [
 		byte-ptr! [byte!]
 		int-ptr! [integer!]
 		ptr-ptr! [pointer!]
@@ -140,7 +149,7 @@ compiler-rsir-frontend: context [
 	; Operation IDs follow the language families, not source spellings or x64
 	; encodings. The postfix stream preserves the specified left-to-right order.
 	not-operation: 1
-	binary-operations: make hash! [
+	binary-operations: make map! [
 		+   1  -   2  *   3  /   4  %   5  //  6
 		<<  7  >>  8  >>> 9  or 10  xor 11  and 12
 		=  13  <> 14  >  15  <  16  >= 17  <= 18
@@ -174,10 +183,10 @@ compiler-rsir-frontend: context [
 	atomic-math-native: 21
 	log-b-native: 22
 	atomic-old-flag: 8
-	atomic-operations: make hash! [
+	atomic-operations: make map! [
 		add 1 sub 2 or 3 xor 4 and 5
 	]
-	cpu-register-ids: make hash! [
+	cpu-register-ids: make map! [
 		rax 0 rcx 1 rdx 2 rbx 3 rsp 4 rbp 5 rsi 6 rdi 7
 		r8 8 r9 9 r10 10 r11 11 r12 12 r13 13 r14 14 r15 15
 	]
@@ -193,6 +202,8 @@ compiler-rsir-frontend: context [
 	function-return: 0
 	function-flags: 0
 	function-active?: false
+	function-scope: none
+	function-uses: none
 	loops: make block! 8
 	overflows: make block! 8
 	catches: make block! 8
@@ -201,12 +212,13 @@ compiler-rsir-frontend: context [
 	; built. USE slots stay in the frame table, while their names are tombstoned
 	; when the lexical body ends. Subroutine bodies precede the main body and are
 	; emitted once, with direct intra-function calls.
-	use-local-slots: make hash! 32
+	use-local-slots: make map! 32
+	function-storage: make map! 64
 	; name [body entry result stopped? state]
-	subroutines: make hash! 32
+	subroutines: make map! 32
 	subroutine-order: make block! 16
 	active-subroutine: none
-	subroutine-inferred: make hash! 16
+	subroutine-inferred: make map! 16
 	static?: false
 	static-ref: 0
 	static-low: 0
@@ -421,7 +433,7 @@ compiler-rsir-frontend: context [
 	resolve-used-name: func [
 		value [word! path!]
 		uses [block!]
-		names [hash!]
+		names [map!]
 		/local found best imported key candidate rank
 	][
 		found: none
@@ -440,10 +452,10 @@ compiler-rsir-frontend: context [
 		found
 	]
 
-	resolve-name: func [
+	resolve-name-in: func [
 		value [word! path!]
 		scope uses [block!]
-		names [hash!]
+		names [map!]
 		/local depth key id
 	][
 		if root-qualified? value [
@@ -461,6 +473,52 @@ compiler-rsir-frontend: context [
 		unless none? id [return id]
 		key: qualified copy [] value
 		select names key
+	]
+
+	clear-resolved-names: does [
+		clear resolved-functions
+		clear resolved-imports
+		clear resolved-calls
+		clear resolved-globals
+		clear resolved-literals
+		clear resolved-protected
+	]
+
+	name-cache: func [
+		names [map!]
+		scope uses [block!]
+		return: [map! none!]
+	][
+		unless all [
+			function-active?
+			same? scope function-scope
+			same? uses function-uses
+		][return none]
+		case [
+			same? names function-ids [resolved-functions]
+			same? names import-ids [resolved-imports]
+			same? names call-ids [resolved-calls]
+			same? names globals [resolved-globals]
+			same? names literal-values [resolved-literals]
+			same? names protected [resolved-protected]
+			true [none]
+		]
+	]
+
+	resolve-name: func [
+		value [word! path!]
+		scope uses [block!]
+		names [map!]
+		/local cache key id
+	][
+		cache: name-cache names scope uses
+		if map? cache [
+			key: either word? value [value][form value]
+			if find cache key [return select cache key]
+		]
+		id: resolve-name-in value scope uses names
+		if map? cache [put cache key id]
+		id
 	]
 
 	import-variable-id: func [
@@ -541,7 +599,7 @@ compiler-rsir-frontend: context [
 			resolve-used-name value active import-ids
 			resolve-used-name value active function-ids
 			resolve-used-name value active protected
-			resolve-used-name value active constants
+			resolve-used-name value active literal-values
 			resolve-used-name value active contexts
 		]
 	]
@@ -559,12 +617,14 @@ compiler-rsir-frontend: context [
 		]
 		if id: select pointer-types pointee [return id]
 		id: type-count + 1
-		repend pointer-types [pointee id]
+		put pointer-types pointee id
 		append types none
 		append types 'pointer
 		append types pointee
 		append/only types copy []
 		append/only types copy []
+		append canonical-refs id
+		append ref-kinds 'pointer
 		type-count: id
 		id
 	]
@@ -587,12 +647,14 @@ compiler-rsir-frontend: context [
 		key: mold/flat reduce [element count width]
 		if id: select array-types key [return id]
 		id: type-count + 1
-		repend array-types [key id]
+		put array-types key id
 		append types none
 		append types 'array
 		append types element
 		append types count
 		append types width
+		append canonical-refs id
+		append ref-kinds 'array
 		type-count: id
 		id
 	]
@@ -625,10 +687,10 @@ compiler-rsir-frontend: context [
 			unless all [word? field block? position/2][
 				fail ERROR-UNSUPPORTED ["invalid aggregate member " mold field]
 			]
-			if select names field [
+			if find names field [
 				fail ERROR-DUPLICATE ["duplicate aggregate member " mold field]
 			]
-			repend names [field true]
+			append names field
 			position: skip position 2
 		]
 		true
@@ -647,12 +709,14 @@ compiler-rsir-frontend: context [
 		key: mold/flat reduce [kind spec scope uses]
 		if id: select aggregate-types key [return id]
 		id: type-count + 1
-		repend aggregate-types [key id]
+		put aggregate-types key id
 		append types none
 		append types kind
 		append/only types copy/deep spec
 		append/only types copy scope
 		append/only types copy/deep uses
+		append canonical-refs id
+		append ref-kinds kind
 		type-count: id
 		id
 	]
@@ -796,7 +860,7 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	ref-kind: func [ref [integer!] /local record kind name steps target][
+	ref-kind: func [ref [integer!] /local origin kind][
 		if ref < 0 [
 			if ref < -15 [return none]
 			return pick [
@@ -805,22 +869,23 @@ compiler-rsir-frontend: context [
 				negate ref
 		]
 		if any [ref = 0 ref > type-count][return none]
-		steps: 0
-		while [steps < type-count][
-			if ref > type-count [return none]
-			record: skip types ((ref - 1) * 5)
-			kind: record/2
-			unless kind = 'alias [return kind]
-			target: record/3
-			if block? target [return type-kind target record/4 record/5]
-			name: target
-			if all [word? name kind: select type-kinds name][
-				return kind
+		origin: ref
+		kind: pick ref-kinds ref
+		if word? kind [return kind]
+		ref: canonical-ref ref
+		kind: case [
+			ref < -15 [none]
+			ref < 0 [
+				pick [
+					i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic
+					pointer c-string null byte
+				] negate ref
 			]
-			unless ref: resolve-name name record/4 record/5 type-ids [return none]
-			steps: steps + 1
+			ref > 0 [pick ref-kinds ref]
+			true [none]
 		]
-		none
+		if word? kind [poke ref-kinds origin kind]
+		kind
 	]
 
 	type-label: func [
@@ -839,19 +904,30 @@ compiler-rsir-frontend: context [
 		output
 	]
 
-	canonical-ref: func [ref [integer!] /local record target steps][
+	canonical-ref: func [ref [integer!] /local origin record target steps][
 		if ref <= 0 [return ref]
+		if ref > type-count [return 0]
+		origin: ref
 		steps: 0
 		while [steps < type-count][
 			if ref > type-count [return 0]
-			target: select canonical-types ref
-			if integer? target [return target]
+			target: pick canonical-refs ref
+			if target <> 0 [
+				poke canonical-refs origin target
+				return target
+			]
 			record: skip types ((ref - 1) * 5)
-			unless record/2 = 'alias [return ref]
+			unless record/2 = 'alias [
+				poke canonical-refs origin ref
+				return ref
+			]
 			target: record/3
 			target: either block? target [target][reduce [target]]
 			ref: type-ref target record/4 record/5
-			if ref <= 0 [return ref]
+			if ref <= 0 [
+				poke canonical-refs origin ref
+				return ref
+			]
 			steps: steps + 1
 		]
 		fail ERROR-REFERENCE "cyclic type alias"
@@ -1160,10 +1236,10 @@ compiler-rsir-frontend: context [
 					names-start: position
 					while [all [not tail? position word? position/1]][
 						name: position/1
-						if select names name [
+						if find names name [
 							fail ERROR-UNSUPPORTED "duplicate function variable"
 						]
-						repend names [name true]
+						append names name
 						position: next position
 					]
 					names-end: position
@@ -1238,12 +1314,14 @@ compiler-rsir-frontend: context [
 		key: signature-key signature
 		if id: select function-types key [return id]
 		id: type-count + 1
-		repend function-types [key id]
+		put function-types key id
 		append types none
 		append types 'function
 		append/only types copy/deep signature
 		append/only types copy scope
 		append/only types copy/deep uses
+		append canonical-refs id
+		append ref-kinds 'function
 		type-count: id
 		id
 	]
@@ -1263,12 +1341,14 @@ compiler-rsir-frontend: context [
 		key: mold/flat reduce [scope uses]
 		if id: select subroutine-types key [return id]
 		id: type-count + 1
-		repend subroutine-types [key id]
+		put subroutine-types key id
 		append types none
 		append types 'subroutine
 		append/only types copy []
 		append/only types copy scope
 		append/only types copy/deep uses
+		append canonical-refs id
+		append ref-kinds 'subroutine
 		type-count: id
 		id
 	]
@@ -1313,7 +1393,7 @@ compiler-rsir-frontend: context [
 					if kind = 'function [
 						key: signature-key signature
 						unless select function-types key [
-							repend function-types [key id]
+							put function-types key id
 						]
 					]
 				]
@@ -1379,7 +1459,7 @@ compiler-rsir-frontend: context [
 		either resolved-signature? record/3 [record/3][none]
 	]
 
-	call-signature-ref: func [target [integer!] return: [integer!] /local record][
+	make-call-signature-ref: func [target [integer!] return: [integer!] /local record][
 		either target > 0 [
 			record: skip functions ((target - 1) * 10)
 			intern-function-signature reduce [
@@ -1393,6 +1473,20 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	call-signature-ref: func [
+		target [integer!]
+		return: [integer!]
+		/local cache index cached fresh
+	][
+		cache: either target > 0 [function-call-types][import-call-types]
+		index: absolute target
+		cached: pick cache index
+		if cached <> 0 [return cached]
+		fresh: make-call-signature-ref target
+		poke cache index fresh
+		fresh
+	]
+
 	intern-typed-call: func [
 		signature [integer!]
 		arguments [block!]
@@ -1402,17 +1496,20 @@ compiler-rsir-frontend: context [
 		key: mold/flat reduce [signature arguments]
 		if id: select typed-call-types key [return id]
 		id: type-count + 1
-		repend typed-call-types [key id]
+		put typed-call-types key id
 		append types key
 		append types 'typed-call
 		append/only types copy arguments
 		append/only types copy []
 		append/only types copy []
+		append canonical-refs id
+		append ref-kinds 'typed-call
 		type-count: id
 		id
 	]
 
 	prepare-functions: func [/local record signature id][
+		clear function-call-types
 		record: functions
 		id: 1
 		while [not tail? record][
@@ -1423,12 +1520,14 @@ compiler-rsir-frontend: context [
 			record/7: signature/2
 			record/8: signature/3
 			record/9: signature/4
+			append function-call-types 0
 			id: id + 1
 			record: skip record 10
 		]
 	]
 
 	prepare-imports: func [/local record signature cc id][
+		clear import-call-types
 		record: imports
 		id: -1
 		while [not tail? record][
@@ -1451,6 +1550,7 @@ compiler-rsir-frontend: context [
 				record/9: none
 				record/10: 0
 			]
+			append import-call-types 0
 			id: id - 1
 			record: skip record 10
 		]
@@ -1469,7 +1569,8 @@ compiler-rsir-frontend: context [
 			select globals key
 		][fail ERROR-DUPLICATE [form name " is reserved for the module body"]]
 		id: function-count + 1
-		repend function-ids [key id]
+		put function-ids key id
+		put call-ids key id
 		append/only functions to binary! form name
 		append/only functions copy []
 		append/only functions code
@@ -1512,12 +1613,14 @@ compiler-rsir-frontend: context [
 		key: qualified scope name
 		if select type-ids key [fail ERROR-DUPLICATE ["duplicate type " mold key]]
 		id: type-count + 1
-		repend type-ids [key id]
+		put type-ids key id
 		append types key
 		append types 'i32
 		append/only types values
 		append/only types copy scope
 		append/only types copy []
+		append canonical-refs id
+		append ref-kinds 'i32
 		type-count: id
 		value: 0
 		position: values
@@ -1541,7 +1644,7 @@ compiler-rsir-frontend: context [
 						integer? after-labels/1 [value: after-labels/1]
 						word? after-labels/1 [
 							unless integer? value: resolve-name
-								after-labels/1 scope [] constants [
+								after-labels/1 scope [] literal-values [
 								fail ERROR-REFERENCE [
 									"unknown enum value " mold after-labels/1
 								]
@@ -1556,10 +1659,10 @@ compiler-rsir-frontend: context [
 			while [labels <> after-labels][
 				item: to word! labels/1
 				constant-key: qualified scope item
-				if select constants constant-key [
+				if select literal-values constant-key [
 					fail ERROR-DUPLICATE ["duplicate enum name " mold constant-key]
 				]
-				repend constants [constant-key value]
+				put literal-values constant-key value
 				labels: next labels
 			]
 			value: value + 1
@@ -1586,7 +1689,7 @@ compiler-rsir-frontend: context [
 			library: to binary! position/1
 			either canonical: select libraries library [
 				library: canonical
-			][repend libraries [library library]]
+			][put libraries library library]
 			cc: position/2
 			entries: position/3
 			if empty? entries [
@@ -1624,7 +1727,8 @@ compiler-rsir-frontend: context [
 					]
 				]['variable]['function]
 				id: import-count + 1
-				repend import-ids [key id]
+				put import-ids key id
+				if kind = 'function [put call-ids key (0 - id)]
 				if all [kind = 'function infix-spec? spec][
 					append infix-targets (0 - id)
 				]
@@ -1751,7 +1855,7 @@ compiler-rsir-frontend: context [
 		values scope uses [block!]
 		with-count [integer!]
 		/local position name spec body child key kind target next-uses
-			spelling id type-spec protected-id alias-id
+			spelling id type-spec protected-id alias-id canonical
 	][
 		position: values
 		while [not tail? position][
@@ -1833,25 +1937,31 @@ compiler-rsir-frontend: context [
 						true [fail ERROR-UNSUPPORTED "invalid alias declaration"]
 					]
 					id: type-count + 1
-					repend type-ids [key id]
+					put type-ids key id
 					if find [struct union] kind [
 						spelling: mold/flat reduce [kind type-spec scope uses]
 						target: select aggregate-types spelling
 						unless integer? target [
 							target: id
-							repend aggregate-types [spelling id]
+							put aggregate-types spelling id
 						]
-						repend canonical-types [id target]
+					]
+					canonical: case [
+						find [struct union] kind [target]
+						kind = 'alias [0]
+						true [id]
 					]
 					append types key
 					append types kind
 					append/only types type-spec
 					append/only types copy scope
 					append/only types copy/deep uses
+					append canonical-refs canonical
+					append ref-kinds either kind = 'alias [none][kind]
 					type-count: id
 					alias-count: alias-count + 1
 					alias-id: 1000 + alias-count
-					repend alias-type-ids [key alias-id]
+					put alias-type-ids key alias-id
 				]
 				all [
 					set-word? position/1
@@ -1873,13 +1983,14 @@ compiler-rsir-frontend: context [
 						select import-ids key
 						select globals key
 						select protected key
-						select constants key
+						select literal-values key
 						select contexts key
 					][
 						fail ERROR-DUPLICATE ["duplicate function " mold key]
 					]
 					id: function-count + 1
-					repend function-ids [key id]
+					put function-ids key id
+					put call-ids key id
 					if infix-spec? spec [append infix-targets id]
 					append/only functions to binary! spelling
 					append/only functions spec
@@ -1908,13 +2019,13 @@ compiler-rsir-frontend: context [
 						select import-ids key
 						select globals key
 						select protected key
-						select constants key
+						select literal-values key
 						select type-ids key
 					][
 						fail ERROR-DUPLICATE ["duplicate context " mold key]
 					]
 					context-count: context-count + 1
-					repend contexts [key context-count]
+					put contexts key context-count
 					child: append copy scope name
 					scan-block position/3 child uses 0
 					position: skip position 3
@@ -1945,14 +2056,14 @@ compiler-rsir-frontend: context [
 						select import-ids key
 						select globals key
 						select protected key
-						select constants key
+						select literal-values key
 						select contexts key
 					][fail ERROR-DUPLICATE ["duplicate protected value " mold key]]
 					protected-id: 0
 					unless protected-scalar? position/3 [
 						global-count: global-count + 1
 						protected-id: global-count
-						repend globals [key global-count]
+						put globals key global-count
 						spelling: form key
 						unless valid-name? spelling [
 							fail ERROR-NAME "invalid RSIR global name"
@@ -1963,7 +2074,7 @@ compiler-rsir-frontend: context [
 						append global-data 0
 						append global-data 0
 					]
-					repend protected [key protected-id]
+					put protected key protected-id
 					position: next position
 				]
 				set-word? position/1 [
@@ -1978,13 +2089,13 @@ compiler-rsir-frontend: context [
 						if any [
 							select function-ids key
 							select import-ids key
-							select constants key
+							select literal-values key
 							select contexts key
 						][
 							fail ERROR-DUPLICATE ["duplicate global " mold key]
 						]
 						global-count: global-count + 1
-						repend globals [key global-count]
+						put globals key global-count
 						spelling: form key
 						unless valid-name? spelling [
 							fail ERROR-NAME "invalid RSIR global name"
@@ -2105,7 +2216,7 @@ compiler-rsir-frontend: context [
 					]
 				]
 				find [struct union] kind [
-					target: select canonical-types id
+					target: pick canonical-refs id
 					either all [integer? target target <> id][
 						emit type-output reduce [
 							select type-codes 'alias target 0 first 0
@@ -2362,14 +2473,10 @@ compiler-rsir-frontend: context [
 		value [word! path!]
 		scope uses [block!]
 		return: [integer! none!]
-		/local id record
+		/local id
 	][
-		id: resolve-name value scope uses function-ids
-		if integer? id [return id]
-		id: resolve-name value scope uses import-ids
-		unless integer? id [return none]
-		record: skip imports ((id - 1) * 10)
-		either record/5 = 'function [0 - id][none]
+		id: resolve-name value scope uses call-ids
+		either integer? id [id][none]
 	]
 
 	array-pointer-compatible?: func [
@@ -2786,7 +2893,7 @@ compiler-rsir-frontend: context [
 		scope uses [block!]
 		protected? [logic!]
 		return: [block! none!]
-		/local wide bits id key target record ref protected-info
+		/local wide bits id key target record ref literal
 	][
 		case [
 			issue? value [
@@ -2832,17 +2939,13 @@ compiler-rsir-frontend: context [
 			]
 			any [get-word? value get-path? value][
 				target: either get-word? value [to word! value][to path! value]
-				id: resolve-name target scope uses function-ids
+				id: resolve-name target scope uses call-ids
 				if integer? id [
 					ref: call-signature-ref id
-					return reduce [ref address-initializer function-address id 0]
-				]
-				id: resolve-name target scope uses import-ids
-				if integer? id [
-					record: skip imports ((id - 1) * 10)
-					if record/5 = 'function [
-						ref: call-signature-ref (0 - id)
-						return reduce [ref address-initializer import-address id 0]
+					return reduce [
+						ref address-initializer
+						either id > 0 [function-address][import-address]
+						absolute id 0
 					]
 				]
 				id: resolve-name target scope uses globals
@@ -2859,12 +2962,12 @@ compiler-rsir-frontend: context [
 				]
 			]
 			any [word? value path? value][
-				protected-info: resolve-name value scope uses protected-values
-				if block? protected-info [return copy protected-info]
-				id: resolve-name value scope uses constants
-				if integer? id [
+				literal: resolve-name value scope uses literal-values
+				if block? literal [return copy literal]
+				if integer? literal [
 					return reduce [
-						-5 scalar-initializer id either id < 0 [-1][0] 0
+						-5 scalar-initializer literal
+							either literal < 0 [-1][0] 0
 					]
 				]
 			]
@@ -3186,42 +3289,46 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	stack-storage-info: func [
+	register-storage: func [
 		name [word!]
-		params [block!]
-		locals [block!]
-		return: [block! none!]
-		/local position slot offset
+		slot [integer!]
+		record [block!]
 	][
-		position: params
+		put function-storage name reduce [slot record]
+	]
+
+	prepare-function-storage: func [
+		params locals [block!]
+		/local position slot
+	][
+		clear function-storage
 		slot: 1
-		offset: 1
+		position: params
 		while [not tail? position][
-			if position/1 = name [return reduce [slot offset]]
+			if word? position/1 [register-storage position/1 slot position]
 			position: skip position 3
 			slot: slot + 1
-			offset: offset + 3
 		]
 		position: locals
-		offset: 1
 		while [not tail? position][
-			if position/1 = name [return reduce [slot (0 - offset)]]
+			if word? position/1 [register-storage position/1 slot position]
 			if storage-local? position [slot: slot + 1]
 			position: skip position 3
-			offset: offset + 3
 		]
-		none
+	]
+
+	stack-storage-info: func [
+		name [word!]
+		return: [block! none!]
+	][
+		select function-storage name
 	]
 
 	storage-record: func [
-		storage params locals [block!]
+		storage [block!]
 		return: [block!]
-		/local offset
 	][
-		offset: storage/2
-		either offset > 0 [
-			skip params (offset - 1)
-		][skip locals ((0 - offset) - 1)]
+		storage/2
 	]
 
 	collect-subroutines: func [
@@ -3238,16 +3345,15 @@ compiler-rsir-frontend: context [
 				(length? position) >= 2
 				block? position/2
 				name: to word! position/1
-				storage: stack-storage-info name params locals
+				storage: stack-storage-info name
 				block? storage
-				record: storage-record storage params locals
+				record: storage-record storage
 				(ref-kind record/2) = 'subroutine
 			][
 				if select subroutines name [
 					fail ERROR-DUPLICATE ["duplicate subroutine name: " mold name]
 				]
-				append subroutines name
-				append/only subroutines reduce [copy/deep position/2 0 0 false 0]
+				put subroutines name reduce [copy/deep position/2 0 0 false 0]
 				; A definition is data for this function. Its body is compiled by
 				; the function-level pass, not recursively collected here.
 				position: skip position 2
@@ -3311,7 +3417,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		return: [block!]
 		/local spec body cursor names-start name ref flags record-index record
-			active-records stopped?
+			active-records stopped? saved slot
 	][
 		unless function-active? [
 			fail ERROR-CONTEXT "USE is only allowed inside a function"
@@ -3346,11 +3452,13 @@ compiler-rsir-frontend: context [
 			]
 			while [names-start <> cursor][
 				name: names-start/1
-				if stack-storage-info name params locals [
+				if stack-storage-info name [
 					fail ERROR-DUPLICATE ["duplicate USE local " mold name]
 				]
-				record-index: select use-local-slots name
-				either integer? record-index [
+				saved: select use-local-slots name
+				either block? saved [
+					record-index: saved/1
+					slot: saved/2
 					record: skip locals ((record-index - 1) * 3)
 					unless all [
 						stack-type-compatible? record/2 ref
@@ -3363,11 +3471,14 @@ compiler-rsir-frontend: context [
 					record/1: name
 				][
 					record-index: 1 + ((length? locals) / 3)
-					repend use-local-slots [name record-index]
+					slot: 1 + ((length? params) / 3) + storage-local-count locals
 					append locals name
 					append locals ref
 					append locals flags
+					record: skip locals ((record-index - 1) * 3)
+					put use-local-slots name reduce [record-index slot]
 				]
+				register-storage name slot record
 				append active-records record-index
 				names-start: next names-start
 			]
@@ -3379,6 +3490,7 @@ compiler-rsir-frontend: context [
 		; names leave the active lexical environment with this body.
 		foreach record-index active-records [
 			record: skip locals ((record-index - 1) * 3)
+			remove/key function-storage record/1
 			record/1: none
 		]
 		last-type: 0
@@ -3612,9 +3724,9 @@ compiler-rsir-frontend: context [
 		base: either block? parts [parts/1][target]
 		place?: false
 		if all [word? base not root-qualified? target][
-			storage: stack-storage-info base params locals
+			storage: stack-storage-info base
 			if block? storage [
-				position: storage-record storage params locals
+				position: storage-record storage
 				if (ref-kind position/2) = 'subroutine [
 					fail ERROR-REFERENCE ["subroutine has no address " mold target]
 				]
@@ -3741,7 +3853,7 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		/local id storage
 	][
-		storage: stack-storage-info 'system params locals
+		storage: stack-storage-info 'system
 		id: resolve-name 'system scope uses globals
 		if all [not block? storage not integer? id][
 			id: resolve-name 'system scope uses import-ids
@@ -4576,7 +4688,7 @@ compiler-rsir-frontend: context [
 				either block? wide [reduce [wide/2 wide/3]][none]
 			]
 			any [word? value path? value][
-				number: resolve-name value scope uses constants
+				number: resolve-name value scope uses literal-values
 				either integer? number [
 					reduce [number either number < 0 [-1][0]]
 				][none]
@@ -5067,9 +5179,9 @@ compiler-rsir-frontend: context [
 			]
 		]
 		if word? value [
-			storage: stack-storage-info value params locals
+			storage: stack-storage-info value
 			if block? storage [
-				record: storage-record storage params locals
+				record: storage-record storage
 				if integer? record/2 [ref: record/2]
 			]
 		]
@@ -5081,7 +5193,7 @@ compiler-rsir-frontend: context [
 			]
 		]
 		if all [none? ref word? value][
-			if integer? resolve-name value scope uses constants [ref: -5]
+			if integer? resolve-name value scope uses literal-values [ref: -5]
 		]
 		if all [none? ref path? value][
 			scratch: make binary! 64
@@ -5568,7 +5680,7 @@ compiler-rsir-frontend: context [
 		value-context [integer!]
 		return: [block!]
 		/local value type-info next-position target id
-			inner wide bits call-target protected-info
+			inner wide bits call-target literal
 			storage record
 	][
 		unless not tail? position [
@@ -5579,8 +5691,8 @@ compiler-rsir-frontend: context [
 		last-stopped?: false
 		if all [
 			word? value
-			storage: stack-storage-info value params locals
-			record: storage-record storage params locals
+			storage: stack-storage-info value
+			record: storage-record storage
 			(ref-kind record/2) = 'subroutine
 		][
 			return stack-subroutine position value instructions
@@ -5807,7 +5919,7 @@ compiler-rsir-frontend: context [
 			][next-position]
 			any [word? value path? value] [
 				storage: either word? value [
-					stack-storage-info value params locals
+					stack-storage-info value
 				][none]
 				if block? storage [
 					unless stack-address value scope uses instructions params locals [
@@ -5827,19 +5939,20 @@ compiler-rsir-frontend: context [
 						return next position
 					]
 				]
-				protected-info: resolve-name value scope uses protected-values
-				if block? protected-info [
+				literal: resolve-name value scope uses literal-values
+				if block? literal [
 					emit instructions reduce [
-						literal-op protected-info/1 protected-info/3 protected-info/4
+						literal-op literal/1 literal/3 literal/4
 					]
-					last-type: protected-info/1
+					last-type: literal/1
 					last-flags: 0
 					last-float-literal?: float-kind? ref-kind last-type
 					return next position
 				]
-				id: resolve-name value scope uses constants
-				next-position: either integer? id [
-					emit instructions reduce [literal-op -5 id either id < 0 [-1][0]]
+				next-position: either integer? literal [
+					emit instructions reduce [
+						literal-op -5 literal either literal < 0 [-1][0]
+					]
 					last-type: -5
 					last-flags: 0
 					next position
@@ -6120,7 +6233,7 @@ compiler-rsir-frontend: context [
 				fail ERROR-CONTEXT "scalar DECLARE requires a variable target"
 			]
 			either block? storage [
-				record: storage-record storage params locals
+				record: storage-record storage
 				either record/2 = 0 [
 					record/2: ref
 					record/3: 0
@@ -6195,7 +6308,7 @@ compiler-rsir-frontend: context [
 		last-flags: source-flags
 
 		either block? storage [
-			record: storage-record storage params locals
+			record: storage-record storage
 			either record/2 = 0 [
 				record/2: ref
 				record/3: 0
@@ -6231,7 +6344,7 @@ compiler-rsir-frontend: context [
 		/local parts count candidate
 	][
 		parts: either word? target [reduce [target]][to block! target]
-		if block? stack-storage-info parts/1 params locals [return false]
+		if block? stack-storage-info parts/1 [return false]
 		count: length? parts
 		while [count > 0][
 			candidate: either count = 1 [
@@ -6264,8 +6377,7 @@ compiler-rsir-frontend: context [
 			unless all [block? info info/2 = scalar-initializer][
 				fail ERROR-UNSUPPORTED "PROTECT expects a literal value"
 			]
-			append protected-values key
-			append/only protected-values copy info
+			put literal-values key copy info
 			next-position: skip position 3
 		][
 			unless stack-static next position scope uses true [
@@ -6302,11 +6414,11 @@ compiler-rsir-frontend: context [
 		next-position: stack-system-assignment position target scope uses instructions
 			params locals
 		if block? next-position [return next-position]
-		storage: either word? target [stack-storage-info target params locals][none]
+		storage: either word? target [stack-storage-info target][none]
 		id: either block? storage [none][resolve-name target scope uses globals]
 		if all [
 			block? storage
-			record: storage-record storage params locals
+			record: storage-record storage
 			(ref-kind record/2) = 'subroutine
 		][
 			unless block? position/2 [
@@ -6385,14 +6497,14 @@ compiler-rsir-frontend: context [
 		last-flags: source-flags
 		last-float-literal?: source-float-literal?
 		either block? storage [
-			record: storage-record storage params locals
+			record: storage-record storage
 			either record/2 = 0 [
 				if last-type = -14 [
 					fail ERROR-REFERENCE "null needs an explicit target type"
 				]
 				if all [word? target word? active-subroutine][
 					owner: active-subroutine
-					repend subroutine-inferred [target owner]
+					put subroutine-inferred target owner
 				]
 				record/2: last-type
 				record/3: last-flags
@@ -6576,10 +6688,14 @@ compiler-rsir-frontend: context [
 		function-return: return-ref
 		function-flags: flags
 		function-active?: true
+		function-scope: scope
+		function-uses: uses
+		clear-resolved-names
 		clear loops
 		clear overflows
 		clear catches
 		clear use-local-slots
+		prepare-function-storage params locals
 		clear subroutines
 		clear subroutine-order
 		active-subroutine: none
@@ -6609,9 +6725,13 @@ compiler-rsir-frontend: context [
 		]
 		count: to integer! (((length? instructions) - before) / 16)
 		function-active?: false
+		function-scope: none
+		function-uses: none
+		clear-resolved-names
 		clear overflows
 		clear catches
 		clear use-local-slots
+		clear function-storage
 		clear subroutines
 		clear subroutine-order
 		active-subroutine: none
@@ -6669,6 +6789,9 @@ compiler-rsir-frontend: context [
 		debug?: to logic! debug
 		result: catch/name [
 			function-active?: false
+			function-scope: none
+			function-uses: none
+			clear-resolved-names
 			module-kind: case [
 				kind = 'user [1]
 				kind = 'support [2]
@@ -6682,6 +6805,7 @@ compiler-rsir-frontend: context [
 
 			clear functions
 			clear function-ids
+			clear call-ids
 			clear infix-targets
 			clear contexts
 			clear types
@@ -6689,14 +6813,16 @@ compiler-rsir-frontend: context [
 			clear pointer-types
 			clear array-types
 			clear aggregate-types
-			clear canonical-types
+			clear canonical-refs
+			clear ref-kinds
 			clear function-types
+			clear function-call-types
+			clear import-call-types
 			clear subroutine-types
 			clear typed-call-types
 			clear alias-type-ids
-			clear constants
+			clear literal-values
 			clear protected
-			clear protected-values
 			clear imports
 			clear import-ids
 			clear libraries
@@ -6720,6 +6846,7 @@ compiler-rsir-frontend: context [
 			clear switches
 			clear strings
 			clear use-local-slots
+			clear function-storage
 			clear subroutines
 			clear subroutine-order
 			active-subroutine: none

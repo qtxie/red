@@ -175,7 +175,7 @@ linker: context [
 			return codegen-fail "native codegen data does not finish its image"
 		]
 
-		symbols: make hash! ((function-count + global-count) * 2)
+		symbols: make map! (function-count + global-count)
 		function-names: make block! function-count
 		global-names: make block! global-count
 		bitmap-base: 0
@@ -218,7 +218,7 @@ linker: context [
 			if find name-bytes 0 [return codegen-fail "native function name contains NUL"]
 			name: attempt [to word! to string! name-bytes]
 			unless word? name [return codegen-fail "native function name is not a Red word"]
-			if find symbols name [return codegen-fail "native codegen returned duplicate symbols"]
+			if select symbols name [return codegen-fail "native codegen returned duplicate symbols"]
 			append function-names name
 			refs: make block! count-reference
 			data-refs: make block! count-reference
@@ -251,8 +251,7 @@ linker: context [
 				]
 				reference-id: reference-id + 1
 			]
-			append symbols name
-			append/only symbols reduce [
+			put symbols name reduce [
 				'native (function-offset + 1) refs data-refs
 			]
 			id: id + 1
@@ -305,7 +304,7 @@ linker: context [
 					return codegen-fail "native global name is not a Red word"
 				]
 			]
-			if find symbols name [return codegen-fail "native codegen returned duplicate symbols"]
+			if select symbols name [return codegen-fail "native codegen returned duplicate symbols"]
 			append global-names name
 			refs: make block! count-reference
 			data-refs: make block! count-reference
@@ -339,15 +338,13 @@ linker: context [
 				reference-id: reference-id + 1
 			]
 			symbol-type: either global-flags = codegen-protected ['constant]['global]
-			append symbols name
-			append/only symbols reduce [symbol-type global-offset refs data-refs]
+			put symbols name reduce [symbol-type global-offset refs data-refs]
 			id: id + 1
 		]
 		; The codegen image owns the shared bitmap data at this offset. Expose
 		; its base through the linker symbol table only for runtime modules.
-		if all [job/runtime? not find symbols '***-ptr-bitmaps][
-			append symbols '***-ptr-bitmaps
-			append/only symbols reduce ['global bitmap-base copy [] copy []]
+		if all [job/runtime? not select symbols '***-ptr-bitmaps][
+			put symbols '***-ptr-bitmaps reduce ['global bitmap-base copy [] copy []]
 		]
 
 		imports: make block! (import-count * 2)
@@ -508,8 +505,8 @@ linker: context [
 	]
 
 	set-ptr: func [job [object!] name [word!] value [integer!] /local spec][
-		if spec: find job/symbols name [
-			spec/2/2: value
+		if spec: select job/symbols name [
+			spec/2: value
 		]
 	]
 
@@ -518,8 +515,8 @@ linker: context [
 	]
 
 	set-integer: func [job [object!] name [word!] value [integer!] /local spec][
-		if spec: find job/symbols name [
-			change/part at job/sections/data/2 spec/2/2 + 1 int-to-bin/to-bin32 value 4
+		if spec: select job/symbols name [
+			change/part at job/sections/data/2 spec/2 + 1 int-to-bin/to-bin32 value 4
 		]
 	]
 
@@ -548,17 +545,17 @@ linker: context [
 			spec bits-offset struct-offset field-offset image-base
 	][
 		unless job/runtime? [exit]
-		bits-offset: second second find job/symbols '***-ptr-bitmaps
-		spec: find job/symbols '***-exec-image
+		bits-offset: second select job/symbols '***-ptr-bitmaps
+		spec: select job/symbols '***-exec-image
 		struct-offset: either target-64? job/target [8][4]
 		;-- ARM64 PIC startup derives the load base from this struct's runtime address.
 		image-base: either all [job/PIC? job/target = 'ARM64][
-			data-offset + spec/2/2 + struct-offset
+			data-offset + spec/2 + struct-offset
 		][base-address]
 		field-offset: struct-offset
 		either target-64? job/target [
 			change/part
-				at job/sections/data/2 spec/2/2 + field-offset + 1
+				at job/sections/data/2 spec/2 + field-offset + 1
 				rejoin [
 					int-to-bin/to-bin32 image-base
 					int-to-bin/to-bin32 any [base-address-high 0]
@@ -566,16 +563,16 @@ linker: context [
 				8
 			field-offset: field-offset + 8
 		][
-			set-integer-at job spec/2/2 + field-offset image-base
+			set-integer-at job spec/2 + field-offset image-base
 			field-offset: field-offset + 4
 		]
-		set-integer-at job spec/2/2 + field-offset      code-offset
-		set-integer-at job spec/2/2 + field-offset + 4  code-size
-		set-integer-at job spec/2/2 + field-offset + 8  data-offset
-		set-integer-at job spec/2/2 + field-offset + 12 data-size
-		set-integer-at job spec/2/2 + field-offset + 16 data-offset + bits-offset
-		set-integer-at job spec/2/2 + field-offset + 20 rodata-offset
-		set-integer-at job spec/2/2 + field-offset + 24 rodata-size
+		set-integer-at job spec/2 + field-offset      code-offset
+		set-integer-at job spec/2 + field-offset + 4  code-size
+		set-integer-at job spec/2 + field-offset + 8  data-offset
+		set-integer-at job spec/2 + field-offset + 12 data-size
+		set-integer-at job spec/2 + field-offset + 16 data-offset + bits-offset
+		set-integer-at job spec/2 + field-offset + 20 rodata-offset
+		set-integer-at job spec/2 + field-offset + 24 rodata-size
 	]
 
 	resolve-symbol-refs: func [

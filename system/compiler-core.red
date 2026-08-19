@@ -82,7 +82,7 @@ system-dialect: context [
 		none-type:	 	 [#(none)]						;-- marker for "no value returned"
 		last-type:	 	 none-type						;-- type of last value from an expression
 		locals: 	 	 none							;-- currently compiled function specification block
-		definitions:  	 make block! 100
+		definitions:  	 make hash! 100
 		enumerations: 	 make hash! 10
 		expr-call-stack: make block! 10					;-- simple stack of nested calls for a given expression
 		loop-stack:		 make block! 1					;-- keep track of in-loop state

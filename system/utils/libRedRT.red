@@ -417,14 +417,10 @@ libRedRT: context [
 		file: get-path include-file
 		write clean-path file tmpl
 
-		; Red hashes do not retain insertion order after growing, while the stored
-		; symbol IDs are the root-slot order expected by generated code and libRedRT.
-		; Reconstruct Stage0's insertion order explicitly instead of enumerating the
-		; hash directly.
-		list: to block! red/symbols
-		words: make block! ((length? list) / 2)
-		loop ((length? list) / 2) [append words none]
-		foreach [name pos] list [poke words pos/2 name]
+		; Stored symbol IDs define the root-slot order expected by generated code.
+		words: make block! length? red/symbols
+		loop length? red/symbols [append words none]
+		foreach [name pos] red/symbols [poke words pos/2 name]
 		remove-each w words [find form w #"~"]
 
 		lits: copy red/literals
@@ -433,7 +429,11 @@ libRedRT: context [
 		]
 		replace/all lits 'get-root-node 'get-root-node2
 		globals: to block! red/globals
-		contexts: to block! red/contexts
+		contexts: make block! (2 * length? red/contexts)
+		foreach [name pos] red/contexts [
+			append contexts name
+			append/only contexts pos
+		]
 
 		tmpl: mold/all reduce [
 			new-line/all/skip to-block red/functions yes 2

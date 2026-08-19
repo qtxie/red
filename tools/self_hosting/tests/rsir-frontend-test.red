@@ -743,7 +743,7 @@ forward-context-function-ir: compile-text {
 				return: [function! [value [integer!] return: [integer!]]]
 			][
 				as function! [value [integer!] return: [integer!]]
-					actions/get-action-ptr
+					:actions/get-action-ptr
 			]
 		]
 		actions: context [
@@ -757,7 +757,28 @@ assert binary? forward-context-function-ir [
 forward-context-function-layout: layout-of forward-context-function-ir
 assert not none? find
 	ops-of forward-context-function-ir forward-context-function-layout [3 20 11]
-	"a bare context function cast did not lower its callable address"
+	"an explicit context function address did not lower through ADDRESS/REFERENCE"
+
+casted-call-ir: compile-text {
+	Red/System []
+	op!: alias function! [value [integer!] return: [integer!]]
+	inc: func [value [integer!] return: [integer!]][value + 1]
+	select-op: func [return: [uint64!]][as uint64! :inc]
+	run: func [return: [integer!] /local op [op!]][
+		op: as op! select-op
+		op 41
+	]
+} 'user
+assert binary? casted-call-ir [
+	"casted direct call failed: " mold frontend/last-error
+]
+casted-call-layout: layout-of casted-call-ir
+assert all [
+	(function-instruction-word casted-call-ir casted-call-layout 3 1 0) = 7
+	(function-instruction-word casted-call-ir casted-call-layout 3 1 4) = 2
+	(function-instruction-word casted-call-ir casted-call-layout 3 1 8) = 0
+	(op-count (ops-of casted-call-ir casted-call-layout) 7) = 2
+]["AS captured a direct function address instead of compiling its call"]
 
 namespace-with-child-ir: compile-text {
 	Red/System []
@@ -2625,6 +2646,21 @@ assert all [
 	(instruction-word enum-shared-value-ir enum-shared-value-layout 10 8) = 21
 ]["a chained enum assignment did not bind every label to the shared value"]
 
+enum-size-ir: compile-text {
+	Red/System []
+	#enum states! [first: second: 10 third fourth: fifth: 20 sixth]
+	count: func [return: [integer!]][size? states!]
+} 'user
+assert binary? enum-size-ir [
+	"enum SIZE? lowering failed: " mold frontend/last-error
+]
+enum-size-layout: layout-of enum-size-ir
+assert all [
+	(function-instruction-word enum-size-ir enum-size-layout 1 1 0) = frontend/literal-op
+	(function-instruction-word enum-size-ir enum-size-layout 1 1 4) = -5
+	(function-instruction-word enum-size-ir enum-size-layout 1 1 8) = 6
+]["enum SIZE? did not return the number of declared labels"]
+
 widen-ir: compile-text {
 	Red/System []
 	widen: func [
@@ -2891,6 +2927,8 @@ library-ir: compile-text {
 	value: value + 1
 	#user-code
 	value: value + 2
+	#user-code
+	value: value + 4
 	answer: func [return: [integer!]][value]
 	#export stdcall [answer "answer-v1" value]
 } 'library
@@ -2910,8 +2948,8 @@ assert all [
 	(word-at library-ir 16) = 7
 	(word-at library-ir 32) = 2
 	(function-word library-ir library-layout 1 12) = 66
-	(function-word library-ir library-layout 6 32) > 1
-	(function-word library-ir library-layout 7 32) > 1
+	(function-word library-ir library-layout 6 32) = 8
+	(function-word library-ir library-layout 7 32) = 15
 	(export-word library-ir library-layout 1 0) = 1
 	(export-word library-ir library-layout 2 0) = -1
 	first-export-name = "answer-v1"

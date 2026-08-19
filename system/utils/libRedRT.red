@@ -307,11 +307,12 @@ libRedRT: context [
 		]
 		append template "^/red: context "
 
+		append imports reduce [
+			to issue! "include" %$ROOT-PATH$runtime/definitions.reds
+			to issue! "include" %$ROOT-PATH$runtime/macros.reds
+			to issue! "include" %$ROOT-PATH$runtime/structures.reds
+		]
 		append imports [
-			#include %$ROOT-PATH$runtime/definitions.reds
-			#include %$ROOT-PATH$runtime/macros.reds
-			#include %$ROOT-PATH$runtime/structures.reds
-
 			cell!: alias struct! [
 				header	[integer!]						;-- cell's header flags
 				data1	[integer!]						;-- placeholders to make a 128-bit cell

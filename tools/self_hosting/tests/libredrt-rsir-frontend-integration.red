@@ -63,8 +63,13 @@ libRedRT/save-files
 	job
 	compiler-rsir-frontend/runtime-functions
 	compiler-rsir-frontend/runtime-specs
-unless block? libRedRT/get-include-file job [
+include-source: libRedRT/get-include-file job
+unless block? include-source [
 	fail "generated libRedRT include file could not be loaded"
+]
+include-file: libRedRT/get-path libRedRT/include-file
+unless find read include-file "#include" [
+	fail "generated libRedRT include directives were preprocessed"
 ]
 unless block? libRedRT/get-definitions [
 	fail "generated libRedRT definitions could not be loaded"

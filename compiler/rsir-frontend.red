@@ -1862,7 +1862,8 @@ compiler-rsir-frontend: context [
 	scan-enum: func [
 		name [word!]
 		values scope [block!]
-		/local key position labels after-labels next-position item value constant-key id
+		/local key position labels after-labels next-position item value constant-key
+			id count record
 	][
 		key: qualified scope name
 		if select type-ids key [fail ERROR-DUPLICATE ["duplicate type " mold key]]
@@ -1870,13 +1871,14 @@ compiler-rsir-frontend: context [
 		put type-ids key id
 		append types key
 		append types 'i32
-		append/only types values
+		append types 0
 		append/only types copy scope
 		append/only types copy []
 		append canonical-refs -5
 		append ref-kinds 'i32
 		type-count: id
 		value: 0
+		count: 0
 		position: values
 		while [not tail? position][
 			case [
@@ -1917,11 +1919,25 @@ compiler-rsir-frontend: context [
 					fail ERROR-DUPLICATE ["duplicate enum name " mold constant-key]
 				]
 				put literal-values constant-key value
+				count: count + 1
 				labels: next labels
 			]
 			value: value + 1
 			position: next-position
 		]
+		record: skip types ((id - 1) * 5)
+		record/3: count
+	]
+
+	count-enum: func [
+		name [word! path!]
+		scope uses [block!]
+		return: [integer! none!]
+		/local id record
+	][
+		unless id: resolve-name name scope uses type-ids [return none]
+		record: skip types ((id - 1) * 5)
+		all [record/2 = 'i32 integer? record/3 record/3]
 	]
 
 	scan-imports: func [
@@ -4084,7 +4100,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local type-info target-ref target-flags target-kind source keep? value
 			literal-end bits next-position source-ref source-flags source-kind
-			source-literal? address-source? id
+			source-literal? stored-function? id
 	][
 		type-info: stack-read-type next position scope uses
 		target-ref: type-info/2
@@ -4135,24 +4151,20 @@ compiler-rsir-frontend: context [
 			return literal-end
 		]
 
-		address-source?: false
+		stored-function?: false
 		if all [
 			target-kind = 'function
 			any [word? source/1 path? source/1]
 			not any [get-word? source/1 get-path? source/1]
+			(resolve-value-kind source/1 scope uses) <> 2
 		][
-			address-source?: stack-call-address source/1 scope uses instructions
-			either address-source? [
+			stored-function?: stack-address source/1 scope uses instructions params locals
+			if stored-function? [
+				emit instructions reduce [load-op 0 0 0]
 				next-position: next source
-			][
-				address-source?: stack-address source/1 scope uses instructions params locals
-				if address-source? [
-					emit instructions reduce [load-op 0 0 0]
-					next-position: next source
-				]
 			]
 		]
-		unless address-source? [
+		unless stored-function? [
 			next-position: stack-value source scope uses instructions params locals
 				expression-value
 		]
@@ -5771,11 +5783,22 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local value storage id record ref info type-info kind bytes wide
+		/local value storage id record ref info type-info kind bytes wide count
 			scratch next-position
 	][
 		if tail? position [fail ERROR-UNSUPPORTED "SIZE? requires a type or value"]
 		value: position/1
+		if all [
+			any [word? value path? value]
+			integer? count: count-enum value scope uses
+		][
+			emit instructions reduce [literal-op -5 count 0]
+			last-type: -5
+			last-flags: 0
+			last-float-literal?: false
+			last-stopped?: false
+			return next position
+		]
 		kind: either any [word? value path? value][
 			type-kind reduce [value] scope uses
 		][none]
@@ -7292,9 +7315,9 @@ compiler-rsir-frontend: context [
 				][position: skip position 2]
 				all [issue? position/1 position/1 = #user-code][
 					if split-module? [
-						user-code?: not user-code?
-						active-module-code: either user-code? [module-code][boot-code]
-						active-module-locals: either user-code? [module-locals][boot-locals]
+						user-code?: true
+						active-module-code: module-code
+						active-module-locals: module-locals
 					]
 					position: next position
 				]

@@ -151,7 +151,7 @@ system-dialect: context [
 
 	compile-rsir: func [
 		source [block!] file [file!]
-		/local output error runtime-exports
+		/local output error runtime-exports kind
 	][
 		compiler/script: clean-path file
 		compiler/pc: source
@@ -162,13 +162,14 @@ system-dialect: context [
 			compiler/throw-error "missing Red/System program header"
 		]
 		compiler-rsir-frontend/definitions: compiler/definitions
+		kind: either job/type = 'dll ['library]['glue]
 		output: either job/libRedRT? [
 			runtime-exports: libRedRT/runtime-exports job
-			compiler-rsir-frontend/compile/runtime source 'library runtime-exports
+			compiler-rsir-frontend/compile/runtime/red source 'library runtime-exports
 		][
-			compiler-rsir-frontend/compile source either job/type = 'dll [
-				'library
-			]['glue]
+			either job/red-pass? [
+				compiler-rsir-frontend/compile/red source kind
+			][compiler-rsir-frontend/compile source kind]
 		]
 		foreach warning compiler-rsir-frontend/warnings [
 			print ["*** Warning:" warning]

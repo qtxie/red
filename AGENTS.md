@@ -1,10 +1,10 @@
-- compile Windows x64 Red/Red/System in release mode: `build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe -r -d -t Windows-X86-64 -o output_path_name input_file_path`
-- compile in development mode: omit `-r` and keep the Stage1-built `libRedRT.dll` beside the output executable
-- the Rebol Stage0 compiler is retired from normal work; do not invoke `red.r` through `rebcmdview.exe` unless the user explicitly requests a recovery or historical audit
 - run/interpret Red script: `D:\EE\QTool\red-console.exe red-script-path.red` for quick testing without waiting a long time to compile it.
-- Be careful when you using red-console.exe, sometime it does not exit properly and keep burning cpu
+- Be careful when you using red-console.exe or running tests, sometime it does not exit properly and keep burning cpu
 - dumpbin: C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC\14.50.35717\bin\Hostx64\x64\dumpbin.exe
 - cdb: C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe
+- think more time before writing code. The code should be Red or Red/System idiomatic. The architecture and algorithms must be elegant, refined, direct, fast, and free of any unnecessary overhead.
+- The architecture and algorithms should be elegant, clear, fast, and free of unnecessary overhead. They should not rely on special-case hacks that distort the compiler.
+- do a git commit when finish a major task
 
 # Red/System Idiomatic Patterns - Key Insights
 

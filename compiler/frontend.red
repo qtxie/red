@@ -97,6 +97,9 @@ red: context [
 	ssa-names: 	   make block! 10						;-- unique names lookup table (SSA form)
 	final-ssa-names: make block! 10						;-- final aliases visible through object slots
 	types-cache:   make hash!  100						;-- store compiled typesets [types array name...]
+	red-value-types: [
+		"cell!" "red/cell!" "red>cell!" "red-value!" "red>red-value!"
+	]
 	last-type:	   none
 	return-def:    to-set-word 'return					;-- return: keyword
 	s-counter:	   0									;-- series suffix counter
@@ -946,7 +949,7 @@ red: context [
 				unless block? type [
 					red-name: form type
 					case [
-						find ["red/cell!" "red>cell!" "red-value!" "red>red-value!"] red-name [
+						find red-value-types red-name [
 							type: 'any-type!
 						]
 						find/match red-name "red-" [
@@ -2099,15 +2102,16 @@ red: context [
 		]
 	]
 	
-	emit-routine: func [name [word!] spec [block!] /local type cnt offset alter idx pos][
+	emit-routine: func [name [word!] spec [block!] /local type cnt offset alter idx pos red-name][
 		idx: 0
 		if block? spec/1 [spec: next spec]
 		forall spec [
 			if any [spec/1 = /local set-word? spec/1][break] ;-- avoid processing local variable
 			if block? spec/1 [
 				type: spec/1/1
-				if type <> 'red-value! [					 ;-- any-type! => red-value! => no check
-					if pos: find/match form type "red-" [type: to word! pos]
+				red-name: form type
+				unless find red-value-types red-name [		 ;-- any-type! => runtime value => no check
+					if pos: find/match red-name "red-" [type: to word! pos]
 					type: reduce [type]
 					emit make-typeset type none back spec yes ;-- inject type-checking calls for arguments
 					emit idx

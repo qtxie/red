@@ -27,6 +27,7 @@ compiler-rsir-frontend: context [
 	module-kind: 0
 	debug?: false
 	runtime-library?: false
+	red-pass?: false
 	runtime-functions: make block! 512
 	runtime-specs: make map! 1024
 	functions: make block! (10 * 256)
@@ -6700,7 +6701,7 @@ compiler-rsir-frontend: context [
 			return stack-primary position scope uses instructions params locals value-context
 		]
 		if all [
-			runtime-library?
+			red-pass?
 			issue? value
 			find [#get #in #typecheck #call] value
 		][
@@ -7824,6 +7825,7 @@ compiler-rsir-frontend: context [
 		source [block!]
 		kind [word!]
 		/runtime runtime-exports [block!]
+		/red
 		/debug
 		/limit max-bytes [integer!]
 		/local result
@@ -7833,6 +7835,7 @@ compiler-rsir-frontend: context [
 		clear warnings
 		debug?: to logic! debug
 		runtime-library?: to logic! runtime
+		red-pass?: to logic! red
 		result: catch/name [
 			function-active?: false
 			function-scope: none

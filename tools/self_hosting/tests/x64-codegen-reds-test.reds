@@ -83,6 +83,31 @@ execute-first?: func [
 ]
 
 failures: 0
+no-types: as byte-ptr! 0
+if not x64-codegen/implicitly-compatible-types? -3 -1 no-types 0 [
+	failures: failures + 1
+]
+if not x64-codegen/implicitly-compatible-types? -5 -2 no-types 0 [
+	failures: failures + 1
+]
+if not x64-codegen/implicitly-compatible-types? -7 -6 no-types 0 [
+	failures: failures + 1
+]
+if not x64-codegen/implicitly-compatible-types? -8 -6 no-types 0 [
+	failures: failures + 1
+]
+if x64-codegen/implicitly-compatible-types? -1 -5 no-types 0 [
+	failures: failures + 1
+]
+if x64-codegen/implicitly-compatible-types? -4 -1 no-types 0 [
+	failures: failures + 1
+]
+if x64-codegen/implicitly-compatible-types? -6 -3 no-types 0 [
+	failures: failures + 1
+]
+if x64-codegen/implicitly-compatible-types? -7 -8 no-types 0 [
+	failures: failures + 1
+]
 output: allocate 1024
 void-ir: allocate 132
 local-ir: allocate 260
@@ -90,6 +115,7 @@ pointer-ir: allocate 132
 arithmetic-ir: allocate 260
 aggregate-ir: allocate 516
 abi-ir: allocate 1028
+widening-ir: allocate 676
 indirect-ir: allocate 324
 variadic-ir: allocate 516
 import-variadic-ir: allocate 260
@@ -115,7 +141,7 @@ image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
-	null? aggregate-ir null? abi-ir null? indirect-ir null? variadic-ir
+	null? aggregate-ir null? abi-ir null? widening-ir null? indirect-ir null? variadic-ir
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
 	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
@@ -486,6 +512,156 @@ if size > 0 [
 	if header/function-count <> 2 [failures: failures + 1]
 	unless execute-first? output 77 [failures: failures + 1]
 ]
+
+; One module exercises every implicit integer widening consumer. The entry
+; combines SUB_RETURN, fixed CALL arguments, SET, ordinary RETURN, and a mixed
+; integer comparison into the expected logic result.
+put widening-ir 0 1
+put widening-ir 4 0
+put widening-ir 8 0
+put widening-ir 12 0
+put widening-ir 16 3
+put widening-ir 20 30
+put widening-ir 24 0
+put widening-ir 28 0
+put widening-ir 32 0
+
+put widening-ir 36 0
+put widening-ir 40 1
+put widening-ir 44 -11
+put widening-ir 48 0
+put widening-ir 52 0
+put widening-ir 56 0
+put widening-ir 60 0
+put widening-ir 64 1
+put widening-ir 68 22
+
+put widening-ir 72 0
+put widening-ir 76 1
+put widening-ir 80 -7
+put widening-ir 84 0
+put widening-ir 88 1
+put widening-ir 92 5
+put widening-ir 96 6
+put widening-ir 100 0
+put widening-ir 104 6
+
+put widening-ir 108 0
+put widening-ir 112 1
+put widening-ir 116 -7
+put widening-ir 120 0
+put widening-ir 124 6
+put widening-ir 128 0
+put widening-ir 132 6
+put widening-ir 136 0
+put widening-ir 140 2
+
+put widening-ir 144 -7
+put widening-ir 148 0
+put widening-ir 152 -7
+put widening-ir 156 0
+put widening-ir 160 -7
+put widening-ir 164 0
+put widening-ir 168 -7
+put widening-ir 172 0
+put widening-ir 176 -7
+put widening-ir 180 0
+put widening-ir 184 -7
+put widening-ir 188 0
+
+; Function 1 starts with a local subroutine so its entry jumps over the body.
+put-instruction widening-ir 192 16 5 0 0
+put-instruction widening-ir 208 27 1 -7 0
+put-instruction widening-ir 224 1 -1 -2 -1
+put-instruction widening-ir 240 29 -7 0 0
+put-instruction widening-ir 256 27 0 0 0
+put-instruction widening-ir 272 28 2 -7 0
+
+; The first fixed argument widens in a register; the fifth widens from the
+; caller's stack slot. The callee returns their sum, -2 + 250 = 248.
+put-instruction widening-ir 288 1 -1 -2 -1
+put-instruction widening-ir 304 1 -7 0 0
+put-instruction widening-ir 320 1 -7 0 0
+put-instruction widening-ir 336 1 -7 0 0
+put-instruction widening-ir 352 1 -2 250 0
+put-instruction widening-ir 368 7 2 5 -7
+put-instruction widening-ir 384 15 1 0 0
+
+; SET widens signed int8 -3 into the int64 local.
+put-instruction widening-ir 400 1 -1 -3 -1
+put-instruction widening-ir 416 3 1 1 0
+put-instruction widening-ir 432 5 0 0 0
+put-instruction widening-ir 448 15 1 0 0
+
+; Add an ordinary widened return (-4), then compare the total 239 against a
+; uint16 literal to exercise mixed signed/unsigned equality.
+put-instruction widening-ir 464 7 3 0 -7
+put-instruction widening-ir 480 15 1 0 0
+put-instruction widening-ir 496 1 -4 239 0
+put-instruction widening-ir 512 15 13 0 0
+put-instruction widening-ir 528 11 -11 0 0
+
+; Function 2 returns its first and fifth fixed parameters.
+put-instruction widening-ir 544 3 1 1 0
+put-instruction widening-ir 560 4 0 0 0
+put-instruction widening-ir 576 3 1 5 0
+put-instruction widening-ir 592 4 0 0 0
+put-instruction widening-ir 608 15 1 0 0
+put-instruction widening-ir 624 11 -7 0 0
+
+; Function 3 widens an int8 literal at an ordinary RETURN.
+put-instruction widening-ir 640 1 -1 -4 -1
+put-instruction widening-ir 656 11 -7 0 0
+widening-ir/673: as byte! 66h
+
+size: x64-codegen/generate widening-ir 673 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	header: as codegen-header! output
+	if header/function-count <> 3 [failures: failures + 1]
+	unless execute-first? output 1 [failures: failures + 1]
+]
+
+; A fixed parameter rejects narrowing from int64 to int8.
+put widening-ir 152 -1
+put widening-ir 292 -7
+if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put widening-ir 152 -7
+put widening-ir 292 -1
+
+; SET rejects a signed source when the destination is unsigned.
+put widening-ir 144 -8
+put widening-ir 448 12
+put widening-ir 452 0
+if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put widening-ir 144 -7
+put widening-ir 448 15
+put widening-ir 452 1
+
+; An ordinary RETURN rejects narrowing after its caller metadata is adjusted
+; to keep the rest of the module internally consistent.
+put widening-ir 116 -1
+put widening-ir 476 -1
+put widening-ir 644 -7
+put widening-ir 660 -1
+if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put widening-ir 116 -7
+put widening-ir 476 -7
+put widening-ir 644 -1
+put widening-ir 660 -7
+
+; Equal-width signed and unsigned integers have no lossless common type.
+put widening-ir 500 -8
+if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+put widening-ir 500 -4
 
 ; A function address is an ordinary typed value. The caller keeps it below
 ; one argument, CALL consumes both slots, and the callee returns 41 + 1.
@@ -1667,6 +1843,7 @@ free pointer-ir
 free arithmetic-ir
 free aggregate-ir
 free abi-ir
+free widening-ir
 free indirect-ir
 free variadic-ir
 free null-function-ir

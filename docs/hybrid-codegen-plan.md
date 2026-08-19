@@ -559,8 +559,9 @@ Already retained:
 - switch comparison-chain emission with target-relative offsets, including
   byte, integer, and 64-bit scalar execution paths;
 - one fixed-width integer rule for lossless widening at assignments, calls,
-  explicit returns, and tail returns, represented by the ordinary cast
-  operation rather than a source-shaped adapter;
+  ordinary and subroutine returns: RSIR keeps the producer and declared sink
+  types, while codegen validates the pair and fuses extension into the native
+  load; no implicit cast operation or source-shaped adapter is emitted;
 - common integer comparison width and signedness selected from logical types,
   with native loads performing the required sign or zero extension;
 - an executable fixed-integer gate covering every scalar width, arithmetic,

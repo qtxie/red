@@ -2681,10 +2681,10 @@ widen-ir: compile-text {
 assert binary? widen-ir ["lossless integer widening failed: " mold frontend/last-error]
 widen-layout: layout-of widen-ir
 assert all [
-	(ops-of widen-ir widen-layout) = [3 4 8 3 5 12 3 4 8 11]
-	(instruction-word widen-ir widen-layout 3 4) = -5
-	(instruction-word widen-ir widen-layout 9 4) = -7
-]["lossless assignment/return widening did not use ordinary CAST operations"]
+	(ops-of widen-ir widen-layout) = [3 4 3 5 12 3 4 11]
+	(instruction-word widen-ir widen-layout 4 4) = 0
+	(instruction-word widen-ir widen-layout 8 4) = -7
+]["lossless assignment/return widening was not left to codegen"]
 
 early-widen-ir: compile-text {
 	Red/System []
@@ -2695,9 +2695,9 @@ assert binary? early-widen-ir [
 ]
 early-widen-layout: layout-of early-widen-ir
 assert all [
-	(ops-of early-widen-ir early-widen-layout) = [3 4 8 11]
+	(ops-of early-widen-ir early-widen-layout) = [3 4 11]
 	(instruction-word early-widen-ir early-widen-layout 3 4) = -7
-]["explicit RETURN did not use the ordinary lossless CAST path"]
+]["explicit RETURN widening was not left to codegen"]
 
 widen-call-ir: compile-text {
 	Red/System []
@@ -2710,12 +2710,11 @@ assert binary? widen-call-ir [
 ]
 widen-call-layout: layout-of widen-call-ir
 assert all [
-	(ops-of widen-call-ir widen-call-layout) = [3 4 11 3 4 8 7 11 1 11]
-	(instruction-word widen-call-ir widen-call-layout 6 4) = -5
-	(instruction-word widen-call-ir widen-call-layout 7 4) = 1
+	(ops-of widen-call-ir widen-call-layout) = [3 4 11 3 4 7 11 1 11]
+	(instruction-word widen-call-ir widen-call-layout 6 4) = 1
 	(function-word widen-call-ir widen-call-layout 3 12) = 1
-	(instruction-word widen-call-ir widen-call-layout 10 8) = 0
-]["argument widening or scalar calling-convention return flags are incorrect"]
+	(instruction-word widen-call-ir widen-call-layout 9 8) = 0
+]["argument widening was not left to codegen or return flags are incorrect"]
 
 widen-compare-ir: compile-text {
 	Red/System []
@@ -2736,9 +2735,9 @@ enum-widen-ir: compile-text {
 assert binary? enum-widen-ir ["enum widening failed: " mold frontend/last-error]
 enum-widen-layout: layout-of enum-widen-ir
 assert all [
-	(ops-of enum-widen-ir enum-widen-layout) = [3 4 8 11]
+	(ops-of enum-widen-ir enum-widen-layout) = [3 4 11]
 	(instruction-word enum-widen-ir enum-widen-layout 3 4) = -7
-]["logical integer types did not participate in generic widening"]
+]["logical integer widening was not left to codegen"]
 
 wide-float-ir: compile-text {
 	Red/System []
@@ -3197,19 +3196,23 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"local type change reported the wrong error class"
 
-assert none? compile-text {
+narrow-ir: compile-text {
 	Red/System []
 	narrow: func [value [int32!] return: [int8!]][value]
-} 'user "implicit integer narrowing was accepted"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"implicit integer narrowing reported the wrong error class"
+} 'user
+assert binary? narrow-ir ["frontend rejected backend-owned integer narrowing"]
+narrow-layout: layout-of narrow-ir
+assert (ops-of narrow-ir narrow-layout) = [3 4 11]
+	"integer narrowing introduced a frontend CAST"
 
-assert none? compile-text {
+sign-change-ir: compile-text {
 	Red/System []
 	change-sign: func [value [int8!] return: [uint16!]][value]
-} 'user "signed-to-unsigned widening was accepted"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"signed-to-unsigned widening reported the wrong error class"
+} 'user
+assert binary? sign-change-ir ["frontend rejected backend-owned sign change"]
+sign-change-layout: layout-of sign-change-ir
+assert (ops-of sign-change-ir sign-change-layout) = [3 4 11]
+	"integer sign change introduced a frontend CAST"
 
 assert none? compile-text {
 	Red/System []

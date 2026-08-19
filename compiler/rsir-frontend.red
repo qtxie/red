@@ -3231,64 +3231,6 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	integer-code: func [ref [integer!] return: [integer!] /local kind][
-		if all [ref < 0 ref >= -8][return negate ref]
-		kind: ref-kind ref
-		case [
-			kind = 'i8 [1]
-			kind = 'byte [2]
-			kind = 'u8 [2]
-			kind = 'i16 [3]
-			kind = 'u16 [4]
-			kind = 'i32 [5]
-			kind = 'u32 [6]
-			kind = 'i64 [7]
-			kind = 'u64 [8]
-			true [0]
-		]
-	]
-
-	integer-code-widens?: func [
-		source target [integer!]
-		return: [logic!]
-		/local source-rank target-rank source-signed? target-signed?
-	][
-		if any [source = 0 target = 0][return false]
-		source-rank: to integer! ((source + 1) / 2)
-		target-rank: to integer! ((target + 1) / 2)
-		if target-rank <= source-rank [return false]
-		source-signed?: (source and 1) = 1
-		target-signed?: (target and 1) = 1
-		any [
-			source-signed? = target-signed?
-			all [not source-signed? target-signed?]
-		]
-	]
-
-	lossless-integer-cast?: func [
-		source target [integer!]
-		return: [logic!]
-		/local source-code target-code
-	][
-		if stack-type-compatible? target source [return true]
-		source-code: integer-code source
-		target-code: integer-code target
-		integer-code-widens? source-code target-code
-	]
-
-	integer-common-ref: func [
-		left right [integer!]
-		return: [integer!]
-		/local left-code right-code
-	][
-		if stack-type-compatible? left right [return left]
-		left-code: integer-code left
-		right-code: integer-code right
-		if integer-code-widens? right-code left-code [return left]
-		if integer-code-widens? left-code right-code [return right]
-		0
-	]
-
 	coerce-stack: func [
 		expected expected-flags [integer!]
 		instructions [binary!]
@@ -3364,20 +3306,18 @@ compiler-rsir-frontend: context [
 			last-float-literal?: false
 			return true
 		]
-		unless all [
+		if all [
 			expected-flags = 0
 			last-flags = 0
-			lossless-integer-cast? last-type expected
-		][return false]
-		either before [
-			emit-before instructions offset reduce [cast-op expected 0 0]
+			integer-kind? source-kind
+			integer-kind? target-kind
 		][
-			emit instructions reduce [cast-op expected 0 0]
+			last-type: expected
+			last-flags: 0
+			last-float-literal?: false
+			return true
 		]
-		last-type: expected
-		last-flags: 0
-		last-float-literal?: false
-		true
+		false
 	]
 
 	hex-digit: func [value [char!] return: [integer!] /local code][
@@ -3963,7 +3903,7 @@ compiler-rsir-frontend: context [
 					right-flags = 0
 					integer-kind? left-kind
 					integer-kind? right-kind
-				][integer-common-ref left right][0]
+				][left][0]
 				valid?: any [
 					common <> 0
 					all [

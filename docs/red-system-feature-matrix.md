@@ -33,7 +33,7 @@ rules remain in Red/System codegen.
 | Global and local variables | Global records and function slots; codegen derives types for address/load/set | compiler/compiles-ok-test.r, x64-local-smoke.reds | replace |
 | Protected constant data | Read-only global plus flat initializer stream; codegen rejects writes | units/protect-test.reds, array-test.reds | pending |
 | logic!, byte!, integer! | Built-in logical types and generic scalar operations | units/logic-test.reds, byte-test.reds, integer-test.reds | pending |
-| Signed and unsigned fixed-width integers | Logical width/sign plus one lossless widening rule at typed boundaries; generic integer operations | units/fixed-int-test.reds, int64-test.reds, rsir-frontend-test.red, rsir-fixed-integer-exit.reds | replace |
+| Signed and unsigned fixed-width integers | Logical producer/sink types plus one codegen-owned lossless widening rule at typed boundaries; generic integer operations | units/fixed-int-test.reds, int64-test.reds, rsir-frontend-test.red, rsir-fixed-integer-exit.reds | replace |
 | float! and float32! | Exact IEEE literal payloads, ordinary typed casts/binary operations, and target XMM selection | units/float-test.reds, float32-test.reds, math-mixed-test.reds, rsir-float-scalar-exit.reds | pending |
 | c-string! | Pointer-to-byte semantics, one-based index, string constant object | units/c-string-test.reds, length-test.reds, lib-test.reds | pending |
 | pointer! and get-path | Pointee-preserving type, address/index/load/set/cast | compiler/pointer-test.r, units/pointer-test.reds, get-pointer-test.reds | pending |
@@ -169,8 +169,11 @@ The direct `rsir-fixed-integer-exit.reds` gate currently executes 49 scalar
 checks through frontend, RSIR, native codegen, linker, and the generated PE. It
 covers all eight fixed widths, signed and unsigned arithmetic, 64-bit division
 and shifts, direct binary-logarithm selection at every logical integer width,
-explicit truncation, lossless assignment/call/return widening, mixed-width
-comparison, scalar cdecl/callback returns, and eight Win64 integer arguments.
+explicit truncation, lossless assignment/call/return widening without implicit
+CAST records, mixed-width comparison, scalar cdecl/callback returns, and eight
+Win64 integer arguments. The native codegen fixture additionally executes
+subroutine-return widening and isolates invalid SET, CALL, RETURN, and BINARY
+type pairs.
 This is mechanism evidence, not row completion: aggregate field paths,
 typed/variadic calls, and the complete fixed-int/int64 formal families remain
 required.

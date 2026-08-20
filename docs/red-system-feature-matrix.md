@@ -61,7 +61,7 @@ rules remain in Red/System codegen.
 | switch | Typed literal/target slice with explicit default or fail semantics; native selector and target-merge validation plus x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | exit, return, break and continue | Direct function or loop terminators through the shared jump/return core | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds | replace |
 | Subroutines | Function-local entry targets and subroutine call/return | units/subroutine-test.reds, x64-subroutine-smoke.reds | pending |
-| throw and catch statement | Catch regions and non-local transfer state; native CATCH owns filter type, while the THROW source ID remains a frontend check until THROW directly consumes the unprojected value | units/exceptions-test.reds, x64-catch-*.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
+| throw and catch statement | Catch regions and non-local transfer state; native CATCH owns filter type and native THROW consumes the original ID plus thrown place, writes the state, and unwinds without a SET adapter | units/exceptions-test.reds, x64-catch-*.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | catch function attribute | Signature flag and resume point after a throwing call; no-return fallthrough is cut only in non-catch callers | units/exceptions-test.reds, x64-catch-runtime.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
 | overflow? and CPU overflow state | Native arithmetic flags tracked as an explicit effect | units/overflow-test.reds, x64-overflow and mixed-overflow smokes | pending |
 | push, pop and stack controls | Native-operation IDs with explicit stack effects; codegen validates stack allocation/free operands while the frontend retains only argument shape and result shadow | units/push-pop-test.reds, x64-stack-smoke.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
@@ -250,8 +250,17 @@ formal atomic, system, push/pop, exceptions, and integer executables pass 1,656
 assertions in total. H47 then builds the same-source H48 with identical total
 and `.text` sizes. This proves the ownership boundary and self-hosting closure,
 not completion of the broader system rows: queue/thread behavior, remaining
-CPU/FPU/I/O/image forms, direct THROW source ownership, and non-x64 targets
-remain required.
+CPU/FPU/I/O/image forms, explicit `system/thrown:` SET ownership, and non-x64
+targets remain required.
+
+The direct THROW gate extends that boundary over the exception state itself:
+the frontend emits the original ID, the existing thrown place, and one OP_THROW;
+native codegen validates both slots, performs the scalar store, emits tagged
+variant writes when needed, and then unwinds. H49 and H50 both pass the native
+codegen fixture, the 33-test/67-assertion exception suite, and ordinary plus
+tagged-place executable probes. This proves direct THROW ownership and
+self-hosting closure; the separate `system/thrown:` assignment path still uses
+the ordinary SET sink and remains a later slice.
 
 ## Windows Linker Gate
 

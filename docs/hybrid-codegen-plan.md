@@ -168,6 +168,11 @@ consumes it. switch remains explicit so native codegen validates its selector
 and may choose a comparison chain or jump table from density without changing
 frontend semantics.
 
+THROW is a two-input semantic operation: the frontend resolves the existing
+thrown storage place, while codegen validates the original integer ID and
+place, writes the ID, updates any variant tag chain, and emits the non-local
+unwind. There is no intermediate SET or source-shaped coercion in this path.
+
 In a runtime-free module, fail lowers to a native trap. Once the runtime image
 is present, the same terminator transfers to its diagnostic service; source
 constructs do not encode either policy.
@@ -623,12 +628,13 @@ Already retained:
   The Red frontend resolves operation spelling, refinement, argument count, and
   target-independent leaf names, while native codegen alone validates CATCH,
   atomic load/store/CAS/math, stack allocation/free, CPU-register assignment,
-  PUSH, and LOG-B operand and result types. The frontend retains only structural
-  value presence, terminal-expression propagation, and parser result shadow;
-  strict THROW and `system/thrown` source-ID checks remain in Red for now because
-  their producer first passes through an ordinary typed SET, which hides the
-  original logical type from OP_THROW. Moving that last check requires direct
-  THROW ownership of the source value, not a validation adapter;
+  PUSH, and LOG-B operand and result types. THROW additionally consumes the
+  original ID and place directly, so native codegen owns its source/destination
+  compatibility, storage write, variant tags, and unwind. The frontend retains
+  only structural value presence, terminal-expression propagation, and parser
+  result shadow. Explicit `system/thrown:` assignment remains a strict Red
+  source check until that separate ordinary SET sink gains a direct semantic
+  destination marker;
 - common integer comparison width and signedness selected from logical types,
   with native loads performing the required sign or zero extension;
 - one dense explicit CAST whose complete dynamic compatibility matrix,
@@ -692,6 +698,17 @@ Already retained:
   backend 42.841, native codegen 0.690, link build 6.352 seconds). H48 has the
   same total and `.text` sizes as H47, exposes only O0/O2, and rebuilds and
   passes the native codegen suite;
+- H48 built H49 with direct THROW value/place ownership in 64.295 seconds
+  (frontend 24.768, backend 39.297, native codegen 0.675, link build 5.827
+  seconds). H49 is 6,330,880 bytes, 3,072 bytes larger than H48, with `.text`
+  raw size `585000h` (`C00h` larger). Its native suite passed, the formal
+  exceptions executable passed all 67 assertions, and both ordinary and
+  tagged-place THROW probes exited successfully; an invalid boolean ID reached
+  and was rejected by native codegen;
+- H49 then built the same-source H50 in 69.353 seconds (frontend 24.625,
+  backend 44.496, native codegen 0.662, link build 6.672 seconds). H50 has the
+  same 6,330,880-byte image and `.text` raw size as H49, exposes only O0/O2,
+  and rebuilt and passed the native codegen and 67-assertion exception gates;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

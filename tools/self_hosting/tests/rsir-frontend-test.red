@@ -4118,8 +4118,8 @@ assert all [
 	(function-instruction-word exception-ir exception-layout 1 end-catch-index 8) = 1
 	(function-instruction-word exception-ir exception-layout 1 throw-index 4) = 0
 	(function-instruction-word exception-ir exception-layout
-		1 (throw-index - 1) 0) = 5
-]["catch/throw did not lower to one paired lexical region"]
+		1 (throw-index - 1) 0) = 3
+]["catch/throw did not retain its value/place ownership boundary"]
 
 shared-exception-ir: compile-text {
 	Red/System []
@@ -4363,12 +4363,18 @@ assert not none? find (ops-of invalid-catch-filter-ir
 	layout-of invalid-catch-filter-ir) frontend/catch-op
 	"invalid CATCH filter did not reach native validation"
 
-assert none? compile-text {
+invalid-throw-id-ir: compile-text {
 	Red/System []
 	fn: func [][throw true]
-} 'user "throw accepted a non-integer ID"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid throw ID reported the wrong error class"
+} 'user
+assert binary? invalid-throw-id-ir [
+	"frontend rejected backend-owned THROW ID: " mold frontend/last-error
+]
+invalid-throw-ops: ops-of invalid-throw-id-ir layout-of invalid-throw-id-ir
+assert all [
+	not none? find invalid-throw-ops frontend/throw-op
+	none? find invalid-throw-ops frontend/set-op
+]["invalid THROW ID did not reach its direct native consumer"]
 
 global-throw-ir: compile-text {
 	Red/System []

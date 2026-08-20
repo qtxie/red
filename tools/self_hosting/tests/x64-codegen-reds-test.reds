@@ -3179,7 +3179,7 @@ put exception-ir 4 0
 put exception-ir 8 0
 put exception-ir 12 0
 put exception-ir 16 1
-put exception-ir 20 7
+put exception-ir 20 9
 put exception-ir 24 0
 put exception-ir 28 0
 put exception-ir 32 0
@@ -3191,55 +3191,92 @@ put exception-ir 48 0
 put exception-ir 52 0
 put exception-ir 56 0
 put exception-ir 60 0
-put exception-ir 64 0
-put exception-ir 68 7
+put exception-ir 64 1
+put exception-ir 68 9
 
-put-instruction exception-ir 72 1 -5 1 0
-put-instruction exception-ir 88 24 5 1 0
-put-instruction exception-ir 104 1 -5 1 0
-put-instruction exception-ir 120 26 0 0 0
-put-instruction exception-ir 136 25 2 1 0
-put-instruction exception-ir 152 1 -5 73 0
-put-instruction exception-ir 168 11 -5 0 0
-exception-ir/185: as byte! 66h
-exception-ir/186: as byte! 6Eh
+put exception-ir 72 -5
+put exception-ir 76 0
+put-instruction exception-ir 80 1 -5 1 0
+put-instruction exception-ir 96 24 6 1 0
+put-instruction exception-ir 112 1 -5 1 0
+put-instruction exception-ir 128 3 1 1 0
+put-instruction exception-ir 144 26 0 0 0
+put-instruction exception-ir 160 25 2 1 0
+put-instruction exception-ir 176 3 1 1 0
+put-instruction exception-ir 192 4 0 0 0
+put-instruction exception-ir 208 11 -5 0 0
+exception-ir/225: as byte! 66h
+exception-ir/226: as byte! 6Eh
 
-size: x64-codegen/generate exception-ir 186 output 1024 0
-if any [size <= 0 not execute-selection? output 73][failures: failures + 1]
-put exception-ir 92 6
-if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
+size: x64-codegen/generate exception-ir 226 output 1024 0
+if any [size <= 0 not execute-selection? output 1][
+	print ["direct THROW fixture failed" lf]
 	failures: failures + 1
 ]
-put exception-ir 92 5
-put exception-ir 96 2
-if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 100 7
+if (x64-codegen/generate exception-ir 226 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["CATCH accepted a mismatched END_CATCH target" lf]
 	failures: failures + 1
 ]
-put exception-ir 96 1
-put exception-ir 76 -11
-if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 100 6
+put exception-ir 104 2
+if (x64-codegen/generate exception-ir 226 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["CATCH accepted a mismatched nesting level" lf]
 	failures: failures + 1
 ]
-put exception-ir 76 -5
-put exception-ir 108 -11
-if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 104 1
+put exception-ir 84 -11
+if (x64-codegen/generate exception-ir 226 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["CATCH accepted a logic filter" lf]
 	failures: failures + 1
 ]
-put exception-ir 108 -5
+put exception-ir 84 -5
+put exception-ir 116 -11
+if (x64-codegen/generate exception-ir 226 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["THROW accepted a logic ID" lf]
+	failures: failures + 1
+]
+put exception-ir 116 -5
+
+; THROW owns both the original ID value and the destination place.
+put exception-ir 72 -11
+put exception-ir 44 -11
+put exception-ir 212 -11
+if (x64-codegen/generate exception-ir 226 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["THROW accepted a non-integer destination" lf]
+	failures: failures + 1
+]
+put exception-ir 72 -5
+put exception-ir 44 -5
+put exception-ir 212 -5
+put-instruction exception-ir 128 1 -5 1 0
+if (x64-codegen/generate exception-ir 226 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["THROW accepted a value instead of a destination place" lf]
+	failures: failures + 1
+]
+put-instruction exception-ir 128 3 1 1 0
 
 ; JUMP carries only the number of lexical catch records it exits.
-put exception-ir 112 73
-put-instruction exception-ir 120 16 6 1 1
-size: x64-codegen/generate exception-ir 186 output 1024 0
-if any [size <= 0 not execute-selection? output 73][failures: failures + 1]
-put exception-ir 132 0
-if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
+put exception-ir 120 73
+put-instruction exception-ir 128 16 9 0 1
+put-instruction exception-ir 144 19 1 0 0
+size: x64-codegen/generate exception-ir 226 output 1024 0
+if any [size <= 0 not execute-selection? output 73][
+	print ["catch-unwinding JUMP fixture failed" lf]
 	failures: failures + 1
 ]
-put exception-ir 132 1
+put exception-ir 140 0
+if (x64-codegen/generate exception-ir 226 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["JUMP crossed a catch boundary without unwinding it" lf]
+	failures: failures + 1
+]
+put exception-ir 120 1
+put-instruction exception-ir 128 3 1 1 0
+put-instruction exception-ir 144 26 0 0 0
 
 put exception-ir 48 (x64-codegen/CATCH_FLAG + x64-codegen/CDECL)
-if (x64-codegen/generate exception-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
+if (x64-codegen/generate exception-ir 226 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["CATCH function accepted a calling convention" lf]
 	failures: failures + 1
 ]
 

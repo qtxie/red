@@ -6011,19 +6011,55 @@ x64-codegen: context [
 					written: written + encoded
 				]
 				instruction/op = OP_THROW [
+					; VALUE PLACE -> no fallthrough
+					source-slot: depth - 1
+					target-slot: depth
 					unless all [
 						instruction/a = 0 instruction/b = 0 instruction/c = 0
-						depth > 0 stack-kinds/depth = VALUE
-						stack-flags/depth = 0
-						compatible-types? -5 stack-types/depth types type-count
+						depth > 1
+						stack-kinds/source-slot = VALUE
+						stack-flags/source-slot = 0
+						compatible-types? -5 stack-types/source-slot types type-count
+						stack-kinds/target-slot = PLACE
+						stack-flags/target-slot = 0
+						compatible-types? -5 stack-types/target-slot types type-count
 					][return INVALID_IR]
+					tag-head: stack-tags/target-slot
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-slots + depth) 4 0
+						x64-encoder/RAX slot-displacement
+							(storage-slots + source-slot) 4 0
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
-					depth: depth - 1
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/frame-load at (capacity - written)
+						x64-encoder/RDX slot-displacement
+							(storage-slots + target-slot) 8 0
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: x64-encoder/store-indirect at (capacity - written) 4
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: emit-variant-tags at (capacity - written) tag-head tag-base
+						fn/instruction-count instructions tag-next tag-slots tag-widths
+					if encoded < 0 [return encoded]
+					written: written + encoded
+					if tag-head > 0 [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-load at (capacity - written)
+							x64-encoder/RAX slot-displacement
+								(storage-slots + source-slot) 4 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					depth: source-slot - 1
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/throw-unwind at (capacity - written)

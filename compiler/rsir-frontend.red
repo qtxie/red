@@ -4782,11 +4782,8 @@ compiler-rsir-frontend: context [
 		after: stack-value next position scope uses instructions params locals
 			expression-value
 		if last-stopped? [return after]
-		unless all [last-flags = 0 (ref-kind last-type) = 'i32][
-			fail ERROR-REFERENCE "THROW expects an integer! ID"
-		]
+		unless last-type <> 0 [fail ERROR-REFERENCE "THROW requires an ID value"]
 		stack-thrown-address scope uses instructions params locals
-		emit instructions reduce [set-op 0 0 0]
 		emit instructions reduce [throw-op 0 0 0]
 		last-type: 0
 		last-flags: 0

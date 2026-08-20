@@ -168,6 +168,8 @@ execute-small-return?: func [
 ]
 
 failures: 0
+identity-code-size: 0
+folded-code-size: 0
 no-types: as byte-ptr! 0
 sink-pairs: declare signature-pairs!
 sink-pairs/memory: null
@@ -230,6 +232,7 @@ tagged-ir: allocate 388
 array-ir: allocate 260
 array-compare-ir: allocate 228
 branch-ir: allocate 260
+boolean-ir: allocate 260
 merge-ir: allocate 260
 literal-merge-ir: allocate 260
 selection-ir: allocate 260
@@ -254,7 +257,7 @@ if any [
 	null? widening-ir null? sink-ir null? signature-ir
 	null? indirect-ir null? variadic-ir
 	null? import-variadic-ir null? null-function-ir null? cast-ir null? static-cast-ir
-	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
+	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir null? boolean-ir
 	null? merge-ir null? literal-merge-ir null? selection-ir
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
@@ -2389,6 +2392,129 @@ if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR 
 	failures: failures + 1
 ]
 
+; A boolean diamond materializes the truth value already on the postfix stack.
+; O0 keeps the operation-level cost at 14 bytes and normalizes every nonzero
+; condition to the canonical logic value 1 without emitting control flow.
+put boolean-ir 0 1
+put boolean-ir 4 0
+put boolean-ir 8 0
+put boolean-ir 12 0
+put boolean-ir 16 1
+put boolean-ir 20 2
+put boolean-ir 24 0
+put boolean-ir 28 0
+put boolean-ir 32 0
+put boolean-ir 36 0
+put boolean-ir 40 2
+put boolean-ir 44 -11
+put boolean-ir 48 0
+put boolean-ir 52 0
+put boolean-ir 56 0
+put boolean-ir 60 0
+put boolean-ir 64 0
+put boolean-ir 68 2
+put-instruction boolean-ir 72 1 -11 0 0
+put-instruction boolean-ir 88 11 -11 0 0
+boolean-ir/105: as byte! 62h
+boolean-ir/106: as byte! 6Eh
+
+size: x64-codegen/generate boolean-ir 106 output 1024 0
+if any [size <= 0 not execute-first? output 0][
+	print ["boolean identity fixture failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	identity-code-size: fn/code-size
+]
+
+put boolean-ir 20 6
+put boolean-ir 68 6
+put-instruction boolean-ir 72 1 -11 0 0
+put-instruction boolean-ir 88 17 5 0 0
+put-instruction boolean-ir 104 1 -11 1 0
+put-instruction boolean-ir 120 16 6 0 0
+put-instruction boolean-ir 136 1 -11 0 0
+put-instruction boolean-ir 152 11 -11 0 0
+boolean-ir/169: as byte! 62h
+boolean-ir/170: as byte! 6Eh
+
+size: x64-codegen/generate boolean-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 0][
+	print ["boolean diamond false path failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	folded-code-size: fn/code-size
+	if folded-code-size <> (identity-code-size + 14)[
+		print ["boolean diamond was not lowered to the O0 identity operation" lf]
+		failures: failures + 1
+	]
+]
+put boolean-ir 80 7
+size: x64-codegen/generate boolean-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["boolean diamond did not normalize a nonzero condition" lf]
+	failures: failures + 1
+]
+
+put boolean-ir 96 1
+put boolean-ir 112 0
+put boolean-ir 144 1
+size: x64-codegen/generate boolean-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["reverse boolean diamond true path failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> folded-code-size [
+		print ["reverse boolean diamond was not folded" lf]
+		failures: failures + 1
+	]
+]
+put boolean-ir 80 0
+size: x64-codegen/generate boolean-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 0][
+	print ["reverse boolean diamond false path failed" lf]
+	failures: failures + 1
+]
+
+; An incoming edge to any interior instruction makes the same local shape
+; non-collapsible. This preserves raw RSIR control-flow targets without a CFG.
+put boolean-ir 20 8
+put boolean-ir 68 8
+put-instruction boolean-ir 72 1 -11 0 0
+put-instruction boolean-ir 88 17 7 1 0
+put-instruction boolean-ir 104 1 -11 7 0
+put-instruction boolean-ir 120 17 7 0 0
+put-instruction boolean-ir 136 1 -11 1 0
+put-instruction boolean-ir 152 16 8 0 0
+put-instruction boolean-ir 168 1 -11 0 0
+put-instruction boolean-ir 184 11 -11 0 0
+boolean-ir/201: as byte! 62h
+boolean-ir/202: as byte! 6Eh
+
+size: x64-codegen/generate boolean-ir 202 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["shared boolean diamond fixture failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <= folded-code-size [
+		print ["shared boolean diamond was folded across an incoming edge" lf]
+		failures: failures + 1
+	]
+]
+put boolean-ir 80 1
+size: x64-codegen/generate boolean-ir 202 output 1024 0
+if any [size <= 0 not execute-first? output 0][
+	print ["shared boolean diamond external entry failed" lf]
+	failures: failures + 1
+]
+
 ; A typed stack merge accepts matching arm values and rejects equal-depth
 ; edges whose top values have different logical types.
 put merge-ir 0 1
@@ -3426,6 +3552,7 @@ free tagged-ir
 free array-ir
 free array-compare-ir
 free branch-ir
+free boolean-ir
 free merge-ir
 free literal-merge-ir
 free selection-ir

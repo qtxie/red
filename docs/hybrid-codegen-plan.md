@@ -763,6 +763,20 @@ Already retained:
   and `.text` raw size `580000h`. H57 exposes only O0/O2, rejects an invalid
   final ANY/ALL predicate in native codegen, passes the native fixture, and
   passes 143 formal tests with all 176 assertions;
+- H57 built H58 after adding the native O0 identity-boolean fold in 66.047
+  seconds (frontend 26.453, backend 39.595, native codegen 0.650, link build
+  6.791). The fold uses saturated incoming-edge counts gathered by the existing
+  structural scan and consumes the generic `BRANCH/literal/JUMP/literal` shape
+  only when its interior has no other entry. It adds no frontend rule, new RSIR,
+  CFG, adapter, or codegen pass;
+- H58 built H59 in 58.981 seconds (frontend 22.259, backend 36.722, native
+  codegen 0.667, link build 6.282), and H59 built H60 in 63.314 seconds
+  (frontend 24.461, backend 38.853, native codegen 0.696, link build 5.927).
+  H58-H60 are all 6,315,008 bytes with `SizeOfCode` and `.text` raw size
+  `581E00h`. A DLL probe keeps `identity` at 44 bytes and reduces both
+  one-value ANY and ALL from 76 to 58 bytes; their body is branchless
+  `test/setne` code. H60 rebuilds and passes the native fixture and the
+  conditional, use, logic, exit, and return gate: 143 tests, 176 assertions;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
@@ -775,8 +789,7 @@ Still incomplete and therefore not an H0:
 - complete fixed-int/int64 formal coverage for aggregate fields and
   typed/variadic ABI paths;
 - compiler diagnostic and source-location coverage for control errors, runtime
-  diagnostic dispatch for fail, dense switch jump-table selection, and O0
-  simplification of the one-condition ANY/ALL boolean diamond;
+  diagnostic dispatch for fail, and dense switch jump-table selection;
 - remaining aggregate and array initializers and function-pointer nodes;
 - complete Win64 imported/variadic aggregate, indirect-call, callback, and
   formal ABI coverage;

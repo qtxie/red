@@ -2014,6 +2014,71 @@ x64-codegen: context [
 		result
 	]
 
+	record-control-use: func [
+		uses [int-ptr!]
+		target count [integer!]
+	][
+		if all [
+			target > 0 target <= count
+			uses/target < 2
+		][uses/target: uses/target + 1]
+	]
+
+	; Collapse source-independent boolean materialization only when its three
+	; interior instructions have no other control-flow entry.
+	boolean-diamond?: func [
+		index instruction-count [integer!]
+		instructions [byte-ptr!]
+		catch-depths control-uses [int-ptr!]
+		return: [logic!]
+		/local branch [rsir-instruction!]
+			fall [rsir-instruction!]
+			jump [rsir-instruction!]
+			target [rsir-instruction!]
+			fall-index jump-index target-index join-index [integer!]
+	][
+		if any [
+			instruction-count < 4
+			index > (instruction-count - 4)
+		][return false]
+		fall-index: index + 1
+		jump-index: index + 2
+		target-index: index + 3
+		join-index: index + 4
+		branch: as rsir-instruction! (instructions
+			+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+		fall: as rsir-instruction! (instructions
+			+ ((fall-index - 1) * RSIR_INSTRUCTION_SIZE))
+		jump: as rsir-instruction! (instructions
+			+ ((jump-index - 1) * RSIR_INSTRUCTION_SIZE))
+		target: as rsir-instruction! (instructions
+			+ ((target-index - 1) * RSIR_INSTRUCTION_SIZE))
+		all [
+			branch/op = OP_BRANCH
+			branch/a = target-index
+			any [branch/b = 0 branch/b = 1]
+			branch/c = 0
+			fall/op = OP_LITERAL
+			fall/a = -11
+			fall/b = (1 - branch/b)
+			fall/c = 0
+			jump/op = OP_JUMP
+			jump/a = join-index
+			jump/b = 0 jump/c = 0
+			target/op = OP_LITERAL
+			target/a = -11
+			target/b = branch/b
+			target/c = 0
+			control-uses/fall-index = 0
+			control-uses/jump-index = 0
+			control-uses/target-index = 1
+			catch-depths/fall-index = catch-depths/index
+			catch-depths/jump-index = catch-depths/index
+			catch-depths/target-index = catch-depths/index
+			catch-depths/join-index = catch-depths/index
+		]
+	]
+
 	merge-target: func [
 		target depth instruction-count [integer!]
 		instruction-depths entry-types entry-flags entry-kinds entry-tags
@@ -2601,7 +2666,8 @@ x64-codegen: context [
 		instructions [byte-ptr!]
 		stack-types stack-flags stack-kinds stack-tags storage-offsets result-offsets
 			layouts member-offsets
-			instruction-offsets instruction-depths catch-depths entry-types entry-flags entry-kinds
+			instruction-offsets instruction-depths catch-depths control-uses
+			entry-types entry-flags entry-kinds
 			entry-tags tag-next tag-slots tag-widths import-refs references [int-ptr!]
 		parameters functions imports globals types members switches image-data strings code
 			[byte-ptr!]
@@ -2651,9 +2717,17 @@ x64-codegen: context [
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
-			tracked? zero-extend? [logic!]
+			tracked? zero-extend? fold-boolean? [logic!]
 	][
 		measure?: null? code
+		if measure? [
+			index: 1
+			while [index <= fn/instruction-count][
+				instruction-depths/index: -1
+				control-uses/index: 0
+				index: index + 1
+			]
+		]
 		sub-frame: either measure? [8][
 			if outgoing-size/1 < 0 [return INVALID_IR]
 			if outgoing-size/1 > (2147483647 - 23)[return OUTPUT_FULL]
@@ -2779,6 +2853,38 @@ x64-codegen: context [
 					register-id = x64-encoder/RBP
 				][unstable-stack?: true]
 			]
+			if measure? [
+				case [
+					any [
+						instruction/op = OP_JUMP
+						instruction/op = OP_BRANCH
+						instruction/op = OP_OVERFLOW
+						instruction/op = OP_CATCH
+					][
+						record-control-use control-uses instruction/a
+							fn/instruction-count
+					]
+					instruction/op = OP_SWITCH [
+						record-control-use control-uses instruction/c
+							fn/instruction-count
+						if all [
+							instruction/a >= 0 instruction/b > 0
+							instruction/b <= switch-count
+							instruction/a <= (switch-count - instruction/b)
+						][
+							case-index: 0
+							while [case-index < instruction/b][
+								switch-case: as rsir-switch! (switches
+									+ ((instruction/a + case-index) * RSIR_SWITCH_SIZE))
+								record-control-use control-uses switch-case/target
+									fn/instruction-count
+								case-index: case-index + 1
+							]
+						]
+					]
+					true []
+				]
+			]
 			index: index + 1
 		]
 		if any [
@@ -2834,13 +2940,6 @@ x64-codegen: context [
 		current-entry: 0
 		fallthrough?: true
 		written: 0
-		if measure? [
-			index: 1
-			while [index <= fn/instruction-count][
-				instruction-depths/index: -1
-				index: index + 1
-			]
-		]
 		if entry? [
 			at: as byte-ptr! 0
 			if not measure? [at: code + written]
@@ -6122,39 +6221,67 @@ x64-codegen: context [
 						compatible-types? -11 stack-types/depth types type-count
 						stack-flags/depth = 0
 					][return INVALID_IR]
+					fold-boolean?: boolean-diamond? index fn/instruction-count
+						instructions catch-depths control-uses
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth) 4 0
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
-					depth: depth - 1
-					if measure? [
-						unless merge-target target depth fn/instruction-count
-							instruction-depths entry-types entry-flags entry-kinds entry-tags
-							stack-types stack-flags stack-kinds stack-tags types type-count [
-							return INVALID_IR
-						]
-					]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/test-register at (capacity - written)
 						x64-encoder/RAX 4
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
-					displacement: 0
-					if not measure? [
-						target-offset: index + 1
-						displacement: instruction-offsets/target
-							- instruction-offsets/target-offset
+					either fold-boolean? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/condition-result at (capacity - written) 5
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-store at (capacity - written)
+							x64-encoder/RAX slot-displacement (storage-slots + depth) 4
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						stack-types/depth: -11
+						stack-flags/depth: 0
+						stack-kinds/depth: VALUE
+						stack-tags/depth: 0
+						if measure? [
+							target-offset: index + 1
+							while [target-offset <= (index + 3)][
+								instruction-offsets/target-offset: written
+								target-offset: target-offset + 1
+							]
+						]
+						index: index + 3
+					][
+						depth: depth - 1
+						if measure? [
+							unless merge-target target depth fn/instruction-count
+								instruction-depths entry-types entry-flags entry-kinds entry-tags
+								stack-types stack-flags stack-kinds stack-tags types type-count [
+								return INVALID_IR
+							]
+						]
+						displacement: 0
+						if not measure? [
+							target-offset: index + 1
+							displacement: instruction-offsets/target
+								- instruction-offsets/target-offset
+						]
+						condition: either instruction/b = 1 [5][4]
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/jump-condition at (capacity - written)
+							condition displacement
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
 					]
-					condition: either instruction/b = 1 [5][4]
-					at: as byte-ptr! 0
-					if not measure? [at: code + written]
-					encoded: x64-encoder/jump-condition at (capacity - written)
-						condition displacement
-					if encoded < 0 [return OUTPUT_FULL]
-					written: written + encoded
 				]
 				instruction/op = OP_SWITCH [
 					unless all [
@@ -6618,7 +6745,8 @@ x64-codegen: context [
 			image-import [codegen-import!]
 			image-export [codegen-export!]
 			import-refs function-sizes function-frames function-outgoing instruction-offsets
-				instruction-depths catch-depths entry-types entry-flags entry-kinds entry-tags
+				instruction-depths catch-depths control-uses entry-types entry-flags
+				entry-kinds entry-tags
 				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
 				tag-widths result-offsets storage-offsets layouts member-offsets
 				references [int-ptr!]
@@ -7293,10 +7421,10 @@ x64-codegen: context [
 			return OUTPUT_FULL
 		]
 		scratch-count: header/import-count + (header/function-count * 4)
-		if header/instruction-count > ((2147483647 - scratch-count) / 15)[
+		if header/instruction-count > ((2147483647 - scratch-count) / 16)[
 			return OUTPUT_FULL
 		]
-		scratch-count: scratch-count + (header/instruction-count * 15)
+		scratch-count: scratch-count + (header/instruction-count * 16)
 		if parameter-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
 		scratch-count: scratch-count + parameter-count
 		if header/type-count > ((2147483647 - scratch-count) / 4)[
@@ -7316,7 +7444,8 @@ x64-codegen: context [
 		instruction-depths: instruction-offsets + header/instruction-count
 			+ header/function-count
 		catch-depths: instruction-depths + header/instruction-count
-		entry-types: catch-depths + header/instruction-count
+		control-uses: catch-depths + header/instruction-count
+		entry-types: control-uses + header/instruction-count
 		entry-flags: entry-types + header/instruction-count
 		entry-kinds: entry-flags + header/instruction-count
 		entry-tags: entry-kinds + header/instruction-count
@@ -7374,6 +7503,7 @@ x64-codegen: context [
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(catch-depths + (next-instruction - 1))
+				(control-uses + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
 				(entry-flags + (next-instruction - 1))
 				(entry-kinds + (next-instruction - 1))
@@ -7662,6 +7792,7 @@ x64-codegen: context [
 				(instruction-offsets + (next-offset - 1))
 				(instruction-depths + (next-instruction - 1))
 				(catch-depths + (next-instruction - 1))
+				(control-uses + (next-instruction - 1))
 				(entry-types + (next-instruction - 1))
 				(entry-flags + (next-instruction - 1))
 				(entry-kinds + (next-instruction - 1))

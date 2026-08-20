@@ -55,7 +55,7 @@ rules remain in Red/System codegen.
 | Variadic, typed and custom calls | Actual stack types/count plus signature attributes; codegen applies C default `float32!` promotion to variadic extras | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds, x64-codegen-reds-test.reds | pending |
 | Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results, sink-width conversion and variadic float duplication | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
-| if, either, any and all | Generic branch/jump; every predicate, including the final any/all item, reaches native BRANCH, while identity literals form the short-circuit result and the frontend retains only syntax, targets, and parser shadow state | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, isolated native-rejection sources | replace |
+| if, either, any and all | Generic branch/jump; every predicate reaches native BRANCH and the frontend retains only syntax, targets, and parser shadow state. O0 lowers an unshared logic identity diamond directly to `test`/`setne`; shared short-circuit targets retain control flow | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, isolated native-rejection sources | replace |
 | loop, until and while | Generic branch/jump loops with explicit break/continue targets; native BRANCH validates conditions and the ordinary typed SET sink validates hidden loop counters | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | case | Ordered condition blocks and non-returning fail on no match; native branch and target merge own predicate/result legality without frontend repair | units/case-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | switch | Typed literal/target slice with explicit default or fail semantics; native selector and target-merge validation plus x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
@@ -279,9 +279,21 @@ an invalid final condition in native codegen, passes the native fixture, and
 passes the conditional, use, logic, exit, and return executables: 143 tests
 and 176 assertions. Final-source H56 and H57 are both 6,303,744 bytes with
 `SizeOfCode` `57F200h` and `.text` raw size `580000h`; H56 built H57 in 62.520
-seconds. This proves the x64 ownership and self-hosting fixed point; O0 still
-needs a general simplification for the one-condition ANY/ALL boolean diamond,
-and complete formal families remain required.
+seconds. This proves the x64 ownership and self-hosting fixed point.
+
+The H58-H60 gate adds the corresponding O0 simplification wholly inside native
+codegen. The existing structural scan records saturated incoming-edge counts;
+a generic `BRANCH`, opposite logic literal, `JUMP`, logic literal diamond is
+collapsed only when none of its three interior instructions has another entry
+and all four instructions remain at the same catch depth. The consumer then
+normalizes the value with `test`/`setne` in the same postfix slot. This adds no
+frontend rule, RSIR form, CFG, adapter, or third codegen pass. A source probe
+reduces both one-value ANY and ALL functions from 76 to 58 bytes while identity
+remains 44 bytes, and disassembly contains no conditional jump. H57 built H58
+in 66.047 seconds, H58 built H59 in 58.981 seconds, and H59 built H60 in 63.314
+seconds. H58-H60 are all 6,315,008 bytes with `SizeOfCode` and `.text` raw size
+`581E00h`; H60 rebuilds and passes the native fixture and the same 143-test,
+176-assertion formal gate. Complete formal families remain required.
 
 ## Windows Linker Gate
 

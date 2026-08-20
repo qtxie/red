@@ -292,6 +292,36 @@ expected: #{F2440F118C2480000000}
 if any [size <> 10 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
+size: x64-encoder/xmm-load-register code 128 x64-encoder/XMM0
+	x64-encoder/RAX 4
+expected: #{660F6EC0}
+if any [size <> 4 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-load-register code 128 9 10 8
+expected: #{664D0F6ECA}
+if any [size <> 5 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-store-register code 128 x64-encoder/RAX
+	x64-encoder/XMM0 4
+expected: #{660F7EC0}
+if any [size <> 4 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-store-register code 128 10 9 8
+expected: #{664D0F7ECA}
+if any [size <> 5 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+if (x64-encoder/xmm-load-register code 128 x64-encoder/XMM0
+	x64-encoder/RAX 2) <> -1 [
+	failures: failures + 1
+]
+if (x64-encoder/xmm-store-register code 3 x64-encoder/RAX
+	x64-encoder/XMM0 4) <> -1 [
+	failures: failures + 1
+]
 size: x64-encoder/xmm-move-register code 128 x64-encoder/XMM1
 	x64-encoder/XMM0 4
 expected: #{F30F10C8}

@@ -24,6 +24,7 @@ Red/System [
 
 selection-entry!: alias function! [return: [integer!]]
 floating-entry!: alias function! [return: [float!]]
+floating32-entry!: alias function! [return: [float32!]]
 hidden-return-entry!: alias function! [
 	result [byte-ptr!]
 	value [byte-ptr!]
@@ -76,6 +77,15 @@ run-floating: func [
 	entry
 ]
 
+run-floating32: func [
+	code [byte-ptr!]
+	return: [float32!]
+	/local entry [floating32-entry!]
+][
+	entry: as floating32-entry! code
+	entry
+]
+
 execute-selection?: func [
 	image [byte-ptr!]
 	expected [integer!]
@@ -125,6 +135,24 @@ execute-floating?: func [
 	if null? code [return false]
 	copy-memory code (image + header/code-offset) header/code-size
 	result: run-floating (code + fn/code-offset)
+	VirtualFree code 0 8000h
+	result = expected
+]
+
+execute-floating32?: func [
+	image [byte-ptr!]
+	expected [float32!]
+	return: [logic!]
+	/local header [codegen-header!] fn [codegen-function!]
+		code [byte-ptr!] result [float32!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	if header/code-size > 4096 [return false]
+	code: VirtualAlloc (as byte-ptr! 0) 4096 3000h 40h
+	if null? code [return false]
+	copy-memory code (image + header/code-offset) header/code-size
+	result: run-floating32 (code + fn/code-offset)
 	VirtualFree code 0 8000h
 	result = expected
 ]
@@ -204,6 +232,13 @@ call-branch-code-size: 0
 call-drop-code-size: 0
 call-float-code-size: 0
 call-narrow-code-size: 0
+cast-byte-code-size: 0
+cast-keep-f32-code-size: 0
+cast-keep-integer-code-size: 0
+cast-float-width-code-size: 0
+cast-integer-float-code-size: 0
+call-cast-integer-code-size: 0
+call-cast-float-code-size: 0
 no-types: as byte-ptr! 0
 sink-pairs: declare signature-pairs!
 sink-pairs/memory: null
@@ -261,6 +296,7 @@ variadic-ir: allocate 516
 import-variadic-ir: allocate 260
 null-function-ir: allocate 196
 cast-ir: allocate 164
+cast-flow-ir: allocate 260
 static-cast-ir: allocate 180
 tagged-ir: allocate 388
 array-ir: allocate 260
@@ -291,7 +327,8 @@ if any [
 	null? aggregate-ir null? abi-ir null? small-return-ir
 	null? widening-ir null? sink-ir null? signature-ir
 	null? indirect-ir null? variadic-ir
-	null? import-variadic-ir null? null-function-ir null? cast-ir null? static-cast-ir
+	null? import-variadic-ir null? null-function-ir null? cast-ir null? cast-flow-ir
+	null? static-cast-ir
 	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
 	null? call-result-ir null? boolean-ir
 	null? merge-ir null? literal-merge-ir null? selection-ir
@@ -2343,6 +2380,14 @@ if any [size <= 0 not execute-first? output 1][
 	print ["integer-to-byte cast failed" lf]
 	failures: failures + 1
 ]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	cast-byte-code-size: fn/code-size
+	if cast-byte-code-size <> 29 [
+		print ["O0 integer-to-byte CAST code size: " cast-byte-code-size lf]
+		failures: failures + 1
+	]
+]
 
 set-cast-case cast-ir -12 0 0 -11 0
 size: x64-codegen/generate cast-ir 141 output 1024 0
@@ -2352,14 +2397,71 @@ if any [size <= 0 not execute-first? output 0][
 ]
 
 set-cast-case cast-ir -5 1069547520 0 -9 1
-if (x64-codegen/generate cast-ir 141 output 1024 0) <= 0 [
+size: x64-codegen/generate cast-ir 141 output 1024 0
+if any [size <= 0 not execute-floating32? output 1.5][
 	print ["bit-preserving integer-to-float32 cast was rejected" lf]
 	failures: failures + 1
 ]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	cast-keep-f32-code-size: fn/code-size
+	if cast-keep-f32-code-size <> 30 [
+		print ["O0 keep integer-to-float32 CAST code size: "
+			cast-keep-f32-code-size lf]
+		failures: failures + 1
+	]
+]
+
+set-cast-case cast-ir -9 1069547520 0 -5 1
+size: x64-codegen/generate cast-ir 141 output 1024 0
+if any [size <= 0 not execute-first? output 1069547520][
+	print ["bit-preserving float32-to-integer cast failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	cast-keep-integer-code-size: fn/code-size
+	if cast-keep-integer-code-size <> 32 [
+		print ["O0 keep float32-to-integer CAST code size: "
+			cast-keep-integer-code-size lf]
+		failures: failures + 1
+	]
+]
 
 set-cast-case cast-ir -10 0 1073217536 -9 0
-if (x64-codegen/generate cast-ir 141 output 1024 0) <= 0 [
+size: x64-codegen/generate cast-ir 141 output 1024 0
+if any [size <= 0 not execute-floating32? output 1.5][
 	print ["numeric float-to-float32 cast was rejected" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	cast-float-width-code-size: fn/code-size
+	if cast-float-width-code-size <> 44 [
+		print ["O0 float width CAST code size: " cast-float-width-code-size lf]
+		failures: failures + 1
+	]
+]
+
+set-cast-case cast-ir -5 3 0 -10 0
+size: x64-codegen/generate cast-ir 141 output 1024 0
+if any [size <= 0 not execute-floating? output 3.0][
+	print ["numeric integer-to-float cast failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	cast-integer-float-code-size: fn/code-size
+	if cast-integer-float-code-size <> 31 [
+		print ["O0 integer-to-float CAST code size: " cast-integer-float-code-size lf]
+		failures: failures + 1
+	]
+]
+
+set-cast-case cast-ir -10 0 1073217536 -5 0
+size: x64-codegen/generate cast-ir 141 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["numeric float-to-integer cast failed" lf]
 	failures: failures + 1
 ]
 
@@ -2434,6 +2536,71 @@ if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
 put cast-ir 40 -2
 if (x64-codegen/generate cast-ir 141 output 1024 0) <= 0 [
 	print ["uint8! alias was classified as byte!" lf]
+	failures: failures + 1
+]
+
+; CAST keeps a canonical register value for the next consumer. These chains
+; compare the widened result so stale high bits cannot hide behind a narrow ABI.
+put cast-flow-ir 0 1
+put cast-flow-ir 4 0
+put cast-flow-ir 8 0
+put cast-flow-ir 12 0
+put cast-flow-ir 16 1
+put cast-flow-ir 20 5
+put cast-flow-ir 24 0
+put cast-flow-ir 28 0
+put cast-flow-ir 32 0
+put cast-flow-ir 36 0
+put cast-flow-ir 40 2
+put cast-flow-ir 44 -11
+put cast-flow-ir 48 0
+put cast-flow-ir 52 0
+put cast-flow-ir 56 0
+put cast-flow-ir 60 0
+put cast-flow-ir 64 0
+put cast-flow-ir 68 5
+put-instruction cast-flow-ir 72 1 -5 -1 0
+put-instruction cast-flow-ir 88 8 -7 0 0
+put-instruction cast-flow-ir 104 1 -7 -1 -1
+put-instruction cast-flow-ir 120 15 13 0 0
+put-instruction cast-flow-ir 136 11 -11 0 0
+cast-flow-ir/153: as byte! 63h
+cast-flow-ir/154: as byte! 66h
+if any [
+	(x64-codegen/generate cast-flow-ir 154 output 1024 0) <= 0
+	not execute-first? output 1
+][
+	print ["O0 signed integer CAST widening was not canonical" lf]
+	failures: failures + 1
+]
+
+put cast-flow-ir 20 6
+put cast-flow-ir 68 6
+put-instruction cast-flow-ir 72 1 -5 257 0
+put-instruction cast-flow-ir 88 8 -15 0 0
+put-instruction cast-flow-ir 104 8 -7 0 0
+put-instruction cast-flow-ir 120 1 -7 1 0
+put-instruction cast-flow-ir 136 15 13 0 0
+put-instruction cast-flow-ir 152 11 -11 0 0
+cast-flow-ir/169: as byte! 63h
+cast-flow-ir/170: as byte! 66h
+if any [
+	(x64-codegen/generate cast-flow-ir 170 output 1024 0) <= 0
+	not execute-first? output 1
+][
+	print ["O0 byte CAST truncation was not canonical" lf]
+	failures: failures + 1
+]
+
+put-instruction cast-flow-ir 72 1 -7 -1 1
+put-instruction cast-flow-ir 88 8 -5 0 0
+put-instruction cast-flow-ir 104 8 -7 0 0
+put-instruction cast-flow-ir 120 1 -7 -1 -1
+if any [
+	(x64-codegen/generate cast-flow-ir 170 output 1024 0) <= 0
+	not execute-first? output 1
+][
+	print ["O0 int64 CAST truncation retained stale high bits" lf]
 	failures: failures + 1
 ]
 
@@ -2625,6 +2792,36 @@ if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR 
 	failures: failures + 1
 ]
 
+; The fallthrough CAST reaches a RETURN which is also a branch target. It must
+; materialize the byte in the shared stack slot before the two paths merge.
+put branch-ir 20 7
+put branch-ir 44 -15
+put branch-ir 68 7
+put-instruction branch-ir 72 1 -15 2 0
+put-instruction branch-ir 88 1 -11 1 0
+put-instruction branch-ir 104 17 7 0 0
+put-instruction branch-ir 120 12 0 0 0
+put-instruction branch-ir 136 1 -5 257 0
+put-instruction branch-ir 152 8 -15 0 0
+put-instruction branch-ir 168 11 -15 0 0
+branch-ir/185: as byte! 66h
+branch-ir/186: as byte! 6Eh
+if any [
+	(x64-codegen/generate branch-ir 186 output 1024 0) <= 0
+	not execute-first? output 1
+][
+	print ["O0 CAST fallthrough was not materialized at merge" lf]
+	failures: failures + 1
+]
+put branch-ir 96 0
+if any [
+	(x64-codegen/generate branch-ir 186 output 1024 0) <= 0
+	not execute-first? output 2
+][
+	print ["O0 CAST merge lost its branch value" lf]
+	failures: failures + 1
+]
+
 ; A scalar CALL already returns in RAX or XMM0. A linear consumer uses that
 ; value directly; only paths which need a stack home materialize it.
 put call-result-ir 0 1
@@ -2750,6 +2947,86 @@ if size > 0 [
 		failures: failures + 1
 	]
 	if not execute-first? output -1 [failures: failures + 1]
+]
+
+; CAST consumes scalar CALL results in their ABI result registers. Cover both
+; numeric and bit-preserving transitions in both register directions.
+put call-result-ir 20 5
+put call-result-ir 44 -15
+put call-result-ir 68 3
+put call-result-ir 80 -5
+put call-result-ir 104 2
+put-instruction call-result-ir 108 7 2 0 -5
+put-instruction call-result-ir 124 8 -15 0 0
+put-instruction call-result-ir 140 11 -15 0 0
+put-instruction call-result-ir 156 1 -5 257 0
+put-instruction call-result-ir 172 11 -5 0 0
+call-result-ir/189: as byte! 63h
+call-result-ir/190: as byte! 72h
+size: x64-codegen/generate call-result-ir 190 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["O0 integer CALL to CAST failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	call-cast-integer-code-size: fn/code-size
+	if call-cast-integer-code-size <> 29 [
+		print ["O0 integer CALL to CAST code size: "
+			call-cast-integer-code-size lf]
+		failures: failures + 1
+	]
+]
+
+put call-result-ir 44 -9
+put call-result-ir 80 -10
+put-instruction call-result-ir 108 7 2 0 -10
+put-instruction call-result-ir 124 8 -9 0 0
+put-instruction call-result-ir 140 11 -9 0 0
+put-instruction call-result-ir 156 1 -10 0 1073217536
+put-instruction call-result-ir 172 11 -10 0 0
+size: x64-codegen/generate call-result-ir 190 output 1024 0
+if any [size <= 0 not execute-floating32? output 1.5][
+	print ["O0 floating CALL to CAST failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	call-cast-float-code-size: fn/code-size
+	if call-cast-float-code-size <> 30 [
+		print ["O0 floating CALL to CAST code size: " call-cast-float-code-size lf]
+		failures: failures + 1
+	]
+]
+
+put call-result-ir 44 -5
+put call-result-ir 80 -9
+put-instruction call-result-ir 108 7 2 0 -9
+put-instruction call-result-ir 124 8 -5 0 1
+put-instruction call-result-ir 140 11 -5 0 0
+put-instruction call-result-ir 156 1 -9 1069547520 0
+put-instruction call-result-ir 172 11 -9 0 0
+if any [
+	(x64-codegen/generate call-result-ir 190 output 1024 0) <= 0
+	not execute-first? output 1069547520
+][
+	print ["O0 float32 CALL keep CAST failed" lf]
+	failures: failures + 1
+]
+
+put call-result-ir 44 -9
+put call-result-ir 80 -5
+put-instruction call-result-ir 108 7 2 0 -5
+put-instruction call-result-ir 124 8 -9 0 1
+put-instruction call-result-ir 140 11 -9 0 0
+put-instruction call-result-ir 156 1 -5 1069547520 0
+put-instruction call-result-ir 172 11 -5 0 0
+if any [
+	(x64-codegen/generate call-result-ir 190 output 1024 0) <= 0
+	not execute-floating32? output 1.5
+][
+	print ["O0 integer CALL keep CAST failed" lf]
+	failures: failures + 1
 ]
 
 ; A boolean diamond materializes the truth value already on the postfix stack.
@@ -3935,6 +4212,7 @@ free indirect-ir
 free variadic-ir
 free null-function-ir
 free cast-ir
+free cast-flow-ir
 free static-cast-ir
 free tagged-ir
 free array-ir

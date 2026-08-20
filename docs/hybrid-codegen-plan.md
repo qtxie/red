@@ -930,6 +930,43 @@ Already retained:
   16,755/16,755 assertions). Both suite stderr logs are empty. H75-H77 reuse
   the fixed runtime DLL SHA256
   `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- scalar CAST now consumes and republishes the existing one-slot location
+  directly. Representation-preserving casts emit no instruction, numeric
+  conversions stay in `RAX` or `XMM0`, and only a control-flow boundary writes
+  the target value back to its postfix slot. Narrow integer targets are
+  canonicalized before publication. Bit-preserving `integer!`/`float32!`
+  transitions use direct `MOVD` register transfers, or load the same four-byte
+  slot directly into the target register class when the source is already
+  materialized. The encoder exposes the corresponding 32/64-bit GPR/XMM move
+  primitives. No frontend rule, RSIR field, adapter, allocation, CFG, or pass
+  is added;
+- H77 built H78, which contains the CAST backend but was emitted by the previous
+  backend, with a 62.794-second compiler profile (frontend 22.971, RSIR frontend
+  28.630, native codegen 0.613, link build 4.445). H78 is 4,576,768 bytes with
+  `.text` raw size `3D9800h` and virtual size `3D96B1h`;
+- H78 built the first CAST-forwarded compiler, H79, in 58.710 wall seconds
+  (compiler profile 58.462, frontend 23.063, RSIR frontend 24.213, native
+  codegen 0.544, link build 4.504). H79 built H80 in 57.499 wall seconds
+  (compiler profile 57.241, frontend 23.187, RSIR frontend 22.944, native
+  codegen 0.429, link build 5.008). H79 and H80 are both 4,567,040 bytes with
+  `.text` raw size `3D7200h`, virtual size `3D70BEh`, and `.text` SHA256
+  `30888C2AA7E895F4D82057F933011DC07F8C471400EB8F09A14945171E49A5CC`;
+  their complete files differ only at three PE timestamp/checksum bytes. The
+  new backend removes 9,728 bytes from H78 and is a net 7,168 bytes smaller
+  than the H77 fixed point. A final whitespace-only style correction was
+  rebuilt as H81; H81 has the same image size, `.text` layout, and `.text` hash
+  and differs from H80 only in PE timestamp/checksum metadata;
+- the focused CAST fixtures execute narrowing, signed widening, 64-to-32-bit
+  truncation, both bit-preserving GPR/XMM directions, both numeric float
+  directions, branch-merge materialization, and integer/floating CALL-to-CAST
+  paths. Representative caller bodies are 29 bytes for integer CALL-to-CAST
+  and 30 bytes for floating CALL-to-CAST. H80 rebuilds and passes the primitive
+  encoder, native codegen, and thin frontend fixtures, the complete Windows x64
+  Red/System runner in 68.149 seconds (10,582 tests, 12,647/12,647 assertions,
+  no compile failures), and the complete current non-View Red runner in 243.720
+  seconds (8,730 tests, 16,755/16,755 assertions). H78-H81 reuse the same fixed
+  runtime DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

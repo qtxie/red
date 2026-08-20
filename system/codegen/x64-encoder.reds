@@ -1056,6 +1056,54 @@ x64-encoder: context [
 		size
 	]
 
+	xmm-load-register: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local rex-byte size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			any [width = 4 width = 8]
+		][return -1]
+		rex-byte: rex (width = 8) target source
+		size: either rex-byte = 40h [4][5]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! 66h
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 6Eh
+		at/3: as byte! modrm 3 target source
+		size
+	]
+
+	xmm-store-register: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local rex-byte size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			any [width = 4 width = 8]
+		][return -1]
+		rex-byte: rex (width = 8) source target
+		size: either rex-byte = 40h [4][5]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! 66h
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 7Eh
+		at/3: as byte! modrm 3 source target
+		size
+	]
+
 	xmm-move-register: func [
 		code [byte-ptr!]
 		capacity target source width [integer!]

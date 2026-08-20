@@ -3233,6 +3233,7 @@ x64-codegen: context [
 					any [location = LOCATION_GPR location = LOCATION_XMM][
 						any [
 							instruction/op = OP_DROP
+							instruction/op = OP_CAST
 							instruction/op = OP_BINARY
 							instruction/op = OP_SUB_RETURN
 							all [
@@ -4998,10 +4999,106 @@ x64-codegen: context [
 							]
 						]
 					]
-					either valid? [encoded: 0][either floating? [
-						case [
-							any [keep-cast = 1 source-kind = target-kind][
-								signed: either signed-type? ref types type-count [1][0]
+					located?: location <> LOCATION_NONE
+					if any [
+						all [
+							located?
+							any [source-kind = 9 source-kind = 10]
+							location <> LOCATION_XMM
+						]
+						all [
+							located?
+							not any [source-kind = 9 source-kind = 10]
+							location <> LOCATION_GPR
+						]
+					][return INVALID_IR]
+					tracked?: located?
+					location: LOCATION_NONE
+					location-depth: 0
+					location-source: 0
+					unless valid? [
+						tracked?: true
+						either floating? [
+							case [
+								keep-cast = 1 [
+									either source-kind = 5 [
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: either located? [
+											x64-encoder/xmm-load-register at
+												(capacity - written) x64-encoder/XMM0
+												x64-encoder/RAX 4
+										][
+											x64-encoder/xmm-frame-load at
+												(capacity - written) x64-encoder/XMM0
+												slot-displacement (storage-slots + depth) 4
+										]
+									][
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: either located? [
+											x64-encoder/xmm-store-register at
+												(capacity - written) x64-encoder/RAX
+												x64-encoder/XMM0 4
+										][
+											x64-encoder/frame-load at
+												(capacity - written) x64-encoder/RAX
+											slot-displacement (storage-slots + depth) 4 0
+										]
+									]
+								]
+								source-kind = 5 [
+									unless located? [
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: x64-encoder/frame-load at
+											(capacity - written) x64-encoder/RAX
+											slot-displacement (storage-slots + depth) 4 1
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/integer-to-xmm at
+										(capacity - written) x64-encoder/XMM0
+										x64-encoder/RAX 4 target-width
+								]
+								target-kind = 5 [
+									unless located? [
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: x64-encoder/xmm-frame-load at
+											(capacity - written) x64-encoder/XMM0
+											slot-displacement (storage-slots + depth) source-width
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/xmm-to-integer at
+										(capacity - written) x64-encoder/RAX
+										x64-encoder/XMM0 source-width 4
+								]
+								true [
+									unless located? [
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: x64-encoder/xmm-frame-load at
+											(capacity - written) x64-encoder/XMM0
+											slot-displacement (storage-slots + depth) source-width
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/xmm-convert at
+										(capacity - written) x64-encoder/XMM0 x64-encoder/XMM0
+										source-width target-width
+								]
+							]
+						][
+							signed: either signed-type? ref types type-count [1][0]
+							unless located? [
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/frame-load at (capacity - written)
@@ -5009,120 +5106,68 @@ x64-codegen: context [
 										(storage-slots + depth) source-width signed
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/frame-store at (capacity - written)
-									x64-encoder/RAX slot-displacement
-										(storage-slots + depth) target-width
 							]
-							source-kind = 5 [
+							encoded: 0
+							either target-kind = 11 [
+								width: either source-width = 8 [8][4]
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
-								encoded: x64-encoder/frame-load at (capacity - written)
-									x64-encoder/RAX slot-displacement
-										(storage-slots + depth) 4 1
+								encoded: x64-encoder/test-register at (capacity - written)
+									x64-encoder/RAX width
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
-								encoded: x64-encoder/integer-to-xmm at (capacity - written)
-									x64-encoder/XMM0 x64-encoder/RAX 4 target-width
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/xmm-frame-store at (capacity - written)
-									x64-encoder/XMM0 slot-displacement
-										(storage-slots + depth) target-width
-							]
-							target-kind = 5 [
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/xmm-frame-load at (capacity - written)
-									x64-encoder/XMM0 slot-displacement
-										(storage-slots + depth) source-width
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/xmm-to-integer at (capacity - written)
-									x64-encoder/RAX x64-encoder/XMM0 source-width 4
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/frame-store at (capacity - written)
-									x64-encoder/RAX slot-displacement
-										(storage-slots + depth) 4
-							]
-							true [
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/xmm-frame-load at (capacity - written)
-									x64-encoder/XMM0 slot-displacement
-										(storage-slots + depth) source-width
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/xmm-convert at (capacity - written)
-									x64-encoder/XMM0 x64-encoder/XMM0
-									source-width target-width
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/xmm-frame-store at (capacity - written)
-									x64-encoder/XMM0 slot-displacement
-										(storage-slots + depth) target-width
+								encoded: x64-encoder/condition-result at
+									(capacity - written) 5
+							][
+								if target-width < 4 [
+									signed: either signed-type? instruction/a types type-count [1][0]
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/extend-narrow-register at
+										(capacity - written) x64-encoder/RAX x64-encoder/RAX
+										target-width signed
+								]
+								if all [target-width = 4 source-width = 8][
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/move-register at
+										(capacity - written) x64-encoder/RAX x64-encoder/RAX 4
+								]
+								if all [target-width = 8 source-width < 8 signed = 1][
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/sign-extend-eax at (capacity - written)
+								]
 							]
 						]
-					][
-						signed: either signed-type? ref types type-count [1][0]
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-slots + depth)
-							source-width signed
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-						either target-kind = 11 [
-							width: either source-width = 8 [8][4]
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: x64-encoder/test-register at (capacity - written)
-								x64-encoder/RAX width
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: x64-encoder/condition-result at
-								(capacity - written) 5
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: x64-encoder/frame-store at
-								(capacity - written) x64-encoder/RAX
-								slot-displacement (storage-slots + depth) 4
+					]
+					if tracked? [
+						either linear? [
+							location: either any [target-kind = 9 target-kind = 10][
+								LOCATION_XMM
+							][LOCATION_GPR]
+							location-depth: depth
 						][
-							if all [target-width = 8 source-width < 8 signed = 1][
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/sign-extend-eax at (capacity - written)
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-							]
-							width: either target-width = 8 [8][4]
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
-							encoded: x64-encoder/frame-store at (capacity - written)
-								x64-encoder/RAX slot-displacement (storage-slots + depth)
-								width
+							encoded: either any [target-kind = 9 target-kind = 10][
+								x64-encoder/xmm-frame-store at (capacity - written)
+									x64-encoder/XMM0 slot-displacement
+										(storage-slots + depth) target-width
+							][
+								width: either target-width = 8 [8][4]
+								x64-encoder/frame-store at (capacity - written)
+									x64-encoder/RAX slot-displacement
+										(storage-slots + depth) width
+							]
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
 						]
-					]]
-					if encoded < 0 [return OUTPUT_FULL]
-					written: written + encoded
+					]
 					stack-types/depth: instruction/a
 					stack-flags/depth: instruction/b
 					stack-tags/depth: 0

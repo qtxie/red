@@ -831,6 +831,37 @@ Already retained:
   71.700 seconds (10,582 tests, 12,647/12,647 assertions, no compile failures)
   and the complete current non-View Red runner in 250.145 seconds (8,730 tests,
   16,755/16,755 assertions). Both suite stderr logs are empty;
+- the same one-slot selector now lets SET consume its adjacent PLACE directly.
+  A frame PLACE becomes an address in `RDX`, an indirect-frame PLACE loads its
+  address into `RDX`, and a live member address moves from `RAX` to `RDX`.
+  Constructing that target has already materialized the source VALUE in its
+  existing postfix slot, so no second location or location stack is required.
+  An untagged linear scalar result remains in `RAX` or `XMM0`; aggregate and
+  variant-tagged results remain frame-backed because aggregate copies preserve
+  pointer semantics and tag emission uses the same work registers. This adds no
+  frontend rule, RSIR field, allocation, adapter, CFG, or pass;
+- H66 built H67, which contains the new backend but was emitted by the previous
+  backend, in 58.799 wall seconds (compiler profile 58.668, frontend 23.751,
+  RSIR frontend 23.878, native codegen 0.574, link build 4.842). H67 is
+  5,140,480 bytes with `SizeOfCode` `463200h`;
+- H67 built the first compiler emitted through the new SET paths, H68, in
+  66.085 wall seconds (compiler profile 65.958, frontend 23.715, RSIR frontend
+  31.523, native codegen 0.571, link build 4.665). H68 is 4,901,888 bytes with
+  `SizeOfCode` and `.text` raw size `428E00h` and `.text` virtual size
+  `428D94h`. It is 238,592 bytes smaller than H67 and 238,080 bytes (4.632%)
+  smaller than the preceding H66 fixed point;
+- H68 built H69 in 60.986 wall seconds (compiler profile 60.859, frontend
+  23.847, RSIR frontend 25.142, native codegen 0.493, link build 5.193). H68
+  and H69 have identical image size, `SizeOfCode`, `.text` layout, and `.text`
+  SHA256 `68FCFE12EF3C1ACAD79F796E74778F3EA6D87B787F4493B2836552E1D503EA7A`;
+  their complete files differ only at two PE timestamp/checksum bytes. All
+  three builds reuse the fixed runtime DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- H69 rebuilds and passes the primitive encoder, native codegen, and thin
+  frontend fixtures. It passes the complete Windows x64 Red/System runner in
+  70.870 seconds (10,582 tests, 12,647/12,647 assertions, no compile failures)
+  and the complete current non-View Red runner in 250.399 seconds (8,730 tests,
+  16,755/16,755 assertions). Both suite stderr logs are empty;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

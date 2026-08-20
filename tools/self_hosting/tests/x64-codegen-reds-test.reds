@@ -539,6 +539,7 @@ if (x64-codegen/generate void-ir 90 output 1024 1) <> x64-codegen/UNSUPPORTED [
 ]
 
 ; fn: func [return: [integer!] /local value][value: 7 value]
+; The local PLACE feeds SET directly, and its scalar result feeds DROP.
 put local-ir 0 1
 put local-ir 4 0
 put local-ir 8 0
@@ -585,10 +586,10 @@ if size > 0 [
 		fn/code-size <> header/code-size
 	][failures: failures + 1]
 	if any [
-		local-code-size <> 52
+		local-code-size <> 41
 		not execute-first? output 7
 	][
-		print ["O0 local value location was not forwarded" lf]
+		print ["O0 local SET location code size: " local-code-size lf]
 		failures: failures + 1
 	]
 ]
@@ -691,8 +692,8 @@ local-ir/242: as byte! 6Eh
 size: x64-codegen/generate local-ir 242 output 1024 0
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 89 [
-		print ["O0 XMM operator location code size: " fn/code-size lf]
+	if fn/code-size <> 76 [
+		print ["O0 XMM SET/operator location code size: " fn/code-size lf]
 		failures: failures + 1
 	]
 ]

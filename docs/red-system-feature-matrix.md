@@ -342,6 +342,33 @@ failures), and the complete current non-View Red runner (8,730 tests,
 16,755/16,755 assertions). The fixed runtime DLL SHA256 is
 `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
 
+The H67-H69 gate extends the same one-slot selector to assignment without a new
+stack model. SET consumes its adjacent PLACE directly: a frame PLACE computes
+its address in `RDX`, an indirect-frame PLACE loads that address, and a live
+member address moves from `RAX` to `RDX`. The intervening target construction
+has already materialized the source VALUE in its existing postfix slot. An
+untagged linear scalar result remains in `RAX` or `XMM0`; aggregate and
+variant-tagged results remain frame-backed because aggregate values preserve
+pointer semantics and tag emission uses the work registers. There is no new
+RSIR field, allocation, frontend rule, adapter, CFG, or extra pass. Focused
+execution covers integer and binary64 local assignment chains, scalar widening,
+aggregate member copies, and variant-tagged member assignment.
+
+H66 built H67 in 58.799 wall seconds. H67, emitted by the previous backend, is
+5,140,480 bytes with `SizeOfCode` `463200h`. H67 built the first optimized H68
+in 66.085 seconds, and H68 built H69 in 60.986 seconds. H68 and H69 are both
+4,901,888 bytes with `SizeOfCode` and `.text` raw size `428E00h` and `.text`
+virtual size `428D94h`; their `.text` SHA256 is identically
+`68FCFE12EF3C1ACAD79F796E74778F3EA6D87B787F4493B2836552E1D503EA7A`, and
+their complete files differ only at two PE timestamp/checksum bytes. Against
+the preceding H66 fixed point, image and code both fall by 238,080 bytes
+(4.632%). H69 rebuilds and passes the encoder, native codegen, and frontend
+fixtures, the complete Windows x64 Red/System runner (10,582 tests,
+12,647/12,647 assertions, no compile failures), and the complete current
+non-View Red runner (8,730 tests, 16,755/16,755 assertions). The fixed runtime
+DLL SHA256 remains
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
+
 ## Windows Linker Gate
 
 Applicable tests in system/tests/static-link include:

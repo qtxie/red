@@ -3226,6 +3226,7 @@ x64-codegen: context [
 							instruction/op = OP_LOAD
 							instruction/op = OP_REFERENCE
 							instruction/op = OP_MEMBER
+							instruction/op = OP_SET
 							instruction/op = OP_DROP
 						]
 					]
@@ -3840,28 +3841,6 @@ x64-codegen: context [
 							layouts member-offsets :copy-size :copy-align [
 							return INVALID_IR
 						]
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RCX slot-displacement
-								(storage-slots + source-slot) 8 0
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RDX slot-displacement (storage-slots + target-slot) 8 0
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/copy-indirect at (capacity - written) copy-size
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
-						depth: source-slot
-						stack-types/depth: target-ref
-						stack-flags/depth: 0
-						stack-kinds/depth: VALUE
 					][
 						compatibility: implicitly-compatible-types target-ref ref
 							stack-tags/source-slot false types members type-count
@@ -3878,6 +3857,54 @@ x64-codegen: context [
 						target-width: value-width target-ref target-flags types members
 							type-count layouts member-offsets
 						floating?: float-type? target-ref types type-count
+					]
+
+					at: as byte-ptr! 0
+					if not measure? [at: code + written]
+					encoded: case [
+						location = LOCATION_FRAME [
+							x64-encoder/frame-address at (capacity - written)
+								x64-encoder/RDX location-source
+						]
+						location = LOCATION_FRAME_INDIRECT [
+							x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RDX location-source 8 0
+						]
+						location = LOCATION_ADDRESS [
+							x64-encoder/move-register at (capacity - written)
+								x64-encoder/RDX x64-encoder/RAX 8
+						]
+						location = LOCATION_NONE [
+							x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RDX slot-displacement
+									(storage-slots + target-slot) 8 0
+						]
+						true [return INVALID_IR]
+					]
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					location: LOCATION_NONE
+					location-depth: 0
+					location-source: 0
+
+					either aggregate-copy? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-load at (capacity - written)
+							x64-encoder/RCX slot-displacement
+								(storage-slots + source-slot) 8 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/copy-indirect at (capacity - written) copy-size
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						depth: source-slot
+						stack-types/depth: target-ref
+						stack-flags/depth: 0
+						stack-kinds/depth: VALUE
+					][
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: either floating? [
@@ -3894,13 +3921,6 @@ x64-codegen: context [
 						written: written + encoded
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
-						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RDX slot-displacement
-								(storage-slots + target-slot) 8 0
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
 						encoded: either floating? [
 							x64-encoder/xmm-store-indirect at (capacity - written)
 								x64-encoder/RDX x64-encoder/XMM0 target-width
@@ -3911,20 +3931,22 @@ x64-codegen: context [
 						stack-types/depth: target-ref
 						stack-flags/depth: target-flags
 						stack-kinds/depth: VALUE
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: either floating? [
-							x64-encoder/xmm-frame-store at (capacity - written)
-								x64-encoder/XMM0 slot-displacement
-									(storage-slots + depth) target-width
-						][
-							width: either target-width = 8 [8][4]
-							x64-encoder/frame-store at (capacity - written)
-								x64-encoder/RAX slot-displacement (storage-slots + depth)
-								width
+						unless all [linear? tag-head = 0][
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: either floating? [
+								x64-encoder/xmm-frame-store at (capacity - written)
+									x64-encoder/XMM0 slot-displacement
+										(storage-slots + depth) target-width
+							][
+								width: either target-width = 8 [8][4]
+								x64-encoder/frame-store at (capacity - written)
+									x64-encoder/RAX
+									slot-displacement (storage-slots + depth) width
+							]
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
 						]
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
 					]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
@@ -3933,6 +3955,10 @@ x64-codegen: context [
 					if encoded < 0 [return encoded]
 					written: written + encoded
 					stack-tags/depth: 0
+					if all [not aggregate-copy? linear? tag-head = 0][
+						location: either floating? [LOCATION_XMM][LOCATION_GPR]
+						location-depth: depth
+					]
 				]
 				instruction/op = OP_MEMBER [
 					if any [depth <= 0 instruction/c <> 0][return INVALID_IR]

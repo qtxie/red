@@ -3113,65 +3113,11 @@ compiler-rsir-frontend: context [
 		not none? find [i8 byte u8 i16 u16 i32 u32 i64 u64] kind
 	]
 
-	cast-compatible?: func [
-		source target [integer!]
-		return: [logic!]
-		/local source-kind target-kind
-	][
-		source-kind: ref-kind source
-		target-kind: ref-kind target
-		not any [
-			all [
-				source-kind = 'function
-				not find [function pointer i32 u32 i64 u64] target-kind
-			]
-			all [
-				target-kind = 'function
-				not find [function c-string pointer struct union array i32 u32 i64 u64]
-					source-kind
-			]
-			all [
-				float-kind? target-kind
-				not any [float-kind? source-kind source-kind = 'i32]
-			]
-			all [
-				float-kind? source-kind
-				not any [float-kind? target-kind target-kind = 'i32]
-			]
-			all [
-				target-kind = 'byte
-				find [c-string pointer struct union] source-kind
-			]
-			all [
-				find [c-string pointer struct union] target-kind
-				find [byte logic] source-kind
-			]
-		]
-	]
-
-	check-cast: func [
+	warn-redundant-cast: func [
 		source source-flags target target-flags [integer!]
-		keep? [logic!]
-		/local source-kind target-kind
+		/local source-kind
 	][
 		source-kind: ref-kind source
-		target-kind: ref-kind target
-		unless all [
-			cast-compatible? source target
-			any [
-				not any [float-kind? source-kind float-kind? target-kind]
-				all [
-					source-flags = 0
-					target-flags = 0
-					float-cast-compatible? source target keep?
-				]
-			]
-		][
-			fail ERROR-REFERENCE rejoin [
-				"type casting from " type-spelling source
-				" to " type-spelling target " is not allowed"
-			]
-		]
 		if all [
 			source-kind <> 'function
 			source-flags = target-flags
@@ -3611,30 +3557,6 @@ compiler-rsir-frontend: context [
 		not none? find [f32 f64] kind
 	]
 
-	float-cast-compatible?: func [
-		source target [integer!]
-		keep? [logic!]
-		return: [logic!]
-		/local source-kind target-kind
-	][
-		source-kind: ref-kind source
-		target-kind: ref-kind target
-		unless any [float-kind? source-kind float-kind? target-kind][return true]
-		if keep? [
-			return any [
-				source-kind = target-kind
-				all [source-kind = 'i32 target-kind = 'f32]
-				all [source-kind = 'f32 target-kind = 'i32]
-			]
-		]
-		any [
-			source-kind = target-kind
-			all [float-kind? source-kind float-kind? target-kind]
-			all [source-kind = 'i32 float-kind? target-kind]
-			all [float-kind? source-kind target-kind = 'i32]
-		]
-	]
-
 	same-stack-type?: func [
 		left left-flags right right-flags [integer!]
 		return: [logic!]
@@ -4067,15 +3989,14 @@ compiler-rsir-frontend: context [
 		if tail? source [fail ERROR-UNSUPPORTED "cast is missing its value"]
 		value: source/1
 		literal-end: next source
-		if all [
-			binary? value
-			target-flags = 0
-			find [c-string pointer] target-kind
-		][
-			check-cast -13 0 target-ref target-flags keep?
+		if binary? value [
 			id: add-static-bytes value false false
 			emit instructions reduce [address-op global-address id 0]
-			emit instructions reduce [reference-op target-ref 0 0]
+			emit instructions reduce [reference-op -13 0 0]
+			warn-redundant-cast -13 0 target-ref target-flags
+			emit instructions reduce [
+				cast-op target-ref target-flags either keep? [1][0]
+			]
 			last-type: target-ref
 			last-flags: 0
 			last-stopped?: false
@@ -4091,7 +4012,7 @@ compiler-rsir-frontend: context [
 			any [tail? literal-end none? select binary-operations literal-end/1]
 		][
 			source-ref: either integer? value [-5][-10]
-			check-cast source-ref 0 target-ref target-flags keep?
+			warn-redundant-cast source-ref 0 target-ref target-flags
 			bits: either keep? [
 				reduce [value 0]
 			][
@@ -4124,26 +4045,8 @@ compiler-rsir-frontend: context [
 		]
 		source-ref: last-type
 		source-flags: last-flags
-		if all [source-ref = -14 null-literal? value][
-			fail ERROR-REFERENCE "null cannot be explicitly cast"
-		]
-		check-cast source-ref source-flags target-ref target-flags keep?
-		unless all [
-			target-flags = source-flags
-			stack-type-compatible? target-ref source-ref
-			any [
-				(canonical-ref target-ref) = canonical-ref source-ref
-				all [
-					(ref-kind target-ref) <> 'function
-					(ref-kind source-ref) <> 'function
-					(canonical-ref target-ref) <> -12
-					(canonical-ref source-ref) <> -12
-					(canonical-ref source-ref) <> -14
-				]
-			]
-		][
-			emit instructions reduce [cast-op target-ref target-flags either keep? [1][0]]
-		]
+		warn-redundant-cast source-ref source-flags target-ref target-flags
+		emit instructions reduce [cast-op target-ref target-flags either keep? [1][0]]
 		last-type: target-ref
 		last-flags: target-flags
 		next-position
@@ -6766,6 +6669,7 @@ compiler-rsir-frontend: context [
 					kind: ref-kind type-info/2
 					bits: none
 					if all [
+						type-info/3 = 0
 						float-kind? kind
 						any [
 							all [not keep? any [float-literal? value integer? value]]
@@ -6773,7 +6677,7 @@ compiler-rsir-frontend: context [
 						]
 					][
 						source-ref: either integer? value [-5][-10]
-						check-cast source-ref 0 type-info/2 type-info/3 keep?
+						warn-redundant-cast source-ref 0 type-info/2 type-info/3
 						bits: either keep? [
 							reduce [value 0]
 						][float-bits either integer? value [to float! value][value] kind]
@@ -6784,8 +6688,8 @@ compiler-rsir-frontend: context [
 						static-low: bits/1
 						static-high: bits/2
 						static-next: next next-position
-					][if integer? value [
-						check-cast -5 0 type-info/2 type-info/3 keep?
+					][if all [integer? value not float-kind? kind][
+						warn-redundant-cast -5 0 type-info/2 type-info/3
 						static?: true
 						static-ref: type-info/2
 						static-low: value
@@ -6796,7 +6700,7 @@ compiler-rsir-frontend: context [
 						any [logic? value all [word? value find [true false yes no] value]]
 						kind = 'logic
 					][
-						check-cast -11 0 type-info/2 type-info/3 keep?
+						warn-redundant-cast -11 0 type-info/2 type-info/3
 						static?: true
 						static-ref: type-info/2
 						static-low: either any [
@@ -6810,7 +6714,7 @@ compiler-rsir-frontend: context [
 						string? value
 						find [pointer c-string] kind
 					][
-						check-cast -13 0 type-info/2 type-info/3 keep?
+						warn-redundant-cast -13 0 type-info/2 type-info/3
 						id: add-static-bytes to binary! value true protected?
 						static?: true
 						static-ref: type-info/2
@@ -6824,7 +6728,6 @@ compiler-rsir-frontend: context [
 						any [get-word? value get-path? value]
 						info: static-literal-info value scope uses protected?
 					][
-						check-cast info/1 0 type-info/2 type-info/3 keep?
 						static?: true
 						static-ref: type-info/2
 						static-initializer: reduce [info/2 info/3 info/4 info/1]

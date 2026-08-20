@@ -42,7 +42,7 @@ rules remain in Red/System codegen.
 | struct! reference and value forms | Logical members, type-use flags, aggregate load/set/copy | units/struct-x64-test.reds, x64-struct-*.reds | pending |
 | union! raw form | Shared logical variants and maximum native layout | units/union-test.reds, x64-union-by-value-smoke.reds | pending |
 | Tagged unions and variant? | Variant metadata, native tag layout, generic member access and switch | x64-tagged-union-smoke.reds | pending |
-| Type casts and size? | Explicit cast intent; codegen checks the cast matrix and queries native layout | compiler/cast-test.r, units/cast-test.reds, size-x64-test.reds | replace |
+| Type casts and size? | One dense explicit CAST; native codegen owns the dynamic compatibility matrix, `keep`, alias categories, null rejection and conversion, while source-typed static addresses use a separate relocation-representation check; codegen queries native layout | compiler/cast-test.r, units/cast-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, size-x64-test.reds | replace |
 | Left-to-right expressions | Dense postfix syntax in exact source order; codegen derives stack types | compiler/cond-expr-test.r, infix-test.r, units/conditional-test.reds | replace |
 | Math, shifts and bitwise operations | One dense binary operation plus lexical overflow metadata; native codegen owns operand legality, result type, coercion, and instruction selection | integer, fixed-int, modulo and math-mixed unit tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | Comparisons and not | Dense binary/unary operations with a parser-only shadow result; native codegen owns operand legality and selects integer signedness or IEEE unordered behavior | compiler/not-test.r, units/not-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, rsir-fixed-integer-exit.reds, rsir-float-scalar-exit.reds | replace |
@@ -186,6 +186,18 @@ arguments. This proves the shared scalar mechanism, not completion of the float
 row. Float aggregate and pointer paths, typed/variadic calls, the specified
 float32 remainder operation, and the complete float/float32/cast formal
 families remain required.
+
+The focused cast ownership gate keeps invalid source casts in dense RSIR until
+native codegen consumes them. Raw native fixtures cover function, integer,
+byte, fixed-width, logic, pointer, c-string, float, float32, null and alias
+categories, including numeric and bit-preserving conversion plus independently
+validated static function-address initializers. H43 also rejects isolated
+pointer-to-byte, float-to-byte, null-to-function, binary-to-byte, static
+function-to-byte and invalid static `keep` source programs in native codegen.
+The formal Red/System unit cast executable passes all 158 assertions. This
+proves dynamic ownership, direct-relocation validation and the unit language
+matrix, not completion: computed static conversions, compiler diagnostic cases
+and non-x64 targets remain required.
 
 The direct `rsir-address-index-exit.reds` gate executes 29 address checks
 through frontend, RSIR, native codegen, linker, and the generated PE. One

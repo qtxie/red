@@ -47,6 +47,16 @@ put-instruction: func [
 	put data (offset + 12) c
 ]
 
+set-cast-case: func [
+	data [byte-ptr!]
+	source low high target keep [integer!]
+][
+	put data 64 target
+	put-instruction data 92 1 source low high
+	put-instruction data 108 8 target 0 keep
+	put-instruction data 124 11 target 0 0
+]
+
 run-selection: func [
 	code [byte-ptr!]
 	return: [integer!]
@@ -213,6 +223,8 @@ indirect-ir: allocate 324
 variadic-ir: allocate 516
 import-variadic-ir: allocate 260
 null-function-ir: allocate 196
+cast-ir: allocate 164
+static-cast-ir: allocate 180
 tagged-ir: allocate 388
 array-ir: allocate 260
 array-compare-ir: allocate 228
@@ -239,7 +251,7 @@ if any [
 	null? aggregate-ir null? abi-ir null? small-return-ir
 	null? widening-ir null? sink-ir null? signature-ir
 	null? indirect-ir null? variadic-ir
-	null? import-variadic-ir null? null-function-ir
+	null? import-variadic-ir null? null-function-ir null? cast-ir null? static-cast-ir
 	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
 	null? merge-ir null? literal-merge-ir null? selection-ir
 	null? recursive-pointer-ir null? recursive-value-ir
@@ -1950,8 +1962,8 @@ if size > 0 [
 	]
 ]
 
-; NULL is typeless until the frontend coerces it to a declared reference.
-; The native core preserves the zero bits while changing only the stack type.
+; Contextual null conversion belongs to SET/CALL/RETURN. An explicit OP_CAST
+; cannot give typeless NULL a declared type.
 put null-function-ir 0 1
 put null-function-ir 4 0
 put null-function-ir 8 1
@@ -1986,18 +1998,206 @@ put-instruction null-function-ir 156 11 -11 0 0
 null-function-ir/173: as byte! 6Eh
 
 size: x64-codegen/generate null-function-ir 173 output 1024 0
-if size <= 0 [
+if size <> x64-codegen/INVALID_IR [
+	print ["explicit null function cast was accepted" lf]
 	failures: failures + 1
 ]
-if size > 0 [
-	unless execute-selection? output 1 [failures: failures + 1]
+
+; Dynamic cast legality is owned by OP_CAST. One function type plus three
+; instructions are enough to exercise the complete scalar/reference matrix.
+put cast-ir 0 1
+put cast-ir 4 0
+put cast-ir 8 1
+put cast-ir 12 0
+put cast-ir 16 1
+put cast-ir 20 3
+put cast-ir 24 0
+put cast-ir 28 0
+put cast-ir 32 0
+
+put cast-ir 36 -4
+put cast-ir 40 -5
+put cast-ir 44 0
+put cast-ir 48 0
+put cast-ir 52 0
+
+put cast-ir 56 0
+put cast-ir 60 1
+put cast-ir 64 -5
+put cast-ir 68 0
+put cast-ir 72 0
+put cast-ir 76 0
+put cast-ir 80 0
+put cast-ir 84 0
+put cast-ir 88 3
+cast-ir/141: as byte! 63h
+
+set-cast-case cast-ir 1 0 0 -5 0
+size: x64-codegen/generate cast-ir 141 output 1024 0
+if any [size <= 0 not execute-first? output 0][
+	print ["function-to-integer cast was rejected" lf]
+	failures: failures + 1
 ]
-put null-function-ir 112 -2
-if (x64-codegen/generate null-function-ir 173 output 1024 0)
+
+set-cast-case cast-ir 1 0 0 -15 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["function-to-byte cast was accepted" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -5 257 0 -15 0
+size: x64-codegen/generate cast-ir 141 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["integer-to-byte cast failed" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -12 0 0 -11 0
+size: x64-codegen/generate cast-ir 141 output 1024 0
+if any [size <= 0 not execute-first? output 0][
+	print ["pointer-to-logic cast failed" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -5 1069547520 0 -9 1
+if (x64-codegen/generate cast-ir 141 output 1024 0) <= 0 [
+	print ["bit-preserving integer-to-float32 cast was rejected" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -10 0 1073217536 -9 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <= 0 [
+	print ["numeric float-to-float32 cast was rejected" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -10 0 1073217536 -15 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["float-to-byte cast was accepted" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -13 0 0 -15 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["c-string-to-byte cast was accepted" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -12 0 0 -15 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["pointer-to-byte cast was accepted" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -15 1 0 -12 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["byte-to-pointer cast was accepted" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -2 1 0 -12 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <= 0 [
+	print ["uint8-to-pointer cast was rejected as byte!" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -11 1 0 -12 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["logic-to-pointer cast was accepted" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -4 1 0 1 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["narrow integer-to-function cast was accepted" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -5 1 0 1 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <= 0 [
+	print ["integer-to-function cast was rejected" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -10 0 1073217536 -9 1
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["bit-preserving float64-to-float32 cast was accepted" lf]
+	failures: failures + 1
+]
+
+set-cast-case cast-ir -5 1 0 -10 1
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["bit-preserving integer-to-float64 cast was accepted" lf]
+	failures: failures + 1
+]
+
+put cast-ir 36 -1
+put cast-ir 40 -15
+set-cast-case cast-ir 1 1 0 -12 0
+if (x64-codegen/generate cast-ir 141 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["byte! alias lost its cast category" lf]
+	failures: failures + 1
+]
+
+put cast-ir 40 -2
+if (x64-codegen/generate cast-ir 141 output 1024 0) <= 0 [
+	print ["uint8! alias was classified as byte!" lf]
+	failures: failures + 1
+]
+
+; Address initializers retain their source type. Native validation accepts only
+; casts whose target can hold the relocation representation unchanged.
+put static-cast-ir 0 1
+put static-cast-ir 4 0
+put static-cast-ir 8 1
+put static-cast-ir 12 0
+put static-cast-ir 16 1
+put static-cast-ir 20 1
+put static-cast-ir 24 1
+put static-cast-ir 28 0
+put static-cast-ir 32 0
+
+put static-cast-ir 36 -4
+put static-cast-ir 40 0
+put static-cast-ir 44 0
+put static-cast-ir 48 0
+put static-cast-ir 52 0
+
+put static-cast-ir 56 0
+put static-cast-ir 60 1
+put static-cast-ir 64 -15
+put static-cast-ir 68 0
+put static-cast-ir 72 0
+put static-cast-ir 76 1
+
+put static-cast-ir 80 1
+put static-cast-ir 84 1
+put static-cast-ir 88 0
+put static-cast-ir 92 0
+put static-cast-ir 96 0
+put static-cast-ir 100 0
+put static-cast-ir 104 0
+put static-cast-ir 108 0
+put static-cast-ir 112 1
+
+put static-cast-ir 116 2
+put static-cast-ir 120 4
+put static-cast-ir 124 1
+put static-cast-ir 128 1
+put-instruction static-cast-ir 132 11 0 0 0
+static-cast-ir/149: as byte! 67h
+static-cast-ir/150: as byte! 66h
+
+if (x64-codegen/generate static-cast-ir 150 output 1024 0)
 	<> x64-codegen/INVALID_IR [
+	print ["static function-to-byte cast was accepted" lf]
 	failures: failures + 1
 ]
-put null-function-ir 112 1
+put static-cast-ir 64 -5
+if (x64-codegen/generate static-cast-ir 150 output 1024 0) <= 0 [
+	print ["static function-to-integer cast was rejected" lf]
+	failures: failures + 1
+]
 
 ; A tagged union stores its tag before the aligned shared payload. A write
 ; marks variant 1 after storing 73; TAG plus the payload must therefore be 74.
@@ -2968,6 +3168,8 @@ free signature-ir
 free indirect-ir
 free variadic-ir
 free null-function-ir
+free cast-ir
+free static-cast-ir
 free tagged-ir
 free array-ir
 free array-compare-ir

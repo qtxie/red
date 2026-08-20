@@ -785,8 +785,8 @@ assert binary? forward-context-function-ir [
 ]
 forward-context-function-layout: layout-of forward-context-function-ir
 assert not none? find
-	ops-of forward-context-function-ir forward-context-function-layout [3 20 11]
-	"an explicit context function address did not lower through ADDRESS/REFERENCE"
+	ops-of forward-context-function-ir forward-context-function-layout [3 20 8 11]
+	"an explicit context function address did not retain its CAST"
 
 casted-call-ir: compile-text {
 	Red/System []
@@ -1322,7 +1322,8 @@ assert all [
 	(instruction-word packed-string-ir packed-string-layout 1 8) = 1
 	(instruction-word packed-string-ir packed-string-layout 2 0) = 20
 	(instruction-word packed-string-ir packed-string-layout 2 4) = -13
-	none? find ops-of packed-string-ir packed-string-layout 8
+	(instruction-word packed-string-ir packed-string-layout 3 0) = 8
+	(instruction-word packed-string-ir packed-string-layout 3 4) = -13
 ]["explicit binary-to-c-string cast did not preserve raw bytes"]
 
 assert none? compile-text {
@@ -1567,13 +1568,17 @@ assert binary? compile-text {
 	address: func [return: [integer!]][as integer! :inc]
 } 'user "function-to-integer cast was rejected"
 
-assert none? compile-text {
+invalid-function-cast-ir: compile-text {
 	Red/System []
 	inc: func [value [integer!] return: [integer!]][value + 1]
 	bad: func [return: [byte!]][as byte! :inc]
-} 'user "function-to-byte cast was accepted"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid function cast reported the wrong error class"
+} 'user
+assert binary? invalid-function-cast-ir [
+	"frontend rejected backend-owned function cast legality: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-function-cast-ir
+	layout-of invalid-function-cast-ir) frontend/cast-op
+	"invalid function cast did not reach native codegen"
 
 function-integer-cast-ir: compile-text {
 	Red/System []
@@ -1588,13 +1593,17 @@ assert binary? function-integer-cast-ir [
 	"32/64-bit integer function cast failed: " mold frontend/last-error
 ]
 
-assert none? compile-text {
+invalid-narrow-function-cast-ir: compile-text {
 	Red/System []
 	callback!: alias function! [return: [integer!]]
 	bad: func [value [uint16!] return: [callback!]][as callback! value]
-} 'user "a 16-bit integer was accepted as a function address"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"narrow integer function cast reported the wrong error class"
+} 'user
+assert binary? invalid-narrow-function-cast-ir [
+	"frontend rejected backend-owned narrow function cast: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-narrow-function-cast-ir
+	layout-of invalid-narrow-function-cast-ir) frontend/cast-op
+	"narrow function cast did not reach native codegen"
 
 system-aggregate-root-ir: compile-text {
 	Red/System []
@@ -1667,13 +1676,17 @@ assert binary? compile-text {
 	]
 } 'user "explicit function-to-function cast was rejected"
 
-assert none? compile-text {
+explicit-null-cast-ir: compile-text {
 	Red/System []
 	op!: alias function! [value [integer!] return: [integer!]]
 	bad: func [return: [integer!]][as op! null]
-} 'user "explicit null function cast was accepted"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"explicit null function cast reported the wrong error class"
+} 'user
+assert binary? explicit-null-cast-ir [
+	"frontend rejected backend-owned explicit null cast: " mold frontend/last-error
+]
+assert not none? find (ops-of explicit-null-cast-ir
+	layout-of explicit-null-cast-ir) frontend/cast-op
+	"explicit null cast did not reach native codegen"
 
 protect-ir: compile-text {
 	Red/System []
@@ -2835,8 +2848,8 @@ assert binary? mixed-float-ir [
 	"mixed float!/float32! arithmetic failed: " mold frontend/last-error
 ]
 mixed-float-layout: layout-of mixed-float-ir
-assert (ops-of mixed-float-ir mixed-float-layout) = [1 3 4 15 3 4 15 11]
-	"mixed floating arithmetic did not retain one typed binary path"
+assert (ops-of mixed-float-ir mixed-float-layout) = [1 3 4 15 3 4 15 8 11]
+	"mixed floating arithmetic did not retain its explicit result CAST"
 
 float-expression-cast-ir: compile-text {
 	Red/System []
@@ -4566,39 +4579,69 @@ assert all [
 		"type casting from integer! to integer! is not necessary"
 ]["same-type casts did not report canonical warnings"]
 
-assert none? compile-text {
+invalid-static-function-cast-ir: compile-text {
 	Red/System []
 	foo: func [][]
 	bad: as byte! :foo
-} 'user "a function address was cast to byte!"
-assert frontend/last-error/message =
-	"type casting from function! to byte! is not allowed"
-	"static function cast did not report the canonical error"
+} 'user
+assert binary? invalid-static-function-cast-ir [
+	"frontend rejected backend-owned static address cast: " mold frontend/last-error
+]
+invalid-static-function-layout: layout-of invalid-static-function-cast-ir
+assert all [
+	(initializer-word invalid-static-function-cast-ir
+		invalid-static-function-layout 1 0) = 2
+	(initializer-word invalid-static-function-cast-ir
+		invalid-static-function-layout 1 12) > 0
+]["static function cast did not retain its source type for native validation"]
 
-assert none? compile-text {
+invalid-float-cast-ir: compile-text {
 	Red/System []
-	bad: as byte! 1.0
-} 'user "a float! literal was cast to byte!"
-assert frontend/last-error/message =
-	"type casting from float! to byte! is not allowed"
-	"static float cast did not report the canonical error"
+	bad: func [return: [byte!]][as byte! 1.0]
+} 'user
+assert binary? invalid-float-cast-ir [
+	"frontend rejected backend-owned float cast legality: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-float-cast-ir
+	layout-of invalid-float-cast-ir) frontend/cast-op
+	"invalid float cast did not reach native codegen"
 
-assert none? compile-text {
+invalid-static-keep-cast-ir: compile-text {
 	Red/System []
-	bad: as byte! "text"
-} 'user "a c-string! literal was cast to byte!"
-assert frontend/last-error/message =
-	"type casting from c-string! to byte! is not allowed"
-	"static c-string cast did not report the canonical error"
+	bad: as float! keep 1
+} 'glue
+assert binary? invalid-static-keep-cast-ir [
+	"frontend rejected backend-owned static keep cast: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-static-keep-cast-ir
+	layout-of invalid-static-keep-cast-ir) frontend/cast-op
+	"invalid static keep cast was folded before native validation"
 
-assert none? compile-text {
+invalid-string-cast-ir: compile-text {
+	Red/System []
+	bad: func [return: [byte!]][as byte! "text"]
+} 'user
+assert binary? invalid-string-cast-ir [
+	"frontend rejected backend-owned c-string cast legality: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-string-cast-ir
+	layout-of invalid-string-cast-ir) frontend/cast-op
+	"invalid c-string cast did not reach native codegen"
+
+dynamic-invalid-cast-ir: compile-text {
 	Red/System []
 	p: declare pointer! [integer!]
-	bad: as byte! p
-} 'user "a pointer! value was cast to byte!"
-assert frontend/last-error/message =
-	"type casting from pointer! to byte! is not allowed"
-	"dynamic pointer cast did not report the canonical error"
+	bad-pointer: func [return: [byte!]][as byte! p]
+	bad-float: func [value [float!] return: [byte!]][as byte! value]
+	bad-string: func [return: [byte!]][as byte! "text"]
+	bad-binary: func [return: [byte!]][as byte! #{0102}]
+} 'user
+assert binary? dynamic-invalid-cast-ir [
+	"frontend rejected backend-owned dynamic cast legality: " mold frontend/last-error
+]
+assert (op-count (ops-of dynamic-invalid-cast-ir layout-of dynamic-invalid-cast-ir)
+	frontend/cast-op) = 4
+	"dynamic invalid casts did not retain one dense CAST each"
 
 assert none? compile-text {Red/System [] if 1 []} 'user
 	"IF accepted a non-conditional expression"

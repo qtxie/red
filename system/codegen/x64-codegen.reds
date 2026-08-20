@@ -839,6 +839,81 @@ x64-codegen: context [
 		any [kind = 5 kind = 6 kind = 7 kind = 8]
 	]
 
+	cast-kind: func [
+		ref [integer!]
+		types [byte-ptr!]
+		count [integer!]
+		return: [integer!]
+		/local record [rsir-type!] kind steps [integer!]
+	][
+		; Canonical arithmetic aliases byte! to uint8!, but the cast matrix does not.
+		if ref = -15 [return 15]
+		if ref < 0 [return 0 - ref]
+		steps: 0
+		while [steps < count][
+			if any [ref <= 0 ref > count][return 0]
+			record: as rsir-type! (types + ((ref - 1) * RSIR_TYPE_SIZE))
+			kind: record/kind
+			unless kind = -1 [return either kind = -6 [12][kind]]
+			ref: record/target
+			if ref = -15 [return 15]
+			if ref < 0 [return 0 - ref]
+			steps: steps + 1
+		]
+		0
+	]
+
+	cast-compatible-kinds?: func [
+		source-kind target-kind [integer!]
+		return: [logic!]
+	][
+		if any [
+			source-kind = 0 target-kind = 0
+			source-kind = 14 target-kind = 14
+		][return false]
+		if source-kind = -4 [
+			return any [
+				target-kind = -4 target-kind = 12
+				address-integer-kind? target-kind
+			]
+		]
+		if target-kind = -4 [
+			return any [
+				source-kind = -4 source-kind = 12 source-kind = 13
+				source-kind = -2 source-kind = -3 source-kind = -7
+				address-integer-kind? source-kind
+			]
+		]
+		if any [
+			source-kind = 9 source-kind = 10
+			target-kind = 9 target-kind = 10
+		][
+			return any [
+				all [
+					any [source-kind = 9 source-kind = 10]
+					any [target-kind = 9 target-kind = 10]
+				]
+				all [source-kind = 5 any [target-kind = 9 target-kind = 10]]
+				all [any [source-kind = 9 source-kind = 10] target-kind = 5]
+			]
+		]
+		if all [
+			target-kind = 15
+			any [
+				source-kind = 12 source-kind = 13
+				source-kind = -2 source-kind = -3
+			]
+		][return false]
+		if all [
+			any [
+				target-kind = 12 target-kind = 13
+				target-kind = -2 target-kind = -3
+			]
+			any [source-kind = 15 source-kind = 11]
+		][return false]
+		true
+	]
+
 	integer-kind-widens?: func [
 		source-kind target-kind [integer!]
 		return: [logic!]
@@ -1201,7 +1276,7 @@ x64-codegen: context [
 		valid-type-ref? result/1 count
 	]
 
-	static-address-cast-compatible?: func [
+	static-address-representation-compatible?: func [
 		target source [integer!]
 		types [byte-ptr!]
 		count [integer!]
@@ -1245,7 +1320,7 @@ x64-codegen: context [
 			initializer/c <> 0
 			any [
 				not valid-type-ref? source type-count
-				not static-address-cast-compatible? expected source types type-count
+				not static-address-representation-compatible? expected source types type-count
 			]
 		][return false]
 		case [
@@ -4400,31 +4475,14 @@ x64-codegen: context [
 						machine-value? instruction/a instruction/b types members type-count
 							layouts member-offsets
 					][return UNSUPPORTED]
-					source-kind: logical-kind ref types type-count
-					target-kind: logical-kind instruction/a types type-count
-					if all [source-kind = 14 not reference-kind? target-kind][
+					source-kind: cast-kind ref types type-count
+					target-kind: cast-kind instruction/a types type-count
+					unless cast-compatible-kinds? source-kind target-kind [
 						return INVALID_IR
 					]
 					floating?: any [
 						any [source-kind = 9 source-kind = 10]
 						any [target-kind = 9 target-kind = 10]
-					]
-					if any [source-kind = -4 target-kind = -4][
-						valid?: either source-kind = -4 [
-							any [
-								address-integer-kind? target-kind
-								target-kind = 12
-								target-kind = -6 target-kind = -4]
-						][
-							any [
-								address-integer-kind? source-kind
-								source-kind = 12 source-kind = 13
-								source-kind = 14
-								source-kind = -2 source-kind = -3 source-kind = -4
-								source-kind = -6 source-kind = -7
-							]
-						]
-						unless valid? [return INVALID_IR]
 					]
 					if floating? [
 						valid?: all [
@@ -4446,13 +4504,23 @@ x64-codegen: context [
 						]
 						unless valid? [return INVALID_IR]
 					]
-					valid?: all [
-						not floating?
-						flags = 0 instruction/b = 0
-						source-width = target-width
-						any [
-							all [reference-kind? source-kind reference-kind? target-kind]
-							any [source-kind = -4 target-kind = -4]
+					valid?: any [
+						all [
+							flags = instruction/b
+							source-kind = target-kind
+							source-width = target-width
+						]
+						all [
+							not floating?
+							flags = 0 instruction/b = 0
+							source-width = target-width
+							any [
+								all [
+									reference-kind? source-kind
+									reference-kind? target-kind
+								]
+								any [source-kind = -4 target-kind = -4]
+							]
 						]
 					]
 					either valid? [encoded: 0][either floating? [

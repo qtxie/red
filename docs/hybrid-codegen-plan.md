@@ -242,6 +242,14 @@ narrowing rules, inserts required coercions in native working state, then
 selects integer, pointer, or XMM instructions. Those rules have one production
 owner: codegen.
 
+The frontend may encode a direct floating-point literal in its final target
+width when the source spelling alone proves the conversion. Every other
+runtime cast remains one ordinary cast instruction. Static symbol addresses
+retain their source type and are accepted by codegen only when the target can
+hold the relocation representation unchanged. Static conversions that require
+computation belong to initializer lowering; they are not approximated by
+writing an address or source bit pattern into the target slot.
+
 ## Direct RSIR Order
 
 RSIR uses fixed-size records in one known sequence:
@@ -584,6 +592,12 @@ Already retained:
   same rule;
 - common integer comparison width and signedness selected from logical types,
   with native loads performing the required sign or zero extension;
+- one dense explicit CAST whose complete dynamic compatibility matrix,
+  `keep` restrictions, alias classification, null rejection, width conversion,
+  and machine selection are owned by native codegen. The frontend always emits
+  the cast after parsing and retains only warning and shadow-result work;
+  `byte!` remains distinct from `uint8!`, and representation-preserving static
+  symbol-address casts retain their source type for separate native validation;
 - an executable fixed-integer gate covering every scalar width, arithmetic,
   casts, mixed comparisons, scalar calling-convention returns, and eight Win64
   integer arguments through the direct linker path;
@@ -604,13 +618,27 @@ Already retained:
   floating-point/ABI executable in 0.521 seconds and it returned the expected
   exit code 73. H42 is 13,312 bytes smaller than H41, with `.text` raw size
   reduced by 9,728 bytes rather than duplicated;
+- H42 built H43 with the native CAST ownership in the normal development O0
+  path in 68.032 seconds (frontend 25.970, backend 41.965, native codegen
+  0.650, link build 6.999 seconds) using the same known-good runtime DLL set.
+  H43 is 19,456 bytes smaller than H42 and its `.text` raw size is 17,408 bytes
+  smaller. H43 rebuilt and passed the native codegen suite, built the 50-check
+  floating-point executable which returned 73, passed all 158 assertions in
+  the formal Red/System unit cast suite, and independently rejected six invalid
+  source casts in native codegen;
+- H43 then built the same-source H44 in 65.777 seconds (frontend 24.351,
+  backend 41.336, native codegen 0.651, link build 5.716 seconds). H44 has the
+  same 6,372,864-byte size as H43 and starts successfully with only O0/O2,
+  proving that the compiler containing this ownership change can build its
+  next generation;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
 Still incomplete and therefore not an H0:
 
 - the specified float32 remainder operation, complete float aggregate/pointer
-  paths and formal float/float32/cast coverage;
+  paths, computed static cast initializers, compiler diagnostic cast cases,
+  and remaining float/float32 coverage;
 - the remaining non-local control operations;
 - complete fixed-int/int64 formal coverage for aggregate fields and
   typed/variadic ABI paths;

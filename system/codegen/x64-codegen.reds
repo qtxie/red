@@ -3251,8 +3251,6 @@ x64-codegen: context [
 							all [
 								instruction/op = OP_BRANCH
 								location = LOCATION_GPR
-								boolean-diamond? index fn/instruction-count
-									instructions catch-depths control-uses
 							]
 						]
 					]
@@ -6666,7 +6664,7 @@ x64-codegen: context [
 					fold-boolean?: boolean-diamond? index fn/instruction-count
 						instructions catch-depths control-uses
 					at: as byte-ptr! 0
-					tracked?: all [fold-boolean? location = LOCATION_GPR]
+					tracked?: location = LOCATION_GPR
 					unless tracked? [
 						if not measure? [at: code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
@@ -6729,6 +6727,9 @@ x64-codegen: context [
 							condition displacement
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
+						location: LOCATION_NONE
+						location-depth: 0
+						location-source: 0
 					]
 				]
 				instruction/op = OP_SWITCH [

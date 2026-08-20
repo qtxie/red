@@ -199,6 +199,7 @@ failures: 0
 identity-code-size: 0
 folded-code-size: 0
 local-code-size: 0
+branch-code-size: 0
 no-types: as byte-ptr! 0
 sink-pairs: declare signature-pairs!
 sink-pairs/memory: null
@@ -2555,6 +2556,7 @@ if (x64-codegen/generate tagged-ir 318 output 1024 0) <> x64-codegen/INVALID_IR 
 put tagged-ir 132 1
 
 ; fn: func [return: [integer!]][either true [return 7][return 9]]
+; A canonical logic GPR is consumed by BRANCH without a frame round-trip.
 put branch-ir 0 1
 put branch-ir 4 0
 put branch-ir 8 0
@@ -2584,6 +2586,19 @@ branch-ir/170: as byte! 6Eh
 
 size: x64-codegen/generate branch-ir 170 output 1024 0
 if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	branch-code-size: fn/code-size
+	if branch-code-size <> 46 [
+		print ["O0 direct BRANCH code size: " branch-code-size lf]
+		failures: failures + 1
+	]
+	if not execute-first? output 7 [failures: failures + 1]
+]
+put branch-ir 80 0
+size: x64-codegen/generate branch-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 9][failures: failures + 1]
+put branch-ir 80 1
 put branch-ir 92 7
 if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1

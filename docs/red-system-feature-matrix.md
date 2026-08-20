@@ -369,6 +369,36 @@ non-View Red runner (8,730 tests, 16,755/16,755 assertions). The fixed runtime
 DLL SHA256 remains
 `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
 
+The H70-H74 gate extends the one-slot selector to ordinary BRANCH consumers.
+When the top postfix value is the canonical logic in `RAX`, native BRANCH emits
+the existing `test` and conditional jump directly, omitting only the frame
+store/load pair; it then clears the location before the fallthrough path. A
+branch with an incoming edge still uses the materialized frame value, and the
+existing boolean-diamond fold remains a separate transformation. No RSIR field,
+allocation, frontend rule, adapter, CFG, or extra pass is introduced. The
+focused fixture executes both truth paths and locks the direct function body at
+46 bytes.
+
+H69 built H70 in 102.335 seconds, H70 built H71 in 99.261 seconds, and H71
+built H72 in 105.712 seconds. Those clocks are correctness-only: a stale
+offline RSIR parser was found consuming host CPU during the runs and was
+terminated before the clean measurements. H70 remains 4,901,888 bytes; H71
+and H72 are both 4,865,536 bytes with `SizeOfCode` and `.text` raw size
+`420000h` and `.text` virtual size `41FEE9h`, reducing the H69 fixed point by
+36,352 bytes. H72 passed the complete Windows x64 Red/System runner (10,582
+tests, 12,647/12,647 assertions, no compile failures) and the complete current
+non-View Red runner (8,730 tests, 16,755/16,755 assertions); H72's `.text` is
+identical to the clean H73/H74 fixed point. H72-H74 reuse the fixed runtime DLL
+SHA256
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
+
+After the contention was removed, H72 built H73 in 73.014 wall seconds and
+H73 built H74 in 63.386 seconds; H74's compiler profile is 63.258 seconds
+(frontend 25.574, RSIR frontend 25.552, native codegen 0.453, link build
+5.269). H73 and H74 have identical `.text` SHA256
+`5EDBB39C666A7B9562F0B59D3834265F683FB059751F5FC8D4D613A459C90CF1` and
+differ only in PE timestamp/checksum metadata.
+
 ## Windows Linker Gate
 
 Applicable tests in system/tests/static-link include:

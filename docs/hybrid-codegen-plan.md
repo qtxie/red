@@ -862,6 +862,36 @@ Already retained:
   70.870 seconds (10,582 tests, 12,647/12,647 assertions, no compile failures)
   and the complete current non-View Red runner in 250.399 seconds (8,730 tests,
   16,755/16,755 assertions). Both suite stderr logs are empty;
+- ordinary BRANCH now consumes a canonical logic value already live in `RAX`.
+  The backend keeps the existing `test`/conditional-jump lowering, skips only
+  the redundant frame store/load, and clears the one-slot location after the
+  branch. The boolean-diamond fold remains independent: a non-folded branch
+  has the same stack-depth and merge behavior as before, while a branch with an
+  incoming edge still materializes through the existing frame path. This adds
+  no RSIR field, allocation, frontend rule, adapter, CFG, or pass;
+- H69 built H70 in 102.335 wall seconds and H70 built H71 in 99.261 seconds;
+  H71 built H72 in 105.712 seconds. These three clocks are correctness runs,
+  not performance measurements: a stale offline RSIR parser process was found
+  consuming the host CPU during them and was terminated after the H72 suite.
+  H70 remains 4,901,888 bytes, while H71 and H72 are 4,865,536 bytes with
+  `SizeOfCode` and `.text` raw size `420000h` and `.text` virtual size
+  `41FEE9h`, a 36,352-byte reduction from H70/H69;
+- after that process was stopped, H72 built H73 in 73.014 wall seconds and H73
+  built H74 in 63.386 seconds (H74 compiler profile 63.258, frontend 25.574,
+  RSIR frontend 25.552, native codegen 0.453, link build 5.269). H73 and H74
+  have identical image size and `.text` SHA256
+  `5EDBB39C666A7B9562F0B59D3834265F683FB059751F5FC8D4D613A459C90CF1`;
+  their complete files differ only at PE timestamp/checksum bytes. The direct
+  BRANCH fixture locks the generated function at 46 bytes and executes both
+  truth paths;
+- H72 (whose `.text` is identical to clean H74) rebuilds and passes the
+  primitive encoder, native codegen, and thin frontend fixtures. It also passes
+  the complete Windows x64 Red/System runner (10,582 tests, 12,647/12,647
+  assertions, no compile failures) and the complete current non-View Red runner
+  (8,730 tests, 16,755/16,755 assertions); those two wall times are retained
+  only as correctness-run metadata because of the verified host contention.
+  All H70-H74 builds reuse the fixed runtime DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

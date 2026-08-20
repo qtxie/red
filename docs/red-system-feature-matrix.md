@@ -50,8 +50,8 @@ rules remain in Red/System codegen.
 | Function declarations and returns | Declared signature, slots and instruction range; value RETURN keeps its producer type, while EXIT remains a void RETURN, and native codegen checks both against the declared result | compiler/return-test.r, units/function-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |
 | Direct and imported calls | One stack call with target, signature and actual count; native codegen checks parameter sinks and performs required scalar ABI conversion | units/function-test.reds, x64-function-smoke.reds, x64-import-smoke.reds, x64-codegen-reds-test.reds | replace |
-| Function pointers and variables | Function signature type, symbol address and indirect call; native sink compatibility compares complete return, parameter, call-shape and normalized convention records | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds, x64-codegen-reds-test.reds | pending |
-| cdecl, stdcall and callback | Signature attributes and target ABI classifier; default and stdcall share one sink convention while cdecl remains distinct | compiler/callback-test.r, fixed-int ABI cases, dylib tests, x64-codegen-reds-test.reds | pending |
+| Function pointers and variables | Function signature type, symbol address and indirect call; native sink compatibility compares complete return, parameter, and target call-shape records | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds, x64-codegen-reds-test.reds | pending |
+| cdecl, stdcall and callback | Signature attributes and target ABI classifier; fixed default/stdcall/cdecl signatures share the Win64 sink shape required by C callbacks, while packed and C variadic shapes remain distinct | compiler/callback-test.r, units/lib-test.reds, fixed-int ABI cases, dylib tests, x64-codegen-reds-test.reds | pending |
 | Variadic, typed and custom calls | Actual stack types/count plus signature attributes; codegen applies C default `float32!` promotion to variadic extras | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds, x64-codegen-reds-test.reds | pending |
 | Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results, sink-width conversion and variadic float duplication | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
@@ -294,6 +294,30 @@ in 66.047 seconds, H58 built H59 in 58.981 seconds, and H59 built H60 in 63.314
 seconds. H58-H60 are all 6,315,008 bytes with `SizeOfCode` and `.text` raw size
 `581E00h`; H60 rebuilds and passes the native fixture and the same 143-test,
 176-assertion formal gate. Complete formal families remain required.
+
+The H61-H63 gate adds the first generic O0 value-location selector wholly inside
+native codegen. It tracks only the top postfix slot as a lazy frame address,
+indirect frame address, live address, `RAX`, or `XMM0`, and only across the
+immediately adjacent instruction when there is no incoming control edge, catch
+transition, or ENTRY. LOAD, REFERENCE, MEMBER, DROP, scalar RETURN/SUB_RETURN,
+and the existing boolean fold consume a matching location directly; every other
+consumer materializes it into the existing frame slot before that instruction.
+There is no new RSIR field, scratch allocation, frontend rule, adapter, CFG, or
+extra pass. Focused execution covers integer and binary64 local return paths and
+both sides of an incoming-edge merge.
+
+H60 built H61 in 61.166 seconds. H61 then built the optimized H62 in 61.596
+seconds, and H62 built H63 in 59.961 seconds. H62 and H63 are both 5,215,232
+bytes with `SizeOfCode` `475600h`, `.text` virtual size `4755E9h`, and `.text`
+raw size `476000h`; they differ in only four PE timestamp/checksum bytes. Against
+H61, total image size falls by 1,123,840 bytes (17.73%) and `SizeOfCode` by
+19.38%. H63 rebuilds and passes the native and frontend fixtures. H62 passes the
+complete Windows x64 Red/System runner (10,582 tests, 12,647/12,647 assertions),
+and H63 passes the complete current non-View Red runner (8,730 tests,
+16,755/16,755 assertions). The sink regression exposed by `lib-test.reds` is
+also fixed at the general ABI boundary: fixed cdecl/default/stdcall function
+values share one Win64 call shape, while packed and C variadic values remain
+distinct at SET, CALL, and RETURN.
 
 ## Windows Linker Gate
 

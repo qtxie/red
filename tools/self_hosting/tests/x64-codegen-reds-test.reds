@@ -23,6 +23,7 @@ Red/System [
 ]
 
 selection-entry!: alias function! [return: [integer!]]
+floating-entry!: alias function! [return: [float!]]
 hidden-return-entry!: alias function! [
 	result [byte-ptr!]
 	value [byte-ptr!]
@@ -66,6 +67,15 @@ run-selection: func [
 	entry
 ]
 
+run-floating: func [
+	code [byte-ptr!]
+	return: [float!]
+	/local entry [floating-entry!]
+][
+	entry: as floating-entry! code
+	entry
+]
+
 execute-selection?: func [
 	image [byte-ptr!]
 	expected [integer!]
@@ -97,6 +107,24 @@ execute-first?: func [
 	if null? code [return false]
 	copy-memory code (image + header/code-offset) header/code-size
 	result: run-selection (code + fn/code-offset)
+	VirtualFree code 0 8000h
+	result = expected
+]
+
+execute-floating?: func [
+	image [byte-ptr!]
+	expected [float!]
+	return: [logic!]
+	/local header [codegen-header!] fn [codegen-function!]
+		code [byte-ptr!] result [float!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	if header/code-size > 4096 [return false]
+	code: VirtualAlloc (as byte-ptr! 0) 4096 3000h 40h
+	if null? code [return false]
+	copy-memory code (image + header/code-offset) header/code-size
+	result: run-floating (code + fn/code-offset)
 	VirtualFree code 0 8000h
 	result = expected
 ]
@@ -170,6 +198,7 @@ execute-small-return?: func [
 failures: 0
 identity-code-size: 0
 folded-code-size: 0
+local-code-size: 0
 no-types: as byte-ptr! 0
 sink-pairs: declare signature-pairs!
 sink-pairs/memory: null
@@ -347,8 +376,8 @@ put sink-ir 64 -2
 put sink-ir 8 1
 put sink-ir 28 2
 if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 0 [
-	print ["cdecl and stdcall function signatures were compatible" lf]
+	(sink-ir + 40) 2 sink-pairs) <> 1 [
+	print ["fixed cdecl and stdcall function signatures were incompatible" lf]
 	failures: failures + 1
 ]
 put sink-ir 8 0
@@ -549,11 +578,19 @@ if size <= 0 [
 if size > 0 [
 	header: as codegen-header! output
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	local-code-size: fn/code-size
 	if any [
 		header/code-size <= 17
 		fn/frame-size <> 64
 		fn/code-size <> header/code-size
 	][failures: failures + 1]
+	if any [
+		local-code-size <> 52
+		not execute-first? output 7
+	][
+		print ["O0 local value location was not forwarded" lf]
+		failures: failures + 1
+	]
 ]
 
 ; SET and RETURN are the declared type consumers. The frontend leaves both
@@ -582,6 +619,57 @@ if (x64-codegen/generate local-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 put local-ir 72 -5
+
+; A LOAD with an explicit incoming edge cannot inherit the fallthrough
+; register location. Both paths must instead observe the materialized PLACE.
+put local-ir 20 11
+put local-ir 68 11
+put-instruction local-ir 80 1 -5 7 0
+put-instruction local-ir 96 3 1 1 0
+put-instruction local-ir 112 5 0 0 0
+put-instruction local-ir 128 12 0 0 0
+put-instruction local-ir 144 3 1 1 0
+put-instruction local-ir 160 1 -11 0 0
+put-instruction local-ir 176 17 10 1 0
+put-instruction local-ir 192 12 0 0 0
+put-instruction local-ir 208 3 1 1 0
+put-instruction local-ir 224 4 0 0 0
+put-instruction local-ir 240 11 -5 0 0
+local-ir/257: as byte! 66h
+local-ir/258: as byte! 6Eh
+
+size: x64-codegen/generate local-ir 258 output 1024 0
+if any [size <= 0 not execute-first? output 7][
+	print ["fallthrough address location was not materialized" lf]
+	failures: failures + 1
+]
+put local-ir 168 1
+size: x64-codegen/generate local-ir 258 output 1024 0
+if any [size <= 0 not execute-first? output 7][
+	print ["incoming address location was not materialized" lf]
+	failures: failures + 1
+]
+
+; A direct local floating load remains in XMM0 through scalar RETURN.
+put local-ir 20 7
+put local-ir 44 -10
+put local-ir 68 7
+put local-ir 72 -10
+put-instruction local-ir 80 1 -10 0 3FF80000h
+put-instruction local-ir 96 3 1 1 0
+put-instruction local-ir 112 5 0 0 0
+put-instruction local-ir 128 12 0 0 0
+put-instruction local-ir 144 3 1 1 0
+put-instruction local-ir 160 4 0 0 0
+put-instruction local-ir 176 11 -10 0 0
+local-ir/193: as byte! 66h
+local-ir/194: as byte! 6Eh
+
+size: x64-codegen/generate local-ir 194 output 1024 0
+if any [size <= 0 not execute-floating? output 1.5][
+	print ["O0 XMM value location was not forwarded" lf]
+	failures: failures + 1
+]
 
 ; Unused pointer node: logical pointee information must be accepted without
 ; changing code generated for the same function.
@@ -1423,9 +1511,8 @@ if (x64-codegen/generate sink-ir 276 output 1024 0) <= 0 [
 	failures: failures + 1
 ]
 
-; Calling conventions are part of a function value's sink type. The default
-; convention is stdcall, while cdecl must be rejected independently by SET,
-; a fixed CALL parameter, and RETURN.
+; Fixed cdecl/default/stdcall function values share the Win64 ABI. Packed and
+; C variadic signatures remain distinct at SET, fixed CALL, and RETURN sinks.
 put sink-ir 0 1
 put sink-ir 4 0
 put sink-ir 8 2
@@ -1503,20 +1590,28 @@ if (x64-codegen/generate sink-ir 409 output 1024 0) <= 0 [
 ]
 put sink-ir 44 1
 put sink-ir 88 1
-if (x64-codegen/generate sink-ir 409 output 1024 0) <> x64-codegen/INVALID_IR [
-	print ["cdecl function value entered a stdcall SET sink" lf]
+if (x64-codegen/generate sink-ir 409 output 1024 0) <= 0 [
+	print ["fixed cdecl function sinks were incompatible" lf]
 	failures: failures + 1
 ]
-; Give SET the exact source type so the next failure can only come from CALL.
+
+; Type 1 is C variadic while type 2 is the packed Red/System variadic shape.
+; Give SET the exact source type after its isolated rejection, then do the
+; same for CALL so each sink is reached independently.
+put sink-ir 44 9
+put sink-ir 64 8
+if (x64-codegen/generate sink-ir 409 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["C variadic function value entered a packed SET sink" lf]
+	failures: failures + 1
+]
 put sink-ir 192 1
 if (x64-codegen/generate sink-ir 409 output 1024 0) <> x64-codegen/INVALID_IR [
-	print ["cdecl function value entered a stdcall CALL sink" lf]
+	print ["C variadic function value entered a packed CALL sink" lf]
 	failures: failures + 1
 ]
-; Give CALL the exact source type so only the declared stdcall RETURN remains.
 put sink-ir 184 1
 if (x64-codegen/generate sink-ir 409 output 1024 0) <> x64-codegen/INVALID_IR [
-	print ["cdecl function value entered a stdcall RETURN sink" lf]
+	print ["C variadic function value entered a packed RETURN sink" lf]
 	failures: failures + 1
 ]
 
@@ -2448,7 +2543,8 @@ if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	folded-code-size: fn/code-size
 	if folded-code-size <> (identity-code-size + 14)[
-		print ["boolean diamond was not lowered to the O0 identity operation" lf]
+		print ["boolean diamond code size changed: " identity-code-size
+			" / " folded-code-size lf]
 		failures: failures + 1
 	]
 ]

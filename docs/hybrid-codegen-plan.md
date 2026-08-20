@@ -628,7 +628,8 @@ Already retained:
 - assignments, direct/imported/indirect calls, ordinary/subroutine returns,
   and system stack writes now keep producer values unchanged in RSIR. Native
   codegen alone checks the declared sink, compares complete function
-  signatures including the normalized default/stdcall versus cdecl ABI,
+  signatures using the target call shape (fixed default/stdcall/cdecl are one
+  Win64 shape, while packed and C variadic remain distinct),
   applies contextual null and direct-literal rules, and selects the target-width
   load or XMM conversion. One negative native stack tag marks a direct float
   literal; positive tags remain union-variant write chains;
@@ -777,6 +778,29 @@ Already retained:
   one-value ANY and ALL from 76 to 58 bytes; their body is branchless
   `test/setne` code. H60 rebuilds and passes the native fixture and the
   conditional, use, logic, exit, and return gate: 143 tests, 176 assertions;
+- H60 built H61 after adding a one-slot O0 value-location selector in 61.166
+  seconds. The selector holds only the top postfix slot, recognizes lazy frame,
+  indirect-frame, address, `RAX`, and `XMM0` locations, and forwards them only
+  to an adjacent consumer with no incoming edge, catch transition, or ENTRY.
+  Unsupported consumers materialize the value into its existing frame slot.
+  LOAD, REFERENCE, MEMBER, DROP, scalar RETURN/SUB_RETURN, and the boolean fold
+  consume matching locations directly. This adds no RSIR field, allocation,
+  frontend rule, adapter, CFG, or pass;
+- H61 built H62 in 61.596 wall seconds (frontend 22.586, RSIR frontend 27.519,
+  native codegen 0.739, link build 4.935), and H62 built H63 in 59.961 seconds
+  (frontend 22.990, RSIR frontend 23.802, native codegen 0.622, link build
+  6.707). H62 and H63 are both 5,215,232 bytes with `SizeOfCode` `475600h`,
+  `.text` virtual size `4755E9h`, and `.text` raw size `476000h`; their complete
+  files differ only at four PE timestamp/checksum bytes. Relative to H61, total
+  size falls 1,123,840 bytes (17.73%) and `SizeOfCode` falls 19.38%;
+- H63 rebuilds and passes the native fixture and the frontend fixture. H62
+  passes the complete Windows x64 Red/System runner (10,582 tests and all
+  12,647 assertions), while H63 passes the complete current non-View Red runner
+  (8,730 tests and all 16,755 assertions). The same gate corrects contextual
+  function sinks according to the specified C callback model: fixed
+  cdecl/default/stdcall signatures share the Win64 call shape, but packed and C
+  variadic signatures remain distinct and are rejected independently by SET,
+  CALL, and RETURN;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
@@ -794,7 +818,8 @@ Still incomplete and therefore not an H0:
 - complete Win64 imported/variadic aggregate, indirect-call, callback, and
   formal ABI coverage;
 - system facilities, directives, output kinds, runtime image, and Red routines;
-- the full Red/System and Red correctness gates followed by H0/H1/H2.
+- repeating the complete Red/System and Red correctness gates after the
+  remaining feature families, followed by the H0/H1/H2 fixed-point gates.
 
 The next source changes continue by semantic family from the feature matrix.
 No self-host identifier or isolated test shape defines an operation.

@@ -23,6 +23,15 @@ Red/System [
 ]
 
 selection-entry!: alias function! [return: [integer!]]
+hidden-return-entry!: alias function! [
+	result [byte-ptr!]
+	value [byte-ptr!]
+	return: [byte-ptr!]
+]
+small-return-entry!: alias function! [
+	value [byte-ptr!]
+	return: [byte-ptr!]
+]
 
 put: func [data [byte-ptr!] offset value [integer!]][
 	x64-encoder/write-i32 (data + offset) value
@@ -82,30 +91,110 @@ execute-first?: func [
 	result = expected
 ]
 
+execute-hidden-return?: func [
+	image [byte-ptr!]
+	return: [logic!]
+	/local header [codegen-header!] fn [codegen-function!]
+		code input result returned [byte-ptr!]
+		entry [hidden-return-entry!] input-values result-values [int-ptr!]
+		valid? [logic!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE
+		+ x64-codegen/IMAGE_FUNCTION_SIZE)
+	if header/code-size > 4096 [return false]
+	code: VirtualAlloc (as byte-ptr! 0) 4096 3000h 40h
+	input: allocate 16
+	result: allocate 16
+	if any [null? code null? input null? result][
+		if not null? code [VirtualFree code 0 8000h]
+		if not null? input [free input]
+		if not null? result [free result]
+		return false
+	]
+	input-values: as int-ptr! input
+	input-values/1: 7
+	input-values/2: 8
+	input-values/3: 9
+	copy-memory code (image + header/code-offset) header/code-size
+	entry: as hidden-return-entry! (code + fn/code-offset)
+	returned: entry result input
+	result-values: as int-ptr! result
+	valid?: all [
+		returned = result
+		result-values/1 = 70
+		result-values/2 = 8
+		result-values/3 = 9
+	]
+	VirtualFree code 0 8000h
+	free input
+	free result
+	valid?
+]
+
+execute-small-return?: func [
+	image [byte-ptr!]
+	return: [logic!]
+	/local header [codegen-header!] fn [codegen-function!]
+		code value returned [byte-ptr!] entry [small-return-entry!] valid? [logic!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	if header/code-size > 4096 [return false]
+	code: VirtualAlloc (as byte-ptr! 0) 4096 3000h 40h
+	value: allocate 8
+	if any [null? code null? value][
+		if not null? code [VirtualFree code 0 8000h]
+		if not null? value [free value]
+		return false
+	]
+	copy-memory code (image + header/code-offset) header/code-size
+	entry: as small-return-entry! (code + fn/code-offset)
+	returned: entry value
+	valid?: returned = value
+	VirtualFree code 0 8000h
+	free value
+	valid?
+]
+
 failures: 0
 no-types: as byte-ptr! 0
-if not x64-codegen/implicitly-compatible-types? -3 -1 no-types 0 [
+sink-pairs: declare signature-pairs!
+sink-pairs/memory: null
+sink-pairs/pair-count: 0
+sink-pairs/pair-capacity: 0
+sink-pairs/slot-capacity: 0
+sink-pairs/epoch: 0
+if (x64-codegen/implicitly-compatible-types -3 -1 0 false
+	no-types no-types 0 sink-pairs) <> 1 [
 	failures: failures + 1
 ]
-if not x64-codegen/implicitly-compatible-types? -5 -2 no-types 0 [
+if (x64-codegen/implicitly-compatible-types -5 -2 0 false
+	no-types no-types 0 sink-pairs) <> 1 [
 	failures: failures + 1
 ]
-if not x64-codegen/implicitly-compatible-types? -7 -6 no-types 0 [
+if (x64-codegen/implicitly-compatible-types -7 -6 0 false
+	no-types no-types 0 sink-pairs) <> 1 [
 	failures: failures + 1
 ]
-if not x64-codegen/implicitly-compatible-types? -8 -6 no-types 0 [
+if (x64-codegen/implicitly-compatible-types -8 -6 0 false
+	no-types no-types 0 sink-pairs) <> 1 [
 	failures: failures + 1
 ]
-if x64-codegen/implicitly-compatible-types? -1 -5 no-types 0 [
+if (x64-codegen/implicitly-compatible-types -1 -5 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
 	failures: failures + 1
 ]
-if x64-codegen/implicitly-compatible-types? -4 -1 no-types 0 [
+if (x64-codegen/implicitly-compatible-types -4 -1 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
 	failures: failures + 1
 ]
-if x64-codegen/implicitly-compatible-types? -6 -3 no-types 0 [
+if (x64-codegen/implicitly-compatible-types -6 -3 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
 	failures: failures + 1
 ]
-if x64-codegen/implicitly-compatible-types? -7 -8 no-types 0 [
+if (x64-codegen/implicitly-compatible-types -7 -8 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
 	failures: failures + 1
 ]
 output: allocate 1024
@@ -116,7 +205,10 @@ arithmetic-ir: allocate 260
 expression-ir: allocate 260
 aggregate-ir: allocate 516
 abi-ir: allocate 1028
+small-return-ir: allocate 180
 widening-ir: allocate 676
+sink-ir: allocate 676
+signature-ir: allocate 1024
 indirect-ir: allocate 324
 variadic-ir: allocate 516
 import-variadic-ir: allocate 260
@@ -126,6 +218,7 @@ array-ir: allocate 260
 array-compare-ir: allocate 228
 branch-ir: allocate 260
 merge-ir: allocate 260
+literal-merge-ir: allocate 260
 selection-ir: allocate 260
 recursive-pointer-ir: allocate 164
 recursive-value-ir: allocate 148
@@ -143,13 +236,207 @@ array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
 	null? expression-ir
-	null? aggregate-ir null? abi-ir null? widening-ir null? indirect-ir null? variadic-ir
+	null? aggregate-ir null? abi-ir null? small-return-ir
+	null? widening-ir null? sink-ir null? signature-ir
+	null? indirect-ir null? variadic-ir
 	null? import-variadic-ir null? null-function-ir
 	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
-	null? merge-ir null? selection-ir null? recursive-pointer-ir null? recursive-value-ir
+	null? merge-ir null? literal-merge-ir null? selection-ir
+	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
 	null? exception-ir null? no-return-ir
 ][quit 1]
+
+; Null is implicitly compatible with reference-shaped sinks only. Keep the
+; pointer and function records distinct from the built-in scalar probes.
+put sink-ir 0 -6
+put sink-ir 4 -5
+put sink-ir 8 0
+put sink-ir 12 0
+put sink-ir 16 0
+put sink-ir 20 -4
+put sink-ir 24 0
+put sink-ir 28 0
+put sink-ir 32 0
+put sink-ir 36 0
+if (x64-codegen/implicitly-compatible-types 1 -14 0 false
+	sink-ir (sink-ir + 40) 2 sink-pairs) <> 1 [
+	print ["null to pointer compatibility was rejected" lf]
+	failures: failures + 1
+]
+if (x64-codegen/implicitly-compatible-types 2 -14 0 false
+	sink-ir (sink-ir + 40) 2 sink-pairs) <> 1 [
+	print ["null to function compatibility was rejected" lf]
+	failures: failures + 1
+]
+if (x64-codegen/implicitly-compatible-types -2 -14 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
+	print ["null to byte compatibility was accepted" lf]
+	failures: failures + 1
+]
+if (x64-codegen/implicitly-compatible-types -5 -14 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
+	print ["null to integer compatibility was accepted" lf]
+	failures: failures + 1
+]
+if (x64-codegen/implicitly-compatible-types -11 -14 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
+	print ["null to logic compatibility was accepted" lf]
+	failures: failures + 1
+]
+if (x64-codegen/implicitly-compatible-types -9 -14 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
+	print ["null to f32 compatibility was accepted" lf]
+	failures: failures + 1
+]
+if (x64-codegen/implicitly-compatible-types -10 -14 0 false
+	no-types no-types 0 sink-pairs) <> 0 [
+	print ["null to f64 compatibility was accepted" lf]
+	failures: failures + 1
+]
+
+; Distinct function type records are compatible only when their ABI shape,
+; return type, parameter types, and parameter flags all match.
+put sink-ir 0 -4
+put sink-ir 4 -11
+put sink-ir 8 1
+put sink-ir 12 0
+put sink-ir 16 2
+put sink-ir 20 -4
+put sink-ir 24 -11
+put sink-ir 28 1
+put sink-ir 32 2
+put sink-ir 36 2
+put sink-ir 40 -5
+put sink-ir 44 0
+put sink-ir 48 -2
+put sink-ir 52 0
+put sink-ir 56 -5
+put sink-ir 60 0
+put sink-ir 64 -2
+put sink-ir 68 0
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 1 [
+	print ["equal function signatures were rejected" lf]
+	failures: failures + 1
+]
+put sink-ir 64 -1
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 0 [
+	print ["function parameter type mismatch was accepted" lf]
+	failures: failures + 1
+]
+put sink-ir 64 -2
+put sink-ir 8 1
+put sink-ir 28 2
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 0 [
+	print ["cdecl and stdcall function signatures were compatible" lf]
+	failures: failures + 1
+]
+put sink-ir 8 0
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 1 [
+	print ["default and stdcall function signatures were incompatible" lf]
+	failures: failures + 1
+]
+put sink-ir 8 1
+put sink-ir 28 9
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 0 [
+	print ["function call shape mismatch was accepted" lf]
+	failures: failures + 1
+]
+put sink-ir 8 8
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 0 [
+	print ["packed and C variadic signatures were compatible" lf]
+	failures: failures + 1
+]
+put sink-ir 8 1
+put sink-ir 28 1
+put sink-ir 36 1
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 0 [
+	print ["function parameter count mismatch was accepted" lf]
+	failures: failures + 1
+]
+
+; Matching recursive signatures close over the same pair of distinct records.
+; Changing the recursive member on one side breaks that structural match.
+put sink-ir 0 -4
+put sink-ir 4 -11
+put sink-ir 8 1
+put sink-ir 12 0
+put sink-ir 16 1
+put sink-ir 20 -4
+put sink-ir 24 -11
+put sink-ir 28 1
+put sink-ir 32 1
+put sink-ir 36 1
+put sink-ir 40 1
+put sink-ir 44 0
+put sink-ir 48 2
+put sink-ir 52 0
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 1 [
+	print ["equal recursive function signatures were rejected" lf]
+	failures: failures + 1
+]
+put sink-ir 48 -5
+if (x64-codegen/sink-compatible-types 1 2 sink-ir
+	(sink-ir + 40) 2 sink-pairs) <> 0 [
+	print ["recursive function member mismatch was accepted" lf]
+	failures: failures + 1
+]
+
+; Eighteen distinct nested pairs force the reusable signature workspace through
+; its initial 16-pair capacity and rehash every queued pair exactly once.
+signature-index: 1
+left-ref: 0
+right-ref: 0
+signature-offset: 0
+while [signature-index <= 18][
+	left-ref: signature-index
+	right-ref: signature-index + 18
+	signature-offset: (left-ref - 1) * 20
+	put signature-ir signature-offset -4
+	put signature-ir (signature-offset + 4) -11
+	put signature-ir (signature-offset + 8) 0
+	put signature-ir (signature-offset + 12) (signature-index - 1)
+	put signature-ir (signature-offset + 16) 1
+	signature-offset: (right-ref - 1) * 20
+	put signature-ir signature-offset -4
+	put signature-ir (signature-offset + 4) -11
+	put signature-ir (signature-offset + 8) 0
+	put signature-ir (signature-offset + 12) (signature-index + 17)
+	put signature-ir (signature-offset + 16) 1
+	signature-offset: 720 + ((signature-index - 1) * 8)
+	put signature-ir signature-offset either signature-index = 18 [
+		-5
+	][signature-index + 1]
+	put signature-ir (signature-offset + 4) 0
+	signature-offset: 720 + ((signature-index + 17) * 8)
+	put signature-ir signature-offset either signature-index = 18 [
+		-5
+	][signature-index + 19]
+	put signature-ir (signature-offset + 4) 0
+	signature-index: signature-index + 1
+]
+if any [
+	(x64-codegen/sink-compatible-types 1 19 signature-ir
+		(signature-ir + 720) 36 sink-pairs) <> 1
+	sink-pairs/pair-capacity <> 32
+][
+	print ["nested function signature rehash failed" lf]
+	failures: failures + 1
+]
+put signature-ir 1000 -2
+if (x64-codegen/sink-compatible-types 1 19 signature-ir
+	(signature-ir + 720) 36 sink-pairs) <> 0 [
+	print ["nested signature mismatch was lost after rehash" lf]
+	failures: failures + 1
+]
 
 ; USER module: fn: func [][]
 put void-ir 0 1
@@ -654,6 +941,57 @@ if size > 0 [
 	header: as codegen-header! output
 	if header/function-count <> 2 [failures: failures + 1]
 	unless execute-first? output 77 [failures: failures + 1]
+	unless execute-hidden-return? output [
+		print ["hidden aggregate RETURN lost its buffer result" lf]
+		failures: failures + 1
+	]
+]
+
+; An eight-byte aggregate returns directly in RAX. Calling the generated
+; function with pointer-shaped bits makes the exact result easy to distinguish
+; from the address of its compiler stack slot.
+put small-return-ir 0 1
+put small-return-ir 4 0
+put small-return-ir 8 1
+put small-return-ir 12 0
+put small-return-ir 16 1
+put small-return-ir 20 3
+put small-return-ir 24 0
+put small-return-ir 28 0
+put small-return-ir 32 0
+
+put small-return-ir 36 -2
+put small-return-ir 40 0
+put small-return-ir 44 0
+put small-return-ir 48 0
+put small-return-ir 52 2
+put small-return-ir 56 -5
+put small-return-ir 60 0
+put small-return-ir 64 -5
+put small-return-ir 68 0
+
+put small-return-ir 72 0
+put small-return-ir 76 2
+put small-return-ir 80 1
+put small-return-ir 84 x64-codegen/RETURN_VALUE
+put small-return-ir 88 0
+put small-return-ir 92 1
+put small-return-ir 96 1
+put small-return-ir 100 0
+put small-return-ir 104 3
+
+put small-return-ir 108 1
+put small-return-ir 112 x64-codegen/INLINE
+put-instruction small-return-ir 116 3 1 1 0
+put-instruction small-return-ir 132 4 0 0 0
+put-instruction small-return-ir 148 11 1 0 0
+small-return-ir/165: as byte! 66h
+small-return-ir/166: as byte! 6Eh
+
+size: x64-codegen/generate small-return-ir 166 output 1024 0
+if any [size <= 0 not execute-small-return? output][
+	print ["register aggregate RETURN lost its value" lf]
+	failures: failures + 1
 ]
 
 ; One module exercises every implicit integer widening consumer. The entry
@@ -806,6 +1144,569 @@ if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_I
 ]
 put widening-ir 500 -4
 
+; A direct binary64 literal may narrow at a fixed binary32 CALL. The chosen
+; value rounds from 16777217.0 to 16777216.0, so execution also proves that
+; codegen converts the value rather than merely accepting its type.
+put sink-ir 0 1
+put sink-ir 4 0
+put sink-ir 8 0
+put sink-ir 12 0
+put sink-ir 16 2
+put sink-ir 20 8
+put sink-ir 24 0
+put sink-ir 28 0
+put sink-ir 32 0
+
+put sink-ir 36 0
+put sink-ir 40 4
+put sink-ir 44 -11
+put sink-ir 48 0
+put sink-ir 52 0
+put sink-ir 56 0
+put sink-ir 60 0
+put sink-ir 64 0
+put sink-ir 68 5
+
+put sink-ir 72 4
+put sink-ir 76 4
+put sink-ir 80 -9
+put sink-ir 84 0
+put sink-ir 88 0
+put sink-ir 92 1
+put sink-ir 96 1
+put sink-ir 100 0
+put sink-ir 104 3
+
+put sink-ir 108 -9
+put sink-ir 112 0
+
+put-instruction sink-ir 116 1 -10 10000000h 41700000h
+put-instruction sink-ir 132 7 2 1 -9
+put-instruction sink-ir 148 1 -9 4B800000h 0
+put-instruction sink-ir 164 15 13 0 0
+put-instruction sink-ir 180 11 -11 0 0
+
+put-instruction sink-ir 196 3 1 1 0
+put-instruction sink-ir 212 4 0 0 0
+put-instruction sink-ir 228 11 -9 0 0
+sink-ir/245: as byte! 6Dh
+sink-ir/246: as byte! 61h
+sink-ir/247: as byte! 69h
+sink-ir/248: as byte! 6Eh
+sink-ir/249: as byte! 74h
+sink-ir/250: as byte! 61h
+sink-ir/251: as byte! 6Bh
+sink-ir/252: as byte! 65h
+
+size: x64-codegen/generate sink-ir 252 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["literal f64 to fixed f32 CALL failed" lf]
+	failures: failures + 1
+]
+
+; CUSTOM consumes one ordinary stack value as its dynamic argument count.
+; The frontend does not pre-coerce it; native CALL must reject a non-integer.
+put sink-ir 84 32
+if (x64-codegen/generate sink-ir 252 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["non-integer custom call count was accepted" lf]
+	failures: failures + 1
+]
+put sink-ir 84 0
+
+; The same binary64 value is not allowed to narrow at an ordinary RETURN.
+; Widening the callee parameter makes its LOAD produce a runtime binary64.
+put sink-ir 108 -10
+if (x64-codegen/generate sink-ir 252 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["runtime f64 to f32 RETURN was accepted" lf]
+	failures: failures + 1
+]
+put sink-ir 108 -9
+
+; LOAD clears the direct-literal trait, so a runtime binary64 cannot narrow at
+; the otherwise literal-aware fixed binary32 CALL.
+put sink-ir 20 7
+put sink-ir 44 -9
+put sink-ir 64 1
+put sink-ir 68 4
+put sink-ir 80 -9
+put sink-ir 88 1
+put sink-ir 92 1
+put sink-ir 96 2
+put sink-ir 100 0
+put sink-ir 104 3
+put sink-ir 108 -10
+put sink-ir 112 0
+put sink-ir 116 -9
+put sink-ir 120 0
+put-instruction sink-ir 124 3 1 1 0
+put-instruction sink-ir 140 4 0 0 0
+put-instruction sink-ir 156 7 2 1 -9
+put-instruction sink-ir 172 11 -9 0 0
+put-instruction sink-ir 188 3 1 1 0
+put-instruction sink-ir 204 4 0 0 0
+put-instruction sink-ir 220 11 -9 0 0
+sink-ir/237: as byte! 6Dh
+sink-ir/238: as byte! 61h
+sink-ir/239: as byte! 69h
+sink-ir/240: as byte! 6Eh
+sink-ir/241: as byte! 74h
+sink-ir/242: as byte! 61h
+sink-ir/243: as byte! 6Bh
+sink-ir/244: as byte! 65h
+
+if (x64-codegen/generate sink-ir 244 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["loaded f64 to fixed f32 CALL was accepted" lf]
+	failures: failures + 1
+]
+put sink-ir 108 -9
+if (x64-codegen/generate sink-ir 244 output 1024 0) <= 0 [
+	print ["matched loaded f32 CALL control failed" lf]
+	failures: failures + 1
+]
+
+; SET is not a literal-aware sink and rejects binary64-to-binary32 narrowing.
+put sink-ir 116 -9
+put-instruction sink-ir 124 1 -10 0 1073217536
+put-instruction sink-ir 140 3 1 1 0
+put-instruction sink-ir 156 5 0 0 0
+put-instruction sink-ir 172 11 -9 0 0
+if (x64-codegen/generate sink-ir 244 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["literal f64 to f32 SET was accepted" lf]
+	failures: failures + 1
+]
+
+; Contextual null stays typeless in RSIR. Scalar CALL, SET, and RETURN sinks
+; reject it without changing any of the three source tags.
+put sink-ir 20 9
+put sink-ir 44 -11
+put sink-ir 64 1
+put sink-ir 68 7
+put sink-ir 80 -9
+put sink-ir 88 1
+put sink-ir 92 1
+put sink-ir 96 2
+put sink-ir 100 0
+put sink-ir 104 2
+put sink-ir 108 -9
+put sink-ir 112 0
+put sink-ir 116 -9
+put sink-ir 120 0
+put-instruction sink-ir 124 1 -14 0 0
+put-instruction sink-ir 140 7 2 1 -9
+put-instruction sink-ir 156 1 -14 0 0
+put-instruction sink-ir 172 3 1 1 0
+put-instruction sink-ir 188 5 0 0 0
+put-instruction sink-ir 204 15 13 0 0
+put-instruction sink-ir 220 11 -11 0 0
+put-instruction sink-ir 236 1 -14 0 0
+put-instruction sink-ir 252 11 -9 0 0
+sink-ir/269: as byte! 6Dh
+sink-ir/270: as byte! 61h
+sink-ir/271: as byte! 69h
+sink-ir/272: as byte! 6Eh
+sink-ir/273: as byte! 73h
+sink-ir/274: as byte! 69h
+sink-ir/275: as byte! 6Eh
+sink-ir/276: as byte! 6Bh
+
+array-values: as int-ptr! sink-ir
+if any [
+	array-values/33 <> -14
+	array-values/41 <> -14
+	array-values/61 <> -14
+][
+	print ["contextual null was retagged in RSIR" lf]
+	failures: failures + 1
+]
+if (x64-codegen/generate sink-ir 276 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["contextual null scalar CALL was accepted" lf]
+	failures: failures + 1
+]
+put sink-ir 128 -9
+if (x64-codegen/generate sink-ir 276 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["contextual null scalar SET was accepted" lf]
+	failures: failures + 1
+]
+put sink-ir 160 -9
+if (x64-codegen/generate sink-ir 276 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["contextual null scalar RETURN was accepted" lf]
+	failures: failures + 1
+]
+put sink-ir 240 -9
+if (x64-codegen/generate sink-ir 276 output 1024 0) <= 0 [
+	print ["matched scalar null-sink control failed" lf]
+	failures: failures + 1
+]
+
+; Calling conventions are part of a function value's sink type. The default
+; convention is stdcall, while cdecl must be rejected independently by SET,
+; a fixed CALL parameter, and RETURN.
+put sink-ir 0 1
+put sink-ir 4 0
+put sink-ir 8 2
+put sink-ir 12 0
+put sink-ir 16 3
+put sink-ir 20 13
+put sink-ir 24 0
+put sink-ir 28 0
+put sink-ir 32 0
+
+put sink-ir 36 -4
+put sink-ir 40 0
+put sink-ir 44 0
+put sink-ir 48 0
+put sink-ir 52 0
+put sink-ir 56 -4
+put sink-ir 60 0
+put sink-ir 64 2
+put sink-ir 68 0
+put sink-ir 72 0
+
+put sink-ir 76 0
+put sink-ir 80 1
+put sink-ir 84 0
+put sink-ir 88 0
+put sink-ir 92 0
+put sink-ir 96 0
+put sink-ir 100 0
+put sink-ir 104 0
+put sink-ir 108 1
+
+put sink-ir 112 0
+put sink-ir 116 1
+put sink-ir 120 0
+put sink-ir 124 0
+put sink-ir 128 0
+put sink-ir 132 1
+put sink-ir 136 1
+put sink-ir 140 0
+put sink-ir 144 1
+
+put sink-ir 148 0
+put sink-ir 152 1
+put sink-ir 156 2
+put sink-ir 160 0
+put sink-ir 164 1
+put sink-ir 168 0
+put sink-ir 172 1
+put sink-ir 176 1
+put sink-ir 180 11
+
+put sink-ir 184 2
+put sink-ir 188 0
+put sink-ir 192 2
+put sink-ir 196 0
+
+put-instruction sink-ir 200 11 0 0 0
+put-instruction sink-ir 216 11 0 0 0
+put-instruction sink-ir 232 3 4 1 1
+put-instruction sink-ir 248 20 1 0 0
+put-instruction sink-ir 264 3 1 1 0
+put-instruction sink-ir 280 5 0 0 0
+put-instruction sink-ir 296 12 0 0 0
+put-instruction sink-ir 312 3 4 1 1
+put-instruction sink-ir 328 20 1 0 0
+put-instruction sink-ir 344 7 2 1 0
+put-instruction sink-ir 360 3 4 1 1
+put-instruction sink-ir 376 20 1 0 0
+put-instruction sink-ir 392 11 2 0 0
+sink-ir/409: as byte! 0
+
+if (x64-codegen/generate sink-ir 409 output 1024 0) <= 0 [
+	print ["default and stdcall function sinks were incompatible" lf]
+	failures: failures + 1
+]
+put sink-ir 44 1
+put sink-ir 88 1
+if (x64-codegen/generate sink-ir 409 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["cdecl function value entered a stdcall SET sink" lf]
+	failures: failures + 1
+]
+; Give SET the exact source type so the next failure can only come from CALL.
+put sink-ir 192 1
+if (x64-codegen/generate sink-ir 409 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["cdecl function value entered a stdcall CALL sink" lf]
+	failures: failures + 1
+]
+; Give CALL the exact source type so only the declared stdcall RETURN remains.
+put sink-ir 184 1
+if (x64-codegen/generate sink-ir 409 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["cdecl function value entered a stdcall RETURN sink" lf]
+	failures: failures + 1
+]
+
+; CDECL variadic extras apply the default binary32-to-binary64 promotion in
+; codegen. The fifth argument uses a Win64 stack slot, and the concrete callee
+; consumes that slot as binary64, making this an executable conversion check.
+put sink-ir 0 1
+put sink-ir 4 0
+put sink-ir 8 2
+put sink-ir 12 0
+put sink-ir 16 2
+put sink-ir 20 15
+put sink-ir 24 0
+put sink-ir 28 0
+put sink-ir 32 0
+
+put sink-ir 36 -4
+put sink-ir 40 -10
+put sink-ir 44 9
+put sink-ir 48 0
+put sink-ir 52 1
+put sink-ir 56 -4
+put sink-ir 60 -10
+put sink-ir 64 1
+put sink-ir 68 1
+put sink-ir 72 5
+
+put sink-ir 76 -5
+put sink-ir 80 0
+put sink-ir 84 -5
+put sink-ir 88 0
+put sink-ir 92 -5
+put sink-ir 96 0
+put sink-ir 100 -5
+put sink-ir 104 0
+put sink-ir 108 -5
+put sink-ir 112 0
+put sink-ir 116 -10
+put sink-ir 120 0
+
+put sink-ir 124 0
+put sink-ir 128 4
+put sink-ir 132 -11
+put sink-ir 136 0
+put sink-ir 140 0
+put sink-ir 144 0
+put sink-ir 148 0
+put sink-ir 152 0
+put sink-ir 156 12
+
+put sink-ir 160 4
+put sink-ir 164 9
+put sink-ir 168 -10
+put sink-ir 172 1
+put sink-ir 176 0
+put sink-ir 180 5
+put sink-ir 184 5
+put sink-ir 188 0
+put sink-ir 192 3
+
+put sink-ir 196 -5
+put sink-ir 200 0
+put sink-ir 204 -5
+put sink-ir 208 0
+put sink-ir 212 -5
+put sink-ir 216 0
+put sink-ir 220 -5
+put sink-ir 224 0
+put sink-ir 228 -10
+put sink-ir 232 0
+
+put-instruction sink-ir 236 3 4 2 2
+put-instruction sink-ir 252 20 2 0 0
+put-instruction sink-ir 268 8 1 0 0
+put-instruction sink-ir 284 1 -5 0 0
+put-instruction sink-ir 300 1 -5 0 0
+put-instruction sink-ir 316 1 -5 0 0
+put-instruction sink-ir 332 1 -5 0 0
+put-instruction sink-ir 348 1 -9 3FC00000h 0
+put-instruction sink-ir 364 7 0 5 1
+put-instruction sink-ir 380 1 -10 0 1073217536
+put-instruction sink-ir 396 15 13 0 0
+put-instruction sink-ir 412 11 -11 0 0
+
+put-instruction sink-ir 428 3 1 5 0
+put-instruction sink-ir 444 4 0 0 0
+put-instruction sink-ir 460 11 -10 0 0
+sink-ir/477: as byte! 6Dh
+sink-ir/478: as byte! 61h
+sink-ir/479: as byte! 69h
+sink-ir/480: as byte! 6Eh
+sink-ir/481: as byte! 72h
+sink-ir/482: as byte! 65h
+sink-ir/483: as byte! 61h
+sink-ir/484: as byte! 64h
+sink-ir/485: as byte! 2Dh
+sink-ir/486: as byte! 66h
+sink-ir/487: as byte! 69h
+sink-ir/488: as byte! 76h
+sink-ir/489: as byte! 65h
+
+size: x64-codegen/generate sink-ir 489 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["cdecl variadic stack f32 promotion failed" lf]
+	failures: failures + 1
+]
+
+; A register-slot CDECL variadic extra is promoted in XMM1 and its converted
+; binary64 bits are mirrored in RDX. The callee checks both channels against
+; 1.5 before any body instruction can overwrite RDX.
+put sink-ir 0 1
+put sink-ir 4 0
+put sink-ir 8 4
+put sink-ir 12 0
+put sink-ir 16 2
+put sink-ir 20 23
+put sink-ir 24 0
+put sink-ir 28 0
+put sink-ir 32 0
+
+put sink-ir 36 -4
+put sink-ir 40 -11
+put sink-ir 44 9
+put sink-ir 48 0
+put sink-ir 52 1
+
+put sink-ir 56 -4
+put sink-ir 60 -11
+put sink-ir 64 1
+put sink-ir 68 1
+put sink-ir 72 2
+
+put sink-ir 76 -6
+put sink-ir 80 -5
+put sink-ir 84 0
+put sink-ir 88 3
+put sink-ir 92 0
+
+put sink-ir 96 -6
+put sink-ir 100 -10
+put sink-ir 104 0
+put sink-ir 108 3
+put sink-ir 112 0
+
+put sink-ir 116 -5
+put sink-ir 120 0
+put sink-ir 124 -5
+put sink-ir 128 0
+put sink-ir 132 -10
+put sink-ir 136 0
+
+put sink-ir 140 0
+put sink-ir 144 1
+put sink-ir 148 -11
+put sink-ir 152 0
+put sink-ir 156 0
+put sink-ir 160 0
+put sink-ir 164 0
+put sink-ir 168 0
+put sink-ir 172 7
+
+put sink-ir 176 1
+put sink-ir 180 1
+put sink-ir 184 -11
+put sink-ir 188 1
+put sink-ir 192 0
+put sink-ir 196 2
+put sink-ir 200 2
+put sink-ir 204 1
+put sink-ir 208 16
+
+put sink-ir 212 -5
+put sink-ir 216 0
+put sink-ir 220 -10
+put sink-ir 224 0
+put sink-ir 228 3
+put sink-ir 232 0
+
+put-instruction sink-ir 236 3 4 2 2
+put-instruction sink-ir 252 20 2 0 0
+put-instruction sink-ir 268 8 1 0 0
+put-instruction sink-ir 284 1 -5 0 0
+put-instruction sink-ir 300 1 -9 3FC00000h 0
+put-instruction sink-ir 316 7 0 2 1
+put-instruction sink-ir 332 11 -11 0 0
+
+put-instruction sink-ir 348 10 14 2 3
+put-instruction sink-ir 364 3 1 3 0
+put-instruction sink-ir 380 5 0 0 0
+put-instruction sink-ir 396 12 0 0 0
+put-instruction sink-ir 412 3 1 3 0
+put-instruction sink-ir 428 20 4 0 0
+put-instruction sink-ir 444 21 0 0 0
+put-instruction sink-ir 460 4 0 0 0
+put-instruction sink-ir 476 1 -10 0 1073217536
+put-instruction sink-ir 492 15 13 0 0
+put-instruction sink-ir 508 3 1 2 0
+put-instruction sink-ir 524 4 0 0 0
+put-instruction sink-ir 540 1 -10 0 1073217536
+put-instruction sink-ir 556 15 13 0 0
+put-instruction sink-ir 572 15 12 0 0
+put-instruction sink-ir 588 11 -11 0 0
+sink-ir/605: as byte! 61h
+sink-ir/606: as byte! 62h
+sink-ir/607: as byte! 72h
+sink-ir/608: as byte! 64h
+sink-ir/609: as byte! 78h
+
+size: x64-codegen/generate sink-ir 609 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["cdecl variadic register f32 promotion or GPR mirror failed" lf]
+	failures: failures + 1
+]
+
+; A tagged-union PLACE keeps its variant write chain in stack-tags. LOAD must
+; retain that index when it becomes a VALUE, but a positive variant index is
+; not the negative direct-literal tag and cannot narrow at the following CALL.
+put sink-ir 0 1
+put sink-ir 4 0
+put sink-ir 8 1
+put sink-ir 12 0
+put sink-ir 16 2
+put sink-ir 20 7
+put sink-ir 24 0
+put sink-ir 28 0
+put sink-ir 32 0
+
+put sink-ir 36 -3
+put sink-ir 40 0
+put sink-ir 44 1
+put sink-ir 48 0
+put sink-ir 52 1
+put sink-ir 56 -10
+put sink-ir 60 0
+
+put sink-ir 64 0
+put sink-ir 68 1
+put sink-ir 72 0
+put sink-ir 76 0
+put sink-ir 80 0
+put sink-ir 84 0
+put sink-ir 88 0
+put sink-ir 92 1
+put sink-ir 96 6
+
+put sink-ir 100 1
+put sink-ir 104 1
+put sink-ir 108 0
+put sink-ir 112 0
+put sink-ir 116 1
+put sink-ir 120 1
+put sink-ir 124 0
+put sink-ir 128 0
+put sink-ir 132 1
+
+put sink-ir 136 1
+put sink-ir 140 1
+put sink-ir 144 -9
+put sink-ir 148 0
+
+put-instruction sink-ir 152 16 2 0 0
+put-instruction sink-ir 168 3 1 1 0
+put-instruction sink-ir 184 6 0 1 0
+put-instruction sink-ir 200 4 0 0 0
+put-instruction sink-ir 216 7 2 1 0
+put-instruction sink-ir 232 11 0 0 0
+put-instruction sink-ir 248 11 0 0 0
+sink-ir/265: as byte! 61h
+sink-ir/266: as byte! 62h
+
+if (x64-codegen/generate sink-ir 266 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["tagged member LOAD confused a variant chain with a literal tag" lf]
+	failures: failures + 1
+]
+
 ; A function address is an ordinary typed value. The caller keeps it below
 ; one argument, CALL consumes both slots, and the callee returns 41 + 1.
 put indirect-ir 0 1
@@ -878,6 +1779,21 @@ if (x64-codegen/generate indirect-ir 306 output 1024 0) <> x64-codegen/INVALID_I
 	failures: failures + 1
 ]
 put indirect-ir 204 1
+
+; Callable type records reject catch mode combined with a foreign convention.
+; This validates raw function/subroutine types, not rsir-function! flags.
+put indirect-ir 44 (x64-codegen/CATCH_FLAG + x64-codegen/CDECL)
+if (x64-codegen/generate indirect-ir 306 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["conflicting raw function type flags were accepted" lf]
+	failures: failures + 1
+]
+put indirect-ir 36 -5
+if (x64-codegen/generate indirect-ir 306 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["conflicting raw subroutine type flags were accepted" lf]
+	failures: failures + 1
+]
+put indirect-ir 36 -4
+put indirect-ir 44 0
 
 ; Native variadic CALL keeps source values in the postfix stream. The caller
 ; packs them into one forward-order uint64 list and passes count/list/size.
@@ -1233,6 +2149,58 @@ merge-ir/186: as byte! 6Eh
 if (x64-codegen/generate merge-ir 186 output 1024 0) <= 0 [failures: failures + 1]
 put merge-ir 140 -11
 if (x64-codegen/generate merge-ir 186 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
+; Direct-float provenance is lexical, not a value property that survives a
+; control-flow merge. Even two literal arms must not enable f64 -> f32 CALL.
+put literal-merge-ir 0 1
+put literal-merge-ir 4 0
+put literal-merge-ir 8 0
+put literal-merge-ir 12 0
+put literal-merge-ir 16 2
+put literal-merge-ir 20 8
+put literal-merge-ir 24 0
+put literal-merge-ir 28 0
+put literal-merge-ir 32 0
+
+put literal-merge-ir 36 0
+put literal-merge-ir 40 1
+put literal-merge-ir 44 0
+put literal-merge-ir 48 0
+put literal-merge-ir 52 0
+put literal-merge-ir 56 0
+put literal-merge-ir 60 0
+put literal-merge-ir 64 0
+put literal-merge-ir 68 7
+
+put literal-merge-ir 72 1
+put literal-merge-ir 76 1
+put literal-merge-ir 80 0
+put literal-merge-ir 84 0
+put literal-merge-ir 88 0
+put literal-merge-ir 92 1
+put literal-merge-ir 96 1
+put literal-merge-ir 100 0
+put literal-merge-ir 104 1
+
+put literal-merge-ir 108 -9
+put literal-merge-ir 112 0
+
+put-instruction literal-merge-ir 116 1 -11 1 0
+put-instruction literal-merge-ir 132 17 5 0 0
+put-instruction literal-merge-ir 148 1 -10 0 1073217536
+put-instruction literal-merge-ir 164 16 6 0 0
+put-instruction literal-merge-ir 180 1 -10 0 1074003968
+put-instruction literal-merge-ir 196 7 2 1 0
+put-instruction literal-merge-ir 212 11 0 0 0
+put-instruction literal-merge-ir 228 11 0 0 0
+literal-merge-ir/245: as byte! 61h
+literal-merge-ir/246: as byte! 62h
+
+if (x64-codegen/generate literal-merge-ir 246 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	print ["merged float literals retained direct-literal provenance" lf]
 	failures: failures + 1
 ]
 
@@ -1974,6 +2942,12 @@ no-return-ir/144: as byte! 32h
 
 size: x64-codegen/generate no-return-ir 144 output 1024 0
 if size <= 0 [failures: failures + 1]
+put no-return-ir 48 x64-codegen/CATCH_FLAG
+if (x64-codegen/generate no-return-ir 144 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["catch caller lost the continuation after a no-return call" lf]
+	failures: failures + 1
+]
+put no-return-ir 48 0
 put no-return-ir 84 0
 if (x64-codegen/generate no-return-ir 144 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
@@ -1987,7 +2961,10 @@ free arithmetic-ir
 free expression-ir
 free aggregate-ir
 free abi-ir
+free small-return-ir
 free widening-ir
+free sink-ir
+free signature-ir
 free indirect-ir
 free variadic-ir
 free null-function-ir
@@ -1996,6 +2973,7 @@ free array-ir
 free array-compare-ir
 free branch-ir
 free merge-ir
+free literal-merge-ir
 free selection-ir
 free recursive-pointer-ir
 free recursive-value-ir
@@ -2006,6 +2984,7 @@ free atomic-ir
 free overflow-ir
 free exception-ir
 free no-return-ir
+x64-codegen/free-signature-pairs sink-pairs
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]
 ][

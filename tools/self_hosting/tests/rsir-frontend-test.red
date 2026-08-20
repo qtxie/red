@@ -164,6 +164,22 @@ op-count: func [operations [block!] operation [integer!] /local count value][
 	count
 ]
 
+function-ops-of: func [
+	ir [binary!]
+	layout [block!]
+	function-id [integer!]
+	/local output id count
+][
+	output: make block! 8
+	count: function-word ir layout function-id 32
+	id: 1
+	while [id <= count][
+		append output function-instruction-word ir layout function-id id 0
+		id: id + 1
+	]
+	output
+]
+
 void-ir: compile-text {Red/System [] fn: func [][]} 'user
 assert binary? void-ir ["void function failed: " mold frontend/last-error]
 void-layout: layout-of void-ir
@@ -490,12 +506,16 @@ assert binary? generic-pointer-ir [
 assert none? find (ops-of generic-pointer-ir layout-of generic-pointer-ir) 8
 	"generic pointer compatibility emitted a representation-preserving cast"
 
-assert none? compile-text {
+typed-pointer-mismatch-ir: compile-text {
 	Red/System []
 	bad: func [target [int-ptr!] source [byte-ptr!]][target: source]
-} 'user "distinct typed pointers became implicitly compatible"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"typed pointer mismatch reported the wrong error class"
+} 'user
+assert binary? typed-pointer-mismatch-ir [
+	"frontend rejected backend-owned typed pointer compatibility: "
+	mold frontend/last-error
+]
+assert none? find (ops-of typed-pointer-mismatch-ir layout-of typed-pointer-mismatch-ir) 8
+	"typed pointer mismatch introduced a frontend CAST"
 
 assert binary? compile-text {
 	Red/System []
@@ -1018,7 +1038,7 @@ assert all [
 	(type-word aggregate-alias-ir aggregate-alias-layout 2 4) = 1
 ]["equivalent aggregate aliases were serialized as duplicate definitions"]
 
-assert none? compile-text {
+aggregate-mismatch-ir: compile-text {
 	Red/System []
 	left!: alias struct! [value [integer!]]
 	right!: alias struct! [value [byte!]]
@@ -1027,9 +1047,13 @@ assert none? compile-text {
 		box: declare box!
 		box/target: box/source
 	]
-} 'user "inline aggregate assignment accepted a different definition"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"incompatible inline aggregate assignment reported the wrong error class"
+} 'user
+assert binary? aggregate-mismatch-ir [
+	"frontend rejected backend-owned inline aggregate compatibility: "
+	mold frontend/last-error
+]
+assert none? find (ops-of aggregate-mismatch-ir layout-of aggregate-mismatch-ir) 8
+	"inline aggregate mismatch introduced a frontend CAST"
 
 comment-ir: compile-text {
 	Red/System []
@@ -1524,8 +1548,18 @@ contextual-null-ir: compile-text {
 assert binary? contextual-null-ir [
 	"contextual null literal failed: " mold frontend/last-error
 ]
-assert none? find (ops-of contextual-null-ir layout-of contextual-null-ir) 8
+contextual-null-layout: layout-of contextual-null-ir
+assert none? find (ops-of contextual-null-ir contextual-null-layout) 8
 	"contextual null literal emitted a runtime cast"
+contextual-null-count: 0
+repeat id word-at contextual-null-ir 20 [
+	if all [
+		(instruction-word contextual-null-ir contextual-null-layout id 0) = 1
+		(instruction-word contextual-null-ir contextual-null-layout id 4) = -14
+	][contextual-null-count: contextual-null-count + 1]
+]
+assert contextual-null-count = 5
+	"contextual null literals were retagged before native sinks"
 
 assert binary? compile-text {
 	Red/System []
@@ -1604,7 +1638,7 @@ repeat id word-at callback-ir 20 [
 ]
 assert callback-call > 0 "callback did not lower through an imported CALL"
 
-assert none? compile-text {
+callback-mismatch-ir: compile-text {
 	Red/System []
 	#import [
 		"foo.dll" cdecl [
@@ -1616,9 +1650,12 @@ assert none? compile-text {
 	]
 	compare: func [[cdecl] left [integer!] return: [logic!]][left <> 0]
 	run: func [][foo :compare]
-} 'user "a callback signature mismatch was accepted"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"function signature mismatch reported the wrong error class"
+} 'user
+assert binary? callback-mismatch-ir [
+	"frontend rejected backend-owned callback compatibility: " mold frontend/last-error
+]
+assert none? find (ops-of callback-mismatch-ir layout-of callback-mismatch-ir) 8
+	"callback mismatch introduced a frontend CAST"
 
 assert binary? compile-text {
 	Red/System []
@@ -1875,24 +1912,18 @@ assert binary? cdecl-variadic-ir [
 ]
 cdecl-variadic-layout: layout-of cdecl-variadic-ir
 cdecl-variadic-call: 0
-cdecl-variadic-promotion: 0
 repeat id word-at cdecl-variadic-ir 20 [
-	either (instruction-word cdecl-variadic-ir cdecl-variadic-layout id 0) = 7 [
+	if (instruction-word cdecl-variadic-ir cdecl-variadic-layout id 0) = 7 [
 		cdecl-variadic-call: id
-	][
-		if all [
-			(instruction-word cdecl-variadic-ir cdecl-variadic-layout id 0) = 8
-			(instruction-word cdecl-variadic-ir cdecl-variadic-layout id 4) = -10
-		][cdecl-variadic-promotion: id]
 	]
 ]
 assert all [
 	(function-word cdecl-variadic-ir cdecl-variadic-layout 1 12) = 9
 	cdecl-variadic-call > 0
-	cdecl-variadic-promotion > 0
+	none? find (ops-of cdecl-variadic-ir cdecl-variadic-layout) 8
 	(instruction-word cdecl-variadic-ir cdecl-variadic-layout
 		cdecl-variadic-call 8) = 2
-]["cdecl variadic prefix checking or float promotion is incorrect"]
+]["cdecl variadic promotion did not remain a native CALL concern"]
 
 indirect-variadic-ir: compile-text {
 	Red/System []
@@ -2349,8 +2380,8 @@ assert binary? null-selection-ir [
 	"reference/null selection failed: " mold frontend/last-error
 ]
 assert (op-count ops-of null-selection-ir layout-of null-selection-ir
-	frontend/cast-op) = 2
-	"a leading null arm did not retain its polymorphic reference type"
+	frontend/cast-op) = 0
+	"polymorphic null selection introduced a frontend sink CAST"
 
 null-aggregate-selection-ir: compile-text {
 	Red/System []
@@ -2373,17 +2404,20 @@ assert binary? null-aggregate-selection-ir [
 	"polymorphic null selection failed: " mold frontend/last-error
 ]
 assert (op-count ops-of null-aggregate-selection-ir
-	layout-of null-aggregate-selection-ir frontend/cast-op) = 2
-	"polymorphic null selections were not contextualized exactly once"
+	layout-of null-aggregate-selection-ir frontend/cast-op) = 1
+	"polymorphic null selection did not retain only its explicit CAST"
 
-assert none? compile-text {
+struct-mismatch-ir: compile-text {
 	Red/System []
 	cell!: alias struct! [header [integer!] data [integer!]]
 	block!: alias struct! [header [integer!] head [integer!]]
 	bad: func [source [cell!] /local out [block!]][out: source]
-} 'user "distinct struct references became implicitly compatible"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"struct reference mismatch reported the wrong error class"
+} 'user
+assert binary? struct-mismatch-ir [
+	"frontend rejected backend-owned aggregate compatibility: " mold frontend/last-error
+]
+assert none? find (ops-of struct-mismatch-ir layout-of struct-mismatch-ir) 8
+	"aggregate mismatch introduced a frontend CAST"
 
 nested-selection-statements-ir: compile-text {
 	Red/System []
@@ -2773,6 +2807,20 @@ assert all [
 	(instruction-word single-float-ir single-float-layout 1 12) = 0
 ]["float32! literal was not directly typed at compile time"]
 
+integer-float-cast-ir: compile-text {
+	Red/System []
+	value: func [return: [float!]][as float! 1]
+} 'user
+assert binary? integer-float-cast-ir [
+	"integer-to-float literal cast failed: " mold frontend/last-error
+]
+integer-float-cast-layout: layout-of integer-float-cast-ir
+assert all [
+	(ops-of integer-float-cast-ir integer-float-cast-layout) = [1 8 11]
+	(instruction-word integer-float-cast-ir integer-float-cast-layout 1 4) = -5
+	(instruction-word integer-float-cast-ir integer-float-cast-layout 2 4) = -10
+]["integer-to-float cast was folded into a direct float literal"]
+
 mixed-float-ir: compile-text {
 	Red/System []
 	mixed: func [
@@ -2826,9 +2874,9 @@ assert binary? float-argument-ir [
 ]
 float-argument-layout: layout-of float-argument-ir
 assert all [
-	(ops-of float-argument-ir float-argument-layout) = [3 4 11 1 8 7 11]
-	(instruction-word float-argument-ir float-argument-layout 5 4) = -9
-]["float32! argument literal coercion was not represented by CAST"]
+	(ops-of float-argument-ir float-argument-layout) = [3 4 11 1 7 11]
+	(instruction-word float-argument-ir float-argument-layout 4 4) = -10
+]["float argument literal did not remain unmodified for native CALL coercion"]
 
 short-ir: compile-text {
 	Red/System []
@@ -3197,12 +3245,16 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-ARGUMENTS
 	"invalid #script source reported the wrong error class"
 
-assert none? compile-text {
+local-type-change-ir: compile-text {
 	Red/System []
 	fn: func [/local value][value: 1 value: true]
-} 'user "local inference allowed its type to change"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"local type change reported the wrong error class"
+} 'user
+assert binary? local-type-change-ir [
+	"frontend rejected backend-owned inferred local compatibility: "
+	mold frontend/last-error
+]
+assert none? find (ops-of local-type-change-ir layout-of local-type-change-ir) 8
+	"inferred local type change introduced a frontend CAST"
 
 narrow-ir: compile-text {
 	Red/System []
@@ -3256,12 +3308,16 @@ assert (ops-of mixed-float-comparison-ir layout-of mixed-float-comparison-ir) = 
 	3 4 3 4 15 11
 ]["mixed floating comparison did not remain one dense binary operation"]
 
-assert none? compile-text {
+float32-assignment-ir: compile-text {
 	Red/System []
 	set-single: func [value [float32!]][value: 1.5]
-} 'user "float32! assignment accepted an implicit runtime narrowing"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"implicit float32! assignment narrowing reported the wrong error class"
+} 'user
+assert binary? float32-assignment-ir [
+	"frontend rejected backend-owned float assignment narrowing: "
+	mold frontend/last-error
+]
+assert none? find (ops-of float32-assignment-ir layout-of float32-assignment-ir) 8
+	"float assignment narrowing introduced a frontend CAST"
 
 invalid-binary-ir: compile-text {
 	Red/System []
@@ -4116,10 +4172,11 @@ assert binary? catch-function-ir [
 catch-function-layout: layout-of catch-function-ir
 assert all [
 	((function-word catch-function-ir catch-function-layout 2 12) and 256) = 256
-	((function-word catch-function-ir catch-function-layout 2 12) and 1024) = 1024
+	((function-word catch-function-ir catch-function-layout 2 12) and 1024) = 0
+	(function-ops-of catch-function-ir catch-function-layout 2) = [7 11]
 	(word-at catch-function-ir 24) = 1
 	not none? find ops-of catch-function-ir catch-function-layout 26
-]["the catch function attribute did not remain a direct function flag"]
+]["a catch function did not resume after a throwing call"]
 
 no-return-ir: compile-text {
 	Red/System []
@@ -4145,6 +4202,59 @@ assert all [
 	((function-word no-return-ir no-return-layout 4 12) and 1024) = 0
 	((function-word no-return-ir no-return-layout 5 12) and 1024) = 0
 ]["no-return inference did not distinguish unwinding from normal returns"]
+
+stopped-argument-ir: compile-text {
+	Red/System []
+	typed-value!: alias struct! [
+		type [integer!]
+		_align0 [integer!]
+		value [int-ptr!]
+		_padding [integer!]
+		_align1 [integer!]
+	]
+	callback!: alias function! [value [integer!]]
+	stop: func [return: [integer!]][assert false]
+	take: func [value [integer!]][]
+	take-two: func [left [integer!] right [integer!]][]
+	sum: func [[infix] left [integer!] right [integer!] return: [integer!]][left]
+	collect: func [[variadic] count [integer!] list [int-ptr!]][]
+	typed-sink: func [[typed] count [integer!] list [typed-value!]][]
+	custom-sink: func [[custom] return: [integer!]][0]
+	fixed-stop: func [][take stop]
+	multi-stop: func [][take-two stop 1]
+	infix-stop: func [][stop sum 1]
+	variadic-stop: func [][collect [stop 1]]
+	typed-stop: func [][typed-sink [stop 1]]
+	custom-stop: func [][custom-sink stop]
+	indirect-stop: func [callback [callback!]][callback stop]
+	binary-left-stop: func [][take stop + 1]
+	binary-right-stop: func [][take 1 + stop]
+	not-stop: func [][take not stop]
+	infix-chain-stop: func [][take stop sum 1 + 2]
+	cast-stop: func [][take as integer! stop]
+} 'user
+assert binary? stopped-argument-ir [
+	"terminating call argument did not propagate: " mold frontend/last-error
+]
+stopped-argument-ops: ops-of stopped-argument-ir layout-of stopped-argument-ir
+assert all [
+	(op-count stopped-argument-ops frontend/call-op) = 12
+	(op-count stopped-argument-ops frontend/fail-op) = 8
+]["a call survived its terminating argument"]
+stopped-argument-layout: layout-of stopped-argument-ir
+assert all [
+	(function-ops-of stopped-argument-ir stopped-argument-layout 8) = [7]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 9) = [7 1 19]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 10) = [7 1 19]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 11) = [7 1 19]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 12) = [7 1 19]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 13) = [7]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 15) = [7 1 19]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 16) = [1 7]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 17) = [7]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 18) = [7 1 19 1 19]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 19) = [7]
+]["terminating expression state was not sticky through its consumer"]
 
 nested-catch-ir: compile-text {
 	Red/System []
@@ -4344,12 +4454,16 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"invalid stack assignment reported the wrong error class"
 
-assert none? compile-text {
+invalid-stack-top-ir: compile-text {
 	Red/System []
 	fn: func [][system/stack/top: 1]
-} 'user "system/stack/top accepted a non-pointer assignment"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid stack pointer assignment reported the wrong error class"
+} 'user
+assert binary? invalid-stack-top-ir [
+	"frontend rejected backend-owned stack pointer compatibility: "
+	mold frontend/last-error
+]
+assert none? find (ops-of invalid-stack-top-ir layout-of invalid-stack-top-ir) 8
+	"invalid stack pointer assignment introduced a frontend CAST"
 
 assert none? compile-text {
 	Red/System []
@@ -4424,13 +4538,17 @@ assert all [
 		((word-at indirect-custom-ir 20) - 1) 12) > 0
 ]["indirect custom call lost its function signature or count operand"]
 
-assert none? compile-text {
+invalid-custom-count-ir: compile-text {
 	Red/System []
 	target: func [[custom] return: [integer!]][41]
 	caller: func [return: [integer!]][target true]
-} 'user "custom call accepted a non-integer count"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid custom count reported the wrong error class"
+} 'user
+assert binary? invalid-custom-count-ir [
+	"frontend rejected backend-owned custom count type: " mold frontend/last-error
+]
+assert none? find (ops-of invalid-custom-count-ir
+	layout-of invalid-custom-count-ir) frontend/cast-op
+	"invalid custom count introduced a frontend CAST"
 
 diagnostic-ir: compile-text {
 	Red/System []
@@ -4540,20 +4658,26 @@ assert none? compile-text {
 assert frontend/last-error/message = "return is missing an argument"
 	"missing RETURN argument did not report the canonical error"
 
-assert none? compile-text {
+return-mismatch-ir: compile-text {
 	Red/System []
 	foo: func [return: [integer!]][return true]
-} 'user "RETURN accepted an incompatible result"
-assert frontend/last-error/message = "wrong return type in function: foo"
-	"RETURN type mismatch did not report the canonical error"
+} 'user
+assert binary? return-mismatch-ir [
+	"frontend rejected backend-owned RETURN compatibility: " mold frontend/last-error
+]
+assert (ops-of return-mismatch-ir layout-of return-mismatch-ir) = [1 11]
+	"RETURN mismatch did not remain one literal and one sink"
 
-assert none? compile-text {
+call-mismatch-ir: compile-text {
 	Red/System []
 	take: func [value [integer!]][]
-	take true
-} 'user "a direct call accepted an incompatible argument"
-assert frontend/last-error/message = "argument type mismatch on calling: take"
-	"direct call mismatch did not report the canonical error"
+	run: func [][take true]
+} 'user
+assert binary? call-mismatch-ir [
+	"frontend rejected backend-owned CALL compatibility: " mold frontend/last-error
+]
+assert none? find (ops-of call-mismatch-ir layout-of call-mismatch-ir) 8
+	"CALL mismatch introduced a frontend CAST"
 
 assert none? compile-text {
 	Red/System []

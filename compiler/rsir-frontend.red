@@ -120,6 +120,7 @@ compiler-rsir-frontend: context [
 		float32-ptr! [float32!]
 	]
 
+	cdecl-flag: 1
 	return-value-flag: 4
 	variadic-flag: 8
 	typed-flag: 16
@@ -217,7 +218,6 @@ compiler-rsir-frontend: context [
 
 	last-type: 0
 	last-flags: 0
-	last-float-literal?: false
 	last-stopped?: false
 	function-base: 0
 	function-return: 0
@@ -285,46 +285,6 @@ compiler-rsir-frontend: context [
 			patch: skip patch 3
 		]
 		clear native-name-patches
-	]
-
-	emit-before: func [
-		output [binary!]
-		offset [integer!]
-		values [block!]
-		/local count value
-	][
-		count: (length? values) * 4
-		insert/dup at output offset 0 count
-		foreach value values [
-			change/part at output offset int-to-bin/to-bin32 value 4
-			offset: offset + 4
-		]
-	]
-
-	read-i32: func [data [binary!] offset [integer!] return: [integer!] /local high][
-		high: to integer! pick data (offset + 3)
-		(to integer! pick data offset)
-			+ ((to integer! pick data (offset + 1)) * 256)
-			+ ((to integer! pick data (offset + 2)) * 65536)
-			+ ((either high > 127 [high - 256][high]) * 16777216)
-	]
-
-	retag-null-literal: func [
-		instructions [binary!]
-		target [integer!]
-		end [integer! none!]
-		return: [logic!]
-		/local start
-	][
-		end: any [end index? tail instructions]
-		start: end - 16
-		unless all [
-			start > 0
-			(read-i32 instructions start) = literal-op
-			(read-i32 instructions (start + 4)) = -14
-		][return false]
-		change/part at instructions (start + 4) int-to-bin/to-bin32 target 4
-		true
 	]
 
 	instruction-here: func [output [binary!] return: [integer!]][
@@ -3043,7 +3003,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [reference-op ref 0 0]
 		last-type: ref
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		true
 	]
@@ -3063,15 +3022,25 @@ compiler-rsir-frontend: context [
 	]
 
 	function-signatures-compatible?: func [
-		expected actual depth [integer!]
+		expected actual [integer!]
+		visited [block!]
 		return: [logic!]
-		/local left right left-parameter right-parameter
+		/local left right left-parameter right-parameter cursor
 	][
-		if depth > type-count [return false]
+		cursor: visited
+		while [not tail? cursor][
+			if all [cursor/1 = expected cursor/2 = actual][return true]
+			cursor: skip cursor 2
+		]
+		append visited expected
+		append visited actual
 		left: function-signature expected
 		right: function-signature actual
 		unless all [block? left block? right][return false]
-		if (left/4 and call-shape-flags) <> (right/4 and call-shape-flags)[
+		if any [
+			(left/4 and cdecl-flag) <> (right/4 and cdecl-flag)
+			(left/4 and call-shape-flags) <> (right/4 and call-shape-flags)
+		][
 			return false
 		]
 		either left/1 = 0 [
@@ -3079,7 +3048,7 @@ compiler-rsir-frontend: context [
 		][
 			if any [
 				right/1 = 0
-				not stack-type-compatible-at? left/1 right/1 (depth + 1)
+				not stack-type-compatible-at? left/1 right/1 visited
 			][return false]
 		]
 		if (length? left/2) <> length? right/2 [return false]
@@ -3089,7 +3058,7 @@ compiler-rsir-frontend: context [
 			if any [
 				left-parameter/3 <> right-parameter/3
 				not stack-type-compatible-at? left-parameter/2 right-parameter/2
-					(depth + 1)
+					visited
 			][return false]
 			left-parameter: skip left-parameter 3
 			right-parameter: skip right-parameter 3
@@ -3099,7 +3068,7 @@ compiler-rsir-frontend: context [
 
 	stack-type-compatible-at?: func [
 		expected actual [integer!]
-		depth [integer!]
+		visited [block! none!]
 		return: [logic!]
 		/local expected-kind actual-kind
 	][
@@ -3119,7 +3088,8 @@ compiler-rsir-frontend: context [
 		][return true]
 		if array-pointer-compatible? expected actual [return true]
 		if all [expected-kind = 'function actual-kind = 'function][
-			return function-signatures-compatible? expected actual depth
+			if none? visited [visited: make block! 8]
+			return function-signatures-compatible? expected actual visited
 		]
 		if any [reference-kind? expected-kind reference-kind? actual-kind][return false]
 		either all [expected > 0 actual > 0][
@@ -3133,7 +3103,10 @@ compiler-rsir-frontend: context [
 		expected actual [integer!]
 		return: [logic!]
 	][
-		stack-type-compatible-at? expected actual 0
+		expected: canonical-ref expected
+		actual: canonical-ref actual
+		if expected = actual [return true]
+		stack-type-compatible-at? expected actual none
 	]
 
 	integer-kind?: func [kind [word! none!] return: [logic!]][
@@ -3209,95 +3182,6 @@ compiler-rsir-frontend: context [
 				" to " type-spelling target " is not necessary"
 			]
 		]
-	]
-
-	coerce-stack: func [
-		expected expected-flags [integer!]
-		instructions [binary!]
-		allow-float-literal? [logic!]
-		/before offset [integer!]
-		return: [logic!]
-		/local source-kind target-kind
-	][
-		target-kind: ref-kind expected
-		if all [
-			expected-flags = 0
-			last-flags = 0
-			last-type = -14
-			any [
-				reference-kind? target-kind
-				integer-kind? target-kind
-				target-kind = 'logic
-				float-kind? target-kind
-			]
-			retag-null-literal instructions expected either before [offset][none]
-		][
-			last-type: expected
-			last-flags: 0
-			last-float-literal?: false
-			return true
-		]
-		if all [
-			expected-flags = last-flags
-			stack-type-compatible? expected last-type
-		][
-			if all [
-				(canonical-ref expected) <> canonical-ref last-type
-				any [
-					last-type = -14
-					(ref-kind expected) = 'function
-					(ref-kind last-type) = 'function
-				]
-			][either before [
-				emit-before instructions offset reduce [cast-op expected expected-flags 0]
-			][
-				emit instructions reduce [cast-op expected expected-flags 0]
-			]]
-			last-type: expected
-			last-flags: expected-flags
-			return true
-		]
-		source-kind: ref-kind last-type
-		if all [
-			last-flags = 0
-			expected-flags <> 0
-			find [struct union] target-kind
-			find [struct union] source-kind
-			stack-type-compatible? expected last-type
-		][
-			last-type: expected
-			return true
-		]
-		if all [
-			allow-float-literal?
-			last-float-literal?
-			expected-flags = 0
-			last-flags = 0
-			source-kind = 'f64
-			target-kind = 'f32
-		][
-			either before [
-				emit-before instructions offset reduce [cast-op expected 0 0]
-			][
-				emit instructions reduce [cast-op expected 0 0]
-			]
-			last-type: expected
-			last-flags: 0
-			last-float-literal?: false
-			return true
-		]
-		if all [
-			expected-flags = 0
-			last-flags = 0
-			integer-kind? source-kind
-			integer-kind? target-kind
-		][
-			last-type: expected
-			last-flags: 0
-			last-float-literal?: false
-			return true
-		]
-		false
 	]
 
 	hex-digit: func [value [char!] return: [integer!] /local code][
@@ -3719,7 +3603,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [load-op 0 0 0]
 		last-type: info/1
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		next position
 	]
@@ -3837,7 +3720,6 @@ compiler-rsir-frontend: context [
 			]
 		]
 		emit instructions reduce [binary-op operation anchor overflow-data]
-		last-float-literal?: false
 		either comparison? [
 			last-type: -11
 			last-flags: 0
@@ -4108,7 +3990,6 @@ compiler-rsir-frontend: context [
 		]
 		last-type: record/3
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: record/4
 		next position
 	]
@@ -4156,7 +4037,7 @@ compiler-rsir-frontend: context [
 		/local type-info target-position target-spec target-ref target-flags
 			target-kind source keep? value
 			literal-end bits next-position source-ref source-flags
-			source-literal? stored-function? id
+			stored-function? id
 	][
 		target-position: next position
 		if all [
@@ -4197,7 +4078,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [reference-op target-ref 0 0]
 			last-type: target-ref
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return literal-end
 		]
@@ -4205,8 +4085,8 @@ compiler-rsir-frontend: context [
 			target-flags = 0
 			float-kind? target-kind
 			any [
-				all [not keep? any [float-literal? value integer? value]]
-				all [keep? target-kind = 'f32 integer? value]
+				all [not keep? float-literal? value]
+				all [target-kind = 'f32 integer? value]
 			]
 			any [tail? literal-end none? select binary-operations literal-end/1]
 		][
@@ -4221,7 +4101,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [literal-op target-ref bits/1 bits/2]
 			last-type: target-ref
 			last-flags: 0
-			last-float-literal?: all [target-kind = 'f64 float-literal? value]
 			return literal-end
 		]
 
@@ -4241,10 +4120,10 @@ compiler-rsir-frontend: context [
 		unless stored-function? [
 			next-position: stack-value source scope uses instructions params locals
 				expression-value
+			if last-stopped? [return next-position]
 		]
 		source-ref: last-type
 		source-flags: last-flags
-		source-literal?: last-float-literal?
 		if all [source-ref = -14 null-literal? value][
 			fail ERROR-REFERENCE "null cannot be explicitly cast"
 		]
@@ -4267,7 +4146,6 @@ compiler-rsir-frontend: context [
 		]
 		last-type: target-ref
 		last-flags: target-flags
-		last-float-literal?: all [source-literal? target-kind = 'f64]
 		next-position
 	]
 
@@ -4483,23 +4361,38 @@ compiler-rsir-frontend: context [
 	][
 		position-after: stack-value next position scope uses instructions params locals
 			expression-value
-		unless all [
-			not last-stopped?
-			last-flags = 0
-			stack-type-compatible? -5 last-type
-		][fail ERROR-REFERENCE ["custom call count must be an integer!: " mold value]]
+		if last-stopped? [
+			finish-stopped-expression instructions
+			return position-after
+		]
+		unless last-type <> 0 [
+			fail ERROR-REFERENCE ["custom call count is missing: " mold value]
+		]
 		emit instructions reduce [
 			call-op target 1 either target = 0 [signature-ref][return-ref]
 		]
 		last-type: return-ref
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: direct-no-return? target
+		if last-stopped? [last-type: 0]
 		position-after
 	]
 
 	direct-no-return?: func [target [integer!] return: [logic!]][
-		to logic! all [target > 0 select no-return-functions target]
+		to logic! all [
+			target > 0
+			(function-flags and catch-flag) = 0
+			select no-return-functions target
+		]
+	]
+
+	finish-stopped-expression: func [instructions [binary!]][
+		; Syntax after a terminating subexpression is still parsed. Terminate any
+		; disconnected postfix suffix which can otherwise fall through.
+		unless last-stopped? [emit instructions reduce [fail-op 102 0 0]]
+		last-type: 0
+		last-flags: 0
+		last-stopped?: true
 	]
 
 	stack-call: func [
@@ -4512,7 +4405,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		return: [block!]
 		/local record return-ref parameters flags mode
-			parameter count expected expected-flags position-after
+			parameter count position-after stopped?
 	][
 		either target > 0 [
 			record: skip functions ((target - 1) * 10)
@@ -4545,6 +4438,7 @@ compiler-rsir-frontend: context [
 			]
 		]
 		count: 0
+		stopped?: false
 		parameter: parameters
 		position-after: next position
 		while [not tail? parameter][
@@ -4553,21 +4447,24 @@ compiler-rsir-frontend: context [
 			]
 			position-after: stack-value position-after scope uses instructions params locals
 				expression-value
-			expected: parameter/2
-			expected-flags: parameter/3
-			unless coerce-stack expected expected-flags instructions true [
+			if last-stopped? [stopped?: true]
+			unless any [last-stopped? last-type <> 0][
 				fail ERROR-REFERENCE rejoin [
-					"argument type mismatch on calling: " source-name value
+					"argument is missing a value on calling: " source-name value
 				]
 			]
 			count: count + 1
 			parameter: skip parameter 3
 		]
+		if stopped? [
+			finish-stopped-expression instructions
+			return position-after
+		]
 		emit instructions reduce [call-op target count return-ref]
 		last-type: return-ref
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: direct-no-return? target
+		if last-stopped? [last-type: 0]
 		position-after
 	]
 
@@ -4579,7 +4476,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local record return-ref parameters expected expected-flags position-after
+		/local record return-ref position-after stopped?
 	][
 		if path? value [
 			fail ERROR-UNSUPPORTED "infix functions cannot be called using a path"
@@ -4587,35 +4484,29 @@ compiler-rsir-frontend: context [
 		either target > 0 [
 			record: skip functions ((target - 1) * 10)
 			return-ref: record/6
-			parameters: record/7
 		][
 			record: skip imports (((0 - target) - 1) * 10)
 			return-ref: record/8
-			parameters: record/9
 		]
-		unless last-type <> 0 [
+		stopped?: last-stopped?
+		unless any [stopped? last-type <> 0][
 			fail ERROR-REFERENCE ["infix function is missing its left argument " mold value]
-		]
-		expected: parameters/2
-		expected-flags: parameters/3
-		unless coerce-stack expected expected-flags instructions true [
-			fail ERROR-REFERENCE ["left argument does not match infix function " mold value]
 		]
 		position-after: stack-primary next position scope uses instructions params locals
 			expression-value
-		unless all [not last-stopped? last-type <> 0][
+		if last-stopped? [stopped?: true]
+		unless any [last-stopped? last-type <> 0][
 			fail ERROR-REFERENCE ["infix function is missing its right argument " mold value]
 		]
-		expected: parameters/5
-		expected-flags: parameters/6
-		unless coerce-stack expected expected-flags instructions true [
-			fail ERROR-REFERENCE ["right argument does not match infix function " mold value]
+		if stopped? [
+			finish-stopped-expression instructions
+			return position-after
 		]
 		emit instructions reduce [call-op target 2 return-ref]
 		last-type: return-ref
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: direct-no-return? target
+		if last-stopped? [last-type: 0]
 		position-after
 	]
 
@@ -4687,6 +4578,7 @@ compiler-rsir-frontend: context [
 		flags signature-ref [integer!]
 		return: [block!]
 		/local cursor next-value arguments count type-id block-arguments? position-after
+			stopped?
 	][
 		unless (length? position) >= 2 [
 			fail ERROR-REFERENCE ["typed call is missing its argument: " mold value]
@@ -4700,36 +4592,45 @@ compiler-rsir-frontend: context [
 		block-arguments?: block? position/2
 		cursor: either block-arguments? [position/2][next position]
 		count: 0
+		stopped?: false
 		while [all [not tail? cursor any [block-arguments? count = 0]]][
 			if block? cursor/1 [
 				fail ERROR-UNSUPPORTED "literal arrays cannot be passed as argument"
 			]
 			next-value: stack-value cursor scope uses instructions params locals
 				expression-value
-			unless all [last-type <> 0 last-flags = 0][
-				fail ERROR-UNSUPPORTED [
-					"typed argument must be a scalar or reference value: " mold value
+			either last-stopped? [
+				stopped?: true
+			][
+				unless all [last-type <> 0 last-flags = 0][
+					fail ERROR-UNSUPPORTED [
+						"typed argument must be a scalar or reference value: " mold value
+					]
 				]
-			]
-			type-id: typed-type-id last-type
-			unless type-id > 0 [
-				fail ERROR-UNSUPPORTED [
-					"typed argument has no runtime type ID: " mold value
+				type-id: typed-type-id last-type
+				unless type-id > 0 [
+					fail ERROR-UNSUPPORTED [
+						"typed argument has no runtime type ID: " mold value
+					]
 				]
+				append arguments last-type
+				append arguments type-id
 			]
-			append arguments last-type
-			append arguments type-id
 			count: count + 1
 			cursor: next-value
 		]
 		position-after: either block-arguments? [skip position 2][cursor]
+		if stopped? [
+			finish-stopped-expression instructions
+			return position-after
+		]
 		emit instructions reduce [
 			call-op target count intern-typed-call signature-ref arguments
 		]
 		last-type: return-ref
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: direct-no-return? target
+		if last-stopped? [last-type: 0]
 		position-after
 	]
 
@@ -4744,7 +4645,7 @@ compiler-rsir-frontend: context [
 		parameters [block!]
 		flags signature-ref [integer!]
 		return: [block!]
-		/local cursor next-value parameter count expected expected-flags cdecl?
+		/local cursor next-value parameter count cdecl? stopped?
 			block-arguments? position-after
 	][
 		unless (length? position) >= 2 [
@@ -4772,33 +4673,17 @@ compiler-rsir-frontend: context [
 		cursor: either block-arguments? [position/2][next position]
 		parameter: parameters
 		count: 0
+		stopped?: false
 		while [all [not tail? cursor any [block-arguments? count = 0]]][
 			next-value: stack-value cursor scope uses instructions params locals
 				expression-value
-			if last-type = 0 [
+			if last-stopped? [stopped?: true]
+			unless any [last-stopped? last-type <> 0][
 				fail ERROR-REFERENCE ["variadic argument has no value: " mold value]
 			]
 			count: count + 1
-			either all [cdecl? not tail? parameter][
-				expected: parameter/2
-				expected-flags: parameter/3
-				unless coerce-stack expected expected-flags instructions true [
-					fail ERROR-REFERENCE [
-						"argument type does not match function " mold value
-					]
-				]
+			if all [cdecl? not tail? parameter][
 				parameter: skip parameter 3
-			][
-				if all [
-					cdecl?
-					(flags and objc-flag) = 0
-					(ref-kind last-type) = 'f32
-				][
-					emit instructions reduce [cast-op -10 0 0]
-					last-type: -10
-					last-flags: 0
-					last-float-literal?: false
-				]
 			]
 			cursor: next-value
 		]
@@ -4806,13 +4691,17 @@ compiler-rsir-frontend: context [
 			fail ERROR-REFERENCE ["not enough arguments for function " mold value]
 		]
 		position-after: either block-arguments? [skip position 2][cursor]
+		if stopped? [
+			finish-stopped-expression instructions
+			return position-after
+		]
 		emit instructions reduce [
 			call-op target count either target = 0 [signature-ref][return-ref]
 		]
 		last-type: return-ref
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: direct-no-return? target
+		if last-stopped? [last-type: 0]
 		position-after
 	]
 
@@ -4824,7 +4713,7 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		return: [block!]
 		/local signature signature-ref return-ref parameters mode parameter
-			count expected expected-flags position-after
+			count position-after stopped?
 	][
 		signature-ref: canonical-ref last-type
 		signature: function-signature signature-ref
@@ -4853,6 +4742,7 @@ compiler-rsir-frontend: context [
 			]
 		]
 		count: 0
+		stopped?: false
 		parameter: parameters
 		position-after: next position
 		while [not tail? parameter][
@@ -4861,20 +4751,22 @@ compiler-rsir-frontend: context [
 			]
 			position-after: stack-value position-after scope uses instructions params locals
 				expression-value
-			expected: parameter/2
-			expected-flags: parameter/3
-			unless coerce-stack expected expected-flags instructions true [
+			if last-stopped? [stopped?: true]
+			unless any [last-stopped? last-type <> 0][
 				fail ERROR-REFERENCE rejoin [
-					"argument type mismatch on calling: " source-name value
+					"argument is missing a value on calling: " source-name value
 				]
 			]
 			count: count + 1
 			parameter: skip parameter 3
 		]
+		if stopped? [
+			finish-stopped-expression instructions
+			return position-after
+		]
 		emit instructions reduce [call-op 0 count signature-ref]
 		last-type: return-ref
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		position-after
 	]
@@ -4889,7 +4781,6 @@ compiler-rsir-frontend: context [
 		position: body
 		last-type: 0
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		while [not tail? position][
 			last-stopped?: false
@@ -4916,7 +4807,9 @@ compiler-rsir-frontend: context [
 				]
 			]
 			unless keep? [
-				if last-type <> 0 [emit instructions reduce [drop-op 0 0 0]]
+				if all [not stopped? last-type <> 0][
+					emit instructions reduce [drop-op 0 0 0]
+				]
 				last-type: 0
 				last-flags: 0
 			]
@@ -4974,7 +4867,6 @@ compiler-rsir-frontend: context [
 			last-flags: 0
 			last-stopped?: false
 		]
-		last-float-literal?: false
 		skip position 2
 	]
 
@@ -5009,7 +4901,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [end-catch-op anchor level 0]
 		last-type: 0
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		next body
 	]
@@ -5032,7 +4923,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [throw-op 0 0 0]
 		last-type: 0
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: true
 		after
 	]
@@ -5067,7 +4957,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [fail-op 98 0 0]
 			last-type: 0
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: true
 			return after
 		]
@@ -5080,7 +4969,6 @@ compiler-rsir-frontend: context [
 		]
 		last-type: 0
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		after
 	]
@@ -5101,7 +4989,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [reference-op -13 0 0]
 		last-type: -13
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		skip position 2
 	]
@@ -5445,7 +5332,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [binary-op 13 0 0]
 		last-type: -11
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		next after
 	]
@@ -5631,7 +5517,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local after return-flags
+		/local after
 	][
 		unless function-active? [
 			fail ERROR-CONTEXT "return is not allowed outside of a function"
@@ -5646,16 +5532,10 @@ compiler-rsir-frontend: context [
 		after: stack-value next position scope uses instructions params locals
 			expression-value
 		if last-stopped? [return after]
-		return-flags: either (function-flags and return-value-flag) <> 0 [
-			inline-flag
-		][0]
-		unless all [
-			last-type <> 0
-			coerce-stack function-return return-flags instructions false
-		][fail ERROR-REFERENCE rejoin [
-			"wrong return type in function: " source-name active-function
+		unless last-type <> 0 [fail ERROR-REFERENCE rejoin [
+			"return value is missing in function: " source-name active-function
 		]]
-		emit instructions reduce [return-op function-return last-flags 0]
+		emit instructions reduce [return-op function-return 0 0]
 		function-returns?: true
 		last-type: 0
 		last-flags: 0
@@ -5878,7 +5758,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [literal-op -5 count 0]
 			last-type: -5
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next position
 		]
@@ -5890,7 +5769,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [size-op type-info/2 0 0]
 			last-type: -5
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return type-info/1
 		]
@@ -5899,7 +5777,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [literal-op -5 ((length? bytes) + 1) 0]
 			last-type: -5
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next position
 		]
@@ -5954,7 +5831,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [size-op ref 0 0]
 			last-type: -5
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next position
 		]
@@ -5966,7 +5842,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [size-op last-type 1 last-flags]
 		last-type: -5
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		next-position
 	]
@@ -5995,7 +5870,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [native-op atomic-fence-native 0 0]
 			last-type: 0
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next position
 		]
@@ -6012,7 +5886,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [native-op atomic-load-native 0 -5]
 			last-type: -5
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next-position
 		]
@@ -6039,7 +5912,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [native-op atomic-store-native 0 0]
 			last-type: 0
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next-position
 		]
@@ -6076,7 +5948,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [native-op atomic-cas-native 0 -11]
 			last-type: -11
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next-position
 		]
@@ -6114,7 +5985,6 @@ compiler-rsir-frontend: context [
 		]
 		last-type: -5
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		next-position
 	]
@@ -6145,7 +6015,6 @@ compiler-rsir-frontend: context [
 			emit instructions reduce [literal-op -5 id 0]
 			last-type: -5
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next position
 		]
@@ -6153,7 +6022,6 @@ compiler-rsir-frontend: context [
 			unless count = 2 [fail ERROR-REFERENCE "invalid system/thrown access"]
 			stack-thrown-address scope uses instructions params locals
 			emit instructions reduce [load-op 0 0 0]
-			last-float-literal?: false
 			last-stopped?: false
 			return next position
 		]
@@ -6165,7 +6033,6 @@ compiler-rsir-frontend: context [
 			]
 			last-type: pointer-ref
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next position
 		]
@@ -6182,7 +6049,6 @@ compiler-rsir-frontend: context [
 				last-type: pointer-ref
 			]
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next position
 		]
@@ -6196,7 +6062,6 @@ compiler-rsir-frontend: context [
 				emit instructions reduce [native-op stack-top-native 0 pointer-ref]
 				last-type: pointer-ref
 				last-flags: 0
-				last-float-literal?: false
 				last-stopped?: false
 				next position
 			]
@@ -6205,7 +6070,6 @@ compiler-rsir-frontend: context [
 				emit instructions reduce [native-op stack-frame-native 0 pointer-ref]
 				last-type: pointer-ref
 				last-flags: 0
-				last-float-literal?: false
 				last-stopped?: false
 				next position
 			]
@@ -6214,7 +6078,6 @@ compiler-rsir-frontend: context [
 				emit instructions reduce [native-op stack-align-native 0 pointer-ref]
 				last-type: pointer-ref
 				last-flags: 0
-				last-float-literal?: false
 				last-stopped?: false
 				next position
 			]
@@ -6247,7 +6110,6 @@ compiler-rsir-frontend: context [
 				]
 				last-type: pointer-ref
 				last-flags: 0
-				last-float-literal?: false
 				last-stopped?: false
 				next-position
 			]
@@ -6265,7 +6127,6 @@ compiler-rsir-frontend: context [
 				emit instructions reduce [native-op stack-free-native 0 0]
 				last-type: 0
 				last-flags: 0
-				last-float-literal?: false
 				last-stopped?: false
 				next-position
 			]
@@ -6273,7 +6134,6 @@ compiler-rsir-frontend: context [
 				emit instructions reduce [native-op stack-push-all-native 0 0]
 				last-type: 0
 				last-flags: 0
-				last-float-literal?: false
 				last-stopped?: false
 				next position
 			]
@@ -6281,7 +6141,6 @@ compiler-rsir-frontend: context [
 				emit instructions reduce [native-op stack-pop-all-native 0 0]
 				last-type: 0
 				last-flags: 0
-				last-float-literal?: false
 				last-stopped?: false
 				next position
 			]
@@ -6315,7 +6174,6 @@ compiler-rsir-frontend: context [
 			]
 			stack-thrown-address scope uses instructions params locals
 			emit instructions reduce [set-op 0 0 0]
-			last-float-literal?: false
 			last-stopped?: false
 			return next-position
 		]
@@ -6336,7 +6194,6 @@ compiler-rsir-frontend: context [
 			emit-native-register instructions cpu-register-set-native target/3
 			last-type: pointer-ref
 			last-flags: 0
-			last-float-literal?: false
 			last-stopped?: false
 			return next-position
 		]
@@ -6349,8 +6206,8 @@ compiler-rsir-frontend: context [
 		next-position: stack-value next position scope uses instructions params locals
 			expression-value
 		if last-stopped? [return next-position]
-		unless coerce-stack pointer-ref 0 instructions false [
-			fail ERROR-REFERENCE "system/stack assignment expects pointer! [integer!]"
+		unless last-type <> 0 [
+			fail ERROR-REFERENCE "system/stack assignment requires a value"
 		]
 		emit instructions reduce [
 			native-op either target/3 = 'top [
@@ -6360,7 +6217,6 @@ compiler-rsir-frontend: context [
 		]
 		last-type: pointer-ref
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		next-position
 	]
@@ -6380,7 +6236,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [native-op stack-push-native 0 0]
 		last-type: 0
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		position-after
 	]
@@ -6402,7 +6257,6 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [native-op log-b-native 0 -5]
 		last-type: -5
 		last-flags: 0
-		last-float-literal?: false
 		last-stopped?: false
 		position-after
 	]
@@ -6443,7 +6297,6 @@ compiler-rsir-frontend: context [
 			]
 			last-type: literal/1
 			last-flags: 0
-			last-float-literal?: float-kind? ref-kind last-type
 			return next position
 		]
 		next-position: either all [value-kind = 1 integer? literal][
@@ -6475,7 +6328,6 @@ compiler-rsir-frontend: context [
 				]
 			]
 		]
-		last-float-literal?: false
 		next-position
 	]
 
@@ -6505,7 +6357,6 @@ compiler-rsir-frontend: context [
 			error-position: position
 		]
 		value: position/1
-		last-float-literal?: false
 		last-stopped?: false
 		if all [issue? value value = #build-date][
 			change position mold now/utc
@@ -6564,40 +6415,33 @@ compiler-rsir-frontend: context [
 			]
 			value = 'if [
 				next-position: stack-if position scope uses instructions params locals
-				last-float-literal?: false
 				next-position
 			]
 			value = 'either [
 				next-position: stack-either position scope uses instructions params locals
 					value-context
-				last-float-literal?: false
 				next-position
 			]
 			value = 'case [
 				next-position: stack-case position scope uses instructions params locals
 					value-context
-				last-float-literal?: false
 				next-position
 			]
 			value = 'switch [
 				next-position: stack-switch position scope uses instructions params locals
 					value-context
-				last-float-literal?: false
 				next-position
 			]
 			value = 'variant? [
 				next-position: stack-variant position scope uses instructions params locals
-				last-float-literal?: false
 				next-position
 			]
 			value = 'any [
 				next-position: stack-conditions position scope uses instructions params locals true
-				last-float-literal?: false
 				next-position
 			]
 			value = 'all [
 				next-position: stack-conditions position scope uses instructions params locals false
-				last-float-literal?: false
 				next-position
 			]
 			value = 'return [
@@ -6634,8 +6478,9 @@ compiler-rsir-frontend: context [
 			value = 'not [
 				next-position: stack-value next position scope uses instructions params locals
 					expression-value
-				emit instructions reduce [unary-op not-operation 0 0]
-				last-float-literal?: false
+				unless last-stopped? [
+					emit instructions reduce [unary-op not-operation 0 0]
+				]
 				next-position
 			]
 			value = 'as [
@@ -6651,7 +6496,6 @@ compiler-rsir-frontend: context [
 				emit instructions reduce [native-op stack-pop-native 0 0]
 				last-type: -5
 				last-flags: 0
-				last-float-literal?: false
 				last-stopped?: false
 				next position
 			]
@@ -6697,7 +6541,6 @@ compiler-rsir-frontend: context [
 					]
 					emit instructions reduce [literal-op -10 bits/1 bits/2]
 					last-type: -10
-					last-float-literal?: true
 				]
 				last-flags: 0
 				next position
@@ -6708,7 +6551,6 @@ compiler-rsir-frontend: context [
 				emit instructions reduce [literal-op -10 bits/1 bits/2]
 				last-type: -10
 				last-flags: 0
-				last-float-literal?: true
 				next position
 			]
 			integer? value [
@@ -6777,9 +6619,10 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local operation left left-flags infix-target right-start
+		/local operation left left-flags infix-target right-start stopped?
 	][
 		position: stack-primary position scope uses instructions params locals value-context
+		stopped?: last-stopped?
 		while [not tail? position][
 			if all [issue? position/1 position/1 = #script][
 				position: skip-script position
@@ -6792,17 +6635,22 @@ compiler-rsir-frontend: context [
 				right-start: length? instructions
 				position: stack-primary next position scope uses instructions params locals
 					expression-value
-				stack-binary operation left left-flags right-start instructions
+				either any [stopped? last-stopped?][
+					stopped?: true
+				][stack-binary operation left left-flags right-start instructions]
 			][
 				infix-target: none
 				if any [word? position/1 path? position/1][
 					infix-target: resolve-stack-call position/1 scope uses
 				]
 				unless all [integer? infix-target find infix-targets infix-target][break]
+				if stopped? [last-stopped?: true]
 				position: stack-infix-call infix-target position/1 position
 					scope uses instructions params locals
+				if last-stopped? [stopped?: true]
 			]
 		]
+		if stopped? [finish-stopped-expression instructions]
 		position
 	]
 
@@ -7005,7 +6853,7 @@ compiler-rsir-frontend: context [
 		return: [block!]
 		/local type-info type-position type-token type-spec next-position ref kind
 			aggregate? pointer? storage-ref storage-flags
-			record hidden target-ref target-flags source-ref source-flags address-offset
+			record hidden target-ref
 	][
 		type-position: skip position 2
 		if tail? type-position [
@@ -7096,44 +6944,30 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [reference-op ref 0 0]
 		last-type: ref
 		last-flags: 0
-		source-ref: last-type
-		source-flags: last-flags
-		address-offset: index? tail instructions
 		unless stack-address/write target scope uses instructions params locals [
 			fail ERROR-REFERENCE ["unknown assignment target " mold target]
 		]
 		target-ref: last-type
-		target-flags: last-flags
-		last-type: source-ref
-		last-flags: source-flags
 
-		either block? storage [
+		if block? storage [
 			record: storage-record storage
-			either record/2 = 0 [
+			if record/2 = 0 [
 				record/2: ref
 				record/3: 0
-			][unless coerce-stack/before record/2 record/3 instructions false
-				address-offset [
-				fail ERROR-REFERENCE ["declaration changes type " mold target]
-			]]
-		][either integer? id [
+			]
+			target-ref: record/2
+		]
+		if integer? id [
 			record: skip global-data ((id - 1) * 5)
-			either integer? record/2 [
-				unless coerce-stack/before record/2 0 instructions false
-					address-offset [
-					fail ERROR-REFERENCE ["declaration changes type " mold target]
-				]
-			][
+			unless integer? record/2 [
 				record/2: ref
 				record/3: 0
 			]
-		][
-			unless coerce-stack/before target-ref target-flags instructions false
-				address-offset [
-				fail ERROR-REFERENCE ["declaration changes type " mold target]
-			]
-		]]
+			target-ref: record/2
+		]
 		emit instructions reduce [set-op 0 0 0]
+		last-type: target-ref
+		last-flags: 0
 		next-position
 	]
 
@@ -7229,7 +7063,7 @@ compiler-rsir-frontend: context [
 		fold? [logic!]
 		return: [block!]
 		/local target id record target-ref target-flags next-position storage
-			source-ref source-flags source-float-literal? address-offset owner
+			source-ref source-flags owner
 			continues? infix-target
 	][
 		if (length? position) < 2 [fail ERROR-UNSUPPORTED "assignment value is missing"]
@@ -7318,10 +7152,11 @@ compiler-rsir-frontend: context [
 				expression-value
 		]
 		if last-stopped? [return next-position]
+		unless last-type <> 0 [
+			fail ERROR-REFERENCE ["assignment has no value for " mold target]
+		]
 		source-ref: last-type
 		source-flags: last-flags
-		source-float-literal?: last-float-literal?
-		address-offset: index? tail instructions
 		unless stack-address/write target scope uses instructions params locals [
 			fail ERROR-REFERENCE ["unknown assignment target " mold target]
 		]
@@ -7333,49 +7168,34 @@ compiler-rsir-frontend: context [
 		][
 			fail ERROR-REFERENCE "a literal array pointer cannot be reassigned"
 		]
-		last-type: source-ref
-		last-flags: source-flags
-		last-float-literal?: source-float-literal?
-		either block? storage [
+		if block? storage [
 			record: storage-record storage
-			either record/2 = 0 [
-				if last-type = -14 [
+			if record/2 = 0 [
+				if source-ref = -14 [
 					fail ERROR-REFERENCE "null needs an explicit target type"
 				]
 				if all [word? target word? active-subroutine][
 					owner: active-subroutine
 					put subroutine-inferred target owner
 				]
-				record/2: last-type
-				record/3: last-flags
-			][
-				unless coerce-stack/before record/2 record/3 instructions false
-					address-offset [
-					fail ERROR-REFERENCE ["local assignment changes type " mold target]
-				]
+				record/2: source-ref
+				record/3: source-flags
 			]
-		][either integer? id [
+			target-ref: record/2
+		]
+		if integer? id [
 			record: skip global-data ((id - 1) * 5)
-			either integer? record/2 [
-				unless coerce-stack/before record/2 0 instructions false
-					address-offset [
-					fail ERROR-REFERENCE ["global assignment changes type " mold target]
-				]
-			][
-				if last-type = -14 [
+			unless integer? record/2 [
+				if source-ref = -14 [
 					fail ERROR-REFERENCE "null needs an explicit target type"
 				]
-				record/2: last-type
+				record/2: source-ref
 			]
-		][
-			unless coerce-stack/before target-ref target-flags instructions false
-				address-offset [
-				fail ERROR-REFERENCE either path? target [
-					["type mismatch on setting path:" mold target]
-				][["assignment changes type " mold target]]
-			]
-		]]
+			target-ref: record/2
+		]
 		emit instructions reduce [set-op 0 0 0]
+		last-type: target-ref
+		last-flags: source-flags
 		next-position
 	]
 
@@ -7530,7 +7350,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		flags [integer!]
 		return: [integer!]
-		/local before count return-flags
+		/local before count
 	][
 		before: length? instructions
 		function-base: to integer! (before / 16)
@@ -7567,18 +7387,13 @@ compiler-rsir-frontend: context [
 				if last-type = 0 [
 					fail ERROR-UNSUPPORTED "function result is missing"
 				]
-				return-flags: either (flags and return-value-flag) <> 0 [
-					inline-flag
-				][0]
-				unless coerce-stack return-ref return-flags instructions false [
-					fail ERROR-REFERENCE "function result type does not match signature"
-				]
-				emit instructions reduce [return-op return-ref last-flags 0]
+				emit instructions reduce [return-op return-ref 0 0]
 				function-returns?: true
 			]
 		]
 		count: to integer! (((length? instructions) - before) / 16)
 		function-active?: false
+		function-flags: 0
 		function-scope: none
 		function-uses: none
 		clear-resolved-names
@@ -7707,7 +7522,6 @@ compiler-rsir-frontend: context [
 			active-module-locals: module-locals
 			split-module?: false
 			user-code?: false
-			last-float-literal?: false
 			clear function-code
 			clear function-states
 			clear no-return-functions

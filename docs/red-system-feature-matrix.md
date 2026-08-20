@@ -22,7 +22,7 @@ rules remain in Red/System codegen.
 | Specification family | Direct mechanism | Primary repository evidence | Status |
 | --- | --- | --- | --- |
 | Source header, delimiters, comments, free-form syntax | Loader normalization followed by direct token cursor | compiler/compiles-ok-test.r, compiler/output-test.r, compiler/regression-test-rsc.r | audit |
-| Integer, character, hex, binary, string and null literals | Dense literal forms and constant bytes; codegen derives contextual types | compiler/int-literals-test.r, units/integer-test.reds, byte-test.reds, null-test.reds | replace |
+| Integer, character, hex, binary, string and null literals | Dense literal forms and constant bytes; null remains typeless until native codegen consumes it at a declared sink | compiler/int-literals-test.r, units/integer-test.reds, byte-test.reds, null-test.reds, x64-codegen-reds-test.reds | replace |
 | #define and parameterized macros | Existing loader expansion before declaration scan | compiler/define-test.reds, compiler/regression-test-rsc.r | audit |
 | #enum | Loader assigns labels; frontend keeps labels and resolved integer type | compiler/enum-test.r, units/enum-test.reds | audit |
 | #include, #if, #either and #switch | Existing source-order loader expansion with source positions | namespace include tests, compiler/regression-test-rsc.r, focused directive probes | audit |
@@ -34,7 +34,7 @@ rules remain in Red/System codegen.
 | Protected constant data | Read-only global plus flat initializer stream; codegen rejects writes | units/protect-test.reds, array-test.reds | pending |
 | logic!, byte!, integer! | Built-in logical types and generic scalar operations | units/logic-test.reds, byte-test.reds, integer-test.reds | pending |
 | Signed and unsigned fixed-width integers | Logical producer/sink types plus one codegen-owned lossless widening rule at typed boundaries; generic integer operations | units/fixed-int-test.reds, int64-test.reds, rsir-frontend-test.red, rsir-fixed-integer-exit.reds | replace |
-| float! and float32! | Exact IEEE literal payloads and ordinary typed operations; native codegen derives common math width, performs operand conversion, and selects XMM forms | units/float-test.reds, float32-test.reds, math-mixed-test.reds, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
+| float! and float32! | Exact IEEE literal payloads and ordinary typed operations; native codegen derives math and sink widths, performs operand or permitted direct-literal conversion, and selects XMM forms | units/float-test.reds, float32-test.reds, math-mixed-test.reds, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | c-string! | Pointer-to-byte semantics, one-based index, string constant object | units/c-string-test.reds, length-test.reds, lib-test.reds | pending |
 | pointer! and get-path | Pointee-preserving type, address/index/load/set/cast | compiler/pointer-test.r, units/pointer-test.reds, get-pointer-test.reds | pending |
 | Pointer and struct arithmetic | Generic binary operation plus native stride from logical layout | pointer tests, x64-pointer-parity-smoke.reds | replace |
@@ -47,13 +47,13 @@ rules remain in Red/System codegen.
 | Math, shifts and bitwise operations | One dense binary operation plus lexical overflow metadata; native codegen owns operand legality, result type, coercion, and instruction selection | integer, fixed-int, modulo and math-mixed unit tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | Comparisons and not | Dense binary/unary operations with a parser-only shadow result; native codegen owns operand legality and selects integer signedness or IEEE unordered behavior | compiler/not-test.r, units/not-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, rsir-fixed-integer-exit.reds, rsir-float-scalar-exit.reds | replace |
 | Predeclared runtime functions and predicates | Frontend-known typed signatures; ordinary calls or semantic native operations | compiler/print-test.r, units/integer-test.reds, lib-test.reds | pending |
-| Function declarations and returns | Declared signature, slots, instruction range, and backend-checked return | compiler/return-test.r, units/function-test.reds, return-test.reds | replace |
+| Function declarations and returns | Declared signature, slots and instruction range; RETURN keeps its producer type and native codegen checks and lowers the declared result sink | compiler/return-test.r, units/function-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |
-| Direct and imported calls | One stack call with target, signature and actual count | units/function-test.reds, x64-function-smoke.reds, x64-import-smoke.reds | replace |
-| Function pointers and variables | Function signature type, symbol address, indirect call | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds | pending |
-| cdecl, stdcall and callback | Signature attributes and target ABI classifier | compiler/callback-test.r, fixed-int ABI cases, dylib tests | pending |
-| Variadic, typed and custom calls | Actual stack types/count plus signature attributes | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds | pending |
-| Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results and variadic float duplication | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds | pending |
+| Direct and imported calls | One stack call with target, signature and actual count; native codegen checks parameter sinks and performs required scalar ABI conversion | units/function-test.reds, x64-function-smoke.reds, x64-import-smoke.reds, x64-codegen-reds-test.reds | replace |
+| Function pointers and variables | Function signature type, symbol address and indirect call; native sink compatibility compares complete return, parameter, call-shape and normalized convention records | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds, x64-codegen-reds-test.reds | pending |
+| cdecl, stdcall and callback | Signature attributes and target ABI classifier; default and stdcall share one sink convention while cdecl remains distinct | compiler/callback-test.r, fixed-int ABI cases, dylib tests, x64-codegen-reds-test.reds | pending |
+| Variadic, typed and custom calls | Actual stack types/count plus signature attributes; codegen applies C default `float32!` promotion to variadic extras | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds, x64-codegen-reds-test.reds | pending |
+| Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results, sink-width conversion and variadic float duplication | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
 | if, either, any and all | Generic branch/jump; codegen derives common stack prefixes and merges compatible results | units/conditional-test.reds, focused frontend/bridge/linked-PE control tests | replace |
 | loop, until and while | Generic branch/jump loops with explicit break/continue targets and ordinary hidden counters | integer and function units, focused frontend/bridge/linked-PE control tests | replace |
@@ -62,7 +62,7 @@ rules remain in Red/System codegen.
 | exit, return, break and continue | Direct function or loop terminators through the shared jump/return core | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds | replace |
 | Subroutines | Function-local entry targets and subroutine call/return | units/subroutine-test.reds, x64-subroutine-smoke.reds | pending |
 | throw and catch statement | Catch regions and non-local transfer state | units/exceptions-test.reds, x64-catch-*.reds | pending |
-| catch function attribute | Signature flag and resume point after throwing call | units/exceptions-test.reds, x64-catch-runtime.reds | pending |
+| catch function attribute | Signature flag and resume point after a throwing call; no-return fallthrough is cut only in non-catch callers | units/exceptions-test.reds, x64-catch-runtime.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
 | overflow? and CPU overflow state | Native arithmetic flags tracked as an explicit effect | units/overflow-test.reds, x64-overflow and mixed-overflow smokes | pending |
 | push, pop and stack controls | Native-operation IDs with explicit stack effects | units/push-pop-test.reds, x64-stack-smoke.reds | pending |
 | args, environment, CPU, FPU, I/O and image | Native-operation IDs plus symbolic target leaf names; target mapping and checks in codegen/runtime | units/system-test.reds, x64-cpu-register and image-info smokes | pending |

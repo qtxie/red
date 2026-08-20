@@ -567,6 +567,21 @@ Already retained:
   ordinary and subroutine returns: RSIR keeps the producer and declared sink
   types, while codegen validates the pair and fuses extension into the native
   load; no implicit cast operation or source-shaped adapter is emitted;
+- assignments, direct/imported/indirect calls, ordinary/subroutine returns,
+  and system stack writes now keep producer values unchanged in RSIR. Native
+  codegen alone checks the declared sink, compares complete function
+  signatures including the normalized default/stdcall versus cdecl ABI,
+  applies contextual null and direct-literal rules, and selects the target-width
+  load or XMM conversion. One negative native stack tag marks a direct float
+  literal; positive tags remain union-variant write chains;
+- CDECL variadic `float32!` promotion is derived from the signature and actual
+  argument ordinal in codegen, including both Win64 register mirrors and stack
+  arguments; the frontend emits no promotion CAST;
+- terminating subexpressions remain terminal while their enclosing call, cast,
+  unary, binary, or infix syntax is consumed, so no disconnected sink operation
+  is emitted. A `[catch]` caller retains the call continuation because a throw
+  resumes immediately after that call; native control-flow analysis applies the
+  same rule;
 - common integer comparison width and signedness selected from logical types,
   with native loads performing the required sign or zero extension;
 - an executable fixed-integer gate covering every scalar width, arithmetic,
@@ -583,6 +598,12 @@ Already retained:
   for other parameter sizes, hidden result pointers, and stable nested-call
   results; internal executable coverage spans structs and unions from one to
   forty bytes, register and stack boundaries, and source-copy isolation;
+- H41 built the complete current H42 compiler in the normal development O0
+  path in 63.859 seconds using the known-good runtime DLL set (frontend 23.887,
+  native 32.759, link 7.060 seconds). H42 then built the 55-check
+  floating-point/ABI executable in 0.521 seconds and it returned the expected
+  exit code 73. H42 is 13,312 bytes smaller than H41, with `.text` raw size
+  reduced by 9,728 bytes rather than duplicated;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

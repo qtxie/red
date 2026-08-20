@@ -146,6 +146,14 @@ codegen-export!: alias struct! [
 	name-size [integer!]
 ]
 
+signature-pairs!: alias struct! [
+	memory        [byte-ptr!]
+	pair-count    [integer!]
+	pair-capacity [integer!]
+	slot-capacity [integer!]
+	epoch         [integer!]
+]
+
 x64-codegen: context [
 	RSIR_HEADER_SIZE:      36
 	RSIR_TYPE_SIZE:        20
@@ -249,6 +257,9 @@ x64-codegen: context [
 
 	PLACE: 1
 	VALUE: 2
+	; Zero means no stack tag, positive values are variant-chain instruction
+	; indexes, and -1 marks a direct binary64 literal without colliding with them.
+	FLOAT_LITERAL_TAG: -1
 
 	INVALID_IR:  -1
 	UNSUPPORTED: -2
@@ -849,17 +860,233 @@ x64-codegen: context [
 		]
 	]
 
-	implicitly-compatible-types?: func [
+	reset-signature-pairs: func [
+		pairs [signature-pairs!]
+		return: [integer!]
+		/local stamps [int-ptr!] index [integer!]
+	][
+		if null? pairs/memory [
+			pairs/pair-capacity: 16
+			pairs/slot-capacity: 32
+			pairs/memory: allocate (pairs/pair-capacity * 24)
+			if null? pairs/memory [return OUTPUT_FULL]
+			pairs/epoch: 0
+			stamps: as int-ptr! pairs/memory
+			stamps: stamps + ((pairs/pair-capacity * 2) + pairs/slot-capacity)
+			index: 1
+			while [index <= pairs/slot-capacity][
+				stamps/index: 0
+				index: index + 1
+			]
+		]
+		either pairs/epoch = 2147483647 [
+			stamps: as int-ptr! pairs/memory
+			stamps: stamps + ((pairs/pair-capacity * 2) + pairs/slot-capacity)
+			index: 1
+			while [index <= pairs/slot-capacity][
+				stamps/index: 0
+				index: index + 1
+			]
+			pairs/epoch: 1
+		][pairs/epoch: pairs/epoch + 1]
+		pairs/pair-count: 0
+		0
+	]
+
+	grow-signature-pairs: func [
+		pairs [signature-pairs!]
+		return: [integer!]
+		/local old-memory new-memory [byte-ptr!]
+			new-pairs new-slots new-stamps slot hash-slot stamp [int-ptr!]
+			new-capacity new-slot-capacity index hash [integer!]
+	][
+		if pairs/pair-capacity > (2147483647 / 48)[return OUTPUT_FULL]
+		new-capacity: pairs/pair-capacity * 2
+		new-slot-capacity: pairs/slot-capacity * 2
+		new-memory: allocate (new-capacity * 24)
+		if null? new-memory [return OUTPUT_FULL]
+		new-pairs: as int-ptr! new-memory
+		copy-memory new-memory pairs/memory (pairs/pair-count * 8)
+		new-slots: new-pairs + (new-capacity * 2)
+		new-stamps: new-slots + new-slot-capacity
+		index: 1
+		while [index <= new-slot-capacity][
+			new-stamps/index: 0
+			index: index + 1
+		]
+		index: 0
+		while [index < pairs/pair-count][
+			slot: new-pairs + (index * 2)
+			hash: ((slot/1 * 65599) xor slot/2) and (new-slot-capacity - 1)
+			hash-slot: new-slots + hash
+			stamp: new-stamps + hash
+			while [stamp/1 = pairs/epoch][
+				hash: (hash + 1) and (new-slot-capacity - 1)
+				hash-slot: new-slots + hash
+				stamp: new-stamps + hash
+			]
+			hash-slot/1: index + 1
+			stamp/1: pairs/epoch
+			index: index + 1
+		]
+		old-memory: pairs/memory
+		pairs/memory: new-memory
+		pairs/pair-capacity: new-capacity
+		pairs/slot-capacity: new-slot-capacity
+		free old-memory
+		0
+	]
+
+	free-signature-pairs: func [pairs [signature-pairs!]][
+		unless null? pairs/memory [free pairs/memory]
+		pairs/memory: null
+		pairs/pair-count: 0
+		pairs/pair-capacity: 0
+		pairs/slot-capacity: 0
+		pairs/epoch: 0
+	]
+
+	queue-compatible-types: func [
 		expected actual [integer!]
 		types [byte-ptr!]
 		count [integer!]
-		return: [logic!]
-		/local expected-kind actual-kind [integer!]
+		pairs [signature-pairs!]
+		return: [integer!]
+		/local left right left-kind right-kind pair-index hash status [integer!]
+			data slots stamps slot hash-slot stamp [int-ptr!]
 	][
-		if compatible-types? expected actual types count [return true]
+		if expected = actual [return 1]
+		if compatible-types? expected actual types count [return 1]
+		left: canonical-type expected types count
+		right: canonical-type actual types count
+		if any [left <= 0 right <= 0][return 0]
+		left-kind: logical-kind left types count
+		right-kind: logical-kind right types count
+		unless all [left-kind = -4 right-kind = -4][return 0]
+		data: as int-ptr! pairs/memory
+		slots: data + (pairs/pair-capacity * 2)
+		stamps: slots + pairs/slot-capacity
+		hash: ((left * 65599) xor right) and (pairs/slot-capacity - 1)
+		hash-slot: slots + hash
+		stamp: stamps + hash
+		while [stamp/1 = pairs/epoch][
+			pair-index: hash-slot/1 - 1
+			slot: data + (pair-index * 2)
+			if all [slot/1 = left slot/2 = right][return 1]
+			hash: (hash + 1) and (pairs/slot-capacity - 1)
+			hash-slot: slots + hash
+			stamp: stamps + hash
+		]
+		if pairs/pair-count = pairs/pair-capacity [
+			status: grow-signature-pairs pairs
+			if status < 0 [return status]
+			data: as int-ptr! pairs/memory
+			slots: data + (pairs/pair-capacity * 2)
+			stamps: slots + pairs/slot-capacity
+			hash: ((left * 65599) xor right) and (pairs/slot-capacity - 1)
+			hash-slot: slots + hash
+			stamp: stamps + hash
+			while [stamp/1 = pairs/epoch][
+				hash: (hash + 1) and (pairs/slot-capacity - 1)
+				hash-slot: slots + hash
+				stamp: stamps + hash
+			]
+		]
+		slot: data + (pairs/pair-count * 2)
+		slot/1: left
+		slot/2: right
+		hash-slot/1: pairs/pair-count + 1
+		stamp/1: pairs/epoch
+		pairs/pair-count: pairs/pair-count + 1
+		1
+	]
+
+	function-types-compatible: func [
+		expected actual [integer!]
+		types members [byte-ptr!]
+		count [integer!]
+		pairs [signature-pairs!]
+		return: [integer!]
+		/local cursor id status [integer!]
+			slot [int-ptr!] left-type right-type [rsir-type!]
+			left-member right-member [rsir-member!]
+	][
+		status: reset-signature-pairs pairs
+		if status < 0 [return status]
+		status: queue-compatible-types expected actual types count pairs
+		if status <> 1 [return status]
+		cursor: 0
+		while [cursor < pairs/pair-count][
+			slot: (as int-ptr! pairs/memory) + (cursor * 2)
+			left-type: as rsir-type! (types + ((slot/1 - 1) * RSIR_TYPE_SIZE))
+			right-type: as rsir-type! (types + ((slot/2 - 1) * RSIR_TYPE_SIZE))
+			if any [
+				(left-type/flags and CDECL) <> (right-type/flags and CDECL)
+				(left-type/flags and CALL_SHAPE_FLAGS)
+					<> (right-type/flags and CALL_SHAPE_FLAGS)
+				left-type/member-count <> right-type/member-count
+				all [
+					any [left-type/target = 0 right-type/target = 0]
+					left-type/target <> right-type/target
+				]
+			][return 0]
+			if left-type/target <> 0 [
+				status: queue-compatible-types left-type/target right-type/target
+					types count pairs
+				if status <> 1 [return status]
+			]
+			id: 0
+			while [id < left-type/member-count][
+				left-member: as rsir-member! (members
+					+ ((left-type/first-member + id) * RSIR_MEMBER_SIZE))
+				right-member: as rsir-member! (members
+					+ ((right-type/first-member + id) * RSIR_MEMBER_SIZE))
+				if left-member/flags <> right-member/flags [return 0]
+				status: queue-compatible-types left-member/type right-member/type
+					types count pairs
+				if status <> 1 [return status]
+				id: id + 1
+			]
+			cursor: cursor + 1
+		]
+		1
+	]
+
+	sink-compatible-types: func [
+		expected actual [integer!]
+		types members [byte-ptr!]
+		count [integer!]
+		pairs [signature-pairs!]
+		return: [integer!]
+		/local left-kind right-kind [integer!]
+	][
+		if compatible-types? expected actual types count [return 1]
+		left-kind: logical-kind expected types count
+		right-kind: logical-kind actual types count
+		unless all [left-kind = -4 right-kind = -4][return 0]
+		function-types-compatible expected actual types members count pairs
+	]
+
+	implicitly-compatible-types: func [
+		expected actual tag [integer!]
+		allow-float-literal? [logic!]
+		types members [byte-ptr!]
+		count [integer!]
+		pairs [signature-pairs!]
+		return: [integer!]
+		/local expected-kind actual-kind status [integer!]
+	][
+		status: sink-compatible-types expected actual types members count pairs
+		if status <> 0 [return status]
 		expected-kind: logical-kind expected types count
 		actual-kind: logical-kind actual types count
-		integer-kind-widens? actual-kind expected-kind
+		if integer-kind-widens? actual-kind expected-kind [return 1]
+		either all [
+			allow-float-literal?
+			tag = FLOAT_LITERAL_TAG
+			actual-kind = 10
+			expected-kind = 9
+		][1][0]
 	]
 
 	integer-common-ref: func [
@@ -1701,7 +1928,13 @@ x64-codegen: context [
 		written + encoded
 	]
 
-	release: func [scratch [byte-ptr!] result [integer!] return: [integer!]][
+	release: func [
+		scratch [byte-ptr!]
+		signature-cache [signature-pairs!]
+		result [integer!]
+		return: [integer!]
+	][
+		free-signature-pairs signature-cache
 		unless null? scratch [free scratch]
 		result
 	]
@@ -1713,18 +1946,24 @@ x64-codegen: context [
 		types [byte-ptr!]
 		type-count [integer!]
 		return: [logic!]
+		/local entry-tag stack-tag [integer!]
 	][
 		if any [target <= 0 target > instruction-count][return false]
 		either instruction-depths/target >= 0 [
 			if instruction-depths/target <> depth [return false]
 			if depth > 0 [
+				entry-tag: entry-tags/target
+				stack-tag: stack-tags/depth
+				if entry-tag < 0 [entry-tag: 0]
+				if stack-tag < 0 [stack-tag: 0]
 				if any [
 					not merge-compatible-types? entry-types/target stack-types/depth
 						types type-count
 					entry-flags/target <> stack-flags/depth
 					entry-kinds/target <> stack-kinds/depth
-					entry-tags/target <> stack-tags/depth
+					entry-tag <> stack-tag
 				][return false]
+				entry-tags/target: entry-tag
 			]
 		][
 			instruction-depths/target: depth
@@ -1732,7 +1971,8 @@ x64-codegen: context [
 				entry-types/target: stack-types/depth
 				entry-flags/target: stack-flags/depth
 				entry-kinds/target: stack-kinds/depth
-				entry-tags/target: stack-tags/depth
+				stack-tag: stack-tags/depth
+				entry-tags/target: either stack-tag < 0 [0][stack-tag]
 			]
 		]
 		true
@@ -2282,6 +2522,7 @@ x64-codegen: context [
 
 	compile-function: func [
 		fn [rsir-function!]
+		signature-cache [signature-pairs!]
 		instructions [byte-ptr!]
 		stack-types stack-flags stack-kinds stack-tags storage-offsets result-offsets
 			layouts member-offsets
@@ -2331,7 +2572,7 @@ x64-codegen: context [
 			record-offset overflow-anchor base-depth overflow-limit
 			catch-level catch-capacity catch-base catch-record catch-unwind
 			catch-threshold allocation-size current-entry current-sub
-			main-entry-count sub-entry-count [integer!]
+			main-entry-count sub-entry-count compatibility [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
@@ -2700,12 +2941,14 @@ x64-codegen: context [
 					if measure? [
 						if instruction-depths/index <> depth [return INVALID_IR]
 						if depth > 0 [
+							tag-head: stack-tags/depth
+							if tag-head < 0 [tag-head: 0]
 							if any [
 								not merge-compatible-types? entry-types/index stack-types/depth
 									types type-count
 								entry-flags/index <> stack-flags/depth
 								entry-kinds/index <> stack-kinds/depth
-								entry-tags/index <> stack-tags/depth
+								entry-tags/index <> tag-head
 							][return INVALID_IR]
 						]
 					]
@@ -2752,7 +2995,9 @@ x64-codegen: context [
 					stack-types/depth: ref
 					stack-flags/depth: 0
 					stack-kinds/depth: VALUE
-					stack-tags/depth: 0
+					stack-tags/depth: either (logical-kind ref types type-count) = 10 [
+						FLOAT_LITERAL_TAG
+					][0]
 					width: value-width ref 0 types members type-count
 						layouts member-offsets
 					target-width: either width = 8 [8][4]
@@ -3135,25 +3380,27 @@ x64-codegen: context [
 						stack-flags/depth: 0
 						stack-kinds/depth: VALUE
 					][
+						compatibility: implicitly-compatible-types target-ref ref
+							stack-tags/source-slot false types members type-count
+							signature-cache
+						if compatibility < 0 [return compatibility]
 						unless all [
-							implicitly-compatible-types? target-ref ref types type-count
+							compatibility = 1
 							target-flags = flags
 							machine-value? ref flags types members type-count
 								layouts member-offsets
 							machine-value? target-ref target-flags types members
 								type-count layouts member-offsets
 						][return INVALID_IR]
-						source-width: value-width ref flags types members type-count
-							layouts member-offsets
 						target-width: value-width target-ref target-flags types members
 							type-count layouts member-offsets
-						floating?: float-type? ref types type-count
+						floating?: float-type? target-ref types type-count
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: either floating? [
 							x64-encoder/xmm-frame-load at (capacity - written)
 								x64-encoder/XMM0 slot-displacement
-									(storage-slots + source-slot) source-width
+									(storage-slots + source-slot) target-width
 						][
 							load-operation-value at (capacity - written)
 								x64-encoder/RAX slot-displacement
@@ -3565,9 +3812,12 @@ x64-codegen: context [
 									compatible-types? parameter/type ref types type-count
 								][return INVALID_IR]
 							][
+								compatibility: implicitly-compatible-types parameter/type ref
+									stack-tags/argument-slot true types members type-count
+									signature-cache
+								if compatibility < 0 [return compatibility]
 								unless all [
-									implicitly-compatible-types? parameter/type ref
-										types type-count
+									compatibility = 1
 									parameter/flags = flags
 								][return INVALID_IR]
 								unless machine-value? ref flags types members type-count
@@ -3830,6 +4080,16 @@ x64-codegen: context [
 									types members type-count layouts member-offsets
 							]
 						]
+						if all [
+							source-slot > parameter-count
+							call-mode = VARIADIC
+							(call-flags and CDECL) <> 0
+							(call-flags and OBJC) = 0
+							(logical-kind ref types type-count) = 9
+						][
+							target-ref: -10
+							target-flags: 0
+						]
 						physical-slot: source-slot + hidden-shift
 						; Win64 stack arguments always occupy complete 8-byte slots.
 						either aggregate-argument? [
@@ -3886,7 +4146,7 @@ x64-codegen: context [
 								layouts member-offsets
 							argument-width: value-width target-ref target-flags types members
 								type-count layouts member-offsets
-							floating?: float-type? ref types type-count
+							floating?: float-type? target-ref types type-count
 							either physical-slot <= 4 [
 								target-slot: argument-register physical-slot
 								at: as byte-ptr! 0
@@ -3904,7 +4164,26 @@ x64-codegen: context [
 								]
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
+								if all [floating? source-width <> argument-width][
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/xmm-convert at
+										(capacity - written) (physical-slot - 1)
+										(physical-slot - 1) source-width argument-width
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+								]
 								if all [floating? (call-flags and VARIADIC) <> 0][
+									if source-width <> argument-width [
+										at: as byte-ptr! 0
+										if not measure? [at: code + written]
+										encoded: x64-encoder/xmm-frame-store at
+											(capacity - written) (physical-slot - 1)
+											slot-displacement (storage-slots + argument-slot)
+											argument-width
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
 									at: as byte-ptr! 0
 									if not measure? [at: code + written]
 									encoded: x64-encoder/frame-load at (capacity - written)
@@ -3915,20 +4194,42 @@ x64-codegen: context [
 									written: written + encoded
 								]
 							][
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: load-operation-value at (capacity - written)
-									x64-encoder/RAX slot-displacement
-									(storage-slots + argument-slot) ref flags
-									argument-width false types members type-count
-									layouts member-offsets
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								at: as byte-ptr! 0
-								if not measure? [at: code + written]
-								encoded: x64-encoder/outgoing-store at (capacity - written)
-									(32 + ((physical-slot - 5) * 8))
-									8
+								either all [floating? source-width <> argument-width][
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/xmm-frame-load at
+										(capacity - written) x64-encoder/XMM0
+										slot-displacement (storage-slots + argument-slot)
+										source-width
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/xmm-convert at
+										(capacity - written) x64-encoder/XMM0
+										x64-encoder/XMM0 source-width argument-width
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/xmm-outgoing-store at
+										(capacity - written) x64-encoder/XMM0
+										(32 + ((physical-slot - 5) * 8)) argument-width
+								][
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: load-operation-value at (capacity - written)
+										x64-encoder/RAX slot-displacement
+										(storage-slots + argument-slot) ref flags
+										argument-width false types members type-count
+										layouts member-offsets
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: as byte-ptr! 0
+									if not measure? [at: code + written]
+									encoded: x64-encoder/outgoing-store at
+										(capacity - written) (32 + ((physical-slot - 5) * 8)) 8
+								]
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
 							]
@@ -4074,7 +4375,11 @@ x64-codegen: context [
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
-					if all [target > 0 (call-flags and NO_RETURN) <> 0][
+					if all [
+						target > 0
+						(call-flags and NO_RETURN) <> 0
+						(fn/flags and CATCH_FLAG) = 0
+					][
 						fallthrough?: false
 					]
 				]
@@ -5912,6 +6217,15 @@ x64-codegen: context [
 					sub-entry: as rsir-instruction! (instructions
 						+ ((current-entry - 1) * RSIR_INSTRUCTION_SIZE))
 					return-ref: instruction/a
+					compatibility: 0
+					if all [
+						return-ref <> 0 depth = 1 stack-kinds/depth = VALUE
+						stack-flags/depth = 0
+					][
+						compatibility: implicitly-compatible-types return-ref stack-types/depth
+							stack-tags/depth false types members type-count signature-cache
+						if compatibility < 0 [return compatibility]
+					]
 					unless all [
 						sub-entry/op = OP_ENTRY sub-entry/a = 1
 						return-ref = sub-entry/b instruction/b = 0 instruction/c = 0
@@ -5920,8 +6234,7 @@ x64-codegen: context [
 							all [
 								return-ref <> 0 depth = 1 stack-kinds/depth = VALUE
 								stack-flags/depth = 0
-								implicitly-compatible-types? return-ref stack-types/depth
-									types type-count
+								compatibility = 1
 								machine-value? stack-types/depth 0 types members type-count
 									layouts member-offsets
 							]
@@ -5929,17 +6242,15 @@ x64-codegen: context [
 					][return INVALID_IR]
 					if return-ref <> 0 [
 						ref: stack-types/depth
-						source-width: value-width ref 0 types members type-count
-							layouts member-offsets
 						target-width: value-width return-ref 0 types members type-count
 							layouts member-offsets
-						floating?: float-type? ref types type-count
+						floating?: float-type? return-ref types type-count
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: either floating? [
 							x64-encoder/xmm-frame-load at (capacity - written)
 								x64-encoder/XMM0 slot-displacement
-									(storage-slots + depth) source-width
+									(storage-slots + depth) target-width
 						][
 							load-operation-value at (capacity - written)
 								x64-encoder/RAX slot-displacement
@@ -5996,9 +6307,11 @@ x64-codegen: context [
 								compatible-types? return-ref stack-types/depth types type-count
 							][return INVALID_IR]
 						][
+							compatibility: implicitly-compatible-types return-ref stack-types/depth
+								stack-tags/depth false types members type-count signature-cache
+							if compatibility < 0 [return compatibility]
 							unless all [
-								implicitly-compatible-types? return-ref stack-types/depth
-									types type-count
+								compatibility = 1
 								stack-flags/depth = instruction/b
 								machine-value? return-ref instruction/b
 									types members type-count layouts member-offsets
@@ -6094,17 +6407,15 @@ x64-codegen: context [
 							][
 								ref: stack-types/depth
 								flags: stack-flags/depth
-								source-width: value-width ref flags types members type-count
-									layouts member-offsets
 								target-width: value-width return-ref instruction/b
 									types members type-count layouts member-offsets
-								floating?: float-type? ref types type-count
+								floating?: float-type? return-ref types type-count
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: either floating? [
 									x64-encoder/xmm-frame-load at (capacity - written)
 										x64-encoder/XMM0 slot-displacement
-											(storage-slots + depth) source-width
+											(storage-slots + depth) target-width
 								][
 									load-operation-value at (capacity - written)
 										x64-encoder/RAX slot-displacement
@@ -6188,6 +6499,7 @@ x64-codegen: context [
 		capacity opt-level [integer!]
 		return: [integer!]
 		/local header [rsir-header!]
+			signature-cache [signature-pairs!]
 			ir-type array-type [rsir-type!]
 			ir-member [rsir-member!]
 			ir-import [rsir-import!]
@@ -6229,6 +6541,8 @@ x64-codegen: context [
 					status [integer!]
 			entry? current-entry? array? protected? [logic!]
 	][
+		signature-cache: declare signature-pairs!
+		signature-cache/memory: null
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
 			return INVALID_IR
 		]
@@ -6287,8 +6601,14 @@ x64-codegen: context [
 					][return INVALID_IR]
 				]
 				any [ir-type/kind = -4 ir-type/kind = -5][
-					if all [ir-type/target <> 0
-						not valid-type-ref? ir-type/target header/type-count][return INVALID_IR]
+					if any [
+						all [ir-type/target <> 0
+							not valid-type-ref? ir-type/target header/type-count]
+						all [
+							(ir-type/flags and CATCH_FLAG) <> 0
+							(ir-type/flags and CATCH_CONFLICT_FLAGS) <> 0
+						]
+					][return INVALID_IR]
 				]
 				ir-type/kind = -6 [
 					if any [ir-type/flags <> 0 ir-type/member-count <> 0
@@ -6920,7 +7240,7 @@ x64-codegen: context [
 			global-align: 0
 			unless layout-type id true type-data member-data header/type-count 0
 				layouts member-offsets :global-size :global-align [
-				return release scratch INVALID_IR
+				return release scratch signature-cache INVALID_IR
 			]
 			id: id + 1
 		]
@@ -6939,11 +7259,11 @@ x64-codegen: context [
 				ir-function/name < 0 ir-function/name-size <= 0
 				ir-function/name-size > strings-size
 				ir-function/name > (strings-size - ir-function/name-size)
-			][return release scratch INVALID_IR]
+			][return release scratch signature-cache INVALID_IR]
 			function-instructions: instruction-data
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
-			function-size: compile-function ir-function function-instructions
+			function-size: compile-function ir-function signature-cache function-instructions
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(result-offsets + (next-instruction - 1))
 				layouts member-offsets
@@ -6963,13 +7283,13 @@ x64-codegen: context [
 				header/global-count header/switch-count strings-size 0 0 0 0 current-entry?
 				:global-reference-count :literal-size (function-frames + (id - 1))
 				(function-outgoing + (id - 1))
-			if function-size < 0 [return release scratch function-size]
+			if function-size < 0 [return release scratch signature-cache function-size]
 			function-sizes/id: function-size
 			if function-names-size > (2147483647 - ir-function/name-size)[
-				return release scratch OUTPUT_FULL
+				return release scratch signature-cache OUTPUT_FULL
 			]
 			function-names-size: function-names-size + ir-function/name-size
-			if code-size > (2147483647 - function-size)[return release scratch OUTPUT_FULL]
+			if code-size > (2147483647 - function-size)[return release scratch signature-cache OUTPUT_FULL]
 			code-size: code-size + function-size
 			if current-entry? [entry-size: function-size]
 			next-instruction: next-instruction + ir-function/instruction-count
@@ -6977,7 +7297,7 @@ x64-codegen: context [
 			id: id + 1
 		]
 		function-code-size: code-size
-		if code-size > (2147483647 - literal-size)[return release scratch OUTPUT_FULL]
+		if code-size > (2147483647 - literal-size)[return release scratch signature-cache OUTPUT_FULL]
 		code-size: code-size + literal-size
 
 		used-import-count: 0
@@ -6991,18 +7311,18 @@ x64-codegen: context [
 				ir-import: as rsir-import! (import-data + ((id - 1) * RSIR_IMPORT_SIZE))
 				used-import-count: used-import-count + 1
 				if import-reference-count > (2147483647 - count)[
-					return release scratch OUTPUT_FULL
+					return release scratch signature-cache OUTPUT_FULL
 				]
 				import-reference-count: import-reference-count + count
 				if ir-import/library <> last-library [
 					if import-names-size > (2147483647 - ir-import/library-size)[
-						return release scratch OUTPUT_FULL
+						return release scratch signature-cache OUTPUT_FULL
 					]
 					import-names-size: import-names-size + ir-import/library-size
 					last-library: ir-import/library
 				]
 				if import-names-size > (2147483647 - ir-import/external-size)[
-					return release scratch OUTPUT_FULL
+					return release scratch signature-cache OUTPUT_FULL
 				]
 				import-names-size: import-names-size + ir-import/external-size
 			]
@@ -7012,7 +7332,7 @@ x64-codegen: context [
 		reference-count: global-reference-count + import-reference-count
 		if entry? [
 			if any [image-import-count = 2147483647 reference-count = 2147483647][
-				return release scratch OUTPUT_FULL
+				return release scratch signature-cache OUTPUT_FULL
 			]
 			image-import-count: image-import-count + 1
 			reference-count: reference-count + 1
@@ -7020,45 +7340,45 @@ x64-codegen: context [
 
 		metadata-size: IMAGE_HEADER_SIZE + (header/function-count * IMAGE_FUNCTION_SIZE)
 		if header/global-count > ((2147483647 - metadata-size) / IMAGE_GLOBAL_SIZE)[
-			return release scratch OUTPUT_FULL
+			return release scratch signature-cache OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (header/global-count * IMAGE_GLOBAL_SIZE)
 		if image-import-count > ((2147483647 - metadata-size) / IMAGE_IMPORT_SIZE)[
-			return release scratch OUTPUT_FULL
+			return release scratch signature-cache OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (image-import-count * IMAGE_IMPORT_SIZE)
 		if header/export-count > ((2147483647 - metadata-size) / IMAGE_EXPORT_SIZE)[
-			return release scratch OUTPUT_FULL
+			return release scratch signature-cache OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (header/export-count * IMAGE_EXPORT_SIZE)
 		if reference-count > ((2147483647 - metadata-size) / 4)[
-			return release scratch OUTPUT_FULL
+			return release scratch signature-cache OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (reference-count * 4)
 		names-size: function-names-size + global-names-size + import-names-size
 		if names-size > (2147483647 - export-names-size)[
-			return release scratch OUTPUT_FULL
+			return release scratch signature-cache OUTPUT_FULL
 		]
 		names-size: names-size + export-names-size
 		if entry? [names-size: names-size + 23]
 		if any [names-size < 0 metadata-size > (2147483647 - names-size - 15)][
-			return release scratch OUTPUT_FULL
+			return release scratch signature-cache OUTPUT_FULL
 		]
 		code-offset: align (metadata-size + names-size) 16
 		if any [code-offset < 0 code-offset > (2147483647 - code-size - 3)][
-			return release scratch OUTPUT_FULL
+			return release scratch signature-cache OUTPUT_FULL
 		]
 		rodata-offset: align (code-offset + code-size) 4
 		if any [
 			rodata-offset < 0
 			rodata-offset > (2147483647 - image-rodata-size - 3)
-		][return release scratch OUTPUT_FULL]
+		][return release scratch signature-cache OUTPUT_FULL]
 		data-offset: align (rodata-offset + image-rodata-size) 4
 		if any [data-offset < 0 data-offset > (2147483647 - image-data-size)][
-			return release scratch OUTPUT_FULL
+			return release scratch signature-cache OUTPUT_FULL
 		]
 		total-size: data-offset + image-data-size
-		if total-size > capacity [return release scratch OUTPUT_FULL]
+		if total-size > capacity [return release scratch signature-cache OUTPUT_FULL]
 
 		image: as codegen-header! output
 		image/size: total-size
@@ -7231,7 +7551,7 @@ x64-codegen: context [
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
-			written: compile-function ir-function function-instructions
+			written: compile-function ir-function signature-cache function-instructions
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(result-offsets + (next-instruction - 1))
 				layouts member-offsets
@@ -7253,7 +7573,8 @@ x64-codegen: context [
 				function-code-size image-function/code-size exit-reference-id current-entry?
 				:global-reference-count :literal-size (function-frames + (id - 1))
 				(function-outgoing + (id - 1))
-			if written <> image-function/code-size [return release scratch INVALID_IR]
+			if written < 0 [return release scratch signature-cache written]
+			if written <> image-function/code-size [return release scratch signature-cache INVALID_IR]
 			next-instruction: next-instruction + ir-function/instruction-count
 			next-offset: next-offset + ir-function/instruction-count + 1
 			id: id + 1
@@ -7309,7 +7630,7 @@ x64-codegen: context [
 							initializer/kind = SCALAR_INITIALIZER [
 								unless write-static-scalar (cursor + item-offset) slot-width
 									initializer/a initializer/b [
-									return release scratch INVALID_IR
+									return release scratch signature-cache INVALID_IR
 								]
 							]
 							initializer/kind = ADDRESS_INITIALIZER [
@@ -7334,18 +7655,18 @@ x64-codegen: context [
 										target-image-function/reference-count:
 											target-image-function/reference-count + 1
 									]
-									true [return release scratch INVALID_IR]
+									true [return release scratch signature-cache INVALID_IR]
 								]
 								global-offset: image-global/data-offset + item-offset
 								if global-offset > REFERENCE_OFFSET_MASK [
-									return release scratch OUTPUT_FULL
+									return release scratch signature-cache OUTPUT_FULL
 								]
 								references/reference-id: either
 									(image-global/flags and PROTECTED) <> 0 [
 										RODATA_REFERENCE_TAG or global-offset
 									][DATA_REFERENCE_TAG or global-offset]
 							]
-							true [return release scratch INVALID_IR]
+							true [return release scratch signature-cache INVALID_IR]
 						]
 						initializer-id: initializer-id + 1
 						item-offset: item-offset + slot-width
@@ -7354,6 +7675,6 @@ x64-codegen: context [
 			]
 			id: id + 1
 		]
-		release scratch total-size
+		release scratch signature-cache total-size
 	]
 ]

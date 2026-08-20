@@ -801,6 +801,36 @@ Already retained:
   cdecl/default/stdcall signatures share the Win64 call shape, but packed and C
   variadic signatures remain distinct and are rejected independently by SET,
   CALL, and RETURN;
+- the same one-slot selector now consumes adjacent integer and floating right
+  operands at BINARY and integer values at UNARY. Before loading the left
+  operand, the live right value moves directly from `RAX` to the existing
+  `RDX`/`RCX` operation register, or from `XMM0` to `XMM1`; a mixed floating
+  width converts directly during that move. Results remain in `RAX` or `XMM0`
+  for the next adjacent consumer. One invariant keeps every GPR location
+  canonical for its declared type, so 1/2-byte results use register-only
+  sign/zero extension before propagation. This adds no location stack, RSIR
+  field, allocation, frontend rule, adapter, CFG, or pass;
+- H63 built H64, which contains the new backend but was emitted by the previous
+  backend, in 62.263 wall seconds (compiler profile 62.131, frontend 24.447,
+  RSIR frontend 26.057, native codegen 0.602, link build 4.860). H64 is
+  5,225,472 bytes with `SizeOfCode` `477E00h`;
+- H64 then built the first compiler emitted through the new operator paths,
+  H65, in 61.802 wall seconds (compiler profile 61.666, frontend 23.931, RSIR
+  frontend 24.864, native codegen 0.615, link build 5.396). H65 is 5,139,968
+  bytes with `SizeOfCode` and `.text` raw size `463000h`, 85,504 bytes smaller
+  than H64. Relative to the previous H63 fixed point, both total image and code
+  fall by 75,264 bytes (1.443% of the image);
+- H65 built H66 in 65.649 wall seconds (compiler profile 65.501, frontend
+  25.020, RSIR frontend 27.883, native codegen 0.568, link build 4.756). H65
+  and H66 have identical size, `SizeOfCode`, `.text` virtual size `462E0Ch`,
+  and `.text` bytes; their complete files differ only at three PE
+  timestamp/checksum bytes. All three builds reuse runtime DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- H66 rebuilds and passes the primitive encoder, native codegen, and thin
+  frontend fixtures. It passes the complete Windows x64 Red/System runner in
+  71.700 seconds (10,582 tests, 12,647/12,647 assertions, no compile failures)
+  and the complete current non-View Red runner in 250.145 seconds (8,730 tests,
+  16,755/16,755 assertions). Both suite stderr logs are empty;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

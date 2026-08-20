@@ -671,6 +671,36 @@ if any [size <= 0 not execute-floating? output 1.5][
 	failures: failures + 1
 ]
 
+; The right local LOAD stays in XMM0 until BINARY moves it to XMM1. The
+; arithmetic result then stays in XMM0 through RETURN.
+put local-ir 20 10
+put local-ir 68 10
+put-instruction local-ir 80 1 -10 0 3FF80000h
+put-instruction local-ir 96 3 1 1 0
+put-instruction local-ir 112 5 0 0 0
+put-instruction local-ir 128 12 0 0 0
+put-instruction local-ir 144 3 1 1 0
+put-instruction local-ir 160 4 0 0 0
+put-instruction local-ir 176 3 1 1 0
+put-instruction local-ir 192 4 0 0 0
+put-instruction local-ir 208 15 1 0 0
+put-instruction local-ir 224 11 -10 0 0
+local-ir/241: as byte! 66h
+local-ir/242: as byte! 6Eh
+
+size: x64-codegen/generate local-ir 242 output 1024 0
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 89 [
+		print ["O0 XMM operator location code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+if any [size <= 0 not execute-floating? output 3.0][
+	print ["O0 XMM operator location was not forwarded" lf]
+	failures: failures + 1
+]
+
 ; Unused pointer node: logical pointee information must be accepted without
 ; changing code generated for the same function.
 put pointer-ir 0 1
@@ -792,7 +822,14 @@ size: x64-codegen/generate arithmetic-ir 170 output 1024 0
 if size <= 0 [failures: failures + 1]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if any [fn/frame-size <> 48 fn/code-size <= 17][failures: failures + 1]
+	if any [
+		fn/frame-size <> 48
+		fn/code-size <> 57
+		not execute-first? output 9
+	][
+		print ["O0 integer operator location code size: " fn/code-size lf]
+		failures: failures + 1
+	]
 ]
 put arithmetic-ir 92 -11
 if (x64-codegen/generate arithmetic-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
@@ -801,6 +838,78 @@ if (x64-codegen/generate arithmetic-ir 170 output 1024 0) <> x64-codegen/INVALID
 put arithmetic-ir 92 -5
 put arithmetic-ir 108 19
 if (x64-codegen/generate arithmetic-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
+; A narrow signed right operand forwarded in EAX must be sign-extended before
+; an int64 operation. Comparing the full result catches a zero-extended move.
+put arithmetic-ir 20 6
+put arithmetic-ir 44 -11
+put arithmetic-ir 68 6
+put-instruction arithmetic-ir 72 1 -7 10 0
+put-instruction arithmetic-ir 88 1 -1 -1 -1
+put-instruction arithmetic-ir 104 15 1 0 0
+put-instruction arithmetic-ir 120 1 -7 9 0
+put-instruction arithmetic-ir 136 15 13 0 0
+put-instruction arithmetic-ir 152 11 -11 0 0
+if any [
+	(x64-codegen/generate arithmetic-ir 170 output 1024 0) <= 0
+	not execute-first? output 1
+][
+	print ["O0 forwarded signed binary operand was not extended" lf]
+	failures: failures + 1
+]
+
+; Division consumes its forwarded right operand through RCX.
+put arithmetic-ir 20 4
+put arithmetic-ir 44 -5
+put arithmetic-ir 68 4
+put-instruction arithmetic-ir 72 1 -5 8 0
+put-instruction arithmetic-ir 88 1 -5 2 0
+put-instruction arithmetic-ir 104 15 4 0 0
+put-instruction arithmetic-ir 120 11 -5 0 0
+arithmetic-ir/137: as byte! 66h
+arithmetic-ir/138: as byte! 6Eh
+if any [
+	(x64-codegen/generate arithmetic-ir 138 output 1024 0) <= 0
+	not execute-first? output 4
+][
+	print ["O0 forwarded division operand did not reach RCX" lf]
+	failures: failures + 1
+]
+
+; Register locations are canonical values, not just untyped 32-bit payloads.
+; Narrow arithmetic must truncate before its signed result widens at RETURN.
+put arithmetic-ir 20 4
+put arithmetic-ir 44 -7
+put arithmetic-ir 68 4
+put-instruction arithmetic-ir 72 1 -1 127 0
+put-instruction arithmetic-ir 88 1 -1 1 0
+put-instruction arithmetic-ir 104 15 1 0 0
+put-instruction arithmetic-ir 120 11 -7 0 0
+arithmetic-ir/137: as byte! 66h
+arithmetic-ir/138: as byte! 6Eh
+if any [
+	(x64-codegen/generate arithmetic-ir 138 output 1024 0) <= 0
+	not execute-first? output -128
+][
+	print ["O0 signed narrow binary result was not canonical" lf]
+	failures: failures + 1
+]
+
+; Unsigned NOT likewise keeps only its declared byte before widening.
+put arithmetic-ir 20 3
+put arithmetic-ir 68 3
+put-instruction arithmetic-ir 72 1 -2 1 0
+put-instruction arithmetic-ir 88 14 1 0 0
+put-instruction arithmetic-ir 104 11 -7 0 0
+arithmetic-ir/121: as byte! 66h
+arithmetic-ir/122: as byte! 6Eh
+if any [
+	(x64-codegen/generate arithmetic-ir 122 output 1024 0) <= 0
+	not execute-first? output 254
+][
+	print ["O0 unsigned narrow unary result was not canonical" lf]
 	failures: failures + 1
 ]
 
@@ -927,6 +1036,13 @@ size: x64-codegen/generate expression-ir 122 output 1024 0
 if any [size <= 0 not execute-first? output -2][
 	print ["expression integer NOT failed" lf]
 	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 28 [
+		print ["O0 unary operator location code size: " fn/code-size lf]
+		failures: failures + 1
+	]
 ]
 put expression-ir 76 -11
 put expression-ir 44 -11

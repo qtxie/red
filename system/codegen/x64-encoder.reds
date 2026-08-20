@@ -568,6 +568,38 @@ x64-encoder: context [
 		3
 	]
 
+	extend-narrow-register: func [
+		code [byte-ptr!]
+		capacity target source width signed [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			any [width = 1 width = 2]
+			any [signed = 0 signed = 1]
+		][return -1]
+		prefix: rex false target source
+		size: 3
+		if any [prefix <> 40h all [width = 1 source >= 4]][size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if any [prefix <> 40h all [width = 1 source >= 4]][
+			at/1: as byte! prefix
+			at: at + 1
+		]
+		at/1: as byte! 0Fh
+		at/2: as byte! case [
+			all [width = 1 signed = 0][B6h]
+			all [width = 1 signed = 1][BEh]
+			all [width = 2 signed = 0][B7h]
+			true [BFh]
+		]
+		at/3: as byte! modrm 3 target source
+		size
+	]
+
 	frame-load: func [
 		code [byte-ptr!]
 		capacity target displacement width signed [integer!]
@@ -1021,6 +1053,31 @@ x64-encoder: context [
 		at/1: as byte! 0Fh
 		at/2: as byte! 11h
 		at/3: as byte! modrm 0 source address
+		size
+	]
+
+	xmm-move-register: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			prefix <> 0
+		][return -1]
+		rex-byte: rex false target source
+		size: either rex-byte = 40h [4][5]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 10h
+		at/3: as byte! modrm 3 target source
 		size
 	]
 

@@ -6,6 +6,7 @@ Red/System [
 
 failures: 0
 code: allocate 128
+expected: as byte-ptr! 0
 if null? code [quit 1]
 
 size: x64-encoder/prolog code 128 0 0
@@ -32,7 +33,7 @@ expected: #{
 	E8DDFFFFFF
 	C9C3
 }
-if (compare-memory code (as byte-ptr! expected) 37) <> 0 [
+if (compare-memory code expected 37) <> 0 [
 	failures: failures + 1
 ]
 
@@ -125,6 +126,28 @@ if any [offset <> 52 (compare-memory code (as byte-ptr! operations) offset) <> 0
 	failures: failures + 1
 ]
 
+size: x64-encoder/extend-narrow-register code 128 x64-encoder/RAX
+	x64-encoder/RAX 1 1
+expected: #{0FBEC0}
+if any [size <> 3 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/extend-narrow-register code 128 x64-encoder/RDX
+	x64-encoder/RAX 2 0
+expected: #{0FB7D0}
+if any [size <> 3 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/extend-narrow-register code 128 9 10 1 0
+expected: #{450FB6CA}
+if any [size <> 4 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+if (x64-encoder/extend-narrow-register code 128 x64-encoder/RAX
+	x64-encoder/RAX 4 0) <> -1 [
+	failures: failures + 1
+]
+
 size: x64-encoder/frame-address code 128 x64-encoder/RAX -40
 if any [size <> 4 code/1 <> as byte! 48h code/2 <> as byte! 8Dh][
 	failures: failures + 1
@@ -147,40 +170,40 @@ if any [
 ][failures: failures + 1]
 size: x64-encoder/register-load code 128 x64-encoder/R9 x64-encoder/R10 24
 expected: #{4D8B4A18}
-if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-store code 128 x64-encoder/R9 x64-encoder/R10 24
 expected: #{4D894A18}
-if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-load code 128 x64-encoder/RAX x64-encoder/RSP 32
 expected: #{488B442420}
-if any [size <> 5 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 5 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-store code 128 x64-encoder/RAX x64-encoder/RSP 32
 expected: #{4889442420}
-if any [size <> 5 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 5 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-load-indirect code 128 x64-encoder/R9
 	x64-encoder/R10 4 0
 expected: #{458B0A}
-if any [size <> 3 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 3 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-load-indirect code 128 x64-encoder/RAX
 	x64-encoder/RBP 2 1
 expected: #{0FBF4500}
-if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-store-indirect code 128 x64-encoder/R13
 	x64-encoder/R9 4
 expected: #{45894D00}
-if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 offset: 0
@@ -204,7 +227,7 @@ size: x64-encoder/negate-register (code + offset) (128 - offset)
 if size <> 3 [failures: failures + 1]
 offset: offset + size
 expected: #{F0440112F00FC102F0450FB15D000FAEF041F7D9}
-if any [offset <> 20 (compare-memory code (as byte-ptr! expected) offset) <> 0][
+if any [offset <> 20 (compare-memory code expected offset) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/rip-address code 128 x64-encoder/RAX 123
@@ -240,33 +263,48 @@ if any [
 ][failures: failures + 1]
 size: x64-encoder/and-immediate code 128 x64-encoder/RSP -16
 expected: #{4883E4F0}
-if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/compare-immediate code 128 x64-encoder/R8 4
 expected: #{4183F804}
-if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 if (x64-encoder/outgoing-store code 128 32 8) <> 5 [failures: failures + 1]
 size: x64-encoder/outgoing-immediate-store code 128 32 12345678h
 expected: #{C744242078563412}
-if any [size <> 8 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 8 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/outgoing-immediate-store code 128 128 12345678h
 expected: #{C784248000000078563412}
-if any [size <> 11 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 11 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/xmm-outgoing-store code 128 x64-encoder/XMM0 32 4
 expected: #{F30F11442420}
-if any [size <> 6 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 6 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/xmm-outgoing-store code 128 9 128 8
 expected: #{F2440F118C2480000000}
-if any [size <> 10 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 10 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-move-register code 128 x64-encoder/XMM1
+	x64-encoder/XMM0 4
+expected: #{F30F10C8}
+if any [size <> 4 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-move-register code 128 9 10 8
+expected: #{F2450F10CA}
+if any [size <> 5 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+if (x64-encoder/xmm-move-register code 128 x64-encoder/XMM0
+	x64-encoder/XMM1 2) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/call-import code 128 0) <> 6 [failures: failures + 1]
@@ -297,17 +335,17 @@ size: x64-encoder/pop-flags code 128
 if any [size <> 1 code/1 <> as byte! 9Dh][failures: failures + 1]
 size: x64-encoder/fxsave-stack code 128
 expected: #{0FAE0424}
-if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/fxrstor-stack code 128
 expected: #{0FAE0C24}
-if any [size <> 4 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/repeat-store-quad code 128
 expected: #{F348AB}
-if any [size <> 3 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 3 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/prolog code 128 0 -2
@@ -315,12 +353,12 @@ if any [size <> 15 code/6 <> as byte! FEh][failures: failures + 1]
 if (x64-encoder/prolog code 128 0 -3) <> -1 [failures: failures + 1]
 size: x64-encoder/throw-unwind code 128 false
 expected: #{8B55F839C27303C9EBF64C8B5DF04D85DB7502415B41FFE3}
-if any [size <> 24 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 24 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/throw-unwind code 128 true
 expected: #{C98B55F839C27303C9EBF64C8B5DF04D85DB7502415B41FFE3}
-if any [size <> 25 (compare-memory code (as byte-ptr! expected) size) <> 0][
+if any [size <> 25 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 if (x64-encoder/throw-unwind null 0 false) <> 24 [failures: failures + 1]

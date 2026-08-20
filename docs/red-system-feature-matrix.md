@@ -319,6 +319,29 @@ also fixed at the general ABI boundary: fixed cdecl/default/stdcall function
 values share one Win64 call shape, while packed and C variadic values remain
 distinct at SET, CALL, and RETURN.
 
+The H64-H66 gate extends that same one-slot selector to the scalar operator
+family without changing its architecture. An adjacent UNARY consumes `RAX`;
+BINARY moves its live right operand from `RAX` to the existing `RDX`/`RCX`
+operation register, or from `XMM0` to `XMM1`, before loading the left operand.
+Mixed floating widths convert during the XMM move, and operator results remain
+in `RAX` or `XMM0` for the next adjacent consumer. GPR locations are canonical
+typed values: 1/2-byte results receive register-only sign/zero extension before
+they propagate. There is still no location stack, new RSIR field, allocation,
+frontend rule, adapter, CFG, or extra pass.
+
+H63 built H64 in 62.263 wall seconds; H64 built H65 in 61.802 seconds; and H65
+built H66 in 65.649 seconds. H64, the generation emitted by the previous
+backend, is 5,225,472 bytes with `SizeOfCode` `477E00h`. H65 and H66 are both
+5,139,968 bytes with `SizeOfCode` and `.text` raw size `463000h` and `.text`
+virtual size `462E0Ch`; their complete files differ only at three PE
+timestamp/checksum bytes and their `.text` is identical. Against H63, total
+image and code both fall by 75,264 bytes (1.443% of the image). H66 rebuilds and
+passes the encoder, native codegen, and frontend fixtures, the complete Windows
+x64 Red/System runner (10,582 tests, 12,647/12,647 assertions, no compile
+failures), and the complete current non-View Red runner (8,730 tests,
+16,755/16,755 assertions). The fixed runtime DLL SHA256 is
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
+
 ## Windows Linker Gate
 
 Applicable tests in system/tests/static-link include:

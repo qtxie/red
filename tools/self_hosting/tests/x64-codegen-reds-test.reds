@@ -200,6 +200,10 @@ identity-code-size: 0
 folded-code-size: 0
 local-code-size: 0
 branch-code-size: 0
+call-branch-code-size: 0
+call-drop-code-size: 0
+call-float-code-size: 0
+call-narrow-code-size: 0
 no-types: as byte-ptr! 0
 sink-pairs: declare signature-pairs!
 sink-pairs/memory: null
@@ -262,6 +266,7 @@ tagged-ir: allocate 388
 array-ir: allocate 260
 array-compare-ir: allocate 228
 branch-ir: allocate 260
+call-result-ir: allocate 260
 boolean-ir: allocate 260
 merge-ir: allocate 260
 literal-merge-ir: allocate 260
@@ -274,7 +279,7 @@ system-ir: allocate 260
 atomic-ir: allocate 276
 overflow-ir: allocate 276
 exception-ir: allocate 260
-no-return-ir: allocate 148
+no-return-ir: allocate 164
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -287,7 +292,8 @@ if any [
 	null? widening-ir null? sink-ir null? signature-ir
 	null? indirect-ir null? variadic-ir
 	null? import-variadic-ir null? null-function-ir null? cast-ir null? static-cast-ir
-	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir null? boolean-ir
+	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
+	null? call-result-ir null? boolean-ir
 	null? merge-ir null? literal-merge-ir null? selection-ir
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
@@ -2619,6 +2625,133 @@ if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR 
 	failures: failures + 1
 ]
 
+; A scalar CALL already returns in RAX or XMM0. A linear consumer uses that
+; value directly; only paths which need a stack home materialize it.
+put call-result-ir 0 1
+put call-result-ir 4 0
+put call-result-ir 8 0
+put call-result-ir 12 0
+put call-result-ir 16 2
+put call-result-ir 20 8
+put call-result-ir 24 0
+put call-result-ir 28 0
+put call-result-ir 32 0
+
+put call-result-ir 36 0
+put call-result-ir 40 1
+put call-result-ir 44 -5
+put call-result-ir 48 0
+put call-result-ir 52 0
+put call-result-ir 56 0
+put call-result-ir 60 0
+put call-result-ir 64 0
+put call-result-ir 68 6
+
+put call-result-ir 72 1
+put call-result-ir 76 1
+put call-result-ir 80 -11
+put call-result-ir 84 0
+put call-result-ir 88 0
+put call-result-ir 92 0
+put call-result-ir 96 0
+put call-result-ir 100 0
+put call-result-ir 104 2
+
+put-instruction call-result-ir 108 7 2 0 -11
+put-instruction call-result-ir 124 17 5 0 0
+put-instruction call-result-ir 140 1 -5 7 0
+put-instruction call-result-ir 156 11 -5 0 0
+put-instruction call-result-ir 172 1 -5 9 0
+put-instruction call-result-ir 188 11 -5 0 0
+put-instruction call-result-ir 204 1 -11 1 0
+put-instruction call-result-ir 220 11 -11 0 0
+call-result-ir/237: as byte! 63h
+call-result-ir/238: as byte! 72h
+
+size: x64-codegen/generate call-result-ir 238 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	call-branch-code-size: fn/code-size
+	if call-branch-code-size <> 46 [
+		print ["O0 CALL to BRANCH code size: " call-branch-code-size lf]
+		failures: failures + 1
+	]
+	if not execute-first? output 7 [failures: failures + 1]
+]
+put call-result-ir 212 0
+size: x64-codegen/generate call-result-ir 238 output 1024 0
+if any [size <= 0 not execute-first? output 9][failures: failures + 1]
+
+put call-result-ir 20 6
+put call-result-ir 44 -5
+put call-result-ir 68 4
+put call-result-ir 80 -5
+put call-result-ir 104 2
+put-instruction call-result-ir 108 7 2 0 -5
+put-instruction call-result-ir 124 12 0 0 0
+put-instruction call-result-ir 140 1 -5 7 0
+put-instruction call-result-ir 156 11 -5 0 0
+put-instruction call-result-ir 172 1 -5 9 0
+put-instruction call-result-ir 188 11 -5 0 0
+call-result-ir/205: as byte! 63h
+call-result-ir/206: as byte! 72h
+
+size: x64-codegen/generate call-result-ir 206 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	call-drop-code-size: fn/code-size
+	if call-drop-code-size <> 31 [
+		print ["O0 CALL to DROP code size: " call-drop-code-size lf]
+		failures: failures + 1
+	]
+	if not execute-first? output 7 [failures: failures + 1]
+]
+
+put call-result-ir 20 4
+put call-result-ir 44 -10
+put call-result-ir 68 2
+put call-result-ir 80 -10
+put call-result-ir 104 2
+put-instruction call-result-ir 108 7 2 0 -10
+put-instruction call-result-ir 124 11 -10 0 0
+put-instruction call-result-ir 140 1 -10 0 1073217536
+put-instruction call-result-ir 156 11 -10 0 0
+call-result-ir/173: as byte! 63h
+call-result-ir/174: as byte! 72h
+
+size: x64-codegen/generate call-result-ir 174 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	call-float-code-size: fn/code-size
+	if call-float-code-size <> 26 [
+		print ["O0 floating CALL to RETURN code size: " call-float-code-size lf]
+		failures: failures + 1
+	]
+	if not execute-floating? output 1.5 [failures: failures + 1]
+]
+
+put call-result-ir 44 -5
+put call-result-ir 80 -1
+put-instruction call-result-ir 108 7 2 0 -1
+put-instruction call-result-ir 124 11 -5 0 0
+put-instruction call-result-ir 140 1 -1 -1 0
+put-instruction call-result-ir 156 11 -1 0 0
+
+size: x64-codegen/generate call-result-ir 174 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	call-narrow-code-size: fn/code-size
+	if call-narrow-code-size <> 29 [
+		print ["O0 narrow CALL normalization code size: " call-narrow-code-size lf]
+		failures: failures + 1
+	]
+	if not execute-first? output -1 [failures: failures + 1]
+]
+
 ; A boolean diamond materializes the truth value already on the postfix stack.
 ; O0 keeps the operation-level cost at 14 bytes and normalizes every nonzero
 ; condition to the canonical logic value 1 without emitting control flow.
@@ -3747,6 +3880,33 @@ no-return-ir/144: as byte! 32h
 
 size: x64-codegen/generate no-return-ir 144 output 1024 0
 if size <= 0 [failures: failures + 1]
+
+; A declared result from a no-return callee has no live register value. The
+; disconnected instruction after CALL must therefore start without a location.
+put no-return-ir 20 3
+put no-return-ir 68 2
+put no-return-ir 80 -11
+put-instruction no-return-ir 108 7 2 0 -11
+put-instruction no-return-ir 124 19 1 0 0
+put-instruction no-return-ir 140 19 1 0 0
+no-return-ir/157: as byte! 66h
+no-return-ir/158: as byte! 31h
+no-return-ir/159: as byte! 66h
+no-return-ir/160: as byte! 32h
+if (x64-codegen/generate no-return-ir 160 output 1024 0) <= 0 [
+	print ["typed no-return CALL retained a live result" lf]
+	failures: failures + 1
+]
+put no-return-ir 20 2
+put no-return-ir 68 1
+put no-return-ir 80 0
+put-instruction no-return-ir 108 7 2 0 0
+put-instruction no-return-ir 124 19 1 0 0
+no-return-ir/141: as byte! 66h
+no-return-ir/142: as byte! 31h
+no-return-ir/143: as byte! 66h
+no-return-ir/144: as byte! 32h
+
 put no-return-ir 48 x64-codegen/CATCH_FLAG
 if (x64-codegen/generate no-return-ir 144 output 1024 0) <> x64-codegen/INVALID_IR [
 	print ["catch caller lost the continuation after a no-return call" lf]
@@ -3780,6 +3940,7 @@ free tagged-ir
 free array-ir
 free array-compare-ir
 free branch-ir
+free call-result-ir
 free boolean-ir
 free merge-ir
 free literal-merge-ir

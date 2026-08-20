@@ -4849,6 +4849,13 @@ x64-codegen: context [
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
+					if all [
+						target > 0
+						(call-flags and NO_RETURN) <> 0
+						(fn/flags and CATCH_FLAG) = 0
+					][
+						fallthrough?: false
+					]
 					depth: result-index
 					if return-ref <> 0 [
 						depth: depth + 1
@@ -4891,28 +4898,39 @@ x64-codegen: context [
 							width: value-width return-ref 0 types members type-count
 								layouts member-offsets
 							floating?: float-type? return-ref types type-count
+							tracked?: all [linear? fallthrough?]
+							if all [tracked? not floating? width < 4][
+								signed: either signed-type? return-ref types type-count [1][0]
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/extend-narrow-register at
+									(capacity - written) x64-encoder/RAX x64-encoder/RAX
+									width signed
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
-							encoded: either floating? [
-								x64-encoder/xmm-frame-store at (capacity - written)
-									x64-encoder/XMM0 slot-displacement
-										(storage-slots + depth) width
-							][
-								target-width: either width = 8 [8][4]
-								x64-encoder/frame-store at (capacity - written)
-									x64-encoder/RAX slot-displacement
-										(storage-slots + depth) target-width
+							encoded: either tracked? [0][
+								either floating? [
+									x64-encoder/xmm-frame-store at (capacity - written)
+										x64-encoder/XMM0 slot-displacement
+											(storage-slots + depth) width
+								][
+									target-width: either width = 8 [8][4]
+									x64-encoder/frame-store at (capacity - written)
+										x64-encoder/RAX slot-displacement
+											(storage-slots + depth) target-width
+								]
+							]
+							if tracked? [
+								location: either floating? [LOCATION_XMM][LOCATION_GPR]
+								location-depth: depth
+								location-source: 0
 							]
 						]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-					]
-					if all [
-						target > 0
-						(call-flags and NO_RETURN) <> 0
-						(fn/flags and CATCH_FLAG) = 0
-					][
-						fallthrough?: false
 					]
 				]
 				instruction/op = OP_CAST [

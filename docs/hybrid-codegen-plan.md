@@ -892,6 +892,44 @@ Already retained:
   only as correctness-run metadata because of the verified host contention.
   All H70-H74 builds reuse the fixed runtime DLL SHA256
   `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- a scalar CALL result now enters the same one-slot selector directly from its
+  Win64 ABI register. A linear continuation keeps an integer/reference result
+  in `RAX` or a floating result in `XMM0`; an existing DROP, scalar operation,
+  RETURN, MEMBER, or BRANCH consumer can use it without a frame round-trip.
+  One- and two-byte integer returns are sign/zero extended before publication,
+  preserving the canonical GPR invariant even for foreign callees. Aggregate
+  returns keep their dedicated result storage, and a concrete no-return call
+  never publishes a result. Calls whose next instruction has an incoming edge
+  still materialize through the existing frame path. No call argument rule,
+  ABI shape, frontend rule, RSIR field, allocation, adapter, CFG, or pass is
+  added;
+- H74 built H75, which contains the new backend but was emitted by the previous
+  backend, in 64.641 wall seconds (compiler profile 64.525, frontend 22.477,
+  RSIR frontend 30.767, native codegen 0.452, link build 4.544). H75 is
+  4,866,560 bytes with `SizeOfCode` and `.text` raw size `420400h` and `.text`
+  virtual size `42025Ah`;
+- H75 built the first compiler emitted through the new CALL-result path, H76,
+  in 60.749 wall seconds (compiler profile 60.620, frontend 23.975, RSIR
+  frontend 24.831, native codegen 0.492, link build 4.418). H76 is 4,574,208
+  bytes with `SizeOfCode` and `.text` raw size `3D8E00h` and `.text` virtual
+  size `3D8D01h`, 292,352 bytes smaller than H75. Relative to the clean H74
+  fixed point, the image is 291,328 bytes (5.988%) smaller;
+- H76 built H77 in 60.032 wall seconds (compiler profile 59.917, frontend
+  23.620, RSIR frontend 24.353, native codegen 0.426, link build 5.157). H76
+  and H77 have identical image size, `.text` layout, and `.text` SHA256
+  `853FAB4D7CBB8271BAA66F3093E431621F7D2001D838BC37593024CE7ACECD80`;
+  their complete files differ only at three PE timestamp/checksum bytes. The
+  focused fixtures execute direct CALL-to-BRANCH, CALL-to-DROP, floating
+  CALL-to-RETURN, and a narrow signed result in caller bodies of 46, 31, 26,
+  and 29 bytes respectively; existing indirect and variadic execution fixtures
+  pass through the same result path;
+- H77 rebuilds and passes the primitive encoder, native codegen, and thin
+  frontend fixtures. It passes the complete Windows x64 Red/System runner in
+  68.718 seconds (10,582 tests, 12,647/12,647 assertions, no compile failures)
+  and the complete current non-View Red runner in 255.140 seconds (8,730 tests,
+  16,755/16,755 assertions). Both suite stderr logs are empty. H75-H77 reuse
+  the fixed runtime DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

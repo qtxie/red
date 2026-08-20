@@ -49,11 +49,11 @@ rules remain in Red/System codegen.
 | Predeclared runtime functions and predicates | Frontend-known typed signatures; ordinary calls or semantic native operations | compiler/print-test.r, units/integer-test.reds, lib-test.reds | pending |
 | Function declarations and returns | Declared signature, slots and instruction range; value RETURN keeps its producer type, while EXIT remains a void RETURN, and native codegen checks both against the declared result | compiler/return-test.r, units/function-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |
-| Direct and imported calls | One stack call with target, signature and actual count; native codegen checks parameter sinks and performs required scalar ABI conversion | units/function-test.reds, x64-function-smoke.reds, x64-import-smoke.reds, x64-codegen-reds-test.reds | replace |
+| Direct and imported calls | One stack call with target, signature and actual count; native codegen checks parameter sinks, performs required scalar ABI conversion, and forwards a linear scalar result directly from its ABI register | units/function-test.reds, x64-function-smoke.reds, x64-import-smoke.reds, x64-codegen-reds-test.reds | replace |
 | Function pointers and variables | Function signature type, symbol address and indirect call; native sink compatibility compares complete return, parameter, and target call-shape records | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds, x64-codegen-reds-test.reds | pending |
 | cdecl, stdcall and callback | Signature attributes and target ABI classifier; fixed default/stdcall/cdecl signatures share the Win64 sink shape required by C callbacks, while packed and C variadic shapes remain distinct | compiler/callback-test.r, units/lib-test.reds, fixed-int ABI cases, dylib tests, x64-codegen-reds-test.reds | pending |
 | Variadic, typed and custom calls | Actual stack types/count plus signature attributes; codegen applies C default `float32!` promotion to variadic extras | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds, x64-codegen-reds-test.reds | pending |
-| Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results, sink-width conversion and variadic float duplication | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
+| Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results, sink-width conversion and variadic float duplication; linear results remain in RAX/XMM0 and narrow integer results are canonicalized before propagation | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
 | if, either, any and all | Generic branch/jump; every predicate reaches native BRANCH and the frontend retains only syntax, targets, and parser shadow state. O0 lowers an unshared logic identity diamond directly to `test`/`setne`; shared short-circuit targets retain control flow | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, isolated native-rejection sources | replace |
 | loop, until and while | Generic branch/jump loops with explicit break/continue targets; native BRANCH validates conditions and the ordinary typed SET sink validates hidden loop counters | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
@@ -398,6 +398,31 @@ H73 built H74 in 63.386 seconds; H74's compiler profile is 63.258 seconds
 5.269). H73 and H74 have identical `.text` SHA256
 `5EDBB39C666A7B9562F0B59D3834265F683FB059751F5FC8D4D613A459C90CF1` and
 differ only in PE timestamp/checksum metadata.
+
+The H75-H77 gate publishes a scalar CALL result directly into that same
+one-slot selector. A linear integer/reference result stays in `RAX`, and a
+floating result stays in `XMM0`, so existing DROP, scalar-operation, RETURN,
+MEMBER, and BRANCH consumers need no frame round-trip. One- and two-byte
+integer results are sign/zero extended before publication, keeping the GPR
+location canonical for generated and foreign callees alike. Aggregate returns
+retain their dedicated result storage; concrete no-return calls publish no
+result; and paths with an incoming edge still materialize. This changes no call
+argument ABI, frontend rule, RSIR field, allocation, adapter, CFG, or pass.
+
+H74 built H75 in 64.641 wall seconds. H75, emitted by the previous backend, is
+4,866,560 bytes with `SizeOfCode` and `.text` raw size `420400h`. H75 built the
+first optimized H76 in 60.749 seconds, and H76 built H77 in 60.032 seconds.
+H76 and H77 are both 4,574,208 bytes with `.text` raw size `3D8E00h`, virtual
+size `3D8D01h`, and SHA256
+`853FAB4D7CBB8271BAA66F3093E431621F7D2001D838BC37593024CE7ACECD80`;
+their complete files differ only in PE timestamp/checksum metadata. Against
+H75 the image and code fall by 292,352 bytes; against the H74 fixed point the
+image falls by 291,328 bytes (5.988%). H77 rebuilds and passes the encoder,
+native codegen, and frontend fixtures, the complete Windows x64 Red/System
+runner in 68.718 seconds (10,582 tests, 12,647/12,647 assertions, no compile
+failures), and the complete current non-View Red runner in 255.140 seconds
+(8,730 tests, 16,755/16,755 assertions). The fixed runtime DLL SHA256 remains
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
 
 ## Windows Linker Gate
 

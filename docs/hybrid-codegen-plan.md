@@ -197,6 +197,15 @@ semantic identifiers. It covers size?, length?, overflow state, stack,
 CPU/FPU, I/O, atomics, image information, push, pop, and assert.
 
 The Red frontend resolves the language facility to a semantic native operation.
+It also preserves the source-defined argument boundary and the shallow result
+type needed to continue parsing. It does not coerce or validate the runtime
+operand combination. Codegen consumes the original postfix values, validates
+their pointer, scalar, and result types while deriving the stack effect, and
+then emits the target instruction. Value presence remains a frontend shape
+check because dense postfix RSIR has no explicit argument delimiter; without
+it, a valueless operand could accidentally consume an enclosing expression's
+value.
+
 Target-independent leaf names stay symbolic. For example, `system/cpu/rax`
 stores the register name in RSIR; only x64 codegen maps it to a physical
 register number. Codegen switches only on distinctions made by the language
@@ -610,6 +619,16 @@ Already retained:
   is emitted. A `[catch]` caller retains the call continuation because a throw
   resumes immediately after that call; native control-flow analysis applies the
   same rule;
+- CATCH filters and semantic native-operation operands cross RSIR unchanged.
+  The Red frontend resolves operation spelling, refinement, argument count, and
+  target-independent leaf names, while native codegen alone validates CATCH,
+  atomic load/store/CAS/math, stack allocation/free, CPU-register assignment,
+  PUSH, and LOG-B operand and result types. The frontend retains only structural
+  value presence, terminal-expression propagation, and parser result shadow;
+  strict THROW and `system/thrown` source-ID checks remain in Red for now because
+  their producer first passes through an ordinary typed SET, which hides the
+  original logical type from OP_THROW. Moving that last check requires direct
+  THROW ownership of the source value, not a validation adapter;
 - common integer comparison width and signedness selected from logical types,
   with native loads performing the required sign or zero extension;
 - one dense explicit CAST whose complete dynamic compatibility matrix,
@@ -662,6 +681,17 @@ Already retained:
   backend 41.545, native codegen 0.651, link build 6.930 seconds). H46 has the
   same size and `.text` size as H45, exposes only O0/O2, and rebuilds and passes
   the native codegen suite;
+- H46 built H47 with native intrinsic operand ownership in 66.348 seconds
+  (frontend 22.857, backend 43.382, native codegen 0.648, link build 6.953
+  seconds). H47 is 6,327,808 bytes, 17,920 bytes smaller than H46, and its
+  `.text` raw size fell by 15,872 bytes to `584400h`. Eight isolated invalid
+  CATCH, atomic, stack, CPU, and LOG-B source programs reached and were rejected
+  by native codegen. The formal atomic, system, push/pop, exceptions, and
+  integer executables passed all 1,656 assertions;
+- H47 then built the same-source H48 in 69.058 seconds (frontend 26.097,
+  backend 42.841, native codegen 0.690, link build 6.352 seconds). H48 has the
+  same total and `.text` sizes as H47, exposes only O0/O2, and rebuilds and
+  passes the native codegen suite;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

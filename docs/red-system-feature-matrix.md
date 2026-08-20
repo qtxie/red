@@ -61,13 +61,13 @@ rules remain in Red/System codegen.
 | switch | Typed literal/target slice with explicit default or fail semantics; native selector and target-merge validation plus x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | exit, return, break and continue | Direct function or loop terminators through the shared jump/return core | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds | replace |
 | Subroutines | Function-local entry targets and subroutine call/return | units/subroutine-test.reds, x64-subroutine-smoke.reds | pending |
-| throw and catch statement | Catch regions and non-local transfer state | units/exceptions-test.reds, x64-catch-*.reds | pending |
+| throw and catch statement | Catch regions and non-local transfer state; native CATCH owns filter type, while the THROW source ID remains a frontend check until THROW directly consumes the unprojected value | units/exceptions-test.reds, x64-catch-*.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
 | catch function attribute | Signature flag and resume point after a throwing call; no-return fallthrough is cut only in non-catch callers | units/exceptions-test.reds, x64-catch-runtime.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
 | overflow? and CPU overflow state | Native arithmetic flags tracked as an explicit effect | units/overflow-test.reds, x64-overflow and mixed-overflow smokes | pending |
-| push, pop and stack controls | Native-operation IDs with explicit stack effects | units/push-pop-test.reds, x64-stack-smoke.reds | pending |
-| args, environment, CPU, FPU, I/O and image | Native-operation IDs plus symbolic target leaf names; target mapping and checks in codegen/runtime | units/system-test.reds, x64-cpu-register and image-info smokes | pending |
+| push, pop and stack controls | Native-operation IDs with explicit stack effects; codegen validates stack allocation/free operands while the frontend retains only argument shape and result shadow | units/push-pop-test.reds, x64-stack-smoke.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
+| args, environment, CPU, FPU, I/O and image | Native-operation IDs plus symbolic target leaf names; target mapping and runtime operand checks, including CPU-register assignment, live in codegen/runtime | units/system-test.reds, x64-cpu-register and image-info smokes, rsir-frontend-test.red | pending |
 | system/alias and system/words | Frontend semantic aliases and direct resolved symbol paths | units/system-test.reds, namespace tests and complete runtime corpus | pending |
-| Atomic load/store/CAS/math/fence | Typed native operations with ordering semantics | units/atomic-test.reds, queue-test.reds, x64-atomic-direct.reds, rsir-atomic-exit.reds | pending |
+| Atomic load/store/CAS/math/fence | Typed native operations with ordering semantics; the frontend resolves operation/refinement/arity and codegen validates the original pointer, values, and result | units/atomic-test.reds, queue-test.reds, x64-atomic-direct.reds, rsir-atomic-exit.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | #import functions and variables | Direct import records and generic address/call operations | dylib compiler/unit tests, x64-import-var-*.reds | replace |
 | #syscall | Syscall declaration plus typed syscall operation | x64-syscall-smoke.reds and focused diagnostics | pending |
 | #call | Red callback operation supplied only by embedded Red compilation | focused Red #system/routine probes | pending |
@@ -240,6 +240,18 @@ struct-member address. Primitive encoder tests additionally require the x64
 `LOCK`, `XADD`, `CMPXCHG`, and `MFENCE` bytes. This proves the direct target
 mechanism, not row completion: the multithreaded atomic and queue formal
 families still require the runtime/thread source closure and must pass intact.
+
+The native-consumer ownership gate leaves invalid CATCH, atomic, stack,
+CPU-register, and LOG-B operands unchanged until native codegen consumes them.
+H47 independently rejects eight invalid source programs in that owning layer;
+raw fixtures separately cover every atomic STORE, LOAD, and CAS input and result
+position plus stack allocation/free counts and allocation result metadata. The
+formal atomic, system, push/pop, exceptions, and integer executables pass 1,656
+assertions in total. H47 then builds the same-source H48 with identical total
+and `.text` sizes. This proves the ownership boundary and self-hosting closure,
+not completion of the broader system rows: queue/thread behavior, remaining
+CPU/FPU/I/O/image forms, direct THROW source ownership, and non-x64 targets
+remain required.
 
 ## Windows Linker Gate
 

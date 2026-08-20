@@ -3038,6 +3038,139 @@ put atomic-ir 40 -2
 if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
+put atomic-ir 40 -5
+
+; Atomic STORE consumes an ordinary pointer and value. Both operand types are
+; native-owned; the independent result literal follows the void operation.
+put atomic-ir 20 6
+put atomic-ir 88 6
+put-instruction atomic-ir 100 3 1 1 0
+put-instruction atomic-ir 116 20 1 0 0
+put-instruction atomic-ir 132 1 -5 5 0
+put-instruction atomic-ir 148 10 19 0 0
+put-instruction atomic-ir 164 1 -5 7 0
+put-instruction atomic-ir 180 11 -5 0 0
+atomic-ir/197: as byte! 66h
+atomic-ir/198: as byte! 6Eh
+size: x64-codegen/generate atomic-ir 198 output 1024 0
+if any [size <= 0 not execute-first? output 7][
+	print ["atomic STORE fixture failed" lf]
+	failures: failures + 1
+]
+put atomic-ir 136 -11
+if (x64-codegen/generate atomic-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["atomic STORE accepted a logic value" lf]
+	failures: failures + 1
+]
+put atomic-ir 136 -5
+put atomic-ir 40 -15
+if (x64-codegen/generate atomic-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["atomic STORE accepted a byte pointer" lf]
+	failures: failures + 1
+]
+put atomic-ir 40 -5
+
+; Atomic LOAD replaces its pointer with one integer value.
+put-instruction atomic-ir 100 3 1 1 0
+put-instruction atomic-ir 116 20 1 0 0
+put-instruction atomic-ir 132 10 18 0 -5
+put-instruction atomic-ir 148 12 0 0 0
+put-instruction atomic-ir 164 1 -5 7 0
+put-instruction atomic-ir 180 11 -5 0 0
+size: x64-codegen/generate atomic-ir 198 output 1024 0
+if any [size <= 0 not execute-first? output 7][
+	print ["atomic LOAD fixture failed" lf]
+	failures: failures + 1
+]
+put atomic-ir 144 -11
+if (x64-codegen/generate atomic-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["atomic LOAD accepted the wrong result type" lf]
+	failures: failures + 1
+]
+put atomic-ir 144 -5
+put atomic-ir 40 -15
+if (x64-codegen/generate atomic-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["atomic LOAD accepted a byte pointer" lf]
+	failures: failures + 1
+]
+put atomic-ir 40 -5
+
+; Atomic CAS consumes pointer, check, and replacement values and returns logic.
+put atomic-ir 20 9
+put atomic-ir 88 9
+put-instruction atomic-ir 100 1 -5 7 0
+put-instruction atomic-ir 116 3 1 1 0
+put-instruction atomic-ir 132 20 1 0 0
+put-instruction atomic-ir 148 1 -5 1 0
+put-instruction atomic-ir 164 1 -5 2 0
+put-instruction atomic-ir 180 10 20 0 -11
+put-instruction atomic-ir 196 12 0 0 0
+put-instruction atomic-ir 212 1 -5 7 0
+put-instruction atomic-ir 228 11 -5 0 0
+size: x64-codegen/generate atomic-ir 246 output 1024 0
+if any [size <= 0 not execute-first? output 7][
+	print ["atomic CAS fixture failed" lf]
+	failures: failures + 1
+]
+put atomic-ir 152 -11
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["atomic CAS accepted a logic check value" lf]
+	failures: failures + 1
+]
+put atomic-ir 152 -5
+put atomic-ir 168 -11
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["atomic CAS accepted a logic replacement value" lf]
+	failures: failures + 1
+]
+put atomic-ir 168 -5
+put atomic-ir 192 -5
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["atomic CAS accepted the wrong result type" lf]
+	failures: failures + 1
+]
+put atomic-ir 192 -11
+put atomic-ir 40 -15
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["atomic CAS accepted a byte pointer" lf]
+	failures: failures + 1
+]
+put atomic-ir 40 -5
+
+; Stack allocation and release consume slot counts through the same native
+; postfix path. ALLOCATE's pointer result is explicit instruction metadata.
+put-instruction atomic-ir 100 1 -5 7 0
+put-instruction atomic-ir 116 1 -5 1 0
+put-instruction atomic-ir 132 10 8 0 1
+put-instruction atomic-ir 148 12 0 0 0
+put-instruction atomic-ir 164 1 -5 1 0
+put-instruction atomic-ir 180 10 10 0 0
+put-instruction atomic-ir 196 1 -5 0 0
+put-instruction atomic-ir 212 12 0 0 0
+put-instruction atomic-ir 228 11 -5 0 0
+size: x64-codegen/generate atomic-ir 246 output 1024 0
+if any [size <= 0 not execute-first? output 7][
+	print ["native stack allocation fixture failed" lf]
+	failures: failures + 1
+]
+put atomic-ir 120 -11
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["stack ALLOCATE accepted a logic slot count" lf]
+	failures: failures + 1
+]
+put atomic-ir 120 -5
+put atomic-ir 144 -5
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["stack ALLOCATE accepted a scalar result type" lf]
+	failures: failures + 1
+]
+put atomic-ir 144 1
+put atomic-ir 168 -11
+if (x64-codegen/generate atomic-ir 246 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["stack FREE accepted a logic slot count" lf]
+	failures: failures + 1
+]
+put atomic-ir 168 -5
 
 ; A lexical CATCH owns one fixed frame record. THROW resumes at END_CATCH,
 ; which restores the previous threshold, resume address, and stack pointer.

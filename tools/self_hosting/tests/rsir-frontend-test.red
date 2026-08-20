@@ -3692,12 +3692,16 @@ assert (ops-of log-b-ir log-b-layout) = [
 	1 1 15 10 11
 ]["LOG-B did not consume one full prefix argument expression"]
 
-assert none? compile-text {
+invalid-log-b-ir: compile-text {
 	Red/System []
 	bad: func [return: [integer!]][log-b true]
-} 'user "LOG-B accepted a non-integer value"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid LOG-B operand reported the wrong error class"
+} 'user
+assert binary? invalid-log-b-ir [
+	"frontend rejected backend-owned LOG-B operand: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-log-b-ir layout-of invalid-log-b-ir)
+	frontend/native-op
+	"invalid LOG-B operand did not reach its native consumer"
 
 stack-top-ir: compile-text {
 	Red/System []
@@ -4348,12 +4352,16 @@ assert all [
 	not none? find ops-of global-catch-ir layout-of global-catch-ir 26
 ]["global catch/throw did not lower inside the executable module function"]
 
-assert none? compile-text {
+invalid-catch-filter-ir: compile-text {
 	Red/System []
 	fn: func [][catch true []]
-} 'user "catch accepted a non-integer filter"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid catch filter reported the wrong error class"
+} 'user
+assert binary? invalid-catch-filter-ir [
+	"frontend rejected backend-owned CATCH filter: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-catch-filter-ir
+	layout-of invalid-catch-filter-ir) frontend/catch-op
+	"invalid CATCH filter did not reach native validation"
 
 assert none? compile-text {
 	Red/System []
@@ -4433,26 +4441,38 @@ assert atomic-effects = [
 	18 0 -5
 ]["system/atomic did not retain one direct typed native family"]
 
-assert none? compile-text {
+invalid-atomic-load-ir: compile-text {
 	Red/System []
 	fn: func [value [pointer! [byte!]]][system/atomic/load value]
-} 'user "system/atomic/load accepted a non-integer pointer"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid atomic load pointer reported the wrong error class"
+} 'user
+assert binary? invalid-atomic-load-ir [
+	"frontend rejected backend-owned atomic LOAD pointer: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-atomic-load-ir
+	layout-of invalid-atomic-load-ir) frontend/native-op
+	"invalid atomic LOAD pointer did not reach native validation"
 
-assert none? compile-text {
+invalid-atomic-store-ir: compile-text {
 	Red/System []
 	fn: func [value [pointer! [integer!]]][system/atomic/store value true]
-} 'user "system/atomic/store accepted a non-integer value"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid atomic store value reported the wrong error class"
+} 'user
+assert binary? invalid-atomic-store-ir [
+	"frontend rejected backend-owned atomic STORE value: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-atomic-store-ir
+	layout-of invalid-atomic-store-ir) frontend/native-op
+	"invalid atomic STORE value did not reach native validation"
 
-assert none? compile-text {
+invalid-atomic-cas-ir: compile-text {
 	Red/System []
 	fn: func [value [pointer! [integer!]]][system/atomic/cas value false 1]
-} 'user "system/atomic/cas accepted a non-integer check value"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid atomic CAS check reported the wrong error class"
+} 'user
+assert binary? invalid-atomic-cas-ir [
+	"frontend rejected backend-owned atomic CAS value: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-atomic-cas-ir
+	layout-of invalid-atomic-cas-ir) frontend/native-op
+	"invalid atomic CAS value did not reach native validation"
 
 assert none? compile-text {
 	Red/System []
@@ -4468,21 +4488,73 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-REFERENCE
 	"unknown atomic refinement reported the wrong error class"
 
-assert none? compile-text {
+invalid-stack-allocate-ir: compile-text {
 	Red/System []
 	fn: func [return: [pointer! [integer!]]][
 		system/stack/allocate true
 	]
-} 'user "system/stack/allocate accepted a non-integer argument"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid stack allocation argument reported the wrong error class"
+} 'user
+assert binary? invalid-stack-allocate-ir [
+	"frontend rejected backend-owned stack ALLOCATE value: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-stack-allocate-ir
+	layout-of invalid-stack-allocate-ir) frontend/native-op
+	"invalid stack ALLOCATE value did not reach native validation"
+
+invalid-stack-free-ir: compile-text {
+	Red/System []
+	fn: func [][system/stack/free as int64! 1]
+} 'user
+assert binary? invalid-stack-free-ir [
+	"frontend rejected backend-owned stack FREE value: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-stack-free-ir
+	layout-of invalid-stack-free-ir) frontend/native-op
+	"invalid stack FREE value did not reach native validation"
 
 assert none? compile-text {
 	Red/System []
-	fn: func [][system/stack/free as int64! 1]
-} 'user "system/stack/free accepted a non-integer! argument"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid stack free argument reported the wrong error class"
+	sink: func [][]
+	fn: func [value [pointer! [integer!]]][system/atomic/store value sink]
+} 'user "system/atomic accepted an argument without a value"
+assert frontend/last-error/message = "system/atomic argument is missing a value"
+	"atomic argument presence was not retained as frontend structure"
+
+stopped-native-ir: compile-text {
+	Red/System []
+	stop-int: func [return: [integer!]][assert false]
+	stop-pointer: func [return: [pointer! [integer!]]][assert false]
+	atomic-load-stop: func [][system/atomic/load stop-pointer]
+	atomic-store-pointer-stop: func [][system/atomic/store stop-pointer 1]
+	atomic-store-value-stop: func [value [pointer! [integer!]]][
+		system/atomic/store value stop-int
+	]
+	atomic-cas-check-stop: func [value [pointer! [integer!]]][
+		system/atomic/cas value stop-int 1
+	]
+	atomic-cas-new-stop: func [value [pointer! [integer!]]][
+		system/atomic/cas value 1 stop-int
+	]
+	stack-allocate-stop: func [][system/stack/allocate stop-int]
+	stack-free-stop: func [][system/stack/free stop-int]
+	push-stop: func [][push stop-int]
+	log-b-stop: func [return: [integer!]][log-b stop-int]
+	catch-stop: func [][catch stop-int []]
+	throw-stop: func [][throw stop-int]
+	thrown-stop: func [][system/thrown: stop-int]
+	cpu-stop: func [][system/cpu/rcx: stop-pointer]
+} 'user
+assert binary? stopped-native-ir [
+	"terminating native operand did not propagate: " mold frontend/last-error
+]
+stopped-native-ops: ops-of stopped-native-ir layout-of stopped-native-ir
+assert all [
+	not none? find stopped-native-ops frontend/call-op
+	none? find stopped-native-ops frontend/native-op
+	none? find stopped-native-ops frontend/catch-op
+	none? find stopped-native-ops frontend/throw-op
+	none? find stopped-native-ops frontend/set-op
+]["a native consumer survived its terminating operand"]
 
 assert none? compile-text {
 	Red/System []

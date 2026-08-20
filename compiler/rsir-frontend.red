@@ -4747,13 +4747,12 @@ compiler-rsir-frontend: context [
 	][
 		body: stack-value next position scope uses instructions params locals
 			expression-value
-		unless all [
-			not last-stopped?
-			last-flags = 0
-			(ref-kind last-type) = 'i32
-		][fail ERROR-REFERENCE "CATCH expects an integer! filter"]
 		unless all [not tail? body block? body/1][
 			fail ERROR-UNSUPPORTED "CATCH requires a body block"
+		]
+		if last-stopped? [return next body]
+		unless last-type <> 0 [
+			fail ERROR-REFERENCE "CATCH requires a filter value"
 		]
 
 		anchor: instruction-here instructions
@@ -5648,144 +5647,70 @@ compiler-rsir-frontend: context [
 		next-position
 	]
 
-	integer-pointer-value?: func [
-		ref flags [integer!]
-		return: [logic!]
-		/local pointee
-	][
-		if any [flags <> 0 (ref-kind ref) <> 'pointer][return false]
-		pointee: pointee-ref ref
-		all [integer? pointee (canonical-ref pointee) = -5]
-	]
-
 	stack-atomic: func [
 		position [block!]
 		scope uses [block!]
 		instructions [binary!]
 		params locals [block!]
 		return: [block!]
-		/local path count operation next-position old?
+		/local path count operation native-id argument-count result-ref
+			next-position old? stopped?
 	][
 		path: position/1
 		count: length? path
-		if all [count = 3 path/3 = 'fence][
-			emit instructions reduce [native-op atomic-fence-native 0 0]
-			last-type: 0
-			last-flags: 0
-			last-stopped?: false
-			return next position
-		]
-		if all [count = 3 path/3 = 'load][
-			next-position: stack-value next position scope uses instructions
-				params locals expression-value
-			unless all [
-				not last-stopped?
-				integer-pointer-value? last-type last-flags
-			][
-				fail ERROR-REFERENCE
-					"system/atomic/load expects pointer! [integer!]"
+		operation: 0
+		native-id: 0
+		argument-count: 0
+		result-ref: 0
+		case [
+			all [count = 3 path/3 = 'fence][
+				native-id: atomic-fence-native
 			]
-			emit instructions reduce [native-op atomic-load-native 0 -5]
-			last-type: -5
-			last-flags: 0
-			last-stopped?: false
-			return next-position
-		]
-		if all [count = 3 path/3 = 'store][
-			next-position: stack-value next position scope uses instructions
-				params locals expression-value
-			unless all [
-				not last-stopped?
-				integer-pointer-value? last-type last-flags
-			][
-				fail ERROR-REFERENCE
-					"system/atomic/store expects pointer! [integer!]"
+			all [count = 3 path/3 = 'load][
+				native-id: atomic-load-native
+				argument-count: 1
+				result-ref: -5
 			]
+			all [count = 3 path/3 = 'store][
+				native-id: atomic-store-native
+				argument-count: 2
+			]
+			all [count = 3 path/3 = 'cas][
+				native-id: atomic-cas-native
+				argument-count: 3
+				result-ref: -11
+			]
+			true [
+				operation: either count >= 3 [select atomic-operations path/3][none]
+				old?: all [count = 4 path/4 = 'old]
+				unless all [
+					integer? operation
+					any [count = 3 old?]
+				][fail ERROR-REFERENCE "invalid system/atomic access"]
+				native-id: atomic-math-native
+				argument-count: 2
+				result-ref: -5
+				if old? [operation: operation + atomic-old-flag]
+			]
+		]
+
+		next-position: next position
+		stopped?: false
+		loop argument-count [
 			next-position: stack-value next-position scope uses instructions
 				params locals expression-value
-			unless all [
-				not last-stopped?
-				last-flags = 0
-				(canonical-ref last-type) = -5
-			][
-				fail ERROR-REFERENCE
-					"system/atomic/store expects an integer! value"
+			if last-stopped? [stopped?: true]
+			unless any [last-stopped? last-type <> 0][
+				fail ERROR-REFERENCE "system/atomic argument is missing a value"
 			]
-			emit instructions reduce [native-op atomic-store-native 0 0]
-			last-type: 0
-			last-flags: 0
-			last-stopped?: false
+		]
+		if stopped? [
+			finish-stopped-expression instructions
 			return next-position
 		]
-		if all [count = 3 path/3 = 'cas][
-			next-position: stack-value next position scope uses instructions
-				params locals expression-value
-			unless all [
-				not last-stopped?
-				integer-pointer-value? last-type last-flags
-			][
-				fail ERROR-REFERENCE
-					"system/atomic/cas expects pointer! [integer!]"
-			]
-			next-position: stack-value next-position scope uses instructions
-				params locals expression-value
-			unless all [
-				not last-stopped?
-				last-flags = 0
-				(canonical-ref last-type) = -5
-			][
-				fail ERROR-REFERENCE
-					"system/atomic/cas expects an integer! check value"
-			]
-			next-position: stack-value next-position scope uses instructions
-				params locals expression-value
-			unless all [
-				not last-stopped?
-				last-flags = 0
-				(canonical-ref last-type) = -5
-			][
-				fail ERROR-REFERENCE
-					"system/atomic/cas expects an integer! new value"
-			]
-			emit instructions reduce [native-op atomic-cas-native 0 -11]
-			last-type: -11
-			last-flags: 0
-			last-stopped?: false
-			return next-position
-		]
-		operation: either count >= 3 [select atomic-operations path/3][none]
-		old?: all [count = 4 path/4 = 'old]
-		unless all [
-			integer? operation
-			any [count = 3 old?]
-		][fail ERROR-REFERENCE "invalid system/atomic access"]
-		next-position: stack-value next position scope uses instructions
-			params locals expression-value
-		unless all [
-			not last-stopped?
-			integer-pointer-value? last-type last-flags
-		][
-			fail ERROR-REFERENCE [
-				"system/atomic/" path/3 " expects pointer! [integer!]"
-			]
-		]
-		next-position: stack-value next-position scope uses instructions
-			params locals expression-value
-		unless all [
-			not last-stopped?
-			last-flags = 0
-			(canonical-ref last-type) = -5
-		][
-			fail ERROR-REFERENCE [
-				"system/atomic/" path/3 " expects an integer! value"
-			]
-		]
-		emit instructions reduce [
-			native-op atomic-math-native
-			operation + (either old? [atomic-old-flag][0])
-			-5
-		]
-		last-type: -5
+
+		emit instructions reduce [native-op native-id operation result-ref]
+		last-type: result-ref
 		last-flags: 0
 		last-stopped?: false
 		next-position
@@ -5895,13 +5820,9 @@ compiler-rsir-frontend: context [
 			][
 				next-position: stack-value next position scope uses instructions
 					params locals expression-value
-				unless all [
-					not last-stopped?
-					last-flags = 0
-					(ref-kind last-type) = 'i32
-				][
-					fail ERROR-REFERENCE
-						"system/stack/allocate expects an integer! argument"
+				if last-stopped? [return next-position]
+				unless last-type <> 0 [
+					fail ERROR-REFERENCE "system/stack/allocate requires a value"
 				]
 				pointer-ref: intern-pointer -5
 				emit instructions reduce [
@@ -5918,13 +5839,9 @@ compiler-rsir-frontend: context [
 			all [count = 3 path/3 = 'free][
 				next-position: stack-value next position scope uses instructions
 					params locals expression-value
-				unless all [
-					not last-stopped?
-					last-flags = 0
-					(ref-kind last-type) = 'i32
-				][
-					fail ERROR-REFERENCE
-						"system/stack/free expects an integer! argument"
+				if last-stopped? [return next-position]
+				unless last-type <> 0 [
+					fail ERROR-REFERENCE "system/stack/free requires a value"
 				]
 				emit instructions reduce [native-op stack-free-native 0 0]
 				last-type: 0
@@ -5993,6 +5910,9 @@ compiler-rsir-frontend: context [
 			next-position: stack-value next position scope uses instructions
 				params locals expression-value
 			if last-stopped? [return next-position]
+			unless last-type <> 0 [
+				fail ERROR-REFERENCE "system/cpu assignment requires a value"
+			]
 			emit-native-register instructions cpu-register-set-native target/3
 			last-type: pointer-ref
 			last-flags: 0
@@ -6032,9 +5952,8 @@ compiler-rsir-frontend: context [
 	][
 		position-after: stack-value next position scope uses instructions params locals
 			expression-value
-		unless all [not last-stopped? last-type <> 0][
-			fail ERROR-REFERENCE "PUSH requires a value"
-		]
+		if last-stopped? [return position-after]
+		unless last-type <> 0 [fail ERROR-REFERENCE "PUSH requires a value"]
 		emit instructions reduce [native-op stack-push-native 0 0]
 		last-type: 0
 		last-flags: 0
@@ -6051,11 +5970,8 @@ compiler-rsir-frontend: context [
 	][
 		position-after: stack-value next position scope uses instructions params locals
 			expression-value
-		unless all [
-			not last-stopped?
-			last-flags = 0
-			integer-kind? ref-kind last-type
-		][fail ERROR-REFERENCE "LOG-B expects an integer value"]
+		if last-stopped? [return position-after]
+		unless last-type <> 0 [fail ERROR-REFERENCE "LOG-B requires a value"]
 		emit instructions reduce [native-op log-b-native 0 -5]
 		last-type: -5
 		last-flags: 0

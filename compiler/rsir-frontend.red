@@ -235,7 +235,6 @@ compiler-rsir-frontend: context [
 	; built. USE slots stay in the frame table, while their names are tombstoned
 	; when the lexical body ends. Subroutine bodies precede the main body and are
 	; emitted once, with direct intra-function calls.
-	use-local-slots: make map! 32
 	function-storage: make map! 64
 	; name [body entry result stopped? state]
 	subroutines: make map! 32
@@ -416,10 +415,6 @@ compiler-rsir-frontend: context [
 			record: skip record 3
 		]
 		count
-	]
-
-	logical-value?: func [ref flags [integer!] return: [logic!]][
-		all [stack-type-compatible? -11 ref flags = 0]
 	]
 
 	fail: func [code [integer!] message [string! block!] /local error][
@@ -3003,108 +2998,6 @@ compiler-rsir-frontend: context [
 		true
 	]
 
-	array-pointer-compatible?: func [
-		expected actual [integer!]
-		return: [logic!]
-		/local info target
-	][
-		unless info: array-info actual [return false]
-		unless target: pointee-ref expected [return false]
-		(canonical-ref target) = canonical-ref info/1
-	]
-
-	reference-kind?: func [kind [word! none!] return: [logic!]][
-		not none? find [pointer c-string struct union array function null] kind
-	]
-
-	function-signatures-compatible?: func [
-		expected actual [integer!]
-		visited [block!]
-		return: [logic!]
-		/local left right left-parameter right-parameter cursor
-	][
-		cursor: visited
-		while [not tail? cursor][
-			if all [cursor/1 = expected cursor/2 = actual][return true]
-			cursor: skip cursor 2
-		]
-		append visited expected
-		append visited actual
-		left: function-signature expected
-		right: function-signature actual
-		unless all [block? left block? right][return false]
-		if any [
-			(left/4 and cdecl-flag) <> (right/4 and cdecl-flag)
-			(left/4 and call-shape-flags) <> (right/4 and call-shape-flags)
-		][
-			return false
-		]
-		either left/1 = 0 [
-			if right/1 <> 0 [return false]
-		][
-			if any [
-				right/1 = 0
-				not stack-type-compatible-at? left/1 right/1 visited
-			][return false]
-		]
-		if (length? left/2) <> length? right/2 [return false]
-		left-parameter: left/2
-		right-parameter: right/2
-		while [not tail? left-parameter][
-			if any [
-				left-parameter/3 <> right-parameter/3
-				not stack-type-compatible-at? left-parameter/2 right-parameter/2
-					visited
-			][return false]
-			left-parameter: skip left-parameter 3
-			right-parameter: skip right-parameter 3
-		]
-		true
-	]
-
-	stack-type-compatible-at?: func [
-		expected actual [integer!]
-		visited [block! none!]
-		return: [logic!]
-		/local expected-kind actual-kind
-	][
-		expected: canonical-ref expected
-		actual: canonical-ref actual
-		if expected = actual [return true]
-		if any [expected = 0 actual = 0] [return false]
-		expected-kind: ref-kind expected
-		actual-kind: ref-kind actual
-		if any [expected-kind = 'null actual-kind = 'null][
-			return all [reference-kind? expected-kind reference-kind? actual-kind]
-		]
-		if all [
-			any [expected = -12 actual = -12]
-			expected-kind = 'pointer
-			actual-kind = 'pointer
-		][return true]
-		if array-pointer-compatible? expected actual [return true]
-		if all [expected-kind = 'function actual-kind = 'function][
-			if none? visited [visited: make block! 8]
-			return function-signatures-compatible? expected actual visited
-		]
-		if any [reference-kind? expected-kind reference-kind? actual-kind][return false]
-		either all [expected > 0 actual > 0][
-			false
-		][
-			expected-kind = actual-kind
-		]
-	]
-
-	stack-type-compatible?: func [
-		expected actual [integer!]
-		return: [logic!]
-	][
-		expected: canonical-ref expected
-		actual: canonical-ref actual
-		if expected = actual [return true]
-		stack-type-compatible-at? expected actual none
-	]
-
 	integer-kind?: func [kind [word! none!] return: [logic!]][
 		not none? find [i8 byte u8 i16 u16 i32 u32 i64 u64] kind
 	]
@@ -3747,7 +3640,7 @@ compiler-rsir-frontend: context [
 		locals [block!]
 		return: [block!]
 		/local spec body cursor names-start name ref flags record-index record
-			active-records stopped? saved slot
+			active-records stopped? slot
 	][
 		unless function-active? [
 			fail ERROR-CONTEXT "USE is only allowed inside a function"
@@ -3760,6 +3653,7 @@ compiler-rsir-frontend: context [
 		spec: position/2
 		body: position/3
 		active-records: make block! 8
+		slot: 1 + ((length? params) / 3) + storage-local-count locals
 		cursor: spec
 		while [not tail? cursor][
 			unless word? cursor/1 [
@@ -3785,30 +3679,13 @@ compiler-rsir-frontend: context [
 				if stack-storage-info name [
 					fail ERROR-DUPLICATE ["duplicate USE local " mold name]
 				]
-				saved: select use-local-slots name
-				either block? saved [
-					record-index: saved/1
-					slot: saved/2
-					record: skip locals ((record-index - 1) * 3)
-					unless all [
-						stack-type-compatible? record/2 ref
-						record/3 = flags
-					][
-						fail ERROR-REFERENCE [
-							"conflicting USE local type " mold name
-						]
-					]
-					record/1: name
-				][
-					record-index: 1 + ((length? locals) / 3)
-					slot: 1 + ((length? params) / 3) + storage-local-count locals
-					append locals name
-					append locals ref
-					append locals flags
-					record: skip locals ((record-index - 1) * 3)
-					put use-local-slots name reduce [record-index slot]
-				]
+				record-index: 1 + ((length? locals) / 3)
+				append locals name
+				append locals ref
+				append locals flags
+				record: skip locals ((record-index - 1) * 3)
 				register-storage name slot record
+				slot: slot + 1
 				append active-records record-index
 				names-start: next names-start
 			]
@@ -3816,8 +3693,8 @@ compiler-rsir-frontend: context [
 		]
 		stack-block body scope uses instructions params locals statement-value
 		stopped?: last-stopped?
-		; The slots remain available for a later same-name USE, but their source
-		; names leave the active lexical environment with this body.
+		; Each lexical declaration keeps its own slot, while its source name leaves
+		; the active environment with this body.
 		foreach record-index active-records [
 			record: skip locals ((record-index - 1) * 3)
 			remove/key function-storage record/1
@@ -4812,9 +4689,7 @@ compiler-rsir-frontend: context [
 		before: length? instructions
 		after: stack-value next position scope uses instructions params locals
 			expression-value
-		unless all [not last-stopped? logical-value? last-type last-flags][
-			fail ERROR-REFERENCE "ASSERT requires a logic value"
-		]
+		if last-stopped? [return after]
 		if never? [
 			clear at instructions (before + 1)
 			emit instructions reduce [fail-op 98 0 0]
@@ -5279,41 +5154,27 @@ compiler-rsir-frontend: context [
 		while [not tail? cursor][
 			cursor: stack-value cursor scope uses instructions params locals
 				expression-value
-			either all [last-type = 0 not last-stopped?][
-				; A statement contributes the identity without short-circuiting.
-				if tail? cursor [
-					emit instructions reduce [
-						literal-op -11 either any? [0][1] 0
-					]
-					last-type: -11
-					last-flags: 0
-				]
-			][
-				either tail? cursor [
-					unless logical-value? last-type last-flags [
-						fail ERROR-REFERENCE rejoin [
-							either any? ["ANY"]["ALL"]
-							" requires a conditional expression"
-						]
-					]
-				][
-					patch: emit-control instructions branch-op either any? [1][0]
-					append patches patch
+			if last-stopped? [
+				fail ERROR-REFERENCE rejoin [
+					either any? ["ANY"]["ALL"]
+					" requires a conditional expression"
 				]
 			]
+			if last-type <> 0 [
+				patch: emit-control instructions branch-op either any? [1][0]
+				append patches patch
+			]
 		]
-		if empty? patches [
-			last-stopped?: false
-			return after
-		]
-
 		decided: either any? [1][0]
-		jump-patch: emit-control instructions jump-op 0
-		foreach patch patches [
-			patch-control instructions patch instruction-here instructions
+		emit instructions reduce [literal-op -11 either any? [0][1] 0]
+		unless empty? patches [
+			jump-patch: emit-control instructions jump-op 0
+			foreach patch patches [
+				patch-control instructions patch instruction-here instructions
+			]
+			emit instructions reduce [literal-op -11 decided 0]
+			patch-control instructions jump-patch instruction-here instructions
 		]
-		emit instructions reduce [literal-op -11 decided 0]
-		patch-control instructions jump-patch instruction-here instructions
 		last-type: -11
 		last-flags: 0
 		last-stopped?: false
@@ -6596,7 +6457,7 @@ compiler-rsir-frontend: context [
 					record/3: 0
 				][unless all [
 					record/3 = 0
-					stack-type-compatible? record/2 ref
+					(canonical-ref record/2) = (canonical-ref ref)
 				][fail ERROR-REFERENCE ["declaration changes type " mold target]]]
 			][
 				unless integer? id [
@@ -6604,7 +6465,7 @@ compiler-rsir-frontend: context [
 				]
 				record: skip global-data ((id - 1) * 5)
 				either integer? record/2 [
-					unless stack-type-compatible? record/2 ref [
+					unless (canonical-ref record/2) = (canonical-ref ref) [
 						fail ERROR-REFERENCE ["declaration changes type " mold target]
 					]
 				][
@@ -7073,7 +6934,6 @@ compiler-rsir-frontend: context [
 		clear loops
 		clear overflows
 		clear catches
-		clear use-local-slots
 		prepare-function-storage params locals
 		clear subroutines
 		clear subroutine-order
@@ -7108,7 +6968,6 @@ compiler-rsir-frontend: context [
 		clear-resolved-names
 		clear overflows
 		clear catches
-		clear use-local-slots
 		clear function-storage
 		clear subroutines
 		clear subroutine-order
@@ -7241,7 +7100,6 @@ compiler-rsir-frontend: context [
 			clear strings
 			clear native-names
 			clear native-name-patches
-			clear use-local-slots
 			clear function-storage
 			clear subroutines
 			clear subroutine-order

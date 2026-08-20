@@ -161,12 +161,12 @@ The general control operations are:
 - subroutine call and return.
 
 if, either, loops, any, all, and case lower to these operations. Branches own
-the predicates of if, either, case, while, until, and every non-final any/all
-item. The loop counter reaches the ordinary typed SET sink. The final any/all
-item temporarily retains a frontend logic check because no control operation
-consumes it. switch remains explicit so native codegen validates its selector
-and may choose a comparison chain or jump table from density without changing
-frontend semantics.
+the predicates of if, either, case, while, until, and every any/all item. ANY
+and ALL rebuild their result from the two short-circuit identity literals, so
+even the final predicate reaches the same native BRANCH validator. The loop
+counter reaches the ordinary typed SET sink. switch remains explicit so native
+codegen validates its selector and may choose a comparison chain or jump table
+from density without changing frontend semantics.
 
 THROW is a two-input semantic operation: the frontend resolves the existing
 thrown storage place, while codegen validates the original integer ID and
@@ -211,6 +211,13 @@ check because dense postfix RSIR has no explicit argument delimiter; without
 it, a valueless operand could accidentally consume an enclosing expression's
 value.
 
+Debug ASSERT lowers through the same branch/fail core, so native BRANCH owns
+its predicate. Ordinary release ASSERT follows the existing language compiler
+rule and removes its unevaluated expression entirely. The existing statically
+false tail/inferred form remains an explicit FAIL terminator for no-return
+inference; the frontend does not run a second compatibility check for either
+form.
+
 Target-independent leaf names stay symbolic. For example, `system/cpu/rax`
 stores the register name in RSIR; only x64 codegen maps it to a physical
 register number. Codegen switches only on distinctions made by the language
@@ -249,6 +256,13 @@ returns. Alias names, enum labels, member names, and local names are bound by
 the frontend; canonical aliases, inferred local types, and expression types
 are derived once by codegen. Names remain frontend data unless a later
 operation, diagnostic, export, or link requires them.
+
+Each USE declaration receives one source-order local slot and leaves the
+active name environment at the end of its lexical body. The frontend does not
+reuse slots by spelling or compare their runtime types; later native lifetime
+analysis may coalesce non-overlapping storage without changing RSIR identity.
+Repeated scalar DECLARE syntax compares canonical declared identity only.
+Runtime value compatibility has no parallel Red implementation.
 
 Tagged-union metadata records logical variants and anonymous payload
 structure. Native codegen chooses tag width, payload offset, total alignment,
@@ -580,6 +594,8 @@ Already retained:
 - proof that the existing compiler can build and execute the boundary.
 - dense postfix values and places with backend-derived types and assignment results;
 - one contiguous parameter/local storage model with local type inference;
+- one source-order slot per lexical USE declaration, without name-based
+  frontend reuse or runtime compatibility checks;
 - pointee-preserving pointer nodes and a distinct c-string logical type;
 - one semantic function compiler used for size measurement and emission;
 - primitive x64 encodings with no call/argument/source-shape combinations.
@@ -597,9 +613,9 @@ Already retained:
   continue lowered through that shared control core. Native BRANCH validates
   logic predicates, native SET validates the loop count, and native target
   merging validates reachable value depth and type. The frontend emits no
-  merge-repair DROP and retains only parser shadow state; only the final
-  any/all item still needs a frontend logic check because it has no branch
-  consumer;
+  merge-repair DROP and retains only parser shadow state. Every any/all value,
+  including the final one, is consumed by BRANCH and the result is rebuilt from
+  short-circuit identity literals;
 - ordered case selection lowered to branch/jump plus a non-returning fail
   terminator, and switch selection represented by a compact typed literal/target
   table with fixed-width integer limbs;
@@ -727,6 +743,26 @@ Already retained:
   H52 has the same image size, `SizeOfCode`, and `.text` raw size as H51,
   exposes only O0/O2, rejects the same four invalid sources, and rebuilds and
   passes the native fixture plus the same 296-assertion formal gate;
+- H52 built H53 after removing the Red runtime-compatibility mini-engine,
+  routing every ANY/ALL predicate through native BRANCH, and assigning each
+  lexical USE declaration its own source slot. The development O0 build took
+  68.835 seconds (frontend 24.999, backend 43.692, native codegen 0.647, link
+  build 6.778 seconds). H53 is 6,290,432 bytes, 39,424 bytes smaller than H52;
+  `SizeOfCode` fell to `57BE00h` and `.text` raw size to `57C000h`;
+- H53 built the same source into H54 in 66.045 seconds (frontend 23.343,
+  backend 42.587, native codegen 0.647, link build 7.445 seconds). H54 is
+  6,303,744 bytes because the new frontend now compiles its own source;
+  H54 then built H55 in 64.845 seconds (frontend 25.393, backend 39.342,
+  native codegen 0.652, link build 5.525 seconds). H54 and H55 have identical
+  total size, `SizeOfCode` `57F200h`, and `.text` raw size `580000h`;
+- after making USE slot numbering one linear pass, H55 built final-source H56
+  in 65.696 seconds (frontend 25.063, backend 40.523, native codegen 0.636,
+  link build 7.194 seconds), and H56 built H57 in 62.520 seconds (frontend
+  22.321, backend 40.088, native codegen 0.696, link build 5.950 seconds).
+  H56 and H57 retain the same 6,303,744-byte total, `SizeOfCode` `57F200h`,
+  and `.text` raw size `580000h`. H57 exposes only O0/O2, rejects an invalid
+  final ANY/ALL predicate in native codegen, passes the native fixture, and
+  passes 143 formal tests with all 176 assertions;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
@@ -739,7 +775,8 @@ Still incomplete and therefore not an H0:
 - complete fixed-int/int64 formal coverage for aggregate fields and
   typed/variadic ABI paths;
 - compiler diagnostic and source-location coverage for control errors, runtime
-  diagnostic dispatch for fail, and dense switch jump-table selection;
+  diagnostic dispatch for fail, dense switch jump-table selection, and O0
+  simplification of the one-condition ANY/ALL boolean diamond;
 - remaining aggregate and array initializers and function-pointer nodes;
 - complete Win64 imported/variadic aggregate, indirect-call, callback, and
   formal ABI coverage;

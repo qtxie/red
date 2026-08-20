@@ -2319,12 +2319,30 @@ assert all [
 	(function-instruction-word debug-assert-ir debug-assert-layout 2 4 0) = 11
 ]["debug ASSERT did not use the shared branch/fail path"]
 
-assert none? compile-text {
+release-invalid-assert-ir: compile-text {
 	Red/System []
 	fn: func [][assert 1]
-} 'user "ASSERT accepted a non-logic condition"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid ASSERT condition reported the wrong error class"
+} 'user
+assert binary? release-invalid-assert-ir [
+	"release ASSERT did not follow the legacy ignored-expression rule: "
+	mold frontend/last-error
+]
+release-invalid-assert-layout: layout-of release-invalid-assert-ir
+assert (function-ops-of release-invalid-assert-ir
+	release-invalid-assert-layout 1) = [11]
+	"release ASSERT retained its ignored condition in RSIR"
+
+debug-invalid-assert-ir: compile-text/debug {
+	Red/System []
+	fn: func [][assert 1]
+} 'user
+assert binary? debug-invalid-assert-ir [
+	"frontend rejected backend-owned debug ASSERT predicate: "
+	mold frontend/last-error
+]
+assert (function-ops-of debug-invalid-assert-ir
+	layout-of debug-invalid-assert-ir 1) = [1 17 19 11]
+	"invalid debug ASSERT did not reach native BRANCH validation"
 
 byte-ir: compile-text {
 	Red/System []
@@ -2915,11 +2933,12 @@ short-layout: layout-of short-ir
 assert all [
 	(function-word short-ir short-layout 1 28) = 0
 	(ops-of short-ir short-layout) = [
-		3 4 17 3 4 16 1 11
+		3 4 17 3 4 17 1 16 1 11
 	]
 	(instruction-word short-ir short-layout 3 8) = 1
-	(instruction-word short-ir short-layout 3 4) = 7
-	(instruction-word short-ir short-layout 6 4) = 8
+	(instruction-word short-ir short-layout 3 4) = 9
+	(instruction-word short-ir short-layout 6 4) = 9
+	(instruction-word short-ir short-layout 8 4) = 10
 ]["ANY did not merge its short-circuit result on the typed stack"]
 
 single-all-ir: compile-text {
@@ -2929,8 +2948,9 @@ single-all-ir: compile-text {
 single-all-layout: layout-of single-all-ir
 assert all [
 	(function-word single-all-ir single-all-layout 1 28) = 0
-	(ops-of single-all-ir single-all-layout) = [3 4 11]
-]["a one-condition ALL retained unnecessary control or merge work"]
+	(ops-of single-all-ir single-all-layout) = [3 4 17 1 16 1 11]
+	(instruction-word single-all-ir single-all-layout 3 8) = 0
+]["a one-condition ALL did not reach native BRANCH validation"]
 
 condition-statements-ir: compile-text {
 	Red/System []
@@ -3477,8 +3497,8 @@ use-ir: compile-text {
 } 'user
 assert binary? use-ir ["nested USE lowering failed: " mold frontend/last-error]
 use-layout: layout-of use-ir
-assert (function-word use-ir use-layout 1 28) = 3
-	"non-overlapping same-name USE locals did not share their frame slot"
+assert (function-word use-ir use-layout 1 28) = 4
+	"independent USE declarations did not retain distinct frame slots"
 
 subroutine-ir: compile-text {
 	Red/System []
@@ -3569,15 +3589,23 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"USE subroutine local reported the wrong error class"
 
-assert none? compile-text {
+separate-use-locals-ir: compile-text {
 	Red/System []
 	fn: func [][
 		use [value [integer!]][]
 		use [value [logic!]][]
 	]
-} 'user "USE reused one frame slot with conflicting types"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"conflicting USE local types reported the wrong error class"
+} 'user
+assert binary? separate-use-locals-ir [
+	"separate USE contexts rejected independent same-name declarations: "
+	mold frontend/last-error
+]
+separate-use-layout: layout-of separate-use-locals-ir
+assert all [
+	(function-word separate-use-locals-ir separate-use-layout 1 28) = 2
+	(word-at separate-use-locals-ir separate-use-layout/5) = -5
+	(word-at separate-use-locals-ir (separate-use-layout/5 + 8)) = -11
+]["separate USE declarations reused one frontend frame slot"]
 
 assert none? compile-text {
 	Red/System []
@@ -4779,15 +4807,18 @@ assert all [
 	not none? find invalid-control-ops frontend/set-op
 ]["invalid control predicates did not retain their native consumers"]
 
-assert none? compile-text {Red/System [] all [true 1]} 'user
-	"ALL accepted a non-conditional value"
-assert frontend/last-error/message = "ALL requires a conditional expression"
-	"ALL final identity predicate did not retain its necessary frontend check"
-
-assert none? compile-text {Red/System [] any [false 1]} 'user
-	"ANY accepted a non-conditional value"
-assert frontend/last-error/message = "ANY requires a conditional expression"
-	"ANY final identity predicate did not retain its necessary frontend check"
+invalid-final-conditions-ir: compile-text {
+	Red/System []
+	bad-all: func [return: [logic!]][all [true 1]]
+	bad-any: func [return: [logic!]][any [false 1]]
+} 'user
+assert binary? invalid-final-conditions-ir [
+	"frontend rejected backend-owned final ANY/ALL predicates: "
+	mold frontend/last-error
+]
+assert (op-count (ops-of invalid-final-conditions-ir
+	layout-of invalid-final-conditions-ir) frontend/branch-op) = 4
+	"final ANY/ALL predicates did not reach native BRANCH validation"
 
 assert none? compile-text {Red/System [] return} 'user
 	"RETURN was accepted outside a function"

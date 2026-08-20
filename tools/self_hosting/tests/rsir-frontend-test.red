@@ -2450,14 +2450,18 @@ assert binary? nested-selection-statements-ir [
 	"nested statement selections failed: " mold frontend/last-error
 ]
 
-assert none? compile-text {
+nested-invalid-selection-ir: compile-text {
 	Red/System []
 	fn: func [flag [logic!] return: [integer!]][
 		either flag [case [true [1] true [true]]][1]
 	]
-} 'user "value-returning nested selections accepted unlike arm types"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"nested selection value mismatch reported the wrong error class"
+} 'user
+assert binary? nested-invalid-selection-ir [
+	"frontend rejected backend-owned nested selection merge: " mold frontend/last-error
+]
+assert none? find (ops-of nested-invalid-selection-ir
+	layout-of nested-invalid-selection-ir) frontend/drop-op
+	"invalid nested selection was reshaped by frontend DROP operations"
 
 case-ir: compile-text {
 	Red/System []
@@ -2606,16 +2610,21 @@ assert all [
 	(switch-word tagged-ir tagged-layout 2 0) = 2
 ]["tagged union did not retain one tagged layout and ordinary member/tag operations"]
 
-assert none? compile-text {
+non-exhaustive-tagged-switch-ir: compile-text {
 	Red/System []
 	event!: alias union! [[variant] mouse [integer!] key [integer!]]
 	inspect: func [return: [integer!] /local event [event!]][
 		event: declare event!
 		switch event [mouse [1] key [2]]
 	]
-} 'user "a non-exhaustive tagged SWITCH produced a value without DEFAULT"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"tagged SWITCH value flow reported the wrong error class"
+} 'user
+assert binary? non-exhaustive-tagged-switch-ir [
+	"frontend rejected backend-owned tagged SWITCH depth merge: "
+	mold frontend/last-error
+]
+assert (op-count (ops-of non-exhaustive-tagged-switch-ir
+	layout-of non-exhaustive-tagged-switch-ir) frontend/drop-op) = 1
+	"non-exhaustive tagged SWITCH added a merge-repair DROP"
 
 assert none? compile-text {
 	Red/System []
@@ -3352,33 +3361,48 @@ assert binary? invalid-unary-ir [
 assert (ops-of invalid-unary-ir layout-of invalid-unary-ir) = [3 4 14 11]
 	"invalid scalar NOT did not remain one dense unary operation"
 
-assert none? compile-text {
+invalid-if-ir: compile-text {
 	Red/System []
 	fn: func [][if 1 []]
-} 'user "IF accepted a non-logic condition"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid IF condition reported the wrong error class"
+} 'user
+assert binary? invalid-if-ir [
+	"frontend rejected backend-owned IF predicate: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-if-ir layout-of invalid-if-ir) frontend/branch-op
+	"invalid IF predicate did not reach native BRANCH validation"
 
-assert none? compile-text {
+invalid-either-merge-ir: compile-text {
 	Red/System []
 	fn: func [return: [integer!]][either true [1][false]]
-} 'user "expression EITHER accepted different block result types"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid EITHER results reported the wrong error class"
+} 'user
+assert binary? invalid-either-merge-ir [
+	"frontend rejected backend-owned EITHER merge: " mold frontend/last-error
+]
+assert none? find (ops-of invalid-either-merge-ir
+	layout-of invalid-either-merge-ir) frontend/drop-op
+	"invalid EITHER merge was hidden by frontend DROP operations"
 
-assert none? compile-text {
+invalid-case-merge-ir: compile-text {
 	Red/System []
 	fn: func [return: [integer!]][case [true [1] false [false]]]
-} 'user "expression CASE accepted different block result types"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid CASE results reported the wrong error class"
+} 'user
+assert binary? invalid-case-merge-ir [
+	"frontend rejected backend-owned CASE merge: " mold frontend/last-error
+]
+assert none? find (ops-of invalid-case-merge-ir
+	layout-of invalid-case-merge-ir) frontend/drop-op
+	"invalid CASE merge was hidden by frontend DROP operations"
 
-assert none? compile-text {
+invalid-switch-selector-ir: compile-text {
 	Red/System []
 	fn: func [value [logic!]][switch value [1 []]]
-} 'user "SWITCH accepted a non-integer selector"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid SWITCH selector reported the wrong error class"
+} 'user
+assert binary? invalid-switch-selector-ir [
+	"frontend rejected backend-owned SWITCH selector: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-switch-selector-ir
+	layout-of invalid-switch-selector-ir) frontend/switch-op
+	"invalid SWITCH selector did not reach native SWITCH validation"
 
 assert none? compile-text {
 	Red/System []
@@ -4643,37 +4667,34 @@ assert (op-count (ops-of dynamic-invalid-cast-ir layout-of dynamic-invalid-cast-
 	frontend/cast-op) = 4
 	"dynamic invalid casts did not retain one dense CAST each"
 
-assert none? compile-text {Red/System [] if 1 []} 'user
-	"IF accepted a non-conditional expression"
-assert frontend/last-error/message = "IF requires a conditional expression"
-	"IF did not report the canonical conditional error"
-
-assert none? compile-text {Red/System [] either 1 [][]} 'user
-	"EITHER accepted a non-conditional expression"
-assert frontend/last-error/message = "EITHER requires a conditional expression"
-	"EITHER did not report the canonical conditional error"
-
-assert none? compile-text {Red/System [] until [1]} 'user
-	"UNTIL accepted a non-conditional tail expression"
-assert frontend/last-error/message =
-	"UNTIL requires a conditional expression as last expression"
-	"UNTIL did not report the canonical conditional error"
-
-assert none? compile-text {Red/System [] while [1][]} 'user
-	"WHILE accepted a non-conditional tail expression"
-assert frontend/last-error/message =
-	"WHILE requires a conditional expression as last expression"
-	"WHILE did not report the canonical conditional error"
+invalid-control-predicates-ir: compile-text {
+	Red/System []
+	bad-case: func [][case [1 [] true []]]
+	bad-while: func [][while [1][]]
+	bad-until: func [][until [1]]
+	bad-loop: func [][loop true []]
+	bad-all: func [return: [logic!]][all [1 true]]
+	bad-any: func [return: [logic!]][any [1 false]]
+} 'user
+assert binary? invalid-control-predicates-ir [
+	"frontend rejected backend-owned control predicates: " mold frontend/last-error
+]
+invalid-control-ops: ops-of invalid-control-predicates-ir
+	layout-of invalid-control-predicates-ir
+assert all [
+	(op-count invalid-control-ops frontend/branch-op) >= 5
+	not none? find invalid-control-ops frontend/set-op
+]["invalid control predicates did not retain their native consumers"]
 
 assert none? compile-text {Red/System [] all [true 1]} 'user
 	"ALL accepted a non-conditional value"
 assert frontend/last-error/message = "ALL requires a conditional expression"
-	"ALL did not report the canonical conditional error"
+	"ALL final identity predicate did not retain its necessary frontend check"
 
 assert none? compile-text {Red/System [] any [false 1]} 'user
 	"ANY accepted a non-conditional value"
 assert frontend/last-error/message = "ANY requires a conditional expression"
-	"ANY did not report the canonical conditional error"
+	"ANY final identity predicate did not retain its necessary frontend check"
 
 assert none? compile-text {Red/System [] return} 'user
 	"RETURN was accepted outside a function"

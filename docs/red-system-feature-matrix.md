@@ -55,10 +55,10 @@ rules remain in Red/System codegen.
 | Variadic, typed and custom calls | Actual stack types/count plus signature attributes; codegen applies C default `float32!` promotion to variadic extras | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds, x64-codegen-reds-test.reds | pending |
 | Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results, sink-width conversion and variadic float duplication | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
-| if, either, any and all | Generic branch/jump; codegen derives common stack prefixes and merges compatible results | units/conditional-test.reds, focused frontend/bridge/linked-PE control tests | replace |
-| loop, until and while | Generic branch/jump loops with explicit break/continue targets and ordinary hidden counters | integer and function units, focused frontend/bridge/linked-PE control tests | replace |
-| case | Ordered condition blocks, typed result merge, and non-returning fail on no match | units/case-test.reds, compiler conditional tests | pending |
-| switch | Typed literal/target slice with explicit default or fail semantics; x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests | pending |
+| if, either, any and all | Generic branch/jump; native codegen validates branch predicates and compatible result merges, while the frontend retains only syntax, targets, and parser shadow state; the final any/all item remains a frontend check until represented by a consumer | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, isolated native-rejection sources | replace |
+| loop, until and while | Generic branch/jump loops with explicit break/continue targets; native BRANCH validates conditions and the ordinary typed SET sink validates hidden loop counters | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
+| case | Ordered condition blocks and non-returning fail on no match; native branch and target merge own predicate/result legality without frontend repair | units/case-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
+| switch | Typed literal/target slice with explicit default or fail semantics; native selector and target-merge validation plus x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | exit, return, break and continue | Direct function or loop terminators through the shared jump/return core | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds | replace |
 | Subroutines | Function-local entry targets and subroutine call/return | units/subroutine-test.reds, x64-subroutine-smoke.reds | pending |
 | throw and catch statement | Catch regions and non-local transfer state | units/exceptions-test.reds, x64-catch-*.reds | pending |
@@ -198,6 +198,16 @@ The formal Red/System unit cast executable passes all 158 assertions. This
 proves dynamic ownership, direct-relocation validation and the unit language
 matrix, not completion: computed static conversions, compiler diagnostic cases
 and non-x64 targets remain required.
+
+The focused control ownership gate leaves invalid predicates and incompatible
+selection results unchanged until native BRANCH, SWITCH, SET, or target-merge
+validation consumes them. H45 independently rejects ten source programs for
+invalid if/case/while/until/any/all predicates, a logic switch selector, a
+logic loop count, and incompatible either/case results. The formal conditional,
+case, switch, and logic executables pass 274 assertions in total. This proves
+the shared x64 mechanism and formal unit behavior; precise compiler diagnostics,
+source locations, fail dispatch, jump-table selection, and non-x64 targets
+remain incomplete.
 
 The direct `rsir-address-index-exit.reds` gate executes 29 address checks
 through frontend, RSIR, native codegen, linker, and the generated PE. One

@@ -132,14 +132,22 @@ Branches use instruction indexes as direct targets. Basic blocks are derived
 from entry points, branch targets, and terminators; no block directory is
 serialized.
 
-A branch consumes only its condition. Both successors retain the same common
-stack prefix, which is required when control appears in an assignment, call
-argument, or right operand. Compatible conditional arms leave their result at
-the same virtual stack depth, so no phi object, hidden local, or native move is
-needed. A value-less merge trims the unused arm value on its incoming edge;
-that changes only the abstract stack depth and emits no machine instruction.
-Codegen records the depth, type, flags, and place/value kind at each branch
-target and restores them when linear decoding enters a non-fallthrough block.
+A branch consumes only its condition, which native codegen requires to be a
+logic value. Both successors retain the same common stack prefix, which is
+required when control appears in an assignment, call argument, or right
+operand. Value-producing conditional arms leave their result at the same
+virtual stack depth, so no phi object, hidden local, or native move is needed.
+Codegen records and validates the depth, type, flags, and place/value kind at
+each branch target, then restores them when linear decoding enters a
+non-fallthrough block. The frontend never repairs an incompatible merge by
+inserting DROP operations; statement-context values are dropped while their
+own blocks are lowered.
+
+The frontend retains only enough selection shape to continue parsing: whether
+an arm can fall through, whether every reachable arm has a value, and the
+first reachable value type as a non-authoritative shadow. A non-exhaustive
+tagged switch may use an arm type for that shadow, but its real empty edge is
+unchanged in RSIR and native merge validation rejects it in value context.
 
 The general control operations are:
 
@@ -152,9 +160,13 @@ The general control operations are:
 - throw;
 - subroutine call and return.
 
-if, either, loops, any, all, and case lower to these operations. switch remains
-explicit so native codegen may choose a comparison chain or jump table from
-density without changing frontend semantics.
+if, either, loops, any, all, and case lower to these operations. Branches own
+the predicates of if, either, case, while, until, and every non-final any/all
+item. The loop counter reaches the ordinary typed SET sink. The final any/all
+item temporarily retains a frontend logic check because no control operation
+consumes it. switch remains explicit so native codegen validates its selector
+and may choose a comparison chain or jump table from density without changing
+frontend semantics.
 
 In a runtime-free module, fail lowers to a native trap. Once the runtime image
 is present, the same terminator transfers to its diagnostic service; source
@@ -309,8 +321,9 @@ The frontend is one Red context with direct data ownership:
 3. retain body positions in the expanded source block without copying bodies;
 4. encode declared type syntax and bind lexical names to IDs;
 5. parse each body directly into a dense left-to-right RSIR instruction binary;
-6. record source control structure and symbolic targets without merging value
-   types or choosing machine operations;
+6. record source control structure and symbolic targets, retaining only the
+   shallow value-presence/type shadow needed to continue parsing, without
+   checking or repairing branch merges;
 7. append only required literals, symbols, target-leaf names, and diagnostics;
 8. call the native routine.
 
@@ -318,10 +331,12 @@ Name-to-value lookup uses map! tables; hash! is reserved for actual sets.
 Qualified names are constructed once at declaration or scope entry. Hot paths
 never search pair blocks with select.
 
-The frontend does not infer expression or local types, enforce operand, cast,
-call, assignment, or return compatibility, fold runtime expressions, calculate
-layout, build CFG state, classify ABI arguments, allocate registers, or
-construct linker objects.
+The frontend does not infer authoritative expression or local types, enforce
+operand, dynamic cast, call, assignment, return, branch-predicate, or branch-
+merge compatibility, fold runtime expressions, calculate layout, build CFG
+state, classify ABI arguments, allocate registers, or construct linker objects.
+Its parser shadow is not serialized as a second type system and never rewrites
+an incompatible producer to make it pass native validation.
 
 The loader may be reused where it already implements Red/System semantics
 directly. It should be simplified when old emitter-facing output or duplicate
@@ -565,7 +580,12 @@ Already retained:
 - function-local jump/branch targets with fixed near x64 forms, native offset
   tables, and matching target-entry stack depths and top types;
 - if, either, any, all, loop, while, until, early return/exit, break, and
-  continue lowered through that shared control core;
+  continue lowered through that shared control core. Native BRANCH validates
+  logic predicates, native SET validates the loop count, and native target
+  merging validates reachable value depth and type. The frontend emits no
+  merge-repair DROP and retains only parser shadow state; only the final
+  any/all item still needs a frontend logic check because it has no branch
+  consumer;
 - ordered case selection lowered to branch/jump plus a non-returning fail
   terminator, and switch selection represented by a compact typed literal/target
   table with fixed-width integer limbs;
@@ -631,6 +651,17 @@ Already retained:
   same 6,372,864-byte size as H43 and starts successfully with only O0/O2,
   proving that the compiler containing this ownership change can build its
   next generation;
+- H44 built H45 with native control-predicate and selection-merge ownership in
+  61.706 seconds (frontend 23.424, backend 38.281, native codegen 0.682, link
+  build 6.038 seconds). H45 is 6,345,728 bytes, 27,136 bytes smaller than H44,
+  and its `.text` raw size fell by 24,576 bytes to `588200h`. Ten isolated
+  invalid source programs reached and were rejected by native codegen, while
+  the formal conditional, case, switch, and logic executables passed all 274
+  assertions;
+- H45 then built the same-source H46 in 65.521 seconds (frontend 23.976,
+  backend 41.545, native codegen 0.651, link build 6.930 seconds). H46 has the
+  same size and `.text` size as H45, exposes only O0/O2, and rebuilds and passes
+  the native codegen suite;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 
@@ -642,8 +673,8 @@ Still incomplete and therefore not an H0:
 - the remaining non-local control operations;
 - complete fixed-int/int64 formal coverage for aggregate fields and
   typed/variadic ABI paths;
-- complete formal case/switch suite coverage, runtime diagnostic dispatch for
-  fail, and dense switch jump-table selection;
+- compiler diagnostic and source-location coverage for control errors, runtime
+  diagnostic dispatch for fail, and dense switch jump-table selection;
 - remaining aggregate and array initializers and function-pointer nodes;
 - complete Win64 imported/variadic aggregate, indirect-call, callback, and
   formal ABI coverage;

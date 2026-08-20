@@ -306,10 +306,6 @@ compiler-rsir-frontend: context [
 		change/part at output patch int-to-bin/to-bin32 target 4
 	]
 
-	patch-control-drop: func [output [binary!] patch count [integer!]][
-		change/part at output (patch + 4) int-to-bin/to-bin32 count 4
-	]
-
 	patch-control-catches: func [output [binary!] patch count [integer!]][
 		change/part at output (patch + 8) int-to-bin/to-bin32 count 4
 	]
@@ -3557,37 +3553,6 @@ compiler-rsir-frontend: context [
 		not none? find [f32 f64] kind
 	]
 
-	same-stack-type?: func [
-		left left-flags right right-flags [integer!]
-		return: [logic!]
-	][
-		all [
-			(canonical-ref left) = canonical-ref right
-			left-flags = right-flags
-		]
-	]
-
-	common-stack-ref: func [
-		left left-flags right right-flags [integer!]
-		return: [integer!]
-		/local left-kind right-kind
-	][
-		if same-stack-type? left left-flags right right-flags [return left]
-		unless all [left-flags = 0 right-flags = 0][return 0]
-		left-kind: ref-kind left
-		right-kind: ref-kind right
-		; Null stays polymorphic when it is the selection's first live type.
-		case [
-			all [left-kind = 'null reference-kind? right-kind][left]
-			all [right-kind = 'null reference-kind? left-kind][left]
-			all [
-				left-kind = right-kind
-				find [pointer struct union] left-kind
-			][left]
-			true [0]
-		]
-	]
-
 	stack-binary: func [
 		operation left left-flags [integer!]
 		right-start [integer!]
@@ -4958,9 +4923,6 @@ compiler-rsir-frontend: context [
 	][
 		body: stack-value next position scope uses instructions params locals
 			expression-value
-		unless logical-value? last-type last-flags [
-			fail ERROR-REFERENCE "IF requires a conditional expression"
-		]
 		unless all [not tail? body block? body/1][
 			fail ERROR-UNSUPPORTED "IF is missing its body block"
 		]
@@ -4974,52 +4936,31 @@ compiler-rsir-frontend: context [
 	]
 
 	finish-selection: func [
-		name [word!]
 		arms [block!]
 		instructions [binary!]
 		after [block!]
-		value-context [integer!]
 		return: [block!]
-		/local arm result-type result-flags common-ref flow? common? drop? target
+		/local arm result-type result-flags flow? all-value? target
 	][
 		result-type: 0
 		result-flags: 0
 		flow?: false
-		common?: true
+		all-value?: true
 		arm: arms
 		while [not tail? arm][
 			unless arm/4 [
-				either flow? [
-					common-ref: either all [result-type <> 0 arm/2 <> 0][
-						common-stack-ref result-type result-flags arm/2 arm/3
-					][0]
-					either common-ref = 0 [common?: false][
-						result-type: common-ref
-						result-flags: arm/3
-					]
-				][
-					flow?: true
+				flow?: true
+				unless arm/2 <> 0 [all-value?: false]
+				if all [all-value? result-type = 0][
 					result-type: arm/2
 					result-flags: arm/3
 				]
 			]
 			arm: skip arm 4
 		]
-		unless common? [
+		unless all-value? [
 			result-type: 0
 			result-flags: 0
-		]
-
-		arm: arms
-		while [not tail? arm][
-			drop?: all [not arm/4 arm/2 <> 0 result-type = 0]
-			if integer? arm/1 [
-				patch-control-drop instructions arm/1 either drop? [1][0]
-			]
-			if all [none? arm/1 drop?][
-				emit instructions reduce [drop-op 0 0 0]
-			]
-			arm: skip arm 4
 		]
 		target: instruction-here instructions
 		arm: arms
@@ -5031,16 +4972,6 @@ compiler-rsir-frontend: context [
 		last-type: result-type
 		last-flags: result-flags
 		last-stopped?: not flow?
-		if all [
-			any [
-				value-context = expression-value
-				all [value-context = tail-value tail? after]
-			]
-			result-type = 0
-			not last-stopped?
-		][
-			fail ERROR-REFERENCE [uppercase form name " bodies do not have a common value"]
-		]
 		after
 	]
 
@@ -5050,16 +4981,13 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local arms after arm-context branch-patch jump-patch drop-count
+		/local arms after arm-context branch-patch jump-patch
 			true-type true-flags false-type false-flags
-			result-type result-flags common-ref
+			result-type result-flags
 			true-value? false-value? true-stopped? false-stopped?
 	][
 		arms: stack-value next position scope uses instructions params locals
 			expression-value
-		unless logical-value? last-type last-flags [
-			fail ERROR-REFERENCE "EITHER requires a conditional expression"
-		]
 		unless all [
 			(length? arms) >= 2 block? arms/1 block? arms/2
 		][fail ERROR-UNSUPPORTED "EITHER requires two body blocks"]
@@ -5090,32 +5018,22 @@ compiler-rsir-frontend: context [
 
 		result-type: 0
 		result-flags: 0
-		common-ref: either all [true-value? false-value?][
-			common-stack-ref true-type true-flags false-type false-flags
-		][0]
 		case [
-			all [true-value? false-stopped?][
+			all [true-value? false-value?] [
 				result-type: true-type
 				result-flags: true-flags
 			]
-			all [false-value? true-stopped?][
+			all [true-value? false-stopped?] [
+				result-type: true-type
+				result-flags: true-flags
+			]
+			all [false-value? true-stopped?] [
 				result-type: false-type
 				result-flags: false-flags
-			]
-			common-ref <> 0 [
-				result-type: common-ref
-				result-flags: true-flags
 			]
 			true [0]
 		]
 
-		if integer? jump-patch [
-			drop-count: either all [true-value? result-type = 0][1][0]
-			patch-control-drop instructions jump-patch drop-count
-		]
-		if all [false-value? result-type = 0][
-			emit instructions reduce [drop-op 0 0 0]
-		]
 		if integer? jump-patch [
 			patch-control instructions jump-patch instruction-here instructions
 		]
@@ -5123,21 +5041,6 @@ compiler-rsir-frontend: context [
 		last-type: result-type
 		last-flags: result-flags
 		last-stopped?: all [true-stopped? false-stopped?]
-		if all [
-			any [
-				value-context = expression-value
-				all [value-context = tail-value tail? after]
-			]
-			result-type = 0
-			not last-stopped?
-		][fail ERROR-REFERENCE [
-			"EITHER blocks do not have a common value"
-			any [
-				all [active-function rejoin [" in " to string! active-function]]
-				""
-			]
-			rejoin [" (" true-type "/" true-flags ", " false-type "/" false-flags ")"]
-		]]
 		after
 	]
 
@@ -5165,9 +5068,6 @@ compiler-rsir-frontend: context [
 		while [not tail? cursor][
 			action: stack-value cursor scope uses instructions params locals
 				expression-value
-			unless logical-value? last-type last-flags [
-				fail ERROR-REFERENCE "CASE requires logic conditions"
-			]
 			unless all [not tail? action block? action/1][
 				fail ERROR-UNSUPPORTED "CASE condition is missing its body block"
 			]
@@ -5182,7 +5082,7 @@ compiler-rsir-frontend: context [
 			cursor: next action
 		]
 		emit instructions reduce [fail-op 100 0 0]
-		finish-selection 'case arms instructions after value-context
+		finish-selection arms instructions after
 	]
 
 	switch-bits: func [
@@ -5245,23 +5145,20 @@ compiler-rsir-frontend: context [
 		params locals [block!]
 		value-context [integer!]
 		return: [block!]
-		/local spec-position spec after arm-context selector-ref selector-kind cursor arms default-body
+		/local spec-position spec after arm-context selector-ref cursor arms default-body
 			patches bits first-case case-count case-patch switch-patch default-target
 			arm-position arm target jump-patch missing-jump results last-arm? info
-			tagged-selector?
+			shadow-type shadow-flags tagged-selector?
 	][
 		spec-position: stack-value next position scope uses instructions params locals
 			expression-value
 		selector-ref: last-type
-		selector-kind: ref-kind last-type
 		tagged-selector?: all [last-flags = 0 tagged-union-ref? selector-ref]
-		either tagged-selector? [
+		if tagged-selector? [
 			emit instructions reduce [tag-op 0 0 0]
 			last-type: -5
 			last-flags: 0
-		][unless all [integer-kind? selector-kind last-flags = 0][
-			fail ERROR-REFERENCE "SWITCH requires an integer or tagged union value"
-		]]
+		]
 		unless all [not tail? spec-position block? spec-position/1][
 			fail ERROR-UNSUPPORTED "SWITCH is missing its body block"
 		]
@@ -5324,9 +5221,6 @@ compiler-rsir-frontend: context [
 		]
 
 		results: make block! ((length? arms) * 4) + 4
-		if integer? missing-jump [
-			repend results [missing-jump 0 0 false]
-		]
 		arm-position: arms
 		while [not tail? arm-position][
 			arm: arm-position/1
@@ -5347,7 +5241,22 @@ compiler-rsir-frontend: context [
 			stack-block default-body scope uses instructions params locals arm-context
 			repend results [none last-type last-flags last-stopped?]
 		]
-		finish-selection 'switch results instructions after value-context
+		if integer? missing-jump [
+			shadow-type: 0
+			shadow-flags: 0
+			arm-position: results
+			while [not tail? arm-position][
+				if all [not arm-position/4 arm-position/2 <> 0][
+					shadow-type: arm-position/2
+					shadow-flags: arm-position/3
+					break
+				]
+				arm-position: skip arm-position 4
+			]
+			; The native merge still sees the empty edge; this is parser shadow only.
+			repend results [missing-jump shadow-type shadow-flags false]
+		]
+		finish-selection results instructions after
 	]
 
 	stack-conditions: func [
@@ -5375,18 +5284,7 @@ compiler-rsir-frontend: context [
 		while [not tail? cursor][
 			cursor: stack-value cursor scope uses instructions params locals
 				expression-value
-			either logical-value? last-type last-flags [
-				unless tail? cursor [
-					patch: emit-control instructions branch-op either any? [1][0]
-					append patches patch
-				]
-			][
-				unless all [last-type = 0 not last-stopped?][
-					fail ERROR-REFERENCE rejoin [
-						either any? ["ANY"]["ALL"]
-						" requires a conditional expression"
-					]
-				]
+			either all [last-type = 0 not last-stopped?][
 				; A statement contributes the identity without short-circuiting.
 				if tail? cursor [
 					emit instructions reduce [
@@ -5394,6 +5292,18 @@ compiler-rsir-frontend: context [
 					]
 					last-type: -11
 					last-flags: 0
+				]
+			][
+				either tail? cursor [
+					unless logical-value? last-type last-flags [
+						fail ERROR-REFERENCE rejoin [
+							either any? ["ANY"]["ALL"]
+							" requires a conditional expression"
+						]
+					]
+				][
+					patch: emit-control instructions branch-op either any? [1][0]
+					append patches patch
 				]
 			]
 		]
@@ -5535,9 +5445,6 @@ compiler-rsir-frontend: context [
 		slot: add-hidden-local params locals -5 0
 		after: stack-value next position scope uses instructions params locals
 			expression-value
-		unless all [(ref-kind last-type) = 'i32 last-flags = 0][
-			fail ERROR-REFERENCE "LOOP requires an integer value"
-		]
 		emit-local-address instructions slot
 		unless all [not tail? after block? after/1][
 			fail ERROR-UNSUPPORTED "LOOP is missing its body block"
@@ -5592,10 +5499,6 @@ compiler-rsir-frontend: context [
 		open-loop 0 true
 		stack-block condition scope uses instructions params locals tail-value
 		close-loop
-		unless logical-value? last-type last-flags [
-			fail ERROR-REFERENCE
-				"WHILE requires a conditional expression as last expression"
-		]
 		exit-patch: emit-control instructions branch-op 0
 
 		loop-state: open-loop test-target false
@@ -5628,10 +5531,6 @@ compiler-rsir-frontend: context [
 		start: instruction-here instructions
 		loop-state: open-loop start false
 		stack-block body scope uses instructions params locals tail-value
-		unless logical-value? last-type last-flags [
-			fail ERROR-REFERENCE
-				"UNTIL requires a conditional expression as last expression"
-		]
 		patch-controls instructions loop-state/2 start
 		patch: emit-control instructions branch-op 0
 		patch-control instructions patch start

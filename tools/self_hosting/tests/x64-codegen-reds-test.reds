@@ -2465,6 +2465,14 @@ put selection-ir 88 -5
 put selection-ir 92 2
 put selection-ir 72 2
 
+put selection-ir 88 -11
+if (x64-codegen/generate selection-ir 198 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	print ["SWITCH accepted a logic selector" lf]
+	failures: failures + 1
+]
+put selection-ir 88 -5
+
 put selection-ir 104 1
 if (x64-codegen/generate selection-ir 198 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1

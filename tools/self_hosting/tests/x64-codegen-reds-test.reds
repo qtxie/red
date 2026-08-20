@@ -211,6 +211,7 @@ output: allocate 1024
 void-ir: allocate 132
 local-ir: allocate 260
 pointer-ir: allocate 132
+index-ir: allocate 260
 arithmetic-ir: allocate 260
 expression-ir: allocate 260
 aggregate-ir: allocate 516
@@ -246,7 +247,8 @@ fn: declare codegen-function!
 image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
-	null? output null? void-ir null? local-ir null? pointer-ir null? arithmetic-ir
+	null? output null? void-ir null? local-ir null? pointer-ir null? index-ir
+	null? arithmetic-ir
 	null? expression-ir
 	null? aggregate-ir null? abi-ir null? small-return-ir
 	null? widening-ir null? sink-ir null? signature-ir
@@ -551,6 +553,21 @@ if size > 0 [
 	][failures: failures + 1]
 ]
 
+; SET and RETURN are the declared type consumers. The frontend leaves both
+; source types unchanged, so each mismatch must be rejected here independently.
+put local-ir 84 -11
+if (x64-codegen/generate local-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["integer SET accepted a logic source" lf]
+	failures: failures + 1
+]
+put local-ir 84 -5
+put local-ir 180 0
+if (x64-codegen/generate local-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["value function accepted a void RETURN" lf]
+	failures: failures + 1
+]
+put local-ir 180 -5
+
 ; first-local and local-count describe one contiguous function storage slice.
 put local-ir 60 1
 if (x64-codegen/generate local-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
@@ -596,6 +613,59 @@ size: x64-codegen/generate pointer-ir 110 output 1024 0
 if size <> 132 [failures: failures + 1]
 put pointer-ir 40 0
 if (x64-codegen/generate pointer-ir 110 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
+; Dynamic INDEX consumes the original pointer and index values. A logic index
+; reaches this consumer unchanged and must fail before instruction selection.
+put index-ir 0 1
+put index-ir 4 0
+put index-ir 8 1
+put index-ir 12 0
+put index-ir 16 1
+put index-ir 20 7
+put index-ir 24 0
+put index-ir 28 0
+put index-ir 32 0
+
+put index-ir 36 -6
+put index-ir 40 -5
+put index-ir 44 0
+put index-ir 48 0
+put index-ir 52 0
+
+put index-ir 56 0
+put index-ir 60 2
+put index-ir 64 -5
+put index-ir 68 0
+put index-ir 72 0
+put index-ir 76 2
+put index-ir 80 2
+put index-ir 84 0
+put index-ir 88 7
+
+put index-ir 92 1
+put index-ir 96 0
+put index-ir 100 -11
+put index-ir 104 0
+
+put-instruction index-ir 108 3 1 1 0
+put-instruction index-ir 124 4 0 0 0
+put-instruction index-ir 140 3 1 2 0
+put-instruction index-ir 156 4 0 0 0
+put-instruction index-ir 172 21 0 1 0
+put-instruction index-ir 188 4 0 0 0
+put-instruction index-ir 204 11 -5 0 0
+index-ir/221: as byte! 66h
+index-ir/222: as byte! 6Eh
+
+if (x64-codegen/generate index-ir 222 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["dynamic INDEX accepted a logic index" lf]
+	failures: failures + 1
+]
+put index-ir 100 -5
+if (x64-codegen/generate index-ir 222 output 1024 0) <= 0 [
+	print ["dynamic INDEX rejected an integer index" lf]
 	failures: failures + 1
 ]
 
@@ -2256,10 +2326,13 @@ if size > 0 [
 	unless execute-selection? output 74 [failures: failures + 1]
 ]
 put tagged-ir 44 0
+put tagged-ir 148 0
 if (x64-codegen/generate tagged-ir 318 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["TAG accepted a raw union" lf]
 	failures: failures + 1
 ]
 put tagged-ir 44 1
+put tagged-ir 148 1
 put tagged-ir 132 2
 if (x64-codegen/generate tagged-ir 318 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
@@ -3335,6 +3408,7 @@ free output
 free void-ir
 free local-ir
 free pointer-ir
+free index-ir
 free arithmetic-ir
 free expression-ir
 free aggregate-ir

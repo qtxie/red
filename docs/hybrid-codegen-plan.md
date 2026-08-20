@@ -632,9 +632,14 @@ Already retained:
   original ID and place directly, so native codegen owns its source/destination
   compatibility, storage write, variant tags, and unwind. The frontend retains
   only structural value presence, terminal-expression propagation, and parser
-  result shadow. Explicit `system/thrown:` assignment remains a strict Red
-  source check until that separate ordinary SET sink gains a direct semantic
-  destination marker;
+  result shadow. Explicit `system/thrown:` assignment is an ordinary typed SET:
+  its original producer and resolved integer place cross RSIR unchanged, and
+  the existing native SET consumer owns their compatibility without a marker;
+- dynamic pointer indexing preserves the original index value for native INDEX
+  validation. VARIANT? resolves only its literal member name in Red and leaves
+  tagged-versus-raw legality to native TAG. EXIT emits the ordinary void RETURN,
+  whose compatibility with the enclosing function signature is checked by
+  native codegen;
 - common integer comparison width and signedness selected from logical types,
   with native loads performing the required sign or zero extension;
 - one dense explicit CAST whose complete dynamic compatibility matrix,
@@ -709,6 +714,19 @@ Already retained:
   backend 44.496, native codegen 0.662, link build 6.672 seconds). H50 has the
   same 6,330,880-byte image and `.text` raw size as H49, exposes only O0/O2,
   and rebuilt and passed the native codegen and 67-assertion exception gates;
+- H50 built H51 after moving dynamic INDEX, VARIANT?, explicit
+  `system/thrown:`, and EXIT legality to their existing native consumers. Its
+  compiler profile totals 68.728 seconds (frontend 24.943, backend 43.785,
+  native codegen 1.439, link build 5.892 seconds). H51 is 6,329,856 bytes,
+  1,024 bytes smaller than H50; `SizeOfCode` fell from `585000h` to `584C00h`
+  while the file-aligned `.text` raw size remains `585000h`. Four isolated
+  invalid sources reach native rejection, and the pointer, union, exit, return,
+  and exception executables pass all 296 assertions;
+- H51 built the unchanged source into H52 in 68.729 wall seconds (frontend
+  26.754, backend 41.878, native codegen 1.271, link build 6.383 seconds).
+  H52 has the same image size, `SizeOfCode`, and `.text` raw size as H51,
+  exposes only O0/O2, rejects the same four invalid sources, and rebuilds and
+  passes the native fixture plus the same 296-assertion formal gate;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

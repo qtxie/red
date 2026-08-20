@@ -4163,10 +4163,9 @@ compiler-rsir-frontend: context [
 						word? part [
 							stack-value reduce [part] scope uses instructions params locals
 								expression-value
-							unless all [
-								last-flags = 0
-								stack-type-compatible? -5 last-type
-							][fail ERROR-REFERENCE "pointer index must be an integer!"]
+							unless all [not last-stopped? last-type <> 0][
+								fail ERROR-REFERENCE "pointer index requires a value"
+							]
 							emit instructions reduce [index-op 0 1 0]
 						]
 						true [
@@ -5115,8 +5114,8 @@ compiler-rsir-frontend: context [
 		after: stack-value next position scope uses instructions params locals
 			expression-value
 		ref: last-type
-		unless all [last-flags = 0 tagged-union-ref? ref][
-			fail ERROR-REFERENCE "VARIANT? requires a tagged union value"
+		unless all [not last-stopped? ref <> 0][
+			fail ERROR-REFERENCE "VARIANT? requires a value"
 		]
 		unless all [not tail? after lit-word? after/1][
 			fail ERROR-UNSUPPORTED "VARIANT? requires a literal variant name"
@@ -5355,9 +5354,6 @@ compiler-rsir-frontend: context [
 	stack-exit: func [position [block!] instructions [binary!] return: [block!]][
 		unless function-active? [
 			fail ERROR-CONTEXT "exit is not allowed outside of a function"
-		]
-		if function-return <> 0 [
-			fail ERROR-REFERENCE "EXIT is incompatible with a function result"
 		]
 		emit instructions reduce [return-op 0 0 0]
 		function-returns?: true
@@ -5885,9 +5881,7 @@ compiler-rsir-frontend: context [
 			next-position: stack-value next position scope uses instructions params locals
 				expression-value
 			if last-stopped? [return next-position]
-			unless all [last-flags = 0 (ref-kind last-type) = 'i32][
-				fail ERROR-REFERENCE "system/thrown expects an integer! value"
-			]
+			unless last-type <> 0 [fail ERROR-REFERENCE "system/thrown requires a value"]
 			stack-thrown-address scope uses instructions params locals
 			emit instructions reduce [set-op 0 0 0]
 			last-stopped?: false

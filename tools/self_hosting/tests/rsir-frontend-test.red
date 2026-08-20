@@ -1802,12 +1802,16 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"empty aggregate alias reported the wrong error class"
 
-assert none? compile-text {
+invalid-pointer-index-ir: compile-text {
 	Red/System []
 	fn: func [p [int-ptr!] index [logic!] return: [integer!]][p/index]
-} 'user "pointer indexing accepted a non-integer! index"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid pointer index reported the wrong error class"
+} 'user
+assert binary? invalid-pointer-index-ir [
+	"frontend rejected backend-owned pointer index type: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-pointer-index-ir
+	layout-of invalid-pointer-index-ir) frontend/index-op
+	"invalid pointer index did not reach native INDEX"
 
 variadic-ir: compile-text {
 	Red/System []
@@ -2626,13 +2630,16 @@ assert (op-count (ops-of non-exhaustive-tagged-switch-ir
 	layout-of non-exhaustive-tagged-switch-ir) frontend/drop-op) = 1
 	"non-exhaustive tagged SWITCH added a merge-repair DROP"
 
-assert none? compile-text {
+raw-variant-ir: compile-text {
 	Red/System []
 	raw!: alias union! [value [integer!]]
 	fn: func [raw [raw!] return: [logic!]][variant? raw 'value]
-} 'user "VARIANT? accepted a raw union"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"raw union VARIANT? reported the wrong error class"
+} 'user
+assert binary? raw-variant-ir [
+	"frontend rejected backend-owned VARIANT? type: " mold frontend/last-error
+]
+assert not none? find (ops-of raw-variant-ir layout-of raw-variant-ir) frontend/tag-op
+	"raw union VARIANT? did not reach native TAG"
 
 wide-switch-ir: compile-text {
 	Red/System []
@@ -3430,11 +3437,15 @@ assert none? compile-text {Red/System [] exit fn: func [][]} 'user
 assert frontend/last-error/code = frontend/ERROR-CONTEXT
 	"invalid EXIT context reported the wrong error class"
 
-assert none? compile-text {
+invalid-exit-ir: compile-text {
 	Red/System [] fn: func [return: [integer!]][exit]
-} 'user "EXIT was accepted in a value-returning function"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"incompatible EXIT reported the wrong error class"
+} 'user
+assert binary? invalid-exit-ir [
+	"frontend rejected backend-owned EXIT result: " mold frontend/last-error
+]
+invalid-exit-layout: layout-of invalid-exit-ir
+assert (function-instruction-word invalid-exit-ir invalid-exit-layout 1 1 4) = 0
+	"EXIT did not preserve its void RETURN for native validation"
 
 assert none? compile-text/limit {Red/System [] fn: func [][]} 'user 32
 	"frontend ignored its output limit"
@@ -4392,12 +4403,16 @@ assert none? compile-text {
 assert frontend/last-error/code = frontend/ERROR-UNSUPPORTED
 	"catch attribute conflict reported the wrong error class"
 
-assert none? compile-text {
+invalid-thrown-set-ir: compile-text {
 	Red/System []
 	fn: func [][system/thrown: true]
-} 'user "system/thrown accepted a non-integer assignment"
-assert frontend/last-error/code = frontend/ERROR-REFERENCE
-	"invalid system/thrown assignment reported the wrong error class"
+} 'user
+assert binary? invalid-thrown-set-ir [
+	"frontend rejected backend-owned system/thrown SET: " mold frontend/last-error
+]
+assert not none? find (ops-of invalid-thrown-set-ir
+	layout-of invalid-thrown-set-ir) frontend/set-op
+	"invalid system/thrown source did not reach native SET"
 
 atomic-ir: compile-text {
 	Red/System []

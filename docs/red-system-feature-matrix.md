@@ -36,18 +36,18 @@ rules remain in Red/System codegen.
 | Signed and unsigned fixed-width integers | Logical producer/sink types plus one codegen-owned lossless widening rule at typed boundaries; generic integer operations | units/fixed-int-test.reds, int64-test.reds, rsir-frontend-test.red, rsir-fixed-integer-exit.reds | replace |
 | float! and float32! | Exact IEEE literal payloads and ordinary typed operations; native codegen derives math and sink widths, performs operand or permitted direct-literal conversion, and selects XMM forms | units/float-test.reds, float32-test.reds, math-mixed-test.reds, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | c-string! | Pointer-to-byte semantics, one-based index, string constant object | units/c-string-test.reds, length-test.reds, lib-test.reds | pending |
-| pointer! and get-path | Pointee-preserving type, address/index/load/set/cast | compiler/pointer-test.r, units/pointer-test.reds, get-pointer-test.reds | pending |
+| pointer! and get-path | Pointee-preserving type and generic address/index/load/set/cast; native INDEX validates the original dynamic index value and derives stride | compiler/pointer-test.r, units/pointer-test.reds, get-pointer-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
 | Pointer and struct arithmetic | Generic binary operation plus native stride from logical layout | pointer tests, x64-pointer-parity-smoke.reds | replace |
 | Literal and binary arrays | Fixed-array logical type and initializer nodes | units/array-test.reds, protect-test.reds | pending |
 | struct! reference and value forms | Logical members, type-use flags, aggregate load/set/copy | units/struct-x64-test.reds, x64-struct-*.reds | pending |
 | union! raw form | Shared logical variants and maximum native layout | units/union-test.reds, x64-union-by-value-smoke.reds | pending |
-| Tagged unions and variant? | Variant metadata, native tag layout, generic member access and switch | x64-tagged-union-smoke.reds | pending |
+| Tagged unions and variant? | Frontend resolves literal variant names; native TAG validates tagged-versus-raw input using variant metadata and native tag layout | units/union-test.reds, x64-tagged-union-smoke.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
 | Type casts and size? | One dense explicit CAST; native codegen owns the dynamic compatibility matrix, `keep`, alias categories, null rejection and conversion, while source-typed static addresses use a separate relocation-representation check; codegen queries native layout | compiler/cast-test.r, units/cast-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, size-x64-test.reds | replace |
 | Left-to-right expressions | Dense postfix syntax in exact source order; codegen derives stack types | compiler/cond-expr-test.r, infix-test.r, units/conditional-test.reds | replace |
 | Math, shifts and bitwise operations | One dense binary operation plus lexical overflow metadata; native codegen owns operand legality, result type, coercion, and instruction selection | integer, fixed-int, modulo and math-mixed unit tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | Comparisons and not | Dense binary/unary operations with a parser-only shadow result; native codegen owns operand legality and selects integer signedness or IEEE unordered behavior | compiler/not-test.r, units/not-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, rsir-fixed-integer-exit.reds, rsir-float-scalar-exit.reds | replace |
 | Predeclared runtime functions and predicates | Frontend-known typed signatures; ordinary calls or semantic native operations | compiler/print-test.r, units/integer-test.reds, lib-test.reds | pending |
-| Function declarations and returns | Declared signature, slots and instruction range; RETURN keeps its producer type and native codegen checks and lowers the declared result sink | compiler/return-test.r, units/function-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
+| Function declarations and returns | Declared signature, slots and instruction range; value RETURN keeps its producer type, while EXIT remains a void RETURN, and native codegen checks both against the declared result | compiler/return-test.r, units/function-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |
 | Direct and imported calls | One stack call with target, signature and actual count; native codegen checks parameter sinks and performs required scalar ABI conversion | units/function-test.reds, x64-function-smoke.reds, x64-import-smoke.reds, x64-codegen-reds-test.reds | replace |
 | Function pointers and variables | Function signature type, symbol address and indirect call; native sink compatibility compares complete return, parameter, call-shape and normalized convention records | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds, x64-codegen-reds-test.reds | pending |
@@ -59,9 +59,9 @@ rules remain in Red/System codegen.
 | loop, until and while | Generic branch/jump loops with explicit break/continue targets; native BRANCH validates conditions and the ordinary typed SET sink validates hidden loop counters | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | case | Ordered condition blocks and non-returning fail on no match; native branch and target merge own predicate/result legality without frontend repair | units/case-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | switch | Typed literal/target slice with explicit default or fail semantics; native selector and target-merge validation plus x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
-| exit, return, break and continue | Direct function or loop terminators through the shared jump/return core | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds | replace |
+| exit, return, break and continue | Direct function or loop terminators through the shared jump/return core; native RETURN owns EXIT/result compatibility | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
 | Subroutines | Function-local entry targets and subroutine call/return | units/subroutine-test.reds, x64-subroutine-smoke.reds | pending |
-| throw and catch statement | Catch regions and non-local transfer state; native CATCH owns filter type and native THROW consumes the original ID plus thrown place, writes the state, and unwinds without a SET adapter | units/exceptions-test.reds, x64-catch-*.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
+| throw and catch statement | Catch regions and non-local transfer state; native CATCH owns filter type, native THROW consumes the original ID plus thrown place, and explicit system/thrown assignment remains an ordinary native-validated SET | units/exceptions-test.reds, x64-catch-*.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | catch function attribute | Signature flag and resume point after a throwing call; no-return fallthrough is cut only in non-catch callers | units/exceptions-test.reds, x64-catch-runtime.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
 | overflow? and CPU overflow state | Native arithmetic flags tracked as an explicit effect | units/overflow-test.reds, x64-overflow and mixed-overflow smokes | pending |
 | push, pop and stack controls | Native-operation IDs with explicit stack effects; codegen validates stack allocation/free operands while the frontend retains only argument shape and result shadow | units/push-pop-test.reds, x64-stack-smoke.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
@@ -250,8 +250,7 @@ formal atomic, system, push/pop, exceptions, and integer executables pass 1,656
 assertions in total. H47 then builds the same-source H48 with identical total
 and `.text` sizes. This proves the ownership boundary and self-hosting closure,
 not completion of the broader system rows: queue/thread behavior, remaining
-CPU/FPU/I/O/image forms, explicit `system/thrown:` SET ownership, and non-x64
-targets remain required.
+CPU/FPU/I/O/image forms, and non-x64 targets remain required.
 
 The direct THROW gate extends that boundary over the exception state itself:
 the frontend emits the original ID, the existing thrown place, and one OP_THROW;
@@ -259,8 +258,18 @@ native codegen validates both slots, performs the scalar store, emits tagged
 variant writes when needed, and then unwinds. H49 and H50 both pass the native
 codegen fixture, the 33-test/67-assertion exception suite, and ordinary plus
 tagged-place executable probes. This proves direct THROW ownership and
-self-hosting closure; the separate `system/thrown:` assignment path still uses
-the ordinary SET sink and remains a later slice.
+self-hosting closure. The following H51/H52 gate proves that the separate
+`system/thrown:` assignment needs no exception-specific operation: it keeps the
+producer plus resolved place and lets ordinary native SET validate them.
+
+The same H51/H52 gate moves three other existing consumers to that boundary:
+dynamic INDEX validates its original index value, TAG distinguishes tagged and
+raw unions after the frontend resolves a literal member name, and RETURN checks
+whether a void EXIT matches the enclosing function. Both generations reject
+four isolated invalid sources in native codegen, rebuild and pass the native
+fixture, and pass the pointer, union, exit, return, and exception formal
+executables: 152 tests and 296 assertions per generation. H51 and H52 are both
+6,329,856 bytes with `SizeOfCode` `584C00h`, 1,024 bytes below H50.
 
 ## Windows Linker Gate
 

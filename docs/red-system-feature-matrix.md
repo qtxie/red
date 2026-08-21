@@ -47,7 +47,7 @@ rules remain in Red/System codegen.
 | Math, shifts and bitwise operations | One dense binary operation plus lexical overflow metadata; native codegen owns operand legality, result type, coercion, and instruction selection | integer, fixed-int, modulo and math-mixed unit tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | Comparisons and not | Dense binary/unary operations with a parser-only shadow result; native codegen owns operand legality and selects integer signedness or IEEE unordered behavior | compiler/not-test.r, units/not-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, rsir-fixed-integer-exit.reds, rsir-float-scalar-exit.reds | replace |
 | Predeclared runtime functions and predicates | Frontend-known typed signatures; ordinary calls or semantic native operations | compiler/print-test.r, units/integer-test.reds, lib-test.reds | pending |
-| Function declarations and returns | Declared signature, slots and instruction range; value RETURN keeps its producer type, while EXIT remains a void RETURN, and native codegen checks both against the declared result | compiler/return-test.r, units/function-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
+| Function declarations and returns | Declared signature, slots and instruction range; value RETURN keeps its producer type, EXIT remains a void RETURN, and native codegen checks both while deriving enclosing-function return effects from the complete CFG | compiler/return-test.r, units/function-test.reds, return-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | Infix functions | Frontend parse rule; ordinary call operation | compiler/infix-test.r, units/infix-test.reds | pending |
 | Direct and imported calls | One stack call with target, signature and actual count; native codegen checks parameter sinks, performs required scalar ABI conversion, and forwards a linear scalar result directly from its ABI register | units/function-test.reds, x64-function-smoke.reds, x64-import-smoke.reds, x64-codegen-reds-test.reds | replace |
 | Function pointers and variables | Function signature type, symbol address and indirect call; native sink compatibility compares complete return, parameter, and target call-shape records | compiler/callback-test.r, x64-function-pointer-smoke.reds, x64-function-variable-smoke.reds, x64-codegen-reds-test.reds | pending |
@@ -55,14 +55,14 @@ rules remain in Red/System codegen.
 | Variadic, typed and custom calls | Actual stack types/count plus signature attributes; codegen applies C default `float32!` promotion to variadic extras | units/vararg-test.reds, x64-typed-variadic-smoke.reds, x64-variadic-smoke.reds, x64-codegen-reds-test.reds | pending |
 | Win64 scalar call ABI | Argument-ordinal GPR/XMM selection, shared stack slots, scalar results, sink-width conversion and variadic float duplication; linear results remain in RAX/XMM0 and narrow integer results are canonicalized before propagation | x64-register-arg, stack-arg, wide-stack-arg and mixed-arg smokes, rsir-float-scalar-exit.reds, x64-codegen-reds-test.reds | pending |
 | Win64 aggregate call ABI | Native value classification, copies and hidden result storage | x64-struct-by-value, union-by-value and hidden-return smokes | pending |
-| if, either, any and all | Generic branch/jump; every predicate reaches native BRANCH and the frontend retains only syntax, targets, and parser shadow state. O0 lowers an unshared logic identity diamond directly to `test`/`setne`; shared short-circuit targets retain control flow | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, isolated native-rejection sources | replace |
+| if, either, any and all | Generic branch/jump; every predicate reaches native BRANCH and the frontend retains only syntax, targets, and parser shadow state. O0 lowers an unshared logic identity diamond directly to `test`/`setne`; O2 resolves dominating literal conditions and removes the unselected CFG arm | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds, isolated native-rejection sources | replace |
 | loop, until and while | Generic branch/jump loops with explicit break/continue targets; native BRANCH validates conditions and the ordinary typed SET sink validates hidden loop counters | units/conditional-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | case | Ordered condition blocks and non-returning fail on no match; native branch and target merge own predicate/result legality without frontend repair | units/case-test.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | switch | Typed literal/target slice with explicit default or fail semantics; native selector and target-merge validation plus x64 comparison-chain lowering | units/switch-test.reds, enum and tagged-union tests, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
-| exit, return, break and continue | Direct function or loop terminators through the shared jump/return core; native RETURN owns EXIT/result compatibility | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
-| Subroutines | Function-local entry targets and subroutine call/return | units/subroutine-test.reds, x64-subroutine-smoke.reds | pending |
+| exit, return, break and continue | Direct function or loop terminators through the shared jump/return core; native RETURN owns EXIT/result compatibility and participates in the codegen return-effect fixed point | compiler/exit-test.r, return-test.r, units/exit-test.reds, return-test.reds, x64-codegen-reds-test.reds | replace |
+| Subroutines | Function-local ENTRY/SUB_CALL/SUB_RETURN edges with distinct native `RETURNS` and `RESUMES` effects; an ordinary RETURN inside a subroutine exits the enclosing function | units/subroutine-test.reds, x64-subroutine-smoke.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | retained |
 | throw and catch statement | Catch regions and non-local transfer state; native CATCH owns filter type, native THROW consumes the original ID plus thrown place, and explicit system/thrown assignment remains an ordinary native-validated SET | units/exceptions-test.reds, x64-catch-*.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
-| catch function attribute | Signature flag and resume point after a throwing call; no-return fallthrough is cut only in non-catch callers | units/exceptions-test.reds, x64-catch-runtime.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
+| catch function attribute | Signature flag and resume point after a throwing call; native call-effect inference keeps every catch-caller continuation and cuts proven no-return fallthrough only in non-catch callers | units/exceptions-test.reds, x64-catch-runtime.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | pending |
 | overflow? and CPU overflow state | Native arithmetic flags tracked as an explicit effect | units/overflow-test.reds, x64-overflow and mixed-overflow smokes | pending |
 | push, pop and stack controls | Native-operation IDs with explicit stack effects; codegen validates stack allocation/free operands while the frontend retains only argument shape and result shadow | units/push-pop-test.reds, x64-stack-smoke.reds, rsir-frontend-test.red, x64-codegen-reds-test.reds | replace |
 | args, environment, CPU, FPU, I/O and image | Native-operation IDs plus symbolic target leaf names; target mapping and runtime operand checks, including CPU-register assignment, live in codegen/runtime | units/system-test.reds, x64-cpu-register and image-info smokes, rsir-frontend-test.red | pending |
@@ -518,6 +518,44 @@ frontend and native codegen fixtures, the full Windows x64 Red/System runner in
 and the full current non-View Red runner in 242.563 seconds (8,730 tests,
 16,755/16,755 assertions). The fixed runtime DLL SHA256 remains
 `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
+
+The H96-H99 gate moves termination ownership completely into native codegen.
+The frontend lowers every function once in source order, emits the complete
+postfix suffix, and serializes no no-return or subroutine-resume judgment.
+Codegen derives separate enclosing-function `RETURNS` and local-subroutine
+`RESUMES` effects over ordinary control edges, direct calls, catch callers,
+and SUB_CALL edges, then uses a forward reachability walk for storage and
+machine-code planning. This is one O(V + E) analysis over compact arrays in the
+existing scratch allocation, not a Red dependency scan or an IR adapter.
+
+H98/H99 are an O0 fixed point at 4,295,168 bytes, `.text` raw size
+`395A00h`, virtual size `395818h`, and `.text` SHA256
+`4BC47CC9FF575973694629F469F1907A64241B8A4AE652C0BA8B933DDD815070`.
+H98 built H99 in 52.607 wall seconds. O1 is rejected, while O2 now performs a
+real native CFG transform: an adjacent dominating logic literal selects one
+BRANCH edge and makes the other arm unreachable. H99 O2 passes the complete
+Windows x64 Red/System runner (10,582 tests, 12,647/12,647 assertions, no
+compile failures) and the complete current non-View Red runner (8,730 tests,
+16,755/16,755 assertions).
+
+H100 is the separate O2 compiler build. It completes in 56.814 wall seconds,
+starts, and compiles and executes the O2 probe. Its 4,293,632-byte image has
+`.text` raw size `395400h` and virtual size `395343h`, reducing the H99 O0
+compiler by 1,536 raw code bytes and 1,237 virtual code bytes. H96-H100 all use
+runtime DLL SHA256
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
+
+The final stack-prefix location refinement is fixed at H101/H102. Those O0
+compilers are both 4,295,168 bytes with `.text` raw size `395A00h`, virtual
+size `395818h`, and identical `.text` SHA256
+`4F015A7E2DA3C2550984217A7DA7FE09D591209F3E86C27E8187FBB88C68F466`.
+H101 built H102 in 59.419 wall seconds. Final H102 at O2 passes the complete
+Red/System and Red runners at 12,647/12,647 and 16,755/16,755 assertions. Its
+H103 O2 performance compiler is 4,293,632 bytes with `.text` raw size
+`395400h`, virtual size `395343h`, and SHA256
+`3237A5179E9134A07B83FFE75A32EAB641A7381D4CEE8A2C892B5DEB2567EC2F`.
+H103 took 63.070 wall seconds, so this gate establishes code-size reduction,
+not a compiler build-time improvement.
 
 ## Windows Linker Gate
 

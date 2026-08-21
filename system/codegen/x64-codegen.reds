@@ -185,11 +185,18 @@ x64-codegen: context [
 	CATCH_FLAG:  256
 	RED_INTERNAL: 512
 	NO_RETURN:   1024
+	EFFECT_RETURNS:        1
+	EFFECT_LIVE:           2
+	EFFECT_FUNCTION_START: 4
+	EFFECT_RESUMES:        8
+	EFFECT_CONSTANT_BRANCH: 16
+	EFFECT_BRANCH_TAKEN:    32
+	EFFECT_ELIDED:          64
 	CALL_SHAPE_FLAGS: RETURN_VALUE + VARIADIC + TYPED + CUSTOM + OBJC
 	CATCH_CONFLICT_FLAGS: CDECL + STDCALL + VARIADIC + TYPED + CUSTOM + CALLBACK + OBJC
 	VARIABLE_FLAGS: 56
 	CALLABLE_FLAGS: 1023
-	FUNCTION_FLAGS: CALLABLE_FLAGS + NO_RETURN
+	FUNCTION_FLAGS: CALLABLE_FLAGS
 	INLINE:          1
 	PROTECTED:       2
 	TAGGED_UNION:    1
@@ -1737,7 +1744,7 @@ x64-codegen: context [
 		fn [rsir-function!]
 		instructions functions imports types members [byte-ptr!]
 		function-count import-count type-count used [integer!]
-		layouts member-offsets offsets [int-ptr!]
+		layouts member-offsets function-effects instruction-effects offsets [int-ptr!]
 		return: [integer!]
 		/local instruction [rsir-instruction!]
 			callee [rsir-function!] imported [rsir-import!]
@@ -1749,7 +1756,10 @@ x64-codegen: context [
 			offsets/index: 0
 			instruction: as rsir-instruction! (instructions
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
-			if instruction/op = OP_CALL [
+			if all [
+				instruction/op = OP_CALL
+				(instruction-effects/index and EFFECT_LIVE) <> 0
+			][
 				target: instruction/a
 				signature-ref: instruction/c
 				if all [
@@ -1789,7 +1799,16 @@ x64-codegen: context [
 					flags: signature/flags
 				]
 				]
-				if (flags and RETURN_VALUE) <> 0 [
+				if all [
+					(flags and RETURN_VALUE) <> 0
+					any [
+						target <= 0
+						(fn/flags and CATCH_FLAG) <> 0
+						(function-effects/target and NO_RETURN) = 0
+						win64-hidden-return? ref flags types members type-count
+							layouts member-offsets
+					]
+				][
 					size: aggregate-size ref types members type-count
 						layouts member-offsets
 					if any [size <= 0 used > (2147483647 - size)][
@@ -2072,6 +2091,483 @@ x64-codegen: context [
 		free-signature-pairs signature-cache
 		unless null? scratch [free scratch]
 		result
+	]
+
+	queue-effect: func [
+		index bit [integer!]
+		effects queue tail [int-ptr!]
+		/local position [integer!]
+	][
+		if (effects/index and bit) = 0 [
+			effects/index: effects/index or bit
+			position: tail/1 + 1
+			tail/1: position
+			queue/position: index
+		]
+	]
+
+	record-effect-use: func [
+		target user [integer!]
+		heads links targets [int-ptr!]
+	][
+		links/user: heads/target
+		heads/target: user
+		targets/user: target
+	]
+
+	record-switch-effect-use: func [
+		target user slot [integer!]
+		heads links users [int-ptr!]
+	][
+		links/slot: heads/target
+		users/slot: user
+		heads/target: 0 - slot
+	]
+
+	update-call-effects: func [
+		index instruction-count [integer!]
+		sub-call? [logic!]
+		effects targets return-queue resume-queue return-tail resume-tail [int-ptr!]
+		/local next-index target [integer!]
+			next? target-returns? target-resumes? [logic!]
+	][
+		next-index: index + 1
+		next?: all [
+			next-index <= instruction-count
+			(effects/next-index and EFFECT_FUNCTION_START) = 0
+		]
+		target: targets/index
+		either sub-call? [
+			target-returns?: (effects/target and EFFECT_RETURNS) <> 0
+			target-resumes?: (effects/target and EFFECT_RESUMES) <> 0
+			if any [
+				target-returns?
+				all [
+					target-resumes? next?
+					(effects/next-index and EFFECT_RETURNS) <> 0
+				]
+			][
+				queue-effect index EFFECT_RETURNS effects return-queue return-tail
+			]
+			if all [
+				target-resumes? next?
+				(effects/next-index and EFFECT_RESUMES) <> 0
+			][
+				queue-effect index EFFECT_RESUMES effects resume-queue resume-tail
+			]
+		][
+			target-returns?: any [
+				target = 0
+				(effects/target and EFFECT_RETURNS) <> 0
+			]
+			if all [target-returns? next?][
+				if (effects/next-index and EFFECT_RETURNS) <> 0 [
+					queue-effect index EFFECT_RETURNS effects return-queue return-tail
+				]
+				if (effects/next-index and EFFECT_RESUMES) <> 0 [
+					queue-effect index EFFECT_RESUMES effects resume-queue resume-tail
+				]
+			]
+		]
+	]
+
+	infer-effects: func [
+		functions instructions switches [byte-ptr!]
+		function-count instruction-count switch-count opt-level [integer!]
+		function-starts function-effects effects heads queue resume-queue links targets
+			switch-links switch-users [int-ptr!]
+		return: [integer!]
+		/local fn [rsir-function!]
+			instruction previous [rsir-instruction!]
+			overflow-scope [rsir-instruction!]
+			switch-case [rsir-switch!]
+			id index global-index function-base target global-target
+			case-index switch-id edge user queue-head queue-tail resume-head resume-tail
+				next-index effect-bit [integer!]
+			catch-caller? constant? taken? [logic!]
+	][
+		index: 1
+		while [index <= instruction-count][
+			effects/index: 0
+			heads/index: 0
+			links/index: 0
+			targets/index: 0
+			index: index + 1
+		]
+		index: 1
+		while [index <= switch-count][
+			switch-links/index: 0
+			switch-users/index: 0
+			index: index + 1
+		]
+
+		function-base: 1
+		id: 1
+		while [id <= function-count][
+			fn: as rsir-function! (functions + ((id - 1) * RSIR_FUNCTION_SIZE))
+			function-starts/id: function-base
+			function-base: function-base + fn/instruction-count
+			id: id + 1
+		]
+		if function-base <> (instruction-count + 1) [return INVALID_IR]
+
+		queue-tail: 0
+		resume-tail: 0
+		id: 1
+		while [id <= function-count][
+			fn: as rsir-function! (functions + ((id - 1) * RSIR_FUNCTION_SIZE))
+			function-base: function-starts/id
+			catch-caller?: (fn/flags and CATCH_FLAG) <> 0
+			index: 1
+			while [index <= fn/instruction-count][
+				global-index: function-base + index - 1
+				if index = 1 [
+					effects/global-index: effects/global-index or EFFECT_FUNCTION_START
+				]
+				instruction: as rsir-instruction! (instructions
+					+ ((global-index - 1) * RSIR_INSTRUCTION_SIZE))
+				if any [instruction/op < OP_LITERAL instruction/op > OP_SUB_RETURN][
+					return INVALID_IR
+				]
+				if all [instruction/op = OP_FAIL any [
+					instruction/a <= 0 instruction/b <> 0 instruction/c <> 0
+				]][return INVALID_IR]
+				case [
+					instruction/op = OP_RETURN [
+						queue-effect global-index EFFECT_RETURNS effects queue :queue-tail
+					]
+					instruction/op = OP_SUB_RETURN [
+						queue-effect global-index EFFECT_RESUMES effects resume-queue :resume-tail
+					]
+					any [
+						instruction/op = OP_JUMP
+						instruction/op = OP_BRANCH
+						instruction/op = OP_CATCH
+					][
+						target: instruction/a
+						if any [target <= 0 target > fn/instruction-count][return INVALID_IR]
+						global-target: function-base + target - 1
+						record-effect-use global-target global-index heads links targets
+					]
+					instruction/op = OP_BINARY [
+						if instruction/b < 0 [return INVALID_IR]
+						if instruction/b > 0 [
+							target: instruction/b
+							if target >= index [return INVALID_IR]
+							overflow-scope: as rsir-instruction! (instructions
+								+ ((function-base + target - 2) * RSIR_INSTRUCTION_SIZE))
+							unless all [
+								overflow-scope/op = OP_OVERFLOW
+								overflow-scope/b = 0 overflow-scope/c = 0
+							][return INVALID_IR]
+							target: overflow-scope/a
+							if any [target <= index target > fn/instruction-count][
+								return INVALID_IR
+							]
+							global-target: function-base + target - 1
+							record-effect-use global-target global-index heads links targets
+						]
+					]
+					instruction/op = OP_SWITCH [
+						if any [
+							instruction/c <= 0 instruction/c > fn/instruction-count
+							instruction/a < 0 instruction/b <= 0
+							instruction/b > switch-count
+							instruction/a > (switch-count - instruction/b)
+						][return INVALID_IR]
+						global-target: function-base + instruction/c - 1
+						record-effect-use global-target global-index heads links targets
+						case-index: 0
+						while [case-index < instruction/b][
+							switch-id: instruction/a + case-index + 1
+							; Each dense switch record is one CFG edge and has one owner.
+							if switch-users/switch-id <> 0 [return INVALID_IR]
+							switch-case: as rsir-switch! (switches
+								+ ((switch-id - 1) * RSIR_SWITCH_SIZE))
+							target: switch-case/target
+							if any [target <= 0 target > fn/instruction-count][
+								return INVALID_IR
+							]
+							global-target: function-base + target - 1
+							record-switch-effect-use global-target global-index switch-id
+								heads switch-links switch-users
+							case-index: case-index + 1
+						]
+					]
+					instruction/op = OP_CALL [
+						if instruction/a > 0 [
+							if instruction/a > function-count [return INVALID_IR]
+							unless catch-caller? [
+								target: instruction/a
+								global-target: function-starts/target
+								record-effect-use global-target global-index heads links targets
+							]
+						]
+					]
+					instruction/op = OP_SUB_CALL [
+						target: instruction/a
+						if any [target <= 0 target > fn/instruction-count][return INVALID_IR]
+						global-target: function-base + target - 1
+						record-effect-use global-target global-index heads links targets
+					]
+					true [0]
+				]
+				index: index + 1
+			]
+			id: id + 1
+		]
+
+		; O2 resolves a literal logic branch only when every path into the branch
+		; executes the adjacent literal. The literal and its stack consumption then
+		; disappear together; the fixed point sees only the selected CFG edge.
+		if opt-level = 2 [
+			id: 1
+			while [id <= function-count][
+				fn: as rsir-function! (functions + ((id - 1) * RSIR_FUNCTION_SIZE))
+				function-base: function-starts/id
+				index: 2
+				while [index <= fn/instruction-count][
+					global-index: function-base + index - 1
+					instruction: as rsir-instruction! (instructions
+						+ ((global-index - 1) * RSIR_INSTRUCTION_SIZE))
+					if all [
+						instruction/op = OP_BRANCH
+						heads/global-index = 0
+						any [instruction/b = 0 instruction/b = 1]
+						instruction/c = 0
+					][
+						previous: as rsir-instruction! (instructions
+							+ ((global-index - 2) * RSIR_INSTRUCTION_SIZE))
+						if all [
+							previous/op = OP_LITERAL
+							previous/a = -11
+							any [previous/b = 0 previous/b = 1]
+							previous/c = 0
+						][
+							effects/global-index: effects/global-index
+								or EFFECT_CONSTANT_BRANCH
+							taken?: previous/b = instruction/b
+							if taken? [
+								effects/global-index: effects/global-index
+									or EFFECT_BRANCH_TAKEN
+							]
+							target: global-index - 1
+							effects/target: effects/target or EFFECT_ELIDED
+						]
+					]
+					index: index + 1
+				]
+				id: id + 1
+			]
+		]
+
+		queue-head: 1
+		resume-head: 1
+		while [any [queue-head <= queue-tail resume-head <= resume-tail]][
+			either queue-head <= queue-tail [
+				index: queue/queue-head
+				queue-head: queue-head + 1
+				effect-bit: EFFECT_RETURNS
+			][
+				index: resume-queue/resume-head
+				resume-head: resume-head + 1
+				effect-bit: EFFECT_RESUMES
+			]
+			if (effects/index and EFFECT_FUNCTION_START) = 0 [
+				user: index - 1
+				instruction: as rsir-instruction! (instructions
+					+ ((user - 1) * RSIR_INSTRUCTION_SIZE))
+				case [
+					any [instruction/op = OP_CALL instruction/op = OP_SUB_CALL][
+						update-call-effects user instruction-count
+							(instruction/op = OP_SUB_CALL) effects targets
+							queue resume-queue :queue-tail :resume-tail
+					]
+					instruction/op = OP_BRANCH [
+						constant?: (effects/user and EFFECT_CONSTANT_BRANCH) <> 0
+						taken?: (effects/user and EFFECT_BRANCH_TAKEN) <> 0
+						unless all [constant? taken?][
+							either effect-bit = EFFECT_RETURNS [
+								queue-effect user effect-bit effects queue :queue-tail
+							][
+								queue-effect user effect-bit effects resume-queue :resume-tail
+							]
+						]
+					]
+					any [
+						instruction/op = OP_JUMP
+						instruction/op = OP_SWITCH
+						instruction/op = OP_FAIL
+						instruction/op = OP_THROW
+						instruction/op = OP_RETURN
+						instruction/op = OP_SUB_RETURN
+					][0]
+					true [
+						either effect-bit = EFFECT_RETURNS [
+							queue-effect user effect-bit effects queue :queue-tail
+						][
+							queue-effect user effect-bit effects resume-queue :resume-tail
+						]
+					]
+				]
+			]
+			edge: heads/index
+			while [edge <> 0][
+				either edge > 0 [
+					user: edge
+					edge: links/user
+				][
+					switch-id: 0 - edge
+					user: switch-users/switch-id
+					edge: switch-links/switch-id
+				]
+				instruction: as rsir-instruction! (instructions
+					+ ((user - 1) * RSIR_INSTRUCTION_SIZE))
+				constant?: (effects/user and EFFECT_CONSTANT_BRANCH) <> 0
+				taken?: (effects/user and EFFECT_BRANCH_TAKEN) <> 0
+				unless all [
+					instruction/op = OP_BRANCH
+					constant?
+					not taken?
+				][
+					either any [
+						instruction/op = OP_CALL
+						instruction/op = OP_SUB_CALL
+					][
+						update-call-effects user instruction-count
+							(instruction/op = OP_SUB_CALL) effects targets
+							queue resume-queue :queue-tail :resume-tail
+					][
+						either effect-bit = EFFECT_RETURNS [
+							queue-effect user effect-bit effects queue :queue-tail
+						][
+							queue-effect user effect-bit effects resume-queue :resume-tail
+						]
+					]
+				]
+			]
+		]
+
+		; Switch links are no longer needed after the fixed point. Reuse them for
+		; the exact global case targets consumed by the forward reachability walk.
+		queue-head: 1
+		queue-tail: 0
+		id: 1
+		while [id <= function-count][
+			fn: as rsir-function! (functions + ((id - 1) * RSIR_FUNCTION_SIZE))
+			function-base: function-starts/id
+			queue-effect function-base EFFECT_LIVE effects queue :queue-tail
+			index: 1
+			while [index <= fn/instruction-count][
+				global-index: function-base + index - 1
+				instruction: as rsir-instruction! (instructions
+					+ ((global-index - 1) * RSIR_INSTRUCTION_SIZE))
+				if instruction/op = OP_ENTRY [
+					queue-effect global-index EFFECT_LIVE effects queue :queue-tail
+				]
+				if instruction/op = OP_SWITCH [
+					case-index: 0
+					while [case-index < instruction/b][
+						switch-id: instruction/a + case-index + 1
+						switch-case: as rsir-switch! (switches
+							+ ((switch-id - 1) * RSIR_SWITCH_SIZE))
+						switch-links/switch-id: function-base + switch-case/target - 1
+						case-index: case-index + 1
+					]
+				]
+				index: index + 1
+			]
+			id: id + 1
+		]
+
+		while [queue-head <= queue-tail][
+			index: queue/queue-head
+			queue-head: queue-head + 1
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			target: targets/index
+			next-index: index + 1
+			if any [
+				next-index > instruction-count
+				(effects/next-index and EFFECT_FUNCTION_START) <> 0
+			][next-index: 0]
+			case [
+				any [
+					instruction/op = OP_FAIL
+					instruction/op = OP_THROW
+					instruction/op = OP_RETURN
+					instruction/op = OP_SUB_RETURN
+				][0]
+				instruction/op = OP_JUMP [
+					queue-effect targets/index EFFECT_LIVE effects queue :queue-tail
+				]
+				instruction/op = OP_BRANCH [
+					constant?: (effects/index and EFFECT_CONSTANT_BRANCH) <> 0
+					taken?: (effects/index and EFFECT_BRANCH_TAKEN) <> 0
+					either constant? [
+						either taken? [
+							queue-effect targets/index EFFECT_LIVE effects queue :queue-tail
+						][
+							if next-index > 0 [
+								queue-effect next-index EFFECT_LIVE effects queue :queue-tail
+							]
+						]
+					][
+						queue-effect targets/index EFFECT_LIVE effects queue :queue-tail
+						if next-index > 0 [
+							queue-effect next-index EFFECT_LIVE effects queue :queue-tail
+						]
+					]
+				]
+				instruction/op = OP_SWITCH [
+					queue-effect targets/index EFFECT_LIVE effects queue :queue-tail
+					case-index: 0
+					while [case-index < instruction/b][
+						switch-id: instruction/a + case-index + 1
+						queue-effect switch-links/switch-id EFFECT_LIVE effects queue :queue-tail
+						case-index: case-index + 1
+					]
+				]
+				any [instruction/op = OP_BINARY instruction/op = OP_CATCH][
+					if targets/index > 0 [
+						queue-effect targets/index EFFECT_LIVE effects queue :queue-tail
+					]
+					if next-index > 0 [
+						queue-effect next-index EFFECT_LIVE effects queue :queue-tail
+					]
+				]
+				instruction/op = OP_CALL [
+					if all [
+						next-index > 0
+						any [
+							target = 0
+							(effects/target and EFFECT_RETURNS) <> 0
+						]
+					][queue-effect next-index EFFECT_LIVE effects queue :queue-tail]
+				]
+				instruction/op = OP_SUB_CALL [
+					if all [
+						next-index > 0
+						(effects/target and EFFECT_RESUMES) <> 0
+					][queue-effect next-index EFFECT_LIVE effects queue :queue-tail]
+				]
+				true [
+					if next-index > 0 [
+						queue-effect next-index EFFECT_LIVE effects queue :queue-tail
+					]
+				]
+			]
+		]
+
+		id: 1
+		while [id <= function-count][
+			function-base: function-starts/id
+			function-effects/id: either
+				(effects/function-base and EFFECT_RETURNS) = 0
+				[NO_RETURN][0]
+			id: id + 1
+		]
+		0
 	]
 
 	record-control-use: func [
@@ -2724,6 +3220,7 @@ x64-codegen: context [
 		fn [rsir-function!]
 		signature-cache [signature-pairs!]
 		instructions [byte-ptr!]
+		function-effects instruction-effects [int-ptr!]
 		stack-types stack-flags stack-kinds stack-tags storage-offsets result-offsets
 			layouts member-offsets
 			instruction-offsets instruction-depths catch-depths control-uses
@@ -2779,7 +3276,9 @@ x64-codegen: context [
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
-			tracked? located? zero-extend? fold-boolean? linear? consume-location? [logic!]
+			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
+			linear? consume-location? live?
+			sub-returns? [logic!]
 	][
 		measure?: null? code
 		if measure? [
@@ -2818,6 +3317,7 @@ x64-codegen: context [
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			live?: (instruction-effects/index and EFFECT_LIVE) <> 0
 			catch-depths/index: catch-level
 			if instruction/op = OP_ENTRY [
 				if any [catch-level <> 0 current-sub >= 0][return INVALID_IR]
@@ -2830,8 +3330,7 @@ x64-codegen: context [
 					instruction/a = 1 [
 						unless all [
 							any [instruction/b = 0 valid-type-ref? instruction/b type-count]
-							any [instruction/c = 0 instruction/c = 1]
-							any [instruction/c = 0 instruction/b = 0]
+							instruction/c = 0
 						][return INVALID_IR]
 						if all [
 							instruction/b <> 0
@@ -2853,7 +3352,7 @@ x64-codegen: context [
 					+ ((instruction/a - 1) * RSIR_INSTRUCTION_SIZE))
 				unless all [
 					sub-entry/op = OP_ENTRY sub-entry/a = 1
-					instruction/b = sub-entry/b instruction/c = sub-entry/c
+					instruction/b = sub-entry/b instruction/c = 0
 				][return INVALID_IR]
 			]
 			if instruction/op = OP_SUB_RETURN [
@@ -2883,7 +3382,9 @@ x64-codegen: context [
 					catch-scope/c = 0
 				][return INVALID_IR]
 				catch-level: catch-level + 1
-				if catch-level > catch-capacity [catch-capacity: catch-level]
+				if live? [
+					if catch-level > catch-capacity [catch-capacity: catch-level]
+				]
 			]
 			if instruction/op = OP_END_CATCH [
 				unless all [
@@ -2901,10 +3402,11 @@ x64-codegen: context [
 			if all [instruction/op = OP_JUMP any [
 				instruction/c < 0 instruction/c > catch-level
 			]][return INVALID_IR]
-			if all [instruction/op = OP_MEMBER instruction/b > 0][
+			if all [live? instruction/op = OP_MEMBER instruction/b > 0][
 				tag-capacity: tag-capacity + 1
 			]
 			if all [
+				live?
 				instruction/op = OP_ADDRESS
 				instruction/a = LOCAL_ADDRESS
 				instruction/b > fn/parameter-count
@@ -2914,6 +3416,7 @@ x64-codegen: context [
 				storage-offsets/source-slot: 1
 			]
 			if all [
+				live?
 				instruction/op = OP_NATIVE
 				any [
 					instruction/a = 2
@@ -2922,6 +3425,7 @@ x64-codegen: context [
 				]
 			][unstable-stack?: true]
 			if all [
+				live?
 				instruction/op = OP_NATIVE
 				instruction/a = 15
 				instruction/b >= 0 instruction/c > 0
@@ -2934,18 +3438,28 @@ x64-codegen: context [
 					register-id = x64-encoder/RBP
 				][unstable-stack?: true]
 			]
-			if measure? [
-				case [
-					any [
-						instruction/op = OP_JUMP
-						instruction/op = OP_BRANCH
-						instruction/op = OP_OVERFLOW
-						instruction/op = OP_CATCH
-					][
-						record-control-use control-uses instruction/a
-							fn/instruction-count
-					]
-					instruction/op = OP_SWITCH [
+			if all [measure? live?][
+					case [
+						any [
+							instruction/op = OP_JUMP
+							instruction/op = OP_OVERFLOW
+							instruction/op = OP_CATCH
+						][
+							record-control-use control-uses instruction/a
+								fn/instruction-count
+						]
+						instruction/op = OP_BRANCH [
+							unless all [
+								(instruction-effects/index
+									and EFFECT_CONSTANT_BRANCH) <> 0
+								(instruction-effects/index
+									and EFFECT_BRANCH_TAKEN) = 0
+							][
+								record-control-use control-uses instruction/a
+									fn/instruction-count
+							]
+						]
+						instruction/op = OP_SWITCH [
 						record-control-use control-uses instruction/c
 							fn/instruction-count
 						if all [
@@ -2978,7 +3492,7 @@ x64-codegen: context [
 		if storage-bytes < 0 [return storage-bytes]
 		storage-bytes: plan-call-results fn instructions functions imports types members
 			function-count import-count type-count storage-bytes
-			layouts member-offsets result-offsets
+			layouts member-offsets function-effects instruction-effects result-offsets
 		if storage-bytes < 0 [return storage-bytes]
 		native-stack-slot: 0
 		if unstable-stack? [
@@ -3179,6 +3693,11 @@ x64-codegen: context [
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			unless (instruction-effects/index and EFFECT_LIVE) <> 0 [
+				if measure? [instruction-offsets/index: written]
+				index: index + 1
+				continue
+			]
 			if instruction/op = OP_ENTRY [
 				if fallthrough? [return INVALID_IR]
 				if max-depth > (2147483647 - segment-slots)[return OUTPUT_FULL]
@@ -3279,6 +3798,8 @@ x64-codegen: context [
 							all [
 								instruction/op = OP_BRANCH
 								location = LOCATION_GPR
+								(instruction-effects/index
+									and EFFECT_CONSTANT_BRANCH) = 0
 							]
 						]
 					]
@@ -3349,7 +3870,13 @@ x64-codegen: context [
 					location: LOCATION_NONE
 					location-depth: 0
 					location-source: 0
+					]
 				]
+			if (instruction-effects/index and EFFECT_ELIDED) <> 0 [
+				if measure? [instruction-offsets/index: written]
+				fallthrough?: true
+				index: index + 1
+				continue
 			]
 			linear?: false
 			next-index: index + 1
@@ -4137,7 +4664,7 @@ x64-codegen: context [
 						return-ref: callee/return-type
 						first-parameter: callee/first-parameter
 						parameter-count: callee/parameter-count
-						call-flags: callee/flags
+						call-flags: callee/flags or function-effects/target
 					][either target < 0 [
 						import-id: 0 - target
 						if any [import-id <= 0 import-id > import-count][return INVALID_IR]
@@ -5051,7 +5578,7 @@ x64-codegen: context [
 						fallthrough?: false
 					]
 					depth: result-index
-					if return-ref <> 0 [
+					if all [fallthrough? return-ref <> 0][
 						depth: depth + 1
 						stack-types/depth: return-ref
 						stack-flags/depth: 0
@@ -6908,84 +7435,124 @@ x64-codegen: context [
 				]
 				instruction/op = OP_BRANCH [
 					target: instruction/a
+					fold-constant?: (instruction-effects/index
+						and EFFECT_CONSTANT_BRANCH) <> 0
+					branch-taken?: (instruction-effects/index
+						and EFFECT_BRANCH_TAKEN) <> 0
 					unless all [
 						target > 0 target <= fn/instruction-count
 						catch-depths/target = catch-depths/index
 						any [instruction/b = 0 instruction/b = 1]
-						instruction/c = 0 depth > 0
-						stack-kinds/depth = VALUE
-						compatible-types? -11 stack-types/depth types type-count
-						stack-flags/depth = 0
+						instruction/c = 0
+						any [
+							fold-constant?
+							all [
+								depth > 0
+								stack-kinds/depth = VALUE
+								compatible-types? -11 stack-types/depth types type-count
+								stack-flags/depth = 0
+							]
+						]
 					][return INVALID_IR]
-					fold-boolean?: boolean-diamond? index fn/instruction-count
-						instructions catch-depths control-uses
-					at: as byte-ptr! 0
-					tracked?: location = LOCATION_GPR
-					unless tracked? [
-						if not measure? [at: code + written]
-						encoded: x64-encoder/frame-load at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-slots + depth) 4 0
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
-					]
-					at: as byte-ptr! 0
-					if not measure? [at: code + written]
-					encoded: x64-encoder/test-register at (capacity - written)
-						x64-encoder/RAX 4
-					if encoded < 0 [return OUTPUT_FULL]
-					written: written + encoded
-					either fold-boolean? [
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/condition-result at (capacity - written) 5
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/frame-store at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-slots + depth) 4
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
-						stack-types/depth: -11
-						stack-flags/depth: 0
-						stack-kinds/depth: VALUE
-						stack-tags/depth: 0
-						location: LOCATION_NONE
-						location-depth: 0
-						location-source: 0
-						if measure? [
-							target-offset: index + 1
-							while [target-offset <= (index + 3)][
-								instruction-offsets/target-offset: written
-								target-offset: target-offset + 1
+					either fold-constant? [
+						if branch-taken? [
+							if measure? [
+								unless merge-target target depth fn/instruction-count
+									instruction-depths entry-types entry-flags entry-kinds
+									entry-tags stack-types stack-flags stack-kinds stack-tags
+									types type-count [
+									return INVALID_IR
+								]
 							]
+							displacement: 0
+							if not measure? [
+								target-offset: index + 1
+								displacement: instruction-offsets/target
+									- instruction-offsets/target-offset
+							]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/jump-relative at (capacity - written)
+								displacement
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							fallthrough?: false
 						]
-						index: index + 3
 					][
-						depth: depth - 1
-						if measure? [
-							unless merge-target target depth fn/instruction-count
-								instruction-depths entry-types entry-flags entry-kinds entry-tags
-								stack-types stack-flags stack-kinds stack-tags types type-count [
-								return INVALID_IR
-							]
+						fold-boolean?: boolean-diamond? index fn/instruction-count
+							instructions catch-depths control-uses
+						at: as byte-ptr! 0
+						tracked?: location = LOCATION_GPR
+						unless tracked? [
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 4 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
 						]
-						displacement: 0
-						if not measure? [
-							target-offset: index + 1
-							displacement: instruction-offsets/target
-								- instruction-offsets/target-offset
-						]
-						condition: either instruction/b = 1 [5][4]
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
-						encoded: x64-encoder/jump-condition at (capacity - written)
-							condition displacement
+						encoded: x64-encoder/test-register at (capacity - written)
+							x64-encoder/RAX 4
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-						location: LOCATION_NONE
-						location-depth: 0
-						location-source: 0
+						either fold-boolean? [
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/condition-result at
+								(capacity - written) 5
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							stack-types/depth: -11
+							stack-flags/depth: 0
+							stack-kinds/depth: VALUE
+							stack-tags/depth: 0
+							location: LOCATION_NONE
+							location-depth: 0
+							location-source: 0
+							if measure? [
+								target-offset: index + 1
+								while [target-offset <= (index + 3)][
+									instruction-offsets/target-offset: written
+									target-offset: target-offset + 1
+								]
+							]
+							index: index + 3
+						][
+							depth: depth - 1
+							if measure? [
+								unless merge-target target depth fn/instruction-count
+									instruction-depths entry-types entry-flags entry-kinds
+									entry-tags stack-types stack-flags stack-kinds stack-tags
+									types type-count [
+									return INVALID_IR
+								]
+							]
+							displacement: 0
+							if not measure? [
+								target-offset: index + 1
+								displacement: instruction-offsets/target
+									- instruction-offsets/target-offset
+							]
+							condition: either instruction/b = 1 [5][4]
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/jump-condition at
+								(capacity - written) condition displacement
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							location: LOCATION_NONE
+							location-depth: 0
+							location-source: 0
+						]
 					]
 				]
 				instruction/op = OP_SWITCH [
@@ -7105,7 +7672,7 @@ x64-codegen: context [
 						+ ((target - 1) * RSIR_INSTRUCTION_SIZE))
 					unless all [
 						sub-entry/op = OP_ENTRY sub-entry/a = 1
-						instruction/b = sub-entry/b instruction/c = sub-entry/c
+						instruction/b = sub-entry/b instruction/c = 0
 					][return INVALID_IR]
 					displacement: 0
 					if not measure? [
@@ -7118,7 +7685,8 @@ x64-codegen: context [
 						displacement
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
-					either instruction/c = 1 [
+					sub-returns?: (instruction-effects/target and EFFECT_RESUMES) <> 0
+					either not sub-returns? [
 						fallthrough?: false
 					][
 						ref: instruction/b
@@ -7495,11 +8063,13 @@ x64-codegen: context [
 			image-global target-image-global [codegen-global!]
 			image-import [codegen-import!]
 			image-export [codegen-export!]
-			import-refs function-sizes function-frames function-outgoing instruction-offsets
+			import-refs function-sizes function-frames function-outgoing function-effects
+				instruction-offsets
 				instruction-depths catch-depths control-uses entry-types entry-flags
 				entry-kinds entry-tags
 				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
 				tag-widths result-offsets storage-offsets layouts member-offsets
+				instruction-effects switch-effect-links switch-effect-users
 				references [int-ptr!]
 			type-data member-data import-data global-data function-data export-data
 				parameter-data initializer-data switch-data instruction-data strings
@@ -7530,7 +8100,7 @@ x64-codegen: context [
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
 			return INVALID_IR
 		]
-		if opt-level <> 0 [return UNSUPPORTED]
+		unless any [opt-level = 0 opt-level = 2][return UNSUPPORTED]
 		header: as rsir-header! data
 		if any [
 			header/type-count < 0 header/import-count < 0 header/global-count < 0
@@ -8197,14 +8767,18 @@ x64-codegen: context [
 			id: id + 1
 		]
 
-		if header/function-count > ((2147483647 - header/import-count) / 4)[
+		if header/function-count > ((2147483647 - header/import-count) / 5)[
 			return OUTPUT_FULL
 		]
-		scratch-count: header/import-count + (header/function-count * 4)
-		if header/instruction-count > ((2147483647 - scratch-count) / 16)[
+		scratch-count: header/import-count + (header/function-count * 5)
+		if header/instruction-count > ((2147483647 - scratch-count) / 17)[
 			return OUTPUT_FULL
 		]
-		scratch-count: scratch-count + (header/instruction-count * 16)
+		scratch-count: scratch-count + (header/instruction-count * 17)
+		if header/switch-count > ((2147483647 - scratch-count) / 2)[
+			return OUTPUT_FULL
+		]
+		scratch-count: scratch-count + (header/switch-count * 2)
 		if parameter-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
 		scratch-count: scratch-count + parameter-count
 		if header/type-count > ((2147483647 - scratch-count) / 4)[
@@ -8220,7 +8794,8 @@ x64-codegen: context [
 		function-sizes: import-refs + header/import-count
 		function-frames: function-sizes + header/function-count
 		function-outgoing: function-frames + header/function-count
-		instruction-offsets: function-outgoing + header/function-count
+		function-effects: function-outgoing + header/function-count
+		instruction-offsets: function-effects + header/function-count
 		instruction-depths: instruction-offsets + header/instruction-count
 			+ header/function-count
 		catch-depths: instruction-depths + header/instruction-count
@@ -8240,6 +8815,9 @@ x64-codegen: context [
 		storage-offsets: result-offsets + header/instruction-count
 		layouts: storage-offsets + parameter-count
 		member-offsets: layouts + (header/type-count * 4)
+		instruction-effects: member-offsets + member-count
+		switch-effect-links: instruction-effects + header/instruction-count
+		switch-effect-users: switch-effect-links + header/switch-count
 		id: 1
 		while [id <= header/import-count][import-refs/id: 0 id: id + 1]
 		count: header/type-count * 4
@@ -8247,6 +8825,12 @@ x64-codegen: context [
 		while [id <= count][layouts/id: 0 id: id + 1]
 		id: 1
 		while [id <= member-count][member-offsets/id: -1 id: id + 1]
+		status: infer-effects function-data instruction-data switch-data
+			header/function-count header/instruction-count header/switch-count opt-level
+			function-sizes function-effects instruction-effects instruction-offsets
+			instruction-depths entry-types catch-depths control-uses
+			switch-effect-links switch-effect-users
+		if status <> 0 [return release scratch signature-cache status]
 		id: 1
 		while [id <= header/type-count][
 			global-size: 0
@@ -8277,6 +8861,7 @@ x64-codegen: context [
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
 			function-size: compile-function ir-function signature-cache function-instructions
+				function-effects (instruction-effects + (next-instruction - 1))
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(result-offsets + (next-instruction - 1))
 				layouts member-offsets
@@ -8566,6 +9151,7 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
 			written: compile-function ir-function signature-cache function-instructions
+				function-effects (instruction-effects + (next-instruction - 1))
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(result-offsets + (next-instruction - 1))
 				layouts member-offsets

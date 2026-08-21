@@ -78,8 +78,6 @@ compiler-rsir-frontend: context [
 	split-module?: false
 	user-code?: false
 	function-code: make binary! (1024 * 1024)
-	function-states: make block! 256
-	no-return-functions: make map! 64
 	initializers: make binary! (16 * 256)
 	switches: make binary! (12 * 128)
 	strings: make binary! (2 * 1024)
@@ -129,7 +127,6 @@ compiler-rsir-frontend: context [
 	objc-flag: 128
 	catch-flag: 256
 	red-internal-flag: 512
-	no-return-flag: 1024
 	call-shape-flags: return-value-flag + variadic-flag + typed-flag
 		+ custom-flag + objc-flag
 	inline-flag: 1
@@ -223,7 +220,6 @@ compiler-rsir-frontend: context [
 	function-return: 0
 	function-flags: 0
 	function-active?: false
-	function-returns?: false
 	function-scope: none
 	function-uses: none
 	active-function: none
@@ -236,7 +232,7 @@ compiler-rsir-frontend: context [
 	; when the lexical body ends. Subroutine bodies precede the main body and are
 	; emitted once, with direct intra-function calls.
 	function-storage: make map! 64
-	; name [body entry result stopped? state]
+	; name [body entry result state]
 	subroutines: make map! 32
 	subroutine-order: make block! 16
 	active-subroutine: none
@@ -1797,95 +1793,25 @@ compiler-rsir-frontend: context [
 		id
 	]
 
-	collect-call-dependencies: func [
-		body scope uses [block!]
-		local-names seen [map!]
-		dependencies [block!]
-		/local value base target
-	][
-		foreach value body [
-			case [
-				any [word? value path? value][
-					base: either word? value [value][value/1]
-					if all [word? base not select local-names base][
-						target: resolve-name value scope uses call-ids
-						if all [
-							integer? target
-							target > 0
-							not select seen target
-						][
-							put seen target true
-							append dependencies target
-						]
-					]
-				]
-				any [block? value paren? value][
-					collect-call-dependencies to block! value scope uses
-						local-names seen dependencies
-				]
-				true [0]
-			]
-		]
-	]
-
-	collect-local-names: func [
-		records [block!]
-		names [map!]
-		/local record
-	][
-		record: records
-		while [not tail? record][
-			if word? record/1 [put names record/1 true]
-			record: skip record 3
-		]
-	]
-
-	lower-function: func [
-		id [integer!]
-		/local record body code count dependencies seen local-names target returns?
-	][
-		if (pick function-states id) <> 0 [exit]
-		poke function-states id 1
-		record: skip functions ((id - 1) * 10)
-		body: record/3
-		either binary? body [
-			unless ((length? body) // 16) = 0 [
-				fail ERROR-UNSUPPORTED "invalid module instruction stream"
-			]
-			record/10: (length? body) / 16
-		][
-			dependencies: make block! 16
-			seen: make map! 16
-			local-names: make map! 16
-			collect-local-names record/7 local-names
-			collect-local-names record/8 local-names
-			collect-call-dependencies body record/4 record/5
-				local-names seen dependencies
-			foreach target dependencies [
-				if (pick function-states target) = 0 [lower-function target]
-			]
-
-			active-function: record/1
-			code: make binary! ((length? body) * 16)
-			count: stack-body record/6 body record/4 record/5 code
-				record/7 record/8 record/9
-			returns?: function-returns?
-			record/3: code
-			record/10: count
-			unless returns? [put no-return-functions id true]
-		]
-		poke function-states id 2
-	]
-
-	lower-functions: func [/local id record][
+	lower-functions: func [/local record body code count][
 		clear function-code
-		clear function-states
-		clear no-return-functions
-		append/dup function-states 0 function-count
-		id: 1
-		while [id <= function-count][
-			lower-function id
-			id: id + 1
+		record: functions
+		while [not tail? record][
+			body: record/3
+			either binary? body [
+				unless ((length? body) // 16) = 0 [
+					fail ERROR-UNSUPPORTED "invalid module instruction stream"
+				]
+				record/10: (length? body) / 16
+			][
+				active-function: record/1
+				code: make binary! ((length? body) * 16)
+				count: stack-body record/6 body record/4 record/5 code
+					record/7 record/8 record/9
+				record/3: code
+				record/10: count
+			]
+			record: skip record 10
 		]
 		finish-native-names
 		record: functions
@@ -2828,7 +2754,6 @@ compiler-rsir-frontend: context [
 			params: position/7
 			locals: position/8
 			flags: position/9
-			if select no-return-functions id [flags: flags or no-return-flag]
 			param-count: (length? params) / 3
 			local-count: storage-local-count locals
 			first-local: first-param + param-count
@@ -3522,7 +3447,7 @@ compiler-rsir-frontend: context [
 				if select subroutines name [
 					fail ERROR-DUPLICATE ["duplicate subroutine name: " mold name]
 				]
-				put subroutines name reduce [copy/deep position/2 0 0 false 0]
+				put subroutines name reduce [copy/deep position/2 0 0 0]
 				; A definition is data for this function. Its body is compiled by
 				; the function-level pass, not recursively collected here.
 				position: skip position 2
@@ -3542,14 +3467,14 @@ compiler-rsir-frontend: context [
 		record: select subroutines name
 		unless block? record [fail ERROR-REFERENCE ["undefined subroutine " mold name]]
 		case [
-			record/5 = 3 [exit]
-			record/5 = 2 [exit]
-			record/5 = 1 [fail ERROR-CONTEXT ["recursive subroutine " mold name]]
+			record/4 = 3 [exit]
+			record/4 = 2 [exit]
+			record/4 = 1 [fail ERROR-CONTEXT ["recursive subroutine " mold name]]
 			true [0]
 		]
-		record/5: 1
+		record/4: 1
 		order-subroutine-body record/1
-		record/5: 2
+		record/4: 2
 		append subroutine-order name
 	]
 
@@ -3689,18 +3614,16 @@ compiler-rsir-frontend: context [
 		unless block? record [
 			fail ERROR-REFERENCE ["undefined subroutine " mold name]
 		]
-		unless record/5 = 3 [
+		unless record/4 = 3 [
 			if name = active-subroutine [
 				fail ERROR-CONTEXT ["recursive subroutine " mold name]
 			]
 			fail ERROR-REFERENCE ["subroutine is used before its definition " mold name]
 		]
-		emit instructions reduce [
-			subroutine-call-op record/2 record/3 (either record/4 [1][0])
-		]
+		emit instructions reduce [subroutine-call-op record/2 record/3 0]
 		last-type: record/3
 		last-flags: 0
-		last-stopped?: record/4
+		last-stopped?: false
 		next position
 	]
 
@@ -4063,17 +3986,8 @@ compiler-rsir-frontend: context [
 		]
 		last-type: return-ref
 		last-flags: 0
-		last-stopped?: direct-no-return? target
-		if last-stopped? [last-type: 0]
+		last-stopped?: false
 		position-after
-	]
-
-	direct-no-return?: func [target [integer!] return: [logic!]][
-		to logic! all [
-			target > 0
-			(function-flags and catch-flag) = 0
-			select no-return-functions target
-		]
 	]
 
 	finish-stopped-expression: func [instructions [binary!]][
@@ -4153,8 +4067,7 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [call-op target count return-ref]
 		last-type: return-ref
 		last-flags: 0
-		last-stopped?: direct-no-return? target
-		if last-stopped? [last-type: 0]
+		last-stopped?: false
 		position-after
 	]
 
@@ -4195,8 +4108,7 @@ compiler-rsir-frontend: context [
 		emit instructions reduce [call-op target 2 return-ref]
 		last-type: return-ref
 		last-flags: 0
-		last-stopped?: direct-no-return? target
-		if last-stopped? [last-type: 0]
+		last-stopped?: false
 		position-after
 	]
 
@@ -4319,8 +4231,7 @@ compiler-rsir-frontend: context [
 		]
 		last-type: return-ref
 		last-flags: 0
-		last-stopped?: direct-no-return? target
-		if last-stopped? [last-type: 0]
+		last-stopped?: false
 		position-after
 	]
 
@@ -4390,8 +4301,7 @@ compiler-rsir-frontend: context [
 		]
 		last-type: return-ref
 		last-flags: 0
-		last-stopped?: direct-no-return? target
-		if last-stopped? [last-type: 0]
+		last-stopped?: false
 		position-after
 	]
 
@@ -5151,7 +5061,6 @@ compiler-rsir-frontend: context [
 			"return value is missing in function: " source-name active-function
 		]]
 		emit instructions reduce [return-op function-return 0 0]
-		function-returns?: true
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -5163,7 +5072,6 @@ compiler-rsir-frontend: context [
 			fail ERROR-CONTEXT "exit is not allowed outside of a function"
 		]
 		emit instructions reduce [return-op 0 0 0]
-		function-returns?: true
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -6840,12 +6748,9 @@ compiler-rsir-frontend: context [
 				fail ERROR-UNSUPPORTED "cannot return an aggregate value from a subroutine"
 			]
 			record/3: result
-			record/4: stopped?
-			record/5: 3
+			record/4: 3
 			change/part at instructions (marker + 9)
 				int-to-bin/to-bin32 result 4
-			change/part at instructions (marker + 13)
-				int-to-bin/to-bin32 (either stopped? [1][0]) 4
 			emit instructions reduce [subroutine-return-op result 0 0]
 			active-subroutine: none
 		]
@@ -6873,7 +6778,6 @@ compiler-rsir-frontend: context [
 		function-return: return-ref
 		function-flags: flags
 		function-active?: true
-		function-returns?: false
 		function-scope: scope
 		function-uses: uses
 		clear-resolved-names
@@ -6894,16 +6798,11 @@ compiler-rsir-frontend: context [
 			stack-block body scope uses instructions params locals statement-value
 			unless last-stopped? [
 				emit instructions reduce [return-op 0 0 0]
-				function-returns?: true
 			]
 		][
 			stack-block body scope uses instructions params locals tail-value
 			unless last-stopped? [
-				if last-type = 0 [
-					fail ERROR-UNSUPPORTED "function result is missing"
-				]
 				emit instructions reduce [return-op return-ref 0 0]
-				function-returns?: true
 			]
 		]
 		count: to integer! (((length? instructions) - before) / 16)
@@ -7037,8 +6936,6 @@ compiler-rsir-frontend: context [
 			split-module?: false
 			user-code?: false
 			clear function-code
-			clear function-states
-			clear no-return-functions
 			clear overflows
 			clear catches
 			clear initializers

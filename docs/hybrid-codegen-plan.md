@@ -149,6 +149,17 @@ first reachable value type as a non-authoritative shadow. A non-exhaustive
 tagged switch may use an arm type for that shadow, but its real empty edge is
 unchanged in RSIR and native merge validation rejects it in value context.
 
+The frontend does not infer whether a direct call or local subroutine returns.
+It lowers each function once in source order, keeps the complete postfix suffix,
+and serializes neither a no-return function flag nor a subroutine effect bit.
+Native codegen computes one least fixed point over ordinary control edges,
+direct calls, catch callers, and local subroutine calls. Two effects are kept:
+`RETURNS` exits the enclosing function, while `RESUMES` reaches a local
+`SUB_RETURN`. This distinction is required because an ordinary `RETURN` inside
+a subroutine exits its enclosing function rather than resuming the local
+caller. A forward walk over the same edges then marks the exact instructions
+used by layout, frame planning, ABI result storage, and machine selection.
+
 The general control operations are:
 
 - jump;
@@ -214,9 +225,9 @@ value.
 Debug ASSERT lowers through the same branch/fail core, so native BRANCH owns
 its predicate. Ordinary release ASSERT follows the existing language compiler
 rule and removes its unevaluated expression entirely. The existing statically
-false tail/inferred form remains an explicit FAIL terminator for no-return
-inference; the frontend does not run a second compatibility check for either
-form.
+false tail/inferred form remains an explicit FAIL terminator for the native
+effect fixed point; the frontend does not run a second compatibility check for
+either form.
 
 Target-independent leaf names stay symbolic. For example, `system/cpu/rax`
 stores the register name in RSIR; only x64 codegen maps it to a physical
@@ -404,10 +415,14 @@ There are exactly two optimization levels:
   redundant load/store elimination, address folding, call-argument move
   coalescing, branch simplification, and unreachable-block removal.
 
-O1 is invalid, not an alias. O2 is not exposed until at least one real native
-optimization changes generated code and passes its correctness and performance
-gate; it must never silently run the O0 path. Global SSA, aggressive inlining,
-complex loop transforms, and vectorization are outside the initial O2 scope.
+O1 is invalid, not an alias. O2 is exposed only with a real native
+transformation and must never silently run the O0 path. Its first enabled
+transform resolves an adjacent literal logic branch when no control edge can
+enter after the literal, removes the literal and unselected successor from the
+native CFG, and emits only the selected edge. It reuses the codegen effect
+arrays and adds no serialized field or frontend rule. Global SSA, aggressive
+inlining, complex loop transforms, and vectorization are outside the initial
+O2 scope.
 
 Derived native arrays are codegen working memory, not a serialized second IR.
 They exist only where layout, control flow, ABI lowering, or allocation
@@ -643,11 +658,12 @@ Already retained:
 - CDECL variadic `float32!` promotion is derived from the signature and actual
   argument ordinal in codegen, including both Win64 register mirrors and stack
   arguments; the frontend emits no promotion CAST;
-- terminating subexpressions remain terminal while their enclosing call, cast,
-  unary, binary, or infix syntax is consumed, so no disconnected sink operation
-  is emitted. A `[catch]` caller retains the call continuation because a throw
-  resumes immediately after that call; native control-flow analysis applies the
-  same rule;
+- the frontend emits the complete postfix expression after every declared call
+  result and does not guess a call or subroutine termination effect. Native
+  codegen derives function return, local subroutine resume, and forward
+  reachability effects over one direct edge graph. A `[catch]` caller retains
+  its continuation because a throw resumes immediately after that call;
+  unreachable suffixes consume no frame, call-result, or machine-code planning;
 - CATCH filters and semantic native-operation operands cross RSIR unchanged.
   The Red frontend resolves operation spelling, refinement, argument count, and
   target-independent leaf names, while native codegen alone validates CATCH,
@@ -655,8 +671,8 @@ Already retained:
   PUSH, and LOG-B operand and result types. THROW additionally consumes the
   original ID and place directly, so native codegen owns its source/destination
   compatibility, storage write, variant tags, and unwind. The frontend retains
-  only structural value presence, terminal-expression propagation, and parser
-  result shadow. Explicit `system/thrown:` assignment is an ordinary typed SET:
+  only structural value presence and parser result shadow. Explicit
+  `system/thrown:` assignment is an ordinary typed SET:
   its original producer and resolved integer place cross RSIR unchanged, and
   the existing native SET consumer owns their compatibility without a marker;
 - dynamic pointer indexing preserves the original index value for native INDEX
@@ -1034,6 +1050,58 @@ Already retained:
   non-View Red runner in 242.563 seconds (8,730 tests, 16,755/16,755 assertions).
   H89/H90 use the same fixed runtime DLL SHA256
   `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- function lowering no longer recursively scans source blocks to order callees
+  or infer a wire no-return bit. It lowers each source-order function once and
+  preserves every parsed postfix suffix. Native codegen builds direct reverse
+  edges, computes the least fixed point for enclosing-function `RETURNS` and
+  local-subroutine `RESUMES`, then performs one forward reachability walk.
+  Function flag 1024 and subroutine ENTRY/CALL effect fields are rejected or
+  reserved rather than treated as frontend authority. The work is O(V + E),
+  uses compact integer arrays in the existing scratch allocation, and feeds
+  frame, call-result, and machine-code planning directly;
+- H96 built H97 through this native effect path in 52.515 wall seconds. H96 and
+  H97 are both 4,289,536 bytes with `.text` raw size `394200h`, virtual size
+  `394140h`, and identical `.text` SHA256
+  `A80B0DFA7334C6C44B9DD68B2D5CD23D11EAEB7553A726649ED98EA100735517`.
+  The frontend and native codegen fixtures pass, as do the complete O0
+  Red/System and Red runners at 12,647/12,647 and 16,755/16,755 assertions;
+- O2 is now a real backend level rather than an accepted spelling or O0 alias.
+  When an adjacent canonical logic literal dominates a BRANCH, native codegen
+  marks only the selected successor live, elides the literal/condition pair,
+  and removes the unreachable arm. A standalone Windows probe executes
+  correctly in both modes and reduces virtual `.text` from `38EDh` at O0 to
+  `3895h` at O2. O1 remains rejected by the hybrid command line and native
+  entry;
+- H97 built source-bearing H98 at O0 in 55.023 wall seconds, and H98 built H99
+  at O0 in 52.607 seconds. H98/H99 are both 4,295,168 bytes with `.text` raw
+  size `395A00h`, virtual size `395818h`, and identical `.text` SHA256
+  `4BC47CC9FF575973694629F469F1907A64241B8A4AE652C0BA8B933DDD815070`.
+  H99 at O2 passes the complete Windows x64 Red/System runner (10,582 tests,
+  12,647/12,647 assertions, no compile failures) and the complete current
+  non-View Red runner (8,730 tests, 16,755/16,755 assertions);
+- the separate H100 O2 performance build completes in 56.814 wall seconds,
+  starts, and compiles and runs the O2 probe. It is 4,293,632 bytes with
+  `.text` raw size `395400h` and virtual size `395343h`: 1,536 raw code
+  bytes and 1,237 virtual code bytes below H99 O0. H96-H100 all reuse runtime
+  DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- a final O2 location refinement materializes an existing stack-prefix value
+  before eliding its following constant condition. Focused execution covers
+  both selected successors, a direct edge which bypasses the adjacent literal,
+  and a value-producing branch merge. H99 built source-bearing H101 at O0 in
+  55.232 wall seconds, and H101 built H102 at O0 in 59.419 seconds. H101/H102
+  are both 4,295,168 bytes with `.text` raw size `395A00h`, virtual size
+  `395818h`, and identical final `.text` SHA256
+  `4F015A7E2DA3C2550984217A7DA7FE09D591209F3E86C27E8187FBB88C68F466`;
+- final H102 at O2 passes the complete Windows x64 Red/System runner (10,582
+  tests, 12,647/12,647 assertions, no compile failures) and the complete
+  current non-View Red runner (8,730 tests, 16,755/16,755 assertions). H102
+  builds the final H103 O2 performance compiler in 63.070 wall seconds. H103
+  is 4,293,632 bytes with `.text` raw size `395400h`, virtual size
+  `395343h`, and `.text` SHA256
+  `3237A5179E9134A07B83FFE75A32EAB641A7381D4CEE8A2C892B5DEB2567EC2F`.
+  The O2 build remains a code-size gate, not evidence of a build-time speedup;
+  H101-H103 reuse the same fixed runtime DLL;
 - the separate Red/System compiler-diagnostic runner remains an explicit H0
   gap: H88 reports 124 assertions and 38 failures. H81 reports the same totals,
   and the ordered set of all 38 failed test labels is identical, so this batch

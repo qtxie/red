@@ -4278,11 +4278,11 @@ assert binary? no-return-ir [
 no-return-layout: layout-of no-return-ir
 assert all [
 	((function-word no-return-ir no-return-layout 1 12) and 1024) = 0
-	((function-word no-return-ir no-return-layout 2 12) and 1024) = 1024
-	((function-word no-return-ir no-return-layout 3 12) and 1024) = 1024
+	((function-word no-return-ir no-return-layout 2 12) and 1024) = 0
+	((function-word no-return-ir no-return-layout 3 12) and 1024) = 0
 	((function-word no-return-ir no-return-layout 4 12) and 1024) = 0
 	((function-word no-return-ir no-return-layout 5 12) and 1024) = 0
-]["no-return inference did not distinguish unwinding from normal returns"]
+]["frontend serialized a backend control-flow effect"]
 
 stopped-argument-ir: compile-text {
 	Red/System []
@@ -4318,24 +4318,24 @@ assert binary? stopped-argument-ir [
 	"terminating call argument did not propagate: " mold frontend/last-error
 ]
 stopped-argument-ops: ops-of stopped-argument-ir layout-of stopped-argument-ir
-assert all [
-	(op-count stopped-argument-ops frontend/call-op) = 12
-	(op-count stopped-argument-ops frontend/fail-op) = 8
-]["a call survived its terminating argument"]
 stopped-argument-layout: layout-of stopped-argument-ir
 assert all [
-	(function-ops-of stopped-argument-ir stopped-argument-layout 8) = [7]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 9) = [7 1 19]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 10) = [7 1 19]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 11) = [7 1 19]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 12) = [7 1 19]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 13) = [7]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 15) = [7 1 19]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 16) = [1 7]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 17) = [7]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 18) = [7 1 19 1 19]
-	(function-ops-of stopped-argument-ir stopped-argument-layout 19) = [7]
-]["terminating expression state was not sticky through its consumer"]
+	(op-count stopped-argument-ops frontend/call-op) = 25
+	(op-count stopped-argument-ops frontend/fail-op) = 1
+]["frontend pruned a postfix suffix using a guessed call effect"]
+assert all [
+	(function-ops-of stopped-argument-ir stopped-argument-layout 8) = [7 7 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 9) = [7 1 7 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 10) = [7 1 7 12 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 11) = [7 1 7 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 12) = [7 1 7 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 13) = [7 7 12 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 15) = [7 1 15 7 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 16) = [1 7 15 7 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 17) = [7 14 7 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 18) = [7 1 7 1 15 7 11]
+	(function-ops-of stopped-argument-ir stopped-argument-layout 19) = [7 8 7 11]
+]["frontend did not preserve the complete postfix expression"]
 
 nested-catch-ir: compile-text {
 	Red/System []
@@ -4600,11 +4600,11 @@ assert binary? stopped-native-ir [
 stopped-native-ops: ops-of stopped-native-ir layout-of stopped-native-ir
 assert all [
 	not none? find stopped-native-ops frontend/call-op
-	none? find stopped-native-ops frontend/native-op
-	none? find stopped-native-ops frontend/catch-op
-	none? find stopped-native-ops frontend/throw-op
-	none? find stopped-native-ops frontend/set-op
-]["a native consumer survived its terminating operand"]
+	not none? find stopped-native-ops frontend/native-op
+	not none? find stopped-native-ops frontend/catch-op
+	not none? find stopped-native-ops frontend/throw-op
+	not none? find stopped-native-ops frontend/set-op
+]["frontend pruned a native postfix consumer using a guessed call effect"]
 
 assert none? compile-text {
 	Red/System []

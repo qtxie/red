@@ -324,6 +324,7 @@ atomic-ir: allocate 276
 overflow-ir: allocate 276
 exception-ir: allocate 260
 no-return-ir: allocate 164
+effect-ir: allocate 562
 header: declare codegen-header!
 fn: declare codegen-function!
 image-global: declare codegen-global!
@@ -343,7 +344,7 @@ if any [
 	null? merge-ir null? literal-merge-ir null? selection-ir
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
-	null? exception-ir null? no-return-ir
+	null? exception-ir null? no-return-ir null? effect-ir
 	null? call-argument-ir null? float-argument-ir
 ][quit 1]
 
@@ -585,7 +586,7 @@ if (x64-codegen/generate void-ir 89 output 1024 0) <> x64-codegen/INVALID_IR [
 if (x64-codegen/generate void-ir 90 output 64 0) <> x64-codegen/OUTPUT_FULL [
 	failures: failures + 1
 ]
-if (x64-codegen/generate void-ir 90 output 1024 2) <> x64-codegen/UNSUPPORTED [
+if (x64-codegen/generate void-ir 90 output 1024 2) <= 0 [
 	failures: failures + 1
 ]
 if (x64-codegen/generate void-ir 90 output 1024 1) <> x64-codegen/UNSUPPORTED [
@@ -1417,6 +1418,15 @@ if size > 0 [
 	]
 ]
 
+; A hidden result buffer is also an ABI argument, so it remains allocated even
+; when native effect inference proves that the aggregate callee cannot return.
+put-instruction abi-ir 568 19 1 0 0
+if (x64-codegen/generate abi-ir 702 output 1024 0) <= 0 [
+	print ["no-return aggregate call lost its hidden result argument" lf]
+	failures: failures + 1
+]
+put-instruction abi-ir 568 1 -5 70 0
+
 ; An eight-byte aggregate returns directly in RAX. Calling the generated
 ; function with pointer-shaped bits makes the exact result easy to distinguish
 ; from the address of its compiler stack slot.
@@ -1578,6 +1588,20 @@ if size > 0 [
 	]
 	unless execute-first? output 1 [failures: failures + 1]
 ]
+
+; Subroutine termination is a native effect, not a serialized ENTRY/CALL bit.
+put widening-ir 220 1
+if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["subroutine ENTRY accepted a wire effect" lf]
+	failures: failures + 1
+]
+put widening-ir 220 0
+put widening-ir 284 1
+if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["subroutine CALL accepted a wire effect" lf]
+	failures: failures + 1
+]
+put widening-ir 284 0
 
 ; A fixed parameter rejects narrowing from int64 to int8.
 put widening-ir 152 -1
@@ -2916,9 +2940,36 @@ if size > 0 [
 	]
 	if not execute-first? output 7 [failures: failures + 1]
 ]
+
+; O2 resolves an adjacent literal condition in the native CFG, removes the
+; literal and unreachable arm, and emits only the selected control edge.
+size: x64-codegen/generate branch-ir 170 output 1024 2
+if any [size <= 0 not execute-first? output 7][
+	print ["O2 true branch folding failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size >= branch-code-size [
+		print ["O2 true branch did not reduce code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
 put branch-ir 80 0
 size: x64-codegen/generate branch-ir 170 output 1024 0
 if any [size <= 0 not execute-first? output 9][failures: failures + 1]
+size: x64-codegen/generate branch-ir 170 output 1024 2
+if any [size <= 0 not execute-first? output 9][
+	print ["O2 false branch folding failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size >= branch-code-size [
+		print ["O2 false branch did not reduce code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
 put branch-ir 80 1
 put branch-ir 92 7
 if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
@@ -2937,6 +2988,30 @@ if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR 
 put branch-ir 76 -11
 put branch-ir 92 4
 if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR [
+	failures: failures + 1
+]
+
+; A direct edge into BRANCH bypasses its adjacent literal. O2 must retain the
+; real stack condition from that edge instead of treating the literal as a
+; dominating constant.
+put branch-ir 20 8
+put branch-ir 44 -5
+put branch-ir 68 8
+put-instruction branch-ir 72 1 -11 1 0
+put-instruction branch-ir 88 16 4 0 0
+put-instruction branch-ir 104 1 -11 0 0
+put-instruction branch-ir 120 17 7 1 0
+put-instruction branch-ir 136 1 -5 9 0
+put-instruction branch-ir 152 11 -5 0 0
+put-instruction branch-ir 168 1 -5 7 0
+put-instruction branch-ir 184 11 -5 0 0
+branch-ir/201: as byte! 66h
+branch-ir/202: as byte! 6Eh
+if any [
+	(x64-codegen/generate branch-ir 202 output 1024 2) <= 0
+	not execute-first? output 7
+][
+	print ["O2 folded a branch across an incoming edge" lf]
 	failures: failures + 1
 ]
 
@@ -2961,12 +3036,26 @@ if any [
 	print ["O0 CAST fallthrough was not materialized at merge" lf]
 	failures: failures + 1
 ]
+if any [
+	(x64-codegen/generate branch-ir 186 output 1024 2) <= 0
+	not execute-first? output 1
+][
+	print ["O2 constant fallthrough lost its stack prefix" lf]
+	failures: failures + 1
+]
 put branch-ir 96 0
 if any [
 	(x64-codegen/generate branch-ir 186 output 1024 0) <= 0
 	not execute-first? output 2
 ][
 	print ["O0 CAST merge lost its branch value" lf]
+	failures: failures + 1
+]
+if any [
+	(x64-codegen/generate branch-ir 186 output 1024 2) <= 0
+	not execute-first? output 2
+][
+	print ["O2 constant target lost its stack prefix" lf]
 	failures: failures + 1
 ]
 
@@ -4570,7 +4659,7 @@ put no-return-ir 68 1
 put no-return-ir 72 2
 put no-return-ir 76 2
 put no-return-ir 80 0
-put no-return-ir 84 x64-codegen/NO_RETURN
+put no-return-ir 84 0
 put no-return-ir 88 0
 put no-return-ir 92 0
 put no-return-ir 96 0
@@ -4585,7 +4674,10 @@ no-return-ir/143: as byte! 66h
 no-return-ir/144: as byte! 32h
 
 size: x64-codegen/generate no-return-ir 144 output 1024 0
-if size <= 0 [failures: failures + 1]
+if size <= 0 [
+	print ["void no-return CALL inference failed: " size lf]
+	failures: failures + 1
+]
 
 ; A declared result from a no-return callee has no live register value. The
 ; disconnected instruction after CALL must therefore start without a location.
@@ -4619,10 +4711,151 @@ if (x64-codegen/generate no-return-ir 144 output 1024 0) <> x64-codegen/INVALID_
 	failures: failures + 1
 ]
 put no-return-ir 48 0
-put no-return-ir 84 0
+put no-return-ir 84 x64-codegen/NO_RETURN
 if (x64-codegen/generate no-return-ir 144 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["wire NO_RETURN flag was not rejected" lf]
 	failures: failures + 1
 ]
+put no-return-ir 84 0
+put-instruction no-return-ir 124 11 0 0 0
+if (x64-codegen/generate no-return-ir 144 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["returning callee was inferred as no-return" lf]
+	failures: failures + 1
+]
+
+; Native effects form one least fixed point over ordinary control flow, direct
+; calls, and local subroutine calls. A valid but stack-invalid DROP immediately
+; after each call makes a returning path observable without a wire annotation.
+put effect-ir 0 1
+put effect-ir 4 0
+put effect-ir 8 0
+put effect-ir 12 0
+put effect-ir 16 6
+put effect-ir 20 19
+put effect-ir 24 0
+put effect-ir 28 0
+put effect-ir 32 0
+
+put effect-ir 36 0
+put effect-ir 40 1
+put effect-ir 44 0
+put effect-ir 48 0
+put effect-ir 52 0
+put effect-ir 56 0
+put effect-ir 60 0
+put effect-ir 64 0
+put effect-ir 68 3
+
+put effect-ir 72 1
+put effect-ir 76 1
+put effect-ir 80 0
+put effect-ir 84 0
+put effect-ir 88 0
+put effect-ir 92 0
+put effect-ir 96 0
+put effect-ir 100 0
+put effect-ir 104 2
+
+put effect-ir 108 2
+put effect-ir 112 1
+put effect-ir 116 0
+put effect-ir 120 0
+put effect-ir 124 0
+put effect-ir 128 0
+put effect-ir 132 0
+put effect-ir 136 0
+put effect-ir 140 2
+
+put effect-ir 144 3
+put effect-ir 148 1
+put effect-ir 152 0
+put effect-ir 156 0
+put effect-ir 160 0
+put effect-ir 164 0
+put effect-ir 168 0
+put effect-ir 172 0
+put effect-ir 176 3
+
+put effect-ir 180 4
+put effect-ir 184 1
+put effect-ir 188 0
+put effect-ir 192 0
+put effect-ir 196 0
+put effect-ir 200 0
+put effect-ir 204 0
+put effect-ir 208 0
+put effect-ir 212 8
+
+put effect-ir 216 5
+put effect-ir 220 1
+put effect-ir 224 0
+put effect-ir 228 0
+put effect-ir 232 0
+put effect-ir 236 0
+put effect-ir 240 0
+put effect-ir 244 0
+put effect-ir 248 1
+
+put-instruction effect-ir 252 7 2 0 0
+put-instruction effect-ir 268 12 0 0 0
+put-instruction effect-ir 284 11 0 0 0
+put-instruction effect-ir 300 7 3 0 0
+put-instruction effect-ir 316 11 0 0 0
+put-instruction effect-ir 332 19 1 0 0
+put-instruction effect-ir 348 11 0 0 0
+put-instruction effect-ir 364 7 4 0 0
+put-instruction effect-ir 380 12 0 0 0
+put-instruction effect-ir 396 11 0 0 0
+put-instruction effect-ir 412 16 5 0 0
+put-instruction effect-ir 428 27 1 0 0
+put-instruction effect-ir 444 7 3 0 0
+put-instruction effect-ir 460 29 0 0 0
+put-instruction effect-ir 476 27 0 0 0
+put-instruction effect-ir 492 28 2 0 0
+put-instruction effect-ir 508 12 0 0 0
+put-instruction effect-ir 524 11 0 0 0
+put-instruction effect-ir 540 11 0 0 0
+effect-ir/557: as byte! 61h
+effect-ir/558: as byte! 62h
+effect-ir/559: as byte! 63h
+effect-ir/560: as byte! 64h
+effect-ir/561: as byte! 65h
+effect-ir/562: as byte! 66h
+
+if (x64-codegen/generate effect-ir 562 output 1024 0) <= 0 [
+	print ["transitive call/subroutine effect fixture failed" lf]
+	failures: failures + 1
+]
+put-instruction effect-ir 332 11 0 0 0
+if (x64-codegen/generate effect-ir 562 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["transitive returning path did not reach its consumer" lf]
+	failures: failures + 1
+]
+put-instruction effect-ir 332 19 1 0 0
+put effect-ir 368 6
+if (x64-codegen/generate effect-ir 562 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["returning replacement kept the recursive call terminal" lf]
+	failures: failures + 1
+]
+put effect-ir 368 4
+put-instruction effect-ir 444 11 0 0 0
+if (x64-codegen/generate effect-ir 562 output 1024 0) <= 0 [
+	print ["subroutine function RETURN incorrectly resumed its caller" lf]
+	failures: failures + 1
+]
+put-instruction effect-ir 444 7 3 0 0
+put effect-ir 448 6
+if (x64-codegen/generate effect-ir 562 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["returning local subroutine did not reach its consumer" lf]
+	failures: failures + 1
+]
+put effect-ir 448 3
+put effect-ir 48 x64-codegen/CATCH_FLAG
+if (x64-codegen/generate effect-ir 562 output 1024 0) <> x64-codegen/INVALID_IR [
+	print ["catch caller lost its continuation effect" lf]
+	failures: failures + 1
+]
+put effect-ir 48 0
 
 free output
 free void-ir
@@ -4665,6 +4898,7 @@ free atomic-ir
 free overflow-ir
 free exception-ir
 free no-return-ir
+free effect-ir
 x64-codegen/free-signature-pairs sink-pairs
 either failures = 0 [
 	print ["PASS: typed postfix Windows x64 codegen" lf]

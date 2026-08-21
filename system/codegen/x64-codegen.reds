@@ -274,6 +274,8 @@ x64-codegen: context [
 	LOCATION_GLOBAL:         6
 	; The two top stack values are held in RAX and RDX respectively.
 	LOCATION_GPR_PAIR:       7
+	; The two top stack values are held in XMM0 and XMM1 respectively.
+	LOCATION_XMM_PAIR:       8
 	; Zero means no stack tag, positive values are variant-chain instruction
 	; indexes, and -1 marks a direct binary64 literal without colliding with them.
 	FLOAT_LITERAL_TAG: -1
@@ -1929,6 +1931,24 @@ x64-codegen: context [
 		]
 	]
 
+	register-pair-operation?: func [
+		operation [integer!]
+		floating? [logic!]
+		return: [logic!]
+	][
+		either floating? [
+			any [
+				all [operation >= ADD_OPERATION operation <= DIVIDE_OPERATION]
+				all [operation >= EQUAL_OPERATION operation <= LESS_EQUAL_OPERATION]
+			]
+		][
+			any [
+				all [operation >= ADD_OPERATION operation <= MULTIPLY_OPERATION]
+				all [operation >= OR_OPERATION operation <= LESS_EQUAL_OPERATION]
+			]
+		]
+	]
+
 	normalize-modulo: func [
 		code [byte-ptr!]
 		capacity width [integer!]
@@ -3272,6 +3292,7 @@ x64-codegen: context [
 		return: [integer!]
 		/local instruction [rsir-instruction!]
 			next-instruction [rsir-instruction!]
+			following-instruction [rsir-instruction!]
 			overflow-scope [rsir-instruction!]
 			catch-scope [rsir-instruction!]
 			sub-entry [rsir-instruction!]
@@ -3309,6 +3330,7 @@ x64-codegen: context [
 			catch-level catch-capacity catch-base catch-record catch-unwind
 			catch-threshold allocation-size current-entry current-sub
 			location location-depth location-source location-reference source-location
+			source-depth
 			next-index
 			global-reference-id
 			main-entry-count sub-entry-count compatibility [integer!]
@@ -3317,6 +3339,7 @@ x64-codegen: context [
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
 			linear? consume-location? global-target? defer-global? paired? set-pair?
+			address-pair? load-pair?
 			source-located? direct-frame-target? live?
 			sub-returns? [logic!]
 	][
@@ -3343,6 +3366,7 @@ x64-codegen: context [
 		location-source: 0
 		location-reference: 0
 		source-location: LOCATION_NONE
+		source-depth: 0
 		main-entry-count: 0
 		sub-entry-count: 0
 		unstable-stack?: false
@@ -3752,6 +3776,8 @@ x64-codegen: context [
 				location: LOCATION_NONE
 				location-depth: 0
 				location-source: 0
+				source-location: LOCATION_NONE
+				source-depth: 0
 			]
 			if instruction/op = OP_ENTRY [
 				if fallthrough? [
@@ -3826,31 +3852,40 @@ x64-codegen: context [
 					next-instruction/op <> OP_ENTRY
 				]
 			]
-			paired?: all [
+			paired?: false
+			if all [
 				linear?
-				location = LOCATION_GPR
+				any [location = LOCATION_GPR location = LOCATION_XMM]
 				instruction/op = OP_LITERAL
 				depth > 0
 				stack-kinds/depth = VALUE
 				stack-flags/depth = 0
 				valid-type-ref? instruction/a type-count
-				instruction/a = stack-types/depth
-				integer-type? instruction/a types type-count
+				machine-value? instruction/a 0 types members type-count
+					layouts member-offsets
 				(instruction-effects/next-index and EFFECT_LIVE) <> 0
 				(instruction-effects/next-index and EFFECT_ELIDED) = 0
 				next-instruction/op = OP_BINARY
-				any [
+				next-instruction/a >= ADD_OPERATION
+				next-instruction/a <= LESS_EQUAL_OPERATION
+			][
+				paired?: either location = LOCATION_XMM [
 					all [
-						next-instruction/a >= ADD_OPERATION
-						next-instruction/a <= MULTIPLY_OPERATION
+						float-type? stack-types/depth types type-count
+						float-type? instruction/a types type-count
+						register-pair-operation? next-instruction/a true
 					]
+				][
 					all [
-						next-instruction/a >= OR_OPERATION
-						next-instruction/a <= LESS_EQUAL_OPERATION
+						instruction/a = stack-types/depth
+						integer-type? stack-types/depth types type-count
+						integer-type? instruction/a types type-count
+						register-pair-operation? next-instruction/a false
 					]
 				]
 			]
 			set-pair?: false
+			address-pair?: false
 			if all [
 				linear?
 				any [location = LOCATION_GPR location = LOCATION_XMM]
@@ -3858,9 +3893,6 @@ x64-codegen: context [
 				depth > 0
 				stack-kinds/depth = VALUE
 				stack-flags/depth = 0
-				(instruction-effects/next-index and EFFECT_LIVE) <> 0
-				(instruction-effects/next-index and EFFECT_ELIDED) = 0
-				next-instruction/op = OP_SET
 			][
 				target-ref: 0
 				target-flags: -1
@@ -3890,16 +3922,58 @@ x64-codegen: context [
 				]
 				if all [
 					valid-type-ref? target-ref type-count
-					target-ref = stack-types/depth
 					target-flags = 0
 					machine-value? target-ref 0 types members type-count
 						layouts member-offsets
 				][
 					floating?: float-type? target-ref types type-count
-					set-pair?: either floating? [
+					valid?: either floating? [
 						location = LOCATION_XMM
-					][location = LOCATION_GPR]
+					][
+						all [
+							location = LOCATION_GPR
+							target-ref = stack-types/depth
+						]
+					]
+					if valid? [
+						set-pair?: all [
+							target-ref = stack-types/depth
+							(instruction-effects/next-index and EFFECT_LIVE) <> 0
+							(instruction-effects/next-index and EFFECT_ELIDED) = 0
+							next-instruction/op = OP_SET
+						]
+						if all [
+							next-instruction/op = OP_LOAD
+							(instruction-effects/next-index and EFFECT_LIVE) <> 0
+							(instruction-effects/next-index and EFFECT_ELIDED) = 0
+							next-index < fn/instruction-count
+						][
+							target: next-index + 1
+							following-instruction: as rsir-instruction! (instructions
+								+ (next-index * RSIR_INSTRUCTION_SIZE))
+							address-pair?: all [
+								control-uses/target = 0
+								catch-depths/target = catch-depths/index
+								(following-instruction/op <> OP_ENTRY)
+								(instruction-effects/target and EFFECT_LIVE) <> 0
+								(instruction-effects/target and EFFECT_ELIDED) = 0
+								following-instruction/op = OP_BINARY
+								following-instruction/a >= ADD_OPERATION
+								following-instruction/a <= LESS_EQUAL_OPERATION
+								register-pair-operation? following-instruction/a floating?
+							]
+						]
+					]
 				]
+			]
+			load-pair?: all [
+				linear?
+				instruction/op = OP_LOAD
+				source-location <> LOCATION_NONE
+				source-depth = (depth - 1)
+				(instruction-effects/next-index and EFFECT_LIVE) <> 0
+				(instruction-effects/next-index and EFFECT_ELIDED) = 0
+				next-instruction/op = OP_BINARY
 			]
 			if location <> LOCATION_NONE [
 				unless all [
@@ -3925,8 +3999,12 @@ x64-codegen: context [
 					any [location = LOCATION_GPR location = LOCATION_XMM][
 						any [
 							all [instruction/op = OP_LITERAL paired?]
-							all [instruction/op = OP_ADDRESS set-pair?]
+							all [
+								instruction/op = OP_ADDRESS
+								any [set-pair? address-pair?]
+							]
 							instruction/op = OP_DROP
+							instruction/op = OP_DUPLICATE
 							instruction/op = OP_CAST
 							instruction/op = OP_BINARY
 							instruction/op = OP_SUB_RETURN
@@ -3955,7 +4033,10 @@ x64-codegen: context [
 							]
 						]
 					]
-					location = LOCATION_GPR_PAIR [instruction/op = OP_BINARY]
+					any [
+						location = LOCATION_GPR_PAIR
+						location = LOCATION_XMM_PAIR
+					][instruction/op = OP_BINARY]
 					true [false]
 				]
 				unless consume-location? [
@@ -3982,7 +4063,10 @@ x64-codegen: context [
 							location = LOCATION_XMM
 						][0]
 						location = LOCATION_GLOBAL [return INVALID_IR]
-						location = LOCATION_GPR_PAIR [return INVALID_IR]
+						any [
+							location = LOCATION_GPR_PAIR
+							location = LOCATION_XMM_PAIR
+						][return INVALID_IR]
 						true [return INVALID_IR]
 					]
 					ref: stack-types/depth
@@ -4055,7 +4139,11 @@ x64-codegen: context [
 					width: value-width ref 0 types members type-count
 						layouts member-offsets
 					target-width: either width = 8 [8][4]
-					register-id: either paired? [x64-encoder/RDX][x64-encoder/RAX]
+					floating?: float-type? ref types type-count
+					register-id: either all [
+						paired?
+						location = LOCATION_GPR
+					][x64-encoder/RDX][x64-encoder/RAX]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/move-immediate at (capacity - written)
@@ -4063,14 +4151,22 @@ x64-codegen: context [
 						instruction/b instruction/c
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+					if all [floating? any [linear? paired?]][
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						register-id: either paired? [x64-encoder/XMM1][x64-encoder/XMM0]
+						encoded: x64-encoder/xmm-load-register at (capacity - written)
+							register-id x64-encoder/RAX width
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 					either paired? [
-						location: LOCATION_GPR_PAIR
+						location: either floating? [LOCATION_XMM_PAIR][LOCATION_GPR_PAIR]
 						location-depth: depth
 					][either all [
 						linear?
-						not float-type? ref types type-count
 					][
-						location: LOCATION_GPR
+						location: either floating? [LOCATION_XMM][LOCATION_GPR]
 						location-depth: depth
 					][
 						at: as byte-ptr! 0
@@ -4126,7 +4222,10 @@ x64-codegen: context [
 					]
 				]
 				instruction/op = OP_ADDRESS [
-					source-location: either set-pair? [location][LOCATION_NONE]
+					source-location: either any [set-pair? address-pair?][
+						location
+					][LOCATION_NONE]
+					source-depth: either source-location <> LOCATION_NONE [depth][0]
 					ref: 0
 					flags: 0
 					import-id: 0
@@ -4177,7 +4276,11 @@ x64-codegen: context [
 							flags: global/flags and INLINE
 							if all [
 								linear?
-								any [location = LOCATION_NONE set-pair?]
+								any [
+									location = LOCATION_NONE
+									set-pair?
+									address-pair?
+								]
 								flags = 0
 								machine-value? ref flags types members type-count
 									layouts member-offsets
@@ -4355,16 +4458,26 @@ x64-codegen: context [
 							layouts member-offsets
 						signed: either signed-type? ref types type-count [1][0]
 						floating?: float-type? ref types type-count
+						register-id: either load-pair? [
+							either floating? [x64-encoder/XMM1][x64-encoder/RDX]
+						][either floating? [x64-encoder/XMM0][x64-encoder/RAX]]
+						if all [
+							load-pair?
+							not any [
+								location = LOCATION_FRAME
+								location = LOCATION_GLOBAL
+							]
+						][return INVALID_IR]
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: case [
 							location = LOCATION_FRAME [
 								either floating? [
 									x64-encoder/xmm-frame-load at (capacity - written)
-										x64-encoder/XMM0 location-source width
+										register-id location-source width
 								][
 									x64-encoder/frame-load at (capacity - written)
-										x64-encoder/RAX location-source width signed
+										register-id location-source width signed
 								]
 							]
 							location = LOCATION_FRAME_INDIRECT [
@@ -4374,11 +4487,11 @@ x64-codegen: context [
 							location = LOCATION_GLOBAL [
 								either floating? [
 									x64-encoder/xmm-rip-load at (capacity - written)
-										x64-encoder/XMM0 0 width
-							][
-								x64-encoder/rip-value-load at (capacity - written)
-									x64-encoder/RAX 0 width signed
-							]
+										register-id 0 width
+								][
+									x64-encoder/rip-value-load at (capacity - written)
+										register-id 0 width signed
+								]
 							]
 							location = LOCATION_ADDRESS [0]
 							location = LOCATION_NONE [
@@ -4411,7 +4524,9 @@ x64-codegen: context [
 						location-source: 0
 						location-reference: 0
 						either linear? [
-							location: either floating? [LOCATION_XMM][LOCATION_GPR]
+							location: either load-pair? [
+								either floating? [LOCATION_XMM_PAIR][LOCATION_GPR_PAIR]
+							][either floating? [LOCATION_XMM][LOCATION_GPR]]
 							location-depth: depth
 						][
 							at: as byte-ptr! 0
@@ -4430,6 +4545,8 @@ x64-codegen: context [
 							written: written + encoded
 						]
 					]
+					source-location: LOCATION_NONE
+					source-depth: 0
 				]
 				instruction/op = OP_REFERENCE [
 					if any [depth <= 0 stack-kinds/depth <> PLACE][return INVALID_IR]
@@ -4754,6 +4871,7 @@ x64-codegen: context [
 						]
 					]
 					source-location: LOCATION_NONE
+					source-depth: 0
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: emit-variant-tags at (capacity - written) tag-head tag-base
@@ -6896,27 +7014,53 @@ x64-codegen: context [
 							layouts member-offsets
 					]
 					signed: either signed-type? ref types type-count [1][0]
-					at: as byte-ptr! 0
-					if not measure? [at: code + written]
-					encoded: x64-encoder/frame-load at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-slots + depth)
-						width signed
-					if encoded < 0 [return OUTPUT_FULL]
-					written: written + encoded
+					located?: all [
+						kind = VALUE
+						location-depth = depth
+						any [location = LOCATION_GPR location = LOCATION_XMM]
+					]
+					unless located? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-load at (capacity - written)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
+							width signed
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					if located? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: either location = LOCATION_XMM [
+							x64-encoder/xmm-frame-store at (capacity - written)
+								x64-encoder/XMM0 slot-displacement
+									(storage-slots + depth) width
+						][
+							target-width: either width = 8 [8][4]
+							x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement
+									(storage-slots + depth) target-width
+						]
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 					depth: depth + 1
 					if depth > max-depth [max-depth: depth]
 					stack-types/depth: ref
 					stack-flags/depth: flags
 					stack-kinds/depth: kind
 					stack-tags/depth: tag-head
-					target-width: either width = 8 [8][4]
-					at: as byte-ptr! 0
-					if not measure? [at: code + written]
-					encoded: x64-encoder/frame-store at (capacity - written)
-						x64-encoder/RAX slot-displacement (storage-slots + depth)
-						target-width
-					if encoded < 0 [return OUTPUT_FULL]
-					written: written + encoded
+					unless located? [
+						target-width: either width = 8 [8][4]
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-store at (capacity - written)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
+							target-width
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					if located? [location-depth: depth]
 				]
 				instruction/op = OP_UNARY [
 					if any [
@@ -7192,11 +7336,20 @@ x64-codegen: context [
 							layouts member-offsets
 					][return UNSUPPORTED]
 					located?: location <> LOCATION_NONE
-					paired?: location = LOCATION_GPR_PAIR
+					paired?: any [
+						location = LOCATION_GPR_PAIR
+						location = LOCATION_XMM_PAIR
+					]
 					if all [
 						located?
 						any [
-							all [floating? location <> LOCATION_XMM]
+							all [
+								floating?
+								not any [
+									location = LOCATION_XMM
+									location = LOCATION_XMM_PAIR
+								]
+							]
 							all [
 								not floating?
 								not any [
@@ -7215,28 +7368,43 @@ x64-codegen: context [
 						source-width: value-width right-ref right-flags types members
 							type-count layouts member-offsets
 						if located? [
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: either source-width = operation-width [
-								x64-encoder/xmm-move-register at (capacity - written)
-									x64-encoder/XMM1 x64-encoder/XMM0 source-width
+							if any [
+								location <> LOCATION_XMM_PAIR
+								source-width <> operation-width
 							][
-								x64-encoder/xmm-convert at (capacity - written)
-									x64-encoder/XMM1 x64-encoder/XMM0
-									source-width operation-width
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: case [
+									location = LOCATION_XMM_PAIR [
+										x64-encoder/xmm-convert at (capacity - written)
+											x64-encoder/XMM1 x64-encoder/XMM1
+											source-width operation-width
+									]
+									source-width = operation-width [
+										x64-encoder/xmm-move-register at (capacity - written)
+											x64-encoder/XMM1 x64-encoder/XMM0 source-width
+									]
+									true [
+										x64-encoder/xmm-convert at (capacity - written)
+											x64-encoder/XMM1 x64-encoder/XMM0
+											source-width operation-width
+									]
+								]
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
 							]
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
 						]
 						source-width: value-width left-ref left-flags types members
 							type-count layouts member-offsets
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/xmm-frame-load at (capacity - written)
-							x64-encoder/XMM0 slot-displacement
-								(storage-slots + target-slot) source-width
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
+						unless paired? [
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/xmm-frame-load at (capacity - written)
+								x64-encoder/XMM0 slot-displacement
+									(storage-slots + target-slot) source-width
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
 						if source-width <> operation-width [
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]

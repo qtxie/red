@@ -290,6 +290,7 @@ untyped-import-ir: allocate 164
 pointer-ir: allocate 132
 index-ir: allocate 260
 arithmetic-ir: allocate 260
+duplicate-ir: allocate 180
 expression-ir: allocate 260
 aggregate-ir: allocate 516
 abi-ir: allocate 1028
@@ -332,7 +333,7 @@ array-values: as int-ptr! 0
 if any [
 	null? output null? void-ir null? local-ir null? unused-local-ir null? untyped-import-ir
 	null? pointer-ir null? index-ir
-	null? arithmetic-ir
+	null? arithmetic-ir null? duplicate-ir
 	null? expression-ir
 	null? aggregate-ir null? abi-ir null? small-return-ir
 	null? widening-ir null? sink-ir null? signature-ir
@@ -832,6 +833,61 @@ if any [size <= 0 not execute-first? output 7][
 	failures: failures + 1
 ]
 
+; Two direct local integer loads remain in RAX/RDX through BINARY.
+put local-ir 20 10
+put local-ir 44 -5
+put local-ir 68 10
+put local-ir 72 -5
+put-instruction local-ir 80 1 -5 7 0
+put-instruction local-ir 96 3 1 1 0
+put-instruction local-ir 112 5 0 0 0
+put-instruction local-ir 128 12 0 0 0
+put-instruction local-ir 144 3 1 1 0
+put-instruction local-ir 160 4 0 0 0
+put-instruction local-ir 176 3 1 1 0
+put-instruction local-ir 192 4 0 0 0
+put-instruction local-ir 208 15 1 0 0
+put-instruction local-ir 224 11 -5 0 0
+local-ir/241: as byte! 66h
+local-ir/242: as byte! 6Eh
+
+size: x64-codegen/generate local-ir 242 output 1024 0
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 37 [
+		print ["O0 integer local pair code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+if any [size <= 0 not execute-first? output 14][
+	print ["O0 integer local pair was not forwarded" lf]
+	failures: failures + 1
+]
+
+; The RAX/RDX pair covers bitwise operations, including AND.
+put-instruction local-ir 208 15 12 0 0
+size: x64-codegen/generate local-ir 242 output 1024 0
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 37 [
+		print ["O0 integer AND pair code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+if any [size <= 0 not execute-first? output 7][
+	print ["O0 integer AND pair was not forwarded" lf]
+	failures: failures + 1
+]
+
+; Variable shifts consume their right operand from RCX, so they must not use
+; the RAX/RDX pair. This also exercises the materialized fallback path.
+put-instruction local-ir 208 15 9 0 0
+size: x64-codegen/generate local-ir 242 output 1024 0
+if any [size <= 0 not execute-first? output 0][
+	print ["O0 logical shift used the RAX/RDX pair" lf]
+	failures: failures + 1
+]
+
 ; A direct local floating load remains in XMM0 through scalar RETURN.
 put local-ir 20 7
 put local-ir 44 -10
@@ -853,8 +909,8 @@ if any [size <= 0 not execute-floating? output 1.5][
 	failures: failures + 1
 ]
 
-; The right local LOAD stays in XMM0 until BINARY moves it to XMM1. The
-; arithmetic result then stays in XMM0 through RETURN.
+; Two direct local floating loads remain in XMM0/XMM1 through BINARY. The
+; arithmetic result remains in XMM0 through RETURN.
 put local-ir 20 10
 put local-ir 68 10
 put-instruction local-ir 80 1 -10 0 3FF80000h
@@ -873,13 +929,67 @@ local-ir/242: as byte! 6Eh
 size: x64-codegen/generate local-ir 242 output 1024 0
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 76 [
+	if fn/code-size <> 55 [
 		print ["O0 XMM SET/operator location code size: " fn/code-size lf]
 		failures: failures + 1
 	]
 ]
 if any [size <= 0 not execute-floating? output 3.0][
 	print ["O0 XMM operator location was not forwarded" lf]
+	failures: failures + 1
+]
+
+; A register-resident value must be materialized only for the old duplicate
+; slot; the new top stays in the same register for the following expression.
+put duplicate-ir 0 1
+put duplicate-ir 4 0
+put duplicate-ir 8 0
+put duplicate-ir 12 0
+put duplicate-ir 16 1
+put duplicate-ir 20 6
+put duplicate-ir 24 0
+put duplicate-ir 28 0
+put duplicate-ir 32 0
+put duplicate-ir 36 0
+put duplicate-ir 40 2
+put duplicate-ir 44 -5
+put duplicate-ir 48 0
+put duplicate-ir 52 0
+put duplicate-ir 56 0
+put duplicate-ir 60 0
+put duplicate-ir 64 0
+put duplicate-ir 68 6
+put-instruction duplicate-ir 72 1 -5 5 0
+put-instruction duplicate-ir 88 13 0 0 0
+put-instruction duplicate-ir 104 1 -5 2 0
+put-instruction duplicate-ir 120 15 1 0 0
+put-instruction duplicate-ir 136 15 1 0 0
+put-instruction duplicate-ir 152 11 -5 0 0
+duplicate-ir/169: as byte! 64h
+duplicate-ir/170: as byte! 70h
+size: x64-codegen/generate duplicate-ir 170 output 1024 0
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 43 [
+		print ["O0 duplicate location code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+if any [size <= 0 not execute-first? output 12][
+	print ["O0 duplicate location was not forwarded" lf]
+	failures: failures + 1
+]
+
+; The same duplicate path preserves XMM0 and materializes the old slot once.
+put duplicate-ir 44 -10
+put-instruction duplicate-ir 72 1 -10 0 3FF80000h
+put-instruction duplicate-ir 104 1 -10 0 40000000h
+put-instruction duplicate-ir 120 15 3 0 0
+put-instruction duplicate-ir 136 15 1 0 0
+put-instruction duplicate-ir 152 11 -10 0 0
+size: x64-codegen/generate duplicate-ir 170 output 1024 0
+if any [size <= 0 not execute-floating? output 4.5][
+	print ["O0 XMM duplicate location was not forwarded" lf]
 	failures: failures + 1
 ]
 
@@ -2593,7 +2703,7 @@ if any [size <= 0 not execute-first? output 1069547520][
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	cast-keep-integer-code-size: fn/code-size
-	if cast-keep-integer-code-size <> 32 [
+	if cast-keep-integer-code-size <> 34 [
 		print ["O0 keep float32-to-integer CAST code size: "
 			cast-keep-integer-code-size lf]
 		failures: failures + 1
@@ -2609,7 +2719,7 @@ if any [size <= 0 not execute-floating32? output 1.5][
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	cast-float-width-code-size: fn/code-size
-	if cast-float-width-code-size <> 44 [
+	if cast-float-width-code-size <> 40 [
 		print ["O0 float width CAST code size: " cast-float-width-code-size lf]
 		failures: failures + 1
 	]
@@ -3458,7 +3568,7 @@ if any [size <= 0 not execute-floating? output 1.5][
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	call-float-argument-code-size: fn/code-size
-	if call-float-argument-code-size <> 58 [
+	if call-float-argument-code-size <> 64 [
 		print ["O0 floating argument code size: " call-float-argument-code-size lf]
 		failures: failures + 1
 	]

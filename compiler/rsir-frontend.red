@@ -245,8 +245,18 @@ compiler-rsir-frontend: context [
 	static-initializer: none
 	static-next: none
 
-	emit: func [output [binary!] values [block!] /local value][
+	emit-values: func [output [binary!] values [block!] /local value][
 		foreach value values [append output int-to-bin/to-bin32 value]
+	]
+
+	emit: func [
+		output [binary!]
+		a b c d [integer!]
+	][
+		append output int-to-bin/to-bin32 a
+		append output int-to-bin/to-bin32 b
+		append output int-to-bin/to-bin32 c
+		append output int-to-bin/to-bin32 d
 	]
 
 	emit-native-register: func [
@@ -257,7 +267,7 @@ compiler-rsir-frontend: context [
 		append/only native-name-patches instructions
 		append native-name-patches (length? instructions) + 9
 		append native-name-patches name
-		emit instructions reduce [native-op operation 0 0]
+		emit instructions native-op operation 0 0
 	]
 
 	finish-native-names: func [
@@ -293,7 +303,7 @@ compiler-rsir-frontend: context [
 		/local patch
 	][
 		patch: (length? output) + 5
-		emit output reduce [op 0 sense 0]
+		emit output op 0 sense 0
 		patch
 	]
 
@@ -307,7 +317,7 @@ compiler-rsir-frontend: context [
 
 	emit-switch-case: func [low high [integer!] return: [integer!] /local patch][
 		patch: (length? switches) + 9
-		emit switches reduce [low high 0]
+		emit-values switches reduce [low high 0]
 		patch
 	]
 
@@ -377,7 +387,7 @@ compiler-rsir-frontend: context [
 			fail ERROR-UNSUPPORTED "global value is already initialized"
 		]
 		data: make binary! (count * 16)
-		emit data values
+		emit-values data values
 		record/4: data
 		record/5: count
 	]
@@ -396,7 +406,7 @@ compiler-rsir-frontend: context [
 	]
 
 	emit-local-address: func [output [binary!] slot [integer!]][
-		emit output reduce [address-op local-address slot 0]
+		emit output address-op local-address slot 0
 	]
 
 	storage-local?: func [record [block!] return: [logic!]][
@@ -2511,13 +2521,13 @@ compiler-rsir-frontend: context [
 		compile-module body copy [] copy []
 		case [
 			module-kind = 3 [
-				emit module-code reduce [return-op 0 0 0]
+				emit module-code return-op 0 0 0
 				add-module-function '***-main module-code module-locals
 			]
 			module-kind = 4 [
-				emit boot-code reduce [return-op 0 0 0]
+				emit boot-code return-op 0 0 0
 				add-module-function '***-boot-rs boot-code boot-locals
-				emit module-code reduce [return-op 0 0 0]
+				emit module-code return-op 0 0 0
 				add-module-function '***-main module-code module-locals
 			]
 		]
@@ -2547,7 +2557,7 @@ compiler-rsir-frontend: context [
 					scope: record/4
 					uses: record/5
 					target: either block? target [target][reduce [target]]
-					emit type-output reduce [
+					emit-values type-output reduce [
 						code
 						type-ref target scope uses
 						0
@@ -2558,7 +2568,7 @@ compiler-rsir-frontend: context [
 				kind = 'typed-call [
 					typed-arguments: record/3
 					count: ((length? typed-arguments) - 1) / 2
-					emit type-output reduce [
+					emit-values type-output reduce [
 						select type-codes 'typed-call
 						typed-arguments/1
 						0
@@ -2567,25 +2577,25 @@ compiler-rsir-frontend: context [
 					]
 					typed-argument: skip typed-arguments 1
 					while [not tail? typed-argument][
-						emit members reduce [typed-argument/1 typed-argument/2]
+						emit-values members reduce [typed-argument/1 typed-argument/2]
 						typed-argument: skip typed-argument 2
 					]
 					first: first + count
 				]
 				kind = 'pointer [
-					emit type-output reduce [
+					emit-values type-output reduce [
 						select type-codes 'pointer-node record/3 0 first 0
 					]
 				]
 				kind = 'array [
-					emit type-output reduce [
+					emit-values type-output reduce [
 						select type-codes 'array record/3 record/5 first record/4
 					]
 				]
 				find [struct union] kind [
 					target: pick canonical-refs id
 					either all [integer? target target <> id][
-						emit type-output reduce [
+						emit-values type-output reduce [
 							select type-codes 'alias target 0 first 0
 						]
 					][
@@ -2595,7 +2605,7 @@ compiler-rsir-frontend: context [
 						scope: record/4
 						uses: record/5
 						count: (length? spec) / 2
-						emit type-output reduce [
+						emit-values type-output reduce [
 							code 0 either tagged-union? kind definition [tagged-type-flag][0]
 							first count
 						]
@@ -2604,7 +2614,7 @@ compiler-rsir-frontend: context [
 							info: member-type-info kind definition field-type scope uses
 							ref: info/1
 							flags: info/2
-							emit members reduce [ref flags]
+							emit-values members reduce [ref flags]
 							spec: skip spec 2
 						]
 						first: first + count
@@ -2620,7 +2630,7 @@ compiler-rsir-frontend: context [
 					]
 					params: signature/2
 					count: (length? params) / 3
-					emit type-output reduce [
+					emit-values type-output reduce [
 						select type-codes kind
 						signature/1
 						signature/4
@@ -2629,13 +2639,13 @@ compiler-rsir-frontend: context [
 					]
 					parameter: params
 					while [not tail? parameter][
-						emit members reduce [parameter/2 parameter/3]
+						emit-values members reduce [parameter/2 parameter/3]
 						parameter: skip parameter 3
 					]
 					first: first + count
 				]
 				true [
-					emit type-output reduce [(select type-codes kind) 0 0 first 0]
+					emit-values type-output reduce [(select type-codes kind) 0 0 first 0]
 					]
 			]
 			id: id + 1
@@ -2712,7 +2722,7 @@ compiler-rsir-frontend: context [
 			if block? params [
 				parameter: params
 				while [not tail? parameter][
-					emit output reduce [parameter/2 parameter/3]
+					emit-values output reduce [parameter/2 parameter/3]
 					parameter: skip parameter 3
 				]
 			]
@@ -2778,13 +2788,13 @@ compiler-rsir-frontend: context [
 				int-to-bin/to-bin32 position/10 4
 			parameter: params
 			while [not tail? parameter][
-				emit output reduce [parameter/2 parameter/3]
+				emit-values output reduce [parameter/2 parameter/3]
 				parameter: skip parameter 3
 			]
 			parameter: locals
 			while [not tail? parameter][
 				if storage-local? parameter [
-					emit output reduce [parameter/2 parameter/3]
+					emit-values output reduce [parameter/2 parameter/3]
 				]
 				parameter: skip parameter 3
 			]
@@ -2857,12 +2867,11 @@ compiler-rsir-frontend: context [
 		unless (resolve-value-kind value scope uses) = 2 [return false]
 		target: resolved-value-id
 		ref: call-signature-ref target
-		emit instructions reduce [
-			address-op either target > 0 [function-address][import-address]
+		emit instructions address-op
+			either target > 0 [function-address][import-address]
 			either target > 0 [target][0 - target]
 			ref
-		]
-		emit instructions reduce [reference-op ref 0 0]
+		emit instructions reference-op ref 0 0
 		last-type: ref
 		last-flags: 0
 		last-stopped?: false
@@ -3305,8 +3314,8 @@ compiler-rsir-frontend: context [
 		id: add-hidden-global info/1 inline-flag
 		record: skip global-data ((id - 1) * 5)
 		set-global-initializer record info/2
-		emit instructions reduce [address-op global-address id 0]
-		emit instructions reduce [load-op 0 0 0]
+		emit instructions address-op global-address id 0
+		emit instructions load-op 0 0 0
 		last-type: info/1
 		last-flags: 0
 		last-stopped?: false
@@ -3370,7 +3379,7 @@ compiler-rsir-frontend: context [
 				]
 			]
 		]
-		emit instructions reduce [binary-op operation anchor overflow-data]
+		emit instructions binary-op operation anchor overflow-data
 		either comparison? [
 			last-type: -11
 			last-flags: 0
@@ -3620,7 +3629,7 @@ compiler-rsir-frontend: context [
 			]
 			fail ERROR-REFERENCE ["subroutine is used before its definition " mold name]
 		]
-		emit instructions reduce [subroutine-call-op record/2 record/3 0]
+		emit instructions subroutine-call-op record/2 record/3 0
 		last-type: record/3
 		last-flags: 0
 		last-stopped?: false
@@ -3702,12 +3711,10 @@ compiler-rsir-frontend: context [
 		literal-end: next source
 		if binary? value [
 			id: add-static-bytes value false false
-			emit instructions reduce [address-op global-address id 0]
-			emit instructions reduce [reference-op -13 0 0]
+			emit instructions address-op global-address id 0
+			emit instructions reference-op -13 0 0
 			warn-redundant-cast -13 0 target-ref target-flags
-			emit instructions reduce [
-				cast-op target-ref target-flags either keep? [1][0]
-			]
+			emit instructions cast-op target-ref target-flags either keep? [1][0]
 			last-type: target-ref
 			last-flags: 0
 			last-stopped?: false
@@ -3730,7 +3737,7 @@ compiler-rsir-frontend: context [
 				float-bits either integer? value [to float! value][value] target-kind
 			]
 			unless block? bits [fail ERROR-UNSUPPORTED "invalid floating-point literal"]
-			emit instructions reduce [literal-op target-ref bits/1 bits/2]
+			emit instructions literal-op target-ref bits/1 bits/2
 			last-type: target-ref
 			last-flags: 0
 			return literal-end
@@ -3745,7 +3752,7 @@ compiler-rsir-frontend: context [
 		][
 			stored-function?: stack-address source/1 scope uses instructions params locals
 			if stored-function? [
-				emit instructions reduce [load-op 0 0 0]
+				emit instructions load-op 0 0 0
 				next-position: next source
 			]
 		]
@@ -3757,7 +3764,7 @@ compiler-rsir-frontend: context [
 		source-ref: last-type
 		source-flags: last-flags
 		warn-redundant-cast source-ref source-flags target-ref target-flags
-		emit instructions reduce [cast-op target-ref target-flags either keep? [1][0]]
+		emit instructions cast-op target-ref target-flags either keep? [1][0]
 		last-type: target-ref
 		last-flags: target-flags
 		next-position
@@ -3772,7 +3779,7 @@ compiler-rsir-frontend: context [
 	][
 		id: resolve-name target scope uses globals
 		if integer? id [
-			emit instructions reduce [address-op global-address id 0]
+			emit instructions address-op global-address id 0
 			position: skip global-data ((id - 1) * 5)
 			last-type: any [position/2 0]
 			last-flags: position/3 and inline-flag
@@ -3780,7 +3787,7 @@ compiler-rsir-frontend: context [
 		]
 		id: import-variable-id target scope uses
 		if integer? id [
-			emit instructions reduce [address-op import-address id 0]
+			emit instructions address-op import-address id 0
 			position: skip imports ((id - 1) * 10)
 			last-type: position/8
 			last-flags: 0
@@ -3829,7 +3836,7 @@ compiler-rsir-frontend: context [
 						" used in subroutine " mold active-subroutine
 					]
 				]
-				emit instructions reduce [address-op local-address storage/1 0]
+				emit instructions address-op local-address storage/1 0
 				last-type: position/2
 				last-flags: position/3
 				if word? target [return true]
@@ -3872,25 +3879,25 @@ compiler-rsir-frontend: context [
 						fail ERROR-REFERENCE ["aggregate member must be a word: " mold part]
 					]
 					if all [place? flags = 0][
-						emit instructions reduce [load-op 0 0 0]
+						emit instructions load-op 0 0 0
 						place?: false
 					]
 					info: member-info current part
 					unless block? info [
 						fail ERROR-REFERENCE ["unknown member " mold part]
 					]
-					emit instructions reduce [
-						member-op info/1 either all [
+					emit instructions member-op info/1
+						either all [
 							write tagged-union-ref? current
-						][info/1 + 1][0] 0
-					]
+						][info/1 + 1][0]
+						0
 					current: info/2
 					flags: info/3
 					place?: true
 				]
 				find [pointer c-string array] kind [
 					if place? [
-						emit instructions reduce [load-op 0 0 0]
+						emit instructions load-op 0 0 0
 						flags: 0
 						place?: false
 					]
@@ -3900,11 +3907,11 @@ compiler-rsir-frontend: context [
 					]
 					case [
 						all [kind = 'pointer word? part part = 'value][
-							emit instructions reduce [index-op 0 0 0]
+							emit instructions index-op 0 0 0
 						]
 						integer? part [
 							bits: one-based-index-bits part
-							emit instructions reduce [index-op bits/1 0 bits/2]
+							emit instructions index-op bits/1 0 bits/2
 						]
 						word? part [
 							stack-value reduce [part] scope uses instructions params locals
@@ -3912,7 +3919,7 @@ compiler-rsir-frontend: context [
 							unless all [not last-stopped? last-type <> 0][
 								fail ERROR-REFERENCE "pointer index requires a value"
 							]
-							emit instructions reduce [index-op 0 1 0]
+							emit instructions index-op 0 1 0
 						]
 						true [
 							fail ERROR-REFERENCE ["invalid pointer index " mold part]
@@ -3955,7 +3962,7 @@ compiler-rsir-frontend: context [
 			]
 		][
 			id: ensure-thrown-global
-			emit instructions reduce [address-op global-address id 0]
+			emit instructions address-op global-address id 0
 			last-type: -5
 			last-flags: 0
 		]
@@ -3981,9 +3988,8 @@ compiler-rsir-frontend: context [
 		unless last-type <> 0 [
 			fail ERROR-REFERENCE ["custom call count is missing: " mold value]
 		]
-		emit instructions reduce [
-			call-op target 1 either target = 0 [signature-ref][return-ref]
-		]
+		emit instructions call-op target 1
+			either target = 0 [signature-ref][return-ref]
 		last-type: return-ref
 		last-flags: 0
 		last-stopped?: false
@@ -3993,7 +3999,7 @@ compiler-rsir-frontend: context [
 	finish-stopped-expression: func [instructions [binary!]][
 		; Syntax after a terminating subexpression is still parsed. Terminate any
 		; disconnected postfix suffix which can otherwise fall through.
-		unless last-stopped? [emit instructions reduce [fail-op 102 0 0]]
+		unless last-stopped? [emit instructions fail-op 102 0 0]
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -4064,7 +4070,7 @@ compiler-rsir-frontend: context [
 			finish-stopped-expression instructions
 			return position-after
 		]
-		emit instructions reduce [call-op target count return-ref]
+		emit instructions call-op target count return-ref
 		last-type: return-ref
 		last-flags: 0
 		last-stopped?: false
@@ -4105,7 +4111,7 @@ compiler-rsir-frontend: context [
 			finish-stopped-expression instructions
 			return position-after
 		]
-		emit instructions reduce [call-op target 2 return-ref]
+		emit instructions call-op target 2 return-ref
 		last-type: return-ref
 		last-flags: 0
 		last-stopped?: false
@@ -4226,9 +4232,8 @@ compiler-rsir-frontend: context [
 			finish-stopped-expression instructions
 			return position-after
 		]
-		emit instructions reduce [
-			call-op target count intern-typed-call signature-ref arguments
-		]
+		emit instructions call-op target count
+			intern-typed-call signature-ref arguments
 		last-type: return-ref
 		last-flags: 0
 		last-stopped?: false
@@ -4296,9 +4301,8 @@ compiler-rsir-frontend: context [
 			finish-stopped-expression instructions
 			return position-after
 		]
-		emit instructions reduce [
-			call-op target count either target = 0 [signature-ref][return-ref]
-		]
+		emit instructions call-op target count
+			either target = 0 [signature-ref][return-ref]
 		last-type: return-ref
 		last-flags: 0
 		last-stopped?: false
@@ -4320,7 +4324,7 @@ compiler-rsir-frontend: context [
 		unless block? signature [
 			fail ERROR-REFERENCE ["value is not callable " mold value]
 		]
-		emit instructions reduce [load-op 0 0 0]
+		emit instructions load-op 0 0 0
 		return-ref: signature/1
 		parameters: signature/2
 		mode: signature/4 and (variadic-flag + typed-flag + custom-flag)
@@ -4364,7 +4368,7 @@ compiler-rsir-frontend: context [
 			finish-stopped-expression instructions
 			return position-after
 		]
-		emit instructions reduce [call-op 0 count signature-ref]
+		emit instructions call-op 0 count signature-ref
 		last-type: return-ref
 		last-flags: 0
 		last-stopped?: false
@@ -4408,7 +4412,7 @@ compiler-rsir-frontend: context [
 			]
 			unless keep? [
 				if all [not stopped? last-type <> 0][
-					emit instructions reduce [drop-op 0 0 0]
+					emit instructions drop-op 0 0 0
 				]
 				last-type: 0
 				last-flags: 0
@@ -4434,26 +4438,26 @@ compiler-rsir-frontend: context [
 			0
 		]
 		append/only overflows scope-state
-		emit instructions reduce [overflow-op 0 0 0]
+		emit instructions overflow-op 0 0 0
 		stack-block position/2 scope uses instructions params locals statement-value
 		stopped?: last-stopped?
 		remove back tail overflows
 
 		either scope-state/3 = 0 [
 			unless stopped? [
-				emit instructions reduce [literal-op -11 0 0]
+				emit instructions literal-op -11 0 0
 			]
 		][
 			either stopped? [
 				target: instruction-here instructions
 				patch-control instructions scope-state/2 target
-				emit instructions reduce [literal-op -11 1 0]
+				emit instructions literal-op -11 1 0
 			][
-				emit instructions reduce [literal-op -11 0 0]
+				emit instructions literal-op -11 0 0
 				jump-patch: emit-control instructions jump-op 0
 				target: instruction-here instructions
 				patch-control instructions scope-state/2 target
-				emit instructions reduce [literal-op -11 1 0]
+				emit instructions literal-op -11 1 0
 				patch-control instructions jump-patch instruction-here instructions
 			]
 		]
@@ -4490,14 +4494,14 @@ compiler-rsir-frontend: context [
 		anchor: instruction-here instructions
 		level: 1 + length? catches
 		patch: (length? instructions) + 5
-		emit instructions reduce [catch-op 0 level 0]
+		emit instructions catch-op 0 level 0
 		append/only catches reduce [anchor level]
 		stack-block body/1 scope uses instructions params locals statement-value
 		remove back tail catches
 
 		target: instruction-here instructions
 		patch-control instructions patch target
-		emit instructions reduce [end-catch-op anchor level 0]
+		emit instructions end-catch-op anchor level 0
 		last-type: 0
 		last-flags: 0
 		last-stopped?: false
@@ -4516,7 +4520,7 @@ compiler-rsir-frontend: context [
 		if last-stopped? [return after]
 		unless last-type <> 0 [fail ERROR-REFERENCE "THROW requires an ID value"]
 		stack-thrown-address scope uses instructions params locals
-		emit instructions reduce [throw-op 0 0 0]
+		emit instructions throw-op 0 0 0
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -4548,7 +4552,7 @@ compiler-rsir-frontend: context [
 		if last-stopped? [return after]
 		if never? [
 			clear at instructions (before + 1)
-			emit instructions reduce [fail-op 98 0 0]
+			emit instructions fail-op 98 0 0
 			last-type: 0
 			last-flags: 0
 			last-stopped?: true
@@ -4556,7 +4560,7 @@ compiler-rsir-frontend: context [
 		]
 		either debug? [
 			patch: emit-control instructions branch-op 1
-			emit instructions reduce [fail-op 98 0 0]
+			emit instructions fail-op 98 0 0
 			patch-control instructions patch instruction-here instructions
 		][
 			clear at instructions (before + 1)
@@ -4579,8 +4583,8 @@ compiler-rsir-frontend: context [
 		data: unicode/to-utf16le position/2
 		append data #{0000}
 		id: add-static-bytes data false false
-		emit instructions reduce [address-op global-address id 0]
-		emit instructions reduce [reference-op -13 0 0]
+		emit instructions address-op global-address id 0
+		emit instructions reference-op -13 0 0
 		last-type: -13
 		last-flags: 0
 		last-stopped?: false
@@ -4807,7 +4811,7 @@ compiler-rsir-frontend: context [
 			patch-control instructions branch-patch instruction-here instructions
 			cursor: next action
 		]
-		emit instructions reduce [fail-op 100 0 0]
+		emit instructions fail-op 100 0 0
 		finish-selection arms instructions after
 	]
 
@@ -4856,9 +4860,9 @@ compiler-rsir-frontend: context [
 		unless block? info [
 			fail ERROR-REFERENCE ["unknown union variant " mold name]
 		]
-		emit instructions reduce [tag-op 0 0 0]
-		emit instructions reduce [literal-op -5 (info/1 + 1) 0]
-		emit instructions reduce [binary-op 13 0 0]
+		emit instructions tag-op 0 0 0
+		emit instructions literal-op -5 (info/1 + 1) 0
+		emit instructions binary-op 13 0 0
 		last-type: -11
 		last-flags: 0
 		last-stopped?: false
@@ -4881,7 +4885,7 @@ compiler-rsir-frontend: context [
 		selector-ref: last-type
 		tagged-selector?: all [last-flags = 0 tagged-union-ref? selector-ref]
 		if tagged-selector? [
-			emit instructions reduce [tag-op 0 0 0]
+			emit instructions tag-op 0 0 0
 			last-type: -5
 			last-flags: 0
 		]
@@ -4936,14 +4940,14 @@ compiler-rsir-frontend: context [
 		if empty? arms [fail ERROR-UNSUPPORTED "SWITCH requires at least one value"]
 
 		switch-patch: (length? instructions) + 13
-		emit instructions reduce [switch-op first-case case-count 0]
+		emit instructions switch-op first-case case-count 0
 		missing-jump: none
 		if none? default-body [
 			default-target: instruction-here instructions
 			patch-control instructions switch-patch default-target
 			either tagged-selector? [
 				missing-jump: emit-control instructions jump-op 0
-			][emit instructions reduce [fail-op 101 0 0]]
+			][emit instructions fail-op 101 0 0]
 		]
 
 		results: make block! ((length? arms) * 4) + 4
@@ -4999,7 +5003,7 @@ compiler-rsir-frontend: context [
 		body: position/2
 		after: skip position 2
 		if empty? body [
-			emit instructions reduce [literal-op -11 either any? [0][1] 0]
+			emit instructions literal-op -11 either any? [0][1] 0
 			last-type: -11
 			last-flags: 0
 			last-stopped?: false
@@ -5022,13 +5026,13 @@ compiler-rsir-frontend: context [
 			]
 		]
 		decided: either any? [1][0]
-		emit instructions reduce [literal-op -11 either any? [0][1] 0]
+		emit instructions literal-op -11 either any? [0][1] 0
 		unless empty? patches [
 			jump-patch: emit-control instructions jump-op 0
 			foreach patch patches [
 				patch-control instructions patch instruction-here instructions
 			]
-			emit instructions reduce [literal-op -11 decided 0]
+			emit instructions literal-op -11 decided 0
 			patch-control instructions jump-patch instruction-here instructions
 		]
 		last-type: -11
@@ -5060,7 +5064,7 @@ compiler-rsir-frontend: context [
 		unless last-type <> 0 [fail ERROR-REFERENCE rejoin [
 			"return value is missing in function: " source-name active-function
 		]]
-		emit instructions reduce [return-op function-return 0 0]
+		emit instructions return-op function-return 0 0
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -5071,7 +5075,7 @@ compiler-rsir-frontend: context [
 		unless function-active? [
 			fail ERROR-CONTEXT "exit is not allowed outside of a function"
 		]
-		emit instructions reduce [return-op 0 0 0]
+		emit instructions return-op 0 0 0
 		last-type: 0
 		last-flags: 0
 		last-stopped?: true
@@ -5156,14 +5160,14 @@ compiler-rsir-frontend: context [
 		unless all [not tail? after block? after/1][
 			fail ERROR-UNSUPPORTED "LOOP is missing its body block"
 		]
-		emit instructions reduce [set-op 0 0 0]
-		emit instructions reduce [drop-op 0 0 0]
+		emit instructions set-op 0 0 0
+		emit instructions drop-op 0 0 0
 
 		test-target: instruction-here instructions
 		emit-local-address instructions slot
-		emit instructions reduce [load-op 0 0 0]
-		emit instructions reduce [literal-op -5 0 0]
-		emit instructions reduce [binary-op 15 0 0]
+		emit instructions load-op 0 0 0
+		emit instructions literal-op -5 0 0
+		emit instructions binary-op 15 0 0
 		exit-patch: emit-control instructions branch-op 0
 
 		loop-state: open-loop 0 false
@@ -5172,12 +5176,12 @@ compiler-rsir-frontend: context [
 		patch-controls instructions loop-state/2 loop-state/1
 
 		emit-local-address instructions slot
-		emit instructions reduce [load-op 0 0 0]
-		emit instructions reduce [literal-op -5 1 0]
-		emit instructions reduce [binary-op 2 0 0]
+		emit instructions load-op 0 0 0
+		emit instructions literal-op -5 1 0
+		emit instructions binary-op 2 0 0
 		emit-local-address instructions slot
-		emit instructions reduce [set-op 0 0 0]
-		emit instructions reduce [drop-op 0 0 0]
+		emit instructions set-op 0 0 0
+		emit instructions drop-op 0 0 0
 		jump-patch: emit-control instructions jump-op 0
 		patch-control instructions jump-patch test-target
 
@@ -5264,7 +5268,7 @@ compiler-rsir-frontend: context [
 			any [word? value path? value]
 			integer? count: count-enum value scope uses
 		][
-			emit instructions reduce [literal-op -5 count 0]
+			emit instructions literal-op -5 count 0
 			last-type: -5
 			last-flags: 0
 			last-stopped?: false
@@ -5275,7 +5279,7 @@ compiler-rsir-frontend: context [
 		][none]
 		if kind [
 			type-info: stack-read-type position scope uses
-			emit instructions reduce [size-op type-info/2 0 0]
+			emit instructions size-op type-info/2 0 0
 			last-type: -5
 			last-flags: 0
 			last-stopped?: false
@@ -5283,7 +5287,7 @@ compiler-rsir-frontend: context [
 		]
 		if string? value [
 			bytes: to binary! value
-			emit instructions reduce [literal-op -5 ((length? bytes) + 1) 0]
+			emit instructions literal-op -5 ((length? bytes) + 1) 0
 			last-type: -5
 			last-flags: 0
 			last-stopped?: false
@@ -5337,7 +5341,7 @@ compiler-rsir-frontend: context [
 			]
 		]
 		if all [integer? ref (ref-kind ref) <> 'c-string][
-			emit instructions reduce [size-op ref 0 0]
+			emit instructions size-op ref 0 0
 			last-type: -5
 			last-flags: 0
 			last-stopped?: false
@@ -5348,7 +5352,7 @@ compiler-rsir-frontend: context [
 		unless all [not last-stopped? last-type <> 0][
 			fail ERROR-REFERENCE "SIZE? requires a value"
 		]
-		emit instructions reduce [size-op last-type 1 last-flags]
+		emit instructions size-op last-type 1 last-flags
 		last-type: -5
 		last-flags: 0
 		last-stopped?: false
@@ -5417,7 +5421,7 @@ compiler-rsir-frontend: context [
 			return next-position
 		]
 
-		emit instructions reduce [native-op native-id operation result-ref]
+		emit instructions native-op native-id operation result-ref
 		last-type: result-ref
 		last-flags: 0
 		last-stopped?: false
@@ -5447,7 +5451,7 @@ compiler-rsir-frontend: context [
 			unless integer? id [
 				fail ERROR-REFERENCE ["undefined alias name " mold path/3]
 			]
-			emit instructions reduce [literal-op -5 id 0]
+			emit instructions literal-op -5 id 0
 			last-type: -5
 			last-flags: 0
 			last-stopped?: false
@@ -5456,16 +5460,14 @@ compiler-rsir-frontend: context [
 		if path/2 = 'thrown [
 			unless count = 2 [fail ERROR-REFERENCE "invalid system/thrown access"]
 			stack-thrown-address scope uses instructions params locals
-			emit instructions reduce [load-op 0 0 0]
+			emit instructions load-op 0 0 0
 			last-stopped?: false
 			return next position
 		]
 		if path/2 = 'pc [
 			unless count = 2 [fail ERROR-REFERENCE "invalid system/pc access"]
 			pointer-ref: intern-pointer -15
-			emit instructions reduce [
-				native-op program-counter-native 0 pointer-ref
-			]
+			emit instructions native-op program-counter-native 0 pointer-ref
 			last-type: pointer-ref
 			last-flags: 0
 			last-stopped?: false
@@ -5476,7 +5478,7 @@ compiler-rsir-frontend: context [
 				fail ERROR-REFERENCE "invalid system/cpu access"
 			]
 			either path/3 = 'overflow? [
-				emit instructions reduce [native-op cpu-overflow-native 0 -11]
+				emit instructions native-op cpu-overflow-native 0 -11
 				last-type: -11
 			][
 				pointer-ref: intern-pointer -5
@@ -5494,7 +5496,7 @@ compiler-rsir-frontend: context [
 		case [
 			all [count = 3 path/3 = 'top][
 				pointer-ref: intern-pointer -5
-				emit instructions reduce [native-op stack-top-native 0 pointer-ref]
+				emit instructions native-op stack-top-native 0 pointer-ref
 				last-type: pointer-ref
 				last-flags: 0
 				last-stopped?: false
@@ -5502,7 +5504,7 @@ compiler-rsir-frontend: context [
 			]
 			all [count = 3 path/3 = 'frame][
 				pointer-ref: intern-pointer -5
-				emit instructions reduce [native-op stack-frame-native 0 pointer-ref]
+				emit instructions native-op stack-frame-native 0 pointer-ref
 				last-type: pointer-ref
 				last-flags: 0
 				last-stopped?: false
@@ -5510,7 +5512,7 @@ compiler-rsir-frontend: context [
 			]
 			all [count = 3 path/3 = 'align][
 				pointer-ref: intern-pointer -5
-				emit instructions reduce [native-op stack-align-native 0 pointer-ref]
+				emit instructions native-op stack-align-native 0 pointer-ref
 				last-type: pointer-ref
 				last-flags: 0
 				last-stopped?: false
@@ -5533,12 +5535,11 @@ compiler-rsir-frontend: context [
 					fail ERROR-REFERENCE "system/stack/allocate requires a value"
 				]
 				pointer-ref: intern-pointer -5
-				emit instructions reduce [
-					native-op either count = 4 [
+				emit instructions native-op
+					either count = 4 [
 						stack-allocate-zero-native
 					][stack-allocate-native]
 					0 pointer-ref
-				]
 				last-type: pointer-ref
 				last-flags: 0
 				last-stopped?: false
@@ -5551,21 +5552,21 @@ compiler-rsir-frontend: context [
 				unless last-type <> 0 [
 					fail ERROR-REFERENCE "system/stack/free requires a value"
 				]
-				emit instructions reduce [native-op stack-free-native 0 0]
+				emit instructions native-op stack-free-native 0 0
 				last-type: 0
 				last-flags: 0
 				last-stopped?: false
 				next-position
 			]
 			all [count = 3 path/3 = 'push-all][
-				emit instructions reduce [native-op stack-push-all-native 0 0]
+				emit instructions native-op stack-push-all-native 0 0
 				last-type: 0
 				last-flags: 0
 				last-stopped?: false
 				next position
 			]
 			all [count = 3 path/3 = 'pop-all][
-				emit instructions reduce [native-op stack-pop-all-native 0 0]
+				emit instructions native-op stack-pop-all-native 0 0
 				last-type: 0
 				last-flags: 0
 				last-stopped?: false
@@ -5598,7 +5599,7 @@ compiler-rsir-frontend: context [
 			if last-stopped? [return next-position]
 			unless last-type <> 0 [fail ERROR-REFERENCE "system/thrown requires a value"]
 			stack-thrown-address scope uses instructions params locals
-			emit instructions reduce [set-op 0 0 0]
+			emit instructions set-op 0 0 0
 			last-stopped?: false
 			return next-position
 		]
@@ -5637,12 +5638,11 @@ compiler-rsir-frontend: context [
 		unless last-type <> 0 [
 			fail ERROR-REFERENCE "system/stack assignment requires a value"
 		]
-		emit instructions reduce [
-			native-op either target/3 = 'top [
+		emit instructions native-op
+			either target/3 = 'top [
 				stack-top-set-native
 			][stack-frame-set-native]
 			0 pointer-ref
-		]
 		last-type: pointer-ref
 		last-flags: 0
 		last-stopped?: false
@@ -5660,7 +5660,7 @@ compiler-rsir-frontend: context [
 			expression-value
 		if last-stopped? [return position-after]
 		unless last-type <> 0 [fail ERROR-REFERENCE "PUSH requires a value"]
-		emit instructions reduce [native-op stack-push-native 0 0]
+		emit instructions native-op stack-push-native 0 0
 		last-type: 0
 		last-flags: 0
 		last-stopped?: false
@@ -5678,7 +5678,7 @@ compiler-rsir-frontend: context [
 			expression-value
 		if last-stopped? [return position-after]
 		unless last-type <> 0 [fail ERROR-REFERENCE "LOG-B requires a value"]
-		emit instructions reduce [native-op log-b-native 0 -5]
+		emit instructions native-op log-b-native 0 -5
 		last-type: -5
 		last-flags: 0
 		last-stopped?: false
@@ -5708,7 +5708,7 @@ compiler-rsir-frontend: context [
 				return stack-indirect-call value position scope uses
 					instructions params locals
 			][
-				emit instructions reduce [load-op 0 0 0]
+				emit instructions load-op 0 0 0
 				last-flags: 0
 				return next position
 			]
@@ -5716,17 +5716,14 @@ compiler-rsir-frontend: context [
 		value-kind: resolve-value-kind value scope uses
 		literal: either value-kind = 1 [resolved-value-id][none]
 		if block? literal [
-			emit instructions reduce [
-				literal-op literal/1 literal/3 literal/4
-			]
+			emit instructions literal-op literal/1 literal/3 literal/4
 			last-type: literal/1
 			last-flags: 0
 			return next position
 		]
 		next-position: either all [value-kind = 1 integer? literal][
-			emit instructions reduce [
-				literal-op -5 literal either literal < 0 [-1][0]
-			]
+			emit instructions literal-op -5 literal
+				either literal < 0 [-1][0]
 			last-type: -5
 			last-flags: 0
 			next position
@@ -5746,7 +5743,7 @@ compiler-rsir-frontend: context [
 				either (ref-kind last-type) = 'function [
 					stack-indirect-call value position scope uses instructions params locals
 				][
-					emit instructions reduce [load-op 0 0 0]
+					emit instructions load-op 0 0 0
 					last-flags: 0
 					next position
 				]
@@ -5903,7 +5900,7 @@ compiler-rsir-frontend: context [
 				next-position: stack-value next position scope uses instructions params locals
 					expression-value
 				unless last-stopped? [
-					emit instructions reduce [unary-op not-operation 0 0]
+					emit instructions unary-op not-operation 0 0
 				]
 				next-position
 			]
@@ -5917,7 +5914,7 @@ compiler-rsir-frontend: context [
 				stack-push position scope uses instructions params locals
 			]
 			value = 'pop [
-				emit instructions reduce [native-op stack-pop-native 0 0]
+				emit instructions native-op stack-pop-native 0 0
 				last-type: -5
 				last-flags: 0
 				last-stopped?: false
@@ -5938,7 +5935,7 @@ compiler-rsir-frontend: context [
 					fail ERROR-REFERENCE ["undefined symbol:" mold target]
 				]
 				if all [get-word? value (ref-kind last-type) = 'function][
-					emit instructions reduce [load-op 0 0 0]
+					emit instructions load-op 0 0 0
 					last-flags: 0
 					return next position
 				]
@@ -5948,7 +5945,7 @@ compiler-rsir-frontend: context [
 				unless integer? id [
 					fail ERROR-REFERENCE ["value cannot be addressed " mold value]
 				]
-				emit instructions reduce [reference-op id 0 0]
+				emit instructions reference-op id 0 0
 				last-type: id
 				last-flags: 0
 				next position
@@ -5956,14 +5953,14 @@ compiler-rsir-frontend: context [
 			issue? value [
 				wide: wide-literal value
 				either block? wide [
-					emit instructions reduce [literal-op wide/1 wide/2 wide/3]
+					emit instructions literal-op wide/1 wide/2 wide/3
 					last-type: wide/1
 				][
 					bits: either float-literal? value [float-bits value 'f64][none]
 					unless block? bits [
 						fail ERROR-UNSUPPORTED ["unsupported issue literal " mold value]
 					]
-					emit instructions reduce [literal-op -10 bits/1 bits/2]
+					emit instructions literal-op -10 bits/1 bits/2
 					last-type: -10
 				]
 				last-flags: 0
@@ -5972,15 +5969,14 @@ compiler-rsir-frontend: context [
 			float? value [
 				bits: float-bits value 'f64
 				unless block? bits [fail ERROR-UNSUPPORTED "invalid floating-point literal"]
-				emit instructions reduce [literal-op -10 bits/1 bits/2]
+				emit instructions literal-op -10 bits/1 bits/2
 				last-type: -10
 				last-flags: 0
 				next position
 			]
 			integer? value [
-				emit instructions reduce [
-					literal-op -5 value either value < 0 [-1][0]
-				]
+				emit instructions literal-op -5 value
+					either value < 0 [-1][0]
 				last-type: -5
 				last-flags: 0
 				next position
@@ -5988,35 +5984,35 @@ compiler-rsir-frontend: context [
 			char? value [
 				id: to integer! value
 				if id > 255 [fail ERROR-UNSUPPORTED "byte literal is out of range"]
-				emit instructions reduce [literal-op -15 id 0]
+				emit instructions literal-op -15 id 0
 				last-type: -15
 				last-flags: 0
 				next position
 			]
 			logic? value [
-				emit instructions reduce [literal-op -11 either value [1][0] 0]
+				emit instructions literal-op -11 either value [1][0] 0
 				last-type: -11
 				last-flags: 0
 				next position
 			]
 			all [word? value find [true false yes no] value][
-				emit instructions reduce [
-					literal-op -11 either find [true yes] value [1][0] 0
-				]
+				emit instructions literal-op -11
+					either find [true yes] value [1][0]
+					0
 				last-type: -11
 				last-flags: 0
 				next position
 			]
 			value = 'null [
-				emit instructions reduce [literal-op -14 0 0]
+				emit instructions literal-op -14 0 0
 				last-type: -14
 				last-flags: 0
 				next position
 			]
 			string? value [
 				id: add-static-bytes to binary! value true false
-				emit instructions reduce [address-op global-address id 0]
-				emit instructions reduce [reference-op -13 0 0]
+				emit instructions address-op global-address id 0
+				emit instructions reference-op -13 0 0
 				last-type: -13
 				last-flags: 0
 				next position
@@ -6363,9 +6359,9 @@ compiler-rsir-frontend: context [
 			emit-local-address instructions hidden
 		][
 			hidden: add-hidden-global storage-ref storage-flags
-			emit instructions reduce [address-op global-address hidden 0]
+			emit instructions address-op global-address hidden 0
 		]
-		emit instructions reduce [reference-op ref 0 0]
+		emit instructions reference-op ref 0 0
 		last-type: ref
 		last-flags: 0
 		unless stack-address/write target scope uses instructions params locals [
@@ -6389,7 +6385,7 @@ compiler-rsir-frontend: context [
 			]
 			target-ref: record/2
 		]
-		emit instructions reduce [set-op 0 0 0]
+		emit instructions set-op 0 0 0
 		last-type: target-ref
 		last-flags: 0
 		next-position
@@ -6617,7 +6613,7 @@ compiler-rsir-frontend: context [
 			]
 			target-ref: record/2
 		]
-		emit instructions reduce [set-op 0 0 0]
+		emit instructions set-op 0 0 0
 		last-type: target-ref
 		last-flags: source-flags
 		next-position
@@ -6708,14 +6704,14 @@ compiler-rsir-frontend: context [
 				any [set-word? position/1 set-path? position/1][
 					position: stack-assignment position scope uses active-module-code
 						[] active-module-locals true
-					if last-type <> 0 [emit active-module-code reduce [drop-op 0 0 0]]
+					if last-type <> 0 [emit active-module-code drop-op 0 0 0]
 				]
 				true [
 					position: stack-value position scope uses active-module-code
 						[] active-module-locals
 						statement-value
 					if last-type <> 0 [
-						emit active-module-code reduce [drop-op 0 0 0]
+						emit active-module-code drop-op 0 0 0
 					]
 				]
 			]
@@ -6736,7 +6732,7 @@ compiler-rsir-frontend: context [
 			record: select subroutines name
 			record/2: instruction-here instructions
 			marker: length? instructions
-			emit instructions reduce [entry-op 1 0 0]
+			emit instructions entry-op 1 0 0
 			clear loops
 			clear overflows
 			clear catches
@@ -6751,11 +6747,11 @@ compiler-rsir-frontend: context [
 			record/4: 3
 			change/part at instructions (marker + 9)
 				int-to-bin/to-bin32 result 4
-			emit instructions reduce [subroutine-return-op result 0 0]
+			emit instructions subroutine-return-op result 0 0
 			active-subroutine: none
 		]
 		main-entry: instruction-here instructions
-		emit instructions reduce [entry-op 0 0 0]
+		emit instructions entry-op 0 0 0
 		patch-control instructions jump-patch main-entry
 		clear loops
 		clear overflows
@@ -6797,12 +6793,12 @@ compiler-rsir-frontend: context [
 		either return-ref = 0 [
 			stack-block body scope uses instructions params locals statement-value
 			unless last-stopped? [
-				emit instructions reduce [return-op 0 0 0]
+				emit instructions return-op 0 0 0
 			]
 		][
 			stack-block body scope uses instructions params locals tail-value
 			unless last-stopped? [
-				emit instructions reduce [return-op return-ref 0 0]
+				emit instructions return-op return-ref 0 0
 			]
 		]
 		count: to integer! (((length? instructions) - before) / 16)

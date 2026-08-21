@@ -557,6 +557,25 @@ H103 O2 performance compiler is 4,293,632 bytes with `.text` raw size
 H103 took 63.070 wall seconds, so this gate establishes code-size reduction,
 not a compiler build-time improvement.
 
+The H105-H109 gate removes the per-instruction Red block allocation from dense
+RSIR emission. The primary writer receives four integer fields directly for a
+16-byte instruction; a separate block-taking writer remains only for
+low-frequency variable-width records. All 119 instruction emission sites use
+the direct path, covering the canonical compiler's 454,640 instructions without
+an RSIR field, adapter, extra pass, or source-specific rule.
+
+For the same direct-emitter source, H102's old compiled emitter spent 21.152
+seconds and 98 GC cycles in the RSIR frontend while producing H105. H105 and
+H106's direct emitter produced the next two identical-text generations in
+18.094/84 and 18.543/74. Final naming reaches the H108/H109 fixed point at
+4,281,344 bytes, `.text` raw size `392400h`, virtual size `39234Bh`, and SHA256
+`34C6B21CCBA4D64489AB5B02CDCEF5E0B5F2878AB180D39091D214626282C272`.
+The two final wall samples are 54.355 and 58.191 seconds; their RSIR GC counts
+remain lower at 81 and 80, so no claim relies on the fastest wall sample. H109
+O0 passes the full Windows x64 Red/System and Red runners at 12,647/12,647 and
+16,755/16,755 assertions. H105-H109 use the fixed runtime DLL SHA256
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
+
 ## Windows Linker Gate
 
 Applicable tests in system/tests/static-link include:

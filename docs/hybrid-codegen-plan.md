@@ -370,6 +370,11 @@ Name-to-value lookup uses map! tables; hash! is reserved for actual sets.
 Qualified names are constructed once at declaration or scope entry. Hot paths
 never search pair blocks with select.
 
+The fixed instruction writer accepts its four integer fields directly and
+appends one 16-byte record. It does not allocate a temporary Red block for each
+instruction. The separate block-taking writer is reserved for low-frequency,
+variable-width tables and initializer records.
+
 The frontend does not infer authoritative expression or local types, enforce
 operand, dynamic cast, call, assignment, return, branch-predicate, or branch-
 merge compatibility, fold runtime expressions, calculate layout, build CFG
@@ -1102,6 +1107,34 @@ Already retained:
   `3237A5179E9134A07B83FFE75A32EAB641A7381D4CEE8A2C892B5DEB2567EC2F`.
   The O2 build remains a code-size gate, not evidence of a build-time speedup;
   H101-H103 reuse the same fixed runtime DLL;
+- dense instruction emission no longer constructs and traverses a four-value
+  `reduce` block for every 16-byte record. The primary `emit` takes the four
+  integer fields directly; `emit-values` remains only for variable-width type,
+  member, parameter, switch, and initializer records. All 119 instruction
+  emission sites use the direct path. The canonical compiler RSIR contains
+  454,640 instructions, so this removes the corresponding transient block
+  allocation pressure without changing RSIR or adding an adapter;
+- the same-source transition separates source size from emitter execution.
+  H102, whose compiled frontend still used the old block-taking emitter, built
+  the direct-emitter source as H105 in 59.425 wall seconds; its RSIR frontend
+  took 21.152 seconds and 98 GC cycles. H105 then built H106 in 51.389 seconds
+  with 18.094 RSIR seconds and 84 cycles, and H106 built H107 in 55.296 seconds
+  with 18.543 RSIR seconds and 74 cycles. H105-H107 have identical `.text`, so
+  the repeatable claim is the lower RSIR allocation count and roughly 2.8-second
+  phase reduction in those same-source samples, not the fastest total wall
+  sample;
+- the final idiomatic naming and layout reaches an H108/H109 O0 fixed point at
+  4,281,344 bytes, `.text` raw size `392400h`, virtual size `39234Bh`, and
+  `.text` SHA256
+  `34C6B21CCBA4D64489AB5B02CDCEF5E0B5F2878AB180D39091D214626282C272`.
+  This is 13,824 image/raw-text bytes below H102. H108 and H109 took 54.355 and
+  58.191 wall seconds; their RSIR phases used 81 and 80 GC cycles, confirming
+  the allocation reduction even in the slower wall sample. Final H109 O0
+  passes the complete Windows x64 Red/System runner (10,582 tests,
+  12,647/12,647 assertions, no compile failures) and complete current non-View
+  Red runner (8,730 tests, 16,755/16,755 assertions). H105-H109 use the fixed
+  runtime DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
 - the separate Red/System compiler-diagnostic runner remains an explicit H0
   gap: H88 reports 124 assertions and 38 failures. H81 reports the same totals,
   and the ordered set of all 38 failed test labels is identical, so this batch

@@ -5,8 +5,8 @@ Red [
 #include %../../../compiler/int-to-bin.red
 #include %../../../compiler/ieee-754.red
 #include %../../../compiler/unicode.red
-#include %../../../compiler/rsir-frontend.red
 #include %../../../compiler/codegen-bridge.red
+#include %../../../compiler/rsir-frontend.red
 
 red-compiler-process-get: func [spec code [block!]][false]
 red-compiler-process-in: func [path word code [block!]][false]
@@ -31,6 +31,18 @@ word-at: func [data [binary!] offset [integer!] /local high][
 		+ ((to integer! pick data (offset + 3)) * 65536)
 		+ (high * 16777216)
 ]
+
+instruction-output: make binary! 1
+while [1 = emit-rsir-instruction instruction-output 1 2 3 4][]
+instruction-tail: length? instruction-output
+compiler-rsir-frontend/emit instruction-output 5 6 7 8
+check all [
+	(length? instruction-output) = (instruction-tail + 16)
+	(word-at instruction-output instruction-tail) = 5
+	(word-at instruction-output (instruction-tail + 4)) = 6
+	(word-at instruction-output (instruction-tail + 8)) = 7
+	(word-at instruction-output (instruction-tail + 12)) = 8
+]["native instruction writer did not grow and append atomically"]
 
 generate: func [
 	name source [string!]

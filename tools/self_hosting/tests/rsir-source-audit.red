@@ -4,6 +4,17 @@ Red [
 
 #include %../../../system/compiler-windows-common.red
 
+emit-rsir-instruction: func [
+	output [binary!]
+	a b c d [integer!]
+][
+	append output int-to-bin/to-bin32 a
+	append output int-to-bin/to-bin32 b
+	append output int-to-bin/to-bin32 c
+	append output int-to-bin/to-bin32 d
+	1
+]
+
 #include %../../../compiler/rsir-frontend.red
 
 rsir-source-audit: context [

@@ -9,6 +9,6 @@ Red [
 #include %compiler-windows-common.red
 #include %utils/libRedRT.red
 #include %../compiler/system-diagnostics.red
-#include %../compiler/rsir-frontend.red
 #include %../compiler/codegen-bridge.red
+#include %../compiler/rsir-frontend.red
 #include %compiler-rsir-core.red

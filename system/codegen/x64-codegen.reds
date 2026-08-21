@@ -271,9 +271,13 @@ x64-codegen: context [
 	LOCATION_FRAME_INDIRECT: 3
 	LOCATION_GPR:            4
 	LOCATION_XMM:            5
+	LOCATION_GLOBAL:         6
+	; The two top stack values are held in RAX and RDX respectively.
+	LOCATION_GPR_PAIR:       7
 	; Zero means no stack tag, positive values are variant-chain instruction
 	; indexes, and -1 marks a direct binary64 literal without colliding with them.
 	FLOAT_LITERAL_TAG: -1
+	ANY_POINTER_REF: -16
 
 	INVALID_IR:  -1
 	UNSUPPORTED: -2
@@ -407,14 +411,14 @@ x64-codegen: context [
 
 	reference-kind?: func [kind [integer!] return: [logic!]][
 		any [
-			kind = 12 kind = 13 kind = 14
+			kind = 12 kind = 13 kind = 14 kind = 16
 			kind = -2 kind = -3 kind = -4 kind = -6 kind = -7
 		]
 	]
 
 	address-kind?: func [kind [integer!] return: [logic!]][
 		any [
-			kind = 12 kind = 13
+			kind = 12 kind = 13 kind = 16
 			kind = -2 kind = -3 kind = -6 kind = -7
 		]
 	]
@@ -424,6 +428,11 @@ x64-codegen: context [
 		return: [logic!]
 	][
 		any [
+			all [
+				any [left-kind = 16 right-kind = 16]
+				reference-kind? left-kind
+				reference-kind? right-kind
+			]
 			all [
 				any [left-kind = 12 left-kind = -6]
 				any [right-kind = 12 right-kind = -6]
@@ -453,6 +462,9 @@ x64-codegen: context [
 		if left = right [return true]
 		left-kind: logical-kind left types count
 		right-kind: logical-kind right types count
+		if any [left = ANY_POINTER_REF right = ANY_POINTER_REF][
+			return all [reference-kind? left-kind reference-kind? right-kind]
+		]
 		if any [left-kind = 14 right-kind = 14][
 			return all [reference-kind? left-kind reference-kind? right-kind]
 		]
@@ -540,20 +552,27 @@ x64-codegen: context [
 		]
 	]
 
-	merge-compatible-types?: func [
+	merged-type: func [
 		left right [integer!]
 		types [byte-ptr!]
 		count [integer!]
-		return: [logic!]
+		return: [integer!]
 		/local left-kind right-kind
 	][
-		if compatible-types? left right types count [return true]
+		if compatible-types? left right types count [
+			left-kind: logical-kind left types count
+			if left-kind = 14 [
+				right-kind: logical-kind right types count
+				if reference-kind? right-kind [return ANY_POINTER_REF]
+			]
+			return left
+		]
 		left-kind: logical-kind left types count
 		right-kind: logical-kind right types count
-		all [
+		either all [
 			left-kind = right-kind
 			any [left-kind = -6 left-kind = -2 left-kind = -3]
-		]
+		][left][0]
 	]
 
 	signed-type?: func [
@@ -627,6 +646,7 @@ x64-codegen: context [
 					any [kind = 5 kind = 6 kind = 9 kind = 11][4]
 					any [
 						kind = 7 kind = 8 kind = 10 kind = 12 kind = 13 kind = 14
+						kind = 16
 					][8]
 					true [0]
 				]
@@ -1256,7 +1276,7 @@ x64-codegen: context [
 		base: canonical-type ref types count
 		if base = 0 [return 0]
 		kind: logical-kind base types count
-		if any [kind = 12 kind = 13][return 1]
+		if any [kind = 12 kind = 13 kind = 16][return 1]
 		size: 0
 		alignment: 0
 		case [
@@ -2637,14 +2657,29 @@ x64-codegen: context [
 
 	merge-target: func [
 		target depth instruction-count [integer!]
+		instructions [byte-ptr!]
 		instruction-depths entry-types entry-flags entry-kinds entry-tags
 			stack-types stack-flags stack-kinds stack-tags [int-ptr!]
 		types [byte-ptr!]
 		type-count [integer!]
 		return: [logic!]
-		/local entry-tag stack-tag [integer!]
+		/local
+			target-instruction [rsir-instruction!]
+			entry-tag stack-tag merged [integer!]
 	][
 		if any [target <= 0 target > instruction-count][return false]
+		target-instruction: as rsir-instruction! (instructions
+			+ ((target - 1) * RSIR_INSTRUCTION_SIZE))
+		; A resultless subroutine return discards one optional expression value.
+		; Normalize it before joining control-flow edges at that return.
+		if all [
+			target-instruction/op = OP_SUB_RETURN
+			target-instruction/a = 0
+			depth = 1
+		][
+			if stack-kinds/depth <> VALUE [return false]
+			depth: 0
+		]
 		either instruction-depths/target >= 0 [
 			if instruction-depths/target <> depth [return false]
 			if depth > 0 [
@@ -2652,13 +2687,15 @@ x64-codegen: context [
 				stack-tag: stack-tags/depth
 				if entry-tag < 0 [entry-tag: 0]
 				if stack-tag < 0 [stack-tag: 0]
+				merged: merged-type entry-types/target stack-types/depth
+					types type-count
 				if any [
-					not merge-compatible-types? entry-types/target stack-types/depth
-						types type-count
+					merged = 0
 					entry-flags/target <> stack-flags/depth
 					entry-kinds/target <> stack-kinds/depth
 					entry-tag <> stack-tag
 				][return false]
+				entry-types/target: merged
 				entry-tags/target: entry-tag
 			]
 		][
@@ -3271,13 +3308,16 @@ x64-codegen: context [
 			record-offset overflow-anchor base-depth overflow-limit
 			catch-level catch-capacity catch-base catch-record catch-unwind
 			catch-threshold allocation-size current-entry current-sub
-			location location-depth location-source next-index
+			location location-depth location-source location-reference source-location
+			next-index
+			global-reference-id
 			main-entry-count sub-entry-count compatibility [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
-			linear? consume-location? live?
+			linear? consume-location? global-target? defer-global? paired? set-pair?
+			source-located? direct-frame-target? live?
 			sub-returns? [logic!]
 	][
 		measure?: null? code
@@ -3301,6 +3341,8 @@ x64-codegen: context [
 		location: LOCATION_NONE
 		location-depth: 0
 		location-source: 0
+		location-reference: 0
+		source-location: LOCATION_NONE
 		main-entry-count: 0
 		sub-entry-count: 0
 		unstable-stack?: false
@@ -3698,8 +3740,23 @@ x64-codegen: context [
 				index: index + 1
 				continue
 			]
+			; A subroutine with no result consumes an optional expression value.
+			; Frontend statement paths may reach the same return with or without it.
+			if all [
+				instruction/op = OP_SUB_RETURN
+				instruction/a = 0
+				depth = 1
+			][
+				unless stack-kinds/depth = VALUE [return INVALID_IR]
+				depth: 0
+				location: LOCATION_NONE
+				location-depth: 0
+				location-source: 0
+			]
 			if instruction/op = OP_ENTRY [
-				if fallthrough? [return INVALID_IR]
+				if fallthrough? [
+					return INVALID_IR
+				]
 				if max-depth > (2147483647 - segment-slots)[return OUTPUT_FULL]
 				segment-slots: segment-slots + max-depth
 				if storage-base > (2147483647 - segment-slots)[return OUTPUT_FULL]
@@ -3712,17 +3769,23 @@ x64-codegen: context [
 			either fallthrough? [
 				if instruction-depths/index >= 0 [
 					if measure? [
-						if instruction-depths/index <> depth [return INVALID_IR]
+						if instruction-depths/index <> depth [
+							return INVALID_IR
+						]
 						if depth > 0 [
 							tag-head: stack-tags/depth
 							if tag-head < 0 [tag-head: 0]
+							ref: merged-type entry-types/index stack-types/depth
+								types type-count
 							if any [
-								not merge-compatible-types? entry-types/index stack-types/depth
-									types type-count
+								ref = 0
 								entry-flags/index <> stack-flags/depth
 								entry-kinds/index <> stack-kinds/depth
 								entry-tags/index <> tag-head
-							][return INVALID_IR]
+							][
+								return INVALID_IR
+							]
+							entry-types/index: ref
 						]
 					]
 					if depth > 0 [
@@ -3752,6 +3815,92 @@ x64-codegen: context [
 					entry-tags/index: stack-tags/depth
 				]
 			]
+			linear?: false
+			next-index: index + 1
+			if next-index <= fn/instruction-count [
+				next-instruction: as rsir-instruction! (instructions
+					+ ((next-index - 1) * RSIR_INSTRUCTION_SIZE))
+				linear?: all [
+					control-uses/next-index = 0
+					catch-depths/next-index = catch-depths/index
+					next-instruction/op <> OP_ENTRY
+				]
+			]
+			paired?: all [
+				linear?
+				location = LOCATION_GPR
+				instruction/op = OP_LITERAL
+				depth > 0
+				stack-kinds/depth = VALUE
+				stack-flags/depth = 0
+				valid-type-ref? instruction/a type-count
+				instruction/a = stack-types/depth
+				integer-type? instruction/a types type-count
+				(instruction-effects/next-index and EFFECT_LIVE) <> 0
+				(instruction-effects/next-index and EFFECT_ELIDED) = 0
+				next-instruction/op = OP_BINARY
+				any [
+					all [
+						next-instruction/a >= ADD_OPERATION
+						next-instruction/a <= MULTIPLY_OPERATION
+					]
+					all [
+						next-instruction/a >= OR_OPERATION
+						next-instruction/a <= LESS_EQUAL_OPERATION
+					]
+				]
+			]
+			set-pair?: false
+			if all [
+				linear?
+				any [location = LOCATION_GPR location = LOCATION_XMM]
+				instruction/op = OP_ADDRESS
+				depth > 0
+				stack-kinds/depth = VALUE
+				stack-flags/depth = 0
+				(instruction-effects/next-index and EFFECT_LIVE) <> 0
+				(instruction-effects/next-index and EFFECT_ELIDED) = 0
+				next-instruction/op = OP_SET
+			][
+				target-ref: 0
+				target-flags: -1
+				case [
+					all [
+						instruction/a = LOCAL_ADDRESS
+						instruction/b > 0
+						instruction/b <= storage-count
+					][
+						parameter: as rsir-parameter! (parameters
+							+ ((fn/first-parameter + instruction/b - 1)
+								* RSIR_PARAMETER_SIZE))
+						target-ref: parameter/type
+						target-flags: parameter/flags
+					]
+					all [
+						instruction/a = GLOBAL_ADDRESS
+						instruction/b > 0
+						instruction/b <= global-count
+					][
+						global: as rsir-global! (globals
+							+ ((instruction/b - 1) * RSIR_GLOBAL_SIZE))
+						target-ref: global/type
+						target-flags: global/flags and INLINE
+					]
+					true [0]
+				]
+				if all [
+					valid-type-ref? target-ref type-count
+					target-ref = stack-types/depth
+					target-flags = 0
+					machine-value? target-ref 0 types members type-count
+						layouts member-offsets
+				][
+					floating?: float-type? target-ref types type-count
+					set-pair?: either floating? [
+						location = LOCATION_XMM
+					][location = LOCATION_GPR]
+				]
+			]
 			if location <> LOCATION_NONE [
 				unless all [
 					location-depth = depth
@@ -3763,6 +3912,7 @@ x64-codegen: context [
 						location = LOCATION_ADDRESS
 						location = LOCATION_FRAME
 						location = LOCATION_FRAME_INDIRECT
+						location = LOCATION_GLOBAL
 					][
 						any [
 							instruction/op = OP_LOAD
@@ -3774,6 +3924,8 @@ x64-codegen: context [
 					]
 					any [location = LOCATION_GPR location = LOCATION_XMM][
 						any [
+							all [instruction/op = OP_LITERAL paired?]
+							all [instruction/op = OP_ADDRESS set-pair?]
 							instruction/op = OP_DROP
 							instruction/op = OP_CAST
 							instruction/op = OP_BINARY
@@ -3803,6 +3955,7 @@ x64-codegen: context [
 							]
 						]
 					]
+					location = LOCATION_GPR_PAIR [instruction/op = OP_BINARY]
 					true [false]
 				]
 				unless consume-location? [
@@ -3828,6 +3981,8 @@ x64-codegen: context [
 							location = LOCATION_GPR
 							location = LOCATION_XMM
 						][0]
+						location = LOCATION_GLOBAL [return INVALID_IR]
+						location = LOCATION_GPR_PAIR [return INVALID_IR]
 						true [return INVALID_IR]
 					]
 					ref: stack-types/depth
@@ -3878,17 +4033,6 @@ x64-codegen: context [
 				index: index + 1
 				continue
 			]
-			linear?: false
-			next-index: index + 1
-			if next-index <= fn/instruction-count [
-				next-instruction: as rsir-instruction! (instructions
-					+ ((next-index - 1) * RSIR_INSTRUCTION_SIZE))
-				linear?: all [
-					control-uses/next-index = 0
-					catch-depths/next-index = catch-depths/index
-					next-instruction/op <> OP_ENTRY
-				]
-			]
 			if measure? [instruction-offsets/index: written]
 			instruction-start: written
 			fallthrough?: true
@@ -3911,14 +4055,18 @@ x64-codegen: context [
 					width: value-width ref 0 types members type-count
 						layouts member-offsets
 					target-width: either width = 8 [8][4]
+					register-id: either paired? [x64-encoder/RDX][x64-encoder/RAX]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: x64-encoder/move-immediate at (capacity - written)
-						x64-encoder/RAX target-width
+						register-id target-width
 						instruction/b instruction/c
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
-					either all [
+					either paired? [
+						location: LOCATION_GPR_PAIR
+						location-depth: depth
+					][either all [
 						linear?
 						not float-type? ref types type-count
 					][
@@ -3932,7 +4080,7 @@ x64-codegen: context [
 							target-width
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-					]
+					]]
 				]
 				instruction/op = OP_CONSTANT [
 					ref: instruction/a
@@ -3978,10 +4126,12 @@ x64-codegen: context [
 					]
 				]
 				instruction/op = OP_ADDRESS [
+					source-location: either set-pair? [location][LOCATION_NONE]
 					ref: 0
 					flags: 0
 					import-id: 0
 					global-id: 0
+					defer-global?: false
 					case [
 						instruction/a = LOCAL_ADDRESS [
 							unless all [
@@ -4025,10 +4175,26 @@ x64-codegen: context [
 								+ ((global-id - 1) * RSIR_GLOBAL_SIZE))
 							ref: global/type
 							flags: global/flags and INLINE
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: x64-encoder/rip-address at (capacity - written)
-								x64-encoder/RAX 0
+							if all [
+								linear?
+								any [location = LOCATION_NONE set-pair?]
+								flags = 0
+								machine-value? ref flags types members type-count
+									layouts member-offsets
+							][
+								defer-global?: any [
+									next-instruction/op = OP_LOAD
+									next-instruction/op = OP_SET
+								]
+							]
+							either defer-global? [
+								encoded: 0
+							][
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/rip-address at (capacity - written)
+									x64-encoder/RAX 0
+							]
 						]
 						instruction/a = IMPORT_ADDRESS [
 							import-id: instruction/b
@@ -4097,7 +4263,12 @@ x64-codegen: context [
 						][
 							reference-id: image-global/first-reference
 								+ image-global/reference-count
-							references/reference-id: function-offset + written + 3
+							either defer-global? [
+								location-reference: reference-id
+							][
+								references/reference-id:
+									function-offset + written + encoded - 4
+							]
 							image-global/reference-count: image-global/reference-count + 1
 						]
 					]
@@ -4108,8 +4279,13 @@ x64-codegen: context [
 					stack-flags/depth: flags
 					stack-kinds/depth: PLACE
 					stack-tags/depth: 0
-					if all [linear? location = LOCATION_NONE][
-						location: LOCATION_ADDRESS
+					either defer-global? [
+						location: LOCATION_GLOBAL
+						location-source: global-id
+					][
+						if all [linear? location = LOCATION_NONE][
+							location: LOCATION_ADDRESS
+						]
 					]
 					either location <> LOCATION_NONE [
 						location-depth: depth
@@ -4128,6 +4304,7 @@ x64-codegen: context [
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					tracked?: location <> LOCATION_NONE
+					global-target?: location = LOCATION_GLOBAL
 					either all [
 						flags = INLINE
 						inline-object-ref? ref types type-count
@@ -4144,6 +4321,7 @@ x64-codegen: context [
 									x64-encoder/frame-load at (capacity - written)
 										x64-encoder/RAX location-source 8 0
 								]
+								location = LOCATION_GLOBAL [return INVALID_IR]
 								location = LOCATION_ADDRESS [0]
 								true [return INVALID_IR]
 							]
@@ -4193,6 +4371,15 @@ x64-codegen: context [
 								x64-encoder/frame-load at (capacity - written)
 									x64-encoder/RAX location-source 8 0
 							]
+							location = LOCATION_GLOBAL [
+								either floating? [
+									x64-encoder/xmm-rip-load at (capacity - written)
+										x64-encoder/XMM0 0 width
+							][
+								x64-encoder/rip-value-load at (capacity - written)
+									x64-encoder/RAX 0 width signed
+							]
+							]
 							location = LOCATION_ADDRESS [0]
 							location = LOCATION_NONE [
 								x64-encoder/frame-load at (capacity - written)
@@ -4203,7 +4390,13 @@ x64-codegen: context [
 						]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-						if location <> LOCATION_FRAME [
+						if global-target? [
+							unless measure? [
+								references/location-reference:
+									function-offset + written - 4
+							]
+						]
+						if all [location <> LOCATION_FRAME not global-target?][
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: either floating? [
@@ -4216,6 +4409,7 @@ x64-codegen: context [
 						stack-kinds/depth: VALUE
 						location: LOCATION_NONE
 						location-source: 0
+						location-reference: 0
 						either linear? [
 							location: either floating? [LOCATION_XMM][LOCATION_GPR]
 							location-depth: depth
@@ -4376,7 +4570,17 @@ x64-codegen: context [
 					source-slot: depth - 1
 					target-slot: depth
 					if any [depth < 2 stack-kinds/source-slot <> VALUE
-						stack-kinds/target-slot <> PLACE][return INVALID_IR]
+						stack-kinds/target-slot <> PLACE][
+						return INVALID_IR
+					]
+					source-located?: source-location <> LOCATION_NONE
+					global-target?: location = LOCATION_GLOBAL
+					direct-frame-target?: all [
+						source-located?
+						location = LOCATION_FRAME
+					]
+					target-offset: location-source
+					global-reference-id: location-reference
 					target-ref: stack-types/target-slot
 					target-flags: stack-flags/target-slot
 					tag-head: stack-tags/target-slot
@@ -4407,7 +4611,9 @@ x64-codegen: context [
 								layouts member-offsets
 							machine-value? target-ref target-flags types members
 								type-count layouts member-offsets
-						][return INVALID_IR]
+						][
+							return INVALID_IR
+						]
 						target-width: value-width target-ref target-flags types members
 							type-count layouts member-offsets
 						floating?: float-type? target-ref types type-count
@@ -4417,8 +4623,10 @@ x64-codegen: context [
 					if not measure? [at: code + written]
 					encoded: case [
 						location = LOCATION_FRAME [
-							x64-encoder/frame-address at (capacity - written)
-								x64-encoder/RDX location-source
+							either source-located? [0][
+								x64-encoder/frame-address at (capacity - written)
+									x64-encoder/RDX location-source
+							]
 						]
 						location = LOCATION_FRAME_INDIRECT [
 							x64-encoder/frame-load at (capacity - written)
@@ -4428,6 +4636,7 @@ x64-codegen: context [
 							x64-encoder/move-register at (capacity - written)
 								x64-encoder/RDX x64-encoder/RAX 8
 						]
+						location = LOCATION_GLOBAL [0]
 						location = LOCATION_NONE [
 							x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RDX slot-displacement
@@ -4440,6 +4649,7 @@ x64-codegen: context [
 					location: LOCATION_NONE
 					location-depth: 0
 					location-source: 0
+					location-reference: 0
 
 					either aggregate-copy? [
 						at: as byte-ptr! 0
@@ -4459,28 +4669,69 @@ x64-codegen: context [
 						stack-flags/depth: 0
 						stack-kinds/depth: VALUE
 					][
+						if source-located? [
+							valid?: either floating? [
+								source-location = LOCATION_XMM
+							][source-location = LOCATION_GPR]
+							unless valid? [return INVALID_IR]
+						]
+						unless source-located? [
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: either floating? [
+								x64-encoder/xmm-frame-load at (capacity - written)
+									x64-encoder/XMM0 slot-displacement
+										(storage-slots + source-slot) target-width
+							][
+								load-operation-value at (capacity - written)
+									x64-encoder/RAX slot-displacement
+									(storage-slots + source-slot) ref flags target-width false
+									types members type-count layouts member-offsets
+							]
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: either floating? [
-							x64-encoder/xmm-frame-load at (capacity - written)
-								x64-encoder/XMM0 slot-displacement
-									(storage-slots + source-slot) target-width
+							case [
+								direct-frame-target? [
+									x64-encoder/xmm-frame-store at (capacity - written)
+										x64-encoder/XMM0 target-offset target-width
+								]
+								global-target? [
+									x64-encoder/xmm-rip-store at (capacity - written)
+										x64-encoder/XMM0 0 target-width
+								]
+								true [
+									x64-encoder/xmm-store-indirect at (capacity - written)
+										x64-encoder/RDX x64-encoder/XMM0 target-width
+								]
+							]
 						][
-							load-operation-value at (capacity - written)
-								x64-encoder/RAX slot-displacement
-								(storage-slots + source-slot) ref flags target-width false
-								types members type-count layouts member-offsets
+							case [
+								direct-frame-target? [
+									x64-encoder/frame-store at (capacity - written)
+										x64-encoder/RAX target-offset target-width
+								]
+								global-target? [
+									x64-encoder/rip-value-store at (capacity - written)
+										x64-encoder/RAX 0 target-width
+								]
+								true [
+									x64-encoder/store-indirect at (capacity - written)
+										target-width
+								]
+							]
 						]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: either floating? [
-							x64-encoder/xmm-store-indirect at (capacity - written)
-								x64-encoder/RDX x64-encoder/XMM0 target-width
-						][x64-encoder/store-indirect at (capacity - written) target-width]
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
+						if global-target? [
+							unless measure? [
+								references/global-reference-id:
+									function-offset + written - 4
+							]
+						]
 						depth: source-slot
 						stack-types/depth: target-ref
 						stack-flags/depth: target-flags
@@ -4502,6 +4753,7 @@ x64-codegen: context [
 							written: written + encoded
 						]
 					]
+					source-location: LOCATION_NONE
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: emit-variant-tags at (capacity - written) tag-head tag-base
@@ -5729,7 +5981,7 @@ x64-codegen: context [
 						all [
 							located?
 							not any [source-kind = 9 source-kind = 10]
-							location <> LOCATION_GPR
+						location <> LOCATION_GPR
 						]
 					][return INVALID_IR]
 					tracked?: located?
@@ -6924,7 +7176,7 @@ x64-codegen: context [
 							return INVALID_IR
 						]
 						if measure? [
-							unless merge-target target base-depth fn/instruction-count
+							unless merge-target target base-depth fn/instruction-count instructions
 								instruction-depths entry-types entry-flags entry-kinds entry-tags
 								stack-types stack-flags stack-kinds stack-tags types type-count [
 								return INVALID_IR
@@ -6940,11 +7192,18 @@ x64-codegen: context [
 							layouts member-offsets
 					][return UNSUPPORTED]
 					located?: location <> LOCATION_NONE
+					paired?: location = LOCATION_GPR_PAIR
 					if all [
 						located?
 						any [
 							all [floating? location <> LOCATION_XMM]
-							all [not floating? location <> LOCATION_GPR]
+							all [
+								not floating?
+								not any [
+									location = LOCATION_GPR
+									location = LOCATION_GPR_PAIR
+								]
+							]
 						]
 					][return INVALID_IR]
 
@@ -7044,7 +7303,7 @@ x64-codegen: context [
 						operation >= DIVIDE_OPERATION
 						operation <= SHIFT_LOGICAL_OPERATION
 					][x64-encoder/RCX][x64-encoder/RDX]
-					if located? [
+					if all [located? not paired?][
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: move-operation-value at (capacity - written)
@@ -7058,15 +7317,17 @@ x64-codegen: context [
 						target-offset: instruction-start
 							+ (instruction-offsets/target - instruction-offsets/index)
 					]
-					at: as byte-ptr! 0
-					if not measure? [at: code + written]
-					encoded: load-operation-value at (capacity - written)
-						x64-encoder/RAX slot-displacement
-						(storage-slots + target-slot) left-ref left-flags
-						operation-width zero-extend? types members type-count
-						layouts member-offsets
-					if encoded < 0 [return OUTPUT_FULL]
-					written: written + encoded
+					unless paired? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: load-operation-value at (capacity - written)
+							x64-encoder/RAX slot-displacement
+							(storage-slots + target-slot) left-ref left-flags
+							operation-width zero-extend? types members type-count
+							layouts member-offsets
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 
 					unless located? [
 						at: as byte-ptr! 0
@@ -7310,7 +7571,7 @@ x64-codegen: context [
 					written: written + encoded
 					depth: depth - 1
 					if measure? [
-						unless merge-target target depth fn/instruction-count
+						unless merge-target target depth fn/instruction-count instructions
 							instruction-depths entry-types entry-flags entry-kinds entry-tags
 							stack-types stack-flags stack-kinds stack-tags types type-count [
 							return INVALID_IR
@@ -7413,7 +7674,7 @@ x64-codegen: context [
 					]
 					depth: depth - instruction/b
 					if measure? [
-						unless merge-target target depth fn/instruction-count
+						unless merge-target target depth fn/instruction-count instructions
 							instruction-depths entry-types entry-flags entry-kinds entry-tags
 							stack-types stack-flags stack-kinds stack-tags types type-count [
 							return INVALID_IR
@@ -7457,7 +7718,7 @@ x64-codegen: context [
 					either fold-constant? [
 						if branch-taken? [
 							if measure? [
-								unless merge-target target depth fn/instruction-count
+								unless merge-target target depth fn/instruction-count instructions
 									instruction-depths entry-types entry-flags entry-kinds
 									entry-tags stack-types stack-flags stack-kinds stack-tags
 									types type-count [
@@ -7529,7 +7790,7 @@ x64-codegen: context [
 						][
 							depth: depth - 1
 							if measure? [
-								unless merge-target target depth fn/instruction-count
+								unless merge-target target depth fn/instruction-count instructions
 									instruction-depths entry-types entry-flags entry-kinds
 									entry-tags stack-types stack-flags stack-kinds stack-tags
 									types type-count [
@@ -7594,7 +7855,7 @@ x64-codegen: context [
 							return INVALID_IR
 						]
 						if measure? [
-							unless merge-target target depth fn/instruction-count
+							unless merge-target target depth fn/instruction-count instructions
 								instruction-depths entry-types entry-flags entry-kinds entry-tags
 								stack-types stack-flags stack-kinds stack-tags types type-count [
 								return INVALID_IR
@@ -7632,7 +7893,7 @@ x64-codegen: context [
 					target: instruction/c
 					if catch-depths/target <> catch-depths/index [return INVALID_IR]
 					if measure? [
-						unless merge-target target depth fn/instruction-count
+						unless merge-target target depth fn/instruction-count instructions
 							instruction-depths entry-types entry-flags entry-kinds entry-tags
 							stack-types stack-flags stack-kinds stack-tags types type-count [
 							return INVALID_IR
@@ -7717,7 +7978,9 @@ x64-codegen: context [
 					]
 				]
 				instruction/op = OP_SUB_RETURN [
-					if current-entry <= 0 [return INVALID_IR]
+					if current-entry <= 0 [
+						return INVALID_IR
+					]
 					sub-entry: as rsir-instruction! (instructions
 						+ ((current-entry - 1) * RSIR_INSTRUCTION_SIZE))
 					return-ref: instruction/a
@@ -7734,7 +7997,13 @@ x64-codegen: context [
 						sub-entry/op = OP_ENTRY sub-entry/a = 1
 						return-ref = sub-entry/b instruction/b = 0 instruction/c = 0
 						any [
-							all [return-ref = 0 depth = 0]
+							all [
+								return-ref = 0
+								any [
+									depth = 0
+									all [depth = 1 stack-kinds/depth = VALUE]
+								]
+							]
 							all [
 								return-ref <> 0 depth = 1 stack-kinds/depth = VALUE
 								stack-flags/depth = 0
@@ -7743,7 +8012,9 @@ x64-codegen: context [
 									layouts member-offsets
 							]
 						]
-					][return INVALID_IR]
+					][
+						return INVALID_IR
+					]
 					if return-ref <> 0 [
 						ref: stack-types/depth
 						target-width: value-width return-ref 0 types members type-count

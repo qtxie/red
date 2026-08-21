@@ -1367,6 +1367,119 @@ x64-encoder: context [
 		7
 	]
 
+	rip-value-load: func [
+		code [byte-ptr!]
+		capacity target displacement width signed [integer!]
+		return: [integer!]
+		/local prefix opcode-size size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15
+			any [width = 1 width = 2 width = 4 width = 8]
+			any [signed = 0 signed = 1]
+		][return -1]
+		opcode-size: either width <= 2 [2][1]
+		prefix: rex (width = 8) target RBP
+		size: opcode-size + 5
+		if prefix <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		case [
+			width = 1 [
+				at/1: as byte! 0Fh
+				at/2: as byte! either signed = 1 [BEh][B6h]
+				at: at + 2
+			]
+			width = 2 [
+				at/1: as byte! 0Fh
+				at/2: as byte! either signed = 1 [BFh][B7h]
+				at: at + 2
+			]
+			true [at/1: as byte! 8Bh at: at + 1]
+		]
+		at/1: as byte! modrm 0 target RBP
+		write-i32 (at + 1) displacement
+		size
+	]
+
+	rip-value-store: func [
+		code [byte-ptr!]
+		capacity source displacement width [integer!]
+		return: [integer!]
+		/local prefix prefix-size size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			source >= 0 source <= 15
+			any [width = 1 width = 2 width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) source RBP
+		prefix-size: either width = 2 [1][0]
+		if any [prefix <> 40h all [width = 1 source >= 4]][
+			prefix-size: prefix-size + 1
+		]
+		size: prefix-size + 6
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if width = 2 [at/1: as byte! 66h at: at + 1]
+		if any [prefix <> 40h all [width = 1 source >= 4]][
+			at/1: as byte! prefix
+			at: at + 1
+		]
+		at/1: as byte! either width = 1 [88h][89h]
+		at/2: as byte! modrm 0 source RBP
+		write-i32 (at + 2) displacement
+		size
+	]
+
+	xmm-rip-load: func [
+		code [byte-ptr!]
+		capacity target displacement width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		unless all [target >= 0 target <= 15 prefix <> 0][return -1]
+		rex-byte: rex false target RBP
+		size: either rex-byte = 40h [8][9]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 10h
+		at/3: as byte! modrm 0 target RBP
+		write-i32 (at + 3) displacement
+		size
+	]
+
+	xmm-rip-store: func [
+		code [byte-ptr!]
+		capacity source displacement width [integer!]
+		return: [integer!]
+		/local prefix rex-byte size [integer!] at [byte-ptr!]
+	][
+		prefix: xmm-prefix width
+		unless all [source >= 0 source <= 15 prefix <> 0][return -1]
+		rex-byte: rex false source RBP
+		size: either rex-byte = 40h [8][9]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		at/1: as byte! prefix
+		at: at + 1
+		if rex-byte <> 40h [at/1: as byte! rex-byte at: at + 1]
+		at/1: as byte! 0Fh
+		at/2: as byte! 11h
+		at/3: as byte! modrm 0 source RBP
+		write-i32 (at + 3) displacement
+		size
+	]
+
 	load-indirect: func [
 		code [byte-ptr!]
 		capacity width signed [integer!]

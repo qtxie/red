@@ -171,7 +171,7 @@ simple-io: context [
 				]
 				GetFileSize: "GetFileSize" [
 					file		[integer!]
-					high-size	[integer!]
+					high-size	[int-ptr!]
 					return:		[integer!]
 				]
 				CloseHandle:	"CloseHandle" [

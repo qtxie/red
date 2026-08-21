@@ -230,7 +230,7 @@ platform: context [
 				buffer			[c-string!]
 				len				[integer!]
 				written			[int-ptr!]
-				overlapped		[integer!]
+				overlapped		[int-ptr!]
 				return:			[integer!]
 			]
 			GetConsoleMode:	"GetConsoleMode" [
@@ -296,11 +296,11 @@ platform: context [
 			CreateProcessW: "CreateProcessW" [
 				lpApplicationName       [c-string!]
 				lpCommandLine           [c-string!]
-				lpProcessAttributes     [integer!]
-				lpThreadAttributes      [integer!]
+				lpProcessAttributes     [security-attributes!]
+				lpThreadAttributes      [security-attributes!]
 				bInheritHandles         [logic!]
 				dwCreationFlags         [integer!]
-				lpEnvironment           [integer!]
+				lpEnvironment           [byte-ptr!]
 				lpCurrentDirectory      [c-string!]
 				lpStartupInfo           [startup-info!]
 				lpProcessInformation    [process-info!]
@@ -330,7 +330,7 @@ platform: context [
 				lpSecurityAttributes	[security-attributes!]
 				dwCreationDisposition	[integer!]
 				dwFlagsAndAttributes	[integer!]
-				hTemplateFile			[integer!]
+				hTemplateFile			[int-ptr!]
 				return:					[integer!]
 			]
 			CloseHandle: "CloseHandle" [
@@ -346,7 +346,7 @@ platform: context [
 				lpBuffer                [byte-ptr!]
 				nNumberOfBytesToRead    [integer!]
 				lpNumberOfBytesRead     [int-ptr!]
-				lpOverlapped            [integer!]
+				lpOverlapped            [int-ptr!]
 				return:                 [logic!]
 			]
 			SetHandleInformation: "SetHandleInformation" [

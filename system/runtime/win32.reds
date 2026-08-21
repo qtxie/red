@@ -36,7 +36,7 @@ Red/System [
 	
 	prin: func [s [c-string!] return: [c-string!] /local written][
 		written: declare struct! [value [integer!]]
-		WriteFile stdout s length? s written 0
+		WriteFile stdout s length? s written null
 		s
 	]
 ]
@@ -92,7 +92,7 @@ win32-startup-ctx: context [
 				buffer		[c-string!]
 				len			[integer!]
 				written		[int-ptr!]
-				overlapped	[integer!]
+				overlapped	[int-ptr!]
 				return:		[integer!]
 			]
 			LocalFree: "LocalFree" [

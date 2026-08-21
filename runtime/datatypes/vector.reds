@@ -775,7 +775,7 @@ vector: context [
 		if fill? [
 			s: GET_BUFFER(vec)
 			end: (as byte-ptr! s/offset) + (size * unit)
-			fill as byte-ptr! s/tail end null
+			fill as byte-ptr! s/tail end #"^(00)"
 			s/tail: as cell! end
 		]
 		vec

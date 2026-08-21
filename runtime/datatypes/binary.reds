@@ -1386,7 +1386,7 @@ binary: context [
 		]
 		if i < len [
 			switch type [
-				OP_AND [fill p + i p + len null]
+				OP_AND [fill p + i p + len #"^(00)"]
 				OP_OR
 				OP_XOR [copy-memory p + i p2 + i len - i]
 			]

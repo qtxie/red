@@ -641,7 +641,7 @@ if size > 0 [
 		fn/code-size <> header/code-size
 	][failures: failures + 1]
 	if any [
-		local-code-size <> 41
+		local-code-size <> 32
 		not execute-first? output 7
 	][
 		print ["O0 local SET location code size: " local-code-size lf]
@@ -1006,7 +1006,7 @@ if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if any [
 		fn/frame-size <> 48
-		fn/code-size <> 57
+		fn/code-size <> 41
 		not execute-first? output 9
 	][
 		print ["O0 integer operator location code size: " fn/code-size lf]

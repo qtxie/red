@@ -252,11 +252,14 @@ compiler-rsir-frontend: context [
 	emit: func [
 		output [binary!]
 		a b c d [integer!]
+		/local end
 	][
-		append output int-to-bin/to-bin32 a
-		append output int-to-bin/to-bin32 b
-		append output int-to-bin/to-bin32 c
-		append output int-to-bin/to-bin32 d
+		if zero? emit-rsir-instruction output a b c d [
+			end: tail output
+			append/dup output 0 4096
+			clear end
+			emit-rsir-instruction output a b c d
+		]
 	]
 
 	emit-native-register: func [
@@ -434,6 +437,14 @@ compiler-rsir-frontend: context [
 
 	warn: func [message [string! block!]][
 		append/only warnings form either block? message [reduce message][message]
+	]
+
+	begin-phase: func [name [word!]][
+		if value? 'phase-timer [phase-timer/begin name]
+	]
+
+	finish-phase: func [name [word!]][
+		if value? 'phase-timer [phase-timer/finish name]
 	]
 
 	source-name: func [value return: [string!]][
@@ -2501,6 +2512,7 @@ compiler-rsir-frontend: context [
 		]
 
 		body: skip source 2
+		begin-phase 'rsir-scan
 		scan-block body copy [] copy [] 0
 		if runtime-exports [add-runtime-exports runtime-exports]
 		if module-kind = 4 [
@@ -2509,15 +2521,19 @@ compiler-rsir-frontend: context [
 			]
 			add-library-callbacks
 		]
+		finish-phase 'rsir-scan
+		begin-phase 'rsir-prepare
 		prepare-types
 		prepare-functions
 		if runtime-exports [prepare-runtime-functions]
 		prepare-imports
 		prepare-exports
+		finish-phase 'rsir-prepare
 		split-module?: to logic! all [module-kind = 4 find body #user-code]
 		user-code?: false
 		active-module-code: either split-module? [boot-code][module-code]
 		active-module-locals: either split-module? [boot-locals][module-locals]
+		begin-phase 'rsir-module-lowering
 		compile-module body copy [] copy []
 		case [
 			module-kind = 3 [
@@ -2537,8 +2553,13 @@ compiler-rsir-frontend: context [
 		if function-count < 1 [
 			fail ERROR-FUNCTION-COUNT "RSIR module has no function"
 		]
+		finish-phase 'rsir-module-lowering
+		begin-phase 'rsir-function-lowering
 		lower-functions
+		finish-phase 'rsir-function-lowering
+		begin-phase 'rsir-final-types
 		prepare-types
+		finish-phase 'rsir-final-types
 	]
 
 	write-types: func [type-output members [binary!] /local record kind definition
@@ -6863,7 +6884,7 @@ compiler-rsir-frontend: context [
 		/red
 		/debug
 		/limit max-bytes [integer!]
-		/local result
+		/local result output
 	][
 		last-error: none
 		error-position: none
@@ -6952,7 +6973,10 @@ compiler-rsir-frontend: context [
 			thrown-global: 0
 			alias-count: 0
 			compile-source source either runtime-library? [runtime-exports][none]
-			write-rsir any [max-bytes DEFAULT-MAX-BYTES]
+			begin-phase 'rsir-write
+			output: write-rsir any [max-bytes DEFAULT-MAX-BYTES]
+			finish-phase 'rsir-write
+			output
 		] 'rsir-error
 		either same? result last-error [none][result]
 	]

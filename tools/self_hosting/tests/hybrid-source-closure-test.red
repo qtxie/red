@@ -80,11 +80,17 @@ unless find read %../../../system/compiler-windows-hybrid-bootstrap.red
 ]
 
 native-bridge-text: read %../../../system/codegen/codegen-bridge.reds
-if find native-bridge-text "binary/rs-append" [
+routine-bridge-text: read %../../../compiler/codegen-bridge.red
+if any [
+	find native-bridge-text "binary/rs-append"
+	find routine-bridge-text "binary/rs-append"
+][
 	fail "native codegen bridge depends on non-exported binary/rs-append"
 ]
 unless all [
 	find native-bridge-text "GET_BUFFER(artifact)"
+	find routine-bridge-text "GET_BUFFER(output)"
+	find routine-bridge-text "series/tail: as cell! tail + 16"
 	find native-bridge-text "x64-codegen/generate"
 	not find native-bridge-text "WIRE_"
 	not find native-bridge-text "wire-"

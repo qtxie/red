@@ -239,6 +239,53 @@ if any [size <> 7 code/1 <> as byte! 48h code/2 <> as byte! 8Bh code/3 <> as byt
 	failures: failures + 1
 ]
 
+size: x64-encoder/rip-value-load code 128 x64-encoder/RAX 123 4 0
+expected: #{8B057B000000}
+if any [size <> 6 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/rip-value-load code 128 x64-encoder/R9 -7 8 1
+expected: #{4C8B0DF9FFFFFF}
+if any [size <> 7 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/rip-value-load code 128 x64-encoder/RAX 1 1 1
+expected: #{0FBE0501000000}
+if any [size <> 7 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/rip-value-load code 128 x64-encoder/RAX 1 2 0
+expected: #{0FB70501000000}
+if any [size <> 7 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/rip-value-store code 128 x64-encoder/RAX 123 4
+expected: #{89057B000000}
+if any [size <> 6 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/rip-value-store code 128 x64-encoder/R9 -7 8
+expected: #{4C890DF9FFFFFF}
+if any [size <> 7 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-rip-load code 128 x64-encoder/XMM0 123 8
+expected: #{F20F10057B000000}
+if any [size <> 8 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/xmm-rip-store code 128 9 -7 4
+expected: #{F3440F110DF9FFFFFF}
+if any [size <> 9 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+if any [
+	(x64-encoder/rip-value-load null 0 x64-encoder/RAX 0 3 0) <> -1
+	(x64-encoder/rip-value-store null 0 x64-encoder/RAX 0 3) <> -1
+	(x64-encoder/xmm-rip-load null 0 x64-encoder/XMM0 0 3) <> -1
+	(x64-encoder/xmm-rip-store null 0 x64-encoder/XMM0 0 3) <> -1
+][failures: failures + 1]
+
 if (x64-encoder/load-indirect code 128 1 1) <> 3 [failures: failures + 1]
 if (x64-encoder/store-indirect code 128 8) <> 3 [failures: failures + 1]
 if (x64-encoder/copy-indirect code 128 1) <> 8 [failures: failures + 1]

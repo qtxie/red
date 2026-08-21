@@ -2,6 +2,17 @@ Red [
 	Title: "Typed postfix Red/System frontend tests"
 ]
 
+emit-rsir-instruction: func [
+	output [binary!]
+	a b c d [integer!]
+][
+	append output int-to-bin/to-bin32 a
+	append output int-to-bin/to-bin32 b
+	append output int-to-bin/to-bin32 c
+	append output int-to-bin/to-bin32 d
+	1
+]
+
 do %../../../compiler/rsir-frontend.red
 
 frontend: compiler-rsir-frontend

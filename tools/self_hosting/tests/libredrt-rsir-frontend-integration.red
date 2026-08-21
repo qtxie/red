@@ -8,6 +8,7 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
 #include %system/compiler-windows-common.red
 #include %system/utils/libRedRT.red
+#include %compiler/codegen-bridge.red
 #include %compiler/rsir-frontend.red
 #include %system/compiler-rsir-core.red
 #include %compiler/modules.red

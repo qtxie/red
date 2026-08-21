@@ -1664,54 +1664,6 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	collect-local-uses: func [
-		body [block!]
-		candidates used [hash!]
-		/local value name parts
-	][
-		foreach value body [
-			name: none
-			case [
-				any [word? value set-word? value get-word? value][
-					name: to word! value
-				]
-				any [path? value set-path? value get-path? value][
-					parts: to block! value
-					if all [not empty? parts word? parts/1][name: parts/1]
-				]
-				any [block? value paren? value][
-					collect-local-uses to block! value candidates used
-				]
-			]
-			if all [
-				word? name
-				find candidates name
-				not find used name
-			][append used name]
-		]
-	]
-
-	prune-unused-locals: func [
-		locals body [block!]
-		/local candidates used position
-	][
-		if empty? locals [exit]
-		candidates: make hash! ((length? locals) / 3)
-		position: locals
-		while [not tail? position][
-			append candidates position/1
-			position: skip position 3
-		]
-		used: make hash! (length? candidates)
-		collect-local-uses body candidates used
-		position: locals
-		while [not tail? position][
-			either find used position/1 [
-				position: skip position 3
-			][position: remove/part position 3]
-		]
-	]
-
 	function-signature: func [ref [integer!] return: [block! none!] /local record][
 		ref: canonical-ref ref
 		if any [ref <= 0 ref > type-count][return none]
@@ -1775,7 +1727,6 @@ compiler-rsir-frontend: context [
 		id: 1
 		while [not tail? record][
 			signature: read-signature record/2 record/4 record/5 record/1
-			prune-unused-locals signature/3 record/3
 			if find infix-targets id [check-infix-arity record/1 signature]
 			record/6: signature/1
 			record/7: signature/2
@@ -2907,11 +2858,6 @@ compiler-rsir-frontend: context [
 			]
 			parameter: locals
 			while [not tail? parameter][
-				if all [storage-local? parameter parameter/2 = 0][
-					fail ERROR-UNSUPPORTED [
-						"local type is unresolved: " mold parameter/1
-					]
-				]
 				if storage-local? parameter [
 					emit output reduce [parameter/2 parameter/3]
 				]

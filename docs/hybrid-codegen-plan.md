@@ -593,7 +593,14 @@ Already retained:
   inline/reference size and alignment plus direct member offsets;
 - proof that the existing compiler can build and execute the boundary.
 - dense postfix values and places with backend-derived types and assignment results;
-- one contiguous parameter/local storage model with local type inference;
+- one contiguous, source-order parameter/local declaration table. The frontend
+  keeps only the shallow local type inference needed while parsing. An
+  unreferenced untyped local remains type `0` inside the local slice; native
+  codegen reuses its existing instruction scan to mark `LOCAL_ADDRESS` slots,
+  and `plan-storage` assigns frame offsets only to referenced locals. Parameters,
+  import parameters, and referenced locals must have concrete types. This
+  removes the frontend's recursive syntax-tree pruning scan without adding an
+  IR operation, adapter, allocation, bitmap, or optimization pass;
 - one source-order slot per lexical USE declaration, without name-based
   frontend reuse or runtime compatibility checks;
 - pointee-preserving pointer nodes and a distinct c-string logical type;
@@ -1005,6 +1012,27 @@ Already retained:
   seconds (10,582 tests, 12,647/12,647 assertions, no compile failures) and the
   complete current non-View Red runner in 270.657 seconds (8,730 tests,
   16,755/16,755 assertions). H82-H88 reuse the fixed runtime DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- unused-local storage planning now belongs to native codegen. The frontend
+  preserves every declared local in source order and no longer recursively
+  walks each function body before lowering just to remove unused declarations.
+  The existing native instruction scan marks referenced local slots, so unused
+  typed or untyped declarations consume neither frame space nor initialization
+  code. A representative compiler-source profile reduced `prepare-functions`
+  from about 1.427 seconds to 0.375 seconds, a roughly 1.05-second phase
+  reduction. The end-to-end samples remain too variable to claim the same wall
+  reduction;
+- H88 built source-bearing H89 in 60.836 wall seconds, and H89 built H90 in
+  63.770 seconds. H89 and H90 are both 4,289,024 bytes with `.text` raw size
+  `393800h`, virtual size `393660h`, and identical `.text` SHA256
+  `79753D89E595B1790D30CBA365DE1F34F2A2EBD4DC461B8D2F427607D43FCD80`;
+  their complete files differ only at three PE metadata bytes. Against H88 the
+  image is 7,168 bytes smaller and raw `.text` is 6,144 bytes smaller;
+- H90 rebuilds and passes the native codegen and thin frontend fixtures. It
+  passes the complete Windows x64 Red/System runner in 70.578 seconds (10,582
+  tests, 12,647/12,647 assertions, no compile failures) and the complete current
+  non-View Red runner in 242.563 seconds (8,730 tests, 16,755/16,755 assertions).
+  H89/H90 use the same fixed runtime DLL SHA256
   `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
 - the separate Red/System compiler-diagnostic runner remains an explicit H0
   gap: H88 reports 124 assertions and 38 failures. H81 reports the same totals,

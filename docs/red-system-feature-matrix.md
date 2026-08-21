@@ -30,7 +30,7 @@ rules remain in Red/System codegen.
 | Global, function, use and context scopes | Source-order IDs plus hash! lookup and lexical scope chain; every USE declaration owns one source slot until native lifetime optimization proves reuse | compiler/namespace-test.r, units/namespace-test.reds, use-test.reds | replace |
 | with scopes and path-qualified symbols | Resolved frontend scope chain; direct symbol IDs | complete compiler corpus and focused namespace fixtures | replace |
 | Aliases and type inference | Frontend binds alias names and slots; codegen canonicalizes aliases and infers local/value types | compiler/alias-test.r, inference-test.r, units/alias-test.reds | replace |
-| Global and local variables | Global records and function slots; codegen derives types for address/load/set | compiler/compiles-ok-test.r, x64-local-smoke.reds | replace |
+| Global and local variables | Source-order declarations and stable function slots; the frontend keeps parser-local inference, while the existing native instruction scan marks referenced local slots and frame planning allocates only those slots | compiler/compiles-ok-test.r, rsir-frontend-test.red, x64-codegen-reds-test.reds, x64-local-smoke.reds | replace |
 | Protected constant data | Read-only global plus flat initializer stream; codegen rejects writes | units/protect-test.reds, array-test.reds | pending |
 | logic!, byte!, integer! | Built-in logical types and generic scalar operations | units/logic-test.reds, byte-test.reds, integer-test.reds | pending |
 | Signed and unsigned fixed-width integers | Logical producer/sink types plus one codegen-owned lossless widening rule at typed boundaries; generic integer operations | units/fixed-int-test.reds, int64-test.reds, rsir-frontend-test.red, rsir-fixed-integer-exit.reds | replace |
@@ -494,6 +494,30 @@ The separate compiler-diagnostic runner remains incomplete at 124 assertions
 and 38 failures. H81 has the same totals and the same ordered set of 38 failed
 test labels, so the CALL argument gate adds no diagnostic regression; those
 frontend diagnostic families remain required for H0.
+
+Unused-local storage planning now follows the same thin-frontend boundary. The
+frontend preserves all declarations in source order and emits `type = 0` only
+for an untyped local that lowering never references. Native codegen reuses its
+existing instruction scan to mark `LOCAL_ADDRESS` slots, then `plan-storage`
+assigns offsets only to referenced locals. Parameters, import parameters, and
+referenced locals still require concrete types. This removes the recursive Red
+syntax-tree use scan without adding an IR operation, adapter, bitmap,
+allocation, or separate optimization pass.
+
+In a representative compiler-source profile, `prepare-functions` fell from
+about 1.427 seconds to 0.375 seconds, roughly 1.05 seconds in that phase. H88
+built source-bearing H89 in 60.836 wall seconds and H89 built fixed-point H90 in
+63.770 seconds; those noisy wall samples are not claimed as an end-to-end
+speedup. H89/H90 are both 4,289,024 bytes with `.text` raw size `393800h`,
+virtual size `393660h`, and `.text` SHA256
+`79753D89E595B1790D30CBA365DE1F34F2A2EBD4DC461B8D2F427607D43FCD80`.
+Their files differ only at three PE metadata bytes. Relative to H88, the image
+is 7,168 bytes smaller and raw `.text` is 6,144 bytes smaller. H90 passes the
+frontend and native codegen fixtures, the full Windows x64 Red/System runner in
+70.578 seconds (10,582 tests, 12,647/12,647 assertions, no compile failures),
+and the full current non-View Red runner in 242.563 seconds (8,730 tests,
+16,755/16,755 assertions). The fixed runtime DLL SHA256 remains
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
 
 ## Windows Linker Gate
 

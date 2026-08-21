@@ -264,13 +264,14 @@ unused-local-ir: compile-text {
 	fn: func [return: [integer!] /local unused][7]
 } 'user
 assert binary? unused-local-ir [
-	"unused local pruning failed: " mold frontend/last-error
+	"unused local declaration failed: " mold frontend/last-error
 ]
 unused-local-layout: layout-of unused-local-ir
 assert all [
-	(function-word unused-local-ir unused-local-layout 1 28) = 0
+	(function-word unused-local-ir unused-local-layout 1 28) = 1
+	(word-at unused-local-ir unused-local-layout/5) = 0
 	(ops-of unused-local-ir unused-local-layout) = [1 11]
-]["an unused local retained runtime storage"]
+]["an unused local was not preserved as untyped declaration metadata"]
 
 local-order-ir: compile-text {
 	Red/System []
@@ -285,10 +286,10 @@ assert binary? local-order-ir [
 ]
 local-order-layout: layout-of local-order-ir
 assert all [
-	(function-word local-order-ir local-order-layout 1 28) = 2
-	(instruction-word local-order-ir local-order-layout 2 8) = 2
-	(instruction-word local-order-ir local-order-layout 6 8) = 1
-]["unused local pruning changed the declaration-order slots of used locals"]
+	(function-word local-order-ir local-order-layout 1 28) = 3
+	(instruction-word local-order-ir local-order-layout 2 8) = 3
+	(instruction-word local-order-ir local-order-layout 6 8) = 2
+]["local slots did not retain declaration order"]
 
 explicit-local-ir: compile-text {
 	Red/System []

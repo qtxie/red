@@ -1704,25 +1704,30 @@ x64-codegen: context [
 		while [index <= count][
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
-			size: 8
-			alignment: 8
-			if parameter/flags = INLINE [
-				size: 0
-				alignment: 0
-				unless layout-type parameter/type true types members type-count 0
-					layouts member-offsets :size :alignment [return INVALID_IR]
-				if all [
-					index <= fn/parameter-count
-					not win64-register-size? size
-				][
-					size: 8
-					alignment: 8
+			either all [index > fn/parameter-count offsets/index = 0][
+				offsets/index: 0
+			][
+				if parameter/type = 0 [return INVALID_IR]
+				size: 8
+				alignment: 8
+				if parameter/flags = INLINE [
+					size: 0
+					alignment: 0
+					unless layout-type parameter/type true types members type-count 0
+						layouts member-offsets :size :alignment [return INVALID_IR]
+					if all [
+						index <= fn/parameter-count
+						not win64-register-size? size
+					][
+						size: 8
+						alignment: 8
+					]
 				]
+				if used > (2147483647 - size)[return INVALID_IR]
+				used: align (used + size) alignment
+				if used < 0 [return INVALID_IR]
+				offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
 			]
-			if used > (2147483647 - size)[return INVALID_IR]
-			used: align (used + size) alignment
-			if used < 0 [return INVALID_IR]
-			offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
 			index: index + 1
 		]
 		align used 8
@@ -2802,6 +2807,13 @@ x64-codegen: context [
 		unstable-stack?: false
 		last-math-operation: 0
 		cpu-pointer-ref: 0
+		storage-count: fn/parameter-count + fn/local-count
+		; Before layout, storage offsets also mark which local slots are referenced.
+		index: 1
+		while [index <= storage-count][
+			storage-offsets/index: either index <= fn/parameter-count [1][0]
+			index: index + 1
+		]
 		index: 1
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
@@ -2893,6 +2905,15 @@ x64-codegen: context [
 				tag-capacity: tag-capacity + 1
 			]
 			if all [
+				instruction/op = OP_ADDRESS
+				instruction/a = LOCAL_ADDRESS
+				instruction/b > fn/parameter-count
+				instruction/b <= storage-count
+			][
+				source-slot: instruction/b
+				storage-offsets/source-slot: 1
+			]
+			if all [
 				instruction/op = OP_NATIVE
 				any [
 					instruction/a = 2
@@ -2952,7 +2973,6 @@ x64-codegen: context [
 			all [sub-entry-count > 0 main-entry-count <> 1]
 			all [sub-entry-count = 0 main-entry-count <> 0]
 		][return INVALID_IR]
-		storage-count: fn/parameter-count + fn/local-count
 		storage-bytes: plan-storage fn parameters types members type-count
 			layouts member-offsets storage-offsets
 		if storage-bytes < 0 [return storage-bytes]
@@ -3129,7 +3149,7 @@ x64-codegen: context [
 		while [index <= storage-count][
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
-			if parameter/flags = INLINE [
+			if all [storage-offsets/index <> 0 parameter/flags = INLINE][
 				unless clear? [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
@@ -3453,6 +3473,7 @@ x64-codegen: context [
 									type-count layouts member-offsets) = 0
 							]
 							location-source: storage-displacement storage-offsets instruction/b
+							if location-source = 0 [return INVALID_IR]
 							either linear? [
 								location: either valid? [
 									LOCATION_FRAME_INDIRECT
@@ -7495,6 +7516,7 @@ x64-codegen: context [
 				total-size scratch-count
 				id next-instruction next-offset instruction-count function-size entry-size
 				code-cursor name-cursor global-size global-align global-offset
+				parameter-id parameter-end
 				global-reference-count used-import-count import-reference-count
 				image-import-count reference-count count first-reference last-library
 				library-offset external-offset output-import-id exit-reference-id
@@ -7769,11 +7791,39 @@ x64-codegen: context [
 			ir-parameter: as rsir-parameter! (parameter-data
 				+ ((id - 1) * RSIR_PARAMETER_SIZE))
 			if any [
-				not valid-type-ref? ir-parameter/type header/type-count
+				all [ir-parameter/type <> 0
+					not valid-type-ref? ir-parameter/type header/type-count]
 				ir-parameter/flags < 0 ir-parameter/flags > INLINE
 				all [ir-parameter/flags = INLINE
 					not aggregate-ref? ir-parameter/type type-data header/type-count]
 			][return INVALID_IR]
+			id: id + 1
+		]
+		id: 1
+		while [id <= header/import-count][
+			ir-import: as rsir-import! (import-data + ((id - 1) * RSIR_IMPORT_SIZE))
+			parameter-id: ir-import/first-parameter
+			parameter-end: parameter-id + ir-import/parameter-count
+			while [parameter-id < parameter-end][
+				ir-parameter: as rsir-parameter! (parameter-data
+					+ (parameter-id * RSIR_PARAMETER_SIZE))
+				if ir-parameter/type = 0 [return INVALID_IR]
+				parameter-id: parameter-id + 1
+			]
+			id: id + 1
+		]
+		id: 1
+		while [id <= header/function-count][
+			ir-function: as rsir-function! (function-data
+				+ ((id - 1) * RSIR_FUNCTION_SIZE))
+			parameter-id: ir-function/first-parameter
+			parameter-end: ir-function/first-local
+			while [parameter-id < parameter-end][
+				ir-parameter: as rsir-parameter! (parameter-data
+					+ (parameter-id * RSIR_PARAMETER_SIZE))
+				if ir-parameter/type = 0 [return INVALID_IR]
+				parameter-id: parameter-id + 1
+			]
 			id: id + 1
 		]
 

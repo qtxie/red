@@ -285,6 +285,8 @@ if (x64-codegen/implicitly-compatible-types -7 -8 0 false
 output: allocate 1024
 void-ir: allocate 132
 local-ir: allocate 260
+unused-local-ir: allocate 260
+untyped-import-ir: allocate 164
 pointer-ir: allocate 132
 index-ir: allocate 260
 arithmetic-ir: allocate 260
@@ -327,7 +329,8 @@ fn: declare codegen-function!
 image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
-	null? output null? void-ir null? local-ir null? pointer-ir null? index-ir
+	null? output null? void-ir null? local-ir null? unused-local-ir null? untyped-import-ir
+	null? pointer-ir null? index-ir
 	null? arithmetic-ir
 	null? expression-ir
 	null? aggregate-ir null? abi-ir null? small-return-ir
@@ -659,6 +662,132 @@ if (x64-codegen/generate local-ir 194 output 1024 0) <> x64-codegen/INVALID_IR [
 	failures: failures + 1
 ]
 put local-ir 180 -5
+
+; Local declarations stay in RSIR source order. The existing instruction scan
+; owns storage liveness, so an unused untyped slot consumes no frame space.
+put unused-local-ir 0 1
+put unused-local-ir 4 0
+put unused-local-ir 8 0
+put unused-local-ir 12 0
+put unused-local-ir 16 1
+put unused-local-ir 20 7
+put unused-local-ir 24 0
+put unused-local-ir 28 0
+put unused-local-ir 32 0
+
+put unused-local-ir 36 0
+put unused-local-ir 40 2
+put unused-local-ir 44 -5
+put unused-local-ir 48 0
+put unused-local-ir 52 0
+put unused-local-ir 56 0
+put unused-local-ir 60 0
+put unused-local-ir 64 2
+
+; Type zero is a local-only declaration marker, never a callable parameter.
+put untyped-import-ir 0 1
+put untyped-import-ir 4 0
+put untyped-import-ir 8 0
+put untyped-import-ir 12 1
+put untyped-import-ir 16 1
+put untyped-import-ir 20 1
+put untyped-import-ir 24 0
+put untyped-import-ir 28 0
+put untyped-import-ir 32 0
+
+put untyped-import-ir 36 0
+put untyped-import-ir 40 1
+put untyped-import-ir 44 1
+put untyped-import-ir 48 1
+put untyped-import-ir 52 0
+put untyped-import-ir 56 2
+put untyped-import-ir 60 0
+put untyped-import-ir 64 1
+
+put untyped-import-ir 68 2
+put untyped-import-ir 72 1
+put untyped-import-ir 76 0
+put untyped-import-ir 80 0
+put untyped-import-ir 84 1
+put untyped-import-ir 88 0
+put untyped-import-ir 92 1
+put untyped-import-ir 96 0
+put untyped-import-ir 100 1
+
+put untyped-import-ir 104 -5
+put untyped-import-ir 108 0
+put-instruction untyped-import-ir 112 11 0 0 0
+untyped-import-ir/129: as byte! 6Ch
+untyped-import-ir/130: as byte! 65h
+untyped-import-ir/131: as byte! 66h
+if (x64-codegen/generate untyped-import-ir 131 output 1024 0) <= 0 [
+	print ["typed import parameter control was rejected" lf]
+	failures: failures + 1
+]
+put untyped-import-ir 104 0
+if (x64-codegen/generate untyped-import-ir 131 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	print ["untyped import parameter was accepted" lf]
+	failures: failures + 1
+]
+put unused-local-ir 68 7
+
+put unused-local-ir 72 0
+put unused-local-ir 76 0
+put unused-local-ir 80 -5
+put unused-local-ir 84 0
+put-instruction unused-local-ir 88 1 -5 7 0
+put-instruction unused-local-ir 104 3 1 2 0
+put-instruction unused-local-ir 120 5 0 0 0
+put-instruction unused-local-ir 136 12 0 0 0
+put-instruction unused-local-ir 152 3 1 2 0
+put-instruction unused-local-ir 168 4 0 0 0
+put-instruction unused-local-ir 184 11 -5 0 0
+unused-local-ir/201: as byte! 66h
+unused-local-ir/202: as byte! 6Eh
+
+size: x64-codegen/generate unused-local-ir 202 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if any [
+		fn/frame-size <> 64
+		fn/code-size <> local-code-size
+		not execute-first? output 7
+	][
+		print ["unused local changed frame or code size" lf]
+		failures: failures + 1
+	]
+]
+put unused-local-ir 72 -10
+size: x64-codegen/generate unused-local-ir 202 output 1024 0
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if any [fn/frame-size <> 64 fn/code-size <> local-code-size][
+		print ["typed unused local retained frame storage" lf]
+		failures: failures + 1
+	]
+]
+if size <= 0 [failures: failures + 1]
+put unused-local-ir 72 0
+put unused-local-ir 112 1
+if (x64-codegen/generate unused-local-ir 202 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	print ["used untyped local was accepted" lf]
+	failures: failures + 1
+]
+put unused-local-ir 112 2
+put unused-local-ir 56 1
+put unused-local-ir 60 1
+put unused-local-ir 64 1
+if (x64-codegen/generate unused-local-ir 202 output 1024 0)
+	<> x64-codegen/INVALID_IR [
+	print ["untyped function parameter was accepted" lf]
+	failures: failures + 1
+]
+put unused-local-ir 56 0
+put unused-local-ir 60 0
+put unused-local-ir 64 2
 
 ; first-local and local-count describe one contiguous function storage slice.
 put local-ir 60 1
@@ -4498,6 +4627,8 @@ if (x64-codegen/generate no-return-ir 144 output 1024 0) <> x64-codegen/INVALID_
 free output
 free void-ir
 free local-ir
+free unused-local-ir
+free untyped-import-ir
 free pointer-ir
 free index-ir
 free arithmetic-ir

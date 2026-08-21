@@ -967,6 +967,56 @@ Already retained:
   seconds (8,730 tests, 16,755/16,755 assertions). H78-H81 reuse the same fixed
   runtime DLL SHA256
   `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- CALL argument marshaling now consumes the same one-slot location directly
+  when it is the last logical scalar argument. This is a backend consequence
+  of postfix order, not a new frontend convention: for every nonempty CALL the
+  final argument is the stack top. Fixed and C-variadic calls move or convert
+  that value from `RAX`/`XMM0` into its Win64 register or outgoing stack slot;
+  packed calls write it directly into the packed list. A volatile `R11` or
+  `XMM4` holds it only when marshaling an earlier argument would overwrite its
+  ABI register. Typed/custom calls and aggregate values materialize through
+  the existing frame path. C-vararg floating register mirrors now use a direct
+  XMM-to-GPR transfer. No RSIR field, frontend rule, adapter, allocation, CFG,
+  or extra pass is introduced;
+- the canonical compiler RSIR contains 454,640 instructions and 116,970 CALLs.
+  Of the nonempty calls, 72,846 have an adjacent producer and 72,844 of those
+  producers are scalar. Their immediate producers are 36,313 LOADs, 27,703
+  LITERALs, 4,020 REFERENCEs, 2,779 CALLs, 1,082 CASTs, 947 BINARYs, and two
+  NATIVEs. The corresponding call modes are 70,640 fixed, 2,191 packed, eight
+  typed, and seven C variadic. This distribution selected the general last
+  argument boundary; no source name or fixture shape selects it;
+- H81 built the source-bearing H82 in 58.180 wall seconds (compiler profile
+  58.043, frontend 22.509, RSIR frontend 24.645, native codegen 0.435, link
+  build 4.605). H82 is 4,574,208 bytes. H82 built the first argument-forwarded
+  H83 in 67.701 seconds, and H83 built H84 in 61.540 seconds. Final packed and
+  floating stack-argument refinements produced H87/H88 in 58.441 and 66.450
+  seconds. H87 and H88 are both 4,296,192 bytes with `.text` raw size
+  `395000h`, virtual size `394F11h`, and `.text` SHA256
+  `DCCB49F3BA3615C97A7A3E706D0B2E573BBBBAABABD4361738DD745D60AF1563`;
+  their complete files differ only in PE metadata. Against the H81 fixed point,
+  both image and raw code fall by 270,848 bytes: 5.93% of the image and 6.73%
+  of `.text`;
+- H88 rebuilds and passes the primitive encoder, native codegen, and thin
+  frontend fixtures. Focused callers cover a signed fixed argument, a fifth
+  stack argument, floating values protected across earlier arguments, a fifth
+  floating stack argument locked at 87 bytes, two packed arguments, and a
+  one-value packed call whose caller is locked at 52 bytes. H88 passes the
+  complete Windows x64 Red/System runner in 72.157
+  seconds (10,582 tests, 12,647/12,647 assertions, no compile failures) and the
+  complete current non-View Red runner in 270.657 seconds (8,730 tests,
+  16,755/16,755 assertions). H82-H88 reuse the fixed runtime DLL SHA256
+  `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`;
+- the separate Red/System compiler-diagnostic runner remains an explicit H0
+  gap: H88 reports 124 assertions and 38 failures. H81 reports the same totals,
+  and the ordered set of all 38 failed test labels is identical, so this batch
+  introduces no diagnostic regression but does not claim that gate as passed;
+- this batch proves a code-quality and footprint improvement, not a
+  self-compilation wall-time improvement. Fixed-point builds span the observed
+  58-66 second band, while native codegen remains below 0.8 seconds;
+  the variation is still concentrated in the Red frontend, RSIR frontend, and
+  their GC cycles. Further compiler-evolution speedups must reduce those two
+  Red phases or their allocation pressure rather than infer speed from `.text`
+  size alone;
 - the retired wire/schema/driver/adapter experiment and its generated test
   closure have been removed from the repository.
 

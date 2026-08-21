@@ -451,6 +451,50 @@ non-View Red runner in 243.720 seconds (8,730 tests, 16,755/16,755 assertions).
 The fixed runtime DLL SHA256 remains
 `96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
 
+The H82-H88 gate extends the same one-slot selector across the CALL argument
+boundary. Postfix order makes the last logical argument the stack top, so fixed
+and C-variadic calls can marshal a live scalar directly from `RAX`/`XMM0` to
+its Win64 register or outgoing stack slot. Packed calls write the live bits
+directly into their list. `R11` or `XMM4` protects the value only across an
+earlier marshaling operation that uses the same ABI work register. Typed and
+custom calls, aggregates, incoming control edges, and other non-linear cases
+retain the existing frame path. C-vararg XMM register mirrors are direct as
+well. This changes no evaluation order, frontend rule, RSIR field, allocation,
+adapter, CFG, or optimization-pass structure.
+
+The canonical compiler RSIR has 116,970 CALL instructions. Of its nonempty
+calls, 72,846 have an adjacent producer and 72,844 of those producers are
+scalar: 36,313 LOAD, 27,703 LITERAL, 4,020 REFERENCE, 2,779 CALL, 1,082 CAST,
+947 BINARY, and two NATIVE. The mode split is 70,640 fixed, 2,191 packed, eight
+typed, and seven C variadic. These counts define the general backend boundary;
+no self-host name or test-specific rule is used.
+
+H81 built source-bearing H82 in 58.180 wall seconds. H82 built the first
+argument-forwarded H83 in 67.701 seconds, H83 built H84 in 61.540 seconds, and
+the final packed and floating stack-argument refinements built H87/H88 in
+58.441/66.450 seconds. H87 and H88 are both 4,296,192 bytes with `.text` raw
+size `395000h`, virtual size
+`394F11h`, and identical `.text` SHA256
+`DCCB49F3BA3615C97A7A3E706D0B2E573BBBBAABABD4361738DD745D60AF1563`.
+Against H81, image and raw code both fall by 270,848 bytes (5.93% and 6.73%).
+The fixed-point wall samples do not establish a compilation-time speedup: the
+native codegen phase remains below 0.8 seconds and the observed variation is
+in the Red and RSIR frontend phases.
+
+H88 rebuilds and passes the encoder, native codegen, and frontend fixtures. It
+passes the complete Windows x64 Red/System runner in 72.157 seconds (10,582
+tests, 12,647/12,647 assertions, no compile failures) and the complete current
+non-View Red runner in 270.657 seconds (8,730 tests, 16,755/16,755 assertions).
+Focused execution covers fixed register and stack arguments, protected
+floating multi-argument marshaling, a fifth floating stack argument locked at
+87 bytes, two-value packed marshaling, and a direct one-value packed caller
+locked at 52 bytes. H82-H88 reuse runtime DLL SHA256
+`96C8A603A021FDBAFBAC715966DDB1CB5D98375375A8CB4863F084322B04958B`.
+The separate compiler-diagnostic runner remains incomplete at 124 assertions
+and 38 failures. H81 has the same totals and the same ordered set of 38 failed
+test labels, so the CALL argument gate adds no diagnostic regression; those
+frontend diagnostic families remain required for H0.
+
 ## Windows Linker Gate
 
 Applicable tests in system/tests/static-link include:

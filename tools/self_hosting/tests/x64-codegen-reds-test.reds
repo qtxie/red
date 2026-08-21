@@ -239,6 +239,10 @@ cast-float-width-code-size: 0
 cast-integer-float-code-size: 0
 call-cast-integer-code-size: 0
 call-cast-float-code-size: 0
+call-argument-code-size: 0
+call-float-argument-code-size: 0
+packed-argument-code-size: 0
+widening-argument-code-size: 0
 no-types: as byte-ptr! 0
 sink-pairs: declare signature-pairs!
 sink-pairs/memory: null
@@ -303,6 +307,8 @@ array-ir: allocate 260
 array-compare-ir: allocate 228
 branch-ir: allocate 260
 call-result-ir: allocate 260
+call-argument-ir: allocate 242
+float-argument-ir: allocate 379
 boolean-ir: allocate 260
 merge-ir: allocate 260
 literal-merge-ir: allocate 260
@@ -335,6 +341,7 @@ if any [
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
 	null? exception-ir null? no-return-ir
+	null? call-argument-ir null? float-argument-ir
 ][quit 1]
 
 ; Null is implicitly compatible with reference-shaped sinks only. Keep the
@@ -1434,6 +1441,12 @@ if size <= 0 [failures: failures + 1]
 if size > 0 [
 	header: as codegen-header! output
 	if header/function-count <> 3 [failures: failures + 1]
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	widening-argument-code-size: fn/code-size
+	if widening-argument-code-size <> 231 [
+		print ["O0 fifth argument code size: " widening-argument-code-size lf]
+		failures: failures + 1
+	]
 	unless execute-first? output 1 [failures: failures + 1]
 ]
 
@@ -2223,6 +2236,12 @@ if size <= 0 [failures: failures + 1]
 if size > 0 [
 	header: as codegen-header! output
 	if header/function-count <> 2 [failures: failures + 1]
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	packed-argument-code-size: fn/code-size
+	if packed-argument-code-size <> 74 [
+		print ["O0 packed argument code size: " packed-argument-code-size lf]
+		failures: failures + 1
+	]
 	unless execute-first? output 51 [failures: failures + 1]
 ]
 put variadic-ir 136 -5
@@ -3027,6 +3046,287 @@ if any [
 ][
 	print ["O0 integer CALL keep CAST failed" lf]
 	failures: failures + 1
+]
+
+; A linear scalar producer is the last logical CALL argument. The fixed ABI
+; consumes the signed int8 value directly while widening it to int64.
+put call-argument-ir 0 1
+put call-argument-ir 4 0
+put call-argument-ir 8 0
+put call-argument-ir 12 0
+put call-argument-ir 16 2
+put call-argument-ir 20 6
+put call-argument-ir 24 0
+put call-argument-ir 28 0
+put call-argument-ir 32 0
+
+put call-argument-ir 36 0
+put call-argument-ir 40 1
+put call-argument-ir 44 -7
+put call-argument-ir 48 0
+put call-argument-ir 52 0
+put call-argument-ir 56 0
+put call-argument-ir 60 0
+put call-argument-ir 64 0
+put call-argument-ir 68 3
+
+put call-argument-ir 72 1
+put call-argument-ir 76 1
+put call-argument-ir 80 -7
+put call-argument-ir 84 0
+put call-argument-ir 88 0
+put call-argument-ir 92 1
+put call-argument-ir 96 1
+put call-argument-ir 100 0
+put call-argument-ir 104 3
+
+put call-argument-ir 108 -7
+put call-argument-ir 112 0
+put-instruction call-argument-ir 116 1 -1 -2 -1
+put-instruction call-argument-ir 132 7 2 1 -7
+put-instruction call-argument-ir 148 11 -7 0 0
+put-instruction call-argument-ir 164 3 1 1 0
+put-instruction call-argument-ir 180 4 0 0 0
+put-instruction call-argument-ir 196 11 -7 0 0
+call-argument-ir/213: as byte! 61h
+call-argument-ir/214: as byte! 62h
+
+size: x64-codegen/generate call-argument-ir 214 output 1024 0
+if any [size <= 0 not execute-first? output -2][
+	print ["O0 fixed scalar CALL argument failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	call-argument-code-size: fn/code-size
+	if call-argument-code-size <> 36 [
+		print ["O0 fixed argument code size: " call-argument-code-size lf]
+		failures: failures + 1
+	]
+]
+
+; A one-value packed CALL can write the live RAX value directly into its list.
+; There is no earlier packed value that requires staging through R11.
+put call-argument-ir 0 1
+put call-argument-ir 4 0
+put call-argument-ir 8 1
+put call-argument-ir 12 0
+put call-argument-ir 16 2
+put call-argument-ir 20 6
+put call-argument-ir 24 0
+put call-argument-ir 28 0
+put call-argument-ir 32 0
+
+put call-argument-ir 36 -6
+put call-argument-ir 40 -8
+put call-argument-ir 44 0
+put call-argument-ir 48 0
+put call-argument-ir 52 0
+
+put call-argument-ir 56 0
+put call-argument-ir 60 1
+put call-argument-ir 64 -5
+put call-argument-ir 68 0
+put call-argument-ir 72 0
+put call-argument-ir 76 0
+put call-argument-ir 80 0
+put call-argument-ir 84 0
+put call-argument-ir 88 3
+
+put call-argument-ir 92 1
+put call-argument-ir 96 1
+put call-argument-ir 100 -5
+put call-argument-ir 104 x64-codegen/VARIADIC
+put call-argument-ir 108 0
+put call-argument-ir 112 2
+put call-argument-ir 116 2
+put call-argument-ir 120 0
+put call-argument-ir 124 3
+
+put call-argument-ir 128 -5
+put call-argument-ir 132 0
+put call-argument-ir 136 1
+put call-argument-ir 140 0
+put-instruction call-argument-ir 144 1 -5 41 0
+put-instruction call-argument-ir 160 7 2 1 -5
+put-instruction call-argument-ir 176 11 -5 0 0
+put-instruction call-argument-ir 192 3 1 1 0
+put-instruction call-argument-ir 208 4 0 0 0
+put-instruction call-argument-ir 224 11 -5 0 0
+call-argument-ir/241: as byte! 61h
+call-argument-ir/242: as byte! 62h
+
+size: x64-codegen/generate call-argument-ir 242 output 1024 0
+if size <= 0 [
+	print ["O0 one-value packed CALL generate status: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 52 [
+		print ["O0 one-value packed code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+	unless execute-first? output 1 [
+		print ["O0 one-value packed CALL execution failed" lf]
+		failures: failures + 1
+	]
+]
+
+; The second floating argument is a live CALL result in XMM0. Loading the
+; earlier floating argument must not destroy it before the fixed CALL.
+put float-argument-ir 0 1
+put float-argument-ir 4 0
+put float-argument-ir 8 0
+put float-argument-ir 12 0
+put float-argument-ir 16 3
+put float-argument-ir 20 9
+put float-argument-ir 24 0
+put float-argument-ir 28 0
+put float-argument-ir 32 0
+
+put float-argument-ir 36 0
+put float-argument-ir 40 1
+put float-argument-ir 44 -10
+put float-argument-ir 48 0
+put float-argument-ir 52 0
+put float-argument-ir 56 0
+put float-argument-ir 60 0
+put float-argument-ir 64 0
+put float-argument-ir 68 4
+
+put float-argument-ir 72 1
+put float-argument-ir 76 1
+put float-argument-ir 80 -10
+put float-argument-ir 84 0
+put float-argument-ir 88 0
+put float-argument-ir 92 2
+put float-argument-ir 96 2
+put float-argument-ir 100 0
+put float-argument-ir 104 3
+
+put float-argument-ir 108 2
+put float-argument-ir 112 1
+put float-argument-ir 116 -10
+put float-argument-ir 120 0
+put float-argument-ir 124 2
+put float-argument-ir 128 0
+put float-argument-ir 132 2
+put float-argument-ir 136 0
+put float-argument-ir 140 2
+
+put float-argument-ir 144 -10
+put float-argument-ir 148 0
+put float-argument-ir 152 -10
+put float-argument-ir 156 0
+put-instruction float-argument-ir 160 1 -10 0 3FF00000h
+put-instruction float-argument-ir 176 7 3 0 -10
+put-instruction float-argument-ir 192 7 2 2 -10
+put-instruction float-argument-ir 208 11 -10 0 0
+put-instruction float-argument-ir 224 3 1 2 0
+put-instruction float-argument-ir 240 4 0 0 0
+put-instruction float-argument-ir 256 11 -10 0 0
+put-instruction float-argument-ir 272 1 -10 0 3FF80000h
+put-instruction float-argument-ir 288 11 -10 0 0
+float-argument-ir/305: as byte! 61h
+float-argument-ir/306: as byte! 62h
+float-argument-ir/307: as byte! 63h
+
+size: x64-codegen/generate float-argument-ir 307 output 1024 0
+if any [size <= 0 not execute-floating? output 1.5][
+	print ["O0 floating CALL argument staging failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	call-float-argument-code-size: fn/code-size
+	if call-float-argument-code-size <> 58 [
+		print ["O0 floating argument code size: " call-float-argument-code-size lf]
+		failures: failures + 1
+	]
+]
+
+; The fifth physical argument is a live floating CALL result in XMM0. It is
+; staged in XMM4 while four earlier register arguments are marshaled, then
+; written once without changing the logical argument loop index.
+put float-argument-ir 0 1
+put float-argument-ir 4 0
+put float-argument-ir 8 0
+put float-argument-ir 12 0
+put float-argument-ir 16 3
+put float-argument-ir 20 12
+put float-argument-ir 24 0
+put float-argument-ir 28 0
+put float-argument-ir 32 0
+
+put float-argument-ir 36 0
+put float-argument-ir 40 1
+put float-argument-ir 44 -10
+put float-argument-ir 48 0
+put float-argument-ir 52 0
+put float-argument-ir 56 0
+put float-argument-ir 60 0
+put float-argument-ir 64 0
+put float-argument-ir 68 7
+
+put float-argument-ir 72 1
+put float-argument-ir 76 1
+put float-argument-ir 80 -10
+put float-argument-ir 84 0
+put float-argument-ir 88 0
+put float-argument-ir 92 5
+put float-argument-ir 96 5
+put float-argument-ir 100 0
+put float-argument-ir 104 3
+
+put float-argument-ir 108 2
+put float-argument-ir 112 1
+put float-argument-ir 116 -10
+put float-argument-ir 120 0
+put float-argument-ir 124 5
+put float-argument-ir 128 0
+put float-argument-ir 132 5
+put float-argument-ir 136 0
+put float-argument-ir 140 2
+
+put float-argument-ir 144 -5
+put float-argument-ir 148 0
+put float-argument-ir 152 -5
+put float-argument-ir 156 0
+put float-argument-ir 160 -5
+put float-argument-ir 164 0
+put float-argument-ir 168 -5
+put float-argument-ir 172 0
+put float-argument-ir 176 -10
+put float-argument-ir 180 0
+
+put-instruction float-argument-ir 184 1 -5 0 0
+put-instruction float-argument-ir 200 1 -5 0 0
+put-instruction float-argument-ir 216 1 -5 0 0
+put-instruction float-argument-ir 232 1 -5 0 0
+put-instruction float-argument-ir 248 7 3 0 -10
+put-instruction float-argument-ir 264 7 2 5 -10
+put-instruction float-argument-ir 280 11 -10 0 0
+put-instruction float-argument-ir 296 3 1 5 0
+put-instruction float-argument-ir 312 4 0 0 0
+put-instruction float-argument-ir 328 11 -10 0 0
+put-instruction float-argument-ir 344 1 -10 0 1073217536
+put-instruction float-argument-ir 360 11 -10 0 0
+float-argument-ir/377: as byte! 61h
+float-argument-ir/378: as byte! 62h
+float-argument-ir/379: as byte! 63h
+
+size: x64-codegen/generate float-argument-ir 379 output 1024 0
+if any [size <= 0 not execute-floating? output 1.5][
+	print ["O0 floating stack CALL argument failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 87 [
+		print ["O0 floating stack argument code size: " fn/code-size lf]
+		failures: failures + 1
+	]
 ]
 
 ; A boolean diamond materializes the truth value already on the postfix stack.
@@ -4219,6 +4519,8 @@ free array-ir
 free array-compare-ir
 free branch-ir
 free call-result-ir
+free call-argument-ir
+free float-argument-ir
 free boolean-ir
 free merge-ir
 free literal-merge-ir

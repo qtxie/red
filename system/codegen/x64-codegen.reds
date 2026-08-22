@@ -3333,13 +3333,13 @@ x64-codegen: context [
 			source-depth
 			next-index
 			global-reference-id
-			main-entry-count sub-entry-count compatibility [integer!]
+			main-entry-count sub-entry-count compatibility flags-condition [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
 			linear? consume-location? global-target? defer-global? paired? set-pair?
-			address-pair? load-pair? direct-store? spill-next?
+			address-pair? load-pair? direct-store? spill-next? fuse-branch?
 			source-located? direct-frame-target? live?
 			sub-returns? [logic!]
 	][
@@ -3371,6 +3371,7 @@ x64-codegen: context [
 		sub-entry-count: 0
 		unstable-stack?: false
 		last-math-operation: 0
+		flags-condition: -1
 		cpu-pointer-ref: 0
 		storage-count: fn/parameter-count + fn/local-count
 		; Before layout, storage offsets also mark which local slots are referenced.
@@ -7221,6 +7222,7 @@ x64-codegen: context [
 						stack-kinds/depth <> VALUE
 					][return INVALID_IR]
 					operation: instruction/a
+					fuse-branch?: false
 					left-ref: stack-types/target-slot
 					left-flags: stack-flags/target-slot
 					right-ref: stack-types/depth
@@ -7705,12 +7707,34 @@ x64-codegen: context [
 					if comparison? [
 						condition: comparison-condition operation signed
 						if condition < 0 [return INVALID_IR]
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/condition-result at (capacity - written)
-							condition
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
+						; An integer compare consumed only by the adjacent
+						; BRANCH never needs its boolean materialized: the
+						; branch jumps straight on the compare flags.
+						fuse-branch?: all [
+							linear?
+							(instruction-effects/next-index and EFFECT_LIVE) <> 0
+							next-instruction/op = OP_BRANCH
+							any [
+								next-instruction/b = 0
+								next-instruction/b = 1
+							]
+							next-instruction/c = 0
+							(instruction-effects/next-index
+								and EFFECT_CONSTANT_BRANCH) = 0
+							not boolean-diamond? (index + 1)
+								fn/instruction-count instructions
+								catch-depths control-uses
+						]
+						either fuse-branch? [
+							flags-condition: condition
+						][
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/condition-result at
+								(capacity - written) condition
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
 					]
 					]
 					unless floating? [last-math-operation: operation]
@@ -7733,6 +7757,12 @@ x64-codegen: context [
 					location: LOCATION_NONE
 					location-depth: 0
 					location-source: 0
+					either fuse-branch? [
+						; The result lives only in the compare flags and is
+						; consumed by the adjacent branch before any other
+						; instruction can clobber them.
+						0
+					][
 					either linear? [
 						if all [not floating? not comparison? width < 4][
 							signed: either signed-type? ref types type-count [1][0]
@@ -7762,6 +7792,7 @@ x64-codegen: context [
 						]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
+					]
 					]
 				]
 				instruction/op = OP_CATCH [
@@ -7964,7 +7995,7 @@ x64-codegen: context [
 							instructions catch-depths control-uses
 						at: as byte-ptr! 0
 						tracked?: location = LOCATION_GPR
-						unless tracked? [
+						unless any [tracked? flags-condition >= 0][
 							if not measure? [at: code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
@@ -7972,12 +8003,14 @@ x64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/test-register at (capacity - written)
-							x64-encoder/RAX 4
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
+						if flags-condition < 0 [
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/test-register at
+								(capacity - written) x64-encoder/RAX 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
 						either fold-boolean? [
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
@@ -8023,7 +8056,18 @@ x64-codegen: context [
 								displacement: instruction-offsets/target
 									- instruction-offsets/target-offset
 							]
-							condition: either instruction/b = 1 [5][4]
+							condition: case [
+								flags-condition >= 0 [
+									; Branch directly on the fused compare
+									; flags; inversion is the adjacent cc.
+									either instruction/b = 1 [
+										flags-condition
+									][flags-condition xor 1]
+								]
+								instruction/b = 1 [5]
+								true [4]
+							]
+							flags-condition: -1
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: x64-encoder/jump-condition at

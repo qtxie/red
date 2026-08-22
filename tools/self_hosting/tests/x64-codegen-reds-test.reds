@@ -316,6 +316,7 @@ boolean-ir: allocate 260
 merge-ir: allocate 260
 literal-merge-ir: allocate 260
 direct-store-ir: allocate 200
+fused-branch-ir: allocate 260
 selection-ir: allocate 260
 recursive-pointer-ir: allocate 164
 recursive-value-ir: allocate 148
@@ -343,7 +344,8 @@ if any [
 	null? static-cast-ir
 	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
 	null? call-result-ir null? boolean-ir
-	null? merge-ir null? literal-merge-ir null? direct-store-ir null? selection-ir
+	null? merge-ir null? literal-merge-ir null? direct-store-ir
+	null? fused-branch-ir null? selection-ir
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
 	null? exception-ir null? no-return-ir null? effect-ir
@@ -3154,6 +3156,68 @@ put-instruction direct-store-ir 136 1 -7 305419896 258
 size: x64-codegen/generate direct-store-ir 170 output 1024 0
 if any [size <= 0 not execute-first? output 305419896][
 	print ["wide merge-point int64 literal store failed" lf]
+	failures: failures + 1
+]
+
+; fn: func [return: [integer!]][either 5 < 10 [222][111]]
+; The integer compare feeds only the adjacent BRANCH, so the branch jumps
+; straight on the compare flags without materializing a boolean.
+put fused-branch-ir 0 1
+put fused-branch-ir 4 0
+put fused-branch-ir 8 0
+put fused-branch-ir 12 0
+put fused-branch-ir 16 1
+put fused-branch-ir 20 8
+put fused-branch-ir 24 0
+put fused-branch-ir 28 0
+put fused-branch-ir 32 0
+
+put fused-branch-ir 36 0
+put fused-branch-ir 40 2
+put fused-branch-ir 44 -5
+put fused-branch-ir 48 0
+put fused-branch-ir 52 0
+put fused-branch-ir 56 0
+put fused-branch-ir 60 0
+put fused-branch-ir 64 0
+put fused-branch-ir 68 8
+
+put-instruction fused-branch-ir 72 1 -5 5 0
+put-instruction fused-branch-ir 88 1 -5 10 0
+put-instruction fused-branch-ir 104 15 16 0 0
+put-instruction fused-branch-ir 120 17 7 1 0
+put-instruction fused-branch-ir 136 1 -5 111 0
+put-instruction fused-branch-ir 152 11 -5 0 0
+put-instruction fused-branch-ir 168 1 -5 222 0
+put-instruction fused-branch-ir 184 11 -5 0 0
+fused-branch-ir/201: as byte! 61h
+fused-branch-ir/202: as byte! 62h
+
+size: x64-codegen/generate fused-branch-ir 202 output 1024 0
+if any [size <= 0 not execute-first? output 222][
+	print ["fused true compare branch failed" lf]
+	failures: failures + 1
+]
+
+; Branch-if-false inverts the fused condition code.
+put-instruction fused-branch-ir 120 17 7 0 0
+size: x64-codegen/generate fused-branch-ir 202 output 1024 0
+if any [size <= 0 not execute-first? output 111][
+	print ["fused inverted compare branch failed" lf]
+	failures: failures + 1
+]
+
+; A false compare reaches the fallthrough arm on both polarities.
+put-instruction fused-branch-ir 72 1 -5 15 0
+size: x64-codegen/generate fused-branch-ir 202 output 1024 0
+if any [size <= 0 not execute-first? output 222][
+	print ["fused false inverted compare branch failed" lf]
+	failures: failures + 1
+]
+put-instruction fused-branch-ir 120 17 7 1 0
+size: x64-codegen/generate fused-branch-ir 202 output 1024 0
+if any [size <= 0 not execute-first? output 111][
+	print ["fused false compare branch failed" lf]
 	failures: failures + 1
 ]
 

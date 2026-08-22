@@ -319,6 +319,27 @@ if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 if (x64-encoder/outgoing-store code 128 32 8) <> 5 [failures: failures + 1]
+size: x64-encoder/frame-immediate-store code 128 -64 12345678h 4
+expected: #{C745C078563412}
+if any [size <> 7 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/frame-immediate-store code 128 128 12345678h 4
+expected: #{C7858000000078563412}
+if any [size <> 10 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/frame-immediate-store code 128 -64 12345678h 8
+expected: #{48C745C078563412}
+if any [size <> 8 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/frame-immediate-store code 128 128 12345678h 8
+expected: #{48C7858000000078563412}
+if any [size <> 11 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+if (x64-encoder/frame-immediate-store code 128 -64 0 2) <> -1 [failures: failures + 1]
 size: x64-encoder/outgoing-immediate-store code 128 32 12345678h
 expected: #{C744242078563412}
 if any [size <> 8 (compare-memory code expected size) <> 0][

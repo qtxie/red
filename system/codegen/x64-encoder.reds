@@ -681,6 +681,35 @@ x64-encoder: context [
 		size
 	]
 
+	frame-immediate-store: func [
+		code [byte-ptr!]
+		capacity displacement value width [integer!]
+		return: [integer!]
+		/local displacement-size size [integer!]
+			at [byte-ptr!]
+	][
+		unless any [width = 4 width = 8][return -1]
+		displacement-size: either fits-i8? displacement [1][4]
+		size: 6 + displacement-size
+		if width = 8 [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if width = 8 [at/1: as byte! 48h at: at + 1]
+		at/1: as byte! C7h
+		at/2: as byte! either displacement-size = 1 [45h][85h]
+		at: at + 2
+		either displacement-size = 1 [
+			at/1: as byte! displacement
+			at: at + 1
+		][
+			write-i32 at displacement
+			at: at + 4
+		]
+		write-i32 at value
+		size
+	]
+
 	register-load: func [
 		code [byte-ptr!]
 		capacity target base displacement [integer!]

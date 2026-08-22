@@ -315,6 +315,7 @@ float-argument-ir: allocate 379
 boolean-ir: allocate 260
 merge-ir: allocate 260
 literal-merge-ir: allocate 260
+direct-store-ir: allocate 200
 selection-ir: allocate 260
 recursive-pointer-ir: allocate 164
 recursive-value-ir: allocate 148
@@ -342,7 +343,7 @@ if any [
 	null? static-cast-ir
 	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
 	null? call-result-ir null? boolean-ir
-	null? merge-ir null? literal-merge-ir null? selection-ir
+	null? merge-ir null? literal-merge-ir null? direct-store-ir null? selection-ir
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
 	null? exception-ir null? no-return-ir null? effect-ir
@@ -1692,7 +1693,7 @@ if size > 0 [
 	if header/function-count <> 3 [failures: failures + 1]
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	widening-argument-code-size: fn/code-size
-	if widening-argument-code-size <> 231 [
+	if widening-argument-code-size <> 212 [
 		print ["O0 fifth argument code size: " widening-argument-code-size lf]
 		failures: failures + 1
 	]
@@ -2501,7 +2502,7 @@ if size > 0 [
 	if header/function-count <> 2 [failures: failures + 1]
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	packed-argument-code-size: fn/code-size
-	if packed-argument-code-size <> 74 [
+	if packed-argument-code-size <> 73 [
 		print ["O0 packed argument code size: " packed-argument-code-size lf]
 		failures: failures + 1
 	]
@@ -3101,6 +3102,61 @@ if (x64-codegen/generate branch-ir 170 output 1024 0) <> x64-codegen/INVALID_IR 
 	failures: failures + 1
 ]
 
+; fn: func [return: [integer!]][either false [111][1234567]]
+; The false-arm literal is followed by the merge label, so it stores its
+; qword slot directly from a sign-extended imm32 without a register
+; round-trip. The taken edge executes that store and returns through it.
+put direct-store-ir 0 1
+put direct-store-ir 4 0
+put direct-store-ir 8 0
+put direct-store-ir 12 0
+put direct-store-ir 16 1
+put direct-store-ir 20 6
+put direct-store-ir 24 0
+put direct-store-ir 28 0
+put direct-store-ir 32 0
+
+put direct-store-ir 36 0
+put direct-store-ir 40 2
+put direct-store-ir 44 -7
+put direct-store-ir 48 0
+put direct-store-ir 52 0
+put direct-store-ir 56 0
+put direct-store-ir 60 0
+put direct-store-ir 64 0
+put direct-store-ir 68 6
+
+put-instruction direct-store-ir 72 1 -11 0 0
+put-instruction direct-store-ir 88 17 5 0 0
+put-instruction direct-store-ir 104 1 -7 111 0
+put-instruction direct-store-ir 120 16 6 0 0
+put-instruction direct-store-ir 136 1 -7 1234567 0
+put-instruction direct-store-ir 152 11 -7 0 0
+direct-store-ir/169: as byte! 61h
+direct-store-ir/170: as byte! 62h
+
+size: x64-codegen/generate direct-store-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 1234567][
+	print ["merge-point int64 immediate store failed" lf]
+	failures: failures + 1
+]
+
+; A negative merge-point literal takes the sign-extended imm32 form instead.
+put-instruction direct-store-ir 136 1 -7 -1234567 -1
+size: x64-codegen/generate direct-store-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output -1234567][
+	print ["negative merge-point int64 immediate store failed" lf]
+	failures: failures + 1
+]
+
+; A merge-point int64 needing both halves keeps the register round-trip.
+put-instruction direct-store-ir 136 1 -7 305419896 258
+size: x64-codegen/generate direct-store-ir 170 output 1024 0
+if any [size <= 0 not execute-first? output 305419896][
+	print ["wide merge-point int64 literal store failed" lf]
+	failures: failures + 1
+]
+
 ; A direct edge into BRANCH bypasses its adjacent literal. O2 must retain the
 ; real stack condition from that edge instead of treating the literal as a
 ; dominating constant.
@@ -3651,7 +3707,7 @@ if any [size <= 0 not execute-floating? output 1.5][
 ]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 87 [
+	if fn/code-size <> 84 [
 		print ["O0 floating stack argument code size: " fn/code-size lf]
 		failures: failures + 1
 	]

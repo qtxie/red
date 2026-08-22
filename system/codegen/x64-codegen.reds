@@ -3339,7 +3339,7 @@ x64-codegen: context [
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
 			linear? consume-location? global-target? defer-global? paired? set-pair?
-			address-pair? load-pair?
+			address-pair? load-pair? direct-store? spill-next?
 			source-located? direct-frame-target? live?
 			sub-returns? [logic!]
 	][
@@ -3376,7 +3376,7 @@ x64-codegen: context [
 		; Before layout, storage offsets also mark which local slots are referenced.
 		index: 1
 		while [index <= storage-count][
-			storage-offsets/index: either index <= fn/parameter-count [1][0]
+			storage-offsets/index: 0
 			index: index + 1
 		]
 		index: 1
@@ -3475,7 +3475,7 @@ x64-codegen: context [
 				live?
 				instruction/op = OP_ADDRESS
 				instruction/a = LOCAL_ADDRESS
-				instruction/b > fn/parameter-count
+				instruction/b > 0
 				instruction/b <= storage-count
 			][
 				source-slot: instruction/b
@@ -4016,11 +4016,11 @@ x64-codegen: context [
 								instruction/op = OP_UNARY
 								location = LOCATION_GPR
 							]
-							all [
-								instruction/op = OP_RETURN
-								not entry?
-								(fn/flags and RETURN_VALUE) = 0
-							]
+					all [
+						instruction/op = OP_RETURN
+						not entry?
+						(fn/flags and RETURN_VALUE) = 0
+					]
 							all [
 								instruction/op = OP_MEMBER
 								location = LOCATION_GPR
@@ -4144,14 +4144,61 @@ x64-codegen: context [
 						paired?
 						location = LOCATION_GPR
 					][x64-encoder/RDX][x64-encoder/RAX]
+					; A linear literal stays in a register only when a consumer
+					; can use it there. LITERAL, CONSTANT, and JUMP never read
+					; the located top: they push fresh values or relocate the
+					; stack, so the register copy would be flushed back to the
+					; same slot before it is ever read. A literal followed by
+					; another literal still stays located when that literal
+					; pairs with this one for a register binary operation.
+					spill-next?: either next-instruction/op = OP_LITERAL [
+						either (index + 2) <= fn/instruction-count [
+							following-instruction: as rsir-instruction! (instructions
+								+ ((index + 1) * RSIR_INSTRUCTION_SIZE))
+							any [
+								following-instruction/op <> OP_BINARY
+								following-instruction/a < ADD_OPERATION
+								following-instruction/a > LESS_EQUAL_OPERATION
+							]
+						][true]
+					][
+						any [
+							next-instruction/op = OP_CONSTANT
+							next-instruction/op = OP_JUMP
+						]
+					]
+					direct-store?: all [
+						not paired?
+						(logical-kind ref types type-count) <> 11
+						any [
+							target-width = 4
+							all [
+								target-width = 8
+								any [
+									all [instruction/c = 0 instruction/b >= 0]
+									all [instruction/c = -1 instruction/b < 0]
+								]
+							]
+						]
+						any [
+							not linear?
+							spill-next?
+						]
+					]
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
-					encoded: x64-encoder/move-immediate at (capacity - written)
-						register-id target-width
-						instruction/b instruction/c
+					encoded: either direct-store? [
+						x64-encoder/frame-immediate-store at (capacity - written)
+							slot-displacement (storage-slots + depth)
+							instruction/b target-width
+					][
+						x64-encoder/move-immediate at (capacity - written)
+							register-id target-width
+							instruction/b instruction/c
+					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
-					if all [floating? any [linear? paired?]][
+					if all [floating? any [paired? all [linear? not direct-store?]]][
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						register-id: either paired? [x64-encoder/XMM1][x64-encoder/XMM0]
@@ -4165,17 +4212,22 @@ x64-codegen: context [
 						location-depth: depth
 					][either all [
 						linear?
+						not direct-store?
 					][
 						location: either floating? [LOCATION_XMM][LOCATION_GPR]
 						location-depth: depth
 					][
-						at: as byte-ptr! 0
-						if not measure? [at: code + written]
-						encoded: x64-encoder/frame-store at (capacity - written)
-							x64-encoder/RAX slot-displacement (storage-slots + depth)
-							target-width
-						if encoded < 0 [return OUTPUT_FULL]
-						written: written + encoded
+						location: LOCATION_NONE
+						location-depth: 0
+						unless direct-store? [
+							at: as byte-ptr! 0
+							if not measure? [at: code + written]
+							encoded: x64-encoder/frame-store at (capacity - written)
+								x64-encoder/RAX slot-displacement (storage-slots + depth)
+								target-width
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
 					]]
 				]
 				instruction/op = OP_CONSTANT [

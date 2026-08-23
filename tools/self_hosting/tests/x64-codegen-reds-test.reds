@@ -230,6 +230,7 @@ local-code-size: 0
 branch-code-size: 0
 call-branch-code-size: 0
 imm-fold-code-size: 0
+set-fold-code-size: 0
 call-drop-code-size: 0
 call-float-code-size: 0
 call-narrow-code-size: 0
@@ -647,7 +648,7 @@ if size > 0 [
 		fn/code-size <> header/code-size
 	][failures: failures + 1]
 	if any [
-		local-code-size <> 32
+		local-code-size <> 31
 		not execute-first? output 7
 	][
 		print ["O0 local SET location code size: " local-code-size lf]
@@ -859,7 +860,7 @@ local-ir/242: as byte! 6Eh
 size: x64-codegen/generate local-ir 242 output 1024 0
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 37 [
+	if fn/code-size <> 36 [
 		print ["O0 integer local pair code size: " fn/code-size lf]
 		failures: failures + 1
 	]
@@ -874,7 +875,7 @@ put-instruction local-ir 208 15 12 0 0
 size: x64-codegen/generate local-ir 242 output 1024 0
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 37 [
+	if fn/code-size <> 36 [
 		print ["O0 integer AND pair code size: " fn/code-size lf]
 		failures: failures + 1
 	]
@@ -3318,6 +3319,38 @@ if size > 0 [
 ]
 put-instruction imm-fold-ir 160 1 -5 1 0
 put-instruction imm-fold-ir 176 15 1 0 0
+
+; fn: func [return: [integer!] /local n][n: 7  n]
+; A literal assigned straight to a local slot stores its immediate directly
+; with no register round-trip; reading the slot back still sees the value.
+put imm-fold-ir 20 7
+put imm-fold-ir 68 7
+put-instruction imm-fold-ir 80 1 -5 7 0
+put-instruction imm-fold-ir 96 3 1 1 0
+put-instruction imm-fold-ir 112 5 0 0 0
+put-instruction imm-fold-ir 128 12 0 0 0
+put-instruction imm-fold-ir 144 3 1 1 0
+put-instruction imm-fold-ir 160 4 0 0 0
+put-instruction imm-fold-ir 176 11 -5 0 0
+imm-fold-ir/193: as byte! 61h
+imm-fold-ir/194: as byte! 62h
+
+size: x64-codegen/generate imm-fold-ir 194 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	set-fold-code-size: fn/code-size
+	if any [
+		not execute-first? output 7
+		; The unfused path needs a register move plus a slot store; the
+		; fold is a single immediate store, so it must stay smaller.
+		set-fold-code-size >= 36
+	][
+		print ["immediate SET fold failed" lf]
+		failures: failures + 1
+	]
+]
+put-instruction imm-fold-ir 80 1 -5 7 0
 
 ; A direct edge into BRANCH bypasses its adjacent literal. O2 must retain the
 ; real stack condition from that edge instead of treating the literal as a

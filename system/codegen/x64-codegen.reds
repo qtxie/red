@@ -3334,14 +3334,15 @@ x64-codegen: context [
 			next-index
 			global-reference-id
 			main-entry-count sub-entry-count compatibility flags-condition
-			pending-immediate-index pending-immediate-value [integer!]
+			pending-immediate-index pending-immediate-value pending-immediate-kind
+			[integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
 			linear? consume-location? global-target? defer-global? paired? set-pair?
 			address-pair? load-pair? direct-store? spill-next? fuse-branch? imm-pair?
-			immediate? left-in-register?
+			immediate? left-in-register? imm-set? set-fused? set-next?
 			source-located? direct-frame-target? live?
 			sub-returns? [logic!]
 	][
@@ -3376,6 +3377,7 @@ x64-codegen: context [
 		flags-condition: -1
 		pending-immediate-index: -1
 		pending-immediate-value: 0
+		pending-immediate-kind: 0
 		cpu-pointer-ref: 0
 		storage-count: fn/parameter-count + fn/local-count
 		; Before layout, storage offsets also mark which local slots are referenced.
@@ -3991,6 +3993,7 @@ x64-codegen: context [
 					; so this GPR location names the left operand one slot
 					; below the top instead of the top itself.
 					all [
+						pending-immediate-kind = 1
 						pending-immediate-index = (index - 1)
 						location = LOCATION_GPR
 						location-depth = (depth - 1)
@@ -4167,6 +4170,48 @@ x64-codegen: context [
 					; operand extension is involved. The immediate beats the
 					; register pair, so it takes priority over pairing.
 					target-slot: depth - 1
+					; A literal stored straight into a local slot by the
+					; following statement assignment skips the register
+					; entirely: LITERAL, local ADDRESS, SET, then a dropped
+					; statement value.
+					imm-set?: false
+					if all [
+						linear?
+						location = LOCATION_NONE
+						not floating?
+						(logical-kind ref types type-count) <> 11
+						next-instruction/op = OP_ADDRESS
+						next-instruction/a = LOCAL_ADDRESS
+						next-instruction/b > 0
+						next-instruction/b <= storage-count
+						(index + 3) <= fn/instruction-count
+					][
+						following-instruction: as rsir-instruction! (instructions
+							+ ((index + 1) * RSIR_INSTRUCTION_SIZE))
+						set-next?: following-instruction/op = OP_SET
+						following-instruction: as rsir-instruction! (instructions
+							+ ((index + 2) * RSIR_INSTRUCTION_SIZE))
+						parameter: as rsir-parameter! (parameters
+							+ ((fn/first-parameter + next-instruction/b - 1)
+								* RSIR_PARAMETER_SIZE))
+						imm-set?: all [
+							set-next?
+							following-instruction/op = OP_DROP
+							parameter/type = ref
+							parameter/flags = 0
+							any [
+								target-width = 4
+								all [
+									target-width = 8
+									any [
+										all [instruction/c = 0 instruction/b >= 0]
+										all [instruction/c = -1 instruction/b < 0]
+									]
+								]
+							]
+							(instruction-effects/next-index and EFFECT_LIVE) <> 0
+						]
+					]
 					imm-pair?: all [
 						linear?
 						any [
@@ -4200,9 +4245,25 @@ x64-codegen: context [
 						(instruction-effects/next-index and EFFECT_LIVE) <> 0
 						(instruction-effects/next-index and EFFECT_ELIDED) = 0
 					]
+					either imm-set? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-immediate-store at
+							(capacity - written)
+							storage-displacement storage-offsets next-instruction/b
+							instruction/b target-width
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						pending-immediate-index: index
+						pending-immediate-value: instruction/b
+						pending-immediate-kind: 2
+						location: LOCATION_NONE
+						location-depth: 0
+					][
 					either imm-pair? [
 						pending-immediate-index: index
 						pending-immediate-value: instruction/b
+						pending-immediate-kind: 1
 						; A GPR located below the pending immediate is the left
 						; operand: keep it in RAX for the consuming operation.
 						unless location = LOCATION_GPR [
@@ -4295,6 +4356,7 @@ x64-codegen: context [
 						written: written + encoded
 					]
 				]]
+				]
 				]
 				]
 				instruction/op = OP_CONSTANT [
@@ -4855,6 +4917,15 @@ x64-codegen: context [
 						floating?: float-type? target-ref types type-count
 					]
 
+					; The literal two instructions back already stored its
+					; immediate straight into the local slot.
+					set-fused?: all [
+						pending-immediate-kind = 2
+						pending-immediate-index = (index - 2)
+						not aggregate-copy?
+						not floating?
+					]
+					unless set-fused? [
 					at: as byte-ptr! 0
 					if not measure? [at: code + written]
 					encoded: case [
@@ -4989,6 +5060,17 @@ x64-codegen: context [
 							written: written + encoded
 						]
 					]
+					]
+					if set-fused? [
+						location: LOCATION_NONE
+						location-depth: 0
+						location-source: 0
+						location-reference: 0
+						depth: source-slot
+						stack-types/depth: target-ref
+						stack-flags/depth: target-flags
+						stack-kinds/depth: VALUE
+					]
 					source-location: LOCATION_NONE
 					source-depth: 0
 					at: as byte-ptr! 0
@@ -4998,7 +5080,7 @@ x64-codegen: context [
 					if encoded < 0 [return encoded]
 					written: written + encoded
 					stack-tags/depth: 0
-					if all [not aggregate-copy? linear? tag-head = 0][
+					if all [not aggregate-copy? not set-fused? linear? tag-head = 0][
 						location: either floating? [LOCATION_XMM][LOCATION_GPR]
 						location-depth: depth
 					]
@@ -7596,6 +7678,7 @@ x64-codegen: context [
 					; scaled product must still fit a sign-extended imm32.
 					immediate?: all [
 						not floating?
+						pending-immediate-kind = 1
 						pending-immediate-index = (index - 1)
 						not any [
 							operation = DIVIDE_OPERATION

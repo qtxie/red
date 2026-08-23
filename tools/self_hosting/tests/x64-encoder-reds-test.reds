@@ -340,6 +340,28 @@ if any [size <> 11 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 if (x64-encoder/frame-immediate-store code 128 -64 0 2) <> -1 [failures: failures + 1]
+size: x64-encoder/alu-immediate code 128 5 x64-encoder/RAX 5 4
+expected: #{83E805}
+if any [size <> 3 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/alu-immediate code 128 0 x64-encoder/RAX 7 8
+expected: #{4883C007}
+if any [size <> 4 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/alu-immediate code 128 7 x64-encoder/RAX 12345678h 4
+expected: #{81F878563412}
+if any [size <> 6 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/alu-immediate code 128 1 x64-encoder/RDX 1000 4
+expected: #{81CAE8030000}
+if any [size <> 6 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+if (x64-encoder/alu-immediate code 128 8 x64-encoder/RAX 1 4) <> -1 [failures: failures + 1]
+if (x64-encoder/alu-immediate code 128 0 x64-encoder/RAX 1 2) <> -1 [failures: failures + 1]
 size: x64-encoder/outgoing-immediate-store code 128 32 12345678h
 expected: #{C744242078563412}
 if any [size <> 8 (compare-memory code expected size) <> 0][

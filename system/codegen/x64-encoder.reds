@@ -1570,6 +1570,32 @@ x64-encoder: context [
 		size
 	]
 
+	; One primitive for every ALU op with a sign-extended immediate operand.
+	; extension is the modrm /reg field: 0 add, 1 or, 4 and, 5 sub, 6 xor, 7 cmp.
+	alu-immediate: func [
+		code [byte-ptr!]
+		capacity extension target value width [integer!]
+		return: [integer!]
+		/local prefix size [integer!] at [byte-ptr!]
+	][
+		unless all [
+			target >= 0 target <= 15
+			extension >= 0 extension <= 7
+			any [width = 4 width = 8]
+		][return -1]
+		prefix: rex (width = 8) 0 target
+		size: either fits-i8? value [3][6]
+		if prefix <> 40h [size: size + 1]
+		unless room? code capacity size [return -1]
+		if null? code [return size]
+		at: code
+		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
+		at/1: as byte! either fits-i8? value [83h][81h]
+		at/2: as byte! modrm 3 extension target
+		either fits-i8? value [at/3: as byte! value][write-i32 (at + 2) value]
+		size
+	]
+
 	compare-immediate: func [
 		code [byte-ptr!]
 		capacity target value [integer!]

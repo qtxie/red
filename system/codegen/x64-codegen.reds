@@ -3333,13 +3333,15 @@ x64-codegen: context [
 			source-depth
 			next-index
 			global-reference-id
-			main-entry-count sub-entry-count compatibility flags-condition [integer!]
+			main-entry-count sub-entry-count compatibility flags-condition
+			pending-immediate-index pending-immediate-value [integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? unstable-stack? atomic-old?
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
 			linear? consume-location? global-target? defer-global? paired? set-pair?
-			address-pair? load-pair? direct-store? spill-next? fuse-branch?
+			address-pair? load-pair? direct-store? spill-next? fuse-branch? imm-pair?
+			immediate? left-in-register?
 			source-located? direct-frame-target? live?
 			sub-returns? [logic!]
 	][
@@ -3372,6 +3374,8 @@ x64-codegen: context [
 		unstable-stack?: false
 		last-math-operation: 0
 		flags-condition: -1
+		pending-immediate-index: -1
+		pending-immediate-value: 0
 		cpu-pointer-ref: 0
 		storage-count: fn/parameter-count + fn/local-count
 		; Before layout, storage offsets also mark which local slots are referenced.
@@ -3977,10 +3981,20 @@ x64-codegen: context [
 				next-instruction/op = OP_BINARY
 			]
 			if location <> LOCATION_NONE [
-				unless all [
-					location-depth = depth
-					depth > 0
-					control-uses/index = 0
+				unless any [
+					all [
+						location-depth = depth
+						depth > 0
+						control-uses/index = 0
+					]
+					; The preceding literal folded into a pending immediate,
+					; so this GPR location names the left operand one slot
+					; below the top instead of the top itself.
+					all [
+						pending-immediate-index = (index - 1)
+						location = LOCATION_GPR
+						location-depth = (depth - 1)
+					]
 				][return INVALID_IR]
 				consume-location?: case [
 					any [
@@ -4145,6 +4159,57 @@ x64-codegen: context [
 						paired?
 						location = LOCATION_GPR
 					][x64-encoder/RDX][x64-encoder/RAX]
+					; An integer literal that is the right operand of the adjacent
+					; binary operation folds into that operation's immediate
+					; form: no register load and no slot store. It applies when
+					; the left operand lives in its frame slot (a located left
+					; keeps the register pair) and both sides are 32-bit so no
+					; operand extension is involved. The immediate beats the
+					; register pair, so it takes priority over pairing.
+					target-slot: depth - 1
+					imm-pair?: all [
+						linear?
+						any [
+							location = LOCATION_NONE
+							location = LOCATION_GPR
+						]
+						depth > 1
+						target-width = 4
+						integer-type? stack-types/target-slot types type-count
+						(value-width stack-types/target-slot 0 types members
+							type-count layouts member-offsets) = 4
+						next-instruction/op = OP_BINARY
+						next-instruction/b = 0
+						not floating?
+						next-instruction/a >= ADD_OPERATION
+						next-instruction/a <= LESS_EQUAL_OPERATION
+						not any [
+							next-instruction/a = DIVIDE_OPERATION
+							next-instruction/a = REMAINDER_OPERATION
+							next-instruction/a = MODULO_OPERATION
+						]
+						any [
+							next-instruction/a < SHIFT_LEFT_OPERATION
+							next-instruction/a > SHIFT_LOGICAL_OPERATION
+							all [instruction/b >= 0 instruction/b <= 63]
+						]
+						any [
+							all [instruction/c = 0 instruction/b >= 0]
+							all [instruction/c = -1 instruction/b < 0]
+						]
+						(instruction-effects/next-index and EFFECT_LIVE) <> 0
+						(instruction-effects/next-index and EFFECT_ELIDED) = 0
+					]
+					either imm-pair? [
+						pending-immediate-index: index
+						pending-immediate-value: instruction/b
+						; A GPR located below the pending immediate is the left
+						; operand: keep it in RAX for the consuming operation.
+						unless location = LOCATION_GPR [
+							location: LOCATION_NONE
+							location-depth: 0
+						]
+					][
 					; A linear literal stays in a register only when a consumer
 					; can use it there. LITERAL, CONSTANT, and JUMP never read
 					; the located top: they push fresh values or relocate the
@@ -4215,21 +4280,22 @@ x64-codegen: context [
 						linear?
 						not direct-store?
 					][
-						location: either floating? [LOCATION_XMM][LOCATION_GPR]
-						location-depth: depth
-					][
-						location: LOCATION_NONE
-						location-depth: 0
-						unless direct-store? [
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: x64-encoder/frame-store at (capacity - written)
-								x64-encoder/RAX slot-displacement (storage-slots + depth)
-								target-width
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-						]
-					]]
+					location: either floating? [LOCATION_XMM][LOCATION_GPR]
+					location-depth: depth
+				][
+					location: LOCATION_NONE
+					location-depth: 0
+					unless direct-store? [
+						at: as byte-ptr! 0
+						if not measure? [at: code + written]
+						encoded: x64-encoder/frame-store at (capacity - written)
+							x64-encoder/RAX slot-displacement (storage-slots + depth)
+							target-width
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+				]]
+				]
 				]
 				instruction/op = OP_CONSTANT [
 					ref: instruction/a
@@ -7525,7 +7591,44 @@ x64-codegen: context [
 						operation >= DIVIDE_OPERATION
 						operation <= SHIFT_LOGICAL_OPERATION
 					][x64-encoder/RCX][x64-encoder/RDX]
-					if all [located? not paired?][
+					; The preceding literal offered itself as the immediate
+					; right operand. Pointer arithmetic scales it first, so the
+					; scaled product must still fit a sign-extended imm32.
+					immediate?: all [
+						not floating?
+						pending-immediate-index = (index - 1)
+						not any [
+							operation = DIVIDE_OPERATION
+							operation = REMAINDER_OPERATION
+							operation = MODULO_OPERATION
+						]
+					]
+					if immediate? [
+						if all [
+							address-type? left-ref types type-count
+							integer-type? right-ref types type-count
+						][
+							stride: pointer-stride left-ref types members type-count
+								layouts member-offsets
+							if stride <= 0 [return UNSUPPORTED]
+							if stride > 1 [
+								unless all [
+									(either pending-immediate-value < 0 [
+										0 - pending-immediate-value
+									][pending-immediate-value])
+										<= (2147483647 / stride)
+								][immediate?: false]
+							]
+						]
+					]
+					; A pending immediate means the GPR location names the
+					; left operand already sitting in RAX.
+					left-in-register?: all [
+						immediate?
+						location = LOCATION_GPR
+						location-depth = (depth - 1)
+					]
+					if all [located? not paired? not left-in-register?][
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: move-operation-value at (capacity - written)
@@ -7539,7 +7642,7 @@ x64-codegen: context [
 						target-offset: instruction-start
 							+ (instruction-offsets/target - instruction-offsets/index)
 					]
-					unless paired? [
+					unless any [paired? left-in-register?] [
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: load-operation-value at (capacity - written)
@@ -7551,7 +7654,7 @@ x64-codegen: context [
 						written: written + encoded
 					]
 
-					unless located? [
+					unless any [located? immediate?] [
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: load-operation-value at (capacity - written)
@@ -7570,12 +7673,18 @@ x64-codegen: context [
 							layouts member-offsets
 						if stride <= 0 [return UNSUPPORTED]
 						if stride <> 1 [
-							at: as byte-ptr! 0
-							if not measure? [at: code + written]
-							encoded: x64-encoder/multiply-immediate at (capacity - written)
-								x64-encoder/RDX x64-encoder/RDX stride 8
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
+							either immediate? [
+								pending-immediate-value: pending-immediate-value
+									* stride
+							][
+								at: as byte-ptr! 0
+								if not measure? [at: code + written]
+								encoded: x64-encoder/multiply-immediate at
+									(capacity - written)
+									x64-encoder/RDX x64-encoder/RDX stride 8
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
 						]
 					]
 
@@ -7604,20 +7713,39 @@ x64-codegen: context [
 					if not measure? [at: code + written]
 					case [
 						operation = ADD_OPERATION [
-							encoded: x64-encoder/binary-register at (capacity - written)
-								01h x64-encoder/RAX x64-encoder/RDX operation-width
+							encoded: either immediate? [
+								x64-encoder/alu-immediate at (capacity - written)
+									0 x64-encoder/RAX pending-immediate-value
+									operation-width
+							][
+								x64-encoder/binary-register at (capacity - written)
+									01h x64-encoder/RAX x64-encoder/RDX operation-width
+							]
 						]
 						operation = SUBTRACT_OPERATION [
-							encoded: x64-encoder/binary-register at (capacity - written)
-								29h x64-encoder/RAX x64-encoder/RDX operation-width
+							encoded: either immediate? [
+								x64-encoder/alu-immediate at (capacity - written)
+									5 x64-encoder/RAX pending-immediate-value
+									operation-width
+							][
+								x64-encoder/binary-register at (capacity - written)
+									29h x64-encoder/RAX x64-encoder/RDX operation-width
+							]
 						]
 						operation = MULTIPLY_OPERATION [
-							encoded: either all [tracked? signed = 0][
-								x64-encoder/unsigned-multiply-register at
-									(capacity - written) x64-encoder/RDX operation-width
+							encoded: either immediate? [
+								x64-encoder/multiply-immediate at
+									(capacity - written) x64-encoder/RAX
+									x64-encoder/RAX pending-immediate-value
+									operation-width
 							][
-								x64-encoder/multiply-register at (capacity - written)
-									x64-encoder/RAX x64-encoder/RDX operation-width
+								either all [tracked? signed = 0][
+									x64-encoder/unsigned-multiply-register at
+										(capacity - written) x64-encoder/RDX operation-width
+								][
+									x64-encoder/multiply-register at (capacity - written)
+										x64-encoder/RAX x64-encoder/RDX operation-width
+								]
 							]
 						]
 						all [
@@ -7628,9 +7756,11 @@ x64-codegen: context [
 								operation-width signed
 						]
 						operation = SHIFT_LEFT_OPERATION [
-							encoded: either tracked? [
+							encoded: either any [tracked? immediate?][
 								x64-encoder/shift-immediate at (capacity - written)
-									x64-encoder/RAX 4 instruction/c operation-width
+									x64-encoder/RAX 4 either immediate? [
+										pending-immediate-value
+									][instruction/c] operation-width
 							][
 								x64-encoder/shift-register at (capacity - written)
 									x64-encoder/RAX 4 operation-width
@@ -7638,31 +7768,68 @@ x64-codegen: context [
 						]
 						operation = SHIFT_RIGHT_OPERATION [
 							condition: either signed = 1 [7][5]
-							encoded: x64-encoder/shift-register at (capacity - written)
-								x64-encoder/RAX condition operation-width
+							encoded: either immediate? [
+								x64-encoder/shift-immediate at (capacity - written)
+									x64-encoder/RAX condition
+									pending-immediate-value operation-width
+							][
+								x64-encoder/shift-register at (capacity - written)
+									x64-encoder/RAX condition operation-width
+							]
 						]
 						operation = SHIFT_LOGICAL_OPERATION [
-							encoded: x64-encoder/shift-register at (capacity - written)
-								x64-encoder/RAX 5 operation-width
+							encoded: either immediate? [
+								x64-encoder/shift-immediate at (capacity - written)
+									x64-encoder/RAX 5 pending-immediate-value
+									operation-width
+							][
+								x64-encoder/shift-register at (capacity - written)
+									x64-encoder/RAX 5 operation-width
+							]
 						]
 						operation = OR_OPERATION [
-							encoded: x64-encoder/binary-register at (capacity - written)
-								09h x64-encoder/RAX x64-encoder/RDX operation-width
+							encoded: either immediate? [
+								x64-encoder/alu-immediate at (capacity - written)
+									1 x64-encoder/RAX pending-immediate-value
+									operation-width
+							][
+								x64-encoder/binary-register at (capacity - written)
+									09h x64-encoder/RAX x64-encoder/RDX operation-width
+							]
 						]
 						operation = XOR_OPERATION [
-							encoded: x64-encoder/binary-register at (capacity - written)
-								31h x64-encoder/RAX x64-encoder/RDX operation-width
+							encoded: either immediate? [
+								x64-encoder/alu-immediate at (capacity - written)
+									6 x64-encoder/RAX pending-immediate-value
+									operation-width
+							][
+								x64-encoder/binary-register at (capacity - written)
+									31h x64-encoder/RAX x64-encoder/RDX operation-width
+							]
 						]
 						operation = AND_OPERATION [
-							encoded: x64-encoder/binary-register at (capacity - written)
-								21h x64-encoder/RAX x64-encoder/RDX operation-width
+							encoded: either immediate? [
+								x64-encoder/alu-immediate at (capacity - written)
+									4 x64-encoder/RAX pending-immediate-value
+									operation-width
+							][
+								x64-encoder/binary-register at (capacity - written)
+									21h x64-encoder/RAX x64-encoder/RDX operation-width
+							]
 						]
 						comparison? [
-							encoded: x64-encoder/binary-register at (capacity - written)
-								39h x64-encoder/RAX x64-encoder/RDX operation-width
+							encoded: either immediate? [
+								x64-encoder/alu-immediate at (capacity - written)
+									7 x64-encoder/RAX pending-immediate-value
+									operation-width
+							][
+								x64-encoder/binary-register at (capacity - written)
+									39h x64-encoder/RAX x64-encoder/RDX operation-width
+							]
 						]
 						true [encoded: -1]
 					]
+					if immediate? [pending-immediate-index: -1]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 

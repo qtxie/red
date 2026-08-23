@@ -229,6 +229,7 @@ folded-code-size: 0
 local-code-size: 0
 branch-code-size: 0
 call-branch-code-size: 0
+imm-fold-code-size: 0
 call-drop-code-size: 0
 call-float-code-size: 0
 call-narrow-code-size: 0
@@ -317,6 +318,7 @@ merge-ir: allocate 260
 literal-merge-ir: allocate 260
 direct-store-ir: allocate 200
 fused-branch-ir: allocate 260
+imm-fold-ir: allocate 260
 selection-ir: allocate 260
 recursive-pointer-ir: allocate 164
 recursive-value-ir: allocate 148
@@ -345,7 +347,7 @@ if any [
 	null? tagged-ir null? array-ir null? array-compare-ir null? branch-ir
 	null? call-result-ir null? boolean-ir
 	null? merge-ir null? literal-merge-ir null? direct-store-ir
-	null? fused-branch-ir null? selection-ir
+	null? fused-branch-ir null? imm-fold-ir null? selection-ir
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
 	null? exception-ir null? no-return-ir null? effect-ir
@@ -973,7 +975,7 @@ duplicate-ir/170: as byte! 70h
 size: x64-codegen/generate duplicate-ir 170 output 1024 0
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 43 [
+	if fn/code-size <> 39 [
 		print ["O0 duplicate location code size: " fn/code-size lf]
 		failures: failures + 1
 	]
@@ -1119,7 +1121,7 @@ if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if any [
 		fn/frame-size <> 48
-		fn/code-size <> 41
+		fn/code-size <> 32
 		not execute-first? output 9
 	][
 		print ["O0 integer operator location code size: " fn/code-size lf]
@@ -3220,6 +3222,102 @@ if any [size <= 0 not execute-first? output 111][
 	print ["fused false compare branch failed" lf]
 	failures: failures + 1
 ]
+
+; fn: func [return: [integer!] /local n][n: 41  n + 1]
+; A slot-resident 32-bit left operand with an adjacent literal right operand
+; folds into the immediate ALU form with no register round-trip for the
+; literal. Each operation variant executes its exact arithmetic result.
+put imm-fold-ir 0 1
+put imm-fold-ir 4 0
+put imm-fold-ir 8 0
+put imm-fold-ir 12 0
+put imm-fold-ir 16 1
+put imm-fold-ir 20 8
+put imm-fold-ir 24 0
+put imm-fold-ir 28 0
+put imm-fold-ir 32 0
+
+put imm-fold-ir 36 0
+put imm-fold-ir 40 2
+put imm-fold-ir 44 -5
+put imm-fold-ir 48 0
+put imm-fold-ir 52 0
+put imm-fold-ir 56 0
+put imm-fold-ir 60 0
+put imm-fold-ir 64 1
+put imm-fold-ir 68 8
+
+put imm-fold-ir 72 -5
+put imm-fold-ir 76 0
+
+put-instruction imm-fold-ir 80 1 -5 41 0
+put-instruction imm-fold-ir 96 3 1 1 0
+put-instruction imm-fold-ir 112 5 0 0 0
+put-instruction imm-fold-ir 128 3 1 1 0
+put-instruction imm-fold-ir 144 4 0 0 0
+put-instruction imm-fold-ir 160 1 -5 1 0
+put-instruction imm-fold-ir 176 15 1 0 0
+put-instruction imm-fold-ir 192 11 -5 0 0
+imm-fold-ir/209: as byte! 61h
+imm-fold-ir/210: as byte! 62h
+
+size: x64-codegen/generate imm-fold-ir 210 output 1024 0
+if size <= 0 [failures: failures + 1]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	imm-fold-code-size: fn/code-size
+	unless execute-first? output 42 [
+		print ["immediate ADD fold failed" lf]
+		failures: failures + 1
+	]
+]
+
+put-instruction imm-fold-ir 176 15 2 0 0
+size: x64-codegen/generate imm-fold-ir 210 output 1024 0
+if any [size <= 0 not execute-first? output 40][
+	print ["immediate SUB fold failed" lf]
+	failures: failures + 1
+]
+put-instruction imm-fold-ir 160 1 -5 3 0
+put-instruction imm-fold-ir 176 15 3 0 0
+size: x64-codegen/generate imm-fold-ir 210 output 1024 0
+if any [size <= 0 not execute-first? output 123][
+	print ["immediate MUL fold failed" lf]
+	failures: failures + 1
+]
+put-instruction imm-fold-ir 160 1 -5 2 0
+put-instruction imm-fold-ir 176 15 8 0 0
+size: x64-codegen/generate imm-fold-ir 210 output 1024 0
+if any [size <= 0 not execute-first? output 10][
+	print ["immediate SHIFT fold failed" lf]
+	failures: failures + 1
+]
+put-instruction imm-fold-ir 160 1 -5 15 0
+put-instruction imm-fold-ir 176 15 12 0 0
+size: x64-codegen/generate imm-fold-ir 210 output 1024 0
+if any [size <= 0 not execute-first? output 9][
+	print ["immediate AND fold failed" lf]
+	failures: failures + 1
+]
+
+; Integer division has no immediate form, so its right operand keeps the
+; slot round-trip and the function must stay strictly larger than the fold.
+put-instruction imm-fold-ir 160 1 -5 1 0
+put-instruction imm-fold-ir 176 15 4 0 0
+size: x64-codegen/generate imm-fold-ir 210 output 1024 0
+if any [size <= 0 not execute-first? output 41][
+	print ["immediate DIVIDE fallback failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <= imm-fold-code-size [
+		print ["division did not stay larger than the fold: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+put-instruction imm-fold-ir 160 1 -5 1 0
+put-instruction imm-fold-ir 176 15 1 0 0
 
 ; A direct edge into BRANCH bypasses its adjacent literal. O2 must retain the
 ; real stack condition from that edge instead of treating the literal as a

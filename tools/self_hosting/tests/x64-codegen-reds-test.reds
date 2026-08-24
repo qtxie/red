@@ -342,6 +342,7 @@ array-compare-ir: allocate 228
 branch-ir: allocate 260
 call-result-ir: allocate 260
 call-argument-ir: allocate 242
+address-call-ir: allocate 307
 float-argument-ir: allocate 379
 boolean-ir: allocate 260
 merge-ir: allocate 260
@@ -381,7 +382,7 @@ if any [
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
 	null? exception-ir null? no-return-ir null? effect-ir
-	null? call-argument-ir null? float-argument-ir
+	null? call-argument-ir null? address-call-ir null? float-argument-ir
 ][quit 1]
 
 ; Null is implicitly compatible with reference-shaped sinks only. Keep the
@@ -3910,6 +3911,147 @@ if size > 0 [
 	call-argument-code-size: fn/code-size
 	if call-argument-code-size <> 33 [
 		print ["O0 fixed argument code size: " call-argument-code-size lf]
+		failures: failures + 1
+	]
+]
+
+; ADDRESS, REFERENCE, and a one-argument CALL form one value flow. The measure
+; pass assigns the ABI register, so the global address is emitted there once.
+put address-call-ir 0 1
+put address-call-ir 4 0
+put address-call-ir 8 1
+put address-call-ir 12 0
+put address-call-ir 16 2
+put address-call-ir 20 8
+put address-call-ir 24 1
+put address-call-ir 28 0
+put address-call-ir 32 0
+
+put address-call-ir 36 -6
+put address-call-ir 40 -5
+put address-call-ir 44 0
+put address-call-ir 48 0
+put address-call-ir 52 0
+
+put address-call-ir 56 0
+put address-call-ir 60 1
+put address-call-ir 64 -5
+put address-call-ir 68 0
+put address-call-ir 72 0
+put address-call-ir 76 1
+
+put address-call-ir 80 1
+put address-call-ir 84 1
+put address-call-ir 88 -11
+put address-call-ir 92 0
+put address-call-ir 96 0
+put address-call-ir 100 0
+put address-call-ir 104 0
+put address-call-ir 108 0
+put address-call-ir 112 4
+
+put address-call-ir 116 2
+put address-call-ir 120 1
+put address-call-ir 124 -11
+put address-call-ir 128 0
+put address-call-ir 132 0
+put address-call-ir 136 1
+put address-call-ir 140 1
+put address-call-ir 144 0
+put address-call-ir 148 4
+
+put address-call-ir 152 1
+put address-call-ir 156 0
+put-instruction address-call-ir 160 1 41 0 0
+
+put-instruction address-call-ir 176 3 2 1 0
+put-instruction address-call-ir 192 20 1 0 0
+put-instruction address-call-ir 208 7 2 1 -11
+put-instruction address-call-ir 224 11 -11 0 0
+put-instruction address-call-ir 240 3 1 1 0
+put-instruction address-call-ir 256 4 0 0 0
+put-instruction address-call-ir 272 8 -11 0 0
+put-instruction address-call-ir 288 11 -11 0 0
+address-call-ir/305: as byte! 67h
+address-call-ir/306: as byte! 61h
+address-call-ir/307: as byte! 62h
+
+size: x64-codegen/generate address-call-ir 307 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["O0 direct reference CALL argument failed: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 33 [
+		print ["O0 direct reference CALL code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+
+; A local address is materialized by REFERENCE rather than ADDRESS. It receives
+; the same ABI target without staging the pointer through RAX.
+put address-call-ir 0 1
+put address-call-ir 4 0
+put address-call-ir 8 1
+put address-call-ir 12 0
+put address-call-ir 16 2
+put address-call-ir 20 8
+put address-call-ir 24 0
+put address-call-ir 28 0
+put address-call-ir 32 0
+
+put address-call-ir 36 -6
+put address-call-ir 40 -5
+put address-call-ir 44 0
+put address-call-ir 48 0
+put address-call-ir 52 0
+
+put address-call-ir 56 0
+put address-call-ir 60 1
+put address-call-ir 64 -11
+put address-call-ir 68 0
+put address-call-ir 72 0
+put address-call-ir 76 0
+put address-call-ir 80 0
+put address-call-ir 84 1
+put address-call-ir 88 4
+
+put address-call-ir 92 1
+put address-call-ir 96 1
+put address-call-ir 100 -11
+put address-call-ir 104 0
+put address-call-ir 108 1
+put address-call-ir 112 1
+put address-call-ir 116 2
+put address-call-ir 120 0
+put address-call-ir 124 4
+
+put address-call-ir 128 -5
+put address-call-ir 132 0
+put address-call-ir 136 1
+put address-call-ir 140 0
+
+put-instruction address-call-ir 144 3 1 1 0
+put-instruction address-call-ir 160 20 1 0 0
+put-instruction address-call-ir 176 7 2 1 -11
+put-instruction address-call-ir 192 11 -11 0 0
+put-instruction address-call-ir 208 3 1 1 0
+put-instruction address-call-ir 224 4 0 0 0
+put-instruction address-call-ir 240 8 -11 0 0
+put-instruction address-call-ir 256 11 -11 0 0
+address-call-ir/273: as byte! 61h
+address-call-ir/274: as byte! 62h
+
+size: x64-codegen/generate address-call-ir 274 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["O0 direct local reference CALL argument failed: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 30 [
+		print ["O0 direct local reference CALL code size: " fn/code-size lf]
 		failures: failures + 1
 	]
 ]

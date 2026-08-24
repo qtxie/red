@@ -3288,7 +3288,7 @@ x64-codegen: context [
 	compile-function: func [
 		fn [rsir-function!]
 		signature-cache [signature-pairs!]
-		instructions [byte-ptr!]
+		instructions argument-targets [byte-ptr!]
 		function-effects instruction-effects [int-ptr!]
 		stack-types stack-flags stack-kinds stack-tags storage-offsets result-offsets
 			layouts member-offsets
@@ -3304,7 +3304,7 @@ x64-codegen: context [
 		return: [integer!]
 		/local instruction [rsir-instruction!]
 			next-instruction [rsir-instruction!]
-			following-instruction [rsir-instruction!]
+			following-instruction argument-instruction argument-address [rsir-instruction!]
 			overflow-scope [rsir-instruction!]
 			catch-scope [rsir-instruction!]
 			sub-entry [rsir-instruction!]
@@ -3345,7 +3345,7 @@ x64-codegen: context [
 			source-depth
 			next-index
 			global-reference-id
-			main-entry-count sub-entry-count compatibility flags-condition
+			main-entry-count sub-entry-count compatibility flags-condition argument-producer
 			pending-immediate-index pending-immediate-value pending-immediate-kind
 			[integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
@@ -3354,7 +3354,7 @@ x64-codegen: context [
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
 			linear? consume-location? global-target? defer-global? paired? set-pair?
 			address-pair? load-pair? direct-store? spill-next? fuse-branch? imm-pair?
-			imm-call?
+			imm-call? reference-call? direct-reference?
 			immediate? left-in-register? imm-set? set-fused? set-next?
 			scaled-immediate?
 			source-located? direct-frame-target? live?
@@ -4476,6 +4476,12 @@ x64-codegen: context [
 					import-id: 0
 					global-id: 0
 					defer-global?: false
+					register-id: as integer! argument-targets/index
+					either register-id = 0 [
+						register-id: x64-encoder/RAX
+					][
+						register-id: register-id - 1
+					]
 					case [
 						instruction/a = LOCAL_ADDRESS [
 							unless all [
@@ -4505,10 +4511,10 @@ x64-codegen: context [
 								if not measure? [at: code + written]
 								encoded: either valid? [
 									x64-encoder/frame-load at (capacity - written)
-										x64-encoder/RAX location-source 8 0
+										register-id location-source 8 0
 								][
 									x64-encoder/frame-address at (capacity - written)
-										x64-encoder/RAX location-source
+										register-id location-source
 								]
 							]
 						]
@@ -4541,7 +4547,7 @@ x64-codegen: context [
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: x64-encoder/rip-address at (capacity - written)
-									x64-encoder/RAX 0
+									register-id 0
 							]
 						]
 						instruction/a = IMPORT_ADDRESS [
@@ -4562,7 +4568,7 @@ x64-codegen: context [
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: x64-encoder/rip-load at (capacity - written)
-								x64-encoder/RAX 0
+								register-id 0
 						]
 						instruction/a = FUNCTION_ADDRESS [
 							target: instruction/b
@@ -4582,7 +4588,7 @@ x64-codegen: context [
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: x64-encoder/rip-address at (capacity - written)
-								x64-encoder/RAX displacement
+								register-id displacement
 						]
 						true [return UNSUPPORTED]
 					]
@@ -4803,17 +4809,23 @@ x64-codegen: context [
 							layouts member-offsets
 					][return INVALID_IR]
 					tracked?: location <> LOCATION_NONE
+					register-id: as integer! argument-targets/index
+					either register-id = 0 [
+						register-id: x64-encoder/RAX
+					][
+						register-id: register-id - 1
+					]
 					if tracked? [
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						encoded: case [
 							location = LOCATION_FRAME [
 								x64-encoder/frame-address at (capacity - written)
-									x64-encoder/RAX location-source
+									register-id location-source
 							]
 							location = LOCATION_FRAME_INDIRECT [
 								x64-encoder/frame-load at (capacity - written)
-									x64-encoder/RAX location-source 8 0
+									register-id location-source 8 0
 							]
 							location = LOCATION_ADDRESS [0]
 							true [return INVALID_IR]
@@ -5506,6 +5518,33 @@ x64-codegen: context [
 						pending-immediate-index: -1
 						pending-immediate-kind: 0
 					]
+					reference-call?: false
+					argument-producer: 0
+					if all [
+						index > 2
+						argument-index = 1
+						location = LOCATION_GPR
+						location-depth = depth
+					][
+						argument-instruction: as rsir-instruction! (instructions
+							+ ((index - 2) * RSIR_INSTRUCTION_SIZE))
+						argument-address: as rsir-instruction! (instructions
+							+ ((index - 3) * RSIR_INSTRUCTION_SIZE))
+						reference-call?: all [
+							argument-instruction/op = OP_REFERENCE
+							argument-address/op = OP_ADDRESS
+						]
+						if reference-call? [
+							argument-producer: either argument-address/a = LOCAL_ADDRESS [
+								index - 1
+							][index - 2]
+						]
+					]
+					direct-reference?: all [
+						reference-call?
+						not custom-call?
+						not list-call?
+					]
 					located?: location <> LOCATION_NONE
 					if located? [
 						ref: stack-types/depth
@@ -5553,7 +5592,7 @@ x64-codegen: context [
 							located?: false
 						]
 					]
-					if all [located? not immediate?][
+					if all [located? not immediate? not direct-reference?][
 						aggregate-copy?: false
 						if all [location = LOCATION_GPR not packed-call?][
 							source-slot: 1
@@ -6039,21 +6078,37 @@ x64-codegen: context [
 												(storage-slots + argument-slot) source-width
 									]
 								][
-									either immediate? [
-										x64-encoder/move-immediate at (capacity - written)
-											target-slot target-width following-instruction/b
-											following-instruction/c
-									][either tracked? [
-										move-operation-value at (capacity - written)
-											target-slot location-source ref flags target-width
-											types members type-count layouts member-offsets
-									][
-										load-operation-value at (capacity - written)
-											target-slot slot-displacement
-											(storage-slots + argument-slot) ref flags
-											argument-width false types members type-count
-											layouts member-offsets
-									]]
+									case [
+										immediate? [
+											x64-encoder/move-immediate at (capacity - written)
+												target-slot target-width following-instruction/b
+												following-instruction/c
+										]
+										direct-reference? [
+											either measure? [
+												argument-targets/argument-producer:
+													as byte! (target-slot + 1)
+											][
+												if argument-targets/argument-producer <>
+													as byte! (target-slot + 1) [
+													return INVALID_IR
+												]
+											]
+											0
+										]
+										tracked? [
+											move-operation-value at (capacity - written)
+												target-slot location-source ref flags target-width
+												types members type-count layouts member-offsets
+										]
+										true [
+											load-operation-value at (capacity - written)
+												target-slot slot-displacement
+												(storage-slots + argument-slot) ref flags
+												argument-width false types members type-count
+												layouts member-offsets
+										]
+									]
 								]
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
@@ -8944,6 +8999,7 @@ x64-codegen: context [
 				parameter-data initializer-data switch-data instruction-data strings
 				function-instructions
 				name names-output code rodata-output data-output cursor finish scratch
+				argument-targets
 				[byte-ptr!]
 			type-bytes member-bytes import-bytes global-bytes function-bytes export-bytes
 				parameter-bytes initializer-bytes switch-bytes instruction-bytes remaining
@@ -9656,9 +9712,12 @@ x64-codegen: context [
 		scratch-count: scratch-count + (header/type-count * 4)
 		if member-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
 		scratch-count: scratch-count + member-count
-		if scratch-count > (2147483647 / 4)[return OUTPUT_FULL]
-		scratch: allocate (scratch-count * 4)
+		if scratch-count > ((2147483647 - header/instruction-count) / 4)[
+			return OUTPUT_FULL
+		]
+		scratch: allocate ((scratch-count * 4) + header/instruction-count)
 		if null? scratch [return OUTPUT_FULL]
+		argument-targets: scratch + (scratch-count * 4)
 		import-refs: as int-ptr! scratch
 		function-sizes: import-refs + header/import-count
 		function-frames: function-sizes + header/function-count
@@ -9694,6 +9753,11 @@ x64-codegen: context [
 		while [id <= count][layouts/id: 0 id: id + 1]
 		id: 1
 		while [id <= member-count][member-offsets/id: -1 id: id + 1]
+		id: 1
+		while [id <= header/instruction-count][
+			argument-targets/id: as byte! 0
+			id: id + 1
+		]
 		status: infer-effects function-data instruction-data switch-data
 			header/function-count header/instruction-count header/switch-count opt-level
 			function-sizes function-effects instruction-effects instruction-offsets
@@ -9730,6 +9794,7 @@ x64-codegen: context [
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
 			function-size: compile-function ir-function signature-cache function-instructions
+				(argument-targets + (next-instruction - 1))
 				function-effects (instruction-effects + (next-instruction - 1))
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(result-offsets + (next-instruction - 1))
@@ -10020,6 +10085,7 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
 			written: compile-function ir-function signature-cache function-instructions
+				(argument-targets + (next-instruction - 1))
 				function-effects (instruction-effects + (next-instruction - 1))
 				stack-types stack-flags stack-kinds stack-tags storage-offsets
 				(result-offsets + (next-instruction - 1))

@@ -135,23 +135,39 @@ x64-encoder: context [
 		unless all [target >= 0 target <= 15 any [width = 4 width = 8]][
 			return -1
 		]
-		size: either width = 8 [either target >= 8 [11][10]][
-			either target >= 8 [6][5]
+		; A 32-bit register write clears its upper half. It is therefore the
+		; shortest exact encoding for every 32-bit value and every 64-bit value
+		; whose high word is zero.
+		if any [width = 4 high = 0][
+			size: either target >= 8 [6][5]
+			unless room? code capacity size [return -1]
+			if null? code [return size]
+			at: code
+			if target >= 8 [
+				at/1: as byte! 41h
+				at: at + 1
+			]
+			at/1: as byte! (B8h + (target and 7))
+			write-i32 (at + 1) low
+			return size
 		]
-		unless room? code capacity size [return -1]
-		if null? code [return size]
-		at: code
-		if target >= 8 [
-			at/1: as byte! either width = 8 [49h][41h]
-			at: at + 1
+		; C7 /0 sign-extends imm32 to 64 bits and is three bytes shorter
+		; than movabs.
+		if all [high = -1 low < 0][
+			unless room? code capacity 7 [return -1]
+			if null? code [return 7]
+			code/1: as byte! rex true 0 target
+			code/2: as byte! C7h
+			code/3: as byte! modrm 3 0 target
+			write-i32 (code + 3) low
+			return 7
 		]
-		if all [width = 8 target < 8][
-			at/1: as byte! 48h
-			at: at + 1
-		]
-		at/1: as byte! (B8h + (target and 7))
-		either width = 8 [write-i64 (at + 1) low high][write-i32 (at + 1) low]
-		size
+		unless room? code capacity 10 [return -1]
+		if null? code [return 10]
+		code/1: as byte! either target >= 8 [49h][48h]
+		code/2: as byte! (B8h + (target and 7))
+		write-i64 (code + 2) low high
+		10
 	]
 
 	move-register: func [

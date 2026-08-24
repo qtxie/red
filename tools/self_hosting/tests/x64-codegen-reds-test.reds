@@ -2502,6 +2502,11 @@ if size <= 0 [
 if size > 0 [
 	header: as codegen-header! output
 	if header/function-count <> 2 [failures: failures + 1]
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 43 [
+		print ["immediate indirect CALL code size: " fn/code-size lf]
+		failures: failures + 1
+	]
 	unless execute-first? output 42 [failures: failures + 1]
 ]
 put indirect-ir 204 -5
@@ -3903,7 +3908,7 @@ if any [size <= 0 not execute-first? output -2][
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	call-argument-code-size: fn/code-size
-	if call-argument-code-size <> 36 [
+	if call-argument-code-size <> 33 [
 		print ["O0 fixed argument code size: " call-argument-code-size lf]
 		failures: failures + 1
 	]
@@ -3976,6 +3981,16 @@ if size > 0 [
 		failures: failures + 1
 	]
 ]
+
+; Narrow literals still use a 32-bit ABI register when a packed CALL falls
+; back to materializing RAX before constructing its argument list.
+put call-argument-ir 148 -2
+size: x64-codegen/generate call-argument-ir 242 output 1024 0
+if any [size <= 0 not execute-first? output 1][
+	print ["O0 byte literal packed CALL fallback failed" lf]
+	failures: failures + 1
+]
+put call-argument-ir 148 -5
 
 ; The second floating argument is a live CALL result in XMM0. Loading the
 ; earlier floating argument must not destroy it before the fixed CALL.

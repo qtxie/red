@@ -39,7 +39,26 @@ if (compare-memory code expected 37) <> 0 [
 
 if (x64-encoder/prolog null 0 0 0) <> 15 [failures: failures + 1]
 if (x64-encoder/allocate-frame null 0 128) <> 7 [failures: failures + 1]
-if (x64-encoder/move-immediate null 0 x64-encoder/R9 8 1 0) <> 11 [
+if (x64-encoder/move-immediate null 0 x64-encoder/R9 8 1 0) <> 6 [
+	print ["compact zero immediate size failed" lf]
+	failures: failures + 1
+]
+size: x64-encoder/move-immediate code 128 x64-encoder/R9 8 1 0
+expected: #{41B901000000}
+if any [size <> 6 (compare-memory code expected size) <> 0][
+	print ["compact zero immediate failed, size=" size lf]
+	failures: failures + 1
+]
+size: x64-encoder/move-immediate code 128 x64-encoder/RAX 8 -1 -1
+expected: #{48C7C0FFFFFFFF}
+if any [size <> 7 (compare-memory code expected size) <> 0][
+	print ["sign-extended immediate failed, size=" size lf]
+	failures: failures + 1
+]
+size: x64-encoder/move-immediate code 128 x64-encoder/R9 8 1 1
+expected: #{49B90100000001000000}
+if any [size <> 10 (compare-memory code expected size) <> 0][
+	print ["full-width immediate failed, size=" size lf]
 	failures: failures + 1
 ]
 if (x64-encoder/move-register code 128 x64-encoder/RDX x64-encoder/RCX 8) <> 3 [

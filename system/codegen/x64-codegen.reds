@@ -3343,6 +3343,7 @@ x64-codegen: context [
 			linear? consume-location? global-target? defer-global? paired? set-pair?
 			address-pair? load-pair? direct-store? spill-next? fuse-branch? imm-pair?
 			immediate? left-in-register? imm-set? set-fused? set-next?
+			scaled-immediate?
 			source-located? direct-frame-target? live?
 			sub-returns? [logic!]
 	][
@@ -4162,13 +4163,10 @@ x64-codegen: context [
 						paired?
 						location = LOCATION_GPR
 					][x64-encoder/RDX][x64-encoder/RAX]
-					; An integer literal that is the right operand of the adjacent
-					; binary operation folds into that operation's immediate
-					; form: no register load and no slot store. It applies when
-					; the left operand lives in its frame slot (a located left
-					; keeps the register pair) and both sides are 32-bit so no
-					; operand extension is involved. The immediate beats the
-					; register pair, so it takes priority over pairing.
+					; A 32-bit integer literal consumed by the adjacent binary
+					; operation can become its immediate operand. Integer math
+					; requires a 32-bit left value; pointer math first proves that
+					; the scaled offset still fits the sign-extended imm32 form.
 					target-slot: depth - 1
 					; A literal stored straight into a local slot by the
 					; following statement assignment skips the register
@@ -4186,6 +4184,8 @@ x64-codegen: context [
 						next-instruction/b <= storage-count
 						(index + 3) <= fn/instruction-count
 					][
+						target: index + 2
+						target-offset: index + 3
 						following-instruction: as rsir-instruction! (instructions
 							+ ((index + 1) * RSIR_INSTRUCTION_SIZE))
 						set-next?: following-instruction/op = OP_SET
@@ -4210,6 +4210,39 @@ x64-codegen: context [
 								]
 							]
 							(instruction-effects/next-index and EFFECT_LIVE) <> 0
+							(instruction-effects/next-index and EFFECT_ELIDED) = 0
+							control-uses/target = 0
+							catch-depths/target = catch-depths/index
+							(instruction-effects/target and EFFECT_LIVE) <> 0
+							(instruction-effects/target and EFFECT_ELIDED) = 0
+							control-uses/target-offset = 0
+							catch-depths/target-offset = catch-depths/index
+							(instruction-effects/target-offset and EFFECT_LIVE) <> 0
+							(instruction-effects/target-offset and EFFECT_ELIDED) = 0
+						]
+					]
+					scaled-immediate?: false
+					if all [
+						linear?
+						depth > 1
+						target-width = 4
+						integer-type? ref types type-count
+						next-instruction/op = OP_BINARY
+						any [
+							next-instruction/a = ADD_OPERATION
+							next-instruction/a = SUBTRACT_OPERATION
+						]
+						address-type? stack-types/target-slot types type-count
+					][
+						stride: pointer-stride stack-types/target-slot types members
+							type-count layouts member-offsets
+						scaled-immediate?: all [
+							stride > 0
+							either instruction/b < 0 [
+								instruction/b >= (80000000h / stride)
+							][
+								instruction/b <= (7FFFFFFFh / stride)
+							]
 						]
 					]
 					imm-pair?: all [
@@ -4220,9 +4253,6 @@ x64-codegen: context [
 						]
 						depth > 1
 						target-width = 4
-						integer-type? stack-types/target-slot types type-count
-						(value-width stack-types/target-slot 0 types members
-							type-count layouts member-offsets) = 4
 						next-instruction/op = OP_BINARY
 						next-instruction/b = 0
 						not floating?
@@ -4232,6 +4262,21 @@ x64-codegen: context [
 							next-instruction/a = DIVIDE_OPERATION
 							next-instruction/a = REMAINDER_OPERATION
 							next-instruction/a = MODULO_OPERATION
+						]
+						any [
+							all [
+								integer-type? stack-types/target-slot types type-count
+								(value-width stack-types/target-slot 0 types members
+									type-count layouts member-offsets) = 4
+							]
+							all [
+								address-type? stack-types/target-slot types type-count
+								any [
+									next-instruction/a = ADD_OPERATION
+									next-instruction/a = SUBTRACT_OPERATION
+								]
+								scaled-immediate?
+							]
 						]
 						any [
 							next-instruction/a < SHIFT_LEFT_OPERATION
@@ -5062,6 +5107,8 @@ x64-codegen: context [
 					]
 					]
 					if set-fused? [
+						pending-immediate-index: -1
+						pending-immediate-kind: 0
 						location: LOCATION_NONE
 						location-depth: 0
 						location-source: 0
@@ -7684,24 +7731,6 @@ x64-codegen: context [
 							operation = DIVIDE_OPERATION
 							operation = REMAINDER_OPERATION
 							operation = MODULO_OPERATION
-						]
-					]
-					if immediate? [
-						if all [
-							address-type? left-ref types type-count
-							integer-type? right-ref types type-count
-						][
-							stride: pointer-stride left-ref types members type-count
-								layouts member-offsets
-							if stride <= 0 [return UNSUPPORTED]
-							if stride > 1 [
-								unless all [
-									(either pending-immediate-value < 0 [
-										0 - pending-immediate-value
-									][pending-immediate-value])
-										<= (2147483647 / stride)
-								][immediate?: false]
-							]
 						]
 					]
 					; A pending immediate means the GPR location names the

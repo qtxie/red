@@ -23,6 +23,7 @@ Red/System [
 ]
 
 selection-entry!: alias function! [return: [integer!]]
+pointer-entry!: alias function! [return: [byte-ptr!]]
 floating-entry!: alias function! [return: [float!]]
 floating32-entry!: alias function! [return: [float32!]]
 hidden-return-entry!: alias function! [
@@ -65,6 +66,15 @@ run-selection: func [
 	/local entry [selection-entry!]
 ][
 	entry: as selection-entry! code
+	entry
+]
+
+run-pointer: func [
+	code [byte-ptr!]
+	return: [byte-ptr!]
+	/local entry [pointer-entry!]
+][
+	entry: as pointer-entry! code
 	entry
 ]
 
@@ -117,6 +127,23 @@ execute-first?: func [
 	if null? code [return false]
 	copy-memory code (image + header/code-offset) header/code-size
 	result: run-selection (code + fn/code-offset)
+	VirtualFree code 0 8000h
+	result = expected
+]
+
+execute-pointer?: func [
+	image expected [byte-ptr!]
+	return: [logic!]
+	/local header [codegen-header!] fn [codegen-function!]
+		code result [byte-ptr!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	if header/code-size > 4096 [return false]
+	code: VirtualAlloc (as byte-ptr! 0) 4096 3000h 40h
+	if null? code [return false]
+	copy-memory code (image + header/code-offset) header/code-size
+	result: run-pointer (code + fn/code-offset)
 	VirtualFree code 0 8000h
 	result = expected
 ]
@@ -245,6 +272,7 @@ call-argument-code-size: 0
 call-float-argument-code-size: 0
 packed-argument-code-size: 0
 widening-argument-code-size: 0
+pointer-fold-code-size: 0
 no-types: as byte-ptr! 0
 sink-pairs: declare signature-pairs!
 sink-pairs/memory: null
@@ -289,7 +317,7 @@ void-ir: allocate 132
 local-ir: allocate 260
 unused-local-ir: allocate 260
 untyped-import-ir: allocate 164
-pointer-ir: allocate 132
+pointer-ir: allocate 196
 index-ir: allocate 260
 arithmetic-ir: allocate 260
 duplicate-ir: allocate 180
@@ -319,7 +347,7 @@ merge-ir: allocate 260
 literal-merge-ir: allocate 260
 direct-store-ir: allocate 200
 fused-branch-ir: allocate 260
-imm-fold-ir: allocate 260
+imm-fold-ir: allocate 292
 selection-ir: allocate 260
 recursive-pointer-ir: allocate 164
 recursive-value-ir: allocate 148
@@ -3352,6 +3380,124 @@ if size > 0 [
 ]
 put-instruction imm-fold-ir 80 1 -5 7 0
 
+; A jump into SET carries its own VALUE/PLACE pair. The literal assignment on
+; the other predecessor cannot be stored early or erase the shared SET.
+put imm-fold-ir 0 1
+put imm-fold-ir 4 0
+put imm-fold-ir 8 0
+put imm-fold-ir 12 0
+put imm-fold-ir 16 1
+put imm-fold-ir 20 12
+put imm-fold-ir 24 0
+put imm-fold-ir 28 0
+put imm-fold-ir 32 0
+
+put imm-fold-ir 36 0
+put imm-fold-ir 40 2
+put imm-fold-ir 44 -5
+put imm-fold-ir 48 0
+put imm-fold-ir 52 0
+put imm-fold-ir 56 0
+put imm-fold-ir 60 0
+put imm-fold-ir 64 1
+put imm-fold-ir 68 12
+
+put imm-fold-ir 72 -5
+put imm-fold-ir 76 0
+
+put-instruction imm-fold-ir 80 1 -11 0 0
+put-instruction imm-fold-ir 96 17 6 1 0
+put-instruction imm-fold-ir 112 1 -5 9 0
+put-instruction imm-fold-ir 128 3 1 1 0
+put-instruction imm-fold-ir 144 16 8 0 0
+put-instruction imm-fold-ir 160 1 -5 7 0
+put-instruction imm-fold-ir 176 3 1 1 0
+put-instruction imm-fold-ir 192 5 0 0 0
+put-instruction imm-fold-ir 208 12 0 0 0
+put-instruction imm-fold-ir 224 3 1 1 0
+put-instruction imm-fold-ir 240 4 0 0 0
+put-instruction imm-fold-ir 256 11 -5 0 0
+imm-fold-ir/273: as byte! 61h
+imm-fold-ir/274: as byte! 62h
+
+if any [
+	(x64-codegen/generate imm-fold-ir 274 output 1024 0) <= 0
+	not execute-first? output 9
+][
+	print ["immediate SET crossed an incoming control edge" lf]
+	failures: failures + 1
+]
+
+; Pointer arithmetic scales an adjacent integer literal before selecting an
+; imm32 form. The exact negative boundary folds; INT_MIN at stride four stays
+; in a register so its 64-bit product cannot wrap in the code generator.
+put pointer-ir 0 1
+put pointer-ir 4 0
+put pointer-ir 8 1
+put pointer-ir 12 0
+put pointer-ir 16 1
+put pointer-ir 20 4
+put pointer-ir 24 0
+put pointer-ir 28 0
+put pointer-ir 32 0
+
+put pointer-ir 36 -6
+put pointer-ir 40 -5
+put pointer-ir 44 0
+put pointer-ir 48 0
+put pointer-ir 52 0
+
+put pointer-ir 56 0
+put pointer-ir 60 2
+put pointer-ir 64 1
+put pointer-ir 68 0
+put pointer-ir 72 0
+put pointer-ir 76 0
+put pointer-ir 80 0
+put pointer-ir 84 0
+put pointer-ir 88 4
+
+put-instruction pointer-ir 92 1 1 4096 0
+put-instruction pointer-ir 108 1 -5 E0000000h -1
+put-instruction pointer-ir 124 15 1 0 0
+put-instruction pointer-ir 140 11 1 0 0
+pointer-ir/157: as byte! 66h
+pointer-ir/158: as byte! 6Eh
+
+expected-pointer: as byte-ptr! 4096
+expected-pointer: expected-pointer + E0000000h
+expected-pointer: expected-pointer + E0000000h
+expected-pointer: expected-pointer + E0000000h
+expected-pointer: expected-pointer + E0000000h
+size: x64-codegen/generate pointer-ir 158 output 1024 0
+if any [size <= 0 not execute-pointer? output expected-pointer][
+	print ["pointer immediate boundary fold failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	pointer-fold-code-size: fn/code-size
+]
+
+put-instruction pointer-ir 108 1 -5 80000000h -1
+expected-pointer: as byte-ptr! 4096
+expected-pointer: expected-pointer + 80000000h
+expected-pointer: expected-pointer + 80000000h
+expected-pointer: expected-pointer + 80000000h
+expected-pointer: expected-pointer + 80000000h
+size: x64-codegen/generate pointer-ir 158 output 1024 0
+if any [size <= 0 not execute-pointer? output expected-pointer][
+	print ["wide pointer literal scaling overflowed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <= pointer-fold-code-size [
+		print ["wide pointer literal did not use the register fallback" lf]
+		failures: failures + 1
+	]
+]
+
 ; A direct edge into BRANCH bypasses its adjacent literal. O2 must retain the
 ; real stack condition from that edge instead of treating the literal as a
 ; dominating constant.
@@ -5249,6 +5395,9 @@ free float-argument-ir
 free boolean-ir
 free merge-ir
 free literal-merge-ir
+free direct-store-ir
+free fused-branch-ir
+free imm-fold-ir
 free selection-ir
 free recursive-pointer-ir
 free recursive-value-ir

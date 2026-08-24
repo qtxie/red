@@ -1724,38 +1724,50 @@ x64-codegen: context [
 		layouts member-offsets offsets [int-ptr!]
 		return: [integer!]
 		/local parameter [rsir-parameter!]
-			count index used size alignment [integer!]
+			count index used size alignment hidden-shift physical-slot [integer!]
 	][
 		count: fn/parameter-count + fn/local-count
 		index: 1
-		used: either win64-hidden-return? fn/return-type fn/flags
-			types members type-count layouts member-offsets [8][0]
+		hidden-shift: either win64-hidden-return? fn/return-type fn/flags
+			types members type-count layouts member-offsets [1][0]
+		used: hidden-shift * 8
 		while [index <= count][
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
-			either all [index > fn/parameter-count offsets/index = 0][
-				offsets/index: 0
-			][
-				if parameter/type = 0 [return INVALID_IR]
-				size: 8
-				alignment: 8
-				if parameter/flags = INLINE [
-					size: 0
-					alignment: 0
-					unless layout-type parameter/type true types members type-count 0
-						layouts member-offsets :size :alignment [return INVALID_IR]
-					if all [
-						index <= fn/parameter-count
-						not win64-register-size? size
-					][
-						size: 8
-						alignment: 8
+			physical-slot: index + hidden-shift
+			case [
+				all [index <= fn/parameter-count physical-slot > 4][
+					if parameter/type = 0 [return INVALID_IR]
+					if (physical-slot - 5) > ((2147483647 - 48) / 8)[
+						return OUTPUT_FULL
 					]
+					offsets/index: 48 + ((physical-slot - 5) * 8)
 				]
-				if used > (2147483647 - size)[return INVALID_IR]
-				used: align (used + size) alignment
-				if used < 0 [return INVALID_IR]
-				offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
+				all [index > fn/parameter-count offsets/index = 0][
+					offsets/index: 0
+				]
+				true [
+					if parameter/type = 0 [return INVALID_IR]
+					size: 8
+					alignment: 8
+					if parameter/flags = INLINE [
+						size: 0
+						alignment: 0
+						unless layout-type parameter/type true types members type-count 0
+							layouts member-offsets :size :alignment [return INVALID_IR]
+						if all [
+							index <= fn/parameter-count
+							not win64-register-size? size
+						][
+							size: 8
+							alignment: 8
+						]
+					]
+					if used > (2147483647 - size)[return INVALID_IR]
+					used: align (used + size) alignment
+					if used < 0 [return INVALID_IR]
+					offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
+				]
 			]
 			index: index + 1
 		]
@@ -3701,7 +3713,7 @@ x64-codegen: context [
 			]
 			target-slot: storage-displacement storage-offsets index
 			physical-slot: index + hidden-shift
-			either physical-slot <= 4 [
+			if physical-slot <= 4 [
 				at: as byte-ptr! 0
 				if not measure? [at: code + written]
 				encoded: either floating? [
@@ -3712,20 +3724,6 @@ x64-codegen: context [
 					x64-encoder/frame-store at (capacity - written)
 						source-slot target-slot width
 				]
-				if encoded < 0 [return OUTPUT_FULL]
-				written: written + encoded
-			][
-				displacement: 48 + ((physical-slot - 5) * 8)
-				at: as byte-ptr! 0
-				if not measure? [at: code + written]
-				encoded: x64-encoder/frame-load at (capacity - written)
-					x64-encoder/RAX displacement width signed
-				if encoded < 0 [return OUTPUT_FULL]
-				written: written + encoded
-				at: as byte-ptr! 0
-				if not measure? [at: code + written]
-				encoded: x64-encoder/frame-store at (capacity - written)
-					x64-encoder/RAX target-slot width
 				if encoded < 0 [return OUTPUT_FULL]
 				written: written + encoded
 			]

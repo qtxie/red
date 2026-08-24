@@ -326,6 +326,7 @@ aggregate-ir: allocate 516
 abi-ir: allocate 1028
 small-return-ir: allocate 180
 widening-ir: allocate 676
+stack-parameter-ir: allocate 376
 sink-ir: allocate 676
 signature-ir: allocate 1024
 indirect-ir: allocate 324
@@ -369,7 +370,7 @@ if any [
 	null? arithmetic-ir null? duplicate-ir
 	null? expression-ir
 	null? aggregate-ir null? abi-ir null? small-return-ir
-	null? widening-ir null? sink-ir null? signature-ir
+	null? widening-ir null? stack-parameter-ir null? sink-ir null? signature-ir
 	null? indirect-ir null? variadic-ir
 	null? import-variadic-ir null? null-function-ir null? cast-ir null? cast-flow-ir
 	null? static-cast-ir
@@ -1787,6 +1788,84 @@ if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_I
 	failures: failures + 1
 ]
 put widening-ir 500 -4
+
+; The fifth Win64 parameter already has stable caller-stack storage. Assigning
+; through its address and loading it again must use that same slot without a
+; private frame home.
+put stack-parameter-ir 0 1
+put stack-parameter-ir 4 0
+put stack-parameter-ir 8 0
+put stack-parameter-ir 12 0
+put stack-parameter-ir 16 2
+put stack-parameter-ir 20 14
+put stack-parameter-ir 24 0
+put stack-parameter-ir 28 0
+put stack-parameter-ir 32 0
+
+put stack-parameter-ir 36 0
+put stack-parameter-ir 40 2
+put stack-parameter-ir 44 -5
+put stack-parameter-ir 48 0
+put stack-parameter-ir 52 0
+put stack-parameter-ir 56 0
+put stack-parameter-ir 60 0
+put stack-parameter-ir 64 0
+put stack-parameter-ir 68 7
+
+put stack-parameter-ir 72 2
+put stack-parameter-ir 76 2
+put stack-parameter-ir 80 -5
+put stack-parameter-ir 84 0
+put stack-parameter-ir 88 0
+put stack-parameter-ir 92 5
+put stack-parameter-ir 96 5
+put stack-parameter-ir 100 0
+put stack-parameter-ir 104 7
+
+put stack-parameter-ir 108 -5
+put stack-parameter-ir 112 0
+put stack-parameter-ir 116 -5
+put stack-parameter-ir 120 0
+put stack-parameter-ir 124 -5
+put stack-parameter-ir 128 0
+put stack-parameter-ir 132 -5
+put stack-parameter-ir 136 0
+put stack-parameter-ir 140 -5
+put stack-parameter-ir 144 0
+
+put-instruction stack-parameter-ir 148 1 -5 1 0
+put-instruction stack-parameter-ir 164 1 -5 2 0
+put-instruction stack-parameter-ir 180 1 -5 3 0
+put-instruction stack-parameter-ir 196 1 -5 4 0
+put-instruction stack-parameter-ir 212 1 -5 5 0
+put-instruction stack-parameter-ir 228 7 2 5 -5
+put-instruction stack-parameter-ir 244 11 -5 0 0
+
+put-instruction stack-parameter-ir 260 1 -5 42 0
+put-instruction stack-parameter-ir 276 3 1 5 0
+put-instruction stack-parameter-ir 292 5 0 0 0
+put-instruction stack-parameter-ir 308 12 0 0 0
+put-instruction stack-parameter-ir 324 3 1 5 0
+put-instruction stack-parameter-ir 340 4 0 0 0
+put-instruction stack-parameter-ir 356 11 -5 0 0
+stack-parameter-ir/373: as byte! 61h
+stack-parameter-ir/374: as byte! 0
+stack-parameter-ir/375: as byte! 62h
+stack-parameter-ir/376: as byte! 0
+
+size: x64-codegen/generate stack-parameter-ir 376 output 1024 0
+if any [size <= 0 not execute-first? output 42][
+	print ["mutable fifth parameter lost its caller-stack storage" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE
+		+ x64-codegen/IMAGE_FUNCTION_SIZE)
+	if fn/frame-size <> 80 [
+		print ["fifth parameter kept a private frame home: " fn/frame-size lf]
+		failures: failures + 1
+	]
+]
 
 ; A direct binary64 literal may narrow at a fixed binary32 CALL. The chosen
 ; value rounds from 16777217.0 to 16777216.0, so execution also proves that
@@ -5377,6 +5456,7 @@ free aggregate-ir
 free abi-ir
 free small-return-ir
 free widening-ir
+free stack-parameter-ir
 free sink-ir
 free signature-ir
 free indirect-ir

@@ -345,6 +345,7 @@ call-argument-ir: allocate 242
 address-call-ir: allocate 354
 float-argument-ir: allocate 379
 multi-argument-ir: allocate 640
+r8-branch-ir: allocate 414
 boolean-ir: allocate 260
 merge-ir: allocate 260
 literal-merge-ir: allocate 260
@@ -383,7 +384,7 @@ if any [
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
 	null? exception-ir null? no-return-ir null? effect-ir
-	null? call-argument-ir null? address-call-ir null? float-argument-ir
+	null? call-argument-ir null? address-call-ir null? float-argument-ir null? r8-branch-ir
 ][quit 1]
 
 ; Null is implicitly compatible with reference-shaped sinks only. Keep the
@@ -4332,8 +4333,7 @@ if size > 0 [
 ]
 
 ; A third register argument reaches R8. Its move encoding carries a REX prefix,
-; so the measure pass must run again after the direct target was recorded to
-; keep every offset consistent with the emitted bytes.
+; which the measure pass accounts for at the consuming CALL.
 put multi-argument-ir 44 -5
 put multi-argument-ir 80 -5
 put multi-argument-ir 108 -5
@@ -4392,6 +4392,80 @@ if size > 0 [
 		failures: failures + 1
 	]
 ]
+
+; A branch before the R8 producer must still reach its target after the direct
+; load gains its REX byte. The false path calls through R8 and returns 99.
+put r8-branch-ir 0 1
+put r8-branch-ir 4 0
+put r8-branch-ir 8 0
+put r8-branch-ir 12 0
+put r8-branch-ir 16 2
+put r8-branch-ir 20 17
+put r8-branch-ir 24 0
+put r8-branch-ir 28 0
+put r8-branch-ir 32 0
+
+put r8-branch-ir 36 0
+put r8-branch-ir 40 1
+put r8-branch-ir 44 -5
+put r8-branch-ir 48 0
+put r8-branch-ir 52 0
+put r8-branch-ir 56 0
+put r8-branch-ir 60 0
+put r8-branch-ir 64 1
+put r8-branch-ir 68 14
+
+put r8-branch-ir 72 1
+put r8-branch-ir 76 1
+put r8-branch-ir 80 -5
+put r8-branch-ir 84 0
+put r8-branch-ir 88 1
+put r8-branch-ir 92 3
+put r8-branch-ir 96 4
+put r8-branch-ir 100 0
+put r8-branch-ir 104 3
+
+put r8-branch-ir 108 -5
+put r8-branch-ir 112 0
+put r8-branch-ir 116 -5
+put r8-branch-ir 120 0
+put r8-branch-ir 124 -5
+put r8-branch-ir 128 0
+put r8-branch-ir 132 -5
+put r8-branch-ir 136 0
+
+put-instruction r8-branch-ir 140 1 -5 99 0
+put-instruction r8-branch-ir 156 3 1 1 0
+put-instruction r8-branch-ir 172 5 0 0 0
+put-instruction r8-branch-ir 188 12 0 0 0
+put-instruction r8-branch-ir 204 1 -11 0 0
+put-instruction r8-branch-ir 220 17 13 1 0
+put-instruction r8-branch-ir 236 1 -5 1 0
+put-instruction r8-branch-ir 252 1 -5 2 0
+put-instruction r8-branch-ir 268 3 1 1 0
+put-instruction r8-branch-ir 284 4 0 0 0
+put-instruction r8-branch-ir 300 7 2 3 -5
+put-instruction r8-branch-ir 316 16 14 0 0
+put-instruction r8-branch-ir 332 1 -5 42 0
+put-instruction r8-branch-ir 348 11 -5 0 0
+put-instruction r8-branch-ir 364 3 1 3 0
+put-instruction r8-branch-ir 380 4 0 0 0
+put-instruction r8-branch-ir 396 11 -5 0 0
+r8-branch-ir/413: as byte! 61h
+r8-branch-ir/414: as byte! 62h
+
+size: x64-codegen/generate r8-branch-ir 414 output 1024 0
+if any [size <= 0 not execute-first? output 99][
+	print ["O0 direct R8 branch offset failed" lf]
+	failures: failures + 1
+]
+put-instruction r8-branch-ir 204 1 -11 1 0
+size: x64-codegen/generate r8-branch-ir 414 output 1024 0
+if any [size <= 0 not execute-first? output 42][
+	print ["O0 direct R8 branch target failed" lf]
+	failures: failures + 1
+]
+put-instruction r8-branch-ir 204 1 -11 0 0
 
 ; A one-value packed CALL can write the live RAX value directly into its list.
 ; There is no earlier packed value that requires staging through R11.
@@ -5966,6 +6040,7 @@ free branch-ir
 free call-result-ir
 free call-argument-ir
 free float-argument-ir
+free r8-branch-ir
 free boolean-ir
 free merge-ir
 free literal-merge-ir

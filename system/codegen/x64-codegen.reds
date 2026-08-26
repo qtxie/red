@@ -3301,8 +3301,6 @@ x64-codegen: context [
 			function-offset function-code-size capacity exit-reference-id [integer!]
 		entry? [logic!]
 		global-reference-count literal-size frame-size outgoing-size [int-ptr!]
-		direct-count [int-ptr!]
-		collect-layout? [logic!]
 		return: [integer!]
 		/local instruction [rsir-instruction!]
 			next-instruction [rsir-instruction!]
@@ -4436,7 +4434,7 @@ x64-codegen: context [
 					][return INVALID_IR]
 					at: strings + literal-end - 1
 					if at/1 <> as byte! 0 [return INVALID_IR]
-					if all [measure? collect-layout? literal-end > literal-size/1][
+					if all [measure? literal-end > literal-size/1][
 						literal-size/1: literal-end
 					]
 					depth: depth + 1
@@ -4596,10 +4594,8 @@ x64-codegen: context [
 					if encoded < 0 [return OUTPUT_FULL]
 					if import-id > 0 [
 						either measure? [
-							if collect-layout? [
-								if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
-								import-refs/import-id: import-refs/import-id + 1
-							]
+							if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
+							import-refs/import-id: import-refs/import-id + 1
 						][
 							reference-id: import-refs/import-id
 							references/reference-id: function-offset + written + 3
@@ -4611,14 +4607,12 @@ x64-codegen: context [
 							+ (function-count * IMAGE_FUNCTION_SIZE)
 							+ ((global-id - 1) * IMAGE_GLOBAL_SIZE))
 						either measure? [
-							if collect-layout? [
-								if any [
-									image-global/reference-count = 2147483647
-									global-reference-count/1 = 2147483647
-								][return OUTPUT_FULL]
-								image-global/reference-count: image-global/reference-count + 1
-								global-reference-count/1: global-reference-count/1 + 1
-							]
+							if any [
+								image-global/reference-count = 2147483647
+								global-reference-count/1 = 2147483647
+							][return OUTPUT_FULL]
+							image-global/reference-count: image-global/reference-count + 1
+							global-reference-count/1: global-reference-count/1 + 1
 						][
 							reference-id: image-global/first-reference
 								+ image-global/reference-count
@@ -6091,17 +6085,16 @@ x64-codegen: context [
 										either measure? [
 											argument-targets/argument-producer:
 												as byte! physical-slot
-											; R8/R9 can add a REX prefix to a narrow integer
-											; producer. The other ABI targets, and 64-bit
-											; values already carrying REX.W, keep the first
-											; measurement's instruction lengths.
+											; A narrow R8/R9 producer adds one REX byte after
+											; its RAX measurement. Advance this CALL and all
+											; following offsets without measuring the function again.
 											if all [
-												not null? direct-count
 												not floating?
 												physical-slot >= 3
 												source-width < 8
 											][
-												direct-count/1: direct-count/1 + 1
+												instruction-offsets/index: instruction-offsets/index + 1
+												written: written + 1
 											]
 									][
 										if argument-targets/argument-producer <>
@@ -6316,10 +6309,8 @@ x64-codegen: context [
 					if encoded < 0 [return OUTPUT_FULL]
 					if import-id > 0 [
 						either measure? [
-							if collect-layout? [
-								if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
-								import-refs/import-id: import-refs/import-id + 1
-							]
+							if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
+							import-refs/import-id: import-refs/import-id + 1
 						][
 							reference-id: import-refs/import-id
 							references/reference-id: function-offset + written + 2
@@ -9056,7 +9047,6 @@ x64-codegen: context [
 				literal-size rodata-offset data-offset image-rodata-size image-data-size
 				total-size scratch-count
 				id next-instruction next-offset instruction-count function-size entry-size
-				direct-round
 				code-cursor name-cursor global-size global-align global-offset
 				parameter-id parameter-end
 				global-reference-count used-import-count import-reference-count
@@ -9840,11 +9830,6 @@ x64-codegen: context [
 			function-instructions: instruction-data
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
-			; Direct argument targets are recorded during this measure pass and
-			; read by their producing instructions. R8/R9 narrow scalar targets
-			; can add a REX prefix, so only those functions need a second
-			; measurement with stable register assignments.
-			direct-round: 0
 			function-size: compile-function ir-function signature-cache function-instructions
 				(argument-targets + (next-instruction - 1))
 				function-effects (instruction-effects + (next-instruction - 1))
@@ -9867,32 +9852,7 @@ x64-codegen: context [
 				header/type-count header/function-count header/import-count
 				header/global-count header/switch-count strings-size 0 0 0 0 current-entry?
 				:global-reference-count :literal-size (function-frames + (id - 1))
-				(function-outgoing + (id - 1)) :direct-round true
-			if direct-round > 0 [
-				function-size: compile-function ir-function signature-cache function-instructions
-					(argument-targets + (next-instruction - 1))
-					function-effects (instruction-effects + (next-instruction - 1))
-					stack-types stack-flags stack-kinds stack-tags storage-offsets
-					(result-offsets + (next-instruction - 1))
-					layouts member-offsets
-					(instruction-offsets + (next-offset - 1))
-					(instruction-depths + (next-instruction - 1))
-					(catch-depths + (next-instruction - 1))
-					(control-uses + (next-instruction - 1))
-					(entry-types + (next-instruction - 1))
-					(entry-flags + (next-instruction - 1))
-					(entry-kinds + (next-instruction - 1))
-					(entry-tags + (next-instruction - 1))
-					(tag-next + (next-instruction - 1))
-					(tag-slots + (next-instruction - 1))
-					(tag-widths + (next-instruction - 1)) import-refs null
-					parameter-data function-data import-data global-data type-data member-data
-					switch-data (output + IMAGE_HEADER_SIZE) strings null
-					header/type-count header/function-count header/import-count
-					header/global-count header/switch-count strings-size 0 0 0 0 current-entry?
-					:global-reference-count :literal-size (function-frames + (id - 1))
-					(function-outgoing + (id - 1)) :direct-round false
-			]
+				(function-outgoing + (id - 1))
 			if function-size < 0 [return release scratch signature-cache function-size]
 			function-sizes/id: function-size
 			if function-names-size > (2147483647 - ir-function/name-size)[
@@ -10185,7 +10145,7 @@ x64-codegen: context [
 				header/global-count header/switch-count strings-size image-function/code-offset
 				function-code-size image-function/code-size exit-reference-id current-entry?
 				:global-reference-count :literal-size (function-frames + (id - 1))
-				(function-outgoing + (id - 1)) null false
+				(function-outgoing + (id - 1))
 			if written < 0 [return release scratch signature-cache written]
 			if written <> image-function/code-size [return release scratch signature-cache INVALID_IR]
 			next-instruction: next-instruction + ir-function/instruction-count

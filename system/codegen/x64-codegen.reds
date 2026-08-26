@@ -3354,7 +3354,7 @@ x64-codegen: context [
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
 			linear? consume-location? global-target? defer-global? paired? set-pair?
 			address-pair? load-pair? direct-store? spill-next? fuse-branch? imm-pair?
-			imm-call? reference-call? direct-reference?
+			imm-call? direct-argument?
 			immediate? left-in-register? imm-set? set-fused? set-next?
 			scaled-immediate?
 			source-located? direct-frame-target? live?
@@ -4476,12 +4476,11 @@ x64-codegen: context [
 					import-id: 0
 					global-id: 0
 					defer-global?: false
-					register-id: as integer! argument-targets/index
-					either register-id = 0 [
-						register-id: x64-encoder/RAX
-					][
-						register-id: register-id - 1
-					]
+					physical-slot: as integer! argument-targets/index
+					register-id: either physical-slot = 0 [
+						x64-encoder/RAX
+					][argument-register physical-slot]
+					if register-id < 0 [return INVALID_IR]
 					case [
 						instruction/a = LOCAL_ADDRESS [
 							unless all [
@@ -4709,9 +4708,15 @@ x64-codegen: context [
 							layouts member-offsets
 						signed: either signed-type? ref types type-count [1][0]
 						floating?: float-type? ref types type-count
-						register-id: either load-pair? [
-							either floating? [x64-encoder/XMM1][x64-encoder/RDX]
-						][either floating? [x64-encoder/XMM0][x64-encoder/RAX]]
+						physical-slot: as integer! argument-targets/index
+						register-id: either physical-slot = 0 [
+							either load-pair? [
+								either floating? [x64-encoder/XMM1][x64-encoder/RDX]
+							][either floating? [x64-encoder/XMM0][x64-encoder/RAX]]
+						][either floating? [
+							physical-slot - 1
+						][argument-register physical-slot]]
+						if register-id < 0 [return INVALID_IR]
 						if all [
 							load-pair?
 							not any [
@@ -4765,8 +4770,12 @@ x64-codegen: context [
 							if not measure? [at: code + written]
 							encoded: either floating? [
 								x64-encoder/xmm-load-indirect at (capacity - written)
-									x64-encoder/XMM0 x64-encoder/RAX width
-							][x64-encoder/load-indirect at (capacity - written) width signed]
+									register-id x64-encoder/RAX width
+							][
+								x64-encoder/register-load-indirect at
+									(capacity - written) register-id x64-encoder/RAX
+									width signed
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
@@ -4809,12 +4818,11 @@ x64-codegen: context [
 							layouts member-offsets
 					][return INVALID_IR]
 					tracked?: location <> LOCATION_NONE
-					register-id: as integer! argument-targets/index
-					either register-id = 0 [
-						register-id: x64-encoder/RAX
-					][
-						register-id: register-id - 1
-					]
+					physical-slot: as integer! argument-targets/index
+					register-id: either physical-slot = 0 [
+						x64-encoder/RAX
+					][argument-register physical-slot]
+					if register-id < 0 [return INVALID_IR]
 					if tracked? [
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
@@ -5518,32 +5526,32 @@ x64-codegen: context [
 						pending-immediate-index: -1
 						pending-immediate-kind: 0
 					]
-					reference-call?: false
 					argument-producer: 0
 					if all [
-						index > 2
+						index > 1
 						argument-index = 1
-						location = LOCATION_GPR
+						any [location = LOCATION_GPR location = LOCATION_XMM]
 						location-depth = depth
 					][
 						argument-instruction: as rsir-instruction! (instructions
 							+ ((index - 2) * RSIR_INSTRUCTION_SIZE))
-						argument-address: as rsir-instruction! (instructions
-							+ ((index - 3) * RSIR_INSTRUCTION_SIZE))
-						reference-call?: all [
-							argument-instruction/op = OP_REFERENCE
-							argument-address/op = OP_ADDRESS
+						if argument-instruction/op = OP_LOAD [
+							argument-producer: index - 1
 						]
-						if reference-call? [
+						if all [
+							argument-producer = 0
+							index > 2
+							location = LOCATION_GPR
+							argument-instruction/op = OP_REFERENCE
+						][
+							argument-address: as rsir-instruction! (instructions
+								+ ((index - 3) * RSIR_INSTRUCTION_SIZE))
+							if argument-address/op = OP_ADDRESS [
 							argument-producer: either argument-address/a = LOCAL_ADDRESS [
 								index - 1
 							][index - 2]
+							]
 						]
-					]
-					direct-reference?: all [
-						reference-call?
-						not custom-call?
-						not list-call?
 					]
 					located?: location <> LOCATION_NONE
 					if located? [
@@ -5592,7 +5600,14 @@ x64-codegen: context [
 							located?: false
 						]
 					]
-					if all [located? not immediate? not direct-reference?][
+					direct-argument?: all [
+						located?
+						argument-producer > 0
+						not aggregate-ref? stack-types/depth types type-count
+						not custom-call?
+						not list-call?
+					]
+					if all [located? not immediate? not direct-argument?][
 						aggregate-copy?: false
 						if all [location = LOCATION_GPR not packed-call?][
 							source-slot: 1
@@ -6057,6 +6072,20 @@ x64-codegen: context [
 							target-width: either argument-width = 8 [8][4]
 							either physical-slot <= 4 [
 								target-slot: argument-register physical-slot
+								if direct-argument? [
+									either measure? [
+										argument-targets/argument-producer:
+											as byte! physical-slot
+									][
+										if argument-targets/argument-producer <>
+											as byte! physical-slot [
+											return INVALID_IR
+										]
+									]
+									location-source: either floating? [
+										physical-slot - 1
+									][target-slot]
+								]
 								at: as byte-ptr! 0
 								if not measure? [at: code + written]
 								encoded: either floating? [
@@ -6083,18 +6112,6 @@ x64-codegen: context [
 											x64-encoder/move-immediate at (capacity - written)
 												target-slot target-width following-instruction/b
 												following-instruction/c
-										]
-										direct-reference? [
-											either measure? [
-												argument-targets/argument-producer:
-													as byte! (target-slot + 1)
-											][
-												if argument-targets/argument-producer <>
-													as byte! (target-slot + 1) [
-													return INVALID_IR
-												]
-											]
-											0
 										]
 										tracked? [
 											move-operation-value at (capacity - written)

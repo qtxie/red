@@ -344,6 +344,7 @@ call-result-ir: allocate 260
 call-argument-ir: allocate 242
 address-call-ir: allocate 354
 float-argument-ir: allocate 379
+multi-argument-ir: allocate 640
 boolean-ir: allocate 260
 merge-ir: allocate 260
 literal-merge-ir: allocate 260
@@ -4225,6 +4226,169 @@ if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if fn/code-size <> 51 [
 		print ["O0 direct floating LOAD CALL code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+
+; A two-argument fixed CALL keeps its freshly loaded second argument in RDX.
+; The first argument was materialized long before, so the producer targets the
+; last ABI slot directly and both staging moves disappear.
+put multi-argument-ir 0 1
+put multi-argument-ir 4 0
+put multi-argument-ir 8 0
+put multi-argument-ir 12 0
+put multi-argument-ir 16 2
+put multi-argument-ir 20 17
+put multi-argument-ir 24 0
+put multi-argument-ir 28 0
+put multi-argument-ir 32 0
+
+put multi-argument-ir 36 0
+put multi-argument-ir 40 1
+put multi-argument-ir 44 -5
+put multi-argument-ir 48 0
+put multi-argument-ir 52 0
+put multi-argument-ir 56 0
+put multi-argument-ir 60 0
+put multi-argument-ir 64 2
+put multi-argument-ir 68 14
+
+put multi-argument-ir 72 1
+put multi-argument-ir 76 1
+put multi-argument-ir 80 -5
+put multi-argument-ir 84 0
+put multi-argument-ir 88 2
+put multi-argument-ir 92 2
+put multi-argument-ir 96 4
+put multi-argument-ir 100 0
+put multi-argument-ir 104 3
+
+put multi-argument-ir 108 -5
+put multi-argument-ir 112 0
+put multi-argument-ir 116 -5
+put multi-argument-ir 120 0
+put multi-argument-ir 124 -5
+put multi-argument-ir 128 0
+put multi-argument-ir 132 -5
+put multi-argument-ir 136 0
+
+put-instruction multi-argument-ir 140 1 -5 41 0
+put-instruction multi-argument-ir 156 3 1 1 0
+put-instruction multi-argument-ir 172 5 0 0 0
+put-instruction multi-argument-ir 188 12 0 0 0
+put-instruction multi-argument-ir 204 1 -5 7 0
+put-instruction multi-argument-ir 220 3 1 2 0
+put-instruction multi-argument-ir 236 5 0 0 0
+put-instruction multi-argument-ir 252 12 0 0 0
+put-instruction multi-argument-ir 268 3 1 1 0
+put-instruction multi-argument-ir 284 4 0 0 0
+put-instruction multi-argument-ir 300 3 1 2 0
+put-instruction multi-argument-ir 316 4 0 0 0
+put-instruction multi-argument-ir 332 7 2 2 -5
+put-instruction multi-argument-ir 348 11 -5 0 0
+put-instruction multi-argument-ir 364 3 1 2 0
+put-instruction multi-argument-ir 380 4 0 0 0
+put-instruction multi-argument-ir 396 11 -5 0 0
+multi-argument-ir/413: as byte! 61h
+multi-argument-ir/414: as byte! 62h
+
+size: x64-codegen/generate multi-argument-ir 414 output 1024 0
+if any [size <= 0 not execute-first? output 7][
+	print ["O0 direct second integer CALL argument failed: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 52 [
+		print ["O0 direct second integer CALL code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+
+; The same shape with binary64 values lands the loaded second argument in XMM1.
+put multi-argument-ir 44 -10
+put multi-argument-ir 80 -10
+put multi-argument-ir 108 -10
+put multi-argument-ir 116 -10
+put multi-argument-ir 124 -10
+put multi-argument-ir 132 -10
+put-instruction multi-argument-ir 140 1 -10 0 3FF00000h
+put-instruction multi-argument-ir 204 1 -10 0 3FF80000h
+put-instruction multi-argument-ir 332 7 2 2 -10
+put-instruction multi-argument-ir 348 11 -10 0 0
+put-instruction multi-argument-ir 396 11 -10 0 0
+
+size: x64-codegen/generate multi-argument-ir 414 output 1024 0
+if any [size <= 0 not execute-floating? output 1.5][
+	print ["O0 direct second floating CALL argument failed: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 86 [
+		print ["O0 direct second floating CALL code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+
+; A third register argument reaches R8. Its move encoding carries a REX prefix,
+; so the measure pass must run again after the direct target was recorded to
+; keep every offset consistent with the emitted bytes.
+put multi-argument-ir 44 -5
+put multi-argument-ir 80 -5
+put multi-argument-ir 108 -5
+put multi-argument-ir 116 -5
+put multi-argument-ir 124 -5
+put multi-argument-ir 132 -5
+
+put multi-argument-ir 64 3
+put multi-argument-ir 68 20
+put multi-argument-ir 88 3
+put multi-argument-ir 92 3
+put multi-argument-ir 96 6
+put multi-argument-ir 104 3
+put multi-argument-ir 20 23
+
+put multi-argument-ir 140 -5
+put multi-argument-ir 144 0
+put multi-argument-ir 148 -5
+put multi-argument-ir 152 0
+
+put-instruction multi-argument-ir 156 1 -5 41 0
+put-instruction multi-argument-ir 172 3 1 1 0
+put-instruction multi-argument-ir 188 5 0 0 0
+put-instruction multi-argument-ir 204 12 0 0 0
+put-instruction multi-argument-ir 220 1 -5 7 0
+put-instruction multi-argument-ir 236 3 1 2 0
+put-instruction multi-argument-ir 252 5 0 0 0
+put-instruction multi-argument-ir 268 12 0 0 0
+put-instruction multi-argument-ir 284 1 -5 99 0
+put-instruction multi-argument-ir 300 3 1 3 0
+put-instruction multi-argument-ir 316 5 0 0 0
+put-instruction multi-argument-ir 332 12 0 0 0
+put-instruction multi-argument-ir 348 3 1 1 0
+put-instruction multi-argument-ir 364 4 0 0 0
+put-instruction multi-argument-ir 380 3 1 2 0
+put-instruction multi-argument-ir 396 4 0 0 0
+put-instruction multi-argument-ir 412 3 1 3 0
+put-instruction multi-argument-ir 428 4 0 0 0
+put-instruction multi-argument-ir 444 7 2 3 -5
+put-instruction multi-argument-ir 460 11 -5 0 0
+put-instruction multi-argument-ir 476 3 1 3 0
+put-instruction multi-argument-ir 492 4 0 0 0
+put-instruction multi-argument-ir 508 11 -5 0 0
+multi-argument-ir/525: as byte! 61h
+multi-argument-ir/526: as byte! 62h
+
+size: x64-codegen/generate multi-argument-ir 526 output 1024 0
+if any [size <= 0 not execute-first? output 99][
+	print ["O0 direct third register CALL argument failed: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 69 [
+		print ["O0 direct third register CALL code size: " fn/code-size lf]
 		failures: failures + 1
 	]
 ]

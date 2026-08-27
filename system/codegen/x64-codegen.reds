@@ -5604,7 +5604,7 @@ x64-codegen: context [
 					direct-argument?: all [
 						located?
 						argument-producer > 0
-						not aggregate-ref? stack-types/depth types type-count
+						not inline-object-ref? stack-types/depth types type-count
 						not custom-call?
 						not list-call?
 						; A register-resident last argument keeps its producer's

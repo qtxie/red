@@ -181,6 +181,8 @@ run-linked-fixture
 	%rsir-tagged-union-exit.reds %rsir-tagged-union-linked.exe "tagged union"
 run-linked-fixture
 	%rsir-literal-array-exit.reds %rsir-literal-array-linked.exe "literal array"
+run-linked-fixture
+	%rsir-inline-array-call-exit.reds %rsir-inline-array-call-linked.exe "inline array call"
 run-linked-fixture/runtime
 	%rsir-cstring-write-exit.reds %rsir-cstring-write-linked.exe "writable c-string literal"
 run-linked-fixture/runtime

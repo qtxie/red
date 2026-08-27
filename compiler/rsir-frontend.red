@@ -579,10 +579,15 @@ compiler-rsir-frontend: context [
 	][
 		if root-qualified? value [
 			value: root-name value
-			key: qualified copy [] value
+			key: qualified [] value
 			return select names key
 		]
 		depth: length? scope
+		if depth > 0 [
+			key: qualified scope value
+			if id: select names key [return id]
+			depth: depth - 1
+		]
 		while [depth > 0][
 			key: qualified copy/part scope depth value
 			if id: select names key [return id]
@@ -590,7 +595,7 @@ compiler-rsir-frontend: context [
 		]
 		id: resolve-used-name value uses names
 		unless none? id [return id]
-		key: qualified copy [] value
+		key: qualified [] value
 		select names key
 	]
 
@@ -645,10 +650,15 @@ compiler-rsir-frontend: context [
 		root?: root-qualified? value
 		if root? [
 			value: root-name value
-			kind: exact-value-kind qualified copy [] value
+			kind: exact-value-kind qualified [] value
 		]
 		if all [kind = 0 not root?][
 			depth: length? scope
+			if depth > 0 [
+				key: qualified scope value
+				kind: exact-value-kind key
+				either kind <> 0 [depth: 0][depth: depth - 1]
+			]
 			while [depth > 0][
 				key: qualified copy/part scope depth value
 				kind: exact-value-kind key
@@ -676,7 +686,7 @@ compiler-rsir-frontend: context [
 			resolved-value-id: best-id
 		]
 		if all [kind = 0 not root?][
-			kind: exact-value-kind qualified copy [] value
+			kind: exact-value-kind qualified [] value
 		]
 		if all [function-active? same? scope function-scope same? uses function-uses][
 			put resolved-value-kinds cache-key kind
@@ -739,11 +749,16 @@ compiler-rsir-frontend: context [
 	][
 		if root-qualified? value [
 			value: root-name value
-			key: qualified copy [] value
-			if select contexts key [return extend-scope copy [] value]
+			key: qualified [] value
+			if select contexts key [return extend-scope [] value]
 			return none
 		]
 		depth: length? scope
+		if depth > 0 [
+			key: qualified scope value
+			if select contexts key [return extend-scope scope value]
+			depth: depth - 1
+		]
 		while [depth > 0][
 			key: qualified copy/part scope depth value
 			if select contexts key [
@@ -762,8 +777,8 @@ compiler-rsir-frontend: context [
 			]
 		]
 		if block? found [return found]
-		key: qualified copy [] value
-		if select contexts key [return extend-scope copy [] value]
+		key: qualified [] value
+		if select contexts key [return extend-scope [] value]
 		none
 	]
 

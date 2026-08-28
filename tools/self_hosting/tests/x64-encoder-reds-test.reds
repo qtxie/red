@@ -61,6 +61,18 @@ if any [size <> 10 (compare-memory code expected size) <> 0][
 	print ["full-width immediate failed, size=" size lf]
 	failures: failures + 1
 ]
+size: x64-encoder/move-immediate-compact code 128 x64-encoder/R9 8 0 0
+expected: #{4531C9}
+if any [size <> 3 (compare-memory code expected size) <> 0][
+	print ["zero materialization failed, size=" size lf]
+	failures: failures + 1
+]
+size: x64-encoder/move-immediate-compact code 128 x64-encoder/R9 8 1 0
+expected: #{4531C941FFC1}
+if any [size <> 6 (compare-memory code expected size) <> 0][
+	print ["one materialization failed, size=" size lf]
+	failures: failures + 1
+]
 if (x64-encoder/move-register code 128 x64-encoder/RDX x64-encoder/RCX 8) <> 3 [
 	failures: failures + 1
 ]
@@ -117,6 +129,20 @@ offset: offset + size
 size: x64-encoder/jump-condition (code + offset) (128 - offset) 4 7
 if size <> 6 [failures: failures + 1]
 offset: offset + size
+size: x64-encoder/jump-relative-short (code + offset) (128 - offset) -2
+expected: #{EBFE}
+if any [size <> 2 (compare-memory (code + offset) expected size) <> 0][
+	print ["short jump failed, size=" size lf]
+	failures: failures + 1
+]
+offset: offset + size
+size: x64-encoder/jump-condition-short (code + offset) (128 - offset) 5 7
+expected: #{7507}
+if any [size <> 2 (compare-memory (code + offset) expected size) <> 0][
+	print ["short condition failed, size=" size lf]
+	failures: failures + 1
+]
+offset: offset + size
 size: x64-encoder/divide-register (code + offset) (128 - offset) 4 1
 if size <> 3 [failures: failures + 1]
 offset: offset + size
@@ -138,10 +164,12 @@ operations: #{
 	85C0
 	E9FBFFFFFF
 	0F8407000000
+	EBFE
+	7507
 	99F7F9
 	4863C9
 }
-if any [offset <> 52 (compare-memory code (as byte-ptr! operations) offset) <> 0][
+if any [offset <> 56 (compare-memory code (as byte-ptr! operations) offset) <> 0][
 	failures: failures + 1
 ]
 
@@ -149,6 +177,7 @@ size: x64-encoder/extend-narrow-register code 128 x64-encoder/RAX
 	x64-encoder/RAX 1 1
 expected: #{0FBEC0}
 if any [size <> 3 (compare-memory code expected size) <> 0][
+	print ["indirect load zero failed, size=" size lf]
 	failures: failures + 1
 ]
 size: x64-encoder/extend-narrow-register code 128 x64-encoder/RDX
@@ -160,6 +189,7 @@ if any [size <> 3 (compare-memory code expected size) <> 0][
 size: x64-encoder/extend-narrow-register code 128 9 10 1 0
 expected: #{450FB6CA}
 if any [size <> 4 (compare-memory code expected size) <> 0][
+	print ["indirect load disp8 failed, size=" size lf]
 	failures: failures + 1
 ]
 if (x64-encoder/extend-narrow-register code 128 x64-encoder/RAX
@@ -190,11 +220,13 @@ if any [
 size: x64-encoder/register-load code 128 x64-encoder/R9 x64-encoder/R10 24
 expected: #{4D8B4A18}
 if any [size <> 4 (compare-memory code expected size) <> 0][
+	print ["indirect store zero failed, size=" size lf]
 	failures: failures + 1
 ]
 size: x64-encoder/register-store code 128 x64-encoder/R9 x64-encoder/R10 24
 expected: #{4D894A18}
 if any [size <> 4 (compare-memory code expected size) <> 0][
+	print ["indirect load disp8 new failed, size=" size lf]
 	failures: failures + 1
 ]
 size: x64-encoder/register-load code 128 x64-encoder/RAX x64-encoder/RSP 32
@@ -208,21 +240,34 @@ if any [size <> 5 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-load-indirect code 128 x64-encoder/R9
-	x64-encoder/R10 4 0
+	x64-encoder/R10 0 4 0
 expected: #{458B0A}
 if any [size <> 3 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-load-indirect code 128 x64-encoder/RAX
-	x64-encoder/RBP 2 1
+	x64-encoder/RBP 0 2 1
 expected: #{0FBF4500}
 if any [size <> 4 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/register-store-indirect code 128 x64-encoder/R13
-	x64-encoder/R9 4
+	x64-encoder/R9 0 4
 expected: #{45894D00}
 if any [size <> 4 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/register-load-indirect code 128 x64-encoder/R9
+	x64-encoder/R10 24 4 0
+expected: #{458B4A18}
+if any [size <> 4 (compare-memory code expected size) <> 0][
+	failures: failures + 1
+]
+size: x64-encoder/register-store-indirect code 128 x64-encoder/R13
+	x64-encoder/R9 12345678h 4
+expected: #{45898D78563412}
+if any [size <> 7 (compare-memory code expected size) <> 0][
+	print ["indirect store disp32 failed, size=" size lf]
 	failures: failures + 1
 ]
 offset: 0
@@ -522,11 +567,11 @@ if (x64-encoder/register-load code 3 x64-encoder/R9 x64-encoder/R10 24) <> -1 [
 if (x64-encoder/register-store code 128 16 x64-encoder/RAX 0) <> -1 [
 	failures: failures + 1
 ]
-if (x64-encoder/register-load-indirect code 128 16 x64-encoder/RAX 4 0) <> -1 [
+if (x64-encoder/register-load-indirect code 128 16 x64-encoder/RAX 0 4 0) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/register-store-indirect code 128 x64-encoder/RAX
-	x64-encoder/RCX 3) <> -1 [failures: failures + 1]
+	x64-encoder/RCX 0 3) <> -1 [failures: failures + 1]
 if (x64-encoder/atomic-binary code 128 02h x64-encoder/RAX
 	x64-encoder/RCX) <> -1 [failures: failures + 1]
 if (x64-encoder/atomic-exchange-add code 128 16 x64-encoder/RAX) <> -1 [

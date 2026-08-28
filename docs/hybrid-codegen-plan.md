@@ -1147,7 +1147,20 @@ Already retained:
   Red phases or their allocation pressure rather than infer speed from `.text`
   size alone;
 - the retired wire/schema/driver/adapter experiment and its generated test
-  closure have been removed from the repository.
+  closure have been removed from the repository;
+- the frame size at an unstable-stack call is known only while emitting, so its
+  immediate keeps one value-independent encoding. The compact zero form had made
+  measurement three bytes shorter than emission for every such call, which
+  exhausted the reserved per-function buffer while lowering the runtime. With
+  that repaired, branch relaxation is enabled: each function measures near forms
+  first, then every jump and branch whose final distance fits one signed byte
+  switches to its two-byte form, and emission matches the relaxed measurement
+  byte for byte. Rebuilding the runtime with the resulting compiler moves
+  libRedRT `.text` from `19E930h` to `185A1Eh`, 103,442 bytes below the previous
+  generation and 14.0% above the same runtime compiled by the existing Red
+  toolchain (`155832h`). The native codegen and encoder fixtures pass, and the
+  complete Windows x64 Red/System runner reports 10,582 tests and 12,647/12,647
+  assertions with no compile failures.
 
 Still incomplete and therefore not an H0:
 

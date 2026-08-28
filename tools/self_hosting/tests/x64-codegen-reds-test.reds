@@ -23,6 +23,7 @@ Red/System [
 ]
 
 selection-entry!: alias function! [return: [integer!]]
+unary-entry!: alias function! [value [integer!] return: [integer!]]
 pointer-entry!: alias function! [return: [byte-ptr!]]
 floating-entry!: alias function! [return: [float!]]
 floating32-entry!: alias function! [return: [float32!]]
@@ -127,6 +128,25 @@ execute-first?: func [
 	if null? code [return false]
 	copy-memory code (image + header/code-offset) header/code-size
 	result: run-selection (code + fn/code-offset)
+	VirtualFree code 0 8000h
+	result = expected
+]
+
+execute-unary?: func [
+	image [byte-ptr!]
+	value expected [integer!]
+	return: [logic!]
+	/local header [codegen-header!] fn [codegen-function!]
+		code [byte-ptr!] entry [unary-entry!] result [integer!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	if header/code-size > 4096 [return false]
+	code: VirtualAlloc (as byte-ptr! 0) 4096 3000h 40h
+	if null? code [return false]
+	copy-memory code (image + header/code-offset) header/code-size
+	entry: as unary-entry! (code + fn/code-offset)
+	result: entry value
 	VirtualFree code 0 8000h
 	result = expected
 ]
@@ -342,6 +362,8 @@ array-compare-ir: allocate 228
 branch-ir: allocate 260
 call-result-ir: allocate 260
 call-argument-ir: allocate 242
+forward-argument-ir: allocate 240
+forward-collision-ir: allocate 312
 address-call-ir: allocate 354
 float-argument-ir: allocate 379
 multi-argument-ir: allocate 640
@@ -384,7 +406,9 @@ if any [
 	null? recursive-pointer-ir null? recursive-value-ir
 	null? stack-ir null? log-b-ir null? system-ir null? atomic-ir null? overflow-ir
 	null? exception-ir null? no-return-ir null? effect-ir
-	null? call-argument-ir null? address-call-ir null? float-argument-ir null? r8-branch-ir
+	null? call-argument-ir null? forward-argument-ir null? forward-collision-ir
+	null? address-call-ir
+	null? float-argument-ir null? r8-branch-ir
 ][quit 1]
 
 ; Null is implicitly compatible with reference-shaped sinks only. Keep the
@@ -1154,7 +1178,7 @@ if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if any [
 		fn/frame-size <> 48
-		fn/code-size <> 32
+		fn/code-size <> 31
 		not execute-first? output 9
 	][
 		print ["O0 integer operator location code size: " fn/code-size lf]
@@ -1369,7 +1393,7 @@ if any [size <= 0 not execute-first? output -2][
 ]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 28 [
+	if fn/code-size <> 27 [
 		print ["O0 unary operator location code size: " fn/code-size lf]
 		failures: failures + 1
 	]
@@ -1730,7 +1754,7 @@ if size > 0 [
 	if header/function-count <> 3 [failures: failures + 1]
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	widening-argument-code-size: fn/code-size
-	if widening-argument-code-size <> 212 [
+	if widening-argument-code-size <> 209 [
 		print ["O0 fifth argument code size: " widening-argument-code-size lf]
 		failures: failures + 1
 	]
@@ -1793,8 +1817,8 @@ if (x64-codegen/generate widening-ir 673 output 1024 0) <> x64-codegen/INVALID_I
 put widening-ir 500 -4
 
 ; The fifth Win64 parameter already has stable caller-stack storage. Assigning
-; through its address and loading it again must use that same slot without a
-; private frame home.
+; through its address and loading it again must use that same slot. The four
+; unused register parameters need no private frame homes.
 put stack-parameter-ir 0 1
 put stack-parameter-ir 4 0
 put stack-parameter-ir 8 0
@@ -1864,8 +1888,8 @@ if any [size <= 0 not execute-first? output 42][
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE
 		+ x64-codegen/IMAGE_FUNCTION_SIZE)
-	if fn/frame-size <> 80 [
-		print ["fifth parameter kept a private frame home: " fn/frame-size lf]
+	if fn/frame-size <> 48 [
+		print ["unused register parameters kept frame homes: " fn/frame-size lf]
 		failures: failures + 1
 	]
 ]
@@ -3165,7 +3189,7 @@ if size <= 0 [failures: failures + 1]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	branch-code-size: fn/code-size
-	if branch-code-size <> 46 [
+	if branch-code-size <> 41 [
 		print ["O0 direct BRANCH code size: " branch-code-size lf]
 		failures: failures + 1
 	]
@@ -3701,7 +3725,7 @@ if size <= 0 [failures: failures + 1]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	call-branch-code-size: fn/code-size
-	if call-branch-code-size <> 46 [
+	if call-branch-code-size <> 42 [
 		print ["O0 CALL to BRANCH code size: " call-branch-code-size lf]
 		failures: failures + 1
 	]
@@ -3915,6 +3939,142 @@ if size > 0 [
 		print ["O0 fixed argument code size: " call-argument-code-size lf]
 		failures: failures + 1
 	]
+]
+
+; A scalar parameter can stay in its incoming ABI register through LOAD. CALL
+; then emits only the transfer its destination slot actually needs; forwarding
+; RCX to RCX is a zero-instruction value flow in both codegen passes.
+put forward-argument-ir 0 1
+put forward-argument-ir 4 0
+put forward-argument-ir 8 0
+put forward-argument-ir 12 0
+put forward-argument-ir 16 2
+put forward-argument-ir 20 7
+put forward-argument-ir 24 0
+put forward-argument-ir 28 0
+put forward-argument-ir 32 0
+
+put forward-argument-ir 36 0
+put forward-argument-ir 40 1
+put forward-argument-ir 44 -5
+put forward-argument-ir 48 0
+put forward-argument-ir 52 0
+put forward-argument-ir 56 1
+put forward-argument-ir 60 1
+put forward-argument-ir 64 0
+put forward-argument-ir 68 4
+
+put forward-argument-ir 72 1
+put forward-argument-ir 76 1
+put forward-argument-ir 80 -5
+put forward-argument-ir 84 0
+put forward-argument-ir 88 1
+put forward-argument-ir 92 1
+put forward-argument-ir 96 2
+put forward-argument-ir 100 0
+put forward-argument-ir 104 3
+
+put forward-argument-ir 108 -5
+put forward-argument-ir 112 0
+put forward-argument-ir 116 -5
+put forward-argument-ir 120 0
+
+put-instruction forward-argument-ir 124 3 1 1 0
+put-instruction forward-argument-ir 140 4 0 0 0
+put-instruction forward-argument-ir 156 7 2 1 -5
+put-instruction forward-argument-ir 172 11 -5 0 0
+put-instruction forward-argument-ir 188 3 1 1 0
+put-instruction forward-argument-ir 204 4 0 0 0
+put-instruction forward-argument-ir 220 11 -5 0 0
+forward-argument-ir/237: as byte! 61h
+forward-argument-ir/238: as byte! 62h
+
+size: x64-codegen/generate forward-argument-ir 238 output 1024 0
+if any [size <= 0 not execute-unary? output 42 42][
+	print ["O0 incoming argument forwarding failed: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size <> 26 [
+		print ["O0 incoming argument forwarding code size: " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+
+; Narrow incoming values are normalized only after the destination ABI slot is
+; known, so signed int8 reaches the int64 callee without an earlier RAX move.
+put forward-argument-ir 44 -7
+put forward-argument-ir 80 -7
+put forward-argument-ir 108 -1
+put forward-argument-ir 116 -7
+put forward-argument-ir 168 -7
+put forward-argument-ir 176 -7
+put forward-argument-ir 224 -7
+size: x64-codegen/generate forward-argument-ir 238 output 1024 0
+if any [size <= 0 not execute-unary? output -2 -2][
+	print ["O0 narrow incoming argument forwarding failed: " size lf]
+	failures: failures + 1
+]
+
+; The last logical argument must retain its incoming register until CALL. An
+; earlier argument may target RCX, so a forwarded RCX value needs protection
+; before that earlier assignment is emitted.
+put forward-collision-ir 0 1
+put forward-collision-ir 4 0
+put forward-collision-ir 8 0
+put forward-collision-ir 12 0
+put forward-collision-ir 16 2
+put forward-collision-ir 20 11
+put forward-collision-ir 24 0
+put forward-collision-ir 28 0
+put forward-collision-ir 32 0
+
+put forward-collision-ir 36 0
+put forward-collision-ir 40 1
+put forward-collision-ir 44 -5
+put forward-collision-ir 48 0
+put forward-collision-ir 52 0
+put forward-collision-ir 56 1
+put forward-collision-ir 60 1
+put forward-collision-ir 64 0
+put forward-collision-ir 68 5
+
+put forward-collision-ir 72 1
+put forward-collision-ir 76 1
+put forward-collision-ir 80 -5
+put forward-collision-ir 84 0
+put forward-collision-ir 88 1
+put forward-collision-ir 92 2
+put forward-collision-ir 96 3
+put forward-collision-ir 100 0
+put forward-collision-ir 104 6
+
+put forward-collision-ir 108 -5
+put forward-collision-ir 112 0
+put forward-collision-ir 116 -5
+put forward-collision-ir 120 0
+put forward-collision-ir 124 -5
+put forward-collision-ir 128 0
+
+put-instruction forward-collision-ir 132 1 -5 41 0
+put-instruction forward-collision-ir 148 3 1 1 0
+put-instruction forward-collision-ir 164 4 0 0 0
+put-instruction forward-collision-ir 180 7 2 2 -5
+put-instruction forward-collision-ir 196 11 -5 0 0
+put-instruction forward-collision-ir 212 3 1 1 0
+put-instruction forward-collision-ir 228 4 0 0 0
+put-instruction forward-collision-ir 244 3 1 2 0
+put-instruction forward-collision-ir 260 4 0 0 0
+put-instruction forward-collision-ir 276 15 1 0 0
+put-instruction forward-collision-ir 292 11 -5 0 0
+forward-collision-ir/309: as byte! 61h
+forward-collision-ir/310: as byte! 62h
+
+size: x64-codegen/generate forward-collision-ir 310 output 1024 0
+if any [size <= 0 not execute-unary? output 2 43][
+	print ["O0 incoming argument collision failed: " size lf]
+	failures: failures + 1
 ]
 
 ; ADDRESS, REFERENCE, and a one-argument CALL form one value flow. The measure
@@ -4525,7 +4685,7 @@ if size <= 0 [
 ]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 52 [
+	if fn/code-size <> 51 [
 		print ["O0 one-value packed code size: " fn/code-size lf]
 		failures: failures + 1
 	]
@@ -4695,7 +4855,7 @@ if any [size <= 0 not execute-floating? output 1.5][
 ]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 84 [
+	if fn/code-size <> 81 [
 		print ["O0 floating stack argument code size: " fn/code-size lf]
 		failures: failures + 1
 	]
@@ -4779,8 +4939,11 @@ if any [size <= 0 not execute-first? output 1][
 ]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> folded-code-size [
-		print ["reverse boolean diamond was not folded" lf]
+	; The nonzero input literal uses a five-byte MOV instead of the two-byte
+	; zeroing idiom in the identity fixture; the boolean diamond remains folded.
+	if fn/code-size <> (folded-code-size + 3) [
+		print ["reverse boolean diamond was not folded: " fn/code-size
+			" / " folded-code-size lf]
 		failures: failures + 1
 	]
 ]
@@ -6039,6 +6202,8 @@ free array-compare-ir
 free branch-ir
 free call-result-ir
 free call-argument-ir
+free forward-argument-ir
+free forward-collision-ir
 free float-argument-ir
 free r8-branch-ir
 free boolean-ir

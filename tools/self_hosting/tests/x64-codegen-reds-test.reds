@@ -300,36 +300,35 @@ sink-pairs/pair-count: 0
 sink-pairs/pair-capacity: 0
 sink-pairs/slot-capacity: 0
 sink-pairs/epoch: 0
-if (x64-codegen/implicitly-compatible-types -3 -1 0 false
-	no-types no-types 0 sink-pairs) <> 1 [
+empty-table: declare type-table!
+empty-table/types: no-types
+empty-table/members: no-types
+empty-table/type-count: 0
+empty-table/layouts: null
+empty-table/member-offsets: null
+empty-table/signatures: sink-pairs
+if (x64-codegen/implicitly-compatible-types -3 -1 0 false empty-table) <> 1 [
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -5 -2 0 false
-	no-types no-types 0 sink-pairs) <> 1 [
+if (x64-codegen/implicitly-compatible-types -5 -2 0 false empty-table) <> 1 [
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -7 -6 0 false
-	no-types no-types 0 sink-pairs) <> 1 [
+if (x64-codegen/implicitly-compatible-types -7 -6 0 false empty-table) <> 1 [
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -8 -6 0 false
-	no-types no-types 0 sink-pairs) <> 1 [
+if (x64-codegen/implicitly-compatible-types -8 -6 0 false empty-table) <> 1 [
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -1 -5 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -1 -5 0 false empty-table) <> 0 [
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -4 -1 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -4 -1 0 false empty-table) <> 0 [
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -6 -3 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -6 -3 0 false empty-table) <> 0 [
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -7 -8 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -7 -8 0 false empty-table) <> 0 [
 	failures: failures + 1
 ]
 output: allocate 1024
@@ -349,6 +348,20 @@ widening-ir: allocate 676
 stack-parameter-ir: allocate 376
 sink-ir: allocate 676
 signature-ir: allocate 1024
+sink-table: declare type-table!
+sink-table/types: sink-ir
+sink-table/members: sink-ir + 40
+sink-table/type-count: 2
+sink-table/layouts: null
+sink-table/member-offsets: null
+sink-table/signatures: sink-pairs
+signature-table: declare type-table!
+signature-table/types: signature-ir
+signature-table/members: signature-ir + 720
+signature-table/type-count: 36
+signature-table/layouts: null
+signature-table/member-offsets: null
+signature-table/signatures: sink-pairs
 indirect-ir: allocate 324
 variadic-ir: allocate 516
 import-variadic-ir: allocate 260
@@ -423,38 +436,31 @@ put sink-ir 24 0
 put sink-ir 28 0
 put sink-ir 32 0
 put sink-ir 36 0
-if (x64-codegen/implicitly-compatible-types 1 -14 0 false
-	sink-ir (sink-ir + 40) 2 sink-pairs) <> 1 [
+if (x64-codegen/implicitly-compatible-types 1 -14 0 false sink-table) <> 1 [
 	print ["null to pointer compatibility was rejected" lf]
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types 2 -14 0 false
-	sink-ir (sink-ir + 40) 2 sink-pairs) <> 1 [
+if (x64-codegen/implicitly-compatible-types 2 -14 0 false sink-table) <> 1 [
 	print ["null to function compatibility was rejected" lf]
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -2 -14 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -2 -14 0 false empty-table) <> 0 [
 	print ["null to byte compatibility was accepted" lf]
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -5 -14 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -5 -14 0 false empty-table) <> 0 [
 	print ["null to integer compatibility was accepted" lf]
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -11 -14 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -11 -14 0 false empty-table) <> 0 [
 	print ["null to logic compatibility was accepted" lf]
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -9 -14 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -9 -14 0 false empty-table) <> 0 [
 	print ["null to f32 compatibility was accepted" lf]
 	failures: failures + 1
 ]
-if (x64-codegen/implicitly-compatible-types -10 -14 0 false
-	no-types no-types 0 sink-pairs) <> 0 [
+if (x64-codegen/implicitly-compatible-types -10 -14 0 false empty-table) <> 0 [
 	print ["null to f64 compatibility was accepted" lf]
 	failures: failures + 1
 ]
@@ -479,49 +485,42 @@ put sink-ir 56 -5
 put sink-ir 60 0
 put sink-ir 64 -2
 put sink-ir 68 0
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 1 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 1 [
 	print ["equal function signatures were rejected" lf]
 	failures: failures + 1
 ]
 put sink-ir 64 -1
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 0 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 0 [
 	print ["function parameter type mismatch was accepted" lf]
 	failures: failures + 1
 ]
 put sink-ir 64 -2
 put sink-ir 8 1
 put sink-ir 28 2
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 1 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 1 [
 	print ["fixed cdecl and stdcall function signatures were incompatible" lf]
 	failures: failures + 1
 ]
 put sink-ir 8 0
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 1 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 1 [
 	print ["default and stdcall function signatures were incompatible" lf]
 	failures: failures + 1
 ]
 put sink-ir 8 1
 put sink-ir 28 9
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 0 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 0 [
 	print ["function call shape mismatch was accepted" lf]
 	failures: failures + 1
 ]
 put sink-ir 8 8
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 0 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 0 [
 	print ["packed and C variadic signatures were compatible" lf]
 	failures: failures + 1
 ]
 put sink-ir 8 1
 put sink-ir 28 1
 put sink-ir 36 1
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 0 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 0 [
 	print ["function parameter count mismatch was accepted" lf]
 	failures: failures + 1
 ]
@@ -542,14 +541,12 @@ put sink-ir 40 1
 put sink-ir 44 0
 put sink-ir 48 2
 put sink-ir 52 0
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 1 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 1 [
 	print ["equal recursive function signatures were rejected" lf]
 	failures: failures + 1
 ]
 put sink-ir 48 -5
-if (x64-codegen/sink-compatible-types 1 2 sink-ir
-	(sink-ir + 40) 2 sink-pairs) <> 0 [
+if (x64-codegen/sink-compatible-types 1 2 sink-table) <> 0 [
 	print ["recursive function member mismatch was accepted" lf]
 	failures: failures + 1
 ]
@@ -588,16 +585,14 @@ while [signature-index <= 18][
 	signature-index: signature-index + 1
 ]
 if any [
-	(x64-codegen/sink-compatible-types 1 19 signature-ir
-		(signature-ir + 720) 36 sink-pairs) <> 1
+	(x64-codegen/sink-compatible-types 1 19 signature-table) <> 1
 	sink-pairs/pair-capacity <> 32
 ][
 	print ["nested function signature rehash failed" lf]
 	failures: failures + 1
 ]
 put signature-ir 1000 -2
-if (x64-codegen/sink-compatible-types 1 19 signature-ir
-	(signature-ir + 720) 36 sink-pairs) <> 0 [
+if (x64-codegen/sink-compatible-types 1 19 signature-table) <> 0 [
 	print ["nested signature mismatch was lost after rehash" lf]
 	failures: failures + 1
 ]

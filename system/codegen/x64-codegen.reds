@@ -3527,6 +3527,7 @@ x64-codegen: context [
 			global-reference-id incoming-arguments incoming-mask incoming-register
 			main-entry-count sub-entry-count compatibility flags-condition argument-producer
 			pending-immediate-index pending-immediate-value pending-immediate-kind
+			resident-slot resident-width resident-mark
 			[integer!]
 			measure? fallthrough? valid? comparison? floating? clear? aggregate-copy?
 			return-value? hidden-return? aggregate-argument? indirect? packed-call?
@@ -3539,6 +3540,7 @@ x64-codegen: context [
 			immediate? left-in-register? imm-set? set-fused? set-next?
 			scaled-immediate?
 			source-located? direct-frame-target? live?
+			resident? resident-clean? resident-hit?
 			sub-returns? [logic!]
 	][
 		measure?: null? code
@@ -3559,6 +3561,13 @@ x64-codegen: context [
 		catch-level: 0
 		catch-capacity: 0
 		current-sub: -1
+		; RAX still holds the value it wrote into a frame slot until the next
+		; emitted byte. A following load of that slot reuses the register.
+		resident?: false
+		resident-slot: 0
+		resident-width: 0
+		resident-mark: 0
+		resident-clean?: false
 		location: LOCATION_NONE
 		location-depth: 0
 		location-source: 0
@@ -4125,6 +4134,13 @@ x64-codegen: context [
 			]
 			incoming-arguments: keep-incoming-arguments incoming-arguments index
 				control-uses/index instruction
+			if resident? [
+				if any [
+					written <> resident-mark
+					control-uses/index <> 0
+					instruction/op = OP_ENTRY
+				][resident?: false]
+			]
 			paired?: false
 			if all [
 				linear?
@@ -5035,19 +5051,44 @@ x64-codegen: context [
 							(instruction-effects/next-index and EFFECT_LIVE) <> 0
 							(instruction-effects/next-index and EFFECT_ELIDED) = 0
 						]
-						either forward-argument? [
+						; The value this local just received is still in RAX, so a
+						; load of the same home reuses the register. Only a following
+						; CALL retargets a producer register, so it keeps the load.
+						resident-hit?: all [
+							resident?
+							written = resident-mark
+							location = LOCATION_FRAME
+							location-source = resident-slot
+							width = resident-width
+							not floating?
+							not load-pair?
+							physical-slot = 0
+							next-instruction/op <> OP_CALL
+						]
+						either any [
+							forward-argument?
+							all [resident-hit? resident-clean?]
+						][
 							encoded: 0
 						][
 							at: as byte-ptr! 0
 							if not measure? [at: code + written]
 							encoded: case [
 								location = LOCATION_FRAME [
-									either floating? [
-										x64-encoder/xmm-frame-load at (capacity - written)
-											register-id location-source width
-									][
-										x64-encoder/frame-load at (capacity - written)
-											register-id location-source width signed
+									case [
+										; Only the low half is known, so this normalizes it.
+										resident-hit? [
+											x64-encoder/move-register at (capacity - written)
+												register-id register-id 4
+										]
+										floating? [
+											x64-encoder/xmm-frame-load at (capacity - written)
+												register-id location-source width
+										]
+										true [
+											x64-encoder/frame-load at (capacity - written)
+												register-id location-source width signed
+										]
 									]
 								]
 								location = LOCATION_FRAME_INDIRECT [
@@ -5557,6 +5598,20 @@ x64-codegen: context [
 					if encoded < 0 [return encoded]
 					written: written + encoded
 					stack-tags/depth: 0
+					if all [
+						not aggregate-copy?
+						not set-fused?
+						not floating?
+						direct-frame-target?
+						tag-head = 0
+						any [target-width = 4 target-width = 8]
+					][
+						resident?: true
+						resident-slot: target-offset
+						resident-width: target-width
+						resident-clean?: any [target-width = 8 not source-located?]
+						resident-mark: written
+					]
 					if all [not aggregate-copy? not set-fused? linear? tag-head = 0][
 						location: either floating? [LOCATION_XMM][LOCATION_GPR]
 						location-depth: depth

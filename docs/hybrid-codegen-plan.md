@@ -1160,7 +1160,22 @@ Already retained:
   generation and 14.0% above the same runtime compiled by the existing Red
   toolchain (`155832h`). The native codegen and encoder fixtures pass, and the
   complete Windows x64 Red/System runner reports 10,582 tests and 12,647/12,647
-  assertions with no compile failures.
+  assertions with no compile failures;
+- a local assignment leaves its value in `RAX`, so the register stays valid for
+  the frame home it just wrote until the next emitted byte, a jump target or a
+  segment entry invalidates it. A following load of the same home reuses the
+  register instead of reading memory back: the full-width case emits nothing and
+  the four-byte case emits one register move that normalizes the upper half. The
+  rule needs no new pass, array or analysis, only the emitted-byte watermark the
+  emitter already advances. Loads that a following CALL may retarget keep the
+  ordinary form so measurement and emission stay identical. Rebuilding libRedRT
+  removes 3,722 redundant reloads and moves `.text` from `185A1Eh` to `182448h`.
+  Against the previous generation the runtime is 116,456 code bytes smaller and
+  13.1% above the same runtime compiled by the existing Red toolchain. A fixed
+  Red workload that stresses blocks, strings, calls and series iteration runs in
+  0.937 seconds against 0.976 for the previous generation and 0.966 for the
+  existing toolchain. The complete Windows x64 Red/System runner reports 10,582
+  tests and 12,647/12,647 assertions with no compile failures.
 
 Still incomplete and therefore not an H0:
 

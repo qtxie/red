@@ -1532,17 +1532,12 @@ x64-codegen: context [
 
 	load-operation-value: func [
 		code [byte-ptr!]
-		capacity target displacement ref flags operation-width [integer!]
-		zero-extend? [logic!]
-		table [type-table!]
+		capacity target displacement [integer!]
+		source-width operation-width signed [integer!]
 		return: [integer!]
-		/local source-width signed encoded written [integer!] at [byte-ptr!]
+		/local encoded written [integer!] at [byte-ptr!]
 	][
-		source-width: value-width ref flags table
 		if source-width <= 0 [return -1]
-		signed: either zero-extend? [0][
-			either signed-type? ref table [1][0]
-		]
 		encoded: x64-encoder/frame-load code capacity target displacement
 			source-width signed
 		if encoded < 0 [return encoded]
@@ -1558,17 +1553,15 @@ x64-codegen: context [
 
 	move-operation-value: func [
 		code [byte-ptr!]
-		capacity target source ref flags operation-width [integer!]
-		table [type-table!]
+		capacity target source [integer!]
+		source-width operation-width signed [integer!]
 		return: [integer!]
-		/local source-width signed transfer-width encoded written [integer!]
+		/local transfer-width encoded written [integer!]
 	][
-		source-width: value-width ref flags table
 		unless all [
 			source-width > 0
 			any [operation-width = 4 operation-width = 8]
 		][return -1]
-		signed: either signed-type? ref table [1][0]
 		transfer-width: either all [
 			operation-width = 8 source-width = 8
 		][8][4]
@@ -1660,7 +1653,7 @@ x64-codegen: context [
 
 	shift-overflow-check: func [
 		code [byte-ptr!]
-		capacity source-width operation-width signed count target current [integer!]
+		capacity source-width operation-width signed count target-displacement [integer!]
 		return: [integer!]
 		/local at [byte-ptr!] encoded written alignment original mode [integer!]
 	][
@@ -1709,8 +1702,8 @@ x64-codegen: context [
 		if encoded < 0 [return encoded]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
-		encoded: jump-condition-to at (capacity - written) 5 target
-			(current + written)
+		encoded: jump-condition-to at (capacity - written) 5
+			target-displacement written
 		if encoded < 0 [return encoded]
 		written + encoded
 	]
@@ -1758,9 +1751,10 @@ x64-codegen: context [
 
 	emit-variant-tags: func [
 		code [byte-ptr!]
-		capacity head tag-base instruction-count [integer!]
-		instructions [byte-ptr!]
-		tag-next tag-slots tag-widths [int-ptr!]
+		capacity head [integer!]
+		state [machine-state!]
+		fn [rsir-function!]
+		scratch [codegen-scratch!]
 		return: [integer!]
 		/local at [byte-ptr!] instruction [rsir-instruction!]
 			node width encoded written steps [integer!]
@@ -1769,16 +1763,17 @@ x64-codegen: context [
 		steps: 0
 		node: head
 		while [node > 0][
-			if any [node > instruction-count steps >= instruction-count][return -1]
-			instruction: as rsir-instruction! (instructions
+			if any [node > fn/instruction-count steps >= fn/instruction-count][return -1]
+			instruction: as rsir-instruction! (scratch/instructions
 				+ ((node - 1) * RSIR_INSTRUCTION_SIZE))
-			width: tag-widths/node
-			if any [instruction/b <= 0 tag-slots/node <= 0
+			width: scratch/tag-widths/node
+			if any [instruction/b <= 0 scratch/tag-slots/node <= 0
 				not any [width = 1 width = 2 width = 4]][return -1]
 
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/frame-load at (capacity - written)
-				x64-encoder/RDX slot-displacement (tag-base + tag-slots/node) 8 0
+				x64-encoder/RDX slot-displacement
+					(state/tag-base + scratch/tag-slots/node) 8 0
 			if encoded < 0 [return encoded]
 			written: written + encoded
 
@@ -1792,7 +1787,7 @@ x64-codegen: context [
 			encoded: x64-encoder/store-indirect at (capacity - written) width
 			if encoded < 0 [return encoded]
 			written: written + encoded
-			node: tag-next/node
+			node: scratch/tag-next/node
 			steps: steps + 1
 		]
 		written
@@ -2939,18 +2934,17 @@ x64-codegen: context [
 	]
 
 	merge-target: func [
-		target depth instruction-count [integer!]
-		instructions [byte-ptr!]
-		instruction-depths entry-types entry-flags entry-kinds entry-tags
-			stack-types stack-flags stack-kinds stack-tags [int-ptr!]
+		target depth [integer!]
+		fn [rsir-function!]
+		scratch [codegen-scratch!]
 		table [type-table!]
 		return: [logic!]
 		/local
 			target-instruction [rsir-instruction!]
 			entry-tag stack-tag merged [integer!]
 	][
-		if any [target <= 0 target > instruction-count][return false]
-		target-instruction: as rsir-instruction! (instructions
+		if any [target <= 0 target > fn/instruction-count][return false]
+		target-instruction: as rsir-instruction! (scratch/instructions
 			+ ((target - 1) * RSIR_INSTRUCTION_SIZE))
 		; A resultless subroutine return discards one optional expression value.
 		; Normalize it before joining control-flow edges at that return.
@@ -2959,34 +2953,35 @@ x64-codegen: context [
 			target-instruction/a = 0
 			depth = 1
 		][
-			if stack-kinds/depth <> VALUE [return false]
+			if scratch/stack-kinds/depth <> VALUE [return false]
 			depth: 0
 		]
-		either instruction-depths/target >= 0 [
-			if instruction-depths/target <> depth [return false]
+		either scratch/instruction-depths/target >= 0 [
+			if scratch/instruction-depths/target <> depth [return false]
 			if depth > 0 [
-				entry-tag: entry-tags/target
-				stack-tag: stack-tags/depth
+				entry-tag: scratch/entry-tags/target
+				stack-tag: scratch/stack-tags/depth
 				if entry-tag < 0 [entry-tag: 0]
 				if stack-tag < 0 [stack-tag: 0]
-				merged: merged-type entry-types/target stack-types/depth table
+				merged: merged-type scratch/entry-types/target
+					scratch/stack-types/depth table
 				if any [
 					merged = 0
-					entry-flags/target <> stack-flags/depth
-					entry-kinds/target <> stack-kinds/depth
+					scratch/entry-flags/target <> scratch/stack-flags/depth
+					scratch/entry-kinds/target <> scratch/stack-kinds/depth
 					entry-tag <> stack-tag
 				][return false]
-				entry-types/target: merged
-				entry-tags/target: entry-tag
+				scratch/entry-types/target: merged
+				scratch/entry-tags/target: entry-tag
 			]
 		][
-			instruction-depths/target: depth
+			scratch/instruction-depths/target: depth
 			if depth > 0 [
-				entry-types/target: stack-types/depth
-				entry-flags/target: stack-flags/depth
-				entry-kinds/target: stack-kinds/depth
-				stack-tag: stack-tags/depth
-				entry-tags/target: either stack-tag < 0 [0][stack-tag]
+				scratch/entry-types/target: scratch/stack-types/depth
+				scratch/entry-flags/target: scratch/stack-flags/depth
+				scratch/entry-kinds/target: scratch/stack-kinds/depth
+				stack-tag: scratch/stack-tags/depth
+				scratch/entry-tags/target: either stack-tag < 0 [0][stack-tag]
 			]
 		]
 		true
@@ -3577,7 +3572,8 @@ x64-codegen: context [
 				switch-count strings-size function-offset function-code-size capacity
 				exit-reference-id [integer!]
 			entry? [logic!]
-			index depth kind ref flags width signed source-slot target-slot
+			index depth kind ref flags width signed
+				source-signed load-signed source-slot target-slot
 			storage-slots storage-size storage-align
 			tag-head tag-width-value
 			operation left-ref right-ref left-flags right-flags
@@ -5185,12 +5181,10 @@ x64-codegen: context [
 									][
 										either width = 8 [
 											move-operation-value at (capacity - written)
-												register-id incoming-register ref flags 8
-												table
+												register-id incoming-register width 8 signed
 										][
 											move-operation-value at (capacity - written)
-												register-id incoming-register ref flags 4
-												table
+												register-id incoming-register width 4 signed
 										]
 									]
 								]
@@ -5389,9 +5383,10 @@ x64-codegen: context [
 
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: either instruction/b = 1 [
+							source-signed: either signed-type? stack-types/depth table [1][0]
 							load-operation-value at (capacity - written)
 								x64-encoder/RDX slot-displacement (storage-slots + depth)
-								stack-types/depth 0 8 false table
+								(value-width stack-types/depth 0 table) 8 source-signed
 						][
 							x64-encoder/move-immediate-compact at (capacity - written)
 								x64-encoder/RDX 8 instruction/a instruction/c
@@ -5477,6 +5472,7 @@ x64-codegen: context [
 						]
 						target-width: value-width target-ref target-flags table
 						floating?: float-type? target-ref table
+						source-signed: either signed-type? ref table [1][0]
 					]
 
 					; The literal two instructions back already stored its
@@ -5559,8 +5555,8 @@ x64-codegen: context [
 							][
 								load-operation-value at (capacity - written)
 									x64-encoder/RAX slot-displacement
-									(storage-slots + source-slot) ref flags target-width false
-									table
+									(storage-slots + source-slot)
+									(value-width ref flags table) target-width source-signed
 							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
@@ -5643,8 +5639,7 @@ x64-codegen: context [
 					state/source-location: LOCATION_NONE
 					state/source-depth: 0
 					at: either measure? [as byte-ptr! 0][code + written]
-					encoded: emit-variant-tags at (capacity - written) tag-head state/tag-base
-						fn/instruction-count instructions tag-next tag-slots tag-widths
+					encoded: emit-variant-tags at (capacity - written) tag-head state fn view
 					if encoded < 0 [return encoded]
 					written: written + encoded
 					stack-tags/depth: 0
@@ -6139,8 +6134,7 @@ x64-codegen: context [
 							][
 								target-width: either width = 8 [8][4]
 								move-operation-value at (capacity - written)
-									register-id incoming-register ref flags target-width
-									table
+									register-id incoming-register width target-width signed
 							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
@@ -6607,6 +6601,7 @@ x64-codegen: context [
 							]
 						][
 							source-width: value-width ref flags table
+							source-signed: either signed-type? ref table [1][0]
 							argument-width: value-width target-ref target-flags table
 							floating?: float-type? target-ref table
 							tracked?: all [located? argument-slot = state/location-depth]
@@ -6676,14 +6671,14 @@ x64-codegen: context [
 										]
 										tracked? [
 											move-operation-value at (capacity - written)
-												target-slot state/location-source ref flags target-width
-												table
+												target-slot state/location-source source-width
+												target-width source-signed
 										]
 										true [
 											load-operation-value at (capacity - written)
 												target-slot slot-displacement
-												(storage-slots + argument-slot) ref flags
-												argument-width false table
+												(storage-slots + argument-slot)
+												(value-width ref flags table) argument-width source-signed
 										]
 									]
 								]
@@ -6741,8 +6736,8 @@ x64-codegen: context [
 									][
 										at: either measure? [as byte-ptr! 0][code + written]
 										encoded: move-operation-value at (capacity - written)
-											x64-encoder/RAX state/location-source ref flags target-width
-											table
+											x64-encoder/RAX state/location-source source-width
+											target-width source-signed
 										if encoded < 0 [return OUTPUT_FULL]
 										written: written + encoded
 										at: either measure? [as byte-ptr! 0][code + written]
@@ -6773,8 +6768,8 @@ x64-codegen: context [
 										at: either measure? [as byte-ptr! 0][code + written]
 										encoded: load-operation-value at (capacity - written)
 											x64-encoder/RAX slot-displacement
-											(storage-slots + argument-slot) ref flags
-											argument-width false table
+											(storage-slots + argument-slot)
+											(value-width ref flags table) argument-width source-signed
 										if encoded < 0 [return OUTPUT_FULL]
 										written: written + encoded
 										at: either measure? [as byte-ptr! 0][code + written]
@@ -7810,11 +7805,12 @@ x64-codegen: context [
 								integer-type? stack-types/depth table
 							][return INVALID_IR]
 							width: value-width stack-types/depth 0 table
+							signed: either signed-type? stack-types/depth table [1][0]
 							operation-width: either width = 8 [8][4]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: load-operation-value at (capacity - written)
 								x64-encoder/RAX slot-displacement (storage-slots + depth)
-								stack-types/depth 0 operation-width false table
+								(value-width stack-types/depth 0 table) operation-width signed
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
@@ -7914,12 +7910,13 @@ x64-codegen: context [
 					][return INVALID_IR]
 					width: value-width ref flags table
 					operation-width: either width = 8 [8][4]
+					signed: either signed-type? ref table [1][0]
 					located?: location = LOCATION_GPR
 					unless located? [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: load-operation-value at (capacity - written)
 							x64-encoder/RAX slot-displacement (storage-slots + depth)
-							ref flags operation-width false table
+							(value-width ref flags table) operation-width signed
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
@@ -8145,9 +8142,7 @@ x64-codegen: context [
 							return INVALID_IR
 						]
 						if measure? [
-							unless merge-target target base-depth fn/instruction-count instructions
-								instruction-depths entry-types entry-flags entry-kinds entry-tags
-								stack-types stack-flags stack-kinds stack-tags table [
+							unless merge-target target base-depth fn view table [
 								return INVALID_IR
 							]
 						]
@@ -8278,6 +8273,8 @@ x64-codegen: context [
 					][8][4]
 					zero-extend?: operation = SHIFT_LOGICAL_OPERATION
 					signed: either signed-type? ref table [1][0]
+					load-signed: either zero-extend? [0][signed]
+					source-signed: either signed-type? right-ref table [1][0]
 					source-slot: either all [
 						operation >= DIVIDE_OPERATION
 						operation <= SHIFT_LOGICAL_OPERATION
@@ -8305,8 +8302,9 @@ x64-codegen: context [
 					if all [located? not paired? not left-in-register?][
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: move-operation-value at (capacity - written)
-							source-slot x64-encoder/RAX right-ref right-flags
-							operation-width table
+							source-slot x64-encoder/RAX
+							(value-width right-ref right-flags table)
+							operation-width source-signed
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
@@ -8319,8 +8317,9 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: load-operation-value at (capacity - written)
 							x64-encoder/RAX slot-displacement
-							(storage-slots + target-slot) left-ref left-flags
-							operation-width zero-extend? table
+							(storage-slots + target-slot)
+							(value-width left-ref left-flags table) operation-width
+							load-signed
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
@@ -8329,7 +8328,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: load-operation-value at (capacity - written)
 							source-slot slot-displacement (storage-slots + depth)
-							right-ref right-flags operation-width false table
+							(value-width right-ref right-flags table) operation-width source-signed
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
@@ -8367,7 +8366,8 @@ x64-codegen: context [
 							]
 							operation = SHIFT_LEFT_OPERATION [
 								shift-overflow-check at (capacity - written) width
-									operation-width signed instruction/c target-offset written
+									operation-width signed instruction/c
+									(target-offset - written)
 							]
 							true [0]
 						]
@@ -8652,9 +8652,7 @@ x64-codegen: context [
 					written: written + encoded
 					depth: depth - 1
 					if measure? [
-						unless merge-target target depth fn/instruction-count instructions
-							instruction-depths entry-types entry-flags entry-kinds entry-tags
-							stack-types stack-flags stack-kinds stack-tags table [
+						unless merge-target target depth fn view table [
 							return INVALID_IR
 						]
 					]
@@ -8705,8 +8703,7 @@ x64-codegen: context [
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					at: either measure? [as byte-ptr! 0][code + written]
-					encoded: emit-variant-tags at (capacity - written) tag-head state/tag-base
-						fn/instruction-count instructions tag-next tag-slots tag-widths
+					encoded: emit-variant-tags at (capacity - written) tag-head state fn view
 					if encoded < 0 [return encoded]
 					written: written + encoded
 					if tag-head > 0 [
@@ -8747,9 +8744,7 @@ x64-codegen: context [
 					]
 					depth: depth - instruction/b
 					if measure? [
-						unless merge-target target depth fn/instruction-count instructions
-							instruction-depths entry-types entry-flags entry-kinds entry-tags
-							stack-types stack-flags stack-kinds stack-tags table [
+						unless merge-target target depth fn view table [
 							return INVALID_IR
 						]
 					]
@@ -8797,10 +8792,7 @@ x64-codegen: context [
 					either fold-constant? [
 						if branch-taken? [
 							if measure? [
-								unless merge-target target depth fn/instruction-count instructions
-									instruction-depths entry-types entry-flags entry-kinds
-									entry-tags stack-types stack-flags stack-kinds stack-tags
-									table [
+								unless merge-target target depth fn view table [
 									return INVALID_IR
 								]
 							]
@@ -8883,10 +8875,7 @@ x64-codegen: context [
 						][
 							depth: depth - 1
 							if measure? [
-								unless merge-target target depth fn/instruction-count instructions
-									instruction-depths entry-types entry-flags entry-kinds
-									entry-tags stack-types stack-flags stack-kinds stack-tags
-									table [
+								unless merge-target target depth fn view table [
 									return INVALID_IR
 								]
 							]
@@ -8941,11 +8930,12 @@ x64-codegen: context [
 					][return INVALID_IR]
 					ref: stack-types/depth
 					width: value-width ref 0 table
+					signed: either signed-type? ref table [1][0]
 					operation-width: either width = 8 [8][4]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth)
-						ref 0 operation-width false table
+						(value-width ref 0 table) operation-width signed
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					depth: depth - 1
@@ -8962,9 +8952,7 @@ x64-codegen: context [
 							return INVALID_IR
 						]
 						if measure? [
-							unless merge-target target depth fn/instruction-count instructions
-								instruction-depths entry-types entry-flags entry-kinds entry-tags
-								stack-types stack-flags stack-kinds stack-tags table [
+							unless merge-target target depth fn view table [
 								return INVALID_IR
 							]
 						]
@@ -8997,9 +8985,7 @@ x64-codegen: context [
 					target: instruction/c
 					if catch-depths/target <> catch-depths/index [return INVALID_IR]
 					if measure? [
-						unless merge-target target depth fn/instruction-count instructions
-							instruction-depths entry-types entry-flags entry-kinds entry-tags
-							stack-types stack-flags stack-kinds stack-tags table [
+						unless merge-target target depth fn view table [
 							return INVALID_IR
 						]
 					]
@@ -9115,6 +9101,7 @@ x64-codegen: context [
 					]
 					if return-ref <> 0 [
 						ref: stack-types/depth
+						signed: either signed-type? ref table [1][0]
 						target-width: value-width return-ref 0 table
 						floating?: float-type? return-ref table
 						tracked?: location <> LOCATION_NONE
@@ -9143,8 +9130,8 @@ x64-codegen: context [
 							][
 								load-operation-value at (capacity - written)
 									x64-encoder/RAX slot-displacement
-									(storage-slots + depth) ref 0 target-width false
-									table
+									(storage-slots + depth)
+									(value-width ref 0 table) target-width signed
 							]
 						]
 						if encoded < 0 [return OUTPUT_FULL]
@@ -9216,12 +9203,13 @@ x64-codegen: context [
 						][
 							ref: stack-types/depth
 							flags: stack-flags/depth
+							signed: either signed-type? ref table [1][0]
 							target-width: value-width return-ref instruction/b table
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: load-operation-value at (capacity - written)
 								x64-encoder/RCX slot-displacement
-								(storage-slots + depth) ref flags target-width false
-								table
+								(storage-slots + depth)
+								(value-width ref flags table) target-width signed
 						]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
@@ -9281,6 +9269,7 @@ x64-codegen: context [
 							][
 								ref: stack-types/depth
 								flags: stack-flags/depth
+								signed: either signed-type? ref table [1][0]
 								target-width: value-width return-ref instruction/b table
 								floating?: float-type? return-ref table
 								tracked?: location <> LOCATION_NONE
@@ -9309,8 +9298,8 @@ x64-codegen: context [
 									][
 										load-operation-value at (capacity - written)
 											x64-encoder/RAX slot-displacement
-											(storage-slots + depth) ref flags target-width false
-											table
+											(storage-slots + depth)
+											(value-width ref flags table) target-width signed
 									]
 								]
 							]

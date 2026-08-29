@@ -93,8 +93,13 @@ Build the next compiler generation:
 ```powershell
 & $compiler -r -d -t Windows-X86-64 `
     -o build\self-hosting\red-bootstrap-stage6-x64.exe `
-    red-bootstrap-windows.red
+    red.red
 ```
+
+`red.red` is the official Red-only command-line entrypoint. It selects the
+hybrid Red/System backend, defaults to development mode, and accepts `-r` for
+release builds. `red-bootstrap-windows.red` remains available as a
+transitional target wrapper for older bootstrap binaries.
 
 Run the development-mode Red suite:
 
@@ -130,7 +135,9 @@ process after a runner exits.
 
 | Area | Path |
 | --- | --- |
-| Bootstrap driver | `red-bootstrap-windows.red` |
+| Official compiler entrypoint | `red.red` |
+| Transitional bootstrap wrapper | `red-bootstrap-windows.red` |
+| Bootstrap driver | `compiler/bootstrap-driver.red` |
 | Red frontend | `compiler/frontend.red` |
 | Red/System compiler | `system/compiler-core.red` |
 | Windows x64 target | `system/targets/X86-64.red` |

@@ -44,6 +44,19 @@ check error? compiler-options/parse-args ["--loaded-red"]
 hybrid-options: compiler-options/parse-args/hybrid []
 check (compiler-options/option-get hybrid-options 'opt-level) = 0
 	"hybrid options did not default to O0"
+check (compiler-options/option-get hybrid-options 'target) = "Windows-X86-64"
+	"hybrid options did not default to Windows-X86-64"
+development-job: compiler-options/to-job hybrid-options
+check compiler-system-job/job-get development-job 'dev-mode?
+	"hybrid options did not default to development mode"
+development-options: compiler-options/parse-args/hybrid ["-r" "--dev"]
+development-job: compiler-options/to-job development-options
+check compiler-system-job/job-get development-job 'dev-mode?
+	"--dev did not select development mode"
+release-options: compiler-options/parse-args/hybrid ["--dev" "-r"]
+release-job: compiler-options/to-job release-options
+check not compiler-system-job/job-get release-job 'dev-mode?
+	"-r did not select release mode"
 check error? compiler-options/parse-args/hybrid ["-O1"]
 	"hybrid options accepted the removed O1 level"
 hybrid-options: compiler-options/parse-args/hybrid ["-O2"]

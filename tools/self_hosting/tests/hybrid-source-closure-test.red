@@ -160,8 +160,10 @@ walk-include-file clean-path to file! rejoin [
 walk-include-file clean-path to file! rejoin [
 	root %red-bootstrap-windows-hybrid-backend.red
 ]
+walk-include-file clean-path to file! rejoin [root %red.red]
 
 foreach forbidden [
+	%red-bootstrap-windows.red
 	%system/compiler-windows-bootstrap.red
 	%system/compiler-core.red
 	%system/emitter.red
@@ -184,8 +186,10 @@ foreach required [
 	%system/codegen/x64-encoder.reds
 	%compiler/rsir-frontend.red
 	%compiler/codegen-bridge.red
+	%compiler/bootstrap-driver.red
 	%compiler/bootstrap-options.red
 	%compiler/saved-frontend.red
+	%red.red
 	%red-system-hybrid-windows.red
 	%red-bootstrap-windows-hybrid-backend.red
 ][

@@ -8,8 +8,11 @@ It has two jobs while the Red implementation is being reworked:
 * `diff` runs two compiler commands against the same corpus and preserves raw
   stdout, stderr, and output artifacts while comparing normalized results.
 
-The direct compiler entrypoint is `red-bootstrap-windows.red`. The canonical
-Windows x64 compiler is the fixed-point self-hosted binary at
+The official direct compiler entrypoint is `red.red`. It uses the Red frontend
+and the hybrid Red/System backend, defaults to development mode, and selects a
+standalone release build with `-r`. `red-bootstrap-windows.red` remains the
+transitional bootstrap entry. The canonical Windows x64 compiler is the
+fixed-point self-hosted binary at
 `build/self-hosting/red-bootstrap-stage1-x64-gc-fixed.exe`; this tool only
 verifies its source closure and compares compiler generations.
 
@@ -19,7 +22,7 @@ The transition build produces an ordinary executable directly:
 $compiler = Resolve-Path .\build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe
 & $compiler -r -t Windows-X86-64 `
     -o build\self-hosting\red-bootstrap-next-x64.exe `
-    red-bootstrap-windows.red
+    red.red
 ```
 
 The compiler executable is built in release mode without `-d`; this avoids

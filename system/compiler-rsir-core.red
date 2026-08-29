@@ -10,7 +10,8 @@ red-runtime-path: %runtime/
 ; It grows by moving complete semantics here, never by importing the legacy
 ; emitter, machine IR, or a compatibility adapter.
 system-dialect: context [
-	MAX-CODE-BYTES: 16777216
+	INITIAL-CODE-BYTES: 16777216
+	MAX-CODE-BYTES: 268435456
 	verbose: 0
 	job: none
 	last-result: none
@@ -84,11 +85,11 @@ system-dialect: context [
 				compiler/throw-error "invalid libRedRT shared-library lifecycle"
 			]
 			all [job/red-pass? not any [
-				all [job/dev-mode? job/runtime? job/type = 'exe not job/libRedRT?]
+				all [job/runtime? job/type = 'exe not job/libRedRT?]
 				all [job/dev-mode? job/runtime? job/type = 'dll job/libRedRT?]
 			]][
 				compiler/throw-error
-					"RSIR frontend currently supports Red development executables and libRedRT"
+					"RSIR frontend supports Red executables and development libRedRT"
 			]
 			any [job/PIC? job/PIE? job/static-link?] [
 				compiler/throw-error "RSIR frontend does not yet support PIC, PIE, or static linking"
@@ -183,9 +184,15 @@ system-dialect: context [
 		last-rsir: output
 	]
 
-	finish-code: func [/local output message][
-		output: make binary! MAX-CODE-BYTES
-		last-status: codegen-module last-rsir output job/opt-level
+	finish-code: func [/local output message capacity][
+		capacity: max INITIAL-CODE-BYTES ((length? last-rsir) * 4)
+		capacity: min capacity MAX-CODE-BYTES
+		forever [
+			output: make binary! capacity
+			last-status: codegen-module last-rsir output job/opt-level
+			if any [last-status <> 4 capacity = MAX-CODE-BYTES][break]
+			capacity: min (capacity * 2) MAX-CODE-BYTES
+		]
 		unless last-status = 0 [
 			message: switch/default last-status [
 				1 ["native codegen received invalid arguments"]
@@ -270,7 +277,7 @@ system-dialect: context [
 		/loaded job-data [block!]
 		/local started comp-time file-list file source runtime-source runtime-file
 			red-runtime-source red-runtime-file sys-global-source
-			output link-time buffer-size result error payload resources icon
+			embed-red-runtime? output link-time buffer-size result error payload resources icon
 	][
 		started: now/time/precise
 		reset-state
@@ -296,6 +303,10 @@ system-dialect: context [
 		loader/connect-compiler-state compiler/definitions compiler/keywords-list
 		loader/init
 		set-verbose-level job/verbosity
+		embed-red-runtime?: to logic! all [
+			job/red-pass?
+			any [job/libRedRT? not job/dev-mode?]
+		]
 
 		runtime-source: none
 		if job/runtime? [
@@ -310,7 +321,7 @@ system-dialect: context [
 					rejoin ["Red/System runtime loader: " error/message]
 				]["Red/System runtime loader failed without a diagnostic"]
 			]
-			if job/libRedRT? [
+			if embed-red-runtime? [
 				sys-global-source: none
 				unless empty? red/sys-global [
 					compiler/script: %***sys-global.reds
@@ -356,7 +367,7 @@ system-dialect: context [
 		if runtime-source [
 			if job/red-pass? [
 				payload: job-data/3
-				unless job/libRedRT? [
+				unless embed-red-runtime? [
 					append runtime-source #import
 					append/only runtime-source [
 						"libRedRT.dll" stdcall [
@@ -367,7 +378,7 @@ system-dialect: context [
 				]
 				append/only runtime-source first [system/boot-data:]
 				append/only runtime-source payload
-				if job/libRedRT? [
+				if embed-red-runtime? [
 					if sys-global-source [append runtime-source skip sys-global-source 2]
 					append runtime-source skip red-runtime-source 2
 				]

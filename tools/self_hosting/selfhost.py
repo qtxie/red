@@ -103,7 +103,7 @@ def _source_paths(root: Path) -> list[Path]:
     )
     paths = [item for item in result.stdout.decode("utf-8").split("\0") if item]
     allowed_untracked_prefixes = ("compiler/", "tools/self_hosting/")
-    allowed_untracked_files = {"red-selfhost.red"}
+    allowed_untracked_files = {"red-selfhost.red", "red.red"}
     tracked = set(
         subprocess.run(
             ["git", "-C", str(root), "ls-files", "-z"],
@@ -467,14 +467,14 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
     for path in registry.get("target_sources", []) + registry.get("format_sources", []):
         if path not in source_paths:
             errors.append(f"registry source is missing from manifest: {path}")
-    direct_dependencies = manifest.get("entrypoint_rebol_dependencies", {}).get(
-        "red-selfhost.red", []
-    )
-    if direct_dependencies:
-        errors.append(
-            "direct Red entrypoint has Rebol dependencies: "
-            + ", ".join(direct_dependencies)
-        )
+    entrypoint_dependencies = manifest.get("entrypoint_rebol_dependencies", {})
+    for entrypoint in ("red.red", "red-selfhost.red"):
+        direct_dependencies = entrypoint_dependencies.get(entrypoint, [])
+        if direct_dependencies:
+            errors.append(
+                f"direct Red entrypoint {entrypoint} has Rebol dependencies: "
+                + ", ".join(direct_dependencies)
+            )
     configured_names = set(registry.get("configured_names", []))
     red_names = set(registry.get("red_registry", {}))
     if red_names and configured_names != red_names:

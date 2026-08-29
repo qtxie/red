@@ -55,7 +55,25 @@ class InventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             errors,
-            ["direct Red entrypoint has Rebol dependencies: legacy/compiler.r"],
+            [
+                "direct Red entrypoint red-selfhost.red has Rebol dependencies: "
+                "legacy/compiler.r"
+            ],
+        )
+
+    def test_manifest_audit_checks_official_entrypoint(self):
+        errors = selfhost._manifest_errors(
+            {
+                "sources": [],
+                "target_registry": {},
+                "entrypoint_rebol_dependencies": {
+                    "red.red": ["legacy/red.r"]
+                },
+            }
+        )
+        self.assertEqual(
+            errors,
+            ["direct Red entrypoint red.red has Rebol dependencies: legacy/red.r"],
         )
 
     def test_target_parser_keeps_nested_options_and_defaults_cpu(self):

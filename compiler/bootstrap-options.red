@@ -36,13 +36,19 @@ compiler-options: context [
 
 	parse-args: func [args [block! none!] /hybrid /local options position token][
 		options: make-options
-		if hybrid [option-set options 'opt-level 0]
+		if hybrid [
+			option-set options 'target "Windows-X86-64"
+			option-set options 'opt-level 0
+		]
 		either block? args [position: args][position: copy []]
 		while [not tail? position][
 			token: to string! position/1
 			case [
 				find ["-h" "--help"] token [option-set options 'help? true]
 				find ["-V" "--version"] token [option-set options 'version? true]
+				find ["-c" "--compile" "--dev"] token [
+					option-set options 'release? false
+				]
 				find ["-r" "--release"] token [option-set options 'release? true]
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
 				find ["-n" "--no-runtime"] token [option-set options 'no-runtime? true]

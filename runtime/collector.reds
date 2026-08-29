@@ -711,6 +711,7 @@ collector: context [
 			node	[int-ptr!]
 			len		[integer!]
 			type	[integer!]
+			evt		[red-event!]
 	][
 		#if debug? = yes [if verbose > 1 [len: -1 indent: indent + 1]]
 		
@@ -825,6 +826,12 @@ collector: context [
 					#if debug? = yes [if verbose > 1 [print "handler"]]
 					h: as red-handle! value
 					if h/extID >= 0 [externals/mark h/extID]
+				]
+				TYPE_EVENT [									;-- synthetic `make event!` value: msg encodes a stable node handle
+					evt: as red-event! value				;-- 00010000h = gui/EVT_FLAG_SYNTHETIC (View's platform.red; raw value here as the collector also compiles in core-only builds)
+					if all [(evt/flags and 00010000h) <> 0  evt/msg <> 0][
+						mark-block-node :evt/msg
+					]
 				]
 				default [0]
 			]

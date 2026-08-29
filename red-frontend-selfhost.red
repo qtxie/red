@@ -5,6 +5,7 @@ Red [
 
 compiler-root: system/options/path
 
+#include %compiler/resource-store.red
 #include %compiler/host-compat.red
 
 #include %system/compiler-host.red

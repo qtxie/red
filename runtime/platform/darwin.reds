@@ -38,13 +38,20 @@ platform: context [
 				return:		[integer!]
 			]
 			_NSGetEnviron: "_NSGetEnviron" [
-				return: 	[int-ptr!]
+				return: 	[ptr-slot!]
 			]
 		]
 	]
 	
-	environ: 0
 	page-size: 0
+
+	get-environ: func [
+		return: [str-array!]
+		/local ptr [ptr-slot!]
+	][
+		ptr: _NSGetEnviron
+		as str-array! ptr/value
+	]
 
 	#syscall [
 		mmap: SYSCALL_MMAP [
@@ -99,9 +106,7 @@ platform: context [
 		]
 	]
 	
-	init: func [/local ptr [int-ptr!]][
-		ptr: _NSGetEnviron
-		environ: ptr/value
+	init: does [
 		page-size: sysconf SC_PAGE_SIZE
 		setlocale __LC_ALL ""					;@@ check if "utf8" is present in returned string?
 	]

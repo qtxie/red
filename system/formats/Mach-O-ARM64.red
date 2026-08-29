@@ -526,7 +526,7 @@ system-format-MachO-ARM64: context [
 			exports tables symbols indirect strings stubs bind-info rebase-info export-trie linkedit
 			data-relocs rodata-relocs rebase-offset bind-offset symbol-offset
 			export-offset indirect-offset string-offset dylib-size id-file id-name id-size linkedit-size
-			signature-file signature-id signature-offset signature-size signature
+			signature-file signature-id signature-offset signature-size signature bundle-signature
 			dll? lifecycle init-spec term-spec data-segment-index data-section-index
 			file-type header-flags
 	][
@@ -565,6 +565,8 @@ system-format-MachO-ARM64: context [
 			append signature-file defs/extensions/dll
 		]
 		signature-id: form signature-file
+		bundle-signature: compiler-system-job/job-get job 'bundle-signature
+		if bundle-signature [signature-id: get in bundle-signature 'identifier]
 		command-count: 1 + (either dll? [7][9]) + length? libraries
 		command-size: text-command-size + data-command-size + 72
 			+ 48 + 24 + 80 + 16 + dylib-size + either dll? [id-size][128]
@@ -655,7 +657,9 @@ system-format-MachO-ARM64: context [
 		append linkedit strings
 		align-buffer linkedit 16
 		signature-offset: linkedit-offset + length? linkedit
-		signature-size: macho-code-sign/size? signature-offset signature-id
+		signature-size: either bundle-signature [
+			macho-code-sign/size?/bundle signature-offset signature-id bundle-signature
+		][macho-code-sign/size? signature-offset signature-id]
 		linkedit-size: (length? linkedit) + signature-size
 
 		commands: make binary! command-size
@@ -734,8 +738,12 @@ system-format-MachO-ARM64: context [
 		if (length? out) <> signature-offset [
 			linker/throw-error "invalid ARM64 Mach-O code signature offset"
 		]
-		signature: macho-code-sign/build out signature-offset signature-id
-			text-file-size not dll?
+		signature: either bundle-signature [
+			macho-code-sign/build/bundle out signature-offset signature-id
+				text-file-size not dll? bundle-signature
+		][
+			macho-code-sign/build out signature-offset signature-id text-file-size not dll?
+		]
 		if (length? signature) <> signature-size [
 			linker/throw-error "invalid ARM64 Mach-O code signature size"
 		]

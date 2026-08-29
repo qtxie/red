@@ -34,13 +34,21 @@ compiler-source-loader: context [
 	]
 
 	path-key: func [path [file!] /local key][
-		key: to string! clean-path path
+		key: to string! either compiler-resource-store/virtual? path [
+			compiler-resource-store/virtual-path path
+		][clean-path path]
 		if system/platform = 'Windows [lowercase key]
 		key
 	]
 
 	resolve: func [name [file! string!] parent [file!] /local path spelling base][
 		path: to file! name
+		if compiler-resource-store/virtual? path [
+			return compiler-resource-store/virtual-path path
+		]
+		if compiler-resource-store/virtual? parent [
+			return compiler-resource-store/resolve path parent
+		]
 		spelling: to string! path
 		unless any [
 			all [not empty? spelling spelling/1 = #"/"]
@@ -133,11 +141,15 @@ compiler-source-loader: context [
 		header-required? [logic!]
 		/local data values parts record
 	][
-		unless exists? path [
+		unless either compiler-resource-store/virtual? path [
+			compiler-resource-store/exists? path
+		][exists? path][
 			make-loader-error rejoin ["source file not found: " mold path] path
 			return none
 		]
-		data: read/binary path
+		data: either compiler-resource-store/virtual? path [
+			compiler-resource-store/read-binary path
+		][read/binary path]
 		values: compiler-lexer/process/file data path
 		if compiler-lexer/last-error [
 			last-error: compiler-lexer/last-error
@@ -205,11 +217,15 @@ compiler-source-loader: context [
 						return none
 					]
 					path: resolve pos/2 current-file
-					unless exists? path [
+					unless either compiler-resource-store/virtual? path [
+						compiler-resource-store/exists? path
+					][exists? path][
 						make-loader-error rejoin ["binary include not found: " mold path] path
 						return none
 					]
-					data: read/binary path
+					data: either compiler-resource-store/virtual? path [
+						compiler-resource-store/read-binary path
+					][read/binary path]
 					append/only output data
 					append/only dependencies reduce [
 						'kind 'binary
@@ -280,7 +296,9 @@ compiler-source-loader: context [
 		clear include-stack
 		clear dependencies
 		clear sources
-		file: clean-path/only to file! path
+		file: either compiler-resource-store/virtual? path [
+			compiler-resource-store/virtual-path path
+		][clean-path/only to file! path]
 		root-file: file
 		record: load-raw file true
 		unless record [return none]

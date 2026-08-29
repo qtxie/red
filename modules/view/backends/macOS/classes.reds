@@ -20,6 +20,7 @@ Red/System [
 
 #either ABI = 'apple-aarch64 [
 	#define SIG_DRAW_RECT		"v@:{CGRect={CGPoint=dd}{CGSize=dd}}"
+	#define SIG_DRAW_INTERIOR	"v@:{CGRect={CGPoint=dd}{CGSize=dd}}@"
 	#define SIG_HIT_TEST		"@@:{CGPoint=dd}"
 	#define SIG_RANGE_RETURN	"{_NSRange=QQ}@:"
 	#define SIG_SET_MARKED		"v@:@{_NSRange=QQ}{_NSRange=QQ}"
@@ -33,13 +34,14 @@ Red/System [
 	#define SIG_TABLE_OBJECT	"@@:@@q"
 	#define SIG_TABLE_EDIT		"B@:@@q"
 	#define SIG_LINE_SPACING	"d@:@Q{CGRect={CGPoint=dd}{CGSize=dd}}"
-	#define SIG_NSINTEGER		"q@:@"
+	#define SIG_NSUINTEGER		"Q@:@"
 	#define SIG_WINDOW_LEVEL	"q@:"
 	#define RED_IVAR_SIZE		8
 	#define RED_IVAR_ALIGN		3
 	#define RED_IVAR_TYPE		"^v"
 ][
 	#define SIG_DRAW_RECT		"v@:{_NSRect=ffff}"
+	#define SIG_DRAW_INTERIOR	"v@:{_NSRect=ffff}@"
 	#define SIG_HIT_TEST		"@@:{_NSPoint=ff}"
 	#define SIG_RANGE_RETURN	"{_NSRange=ii}@:"
 	#define SIG_SET_MARKED		"v@:@{_NSRange=ii}{_NSRange=ii}"
@@ -53,7 +55,7 @@ Red/System [
 	#define SIG_TABLE_OBJECT	"@20@0:4@8@12l16"
 	#define SIG_TABLE_EDIT		"B@:@@l"
 	#define SIG_LINE_SPACING	"f@:@I{_NSRect=ffff}"
-	#define SIG_NSINTEGER		"i12@0:4@8"
+	#define SIG_NSUINTEGER		"I12@0:4@8"
 	#define SIG_WINDOW_LEVEL	"i@:"
 	#define RED_IVAR_SIZE		4
 	#define RED_IVAR_ALIGN		2
@@ -72,7 +74,7 @@ add-base-handler: func [class [Cocoa-handle!]][
 	class_addMethod class sel_getUid "drawRect:" as int-ptr! :draw-rect SIG_DRAW_RECT
 	class_addMethod class sel_getUid "red-menu-action:" as int-ptr! :red-menu-action "v@:@"
 	class_addMethod class sel_getUid "acceptsFirstResponder" as int-ptr! :accepts-first-responder "B@:"
-	class_addMethod class sel_getUid "scrollWheel:" as int-ptr! :scroll-wheel "@:@"
+	class_addMethod class sel_getUid "scrollWheel:" as int-ptr! :scroll-wheel "v@:@"
 	class_addMethod class sel_getUid "hitTest:" as int-ptr! :hit-test SIG_HIT_TEST
 	class_replaceMethod class sel_getUid "rightMouseDown:" as int-ptr! :mouse-events-base "v@:@"
 	class_replaceMethod class sel_getUid "rightMouseUp:" as int-ptr! :mouse-events-base "v@:@"
@@ -96,7 +98,7 @@ add-base-handler: func [class [Cocoa-handle!]][
 add-scrollview-handler: func [class [Cocoa-handle!]][
 	class_addMethod class sel_getUid "setNeedsDisplay:" as int-ptr! :refresh-scrollview "v@:B"
 	class_addMethod class sel_getUid "_doScroller:" as int-ptr! :scroller-change "v@:@"
-	class_addMethod class sel_getUid "reflectScrolledClipView:" as int-ptr! :empty-func "@:@"
+	class_addMethod class sel_getUid "reflectScrolledClipView:" as int-ptr! :empty-func "v@:@"
 ]
 
 win-add-subview: func [
@@ -148,20 +150,29 @@ win-add-subview: func [
 ]
 
 add-window-handler: func [class [Cocoa-handle!]][
-	class_addMethod class sel_getUid "windowWillClose:" as int-ptr! :win-will-close "v12@0:4@8"
+	class_addMethod class sel_getUid "windowWillClose:" as int-ptr! :win-will-close "v@:@"
 	class_addMethod class sel_getUid "windowShouldClose:" as int-ptr! :win-should-close "B@:@"
-	class_addMethod class sel_getUid "windowDidMove:" as int-ptr! :win-did-move "v12@0:4@8"
-	class_addMethod class sel_getUid "windowDidResize:" as int-ptr! :win-did-resize "v12@0:4@8"
+	class_addMethod class sel_getUid "windowDidMove:" as int-ptr! :win-did-move "v@:@"
+	class_addMethod class sel_getUid "windowDidResize:" as int-ptr! :win-did-resize "v@:@"
 	class_addMethod class sel_getUid "windowWillReturnFieldEditor:toObject:" as int-ptr! :return-field-editor "@@:@@"
-	class_addMethod class sel_getUid "windowDidEndLiveResize:" as int-ptr! :win-live-resize "v12@0:4@8"
+	class_addMethod class sel_getUid "windowDidEndLiveResize:" as int-ptr! :win-live-resize "v@:@"
 	;class_addMethod class sel_getUid "windowWillResize:toSize:" as int-ptr! :win-will-resize "{_NSSize=ff}20@0:4@8{_NSSize=ff}12"
 	class_addMethod class sel_getUid "red-menu-action:" as int-ptr! :red-menu-action "v@:@"
-	class_addMethod class sel_getUid "addSubview:" as int-ptr! :win-add-subview "v12@0:4@8"
+	class_addMethod class sel_getUid "addSubview:" as int-ptr! :win-add-subview "v@:@"
 	class_addMethod class sel_getUid "convertPoint:fromView:" as int-ptr! :win-convert-point SIG_CONVERT_POINT
 ]
 
 add-button-handler: func [class [Cocoa-handle!]][
 	class_replaceMethod class sel_getUid "mouseDown:" as int-ptr! :button-mouse-down "v@:@"
+	class_addMethod class sel_getUid "button-click:" as int-ptr! :button-click "v@:@"
+]
+
+add-button-cell-handler: func [class [Cocoa-handle!]][
+	class_addMethod
+		class
+		sel_getUid "drawInteriorWithFrame:inView:"
+		as int-ptr! :draw-button-interior
+		SIG_DRAW_INTERIOR
 ]
 
 add-slider-handler: func [class [Cocoa-handle!]][
@@ -173,6 +184,9 @@ add-droplist-handler: func [class [Cocoa-handle!]][
 ]
 
 add-text-field-handler: func [class [Cocoa-handle!]][
+	class_addMethod class sel_getUid "controlTextDidBeginEditing:" as int-ptr! :control-text-did-begin-editing "v@:@"
+	class_addMethod class sel_getUid "controlTextDidEndEditing:" as int-ptr! :control-text-did-end-editing "v@:@"
+	class_addMethod class sel_getUid "controlTextDidChange:" as int-ptr! :control-text-did-change "v@:@"
 	class_addMethod class sel_getUid "textDidChange:" as int-ptr! :text-did-change "v@:@"
 	class_addMethod class sel_getUid "textDidEndEditing:" as int-ptr! :text-did-end-editing "v@:@"
 	;class_addMethod class sel_getUid "textViewDidChangeSelection:" as int-ptr! :text-change-selection "v@:@"
@@ -205,7 +219,7 @@ add-camera-handler: func [class [Cocoa-handle!]][
 ]
 
 add-calendar-handler: func [class [Cocoa-handle!]][
-	class_addMethod class sel_getUid "calendar-change" as int-ptr! :calendar-change "v@"
+	class_addMethod class sel_getUid "calendar-change" as int-ptr! :calendar-change "v@:"
 ]
 
 add-tabview-handler: func [class [Cocoa-handle!]][
@@ -226,10 +240,10 @@ add-app-handler: func [class [Cocoa-handle!]][
 ]
 
 add-app-delegate: func [class [Cocoa-handle!]][
-	;class_addMethod class sel_getUid "applicationWillFinishLaunching:" as int-ptr! :will-finish "v12@0:4@8"
+	;class_addMethod class sel_getUid "applicationWillFinishLaunching:" as int-ptr! :will-finish "v@:@"
 	;class_addMethod class sel_getUid "dealloc" as int-ptr! :dealloc-app "v@:"
-	class_addMethod class sel_getUid "applicationShouldTerminate:" as int-ptr! :should-terminate SIG_NSINTEGER
-	class_addMethod class sel_getUid "applicationShouldTerminateAfterLastWindowClosed:" as int-ptr! :destroy-app "B12@0:4@8"
+	class_addMethod class sel_getUid "applicationShouldTerminate:" as int-ptr! :should-terminate SIG_NSUINTEGER
+	class_addMethod class sel_getUid "applicationShouldTerminateAfterLastWindowClosed:" as int-ptr! :destroy-app "B@:@"
 ]
 
 add-panel-delegate: func [class [Cocoa-handle!]][
@@ -383,6 +397,15 @@ register-classes: does [
 	make-super-class "RedView"			"NSView"				as int-ptr! :add-content-view-handler STORE_FACE_FLAG or EXTRA_DATA_FLAG
 	make-super-class "RedBase"			"NSView"				as int-ptr! :add-base-handler	STORE_FACE_FLAG or EXTRA_DATA_FLAG
 	make-super-class "RedWindow"		"NSWindow"				as int-ptr! :add-window-handler	STORE_FACE_FLAG
+	make-super-class "RedButtonCell"	"NSButtonCell"			as int-ptr! :add-button-cell-handler 0
+	;-- `button` faces need a cell of their own to place the title vertically, the other
+	;-- NSButton-based faces keep the stock NSButtonCell.
+	make-super-class "RedPushButton"	"NSButton"				as int-ptr! :add-button-handler	STORE_FACE_FLAG
+	objc_msgSend [
+		objc_getClass "RedPushButton"
+		sel_getUid "setCellClass:"
+		objc_getClass "RedButtonCell"
+	]
 	make-super-class "RedButton"		"NSButton"				as int-ptr! :add-button-handler	STORE_FACE_FLAG
 	make-super-class "RedSlider"		"NSSlider"				as int-ptr! :add-slider-handler	STORE_FACE_FLAG
 	make-super-class "RedTextField"		"NSTextField"			as int-ptr! :add-text-field-handler STORE_FACE_FLAG

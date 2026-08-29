@@ -23,8 +23,13 @@ Red/System [
 	EVT_DISPATCH										;-- allow DispatchMessage call only
 ]
 
-gui-evt: declare red-event!								;-- low-level event value slot
-gui-evt/header: TYPE_EVENT
+event-context!: alias struct! [
+	object	[Cocoa-handle!]
+	prev	[byte-ptr!]
+]
+
+active-event-context: as event-context! 0
+quit-event-loop?: no
 
 modal-loop-type: 0										;-- remanence of last EVT_MOVE or EVT_SIZE
 zoom-distance:	 0
@@ -190,11 +195,19 @@ push-face: func [
 	make-at handle as red-object! stack/push*
 ]
 
+get-event-object: func [
+	evt		[red-event!]
+	return: [Cocoa-handle!]
+][
+	assert active-event-context <> as event-context! 0
+	active-event-context/object
+]
+
 get-event-face: func [
 	evt		[red-event!]
 	return: [red-value!]
 ][
-	as red-value! push-face as Cocoa-handle! evt/msg
+	as red-value! push-face get-event-object evt
 ]
 
 get-event-window: func [
@@ -233,12 +246,37 @@ check-extra-keys: func [
 	key
 ]
 
+mouse-state-flags: func [					;-- modifier keys + mouse buttons held during `event`
+	event	[Cocoa-handle!]
+	return: [integer!]
+	/local
+		flags	[integer!]
+		buttons	[integer!]
+][
+	flags: check-extra-keys event
+	buttons: as integer! objc_msgSend [objc_getClass "NSEvent" sel_getUid "pressedMouseButtons"]
+	if buttons and 1 <> 0 [flags: flags or EVT_FLAG_DOWN]		;-- left
+	if buttons and 2 <> 0 [flags: flags or EVT_FLAG_ALT_DOWN]	;-- right
+	if buttons and 4 <> 0 [flags: flags or EVT_FLAG_MID_DOWN]	;-- middle
+	if buttons and 8 <> 0 [flags: flags or EVT_FLAG_AUX_DOWN]	;-- 4th button
+	flags
+]
+
 translate-key: func [
 	keycode [integer!]
 	return: [integer!]
 ][
 	keycode: keycode + 1
 	keycode-table/keycode
+]
+
+#define RED_SYNTH_MARKER 52454421h			;-- unaligned sentinel: can never equal a real (4-aligned) NSEvent isa pointer
+
+synth-event!: alias struct! [				;-- buffer associated to a view for an *injected* event (send-event)
+	marker	[integer!]						;-- = RED_SYNTH_MARKER for synthetic events
+	picked	[integer!]						;-- wheel delta (notches) for injected EVT_WHEEL
+	fx		[float32!]						;-- offset in the target view's own coordinates
+	fy		[float32!]
 ]
 
 get-event-offset: func [
@@ -253,18 +291,27 @@ get-event-offset: func [
 		frame	[NSRect! value]
 		pt		[CGPoint! value]
 		v		[Cocoa-handle!]
+		obj		[Cocoa-handle!]
+		synth	[synth-event!]
 ][
 	type: evt/type
+	obj: get-event-object evt
 	offset: as red-point2D! stack/push*
 	offset/header: TYPE_POINT2D
 	case [
 		type <= EVT_OVER [
-			event: objc_getAssociatedObject as Cocoa-handle! evt/msg RedNSEventKey
+			event: objc_getAssociatedObject obj RedNSEventKey
 			either zero? event [offset/x: as float32! 0.0 offset/y: as float32! 0.0][
-				pt: objc_msgSend_pt [event sel_getUid "locationInWindow"]
-				pt: objc_msgSend_pt [as Cocoa-handle! evt/msg sel_getUid "convertPoint:fromView:" pt/x pt/y 0]
-				offset/x: COCOA_TO_F32(pt/x)
-				offset/y: COCOA_TO_F32(pt/y)
+				synth: as synth-event! event
+				either synth/marker = RED_SYNTH_MARKER [
+					offset/x: synth/fx						;-- injected event: offset stored directly in view coords (no convertPoint)
+					offset/y: synth/fy
+				][
+					pt: objc_msgSend_pt [event sel_getUid "locationInWindow"]
+					pt: objc_msgSend_pt [obj sel_getUid "convertPoint:fromView:" pt/x pt/y 0]
+					offset/x: COCOA_TO_F32(pt/x)
+					offset/y: COCOA_TO_F32(pt/y)
+				]
 			]
 			as red-value! offset
 		]
@@ -272,7 +319,7 @@ get-event-offset: func [
 			type = EVT_MOVING
 			type = EVT_MOVE
 		][
-			rc: objc_msgSend_rect [as Cocoa-handle! evt/msg sel_getUid "frame"]
+			rc: objc_msgSend_rect [obj sel_getUid "frame"]
 			offset/x: COCOA_TO_F32(rc/x)
 			offset/y: (as float32! screen-size-y) - (COCOA_TO_F32(rc/y) + COCOA_TO_F32(rc/h))
 			as red-value! offset
@@ -281,9 +328,9 @@ get-event-offset: func [
 			type = EVT_SIZING
 			type = EVT_SIZE
 		][
-			v: objc_msgSend [as Cocoa-handle! evt/msg sel_getUid "contentView"]
+			v: objc_msgSend [obj sel_getUid "contentView"]
 			frame: objc_msgSend_rect [v sel_getUid "frame"]
-			either zero? objc_getAssociatedObject as Cocoa-handle! evt/msg RedPairSizeKey [
+			either zero? objc_getAssociatedObject obj RedPairSizeKey [
 				offset/x: COCOA_TO_F32(frame/w)
 				offset/y: COCOA_TO_F32(frame/h)
 			][
@@ -420,6 +467,7 @@ get-event-picked: func [
 		d	[Cocoa-float!]
 		event [Cocoa-handle!]
 		idx	[integer!]
+		synth [synth-event!]
 ][
 	as red-value! switch evt/type [
 		EVT_ZOOM
@@ -441,19 +489,24 @@ get-event-picked: func [
 		]
 		EVT_SCROLL [integer/push evt/flags >>> 4]
 		EVT_WHEEL [
-			event: objc_getAssociatedObject as Cocoa-handle! evt/msg RedNSEventKey
+			event: objc_getAssociatedObject get-event-object evt RedNSEventKey
 			d: as Cocoa-float! 0
 			if event <> 0 [
-				d: objc_msgSend_f32 [event sel_getUid "scrollingDeltaY"]
-				if 1 = as integer! objc_msgSend [event sel_getUid "hasPreciseScrollingDeltas"] [
-					d: d / (as Cocoa-float! 10.0)
+				synth: as synth-event! event
+				either synth/marker = RED_SYNTH_MARKER [
+					d: as Cocoa-float! synth/picked		;-- injected wheel: delta stored directly (no NSEvent)
+				][
+					d: objc_msgSend_f32 [event sel_getUid "scrollingDeltaY"]
+					if 1 = as integer! objc_msgSend [event sel_getUid "hasPreciseScrollingDeltas"] [
+						d: d / (as Cocoa-float! 10.0)
+					]
 				]
 			]
-			float/push as float! d
+			float/push COCOA_TO_F64(d)
 		]
 		EVT_IME [to-red-string ime-text null]
 		EVT_DBL_CLICK [
-			obj: as Cocoa-handle! evt/msg
+			obj: get-event-object evt
 			if (object_getClass obj) = objc_getClass "RedTableView" [
 				n: as integer! objc_msgSend [obj sel_getUid "selectedRow"]
 				either n = -1 [none/push][integer/push n + 1]
@@ -461,6 +514,133 @@ get-event-picked: func [
 		]
 		default	 [integer/push evt/flags << 16 >> 16]
 	]
+]
+
+ns-kind?: func [										;-- is `view` an instance of (a subclass of) the named Cocoa class?
+	view	[Cocoa-handle!]
+	cls		[c-string!]
+	return:	[logic!]
+][
+	1 = as integer! objc_msgSend [view sel_getUid "isKindOfClass:" objc_getClass cls]
+]
+
+field-append-char: func [								;-- append one BMP codepoint to a native field's text (display + Red facet)
+	view	[Cocoa-handle!]
+	ch		[integer!]
+	/local
+		uch		[integer!]
+		nsstr	[Cocoa-handle!]
+		cur		[Cocoa-handle!]
+		new		[Cocoa-handle!]
+][
+	uch:   ch and FFFFh									;-- one UTF-16 code unit (BMP); :uch is its address
+	nsstr: objc_msgSend [
+		objc_getClass "NSString" sel_getUid "stringWithCharacters:length:"
+		(as Cocoa-handle! :uch) as NSUInteger! 1
+	]
+	cur:   objc_msgSend [view sel_getUid "stringValue"]
+	new:   objc_msgSend [cur sel_getUid "stringByAppendingString:" nsstr]
+	objc_msgSend [view sel_getUid "setStringValue:" new]	;-- update the visible text...
+	set-text view new									;-- ...and keep the Red `text` facet in sync
+]
+
+OS-send-event: func [
+	evt		[red-event!]
+	queued?	[logic!]									;-- /no-wait (async post) selector; NOT yet honored here: macOS dispatches synchronously in both modes (unlike Windows PostMessage) -- see note below
+	return:	[logic!]
+	/local
+		node	[node!]
+		s		[series!]
+		cell	[red-value!]
+		obj		[red-object!]
+		state	[red-block!]
+		hd		[red-handle!]
+		view	[Cocoa-handle!]
+		pr		[red-pair!]
+		ofs		[red-value!]
+		pt2d	[red-point2D!]
+		flags	[integer!]
+		mods	[integer!]
+		pk		[red-integer!]
+		synth	[synth-event!]
+][
+	;-- NOTE: `queued?` (/no-wait) is not yet honored on this backend: every branch below dispatches
+	;-- synchronously (make-event + native actuation run before this returns), whereas the Windows
+	;-- backend posts asynchronously for /no-wait. True async here needs deferring the dispatch (e.g.
+	;-- dispatch_async_f on the main queue) with the event params snapshotted as primitives -- tracked
+	;-- as a follow-up. Native actuation itself is correct in both modes (it also happens on Windows
+	;-- via the pumped WndProc).
+	if evt/msg = 0 [return false]							;-- needs a target face (synthetic extras node)
+	node: resolve-node evt/msg
+	s:	  as series! node/value
+	cell: s/offset										;-- cell 0 = face
+	if TYPE_OF(cell) <> TYPE_OBJECT [return false]
+	obj:  as red-object! cell
+	state: as red-block! get-node-facet obj/ctx FACE_OBJ_STATE
+	if TYPE_OF(state) <> TYPE_BLOCK [return false]		;-- face not realized -> no live handle (get-face-handle would assert)
+	hd:   as red-handle! block/rs-head state
+	if TYPE_OF(hd) <> TYPE_HANDLE [return false]
+	view: get-cocoa-handle hd
+	if zero? view [return false]
+
+	flags: evt/flags									;-- synthetic flags: low word = key codepoint, high bits = View EVT_FLAG_*
+	;-- keep the modifier keys and the buttons held during the event (dragging requires the button
+	;-- on `over` events); the remaining bits are ones make-event would mis-read
+	mods:  flags and (
+		EVT_FLAG_CTRL_DOWN or EVT_FLAG_SHIFT_DOWN or EVT_FLAG_MENU_DOWN or EVT_FLAG_CMD_DOWN
+		or EVT_FLAG_DOWN or EVT_FLAG_ALT_DOWN or EVT_FLAG_MID_DOWN or EVT_FLAG_AUX_DOWN
+	)
+	if evt/type = EVT_OVER [							;-- pointer outside the face: only a motion event reports
+		mods: mods or (flags and EVT_FLAG_AWAY)			;-- it, as real input does (mouseExited:)
+	]
+
+	;-- Associate a marked buffer carrying the injected offset (view coords) and wheel delta.
+	;-- get-event-offset / get-event-picked return these directly for synthetic events. We must
+	;-- NOT use convertPoint:toView: here: that struct-returning objc_msgSend corrupts esp, which
+	;-- then crashes the following make-event call (see get-event-offset).
+	synth: declare synth-event!
+	synth/marker: RED_SYNTH_MARKER
+	synth/fx: as float32! 0.0
+	synth/fy: as float32! 0.0
+	synth/picked: 0
+	ofs: s/offset + 2									;-- cell 2 = offset (pair! or point2D!, target view coords)
+	if TYPE_OF(ofs) = TYPE_PAIR [pr: as red-pair! ofs  synth/fx: as float32! pr/x  synth/fy: as float32! pr/y]
+	if TYPE_OF(ofs) = TYPE_POINT2D [pt2d: as red-point2D! ofs  synth/fx: pt2d/x  synth/fy: pt2d/y]	;-- fractions preserved
+	pk: as red-integer! (s/offset + 3)					;-- cell 3 = picked (wheel notches)
+	if TYPE_OF(pk) = TYPE_INTEGER [synth/picked: pk/value]
+	objc_setAssociatedObject view RedNSEventKey (as Cocoa-handle! synth) OBJC_ASSOCIATION_ASSIGN
+
+	switch evt/type [
+		EVT_LEFT_DOWN	[
+			make-event view mods EVT_LEFT_DOWN
+			if ns-kind? view "NSButton" [objc_msgSend [view sel_getUid "highlight:" 1]]	;-- depress the button
+		]
+		EVT_LEFT_UP		[
+			make-event view mods EVT_LEFT_UP
+			if ns-kind? view "NSButton" [					;-- native button/checkbox/toggle/radio: fire the click and release
+				button-click view 0 view					;-- the highlight. (RedButton routes clicks via its mouseDown: override,
+				objc_msgSend [view sel_getUid "highlight:" 0]	;-- whose modal tracking loop would deadlock on a separate up.)
+			]
+		]
+		EVT_MIDDLE_DOWN	[make-event view mods EVT_MIDDLE_DOWN]
+		EVT_MIDDLE_UP	[make-event view mods EVT_MIDDLE_UP]
+		EVT_RIGHT_DOWN	[make-event view mods EVT_RIGHT_DOWN]
+		EVT_RIGHT_UP	[make-event view mods EVT_RIGHT_UP]
+		EVT_AUX_DOWN	[make-event view mods EVT_AUX_DOWN]
+		EVT_AUX_UP		[make-event view mods EVT_AUX_UP]
+		EVT_OVER		[make-event view mods EVT_OVER]
+		EVT_DBL_CLICK	[make-event view mods EVT_DBL_CLICK]
+		EVT_KEY_DOWN	[special-key: 0  make-event view ((flags and FFFFh) or mods) EVT_KEY_DOWN]	;-- low word = key codepoint
+		EVT_KEY_UP		[special-key: 0  make-event view ((flags and FFFFh) or mods) EVT_KEY_UP]
+		EVT_KEY			[
+			special-key: 0
+			make-event view ((flags and FFFFh) or mods) EVT_KEY
+			if ns-kind? view "NSTextField" [field-append-char view flags and FFFFh]	;-- native field: also fill the text
+		]
+		EVT_WHEEL		[make-event view mods EVT_WHEEL]	;-- delta via synth/picked
+		default			[return false]
+	]
+	true
 ]
 
 get-event-flags: func [
@@ -505,28 +685,32 @@ make-event: func [
 		state  [integer!]
 		key	   [integer!]
 		char   [integer!]
+		gui-evt [red-event! value]
+		event-context [event-context! value]
 ][
+	event-context/object: obj
+	event-context/prev: as byte-ptr! active-event-context
+	active-event-context: :event-context
+
+	gui-evt/header: TYPE_EVENT
 	gui-evt/type:  evt
-	gui-evt/msg:   as byte-ptr! obj
-	case [
-		evt = EVT_WHEEL [
-		gui-evt/flags: check-extra-keys flags	;-- pass event as flags for EVT_WHEEL
-		]
-		evt = EVT_IME [
+	gui-evt/msg:   0
+	either evt = EVT_IME [
 			ime-text: flags
 			gui-evt/flags: 0
-		]
-		true [gui-evt/flags: as integer! flags]
+	][
+		gui-evt/flags: as integer! flags
 	]
 
 	state: EVT_DISPATCH
 	stack/mark-try-all words/_anon
 	catch CATCH_ALL_EXCEPTIONS [
-		#call [system/view/awake gui-evt]
+		#call [system/view/awake :gui-evt]
 		stack/unwind
 	]
 	stack/adjust-post-try
 	if system/thrown <> 0 [system/thrown: 0]
+	active-event-context: as event-context! event-context/prev
 
 	res: as red-word! stack/arguments
 	if TYPE_OF(res) = TYPE_WORD [
@@ -545,15 +729,16 @@ process-mouse-tracking: func [
 		n 	[integer!]
 		v	[Cocoa-handle!]
 		w	[Cocoa-handle!]
+		p	[int-ptr!]
 ][
 	w: window
 	if zero? w [
 		pt: objc_msgSend_pt [objc_getClass "NSEvent" sel_getUid "mouseLocation"]
 		n: as integer! objc_msgSend [
 			objc_getClass "NSWindow" sel_getUid "windowNumberAtPoint:belowWindowWithWindowNumber:"
-			pt/x pt/y 0
+			pt/x pt/y as NSInteger! 0
 		]
-		w: objc_msgSend [NSApp sel_getUid "windowWithWindowNumber:" n]
+		w: objc_msgSend [NSApp sel_getUid "windowWithWindowNumber:" as NSInteger! n]
 	]
 	if w <> 0 [
 		v: objc_msgSend [w sel_getUid "contentView"]
@@ -571,12 +756,17 @@ process-mouse-tracking: func [
 		while [all [v <> 0 not red-face? v]][
 			v: objc_msgSend [v sel_getUid "superview"]
 		]
+		p: as int-ptr! event
 		if all [
 			v <> 0
 			zero? objc_getAssociatedObject v RedEnableKey
-		][
-			objc_msgSend [v sel_getUid "mouseMoved:" event]
-		]
+			p/2 = NSMouseMoved							;-- a drag is already delivered to the view that got
+		][												;-- the mouseDown: (-> EVT_OVER with the held button in
+			objc_msgSend [v sel_getUid "mouseMoved:" event]	;-- flags). Forwarding it here too would dispatch a
+		]												;-- 2nd EVT_OVER for the same motion, with no button
+														;-- flags, which aborts face dragging (see `dragging`
+														;-- in view.red: a motion without the button reads as
+														;-- a lost `up` event, issue #5544)
 		if v <> current-widget [
 			if current-widget <> 0 [
 				objc_msgSend [current-widget sel_getUid "mouseExited:" event]
@@ -603,28 +793,8 @@ close-pending-windows: func [/local n [integer!] p [Cocoa-handle-ptr!]][
 ]
 
 post-quit-msg: func [
-	/local
-		e	[Cocoa-handle!]
-		tm	[float!]
 ][
-	tm: objc_msgSend_fpret [
-		objc_msgSend [objc_getClass "NSProcessInfo" sel_getUid "processInfo"]
-		sel_getUid "systemUptime"
-	]
-	e: objc_msgSend [
-		objc_getClass "NSEvent"
-		sel_getUid "otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:"
-		NSApplicationDefined
-		0 0		;-- NSZeroPoint
-		0
-		tm
-		0
-		objc_msgSend [objc_getClass "NSGraphicsContext" sel_getUid "currentContext"]
-		0
-		QuitMsgData
-		0
-	]
-	objc_msgSend [NSApp sel_getUid "postEvent:atStart:" e no]
+	quit-event-loop?: yes
 ]
 
 do-events: func [
@@ -638,6 +808,7 @@ do-events: func [
 ][
 	msg?: no
 	timeout: 0
+	quit-event-loop?: no
 
     unless no-wait? [
 		loop 10 [ ;; FIXME Consume some leftover events. Find a better solution !!!
@@ -653,13 +824,13 @@ do-events: func [
 			]
 		    objc_msgSend [pool sel_getUid "drain"]
 	    ]
-	    unless loop-started? [
-		    objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
-			objc_msgSend [NSApp sel_getUid "finishLaunching"]
-		    loop-started?: yes
-	    ]
 	    timeout: objc_msgSend [objc_getClass "NSDate" sel_getUid "distantFuture"]
-    ]
+	]
+	unless loop-started? [
+		objc_msgSend [NSApp sel_getUid "finishLaunching"]
+		objc_msgSend [NSApp sel_getUid "activateIgnoringOtherApps:" 1]
+		loop-started?: yes
+	]
 	until [
 		pool: objc_msgSend [objc_getClass "NSAutoreleasePool" sel_getUid "alloc"]
 		objc_msgSend [pool sel_getUid "init"]
@@ -683,8 +854,9 @@ do-events: func [
 			]
 		]
 		objc_msgSend [pool sel_getUid "drain"]
-		no-wait?
+		any [no-wait? quit-event-loop?]
 	]
+	quit-event-loop?: no
 
 	#if sub-system <> 'gui [
 		if zero? win-cnt [objc_msgSend [NSApp sel_getUid "deactivate"]]

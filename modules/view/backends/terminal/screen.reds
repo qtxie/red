@@ -471,7 +471,7 @@ screen: context [
 			    clr: clr and 0Fh
 			    idx: clr * 2 + as-integer fg-color?
 			    idx: idx + 1	;-- 1-based
-			    s: as c-string! color-16-table/idx
+			    s: color-16-table/idx
 		    ]
 		    palette-256		[
 			    clr: clr and FFh

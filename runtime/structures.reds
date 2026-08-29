@@ -341,7 +341,7 @@ red-hash!: alias struct! [
 red-event!: alias struct! [
 	header	[integer!]								;-- cell header
 	type	[integer!]								;-- symbol ID
-	msg		[byte-ptr!]								;-- low-level OS-specific structure
+	msg		[node-handle!]							;-- stable extras-node handle for synthetic events; zero for native events
 	flags	[integer!]								;-- bit array
 ]
 

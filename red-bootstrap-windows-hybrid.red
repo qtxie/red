@@ -4,4 +4,5 @@ Red [
 	Config: [show: 'X86-64-Hybrid-only]
 ]
 
-#include %red-bootstrap-windows.red
+#include %system/compiler-windows-hybrid-bootstrap.red
+#include %compiler/bootstrap-driver.red

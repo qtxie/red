@@ -12,7 +12,7 @@ Red/System [
 
 #include %text-box.reds
 
-#define DRAW_FLOAT_MAX		[as Cocoa-float! 3.4e38]
+#define DRAW_FLOAT_MAX		[F64_TO_COCOA(3.4e38)]
 
 #either ABI = 'apple-aarch64 [
 	#define sqrtf sqrt
@@ -74,10 +74,10 @@ draw-begin: func [
 		either on-graphic? [							;-- draw on image!, flip the CTM
 			rc: as NSRect! img
 			ctx/rect-y: rc/y
-			CGContextTranslateCTM CGCtx as Cocoa-float! 0.0 rc/y
-			CGContextScaleCTM CGCtx as Cocoa-float! 1.0 as Cocoa-float! -1.0
+			CGContextTranslateCTM CGCtx F64_TO_COCOA(0.0) rc/y
+			CGContextScaleCTM CGCtx F64_TO_COCOA(1.0) F64_TO_COCOA(-1.0)
 		][
-			CGContextTranslateCTM CGCtx as Cocoa-float! 0.5 as Cocoa-float! 0.5
+			CGContextTranslateCTM CGCtx F64_TO_COCOA(0.5) F64_TO_COCOA(0.5)
 		]
 	]
 
@@ -163,7 +163,7 @@ OS-draw-line: func [
 		pair: pair + 1
 	]
 	CGContextBeginPath ctx
-	CGContextAddLines ctx edges nb
+	CGContextAddLines ctx edges as NSUInteger! nb
 	CGContextStrokePath ctx
 ]
 
@@ -272,7 +272,7 @@ OS-draw-line-pattern: func [
 			start: start + 1
 		]
 	]
-	CGContextSetLineDash dc/raw as Cocoa-float! 0.0 dashes cnt
+	CGContextSetLineDash dc/raw F64_TO_COCOA(0.0) dashes as NSUInteger! cnt
 ]
 
 get-shape-center: func [
@@ -500,7 +500,7 @@ OS-draw-triangle: func [
 	point/x: edges/x									;-- close the triangle
 	point/y: edges/y
 	CGContextBeginPath ctx
-	CGContextAddLines ctx edges 4
+	CGContextAddLines ctx edges as NSUInteger! 4
 	if dc/grad-pos? [check-gradient-poly dc edges 3]
 	CGContextClosePath ctx
 	do-draw-path dc
@@ -533,7 +533,7 @@ OS-draw-polygon: func [
 	GET_COCOA_XY(start point/x point/y)			;-- close the polygon
 
 	CGContextBeginPath ctx
-	CGContextAddLines ctx edges nb + 1
+	CGContextAddLines ctx edges as NSUInteger! (nb + 1)
 	if dc/grad-pos? [check-gradient-poly dc edges nb]
 	CGContextClosePath ctx
 	do-draw-path dc
@@ -735,7 +735,7 @@ draw-text-at: func [
 		sel_getUid "ascender"
 	]
 	m/ty: m/ty + delta
-	CGContextSetTextMatrix ctx m/a m/b m/c m/d m/tx m/ty
+	CGContextSetTextMatrix ctx m
 	CTLineDraw line ctx
 
 	CFRelease str
@@ -801,8 +801,14 @@ draw-text-box: func [
 		CG-set-color dc/raw get-tuple-color color yes
 		CGContextFillRect dc/raw cg-pt/x cg-pt/y w h
 	]
-	objc_msgSend [layout sel_getUid "drawBackgroundForGlyphRange:atPoint:" idx len cg-pt/x cg-pt/y]
-	objc_msgSend [layout sel_getUid "drawGlyphsForGlyphRange:atPoint:" idx len cg-pt/x cg-pt/y]
+	objc_msgSend [
+		layout sel_getUid "drawBackgroundForGlyphRange:atPoint:"
+		as NSUInteger! idx as NSUInteger! len cg-pt/x cg-pt/y
+	]
+	objc_msgSend [
+		layout sel_getUid "drawGlyphsForGlyphRange:atPoint:"
+		as NSUInteger! idx as NSUInteger! len cg-pt/x cg-pt/y
+	]
 ]
 
 OS-draw-text: func [
@@ -866,7 +872,7 @@ _draw-arc: func [
 		]
 	]
 	delta: beta - alpha / as Cocoa-float! 2.0
-	bcp: as Cocoa-float! (4.0 / 3.0 * (1.0 - cos as float! delta) / sin as float! delta)
+	bcp: as Cocoa-float! (4.0 / 3.0 * (1.0 - cos COCOA_TO_F64(delta)) / sin COCOA_TO_F64(delta))
 
 	sin-a: sinf alpha
 	sin-b: sinf beta
@@ -907,11 +913,13 @@ OS-draw-arc: func [
 		rad-y		[Cocoa-float!]
 		angle-begin [Cocoa-float!]
 		angle-end	[Cocoa-float!]
+		begin-deg	[Cocoa-float!]
 		delta		[Cocoa-float!]
+		dir			[Cocoa-float!]
 		rad			[Cocoa-float!]
 		current		[Cocoa-float!]
 		drawn		[Cocoa-float!]
-		sweep		[integer!]
+		sweep		[Cocoa-float!]
 		i			[integer!]
 		closed?		[logic!]
 		pt			[red-point2D!]
@@ -923,36 +931,36 @@ OS-draw-arc: func [
 	radius: center + 1
 	GET_COCOA_XY(radius rad-x rad-y)
 	begin: as red-integer! radius + 1
-	angle-begin: rad * as Cocoa-float! begin/value
+	begin-deg: F32_TO_COCOA get-float32 begin
+	angle-begin: rad * begin-deg
 	angle: begin + 1
-	sweep: angle/value
-	i: begin/value + sweep
-	angle-end: rad * as Cocoa-float! i
+	sweep: F32_TO_COCOA get-float32 angle
+	angle-end: rad * (begin-deg + sweep)
 
 	closed?: angle < end
 
 	CGContextBeginPath ctx
 	if closed? [CGContextMoveToPoint ctx cx cy]
-	either any [sweep >= 360 sweep <= -360][
+	either any [sweep >= (as Cocoa-float! 359.999) sweep <= (as Cocoa-float! -359.999)][
 		CGContextAddEllipseInRect ctx cx - rad-x cy - rad-y rad-x * as Cocoa-float! 2.0 rad-y * as Cocoa-float! 2.0
 	][
 		either rad-x <> rad-y [								;-- elliptical arc
 			delta: as Cocoa-float! (PI / 2.0)
+			dir: either sweep < (as Cocoa-float! 0.0) [as Cocoa-float! -1.0][as Cocoa-float! 1.0]
 			drawn: as Cocoa-float! 0.0
 			i: 0
 			until [
 				current: angle-begin + drawn
 				rad: angle-end - current
-				either rad > delta [rad: delta][
-					if rad <= as Cocoa-float! 0.000001 [break]
-				]
+				if (rad * dir) > delta [rad: delta * dir]
+				if (rad * dir) <= (as Cocoa-float! 0.000001) [break]
 				_draw-arc ctx cx cy rad-x rad-y current current + rad zero? i closed?
 				drawn: drawn + rad
 				i: i + 1
 				i = 4
 			]
 		][
-			CGContextAddArc ctx cx cy rad-x angle-begin angle-end as-integer sweep < 0
+			CGContextAddArc ctx cx cy rad-x angle-begin angle-end as-integer (sweep < (as Cocoa-float! 0.0))
 		]
 	]
 	either closed? [
@@ -1078,7 +1086,7 @@ CG-draw-image: func [						;@@ use CALayer to get very good performance?
 	CGContextTranslateCTM dc tx ty
 	CGContextScaleCTM dc flip-x flip-y
 
-	CGContextDrawImage dc as Cocoa-float! 0.0 as Cocoa-float! 0.0 w h image
+	CGContextDrawImage dc F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) w h image
 
 	;-- flip back
 	CGContextScaleCTM dc flip-x flip-y
@@ -1197,7 +1205,7 @@ fill-gradient-region: func [
 			dc/grad-pen
 			dc/grad-x2
 			dc/grad-y2
-			as Cocoa-float! 0.0
+			F64_TO_COCOA(0.0)
 			dc/grad-x1
 			dc/grad-y1
 			dc/grad-radius
@@ -1321,7 +1329,7 @@ OS-draw-grad-pen-old: func [
 	]
 
 	if dc/grad-pen <> 0 [CGGradientRelease dc/grad-pen]
-	dc/grad-pen: CGGradientCreateWithColorComponents dc/colorspace color pos count
+	dc/grad-pen: CGGradientCreateWithColorComponents dc/colorspace color pos as NSUInteger! count
 ]
 
 OS-draw-grad-pen: func [
@@ -1399,7 +1407,7 @@ OS-draw-grad-pen: func [
 	]
 
 	if ctx/grad-pen <> 0 [CGGradientRelease ctx/grad-pen]
-	ctx/grad-pen: CGGradientCreateWithColorComponents ctx/colorspace color pos count
+	ctx/grad-pen: CGGradientCreateWithColorComponents ctx/colorspace color pos as NSUInteger! count
 
 	;-- positions
 	unless skip-pos? [
@@ -2011,7 +2019,7 @@ OS-draw-shape-arc: func [
 	m: CGAffineTransformMakeTranslation center-x center-y
 	m: CGAffineTransformRotate m theta
 	m: CGAffineTransformScale m radius-x radius-y
-	CGPathAddRelativeArc ctx/path :m as Cocoa-float! 0.0 as Cocoa-float! 0.0 as Cocoa-float! 1.0 cx angle-len
+	CGPathAddRelativeArc ctx/path :m F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) F64_TO_COCOA(1.0) cx angle-len
 ]
 
 OS-draw-shape-close: func [
@@ -2057,11 +2065,11 @@ draw-pattern-callback: func [
 	h: dc/pattern-h
 	do-draw ctx null blk no no yes yes
 	if wrap = flip-x [
-		CGContextScaleCTM ctx as Cocoa-float! -1.0 1.0
+		CGContextScaleCTM ctx F64_TO_COCOA(-1.0) 1.0
 		do-draw ctx null blk no no yes yes
 	]
 	if wrap = flip-y [
-		m: CGAffineTransformMake 1.0 0.0 0.0 as Cocoa-float! -1.0 w h
+		m: CGAffineTransformMake 1.0 0.0 0.0 F64_TO_COCOA(-1.0) w h
 		CGContextConcatCTM ctx m
 		do-draw ctx null blk no no yes yes
 	]
@@ -2138,7 +2146,7 @@ OS-draw-brush-pattern: func [
 	rc/y: y
 	rc/w: width
 	rc/h: height
-	m: CGAffineTransformMake 1.0 0.0 0.0 as Cocoa-float! -1.0 0.0 height
+	m: CGAffineTransformMake 1.0 0.0 0.0 F64_TO_COCOA(-1.0) 0.0 height
 	pattern: CGPatternCreate as int-ptr! dc rc m width height 0 yes callbacks
 	either brush? [
 		dc/brush?: yes

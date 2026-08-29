@@ -19,6 +19,114 @@ is-flipped: func [
 	true
 ]
 
+;-- NSButtonCell always centers the title vertically inside the interior rect it is handed. Rather
+;-- than reimplementing the native title renderer, `para/v-align` is honored by translating that
+;-- interior rect so the title lands on the requested edge of the face.
+draw-button-interior*: func [
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	x		[Cocoa-float!]
+	y		[Cocoa-float!]
+	w		[Cocoa-float!]
+	h		[Cocoa-float!]
+	view	[Cocoa-handle!]
+	/local
+		super		[objc_super! value]
+		title		[NSRect! value]
+		text-size	[NSSize! value]
+		values		[red-value!]
+		para		[red-object!]
+		type		[red-word!]
+		sym			[integer!]
+		flags		[integer!]
+		title-h		[Cocoa-float!]
+		title-y		[Cocoa-float!]
+		target		[Cocoa-float!]
+		new-y		[Cocoa-float!]
+		high?		[logic!]
+][
+	super/receiver: self
+	super/superclass: objc_msgSend [self sel_getUid "superclass"]
+
+	flags: PARA_V_MIDDLE
+	if all [not zero? view red-face? view][
+		values: get-face-values view
+		para: as red-object! values + FACE_OBJ_PARA
+		if TYPE_OF(para) = TYPE_OBJECT [
+			type: as red-word! values + FACE_OBJ_TYPE
+			sym: symbol/resolve type/symbol
+			flags: get-para-flags sym para
+		]
+	]
+	if (flags and PARA_V_MASK) = PARA_V_MIDDLE [		;-- native placement is already centered
+		objc_msgSendSuper [super cmd x y w h view]
+		exit
+	]
+
+	title: objc_msgSend_rect [self sel_getUid "titleRectForBounds:" x y w h]
+	title-h: title/h
+	title-y: title/y
+	if any [										;-- no usable title rect: measure the text itself
+		title-h <= as Cocoa-float! 0.0
+		title-h >= h
+	][
+		text-size: objc_msgSend_sz [
+			objc_msgSend [self sel_getUid "attributedTitle"] sel_getUid "size"
+		]
+		title-h: text-size/h
+		title-y: y + ((h - title-h) / (as Cocoa-float! 2.0))
+	]
+	if any [										;-- title fills the face: nothing left to align
+		title-h <= as Cocoa-float! 0.0
+		title-h >= h
+	][
+		objc_msgSendSuper [super cmd x y w h view]
+		exit
+	]
+
+	;-- `bottom` sits at the larger Y in a flipped view and at the smaller one otherwise
+	high?: (flags and PARA_V_BOTTOM) <> 0
+	unless as logic! objc_msgSend [view sel_getUid "isFlipped"] [high?: not high?]
+	target: either high? [(y + h) - title-h][y]
+	new-y: (y + target) - title-y
+	objc_msgSendSuper [super cmd x new-y w h view]
+]
+
+#either ABI = 'apple-aarch64 [
+	draw-button-interior: func [
+		[cdecl]
+		self	[Cocoa-handle!]
+		cmd		[Cocoa-handle!]
+		rc		[NSRect! value]
+		view	[Cocoa-handle!]
+	][
+		draw-button-interior* self cmd rc/x rc/y rc/w rc/h view
+	]
+][
+	draw-button-interior: func [
+		[cdecl]
+		self	[Cocoa-handle!]
+		cmd		[Cocoa-handle!]
+		x		[float32!]
+		y		[float32!]
+		width	[float32!]
+		height	[float32!]
+		view	[Cocoa-handle!]
+	][
+		draw-button-interior* self cmd x y width height view
+	]
+]
+
+;-- Faces whose views take the keyboard themselves, instead of letting a native control handle it.
+;-- `text` is excluded on purpose: labels are RedBase views too, but must never take the focus away
+;-- from the faces above (the GUI console reads its input from a scrollable `rich-text`).
+base-keyboard-type?: func [
+	type	[Cocoa-handle!]							;-- IVAR_RED_DATA, set by init-base-face
+	return: [logic!]
+][
+	any [type = base type = panel type = rich-text]
+]
+
 accepts-first-responder: func [
 	[cdecl]
 	self	[Cocoa-handle!]
@@ -29,7 +137,7 @@ accepts-first-responder: func [
 ][
 	type: 0
 	object_getInstanceVariable self IVAR_RED_DATA :type
-	type = base
+	base-keyboard-type? type
 ]
 
 become-first-responder: func [
@@ -63,7 +171,8 @@ reset-cursor-rects: func [
 			sz: objc_msgSend_pt [self sel_getUid "contentSize"]
 		]
 		objc_msgSend [
-			self sel_getUid "addCursorRect:cursor:" 0 0 sz/x sz/y cur
+			self sel_getUid "addCursorRect:cursor:"
+			F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) sz/x sz/y cur
 		]
 	]
 ]
@@ -73,10 +182,13 @@ mouse-entered: func [
 	self	[Cocoa-handle!]
 	cmd		[Cocoa-handle!]
 	event	[Cocoa-handle!]
+	/local
+		flags [integer!]
 ][
 	if zero? objc_getAssociatedObject self RedEnableKey [
 		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self 0 EVT_OVER
+		flags: mouse-state-flags event				;-- report the modifiers and buttons held, as the other
+		make-event self flags EVT_OVER				;-- backends do (a 0 here would abort a running drag)
 	]
 ]
 
@@ -85,10 +197,13 @@ mouse-exited: func [
 	self	[Cocoa-handle!]
 	cmd		[Cocoa-handle!]
 	event	[Cocoa-handle!]
+	/local
+		flags [integer!]
 ][
 	if zero? objc_getAssociatedObject self RedEnableKey [
 		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-		make-event self EVT_FLAG_AWAY EVT_OVER
+		flags: (mouse-state-flags event) or EVT_FLAG_AWAY
+		make-event self flags EVT_OVER
 	]
 ]
 
@@ -99,12 +214,14 @@ mouse-moved: func [
 	event	[Cocoa-handle!]
 	/local
 		flags [integer!]
+		mods  [integer!]
 ][
 	if zero? objc_getAssociatedObject self RedEnableKey [
 		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 		flags: get-flags (as red-block! get-face-values self) + FACE_OBJ_FLAGS
 		if flags and FACET_FLAGS_ALL_OVER <> 0 [
-			make-event self 0 EVT_OVER
+			mods: mouse-state-flags event
+			make-event self mods EVT_OVER
 		]
 	]
 ]
@@ -132,7 +249,7 @@ button-mouse-down: func [
 		assert window <> 0
 		event: objc_msgSend [
 			window sel_getUid "nextEventMatchingMask:"
-			NSLeftMouseDownMask or NSLeftMouseUpMask or NSLeftMouseDraggedMask
+			as NSUInteger! (NSLeftMouseDownMask or NSLeftMouseUpMask or NSLeftMouseDraggedMask)
 		]
 		bound: objc_msgSend_rect [self sel_getUid "bounds"]
 		type: as integer! objc_msgSend [event sel_getUid "type"]
@@ -143,13 +260,13 @@ button-mouse-down: func [
 		objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
 		switch type [
 			NSLeftMouseDragged [
-				make-event self 0 EVT_OVER
+				make-event self EVT_FLAG_DOWN EVT_OVER
 			]
 			NSLeftMouseUp [
 				make-event self 0 EVT_LEFT_UP
 				if inside? [
 					inside?: false
-					button-click self
+					button-click self 0 self
 				]
 			]
 			default [0]
@@ -313,6 +430,26 @@ handle-speical-key: func [
 	][yes]
 ]
 
+;-- Faces for which RETURN reports a dedicated event instead of a key event. The
+;-- `enter` global handler in %view.red cannot do that conversion: handlers receive
+;-- the event by value, so its `event/type:` write cannot reach the dispatched event.
+return-key-event: func [
+	self	[Cocoa-handle!]
+	return: [integer!]									;-- 0 when the face takes RETURN as a key
+	/local
+		w		[red-word!]
+		type	[integer!]
+][
+	unless red-face? self [return 0]
+	w: as red-word! (get-face-values self) + FACE_OBJ_TYPE
+	type: symbol/resolve w/symbol
+	case [
+		any [type = field type = drop-down]	[EVT_ENTER]
+		type = button						[EVT_CLICK]
+		true								[0]
+	]
+]
+
 on-key-down: func [
 	[cdecl]
 	self	[Cocoa-handle!]
@@ -322,6 +459,7 @@ on-key-down: func [
 		key		[integer!]
 		chars	[Cocoa-handle!]
 		flags	[integer!]
+		evt		[integer!]
 ][
 	key: as integer! objc_msgSend [event sel_getUid "keyCode"]
 	key: either key >= 80h [0][translate-key key]
@@ -335,9 +473,14 @@ on-key-down: func [
 		][
 			if any [
 				key = 8 key = 9							;-- backspace
-				key = 13								;-- number enter
+				key = RED_VK_RETURN						;-- RETURN and Num Pad Enter
 			][
-				make-event self key or flags EVT_KEY
+				evt: either key = RED_VK_RETURN [return-key-event self][0]
+				either zero? evt [
+					make-event self key or flags EVT_KEY
+				][
+					make-event self flags evt
+				]
 				exit
 			]
 			chars: objc_msgSend [event sel_getUid "characters"]
@@ -345,7 +488,7 @@ on-key-down: func [
 				chars <> 0
 				0 < as integer! objc_msgSend [chars sel_length]
 			][
-				key: as integer! objc_msgSend [chars sel_getUid "characterAtIndex:" 0]
+				key: as integer! objc_msgSend [chars sel_getUid "characterAtIndex:" as NSUInteger! 0]
 				make-event self key or flags EVT_KEY
 			]
 		]
@@ -373,7 +516,7 @@ win-level: func [
 	cmd		[Cocoa-handle!]
 	return: [NSInteger!]
 ][
-	as NSInteger! objc_msgSend [
+	objc_msgSend [
 		objc_msgSend [self sel_getUid "window"]
 		sel_getUid "level"
 	]
@@ -429,18 +572,22 @@ on-flags-changed: func [
 
 button-click: func [
 	[cdecl]
-	self [Cocoa-handle!]
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	sender	[Cocoa-handle!]
 	/local
 		w		[red-word!]
 		values	[red-value!]
+		data	[red-logic!]
 		type 	[integer!]
 		event	[integer!]
 ][	
 	values: get-face-values self
 	w: as red-word! values + FACE_OBJ_TYPE
+	data: as red-logic! values + FACE_OBJ_DATA
 	type: symbol/resolve w/symbol
 	
-	if type <> radio [objc_msgSend [self sel_getUid "setNextState"]]
+	if all [zero? cmd type <> radio][objc_msgSend [self sel_getUid "setNextState"]]
 	
 	event: case [
 		type = button [EVT_CLICK]
@@ -452,11 +599,11 @@ button-click: func [
 		]
 		all [
 			type = radio
-			NSOffState = objc_msgSend [self sel_getUid "state"] ;-- ignore double-click (fixes #4246)
+			any [TYPE_OF(data) <> TYPE_LOGIC not data/value] ;-- ignore repeated clicks (fixes #4246)
 		][
-			objc_msgSend [self sel_getUid "setNextState"]		;-- gets converted to CHANGE by high-level event handler
+			objc_msgSend [self sel_getUid "setState:" as NSInteger! NSOnState]
 			get-logic-state self
-			EVT_CLICK
+			EVT_CHANGE
 		]
 		true [0]
 	]
@@ -497,7 +644,13 @@ scroller-change: func [
 		frac: objc_msgSend_fpret [sender sel_getUid "doubleValue"]
 		n: objc_getAssociatedObject sender RedAttachedWidgetKey
 		if n <> 0 [
-			values: as red-value! objc_msgSend [n sel_getUid "unsignedIntValue"]
+			values: as red-value! objc_msgSend [
+				n sel_getUid #either ABI = 'apple-aarch64 [
+					"unsignedLongLongValue"
+				][
+					"unsignedIntValue"
+				]
+			]
 			min:	as red-integer! values + SCROLLER_OBJ_MIN
 			max:	as red-integer! values + SCROLLER_OBJ_MAX
 			page:	as red-integer! values + SCROLLER_OBJ_PAGE
@@ -531,9 +684,12 @@ scroll-wheel: func [
 	self	[Cocoa-handle!]
 	cmd		[Cocoa-handle!]
 	event	[Cocoa-handle!]
+	/local
+		flags [integer!]
 ][
 	objc_setAssociatedObject self RedNSEventKey event OBJC_ASSOCIATION_ASSIGN
-	make-event self event EVT_WHEEL
+	flags: check-extra-keys event				;-- make-event takes the flags, like every other event
+	make-event self flags EVT_WHEEL
 ]
 
 slider-change: func [
@@ -557,7 +713,7 @@ slider-change: func [
 	][
 		percent/rs-make-at as red-value! pos 0.0
 	]
-	val: objc_msgSend_fpret [self sel_getUid "floatValue"]
+	val: objc_msgSend_fpret [self sel_getUid "doubleValue"]
 	divisor: objc_msgSend_fpret [self sel_getUid "maxValue"]
 	pos/value: val / divisor
 
@@ -575,6 +731,7 @@ slider-change: func [
 calendar-change: func [
 	[cdecl]
 	self   [Cocoa-handle!]
+	cmd    [Cocoa-handle!]
 ][	
 	sync-calendar self
 	make-event self 0 EVT_CHANGE
@@ -606,13 +763,16 @@ set-text: func [
 		if TYPE_OF(str) <> TYPE_STRING [
 			string/make-at as red-value! str size UCS-2
 		]
-		if size = 0 [
+		either size = 0 [
 			string/rs-reset str
-			exit
+		][
+			out: unicode/get-cache str size + 1 * 4			;-- account for surrogate pairs and terminal NUL
+			objc_msgSend [
+				text sel_getUid "getCString:maxLength:encoding:"
+				out as NSUInteger! ((size + 1) * 2) NSUTF16LittleEndianStringEncoding
+			]
+			unicode/load-utf16 null size str no
 		]
-		out: unicode/get-cache str size + 1 * 4			;-- account for surrogate pairs and terminal NUL
-		objc_msgSend [text sel_getUid "getCString:maxLength:encoding:" out size + 1 * 2 NSUTF16LittleEndianStringEncoding]
-		unicode/load-utf16 null size str no
 
 		face: push-face obj
 		if TYPE_OF(face) = TYPE_OBJECT [
@@ -620,6 +780,34 @@ set-text: func [
 		]
 		stack/pop 1
 	]
+]
+
+control-text-did-begin-editing: func [
+	[cdecl]
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	notif	[Cocoa-handle!]
+][
+	make-event self 0 EVT_FOCUS
+]
+
+control-text-did-end-editing: func [
+	[cdecl]
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	notif	[Cocoa-handle!]
+][
+	make-event self 0 EVT_UNFOCUS
+]
+
+control-text-did-change: func [
+	[cdecl]
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	notif	[Cocoa-handle!]
+][
+	set-text self objc_msgSend [self sel_getUid "stringValue"]
+	if loop-started? [make-event self 0 EVT_CHANGE]
 ]
 
 text-did-end-editing: func [
@@ -747,7 +935,7 @@ selection-change: func [
 	if all [loop-started? idx >= 0][
 		res: make-event self idx + 1 EVT_SELECT
 		set-selected self idx + 1
-		set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" idx]
+		set-text self objc_msgSend [self sel_getUid "itemObjectValueAtIndex:" as NSInteger! idx]
 		if res = EVT_DISPATCH [
 			make-event self idx + 1 EVT_CHANGE
 		]
@@ -888,7 +1076,7 @@ win-send-event: func [
 		type = NSKeyUp [
 			responder: objc_msgSend [self sel_getUid "firstResponder"]
 			object_getInstanceVariable responder IVAR_RED_DATA :view-type
-			if view-type = base [
+			if base-keyboard-type? view-type [
 				on-key-up responder 0 event
 				send?: no
 			]
@@ -897,7 +1085,7 @@ win-send-event: func [
 			find?: yes
 			responder: objc_msgSend [self sel_getUid "firstResponder"]
 			object_getInstanceVariable responder IVAR_RED_DATA :view-type
-			either view-type <> base [
+			either not base-keyboard-type? view-type [
 				unless red-face? responder [
 					responder: objc_getAssociatedObject self RedFieldEditorKey
 					unless red-face? responder [find?: no]
@@ -1011,9 +1199,9 @@ should-terminate: func [
 	self	[Cocoa-handle!]
 	cmd		[Cocoa-handle!]
 	app		[Cocoa-handle!]
-	return: [NSInteger!]
+	return: [NSUInteger!]
 ][
-	#either sub-system = 'gui [as NSInteger! 1][as NSInteger! 0]	;-- 0: NSTerminateCancel
+	#either sub-system = 'gui [as NSUInteger! 1][as NSUInteger! 0]	;-- 0: NSTerminateCancel
 ]
 
 win-should-close: func [
@@ -1188,23 +1376,30 @@ render-text: func [
 		text	[red-string!]
 		font	[red-object!]
 		para	[red-object!]
+		type	[red-word!]
+		sym		[integer!]
 		flags	[integer!]
 		str		[Cocoa-handle!]
-		attr	[Cocoa-handle!]
-		nscolor [Cocoa-handle!]
 		attrs	[Cocoa-handle!]
+		mutable [Cocoa-handle!]
+		style	[Cocoa-handle!]
+		storage [Cocoa-handle!]
+		layout	[Cocoa-handle!]
+		container [Cocoa-handle!]
 		objects	[Cocoa-handle-array!]
 		keys	[Cocoa-handle-array!]
-		line	[Cocoa-handle!]
-		text-size [NSSize! value]
-		temp	[Cocoa-float!]
-		rc		[NSRect!]
-		m		[CGAffineTransform!]
+		range	[NSRange! value]
+		used	[NSRect! value]
+		origin	[CGPoint! value]
+		available [Cocoa-float!]
+		line-break [integer!]
 ][
 	text: as red-string! values + FACE_OBJ_TEXT
 	if TYPE_OF(text) <> TYPE_STRING [exit]
 
 	CGContextSaveGState ctx
+	type: as red-word! values + FACE_OBJ_TYPE
+	sym: symbol/resolve type/symbol
 	font: as red-object! values + FACE_OBJ_FONT
 	either TYPE_OF(font) = TYPE_OBJECT [
 		attrs: make-font-attrs font as red-object! none-value -1
@@ -1213,57 +1408,70 @@ render-text: func [
 		keys: declare Cocoa-handle-array!
 		objects/v1: default-font
 		keys/v1: NSFontAttributeName
-		attrs: make-NSDictionary objects keys as NSUInteger! 1
+		objects/v2: objc_msgSend [objc_getClass "NSColor" sel_getUid "controlTextColor"]
+		keys/v2: NSForegroundColorAttributeName
+		attrs: make-NSDictionary objects keys as NSUInteger! 2
 	]
-
-	str: to-CFString text
-	attr: CFAttributedStringCreate 0 str attrs
-	text-size: objc_msgSend_sz [attr sel_getUid "size"]
-	rc: declare NSRect!
-	rc/x: text-size/w
-	rc/y: text-size/h
-	rc/w: as Cocoa-float! 0.0
-	rc/h: as Cocoa-float! 0.0
 
 	para: as red-object! values + FACE_OBJ_PARA
-	flags: either TYPE_OF(para) = TYPE_OBJECT [		;@@ TBD set alignment attribute
-		get-para-flags base para
+	flags: either TYPE_OF(para) = TYPE_OBJECT [
+		get-para-flags sym para
 	][
-		2 or 4										;-- center
+		either sym = base [NSTextAlignmentCenter or 4][NSTextAlignmentLeft]
+	]
+	line-break: either (flags and 20h) <> 0 [
+		NSLineBreakByWordWrapping
+	][
+		NSLineBreakByClipping
 	]
 
-	m: make-CGMatrix 1 0 0 -1 0 0
+	style: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
+	style: objc_msgSend [style sel_getUid "mutableCopy"]
+	objc_msgSend [style sel_getUid "setAlignment:" as NSInteger! (flags and 3)]
+	objc_msgSend [style sel_getUid "setLineBreakMode:" as NSInteger! line-break]
+	mutable: objc_msgSend [attrs sel_getUid "mutableCopy"]
+	objc_msgSend [mutable sel_getUid "setObject:forKey:" style NSParagraphStyleAttributeName]
+	objc_msgSend [attrs sel_getUid "release"]
+	objc_msgSend [style sel_getUid "release"]
+	attrs: mutable
+
+	str: to-NSString text
+	storage: objc_msgSend [
+		objc_msgSend [objc_getClass "NSTextStorage" sel_alloc]
+		sel_getUid "initWithString:attributes:" str attrs
+	]
+	container: objc_msgSend [
+		objc_msgSend [objc_getClass "NSTextContainer" sel_alloc]
+		sel_getUid "initWithSize:" sz/w F64_TO_COCOA(1.0e37)
+	]
+	objc_msgSend [container sel_getUid "setLineFragmentPadding:" F64_TO_COCOA(0.0)]
+	objc_msgSend [container sel_getUid "setLineBreakMode:" as NSInteger! line-break]
+	layout: objc_msgSend [objc_msgSend [objc_getClass "NSLayoutManager" sel_alloc] sel_init]
+	objc_msgSend [layout sel_getUid "addTextContainer:" container]
+	objc_msgSend [container sel_getUid "release"]
+	objc_msgSend [storage sel_getUid "addLayoutManager:" layout]
+	objc_msgSend [layout sel_getUid "release"]
+
+	range: objc_msgSend_range [layout sel_getUid "glyphRangeForTextContainer:" container]
+	used: objc_msgSend_rect [layout sel_getUid "usedRectForTextContainer:" container]
+	available: sz/h - used/h
+	origin/x: as Cocoa-float! 0.0
+	origin/y: (as Cocoa-float! 0.0) - used/y
 	case [
-		flags and 1 <> 0 [m/tx: sz/w - rc/x]
-		flags and 2 <> 0 [temp: sz/w - rc/x m/tx: temp / as Cocoa-float! 2.0]
+		(flags and 4) <> 0 [origin/y: (available / as Cocoa-float! 2.0) - used/y]
+		(flags and 8) <> 0 [origin/y: available - used/y]
 		true [0]
 	]
+	objc_msgSend [
+		layout sel_getUid "drawBackgroundForGlyphRange:atPoint:"
+		range/idx range/len origin/x origin/y
+	]
+	objc_msgSend [
+		layout sel_getUid "drawGlyphsForGlyphRange:atPoint:"
+		range/idx range/len origin/x origin/y
+	]
 
-	case [
-		flags and 4 <> 0 [temp: sz/h - rc/y m/ty: temp / as Cocoa-float! 2.0]
-		flags and 8 <> 0 [m/ty: sz/h - rc/y]
-		true [0]
-	]
-	temp: objc_msgSend_f32 [
-		objc_msgSend [attrs sel_getUid "objectForKey:" NSFontAttributeName]
-		sel_getUid "ascender"
-	]
-	m/ty: m/ty + temp
-	line: CTLineCreateWithAttributedString attr
-	CGContextSetTextMatrix ctx m/a m/b m/c m/d m/tx m/ty
-	CTLineDraw line ctx
-	CFRelease str
-	CFRelease attr
-	CFRelease line
-
-	attr: objc_msgSend [attrs sel_getUid "objectForKey:" NSStrikethroughStyleAttributeName]
-	if as logic! objc_msgSend [attr sel_getUid "boolValue"][
-		m/ty: m/ty - temp + (rc/y / as Cocoa-float! 2.0)
-		CGContextTranslateCTM ctx m/tx m/ty
-		CGContextMoveToPoint ctx as Cocoa-float! 0.0 as Cocoa-float! 0.0
-		CGContextAddLineToPoint ctx rc/x as Cocoa-float! 0.0
-		CGContextStrokePath ctx
-	]
+	objc_msgSend [storage sel_getUid "release"]
 	objc_msgSend [attrs sel_getUid "release"]
 	CGContextRestoreGState ctx
 ]
@@ -1482,7 +1690,7 @@ insert-text-range*: func [
 	len: as integer! objc_msgSend [text sel_length]
 	idx: 0
 	while [idx < len][
-		key: as integer! objc_msgSend [text sel_getUid "characterAtIndex:" idx]
+		key: as integer! objc_msgSend [text sel_getUid "characterAtIndex:" as NSUInteger! idx]
 		make-event self key EVT_KEY
 		idx: idx + 1
 	]
@@ -1658,8 +1866,14 @@ hit-test*: func [
 			ix: as integer! (pt/x * ratio)
 			ratio: (as Cocoa-float! h) / (as Cocoa-float! sz/y)
 			iy: as integer! (pt/y * ratio)
-			pixel-value: OS-image/get-pixel resolve-node img/node iy * w + ix
-			if pixel-value >>> 24 = 0 [return as Cocoa-handle! 0]
+			either any [ix < 0 iy < 0 ix >= w iy >= h][	;-- outside the image: no pixel to test, the
+				return v							;-- face takes the click
+			][
+				pixel-value: OS-image/get-pixel resolve-node img/node (iy * w) + ix
+				either pixel-value >>> 24 = 0 [return as Cocoa-handle! 0][	;-- transparent pixel: the click passes through
+					return v						;-- opaque one: the face takes it, whatever `color`
+				]									;-- is (an image face has no color: the check below
+			]										;-- would sample the cached bitmap and reject it)
 		]
 
 		clr: (as red-tuple! vals) + FACE_OBJ_COLOR
@@ -1678,7 +1892,10 @@ hit-test*: func [
 				self sel_getUid "convertPoint:fromView:" x y
 				objc_msgSend [self sel_getUid "superview"]
 			]
-			pixel: objc_msgSend [rep sel_getUid "colorAtX:y:" as-integer pt/x as-integer pt/y]
+			pixel: objc_msgSend [
+				rep sel_getUid "colorAtX:y:"
+				as NSInteger! (as-integer pt/x) as NSInteger! (as-integer pt/y)
+			]
 			alpha: objc_msgSend_fpret [pixel sel_getUid "alphaComponent"]
 			if alpha = 0.0 [return as Cocoa-handle! 0]
 		]
@@ -1760,7 +1977,7 @@ draw-rect*: func [
 	view-size/w: bounds/w
 	view-size/h: bounds/h
 	case [
-		sym = base [render-text ctx vals :view-size]
+		any [sym = base sym = text][render-text ctx vals :view-size]
 		sym = rich-text [
 			pos/header: TYPE_POINT2D
 			pos/x: F32_0 pos/y: F32_0

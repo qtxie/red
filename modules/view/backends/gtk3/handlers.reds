@@ -243,8 +243,8 @@ render-text: func [
 	para: as red-object! values + FACE_OBJ_PARA
 	either TYPE_OF(para) = TYPE_OBJECT [
 		pvalues: object/get-values para
-		hsym: get-para-hsym pvalues
-		vsym: get-para-vsym pvalues
+		hsym: get-para-hsym pvalues _para/left
+		vsym: get-para-vsym pvalues _para/middle
 	][
 		hsym: _para/center
 		vsym: _para/middle
@@ -1423,7 +1423,7 @@ focus-in-event: func [
 		SET-FOCUS-EVENT(widget 2)
 	]
 	change-selection widget int sym
-	make-event widget 0 EVT_FOCUS
+	unless sym = base [make-event widget 0 EVT_FOCUS]	;-- #5761: base faces emit no focus events (Windows parity)
 	EVT_DISPATCH
 ]
 
@@ -1463,7 +1463,7 @@ focus-out-event: func [
 		return EVT_DISPATCH
 	]
 
-	make-event widget 0 EVT_UNFOCUS
+	unless sym = base [make-event widget 0 EVT_UNFOCUS]	;-- #5761: base faces emit no focus events (Windows parity)
 	EVT_DISPATCH
 ]
 

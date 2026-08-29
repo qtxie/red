@@ -21,6 +21,19 @@ Red [
 
 event?: routine ["Returns true if the value is this type" value [any-type!] return: [logic!]][TYPE_OF(value) = TYPE_EVENT]
 
+send-event-os: routine [event [event!] queued? [logic!] return: [logic!]][
+	gui/OS-send-event event queued?
+]
+
+send-event: function [
+	"Sends a synthetic event! into the active GUI event loop"
+	event	[event!]
+	/no-wait "Post asynchronously to the OS queue (return without waiting) instead of dispatching synchronously"
+	return:	[logic!]						;-- TRUE if injected, FALSE if the target has no live handle or the type isn't OS-injectable
+][
+	send-event-os event to logic! no-wait
+]
+
 face?: function [
 	"Returns TRUE if the value is a face! object"
 	value	"Value to test"
@@ -533,7 +546,7 @@ face!: object [				;-- keep in sync with facet! enum
 				block? data
 				find [drop-list drop-down text-list field area] type
 				value: pick data selected
-				set-quiet 'text copy value
+				set-quiet 'text either series? value [copy value][form value]
 			]
 			
 			if all [not same? :old :new image? :old][system/view/platform/detach-image old]
@@ -728,6 +741,7 @@ system/view: context [
 			set/any 'result do-actor face event 'detect
 			if find [stop done] :result [return :result]
 		]
+		return false
 	]
 	
 	awake: function [event [event!] /with face /local result result2][	;@@ temporary until event:// is implemented
@@ -738,8 +752,11 @@ system/view: context [
 				set/any 'result do-safe [handler face event]
 				either event? :result [event: result][if :result [return :result]]
 			]
-			set/any 'result capture-events face event	;-- event capturing
-			if find [stop done] :result [return :result]
+			if capturing? [
+				set/any 'result capture-events face event	;-- event capturing
+				if find [stop done] :result [return :result]
+			]
+			false
 		]
 		
 		set/any 'result do-actor face event event/type
@@ -1153,7 +1170,9 @@ insert-event-func: function [
 	name [word!]
 	fun  [block! function!] "A function or a function body block"
 ][
-	if block? :fun [fun: apply :function [copy [face event] fun]]	;@@ compiler chokes on 'function call
+	if block? :fun [
+		fun: apply :function [copy [face [object!] event [event!]] fun]
+	]	;@@ compiler chokes on 'function call
 	if any [
 		find svh: system/view/handlers name
 		find/same svh :fun
@@ -1270,7 +1289,7 @@ alert: func [
 ;=== Global handlers ===
 
 ;-- Dragging face handler --
-insert-event-func 'dragging function [face event][
+insert-event-func 'dragging function [face [object!] event [event!]][
 	if all [
 		block? event/face/options
 		drag-evt: event/face/options/drag-on
@@ -1296,31 +1315,41 @@ insert-event-func 'dragging function [face event][
 			unless system/view/auto-sync? [show face]
 		][
 			if drag-info: face/state/4 [
+				done?: no
 				either type = 'over [
 					unless event/away? [
-						new: (any [face/offset 0x0]) + event/offset - drag-info/1
-						if face/offset <> new [
-							if box: drag-info/2 [new: min box/max max box/min new]
-							if face/offset <> new [face/offset: new]
-							set/any 'result do-actor face event 'drag ;-- avoid calling on-over actor
-							show face/parent
-							return :result
+						either any [
+							not find [down mid-down] drag-evt	;-- other buttons not reliably reported in motion events
+							find event/flags drag-evt
+							all [drag-evt = 'mid-down find event/flags 'down]	;-- terminal backend reports only `down` in motion events
+						][
+							new: (any [face/offset 0x0]) + event/offset - drag-info/1
+							if face/offset <> new [
+								if box: drag-info/2 [new: min box/max max box/min new]
+								if face/offset <> new [face/offset: new]
+								set/any 'result do-actor face event 'drag ;-- avoid calling on-over actor
+								show face/parent
+								return :result
+							]
+						][
+							done?: yes				;-- button no longer held: `up` event was lost (#5544)
 						]
 					]
 				][
-					if drag-evt = select [
+					done?: drag-evt = select [
 						up		down
 						mid-up	mid-down
 						alt-up	alt-down
 						aux-up	aux-down
-					] type [
-						do-actor face event 'drop
-						if face/state [face/state/4: none]
-						face/flags: all [
-							block? flags: face/flags
-							remove find flags 'all-over
-							flags
-						]
+					] type
+				]
+				if done? [
+					do-actor face event 'drop
+					if face/state [face/state/4: none]
+					face/flags: all [
+						block? flags: face/flags
+						remove find flags 'all-over
+						flags
 					]
 				]
 			]
@@ -1360,24 +1389,22 @@ insert-event-func 'enter [
 			button	  [event/type: 'click]
 		]
 	]
-	event
+	none
 ]
 
 ;-- Radio faces handler --
 insert-event-func 'radio [
 	if all [
-		event/type = 'click
-		event/face/type = 'radio
+		find [click change] event/type
+		face/type = 'radio
 	][
-		face: event/face								;-- save face reference to avoid single-event corruption (#5278)
 		foreach f face/parent/pane [
-			if all [f/type = 'radio f/data][f/data: off show f]
+			if all [not same? f face f/type = 'radio f/data][f/data: off show f]
 		]
-		face/data: on
-		show face
-		event/type: 'change
+		unless face/data [face/data: on show face]
+		if event/type = 'click [event/type: 'change]
 	]
-	event
+	none
 ]
 
 ;-- Reactors support handler --
@@ -1425,7 +1452,7 @@ insert-event-func 'field-sync [
 ]
 
 ;-- TAB key navigation handler
-insert-event-func 'tab function [face event][
+insert-event-func 'tab function [face [object!] event [event!]][
 	if all [
 		event/type = 'key-down
 		event/key = #"^-"
@@ -1459,12 +1486,12 @@ insert-event-func 'tab function [face event][
 		unless same? new face [set-focus new]
 		return 'stop
 	]
-	event
+	none
 ]
 
 #if config/GUI-engine = 'terminal [
 	;-- ESC key handler
-	insert-event-func 'esc function [face event][
+	insert-event-func 'esc function [face [object!] event [event!]][
 		if all [
 			event/type = 'key
 			event/key = #"^["

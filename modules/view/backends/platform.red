@@ -177,6 +177,7 @@ system/view/platform: context [
 			]
 			
 			#enum event-flag! [
+				EVT_FLAG_SYNTHETIC:		00010000h		;-- `make event!`-built value: msg is a stable extras-node handle, not an OS handle (see runtime/datatypes/event.reds)
 				EVT_FLAG_AX2_DOWN:		00200000h
 				EVT_FLAG_AUX_DOWN:		00400000h
 				EVT_FLAG_ALT_DOWN:		00800000h
@@ -237,7 +238,8 @@ system/view/platform: context [
 				bottom:		symbol/make "bottom"
 			]
 
-			screen:			symbol/make "screen"
+			screen-sym:		symbol/make "screen"	;-- not `screen`: the terminal backend defines its
+													;-- own `screen` context inside this one, shadowing it
 			window:			symbol/make "window"
 			button:			symbol/make "button"
 			toggle:			symbol/make "toggle"
@@ -860,8 +862,15 @@ system/view/platform: context [
 		SET_RETURN(none-value)
 	]
 	
-	update-view: routine [face [object!]][
-		gui/OS-update-view face
+	update-view: routine [
+		face [object!]
+		/local
+			word [red-word!]
+	][
+		word: as red-word! (object/get-values face) + gui/FACE_OBJ_TYPE
+		if gui/screen-sym <> symbol/resolve word/symbol [ ;-- a screen face mirrors the OS state: it has
+			gui/OS-update-view face					;-- no widget handle to push facets to
+		]
 		SET_RETURN(none-value)
 	]
 

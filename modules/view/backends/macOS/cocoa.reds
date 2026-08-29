@@ -20,6 +20,8 @@ Red/System [
 	#define NSUInteger! uint64!
 	#define COCOA_TO_F32(value) [as float32! value]
 	#define F32_TO_COCOA [as float!]
+	#define COCOA_TO_F64(value) [value]			;-- Cocoa-float! is already float! here
+	#define F64_TO_COCOA(value) [value]			;-- float! literals need no narrowing here
 ][
 	#define Cocoa-handle! integer!
 	#define Cocoa-uhandle! integer!
@@ -30,15 +32,21 @@ Red/System [
 	#define NSUInteger! integer!
 	#define COCOA_TO_F32(value) [value]
 	#define F32_TO_COCOA []
+	#define COCOA_TO_F64(value) [as float! value]
+	#define F64_TO_COCOA(value) [as float32! value]
 ]
 
-#define NSNotFound					7FFFFFFFh			;@@ should be NSIntegerMax
+#either ABI = 'apple-aarch64 [
+	#define NSNotFound				[(((as NSInteger! 1) << 62) + (((as NSInteger! 1) << 62) - (as NSInteger! 1)))]
+	#define NSAnyEventMask			[((as NSUInteger! 0) - (as NSUInteger! 1))]
+][
+	#define NSNotFound				7FFFFFFFh
+	#define NSAnyEventMask			-1
+]
 
 #define OBJC_ASSOCIATION_ASSIGN		0
 #define OBJC_ASSOCIATION_RETAIN		0301h
 #define OBJC_ASSOCIATION_COPY		0303h
-
-#define NSAnyEventMask				-1
 
 #define NSUtilityWindowMask         16
 #define NSDocModalWindowMask        32
@@ -169,9 +177,20 @@ Red/System [
 #define kCGPathFillStroke			3
 #define kCGPathEOFillStroke			4
 
-#define NSTextAlignmentLeft			0
-#define NSTextAlignmentRight		1
-#define NSTextAlignmentCenter		2
+#either ABI = 'apple-aarch64 [
+	#define NSTextAlignmentLeft		0
+	#define NSTextAlignmentCenter		1
+	#define NSTextAlignmentRight		2
+][
+	#define NSTextAlignmentLeft		0
+	#define NSTextAlignmentRight		1
+	#define NSTextAlignmentCenter		2
+]
+
+#define NSLineBreakByWordWrapping	0
+#define NSLineBreakByClipping		2
+
+#define kCFNumberIntType			9
 
 #define NSASCIIStringEncoding		1
 #define NSUTF8StringEncoding		4
@@ -179,11 +198,15 @@ Red/System [
 #define NSWindowsCP1251StringEncoding	11
 #define NSWindowsCP1252StringEncoding	12
 #define NSWindowsCP1250StringEncoding	15
-#define NSUTF16LittleEndianStringEncoding	94000100h
+#either ABI = 'apple-aarch64 [
+	#define NSUTF16LittleEndianStringEncoding [(((as NSUInteger! 94h) << 24) or (as NSUInteger! 00000100h))]
+][
+	#define NSUTF16LittleEndianStringEncoding 94000100h
+]
 
-#define IVAR_RED_FACE		"red-face"		;-- struct! 16 bytes, for storing red face object
-#define IVAR_RED_DATA		"red-data"		;-- integer! 4 bytes, for storing extra red data
-#define IVAR_RED_DRAW_CTX	"red-draw-ctx"	;-- pointer! 4 bytes, for storing draw-ctx!
+#define IVAR_RED_FACE		"red-face"		;-- pointer-sized registry ID for a Red face object
+#define IVAR_RED_DATA		"red-data"		;-- pointer-sized backend data
+#define IVAR_RED_DRAW_CTX	"red-draw-ctx"	;-- pointer-sized draw-ctx! reference
 #define NSString(cStr) [objc_msgSend [objc_getClass "NSString" sel_getUid "stringWithUTF8String:" cStr]] 
 
 #define RedNSEventKey			4000FFF0h
@@ -414,7 +437,7 @@ tagSIZE: alias struct! [
 		]
 		CFNumberGetValue: "CFNumberGetValue" [
 			number		[Cocoa-handle!]
-			theType		[integer!]
+			theType		[NSInteger!]
 			valuePtr	[int-ptr!]
 			return:		[logic!]
 		]
@@ -457,7 +480,7 @@ tagSIZE: alias struct! [
 		]
 		CFNumberCreate: "CFNumberCreate" [
 			allocator	[Cocoa-handle!]
-			type		[integer!]
+			type		[NSInteger!]
 			valuePtr	[int-ptr!]
 			return:		[Cocoa-handle!]
 		]
@@ -544,7 +567,7 @@ tagSIZE: alias struct! [
 			colorspace	[Cocoa-handle!]
 			components	[Cocoa-float-ptr!]
 			locations	[Cocoa-float-ptr!]
-			nlocations	[integer!]
+			nlocations	[NSUInteger!]
 			return:		[Cocoa-handle!]
 		]
 		CGGradientRelease: "CGGradientRelease" [
@@ -646,7 +669,7 @@ tagSIZE: alias struct! [
 			c			[handle!]
 			phase		[Cocoa-float!]
 			lengths		[Cocoa-float-ptr!]
-			count		[integer!]
+			count		[NSUInteger!]
 		]
 		CGContextSetAllowsAntialiasing: "CGContextSetAllowsAntialiasing" [
 			c			[handle!]
@@ -706,7 +729,7 @@ tagSIZE: alias struct! [
 		CGContextAddLines: "CGContextAddLines" [
 			c			[handle!]
 			points		[CGPoint!]
-			count		[integer!]
+			count		[NSUInteger!]
 		]
 		CGContextAddArc: "CGContextAddArc" [
 			c			[handle!]
@@ -795,12 +818,7 @@ tagSIZE: alias struct! [
 		]
 		CGContextSetTextMatrix: "CGContextSetTextMatrix" [
 			ctx			[handle!]
-			a			[Cocoa-float!]
-			b			[Cocoa-float!]
-			c			[Cocoa-float!]
-			d			[Cocoa-float!]
-			tx			[Cocoa-float!]
-			ty			[Cocoa-float!]
+			m			[CGAffineTransform! value]
 		]
 		CGContextGetPathBoundingBox: "CGContextGetPathBoundingBox" [
 			ctx			[handle!]
@@ -1021,7 +1039,9 @@ to-red-string: func [
 		size [integer!]
 		cstr [c-string!]
 ][
-	size: as integer! objc_msgSend [nsstr sel_getUid "lengthOfBytesUsingEncoding:" NSUTF8StringEncoding]
+	size: as integer! objc_msgSend [
+		nsstr sel_getUid "lengthOfBytesUsingEncoding:" as NSUInteger! NSUTF8StringEncoding
+	]
 	cstr: as c-string! objc_msgSend [nsstr sel_getUid "UTF8String"]
 	if null? slot [slot: stack/push*]
 	str: string/make-at slot size Latin1

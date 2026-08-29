@@ -1004,6 +1004,10 @@ change-pane: func [
 	unless null? layout [
 		win: gtk_widget_get_toplevel parent
 		focus: gtk_window_get_focus win
+		if focus <> null [								;-- #5761: silence the focus churn from re-parenting
+			g_signal_handlers_block_by_func(focus :focus-out-event focus)
+			g_signal_handlers_block_by_func(focus :focus-in-event focus)
+		]
 		list: gtk_container_get_children layout
 		child: list
 		while [not null? child][
@@ -1036,7 +1040,11 @@ change-pane: func [
 		unless null? list [
 			g_list_free list
 		]
-		if focus <> null [gtk_widget_grab_focus focus]
+		if focus <> null [
+			gtk_widget_grab_focus focus
+			g_signal_handlers_unblock_by_func(focus :focus-in-event focus)
+			g_signal_handlers_unblock_by_func(focus :focus-out-event focus)
+		]
 	]
 ]
 
@@ -1435,6 +1443,10 @@ change-selection: func [
 		type = window [
 			switch TYPE_OF(int) [
 				TYPE_OBJECT [set-selected-focus widget]
+				TYPE_NONE	[							;-- drop the native focus, as SetFocus hWnd on Windows
+					g_object_ref widget
+					g_idle_add as func-ptr! :deferred-clear-focus widget	;-- deferred, as the grabbing case (#5672)
+				]
 				default [0]
 			]
 		]
@@ -1500,6 +1512,7 @@ deferred-grab-focus: func [
 		focus	[handle!]
 		old-focus [handle!]
 		focused? [logic!]
+		already? [logic!]
 		face	[red-object!]
 ][
 	;-- g_object_ref pinned the widget at scheduling time; if it has since
@@ -1525,6 +1538,7 @@ deferred-grab-focus: func [
 				SET-FOCUS-EVENT(old-focus 3)
 			]
 		]
+		already?: gtk_widget_is_focus self				;-- the grab below is then a no-op emitting no signal
 		SET-FOCUS-EVENT(self 1)
 		gtk_widget_grab_focus self
 		pending: as integer! g_object_get_qdata self focus-event-id
@@ -1548,6 +1562,8 @@ deferred-grab-focus: func [
 		]
 		if all [
 			pending = 1
+			not already?								;-- #5761: don't report a focus change that did not happen
+			base <> get-widget-symbol self				;-- #5761: base faces emit no focus events (Windows parity)
 			selected-focus-face? face
 		][
 			make-event self 0 EVT_FOCUS
@@ -1555,7 +1571,10 @@ deferred-grab-focus: func [
 		SET-FOCUS-EVENT(self 0)
 		unless null? old-focus [
 			old-pending: as integer! g_object_get_qdata old-focus focus-event-id
-			if old-pending = 3 [
+			if all [
+				old-pending = 3
+				base <> get-widget-symbol old-focus
+			][
 				make-event old-focus 0 EVT_UNFOCUS
 			]
 			if any [
@@ -1567,6 +1586,27 @@ deferred-grab-focus: func [
 		]
 	]
 	g_object_unref self
+	false											;-- G_SOURCE_REMOVE
+]
+
+deferred-clear-focus: func [
+	[cdecl]
+	win		[handle!]
+	return:	[logic!]
+	/local
+		values	[red-value!]
+		sel		[red-value!]
+][
+	unless null? g_object_get_qdata win red-face-id [	;-- skip if the window got destroyed meanwhile
+		values: get-face-values win
+		if values <> null [
+			sel: values + FACE_OBJ_SELECTED
+			if TYPE_OF(sel) = TYPE_NONE [				;-- skip if a face got selected meanwhile
+				gtk_window_set_focus win null
+			]
+		]
+	]
+	g_object_unref win
 	false											;-- G_SOURCE_REMOVE
 ]
 
@@ -2367,6 +2407,7 @@ OS-show-window: func [
 		n		[integer!]
 		win		[handle!]
 		parent	[handle!]
+		focused? [logic!]
 ][
 	win: as handle! widget
 	if gtk_window_get_modal win [
@@ -2374,7 +2415,9 @@ OS-show-window: func [
 		unless null? parent [gtk_window_set_transient_for win parent]
 	]
 
+	focused?: not null? gtk_window_get_focus win	;-- a remembered focus survives hide/show cycles
 	gtk_widget_show win
+	unless focused? [gtk_window_set_focus win null]	;-- #5761: undo gtk_window_show's auto-focus (Windows parity)
 	n: 0
 	window-ready?: no
 	g_object_ref win								;-- #5696: pin win across the wait-for-ready
@@ -2855,7 +2898,7 @@ OS-update-view: func [
 	word: as red-word! values + FACE_OBJ_TYPE
 	type: symbol/resolve word/symbol
 
-	if type = screen [exit]
+	if type = screen-sym [exit]
 
 	if all [
 		type = rich-text
@@ -3099,7 +3142,7 @@ OS-to-image: func [
 	type: symbol/resolve word/symbol
 
 	case [
-		type = screen [
+		type = screen-sym [
 			win: gdk_get_default_root_window
 			width: gdk_window_get_width win
 			height: gdk_window_get_height win

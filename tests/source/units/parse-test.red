@@ -1356,7 +1356,73 @@ Red [
 	--test-- "str-sk40" --assert not parse	""			[to ["a"]]
 	--test-- "str-sk41" --assert not parse	""			[to [#"a"]]
 
+	--test-- "str-sk42" --assert parse 		"A" 		[thru #"a"]
+	--test-- "str-sk43" --assert parse 		"A" 		[thru #"A"]
+	--test-- "str-sk44" --assert parse 		"b" 		[thru #"b"]
+	--test-- "str-sk45" --assert parse 		"b" 		[thru #"B"]
+	--test-- "str-sk46" --assert not parse/case "A" 	[thru #"a"]
+	--test-- "str-sk47" --assert parse/case "A" 		[thru #"A"]
+	--test-- "str-sk48" --assert parse/case "b" 		[thru #"b"]
+	--test-- "str-sk49" --assert not parse/case "b" 	[thru #"B"]
 	
+	--test-- "str-sk50" --assert not parse 	"cccc" 		[to #"a"]
+	--test-- "str-sk51" --assert not parse 	"cccc" 		[to #"A"]
+	--test-- "str-sk52" --assert not parse/case "cccc"	[to #"a"]
+	--test-- "str-sk53" --assert not parse/case "cccc"	[to #"A"]
+	
+	--test-- "str-sk54" --assert parse 		"Č" 		[thru #"č"]
+	--test-- "str-sk55" --assert parse 		"Č" 		[thru #"Č"]
+	--test-- "str-sk56" --assert parse 		"ŏ" 		[thru #"ŏ"]
+	--test-- "str-sk57" --assert parse 		"ŏ" 		[thru #"Ŏ"]
+	--test-- "str-sk58" --assert not parse/case "Č" 	[thru #"č"]
+	--test-- "str-sk59" --assert parse/case "Č" 		[thru #"Č"]
+	--test-- "str-sk60" --assert parse/case "ŏ" 		[thru #"ŏ"]
+	--test-- "str-sk61" --assert not parse/case "ŏ" 	[thru #"Ŏ"]
+	
+	--test-- "str-sk62" --assert not parse 	"cccc" 		[to #"č"]
+	--test-- "str-sk63" --assert not parse 	"cccc" 		[to #"Č"]
+	--test-- "str-sk64" --assert not parse/case "cccc"	[to #"č"]
+	--test-- "str-sk65" --assert not parse/case "cccc"	[to #"Č"]
+	
+	--test-- "str-sk66" --assert parse 		"𐐀" 		[thru #"𐐨"]
+	--test-- "str-sk67" --assert parse 		"𐐀" 		[thru #"𐐀"]
+	--test-- "str-sk68" --assert parse 		"𐐩" 		[thru #"𐐩"]
+	--test-- "str-sk69" --assert parse 		"𐐩" 		[thru #"𐐁"]
+	--test-- "str-sk70" --assert not parse/case "𐐀" 	[thru #"𐐨"]
+	--test-- "str-sk71" --assert parse/case "𐐀" 		[thru #"𐐀"]
+	--test-- "str-sk72" --assert parse/case "𐐩" 		[thru #"𐐩"]
+	--test-- "str-sk73" --assert not parse/case "𐐩" 	[thru #"𐐁"]
+
+	--test-- "str-sk74" --assert not parse 	"cccc" 		[to #"𐐨"]
+	--test-- "str-sk75" --assert not parse 	"cccc" 		[to #"𐐀"]
+	--test-- "str-sk76" --assert not parse/case "cccc"	[to #"𐐨"]
+	--test-- "str-sk77" --assert not parse/case "cccc"	[to #"𐐀"]
+
+	--test-- "str-sk78" --assert parse 		"xς" 		[thru #"σ"]		;-- ς, σ and Σ share the same uppercase form
+	--test-- "str-sk79" --assert parse 		"xσ" 		[thru #"ς"]
+	--test-- "str-sk80" --assert parse 		"xς" 		[thru #"Σ"]
+	--test-- "str-sk81" --assert parse 		"xΣ" 		[thru #"ς"]
+	--test-- "str-sk82" --assert parse 		"xſ" 		[thru #"s"]		;-- s and ſ both uppercase to S
+	--test-- "str-sk83" --assert parse 		"xs" 		[thru #"ſ"]
+	--test-- "str-sk84" --assert parse 		"xµ" 		[thru #"μ"]		;-- micro sign and Greek mu both uppercase to Μ
+	--test-- "str-sk85" --assert parse 		"xμ" 		[thru #"µ"]
+	--test-- "str-sk86" --assert parse 		"xǅ" 		[thru #"ǆ"]		;-- titlecase ǅ uppercases to Ǆ, like ǆ
+	--test-- "str-sk87" --assert parse		"xς" 		[to #"σ" skip]
+	--test-- "str-sk88" --assert not parse/case "xς"	[thru #"σ"]
+	--test-- "str-sk89" --assert not parse/case "xſ"	[thru #"s"]
+	--test-- "str-sk90" --assert not parse/case "zA"	[thru #"Ł"]		;-- Latin1 input cannot contain Ł (byte truncation)
+	--test-- "str-sk91" --assert not parse 	"zA"		[thru #"Ł"]
+	--test-- "str-sk92" --assert parse 		"zł" 		[thru #"Ł"]
+
+	--test-- "str-sk93" --assert not parse 	"xč"		[thru #"𐐨"]		;-- astral token over a UCS-2 string
+	--test-- "str-sk94" --assert not parse 	"xč"		[to #"𐐀"]
+	--test-- "str-sk95" --assert not parse/case "xč"	[thru #"𐐨"]
+	--test-- "str-sk96" --assert not parse/case "xč"	[to #"𐐀"]
+
+	--test-- "str-sk97" --assert not parse 	"k"			[thru #"^(212A)"]	;-- Kelvin sign lowercases to k, but has no uppercase mapping
+	--test-- "str-sk98" --assert not parse 	"^(212A)x"	[thru #"k"]
+	--test-- "str-sk99" --assert parse 		"x^(212A)"	[thru #"^(212A)"]
+
 ===end-group===
 
 ===start-group=== "string-casing"
@@ -2402,6 +2468,12 @@ Red [
 	--test-- "bin-sk39" --assert not parse	#{}			[to #"^(0A)"]
 	--test-- "bin-sk40" --assert not parse	#{}			[to [#{0A}]]
 	--test-- "bin-sk41" --assert not parse	#{}			[to [#"^(0A)"]]
+
+	--test-- "bin-sk42" --assert not parse	#{41}		[thru #"a"]			;-- binary searches are byte-exact, no case folding
+	--test-- "bin-sk43" --assert parse		#{41}		[thru #"A"]
+	--test-- "bin-sk44" --assert parse		#{4161}		[thru #"a"]
+	--test-- "bin-sk45" --assert not parse/case #{41}	[thru #"a"]
+	--test-- "bin-sk46" --assert not parse	#{41}		[thru #"^(0141)"]	;-- codepoint above FFh never matches a byte
 
 	
 ===end-group===

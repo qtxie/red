@@ -10,6 +10,11 @@ Red/System [
 	}
 ]
 
+#define PARA_V_TOP		0000h						;-- DT_TOP
+#define PARA_V_MIDDLE	0004h						;-- DT_VCENTER
+#define PARA_V_BOTTOM	0008h						;-- DT_BOTTOM
+#define PARA_V_MASK		000Ch
+
 change-para: func [
 	hWnd	[Cocoa-handle!]
 	face	[red-object!]
@@ -22,9 +27,10 @@ change-para: func [
 		cell  [Cocoa-handle!]
 ][
 	if TYPE_OF(para) <> TYPE_OBJECT [return no]
+	flags: get-para-flags type para
 
 	case [
-		any [type = base type = panel][
+		any [type = base type = panel type = text][
 			objc_msgSend [hWnd sel_getUid "setNeedsDisplay:" yes]
 		]
 		any [
@@ -33,20 +39,18 @@ change-para: func [
 			type = check
 			type = radio
 			type = field
-			type = text
 		][
 			either TYPE_OF(font) = TYPE_OBJECT [
 				change-font hWnd face font type
 			][
-				flags: get-para-flags type para
-				objc_msgSend [hWnd sel_getUid "setAlignment:" flags and 3]
+				objc_msgSend [hWnd sel_getUid "setAlignment:" as NSInteger! (flags and 3)]
 			]
 		]
 		true [0]
 	]
-	if any [type = field type = text][
+	if type = field [
 		cell: objc_msgSend [hWnd sel_getUid "cell"]
-		objc_msgSend [cell sel_getUid "setWraps:" flags and 20h <> 0]
+		objc_msgSend [cell sel_getUid "setWraps:" (flags and 20h) <> 0]
 	]
 	yes
 ]
@@ -107,11 +111,11 @@ get-para-flags: func [
 
 	flags:	0
 	left:	0000h								;-- DT_LEFT
-	right:  0001h								;-- DT_RIGHT
-	center: 0002h								;-- DT_CENTER
-	top:	0000h								;-- DT_TOP
-	middle: 0004h								;-- DT_VCENTER
-	bottom: 0008h								;-- DT_BOTTOM
+	right:  NSTextAlignmentRight
+	center: NSTextAlignmentCenter
+	top:	PARA_V_TOP
+	middle: PARA_V_MIDDLE
+	bottom: PARA_V_BOTTOM
 	
 	unless wrap? [flags: 20h]					;-- DT_SINGLELINE
 	either any [type = base type = toggle type = button][
@@ -130,7 +134,14 @@ get-para-flags: func [
 		v-sym = _para/top	 [flags: flags or top]
 		v-sym = _para/middle [flags: flags or middle]
 		v-sym = _para/bottom [flags: flags or bottom]
-		true				 [0]
+		true				 [
+			;-- NSButtonCell centers its title vertically, so that is the default a button-like
+			;-- face has to fall back to when `para/v-align` does not name a position.
+			if any [type = button type = toggle type = check type = radio][
+				flags: flags or middle
+			]
+			0
+		]
 	]
 	flags
 ]

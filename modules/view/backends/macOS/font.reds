@@ -94,8 +94,8 @@ make-font: func [
 			manager
 			sel_getUid "fontWithFamily:traits:weight:size:"
 			family
-			traits
-			5									;-- ignored if use traits
+			as NSUInteger! traits
+			as NSInteger! 5						;-- ignored if use traits
 			temp/x
 		]
 		unless sys? [CFRelease family]
@@ -107,6 +107,7 @@ make-font: func [
 		]
 		hFont <> 0
 	]
+	objc_msgSend [hFont sel_getUid "retain"]
 
 	blk: as red-block! values + FONT_OBJ_STATE
 	either TYPE_OF(blk) <> TYPE_BLOCK [
@@ -166,6 +167,7 @@ free-font: func [
 	if hFont <> 0 [
 		state: as red-block! (object/get-values font) + FONT_OBJ_STATE
 		state/header: TYPE_NONE
+		objc_msgSend [hFont sel_getUid "release"]
 	]
 ]
 
@@ -214,7 +216,7 @@ make-font-attrs: func [
 	values: object/get-values font
 	nscolor: to-NSColor as red-tuple! values + FONT_OBJ_COLOR
 	if zero? nscolor [
-		nscolor: objc_msgSend [objc_getClass "NSColor" sel_getUid "blackColor"]
+		nscolor: objc_msgSend [objc_getClass "NSColor" sel_getUid "controlTextColor"]
 	]
 	style: as red-word! values + FONT_OBJ_STYLE
 	len: switch TYPE_OF(style) [
@@ -240,8 +242,8 @@ make-font-attrs: func [
 			style: style + 1
 		]
 	]
-	under: CFNumberCreate 0 15 :under-value
-	strike: CFNumberCreate 0 15 :strike-value
+	under: CFNumberCreate 0 kCFNumberIntType :under-value
+	strike: CFNumberCreate 0 kCFNumberIntType :strike-value
 
 	len: -1
 	if TYPE_OF(face) = TYPE_OBJECT [
@@ -254,7 +256,7 @@ make-font-attrs: func [
 	if len <> -1 [
 		para: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
 		para: objc_msgSend [para sel_getUid "mutableCopy"]
-		objc_msgSend [para sel_getUid "setAlignment:" len]
+		objc_msgSend [para sel_getUid "setAlignment:" as NSInteger! len]
 	]
 
 	objects: declare Cocoa-handle-array!

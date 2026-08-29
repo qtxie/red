@@ -58,7 +58,7 @@ create-main-menu: func [
 
 	title: NSString("Preferences...")
 	item: objc_msgSend [apple-menu sel-add title 0 NSString(",")]
-	objc_msgSend [item sel_getUid "setTag:" 42]
+	objc_msgSend [item sel_getUid "setTag:" as NSInteger! 42]
 	objc_msgSend [apple-menu sel_getUid "addItem:" objc_msgSend [objc_getClass "NSMenuItem" sel_getUid "separatorItem"]]
 
 	title: NSString("Services")
@@ -77,7 +77,10 @@ create-main-menu: func [
 
 	title: NSString("Hide Others")
 	item: objc_msgSend [apple-menu sel-add title sel_getUid "hideOtherApplications:" NSString("h")]
-	objc_msgSend [item sel_getUid "setKeyEquivalentModifierMask:" NSCommandKeyMask or NSAlternateKeyMask]
+	objc_msgSend [
+		item sel_getUid "setKeyEquivalentModifierMask:"
+		as NSUInteger! (NSCommandKeyMask or NSAlternateKeyMask)
+	]
 	objc_msgSend [item sel_getUid "setTarget:" NSApp]
 
 	title: NSString("Show All")
@@ -139,23 +142,23 @@ build-menu: func [
 						TYPE_BLOCK [
 							sub-menu: objc_msgSend [objc_getClass "NSMenu" sel_getUid "alloc"]
 							sub-menu: objc_msgSend [sub-menu sel_getUid "initWithTitle:" title]
-							build-menu as red-block! next sub-menu
-							objc_msgSend [item sel_getUid "setSubmenu:" sub-menu]
+							build-menu as red-block! next sub-menu target	;-- `target` is required: without it, the
+							objc_msgSend [item sel_getUid "setSubmenu:" sub-menu]	;-- next expression was consumed as it
 							value: value + 1
 						]
 						TYPE_WORD [
 							w: as red-word! next
-							objc_msgSend [item sel_getUid "setTag:" w/symbol]
+							objc_msgSend [item sel_getUid "setTag:" as NSInteger! w/symbol]
 							objc_msgSend [item sel_getUid "setAction:" action]
 							value: value + 1
 						]
 						default [
-							objc_msgSend [item sel_getUid "setTag:" -1]
+							objc_msgSend [item sel_getUid "setTag:" as NSInteger! -1]
 							objc_msgSend [item sel_getUid "setAction:" action]
 						]
 					]
 				][
-					objc_msgSend [item sel_getUid "setTag:" -1]
+					objc_msgSend [item sel_getUid "setTag:" as NSInteger! -1]
 					objc_msgSend [item sel_getUid "setAction:" action]
 				]
 			]

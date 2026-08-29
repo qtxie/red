@@ -58,7 +58,8 @@ init-text-list: func [
 		selected/header: TYPE_INTEGER
 		selected/value: -1
 	][
-		SendMessage hWnd LB_SETCURSEL selected/value - 1 0
+		value: either selected/value < 1 [-1][selected/value - 1]	;-- selected < 1 (e.g. the -1 no-selection value) deselects via LB_SETCURSEL -1
+		SendMessage hWnd LB_SETCURSEL value 0
 	]
 ]
 
@@ -179,6 +180,7 @@ remove-list-items: func [
 	loop part [
 		type: TYPE_OF(str)
 		if ANY_STRING?(type) [remove-list-item hWnd pos drop?]
+		str: str + 1
 	]
 ]
 

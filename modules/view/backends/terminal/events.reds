@@ -27,6 +27,15 @@ mouse-event?:		no
 mouse-x:			as float32! 0
 mouse-y:			as float32! 0
 event-loop-cnt:		0
+active-widget-event: as widget-event! 0
+
+get-widget-event: func [
+	evt		[red-event!]
+	return:	[widget-event!]
+][
+	assert active-widget-event <> as widget-event! 0
+	active-widget-event
+]
 
 map-pt-from-win: func [
 	g		[widget!]
@@ -66,7 +75,7 @@ get-event-face: func [
 		widget-evt [widget-event!]
 		g		[widget!]
 ][
-	widget-evt: as widget-event! evt/msg
+	widget-evt: get-widget-event evt
 	g: widget-evt/widget
 	assert g/face <> 0
 	copy-cell as cell! :g/face stack/push*
@@ -78,7 +87,7 @@ get-event-offset: func [
 	/local
 		widget-evt [widget-event!]
 ][
-	widget-evt: as widget-event! evt/msg
+	widget-evt: get-widget-event evt
 	as red-value! pair/push as-integer widget-evt/pt/x as-integer widget-evt/pt/y
 ]
 
@@ -88,7 +97,7 @@ get-event-key: func [
 	/local
 		widget-evt [widget-event!]
 ][
-	widget-evt: as widget-event! evt/msg
+	widget-evt: get-widget-event evt
 	as red-value! either evt/flags and SPECIAL_KEY = 0 [
 		char/push widget-evt/data
 	][
@@ -134,12 +143,14 @@ get-event-picked: func [
 	/local
 		e	[widget-event!]
 ][
-	e: as widget-event! evt/msg
+	e: get-widget-event evt
 	as red-value! switch evt/type [
 		EVT_WHEEL [float/push as float! e/fdata]
 		default	  [integer/push e/data]
 	]
 ]
+
+OS-send-event: func [evt [red-event!] queued? [logic!] return: [logic!]][false]	;-- backend stub: OS injection not implemented yet
 
 get-event-flags: func [
 	evt		[red-event!]
@@ -179,10 +190,14 @@ make-event: func [
 		sym		[integer!]
 		state	[integer!]
 		gui-evt	[red-event! value]
+		previous-widget-event [widget-event!]
 		t?		[logic!]
 ][
+	previous-widget-event: active-widget-event
+	active-widget-event: widget-evt
+
 	gui-evt/header: TYPE_EVENT
-	gui-evt/msg:    as byte-ptr! widget-evt
+	gui-evt/msg:    0
 	gui-evt/flags:  flags
 	gui-evt/type:   evt
 
@@ -198,7 +213,8 @@ make-event: func [
 		stack/unwind
 	]
 	interpreter/tracing?: t?
-	
+	active-widget-event: previous-widget-event
+
 	stack/adjust-post-try
 	if system/thrown <> 0 [system/thrown: 0]
 

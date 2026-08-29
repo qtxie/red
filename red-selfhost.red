@@ -5,6 +5,7 @@ Red [
 
 compiler-root: system/options/path
 
+#include %compiler/resource-store.red
 #include %compiler/target-registry.red
 #include %compiler/system-job.red
 #include %compiler/lexer.red

@@ -19,11 +19,16 @@ compiler-options: context [
 			red-only?: false
 			loaded-red: none
 			no-compress?: false
+			show-func-map?: false
 			dll?: false
 			update-libRedRT?: false
 			verbose: 0
 			help?: false
 			version?: false
+			toolchain-info?: false
+			list-targets?: false
+			resource-manifest?: false
+			self-check?: false
 		]
 	]
 
@@ -49,9 +54,12 @@ compiler-options: context [
 				find ["-c" "--compile" "--dev"] token [
 					option-set options 'release? false
 				]
+				token = "--toolchain-info" [option-set options 'toolchain-info? true]
+				token = "--list-targets" [option-set options 'list-targets? true]
+				token = "--resource-manifest" [option-set options 'resource-manifest? true]
+				token = "--self-check" [option-set options 'self-check? true]
 				find ["-r" "--release"] token [option-set options 'release? true]
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
-				find ["-n" "--no-runtime"] token [option-set options 'no-runtime? true]
 				token = "-O0" [option-set options 'opt-level 0]
 				token = "-O1" [
 					either hybrid [
@@ -76,6 +84,7 @@ compiler-options: context [
 					option-set options 'loaded-red to string! position/1
 				]
 				token = "--no-compress" [option-set options 'no-compress? true]
+				token = "--show-func-map" [option-set options 'show-func-map? true]
 				find ["-t" "--target"] token [
 					position: next position
 					if tail? position [return missing-value token]
@@ -116,6 +125,7 @@ compiler-options: context [
 			'runtime? not option-get options 'no-runtime?
 			'red-only? option-get options 'red-only?
 			'redbin-compress? not option-get options 'no-compress?
+			'show-func-map? option-get options 'show-func-map?
 			'verbosity option-get options 'verbose
 			'dev-mode? dev?
 			'libRedRT-update? update?

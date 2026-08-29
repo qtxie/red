@@ -22,7 +22,7 @@ select-tab: func [
 	if any [idx < 1 idx > nb][exit]
 
 	int/value: idx
-	objc_msgSend [hWnd sel_getUid "selectTabViewItemAtIndex:" idx - 1]
+	objc_msgSend [hWnd sel_getUid "selectTabViewItemAtIndex:" as NSInteger! (idx - 1)]
 ]
 
 insert-tab: func [
@@ -55,7 +55,7 @@ set-tabs: func [
 	while [idx >= 0][							;-- remove all tabs
 		objc_msgSend [
 			obj sel_getUid "removeTabViewItem:"
-			objc_msgSend [obj sel_getUid "tabViewItemAtIndex:" idx]
+			objc_msgSend [obj sel_getUid "tabViewItemAtIndex:" as NSInteger! idx]
 		]
 		idx: idx - 1
 	]
@@ -79,8 +79,10 @@ set-tabs: func [
 				objc_msgSend [obj sel_getUid "addTabViewItem:" item]
 
 				if face < end [
-					panel: get-face-handle face
-					objc_msgSend [item sel_getUid "setView:" panel]
+					panel: face-handle? face
+					if panel <> 0 [
+						objc_msgSend [item sel_getUid "setView:" panel]
+					]
 					face: face + 1
 				]
 				nb: nb + 1

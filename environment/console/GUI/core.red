@@ -374,17 +374,20 @@ object [
 		]
 	]
 
-	scroll: func [event /local key n delta][
+	scroll: func [
+		key		[word!]
+		picked	[integer! float!]
+		/local n delta
+	][
 		if empty? lines [exit]
-		key: event/key
 		n: switch/default key [
 			up			[1]
 			down		[-1]
 			page-up		[scroller/page-size]
 			page-down	[0 - scroller/page-size]
-			track		[scroller/position - event/picked]
+			track		[scroller/position - picked]
 			wheel		[
-				delta: event/picked
+				delta: picked
 				case [	;-- scroll by lines
 					all [delta > -1.0 delta < 0.0][-1]
 					all [delta > 0.0 delta < 1.0][1]
@@ -400,15 +403,18 @@ object [
 		]
 	]
 
-	zoom: func [event /local ft sz][
+	zoom-wheel: func [delta [float!] /local ft sz][
 		box/line-spacing: none
-		either object? event [ft: event][
-			ft: box/font
-			sz: ft/size
-			either event/picked > 0 [sz: sz + 1][sz: sz - 1]
-			if sz = 5 [exit]		;-- mininum size
-			ft/size: sz
-		]
+		ft: box/font
+		sz: ft/size
+		either delta > 0.0 [sz: sz + 1][sz: sz - 1]
+		if sz = 5 [exit]		;-- minimum size
+		ft/size: sz
+		update-cfg ft none
+	]
+
+	zoom: func [ft [object!]][
+		box/line-spacing: none
 		update-cfg ft none
 	]
 

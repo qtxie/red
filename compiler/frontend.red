@@ -256,7 +256,31 @@ red: context [
 		not find "/~" ch
 	]
 
+	builtin-source-path: func [file [file!]][
+		compiler-resource-store/source-path file
+	]
+
+	source-exists?: func [file [file!]][
+		either compiler-resource-store/virtual? file [
+			compiler-resource-store/exists? file
+		][exists? file]
+	]
+
+	read-source-text: func [file [file!]][
+		either compiler-resource-store/virtual? file [
+			compiler-resource-store/read-text file
+		][read file]
+	]
+
 	resolve-include-file: func [file [file!] /local bases base candidate][
+		if compiler-resource-store/virtual? file [return compiler-resource-store/virtual-path file]
+		if all [
+			relative-path? file
+			file? script-path
+			compiler-resource-store/virtual? script-path
+		][
+			return compiler-resource-store/resolve/directory file script-path
+		]
 		unless relative-path? file [return clean-path file]
 		bases: copy []
 		if script-path [append bases script-path]
@@ -286,7 +310,9 @@ red: context [
 				include-directive file: (
 					script-path: any [script-path main-path]
 					if all [script-path relative-path? file/1][
-						file/1: clean-path append copy script-path file/1
+						file/1: either compiler-resource-store/virtual? script-path [
+							compiler-resource-store/resolve/directory file/1 script-path
+						][clean-path append copy script-path file/1]
 					]
 					unless empty? script-stk [
 						insert next file reduce [#script last script-stk]
@@ -1942,7 +1968,7 @@ red: context [
 		out
 	]
 	
-	make-refs-table: func [spec [block!] /local mark pos arity arg-rule list ref args][
+	make-refs-table: func [spec [block!] /local mark pos arity arg-rule list ref args result][
 		arity: 0
 		arg-rule: [word! | lit-word! | get-word!]
 		parse spec [
@@ -1959,7 +1985,12 @@ red: context [
 				some [
 					pos: refinement! opt string! (
 						ref: ref + 1
-						if pos/1 = /local [return reduce [list arity]]
+						if pos/1 = /local [
+							result: make block! 2
+							append/only result list
+							append result arity
+							return result
+						]
 						repend list [pos/1 ref 0]
 						args: 0
 					)
@@ -1970,7 +2001,10 @@ red: context [
 				]
 			]
 		]
-		reduce [list arity]
+		result: make block! 2
+		append/only result list
+		append result arity
+		result
 	]
 	
 	get-prefix-func: func [name [word!] /local path word ctx value][
@@ -5223,7 +5257,7 @@ red: context [
 		file: resolve-include-file file
 		script-path: first split-path file
 
-		unless any [booting? exists? file][
+		unless any [booting? source-exists? file][
 			throw-error ["include file not found:" pc/2]
 		]
 		either find included-list file [
@@ -5596,26 +5630,32 @@ red: context [
 		]
 	]
 	
-	comp-source: func [code [block!] /local user main saved saved-name mods][
+	comp-source: func [code [block!] /local user main saved saved-name mods boot-source saved-boot-path][
 		phase-timer/begin 'red-lowering-init
 		output: make block! 10000
 		comp-init
 		phase-timer/finish 'red-lowering-init
 		
 		phase-timer/begin 'red-lowering-boot
-		pc: next compiler-preprocessor/expand/clean load-source/hidden %compiler/bootstrap-boot.red job
+		boot-source: builtin-source-path %compiler/bootstrap-boot.red
+		saved-boot-path: script-path
+		script-path: either compiler-resource-store/virtual? boot-source [
+			compiler-resource-store/virtual-path %""
+		][first split-path boot-source]
+		pc: next compiler-preprocessor/expand/clean load-source/hidden boot-source job
 		unless job/red-help? [clear-docstrings pc]
 		booting?: yes
 		comp-block
 		append output boot-extras
 		booting?: no
 		phase-timer/finish 'red-lowering-boot
+		script-path: saved-boot-path
 		
 		mods: tail output
 		append output [#user-code]
 		phase-timer/begin 'red-lowering-modules
 		foreach module needed [
-			module: clean-path module
+			module: builtin-source-path module
 			saved: if script-path [copy script-path]
 			saved-name: script-name
 			saved-main: if main-path [copy main-path]
@@ -5839,7 +5879,7 @@ red: context [
 			unless hidden [script-name: file]
 			; Match Stage0's READ-CACHE input contract: text READ normalizes CRLF
 			; before the lexer materializes multiline string values.
-			src: compiler-lexer/process/file read file file
+			src: compiler-lexer/process/file read-source-text file file
 			if all [
 				(length? src) >= 4
 				src/1 = 'REBOL

@@ -59,6 +59,7 @@ compiler-system-job: context [
 		command-line: none
 		show-func-map?: false
 		packager: none
+		bundle-signature: none
 		compiler-version: none
 		compiler-build-date: none
 		compiler-git: none
@@ -123,6 +124,7 @@ compiler-system-job: context [
 			command-line: none
 			show-func-map?: false
 			packager: none
+			bundle-signature: none
 			compiler-version: none
 			compiler-build-date: none
 			compiler-git: none

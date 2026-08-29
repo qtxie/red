@@ -124,7 +124,7 @@ set-file-filter: func [
 			]
 			true [idx: 0]
 		]
-		if idx <> 0 [t: objc_msgSend [t sel_getUid "substringFromIndex:" idx]]
+		if idx <> 0 [t: objc_msgSend [t sel_getUid "substringFromIndex:" as NSUInteger! idx]]
 		objc_msgSend [allowed sel_getUid "addObject:" t]
 	]
 	objc_msgSend [panel sel_getUid "setAllowedFileTypes:" allowed]
@@ -181,7 +181,7 @@ request-file-handler: func [
 			blk: block/make-at as red-block! ret count
 			i: 0
 			while [i < count][
-				file: objc_msgSend [files sel_getUid "objectAtIndex:" i]
+				file: objc_msgSend [files sel_getUid "objectAtIndex:" as NSUInteger! i]
 				str: to-red-string file ALLOC_TAIL(blk)
 				set-type as red-value! str TYPE_FILE
 				if dir? [string/append-char GET_BUFFER(str) as-integer #"/"]
@@ -240,7 +240,7 @@ setup-filter-button: func [
 		head: head + 2
 		head >= tail
 	]
-	objc_msgSend [obj sel_getUid "selectItemAtIndex:" 0]
+	objc_msgSend [obj sel_getUid "selectItemAtIndex:" as NSInteger! 0]
 	objc_msgSend [obj sel_getUid "sizeToFit"]
 	objc_msgSend [panel sel_getUid "setAccessoryView:" obj]
 
@@ -393,6 +393,11 @@ OS-request-font: func [
 		trait		[integer!]
 		bold?		[logic!]
 		pool		[Cocoa-handle!]
+		key-win		[Cocoa-handle!]
+		wins		[Cocoa-handle!]
+		wframe		[NSRect! value]
+		pframe		[NSRect! value]
+		x y			[Cocoa-float!]
 ][
 	font-changed?: no
 	nsfont: get-font null selected
@@ -402,7 +407,32 @@ OS-request-font: func [
 
 	panel: objc_msgSend [objc_getClass "NSFontPanel" sel_getUid "sharedFontPanel"]
 	objc_msgSend [panel sel_getUid "setPanelFont:isMultiple:" nsfont no]
+	manager: objc_msgSend [objc_getClass "NSFontManager" sel_getUid "sharedFontManager"]
+	objc_msgSend [manager sel_getUid "setSelectedFont:isMultiple:" nsfont no]	;-- the panel's lists reflect the
+															;-- font manager's selection, not setPanelFont:
 	objc_msgSend [panel sel_getUid "setDelegate:" delegate]
+
+	key-win: objc_msgSend [NSApp sel_getUid "keyWindow"]	;-- the shared font panel keeps its own
+	if zero? key-win [									;-- autosaved frame: center it over the app's
+		key-win: objc_msgSend [NSApp sel_getUid "mainWindow"]	;-- window, as the Windows (hwndOwner) and
+	]													;-- GTK (transient-for) backends do
+	if zero? key-win [									;-- app not active yet: use its first window
+		wins: objc_msgSend [NSApp sel_getUid "windows"]
+		if 0 < objc_msgSend [wins sel_getUid "count"][
+			key-win: objc_msgSend [wins sel_getUid "objectAtIndex:" 0]
+		]
+	]
+	either zero? key-win [
+		objc_msgSend [panel sel_getUid "center"]		;-- no app window: fall back to screen-centered
+	][
+		wframe: objc_msgSend_rect [key-win sel_getUid "frame"]
+		pframe: objc_msgSend_rect [panel sel_getUid "frame"]
+		x: wframe/w - pframe/w / as float32! 2.0	;-- centered over the window, in Cocoa coords
+		y: wframe/h - pframe/h / as float32! 2.0	;-- (both frames are bottom-left based)
+		x: wframe/x + x
+		y: wframe/y + y
+		objc_msgSend [panel sel_getUid "setFrameOrigin:" x y]
+	]
 	objc_msgSend [panel sel_getUid "orderFront:" 0]
 	objc_msgSend [NSApp sel_getUid "runModalForWindow:" panel]
 	either font-changed? [

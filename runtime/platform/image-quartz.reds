@@ -15,8 +15,14 @@ Red/System [
 
 #either ABI = 'apple-aarch64 [
 	#define CGFloat! float!
+	#define Quartz-size! uint64!
+	#define Quartz-CFIndex! int64!
+	#define F64_TO_CGFLOAT(value) [value]			;-- CGFloat! is already float! here
 ][
 	#define CGFloat! float32!
+	#define Quartz-size! integer!
+	#define Quartz-CFIndex! integer!
+	#define F64_TO_CGFLOAT(value) [as float32! value]
 ]
 
 OS-image: context [
@@ -41,7 +47,7 @@ OS-image: context [
 			CGImageDestinationCreateWithURL: "CGImageDestinationCreateWithURL" [
 				url			[int-ptr!]
 				type		[int-ptr!]
-				count		[integer!]
+				count		[Quartz-size!]
 				options		[int-ptr!]
 				return:		[int-ptr!]
 			]
@@ -71,21 +77,21 @@ OS-image: context [
 			]
 			CGBitmapContextCreate: "CGBitmapContextCreate" [
 				buffer		[byte-ptr!]
-				width		[integer!]
-				height		[integer!]
-				bits		[integer!]
-				bytes-row	[integer!]
+				width		[Quartz-size!]
+				height		[Quartz-size!]
+				bits		[Quartz-size!]
+				bytes-row	[Quartz-size!]
 				color-space [int-ptr!]
 				bmp-info	[integer!]
 				return:		[int-ptr!]
 			]
 			CGBitmapContextGetWidth: "CGBitmapContextGetWidth" [
 				ctx			[int-ptr!]
-				return:		[integer!]
+				return:		[Quartz-size!]
 			]
 			CGBitmapContextGetHeight: "CGBitmapContextGetHeight" [
 				ctx			[int-ptr!]
-				return:		[integer!]
+				return:		[Quartz-size!]
 			]
 			CGBitmapContextGetData: "CGBitmapContextGetData" [
 				ctx			[int-ptr!]
@@ -114,17 +120,17 @@ OS-image: context [
 			]
 			CGImageSourceCreateImageAtIndex: "CGImageSourceCreateImageAtIndex" [
 				src			[int-ptr!]
-				index		[integer!]
+				index		[Quartz-size!]
 				options		[int-ptr!]
 				return:		[int-ptr!]
 			]
 			CGImageGetWidth: "CGImageGetWidth" [
 				image		[int-ptr!]
-				return:		[integer!]
+				return:		[Quartz-size!]
 			]
 			CGImageGetHeight: "CGImageGetHeight" [
 				image		[int-ptr!]
-				return:		[integer!]
+				return:		[Quartz-size!]
 			]
 			CGImageGetAlphaInfo: "CGImageGetAlphaInfo" [
 				image		[int-ptr!]
@@ -134,15 +140,15 @@ OS-image: context [
 				image		[int-ptr!]
 			]
 			CGImageCreate: "CGImageCreate" [
-				width		[integer!]
-				height		[integer!]
-				bits-part	[integer!]
-				bits-pixel	[integer!]
-				bytes-row	[integer!]
+				width		[Quartz-size!]
+				height		[Quartz-size!]
+				bits-part	[Quartz-size!]
+				bits-pixel	[Quartz-size!]
+				bytes-row	[Quartz-size!]
 				color-space [int-ptr!]
 				bmp-info	[integer!]
 				provider	[int-ptr!]
-				decode		[float32-ptr!]
+				decode		[pointer! [CGFloat!]]
 				interpolate [logic!]
 				intent		[integer!]
 				return:		[int-ptr!]
@@ -162,7 +168,7 @@ OS-image: context [
 			CGDataProviderCreateWithData: "CGDataProviderCreateWithData" [
 				info		[int-ptr!]
 				data		[int-ptr!]
-				size		[integer!]
+				size		[Quartz-size!]
 				releaseData [int-ptr!]
 				return:		[int-ptr!]
 			]
@@ -174,13 +180,13 @@ OS-image: context [
 			CFDataCreate: "CFDataCreate" [
 				allocator	[int-ptr!]
 				data		[byte-ptr!]
-				length		[integer!]
+				length		[Quartz-CFIndex!]
 				return:		[int-ptr!]
 			]
 			CFDataCreateWithBytesNoCopy: "CFDataCreateWithBytesNoCopy" [
 				allocator	[int-ptr!]
 				bytes		[byte-ptr!]
-				length		[integer!]
+				length		[Quartz-CFIndex!]
 				deallocator [int-ptr!]
 				return:		[int-ptr!]
 			]
@@ -343,8 +349,10 @@ OS-image: context [
 
 		rect: make-rect 0 0 width height
 		color-space: CGColorSpaceCreateDeviceRGB
-		ctx: CGBitmapContextCreate null width height 32 width * 16 color-space 2101h
-		CGContextScaleCTM ctx as CGFloat! 1.0 as CGFloat! 1.0
+		ctx: CGBitmapContextCreate
+			null as Quartz-size! width as Quartz-size! height as Quartz-size! 32
+			as Quartz-size! (width * 16) color-space 2101h
+		CGContextScaleCTM ctx F64_TO_CGFLOAT(1.0) F64_TO_CGFLOAT(1.0)
 		CGContextDrawImage ctx rect/x rect/y rect/w rect/h handle
 		nhandle: CGBitmapContextCreateImage ctx
 		CGColorSpaceRelease color-space
@@ -476,15 +484,18 @@ OS-image: context [
 			image: data
 		][
 			image-data: CGImageSourceCreateWithData data null
-			image: CGImageSourceCreateImageAtIndex image-data 0 null
+			image: CGImageSourceCreateImageAtIndex image-data as Quartz-size! 0 null
 		]
 
-		unless edit? [return image]
+		unless edit? [
+			unless cgimage? [CFRelease image-data]	;-- the CGImage holds its own reference to the
+			return image							;-- encoded bytes: the source is not needed anymore
+		]
 
 		alpha?: alpha-channel? image
 		color-space: CGColorSpaceCreateDeviceRGB
-		width: CGImageGetWidth image
-		height: CGImageGetHeight image
+		width: as integer! CGImageGetWidth image
+		height: as integer! CGImageGetHeight image
 
 		bytes-row: width * 4
 		either alpha? [
@@ -497,7 +508,9 @@ OS-image: context [
 
 		rect: make-rect 0 0 width height
 		buf: allocate height * bytes-row * n
-		ctx: CGBitmapContextCreate buf width height 8 * n bytes-row * n color-space info
+		ctx: CGBitmapContextCreate
+			buf as Quartz-size! width as Quartz-size! height as Quartz-size! (8 * n)
+			as Quartz-size! (bytes-row * n) color-space info
 		CGContextDrawImage ctx rect/x rect/y rect/w rect/h image
 
 		if alpha? [
@@ -520,10 +533,16 @@ OS-image: context [
 		len		[integer!]
 		return: [node!]
 		/local
-			h	[int-ptr!]
+			h		[int-ptr!]
+			cfdata	[int-ptr!]
 	][
-		h: data-to-image CFDataCreateWithBytesNoCopy null data len kCFAllocatorNull no no
-		make-node h null 0 CGImageGetWidth h CGImageGetHeight h
+		;-- the CFData must OWN the encoded bytes: CGImageSource decodes lazily and keeps
+		;-- referencing them, while `data` points into a GC-managed Red binary buffer that
+		;-- can be reclaimed or moved before the image is rendered (image turns all black).
+		cfdata: CFDataCreate null data as Quartz-CFIndex! len
+		h: data-to-image cfdata no no
+		CFRelease cfdata					;-- the CGImage retains what it needs from the source
+		make-node h null 0 (as integer! CGImageGetWidth h) (as integer! CGImageGetHeight h)
 	]
 
 	load-nsdata: func [
@@ -533,14 +552,14 @@ OS-image: context [
 			h	[int-ptr!]
 	][
 		h: data-to-image data no no
-		make-node h null 0 CGImageGetWidth h CGImageGetHeight h
+		make-node h null 0 (as integer! CGImageGetWidth h) (as integer! CGImageGetHeight h)
 	]
 
 	load-cgimage: func [
 		h		[int-ptr!]
 		return:	[node!]
 	][
-		make-node h null 0 CGImageGetWidth h CGImageGetHeight h
+		make-node h null 0 (as integer! CGImageGetWidth h) (as integer! CGImageGetHeight h)
 	]
 
 	load-image: func [			;-- load image from external resource: file!
@@ -555,10 +574,10 @@ OS-image: context [
 		img-data: CGImageSourceCreateWithURL path null
 		CFRelease path
 		if null? img-data [return null]
-		h: CGImageSourceCreateImageAtIndex img-data 0 null
+		h: CGImageSourceCreateImageAtIndex img-data as Quartz-size! 0 null
 		CFRelease img-data
 		either null? h [null][
-			make-node h null 0 CGImageGetWidth h CGImageGetHeight h
+			make-node h null 0 (as integer! CGImageGetWidth h) (as integer! CGImageGetHeight h)
 		]
 	]
 
@@ -648,9 +667,11 @@ OS-image: context [
 		node: as img-node! (resolve-series image/node) + 1
 		w: IMAGE_WIDTH(image/size)
 		h: IMAGE_HEIGHT(image/size)
-		data: CGDataProviderCreateWithData null node/buffer w * h * 4 null
+		data: CGDataProviderCreateWithData null node/buffer as Quartz-size! (w * h * 4) null
 		clr: CGColorSpaceCreateDeviceRGB
-		img: CGImageCreate w h 8 32 w * 4 clr 2004h data null true 0 ;-- kCGRenderingIntentDefault
+		img: CGImageCreate
+			as Quartz-size! w as Quartz-size! h as Quartz-size! 8 as Quartz-size! 32
+			as Quartz-size! (w * 4) clr 2004h data null true 0 ;-- kCGRenderingIntentDefault
 		CGDataProviderRelease data
 		CGColorSpaceRelease clr
 		img
@@ -684,11 +705,13 @@ OS-image: context [
 			ctx			[int-ptr!]
 	][
 		color-space: CGColorSpaceCreateDeviceRGB
-		width: CGImageGetWidth img
-		height: CGImageGetHeight img
+		width: as integer! CGImageGetWidth img
+		height: as integer! CGImageGetHeight img
 
 		rect: make-rect 0 0 width height
-		ctx: CGBitmapContextCreate null width height 32 width * 16 color-space 2101h
+		ctx: CGBitmapContextCreate
+			null as Quartz-size! width as Quartz-size! height as Quartz-size! 32
+			as Quartz-size! (width * 16) color-space 2101h
 		CGContextDrawImage ctx rect/x rect/y rect/w rect/h img
 		CGColorSpaceRelease color-space
 		ctx
@@ -738,7 +761,7 @@ OS-image: context [
 			TYPE_URL
 			TYPE_FILE [
 				path: simple-io/to-NSURL as red-string! slot yes
-				dst: CGImageDestinationCreateWithURL path type 1 null
+				dst: CGImageDestinationCreateWithURL path type as Quartz-size! 1 null
 				;if zero? dst []				;-- error
 				CGImageDestinationAddImage dst img null
 				unless CGImageDestinationFinalize dst [
@@ -769,16 +792,18 @@ OS-image: context [
 			ctx		[int-ptr!]
 			handle	[int-ptr!]
 	][
-		w1: CGImageGetWidth img1
-		h1: CGImageGetHeight img1
-		w2: CGImageGetWidth img2
-		h2: CGImageGetHeight img2
+		w1: as integer! CGImageGetWidth img1
+		h1: as integer! CGImageGetHeight img1
+		w2: as integer! CGImageGetWidth img2
+		h2: as integer! CGImageGetHeight img2
 
 		w: w1
 		if w1 < w2 [w: w2]
 		h: h1 + h2
 		cs: CGColorSpaceCreateDeviceRGB
-		ctx: CGBitmapContextCreate null w h 32 w * 16 cs 2101h
+		ctx: CGBitmapContextCreate
+			null as Quartz-size! w as Quartz-size! h as Quartz-size! 32
+			as Quartz-size! (w * 16) cs 2101h
 		rect: make-rect 0 h2 w1 h1
 		CGContextDrawImage ctx rect/x rect/y rect/w rect/h img1
 		rect: make-rect 0 0 w2 h2

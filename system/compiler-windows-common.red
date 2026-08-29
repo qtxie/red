@@ -6,6 +6,7 @@ Red [
 ]
 
 #include %../compiler/phase-timer.red
+#include %../compiler/resource-store.red
 #include %compiler-host.red
 #include %../compiler/host-compat.red
 #include %../compiler/int-to-bin.red

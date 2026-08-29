@@ -174,7 +174,7 @@ OS-text-box-font-name: func [
 	font: objc_msgSend [
 		objc_getClass "NSFont" sel_getUid "fontWithDescriptor:size:"
 		objc_msgSend [desc sel_getUid "fontDescriptorWithFamily:" str]
-		(as Cocoa-float! 0.0)
+		F64_TO_COCOA(0.0)
 	]
 	objc_msgSend [layout sel_addAttribute NSFontAttributeName font as NSUInteger! pos as NSUInteger! len]
 	CFRelease str
@@ -198,7 +198,7 @@ OS-text-box-font-size: func [
 	font: objc_msgSend [
 		objc_getClass "NSFont" sel_getUid "fontWithDescriptor:size:"
 		objc_msgSend [desc sel_getUid "fontDescriptorWithSize:" temp/x]
-		(as Cocoa-float! 0.0)
+		F64_TO_COCOA(0.0)
 	]
 	objc_msgSend [layout sel_addAttribute NSFontAttributeName font as NSUInteger! pos as NSUInteger! len]
 ]
@@ -253,7 +253,7 @@ OS-text-box-metrics: func [
 				as NSUInteger! idx 0
 			]
 			either type = TBOX_METRICS_LINE_HEIGHT [
-				float/push as float! frame/h
+				float/push COCOA_TO_F64(frame/h)
 			][
 				either last? [
 					cg-pt/x: frame/x + frame/w
@@ -369,7 +369,7 @@ OS-text-box-layout: func [
 			objc_msgSend [objc_getClass "NSTextContainer" sel_alloc]
 			sel_getUid "initWithSize:" sz/w sz/h
 		]
-		objc_msgSend [tc sel_getUid "setLineFragmentPadding:" (as Cocoa-float! 0.0)]
+		objc_msgSend [tc sel_getUid "setLineFragmentPadding:" F64_TO_COCOA(0.0)]
 
 		ts: objc_msgSend [
 			objc_msgSend [objc_getClass "NSTextStorage" sel_alloc]

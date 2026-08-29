@@ -246,8 +246,8 @@ get-text-size: func [
 	attr: CFAttributedStringCreate 0 cf-str attrs
 	ns-size: objc_msgSend_sz [attr sel_getUid "size"]
 
-	size/width: as-integer ceil as-float ns-size/w
-	size/height: as-integer ceil as-float ns-size/h
+	size/width: as-integer ceil COCOA_TO_F64(ns-size/w)
+	size/height: as-integer ceil COCOA_TO_F64(ns-size/h)
 	if pt <> null [
 		pt/x: COCOA_TO_F32(ns-size/w)
 		pt/y: COCOA_TO_F32(ns-size/h)
@@ -346,7 +346,7 @@ set-defaults: func [
 		point-size	[Cocoa-float!]
 ][
 	default-font: objc_msgSend [
-		objc_getClass "NSFont" sel_getUid "systemFontOfSize:" (as Cocoa-float! 0.0)
+		objc_getClass "NSFont" sel_getUid "systemFontOfSize:" F64_TO_COCOA(0.0)
 	]
 	objc_msgSend [default-font sel_getUid "retain"]
 
@@ -644,7 +644,7 @@ change-image: func [
 				exit
 			]
 			id: objc_msgSend [objc_getClass "NSImage" sel_getUid "alloc"]
-			id: objc_msgSend [id sel_getUid "initWithCGImage:size:" OS-image/to-cgimage image (as Cocoa-float! 0.0) (as Cocoa-float! 0.0)]
+			id: objc_msgSend [id sel_getUid "initWithCGImage:size:" OS-image/to-cgimage image F64_TO_COCOA(0.0) F64_TO_COCOA(0.0)]
 			objc_msgSend [hWnd sel_getUid "setImage:" id]
 			objc_msgSend [id sel_getUid "release"]
 		]
@@ -1891,7 +1891,7 @@ parse-common-opts: func [
 							nsimg: objc_msgSend [
 								OBJC_ALLOC("NSImage")
 								sel_getUid "initWithCGImage:size:" OS-image/to-cgimage img
-								(as Cocoa-float! 0.0) (as Cocoa-float! 0.0)
+								F64_TO_COCOA(0.0) F64_TO_COCOA(0.0)
 							]
 							pt/x: as Cocoa-float! IMAGE_WIDTH(img/size) / 2
 							pt/y: as Cocoa-float! IMAGE_HEIGHT(img/size) / 2
@@ -2050,7 +2050,7 @@ OS-make-view: func [
 			]
 		]
 		sym = button [
-			class: "RedButton"
+			class: "RedPushButton"
 		]
 		sym = toggle [
 			class: "RedButton"
@@ -2652,7 +2652,7 @@ fetch-screen-info: func [
 	y: prim-h - (as-integer (frame/y + frame/h))
 	pair/make-at alloc-tail s as-integer frame/x y
 	pair/make-at alloc-tail s width height
-	float/make-at alloc-tail s as-float scale
+	float/make-at alloc-tail s COCOA_TO_F64(scale)
 	make-cocoa-handle-at as red-value! alloc-tail s screen handle/CLASS_MONITOR
 ]
 

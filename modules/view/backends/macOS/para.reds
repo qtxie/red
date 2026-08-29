@@ -10,6 +10,11 @@ Red/System [
 	}
 ]
 
+#define PARA_V_TOP		0000h						;-- DT_TOP
+#define PARA_V_MIDDLE	0004h						;-- DT_VCENTER
+#define PARA_V_BOTTOM	0008h						;-- DT_BOTTOM
+#define PARA_V_MASK		000Ch
+
 change-para: func [
 	hWnd	[Cocoa-handle!]
 	face	[red-object!]
@@ -108,9 +113,9 @@ get-para-flags: func [
 	left:	0000h								;-- DT_LEFT
 	right:  NSTextAlignmentRight
 	center: NSTextAlignmentCenter
-	top:	0000h								;-- DT_TOP
-	middle: 0004h								;-- DT_VCENTER
-	bottom: 0008h								;-- DT_BOTTOM
+	top:	PARA_V_TOP
+	middle: PARA_V_MIDDLE
+	bottom: PARA_V_BOTTOM
 	
 	unless wrap? [flags: 20h]					;-- DT_SINGLELINE
 	either any [type = base type = toggle type = button][
@@ -129,7 +134,14 @@ get-para-flags: func [
 		v-sym = _para/top	 [flags: flags or top]
 		v-sym = _para/middle [flags: flags or middle]
 		v-sym = _para/bottom [flags: flags or bottom]
-		true				 [0]
+		true				 [
+			;-- NSButtonCell centers its title vertically, so that is the default a button-like
+			;-- face has to fall back to when `para/v-align` does not name a position.
+			if any [type = button type = toggle type = check type = radio][
+				flags: flags or middle
+			]
+			0
+		]
 	]
 	flags
 ]

@@ -17,10 +17,12 @@ Red/System [
 	#define CGFloat! float!
 	#define Quartz-size! uint64!
 	#define Quartz-CFIndex! int64!
+	#define F64_TO_CGFLOAT(value) [value]			;-- CGFloat! is already float! here
 ][
 	#define CGFloat! float32!
 	#define Quartz-size! integer!
 	#define Quartz-CFIndex! integer!
+	#define F64_TO_CGFLOAT(value) [as float32! value]
 ]
 
 OS-image: context [
@@ -350,7 +352,7 @@ OS-image: context [
 		ctx: CGBitmapContextCreate
 			null as Quartz-size! width as Quartz-size! height as Quartz-size! 32
 			as Quartz-size! (width * 16) color-space 2101h
-		CGContextScaleCTM ctx as CGFloat! 1.0 as CGFloat! 1.0
+		CGContextScaleCTM ctx F64_TO_CGFLOAT(1.0) F64_TO_CGFLOAT(1.0)
 		CGContextDrawImage ctx rect/x rect/y rect/w rect/h handle
 		nhandle: CGBitmapContextCreateImage ctx
 		CGColorSpaceRelease color-space
@@ -487,7 +489,7 @@ OS-image: context [
 
 		unless edit? [
 			unless cgimage? [CFRelease image-data]	;-- the CGImage holds its own reference to the
-			return as int-ptr! image				;-- encoded bytes: the source is not needed anymore
+			return image							;-- encoded bytes: the source is not needed anymore
 		]
 
 		alpha?: alpha-channel? image
@@ -538,7 +540,7 @@ OS-image: context [
 		;-- referencing them, while `data` points into a GC-managed Red binary buffer that
 		;-- can be reclaimed or moved before the image is rendered (image turns all black).
 		cfdata: CFDataCreate null data as Quartz-CFIndex! len
-		h: data-to-image as int-ptr! cfdata no no
+		h: data-to-image cfdata no no
 		CFRelease cfdata					;-- the CGImage retains what it needs from the source
 		make-node h null 0 (as integer! CGImageGetWidth h) (as integer! CGImageGetHeight h)
 	]

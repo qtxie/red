@@ -1968,7 +1968,7 @@ red: context [
 		out
 	]
 	
-	make-refs-table: func [spec [block!] /local mark pos arity arg-rule list ref args][
+	make-refs-table: func [spec [block!] /local mark pos arity arg-rule list ref args result][
 		arity: 0
 		arg-rule: [word! | lit-word! | get-word!]
 		parse spec [
@@ -1985,7 +1985,12 @@ red: context [
 				some [
 					pos: refinement! opt string! (
 						ref: ref + 1
-						if pos/1 = /local [return reduce [list arity]]
+						if pos/1 = /local [
+							result: make block! 2
+							append/only result list
+							append result arity
+							return result
+						]
 						repend list [pos/1 ref 0]
 						args: 0
 					)
@@ -1996,7 +2001,10 @@ red: context [
 				]
 			]
 		]
-		reduce [list arity]
+		result: make block! 2
+		append/only result list
+		append result arity
+		result
 	]
 	
 	get-prefix-func: func [name [word!] /local path word ctx value][

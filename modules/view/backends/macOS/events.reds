@@ -502,7 +502,7 @@ get-event-picked: func [
 					]
 				]
 			]
-			float/push as float! d
+			float/push COCOA_TO_F64(d)
 		]
 		EVT_IME [to-red-string ime-text null]
 		EVT_DBL_CLICK [

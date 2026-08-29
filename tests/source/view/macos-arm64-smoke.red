@@ -57,6 +57,10 @@ top-align-face: none
 middle-align-face: none
 bottom-align-face: none
 multiline-align-face: none
+button-align-panel: none
+button-top-left: none
+button-middle-center: none
+button-bottom-right: none
 scroll-face: none
 calendar-face: none
 canvas: none
@@ -139,6 +143,13 @@ result: try/all [
 		middle-align-face: text "Vertical" 100x64 white left middle font-color black
 		bottom-align-face: text "Vertical" 100x64 white left bottom font-color black
 		multiline-align-face: base "Line one^/Line two" 100x64 white left top font-color black
+		return
+		button-align-panel: panel 340x90 [
+			across
+			button-top-left: button "X" 100x70 left top
+			button-middle-center: button "X" 100x70 center middle
+			button-bottom-right: button "X" 100x70 right bottom
+		]
 		return
 		base-text-face: base "Base text" 160x44 white font-color black
 		image-text-face: image image-background "Image text" 160x44 font-color black
@@ -246,6 +257,66 @@ unless window/size = target-size [
 	fail rejoin [
 		"native window resize failed: target=" mold target-size
 		" actual=" mold window/size
+	]
+]
+
+button-dark-bounds: func [
+	image [image!]
+	face [object!]
+	parent [object!]
+	/local scale-x scale-y margin-x margin-y left top right bottom min-x min-y max-x max-y xy pixel
+][
+	scale-x: image/size/x / parent/size/x
+	scale-y: image/size/y / parent/size/y
+	margin-x: to integer! (10 * scale-x)
+	margin-y: to integer! (10 * scale-y)
+	left: to integer! (face/offset/x * scale-x)
+	top: to integer! (face/offset/y * scale-y)
+	right: left + to integer! (face/size/x * scale-x)
+	bottom: top + to integer! (face/size/y * scale-y)
+	min-x: right
+	min-y: bottom
+	max-x: left
+	max-y: top
+	repeat y image/size/y [
+		repeat x image/size/x [
+			if all [
+				x > (left + margin-x) x < (right - margin-x)
+				y > (top + margin-y) y < (bottom - margin-y)
+			][
+				xy: as-pair x y
+				pixel: image/:xy
+				if all [pixel/1 < 64 pixel/2 < 64 pixel/3 < 64][
+					min-x: min min-x x
+					min-y: min min-y y
+					max-x: max max-x x
+					max-y: max max-y y
+				]
+			]
+		]
+	]
+	reduce [min-x - left min-y - top max-x - left max-y - top]
+]
+
+show button-align-panel
+repeat count 5 [do-events/no-wait wait 0.01]
+button-image: to-image button-align-panel
+button-top-left-bounds: button-dark-bounds button-image button-top-left button-align-panel
+button-middle-center-bounds: button-dark-bounds button-image button-middle-center button-align-panel
+button-bottom-right-bounds: button-dark-bounds button-image button-bottom-right button-align-panel
+unless all [
+	button-top-left-bounds/1 < button-middle-center-bounds/1
+	button-middle-center-bounds/1 < button-bottom-right-bounds/1
+	button-top-left-bounds/2 < button-middle-center-bounds/2
+	button-middle-center-bounds/2 < button-bottom-right-bounds/2
+][
+	fail rejoin [
+		"button alignment bounds are invalid: "
+		mold reduce [
+			button-top-left-bounds
+			button-middle-center-bounds
+			button-bottom-right-bounds
+		]
 	]
 ]
 

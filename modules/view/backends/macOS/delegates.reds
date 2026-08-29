@@ -19,6 +19,104 @@ is-flipped: func [
 	true
 ]
 
+;-- NSButtonCell always centers the title vertically inside the interior rect it is handed. Rather
+;-- than reimplementing the native title renderer, `para/v-align` is honored by translating that
+;-- interior rect so the title lands on the requested edge of the face.
+draw-button-interior*: func [
+	self	[Cocoa-handle!]
+	cmd		[Cocoa-handle!]
+	x		[Cocoa-float!]
+	y		[Cocoa-float!]
+	w		[Cocoa-float!]
+	h		[Cocoa-float!]
+	view	[Cocoa-handle!]
+	/local
+		super		[objc_super! value]
+		title		[NSRect! value]
+		text-size	[NSSize! value]
+		values		[red-value!]
+		para		[red-object!]
+		type		[red-word!]
+		sym			[integer!]
+		flags		[integer!]
+		title-h		[Cocoa-float!]
+		title-y		[Cocoa-float!]
+		target		[Cocoa-float!]
+		new-y		[Cocoa-float!]
+		high?		[logic!]
+][
+	super/receiver: self
+	super/superclass: objc_msgSend [self sel_getUid "superclass"]
+
+	flags: PARA_V_MIDDLE
+	if all [not zero? view red-face? view][
+		values: get-face-values view
+		para: as red-object! values + FACE_OBJ_PARA
+		if TYPE_OF(para) = TYPE_OBJECT [
+			type: as red-word! values + FACE_OBJ_TYPE
+			sym: symbol/resolve type/symbol
+			flags: get-para-flags sym para
+		]
+	]
+	if (flags and PARA_V_MASK) = PARA_V_MIDDLE [		;-- native placement is already centered
+		objc_msgSendSuper [super cmd x y w h view]
+		exit
+	]
+
+	title: objc_msgSend_rect [self sel_getUid "titleRectForBounds:" x y w h]
+	title-h: title/h
+	title-y: title/y
+	if any [										;-- no usable title rect: measure the text itself
+		title-h <= as Cocoa-float! 0.0
+		title-h >= h
+	][
+		text-size: objc_msgSend_sz [
+			objc_msgSend [self sel_getUid "attributedTitle"] sel_getUid "size"
+		]
+		title-h: text-size/h
+		title-y: y + ((h - title-h) / (as Cocoa-float! 2.0))
+	]
+	if any [										;-- title fills the face: nothing left to align
+		title-h <= as Cocoa-float! 0.0
+		title-h >= h
+	][
+		objc_msgSendSuper [super cmd x y w h view]
+		exit
+	]
+
+	;-- `bottom` sits at the larger Y in a flipped view and at the smaller one otherwise
+	high?: (flags and PARA_V_BOTTOM) <> 0
+	unless as logic! objc_msgSend [view sel_getUid "isFlipped"] [high?: not high?]
+	target: either high? [(y + h) - title-h][y]
+	new-y: (y + target) - title-y
+	objc_msgSendSuper [super cmd x new-y w h view]
+]
+
+#either ABI = 'apple-aarch64 [
+	draw-button-interior: func [
+		[cdecl]
+		self	[Cocoa-handle!]
+		cmd		[Cocoa-handle!]
+		rc		[NSRect! value]
+		view	[Cocoa-handle!]
+	][
+		draw-button-interior* self cmd rc/x rc/y rc/w rc/h view
+	]
+][
+	draw-button-interior: func [
+		[cdecl]
+		self	[Cocoa-handle!]
+		cmd		[Cocoa-handle!]
+		x		[float32!]
+		y		[float32!]
+		width	[float32!]
+		height	[float32!]
+		view	[Cocoa-handle!]
+	][
+		draw-button-interior* self cmd x y width height view
+	]
+]
+
 ;-- Faces whose views take the keyboard themselves, instead of letting a native control handle it.
 ;-- `text` is excluded on purpose: labels are RedBase views too, but must never take the focus away
 ;-- from the faces above (the GUI console reads its input from a scrollable `rich-text`).
@@ -74,7 +172,7 @@ reset-cursor-rects: func [
 		]
 		objc_msgSend [
 			self sel_getUid "addCursorRect:cursor:"
-			(as Cocoa-float! 0.0) (as Cocoa-float! 0.0) sz/x sz/y cur
+			F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) sz/x sz/y cur
 		]
 	]
 ]
@@ -418,7 +516,7 @@ win-level: func [
 	cmd		[Cocoa-handle!]
 	return: [NSInteger!]
 ][
-	as NSInteger! objc_msgSend [
+	objc_msgSend [
 		objc_msgSend [self sel_getUid "window"]
 		sel_getUid "level"
 	]
@@ -1344,9 +1442,9 @@ render-text: func [
 	]
 	container: objc_msgSend [
 		objc_msgSend [objc_getClass "NSTextContainer" sel_alloc]
-		sel_getUid "initWithSize:" sz/w (as Cocoa-float! 1.0e37)
+		sel_getUid "initWithSize:" sz/w F64_TO_COCOA(1.0e37)
 	]
-	objc_msgSend [container sel_getUid "setLineFragmentPadding:" as Cocoa-float! 0.0]
+	objc_msgSend [container sel_getUid "setLineFragmentPadding:" F64_TO_COCOA(0.0)]
 	objc_msgSend [container sel_getUid "setLineBreakMode:" as NSInteger! line-break]
 	layout: objc_msgSend [objc_msgSend [objc_getClass "NSLayoutManager" sel_alloc] sel_init]
 	objc_msgSend [layout sel_getUid "addTextContainer:" container]

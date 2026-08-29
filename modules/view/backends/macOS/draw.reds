@@ -12,7 +12,7 @@ Red/System [
 
 #include %text-box.reds
 
-#define DRAW_FLOAT_MAX		[as Cocoa-float! 3.4e38]
+#define DRAW_FLOAT_MAX		[F64_TO_COCOA(3.4e38)]
 
 #either ABI = 'apple-aarch64 [
 	#define sqrtf sqrt
@@ -74,10 +74,10 @@ draw-begin: func [
 		either on-graphic? [							;-- draw on image!, flip the CTM
 			rc: as NSRect! img
 			ctx/rect-y: rc/y
-			CGContextTranslateCTM CGCtx as Cocoa-float! 0.0 rc/y
-			CGContextScaleCTM CGCtx as Cocoa-float! 1.0 as Cocoa-float! -1.0
+			CGContextTranslateCTM CGCtx F64_TO_COCOA(0.0) rc/y
+			CGContextScaleCTM CGCtx F64_TO_COCOA(1.0) F64_TO_COCOA(-1.0)
 		][
-			CGContextTranslateCTM CGCtx as Cocoa-float! 0.5 as Cocoa-float! 0.5
+			CGContextTranslateCTM CGCtx F64_TO_COCOA(0.5) F64_TO_COCOA(0.5)
 		]
 	]
 
@@ -272,7 +272,7 @@ OS-draw-line-pattern: func [
 			start: start + 1
 		]
 	]
-	CGContextSetLineDash dc/raw as Cocoa-float! 0.0 dashes as NSUInteger! cnt
+	CGContextSetLineDash dc/raw F64_TO_COCOA(0.0) dashes as NSUInteger! cnt
 ]
 
 get-shape-center: func [
@@ -872,7 +872,7 @@ _draw-arc: func [
 		]
 	]
 	delta: beta - alpha / as Cocoa-float! 2.0
-	bcp: as Cocoa-float! (4.0 / 3.0 * (1.0 - cos as float! delta) / sin as float! delta)
+	bcp: as Cocoa-float! (4.0 / 3.0 * (1.0 - cos COCOA_TO_F64(delta)) / sin COCOA_TO_F64(delta))
 
 	sin-a: sinf alpha
 	sin-b: sinf beta
@@ -1086,7 +1086,7 @@ CG-draw-image: func [						;@@ use CALayer to get very good performance?
 	CGContextTranslateCTM dc tx ty
 	CGContextScaleCTM dc flip-x flip-y
 
-	CGContextDrawImage dc as Cocoa-float! 0.0 as Cocoa-float! 0.0 w h image
+	CGContextDrawImage dc F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) w h image
 
 	;-- flip back
 	CGContextScaleCTM dc flip-x flip-y
@@ -1205,7 +1205,7 @@ fill-gradient-region: func [
 			dc/grad-pen
 			dc/grad-x2
 			dc/grad-y2
-			as Cocoa-float! 0.0
+			F64_TO_COCOA(0.0)
 			dc/grad-x1
 			dc/grad-y1
 			dc/grad-radius
@@ -2019,7 +2019,7 @@ OS-draw-shape-arc: func [
 	m: CGAffineTransformMakeTranslation center-x center-y
 	m: CGAffineTransformRotate m theta
 	m: CGAffineTransformScale m radius-x radius-y
-	CGPathAddRelativeArc ctx/path :m as Cocoa-float! 0.0 as Cocoa-float! 0.0 as Cocoa-float! 1.0 cx angle-len
+	CGPathAddRelativeArc ctx/path :m F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) F64_TO_COCOA(1.0) cx angle-len
 ]
 
 OS-draw-shape-close: func [
@@ -2065,11 +2065,11 @@ draw-pattern-callback: func [
 	h: dc/pattern-h
 	do-draw ctx null blk no no yes yes
 	if wrap = flip-x [
-		CGContextScaleCTM ctx as Cocoa-float! -1.0 1.0
+		CGContextScaleCTM ctx F64_TO_COCOA(-1.0) 1.0
 		do-draw ctx null blk no no yes yes
 	]
 	if wrap = flip-y [
-		m: CGAffineTransformMake 1.0 0.0 0.0 as Cocoa-float! -1.0 w h
+		m: CGAffineTransformMake 1.0 0.0 0.0 F64_TO_COCOA(-1.0) w h
 		CGContextConcatCTM ctx m
 		do-draw ctx null blk no no yes yes
 	]
@@ -2146,7 +2146,7 @@ OS-draw-brush-pattern: func [
 	rc/y: y
 	rc/w: width
 	rc/h: height
-	m: CGAffineTransformMake 1.0 0.0 0.0 as Cocoa-float! -1.0 0.0 height
+	m: CGAffineTransformMake 1.0 0.0 0.0 F64_TO_COCOA(-1.0) 0.0 height
 	pattern: CGPatternCreate as int-ptr! dc rc m width height 0 yes callbacks
 	either brush? [
 		dc/brush?: yes

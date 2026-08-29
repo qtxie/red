@@ -20,6 +20,8 @@ Red/System [
 	#define NSUInteger! uint64!
 	#define COCOA_TO_F32(value) [as float32! value]
 	#define F32_TO_COCOA [as float!]
+	#define COCOA_TO_F64(value) [value]			;-- Cocoa-float! is already float! here
+	#define F64_TO_COCOA(value) [value]			;-- float! literals need no narrowing here
 ][
 	#define Cocoa-handle! integer!
 	#define Cocoa-uhandle! integer!
@@ -30,6 +32,8 @@ Red/System [
 	#define NSUInteger! integer!
 	#define COCOA_TO_F32(value) [value]
 	#define F32_TO_COCOA []
+	#define COCOA_TO_F64(value) [as float! value]
+	#define F64_TO_COCOA(value) [as float32! value]
 ]
 
 #either ABI = 'apple-aarch64 [

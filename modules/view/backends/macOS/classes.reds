@@ -20,6 +20,7 @@ Red/System [
 
 #either ABI = 'apple-aarch64 [
 	#define SIG_DRAW_RECT		"v@:{CGRect={CGPoint=dd}{CGSize=dd}}"
+	#define SIG_DRAW_INTERIOR	"v@:{CGRect={CGPoint=dd}{CGSize=dd}}@"
 	#define SIG_HIT_TEST		"@@:{CGPoint=dd}"
 	#define SIG_RANGE_RETURN	"{_NSRange=QQ}@:"
 	#define SIG_SET_MARKED		"v@:@{_NSRange=QQ}{_NSRange=QQ}"
@@ -40,6 +41,7 @@ Red/System [
 	#define RED_IVAR_TYPE		"^v"
 ][
 	#define SIG_DRAW_RECT		"v@:{_NSRect=ffff}"
+	#define SIG_DRAW_INTERIOR	"v@:{_NSRect=ffff}@"
 	#define SIG_HIT_TEST		"@@:{_NSPoint=ff}"
 	#define SIG_RANGE_RETURN	"{_NSRange=ii}@:"
 	#define SIG_SET_MARKED		"v@:@{_NSRange=ii}{_NSRange=ii}"
@@ -163,6 +165,14 @@ add-window-handler: func [class [Cocoa-handle!]][
 add-button-handler: func [class [Cocoa-handle!]][
 	class_replaceMethod class sel_getUid "mouseDown:" as int-ptr! :button-mouse-down "v@:@"
 	class_addMethod class sel_getUid "button-click:" as int-ptr! :button-click "v@:@"
+]
+
+add-button-cell-handler: func [class [Cocoa-handle!]][
+	class_addMethod
+		class
+		sel_getUid "drawInteriorWithFrame:inView:"
+		as int-ptr! :draw-button-interior
+		SIG_DRAW_INTERIOR
 ]
 
 add-slider-handler: func [class [Cocoa-handle!]][
@@ -387,6 +397,15 @@ register-classes: does [
 	make-super-class "RedView"			"NSView"				as int-ptr! :add-content-view-handler STORE_FACE_FLAG or EXTRA_DATA_FLAG
 	make-super-class "RedBase"			"NSView"				as int-ptr! :add-base-handler	STORE_FACE_FLAG or EXTRA_DATA_FLAG
 	make-super-class "RedWindow"		"NSWindow"				as int-ptr! :add-window-handler	STORE_FACE_FLAG
+	make-super-class "RedButtonCell"	"NSButtonCell"			as int-ptr! :add-button-cell-handler 0
+	;-- `button` faces need a cell of their own to place the title vertically, the other
+	;-- NSButton-based faces keep the stock NSButtonCell.
+	make-super-class "RedPushButton"	"NSButton"				as int-ptr! :add-button-handler	STORE_FACE_FLAG
+	objc_msgSend [
+		objc_getClass "RedPushButton"
+		sel_getUid "setCellClass:"
+		objc_getClass "RedButtonCell"
+	]
 	make-super-class "RedButton"		"NSButton"				as int-ptr! :add-button-handler	STORE_FACE_FLAG
 	make-super-class "RedSlider"		"NSSlider"				as int-ptr! :add-slider-handler	STORE_FACE_FLAG
 	make-super-class "RedTextField"		"NSTextField"			as int-ptr! :add-text-field-handler STORE_FACE_FLAG

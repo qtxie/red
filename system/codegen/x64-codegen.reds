@@ -185,16 +185,21 @@ rsir-module!: alias struct! [
 ]
 
 ; Working memory for one module, carved out of a single allocation by
-; `generate`. Everything from instructions down to result-offsets is indexed by
-; module-wide instruction id; the rest are indexed by stack depth, storage slot
-; or import id. `window-scratch` produces a second record of this shape holding
-; one function's view: the per-instruction arrays rebased so that index 1 is
-; that function's first instruction, the shared ones as they stand.
+; `generate`. The function arrays, instruction arrays, switch arrays and shared
+; stack/storage arrays all live here; effect inference temporarily reuses later
+; phase arrays for its graph and worklists. `window-scratch` produces a second
+; record of this shape holding one function's view: the per-instruction arrays
+; rebased so index 1 is that function's first instruction, the rest unchanged.
 codegen-scratch!: alias struct! [
 	instructions        [byte-ptr!]
 	argument-targets    [byte-ptr!]
+	function-sizes      [int-ptr!]
+	function-frames     [int-ptr!]
+	function-outgoing   [int-ptr!]
+	function-effects    [int-ptr!]
 	instruction-effects [int-ptr!]
 	instruction-offsets [int-ptr!]
+	relaxed-offsets     [int-ptr!]
 	instruction-depths  [int-ptr!]
 	catch-depths        [int-ptr!]
 	control-uses        [int-ptr!]
@@ -206,13 +211,16 @@ codegen-scratch!: alias struct! [
 	tag-slots           [int-ptr!]
 	tag-widths          [int-ptr!]
 	result-offsets      [int-ptr!]
-	function-effects    [int-ptr!]
 	stack-types         [int-ptr!]
 	stack-flags         [int-ptr!]
 	stack-kinds         [int-ptr!]
 	stack-tags          [int-ptr!]
 	storage-offsets     [int-ptr!]
 	import-refs         [int-ptr!]
+	switch-effect-links [int-ptr!]
+	switch-effect-users [int-ptr!]
+	effect-queue-tail   [integer!]
+	resume-queue-tail   [integer!]
 ]
 
 ; What survives from one instruction to the next while one function is compiled:
@@ -271,26 +279,6 @@ machine-state!: alias struct! [
 	pending-immediate-value [integer!]
 	pending-immediate-kind  [integer!]
 	cpu-pointer-ref         [integer!]
-]
-
-; The working memory of the effect analysis. Control flow is walked backwards
-; over a use list: for each instruction, the chain of instructions that can
-; transfer into it. A dense switch record owns its own chain link because one
-; switch instruction contributes many edges. Both worklists travel here with
-; their tails, so propagating an effect is a single call.
-effect-graph!: alias struct! [
-	function-starts  [int-ptr!]	; per function: its first module-wide instruction
-	function-effects [int-ptr!]	; per function: NO_RETURN once the walk settles
-	effects          [int-ptr!]	; per instruction: EFFECT_* bits
-	heads            [int-ptr!]	; per instruction: first use, negated for a switch
-	links            [int-ptr!]	; per use: next use of the same instruction
-	targets          [int-ptr!]	; per use: the instruction it transfers into
-	switch-links     [int-ptr!]	; per switch record: next use
-	switch-users     [int-ptr!]	; per switch record: the switch that owns it
-	queue            [int-ptr!]	; EFFECT_RETURNS then EFFECT_LIVE worklist
-	resume-queue     [int-ptr!]	; EFFECT_RESUMES worklist
-	queue-tail       [integer!]
-	resume-tail      [integer!]
 ]
 
 ; One function to compile and the image slot its code lands in. Sizes are
@@ -1885,20 +1873,19 @@ x64-codegen: context [
 
 	; Gives every live call whose result cannot travel in a register a frame slot
 	; above the storage already planned, and returns the bytes now in use.
-	; `instructions`, `instruction-effects` and `offsets` are this function's
-	; windows on the module-wide arrays.
+	; The scratch record is already windowed to this function.
 	plan-call-results: func [
 		module [rsir-module!]
 		fn [rsir-function!]
-		instructions [byte-ptr!]
-		instruction-effects function-effects offsets [int-ptr!]
+		scratch [codegen-scratch!]
 		used [integer!]
 		return: [integer!]
 		/local instruction [rsir-instruction!]
 			callee [rsir-function!] imported [rsir-import!]
 			signature metadata [rsir-type!]
 			table [type-table!]
-			functions imports [byte-ptr!]
+			functions imports instructions [byte-ptr!]
+			instruction-effects function-effects offsets [int-ptr!]
 			function-count import-count
 			index target import-id ref flags size signature-ref [integer!]
 	][
@@ -1907,6 +1894,10 @@ x64-codegen: context [
 		imports:   module/imports
 		function-count: module/function-count
 		import-count:   module/import-count
+		instructions:        scratch/instructions
+		instruction-effects: scratch/instruction-effects
+		function-effects:    scratch/function-effects
+		offsets:             scratch/result-offsets
 		index: 1
 		while [index <= fn/instruction-count][
 			offsets/index: 0
@@ -2247,62 +2238,62 @@ x64-codegen: context [
 	; propagation. EFFECT_RESUMES travels on its own worklist; EFFECT_RETURNS and
 	; EFFECT_LIVE share the main one and are never propagated at the same time.
 	queue-effect: func [
-		graph [effect-graph!]
+		scratch [codegen-scratch!]
 		index bit [integer!]
 		/local effects queue [int-ptr!] position [integer!]
 	][
-		effects: graph/effects
+		effects: scratch/instruction-effects
 		if (effects/index and bit) = 0 [
 			effects/index: effects/index or bit
 			either bit = EFFECT_RESUMES [
-				queue: graph/resume-queue
-				position: graph/resume-tail + 1
-				graph/resume-tail: position
+				queue: scratch/entry-types
+				position: scratch/resume-queue-tail + 1
+				scratch/resume-queue-tail: position
 			][
-				queue: graph/queue
-				position: graph/queue-tail + 1
-				graph/queue-tail: position
+				queue: scratch/instruction-depths
+				position: scratch/effect-queue-tail + 1
+				scratch/effect-queue-tail: position
 			]
 			queue/position: index
 		]
 	]
 
 	record-effect-use: func [
-		graph [effect-graph!]
+		scratch [codegen-scratch!]
 		target user [integer!]
 		/local heads links targets [int-ptr!]
 	][
-		heads:   graph/heads
-		links:   graph/links
-		targets: graph/targets
+		heads:   scratch/instruction-offsets
+		links:   scratch/catch-depths
+		targets: scratch/control-uses
 		links/user: heads/target
 		heads/target: user
 		targets/user: target
 	]
 
 	record-switch-effect-use: func [
-		graph [effect-graph!]
+		scratch [codegen-scratch!]
 		target user slot [integer!]
 		/local heads links users [int-ptr!]
 	][
-		heads: graph/heads
-		links: graph/switch-links
-		users: graph/switch-users
+		heads: scratch/instruction-offsets
+		links: scratch/switch-effect-links
+		users: scratch/switch-effect-users
 		links/slot: heads/target
 		users/slot: user
 		heads/target: 0 - slot
 	]
 
 	update-call-effects: func [
-		graph [effect-graph!]
+		scratch [codegen-scratch!]
 		index instruction-count [integer!]
 		sub-call? [logic!]
 		/local effects targets [int-ptr!]
 			next-index target [integer!]
 			next? target-returns? target-resumes? [logic!]
 	][
-		effects: graph/effects
-		targets: graph/targets
+		effects: scratch/instruction-effects
+		targets: scratch/control-uses
 		next-index: index + 1
 		next?: all [
 			next-index <= instruction-count
@@ -2319,13 +2310,13 @@ x64-codegen: context [
 					(effects/next-index and EFFECT_RETURNS) <> 0
 				]
 			][
-				queue-effect graph index EFFECT_RETURNS
+				queue-effect scratch index EFFECT_RETURNS
 			]
 			if all [
 				target-resumes? next?
 				(effects/next-index and EFFECT_RESUMES) <> 0
 			][
-				queue-effect graph index EFFECT_RESUMES
+				queue-effect scratch index EFFECT_RESUMES
 			]
 		][
 			target-returns?: any [
@@ -2334,10 +2325,10 @@ x64-codegen: context [
 			]
 			if all [target-returns? next?][
 				if (effects/next-index and EFFECT_RETURNS) <> 0 [
-					queue-effect graph index EFFECT_RETURNS
+					queue-effect scratch index EFFECT_RETURNS
 				]
 				if (effects/next-index and EFFECT_RESUMES) <> 0 [
-					queue-effect graph index EFFECT_RESUMES
+					queue-effect scratch index EFFECT_RESUMES
 				]
 			]
 		]
@@ -2348,7 +2339,7 @@ x64-codegen: context [
 	; Functions whose entry never returns are flagged NO_RETURN for the caller.
 	infer-effects: func [
 		module [rsir-module!]
-		graph [effect-graph!]
+		scratch [codegen-scratch!]
 		opt-level [integer!]
 		return: [integer!]
 		/local fn [rsir-function!]
@@ -2370,16 +2361,16 @@ x64-codegen: context [
 		function-count:    module/function-count
 		instruction-count: module/instruction-count
 		switch-count:      module/switch-count
-		function-starts:  graph/function-starts
-		function-effects: graph/function-effects
-		effects:          graph/effects
-		heads:            graph/heads
-		links:            graph/links
-		targets:          graph/targets
-		switch-links:     graph/switch-links
-		switch-users:     graph/switch-users
-		queue:            graph/queue
-		resume-queue:     graph/resume-queue
+		function-starts:  scratch/function-sizes
+		function-effects: scratch/function-effects
+		effects:          scratch/instruction-effects
+		heads:            scratch/instruction-offsets
+		links:            scratch/catch-depths
+		targets:          scratch/control-uses
+		switch-links:     scratch/switch-effect-links
+		switch-users:     scratch/switch-effect-users
+		queue:            scratch/instruction-depths
+		resume-queue:     scratch/entry-types
 
 		index: 1
 		while [index <= instruction-count][
@@ -2406,8 +2397,8 @@ x64-codegen: context [
 		]
 		if function-base <> (instruction-count + 1) [return INVALID_IR]
 
-		graph/queue-tail: 0
-		graph/resume-tail: 0
+		scratch/effect-queue-tail: 0
+		scratch/resume-queue-tail: 0
 		id: 1
 		while [id <= function-count][
 			fn: as rsir-function! (functions + ((id - 1) * RSIR_FUNCTION_SIZE))
@@ -2429,10 +2420,10 @@ x64-codegen: context [
 				]][return INVALID_IR]
 				case [
 					instruction/op = OP_RETURN [
-						queue-effect graph global-index EFFECT_RETURNS
+						queue-effect scratch global-index EFFECT_RETURNS
 					]
 					instruction/op = OP_SUB_RETURN [
-						queue-effect graph global-index EFFECT_RESUMES
+						queue-effect scratch global-index EFFECT_RESUMES
 					]
 					any [
 						instruction/op = OP_JUMP
@@ -2442,7 +2433,7 @@ x64-codegen: context [
 						target: instruction/a
 						if any [target <= 0 target > fn/instruction-count][return INVALID_IR]
 						global-target: function-base + target - 1
-						record-effect-use graph global-target global-index
+						record-effect-use scratch global-target global-index
 					]
 					instruction/op = OP_BINARY [
 						if instruction/b < 0 [return INVALID_IR]
@@ -2460,7 +2451,7 @@ x64-codegen: context [
 								return INVALID_IR
 							]
 							global-target: function-base + target - 1
-							record-effect-use graph global-target global-index
+							record-effect-use scratch global-target global-index
 						]
 					]
 					instruction/op = OP_SWITCH [
@@ -2471,7 +2462,7 @@ x64-codegen: context [
 							instruction/a > (switch-count - instruction/b)
 						][return INVALID_IR]
 						global-target: function-base + instruction/c - 1
-						record-effect-use graph global-target global-index
+						record-effect-use scratch global-target global-index
 						case-index: 0
 						while [case-index < instruction/b][
 							switch-id: instruction/a + case-index + 1
@@ -2484,7 +2475,7 @@ x64-codegen: context [
 								return INVALID_IR
 							]
 							global-target: function-base + target - 1
-							record-switch-effect-use graph global-target global-index switch-id
+							record-switch-effect-use scratch global-target global-index switch-id
 							case-index: case-index + 1
 						]
 					]
@@ -2494,7 +2485,7 @@ x64-codegen: context [
 							unless catch-caller? [
 								target: instruction/a
 								global-target: function-starts/target
-								record-effect-use graph global-target global-index
+								record-effect-use scratch global-target global-index
 							]
 						]
 					]
@@ -2502,7 +2493,7 @@ x64-codegen: context [
 						target: instruction/a
 						if any [target <= 0 target > fn/instruction-count][return INVALID_IR]
 						global-target: function-base + target - 1
-						record-effect-use graph global-target global-index
+						record-effect-use scratch global-target global-index
 					]
 					true [0]
 				]
@@ -2558,10 +2549,10 @@ x64-codegen: context [
 		queue-head: 1
 		resume-head: 1
 		while [any [
-			queue-head <= graph/queue-tail
-			resume-head <= graph/resume-tail
+			queue-head <= scratch/effect-queue-tail
+			resume-head <= scratch/resume-queue-tail
 		]][
-			either queue-head <= graph/queue-tail [
+			either queue-head <= scratch/effect-queue-tail [
 				index: queue/queue-head
 				queue-head: queue-head + 1
 				effect-bit: EFFECT_RETURNS
@@ -2576,14 +2567,14 @@ x64-codegen: context [
 					+ ((user - 1) * RSIR_INSTRUCTION_SIZE))
 				case [
 					any [instruction/op = OP_CALL instruction/op = OP_SUB_CALL][
-						update-call-effects graph user instruction-count
+						update-call-effects scratch user instruction-count
 							(instruction/op = OP_SUB_CALL)
 					]
 					instruction/op = OP_BRANCH [
 						constant?: (effects/user and EFFECT_CONSTANT_BRANCH) <> 0
 						taken?: (effects/user and EFFECT_BRANCH_TAKEN) <> 0
 						unless all [constant? taken?][
-							queue-effect graph user effect-bit
+							queue-effect scratch user effect-bit
 						]
 					]
 					any [
@@ -2594,7 +2585,7 @@ x64-codegen: context [
 						instruction/op = OP_RETURN
 						instruction/op = OP_SUB_RETURN
 					][0]
-					true [queue-effect graph user effect-bit]
+					true [queue-effect scratch user effect-bit]
 				]
 			]
 			edge: heads/index
@@ -2620,10 +2611,10 @@ x64-codegen: context [
 						instruction/op = OP_CALL
 						instruction/op = OP_SUB_CALL
 					][
-						update-call-effects graph user instruction-count
+						update-call-effects scratch user instruction-count
 							(instruction/op = OP_SUB_CALL)
 					][
-						queue-effect graph user effect-bit
+						queue-effect scratch user effect-bit
 					]
 				]
 			]
@@ -2632,19 +2623,19 @@ x64-codegen: context [
 		; Switch links are no longer needed after the fixed point. Reuse them for
 		; the exact global case targets consumed by the forward reachability walk.
 		queue-head: 1
-		graph/queue-tail: 0
+		scratch/effect-queue-tail: 0
 		id: 1
 		while [id <= function-count][
 			fn: as rsir-function! (functions + ((id - 1) * RSIR_FUNCTION_SIZE))
 			function-base: function-starts/id
-			queue-effect graph function-base EFFECT_LIVE
+			queue-effect scratch function-base EFFECT_LIVE
 			index: 1
 			while [index <= fn/instruction-count][
 				global-index: function-base + index - 1
 				instruction: as rsir-instruction! (instructions
 					+ ((global-index - 1) * RSIR_INSTRUCTION_SIZE))
 				if instruction/op = OP_ENTRY [
-					queue-effect graph global-index EFFECT_LIVE
+					queue-effect scratch global-index EFFECT_LIVE
 				]
 				if instruction/op = OP_SWITCH [
 					case-index: 0
@@ -2661,7 +2652,7 @@ x64-codegen: context [
 			id: id + 1
 		]
 
-		while [queue-head <= graph/queue-tail][
+		while [queue-head <= scratch/effect-queue-tail][
 			index: queue/queue-head
 			queue-head: queue-head + 1
 			instruction: as rsir-instruction! (instructions
@@ -2680,41 +2671,41 @@ x64-codegen: context [
 					instruction/op = OP_SUB_RETURN
 				][0]
 				instruction/op = OP_JUMP [
-					queue-effect graph targets/index EFFECT_LIVE
+					queue-effect scratch targets/index EFFECT_LIVE
 				]
 				instruction/op = OP_BRANCH [
 					constant?: (effects/index and EFFECT_CONSTANT_BRANCH) <> 0
 					taken?: (effects/index and EFFECT_BRANCH_TAKEN) <> 0
 					either constant? [
 						either taken? [
-							queue-effect graph targets/index EFFECT_LIVE
+							queue-effect scratch targets/index EFFECT_LIVE
 						][
 							if next-index > 0 [
-								queue-effect graph next-index EFFECT_LIVE
+								queue-effect scratch next-index EFFECT_LIVE
 							]
 						]
 					][
-						queue-effect graph targets/index EFFECT_LIVE
+						queue-effect scratch targets/index EFFECT_LIVE
 						if next-index > 0 [
-							queue-effect graph next-index EFFECT_LIVE
+							queue-effect scratch next-index EFFECT_LIVE
 						]
 					]
 				]
 				instruction/op = OP_SWITCH [
-					queue-effect graph targets/index EFFECT_LIVE
+					queue-effect scratch targets/index EFFECT_LIVE
 					case-index: 0
 					while [case-index < instruction/b][
 						switch-id: instruction/a + case-index + 1
-						queue-effect graph switch-links/switch-id EFFECT_LIVE
+						queue-effect scratch switch-links/switch-id EFFECT_LIVE
 						case-index: case-index + 1
 					]
 				]
 				any [instruction/op = OP_BINARY instruction/op = OP_CATCH][
 					if targets/index > 0 [
-						queue-effect graph targets/index EFFECT_LIVE
+						queue-effect scratch targets/index EFFECT_LIVE
 					]
 					if next-index > 0 [
-						queue-effect graph next-index EFFECT_LIVE
+						queue-effect scratch next-index EFFECT_LIVE
 					]
 				]
 				instruction/op = OP_CALL [
@@ -2724,17 +2715,17 @@ x64-codegen: context [
 							target = 0
 							(effects/target and EFFECT_RETURNS) <> 0
 						]
-					][queue-effect graph next-index EFFECT_LIVE]
+					][queue-effect scratch next-index EFFECT_LIVE]
 				]
 				instruction/op = OP_SUB_CALL [
 					if all [
 						next-index > 0
 						(effects/target and EFFECT_RESUMES) <> 0
-					][queue-effect graph next-index EFFECT_LIVE]
+					][queue-effect scratch next-index EFFECT_LIVE]
 				]
 				true [
 					if next-index > 0 [
-						queue-effect graph next-index EFFECT_LIVE
+						queue-effect scratch next-index EFFECT_LIVE
 					]
 				]
 			]
@@ -3515,8 +3506,13 @@ x64-codegen: context [
 		base: first-instruction - 1
 		view/instructions:        work/instructions + (base * RSIR_INSTRUCTION_SIZE)
 		view/argument-targets:    work/argument-targets + base
+		view/function-sizes:      work/function-sizes
+		view/function-frames:     work/function-frames
+		view/function-outgoing:   work/function-outgoing
+		view/function-effects:    work/function-effects
 		view/instruction-effects: work/instruction-effects + base
 		view/instruction-offsets: work/instruction-offsets + (first-offset - 1)
+		view/relaxed-offsets:     work/relaxed-offsets + (first-offset - 1)
 		view/instruction-depths:  work/instruction-depths + base
 		view/catch-depths:        work/catch-depths + base
 		view/control-uses:        work/control-uses + base
@@ -3528,13 +3524,16 @@ x64-codegen: context [
 		view/tag-slots:           work/tag-slots + base
 		view/tag-widths:          work/tag-widths + base
 		view/result-offsets:      work/result-offsets + base
-		view/function-effects:    work/function-effects
 		view/stack-types:         work/stack-types
 		view/stack-flags:         work/stack-flags
 		view/stack-kinds:         work/stack-kinds
 		view/stack-tags:          work/stack-tags
 		view/storage-offsets:     work/storage-offsets
 		view/import-refs:         work/import-refs
+		view/switch-effect-links: work/switch-effect-links
+		view/switch-effect-users: work/switch-effect-users
+		view/effect-queue-tail:   work/effect-queue-tail
+		view/resume-queue-tail:   work/resume-queue-tail
 	]
 
 	; Compiles one function of the module and returns its size in bytes, or a
@@ -3965,8 +3964,7 @@ x64-codegen: context [
 		]
 		state/storage-bytes: plan-storage module fn storage-offsets
 		if state/storage-bytes < 0 [return state/storage-bytes]
-		state/storage-bytes: plan-call-results module fn instructions
-			instruction-effects function-effects result-offsets state/storage-bytes
+		state/storage-bytes: plan-call-results module fn view state/storage-bytes
 		if state/storage-bytes < 0 [return state/storage-bytes]
 		state/native-stack-slot: 0
 		if state/unstable-stack? [
@@ -9397,7 +9395,6 @@ x64-codegen: context [
 			signature-cache [signature-pairs!]
 			table [type-table!]
 			ir-module [rsir-module!]
-			graph [effect-graph!]
 			work [codegen-scratch!]
 			task [codegen-task!]
 			ir-type array-type [rsir-type!]
@@ -9449,7 +9446,6 @@ x64-codegen: context [
 		signature-cache: declare signature-pairs!
 		table: declare type-table!
 		ir-module: declare rsir-module!
-		graph: declare effect-graph!
 		work: declare codegen-scratch!
 		task: declare codegen-task!
 		signature-cache/memory: null
@@ -10201,9 +10197,13 @@ x64-codegen: context [
 		ir-module/strings-size: strings-size
 		work/instructions: instruction-data
 		work/argument-targets: argument-targets
+		work/function-sizes: function-sizes
+		work/function-frames: function-frames
+		work/function-outgoing: function-outgoing
 		work/function-effects: function-effects
 		work/instruction-effects: instruction-effects
 		work/instruction-offsets: instruction-offsets
+		work/relaxed-offsets: relaxed-offsets
 		work/instruction-depths: instruction-depths
 		work/catch-depths: catch-depths
 		work/control-uses: control-uses
@@ -10221,6 +10221,8 @@ x64-codegen: context [
 		work/stack-tags: stack-tags
 		work/storage-offsets: storage-offsets
 		work/import-refs: import-refs
+		work/switch-effect-links: switch-effect-links
+		work/switch-effect-users: switch-effect-users
 		task/image-data: output + IMAGE_HEADER_SIZE
 		id: 1
 		while [id <= header/import-count][import-refs/id: 0 id: id + 1]
@@ -10234,19 +10236,9 @@ x64-codegen: context [
 			argument-targets/id: as byte! 0
 			id: id + 1
 		]
-		; The effect analysis needs eight scratch arrays only for the duration of
-		; its walk; it borrows the ones whose real owners run later.
-		graph/function-starts:  function-sizes
-		graph/function-effects: function-effects
-		graph/effects:          instruction-effects
-		graph/heads:            instruction-offsets
-		graph/links:            catch-depths
-		graph/targets:          control-uses
-		graph/switch-links:     switch-effect-links
-		graph/switch-users:     switch-effect-users
-		graph/queue:            instruction-depths
-		graph/resume-queue:     entry-types
-		status: infer-effects ir-module graph opt-level
+		; Effect inference borrows later-phase arrays from this record for its
+		; use lists and worklists; their permanent owners overwrite them later.
+		status: infer-effects ir-module work opt-level
 		if status <> 0 [return release scratch signature-cache status]
 		id: 1
 		while [id <= header/type-count][

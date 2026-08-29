@@ -1272,6 +1272,24 @@ x64-codegen: context [
 		address-kind? logical-kind ref types count
 	]
 
+	; A pointer offset literal must survive its stride multiplication inside the
+	; sign-extended imm32 form. Both the literal pairing decision and the
+	; immediate fold read this one rule.
+	scaled-pointer-literal?: func [
+		value ref [integer!]
+		types members [byte-ptr!]
+		count [integer!]
+		layouts member-offsets [int-ptr!]
+		return: [logic!]
+		/local stride [integer!]
+	][
+		stride: pointer-stride ref types members count layouts member-offsets
+		if stride <= 0 [return false]
+		either value < 0 [
+			value >= (80000000h / stride)
+		][value <= (7FFFFFFFh / stride)]
+	]
+
 	pointer-stride: func [
 		ref [integer!]
 		types members [byte-ptr!]
@@ -1443,7 +1461,7 @@ x64-codegen: context [
 		if all [operation-width = 8 source-width < 8 signed = 1][
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
-			encoded: x64-encoder/sign-extend-register at (capacity - written) target
+			encoded: x64-encoder/sign-extend-register at (capacity - written) target target
 			if encoded < 0 [return encoded]
 			written: written + encoded
 		]
@@ -1458,7 +1476,6 @@ x64-codegen: context [
 		layouts member-offsets [int-ptr!]
 		return: [integer!]
 		/local source-width signed transfer-width encoded written [integer!]
-			at [byte-ptr!]
 	][
 		source-width: value-width ref flags types members type-count
 			layouts member-offsets
@@ -1470,18 +1487,16 @@ x64-codegen: context [
 		transfer-width: either all [
 			operation-width = 8 source-width = 8
 		][8][4]
+		; MOVSXD already reads the narrow source, so the transfer and the
+		; extension are one instruction.
+		if all [operation-width = 8 source-width < 8 signed = 1][
+			return x64-encoder/sign-extend-register code capacity target source
+		]
 		written: 0
 		if target <> source [
 			encoded: x64-encoder/move-register code capacity target source transfer-width
 			if encoded < 0 [return encoded]
 			written: encoded
-		]
-		if all [operation-width = 8 source-width < 8 signed = 1][
-			at: as byte-ptr! 0
-			if not null? code [at: code + written]
-			encoded: x64-encoder/sign-extend-register at (capacity - written) target
-			if encoded < 0 [return encoded]
-			written: written + encoded
 		]
 		written
 	]
@@ -2962,7 +2977,7 @@ x64-codegen: context [
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: x64-encoder/sign-extend-register at (capacity - written)
-			x64-encoder/RAX
+			x64-encoder/RAX x64-encoder/RAX
 		if encoded < 0 [return OUTPUT_FULL]
 		written: written + encoded
 		at: as byte-ptr! 0
@@ -3021,7 +3036,7 @@ x64-codegen: context [
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: x64-encoder/sign-extend-register at (capacity - written)
-			x64-encoder/RAX
+			x64-encoder/RAX x64-encoder/RAX
 		if encoded < 0 [return OUTPUT_FULL]
 		written: written + encoded
 		at: as byte-ptr! 0
@@ -3233,7 +3248,7 @@ x64-codegen: context [
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: x64-encoder/sign-extend-register at (capacity - written)
-			x64-encoder/RAX
+			x64-encoder/RAX x64-encoder/RAX
 		if encoded < 0 [return OUTPUT_FULL]
 		written: written + encoded
 		if clear? [
@@ -3319,7 +3334,7 @@ x64-codegen: context [
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: x64-encoder/sign-extend-register at (capacity - written)
-			x64-encoder/RAX
+			x64-encoder/RAX x64-encoder/RAX
 		if encoded < 0 [return OUTPUT_FULL]
 		written: written + encoded
 		at: as byte-ptr! 0
@@ -4165,11 +4180,33 @@ x64-codegen: context [
 						register-pair-operation? next-instruction/a true
 					]
 				][
-					all [
-						instruction/a = stack-types/depth
-						integer-type? stack-types/depth types type-count
-						integer-type? instruction/a types type-count
-						register-pair-operation? next-instruction/a false
+					any [
+						all [
+							instruction/a = stack-types/depth
+							integer-type? stack-types/depth types type-count
+							integer-type? instruction/a types type-count
+							register-pair-operation? next-instruction/a false
+						]
+						; A pointer base keeps its register across the offset
+						; literal, which the following ADD or SUBTRACT then folds
+						; into its scaled immediate operand.
+						all [
+							address-type? stack-types/depth types type-count
+							integer-type? instruction/a types type-count
+							any [
+								next-instruction/a = ADD_OPERATION
+								next-instruction/a = SUBTRACT_OPERATION
+							]
+							next-instruction/b = 0
+							(value-width instruction/a 0 types members type-count
+								layouts member-offsets) = 4
+							any [
+								all [instruction/c = 0 instruction/b >= 0]
+								all [instruction/c = -1 instruction/b < 0]
+							]
+							scaled-pointer-literal? instruction/b stack-types/depth
+								types members type-count layouts member-offsets
+						]
 					]
 				]
 			]
@@ -4525,16 +4562,9 @@ x64-codegen: context [
 						]
 						address-type? stack-types/target-slot types type-count
 					][
-						stride: pointer-stride stack-types/target-slot types members
-							type-count layouts member-offsets
-						scaled-immediate?: all [
-							stride > 0
-							either instruction/b < 0 [
-								instruction/b >= (80000000h / stride)
-							][
-								instruction/b <= (7FFFFFFFh / stride)
-							]
-						]
+						scaled-immediate?: scaled-pointer-literal? instruction/b
+							stack-types/target-slot types members type-count
+							layouts member-offsets
 					]
 					imm-pair?: all [
 						linear?
@@ -9336,7 +9366,7 @@ x64-codegen: context [
 								signed-type? ref types type-count
 							][
 								x64-encoder/sign-extend-register at (capacity - written)
-									x64-encoder/RAX
+									x64-encoder/RAX x64-encoder/RAX
 							][0]
 						][
 							either floating? [
@@ -9524,7 +9554,7 @@ x64-codegen: context [
 										signed-type? ref types type-count
 									][
 										x64-encoder/sign-extend-register at
-											(capacity - written) x64-encoder/RAX
+											(capacity - written) x64-encoder/RAX x64-encoder/RAX
 									][0]
 								][
 									either floating? [

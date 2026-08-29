@@ -170,46 +170,20 @@ x64-encoder: context [
 		10
 	]
 
-	increment-register: func [
-		code [byte-ptr!]
-		capacity target [integer!]
-		return: [integer!]
-		/local size [integer!] at [byte-ptr!]
-	][
-		unless all [target >= 0 target <= 15][return -1]
-		size: either target >= 8 [3][2]
-		unless room? code capacity size [return -1]
-		if null? code [return size]
-		at: code
-		if target >= 8 [at/1: as byte! 41h at: at + 1]
-		at/1: as byte! FFh
-		at/2: as byte! modrm 3 0 target
-		size
-	]
-
-	; Use flag-writing forms only when the caller has proved that prior flags
-	; are dead. This keeps the ordinary MOV primitive safe for flag-preserving
-	; instruction sequences.
+	; Zero is the one value whose short form also costs less to execute: the
+	; register write is recognized as a zeroing idiom. Every other value keeps
+	; the single ordinary immediate move. Use this only where the caller has
+	; proved that prior flags are dead.
 	move-immediate-compact: func [
 		code [byte-ptr!]
 		capacity target width low high [integer!]
 		return: [integer!]
-		/local at [byte-ptr!] encoded written [integer!]
 	][
 		unless all [target >= 0 target <= 15 any [width = 4 width = 8]][return -1]
-		unless all [high = 0 any [low = 0 low = 1]][
+		unless all [high = 0 low = 0][
 			return move-immediate code capacity target width low high
 		]
-		written: clear-register code capacity target
-		if written < 0 [return written]
-		if low = 1 [
-			at: as byte-ptr! 0
-			if not null? code [at: code + written]
-			encoded: increment-register at (capacity - written) target
-			if encoded < 0 [return encoded]
-			written: written + encoded
-		]
-		written
+		clear-register code capacity target
 	]
 
 	move-register: func [
@@ -646,14 +620,17 @@ x64-encoder: context [
 
 	sign-extend-register: func [
 		code [byte-ptr!]
-		capacity target [integer!]
+		capacity target source [integer!]
 		return: [integer!]
 	][
-		unless all [target >= 0 target <= 15 room? code capacity 3][return -1]
+		unless all [
+			target >= 0 target <= 15 source >= 0 source <= 15
+			room? code capacity 3
+		][return -1]
 		if not null? code [
-			code/1: as byte! rex true target target
+			code/1: as byte! rex true target source
 			code/2: as byte! 63h
-			code/3: as byte! modrm 3 target target
+			code/3: as byte! modrm 3 target source
 		]
 		3
 	]

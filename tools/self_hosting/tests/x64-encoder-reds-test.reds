@@ -68,7 +68,7 @@ if any [size <> 3 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 size: x64-encoder/move-immediate-compact code 128 x64-encoder/R9 8 1 0
-expected: #{4531C941FFC1}
+expected: #{41B901000000}
 if any [size <> 6 (compare-memory code expected size) <> 0][
 	print ["one materialization failed, size=" size lf]
 	failures: failures + 1
@@ -147,7 +147,7 @@ size: x64-encoder/divide-register (code + offset) (128 - offset) 4 1
 if size <> 3 [failures: failures + 1]
 offset: offset + size
 size: x64-encoder/sign-extend-register (code + offset) (128 - offset)
-	x64-encoder/RCX
+	x64-encoder/RCX x64-encoder/RCX
 if size <> 3 [failures: failures + 1]
 offset: offset + size
 operations: #{

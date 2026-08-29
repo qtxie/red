@@ -1177,6 +1177,25 @@ Already retained:
   existing toolchain. The complete Windows x64 Red/System runner reports 10,582
   tests and 12,647/12,647 assertions with no compile failures.
 
+- three emission rules now target execution cost rather than footprint. A
+  pointer base keeps its register across an offset literal, so the following ADD
+  or SUBTRACT folds the scaled offset into its immediate operand instead of
+  spilling and reloading the base through its stack slot; one shared predicate
+  decides whether a scaled offset still fits the sign-extended imm32 form for
+  both the pairing decision and the fold. A widening register transfer is one
+  MOVSXD from its source instead of a move followed by an extension of the
+  destination. Materializing one no longer clears a register and increments it:
+  that traded an extra instruction and a flag write for a single byte, so only
+  zero keeps its short form, which costs no execution slot at all. libRedRT
+  `.text` falls from `182448h` to `17BD1Dh`, 11.2% above the same runtime
+  compiled by the existing Red toolchain. The fixed Red workload runs in 0.924
+  seconds against 0.983 for both the previous generation and the existing
+  toolchain, and a Red/System pointer, member and call microbenchmark runs in
+  0.876 seconds against 0.939. Four focused size locks move up by the one byte
+  the single-instruction one materialization costs. The complete Windows x64
+  Red/System runner reports 10,582 tests and 12,647/12,647 assertions with no
+  compile failures.
+
 Still incomplete and therefore not an H0:
 
 - the specified float32 remainder operation, complete float aggregate/pointer

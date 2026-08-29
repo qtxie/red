@@ -1178,7 +1178,7 @@ if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	if any [
 		fn/frame-size <> 48
-		fn/code-size <> 31
+		fn/code-size <> 32
 		not execute-first? output 9
 	][
 		print ["O0 integer operator location code size: " fn/code-size lf]
@@ -1393,7 +1393,7 @@ if any [size <= 0 not execute-first? output -2][
 ]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 27 [
+	if fn/code-size <> 28 [
 		print ["O0 unary operator location code size: " fn/code-size lf]
 		failures: failures + 1
 	]
@@ -3189,7 +3189,7 @@ if size <= 0 [failures: failures + 1]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
 	branch-code-size: fn/code-size
-	if branch-code-size <> 41 [
+	if branch-code-size <> 42 [
 		print ["O0 direct BRANCH code size: " branch-code-size lf]
 		failures: failures + 1
 	]
@@ -4685,7 +4685,7 @@ if size <= 0 [
 ]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/code-size <> 51 [
+	if fn/code-size <> 52 [
 		print ["O0 one-value packed code size: " fn/code-size lf]
 		failures: failures + 1
 	]

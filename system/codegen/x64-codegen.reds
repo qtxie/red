@@ -154,6 +154,77 @@ signature-pairs!: alias struct! [
 	epoch         [integer!]
 ]
 
+; The RSIR tables every function in the module is read from.
+rsir-module!: alias struct! [
+	types          [byte-ptr!]
+	members        [byte-ptr!]
+	parameters     [byte-ptr!]
+	functions      [byte-ptr!]
+	imports        [byte-ptr!]
+	globals        [byte-ptr!]
+	switches       [byte-ptr!]
+	instructions   [byte-ptr!]
+	strings        [byte-ptr!]
+	type-count     [integer!]
+	function-count [integer!]
+	import-count   [integer!]
+	global-count   [integer!]
+	switch-count   [integer!]
+	strings-size   [integer!]
+]
+
+; Working memory for one module, carved out of a single allocation by
+; `generate`. The arrays below the signature cache are indexed by module-wide
+; instruction id; a function compiles against its own window on them.
+codegen-scratch!: alias struct! [
+	signatures          [signature-pairs!]
+	argument-targets    [byte-ptr!]
+	function-effects    [int-ptr!]
+	instruction-effects [int-ptr!]
+	instruction-offsets [int-ptr!]
+	instruction-depths  [int-ptr!]
+	catch-depths        [int-ptr!]
+	control-uses        [int-ptr!]
+	entry-types         [int-ptr!]
+	entry-flags         [int-ptr!]
+	entry-kinds         [int-ptr!]
+	entry-tags          [int-ptr!]
+	tag-next            [int-ptr!]
+	tag-slots           [int-ptr!]
+	tag-widths          [int-ptr!]
+	result-offsets      [int-ptr!]
+	stack-types         [int-ptr!]
+	stack-flags         [int-ptr!]
+	stack-kinds         [int-ptr!]
+	stack-tags          [int-ptr!]
+	storage-offsets     [int-ptr!]
+	layouts             [int-ptr!]
+	member-offsets      [int-ptr!]
+	import-refs         [int-ptr!]
+]
+
+; One function to compile and the image slot its code lands in. Sizes are
+; measured first with `code` and `references` null, then the same task is
+; replayed with both set; the four trailing fields carry results of the
+; measuring pass back to the caller and into the emitting pass.
+codegen-task!: alias struct! [
+	fn                     [rsir-function!]
+	first-instruction      [integer!]
+	first-offset           [integer!]
+	image-data             [byte-ptr!]
+	code                   [byte-ptr!]
+	references             [int-ptr!]
+	function-offset        [integer!]
+	function-code-size     [integer!]
+	capacity               [integer!]
+	exit-reference-id      [integer!]
+	entry?                 [logic!]
+	frame-size             [integer!]
+	outgoing-size          [integer!]
+	global-reference-count [integer!]
+	literal-size           [integer!]
+]
+
 x64-codegen: context [
 	RSIR_HEADER_SIZE:      36
 	RSIR_TYPE_SIZE:        20
@@ -3480,24 +3551,18 @@ x64-codegen: context [
 		][available][available and 12]
 	]
 
+	; Compiles one function of the module and returns its size in bytes, or a
+	; negative error code. Called twice per function: once with task/code null
+	; to measure sizes and record the frame and outgoing figures in the task,
+	; then again with an output slot to emit the bytes.
 	compile-function: func [
-		fn [rsir-function!]
-		signature-cache [signature-pairs!]
-		instructions argument-targets [byte-ptr!]
-		function-effects instruction-effects [int-ptr!]
-		stack-types stack-flags stack-kinds stack-tags storage-offsets result-offsets
-			layouts member-offsets
-			instruction-offsets instruction-depths catch-depths control-uses
-			entry-types entry-flags entry-kinds
-			entry-tags tag-next tag-slots tag-widths import-refs references [int-ptr!]
-		parameters functions imports globals types members switches image-data strings code
-			[byte-ptr!]
-		type-count function-count import-count global-count switch-count strings-size
-			function-offset function-code-size capacity exit-reference-id [integer!]
-		entry? [logic!]
-		global-reference-count literal-size frame-size outgoing-size [int-ptr!]
+		module  [rsir-module!]
+		work    [codegen-scratch!]
+		task    [codegen-task!]
 		return: [integer!]
-		/local instruction [rsir-instruction!]
+		/local fn [rsir-function!]
+			signature-cache [signature-pairs!]
+			instruction [rsir-instruction!]
 			next-instruction [rsir-instruction!]
 			following-instruction argument-instruction argument-address [rsir-instruction!]
 			overflow-scope [rsir-instruction!]
@@ -3514,6 +3579,17 @@ x64-codegen: context [
 			target-function [codegen-function!]
 			at [byte-ptr!]
 			call-parameters [byte-ptr!]
+			instructions argument-targets image-data strings code
+				parameters functions imports globals types members switches [byte-ptr!]
+			function-effects instruction-effects instruction-offsets instruction-depths
+				catch-depths control-uses entry-types entry-flags entry-kinds entry-tags
+				tag-next tag-slots tag-widths result-offsets
+				stack-types stack-flags stack-kinds stack-tags storage-offsets
+				layouts member-offsets import-refs references [int-ptr!]
+			instruction-base type-count function-count import-count global-count
+				switch-count strings-size function-offset function-code-size capacity
+				exit-reference-id [integer!]
+			entry? [logic!]
 			index depth max-depth kind ref flags width signed source-slot target-slot
 			storage-count storage-slots storage-base segment-slots storage-bytes
 			storage-size storage-align
@@ -3558,6 +3634,63 @@ x64-codegen: context [
 			resident? resident-clean? resident-hit?
 			sub-returns? [logic!]
 	][
+		; Open the records into locals once; everything below works on plain
+		; pointers and counts.
+		fn: task/fn
+		signature-cache: work/signatures
+		types:      module/types
+		members:    module/members
+		parameters: module/parameters
+		functions:  module/functions
+		imports:    module/imports
+		globals:    module/globals
+		switches:   module/switches
+		strings:    module/strings
+		type-count:     module/type-count
+		function-count: module/function-count
+		import-count:   module/import-count
+		global-count:   module/global-count
+		switch-count:   module/switch-count
+		strings-size:   module/strings-size
+		image-data:         task/image-data
+		code:               task/code
+		references:         task/references
+		function-offset:    task/function-offset
+		function-code-size: task/function-code-size
+		capacity:           task/capacity
+		exit-reference-id:  task/exit-reference-id
+		entry?:             task/entry?
+		; Module-wide arrays indexed by slot, type, member or import id.
+		function-effects: work/function-effects
+		stack-types:      work/stack-types
+		stack-flags:      work/stack-flags
+		stack-kinds:      work/stack-kinds
+		stack-tags:       work/stack-tags
+		storage-offsets:  work/storage-offsets
+		layouts:          work/layouts
+		member-offsets:   work/member-offsets
+		import-refs:      work/import-refs
+		; The per-instruction arrays span the whole module; open this function's
+		; window on them so the body can index everything from 1.
+		instruction-base: task/first-instruction - 1
+		instructions:        module/instructions
+			+ (instruction-base * RSIR_INSTRUCTION_SIZE)
+		argument-targets:    work/argument-targets + instruction-base
+		instruction-effects: work/instruction-effects + instruction-base
+		instruction-depths:  work/instruction-depths + instruction-base
+		catch-depths:        work/catch-depths + instruction-base
+		control-uses:        work/control-uses + instruction-base
+		entry-types:         work/entry-types + instruction-base
+		entry-flags:         work/entry-flags + instruction-base
+		entry-kinds:         work/entry-kinds + instruction-base
+		entry-tags:          work/entry-tags + instruction-base
+		tag-next:            work/tag-next + instruction-base
+		tag-slots:           work/tag-slots + instruction-base
+		tag-widths:          work/tag-widths + instruction-base
+		result-offsets:      work/result-offsets + instruction-base
+		; One extra offset per function records where its epilogue ends.
+		instruction-offsets: work/instruction-offsets + (task/first-offset - 1)
+
 		measure?: null? code
 		if measure? [
 			index: 1
@@ -3568,9 +3701,9 @@ x64-codegen: context [
 			]
 		]
 		sub-frame: either measure? [8][
-			if outgoing-size/1 < 0 [return INVALID_IR]
-			if outgoing-size/1 > (2147483647 - 23)[return OUTPUT_FULL]
-			(align outgoing-size/1 16) + 8
+			if task/outgoing-size < 0 [return INVALID_IR]
+			if task/outgoing-size > (2147483647 - 23)[return OUTPUT_FULL]
+			(align task/outgoing-size 16) + 8
 		]
 		tag-capacity: 0
 		catch-level: 0
@@ -3957,7 +4090,7 @@ x64-codegen: context [
 
 		allocation-size: 0
 		if not measure? [
-			frame-extra: frame-size/1 - x64-encoder/BASE_FRAME_SIZE
+			frame-extra: task/frame-size - x64-encoder/BASE_FRAME_SIZE
 			if frame-extra < 0 [return INVALID_IR]
 			at: code + written
 			encoded: x64-encoder/allocate-frame at (capacity - written) frame-extra
@@ -4756,8 +4889,8 @@ x64-codegen: context [
 					][return INVALID_IR]
 					at: strings + literal-end - 1
 					if at/1 <> as byte! 0 [return INVALID_IR]
-					if all [measure? literal-end > literal-size/1][
-						literal-size/1: literal-end
+					if all [measure? literal-end > task/literal-size][
+						task/literal-size: literal-end
 					]
 					depth: depth + 1
 					if depth > max-depth [max-depth: depth]
@@ -4951,10 +5084,10 @@ x64-codegen: context [
 						either measure? [
 							if any [
 								image-global/reference-count = 2147483647
-								global-reference-count/1 = 2147483647
+								task/global-reference-count = 2147483647
 							][return OUTPUT_FULL]
 							image-global/reference-count: image-global/reference-count + 1
-							global-reference-count/1: global-reference-count/1 + 1
+							task/global-reference-count: task/global-reference-count + 1
 						][
 							reference-id: image-global/first-reference
 								+ image-global/reference-count
@@ -6260,7 +6393,7 @@ x64-codegen: context [
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 						value-size: 0
-						if not measure? [value-size: frame-size/1]
+						if not measure? [value-size: task/frame-size]
 						at: as byte-ptr! 0
 						if not measure? [at: code + written]
 						; The frame size is known only while emitting, so this
@@ -9594,10 +9727,10 @@ x64-codegen: context [
 		]
 		if tag-count <> tag-capacity [return INVALID_IR]
 		if fallthrough? [return INVALID_IR]
-		if all [not measure? max-outgoing <> outgoing-size/1][return INVALID_IR]
+		if all [not measure? max-outgoing <> task/outgoing-size][return INVALID_IR]
 
 		if measure? [
-			outgoing-size/1: max-outgoing
+			task/outgoing-size: max-outgoing
 			if storage-slots > (2147483647 / 8)[return OUTPUT_FULL]
 			slot-bytes: storage-slots * 8
 			if max-depth > ((2147483647 - slot-bytes) / 8)[return OUTPUT_FULL]
@@ -9608,7 +9741,7 @@ x64-codegen: context [
 				frame-extra < 0
 				frame-extra > (2147483647 - x64-encoder/BASE_FRAME_SIZE)
 			][return OUTPUT_FULL]
-			frame-size/1: x64-encoder/BASE_FRAME_SIZE + frame-extra
+			task/frame-size: x64-encoder/BASE_FRAME_SIZE + frame-extra
 			encoded: x64-encoder/allocate-frame null 0 frame-extra
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
@@ -9649,6 +9782,9 @@ x64-codegen: context [
 		return: [integer!]
 		/local header [rsir-header!]
 			signature-cache [signature-pairs!]
+			ir-module [rsir-module!]
+			work [codegen-scratch!]
+			task [codegen-task!]
 			ir-type array-type [rsir-type!]
 			ir-member [rsir-member!]
 			ir-import [rsir-import!]
@@ -9696,6 +9832,9 @@ x64-codegen: context [
 			entry? current-entry? array? protected? [logic!]
 	][
 		signature-cache: declare signature-pairs!
+		ir-module: declare rsir-module!
+		work: declare codegen-scratch!
+		task: declare codegen-task!
 		signature-cache/memory: null
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
 			return INVALID_IR
@@ -10423,6 +10562,49 @@ x64-codegen: context [
 		instruction-effects: member-offsets + member-count
 		switch-effect-links: instruction-effects + header/instruction-count
 		switch-effect-users: switch-effect-links + header/switch-count
+
+		; Bundle the immutable IR tables and the scratch layout once; every
+		; function is then compiled straight out of these two records.
+		ir-module/types: type-data
+		ir-module/members: member-data
+		ir-module/parameters: parameter-data
+		ir-module/functions: function-data
+		ir-module/imports: import-data
+		ir-module/globals: global-data
+		ir-module/switches: switch-data
+		ir-module/instructions: instruction-data
+		ir-module/strings: strings
+		ir-module/type-count: header/type-count
+		ir-module/function-count: header/function-count
+		ir-module/import-count: header/import-count
+		ir-module/global-count: header/global-count
+		ir-module/switch-count: header/switch-count
+		ir-module/strings-size: strings-size
+		work/signatures: signature-cache
+		work/argument-targets: argument-targets
+		work/function-effects: function-effects
+		work/instruction-effects: instruction-effects
+		work/instruction-offsets: instruction-offsets
+		work/instruction-depths: instruction-depths
+		work/catch-depths: catch-depths
+		work/control-uses: control-uses
+		work/entry-types: entry-types
+		work/entry-flags: entry-flags
+		work/entry-kinds: entry-kinds
+		work/entry-tags: entry-tags
+		work/tag-next: tag-next
+		work/tag-slots: tag-slots
+		work/tag-widths: tag-widths
+		work/result-offsets: result-offsets
+		work/stack-types: stack-types
+		work/stack-flags: stack-flags
+		work/stack-kinds: stack-kinds
+		work/stack-tags: stack-tags
+		work/storage-offsets: storage-offsets
+		work/layouts: layouts
+		work/member-offsets: member-offsets
+		work/import-refs: import-refs
+		task/image-data: output + IMAGE_HEADER_SIZE
 		id: 1
 		while [id <= header/import-count][import-refs/id: 0 id: id + 1]
 		count: header/type-count * 4
@@ -10458,6 +10640,15 @@ x64-codegen: context [
 		entry-size: 0
 		next-instruction: 1
 		next-offset: 1
+		; Sizing pass: no code is written, so the task carries no output slot.
+		task/code: null
+		task/references: null
+		task/function-offset: 0
+		task/function-code-size: 0
+		task/capacity: 0
+		task/exit-reference-id: 0
+		task/global-reference-count: global-reference-count
+		task/literal-size: literal-size
 		id: 1
 		while [id <= header/function-count][
 			ir-function: as rsir-function! (function-data
@@ -10470,30 +10661,14 @@ x64-codegen: context [
 			function-instructions: instruction-data
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
-			function-size: compile-function ir-function signature-cache function-instructions
-				(argument-targets + (next-instruction - 1))
-				function-effects (instruction-effects + (next-instruction - 1))
-				stack-types stack-flags stack-kinds stack-tags storage-offsets
-				(result-offsets + (next-instruction - 1))
-				layouts member-offsets
-				(instruction-offsets + (next-offset - 1))
-				(instruction-depths + (next-instruction - 1))
-				(catch-depths + (next-instruction - 1))
-				(control-uses + (next-instruction - 1))
-				(entry-types + (next-instruction - 1))
-				(entry-flags + (next-instruction - 1))
-				(entry-kinds + (next-instruction - 1))
-				(entry-tags + (next-instruction - 1))
-				(tag-next + (next-instruction - 1))
-				(tag-slots + (next-instruction - 1))
-				(tag-widths + (next-instruction - 1)) import-refs null
-				parameter-data function-data import-data global-data type-data member-data
-				switch-data (output + IMAGE_HEADER_SIZE) strings null
-				header/type-count header/function-count header/import-count
-				header/global-count header/switch-count strings-size 0 0 0 0 current-entry?
-				:global-reference-count :literal-size (function-frames + (id - 1))
-				(function-outgoing + (id - 1))
+			task/fn: ir-function
+			task/first-instruction: next-instruction
+			task/first-offset: next-offset
+			task/entry?: current-entry?
+			function-size: compile-function ir-module work task
 			if function-size < 0 [return release scratch signature-cache function-size]
+			function-frames/id: task/frame-size
+			function-outgoing/id: task/outgoing-size
 			; Near forms are measured first, then every branch and jump whose
 			; final distance fits one signed byte switches to its short form.
 			status: relax-branches ir-function function-instructions
@@ -10519,6 +10694,8 @@ x64-codegen: context [
 			next-offset: next-offset + ir-function/instruction-count + 1
 			id: id + 1
 		]
+		global-reference-count: task/global-reference-count
+		literal-size: task/literal-size
 		function-code-size: code-size
 		if code-size > (2147483647 - literal-size)[return release scratch signature-cache OUTPUT_FULL]
 		code-size: code-size + literal-size
@@ -10765,40 +10942,27 @@ x64-codegen: context [
 		code: output + code-offset
 		next-instruction: 1
 		next-offset: 1
+		; Emitting pass: same tasks replayed, now with a slot to write into.
+		task/references: references
+		task/function-code-size: function-code-size
+		task/exit-reference-id: exit-reference-id
 		id: 1
 		while [id <= header/function-count][
 			ir-function: as rsir-function! (function-data
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
-			function-instructions: instruction-data
-				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
-			written: compile-function ir-function signature-cache function-instructions
-				(argument-targets + (next-instruction - 1))
-				function-effects (instruction-effects + (next-instruction - 1))
-				stack-types stack-flags stack-kinds stack-tags storage-offsets
-				(result-offsets + (next-instruction - 1))
-				layouts member-offsets
-				(instruction-offsets + (next-offset - 1))
-				(instruction-depths + (next-instruction - 1))
-				(catch-depths + (next-instruction - 1))
-				(control-uses + (next-instruction - 1))
-				(entry-types + (next-instruction - 1))
-				(entry-flags + (next-instruction - 1))
-				(entry-kinds + (next-instruction - 1))
-				(entry-tags + (next-instruction - 1))
-				(tag-next + (next-instruction - 1))
-				(tag-slots + (next-instruction - 1))
-				(tag-widths + (next-instruction - 1)) import-refs references
-				parameter-data function-data import-data global-data type-data member-data
-				switch-data (output + IMAGE_HEADER_SIZE) strings
-				(code + image-function/code-offset)
-				header/type-count header/function-count header/import-count
-				header/global-count header/switch-count strings-size image-function/code-offset
-				function-code-size image-function/code-size exit-reference-id current-entry?
-				:global-reference-count :literal-size (function-frames + (id - 1))
-				(function-outgoing + (id - 1))
+			task/fn: ir-function
+			task/first-instruction: next-instruction
+			task/first-offset: next-offset
+			task/entry?: current-entry?
+			task/code: code + image-function/code-offset
+			task/function-offset: image-function/code-offset
+			task/capacity: image-function/code-size
+			task/frame-size: function-frames/id
+			task/outgoing-size: function-outgoing/id
+			written: compile-function ir-module work task
 			if written < 0 [return release scratch signature-cache written]
 			if written <> image-function/code-size [return release scratch signature-cache INVALID_IR]
 			next-instruction: next-instruction + ir-function/instruction-count

@@ -97,6 +97,50 @@ check all [file? output exists? output]["Darwin linker did not write " mold outp
 status: call/wait to-local-file output
 check status = 214 ["generated ARM64 loop returned " status " instead of 214"]
 
+import-source: {
+	Red/System []
+	#import [
+		"/usr/lib/libSystem.B.dylib" cdecl [
+			c-abs: "abs" [value [integer!] return: [integer!]]
+		]
+	]
+	main: func [return: [integer!]][c-abs -42]
+}
+
+import-ir: compiler-rsir-frontend/compile load import-source 'user
+check binary? import-ir [
+	"ARM64 import integration frontend failed: " mold compiler-rsir-frontend/last-error
+]
+change/part import-ir int-to-bin/to-bin32 3 4
+change/part at import-ir 5 int-to-bin/to-bin32 1 4
+
+import-image: make binary! 65536
+status: codegen-module import-ir import-image 2 0
+check status = 0 ["ARM64 import integration codegen status=" status]
+check all [
+	(word-at import-image 16) = 1
+	(word-at import-image 20) = 1
+]["ARM64 import integration image metadata is inconsistent"]
+
+import-job: compiler-system-job/new 'Darwin-ARM64
+check object? import-job "could not create a Darwin ARM64 import compilation job"
+import-job: construct/with body-of import-job linker/job-class
+compiler-system-job/job-set import-job 'runtime? false
+compiler-system-job/job-set import-job 'debug? false
+compiler-system-job/job-set import-job 'build-prefix output-dir
+compiler-system-job/job-set import-job 'build-basename %arm64-hybrid-import-integration
+compiler-system-job/job-set import-job 'build-suffix none
+
+check linker/load-codegen import-job import-image [
+	"Darwin linker rejected ARM64 import image: " linker/codegen-error
+]
+import-output: linker/build import-job
+check all [file? import-output exists? import-output][
+	"Darwin linker did not write " mold import-output
+]
+status: call/wait to-local-file import-output
+check status = 42 ["generated ARM64 import returned " status " instead of 42"]
+
 global-source: {
 	Red/System []
 	pair: declare struct! [left [integer!] right [integer!]]

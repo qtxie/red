@@ -46,11 +46,13 @@ arm64-codegen: context [
 	IMAGE_HEADER_SIZE:   52
 	IMAGE_FUNCTION_SIZE: 36
 	IMAGE_GLOBAL_SIZE:   28
+	IMAGE_IMPORT_SIZE:   24
 	IMAGE_EXPORT_SIZE:   12
 	BITMAP_SIZE:         16
 
 	RSIR_TYPE_SIZE:        20
 	RSIR_MEMBER_SIZE:       8
+	RSIR_IMPORT_SIZE:      32
 	RSIR_GLOBAL_SIZE:      24
 	RSIR_FUNCTION_SIZE:    36
 	RSIR_EXPORT_SIZE:      12
@@ -58,6 +60,8 @@ arm64-codegen: context [
 	RSIR_INITIALIZER_SIZE: 16
 	RSIR_INSTRUCTION_SIZE: 16
 
+	CDECL:        1
+	STDCALL:      2
 	RETURN_VALUE: 4
 	INLINE:       1
 	PROTECTED:    2
@@ -694,6 +698,52 @@ arm64-codegen: context [
 		0
 	]
 
+	resolve-call: func [
+		target [integer!]
+		view [rsir-view!]
+		return-ref-out first-parameter-out parameter-count-out
+			reference-target-out [int-ptr!]
+		return: [integer!]
+		/local callee [rsir-function!]
+			imported [rsir-import!]
+			import-id return-ref flags first-parameter parameter-count [integer!]
+	][
+		if target = 0 [return UNSUPPORTED]
+		either target > 0 [
+			if target > view/header/function-count [return INVALID_IR]
+			callee: as rsir-function! (view/functions
+				+ ((target - 1) * RSIR_FUNCTION_SIZE))
+			return-ref: callee/return-type
+			flags: callee/flags
+			first-parameter: callee/first-parameter
+			parameter-count: callee/parameter-count
+			reference-target-out/1: 0
+		][
+			if target < (0 - view/header/import-count)[return INVALID_IR]
+			import-id: 0 - target
+			if import-id = 0 [return INVALID_IR]
+			imported: as rsir-import! (view/imports
+				+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+			unless any [imported/flags = CDECL imported/flags = STDCALL][
+				return UNSUPPORTED
+			]
+			return-ref: imported/type
+			flags: imported/flags
+			first-parameter: imported/first-parameter
+			parameter-count: imported/parameter-count
+			reference-target-out/1: view/header/function-count
+				+ view/header/global-count + import-id
+		]
+		if all [return-ref <> 0 not valid-type-ref? return-ref view][
+			return INVALID_IR
+		]
+		if (flags and RETURN_VALUE) <> 0 [return UNSUPPORTED]
+		return-ref-out/1: return-ref
+		first-parameter-out/1: first-parameter
+		parameter-count-out/1: parameter-count
+		0
+	]
+
 	prepare-global-data: func [
 		view [rsir-view!]
 		layout [arm64-layout-state!]
@@ -937,10 +987,11 @@ arm64-codegen: context [
 		plan [arm64-function-plan!]
 		return: [integer!]
 		/local parameter [rsir-parameter!]
-			callee [rsir-function!]
 			instruction [rsir-instruction!]
 			id slot count width kind home-count frame-allocation
-			depth max-spill has-call argument-count frame-home-count total-slots
+			depth max-spill has-call argument-count frame-home-count total-slots status
+			call-return call-first-parameter call-parameter-count
+			call-reference
 				[integer!]
 	][
 		if (fn/flags and RETURN_VALUE) <> 0 [return UNSUPPORTED]
@@ -1039,23 +1090,26 @@ arm64-codegen: context [
 				instruction/op = OP_CALL [
 					argument-count: instruction/b
 					if any [
-						instruction/a <= 0
-						instruction/a > view/header/function-count
 						argument-count < 0
 						argument-count > depth
-					][return UNSUPPORTED]
-					callee: as rsir-function! (view/functions
-						+ ((instruction/a - 1) * RSIR_FUNCTION_SIZE))
+					][return INVALID_IR]
+					call-return: 0
+					call-first-parameter: 0
+					call-parameter-count: 0
+					call-reference: 0
+					status: resolve-call instruction/a view :call-return
+						:call-first-parameter :call-parameter-count :call-reference
+					if status < 0 [return status]
 					if any [
-						argument-count <> callee/parameter-count
-						instruction/c <> callee/return-type
+						argument-count <> call-parameter-count
+						instruction/c <> call-return
 					][return INVALID_IR]
 					has-call: 1
 					if (depth - argument-count) > max-spill [
 						max-spill: depth - argument-count
 					]
 					depth: depth - argument-count
-					if callee/return-type <> 0 [
+					if call-return <> 0 [
 						depth: depth + 1
 						scratch/stack-low/depth: 0
 					]
@@ -1408,12 +1462,13 @@ arm64-codegen: context [
 		/local instruction next-instruction following-instruction [rsir-instruction!]
 			parameter [rsir-parameter!]
 			global [rsir-global!]
-			callee [rsir-function!]
 			at [byte-ptr!]
 			index ordinal written encoded depth slot source-slot target-slot
 			ref target-ref left-ref right-ref width kind operation target left right folded
 			displacement condition argument-count argument-base argument-slot
-			call-target status load-signed result-width [integer!]
+			call-target call-return call-first-parameter
+			call-parameter-count call-reference status load-signed result-width
+				[integer!]
 			member-type member-flags member-offset stride scaled shift
 				[integer!]
 			returned? comparison? literal? immediate? taken? pointer? [logic!]
@@ -1866,19 +1921,20 @@ arm64-codegen: context [
 				instruction/op = OP_CALL [
 					call-target: instruction/a
 					argument-count: instruction/b
+					if any [argument-count < 0 argument-count > depth][
+						return INVALID_IR
+					]
+					call-return: 0
+					call-first-parameter: 0
+					call-parameter-count: 0
+					call-reference: 0
+					status: resolve-call call-target view :call-return
+						:call-first-parameter :call-parameter-count :call-reference
+					if status < 0 [return status]
 					unless all [
-						call-target > 0
-						call-target <= view/header/function-count
-						argument-count >= 0
-						argument-count <= depth
-					][return UNSUPPORTED]
-					callee: as rsir-function! (view/functions
-						+ ((call-target - 1) * RSIR_FUNCTION_SIZE))
-					unless all [
-						argument-count = callee/parameter-count
+						argument-count = call-parameter-count
 						argument-count <= 8
-						instruction/c = callee/return-type
-						(callee/flags and RETURN_VALUE) = 0
+						instruction/c = call-return
 					][return INVALID_IR]
 					argument-base: depth - argument-count
 					if plan/spill-count < argument-base [return INVALID_IR]
@@ -1925,7 +1981,7 @@ arm64-codegen: context [
 						argument-slot: argument-base + slot
 						if scratch/stack-kinds/argument-slot <> VALUE [return INVALID_IR]
 						parameter: as rsir-parameter! (view/parameters
-							+ ((callee/first-parameter + slot - 1)
+							+ ((call-first-parameter + slot - 1)
 								* RSIR_PARAMETER_SIZE))
 						if parameter/flags <> 0 [return UNSUPPORTED]
 						ref: scratch/stack-types/argument-slot
@@ -1944,11 +2000,16 @@ arm64-codegen: context [
 						slot: slot - 1
 					]
 					displacement: 0
-					if not null? code [
-						call-target: instruction/a
-						target: function-offsets/call-target
-						displacement: target - function-base
-						displacement: displacement - written
+					either call-target > 0 [
+						if not null? code [
+							target: function-offsets/call-target
+							displacement: target - function-base
+							displacement: displacement - written
+						]
+					][
+						status: record-reference call-reference
+							(function-base + written) references
+						if status < 0 [return status]
 					]
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/call-relative at
@@ -1956,9 +2017,9 @@ arm64-codegen: context [
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					depth: argument-base
-					if callee/return-type <> 0 [
+					if call-return <> 0 [
 						depth: depth + 1
-						scratch/stack-types/depth: callee/return-type
+						scratch/stack-types/depth: call-return
 						scratch/stack-kinds/depth: VALUE
 						scratch/stack-locations/depth: LOCATION_REGISTER
 						scratch/stack-low/depth: arm64-encoder/X0
@@ -2347,12 +2408,14 @@ arm64-codegen: context [
 			header [rsir-header!]
 			fn [rsir-function!]
 			global [rsir-global!]
+			imported [rsir-import!]
 			exported [rsir-export!]
 			image [codegen-header!]
 			image-function [codegen-function!]
 			image-global [codegen-global!]
+			image-import [codegen-import!]
 			image-export [codegen-export!]
-			memory code names cursor finish image-globals image-exports
+			memory code names cursor finish image-globals image-imports image-exports
 				rodata-output data-output [byte-ptr!]
 			function-sizes function-offsets function-frames
 				instruction-starts global-offsets global-sizes [int-ptr!]
@@ -2361,14 +2424,14 @@ arm64-codegen: context [
 			data-size total-size name-cursor entry-id storage-count
 			rodata-size reference-count
 			max-storage max-instructions words status member-id
-			target-count target-id [integer!]
+			target-count target-id used-import-count last-library
+			library-offset external-offset output-import-id [integer!]
 			entry? [logic!]
 	][
 		if any [null? output capacity < 0][return INVALID_IR]
 		unless any [opt-level = 0 opt-level = 2][return UNSUPPORTED]
 		if (codegen-rsir-reader/open data size view) <> 0 [return INVALID_IR]
 		header: view/header
-		if header/import-count <> 0 [return UNSUPPORTED]
 		max-storage: 0
 		max-instructions: 0
 		id: 1
@@ -2393,6 +2456,8 @@ arm64-codegen: context [
 			return OUTPUT_FULL
 		]
 		target-count: header/function-count + header/global-count
+		if target-count > (2147483647 - header/import-count)[return OUTPUT_FULL]
+		target-count: target-count + header/import-count
 		if target-count > ((2147483647 - words) / 3)[return OUTPUT_FULL]
 		words: words + (target-count * 3)
 		if header/type-count > ((2147483647 - words) / 2)[return OUTPUT_FULL]
@@ -2490,6 +2555,16 @@ arm64-codegen: context [
 			reference-count: reference-count + reference-state/counts/id
 			id: id + 1
 		]
+		used-import-count: 0
+		id: 1
+		while [id <= header/import-count][
+			target-id: header/function-count + header/global-count + id
+			if reference-state/counts/target-id > 0 [
+				if used-import-count = 2147483647 [return release memory OUTPUT_FULL]
+				used-import-count: used-import-count + 1
+			]
+			id: id + 1
+		]
 
 		entry-id: either header/module-kind = 3 [header/entry-function][0]
 		code-cursor: 0
@@ -2515,6 +2590,10 @@ arm64-codegen: context [
 			return release memory OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (header/global-count * IMAGE_GLOBAL_SIZE)
+		if used-import-count > ((2147483647 - metadata-size) / IMAGE_IMPORT_SIZE)[
+			return release memory OUTPUT_FULL
+		]
+		metadata-size: metadata-size + (used-import-count * IMAGE_IMPORT_SIZE)
 		if header/export-count > ((2147483647 - metadata-size) / IMAGE_EXPORT_SIZE)[
 			return release memory OUTPUT_FULL
 		]
@@ -2540,6 +2619,26 @@ arm64-codegen: context [
 				return release memory OUTPUT_FULL
 			]
 			names-size: names-size + global/name-size
+			id: id + 1
+		]
+		last-library: -1
+		id: 1
+		while [id <= header/import-count][
+			target-id: header/function-count + header/global-count + id
+			if reference-state/counts/target-id > 0 [
+				imported: as rsir-import! (view/imports + ((id - 1) * RSIR_IMPORT_SIZE))
+				if imported/library <> last-library [
+					if names-size > (2147483647 - imported/library-size)[
+						return release memory OUTPUT_FULL
+					]
+					names-size: names-size + imported/library-size
+					last-library: imported/library
+				]
+				if names-size > (2147483647 - imported/external-size)[
+					return release memory OUTPUT_FULL
+				]
+				names-size: names-size + imported/external-size
+			]
 			id: id + 1
 		]
 		id: 1
@@ -2575,7 +2674,7 @@ arm64-codegen: context [
 		image/module-kind: header/module-kind
 		image/entry-function: header/entry-function
 		image/function-count: header/function-count
-		image/import-count: 0
+		image/import-count: used-import-count
 		image/reference-count: reference-count
 		image/names-size: names-size
 		image/code-offset: code-offset
@@ -2587,7 +2686,8 @@ arm64-codegen: context [
 
 		image-globals: output + IMAGE_HEADER_SIZE
 			+ (header/function-count * IMAGE_FUNCTION_SIZE)
-		image-exports: image-globals + (header/global-count * IMAGE_GLOBAL_SIZE)
+		image-imports: image-globals + (header/global-count * IMAGE_GLOBAL_SIZE)
+		image-exports: image-imports + (used-import-count * IMAGE_IMPORT_SIZE)
 		reference-state/references: as int-ptr! (image-exports
 			+ (header/export-count * IMAGE_EXPORT_SIZE))
 		names: output + metadata-size
@@ -2628,6 +2728,38 @@ arm64-codegen: context [
 			name-cursor: name-cursor + global/name-size
 			id: id + 1
 		]
+		output-import-id: 0
+		last-library: -1
+		library-offset: 0
+		id: 1
+		while [id <= header/import-count][
+			target-id: header/function-count + header/global-count + id
+			if reference-state/counts/target-id > 0 [
+				imported: as rsir-import! (view/imports + ((id - 1) * RSIR_IMPORT_SIZE))
+				if imported/library <> last-library [
+					library-offset: name-cursor
+					copy-memory (names + name-cursor)
+						(view/strings + imported/library) imported/library-size
+					name-cursor: name-cursor + imported/library-size
+					last-library: imported/library
+				]
+				external-offset: name-cursor
+				copy-memory (names + name-cursor)
+					(view/strings + imported/external) imported/external-size
+				name-cursor: name-cursor + imported/external-size
+				image-import: as codegen-import! (image-imports
+					+ (output-import-id * IMAGE_IMPORT_SIZE))
+				image-import/library: library-offset
+				image-import/library-size: imported/library-size
+				image-import/external: external-offset
+				image-import/external-size: imported/external-size
+				image-import/first-reference: reference-state/starts/target-id
+				image-import/reference-count: reference-state/counts/target-id
+				output-import-id: output-import-id + 1
+			]
+			id: id + 1
+		]
+		if output-import-id <> used-import-count [return release memory INVALID_IR]
 		id: 1
 		while [id <= header/export-count][
 			exported: as rsir-export! (view/exports + ((id - 1) * RSIR_EXPORT_SIZE))

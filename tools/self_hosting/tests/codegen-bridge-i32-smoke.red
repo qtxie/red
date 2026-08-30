@@ -432,6 +432,14 @@ generate "import store" {
 	red/boot?: yes
 } 'glue
 
+import-call: generate "imported scalar call" {
+	Red/System []
+	#import ["fixture.dll" cdecl [
+		negate: "negate" [value [integer!] return: [integer!]]
+	]]
+	fn: func [return: [integer!]][negate 42]
+} 'user
+
 generate "equivalent aggregate aliases" {
 	Red/System []
 	left!: alias struct! [value [integer!]]
@@ -656,6 +664,18 @@ arm-code-offset: word-at artifact 28
 check (copy/part at artifact (arm-code-offset + 17) 8)
 	= #{1300009073020091}
 	"ARM64 repeated global address was not hoisted into x19"
+
+artifact: make binary! 4096
+status: codegen-module import-call/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate imported calls"
+arm-import-at: codegen-header-size
+	+ ((word-at artifact 12) * 36)
+	+ ((word-at artifact 40) * 28)
+check all [
+	(word-at artifact 16) = 1
+	(word-at artifact 20) = 1
+	(word-at artifact (arm-import-at + 20)) = 1
+]["ARM64 imported call metadata is inconsistent"]
 
 artifact: make binary! 4096
 status: codegen-module global-aggregate/1 artifact 2 0

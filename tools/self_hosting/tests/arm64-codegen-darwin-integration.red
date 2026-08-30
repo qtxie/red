@@ -99,9 +99,17 @@ check status = 214 ["generated ARM64 loop returned " status " instead of 214"]
 global-source: {
 	Red/System []
 	total: 14
-	main: func [return: [integer!]][
-		total: total + 28
-		total
+	main: func [
+		return: [integer!]
+		/local value [integer!] p [int-ptr!]
+	][
+		value: 0
+		p: :value
+		value: value + 14
+		p/1: value + 14
+		total: total + p/1
+		value: total
+		value
 	]
 }
 
@@ -140,5 +148,66 @@ check all [file? global-output exists? global-output][
 ]
 status: call/wait to-local-file global-output
 check status = 42 ["generated ARM64 global update returned " status " instead of 42"]
+
+pointer-source: {
+	Red/System []
+	wide-cell!: alias struct! [
+		a [integer!]
+		b [integer!]
+		c [integer!]
+		d [integer!]
+	]
+	hot-loop: func [
+		base [wide-cell!]
+		iterations [integer!]
+		return: [wide-cell!]
+		/local index [integer!] cursor [wide-cell!]
+	][
+		index: 0
+		cursor: base
+		while [index < iterations][
+			cursor: cursor + 1
+			index: index + 1
+		]
+		cursor
+	]
+	main: func [return: [integer!]][
+		hot-loop null 1000000000
+		0
+	]
+}
+
+pointer-ir: compiler-rsir-frontend/compile load pointer-source 'user
+check binary? pointer-ir [
+	"ARM64 pointer integration frontend failed: " mold compiler-rsir-frontend/last-error
+]
+change/part pointer-ir int-to-bin/to-bin32 3 4
+change/part at pointer-ir 5 int-to-bin/to-bin32 2 4
+
+pointer-image: make binary! 65536
+status: codegen-module pointer-ir pointer-image 2 0
+check status = 0 ["ARM64 pointer integration codegen status=" status]
+check not none? find pointer-image #{D6420091B5060011} [
+	"ARM64 pointer integration lost its direct pointer and index increments"
+]
+
+pointer-job: compiler-system-job/new 'Darwin-ARM64
+check object? pointer-job "could not create a Darwin ARM64 pointer compilation job"
+pointer-job: construct/with body-of pointer-job linker/job-class
+compiler-system-job/job-set pointer-job 'runtime? false
+compiler-system-job/job-set pointer-job 'debug? false
+compiler-system-job/job-set pointer-job 'build-prefix output-dir
+compiler-system-job/job-set pointer-job 'build-basename %arm64-hybrid-pointer-integration
+compiler-system-job/job-set pointer-job 'build-suffix none
+
+check linker/load-codegen pointer-job pointer-image [
+	"Darwin linker rejected ARM64 pointer image: " linker/codegen-error
+]
+pointer-output: linker/build pointer-job
+check all [file? pointer-output exists? pointer-output][
+	"Darwin linker did not write " mold pointer-output
+]
+status: call/wait to-local-file pointer-output
+check status = 0 ["generated ARM64 pointer module returned " status " instead of 0"]
 
 print "PASS: direct ARM64 RSIR -> Mach-O -> execution"

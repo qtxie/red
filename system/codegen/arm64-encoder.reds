@@ -397,6 +397,56 @@ arm64-encoder: context [
 		alu-register code capacity OP_SUB target left right width false
 	]
 
+	extend-register: func [
+		code [byte-ptr!]
+		capacity target source source-width signed [integer!]
+		return: [integer!]
+		/local opcode imms [integer!]
+	][
+		unless all [
+			valid-register? target
+			valid-register? source
+			any [source-width = 1 source-width = 2 source-width = 4 source-width = 8]
+			any [signed = 0 signed = 1]
+		][return -1]
+		if source-width = 8 [return move-register code capacity target source 8]
+		imms: (source-width * 8) - 1
+		opcode: either signed = 1 [93400000h][D3400000h]
+		opcode: opcode or (imms * 1024)
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	add-extended-register: func [
+		code [byte-ptr!]
+		capacity operation target base index source-width signed shift [integer!]
+		return: [integer!]
+		/local option opcode [integer!]
+	][
+		unless all [
+			any [operation = OP_ADD operation = OP_SUB]
+			valid-register? target
+			valid-base? base
+			valid-register? index
+			any [source-width = 1 source-width = 2 source-width = 4 source-width = 8]
+			any [signed = 0 signed = 1]
+			shift >= 0 shift <= 4
+		][return -1]
+		option: case [
+			source-width = 1 [0]
+			source-width = 2 [1]
+			source-width = 4 [2]
+			true [3]
+		]
+		if signed = 1 [option: option + 4]
+		opcode: either operation = OP_ADD [8B200000h][CB200000h]
+		opcode: opcode or (index * 65536)
+		opcode: opcode or (option * 8192)
+		opcode: opcode or (shift * 1024)
+		opcode: opcode or (base * 32)
+		instruction code capacity (opcode or target)
+	]
+
 	compare-register: func [
 		code [byte-ptr!]
 		capacity left right width [integer!]

@@ -300,6 +300,64 @@ register-loop: generate "register-resident integer loop" {
 	]
 } 'user
 
+escaped-scalar: generate "escaped scalar parameter" {
+	Red/System []
+	fn: func [value [integer!] return: [int-ptr!]][:value]
+} 'user
+
+escaped-local-access: generate "direct access to an escaped local" {
+	Red/System []
+	fn: func [return: [integer!] /local value [integer!] p [int-ptr!]][
+		value: 7
+		p: :value
+		value: value + 14
+		p/1 + value
+	]
+} 'user
+
+pointer-index: generate "dynamic and static pointer indexes" {
+	Red/System []
+	fn: func [
+		p [int-ptr!]
+		index [integer!]
+		return: [integer!]
+	][
+		p/index: 7
+		p/2
+	]
+} 'user
+
+member-load: generate "direct aggregate member load" {
+	Red/System []
+	pair!: alias struct! [left [integer!] right [integer!]]
+	fn: func [pair [pair!] return: [integer!]][pair/right]
+} 'user
+
+pointer-loop: generate "register-resident pointer loop" {
+	Red/System []
+	wide-cell!: alias struct! [
+		a [integer!]
+		b [integer!]
+		c [integer!]
+		d [integer!]
+	]
+
+	hot-loop: func [
+		base [wide-cell!]
+		iterations [integer!]
+		return: [wide-cell!]
+		/local index [integer!] cursor [wide-cell!]
+	][
+		index: 0
+		cursor: base
+		while [index < iterations][
+			cursor: cursor + 1
+			index: index + 1
+		]
+		cursor
+	]
+} 'user
+
 generate "explicit local assignment result" {
 	Red/System []
 	fn: func [return: [integer!] /local value [integer!]][value: 7]
@@ -512,6 +570,51 @@ arm-code-offset: word-at artifact 28
 check (copy/part at artifact (arm-code-offset + 41) 12)
 	= #{8A260012B5020A0B94060011}
 	"ARM64 loop did not use direct logical/add destinations"
+
+artifact: make binary! 4096
+status: codegen-module escaped-scalar/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate an escaped scalar parameter"
+check (word-at artifact (codegen-header-size + 16)) = 32
+	"ARM64 escaped scalar did not use one frame home"
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 17) 4) = #{A92300D1}
+	"ARM64 escaped scalar did not form its frame address directly"
+
+artifact: make binary! 4096
+status: codegen-module escaped-local-access/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate direct escaped-local accesses"
+check (word-at artifact (codegen-header-size + 16)) = 32
+	"ARM64 escaped local used an inconsistent frame"
+check all [
+	not none? find artifact #{A9035FB8}
+	not none? find artifact #{A9031FB8}
+]["ARM64 escaped local did not emit frame loads and stores"]
+
+artifact: make binary! 4096
+status: codegen-module pointer-index/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate pointer indexing"
+arm-code-offset: word-at artifact 28
+check not none? find artifact #{310600514AC9318B}
+	"ARM64 dynamic pointer index did not use one extended-register add"
+check not none? find artifact #{690640B9}
+	"ARM64 static pointer index did not fold into the load displacement"
+
+artifact: make binary! 4096
+status: codegen-module member-load/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate an aggregate member load"
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 21) 4) = #{690640B9}
+	"ARM64 aggregate member did not fold into the load displacement"
+
+artifact: make binary! 4096
+status: codegen-module pointer-loop/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a register-resident pointer loop"
+check all [
+	(word-at artifact (codegen-header-size + 16)) = 48
+	(word-at artifact 36) = 16
+]["ARM64 pointer loop lost its register-only frame shape"]
+check not none? find artifact #{D6420091B5060011}
+	"ARM64 pointer loop did not reduce to direct pointer and index increments"
 
 artifact: make binary! 4096
 status: codegen-module global-scalar/1 artifact 2 0

@@ -45,6 +45,26 @@ size: arm64-encoder/subtract-register code 256 arm64-encoder/X14
 expected: #{6E0214CB}
 check size 4 expected
 
+size: arm64-encoder/extend-register code 256 arm64-encoder/X17
+	arm64-encoder/X17 4 1
+expected: #{317E4093}
+check size 4 expected
+
+size: arm64-encoder/extend-register code 256 arm64-encoder/X9
+	arm64-encoder/X10 1 0
+expected: #{491D40D3}
+check size 4 expected
+
+size: arm64-encoder/add-extended-register code 256 arm64-encoder/OP_ADD
+	arm64-encoder/X10 arm64-encoder/X10 arm64-encoder/X17 4 1 2
+expected: #{4AC9318B}
+check size 4 expected
+
+size: arm64-encoder/add-extended-register code 256 arm64-encoder/OP_SUB
+	arm64-encoder/X11 arm64-encoder/X12 arm64-encoder/X13 4 0 3
+expected: #{8B4D2DCB}
+check size 4 expected
+
 size: arm64-encoder/alu-register code 256 arm64-encoder/OP_AND arm64-encoder/X9
 	arm64-encoder/X19 arm64-encoder/X20 8 false
 expected: #{6902148A}

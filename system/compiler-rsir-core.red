@@ -56,6 +56,13 @@ system-dialect: context [
 		either slot [get slot]['legacy]
 	]
 
+	codegen-architecture: does [
+		switch/default job/target [
+			X86-64 [1]
+			ARM64  [2]
+		][0]
+	]
+
 	validate-job: does [
 		case [
 			job-backend-mode <> 'rsir [
@@ -189,7 +196,8 @@ system-dialect: context [
 		capacity: min capacity MAX-CODE-BYTES
 		forever [
 			output: make binary! capacity
-			last-status: codegen-module last-rsir output job/opt-level
+			last-status: codegen-module
+				last-rsir output codegen-architecture job/opt-level
 			if any [last-status <> 4 capacity = MAX-CODE-BYTES][break]
 			capacity: min (capacity * 2) MAX-CODE-BYTES
 		]

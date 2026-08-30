@@ -54,7 +54,7 @@ generate: func [
 		fail [name " frontend: " mold compiler-rsir-frontend/last-error]
 	]
 	artifact: make binary! 65536
-	status: codegen-module ir artifact 0
+	status: codegen-module ir artifact 1 0
 	check status = 0 [name " codegen status=" status]
 	check all [
 		(length? artifact) = word-at artifact 0
@@ -400,13 +400,23 @@ check all [
 ]["unused logical pointer types changed native code"]
 
 small: make binary! 64
-status: codegen-module literal/1 small 0
+status: codegen-module literal/1 small 1 0
 check status = 4 "bridge did not report output exhaustion"
 
 bad: copy literal/1
 change/part at bad 17 int-to-bin/to-bin32 100 4
 artifact: make binary! 4096
-status: codegen-module bad artifact 0
+status: codegen-module bad artifact 1 0
 check status = 2 "bridge did not reject an invalid function count"
+
+artifact: make binary! 4096
+status: codegen-module literal/1 artifact 2 0
+check status = 3 "bridge did not recognize the pending ARM64 backend"
+check empty? artifact "unsupported ARM64 generation changed the output"
+
+artifact: make binary! 4096
+status: codegen-module literal/1 artifact 99 0
+check status = 1 "bridge accepted an unknown architecture"
+check empty? artifact "invalid architecture changed the output"
 
 print "PASS: typed postfix hybrid codegen routine"

@@ -182,6 +182,7 @@ foreach required [
 	%system/compiler-rsir-core.red
 	%system/linker.red
 	%system/codegen/codegen-bridge.reds
+	%system/codegen/codegen-model.reds
 	%system/codegen/x64-codegen.reds
 	%system/codegen/x64-encoder.reds
 	%compiler/rsir-frontend.red

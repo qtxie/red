@@ -31,10 +31,11 @@ emit-rsir-instruction: routine [
 ]
 
 codegen-module: routine [
-	ir        [binary!]
-	artifact  [binary!]
-	opt-level [integer!]
-	return:   [integer!]
+	ir           [binary!]
+	artifact     [binary!]
+	architecture [integer!]
+	opt-level    [integer!]
+	return:      [integer!]
 ][
-	codegen-bridge/run ir artifact opt-level
+	codegen-bridge/run ir artifact architecture opt-level
 ]

@@ -323,8 +323,19 @@ generate "local shadows global" {
 	fn: func [return: [integer!] /local value][value: 11 value]
 } 'user
 
-generate "global load" {
-	Red/System [] answer: 42 fn: func [return: [integer!]][answer]
+global-scalar: generate "scalar global update" {
+	Red/System []
+	answer: 1
+	fn: func [return: [integer!]][
+		answer: answer + 41
+		answer
+	]
+} 'user
+
+global-single: generate "single scalar global load" {
+	Red/System []
+	answer: 42
+	fn: func [return: [integer!]][answer]
 } 'user
 
 generate "owned global aggregate" {
@@ -501,6 +512,42 @@ arm-code-offset: word-at artifact 28
 check (copy/part at artifact (arm-code-offset + 41) 12)
 	= #{8A260012B5020A0B94060011}
 	"ARM64 loop did not use direct logical/add destinations"
+
+artifact: make binary! 4096
+status: codegen-module global-scalar/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a scalar global update"
+check all [
+	(word-at artifact 20) = 1
+	(word-at artifact 36) = 20
+	(word-at artifact 40) = 1
+	(word-at artifact 44) = 0
+	(word-at artifact (codegen-header-size + 16)) = 32
+	(word-at artifact 96) = 16
+	(word-at artifact 100) = 4
+	(word-at artifact 104) = 1
+	(word-at artifact 108) = 1
+	(word-at artifact 112) = 0
+	(word-at artifact 116) = 16
+]["ARM64 scalar global metadata is inconsistent"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 17) 8)
+	= #{1300009073020091}
+	"ARM64 repeated global address was not hoisted into x19"
+
+artifact: make binary! 4096
+status: codegen-module global-single/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a single scalar global load"
+check all [
+	(word-at artifact 20) = 1
+	(word-at artifact 36) = 20
+	(word-at artifact 40) = 1
+	(word-at artifact (codegen-header-size + 16)) = 0
+	(word-at artifact 116) = 0
+]["ARM64 single global load gained unnecessary frame state"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 1) 8)
+	= #{0900009029010091}
+	"ARM64 single global load did not use the temporary register directly"
 
 artifact: make binary! 4096
 status: codegen-module bad artifact 2 0

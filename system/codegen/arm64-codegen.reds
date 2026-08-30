@@ -15,6 +15,7 @@ arm64-function-scratch!: alias struct! [
 	stack-low       [int-ptr!]
 	stack-high      [int-ptr!]
 	instruction-offsets [int-ptr!]
+	global-homes    [int-ptr!]
 ]
 
 arm64-function-plan!: alias struct! [
@@ -25,19 +26,33 @@ arm64-function-plan!: alias struct! [
 	frame-allocation [integer!]
 ]
 
+arm64-reference-state!: alias struct! [
+	counts    [int-ptr!]
+	starts    [int-ptr!]
+	cursors   [int-ptr!]
+	references [int-ptr!]
+]
+
 arm64-codegen: context [
 	IMAGE_HEADER_SIZE:   52
 	IMAGE_FUNCTION_SIZE: 36
+	IMAGE_GLOBAL_SIZE:   28
 	IMAGE_EXPORT_SIZE:   12
 	BITMAP_SIZE:         16
 
 	RSIR_TYPE_SIZE:        20
+	RSIR_GLOBAL_SIZE:      24
 	RSIR_FUNCTION_SIZE:    36
 	RSIR_EXPORT_SIZE:      12
 	RSIR_PARAMETER_SIZE:    8
+	RSIR_INITIALIZER_SIZE: 16
 	RSIR_INSTRUCTION_SIZE: 16
 
 	RETURN_VALUE: 4
+	INLINE:       1
+	PROTECTED:    2
+
+	SCALAR_INITIALIZER: 1
 
 	OP_LITERAL: 1
 	OP_ADDRESS: 3
@@ -49,6 +64,7 @@ arm64-codegen: context [
 	OP_BINARY:  15
 	OP_JUMP:    16
 	OP_BRANCH:  17
+	OP_REFERENCE: 20
 
 	ADD_OPERATION:           1
 	SUBTRACT_OPERATION:      2
@@ -70,6 +86,7 @@ arm64-codegen: context [
 	LESS_EQUAL_OPERATION:    18
 
 	LOCAL_ADDRESS: 1
+	GLOBAL_ADDRESS: 2
 
 	VALUE: 1
 	PLACE: 2
@@ -216,6 +233,74 @@ arm64-codegen: context [
 		all [left <> 0 left = right]
 	]
 
+	write-static-scalar: func [
+		target [byte-ptr!]
+		width low high [integer!]
+		return: [logic!]
+	][
+		case [
+			width = 1 [target/1: as byte! low]
+			width = 2 [
+				target/1: as byte! low
+				target/2: as byte! (low >>> 8)
+			]
+			width = 4 [arm64-encoder/write-i32 target low]
+			width = 8 [
+				arm64-encoder/write-i32 target low
+				arm64-encoder/write-i32 (target + 4) high
+			]
+			true [return false]
+		]
+		true
+	]
+
+	record-global-reference: func [
+		global-id offset [integer!]
+		state [arm64-reference-state!]
+		return: [integer!]
+		/local reference-id [integer!]
+	][
+		if any [global-id <= 0 offset < 0][return INVALID_IR]
+		either null? state/references [
+			if state/counts/global-id = 2147483647 [return OUTPUT_FULL]
+			state/counts/global-id: state/counts/global-id + 1
+		][
+			if state/cursors/global-id >= state/counts/global-id [return INVALID_IR]
+			reference-id: state/starts/global-id + state/cursors/global-id
+			state/references/reference-id: offset
+			state/cursors/global-id: state/cursors/global-id + 1
+		]
+		0
+	]
+
+	emit-global-homes: func [
+		view [rsir-view!]
+		scratch [arm64-function-scratch!]
+		function-position [integer!]
+		references [arm64-reference-state!]
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] id target written encoded status [integer!]
+	][
+		written: 0
+		id: 1
+		while [id <= view/header/global-count][
+			target: scratch/global-homes/id
+			if target > 0 [
+				status: record-global-reference id (function-position + written)
+					references
+				if status < 0 [return status]
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/page-address at (capacity - written) target
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+			]
+			id: id + 1
+		]
+		written
+	]
+
 	plan-function: func [
 		view [rsir-view!]
 		fn [rsir-function!]
@@ -232,6 +317,11 @@ arm64-codegen: context [
 		if (fn/flags and RETURN_VALUE) <> 0 [return UNSUPPORTED]
 		count: fn/parameter-count + fn/local-count
 		id: 1
+		while [id <= view/header/global-count][
+			scratch/global-homes/id: 0
+			id: id + 1
+		]
+		id: 1
 		while [id <= count][
 			parameter: as rsir-parameter! (view/parameters
 				+ ((fn/first-parameter + id - 1) * RSIR_PARAMETER_SIZE))
@@ -247,10 +337,23 @@ arm64-codegen: context [
 			instruction: as rsir-instruction! (view/instructions
 				+ ((first-instruction + id) * RSIR_INSTRUCTION_SIZE))
 			if instruction/op = OP_ADDRESS [
-				if instruction/a = LOCAL_ADDRESS [
-					slot: instruction/b
-					if any [slot <= 0 slot > count][return INVALID_IR]
-					scratch/homes/slot: -1
+				case [
+					instruction/a = LOCAL_ADDRESS [
+						slot: instruction/b
+						if any [slot <= 0 slot > count][return INVALID_IR]
+						scratch/homes/slot: -1
+					]
+					instruction/a = GLOBAL_ADDRESS [
+						slot: instruction/b
+						if any [
+							slot <= 0
+							slot > view/header/global-count
+							instruction/c <> 0
+							scratch/global-homes/slot = 2147483647
+						][return INVALID_IR]
+						scratch/global-homes/slot: scratch/global-homes/slot + 1
+					]
+					true [return UNSUPPORTED]
 				]
 			]
 			case [
@@ -259,6 +362,7 @@ arm64-codegen: context [
 					depth: depth + 1
 				]
 				instruction/op = OP_LOAD []
+				instruction/op = OP_REFERENCE []
 				instruction/op = OP_SET [
 					if depth < 2 [return INVALID_IR]
 					depth: depth - 1
@@ -327,6 +431,18 @@ arm64-codegen: context [
 				if all [id <= fn/parameter-count id > 8][return UNSUPPORTED]
 				home-count: home-count + 1
 				scratch/homes/id: FIRST_HOME_REGISTER + home-count - 1
+			]
+			id: id + 1
+		]
+		id: 1
+		while [id <= view/header/global-count][
+			either scratch/global-homes/id > 1 [
+				either home-count < HOME_REGISTER_COUNT [
+					home-count: home-count + 1
+					scratch/global-homes/id: FIRST_HOME_REGISTER + home-count - 1
+				][scratch/global-homes/id: -1]
+			][
+				if scratch/global-homes/id > 0 [scratch/global-homes/id: -1]
 			]
 			id: id + 1
 		]
@@ -471,6 +587,7 @@ arm64-codegen: context [
 		entry? [logic!]
 		scratch [arm64-function-scratch!]
 		plan [arm64-function-plan!]
+		references [arm64-reference-state!]
 		function-offsets [int-ptr!]
 		function-base [integer!]
 		code [byte-ptr!]
@@ -478,16 +595,22 @@ arm64-codegen: context [
 		return: [integer!]
 		/local instruction next-instruction following-instruction [rsir-instruction!]
 			parameter [rsir-parameter!]
+			global [rsir-global!]
 			callee [rsir-function!]
 			at [byte-ptr!]
 			index ordinal written encoded depth slot source-slot target-slot
 			ref target-ref left-ref right-ref width kind operation target left right folded
 			displacement condition argument-count argument-base argument-slot
-			call-target [integer!]
-			returned? comparison? literal? immediate? signed? taken? [logic!]
+			call-target status load-signed result-width [integer!]
+			returned? comparison? literal? immediate? taken? [logic!]
 	][
 		written: emit-prologue view fn scratch plan code capacity
 		if written < 0 [return written]
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: emit-global-homes view scratch (function-base + written)
+			references at (capacity - written)
+		if encoded < 0 [return encoded]
+		written: written + encoded
 		depth: 0
 		returned?: false
 		index: 0
@@ -512,32 +635,90 @@ arm64-codegen: context [
 				]
 				instruction/op = OP_ADDRESS [
 					slot: instruction/b
-					unless all [
-						instruction/a = LOCAL_ADDRESS
-						slot > 0
-						slot <= plan/storage-count
-						instruction/c = 0
-						scratch/homes/slot > 0
-					][return UNSUPPORTED]
 					depth: depth + 1
-					scratch/stack-types/depth: scratch/storage-types/slot
 					scratch/stack-kinds/depth: PLACE
-					scratch/stack-locations/depth: 0
-					scratch/stack-low/depth: slot
-					scratch/stack-high/depth: 0
+					case [
+						instruction/a = LOCAL_ADDRESS [
+							unless all [
+								slot > 0
+								slot <= plan/storage-count
+								instruction/c = 0
+								scratch/homes/slot > 0
+							][return UNSUPPORTED]
+							scratch/stack-types/depth: scratch/storage-types/slot
+							scratch/stack-locations/depth: 0
+							scratch/stack-low/depth: slot
+							scratch/stack-high/depth: 0
+						]
+						instruction/a = GLOBAL_ADDRESS [
+							unless all [
+								slot > 0
+								slot <= view/header/global-count
+								instruction/c = 0
+							][return INVALID_IR]
+							global: as rsir-global! (view/globals
+								+ ((slot - 1) * RSIR_GLOBAL_SIZE))
+							scratch/stack-types/depth: global/type
+							target: scratch/global-homes/slot
+							if target <= 0 [
+								target: FIRST_TEMP_REGISTER + depth - 1
+								if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+									return UNSUPPORTED
+								]
+								status: record-global-reference slot (function-base + written)
+									references
+								if status < 0 [return status]
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/page-address at
+									(capacity - written) target
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: slot
+						]
+						true [return UNSUPPORTED]
+					]
 				]
 				instruction/op = OP_LOAD [
 					unless all [
 						instruction/a = 0 instruction/b = 0 instruction/c = 0
 						depth > 0 scratch/stack-kinds/depth = PLACE
 					][return INVALID_IR]
-					slot: scratch/stack-low/depth
-					ref: scratch/storage-types/slot
-					if ref = 0 [return INVALID_IR]
+					ref: scratch/stack-types/depth
+					case [
+						scratch/stack-locations/depth = 0 [
+							slot: scratch/stack-low/depth
+							ref: scratch/storage-types/slot
+							if ref = 0 [return INVALID_IR]
+							target: scratch/homes/slot
+						]
+						scratch/stack-locations/depth = LOCATION_REGISTER [
+							width: value-width ref view
+							kind: type-kind ref view
+							if width = 0 [return INVALID_IR]
+							if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							load-signed: either signed-type? ref view [1][0]
+							result-width: either width = 8 [8][4]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/register-load at
+								(capacity - written) target scratch/stack-low/depth 0 width
+								load-signed result-width arm64-encoder/X16
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						true [return INVALID_IR]
+					]
 					scratch/stack-types/depth: ref
 					scratch/stack-kinds/depth: VALUE
 					scratch/stack-locations/depth: LOCATION_REGISTER
-					scratch/stack-low/depth: scratch/homes/slot
+					scratch/stack-low/depth: target
+					scratch/stack-high/depth: 0
 				]
 				instruction/op = OP_SET [
 					unless all [
@@ -546,32 +727,81 @@ arm64-codegen: context [
 					][return INVALID_IR]
 					source-slot: depth - 1
 					if scratch/stack-kinds/source-slot <> VALUE [return INVALID_IR]
-					target-slot: scratch/stack-low/depth
 					ref: scratch/stack-types/source-slot
-					target-ref: scratch/storage-types/target-slot
-					if target-ref = 0 [
-						parameter: as rsir-parameter! (view/parameters
-							+ ((fn/first-parameter + target-slot - 1)
-								* RSIR_PARAMETER_SIZE))
-						if parameter/flags <> 0 [return UNSUPPORTED]
-						width: value-width ref view
-						kind: type-kind ref view
-						if width = 0 [return INVALID_IR]
-						if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
-						target-ref: ref
-						scratch/storage-types/target-slot: ref
+					case [
+						scratch/stack-locations/depth = 0 [
+							target-slot: scratch/stack-low/depth
+							target-ref: scratch/storage-types/target-slot
+							if target-ref = 0 [
+								parameter: as rsir-parameter! (view/parameters
+									+ ((fn/first-parameter + target-slot - 1)
+										* RSIR_PARAMETER_SIZE))
+								if parameter/flags <> 0 [return UNSUPPORTED]
+								width: value-width ref view
+								kind: type-kind ref view
+								if width = 0 [return INVALID_IR]
+								if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
+								target-ref: ref
+								scratch/storage-types/target-slot: ref
+							]
+							unless compatible-literal? target-ref ref view [return INVALID_IR]
+							target: scratch/homes/target-slot
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch source-slot target
+								target-ref at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+						]
+						scratch/stack-locations/depth = LOCATION_REGISTER [
+							slot: scratch/stack-high/depth
+							if any [slot <= 0 slot > view/header/global-count][
+								return INVALID_IR
+							]
+							global: as rsir-global! (view/globals
+								+ ((slot - 1) * RSIR_GLOBAL_SIZE))
+							if (global/flags and PROTECTED) <> 0 [return INVALID_IR]
+							target-ref: global/type
+							unless compatible-literal? target-ref ref view [return INVALID_IR]
+							width: value-width target-ref view
+							kind: type-kind target-ref view
+							if width = 0 [return INVALID_IR]
+							if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
+							target: either (scratch/stack-locations/source-slot
+								= LOCATION_REGISTER) [scratch/stack-low/source-slot][
+								arm64-encoder/X17
+							]
+							if target = arm64-encoder/X17 [
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch source-slot target
+									target-ref at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/register-store at
+								(capacity - written) target scratch/stack-low/depth
+								0 width arm64-encoder/X16
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						true [return INVALID_IR]
 					]
-					unless compatible-literal? target-ref ref view [return INVALID_IR]
-					at: either null? code [as byte-ptr! 0][code + written]
-					encoded: materialize view scratch source-slot
-						scratch/homes/target-slot target-ref at (capacity - written)
-					if encoded < 0 [return encoded]
-					written: written + encoded
 					depth: source-slot
 					scratch/stack-types/depth: target-ref
 					scratch/stack-kinds/depth: VALUE
 					scratch/stack-locations/depth: LOCATION_REGISTER
-					scratch/stack-low/depth: scratch/homes/target-slot
+					scratch/stack-low/depth: target
+					scratch/stack-high/depth: 0
+				]
+				instruction/op = OP_REFERENCE [
+					unless all [
+						instruction/b = 0 instruction/c = 0
+						depth > 0 scratch/stack-kinds/depth = PLACE
+						scratch/stack-locations/depth = LOCATION_REGISTER
+						(value-width instruction/a view) = 8
+					][return UNSUPPORTED]
+					scratch/stack-types/depth: instruction/a
+					scratch/stack-kinds/depth: VALUE
 					scratch/stack-high/depth: 0
 				]
 				instruction/op = OP_CALL [
@@ -1024,18 +1254,24 @@ arm64-codegen: context [
 		/local view [rsir-view! value]
 			scratch [arm64-function-scratch! value]
 			plan [arm64-function-plan! value]
+			reference-state [arm64-reference-state! value]
 			header [rsir-header!]
 			fn [rsir-function!]
+			global [rsir-global!]
+			initializer [rsir-initializer!]
 			exported [rsir-export!]
 			image [codegen-header!]
 			image-function [codegen-function!]
+			image-global [codegen-global!]
 			image-export [codegen-export!]
-			memory code names cursor finish [byte-ptr!]
+			memory code names cursor finish image-globals image-exports
+				rodata-output data-output [byte-ptr!]
 			function-sizes function-offsets function-frames
-				instruction-starts [int-ptr!]
+				instruction-starts global-offsets [int-ptr!]
 			id first-instruction written code-size code-cursor
 			metadata-size names-size code-offset rodata-offset data-offset
 			data-size total-size name-cursor entry-id storage-count
+			rodata-size reference-count reference-cursor width kind global-offset
 			max-storage max-instructions words status [integer!]
 			entry? [logic!]
 	][
@@ -1043,7 +1279,7 @@ arm64-codegen: context [
 		unless any [opt-level = 0 opt-level = 2][return UNSUPPORTED]
 		if (codegen-rsir-reader/open data size view) <> 0 [return INVALID_IR]
 		header: view/header
-		if any [header/import-count <> 0 header/global-count <> 0][return UNSUPPORTED]
+		if header/import-count <> 0 [return UNSUPPORTED]
 		max-storage: 0
 		max-instructions: 0
 		id: 1
@@ -1062,6 +1298,8 @@ arm64-codegen: context [
 		words: words + (max-storage * 2)
 		if max-instructions > ((2147483647 - words) / 6)[return OUTPUT_FULL]
 		words: words + (max-instructions * 6)
+		if header/global-count > ((2147483647 - words) / 5)[return OUTPUT_FULL]
+		words: words + (header/global-count * 5)
 		if words > (2147483647 / 4)[return OUTPUT_FULL]
 		memory: allocate words * 4
 		if null? memory [return OUTPUT_FULL]
@@ -1077,6 +1315,57 @@ arm64-codegen: context [
 		scratch/stack-low: scratch/stack-locations + max-instructions
 		scratch/stack-high: scratch/stack-low + max-instructions
 		scratch/instruction-offsets: scratch/stack-high + max-instructions
+		scratch/global-homes: scratch/instruction-offsets + max-instructions
+		global-offsets: scratch/global-homes + header/global-count
+		reference-state/counts: global-offsets + header/global-count
+		reference-state/starts: reference-state/counts + header/global-count
+		reference-state/cursors: reference-state/starts + header/global-count
+		reference-state/references: as int-ptr! 0
+
+		if header/function-count > (2147483647 / BITMAP_SIZE)[
+			return release memory OUTPUT_FULL
+		]
+		data-size: header/function-count * BITMAP_SIZE
+		rodata-size: 0
+		id: 1
+		while [id <= header/global-count][
+			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
+			unless any [global/flags = 0 global/flags = PROTECTED][
+				return release memory UNSUPPORTED
+			]
+			width: value-width global/type view
+			kind: type-kind global/type view
+			if width = 0 [return release memory INVALID_IR]
+			if any [width > 8 kind = 9 kind = 10][return release memory UNSUPPORTED]
+			if global/initializer-count > 1 [return release memory UNSUPPORTED]
+			if global/initializer-count = 1 [
+				initializer: as rsir-initializer! (view/initializers
+					+ (global/first-initializer * RSIR_INITIALIZER_SIZE))
+				unless all [
+					initializer/kind = SCALAR_INITIALIZER
+					initializer/c = 0
+				][return release memory UNSUPPORTED]
+			]
+			either (global/flags and PROTECTED) <> 0 [
+				global-offset: align rodata-size width
+				if any [
+					global-offset < 0
+					global-offset > (2147483647 - width)
+				][return release memory OUTPUT_FULL]
+				rodata-size: global-offset + width
+			][
+				global-offset: align data-size width
+				if any [
+					global-offset < 0
+					global-offset > (2147483647 - width)
+				][return release memory OUTPUT_FULL]
+				data-size: global-offset + width
+			]
+			global-offsets/id: global-offset
+			reference-state/counts/id: 0
+			reference-state/cursors/id: 0
+			id: id + 1
+		]
 
 		code-size: 0
 		first-instruction: 0
@@ -1094,12 +1383,24 @@ arm64-codegen: context [
 				16 + plan/frame-allocation
 			]
 			written: compile-function view fn first-instruction entry?
-				scratch plan as int-ptr! 0 0 null 0
+				scratch plan reference-state as int-ptr! 0 0 null 0
 			if written < 0 [return release memory written]
 			function-sizes/id: written
 			if code-size > (2147483647 - written)[return release memory OUTPUT_FULL]
 			code-size: code-size + written
 			first-instruction: first-instruction + fn/instruction-count
+			id: id + 1
+		]
+		reference-count: 0
+		id: 1
+		while [id <= header/global-count][
+			reference-state/starts/id: either reference-state/counts/id > 0 [
+				reference-count + 1
+			][0]
+			if reference-count > (2147483647 - reference-state/counts/id)[
+				return release memory OUTPUT_FULL
+			]
+			reference-count: reference-count + reference-state/counts/id
 			id: id + 1
 		]
 
@@ -1123,10 +1424,18 @@ arm64-codegen: context [
 		]
 		metadata-size: IMAGE_HEADER_SIZE
 			+ (header/function-count * IMAGE_FUNCTION_SIZE)
+		if header/global-count > ((2147483647 - metadata-size) / IMAGE_GLOBAL_SIZE)[
+			return release memory OUTPUT_FULL
+		]
+		metadata-size: metadata-size + (header/global-count * IMAGE_GLOBAL_SIZE)
 		if header/export-count > ((2147483647 - metadata-size) / IMAGE_EXPORT_SIZE)[
 			return release memory OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (header/export-count * IMAGE_EXPORT_SIZE)
+		if reference-count > ((2147483647 - metadata-size) / 4)[
+			return release memory OUTPUT_FULL
+		]
+		metadata-size: metadata-size + (reference-count * 4)
 		names-size: 0
 		id: 1
 		while [id <= header/function-count][
@@ -1135,6 +1444,15 @@ arm64-codegen: context [
 				return release memory OUTPUT_FULL
 			]
 			names-size: names-size + fn/name-size
+			id: id + 1
+		]
+		id: 1
+		while [id <= header/global-count][
+			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
+			if names-size > (2147483647 - global/name-size)[
+				return release memory OUTPUT_FULL
+			]
+			names-size: names-size + global/name-size
 			id: id + 1
 		]
 		id: 1
@@ -1154,11 +1472,10 @@ arm64-codegen: context [
 			return release memory OUTPUT_FULL
 		]
 		rodata-offset: align (code-offset + code-size) 4
-		if header/function-count > (2147483647 / BITMAP_SIZE)[
+		if rodata-offset > (2147483647 - rodata-size - 3)[
 			return release memory OUTPUT_FULL
 		]
-		data-size: header/function-count * BITMAP_SIZE
-		data-offset: rodata-offset
+		data-offset: align (rodata-offset + rodata-size) 4
 		if data-offset > (2147483647 - data-size)[return release memory OUTPUT_FULL]
 		total-size: data-offset + data-size
 		if capacity < total-size [return release memory OUTPUT_FULL]
@@ -1172,15 +1489,20 @@ arm64-codegen: context [
 		image/entry-function: header/entry-function
 		image/function-count: header/function-count
 		image/import-count: 0
-		image/reference-count: 0
+		image/reference-count: reference-count
 		image/names-size: names-size
 		image/code-offset: code-offset
 		image/code-size: code-size
 		image/data-size: data-size
-		image/global-count: 0
-		image/rodata-size: 0
+		image/global-count: header/global-count
+		image/rodata-size: rodata-size
 		image/export-count: header/export-count
 
+		image-globals: output + IMAGE_HEADER_SIZE
+			+ (header/function-count * IMAGE_FUNCTION_SIZE)
+		image-exports: image-globals + (header/global-count * IMAGE_GLOBAL_SIZE)
+		reference-state/references: as int-ptr! (image-exports
+			+ (header/export-count * IMAGE_EXPORT_SIZE))
 		names: output + metadata-size
 		name-cursor: 0
 		id: 1
@@ -1202,10 +1524,27 @@ arm64-codegen: context [
 			id: id + 1
 		]
 		id: 1
+		while [id <= header/global-count][
+			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
+			image-global: as codegen-global! (image-globals
+				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
+			width: value-width global/type view
+			image-global/name: name-cursor
+			image-global/name-size: global/name-size
+			image-global/data-offset: global-offsets/id
+			image-global/data-size: width
+			image-global/first-reference: reference-state/starts/id
+			image-global/reference-count: reference-state/counts/id
+			image-global/flags: global/flags and PROTECTED
+			copy-memory (names + name-cursor)
+				(view/strings + global/name) global/name-size
+			name-cursor: name-cursor + global/name-size
+			id: id + 1
+		]
+		id: 1
 		while [id <= header/export-count][
 			exported: as rsir-export! (view/exports + ((id - 1) * RSIR_EXPORT_SIZE))
-			image-export: as codegen-export! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			image-export: as codegen-export! (image-exports
 				+ ((id - 1) * IMAGE_EXPORT_SIZE))
 			image-export/symbol: exported/symbol
 			image-export/name: name-cursor
@@ -1218,16 +1557,46 @@ arm64-codegen: context [
 
 		code: output + code-offset
 		id: 1
+		while [id <= header/global-count][
+			reference-state/cursors/id: 0
+			id: id + 1
+		]
+		id: 1
 		while [id <= header/function-count][
 			fn: as rsir-function! (view/functions + ((id - 1) * RSIR_FUNCTION_SIZE))
 			entry?: all [header/module-kind = 3 id = header/entry-function]
 			status: plan-function view fn instruction-starts/id scratch plan
 			if status < 0 [return release memory status]
 			written: compile-function view fn instruction-starts/id
-				entry? scratch plan function-offsets function-offsets/id
+				entry? scratch plan reference-state function-offsets function-offsets/id
 				(code + function-offsets/id) function-sizes/id
 			if written <> function-sizes/id [
 				return release memory either written < 0 [written][INVALID_IR]
+			]
+			id: id + 1
+		]
+		id: 1
+		while [id <= header/global-count][
+			if reference-state/cursors/id <> reference-state/counts/id [
+				return release memory INVALID_IR
+			]
+			id: id + 1
+		]
+		rodata-output: output + rodata-offset
+		data-output: output + data-offset
+		id: 1
+		while [id <= header/global-count][
+			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
+			if global/initializer-count = 1 [
+				initializer: as rsir-initializer! (view/initializers
+					+ (global/first-initializer * RSIR_INITIALIZER_SIZE))
+				cursor: either (global/flags and PROTECTED) <> 0 [
+					rodata-output + global-offsets/id
+				][data-output + global-offsets/id]
+				width: value-width global/type view
+				unless write-static-scalar cursor width initializer/a initializer/b [
+					return release memory INVALID_IR
+				]
 			]
 			id: id + 1
 		]

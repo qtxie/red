@@ -96,4 +96,49 @@ check all [file? output exists? output]["Darwin linker did not write " mold outp
 status: call/wait to-local-file output
 check status = 214 ["generated ARM64 loop returned " status " instead of 214"]
 
+global-source: {
+	Red/System []
+	total: 14
+	main: func [return: [integer!]][
+		total: total + 28
+		total
+	]
+}
+
+global-ir: compiler-rsir-frontend/compile load global-source 'user
+check binary? global-ir [
+	"ARM64 global integration frontend failed: " mold compiler-rsir-frontend/last-error
+]
+change/part global-ir int-to-bin/to-bin32 3 4
+change/part at global-ir 5 int-to-bin/to-bin32 1 4
+
+global-image: make binary! 65536
+status: codegen-module global-ir global-image 2 0
+check status = 0 ["ARM64 global integration codegen status=" status]
+check all [
+	(word-at global-image 20) = 1
+	(word-at global-image 36) = 20
+	(word-at global-image 40) = 1
+	(word-at global-image 44) = 0
+]["ARM64 global integration image metadata is inconsistent"]
+
+global-job: compiler-system-job/new 'Darwin-ARM64
+check object? global-job "could not create a Darwin ARM64 global compilation job"
+global-job: construct/with body-of global-job linker/job-class
+compiler-system-job/job-set global-job 'runtime? false
+compiler-system-job/job-set global-job 'debug? false
+compiler-system-job/job-set global-job 'build-prefix output-dir
+compiler-system-job/job-set global-job 'build-basename %arm64-hybrid-global-integration
+compiler-system-job/job-set global-job 'build-suffix none
+
+check linker/load-codegen global-job global-image [
+	"Darwin linker rejected ARM64 global image: " linker/codegen-error
+]
+global-output: linker/build global-job
+check all [file? global-output exists? global-output][
+	"Darwin linker did not write " mold global-output
+]
+status: call/wait to-local-file global-output
+check status = 42 ["generated ARM64 global update returned " status " instead of 42"]
+
 print "PASS: direct ARM64 RSIR -> Mach-O -> execution"

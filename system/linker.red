@@ -83,7 +83,7 @@ linker: context [
 			reference-id reference
 			name-bytes name symbols refs data-refs imports functions library-offset library-size
 			external-offset external-size library external last-library code rodata data sections
-			data-reference symbol-type symbol-id internal exports export-names
+			data-reference reference-register symbol-type symbol-id internal exports export-names
 			function-names global-names
 	][
 		codegen-error: none
@@ -244,10 +244,19 @@ linker: context [
 						append data-refs negate (data-reference + 1)
 					]
 				][
-					unless reference <= (code-size - 4) [
-						return codegen-fail "native function reference exceeds code"
+					either job/target = 'ARM64 [
+						unless reference <= (code-size - 8) [
+							return codegen-fail "native function reference exceeds code"
+						]
+						reference-register: (to integer! pick image
+							(code-offset + reference + 1)) and 31
+						append/only refs reduce [reference + 1 reference-register]
+					][
+						unless reference <= (code-size - 4) [
+							return codegen-fail "native function reference exceeds code"
+						]
+						append refs reference + 1
 					]
-					append refs reference + 1
 				]
 				reference-id: reference-id + 1
 			]
@@ -330,10 +339,19 @@ linker: context [
 						append data-refs negate (data-reference + 1)
 					]
 				][
-					unless reference <= (code-size - 4) [
-						return codegen-fail "native global reference exceeds code"
+					either job/target = 'ARM64 [
+						unless reference <= (code-size - 8) [
+							return codegen-fail "native global reference exceeds code"
+						]
+						reference-register: (to integer! pick image
+							(code-offset + reference + 1)) and 31
+						append/only refs reduce [reference + 1 reference-register]
+					][
+						unless reference <= (code-size - 4) [
+							return codegen-fail "native global reference exceeds code"
+						]
+						append refs reference + 1
 					]
-					append refs reference + 1
 				]
 				reference-id: reference-id + 1
 			]

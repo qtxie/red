@@ -272,6 +272,8 @@ machine-state!: alias struct! [
 	resident-width          [integer!]
 	resident-mark           [integer!]
 	resident-clean?         [logic!]
+	promoted-slot1          [integer!]
+	promoted-slot2          [integer!]
 	incoming-arguments      [integer!]
 	flags-condition         [integer!]
 	last-math-operation     [integer!]
@@ -283,8 +285,8 @@ machine-state!: alias struct! [
 
 ; One function to compile and the image slot its code lands in. Sizes are
 ; measured first with `code` and `references` null, then the same task is
-; replayed with both set; the four trailing fields carry results of the
-; measuring pass back to the caller and into the emitting pass.
+; replayed with both set. Frame, outgoing, reference, and literal sizes carry
+; measurement results into the emitting pass; opt-level is its immutable input.
 codegen-task!: alias struct! [
 	fn                     [rsir-function!]
 	first-instruction      [integer!]
@@ -301,6 +303,7 @@ codegen-task!: alias struct! [
 	outgoing-size          [integer!]
 	global-reference-count [integer!]
 	literal-size           [integer!]
+	opt-level              [integer!]
 ]
 
 ; Per-function state shared by the validation, layout, prologue, and emission
@@ -510,6 +513,7 @@ x64-codegen: context [
 	LOCATION_XMM_PAIR:       8
 	; A scalar parameter still resides in its incoming Win64 argument register.
 	LOCATION_ARGUMENT:       9
+	LOCATION_REGISTER_HOME: 10
 	; Zero means no stack tag, positive values are variant-chain instruction
 	; indexes, and -1 marks a direct binary64 literal without colliding with them.
 	FLOAT_LITERAL_TAG: -1
@@ -1876,6 +1880,32 @@ x64-codegen: context [
 
 	storage-displacement: func [offsets [int-ptr!] slot [integer!] return: [integer!]][
 		offsets/slot
+	]
+
+	promoted-storage-register: func [
+		state [machine-state!]
+		slot [integer!]
+		return: [integer!]
+	][
+		case [
+			slot = state/promoted-slot1 [x64-encoder/R10]
+			slot = state/promoted-slot2 [x64-encoder/R11]
+			true [-1]
+		]
+	]
+
+	; Whole-function register homes stay within the simple leaf subset whose
+	; volatile-register ownership is explicit. THROW belongs here because its
+	; unwind sequence uses R11 as the resume-address register.
+	promotion-barrier?: func [operation [integer!] return: [logic!]][
+		any [
+			operation = OP_CALL
+			operation = OP_NATIVE
+			operation = OP_THROW
+			operation = OP_SWITCH
+			operation = OP_SUB_CALL
+			operation = OP_SUB_RETURN
+		]
 	]
 
 	; Lays out the frame homes of one function's parameters and locals and returns
@@ -3810,7 +3840,8 @@ x64-codegen: context [
 				instruction/b <= state/storage-count
 			][
 				source-slot: instruction/b
-				storage-offsets/source-slot: 1
+				if storage-offsets/source-slot = 2147483647 [return OUTPUT_FULL]
+				storage-offsets/source-slot: storage-offsets/source-slot + 1
 			]
 			if all [
 				live?
@@ -3888,6 +3919,133 @@ x64-codegen: context [
 		; one linear load from the still-available ABI register. -1 marks that
 		; single candidate; any other or repeated reference restores the home.
 
+		0
+	]
+
+	; O2 keeps the two hottest integer locals of a leaf function in volatile
+	; registers for the whole function. A local qualifies only when every live
+	; address is consumed immediately by LOAD or SET, so its address cannot
+	; escape and the register remains its canonical home across control flow.
+	plan-promoted-locals: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			instruction next-instruction [rsir-instruction!]
+			parameter [rsir-parameter!]
+			table [type-table!]
+			instructions parameters [byte-ptr!]
+			instruction-effects control-uses catch-depths storage-offsets [int-ptr!]
+			index next-index source-slot slot best-slot best-count pass width [integer!]
+			live? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		instructions: view/instructions
+		parameters: module/parameters
+		instruction-effects: view/instruction-effects
+		control-uses: view/control-uses
+		catch-depths: view/catch-depths
+		storage-offsets: view/storage-offsets
+		state/promoted-slot1: 0
+		state/promoted-slot2: 0
+
+		if any [task/opt-level <> 2 task/entry? fn/local-count = 0][return 0]
+		index: 1
+		while [index <= fn/instruction-count][
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			live?: (instruction-effects/index and EFFECT_LIVE) <> 0
+			if all [live? promotion-barrier? instruction/op][return 0]
+			index: index + 1
+		]
+
+		index: 1
+		while [index <= fn/instruction-count][
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			if all [
+				(instruction-effects/index and EFFECT_LIVE) <> 0
+				instruction/op = OP_ADDRESS
+				instruction/a = LOCAL_ADDRESS
+				instruction/b > fn/parameter-count
+				instruction/b <= state/storage-count
+			][
+				source-slot: instruction/b
+				if storage-offsets/source-slot > 0 [
+					next-index: index + 1
+					live?: false
+					if next-index <= fn/instruction-count [
+						next-instruction: as rsir-instruction! (instructions
+							+ ((next-index - 1) * RSIR_INSTRUCTION_SIZE))
+						live?: all [
+							(instruction-effects/next-index and EFFECT_LIVE) <> 0
+							(instruction-effects/next-index and EFFECT_ELIDED) = 0
+							control-uses/next-index = 0
+							catch-depths/next-index = catch-depths/index
+							any [
+								next-instruction/op = OP_LOAD
+								next-instruction/op = OP_SET
+							]
+						]
+					]
+					unless live? [
+						storage-offsets/source-slot:
+							0 - storage-offsets/source-slot
+					]
+				]
+			]
+			index: index + 1
+		]
+
+		pass: 1
+		while [pass <= 2][
+			best-slot: 0
+			; Fewer than three static accesses do not repay extended-register
+			; moves in straight-line code.
+			best-count: 2
+			slot: fn/parameter-count + 1
+			while [slot <= state/storage-count][
+				if all [
+					slot <> state/promoted-slot1
+					storage-offsets/slot > best-count
+				][
+					parameter: as rsir-parameter! (parameters
+						+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
+					width: value-width parameter/type parameter/flags table
+					if all [
+						parameter/flags = 0
+						integer-type? parameter/type table
+						any [width = 4 width = 8]
+					][
+						best-slot: slot
+						best-count: storage-offsets/slot
+					]
+				]
+				slot: slot + 1
+			]
+			if best-slot = 0 [
+				state/promoted-slot1: 0
+				state/promoted-slot2: 0
+				return 0
+			]
+			either pass = 1 [
+				state/promoted-slot1: best-slot
+			][state/promoted-slot2: best-slot]
+			pass: pass + 1
+		]
+		; Commit both selections together; a lone promoted local is not profitable.
+		slot: state/promoted-slot1
+		storage-offsets/slot: 0
+		slot: state/promoted-slot2
+		storage-offsets/slot: 0
 		0
 	]
 
@@ -4015,7 +4173,7 @@ x64-codegen: context [
 			table [type-table!]
 			storage-offsets [int-ptr!]
 			entry? [logic!]
-			storage-slots [integer!]
+			storage-slots result [integer!]
 	][
 		module: context/module
 		task: context/task
@@ -4025,6 +4183,8 @@ x64-codegen: context [
 		table: module/table
 		entry?: task/entry?
 		storage-offsets: view/storage-offsets
+		result: plan-promoted-locals context
+		if result < 0 [return result]
 
 		state/storage-bytes: plan-storage module fn storage-offsets
 		if state/storage-bytes < 0 [return state/storage-bytes]
@@ -4402,6 +4562,7 @@ x64-codegen: context [
 			global-reference-id [integer!]
 			incoming-mask [integer!]
 			incoming-register [integer!]
+			promoted-register [integer!]
 			compatibility [integer!]
 			measure? [logic!]
 			valid? [logic!]
@@ -4427,6 +4588,7 @@ x64-codegen: context [
 			scaled-immediate? [logic!]
 			source-located? [logic!]
 			direct-frame-target? [logic!]
+			direct-register-target? [logic!]
 			resident-hit? [logic!]
 	][
 		module: context/module
@@ -4516,6 +4678,7 @@ x64-codegen: context [
 						next-instruction/a = LOCAL_ADDRESS
 						next-instruction/b > 0
 						next-instruction/b <= state/storage-count
+						(promoted-storage-register state next-instruction/b) < 0
 						(index + 3) <= fn/instruction-count
 					][
 						target: index + 2
@@ -4817,42 +4980,50 @@ x64-codegen: context [
 								parameter/flags = INLINE
 								(win64-aggregate-width parameter/type table) = 0
 							]
-							state/location-source: storage-displacement storage-offsets instruction/b
-							physical-slot: instruction/b + state/hidden-shift
-							direct-parameter?: false
-							if all [physical-slot >= 1 physical-slot <= 4][
-								incoming-mask: 1 << (physical-slot - 1)
-								direct-parameter?: all [
-									instruction/b <= fn/parameter-count
-									parameter/flags = 0
-									(state/incoming-arguments and incoming-mask) <> 0
-									linear?
-									next-instruction/op = OP_LOAD
-									(instruction-effects/next-index and EFFECT_LIVE) <> 0
-									(instruction-effects/next-index and EFFECT_ELIDED) = 0
-									machine-value? ref flags table
-								]
-							]
-							if all [state/location-source = 0 not direct-parameter?][return INVALID_IR]
-							either direct-parameter? [
-								location: LOCATION_ARGUMENT
-								state/location-source: physical-slot
-								encoded: 0
-							][either linear? [
-								location: either valid? [
-									LOCATION_FRAME_INDIRECT
-								][LOCATION_FRAME]
+							promoted-register: promoted-storage-register state instruction/b
+							either promoted-register >= 0 [
+								unless linear? [return INVALID_IR]
+								location: LOCATION_REGISTER_HOME
+								state/location-source: promoted-register
 								encoded: 0
 							][
-								at: either measure? [as byte-ptr! 0][code + written]
-								encoded: either valid? [
-									x64-encoder/frame-load at (capacity - written)
-										register-id state/location-source 8 0
-								][
-									x64-encoder/frame-address at (capacity - written)
-										register-id state/location-source
+								state/location-source: storage-displacement storage-offsets instruction/b
+								physical-slot: instruction/b + state/hidden-shift
+								direct-parameter?: false
+								if all [physical-slot >= 1 physical-slot <= 4][
+									incoming-mask: 1 << (physical-slot - 1)
+									direct-parameter?: all [
+										instruction/b <= fn/parameter-count
+										parameter/flags = 0
+										(state/incoming-arguments and incoming-mask) <> 0
+										linear?
+										next-instruction/op = OP_LOAD
+										(instruction-effects/next-index and EFFECT_LIVE) <> 0
+										(instruction-effects/next-index and EFFECT_ELIDED) = 0
+										machine-value? ref flags table
+									]
 								]
-							]]
+								if all [state/location-source = 0 not direct-parameter?][return INVALID_IR]
+								either direct-parameter? [
+									location: LOCATION_ARGUMENT
+									state/location-source: physical-slot
+									encoded: 0
+								][either linear? [
+									location: either valid? [
+										LOCATION_FRAME_INDIRECT
+									][LOCATION_FRAME]
+									encoded: 0
+								][
+									at: either measure? [as byte-ptr! 0][code + written]
+									encoded: either valid? [
+										x64-encoder/frame-load at (capacity - written)
+											register-id state/location-source 8 0
+									][
+										x64-encoder/frame-address at (capacity - written)
+											register-id state/location-source
+									]
+								]]
+								]
 						]
 						instruction/a = GLOBAL_ADDRESS [
 							global-id: instruction/b
@@ -5055,6 +5226,7 @@ x64-codegen: context [
 									location = LOCATION_FRAME
 									location = LOCATION_GLOBAL
 									location = LOCATION_ARGUMENT
+									location = LOCATION_REGISTER_HOME
 								]
 						][return INVALID_IR]
 						; A parameter consumed by the next CALL can retain its ABI source
@@ -5109,6 +5281,11 @@ x64-codegen: context [
 								location = LOCATION_FRAME_INDIRECT [
 									x64-encoder/frame-load at (capacity - written)
 										x64-encoder/RAX state/location-source 8 0
+								]
+								location = LOCATION_REGISTER_HOME [
+									target-width: either width = 8 [8][4]
+									move-operation-value at (capacity - written)
+										register-id state/location-source width target-width signed
 								]
 								location = LOCATION_ARGUMENT [
 									incoming-register: either floating? [
@@ -5173,6 +5350,7 @@ x64-codegen: context [
 						not any [
 							location = LOCATION_FRAME
 							location = LOCATION_ARGUMENT
+							location = LOCATION_REGISTER_HOME
 						]
 						not global-target?
 					][
@@ -5380,6 +5558,7 @@ x64-codegen: context [
 						source-located?
 						location = LOCATION_FRAME
 					]
+					direct-register-target?: location = LOCATION_REGISTER_HOME
 					target-offset: state/location-source
 					global-reference-id: state/location-reference
 					target-ref: stack-types/target-slot
@@ -5438,6 +5617,7 @@ x64-codegen: context [
 							x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RDX state/location-source 8 0
 						]
+						location = LOCATION_REGISTER_HOME [0]
 						location = LOCATION_ADDRESS [
 							x64-encoder/move-register at (capacity - written)
 								x64-encoder/RDX x64-encoder/RAX 8
@@ -5521,6 +5701,10 @@ x64-codegen: context [
 							]
 						][
 							case [
+								direct-register-target? [
+									x64-encoder/move-register at (capacity - written)
+										target-offset x64-encoder/RAX target-width
+								]
 								direct-frame-target? [
 									x64-encoder/frame-store at (capacity - written)
 										x64-encoder/RAX target-offset target-width
@@ -9904,7 +10088,8 @@ x64-codegen: context [
 					location = LOCATION_GPR state/location-depth = (depth - 1)]][return INVALID_IR]
 			consume-location?: case [
 				any [location = LOCATION_ADDRESS location = LOCATION_FRAME location = LOCATION_FRAME_INDIRECT
-					location = LOCATION_GLOBAL location = LOCATION_ARGUMENT][
+					location = LOCATION_GLOBAL location = LOCATION_ARGUMENT
+					location = LOCATION_REGISTER_HOME][
 					any [instruction/op = OP_LOAD instruction/op = OP_REFERENCE instruction/op = OP_MEMBER
 						instruction/op = OP_SET instruction/op = OP_CALL instruction/op = OP_DROP]
 				]
@@ -10995,6 +11180,7 @@ x64-codegen: context [
 		table: module/table
 		work: ctx/scratch
 		task: ctx/task
+		task/opt-level: ctx/opt-level
 		member-count: ctx/member-count
 		parameter-count: ctx/parameter-count
 		if header/function-count > ((2147483647 - header/import-count) / 6)[

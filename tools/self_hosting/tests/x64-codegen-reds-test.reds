@@ -274,6 +274,7 @@ failures: 0
 identity-code-size: 0
 folded-code-size: 0
 local-code-size: 0
+promotion-frame-size: 0
 branch-code-size: 0
 call-branch-code-size: 0
 imm-fold-code-size: 0
@@ -334,6 +335,7 @@ if (x64-codegen/implicitly-compatible-types -7 -8 0 false empty-table) <> 0 [
 output: allocate 1024
 void-ir: allocate 132
 local-ir: allocate 260
+promotion-ir: allocate 516
 unused-local-ir: allocate 260
 untyped-import-ir: allocate 164
 pointer-ir: allocate 196
@@ -707,6 +709,171 @@ if size > 0 [
 	]
 ]
 
+; Two static accesses do not repay the REX-prefixed register moves, so O2
+; deliberately leaves this small local in its ordinary frame home.
+size: x64-codegen/generate local-ir 194 output 1024 2
+if any [size <= 0 not execute-first? output 7][
+	print ["O2 low-use integer local produced the wrong result" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if any [fn/frame-size <> 64 fn/code-size <> local-code-size][
+		print ["O2 over-promoted a low-use integer local: " fn/frame-size " " fn/code-size lf]
+		failures: failures + 1
+	]
+]
+
+; Two repeatedly accessed integer locals are profitable together: their frame
+; homes disappear and R10/R11 carry the values through the whole expression.
+put promotion-ir 0 1
+put promotion-ir 4 0
+put promotion-ir 8 0
+put promotion-ir 12 0
+put promotion-ir 16 1
+put promotion-ir 20 20
+put promotion-ir 24 0
+put promotion-ir 28 0
+put promotion-ir 32 0
+
+put promotion-ir 36 0
+put promotion-ir 40 2
+put promotion-ir 44 -5
+put promotion-ir 48 0
+put promotion-ir 52 0
+put promotion-ir 56 0
+put promotion-ir 60 0
+put promotion-ir 64 2
+put promotion-ir 68 20
+
+put promotion-ir 72 -5
+put promotion-ir 76 0
+put promotion-ir 80 -5
+put promotion-ir 84 0
+put-instruction promotion-ir 88 1 -5 1 0
+put-instruction promotion-ir 104 3 1 1 0
+put-instruction promotion-ir 120 5 0 0 0
+put-instruction promotion-ir 136 12 0 0 0
+put-instruction promotion-ir 152 1 -5 2 0
+put-instruction promotion-ir 168 3 1 2 0
+put-instruction promotion-ir 184 5 0 0 0
+put-instruction promotion-ir 200 12 0 0 0
+put-instruction promotion-ir 216 3 1 1 0
+put-instruction promotion-ir 232 4 0 0 0
+put-instruction promotion-ir 248 3 1 2 0
+put-instruction promotion-ir 264 4 0 0 0
+put-instruction promotion-ir 280 15 1 0 0
+put-instruction promotion-ir 296 3 1 1 0
+put-instruction promotion-ir 312 4 0 0 0
+put-instruction promotion-ir 328 15 1 0 0
+put-instruction promotion-ir 344 3 1 2 0
+put-instruction promotion-ir 360 4 0 0 0
+put-instruction promotion-ir 376 15 1 0 0
+put-instruction promotion-ir 392 11 -5 0 0
+promotion-ir/409: as byte! 70h
+promotion-ir/410: as byte! 6Eh
+
+size: x64-codegen/generate promotion-ir 410 output 1024 0
+if any [size <= 0 not execute-first? output 6][
+	print ["O0 two-local promotion control failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	promotion-frame-size: fn/frame-size
+]
+size: x64-codegen/generate promotion-ir 410 output 1024 2
+if any [size <= 0 not execute-first? output 6][
+	print ["O2 two-local promotion produced the wrong result" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/frame-size >= promotion-frame-size [
+		print ["O2 two-local promotion kept redundant frame homes" lf]
+		failures: failures + 1
+	]
+]
+
+; THROW resumes through R11. This function has two otherwise profitable locals
+; plus a third local as the THROW destination; whole-function promotion must
+; stay disabled so the two values survive the unwind and catch continuation.
+put promotion-ir 0 1
+put promotion-ir 4 0
+put promotion-ir 8 0
+put promotion-ir 12 0
+put promotion-ir 16 1
+put promotion-ir 20 24
+put promotion-ir 24 0
+put promotion-ir 28 0
+put promotion-ir 32 0
+
+put promotion-ir 36 0
+put promotion-ir 40 2
+put promotion-ir 44 -5
+put promotion-ir 48 0
+put promotion-ir 52 0
+put promotion-ir 56 0
+put promotion-ir 60 0
+put promotion-ir 64 3
+put promotion-ir 68 24
+
+put promotion-ir 72 -5
+put promotion-ir 76 0
+put promotion-ir 80 -5
+put promotion-ir 84 0
+put promotion-ir 88 -5
+put promotion-ir 92 0
+
+put-instruction promotion-ir 96 1 -5 10 0
+put-instruction promotion-ir 112 3 1 1 0
+put-instruction promotion-ir 128 5 0 0 0
+put-instruction promotion-ir 144 12 0 0 0
+put-instruction promotion-ir 160 1 -5 20 0
+put-instruction promotion-ir 176 3 1 2 0
+put-instruction promotion-ir 192 5 0 0 0
+put-instruction promotion-ir 208 12 0 0 0
+put-instruction promotion-ir 224 1 -5 1 0
+put-instruction promotion-ir 240 24 14 1 0
+put-instruction promotion-ir 256 1 -5 1 0
+put-instruction promotion-ir 272 3 1 3 0
+put-instruction promotion-ir 288 26 0 0 0
+put-instruction promotion-ir 304 25 10 1 0
+put-instruction promotion-ir 320 3 1 1 0
+put-instruction promotion-ir 336 4 0 0 0
+put-instruction promotion-ir 352 3 1 2 0
+put-instruction promotion-ir 368 4 0 0 0
+put-instruction promotion-ir 384 15 1 0 0
+put-instruction promotion-ir 400 3 1 1 0
+put-instruction promotion-ir 416 5 0 0 0
+put-instruction promotion-ir 432 3 1 2 0
+put-instruction promotion-ir 448 5 0 0 0
+put-instruction promotion-ir 464 11 -5 0 0
+promotion-ir/481: as byte! 74h
+promotion-ir/482: as byte! 70h
+
+size: x64-codegen/generate promotion-ir 482 output 1024 0
+if any [size <= 0 not execute-selection? output 30][
+	print ["O0 THROW promotion barrier control failed" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	promotion-frame-size: fn/frame-size
+]
+size: x64-codegen/generate promotion-ir 482 output 1024 2
+if any [size <= 0 not execute-selection? output 30][
+	print ["O2 THROW corrupted a promotion register" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/frame-size <> promotion-frame-size [
+		print ["O2 promoted locals across THROW" lf]
+		failures: failures + 1
+	]
+]
+
 ; SET and RETURN are the declared type consumers. The frontend leaves both
 ; source types unchanged, so each mismatch must be rejected here independently.
 put local-ir 84 -11
@@ -919,6 +1086,19 @@ if size > 0 [
 if any [size <= 0 not execute-first? output 14][
 	print ["O0 integer local pair was not forwarded" lf]
 	failures: failures + 1
+]
+
+size: x64-codegen/generate local-ir 242 output 1024 2
+if any [size <= 0 not execute-first? output 14][
+	print ["O2 lone repeated integer local produced the wrong result" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/frame-size <> 64 [
+		print ["O2 promoted a lone repeated integer local" lf]
+		failures: failures + 1
+	]
 ]
 
 ; The RAX/RDX pair covers bitwise operations, including AND.
@@ -6172,6 +6352,7 @@ put effect-ir 48 0
 free output
 free void-ir
 free local-ir
+free promotion-ir
 free unused-local-ir
 free untyped-import-ir
 free pointer-ir

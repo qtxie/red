@@ -63,7 +63,12 @@ arm64-codegen: context [
 	PROTECTED:    2
 	TAGGED_UNION: 1
 
-	SCALAR_INITIALIZER: 1
+	SCALAR_INITIALIZER:  1
+	ADDRESS_INITIALIZER: 2
+	BYTES_INITIALIZER:   3
+	DATA_REFERENCE_TAG:   80000000h
+	RODATA_REFERENCE_TAG: C0000000h
+	REFERENCE_OFFSET_MASK: 3FFFFFFFh
 
 	OP_LITERAL: 1
 	OP_ADDRESS: 3
@@ -98,8 +103,9 @@ arm64-codegen: context [
 	GREATER_EQUAL_OPERATION: 17
 	LESS_EQUAL_OPERATION:    18
 
-	LOCAL_ADDRESS: 1
-	GLOBAL_ADDRESS: 2
+	LOCAL_ADDRESS:    1
+	GLOBAL_ADDRESS:   2
+	FUNCTION_ADDRESS: 4
 
 	VALUE: 1
 	PLACE: 2
@@ -163,6 +169,13 @@ arm64-codegen: context [
 		type/kind
 	]
 
+	valid-type-ref?: func [ref [integer!] view [rsir-view!] return: [logic!]][
+		any [
+			all [ref > 0 ref <= view/header/type-count]
+			all [ref < 0 ref >= -15]
+		]
+	]
+
 	value-width: func [
 		ref [integer!]
 		view [rsir-view!]
@@ -205,6 +218,54 @@ arm64-codegen: context [
 			kind = 12 kind = 13 kind = 16
 			kind = -2 kind = -3 kind = -6 kind = -7
 		]
+	]
+
+	address-integer-kind?: func [kind [integer!] return: [logic!]][
+		any [kind = 5 kind = 6 kind = 7 kind = 8]
+	]
+
+	compatible-types?: func [
+		expected actual [integer!]
+		view [rsir-view!]
+		return: [logic!]
+		/local left right left-kind right-kind target [integer!]
+			left-record right-record [rsir-type!]
+	][
+		if expected = actual [return true]
+		left: canonical-type expected view
+		right: canonical-type actual view
+		if any [left = 0 right = 0][return false]
+		if left = right [return true]
+		left-kind: type-kind left view
+		right-kind: type-kind right view
+		if any [left-kind = 14 right-kind = 14][
+			return all [reference-type? left view reference-type? right view]
+		]
+		if all [
+			any [left = -12 right = -12]
+			any [left-kind = 12 left-kind = -6]
+			any [right-kind = 12 right-kind = -6]
+		][return true]
+		if all [right-kind = -7 right > 0][
+			right-record: as rsir-type! (view/types
+				+ ((right - 1) * RSIR_TYPE_SIZE))
+			target: 0
+			case [
+				left-kind = 13 [target: -15]
+				all [left-kind = -6 left > 0][
+					left-record: as rsir-type! (view/types
+						+ ((left - 1) * RSIR_TYPE_SIZE))
+					target: left-record/target
+				]
+				true [0]
+			]
+			if all [
+				target <> 0
+				(canonical-type target view)
+					= (canonical-type right-record/target view)
+			][return true]
+		]
+		all [left-kind > 0 left-kind = right-kind]
 	]
 
 	integer-type?: func [ref [integer!] view [rsir-view!] return: [logic!]
@@ -265,17 +326,8 @@ arm64-codegen: context [
 		expected actual [integer!]
 		view [rsir-view!]
 		return: [logic!]
-		/local left right [integer!]
 	][
-		if expected = actual [return true]
-		left: canonical-type expected view
-		right: canonical-type actual view
-		if any [left = 0 right = 0][return false]
-		if left = right [return true]
-		if any [(type-kind left view) = 14 (type-kind right view) = 14][
-			return all [reference-type? left view reference-type? right view]
-		]
-		false
+		compatible-types? expected actual view
 	]
 
 	tag-width: func [count [integer!] return: [integer!]][
@@ -483,7 +535,7 @@ arm64-codegen: context [
 		unless all [any [kind = -6 kind = -7] base > 0][return false]
 		record: as rsir-type! (view/types + ((base - 1) * RSIR_TYPE_SIZE))
 		result/1: record/target
-		result/1 <> 0
+		valid-type-ref? result/1 view
 	]
 
 	pointer-stride: func [
@@ -519,6 +571,78 @@ arm64-codegen: context [
 		size
 	]
 
+	static-address-representation-compatible?: func [
+		target source [integer!]
+		view [rsir-view!]
+		return: [logic!]
+		/local target-kind source-kind [integer!]
+	][
+		if compatible-types? target source view [return true]
+		target-kind: type-kind target view
+		source-kind: type-kind source view
+		case [
+			any [source-kind = 12 source-kind = 13 source-kind = -6][
+				any [
+					address-integer-kind? target-kind
+					target-kind = 12 target-kind = 13
+					target-kind = -2 target-kind = -3 target-kind = -4
+					target-kind = -6 target-kind = -7
+				]
+			]
+			source-kind = -4 [
+				any [
+					address-integer-kind? target-kind
+					target-kind = 12
+					target-kind = -4 target-kind = -6
+				]
+			]
+			true [false]
+		]
+	]
+
+	valid-static-address-initializer?: func [
+		initializer [rsir-initializer!]
+		expected owner [integer!]
+		view [rsir-view!]
+		return: [logic!]
+		/local target [rsir-global!] kind pointee source [integer!]
+	][
+		if initializer/kind <> ADDRESS_INITIALIZER [return false]
+		source: either initializer/c = 0 [expected][initializer/c]
+		if all [
+			initializer/c <> 0
+			any [
+				not valid-type-ref? source view
+				not static-address-representation-compatible? expected source view
+			]
+		][return false]
+		case [
+			initializer/a = GLOBAL_ADDRESS [
+				if any [
+					initializer/b <= 0
+					initializer/b > view/header/global-count
+					initializer/b = owner
+				][return false]
+				target: as rsir-global! (view/globals
+					+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
+				if source = 0 [return true]
+				if compatible-types? source target/type view [return true]
+				pointee: 0
+				unless pointee-type source view :pointee [return false]
+				compatible-types? pointee target/type view
+			]
+			initializer/a = FUNCTION_ADDRESS [
+				if any [
+					initializer/b <= 0
+					initializer/b > view/header/function-count
+				][return false]
+				kind: type-kind source view
+				any [source = 0 kind = 12 kind = -4 kind = -5 kind = -6]
+			]
+			true [false]
+		]
+	]
+
 	power-shift: func [value [integer!] return: [integer!]][
 		case [
 			value = 1 [0]
@@ -551,21 +675,227 @@ arm64-codegen: context [
 		true
 	]
 
-	record-global-reference: func [
-		global-id offset [integer!]
+	record-reference: func [
+		target-id offset [integer!]
 		state [arm64-reference-state!]
 		return: [integer!]
 		/local reference-id [integer!]
 	][
-		if any [global-id <= 0 offset < 0][return INVALID_IR]
+		if target-id <= 0 [return INVALID_IR]
 		either null? state/references [
-			if state/counts/global-id = 2147483647 [return OUTPUT_FULL]
-			state/counts/global-id: state/counts/global-id + 1
+			if state/counts/target-id = 2147483647 [return OUTPUT_FULL]
+			state/counts/target-id: state/counts/target-id + 1
 		][
-			if state/cursors/global-id >= state/counts/global-id [return INVALID_IR]
-			reference-id: state/starts/global-id + state/cursors/global-id
+			if state/cursors/target-id >= state/counts/target-id [return INVALID_IR]
+			reference-id: state/starts/target-id + state/cursors/target-id
 			state/references/reference-id: offset
-			state/cursors/global-id: state/cursors/global-id + 1
+			state/cursors/target-id: state/cursors/target-id + 1
+		]
+		0
+	]
+
+	prepare-global-data: func [
+		view [rsir-view!]
+		layout [arm64-layout-state!]
+		references [arm64-reference-state!]
+		global-offsets global-sizes [int-ptr!]
+		data-size-out rodata-size-out [int-ptr!]
+		return: [integer!]
+		/local global [rsir-global!]
+			array-type [rsir-type!]
+			initializer [rsir-initializer!]
+			id initializer-id base kind global-size global-align
+			global-offset target-id status data-size rodata-size [integer!]
+			inline? array? [logic!]
+	][
+		data-size: data-size-out/1
+		rodata-size: rodata-size-out/1
+		id: 1
+		while [id <= view/header/global-count][
+			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
+			if any [global/flags < 0 global/flags > (INLINE or PROTECTED)][
+				return INVALID_IR
+			]
+			inline?: (global/flags and INLINE) <> 0
+			kind: type-kind global/type view
+			if all [inline? not any [kind = -2 kind = -3 kind = -7]][
+				return INVALID_IR
+			]
+			global-size: 0
+			global-align: 0
+			unless layout-type global/type inline? view layout 0
+				:global-size :global-align [return INVALID_IR]
+			if any [global-size <= 0 global-align <= 0][return INVALID_IR]
+			global-sizes/id: global-size
+
+			base: canonical-type global/type view
+			array?: all [inline? base > 0 kind = -7]
+			if all [array? global/initializer-count = 0][return INVALID_IR]
+			if global/initializer-count > 0 [
+				initializer: as rsir-initializer! (view/initializers
+					+ (global/first-initializer * RSIR_INITIALIZER_SIZE))
+				either array? [
+					array-type: as rsir-type! (view/types
+						+ ((base - 1) * RSIR_TYPE_SIZE))
+					either initializer/kind = BYTES_INITIALIZER [
+						if any [
+							global/initializer-count <> 1
+							initializer/a < 0 initializer/c <> 0
+							array-type/flags <> 1
+							initializer/b <> array-type/member-count
+							(canonical-type array-type/target view) <> -2
+						][return INVALID_IR]
+					][
+						if global/initializer-count <> array-type/member-count [
+							return INVALID_IR
+						]
+						initializer-id: 0
+						while [initializer-id < global/initializer-count][
+							initializer: as rsir-initializer! (view/initializers
+								+ ((global/first-initializer + initializer-id)
+									* RSIR_INITIALIZER_SIZE))
+							case [
+								initializer/kind = SCALAR_INITIALIZER [
+									if initializer/c <> 0 [return INVALID_IR]
+								]
+								initializer/kind = ADDRESS_INITIALIZER [
+									if any [
+										array-type/flags <> 8
+										not valid-static-address-initializer? initializer
+											array-type/target id view
+									][return INVALID_IR]
+									target-id: either initializer/a = GLOBAL_ADDRESS [
+										view/header/function-count + initializer/b
+									][initializer/b]
+									status: record-reference target-id 0 references
+									if status < 0 [return status]
+								]
+								true [return INVALID_IR]
+							]
+							initializer-id: initializer-id + 1
+						]
+					]
+				][
+					if global/initializer-count <> 1 [return INVALID_IR]
+					case [
+						initializer/kind = SCALAR_INITIALIZER [
+							if any [
+								initializer/c <> 0 inline? global-size > 8
+							][return INVALID_IR]
+						]
+						initializer/kind = ADDRESS_INITIALIZER [
+							if any [
+								inline? global-size <> 8
+								not valid-static-address-initializer? initializer
+									global/type id view
+							][return INVALID_IR]
+							target-id: either initializer/a = GLOBAL_ADDRESS [
+								view/header/function-count + initializer/b
+							][initializer/b]
+							status: record-reference target-id 0 references
+							if status < 0 [return status]
+						]
+						true [return INVALID_IR]
+					]
+				]
+			]
+
+			either (global/flags and PROTECTED) <> 0 [
+				global-offset: align rodata-size global-align
+				if any [
+					global-offset < 0
+					global-offset > (2147483647 - global-size)
+				][return OUTPUT_FULL]
+				rodata-size: global-offset + global-size
+			][
+				global-offset: align data-size global-align
+				if any [
+					global-offset < 0
+					global-offset > (2147483647 - global-size)
+				][return OUTPUT_FULL]
+				data-size: global-offset + global-size
+			]
+			global-offsets/id: global-offset
+			id: id + 1
+		]
+		data-size-out/1: data-size
+		rodata-size-out/1: rodata-size
+		0
+	]
+
+	write-global-data: func [
+		view [rsir-view!]
+		references [arm64-reference-state!]
+		global-offsets global-sizes [int-ptr!]
+		rodata-output data-output [byte-ptr!]
+		return: [integer!]
+		/local global [rsir-global!]
+			array-type [rsir-type!]
+			initializer [rsir-initializer!]
+			cursor [byte-ptr!]
+			id initializer-id base kind slot-width item-offset
+			target-id source-offset reference status [integer!]
+			array? [logic!]
+	][
+		id: 1
+		while [id <= view/header/global-count][
+			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
+			cursor: either (global/flags and PROTECTED) <> 0 [
+				rodata-output + global-offsets/id
+			][data-output + global-offsets/id]
+			base: canonical-type global/type view
+			kind: type-kind base view
+			array?: all [
+				(global/flags and INLINE) <> 0
+				base > 0 kind = -7
+			]
+			slot-width: global-sizes/id
+			if array? [
+				array-type: as rsir-type! (view/types
+					+ ((base - 1) * RSIR_TYPE_SIZE))
+				slot-width: array-type/flags
+			]
+			if global/initializer-count > 0 [
+				initializer: as rsir-initializer! (view/initializers
+					+ (global/first-initializer * RSIR_INITIALIZER_SIZE))
+				either initializer/kind = BYTES_INITIALIZER [
+					copy-memory cursor (view/strings + initializer/a) initializer/b
+				][
+					initializer-id: 0
+					item-offset: 0
+					while [initializer-id < global/initializer-count][
+						initializer: as rsir-initializer! (view/initializers
+							+ ((global/first-initializer + initializer-id)
+								* RSIR_INITIALIZER_SIZE))
+						case [
+							initializer/kind = SCALAR_INITIALIZER [
+								unless write-static-scalar (cursor + item-offset)
+									slot-width initializer/a initializer/b [
+									return INVALID_IR
+								]
+							]
+							initializer/kind = ADDRESS_INITIALIZER [
+								target-id: either initializer/a = GLOBAL_ADDRESS [
+									view/header/function-count + initializer/b
+								][initializer/b]
+								source-offset: global-offsets/id + item-offset
+								if source-offset > REFERENCE_OFFSET_MASK [
+									return OUTPUT_FULL
+								]
+								reference: either (global/flags and PROTECTED) <> 0 [
+									RODATA_REFERENCE_TAG or source-offset
+								][DATA_REFERENCE_TAG or source-offset]
+								status: record-reference target-id reference references
+								if status < 0 [return status]
+							]
+							true [return INVALID_IR]
+						]
+						initializer-id: initializer-id + 1
+						item-offset: item-offset + slot-width
+					]
+				]
+			]
+			id: id + 1
 		]
 		0
 	]
@@ -585,7 +915,8 @@ arm64-codegen: context [
 		while [id <= view/header/global-count][
 			target: scratch/global-homes/id
 			if target > 0 [
-				status: record-global-reference id (function-position + written)
+				status: record-reference (view/header/function-count + id)
+					(function-position + written)
 					references
 				if status < 0 [return status]
 				at: either null? code [as byte-ptr! 0][code + written]
@@ -1157,7 +1488,9 @@ arm64-codegen: context [
 								if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
 									return UNSUPPORTED
 								]
-								status: record-global-reference slot (function-base + written)
+								status: record-reference
+									(view/header/function-count + slot)
+									(function-base + written)
 									references
 								if status < 0 [return status]
 								at: either null? code [as byte-ptr! 0][code + written]
@@ -2014,7 +2347,6 @@ arm64-codegen: context [
 			header [rsir-header!]
 			fn [rsir-function!]
 			global [rsir-global!]
-			initializer [rsir-initializer!]
 			exported [rsir-export!]
 			image [codegen-header!]
 			image-function [codegen-function!]
@@ -2023,12 +2355,13 @@ arm64-codegen: context [
 			memory code names cursor finish image-globals image-exports
 				rodata-output data-output [byte-ptr!]
 			function-sizes function-offsets function-frames
-				instruction-starts global-offsets [int-ptr!]
+				instruction-starts global-offsets global-sizes [int-ptr!]
 			id first-instruction written code-size code-cursor
 			metadata-size names-size code-offset rodata-offset data-offset
 			data-size total-size name-cursor entry-id storage-count
-			rodata-size reference-count reference-cursor width kind global-offset
-			max-storage max-instructions words status member-id [integer!]
+			rodata-size reference-count
+			max-storage max-instructions words status member-id
+			target-count target-id [integer!]
 			entry? [logic!]
 	][
 		if any [null? output capacity < 0][return INVALID_IR]
@@ -2054,8 +2387,14 @@ arm64-codegen: context [
 		words: words + (max-storage * 3)
 		if max-instructions > ((2147483647 - words) / 7)[return OUTPUT_FULL]
 		words: words + (max-instructions * 7)
-		if header/global-count > ((2147483647 - words) / 5)[return OUTPUT_FULL]
-		words: words + (header/global-count * 5)
+		if header/global-count > ((2147483647 - words) / 3)[return OUTPUT_FULL]
+		words: words + (header/global-count * 3)
+		if header/function-count > (2147483647 - header/global-count)[
+			return OUTPUT_FULL
+		]
+		target-count: header/function-count + header/global-count
+		if target-count > ((2147483647 - words) / 3)[return OUTPUT_FULL]
+		words: words + (target-count * 3)
 		if header/type-count > ((2147483647 - words) / 2)[return OUTPUT_FULL]
 		words: words + (header/type-count * 2)
 		if view/member-count > (2147483647 - words)[return OUTPUT_FULL]
@@ -2079,11 +2418,12 @@ arm64-codegen: context [
 		scratch/instruction-offsets: scratch/stack-flags + max-instructions
 		scratch/global-homes: scratch/instruction-offsets + max-instructions
 		global-offsets: scratch/global-homes + header/global-count
-		reference-state/counts: global-offsets + header/global-count
-		reference-state/starts: reference-state/counts + header/global-count
-		reference-state/cursors: reference-state/starts + header/global-count
+		global-sizes: global-offsets + header/global-count
+		reference-state/counts: global-sizes + header/global-count
+		reference-state/starts: reference-state/counts + target-count
+		reference-state/cursors: reference-state/starts + target-count
 		reference-state/references: as int-ptr! 0
-		layout/sizes: reference-state/cursors + header/global-count
+		layout/sizes: reference-state/cursors + target-count
 		layout/alignments: layout/sizes + header/type-count
 		layout/member-offsets: layout/alignments + header/type-count
 		id: 1
@@ -2097,51 +2437,21 @@ arm64-codegen: context [
 			layout/member-offsets/member-id: 0
 			member-id: member-id + 1
 		]
+		id: 1
+		while [id <= target-count][
+			reference-state/counts/id: 0
+			reference-state/cursors/id: 0
+			id: id + 1
+		]
 
 		if header/function-count > (2147483647 / BITMAP_SIZE)[
 			return release memory OUTPUT_FULL
 		]
 		data-size: header/function-count * BITMAP_SIZE
 		rodata-size: 0
-		id: 1
-		while [id <= header/global-count][
-			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
-			unless any [global/flags = 0 global/flags = PROTECTED][
-				return release memory UNSUPPORTED
-			]
-			width: value-width global/type view
-			kind: type-kind global/type view
-			if width = 0 [return release memory INVALID_IR]
-			if any [width > 8 kind = 9 kind = 10][return release memory UNSUPPORTED]
-			if global/initializer-count > 1 [return release memory UNSUPPORTED]
-			if global/initializer-count = 1 [
-				initializer: as rsir-initializer! (view/initializers
-					+ (global/first-initializer * RSIR_INITIALIZER_SIZE))
-				unless all [
-					initializer/kind = SCALAR_INITIALIZER
-					initializer/c = 0
-				][return release memory UNSUPPORTED]
-			]
-			either (global/flags and PROTECTED) <> 0 [
-				global-offset: align rodata-size width
-				if any [
-					global-offset < 0
-					global-offset > (2147483647 - width)
-				][return release memory OUTPUT_FULL]
-				rodata-size: global-offset + width
-			][
-				global-offset: align data-size width
-				if any [
-					global-offset < 0
-					global-offset > (2147483647 - width)
-				][return release memory OUTPUT_FULL]
-				data-size: global-offset + width
-			]
-			global-offsets/id: global-offset
-			reference-state/counts/id: 0
-			reference-state/cursors/id: 0
-			id: id + 1
-		]
+		status: prepare-global-data view layout reference-state
+			global-offsets global-sizes :data-size :rodata-size
+		if status < 0 [return release memory status]
 
 		code-size: 0
 		first-instruction: 0
@@ -2170,7 +2480,7 @@ arm64-codegen: context [
 		]
 		reference-count: 0
 		id: 1
-		while [id <= header/global-count][
+		while [id <= target-count][
 			reference-state/starts/id: either reference-state/counts/id > 0 [
 				reference-count + 1
 			][0]
@@ -2294,8 +2604,8 @@ arm64-codegen: context [
 			image-function/frame-size: function-frames/id
 			image-function/bitmap-offset: (id - 1) * BITMAP_SIZE
 			image-function/bitmap-size: BITMAP_SIZE
-			image-function/first-reference: 0
-			image-function/reference-count: 0
+			image-function/first-reference: reference-state/starts/id
+			image-function/reference-count: reference-state/counts/id
 			copy-memory (names + name-cursor) (view/strings + fn/name) fn/name-size
 			name-cursor: name-cursor + fn/name-size
 			id: id + 1
@@ -2305,13 +2615,13 @@ arm64-codegen: context [
 			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
-			width: value-width global/type view
+			target-id: header/function-count + id
 			image-global/name: name-cursor
 			image-global/name-size: global/name-size
 			image-global/data-offset: global-offsets/id
-			image-global/data-size: width
-			image-global/first-reference: reference-state/starts/id
-			image-global/reference-count: reference-state/counts/id
+			image-global/data-size: global-sizes/id
+			image-global/first-reference: reference-state/starts/target-id
+			image-global/reference-count: reference-state/counts/target-id
 			image-global/flags: global/flags and PROTECTED
 			copy-memory (names + name-cursor)
 				(view/strings + global/name) global/name-size
@@ -2334,7 +2644,7 @@ arm64-codegen: context [
 
 		code: output + code-offset
 		id: 1
-		while [id <= header/global-count][
+		while [id <= target-count][
 			reference-state/cursors/id: 0
 			id: id + 1
 		]
@@ -2352,28 +2662,15 @@ arm64-codegen: context [
 			]
 			id: id + 1
 		]
-		id: 1
-		while [id <= header/global-count][
-			if reference-state/cursors/id <> reference-state/counts/id [
-				return release memory INVALID_IR
-			]
-			id: id + 1
-		]
 		rodata-output: output + rodata-offset
 		data-output: output + data-offset
+		status: write-global-data view reference-state global-offsets global-sizes
+			rodata-output data-output
+		if status < 0 [return release memory status]
 		id: 1
-		while [id <= header/global-count][
-			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
-			if global/initializer-count = 1 [
-				initializer: as rsir-initializer! (view/initializers
-					+ (global/first-initializer * RSIR_INITIALIZER_SIZE))
-				cursor: either (global/flags and PROTECTED) <> 0 [
-					rodata-output + global-offsets/id
-				][data-output + global-offsets/id]
-				width: value-width global/type view
-				unless write-static-scalar cursor width initializer/a initializer/b [
-					return release memory INVALID_IR
-				]
+		while [id <= target-count][
+			if reference-state/cursors/id <> reference-state/counts/id [
+				return release memory INVALID_IR
 			]
 			id: id + 1
 		]

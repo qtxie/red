@@ -396,10 +396,22 @@ global-single: generate "single scalar global load" {
 	fn: func [return: [integer!]][answer]
 } 'user
 
-generate "owned global aggregate" {
+global-aggregate: generate "owned global aggregate" {
 	Red/System []
 	pair: declare struct! [left [integer!] right [integer!]]
 	fn: func [return: [integer!]][pair/left]
+} 'user
+
+global-bytes: generate "global byte payload" {
+	Red/System []
+	text: "Red"
+	fn: func [return: [byte!]][text/2]
+} 'user
+
+protected-global-bytes: generate "protected global byte payload" {
+	Red/System []
+	text: protect "Red"
+	fn: func [return: [byte!]][text/2]
 } 'user
 
 generate "dynamic global store" {
@@ -458,9 +470,17 @@ generate "native layout" {
 	fn: func [return: [integer!]][size? cell!]
 } 'user
 
-generate "heterogeneous literal address array" {
+global-address-array: generate "heterogeneous literal address array" {
 	Red/System []
 	values: ["one" 1 "two"]
+	fn: func [][]
+} 'user
+
+global-function-array: generate "literal function address array" {
+	Red/System []
+	int-fn!: alias function! [value [integer!] return: [integer!]]
+	double: func [value [integer!] return: [integer!]][value * 2]
+	functions: [:double]
 	fn: func [][]
 } 'user
 
@@ -636,6 +656,47 @@ arm-code-offset: word-at artifact 28
 check (copy/part at artifact (arm-code-offset + 17) 8)
 	= #{1300009073020091}
 	"ARM64 repeated global address was not hoisted into x19"
+
+artifact: make binary! 4096
+status: codegen-module global-aggregate/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate owned aggregate globals"
+check all [
+	(word-at artifact 20) >= 2
+	(word-at artifact 40) = 2
+	(word-at artifact 36) >= 32
+]["ARM64 owned aggregate metadata is inconsistent"]
+
+artifact: make binary! 4096
+status: codegen-module global-bytes/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate static byte payloads"
+check all [
+	(word-at artifact 20) = 2
+	(word-at artifact 40) = 2
+	(word-at artifact 36) = 28
+	(word-at artifact 44) = 0
+]["ARM64 static byte metadata is inconsistent"]
+
+artifact: make binary! 4096
+status: codegen-module protected-global-bytes/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate protected byte payloads"
+check all [
+	(word-at artifact 20) = 2
+	(word-at artifact 36) = 16
+	(word-at artifact 40) = 2
+	(word-at artifact 44) = 12
+]["ARM64 protected byte metadata is inconsistent"]
+
+artifact: make binary! 8192
+status: codegen-module global-address-array/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate literal address arrays"
+check (word-at artifact 20) = 2
+	"ARM64 literal address array lost its static relocations"
+
+artifact: make binary! 4096
+status: codegen-module global-function-array/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate function address arrays"
+check (word-at artifact 20) >= 1
+	"ARM64 function address array lost its static relocation"
 
 artifact: make binary! 4096
 status: codegen-module global-single/1 artifact 2 0

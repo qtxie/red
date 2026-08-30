@@ -39,6 +39,7 @@ system-dialect: context [
 source: {
 	Red/System []
 	identity: func [value [integer!] return: [integer!]][value]
+	functions: protect [:identity]
 	hot-loop: func [return: [integer!] /local index sum][
 		index: 0
 		sum: 0
@@ -98,14 +99,17 @@ check status = 214 ["generated ARM64 loop returned " status " instead of 214"]
 
 global-source: {
 	Red/System []
+	pair: declare struct! [left [integer!] right [integer!]]
+	text: protect "Red"
 	total: 14
 	main: func [
 		return: [integer!]
 		/local value [integer!] p [int-ptr!]
 	][
+		pair/left: 14
 		value: 0
 		p: :value
-		value: value + 14
+		value: value + pair/left
 		p/1: value + 14
 		total: total + p/1
 		value: total
@@ -124,10 +128,10 @@ global-image: make binary! 65536
 status: codegen-module global-ir global-image 2 0
 check status = 0 ["ARM64 global integration codegen status=" status]
 check all [
-	(word-at global-image 20) = 1
-	(word-at global-image 36) = 20
-	(word-at global-image 40) = 1
-	(word-at global-image 44) = 0
+	(word-at global-image 20) = 4
+	(word-at global-image 36) = 36
+	(word-at global-image 40) = 5
+	(word-at global-image 44) = 12
 ]["ARM64 global integration image metadata is inconsistent"]
 
 global-job: compiler-system-job/new 'Darwin-ARM64

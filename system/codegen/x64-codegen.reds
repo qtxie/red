@@ -329,6 +329,60 @@ x64-instruction-state!: alias struct! [
 	load-pair?            [logic!]
 ]
 
+; What `generate` threads from one module-wide phase to the next: the input
+; module being read, the image being written, the three records every function
+; pass works from, and the running figures the image layout is derived from.
+; Each phase opens the fields it touches into locals of the same name, exactly
+; as the per-function phases do with x64-function-context!.
+x64-module-context!: alias struct! [
+	header                  [rsir-header!]
+	module                  [rsir-module!]
+	scratch                 [codegen-scratch!]
+	task                    [codegen-task!]
+	data                    [byte-ptr!]
+	size                    [integer!]
+	output                  [byte-ptr!]
+	capacity                [integer!]
+	opt-level               [integer!]
+	entry?                  [logic!]
+	; The two input tables rsir-module! does not carry, the walk over the input
+	; the table phases claim from, and the row counts they validated.
+	exports                 [byte-ptr!]
+	initializers            [byte-ptr!]
+	cursor                  [byte-ptr!]
+	remaining               [integer!]
+	member-count            [integer!]
+	parameter-count         [integer!]
+	initializer-count       [integer!]
+	; The single scratch allocation every working array is carved out of.
+	memory                  [byte-ptr!]
+	; Static data areas, sized while the globals are laid out and placed.
+	global-names-size       [integer!]
+	export-names-size       [integer!]
+	rodata-size             [integer!]
+	data-size               [integer!]
+	global-reference-count  [integer!]
+	; Code and literals, measured before any of the image is written.
+	function-names-size     [integer!]
+	code-size               [integer!]
+	function-code-size      [integer!]
+	literal-size            [integer!]
+	entry-size              [integer!]
+	; Image layout, derived once the code size and the used imports are known.
+	import-count            [integer!]
+	reference-count         [integer!]
+	metadata-size           [integer!]
+	names-size              [integer!]
+	code-offset             [integer!]
+	rodata-offset           [integer!]
+	data-offset             [integer!]
+	total-size              [integer!]
+	; The name area and the reference table, filled as the metadata is written.
+	names                   [byte-ptr!]
+	name-cursor             [integer!]
+	references              [int-ptr!]
+]
+
 x64-codegen: context [
 	RSIR_HEADER_SIZE:      36
 	RSIR_TYPE_SIZE:        20
@@ -6174,6 +6228,7 @@ x64-codegen: context [
 										register-id incoming-register width
 								]
 							][
+								signed: either signed-type? ref table [1][0]
 								target-width: either width = 8 [8][4]
 								move-operation-value at (capacity - written)
 									register-id incoming-register width target-width signed
@@ -6181,7 +6236,6 @@ x64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							if all [not floating? width < 4][
-								signed: either signed-type? ref table [1][0]
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/extend-narrow-register at
 									(capacity - written) register-id register-id width signed
@@ -7406,6 +7460,7 @@ x64-codegen: context [
 						]
 						if state/cpu-pointer-ref = 0 [return INVALID_IR]
 					]
+					target-ref: 0
 					switch instruction/a [
 						1 [						;-- system/stack/top
 							unless all [
@@ -10056,70 +10111,38 @@ x64-codegen: context [
 		0
 	]
 
-	generate: func [
-		data [byte-ptr!]
-		size [integer!]
-		output [byte-ptr!]
-		capacity opt-level [integer!]
-		return: [integer!]
-		/local header [rsir-header!]
-			signature-cache [signature-pairs! value]
-			table [type-table! value]
-			ir-module [rsir-module! value]
-			work [codegen-scratch! value]
-			task [codegen-task! value]
-			ir-type array-type [rsir-type!]
-			ir-member [rsir-member!]
-			ir-import [rsir-import!]
-			ir-global target-global [rsir-global!]
-			ir-function [rsir-function!]
-			ir-export [rsir-export!]
-			ir-parameter [rsir-parameter!]
-			initializer [rsir-initializer!]
-			image [codegen-header!]
-			image-function target-image-function [codegen-function!]
-			image-global target-image-global [codegen-global!]
-			image-import [codegen-import!]
-			image-export [codegen-export!]
-			import-refs function-sizes function-frames function-outgoing function-effects
-				instruction-offsets relaxed-offsets
-				instruction-depths catch-depths control-uses entry-types entry-flags
-				entry-kinds entry-tags
-				stack-types stack-flags stack-kinds stack-tags tag-next tag-slots
-				tag-widths result-offsets storage-offsets layouts member-offsets
-				instruction-effects switch-effect-links switch-effect-users
-				references [int-ptr!]
-			type-data member-data import-data global-data function-data export-data
-				parameter-data initializer-data switch-data instruction-data strings
-				function-instructions
-				name names-output code rodata-output data-output cursor finish scratch
-				argument-targets
-				[byte-ptr!]
-			type-bytes member-bytes import-bytes global-bytes function-bytes export-bytes
-				parameter-bytes initializer-bytes switch-bytes instruction-bytes remaining
-				member-count parameter-count initializer-count next-parameter
-				strings-size metadata-size function-names-size global-names-size
-				import-names-size export-names-size names-size code-offset code-size
-				function-code-size
-				literal-size rodata-offset data-offset image-rodata-size image-data-size
-				total-size scratch-count
-				id next-instruction next-offset instruction-count function-size entry-size
-				code-cursor name-cursor global-size global-align global-offset
-				parameter-id parameter-end
-				global-reference-count used-import-count import-reference-count
-				image-import-count reference-count count first-reference last-library
-				library-offset external-offset output-import-id exit-reference-id
-				reference-id variable-mode written base initializer-id
-				slot-width item-offset member-id owner child root current placed
-					status [integer!]
-			entry? current-entry? array? [logic!]
+	; Claims the next table of the input: `count` rows of `row-size` bytes each,
+	; starting where the previous table ended. Returns null when what is left of
+	; the input cannot hold it.
+	claim-table: func [
+		ctx [x64-module-context!]
+		count row-size [integer!]
+		return: [byte-ptr!]
+		/local table [byte-ptr!] bytes [integer!]
 	][
-		signature-cache/memory: null
-		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
-			return INVALID_IR
-		]
-		unless any [opt-level = 0 opt-level = 2][return UNSUPPORTED]
+		if count > (ctx/remaining / row-size)[return null]
+		bytes: count * row-size
+		table: ctx/cursor
+		ctx/cursor: table + bytes
+		ctx/remaining: ctx/remaining - bytes
+		table
+	]
+
+	; Checks the arguments and the module header, then opens the input up for
+	; the table phases that follow.
+	validate-module-header: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!] data [byte-ptr!] size [integer!]
+	][
+		data: ctx/data
+		size: ctx/size
+		if any [
+			null? data null? ctx/output size < RSIR_HEADER_SIZE ctx/capacity < 0
+		][return INVALID_IR]
+		unless any [ctx/opt-level = 0 ctx/opt-level = 2][return UNSUPPORTED]
 		header: as rsir-header! data
+		ctx/header: header
 		if any [
 			header/type-count < 0 header/import-count < 0 header/global-count < 0
 			header/switch-count < 0 header/export-count < 0
@@ -10128,30 +10151,46 @@ x64-codegen: context [
 			all [header/module-kind = 4 header/export-count = 0]
 			all [header/module-kind <> 4 header/export-count <> 0]
 		][return INVALID_IR]
-		entry?: header/module-kind = 3
+		ctx/entry?: header/module-kind = 3
 		if any [
-			all [entry? any [header/entry-function <= 0
+			all [ctx/entry? any [header/entry-function <= 0
 				header/entry-function > header/function-count]]
-			all [not entry? header/entry-function <> 0]
+			all [not ctx/entry? header/entry-function <> 0]
 		][return INVALID_IR]
+		ctx/cursor: data + RSIR_HEADER_SIZE
+		ctx/remaining: size - RSIR_HEADER_SIZE
+		0
+	]
 
-		remaining: size - RSIR_HEADER_SIZE
-		if header/type-count > (remaining / RSIR_TYPE_SIZE)[return INVALID_IR]
-		type-bytes: header/type-count * RSIR_TYPE_SIZE
-		type-data: data + RSIR_HEADER_SIZE
-		remaining: remaining - type-bytes
+	; Validates the type table and the member table its records size, filling in
+	; the type table record every later type ref is resolved through.
+	validate-module-types: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			table [type-table!]
+			ir-type [rsir-type!]
+			ir-member [rsir-member!]
+			types members [byte-ptr!]
+			id member-id member-count variable-mode [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		table: module/table
+		types: claim-table ctx header/type-count RSIR_TYPE_SIZE
+		if null? types [return INVALID_IR]
 		; The layout cache lives in the scratch block, which cannot be sized
 		; until the tables validate; until then layout-type runs unmemoized.
-		table/types: type-data
+		table/types: types
 		table/members: null
 		table/type-count: header/type-count
 		table/layouts: null
 		table/member-offsets: null
-		table/signatures: signature-cache
 		member-count: 0
 		id: 1
 		while [id <= header/type-count][
-			ir-type: as rsir-type! (type-data + ((id - 1) * RSIR_TYPE_SIZE))
+			ir-type: as rsir-type! (types + ((id - 1) * RSIR_TYPE_SIZE))
 			if any [
 				ir-type/member-count < 0 ir-type/first-member <> member-count
 				ir-type/flags < 0 ir-type/flags > CALLABLE_FLAGS
@@ -10224,18 +10263,16 @@ x64-codegen: context [
 			]
 			id: id + 1
 		]
-		if member-count > (remaining / RSIR_MEMBER_SIZE)[return INVALID_IR]
-		member-bytes: member-count * RSIR_MEMBER_SIZE
-		member-data: type-data + type-bytes
-		table/members: member-data
-		remaining: remaining - member-bytes
+		members: claim-table ctx member-count RSIR_MEMBER_SIZE
+		if null? members [return INVALID_IR]
+		table/members: members
 		id: 1
 		while [id <= header/type-count][
-			ir-type: as rsir-type! (type-data + ((id - 1) * RSIR_TYPE_SIZE))
+			ir-type: as rsir-type! (types + ((id - 1) * RSIR_TYPE_SIZE))
 			if ir-type/kind <> -7 [
 				member-id: ir-type/first-member
 				while [member-id < (ir-type/first-member + ir-type/member-count)][
-					ir-member: as rsir-member! (member-data
+					ir-member: as rsir-member! (members
 						+ (member-id * RSIR_MEMBER_SIZE))
 					if not valid-type-ref? ir-member/type table [
 						return INVALID_IR
@@ -10257,15 +10294,35 @@ x64-codegen: context [
 			]
 			id: id + 1
 		]
+		ctx/member-count: member-count
+		0
+	]
 
-		if header/import-count > (remaining / RSIR_IMPORT_SIZE)[return INVALID_IR]
-		import-bytes: header/import-count * RSIR_IMPORT_SIZE
-		import-data: member-data + member-bytes
-		remaining: remaining - import-bytes
+	; Validates the import, global, function and export tables, together with
+	; the parameter, initializer and instruction counts they add up to.
+	validate-module-symbols: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			table [type-table!]
+			ir-import [rsir-import!]
+			ir-global [rsir-global!]
+			ir-function [rsir-function!]
+			ir-export [rsir-export!]
+			imports globals functions exports [byte-ptr!]
+			id variable-mode next-parameter
+			parameter-count initializer-count instruction-count [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		table: module/table
+		imports: claim-table ctx header/import-count RSIR_IMPORT_SIZE
+		if null? imports [return INVALID_IR]
 		parameter-count: 0
 		id: 1
 		while [id <= header/import-count][
-			ir-import: as rsir-import! (import-data + ((id - 1) * RSIR_IMPORT_SIZE))
+			ir-import: as rsir-import! (imports + ((id - 1) * RSIR_IMPORT_SIZE))
 			if any [
 				ir-import/flags < 0 ir-import/flags > CALLABLE_FLAGS
 				(ir-import/flags and 3) = 3
@@ -10292,14 +10349,12 @@ x64-codegen: context [
 			id: id + 1
 		]
 
-		if header/global-count > (remaining / RSIR_GLOBAL_SIZE)[return INVALID_IR]
-		global-bytes: header/global-count * RSIR_GLOBAL_SIZE
-		global-data: import-data + import-bytes
-		remaining: remaining - global-bytes
+		globals: claim-table ctx header/global-count RSIR_GLOBAL_SIZE
+		if null? globals [return INVALID_IR]
 		initializer-count: 0
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			if any [
 				not valid-type-ref? ir-global/type table
 				ir-global/flags < 0 ir-global/flags > (INLINE or PROTECTED)
@@ -10318,14 +10373,12 @@ x64-codegen: context [
 			id: id + 1
 		]
 
-		if header/function-count > (remaining / RSIR_FUNCTION_SIZE)[return INVALID_IR]
-		function-bytes: header/function-count * RSIR_FUNCTION_SIZE
-		function-data: global-data + global-bytes
-		remaining: remaining - function-bytes
+		functions: claim-table ctx header/function-count RSIR_FUNCTION_SIZE
+		if null? functions [return INVALID_IR]
 		instruction-count: 0
 		id: 1
 		while [id <= header/function-count][
-			ir-function: as rsir-function! (function-data
+			ir-function: as rsir-function! (functions
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
 			if any [
 				all [ir-function/return-type <> 0
@@ -10361,13 +10414,11 @@ x64-codegen: context [
 		]
 		if instruction-count <> header/instruction-count [return INVALID_IR]
 
-		if header/export-count > (remaining / RSIR_EXPORT_SIZE)[return INVALID_IR]
-		export-bytes: header/export-count * RSIR_EXPORT_SIZE
-		export-data: function-data + function-bytes
-		remaining: remaining - export-bytes
+		exports: claim-table ctx header/export-count RSIR_EXPORT_SIZE
+		if null? exports [return INVALID_IR]
 		id: 1
 		while [id <= header/export-count][
-			ir-export: as rsir-export! (export-data + ((id - 1) * RSIR_EXPORT_SIZE))
+			ir-export: as rsir-export! (exports + ((id - 1) * RSIR_EXPORT_SIZE))
 			if any [
 				ir-export/symbol = 0
 				all [ir-export/symbol > 0
@@ -10378,13 +10429,39 @@ x64-codegen: context [
 			id: id + 1
 		]
 
-		if parameter-count > (remaining / RSIR_PARAMETER_SIZE)[return INVALID_IR]
-		parameter-bytes: parameter-count * RSIR_PARAMETER_SIZE
-		parameter-data: export-data + export-bytes
-		remaining: remaining - parameter-bytes
+		module/imports: imports
+		module/globals: globals
+		module/functions: functions
+		ctx/exports: exports
+		ctx/parameter-count: parameter-count
+		ctx/initializer-count: initializer-count
+		0
+	]
+
+	; Validates the parameter table and the slice of it each callable declares.
+	validate-module-parameters: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			table [type-table!]
+			ir-import [rsir-import!]
+			ir-function [rsir-function!]
+			ir-parameter [rsir-parameter!]
+			parameters imports functions [byte-ptr!]
+			id parameter-id parameter-end parameter-count [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		table: module/table
+		imports: module/imports
+		functions: module/functions
+		parameter-count: ctx/parameter-count
+		parameters: claim-table ctx parameter-count RSIR_PARAMETER_SIZE
+		if null? parameters [return INVALID_IR]
 		id: 1
 		while [id <= parameter-count][
-			ir-parameter: as rsir-parameter! (parameter-data
+			ir-parameter: as rsir-parameter! (parameters
 				+ ((id - 1) * RSIR_PARAMETER_SIZE))
 			if any [
 				all [ir-parameter/type <> 0
@@ -10397,11 +10474,11 @@ x64-codegen: context [
 		]
 		id: 1
 		while [id <= header/import-count][
-			ir-import: as rsir-import! (import-data + ((id - 1) * RSIR_IMPORT_SIZE))
+			ir-import: as rsir-import! (imports + ((id - 1) * RSIR_IMPORT_SIZE))
 			parameter-id: ir-import/first-parameter
 			parameter-end: parameter-id + ir-import/parameter-count
 			while [parameter-id < parameter-end][
-				ir-parameter: as rsir-parameter! (parameter-data
+				ir-parameter: as rsir-parameter! (parameters
 					+ (parameter-id * RSIR_PARAMETER_SIZE))
 				if ir-parameter/type = 0 [return INVALID_IR]
 				parameter-id: parameter-id + 1
@@ -10410,26 +10487,47 @@ x64-codegen: context [
 		]
 		id: 1
 		while [id <= header/function-count][
-			ir-function: as rsir-function! (function-data
+			ir-function: as rsir-function! (functions
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
 			parameter-id: ir-function/first-parameter
 			parameter-end: ir-function/first-local
 			while [parameter-id < parameter-end][
-				ir-parameter: as rsir-parameter! (parameter-data
+				ir-parameter: as rsir-parameter! (parameters
 					+ (parameter-id * RSIR_PARAMETER_SIZE))
 				if ir-parameter/type = 0 [return INVALID_IR]
 				parameter-id: parameter-id + 1
 			]
 			id: id + 1
 		]
+		module/parameters: parameters
+		0
+	]
 
-		if initializer-count > (remaining / RSIR_INITIALIZER_SIZE)[return INVALID_IR]
-		initializer-bytes: initializer-count * RSIR_INITIALIZER_SIZE
-		initializer-data: parameter-data + parameter-bytes
-		remaining: remaining - initializer-bytes
+	; Validates the initializer table: one scalar or address value per ordinary
+	; global, and a byte block or one value per item for an inline array.
+	validate-module-initializers: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			table [type-table!]
+			ir-global [rsir-global!]
+			array-type [rsir-type!]
+			initializer [rsir-initializer!]
+			initializers globals types [byte-ptr!]
+			id initializer-id base [integer!]
+			array? [logic!]
+	][
+		header: ctx/header
+		module: ctx/module
+		table: module/table
+		types: table/types
+		globals: module/globals
+		initializers: claim-table ctx ctx/initializer-count RSIR_INITIALIZER_SIZE
+		if null? initializers [return INVALID_IR]
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			base: canonical-type ir-global/type table
 			array?: all [
 				(ir-global/flags and INLINE) <> 0
@@ -10438,10 +10536,10 @@ x64-codegen: context [
 			]
 			if all [array? ir-global/initializer-count = 0][return INVALID_IR]
 			if ir-global/initializer-count > 0 [
-				initializer: as rsir-initializer! (initializer-data
+				initializer: as rsir-initializer! (initializers
 					+ (ir-global/first-initializer * RSIR_INITIALIZER_SIZE))
 				either array? [
-					array-type: as rsir-type! (type-data
+					array-type: as rsir-type! (types
 						+ ((base - 1) * RSIR_TYPE_SIZE))
 					either initializer/kind = BYTES_INITIALIZER [
 						if any [
@@ -10457,7 +10555,7 @@ x64-codegen: context [
 						]
 						initializer-id: 0
 						while [initializer-id < ir-global/initializer-count][
-							initializer: as rsir-initializer! (initializer-data
+							initializer: as rsir-initializer! (initializers
 								+ ((ir-global/first-initializer + initializer-id)
 									* RSIR_INITIALIZER_SIZE))
 							case [
@@ -10469,7 +10567,7 @@ x64-codegen: context [
 										array-type/flags <> 8
 										not valid-static-address-initializer? initializer
 											array-type/target id header/global-count
-											header/function-count global-data table
+											header/function-count globals table
 									][return INVALID_IR]
 								]
 								true [return INVALID_IR]
@@ -10492,7 +10590,7 @@ x64-codegen: context [
 								(ir-global/flags and INLINE) <> 0
 								not valid-static-address-initializer? initializer
 									ir-global/type id header/global-count
-									header/function-count global-data table
+									header/function-count globals table
 							][return INVALID_IR]
 						]
 						true [return INVALID_IR]
@@ -10501,26 +10599,42 @@ x64-codegen: context [
 			]
 			id: id + 1
 		]
+		ctx/initializers: initializers
+		0
+	]
 
-		if header/switch-count > (remaining / RSIR_SWITCH_SIZE)[return INVALID_IR]
-		switch-bytes: header/switch-count * RSIR_SWITCH_SIZE
-		switch-data: initializer-data + initializer-bytes
-		remaining: remaining - switch-bytes
-
-		if header/instruction-count > (remaining / RSIR_INSTRUCTION_SIZE)[
-			return INVALID_IR
-		]
-		instruction-bytes: header/instruction-count * RSIR_INSTRUCTION_SIZE
-		instruction-data: switch-data + switch-bytes
-		remaining: remaining - instruction-bytes
-		strings: instruction-data + instruction-bytes
-		strings-size: remaining
+	; Claims the switch, instruction and string areas, then checks every offset
+	; into the string area the tables validated so far can hold.
+	locate-module-strings: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			ir-global [rsir-global!]
+			ir-import [rsir-import!]
+			ir-export [rsir-export!]
+			initializer [rsir-initializer!]
+			switches instructions strings globals imports exports initializers [byte-ptr!]
+			id strings-size export-names-size [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		globals: module/globals
+		imports: module/imports
+		exports: ctx/exports
+		initializers: ctx/initializers
+		switches: claim-table ctx header/switch-count RSIR_SWITCH_SIZE
+		if null? switches [return INVALID_IR]
+		instructions: claim-table ctx header/instruction-count RSIR_INSTRUCTION_SIZE
+		if null? instructions [return INVALID_IR]
+		strings: ctx/cursor
+		strings-size: ctx/remaining
 
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			if ir-global/initializer-count > 0 [
-				initializer: as rsir-initializer! (initializer-data
+				initializer: as rsir-initializer! (initializers
 					+ (ir-global/first-initializer * RSIR_INITIALIZER_SIZE))
 				if all [
 					initializer/kind = BYTES_INITIALIZER
@@ -10535,7 +10649,7 @@ x64-codegen: context [
 
 		id: 1
 		while [id <= header/import-count][
-			ir-import: as rsir-import! (import-data + ((id - 1) * RSIR_IMPORT_SIZE))
+			ir-import: as rsir-import! (imports + ((id - 1) * RSIR_IMPORT_SIZE))
 			if any [
 				ir-import/library < 0 ir-import/library-size <= 0
 				ir-import/library-size > strings-size
@@ -10550,7 +10664,7 @@ x64-codegen: context [
 		export-names-size: 0
 		id: 1
 		while [id <= header/export-count][
-			ir-export: as rsir-export! (export-data + ((id - 1) * RSIR_EXPORT_SIZE))
+			ir-export: as rsir-export! (exports + ((id - 1) * RSIR_EXPORT_SIZE))
 			if any [
 				ir-export/name < 0 ir-export/name-size <= 0
 				ir-export/name-size > strings-size
@@ -10561,18 +10675,56 @@ x64-codegen: context [
 			id: id + 1
 		]
 
+		module/switches: switches
+		module/instructions: instructions
+		module/strings: strings
+		module/strings-size: strings-size
+		module/function-count: header/function-count
+		module/import-count: header/import-count
+		module/global-count: header/global-count
+		module/switch-count: header/switch-count
+		module/instruction-count: header/instruction-count
+		ctx/export-names-size: export-names-size
+		0
+	]
+
+	; Sizes every global and seeds its image record with the alignment and size
+	; the placement pass needs, and totals the global name area. The image
+	; function records are cleared here so the same pass can count references
+	; into them. Both areas double as scratch until the metadata is written.
+	layout-module-globals: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			table [type-table!]
+			ir-global [rsir-global!]
+			image-function [codegen-function!]
+			image-global [codegen-global!]
+			image-functions image-globals globals [byte-ptr!]
+			id capacity metadata-size strings-size
+				global-size global-align global-names-size [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		table: module/table
+		globals: module/globals
+		strings-size: module/strings-size
+		capacity: ctx/capacity
+		image-functions: ctx/output + IMAGE_HEADER_SIZE
+		image-globals: image-functions + (header/function-count * IMAGE_FUNCTION_SIZE)
 		metadata-size: IMAGE_HEADER_SIZE + (header/function-count * IMAGE_FUNCTION_SIZE)
 		if any [metadata-size < 0 metadata-size > capacity][return OUTPUT_FULL]
 		if header/global-count > ((capacity - metadata-size) / IMAGE_GLOBAL_SIZE)[
 			return OUTPUT_FULL
 		]
 		global-names-size: 0
-		image-rodata-size: 0
-		image-data-size: BITMAP_SIZE
-		global-reference-count: 0
+		ctx/rodata-size: 0
+		ctx/data-size: BITMAP_SIZE
+		ctx/global-reference-count: 0
 		id: 1
 		while [id <= header/function-count][
-			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
+			image-function: as codegen-function! (image-functions
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			image-function/first-reference: 0
 			image-function/reference-count: 0
@@ -10580,7 +10732,7 @@ x64-codegen: context [
 		]
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			if any [
 				ir-global/name < 0 ir-global/name-size < 0
 				ir-global/name-size > strings-size
@@ -10593,8 +10745,7 @@ x64-codegen: context [
 			if global-names-size > (2147483647 - ir-global/name-size) [
 				return OUTPUT_FULL
 			]
-			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			; Name fields hold alignment and owner only until final metadata is copied.
 			image-global/name: global-align
@@ -10607,25 +10758,47 @@ x64-codegen: context [
 			global-names-size: global-names-size + ir-global/name-size
 			id: id + 1
 		]
+		ctx/global-names-size: global-names-size
+		0
+	]
 
-		; A uniquely referenced anonymous global is the static payload owned by
-		; its earlier pointer slot. Keep that object next to its owner without
-		; adding ownership records to RSIR.
+	; Derives the ownership links between globals. A uniquely referenced
+	; anonymous global is the static payload of the earlier pointer slot that
+	; addresses it, so recording that relation lets the placement pass keep a
+	; payload next to its owner without adding ownership records to RSIR. The
+	; links are threaded through the image records the metadata pass overwrites
+	; later: `name-size` holds the owner and `first-reference` and
+	; `reference-count` the head and the next link of each owner's child list.
+	link-anonymous-globals: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			ir-global target-global [rsir-global!]
+			image-global target-image-global [codegen-global!]
+			initializer [rsir-initializer!]
+			image-globals globals initializers [byte-ptr!]
+			id initializer-id owner [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		globals: module/globals
+		initializers: ctx/initializers
+		image-globals: ctx/output + IMAGE_HEADER_SIZE
+			+ (header/function-count * IMAGE_FUNCTION_SIZE)
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			initializer-id: 0
 			while [initializer-id < ir-global/initializer-count][
-				initializer: as rsir-initializer! (initializer-data
+				initializer: as rsir-initializer! (initializers
 					+ ((ir-global/first-initializer + initializer-id)
 						* RSIR_INITIALIZER_SIZE))
 				if all [
 					initializer/kind = ADDRESS_INITIALIZER
 					initializer/a = GLOBAL_ADDRESS
 				][
-					target-image-global: as codegen-global! (output
-						+ IMAGE_HEADER_SIZE
-						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					target-image-global: as codegen-global! (image-globals
 						+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
 					if target-image-global/reference-count = 2147483647 [
 						return OUTPUT_FULL
@@ -10639,10 +10812,10 @@ x64-codegen: context [
 		]
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			initializer-id: 0
 			while [initializer-id < ir-global/initializer-count][
-				initializer: as rsir-initializer! (initializer-data
+				initializer: as rsir-initializer! (initializers
 					+ ((ir-global/first-initializer + initializer-id)
 						* RSIR_INITIALIZER_SIZE))
 				if all [
@@ -10650,11 +10823,9 @@ x64-codegen: context [
 					initializer/a = GLOBAL_ADDRESS
 					initializer/b > id
 				][
-					target-global: as rsir-global! (global-data
+					target-global: as rsir-global! (globals
 						+ ((initializer/b - 1) * RSIR_GLOBAL_SIZE))
-					target-image-global: as codegen-global! (output
-						+ IMAGE_HEADER_SIZE
-						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					target-image-global: as codegen-global! (image-globals
 						+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
 					if all [
 						target-global/name-size = 0
@@ -10668,8 +10839,7 @@ x64-codegen: context [
 
 		id: header/global-count
 		while [id > 0][
-			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			image-global/first-reference: 0
 			image-global/reference-count: 0
@@ -10677,36 +10847,56 @@ x64-codegen: context [
 		]
 		id: header/global-count
 		while [id > 0][
-			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			owner: image-global/name-size
 			if owner > 0 [
-				target-image-global: as codegen-global! (output
-					+ IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE)
+				target-image-global: as codegen-global! (image-globals
 					+ ((owner - 1) * IMAGE_GLOBAL_SIZE))
 				image-global/reference-count: target-image-global/first-reference
 				target-image-global/first-reference: id
 			]
 			id: id - 1
 		]
+		0
+	]
 
+	; Places every global in the read-only or writable data area, walking each
+	; owner tree so a payload lands next to the pointer that addresses it, then
+	; counts the relocations the initializers need.
+	place-module-globals: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			ir-global [rsir-global!]
+			image-global target-image-global [codegen-global!]
+			target-image-function [codegen-function!]
+			initializer [rsir-initializer!]
+			image-functions image-globals globals initializers [byte-ptr!]
+			id initializer-id root current child placed status
+				rodata-size data-size global-reference-count [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		globals: module/globals
+		initializers: ctx/initializers
+		image-functions: ctx/output + IMAGE_HEADER_SIZE
+		image-globals: image-functions + (header/function-count * IMAGE_FUNCTION_SIZE)
+		rodata-size: ctx/rodata-size
+		data-size: ctx/data-size
 		placed: 0
 		id: 1
 		while [id <= header/global-count][
-			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			if image-global/name-size = 0 [
 				root: id
 				current: id
 				while [current > 0][
-					image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					image-global: as codegen-global! (image-globals
 						+ ((current - 1) * IMAGE_GLOBAL_SIZE))
-					status: place-global-data image-global
-						:image-rodata-size :image-data-size
+					status: place-global-data image-global :rodata-size :data-size
 					if status <> 0 [return status]
 					placed: placed + 1
 					child: image-global/first-reference
@@ -10718,9 +10908,7 @@ x64-codegen: context [
 							image-global/reference-count = 0
 						]][
 							current: image-global/name-size
-							image-global: as codegen-global! (output
-								+ IMAGE_HEADER_SIZE
-								+ (header/function-count * IMAGE_FUNCTION_SIZE)
+							image-global: as codegen-global! (image-globals
 								+ ((current - 1) * IMAGE_GLOBAL_SIZE))
 						]
 						either current = root [
@@ -10731,34 +10919,33 @@ x64-codegen: context [
 			]
 			id: id + 1
 		]
+		ctx/rodata-size: rodata-size
+		ctx/data-size: data-size
 		if placed <> header/global-count [return INVALID_IR]
 		id: 1
 		while [id <= header/global-count][
-			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			image-global/first-reference: 0
 			image-global/reference-count: 0
 			id: id + 1
 		]
+		global-reference-count: ctx/global-reference-count
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			initializer-id: 0
 			while [initializer-id < ir-global/initializer-count][
-				initializer: as rsir-initializer! (initializer-data
+				initializer: as rsir-initializer! (initializers
 					+ ((ir-global/first-initializer + initializer-id)
 						* RSIR_INITIALIZER_SIZE))
 				if initializer/kind = ADDRESS_INITIALIZER [
-					image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-						+ (header/function-count * IMAGE_FUNCTION_SIZE)
+					image-global: as codegen-global! (image-globals
 						+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 					if image-global/data-offset > REFERENCE_OFFSET_MASK [return OUTPUT_FULL]
 					case [
 						initializer/a = GLOBAL_ADDRESS [
-							target-image-global: as codegen-global! (output
-								+ IMAGE_HEADER_SIZE
-								+ (header/function-count * IMAGE_FUNCTION_SIZE)
+							target-image-global: as codegen-global! (image-globals
 								+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
 							if target-image-global/reference-count = 2147483647 [
 								return OUTPUT_FULL
@@ -10767,8 +10954,7 @@ x64-codegen: context [
 								target-image-global/reference-count + 1
 						]
 						initializer/a = FUNCTION_ADDRESS [
-							target-image-function: as codegen-function! (output
-								+ IMAGE_HEADER_SIZE
+							target-image-function: as codegen-function! (image-functions
 								+ ((initializer/b - 1) * IMAGE_FUNCTION_SIZE))
 							if target-image-function/reference-count = 2147483647 [
 								return OUTPUT_FULL
@@ -10785,7 +10971,32 @@ x64-codegen: context [
 			]
 			id: id + 1
 		]
+		ctx/global-reference-count: global-reference-count
+		0
+	]
 
+	; Carves the one working allocation into every array the later phases and
+	; the function passes read, and clears those whose missing entries have to
+	; be told apart from a zero one.
+	allocate-module-scratch: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			table [type-table!]
+			work [codegen-scratch!]
+			task [codegen-task!]
+			scratch argument-targets [byte-ptr!]
+			import-refs layouts member-offsets [int-ptr!]
+			id count scratch-count member-count parameter-count [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		table: module/table
+		work: ctx/scratch
+		task: ctx/task
+		member-count: ctx/member-count
+		parameter-count: ctx/parameter-count
 		if header/function-count > ((2147483647 - header/import-count) / 6)[
 			return OUTPUT_FULL
 		]
@@ -10811,85 +11022,47 @@ x64-codegen: context [
 		]
 		scratch: allocate ((scratch-count * 4) + header/instruction-count)
 		if null? scratch [return OUTPUT_FULL]
+		ctx/memory: scratch
 		argument-targets: scratch + (scratch-count * 4)
+		; The arrays are laid out in the order they are carved; the layout and
+		; member-offset caches belong to the type table rather than the scratch
+		; record, and the argument-target bytes trail the integer arrays.
 		import-refs: as int-ptr! scratch
-		function-sizes: import-refs + header/import-count
-		function-frames: function-sizes + header/function-count
-		function-outgoing: function-frames + header/function-count
-		function-effects: function-outgoing + header/function-count
-		instruction-offsets: function-effects + header/function-count
-		relaxed-offsets: instruction-offsets + header/instruction-count
-			+ header/function-count
-		instruction-depths: relaxed-offsets + header/instruction-count
-			+ header/function-count
-		catch-depths: instruction-depths + header/instruction-count
-		control-uses: catch-depths + header/instruction-count
-		entry-types: control-uses + header/instruction-count
-		entry-flags: entry-types + header/instruction-count
-		entry-kinds: entry-flags + header/instruction-count
-		entry-tags: entry-kinds + header/instruction-count
-		stack-types: entry-tags + header/instruction-count
-		stack-flags: stack-types + header/instruction-count
-		stack-kinds: stack-flags + header/instruction-count
-		stack-tags: stack-kinds + header/instruction-count
-		tag-next: stack-tags + header/instruction-count
-		tag-slots: tag-next + header/instruction-count
-		tag-widths: tag-slots + header/instruction-count
-		result-offsets: tag-widths + header/instruction-count
-		storage-offsets: result-offsets + header/instruction-count
-		layouts: storage-offsets + parameter-count
+		work/import-refs:         import-refs
+		work/instructions:        module/instructions
+		work/argument-targets:    argument-targets
+		work/function-sizes:      import-refs + header/import-count
+		work/function-frames:     work/function-sizes + header/function-count
+		work/function-outgoing:   work/function-frames + header/function-count
+		work/function-effects:    work/function-outgoing + header/function-count
+		work/instruction-offsets: work/function-effects + header/function-count
+		work/relaxed-offsets:     work/instruction-offsets
+			+ header/instruction-count + header/function-count
+		work/instruction-depths:  work/relaxed-offsets
+			+ header/instruction-count + header/function-count
+		work/catch-depths:        work/instruction-depths + header/instruction-count
+		work/control-uses:        work/catch-depths + header/instruction-count
+		work/entry-types:         work/control-uses + header/instruction-count
+		work/entry-flags:         work/entry-types + header/instruction-count
+		work/entry-kinds:         work/entry-flags + header/instruction-count
+		work/entry-tags:          work/entry-kinds + header/instruction-count
+		work/stack-types:         work/entry-tags + header/instruction-count
+		work/stack-flags:         work/stack-types + header/instruction-count
+		work/stack-kinds:         work/stack-flags + header/instruction-count
+		work/stack-tags:          work/stack-kinds + header/instruction-count
+		work/tag-next:            work/stack-tags + header/instruction-count
+		work/tag-slots:           work/tag-next + header/instruction-count
+		work/tag-widths:          work/tag-slots + header/instruction-count
+		work/result-offsets:      work/tag-widths + header/instruction-count
+		work/storage-offsets:     work/result-offsets + header/instruction-count
+		layouts: work/storage-offsets + parameter-count
 		member-offsets: layouts + (header/type-count * 4)
 		table/layouts: layouts
 		table/member-offsets: member-offsets
-		instruction-effects: member-offsets + member-count
-		switch-effect-links: instruction-effects + header/instruction-count
-		switch-effect-users: switch-effect-links + header/switch-count
-
-		; Bundle the immutable IR tables and the scratch layout once; every
-		; function is then compiled straight out of these two records.
-		ir-module/table: table
-		ir-module/parameters: parameter-data
-		ir-module/functions: function-data
-		ir-module/imports: import-data
-		ir-module/globals: global-data
-		ir-module/switches: switch-data
-		ir-module/instructions: instruction-data
-		ir-module/strings: strings
-		ir-module/function-count: header/function-count
-		ir-module/import-count: header/import-count
-		ir-module/global-count: header/global-count
-		ir-module/switch-count: header/switch-count
-		ir-module/instruction-count: header/instruction-count
-		ir-module/strings-size: strings-size
-		work/instructions: instruction-data
-		work/argument-targets: argument-targets
-		work/function-sizes: function-sizes
-		work/function-frames: function-frames
-		work/function-outgoing: function-outgoing
-		work/function-effects: function-effects
-		work/instruction-effects: instruction-effects
-		work/instruction-offsets: instruction-offsets
-		work/relaxed-offsets: relaxed-offsets
-		work/instruction-depths: instruction-depths
-		work/catch-depths: catch-depths
-		work/control-uses: control-uses
-		work/entry-types: entry-types
-		work/entry-flags: entry-flags
-		work/entry-kinds: entry-kinds
-		work/entry-tags: entry-tags
-		work/tag-next: tag-next
-		work/tag-slots: tag-slots
-		work/tag-widths: tag-widths
-		work/result-offsets: result-offsets
-		work/stack-types: stack-types
-		work/stack-flags: stack-flags
-		work/stack-kinds: stack-kinds
-		work/stack-tags: stack-tags
-		work/storage-offsets: storage-offsets
-		work/import-refs: import-refs
-		work/switch-effect-links: switch-effect-links
-		work/switch-effect-users: switch-effect-users
-		task/image-data: output + IMAGE_HEADER_SIZE
+		work/instruction-effects: member-offsets + member-count
+		work/switch-effect-links: work/instruction-effects + header/instruction-count
+		work/switch-effect-users: work/switch-effect-links + header/switch-count
+		task/image-data: ctx/output + IMAGE_HEADER_SIZE
 		id: 1
 		while [id <= header/import-count][import-refs/id: 0 id: id + 1]
 		count: header/type-count * 4
@@ -10902,23 +11075,63 @@ x64-codegen: context [
 			argument-targets/id: as byte! 0
 			id: id + 1
 		]
+		0
+	]
+
+	; Infers the module effects, caches every declared type layout, then runs the
+	; sizing pass: each function is compiled with no output slot, relaxed to its
+	; short branch forms, and the resulting code, name and literal totals are
+	; what the image layout is then computed from.
+	measure-module-functions: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			table [type-table!]
+			work [codegen-scratch!]
+			task [codegen-task!]
+			ir-function [rsir-function!]
+			functions instructions function-instructions [byte-ptr!]
+			function-sizes function-frames function-outgoing instruction-effects
+				instruction-offsets relaxed-offsets catch-depths control-uses [int-ptr!]
+			id status next-instruction next-offset function-size strings-size
+				global-size global-align function-names-size code-size
+				literal-size entry-size [integer!]
+			entry? current-entry? [logic!]
+	][
+		header: ctx/header
+		module: ctx/module
+		table: module/table
+		work: ctx/scratch
+		task: ctx/task
+		functions: module/functions
+		instructions: module/instructions
+		strings-size: module/strings-size
+		entry?: ctx/entry?
+		function-sizes: work/function-sizes
+		function-frames: work/function-frames
+		function-outgoing: work/function-outgoing
+		instruction-effects: work/instruction-effects
+		instruction-offsets: work/instruction-offsets
+		relaxed-offsets: work/relaxed-offsets
+		catch-depths: work/catch-depths
+		control-uses: work/control-uses
 		; Effect inference borrows later-phase arrays from this record for its
 		; use lists and worklists; their permanent owners overwrite them later.
-		status: infer-effects ir-module work opt-level
-		if status <> 0 [return release scratch signature-cache status]
+		status: infer-effects module work ctx/opt-level
+		if status <> 0 [return status]
 		id: 1
 		while [id <= header/type-count][
 			global-size: 0
 			global-align: 0
 			unless layout-type id true table 0 :global-size :global-align [
-				return release scratch signature-cache INVALID_IR
+				return INVALID_IR
 			]
 			id: id + 1
 		]
 
 		function-names-size: 0
 		code-size: 0
-		literal-size: 0
 		entry-size: 0
 		next-instruction: 1
 		next-offset: 1
@@ -10929,26 +11142,26 @@ x64-codegen: context [
 		task/function-code-size: 0
 		task/capacity: 0
 		task/exit-reference-id: 0
-		task/global-reference-count: global-reference-count
-		task/literal-size: literal-size
+		task/global-reference-count: ctx/global-reference-count
+		task/literal-size: 0
 		id: 1
 		while [id <= header/function-count][
-			ir-function: as rsir-function! (function-data
+			ir-function: as rsir-function! (functions
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
 			if any [
 				ir-function/name < 0 ir-function/name-size <= 0
 				ir-function/name-size > strings-size
 				ir-function/name > (strings-size - ir-function/name-size)
-			][return release scratch signature-cache INVALID_IR]
-			function-instructions: instruction-data
+			][return INVALID_IR]
+			function-instructions: instructions
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
 			task/fn: ir-function
 			task/first-instruction: next-instruction
 			task/first-offset: next-offset
 			task/entry?: current-entry?
-			function-size: compile-function ir-module work task
-			if function-size < 0 [return release scratch signature-cache function-size]
+			function-size: compile-function module work task
+			if function-size < 0 [return function-size]
 			function-frames/id: task/frame-size
 			function-outgoing/id: task/outgoing-size
 			; Near forms are measured first, then every branch and jump whose
@@ -10959,29 +11172,58 @@ x64-codegen: context [
 				(relaxed-offsets + (next-offset - 1))
 				(catch-depths + (next-instruction - 1))
 				(control-uses + (next-instruction - 1))
-			if status < 0 [return release scratch signature-cache INVALID_IR]
-			if status > function-size [
-				return release scratch signature-cache INVALID_IR
-			]
+			if status < 0 [return INVALID_IR]
+			if status > function-size [return INVALID_IR]
 			function-size: function-size - status
 			function-sizes/id: function-size
 			if function-names-size > (2147483647 - ir-function/name-size)[
-				return release scratch signature-cache OUTPUT_FULL
+				return OUTPUT_FULL
 			]
 			function-names-size: function-names-size + ir-function/name-size
-			if code-size > (2147483647 - function-size)[return release scratch signature-cache OUTPUT_FULL]
+			if code-size > (2147483647 - function-size)[return OUTPUT_FULL]
 			code-size: code-size + function-size
 			if current-entry? [entry-size: function-size]
 			next-instruction: next-instruction + ir-function/instruction-count
 			next-offset: next-offset + ir-function/instruction-count + 1
 			id: id + 1
 		]
-		global-reference-count: task/global-reference-count
 		literal-size: task/literal-size
-		function-code-size: code-size
-		if code-size > (2147483647 - literal-size)[return release scratch signature-cache OUTPUT_FULL]
-		code-size: code-size + literal-size
+		if code-size > (2147483647 - literal-size)[return OUTPUT_FULL]
+		ctx/global-reference-count: task/global-reference-count
+		ctx/function-names-size: function-names-size
+		ctx/function-code-size: code-size
+		ctx/literal-size: literal-size
+		ctx/entry-size: entry-size
+		ctx/code-size: code-size + literal-size
+		0
+	]
 
+	; Counts the imports the measured code actually calls, then derives the whole
+	; image layout: the metadata block, the name area, and the aligned code,
+	; read-only and writable data offsets the image is written at.
+	plan-module-image: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			work [codegen-scratch!]
+			ir-import [rsir-import!]
+			import-refs [int-ptr!]
+			imports [byte-ptr!]
+			id count last-library used-import-count import-reference-count
+				import-names-size import-count reference-count metadata-size
+				names-size code-size rodata-size data-size [integer!]
+			entry? [logic!]
+	][
+		header: ctx/header
+		module: ctx/module
+		work: ctx/scratch
+		imports: module/imports
+		import-refs: work/import-refs
+		entry?: ctx/entry?
+		code-size: ctx/code-size
+		rodata-size: ctx/rodata-size
+		data-size: ctx/data-size
 		used-import-count: 0
 		import-reference-count: 0
 		import-names-size: 0
@@ -10990,101 +11232,138 @@ x64-codegen: context [
 		while [id <= header/import-count][
 			count: import-refs/id
 			if count > 0 [
-				ir-import: as rsir-import! (import-data + ((id - 1) * RSIR_IMPORT_SIZE))
+				ir-import: as rsir-import! (imports + ((id - 1) * RSIR_IMPORT_SIZE))
 				used-import-count: used-import-count + 1
-				if import-reference-count > (2147483647 - count)[
-					return release scratch signature-cache OUTPUT_FULL
-				]
+				if import-reference-count > (2147483647 - count)[return OUTPUT_FULL]
 				import-reference-count: import-reference-count + count
 				if ir-import/library <> last-library [
 					if import-names-size > (2147483647 - ir-import/library-size)[
-						return release scratch signature-cache OUTPUT_FULL
+						return OUTPUT_FULL
 					]
 					import-names-size: import-names-size + ir-import/library-size
 					last-library: ir-import/library
 				]
 				if import-names-size > (2147483647 - ir-import/external-size)[
-					return release scratch signature-cache OUTPUT_FULL
+					return OUTPUT_FULL
 				]
 				import-names-size: import-names-size + ir-import/external-size
 			]
 			id: id + 1
 		]
-		image-import-count: used-import-count
-		reference-count: global-reference-count + import-reference-count
+		import-count: used-import-count
+		reference-count: ctx/global-reference-count + import-reference-count
 		if entry? [
-			if any [image-import-count = 2147483647 reference-count = 2147483647][
-				return release scratch signature-cache OUTPUT_FULL
+			if any [import-count = 2147483647 reference-count = 2147483647][
+				return OUTPUT_FULL
 			]
-			image-import-count: image-import-count + 1
+			import-count: import-count + 1
 			reference-count: reference-count + 1
 		]
 
 		metadata-size: IMAGE_HEADER_SIZE + (header/function-count * IMAGE_FUNCTION_SIZE)
 		if header/global-count > ((2147483647 - metadata-size) / IMAGE_GLOBAL_SIZE)[
-			return release scratch signature-cache OUTPUT_FULL
+			return OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (header/global-count * IMAGE_GLOBAL_SIZE)
-		if image-import-count > ((2147483647 - metadata-size) / IMAGE_IMPORT_SIZE)[
-			return release scratch signature-cache OUTPUT_FULL
+		if import-count > ((2147483647 - metadata-size) / IMAGE_IMPORT_SIZE)[
+			return OUTPUT_FULL
 		]
-		metadata-size: metadata-size + (image-import-count * IMAGE_IMPORT_SIZE)
+		metadata-size: metadata-size + (import-count * IMAGE_IMPORT_SIZE)
 		if header/export-count > ((2147483647 - metadata-size) / IMAGE_EXPORT_SIZE)[
-			return release scratch signature-cache OUTPUT_FULL
+			return OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (header/export-count * IMAGE_EXPORT_SIZE)
 		if reference-count > ((2147483647 - metadata-size) / 4)[
-			return release scratch signature-cache OUTPUT_FULL
+			return OUTPUT_FULL
 		]
 		metadata-size: metadata-size + (reference-count * 4)
-		names-size: function-names-size + global-names-size + import-names-size
-		if names-size > (2147483647 - export-names-size)[
-			return release scratch signature-cache OUTPUT_FULL
-		]
-		names-size: names-size + export-names-size
+		names-size: ctx/function-names-size + ctx/global-names-size + import-names-size
+		if names-size > (2147483647 - ctx/export-names-size)[return OUTPUT_FULL]
+		names-size: names-size + ctx/export-names-size
+		; The entry module reaches ExitProcess through one synthetic import whose
+		; two names are the only ones not copied out of the input strings.
 		if entry? [names-size: names-size + 23]
 		if any [names-size < 0 metadata-size > (2147483647 - names-size - 15)][
-			return release scratch signature-cache OUTPUT_FULL
+			return OUTPUT_FULL
 		]
-		code-offset: align (metadata-size + names-size) 16
-		if any [code-offset < 0 code-offset > (2147483647 - code-size - 3)][
-			return release scratch signature-cache OUTPUT_FULL
-		]
-		rodata-offset: align (code-offset + code-size) 4
+		ctx/code-offset: align (metadata-size + names-size) 16
 		if any [
-			rodata-offset < 0
-			rodata-offset > (2147483647 - image-rodata-size - 3)
-		][return release scratch signature-cache OUTPUT_FULL]
-		data-offset: align (rodata-offset + image-rodata-size) 4
-		if any [data-offset < 0 data-offset > (2147483647 - image-data-size)][
-			return release scratch signature-cache OUTPUT_FULL
-		]
-		total-size: data-offset + image-data-size
-		if total-size > capacity [return release scratch signature-cache OUTPUT_FULL]
+			ctx/code-offset < 0
+			ctx/code-offset > (2147483647 - code-size - 3)
+		][return OUTPUT_FULL]
+		ctx/rodata-offset: align (ctx/code-offset + code-size) 4
+		if any [
+			ctx/rodata-offset < 0
+			ctx/rodata-offset > (2147483647 - rodata-size - 3)
+		][return OUTPUT_FULL]
+		ctx/data-offset: align (ctx/rodata-offset + rodata-size) 4
+		if any [
+			ctx/data-offset < 0
+			ctx/data-offset > (2147483647 - data-size)
+		][return OUTPUT_FULL]
+		ctx/total-size: ctx/data-offset + data-size
+		if ctx/total-size > ctx/capacity [return OUTPUT_FULL]
+		ctx/import-count: import-count
+		ctx/reference-count: reference-count
+		ctx/metadata-size: metadata-size
+		ctx/names-size: names-size
+		0
+	]
 
+	; Writes the image header, then the function and global metadata together
+	; with their names. Code offsets follow the measured sizes, with the entry
+	; function first so it starts at offset zero.
+	write-module-metadata: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			work [codegen-scratch!]
+			image [codegen-header!]
+			ir-function [rsir-function!]
+			ir-global [rsir-global!]
+			image-function [codegen-function!]
+			image-global [codegen-global!]
+			function-sizes function-frames [int-ptr!]
+			output image-functions image-globals names functions globals strings [byte-ptr!]
+			id count name-cursor code-cursor [integer!]
+			entry? current-entry? [logic!]
+	][
+		header: ctx/header
+		module: ctx/module
+		work: ctx/scratch
+		output: ctx/output
+		functions: module/functions
+		globals: module/globals
+		strings: module/strings
+		function-sizes: work/function-sizes
+		function-frames: work/function-frames
+		entry?: ctx/entry?
+		image-functions: output + IMAGE_HEADER_SIZE
+		image-globals: image-functions + (header/function-count * IMAGE_FUNCTION_SIZE)
 		image: as codegen-header! output
-		image/size: total-size
+		image/size: ctx/total-size
 		image/module-kind: header/module-kind
 		image/entry-function: header/entry-function
 		image/function-count: header/function-count
-		image/import-count: image-import-count
-		image/reference-count: reference-count
-		image/names-size: names-size
-		image/code-offset: code-offset
-		image/code-size: code-size
-		image/data-size: image-data-size
+		image/import-count: ctx/import-count
+		image/reference-count: ctx/reference-count
+		image/names-size: ctx/names-size
+		image/code-offset: ctx/code-offset
+		image/code-size: ctx/code-size
+		image/data-size: ctx/data-size
 		image/global-count: header/global-count
-		image/rodata-size: image-rodata-size
+		image/rodata-size: ctx/rodata-size
 		image/export-count: header/export-count
 
-		names-output: output + metadata-size
+		names: output + ctx/metadata-size
 		name-cursor: 0
-		code-cursor: entry-size
+		code-cursor: ctx/entry-size
 		id: 1
 		while [id <= header/function-count][
-			ir-function: as rsir-function! (function-data
+			ir-function: as rsir-function! (functions
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
-			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
+			image-function: as codegen-function! (image-functions
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			count: image-function/reference-count
 			current-entry?: all [entry? id = header/entry-function]
@@ -11098,35 +11377,72 @@ x64-codegen: context [
 			image-function/first-reference: 0
 			image-function/reference-count: count
 			unless current-entry? [code-cursor: code-cursor + function-sizes/id]
-			name: strings + ir-function/name
-			copy-memory (names-output + name-cursor) name ir-function/name-size
+			copy-memory (names + name-cursor) (strings + ir-function/name)
+				ir-function/name-size
 			name-cursor: name-cursor + ir-function/name-size
 			id: id + 1
 		]
 
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
-			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
+			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			image-global/name: name-cursor
 			image-global/name-size: ir-global/name-size
-			copy-memory (names-output + name-cursor)
+			copy-memory (names + name-cursor)
 				(strings + ir-global/name) ir-global/name-size
 			name-cursor: name-cursor + ir-global/name-size
 			id: id + 1
 		]
+		ctx/names: names
+		ctx/name-cursor: name-cursor
+		0
+	]
 
-		references: as int-ptr! (output + IMAGE_HEADER_SIZE
-			+ (header/function-count * IMAGE_FUNCTION_SIZE)
-			+ (header/global-count * IMAGE_GLOBAL_SIZE)
-			+ (image-import-count * IMAGE_IMPORT_SIZE)
+	; Hands every function, global and used import a slice of the reference
+	; table, and writes the import metadata and library names alongside. The
+	; per-function reference counts are cleared so the emitting pass can refill
+	; them as it hands out slots; `import-refs` becomes the first slot of each
+	; import rather than its count.
+	assign-module-references: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			work [codegen-scratch!]
+			task [codegen-task!]
+			ir-import [rsir-import!]
+			image-function [codegen-function!]
+			image-global [codegen-global!]
+			image-import [codegen-import!]
+			import-refs [int-ptr!]
+			output image-functions image-globals image-imports names imports strings [byte-ptr!]
+			id count first-reference name-cursor output-import-id last-library
+				library-offset external-offset exit-reference-id [integer!]
+			entry? [logic!]
+	][
+		header: ctx/header
+		module: ctx/module
+		work: ctx/scratch
+		task: ctx/task
+		output: ctx/output
+		imports: module/imports
+		strings: module/strings
+		names: ctx/names
+		name-cursor: ctx/name-cursor
+		import-refs: work/import-refs
+		entry?: ctx/entry?
+		image-functions: output + IMAGE_HEADER_SIZE
+		image-globals: image-functions + (header/function-count * IMAGE_FUNCTION_SIZE)
+		image-imports: image-globals + (header/global-count * IMAGE_GLOBAL_SIZE)
+		ctx/references: as int-ptr! (image-imports
+			+ (ctx/import-count * IMAGE_IMPORT_SIZE)
 			+ (header/export-count * IMAGE_EXPORT_SIZE))
 		first-reference: 1
 		id: 1
 		while [id <= header/function-count][
-			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
+			image-function: as codegen-function! (image-functions
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			count: image-function/reference-count
 			image-function/first-reference: either count > 0 [first-reference][0]
@@ -11136,8 +11452,7 @@ x64-codegen: context [
 		]
 		id: 1
 		while [id <= header/global-count][
-			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			count: image-global/reference-count
 			image-global/first-reference: either count > 0 [first-reference][0]
@@ -11154,21 +11469,19 @@ x64-codegen: context [
 		while [id <= header/import-count][
 			count: import-refs/id
 			if count > 0 [
-				ir-import: as rsir-import! (import-data + ((id - 1) * RSIR_IMPORT_SIZE))
+				ir-import: as rsir-import! (imports + ((id - 1) * RSIR_IMPORT_SIZE))
 				if ir-import/library <> last-library [
 					library-offset: name-cursor
-					copy-memory (names-output + name-cursor)
+					copy-memory (names + name-cursor)
 						(strings + ir-import/library) ir-import/library-size
 					name-cursor: name-cursor + ir-import/library-size
 					last-library: ir-import/library
 				]
 				external-offset: name-cursor
-				copy-memory (names-output + name-cursor)
+				copy-memory (names + name-cursor)
 					(strings + ir-import/external) ir-import/external-size
 				name-cursor: name-cursor + ir-import/external-size
-				image-import: as codegen-import! (output + IMAGE_HEADER_SIZE
-					+ (header/function-count * IMAGE_FUNCTION_SIZE)
-					+ (header/global-count * IMAGE_GLOBAL_SIZE)
+				image-import: as codegen-import! (image-imports
 					+ (output-import-id * IMAGE_IMPORT_SIZE))
 				image-import/library: library-offset
 				image-import/library-size: ir-import/library-size
@@ -11183,10 +11496,11 @@ x64-codegen: context [
 			id: id + 1
 		]
 
+		; The two synthetic ExitProcess names sit at the end of the name area,
+		; where the export names of a shared library would otherwise be; an entry
+		; module never has any.
 		if entry? [
-			image-import: as codegen-import! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
-				+ (header/global-count * IMAGE_GLOBAL_SIZE)
+			image-import: as codegen-import! (image-imports
 				+ (output-import-id * IMAGE_IMPORT_SIZE))
 			library-offset: name-cursor
 			external-offset: library-offset + 12
@@ -11197,42 +11511,97 @@ x64-codegen: context [
 			image-import/first-reference: first-reference
 			image-import/reference-count: 1
 			exit-reference-id: first-reference
-			copy-memory (names-output + library-offset) (as byte-ptr! "kernel32.dll") 12
-			copy-memory (names-output + external-offset) (as byte-ptr! "ExitProcess") 11
+			copy-memory (names + library-offset) (as byte-ptr! "kernel32.dll") 12
+			copy-memory (names + external-offset) (as byte-ptr! "ExitProcess") 11
 		]
+		task/exit-reference-id: exit-reference-id
+		ctx/name-cursor: name-cursor
+		0
+	]
 
+	; Writes the export metadata and names, and clears the gap between the end of
+	; the name area and the aligned start of the code.
+	write-module-exports: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			ir-export [rsir-export!]
+			image-export [codegen-export!]
+			output image-exports names strings exports cursor finish [byte-ptr!]
+			id name-cursor [integer!]
+	][
+		header: ctx/header
+		module: ctx/module
+		output: ctx/output
+		exports: ctx/exports
+		strings: module/strings
+		names: ctx/names
+		name-cursor: ctx/name-cursor
+		image-exports: output + IMAGE_HEADER_SIZE
+			+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			+ (header/global-count * IMAGE_GLOBAL_SIZE)
+			+ (ctx/import-count * IMAGE_IMPORT_SIZE)
 		id: 1
 		while [id <= header/export-count][
-			ir-export: as rsir-export! (export-data + ((id - 1) * RSIR_EXPORT_SIZE))
-			image-export: as codegen-export! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
-				+ (header/global-count * IMAGE_GLOBAL_SIZE)
-				+ (image-import-count * IMAGE_IMPORT_SIZE)
+			ir-export: as rsir-export! (exports + ((id - 1) * RSIR_EXPORT_SIZE))
+			image-export: as codegen-export! (image-exports
 				+ ((id - 1) * IMAGE_EXPORT_SIZE))
 			image-export/symbol: ir-export/symbol
 			image-export/name: name-cursor
 			image-export/name-size: ir-export/name-size
-			copy-memory (names-output + name-cursor)
+			copy-memory (names + name-cursor)
 				(strings + ir-export/name) ir-export/name-size
 			name-cursor: name-cursor + ir-export/name-size
 			id: id + 1
 		]
-
-		cursor: names-output + names-size
-		finish: output + code-offset
+		ctx/name-cursor: name-cursor
+		cursor: names + ctx/names-size
+		finish: output + ctx/code-offset
 		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
-		code: output + code-offset
+		0
+	]
+
+	; Replays the measured tasks with an output slot this time, appends the string
+	; literals the code refers to, and clears the alignment gaps and the writable
+	; data area the static initializers are then written into.
+	emit-module-code: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			work [codegen-scratch!]
+			task [codegen-task!]
+			ir-function [rsir-function!]
+			image-function [codegen-function!]
+			function-frames function-outgoing [int-ptr!]
+			output image-functions code strings cursor finish
+				rodata-output data-output [byte-ptr!]
+			id written next-instruction next-offset function-code-size [integer!]
+			entry? current-entry? [logic!]
+	][
+		header: ctx/header
+		module: ctx/module
+		work: ctx/scratch
+		task: ctx/task
+		output: ctx/output
+		strings: module/strings
+		function-frames: work/function-frames
+		function-outgoing: work/function-outgoing
+		entry?: ctx/entry?
+		function-code-size: ctx/function-code-size
+		image-functions: output + IMAGE_HEADER_SIZE
+		code: output + ctx/code-offset
 		next-instruction: 1
 		next-offset: 1
 		; Emitting pass: same tasks replayed, now with a slot to write into.
-		task/references: references
+		task/references: ctx/references
 		task/function-code-size: function-code-size
-		task/exit-reference-id: exit-reference-id
 		id: 1
 		while [id <= header/function-count][
-			ir-function: as rsir-function! (function-data
+			ir-function: as rsir-function! (module/functions
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
-			image-function: as codegen-function! (output + IMAGE_HEADER_SIZE
+			image-function: as codegen-function! (image-functions
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
 			task/fn: ir-function
@@ -11244,31 +11613,68 @@ x64-codegen: context [
 			task/capacity: image-function/code-size
 			task/frame-size: function-frames/id
 			task/outgoing-size: function-outgoing/id
-			written: compile-function ir-module work task
-			if written < 0 [return release scratch signature-cache written]
-			if written <> image-function/code-size [return release scratch signature-cache INVALID_IR]
+			written: compile-function module work task
+			if written < 0 [return written]
+			if written <> image-function/code-size [return INVALID_IR]
 			next-instruction: next-instruction + ir-function/instruction-count
 			next-offset: next-offset + ir-function/instruction-count + 1
 			id: id + 1
 		]
 
-		if literal-size > 0 [copy-memory (code + function-code-size) strings literal-size]
-		cursor: code + code-size
-		rodata-output: output + rodata-offset
+		if ctx/literal-size > 0 [
+			copy-memory (code + function-code-size) strings ctx/literal-size
+		]
+		cursor: code + ctx/code-size
+		rodata-output: output + ctx/rodata-offset
 		while [cursor < rodata-output][cursor/1: as byte! 0 cursor: cursor + 1]
-		finish: rodata-output + image-rodata-size
+		finish: rodata-output + ctx/rodata-size
 		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
-		data-output: output + data-offset
+		data-output: output + ctx/data-offset
 		while [cursor < data-output][cursor/1: as byte! 0 cursor: cursor + 1]
-		finish: data-output + image-data-size
+		finish: data-output + ctx/data-size
 		cursor: data-output
 		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
+		0
+	]
 
+	; Writes the static initializer bytes of every global into the read-only or
+	; writable data area, filling in one tagged reference-table entry for each
+	; address initializer so the linker can relocate it.
+	write-module-data: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			table [type-table!]
+			ir-global [rsir-global!]
+			array-type [rsir-type!]
+			initializer [rsir-initializer!]
+			image-global target-image-global [codegen-global!]
+			target-image-function [codegen-function!]
+			references [int-ptr!]
+			output image-functions image-globals globals initializers types strings
+				rodata-output data-output cursor [byte-ptr!]
+			id initializer-id base slot-width item-offset reference-id
+				global-offset [integer!]
+			array? [logic!]
+	][
+		header: ctx/header
+		module: ctx/module
+		table: module/table
+		output: ctx/output
+		types: table/types
+		globals: module/globals
+		strings: module/strings
+		initializers: ctx/initializers
+		references: ctx/references
+		image-functions: output + IMAGE_HEADER_SIZE
+		image-globals: image-functions + (header/function-count * IMAGE_FUNCTION_SIZE)
+		rodata-output: output + ctx/rodata-offset
+		data-output: output + ctx/data-offset
 		id: 1
 		while [id <= header/global-count][
-			ir-global: as rsir-global! (global-data + ((id - 1) * RSIR_GLOBAL_SIZE))
-			image-global: as codegen-global! (output + IMAGE_HEADER_SIZE
-				+ (header/function-count * IMAGE_FUNCTION_SIZE)
+			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
+			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
 			either (image-global/flags and PROTECTED) <> 0 [
 				cursor: rodata-output + image-global/data-offset
@@ -11283,11 +11689,11 @@ x64-codegen: context [
 			]
 			slot-width: image-global/data-size
 			if array? [
-				array-type: as rsir-type! (type-data + ((base - 1) * RSIR_TYPE_SIZE))
+				array-type: as rsir-type! (types + ((base - 1) * RSIR_TYPE_SIZE))
 				slot-width: array-type/flags
 			]
 			if ir-global/initializer-count > 0 [
-				initializer: as rsir-initializer! (initializer-data
+				initializer: as rsir-initializer! (initializers
 					+ (ir-global/first-initializer * RSIR_INITIALIZER_SIZE))
 				either initializer/kind = BYTES_INITIALIZER [
 					copy-memory cursor (strings + initializer/a) initializer/b
@@ -11295,23 +11701,21 @@ x64-codegen: context [
 					initializer-id: 0
 					item-offset: 0
 					while [initializer-id < ir-global/initializer-count][
-						initializer: as rsir-initializer! (initializer-data
+						initializer: as rsir-initializer! (initializers
 							+ ((ir-global/first-initializer + initializer-id)
 								* RSIR_INITIALIZER_SIZE))
 						case [
 							initializer/kind = SCALAR_INITIALIZER [
-								unless write-static-scalar (cursor + item-offset) slot-width
-									initializer/a initializer/b [
-									return release scratch signature-cache INVALID_IR
+								unless write-static-scalar (cursor + item-offset)
+									slot-width initializer/a initializer/b [
+									return INVALID_IR
 								]
 							]
 							initializer/kind = ADDRESS_INITIALIZER [
 								reference-id: 0
 								case [
 									initializer/a = GLOBAL_ADDRESS [
-										target-image-global: as codegen-global! (output
-											+ IMAGE_HEADER_SIZE
-											+ (header/function-count * IMAGE_FUNCTION_SIZE)
+										target-image-global: as codegen-global! (image-globals
 											+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
 										reference-id: target-image-global/first-reference
 											+ target-image-global/reference-count
@@ -11319,26 +11723,25 @@ x64-codegen: context [
 											target-image-global/reference-count + 1
 									]
 									initializer/a = FUNCTION_ADDRESS [
-										target-image-function: as codegen-function! (output
-											+ IMAGE_HEADER_SIZE
+										target-image-function: as codegen-function! (image-functions
 											+ ((initializer/b - 1) * IMAGE_FUNCTION_SIZE))
 										reference-id: target-image-function/first-reference
 											+ target-image-function/reference-count
 										target-image-function/reference-count:
 											target-image-function/reference-count + 1
 									]
-									true [return release scratch signature-cache INVALID_IR]
+									true [return INVALID_IR]
 								]
 								global-offset: image-global/data-offset + item-offset
 								if global-offset > REFERENCE_OFFSET_MASK [
-									return release scratch signature-cache OUTPUT_FULL
+									return OUTPUT_FULL
 								]
 								references/reference-id: either
 									(image-global/flags and PROTECTED) <> 0 [
 										RODATA_REFERENCE_TAG or global-offset
 									][DATA_REFERENCE_TAG or global-offset]
 							]
-							true [return release scratch signature-cache INVALID_IR]
+							true [return INVALID_IR]
 						]
 						initializer-id: initializer-id + 1
 						item-offset: item-offset + slot-width
@@ -11347,6 +11750,60 @@ x64-codegen: context [
 			]
 			id: id + 1
 		]
-		release scratch signature-cache total-size
+		0
+	]
+
+	; Generates a Windows x64 image for one RSIR module, returning the number of
+	; bytes written to `output` or a negative error code. The phases run in the
+	; order the image is laid out: the input tables are validated and claimed
+	; first, then the static data is placed and the code measured, and only then
+	; is anything written, because every offset in the image depends on totals
+	; the measuring pass produces. One scratch block and one signature cache
+	; serve the whole module, and both are released on every exit.
+	generate: func [
+		data [byte-ptr!]
+		size [integer!]
+		output [byte-ptr!]
+		capacity opt-level [integer!]
+		return: [integer!]
+		/local ctx [x64-module-context! value]
+			signature-cache [signature-pairs! value]
+			table [type-table! value]
+			ir-module [rsir-module! value]
+			work [codegen-scratch! value]
+			task [codegen-task! value]
+			status [integer!]
+	][
+		signature-cache/memory: null
+		table/signatures: signature-cache
+		ir-module/table: table
+		ctx/module: ir-module
+		ctx/scratch: work
+		ctx/task: task
+		ctx/data: data
+		ctx/size: size
+		ctx/output: output
+		ctx/capacity: capacity
+		ctx/opt-level: opt-level
+		ctx/memory: null
+		status: validate-module-header ctx
+		if status = 0 [status: validate-module-types ctx]
+		if status = 0 [status: validate-module-symbols ctx]
+		if status = 0 [status: validate-module-parameters ctx]
+		if status = 0 [status: validate-module-initializers ctx]
+		if status = 0 [status: locate-module-strings ctx]
+		if status = 0 [status: layout-module-globals ctx]
+		if status = 0 [status: link-anonymous-globals ctx]
+		if status = 0 [status: place-module-globals ctx]
+		if status = 0 [status: allocate-module-scratch ctx]
+		if status = 0 [status: measure-module-functions ctx]
+		if status = 0 [status: plan-module-image ctx]
+		if status = 0 [status: write-module-metadata ctx]
+		if status = 0 [status: assign-module-references ctx]
+		if status = 0 [status: write-module-exports ctx]
+		if status = 0 [status: emit-module-code ctx]
+		if status = 0 [status: write-module-data ctx]
+		if status = 0 [status: ctx/total-size]
+		release ctx/memory signature-cache status
 	]
 ]

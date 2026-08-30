@@ -303,6 +303,32 @@ codegen-task!: alias struct! [
 	literal-size           [integer!]
 ]
 
+; Per-function state shared by the validation, layout, prologue, and emission
+; phases. Keeping these four records together avoids passing a long list of
+; phase inputs and makes the compile pipeline explicit.
+x64-function-context!: alias struct! [
+	module  [rsir-module!]
+	task    [codegen-task!]
+	scratch [codegen-scratch!]
+	state   [machine-state!]
+]
+
+; Values prepared once per instruction and consumed by opcode-family emitters.
+; Keeping these together avoids growing every emitter signature as the shared
+; cursor preparation evolves.
+x64-instruction-state!: alias struct! [
+	next-index            [integer!]
+	advance               [integer!]
+	next-instruction      [rsir-instruction!]
+	instruction-start     [integer!]
+	allocation-size       [integer!]
+	linear?               [logic!]
+	paired?               [logic!]
+	set-pair?             [logic!]
+	address-pair?         [logic!]
+	load-pair?            [logic!]
+]
+
 x64-codegen: context [
 	RSIR_HEADER_SIZE:      36
 	RSIR_TYPE_SIZE:        20
@@ -438,6 +464,7 @@ x64-codegen: context [
 	INVALID_IR:  -1
 	UNSUPPORTED: -2
 	OUTPUT_FULL: -3
+	PREPARE_SKIPPED: 1
 
 	align: func [value boundary [integer!] return: [integer!]
 		/local remainder padding [integer!]
@@ -3531,96 +3558,57 @@ x64-codegen: context [
 		view/resume-queue-tail:   work/resume-queue-tail
 	]
 
-	; Performs the function-local analysis, frame layout, and ABI prologue.
-	; Keeping this pass separate leaves the instruction emitter focused on IR.
-	prepare-function: func [
+	; Initializes the per-function context and creates its scratch window.
+	initialize-function-context: func [
+		context [x64-function-context!]
 		module [rsir-module!]
+		work [codegen-scratch!]
 		task [codegen-task!]
-		view [codegen-scratch!]
-		state [machine-state!]
 		return: [integer!]
-		/local fn [rsir-function!]
+	][
+		window-scratch work context/scratch task/first-instruction task/first-offset
+		context/module: module
+		context/task: task
+		0
+	]
+
+	; Validates function structure and records control-flow metadata.
+	validate-function-structure: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
 			instruction [rsir-instruction!]
-			next-instruction [rsir-instruction!]
-			argument-address [rsir-instruction!]
 			catch-scope [rsir-instruction!]
 			sub-entry [rsir-instruction!]
 			switch-case [rsir-switch!]
-			parameter [rsir-parameter!]
-			at [byte-ptr!]
 			table [type-table!]
-			instructions argument-targets image-data strings code
-				parameters functions imports globals switches [byte-ptr!]
-			function-effects instruction-effects instruction-offsets instruction-depths
-				catch-depths control-uses entry-types entry-flags entry-kinds entry-tags
-				tag-next tag-slots tag-widths result-offsets
-				stack-types stack-flags stack-kinds stack-tags storage-offsets
-				import-refs references [int-ptr!]
-			function-count import-count global-count
-				switch-count strings-size function-offset function-code-size capacity
-				exit-reference-id [integer!]
-			entry? [logic!]
-			index depth flags width signed
-				source-slot target-slot
-			storage-slots storage-size storage-align
-			operation
-			encoded written frame-extra
-			physical-slot target first-parameter
-			register-id
-			parameter-count displacement
-			aggregate-width
-			target-offset case-index
-			catch-unwind catch-threshold allocation-size
-			location
-			next-index
-			incoming-mask
-			[integer!]
-			measure? floating? clear? aggregate-argument? direct-parameter?
-			source-located? direct-frame-target? live? [logic!]
+			instructions strings code switches [byte-ptr!]
+			instruction-effects instruction-depths catch-depths control-uses storage-offsets [int-ptr!]
+			switch-count strings-size [integer!]
+			index source-slot register-id case-index catch-unwind [integer!]
+			measure? live? [logic!]
 	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
 		fn: task/fn
 		table: module/table
-		parameters: module/parameters
-		functions:  module/functions
-		imports:    module/imports
-		globals:    module/globals
-		switches:   module/switches
-		strings:    module/strings
-		function-count: module/function-count
-		import-count:   module/import-count
-		global-count:   module/global-count
-		switch-count:   module/switch-count
-		strings-size:   module/strings-size
-		image-data:         task/image-data
-		code:               task/code
-		references:         task/references
-		function-offset:    task/function-offset
-		function-code-size: task/function-code-size
-		capacity:           task/capacity
-		exit-reference-id:  task/exit-reference-id
-		entry?:             task/entry?
-		instructions:        view/instructions
-		argument-targets:    view/argument-targets
+		switches: module/switches
+		strings: module/strings
+		switch-count: module/switch-count
+		strings-size: module/strings-size
+		code: task/code
+		instructions: view/instructions
 		instruction-effects: view/instruction-effects
-		instruction-offsets: view/instruction-offsets
-		instruction-depths:  view/instruction-depths
-		catch-depths:        view/catch-depths
-		control-uses:        view/control-uses
-		entry-types:         view/entry-types
-		entry-flags:         view/entry-flags
-		entry-kinds:         view/entry-kinds
-		entry-tags:          view/entry-tags
-		tag-next:            view/tag-next
-		tag-slots:           view/tag-slots
-		tag-widths:          view/tag-widths
-		result-offsets:      view/result-offsets
-		function-effects: view/function-effects
-		stack-types:      view/stack-types
-		stack-flags:      view/stack-flags
-		stack-kinds:      view/stack-kinds
-		stack-tags:       view/stack-tags
-		storage-offsets:  view/storage-offsets
-		import-refs:      view/import-refs
+		instruction-depths: view/instruction-depths
+		catch-depths: view/catch-depths
+		control-uses: view/control-uses
+		storage-offsets: view/storage-offsets
 
 		measure?: null? code
 		if measure? [
@@ -3647,7 +3635,7 @@ x64-codegen: context [
 		state/resident-width: 0
 		state/resident-mark: 0
 		state/resident-clean?: false
-		location: LOCATION_NONE
+		state/location: LOCATION_NONE
 		state/location-depth: 0
 		state/location-source: 0
 		state/location-reference: 0
@@ -3845,6 +3833,42 @@ x64-codegen: context [
 		; A register parameter needs no frame home when its only live reference is
 		; one linear load from the still-available ABI register. -1 marks that
 		; single candidate; any other or repeated reference restores the home.
+
+		0
+	]
+
+	; Identifies parameters that can remain in their incoming ABI registers.
+	analyze-function-arguments: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			instruction [rsir-instruction!]
+			next-instruction [rsir-instruction!]
+			argument-address [rsir-instruction!]
+			parameter [rsir-parameter!]
+			table [type-table!]
+			instructions parameters [byte-ptr!]
+			instruction-effects catch-depths control-uses storage-offsets [int-ptr!]
+			index source-slot physical-slot next-index incoming-mask [integer!]
+			direct-parameter? live? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		parameters: module/parameters
+		instructions: view/instructions
+		instruction-effects: view/instruction-effects
+		catch-depths: view/catch-depths
+		control-uses: view/control-uses
+		storage-offsets: view/storage-offsets
+
 		state/hidden-shift: either win64-hidden-return? fn/return-type fn/flags
 			table [1][0]
 		state/incoming-arguments: 15
@@ -3921,6 +3945,33 @@ x64-codegen: context [
 			if storage-offsets/index = -1 [storage-offsets/index: 0]
 			index: index + 1
 		]
+
+		0
+	]
+
+	; Plans local storage, result slots, and exception metadata.
+	plan-function-frame: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			table [type-table!]
+			storage-offsets [int-ptr!]
+			entry? [logic!]
+			storage-slots [integer!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		entry?: task/entry?
+		storage-offsets: view/storage-offsets
+
 		state/storage-bytes: plan-storage module fn storage-offsets
 		if state/storage-bytes < 0 [return state/storage-bytes]
 		state/storage-bytes: plan-call-results module fn view state/storage-bytes
@@ -3956,7 +4007,44 @@ x64-codegen: context [
 		state/hidden-return?: win64-hidden-return? fn/return-type fn/flags table
 		if all [entry? fn/parameter-count <> 0][return UNSUPPORTED]
 
-		depth: 0
+		state/storage-slots: storage-slots
+		0
+	]
+
+	; Emits the function prologue and materializes incoming parameters.
+	emit-function-prologue: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			parameter [rsir-parameter!]
+			at [byte-ptr!]
+			table [type-table!]
+			code parameters [byte-ptr!]
+			storage-offsets [int-ptr!]
+			capacity [integer!]
+			entry? [logic!]
+			index width signed source-slot target-slot storage-size storage-align
+				encoded written frame-extra physical-slot displacement aggregate-width
+				target-offset catch-threshold allocation-size [integer!]
+			measure? floating? clear? aggregate-argument? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		parameters: module/parameters
+		code: task/code
+		capacity: task/capacity
+		entry?: task/entry?
+		storage-offsets: view/storage-offsets
+
+		measure?: null? code
 		state/max-depth: 0
 		state/max-outgoing: 0
 		state/current-entry: 0
@@ -4091,23 +4179,29 @@ x64-codegen: context [
 			index: index + 1
 		]
 
-		written
+		state/written: written
+		0
 	]
-
 	; Verifies the completed control-flow state and records the frame size
 	; discovered during the measurement pass.
-	finish-function: func [
-		task [codegen-task!]
-		view [codegen-scratch!]
-		state [machine-state!]
-		fn [rsir-function!]
-		storage-slots [integer!]
-		written [integer!]
-		measure? [logic!]
+	finalize-function: func [
+		context [x64-function-context!]
 		return: [integer!]
-		/local instruction-offsets [int-ptr!]
-			target-offset slot-bytes frame-extra encoded [integer!]
+		/local task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			instruction-offsets [int-ptr!]
+			storage-slots written target-offset slot-bytes frame-extra encoded [integer!]
+			measure? [logic!]
 	][
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		storage-slots: state/storage-slots
+		written: state/written
+		measure?: null? task/code
 		instruction-offsets: view/instruction-offsets
 		if measure? [
 			target-offset: fn/instruction-count + 1
@@ -4138,565 +4232,195 @@ x64-codegen: context [
 	]
 
 	; Compiles one function of the module and returns its size in bytes, or a
-	; negative error code. The two passes share the same preparation and
-	; emission pipeline; the first records frame requirements, the second emits.
+	; negative error code. Each pass follows the same explicit phase pipeline.
 	compile-function: func [
 		module [rsir-module!]
 		work   [codegen-scratch!]
 		task   [codegen-task!]
 		return: [integer!]
-		/local view [codegen-scratch!]
-			state [machine-state!]
-			written [integer!]
+		/local context [x64-function-context! value]
+			scratch [codegen-scratch! value]
+			state [machine-state! value]
+			result [integer!]
 	][
-		view: declare codegen-scratch!
-		state: declare machine-state!
-		window-scratch work view task/first-instruction task/first-offset
-		written: prepare-function module task view state
-		if written < 0 [return written]
-		emit-function-body module task view state written
+		context/scratch: scratch
+		context/state: state
+		result: initialize-function-context context module work task
+		if result < 0 [return result]
+		result: validate-function-structure context
+		if result < 0 [return result]
+		result: analyze-function-arguments context
+		if result < 0 [return result]
+		result: plan-function-frame context
+		if result < 0 [return result]
+		result: emit-function-prologue context
+		if result < 0 [return result]
+		result: emit-function-body context
+		if result < 0 [return result]
+		finalize-function context
 	]
 
-	; Emits the analyzed function body and finalizes its frame metadata.
-	emit-function-body: func [
-		module  [rsir-module!]
-		task    [codegen-task!]
-		view    [codegen-scratch!]
-		state   [machine-state!]
-		initial-written [integer!]
+
+	; Emits literals, addresses, loads, stores, members, and tags.
+	emit-value-operation: func [
+		context [x64-function-context!]
+		instruction [rsir-instruction!]
+		index [integer!]
+		prepared [x64-instruction-state!]
 		return: [integer!]
-		/local fn [rsir-function!]
+		/local
+			module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
 			written [integer!]
-			instruction [rsir-instruction!]
 			next-instruction [rsir-instruction!]
-			following-instruction argument-instruction argument-address [rsir-instruction!]
-			overflow-scope [rsir-instruction!]
-			sub-entry [rsir-instruction!]
-			switch-case [rsir-switch!]
+			following-instruction [rsir-instruction!]
 			parameter [rsir-parameter!]
-			callee [rsir-function!]
 			imported [rsir-import!]
-			signature typed-metadata list-type [rsir-type!]
-			typed-member [rsir-member!]
 			global [rsir-global!]
 			image-global [codegen-global!]
 			target-function [codegen-function!]
 			at [byte-ptr!]
-			call-parameters [byte-ptr!]
 			table [type-table!]
-			instructions argument-targets image-data strings code
-				parameters functions imports globals switches [byte-ptr!]
-			function-effects instruction-effects instruction-offsets instruction-depths
-				catch-depths control-uses entry-types entry-flags entry-kinds entry-tags
-				tag-next tag-slots tag-widths result-offsets
-				stack-types stack-flags stack-kinds stack-tags storage-offsets
-				import-refs references [int-ptr!]
-			function-count import-count global-count
-				switch-count strings-size function-offset function-code-size capacity
-				exit-reference-id [integer!]
-			entry? [logic!]
-			index depth kind ref flags width signed
-				source-signed load-signed source-slot target-slot
-			storage-slots
-			tag-head tag-width-value
-			operation left-ref right-ref left-flags right-flags
-			left-kind right-kind operation-width condition stride shift-count
-			encoded frame-extra outgoing outgoing-end
-			argument-index argument-base callee-slot
-			argument-slot argument-width physical-slot target return-ref first-parameter
-			register-id
-			parameter-count call-flags import-id global-id literal-end displacement
-			member-type member-flags member-offset source-width target-width
-			target-ref target-flags copy-size copy-align
-			result-index reference-id target-offset instruction-start case-index
-			operation-ref source-kind target-kind opcode parity keep-cast
-			aggregate-width value-size result-offset temp-offset
-			physical-count call-mode list-size list-capacity signature-ref
-			record-offset overflow-anchor base-depth overflow-limit
-			catch-record catch-unwind allocation-size
-			location
-			next-index
-			global-reference-id incoming-mask incoming-register
-			compatibility argument-producer
-			[integer!]
-			measure? valid? comparison? floating? aggregate-copy?
-			aggregate-argument? indirect? packed-call?
-			typed-call? custom-call? list-call? atomic-old?
-			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
-			linear? consume-location? global-target? defer-global? paired? set-pair?
-			address-pair? load-pair? direct-store? spill-next? fuse-branch? imm-pair?
-			imm-call? direct-argument? direct-parameter? forward-argument?
-			direct-boolean?
-			immediate? left-in-register? imm-set? set-fused? set-next?
-			scaled-immediate?
-			source-located? direct-frame-target?
-			resident-hit?
-			sub-returns? [logic!]
+			instructions [byte-ptr!]
+			argument-targets [byte-ptr!]
+			image-data [byte-ptr!]
+			strings [byte-ptr!]
+			code [byte-ptr!]
+			parameters [byte-ptr!]
+			imports [byte-ptr!]
+			globals [byte-ptr!]
+			instruction-effects [int-ptr!]
+			catch-depths [int-ptr!]
+			control-uses [int-ptr!]
+			tag-next [int-ptr!]
+			tag-slots [int-ptr!]
+			tag-widths [int-ptr!]
+			stack-types [int-ptr!]
+			stack-flags [int-ptr!]
+			stack-kinds [int-ptr!]
+			stack-tags [int-ptr!]
+			storage-offsets [int-ptr!]
+			import-refs [int-ptr!]
+			references [int-ptr!]
+			function-count [integer!]
+			import-count [integer!]
+			global-count [integer!]
+			strings-size [integer!]
+			function-offset [integer!]
+			function-code-size [integer!]
+			capacity [integer!]
+			depth [integer!]
+			ref [integer!]
+			flags [integer!]
+			width [integer!]
+			signed [integer!]
+			source-signed [integer!]
+			source-slot [integer!]
+			target-slot [integer!]
+			storage-slots [integer!]
+			tag-head [integer!]
+			tag-width-value [integer!]
+			operation [integer!]
+			stride [integer!]
+			encoded [integer!]
+			physical-slot [integer!]
+			target [integer!]
+			register-id [integer!]
+			import-id [integer!]
+			global-id [integer!]
+			literal-end [integer!]
+			displacement [integer!]
+			member-type [integer!]
+			member-flags [integer!]
+			member-offset [integer!]
+			target-width [integer!]
+			target-ref [integer!]
+			target-flags [integer!]
+			copy-size [integer!]
+			copy-align [integer!]
+			reference-id [integer!]
+			target-offset [integer!]
+			location [integer!]
+			next-index [integer!]
+			global-reference-id [integer!]
+			incoming-mask [integer!]
+			incoming-register [integer!]
+			compatibility [integer!]
+			measure? [logic!]
+			valid? [logic!]
+			floating? [logic!]
+			aggregate-copy? [logic!]
+			tracked? [logic!]
+			linear? [logic!]
+			global-target? [logic!]
+			defer-global? [logic!]
+			paired? [logic!]
+			set-pair? [logic!]
+			address-pair? [logic!]
+			load-pair? [logic!]
+			direct-store? [logic!]
+			spill-next? [logic!]
+			imm-pair? [logic!]
+			imm-call? [logic!]
+			direct-parameter? [logic!]
+			forward-argument? [logic!]
+			imm-set? [logic!]
+			set-fused? [logic!]
+			set-next? [logic!]
+			scaled-immediate? [logic!]
+			source-located? [logic!]
+			direct-frame-target? [logic!]
+			resident-hit? [logic!]
 	][
-		; Open the records into locals once; everything below works on plain
-		; pointers and counts.
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
 		fn: task/fn
 		table: module/table
 		parameters: module/parameters
-		functions:  module/functions
-		imports:    module/imports
-		globals:    module/globals
-		switches:   module/switches
-		strings:    module/strings
+		imports: module/imports
+		globals: module/globals
+		strings: module/strings
 		function-count: module/function-count
-		import-count:   module/import-count
-		global-count:   module/global-count
-		switch-count:   module/switch-count
-		strings-size:   module/strings-size
-		image-data:         task/image-data
-		code:               task/code
-		references:         task/references
-		function-offset:    task/function-offset
+		import-count: module/import-count
+		global-count: module/global-count
+		strings-size: module/strings-size
+		image-data: task/image-data
+		code: task/code
+		references: task/references
+		function-offset: task/function-offset
 		function-code-size: task/function-code-size
-		capacity:           task/capacity
-		exit-reference-id:  task/exit-reference-id
-		entry?:             task/entry?
-		instructions:        view/instructions
-		argument-targets:    view/argument-targets
+		capacity: task/capacity
+		instructions: view/instructions
+		argument-targets: view/argument-targets
 		instruction-effects: view/instruction-effects
-		instruction-offsets: view/instruction-offsets
-		instruction-depths:  view/instruction-depths
-		catch-depths:        view/catch-depths
-		control-uses:        view/control-uses
-		entry-types:         view/entry-types
-		entry-flags:         view/entry-flags
-		entry-kinds:         view/entry-kinds
-		entry-tags:          view/entry-tags
-		tag-next:            view/tag-next
-		tag-slots:           view/tag-slots
-		tag-widths:          view/tag-widths
-		result-offsets:      view/result-offsets
-		function-effects: view/function-effects
-		stack-types:      view/stack-types
-		stack-flags:      view/stack-flags
-		stack-kinds:      view/stack-kinds
-		stack-tags:       view/stack-tags
-		storage-offsets:  view/storage-offsets
-		import-refs:      view/import-refs
-
+		catch-depths: view/catch-depths
+		control-uses: view/control-uses
+		tag-next: view/tag-next
+		tag-slots: view/tag-slots
+		tag-widths: view/tag-widths
+		stack-types: view/stack-types
+		stack-flags: view/stack-flags
+		stack-kinds: view/stack-kinds
+		stack-tags: view/stack-tags
+		storage-offsets: view/storage-offsets
+		import-refs: view/import-refs
 		measure?: null? code
-		written: initial-written
-		depth: 0
-		location: LOCATION_NONE
-		storage-slots: state/storage-base
-		allocation-size: 0
-		if not measure? [
-			frame-extra: task/frame-size - x64-encoder/BASE_FRAME_SIZE
-			if frame-extra < 0 [return INVALID_IR]
-			allocation-size: x64-encoder/allocate-frame null 0 frame-extra
-			if allocation-size < 0 [return OUTPUT_FULL]
-		]
-		index: 1
-		while [index <= fn/instruction-count][
-			instruction: as rsir-instruction! (instructions
-				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
-			unless (instruction-effects/index and EFFECT_LIVE) <> 0 [
-				if measure? [instruction-offsets/index: written]
-				index: index + 1
-				continue
-			]
-			; A subroutine with no result consumes an optional expression value.
-			; Frontend statement paths may reach the same return with or without it.
-			if all [
-				instruction/op = OP_SUB_RETURN
-				instruction/a = 0
-				depth = 1
-			][
-				unless stack-kinds/depth = VALUE [return INVALID_IR]
-				depth: 0
-				location: LOCATION_NONE
-				state/location-depth: 0
-				state/location-source: 0
-				state/source-location: LOCATION_NONE
-				state/source-depth: 0
-			]
-			if instruction/op = OP_ENTRY [
-				if state/fallthrough? [
-					return INVALID_IR
-				]
-				if state/max-depth > (2147483647 - state/segment-slots)[return OUTPUT_FULL]
-				state/segment-slots: state/segment-slots + state/max-depth
-				if state/storage-base > (2147483647 - state/segment-slots)[return OUTPUT_FULL]
-				storage-slots: state/storage-base + state/segment-slots
-				depth: 0
-				state/max-depth: 0
-				state/current-entry: index
-				state/fallthrough?: true
-			]
-			either state/fallthrough? [
-				if instruction-depths/index >= 0 [
-					if measure? [
-						if instruction-depths/index <> depth [
-							return INVALID_IR
-						]
-						if depth > 0 [
-							tag-head: stack-tags/depth
-							if tag-head < 0 [tag-head: 0]
-							ref: merged-type entry-types/index stack-types/depth table
-							if any [
-								ref = 0
-								entry-flags/index <> stack-flags/depth
-								entry-kinds/index <> stack-kinds/depth
-								entry-tags/index <> tag-head
-							][
-								return INVALID_IR
-							]
-							entry-types/index: ref
-						]
-					]
-					if depth > 0 [
-						stack-types/depth: entry-types/index
-						stack-flags/depth: entry-flags/index
-						stack-kinds/depth: entry-kinds/index
-						stack-tags/depth: entry-tags/index
-					]
-				]
-			][
-				depth: either instruction-depths/index >= 0 [
-					instruction-depths/index
-				][0]
-				if depth > 0 [
-					stack-types/depth: entry-types/index
-					stack-flags/depth: entry-flags/index
-					stack-kinds/depth: entry-kinds/index
-					stack-tags/depth: entry-tags/index
-				]
-			]
-			if measure? [
-				instruction-depths/index: depth
-				if depth > 0 [
-					entry-types/index: stack-types/depth
-					entry-flags/index: stack-flags/depth
-					entry-kinds/index: stack-kinds/depth
-					entry-tags/index: stack-tags/depth
-				]
-			]
-			linear?: false
-			next-index: index + 1
-			if next-index <= fn/instruction-count [
-				next-instruction: as rsir-instruction! (instructions
-					+ ((next-index - 1) * RSIR_INSTRUCTION_SIZE))
-				linear?: all [
-					control-uses/next-index = 0
-					catch-depths/next-index = catch-depths/index
-					next-instruction/op <> OP_ENTRY
-				]
-			]
-			state/incoming-arguments: keep-incoming-arguments state/incoming-arguments index
-				control-uses/index instruction
-			if state/resident? [
-				if any [
-					written <> state/resident-mark
-					control-uses/index <> 0
-					instruction/op = OP_ENTRY
-				][state/resident?: false]
-			]
-			paired?: false
-			if all [
-				linear?
-				any [location = LOCATION_GPR location = LOCATION_XMM]
-				instruction/op = OP_LITERAL
-				depth > 0
-				stack-kinds/depth = VALUE
-				stack-flags/depth = 0
-				valid-type-ref? instruction/a table
-				machine-value? instruction/a 0 table
-				(instruction-effects/next-index and EFFECT_LIVE) <> 0
-				(instruction-effects/next-index and EFFECT_ELIDED) = 0
-				next-instruction/op = OP_BINARY
-				next-instruction/a >= ADD_OPERATION
-				next-instruction/a <= LESS_EQUAL_OPERATION
-			][
-				paired?: either location = LOCATION_XMM [
-					all [
-						float-type? stack-types/depth table
-						float-type? instruction/a table
-						register-pair-operation? next-instruction/a true
-					]
-				][
-					any [
-						all [
-							instruction/a = stack-types/depth
-							integer-type? stack-types/depth table
-							integer-type? instruction/a table
-							register-pair-operation? next-instruction/a false
-						]
-						; A pointer base keeps its register across the offset
-						; literal, which the following ADD or SUBTRACT then folds
-						; into its scaled immediate operand.
-						all [
-							address-type? stack-types/depth table
-							integer-type? instruction/a table
-							any [
-								next-instruction/a = ADD_OPERATION
-								next-instruction/a = SUBTRACT_OPERATION
-							]
-							next-instruction/b = 0
-							(value-width instruction/a 0 table) = 4
-							any [
-								all [instruction/c = 0 instruction/b >= 0]
-								all [instruction/c = -1 instruction/b < 0]
-							]
-							scaled-pointer-literal? instruction/b stack-types/depth table
-						]
-					]
-				]
-			]
-			set-pair?: false
-			address-pair?: false
-			if all [
-				linear?
-				any [location = LOCATION_GPR location = LOCATION_XMM]
-				instruction/op = OP_ADDRESS
-				depth > 0
-				stack-kinds/depth = VALUE
-				stack-flags/depth = 0
-			][
-				target-ref: 0
-				target-flags: -1
-				case [
-					all [
-						instruction/a = LOCAL_ADDRESS
-						instruction/b > 0
-						instruction/b <= state/storage-count
-					][
-						parameter: as rsir-parameter! (parameters
-							+ ((fn/first-parameter + instruction/b - 1)
-								* RSIR_PARAMETER_SIZE))
-						target-ref: parameter/type
-						target-flags: parameter/flags
-					]
-					all [
-						instruction/a = GLOBAL_ADDRESS
-						instruction/b > 0
-						instruction/b <= global-count
-					][
-						global: as rsir-global! (globals
-							+ ((instruction/b - 1) * RSIR_GLOBAL_SIZE))
-						target-ref: global/type
-						target-flags: global/flags and INLINE
-					]
-					true [0]
-				]
-				if all [
-					valid-type-ref? target-ref table
-					target-flags = 0
-					machine-value? target-ref 0 table
-				][
-					floating?: float-type? target-ref table
-					valid?: either floating? [
-						location = LOCATION_XMM
-					][
-						all [
-							location = LOCATION_GPR
-							target-ref = stack-types/depth
-						]
-					]
-					if valid? [
-						set-pair?: all [
-							target-ref = stack-types/depth
-							(instruction-effects/next-index and EFFECT_LIVE) <> 0
-							(instruction-effects/next-index and EFFECT_ELIDED) = 0
-							next-instruction/op = OP_SET
-						]
-						if all [
-							next-instruction/op = OP_LOAD
-							(instruction-effects/next-index and EFFECT_LIVE) <> 0
-							(instruction-effects/next-index and EFFECT_ELIDED) = 0
-							next-index < fn/instruction-count
-						][
-							target: next-index + 1
-							following-instruction: as rsir-instruction! (instructions
-								+ (next-index * RSIR_INSTRUCTION_SIZE))
-							address-pair?: all [
-								control-uses/target = 0
-								catch-depths/target = catch-depths/index
-								(following-instruction/op <> OP_ENTRY)
-								(instruction-effects/target and EFFECT_LIVE) <> 0
-								(instruction-effects/target and EFFECT_ELIDED) = 0
-								following-instruction/op = OP_BINARY
-								following-instruction/a >= ADD_OPERATION
-								following-instruction/a <= LESS_EQUAL_OPERATION
-								register-pair-operation? following-instruction/a floating?
-							]
-						]
-					]
-				]
-			]
-			load-pair?: all [
-				linear?
-				instruction/op = OP_LOAD
-				state/source-location <> LOCATION_NONE
-				state/source-depth = (depth - 1)
-				(instruction-effects/next-index and EFFECT_LIVE) <> 0
-				(instruction-effects/next-index and EFFECT_ELIDED) = 0
-				next-instruction/op = OP_BINARY
-			]
-			if location <> LOCATION_NONE [
-				unless any [
-					all [
-						state/location-depth = depth
-						depth > 0
-						control-uses/index = 0
-					]
-					; The preceding literal folded into a pending immediate,
-					; so this GPR location names the left operand one slot
-					; below the top instead of the top itself.
-					all [
-						state/pending-immediate-kind = 1
-						state/pending-immediate-index = (index - 1)
-						location = LOCATION_GPR
-						state/location-depth = (depth - 1)
-					]
-				][return INVALID_IR]
-				consume-location?: case [
-					any [
-						location = LOCATION_ADDRESS
-						location = LOCATION_FRAME
-						location = LOCATION_FRAME_INDIRECT
-						location = LOCATION_GLOBAL
-						location = LOCATION_ARGUMENT
-					][
-						any [
-							instruction/op = OP_LOAD
-							instruction/op = OP_REFERENCE
-							instruction/op = OP_MEMBER
-							instruction/op = OP_SET
-							instruction/op = OP_CALL
-							instruction/op = OP_DROP
-						]
-					]
-					any [location = LOCATION_GPR location = LOCATION_XMM][
-						any [
-							all [instruction/op = OP_LITERAL paired?]
-							all [
-								instruction/op = OP_ADDRESS
-								any [set-pair? address-pair?]
-							]
-							instruction/op = OP_DROP
-							instruction/op = OP_DUPLICATE
-							instruction/op = OP_CAST
-							instruction/op = OP_BINARY
-							instruction/op = OP_SUB_RETURN
-							all [
-								instruction/op = OP_CALL
-								instruction/b > 0
-							]
-							all [
-								instruction/op = OP_UNARY
-								location = LOCATION_GPR
-							]
-					all [
-						instruction/op = OP_RETURN
-						not entry?
-						(fn/flags and RETURN_VALUE) = 0
-					]
-							all [
-								instruction/op = OP_MEMBER
-								location = LOCATION_GPR
-							]
-							all [
-								instruction/op = OP_BRANCH
-								location = LOCATION_GPR
-								(instruction-effects/index
-									and EFFECT_CONSTANT_BRANCH) = 0
-							]
-						]
-					]
-					any [
-						location = LOCATION_GPR_PAIR
-						location = LOCATION_XMM_PAIR
-					][instruction/op = OP_BINARY]
-					true [false]
-				]
-				unless consume-location? [
-					case [
-						location = LOCATION_FRAME [
-							at: either measure? [as byte-ptr! 0][code + written]
-							encoded: x64-encoder/frame-address at (capacity - written)
-								x64-encoder/RAX state/location-source
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-						]
-						location = LOCATION_FRAME_INDIRECT [
-							at: either measure? [as byte-ptr! 0][code + written]
-							encoded: x64-encoder/frame-load at (capacity - written)
-								x64-encoder/RAX state/location-source 8 0
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-						]
-						location = LOCATION_ADDRESS [
-							at: either measure? [as byte-ptr! 0][code + written]
-							encoded: x64-encoder/add-immediate at (capacity - written)
-								x64-encoder/RAX state/location-source
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-						]
-						location = LOCATION_ARGUMENT [return INVALID_IR]
-						any [
-							location = LOCATION_GPR
-							location = LOCATION_XMM
-						][0]
-						location = LOCATION_GLOBAL [return INVALID_IR]
-						any [
-							location = LOCATION_GPR_PAIR
-							location = LOCATION_XMM_PAIR
-						][return INVALID_IR]
-						true [return INVALID_IR]
-					]
-					ref: stack-types/depth
-					flags: stack-flags/depth
-					at: either measure? [as byte-ptr! 0][code + written]
-					encoded: case [
-						any [
-							location = LOCATION_ADDRESS
-							location = LOCATION_FRAME
-							location = LOCATION_FRAME_INDIRECT
-						][
-							x64-encoder/frame-store at (capacity - written)
-								x64-encoder/RAX
-								slot-displacement (storage-slots + depth) 8
-						]
-						location = LOCATION_XMM [
-							width: value-width ref flags table
-							if width <= 0 [return INVALID_IR]
-							x64-encoder/xmm-frame-store at (capacity - written)
-								x64-encoder/XMM0
-								slot-displacement (storage-slots + depth) width
-						]
-						location = LOCATION_GPR [
-							width: either inline-object-ref? ref table [8][
-								value-width ref flags table
-							]
-							if width <= 0 [return INVALID_IR]
-							target-width: either width = 8 [8][4]
-							x64-encoder/frame-store at (capacity - written)
-								x64-encoder/RAX
-								slot-displacement (storage-slots + depth) target-width
-						]
-						true [return INVALID_IR]
-					]
-					if encoded < 0 [return OUTPUT_FULL]
-					written: written + encoded
-					location: LOCATION_NONE
-					state/location-depth: 0
-					state/location-source: 0
-					]
-				]
-			if (instruction-effects/index and EFFECT_ELIDED) <> 0 [
-				if measure? [instruction-offsets/index: written]
-				state/fallthrough?: true
-				index: index + 1
-				continue
-			]
-			if measure? [instruction-offsets/index: written]
-			instruction-start: written
-			state/fallthrough?: true
+		written: state/written
+		depth: state/depth
+		location: state/location
+		storage-slots: state/storage-slots
+		linear?: prepared/linear?
+		paired?: prepared/paired?
+		set-pair?: prepared/set-pair?
+		address-pair?: prepared/address-pair?
+		load-pair?: prepared/load-pair?
+		next-index: prepared/next-index
+		next-instruction: prepared/next-instruction
 			case [
 				instruction/op = OP_LITERAL [
 					ref: instruction/a
@@ -5029,9 +4753,9 @@ x64-codegen: context [
 								instruction/b > 0
 								instruction/b <= state/storage-count
 							][return INVALID_IR]
-							parameter: as rsir-parameter! (parameters
-								+ ((fn/first-parameter + instruction/b - 1)
-									* RSIR_PARAMETER_SIZE))
+								parameter: as rsir-parameter! (parameters
+									+ ((fn/first-parameter + instruction/b - 1)
+										* RSIR_PARAMETER_SIZE))
 							ref: parameter/type
 							flags: parameter/flags
 							valid?: all [
@@ -5647,7 +5371,7 @@ x64-codegen: context [
 						not floating?
 					]
 					unless set-fused? [
-					displacement: either location = LOCATION_ADDRESS [state/location-source][0]
+						displacement: either location = LOCATION_ADDRESS [state/location-source][0]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: case [
 						location = LOCATION_FRAME [
@@ -5972,6 +5696,161 @@ x64-codegen: context [
 					stack-kinds/depth: VALUE
 					stack-tags/depth: 0
 				]
+			true [return UNSUPPORTED]
+		]
+		state/written: written
+		state/depth: depth
+		state/location: location
+		state/storage-slots: storage-slots
+		0
+	]
+
+	; Emits direct, indirect, imported, custom, and typed calls.
+	emit-call-operation: func [
+		context [x64-function-context!]
+		instruction [rsir-instruction!]
+		index [integer!]
+		prepared [x64-instruction-state!]
+		return: [integer!]
+		/local
+			module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			written [integer!]
+			following-instruction [rsir-instruction!]
+			argument-instruction [rsir-instruction!]
+			argument-address [rsir-instruction!]
+			parameter [rsir-parameter!]
+			callee [rsir-function!]
+			imported [rsir-import!]
+			signature [rsir-type!]
+			typed-metadata [rsir-type!]
+			list-type [rsir-type!]
+			typed-member [rsir-member!]
+			target-function [codegen-function!]
+			at [byte-ptr!]
+			call-parameters [byte-ptr!]
+			table [type-table!]
+			instructions [byte-ptr!]
+			argument-targets [byte-ptr!]
+			image-data [byte-ptr!]
+			code [byte-ptr!]
+			parameters [byte-ptr!]
+			functions [byte-ptr!]
+			imports [byte-ptr!]
+			function-effects [int-ptr!]
+			instruction-offsets [int-ptr!]
+			result-offsets [int-ptr!]
+			stack-types [int-ptr!]
+			stack-flags [int-ptr!]
+			stack-kinds [int-ptr!]
+			stack-tags [int-ptr!]
+			import-refs [int-ptr!]
+			references [int-ptr!]
+			function-count [integer!]
+			import-count [integer!]
+			function-offset [integer!]
+			capacity [integer!]
+			depth [integer!]
+			kind [integer!]
+			ref [integer!]
+			flags [integer!]
+			width [integer!]
+			signed [integer!]
+			source-signed [integer!]
+			source-slot [integer!]
+			target-slot [integer!]
+			storage-slots [integer!]
+			encoded [integer!]
+			outgoing [integer!]
+			outgoing-end [integer!]
+			argument-index [integer!]
+			argument-base [integer!]
+			callee-slot [integer!]
+			argument-slot [integer!]
+			argument-width [integer!]
+			physical-slot [integer!]
+			target [integer!]
+			return-ref [integer!]
+			first-parameter [integer!]
+			register-id [integer!]
+			parameter-count [integer!]
+			call-flags [integer!]
+			import-id [integer!]
+			displacement [integer!]
+			source-width [integer!]
+			target-width [integer!]
+			target-ref [integer!]
+			target-flags [integer!]
+			result-index [integer!]
+			reference-id [integer!]
+			aggregate-width [integer!]
+			value-size [integer!]
+			result-offset [integer!]
+			temp-offset [integer!]
+			physical-count [integer!]
+			call-mode [integer!]
+			list-size [integer!]
+			list-capacity [integer!]
+			signature-ref [integer!]
+			record-offset [integer!]
+			location [integer!]
+			incoming-register [integer!]
+			compatibility [integer!]
+			argument-producer [integer!]
+			measure? [logic!]
+			floating? [logic!]
+			aggregate-copy? [logic!]
+			aggregate-argument? [logic!]
+			indirect? [logic!]
+			packed-call? [logic!]
+			typed-call? [logic!]
+			custom-call? [logic!]
+			list-call? [logic!]
+			tracked? [logic!]
+			located? [logic!]
+			linear? [logic!]
+			imm-call? [logic!]
+			direct-argument? [logic!]
+			forward-argument? [logic!]
+			immediate? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		parameters: module/parameters
+		functions: module/functions
+		imports: module/imports
+		function-count: module/function-count
+		import-count: module/import-count
+		image-data: task/image-data
+		code: task/code
+		references: task/references
+		function-offset: task/function-offset
+		capacity: task/capacity
+		instructions: view/instructions
+		function-effects: view/function-effects
+		instruction-offsets: view/instruction-offsets
+		argument-targets: view/argument-targets
+		stack-types: view/stack-types
+		stack-flags: view/stack-flags
+		stack-kinds: view/stack-kinds
+		stack-tags: view/stack-tags
+		result-offsets: view/result-offsets
+		import-refs: view/import-refs
+		measure?: null? code
+		written: state/written
+		depth: state/depth
+		location: state/location
+		storage-slots: state/storage-slots
+		linear?: prepared/linear?
+
+		case [
 				instruction/op = OP_CALL [
 					target: instruction/a
 					argument-index: instruction/b
@@ -7105,6 +6984,134 @@ x64-codegen: context [
 						written: written + encoded
 					]
 				]
+			true [return UNSUPPORTED]
+		]
+		state/written: written
+		state/depth: depth
+		state/location: location
+		state/storage-slots: storage-slots
+		0
+	]
+
+	; Emits casts, native operations, and unary or binary arithmetic.
+	emit-arithmetic-operation: func [
+		context [x64-function-context!]
+		instruction [rsir-instruction!]
+		index [integer!]
+		prepared [x64-instruction-state!]
+		return: [integer!]
+		/local
+			module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			written [integer!]
+			next-instruction [rsir-instruction!]
+			overflow-scope [rsir-instruction!]
+			at [byte-ptr!]
+			table [type-table!]
+			instructions [byte-ptr!]
+			strings [byte-ptr!]
+			code [byte-ptr!]
+			instruction-effects [int-ptr!]
+			instruction-offsets [int-ptr!]
+			instruction-depths [int-ptr!]
+			catch-depths [int-ptr!]
+			control-uses [int-ptr!]
+			stack-types [int-ptr!]
+			stack-flags [int-ptr!]
+			stack-kinds [int-ptr!]
+			stack-tags [int-ptr!]
+			strings-size [integer!]
+			capacity [integer!]
+			depth [integer!]
+			kind [integer!]
+			ref [integer!]
+			flags [integer!]
+			width [integer!]
+			signed [integer!]
+			source-signed [integer!]
+			load-signed [integer!]
+			source-slot [integer!]
+			target-slot [integer!]
+			storage-slots [integer!]
+			tag-head [integer!]
+			operation [integer!]
+			left-ref [integer!]
+			right-ref [integer!]
+			left-flags [integer!]
+			right-flags [integer!]
+			left-kind [integer!]
+			right-kind [integer!]
+			operation-width [integer!]
+			condition [integer!]
+			stride [integer!]
+			shift-count [integer!]
+			encoded [integer!]
+			target [integer!]
+			register-id [integer!]
+			source-width [integer!]
+			target-width [integer!]
+			target-ref [integer!]
+			target-offset [integer!]
+			instruction-start [integer!]
+			operation-ref [integer!]
+			source-kind [integer!]
+			target-kind [integer!]
+			opcode [integer!]
+			parity [integer!]
+			keep-cast [integer!]
+			overflow-anchor [integer!]
+			base-depth [integer!]
+			overflow-limit [integer!]
+			location [integer!]
+			next-index [integer!]
+			measure? [logic!]
+			valid? [logic!]
+			comparison? [logic!]
+			floating? [logic!]
+			atomic-old? [logic!]
+			tracked? [logic!]
+			located? [logic!]
+			zero-extend? [logic!]
+			linear? [logic!]
+			paired? [logic!]
+			fuse-branch? [logic!]
+			immediate? [logic!]
+			left-in-register? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		strings: module/strings
+		strings-size: module/strings-size
+		code: task/code
+		capacity: task/capacity
+		instructions: view/instructions
+		instruction-effects: view/instruction-effects
+		instruction-offsets: view/instruction-offsets
+		instruction-depths: view/instruction-depths
+		catch-depths: view/catch-depths
+		control-uses: view/control-uses
+		stack-types: view/stack-types
+		stack-flags: view/stack-flags
+		stack-kinds: view/stack-kinds
+		stack-tags: view/stack-tags
+		measure?: null? code
+		written: state/written
+		depth: state/depth
+		location: state/location
+		storage-slots: state/storage-slots
+		linear?: prepared/linear?
+		paired?: prepared/paired?
+		next-instruction: prepared/next-instruction
+		instruction-start: prepared/instruction-start
+
+		case [
 				instruction/op = OP_CAST [
 					if any [depth <= 0 stack-kinds/depth <> VALUE][return INVALID_IR]
 					ref: stack-types/depth
@@ -8702,6 +8709,7 @@ x64-codegen: context [
 						; An integer compare consumed only by the adjacent
 						; BRANCH never needs its boolean materialized: the
 						; branch jumps straight on the compare flags.
+						next-index: prepared/next-index
 						fuse-branch?: all [
 							linear?
 							(instruction-effects/next-index and EFFECT_LIVE) <> 0
@@ -8789,6 +8797,117 @@ x64-codegen: context [
 					]
 					]
 				]
+			true [return UNSUPPORTED]
+		]
+		state/written: written
+		state/depth: depth
+		state/location: location
+		state/storage-slots: storage-slots
+		0
+	]
+
+	; Emits exception, branch, subroutine, and return operations.
+	emit-control-operation: func [
+		context [x64-function-context!]
+		instruction [rsir-instruction!]
+		index [integer!]
+		prepared [x64-instruction-state!]
+		return: [integer!]
+		/local
+			module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			written [integer!]
+			sub-entry [rsir-instruction!]
+			switch-case [rsir-switch!]
+			at [byte-ptr!]
+			table [type-table!]
+			instructions [byte-ptr!]
+			code [byte-ptr!]
+			switches [byte-ptr!]
+			instruction-effects [int-ptr!]
+			instruction-offsets [int-ptr!]
+			catch-depths [int-ptr!]
+			control-uses [int-ptr!]
+			stack-types [int-ptr!]
+			stack-flags [int-ptr!]
+			stack-kinds [int-ptr!]
+			stack-tags [int-ptr!]
+			references [int-ptr!]
+			switch-count [integer!]
+			function-offset [integer!]
+			capacity [integer!]
+			exit-reference-id [integer!]
+			entry? [logic!]
+			depth [integer!]
+			ref [integer!]
+			flags [integer!]
+			width [integer!]
+			signed [integer!]
+			source-slot [integer!]
+			target-slot [integer!]
+			storage-slots [integer!]
+			tag-head [integer!]
+			operation-width [integer!]
+			condition [integer!]
+			encoded [integer!]
+			target [integer!]
+			return-ref [integer!]
+			displacement [integer!]
+			target-width [integer!]
+			target-offset [integer!]
+			instruction-start [integer!]
+			case-index [integer!]
+			aggregate-width [integer!]
+			value-size [integer!]
+			catch-record [integer!]
+			catch-unwind [integer!]
+			allocation-size [integer!]
+			location [integer!]
+			compatibility [integer!]
+			measure? [logic!]
+			floating? [logic!]
+			tracked? [logic!]
+			fold-boolean? [logic!]
+			fold-constant? [logic!]
+			branch-taken? [logic!]
+				direct-boolean? [logic!]
+				sub-returns? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		switches: module/switches
+		switch-count: module/switch-count
+		code: task/code
+		references: task/references
+		function-offset: task/function-offset
+		capacity: task/capacity
+		exit-reference-id: task/exit-reference-id
+		entry?: task/entry?
+		instructions: view/instructions
+		instruction-effects: view/instruction-effects
+		instruction-offsets: view/instruction-offsets
+		catch-depths: view/catch-depths
+		control-uses: view/control-uses
+		stack-types: view/stack-types
+		stack-flags: view/stack-flags
+		stack-kinds: view/stack-kinds
+		stack-tags: view/stack-tags
+		measure?: null? code
+		written: state/written
+		depth: state/depth
+		location: state/location
+		storage-slots: state/storage-slots
+		allocation-size: prepared/allocation-size
+		instruction-start: prepared/instruction-start
+
+		case [
 				instruction/op = OP_CATCH [
 					target: instruction/a
 					state/catch-level: instruction/b
@@ -9034,7 +9153,7 @@ x64-codegen: context [
 									target-offset: target-offset + 1
 								]
 							]
-							index: index + 3
+							prepared/advance: 4
 						][
 							depth: depth - 1
 							if measure? [
@@ -9480,11 +9599,436 @@ x64-codegen: context [
 					depth: 0
 					state/fallthrough?: false
 				]
-				true [return UNSUPPORTED]
-			]
-			index: index + 1
+			true [return UNSUPPORTED]
 		]
-		finish-function task view state fn storage-slots written measure?
+		state/written: written
+		state/depth: depth
+		state/location: location
+		state/storage-slots: storage-slots
+		0
+	]
+
+	; Prepares one live instruction for a family emitter. This is the single
+	; place where control-flow merges, location pairing, and register flushing
+	; update the shared machine cursor.
+	prepare-instruction: func [
+		context [x64-function-context!]
+		instruction [rsir-instruction!]
+		index [integer!]
+		prepared [x64-instruction-state!]
+		return: [integer!]
+		/local module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			next-instruction following-instruction [rsir-instruction!]
+			parameter [rsir-parameter!]
+			global [rsir-global!]
+			at [byte-ptr!]
+			table [type-table!]
+			code instructions parameters globals [byte-ptr!]
+			instruction-effects instruction-depths catch-depths control-uses
+				instruction-offsets
+				entry-types entry-flags entry-kinds entry-tags
+				stack-types stack-flags stack-kinds stack-tags [int-ptr!]
+			global-count capacity written depth location storage-slots
+				tag-head ref target target-ref target-flags next-index instruction-start
+							width encoded target-width flags [integer!]
+			measure? linear? paired? set-pair? address-pair? load-pair?
+				consume-location? valid? floating? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		code: task/code
+		instructions: view/instructions
+		parameters: module/parameters
+		globals: module/globals
+		global-count: module/global-count
+		capacity: task/capacity
+		instruction-effects: view/instruction-effects
+		instruction-offsets: view/instruction-offsets
+		instruction-depths: view/instruction-depths
+		catch-depths: view/catch-depths
+		control-uses: view/control-uses
+		entry-types: view/entry-types
+		entry-flags: view/entry-flags
+		entry-kinds: view/entry-kinds
+		entry-tags: view/entry-tags
+		stack-types: view/stack-types
+		stack-flags: view/stack-flags
+		stack-kinds: view/stack-kinds
+		stack-tags: view/stack-tags
+		measure?: null? code
+		written: state/written
+		depth: state/depth
+		location: state/location
+		storage-slots: state/storage-slots
+		prepared/advance: 1
+		next-instruction: null
+
+		unless (instruction-effects/index and EFFECT_LIVE) <> 0 [
+			if measure? [instruction-offsets/index: written]
+			state/written: written
+			state/depth: depth
+			state/location: location
+			state/storage-slots: storage-slots
+			return PREPARE_SKIPPED
+		]
+		if all [
+			instruction/op = OP_SUB_RETURN
+			instruction/a = 0
+			depth = 1
+		][
+			unless stack-kinds/depth = VALUE [return INVALID_IR]
+			depth: 0
+			location: LOCATION_NONE
+			state/location-depth: 0
+			state/location-source: 0
+			state/source-location: LOCATION_NONE
+			state/source-depth: 0
+		]
+		if instruction/op = OP_ENTRY [
+			if state/fallthrough? [return INVALID_IR]
+			if state/max-depth > (2147483647 - state/segment-slots)[return OUTPUT_FULL]
+			state/segment-slots: state/segment-slots + state/max-depth
+			if state/storage-base > (2147483647 - state/segment-slots)[return OUTPUT_FULL]
+			storage-slots: state/storage-base + state/segment-slots
+			depth: 0
+			state/max-depth: 0
+			state/current-entry: index
+			state/fallthrough?: true
+		]
+		either state/fallthrough? [
+			if instruction-depths/index >= 0 [
+				if measure? [
+					if instruction-depths/index <> depth [return INVALID_IR]
+					if depth > 0 [
+						tag-head: stack-tags/depth
+						if tag-head < 0 [tag-head: 0]
+						ref: merged-type entry-types/index stack-types/depth table
+						if any [
+							ref = 0
+							entry-flags/index <> stack-flags/depth
+							entry-kinds/index <> stack-kinds/depth
+							entry-tags/index <> tag-head
+						][return INVALID_IR]
+						entry-types/index: ref
+					]
+				]
+				if depth > 0 [
+					stack-types/depth: entry-types/index
+					stack-flags/depth: entry-flags/index
+					stack-kinds/depth: entry-kinds/index
+					stack-tags/depth: entry-tags/index
+				]
+			]
+		][
+			depth: either instruction-depths/index >= 0 [instruction-depths/index][0]
+			if depth > 0 [
+				stack-types/depth: entry-types/index
+				stack-flags/depth: entry-flags/index
+				stack-kinds/depth: entry-kinds/index
+				stack-tags/depth: entry-tags/index
+			]
+		]
+		if measure? [
+			instruction-depths/index: depth
+			if depth > 0 [
+				entry-types/index: stack-types/depth
+				entry-flags/index: stack-flags/depth
+				entry-kinds/index: stack-kinds/depth
+				entry-tags/index: stack-tags/depth
+			]
+		]
+		linear?: false
+		next-index: index + 1
+		if next-index <= fn/instruction-count [
+			next-instruction: as rsir-instruction! (instructions
+				+ ((next-index - 1) * RSIR_INSTRUCTION_SIZE))
+			linear?: all [
+				control-uses/next-index = 0
+				catch-depths/next-index = catch-depths/index
+				next-instruction/op <> OP_ENTRY
+			]
+		]
+		state/incoming-arguments: keep-incoming-arguments state/incoming-arguments index
+			control-uses/index instruction
+		if state/resident? [
+			if any [written <> state/resident-mark control-uses/index <> 0 instruction/op = OP_ENTRY][
+				state/resident?: false
+			]
+		]
+		paired?: false
+		if all [
+			linear?
+			any [location = LOCATION_GPR location = LOCATION_XMM]
+			instruction/op = OP_LITERAL
+			depth > 0
+			stack-kinds/depth = VALUE
+			stack-flags/depth = 0
+			valid-type-ref? instruction/a table
+			machine-value? instruction/a 0 table
+			(instruction-effects/next-index and EFFECT_LIVE) <> 0
+			(instruction-effects/next-index and EFFECT_ELIDED) = 0
+			next-instruction/op = OP_BINARY
+			next-instruction/a >= ADD_OPERATION
+			next-instruction/a <= LESS_EQUAL_OPERATION
+		][
+			paired?: either location = LOCATION_XMM [
+				all [float-type? stack-types/depth table float-type? instruction/a table
+					register-pair-operation? next-instruction/a true]
+			][
+				any [
+					all [instruction/a = stack-types/depth integer-type? stack-types/depth table
+						integer-type? instruction/a table register-pair-operation? next-instruction/a false]
+					all [address-type? stack-types/depth table integer-type? instruction/a table
+						any [next-instruction/a = ADD_OPERATION next-instruction/a = SUBTRACT_OPERATION]
+						next-instruction/b = 0 (value-width instruction/a 0 table) = 4
+						any [all [instruction/c = 0 instruction/b >= 0] all [instruction/c = -1 instruction/b < 0]]
+						scaled-pointer-literal? instruction/b stack-types/depth table]
+				]
+			]
+		]
+		set-pair?: false
+		address-pair?: false
+		if all [
+			linear? any [location = LOCATION_GPR location = LOCATION_XMM]
+			instruction/op = OP_ADDRESS depth > 0 stack-kinds/depth = VALUE stack-flags/depth = 0
+		][
+			target-ref: 0
+			target-flags: -1
+			case [
+				all [instruction/a = LOCAL_ADDRESS instruction/b > 0 instruction/b <= state/storage-count][
+					parameter: as rsir-parameter! (parameters
+						+ ((fn/first-parameter + instruction/b - 1) * RSIR_PARAMETER_SIZE))
+					target-ref: parameter/type
+					target-flags: parameter/flags
+				]
+				all [instruction/a = GLOBAL_ADDRESS instruction/b > 0 instruction/b <= global-count][
+					global: as rsir-global! (globals + ((instruction/b - 1) * RSIR_GLOBAL_SIZE))
+					target-ref: global/type
+					target-flags: global/flags and INLINE
+				]
+				true [0]
+			]
+			if all [valid-type-ref? target-ref table target-flags = 0 machine-value? target-ref 0 table][
+				floating?: float-type? target-ref table
+				valid?: either floating? [location = LOCATION_XMM][all [location = LOCATION_GPR target-ref = stack-types/depth]]
+				if valid? [
+					set-pair?: all [target-ref = stack-types/depth
+						(instruction-effects/next-index and EFFECT_LIVE) <> 0
+						(instruction-effects/next-index and EFFECT_ELIDED) = 0 next-instruction/op = OP_SET]
+					if all [next-instruction/op = OP_LOAD
+						(instruction-effects/next-index and EFFECT_LIVE) <> 0
+						(instruction-effects/next-index and EFFECT_ELIDED) = 0 next-index < fn/instruction-count][
+						target: next-index + 1
+						following-instruction: as rsir-instruction! (instructions + (next-index * RSIR_INSTRUCTION_SIZE))
+						address-pair?: all [control-uses/target = 0 catch-depths/target = catch-depths/index
+							following-instruction/op <> OP_ENTRY
+							(instruction-effects/target and EFFECT_LIVE) <> 0
+							(instruction-effects/target and EFFECT_ELIDED) = 0
+							following-instruction/op = OP_BINARY following-instruction/a >= ADD_OPERATION
+							following-instruction/a <= LESS_EQUAL_OPERATION
+							register-pair-operation? following-instruction/a floating?]
+					]
+				]
+			]
+		]
+		load-pair?: all [linear? instruction/op = OP_LOAD state/source-location <> LOCATION_NONE
+			state/source-depth = (depth - 1)
+			(instruction-effects/next-index and EFFECT_LIVE) <> 0
+			(instruction-effects/next-index and EFFECT_ELIDED) = 0 next-instruction/op = OP_BINARY]
+		if location <> LOCATION_NONE [
+			unless any [all [state/location-depth = depth depth > 0 control-uses/index = 0]
+				all [state/pending-immediate-kind = 1 state/pending-immediate-index = (index - 1)
+					location = LOCATION_GPR state/location-depth = (depth - 1)]][return INVALID_IR]
+			consume-location?: case [
+				any [location = LOCATION_ADDRESS location = LOCATION_FRAME location = LOCATION_FRAME_INDIRECT
+					location = LOCATION_GLOBAL location = LOCATION_ARGUMENT][
+					any [instruction/op = OP_LOAD instruction/op = OP_REFERENCE instruction/op = OP_MEMBER
+						instruction/op = OP_SET instruction/op = OP_CALL instruction/op = OP_DROP]
+				]
+				any [location = LOCATION_GPR location = LOCATION_XMM][
+					any [all [instruction/op = OP_LITERAL paired?]
+						all [instruction/op = OP_ADDRESS any [set-pair? address-pair?]] instruction/op = OP_DROP
+						instruction/op = OP_DUPLICATE instruction/op = OP_CAST instruction/op = OP_BINARY
+						instruction/op = OP_SUB_RETURN all [instruction/op = OP_CALL instruction/b > 0]
+						all [instruction/op = OP_UNARY location = LOCATION_GPR]
+						all [instruction/op = OP_RETURN not task/entry? (fn/flags and RETURN_VALUE) = 0]
+						all [instruction/op = OP_MEMBER location = LOCATION_GPR]
+						all [instruction/op = OP_BRANCH location = LOCATION_GPR
+							(instruction-effects/index and EFFECT_CONSTANT_BRANCH) = 0]]
+				]
+				any [location = LOCATION_GPR_PAIR location = LOCATION_XMM_PAIR][instruction/op = OP_BINARY]
+				true [false]
+			]
+			unless consume-location? [
+				case [
+					location = LOCATION_FRAME [
+						at: either measure? [as byte-ptr! 0][code + written]
+						encoded: x64-encoder/frame-address at (capacity - written) x64-encoder/RAX state/location-source
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					location = LOCATION_FRAME_INDIRECT [
+						at: either measure? [as byte-ptr! 0][code + written]
+						encoded: x64-encoder/frame-load at (capacity - written) x64-encoder/RAX state/location-source 8 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					location = LOCATION_ADDRESS [
+						at: either measure? [as byte-ptr! 0][code + written]
+						encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RAX state/location-source
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					location = LOCATION_ARGUMENT [return INVALID_IR]
+					any [location = LOCATION_GPR location = LOCATION_XMM][0]
+					location = LOCATION_GLOBAL [return INVALID_IR]
+					any [location = LOCATION_GPR_PAIR location = LOCATION_XMM_PAIR][return INVALID_IR]
+					true [return INVALID_IR]
+				]
+				ref: stack-types/depth
+				flags: stack-flags/depth
+				at: either measure? [as byte-ptr! 0][code + written]
+				encoded: case [
+					any [location = LOCATION_ADDRESS location = LOCATION_FRAME location = LOCATION_FRAME_INDIRECT][
+						x64-encoder/frame-store at (capacity - written) x64-encoder/RAX
+							slot-displacement (storage-slots + depth) 8]
+					location = LOCATION_XMM [
+						width: value-width ref flags table
+						if width <= 0 [return INVALID_IR]
+						x64-encoder/xmm-frame-store at (capacity - written) x64-encoder/XMM0
+							slot-displacement (storage-slots + depth) width]
+					location = LOCATION_GPR [
+						width: either inline-object-ref? ref table [8][value-width ref flags table]
+						if width <= 0 [return INVALID_IR]
+						target-width: either width = 8 [8][4]
+						x64-encoder/frame-store at (capacity - written) x64-encoder/RAX
+							slot-displacement (storage-slots + depth) target-width]
+					true [return INVALID_IR]
+				]
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				location: LOCATION_NONE
+				state/location-depth: 0
+				state/location-source: 0
+			]
+		]
+		if (instruction-effects/index and EFFECT_ELIDED) <> 0 [
+			if measure? [instruction-offsets/index: written]
+			state/fallthrough?: true
+			state/written: written
+			state/depth: depth
+			state/location: location
+			state/storage-slots: storage-slots
+			return PREPARE_SKIPPED
+		]
+		if measure? [instruction-offsets/index: written]
+		instruction-start: written
+		state/fallthrough?: true
+		state/written: written
+		state/depth: depth
+		state/location: location
+		state/storage-slots: storage-slots
+		prepared/next-index: next-index
+		prepared/next-instruction: next-instruction
+		prepared/instruction-start: instruction-start
+		prepared/linear?: linear?
+		prepared/paired?: paired?
+		prepared/set-pair?: set-pair?
+		prepared/address-pair?: address-pair?
+		prepared/load-pair?: load-pair?
+		0
+	]
+
+	; Emits the analyzed instruction stream using the opcode-family handlers.
+	emit-function-body: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			prepared [x64-instruction-state! value]
+			fn [rsir-function!]
+			instruction [rsir-instruction!]
+			instructions code [byte-ptr!]
+			frame-extra allocation-size index [integer!]
+			measure? [logic!]
+			result [integer!]
+		][
+		; Open the records into locals once; the instruction-specific state stays
+		; with the family emitters.
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		instructions:        view/instructions
+		code:               task/code
+
+		measure?: null? code
+		state/depth: 0
+		state/location: LOCATION_NONE
+		state/storage-slots: state/storage-base
+		allocation-size: 0
+		if not measure? [
+			frame-extra: task/frame-size - x64-encoder/BASE_FRAME_SIZE
+			if frame-extra < 0 [return INVALID_IR]
+			allocation-size: x64-encoder/allocate-frame null 0 frame-extra
+			if allocation-size < 0 [return OUTPUT_FULL]
+		]
+		prepared/allocation-size: allocation-size
+		index: 1
+		while [index <= fn/instruction-count][
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			result: prepare-instruction context instruction index prepared
+			if result = PREPARE_SKIPPED [
+				index: index + prepared/advance
+				continue
+			]
+			if result < 0 [return result]
+			result: case [
+				any [instruction/op = OP_LITERAL
+					instruction/op = OP_CONSTANT
+					instruction/op = OP_ADDRESS
+					instruction/op = OP_LOAD
+					instruction/op = OP_REFERENCE
+					instruction/op = OP_INDEX
+					instruction/op = OP_SET
+					instruction/op = OP_MEMBER
+					instruction/op = OP_TAG] [emit-value-operation context instruction index prepared]
+				instruction/op = OP_CALL [emit-call-operation context instruction index prepared]
+				any [instruction/op = OP_CAST
+					instruction/op = OP_SIZE
+					instruction/op = OP_NATIVE
+					instruction/op = OP_DROP
+					instruction/op = OP_DUPLICATE
+					instruction/op = OP_UNARY
+					instruction/op = OP_OVERFLOW
+					instruction/op = OP_BINARY] [emit-arithmetic-operation context instruction index prepared]
+				any [instruction/op = OP_CATCH
+					instruction/op = OP_END_CATCH
+					instruction/op = OP_THROW
+					instruction/op = OP_JUMP
+					instruction/op = OP_BRANCH
+					instruction/op = OP_SWITCH
+					instruction/op = OP_ENTRY
+					instruction/op = OP_SUB_CALL
+					instruction/op = OP_SUB_RETURN
+					instruction/op = OP_FAIL
+					instruction/op = OP_RETURN] [emit-control-operation context instruction index prepared]
+				true [UNSUPPORTED]
+			]
+			if result < 0 [return result]
+			index: index + prepared/advance
+		]
+		0
 	]
 
 	place-global-data: func [
@@ -9519,11 +10063,11 @@ x64-codegen: context [
 		capacity opt-level [integer!]
 		return: [integer!]
 		/local header [rsir-header!]
-			signature-cache [signature-pairs!]
-			table [type-table!]
-			ir-module [rsir-module!]
-			work [codegen-scratch!]
-			task [codegen-task!]
+			signature-cache [signature-pairs! value]
+			table [type-table! value]
+			ir-module [rsir-module! value]
+			work [codegen-scratch! value]
+			task [codegen-task! value]
 			ir-type array-type [rsir-type!]
 			ir-member [rsir-member!]
 			ir-import [rsir-import!]
@@ -9570,11 +10114,6 @@ x64-codegen: context [
 					status [integer!]
 			entry? current-entry? array? [logic!]
 	][
-		signature-cache: declare signature-pairs!
-		table: declare type-table!
-		ir-module: declare rsir-module!
-		work: declare codegen-scratch!
-		task: declare codegen-task!
 		signature-cache/memory: null
 		if any [null? data null? output size < RSIR_HEADER_SIZE capacity < 0][
 			return INVALID_IR

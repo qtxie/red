@@ -55,6 +55,36 @@ size: arm64-encoder/alu-register code 256 arm64-encoder/OP_XOR arm64-encoder/X9
 expected: #{690214CA}
 check size 4 expected
 
+size: arm64-encoder/logical-immediate code 256 arm64-encoder/OP_AND
+	arm64-encoder/X10 arm64-encoder/X19 4 1023 0
+expected: #{6A260012}
+check size 4 expected
+
+size: arm64-encoder/logical-immediate code 256 arm64-encoder/OP_OR
+	arm64-encoder/X11 arm64-encoder/X20 4 00FF00FFh 0
+expected: #{8B9E0032}
+check size 4 expected
+
+size: arm64-encoder/logical-immediate code 256 arm64-encoder/OP_XOR
+	arm64-encoder/X12 arm64-encoder/X21 4 80000000h -1
+expected: #{AC020152}
+check size 4 expected
+
+size: arm64-encoder/logical-immediate code 256 arm64-encoder/OP_AND
+	arm64-encoder/X13 arm64-encoder/X22 8 1023 0
+expected: #{CD264092}
+check size 4 expected
+
+size: arm64-encoder/logical-immediate code 256 arm64-encoder/OP_OR
+	arm64-encoder/X14 arm64-encoder/X23 8 00FF00FFh 00FF00FFh
+expected: #{EE9E00B2}
+check size 4 expected
+
+size: arm64-encoder/logical-immediate code 256 arm64-encoder/OP_XOR
+	arm64-encoder/X15 arm64-encoder/X24 8 0 80000000h
+expected: #{0F0341D2}
+check size 4 expected
+
 size: arm64-encoder/add-immediate code 256 arm64-encoder/X9 arm64-encoder/X19 42 8
 expected: #{69AA0091}
 check size 4 expected
@@ -240,6 +270,14 @@ if (arm64-encoder/register-store code 256 arm64-encoder/X9 arm64-encoder/X19
 ]
 if (arm64-encoder/alu-register code 256 arm64-encoder/OP_OR arm64-encoder/X9
 	arm64-encoder/X10 arm64-encoder/X11 8 true) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/logical-immediate code 256 arm64-encoder/OP_AND
+	arm64-encoder/X9 arm64-encoder/X10 4 0 0) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/logical-immediate code 256 arm64-encoder/OP_OR
+	arm64-encoder/X9 arm64-encoder/X10 8 -1 -1) <> -1 [
 	failures: failures + 1
 ]
 

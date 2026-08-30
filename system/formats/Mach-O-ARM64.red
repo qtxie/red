@@ -128,10 +128,11 @@ system-format-MachO-ARM64: context [
 		]
 	]
 
-	collect-imports: func [job [object!] /local libraries imports library symbol-library ordinal index][
+	collect-imports: func [job [object!] /local source libraries imports library symbol-library ordinal index][
 		libraries: reduce ["/usr/lib/libSystem.B.dylib"]
 		imports: make block! 64
-		foreach [name uses] job/sections/import/3 [
+		source: any [attempt [job/sections/import/3] []]
+		foreach [name uses] source [
 			library: normalize-library name
 			foreach [symbol refs] uses [
 				symbol-library: either objc-runtime-symbol? symbol [

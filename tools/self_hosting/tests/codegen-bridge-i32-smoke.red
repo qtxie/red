@@ -91,7 +91,7 @@ generate "direct call" {
 	main: func [return: [integer!]][id id 7]
 } 'user
 
-generate "left-to-right integer expression" {
+left-expression: generate "left-to-right integer expression" {
 	Red/System []
 	fn: func [return: [integer!]][1 + 2 * 3]
 } 'user
@@ -278,6 +278,28 @@ local: generate "inferred local" {
 check (word-at local/2 (codegen-header-size + 16)) = 64
 	"local storage was mixed with the value stack"
 
+argument: generate "scalar argument home" {
+	Red/System []
+	fn: func [value [integer!] return: [integer!]][value]
+} 'user
+
+register-loop: generate "register-resident integer loop" {
+	Red/System []
+	hot-loop: func [
+		iterations [integer!]
+		return: [integer!]
+		/local i sum
+	][
+		i: 0
+		sum: 0
+		while [i < iterations][
+			sum: sum + (i and 1023)
+			i: i + 1
+		]
+		sum
+	]
+} 'user
+
 generate "explicit local assignment result" {
 	Red/System []
 	fn: func [return: [integer!] /local value [integer!]][value: 7]
@@ -411,8 +433,68 @@ check status = 2 "bridge did not reject an invalid function count"
 
 artifact: make binary! 4096
 status: codegen-module literal/1 artifact 2 0
-check status = 3 "bridge did not recognize the pending ARM64 backend"
-check empty? artifact "unsupported ARM64 generation changed the output"
+check status = 0 "ARM64 bridge did not generate a literal function"
+check all [
+	(word-at artifact 0) = length? artifact
+	(word-at artifact 12) = 1
+	(word-at artifact 16) = 0
+	(word-at artifact 20) = 0
+	(word-at artifact 32) = 8
+	(word-at artifact 36) = 16
+	(word-at artifact (codegen-header-size + 16)) = 0
+]["ARM64 literal image metadata is inconsistent"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 1) 8) = #{E0008052C0035FD6}
+	"ARM64 literal return used unexpected machine code"
+
+artifact: make binary! 4096
+status: codegen-module local/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate an inferred local"
+check all [
+	(word-at artifact 32) = 40
+	(word-at artifact (codegen-header-size + 12)) = 40
+	(word-at artifact (codegen-header-size + 16)) = 32
+]["ARM64 local did not use one register home"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 17) 8) = #{F3008052E003132A}
+	"ARM64 local value did not remain in x19"
+
+artifact: make binary! 4096
+status: codegen-module argument/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a scalar argument"
+check all [
+	(word-at artifact 32) = 40
+	(word-at artifact (codegen-header-size + 12)) = 40
+	(word-at artifact (codegen-header-size + 16)) = 32
+]["ARM64 argument did not use one register home"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 17) 8) = #{F303002AE003132A}
+	"ARM64 argument did not move directly through x19"
+
+artifact: make binary! 4096
+status: codegen-module left-expression/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate integer arithmetic"
+check (word-at artifact 32) = 8
+	"ARM64 literal arithmetic was not folded into registers and immediates"
+
+artifact: make binary! 4096
+status: codegen-module register-loop/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a register-resident loop"
+check all [
+	(word-at artifact 20) = 0
+	(word-at artifact 36) = 16
+	(word-at artifact (codegen-header-size + 16)) = 48
+	(word-at artifact 32) = 80
+]["ARM64 loop image lost its register-only frame shape"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 41) 12)
+	= #{8A260012B5020A0B94060011}
+	"ARM64 loop did not use direct logical/add destinations"
+
+artifact: make binary! 4096
+status: codegen-module bad artifact 2 0
+check status = 2 "ARM64 bridge did not reject invalid RSIR"
+check empty? artifact "invalid ARM64 RSIR changed the output"
 
 artifact: make binary! 4096
 status: codegen-module literal/1 artifact 99 0

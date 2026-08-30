@@ -68,17 +68,18 @@ system-dialect: context [
 			job-backend-mode <> 'rsir [
 				compiler/throw-error "hybrid compiler requires the RSIR backend mode"
 			]
-			job/OS <> 'Windows [
-				compiler/throw-error "RSIR frontend currently supports only Windows"
-			]
-			job/format <> 'PE [
-				compiler/throw-error "RSIR frontend currently supports only PE targets"
-			]
-			job/target <> 'X86-64 [
-				compiler/throw-error "RSIR frontend currently supports only X86-64"
-			]
-			job/ABI <> 'win64 [
-				compiler/throw-error "RSIR frontend currently supports only the Win64 ABI"
+			not any [
+				all [
+					job/OS = 'Windows job/format = 'PE
+					job/target = 'X86-64 job/ABI = 'win64
+				]
+				all [
+					job/OS = 'macOS job/format = 'Mach-O
+					job/target = 'ARM64 job/ABI = 'apple-aarch64
+				]
+			][
+				compiler/throw-error
+					"RSIR frontend supports Win64/PE and Apple AArch64/Mach-O targets"
 			]
 			not find [exe dll] job/type [
 				compiler/throw-error "RSIR frontend currently supports only executable and DLL modules"
@@ -98,8 +99,12 @@ system-dialect: context [
 				compiler/throw-error
 					"RSIR frontend supports Red executables and development libRedRT"
 			]
-			any [job/PIC? job/PIE? job/static-link?] [
-				compiler/throw-error "RSIR frontend does not yet support PIC, PIE, or static linking"
+			any [
+				job/static-link?
+				all [job/OS = 'Windows any [job/PIC? job/PIE?]]
+				all [job/OS = 'macOS not job/PIC?]
+			][
+				compiler/throw-error "invalid hybrid target linking mode"
 			]
 			any [job/debug? not none? job/o2-ir-dump] [
 				compiler/throw-error "RSIR frontend does not yet support debug or O2 IR output"

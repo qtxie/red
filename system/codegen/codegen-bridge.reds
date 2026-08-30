@@ -4,6 +4,7 @@ Red/System [
 ]
 
 #include %x64-codegen.reds
+#include %arm64-codegen.reds
 
 codegen-bridge: context [
 	SUCCESS:         0
@@ -40,7 +41,9 @@ codegen-bridge: context [
 			architecture = ARCH_X64 [
 				x64-codegen/generate ir-data ir-size output capacity opt-level
 			]
-			architecture = ARCH_ARM64 [x64-codegen/UNSUPPORTED]
+			architecture = ARCH_ARM64 [
+				arm64-codegen/generate ir-data ir-size output capacity opt-level
+			]
 			true [return INVALID_ARGUMENTS]
 		]
 		case [

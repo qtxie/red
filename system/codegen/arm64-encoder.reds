@@ -268,6 +268,119 @@ arm64-encoder: context [
 		instruction code capacity (opcode or target)
 	]
 
+	logical-immediate-fields: func [
+		low high width [integer!]
+		fields [int-ptr!]
+		return: [logic!]
+		/local bits element-size element-mask ones rotation base pattern shift
+			base-low base-high candidate-low candidate-high rotated-by imms n [integer!]
+	][
+		bits: width * 8
+		element-size: 2
+		while [element-size <= bits][
+			ones: 1
+			while [ones < element-size][
+				rotation: 0
+				while [rotation < element-size][
+					either element-size <= 32 [
+						element-mask: either element-size = 32 [-1][
+							(1 << element-size) - 1
+						]
+						base: (1 << ones) - 1
+						pattern: either rotation = 0 [base][
+							((base >>> rotation) or
+								(base << (element-size - rotation))) and element-mask
+						]
+						candidate-low: pattern
+						shift: element-size
+						while [shift < 32][
+							candidate-low: candidate-low or (pattern << shift)
+							shift: shift + element-size
+						]
+						candidate-high: candidate-low
+					][
+						case [
+							ones < 32 [
+								base-low: (1 << ones) - 1
+								base-high: 0
+							]
+							ones = 32 [
+								base-low: -1
+								base-high: 0
+							]
+							true [
+								base-low: -1
+								base-high: (1 << (ones - 32)) - 1
+							]
+						]
+						case [
+							rotation = 0 [
+								candidate-low: base-low
+								candidate-high: base-high
+							]
+							rotation < 32 [
+								candidate-low: (base-low >>> rotation) or
+									(base-high << (32 - rotation))
+								candidate-high: (base-high >>> rotation) or
+									(base-low << (32 - rotation))
+							]
+							rotation = 32 [
+								candidate-low: base-high
+								candidate-high: base-low
+							]
+							true [
+								rotated-by: rotation - 32
+								candidate-low: (base-high >>> rotated-by) or
+									(base-low << (32 - rotated-by))
+								candidate-high: (base-low >>> rotated-by) or
+									(base-high << (32 - rotated-by))
+							]
+						]
+					]
+					if all [
+						candidate-low = low
+						any [width = 4 candidate-high = high]
+					][
+						imms: ((0 - (element-size * 2)) and 63) or (ones - 1)
+						n: either element-size = 64 [1][0]
+						fields/1: (n * 4194304) or (rotation * 65536)
+						fields/1: fields/1 or (imms * 1024)
+						return true
+					]
+					rotation: rotation + 1
+				]
+				ones: ones + 1
+			]
+			element-size: element-size * 2
+		]
+		false
+	]
+
+	logical-immediate: func [
+		code [byte-ptr!]
+		capacity operation target source width low high [integer!]
+		return: [integer!]
+		/local fields opcode [integer!]
+	][
+		unless all [
+			valid-register? target valid-register? source valid-width? width
+			operation >= OP_AND operation <= OP_XOR
+		][return -1]
+		fields: 0
+		unless logical-immediate-fields low high width :fields [return -1]
+		opcode: case [
+			all [operation = OP_AND width = 8][92000000h]
+			operation = OP_AND [12000000h]
+			all [operation = OP_OR width = 8][B2000000h]
+			operation = OP_OR [32000000h]
+			all [operation = OP_XOR width = 8][D2000000h]
+			true [52000000h]
+		]
+		opcode: opcode or fields
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
 	add-register: func [
 		code [byte-ptr!]
 		capacity target left right width [integer!]

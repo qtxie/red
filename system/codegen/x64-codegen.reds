@@ -3531,14 +3531,13 @@ x64-codegen: context [
 		view/resume-queue-tail:   work/resume-queue-tail
 	]
 
-	; Compiles one function of the module and returns its size in bytes, or a
-	; negative error code. Called twice per function: once with task/code null
-	; to measure sizes and record the frame and outgoing figures in the task,
-	; then again with an output slot to emit the bytes.
-	compile-function: func [
-		module  [rsir-module!]
-		work    [codegen-scratch!]
-		task    [codegen-task!]
+	; Performs the function-local analysis, frame layout, and ABI prologue.
+	; Keeping this pass separate leaves the instruction emitter focused on IR.
+	prepare-function: func [
+		module [rsir-module!]
+		task [codegen-task!]
+		view [codegen-scratch!]
+		state [machine-state!]
 		return: [integer!]
 		/local fn [rsir-function!]
 			instruction [rsir-instruction!]
@@ -3559,8 +3558,6 @@ x64-codegen: context [
 			at [byte-ptr!]
 			call-parameters [byte-ptr!]
 			table [type-table!]
-			view [codegen-scratch!]
-			state [machine-state!]
 			instructions argument-targets image-data strings code
 				parameters functions imports globals switches [byte-ptr!]
 			function-effects instruction-effects instruction-offsets instruction-depths
@@ -3610,11 +3607,6 @@ x64-codegen: context [
 			resident-hit?
 			sub-returns? [logic!]
 	][
-		; Open the records into locals once; everything below works on plain
-		; pointers and counts.
-		view:  declare codegen-scratch!
-		state: declare machine-state!
-		window-scratch work view task/first-instruction task/first-offset
 		fn: task/fn
 		table: module/table
 		parameters: module/parameters
@@ -4128,6 +4120,207 @@ x64-codegen: context [
 			index: index + 1
 		]
 
+		written
+	]
+
+	; Verifies the completed control-flow state and records the frame size
+	; discovered during the measurement pass.
+	finish-function: func [
+		task [codegen-task!]
+		view [codegen-scratch!]
+		state [machine-state!]
+		fn [rsir-function!]
+		storage-slots [integer!]
+		written [integer!]
+		measure? [logic!]
+		return: [integer!]
+		/local instruction-offsets [int-ptr!]
+			target-offset slot-bytes frame-extra encoded [integer!]
+	][
+		instruction-offsets: view/instruction-offsets
+		if measure? [
+			target-offset: fn/instruction-count + 1
+			instruction-offsets/target-offset: written
+		]
+		if state/tag-count <> state/tag-capacity [return INVALID_IR]
+		if state/fallthrough? [return INVALID_IR]
+		if all [not measure? state/max-outgoing <> task/outgoing-size][return INVALID_IR]
+
+		if measure? [
+			task/outgoing-size: state/max-outgoing
+			if storage-slots > (2147483647 / 8)[return OUTPUT_FULL]
+			slot-bytes: storage-slots * 8
+			if state/max-depth > ((2147483647 - slot-bytes) / 8)[return OUTPUT_FULL]
+			slot-bytes: slot-bytes + (state/max-depth * 8)
+			if slot-bytes > (2147483647 - state/max-outgoing)[return OUTPUT_FULL]
+			frame-extra: align (slot-bytes + state/max-outgoing) 16
+			if any [
+				frame-extra < 0
+				frame-extra > (2147483647 - x64-encoder/BASE_FRAME_SIZE)
+			][return OUTPUT_FULL]
+			task/frame-size: x64-encoder/BASE_FRAME_SIZE + frame-extra
+			encoded: x64-encoder/allocate-frame null 0 frame-extra
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+		written
+	]
+
+	; Compiles one function of the module and returns its size in bytes, or a
+	; negative error code. The two passes share the same preparation and
+	; emission pipeline; the first records frame requirements, the second emits.
+	compile-function: func [
+		module [rsir-module!]
+		work   [codegen-scratch!]
+		task   [codegen-task!]
+		return: [integer!]
+		/local view [codegen-scratch!]
+			state [machine-state!]
+			written [integer!]
+	][
+		view: declare codegen-scratch!
+		state: declare machine-state!
+		window-scratch work view task/first-instruction task/first-offset
+		written: prepare-function module task view state
+		if written < 0 [return written]
+		emit-function-body module task view state written
+	]
+
+	; Emits the analyzed function body and finalizes its frame metadata.
+	emit-function-body: func [
+		module  [rsir-module!]
+		task    [codegen-task!]
+		view    [codegen-scratch!]
+		state   [machine-state!]
+		initial-written [integer!]
+		return: [integer!]
+		/local fn [rsir-function!]
+			written [integer!]
+			instruction [rsir-instruction!]
+			next-instruction [rsir-instruction!]
+			following-instruction argument-instruction argument-address [rsir-instruction!]
+			overflow-scope [rsir-instruction!]
+			catch-scope [rsir-instruction!]
+			sub-entry [rsir-instruction!]
+			switch-case [rsir-switch!]
+			parameter [rsir-parameter!]
+			callee [rsir-function!]
+			imported [rsir-import!]
+			signature typed-metadata list-type [rsir-type!]
+			typed-member [rsir-member!]
+			global [rsir-global!]
+			image-global [codegen-global!]
+			target-function [codegen-function!]
+			at [byte-ptr!]
+			call-parameters [byte-ptr!]
+			table [type-table!]
+			instructions argument-targets image-data strings code
+				parameters functions imports globals switches [byte-ptr!]
+			function-effects instruction-effects instruction-offsets instruction-depths
+				catch-depths control-uses entry-types entry-flags entry-kinds entry-tags
+				tag-next tag-slots tag-widths result-offsets
+				stack-types stack-flags stack-kinds stack-tags storage-offsets
+				import-refs references [int-ptr!]
+			function-count import-count global-count
+				switch-count strings-size function-offset function-code-size capacity
+				exit-reference-id [integer!]
+			entry? [logic!]
+			index depth kind ref flags width signed
+				source-signed load-signed source-slot target-slot
+			storage-slots storage-size storage-align
+			tag-head tag-width-value
+			operation left-ref right-ref left-flags right-flags
+			left-kind right-kind operation-width condition stride shift-count
+			encoded frame-extra slot-bytes outgoing outgoing-end
+			argument-index argument-base callee-slot
+			argument-slot argument-width physical-slot target return-ref first-parameter
+			register-id
+			parameter-count call-flags import-id global-id literal-end displacement
+			member-type member-flags member-offset source-width target-width
+			target-ref target-flags copy-size copy-align
+			result-index reference-id target-offset instruction-start case-index
+			operation-ref source-kind target-kind opcode parity keep-cast
+			aggregate-width value-size result-offset temp-offset
+			physical-count call-mode list-size list-capacity signature-ref
+			record-offset overflow-anchor base-depth overflow-limit
+			catch-record catch-unwind catch-threshold allocation-size
+			location
+			next-index
+			global-reference-id incoming-mask incoming-register
+			compatibility argument-producer
+			[integer!]
+			measure? valid? comparison? floating? clear? aggregate-copy?
+			aggregate-argument? indirect? packed-call?
+			typed-call? custom-call? list-call? atomic-old?
+			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
+			linear? consume-location? global-target? defer-global? paired? set-pair?
+			address-pair? load-pair? direct-store? spill-next? fuse-branch? imm-pair?
+			imm-call? direct-argument? direct-parameter? forward-argument?
+			direct-boolean?
+			immediate? left-in-register? imm-set? set-fused? set-next?
+			scaled-immediate?
+			source-located? direct-frame-target? live?
+			resident-hit?
+			sub-returns? [logic!]
+	][
+		; Open the records into locals once; everything below works on plain
+		; pointers and counts.
+		fn: task/fn
+		table: module/table
+		parameters: module/parameters
+		functions:  module/functions
+		imports:    module/imports
+		globals:    module/globals
+		switches:   module/switches
+		strings:    module/strings
+		function-count: module/function-count
+		import-count:   module/import-count
+		global-count:   module/global-count
+		switch-count:   module/switch-count
+		strings-size:   module/strings-size
+		image-data:         task/image-data
+		code:               task/code
+		references:         task/references
+		function-offset:    task/function-offset
+		function-code-size: task/function-code-size
+		capacity:           task/capacity
+		exit-reference-id:  task/exit-reference-id
+		entry?:             task/entry?
+		instructions:        view/instructions
+		argument-targets:    view/argument-targets
+		instruction-effects: view/instruction-effects
+		instruction-offsets: view/instruction-offsets
+		instruction-depths:  view/instruction-depths
+		catch-depths:        view/catch-depths
+		control-uses:        view/control-uses
+		entry-types:         view/entry-types
+		entry-flags:         view/entry-flags
+		entry-kinds:         view/entry-kinds
+		entry-tags:          view/entry-tags
+		tag-next:            view/tag-next
+		tag-slots:           view/tag-slots
+		tag-widths:          view/tag-widths
+		result-offsets:      view/result-offsets
+		function-effects: view/function-effects
+		stack-types:      view/stack-types
+		stack-flags:      view/stack-flags
+		stack-kinds:      view/stack-kinds
+		stack-tags:       view/stack-tags
+		storage-offsets:  view/storage-offsets
+		import-refs:      view/import-refs
+
+		measure?: null? code
+		written: initial-written
+		depth: 0
+		location: LOCATION_NONE
+		storage-slots: state/storage-base
+		allocation-size: 0
+		if not measure? [
+			frame-extra: task/frame-size - x64-encoder/BASE_FRAME_SIZE
+			if frame-extra < 0 [return INVALID_IR]
+			allocation-size: x64-encoder/allocate-frame null 0 frame-extra
+			if allocation-size < 0 [return OUTPUT_FULL]
+		]
 		index: 1
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
@@ -9321,32 +9514,7 @@ x64-codegen: context [
 			]
 			index: index + 1
 		]
-		if measure? [
-			target-offset: fn/instruction-count + 1
-			instruction-offsets/target-offset: written
-		]
-		if state/tag-count <> state/tag-capacity [return INVALID_IR]
-		if state/fallthrough? [return INVALID_IR]
-		if all [not measure? state/max-outgoing <> task/outgoing-size][return INVALID_IR]
-
-		if measure? [
-			task/outgoing-size: state/max-outgoing
-			if storage-slots > (2147483647 / 8)[return OUTPUT_FULL]
-			slot-bytes: storage-slots * 8
-			if state/max-depth > ((2147483647 - slot-bytes) / 8)[return OUTPUT_FULL]
-			slot-bytes: slot-bytes + (state/max-depth * 8)
-			if slot-bytes > (2147483647 - state/max-outgoing)[return OUTPUT_FULL]
-			frame-extra: align (slot-bytes + state/max-outgoing) 16
-			if any [
-				frame-extra < 0
-				frame-extra > (2147483647 - x64-encoder/BASE_FRAME_SIZE)
-			][return OUTPUT_FULL]
-			task/frame-size: x64-encoder/BASE_FRAME_SIZE + frame-extra
-			encoded: x64-encoder/allocate-frame null 0 frame-extra
-			if encoded < 0 [return OUTPUT_FULL]
-			written: written + encoded
-		]
-		written
+		finish-function task view state fn storage-slots written measure?
 	]
 
 	place-global-data: func [

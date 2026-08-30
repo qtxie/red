@@ -1,0 +1,79 @@
+name: Build Windows x64 hybrid toolchain
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-windows-x64-hybrid-toolchain-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BOOTSTRAP_SHA256: 53f947164aaeb9912c233a0d7c4fb960ded05932fce809aaf34df75b9f9f7eba
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Download pinned bootstrap compiler
+      shell: pwsh
+      env:
+        BOOTSTRAP_URL: ${{ vars.RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if (-not $env:BOOTSTRAP_URL) {
+          throw 'Set the RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL repository variable.'
+        }
+        $bootstrap = 'build\bootstrap\red-bootstrap-speed1.exe'
+        New-Item -ItemType Directory -Force -Path (Split-Path $bootstrap) | Out-Null
+        Invoke-WebRequest -Uri $env:BOOTSTRAP_URL -OutFile $bootstrap
+        $actual = (Get-FileHash -Algorithm SHA256 $bootstrap).Hash.ToLowerInvariant()
+        if ($actual -ne $env:BOOTSTRAP_SHA256) {
+          throw "Bootstrap SHA-256 mismatch: $actual"
+        }
+
+    - name: Build and verify fixed point
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & .\tools\self_hosting\test-windows-hybrid-toolchain-fixed-point.ps1 `
+          -Bootstrap .\build\bootstrap\red-bootstrap-speed1.exe `
+          -OutputRoot .\build\fixed-point
+
+    - name: Package compiler
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $compiler = '.\build\fixed-point\h3\red-toolchain.exe'
+        $package = '.\build\packages\red-toolchain-windows-x64'
+        New-Item -ItemType Directory -Force -Path $package | Out-Null
+        Copy-Item -LiteralPath $compiler -Destination $package
+        & $compiler --toolchain-info |
+          Set-Content -LiteralPath (Join-Path $package 'TOOLCHAIN-INFO.txt') -Encoding utf8NoBOM
+        & $compiler --resource-manifest |
+          Set-Content -LiteralPath (Join-Path $package 'RESOURCE-MANIFEST.txt') -Encoding ascii
+        Compress-Archive -Path "$package\*" `
+          -DestinationPath '.\build\packages\red-toolchain-windows-x64.zip'
+        $archive = '.\build\packages\red-toolchain-windows-x64.zip'
+        $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+        "$hash  red-toolchain-windows-x64.zip" |
+          Set-Content -LiteralPath '.\build\packages\SHA256SUMS' -Encoding ascii
+
+    - name: Upload Windows x64 toolchain
+      uses: actions/upload-artifact@v7
+      with:
+        name: red-toolchain-windows-x64
+        path: |
+          build/packages/red-toolchain-windows-x64.zip
+          build/packages/SHA256SUMS
+        if-no-files-found: error
+        retention-days: 14

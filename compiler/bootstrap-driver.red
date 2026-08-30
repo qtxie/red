@@ -28,6 +28,13 @@ bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
 unless value? 'compiler-command [compiler-command: "red-bootstrap"]
 
+#either config/show = 'X86-64-Hybrid-only [
+	compiler-toolchain/configure
+		"Windows-X86-64"
+		["Windows-X86-64" "Windows-X86-64-DLL"]
+		"hybrid-rsir"
+][none]
+
 print-usage: does [
 	#either config/show = 'X86-64-Hybrid-only [
 		print rejoin [
@@ -35,6 +42,10 @@ print-usage: does [
 			" [-c|--dev|-r] [-u] [-d] [-n] [-O0|-O2] [-dlib] "
 			"[-t Windows-X86-64] [--red-only|--loaded-red output.reds] "
 			"[-o output] source.red|source.reds"
+		]
+		print rejoin [
+			"       " compiler-command
+			" --toolchain-info|--list-targets|--resource-manifest|--self-check"
 		]
 	][
 		print rejoin [
@@ -330,6 +341,8 @@ phase-timer/begin 'compiler-total
 if error? :options [fail-command mold options]
 if compiler-options/option-get options 'help? [print-usage quit/return 0]
 if compiler-options/option-get options 'version? [print bootstrap-version quit/return 0]
+toolchain-result: compiler-toolchain/dispatch-options options bootstrap-version
+if integer? toolchain-result [quit/return toolchain-result]
 compile-source options
 phase-timer/finish 'compiler-total
 if phase-timer/active? [

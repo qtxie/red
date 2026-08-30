@@ -91,6 +91,22 @@ generate "direct call" {
 	main: func [return: [integer!]][id id 7]
 } 'user
 
+generate "address of value-qualified built-in pointer alias" {
+	Red/System []
+	ptr-ptr!: alias struct! [value [int-ptr!]]
+	consume: func [slot [ptr-ptr!]][]
+	forward: func [/local slot [ptr-ptr! value]][consume :slot]
+} 'user
+
+generate "function pointer stored in an aggregate member" {
+	Red/System []
+	callback!: alias function! [value [integer!] return: [integer!]]
+	holder!: alias struct! [callback [callback!]]
+	read-callback: func [holder [holder!] return: [int-ptr!]][
+		as int-ptr! :holder/callback
+	]
+} 'user
+
 generate "left-to-right integer expression" {
 	Red/System []
 	fn: func [return: [integer!]][1 + 2 * 3]

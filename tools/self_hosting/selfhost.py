@@ -815,6 +815,28 @@ def _command_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_compare_pe(args: argparse.Namespace) -> int:
+    left_path = Path(args.left)
+    right_path = Path(args.right)
+    left, left_fields = _normalize_pe(left_path.read_bytes())
+    right, right_fields = _normalize_pe(right_path.read_bytes())
+    expected_fields = ["pe.coff_timestamp", "pe.checksum"]
+    if left_fields != expected_fields or right_fields != expected_fields:
+        raise ValueError("compare-pe inputs must be valid PE images")
+    if left != right:
+        print(
+            f"normalized PE images differ: {left_path} {_sha256(left)} "
+            f"!= {right_path} {_sha256(right)}",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"normalized PE images are identical: {_sha256(left)} "
+        f"(ignored: {', '.join(expected_fields)})"
+    )
+    return 0
+
+
 def _command_diff(args: argparse.Namespace) -> int:
     root = _default_root(args.root)
     config = json.loads(Path(args.config).read_text(encoding="utf-8"))
@@ -850,6 +872,13 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify", help="compare a checked manifest with the current tree")
     verify.add_argument("manifest", help="checked JSON manifest")
     verify.set_defaults(handler=_command_verify)
+
+    compare_pe = subparsers.add_parser(
+        "compare-pe", help="compare PE images after normalizing volatile headers"
+    )
+    compare_pe.add_argument("left", help="first PE image")
+    compare_pe.add_argument("right", help="second PE image")
+    compare_pe.set_defaults(handler=_command_compare_pe)
 
     diff = subparsers.add_parser("diff", help="run two compiler commands against a corpus")
     diff.add_argument("config", help="JSON differential configuration")

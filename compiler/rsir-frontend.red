@@ -28,6 +28,7 @@ compiler-rsir-frontend: context [
 	debug?: false
 	runtime-library?: false
 	red-pass?: false
+	build-date: none
 	runtime-functions: make block! 512
 	runtime-specs: make map! 1024
 	functions: make block! (10 * 256)
@@ -982,9 +983,15 @@ compiler-rsir-frontend: context [
 	][
 		unless all [not empty? type any [word? type/1 path? type/1]][return none]
 		name: type/1
-		kind: all [word? name select type-kinds name]
+		id: none
+		if all [(length? type) = 2 type/2 = 'value][
+			id: resolve-name name scope uses type-ids
+		]
+		kind: all [none? id word? name select type-kinds name]
 		unless kind [
-			unless id: resolve-name name scope uses type-ids [return none]
+			unless integer? id [
+				unless id: resolve-name name scope uses type-ids [return none]
+			]
 			steps: 0
 			forever [
 				steps: steps + 1
@@ -1058,6 +1065,11 @@ compiler-rsir-frontend: context [
 		][return intern-subroutine-type scope uses]
 		kind: type-kind type scope uses
 		unless kind [fail ERROR-UNSUPPORTED ["unsupported type " mold type]]
+		if all [
+			(length? type) = 2
+			type/2 = 'value
+			id: resolve-name name scope uses type-ids
+		][return id]
 		if all [word? name pointee: select builtin-pointees name][
 			return intern-pointer type-ref pointee scope uses
 		]
@@ -1350,14 +1362,21 @@ compiler-rsir-frontend: context [
 	address-reference-ref: func [
 		ref flags [integer!]
 		return: [integer! none!]
-		/local base kind target
+		/local base kind target record name pointee
 	][
 		base: canonical-ref ref
 		kind: ref-kind base
 		if all [
 			flags = inline-flag
 			find [struct union] kind
-		][return base]
+		][
+			record: skip types ((base - 1) * 5)
+			name: record/1
+			if all [word? name pointee: select builtin-pointees name][
+				return intern-pointer type-ref pointee record/4 record/5
+			]
+			return base
+		]
 		if all [flags = inline-flag kind = 'array][
 			target: pointee-ref base
 			if integer? target [return intern-pointer target]
@@ -5816,7 +5835,7 @@ compiler-rsir-frontend: context [
 		value: position/1
 		last-stopped?: false
 		if all [issue? value value = #build-date][
-			change position mold now/utc
+			change position mold any [build-date now/utc]
 			return stack-primary position scope uses instructions params locals value-context
 		]
 		if all [
@@ -5970,7 +5989,7 @@ compiler-rsir-frontend: context [
 				unless stack-address target scope uses instructions params locals [
 					fail ERROR-REFERENCE ["undefined symbol:" mold target]
 				]
-				if all [get-word? value (ref-kind last-type) = 'function][
+				if (ref-kind last-type) = 'function [
 					emit instructions load-op 0 0 0
 					last-flags: 0
 					return next position

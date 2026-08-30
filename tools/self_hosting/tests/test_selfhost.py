@@ -1,6 +1,9 @@
 import sys
 import textwrap
 import unittest
+from argparse import Namespace
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -42,6 +45,48 @@ class InventoryTests(unittest.TestCase):
 
         self.assertEqual(fields, ["pe.coff_timestamp", "pe.checksum"])
         self.assertEqual(left_normalized, right_normalized)
+
+    def test_compare_pe_accepts_only_volatile_header_differences(self):
+        left = bytearray(256)
+        left[:2] = b"MZ"
+        left[60:64] = (128).to_bytes(4, "little")
+        left[128:132] = b"PE\0\0"
+        right = bytearray(left)
+        left[136:140] = (10).to_bytes(4, "little")
+        right[136:140] = (11).to_bytes(4, "little")
+        left[216:220] = (20).to_bytes(4, "little")
+        right[216:220] = (21).to_bytes(4, "little")
+
+        with TemporaryDirectory() as directory:
+            left_path = Path(directory) / "left.exe"
+            right_path = Path(directory) / "right.exe"
+            left_path.write_bytes(left)
+            right_path.write_bytes(right)
+            result = selfhost._command_compare_pe(
+                Namespace(left=str(left_path), right=str(right_path))
+            )
+
+        self.assertEqual(result, 0)
+
+    def test_compare_pe_rejects_payload_differences(self):
+        left = bytearray(256)
+        left[:2] = b"MZ"
+        left[60:64] = (128).to_bytes(4, "little")
+        left[128:132] = b"PE\0\0"
+        right = bytearray(left)
+        right[32] = 1
+
+        with TemporaryDirectory() as directory:
+            left_path = Path(directory) / "left.exe"
+            right_path = Path(directory) / "right.exe"
+            left_path.write_bytes(left)
+            right_path.write_bytes(right)
+            with redirect_stderr(StringIO()):
+                result = selfhost._command_compare_pe(
+                    Namespace(left=str(left_path), right=str(right_path))
+                )
+
+        self.assertEqual(result, 1)
 
     def test_manifest_audit_rejects_rebol_in_direct_closure(self):
         errors = selfhost._manifest_errors(

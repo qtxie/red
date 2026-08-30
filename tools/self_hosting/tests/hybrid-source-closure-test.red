@@ -117,7 +117,10 @@ walk-include-values: func [
 		][
 			included: position/2
 			spelling: to string! included
-			unless find spelling "$" [
+			unless any [
+				find spelling "$"
+				included = %build/generated/red-toolchain-resources.generated.red
+			][
 				candidate: clean-path append copy base included
 				unless exists? candidate [
 					fail ["unresolved hybrid include " included " from " base]
@@ -161,6 +164,9 @@ walk-include-file clean-path to file! rejoin [
 	root %red-bootstrap-windows-hybrid-backend.red
 ]
 walk-include-file clean-path to file! rejoin [root %red.red]
+walk-include-file clean-path to file! rejoin [
+	root %red-toolchain-windows-hybrid.red
+]
 
 foreach forbidden [
 	%red-bootstrap-windows.red
@@ -188,8 +194,10 @@ foreach required [
 	%compiler/codegen-bridge.red
 	%compiler/bootstrap-driver.red
 	%compiler/bootstrap-options.red
+	%compiler/toolchain-support.red
 	%compiler/saved-frontend.red
 	%red.red
+	%red-toolchain-windows-hybrid.red
 	%red-system-hybrid-windows.red
 	%red-bootstrap-windows-hybrid-backend.red
 ][

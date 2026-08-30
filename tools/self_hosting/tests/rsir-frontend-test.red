@@ -518,6 +518,19 @@ assert binary? generic-pointer-ir [
 assert none? find (ops-of generic-pointer-ir layout-of generic-pointer-ir) 8
 	"generic pointer compatibility emitted a representation-preserving cast"
 
+generic-pointer-value-ir: compile-text {
+	Red/System []
+	ptr-ptr!: alias struct! [value [int-ptr!]]
+	load-value: func [slot [ptr-ptr! value] return: [int-ptr!]][slot/value]
+	load-pointer: func [slot [ptr-ptr!] return: [int-ptr!]][slot/value]
+	consume: func [slot [ptr-ptr!]][]
+	forward: func [/local slot [ptr-ptr! value]][consume :slot]
+} 'user
+assert binary? generic-pointer-value-ir [
+	"declared aggregate alias did not override its built-in pointer spelling by value: "
+	mold frontend/last-error
+]
+
 typed-pointer-mismatch-ir: compile-text {
 	Red/System []
 	bad: func [target [int-ptr!] source [byte-ptr!]][target: source]
@@ -910,6 +923,22 @@ assert all [
 	(instruction-word member-address-ir member-address-layout 3 4) = 1
 	(instruction-word member-address-ir member-address-layout 4 0) = 20
 ]["aggregate get-path introduced a source-shaped address operation"]
+
+function-member-get-ir: compile-text {
+	Red/System []
+	callback!: alias function! [value [integer!] return: [integer!]]
+	holder!: alias struct! [callback [callback!]]
+	fn: func [holder [holder!] return: [int-ptr!]][
+		as int-ptr! :holder/callback
+	]
+} 'user
+assert binary? function-member-get-ir [
+	"function-member get-path lowering failed: " mold frontend/last-error
+]
+function-member-get-layout: layout-of function-member-get-ir
+assert (ops-of function-member-get-ir function-member-get-layout)
+	= [3 4 6 4 8 11]
+	"function-member get-path did not load the stored function pointer"
 
 scalar-declare-ir: compile-text {
 	Red/System []
@@ -3271,16 +3300,18 @@ build-date-source: [
 	Red/System []
 	build-stamp: func [return: [c-string!]][#build-date]
 ]
+frontend/build-date: 1-Jan-2000/0:00:00
 build-date-ir: frontend/compile build-date-source 'user
+frontend/build-date: none
 assert binary? build-date-ir [
 	"#build-date lowering failed: " mold frontend/last-error
 ]
 build-date-text: build-date-source/6/1
 assert all [
 	string? build-date-text
-	not empty? build-date-text
+	build-date-text = "1-Jan-2000/0:00:00"
 	not none? find build-date-ir to binary! build-date-text
-]["#build-date was not lowered to the current UTC timestamp string"]
+]["#build-date did not use the configured compiler build date"]
 
 script-marker-ir: compile-text {
 	Red/System []

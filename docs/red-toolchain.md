@@ -1,26 +1,61 @@
-# Standalone Red Toolchain
+# Standalone Red Toolchains
 
-`red-toolchain.red` builds a single executable containing the self-hosted Red
-frontend, Red/System compiler, native linker, runtime sources, standard
-modules, View backend, application packager, and signing support.
+The standalone toolchains package the Red frontend, Red/System compiler,
+native linker, runtime sources, standard modules, View backend, application
+assets, and signing or image-writing support into one executable. Compilation
+does not depend on a repository checkout or an external compiler or linker.
 
-## Current Milestone
+## Platform Matrix
 
-The current executable is deliberately focused on one host/target tuple:
+| Host | Entry point | Backend | Targets | Outputs |
+| --- | --- | --- | --- | --- |
+| Windows x64 | `red-toolchain-windows-hybrid.red` | typed postfix RSIR and native x64 codegen | `Windows-X86-64`, `Windows-X86-64-DLL` | PE executable, DLL |
+| Darwin ARM64 | `red-toolchain.red` | self-hosted ARM64 backend | `Darwin-ARM64`, `Darwin-ARM64-SO`, `macOS-ARM64` | Mach-O executable, dylib, `.app` bundle |
 
-- host: Darwin ARM64
-- compile targets: `Darwin-ARM64` and the `macOS-ARM64` GUI packaging variant
-- output formats: Mach-O executable, dylib, and `.app` bundle
-- modes: release and development (`libRedRT.dylib` generated beside the output)
+Both toolchains support release and development builds. A development Red
+application builds `libRedRT` and its include files beside the output. These
+are native host toolchains; cross-compilation is outside this milestone.
 
-Cross-compilation is not part of this milestone. Direct calls into Red target
-objects are statically bound by the native Red compiler, so a clean multi-target
-implementation needs a compiler-level target interface rather than runtime
-method lookup in the emitter.
+## Embedded Resources
 
-## Build
+The build first generates
+`build/generated/red-toolchain-resources.generated.red`, then compiles that
+archive and the compiler into the final executable. Resource records are
+sorted by normalized path and contain the raw size, storage method, and
+SHA-256 digest. The manifest digest covers the ordered path, content digest,
+and raw size of every resource.
 
-Use a focused, self-hosted Darwin ARM64 bootstrap compiler. Stage0 is not used.
+The compiler and linker are implemented in Red. Normal compilation does not
+call an external compiler or linker. Darwin application bundles receive the
+ad-hoc signature emitted by Red's Mach-O writer.
+
+## Windows x64 Build
+
+The Windows build uses the fixed-point hybrid compiler at
+`build/self-hosting/cc-speed1/red-bootstrap-speed1.exe` by default:
+
+```powershell
+& .\tools\self_hosting\build-windows-hybrid-toolchain.ps1
+```
+
+The output is
+`build/red-toolchain/windows-x64/red-toolchain.exe`. Pass `-Bootstrap`,
+`-Output`, or `-Dumpbin` to override the defaults. Every compiler and fixture
+process has a bounded timeout, and the build verifies PE32+, x64, dynamic-base,
+NX compatibility, embedded resources, target metadata, and the absence of a
+release `libRedRT.dll` import.
+
+Run the compiler outside the repository with:
+
+```powershell
+red-toolchain.exe -r -t Windows-X86-64 -o hello.exe hello.red
+red-toolchain.exe -r -dlib -t Windows-X86-64-DLL -o example.dll example.reds
+```
+
+## Darwin ARM64 Build
+
+Use a focused, self-hosted Darwin ARM64 bootstrap compiler. Stage0 is not
+used.
 
 ```sh
 tools/self_hosting/build-red-toolchain.sh \
@@ -28,35 +63,11 @@ tools/self_hosting/build-red-toolchain.sh \
   build/red-toolchain/red-toolchain
 ```
 
-The build first generates a deterministic source archive at
-`build/generated/red-toolchain-resources.generated.red`, then compiles the
-archive and compiler into the final executable. Resource records are sorted by
-normalized path and contain the raw size, storage method, and SHA-256 digest.
-The manifest digest covers the ordered path, content digest, and raw size of
-every resource.
-
-The compiler and linker are implemented in Red. Normal compilation does not
-call an external compiler, linker, or `codesign`. Mach-O executables and bundles
-receive the ad-hoc signature emitted by Red's Mach-O writer.
-
-## GitHub Actions
-
-`.github/workflows/build-macos-arm64.yml` builds and packages `red-toolchain`,
-the native GUI console, and the terminal CLI console on an Apple Silicon runner.
-Set the `RED_DARWIN_ARM64_BOOTSTRAP_URL` repository variable to the public URL
-of this bootstrap compiler:
-
-```text
-file:   red-bootstrap-stage2-darwin-arm64-bundle-sign
-sha256: 644bfb20fe52dcb054ed9c63324f31b139fd163904730bb78a08b72617ebc81c
-```
-
-The checksum is pinned in the workflow. Uploading a different compiler requires
-reviewing the replacement and updating the checksum in the workflow.
-
 ## Introspection
 
-```sh
+Both tools expose the same standalone metadata interface:
+
+```text
 red-toolchain --toolchain-info
 red-toolchain --list-targets
 red-toolchain --resource-manifest
@@ -66,28 +77,57 @@ red-toolchain --self-check
 `--self-check` decompresses every resource and verifies its raw size and
 SHA-256 digest.
 
-## Hermetic Test
+## Hermetic Tests
+
+The Windows suite copies only the compiler and fixtures into a new temporary
+directory:
+
+```powershell
+& .\tools\self_hosting\test-windows-hybrid-toolchain.ps1 `
+    -Toolchain .\build\red-toolchain\windows-x64\red-toolchain.exe
+```
+
+It builds and runs release and development Red programs, `-O2`, JSON and CSV
+modules, Red/System, a callable DLL export, and a self-closing native View
+window. It verifies output architecture, imports, exports, embedded source
+lookup, and repository-path isolation.
+
+The Darwin equivalent is:
 
 ```sh
 tools/self_hosting/test-toolchain-hermetic.sh \
   build/red-toolchain/red-toolchain
 ```
 
-The test copies only the executable and user fixtures into a fresh temporary
-directory. It builds and runs Red with a relative include, JSON/CSV Red,
-Red/System, a development-mode Red client and `libRedRT.dylib`, a Red/System
-dylib, and a release native View `.app` bundle.
+## Fixed Point
 
-## Self-Hosting Reproducibility
+The Windows gate builds three consecutive generations through one canonical
+staging path, snapshots H1/H2/H3, compares H2 and H3 after normalizing only the
+PE COFF timestamp and checksum, verifies identical resource manifests, then
+runs the hermetic suite with H3. Builds use `SOURCE_DATE_EPOCH` when supplied,
+or the current Git commit timestamp otherwise:
 
-The standalone executable can be passed back to the build script as the next
-generation's bootstrap. For fixed-point comparisons, build consecutive outputs
-under equal-length directory names. Normalize only:
+```powershell
+& .\tools\self_hosting\test-windows-hybrid-toolchain-fixed-point.ps1
+```
 
-- the embedded output directory;
-- the embedded build clock;
-- the `LC_CODE_SIGNATURE` payload, whose hashes necessarily cover those bytes.
+The Darwin fixed-point comparison uses consecutive generations under
+equal-length paths. Its documented normalization additionally covers the
+embedded output directory, build clock, and `LC_CODE_SIGNATURE` payload whose
+hashes cover those bytes.
 
-At the current Darwin ARM64 fixed point, consecutive self-hosted generations
-have identical size and differ in 69 bytes: one output-directory byte, four
-build-clock bytes, and 64 signature-hash bytes. All other bytes are identical.
+## GitHub Actions
+
+`.github/workflows/build-windows-x64-hybrid-toolchain.yml` builds, verifies,
+and packages the Windows fixed-point compiler. Set the
+`RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL` repository variable to the public URL
+of this pinned bootstrap:
+
+```text
+file:   red-bootstrap-speed1.exe
+sha256: 53f947164aaeb9912c233a0d7c4fb960ded05932fce809aaf34df75b9f9f7eba
+```
+
+`.github/workflows/build-macos-arm64.yml` retains the Darwin ARM64 build and
+its separately pinned bootstrap. Replacing either bootstrap requires review
+and a checksum update in the corresponding workflow.

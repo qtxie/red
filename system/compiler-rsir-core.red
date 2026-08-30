@@ -6,6 +6,14 @@ Red [
 runtime-path: %system/runtime/
 red-runtime-path: %runtime/
 
+builtin-source-path: func [path [file!]][
+	either compiler-resource-store/installed? [
+		compiler-resource-store/source-path path
+	][
+		secure-clean-path path
+	]
+]
+
 ; This core connects the compact frontend, native codegen, and linker directly.
 ; It grows by moving complete semantics here, never by importing the legacy
 ; emitter, machine IR, or a compatibility adapter.
@@ -174,6 +182,7 @@ system-dialect: context [
 	][
 		compiler/script: clean-path file
 		compiler/pc: source
+		compiler-rsir-frontend/build-date: any [job/compiler-build-date now/utc]
 		unless all [not tail? source source/1 = 'Red/System][
 			compiler/throw-error "source is not a Red/System program"
 		]
@@ -327,7 +336,7 @@ system-dialect: context [
 
 		runtime-source: none
 		if job/runtime? [
-			runtime-file: secure-clean-path runtime-path/common.reds
+			runtime-file: builtin-source-path runtime-path/common.reds
 			compiler/script: runtime-file
 			phase-timer/begin 'runtime-loader
 			runtime-source: loader/process runtime-file
@@ -352,7 +361,7 @@ system-dialect: context [
 						]["Red/System #system-global loader failed without a diagnostic"]
 					]
 				]
-				red-runtime-file: secure-clean-path red-runtime-path/red.reds
+				red-runtime-file: builtin-source-path red-runtime-path/red.reds
 				compiler/script: red-runtime-file
 				phase-timer/begin 'runtime-red-loader
 				red-runtime-source: loader/process red-runtime-file

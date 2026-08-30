@@ -781,8 +781,8 @@ OS-send-event: func [
 	][													;-- (async key modifiers fall back to physical state; see key-extra-keys)
 		m/hWnd:   hWnd									;-- sync: synthesize the MSG and dispatch through `process` (no pump needed)
 		m/msg:    wmsg
-		m/wParam: wParam
-		m/lParam: lParam
+		m/wParam: win-wparam-from-low32 wParam
+		m/lParam: win-lparam-from-integer lParam
 		m/time:   0
 		m/x:      mx								;-- 0 unless the message carries its point there (WM_MOUSELEAVE);
 		m/y:      my								;-- PostMessage fills them with the physical cursor position instead

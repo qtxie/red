@@ -29,6 +29,29 @@ The compiler executable is built in release mode without `-d`; this avoids
 embedding several megabytes of compiler source-line metadata. It still accepts
 `-d` when debug information is required in the program being compiled.
 
+Build the standalone Windows x64 hybrid toolchain from that compiler with:
+
+```powershell
+& .\tools\self_hosting\build-windows-hybrid-toolchain.ps1
+```
+
+The build embeds the runtime, modules, View sources, and assets, then validates
+the resulting PE image and resource archive. Verify repository-independent
+release, development, module, Red/System, DLL, and View compilation with:
+
+```powershell
+& .\tools\self_hosting\test-windows-hybrid-toolchain.ps1 `
+    -Toolchain .\build\red-toolchain\windows-x64\red-toolchain.exe
+```
+
+For the release gate, build H1, H2, and H3 through one canonical staging path
+and require a normalized H2/H3 PE fixed point before running the same hermetic
+suite with H3. `SOURCE_DATE_EPOCH` defaults to the current Git commit timestamp:
+
+```powershell
+& .\tools\self_hosting\test-windows-hybrid-toolchain-fixed-point.ps1
+```
+
 Use the benchmark wrapper for a single profiled release/debug `hello.red` run:
 
 ```powershell

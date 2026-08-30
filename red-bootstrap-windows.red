@@ -6,13 +6,7 @@ Red [
 
 compiler-root: system/options/path
 #include %compiler/resource-store.red
-
-if value? 'toolchain-resource-index [
-	compiler-resource-store/install
-		toolchain-resource-index
-		toolchain-resource-data
-		toolchain-resource-manifest-sha256
-]
+#include %compiler/toolchain-support.red
 ; The core compiler does not load View, but it needs the datatype token to compile View targets.
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
@@ -59,22 +53,16 @@ fail-command: func [message][
 	quit/return 1
 ]
 
-focused-target: #either config/show = 'X86-64-only ["Windows-X86-64"]["Darwin-ARM64"]
-
-resource-count: does [
-	either compiler-resource-store/installed? [
-		divide length? compiler-resource-store/index 2
-	][0]
-]
-
-print-toolchain-info: does [
-	print ["name: red-toolchain"]
-	print ["version:" bootstrap-version]
-	print ["host:" focused-target]
-	print ["targets:" focused-target]
-	print ["standalone:" compiler-resource-store/installed?]
-	print ["resources:" resource-count]
-	print ["resource-manifest:" any [compiler-resource-store/manifest-sha256 "none"]]
+#either config/show = 'X86-64-only [
+	compiler-toolchain/configure
+		"Windows-X86-64"
+		["Windows-X86-64" "Windows-X86-64-DLL"]
+		"legacy-x64"
+][
+	compiler-toolchain/configure
+		"Darwin-ARM64"
+		["Darwin-ARM64" "Darwin-ARM64-SO" "macOS-ARM64"]
+		"legacy-arm64"
 ]
 
 join-file: func [base [file!] relative [file!]][append copy base relative]
@@ -324,17 +312,8 @@ options: compiler-options/parse-args args
 if error? :options [fail-command mold options]
 if compiler-options/option-get options 'help? [print-usage quit/return 0]
 if compiler-options/option-get options 'version? [print bootstrap-version quit/return 0]
-if compiler-options/option-get options 'toolchain-info? [print-toolchain-info quit/return 0]
-if compiler-options/option-get options 'list-targets? [print focused-target quit/return 0]
-if compiler-options/option-get options 'resource-manifest? [
-	print any [compiler-resource-store/manifest-sha256 "none"]
-	quit/return either compiler-resource-store/installed? [0][1]
-]
-if compiler-options/option-get options 'self-check? [
-	unless compiler-resource-store/installed? [fail-command "resource archive is not installed"]
-	print ["resource-self-check: ok resources:" compiler-resource-store/self-check]
-	quit/return 0
-]
+toolchain-result: compiler-toolchain/dispatch-options options bootstrap-version
+if integer? toolchain-result [quit/return toolchain-result]
 compile-source options
 phase-timer/finish 'compiler-total
 if phase-timer/active? [

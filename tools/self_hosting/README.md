@@ -13,15 +13,15 @@ and the hybrid Red/System backend, defaults to development mode, and selects a
 standalone release build with `-r`. `red-bootstrap-windows.red` remains the
 transitional bootstrap entry. The canonical Windows x64 compiler is the
 fixed-point self-hosted binary at
-`build/self-hosting/red-bootstrap-stage1-x64-gc-fixed.exe`; this tool only
+`build/self-hosting/cc-speed1/red-bootstrap-speed1.exe`; this tool only
 verifies its source closure and compares compiler generations.
 
 The transition build produces an ordinary executable directly:
 
 ```powershell
-$compiler = Resolve-Path .\build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe
+$compiler = Resolve-Path .\build\self-hosting\cc-speed1\red-bootstrap-speed1.exe
 & $compiler -r -t Windows-X86-64 `
-    -o build\self-hosting\red-bootstrap-next-x64.exe `
+    -o build\self-hosting\cc-speed1\red-bootstrap-speed1-next.exe `
     red.red
 ```
 
@@ -33,7 +33,7 @@ Use the benchmark wrapper for a single profiled release/debug `hello.red` run:
 
 ```powershell
 & .\tools\self_hosting\benchmark-compiler.ps1 `
-    -Compiler .\build\self-hosting\red-bootstrap-stage1-x64-gc-fixed.exe `
+    -Compiler .\build\self-hosting\cc-speed1\red-bootstrap-speed1.exe `
     -Runs 1 `
     -OutputRoot .\build\compiler-benchmarks
 ```

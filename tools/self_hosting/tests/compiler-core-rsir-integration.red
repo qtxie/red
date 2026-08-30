@@ -62,6 +62,29 @@ unless exists? source [fail ["cannot access RSIR integration fixture: " source]]
 check not value? 'emitter "RSIR core installed the legacy emitter"
 check not value? 'rs-o2-ir "RSIR core installed the legacy machine IR"
 
+runtime-job: compiler-system-job/new 'Windows-X86-64
+check object? runtime-job "could not create the runtime-linkage test job"
+compiler-system-job/job-set runtime-job 'red-pass? true
+compiler-system-job/job-set runtime-job 'runtime? true
+compiler-system-job/job-set runtime-job 'type 'exe
+compiler-system-job/job-set runtime-job 'libRedRT? false
+compiler-system-job/job-set runtime-job 'dev-mode? true
+check (system-dialect/red-runtime-linkage runtime-job) = 'external
+	"development Red executables did not select external libRedRT"
+compiler-system-job/job-set runtime-job 'dev-mode? false
+check (system-dialect/red-runtime-linkage runtime-job) = 'embedded
+	"release Red executables did not select the embedded runtime"
+compiler-system-job/job-set runtime-job 'type 'dll
+compiler-system-job/job-set runtime-job 'libRedRT? true
+check (system-dialect/red-runtime-linkage runtime-job) = 'invalid
+	"release libRedRT incorrectly selected an embedded runtime"
+compiler-system-job/job-set runtime-job 'dev-mode? true
+check (system-dialect/red-runtime-linkage runtime-job) = 'embedded
+	"development libRedRT did not select the embedded runtime"
+compiler-system-job/job-set runtime-job 'red-pass? false
+check (system-dialect/red-runtime-linkage runtime-job) = 'none
+	"Red/System compilation selected a Red runtime linkage"
+
 resources: make block! 8
 system-dialect/collect-resources [
 	Title: "RSIR resource test"

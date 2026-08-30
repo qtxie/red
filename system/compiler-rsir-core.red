@@ -56,6 +56,26 @@ system-dialect: context [
 		either slot [get slot]['legacy]
 	]
 
+	; Red development executables import libRedRT. Release executables and the
+	; libRedRT build itself carry the runtime in their native image.
+	red-runtime-linkage: func [candidate [object!] return: [word!]][
+		case [
+			not candidate/red-pass? ['none]
+			all [
+				candidate/runtime?
+				candidate/type = 'exe
+				not candidate/libRedRT?
+			][either candidate/dev-mode? ['external]['embedded]]
+			all [
+				candidate/dev-mode?
+				candidate/runtime?
+				candidate/type = 'dll
+				candidate/libRedRT?
+			]['embedded]
+			true ['invalid]
+		]
+	]
+
 	validate-job: does [
 		case [
 			job-backend-mode <> 'rsir [
@@ -84,12 +104,11 @@ system-dialect: context [
 			]][
 				compiler/throw-error "invalid libRedRT shared-library lifecycle"
 			]
-			all [job/red-pass? not any [
-				all [job/runtime? job/type = 'exe not job/libRedRT?]
-				all [job/dev-mode? job/runtime? job/type = 'dll job/libRedRT?]
-			]][
-				compiler/throw-error
-					"RSIR frontend supports Red executables and development libRedRT"
+			all [job/red-pass? (red-runtime-linkage job) = 'invalid][
+				compiler/throw-error [
+					"RSIR frontend supports development and release Red executables,"
+					"and development libRedRT"
+				]
 			]
 			any [job/PIC? job/PIE? job/static-link?] [
 				compiler/throw-error "RSIR frontend does not yet support PIC, PIE, or static linking"
@@ -277,7 +296,7 @@ system-dialect: context [
 		/loaded job-data [block!]
 		/local started comp-time file-list file source runtime-source runtime-file
 			red-runtime-source red-runtime-file sys-global-source
-			embed-red-runtime? output link-time buffer-size result error payload resources icon
+			runtime-linkage embed-red-runtime? output link-time buffer-size result error payload resources icon
 	][
 		started: now/time/precise
 		reset-state
@@ -303,10 +322,8 @@ system-dialect: context [
 		loader/connect-compiler-state compiler/definitions compiler/keywords-list
 		loader/init
 		set-verbose-level job/verbosity
-		embed-red-runtime?: to logic! all [
-			job/red-pass?
-			any [job/libRedRT? not job/dev-mode?]
-		]
+		runtime-linkage: red-runtime-linkage job
+		embed-red-runtime?: runtime-linkage = 'embedded
 
 		runtime-source: none
 		if job/runtime? [

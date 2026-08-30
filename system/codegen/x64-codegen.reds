@@ -3542,21 +3542,12 @@ x64-codegen: context [
 		/local fn [rsir-function!]
 			instruction [rsir-instruction!]
 			next-instruction [rsir-instruction!]
-			following-instruction argument-instruction argument-address [rsir-instruction!]
-			overflow-scope [rsir-instruction!]
+			argument-address [rsir-instruction!]
 			catch-scope [rsir-instruction!]
 			sub-entry [rsir-instruction!]
 			switch-case [rsir-switch!]
 			parameter [rsir-parameter!]
-			callee [rsir-function!]
-			imported [rsir-import!]
-			signature typed-metadata list-type [rsir-type!]
-			typed-member [rsir-member!]
-			global [rsir-global!]
-			image-global [codegen-global!]
-			target-function [codegen-function!]
 			at [byte-ptr!]
-			call-parameters [byte-ptr!]
 			table [type-table!]
 			instructions argument-targets image-data strings code
 				parameters functions imports globals switches [byte-ptr!]
@@ -3569,43 +3560,23 @@ x64-codegen: context [
 				switch-count strings-size function-offset function-code-size capacity
 				exit-reference-id [integer!]
 			entry? [logic!]
-			index depth kind ref flags width signed
-				source-signed load-signed source-slot target-slot
+			index depth flags width signed
+				source-slot target-slot
 			storage-slots storage-size storage-align
-			tag-head tag-width-value
-			operation left-ref right-ref left-flags right-flags
-			left-kind right-kind operation-width condition stride shift-count
-			encoded written frame-extra slot-bytes outgoing outgoing-end
-			argument-index argument-base callee-slot
-			argument-slot argument-width physical-slot target return-ref first-parameter
+			operation
+			encoded written frame-extra
+			physical-slot target first-parameter
 			register-id
-			parameter-count call-flags import-id global-id literal-end displacement
-			member-type member-flags member-offset source-width target-width
-			target-ref target-flags copy-size copy-align
-			result-index reference-id target-offset instruction-start case-index
-			operation-ref source-kind target-kind opcode parity keep-cast
-			aggregate-width value-size result-offset temp-offset
-			physical-count call-mode list-size list-capacity signature-ref
-			record-offset overflow-anchor base-depth overflow-limit
-			catch-record catch-unwind catch-threshold allocation-size
+			parameter-count displacement
+			aggregate-width
+			target-offset case-index
+			catch-unwind catch-threshold allocation-size
 			location
 			next-index
-			global-reference-id incoming-mask incoming-register
-			compatibility argument-producer
+			incoming-mask
 			[integer!]
-			measure? valid? comparison? floating? clear? aggregate-copy?
-			aggregate-argument? indirect? packed-call?
-			typed-call? custom-call? list-call? atomic-old?
-			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
-			linear? consume-location? global-target? defer-global? paired? set-pair?
-			address-pair? load-pair? direct-store? spill-next? fuse-branch? imm-pair?
-			imm-call? direct-argument? direct-parameter? forward-argument?
-			direct-boolean?
-			immediate? left-in-register? imm-set? set-fused? set-next?
-			scaled-immediate?
-			source-located? direct-frame-target? live?
-			resident-hit?
-			sub-returns? [logic!]
+			measure? floating? clear? aggregate-argument? direct-parameter?
+			source-located? direct-frame-target? live? [logic!]
 	][
 		fn: task/fn
 		table: module/table
@@ -4200,7 +4171,6 @@ x64-codegen: context [
 			next-instruction [rsir-instruction!]
 			following-instruction argument-instruction argument-address [rsir-instruction!]
 			overflow-scope [rsir-instruction!]
-			catch-scope [rsir-instruction!]
 			sub-entry [rsir-instruction!]
 			switch-case [rsir-switch!]
 			parameter [rsir-parameter!]
@@ -4227,11 +4197,11 @@ x64-codegen: context [
 			entry? [logic!]
 			index depth kind ref flags width signed
 				source-signed load-signed source-slot target-slot
-			storage-slots storage-size storage-align
+			storage-slots
 			tag-head tag-width-value
 			operation left-ref right-ref left-flags right-flags
 			left-kind right-kind operation-width condition stride shift-count
-			encoded frame-extra slot-bytes outgoing outgoing-end
+			encoded frame-extra outgoing outgoing-end
 			argument-index argument-base callee-slot
 			argument-slot argument-width physical-slot target return-ref first-parameter
 			register-id
@@ -4243,13 +4213,13 @@ x64-codegen: context [
 			aggregate-width value-size result-offset temp-offset
 			physical-count call-mode list-size list-capacity signature-ref
 			record-offset overflow-anchor base-depth overflow-limit
-			catch-record catch-unwind catch-threshold allocation-size
+			catch-record catch-unwind allocation-size
 			location
 			next-index
 			global-reference-id incoming-mask incoming-register
 			compatibility argument-producer
 			[integer!]
-			measure? valid? comparison? floating? clear? aggregate-copy?
+			measure? valid? comparison? floating? aggregate-copy?
 			aggregate-argument? indirect? packed-call?
 			typed-call? custom-call? list-call? atomic-old?
 			tracked? located? zero-extend? fold-boolean? fold-constant? branch-taken?
@@ -4259,7 +4229,7 @@ x64-codegen: context [
 			direct-boolean?
 			immediate? left-in-register? imm-set? set-fused? set-next?
 			scaled-immediate?
-			source-located? direct-frame-target? live?
+			source-located? direct-frame-target?
 			resident-hit?
 			sub-returns? [logic!]
 	][

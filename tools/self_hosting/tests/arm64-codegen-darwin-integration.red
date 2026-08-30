@@ -21,6 +21,14 @@ check: func [condition [logic! none!] message [string! block!]][
 	unless condition [fail message]
 ]
 
+word-at: func [data [binary!] offset [integer!] /local high][
+	high: to integer! pick data (offset + 4)
+	(to integer! pick data (offset + 1))
+		+ ((to integer! pick data (offset + 2)) * 256)
+		+ ((to integer! pick data (offset + 3)) * 65536)
+		+ (high * 16777216)
+]
+
 system-dialect: context [
 	compiler: context [
 		quit-on-error: does [quit/return 1]
@@ -30,6 +38,7 @@ system-dialect: context [
 
 source: {
 	Red/System []
+	identity: func [value [integer!] return: [integer!]][value]
 	hot-loop: func [return: [integer!] /local index sum][
 		index: 0
 		sum: 0
@@ -39,6 +48,7 @@ source: {
 		]
 		sum
 	]
+	main: func [return: [integer!]][identity hot-loop]
 }
 
 root: clean-path system/options/path
@@ -51,11 +61,23 @@ output-dir: clean-path join root %build/arm64-hybrid-baseline/
 ir: compiler-rsir-frontend/compile load source 'user
 check binary? ir ["ARM64 integration frontend failed: " mold compiler-rsir-frontend/last-error]
 change/part ir int-to-bin/to-bin32 3 4
-change/part at ir 5 int-to-bin/to-bin32 1 4
+change/part at ir 5 int-to-bin/to-bin32 3 4
 
 image: make binary! 65536
 status: codegen-module ir image 2 0
 check status = 0 ["ARM64 integration codegen status=" status]
+check all [
+	(word-at image 60) = 28
+	(word-at image 64) = 40
+	(word-at image 96) = 68
+	(word-at image 100) = 68
+	(word-at image 132) = 0
+	(word-at image 136) = 28
+]["ARM64 function layout changed unexpectedly"]
+check (copy/part at image ((word-at image 28) + 1) 28) = #{
+	FD7BBFA9 FD030091 0F000094 04000094
+	BF030091 FD7BC1A8 C0035FD6
+} "ARM64 calls do not target function entries"
 
 job: compiler-system-job/new 'Darwin-ARM64
 check object? job "could not create a Darwin ARM64 compilation job"
@@ -71,8 +93,6 @@ check linker/load-codegen job image [
 ]
 output: linker/build job
 check all [file? output exists? output]["Darwin linker did not write " mold output]
-status: call/wait rejoin ["/bin/chmod +x " to-local-file output]
-check status = 0 ["could not mark generated Mach-O executable: " status]
 status: call/wait to-local-file output
 check status = 214 ["generated ARM64 loop returned " status " instead of 214"]
 

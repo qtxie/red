@@ -85,7 +85,7 @@ literal: generate "literal" {
 check (word-at literal/2 (codegen-header-size + 16)) = 48
 	"literal used an unexpected frame shape"
 
-generate "direct call" {
+direct-call: generate "direct call" {
 	Red/System []
 	id: func [value [integer!] return: [integer!]][value]
 	main: func [return: [integer!]][id id 7]
@@ -470,6 +470,17 @@ check all [
 arm-code-offset: word-at artifact 28
 check (copy/part at artifact (arm-code-offset + 17) 8) = #{F303002AE003132A}
 	"ARM64 argument did not move directly through x19"
+
+artifact: make binary! 4096
+status: codegen-module direct-call/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate nested direct calls"
+check all [
+	(word-at artifact 12) = 2
+	(word-at artifact 16) = 0
+	(word-at artifact 20) = 0
+	(word-at artifact (codegen-header-size + 16)) = 32
+	(word-at artifact (codegen-header-size + 36 + 16)) = 16
+]["ARM64 direct calls have inconsistent metadata or frames"]
 
 artifact: make binary! 4096
 status: codegen-module left-expression/1 artifact 2 0

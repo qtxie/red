@@ -20,6 +20,8 @@ arm64-function-scratch!: alias struct! [
 arm64-function-plan!: alias struct! [
 	storage-count   [integer!]
 	home-count      [integer!]
+	spill-count     [integer!]
+	has-call        [integer!]
 	frame-allocation [integer!]
 ]
 
@@ -41,6 +43,7 @@ arm64-codegen: context [
 	OP_ADDRESS: 3
 	OP_LOAD:    4
 	OP_SET:     5
+	OP_CALL:    7
 	OP_RETURN:  11
 	OP_DROP:    12
 	OP_BINARY:  15
@@ -74,6 +77,7 @@ arm64-codegen: context [
 	LOCATION_IMMEDIATE: 1
 	LOCATION_REGISTER:  2
 	LOCATION_FLAGS:     3
+	LOCATION_FRAME:     4
 
 	FIRST_HOME_REGISTER: 19
 	HOME_REGISTER_COUNT: 10
@@ -220,8 +224,10 @@ arm64-codegen: context [
 		plan [arm64-function-plan!]
 		return: [integer!]
 		/local parameter [rsir-parameter!]
+			callee [rsir-function!]
 			instruction [rsir-instruction!]
-			id slot count width kind home-count frame-allocation [integer!]
+			id slot count width kind home-count frame-allocation
+			depth max-spill has-call argument-count [integer!]
 	][
 		if (fn/flags and RETURN_VALUE) <> 0 [return UNSUPPORTED]
 		count: fn/parameter-count + fn/local-count
@@ -233,6 +239,9 @@ arm64-codegen: context [
 			scratch/storage-types/id: parameter/type
 			id: id + 1
 		]
+		depth: 0
+		max-spill: 0
+		has-call: 0
 		id: 0
 		while [id < fn/instruction-count][
 			instruction: as rsir-instruction! (view/instructions
@@ -243,6 +252,61 @@ arm64-codegen: context [
 					if any [slot <= 0 slot > count][return INVALID_IR]
 					scratch/homes/slot: -1
 				]
+			]
+			case [
+				any [instruction/op = OP_LITERAL instruction/op = OP_ADDRESS][
+					if depth = 2147483647 [return OUTPUT_FULL]
+					depth: depth + 1
+				]
+				instruction/op = OP_LOAD []
+				instruction/op = OP_SET [
+					if depth < 2 [return INVALID_IR]
+					depth: depth - 1
+				]
+				instruction/op = OP_DROP [
+					if depth < 1 [return INVALID_IR]
+					depth: depth - 1
+				]
+				instruction/op = OP_BINARY [
+					if depth < 2 [return INVALID_IR]
+					depth: depth - 1
+				]
+				instruction/op = OP_CALL [
+					argument-count: instruction/b
+					if any [
+						instruction/a <= 0
+						instruction/a > view/header/function-count
+						argument-count < 0
+						argument-count > depth
+					][return UNSUPPORTED]
+					callee: as rsir-function! (view/functions
+						+ ((instruction/a - 1) * RSIR_FUNCTION_SIZE))
+					if any [
+						argument-count <> callee/parameter-count
+						instruction/c <> callee/return-type
+					][return INVALID_IR]
+					has-call: 1
+					if (depth - argument-count) > max-spill [
+						max-spill: depth - argument-count
+					]
+					depth: depth - argument-count
+					if callee/return-type <> 0 [depth: depth + 1]
+				]
+				instruction/op = OP_JUMP [
+					if depth <> 0 [return UNSUPPORTED]
+				]
+				instruction/op = OP_BRANCH [
+					if depth < 1 [return INVALID_IR]
+					depth: depth - 1
+				]
+				instruction/op = OP_RETURN [
+					unless any [
+						all [instruction/a = 0 depth = 0]
+						all [instruction/a <> 0 depth = 1]
+					][return INVALID_IR]
+					depth: 0
+				]
+				true []
 			]
 			id: id + 1
 		]
@@ -266,10 +330,15 @@ arm64-codegen: context [
 			]
 			id: id + 1
 		]
-		frame-allocation: align (home-count * 8) 16
+		if home-count > (2147483647 - max-spill) [return OUTPUT_FULL]
+		count: home-count + max-spill
+		if count > (2147483647 / 8) [return OUTPUT_FULL]
+		frame-allocation: align (count * 8) 16
 		if frame-allocation < 0 [return OUTPUT_FULL]
-		plan/storage-count: count
+		plan/storage-count: fn/parameter-count + fn/local-count
 		plan/home-count: home-count
+		plan/spill-count: max-spill
+		plan/has-call: has-call
 		plan/frame-allocation: frame-allocation
 		0
 	]
@@ -286,7 +355,7 @@ arm64-codegen: context [
 			at [byte-ptr!]
 			written encoded index slot width target [integer!]
 	][
-		if plan/home-count = 0 [return 0]
+		if all [plan/home-count = 0 plan/has-call = 0][return 0]
 		written: arm64-encoder/frame-enter code capacity plan/frame-allocation
 		if written < 0 [return OUTPUT_FULL]
 		index: 0
@@ -332,7 +401,7 @@ arm64-codegen: context [
 		return: [integer!]
 		/local at [byte-ptr!] written encoded index [integer!]
 	][
-		if plan/home-count = 0 [
+		if all [plan/home-count = 0 plan/has-call = 0][
 			return arm64-encoder/return-near code capacity
 		]
 		written: 0
@@ -387,6 +456,10 @@ arm64-codegen: context [
 				arm64-encoder/condition-result code capacity target
 					scratch/stack-low/stack-slot
 			]
+			scratch/stack-locations/stack-slot = LOCATION_FRAME [
+				arm64-encoder/frame-load code capacity target
+					scratch/stack-low/stack-slot width 0 width
+			]
 			true [INVALID_IR]
 		]
 	]
@@ -398,15 +471,19 @@ arm64-codegen: context [
 		entry? [logic!]
 		scratch [arm64-function-scratch!]
 		plan [arm64-function-plan!]
+		function-offsets [int-ptr!]
+		function-base [integer!]
 		code [byte-ptr!]
 		capacity [integer!]
 		return: [integer!]
 		/local instruction next-instruction following-instruction [rsir-instruction!]
 			parameter [rsir-parameter!]
+			callee [rsir-function!]
 			at [byte-ptr!]
 			index ordinal written encoded depth slot source-slot target-slot
 			ref target-ref left-ref right-ref width kind operation target left right folded
-			displacement condition [integer!]
+			displacement condition argument-count argument-base argument-slot
+			call-target [integer!]
 			returned? comparison? literal? immediate? signed? taken? [logic!]
 	][
 		written: emit-prologue view fn scratch plan code capacity
@@ -496,6 +573,106 @@ arm64-codegen: context [
 					scratch/stack-locations/depth: LOCATION_REGISTER
 					scratch/stack-low/depth: scratch/homes/target-slot
 					scratch/stack-high/depth: 0
+				]
+				instruction/op = OP_CALL [
+					call-target: instruction/a
+					argument-count: instruction/b
+					unless all [
+						call-target > 0
+						call-target <= view/header/function-count
+						argument-count >= 0
+						argument-count <= depth
+					][return UNSUPPORTED]
+					callee: as rsir-function! (view/functions
+						+ ((call-target - 1) * RSIR_FUNCTION_SIZE))
+					unless all [
+						argument-count = callee/parameter-count
+						argument-count <= 8
+						instruction/c = callee/return-type
+						(callee/flags and RETURN_VALUE) = 0
+					][return INVALID_IR]
+					argument-base: depth - argument-count
+					if plan/spill-count < argument-base [return INVALID_IR]
+					slot: 1
+					while [slot <= argument-base][
+						if any [
+							scratch/stack-locations/slot = LOCATION_FLAGS
+							all [
+								scratch/stack-locations/slot = LOCATION_REGISTER
+								scratch/stack-low/slot < FIRST_HOME_REGISTER
+							]
+						][
+							ref: scratch/stack-types/slot
+							width: value-width ref view
+							unless any [width = 4 width = 8][return UNSUPPORTED]
+							target: either scratch/stack-locations/slot = LOCATION_REGISTER [
+								scratch/stack-low/slot
+							][
+								arm64-encoder/X17
+							]
+							if target = arm64-encoder/X17 [
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch slot target ref
+									at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+							]
+							displacement: 0 - ((plan/home-count + slot) * 8)
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/frame-store at
+								(capacity - written) target displacement width
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-locations/slot: LOCATION_FRAME
+							scratch/stack-low/slot: displacement
+							scratch/stack-high/slot: 0
+						]
+						slot: slot + 1
+					]
+					slot: argument-count
+					while [slot > 0][
+						argument-slot: argument-base + slot
+						if scratch/stack-kinds/argument-slot <> VALUE [return INVALID_IR]
+						parameter: as rsir-parameter! (view/parameters
+							+ ((callee/first-parameter + slot - 1)
+								* RSIR_PARAMETER_SIZE))
+						if parameter/flags <> 0 [return UNSUPPORTED]
+						ref: scratch/stack-types/argument-slot
+						unless compatible-literal? parameter/type ref view [
+							return INVALID_IR
+						]
+						width: value-width parameter/type view
+						kind: type-kind parameter/type view
+						unless any [width = 4 width = 8][return UNSUPPORTED]
+						if any [kind = 9 kind = 10][return UNSUPPORTED]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: materialize view scratch argument-slot (slot - 1)
+							parameter/type at (capacity - written)
+						if encoded < 0 [return encoded]
+						written: written + encoded
+						slot: slot - 1
+					]
+					displacement: 0
+					if not null? code [
+						call-target: instruction/a
+						target: function-offsets/call-target
+						displacement: target - function-base
+						displacement: displacement - written
+					]
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: arm64-encoder/call-relative at
+						(capacity - written) displacement
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					depth: argument-base
+					if callee/return-type <> 0 [
+						depth: depth + 1
+						scratch/stack-types/depth: callee/return-type
+						scratch/stack-kinds/depth: VALUE
+						scratch/stack-locations/depth: LOCATION_REGISTER
+						scratch/stack-low/depth: arm64-encoder/X0
+						scratch/stack-high/depth: 0
+					]
 				]
 				instruction/op = OP_DROP [
 					unless all [
@@ -910,11 +1087,14 @@ arm64-codegen: context [
 			entry?: all [header/module-kind = 3 id = header/entry-function]
 			status: plan-function view fn first-instruction scratch plan
 			if status < 0 [return release memory status]
-			function-frames/id: either plan/home-count = 0 [0][
+			function-frames/id: either all [
+				plan/home-count = 0
+				plan/has-call = 0
+			][0][
 				16 + plan/frame-allocation
 			]
 			written: compile-function view fn first-instruction entry?
-				scratch plan null 0
+				scratch plan as int-ptr! 0 0 null 0
 			if written < 0 [return release memory written]
 			function-sizes/id: written
 			if code-size > (2147483647 - written)[return release memory OUTPUT_FULL]
@@ -1044,7 +1224,7 @@ arm64-codegen: context [
 			status: plan-function view fn instruction-starts/id scratch plan
 			if status < 0 [return release memory status]
 			written: compile-function view fn instruction-starts/id
-				entry? scratch plan
+				entry? scratch plan function-offsets function-offsets/id
 				(code + function-offsets/id) function-sizes/id
 			if written <> function-sizes/id [
 				return release memory either written < 0 [written][INVALID_IR]

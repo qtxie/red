@@ -25,6 +25,29 @@ Red [
 #include %formats/PE.red
 #include %formats/Mach-O-ARM64.red
 
+#if config/OS = 'macOS [
+	#system-global [
+		#import [
+			LIBC-file cdecl [
+			hybrid-chmod: "chmod" [
+					path [c-string!]
+					mode [integer!]
+					return: [integer!]
+				]
+			]
+		]
+	]
+]
+
+make-system-file-executable: #either config/OS = 'macOS [
+	routine [path [file!] return: [logic!] /local value [red-file!]][
+		value: as red-file! stack/arguments
+		zero? hybrid-chmod file/to-OS-path value 493
+	]
+][
+	func [path [file!] return: [logic!]][true]
+]
+
 system-file-extension: func [job [object!]][
 	case [
 		job/format = 'PE [select system-format-PE/defs/extensions job/type]
@@ -66,7 +89,16 @@ emit-system-file: func [job [object!]][
 ]
 
 finish-system-file: func [job [object!] file [file!]][
-	if job/format = 'PE [system-format-PE/on-file-written job file]
+	case [
+		job/format = 'PE [system-format-PE/on-file-written job file]
+		all [job/format = 'Mach-O job/type = 'exe][
+			unless make-system-file-executable file [
+				system-dialect/compiler/throw-error
+					["could not mark generated Mach-O executable:" file]
+			]
+		]
+		true [none]
+	]
 ]
 
 #include %linker.red

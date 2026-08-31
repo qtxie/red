@@ -1908,6 +1908,111 @@ x64-codegen: context [
 		]
 	]
 
+	; Plans the maximal scalar literal suffix of each fixed direct CALL. The
+	; producer and consumer both read these marks, so a partially qualified run
+	; can never leave one side expecting a frame home that the other removed.
+	plan-literal-call-targets: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn callee [rsir-function!]
+			call literal [rsir-instruction!]
+			parameter [rsir-parameter!]
+			table [type-table!]
+			instructions functions parameters argument-targets [byte-ptr!]
+			instruction-effects control-uses catch-depths [int-ptr!]
+			index cursor source-slot physical-slot width [integer!]
+			measure? eligible? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		if any [task/opt-level <> 2 state/unstable-stack?][return 0]
+
+		table: module/table
+		instructions: view/instructions
+		functions: module/functions
+		parameters: module/parameters
+		instruction-effects: view/instruction-effects
+		control-uses: view/control-uses
+		catch-depths: view/catch-depths
+		argument-targets: view/argument-targets
+		measure?: null? task/code
+
+		index: 1
+		while [index <= fn/instruction-count][
+			call: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			eligible?: all [
+				call/op = OP_CALL
+				(instruction-effects/index and EFFECT_LIVE) <> 0
+				(instruction-effects/index and EFFECT_ELIDED) = 0
+				control-uses/index = 0
+				call/a > 0
+				call/a <= module/function-count
+				call/b > 0
+				call/b <= 255
+			]
+			if eligible? [
+				callee: as rsir-function! (functions
+					+ ((call/a - 1) * RSIR_FUNCTION_SIZE))
+				eligible?: all [
+					call/b = callee/parameter-count
+					call/c = callee/return-type
+					(callee/flags and VARIABLE_FLAGS) = 0
+					not win64-hidden-return? callee/return-type callee/flags table
+				]
+			]
+			if eligible? [
+				; Walk backwards so an incompatible earlier value simply leaves the
+				; already validated suffix eligible for direct placement.
+				cursor: index - 1
+				source-slot: call/b
+				while [all [eligible? cursor > 0 source-slot > 0]][
+					literal: as rsir-instruction! (instructions
+						+ ((cursor - 1) * RSIR_INSTRUCTION_SIZE))
+					parameter: as rsir-parameter! (parameters
+						+ ((callee/first-parameter + source-slot - 1)
+							* RSIR_PARAMETER_SIZE))
+					eligible?: all [
+						literal/op = OP_LITERAL
+						(instruction-effects/cursor and EFFECT_LIVE) <> 0
+						(instruction-effects/cursor and EFFECT_ELIDED) = 0
+						control-uses/cursor = 0
+						catch-depths/cursor = catch-depths/index
+						parameter/flags = 0
+						literal/a = parameter/type
+						(logical-kind literal/a table) <> 11
+						machine-value? literal/a 0 table
+					]
+					if eligible? [
+						width: value-width literal/a 0 table
+						eligible?: width > 0
+					]
+					if eligible? [
+						physical-slot: source-slot
+						either measure? [
+							argument-targets/cursor: as byte! physical-slot
+						][
+							if argument-targets/cursor <> as byte! physical-slot [
+								return INVALID_IR
+							]
+						]
+						cursor: cursor - 1
+						source-slot: source-slot - 1
+					]
+				]
+			]
+			index: index + 1
+		]
+		0
+	]
+
 	; Lays out the frame homes of one function's parameters and locals and returns
 	; the bytes they occupy. Slots left at 0 need no home at all.
 	plan-storage: func [
@@ -4063,7 +4168,7 @@ x64-codegen: context [
 			argument-address [rsir-instruction!]
 			parameter [rsir-parameter!]
 			table [type-table!]
-			instructions parameters [byte-ptr!]
+			instructions parameters argument-targets [byte-ptr!]
 			instruction-effects catch-depths control-uses storage-offsets [int-ptr!]
 			index source-slot physical-slot next-index incoming-mask [integer!]
 			direct-parameter? live? [logic!]
@@ -4076,6 +4181,7 @@ x64-codegen: context [
 		table: module/table
 		parameters: module/parameters
 		instructions: view/instructions
+		argument-targets: view/argument-targets
 		instruction-effects: view/instruction-effects
 		catch-depths: view/catch-depths
 		control-uses: view/control-uses
@@ -4092,6 +4198,14 @@ x64-codegen: context [
 			if live? [
 				state/incoming-arguments: keep-incoming-arguments state/incoming-arguments index
 					control-uses/index instruction
+				if instruction/op = OP_LITERAL [
+					physical-slot: argument-targets/index
+					if all [physical-slot > 0 physical-slot <= 4][
+						incoming-mask: 1 << (physical-slot - 1)
+						state/incoming-arguments: state/incoming-arguments
+							and (15 xor incoming-mask)
+					]
+				]
 				if instruction/op = OP_LOAD [
 					direct-parameter?: false
 					if index > 1 [
@@ -4463,6 +4577,8 @@ x64-codegen: context [
 		if result < 0 [return result]
 		result: validate-function-structure context
 		if result < 0 [return result]
+		result: plan-literal-call-targets context
+		if result < 0 [return result]
 		result: analyze-function-arguments context
 		if result < 0 [return result]
 		result: plan-function-frame context
@@ -4589,6 +4705,7 @@ x64-codegen: context [
 			source-located? [logic!]
 			direct-frame-target? [logic!]
 			direct-register-target? [logic!]
+			direct-literal? [logic!]
 			resident-hit? [logic!]
 	][
 		module: context/module
@@ -4655,6 +4772,8 @@ x64-codegen: context [
 					width: value-width ref 0 table
 					target-width: either width = 8 [8][4]
 					floating?: float-type? ref table
+					physical-slot: argument-targets/index
+					direct-literal?: physical-slot > 0
 					register-id: either all [
 						paired?
 						location = LOCATION_GPR
@@ -4789,6 +4908,45 @@ x64-codegen: context [
 						(instruction-effects/next-index and EFFECT_ELIDED) = 0
 					]
 					case [
+						direct-literal? [
+							register-id: either all [not floating? physical-slot <= 4][
+								argument-register physical-slot
+							][x64-encoder/RAX]
+							if register-id < 0 [return INVALID_IR]
+							at: either measure? [as byte-ptr! 0][code + written]
+							encoded: x64-encoder/move-immediate-compact at
+								(capacity - written) register-id target-width
+								instruction/b instruction/c
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							if floating? [
+								at: either measure? [as byte-ptr! 0][code + written]
+								encoded: either physical-slot <= 4 [
+									x64-encoder/xmm-load-register at (capacity - written)
+										(physical-slot - 1) x64-encoder/RAX width
+								][
+									x64-encoder/outgoing-store at (capacity - written)
+										(32 + ((physical-slot - 5) * 8)) 8
+								]
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							if all [not floating? physical-slot > 4][
+								at: either measure? [as byte-ptr! 0][code + written]
+								encoded: x64-encoder/outgoing-store at (capacity - written)
+									(32 + ((physical-slot - 5) * 8)) 8
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							if physical-slot <= 4 [
+								incoming-mask: 1 << (physical-slot - 1)
+								state/incoming-arguments: state/incoming-arguments
+									and (15 xor incoming-mask)
+							]
+							location: LOCATION_NONE
+							state/location-depth: 0
+							state/location-source: 0
+						]
 						imm-set? [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-immediate-store at
@@ -6038,6 +6196,8 @@ x64-codegen: context [
 			incoming-register [integer!]
 			compatibility [integer!]
 			argument-producer [integer!]
+			literal-count [integer!]
+			literal-slot [integer!]
 			measure? [logic!]
 			floating? [logic!]
 			aggregate-copy? [logic!]
@@ -6052,6 +6212,7 @@ x64-codegen: context [
 			linear? [logic!]
 			imm-call? [logic!]
 			direct-argument? [logic!]
+			direct-literal? [logic!]
 			forward-argument? [logic!]
 			immediate? [logic!]
 	][
@@ -6292,6 +6453,36 @@ x64-codegen: context [
 						argument-base: depth - argument-index
 						result-index: argument-base
 					]
+					; Literal suffix producers have already written their final ABI
+					; destinations. Recover the exact suffix here so ordinary argument
+					; validation remains shared while their frame reloads disappear.
+					literal-count: 0
+					argument-producer: index - 1
+					direct-literal?: all [
+						task/opt-level = 2
+						target > 0
+						not list-call?
+						not custom-call?
+					]
+					while [all [
+						direct-literal?
+						argument-producer > 0
+						literal-count < argument-index
+					]][
+						argument-instruction: as rsir-instruction! (instructions
+							+ ((argument-producer - 1) * RSIR_INSTRUCTION_SIZE))
+						physical-slot: argument-index - literal-count
+							+ state/hidden-shift
+						direct-literal?: all [
+							argument-instruction/op = OP_LITERAL
+							argument-targets/argument-producer = as byte! physical-slot
+						]
+						if direct-literal? [
+							literal-count: literal-count + 1
+							argument-producer: argument-producer - 1
+						]
+					]
+					literal-slot: argument-index - literal-count + 1
 					imm-call?: all [
 						state/pending-immediate-kind = 3
 						state/pending-immediate-index = (index - 1)
@@ -6835,6 +7026,7 @@ x64-codegen: context [
 							target-flags: 0
 						]
 						physical-slot: source-slot + state/hidden-shift
+						direct-literal?: source-slot >= literal-slot
 						; Win64 stack arguments always occupy complete 8-byte slots.
 						either aggregate-argument? [
 							either aggregate-width = 0 [
@@ -6924,41 +7116,45 @@ x64-codegen: context [
 										]
 									]
 								at: either measure? [as byte-ptr! 0][code + written]
-								encoded: either floating? [
-									either tracked? [
-										either source-width = argument-width [
-											either (physical-slot - 1) = state/location-source [0][
-												x64-encoder/xmm-move-register at
-													(capacity - written) (physical-slot - 1)
-													state/location-source source-width
+								encoded: case [
+									direct-literal? [0]
+									floating? [
+										either tracked? [
+											either source-width = argument-width [
+												either (physical-slot - 1) = state/location-source [0][
+													x64-encoder/xmm-move-register at
+														(capacity - written) (physical-slot - 1)
+														state/location-source source-width
+												]
+											][
+												x64-encoder/xmm-convert at (capacity - written)
+													(physical-slot - 1) state/location-source
+													source-width argument-width
 											]
 										][
-											x64-encoder/xmm-convert at (capacity - written)
-												(physical-slot - 1) state/location-source
-												source-width argument-width
+											x64-encoder/xmm-frame-load at (capacity - written)
+												(physical-slot - 1) slot-displacement
+													(storage-slots + argument-slot) source-width
 										]
-									][
-										x64-encoder/xmm-frame-load at (capacity - written)
-											(physical-slot - 1) slot-displacement
-												(storage-slots + argument-slot) source-width
 									]
-								][
-									case [
-										immediate? [
-										x64-encoder/move-immediate-compact at (capacity - written)
-												target-slot target-width following-instruction/b
-												following-instruction/c
-										]
-										tracked? [
-											move-operation-value at (capacity - written)
-												target-slot state/location-source source-width
-												target-width source-signed
-										]
-										true [
-											load-operation-value at (capacity - written)
-												target-slot slot-displacement
-												(storage-slots + argument-slot)
-												(value-width ref flags table) argument-width source-signed
+									true [
+										case [
+											immediate? [
+												x64-encoder/move-immediate-compact at (capacity - written)
+													target-slot target-width following-instruction/b
+													following-instruction/c
+											]
+											tracked? [
+												move-operation-value at (capacity - written)
+													target-slot state/location-source source-width
+													target-width source-signed
+											]
+											true [
+												load-operation-value at (capacity - written)
+													target-slot slot-displacement
+													(storage-slots + argument-slot)
+													(value-width ref flags table) argument-width source-signed
+											]
 										]
 									]
 								]
@@ -6997,65 +7193,69 @@ x64-codegen: context [
 									written: written + encoded
 								]
 							][
-								either tracked? [
-									either floating? [
-										register-id: state/location-source
-										if source-width <> argument-width [
+								case [
+									direct-literal? [encoded: 0]
+									tracked? [
+										either floating? [
+											register-id: state/location-source
+											if source-width <> argument-width [
+												at: either measure? [as byte-ptr! 0][code + written]
+												encoded: x64-encoder/xmm-convert at
+													(capacity - written) x64-encoder/XMM0
+													state/location-source source-width argument-width
+												if encoded < 0 [return OUTPUT_FULL]
+												written: written + encoded
+												register-id: x64-encoder/XMM0
+											]
+											at: either measure? [as byte-ptr! 0][code + written]
+											encoded: x64-encoder/xmm-outgoing-store at
+												(capacity - written) register-id
+												(32 + ((physical-slot - 5) * 8)) argument-width
+										][
+											at: either measure? [as byte-ptr! 0][code + written]
+											encoded: move-operation-value at (capacity - written)
+												x64-encoder/RAX state/location-source source-width
+												target-width source-signed
+											if encoded < 0 [return OUTPUT_FULL]
+											written: written + encoded
+											at: either measure? [as byte-ptr! 0][code + written]
+											encoded: x64-encoder/outgoing-store at
+												(capacity - written)
+												(32 + ((physical-slot - 5) * 8)) 8
+										]
+									]
+									true [
+										either all [floating? source-width <> argument-width][
+											at: either measure? [as byte-ptr! 0][code + written]
+											encoded: x64-encoder/xmm-frame-load at
+												(capacity - written) x64-encoder/XMM0
+												slot-displacement (storage-slots + argument-slot)
+												source-width
+											if encoded < 0 [return OUTPUT_FULL]
+											written: written + encoded
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/xmm-convert at
 												(capacity - written) x64-encoder/XMM0
-												state/location-source source-width argument-width
+												x64-encoder/XMM0 source-width argument-width
 											if encoded < 0 [return OUTPUT_FULL]
 											written: written + encoded
-											register-id: x64-encoder/XMM0
+											at: either measure? [as byte-ptr! 0][code + written]
+											encoded: x64-encoder/xmm-outgoing-store at
+												(capacity - written) x64-encoder/XMM0
+												(32 + ((physical-slot - 5) * 8)) argument-width
+										][
+											at: either measure? [as byte-ptr! 0][code + written]
+											encoded: load-operation-value at (capacity - written)
+												x64-encoder/RAX slot-displacement
+												(storage-slots + argument-slot)
+												(value-width ref flags table) argument-width source-signed
+											if encoded < 0 [return OUTPUT_FULL]
+											written: written + encoded
+											at: either measure? [as byte-ptr! 0][code + written]
+											encoded: x64-encoder/outgoing-store at
+												(capacity - written)
+												(32 + ((physical-slot - 5) * 8)) 8
 										]
-										at: either measure? [as byte-ptr! 0][code + written]
-										encoded: x64-encoder/xmm-outgoing-store at
-											(capacity - written) register-id
-											(32 + ((physical-slot - 5) * 8)) argument-width
-									][
-										at: either measure? [as byte-ptr! 0][code + written]
-										encoded: move-operation-value at (capacity - written)
-											x64-encoder/RAX state/location-source source-width
-											target-width source-signed
-										if encoded < 0 [return OUTPUT_FULL]
-										written: written + encoded
-										at: either measure? [as byte-ptr! 0][code + written]
-										encoded: x64-encoder/outgoing-store at
-											(capacity - written)
-											(32 + ((physical-slot - 5) * 8)) 8
-									]
-								][
-									either all [floating? source-width <> argument-width][
-										at: either measure? [as byte-ptr! 0][code + written]
-										encoded: x64-encoder/xmm-frame-load at
-											(capacity - written) x64-encoder/XMM0
-											slot-displacement (storage-slots + argument-slot)
-											source-width
-										if encoded < 0 [return OUTPUT_FULL]
-										written: written + encoded
-										at: either measure? [as byte-ptr! 0][code + written]
-										encoded: x64-encoder/xmm-convert at
-											(capacity - written) x64-encoder/XMM0
-											x64-encoder/XMM0 source-width argument-width
-										if encoded < 0 [return OUTPUT_FULL]
-										written: written + encoded
-										at: either measure? [as byte-ptr! 0][code + written]
-										encoded: x64-encoder/xmm-outgoing-store at
-											(capacity - written) x64-encoder/XMM0
-											(32 + ((physical-slot - 5) * 8)) argument-width
-									][
-										at: either measure? [as byte-ptr! 0][code + written]
-										encoded: load-operation-value at (capacity - written)
-											x64-encoder/RAX slot-displacement
-											(storage-slots + argument-slot)
-											(value-width ref flags table) argument-width source-signed
-										if encoded < 0 [return OUTPUT_FULL]
-										written: written + encoded
-										at: either measure? [as byte-ptr! 0][code + written]
-										encoded: x64-encoder/outgoing-store at
-											(capacity - written)
-											(32 + ((physical-slot - 5) * 8)) 8
 									]
 								]
 								if encoded < 0 [return OUTPUT_FULL]

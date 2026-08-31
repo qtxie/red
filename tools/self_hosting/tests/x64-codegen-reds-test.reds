@@ -291,6 +291,7 @@ call-cast-integer-code-size: 0
 call-cast-float-code-size: 0
 call-argument-code-size: 0
 call-float-argument-code-size: 0
+literal-call-code-size: 0
 packed-argument-code-size: 0
 widening-argument-code-size: 0
 pointer-fold-code-size: 0
@@ -382,6 +383,7 @@ forward-collision-ir: allocate 312
 address-call-ir: allocate 354
 float-argument-ir: allocate 379
 multi-argument-ir: allocate 640
+literal-call-ir: allocate 340
 r8-branch-ir: allocate 414
 boolean-ir: allocate 260
 merge-ir: allocate 260
@@ -423,7 +425,8 @@ if any [
 	null? exception-ir null? no-return-ir null? effect-ir
 	null? call-argument-ir null? forward-argument-ir null? forward-collision-ir
 	null? address-call-ir
-	null? float-argument-ir null? r8-branch-ir
+	null? float-argument-ir null? multi-argument-ir null? literal-call-ir
+	null? r8-branch-ir
 ][quit 1]
 
 ; Null is implicitly compatible with reference-shaped sinks only. Keep the
@@ -4728,6 +4731,97 @@ if size > 0 [
 	]
 ]
 
+; O2 writes a complete scalar literal suffix into its final Win64 destinations.
+; Five arguments exercise RCX through R9 and one outgoing stack slot.
+put literal-call-ir 0 1
+put literal-call-ir 4 0
+put literal-call-ir 8 0
+put literal-call-ir 12 0
+put literal-call-ir 16 2
+put literal-call-ir 20 10
+put literal-call-ir 24 0
+put literal-call-ir 28 0
+put literal-call-ir 32 0
+
+put literal-call-ir 36 0
+put literal-call-ir 40 1
+put literal-call-ir 44 -5
+put literal-call-ir 48 0
+put literal-call-ir 52 0
+put literal-call-ir 56 0
+put literal-call-ir 60 0
+put literal-call-ir 64 0
+put literal-call-ir 68 7
+
+put literal-call-ir 72 1
+put literal-call-ir 76 1
+put literal-call-ir 80 -5
+put literal-call-ir 84 0
+put literal-call-ir 88 0
+put literal-call-ir 92 5
+put literal-call-ir 96 5
+put literal-call-ir 100 0
+put literal-call-ir 104 3
+
+put literal-call-ir 108 -5
+put literal-call-ir 112 0
+put literal-call-ir 116 -5
+put literal-call-ir 120 0
+put literal-call-ir 124 -5
+put literal-call-ir 128 0
+put literal-call-ir 132 -5
+put literal-call-ir 136 0
+put literal-call-ir 140 -5
+put literal-call-ir 144 0
+
+put-instruction literal-call-ir 148 1 -5 11 0
+put-instruction literal-call-ir 164 1 -5 22 0
+put-instruction literal-call-ir 180 1 -5 33 0
+put-instruction literal-call-ir 196 1 -5 44 0
+put-instruction literal-call-ir 212 1 -5 55 0
+put-instruction literal-call-ir 228 7 2 5 -5
+put-instruction literal-call-ir 244 11 -5 0 0
+put-instruction literal-call-ir 260 3 1 1 0
+put-instruction literal-call-ir 276 4 0 0 0
+put-instruction literal-call-ir 292 11 -5 0 0
+literal-call-ir/309: as byte! 61h
+literal-call-ir/310: as byte! 62h
+
+size: x64-codegen/generate literal-call-ir 310 output 1024 0
+if any [size <= 0 not execute-first? output 11][
+	print ["O0 literal suffix CALL failed: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	literal-call-code-size: fn/code-size
+]
+size: x64-codegen/generate literal-call-ir 310 output 1024 2
+if any [size <= 0 not execute-first? output 11][
+	print ["O2 literal suffix CALL failed: " size lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/code-size >= literal-call-code-size [
+		print [
+			"O2 literal suffix CALL code size: " fn/code-size
+			" vs O0 " literal-call-code-size lf
+		]
+		failures: failures + 1
+	]
+]
+
+; Qualification is atomic. A final narrow literal is valid for the CALL, but
+; prevents every earlier producer from omitting a home the CALL would reload.
+put-instruction literal-call-ir 212 1 -1 55 0
+size: x64-codegen/generate literal-call-ir 310 output 1024 2
+if any [size <= 0 not execute-first? output 11][
+	print ["O2 mixed literal suffix CALL failed: " size lf]
+	failures: failures + 1
+]
+put-instruction literal-call-ir 212 1 -5 55 0
+
 ; A branch before the R8 producer must still reach its target after the direct
 ; load gains its REX byte. The false path calls through R8 and returns 99.
 put r8-branch-ir 0 1
@@ -6381,6 +6475,8 @@ free call-argument-ir
 free forward-argument-ir
 free forward-collision-ir
 free float-argument-ir
+free multi-argument-ir
+free literal-call-ir
 free r8-branch-ir
 free boolean-ir
 free merge-ir

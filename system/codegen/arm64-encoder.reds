@@ -67,12 +67,63 @@ arm64-encoder: context [
 		all [register >= 0 register <= 30]
 	]
 
+	valid-float-register?: func [register [integer!] return: [logic!]][
+		all [register >= 0 register <= 31]
+	]
+
 	valid-base?: func [register [integer!] return: [logic!]][
 		all [register >= 0 register <= 31]
 	]
 
 	valid-width?: func [width [integer!] return: [logic!]][
 		any [width = 4 width = 8]
+	]
+
+	float-immediate-value?: func [
+		low high width [integer!]
+		result [int-ptr!]
+		return: [logic!]
+		/local bits pattern immediate [integer!]
+	][
+		unless all [not null? result valid-width? width][return false]
+		bits: either width = 4 [low][high]
+		either width = 4 [
+			if (bits and 0007FFFFh) <> 0 [return false]
+			pattern: bits and 7E000000h
+			unless any [
+				pattern = 3E000000h
+				pattern = 40000000h
+			][return false]
+			immediate: (bits >>> 24) and 80h
+			if pattern = 3E000000h [immediate: immediate or 40h]
+			immediate: immediate or ((bits >>> 19) and 3Fh)
+		][
+			if any [low <> 0 (bits and 0000FFFFh) <> 0][return false]
+			pattern: bits and 7FC00000h
+			unless any [
+				pattern = 3FC00000h
+				pattern = 40000000h
+			][return false]
+			immediate: (bits >>> 24) and 80h
+			if pattern = 3FC00000h [immediate: immediate or 40h]
+			immediate: immediate or ((bits >>> 16) and 3Fh)
+		]
+		result/1: immediate
+		true
+	]
+
+	float-move-immediate: func [
+		code [byte-ptr!]
+		capacity target width low high [integer!]
+		return: [integer!]
+		/local immediate opcode [integer!]
+	][
+		unless valid-float-register? target [return -1]
+		immediate: 0
+		unless float-immediate-value? low high width :immediate [return -1]
+		opcode: either width = 8 [1E601000h][1E201000h]
+		opcode: opcode or (immediate * 8192)
+		instruction code capacity (opcode or target)
 	]
 
 	room?: func [code [byte-ptr!] capacity size [integer!] return: [logic!]][
@@ -1028,9 +1079,108 @@ arm64-encoder: context [
 		return: [integer!]
 		/local opcode [integer!]
 	][
-		unless all [valid-register? target valid-register? source valid-width? width][return -1]
+		unless all [
+			valid-float-register? target valid-float-register? source
+			valid-width? width
+		][return -1]
 		if target = source [return 0]
 		opcode: either width = 8 [1E604000h][1E204000h]
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	float-move-from-register: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-float-register? target valid-register? source valid-width? width
+		][return -1]
+		opcode: either width = 8 [9E670000h][1E270000h]
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	float-move-to-register: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? target valid-float-register? source valid-width? width
+		][return -1]
+		opcode: either width = 8 [9E660000h][1E260000h]
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	float-convert: func [
+		code [byte-ptr!]
+		capacity target source source-width target-width [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-float-register? target valid-float-register? source
+			valid-width? source-width valid-width? target-width
+		][return -1]
+		if source-width = target-width [
+			return float-move-register code capacity target source source-width
+		]
+		opcode: either target-width = 4 [1E624000h][1E22C000h]
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	integer-to-float: func [
+		code [byte-ptr!]
+		capacity target source source-width target-width signed [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-float-register? target valid-register? source
+			valid-width? source-width valid-width? target-width
+			any [signed = 0 signed = 1]
+		][return -1]
+		opcode: case [
+			all [signed = 1 source-width = 8 target-width = 8][9E620000h]
+			all [signed = 1 source-width = 8][9E220000h]
+			all [signed = 1 target-width = 8][1E620000h]
+			signed = 1 [1E220000h]
+			all [source-width = 8 target-width = 8][9E630000h]
+			source-width = 8 [9E230000h]
+			target-width = 8 [1E630000h]
+			true [1E230000h]
+		]
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	float-to-integer: func [
+		code [byte-ptr!]
+		capacity target source source-width target-width signed [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? target valid-float-register? source
+			valid-width? source-width valid-width? target-width
+			any [signed = 0 signed = 1]
+		][return -1]
+		opcode: case [
+			all [signed = 1 source-width = 8 target-width = 8][9E780000h]
+			all [signed = 1 source-width = 8][1E780000h]
+			all [signed = 1 target-width = 8][9E380000h]
+			signed = 1 [1E380000h]
+			all [source-width = 8 target-width = 8][9E790000h]
+			source-width = 8 [1E790000h]
+			target-width = 8 [9E390000h]
+			true [1E390000h]
+		]
 		opcode: opcode or (source * 32)
 		instruction code capacity (opcode or target)
 	]
@@ -1043,7 +1193,8 @@ arm64-encoder: context [
 	][
 		unless all [
 			operation >= OP_ADD operation <= OP_SUB
-			valid-register? target valid-register? left valid-register? right valid-width? width
+			valid-float-register? target valid-float-register? left
+			valid-float-register? right valid-width? width
 		][return -1]
 		opcode: case [
 			all [operation = OP_ADD width = 8][1E602800h]
@@ -1063,7 +1214,8 @@ arm64-encoder: context [
 		/local opcode [integer!]
 	][
 		unless all [
-			valid-register? target valid-register? left valid-register? right valid-width? width
+			valid-float-register? target valid-float-register? left
+			valid-float-register? right valid-width? width
 		][return -1]
 		opcode: either width = 8 [1E600800h][1E200800h]
 		opcode: opcode or (right * 65536)
@@ -1078,7 +1230,8 @@ arm64-encoder: context [
 		/local opcode [integer!]
 	][
 		unless all [
-			valid-register? target valid-register? left valid-register? right valid-width? width
+			valid-float-register? target valid-float-register? left
+			valid-float-register? right valid-width? width
 		][return -1]
 		opcode: either width = 8 [1E601800h][1E201800h]
 		opcode: opcode or (right * 65536)
@@ -1092,9 +1245,107 @@ arm64-encoder: context [
 		return: [integer!]
 		/local opcode [integer!]
 	][
-		unless all [valid-register? left valid-register? right valid-width? width][return -1]
+		unless all [
+			valid-float-register? left valid-float-register? right valid-width? width
+		][return -1]
 		opcode: either width = 8 [1E602000h][1E202000h]
 		opcode: opcode or (right * 65536)
 		instruction code capacity (opcode or (left * 32))
+	]
+
+	float-register-load: func [
+		code [byte-ptr!]
+		capacity target base displacement width scratch [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] opcode encoded written [integer!] scaled? [logic!]
+	][
+		unless all [
+			valid-float-register? target valid-base? base valid-register? scratch
+			scratch <> base valid-width? width
+		][return -1]
+		scaled?: all [
+			displacement >= 0
+			(displacement // width) = 0
+			(displacement / width) <= 4095
+		]
+		if any [scaled? all [displacement >= -256 displacement <= 255]][
+			opcode: case [
+				all [width = 8 scaled?][FD400000h]
+				scaled? [BD400000h]
+				width = 8 [FC400000h]
+				true [BC400000h]
+			]
+			opcode: opcode or (base * 32)
+			opcode: opcode or target
+			opcode: either scaled? [
+				opcode or ((displacement / width) * 1024)
+			][opcode or ((displacement and 511) * 4096)]
+			return instruction code capacity opcode
+		]
+		written: address-offset code capacity scratch base displacement scratch
+		if written < 0 [return -1]
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		opcode: either width = 8 [FC400000h][BC400000h]
+		opcode: opcode or (scratch * 32)
+		encoded: instruction at (capacity - written) (opcode or target)
+		if encoded < 0 [return -1]
+		written + encoded
+	]
+
+	float-register-store: func [
+		code [byte-ptr!]
+		capacity source base displacement width scratch [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] opcode encoded written [integer!] scaled? [logic!]
+	][
+		unless all [
+			valid-float-register? source valid-base? base valid-register? scratch
+			scratch <> base valid-width? width
+		][return -1]
+		scaled?: all [
+			displacement >= 0
+			(displacement // width) = 0
+			(displacement / width) <= 4095
+		]
+		if any [scaled? all [displacement >= -256 displacement <= 255]][
+			opcode: case [
+				all [width = 8 scaled?][FD000000h]
+				scaled? [BD000000h]
+				width = 8 [FC000000h]
+				true [BC000000h]
+			]
+			opcode: opcode or (base * 32)
+			opcode: opcode or source
+			opcode: either scaled? [
+				opcode or ((displacement / width) * 1024)
+			][opcode or ((displacement and 511) * 4096)]
+			return instruction code capacity opcode
+		]
+		written: address-offset code capacity scratch base displacement scratch
+		if written < 0 [return -1]
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		opcode: either width = 8 [FC000000h][BC000000h]
+		opcode: opcode or (scratch * 32)
+		encoded: instruction at (capacity - written) (opcode or source)
+		if encoded < 0 [return -1]
+		written + encoded
+	]
+
+	float-frame-load: func [
+		code [byte-ptr!]
+		capacity target displacement width [integer!]
+		return: [integer!]
+	][
+		float-register-load code capacity target FP displacement width X16
+	]
+
+	float-frame-store: func [
+		code [byte-ptr!]
+		capacity source displacement width [integer!]
+		return: [integer!]
+	][
+		float-register-store code capacity source FP displacement width X16
 	]
 ]

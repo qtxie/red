@@ -270,6 +270,79 @@ size: arm64-encoder/float-move-register code 256 arm64-encoder/X9 arm64-encoder/
 expected: #{4941601E}
 check size 4 expected
 
+size: arm64-encoder/float-move-from-register code 256 arm64-encoder/X0
+	arm64-encoder/X1 4
+expected: #{2000271E}
+check size 4 expected
+
+size: arm64-encoder/float-move-to-register code 256 arm64-encoder/X2
+	arm64-encoder/X3 4
+expected: #{6200261E}
+check size 4 expected
+
+size: arm64-encoder/float-move-from-register code 256 arm64-encoder/X4
+	arm64-encoder/X5 8
+expected: #{A400679E}
+check size 4 expected
+
+size: arm64-encoder/float-move-to-register code 256 arm64-encoder/X6
+	arm64-encoder/X7 8
+expected: #{E600669E}
+check size 4 expected
+
+size: arm64-encoder/float-move-immediate code 256 arm64-encoder/X8 4
+	3F800000h 0
+expected: #{08102E1E}
+check size 4 expected
+
+size: arm64-encoder/float-move-immediate code 256 arm64-encoder/X9 8
+	0 3FF00000h
+expected: #{09106E1E}
+check size 4 expected
+
+size: arm64-encoder/float-convert code 256 arm64-encoder/X8 arm64-encoder/X9 8 4
+expected: #{2841621E}
+check size 4 expected
+
+size: arm64-encoder/float-convert code 256 arm64-encoder/X10 arm64-encoder/X11 4 8
+expected: #{6AC1221E}
+check size 4 expected
+
+size: arm64-encoder/integer-to-float code 256 arm64-encoder/X12
+	arm64-encoder/X13 4 4 1
+expected: #{AC01221E}
+check size 4 expected
+
+size: arm64-encoder/integer-to-float code 256 arm64-encoder/X14
+	arm64-encoder/X15 8 8 0
+expected: #{EE01639E}
+check size 4 expected
+
+size: arm64-encoder/float-to-integer code 256 arm64-encoder/X16
+	arm64-encoder/X17 4 4 1
+expected: #{3002381E}
+check size 4 expected
+
+size: arm64-encoder/float-to-integer code 256 arm64-encoder/X18
+	arm64-encoder/X19 8 8 0
+expected: #{7202799E}
+check size 4 expected
+
+size: arm64-encoder/float-register-load code 256 20 arm64-encoder/X21
+	-4 4 arm64-encoder/X16
+expected: #{B4C25FBC}
+check size 4 expected
+
+size: arm64-encoder/float-register-load code 256 24 arm64-encoder/X25
+	12 4 arm64-encoder/X16
+expected: #{380F40BD}
+check size 4 expected
+
+size: arm64-encoder/float-register-store code 256 26 arm64-encoder/X27
+	24 8 arm64-encoder/X16
+expected: #{7A0F00FD}
+check size 4 expected
+
 size: arm64-encoder/float-binary code 256 arm64-encoder/OP_ADD arm64-encoder/X9
 	arm64-encoder/X10 arm64-encoder/X11 8
 expected: #{49296B1E}

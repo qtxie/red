@@ -260,6 +260,127 @@ check status = 42 [
 	"generated ARM64 integer division module returned " status " instead of 42"
 ]
 
+float-source: {
+	Red/System []
+	#import [
+		"/usr/lib/libSystem.B.dylib" cdecl [
+			c-sqrt: "sqrt" [value [float!] return: [float!]]
+		]
+	]
+	factor: as float32! 1.5
+	blend: func [
+		count [integer!]
+		a [float!]
+		b [float32!]
+		return: [float32!]
+		/local total [float32!]
+	][
+		total: a + b
+		factor: total * as float32! 2.0
+		factor + as float32! count
+	]
+	through-pointer: func [
+		value [float32!]
+		return: [float32!]
+		/local slot [float32!] pointer [pointer! [float32!]]
+	][
+		slot: value
+		pointer: :slot
+		pointer/1: pointer/1 + as float32! 1.0
+		pointer/1 - as float32! 1.0
+	]
+	round-half: func [value [integer!] return: [integer!] /local real [float!]][
+		real: as float! value
+		as integer! (real / 2.0)
+	]
+	bits: func [value [float32!] return: [integer!]][as integer! keep value]
+	increment: func [value [float!] return: [float!]][value + 1.0]
+	preserve: func [value [float!] return: [float!]][
+		(value * 2.0) + (increment 1.0)
+	]
+	bank-sum: func [
+		a [integer!] x [float!]
+		b [integer!] y [float!]
+		c [integer!] z [float!]
+		d [integer!] u [float!]
+		e [integer!] v [float!]
+		return: [integer!]
+		/local integers [integer!] reals [float!]
+	][
+		integers: a + b + c + d + e
+		reals: x + y + z + u + v
+		integers + (as integer! reals)
+	]
+	compare-score: func [
+		return: [integer!]
+		/local score [integer!] zero [float!] one [float!] two [float!]
+			three [float!] nan [float!]
+	][
+		score: 0
+		zero: 0.0
+		one: 1.0
+		two: 2.0
+		three: 3.0
+		if three > two [score: score + 1]
+		if two < three [score: score + 2]
+		if three >= three [score: score + 4]
+		if three <= three [score: score + 8]
+		nan: zero / zero
+		if nan < one [score: score + 64]
+		if nan <= one [score: score + 64]
+		if nan > one [score: score + 64]
+		if nan >= one [score: score + 64]
+		if nan = nan [score: score + 64]
+		if nan <> nan [score: score + 8]
+		score
+	]
+	main: func [return: [integer!] /local value [integer!] real [float32!]][
+		real: blend 7 1.25 as float32! 2.25
+		real: through-pointer real
+		value: as integer! real
+		value: value + round-half 10
+		value: value + compare-score
+		value: value + (bits as float32! 0.0)
+		value: value + (as integer! (c-sqrt 81.0)) - 9
+		value: value + (as integer! (preserve 3.0)) - 8
+		value: value + (bank-sum 1 1.0 2 2.0 3 3.0 4 4.0 5 5.0) - 30
+		value
+	]
+}
+
+float-ir: compiler-rsir-frontend/compile load float-source 'user
+check binary? float-ir [
+	"ARM64 scalar float integration frontend failed: "
+	mold compiler-rsir-frontend/last-error
+]
+change/part float-ir int-to-bin/to-bin32 3 4
+change/part at float-ir 5 int-to-bin/to-bin32 (word-at float-ir 16) 4
+
+float-image: make binary! 65536
+status: codegen-module float-ir float-image 2 0
+check status = 0 ["ARM64 scalar float integration codegen status=" status]
+
+float-job: compiler-system-job/new 'Darwin-ARM64
+check object? float-job "could not create a Darwin ARM64 scalar float job"
+float-job: construct/with body-of float-job linker/job-class
+compiler-system-job/job-set float-job 'runtime? false
+compiler-system-job/job-set float-job 'debug? false
+compiler-system-job/job-set float-job 'build-prefix output-dir
+compiler-system-job/job-set float-job 'build-basename %arm64-hybrid-float-integration
+compiler-system-job/job-set float-job 'build-suffix none
+
+check linker/load-codegen float-job float-image [
+	"Darwin linker rejected ARM64 scalar float image: " linker/codegen-error
+]
+float-output: linker/build float-job
+check all [file? float-output exists? float-output][
+	"Darwin linker did not write " mold float-output
+]
+status: call/wait to-local-file float-output
+check status = 42 [
+	"generated ARM64 scalar float module returned " status " instead of 42"
+]
+
 global-source: {
 	Red/System []
 	pair: declare struct! [left [integer!] right [integer!]]

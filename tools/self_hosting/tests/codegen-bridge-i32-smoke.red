@@ -255,6 +255,112 @@ integer-division: generate "integer division, remainder and modulo" {
 	]
 } 'user
 
+float-scalars: generate "ARM64 scalar floating point" {
+	Red/System []
+	factor: as float32! 1.5
+	blend: func [
+		count [integer!]
+		a [float!]
+		b [float32!]
+		return: [float32!]
+		/local total [float32!]
+	][
+		total: a + b
+		factor: total * as float32! 2.0
+		factor + as float32! count
+	]
+	round-half: func [value [integer!] return: [integer!] /local real [float!]][
+		real: as float! value
+		as integer! (real / 2.0)
+	]
+	bits: func [value [float32!] return: [integer!]][as integer! keep value]
+	main: func [return: [integer!] /local value [float32!]][
+		value: blend 7 1.25 as float32! 2.25
+		(as integer! value) + round-half 10 + (bits as float32! 0.0)
+	]
+} 'user
+
+float-pointer: generate "ARM64 pointer-backed float local" {
+	Red/System []
+	through: func [
+		value [float32!]
+		return: [float32!]
+		/local slot [float32!] pointer [pointer! [float32!]]
+	][
+		slot: value
+		pointer: :slot
+		pointer/1: pointer/1 + as float32! 1.0
+		pointer/1
+	]
+} 'user
+
+float-comparisons: generate "ARM64 ordered float comparisons" {
+	Red/System []
+	score: func [
+		a [float!]
+		b [float!]
+		return: [integer!]
+		/local result [integer!]
+	][
+		result: 0
+		if a < b [result: result + 1]
+		if a <= b [result: result + 2]
+		if a > b [result: result + 4]
+		if a >= b [result: result + 8]
+		if a = b [result: result + 16]
+		if a <> b [result: result + 32]
+		result
+	]
+} 'user
+
+float-import: generate "ARM64 imported float call" {
+	Red/System []
+	#import [
+		"/usr/lib/libSystem.B.dylib" cdecl [
+			c-sqrt: "sqrt" [value [float!] return: [float!]]
+		]
+	]
+	fn: func [return: [integer!]][as integer! (c-sqrt 81.0)]
+} 'user
+
+float-call-spill: generate "ARM64 caller-live floating point" {
+	Red/System []
+	#import [
+		"/usr/lib/libSystem.B.dylib" cdecl [
+			c-sqrt: "sqrt" [value [float!] return: [float!]]
+		]
+	]
+	increment: func [value [float!] return: [float!]][value + 1.0]
+	preserve: func [value [float!] return: [float!]][
+		(value * 2.0) + (increment 1.0)
+	]
+	main: func [return: [integer!] /local value [integer!]][
+		value: 7
+		value: value + (as integer! (c-sqrt 81.0)) - 9
+		value + (as integer! (preserve 3.0))
+	]
+} 'user
+
+float-register-banks: generate "ARM64 independent integer and float argument banks" {
+	Red/System []
+	sum: func [
+		a [integer!] x [float!]
+		b [integer!] y [float!]
+		c [integer!] z [float!]
+		d [integer!] u [float!]
+		e [integer!] v [float!]
+		return: [integer!]
+		/local integers [integer!] reals [float!]
+	][
+		integers: a + b + c + d + e
+		reals: x + y + z + u + v
+		integers + (as integer! reals)
+	]
+	main: func [return: [integer!]][
+		sum 1 1.0 2 2.0 3 3.0 4 4.0 5 5.0
+	]
+} 'user
+
 narrow-integers: generate "narrow integer casts and widening" {
 	Red/System []
 	compute: func [
@@ -664,6 +770,39 @@ check status = 0 ["ARM64 narrow call-preserved value status=" status]
 artifact: make binary! 4096
 status: codegen-module integer-division/1 artifact 2 0
 check status = 0 ["ARM64 integer division family status=" status]
+
+artifact: make binary! 8192
+status: codegen-module float-scalars/1 artifact 2 0
+check status = 0 ["ARM64 scalar floating-point status=" status]
+
+artifact: make binary! 4096
+pointer-status: codegen-module float-pointer/1 artifact 2 0
+artifact: make binary! 4096
+comparison-status: codegen-module float-comparisons/1 artifact 2 0
+artifact: make binary! 4096
+float-import-status: codegen-module float-import/1 artifact 2 0
+check all [
+	pointer-status = 0 comparison-status = 0 float-import-status = 0
+][
+	"ARM64 float pointer/comparison/import statuses="
+	pointer-status "/" comparison-status "/" float-import-status
+]
+
+artifact: make binary! 8192
+status: codegen-module float-call-spill/1 artifact 2 0
+check status = 0 ["ARM64 caller-live floating-point status=" status]
+check all [
+	not none? find artifact #{B0031FFC}
+	not none? find artifact #{B0035FFC}
+]["ARM64 caller-live float did not spill and reload d16 directly"]
+
+artifact: make binary! 8192
+status: codegen-module float-register-banks/1 artifact 2 0
+check status = 0 ["ARM64 mixed argument register-bank status=" status]
+check all [
+	not none? find artifact #{A4008052}
+	not none? find artifact #{0490621E}
+]["ARM64 fifth mixed arguments did not use w4 and d4 directly"]
 
 artifact: make binary! 4096
 status: codegen-module narrow-integers/1 artifact 2 0

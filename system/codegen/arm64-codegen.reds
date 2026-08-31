@@ -23,6 +23,7 @@ arm64-function-scratch!: alias struct! [
 arm64-function-plan!: alias struct! [
 	storage-count   [integer!]
 	home-count      [integer!]
+	float-home-count [integer!]
 	frame-home-count [integer!]
 	spill-count     [integer!]
 	has-call        [integer!]
@@ -129,6 +130,11 @@ arm64-codegen: context [
 	HOME_REGISTER_COUNT: 10
 	FIRST_TEMP_REGISTER: 9
 	TEMP_REGISTER_COUNT: 7
+	FIRST_FLOAT_HOME_REGISTER: 8
+	FLOAT_HOME_REGISTER_COUNT: 8
+	FIRST_FLOAT_TEMP_REGISTER: 16
+	FLOAT_TEMP_REGISTER_COUNT: 8
+	FLOAT_SCRATCH_REGISTER: 31
 
 	INVALID_IR:  -1
 	UNSUPPORTED: -2
@@ -282,6 +288,28 @@ arm64-codegen: context [
 		all [kind >= 1 kind <= 8]
 	]
 
+	float-type?: func [ref [integer!] view [rsir-view!] return: [logic!]
+		/local kind [integer!]
+	][
+		kind: type-kind ref view
+		any [kind = 9 kind = 10]
+	]
+
+	float-common-ref: func [
+		left right [integer!]
+		view [rsir-view!]
+		return: [integer!]
+		/local left-kind right-kind [integer!]
+	][
+		left-kind: type-kind left view
+		right-kind: type-kind right view
+		unless all [
+			any [left-kind = 9 left-kind = 10]
+			any [right-kind = 9 right-kind = 10]
+		][return 0]
+		either any [left-kind = 9 right-kind = 9][-9][-10]
+	]
+
 	integer-kind-widens?: func [
 		source-kind target-kind [integer!]
 		return: [logic!]
@@ -334,6 +362,54 @@ arm64-codegen: context [
 		]
 	]
 
+	float-comparison-condition: func [operation [integer!] return: [integer!]][
+		case [
+			operation = EQUAL_OPERATION [arm64-encoder/EQ]
+			operation = NOT_EQUAL_OPERATION [arm64-encoder/NE]
+			operation = GREATER_OPERATION [arm64-encoder/GT]
+			operation = LESS_OPERATION [arm64-encoder/MI]
+			operation = GREATER_EQUAL_OPERATION [arm64-encoder/GE]
+			operation = LESS_EQUAL_OPERATION [arm64-encoder/LS]
+			true [-1]
+		]
+	]
+
+	abi-parameter-register: func [
+		view [rsir-view!]
+		first-parameter ordinal [integer!]
+		floating? [logic!]
+		return: [integer!]
+		/local parameter [rsir-parameter!]
+			id index kind [integer!] parameter-floating? [logic!]
+	][
+		if ordinal <= 0 [return -1]
+		id: 1
+		index: 0
+		while [id <= ordinal][
+			parameter: as rsir-parameter! (view/parameters
+				+ ((first-parameter + id - 1) * RSIR_PARAMETER_SIZE))
+			kind: type-kind parameter/type view
+			parameter-floating?: any [kind = 9 kind = 10]
+			if parameter-floating? = floating? [
+				if id = ordinal [return index]
+				index: index + 1
+			]
+			id: id + 1
+		]
+		-1
+	]
+
+	volatile-register-value?: func [
+		ref register [integer!]
+		view [rsir-view!]
+		return: [logic!]
+	][
+		either float-type? ref view [
+			any [register < FIRST_FLOAT_HOME_REGISTER
+				register >= FIRST_FLOAT_TEMP_REGISTER]
+		][register < FIRST_HOME_REGISTER]
+	]
+
 	fold-integer32: func [
 		operation left right [integer!]
 		result [int-ptr!]
@@ -381,6 +457,7 @@ arm64-codegen: context [
 
 	implicitly-compatible?: func [
 		expected actual [integer!]
+		literal? [logic!]
 		view [rsir-view!]
 		return: [logic!]
 		/local expected-kind actual-kind [integer!]
@@ -388,7 +465,10 @@ arm64-codegen: context [
 		if compatible-types? expected actual view [return true]
 		expected-kind: type-kind expected view
 		actual-kind: type-kind actual view
-		integer-kind-widens? actual-kind expected-kind
+		any [
+			integer-kind-widens? actual-kind expected-kind
+			all [literal? expected-kind = 9 actual-kind = 10]
+		]
 	]
 
 	scalar-cast-compatible?: func [
@@ -404,9 +484,20 @@ arm64-codegen: context [
 		if any [
 			source-width = 0 source-width > 8
 			target-width = 0 target-width > 8
+		][return false]
+		if any [
 			source-kind = 9 source-kind = 10
 			target-kind = 9 target-kind = 10
-		][return false]
+		][
+			return any [
+				all [
+					any [source-kind = 9 source-kind = 10]
+					any [target-kind = 9 target-kind = 10]
+				]
+				all [source-kind = 5 any [target-kind = 9 target-kind = 10]]
+				all [any [source-kind = 9 source-kind = 10] target-kind = 5]
+			]
+		]
 		any [
 			all [integer-type? source view integer-type? target view]
 			all [source-kind = 11 any [integer-type? target view target-kind = 11]]
@@ -1079,7 +1170,7 @@ arm64-codegen: context [
 		return: [integer!]
 		/local parameter [rsir-parameter!]
 			instruction [rsir-instruction!]
-			id slot count width kind home-count frame-allocation
+			id slot count width kind home-count float-home-count frame-allocation
 			depth max-spill has-call argument-count frame-home-count total-slots status
 			call-return call-first-parameter call-parameter-count
 			call-reference
@@ -1224,23 +1315,38 @@ arm64-codegen: context [
 			id: id + 1
 		]
 		home-count: 0
+		float-home-count: 0
 		frame-home-count: 0
 		id: 1
 		while [id <= count][
 			if scratch/storage-kinds/id = STORAGE_REGISTER [
-				if home-count = HOME_REGISTER_COUNT [return UNSUPPORTED]
 				parameter: as rsir-parameter! (view/parameters
 					+ ((fn/first-parameter + id - 1) * RSIR_PARAMETER_SIZE))
 				if parameter/flags <> 0 [return UNSUPPORTED]
+				kind: 0
 				if parameter/type <> 0 [
 					width: value-width parameter/type view
 					kind: type-kind parameter/type view
 					if width = 0 [return INVALID_IR]
-					if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
+					if width > 8 [return UNSUPPORTED]
 				]
-				if all [id <= fn/parameter-count id > 8][return UNSUPPORTED]
-				home-count: home-count + 1
-				scratch/homes/id: FIRST_HOME_REGISTER + home-count - 1
+				if id <= fn/parameter-count [
+					slot: abi-parameter-register view fn/first-parameter id
+						(any [kind = 9 kind = 10])
+					if any [slot < 0 slot >= 8][return UNSUPPORTED]
+				]
+				either any [kind = 9 kind = 10][
+					if float-home-count = FLOAT_HOME_REGISTER_COUNT [
+						return UNSUPPORTED
+					]
+					float-home-count: float-home-count + 1
+					scratch/homes/id: FIRST_FLOAT_HOME_REGISTER
+						+ float-home-count - 1
+				][
+					if home-count = HOME_REGISTER_COUNT [return UNSUPPORTED]
+					home-count: home-count + 1
+					scratch/homes/id: FIRST_HOME_REGISTER + home-count - 1
+				]
 			]
 			if scratch/storage-kinds/id = STORAGE_FRAME [
 				parameter: as rsir-parameter! (view/parameters
@@ -1248,8 +1354,12 @@ arm64-codegen: context [
 				width: value-width parameter/type view
 				kind: type-kind parameter/type view
 				if width = 0 [return INVALID_IR]
-				if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
-				if all [id <= fn/parameter-count id > 8][return UNSUPPORTED]
+				if width > 8 [return UNSUPPORTED]
+				if id <= fn/parameter-count [
+					slot: abi-parameter-register view fn/first-parameter id
+						(any [kind = 9 kind = 10])
+					if any [slot < 0 slot >= 8][return UNSUPPORTED]
+				]
 				frame-home-count: frame-home-count + 1
 				scratch/homes/id: 0 - frame-home-count
 			]
@@ -1271,12 +1381,14 @@ arm64-codegen: context [
 		while [id <= count][
 			if scratch/storage-kinds/id = STORAGE_FRAME [
 				slot: 0 - scratch/homes/id
-				scratch/homes/id: 0 - ((home-count + slot) * 8)
+				scratch/homes/id: 0 - ((home-count + float-home-count + slot) * 8)
 			]
 			id: id + 1
 		]
-		if home-count > (2147483647 - frame-home-count)[return OUTPUT_FULL]
-		total-slots: home-count + frame-home-count
+		if home-count > (2147483647 - float-home-count)[return OUTPUT_FULL]
+		total-slots: home-count + float-home-count
+		if total-slots > (2147483647 - frame-home-count)[return OUTPUT_FULL]
+		total-slots: total-slots + frame-home-count
 		if total-slots > (2147483647 - max-spill)[return OUTPUT_FULL]
 		total-slots: total-slots + max-spill
 		if total-slots > (2147483647 / 8) [return OUTPUT_FULL]
@@ -1284,6 +1396,7 @@ arm64-codegen: context [
 		if frame-allocation < 0 [return OUTPUT_FULL]
 		plan/storage-count: fn/parameter-count + fn/local-count
 		plan/home-count: home-count
+		plan/float-home-count: float-home-count
 		plan/frame-home-count: frame-home-count
 		plan/spill-count: max-spill
 		plan/has-call: has-call
@@ -1301,10 +1414,12 @@ arm64-codegen: context [
 		return: [integer!]
 		/local parameter [rsir-parameter!]
 			at [byte-ptr!]
-			written encoded index slot width transfer-width target signed [integer!]
+			written encoded index slot width transfer-width target signed kind
+				parameter-register [integer!]
 	][
 		if all [
 			plan/home-count = 0
+			plan/float-home-count = 0
 			plan/frame-home-count = 0
 			plan/has-call = 0
 		][return 0]
@@ -1327,6 +1442,16 @@ arm64-codegen: context [
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 		]
+		index: 0
+		while [index < plan/float-home-count][
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/float-frame-store at (capacity - written)
+				(FIRST_FLOAT_HOME_REGISTER + index)
+				(0 - ((plan/home-count + index + 1) * 8)) 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			index: index + 1
+		]
 		slot: 1
 		while [slot <= fn/parameter-count][
 			target: scratch/homes/slot
@@ -1334,20 +1459,36 @@ arm64-codegen: context [
 				parameter: as rsir-parameter! (view/parameters
 					+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
 				width: value-width parameter/type view
+				kind: type-kind parameter/type view
 				transfer-width: either width = 8 [8][4]
+				parameter-register: abi-parameter-register view fn/first-parameter
+					slot (any [kind = 9 kind = 10])
+				if any [parameter-register < 0 parameter-register >= 8][
+					return UNSUPPORTED
+				]
 				at: either null? code [as byte-ptr! 0][code + written]
-				encoded: either target > 0 [
-					either width < 4 [
-						signed: either signed-type? parameter/type view [1][0]
-						arm64-encoder/extend-register at (capacity - written)
-							target (slot - 1) width signed
+				encoded: either any [kind = 9 kind = 10][
+					either target > 0 [
+						arm64-encoder/float-move-register at (capacity - written)
+							target parameter-register width
 					][
-						arm64-encoder/move-register at (capacity - written)
-							target (slot - 1) transfer-width
+						arm64-encoder/float-frame-store at (capacity - written)
+							parameter-register target width
 					]
 				][
-					arm64-encoder/frame-store at (capacity - written)
-						(slot - 1) target width
+					either target > 0 [
+						either width < 4 [
+							signed: either signed-type? parameter/type view [1][0]
+							arm64-encoder/extend-register at (capacity - written)
+								target parameter-register width signed
+						][
+							arm64-encoder/move-register at (capacity - written)
+								target parameter-register transfer-width
+						]
+					][
+						arm64-encoder/frame-store at (capacity - written)
+							parameter-register target width
+					]
 				]
 				if encoded < 0 [return OUTPUT_FULL]
 				written: written + encoded
@@ -1366,12 +1507,23 @@ arm64-codegen: context [
 	][
 		if all [
 			plan/home-count = 0
+			plan/float-home-count = 0
 			plan/frame-home-count = 0
 			plan/has-call = 0
 		][
 			return arm64-encoder/return-near code capacity
 		]
 		written: 0
+		index: 0
+		while [index < plan/float-home-count][
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/float-frame-load at (capacity - written)
+				(FIRST_FLOAT_HOME_REGISTER + index)
+				(0 - ((plan/home-count + index + 1) * 8)) 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			index: index + 1
+		]
 		index: 0
 		while [(index + 1) < plan/home-count][
 			at: either null? code [as byte-ptr! 0][code + written]
@@ -1402,7 +1554,10 @@ arm64-codegen: context [
 		code [byte-ptr!]
 		capacity [integer!]
 		return: [integer!]
-		/local source-ref source-width target-width operation-width signed high [integer!]
+		/local at [byte-ptr!]
+			source-ref source-width target-width source-kind target-kind
+			operation-width signed high written encoded [integer!]
+			direct-immediate? [logic!]
 	][
 		if scratch/stack-kinds/stack-slot <> VALUE [return INVALID_IR]
 		source-ref: scratch/stack-types/stack-slot
@@ -1412,6 +1567,60 @@ arm64-codegen: context [
 			source-width = 0 source-width > 8
 			target-width = 0 target-width > 8
 		][return UNSUPPORTED]
+		source-kind: type-kind source-ref view
+		target-kind: type-kind target-ref view
+		if any [
+			source-kind = 9 source-kind = 10
+			target-kind = 9 target-kind = 10
+		][
+			unless all [
+				any [source-kind = 9 source-kind = 10]
+				any [target-kind = 9 target-kind = 10]
+			][return UNSUPPORTED]
+			written: 0
+			case [
+				scratch/stack-locations/stack-slot = LOCATION_IMMEDIATE [
+					direct-immediate?: true
+					encoded: arm64-encoder/float-move-immediate code capacity target
+						source-width scratch/stack-low/stack-slot
+						scratch/stack-high/stack-slot
+					if encoded < 0 [
+						direct-immediate?: false
+						encoded: arm64-encoder/move-immediate code capacity
+							arm64-encoder/X16 source-width
+							scratch/stack-low/stack-slot scratch/stack-high/stack-slot
+					]
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					either direct-immediate? [
+						encoded: 0
+					][
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/float-move-from-register at
+							(capacity - written) target arm64-encoder/X16 source-width
+					]
+				]
+				scratch/stack-locations/stack-slot = LOCATION_REGISTER [
+					encoded: arm64-encoder/float-move-register code capacity target
+						scratch/stack-low/stack-slot source-width
+				]
+				scratch/stack-locations/stack-slot = LOCATION_FRAME [
+					encoded: arm64-encoder/float-frame-load code capacity target
+						scratch/stack-low/stack-slot source-width
+				]
+				true [return INVALID_IR]
+			]
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			if source-width <> target-width [
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/float-convert at (capacity - written)
+					target target source-width target-width
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+			]
+			return written
+		]
 		operation-width: either target-width = 8 [8][4]
 		signed: either signed-type? source-ref view [1][0]
 		case [
@@ -1587,13 +1796,14 @@ arm64-codegen: context [
 			index ordinal written encoded depth slot source-slot target-slot
 			ref target-ref left-ref right-ref width kind operation target left right folded
 			source-width target-width source-kind target-kind
+			operation-ref parameter-register
 			displacement condition argument-count argument-base argument-slot
 			call-target call-return call-first-parameter
 			call-parameter-count call-reference status load-signed result-width
 				[integer!]
 			member-type member-flags member-offset stride scaled shift
 				[integer!]
-			returned? comparison? literal? immediate? taken? pointer? [logic!]
+			returned? comparison? literal? immediate? taken? pointer? floating? [logic!]
 	][
 		written: emit-prologue view fn scratch plan code capacity
 		if written < 0 [return written]
@@ -1616,7 +1826,7 @@ arm64-codegen: context [
 					width: value-width instruction/a view
 					kind: type-kind instruction/a view
 					if width = 0 [return INVALID_IR]
-					if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
+					if width > 8 [return UNSUPPORTED]
 					depth: depth + 1
 					scratch/stack-types/depth: instruction/a
 					scratch/stack-kinds/depth: VALUE
@@ -1639,6 +1849,107 @@ arm64-codegen: context [
 					target-width: value-width target-ref view
 					source-kind: type-kind ref view
 					target-kind: type-kind target-ref view
+					floating?: any [
+						source-kind = 9 source-kind = 10
+						target-kind = 9 target-kind = 10
+					]
+					if floating? [
+						either instruction/c = 1 [
+							unless any [
+								source-kind = target-kind
+								all [source-kind = 5 target-kind = 9]
+								all [source-kind = 9 target-kind = 5]
+							][return INVALID_IR]
+						][
+							unless any [
+								all [
+									any [source-kind = 9 source-kind = 10]
+									any [target-kind = 9 target-kind = 10]
+								]
+								all [source-kind = 5
+									any [target-kind = 9 target-kind = 10]]
+								all [any [source-kind = 9 source-kind = 10]
+									target-kind = 5]
+							][return INVALID_IR]
+						]
+						target: either any [target-kind = 9 target-kind = 10][
+							FIRST_FLOAT_TEMP_REGISTER + depth - 1
+						][FIRST_TEMP_REGISTER + depth - 1]
+						if any [
+							all [any [target-kind = 9 target-kind = 10]
+								target >= (FIRST_FLOAT_TEMP_REGISTER
+									+ FLOAT_TEMP_REGISTER_COUNT)]
+							all [target-kind = 5
+								target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)]
+						][return UNSUPPORTED]
+						encoded: 0
+						case [
+							all [instruction/c = 1 source-kind = target-kind][
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch depth target target-ref
+									at (capacity - written)
+							]
+							all [instruction/c = 1 source-kind = 5][
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch depth arm64-encoder/X16 ref
+									at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/float-move-from-register at
+									(capacity - written) target arm64-encoder/X16 4
+							]
+							instruction/c = 1 [
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch depth
+									FLOAT_SCRATCH_REGISTER ref at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/float-move-to-register at
+									(capacity - written) target FLOAT_SCRATCH_REGISTER 4
+							]
+							all [
+								any [source-kind = 9 source-kind = 10]
+								any [target-kind = 9 target-kind = 10]
+							][
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch depth target target-ref
+									at (capacity - written)
+							]
+							source-kind = 5 [
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch depth arm64-encoder/X16 ref
+									at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/integer-to-float at
+									(capacity - written) target arm64-encoder/X16
+									4 target-width 1
+							]
+							true [
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch depth
+									FLOAT_SCRATCH_REGISTER ref at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/float-to-integer at
+									(capacity - written) target FLOAT_SCRATCH_REGISTER
+									source-width 4 1
+							]
+						]
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						scratch/stack-types/depth: target-ref
+						scratch/stack-locations/depth: LOCATION_REGISTER
+						scratch/stack-low/depth: target
+						scratch/stack-high/depth: 0
+						scratch/stack-flags/depth: 0
+						index: index + 1
+						continue
+					]
 					if scratch/stack-locations/depth = LOCATION_IMMEDIATE [
 						if target-kind = 11 [
 							scratch/stack-low/depth: either any [
@@ -1828,18 +2139,30 @@ arm64-codegen: context [
 							width: value-width ref view
 							kind: type-kind ref view
 							if width = 0 [return INVALID_IR]
-							if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
-							target: FIRST_TEMP_REGISTER + depth - 1
-							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+							if width > 8 [return UNSUPPORTED]
+							floating?: any [kind = 9 kind = 10]
+							target: either floating? [
+								FIRST_FLOAT_TEMP_REGISTER + depth - 1
+							][FIRST_TEMP_REGISTER + depth - 1]
+							condition: either floating? [
+								FIRST_FLOAT_TEMP_REGISTER + FLOAT_TEMP_REGISTER_COUNT
+							][FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT]
+							if target >= condition [
 								return UNSUPPORTED
 							]
-							load-signed: either signed-type? ref view [1][0]
-							result-width: either width = 8 [8][4]
 							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/register-load at
-								(capacity - written) target scratch/stack-low/depth
-								scratch/stack-high/depth width
-								load-signed result-width arm64-encoder/X16
+							encoded: either floating? [
+								arm64-encoder/float-register-load at
+									(capacity - written) target scratch/stack-low/depth
+									scratch/stack-high/depth width arm64-encoder/X16
+							][
+								load-signed: either signed-type? ref view [1][0]
+								result-width: either width = 8 [8][4]
+								arm64-encoder/register-load at
+									(capacity - written) target scratch/stack-low/depth
+									scratch/stack-high/depth width
+									load-signed result-width arm64-encoder/X16
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
@@ -1847,17 +2170,28 @@ arm64-codegen: context [
 							width: value-width ref view
 							kind: type-kind ref view
 							if width = 0 [return INVALID_IR]
-							if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
-							target: FIRST_TEMP_REGISTER + depth - 1
-							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+							if width > 8 [return UNSUPPORTED]
+							floating?: any [kind = 9 kind = 10]
+							target: either floating? [
+								FIRST_FLOAT_TEMP_REGISTER + depth - 1
+							][FIRST_TEMP_REGISTER + depth - 1]
+							condition: either floating? [
+								FIRST_FLOAT_TEMP_REGISTER + FLOAT_TEMP_REGISTER_COUNT
+							][FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT]
+							if target >= condition [
 								return UNSUPPORTED
 							]
-							load-signed: either signed-type? ref view [1][0]
-							result-width: either width = 8 [8][4]
 							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/frame-load at
-								(capacity - written) target scratch/stack-low/depth
-								width load-signed result-width
+							encoded: either floating? [
+								arm64-encoder/float-frame-load at (capacity - written)
+									target scratch/stack-low/depth width
+							][
+								load-signed: either signed-type? ref view [1][0]
+								result-width: either width = 8 [8][4]
+								arm64-encoder/frame-load at
+									(capacity - written) target scratch/stack-low/depth
+									width load-signed result-width
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
@@ -1894,7 +2228,9 @@ arm64-codegen: context [
 								target-ref: ref
 								scratch/storage-types/target-slot: ref
 							]
-							unless implicitly-compatible? target-ref ref view [return INVALID_IR]
+							unless implicitly-compatible? target-ref ref
+								(scratch/stack-locations/source-slot = LOCATION_IMMEDIATE)
+								view [return INVALID_IR]
 							target: scratch/homes/target-slot
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch source-slot target
@@ -1907,16 +2243,22 @@ arm64-codegen: context [
 								return INVALID_IR
 							]
 							target-ref: scratch/stack-types/depth
-							unless implicitly-compatible? target-ref ref view [return INVALID_IR]
+							unless implicitly-compatible? target-ref ref
+								(scratch/stack-locations/source-slot = LOCATION_IMMEDIATE)
+								view [return INVALID_IR]
 							width: value-width target-ref view
 							kind: type-kind target-ref view
 							if width = 0 [return INVALID_IR]
-							if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
+							if width > 8 [return UNSUPPORTED]
+							floating?: any [kind = 9 kind = 10]
 							target: either (scratch/stack-locations/source-slot
 								= LOCATION_REGISTER) [scratch/stack-low/source-slot][
-								arm64-encoder/X17
+								either floating? [FLOAT_SCRATCH_REGISTER][arm64-encoder/X17]
 							]
-							if target = arm64-encoder/X17 [
+							if any [
+								target = arm64-encoder/X17
+								all [floating? target = FLOAT_SCRATCH_REGISTER]
+							][
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch source-slot target
 									target-ref at (capacity - written)
@@ -1924,9 +2266,15 @@ arm64-codegen: context [
 								written: written + encoded
 							]
 							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/register-store at
-								(capacity - written) target scratch/stack-low/depth
-								scratch/stack-high/depth width arm64-encoder/X16
+							encoded: either floating? [
+								arm64-encoder/float-register-store at
+									(capacity - written) target scratch/stack-low/depth
+									scratch/stack-high/depth width arm64-encoder/X16
+							][
+								arm64-encoder/register-store at
+									(capacity - written) target scratch/stack-low/depth
+									scratch/stack-high/depth width arm64-encoder/X16
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
@@ -1935,16 +2283,22 @@ arm64-codegen: context [
 								return INVALID_IR
 							]
 							target-ref: scratch/stack-types/depth
-							unless implicitly-compatible? target-ref ref view [return INVALID_IR]
+							unless implicitly-compatible? target-ref ref
+								(scratch/stack-locations/source-slot = LOCATION_IMMEDIATE)
+								view [return INVALID_IR]
 							width: value-width target-ref view
 							kind: type-kind target-ref view
 							if width = 0 [return INVALID_IR]
-							if any [width > 8 kind = 9 kind = 10][return UNSUPPORTED]
+							if width > 8 [return UNSUPPORTED]
+							floating?: any [kind = 9 kind = 10]
 							target: either (scratch/stack-locations/source-slot
 								= LOCATION_REGISTER) [
 								scratch/stack-low/source-slot
-							][arm64-encoder/X17]
-							if target = arm64-encoder/X17 [
+							][either floating? [FLOAT_SCRATCH_REGISTER][arm64-encoder/X17]]
+							if any [
+								target = arm64-encoder/X17
+								all [floating? target = FLOAT_SCRATCH_REGISTER]
+							][
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch source-slot target
 									target-ref at (capacity - written)
@@ -1952,8 +2306,13 @@ arm64-codegen: context [
 								written: written + encoded
 							]
 							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/frame-store at
-								(capacity - written) target scratch/stack-low/depth width
+							encoded: either floating? [
+								arm64-encoder/float-frame-store at (capacity - written)
+									target scratch/stack-low/depth width
+							][
+								arm64-encoder/frame-store at
+									(capacity - written) target scratch/stack-low/depth width
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
@@ -2182,37 +2541,40 @@ arm64-codegen: context [
 					if call-return <> 0 [
 						width: value-width call-return view
 						kind: type-kind call-return view
-						if any [width = 0 width > 8 kind = 9 kind = 10][
+						if any [width = 0 width > 8][
 							return UNSUPPORTED
 						]
 					]
 					unless all [
 						argument-count = call-parameter-count
-						argument-count <= 8
 						instruction/c = call-return
 					][return INVALID_IR]
 					argument-base: depth - argument-count
 					if plan/spill-count < argument-base [return INVALID_IR]
 					slot: 1
 					while [slot <= argument-base][
+						ref: scratch/stack-types/slot
 						if any [
 							scratch/stack-locations/slot = LOCATION_FLAGS
 							all [
 								scratch/stack-locations/slot = LOCATION_REGISTER
-								scratch/stack-low/slot < FIRST_HOME_REGISTER
+								volatile-register-value? ref scratch/stack-low/slot view
 							]
 							][
-								ref: scratch/stack-types/slot
 								width: value-width ref view
 								unless any [
 									width = 1 width = 2 width = 4 width = 8
 								][return UNSUPPORTED]
+							floating?: float-type? ref view
 							target: either scratch/stack-locations/slot = LOCATION_REGISTER [
 								scratch/stack-low/slot
 							][
-								arm64-encoder/X17
+								either floating? [FLOAT_SCRATCH_REGISTER][arm64-encoder/X17]
 							]
-							if target = arm64-encoder/X17 [
+							if any [
+								target = arm64-encoder/X17
+								all [floating? target = FLOAT_SCRATCH_REGISTER]
+							][
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch slot target ref
 									at (capacity - written)
@@ -2220,11 +2582,17 @@ arm64-codegen: context [
 								written: written + encoded
 							]
 							displacement: 0 - ((
-								plan/home-count + plan/frame-home-count + slot
+								plan/home-count + plan/float-home-count
+									+ plan/frame-home-count + slot
 							) * 8)
 							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/frame-store at
-								(capacity - written) target displacement width
+							encoded: either floating? [
+								arm64-encoder/float-frame-store at
+									(capacity - written) target displacement width
+							][
+								arm64-encoder/frame-store at
+									(capacity - written) target displacement width
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							scratch/stack-locations/slot: LOCATION_FRAME
@@ -2242,17 +2610,23 @@ arm64-codegen: context [
 								* RSIR_PARAMETER_SIZE))
 						if parameter/flags <> 0 [return UNSUPPORTED]
 						ref: scratch/stack-types/argument-slot
-						unless implicitly-compatible? parameter/type ref view [
+						unless implicitly-compatible? parameter/type ref
+							(scratch/stack-locations/argument-slot = LOCATION_IMMEDIATE) view [
 							return INVALID_IR
 						]
-							width: value-width parameter/type view
-							kind: type-kind parameter/type view
-							unless any [
-								width = 1 width = 2 width = 4 width = 8
-							][return UNSUPPORTED]
-						if any [kind = 9 kind = 10][return UNSUPPORTED]
+						width: value-width parameter/type view
+						kind: type-kind parameter/type view
+						unless any [
+							width = 1 width = 2 width = 4 width = 8
+						][return UNSUPPORTED]
+						floating?: any [kind = 9 kind = 10]
+						parameter-register: abi-parameter-register view
+							call-first-parameter slot floating?
+						if any [parameter-register < 0 parameter-register >= 8][
+							return UNSUPPORTED
+						]
 						at: either null? code [as byte-ptr! 0][code + written]
-						encoded: materialize view scratch argument-slot (slot - 1)
+						encoded: materialize view scratch argument-slot parameter-register
 							parameter/type at (capacity - written)
 						if encoded < 0 [return encoded]
 						written: written + encoded
@@ -2278,7 +2652,7 @@ arm64-codegen: context [
 					depth: argument-base
 					if call-return <> 0 [
 						width: value-width call-return view
-						if width < 4 [
+						if all [not float-type? call-return view width < 4][
 							load-signed: either signed-type? call-return view [1][0]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/extend-register at
@@ -2383,6 +2757,8 @@ arm64-codegen: context [
 					left-ref: scratch/stack-types/source-slot
 					right-ref: scratch/stack-types/depth
 					operation: instruction/a
+					operation-ref: float-common-ref left-ref right-ref view
+					floating?: operation-ref <> 0
 					pointer?: all [
 						any [operation = ADD_OPERATION operation = SUBTRACT_OPERATION]
 						address-type? left-ref view
@@ -2391,18 +2767,90 @@ arm64-codegen: context [
 					unless any [
 						pointer?
 						all [
+							floating?
+							any [
+								operation <= DIVIDE_OPERATION
+								operation >= EQUAL_OPERATION
+							]
+						]
+						all [
 							integer-type? left-ref view
 							integer-type? right-ref view
 							compatible-literal? left-ref right-ref view
 						]
 					][return INVALID_IR]
+					comparison?: operation >= EQUAL_OPERATION
+					if floating? [
+						width: value-width operation-ref view
+						target: FIRST_FLOAT_TEMP_REGISTER + source-slot - 1
+						if target >= (FIRST_FLOAT_TEMP_REGISTER
+							+ FLOAT_TEMP_REGISTER_COUNT)[return UNSUPPORTED]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: materialize view scratch source-slot target
+							operation-ref at (capacity - written)
+						if encoded < 0 [return encoded]
+						written: written + encoded
+						right: FLOAT_SCRATCH_REGISTER
+						if all [
+							scratch/stack-locations/depth = LOCATION_REGISTER
+							(value-width right-ref view) = width
+						][right: scratch/stack-low/depth]
+						if right = FLOAT_SCRATCH_REGISTER [
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch depth right operation-ref
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: case [
+							operation = ADD_OPERATION [
+								arm64-encoder/float-binary at (capacity - written)
+									arm64-encoder/OP_ADD target target right width
+							]
+							operation = SUBTRACT_OPERATION [
+								arm64-encoder/float-binary at (capacity - written)
+									arm64-encoder/OP_SUB target target right width
+							]
+							operation = MULTIPLY_OPERATION [
+								arm64-encoder/float-multiply at (capacity - written)
+									target target right width
+							]
+							operation = DIVIDE_OPERATION [
+								arm64-encoder/float-divide at (capacity - written)
+									target target right width
+							]
+							comparison? [
+								arm64-encoder/float-compare at (capacity - written)
+									target right width
+							]
+							true [-1]
+						]
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						depth: source-slot
+						scratch/stack-types/depth: either comparison? [-11][operation-ref]
+						scratch/stack-kinds/depth: VALUE
+						either comparison? [
+							condition: float-comparison-condition operation
+							if condition < 0 [return INVALID_IR]
+							scratch/stack-locations/depth: LOCATION_FLAGS
+							scratch/stack-low/depth: condition
+						][
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+						]
+						scratch/stack-high/depth: 0
+						scratch/stack-flags/depth: 0
+						index: index + 1
+						continue
+					]
 					result-width: either pointer? [8][value-width left-ref view]
 					unless any [
 						result-width = 1 result-width = 2
 						result-width = 4 result-width = 8
 					][return UNSUPPORTED]
 					width: either result-width = 8 [8][4]
-					comparison?: operation >= EQUAL_OPERATION
 					folded: 0
 					if all [
 						not pointer?
@@ -2792,8 +3240,8 @@ arm64-codegen: context [
 					][
 						unless all [
 							depth = 1 instruction/b = 0
-							implicitly-compatible? instruction/a
-								scratch/stack-types/depth view
+							implicitly-compatible? instruction/a scratch/stack-types/depth
+								(scratch/stack-locations/depth = LOCATION_IMMEDIATE) view
 						][return INVALID_IR]
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: materialize view scratch depth arm64-encoder/X0
@@ -2955,6 +3403,7 @@ arm64-codegen: context [
 			if status < 0 [return release memory status]
 			function-frames/id: either all [
 				plan/home-count = 0
+				plan/float-home-count = 0
 				plan/frame-home-count = 0
 				plan/has-call = 0
 			][0][

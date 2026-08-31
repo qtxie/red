@@ -173,6 +173,26 @@ size: arm64-encoder/condition-result code 256 arm64-encoder/X9 arm64-encoder/EQ
 expected: #{E9179F1A}
 check size 4 expected
 
+size: arm64-encoder/conditional-negate code 256 arm64-encoder/X16
+	arm64-encoder/X17 4 arm64-encoder/MI
+expected: #{3056915A}
+check size 4 expected
+
+size: arm64-encoder/conditional-negate code 256 arm64-encoder/X9
+	arm64-encoder/X10 8 arm64-encoder/PL
+expected: #{49458ADA}
+check size 4 expected
+
+size: arm64-encoder/conditional-select code 256 arm64-encoder/X16
+	arm64-encoder/X16 arm64-encoder/ZR 4 arm64-encoder/MI
+expected: #{10429F1A}
+check size 4 expected
+
+size: arm64-encoder/conditional-select code 256 arm64-encoder/X9
+	arm64-encoder/X10 arm64-encoder/X11 8 arm64-encoder/PL
+expected: #{49518B9A}
+check size 4 expected
+
 size: arm64-encoder/branch-zero code 256 arm64-encoder/X9 8 20 false
 expected: #{A90000B4}
 check size 4 expected

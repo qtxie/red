@@ -202,6 +202,75 @@ generate "byte expression" {
 	fn: func [return: [byte!]][#"A" + #"^(01)"]
 } 'user
 
+narrow-parameter: generate "narrow integer parameter and return" {
+	Red/System []
+	fn: func [value [int8!] return: [int8!]][value]
+} 'user
+
+narrow-cast: generate "explicit integer truncation" {
+	Red/System []
+	fn: func [value [int64!] return: [integer!]][as integer! value]
+} 'user
+
+narrow-arithmetic: generate "narrow integer arithmetic" {
+	Red/System []
+	fn: func [value [int8!] return: [int8!]][value * as int8! 7]
+} 'user
+
+narrow-widening: generate "signed narrow integer widening" {
+	Red/System []
+	fn: func [value [int8!] return: [int64!]][value]
+} 'user
+
+narrow-unary: generate "narrow integer and logic unary operations" {
+	Red/System []
+	bits: func [value [uint8!] return: [uint8!]][not value]
+	predicate: func [value [logic!] return: [logic!]][not value]
+} 'user
+
+narrow-call-spill: generate "narrow value live across a call" {
+	Red/System []
+	increment: func [value [int8!] return: [int8!]][value + as int8! 1]
+	fn: func [value [int8!] return: [int8!]][
+		value + increment as int8! 1
+	]
+} 'user
+
+integer-division: generate "integer division, remainder and modulo" {
+	Red/System []
+	signed: func [a [integer!] b [integer!] return: [integer!]][
+		(a / b) + (a % b) + (a // b)
+	]
+	wide: func [a [int64!] b [int64!] return: [int64!]][a / b]
+	unsigned: func [a [uint32!] b [uint32!] return: [uint32!]][a % b]
+	main: func [
+		return: [integer!]
+		/local value [integer!] wide-value [int64!] unsigned-value [uint32!]
+	][
+		value: signed -17 -5
+		wide-value: wide as int64! 72 as int64! 2
+		unsigned-value: unsigned as uint32! 17 as uint32! 5
+		value: value + as integer! wide-value
+		value + as integer! unsigned-value
+	]
+} 'user
+
+narrow-integers: generate "narrow integer casts and widening" {
+	Red/System []
+	compute: func [
+		a [int8!]
+		b [uint8!]
+		return: [integer!]
+		/local signed-result [int8!] unsigned-result [uint8!] wide [int64!]
+	][
+		signed-result: a * as int8! 7
+		unsigned-result: b + as uint8! 10
+		wide: signed-result
+		(as integer! wide) - (as integer! unsigned-result) - 22
+	]
+	main: func [return: [integer!]][compute as int8! -100 as uint8! 250]
+} 'user
+
 generate "scaled pointer expression" {
 	Red/System []
 	fn: func [
@@ -567,6 +636,45 @@ check all [
 arm-code-offset: word-at artifact 28
 check (copy/part at artifact (arm-code-offset + 17) 8) = #{F303002AE003132A}
 	"ARM64 argument did not move directly through x19"
+
+artifact: make binary! 4096
+status: codegen-module narrow-parameter/1 artifact 2 0
+check status = 0 ["ARM64 narrow parameter/return status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-cast/1 artifact 2 0
+check status = 0 ["ARM64 explicit integer truncation status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-arithmetic/1 artifact 2 0
+check status = 0 ["ARM64 narrow integer arithmetic status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-widening/1 artifact 2 0
+check status = 0 ["ARM64 signed narrow integer widening status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-unary/1 artifact 2 0
+check status = 0 ["ARM64 narrow integer or logic unary status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-call-spill/1 artifact 2 0
+check status = 0 ["ARM64 narrow call-preserved value status=" status]
+
+artifact: make binary! 4096
+status: codegen-module integer-division/1 artifact 2 0
+check status = 0 ["ARM64 integer division family status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-integers/1 artifact 2 0
+check status = 0 [
+	"ARM64 bridge did not generate narrow integer operations, status=" status
+]
+check all [
+	(word-at artifact 12) = 2
+	(word-at artifact (codegen-header-size + 16)) = 64
+	(word-at artifact (codegen-header-size + 36 + 16)) = 16
+]["ARM64 narrow integer functions have inconsistent metadata or frames"]
 
 artifact: make binary! 4096
 status: codegen-module direct-call/1 artifact 2 0

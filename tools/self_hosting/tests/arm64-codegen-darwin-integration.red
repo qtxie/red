@@ -141,6 +141,125 @@ check all [file? import-output exists? import-output][
 status: call/wait to-local-file import-output
 check status = 42 ["generated ARM64 import returned " status " instead of 42"]
 
+narrow-source: {
+	Red/System []
+	compute: func [
+		a [int8!]
+		b [uint8!]
+		return: [integer!]
+		/local signed-result [int8!] unsigned-result [uint8!]
+			inverted [uint8!] wide [int64!]
+	][
+		signed-result: a * as int8! 7
+		unsigned-result: b + as uint8! 10
+		inverted: not b
+		wide: signed-result
+		(as integer! wide) - (as integer! unsigned-result) - 22
+			+ (as integer! inverted) - 5
+	]
+	main: func [return: [integer!]][compute as int8! -100 as uint8! 250]
+}
+
+narrow-ir: compiler-rsir-frontend/compile load narrow-source 'user
+check binary? narrow-ir [
+	"ARM64 narrow integer integration frontend failed: "
+	mold compiler-rsir-frontend/last-error
+]
+change/part narrow-ir int-to-bin/to-bin32 3 4
+change/part at narrow-ir 5 int-to-bin/to-bin32 2 4
+
+narrow-image: make binary! 65536
+status: codegen-module narrow-ir narrow-image 2 0
+check status = 0 ["ARM64 narrow integer integration codegen status=" status]
+
+narrow-job: compiler-system-job/new 'Darwin-ARM64
+check object? narrow-job "could not create a Darwin ARM64 narrow integer job"
+narrow-job: construct/with body-of narrow-job linker/job-class
+compiler-system-job/job-set narrow-job 'runtime? false
+compiler-system-job/job-set narrow-job 'debug? false
+compiler-system-job/job-set narrow-job 'build-prefix output-dir
+compiler-system-job/job-set narrow-job 'build-basename %arm64-hybrid-narrow-integration
+compiler-system-job/job-set narrow-job 'build-suffix none
+
+check linker/load-codegen narrow-job narrow-image [
+	"Darwin linker rejected ARM64 narrow integer image: " linker/codegen-error
+]
+narrow-output: linker/build narrow-job
+check all [file? narrow-output exists? narrow-output][
+	"Darwin linker did not write " mold narrow-output
+]
+status: call/wait to-local-file narrow-output
+check status = 42 [
+	"generated ARM64 narrow integer module returned " status " instead of 42"
+]
+
+division-source: {
+	Red/System []
+	signed: func [a [integer!] b [integer!] return: [integer!]][
+		(a / b) + (a % b) + (a // b)
+	]
+	narrow-signed: func [
+		a [int8!]
+		b [int8!]
+		return: [integer!]
+		/local quotient [int8!] remainder [int8!] modulo [int8!]
+	][
+		quotient: a / b
+		remainder: a % b
+		modulo: a // b
+		(as integer! quotient) + (as integer! remainder) + (as integer! modulo)
+	]
+	wide: func [a [int64!] b [int64!] return: [int64!]][a / b]
+	unsigned: func [a [uint32!] b [uint32!] return: [uint32!]][a % b]
+	main: func [
+		return: [integer!]
+		/local value [integer!] wide-value [int64!] unsigned-value [uint32!]
+	][
+		value: signed -17 -5
+		value: value + signed -17 5
+		value: value + signed 17 -5
+		value: value + signed 17 5
+		value: value + narrow-signed as int8! -100 as int8! 7
+		wide-value: wide as int64! 82 as int64! 2
+		unsigned-value: unsigned as uint32! 17 as uint32! 5
+		value: value + as integer! wide-value
+		value + as integer! unsigned-value
+	]
+}
+
+division-ir: compiler-rsir-frontend/compile load division-source 'user
+check binary? division-ir [
+	"ARM64 integer division integration frontend failed: "
+	mold compiler-rsir-frontend/last-error
+]
+change/part division-ir int-to-bin/to-bin32 3 4
+change/part at division-ir 5 int-to-bin/to-bin32 5 4
+
+division-image: make binary! 65536
+status: codegen-module division-ir division-image 2 0
+check status = 0 ["ARM64 integer division integration codegen status=" status]
+
+division-job: compiler-system-job/new 'Darwin-ARM64
+check object? division-job "could not create a Darwin ARM64 integer division job"
+division-job: construct/with body-of division-job linker/job-class
+compiler-system-job/job-set division-job 'runtime? false
+compiler-system-job/job-set division-job 'debug? false
+compiler-system-job/job-set division-job 'build-prefix output-dir
+compiler-system-job/job-set division-job 'build-basename %arm64-hybrid-division-integration
+compiler-system-job/job-set division-job 'build-suffix none
+
+check linker/load-codegen division-job division-image [
+	"Darwin linker rejected ARM64 integer division image: " linker/codegen-error
+]
+division-output: linker/build division-job
+check all [file? division-output exists? division-output][
+	"Darwin linker did not write " mold division-output
+]
+status: call/wait to-local-file division-output
+check status = 42 [
+	"generated ARM64 integer division module returned " status " instead of 42"
+]
+
 global-source: {
 	Red/System []
 	pair: declare struct! [left [integer!] right [integer!]]

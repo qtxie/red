@@ -643,6 +643,40 @@ arm64-encoder: context [
 		instruction code capacity (opcode or target)
 	]
 
+	conditional-negate: func [
+		code [byte-ptr!]
+		capacity target source width condition [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? target valid-register? source valid-width? width
+			condition >= 0 condition <= 13
+		][return -1]
+		opcode: either width = 8 [DA800400h][5A800400h]
+		opcode: opcode or (source * 65536)
+		opcode: opcode or (((condition xor 1) and 15) * 4096)
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	conditional-select: func [
+		code [byte-ptr!]
+		capacity target when-true when-false width condition [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? target valid-base? when-true valid-base? when-false
+			valid-width? width condition >= 0 condition <= 13
+		][return -1]
+		opcode: either width = 8 [9A800000h][1A800000h]
+		opcode: opcode or (when-false * 65536)
+		opcode: opcode or (condition * 4096)
+		opcode: opcode or (when-true * 32)
+		instruction code capacity (opcode or target)
+	]
+
 	branch-relative: func [
 		code [byte-ptr!]
 		capacity displacement [integer!]

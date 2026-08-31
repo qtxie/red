@@ -141,6 +141,48 @@ check all [file? import-output exists? import-output][
 status: call/wait to-local-file import-output
 check status = 42 ["generated ARM64 import returned " status " instead of 42"]
 
+size-source: {
+	Red/System []
+	cell!: alias struct! [mark [byte!] value [integer!]]
+	measure: func [text [c-string!] return: [integer!]][size? text]
+	main: func [return: [integer!]][
+		(size? cell!) + (measure "Hybrid") + 27
+	]
+}
+
+size-ir: compiler-rsir-frontend/compile load size-source 'user
+check binary? size-ir [
+	"ARM64 SIZE? integration frontend failed: "
+	mold compiler-rsir-frontend/last-error
+]
+change/part size-ir int-to-bin/to-bin32 3 4
+change/part at size-ir 5 int-to-bin/to-bin32 2 4
+
+size-image: make binary! 65536
+status: codegen-module size-ir size-image 2 0
+check status = 0 ["ARM64 SIZE? integration codegen status=" status]
+
+size-job: compiler-system-job/new 'Darwin-ARM64
+check object? size-job "could not create a Darwin ARM64 SIZE? job"
+size-job: construct/with body-of size-job linker/job-class
+compiler-system-job/job-set size-job 'runtime? false
+compiler-system-job/job-set size-job 'debug? false
+compiler-system-job/job-set size-job 'build-prefix output-dir
+compiler-system-job/job-set size-job 'build-basename %arm64-hybrid-size-integration
+compiler-system-job/job-set size-job 'build-suffix none
+
+check linker/load-codegen size-job size-image [
+	"Darwin linker rejected ARM64 SIZE? image: " linker/codegen-error
+]
+size-output: linker/build size-job
+check all [file? size-output exists? size-output][
+	"Darwin linker did not write " mold size-output
+]
+status: call/wait to-local-file size-output
+check status = 42 [
+	"generated ARM64 SIZE? module returned " status " instead of 42"
+]
+
 narrow-source: {
 	Red/System []
 	compute: func [

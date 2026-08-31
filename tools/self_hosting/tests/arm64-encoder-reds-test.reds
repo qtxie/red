@@ -201,6 +201,11 @@ size: arm64-encoder/branch-zero code 256 arm64-encoder/X9 4 16 true
 expected: #{89000035}
 check size 4 expected
 
+size: arm64-encoder/c-string-size code 256 arm64-encoder/X16
+	arm64-encoder/X9 arm64-encoder/X17
+expected: #{090080521116403829050011D1FFFF35}
+check size 16 expected
+
 size: arm64-encoder/branch-condition code 256 arm64-encoder/EQ 12
 expected: #{60000054}
 check size 4 expected

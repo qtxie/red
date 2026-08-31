@@ -795,6 +795,34 @@ arm64-encoder: context [
 		instruction code capacity (opcode or register)
 	]
 
+	c-string-size: func [
+		code [byte-ptr!]
+		capacity pointer target scratch [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] opcode encoded written [integer!]
+	][
+		unless all [
+			valid-register? pointer valid-register? target valid-register? scratch
+			pointer <> target pointer <> scratch target <> scratch
+		][return -1]
+		written: move-immediate code capacity target 4 0 0
+		if written < 0 [return -1]
+		; LDRB Wscratch, [Xpointer], #1
+		opcode: 38401400h or (pointer * 32)
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: instruction at (capacity - written) (opcode or scratch)
+		if encoded < 0 [return -1]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: add-immediate at (capacity - written) target target 1 4
+		if encoded < 0 [return -1]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: branch-zero at (capacity - written) scratch 4 -8 true
+		if encoded < 0 [return -1]
+		written + encoded
+	]
+
 	call-register: func [
 		code [byte-ptr!]
 		capacity register [integer!]

@@ -82,6 +82,7 @@ arm64-codegen: context [
 	OP_MEMBER:  6
 	OP_CALL:    7
 	OP_CAST:    8
+	OP_SIZE:    9
 	OP_RETURN:  11
 	OP_DROP:    12
 	OP_UNARY:  14
@@ -706,6 +707,26 @@ arm64-codegen: context [
 		true
 	]
 
+	logical-size: func [
+		ref [integer!]
+		view [rsir-view!]
+		layout [arm64-layout-state!]
+		return: [integer!]
+		/local base kind size alignment [integer!] record [rsir-type!]
+	][
+		base: canonical-type ref view
+		if base = 0 [return 0]
+		kind: type-kind base view
+		; Array values use their element count as the Red SIZE? result.
+		if all [base > 0 kind = -7][
+			record: as rsir-type! (view/types + ((base - 1) * RSIR_TYPE_SIZE))
+			return record/member-count
+		]
+		size: 0
+		alignment: 0
+		either layout-type ref true view layout 0 :size :alignment [size][0]
+	]
+
 	pointee-type: func [
 		ref [integer!]
 		view [rsir-view!]
@@ -1235,6 +1256,20 @@ arm64-codegen: context [
 				]
 				instruction/op = OP_LOAD [
 					if depth < 1 [return INVALID_IR]
+					scratch/stack-low/depth: 0
+				]
+				instruction/op = OP_SIZE [
+					unless all [
+						valid-type-ref? instruction/a view
+						any [instruction/b = 0 instruction/b = 1]
+					][return INVALID_IR]
+					either instruction/b = 0 [
+						if instruction/c <> 0 [return INVALID_IR]
+						if depth = 2147483647 [return OUTPUT_FULL]
+						depth: depth + 1
+					][
+						if depth < 1 [return INVALID_IR]
+					]
 					scratch/stack-low/depth: 0
 				]
 				instruction/op = OP_REFERENCE [
@@ -2060,6 +2095,54 @@ arm64-codegen: context [
 					scratch/stack-locations/depth: LOCATION_REGISTER
 					scratch/stack-low/depth: target
 					scratch/stack-high/depth: 0
+					scratch/stack-flags/depth: 0
+				]
+				instruction/op = OP_SIZE [
+					ref: instruction/a
+					unless all [
+						valid-type-ref? ref view
+						any [instruction/b = 0 instruction/b = 1]
+					][return INVALID_IR]
+					either instruction/b = 0 [
+						if instruction/c <> 0 [return INVALID_IR]
+						if depth = 2147483647 [return OUTPUT_FULL]
+						depth: depth + 1
+					][
+						unless all [
+							depth > 0
+							scratch/stack-kinds/depth = VALUE
+							scratch/stack-types/depth = ref
+							scratch/stack-flags/depth = instruction/c
+						][return INVALID_IR]
+					]
+					width: logical-size ref view layout
+					if width <= 0 [return INVALID_IR]
+					kind: type-kind ref view
+					either all [instruction/b = 1 kind = 13][
+						target: FIRST_TEMP_REGISTER + depth - 1
+						if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+							return UNSUPPORTED
+						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: materialize view scratch depth arm64-encoder/X16 ref
+							at (capacity - written)
+						if encoded < 0 [return encoded]
+						written: written + encoded
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/c-string-size at (capacity - written)
+							arm64-encoder/X16 target arm64-encoder/X17
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						scratch/stack-locations/depth: LOCATION_REGISTER
+						scratch/stack-low/depth: target
+						scratch/stack-high/depth: 0
+					][
+						scratch/stack-locations/depth: LOCATION_IMMEDIATE
+						scratch/stack-low/depth: width
+						scratch/stack-high/depth: 0
+					]
+					scratch/stack-types/depth: -5
+					scratch/stack-kinds/depth: VALUE
 					scratch/stack-flags/depth: 0
 				]
 				instruction/op = OP_ADDRESS [

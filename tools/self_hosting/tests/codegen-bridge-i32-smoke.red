@@ -647,10 +647,15 @@ generate "c-string call" {
 	symbol: red/make "type"
 } 'glue
 
-generate "native layout" {
+native-layout: generate "native layout" {
 	Red/System []
 	cell!: alias struct! [mark [byte!] value [integer!]]
 	fn: func [return: [integer!]][size? cell!]
+} 'user
+
+c-string-size: generate "dynamic c-string size" {
+	Red/System []
+	measure: func [text [c-string!] return: [integer!]][size? text]
 } 'user
 
 global-address-array: generate "heterogeneous literal address array" {
@@ -770,6 +775,21 @@ check status = 0 ["ARM64 narrow call-preserved value status=" status]
 artifact: make binary! 4096
 status: codegen-module integer-division/1 artifact 2 0
 check status = 0 ["ARM64 integer division family status=" status]
+
+artifact: make binary! 4096
+status: codegen-module native-layout/1 artifact 2 0
+check status = 0 ["ARM64 static SIZE? status=" status]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 1) 8) = #{00018052C0035FD6}
+	"ARM64 static SIZE? was not folded to an immediate"
+
+artifact: make binary! 4096
+status: codegen-module c-string-size/1 artifact 2 0
+check status = 0 ["ARM64 dynamic c-string SIZE? status=" status]
+check all [
+	not none? find artifact #{11164038}
+	not none? find artifact #{D1FFFF35}
+]["ARM64 dynamic c-string SIZE? did not use the inline byte loop"]
 
 artifact: make binary! 8192
 status: codegen-module float-scalars/1 artifact 2 0

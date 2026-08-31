@@ -118,7 +118,7 @@ generate "logic operation families" {
 	fn: func [a [logic!] b [logic!] return: [logic!]][not (a and b xor false)]
 } 'user
 
-generate "structured conditionals and early return" {
+structured-conditionals: generate "structured conditionals and early return" {
 	Red/System []
 	choose: func [value [integer!] return: [integer!]][
 		if value > 0 [return 7]
@@ -130,7 +130,7 @@ generate "structured conditionals and early return" {
 	]
 } 'user
 
-generate "typed CASE selection" {
+typed-case: generate "typed CASE selection" {
 	Red/System []
 	choose: func [value [integer!] return: [integer!]][
 		case [
@@ -141,7 +141,7 @@ generate "typed CASE selection" {
 	]
 } 'user
 
-generate "typed SWITCH dispatch" {
+typed-switch: generate "typed SWITCH dispatch" {
 	Red/System []
 	choose: func [value [integer!] return: [integer!]][
 		switch value [1 2 [11] 3 [22] default [33]]
@@ -775,6 +775,18 @@ check status = 0 ["ARM64 narrow call-preserved value status=" status]
 artifact: make binary! 4096
 status: codegen-module integer-division/1 artifact 2 0
 check status = 0 ["ARM64 integer division family status=" status]
+
+artifact: make binary! 8192
+status: codegen-module structured-conditionals/1 artifact 2 0
+check status = 0 ["ARM64 early-return/conditional merge status=" status]
+
+artifact: make binary! 8192
+status: codegen-module typed-case/1 artifact 2 0
+check status = 0 ["ARM64 CASE merge status=" status]
+
+artifact: make binary! 8192
+status: codegen-module typed-switch/1 artifact 2 0
+check status = 0 ["ARM64 SWITCH merge status=" status]
 
 artifact: make binary! 4096
 status: codegen-module native-layout/1 artifact 2 0

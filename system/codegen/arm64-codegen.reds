@@ -16,7 +16,13 @@ arm64-function-scratch!: alias struct! [
 	stack-low       [int-ptr!]
 	stack-high      [int-ptr!]
 	stack-flags     [int-ptr!]
+	plan-depths     [int-ptr!]
 	instruction-offsets [int-ptr!]
+	instruction-depths  [int-ptr!]
+	entry-types         [int-ptr!]
+	entry-kinds         [int-ptr!]
+	entry-flags         [int-ptr!]
+	control-uses        [int-ptr!]
 	global-homes    [int-ptr!]
 ]
 
@@ -60,6 +66,7 @@ arm64-codegen: context [
 	RSIR_PARAMETER_SIZE:    8
 	RSIR_INITIALIZER_SIZE: 16
 	RSIR_INSTRUCTION_SIZE: 16
+	RSIR_SWITCH_SIZE:      12
 
 	CDECL:        1
 	STDCALL:      2
@@ -89,6 +96,8 @@ arm64-codegen: context [
 	OP_BINARY:  15
 	OP_JUMP:    16
 	OP_BRANCH:  17
+	OP_SWITCH:  18
+	OP_FAIL:    19
 	OP_REFERENCE: 20
 	OP_INDEX:     21
 
@@ -280,6 +289,28 @@ arm64-codegen: context [
 			][return true]
 		]
 		all [left-kind > 0 left-kind = right-kind]
+	]
+
+	merged-type: func [
+		left right [integer!]
+		view [rsir-view!]
+		return: [integer!]
+		/local left-kind right-kind [integer!]
+	][
+		if compatible-types? left right view [
+			left-kind: type-kind left view
+			if left-kind = 14 [
+				right-kind: type-kind right view
+				if reference-type? right view [return -14]
+			]
+			return left
+		]
+		left-kind: type-kind left view
+		right-kind: type-kind right view
+		either all [
+			left-kind = right-kind
+			any [left-kind = -6 left-kind = -2 left-kind = -3]
+		][left][0]
 	]
 
 	integer-type?: func [ref [integer!] view [rsir-view!] return: [logic!]
@@ -1182,6 +1213,89 @@ arm64-codegen: context [
 		written
 	]
 
+	record-plan-depth: func [
+		target depth [integer!]
+		fn [rsir-function!]
+		depths [int-ptr!]
+		return: [logic!]
+	][
+		if any [target <= 0 target > fn/instruction-count][return false]
+		either depths/target < 0 [
+			depths/target: depth
+		][
+			if depths/target <> depth [return false]
+		]
+		true
+	]
+
+	prepare-control-targets: func [
+		view [rsir-view!]
+		scratch [arm64-function-scratch!]
+		return: [integer!]
+		/local fn [rsir-function!] instruction [rsir-instruction!]
+			switch-case [rsir-switch!]
+			id index first target case-index switch-id [integer!]
+	][
+		id: 1
+		while [id <= view/header/instruction-count][
+			scratch/instruction-offsets/id: 0
+			scratch/instruction-depths/id: -1
+			scratch/entry-types/id: 0
+			scratch/entry-kinds/id: 0
+			scratch/entry-flags/id: 0
+			scratch/control-uses/id: 0
+			id: id + 1
+		]
+		first: 0
+		id: 1
+		while [id <= view/header/function-count][
+			fn: as rsir-function! (view/functions + ((id - 1) * RSIR_FUNCTION_SIZE))
+			index: 0
+			while [index < fn/instruction-count][
+				instruction: as rsir-instruction! (view/instructions
+					+ ((first + index) * RSIR_INSTRUCTION_SIZE))
+				case [
+					any [instruction/op = OP_JUMP instruction/op = OP_BRANCH][
+						target: instruction/a
+						if any [target <= 0 target > fn/instruction-count][
+							return INVALID_IR
+						]
+						target: first + target
+						scratch/control-uses/target: 1
+					]
+					instruction/op = OP_SWITCH [
+						if any [
+							instruction/a < 0 instruction/b <= 0
+							instruction/b > view/header/switch-count
+							instruction/a > (view/header/switch-count - instruction/b)
+							instruction/c <= 0 instruction/c > fn/instruction-count
+						][return INVALID_IR]
+						target: first + instruction/c
+						scratch/control-uses/target: 1
+						case-index: 0
+						while [case-index < instruction/b][
+							switch-id: instruction/a + case-index
+							switch-case: as rsir-switch! (view/switches
+								+ (switch-id * RSIR_SWITCH_SIZE))
+							if any [
+								switch-case/target <= 0
+								switch-case/target > fn/instruction-count
+							][return INVALID_IR]
+							target: first + switch-case/target
+							scratch/control-uses/target: 1
+							case-index: case-index + 1
+						]
+					]
+					true []
+				]
+				index: index + 1
+			]
+			first: first + fn/instruction-count
+			id: id + 1
+		]
+		0
+	]
+
 	plan-function: func [
 		view [rsir-view!]
 		fn [rsir-function!]
@@ -1191,11 +1305,14 @@ arm64-codegen: context [
 		return: [integer!]
 		/local parameter [rsir-parameter!]
 			instruction [rsir-instruction!]
+			switch-case [rsir-switch!]
+			depths [int-ptr!]
 			id slot count width kind home-count float-home-count frame-allocation
 			depth max-spill has-call argument-count frame-home-count total-slots status
 			call-return call-first-parameter call-parameter-count
-			call-reference
+			call-reference ordinal target case-index
 				[integer!]
+			fallthrough? [logic!]
 	][
 		if (fn/flags and RETURN_VALUE) <> 0 [return UNSUPPORTED]
 		count: fn/parameter-count + fn/local-count
@@ -1213,9 +1330,16 @@ arm64-codegen: context [
 			scratch/storage-kinds/id: 0
 			id: id + 1
 		]
+		depths: scratch/plan-depths
+		id: 1
+		while [id <= fn/instruction-count][
+			depths/id: -1
+			id: id + 1
+		]
 		depth: 0
 		max-spill: 0
 		has-call: 0
+		fallthrough?: true
 		id: 0
 		while [id < fn/instruction-count][
 			instruction: as rsir-instruction! (view/instructions
@@ -1244,6 +1368,20 @@ arm64-codegen: context [
 					]
 					true [return UNSUPPORTED]
 				]
+			]
+			ordinal: id + 1
+			either fallthrough? [
+				if all [depths/ordinal >= 0 depths/ordinal <> depth][
+					return INVALID_IR
+				]
+				depths/ordinal: depth
+			][
+				if depths/ordinal < 0 [
+					id: id + 1
+					continue
+				]
+				depth: depths/ordinal
+				fallthrough?: true
 			]
 			case [
 				any [instruction/op = OP_LITERAL instruction/op = OP_ADDRESS][
@@ -1332,11 +1470,50 @@ arm64-codegen: context [
 					]
 				]
 				instruction/op = OP_JUMP [
-					if depth <> 0 [return UNSUPPORTED]
+					unless all [instruction/b = 0 instruction/c = 0][
+						return UNSUPPORTED
+					]
+					unless record-plan-depth instruction/a depth fn depths [
+						return INVALID_IR
+					]
+					fallthrough?: false
 				]
 				instruction/op = OP_BRANCH [
-					if depth < 1 [return INVALID_IR]
+					if any [
+						depth < 1 instruction/c <> 0
+						not any [instruction/b = 0 instruction/b = 1]
+					][return INVALID_IR]
 					depth: depth - 1
+					unless record-plan-depth instruction/a depth fn depths [
+						return INVALID_IR
+					]
+				]
+				instruction/op = OP_SWITCH [
+					if any [
+						depth < 1 instruction/a < 0 instruction/b <= 0
+						instruction/b > view/header/switch-count
+						instruction/a > (view/header/switch-count - instruction/b)
+					][return INVALID_IR]
+					depth: depth - 1
+					unless record-plan-depth instruction/c depth fn depths [
+						return INVALID_IR
+					]
+					case-index: 0
+					while [case-index < instruction/b][
+						switch-case: as rsir-switch! (view/switches
+							+ ((instruction/a + case-index) * RSIR_SWITCH_SIZE))
+						unless record-plan-depth switch-case/target depth fn depths [
+							return INVALID_IR
+						]
+						case-index: case-index + 1
+					]
+					fallthrough?: false
+				]
+				instruction/op = OP_FAIL [
+					unless all [
+						instruction/a > 0 instruction/b = 0 instruction/c = 0
+					][return INVALID_IR]
+					fallthrough?: false
 				]
 				instruction/op = OP_RETURN [
 					unless any [
@@ -1344,11 +1521,13 @@ arm64-codegen: context [
 						all [instruction/a <> 0 depth = 1]
 					][return INVALID_IR]
 					depth: 0
+					fallthrough?: false
 				]
 				true []
 			]
 			id: id + 1
 		]
+		if fallthrough? [return INVALID_IR]
 		home-count: 0
 		float-home-count: 0
 		frame-home-count: 0
@@ -1699,6 +1878,105 @@ arm64-codegen: context [
 		]
 	]
 
+	merge-control-target: func [
+		target depth [integer!]
+		fn [rsir-function!]
+		view [rsir-view!]
+		scratch [arm64-function-scratch!]
+		depths entry-types entry-kinds entry-flags [int-ptr!]
+		return: [logic!]
+		/local ref [integer!]
+	][
+		if any [target <= 0 target > fn/instruction-count][return false]
+		either depths/target >= 0 [
+			if depths/target <> depth [return false]
+			if depth > 0 [
+				ref: merged-type entry-types/target scratch/stack-types/depth view
+				if any [
+					ref = 0
+					entry-kinds/target <> scratch/stack-kinds/depth
+					entry-flags/target <> scratch/stack-flags/depth
+				][return false]
+				entry-types/target: ref
+			]
+		][
+			depths/target: depth
+			if depth > 0 [
+				entry-types/target: scratch/stack-types/depth
+				entry-kinds/target: scratch/stack-kinds/depth
+				entry-flags/target: scratch/stack-flags/depth
+			]
+		]
+		true
+	]
+
+	canonicalize-stack: func [
+		view [rsir-view!]
+		scratch [arm64-function-scratch!]
+		depth [integer!]
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+		/local at [byte-ptr!]
+			slot ref kind target limit written encoded [integer!]
+	][
+		written: 0
+		slot: 1
+		while [slot <= depth][
+			if scratch/stack-kinds/slot <> VALUE [return UNSUPPORTED]
+			ref: scratch/stack-types/slot
+			kind: type-kind ref view
+			target: either any [kind = 9 kind = 10][
+				FIRST_FLOAT_TEMP_REGISTER + slot - 1
+			][FIRST_TEMP_REGISTER + slot - 1]
+			limit: either any [kind = 9 kind = 10][
+				FIRST_FLOAT_TEMP_REGISTER + FLOAT_TEMP_REGISTER_COUNT
+			][FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT]
+			if target >= limit [return UNSUPPORTED]
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: materialize view scratch slot target ref at (capacity - written)
+			if encoded < 0 [return encoded]
+			written: written + encoded
+			scratch/stack-locations/slot: LOCATION_REGISTER
+			scratch/stack-low/slot: target
+			scratch/stack-high/slot: 0
+			slot: slot + 1
+		]
+		written
+	]
+
+	restore-control-stack: func [
+		view [rsir-view!]
+		scratch [arm64-function-scratch!]
+		depth target [integer!]
+		entry-types entry-kinds entry-flags [int-ptr!]
+		return: [logic!]
+		/local slot kind register limit [integer!]
+	][
+		if depth > 0 [
+			scratch/stack-types/depth: entry-types/target
+			scratch/stack-kinds/depth: entry-kinds/target
+			scratch/stack-flags/depth: entry-flags/target
+		]
+		slot: 1
+		while [slot <= depth][
+			if scratch/stack-kinds/slot <> VALUE [return false]
+			kind: type-kind scratch/stack-types/slot view
+			register: either any [kind = 9 kind = 10][
+				FIRST_FLOAT_TEMP_REGISTER + slot - 1
+			][FIRST_TEMP_REGISTER + slot - 1]
+			limit: either any [kind = 9 kind = 10][
+				FIRST_FLOAT_TEMP_REGISTER + FLOAT_TEMP_REGISTER_COUNT
+			][FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT]
+			if register >= limit [return false]
+			scratch/stack-locations/slot: LOCATION_REGISTER
+			scratch/stack-low/slot: register
+			scratch/stack-high/slot: 0
+			slot: slot + 1
+		]
+		true
+	]
+
 	emit-pointer-binary: func [
 		view [rsir-view!]
 		layout [arm64-layout-state!]
@@ -1825,9 +2103,12 @@ arm64-codegen: context [
 		capacity [integer!]
 		return: [integer!]
 		/local instruction next-instruction following-instruction [rsir-instruction!]
+			switch-case [rsir-switch!]
 			parameter [rsir-parameter!]
 			global [rsir-global!]
 			at [byte-ptr!]
+			instruction-offsets instruction-depths entry-types entry-kinds
+				entry-flags control-uses [int-ptr!]
 			index ordinal written encoded depth slot source-slot target-slot
 			ref target-ref left-ref right-ref width kind operation target left right folded
 			source-width target-width source-kind target-kind
@@ -1835,11 +2116,30 @@ arm64-codegen: context [
 			displacement condition argument-count argument-base argument-slot
 			call-target call-return call-first-parameter
 			call-parameter-count call-reference status load-signed result-width
+			case-index return-count
 				[integer!]
 			member-type member-flags member-offset stride scaled shift
 				[integer!]
-			returned? comparison? literal? immediate? taken? pointer? floating? [logic!]
+			fallthrough? measure? comparison? literal? immediate? taken? pointer?
+				floating? [logic!]
 	][
+		instruction-offsets: scratch/instruction-offsets + first-instruction
+		instruction-depths: scratch/instruction-depths + first-instruction
+		entry-types: scratch/entry-types + first-instruction
+		entry-kinds: scratch/entry-kinds + first-instruction
+		entry-flags: scratch/entry-flags + first-instruction
+		control-uses: scratch/control-uses + first-instruction
+		measure?: null? code
+		if measure? [
+			index: 1
+			while [index <= fn/instruction-count][
+				instruction-depths/index: -1
+				entry-types/index: 0
+				entry-kinds/index: 0
+				entry-flags/index: 0
+				index: index + 1
+			]
+		]
 		written: emit-prologue view fn scratch plan code capacity
 		if written < 0 [return written]
 		at: either null? code [as byte-ptr! 0][code + written]
@@ -1848,14 +2148,41 @@ arm64-codegen: context [
 		if encoded < 0 [return encoded]
 		written: written + encoded
 		depth: 0
-		returned?: false
+		fallthrough?: true
+		return-count: 0
 		index: 0
 		while [index < fn/instruction-count][
 			ordinal: index + 1
-			scratch/instruction-offsets/ordinal: written
 			instruction: as rsir-instruction! (view/instructions
 				+ ((first-instruction + index) * RSIR_INSTRUCTION_SIZE))
-			if returned? [return INVALID_IR]
+			either fallthrough? [
+				if control-uses/ordinal > 0 [
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: canonicalize-stack view scratch depth
+						at (capacity - written)
+					if encoded < 0 [return encoded]
+					written: written + encoded
+				]
+				unless merge-control-target ordinal depth fn view scratch
+					instruction-depths entry-types entry-kinds entry-flags [
+					return INVALID_IR
+				]
+				if control-uses/ordinal > 0 [
+					unless restore-control-stack view scratch depth ordinal
+						entry-types entry-kinds entry-flags [return UNSUPPORTED]
+				]
+			][
+				if instruction-depths/ordinal < 0 [
+					instruction-offsets/ordinal: written
+					index: index + 1
+					continue
+				]
+				depth: instruction-depths/ordinal
+				unless restore-control-stack view scratch depth ordinal
+					entry-types entry-kinds entry-flags [return UNSUPPORTED]
+				fallthrough?: true
+			]
+			instruction-offsets/ordinal: written
 			case [
 				instruction/op = OP_LITERAL [
 					width: value-width instruction/a view
@@ -3252,16 +3579,26 @@ arm64-codegen: context [
 					target: instruction/a
 					unless all [
 						target > 0 target <= fn/instruction-count
-						instruction/b = 0 instruction/c = 0 depth = 0
+						instruction/b = 0 instruction/c = 0
 					][return UNSUPPORTED]
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: canonicalize-stack view scratch depth
+						at (capacity - written)
+					if encoded < 0 [return encoded]
+					written: written + encoded
+					unless merge-control-target target depth fn view scratch
+						instruction-depths entry-types entry-kinds entry-flags [
+						return INVALID_IR
+					]
 					displacement: either null? code [0][
-						scratch/instruction-offsets/target - written
+						instruction-offsets/target - written
 					]
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/branch-relative at
 						(capacity - written) displacement
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+					fallthrough?: false
 				]
 				instruction/op = OP_BRANCH [
 					target: instruction/a
@@ -3271,39 +3608,151 @@ arm64-codegen: context [
 						instruction/c = 0 depth > 0
 						compatible-literal? -11 scratch/stack-types/depth view
 					][return INVALID_IR]
+					source-slot: depth
+					if all [
+						depth > 1
+						scratch/stack-locations/source-slot <> LOCATION_IMMEDIATE
+					][
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: materialize view scratch source-slot arm64-encoder/X17
+							-11 at (capacity - written)
+						if encoded < 0 [return encoded]
+						written: written + encoded
+						scratch/stack-locations/source-slot: LOCATION_REGISTER
+						scratch/stack-low/source-slot: arm64-encoder/X17
+						scratch/stack-high/source-slot: 0
+					]
+					depth: depth - 1
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: canonicalize-stack view scratch depth
+						at (capacity - written)
+					if encoded < 0 [return encoded]
+					written: written + encoded
+					unless merge-control-target target depth fn view scratch
+						instruction-depths entry-types entry-kinds entry-flags [
+						return INVALID_IR
+					]
 					displacement: either null? code [0][
-						scratch/instruction-offsets/target - written
+						instruction-offsets/target - written
 					]
 					encoded: 0
 					case [
-						scratch/stack-locations/depth = LOCATION_IMMEDIATE [
+						scratch/stack-locations/source-slot = LOCATION_IMMEDIATE [
 							taken?: either instruction/b = 1 [
-								scratch/stack-low/depth <> 0
-							][scratch/stack-low/depth = 0]
+								scratch/stack-low/source-slot <> 0
+							][scratch/stack-low/source-slot = 0]
 							if taken? [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/branch-relative at
 									(capacity - written) displacement
 							]
 						]
-						scratch/stack-locations/depth = LOCATION_FLAGS [
-							condition: scratch/stack-low/depth
+						scratch/stack-locations/source-slot = LOCATION_FLAGS [
+							condition: scratch/stack-low/source-slot
 							if instruction/b = 0 [condition: condition xor 1]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/branch-condition at
 								(capacity - written) condition displacement
 						]
-						scratch/stack-locations/depth = LOCATION_REGISTER [
+						scratch/stack-locations/source-slot = LOCATION_REGISTER [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/branch-zero at
-								(capacity - written) scratch/stack-low/depth 4
+								(capacity - written) scratch/stack-low/source-slot 4
 								displacement (instruction/b = 1)
 						]
 						true [return INVALID_IR]
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+				]
+				instruction/op = OP_SWITCH [
+					unless all [
+						instruction/a >= 0 instruction/b > 0
+						instruction/b <= view/header/switch-count
+						instruction/a <= (view/header/switch-count - instruction/b)
+						instruction/c > 0 instruction/c <= fn/instruction-count
+						depth > 0 scratch/stack-kinds/depth = VALUE
+						scratch/stack-flags/depth = 0
+						integer-type? scratch/stack-types/depth view
+					][return INVALID_IR]
+					ref: scratch/stack-types/depth
+					width: value-width ref view
+					result-width: either width = 8 [8][4]
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: materialize view scratch depth arm64-encoder/X17 ref
+						at (capacity - written)
+					if encoded < 0 [return encoded]
+					written: written + encoded
 					depth: depth - 1
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: canonicalize-stack view scratch depth
+						at (capacity - written)
+					if encoded < 0 [return encoded]
+					written: written + encoded
+					case-index: 0
+					while [case-index < instruction/b][
+						switch-case: as rsir-switch! (view/switches
+							+ ((instruction/a + case-index) * RSIR_SWITCH_SIZE))
+						target: switch-case/target
+						unless merge-control-target target depth fn view scratch
+							instruction-depths entry-types entry-kinds entry-flags [
+							return INVALID_IR
+						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						either all [
+							switch-case/high = 0
+							switch-case/low >= 0 switch-case/low <= 4095
+						][
+							encoded: arm64-encoder/compare-immediate at
+								(capacity - written) arm64-encoder/X17
+								switch-case/low result-width
+						][
+							encoded: arm64-encoder/move-immediate at
+								(capacity - written) arm64-encoder/X16 result-width
+								switch-case/low switch-case/high
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/compare-register at
+								(capacity - written) arm64-encoder/X17
+								arm64-encoder/X16 result-width
+						]
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						displacement: either null? code [0][
+							instruction-offsets/target - written
+						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/branch-condition at
+							(capacity - written) arm64-encoder/EQ displacement
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						case-index: case-index + 1
+					]
+					target: instruction/c
+					unless merge-control-target target depth fn view scratch
+						instruction-depths entry-types entry-kinds entry-flags [
+						return INVALID_IR
+					]
+					displacement: either null? code [0][
+						instruction-offsets/target - written
+					]
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: arm64-encoder/branch-relative at
+						(capacity - written) displacement
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					fallthrough?: false
+				]
+				instruction/op = OP_FAIL [
+					unless all [
+						instruction/a > 0 instruction/b = 0 instruction/c = 0
+					][return INVALID_IR]
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: arm64-encoder/trap at (capacity - written)
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					fallthrough?: false
 				]
 				instruction/op = OP_RETURN [
 					if any [
@@ -3337,13 +3786,14 @@ arm64-codegen: context [
 					encoded: emit-epilogue plan at (capacity - written)
 					if encoded < 0 [return encoded]
 					written: written + encoded
-					returned?: true
+					return-count: return-count + 1
+					fallthrough?: false
 				]
 				true [return UNSUPPORTED]
 			]
 			index: index + 1
 		]
-		either returned? [written][INVALID_IR]
+		either all [return-count > 0 not fallthrough?][written][INVALID_IR]
 	]
 
 	release: func [memory [byte-ptr!] result [integer!] return: [integer!]][
@@ -3407,6 +3857,10 @@ arm64-codegen: context [
 		words: words + (max-storage * 3)
 		if max-instructions > ((2147483647 - words) / 7)[return OUTPUT_FULL]
 		words: words + (max-instructions * 7)
+		if header/instruction-count > ((2147483647 - words) / 6)[
+			return OUTPUT_FULL
+		]
+		words: words + (header/instruction-count * 6)
 		if header/global-count > ((2147483647 - words) / 3)[return OUTPUT_FULL]
 		words: words + (header/global-count * 3)
 		if header/function-count > (2147483647 - header/global-count)[
@@ -3437,8 +3891,15 @@ arm64-codegen: context [
 		scratch/stack-low: scratch/stack-locations + max-instructions
 		scratch/stack-high: scratch/stack-low + max-instructions
 		scratch/stack-flags: scratch/stack-high + max-instructions
-		scratch/instruction-offsets: scratch/stack-flags + max-instructions
-		scratch/global-homes: scratch/instruction-offsets + max-instructions
+		scratch/plan-depths: scratch/stack-flags + max-instructions
+		scratch/instruction-offsets: scratch/plan-depths + max-instructions
+		scratch/instruction-depths:
+			scratch/instruction-offsets + header/instruction-count
+		scratch/entry-types: scratch/instruction-depths + header/instruction-count
+		scratch/entry-kinds: scratch/entry-types + header/instruction-count
+		scratch/entry-flags: scratch/entry-kinds + header/instruction-count
+		scratch/control-uses: scratch/entry-flags + header/instruction-count
+		scratch/global-homes: scratch/control-uses + header/instruction-count
 		global-offsets: scratch/global-homes + header/global-count
 		global-sizes: global-offsets + header/global-count
 		reference-state/counts: global-sizes + header/global-count
@@ -3465,6 +3926,8 @@ arm64-codegen: context [
 			reference-state/cursors/id: 0
 			id: id + 1
 		]
+		status: prepare-control-targets view scratch
+		if status < 0 [return release memory status]
 
 		if header/function-count > (2147483647 / BITMAP_SIZE)[
 			return release memory OUTPUT_FULL

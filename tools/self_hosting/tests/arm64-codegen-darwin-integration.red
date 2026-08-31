@@ -183,6 +183,67 @@ check status = 42 [
 	"generated ARM64 SIZE? module returned " status " instead of 42"
 ]
 
+control-source: {
+	Red/System []
+	either-value: func [flag [logic!] return: [integer!]][
+		either flag [11][22]
+	]
+	case-value: func [value [integer!] return: [integer!]][
+		case [
+			value = 1 [3]
+			value = 2 [5]
+			true [7]
+		]
+	]
+	switch-value: func [value [integer!] return: [integer!]][
+		switch value [1 [13] 2 [17] default [19]]
+	]
+	early-value: func [value [integer!] return: [integer!]][
+		if value = 0 [return 4]
+		8
+	]
+	nested-value: func [flag [logic!] return: [integer!]][
+		1 + (either flag [2][3])
+	]
+	main: func [return: [integer!]][
+		(either-value true) + (case-value 2) + (switch-value 1)
+			+ (early-value 0) + (nested-value true) + 6
+	]
+}
+
+control-ir: compiler-rsir-frontend/compile load control-source 'user
+check binary? control-ir [
+	"ARM64 control-flow integration frontend failed: "
+	mold compiler-rsir-frontend/last-error
+]
+change/part control-ir int-to-bin/to-bin32 3 4
+change/part at control-ir 5 int-to-bin/to-bin32 6 4
+
+control-image: make binary! 131072
+status: codegen-module control-ir control-image 2 0
+check status = 0 ["ARM64 control-flow integration codegen status=" status]
+
+control-job: compiler-system-job/new 'Darwin-ARM64
+check object? control-job "could not create a Darwin ARM64 control-flow job"
+control-job: construct/with body-of control-job linker/job-class
+compiler-system-job/job-set control-job 'runtime? false
+compiler-system-job/job-set control-job 'debug? false
+compiler-system-job/job-set control-job 'build-prefix output-dir
+compiler-system-job/job-set control-job 'build-basename %arm64-hybrid-control-integration
+compiler-system-job/job-set control-job 'build-suffix none
+
+check linker/load-codegen control-job control-image [
+	"Darwin linker rejected ARM64 control-flow image: " linker/codegen-error
+]
+control-output: linker/build control-job
+check all [file? control-output exists? control-output][
+	"Darwin linker did not write " mold control-output
+]
+status: call/wait to-local-file control-output
+check status = 42 [
+	"generated ARM64 control-flow module returned " status " instead of 42"
+]
+
 narrow-source: {
 	Red/System []
 	compute: func [

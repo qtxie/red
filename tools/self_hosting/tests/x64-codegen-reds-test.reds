@@ -270,11 +270,153 @@ execute-small-return?: func [
 	valid?
 ]
 
+test-linear-scan-allocation?: func [
+	return: [logic!]
+	/local context [x64-function-context! value]
+		scratch [codegen-scratch! value]
+		state [machine-state! value]
+		task [codegen-task! value]
+		fn [rsir-function! value]
+		interval [x64-live-interval!]
+		intervals [byte-ptr!]
+		offset-bytes [byte-ptr!]
+		offsets [int-ptr!]
+		slot result register1 register2 register3 register4 register5 register6 register7 [integer!]
+		valid? [logic!]
+][
+	intervals: allocate (7 * size? x64-live-interval!)
+	offset-bytes: allocate (7 * size? integer!)
+	offsets: as int-ptr! offset-bytes
+	if any [null? intervals null? offset-bytes][
+		if not null? intervals [free intervals]
+		if not null? offset-bytes [free offset-bytes]
+		return false
+	]
+
+	slot: 1
+	while [slot <= 7][
+		interval: as x64-live-interval! (intervals
+			+ ((slot - 1) * size? x64-live-interval!))
+		interval/start: 0
+		interval/end: 0
+		interval/weight: 0
+		interval/class: 0
+		interval/register: x64-codegen/ALLOCATION_UNASSIGNED
+		interval/flags: 0
+		offsets/slot: 1
+		slot: slot + 1
+	]
+
+	; The third incoming Win64 integer argument reserves R8 through index 50.
+	interval: as x64-live-interval! intervals
+	interval/start: 1
+	interval/end: 50
+	interval/class: x64-codegen/ALLOCATION_GPR
+	interval/register: x64-encoder/R8
+	interval/flags: x64-codegen/ALLOCATION_FIXED
+		or x64-codegen/ALLOCATION_PROCESSED
+
+	; Three low-to-medium-cost GPR intervals initially occupy R9-R11.
+	interval: as x64-live-interval! (intervals + (1 * size? x64-live-interval!))
+	interval/start: 2
+	interval/end: 40
+	interval/weight: 2
+	interval/class: x64-codegen/ALLOCATION_GPR
+	interval/flags: x64-codegen/ALLOCATION_INITIALIZED
+
+	interval: as x64-live-interval! (intervals + (2 * size? x64-live-interval!))
+	interval/start: 3
+	interval/end: 40
+	interval/weight: 4
+	interval/class: x64-codegen/ALLOCATION_GPR
+	interval/flags: x64-codegen/ALLOCATION_INITIALIZED
+
+	interval: as x64-live-interval! (intervals + (3 * size? x64-live-interval!))
+	interval/start: 4
+	interval/end: 40
+	interval/weight: 6
+	interval/class: x64-codegen/ALLOCATION_GPR
+	interval/flags: x64-codegen/ALLOCATION_INITIALIZED
+
+	; This dense interval should evict the low-cost interval in slot 2.
+	interval: as x64-live-interval! (intervals + (4 * size? x64-live-interval!))
+	interval/start: 5
+	interval/end: 20
+	interval/weight: 40
+	interval/class: x64-codegen/ALLOCATION_GPR
+	interval/flags: x64-codegen/ALLOCATION_INITIALIZED
+
+	; This sparse range is cheaper to spill than any remaining GPR interval.
+	interval: as x64-live-interval! (intervals + (5 * size? x64-live-interval!))
+	interval/start: 6
+	interval/end: 100
+	interval/weight: 1
+	interval/class: x64-codegen/ALLOCATION_GPR
+	interval/flags: x64-codegen/ALLOCATION_INITIALIZED
+
+	; XMM allocation is an independent register class under the same pressure.
+	interval: as x64-live-interval! (intervals + (6 * size? x64-live-interval!))
+	interval/start: 2
+	interval/end: 100
+	interval/weight: 10
+	interval/class: x64-codegen/ALLOCATION_XMM
+	interval/flags: x64-codegen/ALLOCATION_INITIALIZED
+
+	fn/parameter-count: 1
+	fn/local-count: 6
+	task/fn: fn
+	scratch/allocation-intervals: intervals
+	scratch/storage-offsets: offsets
+	state/storage-count: 7
+	context/task: task
+	context/scratch: scratch
+	context/state: state
+	result: x64-codegen/allocate-local-intervals context
+
+	interval: as x64-live-interval! intervals
+	register1: interval/register
+	interval: as x64-live-interval! (intervals + (1 * size? x64-live-interval!))
+	register2: interval/register
+	interval: as x64-live-interval! (intervals + (2 * size? x64-live-interval!))
+	register3: interval/register
+	interval: as x64-live-interval! (intervals + (3 * size? x64-live-interval!))
+	register4: interval/register
+	interval: as x64-live-interval! (intervals + (4 * size? x64-live-interval!))
+	register5: interval/register
+	interval: as x64-live-interval! (intervals + (5 * size? x64-live-interval!))
+	register6: interval/register
+	interval: as x64-live-interval! (intervals + (6 * size? x64-live-interval!))
+	register7: interval/register
+	valid?: all [
+		result = 0
+		register1 = x64-encoder/R8
+		register2 = x64-codegen/ALLOCATION_SPILLED
+		register3 >= 0
+		register4 >= 0
+		register5 >= 0
+		register3 <> register4
+		register3 <> register5
+		register4 <> register5
+		register6 = x64-codegen/ALLOCATION_SPILLED
+		register7 = 2
+		offsets/2 = 1
+		offsets/3 = 0
+		offsets/4 = 0
+		offsets/5 = 0
+		offsets/6 = 1
+		offsets/7 = 0
+	]
+	free intervals
+	free offset-bytes
+	valid?
+]
+
 failures: 0
 identity-code-size: 0
 folded-code-size: 0
 local-code-size: 0
 promotion-frame-size: 0
+floating-promotion-frame-size: 0
 branch-code-size: 0
 call-branch-code-size: 0
 imm-fold-code-size: 0
@@ -295,6 +437,10 @@ literal-call-code-size: 0
 packed-argument-code-size: 0
 widening-argument-code-size: 0
 pointer-fold-code-size: 0
+unless test-linear-scan-allocation? [
+	print ["linear-scan allocation policy failed" lf]
+	failures: failures + 1
+]
 no-types: as byte-ptr! 0
 sink-pairs: declare signature-pairs!
 sink-pairs/memory: null
@@ -1098,8 +1244,8 @@ if any [size <= 0 not execute-first? output 14][
 ]
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
-	if fn/frame-size <> 64 [
-		print ["O2 promoted a lone repeated integer local" lf]
+	if fn/frame-size >= 64 [
+		print ["O2 did not allocate a profitable integer interval" lf]
 		failures: failures + 1
 	]
 ]
@@ -1169,6 +1315,7 @@ local-ir/242: as byte! 6Eh
 size: x64-codegen/generate local-ir 242 output 1024 0
 if size > 0 [
 	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	floating-promotion-frame-size: fn/frame-size
 	if fn/code-size <> 55 [
 		print ["O0 XMM SET/operator location code size: " fn/code-size lf]
 		failures: failures + 1
@@ -1177,6 +1324,19 @@ if size > 0 [
 if any [size <= 0 not execute-floating? output 3.0][
 	print ["O0 XMM operator location was not forwarded" lf]
 	failures: failures + 1
+]
+
+size: x64-codegen/generate local-ir 242 output 1024 2
+if any [size <= 0 not execute-floating? output 3.0][
+	print ["O2 XMM local allocation produced the wrong result" lf]
+	failures: failures + 1
+]
+if size > 0 [
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE)
+	if fn/frame-size >= floating-promotion-frame-size [
+		print ["O2 XMM interval kept a redundant frame home" lf]
+		failures: failures + 1
+	]
 ]
 
 ; A register-resident value must be materialized only for the old duplicate

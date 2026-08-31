@@ -216,6 +216,7 @@ codegen-scratch!: alias struct! [
 	stack-kinds         [int-ptr!]
 	stack-tags          [int-ptr!]
 	storage-offsets     [int-ptr!]
+	allocation-intervals [byte-ptr!]
 	import-refs         [int-ptr!]
 	switch-effect-links [int-ptr!]
 	switch-effect-users [int-ptr!]
@@ -272,8 +273,6 @@ machine-state!: alias struct! [
 	resident-width          [integer!]
 	resident-mark           [integer!]
 	resident-clean?         [logic!]
-	promoted-slot1          [integer!]
-	promoted-slot2          [integer!]
 	incoming-arguments      [integer!]
 	flags-condition         [integer!]
 	last-math-operation     [integer!]
@@ -330,6 +329,19 @@ x64-instruction-state!: alias struct! [
 	set-pair?             [logic!]
 	address-pair?         [logic!]
 	load-pair?            [logic!]
+]
+
+; One interval per scalar storage slot. `register` is a physical register ID,
+; or ALLOCATION_UNASSIGNED/ALLOCATION_SPILLED when the value stays in memory.
+; The record is intentionally compact because it is allocated for every
+; parameter/local slot in the module scratch arena.
+x64-live-interval!: alias struct! [
+	start    [integer!]
+	end      [integer!]
+	weight   [integer!]
+	class    [integer!]
+	register [integer!]
+	flags    [integer!]
 ]
 
 ; What `generate` threads from one module-wide phase to the next: the input
@@ -514,6 +526,21 @@ x64-codegen: context [
 	; A scalar parameter still resides in its incoming Win64 argument register.
 	LOCATION_ARGUMENT:       9
 	LOCATION_REGISTER_HOME: 10
+
+	; Register-allocation metadata. A negative register value means that the
+	; interval is spilled (or has not been assigned yet); only non-negative
+	; values are materialized as canonical register homes.
+	ALLOCATION_UNASSIGNED: -1
+	ALLOCATION_SPILLED:    -2
+	ALLOCATION_GPR:         1
+	ALLOCATION_XMM:         2
+	ALLOCATION_FIXED:       1
+	ALLOCATION_CLOBBERED:   2
+	ALLOCATION_PROCESSED:   4
+	ALLOCATION_INITIALIZED: 8
+	ALLOCATION_INVALID:    16
+	ALLOCATION_MIN_WEIGHT:  7
+	ALLOCATION_REGISTER_COUNT: 4
 	; Zero means no stack tag, positive values are variant-chain instruction
 	; indexes, and -1 marks a direct binary64 literal without colliding with them.
 	FLOAT_LITERAL_TAG: -1
@@ -1882,30 +1909,100 @@ x64-codegen: context [
 		offsets/slot
 	]
 
-	promoted-storage-register: func [
-		state [machine-state!]
-		slot [integer!]
+	allocated-storage-register: func [
+		intervals [byte-ptr!]
+		slot index [integer!]
 		return: [integer!]
+		/local interval [x64-live-interval!]
 	][
-		case [
-			slot = state/promoted-slot1 [x64-encoder/R10]
-			slot = state/promoted-slot2 [x64-encoder/R11]
-			true [-1]
+		if any [null? intervals slot <= 0 index <= 0][
+			return ALLOCATION_UNASSIGNED
+		]
+		interval: as x64-live-interval! (intervals
+			+ ((slot - 1) * size? x64-live-interval!))
+		if any [
+			interval/register < 0
+			(interval/flags and ALLOCATION_FIXED) <> 0
+			index < interval/start
+			index > interval/end
+		][return ALLOCATION_UNASSIGNED]
+		interval/register
+	]
+
+	; These operations invalidate every volatile home. Linear scan keeps an
+	; interval that crosses one of them in memory; intervals ending before or
+	; starting after the boundary remain independently allocatable.
+	allocation-clobber?: func [
+		instruction [rsir-instruction!]
+		return: [logic!]
+	][
+		any [
+			instruction/op = OP_CALL
+			instruction/op = OP_NATIVE
+			instruction/op = OP_THROW
+			instruction/op = OP_SUB_CALL
+			instruction/op = OP_SUB_RETURN
+			instruction/op = OP_OVERFLOW
+			all [
+				instruction/op = OP_BINARY
+				instruction/b <> 0
+			]
 		]
 	]
 
-	; Whole-function register homes stay within the simple leaf subset whose
-	; volatile-register ownership is explicit. THROW belongs here because its
-	; unwind sequence uses R11 as the resume-address register.
-	promotion-barrier?: func [operation [integer!] return: [logic!]][
+	allocation-control-boundary?: func [
+		operation [integer!]
+		return: [logic!]
+	][
 		any [
-			operation = OP_CALL
-			operation = OP_NATIVE
+			operation = OP_CATCH
+			operation = OP_END_CATCH
 			operation = OP_THROW
+			operation = OP_JUMP
+			operation = OP_BRANCH
 			operation = OP_SWITCH
+			operation = OP_ENTRY
 			operation = OP_SUB_CALL
 			operation = OP_SUB_RETURN
+			operation = OP_FAIL
 		]
+	]
+
+	allocation-register: func [
+		register-class ordinal [integer!]
+		return: [integer!]
+	][
+		unless all [ordinal >= 1 ordinal <= ALLOCATION_REGISTER_COUNT][
+			return ALLOCATION_UNASSIGNED
+		]
+		case [
+			register-class = ALLOCATION_GPR [
+				x64-encoder/R8 + (ordinal - 1)
+			]
+			register-class = ALLOCATION_XMM [
+				; XMM0/XMM1 belong to the transient expression stack.
+				ordinal + 1
+			]
+			true [ALLOCATION_UNASSIGNED]
+		]
+	]
+
+	allocation-cost: func [
+		interval [x64-live-interval!]
+		return: [integer!]
+		/local span [integer!]
+	][
+		span: (interval/end - interval/start) + 1
+		if any [span <= 0 interval/weight <= 0][return 0]
+		if interval/weight > (2147483647 / 16)[return 2147483647]
+		(interval/weight * 16) / span
+	]
+
+	allocation-intervals-overlap?: func [
+		left right [x64-live-interval!]
+		return: [logic!]
+	][
+		all [left/start <= right/end right/start <= left/end]
 	]
 
 	; Plans the maximal scalar literal suffix of each fixed direct CALL. The
@@ -3740,6 +3837,7 @@ x64-codegen: context [
 		view/stack-kinds:         work/stack-kinds
 		view/stack-tags:          work/stack-tags
 		view/storage-offsets:     work/storage-offsets
+		view/allocation-intervals: work/allocation-intervals
 		view/import-refs:         work/import-refs
 		view/switch-effect-links: work/switch-effect-links
 		view/switch-effect-users: work/switch-effect-users
@@ -4020,18 +4118,38 @@ x64-codegen: context [
 			all [state/sub-entry-count > 0 state/main-entry-count <> 1]
 			all [state/sub-entry-count = 0 state/main-entry-count <> 0]
 		][return INVALID_IR]
-		; A register parameter needs no frame home when its only live reference is
-		; one linear load from the still-available ABI register. -1 marks that
-		; single candidate; any other or repeated reference restores the home.
-
 		0
 	]
 
-	; O2 keeps the two hottest integer locals of a leaf function in volatile
-	; registers for the whole function. A local qualifies only when every live
-	; address is consumed immediately by LOAD or SET, so its address cannot
-	; escape and the register remains its canonical home across control flow.
-	plan-promoted-locals: func [
+	reset-register-allocation: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local view [codegen-scratch!]
+			state [machine-state!]
+			interval [x64-live-interval!]
+			slot [integer!]
+	][
+		view: context/scratch
+		state: context/state
+		slot: 1
+		while [slot <= state/storage-count][
+			interval: as x64-live-interval! (view/allocation-intervals
+				+ ((slot - 1) * size? x64-live-interval!))
+			interval/start: 0
+			interval/end: 0
+			interval/weight: 0
+			interval/class: 0
+			interval/register: ALLOCATION_UNASSIGNED
+			interval/flags: 0
+			slot: slot + 1
+		]
+		0
+	]
+
+	; Builds one canonical interval per eligible scalar local. Requiring an
+	; adjacent LOAD or SET keeps addresses from escaping; requiring the first
+	; access to be SET means a register home never needs an implicit frame load.
+	discover-local-intervals: func [
 		context [x64-function-context!]
 		return: [integer!]
 		/local module [rsir-module!]
@@ -4041,11 +4159,12 @@ x64-codegen: context [
 			fn [rsir-function!]
 			instruction next-instruction [rsir-instruction!]
 			parameter [rsir-parameter!]
+			interval [x64-live-interval!]
 			table [type-table!]
 			instructions parameters [byte-ptr!]
 			instruction-effects control-uses catch-depths storage-offsets [int-ptr!]
-			index next-index source-slot slot best-slot best-count pass width [integer!]
-			live? [logic!]
+			index next-index slot width weight [integer!]
+			direct? [logic!]
 	][
 		module: context/module
 		task: context/task
@@ -4059,17 +4178,25 @@ x64-codegen: context [
 		control-uses: view/control-uses
 		catch-depths: view/catch-depths
 		storage-offsets: view/storage-offsets
-		state/promoted-slot1: 0
-		state/promoted-slot2: 0
 
-		if any [task/opt-level <> 2 task/entry? fn/local-count = 0][return 0]
-		index: 1
-		while [index <= fn/instruction-count][
-			instruction: as rsir-instruction! (instructions
-				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
-			live?: (instruction-effects/index and EFFECT_LIVE) <> 0
-			if all [live? promotion-barrier? instruction/op][return 0]
-			index: index + 1
+		slot: fn/parameter-count + 1
+		while [slot <= state/storage-count][
+			parameter: as rsir-parameter! (parameters
+				+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
+			width: value-width parameter/type parameter/flags table
+			if all [
+				storage-offsets/slot > 0
+				parameter/flags = 0
+				machine-value? parameter/type 0 table
+				any [width = 4 width = 8]
+			][
+				interval: as x64-live-interval! (view/allocation-intervals
+					+ ((slot - 1) * size? x64-live-interval!))
+				interval/class: either float-type? parameter/type table [
+					ALLOCATION_XMM
+				][ALLOCATION_GPR]
+			]
+			slot: slot + 1
 		]
 
 		index: 1
@@ -4078,19 +4205,22 @@ x64-codegen: context [
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
 			if all [
 				(instruction-effects/index and EFFECT_LIVE) <> 0
+				(instruction-effects/index and EFFECT_ELIDED) = 0
 				instruction/op = OP_ADDRESS
 				instruction/a = LOCAL_ADDRESS
 				instruction/b > fn/parameter-count
 				instruction/b <= state/storage-count
 			][
-				source-slot: instruction/b
-				if storage-offsets/source-slot > 0 [
+				slot: instruction/b
+				interval: as x64-live-interval! (view/allocation-intervals
+					+ ((slot - 1) * size? x64-live-interval!))
+				if interval/class <> 0 [
 					next-index: index + 1
-					live?: false
+					direct?: false
 					if next-index <= fn/instruction-count [
 						next-instruction: as rsir-instruction! (instructions
 							+ ((next-index - 1) * RSIR_INSTRUCTION_SIZE))
-						live?: all [
+						direct?: all [
 							(instruction-effects/next-index and EFFECT_LIVE) <> 0
 							(instruction-effects/next-index and EFFECT_ELIDED) = 0
 							control-uses/next-index = 0
@@ -4101,57 +4231,350 @@ x64-codegen: context [
 							]
 						]
 					]
-					unless live? [
-						storage-offsets/source-slot:
-							0 - storage-offsets/source-slot
+					either direct? [
+						if interval/start = 0 [
+							interval/start: index
+							either next-instruction/op = OP_SET [
+								interval/flags: interval/flags or ALLOCATION_INITIALIZED
+							][
+								interval/flags: interval/flags or ALLOCATION_INVALID
+							]
+						]
+						interval/end: next-index
+						weight: either next-instruction/op = OP_LOAD [3][2]
+						if interval/weight > (2147483647 - weight)[return OUTPUT_FULL]
+						interval/weight: interval/weight + weight
+					][
+						interval/flags: interval/flags or ALLOCATION_INVALID
 					]
 				]
 			]
 			index: index + 1
 		]
+		0
+	]
 
-		pass: 1
-		while [pass <= 2][
-			best-slot: 0
-			; Fewer than three static accesses do not repay extended-register
-			; moves in straight-line code.
-			best-count: 2
+	; Direct incoming arguments are fixed intervals. They are not emitted as
+	; allocator homes; they only reserve overlapping ABI registers until the
+	; existing direct-argument path consumes them.
+	discover-abi-constraints: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local module [rsir-module!]
+			task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			instruction next-instruction [rsir-instruction!]
+			parameter [rsir-parameter!]
+			interval [x64-live-interval!]
+			table [type-table!]
+			instructions parameters [byte-ptr!]
+			instruction-effects control-uses catch-depths storage-offsets [int-ptr!]
+			slot physical-slot index next-index width [integer!]
+			floating? direct? [logic!]
+	][
+		module: context/module
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		table: module/table
+		instructions: view/instructions
+		parameters: module/parameters
+		instruction-effects: view/instruction-effects
+		control-uses: view/control-uses
+		catch-depths: view/catch-depths
+		storage-offsets: view/storage-offsets
+
+		slot: 1
+		while [slot <= fn/parameter-count][
+			physical-slot: slot + state/hidden-shift
+			if all [storage-offsets/slot = 0 physical-slot <= 4][
+				parameter: as rsir-parameter! (parameters
+					+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
+				width: value-width parameter/type parameter/flags table
+				if all [
+					parameter/flags = 0
+					machine-value? parameter/type 0 table
+					any [width = 4 width = 8]
+				][
+					index: 1
+					while [index < fn/instruction-count][
+						instruction: as rsir-instruction! (instructions
+							+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+						direct?: all [
+							(instruction-effects/index and EFFECT_LIVE) <> 0
+							(instruction-effects/index and EFFECT_ELIDED) = 0
+							instruction/op = OP_ADDRESS
+							instruction/a = LOCAL_ADDRESS
+							instruction/b = slot
+						]
+						if direct? [
+							next-index: index + 1
+							next-instruction: as rsir-instruction! (instructions
+								+ ((next-index - 1) * RSIR_INSTRUCTION_SIZE))
+							direct?: all [
+								next-instruction/op = OP_LOAD
+								(instruction-effects/next-index and EFFECT_LIVE) <> 0
+								(instruction-effects/next-index and EFFECT_ELIDED) = 0
+								control-uses/next-index = 0
+								catch-depths/next-index = catch-depths/index
+							]
+						]
+						if direct? [
+							floating?: float-type? parameter/type table
+							interval: as x64-live-interval! (view/allocation-intervals
+								+ ((slot - 1) * size? x64-live-interval!))
+							interval/start: 1
+							interval/end: next-index
+							interval/class: either floating? [
+								ALLOCATION_XMM
+							][ALLOCATION_GPR]
+							interval/register: either floating? [
+								physical-slot - 1
+							][argument-register physical-slot]
+							interval/flags: ALLOCATION_FIXED or ALLOCATION_PROCESSED
+							index: fn/instruction-count
+						]
+						index: index + 1
+					]
+				]
+			]
+			slot: slot + 1
+		]
+		0
+	]
+
+	; Reject intervals that cross a volatile-register clobber or a control-flow
+	; boundary. Splitting at such boundaries can be added later without changing
+	; the allocator; until then, spilling the whole interval is deterministic and
+	; keeps its canonical value in one place.
+	qualify-local-intervals: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			instruction [rsir-instruction!]
+			interval [x64-live-interval!]
+			instructions [byte-ptr!]
+			instruction-effects control-uses catch-depths [int-ptr!]
+			slot index interval-start interval-catch [integer!]
+			unsafe? [logic!]
+	][
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		instructions: view/instructions
+		instruction-effects: view/instruction-effects
+		control-uses: view/control-uses
+		catch-depths: view/catch-depths
+
+		slot: fn/parameter-count + 1
+		while [slot <= state/storage-count][
+			interval: as x64-live-interval! (view/allocation-intervals
+				+ ((slot - 1) * size? x64-live-interval!))
+			unsafe?: any [
+				interval/class = 0
+				interval/start <= 0
+				interval/end < interval/start
+				interval/weight < ALLOCATION_MIN_WEIGHT
+				(interval/flags and ALLOCATION_INITIALIZED) = 0
+				(interval/flags and ALLOCATION_INVALID) <> 0
+			]
+			unless unsafe? [
+				interval-start: interval/start
+				interval-catch: catch-depths/interval-start
+				index: interval-start
+				while [all [not unsafe? index <= interval/end]][
+					instruction: as rsir-instruction! (instructions
+						+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+					if all [
+						(instruction-effects/index and EFFECT_LIVE) <> 0
+						(instruction-effects/index and EFFECT_ELIDED) = 0
+					][
+						if allocation-clobber? instruction [
+							interval/flags: interval/flags or ALLOCATION_CLOBBERED
+							unsafe?: true
+						]
+						if any [
+							control-uses/index <> 0
+							catch-depths/index <> interval-catch
+							allocation-control-boundary? instruction/op
+						][
+							interval/flags: interval/flags or ALLOCATION_INVALID
+							unsafe?: true
+						]
+					]
+					index: index + 1
+				]
+			]
+			if unsafe? [interval/register: ALLOCATION_SPILLED]
+			slot: slot + 1
+		]
+		0
+	]
+
+	allocation-register-free?: func [
+		context [x64-function-context!]
+		current-slot register-id [integer!]
+		return: [logic!]
+		/local view [codegen-scratch!]
+			state [machine-state!]
+			current other [x64-live-interval!]
+			slot [integer!]
+	][
+		view: context/scratch
+		state: context/state
+		current: as x64-live-interval! (view/allocation-intervals
+			+ ((current-slot - 1) * size? x64-live-interval!))
+		slot: 1
+		while [slot <= state/storage-count][
+			if slot <> current-slot [
+				other: as x64-live-interval! (view/allocation-intervals
+					+ ((slot - 1) * size? x64-live-interval!))
+				if all [
+					other/register = register-id
+					other/class = current/class
+					allocation-intervals-overlap? current other
+				][return false]
+			]
+			slot: slot + 1
+		]
+		true
+	]
+
+	; Linear scan processes intervals by start position. When every register is
+	; busy, scaled access density is the spill cost; equal-cost ties evict the
+	; interval ending later so a short range releases its register sooner.
+	allocate-local-intervals: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			current other [x64-live-interval!]
+			storage-offsets [int-ptr!]
+			slot selected-slot selected-start ordinal register-id victim-slot
+				victim-cost victim-end other-cost [integer!]
+	][
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		storage-offsets: view/storage-offsets
+
+		while [true][
+			selected-slot: 0
+			selected-start: 2147483647
 			slot: fn/parameter-count + 1
 			while [slot <= state/storage-count][
+				current: as x64-live-interval! (view/allocation-intervals
+					+ ((slot - 1) * size? x64-live-interval!))
 				if all [
-					slot <> state/promoted-slot1
-					storage-offsets/slot > best-count
+					current/class <> 0
+					current/register = ALLOCATION_UNASSIGNED
+					(current/flags and ALLOCATION_PROCESSED) = 0
+					current/start > 0
+					current/start < selected-start
 				][
-					parameter: as rsir-parameter! (parameters
-						+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
-					width: value-width parameter/type parameter/flags table
-					if all [
-						parameter/flags = 0
-						integer-type? parameter/type table
-						any [width = 4 width = 8]
-					][
-						best-slot: slot
-						best-count: storage-offsets/slot
-					]
+					selected-slot: slot
+					selected-start: current/start
 				]
 				slot: slot + 1
 			]
-			if best-slot = 0 [
-				state/promoted-slot1: 0
-				state/promoted-slot2: 0
-				return 0
+			if selected-slot = 0 [break]
+
+			current: as x64-live-interval! (view/allocation-intervals
+				+ ((selected-slot - 1) * size? x64-live-interval!))
+			register-id: ALLOCATION_UNASSIGNED
+			ordinal: 1
+			while [all [
+				register-id < 0
+				ordinal <= ALLOCATION_REGISTER_COUNT
+			]][
+				register-id: allocation-register current/class ordinal
+				unless allocation-register-free? context selected-slot register-id [
+					register-id: ALLOCATION_UNASSIGNED
+				]
+				ordinal: ordinal + 1
 			]
-			either pass = 1 [
-				state/promoted-slot1: best-slot
-			][state/promoted-slot2: best-slot]
-			pass: pass + 1
+			either register-id >= 0 [
+				current/register: register-id
+			][
+				victim-slot: 0
+				victim-cost: allocation-cost current
+				victim-end: current/end
+				slot: 1
+				while [slot <= state/storage-count][
+					if slot <> selected-slot [
+						other: as x64-live-interval! (view/allocation-intervals
+							+ ((slot - 1) * size? x64-live-interval!))
+						if all [
+							other/register >= 0
+							other/class = current/class
+							(other/flags and ALLOCATION_FIXED) = 0
+							allocation-intervals-overlap? current other
+						][
+							other-cost: allocation-cost other
+							if any [
+								other-cost < victim-cost
+								all [
+									other-cost = victim-cost
+									other/end > victim-end
+								]
+							][
+								victim-slot: slot
+								victim-cost: other-cost
+								victim-end: other/end
+							]
+						]
+					]
+					slot: slot + 1
+				]
+				either victim-slot > 0 [
+					other: as x64-live-interval! (view/allocation-intervals
+						+ ((victim-slot - 1) * size? x64-live-interval!))
+					current/register: other/register
+					other/register: ALLOCATION_SPILLED
+				][current/register: ALLOCATION_SPILLED]
+			]
+			current/flags: current/flags or ALLOCATION_PROCESSED
 		]
-		; Commit both selections together; a lone promoted local is not profitable.
-		slot: state/promoted-slot1
-		storage-offsets/slot: 0
-		slot: state/promoted-slot2
-		storage-offsets/slot: 0
+
+		slot: fn/parameter-count + 1
+		while [slot <= state/storage-count][
+			current: as x64-live-interval! (view/allocation-intervals
+				+ ((slot - 1) * size? x64-live-interval!))
+			if current/register >= 0 [storage-offsets/slot: 0]
+			slot: slot + 1
+		]
 		0
+	]
+
+	plan-register-allocation: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local task [codegen-task!]
+			fn [rsir-function!]
+			result [integer!]
+	][
+		task: context/task
+		fn: task/fn
+		result: reset-register-allocation context
+		if result < 0 [return result]
+		if any [task/opt-level <> 2 task/entry? fn/local-count = 0][return 0]
+		result: discover-local-intervals context
+		if result < 0 [return result]
+		result: discover-abi-constraints context
+		if result < 0 [return result]
+		result: qualify-local-intervals context
+		if result < 0 [return result]
+		allocate-local-intervals context
 	]
 
 	; Identifies parameters that can remain in their incoming ABI registers.
@@ -4297,7 +4720,7 @@ x64-codegen: context [
 		table: module/table
 		entry?: task/entry?
 		storage-offsets: view/storage-offsets
-		result: plan-promoted-locals context
+		result: plan-register-allocation context
 		if result < 0 [return result]
 
 		state/storage-bytes: plan-storage module fn storage-offsets
@@ -4678,7 +5101,7 @@ x64-codegen: context [
 			global-reference-id [integer!]
 			incoming-mask [integer!]
 			incoming-register [integer!]
-			promoted-register [integer!]
+			home-register [integer!]
 			compatibility [integer!]
 			measure? [logic!]
 			valid? [logic!]
@@ -4705,6 +5128,7 @@ x64-codegen: context [
 			source-located? [logic!]
 			direct-frame-target? [logic!]
 			direct-register-target? [logic!]
+			direct-xmm-register-target? [logic!]
 			direct-literal? [logic!]
 			resident-hit? [logic!]
 	][
@@ -4797,7 +5221,8 @@ x64-codegen: context [
 						next-instruction/a = LOCAL_ADDRESS
 						next-instruction/b > 0
 						next-instruction/b <= state/storage-count
-						(promoted-storage-register state next-instruction/b) < 0
+						(allocated-storage-register view/allocation-intervals
+							next-instruction/b next-index) < 0
 						(index + 3) <= fn/instruction-count
 					][
 						target: index + 2
@@ -5138,11 +5563,12 @@ x64-codegen: context [
 								parameter/flags = INLINE
 								(win64-aggregate-width parameter/type table) = 0
 							]
-							promoted-register: promoted-storage-register state instruction/b
-							either promoted-register >= 0 [
+							home-register: allocated-storage-register
+								view/allocation-intervals instruction/b index
+							either home-register >= 0 [
 								unless linear? [return INVALID_IR]
 								location: LOCATION_REGISTER_HOME
-								state/location-source: promoted-register
+								state/location-source: home-register
 								encoded: 0
 							][
 								state/location-source: storage-displacement storage-offsets instruction/b
@@ -5441,9 +5867,18 @@ x64-codegen: context [
 										x64-encoder/RAX state/location-source 8 0
 								]
 								location = LOCATION_REGISTER_HOME [
-									target-width: either width = 8 [8][4]
-									move-operation-value at (capacity - written)
-										register-id state/location-source width target-width signed
+									either floating? [
+										either register-id = state/location-source [0][
+											x64-encoder/xmm-move-register at
+												(capacity - written) register-id
+												state/location-source width
+										]
+									][
+										target-width: either width = 8 [8][4]
+										move-operation-value at (capacity - written)
+											register-id state/location-source width
+											target-width signed
+									]
 								]
 								location = LOCATION_ARGUMENT [
 									incoming-register: either floating? [
@@ -5716,7 +6151,6 @@ x64-codegen: context [
 						source-located?
 						location = LOCATION_FRAME
 					]
-					direct-register-target?: location = LOCATION_REGISTER_HOME
 					target-offset: state/location-source
 					global-reference-id: state/location-reference
 					target-ref: stack-types/target-slot
@@ -5750,6 +6184,14 @@ x64-codegen: context [
 						]
 						target-width: value-width target-ref target-flags table
 						floating?: float-type? target-ref table
+						direct-register-target?: all [
+							location = LOCATION_REGISTER_HOME
+							not floating?
+						]
+						direct-xmm-register-target?: all [
+							location = LOCATION_REGISTER_HOME
+							floating?
+						]
 						source-signed: either signed-type? ref table [1][0]
 					]
 
@@ -5843,6 +6285,13 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: either floating? [
 							case [
+								direct-xmm-register-target? [
+									either target-offset = x64-encoder/XMM0 [0][
+										x64-encoder/xmm-move-register at
+											(capacity - written) target-offset
+											x64-encoder/XMM0 target-width
+									]
+								]
 								direct-frame-target? [
 									x64-encoder/xmm-frame-store at (capacity - written)
 										x64-encoder/XMM0 target-offset target-width
@@ -11371,9 +11820,10 @@ x64-codegen: context [
 			table [type-table!]
 			work [codegen-scratch!]
 			task [codegen-task!]
+			interval [x64-live-interval!]
 			scratch argument-targets [byte-ptr!]
 			import-refs layouts member-offsets [int-ptr!]
-			id count scratch-count member-count parameter-count [integer!]
+			id count scratch-count member-count parameter-count interval-words [integer!]
 	][
 		header: ctx/header
 		module: ctx/module
@@ -11395,8 +11845,13 @@ x64-codegen: context [
 			return OUTPUT_FULL
 		]
 		scratch-count: scratch-count + (header/switch-count * 2)
-		if parameter-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
-		scratch-count: scratch-count + parameter-count
+		interval-words: (size? x64-live-interval!) / 4
+		if any [
+			interval-words <= 0
+			parameter-count > ((2147483647 - scratch-count) / (interval-words + 1))
+		][return OUTPUT_FULL]
+		scratch-count: scratch-count
+			+ (parameter-count * (interval-words + 1))
 		if header/type-count > ((2147483647 - scratch-count) / 4)[
 			return OUTPUT_FULL
 		]
@@ -11441,7 +11896,11 @@ x64-codegen: context [
 		work/tag-widths:          work/tag-slots + header/instruction-count
 		work/result-offsets:      work/tag-widths + header/instruction-count
 		work/storage-offsets:     work/result-offsets + header/instruction-count
-		layouts: work/storage-offsets + parameter-count
+		work/allocation-intervals: as byte-ptr! (
+			work/storage-offsets + parameter-count
+		)
+		layouts: as int-ptr! (work/allocation-intervals
+			+ (parameter-count * size? x64-live-interval!))
 		member-offsets: layouts + (header/type-count * 4)
 		table/layouts: layouts
 		table/member-offsets: member-offsets
@@ -11456,6 +11915,19 @@ x64-codegen: context [
 		while [id <= count][layouts/id: 0 id: id + 1]
 		id: 1
 		while [id <= member-count][member-offsets/id: -1 id: id + 1]
+		id: 1
+		while [id <= parameter-count][
+			work/storage-offsets/id: 0
+			interval: as x64-live-interval! (work/allocation-intervals
+				+ ((id - 1) * size? x64-live-interval!))
+			interval/start: 0
+			interval/end: 0
+			interval/weight: 0
+			interval/class: 0
+			interval/register: ALLOCATION_UNASSIGNED
+			interval/flags: 0
+			id: id + 1
+		]
 		id: 1
 		while [id <= header/instruction-count][
 			argument-targets/id: as byte! 0

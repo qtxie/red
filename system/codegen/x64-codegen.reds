@@ -216,7 +216,10 @@ codegen-scratch!: alias struct! [
 	stack-kinds         [int-ptr!]
 	stack-tags          [int-ptr!]
 	storage-offsets     [int-ptr!]
+	; Per-function scalar allocation state, reused by the two compiler passes.
 	allocation-intervals [byte-ptr!]
+	allocation-order    [int-ptr!]
+	allocation-registers [int-ptr!]
 	import-refs         [int-ptr!]
 	switch-effect-links [int-ptr!]
 	switch-effect-users [int-ptr!]
@@ -233,6 +236,7 @@ codegen-scratch!: alias struct! [
 machine-state!: alias struct! [
 	; Frame layout, fixed before the first instruction is compiled.
 	storage-count           [integer!]	; parameters plus locals
+	allocation-count        [integer!]	; ordered local interval count
 	storage-bytes           [integer!]
 	storage-base            [integer!]
 	storage-slots           [integer!]
@@ -536,11 +540,14 @@ x64-codegen: context [
 	ALLOCATION_XMM:         2
 	ALLOCATION_FIXED:       1
 	ALLOCATION_CLOBBERED:   2
-	ALLOCATION_PROCESSED:   4
-	ALLOCATION_INITIALIZED: 8
-	ALLOCATION_INVALID:    16
+	ALLOCATION_INITIALIZED: 4
+	ALLOCATION_INVALID:     8
 	ALLOCATION_MIN_WEIGHT:  7
 	ALLOCATION_REGISTER_COUNT: 4
+	ALLOCATION_XMM_FIRST:   2
+	ALLOCATION_XMM_LAST:    5
+	; Four GPR owners followed by four XMM owners.
+	ALLOCATION_OWNER_COUNT: 8
 	; Zero means no stack tag, positive values are variant-chain instruction
 	; indexes, and -1 marks a direct binary64 literal without colliding with them.
 	FLOAT_LITERAL_TAG: -1
@@ -1981,9 +1988,32 @@ x64-codegen: context [
 			]
 			register-class = ALLOCATION_XMM [
 				; XMM0/XMM1 belong to the transient expression stack.
-				ordinal + 1
+				ordinal + (ALLOCATION_XMM_FIRST - 1)
 			]
 			true [ALLOCATION_UNASSIGNED]
+		]
+	]
+
+	allocation-register-ordinal: func [
+		register-class register-id [integer!]
+		return: [integer!]
+	][
+		case [
+			register-class = ALLOCATION_GPR [
+				either all [
+					register-id >= x64-encoder/R8
+					register-id <= x64-encoder/R11
+				][(register-id - x64-encoder/R8) + 1][0]
+			]
+			register-class = ALLOCATION_XMM [
+					either all [
+					register-id >= ALLOCATION_XMM_FIRST
+					register-id <= ALLOCATION_XMM_LAST
+				][
+					(register-id - ALLOCATION_XMM_FIRST) + 1
+				][0]
+			]
+			true [0]
 		]
 	]
 
@@ -1996,13 +2026,6 @@ x64-codegen: context [
 		if any [span <= 0 interval/weight <= 0][return 0]
 		if interval/weight > (2147483647 / 16)[return 2147483647]
 		(interval/weight * 16) / span
-	]
-
-	allocation-intervals-overlap?: func [
-		left right [x64-live-interval!]
-		return: [logic!]
-	][
-		all [left/start <= right/end right/start <= left/end]
 	]
 
 	; Plans the maximal scalar literal suffix of each fixed direct CALL. The
@@ -3838,6 +3861,8 @@ x64-codegen: context [
 		view/stack-tags:          work/stack-tags
 		view/storage-offsets:     work/storage-offsets
 		view/allocation-intervals: work/allocation-intervals
+		view/allocation-order:    work/allocation-order
+		view/allocation-registers: work/allocation-registers
 		view/import-refs:         work/import-refs
 		view/switch-effect-links: work/switch-effect-links
 		view/switch-effect-users: work/switch-effect-users
@@ -4131,6 +4156,7 @@ x64-codegen: context [
 	][
 		view: context/scratch
 		state: context/state
+		state/allocation-count: 0
 		slot: 1
 		while [slot <= state/storage-count][
 			interval: as x64-live-interval! (view/allocation-intervals
@@ -4162,8 +4188,9 @@ x64-codegen: context [
 			interval [x64-live-interval!]
 			table [type-table!]
 			instructions parameters [byte-ptr!]
-			instruction-effects control-uses catch-depths storage-offsets [int-ptr!]
-			index next-index slot width weight [integer!]
+			instruction-effects control-uses catch-depths storage-offsets
+				allocation-order [int-ptr!]
+			index next-index slot width weight order-index [integer!]
 			direct? [logic!]
 	][
 		module: context/module
@@ -4178,6 +4205,7 @@ x64-codegen: context [
 		control-uses: view/control-uses
 		catch-depths: view/catch-depths
 		storage-offsets: view/storage-offsets
+		allocation-order: view/allocation-order
 
 		slot: fn/parameter-count + 1
 		while [slot <= state/storage-count][
@@ -4233,6 +4261,12 @@ x64-codegen: context [
 					]
 					either direct? [
 						if interval/start = 0 [
+							if state/allocation-count >= state/storage-count [
+								return INVALID_IR
+							]
+							state/allocation-count: state/allocation-count + 1
+							order-index: state/allocation-count
+							allocation-order/order-index: slot
 							interval/start: index
 							either next-instruction/op = OP_SET [
 								interval/flags: interval/flags or ALLOCATION_INITIALIZED
@@ -4334,7 +4368,7 @@ x64-codegen: context [
 							interval/register: either floating? [
 								physical-slot - 1
 							][argument-register physical-slot]
-							interval/flags: ALLOCATION_FIXED or ALLOCATION_PROCESSED
+							interval/flags: ALLOCATION_FIXED
 							index: fn/instruction-count
 						]
 						index: index + 1
@@ -4418,38 +4452,10 @@ x64-codegen: context [
 		0
 	]
 
-	allocation-register-free?: func [
-		context [x64-function-context!]
-		current-slot register-id [integer!]
-		return: [logic!]
-		/local view [codegen-scratch!]
-			state [machine-state!]
-			current other [x64-live-interval!]
-			slot [integer!]
-	][
-		view: context/scratch
-		state: context/state
-		current: as x64-live-interval! (view/allocation-intervals
-			+ ((current-slot - 1) * size? x64-live-interval!))
-		slot: 1
-		while [slot <= state/storage-count][
-			if slot <> current-slot [
-				other: as x64-live-interval! (view/allocation-intervals
-					+ ((slot - 1) * size? x64-live-interval!))
-				if all [
-					other/register = register-id
-					other/class = current/class
-					allocation-intervals-overlap? current other
-				][return false]
-			]
-			slot: slot + 1
-		]
-		true
-	]
-
-	; Linear scan processes intervals by start position. When every register is
-	; busy, scaled access density is the spill cost; equal-cost ties evict the
-	; interval ending later so a short range releases its register sooner.
+	; Linear scan walks the discovery order once. Eight owner slots are its
+	; active set: four volatile GPRs and four XMM registers. Expiration and spill
+	; selection therefore take constant work per interval, and fixed incoming ABI
+	; intervals participate in the same owner set without ever becoming victims.
 	allocate-local-intervals: func [
 		context [x64-function-context!]
 		return: [integer!]
@@ -4458,8 +4464,9 @@ x64-codegen: context [
 			state [machine-state!]
 			fn [rsir-function!]
 			current other [x64-live-interval!]
-			storage-offsets [int-ptr!]
-			slot selected-slot selected-start ordinal register-id victim-slot
+			storage-offsets allocation-order owners [int-ptr!]
+			slot order-index previous-start ordinal selected-ordinal owner-base
+				owner-index owner-slot register-id victim-slot victim-owner
 				victim-cost victim-end other-cost [integer!]
 	][
 		task: context/task
@@ -4467,59 +4474,104 @@ x64-codegen: context [
 		state: context/state
 		fn: task/fn
 		storage-offsets: view/storage-offsets
+		allocation-order: view/allocation-order
+		owners: view/allocation-registers
 
-		while [true][
-			selected-slot: 0
-			selected-start: 2147483647
-			slot: fn/parameter-count + 1
-			while [slot <= state/storage-count][
-				current: as x64-live-interval! (view/allocation-intervals
-					+ ((slot - 1) * size? x64-live-interval!))
-				if all [
-					current/class <> 0
-					current/register = ALLOCATION_UNASSIGNED
-					(current/flags and ALLOCATION_PROCESSED) = 0
-					current/start > 0
-					current/start < selected-start
-				][
-					selected-slot: slot
-					selected-start: current/start
-				]
-				slot: slot + 1
-			]
-			if selected-slot = 0 [break]
+		owner-index: 1
+		while [owner-index <= ALLOCATION_OWNER_COUNT][
+			owners/owner-index: 0
+			owner-index: owner-index + 1
+		]
 
+		; Precolored argument intervals all begin at entry, so seed them before
+		; walking the ordered local intervals. Registers outside the local pools
+		; need no owner slot.
+		slot: 1
+		while [slot <= fn/parameter-count][
 			current: as x64-live-interval! (view/allocation-intervals
-				+ ((selected-slot - 1) * size? x64-live-interval!))
-			register-id: ALLOCATION_UNASSIGNED
-			ordinal: 1
-			while [all [
-				register-id < 0
-				ordinal <= ALLOCATION_REGISTER_COUNT
-			]][
-				register-id: allocation-register current/class ordinal
-				unless allocation-register-free? context selected-slot register-id [
-					register-id: ALLOCATION_UNASSIGNED
+				+ ((slot - 1) * size? x64-live-interval!))
+			if (current/flags and ALLOCATION_FIXED) <> 0 [
+				ordinal: allocation-register-ordinal current/class current/register
+				if ordinal > 0 [
+					owner-index: ((current/class - 1)
+						* ALLOCATION_REGISTER_COUNT) + ordinal
+					if owners/owner-index <> 0 [return INVALID_IR]
+					owners/owner-index: slot
 				]
-				ordinal: ordinal + 1
 			]
-			either register-id >= 0 [
-				current/register: register-id
-			][
-				victim-slot: 0
-				victim-cost: allocation-cost current
-				victim-end: current/end
-				slot: 1
-				while [slot <= state/storage-count][
-					if slot <> selected-slot [
+			slot: slot + 1
+		]
+
+		previous-start: 0
+		order-index: 1
+		while [order-index <= state/allocation-count][
+			slot: allocation-order/order-index
+			if any [slot <= fn/parameter-count slot > state/storage-count][
+				return INVALID_IR
+			]
+			current: as x64-live-interval! (view/allocation-intervals
+				+ ((slot - 1) * size? x64-live-interval!))
+			if any [
+				current/start <= 0
+				current/start < previous-start
+				not any [
+					current/class = ALLOCATION_GPR
+					current/class = ALLOCATION_XMM
+				]
+				not any [
+					current/register = ALLOCATION_UNASSIGNED
+					current/register = ALLOCATION_SPILLED
+				]
+			][return INVALID_IR]
+			previous-start: current/start
+
+			if current/register = ALLOCATION_UNASSIGNED [
+				owner-base: (current/class - 1) * ALLOCATION_REGISTER_COUNT
+				ordinal: 1
+				while [ordinal <= ALLOCATION_REGISTER_COUNT][
+					owner-index: owner-base + ordinal
+					owner-slot: owners/owner-index
+					if owner-slot > 0 [
+						if owner-slot > state/storage-count [return INVALID_IR]
 						other: as x64-live-interval! (view/allocation-intervals
-							+ ((slot - 1) * size? x64-live-interval!))
-						if all [
-							other/register >= 0
-							other/class = current/class
-							(other/flags and ALLOCATION_FIXED) = 0
-							allocation-intervals-overlap? current other
-						][
+							+ ((owner-slot - 1) * size? x64-live-interval!))
+						if any [
+							other/class <> current/class
+							other/register <> allocation-register current/class ordinal
+						][return INVALID_IR]
+						if other/end < current/start [owners/owner-index: 0]
+					]
+					ordinal: ordinal + 1
+				]
+
+				selected-ordinal: 0
+				ordinal: 1
+				while [all [
+					selected-ordinal = 0
+					ordinal <= ALLOCATION_REGISTER_COUNT
+				]][
+					owner-index: owner-base + ordinal
+					if owners/owner-index = 0 [selected-ordinal: ordinal]
+					ordinal: ordinal + 1
+				]
+				either selected-ordinal > 0 [
+					register-id: allocation-register current/class selected-ordinal
+					current/register: register-id
+					owner-index: owner-base + selected-ordinal
+					owners/owner-index: slot
+				][
+					victim-slot: 0
+					victim-owner: 0
+					victim-cost: allocation-cost current
+					victim-end: current/end
+					ordinal: 1
+					while [ordinal <= ALLOCATION_REGISTER_COUNT][
+						owner-index: owner-base + ordinal
+						owner-slot: owners/owner-index
+						if owner-slot <= 0 [return INVALID_IR]
+						other: as x64-live-interval! (view/allocation-intervals
+							+ ((owner-slot - 1) * size? x64-live-interval!))
+						if (other/flags and ALLOCATION_FIXED) = 0 [
 							other-cost: allocation-cost other
 							if any [
 								other-cost < victim-cost
@@ -4528,22 +4580,24 @@ x64-codegen: context [
 									other/end > victim-end
 								]
 							][
-								victim-slot: slot
+								victim-slot: owner-slot
+								victim-owner: owner-index
 								victim-cost: other-cost
 								victim-end: other/end
 							]
 						]
+						ordinal: ordinal + 1
 					]
-					slot: slot + 1
+					either victim-slot > 0 [
+						other: as x64-live-interval! (view/allocation-intervals
+							+ ((victim-slot - 1) * size? x64-live-interval!))
+						current/register: other/register
+						other/register: ALLOCATION_SPILLED
+						owners/victim-owner: slot
+					][current/register: ALLOCATION_SPILLED]
 				]
-				either victim-slot > 0 [
-					other: as x64-live-interval! (view/allocation-intervals
-						+ ((victim-slot - 1) * size? x64-live-interval!))
-					current/register: other/register
-					other/register: ALLOCATION_SPILLED
-				][current/register: ALLOCATION_SPILLED]
 			]
-			current/flags: current/flags or ALLOCATION_PROCESSED
+			order-index: order-index + 1
 		]
 
 		slot: fn/parameter-count + 1
@@ -11848,10 +11902,13 @@ x64-codegen: context [
 		interval-words: (size? x64-live-interval!) / 4
 		if any [
 			interval-words <= 0
-			parameter-count > ((2147483647 - scratch-count) / (interval-words + 1))
+			scratch-count > (2147483647 - ALLOCATION_OWNER_COUNT)
 		][return OUTPUT_FULL]
+		scratch-count: scratch-count + ALLOCATION_OWNER_COUNT
+		if parameter-count > ((2147483647 - scratch-count)
+			/ (interval-words + 2)) [return OUTPUT_FULL]
 		scratch-count: scratch-count
-			+ (parameter-count * (interval-words + 1))
+			+ (parameter-count * (interval-words + 2))
 		if header/type-count > ((2147483647 - scratch-count) / 4)[
 			return OUTPUT_FULL
 		]
@@ -11899,8 +11956,10 @@ x64-codegen: context [
 		work/allocation-intervals: as byte-ptr! (
 			work/storage-offsets + parameter-count
 		)
-		layouts: as int-ptr! (work/allocation-intervals
+		work/allocation-order: as int-ptr! (work/allocation-intervals
 			+ (parameter-count * size? x64-live-interval!))
+		work/allocation-registers: work/allocation-order + parameter-count
+		layouts: work/allocation-registers + ALLOCATION_OWNER_COUNT
 		member-offsets: layouts + (header/type-count * 4)
 		table/layouts: layouts
 		table/member-offsets: member-offsets
@@ -11918,6 +11977,7 @@ x64-codegen: context [
 		id: 1
 		while [id <= parameter-count][
 			work/storage-offsets/id: 0
+			work/allocation-order/id: 0
 			interval: as x64-live-interval! (work/allocation-intervals
 				+ ((id - 1) * size? x64-live-interval!))
 			interval/start: 0
@@ -11926,6 +11986,11 @@ x64-codegen: context [
 			interval/class: 0
 			interval/register: ALLOCATION_UNASSIGNED
 			interval/flags: 0
+			id: id + 1
+		]
+		id: 1
+		while [id <= ALLOCATION_OWNER_COUNT][
+			work/allocation-registers/id: 0
 			id: id + 1
 		]
 		id: 1

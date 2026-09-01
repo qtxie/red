@@ -51,6 +51,16 @@ put-instruction: func [
 	put data (offset + 12) c
 ]
 
+put-local-access: func [
+	data [byte-ptr!]
+	offset slot operation [integer!]
+][
+	put-instruction data offset x64-codegen/OP_ADDRESS
+		x64-codegen/LOCAL_ADDRESS slot 0
+	put-instruction data (offset + x64-codegen/RSIR_INSTRUCTION_SIZE)
+		operation 0 0 0
+]
+
 set-cast-case: func [
 	data [byte-ptr!]
 	source low high target keep [integer!]
@@ -278,23 +288,27 @@ test-linear-scan-allocation?: func [
 		task [codegen-task! value]
 		fn [rsir-function! value]
 		interval [x64-live-interval!]
-		intervals [byte-ptr!]
-		offset-bytes [byte-ptr!]
-		offsets [int-ptr!]
-		slot result register1 register2 register3 register4 register5 register6 register7 [integer!]
+		intervals offset-bytes allocation-bytes [byte-ptr!]
+		offsets allocation-order owners [int-ptr!]
+		slot result register1 register2 register3 register4 register5 register6
+			register7 register8 [integer!]
 		valid? [logic!]
 ][
-	intervals: allocate (7 * size? x64-live-interval!)
-	offset-bytes: allocate (7 * size? integer!)
+	intervals: allocate (8 * size? x64-live-interval!)
+	offset-bytes: allocate (8 * size? integer!)
+	allocation-bytes: allocate (16 * size? integer!)
 	offsets: as int-ptr! offset-bytes
-	if any [null? intervals null? offset-bytes][
+	allocation-order: as int-ptr! allocation-bytes
+	owners: allocation-order + 8
+	if any [null? intervals null? offset-bytes null? allocation-bytes][
 		if not null? intervals [free intervals]
 		if not null? offset-bytes [free offset-bytes]
+		if not null? allocation-bytes [free allocation-bytes]
 		return false
 	]
 
 	slot: 1
-	while [slot <= 7][
+	while [slot <= 8][
 		interval: as x64-live-interval! (intervals
 			+ ((slot - 1) * size? x64-live-interval!))
 		interval/start: 0
@@ -314,7 +328,6 @@ test-linear-scan-allocation?: func [
 	interval/class: x64-codegen/ALLOCATION_GPR
 	interval/register: x64-encoder/R8
 	interval/flags: x64-codegen/ALLOCATION_FIXED
-		or x64-codegen/ALLOCATION_PROCESSED
 
 	; Three low-to-medium-cost GPR intervals initially occupy R9-R11.
 	interval: as x64-live-interval! (intervals + (1 * size? x64-live-interval!))
@@ -362,12 +375,30 @@ test-linear-scan-allocation?: func [
 	interval/class: x64-codegen/ALLOCATION_XMM
 	interval/flags: x64-codegen/ALLOCATION_INITIALIZED
 
+	; Once the entry constraint and earlier ranges expire, R8 is available again.
+	interval: as x64-live-interval! (intervals + (7 * size? x64-live-interval!))
+	interval/start: 60
+	interval/end: 80
+	interval/weight: 20
+	interval/class: x64-codegen/ALLOCATION_GPR
+	interval/flags: x64-codegen/ALLOCATION_INITIALIZED
+
 	fn/parameter-count: 1
-	fn/local-count: 6
+	fn/local-count: 7
 	task/fn: fn
 	scratch/allocation-intervals: intervals
+	scratch/allocation-order: allocation-order
+	scratch/allocation-registers: owners
 	scratch/storage-offsets: offsets
-	state/storage-count: 7
+	state/storage-count: 8
+	state/allocation-count: 7
+	allocation-order/1: 2
+	allocation-order/2: 7
+	allocation-order/3: 3
+	allocation-order/4: 4
+	allocation-order/5: 5
+	allocation-order/6: 6
+	allocation-order/7: 8
 	context/task: task
 	context/scratch: scratch
 	context/state: state
@@ -387,6 +418,8 @@ test-linear-scan-allocation?: func [
 	register6: interval/register
 	interval: as x64-live-interval! (intervals + (6 * size? x64-live-interval!))
 	register7: interval/register
+	interval: as x64-live-interval! (intervals + (7 * size? x64-live-interval!))
+	register8: interval/register
 	valid?: all [
 		result = 0
 		register1 = x64-encoder/R8
@@ -399,15 +432,254 @@ test-linear-scan-allocation?: func [
 		register4 <> register5
 		register6 = x64-codegen/ALLOCATION_SPILLED
 		register7 = 2
+		register8 = x64-encoder/R8
 		offsets/2 = 1
 		offsets/3 = 0
 		offsets/4 = 0
 		offsets/5 = 0
 		offsets/6 = 1
 		offsets/7 = 0
+		offsets/8 = 0
 	]
 	free intervals
 	free offset-bytes
+	free allocation-bytes
+	valid?
+]
+
+test-allocation-planning?: func [
+	return: [logic!]
+	/local context [x64-function-context! value]
+		module [rsir-module! value]
+		table [type-table! value]
+		scratch [codegen-scratch! value]
+		state [machine-state! value]
+		task [codegen-task! value]
+		fn [rsir-function! value]
+		parameter [rsir-parameter!]
+		interval [x64-live-interval!]
+		memory intervals parameters instructions [byte-ptr!]
+		instruction-effects control-uses catch-depths storage-offsets
+			allocation-order owners [int-ptr!]
+		memory-size slot index result [integer!]
+		valid? [logic!]
+][
+	memory-size: (3 * size? x64-live-interval!)
+		+ (3 * x64-codegen/RSIR_PARAMETER_SIZE)
+		+ (19 * x64-codegen/RSIR_INSTRUCTION_SIZE)
+		+ (71 * size? integer!)
+	memory: allocate memory-size
+	if null? memory [return false]
+	intervals: memory
+	parameters: intervals + (3 * size? x64-live-interval!)
+	instructions: parameters + (3 * x64-codegen/RSIR_PARAMETER_SIZE)
+	instruction-effects: as int-ptr! (
+		instructions + (19 * x64-codegen/RSIR_INSTRUCTION_SIZE)
+	)
+	control-uses: instruction-effects + 19
+	catch-depths: control-uses + 19
+	storage-offsets: catch-depths + 19
+	allocation-order: storage-offsets + 3
+	owners: allocation-order + 3
+
+	table/types: null
+	table/members: null
+	table/type-count: 0
+	module/table: table
+	module/parameters: parameters
+	fn/first-parameter: 0
+	fn/parameter-count: 0
+	fn/local-count: 3
+	fn/instruction-count: 19
+	task/fn: fn
+	task/opt-level: 2
+	task/entry?: false
+	scratch/instructions: instructions
+	scratch/instruction-effects: instruction-effects
+	scratch/control-uses: control-uses
+	scratch/catch-depths: catch-depths
+	scratch/storage-offsets: storage-offsets
+	scratch/allocation-intervals: intervals
+	scratch/allocation-order: allocation-order
+	scratch/allocation-registers: owners
+	state/storage-count: 3
+	context/module: module
+	context/task: task
+	context/scratch: scratch
+	context/state: state
+
+	slot: 1
+	while [slot <= 3][
+		parameter: as rsir-parameter! (parameters
+			+ ((slot - 1) * x64-codegen/RSIR_PARAMETER_SIZE))
+		parameter/type: -5
+		parameter/flags: 0
+		storage-offsets/slot: 3
+		slot: slot + 1
+	]
+	parameter: as rsir-parameter! (parameters
+		+ (2 * x64-codegen/RSIR_PARAMETER_SIZE))
+	parameter/type: -10
+
+	index: 1
+	while [index <= 19][
+		instruction-effects/index: x64-codegen/EFFECT_LIVE
+		control-uses/index: 0
+		catch-depths/index: 0
+		index: index + 1
+	]
+	put-local-access instructions 0 1 x64-codegen/OP_SET
+	put-local-access instructions 32 2 x64-codegen/OP_SET
+	put-local-access instructions 64 2 x64-codegen/OP_LOAD
+	put-local-access instructions 96 2 x64-codegen/OP_LOAD
+	put-instruction instructions 128 x64-codegen/OP_CALL 0 0 0
+	put-local-access instructions 144 1 x64-codegen/OP_LOAD
+	put-local-access instructions 176 1 x64-codegen/OP_LOAD
+	put-local-access instructions 208 3 x64-codegen/OP_SET
+	put-local-access instructions 240 3 x64-codegen/OP_LOAD
+	put-local-access instructions 272 3 x64-codegen/OP_LOAD
+
+	result: x64-codegen/plan-register-allocation context
+	valid?: result = 0
+	interval: as x64-live-interval! intervals
+	valid?: all [
+		valid?
+		interval/start = 1
+		interval/end = 13
+		interval/weight = 8
+		interval/class = x64-codegen/ALLOCATION_GPR
+		interval/register = x64-codegen/ALLOCATION_SPILLED
+		(interval/flags and x64-codegen/ALLOCATION_CLOBBERED) <> 0
+		storage-offsets/1 = 3
+	]
+	interval: as x64-live-interval! (intervals + size? x64-live-interval!)
+	valid?: all [
+		valid?
+		interval/start = 3
+		interval/end = 8
+		interval/weight = 8
+		interval/class = x64-codegen/ALLOCATION_GPR
+		interval/register = x64-encoder/R8
+		storage-offsets/2 = 0
+	]
+	interval: as x64-live-interval! (intervals + (2 * size? x64-live-interval!))
+	valid?: all [
+		valid?
+		interval/start = 14
+		interval/end = 19
+		interval/weight = 8
+		interval/class = x64-codegen/ALLOCATION_XMM
+		interval/register = 2
+		storage-offsets/3 = 0
+	]
+	free memory
+	valid?
+]
+
+test-abi-precoloring?: func [
+	return: [logic!]
+	/local context [x64-function-context! value]
+		module [rsir-module! value]
+		table [type-table! value]
+		scratch [codegen-scratch! value]
+		state [machine-state! value]
+		task [codegen-task! value]
+		fn [rsir-function! value]
+		parameter [rsir-parameter!]
+		interval [x64-live-interval!]
+		memory intervals parameters instructions [byte-ptr!]
+		instruction-effects control-uses catch-depths storage-offsets
+			allocation-order owners [int-ptr!]
+		memory-size slot index result [integer!]
+		valid? [logic!]
+][
+	memory-size: (4 * size? x64-live-interval!)
+		+ (4 * x64-codegen/RSIR_PARAMETER_SIZE)
+		+ (4 * x64-codegen/RSIR_INSTRUCTION_SIZE)
+		+ (28 * size? integer!)
+	memory: allocate memory-size
+	if null? memory [return false]
+	intervals: memory
+	parameters: intervals + (4 * size? x64-live-interval!)
+	instructions: parameters + (4 * x64-codegen/RSIR_PARAMETER_SIZE)
+	instruction-effects: as int-ptr! (
+		instructions + (4 * x64-codegen/RSIR_INSTRUCTION_SIZE)
+	)
+	control-uses: instruction-effects + 4
+	catch-depths: control-uses + 4
+	storage-offsets: catch-depths + 4
+	allocation-order: storage-offsets + 4
+	owners: allocation-order + 4
+
+	table/types: null
+	table/members: null
+	table/type-count: 0
+	module/table: table
+	module/parameters: parameters
+	fn/first-parameter: 0
+	fn/parameter-count: 4
+	fn/local-count: 0
+	fn/instruction-count: 4
+	task/fn: fn
+	scratch/instructions: instructions
+	scratch/instruction-effects: instruction-effects
+	scratch/control-uses: control-uses
+	scratch/catch-depths: catch-depths
+	scratch/storage-offsets: storage-offsets
+	scratch/allocation-intervals: intervals
+	scratch/allocation-order: allocation-order
+	scratch/allocation-registers: owners
+	state/storage-count: 4
+	state/hidden-shift: 0
+	context/module: module
+	context/task: task
+	context/scratch: scratch
+	context/state: state
+
+	slot: 1
+	while [slot <= 4][
+		parameter: as rsir-parameter! (parameters
+			+ ((slot - 1) * x64-codegen/RSIR_PARAMETER_SIZE))
+		parameter/type: -5
+		parameter/flags: 0
+		storage-offsets/slot: 0
+		slot: slot + 1
+	]
+	parameter: as rsir-parameter! (parameters
+		+ (3 * x64-codegen/RSIR_PARAMETER_SIZE))
+	parameter/type: -10
+	index: 1
+	while [index <= 4][
+		instruction-effects/index: x64-codegen/EFFECT_LIVE
+		control-uses/index: 0
+		catch-depths/index: 0
+		index: index + 1
+	]
+	put-local-access instructions 0 3 x64-codegen/OP_LOAD
+	put-local-access instructions 32 4 x64-codegen/OP_LOAD
+
+	result: x64-codegen/reset-register-allocation context
+	if result = 0 [result: x64-codegen/discover-abi-constraints context]
+	valid?: result = 0
+	interval: as x64-live-interval! (intervals + (2 * size? x64-live-interval!))
+	valid?: all [
+		valid?
+		interval/start = 1
+		interval/end = 2
+		interval/class = x64-codegen/ALLOCATION_GPR
+		interval/register = x64-encoder/R8
+		(interval/flags and x64-codegen/ALLOCATION_FIXED) <> 0
+	]
+	interval: as x64-live-interval! (intervals + (3 * size? x64-live-interval!))
+	valid?: all [
+		valid?
+		interval/start = 1
+		interval/end = 4
+		interval/class = x64-codegen/ALLOCATION_XMM
+		interval/register = 3
+		(interval/flags and x64-codegen/ALLOCATION_FIXED) <> 0
+	]
+	free memory
 	valid?
 ]
 
@@ -439,6 +711,14 @@ widening-argument-code-size: 0
 pointer-fold-code-size: 0
 unless test-linear-scan-allocation? [
 	print ["linear-scan allocation policy failed" lf]
+	failures: failures + 1
+]
+unless test-allocation-planning? [
+	print ["live-interval planning or call-clobber handling failed" lf]
+	failures: failures + 1
+]
+unless test-abi-precoloring? [
+	print ["Win64 ABI precolor discovery failed" lf]
 	failures: failures + 1
 ]
 no-types: as byte-ptr! 0

@@ -179,7 +179,7 @@ platform: context [
 		DaylightBias		[integer!]
 	]
 
-	gdiplus-token: 0
+	gdiplus-token: as int-ptr! 0
 	page-size: 4096
 
 	#import [
@@ -395,7 +395,7 @@ platform: context [
 				return:		[integer!]
 			]
 			GdiplusShutdown: "GdiplusShutdown" [
-				token		[integer!]
+				token		[int-ptr!]
 			]
 		]
 		"shell32.dll" stdcall [
@@ -446,7 +446,7 @@ platform: context [
 		startup-input/DebugEventCallback: 0
 		startup-input/SuppressBackgroundThread: 0
 		startup-input/SuppressExternalCodecs: 0
-		GdiplusStartup :gdiplus-token as-integer startup-input 0
+		GdiplusStartup as int-ptr! :gdiplus-token as-integer startup-input 0
 	]
 
 	shutdown-gdiplus: does [

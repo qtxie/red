@@ -118,6 +118,26 @@ size: arm64-encoder/multiply-register code 256 arm64-encoder/X9
 expected: #{697E149B}
 check size 4 expected
 
+size: arm64-encoder/multiply-long code 256 arm64-encoder/X15
+	arm64-encoder/X16 arm64-encoder/X17 1
+expected: #{0F7E319B}
+check size 4 expected
+
+size: arm64-encoder/multiply-long code 256 arm64-encoder/X18
+	arm64-encoder/X19 arm64-encoder/X20 0
+expected: #{727EB49B}
+check size 4 expected
+
+size: arm64-encoder/multiply-high code 256 arm64-encoder/X21
+	arm64-encoder/X22 arm64-encoder/X23 1
+expected: #{D57E579B}
+check size 4 expected
+
+size: arm64-encoder/multiply-high code 256 arm64-encoder/X24
+	arm64-encoder/X25 arm64-encoder/X26 0
+expected: #{387FDA9B}
+check size 4 expected
+
 size: arm64-encoder/divide-register code 256 arm64-encoder/X9
 	arm64-encoder/X19 arm64-encoder/X20 4 1
 expected: #{690ED41A}
@@ -165,8 +185,26 @@ size: arm64-encoder/compare-register code 256 arm64-encoder/X19 arm64-encoder/X2
 expected: #{7F0214EB}
 check size 4 expected
 
+size: arm64-encoder/compare-extended-register code 256 arm64-encoder/X9
+	arm64-encoder/X10 8 4 1
+expected: #{3FC12AEB}
+check size 4 expected
+
+size: arm64-encoder/compare-extended-register code 256 arm64-encoder/X11
+	arm64-encoder/X12 4 2 0
+expected: #{7F212C6B}
+check size 4 expected
+
 size: arm64-encoder/compare-immediate code 256 arm64-encoder/X19 42 4
 expected: #{7FAA0071}
+check size 4 expected
+
+size: arm64-encoder/compare-negative-immediate code 256 arm64-encoder/X13 1 8
+expected: #{BF0500B1}
+check size 4 expected
+
+size: arm64-encoder/compare-negative-immediate code 256 arm64-encoder/X14 4095 4
+expected: #{DFFD3F31}
 check size 4 expected
 
 size: arm64-encoder/condition-result code 256 arm64-encoder/X9 arm64-encoder/EQ
@@ -396,6 +434,21 @@ if (arm64-encoder/logical-immediate code 256 arm64-encoder/OP_AND
 ]
 if (arm64-encoder/logical-immediate code 256 arm64-encoder/OP_OR
 	arm64-encoder/X9 arm64-encoder/X10 8 -1 -1) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/compare-extended-register code 256 arm64-encoder/X9
+	arm64-encoder/X10 4 4 1) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/compare-extended-register code 256 arm64-encoder/X9
+	arm64-encoder/X10 2 1 1) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/compare-negative-immediate code 256 arm64-encoder/X9 -1 8) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/multiply-long code 256 arm64-encoder/X9
+	arm64-encoder/X10 arm64-encoder/X11 2) <> -1 [
 	failures: failures + 1
 ]
 

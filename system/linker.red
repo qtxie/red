@@ -616,6 +616,8 @@ linker: context [
 								target-ptr: case [
 									spec/1 = 'global [data-ptr + spec/2]
 									spec/1 = 'constant [rodata-ptr + spec/2]
+									;-- a taken function address is a code to code reference
+									spec/1 = 'native [code-ptr + spec/2 - 1]
 									spec/1 = 'native-ref [code-ptr + spec/2 - 1]
 								]
 								if integer? target-ptr [

@@ -17,6 +17,8 @@ arm64-function-scratch!: alias struct! [
 	stack-high      [int-ptr!]
 	stack-flags     [int-ptr!]
 	plan-depths     [int-ptr!]
+	entry-spill-bases  [int-ptr!]
+	entry-spill-limits [int-ptr!]
 	instruction-offsets [int-ptr!]
 	instruction-depths  [int-ptr!]
 	entry-types         [int-ptr!]
@@ -71,6 +73,10 @@ arm64-codegen: context [
 	CDECL:        1
 	STDCALL:      2
 	RETURN_VALUE: 4
+	VARIADIC:     8
+	TYPED:       16
+	CUSTOM:      32
+	OBJC:       128
 	INLINE:       1
 	PROTECTED:    2
 	TAGGED_UNION: 1
@@ -100,6 +106,11 @@ arm64-codegen: context [
 	OP_FAIL:    19
 	OP_REFERENCE: 20
 	OP_INDEX:     21
+	OP_TAG:       22
+	OP_OVERFLOW:  23
+	OP_ENTRY:     27
+	OP_SUB_CALL:  28
+	OP_SUB_RETURN: 29
 
 	NOT_OPERATION:           1
 	ADD_OPERATION:           1
@@ -123,7 +134,14 @@ arm64-codegen: context [
 
 	LOCAL_ADDRESS:    1
 	GLOBAL_ADDRESS:   2
+	IMPORT_ADDRESS:   3
 	FUNCTION_ADDRESS: 4
+
+	; A call's parameter descriptors live in the parameter table for declared
+	; functions and imports, and in the type table's member rows for the
+	; function type a call through a pointer names.
+	PARAMETER_TABLE: 0
+	MEMBER_TABLE:    1
 
 	VALUE: 1
 	PLACE: 2
@@ -406,9 +424,24 @@ arm64-codegen: context [
 		]
 	]
 
+	call-parameter: func [
+		view [rsir-view!]
+		source first ordinal [integer!]
+		return: [rsir-parameter!]
+	][
+		; Member rows and parameter rows share the (type, flags) layout.
+		either source = MEMBER_TABLE [
+			as rsir-parameter! (view/members
+				+ ((first + ordinal - 1) * RSIR_MEMBER_SIZE))
+		][
+			as rsir-parameter! (view/parameters
+				+ ((first + ordinal - 1) * RSIR_PARAMETER_SIZE))
+		]
+	]
+
 	abi-parameter-register: func [
 		view [rsir-view!]
-		first-parameter ordinal [integer!]
+		source first-parameter ordinal [integer!]
 		floating? [logic!]
 		return: [integer!]
 		/local parameter [rsir-parameter!]
@@ -418,8 +451,7 @@ arm64-codegen: context [
 		id: 1
 		index: 0
 		while [id <= ordinal][
-			parameter: as rsir-parameter! (view/parameters
-				+ ((first-parameter + id - 1) * RSIR_PARAMETER_SIZE))
+			parameter: call-parameter view source first-parameter id
 			kind: type-kind parameter/type view
 			parameter-floating?: any [kind = 9 kind = 10]
 			if parameter-floating? = floating? [
@@ -429,6 +461,22 @@ arm64-codegen: context [
 			id: id + 1
 		]
 		-1
+	]
+
+	; Argument setup writes the ABI registers plus X16, and OP_SET can park a
+	; value in X17, so only the temporaries and the callee-saved homes hold a
+	; live value across it.
+	call-safe-register?: func [register [integer!] return: [logic!]][
+		any [
+			all [
+				register >= FIRST_TEMP_REGISTER
+				register < (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)
+			]
+			all [
+				register >= FIRST_HOME_REGISTER
+				register < (FIRST_HOME_REGISTER + HOME_REGISTER_COUNT)
+			]
+		]
 	]
 
 	volatile-register-value?: func [
@@ -555,6 +603,21 @@ arm64-codegen: context [
 			count <= 65535 [2]
 			true [4]
 		]
+	]
+
+	; A tagged union stores its variant number in the leading tag field, so a
+	; VARIANT? test or a SWITCH selector only needs that field's width.
+	union-tag-width: func [
+		ref [integer!]
+		view [rsir-view!]
+		return: [integer!]
+		/local base [integer!] record [rsir-type!]
+	][
+		base: canonical-type ref view
+		if base <= 0 [return 0]
+		record: as rsir-type! (view/types + ((base - 1) * RSIR_TYPE_SIZE))
+		unless all [record/kind = -3 record/flags = TAGGED_UNION][return 0]
+		tag-width record/member-count
 	]
 
 	layout-type: func [
@@ -933,45 +996,66 @@ arm64-codegen: context [
 	]
 
 	resolve-call: func [
-		target [integer!]
+		target signature [integer!]
 		view [rsir-view!]
 		return-ref-out first-parameter-out parameter-count-out
-			reference-target-out [int-ptr!]
+			reference-target-out parameter-source-out [int-ptr!]
 		return: [integer!]
 		/local callee [rsir-function!]
 			imported [rsir-import!]
-			import-id return-ref flags first-parameter parameter-count [integer!]
+			shape [rsir-type!]
+			import-id return-ref flags first-parameter parameter-count
+			base [integer!]
 	][
-		if target = 0 [return UNSUPPORTED]
-		either target > 0 [
-			if target > view/header/function-count [return INVALID_IR]
-			callee: as rsir-function! (view/functions
-				+ ((target - 1) * RSIR_FUNCTION_SIZE))
-			return-ref: callee/return-type
-			flags: callee/flags
-			first-parameter: callee/first-parameter
-			parameter-count: callee/parameter-count
-			reference-target-out/1: 0
-		][
-			if target < (0 - view/header/import-count)[return INVALID_IR]
-			import-id: 0 - target
-			if import-id = 0 [return INVALID_IR]
-			imported: as rsir-import! (view/imports
-				+ ((import-id - 1) * RSIR_IMPORT_SIZE))
-			unless any [imported/flags = CDECL imported/flags = STDCALL][
-				return UNSUPPORTED
+		reference-target-out/1: 0
+		parameter-source-out/1: PARAMETER_TABLE
+		case [
+			target > 0 [
+				if target > view/header/function-count [return INVALID_IR]
+				callee: as rsir-function! (view/functions
+					+ ((target - 1) * RSIR_FUNCTION_SIZE))
+				return-ref: callee/return-type
+				flags: callee/flags
+				first-parameter: callee/first-parameter
+				parameter-count: callee/parameter-count
 			]
-			return-ref: imported/type
-			flags: imported/flags
-			first-parameter: imported/first-parameter
-			parameter-count: imported/parameter-count
-			reference-target-out/1: view/header/function-count
-				+ view/header/global-count + import-id
+			target < 0 [
+				if target < (0 - view/header/import-count)[return INVALID_IR]
+				import-id: 0 - target
+				imported: as rsir-import! (view/imports
+					+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+				unless any [imported/flags = CDECL imported/flags = STDCALL][
+					return UNSUPPORTED
+				]
+				return-ref: imported/type
+				flags: imported/flags
+				first-parameter: imported/first-parameter
+				parameter-count: imported/parameter-count
+				reference-target-out/1: view/header/function-count
+					+ view/header/global-count + import-id
+			]
+			true [
+				; A call through a pointer names its shape with a function type
+				; whose member rows describe the parameters.
+				unless valid-type-ref? signature view [return INVALID_IR]
+				base: canonical-type signature view
+				if base <= 0 [return INVALID_IR]
+				shape: as rsir-type! (view/types + ((base - 1) * RSIR_TYPE_SIZE))
+				unless shape/kind = -4 [return INVALID_IR]
+				if shape/member-count < 0 [return INVALID_IR]
+				return-ref: shape/target
+				flags: shape/flags
+				first-parameter: shape/first-member
+				parameter-count: shape/member-count
+				parameter-source-out/1: MEMBER_TABLE
+			]
 		]
 		if all [return-ref <> 0 not valid-type-ref? return-ref view][
 			return INVALID_IR
 		]
-		if (flags and RETURN_VALUE) <> 0 [return UNSUPPORTED]
+		if (flags and (RETURN_VALUE or VARIADIC or TYPED or CUSTOM or OBJC)) <> 0 [
+			return UNSUPPORTED
+		]
 		return-ref-out/1: return-ref
 		first-parameter-out/1: first-parameter
 		parameter-count-out/1: parameter-count
@@ -1263,6 +1347,18 @@ arm64-codegen: context [
 						target: first + target
 						scratch/control-uses/target: 1
 					]
+					instruction/op = OP_OVERFLOW [
+						; A scope without a tracked operation never gets its
+						; landing pad patched in, so a zero target is normal.
+						target: instruction/a
+						if target <> 0 [
+							if any [target <= 0 target > fn/instruction-count][
+								return INVALID_IR
+							]
+							target: first + target
+							scratch/control-uses/target: 1
+						]
+					]
 					instruction/op = OP_SWITCH [
 						if any [
 							instruction/a < 0 instruction/b <= 0
@@ -1296,8 +1392,32 @@ arm64-codegen: context [
 		0
 	]
 
+	; A subroutine body runs on the link register the BL that reached it wrote,
+	; so it only has to preserve LR when it can issue a branch-and-link itself.
+	entry-clobbers-link?: func [
+		view [rsir-view!]
+		fn [rsir-function!]
+		first-instruction ordinal [integer!]
+		return: [logic!]
+		/local instruction [rsir-instruction!] index [integer!]
+	][
+		index: ordinal
+		while [index < fn/instruction-count][
+			instruction: as rsir-instruction! (view/instructions
+				+ ((first-instruction + index) * RSIR_INSTRUCTION_SIZE))
+			if instruction/op = OP_ENTRY [return false]
+			if any [
+				instruction/op = OP_CALL
+				instruction/op = OP_SUB_CALL
+			][return true]
+			index: index + 1
+		]
+		false
+	]
+
 	plan-function: func [
 		view [rsir-view!]
+		layout [arm64-layout-state!]
 		fn [rsir-function!]
 		first-instruction [integer!]
 		scratch [arm64-function-scratch!]
@@ -1306,11 +1426,16 @@ arm64-codegen: context [
 		/local parameter [rsir-parameter!]
 			instruction [rsir-instruction!]
 			switch-case [rsir-switch!]
+			sub-entry [rsir-instruction!]
 			depths [int-ptr!]
 			id slot count width kind home-count float-home-count frame-allocation
 			depth max-spill has-call argument-count frame-home-count total-slots status
 			call-return call-first-parameter call-parameter-count
-			call-reference ordinal target case-index
+			call-reference call-source call-signature callee-slots
+			region-ordinal region-spill entry-base
+			main-entry-count sub-entry-count
+			ordinal target case-index
+			inline-size inline-align
 				[integer!]
 			fallthrough? [logic!]
 	][
@@ -1334,11 +1459,21 @@ arm64-codegen: context [
 		id: 1
 		while [id <= fn/instruction-count][
 			depths/id: -1
+			scratch/entry-spill-bases/id: 0
+			scratch/entry-spill-limits/id: 0
 			id: id + 1
 		]
 		depth: 0
 		max-spill: 0
 		has-call: 0
+		; Region 0 is the straight-line body of a function without subroutines,
+		; or the leading jump of one that has them. Every OP_ENTRY opens a new
+		; region with its own expression-stack window, so a subroutine cannot
+		; overwrite the values its caller left parked.
+		region-ordinal: 0
+		region-spill: 0
+		main-entry-count: 0
+		sub-entry-count: 0
 		fallthrough?: true
 		id: 0
 		while [id < fn/instruction-count][
@@ -1351,9 +1486,19 @@ arm64-codegen: context [
 						if any [slot <= 0 slot > count][return INVALID_IR]
 						parameter: as rsir-parameter! (view/parameters
 							+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
-						if parameter/flags <> 0 [return UNSUPPORTED]
-						if scratch/storage-kinds/slot = 0 [
-							scratch/storage-kinds/slot: STORAGE_REGISTER
+						case [
+							parameter/flags = 0 [
+								if scratch/storage-kinds/slot = 0 [
+									scratch/storage-kinds/slot: STORAGE_REGISTER
+								]
+							]
+							; An inline aggregate only ever exists as memory, so
+							; its slot goes straight to the frame instead of
+							; waiting for a reference to demote it.
+							parameter/flags = INLINE [
+								scratch/storage-kinds/slot: STORAGE_FRAME
+							]
+							true [return UNSUPPORTED]
 						]
 					]
 					instruction/a = GLOBAL_ADDRESS [
@@ -1366,10 +1511,25 @@ arm64-codegen: context [
 						][return INVALID_IR]
 						scratch/global-homes/slot: scratch/global-homes/slot + 1
 					]
+					instruction/a = FUNCTION_ADDRESS [
+						if any [
+							instruction/b <= 0
+							instruction/b > view/header/function-count
+							not valid-type-ref? instruction/c view
+							(type-kind instruction/c view) <> -4
+						][return INVALID_IR]
+					]
 					true [return UNSUPPORTED]
 				]
 			]
 			ordinal: id + 1
+			if instruction/op = OP_ENTRY [
+				; An entry is resumed from a BL or from the leading jump, so the
+				; expression stack is empty there whichever way control arrives.
+				if all [fallthrough? depth <> 0][return INVALID_IR]
+				depths/ordinal: 0
+				fallthrough?: false
+			]
 			either fallthrough? [
 				if all [depths/ordinal >= 0 depths/ordinal <> depth][
 					return INVALID_IR
@@ -1418,6 +1578,25 @@ arm64-codegen: context [
 				instruction/op = OP_MEMBER [
 					if depth < 1 [return INVALID_IR]
 				]
+				instruction/op = OP_TAG [
+					unless all [
+						instruction/a = 0 instruction/b = 0 instruction/c = 0
+						depth >= 1
+					][return INVALID_IR]
+					scratch/stack-low/depth: 0
+				]
+				instruction/op = OP_OVERFLOW [
+					unless all [instruction/b = 0 instruction/c = 0][
+						return INVALID_IR
+					]
+					; The landing pad resumes the scope's own expression stack,
+					; whichever tracked operation branched to it.
+					if instruction/a <> 0 [
+						unless record-plan-depth instruction/a depth fn depths [
+							return INVALID_IR
+						]
+					]
+				]
 				instruction/op = OP_INDEX [
 					case [
 						instruction/b = 0 [
@@ -1444,30 +1623,95 @@ arm64-codegen: context [
 				]
 				instruction/op = OP_CALL [
 					argument-count: instruction/b
-					if any [
-						argument-count < 0
-						argument-count > depth
-					][return INVALID_IR]
+					if argument-count < 0 [return INVALID_IR]
+					; A call through a pointer keeps the callee below its
+					; arguments, so it claims one more live slot.
+					callee-slots: either instruction/a = 0 [1][0]
+					if argument-count > (depth - callee-slots)[return INVALID_IR]
 					call-return: 0
 					call-first-parameter: 0
 					call-parameter-count: 0
 					call-reference: 0
-					status: resolve-call instruction/a view :call-return
-						:call-first-parameter :call-parameter-count :call-reference
+					call-source: PARAMETER_TABLE
+					call-signature: either instruction/a = 0 [instruction/c][0]
+					status: resolve-call instruction/a call-signature view
+						:call-return :call-first-parameter :call-parameter-count
+						:call-reference :call-source
 					if status < 0 [return status]
 					if any [
 						argument-count <> call-parameter-count
-						instruction/c <> call-return
+						all [instruction/a <> 0 instruction/c <> call-return]
 					][return INVALID_IR]
 					has-call: 1
-					if (depth - argument-count) > max-spill [
-						max-spill: depth - argument-count
+					; The spill window still covers the callee slot: it must
+					; survive argument setup when it sits in a scratch register.
+					if (depth - argument-count) > region-spill [
+						region-spill: depth - argument-count
 					]
-					depth: depth - argument-count
+					depth: depth - argument-count - callee-slots
 					if call-return <> 0 [
 						depth: depth + 1
 						scratch/stack-low/depth: 0
 					]
+				]
+				instruction/op = OP_ENTRY [
+					unless all [
+						any [instruction/a = 0 instruction/a = 1]
+						instruction/c = 0
+						any [instruction/b = 0 valid-type-ref? instruction/b view]
+					][return INVALID_IR]
+					either instruction/a = 0 [
+						main-entry-count: main-entry-count + 1
+					][sub-entry-count: sub-entry-count + 1]
+					either region-ordinal = 0 [
+						if region-spill > max-spill [max-spill: region-spill]
+					][
+						scratch/entry-spill-limits/region-ordinal: region-spill
+					]
+					region-ordinal: ordinal
+					region-spill: 0
+				]
+				instruction/op = OP_SUB_CALL [
+					target: instruction/a
+					if any [
+						target <= 0 target > fn/instruction-count
+						target = region-ordinal
+						instruction/c <> 0
+					][return INVALID_IR]
+					sub-entry: as rsir-instruction! (view/instructions
+						+ ((first-instruction + target - 1) * RSIR_INSTRUCTION_SIZE))
+					unless all [
+						sub-entry/op = OP_ENTRY
+						sub-entry/a = 1
+						sub-entry/b = instruction/b
+					][return INVALID_IR]
+					; The callee shares this frame and may rewrite any local, so
+					; the whole live stack is parked before the branch.
+					if depth > region-spill [region-spill: depth]
+					has-call: 1
+					if instruction/b <> 0 [
+						if depth = 2147483647 [return OUTPUT_FULL]
+						depth: depth + 1
+						scratch/stack-low/depth: 0
+					]
+				]
+				instruction/op = OP_SUB_RETURN [
+					if any [
+						region-ordinal = 0
+						instruction/b <> 0 instruction/c <> 0
+					][return INVALID_IR]
+					sub-entry: as rsir-instruction! (view/instructions
+						+ ((first-instruction + region-ordinal - 1)
+							* RSIR_INSTRUCTION_SIZE))
+					unless all [
+						sub-entry/a = 1
+						sub-entry/b = instruction/a
+						either instruction/a = 0 [
+							any [depth = 0 depth = 1]
+						][depth = 1]
+					][return INVALID_IR]
+					depth: 0
+					fallthrough?: false
 				]
 				instruction/op = OP_JUMP [
 					unless all [instruction/b = 0 instruction/c = 0][
@@ -1528,6 +1772,16 @@ arm64-codegen: context [
 			id: id + 1
 		]
 		if fallthrough? [return INVALID_IR]
+		either region-ordinal = 0 [
+			if region-spill > max-spill [max-spill: region-spill]
+		][
+			scratch/entry-spill-limits/region-ordinal: region-spill
+		]
+		if any [
+			all [sub-entry-count > 0 main-entry-count <> 1]
+			all [sub-entry-count = 0 main-entry-count <> 0]
+		][return INVALID_IR]
+		if sub-entry-count > 0 [has-call: 1]
 		home-count: 0
 		float-home-count: 0
 		frame-home-count: 0
@@ -1545,8 +1799,8 @@ arm64-codegen: context [
 					if width > 8 [return UNSUPPORTED]
 				]
 				if id <= fn/parameter-count [
-					slot: abi-parameter-register view fn/first-parameter id
-						(any [kind = 9 kind = 10])
+					slot: abi-parameter-register view PARAMETER_TABLE
+						fn/first-parameter id (any [kind = 9 kind = 10])
 					if any [slot < 0 slot >= 8][return UNSUPPORTED]
 				]
 				either any [kind = 9 kind = 10][
@@ -1565,16 +1819,32 @@ arm64-codegen: context [
 			if scratch/storage-kinds/id = STORAGE_FRAME [
 				parameter: as rsir-parameter! (view/parameters
 					+ ((fn/first-parameter + id - 1) * RSIR_PARAMETER_SIZE))
-				width: value-width parameter/type view
-				kind: type-kind parameter/type view
-				if width = 0 [return INVALID_IR]
-				if width > 8 [return UNSUPPORTED]
-				if id <= fn/parameter-count [
-					slot: abi-parameter-register view fn/first-parameter id
-						(any [kind = 9 kind = 10])
-					if any [slot < 0 slot >= 8][return UNSUPPORTED]
+				either parameter/flags = INLINE [
+					; The whole aggregate lives in the frame, so it claims as
+					; many eight-byte slots as its layout needs. Pointing the
+					; home at the last of them puts the base at the lowest
+					; address of the run.
+					if id <= fn/parameter-count [return UNSUPPORTED]
+					inline-size: 0
+					inline-align: 0
+					unless layout-type parameter/type true view layout 0
+						:inline-size :inline-align [return INVALID_IR]
+					if any [inline-size <= 0 inline-align > 8][return UNSUPPORTED]
+					slot: (inline-size + 7) / 8
+					if frame-home-count > (2147483647 - slot)[return OUTPUT_FULL]
+					frame-home-count: frame-home-count + slot
+				][
+					width: value-width parameter/type view
+					kind: type-kind parameter/type view
+					if width = 0 [return INVALID_IR]
+					if width > 8 [return UNSUPPORTED]
+					if id <= fn/parameter-count [
+						slot: abi-parameter-register view PARAMETER_TABLE
+							fn/first-parameter id (any [kind = 9 kind = 10])
+						if any [slot < 0 slot >= 8][return UNSUPPORTED]
+					]
+					frame-home-count: frame-home-count + 1
 				]
-				frame-home-count: frame-home-count + 1
 				scratch/homes/id: 0 - frame-home-count
 			]
 			id: id + 1
@@ -1605,6 +1875,28 @@ arm64-codegen: context [
 		total-slots: total-slots + frame-home-count
 		if total-slots > (2147483647 - max-spill)[return OUTPUT_FULL]
 		total-slots: total-slots + max-spill
+		; Lay the per-region windows out in instruction order, each followed by
+		; the slot that holds the link register while that subroutine runs.
+		entry-base: total-slots
+		if sub-entry-count > 0 [
+			id: 1
+			while [id <= fn/instruction-count][
+				instruction: as rsir-instruction! (view/instructions
+					+ ((first-instruction + id - 1) * RSIR_INSTRUCTION_SIZE))
+				if instruction/op = OP_ENTRY [
+					region-spill: scratch/entry-spill-limits/id
+					if entry-base > (2147483647 - region-spill - 1)[
+						return OUTPUT_FULL
+					]
+					scratch/entry-spill-bases/id: entry-base
+					entry-base: entry-base + region-spill
+					scratch/entry-spill-limits/id: entry-base
+					if instruction/a = 1 [entry-base: entry-base + 1]
+				]
+				id: id + 1
+			]
+		]
+		total-slots: entry-base
 		if total-slots > (2147483647 / 8) [return OUTPUT_FULL]
 		frame-allocation: align (total-slots * 8) 16
 		if frame-allocation < 0 [return OUTPUT_FULL]
@@ -1675,8 +1967,8 @@ arm64-codegen: context [
 				width: value-width parameter/type view
 				kind: type-kind parameter/type view
 				transfer-width: either width = 8 [8][4]
-				parameter-register: abi-parameter-register view fn/first-parameter
-					slot (any [kind = 9 kind = 10])
+				parameter-register: abi-parameter-register view PARAMETER_TABLE
+					fn/first-parameter slot (any [kind = 9 kind = 10])
 				if any [parameter-register < 0 parameter-register >= 8][
 					return UNSUPPORTED
 				]
@@ -1977,6 +2269,75 @@ arm64-codegen: context [
 		true
 	]
 
+	; A tracked multiplication keeps the half of the product its own type drops,
+	; so the flags left behind answer whether anything was lost: NE is overflow.
+	emit-tracked-multiply: func [
+		target left right result-width signed [integer!]
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] written encoded [integer!]
+	][
+		written: 0
+		if result-width = 4 [
+			encoded: arm64-encoder/multiply-long code capacity target left right
+				signed
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/compare-extended-register at
+				(capacity - written) target target 8 4 signed
+			if encoded < 0 [return OUTPUT_FULL]
+			return written + encoded
+		]
+		; A 64-bit product needs both operands twice over, and only X16 and X17
+		; are free once the result claims a register of its own.
+		if any [
+			left = arm64-encoder/X17 right = arm64-encoder/X16
+			target = arm64-encoder/X16 target = arm64-encoder/X17
+		][return UNSUPPORTED]
+		if left <> arm64-encoder/X16 [
+			encoded: arm64-encoder/move-register code capacity
+				arm64-encoder/X16 left 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+		if right <> arm64-encoder/X17 [
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/move-register at (capacity - written)
+				arm64-encoder/X17 right 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/multiply-register at (capacity - written)
+			target arm64-encoder/X16 arm64-encoder/X17 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/multiply-high at (capacity - written)
+			arm64-encoder/X16 arm64-encoder/X16 arm64-encoder/X17 signed
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		either signed = 1 [
+			; Every bit the upper half keeps has to repeat the result's sign.
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/shift-immediate at (capacity - written)
+				arm64-encoder/SHIFT_ARITHMETIC arm64-encoder/X17 target 63 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/compare-register at (capacity - written)
+				arm64-encoder/X16 arm64-encoder/X17 8
+		][
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/compare-immediate at (capacity - written)
+				arm64-encoder/X16 0 8
+		]
+		if encoded < 0 [return OUTPUT_FULL]
+		written + encoded
+	]
+
 	emit-pointer-binary: func [
 		view [rsir-view!]
 		layout [arm64-layout-state!]
@@ -2106,6 +2467,8 @@ arm64-codegen: context [
 			switch-case [rsir-switch!]
 			parameter [rsir-parameter!]
 			global [rsir-global!]
+			sub-entry [rsir-instruction!]
+			overflow-scope [rsir-instruction!]
 			at [byte-ptr!]
 			instruction-offsets instruction-depths entry-types entry-kinds
 				entry-flags control-uses [int-ptr!]
@@ -2114,14 +2477,20 @@ arm64-codegen: context [
 			source-width target-width source-kind target-kind
 			operation-ref parameter-register
 			displacement condition argument-count argument-base argument-slot
-			call-target call-return call-first-parameter
+			argument-origin callee-slot callee-slots
+			call-target call-return call-first-parameter call-signature call-source
 			call-parameter-count call-reference status load-signed result-width
+			region-base region-limit region-entry sub-target link-slot
 			case-index return-count
+			overflow-anchor overflow-target overflow-condition base-depth
+				shift-count
 				[integer!]
 			member-type member-flags member-offset stride scaled shift
 				[integer!]
+			tag-variant tag-width-value tag-delta tag-slot tag-offset
+				[integer!]
 			fallthrough? measure? comparison? literal? immediate? taken? pointer?
-				floating? [logic!]
+				floating? region-link? tracked? right-ready? [logic!]
 	][
 		instruction-offsets: scratch/instruction-offsets + first-instruction
 		instruction-depths: scratch/instruction-depths + first-instruction
@@ -2150,11 +2519,29 @@ arm64-codegen: context [
 		depth: 0
 		fallthrough?: true
 		return-count: 0
+		tag-variant: 0
+		tag-width-value: 0
+		tag-delta: 0
+		tag-slot: 0
+		; Region 0 covers a function without subroutines; each OP_ENTRY switches
+		; to the window plan-function reserved for that region.
+		region-base: plan/home-count + plan/float-home-count
+			+ plan/frame-home-count
+		region-limit: region-base + plan/spill-count
+		region-entry: 0
+		region-link?: false
 		index: 0
 		while [index < fn/instruction-count][
 			ordinal: index + 1
 			instruction: as rsir-instruction! (view/instructions
 				+ ((first-instruction + index) * RSIR_INSTRUCTION_SIZE))
+			if instruction/op = OP_ENTRY [
+				; An entry is resumed from a BL or from the leading jump, so the
+				; expression stack is empty there whichever way control arrives.
+				if all [fallthrough? depth <> 0][return INVALID_IR]
+				instruction-depths/ordinal: 0
+				fallthrough?: false
+			]
 			either fallthrough? [
 				if control-uses/ordinal > 0 [
 					at: either null? code [as byte-ptr! 0][code + written]
@@ -2183,6 +2570,18 @@ arm64-codegen: context [
 				fallthrough?: true
 			]
 			instruction-offsets/ordinal: written
+			; A pending variant tag names one place, so nothing may rebase or
+			; discard that place before the store lands on it.
+			if all [
+				tag-variant <> 0
+				depth = tag-slot
+				any [
+					instruction/op = OP_LOAD
+					instruction/op = OP_REFERENCE
+					instruction/op = OP_INDEX
+					instruction/op = OP_DROP
+				]
+			][return UNSUPPORTED]
 			case [
 				instruction/op = OP_LITERAL [
 					width: value-width instruction/a view
@@ -2528,6 +2927,33 @@ arm64-codegen: context [
 							scratch/stack-high/depth: 0
 							scratch/stack-flags/depth: global/flags and PROTECTED
 						]
+						instruction/a = FUNCTION_ADDRESS [
+							unless all [
+								slot > 0
+								slot <= view/header/function-count
+								valid-type-ref? instruction/c view
+								(type-kind instruction/c view) = -4
+							][return INVALID_IR]
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							; The linker rewrites the ADRP/ADD pair once it knows
+							; where the callee landed in the code section.
+							status: record-reference slot
+								(function-base + written) references
+							if status < 0 [return status]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/page-address at
+								(capacity - written) target
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: instruction/c
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
 						true [return UNSUPPORTED]
 					]
 				]
@@ -2622,6 +3048,44 @@ arm64-codegen: context [
 					source-slot: depth - 1
 					if scratch/stack-kinds/source-slot <> VALUE [return INVALID_IR]
 					ref: scratch/stack-types/source-slot
+					; The variant number leads the union, so the deferred tag
+					; store lands wherever the member path started out.
+					if tag-variant <> 0 [
+						unless tag-slot = depth [return UNSUPPORTED]
+						tag-offset: either scratch/stack-locations/depth
+							= LOCATION_FRAME [
+							scratch/stack-low/depth - tag-delta
+						][scratch/stack-high/depth - tag-delta]
+						unless all [
+							any [
+								scratch/stack-locations/depth = LOCATION_REGISTER
+								scratch/stack-locations/depth = LOCATION_FRAME
+							]
+							(scratch/stack-flags/depth and PROTECTED) = 0
+							tag-offset >= 0
+							(tag-offset // tag-width-value) = 0
+							(tag-offset / tag-width-value) <= 4095
+						][return UNSUPPORTED]
+						target: either scratch/stack-locations/depth = LOCATION_FRAME [
+							arm64-encoder/FP
+						][scratch/stack-low/depth]
+						if any [
+							target = arm64-encoder/X16
+							target = arm64-encoder/X17
+						][return UNSUPPORTED]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/move-immediate at (capacity - written)
+							arm64-encoder/X16 4 tag-variant 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/register-store at (capacity - written)
+							arm64-encoder/X16 target tag-offset tag-width-value
+							arm64-encoder/X17
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						tag-variant: 0
+					]
 					case [
 						scratch/stack-locations/depth = 0 [
 							target-slot: scratch/stack-low/depth
@@ -2883,9 +3347,7 @@ arm64-codegen: context [
 					scratch/stack-low/target-slot: target
 				]
 				instruction/op = OP_MEMBER [
-					if any [depth <= 0 instruction/b <> 0 instruction/c <> 0][
-						return UNSUPPORTED
-					]
+					if any [depth <= 0 instruction/c <> 0][return UNSUPPORTED]
 					ref: scratch/stack-types/depth
 					unless any [
 						scratch/stack-kinds/depth = PLACE
@@ -2894,6 +3356,22 @@ arm64-codegen: context [
 							any [(type-kind ref view) = -2 (type-kind ref view) = -3]
 						]
 					][return INVALID_IR]
+					; A write through a tagged union carries the variant it
+					; selects. The store itself waits for the OP_SET that closes
+					; the path, so the value being assigned still sees whatever
+					; tag the union held on the way in.
+					if instruction/b <> 0 [
+						unless all [
+							instruction/b = (instruction/a + 1)
+							tag-variant = 0
+						][return UNSUPPORTED]
+						width: union-tag-width ref view
+						if width = 0 [return INVALID_IR]
+						tag-variant: instruction/b
+						tag-width-value: width
+						tag-delta: 0
+						tag-slot: depth
+					]
 					member-type: 0
 					member-flags: 0
 					member-offset: 0
@@ -2901,7 +3379,8 @@ arm64-codegen: context [
 						:member-type :member-flags :member-offset [return INVALID_IR]
 					case [
 						scratch/stack-locations/depth = LOCATION_REGISTER [
-							if scratch/stack-high/depth > (2147483647 - member-offset)[
+							if member-offset >
+								(2147483647 - scratch/stack-high/depth) [
 								return UNSUPPORTED
 							]
 							scratch/stack-high/depth:
@@ -2932,21 +3411,80 @@ arm64-codegen: context [
 						]
 						true [return UNSUPPORTED]
 					]
+					; Every further member step walks away from the union base,
+					; so the pending tag remembers how far back that base sits.
+					if all [tag-variant <> 0 tag-slot = depth][
+						if tag-delta > (2147483647 - member-offset)[
+							return UNSUPPORTED
+						]
+						tag-delta: tag-delta + member-offset
+					]
 					scratch/stack-types/depth: member-type
 					scratch/stack-kinds/depth: PLACE
+				]
+				instruction/op = OP_TAG [
+					unless all [
+						instruction/a = 0 instruction/b = 0 instruction/c = 0
+						depth > 0 scratch/stack-kinds/depth = VALUE
+						scratch/stack-flags/depth = 0
+					][return INVALID_IR]
+					ref: scratch/stack-types/depth
+					width: union-tag-width ref view
+					if width = 0 [return INVALID_IR]
+					target: FIRST_TEMP_REGISTER + depth - 1
+					if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+						return UNSUPPORTED
+					]
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: materialize view scratch depth target ref
+						at (capacity - written)
+					if encoded < 0 [return encoded]
+					written: written + encoded
+					; The variant number leads the union, so the tag sits at the
+					; front of whatever the value points at.
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: arm64-encoder/register-load at (capacity - written)
+						target target 0 width 0 4 arm64-encoder/X16
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					scratch/stack-types/depth: -5
+					scratch/stack-kinds/depth: VALUE
+					scratch/stack-locations/depth: LOCATION_REGISTER
+					scratch/stack-low/depth: target
+					scratch/stack-high/depth: 0
+					scratch/stack-flags/depth: 0
+				]
+				instruction/op = OP_OVERFLOW [
+					; The scope itself emits nothing: it only names the landing
+					; pad the operations inside it branch to.
+					target: instruction/a
+					unless all [
+						instruction/b = 0 instruction/c = 0
+						any [
+							target = 0
+							all [target > ordinal target <= fn/instruction-count]
+						]
+					][return INVALID_IR]
 				]
 				instruction/op = OP_CALL [
 					call-target: instruction/a
 					argument-count: instruction/b
-					if any [argument-count < 0 argument-count > depth][
-						return INVALID_IR
-					]
+					; A call through a pointer keeps the callee below its
+					; arguments, so it claims one more live slot.
+					callee-slots: either call-target = 0 [1][0]
+					if any [
+						argument-count < 0
+						argument-count > (depth - callee-slots)
+					][return INVALID_IR]
 					call-return: 0
 					call-first-parameter: 0
 					call-parameter-count: 0
 					call-reference: 0
-					status: resolve-call call-target view :call-return
-						:call-first-parameter :call-parameter-count :call-reference
+					call-source: PARAMETER_TABLE
+					call-signature: either call-target = 0 [instruction/c][0]
+					status: resolve-call call-target call-signature view
+						:call-return :call-first-parameter :call-parameter-count
+						:call-reference :call-source
 					if status < 0 [return status]
 					if call-return <> 0 [
 						width: value-width call-return view
@@ -2957,10 +3495,22 @@ arm64-codegen: context [
 					]
 					unless all [
 						argument-count = call-parameter-count
-						instruction/c = call-return
+						any [call-target = 0 instruction/c = call-return]
 					][return INVALID_IR]
-					argument-base: depth - argument-count
-					if plan/spill-count < argument-base [return INVALID_IR]
+					argument-origin: depth - argument-count
+					if (region-base + argument-origin) > region-limit [
+						return INVALID_IR
+					]
+					callee-slot: either callee-slots = 0 [0][argument-origin]
+					argument-base: argument-origin - callee-slots
+					if callee-slot > 0 [
+						unless all [
+							scratch/stack-kinds/callee-slot = VALUE
+							scratch/stack-flags/callee-slot = 0
+							compatible-types? call-signature
+								scratch/stack-types/callee-slot view
+						][return INVALID_IR]
+					]
 					slot: 1
 					while [slot <= argument-base][
 						ref: scratch/stack-types/slot
@@ -2991,10 +3541,7 @@ arm64-codegen: context [
 								if encoded < 0 [return encoded]
 								written: written + encoded
 							]
-							displacement: 0 - ((
-								plan/home-count + plan/float-home-count
-									+ plan/frame-home-count + slot
-							) * 8)
+							displacement: 0 - ((region-base + slot) * 8)
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: either floating? [
 								arm64-encoder/float-frame-store at
@@ -3011,13 +3558,31 @@ arm64-codegen: context [
 						]
 						slot: slot + 1
 					]
+					; The callee pointer waits until the arguments are in place,
+					; because X17 is the only register the argument moves leave
+					; alone. A pointer parked anywhere the moves can reach goes
+					; to its spill slot first.
+					if all [
+						callee-slot > 0
+						scratch/stack-locations/callee-slot = LOCATION_REGISTER
+						not call-safe-register? scratch/stack-low/callee-slot
+					][
+						displacement: 0 - ((region-base + callee-slot) * 8)
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/frame-store at (capacity - written)
+							scratch/stack-low/callee-slot displacement 8
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						scratch/stack-locations/callee-slot: LOCATION_FRAME
+						scratch/stack-low/callee-slot: displacement
+						scratch/stack-high/callee-slot: 0
+					]
 					slot: argument-count
 					while [slot > 0][
-						argument-slot: argument-base + slot
+						argument-slot: argument-origin + slot
 						if scratch/stack-kinds/argument-slot <> VALUE [return INVALID_IR]
-						parameter: as rsir-parameter! (view/parameters
-							+ ((call-first-parameter + slot - 1)
-								* RSIR_PARAMETER_SIZE))
+						parameter: call-parameter view call-source
+							call-first-parameter slot
 						if parameter/flags <> 0 [return UNSUPPORTED]
 						ref: scratch/stack-types/argument-slot
 						unless implicitly-compatible? parameter/type ref
@@ -3030,7 +3595,7 @@ arm64-codegen: context [
 							width = 1 width = 2 width = 4 width = 8
 						][return UNSUPPORTED]
 						floating?: any [kind = 9 kind = 10]
-						parameter-register: abi-parameter-register view
+						parameter-register: abi-parameter-register view call-source
 							call-first-parameter slot floating?
 						if any [parameter-register < 0 parameter-register >= 8][
 							return UNSUPPORTED
@@ -3043,20 +3608,36 @@ arm64-codegen: context [
 						slot: slot - 1
 					]
 					displacement: 0
-					either call-target > 0 [
-						if not null? code [
-							target: function-offsets/call-target
-							displacement: target - function-base
-							displacement: displacement - written
+					case [
+						call-target > 0 [
+							if not null? code [
+								target: function-offsets/call-target
+								displacement: target - function-base
+								displacement: displacement - written
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/call-relative at
+								(capacity - written) displacement
 						]
-					][
-						status: record-reference call-reference
-							(function-base + written) references
-						if status < 0 [return status]
+						call-target < 0 [
+							status: record-reference call-reference
+								(function-base + written) references
+							if status < 0 [return status]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/call-relative at
+								(capacity - written) displacement
+						]
+						true [
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch callee-slot
+								arm64-encoder/X17 call-signature at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/call-register at
+								(capacity - written) arm64-encoder/X17
+						]
 					]
-					at: either null? code [as byte-ptr! 0][code + written]
-					encoded: arm64-encoder/call-relative at
-						(capacity - written) displacement
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
 					depth: argument-base
@@ -3079,6 +3660,165 @@ arm64-codegen: context [
 						scratch/stack-high/depth: 0
 						scratch/stack-flags/depth: 0
 					]
+				]
+				instruction/op = OP_ENTRY [
+					unless all [
+						any [instruction/a = 0 instruction/a = 1]
+						instruction/c = 0
+						depth = 0
+					][return INVALID_IR]
+					region-entry: ordinal
+					region-base: scratch/entry-spill-bases/ordinal
+					region-limit: scratch/entry-spill-limits/ordinal
+					region-link?: all [
+						instruction/a = 1
+						entry-clobbers-link? view fn first-instruction ordinal
+					]
+					if region-link? [
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/frame-store at (capacity - written)
+							arm64-encoder/LR (0 - ((region-limit + 1) * 8)) 8
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+				]
+				instruction/op = OP_SUB_CALL [
+					sub-target: instruction/a
+					unless all [
+						sub-target > 0
+						sub-target <= fn/instruction-count
+						sub-target <> region-entry
+						instruction/c = 0
+					][return INVALID_IR]
+					sub-entry: as rsir-instruction! (view/instructions
+						+ ((first-instruction + sub-target - 1)
+							* RSIR_INSTRUCTION_SIZE))
+					unless all [
+						sub-entry/op = OP_ENTRY
+						sub-entry/a = 1
+						sub-entry/b = instruction/b
+					][return INVALID_IR]
+					if (region-base + depth) > region-limit [return INVALID_IR]
+					; The callee runs on this frame and may rewrite any local, so
+					; every live value goes to this region's window first.
+					slot: 1
+					while [slot <= depth][
+						if any [
+							scratch/stack-locations/slot = LOCATION_FLAGS
+							scratch/stack-locations/slot = LOCATION_REGISTER
+						][
+							if scratch/stack-kinds/slot <> VALUE [return UNSUPPORTED]
+							ref: scratch/stack-types/slot
+							width: value-width ref view
+							unless any [
+								width = 1 width = 2 width = 4 width = 8
+							][return UNSUPPORTED]
+							floating?: float-type? ref view
+							target: either (scratch/stack-locations/slot
+								= LOCATION_REGISTER) [scratch/stack-low/slot][
+								either floating? [FLOAT_SCRATCH_REGISTER][arm64-encoder/X17]
+							]
+							if any [
+								target = arm64-encoder/X17
+								all [floating? target = FLOAT_SCRATCH_REGISTER]
+							][
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch slot target ref
+									at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+							]
+							displacement: 0 - ((region-base + slot) * 8)
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: either floating? [
+								arm64-encoder/float-frame-store at
+									(capacity - written) target displacement width
+							][
+								arm64-encoder/frame-store at
+									(capacity - written) target displacement width
+							]
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-locations/slot: LOCATION_FRAME
+							scratch/stack-low/slot: displacement
+							scratch/stack-high/slot: 0
+						]
+						slot: slot + 1
+					]
+					displacement: either null? code [0][
+						instruction-offsets/sub-target - written
+					]
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: arm64-encoder/call-relative at
+						(capacity - written) displacement
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					if instruction/b <> 0 [
+						ref: instruction/b
+						width: value-width ref view
+						if any [width = 0 width > 8][return UNSUPPORTED]
+						if all [not float-type? ref view width < 4][
+							load-signed: either signed-type? ref view [1][0]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/extend-register at
+								(capacity - written) arm64-encoder/X0
+								arm64-encoder/X0 width load-signed
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						depth: depth + 1
+						scratch/stack-types/depth: ref
+						scratch/stack-kinds/depth: VALUE
+						scratch/stack-locations/depth: LOCATION_REGISTER
+						scratch/stack-low/depth: arm64-encoder/X0
+						scratch/stack-high/depth: 0
+						scratch/stack-flags/depth: 0
+					]
+				]
+				instruction/op = OP_SUB_RETURN [
+					if any [
+						region-entry = 0
+						instruction/b <> 0 instruction/c <> 0
+					][return INVALID_IR]
+					sub-entry: as rsir-instruction! (view/instructions
+						+ ((first-instruction + region-entry - 1)
+							* RSIR_INSTRUCTION_SIZE))
+					unless all [
+						sub-entry/a = 1
+						sub-entry/b = instruction/a
+						either instruction/a = 0 [
+							any [depth = 0 depth = 1]
+						][
+							all [
+								depth = 1
+								scratch/stack-kinds/depth = VALUE
+								implicitly-compatible? instruction/a
+									scratch/stack-types/depth
+									(scratch/stack-locations/depth = LOCATION_IMMEDIATE)
+									view
+							]
+						]
+					][return INVALID_IR]
+					if instruction/a <> 0 [
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: materialize view scratch depth arm64-encoder/X0
+							instruction/a at (capacity - written)
+						if encoded < 0 [return encoded]
+						written: written + encoded
+					]
+					depth: 0
+					if region-link? [
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/frame-load at (capacity - written)
+							arm64-encoder/LR (0 - ((region-limit + 1) * 8)) 8 0 8
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: arm64-encoder/return-near at (capacity - written)
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					fallthrough?: false
 				]
 				instruction/op = OP_DROP [
 					unless all [
@@ -3157,7 +3897,7 @@ arm64-codegen: context [
 					unless all [
 						instruction/a >= ADD_OPERATION
 						instruction/a <= LESS_EQUAL_OPERATION
-						instruction/b = 0 instruction/c = 0 depth >= 2
+						instruction/b >= 0 instruction/c >= 0 depth >= 2
 					][return UNSUPPORTED]
 					source-slot: depth - 1
 					unless all [
@@ -3186,10 +3926,95 @@ arm64-codegen: context [
 						all [
 							integer-type? left-ref view
 							integer-type? right-ref view
-							compatible-literal? left-ref right-ref view
+							any [
+								compatible-literal? left-ref right-ref view
+								; Arithmetic and comparisons happen in one of the
+								; two operand types, and a shift count is always
+								; a plain 32-bit integer, so none of those need
+								; the operands to share a type.
+								operation <= MODULO_OPERATION
+								operation >= EQUAL_OPERATION
+								all [
+									operation >= SHIFT_LEFT_OPERATION
+									operation <= SHIFT_LOGICAL_OPERATION
+									(type-kind right-ref view) = 5
+								]
+							]
 						]
 					][return INVALID_IR]
 					comparison?: operation >= EQUAL_OPERATION
+					; A comparison of two integer types happens in the wider of
+					; them, so neither operand reaches the compare truncated.
+					if all [
+						comparison? not floating? not pointer?
+						integer-type? left-ref view
+						integer-type? right-ref view
+						(value-width right-ref view) > (value-width left-ref view)
+					][left-ref: right-ref]
+					; A tracked operation names the OVERFLOW? scope it belongs
+					; to, and branches to that scope's landing pad instead of
+					; letting a wrapped result reach the program.
+					tracked?: instruction/b <> 0
+					overflow-target: 0
+					overflow-condition: -1
+					base-depth: 0
+					shift-count: 0
+					right-ready?: false
+					either tracked? [
+						overflow-anchor: instruction/b
+						if any [
+							overflow-anchor <= 0 overflow-anchor >= ordinal
+						][return INVALID_IR]
+						overflow-scope: as rsir-instruction! (view/instructions
+							+ ((first-instruction + overflow-anchor - 1)
+								* RSIR_INSTRUCTION_SIZE))
+						overflow-target: overflow-scope/a
+						base-depth: instruction-depths/overflow-anchor
+						unless all [
+							overflow-scope/op = OP_OVERFLOW
+							overflow-scope/b = 0 overflow-scope/c = 0
+							overflow-target > overflow-anchor
+							overflow-target <= fn/instruction-count
+							base-depth >= 0 base-depth <= (depth - 2)
+							not floating? not pointer? not comparison?
+						][return INVALID_IR]
+						kind: type-kind left-ref view
+						case [
+							operation <= MULTIPLY_OPERATION [
+								unless all [
+									instruction/c = 0
+									integer-type? left-ref view
+								][return INVALID_IR]
+							]
+							operation <= MODULO_OPERATION [
+								unless all [instruction/c = 0 kind = 5][
+									return INVALID_IR
+								]
+							]
+							operation = SHIFT_LEFT_OPERATION [
+								shift-count: either any [kind = 7 kind = 8][63][31]
+								unless all [
+									instruction/c > 0
+									instruction/c <= shift-count
+								][return INVALID_IR]
+								shift-count: instruction/c
+							]
+							true [return INVALID_IR]
+						]
+						; The landing pad resumes the scope's stack, so the slots
+						; it keeps must be in their canonical registers before
+						; any operand move can set the flags.
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: canonicalize-stack view scratch base-depth
+							at (capacity - written)
+						if encoded < 0 [return encoded]
+						written: written + encoded
+						unless merge-control-target overflow-target base-depth fn
+							view scratch instruction-depths entry-types
+							entry-kinds entry-flags [return INVALID_IR]
+					][
+						if instruction/c <> 0 [return INVALID_IR]
+					]
 					if floating? [
 						width: value-width operation-ref view
 						target: FIRST_FLOAT_TEMP_REGISTER + source-slot - 1
@@ -3262,13 +4087,14 @@ arm64-codegen: context [
 					][return UNSUPPORTED]
 					width: either result-width = 8 [8][4]
 					folded: 0
-					if all [
-						not pointer?
-						result-width = 4
-						scratch/stack-locations/source-slot = LOCATION_IMMEDIATE
-						scratch/stack-locations/depth = LOCATION_IMMEDIATE
-						fold-integer32 operation scratch/stack-low/source-slot
-							scratch/stack-low/depth :folded
+						if all [
+							not pointer?
+							not tracked?
+							result-width = 4
+							scratch/stack-locations/source-slot = LOCATION_IMMEDIATE
+							scratch/stack-locations/depth = LOCATION_IMMEDIATE
+							fold-integer32 operation scratch/stack-low/source-slot
+								scratch/stack-low/depth :folded
 					][
 						depth: source-slot
 						scratch/stack-types/depth: left-ref
@@ -3284,7 +4110,10 @@ arm64-codegen: context [
 					if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
 						return UNSUPPORTED
 					]
-					if all [not comparison? (index + 2) < fn/instruction-count][
+					if all [
+						not comparison? not tracked?
+						(index + 2) < fn/instruction-count
+					][
 						next-instruction: as rsir-instruction! (view/instructions
 							+ ((first-instruction + index + 1) * RSIR_INSTRUCTION_SIZE))
 						following-instruction: as rsir-instruction! (view/instructions
@@ -3346,6 +4175,109 @@ arm64-codegen: context [
 								scratch/stack-high/depth = 0]
 							all [scratch/stack-low/depth < 0
 								scratch/stack-high/depth = -1]
+						]
+					]
+					; The flags an ADDS or a SUBS leaves are the whole point of a
+					; tracked sum, and an immediate that folds a subtraction into
+					; an addition would report the wrong carry.
+					if all [tracked? operation <= SUBTRACT_OPERATION][
+						immediate?: false
+					]
+					if tracked? [
+						load-signed: either signed-type? left-ref view [1][0]
+						case [
+							all [
+								operation >= DIVIDE_OPERATION
+								operation <= MODULO_OPERATION
+							][
+								; Only INT_MIN / -1 leaves the quotient's type, and
+								; both operands have to be live to say so: x - 1
+								; overflows for INT_MIN alone, x + 1 is zero for -1
+								; alone.
+								right: arm64-encoder/X17
+								either all [
+									scratch/stack-locations/depth
+										= LOCATION_REGISTER
+									any [
+										width = 4
+										(value-width right-ref view) = 8
+									]
+								][
+									right: scratch/stack-low/depth
+								][
+									at: either null? code [as byte-ptr! 0][
+										code + written
+									]
+									encoded: materialize view scratch depth right
+										left-ref at (capacity - written)
+									if encoded < 0 [return encoded]
+									written: written + encoded
+								]
+								right-ready?: true
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/compare-negative-immediate
+									at (capacity - written) right 1 width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/branch-condition at
+									(capacity - written) arm64-encoder/NE 12
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/compare-immediate at
+									(capacity - written) left 1 width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								displacement: either null? code [0][
+									instruction-offsets/overflow-target - written
+								]
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/branch-condition at
+									(capacity - written) arm64-encoder/VS displacement
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							all [
+								operation = SHIFT_LEFT_OPERATION
+								result-width >= 4
+							][
+								; Shifting the count back has to return the value
+								; the source held, otherwise a bit left the type.
+								unless all [
+									immediate?
+									scratch/stack-low/depth = shift-count
+								][return INVALID_IR]
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/shift-immediate at
+									(capacity - written) arm64-encoder/SHIFT_LEFT
+									arm64-encoder/X17 left shift-count width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								condition: either load-signed = 1 [
+									arm64-encoder/SHIFT_ARITHMETIC
+								][arm64-encoder/SHIFT_RIGHT]
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/shift-immediate at
+									(capacity - written) condition arm64-encoder/X17
+									arm64-encoder/X17 shift-count width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/compare-register at
+									(capacity - written) arm64-encoder/X17 left width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								displacement: either null? code [0][
+									instruction-offsets/overflow-target - written
+								]
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/branch-condition at
+									(capacity - written) arm64-encoder/NE displacement
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							true [0]
 						]
 					]
 					encoded: -1
@@ -3412,25 +4344,41 @@ arm64-codegen: context [
 						true [-1]
 					]
 					if encoded < 0 [
-						right: arm64-encoder/X17
-						either scratch/stack-locations/depth = LOCATION_REGISTER [
-							right: scratch/stack-low/depth
-						][
-							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: materialize view scratch depth right right-ref
-								at (capacity - written)
-							if encoded < 0 [return encoded]
-							written: written + encoded
+						unless right-ready? [
+							right: arm64-encoder/X17
+							either all [
+								scratch/stack-locations/depth = LOCATION_REGISTER
+								any [width = 4 (value-width right-ref view) = 8]
+							][
+								right: scratch/stack-low/depth
+							][
+								; The operation runs in the left operand's type,
+								; so a narrower right operand is extended into it
+								; rather than used as it stands.
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch depth right left-ref
+									at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+							]
 						]
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: case [
 							operation = ADD_OPERATION [
-								arm64-encoder/add-register at (capacity - written)
-									target left right width
+								arm64-encoder/alu-register at (capacity - written)
+									arm64-encoder/OP_ADD target left right width
+									tracked?
 							]
 							operation = SUBTRACT_OPERATION [
-								arm64-encoder/subtract-register at (capacity - written)
-									target left right width
+								arm64-encoder/alu-register at (capacity - written)
+									arm64-encoder/OP_SUB target left right width
+									tracked?
+							]
+							all [tracked? operation = MULTIPLY_OPERATION
+								result-width >= 4
+							][
+								emit-tracked-multiply target left right
+									result-width load-signed at (capacity - written)
 							]
 							operation = MULTIPLY_OPERATION [
 								arm64-encoder/multiply-register at (capacity - written)
@@ -3519,6 +4467,54 @@ arm64-codegen: context [
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+					if tracked? [
+						load-signed: either signed-type? left-ref view [1][0]
+						if result-width >= 4 [
+							overflow-condition: case [
+								operation = ADD_OPERATION [
+									either load-signed = 1 [
+										arm64-encoder/VS
+									][arm64-encoder/CS]
+								]
+								operation = SUBTRACT_OPERATION [
+									either load-signed = 1 [
+										arm64-encoder/VS
+									][arm64-encoder/CC]
+								]
+								operation = MULTIPLY_OPERATION [arm64-encoder/NE]
+								true [-1]
+							]
+						]
+						if overflow-condition >= 0 [
+							displacement: either null? code [0][
+								instruction-offsets/overflow-target - written
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/branch-condition at
+								(capacity - written) overflow-condition displacement
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						if result-width < 4 [
+							; A narrow result is computed 32 bits wide, so it has
+							; overflowed exactly when it no longer survives being
+							; re-extended from its own type.
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/compare-extended-register at
+								(capacity - written) target target width result-width
+								load-signed
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							displacement: either null? code [0][
+								instruction-offsets/overflow-target - written
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/branch-condition at
+								(capacity - written) arm64-encoder/NE displacement
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+					]
 					if all [
 						operation = MODULO_OPERATION
 						signed-type? left-ref view
@@ -3855,8 +4851,8 @@ arm64-codegen: context [
 		words: header/function-count * 4
 		if max-storage > ((2147483647 - words) / 3)[return OUTPUT_FULL]
 		words: words + (max-storage * 3)
-		if max-instructions > ((2147483647 - words) / 7)[return OUTPUT_FULL]
-		words: words + (max-instructions * 7)
+		if max-instructions > ((2147483647 - words) / 9)[return OUTPUT_FULL]
+		words: words + (max-instructions * 9)
 		if header/instruction-count > ((2147483647 - words) / 6)[
 			return OUTPUT_FULL
 		]
@@ -3892,7 +4888,10 @@ arm64-codegen: context [
 		scratch/stack-high: scratch/stack-low + max-instructions
 		scratch/stack-flags: scratch/stack-high + max-instructions
 		scratch/plan-depths: scratch/stack-flags + max-instructions
-		scratch/instruction-offsets: scratch/plan-depths + max-instructions
+		scratch/entry-spill-bases: scratch/plan-depths + max-instructions
+		scratch/entry-spill-limits: scratch/entry-spill-bases + max-instructions
+		scratch/instruction-offsets:
+			scratch/entry-spill-limits + max-instructions
 		scratch/instruction-depths:
 			scratch/instruction-offsets + header/instruction-count
 		scratch/entry-types: scratch/instruction-depths + header/instruction-count
@@ -3945,7 +4944,7 @@ arm64-codegen: context [
 			fn: as rsir-function! (view/functions + ((id - 1) * RSIR_FUNCTION_SIZE))
 			instruction-starts/id: first-instruction
 			entry?: all [header/module-kind = 3 id = header/entry-function]
-			status: plan-function view fn first-instruction scratch plan
+			status: plan-function view layout fn first-instruction scratch plan
 			if status < 0 [return release memory status]
 			function-frames/id: either all [
 				plan/home-count = 0
@@ -4205,7 +5204,7 @@ arm64-codegen: context [
 		while [id <= header/function-count][
 			fn: as rsir-function! (view/functions + ((id - 1) * RSIR_FUNCTION_SIZE))
 			entry?: all [header/module-kind = 3 id = header/entry-function]
-			status: plan-function view fn instruction-starts/id scratch plan
+			status: plan-function view layout fn instruction-starts/id scratch plan
 			if status < 0 [return release memory status]
 			written: compile-function view layout fn instruction-starts/id
 				entry? scratch plan reference-state function-offsets function-offsets/id

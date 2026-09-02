@@ -601,4 +601,365 @@ check all [file? pointer-output exists? pointer-output][
 status: call/wait to-local-file pointer-output
 check status = 0 ["generated ARM64 pointer module returned " status " instead of 0"]
 
+indirect-source: {
+	Red/System []
+	unary!: alias function! [value [integer!] return: [integer!]]
+	weighted!: alias function! [
+		a [integer!] x [float!] b [integer!] return: [integer!]
+	]
+	octet!: alias function! [
+		a [integer!] b [integer!] c [integer!] d [integer!]
+		e [integer!] f [integer!] g [integer!] h [integer!]
+		return: [integer!]
+	]
+	triple: func [value [integer!] return: [integer!]][value * 3]
+	negate-value: func [value [integer!] return: [integer!]][0 - value]
+	add-two: func [a [integer!] b [integer!] return: [integer!]][a + b]
+	weigh: func [
+		a [integer!] x [float!] b [integer!]
+		return: [integer!]
+	][a + b + as integer! x]
+	sum-eight: func [
+		a [integer!] b [integer!] c [integer!] d [integer!]
+		e [integer!] f [integer!] g [integer!] h [integer!]
+		return: [integer!]
+	][a + b + c + d + e + f + g + h]
+	handler: :add-two
+	current: :triple
+	apply-hook: func [hook [unary!] value [integer!] return: [integer!]][
+		hook value
+	]
+	local-call: func [return: [integer!] /local hook [unary!]][
+		hook: :triple
+		hook 4
+	]
+	spilled-call: func [return: [integer!]][
+		handler (add-two 1 2) 4
+	]
+	weighted-call: func [return: [integer!] /local hook [weighted!]][
+		hook: :weigh
+		hook 3 4.0 5
+	]
+	octet-call: func [return: [integer!] /local hook [octet!]][
+		hook: :sum-eight
+		hook 1 2 3 4 5 6 7 8
+	]
+	main: func [return: [integer!] /local total [integer!]][
+		total: local-call
+		total: total + (apply-hook :negate-value 5)
+		total: total + spilled-call
+		total: total + weighted-call
+		total: total + (octet-call - 33)
+		current: :negate-value
+		total: total + (current 4)
+		total + (handler 9 8)
+	]
+}
+
+indirect-ir: compiler-rsir-frontend/compile load indirect-source 'user
+check binary? indirect-ir [
+	"ARM64 indirect call integration frontend failed: "
+	mold compiler-rsir-frontend/last-error
+]
+change/part indirect-ir int-to-bin/to-bin32 3 4
+change/part at indirect-ir 5 int-to-bin/to-bin32 (word-at indirect-ir 16) 4
+
+indirect-image: make binary! 131072
+status: codegen-module indirect-ir indirect-image 2 0
+check status = 0 ["ARM64 indirect call integration codegen status=" status]
+check not none? find indirect-image #{20023FD6} [
+	"ARM64 indirect calls do not branch through X17"
+]
+
+indirect-job: compiler-system-job/new 'Darwin-ARM64
+check object? indirect-job "could not create a Darwin ARM64 indirect call job"
+indirect-job: construct/with body-of indirect-job linker/job-class
+compiler-system-job/job-set indirect-job 'runtime? false
+compiler-system-job/job-set indirect-job 'debug? false
+compiler-system-job/job-set indirect-job 'build-prefix output-dir
+compiler-system-job/job-set indirect-job 'build-basename %arm64-hybrid-indirect-integration
+compiler-system-job/job-set indirect-job 'build-suffix none
+
+check linker/load-codegen indirect-job indirect-image [
+	"Darwin linker rejected ARM64 indirect call image: " linker/codegen-error
+]
+indirect-output: linker/build indirect-job
+check all [file? indirect-output exists? indirect-output][
+	"Darwin linker did not write " mold indirect-output
+]
+status: call/wait to-local-file indirect-output
+check status = 42 [
+	"generated ARM64 indirect call module returned " status " instead of 42"
+]
+
+subroutine-source: {
+	Red/System []
+	bump-by: func [value [integer!] return: [integer!]][value + 1]
+	tally: func [
+		limit [integer!]
+		return: [integer!]
+		/local step [subroutine!] wrap [subroutine!]
+			total [integer!] index [integer!]
+	][
+		step: [total: total + index]
+		wrap: [
+			total: bump-by total
+			total
+		]
+		total: 0
+		index: 0
+		while [index < limit][
+			index: index + 1
+			step
+		]
+		total + wrap
+	]
+	blend: func [
+		return: [integer!]
+		/local scale [subroutine!] value [float!]
+	][
+		scale: [value * 2.0]
+		value: 2.5
+		as integer! scale
+	]
+	nest: func [
+		return: [integer!]
+		/local inner [subroutine!] outer [subroutine!] total [integer!]
+	][
+		inner: [total: total + 2]
+		outer: [
+			inner
+			inner
+			total
+		]
+		total: 1
+		outer
+	]
+	chain: func [
+		return: [integer!]
+		/local leaf [subroutine!] pair [subroutine!] link [subroutine!]
+			total [integer!]
+	][
+		leaf: [total: total + 1]
+		pair: [leaf leaf total]
+		link: [leaf pair]
+		total: 0
+		link
+	]
+	escape: func [
+		value [integer!]
+		return: [integer!]
+		/local bail [subroutine!]
+	][
+		bail: [
+			if value > 10 [return 0]
+			value
+		]
+		bail
+	]
+	main: func [return: [integer!] /local total [integer!]][
+		total: tally 5
+		total: total + blend
+		total: total + nest
+		total: total + chain
+		total: total + (escape 3)
+		total: total + (escape 20)
+		total - 5
+	]
+}
+
+subroutine-ir: compiler-rsir-frontend/compile load subroutine-source 'user
+check binary? subroutine-ir [
+	"ARM64 subroutine integration frontend failed: "
+	mold compiler-rsir-frontend/last-error
+]
+change/part subroutine-ir int-to-bin/to-bin32 3 4
+change/part at subroutine-ir 5 int-to-bin/to-bin32 (word-at subroutine-ir 16) 4
+
+subroutine-image: make binary! 131072
+status: codegen-module subroutine-ir subroutine-image 2 0
+check status = 0 ["ARM64 subroutine integration codegen status=" status]
+
+;-- Each subroutine body is emitted as its own block terminated by RET, so a
+;-- module using them holds more returns than it has functions.
+return-count: 0
+cursor: at subroutine-image (word-at subroutine-image 28) + 1
+code-words: (word-at subroutine-image 32) / 4
+loop code-words [
+	if #{C0035FD6} = copy/part cursor 4 [return-count: return-count + 1]
+	cursor: skip cursor 4
+]
+check return-count > (word-at subroutine-image 12) [
+	"ARM64 subroutine bodies were not emitted: " return-count
+	" returns for " (word-at subroutine-image 12) " functions"
+]
+
+subroutine-job: compiler-system-job/new 'Darwin-ARM64
+check object? subroutine-job "could not create a Darwin ARM64 subroutine job"
+subroutine-job: construct/with body-of subroutine-job linker/job-class
+compiler-system-job/job-set subroutine-job 'runtime? false
+compiler-system-job/job-set subroutine-job 'debug? false
+compiler-system-job/job-set subroutine-job 'build-prefix output-dir
+compiler-system-job/job-set subroutine-job 'build-basename
+	%arm64-hybrid-subroutine-integration
+compiler-system-job/job-set subroutine-job 'build-suffix none
+
+check linker/load-codegen subroutine-job subroutine-image [
+	"Darwin linker rejected ARM64 subroutine image: " linker/codegen-error
+]
+subroutine-output: linker/build subroutine-job
+check all [file? subroutine-output exists? subroutine-output][
+	"Darwin linker did not write " mold subroutine-output
+]
+status: call/wait to-local-file subroutine-output
+check status = 42 [
+	"generated ARM64 subroutine module returned " status " instead of 42"
+]
+
+advanced-source: {
+	Red/System []
+	point!: alias struct! [x [integer!] y [integer!]]
+	shape!: alias union! [
+		[variant]
+		point [point! value]
+		id [integer!]
+	]
+	tag-check: func [return: [integer!] /local shape [shape!] score [integer!]][
+		shape: declare shape!
+		shape/point/x: 12
+		shape/point/y: 34
+		if not variant? shape 'point [return 1]
+		if shape/point/x <> 12 [return 2]
+		if shape/point/y <> 34 [return 3]
+		score: switch shape [point [4] id [8] default [return 9]]
+		if score <> 4 [return 4]
+		shape/id: 99
+		if variant? shape 'point [return 5]
+		if not variant? shape 'id [return 6]
+		if shape/id <> 99 [return 7]
+		0
+	]
+	overflow-check: func [
+		return: [integer!]
+		/local value [integer!] wide [int64!] uwide [uint64!]
+			narrow [uint8!] flag [logic!] side [integer!] inner [logic!]
+	][
+		flag: overflow? [value: 2147483647 + 1]
+		if not flag [return 10]
+		flag: overflow? [value: 1 + 1]
+		if flag [return 11]
+
+		value: 2147483647
+		flag: overflow? [value: value + 1]
+		if not flag [return 12]
+		value: -2147483648
+		flag: overflow? [value: value - 1]
+		if not flag [return 13]
+		flag: overflow? [value: 46340 * 46340]
+		if flag [return 14]
+		flag: overflow? [value: 46341 * 46341]
+		if not flag [return 15]
+
+		wide: as int64! #u64h-7FFFFFFFFFFFFFFF
+		flag: overflow? [wide: wide + (as int64! 1)]
+		if not flag [return 16]
+		wide: as int64! -20000
+		flag: overflow? [wide: wide * (as int64! 2)]
+		if flag [return 17]
+		if wide <> as int64! -40000 [return 18]
+		wide: as int64! #u64h-4000000000000000
+		flag: overflow? [wide: wide * (as int64! 4)]
+		if not flag [return 19]
+
+		uwide: as uint64! #u64h-FFFFFFFFFFFFFFFF
+		flag: overflow? [uwide: uwide + (as uint64! 1)]
+		if not flag [return 20]
+		uwide: as uint64! 0
+		flag: overflow? [uwide: uwide - (as uint64! 1)]
+		if not flag [return 21]
+		uwide: as uint64! #u64h-8000000000000000
+		flag: overflow? [uwide: uwide * (as uint64! 2)]
+		if not flag [return 22]
+
+		narrow: as uint8! 255
+		flag: overflow? [narrow: narrow + (as uint8! 1)]
+		if not flag [return 23]
+		narrow: as uint8! 127
+		flag: overflow? [narrow: narrow + (as uint8! 1)]
+		if flag [return 24]
+
+		value: 1
+		flag: overflow? [value: value << 31]
+		if not flag [return 25]
+		value: -1
+		flag: overflow? [value: value << 31]
+		if flag [return 26]
+
+		value: -2147483648
+		flag: overflow? [value: value / -1]
+		if not flag [return 27]
+		value: -2147483647
+		flag: overflow? [value: value / -1]
+		if flag [return 28]
+
+		side: 0
+		flag: overflow? [
+			side: side + 1
+			value: 2147483647 + 1
+			side: side + 100
+		]
+		if not flag [return 29]
+		if side <> 1 [return 30]
+
+		flag: overflow? [
+			inner: overflow? [value: 2147483647 + 1]
+			value: 1 + 1
+		]
+		if flag [return 31]
+		if not inner [return 32]
+		0
+	]
+	main: func [return: [integer!] /local status [integer!]][
+		status: tag-check
+		if status <> 0 [return status]
+		status: overflow-check
+		if status <> 0 [return status]
+		42
+	]
+}
+
+advanced-ir: compiler-rsir-frontend/compile load advanced-source 'user
+check binary? advanced-ir [
+	"ARM64 tag/overflow integration frontend failed: "
+	mold compiler-rsir-frontend/last-error
+]
+change/part advanced-ir int-to-bin/to-bin32 3 4
+change/part at advanced-ir 5 int-to-bin/to-bin32 (word-at advanced-ir 16) 4
+
+advanced-image: make binary! 262144
+status: codegen-module advanced-ir advanced-image 2 0
+check status = 0 ["ARM64 tag/overflow integration codegen status=" status]
+
+advanced-job: compiler-system-job/new 'Darwin-ARM64
+check object? advanced-job "could not create a Darwin ARM64 tag/overflow job"
+advanced-job: construct/with body-of advanced-job linker/job-class
+compiler-system-job/job-set advanced-job 'runtime? false
+compiler-system-job/job-set advanced-job 'debug? false
+compiler-system-job/job-set advanced-job 'build-prefix output-dir
+compiler-system-job/job-set advanced-job 'build-basename
+	%arm64-hybrid-tag-overflow-integration
+compiler-system-job/job-set advanced-job 'build-suffix none
+
+check linker/load-codegen advanced-job advanced-image [
+	"Darwin linker rejected ARM64 tag/overflow image: " linker/codegen-error
+]
+advanced-output: linker/build advanced-job
+check all [file? advanced-output exists? advanced-output][
+	"Darwin linker did not write " mold advanced-output
+]
+status: call/wait to-local-file advanced-output
+check status = 42 [
+	"generated ARM64 tag/overflow module returned " status " instead of 42"
+]
+
 print "PASS: direct ARM64 RSIR -> Mach-O -> execution"

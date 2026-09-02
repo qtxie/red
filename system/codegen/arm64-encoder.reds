@@ -510,6 +510,34 @@ arm64-encoder: context [
 		instruction code capacity (opcode or (left * 32))
 	]
 
+	;-- CMP with an extended second operand, used to detect a value that no
+	;-- longer fits the narrower type it belongs to.
+	compare-extended-register: func [
+		code [byte-ptr!]
+		capacity left right width source-width signed [integer!]
+		return: [integer!]
+		/local option opcode [integer!]
+	][
+		unless all [
+			valid-register? left valid-register? right
+			any [width = 4 width = 8]
+			any [source-width = 1 source-width = 2 source-width = 4]
+			source-width < width
+			any [signed = 0 signed = 1]
+		][return -1]
+		option: case [
+			source-width = 1 [0]
+			source-width = 2 [1]
+			true [2]
+		]
+		if signed = 1 [option: option + 4]
+		opcode: either width = 8 [EB200000h][6B200000h]
+		opcode: opcode or (right * 65536)
+		opcode: opcode or (option * 8192)
+		opcode: opcode or (left * 32)
+		instruction code capacity (opcode or ZR)
+	]
+
 	encode-add-immediate: func [
 		operation target source value width [integer!]
 		set-flags? [logic!]
@@ -571,6 +599,19 @@ arm64-encoder: context [
 		instruction code capacity encoded
 	]
 
+	;-- CMN: the flags of an addition nobody keeps, so a register can be tested
+	;-- against a small negative value without materializing one.
+	compare-negative-immediate: func [
+		code [byte-ptr!]
+		capacity source value width [integer!]
+		return: [integer!]
+		/local encoded [integer!]
+	][
+		encoded: encode-add-immediate OP_ADD ZR source value width true
+		if encoded = -1 [return -1]
+		instruction code capacity encoded
+	]
+
 	multiply-register: func [
 		code [byte-ptr!]
 		capacity target left right width [integer!]
@@ -581,6 +622,41 @@ arm64-encoder: context [
 			valid-register? target valid-register? left valid-register? right valid-width? width
 		][return -1]
 		opcode: either width = 8 [9B007C00h][1B007C00h]
+		opcode: opcode or (right * 65536)
+		opcode: opcode or (left * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	;-- SMULL/UMULL keep the whole product of two 32-bit operands, and
+	;-- SMULH/UMULH the upper half of a 64-bit one: both let a multiplication
+	;-- be checked for overflow without a second pass over the operands.
+	multiply-long: func [
+		code [byte-ptr!]
+		capacity target left right signed [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? target valid-register? left valid-register? right
+			any [signed = 0 signed = 1]
+		][return -1]
+		opcode: either signed = 1 [9B207C00h][9BA07C00h]
+		opcode: opcode or (right * 65536)
+		opcode: opcode or (left * 32)
+		instruction code capacity (opcode or target)
+	]
+
+	multiply-high: func [
+		code [byte-ptr!]
+		capacity target left right signed [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? target valid-register? left valid-register? right
+			any [signed = 0 signed = 1]
+		][return -1]
+		opcode: either signed = 1 [9B407C00h][9BC07C00h]
 		opcode: opcode or (right * 65536)
 		opcode: opcode or (left * 32)
 		instruction code capacity (opcode or target)

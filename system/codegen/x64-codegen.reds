@@ -4180,10 +4180,11 @@ x64-codegen: context [
 		0
 	]
 
-	; Builds one canonical interval per eligible scalar local. Requiring an
-	; adjacent LOAD or SET keeps addresses from escaping; requiring the first
-	; access to be SET means a register home never needs an implicit frame load.
-	discover-local-intervals: func [
+	; Builds one canonical interval per eligible scalar storage slot. Requiring
+	; an adjacent LOAD or SET keeps addresses from escaping. Locals require an
+	; initial SET; register parameters with a required frame home already have a
+	; value and are loaded into a chosen register once by the prologue.
+	discover-storage-intervals: func [
 		context [x64-function-context!]
 		return: [integer!]
 		/local module [rsir-module!]
@@ -4198,7 +4199,7 @@ x64-codegen: context [
 			instructions parameters [byte-ptr!]
 			instruction-effects control-uses catch-depths storage-offsets
 				allocation-order [int-ptr!]
-			index next-index slot width weight order-index [integer!]
+			index next-index slot width weight order-index physical-slot [integer!]
 			direct? entry-prefix? live? [logic!]
 	][
 		module: context/module
@@ -4215,13 +4216,15 @@ x64-codegen: context [
 		storage-offsets: view/storage-offsets
 		allocation-order: view/allocation-order
 
-		slot: fn/parameter-count + 1
+		slot: 1
 		while [slot <= state/storage-count][
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
 			width: value-width parameter/type parameter/flags table
+			physical-slot: slot + state/hidden-shift
 			if all [
 				storage-offsets/slot > 0
+				any [slot > fn/parameter-count physical-slot <= 4]
 				parameter/flags = 0
 				machine-value? parameter/type 0 table
 				any [width = 4 width = 8]
@@ -4231,6 +4234,15 @@ x64-codegen: context [
 				interval/class: either float-type? parameter/type table [
 					ALLOCATION_XMM
 				][ALLOCATION_GPR]
+				if slot <= fn/parameter-count [
+					if state/allocation-count >= state/storage-count [return INVALID_IR]
+					state/allocation-count: state/allocation-count + 1
+					order-index: state/allocation-count
+					allocation-order/order-index: slot
+					interval/start: 1
+					interval/flags: ALLOCATION_INITIALIZED
+						or ALLOCATION_DOMINATING_SET
+				]
 			]
 			slot: slot + 1
 		]
@@ -4248,7 +4260,7 @@ x64-codegen: context [
 				live?
 				instruction/op = OP_ADDRESS
 				instruction/a = LOCAL_ADDRESS
-				instruction/b > fn/parameter-count
+				instruction/b > 0
 				instruction/b <= state/storage-count
 			][
 				slot: instruction/b
@@ -4283,7 +4295,8 @@ x64-codegen: context [
 							either next-instruction/op = OP_SET [
 								interval/flags: interval/flags or ALLOCATION_INITIALIZED
 								if entry-prefix? [
-									interval/flags: interval/flags or ALLOCATION_DOMINATING_SET
+									interval/flags: interval/flags
+										or ALLOCATION_DOMINATING_SET
 								]
 							][
 								interval/flags: interval/flags or ALLOCATION_INVALID
@@ -4360,14 +4373,20 @@ x64-codegen: context [
 				target: instruction/a
 				if target <= 0 [return INVALID_IR]
 				loop-home-count: 0
-				slot: fn/parameter-count + 1
+				slot: 1
 				while [slot <= state/storage-count][
 					interval: as x64-live-interval! (view/allocation-intervals
 						+ ((slot - 1) * size? x64-live-interval!))
 					if all [
-						interval/start < target
+						any [
+							all [slot <= fn/parameter-count interval/start <= target]
+							all [slot > fn/parameter-count interval/start < target]
+						]
 						interval/end >= target
-						interval/weight >= ALLOCATION_MIN_WEIGHT
+						any [
+							interval/weight >= ALLOCATION_MIN_WEIGHT
+							slot <= fn/parameter-count
+						]
 						(interval/flags and ALLOCATION_INITIALIZED) <> 0
 						(interval/flags and ALLOCATION_INVALID) = 0
 						(interval/flags and ALLOCATION_DOMINATING_SET) <> 0
@@ -4390,7 +4409,10 @@ x64-codegen: context [
 							interval/register: ALLOCATION_UNASSIGNED
 							interval/flags: 0
 						][
-							if interval/start < target [
+							if any [
+								all [slot <= fn/parameter-count interval/start <= target]
+								all [slot > fn/parameter-count interval/start < target]
+							][
 								interval/flags: interval/flags or ALLOCATION_LOOP_CARRIED
 								if loop-home-count > 1 [
 									interval/flags: interval/flags or ALLOCATION_LOOP_GROUPED
@@ -4499,10 +4521,11 @@ x64-codegen: context [
 		0
 	]
 
-	; A loop-carried canonical home may cross ordinary branches and jumps when its
-	; first SET is in the straight-line entry prefix. Complex control flow and
-	; volatile-register clobbers remain spill boundaries.
-	qualify-local-intervals: func [
+	; A loop-carried canonical home may cross ordinary branches and jumps when it
+	; is initialized at entry (a parameter) or by a SET in the straight-line entry
+	; prefix. Complex control flow and volatile-register clobbers remain spill
+	; boundaries.
+	qualify-storage-intervals: func [
 		context [x64-function-context!]
 		return: [integer!]
 		/local task [codegen-task!]
@@ -4512,8 +4535,8 @@ x64-codegen: context [
 			instruction [rsir-instruction!]
 			interval [x64-live-interval!]
 			instructions [byte-ptr!]
-			instruction-effects control-uses catch-depths [int-ptr!]
-			slot index interval-start interval-catch [integer!]
+			instruction-effects control-uses catch-depths allocation-order [int-ptr!]
+			slot index order-index interval-start interval-catch [integer!]
 			unsafe? control-flow? simple-control? [logic!]
 	][
 		task: context/task
@@ -4524,6 +4547,7 @@ x64-codegen: context [
 		instruction-effects: view/instruction-effects
 		control-uses: view/control-uses
 		catch-depths: view/catch-depths
+		allocation-order: view/allocation-order
 
 		simple-control?: state/sub-entry-count = 0
 		index: 1
@@ -4538,15 +4562,20 @@ x64-codegen: context [
 			index: index + 1
 		]
 
-		slot: fn/parameter-count + 1
-		while [slot <= state/storage-count][
+		order-index: 1
+		while [order-index <= state/allocation-count][
+			slot: allocation-order/order-index
+			if any [slot <= 0 slot > state/storage-count][return INVALID_IR]
 			interval: as x64-live-interval! (view/allocation-intervals
 				+ ((slot - 1) * size? x64-live-interval!))
 			unsafe?: any [
 				interval/class = 0
 				interval/start <= 0
 				interval/end < interval/start
-				interval/weight < ALLOCATION_MIN_WEIGHT
+				all [
+					interval/weight < ALLOCATION_MIN_WEIGHT
+					(interval/flags and ALLOCATION_LOOP_CARRIED) = 0
+				]
 				(interval/flags and ALLOCATION_INITIALIZED) = 0
 				(interval/flags and ALLOCATION_INVALID) <> 0
 			]
@@ -4599,10 +4628,8 @@ x64-codegen: context [
 				(interval/flags and ALLOCATION_LOOP_GROUPED) = 0
 				interval/weight < ALLOCATION_SOLO_LOOP_MIN_WEIGHT
 			][unsafe?: true]
-			if unsafe? [
-				interval/register: ALLOCATION_SPILLED
-			]
-			slot: slot + 1
+			if unsafe? [interval/register: ALLOCATION_SPILLED]
+			order-index: order-index + 1
 		]
 		0
 	]
@@ -4611,7 +4638,7 @@ x64-codegen: context [
 	; active set: four volatile GPRs and four XMM registers. Expiration and spill
 	; selection therefore take constant work per interval, and fixed incoming ABI
 	; intervals participate in the same owner set without ever becoming victims.
-	allocate-local-intervals: func [
+	allocate-storage-intervals: func [
 		context [x64-function-context!]
 		return: [integer!]
 		/local task [codegen-task!]
@@ -4639,8 +4666,8 @@ x64-codegen: context [
 		]
 
 		; Precolored argument intervals all begin at entry, so seed them before
-		; walking the ordered local intervals. Registers outside the local pools
-		; need no owner slot.
+		; walking the ordered allocatable intervals. Registers outside the allocator
+		; pools need no owner slot.
 		slot: 1
 		while [slot <= fn/parameter-count][
 			current: as x64-live-interval! (view/allocation-intervals
@@ -4661,7 +4688,7 @@ x64-codegen: context [
 		order-index: 1
 		while [order-index <= state/allocation-count][
 			slot: allocation-order/order-index
-			if any [slot <= fn/parameter-count slot > state/storage-count][
+			if any [slot <= 0 slot > state/storage-count][
 				return INVALID_IR
 			]
 			current: as x64-live-interval! (view/allocation-intervals
@@ -4755,6 +4782,8 @@ x64-codegen: context [
 			order-index: order-index + 1
 		]
 
+		; Locals no longer need frame storage once their register home is chosen.
+		; Parameters retain the frame source used to initialize their home.
 		slot: fn/parameter-count + 1
 		while [slot <= state/storage-count][
 			current: as x64-live-interval! (view/allocation-intervals
@@ -4770,25 +4799,23 @@ x64-codegen: context [
 		return: [integer!]
 		/local task [codegen-task!]
 			state [machine-state!]
-			fn [rsir-function!]
 			result [integer!]
 	][
 		task: context/task
 		state: context/state
-		fn: task/fn
 		result: reset-register-allocation context
 		if result < 0 [return result]
-		if any [task/opt-level <> 2 task/entry? fn/local-count = 0][return 0]
-		result: discover-local-intervals context
+		if any [task/opt-level <> 2 task/entry? state/storage-count = 0][return 0]
+		result: discover-storage-intervals context
 		if result < 0 [return result]
 		if state/allocation-count = 0 [return 0]
 		result: discover-abi-constraints context
 		if result < 0 [return result]
 		result: extend-loop-intervals context
 		if result < 0 [return result]
-		result: qualify-local-intervals context
+		result: qualify-storage-intervals context
 		if result < 0 [return result]
-		allocate-local-intervals context
+		allocate-storage-intervals context
 	]
 
 	; Identifies parameters that can remain in their incoming ABI registers.
@@ -4992,7 +5019,7 @@ x64-codegen: context [
 			storage-offsets [int-ptr!]
 			capacity [integer!]
 			entry? [logic!]
-			index width signed source-slot target-slot storage-size storage-align
+			index width signed source-slot target-slot home-register storage-size storage-align
 				encoded written frame-extra physical-slot displacement aggregate-width
 				target-offset catch-threshold allocation-size [integer!]
 			measure? floating? clear? aggregate-argument? [logic!]
@@ -5109,6 +5136,40 @@ x64-codegen: context [
 					source-slot: argument-register physical-slot
 					x64-encoder/frame-store at (capacity - written)
 						source-slot target-slot width
+				]
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+			]
+			index: index + 1
+		]
+
+		; All register arguments are safe in their frame homes now. Initialize
+		; promoted parameters afterwards so a chosen home cannot overwrite an
+		; incoming argument that has not yet been preserved.
+		index: 1
+		while [index <= fn/parameter-count][
+			home-register: allocated-storage-register
+				view/allocation-intervals index 1
+			if home-register >= 0 [
+				parameter: as rsir-parameter! (parameters
+					+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
+				unless all [
+					parameter/flags = 0
+					machine-value? parameter/type 0 table
+				][return INVALID_IR]
+				width: value-width parameter/type 0 table
+				unless any [width = 4 width = 8][return INVALID_IR]
+				signed: either signed-type? parameter/type table [1][0]
+				floating?: float-type? parameter/type table
+				target-slot: storage-displacement storage-offsets index
+				if target-slot = 0 [return INVALID_IR]
+				at: either measure? [as byte-ptr! 0][code + written]
+				encoded: either floating? [
+					x64-encoder/xmm-frame-load at (capacity - written)
+						home-register target-slot width
+				][
+					x64-encoder/frame-load at (capacity - written)
+						home-register target-slot width signed
 				]
 				if encoded < 0 [return OUTPUT_FULL]
 				written: written + encoded

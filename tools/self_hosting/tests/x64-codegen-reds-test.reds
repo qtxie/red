@@ -402,7 +402,7 @@ test-linear-scan-allocation?: func [
 	context/task: task
 	context/scratch: scratch
 	context/state: state
-	result: x64-codegen/allocate-local-intervals context
+	result: x64-codegen/allocate-storage-intervals context
 
 	interval: as x64-live-interval! intervals
 	register1: interval/register
@@ -757,6 +757,75 @@ test-loop-interval-planning?: func [
 		result = 0
 		(interval/flags and x64-codegen/ALLOCATION_LOOP_CARRIED) = 0
 		interval/register = x64-codegen/ALLOCATION_SPILLED
+	]
+
+	; A parameter with a required frame home starts at function entry, then
+	; shares the ordinary loop interval and allocation policy with two locals.
+	; Its frame slot remains the canonical prologue source after allocation.
+	fn/parameter-count: 1
+	fn/local-count: 2
+	fn/instruction-count: 21
+	state/storage-count: 3
+	state/hidden-shift: 0
+	index: 1
+	while [index <= 21][
+		put-instruction instructions ((index - 1) * x64-codegen/RSIR_INSTRUCTION_SIZE)
+			x64-codegen/OP_DROP 0 0 0
+		instruction-effects/index: x64-codegen/EFFECT_LIVE
+		control-uses/index: 0
+		catch-depths/index: 0
+		index: index + 1
+	]
+	storage-offsets/1: 3
+	storage-offsets/2: 3
+	storage-offsets/3: 3
+	put-local-access instructions 0 2 x64-codegen/OP_SET
+	put-local-access instructions 32 3 x64-codegen/OP_SET
+	put-local-access instructions 64 2 x64-codegen/OP_LOAD
+	put-local-access instructions 96 1 x64-codegen/OP_LOAD
+	put-instruction instructions 128 x64-codegen/OP_BINARY
+		x64-codegen/EQUAL_OPERATION 0 0
+	put-instruction instructions 144 x64-codegen/OP_BRANCH 20 0 0
+	put-local-access instructions 160 3 x64-codegen/OP_LOAD
+	put-local-access instructions 192 3 x64-codegen/OP_SET
+	put-local-access instructions 224 2 x64-codegen/OP_LOAD
+	put-local-access instructions 256 2 x64-codegen/OP_SET
+	put-instruction instructions 288 x64-codegen/OP_JUMP 5 0 0
+	put-local-access instructions 304 1 x64-codegen/OP_LOAD
+	control-uses/5: 1
+	control-uses/20: 1
+
+	result: x64-codegen/plan-register-allocation context
+	interval: as x64-live-interval! intervals
+	valid?: all [
+		valid?
+		result = 0
+		allocation-order/1 = 1
+		interval/start = 1
+		interval/end = 21
+		interval/weight = 6
+		(interval/flags and x64-codegen/ALLOCATION_DOMINATING_SET) <> 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_CARRIED) <> 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_GROUPED) <> 0
+		interval/register >= 0
+		storage-offsets/1 = 3
+	]
+	register1: interval/register
+	interval: as x64-live-interval! (intervals + size? x64-live-interval!)
+	valid?: all [
+		valid?
+		interval/register >= 0
+		interval/register <> register1
+		storage-offsets/2 = 0
+	]
+	register2: interval/register
+	interval: as x64-live-interval! (intervals + (2 * size? x64-live-interval!))
+	valid?: all [
+		valid?
+		interval/register >= 0
+		interval/register <> register1
+		interval/register <> register2
+		storage-offsets/3 = 0
 	]
 
 	free memory

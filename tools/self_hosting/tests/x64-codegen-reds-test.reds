@@ -503,6 +503,7 @@ test-allocation-planning?: func [
 	scratch/allocation-order: allocation-order
 	scratch/allocation-registers: owners
 	state/storage-count: 3
+	state/sub-entry-count: 0
 	context/module: module
 	context/task: task
 	context/scratch: scratch
@@ -576,6 +577,192 @@ test-allocation-planning?: func [
 	valid?
 ]
 
+test-loop-interval-planning?: func [
+	return: [logic!]
+	/local context [x64-function-context! value]
+		module [rsir-module! value]
+		table [type-table! value]
+		scratch [codegen-scratch! value]
+		state [machine-state! value]
+		task [codegen-task! value]
+		fn [rsir-function! value]
+		parameter [rsir-parameter!]
+		interval [x64-live-interval!]
+		memory intervals parameters instructions [byte-ptr!]
+		instruction-effects control-uses catch-depths storage-offsets
+			allocation-order owners [int-ptr!]
+		memory-size slot index result register1 register2 [integer!]
+		valid? [logic!]
+][
+	memory-size: (3 * size? x64-live-interval!)
+		+ (3 * x64-codegen/RSIR_PARAMETER_SIZE)
+		+ (24 * x64-codegen/RSIR_INSTRUCTION_SIZE)
+		+ ((24 + 24 + 24 + 3 + 3 + 8) * size? integer!)
+	memory: allocate memory-size
+	if null? memory [return false]
+	intervals: memory
+	parameters: intervals + (3 * size? x64-live-interval!)
+	instructions: parameters + (3 * x64-codegen/RSIR_PARAMETER_SIZE)
+	instruction-effects: as int-ptr! (
+		instructions + (24 * x64-codegen/RSIR_INSTRUCTION_SIZE)
+	)
+	control-uses: instruction-effects + 24
+	catch-depths: control-uses + 24
+	storage-offsets: catch-depths + 24
+	allocation-order: storage-offsets + 3
+	owners: allocation-order + 3
+
+	table/types: null
+	table/members: null
+	table/type-count: 0
+	module/table: table
+	module/parameters: parameters
+	fn/first-parameter: 0
+	fn/parameter-count: 0
+	fn/local-count: 3
+	fn/instruction-count: 24
+	task/fn: fn
+	task/opt-level: 2
+	task/entry?: false
+	scratch/instructions: instructions
+	scratch/instruction-effects: instruction-effects
+	scratch/control-uses: control-uses
+	scratch/catch-depths: catch-depths
+	scratch/storage-offsets: storage-offsets
+	scratch/allocation-intervals: intervals
+	scratch/allocation-order: allocation-order
+	scratch/allocation-registers: owners
+	state/storage-count: 3
+	state/sub-entry-count: 0
+	context/module: module
+	context/task: task
+	context/scratch: scratch
+	context/state: state
+
+	slot: 1
+	while [slot <= 3][
+		parameter: as rsir-parameter! (parameters
+			+ ((slot - 1) * x64-codegen/RSIR_PARAMETER_SIZE))
+		parameter/type: -5
+		parameter/flags: 0
+		interval: as x64-live-interval! (intervals
+			+ ((slot - 1) * size? x64-live-interval!))
+		interval/start: 0
+		interval/end: 0
+		interval/weight: 0
+		interval/class: 0
+		interval/register: x64-codegen/ALLOCATION_UNASSIGNED
+		interval/flags: 0
+		storage-offsets/slot: 3
+		slot: slot + 1
+	]
+	index: 1
+	while [index <= 24][
+		instruction-effects/index: x64-codegen/EFFECT_LIVE
+		control-uses/index: 0
+		catch-depths/index: 0
+		index: index + 1
+	]
+
+	; i and sum are initialized before the loop. The third local is initialized
+	; only on the loop body and must not be promoted across its backedge.
+	put-local-access instructions 0 1 x64-codegen/OP_SET
+	put-local-access instructions 32 2 x64-codegen/OP_SET
+	put-local-access instructions 64 1 x64-codegen/OP_LOAD
+	put-instruction instructions 96 x64-codegen/OP_BRANCH 23 0 0
+	put-local-access instructions 112 2 x64-codegen/OP_LOAD
+	put-local-access instructions 144 2 x64-codegen/OP_SET
+	put-local-access instructions 176 1 x64-codegen/OP_LOAD
+	put-local-access instructions 208 1 x64-codegen/OP_SET
+	put-local-access instructions 240 3 x64-codegen/OP_SET
+	put-local-access instructions 272 3 x64-codegen/OP_LOAD
+	put-local-access instructions 304 3 x64-codegen/OP_LOAD
+	put-instruction instructions 336 x64-codegen/OP_JUMP 5 0 0
+	put-local-access instructions 352 2 x64-codegen/OP_LOAD
+	control-uses/5: 1
+	control-uses/23: 1
+
+	result: x64-codegen/plan-register-allocation context
+	valid?: result = 0
+	interval: as x64-live-interval! intervals
+	valid?: all [
+		valid?
+		interval/end = 22
+		(interval/flags and x64-codegen/ALLOCATION_DOMINATING_SET) <> 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_CARRIED) <> 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_GROUPED) <> 0
+		interval/register >= 0
+		storage-offsets/1 = 0
+	]
+	register1: interval/register
+	interval: as x64-live-interval! (intervals + size? x64-live-interval!)
+	valid?: all [
+		valid?
+		interval/end = 24
+		(interval/flags and x64-codegen/ALLOCATION_DOMINATING_SET) <> 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_CARRIED) <> 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_GROUPED) <> 0
+		interval/register >= 0
+		interval/register <> register1
+		storage-offsets/2 = 0
+	]
+	register2: interval/register
+	interval: as x64-live-interval! (intervals + (2 * size? x64-live-interval!))
+	valid?: all [
+		valid?
+		interval/end = 21
+		(interval/flags and x64-codegen/ALLOCATION_DOMINATING_SET) = 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_CARRIED) = 0
+		interval/register >= 0
+		interval/register <> register1
+		interval/register <> register2
+		storage-offsets/3 = 0
+	]
+
+	; A lone, lightly used loop home does not pay for its REX moves. Remove the
+	; second carried candidate and verify that the cost model leaves the first in
+	; its frame slot while retaining the ordinary body-local interval.
+	storage-offsets/1: 3
+	storage-offsets/2: 0
+	storage-offsets/3: 3
+	result: x64-codegen/plan-register-allocation context
+	interval: as x64-live-interval! intervals
+	valid?: all [
+		valid?
+		result = 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_CARRIED) <> 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_GROUPED) = 0
+		interval/register = x64-codegen/ALLOCATION_SPILLED
+		storage-offsets/1 = 3
+	]
+	interval: as x64-live-interval! (intervals + (2 * size? x64-live-interval!))
+	valid?: all [
+		valid?
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_CARRIED) = 0
+		interval/register >= 0
+		storage-offsets/3 = 0
+	]
+
+	; A constant-false BRANCH has no control-flow edge and must not extend an
+	; interval through its numerically backward target.
+	put-instruction instructions 336 x64-codegen/OP_BRANCH 5 0 0
+	instruction-effects/22: x64-codegen/EFFECT_LIVE
+		or x64-codegen/EFFECT_CONSTANT_BRANCH
+	storage-offsets/1: 3
+	storage-offsets/3: 3
+	result: x64-codegen/plan-register-allocation context
+	interval: as x64-live-interval! intervals
+	valid?: all [
+		valid?
+		result = 0
+		(interval/flags and x64-codegen/ALLOCATION_LOOP_CARRIED) = 0
+		interval/register = x64-codegen/ALLOCATION_SPILLED
+	]
+
+	free memory
+	valid?
+]
+
 test-abi-precoloring?: func [
 	return: [logic!]
 	/local context [x64-function-context! value]
@@ -595,19 +782,19 @@ test-abi-precoloring?: func [
 ][
 	memory-size: (4 * size? x64-live-interval!)
 		+ (4 * x64-codegen/RSIR_PARAMETER_SIZE)
-		+ (4 * x64-codegen/RSIR_INSTRUCTION_SIZE)
-		+ (28 * size? integer!)
+		+ (7 * x64-codegen/RSIR_INSTRUCTION_SIZE)
+		+ (37 * size? integer!)
 	memory: allocate memory-size
 	if null? memory [return false]
 	intervals: memory
 	parameters: intervals + (4 * size? x64-live-interval!)
 	instructions: parameters + (4 * x64-codegen/RSIR_PARAMETER_SIZE)
 	instruction-effects: as int-ptr! (
-		instructions + (4 * x64-codegen/RSIR_INSTRUCTION_SIZE)
+		instructions + (7 * x64-codegen/RSIR_INSTRUCTION_SIZE)
 	)
-	control-uses: instruction-effects + 4
-	catch-depths: control-uses + 4
-	storage-offsets: catch-depths + 4
+	control-uses: instruction-effects + 7
+	catch-depths: control-uses + 7
+	storage-offsets: catch-depths + 7
 	allocation-order: storage-offsets + 4
 	owners: allocation-order + 4
 
@@ -619,7 +806,7 @@ test-abi-precoloring?: func [
 	fn/first-parameter: 0
 	fn/parameter-count: 4
 	fn/local-count: 0
-	fn/instruction-count: 4
+	fn/instruction-count: 7
 	task/fn: fn
 	scratch/instructions: instructions
 	scratch/instruction-effects: instruction-effects
@@ -649,7 +836,7 @@ test-abi-precoloring?: func [
 		+ (3 * x64-codegen/RSIR_PARAMETER_SIZE))
 	parameter/type: -10
 	index: 1
-	while [index <= 4][
+	while [index <= 7][
 		instruction-effects/index: x64-codegen/EFFECT_LIVE
 		control-uses/index: 0
 		catch-depths/index: 0
@@ -657,6 +844,9 @@ test-abi-precoloring?: func [
 	]
 	put-local-access instructions 0 3 x64-codegen/OP_LOAD
 	put-local-access instructions 32 4 x64-codegen/OP_LOAD
+	put-local-access instructions 64 3 x64-codegen/OP_LOAD
+	put-instruction instructions 96 x64-codegen/OP_JUMP 1 0 0
+	control-uses/1: 1
 
 	result: x64-codegen/reset-register-allocation context
 	if result = 0 [result: x64-codegen/discover-abi-constraints context]
@@ -678,6 +868,24 @@ test-abi-precoloring?: func [
 		interval/class = x64-codegen/ALLOCATION_XMM
 		interval/register = 3
 		(interval/flags and x64-codegen/ALLOCATION_FIXED) <> 0
+	]
+	if result = 0 [result: x64-codegen/extend-loop-intervals context]
+	interval: as x64-live-interval! (intervals + (2 * size? x64-live-interval!))
+	valid?: all [
+		valid?
+		result = 0
+		interval/class = 0
+		interval/register = x64-codegen/ALLOCATION_UNASSIGNED
+		interval/flags = 0
+		storage-offsets/3 = 1
+	]
+	interval: as x64-live-interval! (intervals + (3 * size? x64-live-interval!))
+	valid?: all [
+		valid?
+		interval/class = 0
+		interval/register = x64-codegen/ALLOCATION_UNASSIGNED
+		interval/flags = 0
+		storage-offsets/4 = 1
 	]
 	free memory
 	valid?
@@ -715,6 +923,10 @@ unless test-linear-scan-allocation? [
 ]
 unless test-allocation-planning? [
 	print ["live-interval planning or call-clobber handling failed" lf]
+	failures: failures + 1
+]
+unless test-loop-interval-planning? [
+	print ["loop interval extension or dominance handling failed" lf]
 	failures: failures + 1
 ]
 unless test-abi-precoloring? [
@@ -2374,6 +2586,18 @@ if size > 0 [
 	widening-argument-code-size: fn/code-size
 	if widening-argument-code-size <> 209 [
 		print ["O0 fifth argument code size: " widening-argument-code-size lf]
+		failures: failures + 1
+	]
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE
+		+ x64-codegen/IMAGE_FUNCTION_SIZE)
+	if (fn/code-offset // x64-codegen/FUNCTION_ALIGNMENT) <> 0 [
+		print ["second function is not aligned: " fn/code-offset lf]
+		failures: failures + 1
+	]
+	fn: as codegen-function! (output + x64-codegen/IMAGE_HEADER_SIZE
+		+ (2 * x64-codegen/IMAGE_FUNCTION_SIZE))
+	if (fn/code-offset // x64-codegen/FUNCTION_ALIGNMENT) <> 0 [
+		print ["third function is not aligned: " fn/code-offset lf]
 		failures: failures + 1
 	]
 	unless execute-first? output 1 [failures: failures + 1]

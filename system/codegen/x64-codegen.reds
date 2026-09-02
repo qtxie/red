@@ -421,6 +421,7 @@ x64-codegen: context [
 	IMAGE_IMPORT_SIZE:   24
 	IMAGE_EXPORT_SIZE:   12
 	BITMAP_SIZE:         16
+	FUNCTION_ALIGNMENT:  32
 
 	CDECL:          1
 	STDCALL:        2
@@ -542,7 +543,11 @@ x64-codegen: context [
 	ALLOCATION_CLOBBERED:   2
 	ALLOCATION_INITIALIZED: 4
 	ALLOCATION_INVALID:     8
+	ALLOCATION_DOMINATING_SET: 16
+	ALLOCATION_LOOP_CARRIED:   32
+	ALLOCATION_LOOP_GROUPED:   64
 	ALLOCATION_MIN_WEIGHT:  7
+	ALLOCATION_SOLO_LOOP_MIN_WEIGHT: 13
 	ALLOCATION_REGISTER_COUNT: 4
 	ALLOCATION_XMM_FIRST:   2
 	ALLOCATION_XMM_LAST:    5
@@ -1957,21 +1962,24 @@ x64-codegen: context [
 		]
 	]
 
-	allocation-control-boundary?: func [
-		operation [integer!]
+	allocation-complex-control?: func [
+		instruction [rsir-instruction!]
 		return: [logic!]
 	][
 		any [
-			operation = OP_CATCH
-			operation = OP_END_CATCH
-			operation = OP_THROW
-			operation = OP_JUMP
-			operation = OP_BRANCH
-			operation = OP_SWITCH
-			operation = OP_ENTRY
-			operation = OP_SUB_CALL
-			operation = OP_SUB_RETURN
-			operation = OP_FAIL
+			instruction/op = OP_CATCH
+			instruction/op = OP_END_CATCH
+			instruction/op = OP_THROW
+			instruction/op = OP_SWITCH
+			instruction/op = OP_ENTRY
+			instruction/op = OP_SUB_CALL
+			instruction/op = OP_SUB_RETURN
+			instruction/op = OP_FAIL
+			instruction/op = OP_OVERFLOW
+			all [
+				instruction/op = OP_BINARY
+				instruction/b <> 0
+			]
 		]
 	]
 
@@ -4191,7 +4199,7 @@ x64-codegen: context [
 			instruction-effects control-uses catch-depths storage-offsets
 				allocation-order [int-ptr!]
 			index next-index slot width weight order-index [integer!]
-			direct? [logic!]
+			direct? entry-prefix? live? [logic!]
 	][
 		module: context/module
 		task: context/task
@@ -4227,13 +4235,17 @@ x64-codegen: context [
 			slot: slot + 1
 		]
 
+		entry-prefix?: true
 		index: 1
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
-			if all [
+			live?: all [
 				(instruction-effects/index and EFFECT_LIVE) <> 0
 				(instruction-effects/index and EFFECT_ELIDED) = 0
+			]
+			if all [
+				live?
 				instruction/op = OP_ADDRESS
 				instruction/a = LOCAL_ADDRESS
 				instruction/b > fn/parameter-count
@@ -4270,6 +4282,9 @@ x64-codegen: context [
 							interval/start: index
 							either next-instruction/op = OP_SET [
 								interval/flags: interval/flags or ALLOCATION_INITIALIZED
+								if entry-prefix? [
+									interval/flags: interval/flags or ALLOCATION_DOMINATING_SET
+								]
 							][
 								interval/flags: interval/flags or ALLOCATION_INVALID
 							]
@@ -4281,6 +4296,110 @@ x64-codegen: context [
 					][
 						interval/flags: interval/flags or ALLOCATION_INVALID
 					]
+				]
+			]
+			if all [
+				entry-prefix?
+				live?
+				any [
+					instruction/op = OP_JUMP
+					instruction/op = OP_BRANCH
+					instruction/op = OP_RETURN
+					allocation-complex-control? instruction
+				]
+			][entry-prefix?: false]
+			index: index + 1
+		]
+		0
+	]
+
+	; A value initialized before a backward edge's target is loop-carried when
+	; its interval reaches that target. Extending it through the edge prevents a
+	; later local from reusing a home required by the next iteration. Incoming
+	; ABI registers cannot be replayed, so an intersecting fixed interval is
+	; materialized in its frame slot instead.
+	extend-loop-intervals: func [
+		context [x64-function-context!]
+		return: [integer!]
+		/local task [codegen-task!]
+			view [codegen-scratch!]
+			state [machine-state!]
+			fn [rsir-function!]
+			instruction [rsir-instruction!]
+			interval [x64-live-interval!]
+			instructions [byte-ptr!]
+			instruction-effects storage-offsets [int-ptr!]
+			index target slot loop-home-count [integer!]
+	][
+		task: context/task
+		view: context/scratch
+		state: context/state
+		fn: task/fn
+		instructions: view/instructions
+		instruction-effects: view/instruction-effects
+		storage-offsets: view/storage-offsets
+
+		index: 1
+		while [index <= fn/instruction-count][
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			if all [
+				(instruction-effects/index and EFFECT_LIVE) <> 0
+				(instruction-effects/index and EFFECT_ELIDED) = 0
+				any [
+					instruction/op = OP_JUMP
+					instruction/op = OP_BRANCH
+				]
+				not all [
+					instruction/op = OP_BRANCH
+					(instruction-effects/index and EFFECT_CONSTANT_BRANCH) <> 0
+					(instruction-effects/index and EFFECT_BRANCH_TAKEN) = 0
+				]
+				instruction/a < index
+			][
+				target: instruction/a
+				if target <= 0 [return INVALID_IR]
+				loop-home-count: 0
+				slot: fn/parameter-count + 1
+				while [slot <= state/storage-count][
+					interval: as x64-live-interval! (view/allocation-intervals
+						+ ((slot - 1) * size? x64-live-interval!))
+					if all [
+						interval/start < target
+						interval/end >= target
+						interval/weight >= ALLOCATION_MIN_WEIGHT
+						(interval/flags and ALLOCATION_INITIALIZED) <> 0
+						(interval/flags and ALLOCATION_INVALID) = 0
+						(interval/flags and ALLOCATION_DOMINATING_SET) <> 0
+					][loop-home-count: loop-home-count + 1]
+					slot: slot + 1
+				]
+				slot: 1
+				while [slot <= state/storage-count][
+					interval: as x64-live-interval! (view/allocation-intervals
+						+ ((slot - 1) * size? x64-live-interval!))
+					if all [
+						interval/start <= index
+						interval/end >= target
+					][
+						either (interval/flags and ALLOCATION_FIXED) <> 0 [
+							storage-offsets/slot: 1
+							interval/start: 0
+							interval/end: 0
+							interval/class: 0
+							interval/register: ALLOCATION_UNASSIGNED
+							interval/flags: 0
+						][
+							if interval/start < target [
+								interval/flags: interval/flags or ALLOCATION_LOOP_CARRIED
+								if loop-home-count > 1 [
+									interval/flags: interval/flags or ALLOCATION_LOOP_GROUPED
+								]
+								if interval/end < index [interval/end: index]
+							]
+						]
+					]
+					slot: slot + 1
 				]
 			]
 			index: index + 1
@@ -4380,10 +4499,9 @@ x64-codegen: context [
 		0
 	]
 
-	; Reject intervals that cross a volatile-register clobber or a control-flow
-	; boundary. Splitting at such boundaries can be added later without changing
-	; the allocator; until then, spilling the whole interval is deterministic and
-	; keeps its canonical value in one place.
+	; A loop-carried canonical home may cross ordinary branches and jumps when its
+	; first SET is in the straight-line entry prefix. Complex control flow and
+	; volatile-register clobbers remain spill boundaries.
 	qualify-local-intervals: func [
 		context [x64-function-context!]
 		return: [integer!]
@@ -4396,7 +4514,7 @@ x64-codegen: context [
 			instructions [byte-ptr!]
 			instruction-effects control-uses catch-depths [int-ptr!]
 			slot index interval-start interval-catch [integer!]
-			unsafe? [logic!]
+			unsafe? control-flow? simple-control? [logic!]
 	][
 		task: context/task
 		view: context/scratch
@@ -4406,6 +4524,19 @@ x64-codegen: context [
 		instruction-effects: view/instruction-effects
 		control-uses: view/control-uses
 		catch-depths: view/catch-depths
+
+		simple-control?: state/sub-entry-count = 0
+		index: 1
+		while [all [simple-control? index <= fn/instruction-count]][
+			instruction: as rsir-instruction! (instructions
+				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			if all [
+				(instruction-effects/index and EFFECT_LIVE) <> 0
+				(instruction-effects/index and EFFECT_ELIDED) = 0
+				allocation-complex-control? instruction
+			][simple-control?: false]
+			index: index + 1
+		]
 
 		slot: fn/parameter-count + 1
 		while [slot <= state/storage-count][
@@ -4420,6 +4551,7 @@ x64-codegen: context [
 				(interval/flags and ALLOCATION_INVALID) <> 0
 			]
 			unless unsafe? [
+				control-flow?: false
 				interval-start: interval/start
 				interval-catch: catch-depths/interval-start
 				index: interval-start
@@ -4436,8 +4568,12 @@ x64-codegen: context [
 						]
 						if any [
 							control-uses/index <> 0
+							instruction/op = OP_JUMP
+							instruction/op = OP_BRANCH
+						][control-flow?: true]
+						if any [
 							catch-depths/index <> interval-catch
-							allocation-control-boundary? instruction/op
+							allocation-complex-control? instruction
 						][
 							interval/flags: interval/flags or ALLOCATION_INVALID
 							unsafe?: true
@@ -4445,8 +4581,27 @@ x64-codegen: context [
 					]
 					index: index + 1
 				]
+				if all [
+					control-flow?
+					any [
+						not simple-control?
+						(interval/flags and ALLOCATION_DOMINATING_SET) = 0
+						(interval/flags and ALLOCATION_LOOP_CARRIED) = 0
+					]
+				][
+					interval/flags: interval/flags or ALLOCATION_INVALID
+					unsafe?: true
+				]
 			]
-			if unsafe? [interval/register: ALLOCATION_SPILLED]
+			if all [
+				not unsafe?
+				(interval/flags and ALLOCATION_LOOP_CARRIED) <> 0
+				(interval/flags and ALLOCATION_LOOP_GROUPED) = 0
+				interval/weight < ALLOCATION_SOLO_LOOP_MIN_WEIGHT
+			][unsafe?: true]
+			if unsafe? [
+				interval/register: ALLOCATION_SPILLED
+			]
 			slot: slot + 1
 		]
 		0
@@ -4614,17 +4769,22 @@ x64-codegen: context [
 		context [x64-function-context!]
 		return: [integer!]
 		/local task [codegen-task!]
+			state [machine-state!]
 			fn [rsir-function!]
 			result [integer!]
 	][
 		task: context/task
+		state: context/state
 		fn: task/fn
 		result: reset-register-allocation context
 		if result < 0 [return result]
 		if any [task/opt-level <> 2 task/entry? fn/local-count = 0][return 0]
 		result: discover-local-intervals context
 		if result < 0 [return result]
+		if state/allocation-count = 0 [return 0]
 		result: discover-abi-constraints context
+		if result < 0 [return result]
+		result: extend-loop-intervals context
 		if result < 0 [return result]
 		result: qualify-local-intervals context
 		if result < 0 [return result]
@@ -12054,7 +12214,6 @@ x64-codegen: context [
 		]
 
 		function-names-size: 0
-		code-size: 0
 		entry-size: 0
 		next-instruction: 1
 		next-offset: 1
@@ -12103,11 +12262,24 @@ x64-codegen: context [
 				return OUTPUT_FULL
 			]
 			function-names-size: function-names-size + ir-function/name-size
-			if code-size > (2147483647 - function-size)[return OUTPUT_FULL]
-			code-size: code-size + function-size
 			if current-entry? [entry-size: function-size]
 			next-instruction: next-instruction + ir-function/instruction-count
 			next-offset: next-offset + ir-function/instruction-count + 1
+			id: id + 1
+		]
+		; The entry stays first. Every other function begins at a stable decode
+		; boundary, so shrinking one function cannot pessimize all later entries.
+		code-size: entry-size
+		id: 1
+		while [id <= header/function-count][
+			current-entry?: all [entry? id = header/entry-function]
+			unless current-entry? [
+				code-size: align code-size FUNCTION_ALIGNMENT
+				if code-size < 0 [return OUTPUT_FULL]
+				function-size: function-sizes/id
+				if code-size > (2147483647 - function-size)[return OUTPUT_FULL]
+				code-size: code-size + function-size
+			]
 			id: id + 1
 		]
 		literal-size: task/literal-size
@@ -12292,19 +12464,27 @@ x64-codegen: context [
 			current-entry?: all [entry? id = header/entry-function]
 			image-function/name: name-cursor
 			image-function/name-size: ir-function/name-size
-			image-function/code-offset: either current-entry? [0][code-cursor]
 			image-function/code-size: function-sizes/id
 			image-function/frame-size: function-frames/id
 			image-function/bitmap-offset: 0
 			image-function/bitmap-size: BITMAP_SIZE
 			image-function/first-reference: 0
 			image-function/reference-count: count
-			unless current-entry? [code-cursor: code-cursor + function-sizes/id]
+			either current-entry? [
+				image-function/code-offset: 0
+			][
+				code-cursor: align code-cursor FUNCTION_ALIGNMENT
+				if code-cursor < 0 [return OUTPUT_FULL]
+				image-function/code-offset: code-cursor
+				if code-cursor > (2147483647 - function-sizes/id)[return OUTPUT_FULL]
+				code-cursor: code-cursor + function-sizes/id
+			]
 			copy-memory (names + name-cursor) (strings + ir-function/name)
 				ir-function/name-size
 			name-cursor: name-cursor + ir-function/name-size
 			id: id + 1
 		]
+		if code-cursor <> ctx/function-code-size [return INVALID_IR]
 
 		id: 1
 		while [id <= header/global-count][
@@ -12515,6 +12695,12 @@ x64-codegen: context [
 		function-code-size: ctx/function-code-size
 		image-functions: output + IMAGE_HEADER_SIZE
 		code: output + ctx/code-offset
+		cursor: code
+		finish: code + function-code-size
+		while [cursor < finish][
+			cursor/1: as byte! 90h
+			cursor: cursor + 1
+		]
 		next-instruction: 1
 		next-offset: 1
 		; Emitting pass: same tasks replayed, now with a slot to write into.

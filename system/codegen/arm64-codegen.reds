@@ -96,6 +96,7 @@ arm64-codegen: context [
 	OP_CALL:    7
 	OP_CAST:    8
 	OP_SIZE:    9
+	OP_NATIVE: 10
 	OP_RETURN:  11
 	OP_DROP:    12
 	OP_UNARY:  14
@@ -136,6 +137,19 @@ arm64-codegen: context [
 	GLOBAL_ADDRESS:   2
 	IMPORT_ADDRESS:   3
 	FUNCTION_ADDRESS: 4
+
+	STACK_TOP_NATIVE:           1
+	STACK_PUSH_NATIVE:          2
+	STACK_POP_NATIVE:           3
+	STACK_FRAME_NATIVE:         4
+	STACK_TOP_SET_NATIVE:       5
+	STACK_FRAME_SET_NATIVE:     6
+	STACK_ALIGN_NATIVE:         7
+	STACK_ALLOCATE_NATIVE:      8
+	STACK_ALLOCATE_ZERO_NATIVE: 9
+	STACK_FREE_NATIVE:         10
+	PROGRAM_COUNTER_NATIVE:    13
+	LOG_B_NATIVE:              22
 
 	; A call's parameter descriptors live in the parameter table for declared
 	; functions and imports, and in the type table's member rows for the
@@ -1415,6 +1429,20 @@ arm64-codegen: context [
 		false
 	]
 
+	pointer-to-canonical?: func [
+		ref target [integer!]
+		view [rsir-view!]
+		return: [logic!]
+		/local pointee [integer!]
+	][
+		pointee: 0
+		all [
+			valid-type-ref? ref view
+			pointee-type ref view :pointee
+			(canonical-type pointee view) = target
+		]
+	]
+
 	plan-function: func [
 		view [rsir-view!]
 		layout [arm64-layout-state!]
@@ -1583,6 +1611,43 @@ arm64-codegen: context [
 						if depth < 1 [return INVALID_IR]
 					]
 					scratch/stack-low/depth: 0
+				]
+				instruction/op = OP_NATIVE [
+					if instruction/b <> 0 [return INVALID_IR]
+					case [
+						any [
+							instruction/a = STACK_TOP_NATIVE
+							instruction/a = STACK_POP_NATIVE
+							instruction/a = STACK_FRAME_NATIVE
+							instruction/a = STACK_ALIGN_NATIVE
+							instruction/a = PROGRAM_COUNTER_NATIVE
+						][
+							if depth = 2147483647 [return OUTPUT_FULL]
+							depth: depth + 1
+							scratch/stack-low/depth: 0
+						]
+						instruction/a = STACK_PUSH_NATIVE [
+							if depth < 1 [return INVALID_IR]
+							depth: depth - 1
+						]
+						any [
+							instruction/a = STACK_TOP_SET_NATIVE
+							instruction/a = STACK_FRAME_SET_NATIVE
+							instruction/a = STACK_ALLOCATE_NATIVE
+							instruction/a = STACK_ALLOCATE_ZERO_NATIVE
+							instruction/a = LOG_B_NATIVE
+						][if depth < 1 [return INVALID_IR]]
+						instruction/a = STACK_FREE_NATIVE [
+							if depth < 1 [return INVALID_IR]
+							depth: depth - 1
+						]
+						true [return UNSUPPORTED]
+					]
+					; Stack intrinsics may move SP and need FP to restore the frame.
+					if all [
+						instruction/a >= STACK_TOP_NATIVE
+						instruction/a <= STACK_FREE_NATIVE
+					][has-call: 1]
 				]
 				instruction/op = OP_REFERENCE [
 					if depth < 1 [return INVALID_IR]
@@ -2184,6 +2249,80 @@ arm64-codegen: context [
 		]
 	]
 
+	emit-stack-resize: func [
+		view [rsir-view!]
+		scratch [arm64-function-scratch!]
+		stack-slot result-register [integer!]
+		allocate? clear? [logic!]
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] written encoded operation [integer!]
+	][
+		written: materialize view scratch stack-slot arm64-encoder/X16 -7
+			code capacity
+		if written < 0 [return written]
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/add-immediate at (capacity - written)
+			arm64-encoder/X16 arm64-encoder/X16 1 8
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/logical-immediate at (capacity - written)
+			arm64-encoder/OP_AND arm64-encoder/X16 arm64-encoder/X16 8 -2 -1
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		if clear? [
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/move-register at (capacity - written)
+				arm64-encoder/X17 arm64-encoder/X16 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+		operation: either allocate? [arm64-encoder/OP_SUB][arm64-encoder/OP_ADD]
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/add-extended-register at (capacity - written)
+			operation
+			arm64-encoder/SP arm64-encoder/SP arm64-encoder/X16 8 0 3
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		if allocate? [
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/move-register at (capacity - written)
+				result-register arm64-encoder/SP 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+		if clear? [
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/move-register at (capacity - written)
+				arm64-encoder/X16 arm64-encoder/SP 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/branch-zero at (capacity - written)
+				arm64-encoder/X17 8 16 false
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/register-store-post at (capacity - written)
+				arm64-encoder/ZR arm64-encoder/X16 8 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/add-immediate at (capacity - written)
+				arm64-encoder/X17 arm64-encoder/X17 -1 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/branch-zero at (capacity - written)
+				arm64-encoder/X17 8 -8 true
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
+		written
+	]
+
 	merge-control-target: func [
 		target depth [integer!]
 		fn [rsir-function!]
@@ -2505,7 +2644,7 @@ arm64-codegen: context [
 			tag-variant tag-width-value tag-delta tag-slot tag-offset
 				[integer!]
 			fallthrough? measure? comparison? literal? immediate? taken? pointer?
-				floating? region-link? tracked? right-ready? [logic!]
+				reference-comparison? floating? region-link? tracked? right-ready? [logic!]
 	][
 		instruction-offsets: scratch/instruction-offsets + first-instruction
 		instruction-depths: scratch/instruction-depths + first-instruction
@@ -2885,6 +3024,297 @@ arm64-codegen: context [
 					scratch/stack-types/depth: -5
 					scratch/stack-kinds/depth: VALUE
 					scratch/stack-flags/depth: 0
+				]
+				instruction/op = OP_NATIVE [
+					if instruction/b <> 0 [return INVALID_IR]
+					case [
+						instruction/a = STACK_TOP_NATIVE [
+							unless pointer-to-canonical? instruction/c -5 view [
+								return INVALID_IR
+							]
+							depth: depth + 1
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-register at
+								(capacity - written) target arm64-encoder/SP 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: instruction/c
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = STACK_PUSH_NATIVE [
+							unless all [
+								instruction/c = 0 depth > 0
+								scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+							][return INVALID_IR]
+							ref: scratch/stack-types/depth
+							width: value-width ref view
+							unless any [width = 1 width = 2 width = 4 width = 8][
+								return UNSUPPORTED
+							]
+							kind: type-kind ref view
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: either any [kind = 9 kind = 10][
+								materialize view scratch depth FLOAT_SCRATCH_REGISTER ref
+									at (capacity - written)
+							][
+								materialize view scratch depth arm64-encoder/X16 ref
+									at (capacity - written)
+							]
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							if any [kind = 9 kind = 10][
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/float-move-to-register at
+									(capacity - written) arm64-encoder/X16
+									FLOAT_SCRATCH_REGISTER width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/add-immediate at (capacity - written)
+								arm64-encoder/SP arm64-encoder/SP -8 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-register at (capacity - written)
+								arm64-encoder/X17 arm64-encoder/SP 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/register-store at (capacity - written)
+								arm64-encoder/X16 arm64-encoder/X17 0 8 arm64-encoder/X9
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							depth: depth - 1
+						]
+						instruction/a = STACK_POP_NATIVE [
+							if instruction/c <> 0 [return INVALID_IR]
+							depth: depth + 1
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-register at (capacity - written)
+								arm64-encoder/X16 arm64-encoder/SP 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/register-load at (capacity - written)
+								target arm64-encoder/X16 0 8 0 8 arm64-encoder/X17
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/add-immediate at (capacity - written)
+								arm64-encoder/SP arm64-encoder/SP 8 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: -5
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = STACK_FRAME_NATIVE [
+							unless pointer-to-canonical? instruction/c -5 view [
+								return INVALID_IR
+							]
+							depth: depth + 1
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-register at
+								(capacity - written) target arm64-encoder/FP 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: instruction/c
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						any [
+							instruction/a = STACK_TOP_SET_NATIVE
+							instruction/a = STACK_FRAME_SET_NATIVE
+						][
+							unless all [
+								pointer-to-canonical? instruction/c -5 view
+								depth > 0 scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								compatible-types? instruction/c
+									scratch/stack-types/depth view
+							][return INVALID_IR]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch depth arm64-encoder/X16
+								instruction/c at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							target: either instruction/a = STACK_TOP_SET_NATIVE [
+								arm64-encoder/SP
+							][arm64-encoder/FP]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-register at
+								(capacity - written)
+								target arm64-encoder/X16 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: instruction/c
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: arm64-encoder/X16
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = STACK_ALIGN_NATIVE [
+							unless pointer-to-canonical? instruction/c -5 view [
+								return INVALID_IR
+							]
+							depth: depth + 1
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-register at
+								(capacity - written) target arm64-encoder/SP 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/logical-immediate at
+								(capacity - written) arm64-encoder/OP_AND
+								arm64-encoder/X16 target 8 -16 -1
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-register at
+								(capacity - written) arm64-encoder/SP arm64-encoder/X16 8
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: instruction/c
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						any [
+							instruction/a = STACK_ALLOCATE_NATIVE
+							instruction/a = STACK_ALLOCATE_ZERO_NATIVE
+						][
+							unless all [
+								pointer-to-canonical? instruction/c -5 view
+								depth > 0 scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								(type-kind scratch/stack-types/depth view) = 5
+							][return INVALID_IR]
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: emit-stack-resize view scratch depth target true
+								(instruction/a = STACK_ALLOCATE_ZERO_NATIVE)
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							scratch/stack-types/depth: instruction/c
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = STACK_FREE_NATIVE [
+							unless all [
+								instruction/c = 0 depth > 0
+								scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								(type-kind scratch/stack-types/depth view) = 5
+							][return INVALID_IR]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: emit-stack-resize view scratch depth 0 false false
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							depth: depth - 1
+						]
+						instruction/a = PROGRAM_COUNTER_NATIVE [
+							unless pointer-to-canonical? instruction/c -2 view [
+								return INVALID_IR
+							]
+							depth: depth + 1
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/program-counter at
+								(capacity - written) target
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: instruction/c
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = LOG_B_NATIVE [
+							unless all [
+								instruction/c = -5 depth > 0
+								scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								integer-type? scratch/stack-types/depth view
+							][return INVALID_IR]
+							ref: scratch/stack-types/depth
+							width: value-width ref view
+							width: either width = 8 [8][4]
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch depth target ref
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/count-leading-zeros at
+								(capacity - written) target target width
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-immediate at (capacity - written)
+								arm64-encoder/X16 width ((width * 8) - 1) 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/subtract-register at
+								(capacity - written) target arm64-encoder/X16 target width
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: -5
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						true [return UNSUPPORTED]
+					]
 				]
 				instruction/op = OP_ADDRESS [
 					slot: instruction/b
@@ -3953,6 +4383,7 @@ arm64-codegen: context [
 					left-ref: scratch/stack-types/source-slot
 					right-ref: scratch/stack-types/depth
 					operation: instruction/a
+					comparison?: operation >= EQUAL_OPERATION
 					operation-ref: float-common-ref left-ref right-ref view
 					floating?: operation-ref <> 0
 					pointer?: all [
@@ -3960,8 +4391,22 @@ arm64-codegen: context [
 						address-type? left-ref view
 						integer-type? right-ref view
 					]
+					reference-comparison?: all [
+						comparison?
+						reference-type? left-ref view
+						reference-type? right-ref view
+						compatible-types? left-ref right-ref view
+						any [
+							operation <= NOT_EQUAL_OPERATION
+							all [
+								address-type? left-ref view
+								address-type? right-ref view
+							]
+						]
+					]
 					unless any [
 						pointer?
+						reference-comparison?
 						all [
 							floating?
 							any [
@@ -3988,7 +4433,6 @@ arm64-codegen: context [
 							]
 						]
 					][return INVALID_IR]
-					comparison?: operation >= EQUAL_OPERATION
 					; A comparison of two integer types happens in the wider of
 					; them, so neither operand reaches the compare truncated.
 					if all [

@@ -476,7 +476,7 @@ arm64-encoder: context [
 	][
 		unless all [
 			any [operation = OP_ADD operation = OP_SUB]
-			valid-register? target
+			valid-base? target
 			valid-base? base
 			valid-register? index
 			any [source-width = 1 source-width = 2 source-width = 4 source-width = 8]
@@ -759,6 +759,20 @@ arm64-encoder: context [
 		instruction code capacity (opcode or target)
 	]
 
+	count-leading-zeros: func [
+		code [byte-ptr!]
+		capacity target source width [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? target valid-register? source valid-width? width
+		][return -1]
+		opcode: either width = 8 [DAC01000h][5AC01000h]
+		opcode: opcode or (source * 32)
+		instruction code capacity (opcode or target)
+	]
+
 	condition-result: func [
 		code [byte-ptr!]
 		capacity target condition [integer!]
@@ -921,6 +935,15 @@ arm64-encoder: context [
 		instruction code capacity D65F03C0h
 	]
 
+	program-counter: func [
+		code [byte-ptr!]
+		capacity target [integer!]
+		return: [integer!]
+	][
+		unless valid-register? target [return -1]
+		instruction code capacity (10000000h or target)
+	]
+
 	trap: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
 		instruction code capacity D4200000h
 	]
@@ -1076,6 +1099,29 @@ arm64-encoder: context [
 		encoded: instruction at (capacity - written) (opcode or source)
 		if encoded < 0 [return -1]
 		written + encoded
+	]
+
+	register-store-post: func [
+		code [byte-ptr!]
+		capacity source base displacement width [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			source >= 0 source <= 31
+			valid-base? base
+			displacement >= -256 displacement <= 255
+			any [width = 1 width = 2 width = 4 width = 8]
+		][return -1]
+		opcode: case [
+			width = 1 [38000400h]
+			width = 2 [78000400h]
+			width = 4 [B8000400h]
+			true [F8000400h]
+		]
+		opcode: opcode or ((displacement and 511) * 4096)
+		opcode: opcode or (base * 32)
+		instruction code capacity (opcode or source)
 	]
 
 	frame-load: func [

@@ -65,6 +65,11 @@ size: arm64-encoder/add-extended-register code 256 arm64-encoder/OP_SUB
 expected: #{8B4D2DCB}
 check size 4 expected
 
+size: arm64-encoder/add-extended-register code 256 arm64-encoder/OP_SUB
+	arm64-encoder/SP arm64-encoder/SP arm64-encoder/X16 8 0 3
+expected: #{FF6F30CB}
+check size 4 expected
+
 size: arm64-encoder/alu-register code 256 arm64-encoder/OP_AND arm64-encoder/X9
 	arm64-encoder/X19 arm64-encoder/X20 8 false
 expected: #{6902148A}
@@ -173,6 +178,16 @@ size: arm64-encoder/shift-immediate code 256 arm64-encoder/SHIFT_ARITHMETIC
 expected: #{69FE4793}
 check size 4 expected
 
+size: arm64-encoder/count-leading-zeros code 256 arm64-encoder/X9
+	arm64-encoder/X10 4
+expected: #{4911C05A}
+check size 4 expected
+
+size: arm64-encoder/count-leading-zeros code 256 arm64-encoder/X11
+	arm64-encoder/X12 8
+expected: #{8B11C0DA}
+check size 4 expected
+
 size: arm64-encoder/negate-register code 256 arm64-encoder/X9 arm64-encoder/X19 8
 expected: #{E90313CB}
 check size 4 expected
@@ -264,6 +279,10 @@ size: arm64-encoder/jump-register code 256 arm64-encoder/X17
 expected: #{20021FD6}
 check size 4 expected
 
+size: arm64-encoder/program-counter code 256 arm64-encoder/X13
+expected: #{0D000010}
+check size 4 expected
+
 size: arm64-encoder/page-address code 256 arm64-encoder/X16
 expected: #{1000009010020091}
 check size 8 expected
@@ -284,6 +303,11 @@ check size 4 expected
 size: arm64-encoder/register-store code 256 arm64-encoder/X9 arm64-encoder/SP
 	16380 4 arm64-encoder/X16
 expected: #{E9FF3FB9}
+check size 4 expected
+
+size: arm64-encoder/register-store-post code 256 arm64-encoder/ZR
+	arm64-encoder/X16 8 8
+expected: #{1F8600F8}
 check size 4 expected
 
 size: arm64-encoder/register-load code 256 arm64-encoder/X9 arm64-encoder/X19

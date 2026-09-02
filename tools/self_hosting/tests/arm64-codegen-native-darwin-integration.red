@@ -48,6 +48,79 @@ source: {
 
 	wide-ptr!: alias pointer! [int64!]
 
+	cpu-register-test: func [
+		return: [integer!]
+		/local value [int-ptr!]
+	][
+		system/cpu/x1: as int-ptr! 42
+		value: system/cpu/x1
+		if value <> (as int-ptr! 42) [return 1]
+
+		system/cpu/x2: as int-ptr! -1
+		system/cpu/w2: as int-ptr! 42
+		value: system/cpu/x2
+		if value <> (as int-ptr! 42) [return 2]
+
+		system/cpu/x9: as int-ptr! (((as int64! 1) << 40) + (as int64! 42))
+		value: system/cpu/w9
+		if value <> (as int-ptr! 42) [return 3]
+
+		value: system/cpu/x9
+		system/cpu/w9: value + 31
+		value: system/cpu/x9
+		if value <> (as int-ptr! 166) [return 4]
+
+		0
+	]
+
+	clobber-x21: func [return: [integer!]][
+		system/cpu/x21: as int-ptr! 777
+		0
+	]
+
+	callee-saved-test: func [
+		return: [integer!]
+		/local saved observed [int-ptr!] result [integer!]
+	][
+		saved: system/cpu/x21
+		system/cpu/x21: as int-ptr! 123
+		result: clobber-x21
+		observed: system/cpu/x21
+		system/cpu/x21: saved
+		if result <> 0 [return 1]
+		either observed = (as int-ptr! 123) [0][2]
+	]
+
+	sp-register-test: func [
+		return: [integer!]
+		/local before raw [int-ptr!]
+	][
+		before: system/stack/top
+		raw: system/cpu/sp
+		if raw <> before [return 1]
+		system/cpu/sp: raw
+		either system/cpu/sp = before [0][2]
+	]
+
+	sparse-home-test: func [
+		return: [integer!]
+		/local saved observed [int-ptr!]
+			a b c result status [integer!]
+	][
+		saved: system/cpu/x20
+		system/cpu/x20: as int-ptr! 777
+		a: 10
+		b: 20
+		c: 30
+		result: (a + b) + c
+		observed: system/cpu/x20
+		status: 0
+		if observed <> (as int-ptr! 777) [status: 1]
+		if result <> 60 [status: 2]
+		system/cpu/x20: saved
+		status
+	]
+
 	automatic-allocation: func [return: [integer!] /local memory [wide-ptr!]][
 		memory: as wide-ptr! system/stack/allocate 3
 		memory/1: as int64! 73
@@ -202,17 +275,31 @@ source: {
 		0
 	]
 
-	main: func [return: [integer!] /local result [integer!]][
-		result: log-test
+	main: func [
+		return: [integer!]
+		/local result argc [integer!] argv [int-ptr!]
+	][
+		argc: as integer! system/cpu/x19
+		argv: system/cpu/x20
+		if any [argc <= 0 argv = null][return 1]
+		result: cpu-register-test
 		if result <> 0 [return 10 + result]
-		result: push-test
+		result: sparse-home-test
 		if result <> 0 [return 20 + result]
-		result: stack-test
+		result: callee-saved-test
 		if result <> 0 [return 30 + result]
-		result: pc-test
+		result: sp-register-test
 		if result <> 0 [return 40 + result]
-		result: overflow-test
+		result: log-test
 		if result <> 0 [return 50 + result]
+		result: push-test
+		if result <> 0 [return 60 + result]
+		result: stack-test
+		if result <> 0 [return 70 + result]
+		result: pc-test
+		if result <> 0 [return 80 + result]
+		result: overflow-test
+		if result <> 0 [return 90 + result]
 		42
 	]
 }

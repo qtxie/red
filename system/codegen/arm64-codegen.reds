@@ -31,6 +31,7 @@ arm64-function-scratch!: alias struct! [
 arm64-function-plan!: alias struct! [
 	storage-count   [integer!]
 	home-count      [integer!]
+	home-mask       [integer!]
 	float-home-count [integer!]
 	frame-home-count [integer!]
 	spill-count     [integer!]
@@ -149,6 +150,8 @@ arm64-codegen: context [
 	STACK_ALLOCATE_ZERO_NATIVE: 9
 	STACK_FREE_NATIVE:         10
 	PROGRAM_COUNTER_NATIVE:    13
+	CPU_REGISTER_NATIVE:       14
+	CPU_REGISTER_SET_NATIVE:   15
 	CPU_OVERFLOW_NATIVE:       16
 	LOG_B_NATIVE:              22
 
@@ -230,6 +233,101 @@ arm64-codegen: context [
 			all [ref > 0 ref <= view/header/type-count]
 			all [ref < 0 ref >= -15]
 		]
+	]
+
+	integer-pointer-type: func [
+		view [rsir-view!]
+		return: [integer!]
+		/local id [integer!] type [rsir-type!]
+	][
+		id: 1
+		while [id <= view/header/type-count][
+			type: as rsir-type! (view/types + ((id - 1) * RSIR_TYPE_SIZE))
+			if all [
+				type/kind = -6
+				(canonical-type type/target view) = -5
+			][return id]
+			id: id + 1
+		]
+		0
+	]
+
+	cpu-register-id: func [
+		name [byte-ptr!]
+		size [integer!]
+		width [int-ptr!]
+		return: [integer!]
+		/local index digit number [integer!]
+	][
+		if any [null? name null? width size < 2 size > 3][return -1]
+		width/1: 0
+		if all [
+			size = 2
+			name/1 = as byte! 73h
+			name/2 = as byte! 70h
+		][
+			width/1: 8
+			return arm64-encoder/SP
+		]
+		unless any [
+			name/1 = as byte! 78h
+			name/1 = as byte! 77h
+		][return -1]
+		number: 0
+		index: 2
+		while [index <= size][
+			digit: (as integer! name/index) - 48
+			if any [digit < 0 digit > 9][return -1]
+			number: (number * 10) + digit
+			index: index + 1
+		]
+		if number > 30 [return -1]
+		width/1: either name/1 = as byte! 78h [8][4]
+		number
+	]
+
+	available-home-register: func [
+		reserved used [integer!]
+		return: [integer!]
+		/local index mask [integer!]
+	][
+		index: 0
+		mask: reserved or used
+		while [all [
+			index < HOME_REGISTER_COUNT
+			(mask and (1 << index)) <> 0
+		]][index: index + 1]
+		either index = HOME_REGISTER_COUNT [-1][FIRST_HOME_REGISTER + index]
+	]
+
+	startup-registers-used?: func [
+		view [rsir-view!]
+		return: [logic!]
+		/local instruction [rsir-instruction!]
+			index register-width register-id [integer!]
+	][
+		index: 0
+		while [index < view/header/instruction-count][
+			instruction: as rsir-instruction! (view/instructions
+				+ (index * RSIR_INSTRUCTION_SIZE))
+			if all [
+				instruction/op = OP_NATIVE
+				any [
+					instruction/a = CPU_REGISTER_NATIVE
+					instruction/a = CPU_REGISTER_SET_NATIVE
+				]
+				instruction/b >= 0 instruction/c > 0
+				instruction/c <= view/strings-size
+				instruction/b <= (view/strings-size - instruction/c)
+			][
+				register-width: 0
+				register-id: cpu-register-id
+					(view/strings + instruction/b) instruction/c :register-width
+				if any [register-id = 19 register-id = 20][return true]
+			]
+			index: index + 1
+		]
+		false
 	]
 
 	value-width: func [
@@ -601,11 +699,9 @@ arm64-codegen: context [
 			all [
 				reference-type? source view
 				address-integer-kind? target-kind
-				target-width = 8
 			]
 			all [
 				address-integer-kind? source-kind
-				source-width = 8
 				reference-type? target view
 			]
 		]
@@ -1484,6 +1580,7 @@ arm64-codegen: context [
 		layout [arm64-layout-state!]
 		fn [rsir-function!]
 		first-instruction [integer!]
+		startup? [logic!]
 		scratch [arm64-function-scratch!]
 		plan [arm64-function-plan!]
 		return: [integer!]
@@ -1493,7 +1590,9 @@ arm64-codegen: context [
 			switch-case [rsir-switch!]
 			sub-entry [rsir-instruction!]
 			depths [int-ptr!]
-			id slot count width kind home-count float-home-count frame-allocation
+			id slot count width kind home-count home-mask home-register
+			reserved-home-mask register-id register-width mask
+			float-home-count frame-allocation
 			depth max-spill has-call argument-count frame-home-count total-slots status
 			call-return call-first-parameter call-parameter-count
 			call-reference call-source call-signature callee-slots
@@ -1531,6 +1630,16 @@ arm64-codegen: context [
 		depth: 0
 		max-spill: 0
 		has-call: 0
+		home-mask: 0
+		home-count: 0
+		; Apple's process entry arrives with argc/argv in X0/X1. X19/X20 keep
+		; them live across the runtime startup calls, matching the legacy backend.
+		reserved-home-mask: 0
+		if startup? [
+			reserved-home-mask: reserved-home-mask or 3
+			home-mask: home-mask or 3
+			home-count: 2
+		]
 		; Region 0 is the straight-line body of a function without subroutines,
 		; or the leading jump of one that has them. Every OP_ENTRY opens a new
 		; region with its own expression-stack window, so a subroutine cannot
@@ -1649,7 +1758,34 @@ arm64-codegen: context [
 					scratch/stack-low/depth: 0
 				]
 				instruction/op = OP_NATIVE [
-					if instruction/b <> 0 [return INVALID_IR]
+					either any [
+						instruction/a = CPU_REGISTER_NATIVE
+						instruction/a = CPU_REGISTER_SET_NATIVE
+					][
+						unless all [
+							instruction/b >= 0 instruction/c > 0
+							instruction/c <= view/strings-size
+							instruction/b <= (view/strings-size - instruction/c)
+						][return INVALID_IR]
+						register-width: 0
+						register-id: cpu-register-id
+							(view/strings + instruction/b) instruction/c :register-width
+						if register-id < 0 [return UNSUPPORTED]
+						if all [
+							register-id >= FIRST_HOME_REGISTER
+							register-id < (FIRST_HOME_REGISTER + HOME_REGISTER_COUNT)
+						][
+							mask: 1 << (register-id - FIRST_HOME_REGISTER)
+							reserved-home-mask: reserved-home-mask or mask
+							if all [
+								instruction/a = CPU_REGISTER_SET_NATIVE
+								(home-mask and mask) = 0
+							][
+								home-mask: home-mask or mask
+								home-count: home-count + 1
+							]
+						]
+					][if instruction/b <> 0 [return INVALID_IR]]
 					case [
 						any [
 							instruction/a = STACK_TOP_NATIVE
@@ -1658,6 +1794,7 @@ arm64-codegen: context [
 							instruction/a = STACK_ALIGN_NATIVE
 							instruction/a = PROGRAM_COUNTER_NATIVE
 							instruction/a = CPU_OVERFLOW_NATIVE
+							instruction/a = CPU_REGISTER_NATIVE
 						][
 							if depth = 2147483647 [return OUTPUT_FULL]
 							depth: depth + 1
@@ -1678,12 +1815,32 @@ arm64-codegen: context [
 							if depth < 1 [return INVALID_IR]
 							depth: depth - 1
 						]
+						instruction/a = CPU_REGISTER_SET_NATIVE [
+							if depth < 1 [return INVALID_IR]
+							; A write can alias a volatile register holding an older
+							; expression. Reserve its indexed spill slot only when that
+							; is possible; ordinary register access remains frameless.
+							if all [
+								register-id <= arm64-encoder/X17
+								depth > 1
+							][
+								if (depth - 1) > region-spill [region-spill: depth - 1]
+								has-call: 1
+							]
+						]
 						true [return UNSUPPORTED]
 					]
 					; Stack intrinsics may move SP and need FP to restore the frame.
 					if all [
 						instruction/a >= STACK_TOP_NATIVE
 						instruction/a <= STACK_FREE_NATIVE
+					][has-call: 1]
+					if all [
+						any [
+							instruction/a = CPU_REGISTER_NATIVE
+							instruction/a = CPU_REGISTER_SET_NATIVE
+						]
+						register-id = arm64-encoder/SP
 					][has-call: 1]
 				]
 				instruction/op = OP_REFERENCE [
@@ -1898,7 +2055,6 @@ arm64-codegen: context [
 			all [sub-entry-count = 0 main-entry-count <> 0]
 		][return INVALID_IR]
 		if sub-entry-count > 0 [has-call: 1]
-		home-count: 0
 		float-home-count: 0
 		frame-home-count: 0
 		id: 1
@@ -1927,9 +2083,15 @@ arm64-codegen: context [
 					scratch/homes/id: FIRST_FLOAT_HOME_REGISTER
 						+ float-home-count - 1
 				][
-					if home-count = HOME_REGISTER_COUNT [return UNSUPPORTED]
-					home-count: home-count + 1
-					scratch/homes/id: FIRST_HOME_REGISTER + home-count - 1
+					home-register: available-home-register reserved-home-mask home-mask
+					either home-register < 0 [
+						scratch/storage-kinds/id: STORAGE_FRAME
+					][
+						home-count: home-count + 1
+						mask: 1 << (home-register - FIRST_HOME_REGISTER)
+						home-mask: home-mask or mask
+						scratch/homes/id: home-register
+					]
 				]
 			]
 			if scratch/storage-kinds/id = STORAGE_FRAME [
@@ -1968,9 +2130,12 @@ arm64-codegen: context [
 		id: 1
 		while [id <= view/header/global-count][
 			either scratch/global-homes/id > 1 [
-				either home-count < HOME_REGISTER_COUNT [
+				home-register: available-home-register reserved-home-mask home-mask
+				either home-register >= 0 [
 					home-count: home-count + 1
-					scratch/global-homes/id: FIRST_HOME_REGISTER + home-count - 1
+					mask: 1 << (home-register - FIRST_HOME_REGISTER)
+					home-mask: home-mask or mask
+					scratch/global-homes/id: home-register
 				][scratch/global-homes/id: -1]
 			][
 				if scratch/global-homes/id > 0 [scratch/global-homes/id: -1]
@@ -2018,6 +2183,7 @@ arm64-codegen: context [
 		if frame-allocation < 0 [return OUTPUT_FULL]
 		plan/storage-count: fn/parameter-count + fn/local-count
 		plan/home-count: home-count
+		plan/home-mask: home-mask
 		plan/float-home-count: float-home-count
 		plan/frame-home-count: frame-home-count
 		plan/spill-count: max-spill
@@ -2037,7 +2203,7 @@ arm64-codegen: context [
 		/local parameter [rsir-parameter!]
 			at [byte-ptr!]
 			written encoded index slot width transfer-width target signed kind
-				parameter-register [integer!]
+				parameter-register register pending-register mask saved-count [integer!]
 	][
 		if all [
 			plan/home-count = 0
@@ -2048,22 +2214,34 @@ arm64-codegen: context [
 		written: arm64-encoder/frame-enter code capacity plan/frame-allocation
 		if written < 0 [return OUTPUT_FULL]
 		index: 0
-		while [(index + 1) < plan/home-count][
-			at: either null? code [as byte-ptr! 0][code + written]
-			encoded: arm64-encoder/store-pair at (capacity - written)
-				(FIRST_HOME_REGISTER + index) (FIRST_HOME_REGISTER + index + 1)
-				arm64-encoder/FP (0 - ((index + 2) * 8))
-			if encoded < 0 [return OUTPUT_FULL]
-			written: written + encoded
-			index: index + 2
+		saved-count: 0
+		pending-register: -1
+		while [index < HOME_REGISTER_COUNT][
+			mask: 1 << index
+			if (plan/home-mask and mask) <> 0 [
+				register: FIRST_HOME_REGISTER + index
+				either pending-register < 0 [pending-register: register][
+					saved-count: saved-count + 2
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: arm64-encoder/store-pair at (capacity - written)
+						pending-register register arm64-encoder/FP
+						(0 - (saved-count * 8))
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					pending-register: -1
+				]
+			]
+			index: index + 1
 		]
-		if index < plan/home-count [
+		if pending-register >= 0 [
+			saved-count: saved-count + 1
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/frame-store at (capacity - written)
-				(FIRST_HOME_REGISTER + index) (0 - ((index + 1) * 8)) 8
+				pending-register (0 - (saved-count * 8)) 8
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 		]
+		if saved-count <> plan/home-count [return INVALID_IR]
 		index: 0
 		while [index < plan/float-home-count][
 			at: either null? code [as byte-ptr! 0][code + written]
@@ -2125,7 +2303,8 @@ arm64-codegen: context [
 		code [byte-ptr!]
 		capacity [integer!]
 		return: [integer!]
-		/local at [byte-ptr!] written encoded index [integer!]
+		/local at [byte-ptr!]
+			written encoded index register pending-register mask saved-count [integer!]
 	][
 		if all [
 			plan/home-count = 0
@@ -2147,22 +2326,34 @@ arm64-codegen: context [
 			index: index + 1
 		]
 		index: 0
-		while [(index + 1) < plan/home-count][
-			at: either null? code [as byte-ptr! 0][code + written]
-			encoded: arm64-encoder/load-pair at (capacity - written)
-				(FIRST_HOME_REGISTER + index) (FIRST_HOME_REGISTER + index + 1)
-				arm64-encoder/FP (0 - ((index + 2) * 8))
-			if encoded < 0 [return OUTPUT_FULL]
-			written: written + encoded
-			index: index + 2
+		saved-count: 0
+		pending-register: -1
+		while [index < HOME_REGISTER_COUNT][
+			mask: 1 << index
+			if (plan/home-mask and mask) <> 0 [
+				register: FIRST_HOME_REGISTER + index
+				either pending-register < 0 [pending-register: register][
+					saved-count: saved-count + 2
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: arm64-encoder/load-pair at (capacity - written)
+						pending-register register arm64-encoder/FP
+						(0 - (saved-count * 8))
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					pending-register: -1
+				]
+			]
+			index: index + 1
 		]
-		if index < plan/home-count [
+		if pending-register >= 0 [
+			saved-count: saved-count + 1
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/frame-load at (capacity - written)
-				(FIRST_HOME_REGISTER + index) (0 - ((index + 1) * 8)) 8 0 8
+				pending-register (0 - (saved-count * 8)) 8 0 8
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 		]
+		if saved-count <> plan/home-count [return INVALID_IR]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/frame-leave at (capacity - written)
 		if encoded < 0 [return OUTPUT_FULL]
@@ -2537,7 +2728,7 @@ arm64-codegen: context [
 		capacity [integer!]
 		return: [integer!]
 		/local at [byte-ptr!]
-			left-ref right-ref source-width stride shift scaled high opcode
+			left-ref right-ref source-width stride shift scaled high limit opcode
 			written encoded right immediate source-signed [integer!]
 	][
 		unless any [operation = ADD_OPERATION operation = SUBTRACT_OPERATION][
@@ -2556,16 +2747,17 @@ arm64-codegen: context [
 		if scratch/stack-locations/right-slot = LOCATION_IMMEDIATE [
 			high: either scratch/stack-low/right-slot < 0 [-1][0]
 			if scratch/stack-high/right-slot <> high [return UNSUPPORTED]
-			if any [
-				all [
-					scratch/stack-low/right-slot < 0
-					scratch/stack-low/right-slot < (80000000h / stride)
+			either scratch/stack-low/right-slot < 0 [
+				limit: 80000000h / stride
+				if scratch/stack-low/right-slot < limit [
+					return UNSUPPORTED
 				]
-				all [
-					scratch/stack-low/right-slot >= 0
-					scratch/stack-low/right-slot > (7FFFFFFFh / stride)
+			][
+				limit: 7FFFFFFFh / stride
+				if scratch/stack-low/right-slot > limit [
+					return UNSUPPORTED
 				]
-			][return UNSUPPORTED]
+			]
 			scaled: scratch/stack-low/right-slot * stride
 			immediate: either operation = ADD_OPERATION [scaled][0 - scaled]
 			at: either null? code [as byte-ptr! 0][code + written]
@@ -2645,6 +2837,7 @@ arm64-codegen: context [
 		fn [rsir-function!]
 		first-instruction [integer!]
 		entry? [logic!]
+		startup? [logic!]
 		scratch [arm64-function-scratch!]
 		plan [arm64-function-plan!]
 		references [arm64-reference-state!]
@@ -2666,7 +2859,7 @@ arm64-codegen: context [
 			index ordinal written encoded depth slot source-slot target-slot
 			ref target-ref left-ref right-ref width kind operation target left right folded
 			source-width target-width source-kind target-kind
-			operation-ref parameter-register
+			operation-ref parameter-register cpu-pointer-ref register-id register-width
 			displacement condition argument-count argument-base argument-slot
 			argument-origin callee-slot callee-slots
 			call-target call-return call-first-parameter call-signature call-source
@@ -2702,6 +2895,18 @@ arm64-codegen: context [
 		]
 		written: emit-prologue view fn scratch plan code capacity
 		if written < 0 [return written]
+		if startup? [
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/move-register at (capacity - written)
+				arm64-encoder/X19 arm64-encoder/X0 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/move-register at (capacity - written)
+				arm64-encoder/X20 arm64-encoder/X1 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: emit-global-homes view scratch (function-base + written)
 			references at (capacity - written)
@@ -2722,6 +2927,7 @@ arm64-codegen: context [
 		region-entry: 0
 		region-link?: false
 		last-math-condition: -1
+		cpu-pointer-ref: 0
 		index: 0
 		while [index < fn/instruction-count][
 			ordinal: index + 1
@@ -3073,7 +3279,24 @@ arm64-codegen: context [
 					scratch/stack-flags/depth: 0
 				]
 				instruction/op = OP_NATIVE [
-					if instruction/b <> 0 [return INVALID_IR]
+					either any [
+						instruction/a = CPU_REGISTER_NATIVE
+						instruction/a = CPU_REGISTER_SET_NATIVE
+					][
+						unless all [
+							instruction/b >= 0 instruction/c > 0
+							instruction/c <= view/strings-size
+							instruction/b <= (view/strings-size - instruction/c)
+						][return INVALID_IR]
+						register-width: 0
+						register-id: cpu-register-id
+							(view/strings + instruction/b) instruction/c :register-width
+						if register-id < 0 [return UNSUPPORTED]
+						if cpu-pointer-ref = 0 [
+							cpu-pointer-ref: integer-pointer-type view
+						]
+						if cpu-pointer-ref = 0 [return INVALID_IR]
+					][if instruction/b <> 0 [return INVALID_IR]]
 					case [
 						instruction/a = STACK_TOP_NATIVE [
 							unless pointer-to-canonical? instruction/c -5 view [
@@ -3313,6 +3536,90 @@ arm64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							scratch/stack-types/depth: instruction/c
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = CPU_REGISTER_NATIVE [
+							if depth = 2147483647 [return OUTPUT_FULL]
+							depth: depth + 1
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: either register-width = 4 [
+								arm64-encoder/extend-register at (capacity - written)
+									target register-id 4 0
+							][
+								arm64-encoder/move-register at (capacity - written)
+									target register-id 8
+							]
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: cpu-pointer-ref
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = CPU_REGISTER_SET_NATIVE [
+							unless all [
+								depth > 0 scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								compatible-types? cpu-pointer-ref
+									scratch/stack-types/depth view
+							][return INVALID_IR]
+							; Explicit writes may alias a live volatile expression
+							; register. Preserve only the values actually at risk.
+							slot: 1
+							while [slot < depth][
+								if all [
+									scratch/stack-locations/slot = LOCATION_REGISTER
+									scratch/stack-low/slot = register-id
+									not float-type? scratch/stack-types/slot view
+								][
+									if scratch/stack-kinds/slot <> VALUE [return UNSUPPORTED]
+									width: value-width scratch/stack-types/slot view
+									unless any [width = 1 width = 2 width = 4 width = 8][
+										return UNSUPPORTED
+									]
+									if (region-base + slot) > region-limit [return INVALID_IR]
+									displacement: 0 - ((region-base + slot) * 8)
+									at: either null? code [as byte-ptr! 0][code + written]
+									encoded: arm64-encoder/frame-store at
+										(capacity - written) register-id displacement width
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									scratch/stack-locations/slot: LOCATION_FRAME
+									scratch/stack-low/slot: displacement
+									scratch/stack-high/slot: 0
+								]
+								slot: slot + 1
+							]
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch depth target cpu-pointer-ref
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: either all [register-width = 4 register-id = target][
+								arm64-encoder/extend-register at (capacity - written)
+									register-id register-id 4 0
+							][
+								arm64-encoder/move-register at (capacity - written)
+									register-id target register-width
+							]
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: cpu-pointer-ref
 							scratch/stack-kinds/depth: VALUE
 							scratch/stack-locations/depth: LOCATION_REGISTER
 							scratch/stack-low/depth: target
@@ -5450,12 +5757,16 @@ arm64-codegen: context [
 			max-storage max-instructions words status member-id
 			target-count target-id used-import-count last-library
 			library-offset external-offset output-import-id [integer!]
-			entry? [logic!]
+			entry? startup? startup-entry? [logic!]
 	][
 		if any [null? output capacity < 0][return INVALID_IR]
 		unless any [opt-level = 0 opt-level = 2][return UNSUPPORTED]
 		if (codegen-rsir-reader/open data size view) <> 0 [return INVALID_IR]
 		header: view/header
+		startup?: all [
+			header/module-kind = 3
+			startup-registers-used? view
+		]
 		max-storage: 0
 		max-instructions: 0
 		id: 1
@@ -5565,7 +5876,9 @@ arm64-codegen: context [
 			fn: as rsir-function! (view/functions + ((id - 1) * RSIR_FUNCTION_SIZE))
 			instruction-starts/id: first-instruction
 			entry?: all [header/module-kind = 3 id = header/entry-function]
-			status: plan-function view layout fn first-instruction scratch plan
+			startup-entry?: all [entry? startup?]
+			status: plan-function view layout fn first-instruction startup-entry?
+				scratch plan
 			if status < 0 [return release memory status]
 			function-frames/id: either all [
 				plan/home-count = 0
@@ -5576,7 +5889,7 @@ arm64-codegen: context [
 				16 + plan/frame-allocation
 			]
 			written: compile-function view layout fn first-instruction entry?
-				scratch plan reference-state as int-ptr! 0 0 null 0
+				startup-entry? scratch plan reference-state as int-ptr! 0 0 null 0
 			if written < 0 [return release memory written]
 			function-sizes/id: written
 			if code-size > (2147483647 - written)[return release memory OUTPUT_FULL]
@@ -5825,10 +6138,13 @@ arm64-codegen: context [
 		while [id <= header/function-count][
 			fn: as rsir-function! (view/functions + ((id - 1) * RSIR_FUNCTION_SIZE))
 			entry?: all [header/module-kind = 3 id = header/entry-function]
-			status: plan-function view layout fn instruction-starts/id scratch plan
+			startup-entry?: all [entry? startup?]
+			status: plan-function view layout fn instruction-starts/id startup-entry?
+				scratch plan
 			if status < 0 [return release memory status]
 			written: compile-function view layout fn instruction-starts/id
-				entry? scratch plan reference-state function-offsets function-offsets/id
+				entry? startup-entry? scratch plan reference-state
+				function-offsets function-offsets/id
 				(code + function-offsets/id) function-sizes/id
 			if written <> function-sizes/id [
 				return release memory either written < 0 [written][INVALID_IR]

@@ -149,6 +149,7 @@ arm64-codegen: context [
 	STACK_ALLOCATE_ZERO_NATIVE: 9
 	STACK_FREE_NATIVE:         10
 	PROGRAM_COUNTER_NATIVE:    13
+	CPU_OVERFLOW_NATIVE:       16
 	LOG_B_NATIVE:              22
 
 	; A call's parameter descriptors live in the parameter table for declared
@@ -1443,6 +1444,41 @@ arm64-codegen: context [
 		]
 	]
 
+	; A multiply needs its otherwise-dead high half only when a later native
+	; query consumes it. Transparent value moves between the two keep NZCV live.
+	overflow-query-follows?: func [
+		view [rsir-view!]
+		fn [rsir-function!]
+		first-instruction index [integer!]
+		return: [logic!]
+		/local instruction [rsir-instruction!]
+	][
+		index: index + 1
+		while [index < fn/instruction-count][
+			instruction: as rsir-instruction! (view/instructions
+				+ ((first-instruction + index) * RSIR_INSTRUCTION_SIZE))
+			if all [
+				instruction/op = OP_NATIVE
+				instruction/a = CPU_OVERFLOW_NATIVE
+			][return true]
+			if any [
+				instruction/op = OP_BINARY
+				instruction/op = OP_CAST
+				instruction/op = OP_CALL
+				instruction/op = OP_SUB_CALL
+				instruction/op = OP_JUMP
+				instruction/op = OP_BRANCH
+				instruction/op = OP_SWITCH
+				instruction/op = OP_ENTRY
+				instruction/op = OP_RETURN
+				instruction/op = OP_SUB_RETURN
+				instruction/op = OP_FAIL
+			][return false]
+			index: index + 1
+		]
+		false
+	]
+
 	plan-function: func [
 		view [rsir-view!]
 		layout [arm64-layout-state!]
@@ -1621,6 +1657,7 @@ arm64-codegen: context [
 							instruction/a = STACK_FRAME_NATIVE
 							instruction/a = STACK_ALIGN_NATIVE
 							instruction/a = PROGRAM_COUNTER_NATIVE
+							instruction/a = CPU_OVERFLOW_NATIVE
 						][
 							if depth = 2147483647 [return OUTPUT_FULL]
 							depth: depth + 1
@@ -2637,7 +2674,7 @@ arm64-codegen: context [
 			region-base region-limit region-entry sub-target link-slot
 			case-index return-count
 			overflow-anchor overflow-target overflow-condition base-depth
-				shift-count
+				shift-count last-math-condition
 				[integer!]
 			member-type member-flags member-offset stride scaled shift
 				[integer!]
@@ -2684,6 +2721,7 @@ arm64-codegen: context [
 		region-limit: region-base + plan/spill-count
 		region-entry: 0
 		region-link?: false
+		last-math-condition: -1
 		index: 0
 		while [index < fn/instruction-count][
 			ordinal: index + 1
@@ -2724,6 +2762,15 @@ arm64-codegen: context [
 				fallthrough?: true
 			]
 			instruction-offsets/ordinal: written
+			if any [
+				instruction/op = OP_CAST
+				instruction/op = OP_CALL
+				instruction/op = OP_SUB_CALL
+				instruction/op = OP_JUMP
+				instruction/op = OP_BRANCH
+				instruction/op = OP_SWITCH
+				instruction/op = OP_ENTRY
+			][last-math-condition: -1]
 			; A pending variant tag names one place, so nothing may rebase or
 			; discard that place before the store lands on it.
 			if all [
@@ -3266,6 +3313,30 @@ arm64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							scratch/stack-types/depth: instruction/c
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = CPU_OVERFLOW_NATIVE [
+							if instruction/c <> -11 [return INVALID_IR]
+							depth: depth + 1
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: either last-math-condition >= 0 [
+								arm64-encoder/condition-result at (capacity - written)
+									target last-math-condition
+							][
+								arm64-encoder/move-immediate at (capacity - written)
+									target 4 0 0
+							]
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: -11
 							scratch/stack-kinds/depth: VALUE
 							scratch/stack-locations/depth: LOCATION_REGISTER
 							scratch/stack-low/depth: target
@@ -4445,6 +4516,31 @@ arm64-codegen: context [
 					; to, and branches to that scope's landing pad instead of
 					; letting a wrapped result reach the program.
 					tracked?: instruction/b <> 0
+					last-math-condition: -1
+					if all [
+						not tracked?
+						not comparison?
+						integer-type? left-ref view
+						overflow-query-follows? view fn first-instruction index
+					][
+						case [
+							operation = ADD_OPERATION [
+								last-math-condition: either signed-type? left-ref view [
+									arm64-encoder/VS
+								][arm64-encoder/CS]
+							]
+							operation = SUBTRACT_OPERATION [
+								last-math-condition: either signed-type? left-ref view [
+									arm64-encoder/VS
+								][arm64-encoder/CC]
+							]
+							operation = MULTIPLY_OPERATION [
+								last-math-condition: arm64-encoder/NE
+							]
+							true [0]
+						]
+						load-signed: either signed-type? left-ref view [1][0]
+					]
 					overflow-target: 0
 					overflow-condition: -1
 					base-depth: 0
@@ -4577,14 +4673,15 @@ arm64-codegen: context [
 					][return UNSUPPORTED]
 					width: either result-width = 8 [8][4]
 					folded: 0
-						if all [
-							not pointer?
-							not tracked?
-							result-width = 4
-							scratch/stack-locations/source-slot = LOCATION_IMMEDIATE
-							scratch/stack-locations/depth = LOCATION_IMMEDIATE
-							fold-integer32 operation scratch/stack-low/source-slot
-								scratch/stack-low/depth :folded
+					if all [
+						not pointer?
+						not tracked?
+						last-math-condition < 0
+						result-width = 4
+						scratch/stack-locations/source-slot = LOCATION_IMMEDIATE
+						scratch/stack-locations/depth = LOCATION_IMMEDIATE
+						fold-integer32 operation scratch/stack-low/source-slot
+							scratch/stack-low/depth :folded
 					][
 						depth: source-slot
 						scratch/stack-types/depth: left-ref
@@ -4775,17 +4872,29 @@ arm64-codegen: context [
 						operation = ADD_OPERATION [
 							if immediate? [
 								at: either null? code [as byte-ptr! 0][code + written]
-								encoded: arm64-encoder/add-immediate at
-									(capacity - written) target left
-									scratch/stack-low/depth width
+								encoded: either last-math-condition >= 0 [
+									arm64-encoder/add-immediate-flags at
+										(capacity - written) target left
+										scratch/stack-low/depth width
+								][
+									arm64-encoder/add-immediate at
+										(capacity - written) target left
+										scratch/stack-low/depth width
+								]
 							]
 						]
 						operation = SUBTRACT_OPERATION [
 							if immediate? [
 								at: either null? code [as byte-ptr! 0][code + written]
-								encoded: arm64-encoder/add-immediate at
-									(capacity - written) target left
-									(0 - scratch/stack-low/depth) width
+								encoded: either last-math-condition >= 0 [
+									arm64-encoder/add-immediate-flags at
+										(capacity - written) target left
+										(0 - scratch/stack-low/depth) width
+								][
+									arm64-encoder/add-immediate at
+										(capacity - written) target left
+										(0 - scratch/stack-low/depth) width
+								]
 							]
 						]
 						all [
@@ -4857,12 +4966,12 @@ arm64-codegen: context [
 							operation = ADD_OPERATION [
 								arm64-encoder/alu-register at (capacity - written)
 									arm64-encoder/OP_ADD target left right width
-									tracked?
+									any [tracked? last-math-condition >= 0]
 							]
 							operation = SUBTRACT_OPERATION [
 								arm64-encoder/alu-register at (capacity - written)
 									arm64-encoder/OP_SUB target left right width
-									tracked?
+									any [tracked? last-math-condition >= 0]
 							]
 							all [tracked? operation = MULTIPLY_OPERATION
 								result-width >= 4
@@ -4871,8 +4980,16 @@ arm64-codegen: context [
 									result-width load-signed at (capacity - written)
 							]
 							operation = MULTIPLY_OPERATION [
-								arm64-encoder/multiply-register at (capacity - written)
-									target left right width
+								either all [
+									last-math-condition >= 0 result-width >= 4
+								][
+									emit-tracked-multiply target left right result-width
+										load-signed
+										at (capacity - written)
+								][
+									arm64-encoder/multiply-register at
+										(capacity - written) target left right width
+								]
 							]
 							operation = DIVIDE_OPERATION [
 								load-signed: either signed-type? left-ref view [1][0]
@@ -4957,6 +5074,20 @@ arm64-codegen: context [
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
+					if all [
+						not tracked?
+						last-math-condition >= 0
+						result-width < 4
+						operation <= MULTIPLY_OPERATION
+					][
+						load-signed: either signed-type? left-ref view [1][0]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/compare-extended-register at
+							(capacity - written) target target 4 result-width load-signed
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						last-math-condition: arm64-encoder/NE
+					]
 					if tracked? [
 						load-signed: either signed-type? left-ref view [1][0]
 						if result-width >= 4 [

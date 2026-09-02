@@ -124,6 +124,84 @@ source: {
 		either all [first <> null second <> null first <> second][0][1]
 	]
 
+	overflow-test: func [
+		return: [integer!]
+		/local x result [integer!] small [int8!] usmall [uint8!]
+			unsigned [uint32!] wide [int64!] uwide [uint64!]
+			overflowed? [logic!]
+	][
+		x: 2147483647
+		result: x + 1
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 1]
+
+		x: -2000000000
+		result: x - 2000000000
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 2]
+
+		x: 1000
+		result: x * 2000
+		overflowed?: system/cpu/overflow?
+		if overflowed? [return 3]
+
+		x: 1000000
+		result: x * 2000000
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 4]
+
+		x: 2147483647
+		result: x / -1
+		overflowed?: system/cpu/overflow?
+		if overflowed? [return 5]
+
+		wide: ((as int64! 1) << 62) - 1
+		wide: wide + ((as int64! 1) << 62) + 1
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 6]
+
+		wide: as int64! 1000000000
+		wide: wide * (as int64! 1000000000)
+		overflowed?: system/cpu/overflow?
+		if overflowed? [return 7]
+
+		small: as int8! 127
+		small: small + (as int8! 1)
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 8]
+
+		usmall: as uint8! 255
+		usmall: usmall + (as uint8! 1)
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 9]
+
+		unsigned: as uint32! 1
+		unsigned: unsigned - (as uint32! 2)
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 10]
+
+		uwide: (as uint64! 1) << 63
+		uwide: uwide + uwide
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 11]
+
+		unsigned: as uint32! 100000
+		unsigned: unsigned * (as uint32! 100000)
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 12]
+
+		wide: (as int64! 1) << 62
+		wide: wide * (as int64! 4)
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 13]
+
+		uwide: (as uint64! 1) << 63
+		uwide: uwide * (as uint64! 2)
+		overflowed?: system/cpu/overflow?
+		if not overflowed? [return 14]
+		0
+	]
+
 	main: func [return: [integer!] /local result [integer!]][
 		result: log-test
 		if result <> 0 [return 10 + result]
@@ -133,6 +211,8 @@ source: {
 		if result <> 0 [return 30 + result]
 		result: pc-test
 		if result <> 0 [return 40 + result]
+		result: overflow-test
+		if result <> 0 [return 50 + result]
 		42
 	]
 }

@@ -588,6 +588,24 @@ arm64-encoder: context [
 		instruction code capacity encoded
 	]
 
+	add-immediate-flags: func [
+		code [byte-ptr!]
+		capacity target source value width [integer!]
+		return: [integer!]
+		/local operation encoded [integer!]
+	][
+		unless all [valid-register? target valid-base? source][return -1]
+		operation: OP_ADD
+		if value < 0 [
+			operation: OP_SUB
+			if value = 80000000h [return -1]
+			value: 0 - value
+		]
+		encoded: encode-add-immediate operation target source value width true
+		if encoded = -1 [return -1]
+		instruction code capacity encoded
+	]
+
 	compare-immediate: func [
 		code [byte-ptr!]
 		capacity source value width [integer!]

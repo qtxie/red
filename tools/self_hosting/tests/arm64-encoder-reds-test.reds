@@ -118,6 +118,16 @@ size: arm64-encoder/add-immediate code 256 arm64-encoder/X9 arm64-encoder/X19 -1
 expected: #{690E40D1}
 check size 4 expected
 
+size: arm64-encoder/add-immediate-flags code 256 arm64-encoder/X9
+	arm64-encoder/X19 42 4
+expected: #{69AA0031}
+check size 4 expected
+
+size: arm64-encoder/add-immediate-flags code 256 arm64-encoder/X10
+	arm64-encoder/X20 -7 8
+expected: #{8A1E00F1}
+check size 4 expected
+
 size: arm64-encoder/multiply-register code 256 arm64-encoder/X9
 	arm64-encoder/X19 arm64-encoder/X20 8
 expected: #{697E149B}

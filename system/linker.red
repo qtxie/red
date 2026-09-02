@@ -62,6 +62,19 @@ linker: context [
 			+ ((either high > 127 [high - 256][high]) * 16777216)
 	]
 
+	arm64-import-reference-kind: func [
+		data [binary!]
+		offset [integer!]
+		/local opcode
+	][
+		opcode: to integer! pick data (offset + 4)
+		case [
+			(opcode and 159) = 144 [1]		;-- ADRP page reference
+			(opcode and 252) = 148 [2]		;-- BL immediate
+			true [0]
+		]
+	]
+
 	codegen-fail: func [message [string!]][
 		codegen-error: message
 		false
@@ -408,7 +421,24 @@ linker: context [
 				unless all [integer? reference reference <= (code-size - 4)][
 					return codegen-fail "native import reference exceeds code"
 				]
-				append refs reference + 1
+				either job/target = 'ARM64 [
+					switch/default
+						(arm64-import-reference-kind image (code-offset + reference)) [
+						1 [
+							unless reference <= (code-size - 8) [
+								return codegen-fail "native import page reference exceeds code"
+							]
+							reference-register: (to integer! pick image
+								(code-offset + reference + 1)) and 31
+							append/only refs reduce [reference + 1 reference-register]
+						]
+						2 [
+							append refs reference + 1
+						]
+					][
+						return codegen-fail "native ARM64 import reference has an invalid opcode"
+					]
+				][append refs reference + 1]
 				reference-id: reference-id + 1
 			]
 			append functions external

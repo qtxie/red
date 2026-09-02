@@ -1424,6 +1424,7 @@ arm64-codegen: context [
 		plan [arm64-function-plan!]
 		return: [integer!]
 		/local parameter [rsir-parameter!]
+			imported [rsir-import!]
 			instruction [rsir-instruction!]
 			switch-case [rsir-switch!]
 			sub-entry [rsir-instruction!]
@@ -1518,6 +1519,19 @@ arm64-codegen: context [
 							not valid-type-ref? instruction/c view
 							(type-kind instruction/c view) <> -4
 						][return INVALID_IR]
+					]
+					instruction/a = IMPORT_ADDRESS [
+						slot: instruction/b
+						if any [
+							slot <= 0 slot > view/header/import-count
+							not valid-type-ref? instruction/c view
+							(type-kind instruction/c view) <> -4
+						][return INVALID_IR]
+						imported: as rsir-import! (view/imports
+							+ ((slot - 1) * RSIR_IMPORT_SIZE))
+						unless any [imported/flags = CDECL imported/flags = STDCALL][
+							return UNSUPPORTED
+						]
 					]
 					true [return UNSUPPORTED]
 				]
@@ -2467,6 +2481,7 @@ arm64-codegen: context [
 			switch-case [rsir-switch!]
 			parameter [rsir-parameter!]
 			global [rsir-global!]
+			imported [rsir-import!]
 			sub-entry [rsir-instruction!]
 			overflow-scope [rsir-instruction!]
 			at [byte-ptr!]
@@ -2941,6 +2956,37 @@ arm64-codegen: context [
 							; The linker rewrites the ADRP/ADD pair once it knows
 							; where the callee landed in the code section.
 							status: record-reference slot
+								(function-base + written) references
+							if status < 0 [return status]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/page-address at
+								(capacity - written) target
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: instruction/c
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = IMPORT_ADDRESS [
+							unless all [
+								slot > 0 slot <= view/header/import-count
+								valid-type-ref? instruction/c view
+								(type-kind instruction/c view) = -4
+							][return INVALID_IR]
+							imported: as rsir-import! (view/imports
+								+ ((slot - 1) * RSIR_IMPORT_SIZE))
+							unless any [
+								imported/flags = CDECL imported/flags = STDCALL
+							][return UNSUPPORTED]
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							status: record-reference
+								(view/header/function-count
+									+ view/header/global-count + slot)
 								(function-base + written) references
 							if status < 0 [return status]
 							at: either null? code [as byte-ptr! 0][code + written]

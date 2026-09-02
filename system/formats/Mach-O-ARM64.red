@@ -454,14 +454,18 @@ system-format-MachO-ARM64: context [
 		/local target source delta opcode
 	][
 		foreach record imports [
-			target: either issue? record/1 [
-				got-offset + (record/5 * 8)
-			][stub-offset + (record/6 * 12)]
 			foreach ref record/3 [
-				either issue? record/1 [
+				either block? ref [
+					target: either issue? record/1 [
+						got-offset + (record/5 * 8)
+					][stub-offset + (record/6 * 12)]
 					linker/patch-arm64-page-ref code ref/1
 						(text-offset + ref/1 - 1) target ref/2
 				][
+					if issue? record/1 [
+						linker/throw-error "ARM64 Mach-O import variable requires a page reference"
+					]
+					target: stub-offset + (record/6 * 12)
 					source: text-offset + ref - 1
 					delta: target - source
 					if any [not zero? delta // 4 delta < -134217728 delta > 134217724][

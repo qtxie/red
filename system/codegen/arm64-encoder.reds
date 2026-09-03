@@ -1142,6 +1142,69 @@ arm64-encoder: context [
 		instruction code capacity (opcode or source)
 	]
 
+	memory-fence: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		instruction code capacity D5033BBFh
+	]
+
+	atomic-load: func [
+		code [byte-ptr!]
+		capacity target address [integer!]
+		return: [integer!]
+	][
+		unless all [valid-register? target valid-register? address][return -1]
+		instruction code capacity ((88DFFC00h or (address * 32)) or target)
+	]
+
+	atomic-store: func [
+		code [byte-ptr!]
+		capacity address source [integer!]
+		return: [integer!]
+	][
+		unless all [valid-register? address valid-register? source][return -1]
+		instruction code capacity ((889FFC00h or (address * 32)) or source)
+	]
+
+	; Apple silicon implements the ARMv8.1 LSE atomics, so one acquire-release
+	; instruction replaces the legacy load-exclusive/store-exclusive loop.
+	atomic-rmw: func [
+		code [byte-ptr!]
+		capacity operation source result address [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			any [operation = OP_ADD operation = OP_AND
+				operation = OP_OR operation = OP_XOR]
+			valid-register? source valid-register? result valid-register? address
+			address <> source address <> result
+		][return -1]
+		opcode: case [
+			operation = OP_ADD [B8E00000h]        ; LDADDAL
+			operation = OP_AND [B8E01000h]        ; LDCLRAL
+			operation = OP_XOR [B8E02000h]        ; LDEORAL
+			true [B8E03000h]                      ; LDSETAL
+		]
+		opcode: opcode or (source * 65536)
+		opcode: opcode or (address * 32)
+		instruction code capacity (opcode or result)
+	]
+
+	atomic-compare-exchange: func [
+		code [byte-ptr!]
+		capacity expected replacement address [integer!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? expected valid-register? replacement
+			valid-register? address
+			address <> expected address <> replacement
+		][return -1]
+		opcode: 88E0FC00h or (expected * 65536)
+		opcode: opcode or (address * 32)
+		instruction code capacity (opcode or replacement)
+	]
+
 	frame-load: func [
 		code [byte-ptr!]
 		capacity target displacement width signed result-width [integer!]

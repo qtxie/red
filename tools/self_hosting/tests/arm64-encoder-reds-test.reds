@@ -320,6 +320,43 @@ size: arm64-encoder/register-store-post code 256 arm64-encoder/ZR
 expected: #{1F8600F8}
 check size 4 expected
 
+size: arm64-encoder/memory-fence code 256
+expected: #{BF3B03D5}
+check size 4 expected
+
+size: arm64-encoder/atomic-load code 256 arm64-encoder/X9 arm64-encoder/X10
+expected: #{49FDDF88}
+check size 4 expected
+
+size: arm64-encoder/atomic-store code 256 arm64-encoder/X12 arm64-encoder/X11
+expected: #{8BFD9F88}
+check size 4 expected
+
+size: arm64-encoder/atomic-rmw code 256 arm64-encoder/OP_ADD
+	arm64-encoder/X13 arm64-encoder/X14 arm64-encoder/X15
+expected: #{EE01EDB8}
+check size 4 expected
+
+size: arm64-encoder/atomic-rmw code 256 arm64-encoder/OP_AND
+	arm64-encoder/X13 arm64-encoder/X14 arm64-encoder/X15
+expected: #{EE11EDB8}
+check size 4 expected
+
+size: arm64-encoder/atomic-rmw code 256 arm64-encoder/OP_OR
+	arm64-encoder/X13 arm64-encoder/X14 arm64-encoder/X15
+expected: #{EE31EDB8}
+check size 4 expected
+
+size: arm64-encoder/atomic-rmw code 256 arm64-encoder/OP_XOR
+	arm64-encoder/X13 arm64-encoder/X14 arm64-encoder/X15
+expected: #{EE21EDB8}
+check size 4 expected
+
+size: arm64-encoder/atomic-compare-exchange code 256 arm64-encoder/X1
+	arm64-encoder/X2 arm64-encoder/X3
+expected: #{62FCE188}
+check size 4 expected
+
 size: arm64-encoder/register-load code 256 arm64-encoder/X9 arm64-encoder/X19
 	-1 1 1 4 arm64-encoder/X16
 expected: #{69F2DF38}
@@ -460,6 +497,18 @@ if (arm64-encoder/register-store code 256 arm64-encoder/X9 arm64-encoder/X19
 ]
 if (arm64-encoder/alu-register code 256 arm64-encoder/OP_OR arm64-encoder/X9
 	arm64-encoder/X10 arm64-encoder/X11 8 true) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/atomic-rmw code 256 arm64-encoder/OP_SUB
+	arm64-encoder/X9 arm64-encoder/X10 arm64-encoder/X11) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/atomic-rmw code 256 arm64-encoder/OP_ADD
+	arm64-encoder/X9 arm64-encoder/X10 arm64-encoder/X9) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/atomic-compare-exchange code 256 arm64-encoder/X9
+	arm64-encoder/X10 arm64-encoder/X9) <> -1 [
 	failures: failures + 1
 ]
 if (arm64-encoder/logical-immediate code 256 arm64-encoder/OP_AND

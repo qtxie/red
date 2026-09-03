@@ -153,6 +153,12 @@ arm64-codegen: context [
 	CPU_REGISTER_NATIVE:       14
 	CPU_REGISTER_SET_NATIVE:   15
 	CPU_OVERFLOW_NATIVE:       16
+	ATOMIC_FENCE_NATIVE:       17
+	ATOMIC_LOAD_NATIVE:        18
+	ATOMIC_STORE_NATIVE:       19
+	ATOMIC_CAS_NATIVE:         20
+	ATOMIC_MATH_NATIVE:        21
+	ATOMIC_OLD:                 8
 	LOG_B_NATIVE:              22
 
 	; A call's parameter descriptors live in the parameter table for declared
@@ -1557,6 +1563,13 @@ arm64-codegen: context [
 				instruction/op = OP_NATIVE
 				instruction/a = CPU_OVERFLOW_NATIVE
 			][return true]
+			if all [
+				instruction/op = OP_NATIVE
+				any [
+					instruction/a = ATOMIC_CAS_NATIVE
+					instruction/a = ATOMIC_MATH_NATIVE
+				]
+			][return false]
 			if any [
 				instruction/op = OP_BINARY
 				instruction/op = OP_CAST
@@ -1590,7 +1603,7 @@ arm64-codegen: context [
 			switch-case [rsir-switch!]
 			sub-entry [rsir-instruction!]
 			depths [int-ptr!]
-			id slot count width kind home-count home-mask home-register
+			id slot count width kind operation home-count home-mask home-register
 			reserved-home-mask register-id register-width mask
 			float-home-count frame-allocation
 			depth max-spill has-call argument-count frame-home-count total-slots status
@@ -1785,7 +1798,18 @@ arm64-codegen: context [
 								home-count: home-count + 1
 							]
 						]
-					][if instruction/b <> 0 [return INVALID_IR]]
+					][
+						either instruction/a = ATOMIC_MATH_NATIVE [
+							operation: instruction/b and 7
+							unless all [
+								operation >= 1 operation <= 5
+								any [
+									instruction/b = operation
+									instruction/b = (operation + ATOMIC_OLD)
+								]
+							][return INVALID_IR]
+						][if instruction/b <> 0 [return INVALID_IR]]
+					]
 					case [
 						any [
 							instruction/a = STACK_TOP_NATIVE
@@ -1827,6 +1851,25 @@ arm64-codegen: context [
 								if (depth - 1) > region-spill [region-spill: depth - 1]
 								has-call: 1
 							]
+						]
+						instruction/a = ATOMIC_FENCE_NATIVE [0]
+						instruction/a = ATOMIC_LOAD_NATIVE [
+							if depth < 1 [return INVALID_IR]
+							scratch/stack-low/depth: 0
+						]
+						instruction/a = ATOMIC_STORE_NATIVE [
+							if depth < 2 [return INVALID_IR]
+							depth: depth - 2
+						]
+						instruction/a = ATOMIC_CAS_NATIVE [
+							if depth < 3 [return INVALID_IR]
+							depth: depth - 2
+							scratch/stack-low/depth: 0
+						]
+						instruction/a = ATOMIC_MATH_NATIVE [
+							if depth < 2 [return INVALID_IR]
+							depth: depth - 1
+							scratch/stack-low/depth: 0
 						]
 						true [return UNSUPPORTED]
 					]
@@ -2857,7 +2900,7 @@ arm64-codegen: context [
 			instruction-offsets instruction-depths entry-types entry-kinds
 				entry-flags control-uses [int-ptr!]
 			index ordinal written encoded depth slot source-slot target-slot
-			ref target-ref left-ref right-ref width kind operation target left right folded
+			ref target-ref left-ref right-ref width kind operation opcode target left right folded
 			source-width target-width source-kind target-kind
 			operation-ref parameter-register cpu-pointer-ref register-id register-width
 			displacement condition argument-count argument-base argument-slot
@@ -2874,7 +2917,8 @@ arm64-codegen: context [
 			tag-variant tag-width-value tag-delta tag-slot tag-offset
 				[integer!]
 			fallthrough? measure? comparison? literal? immediate? taken? pointer?
-				reference-comparison? floating? region-link? tracked? right-ready? [logic!]
+				reference-comparison? floating? region-link? tracked? right-ready?
+				atomic-old? atomic-overflow? [logic!]
 	][
 		instruction-offsets: scratch/instruction-offsets + first-instruction
 		instruction-depths: scratch/instruction-depths + first-instruction
@@ -3296,7 +3340,18 @@ arm64-codegen: context [
 							cpu-pointer-ref: integer-pointer-type view
 						]
 						if cpu-pointer-ref = 0 [return INVALID_IR]
-					][if instruction/b <> 0 [return INVALID_IR]]
+					][
+						either instruction/a = ATOMIC_MATH_NATIVE [
+							operation: instruction/b and 7
+							unless all [
+								operation >= 1 operation <= 5
+								any [
+									instruction/b = operation
+									instruction/b = (operation + ATOMIC_OLD)
+								]
+							][return INVALID_IR]
+						][if instruction/b <> 0 [return INVALID_IR]]
+					]
 					case [
 						instruction/a = STACK_TOP_NATIVE [
 							unless pointer-to-canonical? instruction/c -5 view [
@@ -3644,6 +3699,233 @@ arm64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							scratch/stack-types/depth: -11
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = ATOMIC_FENCE_NATIVE [
+							if instruction/c <> 0 [return INVALID_IR]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/memory-fence at (capacity - written)
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+						]
+						instruction/a = ATOMIC_LOAD_NATIVE [
+							unless all [
+								instruction/c = -5 depth > 0
+								scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								pointer-to-canonical? scratch/stack-types/depth -5 view
+							][return INVALID_IR]
+							ref: scratch/stack-types/depth
+							target: FIRST_TEMP_REGISTER + depth - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch depth target ref
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/atomic-load at (capacity - written)
+								target target
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							scratch/stack-types/depth: -5
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = ATOMIC_STORE_NATIVE [
+							target-slot: depth - 1
+							unless all [
+								instruction/c = 0 depth > 1
+								scratch/stack-kinds/target-slot = VALUE
+								scratch/stack-flags/target-slot = 0
+								pointer-to-canonical?
+									scratch/stack-types/target-slot -5 view
+								scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								(canonical-type scratch/stack-types/depth view) = -5
+							][return INVALID_IR]
+							ref: scratch/stack-types/target-slot
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch target-slot
+								arm64-encoder/X16 ref at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch depth arm64-encoder/X17 -5
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/atomic-store at (capacity - written)
+								arm64-encoder/X16 arm64-encoder/X17
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							depth: depth - 2
+						]
+						instruction/a = ATOMIC_CAS_NATIVE [
+							target-slot: depth - 2
+							source-slot: depth - 1
+							unless all [
+								instruction/c = -11 depth > 2
+								scratch/stack-kinds/target-slot = VALUE
+								scratch/stack-flags/target-slot = 0
+								pointer-to-canonical?
+									scratch/stack-types/target-slot -5 view
+								scratch/stack-kinds/source-slot = VALUE
+								scratch/stack-flags/source-slot = 0
+								(canonical-type scratch/stack-types/source-slot view) = -5
+								scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								(canonical-type scratch/stack-types/depth view) = -5
+							][return INVALID_IR]
+							target: FIRST_TEMP_REGISTER + target-slot - 1
+							right: FIRST_TEMP_REGISTER + depth - 1
+							if any [
+								target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)
+								right >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)
+							][return UNSUPPORTED]
+							ref: scratch/stack-types/target-slot
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch target-slot
+								arm64-encoder/X16 ref at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch source-slot target -5
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch depth right -5
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/move-register at (capacity - written)
+								arm64-encoder/X17 target 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/atomic-compare-exchange at
+								(capacity - written) target right arm64-encoder/X16
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/compare-register at (capacity - written)
+								target arm64-encoder/X17 4
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/condition-result at
+								(capacity - written) target arm64-encoder/EQ
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							last-math-condition: -1
+							depth: target-slot
+							scratch/stack-types/depth: -11
+							scratch/stack-kinds/depth: VALUE
+							scratch/stack-locations/depth: LOCATION_REGISTER
+							scratch/stack-low/depth: target
+							scratch/stack-high/depth: 0
+							scratch/stack-flags/depth: 0
+						]
+						instruction/a = ATOMIC_MATH_NATIVE [
+							target-slot: depth - 1
+							operation: instruction/b and 7
+							atomic-old?: (instruction/b and ATOMIC_OLD) <> 0
+							unless all [
+								instruction/c = -5
+								operation >= 1 operation <= 5 depth > 1
+								scratch/stack-kinds/target-slot = VALUE
+								scratch/stack-flags/target-slot = 0
+								pointer-to-canonical?
+									scratch/stack-types/target-slot -5 view
+								scratch/stack-kinds/depth = VALUE
+								scratch/stack-flags/depth = 0
+								(canonical-type scratch/stack-types/depth view) = -5
+							][return INVALID_IR]
+							target: FIRST_TEMP_REGISTER + target-slot - 1
+							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
+								return UNSUPPORTED
+							]
+							atomic-overflow?: all [
+								operation <= 2
+								overflow-query-follows? view fn first-instruction index
+							]
+							last-math-condition: -1
+							ref: scratch/stack-types/target-slot
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch target-slot
+								arm64-encoder/X16 ref at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: materialize view scratch depth arm64-encoder/X17 -5
+								at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							if any [operation = 2 operation = 5][
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: either operation = 2 [
+									arm64-encoder/negate-register at (capacity - written)
+										arm64-encoder/X17 arm64-encoder/X17 4
+								][
+									arm64-encoder/move-not-register at (capacity - written)
+										arm64-encoder/X17 arm64-encoder/X17 4
+								]
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							opcode: case [
+								operation <= 2 [arm64-encoder/OP_ADD]
+								operation = 3 [arm64-encoder/OP_OR]
+								operation = 4 [arm64-encoder/OP_XOR]
+								true [arm64-encoder/OP_AND]
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/atomic-rmw at (capacity - written)
+								opcode arm64-encoder/X17 target arm64-encoder/X16
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							if any [(not atomic-old?) atomic-overflow?][
+								if any [operation = 2 operation = 5][
+									at: either null? code [as byte-ptr! 0][code + written]
+									encoded: either operation = 2 [
+										arm64-encoder/negate-register at (capacity - written)
+											arm64-encoder/X17 arm64-encoder/X17 4
+									][
+										arm64-encoder/move-not-register at (capacity - written)
+											arm64-encoder/X17 arm64-encoder/X17 4
+									]
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+								]
+								right: either atomic-old? [arm64-encoder/X16][target]
+								opcode: case [
+									operation = 1 [arm64-encoder/OP_ADD]
+									operation = 2 [arm64-encoder/OP_SUB]
+									operation = 3 [arm64-encoder/OP_OR]
+									operation = 4 [arm64-encoder/OP_XOR]
+									true [arm64-encoder/OP_AND]
+								]
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/alu-register at (capacity - written)
+									opcode right target arm64-encoder/X17 4 atomic-overflow?
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+							]
+							if atomic-overflow? [last-math-condition: arm64-encoder/VS]
+							depth: target-slot
+							scratch/stack-types/depth: -5
 							scratch/stack-kinds/depth: VALUE
 							scratch/stack-locations/depth: LOCATION_REGISTER
 							scratch/stack-low/depth: target

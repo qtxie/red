@@ -47,6 +47,12 @@ source: {
 	Red/System []
 
 	wide-ptr!: alias pointer! [int64!]
+	atomic-cell!: alias struct! [
+		padding [integer!]
+		value [integer!]
+	]
+
+	atomic-state: 0
 
 	cpu-register-test: func [
 		return: [integer!]
@@ -125,6 +131,81 @@ source: {
 		memory: as wide-ptr! system/stack/allocate 3
 		memory/1: as int64! 73
 		73
+	]
+
+	atomic-test: func [
+		return: [integer!]
+		/local previous current [integer!] changed? overflowed? [logic!]
+			cell [atomic-cell!]
+	][
+		system/atomic/store :atomic-state 1
+		current: system/atomic/load :atomic-state
+		if current <> 1 [return 1]
+
+		previous: system/atomic/add/old :atomic-state 2
+		if previous <> 1 [return 2]
+		if (system/atomic/load :atomic-state) <> 3 [return 3]
+		previous: system/atomic/sub/old :atomic-state 1
+		if previous <> 3 [return 4]
+		if (system/atomic/load :atomic-state) <> 2 [return 5]
+		previous: system/atomic/or/old :atomic-state 4
+		if previous <> 2 [return 6]
+		if (system/atomic/load :atomic-state) <> 6 [return 7]
+		previous: system/atomic/xor/old :atomic-state 3
+		if previous <> 6 [return 8]
+		if (system/atomic/load :atomic-state) <> 5 [return 9]
+		previous: system/atomic/and/old :atomic-state 6
+		if previous <> 5 [return 10]
+		if (system/atomic/load :atomic-state) <> 4 [return 11]
+
+		current: system/atomic/add :atomic-state 2
+		if current <> 6 [return 12]
+		current: system/atomic/sub :atomic-state 1
+		if current <> 5 [return 13]
+		current: system/atomic/or :atomic-state 8
+		if current <> 13 [return 14]
+		current: system/atomic/xor :atomic-state 1
+		if current <> 12 [return 15]
+		current: system/atomic/and :atomic-state 10
+		if current <> 8 [return 16]
+
+		changed?: system/atomic/cas :atomic-state 8 11
+		if not changed? [return 17]
+		if (system/atomic/load :atomic-state) <> 11 [return 18]
+		changed?: system/atomic/cas :atomic-state 8 12
+		if changed? [return 19]
+		if (system/atomic/load :atomic-state) <> 11 [return 20]
+
+		cell: declare atomic-cell!
+		cell/padding: 0
+		system/atomic/store :cell/value 73
+		if (system/atomic/load :cell/value) <> 73 [return 21]
+
+		system/atomic/store :atomic-state 2147483647
+		current: system/atomic/add :atomic-state 1
+		system/atomic/fence
+		overflowed?: system/cpu/overflow?
+		if current <> 80000000h [return 22]
+		if not overflowed? [return 23]
+
+		system/atomic/store :atomic-state 0
+		previous: system/atomic/sub/old :atomic-state 80000000h
+		overflowed?: system/cpu/overflow?
+		if previous <> 0 [return 24]
+		if (system/atomic/load :atomic-state) <> 80000000h [return 25]
+		if not overflowed? [return 26]
+
+		current: system/atomic/or :atomic-state 0
+		overflowed?: system/cpu/overflow?
+		if overflowed? [return 27]
+
+		system/atomic/store :atomic-state 2147483647
+		current: system/atomic/add :atomic-state 1
+		changed?: system/atomic/cas :atomic-state 80000000h 0
+		overflowed?: system/cpu/overflow?
+		if not changed? [return 28]
+		if overflowed? [return 29]
+		0
 	]
 
 	log-test: func [return: [integer!]][
@@ -300,6 +381,8 @@ source: {
 		if result <> 0 [return 80 + result]
 		result: overflow-test
 		if result <> 0 [return 90 + result]
+		result: atomic-test
+		if result <> 0 [return 110 + result]
 		42
 	]
 }

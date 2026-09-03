@@ -208,6 +208,54 @@ source: {
 		0
 	]
 
+	stack-all-test: func [
+		return: [integer!]
+		/local saved0 saved8 saved28 saved29 saved30 observed [int-ptr!]
+			value [integer!]
+	][
+		saved0: system/cpu/x0
+		saved8: system/cpu/x8
+		saved28: system/cpu/x28
+		saved29: system/cpu/x29
+		saved30: system/cpu/x30
+		value: 1
+
+		system/stack/push-all
+		system/cpu/x0: as int-ptr! 100
+		system/cpu/x8: as int-ptr! 108
+		system/cpu/x28: as int-ptr! 128
+		system/cpu/x30: as int-ptr! 130
+		value: 2
+		; FP must be the final write before POP-ALL, which restores it using SP.
+		system/cpu/x29: as int-ptr! 129
+		system/stack/pop-all
+
+		if value <> 2 [return 1]
+		observed: system/cpu/x0
+		if observed <> saved0 [return 2]
+		observed: system/cpu/x8
+		if observed <> saved8 [return 3]
+		observed: system/cpu/x28
+		if observed <> saved28 [return 4]
+		observed: system/cpu/x29
+		if observed <> saved29 [return 5]
+		observed: system/cpu/x30
+		if observed <> saved30 [return 6]
+
+		system/cpu/x0: as int-ptr! 11
+		system/stack/push-all
+		system/cpu/x0: as int-ptr! 22
+		system/stack/push-all
+		system/cpu/x0: as int-ptr! 33
+		system/stack/pop-all
+		observed: system/cpu/x0
+		if observed <> (as int-ptr! 22) [return 7]
+		system/stack/pop-all
+		observed: system/cpu/x0
+		if observed <> (as int-ptr! 11) [return 8]
+		0
+	]
+
 	log-test: func [return: [integer!]][
 		if (log-b as byte! 128) <> 7 [return 1]
 		if (log-b as int8! 64) <> 6 [return 2]
@@ -383,6 +431,8 @@ source: {
 		if result <> 0 [return 90 + result]
 		result: atomic-test
 		if result <> 0 [return 110 + result]
+		result: stack-all-test
+		if result <> 0 [return 150 + result]
 		42
 	]
 }

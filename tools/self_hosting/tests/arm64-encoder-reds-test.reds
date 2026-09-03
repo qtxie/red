@@ -372,6 +372,44 @@ size: arm64-encoder/load-pair code 256 arm64-encoder/X19 arm64-encoder/X20
 expected: #{B3537DA9}
 check size 4 expected
 
+size: arm64-encoder/store-vector-pair code 256 0 1 arm64-encoder/SP 272
+expected: #{E08708AD}
+check size 4 expected
+
+size: arm64-encoder/load-vector-pair code 256 30 31 arm64-encoder/SP 752
+expected: #{FEFF57AD}
+check size 4 expected
+
+size: arm64-encoder/read-system-register code 256 arm64-encoder/X16
+	arm64-encoder/SYSTEM_NZCV
+expected: #{10423BD5}
+check size 4 expected
+
+size: arm64-encoder/write-system-register code 256 arm64-encoder/SYSTEM_NZCV
+	arm64-encoder/X16
+expected: #{10421BD5}
+check size 4 expected
+
+size: arm64-encoder/read-system-register code 256 arm64-encoder/X16
+	arm64-encoder/SYSTEM_FPCR
+expected: #{10443BD5}
+check size 4 expected
+
+size: arm64-encoder/write-system-register code 256 arm64-encoder/SYSTEM_FPCR
+	arm64-encoder/X16
+expected: #{10441BD5}
+check size 4 expected
+
+size: arm64-encoder/read-system-register code 256 arm64-encoder/X16
+	arm64-encoder/SYSTEM_FPSR
+expected: #{30443BD5}
+check size 4 expected
+
+size: arm64-encoder/write-system-register code 256 arm64-encoder/SYSTEM_FPSR
+	arm64-encoder/X16
+expected: #{30441BD5}
+check size 4 expected
+
 size: arm64-encoder/frame-enter code 256 32
 expected: #{FD7BBFA9FD030091FF8300D1}
 check size 12 expected
@@ -509,6 +547,12 @@ if (arm64-encoder/atomic-rmw code 256 arm64-encoder/OP_ADD
 ]
 if (arm64-encoder/atomic-compare-exchange code 256 arm64-encoder/X9
 	arm64-encoder/X10 arm64-encoder/X9) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/store-vector-pair code 256 0 1 arm64-encoder/SP 8) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/read-system-register code 256 arm64-encoder/X16 4) <> -1 [
 	failures: failures + 1
 ]
 if (arm64-encoder/logical-immediate code 256 arm64-encoder/OP_AND

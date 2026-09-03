@@ -149,6 +149,8 @@ arm64-codegen: context [
 	STACK_ALLOCATE_NATIVE:      8
 	STACK_ALLOCATE_ZERO_NATIVE: 9
 	STACK_FREE_NATIVE:         10
+	STACK_PUSH_ALL_NATIVE:     11
+	STACK_POP_ALL_NATIVE:      12
 	PROGRAM_COUNTER_NATIVE:    13
 	CPU_REGISTER_NATIVE:       14
 	CPU_REGISTER_SET_NATIVE:   15
@@ -160,6 +162,7 @@ arm64-codegen: context [
 	ATOMIC_MATH_NATIVE:        21
 	ATOMIC_OLD:                 8
 	LOG_B_NATIVE:              22
+	STACK_ALL_SIZE:           784
 
 	; A call's parameter descriptors live in the parameter table for declared
 	; functions and imports, and in the type table's member rows for the
@@ -1614,7 +1617,7 @@ arm64-codegen: context [
 			ordinal target case-index
 			inline-size inline-align
 				[integer!]
-			fallthrough? [logic!]
+			fallthrough? stack-all? [logic!]
 	][
 		if (fn/flags and RETURN_VALUE) <> 0 [return UNSUPPORTED]
 		count: fn/parameter-count + fn/local-count
@@ -1643,6 +1646,7 @@ arm64-codegen: context [
 		depth: 0
 		max-spill: 0
 		has-call: 0
+		stack-all?: false
 		home-mask: 0
 		home-count: 0
 		; Apple's process entry arrives with argc/argv in X0/X1. X19/X20 keep
@@ -1871,6 +1875,14 @@ arm64-codegen: context [
 							depth: depth - 1
 							scratch/stack-low/depth: 0
 						]
+						any [
+							instruction/a = STACK_PUSH_ALL_NATIVE
+							instruction/a = STACK_POP_ALL_NATIVE
+						][
+							stack-all?: true
+							if depth > region-spill [region-spill: depth]
+							has-call: 1
+						]
 						true [return UNSUPPORTED]
 					]
 					; Stack intrinsics may move SP and need FP to restore the frame.
@@ -2098,6 +2110,15 @@ arm64-codegen: context [
 			all [sub-entry-count = 0 main-entry-count <> 0]
 		][return INVALID_IR]
 		if sub-entry-count > 0 [has-call: 1]
+		if stack-all? [
+			id: 1
+			while [id <= count][
+				if scratch/storage-kinds/id = STORAGE_REGISTER [
+					scratch/storage-kinds/id: STORAGE_FRAME
+				]
+				id: id + 1
+			]
+		]
 		float-home-count: 0
 		frame-home-count: 0
 		id: 1
@@ -2657,6 +2678,165 @@ arm64-codegen: context [
 			scratch/stack-low/slot: target
 			scratch/stack-high/slot: 0
 			slot: slot + 1
+		]
+		written
+	]
+
+	spill-live-stack: func [
+		view [rsir-view!]
+		scratch [arm64-function-scratch!]
+		depth region-base region-limit [integer!]
+		code [byte-ptr!]
+		capacity [integer!]
+		return: [integer!]
+		/local at [byte-ptr!]
+			slot ref kind width target displacement written encoded [integer!]
+			floating? [logic!]
+	][
+		if (region-base + depth) > region-limit [return INVALID_IR]
+		written: 0
+		slot: 1
+		while [slot <= depth][
+			if any [
+				scratch/stack-locations/slot = LOCATION_FLAGS
+				scratch/stack-locations/slot = LOCATION_REGISTER
+			][
+				kind: scratch/stack-kinds/slot
+				unless any [kind = VALUE kind = PLACE][return INVALID_IR]
+				ref: scratch/stack-types/slot
+				width: either kind = PLACE [8][value-width ref view]
+				unless any [width = 1 width = 2 width = 4 width = 8][
+					return UNSUPPORTED
+				]
+				floating?: all [kind = VALUE float-type? ref view]
+				target: either scratch/stack-locations/slot = LOCATION_REGISTER [
+					scratch/stack-low/slot
+				][either floating? [FLOAT_SCRATCH_REGISTER][arm64-encoder/X17]]
+				if scratch/stack-locations/slot = LOCATION_FLAGS [
+					at: either null? code [as byte-ptr! 0][code + written]
+					encoded: materialize view scratch slot target ref
+						at (capacity - written)
+					if encoded < 0 [return encoded]
+					written: written + encoded
+				]
+				displacement: 0 - ((region-base + slot) * 8)
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: either floating? [
+					arm64-encoder/float-frame-store at (capacity - written)
+						target displacement width
+				][
+					arm64-encoder/frame-store at (capacity - written)
+						target displacement width
+				]
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				scratch/stack-locations/slot: LOCATION_FRAME
+				scratch/stack-low/slot: displacement
+				scratch/stack-high/slot: 0
+			]
+			slot: slot + 1
+		]
+		written
+	]
+
+	emit-stack-all: func [
+		code [byte-ptr!]
+		capacity [integer!]
+		restore? [logic!]
+		return: [integer!]
+		/local at [byte-ptr!]
+			written encoded register offset system-register [integer!]
+	][
+		written: 0
+		either restore? [
+			register: 0
+			while [register < 32][
+				offset: 272 + (register * 16)
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/load-vector-pair at (capacity - written)
+					register (register + 1) arm64-encoder/SP offset
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				register: register + 2
+			]
+			system-register: arm64-encoder/SYSTEM_NZCV
+			while [system-register <= arm64-encoder/SYSTEM_FPSR][
+				offset: 240 + (system-register * 8)
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/register-load at (capacity - written)
+					arm64-encoder/X16 arm64-encoder/SP offset 8 0 8
+					arm64-encoder/X17
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/write-system-register at
+					(capacity - written) system-register arm64-encoder/X16
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				system-register: system-register + 1
+			]
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/register-load at (capacity - written)
+				arm64-encoder/LR arm64-encoder/SP 240 8 0 8 arm64-encoder/X16
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			register: 0
+			while [register < 30][
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/load-pair at (capacity - written)
+					register (register + 1) arm64-encoder/SP (register * 8)
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				register: register + 2
+			]
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/add-immediate at (capacity - written)
+				arm64-encoder/SP arm64-encoder/SP STACK_ALL_SIZE 8
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+		][
+			encoded: arm64-encoder/stack-subtract code capacity STACK_ALL_SIZE
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			register: 0
+			while [register < 30][
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/store-pair at (capacity - written)
+					register (register + 1) arm64-encoder/SP (register * 8)
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				register: register + 2
+			]
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/register-store at (capacity - written)
+				arm64-encoder/LR arm64-encoder/SP 240 8 arm64-encoder/X16
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			system-register: arm64-encoder/SYSTEM_NZCV
+			while [system-register <= arm64-encoder/SYSTEM_FPSR][
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/read-system-register at
+					(capacity - written) arm64-encoder/X16 system-register
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				offset: 240 + (system-register * 8)
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/register-store at (capacity - written)
+					arm64-encoder/X16 arm64-encoder/SP offset 8 arm64-encoder/X17
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				system-register: system-register + 1
+			]
+			register: 0
+			while [register < 32][
+				offset: 272 + (register * 16)
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: arm64-encoder/store-vector-pair at (capacity - written)
+					register (register + 1) arm64-encoder/SP offset
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				register: register + 2
+			]
 		]
 		written
 	]
@@ -3575,6 +3755,25 @@ arm64-codegen: context [
 							if encoded < 0 [return encoded]
 							written: written + encoded
 							depth: depth - 1
+						]
+						any [
+							instruction/a = STACK_PUSH_ALL_NATIVE
+							instruction/a = STACK_POP_ALL_NATIVE
+						][
+							if instruction/c <> 0 [return INVALID_IR]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: spill-live-stack view scratch depth
+								region-base region-limit at (capacity - written)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: emit-stack-all at (capacity - written)
+								(instruction/a = STACK_POP_ALL_NATIVE)
+							if encoded < 0 [return encoded]
+							written: written + encoded
+							if instruction/a = STACK_POP_ALL_NATIVE [
+								last-math-condition: -1
+							]
 						]
 						instruction/a = PROGRAM_COUNTER_NATIVE [
 							unless pointer-to-canonical? instruction/c -2 view [

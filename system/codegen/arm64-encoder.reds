@@ -63,6 +63,10 @@ arm64-encoder: context [
 	SHIFT_RIGHT:    2
 	SHIFT_ARITHMETIC: 3
 
+	SYSTEM_NZCV: 1
+	SYSTEM_FPCR: 2
+	SYSTEM_FPSR: 3
+
 	valid-register?: func [register [integer!] return: [logic!]][
 		all [register >= 0 register <= 30]
 	]
@@ -1253,6 +1257,77 @@ arm64-encoder: context [
 		return: [integer!]
 	][
 		pair-memory code capacity first second base displacement true
+	]
+
+	vector-pair-memory: func [
+		code [byte-ptr!]
+		capacity first second base displacement [integer!]
+		load? [logic!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-float-register? first valid-float-register? second
+			valid-base? base
+			(displacement // 16) = 0
+			displacement >= -1024 displacement <= 1008
+		][return -1]
+		opcode: either load? [AD400000h][AD000000h]
+		opcode: opcode or (((displacement / 16) and 127) * 32768)
+		opcode: opcode or (second * 1024)
+		opcode: opcode or (base * 32)
+		instruction code capacity (opcode or first)
+	]
+
+	store-vector-pair: func [
+		code [byte-ptr!]
+		capacity first second base displacement [integer!]
+		return: [integer!]
+	][
+		vector-pair-memory code capacity first second base displacement false
+	]
+
+	load-vector-pair: func [
+		code [byte-ptr!]
+		capacity first second base displacement [integer!]
+		return: [integer!]
+	][
+		vector-pair-memory code capacity first second base displacement true
+	]
+
+	system-register-transfer: func [
+		code [byte-ptr!]
+		capacity target register [integer!]
+		write? [logic!]
+		return: [integer!]
+		/local opcode [integer!]
+	][
+		unless all [
+			valid-register? target
+			register >= SYSTEM_NZCV register <= SYSTEM_FPSR
+		][return -1]
+		opcode: case [
+			register = SYSTEM_NZCV [either write? [D51B4200h][D53B4200h]]
+			register = SYSTEM_FPCR [either write? [D51B4400h][D53B4400h]]
+			true [either write? [D51B4420h][D53B4420h]]
+		]
+		instruction code capacity (opcode or target)
+	]
+
+	read-system-register: func [
+		code [byte-ptr!]
+		capacity target register [integer!]
+		return: [integer!]
+	][
+		system-register-transfer code capacity target register false
+	]
+
+	write-system-register: func [
+		code [byte-ptr!]
+		capacity register source [integer!]
+		return: [integer!]
+	][
+		system-register-transfer code capacity source register true
 	]
 
 	stack-subtract: func [

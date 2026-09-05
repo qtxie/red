@@ -142,6 +142,57 @@ execute-first?: func [
 	result = expected
 ]
 
+contains-home-comparison?: func [
+	image [byte-ptr!]
+	return: [logic!]
+	/local header [codegen-header!]
+		fn [codegen-function!]
+		at [byte-ptr!]
+		remaining [integer!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	at: image + header/code-offset + fn/code-offset
+	remaining: fn/code-size
+	while [remaining >= 3][
+		if all [
+			at/1 = as byte! 45h
+			at/2 = as byte! 39h
+			((as integer! at/3) and C0h) = C0h
+		][return true]
+		at: at + 1
+		remaining: remaining - 1
+	]
+	false
+]
+
+contains-home-update?: func [
+	image [byte-ptr!]
+	return: [logic!]
+	/local header [codegen-header!]
+		fn [codegen-function!]
+		at [byte-ptr!]
+		remaining [integer!]
+][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	at: image + header/code-offset + fn/code-offset
+	remaining: fn/code-size
+	while [remaining >= 4][
+		if all [
+			at/1 = as byte! 41h
+			at/2 = as byte! 83h
+			any [
+				((as integer! at/3) and 38h) = 0
+				((as integer! at/3) and 38h) = 28h
+			]
+		][return true]
+		at: at + 1
+		remaining: remaining - 1
+	]
+	false
+]
+
 execute-unary?: func [
 	image [byte-ptr!]
 	value expected [integer!]
@@ -1044,6 +1095,7 @@ output: allocate 1024
 void-ir: allocate 132
 local-ir: allocate 260
 promotion-ir: allocate 516
+home-update-ir: allocate 700
 unused-local-ir: allocate 260
 untyped-import-ir: allocate 164
 pointer-ir: allocate 196
@@ -1114,7 +1166,7 @@ fn: declare codegen-function!
 image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
-	null? output null? void-ir null? local-ir null? unused-local-ir null? untyped-import-ir
+	null? output null? void-ir null? local-ir null? home-update-ir null? unused-local-ir null? untyped-import-ir
 	null? pointer-ir null? index-ir
 	null? arithmetic-ir null? duplicate-ir
 	null? expression-ir
@@ -1503,6 +1555,114 @@ if size > 0 [
 		print ["O2 two-local promotion kept redundant frame homes" lf]
 		failures: failures + 1
 	]
+]
+
+; A comparison can read two canonical integer homes directly. Reusing this
+; profitable two-local fixture keeps the test about emission, not allocation.
+put promotion-ir 44 -11
+put-instruction promotion-ir 280 15 16 0 0
+put-instruction promotion-ir 296 12 0 0 0
+put-instruction promotion-ir 312 3 1 1 0
+put-instruction promotion-ir 328 4 0 0 0
+put-instruction promotion-ir 344 3 1 2 0
+put-instruction promotion-ir 360 4 0 0 0
+put-instruction promotion-ir 376 15 16 0 0
+put-instruction promotion-ir 392 11 -11 0 0
+size: x64-codegen/generate promotion-ir 410 output 1024 2
+if any [size <= 0 not execute-first? output 1][
+	print ["O2 register-home comparison produced the wrong result" lf]
+	failures: failures + 1
+]
+if all [size > 0 not contains-home-comparison? output][
+	print ["O2 register-home comparison used scratch-register moves" lf]
+	failures: failures + 1
+]
+
+; A dropped local update is emitted as one immediate operation on its home.
+put home-update-ir 0 1
+put home-update-ir 4 0
+put home-update-ir 8 0
+put home-update-ir 12 0
+put home-update-ir 16 1
+put home-update-ir 20 36
+put home-update-ir 24 0
+put home-update-ir 28 0
+put home-update-ir 32 0
+
+put home-update-ir 36 0
+put home-update-ir 40 2
+put home-update-ir 44 -5
+put home-update-ir 48 0
+put home-update-ir 52 0
+put home-update-ir 56 0
+put home-update-ir 60 0
+put home-update-ir 64 2
+put home-update-ir 68 36
+
+put home-update-ir 72 -5
+put home-update-ir 76 0
+put home-update-ir 80 -5
+put home-update-ir 84 0
+put-instruction home-update-ir 88 1 -5 1 0
+put-instruction home-update-ir 104 3 1 1 0
+put-instruction home-update-ir 120 5 0 0 0
+put-instruction home-update-ir 136 12 0 0 0
+put-instruction home-update-ir 152 1 -5 2 0
+put-instruction home-update-ir 168 3 1 2 0
+put-instruction home-update-ir 184 5 0 0 0
+put-instruction home-update-ir 200 12 0 0 0
+put-instruction home-update-ir 216 3 1 1 0
+put-instruction home-update-ir 232 4 0 0 0
+put-instruction home-update-ir 248 12 0 0 0
+put-instruction home-update-ir 264 3 1 2 0
+put-instruction home-update-ir 280 4 0 0 0
+put-instruction home-update-ir 296 12 0 0 0
+put-instruction home-update-ir 312 3 1 1 0
+put-instruction home-update-ir 328 4 0 0 0
+put-instruction home-update-ir 344 12 0 0 0
+put-instruction home-update-ir 360 3 1 2 0
+put-instruction home-update-ir 376 4 0 0 0
+put-instruction home-update-ir 392 3 1 1 0
+put-instruction home-update-ir 408 4 0 0 0
+put-instruction home-update-ir 424 3 1 2 0
+put-instruction home-update-ir 440 4 0 0 0
+put-instruction home-update-ir 456 3 1 1 0
+put-instruction home-update-ir 472 4 0 0 0
+put-instruction home-update-ir 488 1 -5 1 0
+put-instruction home-update-ir 504 15 1 0 0
+put-instruction home-update-ir 520 3 1 1 0
+put-instruction home-update-ir 536 5 0 0 0
+put-instruction home-update-ir 552 12 0 0 0
+put-instruction home-update-ir 568 3 1 2 0
+put-instruction home-update-ir 584 4 0 0 0
+put-instruction home-update-ir 600 3 1 1 0
+put-instruction home-update-ir 616 4 0 0 0
+put-instruction home-update-ir 632 15 1 0 0
+put-instruction home-update-ir 648 11 -5 0 0
+home-update-ir/665: as byte! 75h
+home-update-ir/666: as byte! 70h
+
+size: x64-codegen/generate home-update-ir 666 output 1024 2
+if any [size <= 0 not execute-first? output 4][
+	print ["O2 register-home update produced the wrong result" lf]
+	failures: failures + 1
+]
+if all [size > 0 not contains-home-update? output][
+	print ["O2 register-home update was not fused" lf]
+	failures: failures + 1
+]
+
+; Subtraction uses the group-one /5 encoding; keeping it beside the addition
+; case protects the shared look-ahead from silently reversing decrements.
+put-instruction home-update-ir 504 15 2 0 0
+size: x64-codegen/generate home-update-ir 666 output 1024 2
+if any [size <= 0 not execute-first? output 2][
+	print ["O2 register-home subtraction produced the wrong result" lf]
+	failures: failures + 1
+]
+if all [size > 0 not contains-home-update? output][
+	print ["O2 register-home subtraction was not fused" lf]
+	failures: failures + 1
 ]
 
 ; THROW resumes through R11. This function has two otherwise profitable locals
@@ -7180,6 +7340,7 @@ free output
 free void-ir
 free local-ir
 free promotion-ir
+free home-update-ir
 free unused-local-ir
 free untyped-import-ir
 free pointer-ir

@@ -272,6 +272,7 @@ machine-state!: alias struct! [
 	location-reference      [integer!]
 	source-location         [integer!]
 	source-depth            [integer!]
+	source-register         [integer!]
 	resident?               [logic!]
 	resident-slot           [integer!]
 	resident-width          [integer!]
@@ -531,6 +532,10 @@ x64-codegen: context [
 	; A scalar parameter still resides in its incoming Win64 argument register.
 	LOCATION_ARGUMENT:       9
 	LOCATION_REGISTER_HOME: 10
+	; The top stack value remains in its canonical allocated GPR home.
+	LOCATION_GPR_HOME:      11
+	; Both comparison operands remain in their allocated GPR homes.
+	LOCATION_GPR_HOME_PAIR: 12
 
 	; Register-allocation metadata. A negative register value means that the
 	; interval is spilled (or has not been assigned yet); only non-negative
@@ -1939,6 +1944,279 @@ x64-codegen: context [
 			index > interval/end
 		][return ALLOCATION_UNASSIGNED]
 		interval/register
+	]
+
+	; A home-only transform is worthwhile when at least two movable homes are
+	; simultaneously live. This is derived from allocation intervals rather than
+	; from a source-level local count, so short-lived temporaries do not disable it.
+	multiple-active-homes?: func [
+		context [x64-function-context!]
+		index [integer!]
+		return: [logic!]
+		/local view [codegen-scratch!]
+			state [machine-state!]
+			intervals [byte-ptr!]
+			allocation-order [int-ptr!]
+			order-index active slot home [integer!]
+	][
+		view: context/scratch
+		state: context/state
+		intervals: view/allocation-intervals
+		allocation-order: view/allocation-order
+		if any [null? intervals null? allocation-order index <= 0][return false]
+		order-index: 1
+		active: 0
+		while [order-index <= state/allocation-count][
+			slot: allocation-order/order-index
+			home: allocated-storage-register intervals slot index
+			if home >= 0 [
+				active: active + 1
+				if active > 1 [return true]
+			]
+			order-index: order-index + 1
+		]
+		false
+	]
+
+	; All instructions in a skipped or paired region must be observable only by
+	; the fall-through path. Keeping this check in one place prevents look-ahead
+	; optimizations from crossing a branch, catch boundary, or dead value.
+	straight-line-range?: func [
+		context [x64-function-context!]
+		first last anchor [integer!]
+		return: [logic!]
+		/local view [codegen-scratch!]
+			fn [rsir-function!]
+			cursor [integer!]
+	][
+		view: context/scratch
+		fn: context/task/fn
+		if any [first <= 0 last > fn/instruction-count first > last
+			anchor <= 0 anchor > fn/instruction-count][return false]
+		cursor: first
+		while [cursor <= last][
+			if any [
+				view/control-uses/cursor <> 0
+				view/catch-depths/cursor <> view/catch-depths/anchor
+				(view/instruction-effects/cursor and EFFECT_LIVE) = 0
+				(view/instruction-effects/cursor and EFFECT_ELIDED) <> 0
+			][return false]
+			cursor: cursor + 1
+		]
+		true
+	]
+
+	; A comparison of two live local homes can consume the homes directly. Keep
+	; this look-ahead exact: it only recognizes ADDRESS/LOAD/BINARY sequences in
+	; one straight-line region, so no value can be observed between the loads.
+	home-compare-source?: func [
+		context [x64-function-context!]
+		index ref [integer!]
+		return: [logic!]
+		/local task [codegen-task!]
+			view [codegen-scratch!]
+			module [rsir-module!]
+			state [machine-state!]
+			fn [rsir-function!]
+			source-address address load compare [rsir-instruction!]
+			parameter [rsir-parameter!]
+			instructions parameters [byte-ptr!]
+			address-index load-index compare-index source-slot slot home source-home width [integer!]
+	][
+		task: context/task
+		view: context/scratch
+		module: context/module
+		state: context/state
+		fn: task/fn
+		if any [task/opt-level <> 2 index <= 0 (index + 3) > fn/instruction-count][
+			return false
+		]
+		instructions: view/instructions
+		parameters: module/parameters
+		address-index: index + 1
+		load-index: index + 2
+		compare-index: index + 3
+		source-address: as rsir-instruction! (instructions
+			+ ((index - 2) * RSIR_INSTRUCTION_SIZE))
+		address: as rsir-instruction! (instructions
+			+ ((address-index - 1) * RSIR_INSTRUCTION_SIZE))
+		load: as rsir-instruction! (instructions
+			+ ((load-index - 1) * RSIR_INSTRUCTION_SIZE))
+		compare: as rsir-instruction! (instructions
+			+ ((compare-index - 1) * RSIR_INSTRUCTION_SIZE))
+		slot: address/b
+		if any [address/op <> OP_ADDRESS address/a <> LOCAL_ADDRESS
+			slot <= 0 slot > state/storage-count][return false]
+		source-slot: source-address/b
+		if any [source-address/op <> OP_ADDRESS
+			source-address/a <> LOCAL_ADDRESS
+			source-slot <= 0 source-slot > state/storage-count][return false]
+		if any [
+			load/op <> OP_LOAD load/a <> 0 load/b <> 0 load/c <> 0
+			compare/op <> OP_BINARY
+			compare/a < EQUAL_OPERATION compare/a > LESS_EQUAL_OPERATION
+			compare/b <> 0 compare/c <> 0][return false]
+		unless straight-line-range? context address-index compare-index index [
+			return false
+		]
+		parameter: as rsir-parameter! (parameters
+			+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
+		width: value-width ref 0 module/table
+		if any [
+			parameter/type <> ref
+			parameter/flags <> 0
+			not integer-type? ref module/table
+			not any [width = 4 width = 8]][return false]
+		home: allocated-storage-register view/allocation-intervals slot address-index
+		source-home: state/location-source
+		if any [
+			home < x64-encoder/R8 home > x64-encoder/R11
+			source-home < x64-encoder/R8 source-home > x64-encoder/R11
+			source-home = home
+		][return false]
+		true
+	]
+
+	; Collapse a dropped `local: local +/- literal` statement into one update of
+	; the canonical GPR home. Every skipped instruction is linear and has no
+	; external user, so neither its transient stack values nor its SET result are
+	; observable. Returns 1 when the sequence was emitted, 0 when it did not match.
+	try-emit-home-update: func [
+		context [x64-function-context!]
+		index [integer!]
+		ref width [integer!]
+		prepared [x64-instruction-state!]
+		return: [integer!]
+		/local task [codegen-task!]
+			view [codegen-scratch!]
+			module [rsir-module!]
+			state [machine-state!]
+			fn [rsir-function!]
+			source-address literal binary target-address set drop [rsir-instruction!]
+			at instructions code [byte-ptr!]
+			instruction-offsets instruction-depths [int-ptr!]
+			literal-index binary-index target-index set-index drop-index
+				slot home source-home target-home operation extension cursor encoded
+				written depth [integer!]
+			measure? [logic!]
+	][
+		task: context/task
+		view: context/scratch
+		module: context/module
+		state: context/state
+		fn: task/fn
+		if any [
+			task/opt-level <> 2
+			index <= 1
+			(index + 5) > fn/instruction-count
+			state/location <> LOCATION_REGISTER_HOME
+			state/depth <= 0
+			address-type? ref module/table
+		][return 0]
+		instructions: view/instructions
+		depth: state/depth
+		literal-index: index + 1
+		binary-index: index + 2
+		target-index: index + 3
+		set-index: index + 4
+		drop-index: index + 5
+		source-address: as rsir-instruction! (instructions
+			+ ((index - 2) * RSIR_INSTRUCTION_SIZE))
+		literal: as rsir-instruction! (instructions
+			+ ((literal-index - 1) * RSIR_INSTRUCTION_SIZE))
+		binary: as rsir-instruction! (instructions
+			+ ((binary-index - 1) * RSIR_INSTRUCTION_SIZE))
+		target-address: as rsir-instruction! (instructions
+			+ ((target-index - 1) * RSIR_INSTRUCTION_SIZE))
+		set: as rsir-instruction! (instructions
+			+ ((set-index - 1) * RSIR_INSTRUCTION_SIZE))
+		drop: as rsir-instruction! (instructions
+			+ ((drop-index - 1) * RSIR_INSTRUCTION_SIZE))
+		slot: source-address/b
+		if any [
+			source-address/op <> OP_ADDRESS
+			source-address/a <> LOCAL_ADDRESS
+			slot <= 0
+			slot <= fn/parameter-count
+			slot > state/storage-count
+			target-address/op <> OP_ADDRESS
+			target-address/a <> LOCAL_ADDRESS
+			target-address/b <> slot
+			literal/op <> OP_LITERAL
+			binary/op <> OP_BINARY
+			not any [binary/a = ADD_OPERATION binary/a = SUBTRACT_OPERATION]
+			binary/b <> 0
+			binary/c <> 0
+			set/op <> OP_SET
+			set/a <> 0
+			set/b <> 0
+			set/c <> 0
+			drop/op <> OP_DROP
+			drop/a <> 0
+			drop/b <> 0
+			drop/c <> 0
+		][return 0]
+		operation: binary/a
+		extension: either operation = ADD_OPERATION [0][5]
+		if any [
+			literal/a <> ref
+			not any [width = 4 width = 8]
+			not any [
+				all [literal/c = 0 literal/b >= 0]
+				all [literal/c = -1 literal/b < 0]
+			]
+		][return 0]
+		home: state/location-source
+		source-home: allocated-storage-register view/allocation-intervals
+			slot (index - 1)
+		if any [
+			home < x64-encoder/R8
+			home > x64-encoder/R11
+			source-home <> home
+		][return 0]
+		target-home: allocated-storage-register view/allocation-intervals
+			slot target-index
+		if target-home <> home [return 0]
+		unless multiple-active-homes? context target-index [return 0]
+		unless straight-line-range? context literal-index drop-index index [return 0]
+		instruction-offsets: view/instruction-offsets
+		instruction-depths: view/instruction-depths
+		code: task/code
+		measure?: null? code
+		written: state/written
+		at: either measure? [as byte-ptr! 0][code + written]
+		encoded: x64-encoder/alu-immediate at (task/capacity - written)
+			extension home literal/b width
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		if measure? [
+			if (depth + 1) > state/max-depth [state/max-depth: depth + 1]
+			instruction-depths/literal-index: depth
+			instruction-depths/binary-index: depth + 1
+			instruction-depths/target-index: depth
+			instruction-depths/set-index: depth + 1
+			instruction-depths/drop-index: depth
+			cursor: literal-index
+			while [cursor <= drop-index][
+				instruction-offsets/cursor: written
+				cursor: cursor + 1
+			]
+		]
+		prepared/advance: 6
+		state/written: written
+		state/depth: depth - 1
+		state/location: LOCATION_NONE
+		state/location-depth: 0
+		state/location-source: 0
+		state/location-reference: 0
+		state/source-location: LOCATION_NONE
+		state/source-depth: 0
+		state/source-register: 0
+		state/pending-immediate-index: -1
+		state/pending-immediate-kind: 0
+		state/resident?: false
+		state/last-math-operation: operation
+		1
 	]
 
 	; These operations invalidate every volatile home. Linear scan keeps an
@@ -3961,6 +4239,7 @@ x64-codegen: context [
 		state/location-reference: 0
 		state/source-location: LOCATION_NONE
 		state/source-depth: 0
+		state/source-register: 0
 		state/main-entry-count: 0
 		state/sub-entry-count: 0
 		state/unstable-stack?: false
@@ -5406,6 +5685,8 @@ x64-codegen: context [
 			direct-xmm-register-target? [logic!]
 			direct-literal? [logic!]
 			resident-hit? [logic!]
+			home-compare? [logic!]
+			home-pair? [logic!]
 	][
 		module: context/module
 		task: context/task
@@ -5482,11 +5763,11 @@ x64-codegen: context [
 					; requires a 32-bit left value; pointer math first proves that
 					; the scaled offset still fits the sign-extended imm32 form.
 					target-slot: depth - 1
-					; A literal stored straight into a local slot by the
-					; following statement assignment skips the register
-					; entirely: LITERAL, local ADDRESS, SET, then a dropped
-					; statement value.
+					; A literal stored by the following statement assignment goes
+					; straight to the local's frame or allocated register home:
+					; LITERAL, local ADDRESS, SET, then a dropped statement value.
 					imm-set?: false
+					home-register: ALLOCATION_UNASSIGNED
 					if all [
 						linear?
 						location = LOCATION_NONE
@@ -5496,10 +5777,10 @@ x64-codegen: context [
 						next-instruction/a = LOCAL_ADDRESS
 						next-instruction/b > 0
 						next-instruction/b <= state/storage-count
-						(allocated-storage-register view/allocation-intervals
-							next-instruction/b next-index) < 0
 						(index + 3) <= fn/instruction-count
 					][
+						home-register: allocated-storage-register view/allocation-intervals
+							next-instruction/b next-index
 						target: index + 2
 						target-offset: index + 3
 						following-instruction: as rsir-instruction! (instructions
@@ -5649,10 +5930,14 @@ x64-codegen: context [
 						]
 						imm-set? [
 							at: either measure? [as byte-ptr! 0][code + written]
-							encoded: x64-encoder/frame-immediate-store at
-								(capacity - written)
-								storage-displacement storage-offsets next-instruction/b
-								instruction/b target-width
+							encoded: either home-register >= 0 [
+								x64-encoder/move-immediate-compact at (capacity - written)
+									home-register target-width instruction/b instruction/c
+							][
+								x64-encoder/frame-immediate-store at (capacity - written)
+									storage-displacement storage-offsets next-instruction/b
+									instruction/b target-width
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							state/pending-immediate-index: index
@@ -5808,6 +6093,10 @@ x64-codegen: context [
 					]
 				]
 				instruction/op = OP_ADDRESS [
+					state/source-register: either all [
+						address-pair?
+						location = LOCATION_GPR_HOME
+					][state/location-source][0]
 					state/source-location: either any [set-pair? address-pair?][
 						location
 					][LOCATION_NONE]
@@ -6017,6 +6306,8 @@ x64-codegen: context [
 				]
 				instruction/op = OP_LOAD [
 					if any [depth <= 0 stack-kinds/depth <> PLACE][return INVALID_IR]
+					home-compare?: false
+					home-pair?: false
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					tracked?: location <> LOCATION_NONE
@@ -6070,6 +6361,12 @@ x64-codegen: context [
 						width: value-width ref flags table
 						signed: either signed-type? ref table [1][0]
 						floating?: float-type? ref table
+						if all [flags = 0 not floating? integer-type? ref table
+							any [width = 4 width = 8]][
+							encoded: try-emit-home-update context index ref width prepared
+							if encoded < 0 [return encoded]
+							if encoded > 0 [return 0]
+						]
 						physical-slot: as integer! argument-targets/index
 						register-id: either physical-slot = 0 [
 							either load-pair? [
@@ -6079,6 +6376,35 @@ x64-codegen: context [
 							physical-slot - 1
 						][argument-register physical-slot]]
 						if register-id < 0 [return INVALID_IR]
+						target-slot: depth - 1
+						home-compare?: all [
+							linear?
+							physical-slot = 0
+							location = LOCATION_REGISTER_HOME
+							flags = 0
+							not floating?
+							home-compare-source? context index ref
+						]
+						home-pair?: all [
+							load-pair?
+							physical-slot = 0
+							location = LOCATION_REGISTER_HOME
+							state/source-location = LOCATION_GPR_HOME
+							state/source-depth = target-slot
+							flags = 0
+							stack-flags/target-slot = 0
+							ref = stack-types/target-slot
+							not floating?
+							any [width = 4 width = 8]
+							state/source-register >= x64-encoder/R8
+							state/source-register <= x64-encoder/R11
+							state/location-source >= x64-encoder/R8
+							state/location-source <= x64-encoder/R11
+							next-instruction/a >= EQUAL_OPERATION
+							next-instruction/a <= LESS_EQUAL_OPERATION
+							next-instruction/b = 0
+							next-instruction/c = 0
+						]
 						if all [
 							load-pair?
 								not any [
@@ -6142,17 +6468,19 @@ x64-codegen: context [
 										x64-encoder/RAX state/location-source 8 0
 								]
 								location = LOCATION_REGISTER_HOME [
-									either floating? [
-										either register-id = state/location-source [0][
+									case [
+										any [home-compare? home-pair?][0]
+										floating? [either register-id = state/location-source [0][
 											x64-encoder/xmm-move-register at
 												(capacity - written) register-id
 												state/location-source width
+										]]
+										true [
+											target-width: either width = 8 [8][4]
+											move-operation-value at (capacity - written)
+												register-id state/location-source width
+												target-width signed
 										]
-									][
-										target-width: either width = 8 [8][4]
-										move-operation-value at (capacity - written)
-											register-id state/location-source width
-											target-width signed
 									]
 								]
 								location = LOCATION_ARGUMENT [
@@ -6239,36 +6567,46 @@ x64-codegen: context [
 							written: written + encoded
 						]
 						stack-kinds/depth: VALUE
-						either forward-argument? [
-							state/location-depth: depth
-						][
-							location: LOCATION_NONE
-							state/location-source: 0
-							state/location-reference: 0
-							either linear? [
-								location: either load-pair? [
-									either floating? [LOCATION_XMM_PAIR][LOCATION_GPR_PAIR]
-								][either floating? [LOCATION_XMM][LOCATION_GPR]]
+						case [
+							forward-argument? [state/location-depth: depth]
+							home-compare? [
+								location: LOCATION_GPR_HOME
 								state/location-depth: depth
-							][
-								at: either measure? [as byte-ptr! 0][code + written]
-								encoded: either floating? [
-									x64-encoder/xmm-frame-store at (capacity - written)
-										x64-encoder/XMM0 slot-displacement
-											(storage-slots + depth) width
+							]
+							home-pair? [
+								location: LOCATION_GPR_HOME_PAIR
+								state/location-depth: depth
+							]
+							true [
+								location: LOCATION_NONE
+								state/location-source: 0
+								state/location-reference: 0
+								either linear? [
+									location: either load-pair? [
+										either floating? [LOCATION_XMM_PAIR][LOCATION_GPR_PAIR]
+									][either floating? [LOCATION_XMM][LOCATION_GPR]]
+									state/location-depth: depth
 								][
-									target-width: either width = 8 [8][4]
-									x64-encoder/frame-store at (capacity - written)
-										x64-encoder/RAX
-										slot-displacement (storage-slots + depth) target-width
+									at: either measure? [as byte-ptr! 0][code + written]
+									encoded: either floating? [
+										x64-encoder/xmm-frame-store at (capacity - written)
+											x64-encoder/XMM0 slot-displacement
+												(storage-slots + depth) width
+									][
+										target-width: either width = 8 [8][4]
+										x64-encoder/frame-store at (capacity - written)
+											x64-encoder/RAX
+											slot-displacement (storage-slots + depth) target-width
+									]
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
 								]
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
 							]
 						]
 					]
 					state/source-location: LOCATION_NONE
 					state/source-depth: 0
+					unless home-pair? [state/source-register: 0]
 				]
 				instruction/op = OP_REFERENCE [
 					if any [depth <= 0 stack-kinds/depth <> PLACE][return INVALID_IR]
@@ -6645,6 +6983,7 @@ x64-codegen: context [
 					]
 					state/source-location: LOCATION_NONE
 					state/source-depth: 0
+					state/source-register: 0
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: emit-variant-tags at (capacity - written) tag-head state fn view
 					if encoded < 0 [return encoded]
@@ -8239,6 +8578,7 @@ x64-codegen: context [
 			zero-extend? [logic!]
 			linear? [logic!]
 			paired? [logic!]
+			home-paired? [logic!]
 			fuse-branch? [logic!]
 			immediate? [logic!]
 			left-in-register? [logic!]
@@ -9491,6 +9831,7 @@ x64-codegen: context [
 						location = LOCATION_GPR_PAIR
 						location = LOCATION_XMM_PAIR
 					]
+					home-paired?: location = LOCATION_GPR_HOME_PAIR
 					if all [
 						located?
 						any [
@@ -9506,6 +9847,7 @@ x64-codegen: context [
 								not any [
 									location = LOCATION_GPR
 									location = LOCATION_GPR_PAIR
+									location = LOCATION_GPR_HOME_PAIR
 								]
 							]
 						]
@@ -9632,7 +9974,7 @@ x64-codegen: context [
 						location = LOCATION_GPR
 						state/location-depth = (depth - 1)
 					]
-					if all [located? not paired? not left-in-register?][
+					if all [located? not paired? not home-paired? not left-in-register?][
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: move-operation-value at (capacity - written)
 							source-slot x64-encoder/RAX
@@ -9646,7 +9988,7 @@ x64-codegen: context [
 						target-offset: instruction-start
 							+ (instruction-offsets/target - instruction-offsets/index)
 					]
-					unless any [paired? left-in-register?] [
+					unless any [paired? home-paired? left-in-register?] [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: load-operation-value at (capacity - written)
 							x64-encoder/RAX slot-displacement
@@ -9710,6 +10052,11 @@ x64-codegen: context [
 
 					at: either measure? [as byte-ptr! 0][code + written]
 					case [
+						home-paired? [
+							unless comparison? [return INVALID_IR]
+							encoded: x64-encoder/binary-register at (capacity - written)
+								39h state/source-register state/location-source operation-width
+						]
 						operation = ADD_OPERATION [
 							encoded: either immediate? [
 								x64-encoder/alu-immediate at (capacity - written)
@@ -9924,6 +10271,7 @@ x64-codegen: context [
 					location: LOCATION_NONE
 					state/location-depth: 0
 					state/location-source: 0
+					state/source-register: 0
 					either fuse-branch? [
 						; The result lives only in the compare flags and is
 						; consumed by the adjacent branch before any other
@@ -10854,6 +11202,7 @@ x64-codegen: context [
 			state/location-source: 0
 			state/source-location: LOCATION_NONE
 			state/source-depth: 0
+			state/source-register: 0
 		]
 		if instruction/op = OP_ENTRY [
 			if state/fallthrough? [return INVALID_IR]
@@ -10960,7 +11309,11 @@ x64-codegen: context [
 		set-pair?: false
 		address-pair?: false
 		if all [
-			linear? any [location = LOCATION_GPR location = LOCATION_XMM]
+			linear? any [
+				location = LOCATION_GPR
+				location = LOCATION_XMM
+				location = LOCATION_GPR_HOME
+			]
 			instruction/op = OP_ADDRESS depth > 0 stack-kinds/depth = VALUE stack-flags/depth = 0
 		][
 			target-ref: 0
@@ -10981,7 +11334,10 @@ x64-codegen: context [
 			]
 			if all [valid-type-ref? target-ref table target-flags = 0 machine-value? target-ref 0 table][
 				floating?: float-type? target-ref table
-				valid?: either floating? [location = LOCATION_XMM][all [location = LOCATION_GPR target-ref = stack-types/depth]]
+				valid?: either floating? [location = LOCATION_XMM][all [
+					any [location = LOCATION_GPR location = LOCATION_GPR_HOME]
+					target-ref = stack-types/depth
+				]]
 				if valid? [
 					set-pair?: all [target-ref = stack-types/depth
 						(instruction-effects/next-index and EFFECT_LIVE) <> 0
@@ -11028,7 +11384,14 @@ x64-codegen: context [
 						all [instruction/op = OP_BRANCH location = LOCATION_GPR
 							(instruction-effects/index and EFFECT_CONSTANT_BRANCH) = 0]]
 				]
-				any [location = LOCATION_GPR_PAIR location = LOCATION_XMM_PAIR][instruction/op = OP_BINARY]
+				location = LOCATION_GPR_HOME [
+					all [instruction/op = OP_ADDRESS address-pair?]
+				]
+				any [
+					location = LOCATION_GPR_PAIR
+					location = LOCATION_XMM_PAIR
+					location = LOCATION_GPR_HOME_PAIR
+				][instruction/op = OP_BINARY]
 				true [false]
 			]
 			unless consume-location? [
@@ -11054,7 +11417,12 @@ x64-codegen: context [
 					location = LOCATION_ARGUMENT [return INVALID_IR]
 					any [location = LOCATION_GPR location = LOCATION_XMM][0]
 					location = LOCATION_GLOBAL [return INVALID_IR]
-					any [location = LOCATION_GPR_PAIR location = LOCATION_XMM_PAIR][return INVALID_IR]
+					location = LOCATION_GPR_HOME [return INVALID_IR]
+					any [
+						location = LOCATION_GPR_PAIR
+						location = LOCATION_XMM_PAIR
+						location = LOCATION_GPR_HOME_PAIR
+					][return INVALID_IR]
 					true [return INVALID_IR]
 				]
 				ref: stack-types/depth

@@ -71,6 +71,10 @@ arm64-encoder: context [
 		all [register >= 0 register <= 30]
 	]
 
+	valid-register-or-zero?: func [register [integer!] return: [logic!]][
+		all [register >= 0 register <= 31]
+	]
+
 	valid-float-register?: func [register [integer!] return: [logic!]][
 		all [register >= 0 register <= 31]
 	]
@@ -957,13 +961,28 @@ arm64-encoder: context [
 		instruction code capacity D65F03C0h
 	]
 
+	address-relative: func [
+		code [byte-ptr!]
+		capacity target displacement [integer!]
+		return: [integer!]
+		/local encoded opcode [integer!]
+	][
+		unless all [
+			valid-register? target
+			displacement >= -1048576 displacement <= 1048575
+		][return -1]
+		encoded: displacement and 2097151
+		opcode: 10000000h or ((encoded and 3) * 536870912)
+		opcode: opcode or (((encoded / 4) and 524287) * 32)
+		instruction code capacity (opcode or target)
+	]
+
 	program-counter: func [
 		code [byte-ptr!]
 		capacity target [integer!]
 		return: [integer!]
 	][
-		unless valid-register? target [return -1]
-		instruction code capacity (10000000h or target)
+		address-relative code capacity target 0
 	]
 
 	trap: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
@@ -1095,7 +1114,7 @@ arm64-encoder: context [
 		/local at [byte-ptr!] opcode encoded written [integer!] scaled? [logic!]
 	][
 		unless all [
-			valid-register? source valid-base? base valid-register? scratch
+			valid-register-or-zero? source valid-base? base valid-register? scratch
 			scratch <> base scratch <> source
 			any [width = 1 width = 2 width = 4 width = 8]
 		][return -1]
@@ -1233,7 +1252,9 @@ arm64-encoder: context [
 		/local opcode [integer!]
 	][
 		unless all [
-			valid-register? first valid-register? second valid-base? base
+			valid-register-or-zero? first
+			valid-register-or-zero? second
+			valid-base? base
 			(displacement // 8) = 0 displacement >= -512 displacement <= 504
 		][return -1]
 		opcode: either load? [A9400000h][A9000000h]
@@ -1377,6 +1398,15 @@ arm64-encoder: context [
 			write-i32 (code + 8) D65F03C0h
 		]
 		12
+	]
+
+	unwind-frame: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
+		unless room? code capacity 8 [return -1]
+		if not null? code [
+			write-i32 code 910003BFh
+			write-i32 (code + 4) A8C17BFDh
+		]
+		8
 	]
 
 	float-move-register: func [

@@ -293,6 +293,14 @@ size: arm64-encoder/program-counter code 256 arm64-encoder/X13
 expected: #{0D000010}
 check size 4 expected
 
+size: arm64-encoder/address-relative code 256 arm64-encoder/X13 4
+expected: #{2D000010}
+check size 4 expected
+
+size: arm64-encoder/address-relative code 256 arm64-encoder/X13 -4
+expected: #{EDFFFF10}
+check size 4 expected
+
 size: arm64-encoder/page-address code 256 arm64-encoder/X16
 expected: #{1000009010020091}
 check size 8 expected
@@ -303,6 +311,10 @@ check size 4 expected
 
 size: arm64-encoder/frame-store code 256 arm64-encoder/X9 -44 4
 expected: #{A9431DB8}
+check size 4 expected
+
+size: arm64-encoder/frame-store code 256 arm64-encoder/ZR -24 8
+expected: #{BF831EF8}
 check size 4 expected
 
 size: arm64-encoder/register-load code 256 arm64-encoder/X9 arm64-encoder/X19
@@ -367,6 +379,11 @@ size: arm64-encoder/store-pair code 256 arm64-encoder/X19 arm64-encoder/X20
 expected: #{B3533DA9}
 check size 4 expected
 
+size: arm64-encoder/store-pair code 256 arm64-encoder/ZR arm64-encoder/ZR
+	arm64-encoder/FP -16
+expected: #{BF7F3FA9}
+check size 4 expected
+
 size: arm64-encoder/load-pair code 256 arm64-encoder/X19 arm64-encoder/X20
 	arm64-encoder/FP -48
 expected: #{B3537DA9}
@@ -417,6 +434,10 @@ check size 12 expected
 size: arm64-encoder/frame-leave code 256
 expected: #{BF030091FD7BC1A8C0035FD6}
 check size 12 expected
+
+size: arm64-encoder/unwind-frame code 256
+expected: #{BF030091FD7BC1A8}
+check size 8 expected
 
 size: arm64-encoder/float-move-register code 256 arm64-encoder/X9 arm64-encoder/X10 8
 expected: #{4941601E}
@@ -526,6 +547,12 @@ if (arm64-encoder/move-immediate code 7 arm64-encoder/X11 8 12345678h 0) <> -1 [
 	failures: failures + 1
 ]
 if (arm64-encoder/branch-relative code 256 2) <> -1 [failures: failures + 1]
+if (arm64-encoder/address-relative code 256 arm64-encoder/X13 1048576) <> -1 [
+	failures: failures + 1
+]
+if (arm64-encoder/address-relative code 256 arm64-encoder/X13 -1048577) <> -1 [
+	failures: failures + 1
+]
 if (arm64-encoder/branch-condition code 256 arm64-encoder/EQ 1048576) <> -1 [
 	failures: failures + 1
 ]

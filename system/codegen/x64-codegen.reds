@@ -2077,10 +2077,10 @@ x64-codegen: context [
 		true
 	]
 
-	; Collapse a dropped `local: local +/- literal` statement into one update of
-	; the canonical GPR home. Every skipped instruction is linear and has no
-	; external user, so neither its transient stack values nor its SET result are
-	; observable. Returns 1 when the sequence was emitted, 0 when it did not match.
+	; Collapse a dropped scalar home update into one immediate operation. Pointer
+	; offsets are accepted only after stride scaling is proven to fit imm32.
+	; Every skipped instruction is linear and has no external user, so neither its
+	; transient stack values nor its SET result are observable.
 	try-emit-home-update: func [
 		context [x64-function-context!]
 		index [integer!]
@@ -2097,7 +2097,7 @@ x64-codegen: context [
 			instruction-offsets instruction-depths [int-ptr!]
 			literal-index binary-index target-index set-index drop-index
 				slot home source-home target-home operation extension cursor encoded
-				written depth [integer!]
+				written depth immediate-value stride [integer!]
 			measure? [logic!]
 	][
 		task: context/task
@@ -2111,7 +2111,6 @@ x64-codegen: context [
 			(index + 5) > fn/instruction-count
 			state/location <> LOCATION_REGISTER_HOME
 			state/depth <= 0
-			address-type? ref module/table
 		][return 0]
 		instructions: view/instructions
 		depth: state/depth
@@ -2159,13 +2158,24 @@ x64-codegen: context [
 		operation: binary/a
 		extension: either operation = ADD_OPERATION [0][5]
 		if any [
-			literal/a <> ref
 			not any [width = 4 width = 8]
 			not any [
 				all [literal/c = 0 literal/b >= 0]
 				all [literal/c = -1 literal/b < 0]
 			]
 		][return 0]
+		immediate-value: literal/b
+		either address-type? ref module/table [
+			unless all [
+				any [operation = ADD_OPERATION operation = SUBTRACT_OPERATION]
+				integer-type? literal/a module/table
+				scaled-pointer-literal? literal/b ref module/table
+			][return 0]
+			stride: pointer-stride ref module/table
+			immediate-value: literal/b * stride
+		][
+			if literal/a <> ref [return 0]
+		]
 		home: state/location-source
 		source-home: allocated-storage-register view/allocation-intervals
 			slot (index - 1)
@@ -2186,7 +2196,7 @@ x64-codegen: context [
 		written: state/written
 		at: either measure? [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/alu-immediate at (task/capacity - written)
-			extension home literal/b width
+			extension home immediate-value width
 		if encoded < 0 [return OUTPUT_FULL]
 		written: written + encoded
 		if measure? [

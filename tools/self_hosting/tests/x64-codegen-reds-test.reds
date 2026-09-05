@@ -193,6 +193,36 @@ contains-home-update?: func [
 	false
 ]
 
+contains-home-binary-update?: func [
+	image [byte-ptr!]
+	return: [logic!]
+	/local header [codegen-header!]
+		fn [codegen-function!]
+		at [byte-ptr!]
+		remaining [integer!]
+	][
+	header: as codegen-header! image
+	fn: as codegen-function! (image + x64-codegen/IMAGE_HEADER_SIZE)
+	at: image + header/code-offset + fn/code-offset
+	remaining: fn/code-size
+	while [remaining >= 3][
+		if all [
+			any [at/1 = as byte! 45h at/1 = as byte! 4Dh]
+			any [
+				at/2 = as byte! 01h
+				at/2 = as byte! 09h
+				at/2 = as byte! 21h
+				at/2 = as byte! 29h
+				at/2 = as byte! 31h
+			]
+			((as integer! at/3) and C0h) = C0h
+		][return true]
+		at: at + 1
+		remaining: remaining - 1
+	]
+	false
+]
+
 execute-unary?: func [
 	image [byte-ptr!]
 	value expected [integer!]
@@ -1096,6 +1126,7 @@ void-ir: allocate 132
 local-ir: allocate 260
 promotion-ir: allocate 516
 home-update-ir: allocate 700
+home-binary-ir: allocate 700
 unused-local-ir: allocate 260
 untyped-import-ir: allocate 164
 pointer-ir: allocate 196
@@ -1166,7 +1197,7 @@ fn: declare codegen-function!
 image-global: declare codegen-global!
 array-values: as int-ptr! 0
 if any [
-	null? output null? void-ir null? local-ir null? home-update-ir null? unused-local-ir null? untyped-import-ir
+	null? output null? void-ir null? local-ir null? home-update-ir null? home-binary-ir null? unused-local-ir null? untyped-import-ir
 	null? pointer-ir null? index-ir
 	null? arithmetic-ir null? duplicate-ir
 	null? expression-ir
@@ -1662,6 +1693,52 @@ if any [size <= 0 not execute-first? output 2][
 ]
 if all [size > 0 not contains-home-update? output][
 	print ["O2 register-home subtraction was not fused" lf]
+	failures: failures + 1
+]
+
+; A local-to-local integer update stays in the two allocated homes.
+copy-memory home-binary-ir home-update-ir 700
+put home-binary-ir 20 36
+put home-binary-ir 68 36
+put-instruction home-binary-ir 216 3 1 1 0
+put-instruction home-binary-ir 232 4 0 0 0
+put-instruction home-binary-ir 248 3 1 2 0
+put-instruction home-binary-ir 264 4 0 0 0
+put-instruction home-binary-ir 280 15 1 0 0
+put-instruction home-binary-ir 296 3 1 1 0
+put-instruction home-binary-ir 312 5 0 0 0
+put-instruction home-binary-ir 328 12 0 0 0
+put-instruction home-binary-ir 344 3 1 1 0
+put-instruction home-binary-ir 360 4 0 0 0
+put-instruction home-binary-ir 376 3 1 2 0
+put-instruction home-binary-ir 392 4 0 0 0
+put-instruction home-binary-ir 408 15 1 0 0
+put-instruction home-binary-ir 424 3 1 1 0
+put-instruction home-binary-ir 440 5 0 0 0
+put-instruction home-binary-ir 456 12 0 0 0
+put-instruction home-binary-ir 472 3 1 1 0
+put-instruction home-binary-ir 488 4 0 0 0
+put-instruction home-binary-ir 504 3 1 2 0
+put-instruction home-binary-ir 520 4 0 0 0
+put-instruction home-binary-ir 536 15 1 0 0
+put-instruction home-binary-ir 552 3 1 1 0
+put-instruction home-binary-ir 568 5 0 0 0
+put-instruction home-binary-ir 584 12 0 0 0
+put-instruction home-binary-ir 600 3 1 1 0
+put-instruction home-binary-ir 616 4 0 0 0
+put-instruction home-binary-ir 632 11 -5 0 0
+size: x64-codegen/generate home-binary-ir 666 output 1024 0
+if any [size <= 0 not execute-first? output 7][
+	print ["O0 local binary update fixture produced the wrong result" lf]
+	failures: failures + 1
+]
+size: x64-codegen/generate home-binary-ir 666 output 1024 2
+if any [size <= 0 not execute-first? output 7][
+	print ["O2 register-home binary update produced the wrong result" lf]
+	failures: failures + 1
+]
+if all [size > 0 not contains-home-binary-update? output][
+	print ["O2 register-home binary update was not fused" lf]
 	failures: failures + 1
 ]
 

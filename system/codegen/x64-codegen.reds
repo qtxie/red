@@ -2219,6 +2219,153 @@ x64-codegen: context [
 		1
 	]
 
+	; Collapse a dropped `local: local op other-local` statement into one
+	; register operation. Both operands must be scalar integer homes in the
+	; same straight-line region; pointer arithmetic stays on the general path.
+	try-emit-home-binary-update: func [
+		context [x64-function-context!]
+		index [integer!]
+		ref width [integer!]
+		prepared [x64-instruction-state!]
+		return: [integer!]
+		/local task [codegen-task!]
+			view [codegen-scratch!]
+			module [rsir-module!]
+			state [machine-state!]
+			fn [rsir-function!]
+			source-address source-load other-address other-load binary
+				target-address set drop [rsir-instruction!]
+			parameter [rsir-parameter!]
+			at instructions code [byte-ptr!]
+			instruction-offsets instruction-depths [int-ptr!]
+			source-slot other-slot target-slot source-home other-home
+			operation opcode cursor encoded written depth [integer!]
+			measure? [logic!]
+	][
+		task: context/task
+		view: context/scratch
+		module: context/module
+		state: context/state
+		fn: task/fn
+		if any [
+			task/opt-level <> 2
+			index <= 1
+			(index + 6) > fn/instruction-count
+			state/location <> LOCATION_REGISTER_HOME
+			state/depth <= 0
+			address-type? ref module/table
+			not any [width = 4 width = 8]
+		][return 0]
+		instructions: view/instructions
+		source-address: as rsir-instruction! (instructions
+			+ ((index - 2) * RSIR_INSTRUCTION_SIZE))
+		source-load: as rsir-instruction! (instructions
+			+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+		other-address: as rsir-instruction! (instructions
+			+ (index * RSIR_INSTRUCTION_SIZE))
+		other-load: as rsir-instruction! (instructions
+			+ ((index + 1) * RSIR_INSTRUCTION_SIZE))
+		binary: as rsir-instruction! (instructions
+			+ ((index + 2) * RSIR_INSTRUCTION_SIZE))
+		target-address: as rsir-instruction! (instructions
+			+ ((index + 3) * RSIR_INSTRUCTION_SIZE))
+		set: as rsir-instruction! (instructions
+			+ ((index + 4) * RSIR_INSTRUCTION_SIZE))
+		drop: as rsir-instruction! (instructions
+			+ ((index + 5) * RSIR_INSTRUCTION_SIZE))
+		source-slot: source-address/b
+		other-slot: other-address/b
+		target-slot: target-address/b
+		if any [
+			source-address/op <> OP_ADDRESS source-address/a <> LOCAL_ADDRESS
+			source-load/op <> OP_LOAD source-load/a <> 0
+			source-load/b <> 0 source-load/c <> 0
+			other-address/op <> OP_ADDRESS other-address/a <> LOCAL_ADDRESS
+			other-load/op <> OP_LOAD other-load/a <> 0
+			other-load/b <> 0 other-load/c <> 0
+			binary/op <> OP_BINARY
+			binary/b <> 0 binary/c <> 0
+			not any [
+				binary/a = ADD_OPERATION
+				binary/a = SUBTRACT_OPERATION
+				binary/a = OR_OPERATION
+				binary/a = XOR_OPERATION
+				binary/a = AND_OPERATION
+			]
+			target-address/op <> OP_ADDRESS target-address/a <> LOCAL_ADDRESS
+			target-address/b <> source-slot
+			target-slot <> source-slot
+			set/op <> OP_SET set/a <> 0 set/b <> 0 set/c <> 0
+			drop/op <> OP_DROP drop/a <> 0 drop/b <> 0 drop/c <> 0
+			source-slot <= fn/parameter-count
+			other-slot <= fn/parameter-count
+			source-slot <= 0 other-slot <= 0
+			source-slot > state/storage-count other-slot > state/storage-count
+		][return 0]
+		parameter: as rsir-parameter! (module/parameters
+			+ ((fn/first-parameter + other-slot - 1) * RSIR_PARAMETER_SIZE))
+		if any [
+			parameter/flags <> 0
+			parameter/type <> ref
+			not integer-type? ref module/table
+			address-type? parameter/type module/table
+		][return 0]
+		operation: binary/a
+		source-home: state/location-source
+		other-home: allocated-storage-register view/allocation-intervals
+			other-slot (index + 1)
+		if any [
+			source-home < x64-encoder/R8 source-home > x64-encoder/R11
+			other-home < x64-encoder/R8 other-home > x64-encoder/R11
+			source-home = other-home
+		][return 0]
+		unless multiple-active-homes? context (index + 2) [return 0]
+		unless straight-line-range? context index (index + 6) index [return 0]
+		opcode: case [
+			operation = ADD_OPERATION [01h]
+			operation = SUBTRACT_OPERATION [29h]
+			operation = OR_OPERATION [09h]
+			operation = XOR_OPERATION [31h]
+			true [21h]
+		]
+		measure?: null? task/code
+		written: state/written
+		depth: state/depth
+		at: either measure? [as byte-ptr! 0][task/code + written]
+		encoded: x64-encoder/binary-register at (task/capacity - written)
+			opcode source-home other-home width
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		if measure? [
+			instruction-offsets: view/instruction-offsets
+			instruction-depths: view/instruction-depths
+			cursor: index
+			while [cursor <= (index + 6)][
+				instruction-depths/cursor: case [
+					any [cursor = (index + 2) cursor = (index + 4)] [depth + 1]
+					true [depth]
+				]
+				instruction-offsets/cursor: written
+				cursor: cursor + 1
+			]
+		]
+		prepared/advance: 7
+		state/written: written
+		state/depth: depth - 1
+		state/location: LOCATION_NONE
+		state/location-depth: 0
+		state/location-source: 0
+		state/location-reference: 0
+		state/source-location: LOCATION_NONE
+		state/source-depth: 0
+		state/source-register: 0
+		state/pending-immediate-index: -1
+		state/pending-immediate-kind: 0
+		state/resident?: false
+		state/last-math-operation: operation
+		1
+	]
+
 	; These operations invalidate every volatile home. Linear scan keeps an
 	; interval that crosses one of them in memory; intervals ending before or
 	; starting after the boundary remain independently allocatable.
@@ -6363,6 +6510,9 @@ x64-codegen: context [
 						floating?: float-type? ref table
 						if all [flags = 0 not floating? integer-type? ref table
 							any [width = 4 width = 8]][
+							encoded: try-emit-home-binary-update context index ref width prepared
+							if encoded < 0 [return encoded]
+							if encoded > 0 [return 0]
 							encoded: try-emit-home-update context index ref width prepared
 							if encoded < 0 [return encoded]
 							if encoded > 0 [return 0]

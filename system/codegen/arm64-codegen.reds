@@ -5193,6 +5193,7 @@ arm64-codegen: context [
 			tag-variant tag-width-value tag-slot
 				[integer!]
 				fallthrough? measure? comparison? literal? immediate? taken? pointer?
+				custom-call?
 					reference-comparison? floating? region-link? tracked? right-ready?
 					syscall? atomic-old? atomic-overflow? packed-call?
 						aggregate-return? hfa-return? aggregate-copy? [logic!]
@@ -7432,6 +7433,7 @@ arm64-codegen: context [
 					]
 					if status < 0 [return status]
 					call-mode: call-flags and (VARIADIC or TYPED or CUSTOM)
+					custom-call?: call-mode = CUSTOM
 					packed-call?: all [
 						call-mode = VARIADIC
 						(call-flags and 3) <> CDECL
@@ -7517,7 +7519,7 @@ arm64-codegen: context [
 						list-capacity: either list-size < 8 [8][list-size]
 						fixed-stack-size: align list-capacity 16
 					]
-					if all [(call-flags and TYPED) = 0 not packed-call?] [
+					if all [(call-flags and TYPED) = 0 not packed-call? not custom-call?] [
 						if call-target = 46 [print ["ARM64 call46 classify" lf]]
 						status: abi-parameter-location view layout call-source
 							call-first-parameter call-parameter-count 0 abi-location
@@ -8093,6 +8095,17 @@ arm64-codegen: context [
 								(capacity - written) displacement
 						]
 						true [
+							if custom-call? [
+								;-- Custom calls pass their single integer
+								;-- argument in the first register (X0).
+								argument-slot: argument-origin + 1
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: materialize view scratch argument-slot
+									arm64-encoder/X0 scratch/stack-types/argument-slot
+									at (capacity - written)
+								if encoded < 0 [return encoded]
+								written: written + encoded
+							]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/call-register at
 								(capacity - written) arm64-encoder/X17

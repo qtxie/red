@@ -592,7 +592,10 @@ system-format-MachO-ARM64: context [
 			data-end: term-offset + 8
 		]
 		const-offset: either empty? rodata [data-end][
-			round/to/ceiling data-end defs/page-size
+			; Place rodata immediately after writable data, still inside
+			; __data. A separate __DATA,__const page is remapped r/o by
+			; dyld on Apple Silicon and SIGBUS-es runtime stores.
+			data-end
 		]
 		data-end: const-offset + length? rodata
 		data-file-size: round/to/ceiling (max 1 data-end - data-offset) defs/page-size
@@ -612,6 +615,10 @@ system-format-MachO-ARM64: context [
 			const-offset length? rodata
 		linker/resolve-symbol-refs job code data rodata
 			text-offset data-section-offset const-offset pointer
+		unless empty? rodata [
+			append data rodata
+			rodata: #{}
+		]
 		patch-imports imports code text-offset stub-offset got-offset
 		data-relocs: collect-data-relocs job
 		rodata-relocs: collect-rodata-relocs job
@@ -692,8 +699,11 @@ system-format-MachO-ARM64: context [
 				8 term-offset 3 10 0 0
 		]
 		unless empty? rodata [
+			; S_REGULAR in __DATA stays writable. S_16BYTE_LITERALS (14)
+			; is the wrong type for general rodata and some dyld paths
+			; treat the page as const, which SIGBUS-es runtime stores.
 			append commands build-section "__const" "__DATA" reduce [const-offset 1]
-				length? rodata const-offset 14 0 0 0
+				length? rodata const-offset 0 0 0 0
 		]
 		append commands build-segment "__LINKEDIT" reduce [linkedit-offset 1]
 			(round/to/ceiling linkedit-size defs/page-size) linkedit-offset linkedit-size 1 1 0 0

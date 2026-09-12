@@ -14,6 +14,9 @@ change-dir root-dir
 source-dir: %tests/source/units/
 output-dir: %build/self-hosting/red-unit-suite/
 make-dir output-dir
+; The compiler reuses an existing libRedRT.dll in the output directory. Drop a
+; stale runtime here so every run links against one built from current sources.
+if exists? output-dir/libRedRT.dll [delete output-dir/libRedRT.dll]
 compiler-executable: get-env "RED_COMPILER"
 unless compiler-executable [
 	print "RED_COMPILER env var required (path to self-hosted red-bootstrap exe)"

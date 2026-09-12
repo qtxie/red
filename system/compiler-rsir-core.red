@@ -84,22 +84,30 @@ system-dialect: context [
 		]
 	]
 
+	codegen-architecture: does [
+		switch/default job/target [
+			X86-64 [1]
+			ARM64  [2]
+		][0]
+	]
+
 	validate-job: does [
 		case [
 			job-backend-mode <> 'rsir [
 				compiler/throw-error "hybrid compiler requires the RSIR backend mode"
 			]
-			job/OS <> 'Windows [
-				compiler/throw-error "RSIR frontend currently supports only Windows"
-			]
-			job/format <> 'PE [
-				compiler/throw-error "RSIR frontend currently supports only PE targets"
-			]
-			job/target <> 'X86-64 [
-				compiler/throw-error "RSIR frontend currently supports only X86-64"
-			]
-			job/ABI <> 'win64 [
-				compiler/throw-error "RSIR frontend currently supports only the Win64 ABI"
+			not any [
+				all [
+					job/OS = 'Windows job/format = 'PE
+					job/target = 'X86-64 job/ABI = 'win64
+				]
+				all [
+					job/OS = 'macOS job/format = 'Mach-O
+					job/target = 'ARM64 job/ABI = 'apple-aarch64
+				]
+			][
+				compiler/throw-error
+					"RSIR frontend supports Win64/PE and Apple AArch64/Mach-O targets"
 			]
 			not find [exe dll] job/type [
 				compiler/throw-error "RSIR frontend currently supports only executable and DLL modules"
@@ -118,8 +126,12 @@ system-dialect: context [
 					"and development libRedRT"
 				]
 			]
-			any [job/PIC? job/PIE? job/static-link?] [
-				compiler/throw-error "RSIR frontend does not yet support PIC, PIE, or static linking"
+			any [
+				job/static-link?
+				all [job/OS = 'Windows any [job/PIC? job/PIE?]]
+				all [job/OS = 'macOS not job/PIC?]
+			][
+				compiler/throw-error "invalid hybrid target linking mode"
 			]
 			any [job/debug? not none? job/o2-ir-dump] [
 				compiler/throw-error "RSIR frontend does not yet support debug or O2 IR output"
@@ -217,7 +229,8 @@ system-dialect: context [
 		capacity: min capacity MAX-CODE-BYTES
 		forever [
 			output: make binary! capacity
-			last-status: codegen-module last-rsir output job/opt-level
+			last-status: codegen-module
+				last-rsir output codegen-architecture job/opt-level
 			if any [last-status <> 4 capacity = MAX-CODE-BYTES][break]
 			capacity: min (capacity * 2) MAX-CODE-BYTES
 		]

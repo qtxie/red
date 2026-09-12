@@ -128,10 +128,11 @@ system-format-MachO-ARM64: context [
 		]
 	]
 
-	collect-imports: func [job [object!] /local libraries imports library symbol-library ordinal index][
+	collect-imports: func [job [object!] /local source libraries imports library symbol-library ordinal index][
 		libraries: reduce ["/usr/lib/libSystem.B.dylib"]
 		imports: make block! 64
-		foreach [name uses] job/sections/import/3 [
+		source: any [attempt [job/sections/import/3] []]
+		foreach [name uses] source [
 			library: normalize-library name
 			foreach [symbol refs] uses [
 				symbol-library: either objc-runtime-symbol? symbol [
@@ -453,14 +454,18 @@ system-format-MachO-ARM64: context [
 		/local target source delta opcode
 	][
 		foreach record imports [
-			target: either issue? record/1 [
-				got-offset + (record/5 * 8)
-			][stub-offset + (record/6 * 12)]
 			foreach ref record/3 [
-				either issue? record/1 [
+				either block? ref [
+					target: either issue? record/1 [
+						got-offset + (record/5 * 8)
+					][stub-offset + (record/6 * 12)]
 					linker/patch-arm64-page-ref code ref/1
 						(text-offset + ref/1 - 1) target ref/2
 				][
+					if issue? record/1 [
+						linker/throw-error "ARM64 Mach-O import variable requires a page reference"
+					]
+					target: stub-offset + (record/6 * 12)
 					source: text-offset + ref - 1
 					delta: target - source
 					if any [not zero? delta // 4 delta < -134217728 delta > 134217724][
@@ -603,11 +608,11 @@ system-format-MachO-ARM64: context [
 			][text-offset + record/2/2 - 1]
 		]
 
+		linker/set-image-info job 0 text-offset length? code data-section-offset length? data
+			const-offset length? rodata
 		linker/resolve-symbol-refs job code data rodata
 			text-offset data-section-offset const-offset pointer
 		patch-imports imports code text-offset stub-offset got-offset
-		linker/set-image-info job 0 text-offset length? code data-section-offset length? data
-			const-offset length? rodata
 		data-relocs: collect-data-relocs job
 		rodata-relocs: collect-rodata-relocs job
 		set-preferred-pointer-high data data-relocs

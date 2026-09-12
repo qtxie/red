@@ -36,6 +36,7 @@ system/console: context [
 	history:	make block! 200
 	size:		0x0
 	catch?:		no										;-- YES: force script to fallback into the console
+	eval?:		no
 	delimiters:	[]										;-- multiline delimiters for [squared curly parens]
 	ws:			charset " ^/^M^-"
 
@@ -46,6 +47,8 @@ system/console: context [
 
 			args: system/options/args
 			--catch: "--catch"
+			--help: "--help"
+			--eval: "--eval"
 			while [
 				all [
 					not tail? args
@@ -53,6 +56,23 @@ system/console: context [
 					args/-1 <> "--"						;-- stop after "--"
 				]
 			][
+				if --help = args/1 [
+					print {
+Usage: red-console [command] [filename.red]
+Commands:
+ --eval "code" eval the code
+examples:
+> red-console   ;-- enter the REPL loop
+> red-console filename.red ;-- run the filename.red Red script
+> red-console --eval "1 + 2"  ;-- eval code "1 + 2"
+}
+					quit
+				]
+				if --eval = args/1 [
+					system/console/eval?: yes
+					args: next args
+					return rejoin ["Red [] " args/1]
+				]
 				either --catch <> args/1 [
 					args: next args
 				][
@@ -333,7 +353,7 @@ system/console: context [
 					][
 						expand-directives script
 						set/any 'result try-do skip script 2
-						if error? :result [print result]
+						if any [system/console/eval? error? :result][print result]
 					]
 				]
 			][
@@ -344,7 +364,7 @@ system/console: context [
 				run/no-banner
 			]
 		][
-			run
+			if zero? length? system/options/args [run]
 		]
 	]
 ]

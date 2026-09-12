@@ -128,6 +128,8 @@ compiler-rsir-frontend: context [
 	objc-flag: 128
 	catch-flag: 256
 	red-internal-flag: 512
+	syscall-flag: 1024
+	syscall-id-shift: 11
 	call-shape-flags: return-value-flag + variadic-flag + typed-flag
 		+ custom-flag + objc-flag
 	inline-flag: 1
@@ -1789,29 +1791,43 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	prepare-imports: func [/local record signature cc id][
+	prepare-imports: func [/local record signature cc id syscall-id][
 		clear import-call-types
 		record: imports
 		id: -1
 		while [not tail? record][
-			cc: record/8
-			either record/5 = 'function [
-				signature: read-signature record/4 record/6 record/7 record/1
-				if find infix-targets id [check-infix-arity record/1 signature]
-				unless empty? signature/3 [
-					fail ERROR-UNSUPPORTED "import signature cannot declare locals"
+			case [
+				record/5 = 'syscall [
+					syscall-id: record/8
+					signature: read-signature record/4 record/6 record/7 record/1
+					unless all [empty? signature/3 signature/4 = 0][
+						fail ERROR-UNSUPPORTED
+							"syscall signature cannot declare locals or attributes"
+					]
+					record/8: signature/1
+					record/9: signature/2
+					record/10: ((syscall-id * 2048) or syscall-flag) or 1
 				]
-				if (signature/4 and 3) <> 0 [
-					fail ERROR-UNSUPPORTED
-						"import calling convention is specified twice"
+				record/5 = 'function [
+					cc: record/8
+					signature: read-signature record/4 record/6 record/7 record/1
+					if find infix-targets id [check-infix-arity record/1 signature]
+					unless empty? signature/3 [
+						fail ERROR-UNSUPPORTED "import signature cannot declare locals"
+					]
+					if (signature/4 and 3) <> 0 [
+						fail ERROR-UNSUPPORTED
+							"import calling convention is specified twice"
+					]
+					record/8: signature/1
+					record/9: signature/2
+					record/10: signature/4 + either cc = 'cdecl [1][2]
 				]
-				record/8: signature/1
-				record/9: signature/2
-				record/10: signature/4 + either cc = 'cdecl [1][2]
-			][
-				record/8: type-ref record/4 record/6 record/7
-				record/9: none
-				record/10: 0
+				true [
+					record/8: type-ref record/4 record/6 record/7
+					record/9: none
+					record/10: 0
+				]
 			]
 			append import-call-types 0
 			id: id - 1
@@ -2003,6 +2019,54 @@ compiler-rsir-frontend: context [
 		unless id: resolve-name name scope uses type-ids [return none]
 		record: skip types ((id - 1) * 5)
 		all [record/2 = 'i32 integer? record/3 record/3]
+	]
+
+	scan-syscalls: func [
+		declarations scope uses [block!]
+		/local position name key syscall-id spec id
+	][
+		if empty? declarations [fail ERROR-UNSUPPORTED "syscall block is empty"]
+		position: declarations
+		while [not tail? position][
+			unless all [
+				(length? position) >= 3
+				set-word? position/1
+				integer? position/2
+				block? position/3
+			][fail ERROR-UNSUPPORTED "invalid syscall declaration"]
+			name: to word! position/1
+			key: qualified scope name
+			syscall-id: position/2
+			spec: position/3
+			unless valid-name? form key [fail ERROR-NAME "invalid syscall name"]
+			unless all [syscall-id >= 0 syscall-id <= 1048575][
+				fail ERROR-ARGUMENTS "syscall number is outside the RSIR range"
+			]
+			if any [
+				select import-ids key
+				select function-ids key
+				select globals key
+				select protected key
+				select literal-values key
+				select contexts key
+			][fail ERROR-DUPLICATE ["duplicate syscall " mold key]]
+			id: import-count + 1
+			add-context-word scope name
+			put import-ids key id
+			put call-ids key (0 - id)
+			append imports key
+			append/only imports to binary! "__red_syscall__"
+			append/only imports to binary! form name
+			append/only imports copy/deep spec
+			append imports 'syscall
+			append/only imports copy scope
+			append/only imports copy/deep uses
+			append imports syscall-id
+			append imports none
+			append imports none
+			import-count: id
+			position: skip position 3
+		]
 	]
 
 	scan-imports: func [
@@ -2317,6 +2381,15 @@ compiler-rsir-frontend: context [
 					block? position/2
 				][
 					scan-imports position/2 scope uses
+					position: skip position 2
+				]
+				all [
+					issue? position/1
+					position/1 = #syscall
+					(length? position) >= 2
+					block? position/2
+				][
+					scan-syscalls position/2 scope uses
 					position: skip position 2
 				]
 				all [
@@ -6717,6 +6790,11 @@ compiler-rsir-frontend: context [
 				all [
 					issue? position/1
 					position/1 = #import
+					(length? position) >= 2
+				][position: skip position 2]
+				all [
+					issue? position/1
+					position/1 = #syscall
 					(length? position) >= 2
 				][position: skip position 2]
 				all [

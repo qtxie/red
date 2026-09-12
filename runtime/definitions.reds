@@ -55,7 +55,7 @@ Red/System [
 #define type-mask			FFFFFF00h		;-- mask for clearing type ID in cell header
 #define get-type-mask		000000FFh		;-- mask for reading type ID in cell header
 #define node!				ptr-ptr!			;-- physical, pointer-width GC node slot
-node-handle!: alias integer!				;-- stable 32-bit node reference stored in cells
+#define node-handle!				integer!				;-- stable 32-bit node reference stored in cells
 #define default-offset		-1				;-- for offset value in alloc-series calls
 
 #define series!				series-buffer! 

@@ -7,6 +7,15 @@ fail: func [message [string! block!]][
 	quit/return 1
 ]
 
+root: clean-path system/options/path
+unless exists? clean-path to file! rejoin [root %system/compiler-rsir-core.red] [
+	root: clean-path to file! rejoin [system/options/path %../../../]
+]
+unless exists? clean-path to file! rejoin [root %system/compiler-rsir-core.red] [
+	fail "could not locate repository root"
+]
+system/options/path: clean-path to file! rejoin [root %tools/self_hosting/tests/]
+
 inventory: context [
 	paths: none
 	words: none
@@ -153,7 +162,6 @@ walk-include-file: func [
 	walk-include-values source base
 ]
 
-root: clean-path to file! rejoin [system/options/path %../../../]
 walk-include-file clean-path to file! rejoin [
 	root %system/compiler-windows-hybrid-bootstrap.red
 ]
@@ -184,10 +192,16 @@ foreach forbidden [
 
 foreach required [
 	%system/compiler-windows-hybrid-core.red
-	%system/compiler-windows-common.red
+	%system/compiler-hybrid-common.red
+	%system/formats/Mach-O-sign.red
+	%system/formats/Mach-O-ARM64.red
 	%system/compiler-rsir-core.red
 	%system/linker.red
 	%system/codegen/codegen-bridge.reds
+	%system/codegen/codegen-model.reds
+	%system/codegen/codegen-rsir-reader.reds
+	%system/codegen/arm64-codegen.reds
+	%system/codegen/arm64-encoder.reds
 	%system/codegen/x64-codegen.reds
 	%system/codegen/x64-encoder.reds
 	%compiler/rsir-frontend.red

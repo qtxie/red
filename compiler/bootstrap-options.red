@@ -42,7 +42,10 @@ compiler-options: context [
 	parse-args: func [args [block! none!] /hybrid /local options position token][
 		options: make-options
 		if hybrid [
-			option-set options 'target "Windows-X86-64"
+			option-set options 'target switch/default system/platform [
+				Windows ["Windows-X86-64"]
+				macOS ["Darwin-ARM64"]
+			]["Windows-X86-64"]
 			option-set options 'opt-level 0
 		]
 		either block? args [position: args][position: copy []]
@@ -53,6 +56,9 @@ compiler-options: context [
 				find ["-V" "--version"] token [option-set options 'version? true]
 				find ["-c" "--compile" "--dev"] token [
 					option-set options 'release? false
+				]
+				find ["-n" "--no-runtime"] token [
+					option-set options 'no-runtime? true
 				]
 				token = "--toolchain-info" [option-set options 'toolchain-info? true]
 				token = "--list-targets" [option-set options 'list-targets? true]

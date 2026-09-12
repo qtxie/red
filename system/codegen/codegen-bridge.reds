@@ -4,6 +4,7 @@ Red/System [
 ]
 
 #include %x64-codegen.reds
+#include %arm64-codegen.reds
 
 codegen-bridge: context [
 	SUCCESS:         0
@@ -11,9 +12,12 @@ codegen-bridge: context [
 	INVALID_IR:      2
 	UNSUPPORTED:     3
 	OUTPUT_FULL:     4
+	ARCH_X64:        1
+	ARCH_ARM64:      2
 
 	run: func [
 		ir artifact [red-binary!]
+		architecture [integer!]
 		opt-level [integer!]
 		return: [integer!]
 		/local series [series!]
@@ -33,7 +37,19 @@ codegen-bridge: context [
 		ir-data: binary/rs-head ir
 		ir-size: binary/rs-length? ir
 		output: (as byte-ptr! series/offset) + artifact/head
-		written: x64-codegen/generate ir-data ir-size output capacity opt-level
+		written: case [
+			architecture = ARCH_X64 [
+				x64-codegen/generate ir-data ir-size output capacity opt-level
+			]
+			architecture = ARCH_ARM64 [
+				arm64-codegen/generate ir-data ir-size output capacity opt-level
+			]
+			true [return INVALID_ARGUMENTS]
+		]
+		if written < 0 [
+			print ["hybrid codegen failure arch=" architecture
+				" status=" written " ir-size=" ir-size lf]
+		]
 		case [
 			written > 0 [
 				series/tail: as cell! (output + written)

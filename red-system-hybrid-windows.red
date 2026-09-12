@@ -1,7 +1,12 @@
 Red [
-	Title: "Windows x64 hybrid Red/System compiler"
+	Title: "Hybrid Red/System compiler"
 	File:  %red-system-hybrid-windows.red
 ]
+
+red-compiler-process-get: func [spec code [block!]][false]
+red-compiler-process-in: func [path word code [block!]][false]
+red-compiler-process-typecheck: func [spec [word! block!]][none]
+red-compiler-expand-call: func [body [block!] global? [logic!]][copy []]
 
 #include %system/compiler-windows-hybrid-bootstrap.red
 #include %compiler/bootstrap-options.red
@@ -11,7 +16,7 @@ recycle/on
 compiler-version: "0.1.0"
 
 print-usage: does [
-	print "Usage: red-system-hybrid-windows [-n] [-O0|-O2] [-dlib] -t Windows-X86-64 [-o output] source.reds"
+	print "Usage: red-system-hybrid-windows [-n] [-O0|-O2] [-dlib] -t Windows-X86-64|Darwin-ARM64 [-o output] source.reds"
 ]
 
 fail-command: func [message][

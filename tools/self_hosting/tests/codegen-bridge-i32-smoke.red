@@ -54,7 +54,7 @@ generate: func [
 		fail [name " frontend: " mold compiler-rsir-frontend/last-error]
 	]
 	artifact: make binary! 65536
-	status: codegen-module ir artifact 0
+	status: codegen-module ir artifact 1 0
 	check status = 0 [name " codegen status=" status]
 	check all [
 		(length? artifact) = word-at artifact 0
@@ -85,7 +85,7 @@ literal: generate "literal" {
 check (word-at literal/2 (codegen-header-size + 16)) = 48
 	"literal used an unexpected frame shape"
 
-generate "direct call" {
+direct-call: generate "direct call" {
 	Red/System []
 	id: func [value [integer!] return: [integer!]][value]
 	main: func [return: [integer!]][id id 7]
@@ -107,7 +107,7 @@ generate "function pointer stored in an aggregate member" {
 	]
 } 'user
 
-generate "left-to-right integer expression" {
+left-expression: generate "left-to-right integer expression" {
 	Red/System []
 	fn: func [return: [integer!]][1 + 2 * 3]
 } 'user
@@ -134,7 +134,7 @@ generate "logic operation families" {
 	fn: func [a [logic!] b [logic!] return: [logic!]][not (a and b xor false)]
 } 'user
 
-generate "structured conditionals and early return" {
+structured-conditionals: generate "structured conditionals and early return" {
 	Red/System []
 	choose: func [value [integer!] return: [integer!]][
 		if value > 0 [return 7]
@@ -146,7 +146,7 @@ generate "structured conditionals and early return" {
 	]
 } 'user
 
-generate "typed CASE selection" {
+typed-case: generate "typed CASE selection" {
 	Red/System []
 	choose: func [value [integer!] return: [integer!]][
 		case [
@@ -157,7 +157,7 @@ generate "typed CASE selection" {
 	]
 } 'user
 
-generate "typed SWITCH dispatch" {
+typed-switch: generate "typed SWITCH dispatch" {
 	Red/System []
 	choose: func [value [integer!] return: [integer!]][
 		switch value [1 2 [11] 3 [22] default [33]]
@@ -216,6 +216,181 @@ generate "fixed-width integer expression" {
 generate "byte expression" {
 	Red/System []
 	fn: func [return: [byte!]][#"A" + #"^(01)"]
+} 'user
+
+narrow-parameter: generate "narrow integer parameter and return" {
+	Red/System []
+	fn: func [value [int8!] return: [int8!]][value]
+} 'user
+
+narrow-cast: generate "explicit integer truncation" {
+	Red/System []
+	fn: func [value [int64!] return: [integer!]][as integer! value]
+} 'user
+
+narrow-arithmetic: generate "narrow integer arithmetic" {
+	Red/System []
+	fn: func [value [int8!] return: [int8!]][value * as int8! 7]
+} 'user
+
+narrow-widening: generate "signed narrow integer widening" {
+	Red/System []
+	fn: func [value [int8!] return: [int64!]][value]
+} 'user
+
+narrow-unary: generate "narrow integer and logic unary operations" {
+	Red/System []
+	bits: func [value [uint8!] return: [uint8!]][not value]
+	predicate: func [value [logic!] return: [logic!]][not value]
+} 'user
+
+narrow-call-spill: generate "narrow value live across a call" {
+	Red/System []
+	increment: func [value [int8!] return: [int8!]][value + as int8! 1]
+	fn: func [value [int8!] return: [int8!]][
+		value + increment as int8! 1
+	]
+} 'user
+
+integer-division: generate "integer division, remainder and modulo" {
+	Red/System []
+	signed: func [a [integer!] b [integer!] return: [integer!]][
+		(a / b) + (a % b) + (a // b)
+	]
+	wide: func [a [int64!] b [int64!] return: [int64!]][a / b]
+	unsigned: func [a [uint32!] b [uint32!] return: [uint32!]][a % b]
+	main: func [
+		return: [integer!]
+		/local value [integer!] wide-value [int64!] unsigned-value [uint32!]
+	][
+		value: signed -17 -5
+		wide-value: wide as int64! 72 as int64! 2
+		unsigned-value: unsigned as uint32! 17 as uint32! 5
+		value: value + as integer! wide-value
+		value + as integer! unsigned-value
+	]
+} 'user
+
+float-scalars: generate "ARM64 scalar floating point" {
+	Red/System []
+	factor: as float32! 1.5
+	blend: func [
+		count [integer!]
+		a [float!]
+		b [float32!]
+		return: [float32!]
+		/local total [float32!]
+	][
+		total: a + b
+		factor: total * as float32! 2.0
+		factor + as float32! count
+	]
+	round-half: func [value [integer!] return: [integer!] /local real [float!]][
+		real: as float! value
+		as integer! (real / 2.0)
+	]
+	bits: func [value [float32!] return: [integer!]][as integer! keep value]
+	main: func [return: [integer!] /local value [float32!]][
+		value: blend 7 1.25 as float32! 2.25
+		(as integer! value) + round-half 10 + (bits as float32! 0.0)
+	]
+} 'user
+
+float-pointer: generate "ARM64 pointer-backed float local" {
+	Red/System []
+	through: func [
+		value [float32!]
+		return: [float32!]
+		/local slot [float32!] pointer [pointer! [float32!]]
+	][
+		slot: value
+		pointer: :slot
+		pointer/1: pointer/1 + as float32! 1.0
+		pointer/1
+	]
+} 'user
+
+float-comparisons: generate "ARM64 ordered float comparisons" {
+	Red/System []
+	score: func [
+		a [float!]
+		b [float!]
+		return: [integer!]
+		/local result [integer!]
+	][
+		result: 0
+		if a < b [result: result + 1]
+		if a <= b [result: result + 2]
+		if a > b [result: result + 4]
+		if a >= b [result: result + 8]
+		if a = b [result: result + 16]
+		if a <> b [result: result + 32]
+		result
+	]
+} 'user
+
+float-import: generate "ARM64 imported float call" {
+	Red/System []
+	#import [
+		"/usr/lib/libSystem.B.dylib" cdecl [
+			c-sqrt: "sqrt" [value [float!] return: [float!]]
+		]
+	]
+	fn: func [return: [integer!]][as integer! (c-sqrt 81.0)]
+} 'user
+
+float-call-spill: generate "ARM64 caller-live floating point" {
+	Red/System []
+	#import [
+		"/usr/lib/libSystem.B.dylib" cdecl [
+			c-sqrt: "sqrt" [value [float!] return: [float!]]
+		]
+	]
+	increment: func [value [float!] return: [float!]][value + 1.0]
+	preserve: func [value [float!] return: [float!]][
+		(value * 2.0) + (increment 1.0)
+	]
+	main: func [return: [integer!] /local value [integer!]][
+		value: 7
+		value: value + (as integer! (c-sqrt 81.0)) - 9
+		value + (as integer! (preserve 3.0))
+	]
+} 'user
+
+float-register-banks: generate "ARM64 independent integer and float argument banks" {
+	Red/System []
+	sum: func [
+		a [integer!] x [float!]
+		b [integer!] y [float!]
+		c [integer!] z [float!]
+		d [integer!] u [float!]
+		e [integer!] v [float!]
+		return: [integer!]
+		/local integers [integer!] reals [float!]
+	][
+		integers: a + b + c + d + e
+		reals: x + y + z + u + v
+		integers + (as integer! reals)
+	]
+	main: func [return: [integer!]][
+		sum 1 1.0 2 2.0 3 3.0 4 4.0 5 5.0
+	]
+} 'user
+
+narrow-integers: generate "narrow integer casts and widening" {
+	Red/System []
+	compute: func [
+		a [int8!]
+		b [uint8!]
+		return: [integer!]
+		/local signed-result [int8!] unsigned-result [uint8!] wide [int64!]
+	][
+		signed-result: a * as int8! 7
+		unsigned-result: b + as uint8! 10
+		wide: signed-result
+		(as integer! wide) - (as integer! unsigned-result) - 22
+	]
+	main: func [return: [integer!]][compute as int8! -100 as uint8! 250]
 } 'user
 
 generate "scaled pointer expression" {
@@ -294,6 +469,86 @@ local: generate "inferred local" {
 check (word-at local/2 (codegen-header-size + 16)) = 64
 	"local storage was mixed with the value stack"
 
+argument: generate "scalar argument home" {
+	Red/System []
+	fn: func [value [integer!] return: [integer!]][value]
+} 'user
+
+register-loop: generate "register-resident integer loop" {
+	Red/System []
+	hot-loop: func [
+		iterations [integer!]
+		return: [integer!]
+		/local i sum
+	][
+		i: 0
+		sum: 0
+		while [i < iterations][
+			sum: sum + (i and 1023)
+			i: i + 1
+		]
+		sum
+	]
+} 'user
+
+escaped-scalar: generate "escaped scalar parameter" {
+	Red/System []
+	fn: func [value [integer!] return: [int-ptr!]][:value]
+} 'user
+
+escaped-local-access: generate "direct access to an escaped local" {
+	Red/System []
+	fn: func [return: [integer!] /local value [integer!] p [int-ptr!]][
+		value: 7
+		p: :value
+		value: value + 14
+		p/1 + value
+	]
+} 'user
+
+pointer-index: generate "dynamic and static pointer indexes" {
+	Red/System []
+	fn: func [
+		p [int-ptr!]
+		index [integer!]
+		return: [integer!]
+	][
+		p/index: 7
+		p/2
+	]
+} 'user
+
+member-load: generate "direct aggregate member load" {
+	Red/System []
+	pair!: alias struct! [left [integer!] right [integer!]]
+	fn: func [pair [pair!] return: [integer!]][pair/right]
+} 'user
+
+pointer-loop: generate "register-resident pointer loop" {
+	Red/System []
+	wide-cell!: alias struct! [
+		a [integer!]
+		b [integer!]
+		c [integer!]
+		d [integer!]
+	]
+
+	hot-loop: func [
+		base [wide-cell!]
+		iterations [integer!]
+		return: [wide-cell!]
+		/local index [integer!] cursor [wide-cell!]
+	][
+		index: 0
+		cursor: base
+		while [index < iterations][
+			cursor: cursor + 1
+			index: index + 1
+		]
+		cursor
+	]
+} 'user
+
 generate "explicit local assignment result" {
 	Red/System []
 	fn: func [return: [integer!] /local value [integer!]][value: 7]
@@ -317,14 +572,37 @@ generate "local shadows global" {
 	fn: func [return: [integer!] /local value][value: 11 value]
 } 'user
 
-generate "global load" {
-	Red/System [] answer: 42 fn: func [return: [integer!]][answer]
+global-scalar: generate "scalar global update" {
+	Red/System []
+	answer: 1
+	fn: func [return: [integer!]][
+		answer: answer + 41
+		answer
+	]
 } 'user
 
-generate "owned global aggregate" {
+global-single: generate "single scalar global load" {
+	Red/System []
+	answer: 42
+	fn: func [return: [integer!]][answer]
+} 'user
+
+global-aggregate: generate "owned global aggregate" {
 	Red/System []
 	pair: declare struct! [left [integer!] right [integer!]]
 	fn: func [return: [integer!]][pair/left]
+} 'user
+
+global-bytes: generate "global byte payload" {
+	Red/System []
+	text: "Red"
+	fn: func [return: [byte!]][text/2]
+} 'user
+
+protected-global-bytes: generate "protected global byte payload" {
+	Red/System []
+	text: protect "Red"
+	fn: func [return: [byte!]][text/2]
 } 'user
 
 generate "dynamic global store" {
@@ -344,6 +622,14 @@ generate "import store" {
 	]
 	red/boot?: yes
 } 'glue
+
+import-call: generate "imported scalar call" {
+	Red/System []
+	#import ["fixture.dll" cdecl [
+		negate: "negate" [value [integer!] return: [integer!]]
+	]]
+	fn: func [return: [integer!]][negate 42]
+} 'user
 
 generate "equivalent aggregate aliases" {
 	Red/System []
@@ -377,15 +663,28 @@ generate "c-string call" {
 	symbol: red/make "type"
 } 'glue
 
-generate "native layout" {
+native-layout: generate "native layout" {
 	Red/System []
 	cell!: alias struct! [mark [byte!] value [integer!]]
 	fn: func [return: [integer!]][size? cell!]
 } 'user
 
-generate "heterogeneous literal address array" {
+c-string-size: generate "dynamic c-string size" {
+	Red/System []
+	measure: func [text [c-string!] return: [integer!]][size? text]
+} 'user
+
+global-address-array: generate "heterogeneous literal address array" {
 	Red/System []
 	values: ["one" 1 "two"]
+	fn: func [][]
+} 'user
+
+global-function-array: generate "literal function address array" {
+	Red/System []
+	int-fn!: alias function! [value [integer!] return: [integer!]]
+	double: func [value [integer!] return: [integer!]][value * 2]
+	functions: [:double]
 	fn: func [][]
 } 'user
 
@@ -416,13 +715,327 @@ check all [
 ]["unused logical pointer types changed native code"]
 
 small: make binary! 64
-status: codegen-module literal/1 small 0
+status: codegen-module literal/1 small 1 0
 check status = 4 "bridge did not report output exhaustion"
 
 bad: copy literal/1
 change/part at bad 17 int-to-bin/to-bin32 100 4
 artifact: make binary! 4096
-status: codegen-module bad artifact 0
+status: codegen-module bad artifact 1 0
 check status = 2 "bridge did not reject an invalid function count"
+
+artifact: make binary! 4096
+status: codegen-module literal/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a literal function"
+check all [
+	(word-at artifact 0) = length? artifact
+	(word-at artifact 12) = 1
+	(word-at artifact 16) = 0
+	(word-at artifact 20) = 0
+	(word-at artifact 32) = 8
+	(word-at artifact 36) = 16
+	(word-at artifact (codegen-header-size + 16)) = 0
+]["ARM64 literal image metadata is inconsistent"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 1) 8) = #{E0008052C0035FD6}
+	"ARM64 literal return used unexpected machine code"
+
+artifact: make binary! 4096
+status: codegen-module local/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate an inferred local"
+check all [
+	(word-at artifact 32) = 40
+	(word-at artifact (codegen-header-size + 12)) = 40
+	(word-at artifact (codegen-header-size + 16)) = 32
+]["ARM64 local did not use one register home"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 17) 8) = #{F3008052E003132A}
+	"ARM64 local value did not remain in x19"
+
+artifact: make binary! 4096
+status: codegen-module argument/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a scalar argument"
+check all [
+	(word-at artifact 32) = 40
+	(word-at artifact (codegen-header-size + 12)) = 40
+	(word-at artifact (codegen-header-size + 16)) = 32
+]["ARM64 argument did not use one register home"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 17) 8) = #{F303002AE003132A}
+	"ARM64 argument did not move directly through x19"
+
+artifact: make binary! 4096
+status: codegen-module narrow-parameter/1 artifact 2 0
+check status = 0 ["ARM64 narrow parameter/return status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-cast/1 artifact 2 0
+check status = 0 ["ARM64 explicit integer truncation status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-arithmetic/1 artifact 2 0
+check status = 0 ["ARM64 narrow integer arithmetic status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-widening/1 artifact 2 0
+check status = 0 ["ARM64 signed narrow integer widening status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-unary/1 artifact 2 0
+check status = 0 ["ARM64 narrow integer or logic unary status=" status]
+
+artifact: make binary! 4096
+status: codegen-module narrow-call-spill/1 artifact 2 0
+check status = 0 ["ARM64 narrow call-preserved value status=" status]
+
+artifact: make binary! 4096
+status: codegen-module integer-division/1 artifact 2 0
+check status = 0 ["ARM64 integer division family status=" status]
+
+artifact: make binary! 8192
+status: codegen-module structured-conditionals/1 artifact 2 0
+check status = 0 ["ARM64 early-return/conditional merge status=" status]
+
+artifact: make binary! 8192
+status: codegen-module typed-case/1 artifact 2 0
+check status = 0 ["ARM64 CASE merge status=" status]
+
+artifact: make binary! 8192
+status: codegen-module typed-switch/1 artifact 2 0
+check status = 0 ["ARM64 SWITCH merge status=" status]
+
+artifact: make binary! 4096
+status: codegen-module native-layout/1 artifact 2 0
+check status = 0 ["ARM64 static SIZE? status=" status]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 1) 8) = #{00018052C0035FD6}
+	"ARM64 static SIZE? was not folded to an immediate"
+
+artifact: make binary! 4096
+status: codegen-module c-string-size/1 artifact 2 0
+check status = 0 ["ARM64 dynamic c-string SIZE? status=" status]
+check all [
+	not none? find artifact #{11164038}
+	not none? find artifact #{D1FFFF35}
+]["ARM64 dynamic c-string SIZE? did not use the inline byte loop"]
+
+artifact: make binary! 8192
+status: codegen-module float-scalars/1 artifact 2 0
+check status = 0 ["ARM64 scalar floating-point status=" status]
+
+artifact: make binary! 4096
+pointer-status: codegen-module float-pointer/1 artifact 2 0
+artifact: make binary! 4096
+comparison-status: codegen-module float-comparisons/1 artifact 2 0
+artifact: make binary! 4096
+float-import-status: codegen-module float-import/1 artifact 2 0
+check all [
+	pointer-status = 0 comparison-status = 0 float-import-status = 0
+][
+	"ARM64 float pointer/comparison/import statuses="
+	pointer-status "/" comparison-status "/" float-import-status
+]
+
+artifact: make binary! 8192
+status: codegen-module float-call-spill/1 artifact 2 0
+check status = 0 ["ARM64 caller-live floating-point status=" status]
+check all [
+	not none? find artifact #{B0031FFC}
+	not none? find artifact #{B0035FFC}
+]["ARM64 caller-live float did not spill and reload d16 directly"]
+
+artifact: make binary! 8192
+status: codegen-module float-register-banks/1 artifact 2 0
+check status = 0 ["ARM64 mixed argument register-bank status=" status]
+check all [
+	not none? find artifact #{A4008052}
+	not none? find artifact #{0490621E}
+]["ARM64 fifth mixed arguments did not use w4 and d4 directly"]
+
+artifact: make binary! 4096
+status: codegen-module narrow-integers/1 artifact 2 0
+check status = 0 [
+	"ARM64 bridge did not generate narrow integer operations, status=" status
+]
+check all [
+	(word-at artifact 12) = 2
+	(word-at artifact (codegen-header-size + 16)) = 64
+	(word-at artifact (codegen-header-size + 36 + 16)) = 16
+]["ARM64 narrow integer functions have inconsistent metadata or frames"]
+
+artifact: make binary! 4096
+status: codegen-module direct-call/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate nested direct calls"
+check all [
+	(word-at artifact 12) = 2
+	(word-at artifact 16) = 0
+	(word-at artifact 20) = 0
+	(word-at artifact (codegen-header-size + 16)) = 32
+	(word-at artifact (codegen-header-size + 36 + 16)) = 16
+]["ARM64 direct calls have inconsistent metadata or frames"]
+
+artifact: make binary! 4096
+status: codegen-module left-expression/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate integer arithmetic"
+check (word-at artifact 32) = 8
+	"ARM64 literal arithmetic was not folded into registers and immediates"
+
+artifact: make binary! 4096
+status: codegen-module register-loop/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a register-resident loop"
+check all [
+	(word-at artifact 20) = 0
+	(word-at artifact 36) = 16
+	(word-at artifact (codegen-header-size + 16)) = 48
+	(word-at artifact 32) = 80
+]["ARM64 loop image lost its register-only frame shape"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 41) 12)
+	= #{8A260012B5020A0B94060011}
+	"ARM64 loop did not use direct logical/add destinations"
+
+artifact: make binary! 4096
+status: codegen-module escaped-scalar/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate an escaped scalar parameter"
+check (word-at artifact (codegen-header-size + 16)) = 32
+	"ARM64 escaped scalar did not use one frame home"
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 17) 4) = #{A92300D1}
+	"ARM64 escaped scalar did not form its frame address directly"
+
+artifact: make binary! 4096
+status: codegen-module escaped-local-access/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate direct escaped-local accesses"
+check (word-at artifact (codegen-header-size + 16)) = 32
+	"ARM64 escaped local used an inconsistent frame"
+check all [
+	not none? find artifact #{A9035FB8}
+	not none? find artifact #{A9031FB8}
+]["ARM64 escaped local did not emit frame loads and stores"]
+
+artifact: make binary! 4096
+status: codegen-module pointer-index/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate pointer indexing"
+arm-code-offset: word-at artifact 28
+check not none? find artifact #{310600514AC9318B}
+	"ARM64 dynamic pointer index did not use one extended-register add"
+check not none? find artifact #{690640B9}
+	"ARM64 static pointer index did not fold into the load displacement"
+
+artifact: make binary! 4096
+status: codegen-module member-load/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate an aggregate member load"
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 21) 4) = #{690640B9}
+	"ARM64 aggregate member did not fold into the load displacement"
+
+artifact: make binary! 4096
+status: codegen-module pointer-loop/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a register-resident pointer loop"
+check all [
+	(word-at artifact (codegen-header-size + 16)) = 48
+	(word-at artifact 36) = 16
+]["ARM64 pointer loop lost its register-only frame shape"]
+check not none? find artifact #{D6420091B5060011}
+	"ARM64 pointer loop did not reduce to direct pointer and index increments"
+
+artifact: make binary! 4096
+status: codegen-module global-scalar/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a scalar global update"
+check all [
+	(word-at artifact 20) = 1
+	(word-at artifact 36) = 20
+	(word-at artifact 40) = 1
+	(word-at artifact 44) = 0
+	(word-at artifact (codegen-header-size + 16)) = 32
+	(word-at artifact 96) = 16
+	(word-at artifact 100) = 4
+	(word-at artifact 104) = 1
+	(word-at artifact 108) = 1
+	(word-at artifact 112) = 0
+	(word-at artifact 116) = 16
+]["ARM64 scalar global metadata is inconsistent"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 17) 8)
+	= #{1300009073020091}
+	"ARM64 repeated global address was not hoisted into x19"
+
+artifact: make binary! 4096
+status: codegen-module import-call/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate imported calls"
+arm-import-at: codegen-header-size
+	+ ((word-at artifact 12) * 36)
+	+ ((word-at artifact 40) * 28)
+check all [
+	(word-at artifact 16) = 1
+	(word-at artifact 20) = 1
+	(word-at artifact (arm-import-at + 20)) = 1
+]["ARM64 imported call metadata is inconsistent"]
+
+artifact: make binary! 4096
+status: codegen-module global-aggregate/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate owned aggregate globals"
+check all [
+	(word-at artifact 20) >= 2
+	(word-at artifact 40) = 2
+	(word-at artifact 36) >= 32
+]["ARM64 owned aggregate metadata is inconsistent"]
+
+artifact: make binary! 4096
+status: codegen-module global-bytes/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate static byte payloads"
+check all [
+	(word-at artifact 20) = 2
+	(word-at artifact 40) = 2
+	(word-at artifact 36) = 28
+	(word-at artifact 44) = 0
+]["ARM64 static byte metadata is inconsistent"]
+
+artifact: make binary! 4096
+status: codegen-module protected-global-bytes/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate protected byte payloads"
+check all [
+	(word-at artifact 20) = 2
+	(word-at artifact 36) = 16
+	(word-at artifact 40) = 2
+	(word-at artifact 44) = 12
+]["ARM64 protected byte metadata is inconsistent"]
+
+artifact: make binary! 8192
+status: codegen-module global-address-array/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate literal address arrays"
+check (word-at artifact 20) = 2
+	"ARM64 literal address array lost its static relocations"
+
+artifact: make binary! 4096
+status: codegen-module global-function-array/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate function address arrays"
+check (word-at artifact 20) >= 1
+	"ARM64 function address array lost its static relocation"
+
+artifact: make binary! 4096
+status: codegen-module global-single/1 artifact 2 0
+check status = 0 "ARM64 bridge did not generate a single scalar global load"
+check all [
+	(word-at artifact 20) = 1
+	(word-at artifact 36) = 20
+	(word-at artifact 40) = 1
+	(word-at artifact (codegen-header-size + 16)) = 0
+	(word-at artifact 116) = 0
+]["ARM64 single global load gained unnecessary frame state"]
+arm-code-offset: word-at artifact 28
+check (copy/part at artifact (arm-code-offset + 1) 8)
+	= #{0900009029010091}
+	"ARM64 single global load did not use the temporary register directly"
+
+artifact: make binary! 4096
+status: codegen-module bad artifact 2 0
+check status = 2 "ARM64 bridge did not reject invalid RSIR"
+check empty? artifact "invalid ARM64 RSIR changed the output"
+
+artifact: make binary! 4096
+status: codegen-module literal/1 artifact 99 0
+check status = 1 "bridge accepted an unknown architecture"
+check empty? artifact "invalid architecture changed the output"
 
 print "PASS: typed postfix hybrid codegen routine"

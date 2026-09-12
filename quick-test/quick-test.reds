@@ -220,5 +220,3 @@ qt-print-totals: func [
     print ["****************TEST FAILURES****************" lf]
   ]
 ]
-
-

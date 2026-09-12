@@ -20,7 +20,7 @@ unless exists? input [fail ["missing frontend RSIR: " mold input]]
 
 ir: read/binary input
 image: make binary! 32'000'000
-status: codegen-module ir image 1
+status: codegen-module ir image 1 1
 unless status = 0 [fail ["libRedRT native codegen status=" status]]
 write/binary output image
 

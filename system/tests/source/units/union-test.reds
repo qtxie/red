@@ -248,6 +248,7 @@ union-by-value-make-large: func [
 	--assert variant? v 'ptr
 	--assert v/ptr/value = 1234
 	v/ptr/value: 5678
+	--assert variant? v 'ptr
 	--assert tagged-int = 5678
 
 ===end-group===

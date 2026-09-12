@@ -8,7 +8,7 @@ unless value? 'ieee-754 [do %ieee-754.red]
 unless value? 'unicode [do %unicode.red]
 
 compiler-rsir-frontend: context [
-	DEFAULT-MAX-BYTES: 16777216
+	DEFAULT-MAX-BYTES: 67108864
 
 	ERROR-ARGUMENTS: 1
 	ERROR-KIND: 2

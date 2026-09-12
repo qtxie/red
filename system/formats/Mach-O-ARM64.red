@@ -608,11 +608,11 @@ system-format-MachO-ARM64: context [
 			][text-offset + record/2/2 - 1]
 		]
 
+		linker/set-image-info job 0 text-offset length? code data-section-offset length? data
+			const-offset length? rodata
 		linker/resolve-symbol-refs job code data rodata
 			text-offset data-section-offset const-offset pointer
 		patch-imports imports code text-offset stub-offset got-offset
-		linker/set-image-info job 0 text-offset length? code data-section-offset length? data
-			const-offset length? rodata
 		data-relocs: collect-data-relocs job
 		rodata-relocs: collect-rodata-relocs job
 		set-preferred-pointer-high data data-relocs

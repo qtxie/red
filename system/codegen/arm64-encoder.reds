@@ -948,6 +948,15 @@ arm64-encoder: context [
 		instruction code capacity (D63F0000h or (register * 32))
 	]
 
+	svc: func [
+		code [byte-ptr!]
+		capacity immediate [integer!]
+		return: [integer!]
+	][
+		unless all [immediate >= 0 immediate <= 65535][return -1]
+		instruction code capacity (D4000001h or (immediate * 32))
+	]
+
 	jump-register: func [
 		code [byte-ptr!]
 		capacity register [integer!]
@@ -1366,6 +1375,25 @@ arm64-encoder: context [
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: instruction at (capacity - written) CB3063FFh
+		if encoded < 0 [return -1]
+		written + encoded
+	]
+
+	stack-restore: func [
+		code [byte-ptr!]
+		capacity size [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded written [integer!]
+	][
+		if size = 0 [return 0]
+		unless all [size > 0 (size and 15) = 0][return -1]
+		encoded: encode-add-immediate OP_ADD SP SP size 8 false
+		if encoded <> -1 [return instruction code capacity encoded]
+		written: move-immediate code capacity X16 8 size 0
+		if written < 0 [return -1]
+		at: as byte-ptr! 0
+		if not null? code [at: code + written]
+		encoded: instruction at (capacity - written) 8B3063FFh
 		if encoded < 0 [return -1]
 		written + encoded
 	]

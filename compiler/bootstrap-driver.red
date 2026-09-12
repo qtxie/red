@@ -237,11 +237,26 @@ compile-source: func [
 			(compiler-system-job/job-get job 'format) = 'ELF
 		][fail-command "this compiler supports only Linux-X86-64 ELF targets"]
 	][
-		unless all [
-			(compiler-system-job/job-get job 'OS) = 'Windows
-			(compiler-system-job/job-get job 'target) = 'X86-64
-			(compiler-system-job/job-get job 'format) = 'PE
-		][fail-command "this compiler supports only Windows-X86-64 PE targets"]
+		#either config/show = 'X86-64-Hybrid-only [
+			unless any [
+				all [
+					(compiler-system-job/job-get job 'OS) = 'Windows
+					(compiler-system-job/job-get job 'target) = 'X86-64
+					(compiler-system-job/job-get job 'format) = 'PE
+				]
+				all [
+					(compiler-system-job/job-get job 'OS) = 'macOS
+					(compiler-system-job/job-get job 'target) = 'ARM64
+					(compiler-system-job/job-get job 'format) = 'Mach-O
+				]
+			][fail-command "hybrid compiler supports Windows-X86-64 PE and Darwin-ARM64 Mach-O targets"]
+		][
+			unless all [
+				(compiler-system-job/job-get job 'OS) = 'Windows
+				(compiler-system-job/job-get job 'target) = 'X86-64
+				(compiler-system-job/job-get job 'format) = 'PE
+			][fail-command "this compiler supports only Windows-X86-64 PE targets"]
+		]
 	]
 	if none? compiler-system-job/job-get job 'dev-mode? [
 		compiler-system-job/job-set job 'dev-mode? false

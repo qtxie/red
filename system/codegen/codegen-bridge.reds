@@ -46,6 +46,10 @@ codegen-bridge: context [
 			]
 			true [return INVALID_ARGUMENTS]
 		]
+		if written < 0 [
+			print ["hybrid codegen failure arch=" architecture
+				" status=" written " ir-size=" ir-size lf]
+		]
 		case [
 			written > 0 [
 				series/tail: as cell! (output + written)

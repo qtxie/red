@@ -4392,9 +4392,14 @@ arm64-codegen: context [
 		if any [target <= 0 target > fn/instruction-count][return false]
 		either depths/target >= 0 [
 			if depths/target <> depth [
-				;-- Dead statement values from deeper paths are abandoned.
-				if depth > depths/target [return false]
-				depths/target: depth
+				;-- Dead statement values from deeper paths are abandoned:
+				;-- the join keeps the shallower recorded depth, and this
+				;-- path's extra slots are simply not part of the merge.
+				either depth > depths/target [
+					depth: depths/target
+				][
+					depths/target: depth
+				]
 			]
 			if depth > 0 [
 				ref: merged-type entry-types/target scratch/stack-types/depth view
@@ -4896,7 +4901,8 @@ arm64-codegen: context [
 		left-ref: scratch/stack-types/left-slot
 		right-ref: scratch/stack-types/right-slot
 		if address-type? right-ref view [
-			unless operation = SUBTRACT_OPERATION [return INVALID_IR]
+			;-- Two addresses combine as a raw 64-bit distance or
+			;-- rebase (x64 parity); neither side is scaled.
 			written: 0
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: materialize view scratch left-slot target left-ref
@@ -4909,8 +4915,13 @@ arm64-codegen: context [
 			if encoded < 0 [return encoded]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
-			encoded: arm64-encoder/subtract-register at (capacity - written)
-				target target arm64-encoder/X17 8
+			encoded: either operation = ADD_OPERATION [
+				arm64-encoder/add-register at (capacity - written)
+					target target arm64-encoder/X17 8
+			][
+				arm64-encoder/subtract-register at (capacity - written)
+					target target arm64-encoder/X17 8
+			]
 			if encoded < 0 [return OUTPUT_FULL]
 			return written + encoded
 		]
@@ -7065,17 +7076,48 @@ arm64-codegen: context [
 							either (scratch/stack-locations/target-slot
 								= LOCATION_REGISTER) [
 								target: scratch/stack-low/target-slot
+								scratch/stack-high/target-slot: scaled
 							][
 								target: available-temp-register view scratch depth
 									false target-slot
-								if target < 0 [return UNSUPPORTED]
-								at: either null? code [as byte-ptr! 0][code + written]
-								encoded: materialize view scratch target-slot target ref
-									at (capacity - written)
-								if encoded < 0 [return encoded]
-								written: written + encoded
+								either target >= 0 [
+									at: either null? code [as byte-ptr! 0][code + written]
+									encoded: materialize view scratch target-slot target ref
+										at (capacity - written)
+									if encoded < 0 [return encoded]
+									written: written + encoded
+									scratch/stack-high/target-slot: scaled
+								][
+									;-- Deep-stack fallback: the temp pool is
+									;-- full, so form base+index in X17 and keep
+									;-- a zero-offset PLACE there for OP_LOAD.
+									if (region-base + depth) > region-limit [
+										return INVALID_IR
+									]
+									at: either null? code [as byte-ptr! 0][code + written]
+									encoded: materialize view scratch target-slot
+										arm64-encoder/X17 ref at (capacity - written)
+									if encoded < 0 [return encoded]
+									written: written + encoded
+									if scaled <> 0 [
+										at: either null? code [as byte-ptr! 0][code + written]
+										encoded: arm64-encoder/move-immediate at
+											(capacity - written) arm64-encoder/X16
+											8 scaled 0
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+										at: either null? code [as byte-ptr! 0][code + written]
+										encoded: arm64-encoder/add-register at
+											(capacity - written) arm64-encoder/X17
+											arm64-encoder/X17 arm64-encoder/X16 8
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+									target: arm64-encoder/X17
+									scaled: 0
+									scratch/stack-high/target-slot: 0
+								]
 							]
-							scratch/stack-high/target-slot: scaled
 						]
 						instruction/b = 1 [
 							if any [
@@ -7649,7 +7691,8 @@ arm64-codegen: context [
 					]
 					; Copy indirect aggregate arguments before loading ABI registers.
 					slot: 1
-					while [all [not packed-call? (call-flags and TYPED) = 0
+					while [all [not packed-call? not custom-call?
+						(call-flags and TYPED) = 0
 						slot <= call-parameter-count]][
 						parameter: call-parameter view call-source call-first-parameter slot
 						if parameter/flags = INLINE [
@@ -7842,6 +7885,10 @@ arm64-codegen: context [
 						written: written + encoded
 						slot: 0
 					]
+					; Custom calls take no ABI arguments: the frontend already
+					; materialized the single value, and the indirect path
+					; injects the X0 move just before call-register.
+					if custom-call? [slot: 0]
 					while [slot > 0][
 						argument-slot: argument-origin + slot
 						if call-target = 46 [
@@ -8505,6 +8552,20 @@ arm64-codegen: context [
 									]
 								]
 								reference-type? left-ref view
+							]
+							;-- Integer-alias (-7) compared with a type it
+							;-- is compatible with (x64 parity).
+							all [
+								any [
+									all [
+										(type-kind left-ref view) = -7
+										compatible-types? right-ref left-ref view
+									]
+									all [
+										(type-kind right-ref view) = -7
+										compatible-types? left-ref right-ref view
+									]
+								]
 							]
 						]
 					]
@@ -10308,7 +10369,13 @@ arm64-codegen: context [
 			if written <> function-sizes/id [
 				print ["ARM64 compile failure function=" id " status=" written
 					" expected=" function-sizes/id " flags=" fn/flags
-					" instructions=" fn/instruction-count lf]
+					" instructions=" fn/instruction-count
+					" ordinal=" last-compile-ordinal lf]
+				diagnostic: as rsir-instruction! (view/instructions
+					+ ((instruction-starts/id + last-compile-ordinal - 1)
+						* RSIR_INSTRUCTION_SIZE))
+				print ["  FAILING op=" diagnostic/op "/" diagnostic/a "/"
+					diagnostic/b "/" diagnostic/c lf]
 				return release memory either written < 0 [written][INVALID_IR]
 			]
 			id: id + 1

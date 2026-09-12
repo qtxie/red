@@ -20,7 +20,6 @@ change-dir root-dir
 source-dir: %system/tests/source/units/
 output-dir: %build/self-hosting/system-suite/
 make-dir output-dir
-compiler-script: %red-system-selfhost-windows.red
 red-console: system/options/boot
 compiler-executable: get-env "RED_SYSTEM_COMPILER"
 compiler-arguments: any [get-env "RED_SYSTEM_COMPILER_ARGUMENTS" ""]
@@ -39,7 +38,8 @@ quoted: func [value][
 compiler-prefix: either compiler-executable [
 	quoted to file! compiler-executable
 ][
-	rejoin [quoted red-console " " quoted compiler-script]
+	print "RED_SYSTEM_COMPILER env var required (path to self-hosted compiler exe)"
+	quit/return 1
 ]
 
 output-name: func [source [file!] output-type [word!] /local name suffix][

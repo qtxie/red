@@ -25,7 +25,6 @@ change-dir root-dir
 tests-dir: path-at root-dir %system/tests/
 compiler-dir: path-at tests-dir %source/compiler/
 output-dir: path-at root-dir %build/self-hosting/compiler-tests/
-compiler-script: path-at root-dir %red-system-selfhost-windows.red
 red-console: system/options/boot
 compiler-executable: get-env "RED_SYSTEM_COMPILER"
 compiler-arguments: any [get-env "RED_SYSTEM_COMPILER_ARGUMENTS" ""]
@@ -33,7 +32,8 @@ compiler-library-target: any [get-env "RED_SYSTEM_LIBRARY_TARGET" "MSDOS"]
 compiler-prefix: either compiler-executable [
 	quoted to file! compiler-executable
 ][
-	rejoin [quoted red-console " " quoted compiler-script]
+	print "RED_SYSTEM_COMPILER env var required (path to self-hosted compiler exe)"
+	quit/return 1
 ]
 make-dir output-dir
 

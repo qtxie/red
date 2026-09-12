@@ -3166,6 +3166,11 @@ arm64-codegen: context [
 					if (depth - argument-count) > region-spill [
 						region-spill: depth - argument-count
 					]
+					;-- Argument values built deeper than the temp pool live in
+					;-- the region spill window; reserve it up front.
+					if all [depth > TEMP_REGISTER_COUNT depth > region-spill] [
+						region-spill: depth
+					]
 					depth: depth - argument-count - callee-slots
 					if call-return <> 0 [
 						depth: depth + 1
@@ -6422,22 +6427,53 @@ arm64-codegen: context [
 							if width > 8 [return UNSUPPORTED]
 							floating?: any [kind = 9 kind = 10]
 							target: available-temp-register view scratch depth floating? depth
-							if target < 0 [return UNSUPPORTED]
-							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: either floating? [
-								arm64-encoder/float-register-load at
-									(capacity - written) target scratch/stack-low/depth
-									scratch/stack-high/depth width arm64-encoder/X16
+							either target >= 0 [
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: either floating? [
+									arm64-encoder/float-register-load at
+										(capacity - written) target scratch/stack-low/depth
+										scratch/stack-high/depth width arm64-encoder/X16
+								][
+									load-signed: either signed-type? ref view [1][0]
+									result-width: either width = 8 [8][4]
+									arm64-encoder/register-load at
+										(capacity - written) target scratch/stack-low/depth
+										scratch/stack-high/depth width
+										load-signed result-width arm64-encoder/X16
+								]
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
 							][
-								load-signed: either signed-type? ref view [1][0]
-								result-width: either width = 8 [8][4]
-								arm64-encoder/register-load at
-									(capacity - written) target scratch/stack-low/depth
-									scratch/stack-high/depth width
-									load-signed result-width arm64-encoder/X16
+								;-- Deep-stack fallback: the expression stack
+								;-- outgrew the temp pool, so park the loaded
+								;-- value in the region spill slot for this depth.
+								if floating? [return UNSUPPORTED]
+								if (region-base + depth) > region-limit [
+									return INVALID_IR
+								]
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/register-load at
+									(capacity - written) arm64-encoder/X16
+									scratch/stack-low/depth scratch/stack-high/depth
+									width 0 width arm64-encoder/X17
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								displacement: 0 - ((region-base + depth) * 8)
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: compiler-frame-store at
+									(capacity - written) arm64-encoder/X16
+									displacement width
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
+								scratch/stack-types/depth: ref
+								scratch/stack-kinds/depth: VALUE
+								scratch/stack-locations/depth: LOCATION_FRAME
+								scratch/stack-low/depth: displacement
+								scratch/stack-high/depth: 0
+								scratch/stack-flags/depth: 0
+								index: index + 1
+								continue
 							]
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
 						]
 						scratch/stack-locations/depth = LOCATION_FRAME [
 							width: value-width ref view
@@ -6709,8 +6745,10 @@ arm64-codegen: context [
 					unless pointee-type ref view :member-type [return INVALID_IR]
 					stride: pointer-stride ref view layout
 					if stride <= 0 [return UNSUPPORTED]
-					target: available-temp-register view scratch depth false target-slot
-					if target < 0 [return UNSUPPORTED]
+					;-- A register-backed base needs no scratch register: the
+					;-- constant-index result stays a (register, offset) pair.
+					;-- Allocate a scratch register only to materialize a base
+					;-- that lives outside the register pool.
 					case [
 						instruction/b = 0 [
 							condition: either instruction/a < 0 [-1][0]
@@ -6727,6 +6765,9 @@ arm64-codegen: context [
 								= LOCATION_REGISTER) [
 								target: scratch/stack-low/target-slot
 							][
+								target: available-temp-register view scratch depth
+									false target-slot
+								if target < 0 [return UNSUPPORTED]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch target-slot target ref
 									at (capacity - written)
@@ -6742,6 +6783,9 @@ arm64-codegen: context [
 								scratch/stack-kinds/depth <> VALUE
 								(type-kind scratch/stack-types/depth view) <> 5
 							][return INVALID_IR]
+							target: available-temp-register view scratch depth
+								false target-slot
+							if target < 0 [return UNSUPPORTED]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth arm64-encoder/X17
 								scratch/stack-types/depth at (capacity - written)
@@ -8096,11 +8140,11 @@ arm64-codegen: context [
 						address-type? left-ref view
 						any [
 							integer-type? right-ref view
-							all [
-								operation = SUBTRACT_OPERATION
-								address-type? right-ref view
-								compatible-types? left-ref right-ref view
-							]
+							;-- A pointer difference between distinct address types
+							;-- is a raw byte distance (x64 parity); the emitter
+							;-- lowers it to an unscaled 64-bit subtract.
+							operation = SUBTRACT_OPERATION
+							address-type? right-ref view
 						]
 					]
 					reference-comparison?: all [

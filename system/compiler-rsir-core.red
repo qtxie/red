@@ -133,8 +133,8 @@ system-dialect: context [
 			][
 				compiler/throw-error "invalid hybrid target linking mode"
 			]
-			any [job/debug? not none? job/o2-ir-dump] [
-				compiler/throw-error "RSIR frontend does not yet support debug or O2 IR output"
+			job/debug? [
+				compiler/throw-error "RSIR frontend does not yet support debug builds"
 			]
 			any [
 				not integer? job/opt-level
@@ -222,6 +222,10 @@ system-dialect: context [
 			]
 		]
 		last-rsir: output
+		if job/o2-ir-dump [
+			write/binary to file! job/o2-ir-dump last-rsir
+			print ["...RSIR dump       :" job/o2-ir-dump]
+		]
 	]
 
 	finish-code: func [/local output message capacity][

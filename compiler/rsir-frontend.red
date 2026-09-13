@@ -6482,13 +6482,11 @@ compiler-rsir-frontend: context [
 			]
 		]
 
-		either function-active? [
-			hidden: add-hidden-local params locals storage-ref storage-flags
-			emit-local-address instructions hidden
-		][
-			hidden: add-hidden-global storage-ref storage-flags
-			emit instructions address-op global-address hidden 0
-		]
+		;-- DECLARE always allocates statically, whether at root level or
+		;-- inside a function. A function-local home breaks the address
+		;-- on ARM64 and is unnecessary on x64.
+		hidden: add-hidden-global storage-ref storage-flags
+		emit instructions address-op global-address hidden 0
 		emit instructions reference-op ref 0 0
 		last-type: ref
 		last-flags: 0

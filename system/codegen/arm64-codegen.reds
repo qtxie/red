@@ -2719,6 +2719,7 @@ arm64-codegen: context [
 			typed-member [rsir-member!]
 			switch-case [rsir-switch!]
 			sub-entry [rsir-instruction!]
+			next-instruction [rsir-instruction!]
 			depths result-offsets [int-ptr!]
 			id slot count width kind operation home-count home-mask home-register
 			jump-depth
@@ -2733,7 +2734,7 @@ arm64-codegen: context [
 			ordinal target case-index result-size result-align result-used
 			inline-size inline-align
 				[integer!]
-			fallthrough? stack-all? frame-anchor? [logic!]
+			fallthrough? stack-all? frame-anchor? escape? [logic!]
 	][
 		status: prepare-exception-structure view fn first-instruction unwind?
 			scratch plan
@@ -2824,10 +2825,22 @@ arm64-codegen: context [
 						if any [slot <= 0 slot > count][return INVALID_IR]
 						parameter: as rsir-parameter! (view/parameters
 							+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
+						; An address that escapes as a reference (`:local`) must live in
+						; memory; a register home has no frame address to hand out.
+						escape?: false
+						if (id + 1) < fn/instruction-count [
+							next-instruction: as rsir-instruction! (view/instructions
+								+ ((first-instruction + id + 1) * RSIR_INSTRUCTION_SIZE))
+							escape?: next-instruction/op = OP_REFERENCE
+						]
 						case [
 							parameter/flags = 0 [
-								if scratch/storage-kinds/slot = 0 [
-									scratch/storage-kinds/slot: STORAGE_REGISTER
+								either escape? [
+									scratch/storage-kinds/slot: STORAGE_FRAME
+								][
+									if scratch/storage-kinds/slot = 0 [
+										scratch/storage-kinds/slot: STORAGE_REGISTER
+									]
 								]
 							]
 							; An inline aggregate only ever exists as memory, so
@@ -6969,6 +6982,7 @@ arm64-codegen: context [
 								target compiler-frame-register scratch/stack-low/depth
 								arm64-encoder/X16
 							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
 						][
 							;-- Deep-stack fallback: the temp pool is exhausted,
 							;-- so form the address in the fixed scratch register
@@ -7008,6 +7022,7 @@ arm64-codegen: context [
 									target scratch/stack-low/depth scratch/stack-high/depth
 									arm64-encoder/X16
 								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
 							][
 								;-- Deep-stack fallback: park the formed address
 								;-- in the region spill slot for this depth.

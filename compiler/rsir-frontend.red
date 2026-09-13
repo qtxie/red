@@ -5562,7 +5562,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		return: [block! none!]
-		/local path count next-position pointer-ref id
+		/local path count next-position pointer-ref id value-kind
 	][
 		unless path? position/1 [return none]
 		path: position/1
@@ -5619,6 +5619,18 @@ compiler-rsir-frontend: context [
 		]
 		if path/2 = 'atomic [
 			return stack-atomic position scope uses instructions params locals
+		]
+		if path/2 = 'words [
+			;-- system/words/* is already root-qualified: resolve at the
+			;-- global scope (classic frontend's system-words-path?).
+			unless count >= 3 [fail ERROR-REFERENCE "invalid system/words access"]
+			value-kind: resolve-value-kind path scope uses
+			either value-kind = 2 [
+				return stack-call resolved-value-id path position scope uses
+					instructions params locals
+			][
+				fail ERROR-REFERENCE ["unsupported system/words path:" mold path]
+			]
 		]
 		unless path/2 = 'stack [return none]
 		case [

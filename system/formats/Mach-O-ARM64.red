@@ -529,7 +529,7 @@ system-format-MachO-ARM64: context [
 			data-section-offset init-offset term-offset const-offset data-file-size data-end
 			linkedit-offset entry-spec entry-offset import-info libraries imports functions
 			exports tables symbols indirect strings stubs bind-info rebase-info export-trie linkedit
-			data-relocs rodata-relocs rebase-offset bind-offset symbol-offset
+			data-relocs rodata-relocs rodata-base folded-relocs rebase-offset bind-offset symbol-offset
 			export-offset indirect-offset string-offset dylib-size id-file id-name id-size linkedit-size
 			signature-file signature-id signature-offset signature-size signature bundle-signature
 			dll? lifecycle init-spec term-spec data-segment-index data-section-index
@@ -549,10 +549,12 @@ system-format-MachO-ARM64: context [
 		functions: import-functions imports
 		exports: either dll? [collect-exports job][make block! 0]
 		text-section-count: 1 + either empty? functions [0][1]
+		;-- rodata is folded into writable __data below; never emit a
+		;-- separate __DATA,__const section (dyld remaps it r/o on Apple
+		;-- Silicon and SIGBUS-es later stores into the same page).
 		data-section-count: 1
 		if not empty? imports [data-section-count: data-section-count + 1]
 		if dll? [data-section-count: data-section-count + 2]
-		if not empty? rodata [data-section-count: data-section-count + 1]
 		text-command-size: 72 + (80 * text-section-count)
 		data-command-size: 72 + (80 * data-section-count)
 		dylib-size: 0
@@ -611,10 +613,13 @@ system-format-MachO-ARM64: context [
 			][text-offset + record/2/2 - 1]
 		]
 
+		;-- Folded rodata stays writable: do not advertise a protected range
+		;-- or protect-image-rodata will mprotect a non-aligned interior page.
 		linker/set-image-info job 0 text-offset length? code data-section-offset length? data
-			const-offset length? rodata
+			0 0
 		linker/resolve-symbol-refs job code data rodata
 			text-offset data-section-offset const-offset pointer
+		rodata-base: length? data
 		unless empty? rodata [
 			append data rodata
 			rodata: #{}
@@ -623,7 +628,12 @@ system-format-MachO-ARM64: context [
 		data-relocs: collect-data-relocs job
 		rodata-relocs: collect-rodata-relocs job
 		set-preferred-pointer-high data data-relocs
-		set-preferred-pointer-high rodata rodata-relocs
+		unless empty? rodata-relocs [
+			;-- rodata bytes now live inside __data; rebias those relocs.
+			folded-relocs: make block! length? rodata-relocs
+			foreach offset rodata-relocs [append folded-relocs rodata-base + offset]
+			set-preferred-pointer-high data folded-relocs
+		]
 		lifecycle: make binary! 16
 		if dll? [
 			init-spec: select job/symbols '***-dll-entry-point
@@ -698,13 +708,7 @@ system-format-MachO-ARM64: context [
 			append commands build-section "__mod_term_func" "__DATA" reduce [term-offset 1]
 				8 term-offset 3 10 0 0
 		]
-		unless empty? rodata [
-			; S_REGULAR in __DATA stays writable. S_16BYTE_LITERALS (14)
-			; is the wrong type for general rodata and some dyld paths
-			; treat the page as const, which SIGBUS-es runtime stores.
-			append commands build-section "__const" "__DATA" reduce [const-offset 1]
-				length? rodata const-offset 0 0 0 0
-		]
+
 		append commands build-segment "__LINKEDIT" reduce [linkedit-offset 1]
 			(round/to/ceiling linkedit-size defs/page-size) linkedit-offset linkedit-size 1 1 0 0
 		append commands build-dyld-info rebase-offset length? rebase-info

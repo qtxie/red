@@ -54,6 +54,11 @@ posix-startup-ctx: context [
 
 	UCTX_DEFINITION
 
+	;-- Singleton debug stack record. Declared at context level so the
+	;-- signal handler only stores its address (ARM64 codegen currently
+	;-- miscompiles declare-inside-function for this pattern).
+	__debug-stack: declare __stack!
+
 	***-on-signal: func [
 		[cdecl]
 		signal	[integer!]
@@ -63,8 +68,8 @@ posix-startup-ctx: context [
 	][
 		error: 99								;-- default unknown error
 		code: info/code
-		
-		system/debug: declare __stack!			;-- allocate a __stack! struct
+
+		system/debug: __debug-stack				;-- reuse the context-level struct
 		#switch target [
 			X86-64 [
 				system/debug/frame: UCTX_GET_STACK_FRAME(ctx)

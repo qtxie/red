@@ -6416,6 +6416,15 @@ arm64-codegen: context [
 								instruction/c = 0
 								scratch/homes/slot <> 0
 							][return UNSUPPORTED]
+							parameter: as rsir-parameter! (view/parameters
+								+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
+							if all [parameter/flags = INLINE][
+								print ["ARM64 local-addr first=" first-instruction
+									" ordinal=" ordinal " slot=" slot
+									" home=" scratch/homes/slot
+									" type=" scratch/storage-types/slot
+									" ic=" fn/instruction-count lf]
+							]
 							scratch/stack-types/depth: scratch/storage-types/slot
 							parameter: as rsir-parameter! (view/parameters
 								+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))

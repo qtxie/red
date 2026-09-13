@@ -270,18 +270,20 @@ re-throw: func [/local id [integer!]][
 	#if debug? = yes [#include %debug.reds]	;-- loads optionally debug functions
 
 	;-- Run-time error handling --
-	
+
+		__debug-stack: declare __stack!
+
 		__set-stack-on-crash: func [
 			return: [byte-ptr!]
 			/local address frame top
 	][
-		top: system/stack/frame				;-- skip the set-stack-on-crash stack frame 
+		top: system/stack/frame				;-- skip the set-stack-on-crash stack frame
 		frame: as int-ptr! top/value
 		top: top + 1
 			address: as byte-ptr! top/value
 		top: frame + 2
 
-		system/debug: declare __stack!		;-- allocate a __stack! struct
+		system/debug: __debug-stack			;-- reuse the static __stack! struct
 		system/debug/frame: frame
 		system/debug/top: top
 		address

@@ -256,6 +256,17 @@ x64-codegen: context [
 	; original target; System V differs in argument registers, stack alignment,
 	; caller-saved registers and in how the entry hands over to libc.
 	target-abi: ABI_WIN64
+	;-- Set while a raw syscall's arguments are being placed, so the fourth
+	;-- one lands in R10 rather than in the RCX the kernel overwrites.
+	syscall-arguments?: false
+	;-- Direct argument placement names a producer's destination register in a
+	;-- mark that only exists once the CALL placing it has been reached, which
+	;-- is one or two instructions after that producer. The first sizing pass
+	;-- therefore still measures the producer into RAX. These two flags drive
+	;-- the extra sizing pass that runs with the marks already in place, so the
+	;-- size finally recorded is the size of the code that will be emitted.
+	argument-marking?:     false
+	direct-argument-mark?: false
 
 	CDECL:          1
 	STDCALL:        2
@@ -2433,7 +2444,9 @@ x64-codegen: context [
 		/local parameter [rsir-parameter!]
 			table [type-table!]
 			parameters [byte-ptr!]
-			count index used size alignment hidden-shift physical-slot [integer!]
+			count index used size alignment hidden-shift physical-slot
+				gpr-slot xmm-slot stack-slot [integer!]
+			register? floating? [logic!]
 	][
 		table:      module/table
 		parameters: module/parameters
@@ -2442,25 +2455,58 @@ x64-codegen: context [
 		hidden-shift: either win64-hidden-return? fn/return-type fn/flags
 			table [1][0]
 		used: hidden-shift * 8
+		gpr-slot: hidden-shift
+		xmm-slot: 0
+		stack-slot: 0
 		while [index <= count][
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
 			physical-slot: index + hidden-shift
+			floating?: all [
+				index <= fn/parameter-count
+				parameter/flags <> INLINE
+				float-type? parameter/type table
+			]
+			;-- Win64 walks one counter and hands out RCX/RDX/R8/R9 or XMM0-3
+			;-- from the same slot number. System V fills six integer registers
+			;-- and eight vector ones from independent counters, so which
+			;-- arguments reach a register has to be counted per class over
+			;-- the parameters that come first.
+			either target-abi = ABI_SYSV [
+				either floating? [xmm-slot: xmm-slot + 1][gpr-slot: gpr-slot + 1]
+				register?: either floating? [xmm-slot <= 8][gpr-slot <= 6]
+			][
+				register?: physical-slot <= 4
+			]
+			; Every System V argument register is volatile across a call, so a
+			; parameter is never read back out of one: it always gets a home
+			; and the prologue spills the incoming register into it.
 			case [
 				all [
+					target-abi <> ABI_SYSV
 					index <= fn/parameter-count
-					physical-slot <= 4
+					register?
 					offsets/index = 0
 				][
 					; An unused or directly forwarded register parameter has no home.
 					offsets/index: 0
 				]
-				all [index <= fn/parameter-count physical-slot > 4][
+				all [index <= fn/parameter-count not register?][
 					if parameter/type = 0 [return fail-invalid 2 "plan-storage/fn/parameter-count#1"]
-					if (physical-slot - 5) > ((2147483647 - 48) / 8)[
-						return OUTPUT_FULL
+					either target-abi = ABI_SYSV [
+						;-- System V places the first stack argument directly
+						;-- above the return address; there is no shadow space.
+						if stack-slot > ((2147483647 - 16) / 8)[
+							return OUTPUT_FULL
+						]
+						offsets/index: 16 + (stack-slot * 8)
+						stack-slot: stack-slot + 1
+					][
+						if (physical-slot - 5) > ((2147483647 - 48) / 8)[
+							return OUTPUT_FULL
+						]
+						offsets/index: 48 + ((physical-slot - 5) * 8)
 					]
-					offsets/index: 48 + ((physical-slot - 5) * 8)
 				]
 				all [index > fn/parameter-count offsets/index = 0][
 					offsets/index: 0
@@ -2615,13 +2661,31 @@ x64-codegen: context [
 		written
 	]
 
+	;-- Win64 walks RCX/RDX/R8/R9 and hands out XMM0-3 from the same slot
+	;-- counter. System V has six integer registers and eight vector ones,
+	;-- counted independently, so a caller keeps two counters and the slot
+	;-- index alone no longer names a register.
 	argument-register: func [index [integer!] return: [integer!]][
-		case [
-			index = 1 [x64-encoder/RCX]
-			index = 2 [x64-encoder/RDX]
-			index = 3 [x64-encoder/R8]
-			index = 4 [x64-encoder/R9]
-			true [-1]
+		either target-abi = ABI_SYSV [
+			case [
+				index = 1 [x64-encoder/RDI]
+				index = 2 [x64-encoder/RSI]
+				index = 3 [x64-encoder/RDX]
+				;-- A syscall clobbers RCX for the return address, so the
+				;-- kernel reads its fourth argument from R10 instead.
+				index = 4 [either syscall-arguments? [x64-encoder/R10][x64-encoder/RCX]]
+				index = 5 [x64-encoder/R8]
+				index = 6 [x64-encoder/R9]
+				true [-1]
+			]
+		][
+			case [
+				index = 1 [x64-encoder/RCX]
+				index = 2 [x64-encoder/RDX]
+				index = 3 [x64-encoder/R8]
+				index = 4 [x64-encoder/R9]
+				true [-1]
+			]
 		]
 	]
 
@@ -4750,7 +4814,9 @@ x64-codegen: context [
 		slot: 1
 		while [slot <= fn/parameter-count][
 			physical-slot: slot + state/hidden-shift
-			if all [storage-offsets/slot = 0 physical-slot <= 4][
+			;-- A System V parameter always has a home, so this fixed-incoming
+		;-- register path only applies where Win64 leaves one in RCX/RDX/R8/R9.
+		if all [target-abi <> ABI_SYSV storage-offsets/slot = 0 physical-slot <= 4][
 				parameter: as rsir-parameter! (parameters
 					+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
 				width: value-width parameter/type parameter/flags table
@@ -5306,8 +5372,8 @@ x64-codegen: context [
 			entry? [logic!]
 			index width signed source-slot target-slot home-register storage-size storage-align
 				encoded written frame-extra physical-slot displacement aggregate-width
-				target-offset catch-threshold allocation-size [integer!]
-			measure? floating? clear? aggregate-argument? [logic!]
+				target-offset catch-threshold allocation-size gpr-slot xmm-slot [integer!]
+			measure? floating? clear? aggregate-argument? register? [logic!]
 	][
 		module: context/module
 		task: context/task
@@ -5395,15 +5461,20 @@ x64-codegen: context [
 		if state/hidden-return? [
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/frame-store at (capacity - written)
-				x64-encoder/RCX (0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8
+				either target-abi = ABI_SYSV [x64-encoder/RDI][x64-encoder/RCX] (0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 		]
 
 		state/hidden-shift: either state/hidden-return? [1][0]
-		; Incoming Win64 arguments stay available until another operation needs
-		; their register class, or an ABI or control boundary invalidates them.
-		state/incoming-arguments: 15
+		; Incoming register arguments stay available until another operation
+		; needs their register class, or an ABI or control boundary invalidates
+		; them. System V marks none of them: every one of its argument
+		; registers is volatile, so a parameter is only ever read from the
+		; home the prologue below spills it into.
+		state/incoming-arguments: either target-abi = ABI_SYSV [0][15]
+		gpr-slot: state/hidden-shift
+		xmm-slot: 0
 		index: 1
 		while [index <= fn/parameter-count][
 			parameter: as rsir-parameter! (parameters
@@ -5425,13 +5496,25 @@ x64-codegen: context [
 			]
 			target-slot: storage-displacement storage-offsets index
 			physical-slot: index + state/hidden-shift
-			if all [target-slot <> 0 physical-slot <= 4][
+			;-- Win64 walks one counter for both register classes; System V
+			;-- counts the integer and the vector registers independently.
+			either target-abi = ABI_SYSV [
+				either floating? [xmm-slot: xmm-slot + 1][gpr-slot: gpr-slot + 1]
+				register?: either floating? [xmm-slot <= 8][gpr-slot <= 6]
+			][
+				register?: physical-slot <= 4
+			]
+			if all [target-slot <> 0 register?][
 				at: either measure? [as byte-ptr! 0][code + written]
 				encoded: either floating? [
 					x64-encoder/xmm-frame-store at (capacity - written)
-						(physical-slot - 1) target-slot width
+						either target-abi = ABI_SYSV [
+							xmm-slot - 1
+						][physical-slot - 1] target-slot width
 				][
-					source-slot: argument-register physical-slot
+					source-slot: either target-abi = ABI_SYSV [
+						argument-register gpr-slot
+					][argument-register physical-slot]
 					x64-encoder/frame-store at (capacity - written)
 						source-slot target-slot width
 				]
@@ -5533,9 +5616,9 @@ x64-codegen: context [
 		]
 		if state/tag-count <> state/tag-capacity [return fail-invalid 62 "finalize-function/state/tag-count#1"]
 		if state/fallthrough? [return fail-invalid 63 "finalize-function/state/fallthrough#2"]
-		if all [not measure? state/max-outgoing <> task/outgoing-size][return fail-invalid 64 "finalize-function/state/max-outgoing#3"]
+	if all [not measure? state/max-outgoing <> task/outgoing-size][return fail-invalid 64 "finalize-function/state/max-outgoing#3"]
 
-		if measure? [
+	if measure? [
 			task/outgoing-size: state/max-outgoing
 			if storage-slots > (2147483647 / 8)[return OUTPUT_FULL]
 			slot-bytes: storage-slots * 8
@@ -6268,20 +6351,22 @@ x64-codegen: context [
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					if import-id > 0 [
-						either measure? [
+						either argument-marking? [
 							if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
 							import-refs/import-id: import-refs/import-id + 1
 						][
-							reference-id: import-refs/import-id
-							references/reference-id: function-offset + written + 3
-							import-refs/import-id: reference-id + 1
+							either measure? [0][
+								reference-id: import-refs/import-id
+								references/reference-id: function-offset + written + 3
+								import-refs/import-id: reference-id + 1
+							]
 						]
 					]
 					if global-id > 0 [
 						image-global: as codegen-global! (image-data
 							+ (function-count * IMAGE_FUNCTION_SIZE)
 							+ ((global-id - 1) * IMAGE_GLOBAL_SIZE))
-						either measure? [
+						either argument-marking? [
 							if any [
 								image-global/reference-count = 2147483647
 								task/global-reference-count = 2147483647
@@ -6289,15 +6374,17 @@ x64-codegen: context [
 							image-global/reference-count: image-global/reference-count + 1
 							task/global-reference-count: task/global-reference-count + 1
 						][
-							reference-id: image-global/first-reference
-								+ image-global/reference-count
-							either defer-global? [
-								state/location-reference: reference-id
-							][
-								references/reference-id:
-									function-offset + written + encoded - 4
+							either measure? [0][
+								reference-id: image-global/first-reference
+									+ image-global/reference-count
+								either defer-global? [
+									state/location-reference: reference-id
+								][
+									references/reference-id:
+										function-offset + written + encoded - 4
+								]
+								image-global/reference-count: image-global/reference-count + 1
 							]
-							image-global/reference-count: image-global/reference-count + 1
 						]
 					]
 					written: written + encoded
@@ -6819,10 +6906,6 @@ x64-codegen: context [
 							machine-value? ref flags table
 							machine-value? target-ref target-flags table
 						][
-							print ["X64-SET93 fn=" fn/name-size " idx=" index
-								" tref=" target-ref " ref=" ref
-								" tflags=" target-flags " flags=" flags
-								" compat=" compatibility lf]
 							return fail-invalid 100 "emit-value-operation/compat#36"
 						]
 						target-width: value-width target-ref target-flags table
@@ -7261,6 +7344,11 @@ x64-codegen: context [
 			argument-slot [integer!]
 			argument-width [integer!]
 			physical-slot [integer!]
+			gpr-slot [integer!]
+			xmm-slot [integer!]
+			stack-slot [integer!]
+			syscall-id [integer!]
+			stack-offset [integer!]
 			target [integer!]
 			return-ref [integer!]
 			first-parameter [integer!]
@@ -7293,6 +7381,8 @@ x64-codegen: context [
 			literal-slot [integer!]
 			measure? [logic!]
 			floating? [logic!]
+			syscall? [logic!]
+			register-argument? [logic!]
 			aggregate-copy? [logic!]
 			aggregate-argument? [logic!]
 			indirect? [logic!]
@@ -7337,6 +7427,8 @@ x64-codegen: context [
 		import-refs: view/import-refs
 		measure?: null? code
 		written: state/written
+		syscall?: false
+		syscall-id: 0
 		depth: state/depth
 		location: state/location
 		storage-slots: state/storage-slots
@@ -7379,10 +7471,8 @@ x64-codegen: context [
 						imported: as rsir-import! (imports
 							+ ((import-id - 1) * RSIR_IMPORT_SIZE))
 						if imported/flags = 0 [return fail-invalid 118 "emit-call-operation/imported/flags#4"]
-						if (imported/flags and SYSCALL_FLAG) <> 0 [
-							;-- x86-64 has no syscall emitter yet; ARM64 does.
-							return fail-unsupported 331 "emit-call-operation/syscall#22"
-						]
+						syscall?: (imported/flags and SYSCALL_FLAG) <> 0
+						if syscall? [syscall-id: imported/flags / 2048]
 						return-ref: imported/type
 						first-parameter: imported/first-parameter
 						parameter-count: imported/parameter-count
@@ -7530,9 +7620,17 @@ x64-codegen: context [
 					if physical-count > (((2147483647 - 32) / 8) + 4)[
 						return OUTPUT_FULL
 					]
-					outgoing: either custom-call? [0][32]
-					if physical-count > 4 [
-						outgoing: outgoing + ((physical-count - 4) * 8)
+					outgoing: either custom-call? [0][
+						either target-abi = ABI_SYSV [0][32]
+					]
+					;-- Which System V arguments reach a register is only known once
+					;-- the loop below has seen each type, so reserve the worst case.
+					either target-abi = ABI_SYSV [
+						outgoing: outgoing + (physical-count * 8)
+					][
+						if physical-count > 4 [
+							outgoing: outgoing + ((physical-count - 4) * 8)
+						]
 					]
 					if outgoing > state/max-outgoing [state/max-outgoing: outgoing]
 					either indirect? [
@@ -7668,6 +7766,14 @@ x64-codegen: context [
 						][return fail-invalid 138 "emit-call-operation/location#24"]
 						direct-argument?: all [
 							argument-producer > 0
+							; System V hands out its argument registers from two
+							; independent counters, so the slot a producer has to
+							; land in is only known once the whole call has been
+							; classified -- which happens here, after that
+							; producer was already emitted. Leave the value on the
+							; shared RAX/XMM0 path, where this CALL resolves the
+							; target on its own.
+							target-abi <> ABI_SYSV
 							not inline-object-ref? stack-types/depth table
 							not aggregate-ref? stack-types/depth table
 							not custom-call?
@@ -7677,6 +7783,12 @@ x64-codegen: context [
 							; dedicated argument register. Stack-bound values stay on
 							; the materialized path where RAX remains shared scratch.
 							(argument-index + state/hidden-shift) <= 4
+							; A syscall takes its fourth argument in R10, but the
+							; flag that selects R10 is only raised once this CALL
+							; is reached, which is after the producer has already
+							; asked for its register. Keep syscalls on the shared
+							; RAX path, where the CALL alone resolves the target.
+							not syscall?
 							; CALL fills target slots from left to right. An incoming
 							; argument in an earlier slot must first use the regular
 							; RAX/XMM0 materialized path, or that earlier target would
@@ -8091,6 +8203,10 @@ x64-codegen: context [
 					]
 					temp-offset: align outgoing 16
 					source-slot: 1
+					gpr-slot: 0
+					xmm-slot: 0
+					stack-slot: 0
+					syscall-arguments?: syscall?
 					while [all [
 						not custom-call? not list-call? source-slot <= argument-index
 					]][
@@ -8123,6 +8239,25 @@ x64-codegen: context [
 							target-flags: 0
 						]
 						physical-slot: source-slot + state/hidden-shift
+						floating?: all [
+							not aggregate-argument?
+							float-type? target-ref table
+						]
+						;-- Win64 walks a single counter and hands out RCX/RDX/R8/R9
+						;-- or XMM0-3 from the same slot number. System V counts the
+						;-- integer and the vector registers independently.
+						either target-abi = ABI_SYSV [
+							either floating? [xmm-slot: xmm-slot + 1][gpr-slot: gpr-slot + 1]
+						][
+							gpr-slot: physical-slot
+							xmm-slot: physical-slot
+						]
+						register-argument?: either floating? [
+							xmm-slot <= either target-abi = ABI_SYSV [8][4]
+						][
+							gpr-slot <= either target-abi = ABI_SYSV [6][4]
+						]
+						stack-offset: (either target-abi = ABI_SYSV [0][32]) + (stack-slot * 8)
 						direct-literal?: source-slot >= literal-slot
 						; Win64 stack arguments always occupy complete 8-byte slots.
 						either aggregate-argument? [
@@ -8149,8 +8284,8 @@ x64-codegen: context [
 								argument-width: aggregate-width
 							]
 							target-width: either argument-width = 8 [8][4]
-							either physical-slot <= 4 [
-								target-slot: argument-register physical-slot
+							either register-argument? [
+								target-slot: argument-register gpr-slot
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/move-register at (capacity - written)
 									target-slot x64-encoder/RAX target-width
@@ -8159,7 +8294,7 @@ x64-codegen: context [
 							][
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/outgoing-store at (capacity - written)
-									(32 + ((physical-slot - 5) * 8))
+									stack-offset
 									8
 								if encoded < 0 [return OUTPUT_FULL]
 								written: written + encoded
@@ -8175,8 +8310,8 @@ x64-codegen: context [
 							floating?: float-type? target-ref table
 							tracked?: all [located? argument-slot = state/location-depth]
 							target-width: either argument-width = 8 [8][4]
-								either physical-slot <= 4 [
-									target-slot: argument-register physical-slot
+								either register-argument? [
+									target-slot: argument-register gpr-slot
 									; Only the located stack-top argument owns the
 									; recorded producer target; earlier slots keep
 									; their own register assignments.
@@ -8187,20 +8322,10 @@ x64-codegen: context [
 											][argument-register state/location-source]
 											if state/location-source < 0 [return fail-invalid 151 "emit-call-operation/state/location-source#37"]
 										][
-											either measure? [
+											either argument-marking? [
 												argument-targets/argument-producer:
 													as byte! physical-slot
-												; A narrow R8/R9 producer adds one REX byte after
-												; its RAX measurement. Advance this CALL and all
-												; following offsets without measuring the function again.
-												if all [
-													not floating?
-													physical-slot >= 3
-													source-width < 8
-												][
-													instruction-offsets/index: instruction-offsets/index + 1
-													written: written + 1
-												]
+												direct-argument-mark?: true
 											][
 												if argument-targets/argument-producer <>
 													as byte! physical-slot [
@@ -8218,19 +8343,19 @@ x64-codegen: context [
 									floating? [
 										either tracked? [
 											either source-width = argument-width [
-												either (physical-slot - 1) = state/location-source [0][
+												either (xmm-slot - 1) = state/location-source [0][
 													x64-encoder/xmm-move-register at
-														(capacity - written) (physical-slot - 1)
+														(capacity - written) (xmm-slot - 1)
 														state/location-source source-width
 												]
 											][
 												x64-encoder/xmm-convert at (capacity - written)
-													(physical-slot - 1) state/location-source
+													(xmm-slot - 1) state/location-source
 													source-width argument-width
 											]
 										][
 											x64-encoder/xmm-frame-load at (capacity - written)
-												(physical-slot - 1) slot-displacement
+												(xmm-slot - 1) slot-displacement
 													(storage-slots + argument-slot) source-width
 										]
 									]
@@ -8276,8 +8401,8 @@ x64-codegen: context [
 								][
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/xmm-convert at
-										(capacity - written) (physical-slot - 1)
-										(physical-slot - 1) source-width argument-width
+										(capacity - written) (xmm-slot - 1)
+										(xmm-slot - 1) source-width argument-width
 									if encoded < 0 [return OUTPUT_FULL]
 									written: written + encoded
 								]
@@ -8285,7 +8410,7 @@ x64-codegen: context [
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/xmm-store-register at
 										(capacity - written) target-slot
-										(physical-slot - 1) argument-width
+										(xmm-slot - 1) argument-width
 									if encoded < 0 [return OUTPUT_FULL]
 									written: written + encoded
 								]
@@ -8307,7 +8432,7 @@ x64-codegen: context [
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/xmm-outgoing-store at
 												(capacity - written) register-id
-												(32 + ((physical-slot - 5) * 8)) argument-width
+												stack-offset argument-width
 										][
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: move-operation-value at (capacity - written)
@@ -8318,7 +8443,7 @@ x64-codegen: context [
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/outgoing-store at
 												(capacity - written)
-												(32 + ((physical-slot - 5) * 8)) 8
+												stack-offset 8
 										]
 									]
 									true [
@@ -8339,7 +8464,7 @@ x64-codegen: context [
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/xmm-outgoing-store at
 												(capacity - written) x64-encoder/XMM0
-												(32 + ((physical-slot - 5) * 8)) argument-width
+												stack-offset argument-width
 										][
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: load-operation-value at (capacity - written)
@@ -8351,7 +8476,7 @@ x64-codegen: context [
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/outgoing-store at
 												(capacity - written)
-												(32 + ((physical-slot - 5) * 8)) 8
+												stack-offset 8
 										]
 									]
 								]
@@ -8359,6 +8484,7 @@ x64-codegen: context [
 								written: written + encoded
 							]
 						]
+						unless register-argument? [stack-slot: stack-slot + 1]
 						source-slot: source-slot + 1
 					]
 					if immediate? [
@@ -8373,7 +8499,7 @@ x64-codegen: context [
 						if result-offset >= 0 [return fail-invalid 153 "emit-call-operation/result-offset#39"]
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-address at (capacity - written)
-							x64-encoder/RCX result-offset
+							either target-abi = ABI_SYSV [x64-encoder/RDI][x64-encoder/RCX] result-offset
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
@@ -8404,6 +8530,16 @@ x64-codegen: context [
 					]
 					at: either measure? [as byte-ptr! 0][code + written]
 					case [
+					syscall? [
+						;-- The kernel takes the call number in RAX and clobbers RCX
+						;-- and R11, which is why the fourth argument rides in R10.
+						encoded: x64-encoder/move-immediate at (capacity - written)
+							x64-encoder/RAX 8 syscall-id 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						at: either measure? [as byte-ptr! 0][code + written]
+						encoded: x64-encoder/syscall at (capacity - written)
+					]
 						target > 0 [
 							encoded: x64-encoder/call-relative at
 								(capacity - written) displacement
@@ -8417,14 +8553,16 @@ x64-codegen: context [
 						]
 					]
 					if encoded < 0 [return OUTPUT_FULL]
-					if import-id > 0 [
-						either measure? [
+					if all [import-id > 0 not syscall?] [
+						either argument-marking? [
 							if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
 							import-refs/import-id: import-refs/import-id + 1
 						][
-							reference-id: import-refs/import-id
-							references/reference-id: function-offset + written + 2
-							import-refs/import-id: reference-id + 1
+							either measure? [0][
+								reference-id: import-refs/import-id
+								references/reference-id: function-offset + written + 2
+								import-refs/import-id: reference-id + 1
+							]
 						]
 					]
 					written: written + encoded
@@ -11072,7 +11210,7 @@ x64-codegen: context [
 								either state/hidden-return? [
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/frame-load at (capacity - written)
-										x64-encoder/RCX slot-displacement
+										either target-abi = ABI_SYSV [x64-encoder/RDI][x64-encoder/RCX] slot-displacement
 											(storage-slots + depth) 8 0
 									if encoded < 0 [return OUTPUT_FULL]
 									written: written + encoded
@@ -12700,6 +12838,7 @@ x64-codegen: context [
 			argument-targets/id: as byte! 0
 			id: id + 1
 		]
+		direct-argument-mark?: false
 		0
 	]
 
@@ -13292,7 +13431,9 @@ x64-codegen: context [
 			task/outgoing-size: function-outgoing/id
 			written: compile-function module work task
 			if written < 0 [return written]
-			if written <> image-function/code-size [return fail-invalid 326 "emit-module-code/image-function/code-size#1"]
+			if written <> image-function/code-size [
+				return fail-invalid 326 "emit-module-code/image-function/code-size#1"
+			]
 			next-instruction: next-instruction + ir-function/instruction-count
 			next-offset: next-offset + ir-function/instruction-count + 1
 			id: id + 1
@@ -13567,7 +13708,20 @@ x64-codegen: context [
 		if status = 0 [status: link-anonymous-globals ctx]
 		if status = 0 [status: place-module-globals ctx]
 		if status = 0 [status: allocate-module-scratch ctx]
-		if status = 0 [status: measure-module-functions ctx]
+		if status = 0 [
+			argument-marking?: true
+			status: measure-module-functions ctx
+			; Direct argument placement decides a producer's destination register
+			; one or two instructions after that producer has already been sized,
+			; so the marking pass necessarily sizes it into RAX. Re-run the whole
+			; sizing pass now that every mark is in place: the sizes it records
+			; are then exactly the sizes the emitting pass will produce.
+			if all [status = 0 direct-argument-mark?][
+				argument-marking?: false
+				status: measure-module-functions ctx
+			]
+			argument-marking?: false
+		]
 		if status = 0 [status: plan-module-image ctx]
 		if status = 0 [status: write-module-metadata ctx]
 		if status = 0 [status: assign-module-references ctx]

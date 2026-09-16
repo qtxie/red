@@ -450,7 +450,7 @@ system-format-ELF: context [
 			structure segments sections commands layout
 			data-size data-reloc rodata-reloc dynamic-size data-imports di-pairs
 			di-name di-off di-size
-			relro-offset plt-offset pos list soname base
+			relro-offset plt-offset gotplt-offset pos list soname base
 			relro-entry dynamic-entry dynamic-section rw-entry gap
 			import-funcs import-vars relro-imports gotplt-count plt-size
 			ehdr-struct phdr-struct shdr-struct dynamic-struct
@@ -854,6 +854,11 @@ system-format-ELF: context [
 				plt-offset: get-layout-address layout ".plt"
 				if job/PIC? [plt-offset: plt-offset - get-layout-address layout ".text"]
 			]
+			gotplt-offset: none
+			if has-layout-element? layout ".got.plt" [
+				gotplt-offset: get-layout-address layout ".got.plt"
+				if job/PIC? [gotplt-offset: gotplt-offset - get-layout-address layout ".text"]
+			]
 			resolve-import-refs
 				job
 				imports
@@ -863,6 +868,7 @@ system-format-ELF: context [
 				get-layout-address layout ".text"
 				relro-offset
 				plt-offset
+				gotplt-offset
 		]
 
 		;; Apply external C object relocations (static linking).
@@ -1686,6 +1692,7 @@ system-format-ELF: context [
 		text-address [integer!]
 		relro-offset [integer! none!]
 		plt-offset [integer! none!]
+		gotplt-offset [integer! none!]
 		/local rel disp index delta opcode target-address
 	] [
 		foreach [libname libimports] any [attempt [job/sections/import/3] []] [
@@ -1700,7 +1707,16 @@ system-format-ELF: context [
 					disp: either issue? symbol [
 						relro-offset + ((size-of machine-word64) * (index - 1))
 					][
-						plt-offset + either job/target = 'ARM64 [16 * (index + 1)][16 * index]
+						either job/target = 'ARM64 [
+							;-- AArch64 branches straight at the stub.
+							plt-offset + (16 * (index + 1))
+						][
+							;-- x86-64 calls indirectly through memory, so the
+							;-- displacement has to name the stub's GOT slot,
+							;-- whose lazy value is the stub itself. The first
+							;-- three slots belong to the dynamic linker.
+							gotplt-offset + ((size-of machine-word64) * (index + 2))
+						]
 					]
 					target-address: either job/PIC? [text-address + disp][disp]
 					foreach callsite callsites [

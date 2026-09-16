@@ -1382,7 +1382,7 @@ simple-io: context [
 				buf: as byte-ptr! system/stack/allocate 256	;-- allocate 1KB on stack
 				blk: block/push-only* 1
 				until [
-					len: getdents64 handle buf 1024
+					len: platform/getdents64 handle buf 1024
 					if len = -1 [fire [TO_ERROR(access cannot-open) filename]]
 
 					i: 0

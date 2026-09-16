@@ -7175,6 +7175,7 @@ compiler-rsir-frontend: context [
 
 	compile-module: func [
 		values scope uses [block!]
+		/local start-id [integer!]
 	][
 		function-base: 0
 		function-return: 0
@@ -7188,11 +7189,19 @@ compiler-rsir-frontend: context [
 		active-line-table: boot-line-table
 		;-- With a platform startup the body is published as ***_start, so it
 		;-- has to exist before the startup statements take its address.
+		start-id: 0
 		if startup-module? [
-			add-module-function '***_start module-code module-locals
+			start-id: add-module-function '***_start module-code module-locals
 				current-file-id module-line-table
 		]
 		stack-module values scope uses
+		;-- Publishing the body that early snapshots its locals block while it is
+		;-- still empty, so the count lowering then reports stays zero and every
+		;-- local the body declares lands outside the published frame. Republish
+		;-- the block now that lowering has declared all of them.
+		if startup-module? [
+			poke functions ((start-id - 1) * 12 + 8) copy module-locals
+		]
 	]
 
 	compile-body: func [

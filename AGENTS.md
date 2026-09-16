@@ -20,13 +20,27 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler66.exe`
-  (65->66, output 5983744 bytes; 66->67 self-compiles to the same size). It carries
-  the x64 fix that widens a narrower left operand with its own signedness
-  (`uint16! 60000 > 50000` used to sign-extend and compare false). Verified with a
-  pinned `SOURCE_DATE_EPOCH`: `hybrid-compiler66 -> p1 -> p2 -> p3`, where p2 and p3
-  differ only in the PE timestamp, checksum, and the output file name baked into the
-  image. Rebuild without the pin and every generation differs in its embedded date.
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler98.exe`
+  (97->98->99, output 6256640 bytes for all three generations). It carries the
+  System V argument classification for Linux-X86-64: `plan-storage` and the
+  function prologue walk the parameters with separate integer and vector
+  counters (6 GPR, 8 XMM) instead of Win64's single slot counter, and stack
+  arguments sit at `rbp+16` and up rather than behind 32 bytes of shadow space.
+  Verified with a pinned `SOURCE_DATE_EPOCH`: 98 and 99 differ in 24 bytes --
+  the PE timestamp, the checksum, the output file name baked into the image,
+  and the absolute addresses that the variable-length build date shifts.
+  On top of that classification, 98 carries the two fixes that kept *Red*
+  (not just Red/System) from running on Linux: `compile-module` published the
+  module body as `***_start` before lowering, which froze its locals count at
+  zero and left every local outside the published frame (`INVALID_IR site 70`
+  on every Red program), and ELF emitted one `DT_NEEDED` per `#import` block
+  instead of one per library.
+  Windows regression at this baseline: 40/40 Red/System units and 57/57 Red
+  units compile and pass, and hello output is byte-identical to the previous
+  compiler apart from the PE timestamp and checksum. Linux x86-64: the Red
+  suite compiles 57/57 and 53/57 run clean; the four failures and the two
+  by-value `union-test` assertions all trace to the System V variadic and
+  aggregate classification, which is still Win64-shaped.
 - `-d` now works for Red programs too, not just Red/System: `??` is lowered to
   `print-line`, and statements without a source location (no file, or line zero
   from synthesized code) simply contribute no line record.

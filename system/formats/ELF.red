@@ -1595,7 +1595,9 @@ system-format-ELF: context [
 		libraries: copy []
 		symbols: copy []
 		foreach [libname libuses] any [attempt [job/sections/import/3] []] [
-			append libraries libname
+			;-- One DT_NEEDED per library: a source file can name the same one
+			;-- from several #import blocks.
+			unless find libraries libname [append libraries libname]
 			foreach [symbol callsites] libuses [
 				append symbols symbol
 			]

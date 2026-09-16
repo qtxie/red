@@ -31,7 +31,12 @@ unless value? 'compiler-command [compiler-command: "red-bootstrap"]
 #either config/show = 'X86-64-Hybrid-only [
 	compiler-toolchain/configure
 		"Windows-X86-64"
-		["Windows-X86-64" "Windows-X86-64-DLL"]
+		[
+			"Windows-X86-64" "Windows-X86-64-DLL"
+			"Darwin-ARM64" "Darwin-ARM64-SO"
+			"Linux-X86-64" "Linux-X86-64-SO"
+			"Linux-ARM64" "Linux-ARM64-SO"
+		]
 		"hybrid-rsir"
 ][none]
 
@@ -40,7 +45,8 @@ print-usage: does [
 		print rejoin [
 			"Usage: " compiler-command
 			" [-c|--dev|-r] [-u] [-d] [-n] [-O0|-O2] [-dlib] "
-			"[-t Windows-X86-64] [--red-only|--loaded-red output.reds] "
+			"[-t Windows-X86-64|Darwin-ARM64|Linux-X86-64|Linux-ARM64] "
+			"[--red-only|--loaded-red output.reds] "
 			"[-o output] source.red|source.reds"
 		]
 		print rejoin [
@@ -81,6 +87,10 @@ libRedRT-target: func [job [object!]][
 			(compiler-system-job/job-get job 'OS) = 'Linux
 			(compiler-system-job/job-get job 'target) = 'X86-64
 		]['Linux-X86-64-SO]
+		all [
+			(compiler-system-job/job-get job 'OS) = 'Linux
+			(compiler-system-job/job-get job 'target) = 'ARM64
+		]['Linux-ARM64-SO]
 		true [none]
 	]
 ]
@@ -260,7 +270,15 @@ compile-source: func [
 					(compiler-system-job/job-get job 'target) = 'ARM64
 					(compiler-system-job/job-get job 'format) = 'Mach-O
 				]
-			][fail-command "hybrid compiler supports Windows-X86-64 PE and Darwin-ARM64 Mach-O targets"]
+				all [
+					(compiler-system-job/job-get job 'OS) = 'Linux
+					any [
+						(compiler-system-job/job-get job 'target) = 'X86-64
+						(compiler-system-job/job-get job 'target) = 'ARM64
+					]
+					(compiler-system-job/job-get job 'format) = 'ELF
+				]
+			][fail-command "hybrid compiler supports Windows-X86-64 PE, Darwin-ARM64 Mach-O and Linux X86-64/ARM64 ELF targets"]
 		][
 			unless all [
 				(compiler-system-job/job-get job 'OS) = 'Windows

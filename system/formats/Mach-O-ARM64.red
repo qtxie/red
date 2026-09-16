@@ -582,6 +582,13 @@ system-format-MachO-ARM64: context [
 		stub-offset: round/to/ceiling (text-offset + length? code) 4
 		text-file-size: round/to/ceiling
 			(stub-offset + (12 * length? functions)) defs/page-size
+		if job/debug? [
+			;-- Append the line and function tables to __data before its length
+			;-- is consumed: the runtime reads them through the __debug-lines,
+			;-- __debug-funcs and *-nb symbols patched here.
+			linker/build-debug-lines job text-offset
+			linker/build-debug-func-names job text-offset
+		]
 		data-offset: text-file-size
 		got-offset: data-offset
 		got-size: 8 * length? imports

@@ -11,21 +11,27 @@ Red/System [
 ]
 
 
+;-- The linker appends these tables as 32-bit records: one machine word holds
+;-- the code addresses of every target the compiler emits for, so the records
+;-- keep the same layout on 32-bit and 64-bit targets.
 __line-record!: alias struct! [				;-- debug lines records associating code addresses and source lines
-	address [byte-ptr!]						;-- native code pointer
+	address [integer!]						;-- native code address
 	line	[integer!]						;-- source line number
 	file	[integer!]						;-- source file name c-string offset (from first record)
 ]
 
-__func-record!: alias struct! [				;-- debug lines records associating code addresses and source lines
-	entry	[byte-ptr!]						;-- entry point of the funcion
+__func-record!: alias struct! [				;-- debug function records associating code addresses and names
+	entry	[integer!]						;-- entry point of the funcion
 	name	[integer!]						;-- function's name c-string offset (from first record)
 	arity	[integer!]						;-- function's arity
-	args	[byte-ptr!]						;-- array of arguments types pointer
+	args	[integer!]						;-- array of arguments types offset (-1 = stack barrier)
 ]
 
-__debug-lines: declare __line-record!		;-- pointer to first debug-lines record (set at link-time)
-__debug-funcs: declare __func-record!		;-- pointer to first debug-funcs record (set at link-time)
+;-- The linker relocates these two symbols onto the tables it appends to the
+;-- data section, so their storage address is the table address, not their
+;-- content: they are read through the address-of operator.
+__debug-lines: declare byte-ptr!			;-- first debug-lines record (set at link-time)
+__debug-funcs: declare byte-ptr!			;-- first debug-funcs record (set at link-time)
 
 __debug-lines-nb: 0							;-- number of line records to consult (set at link-time)
 __debug-funcs-nb: 0							;-- number of function records to consult (set at link-time)
@@ -37,15 +43,19 @@ __print-debug-line: func [
 	address [byte-ptr!]						;-- memory address where the runtime error happened
 	/local base records nb
 ][
-	records: __debug-lines
+	nb: __debug-lines-nb
+	if zero? nb [							;-- no line record was linked in
+		print [lf "*** Cannot determine source file/line info." lf]
+		exit
+	]
+	records: as __line-record! :__debug-lines
 	base: as byte-ptr! records
 	
 	#if any [type <> 'exe PIC? = yes][
 		address: address - system/image/base
 	]
 
-	nb: __debug-lines-nb
-	while [records/address < address][		;-- search for the closest record
+	while [(as byte-ptr! records/address) < address][	;-- search for the closest record
 		records: records + 1
 		nb: nb - 1
 		if zero? nb [
@@ -53,7 +63,7 @@ __print-debug-line: func [
 			exit
 		]
 	]
-	if records/address > address [			;-- if not an exact match, use the closest lower record
+	if (as byte-ptr! records/address) > address [		;-- if not an exact match, use the closest lower record
 		records: records - 1
 	]
 	print [
@@ -85,8 +95,14 @@ __print-debug-stack: func [
 		base		[byte-ptr!]
 		size		[integer!]
 		unused		[float!]
+		links		[ptr-ptr!]
 ][
-	funcs:	as byte-ptr! __debug-funcs
+	funcs:	as byte-ptr! :__debug-funcs
+	nb:		__debug-funcs-nb
+	if zero? nb [							;-- no function record was linked in
+		print-line "*** No debug function record found."
+		exit
+	]
 	frame:	system/debug/frame
 	ret:	as int-ptr! address
 	top:	frame + 2
@@ -97,11 +113,32 @@ __print-debug-stack: func [
 	
 	next-frame: [
 		top: frame
-		frame: as int-ptr! top/1
-		ret:   as int-ptr! top/2
-		top: frame + 2
+		#either target = 'ARM64 [
+			;-- The recorded frame is the [parent frame][return address] record
+			;-- the code generator pushes, and both fields are pointer-sized:
+			;-- a word-wide read would keep half of an address that lives above
+			;-- 4GB, so both links are read at their full width.
+			links: as ptr-ptr! frame
+			frame: as int-ptr! links/value
+			ret: as int-ptr! links/2
+		][
+			frame: as int-ptr! top/1
+			;-- 64-bit frame records are [parent frame][return address] in two
+			;-- pointer-sized slots; 32-bit targets pack them in two words.
+			#either target = 'X86-64 [
+				ret: as int-ptr! top/3
+			][
+				ret: as int-ptr! top/2
+			]
+			top: frame + 2
+		]
 	]
-	if code = 98 [next-frame]				;-- 98 => assertion, jump over the injected ***-on-quit call frame.
+	#either target = 'ARM64 [
+		;-- The ARM64 signal context records the frame the fault interrupted
+		;-- itself, not an injected call frame, so nothing is skipped here.
+	][
+		if code = 98 [next-frame]			;-- 98 => assertion, jump over the injected ***-on-quit call frame.
+	]
 
 	print-line "***   --Frame-- --Code--  --Call--"
 	until [
@@ -116,19 +153,20 @@ __print-debug-stack: func [
 			system/lib-image/base
 		]
 		nb: __debug-funcs-nb
-		records: __debug-funcs
+		records: as __func-record! funcs
 		until [
 			either nb = 1 [
-				end: records/entry + 00010000h	;-- set arbitrary limit of 100KB for last func size
+				end: (as byte-ptr! records/entry) + 00010000h
+											;-- set arbitrary limit of 100KB for last func size
 			][
 				next: records + 1
-				end: next/entry
+				end: as byte-ptr! next/entry
 			]
 			#either any [libRedRT? = yes libRed? = yes PIC? = yes][
-				fun-base: records/entry + base
+				fun-base: (as byte-ptr! records/entry) + base
 				end: end + base 
 			][
-				fun-base: records/entry
+				fun-base: as byte-ptr! records/entry
 			]
 			if all [fun-base <= ret  ret < end][break] ;-- function's body matches!
 			records: records + 1
@@ -144,53 +182,66 @@ __print-debug-stack: func [
 			;]
 		][
 			print ["***   " frame "h " ret "h " as-c-string funcs + records/name]
-			if records/args = as int-ptr! -1 [
+			if records/args = -1 [
 				print [lf lf]
 				exit						;-- exit if a "barrier" function is encountered (set by linker)
 			]
 			s: as-c-string funcs + records/args
 
-			unless zero? records/arity [
-				loop records/arity [
-					print #" "
-					value: top/value
-					switch as-integer s/1 [
-						type-logic!	   [print as-logic value]
-						type-integer!  [print value]
-						type-byte!	   [prin-molded-byte as byte! value]
-						type-float32!  [print as float32! value]
-						type-float!	   [
-							pf: as float-ptr! top
-							unused: prin-float pf/value
-							top: top + 1
-						]
-						type-c-string! [
-							#either debug-safe? = yes [
-								print [as byte-ptr! value #"h"]
-							][
-								prin-byte #"^""
-								prin-only as-c-string value 12
-								if 12 < length? as-c-string value [prin-byte #">"]
-								prin-byte #"^""
+			;-- Argument slot decoding follows the x86 frame layout: the ARM64
+			;-- ABI passes arguments in registers, so a frame slot does not hold
+			;-- the incoming argument the report could print.
+			#either target = 'ARM64 [][
+				unless zero? records/arity [
+					loop records/arity [
+						print #" "
+						value: top/value
+						switch as-integer s/1 [
+							type-logic!	   [print as-logic value]
+							type-integer!  [print value]
+							type-byte!	   [prin-molded-byte as byte! value]
+							type-float32!  [print as float32! value]
+							type-float!	   [
+								pf: as float-ptr! top
+								unused: prin-float pf/value
+								top: top + 1
 							]
+							type-c-string! [
+								#either debug-safe? = yes [
+									print [as byte-ptr! value #"h"]
+								][
+									prin-byte #"^""
+									prin-only as-c-string value 12
+									if 12 < length? as-c-string value [prin-byte #">"]
+									prin-byte #"^""
+								]
+							]
+							default		   [print [as byte-ptr! value #"h"]]
 						]
-						default		   [print [as byte-ptr! value #"h"]]
+						top: top + 1
+						s: s + 1
 					]
-					top: top + 1
-					s: s + 1
 				]
 			]
 			print lf
-			lines: lines - 1
 		]
-		prev: frame
-		next-frame
-		if frame < prev [							;-- if broken frames linked list
-			slot: prev - 4
-			frame: as int-ptr! slot/value			;-- use last known parent frame pointer
-			if frame < prev [break]
+		;-- The report is bounded: a corrupt chain must not spin here.
+		lines: lines - 1
+		either zero? lines [break][
+			prev: frame
+			next-frame
+			#either target = 'ARM64 [
+				if frame < prev [break]				;-- a parent is always higher
+				any [null? frame frame = prev]
+			][
+				if frame < prev [					;-- if broken frames linked list
+					slot: prev - 4
+					frame: as int-ptr! slot/value	;-- use last known parent frame pointer
+					if frame < prev [break]
+				]
+				any [null? frame frame = as int-ptr! -1 frame = prev]
+			]
 		]
-		any [null? frame frame = as int-ptr! -1 frame = prev]
 	]
 ]
 

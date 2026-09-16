@@ -36,7 +36,7 @@ linker: context [
 	cpu-class: 		'IA-32							;-- default target
 	verbose: 		0								;-- logs verbosity level
 	codegen-error: none
-	codegen-header-size: 52
+	codegen-header-size: 60
 	codegen-global-size: 28
 	codegen-export-size: 12
 	codegen-protected: 2
@@ -87,6 +87,8 @@ linker: context [
 		image [binary!]
 		/local size kind entry function-count global-count import-count export-count
 			reference-count names-size expected-kind
+			line-record-count file-count line-offset debug-size debug-names-size
+			line-records debug-files code-off line-no previous-offset
 			code-offset code-size rodata-size data-size functions-size globals-size imports-size
 			exports-size refs-size globals-start imports-start exports-start refs-start
 			names-start rodata-offset data-offset
@@ -116,6 +118,8 @@ linker: context [
 		global-count: read-codegen-word image 40
 		rodata-size: read-codegen-word image 44
 		export-count: read-codegen-word image 48
+		line-record-count: read-codegen-word image 52
+		file-count: read-codegen-word image 56
 		expected-kind: case [
 			job/type = 'exe [3]
 			job/type = 'dll [4]
@@ -126,6 +130,7 @@ linker: context [
 			integer? import-count integer? reference-count integer? names-size
 			integer? code-offset integer? code-size integer? data-size integer? global-count
 			integer? rodata-size integer? export-count
+			integer? line-record-count integer? file-count
 			size = length? image
 			expected-kind > 0 kind = expected-kind
 			function-count > 0
@@ -134,9 +139,13 @@ linker: context [
 				all [kind = 4 entry = 0 export-count > 0]
 			]
 			global-count >= 0 import-count >= 0 export-count >= 0
+			line-record-count >= 0 file-count >= 0
+			any [line-record-count = 0 file-count > 0]
 			reference-count >= 0 names-size > 0
 			code-size > 0 rodata-size >= 0 data-size >= 0
 		][return codegen-fail "native codegen returned an invalid image header"]
+		line-records: make block! (line-record-count * 3)
+		debug-files: make block! file-count
 
 		if function-count > ((size - codegen-header-size) / 36) [
 			return codegen-fail "native codegen function table exceeds its image"
@@ -184,8 +193,65 @@ linker: context [
 		data-offset: rodata-offset + rodata-size
 		remainder: data-offset // 4
 		if remainder <> 0 [data-offset: data-offset + 4 - remainder]
-		unless all [data-size <= (size - data-offset) size = (data-offset + data-size)][
-			return codegen-fail "native codegen data does not finish its image"
+		either line-record-count > 0 [
+			; Debug builds append the sparse line records, the source file table
+			; and the file name bytes after the data section.
+			line-offset: data-offset + data-size
+			remainder: line-offset // 4
+			if remainder <> 0 [line-offset: line-offset + 4 - remainder]
+			debug-size: (line-record-count * 12) + (file-count * 8)
+			if any [file-count <= 0 debug-size > (size - line-offset)][
+				return codegen-fail "native codegen debug lines exceed their image"
+			]
+			debug-names-size: size - line-offset - debug-size
+			previous-offset: 0
+			id: 1
+			while [id <= line-record-count][
+				record: line-offset + ((id - 1) * 12)
+				code-off: read-codegen-word image record
+				line-no: read-codegen-word image (record + 4)
+				file-id: read-codegen-word image (record + 8)
+				unless all [
+					integer? code-off integer? line-no integer? file-id
+					code-off >= 1 code-off <= code-size
+					line-no >= 1 file-id >= 1 file-id <= file-count
+					code-off >= previous-offset
+				][
+					return codegen-fail "native codegen returned an invalid line record"
+				]
+				previous-offset: code-off
+				append line-records code-off
+				append line-records line-no
+				append line-records file-id
+				id: id + 1
+			]
+			id: 1
+			while [id <= file-count][
+				record: line-offset + (line-record-count * 12) + ((id - 1) * 8)
+				name-offset: read-codegen-word image record
+				name-size: read-codegen-word image (record + 4)
+				unless all [
+					integer? name-offset integer? name-size name-size > 0
+					name-size <= debug-names-size
+					name-offset <= (debug-names-size - name-size)
+				][
+					return codegen-fail "native codegen returned an invalid debug file record"
+				]
+				name-bytes: copy/part at image
+					(line-offset + debug-size + name-offset + 1) name-size
+				if find name-bytes 0 [
+					return codegen-fail "native codegen debug file name contains NUL"
+				]
+				append debug-files to file! to string! name-bytes
+				id: id + 1
+			]
+		][
+			if file-count <> 0 [
+				return codegen-fail "native codegen debug file table without line records"
+			]
+			unless size = (data-offset + data-size) [
+				return codegen-fail "native codegen data does not finish its image"
+			]
 		]
 
 		symbols: make map! (function-count + global-count)
@@ -506,7 +572,15 @@ linker: context [
 		]
 		set in job 'sections sections
 		set in job 'symbols symbols
-		set in job 'debug-info none
+		; Debug builds publish the line table extracted from the codegen image.
+		; An empty table keeps the runtime reporting "cannot determine source
+		; file/line info" instead of failing.
+		set in job 'debug-info either job/debug? [
+			reduce ['lines context [
+				records: line-records
+				files: debug-files
+			]]
+		][none]
 		true
 	]
 
@@ -738,13 +812,13 @@ linker: context [
 	build-debug-lines: func [
 		job 	 [object!]
 		code-ptr [integer!]							;-- code memory address
-		/local	records files rec-size buffer table strings record data-buf spec
+		/local	records files rec-size buffer table strings record data-buf spec nb
 	][
 		records: job/debug-info/lines/records
 		files: job/debug-info/lines/files
 
-		rec-size: 12 * (length? records) / 3 		;-- 12 = pointer! + integer! + integer!
-													;--  3 = nb of elements in records (flat structure)
+		nb: (length? records) / 3					;-- 3 = nb of elements in records (flat structure)
+		rec-size: 12 * nb							;-- 12 = pointer! + integer! + integer!
 		buffer:  make binary! rec-size		 		;-- main buffer
 		table:   make block! length? files	 		;-- intermediary file strings offsets table
 		strings: make binary! 32 * length? files	;-- file strings buffer
@@ -765,7 +839,7 @@ linker: context [
 		]
 		data-buf: job/sections/data/2
 		set-ptr job '__debug-lines length? data-buf	;-- patch __debug-lines symbol to point to 1st record
-		set-integer job '__debug-lines-nb (length? records) / 3
+		set-integer job '__debug-lines-nb nb
 
 		append data-buf buffer
 		append data-buf strings
@@ -778,7 +852,7 @@ linker: context [
 		name
 	]
 
-	is-native?: func [name [word! tag!] spec [block!]][
+	is-native?: func [name [word! tag! issue!] spec [block!]][
 		all [spec/1 = 'native not find [_div_ _udiv_ _i64_div_] name]
 	]
 

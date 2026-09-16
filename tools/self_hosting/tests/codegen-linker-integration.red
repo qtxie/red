@@ -25,8 +25,12 @@ system-dialect: context [
 ]
 
 ; Independently constructed image for main -> answer and answer: 42.
+; The 15-word image header carries two trailing debug fields (line-record
+; count, source file count); release images keep both at zero. The metadata
+; moves with the header, but the 16-byte code alignment absorbs the eight
+; extra header bytes, so code, rodata and data keep their old offsets.
 artifact: make binary! 316
-emit artifact [316 3 2 2 1 2 41 240 54 20 1 0 0]
+emit artifact [316 3 2 2 1 2 41 240 54 20 1 0 0 0 0]
 emit artifact [0 8 35 19 32 0 16 0 0]
 emit artifact [8 4 0 35 32 0 16 0 0]
 emit artifact [12 6 16 4 1 1 0]
@@ -41,7 +45,13 @@ append/dup artifact 0 16
 append artifact #{2A000000}
 unless (length? artifact) = 316 [fail "independent native image has the wrong size"]
 
-root: clean-path to file! rejoin [system/options/path %../../../]
+root: clean-path system/options/path
+unless exists? clean-path to file! rejoin [root %system/compiler-rsir-core.red][
+	root: clean-path to file! rejoin [system/options/path %../../../]
+]
+unless exists? clean-path to file! rejoin [root %system/compiler-rsir-core.red][
+	fail "could not locate repository root"
+]
 system/options/path: root
 output: either all [block? system/options/args not empty? system/options/args][
 	clean-path to-red-file to file! system/options/args/1
@@ -71,16 +81,16 @@ compiler-system-job/job-set job 'build-suffix none
 compiler-system-job/job-set job 'verbosity 0
 
 bad-global: copy artifact
-change/part at bad-global 133 int-to-bin/to-bin32 0 4
+change/part at bad-global 141 int-to-bin/to-bin32 0 4
 if linker/load-codegen job bad-global [fail "linker accepted a global inside the bitmap"]
 
 bad-global: copy artifact
-change/part at bad-global 125 int-to-bin/to-bin32 0 4
-change/part at bad-global 129 int-to-bin/to-bin32 8 4
+change/part at bad-global 133 int-to-bin/to-bin32 0 4
+change/part at bad-global 137 int-to-bin/to-bin32 8 4
 if linker/load-codegen job bad-global [fail "linker accepted a duplicate global symbol"]
 
 bad-global: copy artifact
-change/part at bad-global 149 int-to-bin/to-bin32 1 4
+change/part at bad-global 157 int-to-bin/to-bin32 1 4
 if linker/load-codegen job bad-global [fail "linker accepted an invalid global section flag"]
 
 unless linker/load-codegen job artifact [fail linker/codegen-error]
@@ -98,8 +108,8 @@ append protected-artifact #{2A000000}
 append/dup protected-artifact 0 16
 change/part at protected-artifact 37 int-to-bin/to-bin32 16 4
 change/part at protected-artifact 45 int-to-bin/to-bin32 4 4
-change/part at protected-artifact 133 int-to-bin/to-bin32 0 4
-change/part at protected-artifact 149 int-to-bin/to-bin32 2 4
+change/part at protected-artifact 141 int-to-bin/to-bin32 0 4
+change/part at protected-artifact 157 int-to-bin/to-bin32 2 4
 unless linker/load-codegen job protected-artifact [fail linker/codegen-error]
 answer: select job/symbols 'answer
 unless all [block? answer answer/1 = 'constant answer/2 = 0 answer/3 = [18]][
@@ -130,7 +140,7 @@ unless status = 42 [fail ["linked executable returned " status " instead of 42"]
 ; The same code reference now derives the constant address and writes one byte.
 ; The PE page, rather than a compiler-side qualifier, must reject the write.
 fault-artifact: copy protected-artifact
-change/part at fault-artifact 177 int-to-bin/to-bin32 18 4
+change/part at fault-artifact 185 int-to-bin/to-bin32 18 4
 change/part at fault-artifact 256 #{488D0D00000000C60100} 10
 unless linker/load-codegen job fault-artifact [fail linker/codegen-error]
 fault-output: clean-path to file! rejoin [root %build/self-hosting/compact-linker-protect-fault.exe]
@@ -147,19 +157,19 @@ unless status = -1073741819 [
 ]
 
 ; Independently construct a DLL image with one exported entry function.
-dll-artifact: make binary! 136
-emit dll-artifact [136 4 0 1 0 0 24 128 6 0 0 0 1]
+dll-artifact: make binary! 152
+emit dll-artifact [152 4 0 1 0 0 24 144 6 0 0 0 1 0 0]
 emit dll-artifact [0 19 0 6 0 0 0 0 0]
 emit dll-artifact [1 19 5]
 append dll-artifact to binary! "***-dll-entry-pointprobe"
-append/dup dll-artifact 0 (128 - length? dll-artifact)
+append/dup dll-artifact 0 (144 - length? dll-artifact)
 append dll-artifact #{B801000000C3}
-append/dup dll-artifact 0 (136 - length? dll-artifact)
-unless (length? dll-artifact) = 136 [fail "independent DLL image has the wrong size"]
+append/dup dll-artifact 0 (152 - length? dll-artifact)
+unless (length? dll-artifact) = 152 [fail "independent DLL image has the wrong size"]
 
 compiler-system-job/job-set job 'type 'dll
 bad-export: copy dll-artifact
-change/part at bad-export 93 int-to-bin/to-bin32 -1 4
+change/part at bad-export 101 int-to-bin/to-bin32 -1 4
 if linker/load-codegen job bad-export [fail "linker accepted a negative export name offset"]
 
 unless linker/load-codegen job dll-artifact [fail linker/codegen-error]

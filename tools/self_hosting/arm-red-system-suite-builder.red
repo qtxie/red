@@ -195,6 +195,7 @@ arm-suite-builder: context [
 			%exceptions-test.reds %modulo-test.reds %math-mixed-test.reds
 			%overflow-test.reds %vararg-test.reds %infix-test.reds %conditional-test.reds
 			%system-test.reds %atomic-test.reds %queue-test.reds %push-pop-test.reds
+			%pointer-difference-test.reds
 		]
 		if find ["Linux-ARM64" "Darwin-ARM64"] target-name [
 			change find unit-sources %struct-test.reds %struct-x64-test.reds

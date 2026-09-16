@@ -13,6 +13,8 @@ rsir-header!: alias struct! [
 	global-count      [integer!]
 	switch-count      [integer!]
 	export-count      [integer!]
+	line-record-count [integer!]
+	file-count        [integer!]
 ]
 
 rsir-type!: alias struct! [
@@ -91,20 +93,37 @@ rsir-switch!: alias struct! [
 	target [integer!]
 ]
 
+; Sparse debug line entry, emitted only by debug builds. Instruction indices
+; are 1-based within the record's function; file ids index the source file
+; table that follows the line records.
+rsir-line-record!: alias struct! [
+	function-id      [integer!]
+	instruction-index [integer!]
+	line             [integer!]
+	file-id          [integer!]
+]
+
+rsir-file-entry!: alias struct! [
+	name-offset [integer!]
+	name-size   [integer!]
+]
+
 codegen-header!: alias struct! [
-	size            [integer!]
-	module-kind     [integer!]
-	entry-function  [integer!]
-	function-count  [integer!]
-	import-count    [integer!]
-	reference-count [integer!]
-	names-size      [integer!]
-	code-offset     [integer!]
-	code-size       [integer!]
-	data-size       [integer!]
-	global-count    [integer!]
-	rodata-size     [integer!]
-	export-count    [integer!]
+	size              [integer!]
+	module-kind       [integer!]
+	entry-function    [integer!]
+	function-count    [integer!]
+	import-count      [integer!]
+	reference-count   [integer!]
+	names-size        [integer!]
+	code-offset       [integer!]
+	code-size         [integer!]
+	data-size         [integer!]
+	global-count      [integer!]
+	rodata-size       [integer!]
+	export-count      [integer!]
+	line-record-count [integer!]
+	file-count        [integer!]
 ]
 
 codegen-function!: alias struct! [
@@ -144,6 +163,15 @@ codegen-export!: alias struct! [
 	name-size [integer!]
 ]
 
+; One sparse debug line record in the native image, appended after the data
+; section in debug builds. Code offsets are 1-based from the code section
+; start; file ids index the source file table that follows the records.
+codegen-line-record!: alias struct! [
+	code-offset [integer!]
+	line        [integer!]
+	file-id     [integer!]
+]
+
 signature-pairs!: alias struct! [
 	memory        [byte-ptr!]
 	pair-count    [integer!]
@@ -170,10 +198,14 @@ rsir-module!: alias struct! [
 	switches          [byte-ptr!]
 	instructions      [byte-ptr!]
 	strings           [byte-ptr!]
+	lines             [byte-ptr!]
+	file-table        [byte-ptr!]
 	function-count    [integer!]
 	import-count      [integer!]
 	global-count      [integer!]
 	switch-count      [integer!]
 	instruction-count [integer!]
+	line-count        [integer!]
+	file-count        [integer!]
 	strings-size      [integer!]
 ]

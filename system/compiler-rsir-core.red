@@ -57,6 +57,53 @@ system-dialect: context [
 			]
 			quit-on-error
 		]
+
+		;-- The linker builds debug stack traces by asking for the arity and the
+		;-- argument type list of each emitted function. The RSIR function table
+		;-- owns that information, so expose the same two queries as the legacy
+		;-- Red/System compiler core does.
+		debug-functions: none
+
+		invalidate-debug-functions: does [debug-functions: none]
+
+		function-record: func [name [word!] /local record key][
+			if none? debug-functions [
+				debug-functions: make map! 512
+				record: compiler-rsir-frontend/functions
+				while [not tail? record][
+					key: attempt [
+						to word! either binary? record/1 [
+							to string! copy record/1
+						][form record/1]
+					]
+					if key [put debug-functions key record]
+					record: skip record 10
+				]
+			]
+			select debug-functions name
+		]
+
+		get-arity: func [name [word!] return: [integer!] /local record][
+			record: function-record name
+			either record [(length? record/7) / 3][0]
+		]
+
+		get-args-array: func [name [word!] /local record count array parameter id][
+			count: 0
+			array: clear #{}
+			record: function-record name
+			if record [
+				parameter: record/7
+				while [not tail? parameter][
+					count: count + 1
+					id: compiler-rsir-frontend/typed-type-id parameter/2
+					if id >= 1000 [id: 100]
+					append array int-to-bin/to-bin8 id
+					parameter: skip parameter 3
+				]
+			]
+			reduce [count array]
+		]
 	]
 
 	job-backend-mode: func [/local slot][
@@ -91,6 +138,16 @@ system-dialect: context [
 		][0]
 	]
 
+	;-- Selector values shared with system/codegen/codegen-bridge.reds.
+	codegen-abi: does [
+		switch/default job/ABI [
+			win64         [1]
+			sysv          [2]
+			apple-aarch64 [3]
+			aapcs64       [4]
+		][0]
+	]
+
 	validate-job: does [
 		case [
 			job-backend-mode <> 'rsir [
@@ -105,9 +162,17 @@ system-dialect: context [
 					job/OS = 'macOS job/format = 'Mach-O
 					job/target = 'ARM64 job/ABI = 'apple-aarch64
 				]
+				all [
+					job/OS = 'Linux job/format = 'ELF
+					job/target = 'X86-64 job/ABI = 'sysv
+				]
+				all [
+					job/OS = 'Linux job/format = 'ELF
+					job/target = 'ARM64 job/ABI = 'aapcs64
+				]
 			][
 				compiler/throw-error
-					"RSIR frontend supports Win64/PE and Apple AArch64/Mach-O targets"
+					"RSIR frontend supports Win64/PE, Apple AArch64/Mach-O and Linux X86-64/ARM64 ELF targets"
 			]
 			not find [exe dll] job/type [
 				compiler/throw-error "RSIR frontend currently supports only executable and DLL modules"
@@ -130,11 +195,9 @@ system-dialect: context [
 				job/static-link?
 				all [job/OS = 'Windows any [job/PIC? job/PIE?]]
 				all [job/OS = 'macOS not job/PIC?]
+				all [job/OS = 'Linux not all [job/PIC? job/PIE?]]
 			][
 				compiler/throw-error "invalid hybrid target linking mode"
-			]
-			job/debug? [
-				compiler/throw-error "RSIR frontend does not yet support debug builds"
 			]
 			any [
 				not integer? job/opt-level
@@ -177,6 +240,7 @@ system-dialect: context [
 		last-status: -1
 		compiler/pc: none
 		compiler-system-diagnostics/reset
+		compiler/invalidate-debug-functions
 		clear compiler/definitions
 		clear compiler/keywords-list
 	]
@@ -195,6 +259,7 @@ system-dialect: context [
 		compiler/script: clean-path file
 		compiler/pc: source
 		compiler-rsir-frontend/build-date: any [job/compiler-build-date now/utc]
+		compiler-rsir-frontend/source-file: file
 		unless all [not tail? source source/1 = 'Red/System][
 			compiler/throw-error "source is not a Red/System program"
 		]
@@ -203,13 +268,31 @@ system-dialect: context [
 		]
 		compiler-rsir-frontend/definitions: compiler/definitions
 		kind: either job/type = 'dll ['library]['glue]
-		output: either job/libRedRT? [
-			runtime-exports: libRedRT/runtime-exports job
-			compiler-rsir-frontend/compile/runtime/red source 'library runtime-exports
-		][
-			either job/red-pass? [
-				compiler-rsir-frontend/compile/red source kind
-			][compiler-rsir-frontend/compile source kind]
+		output: case [
+			job/libRedRT? [
+				runtime-exports: libRedRT/runtime-exports job
+				either job/debug? [
+					compiler-rsir-frontend/compile/runtime/red/debug
+						source 'library runtime-exports
+				][
+					compiler-rsir-frontend/compile/runtime/red
+						source 'library runtime-exports
+				]
+			]
+			job/red-pass? [
+				either job/debug? [
+					compiler-rsir-frontend/compile/red/debug source kind
+				][
+					compiler-rsir-frontend/compile/red source kind
+				]
+			]
+			true [
+				either job/debug? [
+					compiler-rsir-frontend/compile/debug source kind
+				][
+					compiler-rsir-frontend/compile source kind
+				]
+			]
 		]
 		foreach warning compiler-rsir-frontend/warnings [
 			print ["*** Warning:" warning]
@@ -234,7 +317,7 @@ system-dialect: context [
 		forever [
 			output: make binary! capacity
 			last-status: codegen-module
-				last-rsir output codegen-architecture job/opt-level
+				last-rsir output codegen-architecture codegen-abi job/opt-level
 			if any [last-status <> 4 capacity = MAX-CODE-BYTES][break]
 			capacity: min (capacity * 2) MAX-CODE-BYTES
 		]
@@ -322,6 +405,7 @@ system-dialect: context [
 		/loaded job-data [block!]
 		/local started comp-time file-list file source runtime-source runtime-file
 			red-runtime-source red-runtime-file sys-global-source
+			startup-source startup-file merged-source
 			runtime-linkage embed-red-runtime? output link-time buffer-size result error payload resources icon
 	][
 		started: now/time/precise
@@ -392,6 +476,25 @@ system-dialect: context [
 			]
 		]
 
+		;-- A Linux executable hands its module body to libc: the entry prologue
+		;-- publishes the process stack in a startup register, the spliced
+		;-- startup source turns it into the runtime arguments and calls
+		;-- __libc_start_main. The body then runs as the C main.
+		startup-source: none
+		if all [job/runtime? job/type = 'exe job/OS = 'Linux][
+			startup-file: builtin-source-path runtime-path/start-hybrid.reds
+			compiler/script: startup-file
+			phase-timer/begin 'startup-loader
+			startup-source: loader/process startup-file
+			phase-timer/finish 'startup-loader
+			unless block? startup-source [
+				error: loader/last-error
+				compiler/throw-error either error [
+					rejoin ["platform startup loader: " error/message]
+				]["platform startup loader failed without a diagnostic"]
+			]
+		]
+
 		compiler/script: file
 		phase-timer/begin 'rs-loader
 		either loaded [
@@ -412,8 +515,14 @@ system-dialect: context [
 				payload: job-data/3
 				unless embed-red-runtime? [
 					append runtime-source #import
-					append/only runtime-source [
-						"libRedRT.dll" stdcall [
+					append/only runtime-source reduce [
+						either job/format = 'ELF [
+							"libRedRT.so"
+						][
+							either job/format = 'Mach-O ["libRedRT.dylib"]["libRedRT.dll"]
+						]
+						either job/format = 'PE ['stdcall]['cdecl]
+						[
 							__red-boot: "red/boot" []
 						]
 					]
@@ -430,6 +539,22 @@ system-dialect: context [
 			append/only runtime-source skip source 2
 			if job/type = 'exe [append runtime-source '***-normal-exit]
 			source: runtime-source
+		]
+		if startup-source [
+			unless block? source [
+				compiler/throw-error "platform startup requires a loaded program body"
+			]
+			;-- The startup leads the body: it defines the process argument
+			;-- globals the runtime reads, and the frontend infers a global's
+			;-- type from its first assignment, so it has to be lowered first.
+			merged-source: make block! (length? source) + 2
+			;-- The leading Red/System word is a path: keep it as one element.
+			append/only merged-source source/1
+			append/only merged-source source/2
+			append merged-source #startup-code
+			append/only merged-source skip startup-source 2
+			append merged-source skip source 2
+			source: merged-source
 		]
 
 		phase-timer/begin 'rsir-frontend

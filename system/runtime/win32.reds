@@ -45,7 +45,12 @@ win32-startup-ctx: context [
 
 	;-- Catching runtime errors --
 	;; source: http://msdn.microsoft.com/en-us/library/aa363082(v=VS.85).aspx
-	
+
+	;-- Singleton debug record. system/debug outlives the exception filter
+	;-- frame, so the record is declared once at context level regardless of the
+	;-- storage a function-scope DECLARE would use.
+	__debug-stack: declare __stack!
+
 	SEH_EXCEPTION_POINTERS: alias struct! [
 		error [
 			struct! [
@@ -130,7 +135,7 @@ win32-startup-ctx: context [
 		p: base
 		
 		if 0001007Fh = p/value [					;-- check if CONTEXT layout is full
-			system/debug: declare __stack!			;-- allocate a __stack! struct
+			system/debug: __debug-stack				;-- reuse the context-level struct
 			p: base + 45							;-- extract ebp
 			system/debug/frame: as int-ptr! p/value
 			p: base + 49							;-- extract esp

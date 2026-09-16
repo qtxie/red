@@ -25,8 +25,9 @@ Red [
 #include %../compiler/embedded-assets.red
 #include %formats/PE.red
 #include %formats/Mach-O-ARM64.red
+#include %formats/ELF.red
 
-#if config/OS = 'macOS [
+#if any [config/OS = 'macOS config/OS = 'Linux] [
 	#system-global [
 		#import [
 			LIBC-file cdecl [
@@ -40,7 +41,7 @@ Red [
 	]
 ]
 
-make-system-file-executable: #either config/OS = 'macOS [
+make-system-file-executable: #either any [config/OS = 'macOS config/OS = 'Linux] [
 	routine [path [file!] return: [logic!] /local value [red-file!]][
 		value: as red-file! stack/arguments
 		zero? hybrid-chmod file/to-OS-path value 493
@@ -58,6 +59,13 @@ system-file-extension: func [job [object!]][
 					["hybrid compiler received unsupported Mach-O target:" job/target]
 			]
 			select system-format-MachO-ARM64/defs/extensions job/type
+		]
+		job/format = 'ELF [
+			unless find [X86-64 ARM64] job/target [
+				system-dialect/compiler/throw-error
+					["hybrid compiler received unsupported ELF target:" job/target]
+			]
+			select system-format-ELF/defs/extensions job/type
 		]
 		true [
 			system-dialect/compiler/throw-error
@@ -82,6 +90,13 @@ emit-system-file: func [job [object!]][
 			]
 			system-format-MachO-ARM64/build job
 		]
+		job/format = 'ELF [
+			unless find [X86-64 ARM64] job/target [
+				system-dialect/compiler/throw-error
+					["hybrid compiler received unsupported ELF target:" job/target]
+			]
+			system-format-ELF/build job
+		]
 		true [
 			system-dialect/compiler/throw-error
 				["hybrid compiler received unsupported output format:" job/format]
@@ -98,6 +113,12 @@ finish-system-file: func [job [object!] file [file!]][
 					["could not mark generated Mach-O executable:" file]
 			]
 		]
+		all [job/format = 'ELF job/type = 'exe][
+			unless make-system-file-executable file [
+				system-dialect/compiler/throw-error
+					["could not mark generated ELF executable:" file]
+			]
+		]
 		true [none]
 	]
 ]
@@ -109,6 +130,11 @@ finish-system-file: func [job [object!] file [file!]][
 ; this focused closure.
 external-linker: context [
 	crt-entry: crodata-base: cafter-base: none
+	; ELF format hooks: the hybrid compiler merges no C objects, so the TLS
+	; template, EHABI index and constructor stub variables stay empty.
+	cpp-entry: etls-off: exidx-range: none
+	etls-memsz: etls-filesz: 0
+	etls-align: 1
 
 	resolve-libname: func [name [string!] format [word!] static? [logic!]][
 		if static? [
@@ -118,6 +144,7 @@ external-linker: context [
 		switch/default format [
 			PE [rejoin [name ".dll"]]
 			Mach-O [name]
+			ELF [rejoin [name ".so"]]
 		][
 			system-dialect/compiler/throw-error
 				["unsupported hybrid import format:" format]

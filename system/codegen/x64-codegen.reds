@@ -3,6 +3,7 @@ Red/System [
 	File:  %x64-codegen.reds
 ]
 
+#include %codegen-diag.reds
 #include %x64-encoder.reds
 #include %codegen-model.reds
 
@@ -218,6 +219,7 @@ x64-module-context!: alias struct! [
 	code-offset             [integer!]
 	rodata-offset           [integer!]
 	data-offset             [integer!]
+	line-offset             [integer!]
 	total-size              [integer!]
 	; The name area and the reference table, filled as the metadata is written.
 	names                   [byte-ptr!]
@@ -226,7 +228,7 @@ x64-module-context!: alias struct! [
 ]
 
 x64-codegen: context [
-	RSIR_HEADER_SIZE:      36
+	RSIR_HEADER_SIZE:      44
 	RSIR_TYPE_SIZE:        20
 	RSIR_MEMBER_SIZE:       8
 	RSIR_IMPORT_SIZE:      32
@@ -237,14 +239,23 @@ x64-codegen: context [
 	RSIR_INITIALIZER_SIZE: 16
 	RSIR_SWITCH_SIZE:      12
 	RSIR_INSTRUCTION_SIZE: 16
+	RSIR_LINE_SIZE:        16
+	RSIR_FILE_ENTRY_SIZE:   8
 
-	IMAGE_HEADER_SIZE:   52
+	IMAGE_HEADER_SIZE:   60
 	IMAGE_FUNCTION_SIZE: 36
 	IMAGE_GLOBAL_SIZE:   28
 	IMAGE_IMPORT_SIZE:   24
 	IMAGE_EXPORT_SIZE:   12
 	BITMAP_SIZE:         16
 	FUNCTION_ALIGNMENT:  32
+
+	ABI_WIN64: 1
+	ABI_SYSV:  2
+	; The calling convention of the module being generated. Win64 is the
+	; original target; System V differs in argument registers, stack alignment,
+	; caller-saved registers and in how the entry hands over to libc.
+	target-abi: ABI_WIN64
 
 	CDECL:          1
 	STDCALL:        2
@@ -272,6 +283,11 @@ x64-codegen: context [
 	VARIABLE_FLAGS: 56
 	CALLABLE_FLAGS: 1023
 	FUNCTION_FLAGS: CALLABLE_FLAGS
+	;-- Imports reuse the NO_RETURN bit to mark a raw syscall: the two never
+	;-- meet, one lives on functions, the other on imports. The number is
+	;-- carried in the bits above it.
+	SYSCALL_FLAG:              1024
+	SYSCALL_ID_SHIFT:          11
 	INLINE:          1
 	PROTECTED:       2
 	TAGGED_UNION:    1
@@ -386,9 +402,18 @@ x64-codegen: context [
 	ANY_POINTER_REF: -16
 
 	INVALID_IR:  -1
+
 	UNSUPPORTED: -2
 	OUTPUT_FULL: -3
 	PREPARE_SKIPPED: 1
+
+	fail-invalid: func [site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail INVALID_IR codegen-diag/FILE_X64 site site-name
+	]
+
+	fail-unsupported: func [site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail UNSUPPORTED codegen-diag/FILE_X64 site site-name
+	]
 
 	align: func [value boundary [integer!] return: [integer!]
 		/local remainder padding [integer!]
@@ -2385,7 +2410,7 @@ x64-codegen: context [
 							argument-targets/cursor: as byte! physical-slot
 						][
 							if argument-targets/cursor <> as byte! physical-slot [
-								return INVALID_IR
+								return fail-invalid 1 "plan-literal-call-targets/argument-targets/cursor#1"
 							]
 						]
 						cursor: cursor - 1
@@ -2431,7 +2456,7 @@ x64-codegen: context [
 					offsets/index: 0
 				]
 				all [index <= fn/parameter-count physical-slot > 4][
-					if parameter/type = 0 [return INVALID_IR]
+					if parameter/type = 0 [return fail-invalid 2 "plan-storage/fn/parameter-count#1"]
 					if (physical-slot - 5) > ((2147483647 - 48) / 8)[
 						return OUTPUT_FULL
 					]
@@ -2441,13 +2466,13 @@ x64-codegen: context [
 					offsets/index: 0
 				]
 				true [
-					if parameter/type = 0 [return INVALID_IR]
+					if parameter/type = 0 [return fail-invalid 3 "plan-storage/fn/parameter-count#2"]
 					size: 8
 					alignment: 8
 					if parameter/flags = INLINE [
 						size: 0
 						alignment: 0
-						unless layout-type parameter/type true table 0 :size :alignment [return INVALID_IR]
+						unless layout-type parameter/type true table 0 :size :alignment [return fail-invalid 4 "plan-storage/table#3"]
 						if all [
 							index <= fn/parameter-count
 							not win64-register-size? size
@@ -2456,9 +2481,9 @@ x64-codegen: context [
 							alignment: 8
 						]
 					]
-					if used > (2147483647 - size)[return INVALID_IR]
+					if used > (2147483647 - size)[return fail-invalid 5 "plan-storage/alignment#4"]
 					used: align (used + size) alignment
-					if used < 0 [return INVALID_IR]
+					if used < 0 [return fail-invalid 6 "plan-storage/alignment#5"]
 					offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
 				]
 			]
@@ -2510,7 +2535,7 @@ x64-codegen: context [
 					(logical-kind signature-ref table) = -8
 				][
 					signature-ref: canonical-type signature-ref table
-					if signature-ref <= 0 [return INVALID_IR]
+					if signature-ref <= 0 [return fail-invalid 7 "plan-call-results/signature-ref#1"]
 					metadata: as rsir-type! (table/types
 						+ ((signature-ref - 1) * RSIR_TYPE_SIZE))
 					signature-ref: metadata/target
@@ -2518,14 +2543,14 @@ x64-codegen: context [
 				ref: 0
 				flags: 0
 				either target > 0 [
-					if target > function-count [return INVALID_IR]
+					if target > function-count [return fail-invalid 8 "plan-call-results/function-count#2"]
 					callee: as rsir-function! (functions
 						+ ((target - 1) * RSIR_FUNCTION_SIZE))
 					ref: callee/return-type
 					flags: callee/flags
 				][either target < 0 [
 					import-id: 0 - target
-					if any [import-id <= 0 import-id > import-count][return INVALID_IR]
+					if any [import-id <= 0 import-id > import-count][return fail-invalid 9 "plan-call-results/import-id#3"]
 					imported: as rsir-import! (imports
 						+ ((import-id - 1) * RSIR_IMPORT_SIZE))
 					ref: imported/type
@@ -2534,7 +2559,7 @@ x64-codegen: context [
 					if any [
 						not valid-type-ref? signature-ref table
 						(logical-kind signature-ref table) <> -4
-					][return INVALID_IR]
+					][return fail-invalid 10 "plan-call-results/signature-ref#4"]
 					signature: as rsir-type! (table/types
 						+ (((canonical-type signature-ref table) - 1)
 							* RSIR_TYPE_SIZE))
@@ -2553,10 +2578,10 @@ x64-codegen: context [
 				][
 					size: aggregate-size ref table
 					if any [size <= 0 used > (2147483647 - size)][
-						return INVALID_IR
+						return fail-invalid 11 "plan-call-results#5"
 					]
 					used: align (used + size) 16
-					if used < 0 [return INVALID_IR]
+					if used < 0 [return fail-invalid 12 "plan-call-results#6"]
 					offsets/index: 0 - (x64-encoder/BASE_FRAME_SIZE + used)
 				]
 			]
@@ -2991,13 +3016,14 @@ x64-codegen: context [
 			function-base: function-base + fn/instruction-count
 			id: id + 1
 		]
-		if function-base <> (instruction-count + 1) [return INVALID_IR]
+		if function-base <> (instruction-count + 1) [return fail-invalid 13 "infer-effects/function-base#1"]
 
 		scratch/effect-queue-tail: 0
 		scratch/resume-queue-tail: 0
 		id: 1
 		while [id <= function-count][
 			fn: as rsir-function! (functions + ((id - 1) * RSIR_FUNCTION_SIZE))
+			codegen-diag/mark-function id
 			function-base: function-starts/id
 			catch-caller?: (fn/flags and CATCH_FLAG) <> 0
 			index: 1
@@ -3008,12 +3034,13 @@ x64-codegen: context [
 				]
 				instruction: as rsir-instruction! (instructions
 					+ ((global-index - 1) * RSIR_INSTRUCTION_SIZE))
+				codegen-diag/mark-instruction index instruction/op
 				if any [instruction/op < OP_LITERAL instruction/op > OP_SUB_RETURN][
-					return INVALID_IR
+					return fail-invalid 14 "infer-effects/instruction/op#2"
 				]
 				if all [instruction/op = OP_FAIL any [
 					instruction/a <= 0 instruction/b <> 0 instruction/c <> 0
-				]][return INVALID_IR]
+				]][return fail-invalid 15 "infer-effects/instruction/a#3"]
 				case [
 					instruction/op = OP_RETURN [
 						queue-effect scratch global-index EFFECT_RETURNS
@@ -3027,24 +3054,24 @@ x64-codegen: context [
 						instruction/op = OP_CATCH
 					][
 						target: instruction/a
-						if any [target <= 0 target > fn/instruction-count][return INVALID_IR]
+						if any [target <= 0 target > fn/instruction-count][return fail-invalid 16 "infer-effects/fn/instruction-count#4"]
 						global-target: function-base + target - 1
 						record-effect-use scratch global-target global-index
 					]
 					instruction/op = OP_BINARY [
-						if instruction/b < 0 [return INVALID_IR]
+						if instruction/b < 0 [return fail-invalid 17 "infer-effects/instruction/b#5"]
 						if instruction/b > 0 [
 							target: instruction/b
-							if target >= index [return INVALID_IR]
+							if target >= index [return fail-invalid 18 "infer-effects/instruction/b#6"]
 							overflow-scope: as rsir-instruction! (instructions
 								+ ((function-base + target - 2) * RSIR_INSTRUCTION_SIZE))
 							unless all [
 								overflow-scope/op = OP_OVERFLOW
 								overflow-scope/b = 0 overflow-scope/c = 0
-							][return INVALID_IR]
+							][return fail-invalid 19 "infer-effects/overflow-scope/b#7"]
 							target: overflow-scope/a
 							if any [target <= index target > fn/instruction-count][
-								return INVALID_IR
+								return fail-invalid 20 "infer-effects/fn/instruction-count#8"
 							]
 							global-target: function-base + target - 1
 							record-effect-use scratch global-target global-index
@@ -3056,19 +3083,19 @@ x64-codegen: context [
 							instruction/a < 0 instruction/b <= 0
 							instruction/b > switch-count
 							instruction/a > (switch-count - instruction/b)
-						][return INVALID_IR]
+						][return fail-invalid 21 "infer-effects/instruction/a#9"]
 						global-target: function-base + instruction/c - 1
 						record-effect-use scratch global-target global-index
 						case-index: 0
 						while [case-index < instruction/b][
 							switch-id: instruction/a + case-index + 1
 							; Each dense switch record is one CFG edge and has one owner.
-							if switch-users/switch-id <> 0 [return INVALID_IR]
+							if switch-users/switch-id <> 0 [return fail-invalid 22 "infer-effects/switch-users/switch-id#10"]
 							switch-case: as rsir-switch! (switches
 								+ ((switch-id - 1) * RSIR_SWITCH_SIZE))
 							target: switch-case/target
 							if any [target <= 0 target > fn/instruction-count][
-								return INVALID_IR
+								return fail-invalid 23 "infer-effects/fn/instruction-count#11"
 							]
 							global-target: function-base + target - 1
 							record-switch-effect-use scratch global-target global-index switch-id
@@ -3077,7 +3104,7 @@ x64-codegen: context [
 					]
 					instruction/op = OP_CALL [
 						if instruction/a > 0 [
-							if instruction/a > function-count [return INVALID_IR]
+							if instruction/a > function-count [return fail-invalid 24 "infer-effects/instruction/a#12"]
 							unless catch-caller? [
 								target: instruction/a
 								global-target: function-starts/target
@@ -3087,7 +3114,7 @@ x64-codegen: context [
 					]
 					instruction/op = OP_SUB_CALL [
 						target: instruction/a
-						if any [target <= 0 target > fn/instruction-count][return INVALID_IR]
+						if any [target <= 0 target > fn/instruction-count][return fail-invalid 25 "infer-effects/fn/instruction-count#13"]
 						global-target: function-base + target - 1
 						record-effect-use scratch global-target global-index
 					]
@@ -4197,7 +4224,7 @@ x64-codegen: context [
 			]
 		]
 		state/sub-frame: either measure? [8][
-			if task/outgoing-size < 0 [return INVALID_IR]
+			if task/outgoing-size < 0 [return fail-invalid 26 "validate-function-structure/task/outgoing-size#1"]
 			if task/outgoing-size > (2147483647 - 23)[return OUTPUT_FULL]
 			(align task/outgoing-size 16) + 8
 		]
@@ -4242,10 +4269,10 @@ x64-codegen: context [
 			live?: (instruction-effects/index and EFFECT_LIVE) <> 0
 			catch-depths/index: state/catch-level
 			if instruction/op = OP_ENTRY [
-				if any [state/catch-level <> 0 state/current-sub >= 0][return INVALID_IR]
+				if any [state/catch-level <> 0 state/current-sub >= 0][return fail-invalid 27 "validate-function-structure/state/catch-level#2"]
 				case [
 					instruction/a = 0 [
-						if any [instruction/b <> 0 instruction/c <> 0][return INVALID_IR]
+						if any [instruction/b <> 0 instruction/c <> 0][return fail-invalid 28 "validate-function-structure/instruction/b#3"]
 						state/main-entry-count: state/main-entry-count + 1
 						state/current-sub: 0
 					]
@@ -4253,38 +4280,38 @@ x64-codegen: context [
 						unless all [
 							any [instruction/b = 0 valid-type-ref? instruction/b table]
 							instruction/c = 0
-						][return INVALID_IR]
+						][return fail-invalid 29 "validate-function-structure/instruction/c#4"]
 						if all [
 							instruction/b <> 0
 							not machine-value? instruction/b 0 table
-						][return UNSUPPORTED]
+						][return fail-unsupported 30 "validate-function-structure/instruction/b#5"]
 						state/sub-entry-count: state/sub-entry-count + 1
 						state/current-sub: index
 					]
-					true [return INVALID_IR]
+					true [return fail-invalid 31 "validate-function-structure/state/current-sub#6"]
 				]
 			]
 			if instruction/op = OP_SUB_CALL [
 				unless all [
 					instruction/a > 0 instruction/a <= fn/instruction-count
 					instruction/a <> state/current-sub
-				][return INVALID_IR]
+				][return fail-invalid 32 "validate-function-structure/instruction/a#7"]
 				sub-entry: as rsir-instruction! (instructions
 					+ ((instruction/a - 1) * RSIR_INSTRUCTION_SIZE))
 				unless all [
 					sub-entry/op = OP_ENTRY sub-entry/a = 1
 					instruction/b = sub-entry/b instruction/c = 0
-				][return INVALID_IR]
+				][return fail-invalid 33 "validate-function-structure/instruction/b#8"]
 			]
 			if instruction/op = OP_SUB_RETURN [
-				if state/current-sub <= 0 [return INVALID_IR]
+				if state/current-sub <= 0 [return fail-invalid 34 "validate-function-structure/state/current-sub#9"]
 				sub-entry: as rsir-instruction! (instructions
 					+ ((state/current-sub - 1) * RSIR_INSTRUCTION_SIZE))
 				unless all [
 					state/catch-level = 0
 					instruction/a = sub-entry/b
 					instruction/b = 0 instruction/c = 0
-				][return INVALID_IR]
+				][return fail-invalid 35 "validate-function-structure/instruction/b#10"]
 				state/current-sub: -1
 			]
 			if instruction/op = OP_CATCH [
@@ -4293,7 +4320,7 @@ x64-codegen: context [
 					instruction/a > index instruction/a <= fn/instruction-count
 					instruction/b = catch-unwind
 					instruction/c = 0
-				][return INVALID_IR]
+				][return fail-invalid 36 "validate-function-structure/instruction/c#11"]
 				catch-scope: as rsir-instruction! (instructions
 					+ ((instruction/a - 1) * RSIR_INSTRUCTION_SIZE))
 				unless all [
@@ -4301,7 +4328,7 @@ x64-codegen: context [
 					catch-scope/a = index
 					catch-scope/b = instruction/b
 					catch-scope/c = 0
-				][return INVALID_IR]
+				][return fail-invalid 37 "validate-function-structure/catch-scope/c#12"]
 				state/catch-level: state/catch-level + 1
 				if live? [
 					if state/catch-level > state/catch-capacity [state/catch-capacity: state/catch-level]
@@ -4311,18 +4338,18 @@ x64-codegen: context [
 				unless all [
 					state/catch-level > 0 instruction/b = state/catch-level instruction/c = 0
 					instruction/a > 0 instruction/a < index
-				][return INVALID_IR]
+				][return fail-invalid 38 "validate-function-structure/instruction/a#13"]
 				catch-scope: as rsir-instruction! (instructions
 					+ ((instruction/a - 1) * RSIR_INSTRUCTION_SIZE))
 				unless all [
 					catch-scope/op = OP_CATCH catch-scope/a = index
 					catch-scope/b = instruction/b
-				][return INVALID_IR]
+				][return fail-invalid 39 "validate-function-structure/catch-scope/b#14"]
 				state/catch-level: state/catch-level - 1
 			]
 			if all [instruction/op = OP_JUMP any [
 				instruction/c < 0 instruction/c > state/catch-level
-			]][return INVALID_IR]
+			]][return fail-invalid 40 "validate-function-structure/instruction/c#15"]
 			if all [live? instruction/op = OP_MEMBER instruction/b > 0][
 				state/tag-capacity: state/tag-capacity + 1
 			]
@@ -4408,7 +4435,7 @@ x64-codegen: context [
 			state/catch-level <> 0 state/current-sub > 0
 			all [state/sub-entry-count > 0 state/main-entry-count <> 1]
 			all [state/sub-entry-count = 0 state/main-entry-count <> 0]
-		][return INVALID_IR]
+		][return fail-invalid 41 "validate-function-structure/state/sub-entry-count#16"]
 		0
 	]
 
@@ -4493,7 +4520,7 @@ x64-codegen: context [
 					ALLOCATION_XMM
 				][ALLOCATION_GPR]
 				if slot <= fn/parameter-count [
-					if state/allocation-count >= state/storage-count [return INVALID_IR]
+					if state/allocation-count >= state/storage-count [return fail-invalid 42 "discover-storage-intervals/state/allocation-count#1"]
 					state/allocation-count: state/allocation-count + 1
 					order-index: state/allocation-count
 					allocation-order/order-index: slot
@@ -4544,7 +4571,7 @@ x64-codegen: context [
 					either direct? [
 						if interval/start = 0 [
 							if state/allocation-count >= state/storage-count [
-								return INVALID_IR
+								return fail-invalid 43 "discover-storage-intervals/state/allocation-count#2"
 							]
 							state/allocation-count: state/allocation-count + 1
 							order-index: state/allocation-count
@@ -4629,7 +4656,7 @@ x64-codegen: context [
 				instruction/a < index
 			][
 				target: instruction/a
-				if target <= 0 [return INVALID_IR]
+				if target <= 0 [return fail-invalid 44 "extend-loop-intervals/instruction/a#1"]
 				loop-home-count: 0
 				slot: 1
 				while [slot <= state/storage-count][
@@ -4823,7 +4850,7 @@ x64-codegen: context [
 		order-index: 1
 		while [order-index <= state/allocation-count][
 			slot: allocation-order/order-index
-			if any [slot <= 0 slot > state/storage-count][return INVALID_IR]
+			if any [slot <= 0 slot > state/storage-count][return fail-invalid 45 "qualify-storage-intervals/state/storage-count#1"]
 			interval: as x64-live-interval! (view/allocation-intervals
 				+ ((slot - 1) * size? x64-live-interval!))
 			unsafe?: any [
@@ -4935,7 +4962,7 @@ x64-codegen: context [
 				if ordinal > 0 [
 					owner-index: ((current/class - 1)
 						* ALLOCATION_REGISTER_COUNT) + ordinal
-					if owners/owner-index <> 0 [return INVALID_IR]
+					if owners/owner-index <> 0 [return fail-invalid 46 "allocate-storage-intervals/owners/owner-index#1"]
 					owners/owner-index: slot
 				]
 			]
@@ -4947,7 +4974,7 @@ x64-codegen: context [
 		while [order-index <= state/allocation-count][
 			slot: allocation-order/order-index
 			if any [slot <= 0 slot > state/storage-count][
-				return INVALID_IR
+				return fail-invalid 47 "allocate-storage-intervals/state/storage-count#2"
 			]
 			current: as x64-live-interval! (view/allocation-intervals
 				+ ((slot - 1) * size? x64-live-interval!))
@@ -4962,7 +4989,7 @@ x64-codegen: context [
 					current/register = ALLOCATION_UNASSIGNED
 					current/register = ALLOCATION_SPILLED
 				]
-			][return INVALID_IR]
+			][return fail-invalid 48 "allocate-storage-intervals/current/register#3"]
 			previous-start: current/start
 
 			if current/register = ALLOCATION_UNASSIGNED [
@@ -4972,13 +4999,13 @@ x64-codegen: context [
 					owner-index: owner-base + ordinal
 					owner-slot: owners/owner-index
 					if owner-slot > 0 [
-						if owner-slot > state/storage-count [return INVALID_IR]
+						if owner-slot > state/storage-count [return fail-invalid 49 "allocate-storage-intervals/state/storage-count#4"]
 						other: as x64-live-interval! (view/allocation-intervals
 							+ ((owner-slot - 1) * size? x64-live-interval!))
 						if any [
 							other/class <> current/class
 							other/register <> allocation-register current/class ordinal
-						][return INVALID_IR]
+						][return fail-invalid 50 "allocate-storage-intervals/other/register#5"]
 						if other/end < current/start [owners/owner-index: 0]
 					]
 					ordinal: ordinal + 1
@@ -5008,7 +5035,7 @@ x64-codegen: context [
 					while [ordinal <= ALLOCATION_REGISTER_COUNT][
 						owner-index: owner-base + ordinal
 						owner-slot: owners/owner-index
-						if owner-slot <= 0 [return INVALID_IR]
+						if owner-slot <= 0 [return fail-invalid 51 "allocate-storage-intervals/owner-slot#6"]
 						other: as x64-live-interval! (view/allocation-intervals
 							+ ((owner-slot - 1) * size? x64-live-interval!))
 						if (other/flags and ALLOCATION_FIXED) = 0 [
@@ -5247,15 +5274,15 @@ x64-codegen: context [
 			if any [
 				fn/return-type = 0
 				(aggregate-size fn/return-type table) <= 0
-			][return INVALID_IR]
+			][return fail-invalid 52 "plan-function-frame/fn/return-type#1"]
 		][
 			if all [
 				fn/return-type <> 0
 				not machine-value? fn/return-type 0 table
-			][return UNSUPPORTED]
+			][return fail-unsupported 53 "plan-function-frame/fn/return-type#2"]
 		]
 		state/hidden-return?: win64-hidden-return? fn/return-type fn/flags table
-		if all [entry? fn/parameter-count <> 0][return UNSUPPORTED]
+		if all [entry? fn/parameter-count <> 0][return fail-unsupported 54 "plan-function-frame/fn/parameter-count#3"]
 
 		state/storage-slots: storage-slots
 		0
@@ -5301,13 +5328,26 @@ x64-codegen: context [
 		state/fallthrough?: true
 		written: 0
 		if entry? [
+			if target-abi = ABI_SYSV [
+				;-- Publish the kernel-provided stack pointer before the frame is
+				;-- built: the startup code reads argc at [r12] and argv right
+				;-- after it, then hands over to libc.
+				at: either measure? [as byte-ptr! 0][code + written]
+				encoded: x64-encoder/move-register at (capacity - written)
+					x64-encoder/R12 x64-encoder/RSP 8
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+			]
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/prolog at (capacity - written) 0 -1
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 
+			;-- Win64 reserves shadow space for the call into the body; a System
+			;-- V call only has to leave RSP 16-byte aligned.
 			at: either measure? [as byte-ptr! 0][code + written]
-			encoded: x64-encoder/allocate-frame at (capacity - written) 32
+			encoded: x64-encoder/allocate-frame at (capacity - written)
+				either target-abi = ABI_SYSV [8][32]
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 
@@ -5345,7 +5385,7 @@ x64-codegen: context [
 		allocation-size: 0
 		if not measure? [
 			frame-extra: task/frame-size - x64-encoder/BASE_FRAME_SIZE
-			if frame-extra < 0 [return INVALID_IR]
+			if frame-extra < 0 [return fail-invalid 55 "emit-function-prologue/frame-extra#1"]
 			at: code + written
 			encoded: x64-encoder/allocate-frame at (capacity - written) frame-extra
 			if encoded < 0 [return OUTPUT_FULL]
@@ -5370,14 +5410,14 @@ x64-codegen: context [
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
 			aggregate-argument?: parameter/flags = INLINE
 			either aggregate-argument? [
-				unless aggregate-ref? parameter/type table [return INVALID_IR]
+				unless aggregate-ref? parameter/type table [return fail-invalid 56 "emit-function-prologue/aggregate-ref#2"]
 				aggregate-width: win64-aggregate-width parameter/type table
 				width: either aggregate-width = 0 [8][aggregate-width]
 				signed: 0
 				floating?: false
 			][
 				unless machine-value? parameter/type 0 table [
-					return UNSUPPORTED
+					return fail-unsupported 57 "emit-function-prologue/machine-value#3"
 				]
 				width: value-width parameter/type 0 table
 				signed: either signed-type? parameter/type table [1][0]
@@ -5414,13 +5454,13 @@ x64-codegen: context [
 				unless all [
 					parameter/flags = 0
 					machine-value? parameter/type 0 table
-				][return INVALID_IR]
+				][return fail-invalid 58 "emit-function-prologue/machine-value#4"]
 				width: value-width parameter/type 0 table
-				unless any [width = 4 width = 8][return INVALID_IR]
+				unless any [width = 4 width = 8][return fail-invalid 59 "emit-function-prologue/table#5"]
 				signed: either signed-type? parameter/type table [1][0]
 				floating?: float-type? parameter/type table
 				target-slot: storage-displacement storage-offsets index
-				if target-slot = 0 [return INVALID_IR]
+				if target-slot = 0 [return fail-invalid 60 "emit-function-prologue/target-slot#6"]
 				at: either measure? [as byte-ptr! 0][code + written]
 				encoded: either floating? [
 					x64-encoder/xmm-frame-load at (capacity - written)
@@ -5452,7 +5492,7 @@ x64-codegen: context [
 				storage-size: 0
 				storage-align: 0
 				unless layout-type parameter/type true table 0 :storage-size :storage-align [
-					return INVALID_IR
+					return fail-invalid 61 "emit-function-prologue/table#7"
 				]
 				at: either measure? [as byte-ptr! 0][code + written]
 				encoded: clear-frame-storage at (capacity - written)
@@ -5491,9 +5531,9 @@ x64-codegen: context [
 			target-offset: fn/instruction-count + 1
 			instruction-offsets/target-offset: written
 		]
-		if state/tag-count <> state/tag-capacity [return INVALID_IR]
-		if state/fallthrough? [return INVALID_IR]
-		if all [not measure? state/max-outgoing <> task/outgoing-size][return INVALID_IR]
+		if state/tag-count <> state/tag-capacity [return fail-invalid 62 "finalize-function/state/tag-count#1"]
+		if state/fallthrough? [return fail-invalid 63 "finalize-function/state/fallthrough#2"]
+		if all [not measure? state/max-outgoing <> task/outgoing-size][return fail-invalid 64 "finalize-function/state/max-outgoing#3"]
 
 		if measure? [
 			task/outgoing-size: state/max-outgoing
@@ -5719,7 +5759,7 @@ x64-codegen: context [
 					unless all [
 						valid-type-ref? ref table
 						machine-value? ref 0 table
-					][return INVALID_IR]
+					][return fail-invalid 65 "emit-value-operation/machine-value#1"]
 					depth: depth + 1
 					if depth > state/max-depth [state/max-depth: depth]
 					stack-types/depth: ref
@@ -5872,7 +5912,7 @@ x64-codegen: context [
 							register-id: either all [not floating? physical-slot <= 4][
 								argument-register physical-slot
 							][x64-encoder/RAX]
-							if register-id < 0 [return INVALID_IR]
+							if register-id < 0 [return fail-invalid 66 "emit-value-operation/register-id#2"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/move-immediate-compact at
 								(capacity - written) register-id target-width
@@ -6038,9 +6078,9 @@ x64-codegen: context [
 						instruction/b >= 0 instruction/c > 0
 						instruction/c <= strings-size
 						instruction/b <= (strings-size - instruction/c)
-					][return INVALID_IR]
+					][return fail-invalid 67 "emit-value-operation/instruction/b#3"]
 					at: strings + literal-end - 1
-					if at/1 <> as byte! 0 [return INVALID_IR]
+					if at/1 <> as byte! 0 [return fail-invalid 68 "emit-value-operation/at#4"]
 					if all [measure? literal-end > task/literal-size][
 						task/literal-size: literal-end
 					]
@@ -6089,13 +6129,13 @@ x64-codegen: context [
 					register-id: either physical-slot = 0 [
 						x64-encoder/RAX
 					][argument-register physical-slot]
-					if register-id < 0 [return INVALID_IR]
+					if register-id < 0 [return fail-invalid 69 "emit-value-operation/register-id#5"]
 					case [
 						instruction/a = LOCAL_ADDRESS [
 							unless all [
 								instruction/b > 0
 								instruction/b <= state/storage-count
-							][return INVALID_IR]
+							][return fail-invalid 70 "emit-value-operation/instruction/b#6"]
 								parameter: as rsir-parameter! (parameters
 									+ ((fn/first-parameter + instruction/b - 1)
 										* RSIR_PARAMETER_SIZE))
@@ -6109,7 +6149,7 @@ x64-codegen: context [
 							home-register: allocated-storage-register
 								view/allocation-intervals instruction/b index
 							either home-register >= 0 [
-								unless linear? [return INVALID_IR]
+								unless linear? [return fail-invalid 71 "emit-value-operation/linear#7"]
 								location: LOCATION_REGISTER_HOME
 								state/location-source: home-register
 								encoded: 0
@@ -6130,7 +6170,7 @@ x64-codegen: context [
 										machine-value? ref flags table
 									]
 								]
-								if all [state/location-source = 0 not direct-parameter?][return INVALID_IR]
+								if all [state/location-source = 0 not direct-parameter?][return fail-invalid 72 "emit-value-operation/state/location-source#8"]
 								either direct-parameter? [
 									location: LOCATION_ARGUMENT
 									state/location-source: physical-slot
@@ -6154,7 +6194,7 @@ x64-codegen: context [
 						]
 						instruction/a = GLOBAL_ADDRESS [
 							global-id: instruction/b
-							if any [global-id <= 0 global-id > global-count][return INVALID_IR]
+							if any [global-id <= 0 global-id > global-count][return fail-invalid 73 "emit-value-operation/global-id#9"]
 							global: as rsir-global! (globals
 								+ ((global-id - 1) * RSIR_GLOBAL_SIZE))
 							ref: global/type
@@ -6184,18 +6224,22 @@ x64-codegen: context [
 						]
 						instruction/a = IMPORT_ADDRESS [
 							import-id: instruction/b
-							if any [import-id <= 0 import-id > import-count][return INVALID_IR]
-							imported: as rsir-import! (imports
-								+ ((import-id - 1) * RSIR_IMPORT_SIZE))
-							either imported/flags = 0 [
-								if instruction/c <> 0 [return INVALID_IR]
+							if any [import-id <= 0 import-id > import-count][return fail-invalid 74 "emit-value-operation/import-id#10"]
+						imported: as rsir-import! (imports
+							+ ((import-id - 1) * RSIR_IMPORT_SIZE))
+						if (imported/flags and SYSCALL_FLAG) <> 0 [
+							;-- A syscall has no address to take.
+							return fail-unsupported 330 "emit-value-operation/syscall#15"
+						]
+						either imported/flags = 0 [
+							if instruction/c <> 0 [return fail-invalid 75 "emit-value-operation/instruction/c#11"]
 								ref: imported/type
 							][
 								ref: instruction/c
 								unless all [
 									valid-type-ref? ref table
 									(logical-kind ref table) = -4
-								][return INVALID_IR]
+								][return fail-invalid 76 "emit-value-operation/ref#12"]
 							]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/rip-load at (capacity - written)
@@ -6203,12 +6247,12 @@ x64-codegen: context [
 						]
 						instruction/a = FUNCTION_ADDRESS [
 							target: instruction/b
-							if any [target <= 0 target > function-count][return INVALID_IR]
+							if any [target <= 0 target > function-count][return fail-invalid 77 "emit-value-operation/function-count#13"]
 							ref: instruction/c
 							unless all [
 								valid-type-ref? ref table
 								(logical-kind ref table) = -4
-							][return INVALID_IR]
+							][return fail-invalid 78 "emit-value-operation/ref#14"]
 							displacement: 0
 							if not measure? [
 								target-function: as codegen-function! (image-data
@@ -6220,7 +6264,7 @@ x64-codegen: context [
 							encoded: x64-encoder/rip-address at (capacity - written)
 								register-id displacement
 						]
-						true [return UNSUPPORTED]
+						true [return fail-unsupported 79 "emit-value-operation/register-id#15"]
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					if import-id > 0 [
@@ -6284,7 +6328,7 @@ x64-codegen: context [
 					]
 				]
 				instruction/op = OP_LOAD [
-					if any [depth <= 0 stack-kinds/depth <> PLACE][return INVALID_IR]
+					if any [depth <= 0 stack-kinds/depth <> PLACE][return fail-invalid 80 "emit-value-operation/stack-kinds/depth#16"]
 					home-compare?: false
 					home-pair?: false
 					ref: stack-types/depth
@@ -6306,12 +6350,12 @@ x64-codegen: context [
 									x64-encoder/frame-load at (capacity - written)
 										x64-encoder/RAX state/location-source 8 0
 								]
-								location = LOCATION_GLOBAL [return INVALID_IR]
+								location = LOCATION_GLOBAL [return fail-invalid 81 "emit-value-operation/location#17"]
 								location = LOCATION_ADDRESS [
 									x64-encoder/add-immediate at (capacity - written)
 										x64-encoder/RAX state/location-source
 								]
-								true [return INVALID_IR]
+								true [return fail-invalid 82 "emit-value-operation/state/location-source#18"]
 							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
@@ -6335,7 +6379,7 @@ x64-codegen: context [
 						]
 					][
 						unless machine-value? ref flags table [
-							return UNSUPPORTED
+							return fail-unsupported 83 "emit-value-operation/machine-value#19"
 						]
 						width: value-width ref flags table
 						signed: either signed-type? ref table [1][0]
@@ -6357,7 +6401,7 @@ x64-codegen: context [
 						][either floating? [
 							physical-slot - 1
 						][argument-register physical-slot]]
-						if register-id < 0 [return INVALID_IR]
+						if register-id < 0 [return fail-invalid 84 "emit-value-operation/register-id#20"]
 						target-slot: depth - 1
 						home-compare?: all [
 							linear?
@@ -6395,7 +6439,7 @@ x64-codegen: context [
 									location = LOCATION_ARGUMENT
 									location = LOCATION_REGISTER_HOME
 								]
-						][return INVALID_IR]
+						][return fail-invalid 85 "emit-value-operation/location#21"]
 						; A parameter consumed by the next CALL can retain its ABI source
 						; until that call fixes the destination argument register.
 						forward-argument?: all [
@@ -6499,7 +6543,7 @@ x64-codegen: context [
 										x64-encoder/RAX
 										slot-displacement (storage-slots + depth) 8 0
 								]
-								true [return INVALID_IR]
+								true [return fail-invalid 86 "emit-value-operation/storage-slots#22"]
 							]
 						]
 						if encoded < 0 [return OUTPUT_FULL]
@@ -6591,19 +6635,19 @@ x64-codegen: context [
 					unless home-pair? [state/source-register: 0]
 				]
 				instruction/op = OP_REFERENCE [
-					if any [depth <= 0 stack-kinds/depth <> PLACE][return INVALID_IR]
+					if any [depth <= 0 stack-kinds/depth <> PLACE][return fail-invalid 87 "emit-value-operation/stack-kinds/depth#23"]
 					unless all [
 						instruction/b = 0 instruction/c = 0
 						valid-type-ref? instruction/a table
 						reference-type? instruction/a table
 						machine-value? instruction/a 0 table
-					][return INVALID_IR]
+					][return fail-invalid 88 "emit-value-operation/instruction/a#24"]
 					tracked?: location <> LOCATION_NONE
 					physical-slot: as integer! argument-targets/index
 					register-id: either physical-slot = 0 [
 						x64-encoder/RAX
 					][argument-register physical-slot]
-					if register-id < 0 [return INVALID_IR]
+					if register-id < 0 [return fail-invalid 89 "emit-value-operation/register-id#25"]
 					if tracked? [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: case [
@@ -6629,7 +6673,7 @@ x64-codegen: context [
 										register-id state/location-source
 								]
 							]
-							true [return INVALID_IR]
+							true [return fail-invalid 90 "emit-value-operation/state/location-source#26"]
 						]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
@@ -6655,27 +6699,27 @@ x64-codegen: context [
 					]
 				]
 				instruction/op = OP_INDEX [
-					unless any [instruction/b = 0 instruction/b = 1][return INVALID_IR]
+					unless any [instruction/b = 0 instruction/b = 1][return fail-invalid 91 "emit-value-operation/instruction/b#27"]
 					if all [instruction/b = 1 any [instruction/a <> 0 instruction/c <> 0]][
-						return INVALID_IR
+						return fail-invalid 92 "emit-value-operation/instruction/b#28"
 					]
 					target-slot: either instruction/b = 1 [depth - 1][depth]
 					if any [target-slot <= 0 stack-kinds/target-slot <> VALUE][
-						return INVALID_IR
+						return fail-invalid 93 "emit-value-operation/stack-kinds/target-slot#29"
 					]
 					ref: stack-types/target-slot
 					flags: stack-flags/target-slot
-					if flags <> 0 [return INVALID_IR]
+					if flags <> 0 [return fail-invalid 94 "emit-value-operation/flags#30"]
 					member-type: 0
-					unless pointee-type ref table :member-type [return INVALID_IR]
+					unless pointee-type ref table :member-type [return fail-invalid 95 "emit-value-operation/ref#31"]
 					stride: pointer-stride ref table
-					if stride <= 0 [return UNSUPPORTED]
+					if stride <= 0 [return fail-unsupported 96 "emit-value-operation/stride#32"]
 					if instruction/b = 1 [
 						if any [
 							depth < 2 stack-kinds/depth <> VALUE
 							stack-flags/depth <> 0
 							(logical-kind stack-types/depth table) <> 5
-						][return INVALID_IR]
+						][return fail-invalid 97 "emit-value-operation/stack-types/depth#33"]
 					]
 
 					if any [
@@ -6738,7 +6782,7 @@ x64-codegen: context [
 					target-slot: depth
 					if any [depth < 2 stack-kinds/source-slot <> VALUE
 						stack-kinds/target-slot <> PLACE][
-						return INVALID_IR
+						return fail-invalid 98 "emit-value-operation/stack-kinds/target-slot#34"
 					]
 					source-located?: state/source-location <> LOCATION_NONE
 					global-target?: location = LOCATION_GLOBAL
@@ -6763,7 +6807,7 @@ x64-codegen: context [
 						copy-size: 0
 						copy-align: 0
 						unless layout-type target-ref true table 0 :copy-size :copy-align [
-							return INVALID_IR
+							return fail-invalid 99 "emit-value-operation/target-ref#35"
 						]
 					][
 						compatibility: implicitly-compatible-types target-ref ref
@@ -6775,7 +6819,11 @@ x64-codegen: context [
 							machine-value? ref flags table
 							machine-value? target-ref target-flags table
 						][
-							return INVALID_IR
+							print ["X64-SET93 fn=" fn/name-size " idx=" index
+								" tref=" target-ref " ref=" ref
+								" tflags=" target-flags " flags=" flags
+								" compat=" compatibility lf]
+							return fail-invalid 100 "emit-value-operation/compat#36"
 						]
 						target-width: value-width target-ref target-flags table
 						floating?: float-type? target-ref table
@@ -6823,7 +6871,7 @@ x64-codegen: context [
 								x64-encoder/RDX slot-displacement
 									(storage-slots + target-slot) 8 0
 						]
-						true [return INVALID_IR]
+						true [return fail-invalid 101 "emit-value-operation/storage-slots#37"]
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -6860,7 +6908,7 @@ x64-codegen: context [
 							valid?: either floating? [
 								state/source-location = LOCATION_XMM
 							][state/source-location = LOCATION_GPR]
-							unless valid? [return INVALID_IR]
+							unless valid? [return fail-invalid 102 "emit-value-operation/valid#38"]
 						]
 						unless source-located? [
 							at: either measure? [as byte-ptr! 0][code + written]
@@ -6991,26 +7039,26 @@ x64-codegen: context [
 					]
 				]
 				instruction/op = OP_MEMBER [
-					if any [depth <= 0 instruction/c <> 0][return INVALID_IR]
+					if any [depth <= 0 instruction/c <> 0][return fail-invalid 103 "emit-value-operation/instruction/c#39"]
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					unless any [
 						stack-kinds/depth = PLACE
 						all [stack-kinds/depth = VALUE flags = 0 aggregate-ref? ref table]
-					][return INVALID_IR]
+					][return fail-invalid 104 "emit-value-operation/stack-kinds/depth#40"]
 					member-type: 0
 					member-flags: 0
 					member-offset: 0
 					unless layout-member ref instruction/a table
-						:member-type :member-flags :member-offset [return INVALID_IR]
+						:member-type :member-flags :member-offset [return fail-invalid 105 "emit-value-operation/member-type#41"]
 					tag-width-value: 0
 					if instruction/b <> 0 [
 						unless all [
 							instruction/b = (instruction/a + 1)
 							tagged-union? ref table
-						][return INVALID_IR]
+						][return fail-invalid 106 "emit-value-operation/tagged-union#42"]
 						tag-width-value: union-tag-width ref table
-						if tag-width-value = 0 [return INVALID_IR]
+						if tag-width-value = 0 [return fail-invalid 107 "emit-value-operation/tag-width-value#43"]
 					]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: case [
@@ -7036,7 +7084,7 @@ x64-codegen: context [
 								x64-encoder/RAX
 								slot-displacement (storage-slots + depth) 8 0
 						]
-						true [return INVALID_IR]
+						true [return fail-invalid 108 "emit-value-operation/storage-slots#44"]
 					]
 					if encoded < 0 [return OUTPUT_FULL]
 					written: written + encoded
@@ -7062,7 +7110,7 @@ x64-codegen: context [
 					]
 					if instruction/b <> 0 [
 						state/tag-count: state/tag-count + 1
-						if state/tag-count > state/tag-capacity [return INVALID_IR]
+						if state/tag-count > state/tag-capacity [return fail-invalid 109 "emit-value-operation/state/tag-count#45"]
 						either measure? [
 							tag-next/index: stack-tags/depth
 							tag-slots/index: state/tag-count
@@ -7071,7 +7119,7 @@ x64-codegen: context [
 							tag-next/index = stack-tags/depth
 							tag-slots/index = state/tag-count
 							tag-widths/index = tag-width-value
-						][return INVALID_IR]]
+						][return fail-invalid 110 "emit-value-operation/tag-width-value#46"]]
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement (state/tag-base + state/tag-count) 8
@@ -7097,7 +7145,7 @@ x64-codegen: context [
 								x64-encoder/add-immediate at (capacity - written)
 									x64-encoder/RAX state/location-source
 							]
-							true [return INVALID_IR]
+							true [return fail-invalid 111 "emit-value-operation/state/location-source#47"]
 						]
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
@@ -7115,9 +7163,9 @@ x64-codegen: context [
 						instruction/a <> 0 instruction/b <> 0 instruction/c <> 0
 						depth <= 0 stack-kinds/depth <> VALUE
 						stack-flags/depth <> 0
-					][return INVALID_IR]
+					][return fail-invalid 112 "emit-value-operation/stack-flags/depth#48"]
 					width: union-tag-width stack-types/depth table
-					if width = 0 [return INVALID_IR]
+					if width = 0 [return fail-invalid 113 "emit-value-operation/stack-types/depth#49"]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth) 8 0
@@ -7137,7 +7185,7 @@ x64-codegen: context [
 					stack-kinds/depth: VALUE
 					stack-tags/depth: 0
 				]
-			true [return UNSUPPORTED]
+			true [return fail-unsupported 114 "emit-value-operation/stack-tags/depth#50"]
 		]
 		state/written: written
 		state/depth: depth
@@ -7306,7 +7354,7 @@ x64-codegen: context [
 					]
 					if typed-call? [
 						target-ref: canonical-type signature-ref table
-						if target-ref <= 0 [return INVALID_IR]
+						if target-ref <= 0 [return fail-invalid 115 "emit-call-operation/target-ref#1"]
 						typed-metadata: as rsir-type! (table/types
 							+ ((target-ref - 1) * RSIR_TYPE_SIZE))
 						signature-ref: typed-metadata/target
@@ -7318,7 +7366,7 @@ x64-codegen: context [
 					import-id: 0
 					call-parameters: parameters
 					either target > 0 [
-						if target > function-count [return INVALID_IR]
+						if target > function-count [return fail-invalid 116 "emit-call-operation/function-count#2"]
 						callee: as rsir-function! (functions
 							+ ((target - 1) * RSIR_FUNCTION_SIZE))
 						return-ref: callee/return-type
@@ -7327,10 +7375,14 @@ x64-codegen: context [
 						call-flags: callee/flags or function-effects/target
 					][either target < 0 [
 						import-id: 0 - target
-						if any [import-id <= 0 import-id > import-count][return INVALID_IR]
+						if any [import-id <= 0 import-id > import-count][return fail-invalid 117 "emit-call-operation/import-id#3"]
 						imported: as rsir-import! (imports
 							+ ((import-id - 1) * RSIR_IMPORT_SIZE))
-						if imported/flags = 0 [return INVALID_IR]
+						if imported/flags = 0 [return fail-invalid 118 "emit-call-operation/imported/flags#4"]
+						if (imported/flags and SYSCALL_FLAG) <> 0 [
+							;-- x86-64 has no syscall emitter yet; ARM64 does.
+							return fail-unsupported 331 "emit-call-operation/syscall#22"
+						]
 						return-ref: imported/type
 						first-parameter: imported/first-parameter
 						parameter-count: imported/parameter-count
@@ -7339,7 +7391,7 @@ x64-codegen: context [
 						if any [
 							not valid-type-ref? signature-ref table
 							(logical-kind signature-ref table) <> -4
-						][return INVALID_IR]
+						][return fail-invalid 119 "emit-call-operation/signature-ref#5"]
 						signature: as rsir-type! (table/types
 							+ (((canonical-type signature-ref table) - 1)
 								* RSIR_TYPE_SIZE))
@@ -7351,7 +7403,7 @@ x64-codegen: context [
 					]]
 					call-mode: call-flags and VARIABLE_FLAGS
 					custom-call?: call-mode = CUSTOM
-					unless typed-call? = (call-mode = TYPED) [return INVALID_IR]
+					unless typed-call? = (call-mode = TYPED) [return fail-invalid 120 "emit-call-operation/typed-call#6"]
 					packed-call?: all [
 						call-mode = VARIADIC
 						(call-flags and 3) <> CDECL
@@ -7362,29 +7414,29 @@ x64-codegen: context [
 							target < 0
 							(call-flags and RED_INTERNAL) = 0
 						][
-							unless parameter-count = 0 [return INVALID_IR]
+							unless parameter-count = 0 [return fail-invalid 121 "emit-call-operation/parameter-count#7"]
 						][
 							unless any [parameter-count = 2 parameter-count = 3][
-								return INVALID_IR
+								return fail-invalid 122 "emit-call-operation/parameter-count#8"
 							]
 							parameter: as rsir-parameter! (call-parameters
 								+ (first-parameter * RSIR_PARAMETER_SIZE))
 							unless all [parameter/flags = 0
 								(logical-kind parameter/type table) = 5][
-								return INVALID_IR
+								return fail-invalid 123 "emit-call-operation/table#9"
 							]
 							parameter: as rsir-parameter! (call-parameters
 								+ ((first-parameter + 1) * RSIR_PARAMETER_SIZE))
 							unless all [parameter/flags = 0
 								address-kind? (logical-kind parameter/type table)][
-								return INVALID_IR
+								return fail-invalid 124 "emit-call-operation/address-kind#10"
 							]
 							if parameter-count = 3 [
 								parameter: as rsir-parameter! (call-parameters
 									+ ((first-parameter + 2) * RSIR_PARAMETER_SIZE))
 								unless all [parameter/flags = 0
 									(logical-kind parameter/type table) = 5][
-									return INVALID_IR
+									return fail-invalid 125 "emit-call-operation/table#11"
 								]
 							]
 						]
@@ -7393,22 +7445,22 @@ x64-codegen: context [
 						unless all [
 							typed-metadata/member-count = argument-index
 							parameter-count = 2
-						][return INVALID_IR]
+						][return fail-invalid 126 "emit-call-operation/parameter-count#12"]
 						parameter: as rsir-parameter! (call-parameters
 							+ (first-parameter * RSIR_PARAMETER_SIZE))
 						unless all [
 							parameter/flags = 0
 							(logical-kind parameter/type table) = 5
-						][return INVALID_IR]
+						][return fail-invalid 127 "emit-call-operation/table#13"]
 						parameter: as rsir-parameter! (call-parameters
 							+ ((first-parameter + 1) * RSIR_PARAMETER_SIZE))
 						target-ref: 0
 						unless all [
 							parameter/flags = 0
 							pointee-type parameter/type table :target-ref
-						][return INVALID_IR]
+						][return fail-invalid 128 "emit-call-operation/table#14"]
 						target-ref: canonical-type target-ref table
-						if target-ref <= 0 [return INVALID_IR]
+						if target-ref <= 0 [return fail-invalid 129 "emit-call-operation/target-ref#15"]
 						list-type: as rsir-type! (table/types
 							+ ((target-ref - 1) * RSIR_TYPE_SIZE))
 						unless all [
@@ -7419,20 +7471,20 @@ x64-codegen: context [
 								list-type/member-count = 5
 							]
 							(aggregate-size target-ref table) = 24
-						][return INVALID_IR]
+						][return fail-invalid 130 "emit-call-operation/target-ref#16"]
 						typed-member: as rsir-member! (table/members
 							+ (list-type/first-member * RSIR_MEMBER_SIZE))
 						unless all [
 							typed-member/flags = 0
 							(logical-kind typed-member/type table) = 5
-						][return INVALID_IR]
+						][return fail-invalid 131 "emit-call-operation/table#17"]
 						if list-type/member-count >= 4 [
 							typed-member: as rsir-member! (table/members
 								+ ((list-type/first-member + 1) * RSIR_MEMBER_SIZE))
 							unless all [
 								typed-member/flags = 0
 								(logical-kind typed-member/type table) = 5
-							][return INVALID_IR]
+							][return fail-invalid 132 "emit-call-operation/table#18"]
 						]
 					]
 					unless all [
@@ -7455,17 +7507,17 @@ x64-codegen: context [
 							all [call-mode = VARIADIC
 								argument-index >= parameter-count]
 						]
-					][return INVALID_IR]
+					][return fail-invalid 133 "emit-call-operation/argument-index#19"]
 					state/return-value?: (call-flags and RETURN_VALUE) <> 0
 					if state/return-value? [
 						unless all [
 							return-ref <> 0
 							aggregate-ref? return-ref table
 							(aggregate-size return-ref table) > 0
-						][return INVALID_IR]
+						][return fail-invalid 134 "emit-call-operation/return-ref#20"]
 					]
 					state/hidden-return?: win64-hidden-return? return-ref call-flags table
-					if all [custom-call? state/hidden-return?][return UNSUPPORTED]
+					if all [custom-call? state/hidden-return?][return fail-unsupported 135 "emit-call-operation/state/hidden-return#21"]
 					state/hidden-shift: either state/hidden-return? [1][0]
 					physical-count: case [
 						custom-call? [0]
@@ -7491,7 +7543,7 @@ x64-codegen: context [
 							stack-flags/callee-slot <> 0
 							not compatible-types? signature-ref stack-types/callee-slot
 								table
-						][return INVALID_IR]
+						][return fail-invalid 136 "emit-call-operation/table#22"]
 						argument-base: callee-slot
 						result-index: callee-slot - 1
 					][
@@ -7543,7 +7595,7 @@ x64-codegen: context [
 					if all [imm-call? not immediate?][
 						ref: stack-types/depth
 						width: value-width ref 0 table
-						if width <= 0 [return INVALID_IR]
+						if width <= 0 [return fail-invalid 137 "emit-call-operation/ref#23"]
 						target-width: either width = 8 [8][4]
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/move-immediate-compact at (capacity - written)
@@ -7613,7 +7665,7 @@ x64-codegen: context [
 									]
 								]
 							]
-						][return INVALID_IR]
+						][return fail-invalid 138 "emit-call-operation/location#24"]
 						direct-argument?: all [
 							argument-producer > 0
 							not inline-object-ref? stack-types/depth table
@@ -7636,7 +7688,7 @@ x64-codegen: context [
 						]
 						if all [forward-argument? not direct-argument?][
 							width: value-width ref flags table
-							if width <= 0 [return INVALID_IR]
+							if width <= 0 [return fail-invalid 139 "emit-call-operation/ref#25"]
 							incoming-register: either floating? [
 								state/location-source - 1
 							][argument-register state/location-source]
@@ -7682,7 +7734,7 @@ x64-codegen: context [
 							width: either inline-object-ref? ref table [8][
 								value-width ref flags table
 							]
-							if width <= 0 [return INVALID_IR]
+							if width <= 0 [return fail-invalid 140 "emit-call-operation/ref#26"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: either floating? [
 								x64-encoder/xmm-frame-store at (capacity - written)
@@ -7736,7 +7788,7 @@ x64-codegen: context [
 						]
 						if tracked? [
 							width: value-width ref flags table
-							if width <= 0 [return INVALID_IR]
+							if width <= 0 [return fail-invalid 141 "emit-call-operation/ref#27"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: either floating? [
 								x64-encoder/xmm-move-register at (capacity - written)
@@ -7795,7 +7847,7 @@ x64-codegen: context [
 						argument-slot: argument-base + source-slot
 						ref: stack-types/argument-slot
 						flags: stack-flags/argument-slot
-						if stack-kinds/argument-slot <> VALUE [return INVALID_IR]
+						if stack-kinds/argument-slot <> VALUE [return fail-invalid 142 "emit-call-operation/stack-kinds/argument-slot#28"]
 						aggregate-argument?: false
 						either source-slot <= parameter-count [
 							parameter: as rsir-parameter! (call-parameters
@@ -7807,7 +7859,7 @@ x64-codegen: context [
 									flags = 0
 									aggregate-ref? ref table
 									compatible-types? parameter/type ref table
-								][return INVALID_IR]
+								][return fail-invalid 143 "emit-call-operation/compatible-types#29"]
 							][
 								compatibility: implicitly-compatible-types parameter/type ref
 									stack-tags/argument-slot true table
@@ -7815,14 +7867,14 @@ x64-codegen: context [
 								unless all [
 									compatibility = 1
 									parameter/flags = flags
-								][return INVALID_IR]
+								][return fail-invalid 144 "emit-call-operation/parameter/flags#30"]
 								unless machine-value? ref flags table [
-									return UNSUPPORTED
+									return fail-unsupported 145 "emit-call-operation/machine-value#31"
 								]
 							]
 						][
 							unless machine-value? ref flags table [
-								return UNSUPPORTED
+								return fail-unsupported 146 "emit-call-operation/machine-value#32"
 							]
 						]
 						if aggregate-argument? [
@@ -7874,9 +7926,9 @@ x64-codegen: context [
 								stack-kinds/argument-slot = VALUE
 								flags = 0
 								machine-value? ref flags table
-							][return INVALID_IR]
+							][return fail-invalid 147 "emit-call-operation/machine-value#33"]
 							width: value-width ref flags table
-							if width <= 0 [return UNSUPPORTED]
+							if width <= 0 [return fail-unsupported 148 "emit-call-operation/ref#34"]
 							signed: either signed-type? ref table [1][0]
 							tracked?: all [located? argument-slot = state/location-depth]
 							at: either measure? [as byte-ptr! 0][code + written]
@@ -7947,9 +7999,9 @@ x64-codegen: context [
 								compatible-types? typed-member/type ref table
 								machine-value? ref flags table
 								typed-runtime-id? typed-member/flags
-							][return INVALID_IR]
+							][return fail-invalid 149 "emit-call-operation/typed-member/flags#35"]
 							width: value-width ref flags table
-							if width <= 0 [return UNSUPPORTED]
+							if width <= 0 [return fail-unsupported 150 "emit-call-operation/ref#36"]
 							record-offset: temp-offset + ((source-slot - 1) * 24)
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/outgoing-immediate-store
@@ -8133,7 +8185,7 @@ x64-codegen: context [
 											state/location-source: either floating? [
 												state/location-source - 1
 											][argument-register state/location-source]
-											if state/location-source < 0 [return INVALID_IR]
+											if state/location-source < 0 [return fail-invalid 151 "emit-call-operation/state/location-source#37"]
 										][
 											either measure? [
 												argument-targets/argument-producer:
@@ -8152,7 +8204,7 @@ x64-codegen: context [
 											][
 												if argument-targets/argument-producer <>
 													as byte! physical-slot [
-													return INVALID_IR
+													return fail-invalid 152 "emit-call-operation/byte#38"
 												]
 											]
 											state/location-source: either floating? [
@@ -8318,7 +8370,7 @@ x64-codegen: context [
 					state/location-source: 0
 					if state/hidden-return? [
 						result-offset: result-offsets/index
-						if result-offset >= 0 [return INVALID_IR]
+						if result-offset >= 0 [return fail-invalid 153 "emit-call-operation/result-offset#39"]
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-address at (capacity - written)
 							x64-encoder/RCX result-offset
@@ -8411,7 +8463,7 @@ x64-codegen: context [
 							if any [
 								result-offset >= 0
 								all [aggregate-width = 0 not state/hidden-return?]
-							][return INVALID_IR]
+							][return fail-invalid 154 "emit-call-operation/state/hidden-return#40"]
 							if not state/hidden-return? [
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/frame-store at (capacity - written)
@@ -8430,7 +8482,7 @@ x64-codegen: context [
 									(storage-slots + depth) 8
 						][
 							unless machine-value? return-ref 0 table [
-								return UNSUPPORTED
+								return fail-unsupported 155 "emit-call-operation/machine-value#41"
 							]
 							width: value-width return-ref 0 table
 							floating?: float-type? return-ref table
@@ -8467,7 +8519,7 @@ x64-codegen: context [
 						written: written + encoded
 					]
 				]
-			true [return UNSUPPORTED]
+			true [return fail-unsupported 156 "emit-call-operation/written#42"]
 		]
 		state/written: written
 		state/depth: depth
@@ -8597,7 +8649,7 @@ x64-codegen: context [
 
 		case [
 				instruction/op = OP_CAST [
-					if any [depth <= 0 stack-kinds/depth <> VALUE][return INVALID_IR]
+					if any [depth <= 0 stack-kinds/depth <> VALUE][return fail-invalid 157 "emit-arithmetic-operation/stack-kinds/depth#1"]
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					source-width: value-width ref flags table
@@ -8608,11 +8660,11 @@ x64-codegen: context [
 						any [keep-cast = 0 keep-cast = 1]
 						machine-value? ref flags table
 						machine-value? instruction/a instruction/b table
-					][return UNSUPPORTED]
+					][return fail-unsupported 158 "emit-arithmetic-operation/instruction/a#2"]
 					source-kind: cast-kind ref table
 					target-kind: cast-kind instruction/a table
 					unless cast-compatible-kinds? source-kind target-kind [
-						return INVALID_IR
+						return fail-invalid 159 "emit-arithmetic-operation/cast-compatible-kinds#3"
 					]
 					floating?: any [
 						any [source-kind = 9 source-kind = 10]
@@ -8636,7 +8688,7 @@ x64-codegen: context [
 								]
 							]
 						]
-						unless valid? [return INVALID_IR]
+						unless valid? [return fail-invalid 160 "emit-arithmetic-operation/valid#4"]
 					]
 					valid?: any [
 						all [
@@ -8669,7 +8721,7 @@ x64-codegen: context [
 							not any [source-kind = 9 source-kind = 10]
 						location <> LOCATION_GPR
 						]
-					][return INVALID_IR]
+					][return fail-invalid 161 "emit-arithmetic-operation/location#5"]
 					tracked?: located?
 					location: LOCATION_NONE
 					state/location-depth: 0
@@ -8820,9 +8872,9 @@ x64-codegen: context [
 					unless all [
 						valid-type-ref? ref table
 						any [instruction/b = 0 instruction/b = 1]
-					][return INVALID_IR]
+					][return fail-invalid 162 "emit-arithmetic-operation/instruction/b#6"]
 					either instruction/b = 0 [
-						if instruction/c <> 0 [return INVALID_IR]
+						if instruction/c <> 0 [return fail-invalid 163 "emit-arithmetic-operation/instruction/c#7"]
 						depth: depth + 1
 					][
 						unless all [
@@ -8830,10 +8882,10 @@ x64-codegen: context [
 							stack-kinds/depth = VALUE
 							stack-types/depth = ref
 							stack-flags/depth = instruction/c
-						][return INVALID_IR]
+						][return fail-invalid 164 "emit-arithmetic-operation/stack-flags/depth#8"]
 					]
 					width: logical-size ref table
-					if width <= 0 [return INVALID_IR]
+					if width <= 0 [return fail-invalid 165 "emit-arithmetic-operation/ref#9"]
 					if depth > state/max-depth [state/max-depth: depth]
 					stack-types/depth: -5
 					stack-flags/depth: 0
@@ -8880,15 +8932,15 @@ x64-codegen: context [
 						]
 						true [instruction/b = 0]
 					]
-					unless valid? [return INVALID_IR]
+					unless valid? [return fail-invalid 166 "emit-arithmetic-operation/valid#10"]
 					if all [instruction/a >= 14 instruction/a <= 15][
 						register-id: cpu-register-id
 							(strings + instruction/b) instruction/c
-						if register-id < 0 [return UNSUPPORTED]
+						if register-id < 0 [return fail-unsupported 167 "emit-arithmetic-operation/register-id#11"]
 						if state/cpu-pointer-ref = 0 [
 							state/cpu-pointer-ref: integer-pointer-type table
 						]
-						if state/cpu-pointer-ref = 0 [return INVALID_IR]
+						if state/cpu-pointer-ref = 0 [return fail-invalid 168 "emit-arithmetic-operation/state/cpu-pointer-ref#12"]
 					]
 					target-ref: 0
 					switch instruction/a [
@@ -8897,7 +8949,7 @@ x64-codegen: context [
 								valid-type-ref? instruction/c table
 								pointee-type instruction/c table :target-ref
 								(canonical-type target-ref table) = -5
-							][return INVALID_IR]
+							][return fail-invalid 169 "emit-arithmetic-operation/target-ref#13"]
 							depth: depth + 1
 							if depth > state/max-depth [state/max-depth: depth]
 							stack-types/depth: instruction/c
@@ -8912,12 +8964,12 @@ x64-codegen: context [
 							written: written + encoded
 						]
 						2 [						;-- PUSH
-							unless instruction/c = 0 [return INVALID_IR]
+							unless instruction/c = 0 [return fail-invalid 170 "emit-arithmetic-operation/instruction/c#14"]
 							unless all [
 								depth > 0
 								stack-kinds/depth = VALUE
 								machine-value? stack-types/depth stack-flags/depth table
-							][return INVALID_IR]
+							][return fail-invalid 171 "emit-arithmetic-operation/stack-types/depth#15"]
 							width: value-width stack-types/depth stack-flags/depth table
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
@@ -8933,7 +8985,7 @@ x64-codegen: context [
 							depth: depth - 1
 						]
 						3 [						;-- POP
-							unless instruction/c = 0 [return INVALID_IR]
+							unless instruction/c = 0 [return fail-invalid 172 "emit-arithmetic-operation/instruction/c#16"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/pop-register at (capacity - written)
 								x64-encoder/RAX
@@ -8957,7 +9009,7 @@ x64-codegen: context [
 								valid-type-ref? instruction/c table
 								pointee-type instruction/c table :target-ref
 								(canonical-type target-ref table) = -5
-							][return INVALID_IR]
+							][return fail-invalid 173 "emit-arithmetic-operation/target-ref#17"]
 							depth: depth + 1
 							if depth > state/max-depth [state/max-depth: depth]
 							stack-types/depth: instruction/c
@@ -8980,7 +9032,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								compatible-types? instruction/c stack-types/depth table
-							][return INVALID_IR]
+							][return fail-invalid 174 "emit-arithmetic-operation/instruction/c#18"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-set at (capacity - written)
 								x64-encoder/RSP slot-displacement
@@ -8999,7 +9051,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								compatible-types? instruction/c stack-types/depth table
-							][return INVALID_IR]
+							][return fail-invalid 175 "emit-arithmetic-operation/instruction/c#19"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-set at (capacity - written)
 								x64-encoder/RBP slot-displacement
@@ -9014,7 +9066,7 @@ x64-codegen: context [
 								valid-type-ref? instruction/c table
 								pointee-type instruction/c table :target-ref
 								(canonical-type target-ref table) = -5
-							][return INVALID_IR]
+							][return fail-invalid 176 "emit-arithmetic-operation/target-ref#20"]
 							depth: depth + 1
 							if depth > state/max-depth [state/max-depth: depth]
 							stack-types/depth: instruction/c
@@ -9036,7 +9088,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								(logical-kind stack-types/depth table) = 5
-							][return INVALID_IR]
+							][return fail-invalid 177 "emit-arithmetic-operation/stack-types/depth#21"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-allocate at (capacity - written)
 								slot-displacement (storage-slots + depth) false
@@ -9056,7 +9108,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								(logical-kind stack-types/depth table) = 5
-							][return INVALID_IR]
+							][return fail-invalid 178 "emit-arithmetic-operation/stack-types/depth#22"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-allocate at (capacity - written)
 								slot-displacement (storage-slots + depth) true
@@ -9074,7 +9126,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								(logical-kind stack-types/depth table) = 5
-							][return INVALID_IR]
+							][return fail-invalid 179 "emit-arithmetic-operation/stack-types/depth#23"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-free at (capacity - written)
 								slot-displacement (storage-slots + depth)
@@ -9083,14 +9135,14 @@ x64-codegen: context [
 							depth: depth - 1
 						]
 						11 [					;-- system/stack/push-all
-							unless instruction/c = 0 [return INVALID_IR]
+							unless instruction/c = 0 [return fail-invalid 180 "emit-arithmetic-operation/instruction/c#24"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-all at (capacity - written) false
 							if encoded < 0 [return encoded]
 							written: written + encoded
 						]
 						12 [					;-- system/stack/pop-all
-							unless instruction/c = 0 [return INVALID_IR]
+							unless instruction/c = 0 [return fail-invalid 181 "emit-arithmetic-operation/instruction/c#25"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-all at (capacity - written) true
 							if encoded < 0 [return encoded]
@@ -9101,7 +9153,7 @@ x64-codegen: context [
 								valid-type-ref? instruction/c table
 								pointee-type instruction/c table :target-ref
 								(canonical-type target-ref table) = -2
-							][return INVALID_IR]
+							][return fail-invalid 182 "emit-arithmetic-operation/target-ref#26"]
 							depth: depth + 1
 							if depth > state/max-depth [state/max-depth: depth]
 							stack-types/depth: instruction/c
@@ -9150,7 +9202,7 @@ x64-codegen: context [
 								depth > 0 stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								compatible-types? state/cpu-pointer-ref stack-types/depth table
-							][return INVALID_IR]
+							][return fail-invalid 183 "emit-arithmetic-operation/state/cpu-pointer-ref#27"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
@@ -9169,7 +9221,7 @@ x64-codegen: context [
 							stack-tags/depth: 0
 						]
 						16 [					;-- system/cpu/overflow?
-							unless instruction/c = -11 [return INVALID_IR]
+							unless instruction/c = -11 [return fail-invalid 184 "emit-arithmetic-operation/instruction/c#28"]
 							depth: depth + 1
 							if depth > state/max-depth [state/max-depth: depth]
 							stack-types/depth: -11
@@ -9196,7 +9248,7 @@ x64-codegen: context [
 							written: written + encoded
 						]
 						17 [					;-- system/atomic/fence
-							unless instruction/c = 0 [return INVALID_IR]
+							unless instruction/c = 0 [return fail-invalid 185 "emit-arithmetic-operation/instruction/c#29"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/memory-fence at (capacity - written)
 							if encoded < 0 [return OUTPUT_FULL]
@@ -9211,7 +9263,7 @@ x64-codegen: context [
 								(logical-kind stack-types/depth table) = -6
 								pointee-type stack-types/depth table :target-ref
 								(canonical-type target-ref table) = -5
-							][return INVALID_IR]
+							][return fail-invalid 186 "emit-arithmetic-operation/target-ref#30"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
@@ -9247,7 +9299,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								(canonical-type stack-types/depth table) = -5
-							][return INVALID_IR]
+							][return fail-invalid 187 "emit-arithmetic-operation/stack-types/depth#31"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RDX slot-displacement
@@ -9288,7 +9340,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								(canonical-type stack-types/depth table) = -5
-							][return INVALID_IR]
+							][return fail-invalid 188 "emit-arithmetic-operation/stack-types/depth#32"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RDX slot-displacement
@@ -9346,7 +9398,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								(canonical-type stack-types/depth table) = -5
-							][return INVALID_IR]
+							][return fail-invalid 189 "emit-arithmetic-operation/stack-types/depth#33"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RDX slot-displacement
@@ -9458,7 +9510,7 @@ x64-codegen: context [
 								stack-kinds/depth = VALUE
 								stack-flags/depth = 0
 								integer-type? stack-types/depth table
-							][return INVALID_IR]
+							][return fail-invalid 190 "emit-arithmetic-operation/stack-types/depth#34"]
 							width: value-width stack-types/depth 0 table
 							signed: either signed-type? stack-types/depth table [1][0]
 							operation-width: either width = 8 [8][4]
@@ -9484,18 +9536,18 @@ x64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 						]
-						default [return UNSUPPORTED]
+						default [return fail-unsupported 191 "emit-arithmetic-operation/default#35"]
 					]
 				]
 				instruction/op = OP_DROP [
-					if depth <= 0 [return INVALID_IR]
+					if depth <= 0 [return fail-invalid 192 "emit-arithmetic-operation/depth#36"]
 					location: LOCATION_NONE
 					state/location-depth: 0
 					state/location-source: 0
 					depth: depth - 1
 				]
 				instruction/op = OP_DUPLICATE [
-					if depth <= 0 [return INVALID_IR]
+					if depth <= 0 [return fail-invalid 193 "emit-arithmetic-operation/depth#37"]
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					kind: stack-kinds/depth
@@ -9554,7 +9606,7 @@ x64-codegen: context [
 						instruction/a <> NOT_OPERATION
 						instruction/b <> 0 instruction/c <> 0
 						depth <= 0 stack-kinds/depth <> VALUE
-					][return INVALID_IR]
+					][return fail-invalid 194 "emit-arithmetic-operation/stack-kinds/depth#38"]
 					ref: stack-types/depth
 					flags: stack-flags/depth
 					kind: logical-kind ref table
@@ -9562,7 +9614,7 @@ x64-codegen: context [
 						flags = 0
 						any [integer-type? ref table kind = 11]
 						machine-value? ref flags table
-					][return INVALID_IR]
+					][return fail-invalid 195 "emit-arithmetic-operation/machine-value#39"]
 					width: value-width ref flags table
 					operation-width: either width = 8 [8][4]
 					signed: either signed-type? ref table [1][0]
@@ -9632,7 +9684,7 @@ x64-codegen: context [
 								catch-depths/target = catch-depths/index
 							]
 						]
-					][return INVALID_IR]
+					][return fail-invalid 196 "emit-arithmetic-operation/fn/instruction-count#40"]
 				]
 				instruction/op = OP_BINARY [
 					if any [
@@ -9640,12 +9692,12 @@ x64-codegen: context [
 						instruction/a < ADD_OPERATION
 						instruction/a > LESS_EQUAL_OPERATION
 						depth < 2
-					][return INVALID_IR]
+					][return fail-invalid 197 "emit-arithmetic-operation/depth#41"]
 					target-slot: depth - 1
 					if any [
 						stack-kinds/target-slot <> VALUE
 						stack-kinds/depth <> VALUE
-					][return INVALID_IR]
+					][return fail-invalid 198 "emit-arithmetic-operation/stack-kinds/depth#42"]
 					operation: instruction/a
 					fuse-branch?: false
 					left-ref: stack-types/target-slot
@@ -9747,7 +9799,7 @@ x64-codegen: context [
 						]
 						true [valid?: false]
 					]
-					unless valid? [return INVALID_IR]
+					unless valid? [return fail-invalid 199 "emit-arithmetic-operation/valid#43"]
 					floating?: any [
 						float-type? left-ref table
 						float-type? right-ref table
@@ -9756,7 +9808,7 @@ x64-codegen: context [
 					either tracked? [
 						overflow-anchor: instruction/b
 						unless all [overflow-anchor < index overflow-anchor > 0][
-							return INVALID_IR
+							return fail-invalid 200 "emit-arithmetic-operation/overflow-anchor#44"
 						]
 						overflow-scope: as rsir-instruction! (instructions
 							+ ((overflow-anchor - 1) * RSIR_INSTRUCTION_SIZE))
@@ -9766,7 +9818,7 @@ x64-codegen: context [
 							overflow-scope/b = 0 overflow-scope/c = 0
 							target > index target <= fn/instruction-count
 							not floating?
-						][return INVALID_IR]
+						][return fail-invalid 201 "emit-arithmetic-operation/floating#45"]
 						valid?: false
 						case [
 							operation <= MULTIPLY_OPERATION [
@@ -9791,23 +9843,23 @@ x64-codegen: context [
 							]
 							true [valid?: false]
 						]
-						unless valid? [return INVALID_IR]
+						unless valid? [return fail-invalid 202 "emit-arithmetic-operation/valid#46"]
 						base-depth: instruction-depths/overflow-anchor
 						unless all [base-depth >= 0 base-depth <= (depth - 2)][
-							return INVALID_IR
+							return fail-invalid 203 "emit-arithmetic-operation/base-depth#47"
 						]
 						if measure? [
 							unless merge-target target base-depth fn view table [
-								return INVALID_IR
+								return fail-invalid 204 "emit-arithmetic-operation/base-depth#48"
 							]
 						]
 					][
-						if instruction/c <> 0 [return INVALID_IR]
+						if instruction/c <> 0 [return fail-invalid 205 "emit-arithmetic-operation/instruction/c#49"]
 					]
 					unless all [
 						machine-value? left-ref left-flags table
 						machine-value? right-ref right-flags table
-					][return UNSUPPORTED]
+					][return fail-unsupported 206 "emit-arithmetic-operation/machine-value#50"]
 					located?: location <> LOCATION_NONE
 					paired?: any [
 						location = LOCATION_GPR_PAIR
@@ -9833,7 +9885,7 @@ x64-codegen: context [
 								]
 							]
 						]
-					][return INVALID_IR]
+					][return fail-invalid 207 "emit-arithmetic-operation/location#51"]
 
 					either floating? [
 						ref: either operation-ref <> 0 [operation-ref][left-ref]
@@ -9905,7 +9957,7 @@ x64-codegen: context [
 								x64-encoder/XMM0 x64-encoder/XMM1 operation-width
 						][
 							opcode: float-opcode operation
-							if opcode < 0 [return UNSUPPORTED]
+							if opcode < 0 [return fail-unsupported 208 "emit-arithmetic-operation/opcode#52"]
 							encoded: x64-encoder/xmm-binary at (capacity - written)
 								opcode x64-encoder/XMM0 x64-encoder/XMM1 operation-width
 						]
@@ -9914,7 +9966,7 @@ x64-codegen: context [
 						if comparison? [
 							condition: float-condition operation
 							parity: float-parity operation
-							if condition < 0 [return INVALID_IR]
+							if condition < 0 [return fail-invalid 209 "emit-arithmetic-operation/condition#53"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/float-condition-result
 								at (capacity - written) condition parity
@@ -9930,7 +9982,14 @@ x64-codegen: context [
 					][8][4]
 					zero-extend?: operation = SHIFT_LOGICAL_OPERATION
 					signed: either signed-type? ref table [1][0]
-					load-signed: either zero-extend? [0][signed]
+					; A narrower left operand widens into the operation width
+					; with its own signedness, so an unsigned value survives it:
+					; uint16! 60000 zero-extends against the signed integer!
+					; comparison type. `signed` keeps owning the compare
+					; condition, which follows the common type.
+					load-signed: either zero-extend? [0][
+						either signed-type? left-ref table [1][0]
+					]
 					source-signed: either signed-type? right-ref table [1][0]
 					source-slot: either all [
 						operation >= DIVIDE_OPERATION
@@ -9995,7 +10054,7 @@ x64-codegen: context [
 						integer-type? right-ref table
 					][
 						stride: pointer-stride left-ref table
-						if stride <= 0 [return UNSUPPORTED]
+						if stride <= 0 [return fail-unsupported 210 "emit-arithmetic-operation/stride#54"]
 						if stride <> 1 [
 							either immediate? [
 								state/pending-immediate-value: state/pending-immediate-value
@@ -10035,7 +10094,7 @@ x64-codegen: context [
 					at: either measure? [as byte-ptr! 0][code + written]
 					case [
 						home-paired? [
-							unless comparison? [return INVALID_IR]
+							unless comparison? [return fail-invalid 211 "emit-arithmetic-operation/comparison#55"]
 							encoded: x64-encoder/binary-register at (capacity - written)
 								39h state/source-register state/location-source operation-width
 						]
@@ -10197,7 +10256,7 @@ x64-codegen: context [
 					]
 					if comparison? [
 						condition: comparison-condition operation signed
-						if condition < 0 [return INVALID_IR]
+						if condition < 0 [return fail-invalid 212 "emit-arithmetic-operation/condition#56"]
 						; An integer compare consumed only by the adjacent
 						; BRANCH never needs its boolean materialized: the
 						; branch jumps straight on the compare flags.
@@ -10290,7 +10349,7 @@ x64-codegen: context [
 					]
 					]
 				]
-			true [return UNSUPPORTED]
+			true [return fail-unsupported 213 "emit-arithmetic-operation/written#57"]
 		]
 		state/written: written
 		state/depth: depth
@@ -10414,7 +10473,7 @@ x64-codegen: context [
 						depth > 0 stack-kinds/depth = VALUE
 						stack-flags/depth = 0
 						compatible-types? -5 stack-types/depth table
-					][return INVALID_IR]
+					][return fail-invalid 214 "emit-control-operation/stack-types/depth#1"]
 					catch-record: state/catch-base + ((state/catch-level - 1) * 3) + 1
 					target-offset: 0
 					if not measure? [
@@ -10428,7 +10487,7 @@ x64-codegen: context [
 					depth: depth - 1
 					if measure? [
 						unless merge-target target depth fn view table [
-							return INVALID_IR
+							return fail-invalid 215 "emit-control-operation/depth#2"
 						]
 					]
 				]
@@ -10439,7 +10498,7 @@ x64-codegen: context [
 						state/catch-level > 0 state/catch-level <= state/catch-capacity
 						instruction/c = 0
 						catch-depths/index = state/catch-level
-					][return INVALID_IR]
+					][return fail-invalid 216 "emit-control-operation/state/catch-level#3"]
 					catch-record: state/catch-base + ((state/catch-level - 1) * 3) + 1
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: emit-catch-restore at (capacity - written) catch-record
@@ -10459,7 +10518,7 @@ x64-codegen: context [
 						stack-kinds/target-slot = PLACE
 						stack-flags/target-slot = 0
 						compatible-types? -5 stack-types/target-slot table
-					][return INVALID_IR]
+					][return fail-invalid 217 "emit-control-operation/stack-types/target-slot#4"]
 					tag-head: stack-tags/target-slot
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
@@ -10506,7 +10565,7 @@ x64-codegen: context [
 						instruction/b >= 0 instruction/b <= depth
 						instruction/c >= 0 instruction/c <= state/catch-level
 						catch-depths/target = catch-unwind
-					][return INVALID_IR]
+					][return fail-invalid 218 "emit-control-operation/catch-unwind#5"]
 					catch-unwind: instruction/c
 					while [catch-unwind > 0][
 						catch-record: state/catch-base + ((state/catch-level - 1) * 3) + 1
@@ -10520,7 +10579,7 @@ x64-codegen: context [
 					depth: depth - instruction/b
 					if measure? [
 						unless merge-target target depth fn view table [
-							return INVALID_IR
+							return fail-invalid 219 "emit-control-operation/depth#6"
 						]
 					]
 					displacement: 0
@@ -10563,12 +10622,12 @@ x64-codegen: context [
 								stack-flags/depth = 0
 							]
 						]
-					][return INVALID_IR]
+					][return fail-invalid 220 "emit-control-operation/stack-flags/depth#7"]
 					either fold-constant? [
 						if branch-taken? [
 							if measure? [
 								unless merge-target target depth fn view table [
-									return INVALID_IR
+									return fail-invalid 221 "emit-control-operation/depth#8"
 								]
 							]
 							displacement: 0
@@ -10651,7 +10710,7 @@ x64-codegen: context [
 							depth: depth - 1
 							if measure? [
 								unless merge-target target depth fn view table [
-									return INVALID_IR
+									return fail-invalid 222 "emit-control-operation/depth#9"
 								]
 							]
 							displacement: 0
@@ -10702,7 +10761,7 @@ x64-codegen: context [
 						stack-kinds/depth = VALUE
 						stack-flags/depth = 0
 						integer-type? stack-types/depth table
-					][return INVALID_IR]
+					][return fail-invalid 223 "emit-control-operation/stack-types/depth#10"]
 					ref: stack-types/depth
 					width: value-width ref 0 table
 					signed: either signed-type? ref table [1][0]
@@ -10724,11 +10783,11 @@ x64-codegen: context [
 							target <= 0 target > fn/instruction-count
 							catch-depths/target <> catch-depths/index
 						][
-							return INVALID_IR
+							return fail-invalid 224 "emit-control-operation/fn/instruction-count#11"
 						]
 						if measure? [
 							unless merge-target target depth fn view table [
-								return INVALID_IR
+								return fail-invalid 225 "emit-control-operation/depth#12"
 							]
 						]
 						at: either measure? [as byte-ptr! 0][code + written]
@@ -10758,10 +10817,10 @@ x64-codegen: context [
 					]
 
 					target: instruction/c
-					if catch-depths/target <> catch-depths/index [return INVALID_IR]
+					if catch-depths/target <> catch-depths/index [return fail-invalid 226 "emit-control-operation/instruction/c#13"]
 					if measure? [
 						unless merge-target target depth fn view table [
-							return INVALID_IR
+							return fail-invalid 227 "emit-control-operation/depth#14"
 						]
 					]
 					displacement: 0
@@ -10780,7 +10839,7 @@ x64-codegen: context [
 					state/fallthrough?: false
 				]
 				instruction/op = OP_ENTRY [
-					if any [state/current-entry <> index depth <> 0][return INVALID_IR]
+					if any [state/current-entry <> index depth <> 0][return fail-invalid 228 "emit-control-operation/state/current-entry#15"]
 					if instruction/a = 1 [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/adjust-stack at (capacity - written)
@@ -10791,13 +10850,13 @@ x64-codegen: context [
 				]
 				instruction/op = OP_SUB_CALL [
 					target: instruction/a
-					if target = state/current-entry [return INVALID_IR]
+					if target = state/current-entry [return fail-invalid 229 "emit-control-operation/state/current-entry#16"]
 					sub-entry: as rsir-instruction! (instructions
 						+ ((target - 1) * RSIR_INSTRUCTION_SIZE))
 					unless all [
 						sub-entry/op = OP_ENTRY sub-entry/a = 1
 						instruction/b = sub-entry/b instruction/c = 0
-					][return INVALID_IR]
+					][return fail-invalid 230 "emit-control-operation/instruction/b#17"]
 					displacement: 0
 					if not measure? [
 						displacement: (instruction-offsets/target
@@ -10839,7 +10898,7 @@ x64-codegen: context [
 				]
 				instruction/op = OP_SUB_RETURN [
 					if state/current-entry <= 0 [
-						return INVALID_IR
+						return fail-invalid 231 "emit-control-operation/state/current-entry#18"
 					]
 					sub-entry: as rsir-instruction! (instructions
 						+ ((state/current-entry - 1) * RSIR_INSTRUCTION_SIZE))
@@ -10872,7 +10931,7 @@ x64-codegen: context [
 							]
 						]
 					][
-						return INVALID_IR
+						return fail-invalid 232 "emit-control-operation/stack-types/depth#19"
 					]
 					if return-ref <> 0 [
 						ref: stack-types/depth
@@ -10884,7 +10943,7 @@ x64-codegen: context [
 							if any [
 								all [floating? location <> LOCATION_XMM]
 								all [not floating? location <> LOCATION_GPR]
-							][return INVALID_IR]
+							][return fail-invalid 233 "emit-control-operation/floating#20"]
 						]
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: either tracked? [
@@ -10931,7 +10990,7 @@ x64-codegen: context [
 						instruction/a > 0
 						instruction/b = 0
 						instruction/c = 0
-					][return INVALID_IR]
+					][return fail-invalid 234 "emit-control-operation/instruction/c#21"]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/trap at (capacity - written)
 					if encoded < 0 [return OUTPUT_FULL]
@@ -10947,16 +11006,16 @@ x64-codegen: context [
 						instruction/c <> 0
 						all [return-ref = 0 instruction/b <> 0]
 						all [entry? state/return-value?]
-					][return INVALID_IR]
+					][return fail-invalid 235 "emit-control-operation/state/return-value#22"]
 					if return-ref <> 0 [
-						if any [depth < 1 stack-kinds/depth <> VALUE][return INVALID_IR]
+						if any [depth < 1 stack-kinds/depth <> VALUE][return fail-invalid 236 "emit-control-operation/stack-kinds/depth#23"]
 						either state/return-value? [
 							unless all [
 								instruction/b = 0
 								stack-flags/depth = 0
 								aggregate-ref? stack-types/depth table
 								compatible-types? return-ref stack-types/depth table
-							][return INVALID_IR]
+							][return fail-invalid 237 "emit-control-operation/stack-types/depth#24"]
 						][
 							compatibility: implicitly-compatible-types return-ref stack-types/depth
 								stack-tags/depth false table
@@ -10966,10 +11025,15 @@ x64-codegen: context [
 								stack-flags/depth = instruction/b
 								machine-value? return-ref instruction/b table
 								machine-value? stack-types/depth stack-flags/depth table
-							][return INVALID_IR]
+							][return fail-invalid 238 "emit-control-operation/stack-types/depth#25"]
 						]
 					]
-					either entry? [
+					; On Windows the process entry has no caller, so its return
+					; transfers the status to ExitProcess. Under System V the
+					; entry is the startup code, which never returns to an
+					; address of its own: it hands control to libc, and a plain
+					; return keeps the dead path well formed.
+					either all [entry? target-abi = ABI_WIN64] [
 						if state/max-outgoing < 32 [state/max-outgoing: 32]
 						either return-ref = 0 [
 							at: either measure? [as byte-ptr! 0][code + written]
@@ -10992,7 +11056,7 @@ x64-codegen: context [
 						encoded: x64-encoder/call-import at (capacity - written) 0
 						if encoded < 0 [return OUTPUT_FULL]
 						if not measure? [
-							if exit-reference-id <= 0 [return INVALID_IR]
+							if exit-reference-id <= 0 [return fail-invalid 239 "emit-control-operation/exit-reference-id#26"]
 							references/exit-reference-id: function-offset + written + 2
 						]
 						written: written + encoded
@@ -11019,7 +11083,7 @@ x64-codegen: context [
 									if encoded < 0 [return OUTPUT_FULL]
 									written: written + encoded
 									value-size: aggregate-size return-ref table
-									if value-size <= 0 [return INVALID_IR]
+									if value-size <= 0 [return fail-invalid 240 "emit-control-operation/value-size#27"]
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/copy-indirect at
 										(capacity - written) value-size
@@ -11030,7 +11094,7 @@ x64-codegen: context [
 										x64-encoder/RAX
 										(0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8 0
 								][
-									if aggregate-width = 0 [return INVALID_IR]
+									if aggregate-width = 0 [return fail-invalid 241 "emit-control-operation/aggregate-width#28"]
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/frame-load at (capacity - written)
 										x64-encoder/RAX slot-displacement
@@ -11052,7 +11116,7 @@ x64-codegen: context [
 									if any [
 										all [floating? location <> LOCATION_XMM]
 										all [not floating? location <> LOCATION_GPR]
-									][return INVALID_IR]
+									][return fail-invalid 242 "emit-control-operation/floating#29"]
 								]
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: either tracked? [
@@ -11092,7 +11156,7 @@ x64-codegen: context [
 					depth: 0
 					state/fallthrough?: false
 				]
-			true [return UNSUPPORTED]
+			true [return fail-unsupported 243 "emit-control-operation/state/fallthrough#30"]
 		]
 		state/written: written
 		state/depth: depth
@@ -11177,7 +11241,7 @@ x64-codegen: context [
 			instruction/a = 0
 			depth = 1
 		][
-			unless stack-kinds/depth = VALUE [return INVALID_IR]
+			unless stack-kinds/depth = VALUE [return fail-invalid 244 "prepare-instruction/stack-kinds/depth#1"]
 			depth: 0
 			location: LOCATION_NONE
 			state/location-depth: 0
@@ -11187,7 +11251,7 @@ x64-codegen: context [
 			state/source-register: 0
 		]
 		if instruction/op = OP_ENTRY [
-			if state/fallthrough? [return INVALID_IR]
+			if state/fallthrough? [return fail-invalid 245 "prepare-instruction/state/fallthrough#2"]
 			if state/max-depth > (2147483647 - state/segment-slots)[return OUTPUT_FULL]
 			state/segment-slots: state/segment-slots + state/max-depth
 			if state/storage-base > (2147483647 - state/segment-slots)[return OUTPUT_FULL]
@@ -11200,7 +11264,7 @@ x64-codegen: context [
 		either state/fallthrough? [
 			if instruction-depths/index >= 0 [
 				if measure? [
-					if instruction-depths/index <> depth [return INVALID_IR]
+					if instruction-depths/index <> depth [return fail-invalid 246 "prepare-instruction/depth#3"]
 					if depth > 0 [
 						tag-head: stack-tags/depth
 						if tag-head < 0 [tag-head: 0]
@@ -11210,7 +11274,7 @@ x64-codegen: context [
 							entry-flags/index <> stack-flags/depth
 							entry-kinds/index <> stack-kinds/depth
 							entry-tags/index <> tag-head
-						][return INVALID_IR]
+						][return fail-invalid 247 "prepare-instruction/tag-head#4"]
 						entry-types/index: ref
 					]
 				]
@@ -11347,7 +11411,7 @@ x64-codegen: context [
 		if location <> LOCATION_NONE [
 			unless any [all [state/location-depth = depth depth > 0 control-uses/index = 0]
 				all [state/pending-immediate-kind = 1 state/pending-immediate-index = (index - 1)
-					location = LOCATION_GPR state/location-depth = (depth - 1)]][return INVALID_IR]
+					location = LOCATION_GPR state/location-depth = (depth - 1)]][return fail-invalid 248 "prepare-instruction/state/location-depth#5"]
 			consume-location?: case [
 				any [location = LOCATION_ADDRESS location = LOCATION_FRAME location = LOCATION_FRAME_INDIRECT
 					location = LOCATION_GLOBAL location = LOCATION_ARGUMENT
@@ -11396,16 +11460,16 @@ x64-codegen: context [
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
-					location = LOCATION_ARGUMENT [return INVALID_IR]
+					location = LOCATION_ARGUMENT [return fail-invalid 249 "prepare-instruction/location#6"]
 					any [location = LOCATION_GPR location = LOCATION_XMM][0]
-					location = LOCATION_GLOBAL [return INVALID_IR]
-					location = LOCATION_GPR_HOME [return INVALID_IR]
+					location = LOCATION_GLOBAL [return fail-invalid 250 "prepare-instruction/location#7"]
+					location = LOCATION_GPR_HOME [return fail-invalid 251 "prepare-instruction/location#8"]
 					any [
 						location = LOCATION_GPR_PAIR
 						location = LOCATION_XMM_PAIR
 						location = LOCATION_GPR_HOME_PAIR
-					][return INVALID_IR]
-					true [return INVALID_IR]
+					][return fail-invalid 252 "prepare-instruction/location#9"]
+					true [return fail-invalid 253 "prepare-instruction/location#10"]
 				]
 				ref: stack-types/depth
 				flags: stack-flags/depth
@@ -11416,16 +11480,16 @@ x64-codegen: context [
 							slot-displacement (storage-slots + depth) 8]
 					location = LOCATION_XMM [
 						width: value-width ref flags table
-						if width <= 0 [return INVALID_IR]
+						if width <= 0 [return fail-invalid 254 "prepare-instruction/ref#11"]
 						x64-encoder/xmm-frame-store at (capacity - written) x64-encoder/XMM0
 							slot-displacement (storage-slots + depth) width]
 					location = LOCATION_GPR [
 						width: either inline-object-ref? ref table [8][value-width ref flags table]
-						if width <= 0 [return INVALID_IR]
+						if width <= 0 [return fail-invalid 255 "prepare-instruction/inline-object-ref#12"]
 						target-width: either width = 8 [8][4]
 						x64-encoder/frame-store at (capacity - written) x64-encoder/RAX
 							slot-displacement (storage-slots + depth) target-width]
-					true [return INVALID_IR]
+					true [return fail-invalid 256 "prepare-instruction/storage-slots#13"]
 				]
 				if encoded < 0 [return OUTPUT_FULL]
 				written: written + encoded
@@ -11492,7 +11556,7 @@ x64-codegen: context [
 		allocation-size: 0
 		if not measure? [
 			frame-extra: task/frame-size - x64-encoder/BASE_FRAME_SIZE
-			if frame-extra < 0 [return INVALID_IR]
+			if frame-extra < 0 [return fail-invalid 257 "emit-function-body/frame-extra#1"]
 			allocation-size: x64-encoder/allocate-frame null 0 frame-extra
 			if allocation-size < 0 [return OUTPUT_FULL]
 		]
@@ -11501,6 +11565,7 @@ x64-codegen: context [
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
+			codegen-diag/mark-instruction index instruction/op
 			result: prepare-instruction context instruction index prepared
 			if result = PREPARE_SKIPPED [
 				index: index + prepared/advance
@@ -11598,24 +11663,26 @@ x64-codegen: context [
 		size: ctx/size
 		if any [
 			null? data null? ctx/output size < RSIR_HEADER_SIZE ctx/capacity < 0
-		][return INVALID_IR]
-		unless any [ctx/opt-level = 0 ctx/opt-level = 2][return UNSUPPORTED]
+		][return fail-invalid 258 "validate-module-header/ctx/output#1"]
+		unless any [ctx/opt-level = 0 ctx/opt-level = 2][return fail-unsupported 259 "validate-module-header/ctx/opt-level#2"]
 		header: as rsir-header! data
 		ctx/header: header
 		if any [
 			header/type-count < 0 header/import-count < 0 header/global-count < 0
 			header/switch-count < 0 header/export-count < 0
+			header/line-record-count < 0 header/file-count < 0
+			all [header/line-record-count > 0 header/file-count <= 0]
 			header/function-count <= 0 header/instruction-count <= 0
 			header/module-kind < 1 header/module-kind > 4
 			all [header/module-kind = 4 header/export-count = 0]
 			all [header/module-kind <> 4 header/export-count <> 0]
-		][return INVALID_IR]
+		][return fail-invalid 260 "validate-module-header/header/module-kind#3"]
 		ctx/entry?: header/module-kind = 3
 		if any [
 			all [ctx/entry? any [header/entry-function <= 0
 				header/entry-function > header/function-count]]
 			all [not ctx/entry? header/entry-function <> 0]
-		][return INVALID_IR]
+		][return fail-invalid 261 "validate-module-header/ctx/entry#4"]
 		ctx/cursor: data + RSIR_HEADER_SIZE
 		ctx/remaining: size - RSIR_HEADER_SIZE
 		0
@@ -11638,7 +11705,7 @@ x64-codegen: context [
 		module: ctx/module
 		table: module/table
 		types: claim-table ctx header/type-count RSIR_TYPE_SIZE
-		if null? types [return INVALID_IR]
+		if null? types [return fail-invalid 262 "validate-module-types/types#1"]
 		; The layout cache lives in the scratch block, which cannot be sized
 		; until the tables validate; until then layout-type runs unmemoized.
 		table/types: types
@@ -11654,29 +11721,29 @@ x64-codegen: context [
 				ir-type/member-count < 0 ir-type/first-member <> member-count
 				ir-type/flags < 0 ir-type/flags > CALLABLE_FLAGS
 				(ir-type/flags and 3) = 3
-			][return INVALID_IR]
+			][return fail-invalid 263 "validate-module-types/ir-type/flags#2"]
 			variable-mode: ir-type/flags and VARIABLE_FLAGS
 			unless any [variable-mode = 0 variable-mode = VARIADIC
-				variable-mode = TYPED variable-mode = CUSTOM][return INVALID_IR]
+				variable-mode = TYPED variable-mode = CUSTOM][return fail-invalid 264 "validate-module-types/variable-mode#3"]
 			case [
 				ir-type/kind = -1 [
 					if any [ir-type/flags <> 0 ir-type/member-count <> 0
 						not valid-type-ref? ir-type/target table][
-						return INVALID_IR
+						return fail-invalid 265 "validate-module-types/valid-type-ref#4"
 					]
 				]
 				ir-type/kind = -2 [
 					if any [
 						ir-type/target <> 0 ir-type/flags <> 0
 						ir-type/member-count <= 0
-					][return INVALID_IR]
+					][return fail-invalid 266 "validate-module-types/ir-type/member-count#5"]
 				]
 				ir-type/kind = -3 [
 					if any [
 						ir-type/target <> 0
 						not any [ir-type/flags = 0 ir-type/flags = TAGGED_UNION]
 						ir-type/member-count <= 0
-					][return INVALID_IR]
+					][return fail-invalid 267 "validate-module-types/ir-type/member-count#6"]
 				]
 				any [ir-type/kind = -4 ir-type/kind = -5][
 					if any [
@@ -11686,12 +11753,12 @@ x64-codegen: context [
 							(ir-type/flags and CATCH_FLAG) <> 0
 							(ir-type/flags and CATCH_CONFLICT_FLAGS) <> 0
 						]
-					][return INVALID_IR]
+					][return fail-invalid 268 "validate-module-types/ir-type/flags#7"]
 				]
 				ir-type/kind = -6 [
 					if any [ir-type/flags <> 0 ir-type/member-count <> 0
 						not valid-type-ref? ir-type/target table][
-						return INVALID_IR
+						return fail-invalid 269 "validate-module-types/valid-type-ref#8"
 					]
 				]
 				ir-type/kind = -7 [
@@ -11700,7 +11767,7 @@ x64-codegen: context [
 						ir-type/member-count <= 0
 						not any [ir-type/flags = 1 ir-type/flags = 2
 							ir-type/flags = 4 ir-type/flags = 8]
-					][return INVALID_IR]
+					][return fail-invalid 270 "validate-module-types/ir-type/flags#9"]
 				]
 				ir-type/kind = -8 [
 					if any [
@@ -11708,22 +11775,22 @@ x64-codegen: context [
 						ir-type/target <= 0
 						not valid-type-ref? ir-type/target table
 						(logical-kind ir-type/target table) <> -4
-					][return INVALID_IR]
+					][return fail-invalid 271 "validate-module-types/table#10"]
 				]
 				all [ir-type/kind > 0 ir-type/kind <= 14][
 					if any [ir-type/target <> 0 ir-type/flags <> 0
-						ir-type/member-count <> 0][return INVALID_IR]
+						ir-type/member-count <> 0][return fail-invalid 272 "validate-module-types/ir-type/member-count#11"]
 				]
-				true [return INVALID_IR]
+				true [return fail-invalid 273 "validate-module-types/ir-type/member-count#12"]
 			]
 			if ir-type/kind <> -7 [
-				if member-count > (2147483647 - ir-type/member-count)[return INVALID_IR]
+				if member-count > (2147483647 - ir-type/member-count)[return fail-invalid 274 "validate-module-types/ir-type/member-count#13"]
 				member-count: member-count + ir-type/member-count
 			]
 			id: id + 1
 		]
 		members: claim-table ctx member-count RSIR_MEMBER_SIZE
-		if null? members [return INVALID_IR]
+		if null? members [return fail-invalid 275 "validate-module-types/members#14"]
 		table/members: members
 		id: 1
 		while [id <= header/type-count][
@@ -11734,10 +11801,10 @@ x64-codegen: context [
 					ir-member: as rsir-member! (members
 						+ (member-id * RSIR_MEMBER_SIZE))
 					if not valid-type-ref? ir-member/type table [
-						return INVALID_IR
+						return fail-invalid 276 "validate-module-types/valid-type-ref#15"
 					]
 					either ir-type/kind = -8 [
-						unless typed-runtime-id? ir-member/flags [return INVALID_IR]
+						unless typed-runtime-id? ir-member/flags [return fail-invalid 277 "validate-module-types/ir-member/flags#16"]
 					][
 						if any [
 							ir-member/flags < 0
@@ -11746,7 +11813,7 @@ x64-codegen: context [
 								ir-member/flags = INLINE
 								not aggregate-ref? ir-member/type table
 							]
-						][return INVALID_IR]
+						][return fail-invalid 278 "validate-module-types/aggregate-ref#17"]
 					]
 					member-id: member-id + 1
 				]
@@ -11769,47 +11836,54 @@ x64-codegen: context [
 			ir-global [rsir-global!]
 			ir-function [rsir-function!]
 			ir-export [rsir-export!]
-			imports globals functions exports [byte-ptr!]
-			id variable-mode next-parameter
-			parameter-count initializer-count instruction-count [integer!]
+		imports globals functions exports [byte-ptr!]
+		id variable-mode next-parameter
+		parameter-count initializer-count instruction-count [integer!]
+		syscall? [logic!]
 	][
 		header: ctx/header
 		module: ctx/module
 		table: module/table
 		imports: claim-table ctx header/import-count RSIR_IMPORT_SIZE
-		if null? imports [return INVALID_IR]
+		if null? imports [return fail-invalid 279 "validate-module-symbols/imports#1"]
 		parameter-count: 0
 		id: 1
 		while [id <= header/import-count][
 			ir-import: as rsir-import! (imports + ((id - 1) * RSIR_IMPORT_SIZE))
+			syscall?: (ir-import/flags and SYSCALL_FLAG) <> 0
 			if any [
-				ir-import/flags < 0 ir-import/flags > CALLABLE_FLAGS
+				ir-import/flags < 0
+				either syscall? [
+					;-- A syscall carries its number above the flag and has no
+					;-- calling convention beyond cdecl.
+					(ir-import/flags and 2047) <> (SYSCALL_FLAG or CDECL)
+				][ir-import/flags > CALLABLE_FLAGS]
 				(ir-import/flags and 3) = 3
 				ir-import/first-parameter <> parameter-count
 				ir-import/parameter-count < 0
-			][return INVALID_IR]
+			][return fail-invalid 280 "validate-module-symbols/ir-import/parameter-count#2"]
 			variable-mode: ir-import/flags and VARIABLE_FLAGS
 			unless any [variable-mode = 0 variable-mode = VARIADIC
-				variable-mode = TYPED variable-mode = CUSTOM][return INVALID_IR]
+				variable-mode = TYPED variable-mode = CUSTOM][return fail-invalid 281 "validate-module-symbols/variable-mode#3"]
 			either ir-import/flags = 0 [
 				if any [not valid-type-ref? ir-import/type table
-					ir-import/parameter-count <> 0][return INVALID_IR]
+					ir-import/parameter-count <> 0][return fail-invalid 282 "validate-module-symbols/ir-import/parameter-count#4"]
 			][
 				if any [
 					(ir-import/flags and 3) = 0
 					all [ir-import/type <> 0
 						not valid-type-ref? ir-import/type table]
-				][return INVALID_IR]
+				][return fail-invalid 283 "validate-module-symbols/valid-type-ref#5"]
 			]
 			if parameter-count > (2147483647 - ir-import/parameter-count)[
-				return INVALID_IR
+				return fail-invalid 284 "validate-module-symbols/ir-import/parameter-count#6"
 			]
 			parameter-count: parameter-count + ir-import/parameter-count
 			id: id + 1
 		]
 
 		globals: claim-table ctx header/global-count RSIR_GLOBAL_SIZE
-		if null? globals [return INVALID_IR]
+		if null? globals [return fail-invalid 285 "validate-module-symbols/globals#7"]
 		initializer-count: 0
 		id: 1
 		while [id <= header/global-count][
@@ -11824,21 +11898,22 @@ x64-codegen: context [
 					ir-global/first-initializer <> 0]
 				all [ir-global/initializer-count > 0
 					ir-global/first-initializer <> initializer-count]
-			][return INVALID_IR]
+			][return fail-invalid 286 "validate-module-symbols/ir-global/first-initializer#8"]
 			if initializer-count > (2147483647 - ir-global/initializer-count)[
-				return INVALID_IR
+				return fail-invalid 287 "validate-module-symbols/ir-global/initializer-count#9"
 			]
 			initializer-count: initializer-count + ir-global/initializer-count
 			id: id + 1
 		]
 
 		functions: claim-table ctx header/function-count RSIR_FUNCTION_SIZE
-		if null? functions [return INVALID_IR]
+		if null? functions [return fail-invalid 288 "validate-module-symbols/functions#10"]
 		instruction-count: 0
 		id: 1
 		while [id <= header/function-count][
 			ir-function: as rsir-function! (functions
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
+			codegen-diag/mark-function id
 			if any [
 				all [ir-function/return-type <> 0
 					not valid-type-ref? ir-function/return-type table]
@@ -11852,29 +11927,29 @@ x64-codegen: context [
 				ir-function/parameter-count < 0
 				ir-function/local-count < 0
 				ir-function/instruction-count <= 0
-			][return INVALID_IR]
+			][return fail-invalid 289 "validate-module-symbols/ir-function/instruction-count#11"]
 			variable-mode: ir-function/flags and VARIABLE_FLAGS
 			unless any [variable-mode = 0 variable-mode = VARIADIC
-				variable-mode = TYPED variable-mode = CUSTOM][return INVALID_IR]
+				variable-mode = TYPED variable-mode = CUSTOM][return fail-invalid 290 "validate-module-symbols/variable-mode#12"]
 			if parameter-count > (2147483647 - ir-function/parameter-count)[
-				return INVALID_IR
+				return fail-invalid 291 "validate-module-symbols/ir-function/parameter-count#13"
 			]
 			next-parameter: parameter-count + ir-function/parameter-count
 			if any [
 				ir-function/first-local <> next-parameter
 				next-parameter > (2147483647 - ir-function/local-count)
-			][return INVALID_IR]
+			][return fail-invalid 292 "validate-module-symbols/ir-function/local-count#14"]
 			parameter-count: next-parameter + ir-function/local-count
 			if instruction-count > (2147483647 - ir-function/instruction-count)[
-				return INVALID_IR
+				return fail-invalid 293 "validate-module-symbols/ir-function/instruction-count#15"
 			]
 			instruction-count: instruction-count + ir-function/instruction-count
 			id: id + 1
 		]
-		if instruction-count <> header/instruction-count [return INVALID_IR]
+		if instruction-count <> header/instruction-count [return fail-invalid 294 "validate-module-symbols/header/instruction-count#16"]
 
 		exports: claim-table ctx header/export-count RSIR_EXPORT_SIZE
-		if null? exports [return INVALID_IR]
+		if null? exports [return fail-invalid 295 "validate-module-symbols/exports#17"]
 		id: 1
 		while [id <= header/export-count][
 			ir-export: as rsir-export! (exports + ((id - 1) * RSIR_EXPORT_SIZE))
@@ -11884,7 +11959,7 @@ x64-codegen: context [
 					ir-export/symbol > header/function-count]
 				all [ir-export/symbol < 0
 					ir-export/symbol < (0 - header/global-count)]
-			][return INVALID_IR]
+			][return fail-invalid 296 "validate-module-symbols/ir-export/symbol#18"]
 			id: id + 1
 		]
 
@@ -11917,7 +11992,7 @@ x64-codegen: context [
 		functions: module/functions
 		parameter-count: ctx/parameter-count
 		parameters: claim-table ctx parameter-count RSIR_PARAMETER_SIZE
-		if null? parameters [return INVALID_IR]
+		if null? parameters [return fail-invalid 297 "validate-module-parameters/parameters#1"]
 		id: 1
 		while [id <= parameter-count][
 			ir-parameter: as rsir-parameter! (parameters
@@ -11928,7 +12003,7 @@ x64-codegen: context [
 				ir-parameter/flags < 0 ir-parameter/flags > INLINE
 				all [ir-parameter/flags = INLINE
 					not aggregate-ref? ir-parameter/type table]
-			][return INVALID_IR]
+			][return fail-invalid 298 "validate-module-parameters/aggregate-ref#2"]
 			id: id + 1
 		]
 		id: 1
@@ -11939,7 +12014,7 @@ x64-codegen: context [
 			while [parameter-id < parameter-end][
 				ir-parameter: as rsir-parameter! (parameters
 					+ (parameter-id * RSIR_PARAMETER_SIZE))
-				if ir-parameter/type = 0 [return INVALID_IR]
+				if ir-parameter/type = 0 [return fail-invalid 299 "validate-module-parameters/parameter-id#3"]
 				parameter-id: parameter-id + 1
 			]
 			id: id + 1
@@ -11948,12 +12023,13 @@ x64-codegen: context [
 		while [id <= header/function-count][
 			ir-function: as rsir-function! (functions
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
+			codegen-diag/mark-function id
 			parameter-id: ir-function/first-parameter
 			parameter-end: ir-function/first-local
 			while [parameter-id < parameter-end][
 				ir-parameter: as rsir-parameter! (parameters
 					+ (parameter-id * RSIR_PARAMETER_SIZE))
-				if ir-parameter/type = 0 [return INVALID_IR]
+				if ir-parameter/type = 0 [return fail-invalid 300 "validate-module-parameters/parameter-id#4"]
 				parameter-id: parameter-id + 1
 			]
 			id: id + 1
@@ -11983,7 +12059,7 @@ x64-codegen: context [
 		types: table/types
 		globals: module/globals
 		initializers: claim-table ctx ctx/initializer-count RSIR_INITIALIZER_SIZE
-		if null? initializers [return INVALID_IR]
+		if null? initializers [return fail-invalid 301 "validate-module-initializers/initializers#1"]
 		id: 1
 		while [id <= header/global-count][
 			ir-global: as rsir-global! (globals + ((id - 1) * RSIR_GLOBAL_SIZE))
@@ -11993,7 +12069,7 @@ x64-codegen: context [
 				base > 0
 				(logical-kind base table) = -7
 			]
-			if all [array? ir-global/initializer-count = 0][return INVALID_IR]
+			if all [array? ir-global/initializer-count = 0][return fail-invalid 302 "validate-module-initializers/ir-global/initializer-count#2"]
 			if ir-global/initializer-count > 0 [
 				initializer: as rsir-initializer! (initializers
 					+ (ir-global/first-initializer * RSIR_INITIALIZER_SIZE))
@@ -12007,10 +12083,10 @@ x64-codegen: context [
 							array-type/flags <> 1
 							initializer/b <> array-type/member-count
 							(canonical-type array-type/target table) <> -2
-						][return INVALID_IR]
+						][return fail-invalid 303 "validate-module-initializers/table#3"]
 					][
 						if ir-global/initializer-count <> array-type/member-count [
-							return INVALID_IR
+							return fail-invalid 304 "validate-module-initializers/ir-global/initializer-count#4"
 						]
 						initializer-id: 0
 						while [initializer-id < ir-global/initializer-count][
@@ -12019,7 +12095,7 @@ x64-codegen: context [
 									* RSIR_INITIALIZER_SIZE))
 							case [
 								initializer/kind = SCALAR_INITIALIZER [
-									if initializer/c <> 0 [return INVALID_IR]
+									if initializer/c <> 0 [return fail-invalid 305 "validate-module-initializers/initializer/c#5"]
 								]
 								initializer/kind = ADDRESS_INITIALIZER [
 									if any [
@@ -12027,22 +12103,22 @@ x64-codegen: context [
 										not valid-static-address-initializer? initializer
 											array-type/target id header/global-count
 											header/function-count globals table
-									][return INVALID_IR]
+									][return fail-invalid 306 "validate-module-initializers/header/function-count#6"]
 								]
-								true [return INVALID_IR]
+								true [return fail-invalid 307 "validate-module-initializers/function-count#7"]
 							]
 							initializer-id: initializer-id + 1
 						]
 					]
 				][
-					if ir-global/initializer-count <> 1 [return INVALID_IR]
+					if ir-global/initializer-count <> 1 [return fail-invalid 308 "validate-module-initializers/ir-global/initializer-count#8"]
 					case [
 						initializer/kind = SCALAR_INITIALIZER [
 							if any [
 								initializer/c <> 0
 								(ir-global/flags and INLINE) <> 0
 								not machine-value? ir-global/type 0 table
-							][return INVALID_IR]
+							][return fail-invalid 309 "validate-module-initializers/machine-value#9"]
 						]
 						initializer/kind = ADDRESS_INITIALIZER [
 							if any [
@@ -12050,9 +12126,9 @@ x64-codegen: context [
 								not valid-static-address-initializer? initializer
 									ir-global/type id header/global-count
 									header/function-count globals table
-							][return INVALID_IR]
+							][return fail-invalid 310 "validate-module-initializers/header/function-count#10"]
 						]
-						true [return INVALID_IR]
+						true [return fail-invalid 311 "validate-module-initializers/function-count#11"]
 					]
 				]
 			]
@@ -12073,21 +12149,30 @@ x64-codegen: context [
 			ir-import [rsir-import!]
 			ir-export [rsir-export!]
 			initializer [rsir-initializer!]
-			switches instructions strings globals imports exports initializers [byte-ptr!]
-			id strings-size export-names-size [integer!]
-	][
-		header: ctx/header
-		module: ctx/module
-		globals: module/globals
-		imports: module/imports
-		exports: ctx/exports
-		initializers: ctx/initializers
-		switches: claim-table ctx header/switch-count RSIR_SWITCH_SIZE
-		if null? switches [return INVALID_IR]
-		instructions: claim-table ctx header/instruction-count RSIR_INSTRUCTION_SIZE
-		if null? instructions [return INVALID_IR]
-		strings: ctx/cursor
-		strings-size: ctx/remaining
+			ir-line [rsir-line-record!]
+			file-entry [rsir-file-entry!]
+			ir-function [rsir-function!]
+			lines file-table [byte-ptr!]
+			switches instructions strings globals imports exports initializers functions [byte-ptr!]
+			id strings-size export-names-size previous-function previous-index [integer!]
+		][
+			header: ctx/header
+			module: ctx/module
+			globals: module/globals
+			imports: module/imports
+			exports: ctx/exports
+			initializers: ctx/initializers
+			functions: module/functions
+			switches: claim-table ctx header/switch-count RSIR_SWITCH_SIZE
+			if null? switches [return fail-invalid 312 "locate-module-strings/switches#1"]
+			instructions: claim-table ctx header/instruction-count RSIR_INSTRUCTION_SIZE
+			if null? instructions [return fail-invalid 313 "locate-module-strings/instructions#2"]
+			lines: claim-table ctx header/line-record-count RSIR_LINE_SIZE
+			if null? lines [return fail-invalid 317 "locate-module-strings/lines#6"]
+			file-table: claim-table ctx header/file-count RSIR_FILE_ENTRY_SIZE
+			if null? file-table [return fail-invalid 318 "locate-module-strings/file-table#7"]
+			strings: ctx/cursor
+			strings-size: ctx/remaining
 
 		id: 1
 		while [id <= header/global-count][
@@ -12101,7 +12186,7 @@ x64-codegen: context [
 						initializer/b > strings-size
 						initializer/a > (strings-size - initializer/b)
 					]
-				][return INVALID_IR]
+				][return fail-invalid 314 "locate-module-strings/initializer/a#3"]
 			]
 			id: id + 1
 		]
@@ -12116,7 +12201,7 @@ x64-codegen: context [
 				ir-import/external < 0 ir-import/external-size <= 0
 				ir-import/external-size > strings-size
 				ir-import/external > (strings-size - ir-import/external-size)
-			][return INVALID_IR]
+			][return fail-invalid 315 "locate-module-strings/ir-import/external#4"]
 			id: id + 1
 		]
 
@@ -12129,14 +12214,60 @@ x64-codegen: context [
 				ir-export/name-size > strings-size
 				ir-export/name > (strings-size - ir-export/name-size)
 				export-names-size > (2147483647 - ir-export/name-size)
-			][return INVALID_IR]
+			][return fail-invalid 316 "locate-module-strings/ir-export/name-size#5"]
 			export-names-size: export-names-size + ir-export/name-size
+			id: id + 1
+		]
+
+		; Debug line records must ascend by (function-id, instruction-index)
+		; and point inside their function's instruction stream.
+		previous-function: 0
+		previous-index: 0
+		id: 1
+		while [id <= header/line-record-count][
+			ir-line: as rsir-line-record! (lines + ((id - 1) * RSIR_LINE_SIZE))
+			if any [
+				ir-line/function-id <= 0
+				ir-line/function-id > header/function-count
+				ir-line/instruction-index <= 0
+				ir-line/line <= 0
+				ir-line/file-id <= 0
+				ir-line/file-id > header/file-count
+				all [ir-line/function-id = previous-function
+					ir-line/instruction-index <= previous-index]
+				ir-line/function-id < previous-function
+			][return fail-invalid 319 "locate-module-strings/ir-line/ordering#8"]
+			ir-function: as rsir-function! (functions
+				+ ((ir-line/function-id - 1) * RSIR_FUNCTION_SIZE))
+			if ir-line/instruction-index > ir-function/instruction-count [
+				return fail-invalid 320 "locate-module-strings/ir-line/instruction-index#9"
+			]
+			either ir-line/function-id = previous-function [
+				previous-index: ir-line/instruction-index
+			][
+				previous-function: ir-line/function-id
+				previous-index: ir-line/instruction-index
+			]
+			id: id + 1
+		]
+		id: 1
+		while [id <= header/file-count][
+			file-entry: as rsir-file-entry! (file-table + ((id - 1) * RSIR_FILE_ENTRY_SIZE))
+			if any [
+				file-entry/name-size <= 0
+				file-entry/name-size > strings-size
+				file-entry/name-offset > (strings-size - file-entry/name-size)
+			][return fail-invalid 321 "locate-module-strings/file-entry/name#10"]
 			id: id + 1
 		]
 
 		module/switches: switches
 		module/instructions: instructions
 		module/strings: strings
+		module/lines: lines
+		module/file-table: file-table
+		module/line-count: header/line-record-count
+		module/file-count: header/file-count
 		module/strings-size: strings-size
 		module/function-count: header/function-count
 		module/import-count: header/import-count
@@ -12196,11 +12327,11 @@ x64-codegen: context [
 				ir-global/name < 0 ir-global/name-size < 0
 				ir-global/name-size > strings-size
 				ir-global/name > (strings-size - ir-global/name-size)
-			][return INVALID_IR]
+			][return fail-invalid 317 "layout-module-globals/ir-global/name#1"]
 			global-size: 0
 			global-align: 0
 			unless layout-type ir-global/type ((ir-global/flags and INLINE) <> 0)
-				table 0 :global-size :global-align [return INVALID_IR]
+				table 0 :global-size :global-align [return fail-invalid 318 "layout-module-globals/table#2"]
 			if global-names-size > (2147483647 - ir-global/name-size) [
 				return OUTPUT_FULL
 			]
@@ -12380,7 +12511,7 @@ x64-codegen: context [
 		]
 		ctx/rodata-size: rodata-size
 		ctx/data-size: data-size
-		if placed <> header/global-count [return INVALID_IR]
+		if placed <> header/global-count [return fail-invalid 319 "place-module-globals/header/global-count#1"]
 		id: 1
 		while [id <= header/global-count][
 			image-global: as codegen-global! (image-globals
@@ -12421,7 +12552,7 @@ x64-codegen: context [
 							target-image-function/reference-count:
 								target-image-function/reference-count + 1
 						]
-						true [return INVALID_IR]
+						true [return fail-invalid 320 "place-module-globals/target-image-function/reference-count#2"]
 					]
 					if global-reference-count = 2147483647 [return OUTPUT_FULL]
 					global-reference-count: global-reference-count + 1
@@ -12619,7 +12750,7 @@ x64-codegen: context [
 			global-size: 0
 			global-align: 0
 			unless layout-type id true table 0 :global-size :global-align [
-				return INVALID_IR
+				return fail-invalid 321 "measure-module-functions/table#1"
 			]
 			id: id + 1
 		]
@@ -12645,11 +12776,12 @@ x64-codegen: context [
 				ir-function/name < 0 ir-function/name-size <= 0
 				ir-function/name-size > strings-size
 				ir-function/name > (strings-size - ir-function/name-size)
-			][return INVALID_IR]
+			][return fail-invalid 322 "measure-module-functions/ir-function/name#2"]
 			function-instructions: instructions
 				+ ((next-instruction - 1) * RSIR_INSTRUCTION_SIZE)
 			current-entry?: all [entry? id = header/entry-function]
 			task/fn: ir-function
+			codegen-diag/mark-function id
 			task/first-instruction: next-instruction
 			task/first-offset: next-offset
 			task/entry?: current-entry?
@@ -12665,8 +12797,8 @@ x64-codegen: context [
 				(relaxed-offsets + (next-offset - 1))
 				(catch-depths + (next-instruction - 1))
 				(control-uses + (next-instruction - 1))
-			if status < 0 [return INVALID_IR]
-			if status > function-size [return INVALID_IR]
+			if status < 0 [return fail-invalid 323 "measure-module-functions/status#3"]
+			if status > function-size [return fail-invalid 324 "measure-module-functions/status#4"]
 			function-size: function-size - status
 			function-sizes/id: function-size
 			if function-names-size > (2147483647 - ir-function/name-size)[
@@ -12714,11 +12846,12 @@ x64-codegen: context [
 			module [rsir-module!]
 			work [codegen-scratch!]
 			ir-import [rsir-import!]
+			file-entry [rsir-file-entry!]
 			import-refs [int-ptr!]
 			imports [byte-ptr!]
 			id count last-library used-import-count import-reference-count
 				import-names-size import-count reference-count metadata-size
-				names-size code-size rodata-size data-size [integer!]
+				names-size code-size rodata-size data-size debug-size [integer!]
 			entry? [logic!]
 	][
 		header: ctx/header
@@ -12758,7 +12891,9 @@ x64-codegen: context [
 		]
 		import-count: used-import-count
 		reference-count: ctx/global-reference-count + import-reference-count
-		if entry? [
+		;-- Only a Win64 entry synthesizes an ExitProcess import; a System V
+		;-- entry returns, so it imports nothing of its own.
+		if all [entry? target-abi = ABI_WIN64][
 			if any [import-count = 2147483647 reference-count = 2147483647][
 				return OUTPUT_FULL
 			]
@@ -12786,9 +12921,9 @@ x64-codegen: context [
 		names-size: ctx/function-names-size + ctx/global-names-size + import-names-size
 		if names-size > (2147483647 - ctx/export-names-size)[return OUTPUT_FULL]
 		names-size: names-size + ctx/export-names-size
-		; The entry module reaches ExitProcess through one synthetic import whose
-		; two names are the only ones not copied out of the input strings.
-		if entry? [names-size: names-size + 23]
+		; A Win64 entry module reaches ExitProcess through one synthetic import
+		; whose two names are the only ones not copied out of the input strings.
+		if all [entry? target-abi = ABI_WIN64][names-size: names-size + 23]
 		if any [names-size < 0 metadata-size > (2147483647 - names-size - 15)][
 			return OUTPUT_FULL
 		]
@@ -12807,7 +12942,25 @@ x64-codegen: context [
 			ctx/data-offset < 0
 			ctx/data-offset > (2147483647 - data-size)
 		][return OUTPUT_FULL]
-		ctx/total-size: ctx/data-offset + data-size
+		; Debug builds append the sparse line records and the source file table
+		; with their name bytes directly after the data section. Without them
+		; the image still ends at the data section's last byte.
+		ctx/line-offset: align (ctx/data-offset + data-size) 4
+		debug-size: (header/line-record-count * 12) + (header/file-count * 8)
+		either debug-size > 0 [
+			if debug-size > (2147483647 - ctx/line-offset)[return OUTPUT_FULL]
+			file-entry: as rsir-file-entry! module/file-table
+			id: 1
+			while [id <= header/file-count][
+				if debug-size > (2147483647 - file-entry/name-size)[return OUTPUT_FULL]
+				debug-size: debug-size + file-entry/name-size
+				file-entry: file-entry + 1
+				id: id + 1
+			]
+			ctx/total-size: ctx/line-offset + debug-size
+		][
+			ctx/total-size: ctx/data-offset + data-size
+		]
 		if ctx/total-size > ctx/capacity [return OUTPUT_FULL]
 		ctx/import-count: import-count
 		ctx/reference-count: reference-count
@@ -12861,6 +13014,8 @@ x64-codegen: context [
 		image/global-count: header/global-count
 		image/rodata-size: ctx/rodata-size
 		image/export-count: header/export-count
+		image/line-record-count: header/line-record-count
+		image/file-count: header/file-count
 
 		names: output + ctx/metadata-size
 		name-cursor: 0
@@ -12895,7 +13050,7 @@ x64-codegen: context [
 			name-cursor: name-cursor + ir-function/name-size
 			id: id + 1
 		]
-		if code-cursor <> ctx/function-code-size [return INVALID_IR]
+		if code-cursor <> ctx/function-code-size [return fail-invalid 325 "write-module-metadata/ctx/function-code-size#1"]
 
 		id: 1
 		while [id <= header/global-count][
@@ -13012,8 +13167,9 @@ x64-codegen: context [
 
 		; The two synthetic ExitProcess names sit at the end of the name area,
 		; where the export names of a shared library would otherwise be; an entry
-		; module never has any.
-		if entry? [
+		; module never has any. A System V entry returns instead, so it imports
+		; nothing of its own.
+		if all [entry? target-abi = ABI_WIN64][
 			image-import: as codegen-import! (image-imports
 				+ (output-import-id * IMAGE_IMPORT_SIZE))
 			library-offset: name-cursor
@@ -13125,6 +13281,7 @@ x64-codegen: context [
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			current-entry?: all [entry? id = header/entry-function]
 			task/fn: ir-function
+			codegen-diag/mark-function id
 			task/first-instruction: next-instruction
 			task/first-offset: next-offset
 			task/entry?: current-entry?
@@ -13135,7 +13292,7 @@ x64-codegen: context [
 			task/outgoing-size: function-outgoing/id
 			written: compile-function module work task
 			if written < 0 [return written]
-			if written <> image-function/code-size [return INVALID_IR]
+			if written <> image-function/code-size [return fail-invalid 326 "emit-module-code/image-function/code-size#1"]
 			next-instruction: next-instruction + ir-function/instruction-count
 			next-offset: next-offset + ir-function/instruction-count + 1
 			id: id + 1
@@ -13228,7 +13385,7 @@ x64-codegen: context [
 							initializer/kind = SCALAR_INITIALIZER [
 								unless write-static-scalar (cursor + item-offset)
 									slot-width initializer/a initializer/b [
-									return INVALID_IR
+									return fail-invalid 327 "write-module-data/initializer/a#1"
 								]
 							]
 							initializer/kind = ADDRESS_INITIALIZER [
@@ -13250,7 +13407,7 @@ x64-codegen: context [
 										target-image-function/reference-count:
 											target-image-function/reference-count + 1
 									]
-									true [return INVALID_IR]
+									true [return fail-invalid 328 "write-module-data/target-image-function/reference-count#2"]
 								]
 								global-offset: image-global/data-offset + item-offset
 								if global-offset > REFERENCE_OFFSET_MASK [
@@ -13261,7 +13418,7 @@ x64-codegen: context [
 										RODATA_REFERENCE_TAG or global-offset
 									][DATA_REFERENCE_TAG or global-offset]
 							]
-							true [return INVALID_IR]
+							true [return fail-invalid 329 "write-module-data/global-offset#3"]
 						]
 						initializer-id: initializer-id + 1
 						item-offset: item-offset + slot-width
@@ -13280,11 +13437,102 @@ x64-codegen: context [
 	; is anything written, because every offset in the image depends on totals
 	; the measuring pass produces. One scratch block and one signature cache
 	; serve the whole module, and both are released on every exit.
+	; Mirrors the RSIR debug line records into the image: every record becomes
+	; a 12-byte [code-offset line file-id] entry whose code offset is 1-based
+	; from the start of the code section, followed by the source file table and
+	; the file name bytes.
+	write-module-debug-lines: func [
+		ctx [x64-module-context!]
+		return: [integer!]
+		/local header [rsir-header!]
+			module [rsir-module!]
+			work [codegen-scratch!]
+			image-functions [byte-ptr!]
+			image-function [codegen-function!]
+			ir-function [rsir-function!]
+			ir-line [rsir-line-record!]
+			file-entry [rsir-file-entry!]
+			image-line [codegen-line-record!]
+			img-entry [rsir-file-entry!]
+			instruction-offsets [int-ptr!]
+			strings lines file-table cursor img-table [byte-ptr!]
+			id fn-id first-offset record-index pass emitted r img-offset [integer!]
+			is-entry match? [logic!]
+	][
+		header: ctx/header
+		module: ctx/module
+		if header/line-record-count = 0 [return 0]
+		work: ctx/scratch
+		instruction-offsets: work/instruction-offsets
+		image-functions: ctx/output + IMAGE_HEADER_SIZE
+		lines: module/lines
+		file-table: module/file-table
+		strings: module/strings
+		cursor: ctx/output + ctx/line-offset
+		; The runtime scans line records by ascending code address, and the
+		; image places the entry function at offset zero ahead of the others,
+		; so mirror the records in code order: the entry function first, then
+		; the remaining functions in id order.
+		pass: 0
+		emitted: 0
+		while [pass < 2][
+			r: 1
+			fn-id: 1
+			first-offset: 1
+			while [fn-id <= header/function-count][
+				ir-function: as rsir-function! (module/functions
+					+ ((fn-id - 1) * RSIR_FUNCTION_SIZE))
+				image-function: as codegen-function! (image-functions
+					+ ((fn-id - 1) * IMAGE_FUNCTION_SIZE))
+				is-entry: all [ctx/entry? fn-id = header/entry-function]
+				match?: either pass = 0 [is-entry][not is-entry]
+				while [r <= header/line-record-count][
+					ir-line: as rsir-line-record! (lines + ((r - 1) * RSIR_LINE_SIZE))
+					if ir-line/function-id <> fn-id [break]
+					if match? [
+						record-index: first-offset + ir-line/instruction-index - 1
+						image-line: as codegen-line-record! cursor
+						image-line/code-offset: image-function/code-offset
+							+ instruction-offsets/record-index + 1
+						image-line/line: ir-line/line
+						image-line/file-id: ir-line/file-id
+						cursor: cursor + 12
+						emitted: emitted + 1
+					]
+					r: r + 1
+				]
+				first-offset: first-offset + ir-function/instruction-count + 1
+				fn-id: fn-id + 1
+			]
+			pass: pass + 1
+		]
+		if emitted <> header/line-record-count [
+			return fail-invalid 322 "write-module-debug-lines/line-record-count#1"
+		]
+		; Write the image's own file table with offsets into the name blob that
+		; follows it, then copy the file name bytes out of the RSIR strings.
+		img-table: cursor
+		cursor: cursor + (header/file-count * RSIR_FILE_ENTRY_SIZE)
+		img-offset: 0
+		id: 1
+		while [id <= header/file-count][
+			file-entry: as rsir-file-entry! (file-table + ((id - 1) * RSIR_FILE_ENTRY_SIZE))
+			copy-memory (cursor + img-offset)
+				(strings + file-entry/name-offset) file-entry/name-size
+			img-entry: as rsir-file-entry! (img-table + ((id - 1) * RSIR_FILE_ENTRY_SIZE))
+			img-entry/name-offset: img-offset
+			img-entry/name-size: file-entry/name-size
+			img-offset: img-offset + file-entry/name-size
+			id: id + 1
+		]
+		0
+	]
+
 	generate: func [
 		data [byte-ptr!]
 		size [integer!]
 		output [byte-ptr!]
-		capacity opt-level [integer!]
+		capacity abi opt-level [integer!]
 		return: [integer!]
 		/local ctx [x64-module-context! value]
 			signature-cache [signature-pairs! value]
@@ -13294,6 +13542,9 @@ x64-codegen: context [
 			task [codegen-task! value]
 			status [integer!]
 	][
+		unless any [abi = ABI_WIN64 abi = ABI_SYSV][return fail-unsupported 1 "generate/abi"]
+		target-abi: abi
+		codegen-diag/reset
 		signature-cache/memory: null
 		table/signatures: signature-cache
 		ir-module/table: table
@@ -13323,6 +13574,7 @@ x64-codegen: context [
 		if status = 0 [status: write-module-exports ctx]
 		if status = 0 [status: emit-module-code ctx]
 		if status = 0 [status: write-module-data ctx]
+		if status = 0 [status: write-module-debug-lines ctx]
 		if status = 0 [status: ctx/total-size]
 		release ctx/memory signature-cache status
 	]

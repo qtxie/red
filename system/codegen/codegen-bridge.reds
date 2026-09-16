@@ -14,10 +14,15 @@ codegen-bridge: context [
 	OUTPUT_FULL:     4
 	ARCH_X64:        1
 	ARCH_ARM64:      2
+	ABI_WIN64:        1
+	ABI_SYSV:         2
+	ABI_APPLE_AARCH64: 3
+	ABI_AAPCS64:      4
 
 	run: func [
 		ir artifact [red-binary!]
 		architecture [integer!]
+		abi [integer!]
 		opt-level [integer!]
 		return: [integer!]
 		/local series [series!]
@@ -39,10 +44,10 @@ codegen-bridge: context [
 		output: (as byte-ptr! series/offset) + artifact/head
 		written: case [
 			architecture = ARCH_X64 [
-				x64-codegen/generate ir-data ir-size output capacity opt-level
+				x64-codegen/generate ir-data ir-size output capacity abi opt-level
 			]
 			architecture = ARCH_ARM64 [
-				arm64-codegen/generate ir-data ir-size output capacity opt-level
+				arm64-codegen/generate ir-data ir-size output capacity abi opt-level
 			]
 			true [return INVALID_ARGUMENTS]
 		]

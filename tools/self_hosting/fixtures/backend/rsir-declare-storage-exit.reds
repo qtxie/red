@@ -35,14 +35,20 @@ frame-depth: func [
 	/local pair [pair!] result [integer!]
 ][
 	pair: declare pair!
-	if pair/left <> 0 [return -1]
-	if pair/right <> 0 [return -2]
+	;-- DECLARE is static at every scope (C `static`): the slot is zeroed once
+	;-- when the image is loaded, so the zero check only holds on the outermost
+	;-- call, and the recursion below proves that the callee shares this slot
+	;-- instead of owning a copy in its frame.
+	if depth = 3 [
+		if pair/left <> 0 [return -1]
+		if pair/right <> 0 [return -2]
+	]
 	pair/left: depth
 	either depth = 0 [
 		1
 	][
 		result: frame-depth (depth - 1)
-		if pair/left <> depth [return -3]
+		if pair/left <> 0 [return -3]
 		result + 1
 	]
 ]
@@ -58,7 +64,8 @@ pointer-depth: func [
 		1
 	][
 		result: pointer-depth (depth - 1)
-		if value/value <> depth [return -1]
+		;-- Same static slot: the caller observes the callee's write.
+		if value/value <> 0 [return -1]
 		result + 1
 	]
 ]
@@ -70,7 +77,7 @@ pointer-link: func [
 	value: declare int-ptr!
 	link: declare ptr-ptr!
 	value/value: 41
-	link/value: as pointer! value
+	link/value: value
 	read-back: as int-ptr! link/value
 	either read-back/value = 41 [1][0]
 ]
@@ -84,7 +91,7 @@ main: func [
 	if global-value/value = 0 [score: score + 1]
 	global-value/value: 40
 	if global-value/value = 40 [score: score + 1]
-	global-link/value: as pointer! global-value
+	global-link/value: global-value
 	read-back: as int-ptr! global-link/value
 	if read-back/value = 40 [score: score + 1]
 	if global-pair/left = 0 [score: score + 1]

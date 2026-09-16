@@ -28,7 +28,9 @@ pointer-depth: func [
 		1
 	][
 		result: pointer-depth (depth - 1)
-		if value/value <> depth [return -1]
+		;-- DECLARE is static: the callee wrote the same slot, so the caller
+		;-- observes the callee's value here instead of its own.
+		if value/value <> 0 [return -1]
 		result + 1
 	]
 ]
@@ -40,7 +42,7 @@ local-link: func [
 	value: declare int-ptr!
 	link: declare ptr-ptr!
 	value/value: 71
-	link/value: as pointer! value
+	link/value: value
 	if link/value <> value [return -1]
 	read-back: as int-ptr! link/value
 	read-back/value
@@ -54,7 +56,7 @@ main: func [
 	if value/value <> 73 [return 1]
 	if local-value <> 73 [return 2]
 	if (pointer-depth 3) <> 4 [return 3]
-	link/value: as pointer! value
+	link/value: value
 	if link/value <> value [return 4]
 	read-back: as int-ptr! link/value
 	if read-back/value <> 73 [return 5]

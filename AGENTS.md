@@ -5,6 +5,45 @@
 - think more time before writing code. The code should be Red or Red/System idiomatic. The architecture and algorithms must be elegant, refined, direct, fast, and free of any unnecessary overhead.
 - The architecture and algorithms should be elegant, clear, fast, and free of unnecessary overhead. They should not rely on special-case hacks that distort the compiler.
 - do a git commit when finish a major task
+- sudo password: toto
+
+# Hybrid Bootstrap Chain Discipline
+
+- Verified self-hosting baseline: `build/self-hosting/merge-red64/hybrid-compiler60.exe`
+  (built from `hybrid-compiler59.exe`). 59->60 successfully self-compiles
+  `red-bootstrap-windows-hybrid.red` (fixed point, output 5983232 bytes; the two
+  generations emit byte-identical Red/System programs apart from the PE
+  timestamp and checksum).
+  Debug-mode baseline: `hybrid-compiler59d.exe` (58d->59d, output 8648192
+  bytes); 58d and 59d emit byte-identical programs.
+  The compiler image itself is never byte-identical between generations because
+  it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
+  the serialized data and every absolute address by one byte. Compare generated
+  output, not the compiler image, when checking the fixed point.
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler66.exe`
+  (65->66, output 5983744 bytes; 66->67 self-compiles to the same size). It carries
+  the x64 fix that widens a narrower left operand with its own signedness
+  (`uint16! 60000 > 50000` used to sign-extend and compare false). Verified with a
+  pinned `SOURCE_DATE_EPOCH`: `hybrid-compiler66 -> p1 -> p2 -> p3`, where p2 and p3
+  differ only in the PE timestamp, checksum, and the output file name baked into the
+  image. Rebuild without the pin and every generation differs in its embedded date.
+- `-d` now works for Red programs too, not just Red/System: `??` is lowered to
+  `print-line`, and statements without a source location (no file, or line zero
+  from synthesized code) simply contribute no line record.
+- `-d` stack traces walk the whole frame chain on ARM64 as well. The code generator
+  pushes the AAPCS64 `[parent frame][return address]` record, so both links are read
+  through `ptr-ptr!` (pointer-sized loads): a word-wide read keeps only half of an
+  address that lives above 4GB. The x86/x64 path is unchanged apart from the report
+  now stopping after 40 frames.
+- Earlier baseline (pre line-record): `hybrid-compiler48/49/50.exe`, output
+  5947904 bytes.
+- NEVER use `hybrid-compiler46.exe.stale-inconsistent` / `hybrid-compiler47.exe.stale-inconsistent`
+  as a bootstrap. They were built from a mid-stage-1 working state whose frontend
+  emitted the `***-on-quit` runtime-error call IR while their embedded codegen
+  still rejected it (INVALID_IR site 219/246, op=16/11: FAIL terminator replaced
+  by LITERAL/NATIVE system/pc/CALL sequence breaks stack-depth join validation).
+- After building a new compiler from any bootstrap, always verify it by
+  self-compiling the bootstrap source before adopting it as the new baseline.
 
 # Red/System Idiomatic Patterns - Key Insights
 

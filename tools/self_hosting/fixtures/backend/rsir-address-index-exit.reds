@@ -46,7 +46,7 @@ address-score: func [
 	if scalar = 43 [score: score + 1]
 
 	pp: :p
-	if pp/value = (as pointer! p) [score: score + 1]
+	if pp/value = (as pointer! [integer!] p) [score: score + 1]
 	copy: as int-ptr! pp/value
 	if copy/value = 43 [score: score + 1]
 	pp/value: :global-cell

@@ -223,9 +223,10 @@ inline aggregates, aggregate copy, unions, and the complete formal families
 remain required.
 
 The direct `rsir-declare-storage-exit.reds` gate exercises the ownership rule
-behind `declare`: each aggregate occurrence owns one zeroed object, function
-objects live in the native frame, module objects live in static data, and the
-language variable remains an ordinary reassignable reference. Structs and raw
+behind `declare`: each aggregate occurrence owns one zeroed object, and that
+object is static at every scope, like C's `static`, so a recursive call shares
+the slot instead of allocating a frame copy (the gate proves the sharing), and
+the language variable remains an ordinary reassignable reference. Structs and raw
 unions use the same recursive layout and address operations; the union case
 also verifies maximum-size layout and offset-zero overlap. This is mechanism
 evidence only. Literal arrays, aggregate copy, tagged-union tags and payloads,

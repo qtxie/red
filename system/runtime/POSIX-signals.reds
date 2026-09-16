@@ -24,6 +24,7 @@ Red/System [
 
 #define SA_SIGINFO   [#switch OS [macOS [0040h] FreeBSD [0040h] NetBSD [0040h] #default [00000004h]]]
 #define SA_RESTART   [#switch OS [macOS [0002h] FreeBSD [0002h] NetBSD [0002h] #default [10000000h]]]
+#define SA_ONSTACK   [#switch OS [macOS [0001h] FreeBSD [0001h] NetBSD [0001h] #default [08000000h]]]
 
 #define ILL_ILLOPC   1
 #define ILL_ILLOPN   [#switch OS [macOS [4] #default [2]]]

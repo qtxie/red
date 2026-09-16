@@ -34,8 +34,9 @@ codegen-module: routine [
 	ir           [binary!]
 	artifact     [binary!]
 	architecture [integer!]
+	abi          [integer!]
 	opt-level    [integer!]
 	return:      [integer!]
 ][
-	codegen-bridge/run ir artifact architecture opt-level
+	codegen-bridge/run ir artifact architecture abi opt-level
 ]

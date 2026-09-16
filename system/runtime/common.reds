@@ -270,22 +270,38 @@ re-throw: func [/local id [integer!]][
 	#if debug? = yes [#include %debug.reds]	;-- loads optionally debug functions
 
 	;-- Run-time error handling --
-	
+
+	;-- Singleton debug record. Its address is stored in the global
+	;-- system/debug and read after this frame is gone, so the record is
+	;-- declared once at context level instead of relying on a function-scope
+	;-- DECLARE, which the runtime would then have to treat as static storage.
+	__debug-stack: declare __stack!
+
 		__set-stack-on-crash: func [
 			return: [byte-ptr!]
-			/local address frame top
-	][
-		top: system/stack/frame				;-- skip the set-stack-on-crash stack frame 
-		frame: as int-ptr! top/value
-		top: top + 1
-			address: as byte-ptr! top/value
-		top: frame + 2
+			/local address frame top links
+		][
+			top: system/stack/frame				;-- skip the set-stack-on-crash stack frame 
+			#either target = 'ARM64 [
+				;-- The ARM64 frame record is [parent frame][return address] with
+				;-- pointer-sized fields, so a word-wide read would keep only half
+				;-- of the link the report walks next.
+				links: as ptr-ptr! top
+				frame: as int-ptr! links/value
+				address: as byte-ptr! links/2
+				top: frame + 2
+			][
+				frame: as int-ptr! top/value
+				top: top + 1
+				address: as byte-ptr! top/value
+				top: frame + 2
+			]
 
-		system/debug: declare __stack!		;-- allocate a __stack! struct
-		system/debug/frame: frame
-		system/debug/top: top
-		address
-	]
+			system/debug: __debug-stack			;-- reuse the static __stack! struct
+			system/debug/frame: frame
+			system/debug/top: top
+			address
+		]
 	
 	#if target = 'ARM [
 		***-on-div-error: func [			;-- special error handler wrapper for _div_ intrinsic

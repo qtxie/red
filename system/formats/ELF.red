@@ -468,8 +468,10 @@ system-format-ELF: context [
 
 		;-- (hack) Move libRedRT in first position to avoid "system" symbol
 		;-- to be bound to libC instead! (TBD: find a cleaner way)
-		if pos: find list: job/sections/import/3 "libRedRT.so" [
-			insert list take/part pos 2
+		if list: attempt [job/sections/import/3] [
+			if pos: find list "libRedRT.so" [
+				insert list take/part pos 2
+			]
 		]
 
 		set [libraries imports] collect-import-names job
@@ -1345,7 +1347,7 @@ system-format-ELF: context [
 		job-type		[word!]
 		target			[word!]
 		PIE?			[logic! none!]
-		symbols			[hash!]
+		symbols
 		text-address	[integer!]
 		hash-address	[integer!]
 		dynstr-address	[integer!]
@@ -1526,30 +1528,40 @@ system-format-ELF: context [
 
 	;; -- Job helpers --
 
-	collect-data-reloc: func [job [object!] /local list syms spec][
+	collect-data-reloc: func [job [object!] /local list syms spec ref][
 		list: make block! 100
 		syms: job/symbols
+		spec: select syms '***-exec-image
 		if all [
 			job/runtime?
 			job/PIC?
 			job/target = 'X86-64
-			spec: find syms '***-exec-image
+			spec
 		][
-			append list spec/2/2 + 8					;-- __image!/base after hidden struct slot
+			append list spec/2 + 8						;-- __image!/base after hidden struct slot
 		]
 
-		while [not tail? syms][
-			syms: skip syms 2
-			if all [
-				not tail? syms
-				syms/1 = <data>
-				block? syms/2/4
-				positive? syms/2/4/1					;-- negative: read-only data ref, resolved at link time
-			][
-				append list either syms/2/4/1 - 1 = syms/-1/2 [
-					syms/-1/2							;-- pointer slot to value slot
+		either map? syms [
+			;; The hybrid codegen publishes a map! table whose data references
+			;; are exactly the slots resolve-symbol-refs fills with an absolute
+			;; address; each positive one needs a load-time rebase under PIC.
+			foreach [name spec] syms [
+				if block? spec/4 [
+					foreach ref spec/4 [
+						if positive? ref [append list ref - 1]
+					]
+				]
+			]
+		][
+			while [not tail? syms][
+				syms: skip syms 2
+				if all [
+					not tail? syms
+					syms/1 = <data>
+					block? syms/2/4
+					positive? syms/2/4/1				;-- negative: read-only data ref, resolved at link time
 				][
-					syms/2/4/1 - 1						;-- literal pointer in array to c-string buffer
+					append list syms/2/4/1 - 1
 				]
 			]
 		]
@@ -1576,7 +1588,7 @@ system-format-ELF: context [
 	collect-import-names: func [job [object!] /local libraries symbols] [
 		libraries: copy []
 		symbols: copy []
-		foreach [libname libuses] job/sections/import/3 [
+		foreach [libname libuses] any [attempt [job/sections/import/3] []] [
 			append libraries libname
 			foreach [symbol callsites] libuses [
 				append symbols symbol
@@ -1676,7 +1688,7 @@ system-format-ELF: context [
 		plt-offset [integer! none!]
 		/local rel disp index delta opcode target-address
 	] [
-		foreach [libname libimports] job/sections/import/3 [
+		foreach [libname libimports] any [attempt [job/sections/import/3] []] [
 			linker/check-dup-symbols job libimports
 			foreach [symbol callsites] libimports [
 				either elf64-target? job/target [
@@ -1829,7 +1841,7 @@ system-format-ELF: context [
 		target		[word!]
 		PIE?		[logic! none!]
 		plt-count	[integer!]
-		symbols		[hash!]
+		symbols
 		/local entries spec
 	][
 		  (any [all [job-type = 'dll select symbols '***-dll-entry-point 1] 0])

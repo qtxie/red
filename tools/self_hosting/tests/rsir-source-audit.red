@@ -17,6 +17,15 @@ emit-rsir-instruction: func [
 
 #include %../../../compiler/rsir-frontend.red
 
+;-- The audit closure excludes compiler/frontend.red, so the Red-pass hooks
+;-- the RSIR frontend references need interpreter-level stubs (same set as
+;-- the other hybrid integration tests).
+red-compiler-process-get: func [spec code [block!]][false]
+red-compiler-process-in: func [path word code [block!]][false]
+red-compiler-process-typecheck: func [spec [word! block!]][none]
+red-compiler-process-expand-call: func [body [block!] global? [logic!]][copy []]
+red-compiler-process-call: func [body [block!] global? [logic!]][none]
+
 rsir-source-audit: context [
 	last-error: none
 	runtime-file: clean-path join system/options/path %../../../system/runtime/common.reds

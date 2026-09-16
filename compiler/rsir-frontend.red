@@ -29,6 +29,14 @@ compiler-rsir-frontend: context [
 	runtime-library?: false
 	red-pass?: false
 	build-date: none
+	source-file: none							;-- main source file, seeds the debug file table
+	debug-files: make block! 8					;-- source files referenced by debug line records
+	current-file-id: 0							;-- file table id of the statements being lowered
+	main-file-id: 0								;-- file table id of the main source file
+	active-line-table: none						;-- line records of the function being lowered
+	boot-line-table: none						;-- module body records emitted before #user-code
+	module-line-table: none						;-- module body records emitted after #user-code
+	startup-line-table: none					;-- startup function records after #startup-code
 	runtime-functions: make block! 512
 	runtime-specs: make map! 1024
 	functions: make block! (10 * 256)
@@ -74,6 +82,12 @@ compiler-rsir-frontend: context [
 	boot-locals: make block! 12
 	module-code: make binary! (16 * 1024)
 	module-locals: make block! 12
+	;-- #startup-code carries the platform startup spliced by the compiler core.
+	;-- It becomes the entry function while the module body becomes ***_start,
+	;-- which the startup hands to libc.
+	startup-code: make binary! (4 * 1024)
+	startup-locals: make block! 8
+	startup-module?: false
 	active-module-code: none
 	active-module-locals: none
 	split-module?: false
@@ -103,7 +117,7 @@ compiler-rsir-frontend: context [
 	reserved-words: make hash! [
 		alias as assert break case catch comment context continue declare
 		either exit func function if loop not overflow? pop protect push return
-		size? switch throw until use variant? while with any all
+		size? switch throw until use variant? while with any all ??
 	]
 
 	type-codes: make map! [
@@ -1544,8 +1558,10 @@ compiler-rsir-frontend: context [
 					while [all [not tail? position word? position/1]][
 						name: position/1
 						if find names name [
-							fail ERROR-UNSUPPORTED "duplicate function variable"
-						]
+							fail ERROR-UNSUPPORTED [
+								"in function '" function-name ": duplicate function variable " name
+							]
+							]
 						if all [
 							not locals?
 							resolve-name name scope uses enum-values
@@ -1727,7 +1743,7 @@ compiler-rsir-frontend: context [
 
 	make-call-signature-ref: func [target [integer!] return: [integer!] /local record][
 		either target > 0 [
-			record: skip functions ((target - 1) * 10)
+			record: skip functions ((target - 1) * 12)
 			intern-function-signature reduce [
 				record/6 record/7 copy [] record/9
 			] copy [] copy []
@@ -1787,7 +1803,7 @@ compiler-rsir-frontend: context [
 			record/9: signature/4
 			append function-call-types 0
 			id: id + 1
-			record: skip record 10
+			record: skip record 12
 		]
 	]
 
@@ -1839,6 +1855,8 @@ compiler-rsir-frontend: context [
 		name [word!]
 		code [binary!]
 		locals [block!]
+		file-id [integer!]
+		line-table [block! none!]
 		/local key id
 	][
 		key: name
@@ -1850,6 +1868,9 @@ compiler-rsir-frontend: context [
 		id: function-count + 1
 		put function-ids key id
 		put call-ids key id
+		;-- A module body is published after prepare-functions has filled the
+		;-- signature cache, so it has to open its own slot there.
+		append function-call-types 0
 		append/only functions to binary! form name
 		append/only functions copy []
 		append/only functions code
@@ -1860,6 +1881,8 @@ compiler-rsir-frontend: context [
 		append/only functions copy locals
 		append functions 0
 		append functions 0
+		append functions file-id
+		append/only functions line-table
 		function-count: id
 		id
 	]
@@ -1877,18 +1900,21 @@ compiler-rsir-frontend: context [
 			][
 				active-function: record/1
 				code: make binary! ((length? body) * 16)
+				active-line-table: either debug? [make block! 16][none]
+				current-file-id: record/11
 				count: stack-body record/6 body record/4 record/5 code
 					record/7 record/8 record/9
+				record/12: active-line-table
 				record/3: code
 				record/10: count
 			]
-			record: skip record 10
+			record: skip record 12
 		]
 		finish-native-names
 		record: functions
 		while [not tail? record][
 			append function-code record/3
-			record: skip record 10
+			record: skip record 12
 		]
 		active-function: none
 	]
@@ -2249,7 +2275,7 @@ compiler-rsir-frontend: context [
 				symbol: transcode/one spelling
 				add-runtime-export symbol external
 			]
-			record: skip record 10
+			record: skip record 12
 		]
 	]
 
@@ -2281,7 +2307,7 @@ compiler-rsir-frontend: context [
 			external: position/5
 			id: resolve-name symbol scope uses function-ids
 			either integer? id [
-				record: skip functions ((id - 1) * 10)
+				record: skip functions ((id - 1) * 12)
 				flags: record/9
 				if (flags and catch-flag) <> 0 [
 					fail ERROR-UNSUPPORTED "a catch function cannot be exported"
@@ -2314,6 +2340,50 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	register-debug-file: func [
+		file [file! word! string! none!]
+		return: [integer!]
+		/local pos
+	][
+		if none? file [return 0]
+		pos: find debug-files file
+		either pos [1 + offset? debug-files pos][
+			append debug-files file
+			length? debug-files
+		]
+	]
+
+	; Records one sparse debug line entry [instruction-index line file-id] at a
+	; statement boundary, matching the legacy compiler's store-dbg-lines.
+	; An entry is only useful when the instruction cursor advanced beyond the
+	; previous one and the source location actually changed. Statements that carry
+	; no location -- a module without a source file, or synthesized code the loader
+	; marked with line zero -- have nothing to report and add no record at all.
+	record-line: func [
+		instructions [binary!]
+		position [block! paren!]
+		/local index line n
+	][
+		if all [debug? current-file-id > 0 block? active-line-table][
+			index: (length? instructions) / 16 + 1
+			line: compiler-system-diagnostics/line-of position
+			n: length? active-line-table
+			if line <= 0 [exit]
+			unless all [
+				n >= 3
+				any [
+					index <= active-line-table/(n - 2)
+					all [
+						line = active-line-table/(n - 1)
+						current-file-id = active-line-table/n
+					]
+				]
+			][
+				append active-line-table reduce [index line current-file-id]
+			]
+		]
+	]
+
 	skip-script: func [
 		position [block!]
 		return: [block!]
@@ -2332,6 +2402,7 @@ compiler-rsir-frontend: context [
 				file? position/2
 				position/2 = 'in-memory
 			][fail ERROR-ARGUMENTS "#script requires a file source"]
+			if debug? [current-file-id: register-debug-file position/2]
 			position: skip position 2
 		]
 		position
@@ -2341,7 +2412,7 @@ compiler-rsir-frontend: context [
 		values scope uses [block!]
 		with-count [integer!]
 		/local position name spec body child key kind target next-uses
-			spelling id type-spec protected-id alias-id canonical enum
+			spelling id type-spec protected-id alias-id canonical enum saved-file-id
 	][
 		position: values
 		while [not tail? position][
@@ -2356,6 +2427,17 @@ compiler-rsir-frontend: context [
 					position/1 = #script
 				][position: skip-script position]
 				all [issue? position/1 position/1 = #user-code][
+					;-- The #user-code payload belongs to the main source file.
+					saved-file-id: current-file-id
+					current-file-id: main-file-id
+					either all [(length? position) >= 2 block? position/2][
+						scan-block position/2 scope uses with-count
+						position: skip position 2
+					][position: next position]
+					current-file-id: saved-file-id
+				]
+				all [issue? position/1 position/1 = #startup-code][
+					startup-module?: true
 					either all [(length? position) >= 2 block? position/2][
 						scan-block position/2 scope uses with-count
 						position: skip position 2
@@ -2501,6 +2583,8 @@ compiler-rsir-frontend: context [
 					append functions none
 					append functions none
 					append functions none
+					append functions current-file-id
+					append/only functions none
 					function-count: id
 					position: skip position 4
 				]
@@ -2645,13 +2729,26 @@ compiler-rsir-frontend: context [
 		case [
 			module-kind = 3 [
 				emit module-code return-op 0 0 0
-				add-module-function '***-main module-code module-locals
+				either startup-module? [
+					;-- The startup spliced by the compiler core becomes the entry
+					;-- function (added last, so it lands first in the image);
+					;-- the module body was registered as ***_start above so the
+					;-- startup can hand it to libc.
+					emit startup-code return-op 0 0 0
+					add-module-function '***-start startup-code startup-locals
+						current-file-id startup-line-table
+				][
+					add-module-function '***-main module-code module-locals
+						current-file-id module-line-table
+				]
 			]
 			module-kind = 4 [
 				emit boot-code return-op 0 0 0
 				add-module-function '***-boot-rs boot-code boot-locals
+					current-file-id boot-line-table
 				emit module-code return-op 0 0 0
 				add-module-function '***-main module-code module-locals
+					current-file-id module-line-table
 			]
 		]
 		if all [module-kind < 3 any [not empty? boot-code not empty? module-code]][
@@ -2786,6 +2883,7 @@ compiler-rsir-frontend: context [
 		function-records export-records export-count
 		library external last-library library-offset external-offset names
 		type-output members type-bytes member-bytes switch-count
+		line-output file-table line-count table
 	][
 		type-output: make binary! (type-count * 20)
 		members: make binary! 64
@@ -2801,10 +2899,10 @@ compiler-rsir-frontend: context [
 			+ (length? strings)
 			+ (length? function-code) + (import-count * 64)
 			+ (global-count * 40) + (function-count * 112) + (export-count * 24))
-		append/dup output 0 36
+		append/dup output 0 44
 		append output type-output
 		append output members
-		import-records: 37 + type-bytes + member-bytes
+		import-records: 45 + type-bytes + member-bytes
 		global-records: import-records + (import-count * 32)
 		function-records: global-records + (global-count * 24)
 		export-records: function-records + (function-count * 36)
@@ -2930,7 +3028,7 @@ compiler-rsir-frontend: context [
 			first-param: first-local + local-count
 			instruction-count: instruction-count + position/10
 			id: id + 1
-			position: skip position 10
+			position: skip position 12
 		]
 
 		position: exports
@@ -2950,6 +3048,34 @@ compiler-rsir-frontend: context [
 		append output initializers
 		append output switches
 		append output function-code
+		line-count: 0
+		if debug? [
+			; Sparse line records [function-id instruction-index line file-id],
+			; grouped by function in emission order, then the source file table
+			; [name-offset name-size] with the names appended to the strings.
+			line-output: make binary! 1024
+			file-table: make binary! (8 * length? debug-files)
+			position: functions
+			id: 1
+			while [not tail? position][
+				table: position/12
+				if block? table [
+					foreach [index line file-id] table [
+						emit-values line-output reduce [id index line file-id]
+						line-count: line-count + 1
+					]
+				]
+				id: id + 1
+				position: skip position 12
+			]
+			foreach file debug-files [
+				name: form file
+				emit-values file-table reduce [(length? names) (length? name)]
+				append names name
+			]
+			append output line-output
+			append output file-table
+		]
 		append output names
 		size: length? output
 		if any [limit <= 0 size > limit] [
@@ -2965,6 +3091,8 @@ compiler-rsir-frontend: context [
 		change/part at output 25 int-to-bin/to-bin32 global-count 4
 		change/part at output 29 int-to-bin/to-bin32 switch-count 4
 		change/part at output 33 int-to-bin/to-bin32 export-count 4
+		change/part at output 37 int-to-bin/to-bin32 line-count 4
+		change/part at output 41 int-to-bin/to-bin32 (length? debug-files) 4
 		output
 	]
 
@@ -4146,7 +4274,7 @@ compiler-rsir-frontend: context [
 			parameter count position-after stopped?
 	][
 		either target > 0 [
-			record: skip functions ((target - 1) * 10)
+			record: skip functions ((target - 1) * 12)
 			return-ref: record/6
 			parameters: record/7
 			flags: record/9
@@ -4219,7 +4347,7 @@ compiler-rsir-frontend: context [
 			fail ERROR-UNSUPPORTED "infix functions cannot be called using a path"
 		]
 		either target > 0 [
-			record: skip functions ((target - 1) * 10)
+			record: skip functions ((target - 1) * 12)
 			return-ref: record/6
 		][
 			record: skip imports (((0 - target) - 1) * 10)
@@ -4523,6 +4651,7 @@ compiler-rsir-frontend: context [
 				position: skip position 2
 				continue
 			]
+			record-line instructions position
 			either any [set-word? position/1 set-path? position/1][
 				next-position: stack-assignment position scope uses instructions
 					params locals false
@@ -4655,6 +4784,33 @@ compiler-rsir-frontend: context [
 		after
 	]
 
+	;-- Runtime failures are raised by the runtime itself: the exit handler
+	;-- prints the error code and, in debug builds, the source line and the call
+	;-- stack. The raising statement is compiled from source so the frontend owns
+	;-- the semantics and no backend needs to know about the runtime layout.
+	runtime-error-block: func [code [integer!] /local block][
+		block: copy [1 ***-on-quit 0 system/pc]		;-- first value: hidden header size
+		block/3: code
+		next block									;-- compile past the hidden header
+	]
+
+	raise-runtime-error: func [
+		code [integer!]
+		scope uses [block!]
+		instructions [binary!]
+		params locals [block!]
+		/local saved-table
+	][
+		; The synthesized error-reporting block carries no source location; keep
+		; its instructions out of the debug line table so a fault inside it
+		; reports the offending statement instead of a bogus line.
+		saved-table: active-line-table
+		active-line-table: none
+		stack-block runtime-error-block code
+			scope uses instructions params locals statement-value
+		active-line-table: saved-table
+	]
+
 	stack-assert: func [
 		position scope uses [block!]
 		instructions [binary!]
@@ -4679,8 +4835,15 @@ compiler-rsir-frontend: context [
 			expression-value
 		if last-stopped? [return after]
 		if never? [
+			;-- A statically false condition needs no test: drop the evaluated
+			;-- condition and fail unconditionally.
 			clear at instructions (before + 1)
-			emit instructions fail-op 98 0 0
+			either debug? [
+				raise-runtime-error 98 scope uses instructions params locals
+				emit instructions fail-op 102 0 0	;-- the handler never returns
+			][
+				emit instructions fail-op 98 0 0
+			]
 			last-type: 0
 			last-flags: 0
 			last-stopped?: true
@@ -4688,7 +4851,8 @@ compiler-rsir-frontend: context [
 		]
 		either debug? [
 			patch: emit-control instructions branch-op 1
-			emit instructions fail-op 98 0 0
+			raise-runtime-error 98 scope uses instructions params locals
+			emit instructions fail-op 102 0 0		;-- the handler never returns
 			patch-control instructions patch instruction-here instructions
 		][
 			clear at instructions (before + 1)
@@ -5623,13 +5787,12 @@ compiler-rsir-frontend: context [
 		if path/2 = 'words [
 			;-- system/words/* is already root-qualified: resolve at the
 			;-- global scope (classic frontend's system-words-path?).
+			;-- Calls need the call path, while variables and literals fall
+			;-- through to stack-named-value, which resolves the root name.
 			unless count >= 3 [fail ERROR-REFERENCE "invalid system/words access"]
-			value-kind: resolve-value-kind path scope uses
-			either value-kind = 2 [
+			if (resolve-value-kind path scope uses) = 2 [
 				return stack-call resolved-value-id path position scope uses
 					instructions params locals
-			][
-				fail ERROR-REFERENCE ["unsupported system/words path:" mold path]
 			]
 		]
 		unless path/2 = 'stack [return none]
@@ -5921,6 +6084,17 @@ compiler-rsir-frontend: context [
 		last-stopped?: false
 		if all [issue? value value = #build-date][
 			change position mold any [build-date now/utc]
+			return stack-primary position scope uses instructions params locals value-context
+		]
+		;-- `?? x` is the debug print of a named value: lower it to the ordinary
+		;-- polymorphic print call the runtime already provides.
+		if value = '?? [
+			unless all [(length? position) >= 2 word? position/2][
+				fail ERROR-ARGUMENTS "?? needs a word as argument"
+			]
+			change/part position reduce [
+				'print-line reduce [join form position/2 ": " position/2]
+			] 2
 			return stack-primary position scope uses instructions params locals value-context
 		]
 		if all [
@@ -6494,9 +6668,9 @@ compiler-rsir-frontend: context [
 			]
 		]
 
-		;-- DECLARE always allocates statically, whether at root level or
-		;-- inside a function. A function-local home breaks the address
-		;-- on ARM64 and is unnecessary on x64.
+		;-- DECLARE is static storage at every scope, like C's `static`: one
+		;-- zeroed object per occurrence for the whole program lifetime, which
+		;-- a recursive call therefore shares with its caller.
 		hidden: add-hidden-global storage-ref storage-flags
 		emit instructions address-op global-address hidden 0
 		emit instructions reference-op ref 0 0
@@ -6759,7 +6933,7 @@ compiler-rsir-frontend: context [
 
 	stack-module: func [
 		values scope uses [block!]
-		/local position child target next-uses
+		/local position child target next-uses saved-file-id saved-code saved-locals
 	][
 		position: values
 		while [not tail? position][
@@ -6781,11 +6955,34 @@ compiler-rsir-frontend: context [
 						user-code?: true
 						active-module-code: module-code
 						active-module-locals: module-locals
+						module-line-table: either debug? [make block! 16][none]
+						active-line-table: module-line-table
 					]
+					;-- The #user-code payload belongs to the main source file,
+					;-- even when the runtime splice left another file current.
+					saved-file-id: current-file-id
+					current-file-id: main-file-id
 					either all [(length? position) >= 2 block? position/2][
 						stack-module position/2 scope uses
 						position: skip position 2
 					][position: next position]
+					current-file-id: saved-file-id
+				]
+				all [issue? position/1 position/1 = #startup-code][
+					startup-module?: true
+					saved-code: active-module-code
+					saved-locals: active-module-locals
+					active-module-code: startup-code
+					active-module-locals: startup-locals
+					startup-line-table: either debug? [make block! 8][none]
+					active-line-table: startup-line-table
+					either all [(length? position) >= 2 block? position/2][
+						stack-module position/2 scope uses
+						position: skip position 2
+					][position: next position]
+					active-module-code: saved-code
+					active-module-locals: saved-locals
+					active-line-table: module-line-table
 				]
 				all [issue? position/1 position/1 = #export][
 					position: next position
@@ -6845,11 +7042,13 @@ compiler-rsir-frontend: context [
 					position: skip position 3
 				]
 				any [set-word? position/1 set-path? position/1][
+					record-line active-module-code position
 					position: stack-assignment position scope uses active-module-code
 						[] active-module-locals true
 					if last-type <> 0 [emit active-module-code drop-op 0 0 0]
 				]
 				true [
+					record-line active-module-code position
 					position: stack-value position scope uses active-module-code
 						[] active-module-locals
 						statement-value
@@ -6984,6 +7183,15 @@ compiler-rsir-frontend: context [
 		clear loops
 		clear overflows
 		clear catches
+		boot-line-table: either debug? [make block! 16][none]
+		module-line-table: boot-line-table
+		active-line-table: boot-line-table
+		;-- With a platform startup the body is published as ***_start, so it
+		;-- has to exist before the startup statements take its address.
+		if startup-module? [
+			add-module-function '***_start module-code module-locals
+				current-file-id module-line-table
+		]
 		stack-module values scope uses
 	]
 
@@ -7070,16 +7278,26 @@ compiler-rsir-frontend: context [
 			clear boot-locals
 			clear module-code
 			clear module-locals
+			clear startup-code
+			clear startup-locals
 			active-module-code: module-code
 			active-module-locals: module-locals
 			split-module?: false
 			user-code?: false
+			startup-module?: false
 			clear function-code
 			clear overflows
 			clear catches
 			clear initializers
 			clear switches
 			clear strings
+			debug-files: make block! 8
+			current-file-id: either debug? [register-debug-file source-file][0]
+			main-file-id: current-file-id
+			active-line-table: none
+			boot-line-table: none
+			module-line-table: none
+			startup-line-table: none
 			clear native-names
 			clear native-name-patches
 			clear function-storage

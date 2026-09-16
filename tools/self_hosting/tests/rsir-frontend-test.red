@@ -63,7 +63,7 @@ layout-of: func [ir [binary!] /local types imports functions globals switches ex
 	globals: word-at ir 24
 	switches: word-at ir 28
 	exports: word-at ir 32
-	type-at: 36
+	type-at: 44									;-- 11-word header (line-record-count + file-count added)
 	member-count: 0
 	id: 0
 	while [id < types][
@@ -969,9 +969,13 @@ assert binary? local-declare-ir [
 ]
 local-declare-layout: layout-of local-declare-ir
 assert all [
-	(function-word local-declare-ir local-declare-layout 1 28) = 2
+	;-- DECLARE is static at every scope: the function keeps one local (the
+	;-- pointer variable) and the inline object is one hidden global flagged
+	;-- INLINE, never a frame slot.
+	(function-word local-declare-ir local-declare-layout 1 28) = 1
 	(word-at local-declare-ir (local-declare-layout/5 + 4)) = 0
-	(word-at local-declare-ir (local-declare-layout/5 + 12)) = 1
+	(word-at local-declare-ir 24) = 1
+	(global-word local-declare-ir local-declare-layout 1 12) = 1
 	(copy/part ops-of local-declare-ir local-declare-layout 5) = [3 20 3 5 12]
 ]["local DECLARE did not expose one pointer variable over one inline object"]
 
@@ -988,9 +992,12 @@ assert binary? local-pointer-declare-ir [
 ]
 local-pointer-declare-layout: layout-of local-pointer-declare-ir
 assert all [
-	(function-word local-pointer-declare-ir local-pointer-declare-layout 1 28) = 2
-	(word-at local-pointer-declare-ir (local-pointer-declare-layout/5 + 8)) = -5
-	(word-at local-pointer-declare-ir (local-pointer-declare-layout/5 + 12)) = 0
+	;-- The static slot holds the pointee, and a scalar slot is not INLINE.
+	(function-word local-pointer-declare-ir local-pointer-declare-layout 1 28) = 1
+	(word-at local-pointer-declare-ir (local-pointer-declare-layout/5 + 4)) = 0
+	(word-at local-pointer-declare-ir 24) = 1
+	(global-word local-pointer-declare-ir local-pointer-declare-layout 1 8) = -5
+	(global-word local-pointer-declare-ir local-pointer-declare-layout 1 12) = 0
 	(copy/part ops-of local-pointer-declare-ir local-pointer-declare-layout 5)
 		= [3 20 3 5 12]
 ]["local pointer DECLARE did not address one pointee-typed storage slot"]
@@ -1006,9 +1013,11 @@ assert binary? local-pointer-pointer-ir [
 ]
 local-pointer-pointer-layout: layout-of local-pointer-pointer-ir
 assert all [
-	(function-word local-pointer-pointer-ir local-pointer-pointer-layout 1 28) = 2
-	(word-at local-pointer-pointer-ir (local-pointer-pointer-layout/5 + 8)) = -12
-	(word-at local-pointer-pointer-ir (local-pointer-pointer-layout/5 + 12)) = 0
+	(function-word local-pointer-pointer-ir local-pointer-pointer-layout 1 28) = 1
+	(word-at local-pointer-pointer-ir (local-pointer-pointer-layout/5 + 4)) = 0
+	(word-at local-pointer-pointer-ir 24) = 1
+	(global-word local-pointer-pointer-ir local-pointer-pointer-layout 1 8) = -12
+	(global-word local-pointer-pointer-ir local-pointer-pointer-layout 1 12) = 0
 ]["pointer-to-pointer DECLARE did not reserve one pointer-sized pointee slot"]
 
 inline-copy-ir: compile-text {
@@ -1029,7 +1038,9 @@ assert binary? inline-copy-ir [
 inline-copy-layout: layout-of inline-copy-ir
 inline-copy-ops: ops-of inline-copy-ir inline-copy-layout
 assert all [
-	(function-word inline-copy-ir inline-copy-layout 1 28) = 2
+	(function-word inline-copy-ir inline-copy-layout 1 28) = 1
+	(word-at inline-copy-ir 24) = 1
+	(global-word inline-copy-ir inline-copy-layout 1 12) = 1
 	not none? find inline-copy-ops [3 4 6 4 3 4 6 5]
 ]["inline aggregate assignment did not use ordinary ADDRESS/MEMBER/LOAD/SET semantics"]
 
@@ -2344,20 +2355,23 @@ debug-assert-ir: compile-text/debug {
 	Red/System []
 	predicate: func [return: [logic!]][true]
 	fn: func [][assert predicate]
+	;-- The failing ASSERT branch is compiled from source and calls the exit
+	;-- handler the runtime ships (system/runtime/common.reds). A snippet
+	;-- without the runtime declares the same signature locally.
+	***-on-quit: func [code [integer!] address [byte-ptr!]][]
 } 'user
 assert binary? debug-assert-ir [
 	"debug ASSERT lowering failed: " mold frontend/last-error
 ]
 debug-assert-layout: layout-of debug-assert-ir
 assert all [
-	(function-word debug-assert-ir debug-assert-layout 2 32) = 4
-	(function-instruction-word debug-assert-ir debug-assert-layout 2 1 0) = 7
-	(function-instruction-word debug-assert-ir debug-assert-layout 2 2 0) = 17
-	(function-instruction-word debug-assert-ir debug-assert-layout 2 2 4) = 4
-	(function-instruction-word debug-assert-ir debug-assert-layout 2 2 8) = 1
-	(function-instruction-word debug-assert-ir debug-assert-layout 2 3 0) = 19
-	(function-instruction-word debug-assert-ir debug-assert-layout 2 3 4) = 98
-	(function-instruction-word debug-assert-ir debug-assert-layout 2 4 0) = 11
+	;-- predicate call, take the failure branch, push the assertion error code
+	;-- (98) with the current program counter, call the exit handler with two
+	;-- arguments, then fall through to the ordinary return.
+	(function-ops-of debug-assert-ir debug-assert-layout 2) = [7 17 1 10 7 19 11]
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 2 4) = 7
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 3 8) = 98
+	(function-instruction-word debug-assert-ir debug-assert-layout 2 5 8) = 2
 ]["debug ASSERT did not use the shared branch/fail path"]
 
 release-invalid-assert-ir: compile-text {
@@ -2376,13 +2390,14 @@ assert (function-ops-of release-invalid-assert-ir
 debug-invalid-assert-ir: compile-text/debug {
 	Red/System []
 	fn: func [][assert 1]
+	***-on-quit: func [code [integer!] address [byte-ptr!]][]
 } 'user
 assert binary? debug-invalid-assert-ir [
 	"frontend rejected backend-owned debug ASSERT predicate: "
 	mold frontend/last-error
 ]
 assert (function-ops-of debug-invalid-assert-ir
-	layout-of debug-invalid-assert-ir 1) = [1 17 19 11]
+	layout-of debug-invalid-assert-ir 1) = [1 17 1 10 7 19 11]
 	"invalid debug ASSERT did not reach native BRANCH validation"
 
 byte-ir: compile-text {
@@ -2649,7 +2664,7 @@ tagged-ir: compile-text {
 assert binary? tagged-ir ["tagged union lowering failed: " mold frontend/last-error]
 tagged-layout: layout-of tagged-ir
 tagged-ops: ops-of tagged-ir tagged-layout
-tagged-member-at: 36 + ((word-at tagged-ir 8) * 20)
+tagged-member-at: 44 + ((word-at tagged-ir 8) * 20)
 tagged-write?: false
 repeat id word-at tagged-ir 20 [
 	if all [
@@ -2659,9 +2674,9 @@ repeat id word-at tagged-ir 20 [
 ]
 assert all [
 	(word-at tagged-ir 8) = 2
-	(word-at tagged-ir 36) = -3
-	(word-at tagged-ir 44) = 1
-	(word-at tagged-ir 52) = 2
+	(word-at tagged-ir 44) = -3
+	(word-at tagged-ir 52) = 1
+	(word-at tagged-ir 60) = 2
 	(word-at tagged-ir tagged-member-at) = 2
 	(word-at tagged-ir (tagged-member-at + 4)) = 1
 	(word-at tagged-ir (tagged-member-at + 8)) = -5

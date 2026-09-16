@@ -24,6 +24,11 @@ Red/System [
 			mask	[byte-ptr!]
 			return: [integer!]
 		]
+		sigaltstack: "sigaltstack" [
+			ss		[sigaltstack!]
+			oldss	[sigaltstack!]
+			return: [integer!]
+		]
 		atexit: "__cxa_atexit" [			;-- https://refspecs.linuxbase.org/LSB_3.1.1/LSB-Core-generic/LSB-Core-generic/baselib---cxa-atexit.html
 			handler		[int-ptr!]
 			arg			[int-ptr!]			;-- requires NULL in our use-case
@@ -50,9 +55,35 @@ stderr: 2
 
 #include %POSIX-signals.reds
 
+; Debug builds run the signal handlers on a dedicated stack and dump the
+; faulting context before reporting, so a crash can be diagnosed on a target
+; without a debugger. Release builds must stay behaviorally identical: no
+; alternate stack is installed and nothing extra is printed. The type and its
+; library binding stay unconditional because #import is collected before the
+; preprocessor runs, so it cannot be gated; declaring them costs no code.
+sigaltstack!: alias struct! [
+	ss_sp		[byte-ptr!]
+	ss_flags	[integer!]
+	ss_pad		[integer!]
+	ss_size		[int-ptr!]
+]
+
+#if debug? = yes [
+	rs-dump-ctx: func [pc lr sp fp [integer!]][
+		print [lf "SCTX pc=" pc " lr=" lr " sp=" sp " fp=" fp lf]
+	]
+
+	__alt-stack: as byte-ptr! 0
+]
+
 posix-startup-ctx: context [
 
 	UCTX_DEFINITION
+
+	;-- Singleton debug record. system/debug outlives the handler frame, so the
+	;-- record is declared once at context level regardless of the storage a
+	;-- function-scope DECLARE would use.
+	__debug-stack: declare __stack!
 
 	***-on-signal: func [
 		[cdecl]
@@ -61,10 +92,19 @@ posix-startup-ctx: context [
 		ctx		[_ucontext!]
 		/local code error
 	][
+		#if debug? = yes [
+			rs-dump-ctx as integer! UCTX_INSTRUCTION(ctx)
+				#either all [OS = 'macOS target = 'ARM64][
+					as integer! ctx/mcontext/state/lr
+				][0]
+				as integer! UCTX_GET_STACK_TOP(ctx)
+				as integer! UCTX_GET_STACK_FRAME(ctx)
+		]
+
 		error: 99								;-- default unknown error
 		code: info/code
 		
-		system/debug: declare __stack!			;-- allocate a __stack! struct
+		system/debug: __debug-stack				;-- reuse the context-level struct
 		#switch target [
 			X86-64 [
 				system/debug/frame: UCTX_GET_STACK_FRAME(ctx)
@@ -132,6 +172,7 @@ posix-startup-ctx: context [
 	init: func [
 		/local
 			__sigaction-options [sigaction!]
+			__ss [sigaltstack!]
 	][
 		__sigaction-options: declare sigaction!
 
@@ -148,7 +189,19 @@ posix-startup-ctx: context [
 				as byte-ptr! :***-on-signal
 			]
 		]
-		__sigaction-options/flags: 		SA_SIGINFO ;or SA_RESTART
+		#if debug? = yes [
+			__alt-stack: allocate 1048576
+			__ss: declare sigaltstack!
+			__ss/ss_sp: __alt-stack
+			__ss/ss_flags: 0
+			__ss/ss_size: as int-ptr! 1048576
+			sigaltstack __ss as sigaltstack! 0
+		]
+		__sigaction-options/flags: #either debug? = yes [
+			SA_SIGINFO or SA_ONSTACK					;-- run handlers on __alt-stack
+		][
+			SA_SIGINFO
+		]
 
 		sigaction SIGILL  __sigaction-options as sigaction! 0
 		sigaction SIGBUS  __sigaction-options as sigaction! 0

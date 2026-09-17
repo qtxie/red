@@ -136,6 +136,13 @@ arm64-codegen: context [
 	compiler-frame-register: arm64-encoder/FP
 	compiler-frame-active?: false
 	VISIBLE_FRAME_OFFSET: -32
+	;-- Slot reserved for the function's stack-pointer bitmap offset. The
+	;-- collector reads it at a fixed offset below the frame pointer (see
+	;-- scan-stack-refs in runtime/collector.reds). x64 uses frm - 3; AArch64
+	;-- already spends that slot on the unwind landing pad, so the bitmap gets
+	;-- the slot just below the four the exception frame occupies.
+	BITMAP_SLOT_OFFSET: -40
+	FRAME_PREFIX_SLOTS: 5
 
 	EFFECT_RETURNS: 1
 	EFFECT_LIVE: 2
@@ -2609,7 +2616,7 @@ arm64-codegen: context [
 			plan/unwind: unwind
 			plan/catch-capacity: 0
 			plan/visible-frame-offset: either unwind = 1 [VISIBLE_FRAME_OFFSET][0]
-			plan/frame-prefix-count: either unwind = 1 [4][0]
+			plan/frame-prefix-count: FRAME_PREFIX_SLOTS
 			return 0
 		]
 
@@ -2697,7 +2704,8 @@ arm64-codegen: context [
 		plan/unwind: unwind
 		plan/catch-capacity: capacity
 		plan/visible-frame-offset: either unwind = 1 [VISIBLE_FRAME_OFFSET][0]
-		plan/frame-prefix-count: either unwind = 1 [4 + (capacity * 3)][0]
+		plan/frame-prefix-count: FRAME_PREFIX_SLOTS
+			+ either unwind = 1 [capacity * 3][0]
 		0
 	]
 
@@ -3851,6 +3859,22 @@ arm64-codegen: context [
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 		]
+		;-- Publish a stack-pointer bitmap offset where the collector looks for
+		;-- one (scan-stack-refs in runtime/collector.reds). The slot has to
+		;-- hold a bitmap-sized index whatever the table contains, because the
+		;-- collector adds it to bitarrays-base unchecked; leaving the frame
+		;-- slot untouched makes it read a stray value and walk off the table.
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/move-immediate at (capacity - written)
+			arm64-encoder/X16 4 0 0
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/register-store at (capacity - written)
+			arm64-encoder/X16 arm64-encoder/FP BITMAP_SLOT_OFFSET 8
+			arm64-encoder/X17
+		if encoded < 0 [return OUTPUT_FULL]
+		written: written + encoded
 		plan/unwind-fixup: -1
 		if plan/unwind = 1 [
 			at: either null? code [as byte-ptr! 0][code + written]
@@ -5279,8 +5303,9 @@ arm64-codegen: context [
 							result-width stack-offset stack-size fixed-stack-size
 				call-mode list-size list-capacity copy-size copy-align copy-offset
 					result-offset aggregate-size-value aggregate-align hfa-kind hfa-count
-					chunk-offset chunk-size named-integers named-floats
-					record-offset typed-size runtime-id
+				chunk-offset chunk-size named-integers named-floats
+				trap-number-register trap-immediate
+				record-offset typed-size runtime-id
 							region-base region-limit region-entry sub-target link-slot
 								catch-level catch-record catch-unwind target-offset
 								current-catch-depth target-catch-depth expected-catch-depth
@@ -6663,18 +6688,32 @@ arm64-codegen: context [
 									+ view/header/global-count + slot)
 								(function-base + written) references
 							if status < 0 [return status]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/page-address at
+							(capacity - written) target
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						;-- Mach-O patches the pair to the symbol itself, so
+						;-- the register already holds it. ELF can only name
+						;-- the GOT slot the dynamic linker fills in, so
+						;-- there the pair forms the address of that slot and
+						;-- the load is what reaches the symbol: the address
+						;-- of an imported variable, or the entry point of an
+						;-- imported function.
+						if target-abi = ABI_AAPCS64 [
 							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/page-address at
+							encoded: arm64-encoder/load-register-indirect at
 								(capacity - written) target
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
-							scratch/stack-types/depth: ref
-							scratch/stack-locations/depth: LOCATION_REGISTER
-							scratch/stack-low/depth: target
-							scratch/stack-high/depth: 0
-							scratch/stack-flags/depth: 0
 						]
-						true [return fail-unsupported 238 "compile-function/scratch/stack-flags#72"]
+						scratch/stack-types/depth: ref
+						scratch/stack-locations/depth: LOCATION_REGISTER
+						scratch/stack-low/depth: target
+						scratch/stack-high/depth: 0
+						scratch/stack-flags/depth: 0
+					]
+					true [return fail-unsupported 238 "compile-function/scratch/stack-flags#72"]
 					]
 				]
 				instruction/op = OP_LOAD [
@@ -8173,15 +8212,24 @@ arm64-codegen: context [
 					]
 					case [
 						syscall? [
-							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/move-immediate at
-								(capacity - written) arm64-encoder/X16 8 syscall-id 0
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/svc at
-								(capacity - written) 128
+						;-- Darwin takes the call number in X16 behind
+						;-- `svc #128`; Linux in X8 behind `svc #0`.
+						either target-abi = ABI_AAPCS64 [
+							trap-number-register: arm64-encoder/X8
+							trap-immediate: 0
+						][
+							trap-number-register: arm64-encoder/X16
+							trap-immediate: 128
 						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/move-immediate at
+							(capacity - written) trap-number-register 8 syscall-id 0
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/svc at
+							(capacity - written) trap-immediate
+					]
 						call-target > 0 [
 							if not null? code [
 								target: function-offsets/call-target

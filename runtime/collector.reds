@@ -1392,7 +1392,14 @@ collector: context [
 			if all [c-low < caller caller < c-high]		;-- only process Red frames (skip externals)
 		]
 			[
-				slot: frm - 3							;-- position on bitmap slot
+				;-- x64 keeps the bitmap offset three slots below the frame
+				;-- pointer. AArch64 spends that slot on the unwind landing
+				;-- pad and publishes the offset one slot lower instead.
+				#either target = 'ARM64 [
+					slot: frm - 5						;-- position on bitmap slot
+				][
+					slot: frm - 3						;-- position on bitmap slot
+				]
 				slot-bits: as-integer slot/value
 				if slot-bits = STACK_BITMAP_BARRIER [break]
 				assert slot-bits >= 0

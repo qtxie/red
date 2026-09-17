@@ -1011,6 +1011,22 @@ arm64-encoder: context [
 		8
 	]
 
+	;-- LDR xN, [xN]: replace the address a register holds with the value
+	;-- stored there. An imported symbol has no address the linker could bake
+	;-- in, so a page reference only forms the slot that holds it, and the
+	;-- load is what actually reaches the symbol.
+	load-register-indirect: func [
+		code [byte-ptr!]
+		capacity register [integer!]
+		return: [integer!]
+	][
+		unless all [valid-register? register room? code capacity 4][return -1]
+		if not null? code [
+			write-i32 code ((load-opcode 8 0 8 true) or (register * 32) or register)
+		]
+		4
+	]
+
 	address-offset: func [
 		code [byte-ptr!]
 		capacity target base displacement scratch [integer!]

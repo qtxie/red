@@ -1701,46 +1701,55 @@ system-format-ELF: context [
 		relro-offset [integer! none!]
 		plt-offset [integer! none!]
 		gotplt-offset [integer! none!]
-		/local rel disp index delta opcode target-address
+		/local rel disp index delta opcode target-address page-ref?
 	] [
 		foreach [libname libimports] any [attempt [job/sections/import/3] []] [
 			linker/check-dup-symbols job libimports
 			foreach [symbol callsites] libimports [
 				either elf64-target? job/target [
-					index: either issue? symbol [
-						index? find vars symbol
-					][
-						index? find funcs symbol
-					]
+				index: either issue? symbol [
+					index? find vars symbol
+				][
+					index? find funcs symbol
+				]
+				foreach callsite callsites [
+					;-- A block callsite is an AArch64 ADRP/ADD pair naming a
+					;-- slot the code then reads; an integer one is a call or
+					;-- an x86-64 displacement. The two do not agree on what
+					;-- they point at, so the target follows the reference.
+					page-ref?: all [job/target = 'ARM64 block? callsite]
 					disp: either issue? symbol [
 						relro-offset + ((size-of machine-word64) * (index - 1))
 					][
-						either job/target = 'ARM64 [
+						either all [job/target = 'ARM64 not page-ref?] [
 							;-- AArch64 branches straight at the stub.
 							plt-offset + (16 * (index + 1))
 						][
-							;-- x86-64 calls indirectly through memory, so the
-							;-- displacement has to name the stub's GOT slot,
-							;-- whose lazy value is the stub itself. The first
-							;-- three slots belong to the dynamic linker.
+							;-- Everything else names the stub's GOT slot,
+							;-- whose value is the symbol itself: x86-64 calls
+							;-- and reads indirectly through memory, and an
+							;-- AArch64 page reference reads the slot to turn
+							;-- it into an address. The first three slots
+							;-- belong to the dynamic linker.
 							gotplt-offset + ((size-of machine-word64) * (index + 2))
 						]
 					]
 					target-address: either job/PIC? [text-address + disp][disp]
-					foreach callsite callsites [
-						case [
-							all [job/target = 'ARM64 issue? symbol] [
-								unless all [
-									block? callsite
-									2 <= length? callsite
-									integer? callsite/1
-									integer? callsite/2
-								][make error! "invalid AArch64 import data reference"]
-								linker/patch-arm64-page-ref
-									code callsite/1
-									(text-address + callsite/1 - 1)
-									target-address callsite/2
-							]
+					case [
+					all [job/target = 'ARM64 block? callsite] [
+						;-- An ADRP/ADD pair forms the address of the slot
+						;-- target-address names; the load that follows it
+						;-- turns that into the address of the symbol.
+						unless all [
+							2 <= length? callsite
+							integer? callsite/1
+							integer? callsite/2
+						][make error! "invalid AArch64 import page reference"]
+						linker/patch-arm64-page-ref
+							code callsite/1
+							(text-address + callsite/1 - 1)
+							target-address callsite/2
+					]
 							job/target = 'ARM64 [
 								delta: target-address - (text-address + callsite - 1)
 								if any [not zero? delta // 4 delta < -134217728 delta > 134217724][

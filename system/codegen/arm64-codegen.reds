@@ -6,6 +6,7 @@ Red/System [
 #include %codegen-diag.reds
 #include %arm64-encoder.reds
 #include %codegen-rsir-reader.reds
+#include %stack-bitmap.reds
 
 arm64-function-scratch!: alias struct! [
 	homes           [int-ptr!]
@@ -52,6 +53,8 @@ arm64-function-plan!: alias struct! [
 	visible-frame-offset [integer!]
 	unwind-fixup    [integer!]
 	frame-allocation [integer!]
+	bitmap-index    [integer!]
+	bitmap-slots    [integer!]
 ]
 
 arm64-layout-state!: alias struct! [
@@ -91,7 +94,6 @@ arm64-codegen: context [
 	IMAGE_GLOBAL_SIZE:   28
 	IMAGE_IMPORT_SIZE:   24
 	IMAGE_EXPORT_SIZE:   12
-	BITMAP_SIZE:         16
 
 	RSIR_TYPE_SIZE:        20
 	RSIR_MEMBER_SIZE:       8
@@ -3636,6 +3638,7 @@ arm64-codegen: context [
 		total-slots: total-slots + float-home-count
 		if total-slots > (2147483647 - frame-home-count)[return OUTPUT_FULL]
 		total-slots: total-slots + frame-home-count
+		plan/bitmap-slots: total-slots - 4
 		if total-slots > (2147483647 - max-spill)[return OUTPUT_FULL]
 		total-slots: total-slots + max-spill
 		; Lay the per-region windows out in instruction order, each followed by
@@ -3825,6 +3828,70 @@ arm64-codegen: context [
 		written + encoded
 	]
 
+	mark-bitmap-type: func [
+		record [int-ptr!] ref [integer!] inline? [logic!]
+		displacement depth [integer!] view [rsir-view!] layout [arm64-layout-state!]
+		return: [logic!]
+		/local kind index offset [integer!] type [rsir-type!]
+			member [rsir-member!] offsets [int-ptr!]
+	][
+		if depth > view/header/type-count [return false]
+		ref: canonical-type ref view
+		kind: type-kind ref view
+		if all [inline? any [kind = -2 kind = -3 kind = -7]][
+			type: as rsir-type! (view/types + ((ref - 1) * RSIR_TYPE_SIZE))
+			index: 0
+			while [index < type/member-count][
+				either kind = -7 [
+					unless mark-bitmap-type record type/target false
+						(displacement + (index * type/flags)) (depth + 1) view layout [return false]
+				][
+					member: as rsir-member! (view/members
+						+ ((type/first-member + index) * RSIR_MEMBER_SIZE))
+					offsets: layout/member-offsets + type/first-member + index
+					offset: offsets/value
+					if offset < 0 [return false]
+					unless mark-bitmap-type record member/type (member/flags = INLINE)
+						(displacement + offset) (depth + 1) view layout [return false]
+				]
+				index: index + 1
+			]
+			return true
+		]
+		if any [kind = 12 kind = 13 kind = 16
+			kind = -2 kind = -3 kind = -4 kind = -5 kind = -6 kind = -7][
+			if (displacement // 8) <> 0 [return false]
+			return stack-bitmap/mark record (((0 - displacement) / 8) - 5)
+		]
+		true
+	]
+
+	write-frame-bitmap: func [
+		record [int-ptr!] view [rsir-view!] layout [arm64-layout-state!]
+		fn [rsir-function!] scratch [arm64-function-scratch!] plan [arm64-function-plan!]
+		return: [logic!]
+		/local index [integer!] parameter [rsir-parameter!]
+	][
+		stack-bitmap/initialize record plan/bitmap-slots
+		; Saved GPRs belong to the caller, whose types are unknown here.
+		index: 1
+		while [index <= plan/home-count][
+			unless stack-bitmap/mark record (plan/frame-prefix-count + index - 5) [return false]
+			index: index + 1
+		]
+		index: 1
+		while [index <= (fn/parameter-count + fn/local-count)][
+			if scratch/storage-kinds/index = STORAGE_FRAME [
+				parameter: as rsir-parameter! (view/parameters
+					+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
+				unless mark-bitmap-type record parameter/type (parameter/flags = INLINE)
+					scratch/homes/index 0 view layout [return false]
+			]
+			index: index + 1
+		]
+		true
+	]
+
 	emit-prologue: func [
 		view [rsir-view!]
 		fn [rsir-function!]
@@ -3866,7 +3933,7 @@ arm64-codegen: context [
 		;-- slot untouched makes it read a stray value and walk off the table.
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-immediate at (capacity - written)
-			arm64-encoder/X16 4 0 0
+			arm64-encoder/X16 4 plan/bitmap-index 0
 		if encoded < 0 [return OUTPUT_FULL]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
@@ -4764,7 +4831,7 @@ arm64-codegen: context [
 			record-slot pair-displacement displacement written encoded [integer!]
 	][
 		if level <= 0 [return fail-invalid 154 "emit-catch-open/level#1"]
-		record-slot: 5 + ((level - 1) * 3)
+		record-slot: FRAME_PREFIX_SLOTS + 1 + ((level - 1) * 3)
 		pair-displacement: 0 - ((record-slot + 1) * 8)
 		written: arm64-encoder/address-offset code capacity arm64-encoder/X2
 			compiler-frame-register pair-displacement arm64-encoder/X16
@@ -4812,7 +4879,7 @@ arm64-codegen: context [
 			record-slot pair-displacement written encoded [integer!]
 	][
 		if level <= 0 [return fail-invalid 155 "emit-catch-restore/level#1"]
-		record-slot: 5 + ((level - 1) * 3)
+		record-slot: FRAME_PREFIX_SLOTS + 1 + ((level - 1) * 3)
 		pair-displacement: 0 - ((record-slot + 1) * 8)
 		written: arm64-encoder/address-offset code capacity arm64-encoder/X2
 			compiler-frame-register pair-displacement arm64-encoder/X16
@@ -9979,12 +10046,12 @@ arm64-codegen: context [
 			img-entry [rsir-file-entry!]
 			memory code names cursor finish image-globals image-imports image-exports
 				rodata-output data-output debug-cursor img-table [byte-ptr!]
-		function-sizes function-offsets function-frames
+		function-sizes function-offsets function-frames bitmap-offsets bitmap-sizes
 			function-unwind instruction-starts global-offsets global-sizes
 				global-owners global-children global-siblings [int-ptr!]
 		id first-instruction written code-size code-cursor
 			metadata-size names-size code-offset rodata-offset data-offset
-			data-size total-size name-cursor entry-id storage-count
+			data-size total-size name-cursor entry-id storage-count bitmap-base bitmap-size
 			rodata-size reference-count line-offset debug-size fn-id record-index
 				pass emitted img-offset [integer!]
 			max-storage max-instructions words status member-id
@@ -10018,8 +10085,8 @@ arm64-codegen: context [
 			]
 			id: id + 1
 		]
-		if header/function-count > (2147483647 / 5)[return OUTPUT_FULL]
-		words: header/function-count * 5
+		if header/function-count > (2147483647 / 7)[return OUTPUT_FULL]
+		words: header/function-count * 7
 		if max-storage > ((2147483647 - words) / 3)[return OUTPUT_FULL]
 		words: words + (max-storage * 3)
 		if max-instructions > ((2147483647 - words) / 9)[return OUTPUT_FULL]
@@ -10052,7 +10119,9 @@ arm64-codegen: context [
 		function-frames: function-offsets + header/function-count
 		function-unwind: function-frames + header/function-count
 		instruction-starts: function-unwind + header/function-count
-		scratch/homes: instruction-starts + header/function-count
+		bitmap-offsets: instruction-starts + header/function-count
+		bitmap-sizes: bitmap-offsets + header/function-count
+		scratch/homes: bitmap-sizes + header/function-count
 		scratch/storage-types: scratch/homes + max-storage
 		scratch/storage-kinds: scratch/storage-types + max-storage
 		scratch/stack-types: scratch/storage-kinds + max-storage
@@ -10179,16 +10248,17 @@ arm64-codegen: context [
 		status: prepare-control-targets view scratch
 		if status < 0 [return release memory status]
 
-		if header/function-count > (2147483647 / BITMAP_SIZE)[
-			return release memory OUTPUT_FULL
-		]
-		data-size: header/function-count * BITMAP_SIZE
+		data-size: 16
 		rodata-size: 0
 		status: prepare-global-data view layout reference-state
 			global-offsets global-sizes global-owners global-children global-siblings
 			:data-size :rodata-size
 		if status < 0 [return release memory status]
 
+		bitmap-base: align data-size 8
+		if any [bitmap-base < 0 bitmap-base > (2147483647 - 4)][return release memory OUTPUT_FULL]
+		bitmap-base: bitmap-base + 4
+		bitmap-size: 0
 		code-size: 0
 		first-instruction: 0
 		id: 1
@@ -10202,6 +10272,14 @@ arm64-codegen: context [
 			status: plan-function view layout fn first-instruction startup-entry?
 				unwind? scratch plan
 			if status < 0 [return release memory status]
+			plan/bitmap-index: bitmap-size / 4
+			bitmap-offsets/id: bitmap-base + bitmap-size
+			bitmap-sizes/id: stack-bitmap/record-size plan/bitmap-slots
+			if any [
+				bitmap-size > ((0FFFFFFFh * 4) - bitmap-sizes/id)
+				bitmap-sizes/id > (2147483647 - bitmap-base - bitmap-size)
+			][return release memory OUTPUT_FULL]
+			bitmap-size: bitmap-size + bitmap-sizes/id
 			function-frames/id: either all [
 				plan/home-count = 0
 				plan/float-home-count = 0
@@ -10222,6 +10300,7 @@ arm64-codegen: context [
 			first-instruction: first-instruction + fn/instruction-count
 			id: id + 1
 		]
+		data-size: bitmap-base + bitmap-size
 		reference-count: 0
 		id: 1
 		while [id <= target-count][
@@ -10402,8 +10481,8 @@ arm64-codegen: context [
 			image-function/code-offset: function-offsets/id
 			image-function/code-size: function-sizes/id
 			image-function/frame-size: function-frames/id
-			image-function/bitmap-offset: (id - 1) * BITMAP_SIZE
-			image-function/bitmap-size: BITMAP_SIZE
+			image-function/bitmap-offset: bitmap-offsets/id
+			image-function/bitmap-size: bitmap-sizes/id
 			image-function/first-reference: reference-state/starts/id
 			image-function/reference-count: reference-state/counts/id
 			copy-memory (names + name-cursor) (view/strings + fn/name) fn/name-size
@@ -10491,6 +10570,9 @@ arm64-codegen: context [
 			status: plan-function view layout fn instruction-starts/id startup-entry?
 				unwind? scratch plan
 			if status < 0 [return release memory status]
+			plan/bitmap-index: (bitmap-offsets/id - bitmap-base) / 4
+			unless write-frame-bitmap (as int-ptr! (output + data-offset + bitmap-offsets/id))
+				view layout fn scratch plan [return release memory INVALID_IR]
 			written: compile-function view layout fn instruction-starts/id
 				entry? startup-entry? scratch plan reference-state
 				function-offsets function-offsets/id

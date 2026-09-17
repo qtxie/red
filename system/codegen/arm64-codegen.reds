@@ -5362,6 +5362,30 @@ arm64-codegen: context [
 		if encoded < 0 [return encoded]
 		written: written + encoded
 		compiler-frame-active?: true
+		; Keep the unwind landing pad beside its prologue ADR. A function body
+		; can exceed ADR's signed 21-bit reach; its size must not affect this
+		; address. The normal path skips the pad with one local branch.
+		if all [plan/unwind = 1 not entry?] [
+			if plan/unwind-fixup < 0 [return fail-invalid 389 "compile-function/plan/unwind-fixup#223"]
+			encoded: emit-unwind-handler plan null 0
+			if encoded < 0 [return encoded]
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/branch-relative at (capacity - written) (encoded + 4)
+			if encoded < 0 [return OUTPUT_FULL]
+			written: written + encoded
+			handler-offset: written
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: emit-unwind-handler plan at (capacity - written)
+			if encoded < 0 [return encoded]
+			written: written + encoded
+			unless measure? [
+				displacement: handler-offset - plan/unwind-fixup
+				at: code + plan/unwind-fixup
+				encoded: arm64-encoder/address-relative at
+					(capacity - plan/unwind-fixup) arm64-encoder/X16 displacement
+				if encoded <> 4 [return OUTPUT_FULL]
+			]
+		]
 		if all [startup? target-abi = ABI_APPLE_AARCH64] [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
@@ -9918,21 +9942,6 @@ arm64-codegen: context [
 				true [return fail-unsupported 388 "compile-function/fallthrough#222"]
 			]
 			index: index + 1
-		]
-		if all [plan/unwind = 1 not entry?] [
-			if plan/unwind-fixup < 0 [return fail-invalid 389 "compile-function/plan/unwind-fixup#223"]
-			handler-offset: written
-			at: either null? code [as byte-ptr! 0][code + written]
-			encoded: emit-unwind-handler plan at (capacity - written)
-			if encoded < 0 [return encoded]
-			written: written + encoded
-			unless measure? [
-				displacement: handler-offset - plan/unwind-fixup
-				at: code + plan/unwind-fixup
-				encoded: arm64-encoder/address-relative at
-					(capacity - plan/unwind-fixup) arm64-encoder/X16 displacement
-				if encoded <> 4 [return OUTPUT_FULL]
-			]
 		]
 		either not fallthrough? [written][INVALID_IR]
 	]

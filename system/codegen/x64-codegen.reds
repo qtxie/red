@@ -6,6 +6,7 @@ Red/System [
 #include %codegen-diag.reds
 #include %x64-encoder.reds
 #include %codegen-model.reds
+#include %stack-bitmap.reds
 
 ; Working memory for one module, carved out of a single allocation by
 ; `generate`. The function arrays, instruction arrays, switch arrays and shared
@@ -128,6 +129,9 @@ codegen-task!: alias struct! [
 	entry?                 [logic!]
 	frame-size             [integer!]
 	outgoing-size          [integer!]
+	bitmap                 [int-ptr!]
+	bitmap-index           [integer!]
+	bitmap-slots           [integer!]
 	global-reference-count [integer!]
 	literal-size           [integer!]
 	opt-level              [integer!]
@@ -204,6 +208,8 @@ x64-module-context!: alias struct! [
 	export-names-size       [integer!]
 	rodata-size             [integer!]
 	data-size               [integer!]
+	bitmap-base             [integer!]
+	bitmap-size             [integer!]
 	global-reference-count  [integer!]
 	; Code and literals, measured before any of the image is written.
 	function-names-size     [integer!]
@@ -247,7 +253,6 @@ x64-codegen: context [
 	IMAGE_GLOBAL_SIZE:   28
 	IMAGE_IMPORT_SIZE:   24
 	IMAGE_EXPORT_SIZE:   12
-	BITMAP_SIZE:         16
 	FUNCTION_ALIGNMENT:  32
 
 	ABI_WIN64: 1
@@ -2567,6 +2572,75 @@ x64-codegen: context [
 			index: index + 1
 		]
 		align used 8
+	]
+
+	mark-bitmap-type: func [
+		record [int-ptr!] ref [integer!] inline? [logic!]
+		displacement depth [integer!] table [type-table!]
+		return: [logic!]
+		/local kind index offset [integer!] type [rsir-type!]
+			member [rsir-member!] offsets [int-ptr!]
+	][
+		if depth > table/type-count [return false]
+		ref: canonical-type ref table
+		kind: logical-kind ref table
+		if all [inline? any [kind = -2 kind = -3 kind = -7]][
+			type: as rsir-type! (table/types + ((ref - 1) * RSIR_TYPE_SIZE))
+			index: 0
+			while [index < type/member-count][
+				either kind = -7 [
+					unless mark-bitmap-type record type/target false
+						(displacement + (index * type/flags)) (depth + 1) table [return false]
+				][
+					member: as rsir-member! (table/members
+						+ ((type/first-member + index) * RSIR_MEMBER_SIZE))
+					offsets: table/member-offsets + type/first-member + index
+					offset: offsets/value
+					if offset < 0 [return false]
+					unless mark-bitmap-type record member/type (member/flags = INLINE)
+						(displacement + offset) (depth + 1) table [return false]
+				]
+				index: index + 1
+			]
+			return true
+		]
+		if any [kind = 12 kind = 13 kind = 16
+			kind = -2 kind = -3 kind = -4 kind = -5 kind = -6 kind = -7][
+			if (displacement // 8) <> 0 [return false]
+			return stack-bitmap/mark record (((0 - displacement) / 8) - 5)
+		]
+		true
+	]
+
+	write-frame-bitmap: func [
+		context [x64-function-context!]
+		return: [logic!]
+		/local task [codegen-task!] module [rsir-module!] fn [rsir-function!]
+			parameter [rsir-parameter!] offsets [int-ptr!]
+			index displacement width [integer!] inline? [logic!]
+	][
+		task: context/task
+		module: context/module
+		fn: task/fn
+		offsets: context/scratch/storage-offsets
+		stack-bitmap/initialize task/bitmap task/bitmap-slots
+		index: 1
+		while [index <= (fn/parameter-count + fn/local-count)][
+			displacement: offsets/index
+			if displacement < 0 [
+				parameter: as rsir-parameter! (module/parameters
+					+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
+				inline?: parameter/flags = INLINE
+				if all [inline? index <= fn/parameter-count][
+					width: win64-aggregate-width parameter/type module/table
+					if width = 0 [inline?: false]
+				]
+				unless mark-bitmap-type task/bitmap parameter/type inline?
+					displacement 0 module/table [return false]
+			]
+			index: index + 1
+		]
+		true
 	]
 
 	; Gives every live call whose result cannot travel in a register a frame slot
@@ -5348,6 +5422,10 @@ x64-codegen: context [
 
 		state/storage-bytes: plan-storage module fn storage-offsets
 		if state/storage-bytes < 0 [return state/storage-bytes]
+		task/bitmap-slots: state/storage-bytes / 8
+		if not null? as byte-ptr! task/bitmap [
+			unless write-frame-bitmap context [return INVALID_IR]
+		]
 		state/storage-bytes: plan-call-results module fn view state/storage-bytes
 		if state/storage-bytes < 0 [return state/storage-bytes]
 		state/native-stack-slot: 0
@@ -5436,7 +5514,7 @@ x64-codegen: context [
 				written: written + encoded
 			]
 			at: either measure? [as byte-ptr! 0][code + written]
-			encoded: x64-encoder/prolog at (capacity - written) 0 -1
+			encoded: x64-encoder/prolog at (capacity - written) -1 -1
 			if encoded < 0 [return OUTPUT_FULL]
 			written: written + encoded
 
@@ -5475,7 +5553,7 @@ x64-codegen: context [
 
 		catch-threshold: either (fn/flags and CATCH_FLAG) <> 0 [-2][0]
 		at: either measure? [as byte-ptr! 0][code + written]
-		encoded: x64-encoder/prolog at (capacity - written) 0 catch-threshold
+		encoded: x64-encoder/prolog at (capacity - written) task/bitmap-index catch-threshold
 		if encoded < 0 [return OUTPUT_FULL]
 		written: written + encoded
 
@@ -12510,7 +12588,9 @@ x64-codegen: context [
 		]
 		global-names-size: 0
 		ctx/rodata-size: 0
-		ctx/data-size: BITMAP_SIZE
+		; The bitmap table follows the globals; this reservation keeps the
+		; linker's minimum writable-global offset of 16 satisfied.
+		ctx/data-size: 16
 		ctx/global-reference-count: 0
 		id: 1
 		while [id <= header/function-count][
@@ -12917,6 +12997,7 @@ x64-codegen: context [
 			work [codegen-scratch!]
 			task [codegen-task!]
 			ir-function [rsir-function!]
+			bitmap-function [codegen-function!]
 			functions instructions function-instructions [byte-ptr!]
 			function-sizes function-frames function-outgoing instruction-effects
 				instruction-offsets relaxed-offsets catch-depths control-uses [int-ptr!]
@@ -12956,6 +13037,8 @@ x64-codegen: context [
 			id: id + 1
 		]
 
+		ctx/bitmap-size: 0
+		task/bitmap: as int-ptr! 0
 		function-names-size: 0
 		entry-size: 0
 		next-instruction: 1
@@ -12986,8 +13069,15 @@ x64-codegen: context [
 			task/first-instruction: next-instruction
 			task/first-offset: next-offset
 			task/entry?: current-entry?
+			task/bitmap-index: ctx/bitmap-size / 4
 			function-size: compile-function module work task
 			if function-size < 0 [return function-size]
+			bitmap-function: as codegen-function! (task/image-data
+				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
+			bitmap-function/bitmap-offset: ctx/bitmap-base + ctx/bitmap-size
+			bitmap-function/bitmap-size: stack-bitmap/record-size task/bitmap-slots
+			if ctx/bitmap-size > (0FFFFFFFh * 4 - bitmap-function/bitmap-size) [return OUTPUT_FULL]
+			ctx/bitmap-size: ctx/bitmap-size + bitmap-function/bitmap-size
 			function-frames/id: task/frame-size
 			function-outgoing/id: task/outgoing-size
 			; Near forms are measured first, then every branch and jump whose
@@ -13233,8 +13323,6 @@ x64-codegen: context [
 			image-function/name-size: ir-function/name-size
 			image-function/code-size: function-sizes/id
 			image-function/frame-size: function-frames/id
-			image-function/bitmap-offset: 0
-			image-function/bitmap-size: BITMAP_SIZE
 			image-function/first-reference: 0
 			image-function/reference-count: count
 			either current-entry? [
@@ -13463,6 +13551,16 @@ x64-codegen: context [
 		function-code-size: ctx/function-code-size
 		image-functions: output + IMAGE_HEADER_SIZE
 		code: output + ctx/code-offset
+		cursor: code + ctx/code-size
+		rodata-output: output + ctx/rodata-offset
+		while [cursor < rodata-output][cursor/1: as byte! 0 cursor: cursor + 1]
+		finish: rodata-output + ctx/rodata-size
+		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
+		data-output: output + ctx/data-offset
+		while [cursor < data-output][cursor/1: as byte! 0 cursor: cursor + 1]
+		finish: data-output + ctx/data-size
+		cursor: data-output
+		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
 		cursor: code
 		finish: code + function-code-size
 		while [cursor < finish][
@@ -13491,6 +13589,8 @@ x64-codegen: context [
 			task/capacity: image-function/code-size
 			task/frame-size: function-frames/id
 			task/outgoing-size: function-outgoing/id
+			task/bitmap: as int-ptr! (output + ctx/data-offset + image-function/bitmap-offset)
+			task/bitmap-index: (image-function/bitmap-offset - ctx/bitmap-base) / 4
 			written: compile-function module work task
 			if written < 0 [return written]
 			if written <> image-function/code-size [
@@ -13504,16 +13604,6 @@ x64-codegen: context [
 		if ctx/literal-size > 0 [
 			copy-memory (code + function-code-size) strings ctx/literal-size
 		]
-		cursor: code + ctx/code-size
-		rodata-output: output + ctx/rodata-offset
-		while [cursor < rodata-output][cursor/1: as byte! 0 cursor: cursor + 1]
-		finish: rodata-output + ctx/rodata-size
-		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
-		data-output: output + ctx/data-offset
-		while [cursor < data-output][cursor/1: as byte! 0 cursor: cursor + 1]
-		finish: data-output + ctx/data-size
-		cursor: data-output
-		while [cursor < finish][cursor/1: as byte! 0 cursor: cursor + 1]
 		0
 	]
 
@@ -13769,6 +13859,11 @@ x64-codegen: context [
 		if status = 0 [status: layout-module-globals ctx]
 		if status = 0 [status: link-anonymous-globals ctx]
 		if status = 0 [status: place-module-globals ctx]
+		if status = 0 [
+			ctx/bitmap-base: align ctx/data-size 8
+			if any [ctx/bitmap-base < 0 ctx/bitmap-base > (2147483647 - 4)] [status: OUTPUT_FULL]
+			ctx/bitmap-base: ctx/bitmap-base + 4
+		]
 		if status = 0 [status: allocate-module-scratch ctx]
 		if status = 0 [
 			argument-marking?: true
@@ -13783,6 +13878,11 @@ x64-codegen: context [
 				status: measure-module-functions ctx
 			]
 			argument-marking?: false
+		]
+		if status = 0 [
+			either ctx/bitmap-base > (2147483647 - ctx/bitmap-size) [status: OUTPUT_FULL][
+				ctx/data-size: ctx/bitmap-base + ctx/bitmap-size
+			]
 		]
 		if status = 0 [status: plan-module-image ctx]
 		if status = 0 [status: write-module-metadata ctx]

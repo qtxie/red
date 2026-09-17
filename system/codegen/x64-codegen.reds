@@ -405,6 +405,11 @@ x64-codegen: context [
 	ALLOCATION_REGISTER_COUNT: 4
 	ALLOCATION_XMM_FIRST:   2
 	ALLOCATION_XMM_LAST:    5
+	;-- System V hands the first eight vector arguments to the callee in
+	;-- XMM0-XMM7, so there the pool has to start above them: a value kept
+	;-- alive for a call would otherwise be overwritten while the earlier
+	;-- arguments of that same call are being loaded into place.
+	ALLOCATION_XMM_SYSV_FIRST: 8
 	; Four GPR owners followed by four XMM owners.
 	ALLOCATION_OWNER_COUNT: 8
 	; Zero means no stack tag, positive values are variant-chain instruction
@@ -2276,6 +2281,26 @@ x64-codegen: context [
 		]
 	]
 
+	;-- First vector register the allocator may own. It has to sit clear of the
+	;-- argument registers: a call loads those one by one, and a value the
+	;-- allocator is still holding for that very call must survive the sequence.
+	allocation-xmm-base: func [return: [integer!]][
+		either target-abi = ABI_SYSV [
+			ALLOCATION_XMM_SYSV_FIRST
+		][ALLOCATION_XMM_FIRST]
+	]
+
+	;-- Scratch register a CALL parks the located last argument in while it
+	;-- loads the earlier ones. It has to sit clear of both the argument
+	;-- registers and the allocator pool: Win64 fills XMM0-XMM3 and the pool
+	;-- stops at XMM5, while System V reaches XMM7 and the pool starts above
+	;-- it. XMM12 is the first vector register neither ABI touches.
+	located-scratch-xmm: func [return: [integer!]][
+		either target-abi = ABI_SYSV [
+			ALLOCATION_XMM_SYSV_FIRST + ALLOCATION_REGISTER_COUNT
+		][x64-encoder/XMM4]
+	]
+
 	allocation-register: func [
 		register-class ordinal [integer!]
 		return: [integer!]
@@ -2289,7 +2314,7 @@ x64-codegen: context [
 			]
 			register-class = ALLOCATION_XMM [
 				; XMM0/XMM1 belong to the transient expression stack.
-				ordinal + (ALLOCATION_XMM_FIRST - 1)
+				ordinal + (allocation-xmm-base - 1)
 			]
 			true [ALLOCATION_UNASSIGNED]
 		]
@@ -2298,6 +2323,7 @@ x64-codegen: context [
 	allocation-register-ordinal: func [
 		register-class register-id [integer!]
 		return: [integer!]
+		/local base [integer!]
 	][
 		case [
 			register-class = ALLOCATION_GPR [
@@ -2307,11 +2333,16 @@ x64-codegen: context [
 				][(register-id - x64-encoder/R8) + 1][0]
 			]
 			register-class = ALLOCATION_XMM [
-					either all [
-					register-id >= ALLOCATION_XMM_FIRST
-					register-id <= ALLOCATION_XMM_LAST
+				base: allocation-xmm-base
+				either all [
+					register-id >= base
+					;-- Red/System gives infix operators no precedence, so this
+					;-- reads as `(register-id <= base) + span` unless the sum
+					;-- is bracketed: an unclamped ordinal would then index the
+					;-- owner table past its eight slots.
+					register-id <= (base + (ALLOCATION_XMM_LAST - ALLOCATION_XMM_FIRST))
 				][
-					(register-id - ALLOCATION_XMM_FIRST) + 1
+					(register-id - base) + 1
 				][0]
 			]
 			true [0]
@@ -7904,7 +7935,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: either floating? [
 								x64-encoder/xmm-move-register at (capacity - written)
-									x64-encoder/XMM4 x64-encoder/XMM0 width
+									located-scratch-xmm x64-encoder/XMM0 width
 							][
 								target-width: either width = 8 [8][4]
 								x64-encoder/move-register at (capacity - written)
@@ -7913,7 +7944,7 @@ x64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							state/location-source: either floating? [
-								x64-encoder/XMM4
+								located-scratch-xmm
 							][x64-encoder/R11]
 						]
 					]
@@ -11234,13 +11265,17 @@ x64-codegen: context [
 						if return-ref <> 0 [
 							either state/return-value? [
 								aggregate-width: win64-aggregate-width return-ref table
-								either state/hidden-return? [
-									at: either measure? [as byte-ptr! 0][code + written]
-									encoded: x64-encoder/frame-load at (capacity - written)
-										either target-abi = ABI_SYSV [x64-encoder/RDI][x64-encoder/RCX] slot-displacement
-											(storage-slots + depth) 8 0
-									if encoded < 0 [return OUTPUT_FULL]
-									written: written + encoded
+							either state/hidden-return? [
+								at: either measure? [as byte-ptr! 0][code + written]
+								encoded: x64-encoder/frame-load at (capacity - written)
+									;-- The source of the copy goes into RCX on
+									;-- both ABIs: copy-indirect reads it there,
+									;-- and RDI only ever carries the hidden
+									;-- pointer *into* this function.
+									x64-encoder/RCX slot-displacement
+										(storage-slots + depth) 8 0
+								if encoded < 0 [return OUTPUT_FULL]
+								written: written + encoded
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/frame-load at (capacity - written)
 										x64-encoder/RDX

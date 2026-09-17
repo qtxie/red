@@ -23,6 +23,7 @@ x64-encoder: context [
 	XMM0: 0
 	XMM1: 1
 	XMM4: 4
+	XMM12: 12
 
 	BASE_FRAME_SIZE: 32
 	BITMAP_OFFSET: 9

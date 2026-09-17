@@ -20,8 +20,9 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler102.exe`
-  (98->102, output 6257152 bytes). It carries the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler106.exe`
+  (102->103->104->105->106, output 6257664 bytes; 106 and 107 differ in 5
+  bytes -- PE checksum, PE timestamp and the output file name). It carries the
   System V argument classification for Linux-X86-64: `plan-storage` and the
   function prologue walk the parameters with separate integer and vector
   counters (6 GPR, 8 XMM) instead of Win64's single slot counter, and stack
@@ -43,14 +44,29 @@
     nothing ever calls it, so the lazily bound slot still held its PLT
     trampoline: ELF now emits `DT_BIND_NOW`. `environ` was additionally
     declared `[integer!]`, which read only the low half of a 64-bit pointer.
-  Windows regression at this baseline: 40/40 Red/System units and 57/57 Red
-  units compile and pass, and hello output is byte-identical to the previous
-  compiler apart from the PE timestamp and checksum. Linux x86-64: the Red
-  suite compiles 57/57 and 56/57 run clean (recycle-test is OOM-killed on the
-  2 GB test box; it peaks at 1.5 GB on Windows), and 40/40 Red/System units
-  compile and run, 37 of them byte-identical to Windows.
-  Still open: `va-dbl-10` / `va-mixed-bank-spill` (doubles that spill past the
-  eight vector registers) and `union-by-value-3`, both System V classification.
+  * A CALL parks the located last argument in a scratch register while it loads
+    the earlier ones. That was XMM4, which Win64 never spends on an argument
+    but System V fills as its fifth vector one, so a call with five or more
+    `float!` arguments handed the callee the fifth value in the last slot
+    (`sprintf buf "%.1f ..." 1.5 ... 8.5` printed 5.5 eighth). The scratch now
+    sits above both the argument registers and the allocator pool, and that
+    pool itself had to move above XMM0-XMM7 for the same reason: a value it
+    keeps alive for a call must survive that call's own argument loads. Both
+    moves are cheap, but note that no unit in either suite allocates a vector
+    register today, so the pool one is latent rather than an observed failure.
+  * The hidden-return copy loaded the aggregate's address into RDI on System V
+    instead of RCX. `copy-indirect` reads its source from RCX, so a function
+    returning a 16-byte union copied out of whatever RDI held at the time
+    (`union-by-value-3`).
+  Windows regression at this baseline: 40/40 Red/System units compile and pass,
+  and 57/57 Red units compile and pass. Linux x86-64 on WSL Ubuntu 24.04: the
+  Red suite compiles 57/57 and 57/57 run clean, and 40/40 Red/System units
+  compile and run with 39 byte-identical to Windows (`lib-test` `#switch`es a
+  sixth test in only on Windows).
+  Run the Linux suites with `HOST=wsl`: `wsl.exe` needs no sshd and both
+  `build/linux-hybrid/{red,rs}-suite-linux.sh` accept it. `SKIP_COMPILE=1`
+  reuses binaries an earlier host already cross-compiled. Prefer WSL over the
+  2 GB `vps` box: `recycle-test` peaks at 1.5 GB and is OOM-killed there.
 - `-d` now works for Red programs too, not just Red/System: `??` is lowered to
   `print-line`, and statements without a source location (no file, or line zero
   from synthesized code) simply contribute no line record.

@@ -20,8 +20,8 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler106.exe`
-  (102->103->104->105->106, output 6257664 bytes; 106 and 107 differ in 5
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
+  (102->106->107, output 6259712 bytes; 106 and its own rebuild differ in 5
   bytes -- PE checksum, PE timestamp and the output file name). It carries the
   System V argument classification for Linux-X86-64: `plan-storage` and the
   function prologue walk the parameters with separate integer and vector
@@ -63,6 +63,22 @@
   Red suite compiles 57/57 and 57/57 run clean, and 40/40 Red/System units
   compile and run with 39 byte-identical to Windows (`lib-test` `#switch`es a
   sixth test in only on Windows).
+  * A variadic call on ARM64 gave its trailing arguments the Apple rule --
+    on the stack, even with registers to spare -- while AAPCS64 carries on
+    with the normal sequence. `prin-int` is `printf "%i"`, so every integer
+    printed as whatever x1 held and every unit reported the wrong totals.
+    `abi-parameter-location` now publishes the registers the fixed parameters
+    took and the trailing ones continue from there (Apple is untouched).
+  Linux ARM64 on `armbian`: 40/40 Red/System units compile, 38 run and 3 of
+  those differ -- all source-gated, none failing (`int64-test` is `#if`'d to
+  32-bit and ARM targets, `pointer-test` keeps an x64-only group, `lib-test`
+  takes a Windows-only include). `atomic-test` and `queue-test` take a SIGILL:
+  `atomic-rmw` and `atomic-compare-exchange` emit `ldaddal`/`casal`, the
+  ARMv8.1 LSE atomics, and this board's CPU is ARMv8.0. A baseline AArch64
+  target needs the load-exclusive/store-exclusive loop, which additionally
+  wants two scratch registers the call sites do not yet spare.
+  Still open on ARM64: the ELF writer patches *every* import to
+  `plt + 16*(index+1)`, a branch target, which is wrong for a data reference.
   Run the Linux suites with `HOST=wsl`: `wsl.exe` needs no sshd and both
   `build/linux-hybrid/{red,rs}-suite-linux.sh` accept it. `SKIP_COMPILE=1`
   reuses binaries an earlier host already cross-compiled. Prefer WSL over the

@@ -20,8 +20,8 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler98.exe`
-  (97->98->99, output 6256640 bytes for all three generations). It carries the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler102.exe`
+  (98->102, output 6257152 bytes). It carries the
   System V argument classification for Linux-X86-64: `plan-storage` and the
   function prologue walk the parameters with separate integer and vector
   counters (6 GPR, 8 XMM) instead of Win64's single slot counter, and stack
@@ -29,18 +29,28 @@
   Verified with a pinned `SOURCE_DATE_EPOCH`: 98 and 99 differ in 24 bytes --
   the PE timestamp, the checksum, the output file name baked into the image,
   and the absolute addresses that the variable-length build date shifts.
-  On top of that classification, 98 carries the two fixes that kept *Red*
-  (not just Red/System) from running on Linux: `compile-module` published the
-  module body as `***_start` before lowering, which froze its locals count at
-  zero and left every local outside the published frame (`INVALID_IR site 70`
-  on every Red program), and ELF emitted one `DT_NEEDED` per `#import` block
-  instead of one per library.
+  On top of that classification, it carries the fixes that kept *Red*
+  (not just Red/System) from running on Linux:
+  * `compile-module` published the module body as `***_start` before lowering,
+    which froze its locals count at zero and left every local outside the
+    published frame (`INVALID_IR site 70` on every Red program).
+  * ELF emitted one `DT_NEEDED` per `#import` block instead of one per library.
+  * A variadic `float!` was also copied into the integer register of the same
+    slot, the Win64 rule; under System V that overwrote an earlier argument.
+      (`sprintf buf "%.16g" 1.5` put 1.5 over the format string.) SysV variadic
+      calls now also publish the vector-argument count in AL.
+  * An imported *variable* is read through the same GOT slot a call uses, and
+    nothing ever calls it, so the lazily bound slot still held its PLT
+    trampoline: ELF now emits `DT_BIND_NOW`. `environ` was additionally
+    declared `[integer!]`, which read only the low half of a 64-bit pointer.
   Windows regression at this baseline: 40/40 Red/System units and 57/57 Red
   units compile and pass, and hello output is byte-identical to the previous
   compiler apart from the PE timestamp and checksum. Linux x86-64: the Red
-  suite compiles 57/57 and 53/57 run clean; the four failures and the two
-  by-value `union-test` assertions all trace to the System V variadic and
-  aggregate classification, which is still Win64-shaped.
+  suite compiles 57/57 and 56/57 run clean (recycle-test is OOM-killed on the
+  2 GB test box; it peaks at 1.5 GB on Windows), and 40/40 Red/System units
+  compile and run, 37 of them byte-identical to Windows.
+  Still open: `va-dbl-10` / `va-mixed-bank-spill` (doubles that spill past the
+  eight vector registers) and `union-by-value-3`, both System V classification.
 - `-d` now works for Red programs too, not just Red/System: `??` is lowered to
   `print-line`, and statements without a source location (no file, or line zero
   from synthesized code) simply contribute no line record.

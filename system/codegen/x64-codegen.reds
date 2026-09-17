@@ -8406,7 +8406,16 @@ x64-codegen: context [
 									if encoded < 0 [return OUTPUT_FULL]
 									written: written + encoded
 								]
-								if all [floating? (call-flags and VARIADIC) <> 0][
+								if all [
+									floating?
+									(call-flags and VARIADIC) <> 0
+									;-- Win64 hands a variadic float to the callee twice,
+									;-- once in the vector register and once in the integer
+									;-- register of the same slot. System V leaves it in the
+									;-- vector register alone: the extra store would land on
+									;-- whichever argument owns that integer register.
+									target-abi <> ABI_SYSV
+								][
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/xmm-store-register at
 										(capacity - written) target-slot
@@ -8519,6 +8528,24 @@ x64-codegen: context [
 						encoded: emit-custom-setup at (capacity - written)
 							slot-displacement (storage-slots + depth)
 						if encoded < 0 [return encoded]
+						written: written + encoded
+					]
+					if all [
+						target-abi = ABI_SYSV
+						not indirect?
+						not custom-call?
+						not packed-call?
+						(call-flags and VARIADIC) <> 0
+					][
+						;-- A System V variadic callee learns how many vector
+						;-- registers carry arguments from AL, so the count has
+						;-- to be published before the call. RAX is dead here:
+						;-- an indirect target has been ruled out, and the call
+						;-- overwrites the register with its result anyway.
+						at: either measure? [as byte-ptr! 0][code + written]
+						encoded: x64-encoder/move-immediate at (capacity - written)
+							x64-encoder/RAX 4 either xmm-slot > 8 [8][xmm-slot] 0
+						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
 					]
 					displacement: 0

@@ -72,7 +72,10 @@ platform: context [
 				property	[integer!]
 				return:		[integer!]
 			]
-			environ: "environ" [integer!]
+			;-- environ is a `char **`; declaring it as integer! read only
+			;-- the low half of the pointer on a 64-bit target and then
+			;-- sign-extended it, so list-env walked off a bogus address.
+			environ: "environ" [byte-ptr!]
 		]
 	]
 

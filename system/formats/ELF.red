@@ -1399,6 +1399,12 @@ system-format-ELF: context [
 				'pltrelsz	relplt-size
 				'pltrel		defs/dt-rela
 				'jmprel		relplt-address
+				;-- An imported *variable* is read through the very same GOT
+				;-- slot a call would branch through, and nothing ever calls
+				;-- it, so a lazily bound slot would still hold its PLT
+				;-- trampoline by the time the program reads it. Resolve the
+				;-- whole table before handing over control.
+				'bind-now	0
 			]
 		]
 
@@ -1866,7 +1872,7 @@ system-format-ELF: context [
 		+ (any [all [job-type = 'dll 1] 0])
 		+ (any [all [job-type = 'dll select symbols 'on-unload 1] 0])
 		+ (any [all [PIE? 1] 0])
-		+ (any [all [elf64-target? target plt-count > 0 4] 0])
+		+ (any [all [elf64-target? target plt-count > 0 5] 0])	;-- + DT_BIND_NOW
 		+ (any [all [target <> 'ARM 1] 0])				;-- dt-rpath
 		+ length? [
 			hash

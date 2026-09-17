@@ -6416,8 +6416,14 @@ arm64-codegen: context [
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/atomic-compare-exchange at
-								(capacity - written) target right arm64-encoder/X16
+							encoded: either target-abi = ABI_APPLE_AARCH64 [
+								arm64-encoder/atomic-compare-exchange at
+									(capacity - written) target right arm64-encoder/X16
+							][
+								arm64-encoder/atomic-compare-exchange-exclusive at
+									(capacity - written) target right arm64-encoder/X16
+									(FIRST_TEMP_REGISTER + source-slot - 1)
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
@@ -6493,8 +6499,15 @@ arm64-codegen: context [
 								true [arm64-encoder/OP_AND]
 							]
 							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/atomic-rmw at (capacity - written)
-								opcode arm64-encoder/X17 target arm64-encoder/X16
+							encoded: either target-abi = ABI_APPLE_AARCH64 [
+								arm64-encoder/atomic-rmw at (capacity - written)
+									opcode arm64-encoder/X17 target arm64-encoder/X16
+							][
+								; X0/X1 are outside the expression stack and home registers.
+								arm64-encoder/atomic-rmw-exclusive at (capacity - written)
+									opcode arm64-encoder/X17 target arm64-encoder/X16
+									arm64-encoder/X0 arm64-encoder/X1
+							]
 							if encoded < 0 [return OUTPUT_FULL]
 							written: written + encoded
 							if any [(not atomic-old?) atomic-overflow?][

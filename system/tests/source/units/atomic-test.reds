@@ -228,6 +228,49 @@ Red/System [
 
 ===end-group===
 
+===start-group=== "atomic return values"
+	--test-- "arithmetic old and new values"
+		g-a: 7
+		--assert 7 = system/atomic/add/old :g-a 5
+		--assert g-a = 12
+		--assert 10 = system/atomic/sub :g-a 2
+		--assert 10 = system/atomic/sub/old :g-a 3
+		--assert g-a = 7
+		--assert 8 = system/atomic/add :g-a 1
+
+	--test-- "bitwise old and new values"
+		g-a: 12
+		--assert 12 = system/atomic/or/old :g-a 3
+		--assert g-a = 15
+		--assert 15 = system/atomic/xor/old :g-a 3
+		--assert g-a = 12
+		--assert 12 = system/atomic/and/old :g-a 10
+		--assert g-a = 8
+		--assert 9 = system/atomic/or :g-a 1
+		--assert 10 = system/atomic/xor :g-a 3
+		--assert 8 = system/atomic/and :g-a 12
+
+	--test-- "compare-and-exchange success and mismatch"
+		g-a: 8
+		--assert system/atomic/cas :g-a 8 11
+		--assert g-a = 11
+		--assert not system/atomic/cas :g-a 8 12
+		--assert g-a = 11
+
+	--test-- "arithmetic overflow with old and new results"
+		g-a: 2147483647
+		atomic-result: system/atomic/add/old :g-a 1
+		atomic-overflow: system/cpu/overflow?
+		--assert atomic-overflow
+		--assert atomic-result = 2147483647
+		--assert g-a = -2147483648
+		atomic-result: system/atomic/sub :g-a 1
+		atomic-overflow: system/cpu/overflow?
+		--assert atomic-overflow
+		--assert atomic-result = 2147483647
+		--assert g-a = 2147483647
+===end-group===
+
 ~~~end-file~~~
 
 ][

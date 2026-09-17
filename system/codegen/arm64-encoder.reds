@@ -1253,6 +1253,78 @@ arm64-encoder: context [
 		instruction code capacity (opcode or replacement)
 	]
 
+	atomic-rmw-exclusive: func [
+		code [byte-ptr!]
+		capacity operation source result address value status [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] opcode [integer!]
+	][
+		unless all [
+			any [operation = OP_ADD operation = OP_AND
+				operation = OP_OR operation = OP_XOR]
+			valid-register? source valid-register? result valid-register? address
+			valid-register? value valid-register? status
+			source <> result source <> address source <> value source <> status
+			result <> address result <> value result <> status
+			address <> value address <> status value <> status
+			room? code capacity 16
+		][return -1]
+		if null? code [return 16]
+		opcode: 885FFC00h or (address * 32)
+		instruction code capacity (opcode or result)
+		; OP_AND takes the complemented mask used by LDCLRAL.
+		opcode: case [
+			operation = OP_ADD [0B000000h]
+			operation = OP_AND [0A200000h]
+			operation = OP_XOR [4A000000h]
+			true [2A000000h]
+		]
+		opcode: (opcode or (source * 65536)) or (result * 32)
+		at: code + 4
+		instruction at (capacity - 4) (opcode or value)
+		opcode: (8800FC00h or (status * 65536)) or (address * 32)
+		at: code + 8
+		instruction at (capacity - 8) (opcode or value)
+		at: code + 12
+		branch-zero at (capacity - 12) status 4 -12 true
+		16
+	]
+
+	atomic-compare-exchange-exclusive: func [
+		code [byte-ptr!]
+		capacity expected replacement address scratch [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] opcode [integer!]
+	][
+		unless all [
+			valid-register? expected valid-register? replacement
+			valid-register? address valid-register? scratch
+			expected <> replacement expected <> address expected <> scratch
+			replacement <> address replacement <> scratch address <> scratch
+			room? code capacity 32
+		][return -1]
+		if null? code [return 32]
+		; LDAXR/STLXR preserve CASAL's acquire-release ordering and retry semantics.
+		opcode: 885FFC00h or (address * 32)
+		instruction code capacity (opcode or scratch)
+		at: code + 4
+		compare-register at (capacity - 4) scratch expected 4
+		at: code + 8
+		branch-condition at (capacity - 8) NE 16
+		at: code + 12
+		opcode: (8800FC00h or (scratch * 65536)) or (address * 32)
+		instruction at (capacity - 12) (opcode or replacement)
+		at: code + 16
+		branch-zero at (capacity - 16) scratch 4 -16 true
+		at: code + 20
+		branch-relative at (capacity - 20) 12
+		at: code + 24
+		instruction at (capacity - 24) D5033F5Fh ; CLREX on mismatch
+		at: code + 28
+		move-register at (capacity - 28) expected scratch 4
+		32
+	]
+
 	frame-load: func [
 		code [byte-ptr!]
 		capacity target displacement width signed result-width [integer!]

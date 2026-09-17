@@ -71,6 +71,11 @@ arm64-abi-location!: alias struct! [
 	hfa-width      [integer!]
 	stack-size     [integer!]
 	total-size     [integer!]
+	;-- How many integer and vector registers the parameters up to and
+	;-- including this one have claimed, so that a variadic call can carry the
+	;-- same sequence on into its trailing arguments.
+	integer-used   [integer!]
+	float-used     [integer!]
 ]
 
 arm64-reference-state!: alias struct! [
@@ -984,6 +989,8 @@ arm64-codegen: context [
 		if any [parameter-count < 0 ordinal < 0 ordinal > parameter-count][
 			return fail-invalid 1 "abi-parameter-location/parameter-count#1"
 		]
+		location/integer-used: 0
+		location/float-used: 0
 		integer-count: 0
 		float-count: 0
 		offset: 0
@@ -1107,6 +1114,8 @@ arm64-codegen: context [
 				]
 			]
 			if id = ordinal [
+				location/integer-used: integer-count
+				location/float-used: float-count
 				location/stack-size: -1
 				location/total-size: -1
 				return 0
@@ -1128,6 +1137,60 @@ arm64-codegen: context [
 		if copy-size < 0 [return OUTPUT_FULL]
 		if stack-size > (2147483647 - copy-size)[return OUTPUT_FULL]
 		location/total-size: stack-size + copy-size
+		0
+	]
+
+	;-- AAPCS64 hands the trailing arguments of a variadic call to the callee in
+	;-- the very same registers a fixed parameter would have taken, so the
+	;-- counters the fixed parameters leave behind carry on into them; Apple's
+	;-- ARM64 ABI is the one that spills every trailing argument instead. Where
+	;-- one lands depends on the ones before it, and the emitter walks arguments
+	;-- back to front, so each is resolved by replaying the sequence from the
+	;-- first trailing argument.
+	abi-trailing-argument: func [
+		view [rsir-view!]
+		scratch [arm64-function-scratch!]
+		argument-origin fixed-count ordinal [integer!]
+		integer-used float-used [integer!]
+		location [arm64-abi-location!]
+		return: [integer!]
+		/local id slot ref kind integer-count float-count offset [integer!]
+	][
+		integer-count: integer-used
+		float-count: float-used
+		offset: 0
+		id: 1
+		while [id <= ordinal][
+			slot: argument-origin + fixed-count + id
+			ref: scratch/stack-types/slot
+			kind: type-kind ref view
+			;-- C widens a trailing float! to double, and AAPCS64 gives every
+			;-- argument, register or not, a whole eight-byte slot.
+			either any [kind = 9 kind = 10][
+				either float-count < 8 [
+					location/class: ABI_SIMD
+					location/register-index: float-count
+					float-count: float-count + 1
+				][
+					location/class: ABI_STACK
+					location/register-index: -1
+					location/stack-offset: offset
+					offset: offset + 8
+				]
+			][
+				either integer-count < 8 [
+					location/class: ABI_GPR
+					location/register-index: integer-count
+					integer-count: integer-count + 1
+				][
+					location/class: ABI_STACK
+					location/register-index: -1
+					location/stack-offset: offset
+					offset: offset + 8
+				]
+			]
+			id: id + 1
+		]
 		0
 	]
 
@@ -5216,7 +5279,7 @@ arm64-codegen: context [
 							result-width stack-offset stack-size fixed-stack-size
 				call-mode list-size list-capacity copy-size copy-align copy-offset
 					result-offset aggregate-size-value aggregate-align hfa-kind hfa-count
-					chunk-offset chunk-size
+					chunk-offset chunk-size named-integers named-floats
 					record-offset typed-size runtime-id
 							region-base region-limit region-entry sub-target link-slot
 								catch-level catch-record catch-unwind target-offset
@@ -7896,6 +7959,25 @@ arm64-codegen: context [
 					; materialized the single value, and the indirect path
 					; injects the X0 move just before call-register.
 					if custom-call? [slot: 0]
+					;-- Under AAPCS64 the trailing arguments of a variadic call
+					;-- carry on from the registers the fixed ones took, so
+					;-- snapshot where those left off.
+					named-integers: 0
+					named-floats: 0
+					if all [
+						target-abi = ABI_AAPCS64
+						(call-flags and VARIADIC) <> 0
+						(call-flags and TYPED) = 0
+						not packed-call?
+						argument-count > call-parameter-count
+					][
+						status: abi-parameter-location view layout call-source
+							call-first-parameter call-parameter-count
+							call-parameter-count abi-location
+						if status < 0 [return status]
+						named-integers: abi-location/integer-used
+						named-floats: abi-location/float-used
+					]
 					while [slot > 0][
 						argument-slot: argument-origin + slot
 						if scratch/stack-kinds/argument-slot <> VALUE [return fail-invalid 324 "compile-function/scratch/stack-kinds#158"]
@@ -8004,7 +8086,18 @@ arm64-codegen: context [
 							unless (call-flags and VARIADIC) <> 0 [return fail-invalid 330 "compile-function/call-flags#164"]
 							kind: type-kind ref view
 							target-ref: either kind = 9 [-10][ref]
-							stack-offset: (slot - call-parameter-count - 1) * 8
+							either target-abi = ABI_AAPCS64 [
+								status: abi-trailing-argument view scratch
+									argument-origin call-parameter-count
+									(slot - call-parameter-count)
+									named-integers named-floats abi-location
+								if status < 0 [return status]
+								stack-offset: either abi-location/class = ABI_STACK [
+									abi-location/stack-offset
+								][-1]
+							][
+								stack-offset: (slot - call-parameter-count - 1) * 8
+							]
 						]
 						width: value-width target-ref view
 						kind: type-kind target-ref view

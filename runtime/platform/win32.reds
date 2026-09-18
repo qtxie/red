@@ -390,8 +390,8 @@ platform: context [
 		"gdiplus.dll" stdcall [
 			GdiplusStartup: "GdiplusStartup" [
 				token		[int-ptr!]
-				input		[integer!]
-				output		[integer!]
+				input		[int-ptr!]
+				output		[int-ptr!]
 				return:		[integer!]
 			]
 			GdiplusShutdown: "GdiplusShutdown" [
@@ -446,7 +446,7 @@ platform: context [
 		startup-input/DebugEventCallback: 0
 		startup-input/SuppressBackgroundThread: 0
 		startup-input/SuppressExternalCodecs: 0
-		GdiplusStartup as int-ptr! :gdiplus-token as-integer startup-input 0
+		GdiplusStartup as int-ptr! :gdiplus-token as int-ptr! startup-input as int-ptr! 0
 	]
 
 	shutdown-gdiplus: does [

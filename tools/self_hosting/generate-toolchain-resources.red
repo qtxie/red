@@ -19,9 +19,11 @@ unless (length? args) = 2 [
 	quit/return 2
 ]
 
-repo-root: clean-path to file! args/1
+; to-red-file normalizes Windows drive letters into the /E/... spelling that
+; clean-path treats as absolute; without it clean-path prepends the cwd.
+repo-root: clean-path to-red-file to file! args/1
 unless (last repo-root) = #"/" [append repo-root #"/"]
-output-file: clean-path to file! args/2
+output-file: clean-path to-red-file to file! args/2
 unless exists? join-file repo-root %compiler/bootstrap-boot.red [
 	fail ["not a Red repository root: " repo-root]
 ]

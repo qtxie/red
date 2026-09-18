@@ -3138,6 +3138,16 @@ compiler-rsir-frontend: context [
 		not none? find [i8 byte u8 i16 u16 i32 u32 i64 u64] kind
 	]
 
+	;-- True when the expression starting at position is a bare literal value
+	;-- (its trailing token is not a binary operator), so the caller may swap
+	;-- the emitted literal for an equivalent one of another type.
+	bare-literal?: func [position [block!] value][
+		unless all [not tail? position position/1 = value][return false]
+		either tail? next position [true][
+			not select binary-operations position/2
+		]
+	]
+
 	warn-redundant-cast: func [
 		source source-flags target target-flags [integer!]
 		/local source-kind
@@ -4311,8 +4321,37 @@ compiler-rsir-frontend: context [
 			if all [not tail? position-after block? position-after/1][
 				fail ERROR-UNSUPPORTED "literal arrays cannot be passed as argument"
 			]
-			position-after: stack-value position-after scope uses instructions params locals
-				expression-value
+			either all [
+				bare-literal? position-after 0
+				any [
+					(ref-kind parameter/2) = 'pointer
+					(ref-kind parameter/2) = 'c-string
+					(ref-kind parameter/2) = 'function
+				]
+			][
+				;-- A literal zero passed to a pointer parameter is a C-style
+				;-- NULL: upstream accepts that spelling, emit a null literal.
+				emit instructions literal-op -14 0 0
+				last-type: -14
+				last-flags: 0
+				last-stopped?: false
+				position-after: next position-after
+			][
+				either all [
+					bare-literal? position-after 'null
+					integer-kind? ref-kind parameter/2
+				][
+					;-- null spelled for a plain integer parameter: emit zero.
+					emit instructions literal-op -5 0 0
+					last-type: -5
+					last-flags: 0
+					last-stopped?: false
+					position-after: next position-after
+				][
+					position-after: stack-value position-after scope uses instructions params locals
+						expression-value
+				]
+			]
 			if last-stopped? [stopped?: true]
 			unless any [last-stopped? last-type <> 0][
 				fail ERROR-REFERENCE rejoin [
@@ -4609,8 +4648,37 @@ compiler-rsir-frontend: context [
 			if all [not tail? position-after block? position-after/1][
 				fail ERROR-UNSUPPORTED "literal arrays cannot be passed as argument"
 			]
-			position-after: stack-value position-after scope uses instructions params locals
-				expression-value
+			either all [
+				bare-literal? position-after 0
+				any [
+					(ref-kind parameter/2) = 'pointer
+					(ref-kind parameter/2) = 'c-string
+					(ref-kind parameter/2) = 'function
+				]
+			][
+				;-- A literal zero passed to a pointer parameter is a C-style
+				;-- NULL: upstream accepts that spelling, emit a null literal.
+				emit instructions literal-op -14 0 0
+				last-type: -14
+				last-flags: 0
+				last-stopped?: false
+				position-after: next position-after
+			][
+				either all [
+					bare-literal? position-after 'null
+					integer-kind? ref-kind parameter/2
+				][
+					;-- null spelled for a plain integer parameter: emit zero.
+					emit instructions literal-op -5 0 0
+					last-type: -5
+					last-flags: 0
+					last-stopped?: false
+					position-after: next position-after
+				][
+					position-after: stack-value position-after scope uses instructions params locals
+						expression-value
+				]
+			]
 			if last-stopped? [stopped?: true]
 			unless any [last-stopped? last-type <> 0][
 				fail ERROR-REFERENCE rejoin [
@@ -7018,6 +7086,14 @@ compiler-rsir-frontend: context [
 					block? position/3
 					block? position/4
 				][position: skip position 4]
+				block? position/1 [
+					;-- Stray module-level block literal. `#define does [func []]`
+					;-- turns `name: does [][body]` into `name: func [] [] [body]`,
+					;-- leaving the body block orphaned after the empty-bodied
+					;-- function. Upstream sources use that spelling, so the residue
+					;-- is dropped, exactly like the scan pass already does.
+					position: next position
+				]
 				all [
 					set-word? position/1
 					(length? position) >= 3

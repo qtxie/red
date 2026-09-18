@@ -40,7 +40,7 @@ Design and completeness follow this order:
 
 1. the implemented language described by
    docs/red-system/red-system-specs.txt;
-2. the formal compiler and unit suites in system/tests/run-all.r;
+2. the formal compiler and unit suites in tools/self_hosting/run-red-system-tests.red;
 3. the applicable Windows x64 ABI and COFF/static-link tests;
 4. the complete compiler/runtime source corpus;
 5. focused regression fixtures.

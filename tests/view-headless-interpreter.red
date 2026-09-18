@@ -12,8 +12,9 @@ Red [
 		compiled with Config: [GUI-engine: 'test] -- no per-test compilation and
 		no display required.
 
-		%run-view-headless-tests.r builds this interpreter once per run, then
-		feeds it every test file: the whole suite runs in seconds.
+		%tools/self_hosting/run-red-view-headless-tests.red builds this
+		interpreter once per run, then feeds it every test file: the whole suite
+		runs in seconds.
 
 		To use it standalone, build it from the repo root. -r is essential: the encapped
 		compiler otherwise links a prebuilt libRedRT built with the *native* GUI

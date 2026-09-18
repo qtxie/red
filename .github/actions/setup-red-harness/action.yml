@@ -1,0 +1,58 @@
+name: Set up the Red test harness
+description: >
+  Downloads the hybrid toolchain artifact built by build-hybrid-toolchain.yml
+  and the Red CLI console that drives the suite runners, leaving them at
+  build/toolchain/bin/red-toolchain and build/toolchain/red-console.
+
+inputs:
+  platform:
+    description: 'windows-x64 | linux-x64 | linux-arm64 | darwin-arm64'
+    required: true
+  console-url:
+    description: 'URL of the Red CLI console binary for this platform'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Download hybrid toolchain
+      uses: actions/download-artifact@v8
+      with:
+        name: red-toolchain-${{ inputs.platform }}
+        path: build/toolchain
+
+    - name: Unpack hybrid toolchain (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Expand-Archive -Path "build/toolchain/red-toolchain-$env:PLATFORM.zip" `
+          -DestinationPath build/toolchain/bin
+
+    - name: Unpack hybrid toolchain (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        set -euo pipefail
+        mkdir -p build/toolchain/bin
+        tar -xzf "build/toolchain/red-toolchain-$PLATFORM.tar.gz" -C build/toolchain/bin
+        chmod 755 build/toolchain/bin/red-toolchain
+
+    - name: Download Red CLI console
+      shell: bash
+      env:
+        CONSOLE_URL: ${{ inputs.console-url }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$CONSOLE_URL" ]]; then
+          echo 'Set the RED_CLI_CONSOLE_URL repository variable.' >&2
+          exit 1
+        fi
+        mkdir -p build/toolchain
+        curl --fail --location --retry 3 --retry-all-errors \
+          --output build/toolchain/red-console "$CONSOLE_URL"
+        chmod 755 build/toolchain/red-console

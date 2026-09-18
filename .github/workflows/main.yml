@@ -2,22 +2,192 @@ name: Windows
 
 on: [push, pull_request]
 
-jobs:
-  Windows-X64-All:
+permissions:
+  contents: read
+  actions: write
 
+# The suites are driven by Red runners, so nothing here needs Rebol: Rebol
+# cannot run on ARM64 and the harness has to work everywhere Red does.
+env:
+  RED_TARGET: Windows-X86-64
+  RED_SYSTEM_TARGET: Windows-X86-64
+  RED_SYSTEM_LIBRARY_TARGET: Windows-X86-64-DLL
+
+jobs:
+  toolchain:
+    uses: ./.github/workflows/build-hybrid-toolchain.yml
+    with:
+      platforms: '["windows-x64"]'
+
+  Core:
+    needs: toolchain
     runs-on: windows-latest
     timeout-minutes: 90
-
     steps:
     - uses: actions/checkout@v6
-    - name: setup red repo
+    - uses: ./.github/actions/setup-red-harness
+      with:
+        platform: windows-x64
+        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
+    - name: run Red unit tests
+      shell: pwsh
+      env:
+        RED_COMPILER: build/toolchain/bin/red-toolchain.exe
+        RED_COMPILER_ARGUMENTS: -t Windows-X86-64
       run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run all Windows x86-64 tests
-      run: rebview.exe -qws run-all-tests-x64.r --batch
-      shell: cmd
+        $ErrorActionPreference = 'Stop'
+        & build/toolchain/red-console tools/self_hosting/run-red-unit-tests.red
+        exit $LASTEXITCODE
+
+  Core-Release:
+    needs: toolchain
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup-red-harness
+      with:
+        platform: windows-x64
+        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
+    - name: run Red unit tests in release mode
+      shell: pwsh
+      env:
+        RED_COMPILER: build/toolchain/bin/red-toolchain.exe
+        RED_COMPILER_ARGUMENTS: -r -t Windows-X86-64
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & build/toolchain/red-console tools/self_hosting/run-red-unit-tests.red
+        exit $LASTEXITCODE
+
+  Core-Debug:
+    needs: toolchain
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup-red-harness
+      with:
+        platform: windows-x64
+        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
+    - name: run Red unit tests in debug mode
+      shell: pwsh
+      env:
+        RED_COMPILER: build/toolchain/bin/red-toolchain.exe
+        RED_COMPILER_ARGUMENTS: -d -t Windows-X86-64
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & build/toolchain/red-console tools/self_hosting/run-red-unit-tests.red
+        exit $LASTEXITCODE
+
+  View-Headless:
+    needs: toolchain
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup-red-harness
+      with:
+        platform: windows-x64
+        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
+    - name: run headless view/VID test (test GUI backend)
+      shell: pwsh
+      env:
+        RED_COMPILER: build/toolchain/bin/red-toolchain.exe
+        RED_COMPILER_ARGUMENTS: -t Windows-X86-64
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & build/toolchain/red-console tools/self_hosting/run-red-view-headless-tests.red
+        exit $LASTEXITCODE
+
+  Regression:
+    needs: toolchain
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup-red-harness
+      with:
+        platform: windows-x64
+        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
+    - name: run Red compiler tests
+      shell: pwsh
+      env:
+        RED_COMPILER: build/toolchain/bin/red-toolchain.exe
+        RED_COMPILER_ARGUMENTS: -t Windows-X86-64
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & build/toolchain/red-console tools/self_hosting/run-red-compiler-tests.red
+        exit $LASTEXITCODE
+
+  Red-System-Test:
+    needs: toolchain
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup-red-harness
+      with:
+        platform: windows-x64
+        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
+    - name: run Red/System tests
+      shell: pwsh
+      env:
+        RED_SYSTEM_COMPILER: build/toolchain/bin/red-toolchain.exe
+        RED_SYSTEM_COMPILER_ARGUMENTS: -t Windows-X86-64
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & build/toolchain/red-console tools/self_hosting/run-red-system-tests.red
+        $suite = $LASTEXITCODE
+        & build/toolchain/red-console tools/self_hosting/run-red-system-compiler-tests.red
+        if ($suite -ne 0) { exit $suite }
+        exit $LASTEXITCODE
+
+  Windows-X64-All:
+    needs: toolchain
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup-red-harness
+      with:
+        platform: windows-x64
+        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
+    - name: prepare Windows x86-64 native test dependencies
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        # -HybridCompiler makes the canary compile go through the toolchain
+        # directly; -Compiler is still resolved, but only the Rebol fallback
+        # path would use it.
+        & .\tests\run-windows-x64-all-tests.ps1 -Phase Prepare `
+          -Compiler build/toolchain/bin/red-toolchain.exe `
+          -HybridCompiler build/toolchain/bin/red-toolchain.exe
+
+    - name: run every Red suite
+      shell: pwsh
+      env:
+        RED_COMPILER: build/toolchain/bin/red-toolchain.exe
+        RED_COMPILER_ARGUMENTS: -t Windows-X86-64
+        RED_SYSTEM_COMPILER: build/toolchain/bin/red-toolchain.exe
+        RED_SYSTEM_COMPILER_ARGUMENTS: -t Windows-X86-64
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $runners = @(
+          'tools/self_hosting/run-red-unit-tests.red'
+          'tools/self_hosting/run-red-system-tests.red'
+          'tools/self_hosting/run-red-system-compiler-tests.red'
+          'tools/self_hosting/run-red-compiler-tests.red'
+          'tools/self_hosting/run-red-view-headless-tests.red'
+        )
+        $failed = 0
+        foreach ($runner in $runners) {
+          & build/toolchain/red-console $runner
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::$runner failed with exit code $LASTEXITCODE"
+            $failed = 1
+          }
+        }
+        exit $failed
 
     - uses: actions/upload-artifact@v7
       if: failure()
@@ -25,197 +195,4 @@ jobs:
         name: windows-x64-all-test-logs
         if-no-files-found: ignore
         path: |
-          quick-test/quick-test-x64.log
-          build/windows-x64-all-tests/**
-          build/windows-x64-*/**/*.log
-          build/windows-x64-*/**/*.result
-          build/windows-window-long-ptr-tests/**
-
-  Core:
-
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run core test
-      run: rebview.exe -qws tests\run-core-tests.r --batch
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: core-test-log
-        path: quick-test/quick-test.log
-
-  Core-Release:
-
-    runs-on: windows-latest
-   
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run core test
-      run: rebview.exe -qws tests\run-core-tests.r --batch --release
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: core-test-release-log
-        path: quick-test/quick-test.log
-
-  Core-Debug:
-
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run core test
-      run: rebview.exe -qws tests\run-core-tests.r --batch --debug
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: core-debug-test-log
-        path: quick-test/quick-test.log
-
-  View:
-
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run view test
-      run: rebview.exe -qws tests\run-view-tests.r --batch
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: view-test-log
-        path: quick-test/quick-test.log
-
-  View-Headless:
-
-    runs-on: windows-latest
-
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run headless view/VID test (test GUI backend)
-      run: rebview.exe -qws tests\run-view-headless-tests.r --batch
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: view-headless-test-log
-        path: quick-test/quick-test.log
-
-  Regression:
-
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run regression test
-      run: rebview.exe -qws tests\run-regression-tests.r --batch
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: regression-test-log
-        path: quick-test/quick-test.log
-
-  Each-Mode:
-
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run each test
-      run: rebview.exe -qws tests\run-core-tests.r --ci-each
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: each-test-log
-        path: quick-test/quick-test.log
-
-  Each-Mode-Debug:
-
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run each test
-      run: rebview.exe -qws tests\run-core-tests.r --ci-each --debug
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: each-debug-test-log
-        path: quick-test/quick-test.log
-
-  Red-System-Test:
-
-    runs-on: windows-latest
-    
-    steps:
-    - uses: actions/checkout@v6
-    - name: setup red repo
-      run: |
-        $url = "http://static.red-lang.org/build/rebview.exe"
-        $output = "$Env:GITHUB_WORKSPACE\rebview.exe"
-        (New-Object System.Net.WebClient).DownloadFile($url, $output)
-    - name: run Red/System test
-      run: rebview.exe -qws system\tests\run-all.r --batch
-      shell: cmd
-
-    - uses: actions/upload-artifact@v7
-      if: failure()
-      with:
-        name: rs-test-log
-        path: quick-test/quick-test.log
+          build/self-hosting/**

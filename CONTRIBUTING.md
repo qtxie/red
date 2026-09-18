@@ -66,7 +66,9 @@ vertical-spec: func [
 
 
 ### Test Standards
-Every code-based contribution should be accompanied by a meaningful set of tests. Tests should be written using the quick-test.red or quick-test.reds frameworks. Tests requiring checking console output from your code or compiler message should be written using quick-test.r. If you are unfamiliar with quick-test, check out the [documentation](http://static.red-lang.org/red-system-quick-test.html).
+Every code-based contribution should be accompanied by a meaningful set of tests. Tests should be written using the quick-test.red or quick-test.reds frameworks, including tests that check console output from your code or a compiler message. If you are unfamiliar with quick-test, check out the [documentation](http://static.red-lang.org/red-system-quick-test.html).
+
+The suites are driven by the Red runners in `tools/self_hosting/` (see the README), not by Rebol: the Rebol driver cannot run on ARM64, so the harness runs on Red.
 
 The following approach to writing tests should be used:
 

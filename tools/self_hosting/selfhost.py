@@ -134,7 +134,7 @@ def _classify(path: PurePosixPath, text: str) -> str:
         if name.startswith(("make-", "generate-", "build-")):
             return "test-generator"
         return "test-runner"
-    if value.startswith("build/") or value in {"red.r", "run-all-tests.r", "run-all-tests-x64.r", "run-all-tests-linux-x64.r"}:
+    if value.startswith("build/") or value == "red.r":
         return "rebol-build-driver"
     if value.startswith("bridges/"):
         return "auxiliary-tool"

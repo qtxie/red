@@ -1,82 +1,43 @@
 Red [
-	Title: "Windows Red/System compiler tests"
+	Title: "Red/System unit suite runner"
 	File:  %run-red-system-tests.red
 ]
 
-; Compiles and runs the non-static Windows IA-32 Red/System unit suite through
-; RED_SYSTEM_COMPILER must name the self-hosted red-bootstrap executable.
+comment {
+	Compiles and runs the Red/System unit suite through RED_SYSTEM_COMPILER.
 
-join-file: func [base [file!] relative [file!]][
-	append copy base relative
+	All compile/run/score logic lives in qt-runner.red; this file only names the
+	sources and handles the x64 source swaps. Rebol cannot run on ARM64, so the
+	harness runs on Red.
+}
+
+#include %qt-runner.red
+
+qt/compiler-arguments: any [get-env "RED_SYSTEM_COMPILER_ARGUMENTS" ""]
+qt/target: any [
+	get-env "RED_SYSTEM_TARGET"
+	if all [
+		not empty? qt/compiler-arguments
+		pos: find split qt/compiler-arguments " " "-t"
+		1 < length? pos
+	][pos/2]
+	"Windows-X86-64"
 ]
+;; The shared-object target follows the executable one instead of defaulting to
+;; the Windows spelling, which would be wrong everywhere else.
+qt/library-target: any [get-env "RED_SYSTEM_LIBRARY_TARGET" rejoin [qt/target "-DLL"]]
+qt/source-dir: %system/tests/source/units/
+qt/output-dir: %build/self-hosting/system-suite/
+qt/ensure-output-dir
+qt/set-compiler "RED_SYSTEM_COMPILER"
 
-abs-file: func [base [file!] relative [file!]][
-	clean-path join-file base relative
+structlib-file: any [
+	get-env "RED_SYSTEM_STRUCTLIB"
+	qt/join-file qt/source-dir %libs/structlib.dll
 ]
-
-; red-console sets options/path to the script directory (tools/self_hosting/).
-root-dir: abs-file system/options/path %../../
-change-dir root-dir
-source-dir: %system/tests/source/units/
-output-dir: %build/self-hosting/system-suite/
-make-dir output-dir
-red-console: system/options/boot
-compiler-executable: get-env "RED_SYSTEM_COMPILER"
-compiler-arguments: any [get-env "RED_SYSTEM_COMPILER_ARGUMENTS" ""]
-structlib-file: any [get-env "RED_SYSTEM_STRUCTLIB" join-file source-dir %libs/structlib.dll]
-x64?: not none? find compiler-arguments "X86-64"
 arguments: any [system/options/args copy []]
 run-only?: not none? find arguments "--run-only"
 use-existing-dlls?: not none? find arguments "--use-existing-dlls"
-compile-failures: 0
-
-quoted: func [value][
-	; Prefer root-relative local paths for Stage1 path joining.
-	rejoin [{"} to-local-file value {"}]
-]
-
-compiler-prefix: either compiler-executable [
-	quoted to file! compiler-executable
-][
-	print "RED_SYSTEM_COMPILER env var required (path to self-hosted compiler exe)"
-	quit/return 1
-]
-
-output-name: func [source [file!] output-type [word!] /local name suffix][
-	name: to string! last split-path source
-	clear find/last name ".reds"
-	suffix: either output-type = 'dll [".dll"][".exe"]
-	to file! rejoin [name suffix]
-]
-
-compile-source: func [
-	source [file!]
-	output-type [word!]
-	/local output target command status log-file
-][
-	output: output-name source output-type
-	target: join-file output-dir output
-	command: rejoin [
-		compiler-prefix
-		either empty? compiler-arguments [""][rejoin [" " compiler-arguments]]
-		either output-type = 'dll [" -dlib"][""]
-		" -o " quoted target " " quoted source
-	]
-	print ["compile" source "->" target]
-	log-file: append copy target %.compile.log
-	if exists? target [delete target]
-	if exists? log-file [delete log-file]
-	status: call/shell/wait rejoin [
-		command " > " quoted log-file " 2>&1"
-	]
-	unless all [status = 0 exists? target][
-		if exists? log-file [print read log-file]
-		print ["compiler failed for" source "status:" status]
-		compile-failures: compile-failures + 1
-		return none
-	]
-	target
-]
 
 unit-sources: [
 	%array-test.reds %logic-test.reds %byte-test.reds %c-string-test.reds
@@ -92,85 +53,81 @@ unit-sources: [
 	%system-test.reds %atomic-test.reds %queue-test.reds %push-pop-test.reds
 	%auto-tests/dylib-auto-test.reds
 ]
-if x64? [
+if not none? find qt/target "X86-64" [
 	change find unit-sources %struct-test.reds %struct-x64-test.reds
 	change find unit-sources %size-test.reds %size-x64-test.reds
 ]
 
-compiled: make block! (length? unit-sources) * 2
+;-- %auto-tests/dylib-auto-test.reds is assembled from four templates, the same
+;-- substitution the Rebol harness spread over %make-dylib-auto-test.r and
+;-- %create-dylib-auto-test.r. The #import block names the DLLs by absolute
+;-- path: a compiled test runs from the repo root, not from the output
+;-- directory the DLLs were emitted into.
+generate-dylib-auto-test: func [
+	/local units-dir out header libs make-length script
+][
+	units-dir: qt/abs-file qt/root-dir %system/tests/source/units/
+	make-dir/deep qt/join-file units-dir %auto-tests/
+
+	header: read qt/join-file units-dir %dylib-test-script-header.txt
+	libs:   read qt/join-file units-dir %dylib-libs.txt
+
+	;; The header credits its generator by byte length. This runner regenerates
+	;; on every run, so the marker only has to stay stable.
+	make-length: 0
+	if file? script: system/options/script [
+		script: qt/absolute script
+		if exists? script [make-length: length? read/binary script]
+	]
+	replace header "###make-length###" make-length
+	replace header "###target###" any [qt/library-target qt/target]
+
+	replace libs "***test-dll1***" form to-local-file qt/out-path to file! rejoin ["libtest-dll1" qt/library-suffix]
+	replace libs "***test-dll2***" form to-local-file qt/out-path to file! rejoin ["libtest-dll2" qt/library-suffix]
+
+	out: qt/join-file units-dir %auto-tests/dylib-auto-test.reds
+	write out rejoin [
+		header
+		libs
+		read qt/join-file units-dir %dylib-tests.txt
+		read qt/join-file units-dir %dylib-test-script-footer.txt
+	]
+	out
+]
+
+generate-dylib-auto-test
+
 either run-only? [
 	foreach relative unit-sources [
-		executable: join-file output-dir output-name relative 'exe
+		executable: qt/out-path qt/output-name relative 'exe
 		unless exists? executable [
 			print ["missing compiled test:" executable]
 			quit/return 1
 		]
-		append/only compiled relative
-		append/only compiled executable
+		qt/run executable
+		qt/read-summary qt/output relative
 	]
 ][
 	unless use-existing-dlls? [
-		compile-source join-file source-dir %libtest-dll1.reds 'dll
-		compile-source join-file source-dir %libtest-dll2.reds 'dll
+		qt/compile-library qt/join-file qt/source-dir %libtest-dll1.reds
+		qt/compile-library qt/join-file qt/source-dir %libtest-dll2.reds
 	]
 	if use-existing-dlls? [
 		foreach dependency [%libtest-dll1.dll %libtest-dll2.dll][
-			unless exists? join-file output-dir dependency [
+			unless exists? qt/out-path dependency [
 				print ["missing existing test dependency:" dependency]
-				compile-failures: compile-failures + 1
+				qt/compile-failures: qt/compile-failures + 1
 			]
 		]
 	]
-	write/binary join-file output-dir %structlib.dll read/binary to file! structlib-file
+	write/binary qt/out-path %structlib.dll read/binary qt/local-path structlib-file
 
 	foreach relative unit-sources [
-		executable: compile-source join-file source-dir relative 'exe
-		if file? executable [
-			append/only compiled relative
-			append/only compiled executable
-		]
+		qt/run-unit qt/join-file qt/source-dir relative
 	]
+	;; From the Rebol harness's "extra" phase; it lives outside the units
+	;; directory, so it is not part of unit-sources.
+	qt/run-unit %tests/source/runtime/tools-test.reds
 ]
 
-digits: charset "0123456789"
-whitespace: charset " ^-^/^M"
-total-tests: total-asserts: total-passes: total-failures: 0
-
-read-summary: func [output [string!] name [file!] /local tests asserts passes failures][
-	if parse output [
-		thru "Number of Tests Performed:" some whitespace copy tests some digits
-		thru "Number of Assertions Performed:" some whitespace copy asserts some digits
-		thru "Number of Assertions Passed:" some whitespace copy passes some digits
-		thru "Number of Assertions Failed:" some whitespace copy failures some digits to end
-	][
-		total-tests: total-tests + to integer! tests
-		total-asserts: total-asserts + to integer! asserts
-		total-passes: total-passes + to integer! passes
-		total-failures: total-failures + to integer! failures
-		print ["run" name "tests:" tests "assertions:" asserts "failed:" failures]
-		return none
-	]
-	print ["missing Quick-Test summary:" name]
-	print output
-	total-failures: total-failures + 1
-]
-
-foreach [relative executable] compiled [
-	output: make string! 8192
-	status: call/wait/output to-local-file executable output
-	if status <> 0 [
-		print ["process failed:" relative "status:" status]
-		total-failures: total-failures + 1
-	]
-	read-summary output relative
-]
-
-print [
-	"Red/System suite totals:"
-	"tests" total-tests
-	"assertions" total-asserts
-	"passed" total-passes
-	"failed" total-failures
-	"compile-failures" compile-failures
-]
-quit/return either zero? (total-failures + compile-failures) [0][1]
+qt/report "Red/System suite totals:"

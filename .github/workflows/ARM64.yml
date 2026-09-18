@@ -2,64 +2,63 @@ name: ARM64
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+  actions: write
+
+# Builds and runs natively on ubuntu-24.04-arm. The toolchain is built on the
+# same architecture it will be used on, so there is no cross-build step and no
+# artifact hop: this is the job Rebol could never run.
+env:
+  RED_TARGET: Linux-ARM64
+  RED_SYSTEM_TARGET: Linux-ARM64
+
 jobs:
-  Build-ARM64-Tests:
-    runs-on: ubuntu-latest
+  toolchain:
+    uses: ./.github/workflows/build-hybrid-toolchain.yml
+    with:
+      platforms: '["linux-arm64"]'
+
+  Run-ARM64-Tests:
+    needs: toolchain
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
     steps:
     - name: Checkout
       uses: actions/checkout@v6
 
-    - name: Build Linux ARM64 tests
-      uses: ./CI/Linux-32
+    - uses: ./.github/actions/setup-red-harness
       with:
-        command: rebol -qws system/tests/build-arm-tests.r -t Linux-ARM64 && rebol -qws tests/build-arm-tests.r -t Linux-ARM64
+        platform: linux-arm64
+        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
 
-    - name: Validate ARM64 test package
-      shell: bash
+    - name: run every Red suite
+      env:
+        RED_COMPILER: build/toolchain/bin/red-toolchain
+        RED_COMPILER_ARGUMENTS: -t Linux-ARM64
+        RED_SYSTEM_COMPILER: build/toolchain/bin/red-toolchain
+        RED_SYSTEM_COMPILER_ARGUMENTS: -t Linux-ARM64
       run: |
-        package=quick-test/runnable/arm-tests/system
-        test -f "$package/run-all.sh"
-        expected=$(find system/tests/source/units -maxdepth 1 -name 'arm64-*.reds' | wc -l)
-        expected=$((expected + 1)) # generated long-branch smoke
-        actual=$(find "$package" -maxdepth 1 -name 'arm64-*' | wc -l)
-        test "$actual" -eq "$expected"
-        sh "$package/validate-arm64-elf.sh" \
-          "$package/array-test" "$package/libtest-dll1.so"
-        test -f quick-test/runnable/arm-tests/red/run-all-comp1
-        test -f quick-test/runnable/arm-tests/red/run-all-comp2
-        test -f quick-test/runnable/arm-tests/red/run-all-interp
-        test -f quick-test/runnable/arm-tests/red/run-all.sh
+        set -euo pipefail
+        failed=0
+        for runner in \
+          tools/self_hosting/run-red-unit-tests.red \
+          tools/self_hosting/run-red-system-tests.red \
+          tools/self_hosting/run-red-system-compiler-tests.red \
+          tools/self_hosting/run-red-compiler-tests.red \
+          tools/self_hosting/run-red-view-headless-tests.red
+        do
+          if ! build/toolchain/red-console "$runner"; then
+            echo "::error::$runner failed"
+            failed=1
+          fi
+        done
+        exit "$failed"
 
-    - name: Upload ARM64 test package
-      uses: actions/upload-artifact@v7
-      with:
-        name: arm64-tests
-        path: quick-test/runnable/arm-tests/
-        retention-days: 3
-
-  Run-ARM64-Tests:
-    runs-on: ubuntu-24.04-arm
-    needs: Build-ARM64-Tests
-    steps:
-    - name: Download ARM64 test package
-      uses: actions/download-artifact@v8
-      with:
-        name: arm64-tests
-        path: arm-tests
-
-    - name: Run ARM64 Red/System tests
-      working-directory: arm-tests/system
-      run: sh ./run-all.sh
-
-    - name: Run ARM64 Red tests
-      working-directory: arm-tests/red
-      run: sh ./run-all.sh
-
-    - name: Upload failure log
+    - uses: actions/upload-artifact@v7
       if: failure()
-      uses: actions/upload-artifact@v7
       with:
         name: arm64-test-logs
+        if-no-files-found: ignore
         path: |
-          arm-tests/system/quick-test.log
-          arm-tests/red/quick-test.log
+          build/self-hosting/**

@@ -1,63 +1,36 @@
 Red [
-	Title: "Windows Stage1 Red unit suite runner"
+	Title: "Red unit suite runner"
 	File:  %run-red-unit-tests.red
 ]
 
-; Compiles and runs non-View Red unit tests through RED_COMPILER.
-; Uses the same Quick-Test summary format as the Red/System suite runner.
+comment {
+	Compiles and runs the non-View Red unit tests through RED_COMPILER.
 
-join-file: func [base [file!] relative [file!]][append copy base relative]
-abs-file: func [base [file!] relative [file!]][clean-path join-file base relative]
+	All compile/run/score logic lives in qt-runner.red; this file only names the
+	sources. Rebol cannot run on ARM64, so the harness runs on Red.
+}
 
-root-dir: abs-file system/options/path %../../
-change-dir root-dir
-source-dir: %tests/source/units/
-output-dir: %build/self-hosting/red-unit-suite/
-make-dir output-dir
-; The compiler reuses an existing libRedRT.dll in the output directory. Drop a
-; stale runtime here so every run links against one built from current sources.
-if exists? output-dir/libRedRT.dll [delete output-dir/libRedRT.dll]
-compiler-executable: get-env "RED_COMPILER"
-unless compiler-executable [
-	print "RED_COMPILER env var required (path to self-hosted red-bootstrap exe)"
-	quit/return 1
+#include %qt-runner.red
+
+qt/compiler-arguments: any [get-env "RED_COMPILER_ARGUMENTS" ""]
+qt/target: any [
+	get-env "RED_TARGET"
+	if all [
+		not empty? qt/compiler-arguments
+		pos: find split qt/compiler-arguments " " "-t"
+		1 < length? pos
+	][pos/2]
+	"Windows-X86-64"
 ]
-compiler-arguments: any [get-env "RED_COMPILER_ARGUMENTS" ""]
+qt/source-dir: %tests/source/units/
+qt/output-dir: %build/self-hosting/red-unit-suite/
+qt/ensure-output-dir
+qt/set-compiler "RED_COMPILER"
 
-quoted: func [value][rejoin [{"} to-local-file value {"}]]
-compiler-prefix: quoted to file! compiler-executable
-
-output-name: func [source [file!] /local name][
-	name: to string! last split-path source
-	clear find/last name ".red"
-	to file! rejoin [name ".exe"]
-]
-
-compile-source: func [
-	source [file!]
-	/local output target command status log-file
-][
-	output: output-name source
-	target: join-file output-dir output
-	command: rejoin [
-		compiler-prefix
-		either empty? compiler-arguments [""][rejoin [" " compiler-arguments]]
-		" -o " quoted target " " quoted source
-	]
-	print ["compile" source "->" target]
-	log-file: append copy target %.compile.log
-	if exists? target [delete target]
-	if exists? log-file [delete log-file]
-	status: call/shell/wait rejoin [
-		command " > " quoted log-file " 2>&1"
-	]
-	unless all [status = 0 exists? target][
-		if exists? log-file [print read log-file]
-		print ["compiler failed for" source "status:" status]
-		quit/return 1
-	]
-	target
-]
+; The compiler reuses an existing libRedRT in the output directory. Drop a stale
+; runtime here so every run links against one built from current sources.
+libRedRT-file: qt/join-file qt/output-dir to file! rejoin ["libRedRT" qt/library-suffix]
+if exists? libRedRT-file [delete libRedRT-file]
 
 ; Core console language units only (no View/GUI/clipboard/draw/image).
 unit-sources: [
@@ -79,50 +52,12 @@ unit-sources: [
 	%redbin-codec-test.red
 ]
 
-compiled: make block! (length? unit-sources) * 2
 foreach relative unit-sources [
-	append/only compiled relative
-	append/only compiled compile-source join-file source-dir relative
+	qt/run-unit qt/join-file qt/source-dir relative
 ]
 
-digits: charset "0123456789"
-whitespace: charset " ^-^/^M"
-total-tests: total-asserts: total-passes: total-failures: 0
+;; The Rebol harness ran this one from its "extra" phase, outside the units
+;; directory. It is folded in here so retiring that harness loses nothing.
+qt/run-unit %tests/source/runtime/unicode-test.red
 
-read-summary: func [output [string!] name [file!] /local tests asserts passes failures][
-	if parse output [
-		thru "Number of Tests Performed:" some whitespace copy tests some digits
-		thru "Number of Assertions Performed:" some whitespace copy asserts some digits
-		thru "Number of Assertions Passed:" some whitespace copy passes some digits
-		thru "Number of Assertions Failed:" some whitespace copy failures some digits to end
-	][
-		total-tests: total-tests + to integer! tests
-		total-asserts: total-asserts + to integer! asserts
-		total-passes: total-passes + to integer! passes
-		total-failures: total-failures + to integer! failures
-		print ["run" name "tests:" tests "assertions:" asserts "failed:" failures]
-		return none
-	]
-	print ["missing Quick-Test summary:" name]
-	print output
-	total-failures: total-failures + 1
-]
-
-foreach [relative executable] compiled [
-	output: make string! 8192
-	status: call/wait/output to-local-file executable output
-	if status <> 0 [
-		print ["process failed:" relative "status:" status]
-		total-failures: total-failures + 1
-	]
-	read-summary output relative
-]
-
-print [
-	"Red unit suite totals:"
-	"tests" total-tests
-	"assertions" total-asserts
-	"passed" total-passes
-	"failed" total-failures
-]
-quit/return either zero? total-failures [0][1]
+qt/report "Red unit suite totals:"

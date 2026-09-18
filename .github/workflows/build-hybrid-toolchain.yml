@@ -1,0 +1,197 @@
+name: Build hybrid toolchain
+
+# One reusable entry point for every platform the hybrid toolchain targets.
+# Each matrix leg runs on its own runner because a bootstrap compiler only runs
+# on the platform it was built for; the toolchain it emits can then cross
+# compile, but the fixed-point build itself has to be native.
+#
+# Callers pass the subset they need:
+#
+#   uses: ./.github/workflows/build-hybrid-toolchain.yml
+#   with:
+#     platforms: '["windows-x64"]'
+#
+# and download `red-toolchain-<platform>`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'JSON array of platforms to build'
+        type: string
+        default: '["windows-x64","linux-x64","linux-arm64","darwin-arm64"]'
+  workflow_call:
+    inputs:
+      platforms:
+        description: 'JSON array of platforms to build'
+        type: string
+        default: '["windows-x64","linux-x64","linux-arm64","darwin-arm64"]'
+
+permissions:
+  contents: read
+  actions: write
+
+# The group has to include the requested platforms: every caller invokes this
+# same workflow, so a group keyed only on the ref would let the Linux job
+# cancel the Windows one, and each caller would then lose its toolchain.
+concurrency:
+  group: build-hybrid-toolchain-${{ inputs.platforms }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    if: ${{ contains(fromJSON(inputs.platforms), matrix.platform) }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-2022
+            target: Windows-X86-64
+            archive: zip
+            bootstrap-path: build/bootstrap/red-bootstrap-speed1.exe
+            bootstrap-url: ${{ vars.RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL }}
+            bootstrap-sha256: 53f947164aaeb9912c233a0d7c4fb960ded05932fce809aaf34df75b9f9f7eba
+          - platform: darwin-arm64
+            runner: macos-15
+            target: Darwin-ARM64
+            archive: tar
+            bootstrap-path: build/bootstrap/red-bootstrap-darwin-arm64
+            bootstrap-url: ${{ vars.RED_DARWIN_ARM64_BOOTSTRAP_URL }}
+            bootstrap-sha256: 644bfb20fe52dcb054ed9c63324f31b139fd163904730bb78a08b72617ebc81c
+          # The Linux legs read their checksum from a repository variable: the
+          # bootstrap binaries for these two are not pinned in the tree yet.
+          - platform: linux-x64
+            runner: ubuntu-24.04
+            target: Linux-X86-64
+            archive: tar
+            bootstrap-path: build/bootstrap/red-bootstrap-linux-x64
+            bootstrap-url: ${{ vars.RED_LINUX_X64_HYBRID_BOOTSTRAP_URL }}
+            bootstrap-sha256: ${{ vars.RED_LINUX_X64_BOOTSTRAP_SHA256 }}
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+            target: Linux-ARM64
+            archive: tar
+            bootstrap-path: build/bootstrap/red-bootstrap-linux-arm64
+            bootstrap-url: ${{ vars.RED_LINUX_ARM64_HYBRID_BOOTSTRAP_URL }}
+            bootstrap-sha256: ${{ vars.RED_LINUX_ARM64_BOOTSTRAP_SHA256 }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Download pinned bootstrap compiler (Windows)
+      if: matrix.archive == 'zip'
+      shell: pwsh
+      env:
+        BOOTSTRAP_URL: ${{ matrix.bootstrap-url }}
+        BOOTSTRAP_SHA256: ${{ matrix.bootstrap-sha256 }}
+        BOOTSTRAP_PATH: ${{ matrix.bootstrap-path }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        if (-not $env:BOOTSTRAP_URL) {
+          throw "Set the repository variable for the $env:BOOTSTRAP_PATH bootstrap URL."
+        }
+        if (-not $env:BOOTSTRAP_SHA256) {
+          throw 'Set the bootstrap SHA-256 repository variable for this platform.'
+        }
+        New-Item -ItemType Directory -Force -Path (Split-Path $env:BOOTSTRAP_PATH) | Out-Null
+        Invoke-WebRequest -Uri $env:BOOTSTRAP_URL -OutFile $env:BOOTSTRAP_PATH
+        $actual = (Get-FileHash -Algorithm SHA256 $env:BOOTSTRAP_PATH).Hash.ToLowerInvariant()
+        if ($actual -ne $env:BOOTSTRAP_SHA256) {
+          throw "Bootstrap SHA-256 mismatch: $actual"
+        }
+
+    - name: Download pinned bootstrap compiler (Unix)
+      if: matrix.archive != 'zip'
+      shell: bash
+      env:
+        BOOTSTRAP_URL: ${{ matrix.bootstrap-url }}
+        BOOTSTRAP_SHA256: ${{ matrix.bootstrap-sha256 }}
+        BOOTSTRAP_PATH: ${{ matrix.bootstrap-path }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$BOOTSTRAP_URL" ]]; then
+          echo "Set the repository variable for the $BOOTSTRAP_PATH bootstrap URL." >&2
+          exit 1
+        fi
+        if [[ -z "$BOOTSTRAP_SHA256" ]]; then
+          echo 'Set the bootstrap SHA-256 repository variable for this platform.' >&2
+          exit 1
+        fi
+        mkdir -p "$(dirname "$BOOTSTRAP_PATH")"
+        curl --fail --location --retry 3 --retry-all-errors \
+          --output "$BOOTSTRAP_PATH" "$BOOTSTRAP_URL"
+        echo "$BOOTSTRAP_SHA256  $BOOTSTRAP_PATH" | shasum -a 256 --check
+        chmod 755 "$BOOTSTRAP_PATH"
+
+    - name: Build and verify fixed point (Windows)
+      if: matrix.archive == 'zip'
+      shell: pwsh
+      env:
+        BOOTSTRAP_PATH: ${{ matrix.bootstrap-path }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & .\tools\self_hosting\test-windows-hybrid-toolchain-fixed-point.ps1 `
+          -Bootstrap $env:BOOTSTRAP_PATH `
+          -OutputRoot .\build\fixed-point
+
+    - name: Build standalone Red toolchain (Unix)
+      if: matrix.archive != 'zip'
+      shell: bash
+      env:
+        BOOTSTRAP_PATH: ${{ matrix.bootstrap-path }}
+        TARGET: ${{ matrix.target }}
+      run: |
+        set -euo pipefail
+        tools/self_hosting/build-red-toolchain.sh \
+          -t "$TARGET" \
+          "$BOOTSTRAP_PATH" \
+          build/dist/red-toolchain
+
+    - name: Package toolchain (Windows)
+      if: matrix.archive == 'zip'
+      shell: pwsh
+      env:
+        PLATFORM: ${{ matrix.platform }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $compiler = '.\build\fixed-point\h3\red-toolchain.exe'
+        $package = ".\build\packages\red-toolchain-$env:PLATFORM"
+        New-Item -ItemType Directory -Force -Path $package | Out-Null
+        Copy-Item -LiteralPath $compiler -Destination $package
+        & $compiler --toolchain-info |
+          Set-Content -LiteralPath (Join-Path $package 'TOOLCHAIN-INFO.txt') -Encoding utf8NoBOM
+        & $compiler --resource-manifest |
+          Set-Content -LiteralPath (Join-Path $package 'RESOURCE-MANIFEST.txt') -Encoding ascii
+        Compress-Archive -Path "$package\*" `
+          -DestinationPath ".\build\packages\red-toolchain-$env:PLATFORM.zip"
+        $hash = (Get-FileHash -Algorithm SHA256 ".\build\packages\red-toolchain-$env:PLATFORM.zip").Hash.ToLowerInvariant()
+        "$hash  red-toolchain-$env:PLATFORM.zip" |
+          Set-Content -LiteralPath '.\build\packages\SHA256SUMS' -Encoding ascii
+
+    - name: Package toolchain (Unix)
+      if: matrix.archive != 'zip'
+      shell: bash
+      env:
+        PLATFORM: ${{ matrix.platform }}
+      run: |
+        set -euo pipefail
+        mkdir -p build/packages
+        test -x build/dist/red-toolchain
+        COPYFILE_DISABLE=1 tar -czf "build/packages/red-toolchain-$PLATFORM.tar.gz" \
+          -C build/dist red-toolchain
+        cd build/packages
+        shasum -a 256 "red-toolchain-$PLATFORM.tar.gz" > SHA256SUMS
+
+    - name: Upload toolchain
+      uses: actions/upload-artifact@v7
+      with:
+        name: red-toolchain-${{ matrix.platform }}
+        path: build/packages/
+        if-no-files-found: error
+        retention-days: 14

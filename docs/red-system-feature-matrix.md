@@ -83,7 +83,7 @@ rules remain in Red/System codegen.
 
 ## Formal Suite Inventory
 
-The formal Red/System runner is system/tests/run-all.r. Its compiler group is:
+The formal Red/System runner is tools/self_hosting/run-red-system-tests.red. Its compiler group is:
 
 - alias-test.r;
 - cast-test.r;

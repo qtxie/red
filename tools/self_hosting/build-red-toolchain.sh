@@ -1,9 +1,37 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-	echo "Usage: $0 focused-darwin-arm64-bootstrap [output]" >&2
+# Builds the standalone Red toolchain for one hybrid target with a pinned
+# bootstrap compiler. The target is explicit because the same script now serves
+# every platform the matrix builds for, not just Darwin-ARM64.
+
+target=Darwin-ARM64
+
+usage() {
+	echo "Usage: $0 [-t hybrid-target] focused-bootstrap [output]" >&2
 	exit 2
+}
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-t)
+			[ "$#" -ge 2 ] || usage
+			target=$2
+			shift 2
+			;;
+		-t?*)
+			target=${1#-t}
+			shift
+			;;
+		-h|--help) usage ;;
+		--) shift; break ;;
+		-*) usage ;;
+		*) break ;;
+	esac
+done
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+	usage
 fi
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -21,15 +49,15 @@ mkdir -p "$repo_root/build/red-toolchain" "$repo_root/build/generated" "$output_
 chmod +x "$bootstrap"
 
 cd "$repo_root"
-"$bootstrap" -r -t Darwin-ARM64 \
+"$bootstrap" -r -t "$target" \
 	-o "$generator" \
 	tools/self_hosting/generate-toolchain-resources.red
 chmod +x "$generator"
 "$generator" "$repo_root" "$resources"
 
-"$bootstrap" -r -t Darwin-ARM64 -o "$output" red-toolchain.red
+"$bootstrap" -r -t "$target" -o "$output" red-toolchain.red
 chmod +x "$output"
 "$output" --self-check
 "$output" --toolchain-info
 
-echo "Built $output"
+echo "Built $output for $target"

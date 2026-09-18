@@ -271,14 +271,18 @@ It is usually a good idea to inform the Red team about what changes you are goin
 
 Satisfied with the results of your change and want to issue a pull request on Github?
 
-Make sure the changes pass all the existing tests, add relevant tests to the test-suite, and please test on as many platforms as you can. You can run all the tests using (from Rebol console, at repository root):
+Make sure the changes pass all the existing tests, add relevant tests to the test-suite, and please test on as many platforms as you can. The suites are driven by Red runners, so they run on every platform Red itself runs on -- including ARM64, where Rebol cannot. From the repository root:
 
-        >> do %run-all-tests.r
+        red-console.exe tools/self_hosting/run-red-unit-tests.red
+        red-console.exe tools/self_hosting/run-red-system-tests.red
+        red-console.exe tools/self_hosting/run-red-system-compiler-tests.red
+        red-console.exe tools/self_hosting/run-red-compiler-tests.red
+        red-console.exe tools/self_hosting/run-red-view-headless-tests.red
 
-On Windows, the corresponding x86-64 compiler, runtime, ABI, DLL, and View
-suite can be run with:
-
-        >> do/args %run-all-tests-x64.r "--batch"
+Each one takes its compiler from the environment: `RED_COMPILER` /
+`RED_SYSTEM_COMPILER` name the executable, `RED_COMPILER_ARGUMENTS` /
+`RED_SYSTEM_COMPILER_ARGUMENTS` the flags it is invoked with, and
+`RED_TARGET` / `RED_SYSTEM_TARGET` the target it is compiling for.
 
 The Linux ARM64 Red/System release package can be cross-compiled on Windows
 and run on an AArch64 host available over SSH with:

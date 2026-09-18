@@ -20,18 +20,25 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler133.exe`
-  (132->133, output 6338048 bytes; 134 is the same size). It also compiles the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler136.exe`
+  (135->136, output 6338048 bytes; 137 is the same size). It also compiles the
   headless test View backend (`Config: [GUI-engine: 'test]`, e.g.
   tests/view-headless-interpreter.red, 7.3M IR instructions, 2490880 bytes) and
   the 16 unit files under tests/source/view/ run clean through it: 16/16 with
   246 assertions, 0 failures. `red-console.exe
   tools/self_hosting/run-red-view-headless-tests.red` (RED_COMPILER pointed at
-  the binary) drives the whole suite. Windows regression: 57/57 Red units and
-  40/40 Red/System units, with the Red/System runner reporting 12052 assertions
-  and 12052 passed. Fixed point: 133 and 134 emit byte-identical output apart
-  from 14 bytes -- PE timestamp, checksum, the output file name and the two
-  `movabs rax` immediates that carry the compiler's build clock.
+  the binary) drives the whole suite. Windows regression: 58/58 Red unit files
+  (57 units plus unicode-test, now run in dev mode without `-r`) -- 8812 tests,
+  16893 assertions, 16849 passed, 0 compile failures -- and 40/40 Red/System
+  units, with the Red/System runner reporting 12059 assertions, up from 12052
+  because dylib-auto-test finally loads and runs. The only Red failures, 44,
+  are unicode-test's and predate this baseline. Fixed point: 136 and 137 emit
+  byte-identical output apart from 21 bytes -- PE timestamp, checksum, the
+  output file name and the two `movabs rax` immediates that carry the
+  compiler's build clock.
+  `system/tests/source/units/libs/structlib.dll` is a 32-bit image, so
+  struct-x64-test.exe still dies with STATUS_INVALID_IMAGE_FORMAT before it
+  runs; that failure predates this baseline and is unrelated to the compiler.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
   (131->132, output 6337024 bytes; two SOURCE_DATE_EPOCH-pinned
   self-compilations of 132 differ in 1596 bytes -- PE timestamp, checksum, the
@@ -66,12 +73,31 @@
   subroutine record). The shell regression could not have caught this: it only
   checks exit codes, so run `red-console.exe
   tools/self_hosting/run-red-system-tests.red` for the assertion totals.
-- Still open, unrelated to the above: an `#import` library spelled with an
-  absolute path makes the PE writer prefix the *output directory* to every
-  import name, so dylib-auto-test.exe ends up importing
-  `E:\...\BUILD\SELF-HOSTING\E:\...\BUILD\SELF-HOSTING\KERNEL32.DLL` and dies
-  with STATUS_DLL_NOT_FOUND. Reproduces on 132 as well; plain relative
-  imports (lib-test) are clean.
+- Fixed: a `#import` library name longer than 32 bytes -- any absolute path --
+  was cut at 32 bytes in the PE DLL-name buffer and the *next* name was written
+  into its tail, so dylib-auto-test.exe imported
+  `E:\...\KERNEL32.DLL` and died with STATUS_DLL_NOT_FOUND. The 32 was not
+  `RSIR_IMPORT_SIZE`: `repend` on a binary! is `insert/only` of a reduced
+  block, and `binary/convert` spent the block's *storage* size as the /part
+  byte budget -- 16 bytes per slot -- so every value of the list was truncated
+  and the rest of the list was dropped. `convert` now treats /part as a byte
+  budget only when /part was actually given (runtime/datatypes/binary.reds).
+  `repend dlls [uppercase name null]` in PE.red emits whole paths again.
+- Fixed: a Red program built **without** `-r` (dev mode, linked against
+  libRedRT) took an access violation the moment the collector ran. The
+  collector chose the bitmap table from bit 30 of the frame's bitmap index, a
+  flag only the legacy emitter ever set for libRedRT code, so runtime frames
+  indexed the *program's* bitmap table, read foreign slot counts and rewrote
+  live stack slots. It now selects the runtime's table whenever the frame's
+  return address falls inside the runtime image -- the same test
+  `resolve-compiled-code` already uses (runtime/collector.reds). Dev mode needs
+  a libRedRT built from current sources, and it will silently keep an old one:
+  `libRedRT-ready?` (compiler/bootstrap-driver.red) is satisfied by the dll,
+  the -include.red and the -defs.red all being present, so deleting just the
+  dll in the output directory is what forces a rebuild -- otherwise every run
+  links against whatever was built last and the crash looks unfixed. Series,
+  append, make, convert, enbase, recycle and redbin-codec all died with
+  0xC0000005 before the fix; they now report the same totals as `-r`.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
   (102->106->107, output 6259712 bytes; 106 and its own rebuild differ in 5
   bytes -- PE checksum, PE timestamp and the output file name). It carries the

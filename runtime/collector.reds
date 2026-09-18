@@ -1361,13 +1361,15 @@ collector: context [
 			c-low c-high lib-low lib-high caller [byte-ptr!]
 			s [series!]
 			bits slot-bits idx disp nb arg-slots local-slots slots handle h n [integer!]
-			ext? dyn? [logic!]
+			ext? dyn? in-lib? [logic!]
 	][
 		c-low: system/image/base + system/image/code
 		c-high: c-low + system/image/code-size
-		#if libRedRT? = yes [
+		#either libRedRT? = yes [
 			lib-low: system/lib-image/base + system/lib-image/code
 			lib-high: lib-low + system/lib-image/code-size
+		][
+			in-lib?: no									;-- one image only: every frame reads the program's table
 		]
 		frm: as ptr-ptr! system/stack/frame
 		refs: memory/stk-refs
@@ -1384,9 +1386,12 @@ collector: context [
 				as byte-ptr! slot/value
 			]
 		#either libRedRT? = yes [
+			;-- A frame running the runtime's own code carries a bitmap index
+			;-- into the runtime's table, so remember which image it belongs to.
+			in-lib?: all [lib-low < caller caller < lib-high]
 			if any [									;-- only process Red frames (skip externals)
+				in-lib?
 				all [c-low < caller caller < c-high]
-				all [lib-low < caller caller < lib-high]
 			]
 		][
 			if all [c-low < caller caller < c-high]		;-- only process Red frames (skip externals)
@@ -1403,7 +1408,10 @@ collector: context [
 				slot-bits: as-integer slot/value
 				if slot-bits = STACK_BITMAP_BARRIER [break]
 				assert slot-bits >= 0
-				b: either slot-bits and 40000000h <> 0 [base'][base] ;-- select exe or dll's bitmap array
+				b: either any [
+					in-lib?								;-- code from the runtime's own image
+					slot-bits and 40000000h <> 0		;-- bitmap explicitly flagged as the runtime's
+				][base'][base]							;-- select exe or dll's bitmap array
 				map: b + (slot-bits and 0FFFFFFFh)		;-- first corresponding bitmap slot (removing bit flags)
 				#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [
 					arg-slots: map/value

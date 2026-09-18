@@ -977,7 +977,7 @@ binary: context [
 			s2	[series!]
 			fbuf [red-string!]
 			added i len unit [integer!]
-			count? [logic!]
+			count? budget? [logic!]
 	][
 		assert part <> 0
 		count?: any [mode = MODE_COUNT all [mode = MODE_CHANGE p = null]]	;-- COUNT pass writes nothing (p = null)
@@ -1024,16 +1024,27 @@ binary: context [
 				s2: GET_BUFFER(blk)
 				slot: s2/offset + blk/head
 				len: as-integer s2/tail - slot
-				unless only? [len: len >> 4]
-				if any [part < 0 part > len][part: len]
+				;-- /only spreads /part over the bytes the whole list converts
+				;-- to. Without /part there is no budget at all: the storage
+				;-- size only counts slots, so using it as one would cut the
+				;-- list short after 16 bytes per slot.
+				budget?: all [only? part >= 0]
+				either only? [
+					either budget? [
+						if part > len [part: len]
+					][part: MAX_INT]					;-- if no /part, ensures all bytes are used
+				][
+					len: len >> 4						;-- /part counts values
+					if any [part < 0 part > len][part: len]
+				]
 				added: 0
 				while [all [part > 0 slot < s2/tail]][
-					len: either only? [part][-1]
+					len: either budget? [part][-1]
 					len: convert p slot len only? mode
 					if p <> null [p: p + len]
 					added: added + len
 					slot: slot + 1
-					part: either only? [part - len][part - 1]
+					part: either budget? [part - len][part - 1]
 				]
 				added
 			]

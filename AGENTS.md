@@ -20,7 +20,26 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
+  (131->132, output 6337024 bytes; two SOURCE_DATE_EPOCH-pinned
+  self-compilations of 132 differ in 1596 bytes -- PE timestamp, checksum, the
+  output file name and a handful of embedded values; 131 shows the same 1601
+  bytes of noise, so the chain still converges). On top of 107's System V
+  argument classification and the Red-on-Linux fixes it carries the later
+  generations' unwind, bitmap and atomics work, and now compiles the terminal
+  View backend (`Needs: [JSON CSV View]` with `Config: [GUI-engine: 'terminal]`,
+  e.g. environment/console/CLI/console.red) end to end. That needed two
+  frontend changes: stack-module skips a stray module-level block literal --
+  #define does [func []] turns name: does [][body] into name: func [] [] [body]
+  and the body block used to die as "unsupported expression [0]" -- and
+  stack-call / stack-indirect-call adapt bare call literals to the declared
+  parameter type (literal 0 to a pointer parameter emits null, null to an
+  integer parameter emits zero), which upstream's compiler always accepted
+  (terminal/tty.reds WriteFile ... 0). Still open: the headless test backend
+  (Config: [GUI-engine: 'test], 16 unit files under tests/source/view/) dies
+  in codegen at INVALID_IR site 236 (emit-control-operation/stack-kinds/depth#23,
+  op=11) on its ~7.3M-instruction IR.
+- Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
   (102->106->107, output 6259712 bytes; 106 and its own rebuild differ in 5
   bytes -- PE checksum, PE timestamp and the output file name). It carries the
   System V argument classification for Linux-X86-64: `plan-storage` and the

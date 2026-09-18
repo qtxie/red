@@ -148,6 +148,12 @@ qt: context [
 	][
 		output: out-path output-name source output-type
 		source: absolute source
+		;-- `do` restores the directory it started from, so the change-dir at
+		;-- load time is already undone by the time a runner body runs. The
+		;-- compiler reads system/utils/libRedRT-exports.red through its own
+		;-- cwd, so the child process has to be spawned from the repo root --
+		;-- not from the directory the runner script happens to live in.
+		change-dir root-dir
 		command: rejoin [
 			compiler
 			either empty? compiler-arguments [""][rejoin [" " compiler-arguments]]
@@ -192,6 +198,9 @@ qt: context [
 		][
 			quote executable
 		]
+		;-- Same reason as in compile-file: tests that open a file by relative
+		;-- name expect the repo root, like the Rebol harness gave them.
+		change-dir root-dir
 		out: make string! 8192
 		err: make string! 8192
 		status: call/wait/output/error command out err

@@ -61,12 +61,12 @@ view-sources: [
 	%make-face-test.red %face-tree-test.red
 	%events-actors-test.red %input-test.red %reactivity-test.red
 	%draw-parse-test.red
-	;; Needs: 'View is commented out in this one and it carries no Config: of
-	;; its own, because it is meant to run under whatever backend hosts it --
-	;; here the interpreter, which is built with GUI-engine: 'test. It used to
-	;; be driven only by %tests/run-view-tests.r, through a Rebol interpreter
-	;; that happened to have a real GUI.
-	%base-self-test.red
+	;; %base-self-test.red is deliberately absent: it scores itself by
+	;; rasterizing a face and measuring the pixels (text-bounds? reads the
+	;; rendered image back), and the `test` backend's draw dialect is a no-op
+	;; stub -- every snapshot comes back blank, so every assertion fails for
+	;; want of a renderer, not for a compiler bug. It belongs to the native
+	;; GUI run: %tests/run-windows-x64-view-tests.ps1 compiles it and runs it.
 ]
 
 requested: any [system/options/args copy []]

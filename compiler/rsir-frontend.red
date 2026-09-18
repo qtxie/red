@@ -3722,9 +3722,12 @@ compiler-rsir-frontend: context [
 				if select subroutines name [
 					fail ERROR-DUPLICATE ["duplicate subroutine name: " mold name]
 				]
-				put subroutines name reduce [copy/deep position/2 0 0 0]
-				; A definition is data for this function. Its body is compiled by
-				; the function-level pass, not recursively collected here.
+			;-- [body target result state stops?]: the last one says whether
+			;-- the body terminates the flow, which a call site has to adopt --
+			;-- a subroutine that ends in RETURN never comes back.
+			put subroutines name reduce [copy/deep position/2 0 0 0 false]
+			; A definition is data for this function. Its body is compiled by
+			; the function-level pass, not recursively collected here.
 				position: skip position 2
 			][
 				if block? position/1 [
@@ -3898,7 +3901,11 @@ compiler-rsir-frontend: context [
 		emit instructions subroutine-call-op record/2 record/3 0
 		last-type: record/3
 		last-flags: 0
-		last-stopped?: false
+		;-- A subroutine is inlined, so a body that ends in RETURN leaves the
+		;-- function from the call site: the flow stops here, and reporting
+		;-- otherwise would make the enclosing selection drop the value its
+		;-- other arms do produce.
+		last-stopped?: record/5
 		next position
 	]
 
@@ -7163,6 +7170,7 @@ compiler-rsir-frontend: context [
 			]
 			record/3: result
 			record/4: 3
+			record/5: stopped?
 			change/part at instructions (marker + 9)
 				int-to-bin/to-bin32 result 4
 			emit instructions subroutine-return-op result 0 0
@@ -7216,6 +7224,14 @@ compiler-rsir-frontend: context [
 		][
 			stack-block body scope uses instructions params locals tail-value
 			unless last-stopped? [
+				;-- A body that ends without a value still owes the declared
+				;-- return type one: upstream leaves the register undefined,
+				;-- which the postfix stream cannot express, and a value-less
+				;-- RETURN would contradict the published signature. Hand back
+				;-- the type's zero instead.
+				if last-type = 0 [
+					emit instructions literal-op return-ref 0 0
+				]
 				emit instructions return-op return-ref 0 0
 			]
 		]

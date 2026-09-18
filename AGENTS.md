@@ -20,7 +20,19 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler133.exe`
+  (132->133, output 6338048 bytes; 134 is the same size). It also compiles the
+  headless test View backend (`Config: [GUI-engine: 'test]`, e.g.
+  tests/view-headless-interpreter.red, 7.3M IR instructions, 2490880 bytes) and
+  the 16 unit files under tests/source/view/ run clean through it: 16/16 with
+  246 assertions, 0 failures. `red-console.exe
+  tools/self_hosting/run-red-view-headless-tests.red` (RED_COMPILER pointed at
+  the binary) drives the whole suite. Windows regression: 57/57 Red units and
+  40/40 Red/System units, with the Red/System runner reporting 12052 assertions
+  and 12052 passed. Fixed point: 133 and 134 emit byte-identical output apart
+  from 14 bytes -- PE timestamp, checksum, the output file name and the two
+  `movabs rax` immediates that carry the compiler's build clock.
+- Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
   (131->132, output 6337024 bytes; two SOURCE_DATE_EPOCH-pinned
   self-compilations of 132 differ in 1596 bytes -- PE timestamp, checksum, the
   output file name and a handful of embedded values; 131 shows the same 1601
@@ -35,10 +47,31 @@
   stack-call / stack-indirect-call adapt bare call literals to the declared
   parameter type (literal 0 to a pointer parameter emits null, null to an
   integer parameter emits zero), which upstream's compiler always accepted
-  (terminal/tty.reds WriteFile ... 0). Still open: the headless test backend
-  (Config: [GUI-engine: 'test], 16 unit files under tests/source/view/) dies
-  in codegen at INVALID_IR site 236 (emit-control-operation/stack-kinds/depth#23,
-  op=11) on its ~7.3M-instruction IR.
+  (terminal/tty.reds WriteFile ... 0).
+- The headless test backend needed one more frontend fix on top of 132's:
+  `stack-function` emitted `RETURN <type>` with nothing on the stack for a
+  function whose body produces no value, which codegen rejects at INVALID_IR
+  site 236 (emit-control-operation/stack-kinds/depth#23, op=11). Upstream never
+  checks, and `RETURN 0` cannot be used because codegen site 235 requires the
+  operand to equal the published return type -- so the body now ends with the
+  return type's zero literal (test/text-box.reds OS-text-box-layout is such a
+  stub). Subroutine bodies already did the equivalent: their result falls back
+  to 0 when the body produces nothing.
+- That alone broke `sub-9` of subroutine-test.reds, and only the assertion
+  totals caught it: `stack-subroutine` reported `last-stopped?: false` even for
+  a body ending in RETURN, so `finish-selection` treated the returning SWITCH
+  arms as arms that fall through with no value, cleared the result type and
+  dropped the value the DEFAULT arm does produce. A subroutine is inlined, so
+  its call site now adopts the body's stoppedness (new `stops?` field on the
+  subroutine record). The shell regression could not have caught this: it only
+  checks exit codes, so run `red-console.exe
+  tools/self_hosting/run-red-system-tests.red` for the assertion totals.
+- Still open, unrelated to the above: an `#import` library spelled with an
+  absolute path makes the PE writer prefix the *output directory* to every
+  import name, so dylib-auto-test.exe ends up importing
+  `E:\...\BUILD\SELF-HOSTING\E:\...\BUILD\SELF-HOSTING\KERNEL32.DLL` and dies
+  with STATUS_DLL_NOT_FOUND. Reproduces on 132 as well; plain relative
+  imports (lib-test) are clean.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
   (102->106->107, output 6259712 bytes; 106 and its own rebuild differ in 5
   bytes -- PE checksum, PE timestamp and the output file name). It carries the

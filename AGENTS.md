@@ -20,8 +20,11 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler136.exe`
-  (135->136, output 6338048 bytes; 137 is the same size). It also compiles the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler138.exe`
+  (137->138, output 6338048 bytes; 139 is the same size). 138 is the first
+  baseline whose own runtime is built from the fixed `collector.reds` and
+  `binary.reds`: 136 was built one minute before those fixes landed, so it
+  still carries the old runtime. It also compiles the
   headless test View backend (`Config: [GUI-engine: 'test]`, e.g.
   tests/view-headless-interpreter.red, 7.3M IR instructions, 2490880 bytes) and
   the 16 unit files under tests/source/view/ run clean through it: 16/16 with
@@ -33,10 +36,10 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links. The only Red failures, 44, are unicode-test's
-  and predate this baseline. Fixed point: 136 and 137 emit
-  byte-identical output apart from 21 bytes -- PE timestamp, checksum, the
-  output file name and the two `movabs rax` immediates that carry the
-  compiler's build clock.
+  and predate this baseline (see the still-open note below). Fixed point: 138
+  and 139 emit byte-identical output apart from 16 bytes -- PE timestamp,
+  checksum, the output file name and the two `movabs rax` immediates that carry
+  the compiler's build clock.
   `system/tests/source/units/libs/structlib.dll` is a 32-bit image, so
   struct-x64-test.exe used to die with STATUS_INVALID_IMAGE_FORMAT before it
   ran; the runner now copies `libs/structlib-x64.dll` for X86-64 targets and
@@ -89,6 +92,18 @@
   and the rest of the list was dropped. `convert` now treats /part as a byte
   budget only when /part was actually given (runtime/datatypes/binary.reds).
   `repend dlls [uppercase name null]` in PE.red emits whole paths again.
+- Still open: the 44 `unicode-test` failures are **not** in `load-utf8` -- that
+  decoder is correct (`read` of a UTF-8 file returns U+0100, U+013F and U+10000
+  as expected, and widening Latin1 -> UCS-2 -> UCS-4 works). They are in how
+  Red/System c-string literals are emitted: the lexer decodes `^(XX)` to the
+  codepoint U+00XX and the literal is then written out UTF-8-encoded, so
+  `"^(C4)^(80)"` becomes `C3 84 C2 80` instead of the raw bytes `C4 80`. Every
+  failing group feeds the decoder a *literal*, while the groups that build
+  their input byte by byte (`lui2`, `lui3`, `luu22`) pass. Identical UTF-8
+  emission from 13 through 138, so this is long standing, not a regression.
+  Fixing it means deciding whether c-string literals should be raw bytes -- it
+  changes every non-ASCII literal in the runtime, so it needs a deliberate
+  call, not a drive-by edit.
 - Fixed: a Red program built **without** `-r` (dev mode, linked against
   libRedRT) took an access violation the moment the collector ran. The
   collector chose the bitmap table from bit 30 of the frame's bitmap index, a

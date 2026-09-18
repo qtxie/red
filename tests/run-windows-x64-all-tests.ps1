@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
 	[string]$Compiler,
+	[string]$HybridCompiler,
 	[string]$Dumpbin,
 	[string]$Cdb,
 	[string]$VcVars64,
@@ -79,12 +80,23 @@ function Invoke-PreparePhase {
 
 	$canarySource = Join-Path $root 'tests\source\runtime\windows-x64-runner-canary.reds'
 	$canaryExe = Join-Path $artifactDir 'windows-x64-runner-canary.exe'
-	$compileArgs = @(
-		'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d',
-		'-t', 'Windows-X86-64', '-o', $canaryExe, $canarySource
-	)
-	$compileOutput = Invoke-CheckedProcess 'cmd.exe' $compileArgs $CompileTimeoutSeconds `
-		(Join-Path $artifactDir 'canary-compile.log')
+	if ($HybridCompiler) {
+		# The hybrid toolchain is a native compiler: invoke it directly instead
+		# of driving red.r through the Rebol interpreter.
+		$compileArgs = @(
+			'-r', '-d', '-t', 'Windows-X86-64', '-o', $canaryExe, $canarySource
+		)
+		$compileOutput = Invoke-CheckedProcess $HybridCompiler $compileArgs $CompileTimeoutSeconds `
+			(Join-Path $artifactDir 'canary-compile.log')
+	}
+	else {
+		$compileArgs = @(
+			'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d',
+			'-t', 'Windows-X86-64', '-o', $canaryExe, $canarySource
+		)
+		$compileOutput = Invoke-CheckedProcess 'cmd.exe' $compileArgs $CompileTimeoutSeconds `
+			(Join-Path $artifactDir 'canary-compile.log')
+	}
 	if ($compileOutput -match '(?m)^\*\*\* Warning:') { throw "x64 canary compilation emitted warnings`n$compileOutput" }
 	if (-not (Test-Path -LiteralPath $canaryExe -PathType Leaf)) { throw 'x64 runner canary was not generated' }
 	Assert-X64Image $canaryExe 'canary'
@@ -93,6 +105,7 @@ function Invoke-PreparePhase {
 
 	[ordered]@{
 		compiler = $Compiler
+		hybridCompiler = $HybridCompiler
 		dumpbin = $Dumpbin
 		vcvars64 = $vcvars
 		cdb = Resolve-Cdb $Cdb

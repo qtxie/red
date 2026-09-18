@@ -23,9 +23,12 @@ qt/target: any [
 	][pos/2]
 	"Windows-X86-64"
 ]
-;; The shared-object target follows the executable one instead of defaulting to
-;; the Windows spelling, which would be wrong everywhere else.
-qt/library-target: any [get-env "RED_SYSTEM_LIBRARY_TARGET" rejoin [qt/target "-DLL"]]
+;; The shared-object target follows the executable one. Windows spells the
+;; suffix -DLL; every other target the toolchain reports is -SO.
+qt/library-target: any [
+	get-env "RED_SYSTEM_LIBRARY_TARGET"
+	rejoin [qt/target either find qt/target "Windows" ["-DLL"]["-SO"]]
+]
 qt/source-dir: %system/tests/source/units/
 qt/output-dir: %build/self-hosting/system-suite/
 qt/ensure-output-dir

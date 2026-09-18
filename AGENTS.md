@@ -30,15 +30,21 @@
   the binary) drives the whole suite. Windows regression: 58/58 Red unit files
   (57 units plus unicode-test, now run in dev mode without `-r`) -- 8812 tests,
   16893 assertions, 16849 passed, 0 compile failures -- and 40/40 Red/System
-  units, with the Red/System runner reporting 12059 assertions, up from 12052
-  because dylib-auto-test finally loads and runs. The only Red failures, 44,
-  are unicode-test's and predate this baseline. Fixed point: 136 and 137 emit
+  units, with the Red/System runner reporting 12680 assertions, 12680 passed,
+  0 failures -- up from 12052 because dylib-auto-test finally loads and
+  struct-x64-test finally links. The only Red failures, 44, are unicode-test's
+  and predate this baseline. Fixed point: 136 and 137 emit
   byte-identical output apart from 21 bytes -- PE timestamp, checksum, the
   output file name and the two `movabs rax` immediates that carry the
   compiler's build clock.
   `system/tests/source/units/libs/structlib.dll` is a 32-bit image, so
-  struct-x64-test.exe still dies with STATUS_INVALID_IMAGE_FORMAT before it
-  runs; that failure predates this baseline and is unrelated to the compiler.
+  struct-x64-test.exe used to die with STATUS_INVALID_IMAGE_FORMAT before it
+  ran; the runner now copies `libs/structlib-x64.dll` for X86-64 targets and
+  that test runs 155 tests / 621 assertions with 0 failures, bringing the
+  Red/System suite to 12680 assertions, 12680 passed, 0 failures. Build the
+  64-bit library with `cl /LD /O2 /MT /Fe:structlib.dll structlib.c` from
+  `system/tests/source/units/libs/`; the 32-bit dll is left alone so 32-bit
+  targets keep working.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
   (131->132, output 6337024 bytes; two SOURCE_DATE_EPOCH-pinned
   self-compilations of 132 differ in 1596 bytes -- PE timestamp, checksum, the

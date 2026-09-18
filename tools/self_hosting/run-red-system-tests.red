@@ -36,6 +36,11 @@ qt/set-compiler "RED_SYSTEM_COMPILER"
 
 structlib-file: any [
 	get-env "RED_SYSTEM_STRUCTLIB"
+	;-- The checked-in structlib.dll is a 32-bit image, so the x64 struct test
+	;-- cannot load it: pick the 64-bit build for X86-64 targets.
+	if not none? find qt/target "X86-64" [
+		qt/join-file qt/source-dir %libs/structlib-x64.dll
+	]
 	qt/join-file qt/source-dir %libs/structlib.dll
 ]
 arguments: any [system/options/args copy []]

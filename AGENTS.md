@@ -48,6 +48,19 @@
   64-bit library with `cl /LD /O2 /MT /Fe:structlib.dll structlib.c` from
   `system/tests/source/units/libs/`; the 32-bit dll is left alone so 32-bit
   targets keep working.
+- The standalone toolchain builds and runs again:
+  `hybrid-compiler140.exe -r -t Windows-X86-64 -o red-toolchain.exe
+  red-toolchain-windows-hybrid.red` produces 7609344 bytes
+  (`build/red-toolchain/windows-x64/red-toolchain-140.exe`; it needs
+  `build/generated/red-toolchain-resources.generated.red`, which
+  `generate-toolchain-resources.exe` regenerates). `--self-check` reports 276
+  resources, and it compiles and runs a Red program both with `-r` and in dev
+  mode -- dev mode builds a fresh libRedRT next to the output, so a stale one
+  there is what makes it look broken. It also cross-compiles all four targets:
+  Linux-X86-64 (ELF x86-64), Linux-ARM64 (ELF aarch64) and Darwin-ARM64
+  (Mach-O arm64). The Phase E note in `handover-quick-test-red-port.md` saying
+  `red-toolchain.exe` SEGFAULTs on every invocation is stale -- the checked-in
+  binary answers `missing source file` and exits 1.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
   (131->132, output 6337024 bytes; two SOURCE_DATE_EPOCH-pinned
   self-compilations of 132 differ in 1596 bytes -- PE timestamp, checksum, the

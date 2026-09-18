@@ -3333,6 +3333,27 @@ compiler-rsir-frontend: context [
 		reduce [low high]
 	]
 
+	c-string-bytes: func [
+		value [string!]
+		return: [binary!]
+		/local bytes wide? c
+	][
+		;-- Upstream stored c-string literals with `repend data-buf [value null]`,
+		;-- one byte per character, so ^(XX) escapes land in the output as the
+		;-- byte XX. `to binary!` UTF-8 encodes instead and turns ^(C4) into
+		;-- C3 84, which breaks every literal that spells out raw bytes. Keep
+		;-- the byte-for-byte form while every codepoint fits in one, and fall
+		;-- back to UTF-8 only for the ones that do not -- truncating those
+		;-- would drop the character altogether.
+		wide?: no
+		foreach c value [if (to integer! c) > 255 [wide?: yes break]]
+		either wide? [to binary! value][
+			bytes: make binary! length? value
+			foreach c value [append bytes to integer! c]
+			bytes
+		]
+	]
+
 	add-static-bytes: func [
 		value [binary!]
 		nul? protected? [logic!]
@@ -3400,7 +3421,7 @@ compiler-rsir-frontend: context [
 				]
 			]
 			string? value [
-				id: add-static-bytes to binary! value true protected?
+				id: add-static-bytes c-string-bytes value true protected?
 				return reduce [-13 address-initializer global-address id 0]
 			]
 			any [get-word? value get-path? value][
@@ -6399,7 +6420,7 @@ compiler-rsir-frontend: context [
 				next position
 			]
 			string? value [
-				id: add-static-bytes to binary! value true false
+				id: add-static-bytes c-string-bytes value true false
 				emit instructions address-op global-address id 0
 				emit instructions reference-op -13 0 0
 				last-type: -13
@@ -6621,7 +6642,7 @@ compiler-rsir-frontend: context [
 						find [pointer c-string] kind
 					][
 						warn-redundant-cast -13 0 type-info/2 type-info/3
-						id: add-static-bytes to binary! value true protected?
+						id: add-static-bytes c-string-bytes value true protected?
 						static?: true
 						static-ref: type-info/2
 						static-initializer: reduce [

@@ -122,6 +122,17 @@ the ARM64 backend can notice.
   Slots past the pool now canonicalize into the slot the region reserves
   for that depth, which is the same on both sides of an in-region edge.
 
+The cross-build reproduces. Two generations writing to output names of the
+same length (`build/red-toolchain/darwin-arm64/red-toolchain-157|-158`,
+6690688 bytes each) differ in 144 bytes: the last character of the embedded
+output path in the two places it appears, the two `dd-Mmm-yyyy/h:mm:ss`
+clocks, two materialized 64-bit constants and four 32-byte windows of the
+compressed resource blob. Compare only equal-length `-o` names -- the
+toolchain embeds its own path, so a longer one shifts the resource blob and
+repaints every address literal that points into it. 157's `red-toolchain`
+against 158's `red-toolchain-158` differ in 1.87 MB, almost all of it that
+shift.
+
 ## Introspection
 
 Both tools expose the same standalone metadata interface:

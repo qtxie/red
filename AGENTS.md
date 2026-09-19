@@ -20,10 +20,12 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler150.exe`
-  (149->150, output 6367744 bytes; two `SOURCE_DATE_EPOCH`-pinned
-  self-compilations of 150 are byte-identical).
-  150 adds the set-path type check below to 149, which adds the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler151.exe`
+  (150->151, output 6378496 bytes; two `SOURCE_DATE_EPOCH`-pinned
+  self-compilations of 151 differ only in the PE timestamp, the PE checksum
+  and the output file name).
+  151 adds the header currency registration below to 150, which adds the
+  set-path type check below to 149, which adds the
   return-type check below to 148, which adds the dev-mode
   `#system-global` fix to 147, which adds the
   callback spec check to 146, which adds the
@@ -46,7 +48,7 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All five suites are clean on 150: Red/System compiler tests 124/124,
+  All five suites are clean on 151: Red/System compiler tests 124/124,
   Red/System units 12680/12680, Red units 16893/16893, View headless 246/246,
   and the Red compiler tests are 261 passed / 2 failed (below), up from
   251/12 on 145 -- three are the `#system-global` group, seven the
@@ -56,6 +58,15 @@
   120/124 on 145, 122/124 on 147, 123/124 on 149 and 124/124 on 150 -- the
   last four gained are the callback spec check, the return-type check and
   the set-path type check.
+  MEASURING BEHIND A HARNESS ABORT: `regression-test-redc-5.red` dies at
+  #4526 (`do bind [probe 1 ** 2] context [...]` prints `1` then `** has no
+  value`, and `--assert 3 = load qt/output` raises a *syntax* error on that
+  text in the harness itself). The runner catches it and goes on to the next
+  script, so the file's own #4527 onwards is never measured -- 6 of its 95
+  assertions were hidden that way. To see them, temporarily replace that one
+  assertion with `--assert not none? qt/output`, run
+  `red-console.exe tools/self_hosting/run-red-compiler-tests.red
+  regression-test-redc-5.red`, and revert with `git checkout --`.
   Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"`
   gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
   compile failures -- measured on 145 and re-measured unchanged on 148 and
@@ -107,6 +118,24 @@
   *before* `runtime/red.reds` is spliced in and its `print` output is lost,
   while in dev mode it lands after and prints. The two modes still differ in
   where the block sits relative to the Red runtime.
+- Fixed: **a money literal's currency was validated before the header that
+  declares it had been read.** `Red [Currencies: [bug]] probe bug$0` died as
+  `*** Syntax Error: Invalid money! value`: TRANSCODE checks a currency
+  against the runtime list *as it scans*, so a code only the header declares
+  is still unknown when the body is scanned. Upstream never had the problem
+  -- its lexer did not validate, so its `process-currencies` could run after
+  the whole file had been lexed. `compiler/frontend.red` now reads the
+  marker and the header block on their own first -- `transcode/next` stops
+  after one value, so the body is never touched -- and registers those codes
+  before the real scan. A code that is still unknown is then reported in
+  `to-currency-code`'s own words,
+  `*** Compilation Error: unknown money! currency bug, add it to the
+  Currencies: header.`, which is a *compilation* error the way upstream's is
+  rather than a syntax error. That is #4613: 4 of its 5 assertions, all of
+  them hidden behind the #4526 abort. The fifth is runtime-side and stays
+  failing -- `probe bug$0` prints `BUG$0.00` here, the same convention as
+  `USD$0.00`, while the test expects `bug$0`; molding money is
+  `runtime/datatypes/money.reds`, not the compiler.
 - Still open in that suite: `regression-test-redc-5.red` stops at #4526. The
   test is `do bind [probe 1 ** 2] context [**: make op! func [x y][x + y]]`
   and it prints `1` and then fails with `** has no value`, so `qt/output` is

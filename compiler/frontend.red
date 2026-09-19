@@ -424,6 +424,25 @@ red: context [
 			'else [throw-error ["unknown money! currency" code ", add it to the Currencies: header."]]
 		]
 	]
+
+	;-- TRANSCODE validates a money literal's currency as it scans, so a code
+	;-- the `Currencies:` header does not declare never reaches this file at
+	;-- all -- it dies as a syntax error instead. The compiler is what knows
+	;-- about the header, so it names the code the way `to-currency-code`
+	;-- would have. Returns none when the token failed for any other reason,
+	;-- so a genuinely malformed literal keeps its syntax error.
+	unknown-currency: func [err [error!] return: [word! none!] /local token dollar code][
+		unless all [
+			err/type = 'syntax
+			err/id = 'invalid
+			err/arg2 = money!
+			string? err/arg3
+			dollar: find token: err/arg3 #"$"
+			(index? dollar) = 4						;-- exactly three bytes precede the $
+		][return none]
+		set/any 'code try [to word! copy/part token 3]
+		either all [word? :code not find system/locale/currencies/list code][code][none]
+	]
 	
 	any-function?: func [value [word!]][
 		find [native! action! op! function! routine!] value
@@ -5885,19 +5904,56 @@ red: context [
 		]
 	]
 	
-	load-source: func [file [file! block!] /hidden /header /local src text][
+	;-- TRANSCODE validates a money literal's currency against the runtime
+	;-- list while it scans, so a code the script's own header declares is
+	;-- still unknown when the body is scanned and the whole file dies as
+	;-- `Invalid money! value`. Read the marker and the header block on their
+	;-- own first -- `transcode/next` stops after one value, so the body is
+	;-- never touched -- and register those codes before the real scan.
+	;-- Upstream's lexer never validated a currency, which is why its
+	;-- `process-currencies` could run after the whole file had been lexed.
+	register-header-currencies: func [
+		text [string! binary!]
+		/local position result spec
+	][
+		position: text
+		loop 4 [
+			result: compiler-lexer/next-value position
+			unless all [block? result 2 = length? result][exit]
+			position: result/2
+			if any [result/1 = 'Red result/1 = first [Red/System]][
+				result: compiler-lexer/next-value position
+				unless all [block? result 2 = length? result][exit]
+				unless block? spec: select result/1 quote Currencies: [exit]
+				foreach code spec [
+					if all [word? code 3 = length? form code][
+						append system/locale/currencies/list to word! uppercase form code
+					]
+				]
+				exit
+			]
+		]
+	]
+
+	load-source: func [file [file! block!] /hidden /header /local src text source-text code][
 		either file? file [
 			unless hidden [script-name: file]
 			; Match Stage0's READ-CACHE input contract: text READ normalizes CRLF
 			; before the lexer materializes multiline string values.
-			src: compiler-lexer/process/file read-source-text file file
+			source-text: read-source-text file file
+			register-header-currencies source-text
+			src: compiler-lexer/process/file source-text file
 			;-- A syntax error leaves the lexer with no values at all, so report
 			;-- it here rather than indexing into nothing further down.
 			if compiler-lexer/last-error [
-				either text: compiler-lexer/error-text compiler-lexer/last-error [
-					throw-syntax-error text compiler-lexer/last-error
+				either code: unknown-currency compiler-lexer/last-error [
+					throw-error ["unknown money! currency" code ", add it to the Currencies: header."]
 				][
-					throw-error ["invalid source:" form compiler-lexer/last-error]
+					either text: compiler-lexer/error-text compiler-lexer/last-error [
+						throw-syntax-error text compiler-lexer/last-error
+					][
+						throw-error ["invalid source:" form compiler-lexer/last-error]
+					]
 				]
 			]
 			if all [

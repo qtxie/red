@@ -32,8 +32,13 @@
   red-toolchain-darwin-hybrid.red` produces a 6690688-byte Mach-O that
   reports `host: Darwin-ARM64, backend: hybrid-rsir, standalone: true,
   resources: 276`, passes `--self-check`, and compiles and runs both a Red
-  and a Red/System program on an Apple Silicon Mac. On the Mac: 40/40
-  Red/System units and the logic, integer and function Red units pass.
+  and a Red/System program on an Apple Silicon Mac. On the Mac at 159:
+  40/40 Red/System units and 23 Red units -- logic, integer, float, char,
+  series, append, path, object, map, function, loop, parse, make, convert,
+  mold, load, lexer, evaluation, binding, type, routine, recycle and
+  comparison -- pass, 10298 Red assertions with 0 failures. Cross-compile a
+  slice of the Red suite with
+  `build/tmp-redmac/red-cross-darwin.sh COMPILER OUTDIR`.
   Windows on 156: Red/System suite 10593 tests / 12680 assertions / 12680
   passed / 0 failed / 0 compile-failures.
   157 adds the four deep-stack ARM64 repairs below to 153, which adds the

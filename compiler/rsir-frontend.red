@@ -3229,6 +3229,23 @@ compiler-rsir-frontend: context [
 		any [
 			(canonical-ref target) = (canonical-ref source)
 			lossless-integer-cast? source target
+			;-- A bare `pointer!` names no pointee, so anything pointer-
+			;-- shaped fills it. `ptr-ptr!`'s element is exactly that here
+			;-- (builtin-pointees), and a thread `handle!` -- a `pointer!
+			;-- [integer!]` -- is stored through it in
+			;-- system/tests/source/units/atomic-test.reds.
+			all [
+				(canonical-ref target) = -12
+				find [pointer c-string struct union function array] source-kind
+			]
+			;-- An array value is the address of its first element, so it
+			;-- fills any pointer slot. That is how the Redbin payload
+			;-- reaches `system/boot-data`, a `byte-ptr!`
+			;-- (system/compiler-rsir-core.red). The literal's own flags
+			;-- stay 0 -- `stack-array-literal` puts the inline flag on the
+			;-- hidden global that owns the bytes -- so this cannot be a
+			;-- test on flags.
+			all [source-kind = 'array target-kind = 'pointer]
 			;-- `null` is Red/System's spelling of a null pointer and stands
 			;-- in for anything that is not a number or a logic. `series!`
 			;-- and its kin are struct aliases whose values are pointers, so
@@ -7208,6 +7225,22 @@ compiler-rsir-frontend: context [
 				record/2: source-ref
 			]
 			target-ref: record/2
+		]
+		;-- Upstream checks the stored value against the target's declared
+		;-- type (system/compiler.r's `comp-path-assign`); only a path is
+		;-- checked here, a set-word's type being inferred or pinned down
+		;-- elsewhere. Left unchecked the pair reaches codegen, whose only
+		;-- possible answer is INVALID_IR, so a plain type mistake surfaced
+		;-- as an internal compiler error.
+		if all [
+			path? target
+			not compatible-types? target-ref source-ref
+		][
+			fail ERROR-KIND [
+				"type mismatch on setting path:" mold target
+				"^/*** expected:" type-spelling target-ref
+				"^/***    found:" type-spelling source-ref
+			]
 		]
 		emit instructions set-op 0 0 0
 		last-type: target-ref

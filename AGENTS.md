@@ -20,10 +20,11 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler149.exe`
-  (148->149, output 6366720 bytes; 149 self-compiles to 150 at the same size
-  with `SOURCE_DATE_EPOCH` pinned).
-  149 adds the return-type check below to 148, which adds the dev-mode
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler150.exe`
+  (149->150, output 6367744 bytes; two `SOURCE_DATE_EPOCH`-pinned
+  self-compilations of 150 are byte-identical).
+  150 adds the set-path type check below to 149, which adds the
+  return-type check below to 148, which adds the dev-mode
   `#system-global` fix to 147, which adds the
   callback spec check to 146, which adds the
   compiler-owned syntax-error wording to 145, which adds
@@ -45,17 +46,20 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All four suites are clean on 149: Red/System 12680/12680, Red units
-  16893/16893, View headless 246/246. The Red compiler tests are 261 passed /
-  2 failed (below), up from 251/12 on 145 -- three are the `#system-global`
-  group, seven the syntax-error wording group; before those the twelve were
-  the cast group, the twenty-two before them the conditional group and the
-  last two a wrong path in output-test. The Red/System compiler tests are
-  123 passed / 1 failed, up from 84/40 on 142 -- the last three gained are
-  the callback spec check and the return-type check.
+  All five suites are clean on 150: Red/System compiler tests 124/124,
+  Red/System units 12680/12680, Red units 16893/16893, View headless 246/246,
+  and the Red compiler tests are 261 passed / 2 failed (below), up from
+  251/12 on 145 -- three are the `#system-global` group, seven the
+  syntax-error wording group; before those the twelve were the cast group,
+  the twenty-two before them the conditional group and the last two a wrong
+  path in output-test. The Red/System compiler tests went 84/40 on 142,
+  120/124 on 145, 122/124 on 147, 123/124 on 149 and 124/124 on 150 -- the
+  last four gained are the callback spec check, the return-type check and
+  the set-path type check.
   Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"`
   gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
-  compile failures -- measured on 145 and re-measured unchanged on 148. It is
+  compile failures -- measured on 145 and re-measured unchanged on 148 and
+  150. It is
   *more* than dev mode's 16893 by 28 assertions and 8 tests, not less: a
   handful of tests only run when the runtime is linked in. It costs ~35
   minutes for 58 files, which is why nobody had run it. The earlier `-r` spot
@@ -291,17 +295,34 @@
   call's parameters use it (`stack-call`, `stack-indirect-call`). That is
   callback-test's "inference error 1" and "inference error 2"; Red/System
   compiler tests 120/124 -> 122/124, Red/System units still 12680/12680.
-- Still open, first measured this session: the Red/System **compiler** test
-  suite (`run-red-system-compiler-tests.red`, never run before) reports 84/124
-  on 142, 96/124 on 144, 120/124 on 145, 122/124 on 147 and 123/124 on 149.
-  The one left:
-  * `enum-redec-8` wants `type mismatch on setting path: p/a` and dies at
-    `INVALID_IR site 100 (emit-value-operation/compat#36)`. Its check lives
-    upstream (`comp-set-path`) and was never ported. Note it is not the same
-    *size* as the cast and condition checks: those are local predicates at
-    one emission point, while this one needs assignment type compatibility.
-    It now has most of what it needs below -- `compatible-types?` -- so it is
-    a small step rather than a feature.
+- Fixed: **a set-path never checked the stored value against the target's
+  declared type.** `p: declare struct! [a [test!]] p/a: "a"` -- `test!` an
+  `#enum` -- died at `INVALID_IR site 100 (emit-value-operation/compat#36)`;
+  it now reports upstream's
+  `*** Compilation Error: type mismatch on setting path: p/a`. Upstream's
+  check is `comp-path-assign` in system/compiler.r, and
+  `compiler/rsir-frontend.red`'s `stack-assignment` now applies
+  `compatible-types?` (from the return-type fix) to the pair it already
+  holds, `source-ref` and `target-ref`, just before it emits the SET op.
+  Two pointer-shaped pairs the strict rule would otherwise reject, both
+  found by the suites and not by the self-compile:
+  * A literal array or binary is the address of its first element, so it
+    fills any pointer slot -- that is how the Redbin payload reaches
+    `system/boot-data`, a `byte-ptr!` (system/compiler-rsir-core.red). The
+    literal's own flags are 0 (`stack-array-literal` puts the inline flag on
+    the hidden global that owns the bytes), so this cannot be a test on
+    flags.
+  * A bare `pointer!` names no pointee, so anything pointer-shaped fills it.
+    `ptr-ptr!`'s element is exactly that here (builtin-pointees), and a
+    thread `handle!` -- a `pointer! [integer!]` -- is stored through it in
+    system/tests/source/units/atomic-test.reds.
+  Only a **path** is checked. Upstream also checks a set-word, with a
+  different message (`attempt to change type of variable:`); that one is not
+  ported, because this fork's word assignment infers and pins types in
+  several places the upstream check never sees, and no test pins it.
+- The Red/System **compiler** test suite (`run-red-system-compiler-tests.red`)
+  went 84/124 on 142, 96/124 on 144, 120/124 on 145, 122/124 on 147,
+  123/124 on 149 and 124/124 on 150.
 - Fixed: **`return` never checked its value against the declared return
   type.** `func [return: [integer!]][return true]` reported `*** Compilation
   Error: native codegen rejected invalid RSIR`; it now reports upstream's

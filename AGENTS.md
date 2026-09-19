@@ -61,6 +61,16 @@
   (Mach-O arm64). The Phase E note in `handover-quick-test-red-port.md` saying
   `red-toolchain.exe` SEGFAULTs on every invocation is stale -- the checked-in
   binary answers `missing source file` and exits 1.
+- `red-console.exe tools/self_hosting/run-red-compiler-tests.red` (the nine
+  scripts under tests/source/compiler/) with 140: 262 assertions, 241 passed,
+  22 failed, 28 compile-failures. 138 gives 240 passed / 23 failed on the same
+  run, so the c-string literal fix also cleared issue #832 and introduced
+  nothing. The 28 compile-failures are bookkeeping, not breakage: those tests
+  feed the compiler deliberately broken snippets, and the runner counts each
+  expected compile error as a failure. Of the 22, ten are `preprocessor-test`'s
+  "Macros & #do" (`#macro` / `#do` / `#local`) and four are #2671; the rest are
+  single assertions. None of this suite was ever run against a real compiler
+  before, so there is no earlier number to compare against.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
   (131->132, output 6337024 bytes; two SOURCE_DATE_EPOCH-pinned
   self-compilations of 132 differ in 1596 bytes -- PE timestamp, checksum, the

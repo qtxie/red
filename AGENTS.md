@@ -20,9 +20,10 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler144.exe`
-  (143->144, output 6347264 bytes; 144 self-compiles to 145 at the same size).
-  144 adds the `as`-cast check below to 143, which carries the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler145.exe`
+  (144->145, output 6349824 bytes; 145 self-compiles to 146 at the same size).
+  145 adds the conditional-expression check below to 144, which adds the
+  `as`-cast check to 143, which carries the
   syntax-error fix, which sits on 140, which carries the c-string literal fix
   on top of
   138 -- the first baseline whose own runtime is built from the fixed
@@ -39,15 +40,16 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All four suites are clean on 144: Red/System 12680/12680, Red units
+  All four suites are clean on 145: Red/System 12680/12680, Red units
   16893/16893, View headless 246/246. The Red compiler tests are 251 passed /
-  12 failed (below) and the Red/System compiler tests 96 passed / 28 failed,
-  up from 84/40 on 142 -- the twelve fixed ones are the cast group. Release
+  12 failed (below) and the Red/System compiler tests 118 passed / 6 failed,
+  up from 84/40 on 142 -- the twelve fixed first are the cast group and the
+  twenty-two after them the conditional group. Release
   mode has no full-suite number -- a `-r` build costs ~40s
   per file -- but the seven collector-heavy units were run in `-r` on 142 and
   are clean: series 1119/1119, append 327, make 3, convert 451, redbin-codec
-  1762, recycle 39, unicode 67/67. Fixed point: 144 self-compiles to 145 at the same
-  6347264 bytes. Unpinned they differ in 1602 bytes, which is the clock -- the
+  1762, recycle 39, unicode 67/67. Fixed point: 145 self-compiles to 146 at the same
+  6349824 bytes. Unpinned they differ in 1602 bytes, which is the clock -- the
   build date is a variable-length string, so it shifts every absolute address
   by one and repaints a few thousand bytes. Pin `SOURCE_DATE_EPOCH` and two
   self-compilations of 142 differ in 4 bytes, so the chain genuinely
@@ -144,6 +146,30 @@
   and the rest of the list was dropped. `convert` now treats /part as a byte
   budget only when /part was actually given (runtime/datatypes/binary.reds).
   `repend dlls [uppercase name null]` in PE.red emits whole paths again.
+- Fixed: IF/EITHER/UNTIL/WHILE/ALL/ANY accepted **any** expression as their
+  condition. Upstream requires a logic! and says so in `check-conditional`
+  (system/compiler.r), but the frontend never checked, so `if 123 []` reached
+  codegen and died at `INVALID_IR site 220 (emit-control-operation/...)`, or
+  compiled into a branch on whatever bits were lying around. `require-condition`
+  (compiler/rsir-frontend.red) now checks the value's kind at the six sites:
+  `stack-if`, `stack-either`, `stack-while`, `stack-until` (both report "as
+  last expression", matching upstream) and `stack-conditions` for ALL/ANY.
+  Two details matter:
+  * `last-type` and `last-stopped?` are `none`, not 0, until something sets
+    them, so both parameters accept `none!`. Typing them `[integer!]` /
+    `[logic!]` crashed the compiler on the very first valid condition.
+  * ALL/ANY tolerate an element that produces *no value*: upstream types a
+    call to a function with no `return:` from its body, so
+    `all [... all1-fail]` with `all1-fail: func [][failed: yes]` is a logic!
+    element there. Here it is a value-less one, and float-test.reds and
+    float32-test.reds both rely on it (3258 assertions between them). The
+    `/void-ok?` refinement allows that; a value-less condition elsewhere is
+    still an error, which is what `if foo []` for a void `foo` needs.
+  Clears 22 of the 28 compiler-test failures that were left, 84 -> 96 -> 118
+  of 124. Red/System units 12680/12680, Red units 16893/16893, View headless
+  246/246, Red compiler tests 251/12 -- all unchanged. 145 self-compiles to
+  146 at the same 6349824 bytes, so the whole Red runtime and compiler still
+  compile under the stricter rule.
 - Fixed: the hybrid frontend never ported the `as` type-cast compatibility
   check that upstream's `cast` performs (system/compiler.r, mirrored in
   system/compiler-core.red). Without it an invalid cast such as
@@ -207,21 +233,25 @@
   append, make, convert, enbase, recycle and redbin-codec all died with
   0xC0000005 before the fix; they now report the same totals as `-r`.
 - Still open, first measured this session: the Red/System **compiler** test
-  suite (`run-red-system-compiler-tests.red`, never run before) reports 96
-  passed / 28 failed out of 124 assertions on 144. The remaining 28 are four
-  groups, all pre-existing and none of them wording quibbles:
-  * 22 want `*** Compilation Error: <IF|EITHER|UNTIL|WHILE|ALL|ANY> requires a
-    conditional expression` (plus `UNTIL requires a conditional expression as
-    last expression`). The frontend has no notion of a *condition* slot, so a
-    non-logic condition reaches codegen and dies at `INVALID_IR site 220
-    (emit-control-operation/stack-flat-...)`, or compiles clean when the
-    branch happens to be type-compatible. Fixing this means carrying a
-    condition expectation through `stack-value`, not patching the emitter.
+  suite (`run-red-system-compiler-tests.red`, never run before) reports 84/124
+  on 142, 96/124 on 144 and 118/124 on 145. The six left are four groups, all
+  pre-existing and none of them wording quibbles:
   * 2 want `argument type mismatch on calling: foo` (inference-test); one gets
     `undefined symbol: right` and the other dies in `emit-call-operation`.
   * 1 wants `type mismatch on setting path: p/a` (enum-redec-8), dies at
-    `INVALID_IR site 100 (emit-value-operation/compat#36)`.
+    `INVALID_IR site 100 (emit-value-operation/compat#36)`. Both are the
+    same shape as the cast bug: a check that lives upstream and was never
+    ported, so the bad program reaches codegen.
   * 2 are `output-test`'s `hello`, which compares a program's printed output.
+  * 1 is an **ordering** difference, not a missing check:
+    `foo: func [return: [integer!]][until [return true]]`. Upstream reports
+    `wrong return type in function: foo` because `stack-return` leaves the
+    *type of the returned value* behind, so the condition is a logic! and the
+    condition check passes. Here `stack-return` clears `last-type` to 0, so
+    the condition looks value-less and UNTIL's message wins. Making `return`
+    publish its value's type would fix it and is probably right, but it
+    changes what every caller sees after a RETURN, so it wants its own pass
+    with the full suites behind it.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
   (102->106->107, output 6259712 bytes; 106 and its own rebuild differ in 5
   bytes -- PE checksum, PE timestamp and the output file name). It carries the

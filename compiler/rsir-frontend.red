@@ -5063,6 +5063,36 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	;-- IF/EITHER/UNTIL/WHILE/ALL/ANY take a value of type logic! and nothing
+	;-- else; upstream rejects anything else in `check-conditional`
+	;-- (system/compiler.r). The frontend never checked, so a non-logic
+	;-- condition reached codegen and died at emit-control-operation, or
+	;-- compiled into a branch on whatever bits happened to be there.
+	require-condition: func [
+		name [word!]
+		ref [integer! none!]
+		stopped? [logic! none!]				;-- none until control flow is emitted
+		/void-ok?							;-- ALL/ANY tolerate an element that
+		/local kind							;-- produces no value at all
+	][
+		kind: either none? ref [none][ref-kind ref]
+		;-- Only the *type* decides; stoppedness does not. Upstream leaves the
+		;-- returned value's type behind, so `until [return true]` is a logic!
+		;-- condition there and the wrong-return-type diagnostic wins. Here
+		;-- stack-return clears last-type, so it reports this instead -- the one
+		;-- ordering difference left in the compiler tests. EXIT leaves nothing
+		;-- either way, which is what makes `until [exit]` an error.
+		unless any [
+			all [void-ok? not stopped? none? kind]
+			kind = 'logic
+		][
+			fail ERROR-KIND rejoin [
+				uppercase form name " requires a conditional expression"
+				either find [while until] name [" as last expression"][""]
+			]
+		]
+	]
+
 	stack-if: func [
 		position scope uses [block!]
 		instructions [binary!]
@@ -5072,6 +5102,7 @@ compiler-rsir-frontend: context [
 	][
 		body: stack-value next position scope uses instructions params locals
 			expression-value
+		require-condition 'if last-type last-stopped?
 		unless all [not tail? body block? body/1][
 			fail ERROR-UNSUPPORTED "IF is missing its body block"
 		]
@@ -5137,6 +5168,7 @@ compiler-rsir-frontend: context [
 	][
 		arms: stack-value next position scope uses instructions params locals
 			expression-value
+		require-condition 'either last-type last-stopped?
 		unless all [
 			(length? arms) >= 2 block? arms/1 block? arms/2
 		][fail ERROR-UNSUPPORTED "EITHER requires two body blocks"]
@@ -5433,12 +5465,11 @@ compiler-rsir-frontend: context [
 		while [not tail? cursor][
 			cursor: stack-value cursor scope uses instructions params locals
 				expression-value
-			if last-stopped? [
-				fail ERROR-REFERENCE rejoin [
-					either any? ["ANY"]["ALL"]
-					" requires a conditional expression"
-				]
-			]
+			;-- A call to a function that returns nothing is accepted here:
+			;-- upstream types such a call from its body, so
+			;-- `all [... flag: yes]` is a logic! element there and a value-less
+			;-- one here. `stack-conditions` already skips it for the branch.
+			require-condition/void-ok? either any? ['any]['all] last-type last-stopped?
 			if last-type <> 0 [
 				patch: emit-control instructions branch-op either any? [1][0]
 				append patches patch
@@ -5628,6 +5659,7 @@ compiler-rsir-frontend: context [
 		test-target: instruction-here instructions
 		open-loop 0 true
 		stack-block condition scope uses instructions params locals tail-value
+		require-condition 'while last-type last-stopped?
 		close-loop
 		exit-patch: emit-control instructions branch-op 0
 
@@ -5661,6 +5693,7 @@ compiler-rsir-frontend: context [
 		start: instruction-here instructions
 		loop-state: open-loop start false
 		stack-block body scope uses instructions params locals tail-value
+		require-condition 'until last-type last-stopped?
 		patch-controls instructions loop-state/2 start
 		patch: emit-control instructions branch-op 0
 		patch-control instructions patch start

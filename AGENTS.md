@@ -91,12 +91,15 @@
   `red-console.exe tools/self_hosting/run-red-compiler-tests.red
   regression-test-redc-5.red`, and revert with `git checkout --`.
   Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"`
-  gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
-  compile failures -- measured on 145 and re-measured unchanged on 148 and
-  150. It is
+  gives 9311 tests, 18025 assertions, 18024 passed, 1 failure, 0
+  compile failures -- 63 files, the 58 above plus the five named in
+  COVERAGE GAP CLOSED ON 152. It was 8820 tests / 16921 assertions / 16921
+  passed / 0 failures for the 58 on 145, re-measured unchanged on 148 and
+  150; the 1104 added assertions are the five new files and the single
+  failure is #5220. Release mode is
   *more* than dev mode's 16893 by 28 assertions and 8 tests, not less: a
-  handful of tests only run when the runtime is linked in. It costs ~35
-  minutes for 58 files, which is why nobody had run it. The earlier `-r` spot
+  handful of tests only run when the runtime is linked in. It costs ~40
+  minutes, which is why nobody had run it. The earlier `-r` spot
   check of the seven collector-heavy units on 142 agrees: series 1119/1119,
   append 327, make 3, convert 451, redbin-codec 1762, recycle 39,
   unicode 67/67.

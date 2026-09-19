@@ -1632,54 +1632,67 @@ system-format-ELF: context [
 		the object size is not yet stored in the symbol or exports table, we
 		have to compute it here.}
 		job [object!]
-		/local current-tail code-tail data-tail rodata-tail symbol-offset symbol-size ext-name
-	] [
-		unless find job/sections 'export [return make block! 0]
+	/local pairs meta symbol code-tail data-tail rodata-tail
+		symbol-offset symbol-size ext-name
+] [
+	unless find job/sections 'export [return make block! 0]
 
-		code-tail: length? job/sections/code/2
-		data-tail: length? job/sections/data/2
-		rodata-tail: length? any [attempt [job/sections/rodata/2] #{}]
-		collect [
-			foreach [meta symbol] reverse copy job/symbols [
-				catch [
-					case [
-						find [import import-var native-ref] meta/1 [
-							throw 'continue
-						]
-						'global = meta/1 [
-							symbol-offset: meta/2
-							symbol-size: data-tail - symbol-offset
-							data-tail: symbol-offset
-						]
-						'constant = meta/1 [
-							symbol-offset: meta/2
-							symbol-size: rodata-tail - symbol-offset
-							rodata-tail: symbol-offset
-						]
-						'native = meta/1 [
-							;; Code symbols have 1-based offsets, data symbols
-							;; have 0-based offsets in job/symbols ...
-							symbol-offset: meta/2 - 1
-							symbol-size: code-tail - symbol-offset
-							code-tail: symbol-offset
-						]
-						true [
-							make error! reform ["Unhandled symbol type:" meta/1]
-						]
-					]
-					if ext-name: select job/sections/export/3 symbol [
-						keep compose/deep [
-							(ext-name) [
-								type	(meta/1)
-								offset	(symbol-offset)
-								size	(symbol-size)
-							]
-						]
+	code-tail: length? job/sections/code/2
+	data-tail: length? job/sections/data/2
+	rodata-tail: length? any [attempt [job/sections/rodata/2] #{}]
+
+	;-- Each symbol owns everything from its own offset up to the next one of
+	;-- the same kind, so the sizes fall out of a walk from the highest offset
+	;-- down. That used to be `reverse copy job/symbols`, which no longer
+	;-- works: job/symbols is a map now, and its iteration order says nothing
+	;-- about where a symbol landed. Group the candidates, then sort. Imports
+	;-- are dropped first -- they have no offset of their own to sort by.
+	pairs: make block! 2 * length? job/symbols
+	foreach [symbol meta] job/symbols [
+		unless find [import import-var native-ref] meta/1 [
+			append/only pairs reduce [symbol meta]
+		]
+	]
+	sort/compare pairs func [a b][a/2/2 > b/2/2]
+
+	collect [
+		foreach pair pairs [
+			symbol: pair/1
+			meta: pair/2
+			case [
+				'global = meta/1 [
+					symbol-offset: meta/2
+					symbol-size: data-tail - symbol-offset
+					data-tail: symbol-offset
+				]
+				'constant = meta/1 [
+					symbol-offset: meta/2
+					symbol-size: rodata-tail - symbol-offset
+					rodata-tail: symbol-offset
+				]
+				'native = meta/1 [
+					;; Code symbols have 1-based offsets, data symbols
+					;; have 0-based offsets in job/symbols ...
+					symbol-offset: meta/2 - 1
+					symbol-size: code-tail - symbol-offset
+					code-tail: symbol-offset
+				]
+				true [
+					make error! reform ["Unhandled symbol type:" meta/1]
+				]
+			]
+			if ext-name: select job/sections/export/3 symbol [
+				keep compose/deep [
+					(ext-name) [
+						type	(meta/1)
+						offset	(symbol-offset)
+						size	(symbol-size)
 					]
 				]
 			]
 		]
 	]
+]
 
 	collect-natives: func [job [object!]] [
 		collect [

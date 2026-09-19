@@ -195,7 +195,13 @@ system-dialect: context [
 				job/static-link?
 				all [job/OS = 'Windows any [job/PIC? job/PIE?]]
 				all [job/OS = 'macOS not job/PIC?]
-				all [job/OS = 'Linux not all [job/PIC? job/PIE?]]
+				;-- Linux is position independent in every module; only an
+				;-- executable is also a PIE. A shared object is ET_DYN by
+				;-- job/type -- requiring PIE? here rejected every -SO
+				;-- target, and would have marked the library DF_1_PIE,
+				;-- which is a claim about executables.
+				all [job/OS = 'Linux not job/PIC?]
+				all [job/OS = 'Linux job/type = 'exe not job/PIE?]
 			][
 				compiler/throw-error "invalid hybrid target linking mode"
 			]

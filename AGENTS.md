@@ -20,12 +20,12 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler162.exe`
-  (160->162, output 6384640 bytes; 160->161 differs in 21 bytes and 160->162
-  in 22 -- the PE checksum, the PE timestamp, the two `movabs rax`
-  immediates that carry the compiler's build clock, the output file name and
-  the two embedded `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is back at a
-  fixed point with the import-kind work in it. `system/runtime/darwin.reds`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler164.exe`
+  (163->164, output 6388224 bytes; 164->165 differs in 16 bytes -- the PE
+  checksum, the PE timestamp, the two `movabs rax` immediates that carry the
+  compiler's build clock, the output file name and the two embedded
+  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is back at a fixed point with
+  the import-kind and shared-library work in it. `system/runtime/darwin.reds`
   is Darwin-only, so the Windows bootstrap is byte-identical across it apart
   from that clock). 157 is the first generation that
   cross-compiles the
@@ -223,6 +223,29 @@
   a supported configuration anywhere -- on Windows a dev-mode Red program
   takes an access violation as soon as the collector runs, which is why the
   runners all pass `-r`.
+- Fixed at 164: **Linux shared objects could not be built at all.** Two
+  independent blockers, both only reachable through `#export`, which is why
+  nothing in either suite ever saw them:
+  * `compiler-rsir-core.red` demanded `all [job/PIC? job/PIE?]` for *every*
+    Linux module. The registry gives `Linux-{X86-64,ARM64}-SO` `PIC?` but not
+    `PIE?`, so both `-SO` targets died with "invalid hybrid target linking
+    mode". Linux is now required to be PIC full stop, and an *executable*
+    additionally PIE. A shared object is `ET_DYN` by `job/type` -- `PIE?`
+    would only have stamped it `DF_1_PIE`, which is a claim about
+    executables.
+  * `ELF.red`'s `collect-exports` computed each exported symbol's size by
+    walking `reverse copy job/symbols` from the highest offset down. That was
+    written for a block; `job/symbols` is a map now, so it raised
+    `reverse does not allow map!`. It now groups the candidates (dropping
+    imports, which have no offset of their own), sorts them by offset
+    descending and walks that. Sorting rather than trusting iteration order
+    matters: a map says nothing about layout.
+  `system/tests/shared-lib.reds` now produces a working `.so` on both Linux
+  targets -- `readelf` reports `DYN`, and a C loader calling `dlopen` gets
+  `on-load executed`, `foo(41) = 42`, `i = 56` and `on-unload executed` on
+  AArch64 and x86-64 alike. `-t Darwin-ARM64-SO` and `-t Windows-X86-64-DLL`
+  were already fine; the linker appends the platform suffix, so the output
+  lands at `<name>.dylib` / `<name>.so` / `<name>.dll`, not at `-o <name>`.
   The cross-build is a fixed point as well: 157 and 158, each writing a
   6690688-byte Mach-O to an output name of the same length
   (`build/red-toolchain/darwin-arm64/red-toolchain-157|158`), differ in 144

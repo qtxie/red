@@ -42,9 +42,10 @@
   struct-x64-test finally links.
   All four suites are clean on 145: Red/System 12680/12680, Red units
   16893/16893, View headless 246/246. The Red compiler tests are 251 passed /
-  12 failed (below) and the Red/System compiler tests 118 passed / 6 failed,
-  up from 84/40 on 142 -- the twelve fixed first are the cast group and the
-  twenty-two after them the conditional group. Release
+  12 failed (below) and the Red/System compiler tests 120 passed / 4 failed,
+  up from 84/40 on 142 -- the twelve fixed first are the cast group, the
+  twenty-two after them the conditional group and the last two a wrong path in
+  output-test. Release
   mode has no full-suite number -- a `-r` build costs ~40s
   per file -- but the seven collector-heavy units were run in `-r` on 142 and
   are clean: series 1119/1119, append 327, make 3, convert 451, redbin-codec
@@ -234,15 +235,19 @@
   0xC0000005 before the fix; they now report the same totals as `-r`.
 - Still open, first measured this session: the Red/System **compiler** test
   suite (`run-red-system-compiler-tests.red`, never run before) reports 84/124
-  on 142, 96/124 on 144 and 118/124 on 145. The six left are four groups, all
-  pre-existing and none of them wording quibbles:
-  * 2 want `argument type mismatch on calling: foo` (inference-test); one gets
-    `undefined symbol: right` and the other dies in `emit-call-operation`.
+  on 142, 96/124 on 144 and 120/124 on 145. The four left:
+  * 2 want `argument type mismatch on calling: foo` (callback-test): passing a
+    function whose spec does not match the declared `[function! [...]]`
+    callback parameter.
   * 1 wants `type mismatch on setting path: p/a` (enum-redec-8), dies at
-    `INVALID_IR site 100 (emit-value-operation/compat#36)`. Both are the
-    same shape as the cast bug: a check that lives upstream and was never
-    ported, so the bad program reaches codegen.
-  * 2 are `output-test`'s `hello`, which compares a program's printed output.
+    `INVALID_IR site 100 (emit-value-operation/compat#36)`.
+    Both are the same shape as the cast bug -- a check that lives upstream
+    (`compare-func-specs`, `comp-set-path`) and was never ported -- but they
+    are not the same *size*: the cast and the condition checks are local
+    predicates at one emission point, while these two need argument and
+    assignment type compatibility, and the frontend has no compatibility
+    predicate at all. That is a feature with the whole runtime behind it, so
+    it wants its own pass rather than being bolted on here.
   * 1 is an **ordering** difference, not a missing check:
     `foo: func [return: [integer!]][until [return true]]`. Upstream reports
     `wrong return type in function: foo` because `stack-return` leaves the

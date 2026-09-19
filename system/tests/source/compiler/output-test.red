@@ -8,12 +8,12 @@ Red [
 ~~~start-file~~~ "output"
 
   --test-- "hello"
-  --compile-and-run/pgm %source/compiler/hello.reds 
+  --compile-and-run/pgm %system/tests/source/compiler/hello.reds
   --assert none <> find qt/output "hello"
   --assert none <> find qt/output "world"
   
   --test-- "empty"
-  --compile-and-run/pgm %source/compiler/empty.reds
+  --compile-and-run/pgm %system/tests/source/compiler/empty.reds
   --assert qt/output = ""
   
 ~~~end-file~~~

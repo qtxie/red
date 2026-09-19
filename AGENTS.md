@@ -20,10 +20,12 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler142.exe`
-  (140->142, output 6340608 bytes; 143 is the same size). 142 adds the
-  syntax-error fix below to 140, which carries the c-string literal fix on top
-  of 138 -- the first baseline whose own runtime is built from the fixed
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler144.exe`
+  (143->144, output 6347264 bytes; 144 self-compiles to 145 at the same size).
+  144 adds the `as`-cast check below to 143, which carries the
+  syntax-error fix, which sits on 140, which carries the c-string literal fix
+  on top of
+  138 -- the first baseline whose own runtime is built from the fixed
   `collector.reds` and `binary.reds`. 136 was built one minute before those
   fixes landed, so it still carries the old runtime. It also compiles the
   headless test View backend (`Config: [GUI-engine: 'test]`, e.g.
@@ -37,13 +39,15 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All four suites are clean on 142: Red/System 12680/12680, Red units
-  16893/16893, View headless 246/246, compiler tests 251 passed / 12 failed
-  (below). Release mode has no full-suite number -- a `-r` build costs ~40s
+  All four suites are clean on 144: Red/System 12680/12680, Red units
+  16893/16893, View headless 246/246. The Red compiler tests are 251 passed /
+  12 failed (below) and the Red/System compiler tests 96 passed / 28 failed,
+  up from 84/40 on 142 -- the twelve fixed ones are the cast group. Release
+  mode has no full-suite number -- a `-r` build costs ~40s
   per file -- but the seven collector-heavy units were run in `-r` on 142 and
   are clean: series 1119/1119, append 327, make 3, convert 451, redbin-codec
-  1762, recycle 39, unicode 67/67. Fixed point: 142 self-compiles to 143 at the same
-  6340608 bytes. Unpinned they differ in 1602 bytes, which is the clock -- the
+  1762, recycle 39, unicode 67/67. Fixed point: 144 self-compiles to 145 at the same
+  6347264 bytes. Unpinned they differ in 1602 bytes, which is the clock -- the
   build date is a variable-length string, so it shifts every absolute address
   by one and repaints a few thousand bytes. Pin `SOURCE_DATE_EPOCH` and two
   self-compilations of 142 differ in 4 bytes, so the chain genuinely
@@ -140,6 +144,27 @@
   and the rest of the list was dropped. `convert` now treats /part as a byte
   budget only when /part was actually given (runtime/datatypes/binary.reds).
   `repend dlls [uppercase name null]` in PE.red emits whole paths again.
+- Fixed: the hybrid frontend never ported the `as` type-cast compatibility
+  check that upstream's `cast` performs (system/compiler.r, mirrored in
+  system/compiler-core.red). Without it an invalid cast such as
+  `as byte! 1.0` sailed through the frontend and died in codegen, so a plain
+  type mistake surfaced as an internal error --
+  `codegen INVALID_IR site 159 (emit-arithmetic-operation/cast-compatible-kinds#3)`
+  -- and, when the value was a function address the frontend folded into a
+  static global initializer, as `site 310 (validate-module-initializers/...)`.
+  Both are pre-existing: 132 through 142 all answer the same way.
+  `cast-forbidden?` (compiler/rsir-frontend.red) now carries upstream's eight
+  rules and is called from the two places a cast is emitted: `stack-cast`,
+  before the CAST op, and the `value = 'as` arm of the static-literal folder,
+  where a rejected cast would otherwise leave a global with an initializer
+  codegen cannot validate. Messages match upstream exactly, e.g.
+  `*** Compilation Error: type casting from float! to byte! is not allowed`.
+  Note `fail` renders a message *block* with `form`, which joins the pieces
+  with a space, so the words carry no padding of their own -- "type casting
+  from " would come out with a double space and miss the substring the test
+  greps for. This clears all twelve cast assertions in the Red/System compiler
+  tests (84 -> 96 passed) and changes nothing else: Red/System units stay
+  12680/12680, Red units 16893/16893, View headless 246/246.
 - Fixed: any **syntax error** used to take the compiler down with the internal
   `*** Script Error: cannot compare none with 4`. `load-source`
   (compiler/frontend.red) called `compiler-lexer/process/file` and then tested
@@ -181,6 +206,22 @@
   links against whatever was built last and the crash looks unfixed. Series,
   append, make, convert, enbase, recycle and redbin-codec all died with
   0xC0000005 before the fix; they now report the same totals as `-r`.
+- Still open, first measured this session: the Red/System **compiler** test
+  suite (`run-red-system-compiler-tests.red`, never run before) reports 96
+  passed / 28 failed out of 124 assertions on 144. The remaining 28 are four
+  groups, all pre-existing and none of them wording quibbles:
+  * 22 want `*** Compilation Error: <IF|EITHER|UNTIL|WHILE|ALL|ANY> requires a
+    conditional expression` (plus `UNTIL requires a conditional expression as
+    last expression`). The frontend has no notion of a *condition* slot, so a
+    non-logic condition reaches codegen and dies at `INVALID_IR site 220
+    (emit-control-operation/stack-flat-...)`, or compiles clean when the
+    branch happens to be type-compatible. Fixing this means carrying a
+    condition expectation through `stack-value`, not patching the emitter.
+  * 2 want `argument type mismatch on calling: foo` (inference-test); one gets
+    `undefined symbol: right` and the other dies in `emit-call-operation`.
+  * 1 wants `type mismatch on setting path: p/a` (enum-redec-8), dies at
+    `INVALID_IR site 100 (emit-value-operation/compat#36)`.
+  * 2 are `output-test`'s `hello`, which compares a program's printed output.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
   (102->106->107, output 6259712 bytes; 106 and its own rebuild differ in 5
   bytes -- PE checksum, PE timestamp and the output file name). It carries the

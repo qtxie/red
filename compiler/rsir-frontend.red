@@ -3165,6 +3165,31 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	;-- The combinations `cast` rejects in system/compiler.r. Without them the
+	;-- cast reaches codegen, whose only possible answer is INVALID_IR, so a
+	;-- plain type mistake surfaced as an internal compiler error.
+	cast-forbidden?: func [
+		source target [integer!]
+		/local source-kind target-kind
+	][
+		source-kind: ref-kind source
+		target-kind: ref-kind target
+		if any [none? source-kind none? target-kind][return false]
+		any [
+			all [source-kind = 'function not find [function pointer i32] target-kind]
+			all [target-kind = 'f64 not find [f32 f64 i32] source-kind]
+			all [source-kind = 'f64 not find [f32 f64 i32] target-kind]
+			all [source-kind = 'f32 not find [f32 f64 i32] target-kind]
+			all [find [i64 u64] target-kind find [f32 f64] source-kind]
+			all [find [i64 u64] source-kind find [f32 f64] target-kind]
+			all [target-kind = 'byte find [c-string pointer struct union] source-kind]
+			all [
+				find [c-string pointer struct union] target-kind
+				find [byte logic] source-kind
+			]
+		]
+	]
+
 	hex-digit: func [value [char!] return: [integer!] /local code][
 		code: to integer! value
 		case [
@@ -4057,6 +4082,12 @@ compiler-rsir-frontend: context [
 		]
 		source-ref: last-type
 		source-flags: last-flags
+		if cast-forbidden? source-ref target-ref [
+			fail ERROR-KIND [
+				"type casting from" type-spelling source-ref
+				"to" type-spelling target-ref "is not allowed"
+			]
+		]
 		warn-redundant-cast source-ref source-flags target-ref target-flags
 		emit instructions cast-op target-ref target-flags either keep? [1][0]
 		last-type: target-ref
@@ -6655,6 +6686,15 @@ compiler-rsir-frontend: context [
 						any [get-word? value get-path? value]
 						info: static-literal-info value scope uses protected?
 					][
+						;-- A static initializer carries no instructions, so the
+						;-- cast has to be rejected here or codegen is left with a
+						;-- global whose initializer cannot be validated.
+						if cast-forbidden? info/1 type-info/2 [
+							fail ERROR-KIND [
+								"type casting from" type-spelling info/1
+								"to" type-spelling type-info/2 "is not allowed"
+							]
+						]
 						static?: true
 						static-ref: type-info/2
 						static-initializer: reduce [info/2 info/3 info/4 info/1]

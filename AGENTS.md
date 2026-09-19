@@ -20,12 +20,14 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler160.exe`
-  (159->160, output 6384640 bytes; 161 is the same size and the two differ
-  in 21 bytes -- the PE checksum, the PE timestamp, the two `movabs rax`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler162.exe`
+  (160->162, output 6384640 bytes; 160->161 differs in 21 bytes and 160->162
+  in 22 -- the PE checksum, the PE timestamp, the two `movabs rax`
   immediates that carry the compiler's build clock, the output file name and
   the two embedded `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is back at a
-  fixed point with the import-kind work in it). 157 is the first generation that
+  fixed point with the import-kind work in it. `system/runtime/darwin.reds`
+  is Darwin-only, so the Windows bootstrap is byte-identical across it apart
+  from that clock). 157 is the first generation that
   cross-compiles the
   whole macOS toolchain: `hybrid-compiler157.exe -r -t Darwin-ARM64 -o
   build/red-toolchain/darwin-arm64/red-toolchain
@@ -184,7 +186,43 @@
   now pins all three spellings on Linux and macOS: a read of an imported
   variable, the address of an imported function and a call. Darwin ARM64 goes
   from a crash to 17/17; Linux ARM64 and Linux x86-64 print the same
-  `environ/value` a C program does.
+  `environ/value` a C program does. Windows PE was checked by hand and reads
+  an imported variable correctly -- from `msvcrt.dll`, `_environ` prints a
+  real environment entry. Do **not** reach for `__argc`, `__argv` or
+  `_pgmptr` to test this: a Red/System image has no MSVC CRT startup, so
+  msvcrt leaves those three at zero and dereferencing `__argv` faults.
+  `_environ` survives because msvcrt fills it from the PEB when the DLL is
+  attached. Nothing in either suite imports a Windows data symbol;
+  `lib-win32-test.reds` only imports `GetComputerNameA`.
+  Red on Linux ARM64 at 160 (`logic-test` 95, `float-test` 1793, `series-test`
+  1119, `parse-test` 1518 assertions, 0 failures) agrees with the Mac run
+  assertion for assertion.
+- Fixed at 162: `system/runtime/darwin.reds` declared `NXArgcPtr` **twice** in
+  the `#switch type [dll [...]]` `program-vars!`, so every Darwin *dylib*
+  build -- `libRedRT` included -- died with "duplicate aggregate member". Darwin's
+  `<crt_externs.h>` `ProgramVars` puts `NXArgvPtr` between `NXArgcPtr` and
+  `environPtr`; that is what the second field is now called. Neither field is
+  ever read, so only the declaration changed. An exe was never affected, which
+  is why the toolchain looked fine: only dev mode compiles `libRedRT`.
+- **Editing a runtime file is not enough for the toolchain**: it embeds a
+  compressed copy in `build/generated/red-toolchain-resources.generated.red`,
+  which is checked in. Regenerate it or the fix is invisible --
+  `hybrid-compilerN.exe -r -t <host> -o build/tmp/gen-res.exe
+  tools/self_hosting/generate-toolchain-resources.red` then
+  `build/tmp/gen-res.exe <repo-root> build/generated/red-toolchain-resources
+  .generated.red`. Build the generator for the *host*, not the target:
+  `tools/self_hosting/build-red-toolchain.sh` compiles it for `$target`, which
+  cannot run when cross-compiling.
+- Still open, and only in dev mode: with the duplicate fixed, the macOS
+  toolchain gets past it and then stops at
+  `codegen INVALID_IR site 329 (compile-function/scratch/stack-locations#163)
+  ... op=7` while compiling `libRedRT` as a dylib -- a call argument the
+  classifier will not accept for the declared parameter. Release mode is
+  unaffected: `-r` compiles and runs a Red program on the Mac (`red-toolchain`
+  163 at `--self-check` 276 resources, output 1667272 bytes). Dev mode is not
+  a supported configuration anywhere -- on Windows a dev-mode Red program
+  takes an access violation as soon as the collector runs, which is why the
+  runners all pass `-r`.
   The cross-build is a fixed point as well: 157 and 158, each writing a
   6690688-byte Mach-O to an output name of the same length
   (`build/red-toolchain/darwin-arm64/red-toolchain-157|158`), differ in 144

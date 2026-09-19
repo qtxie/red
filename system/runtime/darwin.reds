@@ -176,10 +176,14 @@ protect-image-rodata: does [
 
 #switch type [
 	dll [
+		;-- Mirrors Darwin's <crt_externs.h> ProgramVars: a second NXArgcPtr
+		;-- here collided with the first and made every dll build fail with
+		;-- "duplicate aggregate member". The field between argc and environ
+		;-- is NXArgvPtr.
 		program-vars!: alias struct! [
 			mh				[byte-ptr!]
 			NXArgcPtr		[int-ptr!]
-			NXArgcPtr		[struct! [p [struct! [s [c-string!]]]]]
+			NXArgvPtr		[struct! [p [struct! [s [c-string!]]]]]
 			environPtr		[struct! [p [struct! [s [c-string!]]]]]
 			__prognamePtr	[struct! [s [c-string!]]]
 		]

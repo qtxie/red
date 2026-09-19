@@ -36,8 +36,12 @@
   16893 assertions, 16893 passed, 0 compile failures -- and 40/40 Red/System
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
-  struct-x64-test finally links. All three suites are clean: no failed
-  assertions anywhere. Fixed point: 142 self-compiles to 143 at the same
+  struct-x64-test finally links.   All four suites are clean on 142: Red/System 12680/12680, Red units
+  16893/16893, View headless 246/246, compiler tests 251 passed / 12 failed
+  (below). Release mode has no full-suite number -- a `-r` build costs ~40s
+  per file -- but the seven collector-heavy units were run in `-r` on 142 and
+  are clean: series 1119/1119, append 327, make 3, convert 451, redbin-codec
+  1762, recycle 39, unicode 67/67. Fixed point: 142 self-compiles to 143 at the same
   6340608 bytes. Unpinned they differ in 1602 bytes, which is the clock -- the
   build date is a variable-length string, so it shifts every absolute address
   by one and repaints a few thousand bytes. Pin `SOURCE_DATE_EPOCH` and two

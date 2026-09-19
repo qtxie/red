@@ -474,6 +474,12 @@
   and the rest of the list was dropped. `convert` now treats /part as a byte
   budget only when /part was actually given (runtime/datatypes/binary.reds).
   `repend dlls [uppercase name null]` in PE.red emits whole paths again.
+  Verified at 169: `system/tests/source/units/auto-tests/dylib-auto-test.reds`
+  compiles and runs -- 8 tests / 7 assertions / 0 failures -- and `dumpbin
+  /imports` shows both
+  `E:\TEMP3\RED\BUILD\SELF-HOSTING\SYSTEM-SUITE\LIBTEST-DLL1.DLL` and
+  `...-DLL2.DLL` whole. The old "still open" form of this bullet (which
+  blamed RSIR_IMPORT_SIZE) was wrong about the cause and is gone.
 - Fixed: IF/EITHER/UNTIL/WHILE/ALL/ANY accepted **any** expression as their
   condition. Upstream requires a logic! and says so in `check-conditional`
   (system/compiler.r), but the frontend never checked, so `if 123 []` reached

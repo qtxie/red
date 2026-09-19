@@ -69,6 +69,14 @@ fail-command: func [message][
 	quit/return 1
 ]
 
+;-- A source with neither a Red nor a Red/System header is not a program the
+;-- compiler recognizes; upstream rejects it as a syntax error, not as a bad
+;-- command line, and the regression suite greps for that wording.
+fail-syntax: func [message][
+	print ["*** Syntax Error:" message]
+	quit/return 1
+]
+
 configure-backend-mode: func [job [object!]][
 	#either config/show = 'X86-64-Hybrid-only [
 		compiler-system-job/job-set job 'backend-mode 'rsir
@@ -238,7 +246,7 @@ compile-source: func [
 
 	marker: read-source-marker source
 	unless any [marker = 'Red marker = red-system-marker][
-		fail-command "source must start with a Red or Red/System header"
+		fail-syntax "Invalid Red program"
 	]
 	loaded-red: compiler-options/option-get options 'loaded-red
 	if all [loaded-red compiler-options/option-get options 'red-only?][

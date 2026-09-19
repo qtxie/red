@@ -218,6 +218,17 @@ red: context [
 		quit-on-error
 	]
 
+	;-- A malformed token is reported in the compiler's own words -- `Invalid
+	;-- char! value` -- not in the runtime catalog's. See compiler/lexer.red.
+	throw-syntax-error: func [message [string!] err [error!]][
+		print [
+			"*** Syntax Error:" message
+			"^/*** in file:" any [attempt [to-local-file script-name] "??"]
+			"^/*** at:" mold err/arg3
+		]
+		quit-on-error
+	]
+
 	fail: func [err [string! block!] /near code [block!]][
 		print ["*** Compiler Internal Error:" reform err]
 		if pc [
@@ -5874,7 +5885,7 @@ red: context [
 		]
 	]
 	
-	load-source: func [file [file! block!] /hidden /header /local src][
+	load-source: func [file [file! block!] /hidden /header /local src text][
 		either file? file [
 			unless hidden [script-name: file]
 			; Match Stage0's READ-CACHE input contract: text READ normalizes CRLF
@@ -5883,7 +5894,11 @@ red: context [
 			;-- A syntax error leaves the lexer with no values at all, so report
 			;-- it here rather than indexing into nothing further down.
 			if compiler-lexer/last-error [
-				throw-error ["invalid source:" form compiler-lexer/last-error]
+				either text: compiler-lexer/error-text compiler-lexer/last-error [
+					throw-syntax-error text compiler-lexer/last-error
+				][
+					throw-error ["invalid source:" form compiler-lexer/last-error]
+				]
 			]
 			if all [
 				(length? src) >= 4

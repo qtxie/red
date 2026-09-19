@@ -20,9 +20,11 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler145.exe`
-  (144->145, output 6349824 bytes; 145 self-compiles to 146 at the same size).
-  145 adds the conditional-expression check below to 144, which adds the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler146.exe`
+  (145->146, output 6353408 bytes; 146 self-compiles to 147 at the same size
+  with `SOURCE_DATE_EPOCH` pinned).
+  146 adds the compiler-owned syntax-error wording below to 145, which adds
+  the conditional-expression check to 144, which adds the
   `as`-cast check to 143, which carries the
   syntax-error fix, which sits on 140, which carries the c-string literal fix
   on top of
@@ -40,12 +42,13 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All four suites are clean on 145: Red/System 12680/12680, Red units
-  16893/16893, View headless 246/246. The Red compiler tests are 251 passed /
-  12 failed (below) and the Red/System compiler tests 120 passed / 4 failed,
-  up from 84/40 on 142 -- the twelve fixed first are the cast group, the
-  twenty-two after them the conditional group and the last two a wrong path in
-  output-test.
+  All four suites are clean on 146: Red/System 12680/12680, Red units
+  16893/16893, View headless 246/246. The Red compiler tests are 258 passed /
+  5 failed (below), up from 251/12 on 145 -- the seven gained are the
+  syntax-error wording group; before that the twelve were the cast group, the
+  twenty-two before them the conditional group and the last two a wrong path
+  in output-test. The Red/System compiler tests are 120 passed / 4 failed,
+  up from 84/40 on 142.
   Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"` on
   145 gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
   compile failures. It is *more* than dev mode's 16893 by 28 assertions and 8
@@ -54,23 +57,40 @@
   earlier `-r` spot check of the seven collector-heavy units on 142 agrees:
   series 1119/1119, append 327, make 3, convert 451, redbin-codec 1762,
   recycle 39, unicode 67/67.
-  Fixed point: 145 self-compiles to 146 at the same
-  6349824 bytes. Unpinned they differ in 1602 bytes, which is the clock -- the
-  build date is a variable-length string, so it shifts every absolute address
-  by one and repaints a few thousand bytes. Pin `SOURCE_DATE_EPOCH` and two
+  Fixed point: with `SOURCE_DATE_EPOCH` pinned, 146 self-compiles to 147 at
+  the same 6353408 bytes. Unpinned they differ in ~1600 bytes, which is the
+  clock -- the build date is a variable-length string, so it shifts every
+  absolute address by one and repaints a few thousand bytes. Pin it and two
   self-compilations of 142 differ in 4 bytes, so the chain genuinely
   converges. (140 vs 141 happened to differ by only 15 because that run's
   clock string kept the same length.)
-  Four of the compiler-test failures are a family and none of them can pass:
-  #2671, #1774, #3670 and ce-1 issue #608 all grep the compile output for
-  `*** Syntax Error: <upstream wording>` -- "Invalid char! value", "Invalid
-  path! value". Every syntax error here comes from one shared catalog entry,
-  `syntax/invalid: [:arg1 "invalid" :arg2 "at" :arg3]` in
-  environment/system.red, and :arg1 is a `(line N)` prefix, so the output is
-  `(line 2) invalid path at ...` and never `Invalid path! value`. Matching
-  upstream means dropping the line number from every syntax error, which
-  load-test then notices: it pins the sibling entry
-  `bad-char: [:arg1 "invalid character at" :arg2]`.
+- Fixed: seven compiler-test assertions wanted the **compiler's** syntax-error
+  wording and were getting the runtime's. #2671 (`#"^(0000001)"`), #1774
+  (`system/options/`), #3670 (a source with no header) and ce-1 issue #608
+  grep the compile output for `*** Syntax Error: Invalid char! value`,
+  `Invalid string! value`, `Invalid path! value` and `Invalid Red program`.
+  That wording is the compiler's own: upstream's compiler lexer says
+  `reform ["Invalid" mold type "value"]` (`encapper/lexer.r:741`), while
+  `transcode` -- the scanner this fork feeds source through -- reports the
+  shared catalog entry `syntax/invalid` as `(line 1) invalid char at ...`.
+  The catalog is shared with `load` and with the interpreter, so it is the
+  wrong layer to change; the compiler now speaks for itself:
+  `compiler/lexer.red`'s `error-text` turns a `syntax/invalid` into
+  `Invalid <type>! value`, `compiler/frontend.red` prints it as
+  `*** Syntax Error:` followed by the file and the offending text, and
+  `compiler/bootstrap-driver.red` rejects a headerless source with
+  `fail-syntax "Invalid Red program"` the way `red.r:755` does. Red compiler
+  tests went from 251 passed / 12 failed on 145 to 258 passed / 5 failed on
+  146. What is left there: #274, #377 and #1090 (all `#system-global`, below),
+  #4190 (`face!` needs the View backend) and the #4526 abort below.
+- Still open in that suite: `regression-test-redc-5.red` stops at #4526. The
+  test is `do bind [probe 1 ** 2] context [**: make op! func [x y][x + y]]`
+  and it prints `1` and then fails with `** has no value`, so `qt/output` is
+  not loadable and the bare `--assert 3 = load qt/output` on the next line
+  raises -- which aborts the rest of the file. Everything after #4526 is
+  therefore unmeasured, not failing. Two things are wrong: the compiler drops
+  the binding `do` was given and treats `1 ** 2` as two expressions, and the
+  harness has no way to survive an assertion whose expression raises.
   `system/tests/source/units/libs/structlib.dll` is a 32-bit image, so
   struct-x64-test.exe used to die with STATUS_INVALID_IMAGE_FORMAT before it
   ran; the runner now copies `libs/structlib-x64.dll` for X86-64 targets and
@@ -204,11 +224,10 @@
   and returns none, so `length?` handed `>=` a none. An unterminated string
   broke the same way. It now reports the lexer's error and stops:
   `*** Compilation Error: invalid source: *** Syntax Error: (line 1) invalid
-  char at #"^(0000001)"`. Note this does *not* make `regression-test-redc-5`'s
-  #2671 pass and cannot: that test wants the upstream wording `*** Syntax
-  Error: Invalid char! value`, while `load-test` (which passes) pins the
-  current `*** Syntax Error: (line 1) invalid character at ...` wording. The
-  two tests disagree, so #2671 stays red on purpose.
+  char at #"^(0000001)"`. A `syntax/invalid` now gets the compiler's own
+  wording instead -- `*** Syntax Error: Invalid char! value`, plus the file
+  and the offending text -- because that is what upstream's compiler lexer
+  always said; everything else still comes out in this form.
 - Fixed: the 44 `unicode-test` failures were **not** in `load-utf8` -- that
   decoder was already correct. They were in how Red/System c-string literals
   are emitted: the lexer decodes `^(XX)` to the codepoint U+00XX and

@@ -203,6 +203,21 @@ compiler-lexer: context [
 		]
 	]
 
+	;-- TRANSCODE reports a syntax error through the runtime's shared catalog
+	;-- entry `syntax/invalid`, which reads `(line 1) invalid char at ...`.
+	;-- The compiler has always named the offending token type instead --
+	;-- `Invalid char! value` -- because that is what its own lexer said, and
+	;-- the regression suite pins that spelling. The catalog belongs to LOAD
+	;-- and to the interpreter, so the compiler translates here rather than
+	;-- bend a shared entry to fit. Any other error is the caller's to report.
+	error-text: func [err [error!]][
+		all [
+			err/type = 'syntax
+			err/id = 'invalid
+			rejoin ["Invalid " mold err/arg2 " value"]
+		]
+	]
+
 	tokenize: func [
 		input [binary! string!]
 		/file file-name [file! string! none!]

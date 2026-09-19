@@ -3180,6 +3180,69 @@ compiler-rsir-frontend: context [
 		not none? find [i8 byte u8 i16 u16 i32 u32 i64 u64] kind
 	]
 
+	integer-width: func [kind [word! none!] return: [integer!]][
+		switch/default kind [
+			i8 [8] byte [8] u8 [8]
+			i16 [16] u16 [16]
+			i32 [32] u32 [32]
+			i64 [64] u64 [64]
+		][0]
+	]
+
+	;-- `byte!` is Red/System's unsigned 8-bit type, so it sits with `u8`
+	;-- rather than with `i8`.
+	signed-integer?: func [kind [word! none!] return: [logic!]][
+		not none? find [i8 i16 i32 i64] kind
+	]
+
+	;-- A narrower integer may stand in for a wider one, and an unsigned one
+	;-- may widen into a signed one. A signed one never narrows into an
+	;-- unsigned one and equal widths never convert. This is upstream's
+	;-- `lossless-integer-cast?` (system/compiler.r); its historical
+	;-- `byte! -> integer!` rule falls out of it, `byte!` being unsigned
+	;-- 8-bit and `integer!` signed 32.
+	lossless-integer-cast?: func [
+		from [integer!] to [integer!]
+		return: [logic!]
+		/local from-kind to-kind
+	][
+		from-kind: ref-kind from
+		to-kind: ref-kind to
+		unless all [integer-kind? from-kind integer-kind? to-kind][return false]
+		all [
+			(integer-width from-kind) < (integer-width to-kind)
+			any [not signed-integer? from-kind signed-integer? to-kind]
+		]
+	]
+
+	;-- What an assignment, a return and an argument all accept upstream:
+	;-- `same-type?`, that widening rule, or a `null` standing in for
+	;-- anything pointer-shaped (system/compiler.r morphs null to the
+	;-- expected type the same way).
+	compatible-types?: func [
+		target [integer!] source [integer!]
+		return: [logic!]
+		/local source-kind target-kind
+	][
+		source-kind: ref-kind source
+		target-kind: ref-kind target
+		any [
+			(canonical-ref target) = (canonical-ref source)
+			lossless-integer-cast? source target
+			;-- `null` is Red/System's spelling of a null pointer and stands
+			;-- in for anything that is not a number or a logic. `series!`
+			;-- and its kin are struct aliases whose values are pointers, so
+			;-- `return null` in a `series!` function is ordinary
+			;-- (runtime/allocator.reds). Upstream morphs null to the
+			;-- expected type the same way.
+			all [
+				source-kind = 'null
+				target-kind
+				not find [i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 logic] target-kind
+			]
+		]
+	]
+
 	;-- True when the expression starting at position is a bare literal value
 	;-- (its trailing token is not a binary operator), so the caller may swap
 	;-- the emitted literal for an equivalent one of another type.
@@ -5558,6 +5621,14 @@ compiler-rsir-frontend: context [
 		unless last-type <> 0 [fail ERROR-REFERENCE rejoin [
 			"return value is missing in function: " source-name active-function
 		]]
+		;-- Checked here rather than at the call site so a wrong type is
+		;-- reported against the function that returns it. Left unchecked the
+		;-- value reaches codegen, which can only answer INVALID_IR.
+		unless compatible-types? function-return last-type [
+			fail ERROR-KIND rejoin [
+				"wrong return type in function: " source-name active-function
+			]
+		]
 		emit instructions return-op function-return 0 0
 		last-type: 0
 		last-flags: 0

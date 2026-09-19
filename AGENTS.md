@@ -20,11 +20,11 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler148.exe`
-  (147->148, output 6359552 bytes; 148 self-compiles to 149 at the same size
-  with `SOURCE_DATE_EPOCH` pinned -- 147 is the same size, the two changes
-  happen to land in the same PE granularity).
-  148 adds the dev-mode `#system-global` fix below to 147, which adds the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler149.exe`
+  (148->149, output 6366720 bytes; 149 self-compiles to 150 at the same size
+  with `SOURCE_DATE_EPOCH` pinned).
+  149 adds the return-type check below to 148, which adds the dev-mode
+  `#system-global` fix to 147, which adds the
   callback spec check to 146, which adds the
   compiler-owned syntax-error wording to 145, which adds
   the conditional-expression check to 144, which adds the
@@ -45,14 +45,14 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All four suites are clean on 148: Red/System 12680/12680, Red units
+  All four suites are clean on 149: Red/System 12680/12680, Red units
   16893/16893, View headless 246/246. The Red compiler tests are 261 passed /
   2 failed (below), up from 251/12 on 145 -- three are the `#system-global`
   group, seven the syntax-error wording group; before those the twelve were
   the cast group, the twenty-two before them the conditional group and the
   last two a wrong path in output-test. The Red/System compiler tests are
-  122 passed / 2 failed, up from 84/40 on 142 -- the last two gained are the
-  callback spec check.
+  123 passed / 1 failed, up from 84/40 on 142 -- the last three gained are
+  the callback spec check and the return-type check.
   Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"`
   gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
   compile failures -- measured on 145 and re-measured unchanged on 148. It is
@@ -62,8 +62,8 @@
   check of the seven collector-heavy units on 142 agrees: series 1119/1119,
   append 327, make 3, convert 451, redbin-codec 1762, recycle 39,
   unicode 67/67.
-  Fixed point: with `SOURCE_DATE_EPOCH` pinned, 148 self-compiles to 149 at
-  the same 6359552 bytes. Unpinned they differ in ~1600 bytes, which is the
+  Fixed point: with `SOURCE_DATE_EPOCH` pinned, 149 self-compiles to 150 at
+  the same 6366720 bytes. Unpinned they differ in ~1600 bytes, which is the
   clock -- the build date is a variable-length string, so it shifts every
   absolute address by one and repaints a few thousand bytes. Pin it and two
   self-compilations of 142 differ in 4 bytes, so the chain genuinely
@@ -293,27 +293,32 @@
   compiler tests 120/124 -> 122/124, Red/System units still 12680/12680.
 - Still open, first measured this session: the Red/System **compiler** test
   suite (`run-red-system-compiler-tests.red`, never run before) reports 84/124
-  on 142, 96/124 on 144, 120/124 on 145 and 122/124 on 147. The two left:
-  * 1 wants `type mismatch on setting path: p/a` (enum-redec-8), dies at
+  on 142, 96/124 on 144, 120/124 on 145, 122/124 on 147 and 123/124 on 149.
+  The one left:
+  * `enum-redec-8` wants `type mismatch on setting path: p/a` and dies at
     `INVALID_IR site 100 (emit-value-operation/compat#36)`. Its check lives
     upstream (`comp-set-path`) and was never ported. Note it is not the same
-    *size* as the cast and condition checks: those are local predicates at one
-    emission point, while this one needs assignment type compatibility, and
-    the frontend still has no general compatibility predicate. That wants its
-    own pass rather than being bolted on here.
-  * 1 is an **ordering** difference on top of a missing check:
-    `foo: func [return: [integer!]][until [return true]]`. Upstream reports
-    `wrong return type in function: foo` because `stack-return` leaves the
-    *type of the returned value* behind, so the condition is a logic! and the
-    condition check passes. Here `stack-return` clears `last-type` to 0, so
-    the condition looks value-less and UNTIL's message wins.
-    **Do not just flip the ordering**: the return-type check it would fall
-    through to does not exist either. `func [return: [integer!]][return true]`
-    -- no UNTIL involved -- reports `native codegen rejected invalid RSIR`
-    today, so publishing the type would turn a diagnostic into a crash. The
-    two have to land together: a return-type check in `stack-return` with the
-    same compatibility predicate `comp-set-path` needs, and only then the
-    ordering. Both are that predicate, which is one pass, not two.
+    *size* as the cast and condition checks: those are local predicates at
+    one emission point, while this one needs assignment type compatibility.
+    It now has most of what it needs below -- `compatible-types?` -- so it is
+    a small step rather than a feature.
+- Fixed: **`return` never checked its value against the declared return
+  type.** `func [return: [integer!]][return true]` reported `*** Compilation
+  Error: native codegen rejected invalid RSIR`; it now reports upstream's
+  `wrong return type in function: foo`. `compiler/rsir-frontend.red` gained
+  `integer-width`, `signed-integer?`, `lossless-integer-cast?` and
+  `compatible-types?` -- the port of upstream's `same-type?` plus
+  `lossless-integer-cast?` -- and `stack-return` applies it, which is where
+  it belongs: the error is reported against the function that returns it,
+  before the enclosing expression sees anything. That is return-test's
+  "return as last statement in until block"; `until [return 123]` still
+  reports `UNTIL requires a conditional expression`, so `stack-return`
+  clearing `last-type` is right and was not the bug.
+  Note `null` stands in for anything that is not a number or a logic:
+  `runtime/allocator.reds` has `return null` in a `series!` function, and
+  `series!` is a struct alias whose values are pointers. The first cut
+  allowed null only for `pointer!`/`c-string!`/`function!` and broke the
+  View backend on that line -- the suites are what found it.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
   (102->106->107, output 6259712 bytes; 106 and its own rebuild differ in 5
   bytes -- PE checksum, PE timestamp and the output file name). It carries the

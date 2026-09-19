@@ -28,9 +28,18 @@ bootstrap-version: "0.6.6-selfhost.2"
 red-system-marker: first [Red/System]
 unless value? 'compiler-command [compiler-command: "red-bootstrap"]
 
+;-- The host a toolchain reports, and the target it picks when `-t` is
+;-- absent, is the platform it was built for: `config/OS` and `config/target`
+;-- are the compile-time view of that build's own target. A toolchain
+;-- cross-built for macOS therefore defaults to Darwin-ARM64 instead of
+;-- handing a Mac user a Windows PE.
 #either config/show = 'X86-64-Hybrid-only [
 	compiler-toolchain/configure
-		"Windows-X86-64"
+		#either config/OS = 'macOS ["Darwin-ARM64"][
+			#either config/OS = 'Linux [
+				#either config/target = 'ARM64 ["Linux-ARM64"]["Linux-X86-64"]
+			]["Windows-X86-64"]
+		]
 		[
 			"Windows-X86-64" "Windows-X86-64-DLL"
 			"Darwin-ARM64" "Darwin-ARM64-SO"
@@ -91,6 +100,10 @@ libRedRT-target: func [job [object!]][
 			(compiler-system-job/job-get job 'OS) = 'Windows
 			(compiler-system-job/job-get job 'target) = 'X86-64
 		]['Windows-X86-64-DLL]
+		all [
+			(compiler-system-job/job-get job 'OS) = 'macOS
+			(compiler-system-job/job-get job 'target) = 'ARM64
+		]['Darwin-ARM64-SO]
 		all [
 			(compiler-system-job/job-get job 'OS) = 'Linux
 			(compiler-system-job/job-get job 'target) = 'X86-64

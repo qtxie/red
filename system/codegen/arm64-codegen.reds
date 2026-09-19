@@ -2907,6 +2907,17 @@ arm64-codegen: context [
 		while [id < fn/instruction-count][
 			instruction: as rsir-instruction! (view/instructions
 				+ ((first-instruction + id) * RSIR_INSTRUCTION_SIZE))
+			;-- A stack slot deeper than the temp-register pool has no register
+			;-- of its own: it lives in the region spill window. Reserve it
+			;-- wherever the expression stack reaches that depth, because any
+			;-- operation that runs out of temp registers computes into the
+			;-- scratch registers and parks its result in that slot -- codegen
+			;-- cannot invent the slot by then. Stated once here it covers
+			;-- every operation, not just the ones that happen to be followed
+			;-- by a call or a native.
+			if all [depth > TEMP_REGISTER_COUNT depth > region-spill][
+				region-spill: depth
+			]
 			if instruction/op = OP_ADDRESS [
 				case [
 					instruction/a = LOCAL_ADDRESS [

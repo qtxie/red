@@ -63,6 +63,40 @@ tools/self_hosting/build-red-toolchain.sh \
   build/red-toolchain/red-toolchain
 ```
 
+### Darwin ARM64 hybrid cross-build
+
+`red-toolchain-darwin-hybrid.red` is the same closure as the Windows hybrid
+toolchain, built for the Mac by cross-compiling from the Windows host:
+
+```sh
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) \
+  build/self-hosting/merge-red64/hybrid-compilerNNN.exe \
+  -r -t Darwin-ARM64 \
+  -o build/red-toolchain/darwin-arm64/red-toolchain \
+  red-toolchain-darwin-hybrid.red
+```
+
+The hybrid core is a cross-compiler, so `config/OS` is 'macOS in that build:
+`bootstrap-driver.red` then reports Darwin-ARM64 as the host and defaults to
+it without `-t`, `compiler-hybrid-common.red` imports the `chmod` its
+executables need, and `libRedRT-target` picks `Darwin-ARM64-SO` so
+development builds produce a `libRedRT.dylib`.
+
+**Status: not yet buildable.** The ARM64 backend compiles Red and Red/System
+applications correctly -- 40/40 Red/System units and the logic, integer and
+function Red units all cross-compile and pass on an Apple Silicon Mac -- but
+the toolchain's own IR is 19 MB and two backend gaps stop it:
+
+* `site 293 compile-function/view#127`, `op=6` (OP_MEMBER): unsupported.
+* `site 324 compile-function/scratch/stack-kinds#158`, `op=7` (OP_CALL): an
+  argument slot holds a PLACE. The frontend leaves `:x` as a place and only
+  `OP_REFERENCE`/`OP_LOAD` resolve it; x64 has no place concept, so only the
+  ARM64 backend notices. Seen at `depth=8`, one past the 7 temp registers,
+  where `OP_ADDRESS` parks a materialized address in the region spill slot.
+
+Both need the ARM64 backend, not the toolchain entry. Until they are closed
+the macOS binary has to come from a native macOS bootstrap as above.
+
 ## Introspection
 
 Both tools expose the same standalone metadata interface:

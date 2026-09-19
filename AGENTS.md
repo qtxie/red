@@ -53,14 +53,15 @@
   last two a wrong path in output-test. The Red/System compiler tests are
   122 passed / 2 failed, up from 84/40 on 142 -- the last two gained are the
   callback spec check.
-  Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"` on
-  145 gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
-  compile failures. It is *more* than dev mode's 16893 by 28 assertions and 8
-  tests, not less: a handful of tests only run when the runtime is linked in.
-  It costs ~35 minutes for 58 files, which is why nobody had run it. The
-  earlier `-r` spot check of the seven collector-heavy units on 142 agrees:
-  series 1119/1119, append 327, make 3, convert 451, redbin-codec 1762,
-  recycle 39, unicode 67/67.
+  Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"`
+  gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
+  compile failures -- measured on 145 and re-measured unchanged on 148. It is
+  *more* than dev mode's 16893 by 28 assertions and 8 tests, not less: a
+  handful of tests only run when the runtime is linked in. It costs ~35
+  minutes for 58 files, which is why nobody had run it. The earlier `-r` spot
+  check of the seven collector-heavy units on 142 agrees: series 1119/1119,
+  append 327, make 3, convert 451, redbin-codec 1762, recycle 39,
+  unicode 67/67.
   Fixed point: with `SOURCE_DATE_EPOCH` pinned, 148 self-compiles to 149 at
   the same 6359552 bytes. Unpinned they differ in ~1600 bytes, which is the
   clock -- the build date is a variable-length string, so it shifts every
@@ -300,15 +301,19 @@
     emission point, while this one needs assignment type compatibility, and
     the frontend still has no general compatibility predicate. That wants its
     own pass rather than being bolted on here.
-  * 1 is an **ordering** difference, not a missing check:
+  * 1 is an **ordering** difference on top of a missing check:
     `foo: func [return: [integer!]][until [return true]]`. Upstream reports
     `wrong return type in function: foo` because `stack-return` leaves the
     *type of the returned value* behind, so the condition is a logic! and the
     condition check passes. Here `stack-return` clears `last-type` to 0, so
-    the condition looks value-less and UNTIL's message wins. Making `return`
-    publish its value's type would fix it and is probably right, but it
-    changes what every caller sees after a RETURN, so it wants its own pass
-    with the full suites behind it.
+    the condition looks value-less and UNTIL's message wins.
+    **Do not just flip the ordering**: the return-type check it would fall
+    through to does not exist either. `func [return: [integer!]][return true]`
+    -- no UNTIL involved -- reports `native codegen rejected invalid RSIR`
+    today, so publishing the type would turn a diagnostic into a crash. The
+    two have to land together: a return-type check in `stack-return` with the
+    same compatibility predicate `comp-set-path` needs, and only then the
+    ordering. Both are that predicate, which is one pass, not two.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler107.exe`
   (102->106->107, output 6259712 bytes; 106 and its own rebuild differ in 5
   bytes -- PE checksum, PE timestamp and the output file name). It carries the

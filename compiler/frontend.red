@@ -5880,6 +5880,11 @@ red: context [
 			; Match Stage0's READ-CACHE input contract: text READ normalizes CRLF
 			; before the lexer materializes multiline string values.
 			src: compiler-lexer/process/file read-source-text file file
+			;-- A syntax error leaves the lexer with no values at all, so report
+			;-- it here rather than indexing into nothing further down.
+			if compiler-lexer/last-error [
+				throw-error ["invalid source:" form compiler-lexer/last-error]
+			]
 			if all [
 				(length? src) >= 4
 				src/1 = 'REBOL

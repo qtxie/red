@@ -20,12 +20,12 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler140.exe`
-  (138->140, output 6340096 bytes; 141 is the same size). 140 carries the
-  c-string literal fix below on top of 138, which was the first baseline whose
-  own runtime is built from the fixed `collector.reds` and `binary.reds`: 136
-  was built one minute before those fixes landed, so it still carries the old
-  runtime. It also compiles the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler142.exe`
+  (140->142, output 6340608 bytes; 143 is the same size). 142 adds the
+  syntax-error fix below to 140, which carries the c-string literal fix on top
+  of 138 -- the first baseline whose own runtime is built from the fixed
+  `collector.reds` and `binary.reds`. 136 was built one minute before those
+  fixes landed, so it still carries the old runtime. It also compiles the
   headless test View backend (`Config: [GUI-engine: 'test]`, e.g.
   tests/view-headless-interpreter.red, 7.3M IR instructions, 2490880 bytes) and
   the 16 unit files under tests/source/view/ run clean through it: 16/16 with
@@ -37,9 +37,13 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links. All three suites are clean: no failed
-  assertions anywhere. Fixed point: 140 and 141 emit byte-identical output
-  apart from 15 bytes -- PE timestamp, checksum, the output file name and the
-  two `movabs rax` immediates that carry the compiler's build clock.
+  assertions anywhere. Fixed point: 142 self-compiles to 143 at the same
+  6340608 bytes. Unpinned they differ in 1602 bytes, which is the clock -- the
+  build date is a variable-length string, so it shifts every absolute address
+  by one and repaints a few thousand bytes. Pin `SOURCE_DATE_EPOCH` and two
+  self-compilations of 142 differ in 4 bytes, so the chain genuinely
+  converges. (140 vs 141 happened to differ by only 15 because that run's
+  clock string kept the same length.)
   `system/tests/source/units/libs/structlib.dll` is a 32-bit image, so
   struct-x64-test.exe used to die with STATUS_INVALID_IMAGE_FORMAT before it
   ran; the runner now copies `libs/structlib-x64.dll` for X86-64 targets and
@@ -121,6 +125,18 @@
   and the rest of the list was dropped. `convert` now treats /part as a byte
   budget only when /part was actually given (runtime/datatypes/binary.reds).
   `repend dlls [uppercase name null]` in PE.red emits whole paths again.
+- Fixed: any **syntax error** used to take the compiler down with the internal
+  `*** Script Error: cannot compare none with 4`. `load-source`
+  (compiler/frontend.red) called `compiler-lexer/process/file` and then tested
+  `(length? src) >= 4`, but on a syntax error the lexer records `last-error`
+  and returns none, so `length?` handed `>=` a none. An unterminated string
+  broke the same way. It now reports the lexer's error and stops:
+  `*** Compilation Error: invalid source: *** Syntax Error: (line 1) invalid
+  char at #"^(0000001)"`. Note this does *not* make `regression-test-redc-5`'s
+  #2671 pass and cannot: that test wants the upstream wording `*** Syntax
+  Error: Invalid char! value`, while `load-test` (which passes) pins the
+  current `*** Syntax Error: (line 1) invalid character at ...` wording. The
+  two tests disagree, so #2671 stays red on purpose.
 - Fixed: the 44 `unicode-test` failures were **not** in `load-utf8` -- that
   decoder was already correct. They were in how Red/System c-string literals
   are emitted: the lexer decodes `^(XX)` to the codepoint U+00XX and

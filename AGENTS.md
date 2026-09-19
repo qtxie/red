@@ -252,6 +252,23 @@
   `system/runtime/`, `modules/` and `system/assets/` (see
   `tools/self_hosting/generate-toolchain-resources.red`): a fix in `compiler/`
   needs the toolchain *rebuilt*, not the resources regenerated.
+- Not supported, in **both** backends: **a global initialised with the address
+  of an import.** `#import [...] [imp-fn: "strcmp" [...]]` then `p: :imp-fn`
+  compiles through the frontend and dies in codegen -- on ARM64 at
+  `prepare-global-data site 34 (prepare-global-data/view#14)`, on x64 at
+  `validate-module-initializers site 310
+  (validate-module-initializers/header/function-count#10)`. Repro:
+  `build/tmp-imp/iag-mac.reds` / `iag-plain.reds`. Taking the address of a
+  function or of a global (`p: :f`, `p: :g`) is fine, and so is the address of
+  an import *in code* (`OP_ADDRESS` with `IMPORT_ADDRESS` is implemented); it
+  is only the static-initializer form that is missing. Supporting it means
+  `valid-static-address-initializer?` plus the `target-id` arithmetic in
+  `prepare-global-data` and `write-global-data` in arm64-codegen, the same pair
+  in x64-codegen, and a data-section relocation to the import's GOT/IAT slot in
+  all three linkers -- a feature, not a fix, and nothing is blocked on it.
+  Careful with the repro: put the `#import` at top level, not inside
+  `#switch` -- from inside a conditional the frontend fails earlier and
+  misleadingly with "missing expression".
 - To inspect a codegen failure without rebuilding the compiler, dump the IR
   the frontend hands it: `red-console.exe build/tmp-imp/rsir-dump.red
   <target> <out.rsir>` (it stubs `codegen-module` because the console cannot

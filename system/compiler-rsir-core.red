@@ -266,6 +266,7 @@ system-dialect: context [
 		compiler/pc: source
 		compiler-rsir-frontend/build-date: any [job/compiler-build-date now/utc]
 		compiler-rsir-frontend/source-file: file
+		compiler-rsir-frontend/OS: job/OS
 		unless all [not tail? source source/1 = 'Red/System][
 			compiler/throw-error "source is not a Red/System program"
 		]

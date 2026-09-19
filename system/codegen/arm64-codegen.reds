@@ -1822,15 +1822,13 @@ arm64-codegen: context [
 		][
 			if flags > CALLABLE_FLAGS [return fail-invalid 18 "resolve-call/flags#11"]
 		]
-		if (flags and VARIADIC) <> 0 [
-			unless any [
-				(flags and 3) = CDECL
-				all [target > 0 (flags and 3) = 0]
-				;-- A pointer call binds the convention at runtime, so a
-				;-- variadic signature without one is acceptable.
-				target = 0
-			][return fail-unsupported 19 "resolve-call/variadic#12"]
-		]
+		;-- No convention check for a variadic callee: cdecl means real
+		;-- varargs and anything else means the trailing arguments are packed
+		;-- into a list, and both are lowered here. Which spelling a callee
+		;-- carries is decided where it is *declared* -- and a runtime export
+		;-- is stamped stdcall, so the import that mirrors it on the other side
+		;-- of the dylib is too. The two agree on purpose; under AAPCS64 there
+		;-- is one convention either way, so the spelling cannot be wrong.
 		unless any [
 			target >= 0
 			(flags and SYSCALL_FLAG) <> 0

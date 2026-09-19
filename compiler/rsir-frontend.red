@@ -28,6 +28,7 @@ compiler-rsir-frontend: context [
 	debug?: false
 	runtime-library?: false
 	red-pass?: false
+	OS: none									;-- picks the dylib callback signatures
 	build-date: none
 	source-file: none							;-- main source file, seeds the debug file table
 	debug-files: make block! 8					;-- source files referenced by debug line records
@@ -2321,17 +2322,42 @@ compiler-rsir-frontend: context [
 		]
 	]
 
-	add-library-callbacks: func [/local declarations code name spec][
-		declarations: [
-			on-load        [handle [pointer! [integer!]]]
-			on-unload      [handle [pointer! [integer!]]]
-			on-new-thread  [handle [pointer! [integer!]]]
-			on-exit-thread [handle [pointer! [integer!]]]
-		]
+	;-- The signature of a dylib callback is whatever that platform's entry
+	;-- point hands it: Windows passes the module handle, Darwin passes
+	;-- argc/argv/envp/apple/pvars and POSIX passes nothing. Injecting one
+	;-- shape for every platform left the other two with a one-parameter
+	;-- `on-load`, so a Darwin dylib was built calling it with `argc` alone --
+	;-- an integer! where a pointer! parameter was declared, which codegen
+	;-- rejects -- and a Linux .so never got past "missing expression" for the
+	;-- same call, which passes no argument at all.
+	callback-prototype: func [name [word!] return: [block!]
+		/local prototype [block!]
+	][
+		prototype: switch/default OS [
+			Windows [
+				[handle [pointer! [integer!]]]
+			]
+			macOS [
+				either name = 'on-load [
+					[
+						argc  [integer!]
+						argv  [struct! [s [c-string!]]]
+						envp  [struct! [s [c-string!]]]
+						apple [struct! [s [c-string!]]]
+						pvars [program-vars!]
+					]
+				][[[cdecl]]]
+			]
+		][[[cdecl]]]								;-- Linux
+		copy/deep prototype							;-- one spec per function
+	]
+
+	add-library-callbacks: func [/local names code name][
+		names: [on-load on-unload on-new-thread on-exit-thread]
 		code: make block! 16
-		foreach [name spec] declarations [
+		foreach name names [
 			unless select function-ids name [
-				repend code [to set-word! name 'func copy/deep spec copy []]
+				repend code [to set-word! name 'func callback-prototype name copy []]
 			]
 		]
 		unless empty? code [scan-block code copy [] copy [] 0]

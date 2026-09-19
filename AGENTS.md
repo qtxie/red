@@ -20,15 +20,16 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler169.exe`
-  (168->169, output 6386176 bytes; the two differ in 15 bytes -- the PE
-  checksum, the PE timestamp, the two `movabs rax` immediates that carry the
-  compiler's build clock, the output file name's last digit in the two places
-  it is embedded, and the two `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is
-  back at a fixed point with the import-kind, shared-library and Mach-O
-  dylib-lifecycle work in it. `system/runtime/darwin.reds`
-  is Darwin-only, so the Windows bootstrap is byte-identical across it apart
-  from that clock). 157 is the first generation that
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler175.exe`
+  (174->175, output 6388224 bytes; the two differ in 17 bytes -- the PE
+  timestamp, the 3-byte PE checksum, the two `movabs rax` immediates that carry
+  the compiler's build clock, the output file name's last digit in the two
+  places it is embedded, and the two `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain
+  is back at a fixed point with the dev-mode macOS work in it. All 40
+  Darwin-ARM64 Red/System executables are byte-identical between 169 and 174,
+  and all 23 dev-mode Red units between 172 and 175, which is what says the
+  callback and variadic changes are inert for everything already passing).
+  157 is the first generation that
   cross-compiles the
   whole macOS toolchain: `hybrid-compiler157.exe -r -t Darwin-ARM64 -o
   build/red-toolchain/darwin-arm64/red-toolchain
@@ -214,16 +215,50 @@
   .generated.red`. Build the generator for the *host*, not the target:
   `tools/self_hosting/build-red-toolchain.sh` compiles it for `$target`, which
   cannot run when cross-compiling.
-- Still open, and only in dev mode: with the duplicate fixed, the macOS
-  toolchain gets past it and then stops at
-  `codegen INVALID_IR site 329 (compile-function/scratch/stack-locations#163)
-  ... op=7` while compiling `libRedRT` as a dylib -- a call argument the
-  classifier will not accept for the declared parameter. Release mode is
-  unaffected: `-r` compiles and runs a Red program on the Mac (`red-toolchain`
-  163 at `--self-check` 276 resources, output 1667272 bytes). Dev mode is not
-  a supported configuration anywhere -- on Windows a dev-mode Red program
-  takes an access violation as soon as the collector runs, which is why the
-  runners all pass `-r`.
+- **Dev mode now builds and runs a Red program on macOS** (fixed at 175, was
+  the open item above). Three independent blockers, all of them invisible to
+  `-r` because only dev mode compiles `libRedRT`:
+  * `compiler/rsir-frontend.red`'s `add-library-callbacks` injected the
+    *Windows* prototype -- `on-load [handle [pointer! [integer!]]]` -- on
+    every platform. Darwin's `***-dll-entry-point` calls
+    `on-load argc argv envp apple pvars`, so the frontend passed `argc` alone
+    into an `int-ptr!` parameter and codegen stopped at
+    `INVALID_IR site 329 (compile-function/scratch/stack-locations#163) op=7`;
+    Linux's calls `on-load` with no argument at all and never got past
+    "missing expression". `callback-prototype` now mirrors the legacy
+    `get-proto` (`system/compiler-core.red`): Windows the handle, macOS the
+    five arguments, Linux `[[cdecl]]`. The frontend needed the OS for that, so
+    `compile-rsir` sets `compiler-rsir-frontend/OS: job/OS`.
+  * `arm64-codegen.reds`'s `resolve-call` refused a variadic callee whose
+    convention was not cdecl unless it was a named function with *no*
+    convention -- but `add-runtime-export` stamps every runtime export
+    `stdcall`, and the generated `libRedRT-include.red` mirrors it, so
+    `red/fire` and three others arrived as stdcall variadic on *both* sides of
+    the dylib. That pairing is deliberate and harmless: cdecl means real
+    varargs, anything else packs the trailing arguments into a list, both are
+    already lowered, and AAPCS64 has one convention either way. The convention
+    test is gone.
+  Verified: dev mode cross-compiles all 23 Red units for `Darwin-ARM64` and
+  the Mac runs them 23/23, 5723 tests / 10270 assertions / 0 failures
+  (`series-test` 1119, `parse-test` 1518, `float-test` 1793, `logic-test` 95
+  -- the same counts release mode reports). A dylib that declares no callbacks
+  of its own still loads, runs and `dlclose`s, and one that does still fires
+  `on-load` and `on-unload`. Linux dev mode builds now too. Dev mode is still
+  not supported on Windows, where a dev-mode Red program takes an access
+  violation as soon as the collector runs -- which is why the runners all pass
+  `-r`.
+- To inspect a codegen failure without rebuilding the compiler, dump the IR
+  the frontend hands it: `red-console.exe build/tmp-imp/rsir-dump.red
+  <target> <out.rsir>` (it stubs `codegen-module` because the console cannot
+  run routines), then read it with
+  `build/self-hosting/merge-red64/rsir.py <out.rsir> <fn>:<limit>`. Note
+  `rsir.py` takes 0-based function and instruction indices while what codegen
+  prints is 1-based, and `first_parameter` is 1-based.
+- Known CLI bug, not fixed: `-v N` is swallowed as `--version` and `N` is then
+  parsed as a source file, so the command dies with "multiple source files".
+  Red's `find` is case-insensitive without `/case`, so
+  `find ["-V" "--version"] "-v"` matches; use `--verbose N` until
+  `compiler/bootstrap-options.red` is corrected.
 - Fixed at 164: **Linux shared objects could not be built at all.** Two
   independent blockers, both only reachable through `#export`, which is why
   nothing in either suite ever saw them:

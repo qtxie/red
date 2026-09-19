@@ -1741,6 +1741,48 @@ compiler-rsir-frontend: context [
 		either resolved-signature? record/3 [record/3][none]
 	]
 
+	;-- Two signatures are the same when they return the same type and take the
+	;-- same parameter types in the same order. A signature is
+	;-- `[return-ref params locals flags]` and `params` is `name`/type/flags
+	;-- triples; aliases are compared after canonicalization, so `byte-ptr!`
+	;-- and `pointer! [byte!]` agree.
+	same-signature?: func [
+		expected [block! none!]
+		actual [block! none!]
+		return: [logic!]
+		/local left right
+	][
+		unless all [expected actual][return false]
+		unless (canonical-ref expected/1) = (canonical-ref actual/1) [return false]
+		left: expected/2
+		right: actual/2
+		forever [
+			if tail? left [return tail? right]
+			if tail? right [return false]
+			unless (canonical-ref left/2) = (canonical-ref right/2) [return false]
+			left: skip left 3
+			right: skip right 3
+		]
+	]
+
+	;-- A parameter typed `function! [spec]` is a callback: the callee calls it
+	;-- with exactly those argument types, so only a function of the same
+	;-- signature may be handed to it. Left unchecked the mismatch reaches
+	;-- codegen, whose only possible answer is INVALID_IR. Upstream checks the
+	;-- same thing in `compare-func-specs` (system/compiler.r).
+	check-callback: func [expected [integer!] actual [integer!] name [string!]][
+		unless all [
+			(ref-kind expected) = 'function
+			(ref-kind actual) = 'function
+		][exit]
+		unless same-signature?
+			function-signature expected
+			function-signature actual
+		[
+			fail ERROR-KIND ["argument type mismatch on calling:" name]
+		]
+	]
+
 	make-call-signature-ref: func [target [integer!] return: [integer!] /local record][
 		either target > 0 [
 			record: skip functions ((target - 1) * 12)
@@ -4409,6 +4451,7 @@ compiler-rsir-frontend: context [
 				][
 					position-after: stack-value position-after scope uses instructions params locals
 						expression-value
+					check-callback parameter/2 last-type source-name value
 				]
 			]
 			if last-stopped? [stopped?: true]
@@ -4736,6 +4779,7 @@ compiler-rsir-frontend: context [
 				][
 					position-after: stack-value position-after scope uses instructions params locals
 						expression-value
+					check-callback parameter/2 last-type source-name value
 				]
 			]
 			if last-stopped? [stopped?: true]

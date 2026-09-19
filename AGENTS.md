@@ -20,10 +20,11 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler146.exe`
-  (145->146, output 6353408 bytes; 146 self-compiles to 147 at the same size
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler147.exe`
+  (146->147, output 6359552 bytes; 147 self-compiles to 148 at the same size
   with `SOURCE_DATE_EPOCH` pinned).
-  146 adds the compiler-owned syntax-error wording below to 145, which adds
+  147 adds the callback spec check below to 146, which adds the
+  compiler-owned syntax-error wording to 145, which adds
   the conditional-expression check to 144, which adds the
   `as`-cast check to 143, which carries the
   syntax-error fix, which sits on 140, which carries the c-string literal fix
@@ -42,13 +43,13 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All four suites are clean on 146: Red/System 12680/12680, Red units
+  All four suites are clean on 147: Red/System 12680/12680, Red units
   16893/16893, View headless 246/246. The Red compiler tests are 258 passed /
   5 failed (below), up from 251/12 on 145 -- the seven gained are the
   syntax-error wording group; before that the twelve were the cast group, the
   twenty-two before them the conditional group and the last two a wrong path
-  in output-test. The Red/System compiler tests are 120 passed / 4 failed,
-  up from 84/40 on 142.
+  in output-test. The Red/System compiler tests are 122 passed / 2 failed,
+  up from 84/40 on 142 -- the last two gained are the callback spec check.
   Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"` on
   145 gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
   compile failures. It is *more* than dev mode's 16893 by 28 assertions and 8
@@ -57,8 +58,8 @@
   earlier `-r` spot check of the seven collector-heavy units on 142 agrees:
   series 1119/1119, append 327, make 3, convert 451, redbin-codec 1762,
   recycle 39, unicode 67/67.
-  Fixed point: with `SOURCE_DATE_EPOCH` pinned, 146 self-compiles to 147 at
-  the same 6353408 bytes. Unpinned they differ in ~1600 bytes, which is the
+  Fixed point: with `SOURCE_DATE_EPOCH` pinned, 147 self-compiles to 148 at
+  the same 6359552 bytes. Unpinned they differ in ~1600 bytes, which is the
   clock -- the build date is a variable-length string, so it shifts every
   absolute address by one and repaints a few thousand bytes. Pin it and two
   self-compilations of 142 differ in 4 bytes, so the chain genuinely
@@ -257,21 +258,30 @@
   links against whatever was built last and the crash looks unfixed. Series,
   append, make, convert, enbase, recycle and redbin-codec all died with
   0xC0000005 before the fix; they now report the same totals as `-r`.
+- Fixed: a function handed to a **callback** parameter whose spec does not
+  match reached codegen, which could only answer `codegen INVALID_IR site 144
+  (emit-call-operation/parameter/flags#30)` and then `*** Compilation Error:
+  native codegen rejected invalid RSIR`. A parameter typed
+  `function! [a [integer!] b [integer!] return: [logic!]]` states what the
+  callee will call, so `compiler/rsir-frontend.red` now compares the two
+  signatures -- `same-signature?` over `[return-ref params locals flags]`,
+  canonicalizing aliases so `byte-ptr!` and `pointer! [byte!]` agree -- and
+  `check-callback` reports upstream's
+  `*** Compilation Error: argument type mismatch on calling: foo`, which is
+  what `compare-func-specs` in system/compiler.r says. Both sites that walk a
+  call's parameters use it (`stack-call`, `stack-indirect-call`). That is
+  callback-test's "inference error 1" and "inference error 2"; Red/System
+  compiler tests 120/124 -> 122/124, Red/System units still 12680/12680.
 - Still open, first measured this session: the Red/System **compiler** test
   suite (`run-red-system-compiler-tests.red`, never run before) reports 84/124
-  on 142, 96/124 on 144 and 120/124 on 145. The four left:
-  * 2 want `argument type mismatch on calling: foo` (callback-test): passing a
-    function whose spec does not match the declared `[function! [...]]`
-    callback parameter.
+  on 142, 96/124 on 144, 120/124 on 145 and 122/124 on 147. The two left:
   * 1 wants `type mismatch on setting path: p/a` (enum-redec-8), dies at
-    `INVALID_IR site 100 (emit-value-operation/compat#36)`.
-    Both are the same shape as the cast bug -- a check that lives upstream
-    (`compare-func-specs`, `comp-set-path`) and was never ported -- but they
-    are not the same *size*: the cast and the condition checks are local
-    predicates at one emission point, while these two need argument and
-    assignment type compatibility, and the frontend has no compatibility
-    predicate at all. That is a feature with the whole runtime behind it, so
-    it wants its own pass rather than being bolted on here.
+    `INVALID_IR site 100 (emit-value-operation/compat#36)`. Its check lives
+    upstream (`comp-set-path`) and was never ported. Note it is not the same
+    *size* as the cast and condition checks: those are local predicates at one
+    emission point, while this one needs assignment type compatibility, and
+    the frontend still has no general compatibility predicate. That wants its
+    own pass rather than being bolted on here.
   * 1 is an **ordering** difference, not a missing check:
     `foo: func [return: [integer!]][until [return true]]`. Upstream reports
     `wrong return type in function: foo` because `stack-return` leaves the

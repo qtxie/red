@@ -20,11 +20,12 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler151.exe`
-  (150->151, output 6378496 bytes; two `SOURCE_DATE_EPOCH`-pinned
-  self-compilations of 151 differ only in the PE timestamp, the PE checksum
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler152.exe`
+  (151->152, output 6380544 bytes; two `SOURCE_DATE_EPOCH`-pinned
+  self-compilations of 152 differ only in the PE timestamp, the PE checksum
   and the output file name).
-  151 adds the header currency registration below to 150, which adds the
+  152 adds the operator-named object field fix to 151, which adds the
+  header currency registration below to 150, which adds the
   set-path type check below to 149, which adds the
   return-type check below to 148, which adds the dev-mode
   `#system-global` fix to 147, which adds the
@@ -48,10 +49,14 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All five suites are clean on 151: Red/System compiler tests 124/124,
+  All five suites are clean on 152: Red/System compiler tests 124/124,
   Red/System units 12680/12680, Red units 16893/16893, View headless 246/246,
-  and the Red compiler tests are 261 passed / 2 failed (below), up from
-  251/12 on 145 -- three are the `#system-global` group, seven the
+  and the Red compiler tests are 319 passed / 2 failed of 321 (below), up
+  from 251/12 of 262 on 145 -- the 59 extra assertions are the tail of
+  `regression-test-redc-5.red`, which #4526 used to truncate. The two left
+  are #4190 (`face!` needs the View backend) and one assertion of #4613
+  (money molding is the runtime's). Of the 319: three are the
+  `#system-global` group, seven the
   syntax-error wording group; before those the twelve were the cast group,
   the twenty-two before them the conditional group and the last two a wrong
   path in output-test. The Red/System compiler tests went 84/40 on 142,
@@ -102,8 +107,9 @@
   `fail-syntax "Invalid Red program"` the way `red.r:755` does. Red compiler
   tests went from 251 passed / 12 failed on 145 to 258 passed / 5 failed on
   146. Fixed since then: #274, #377 and #1090 were all `#system-global`
-  (next entry). What is left there: #4190 (`face!` needs the View backend)
-  and the #4526 abort below.
+  (next entry), #4613 was the currency header (below) and #4526 was an
+  operator-named object field (below). What is left there: #4190 (`face!`
+  needs the View backend) and one assertion of #4613 (money molding).
 - Fixed: **`#system-global` was dropped from every dev-mode build.**
   `system/compiler-rsir-core.red` loaded `red/sys-global` inside
   `if embed-red-runtime?`, and that flag is `runtime-linkage = 'embedded`,
@@ -136,14 +142,21 @@
   failing -- `probe bug$0` prints `BUG$0.00` here, the same convention as
   `USD$0.00`, while the test expects `bug$0`; molding money is
   `runtime/datatypes/money.reds`, not the compiler.
-- Still open in that suite: `regression-test-redc-5.red` stops at #4526. The
-  test is `do bind [probe 1 ** 2] context [**: make op! func [x y][x + y]]`
-  and it prints `1` and then fails with `** has no value`, so `qt/output` is
-  not loadable and the bare `--assert 3 = load qt/output` on the next line
-  raises -- which aborts the rest of the file. Everything after #4526 is
-  therefore unmeasured, not failing. Two things are wrong: the compiler drops
-  the binding `do` was given and treats `1 ** 2` as two expressions, and the
-  harness has no way to survive an assertion whose expression raises.
+- Fixed: **an object field named like an operator was never assigned.**
+  `context [**: 99]` left `**` unset and stored 99 into the *global* `**`
+  instead -- so `do bind [probe 1 ** 2] context [**: make op! ...]` could not
+  see the op and #4526 printed `1` then `** has no value`. `comp-set-word`
+  runs the name through `clean-lf-flag`, which maps every operator to its
+  native's name (`**` -> `op_power`, `//` -> `op_modulo`) because that is how
+  the global function namespace spells them; but an object field is named by
+  its spelling -- `comp-context` collects the set-words as written -- so the
+  field lookup in `emit-set-top`, `emit-push-from` and `get-path-word` now
+  tries the spelling too (new `object-field-index`). Only the operators in
+  `operator-symbols` were affected: `++`, which is not an op, always worked.
+  #4526 passing also stops `regression-test-redc-5.red` from truncating: the
+  Red compiler tests go from 262 assertions (261 passed) to 321 (319
+  passed), the 59 extra being the tail of that file, measured for the first
+  time.
   `system/tests/source/units/libs/structlib.dll` is a 32-bit image, so
   struct-x64-test.exe used to die with STATUS_INVALID_IMAGE_FORMAT before it
   ran; the runner now copies `libs/structlib-x64.dll` for X86-64 targets and

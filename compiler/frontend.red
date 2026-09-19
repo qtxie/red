@@ -587,7 +587,23 @@ red: context [
 		]
 		throw-error ["Should not happen: not found context for word: " mold name]
 	]
-	
+
+	;-- An operator's word is registered under its native's name (`**` is
+	;-- `op_power`, see `operator-symbols`) in the global function namespace,
+	;-- but an object field is named by its spelling: `comp-context` collects
+	;-- the set-words as they are written. Try both, or `context [**: 99]`
+	;-- stores into the global `**` and leaves the field unset.
+	object-field-index: func [
+		ctx [word!] name [word!] original [any-word!]
+		/local words pos
+	][
+		words: select contexts ctx
+		any [
+			all [pos: find words name (index? pos) - 1]
+			all [pos: find words to word! original (index? pos) - 1]
+		]
+	]
+
 	emit-word-ref: func [name [any-word!] /no-prefix /local obj idx ctx][
 		case [
 			rebol-gctx = obj: binding-of name [
@@ -617,13 +633,13 @@ red: context [
 			rebol-gctx <> obj: binding-of original
 			select-obj obj
 		]
-		unless all [ctx attempt [idx: get-word-index/with name ctx]][
+		unless all [ctx attempt [idx: object-field-index ctx name original]][
 			if all [
 				1 < length? obj-stack
 				obj: attempt [safe-eval-object-path obj-stack]
 				object? :obj
 				ctx: select-obj obj
-				attempt [idx: get-word-index/with name ctx]
+				attempt [idx: object-field-index ctx name original]
 			][0][ctx: none]
 		]
 		either all [ctx integer? idx][
@@ -682,7 +698,7 @@ red: context [
 				object? :obj
 				rebol-gctx <> obj
 				ctx: select-obj obj
-				attempt [idx: get-word-index/with name ctx]
+				attempt [idx: object-field-index ctx name original]
 			][
 				emit 'word/set-in-ctx						;-- object field
 				emit either parent-object? obj ['octx][ctx]
@@ -757,7 +773,7 @@ red: context [
 				either all [
 					rebol-gctx <> obj
 					ctx: select-obj obj
-					attempt [idx: get-word-index/with name ctx]
+					attempt [idx: object-field-index ctx name original]
 				][
 					repend blk [
 						pick [word/get-local word/push-local] get-word? original

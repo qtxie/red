@@ -245,8 +245,16 @@
   targets -- `readelf` reports `DYN`, and a C loader calling `dlopen` gets
   `on-load executed`, `foo(41) = 42`, `i = 56` and `on-unload executed` on
   AArch64 and x86-64 alike. `-t Darwin-ARM64-SO` and `-t Windows-X86-64-DLL`
-  were already fine; the linker appends the platform suffix, so the output
+  *built* fine at the time but only Windows actually worked -- see the 167
+  and 169 bullets. The linker appends the platform suffix, so the output
   lands at `<name>.dylib` / `<name>.so` / `<name>.dll`, not at `-o <name>`.
+  As of 169 all three are load-tested, not just built, and all three print
+  `on-load executed`, `foo(41) = 42`, `i = 56`, `on-unload executed`. Windows
+  goes through the PE entry point, which is a real `DllMain`
+  (`DLL_PROCESS_ATTACH` -> `on-load`, `DLL_PROCESS_DETACH` -> `on-unload`),
+  so it needs nothing from the linker beyond `AddressOfEntryPoint`; it is
+  driven by `build/tmp-imp/dll-loader-win.reds`, an R/S program that calls
+  `LoadLibrary`/`GetProcAddress`/`FreeLibrary` -- no C toolchain needed.
   The cross-build is a fixed point as well: 157 and 158, each writing a
   6690688-byte Mach-O to an output name of the same length
   (`build/red-toolchain/darwin-arm64/red-toolchain-157|158`), differ in 144

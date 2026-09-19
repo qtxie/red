@@ -20,9 +20,13 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler157.exe`
-  (156->157, output 6384640 bytes; 156 was the same size, the two differ
-  only in indentation). 157 is the first generation that cross-compiles the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler158.exe`
+  (157->158, output 6384640 bytes; 159 is the same size and the two differ
+  in 18 bytes -- the PE checksum, the PE timestamp, the two `movabs rax`
+  immediates that carry the compiler's build clock, the output file name and
+  the two embedded `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is back at a
+  fixed point with the ARM64 work in it). 157 is the first generation that
+  cross-compiles the
   whole macOS toolchain: `hybrid-compiler157.exe -r -t Darwin-ARM64 -o
   build/red-toolchain/darwin-arm64/red-toolchain
   red-toolchain-darwin-hybrid.red` produces a 6690688-byte Mach-O that
@@ -132,6 +136,16 @@
   All four are reached only by 19 MB of IR -- `compile-function` alone is
   34k instructions -- so unit tests cannot find them; the toolchain build is
   the test.
+  The cross-build is a fixed point as well: 157 and 158, each writing a
+  6690688-byte Mach-O to an output name of the same length
+  (`build/red-toolchain/darwin-arm64/red-toolchain-157|158`), differ in 144
+  bytes -- the output name's last character in the two places the name is
+  embedded, the two `dd-Mmm-yyyy/h:mm:ss` clocks, two materialized 64-bit
+  constants and four 32-byte windows of the compressed resource blob.
+  Compare two builds only under equal-length `-o` names: the output embeds its
+  own path, so a longer name shifts the whole resource blob and repaints every
+  address literal that points into it -- 157's `red-toolchain` against 158's
+  `red-toolchain-158` differ in 1.87 MB, almost all of it that shift.
   Fixed point: with `SOURCE_DATE_EPOCH` pinned, 149 self-compiles to 150 at
   the same 6366720 bytes. Unpinned they differ in ~1600 bytes, which is the
   clock -- the build date is a variable-length string, so it shifts every

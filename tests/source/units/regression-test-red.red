@@ -4,7 +4,10 @@ Red [
 	File: 	 %regression-test.red
 	Tabs:	 4
 	License: "BSD-3 - https://github.com/red/red/blob/origin/BSD-3-License.txt"
-;	Needs:	 'View
+;-- #5645 exercises the CSV codec, which -- like JSON -- is an opt-in
+;-- module (compiler/modules.red): without this the suite dies at
+;-- `load-csv/with` with "load-csv returned a unset! value".
+	Needs:	 CSV
 ]
 
 #include  %../../../quick-test/quick-test.red

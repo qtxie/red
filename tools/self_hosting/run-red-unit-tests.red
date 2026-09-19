@@ -50,6 +50,16 @@ unit-sources: [
 	%system-test.red %recycle-test.red %case-folding-test.red
 	%points-test.red %preprocessor-test.red %serialization-test.red
 	%redbin-codec-test.red
+	;-- Codecs. Both are opt-in modules (compiler/modules.red), declared by
+	;-- each script's own `Needs:` header -- no `Needs` here, the sources
+	;-- carry it.
+	%csv-test.red %json-test.red
+	;-- Reactivity needs no GUI backend; `reactor!` lives in the core image.
+	%reactivity-test.red
+	%routine-test.red
+	;-- Upstream's big Red regression script. It exercises the CSV codec in
+	;-- #5645, so its header declares `Needs: CSV`.
+	%regression-test-red.red
 ]
 
 foreach relative unit-sources [

@@ -63,6 +63,24 @@
   120/124 on 145, 122/124 on 147, 123/124 on 149 and 124/124 on 150 -- the
   last four gained are the callback spec check, the return-type check and
   the set-path type check.
+  COVERAGE GAP CLOSED ON 152: five scripts under `tests/source/units/` were
+  in no runner at all -- `run-red-unit-tests.red` only named its 54 "core
+  console language" units. All five compile and run:
+  `regression-test-red.red` (911 assertions, 910 pass), `csv-test.red` (56),
+  `json-test.red` (47), `reactivity-test.red` (68) and `routine-test.red`
+  (22) -- 1104 assertions, one failure. `regression-test-red.red` exercises
+  the CSV codec in #5645, and CSV -- like JSON -- is an opt-in module
+  (compiler/modules.red), so its header now carries `Needs: CSV`; without it
+  the whole 911-assertion script dies at `load-csv/with` with "load-csv
+  returned a unset! value", which is what its commented-out `; Needs: 'View`
+  used to hide. clipboard-test / draw-test / image-test stay out: they need
+  the View backend.
+  The one failure is #5220, and it is runtime-side, not a codegen bug: the
+  emitted code does carry `stack/unwind-flush` after the discarded statement
+  (check with `--red-only`), three such statements in a row measure 0, and
+  moving the same statement behind a function call makes it measure 160216.
+  The number tracks allocation history, not liveness -- the interpreter
+  reports -284 where a compiled program reports 162484 on the same source.
   MEASURING BEHIND A HARNESS ABORT: `regression-test-redc-5.red` dies at
   #4526 (`do bind [probe 1 ** 2] context [...]` prints `1` then `** has no
   value`, and `--assert 3 = load qt/output` raises a *syntax* error on that

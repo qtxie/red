@@ -456,9 +456,12 @@ system-format-MachO-ARM64: context [
 		foreach record imports [
 			foreach ref record/3 [
 				either block? ref [
-					target: either issue? record/1 [
-						got-offset + (record/5 * 8)
-					][stub-offset + (record/6 * 12)]
+					;-- A page reference names the GOT slot, whose value the
+					;-- loader replaces with the symbol itself; the load the
+					;-- codegen emitted after the pair is what reads it. A
+					;-- stub would hand back the address of the branch
+					;-- sequence instead -- fine to call, wrong to read.
+					target: got-offset + (record/5 * 8)
 					linker/patch-arm64-page-ref code ref/1
 						(text-offset + ref/1 - 1) target ref/2
 				][

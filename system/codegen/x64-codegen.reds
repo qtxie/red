@@ -251,7 +251,7 @@ x64-codegen: context [
 	IMAGE_HEADER_SIZE:   60
 	IMAGE_FUNCTION_SIZE: 36
 	IMAGE_GLOBAL_SIZE:   28
-	IMAGE_IMPORT_SIZE:   24
+	IMAGE_IMPORT_SIZE:   28
 	IMAGE_EXPORT_SIZE:   12
 	FUNCTION_ALIGNMENT:  32
 
@@ -13447,6 +13447,7 @@ x64-codegen: context [
 				image-import/external-size: ir-import/external-size
 				image-import/first-reference: first-reference
 				image-import/reference-count: count
+				image-import/flags: ir-import/flags
 				import-refs/id: first-reference
 				first-reference: first-reference + count
 				output-import-id: output-import-id + 1
@@ -13469,6 +13470,7 @@ x64-codegen: context [
 			image-import/external-size: 11
 			image-import/first-reference: first-reference
 			image-import/reference-count: 1
+			image-import/flags: CDECL				;-- a function, not a variable
 			exit-reference-id: first-reference
 			copy-memory (names + library-offset) (as byte-ptr! "kernel32.dll") 12
 			copy-memory (names + external-offset) (as byte-ptr! "ExitProcess") 11

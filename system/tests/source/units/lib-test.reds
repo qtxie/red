@@ -33,6 +33,11 @@ lt-int!: alias struct! [
 	i			[integer!]
 ]
 
+lt-strlen!: alias function! [
+	str			[c-string!]
+	return:		[integer!]
+]
+
 #import [
 	LIBC-file cdecl [
 		test-memcpy: "memcpy" [
@@ -113,7 +118,42 @@ lt-int!: alias struct! [
 	macOS [
 		#include %lib-macOS-test.reds
 	]
+	Linux []
 ]
+
+;-- An object format names an import three ways and only one of them is a
+;-- call: a branch reaches a function through its stub, while a read of an
+;-- imported variable and the address of an imported function both go through
+;-- the slot the loader fills with the symbol's address. A variable read
+;-- patched at the stub instead loads the stub's first instruction word --
+;-- 0xF0 on AArch64, 0xFF on x86-64 -- and dereferences that, so an
+;-- environment entry that does not begin with a printable character is the
+;-- failure this group is here to catch.
+#either any [OS = 'Linux OS = 'macOS] [
+	#import [
+		LIBC-file cdecl [
+			test-environ: "environ" [pointer! [c-string!]]
+		]
+	]
+
+	env-entry: declare c-string!
+	strlen-fn: declare lt-strlen!
+
+	===start-group=== "imported data"
+
+	--test-- "lib-data-1"
+		env-entry: test-environ/value
+		--assert env-entry <> null
+		--assert all [
+			env-entry/1 >= #"A"
+			env-entry/1 <= #"z"
+		]
+	--test-- "lib-data-2"
+		strlen-fn: as lt-strlen! :test-strlen
+		--assert 12 = strlen-fn "hello, world"
+
+	===end-group===
+][]
   
 ~~~end-file~~~
 

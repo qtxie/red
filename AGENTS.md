@@ -20,19 +20,19 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler159.exe`
-  (158->159, output 6384640 bytes; 160 is the same size and the two differ
-  in 19 bytes -- the PE checksum, the PE timestamp, the two `movabs rax`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler160.exe`
+  (159->160, output 6384640 bytes; 161 is the same size and the two differ
+  in 21 bytes -- the PE checksum, the PE timestamp, the two `movabs rax`
   immediates that carry the compiler's build clock, the output file name and
   the two embedded `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is back at a
-  fixed point with the ARM64 work in it). 157 is the first generation that
+  fixed point with the import-kind work in it). 157 is the first generation that
   cross-compiles the
   whole macOS toolchain: `hybrid-compiler157.exe -r -t Darwin-ARM64 -o
   build/red-toolchain/darwin-arm64/red-toolchain
   red-toolchain-darwin-hybrid.red` produces a 6690688-byte Mach-O that
   reports `host: Darwin-ARM64, backend: hybrid-rsir, standalone: true,
   resources: 276`, passes `--self-check`, and compiles and runs both a Red
-  and a Red/System program on an Apple Silicon Mac. On the Mac at 159:
+  and a Red/System program on an Apple Silicon Mac. On the Mac at 160:
   40/40 Red/System units and 23 Red units -- logic, integer, float, char,
   series, append, path, object, map, function, loop, parse, make, convert,
   mold, load, lexer, evaluation, binding, type, routine, recycle and
@@ -150,11 +150,41 @@
   All four sites are reached only by 19 MB of IR -- `compile-function` alone is
   34k instructions -- so unit tests cannot find them; the toolchain build is
   the test.
-  Linux ARM64 at 159, on the `armbian` board (Cortex-A53, ARMv8.0, no LSE):
+  Linux ARM64 at 160, on the `armbian` board (Cortex-A53, ARMv8.0, no LSE):
   `bash build/linux-hybrid/rs-suite-linux.sh
-  build/self-hosting/merge-red64/hybrid-compiler159.exe Linux-ARM64 armbian`
+  build/self-hosting/merge-red64/hybrid-compiler160.exe Linux-ARM64 armbian`
   compiles 40/40 and runs 40/40 with 0 differing -- `atomic-test` 33/33 and
   `queue-test` 64/64 included, which is what closes the SIGILL note above.
+  Linux x86-64 at 160 (`HOST=wsl`) is also 40/40 compile, 40/40 run, 0
+  differing.
+  Fixed at 160: **the linker could not tell a variable import from a function
+  import.** `codegen-import!` carried no kind, so `linker/load-codegen` named
+  every import with a plain `string!` and every `issue?` test in ELF.red,
+  Mach-O.red and Mach-O-ARM64.red was dead code -- a convention three formats
+  already implement, with nothing feeding it. Two consequences on ARM64:
+    * An ADRP/ADD page reference is how an import is named, and the ARM64
+      codegen emitted the `ldr` that reads the slot only for `ABI_AAPCS64`, on
+      the stated assumption that "Mach-O patches the pair to the symbol
+      itself". It cannot: an imported symbol lives in a dylib at a distance no
+      ADRP can span, so Mach-O reaches it through a `__got` slot exactly as
+      ELF does. The load is now unconditional.
+    * Mach-O's `patch-imports` aimed a page reference at the *stub* for a
+      function and at the GOT slot only for an issue!. Since there were no
+      issues, `environ` was aimed at stub #14, and `ldr` read the stub's first
+      instruction word (`adrp x16, ...`) as if it were a pointer and
+      dereferenced it: `*** Runtime Error 16: invalid virtual address`. With
+      the load restored, the pair names the slot for *every* import -- a stub
+      is fine to branch to but wrong to read.
+  The image now carries `flags` (the RSIR import flags: zero means variable),
+  `IMAGE_IMPORT_SIZE` is 28 in both codegens, and `linker/load-codegen`
+  publishes a variable as `to issue! external`. ELF routes it to
+  `.data.rel.ro` with an `R_*_GLOB_DAT` instead of borrowing the `.got.plt`
+  slot a call uses -- which is what `DT_BIND_NOW` was papering over -- and
+  Mach-O drops it from `__stubs`. `system/tests/source/units/lib-test.reds`
+  now pins all three spellings on Linux and macOS: a read of an imported
+  variable, the address of an imported function and a call. Darwin ARM64 goes
+  from a crash to 17/17; Linux ARM64 and Linux x86-64 print the same
+  `environ/value` a C program does.
   The cross-build is a fixed point as well: 157 and 158, each writing a
   6690688-byte Mach-O to an output name of the same length
   (`build/red-toolchain/darwin-arm64/red-toolchain-157|158`), differ in 144
@@ -492,6 +522,9 @@
     nothing ever calls it, so the lazily bound slot still held its PLT
     trampoline: ELF now emits `DT_BIND_NOW`. `environ` was additionally
     declared `[integer!]`, which read only the low half of a 64-bit pointer.
+    Both of those were workarounds for the real gap: the linker could not tell
+    a variable import from a function import, so it used the call's slot for
+    both. See the imported-variable bullet at the 160 baseline.
   * A CALL parks the located last argument in a scratch register while it loads
     the earlier ones. That was XMM4, which Win64 never spends on an argument
     but System V fills as its fifth vector one, so a call with five or more
@@ -525,8 +558,11 @@
   ARMv8.1 LSE atomics, and this board's CPU is ARMv8.0. That is stale -- both
   emit the load-exclusive/store-exclusive pair now (`ldaxr`/`stlxr`, see the
   Linux ARM64 at 159 bullet below), and the two units pass on this board.
-  Still open on ARM64: the ELF writer patches *every* import to
-  `plt + 16*(index+1)`, a branch target, which is wrong for a data reference.
+  Closed on ARM64: the ELF writer used to patch *every* import to
+  `plt + 16*(index+1)`, a branch target, which is wrong for a data reference
+  (see the imported-variable bullet below). A data import now gets its own
+  `.data.rel.ro` slot and an `R_*_GLOB_DAT` instead of riding on the
+  `.got.plt` slot a call uses.
   Run the Linux suites with `HOST=wsl`: `wsl.exe` needs no sshd and both
   `build/linux-hybrid/{red,rs}-suite-linux.sh` accept it. `SKIP_COMPILE=1`
   reuses binaries an earlier host already cross-compiled. Prefer WSL over the

@@ -155,6 +155,12 @@ codegen-import!: alias struct! [
 	external-size   [integer!]
 	first-reference [integer!]
 	reference-count [integer!]
+	;-- The RSIR import flags: zero names an imported *variable*, anything
+	;-- else a function (the calling convention and the syscall bit live here
+	;-- too). The linker needs the distinction -- a branch reaches a function
+	;-- through its stub, while a page reference reads the slot whose value is
+	;-- the symbol, and only the symbol's own kind says which slot that is.
+	flags           [integer!]
 ]
 
 codegen-export!: alias struct! [

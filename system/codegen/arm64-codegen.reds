@@ -92,7 +92,7 @@ arm64-codegen: context [
 	IMAGE_HEADER_SIZE:   60
 	IMAGE_FUNCTION_SIZE: 36
 	IMAGE_GLOBAL_SIZE:   28
-	IMAGE_IMPORT_SIZE:   24
+	IMAGE_IMPORT_SIZE:   28
 	IMAGE_EXPORT_SIZE:   12
 
 	RSIR_TYPE_SIZE:        20
@@ -6885,20 +6885,19 @@ arm64-codegen: context [
 							(capacity - written) target
 						if encoded < 0 [return OUTPUT_FULL]
 						written: written + encoded
-						;-- Mach-O patches the pair to the symbol itself, so
-						;-- the register already holds it. ELF can only name
-						;-- the GOT slot the dynamic linker fills in, so
-						;-- there the pair forms the address of that slot and
+						;-- An ADRP/ADD pair can only name a slot: an
+						;-- imported symbol lives in a dylib at a distance
+						;-- no ADRP can span, so Mach-O and ELF alike reach
+						;-- it through the GOT entry the dynamic linker fills
+						;-- in. The pair forms the address of that entry and
 						;-- the load is what reaches the symbol: the address
 						;-- of an imported variable, or the entry point of an
 						;-- imported function.
-						if target-abi = ABI_AAPCS64 [
-							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/load-register-indirect at
-								(capacity - written) target
-							if encoded < 0 [return OUTPUT_FULL]
-							written: written + encoded
-						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/load-register-indirect at
+							(capacity - written) target
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
 						scratch/stack-types/depth: ref
 						scratch/stack-locations/depth: LOCATION_REGISTER
 						scratch/stack-low/depth: target
@@ -10657,6 +10656,7 @@ arm64-codegen: context [
 				image-import/external-size: imported/external-size
 				image-import/first-reference: reference-state/starts/target-id
 				image-import/reference-count: reference-state/counts/target-id
+				image-import/flags: imported/flags
 				output-import-id: output-import-id + 1
 			]
 			id: id + 1

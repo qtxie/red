@@ -38,6 +38,7 @@ linker: context [
 	codegen-error: none
 	codegen-header-size: 60
 	codegen-global-size: 28
+	codegen-import-size: 28							;-- must match IMAGE_IMPORT_SIZE
 	codegen-export-size: 12
 	codegen-protected: 2
 	data-reference-base: -2147483648
@@ -98,6 +99,7 @@ linker: context [
 			reference-id reference
 			name-bytes name symbols refs data-refs imports functions library-offset library-size
 			external-offset external-size library external last-library code rodata data sections
+			import-flags
 			data-reference reference-register symbol-type symbol-id internal exports export-names
 			function-names global-names
 	][
@@ -157,10 +159,10 @@ linker: context [
 		]
 		globals-size: global-count * codegen-global-size
 		imports-start: globals-start + globals-size
-		if import-count > ((size - imports-start) / 24) [
+		if import-count > ((size - imports-start) / codegen-import-size) [
 			return codegen-fail "native codegen import table exceeds its image"
 		]
-		imports-size: import-count * 24
+		imports-size: import-count * codegen-import-size
 		exports-start: imports-start + imports-size
 		if export-count > ((size - exports-start) / codegen-export-size) [
 			return codegen-fail "native codegen export table exceeds its image"
@@ -449,18 +451,20 @@ linker: context [
 		functions: none
 		id: 1
 		while [id <= import-count][
-			record: imports-start + ((id - 1) * 24)
+			record: imports-start + ((id - 1) * codegen-import-size)
 			library-offset: read-codegen-word image record
 			library-size: read-codegen-word image (record + 4)
 			external-offset: read-codegen-word image (record + 8)
 			external-size: read-codegen-word image (record + 12)
 			first-reference: read-codegen-word image (record + 16)
 			count-reference: read-codegen-word image (record + 20)
+			import-flags: read-codegen-word image (record + 24)
 			unless all [
 				integer? library-offset integer? library-size library-size > 0
 				library-offset <= (names-size - library-size)
 				integer? external-offset integer? external-size external-size > 0
 				external-offset <= (names-size - external-size)
+				integer? import-flags
 				integer? first-reference first-reference > 0
 				integer? count-reference count-reference > 0
 				first-reference <= reference-count
@@ -507,7 +511,11 @@ linker: context [
 				][append refs reference + 1]
 				reference-id: reference-id + 1
 			]
-			append functions external
+			;-- An issue! name is what tells every object format apart: a
+			;-- string names a function the code calls through a stub, an
+			;-- issue a variable the code reads through a data slot. The
+			;-- codegen image carries the distinction as flags = 0.
+			append functions either zero? import-flags [to issue! external][external]
 			append/only functions refs
 			id: id + 1
 		]

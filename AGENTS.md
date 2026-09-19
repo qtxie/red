@@ -36,7 +36,8 @@
   16893 assertions, 16893 passed, 0 compile failures -- and 40/40 Red/System
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
-  struct-x64-test finally links.   All four suites are clean on 142: Red/System 12680/12680, Red units
+  struct-x64-test finally links.
+  All four suites are clean on 142: Red/System 12680/12680, Red units
   16893/16893, View headless 246/246, compiler tests 251 passed / 12 failed
   (below). Release mode has no full-suite number -- a `-r` build costs ~40s
   per file -- but the seven collector-heavy units were run in `-r` on 142 and
@@ -48,6 +49,16 @@
   self-compilations of 142 differ in 4 bytes, so the chain genuinely
   converges. (140 vs 141 happened to differ by only 15 because that run's
   clock string kept the same length.)
+  Four of the compiler-test failures are a family and none of them can pass:
+  #2671, #1774, #3670 and ce-1 issue #608 all grep the compile output for
+  `*** Syntax Error: <upstream wording>` -- "Invalid char! value", "Invalid
+  path! value". Every syntax error here comes from one shared catalog entry,
+  `syntax/invalid: [:arg1 "invalid" :arg2 "at" :arg3]` in
+  environment/system.red, and :arg1 is a `(line N)` prefix, so the output is
+  `(line 2) invalid path at ...` and never `Invalid path! value`. Matching
+  upstream means dropping the line number from every syntax error, which
+  load-test then notices: it pins the sibling entry
+  `bad-char: [:arg1 "invalid character at" :arg2]`.
   `system/tests/source/units/libs/structlib.dll` is a 32-bit image, so
   struct-x64-test.exe used to die with STATUS_INVALID_IMAGE_FORMAT before it
   ran; the runner now copies `libs/structlib-x64.dll` for X86-64 targets and

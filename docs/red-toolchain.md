@@ -82,20 +82,45 @@ it without `-t`, `compiler-hybrid-common.red` imports the `chmod` its
 executables need, and `libRedRT-target` picks `Darwin-ARM64-SO` so
 development builds produce a `libRedRT.dylib`.
 
-**Status: not yet buildable.** The ARM64 backend compiles Red and Red/System
-applications correctly -- 40/40 Red/System units and the logic, integer and
-function Red units all cross-compile and pass on an Apple Silicon Mac -- but
-the toolchain's own IR is 19 MB and two backend gaps stop it:
+Verified on an Apple Silicon Mac (Darwin 24.6.0 arm64):
 
-* `site 293 compile-function/view#127`, `op=6` (OP_MEMBER): unsupported.
-* `site 324 compile-function/scratch/stack-kinds#158`, `op=7` (OP_CALL): an
-  argument slot holds a PLACE. The frontend leaves `:x` as a place and only
-  `OP_REFERENCE`/`OP_LOAD` resolve it; x64 has no place concept, so only the
-  ARM64 backend notices. Seen at `depth=8`, one past the 7 temp registers,
-  where `OP_ADDRESS` parks a materialized address in the region spill slot.
+```text
+red-toolchain --toolchain-info
+  host: Darwin-ARM64   backend: hybrid-rsir   standalone: true
+  resources: 276
+red-toolchain --self-check        -> resource-self-check: ok resources: 276
+red-toolchain -r -o hello.bin hello.red   -> runs, prints
+```
 
-Both need the ARM64 backend, not the toolchain entry. Until they are closed
-the macOS binary has to come from a native macOS bootstrap as above.
+and the suites the backend had to grow into: 40/40 Red/System units plus the
+logic, integer and function Red units cross-compile and pass on the Mac.
+
+The toolchain's own IR is 19 MB -- roughly a thousandth of everything the
+compiler knows how to compile -- so it is the widest ARM64 test there is.
+Getting it through took four backend repairs, all of them the same root
+cause in a different place: **an expression stack deeper than the seven
+temp registers.** x64 has no place concept and no pool this small, so only
+the ARM64 backend can notice.
+
+* `site 365`: `plan-function` reserved the region spill window only where a
+  call, a native or a subroutine entry happened to observe the depth, so a
+  deep `OP_BINARY` reached codegen with nowhere to park. Stated once at the
+  top of the instruction walk: a slot deeper than the pool is reserved
+  wherever the stack reaches that depth.
+* `site 324` (`op=7`, OP_CALL): a call argument held a PLACE. It was not the
+  frontend leaving one -- `OP_LOAD`'s inline deep fallback parked the address
+  of an inline aggregate but never re-tagged the slot, and an inline
+  aggregate *is* that address, so the parked word was already the value.
+* `site 293` (`op=6`, OP_MEMBER), `site 282` (`op=21`, OP_INDEX) and the
+  tagged-union materializations: out of temp registers with nowhere to put
+  the result. `take-temp-register` now parks one live value in its frame
+  slot and retries, which is what `spill-value-register` already did for
+  `OP_ADDRESS`.
+* `site 148` (`op=16`, OP_JUMP): `canonicalize-stack` and
+  `restore-control-stack` put every live slot in its canonical temp
+  register, because a control-flow edge carries only a depth and a type.
+  Slots past the pool now canonicalize into the slot the region reserves
+  for that depth, which is the same on both sides of an in-region edge.
 
 ## Introspection
 

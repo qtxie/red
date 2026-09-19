@@ -4566,15 +4566,20 @@ arm64-codegen: context [
 		true
 	]
 
+	;-- Control flow carries no register map across an edge, only a depth and a
+	;-- type per slot, so every live slot has to sit where the target will look
+	;-- for it: its canonical temp register, or -- once the stack outruns the
+	;-- pool -- the slot the region reserves for that depth.
 	canonicalize-stack: func [
 		view [rsir-view!]
 		scratch [arm64-function-scratch!]
-		depth [integer!]
+		depth region-base region-limit [integer!]
 		code [byte-ptr!]
 		capacity [integer!]
 		return: [integer!]
 		/local at [byte-ptr!]
-			slot ref kind target limit written encoded [integer!]
+			slot ref kind target limit width displacement written encoded [integer!]
+			floating? [logic!]
 	][
 		written: 0
 		slot: 1
@@ -4582,20 +4587,49 @@ arm64-codegen: context [
 			if scratch/stack-kinds/slot <> VALUE [return fail-unsupported 147 "canonicalize-stack/scratch/stack-kinds#1"]
 			ref: scratch/stack-types/slot
 			kind: type-kind ref view
-			target: either any [kind = 9 kind = 10][
+			floating?: any [kind = 9 kind = 10]
+			target: either floating? [
 				FIRST_FLOAT_TEMP_REGISTER + slot - 1
 			][FIRST_TEMP_REGISTER + slot - 1]
-			limit: either any [kind = 9 kind = 10][
+			limit: either floating? [
 				FIRST_FLOAT_TEMP_REGISTER + FLOAT_TEMP_REGISTER_COUNT
 			][FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT]
-			if target >= limit [return fail-unsupported 148 "canonicalize-stack#2"]
-			at: either null? code [as byte-ptr! 0][code + written]
-			encoded: materialize view scratch slot target ref at (capacity - written)
-			if encoded < 0 [return encoded]
-			written: written + encoded
-			scratch/stack-locations/slot: LOCATION_REGISTER
-			scratch/stack-low/slot: target
-			scratch/stack-high/slot: 0
+			either target < limit [
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: materialize view scratch slot target ref at (capacity - written)
+				if encoded < 0 [return encoded]
+				written: written + encoded
+				scratch/stack-locations/slot: LOCATION_REGISTER
+				scratch/stack-low/slot: target
+				scratch/stack-high/slot: 0
+			][
+				width: value-width ref view
+				unless any [width = 1 width = 2 width = 4 width = 8][
+					return fail-unsupported 394 "canonicalize-stack#2"
+				]
+				if (region-base + slot) > region-limit [
+					return fail-invalid 395 "canonicalize-stack/region-base#3"
+				]
+				target: either floating? [FLOAT_SCRATCH_REGISTER][arm64-encoder/X17]
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: materialize view scratch slot target ref at (capacity - written)
+				if encoded < 0 [return encoded]
+				written: written + encoded
+				displacement: 0 - ((region-base + slot) * 8)
+				at: either null? code [as byte-ptr! 0][code + written]
+				encoded: either floating? [
+					compiler-float-frame-store at (capacity - written)
+						target displacement width
+				][
+					compiler-frame-store at (capacity - written)
+						target displacement width
+				]
+				if encoded < 0 [return OUTPUT_FULL]
+				written: written + encoded
+				scratch/stack-locations/slot: LOCATION_FRAME
+				scratch/stack-low/slot: displacement
+				scratch/stack-high/slot: 0
+			]
 			slot: slot + 1
 		]
 		written
@@ -4658,11 +4692,13 @@ arm64-codegen: context [
 				written
 				]
 
-				;-- Free a temp register by parking one live value in its frame slot. Only a
-				;-- plain value can move: a place holds an address, and the frame tag of a
-				;-- place means "the object lives here" rather than "the address is stored
-				;-- here", so parking one would change what the slot denotes.
-				spill-value-register: func [
+			;-- Free a temp register by parking one live value in its frame slot. Only a
+			;-- plain value can move: a place holds an address, and the frame tag of a
+			;-- place means "the object lives here" rather than "the address is stored
+			;-- here", so parking one would change what the slot denotes.
+			;-- Returns the bytes written, or zero when nothing could be parked --
+			;-- the caller then decides whether it can do without a register.
+			spill-value-register: func [
 				view [rsir-view!]
 				scratch [arm64-function-scratch!]
 				depth region-base region-limit [integer!]
@@ -4670,35 +4706,66 @@ arm64-codegen: context [
 				capacity [integer!]
 				return: [integer!]
 				/local slot ref width displacement encoded [integer!]
-				][
+			][
 				slot: depth - 1
 				while [slot >= 1][
-				if all [
-				scratch/stack-kinds/slot = VALUE
-				scratch/stack-locations/slot = LOCATION_REGISTER
-				scratch/stack-high/slot = 0
-				scratch/stack-low/slot >= FIRST_TEMP_REGISTER
-				scratch/stack-low/slot < (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)
-				not float-type? scratch/stack-types/slot view
-				][
-				ref: scratch/stack-types/slot
-				width: value-width ref view
-				unless any [width = 1 width = 2 width = 4 width = 8][
-					return fail-invalid 152 "spill-value-register#1"
+					if all [
+						scratch/stack-kinds/slot = VALUE
+						scratch/stack-locations/slot = LOCATION_REGISTER
+						scratch/stack-high/slot = 0
+						scratch/stack-low/slot >= FIRST_TEMP_REGISTER
+						scratch/stack-low/slot < (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)
+						not float-type? scratch/stack-types/slot view
+					][
+						ref: scratch/stack-types/slot
+						width: value-width ref view
+						unless any [width = 1 width = 2 width = 4 width = 8][
+							return fail-invalid 152 "spill-value-register#1"
+						]
+						if (region-base + slot) > region-limit [
+							return fail-invalid 153 "spill-value-register/region-base#2"
+						]
+						displacement: 0 - ((region-base + slot) * 8)
+						encoded: compiler-frame-store at capacity
+							scratch/stack-low/slot displacement width
+						if encoded < 0 [return encoded]
+						scratch/stack-locations/slot: LOCATION_FRAME
+						scratch/stack-low/slot: displacement
+						return encoded
+					]
+					slot: slot - 1
 				]
-				if (region-base + slot) > region-limit [return fail-invalid 153 "spill-value-register/region-base#2"]
-				displacement: 0 - ((region-base + slot) * 8)
-											encoded: compiler-frame-store at capacity
-												scratch/stack-low/slot displacement width
-				if encoded < 0 [return encoded]
-				scratch/stack-locations/slot: LOCATION_FRAME
-				scratch/stack-low/slot: displacement
-				return encoded
-				]
-				slot: slot - 1
-				]
-				-1
-				]
+				0
+			]
+
+			;-- Allocate a temp register, parking one live value in its frame
+			;-- slot first when the pool is full. Operations whose result has
+			;-- no frame home of its own -- a place, or an index -- need one,
+			;-- and every slot below keeps working once it is frame-backed.
+			;-- Returns the bytes written; out-register carries -1 when even
+			;-- that could not free one, so the caller names its own site.
+			take-temp-register: func [
+				view [rsir-view!]
+				scratch [arm64-function-scratch!]
+				depth [integer!]
+				floating? [logic!]
+				reusable-slot region-base region-limit [integer!]
+				at [byte-ptr!]
+				capacity [integer!]
+				out-register [int-ptr!]
+				return: [integer!]
+				/local written [integer!]
+			][
+				out-register/value: available-temp-register view scratch
+					depth floating? reusable-slot
+				if out-register/value >= 0 [return 0]
+				written: spill-value-register view scratch depth
+					region-base region-limit at capacity
+				if written < 0 [return written]
+				out-register/value: available-temp-register view scratch
+					depth floating? reusable-slot
+				written
+			]
 
 				emit-stack-all: func [
 		code [byte-ptr!]
@@ -4805,7 +4872,7 @@ arm64-codegen: context [
 	restore-control-stack: func [
 		view [rsir-view!]
 		scratch [arm64-function-scratch!]
-		depth target [integer!]
+		depth target region-base region-limit [integer!]
 		entry-types entry-kinds entry-flags [int-ptr!]
 		return: [logic!]
 		/local slot kind register limit [integer!]
@@ -4825,9 +4892,16 @@ arm64-codegen: context [
 			limit: either any [kind = 9 kind = 10][
 				FIRST_FLOAT_TEMP_REGISTER + FLOAT_TEMP_REGISTER_COUNT
 			][FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT]
-			if register >= limit [return false]
-			scratch/stack-locations/slot: LOCATION_REGISTER
-			scratch/stack-low/slot: register
+			either register < limit [
+				scratch/stack-locations/slot: LOCATION_REGISTER
+				scratch/stack-low/slot: register
+			][
+				;-- Past the pool the canonical home is the slot the region
+				;-- reserves for this depth, which canonicalize-stack filled.
+				if (region-base + slot) > region-limit [return false]
+				scratch/stack-locations/slot: LOCATION_FRAME
+				scratch/stack-low/slot: 0 - ((region-base + slot) * 8)
+			]
 			scratch/stack-high/slot: 0
 			slot: slot + 1
 		]
@@ -5524,7 +5598,7 @@ arm64-codegen: context [
 				if control-uses/ordinal > 0 [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: canonicalize-stack view scratch depth
-						at (capacity - written)
+						region-base region-limit at (capacity - written)
 					if encoded < 0 [return encoded]
 					written: written + encoded
 				]
@@ -5537,7 +5611,7 @@ arm64-codegen: context [
 				if adopt-depth? [depth: instruction-depths/ordinal]
 				if control-uses/ordinal > 0 [
 					unless restore-control-stack view scratch depth ordinal
-						entry-types entry-kinds entry-flags [return fail-unsupported 169 "compile-function/entry-types#3"]
+						region-base region-limit entry-types entry-kinds entry-flags [return fail-unsupported 169 "compile-function/entry-types#3"]
 				]
 			][
 				if instruction-depths/ordinal < 0 [
@@ -5547,7 +5621,7 @@ arm64-codegen: context [
 				]
 				depth: instruction-depths/ordinal
 				unless restore-control-stack view scratch depth ordinal
-					entry-types entry-kinds entry-flags [return fail-unsupported 170 "compile-function/entry-types#4"]
+					region-base region-limit entry-types entry-kinds entry-flags [return fail-unsupported 170 "compile-function/entry-types#4"]
 				fallthrough?: true
 			]
 			instruction-offsets/ordinal: written
@@ -6685,19 +6759,12 @@ arm64-codegen: context [
 								scratch/stack-locations/depth: LOCATION_REGISTER
 								scratch/stack-low/depth: target
 							][
-								target: available-temp-register view scratch depth false depth
-								if target < 0 [
-									;-- The temp pool is full, so park one live
-									;-- value in its frame slot to free a register.
-									at: either null? code [as byte-ptr! 0][code + written]
-									encoded: spill-value-register view scratch depth
-										region-base region-limit at (capacity - written)
-									if encoded < 0 [return encoded]
-									written: written + encoded
-									target: available-temp-register view scratch
-										depth false depth
-									if target < 0 [return fail-unsupported 230 "compile-function/depth#64"]
-								]
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: take-temp-register view scratch depth false depth
+									region-base region-limit at (capacity - written) :target
+								if encoded < 0 [return encoded]
+								written: written + encoded
+								if target < 0 [return fail-unsupported 230 "compile-function/depth#64"]
 								status: record-reference
 									(view/header/function-count + slot)
 									(function-base + written)
@@ -6876,7 +6943,12 @@ arm64-codegen: context [
 								if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
 									;-- Deep-stack fallback: form the address in
 									;-- the fixed scratch register and park it in
-									;-- the region spill slot for this depth.
+									;-- the region spill slot for this depth. An
+									;-- inline aggregate *is* that address, so the
+									;-- parked word is the loaded value: re-tag the
+									;-- slot the way the register path does, or the
+									;-- place survives into consumers that demand a
+									;-- value (a call argument, for one).
 									if (region-base + depth) > region-limit [
 										return fail-invalid 242 "compile-function/region-base#76"
 									]
@@ -6894,9 +6966,11 @@ arm64-codegen: context [
 										displacement 8
 									if encoded < 0 [return OUTPUT_FULL]
 									written: written + encoded
+									scratch/stack-kinds/depth: VALUE
 									scratch/stack-locations/depth: LOCATION_FRAME
 									scratch/stack-low/depth: displacement
 									scratch/stack-high/depth: 0
+									scratch/stack-flags/depth: 0
 									index: index + 1
 									continue
 								]
@@ -7408,8 +7482,11 @@ arm64-codegen: context [
 								scratch/stack-kinds/depth <> VALUE
 								(type-kind scratch/stack-types/depth view) <> 5
 							][return fail-invalid 281 "compile-function/scratch/stack-types#115"]
-							target: available-temp-register view scratch depth
-								false target-slot
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: take-temp-register view scratch depth false
+								target-slot region-base region-limit at (capacity - written) :target
+							if encoded < 0 [return encoded]
+							written: written + encoded
 							if target < 0 [return fail-unsupported 282 "compile-function/target-slot#116"]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth arm64-encoder/X17
@@ -7497,7 +7574,11 @@ arm64-codegen: context [
 						; later address computation.
 						case [
 							scratch/stack-locations/depth = LOCATION_REGISTER [
-								target: available-temp-register view scratch depth false depth
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: take-temp-register view scratch depth false depth
+									region-base region-limit at (capacity - written) :target
+								if encoded < 0 [return encoded]
+								written: written + encoded
 								if target < 0 [return fail-unsupported 287 "compile-function/view#121"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/address-offset at (capacity - written)
@@ -7505,7 +7586,11 @@ arm64-codegen: context [
 									arm64-encoder/X16
 							]
 							scratch/stack-locations/depth = LOCATION_FRAME [
-								target: available-temp-register view scratch depth false depth
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: take-temp-register view scratch depth false depth
+									region-base region-limit at (capacity - written) :target
+								if encoded < 0 [return encoded]
+								written: written + encoded
 								if target < 0 [return fail-unsupported 288 "compile-function/view#122"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/address-offset at (capacity - written)
@@ -7548,7 +7633,11 @@ arm64-codegen: context [
 									scratch/stack-low/depth + member-offset
 								scratch/stack-high/depth: 0
 							][
-								target: available-temp-register view scratch depth false depth
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: take-temp-register view scratch depth false depth
+									region-base region-limit at (capacity - written) :target
+								if encoded < 0 [return encoded]
+								written: written + encoded
 								if target < 0 [return fail-unsupported 293 "compile-function/view#127"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch depth target ref
@@ -8911,7 +9000,7 @@ arm64-codegen: context [
 						; any operand move can set the flags.
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: canonicalize-stack view scratch base-depth
-							at (capacity - written)
+							region-base region-limit at (capacity - written)
 						if encoded < 0 [return encoded]
 						written: written + encoded
 						unless merge-control-target overflow-target base-depth fn
@@ -9702,7 +9791,7 @@ arm64-codegen: context [
 					]
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: canonicalize-stack view scratch depth
-						at (capacity - written)
+						region-base region-limit at (capacity - written)
 					if encoded < 0 [return encoded]
 					written: written + encoded
 					catch-level: catch-depths/ordinal
@@ -9769,7 +9858,7 @@ arm64-codegen: context [
 					depth: depth - 1
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: canonicalize-stack view scratch depth
-						at (capacity - written)
+						region-base region-limit at (capacity - written)
 					if encoded < 0 [return encoded]
 					written: written + encoded
 					;-- A no-value sub-return tolerates one leftover stack
@@ -9845,7 +9934,7 @@ arm64-codegen: context [
 					depth: depth - 1
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: canonicalize-stack view scratch depth
-						at (capacity - written)
+						region-base region-limit at (capacity - written)
 					if encoded < 0 [return encoded]
 					written: written + encoded
 					case-index: 0

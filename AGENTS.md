@@ -20,11 +20,21 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler152.exe`
-  (151->152, output 6380544 bytes; two `SOURCE_DATE_EPOCH`-pinned
-  self-compilations of 152 differ only in the PE timestamp, the PE checksum
-  and the output file name).
-  152 adds the operator-named object field fix to 151, which adds the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler157.exe`
+  (156->157, output 6384640 bytes; 156 was the same size, the two differ
+  only in indentation). 157 is the first generation that cross-compiles the
+  whole macOS toolchain: `hybrid-compiler157.exe -r -t Darwin-ARM64 -o
+  build/red-toolchain/darwin-arm64/red-toolchain
+  red-toolchain-darwin-hybrid.red` produces a 6690688-byte Mach-O that
+  reports `host: Darwin-ARM64, backend: hybrid-rsir, standalone: true,
+  resources: 276`, passes `--self-check`, and compiles and runs both a Red
+  and a Red/System program on an Apple Silicon Mac. On the Mac: 40/40
+  Red/System units and the logic, integer and function Red units pass.
+  Windows on 156: Red/System suite 10593 tests / 12680 assertions / 12680
+  passed / 0 failed / 0 compile-failures.
+  157 adds the four deep-stack ARM64 repairs below to 153, which adds the
+  region-spill planner fix to 152, which adds the operator-named object
+  field fix to 151, which adds the
   header currency registration below to 150, which adds the
   set-path type check below to 149, which adds the
   return-type check below to 148, which adds the dev-mode
@@ -103,6 +113,25 @@
   check of the seven collector-heavy units on 142 agrees: series 1119/1119,
   append 327, make 3, convert 451, redbin-codec 1762, recycle 39,
   unicode 67/67.
+  MACOS TOOLCHAIN (built on 157): see `docs/red-toolchain.md`. The ARM64
+  backend had four gaps, all the same root cause -- an expression stack
+  deeper than the seven temp registers (x9-x15), which x64 cannot see
+  because it has no place concept and a different register budget:
+    * site 324, op=7  OP_CALL   -- OP_LOAD's inline deep fallback parked the
+      address of an inline aggregate but never re-tagged the slot to VALUE.
+      An inline aggregate *is* that address, so the parked word was already
+      the loaded value. (Not the frontend leaving a place: `take o/in`
+      compiles clean, the frontend emits the OP_LOAD.)
+    * site 293, op=6  OP_MEMBER -- out of temp registers, nowhere to put the
+      member address.
+    * site 282, op=21 OP_INDEX  -- same for a dynamic index.
+    * site 148, op=16 OP_JUMP   -- canonicalize-stack/restore-control-stack
+      put every live slot in its canonical temp register because an edge
+      carries only a depth and a type; slots past the pool now canonicalize
+      into the slot the region reserves for that depth.
+  All four are reached only by 19 MB of IR -- `compile-function` alone is
+  34k instructions -- so unit tests cannot find them; the toolchain build is
+  the test.
   Fixed point: with `SOURCE_DATE_EPOCH` pinned, 149 self-compiles to 150 at
   the same 6366720 bytes. Unpinned they differ in ~1600 bytes, which is the
   clock -- the build date is a variable-length string, so it shifts every

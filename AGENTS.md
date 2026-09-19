@@ -20,9 +20,9 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler158.exe`
-  (157->158, output 6384640 bytes; 159 is the same size and the two differ
-  in 18 bytes -- the PE checksum, the PE timestamp, the two `movabs rax`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler159.exe`
+  (158->159, output 6384640 bytes; 160 is the same size and the two differ
+  in 19 bytes -- the PE checksum, the PE timestamp, the two `movabs rax`
   immediates that carry the compiler's build clock, the output file name and
   the two embedded `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is back at a
   fixed point with the ARM64 work in it). 157 is the first generation that
@@ -133,7 +133,16 @@
       put every live slot in its canonical temp register because an edge
       carries only a depth and a type; slots past the pool now canonicalize
       into the slot the region reserves for that depth.
-  All four are reached only by 19 MB of IR -- `compile-function` alone is
+    * spill-live-stack, reached only by system/stack/push-all|pop-all, parked
+      a PLACE as LOCATION_FRAME. On a place that tag denotes "the addressed
+      object lives here", not "the address is stored here", so every member,
+      load and store below it would have been silently retargeted. It now
+      refuses a place (site 396) rather than emit code that lies: a place
+      cannot survive a full register push, and nothing in the language leaves
+      one live there -- the native consumes no operand, so it cannot appear
+      inside a path or an argument list, which is the only place a place is
+      ever live.
+  All four sites are reached only by 19 MB of IR -- `compile-function` alone is
   34k instructions -- so unit tests cannot find them; the toolchain build is
   the test.
   The cross-build is a fixed point as well: 157 and 158, each writing a
@@ -146,6 +155,9 @@
   own path, so a longer name shifts the whole resource blob and repaints every
   address literal that points into it -- 157's `red-toolchain` against 158's
   `red-toolchain-158` differ in 1.87 MB, almost all of it that shift.
+  Editing a file the toolchain embeds changes it too: 158 against 159 differ
+  in 219 KB -- the recompressed resource blob and the address literals that
+  point into it -- although no generated instruction changed.
   Fixed point: with `SOURCE_DATE_EPOCH` pinned, 149 self-compiles to 150 at
   the same 6366720 bytes. Unpinned they differ in ~1600 bytes, which is the
   clock -- the build date is a variable-length string, so it shifts every

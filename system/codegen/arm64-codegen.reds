@@ -4643,7 +4643,7 @@ arm64-codegen: context [
 		capacity [integer!]
 		return: [integer!]
 		/local at [byte-ptr!]
-			slot ref kind width target displacement written encoded [integer!]
+			slot ref width target displacement written encoded [integer!]
 			floating? [logic!]
 	][
 		if (region-base + depth) > region-limit [return fail-invalid 149 "spill-live-stack/region-base#1"]
@@ -4654,14 +4654,24 @@ arm64-codegen: context [
 				scratch/stack-locations/slot = LOCATION_FLAGS
 				scratch/stack-locations/slot = LOCATION_REGISTER
 			][
-				kind: scratch/stack-kinds/slot
-				unless any [kind = VALUE kind = PLACE][return fail-invalid 150 "spill-live-stack/scratch/stack-kinds#2"]
+				;-- Only a value can be parked. A place holds an address, and
+				;-- LOCATION_FRAME on a place means "the addressed object lives
+				;-- here", not "the address is stored here", so parking one
+				;-- would silently retarget every member, load and store below
+				;-- it. Nothing in the language leaves a place live across a
+				;-- push-all anyway: the native consumes no operand, so it
+				;-- cannot appear inside a path or an argument list, which is
+				;-- the only place a place is ever live. Say so rather than
+				;-- emit code that lies.
+				if scratch/stack-kinds/slot <> VALUE [
+					return fail-unsupported 396 "spill-live-stack/place#2"
+				]
 				ref: scratch/stack-types/slot
-				width: either kind = PLACE [8][value-width ref view]
+				width: value-width ref view
 				unless any [width = 1 width = 2 width = 4 width = 8][
 					return fail-unsupported 151 "spill-live-stack#3"
 				]
-				floating?: all [kind = VALUE float-type? ref view]
+				floating?: float-type? ref view
 				target: either scratch/stack-locations/slot = LOCATION_REGISTER [
 					scratch/stack-low/slot
 				][either floating? [FLOAT_SCRATCH_REGISTER][arm64-encoder/X17]]
@@ -4686,11 +4696,11 @@ arm64-codegen: context [
 				scratch/stack-locations/slot: LOCATION_FRAME
 				scratch/stack-low/slot: displacement
 				scratch/stack-high/slot: 0
-				]
-				slot: slot + 1
-				]
-				written
-				]
+			]
+			slot: slot + 1
+		]
+		written
+	]
 
 			;-- Free a temp register by parking one live value in its frame slot. Only a
 			;-- plain value can move: a place holds an address, and the frame tag of a

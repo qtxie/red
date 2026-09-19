@@ -207,6 +207,21 @@ protect-image-rodata: does [
 
 			protect-image-rodata
 
+			;-- Arm the unload hook here rather than leaving it to a
+			;-- __mod_term_func section: dyld logs "registering old style
+			;-- destructor" and then never calls it, and a terminator section
+			;-- assembled by Apple's own toolchain is ignored the same way --
+			;-- which is why clang now compiles __attribute__((destructor)) to
+			;-- __cxa_atexit and emits no terminator section at all. The dso
+			;-- handle has to be this image, not NULL: that is what makes the
+			;-- C library run the handler while dlclose still has us mapped,
+			;-- where a NULL handle leaves it armed until process exit and then
+			;-- calls into an image that is gone (verified: the handler never
+			;-- runs and the loader dies at exit).
+			#if ABI = 'apple-aarch64 [					;-- ARM64 emits no terminator section
+				atexit as int-ptr! :on-unload null as int-ptr! system/image/base
+			]
+
 			#either red-pass? = no [					;-- only for pure R/S DLLs
 				***-boot-rs
 				on-load argc argv envp apple pvars

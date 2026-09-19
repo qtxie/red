@@ -529,7 +529,7 @@ system-format-MachO-ARM64: context [
 		/local code data rodata commands out text-section-count data-section-count
 			text-command-size data-command-size command-size command-count header-size
 			text-offset stub-offset text-file-size data-offset got-offset got-size
-			data-section-offset init-offset term-offset const-offset data-file-size data-end
+			data-section-offset init-offset const-offset data-file-size data-end
 			linkedit-offset entry-spec entry-offset import-info libraries imports functions
 			exports tables symbols indirect strings stubs bind-info rebase-info export-trie linkedit
 			data-relocs rodata-relocs rodata-base folded-relocs rebase-offset bind-offset symbol-offset
@@ -557,7 +557,7 @@ system-format-MachO-ARM64: context [
 		;-- Silicon and SIGBUS-es later stores into the same page).
 		data-section-count: 1
 		if not empty? imports [data-section-count: data-section-count + 1]
-		if dll? [data-section-count: data-section-count + 2]
+		if dll? [data-section-count: data-section-count + 1]
 		text-command-size: 72 + (80 * text-section-count)
 		data-command-size: 72 + (80 * data-section-count)
 		dylib-size: 0
@@ -605,11 +605,10 @@ system-format-MachO-ARM64: context [
 		;-- dyld on Apple Silicon and SIGBUS-es later stores into the same page.
 		const-offset: data-section-offset + length? data
 		data-end: const-offset + length? rodata
-		init-offset: term-offset: data-end
+		init-offset: data-end
 		if dll? [
 			init-offset: round/to/ceiling data-end 8
-			term-offset: init-offset + 8
-			data-end: term-offset + 8
+			data-end: init-offset + 8
 		]
 		data-file-size: round/to/ceiling (max 1 data-end - data-offset) defs/page-size
 		linkedit-offset: data-offset + data-file-size
@@ -645,7 +644,12 @@ system-format-MachO-ARM64: context [
 			foreach offset rodata-relocs [append folded-relocs rodata-base + offset]
 			set-preferred-pointer-high data folded-relocs
 		]
-		lifecycle: make binary! 16
+		;-- Only the load hook goes in a section. dyld does not run
+		;-- __mod_term_func for a dlopen'd image -- it logs "registering old
+		;-- style destructor" and stops there -- so `on-unload` is armed by
+		;-- ***-dll-entry-point through __cxa_atexit instead, and is checked
+		;-- here only so a dylib without it fails with a message that says so.
+		lifecycle: make binary! 8
 		if dll? [
 			init-spec: select job/symbols '***-dll-entry-point
 			term-spec: select job/symbols 'on-unload
@@ -653,9 +657,7 @@ system-format-MachO-ARM64: context [
 				linker/throw-error "missing ARM64 Mach-O dylib lifecycle function"
 			]
 			append-u64 lifecycle reduce [text-offset + init-spec/2 - 1 1]
-			append-u64 lifecycle reduce [text-offset + term-spec/2 - 1 1]
 			append data-relocs init-offset - data-section-offset
-			append data-relocs term-offset - data-section-offset
 		]
 
 		stubs: build-stubs functions stub-offset got-offset
@@ -716,8 +718,6 @@ system-format-MachO-ARM64: context [
 		if dll? [
 			append commands build-section "__mod_init_func" "__DATA" reduce [init-offset 1]
 				8 init-offset 3 9 0 0
-			append commands build-section "__mod_term_func" "__DATA" reduce [term-offset 1]
-				8 term-offset 3 10 0 0
 		]
 
 		append commands build-segment "__LINKEDIT" reduce [linkedit-offset 1]

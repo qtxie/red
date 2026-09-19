@@ -62,7 +62,17 @@ Red [
 			Red[]
 
 			prin "*test1* "
-			#do [a: 12]
+			#do [
+				;-- same guard as tests/source/units/preprocessor-test.red:
+				;-- this environment has no maximum-of, so supply one.
+				unless value? 'maximum-of [
+					maximum-of: function [list [block! paren!]][
+						m: list forall list [if list/1 > m/1 [m: list]]
+						m
+					]
+				]
+				a: 12
+			]
 			print "nothing"
 
 			#macro add2: func [n][n + 2]

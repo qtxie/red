@@ -20,10 +20,12 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler147.exe`
-  (146->147, output 6359552 bytes; 147 self-compiles to 148 at the same size
-  with `SOURCE_DATE_EPOCH` pinned).
-  147 adds the callback spec check below to 146, which adds the
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler148.exe`
+  (147->148, output 6359552 bytes; 148 self-compiles to 149 at the same size
+  with `SOURCE_DATE_EPOCH` pinned -- 147 is the same size, the two changes
+  happen to land in the same PE granularity).
+  148 adds the dev-mode `#system-global` fix below to 147, which adds the
+  callback spec check to 146, which adds the
   compiler-owned syntax-error wording to 145, which adds
   the conditional-expression check to 144, which adds the
   `as`-cast check to 143, which carries the
@@ -43,13 +45,14 @@
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,
   0 failures -- up from 12052 because dylib-auto-test finally loads and
   struct-x64-test finally links.
-  All four suites are clean on 147: Red/System 12680/12680, Red units
-  16893/16893, View headless 246/246. The Red compiler tests are 258 passed /
-  5 failed (below), up from 251/12 on 145 -- the seven gained are the
-  syntax-error wording group; before that the twelve were the cast group, the
-  twenty-two before them the conditional group and the last two a wrong path
-  in output-test. The Red/System compiler tests are 122 passed / 2 failed,
-  up from 84/40 on 142 -- the last two gained are the callback spec check.
+  All four suites are clean on 148: Red/System 12680/12680, Red units
+  16893/16893, View headless 246/246. The Red compiler tests are 261 passed /
+  2 failed (below), up from 251/12 on 145 -- three are the `#system-global`
+  group, seven the syntax-error wording group; before those the twelve were
+  the cast group, the twenty-two before them the conditional group and the
+  last two a wrong path in output-test. The Red/System compiler tests are
+  122 passed / 2 failed, up from 84/40 on 142 -- the last two gained are the
+  callback spec check.
   Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"` on
   145 gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
   compile failures. It is *more* than dev mode's 16893 by 28 assertions and 8
@@ -58,7 +61,7 @@
   earlier `-r` spot check of the seven collector-heavy units on 142 agrees:
   series 1119/1119, append 327, make 3, convert 451, redbin-codec 1762,
   recycle 39, unicode 67/67.
-  Fixed point: with `SOURCE_DATE_EPOCH` pinned, 147 self-compiles to 148 at
+  Fixed point: with `SOURCE_DATE_EPOCH` pinned, 148 self-compiles to 149 at
   the same 6359552 bytes. Unpinned they differ in ~1600 bytes, which is the
   clock -- the build date is a variable-length string, so it shifts every
   absolute address by one and repaints a few thousand bytes. Pin it and two
@@ -82,8 +85,23 @@
   `compiler/bootstrap-driver.red` rejects a headerless source with
   `fail-syntax "Invalid Red program"` the way `red.r:755` does. Red compiler
   tests went from 251 passed / 12 failed on 145 to 258 passed / 5 failed on
-  146. What is left there: #274, #377 and #1090 (all `#system-global`, below),
-  #4190 (`face!` needs the View backend) and the #4526 abort below.
+  146. Fixed since then: #274, #377 and #1090 were all `#system-global`
+  (next entry). What is left there: #4190 (`face!` needs the View backend)
+  and the #4526 abort below.
+- Fixed: **`#system-global` was dropped from every dev-mode build.**
+  `system/compiler-rsir-core.red` loaded `red/sys-global` inside
+  `if embed-red-runtime?`, and that flag is `runtime-linkage = 'embedded`,
+  which is only true for `-r`: dev mode links libRedRT instead, so the block
+  was never compiled and any `routine` written against it failed to resolve
+  (`unknown context c`, `undefined symbol: data`). The block belongs to the
+  program, not to the runtime -- it declares what the Red-level routines are
+  written against -- so it is now loaded whenever `job/runtime?` is set, and
+  only the *Red* runtime splice stays under `embed-red-runtime?`. That is
+  #274 (`Symptom of the universe: 42` now prints), #377 and #1090; Red
+  compiler tests 258/5 -> 261/2. Worth knowing: in `-r` builds the block runs
+  *before* `runtime/red.reds` is spliced in and its `print` output is lost,
+  while in dev mode it lands after and prints. The two modes still differ in
+  where the block sits relative to the Red runtime.
 - Still open in that suite: `regression-test-redc-5.red` stops at #4526. The
   test is `do bind [probe 1 ** 2] context [**: make op! func [x y][x + y]]`
   and it prints `1` and then fails with `** has no value`, so `qt/output` is

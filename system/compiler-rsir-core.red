@@ -436,6 +436,7 @@ system-dialect: context [
 		embed-red-runtime?: runtime-linkage = 'embedded
 
 		runtime-source: none
+		sys-global-source: none
 		if job/runtime? [
 			runtime-file: builtin-source-path runtime-path/common.reds
 			compiler/script: runtime-file
@@ -448,20 +449,24 @@ system-dialect: context [
 					rejoin ["Red/System runtime loader: " error/message]
 				]["Red/System runtime loader failed without a diagnostic"]
 			]
-			if embed-red-runtime? [
-				sys-global-source: none
-				unless empty? red/sys-global [
-					compiler/script: %***sys-global.reds
-					phase-timer/begin 'rs-loader
-					sys-global-source: loader/process red/sys-global
-					phase-timer/finish 'rs-loader
-					unless block? sys-global-source [
-						error: loader/last-error
-						compiler/throw-error either error [
-							rejoin ["Red/System #system-global loader: " error/message]
-						]["Red/System #system-global loader failed without a diagnostic"]
-					]
+			;-- #system-global belongs to the program, not to the runtime: it
+			;-- declares what the Red-level routines are written against. It is
+			;-- compiled whether the Red runtime is linked in or embedded --
+			;-- tying it to `embed-red-runtime?` dropped it from every dev-mode
+			;-- build, where routines referring to it then failed to resolve.
+			unless empty? red/sys-global [
+				compiler/script: %***sys-global.reds
+				phase-timer/begin 'rs-loader
+				sys-global-source: loader/process red/sys-global
+				phase-timer/finish 'rs-loader
+				unless block? sys-global-source [
+					error: loader/last-error
+					compiler/throw-error either error [
+						rejoin ["Red/System #system-global loader: " error/message]
+					]["Red/System #system-global loader failed without a diagnostic"]
 				]
+			]
+			if embed-red-runtime? [
 				red-runtime-file: builtin-source-path red-runtime-path/red.reds
 				compiler/script: red-runtime-file
 				phase-timer/begin 'runtime-red-loader
@@ -530,8 +535,10 @@ system-dialect: context [
 				]
 				append/only runtime-source first [system/boot-data:]
 				append/only runtime-source payload
+				if sys-global-source [
+					append runtime-source skip sys-global-source 2
+				]
 				if embed-red-runtime? [
-					if sys-global-source [append runtime-source skip sys-global-source 2]
 					append runtime-source skip red-runtime-source 2
 				]
 			]

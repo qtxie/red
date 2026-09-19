@@ -20,12 +20,13 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler164.exe`
-  (163->164, output 6388224 bytes; 164->165 differs in 16 bytes -- the PE
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler167.exe`
+  (166->167, output 6387712 bytes; the two differ in 20 bytes -- the PE
   checksum, the PE timestamp, the two `movabs rax` immediates that carry the
-  compiler's build clock, the output file name and the two embedded
-  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is back at a fixed point with
-  the import-kind and shared-library work in it. `system/runtime/darwin.reds`
+  compiler's build clock, the output file name's last digit in the two places
+  it is embedded, and the two `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is
+  back at a fixed point with the import-kind, shared-library and Mach-O
+  dylib-tail work in it. `system/runtime/darwin.reds`
   is Darwin-only, so the Windows bootstrap is byte-identical across it apart
   from that clock). 157 is the first generation that
   cross-compiles the
@@ -266,6 +267,49 @@
   self-compilations of 142 differ in 4 bytes, so the chain genuinely
   converges. (140 vs 141 happened to differ by only 15 because that run's
   clock string kept the same length.)
+- Fixed at 167: **a Darwin dylib's tail was laid out from a stale length.**
+  `Mach-O-ARM64.red` derived `__mod_init_func`, `__mod_term_func` and the
+  rodata base from `length? data` *before* rodata was folded into `data`.
+  rodata is appended to `data` and written as part of it on purpose -- a
+  separate `__DATA,__const` page is remapped r/o by dyld on Apple Silicon and
+  SIGBUS-es later stores -- so every tail offset came out short by the rodata
+  size, the following `insert/dup` was handed a negative count and silently
+  did nothing, and the 16-byte lifecycle payload landed that many bytes past
+  the file offset its two sections advertise. In `shared-lib.reds` rodata is
+  6 bytes, so `__mod_init_func` read `0x1504000a00000001` instead of
+  `0x100001504`: dyld branched into rodata instead of `***-dll-entry-point`,
+  `on-load` never ran, and rodata symbol references resolved 16 bytes high.
+  The fix measures rodata where the file is built from it -- `const-offset` is
+  now the writable end, and the lifecycle slots follow `data + rodata`.
+  Verified: `__mod_init_func` = `0x100001504`, `__mod_term_func` =
+  `0x1000027d4`, matching `--show-func-map`'s `***-dll-entry-point` /
+  `on-unload`, and a C loader gets `on-load executed`, `foo(41) = 42`,
+  `i = 56`. `--show-func-map` is what made it diagnosable: it prints
+  `code-ptr + spec/2 - 1`, the exact expression the slots are built from, so
+  the two numbers can be compared directly. The 40-unit Red/System suite
+  cross-compiled for Darwin-ARM64 is **byte-identical** between 164 and 166,
+  so only the dylib path moved; on the Mac it is 40/40 with 12025 assertions
+  and 0 failures.
+  A Python Mach-O dumper (`build/tmp-imp/macho-dump.py`) reads the sections,
+  decodes the rebase opcodes and prints the 8 bytes at every rebased address,
+  which is how the shifted payload was located: the correct pointers were
+  still in the file, just 6 bytes past where the sections pointed.
+- Still open on Darwin, and **not ours**: `on-unload` never runs. dyld logs
+  `registering old style destructor 0x... for <dylib>` and then never calls
+  it, and a dylib assembled from `__DATA,__mod_term_func,mod_term_funcs` by
+  Apple's own toolchain (`cc -shared ct2.c ct2.s`) behaves exactly the same
+  on Darwin 24.6 -- its `__mod_init_func` runs, its `__mod_term_func` does
+  not, whether the image is `dlclose`d, `RTLD_NODELETE`d, or left loaded
+  until exit. `__mod_term_func` is dead for `dlopen`-ed images there; clang
+  now compiles `__attribute__((destructor))` to `__cxa_atexit`, registered
+  from the initializer, and emits no terminator section at all. Making
+  `on-unload` fire would mean registering it through the runtime's `atexit`
+  (`__cxa_atexit`, already imported in `POSIX.reds`) from
+  `***-dll-entry-point` -- but `POSIX.reds` passes a NULL dso handle, which
+  pins the handler to process exit and would call into an image `dlclose` has
+  already unmapped, so that needs a real `__dso_handle` first. Left alone:
+  the linker's output matches Apple's in mechanism, which is the correct
+  thing to emit.
 - Fixed: seven compiler-test assertions wanted the **compiler's** syntax-error
   wording and were getting the runtime's. #2671 (`#"^(0000001)"`), #1774
   (`system/options/`), #3670 (a source with no header) and ce-1 issue #608

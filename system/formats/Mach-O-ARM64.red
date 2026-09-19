@@ -596,20 +596,21 @@ system-format-MachO-ARM64: context [
 		got-offset: data-offset
 		got-size: 8 * length? imports
 		data-section-offset: round/to/ceiling (got-offset + got-size) 8
-		data-end: data-section-offset + length? data
+		;-- rodata is appended to `data` below and written as part of it, so it
+		;-- has to be measured here: a length taken before the fold left every
+		;-- tail offset short by the rodata size, and the dylib lifecycle slots
+		;-- landed that many bytes past the offsets their sections advertise --
+		;-- dyld then ran whatever the shifted bytes decoded to. It stays inside
+		;-- __data on purpose: a separate __DATA,__const page is remapped r/o by
+		;-- dyld on Apple Silicon and SIGBUS-es later stores into the same page.
+		const-offset: data-section-offset + length? data
+		data-end: const-offset + length? rodata
 		init-offset: term-offset: data-end
 		if dll? [
 			init-offset: round/to/ceiling data-end 8
 			term-offset: init-offset + 8
 			data-end: term-offset + 8
 		]
-		const-offset: either empty? rodata [data-end][
-			; Place rodata immediately after writable data, still inside
-			; __data. A separate __DATA,__const page is remapped r/o by
-			; dyld on Apple Silicon and SIGBUS-es runtime stores.
-			data-end
-		]
-		data-end: const-offset + length? rodata
 		data-file-size: round/to/ceiling (max 1 data-end - data-offset) defs/page-size
 		linkedit-offset: data-offset + data-file-size
 		entry-offset: text-offset

@@ -53,7 +53,10 @@ compiler-options: context [
 			token: to string! position/1
 			case [
 				find ["-h" "--help"] token [option-set options 'help? true]
-				find ["-V" "--version"] token [option-set options 'version? true]
+				;-- `find` ignores case unless told not to, so -V and -v have
+				;-- to be matched with /case: without it "-v" is taken for the
+				;-- version flag and its value falls through as a source file.
+				find/case ["-V" "--version"] token [option-set options 'version? true]
 				find ["-c" "--compile" "--dev"] token [
 					option-set options 'release? false
 				]
@@ -101,7 +104,7 @@ compiler-options: context [
 					if tail? position [return missing-value token]
 					option-set options 'output to string! position/1
 				]
-				find ["-v" "--verbose"] token [
+				find/case ["-v" "--verbose"] token [
 					position: next position
 					if tail? position [return missing-value token]
 					option-set options 'verbose to integer! position/1

@@ -45,11 +45,16 @@
   12 failed (below) and the Red/System compiler tests 120 passed / 4 failed,
   up from 84/40 on 142 -- the twelve fixed first are the cast group, the
   twenty-two after them the conditional group and the last two a wrong path in
-  output-test. Release
-  mode has no full-suite number -- a `-r` build costs ~40s
-  per file -- but the seven collector-heavy units were run in `-r` on 142 and
-  are clean: series 1119/1119, append 327, make 3, convert 451, redbin-codec
-  1762, recycle 39, unicode 67/67. Fixed point: 145 self-compiles to 146 at the same
+  output-test.
+  Release mode now has a full-suite number: `RED_COMPILER_ARGUMENTS="-r"` on
+  145 gives 8820 tests, 16921 assertions, 16921 passed, 0 failures, 0
+  compile failures. It is *more* than dev mode's 16893 by 28 assertions and 8
+  tests, not less: a handful of tests only run when the runtime is linked in.
+  It costs ~35 minutes for 58 files, which is why nobody had run it. The
+  earlier `-r` spot check of the seven collector-heavy units on 142 agrees:
+  series 1119/1119, append 327, make 3, convert 451, redbin-codec 1762,
+  recycle 39, unicode 67/67.
+  Fixed point: 145 self-compiles to 146 at the same
   6349824 bytes. Unpinned they differ in 1602 bytes, which is the clock -- the
   build date is a variable-length string, so it shifts every absolute address
   by one and repaints a few thousand bytes. Pin `SOURCE_DATE_EPOCH` and two

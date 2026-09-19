@@ -150,6 +150,11 @@
   All four sites are reached only by 19 MB of IR -- `compile-function` alone is
   34k instructions -- so unit tests cannot find them; the toolchain build is
   the test.
+  Linux ARM64 at 159, on the `armbian` board (Cortex-A53, ARMv8.0, no LSE):
+  `bash build/linux-hybrid/rs-suite-linux.sh
+  build/self-hosting/merge-red64/hybrid-compiler159.exe Linux-ARM64 armbian`
+  compiles 40/40 and runs 40/40 with 0 differing -- `atomic-test` 33/33 and
+  `queue-test` 64/64 included, which is what closes the SIGILL note above.
   The cross-build is a fixed point as well: 157 and 158, each writing a
   6690688-byte Mach-O to an output name of the same length
   (`build/red-toolchain/darwin-arm64/red-toolchain-157|158`), differ in 144
@@ -515,11 +520,11 @@
   Linux ARM64 on `armbian`: 40/40 Red/System units compile, 38 run and 3 of
   those differ -- all source-gated, none failing (`int64-test` is `#if`'d to
   32-bit and ARM targets, `pointer-test` keeps an x64-only group, `lib-test`
-  takes a Windows-only include). `atomic-test` and `queue-test` take a SIGILL:
-  `atomic-rmw` and `atomic-compare-exchange` emit `ldaddal`/`casal`, the
-  ARMv8.1 LSE atomics, and this board's CPU is ARMv8.0. A baseline AArch64
-  target needs the load-exclusive/store-exclusive loop, which additionally
-  wants two scratch registers the call sites do not yet spare.
+  takes a Windows-only include).   `atomic-test` and `queue-test` took a SIGILL:
+  `atomic-rmw` and `atomic-compare-exchange` emitted `ldaddal`/`casal`, the
+  ARMv8.1 LSE atomics, and this board's CPU is ARMv8.0. That is stale -- both
+  emit the load-exclusive/store-exclusive pair now (`ldaxr`/`stlxr`, see the
+  Linux ARM64 at 159 bullet below), and the two units pass on this board.
   Still open on ARM64: the ELF writer patches *every* import to
   `plt + 16*(index+1)`, a branch target, which is wrong for a data reference.
   Run the Linux suites with `HOST=wsl`: `wsl.exe` needs no sshd and both

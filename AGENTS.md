@@ -690,7 +690,12 @@
   worked here -- do not bisect 134..185 looking for a regression, and the
   System V and ARM64 work is not implicated. The fork's View coverage is the
   headless backend (246/246, above) and the terminal one; the Windows GUI
-  backend is unexercised territory. Diagnosed with a scratch Red/System probe
+  backend is unexercised territory. `environment/console/GUI/gui-console.red`
+  is the sharpest form of it: the 187 toolchain compiles it with `-r` in 52s to
+  3319296 bytes (`GUI backend: native`, `Modules: View JSON CSV`) and the
+  resulting console then dies on the same three `CreateWindowEx failed!` lines,
+  so the GUI console builds but has never been able to open a window here.
+  Diagnosed with a scratch Red/System probe
   (`build/tmp-imp/gci3.reds`): all nine system classes resolve through
   `GetClassInfoExW`; `RegisterClassExW` returns a class atom and
   `GetLastError` stays 0, but the class it just registered is invisible to a

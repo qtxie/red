@@ -327,20 +327,33 @@
   non-code entries for the same reason. And the repro's `#import` must sit at
   top level, not inside `#switch`: from inside a conditional the frontend
   fails earlier and misleadingly with "missing expression".
-- Broken on **Linux-X86-64 only**: **a struct passed by value to a native
-  call.** Import a C function that takes a struct by value and the x64 backend
-  hands it over *by reference* and moves it *after* the other arguments. A
-  call to `checkTriple8 [t [triple8! value] bias [integer!]]` emits
-  `mov $0x4,%edi` / `lea 0x10(%rsp),%rsi` -- the bias in the first register
-  and the struct's address in the second -- where System V wants the three
-  bytes in RDI and the bias in RSI. Found through the 64-bit structlib builds:
-  `checkTriple8` answers 290 instead of 10 and `checkBig` 0 instead of 1.
-  Darwin-ARM64, Linux-ARM64 and Windows-X86-64 all answer 10 and 1, so it is
-  the System V classification in x64-codegen, not the frontend and not the
-  library. Probe: `build/tmp-imp/structlib-probe-{lin,mac,win,la}.reds`. It
-  stayed invisible because `struct-test` and `size-test` were skipped on every
-  non-Windows target -- `libs/` only carried 32-bit structlib builds, so those
-  two units were never run there, only excluded.
+- Broken on **Linux-X86-64**: **an aggregate passed across a native call.**
+  The x64 backend applies the *Win64* aggregate rule on every target: an
+  aggregate of exactly 1, 2, 4 or 8 bytes goes into one integer register and
+  any other one is handed over **by reference**. System V splits an aggregate
+  of at most 16 bytes into eightbytes, gives each one an integer or a vector
+  register by what it holds, and puts anything larger in memory. Found through
+  the 64-bit structlib builds: `checkTriple8 [t [triple8! value] bias
+  [integer!]]` emits `lea 0x10(%rsp),%rax` / `mov %rax,%rdi` / `mov %r11d,%esi`
+  -- the struct's address where its three bytes belong -- and answers 290
+  instead of 10; `checkBig` answers 0 instead of 1.
+  Measured with the real unit, cross-compiled and run with the new 64-bit
+  library beside it (`LD_LIBRARY_PATH=.`): `struct-x64-test` on
+  Linux-X86-64 fails five assertions of the `x64-native-aggregate-abi` group
+  and then dies with an access violation. Linux-ARM64 is 627/628 with one
+  assertion left, and Windows-X86-64 is clean, so it is the System V
+  classification in x64-codegen, not the frontend and not the library.
+  Probes: `build/tmp-imp/structlib-probe-{lin,mac,win,la}.reds` and
+  `build/tmp-imp/sv-probe.reds`. It stayed invisible because `struct-test` and
+  `size-test` were skipped on every non-Windows target -- `libs/` only carried
+  32-bit structlib builds, so those two units were never run there, only
+  excluded.
+  Red/System-to-Red/System is *not* affected and does not need to be: both
+  sides of an internal call use the same by-reference convention, so it is
+  self-consistent on every target. `build/tmp-imp/sv-probe.reds` confirms it --
+  five functions taking structs by value answer identically on all four
+  targets. What must match the C compiler is the boundary: a native call out,
+  a callback in, and a value returned either way.
 - To inspect a codegen failure without rebuilding the compiler, dump the IR
   the frontend hands it: `red-console.exe build/tmp-imp/rsir-dump.red
   <target> <out.rsir>` (it stubs `codegen-module` because the console cannot

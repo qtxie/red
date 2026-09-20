@@ -764,13 +764,15 @@
   left its handle null, so `GdipSetStringFormatAlign` took a null critical
   section and `size-text` segfaulted (`GDIPLUS!GdipSetStringFormatAlign`,
   AV on `rax=0`). `gui.reds`'s `init` now calls `init-gdiplus` first.
-  Remaining, cosmetic: the console prints two `Math Error: attempt to divide
-  by zero` at startup. `view/flags/no-wait win [resize]` (gui-console.red:302)
-  fires `on-resizing` before `terminal/update-cfg` has measured the font, so
-  `adjust-console-size` divides by `char-width`/`line-h` while both are still
-  0. `update-cfg` runs immediately after and sets them correctly, so the
-  console is fine once up; it is an ordering wart in the console app, not a
-  compiler bug.
+  One follow-on, fixed in the same pass: the console printed two `Math Error:
+  attempt to divide by zero` at startup. `view/flags/no-wait win [resize]`
+  (gui-console.red:302) fires `on-resizing` before `terminal/update-cfg` has
+  measured the font, so the layout divided by a still-zero `char-width` /
+  `line-h`. Not a compiler bug -- an ordering wart in the console app; it
+  self-corrected because `update-cfg` runs immediately after. `core.red` now
+  has `measured?` and both layout entry points (`adjust-console-size` and the
+  scroller block in `resize`) skip until the metrics exist, so startup is
+  silent.
   Note `handle!` is not a Red/System type here at all (only Red programs
   define it), so a standalone probe has to spell parameters `int-ptr!`.
   Note too that the **toolchain cannot see edits to `modules/`** -- it embeds

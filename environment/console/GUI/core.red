@@ -355,7 +355,12 @@ object [
 		update-theme
 	]
 
+	;-- `view` delivers an initial resize before `update-cfg` has measured the
+	;   font, so both metrics are still 0 on the very first layout pass.
+	measured?: does [all [char-width <> 0 line-h <> 0]]
+
 	adjust-console-size: function [size [pair!]][
+		unless measured? [exit]
 		cols: to integer! size/x - 20 - pad-left / char-width		;-- -20 compensates for scrollbar
 		rows: to-integer size/y / line-h
 		system/console/size: as-pair cols rows
@@ -366,7 +371,7 @@ object [
 		new-size/x: new-size/x - 20
 		new-size/y: y
 		box/size: new-size
-		if scroller [
+		if all [scroller measured?][
 			page-cnt: to-integer y / line-h
 			scroller/page-size: page-cnt
 			scroller/max-size: line-cnt - 1 + page-cnt

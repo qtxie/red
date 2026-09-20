@@ -40,14 +40,35 @@
   the same `size-text` as one built by hybrid-compiler194.
   Cross-target (every source that changed is Windows-only, so this is a
   control, not an expectation): `hello.red` still prints `red-linux-ok` on
-  Linux-X86-64 (1958480 bytes) and Linux-ARM64 (1632264 bytes). Darwin-ARM64
-  **cross-compiles** to a valid Mach-O -- 1667288 bytes, magic `0xfeedfacf`,
-  cputype `0x0100000c`, `MH_EXECUTE`, 17 load commands, linking
-  libSystem / ApplicationServices / CoreFoundation / CoreServices / libobjc /
-  libcurl / AppKit -- but is still **unrun**: the macmini tunnel keeps
-  refusing 127.0.0.1:5588, so only the "it builds" half is covered. (The
+  Linux-X86-64 (1958480 bytes) and Linux-ARM64 (1632264 bytes). (The
   hybrid compiler rejects plain `Darwin`: it supports Windows-X86-64 PE,
   Darwin-ARM64 Mach-O and Linux X86-64/ARM64 ELF only.)
+  Darwin-ARM64 **compiles and runs**. `hello.red` is a valid Mach-O --
+  1667288 bytes, magic `0xfeedfacf`, cputype `0x0100000c`, `MH_EXECUTE`, 17
+  load commands, linking libSystem / ApplicationServices / CoreFoundation /
+  CoreServices / libobjc / libcurl / AppKit -- and prints `red-linux-ok` on
+  the Mac (macOS 15.7.7, T8132). The full Red unit suite runs there for the
+  first time: **65/65 units, 9363 tests, 18034 assertions, 0 failed**
+  (`build/darwin-hybrid/build-red-suite194.sh` + `deploy-red-suite194.sh`,
+  logged in `red-suite194-run.txt`). That is the 57 units the old 83-era run
+  covered (8808 tests / 16854 assertions) plus the 8 that had no driver
+  before -- clipboard, csv, draw, image, json, reactivity, routine,
+  regression-test-red (374 tests / 912 assertions). Caveats for the harness,
+  not the target: macOS has no `timeout` (the watchdog is hand-rolled, and
+  its `sleep` subshell must have stdout redirected or every test blocks for
+  the full limit), `scp`-ed binaries need
+  `xattr -dr com.apple.quarantine`, `file-test` leaves a `testfile.txt` that
+  a naive `*` glob counts as a failing suite, and the `macmini` tunnel drops
+  long-lived ssh sessions -- launch the runner with `nohup ... & disown` and
+  poll the log.
+  Darwin toolchain fixed point, measured on matched pairs: `dt194b` vs
+  `dt195b` differ in **140 bytes** and `dt194b` vs `dt194c` (same compiler,
+  rebuilt) in **68** -- generation drift is the same order as rebuild noise,
+  so Darwin is at a fixed point. Unrelated and unexplained: a build from the
+  previous session (`dt194`, 20:51) sits ~1.85 MB away from today's rebuilds
+  of the same compiler and source, scattered over the whole file from offset
+  3362 up; it is not the resources file (last changed at `69a5527dd`, 20:34)
+  and not the wall clock (today's 21:03 and 21:22 builds agree to 68 bytes).
   The old open bug where a `#import` library name past 32 bytes was truncated
   in the PE DLL-name buffer is still fixed at 194: `dumpbin /dependents`
   prints `E:\TEMP3\RED\BUILD\TMP-CLEAN\ZEBRA.DLL` and 28/32/33-char names

@@ -319,6 +319,20 @@
   non-code entries for the same reason. And the repro's `#import` must sit at
   top level, not inside `#switch`: from inside a conditional the frontend
   fails earlier and misleadingly with "missing expression".
+- Broken on **Linux-X86-64 only**: **a struct passed by value to a native
+  call.** Import a C function that takes a struct by value and the x64 backend
+  hands it over *by reference* and moves it *after* the other arguments. A
+  call to `checkTriple8 [t [triple8! value] bias [integer!]]` emits
+  `mov $0x4,%edi` / `lea 0x10(%rsp),%rsi` -- the bias in the first register
+  and the struct's address in the second -- where System V wants the three
+  bytes in RDI and the bias in RSI. Found through the 64-bit structlib builds:
+  `checkTriple8` answers 290 instead of 10 and `checkBig` 0 instead of 1.
+  Darwin-ARM64, Linux-ARM64 and Windows-X86-64 all answer 10 and 1, so it is
+  the System V classification in x64-codegen, not the frontend and not the
+  library. Probe: `build/tmp-imp/structlib-probe-{lin,mac,win,la}.reds`. It
+  stayed invisible because `struct-test` and `size-test` were skipped on every
+  non-Windows target -- `libs/` only carried 32-bit structlib builds, so those
+  two units were never run there, only excluded.
 - To inspect a codegen failure without rebuilding the compiler, dump the IR
   the frontend hands it: `red-console.exe build/tmp-imp/rsir-dump.red
   <target> <out.rsir>` (it stubs `codegen-module` because the console cannot

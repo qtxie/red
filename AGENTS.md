@@ -38,6 +38,10 @@
   clean. `build/red-toolchain/windows-x64/red-toolchain-194.exe` is 7690240
   bytes, `--self-check` reports 276 resources, and a program it builds prints
   the same `size-text` as one built by hybrid-compiler194.
+  Cross-target (every source that changed is Windows-only, so this is a
+  control, not an expectation): `hello.red` still prints `red-linux-ok` on
+  Linux-X86-64 (1958480 bytes) and Linux-ARM64 (1632264 bytes). Darwin-ARM64
+  is still unrun -- the macmini tunnel keeps refusing 127.0.0.1:5588.
 - Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler190.exe`
   (189->190, output 6419968 bytes; 190 and 191 differ in 17 bytes -- the PE
   timestamp, the PE checksum, the output file name, the two `movabs rax`

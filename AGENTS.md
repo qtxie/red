@@ -671,6 +671,24 @@
     you hunting a failure that is somewhere else.
   No earlier real-compiler number exists for this suite; 138 scores 240 passed
   / 23 failed on it, so the c-string literal fix also cleared issue #832.
+- **Open, and pre-existing: the Windows View backend cannot create a window at
+  all.** `Red [Needs: [View]] view/no-wait [button "OK"]` prints one
+  `*** Error in GetClassInfoEx`, then `*** View Error: CreateWindowEx failed!`
+  for every widget, and dies on a segfault. **133, 184 and 185 all behave
+  identically and emit byte-identical 2716672-byte output**, so it has never
+  worked here -- do not bisect 134..185 looking for a regression, and the
+  System V and ARM64 work is not implicated. The fork's View coverage is the
+  headless backend (246/246, above) and the terminal one; the Windows GUI
+  backend is unexercised territory. Diagnosed with a scratch Red/System probe
+  (`build/tmp-imp/gci3.reds`): all nine system classes resolve through
+  `GetClassInfoExW`; `RegisterClassExW` returns a class atom and
+  `GetLastError` stays 0, but the class it just registered is invisible to a
+  following `GetClassInfoExW` (under both the module handle and null), and
+  `CreateWindowExW` returns null with `GetLastError` **998 (ERROR_NOACCESS)**
+  -- while the 1- and 3-argument imports in the same program are fine. Chase it
+  from the twelve-argument call side first. Note `handle!` is not a Red/System
+  type here at all (only Red programs define it), so a standalone probe has to
+  spell parameters `int-ptr!`.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
   (131->132, output 6337024 bytes; two SOURCE_DATE_EPOCH-pinned
   self-compilations of 132 differ in 1596 bytes -- PE timestamp, checksum, the

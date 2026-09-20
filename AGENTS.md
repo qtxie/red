@@ -185,13 +185,18 @@
   All four sites are reached only by 19 MB of IR -- `compile-function` alone is
   34k instructions -- so unit tests cannot find them; the toolchain build is
   the test.
-  Linux ARM64 at 179, on the `armbian` board (Cortex-A53, ARMv8.0, no LSE):
+  Linux ARM64 at 185, on the `armbian` board (Cortex-A53, ARMv8.0, no LSE):
   `bash build/linux-hybrid/rs-suite-linux.sh
-  build/self-hosting/merge-red64/hybrid-compiler179.exe Linux-ARM64 armbian`
-  compiles 40/40 and runs 40/40 with 0 failed assertions -- `atomic-test` 33/33
+  build/self-hosting/merge-red64/hybrid-compiler185.exe Linux-ARM64 armbian`
+  compiles 41/41 and runs 41/41 with 0 failed assertions -- `atomic-test` 33/33
   and `queue-test` 64/64 included, which is what closes the SIGILL note above.
-  Linux x86-64 at 179 (`HOST=wsl`) is the same: 40/40 compile, 40/40 run,
-  0 failed assertions. The driver compares every run against
+  Linux x86-64 at 185 (`HOST=wsl`) is the same: 41/41 compile, 41/41 run,
+  0 failed assertions. The 41st unit is `struct-x64-test` -- 621/621 on
+  x86-64 and 628/628 on ARM64 -- which the suite never carried before because
+  it could not load a library there; the driver now ships the 64-bit
+  `structlib.so` / `structlib-arm64.so` for its target to the host and points
+  `LD_LIBRARY_PATH` at it.
+  The driver compares every run against
   `build/win-regression/rs-hybrid-compiler179/`, the Windows logs from the same
   generation; three ARM64 units and one x86-64 unit come out "differing" and
   all four are count-only, with 0 failures on both sides, because the bodies
@@ -200,6 +205,13 @@
   `lib-test` is `#either any [OS = 'Linux OS = 'macOS]` (7 tests on Linux,
   6 on Windows). The output directory is `rs-<gen>-<target>` because the two
   Linux targets share one generation and would otherwise overwrite each other.
+  Watch the `noref:` count: the reference is `build/win-regression/rs-<gen>/`,
+  so a generation whose Windows logs were never produced has nothing to
+  compare against. It used to print `OK` and `differed: 0` in that case, which
+  reads like a match; it now prints `NOREF` and counts them separately, so
+  `differed: 0 noref: 41` means "all 41 ran, none was actually compared".
+  The compile and run counts and each unit's own
+  `Number of Assertions Failed` are the part that stands on its own.
   Fixed at 160: **the linker could not tell a variable import from a function
   import.** `codegen-import!` carried no kind, so `linker/load-codegen` named
   every import with a plain `string!` and every `issue?` test in ELF.red,

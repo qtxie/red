@@ -13,20 +13,29 @@ TAG=$(basename "$C" .exe)
 OUT=build/linux-hybrid/rs-$TAG-$(echo "${TARGET#Linux-}" | tr 'A-Z' 'a-z')
 REF=build/win-regression/rs-$TAG
 mkdir -p $OUT
-UNITS="alias-test array-test atomic-test byte-test c-string-test case-test cast-test conditional-test enum-test exceptions-test exit-test fixed-int-test float-pointer-test float-test float32-test function-test get-pointer-test infix-test int64-test integer-test length-test lib-test logic-test math-mixed-test modulo-test namespace-test not-test null-test overflow-test pointer-test protect-test push-pop-test queue-test return-test subroutine-test switch-test system-test union-test use-test vararg-test"
+UNITS="alias-test array-test atomic-test byte-test c-string-test case-test cast-test conditional-test enum-test exceptions-test exit-test fixed-int-test float-pointer-test float-test float32-test function-test get-pointer-test infix-test int64-test integer-test length-test lib-test logic-test math-mixed-test modulo-test namespace-test not-test null-test overflow-test pointer-test protect-test push-pop-test queue-test return-test struct-x64-test subroutine-test switch-test system-test union-test use-test vararg-test"
+
+# struct-x64-test dlopens a 64-bit structlib by its bare name, so the library
+# goes to the host beside the units and the loader is pointed at that
+# directory. The two targets need different builds of it.
+LIBDIR=/tmp
+LIBSRC=system/tests/source/units/libs/structlib.so
+[ "${TARGET#Linux-}" = "ARM64" ] && LIBSRC=system/tests/source/units/libs/structlib-arm64.so
 
 case "$HOST" in
   wsl)
     ship_one() { wsl.exe -- bash -c "cat > $2 && chmod +x $2" < "$1"; }
-    runon()    { wsl.exe -- bash -c "timeout 120 $1" 2>&1; }
+    runon()    { wsl.exe -- bash -c "LD_LIBRARY_PATH=$LIBDIR timeout 120 $1" 2>&1; }
     ;;
   *)
     ship_one() { scp -q "$1" $HOST:"$2" && ssh $HOST "chmod +x $2"; }
-    runon()    { ssh $HOST "timeout 120 $1" 2>&1; }
+    runon()    { ssh $HOST "LD_LIBRARY_PATH=$LIBDIR timeout 120 $1" 2>&1; }
     ;;
 esac
 
-pass=0; fail=0; runpass=0; runfail=0; diffcount=0; failed=""
+ship_one "$LIBSRC" "$LIBDIR/$(basename "$LIBSRC")" >/dev/null 2>&1
+
+pass=0; fail=0; runpass=0; runfail=0; diffcount=0; noref=0; failed=""
 for u in $UNITS; do
   if timeout 300 "$C" -r -t $TARGET -o "$OUT/$u" "system/tests/source/units/$u.reds" > "$OUT/$u.compile.log" 2>&1 && [ -f "$OUT/$u" ]; then
     pass=$((pass+1))
@@ -40,8 +49,12 @@ for u in $UNITS; do
         runpass=$((runpass+1))
         # The Windows console turns every LF into CRLF, so compare the output
         # with the carriage returns taken back out.
-        if [ -f "$REF/$u.run.log" ] \
-           && ! diff -q <(tr -d '\r' < "$REF/$u.run.log") "$OUT/$u.run.log" >/dev/null; then
+        if [ ! -f "$REF/$u.run.log" ]; then
+          # Nothing to compare against, so say so instead of counting this as
+          # a match -- `differed: 0` used to mean either "identical" or "no
+          # reference was ever generated for this generation".
+          noref=$((noref+1)); echo "NOREF $u"
+        elif ! diff -q <(tr -d '\r' < "$REF/$u.run.log") "$OUT/$u.run.log" >/dev/null; then
           diffcount=$((diffcount+1)); echo "DIFF $u"
         else
           echo "OK   $u"
@@ -58,5 +71,5 @@ for u in $UNITS; do
 done
 echo "compiled: $pass pass, $fail fail"
 echo "ran     : $runpass pass, $runfail fail"
-echo "differed: $diffcount"
+echo "differed: $diffcount  noref: $noref"
 [ -n "$failed" ] && echo "failed:$failed"

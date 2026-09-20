@@ -633,19 +633,38 @@
   proves the link works and nothing else. Use a top-level `print` to check a
   Red/System program actually runs.
 - `red-console.exe tools/self_hosting/run-red-compiler-tests.red` (the nine
-  scripts under tests/source/compiler/) with 140: 262 assertions, 251 passed,
-  12 failed, 27 compile-failures. It takes a filename argument to run one
-  script. Two classes of failure:
-  - The 27 compile-failures are bookkeeping, not breakage: those tests feed the
+  scripts under tests/source/compiler/) with **185: 321 assertions, 320 passed,
+  1 failed, 30 compile-failures** (140 was 262 / 251 / 12 / 27). It takes a
+  filename argument to run one script, which is how to iterate on a single
+  failure -- `... run-red-compiler-tests.red regression-test-redc-5.red` takes
+  1m40s against the full suite's 8m.
+  - The 30 compile-failures are bookkeeping, not breakage: those tests feed the
     compiler deliberately broken snippets, and the runner counts every expected
     compile error as a failure.
-  - `preprocessor-test`'s "Macros & #do" used to lose all ten of its assertions
-    because `maximum-of` does not exist in this environment at all -- not for
-    macros, not for ordinary programs. `tests/source/units/preprocessor-test.red`
-    already guarded against that with a `#do [unless value? 'maximum-of [...]]`
-    (commit 4c4957b84, "to support expansion from interpreter"); the compiler
-    copy was ported later and never got the guard. It has it now and the file
-    is 43/43. What is left is #2671 (four assertions) plus seven singles.
+  - The one real failure is **#4190** in `regression-test-redc-5.red`, and it is
+    not a compiler defect: the snippet is `fc: make face! [...]`, `face!` lives
+    in `modules/view/view.red`, and `--compile-and-run-this-red` only prepends a
+    bare `Red []`, so it dies as `undefined word face!`. Compiled with
+    `Needs: [View]` the program prints `boom` and both of its assertions pass.
+    Declaring that is left undone on purpose: it turns a 20s compile into a 40s
+    one and every Windows View program here prints a pre-existing
+    `*** Error in GetClassInfoEx` at startup, even `print "hi"`.
+  - **#4613** was the other failure and is fixed. Upstream asserted
+    `bug$0 = load qt/output` -- money! equality, which ignores both the case of
+    the currency word and the fraction's formatting. The Red port cannot write
+    that literal (the harness rejects an unregistered currency when it loads
+    the script), so it compared text instead and compared it too strictly: the
+    program prints `BUG$0.00`, because `register-header-currencies` registers
+    the code uppercased and `probe` molds money with
+    `system/options/money-digits` decimals. It now asserts
+    `"bug$0.00" = lowercase trim/tail qt/output`.
+  - Trap while debugging these: plain **`trim` puts the line feed it removed
+    back** -- `trim-head-tail` in `runtime/datatypes/string.reds` sets
+    `append-lf?` and re-pokes it whenever neither `/head` nor `/tail` was given
+    -- so `trim "BUG$0.00^/"` is `"BUG$0.00^/"`. Use `trim/tail` or `trim/all`.
+    And `lowercase` mutates its argument in place, so printing `mold qt/output`
+    *after* a `lowercase trim qt/output` shows the lowercased string and sends
+    you hunting a failure that is somewhere else.
   No earlier real-compiler number exists for this suite; 138 scores 240 passed
   / 23 failed on it, so the c-string literal fix also cleared issue #832.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`

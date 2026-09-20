@@ -308,7 +308,15 @@ test
 		; Bug$0 is a money literal for a currency registered at runtime, so it
 		; cannot appear literally here: Red validates currency codes when it
 		; loads this script. Compare what the program printed instead.
-		--assert "bug$0" = trim qt/output
+		; Upstream compared money! values -- `bug$0 = load qt/output` -- and
+		; money! equality ignores both the case of the currency word and the
+		; fraction's formatting. The Red port cannot build the value, so it
+		; compares the printed text and has to grant the same two freedoms:
+		; the currency is registered uppercase and `probe` molds it with
+		; system/options/money-digits decimals, so the program prints BUG$0.00.
+		; `trim/tail` and not `trim`: plain `trim` puts the line feed it removed
+		; back (string.reds' append-lf?), so it leaves "BUG$0.00^/" as it is.
+		--assert "bug$0.00" = lowercase trim/tail qt/output
 		
 		--compile-and-run-this {
 			Red [Currencies: [bug]]

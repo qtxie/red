@@ -901,6 +901,15 @@
     `struct-x64-test` goes from 627/628 to **628/628** on Linux-ARM64, its 40
     units still report 0 failed assertions, and the Windows Red/System suite
     still reports 12680 assertions / 12680 passed / 0 failed.
+    `arm64-codegen.reds` is shared with Darwin-ARM64, and the Mac was down, so
+    the change was checked against Red instead of left to trust: 184 and 185
+    emit **different bytes** for `parse-test`, `object-test`, `series-test`
+    and `function-test` on Linux-ARM64 -- a call with more than eight
+    arguments now reserves a wider outgoing area, so frame offsets move --
+    but the four run to identical totals with 0 failures on the armbian box
+    (parse 1518, object 658, series 1119, function 147, the same numbers the
+    Mac reported at 179). The change is behaviourally inert for Red, and only
+    a native call that spills can tell the two apart.
   Linux ARM64 on `armbian`: 40/40 Red/System units compile, 38 run and 3 of
   those differ -- all source-gated, none failing (`int64-test` is `#if`'d to
   32-bit and ARM targets, `pointer-test` keeps an x64-only group, `lib-test`

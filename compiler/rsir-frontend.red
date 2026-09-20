@@ -3530,14 +3530,24 @@ compiler-rsir-frontend: context [
 	add-static-bytes: func [
 		value [binary!]
 		nul? protected? [logic!]
+		/wide										;-- intern the blob as UTF-16 units
 		return: [integer!]
 		/local data offset ref id record
 	][
 		data: copy value
 		if nul? [append data 0]
+		;-- An inline array takes its alignment from its element width, so a
+		;   UTF-16 literal has to be interned as 16-bit units rather than bytes.
+		;   The kernel probes every WCHAR* it is handed with that alignment and
+		;   rejects a misaligned one, which the window APIs surface as
+		;   ERROR_NOACCESS (998) from RegisterClassExW / CreateWindowExW.
 		offset: length? strings
 		append strings data
-		ref: intern-array -15 length? data 1
+		ref: either wide [
+			intern-array -4 ((length? data) / 2) 2
+		][
+			intern-array -15 length? data 1
+		]
 		id: add-hidden-global ref (
 			inline-flag + either protected? [protected-flag][0]
 		)
@@ -5151,7 +5161,7 @@ compiler-rsir-frontend: context [
 		]
 		data: unicode/to-utf16le position/2
 		append data #{0000}
-		id: add-static-bytes data false false
+		id: add-static-bytes/wide data false false
 		emit instructions address-op global-address id 0
 		emit instructions reference-op -13 0 0
 		last-type: -13

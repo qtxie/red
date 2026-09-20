@@ -20,15 +20,21 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler187.exe`
-  (186->187, output 6419456 bytes; 186 and 187 differ in 19 bytes -- the PE
-  timestamp, the PE checksum, the two `movabs rax` immediates that carry the
-  compiler's build clock, the output file name's last digit, and the two
-  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is at a fixed point. (185 vs 186
-  was 18 bytes; the count moves by one whenever the variable-length build date
-  does.) No source changed between 185 and 187 -- only the ported #4613
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler190.exe`
+  (189->190, output 6419968 bytes; 190 and 191 differ in 17 bytes -- the PE
+  timestamp, the PE checksum, the output file name, the two `movabs rax`
+  immediates that carry the compiler's build clock, and the
+  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is at a fixed point. 189 carries
+  the **UTF-16 literal alignment** fix described below: `#u16` literals are
+  interned as 16-bit units so they land on an even address, which is what let
+  the Windows View backend register a class and open a window for the first
+  time. Re-measured at 190: Red/System suite 10593 tests / 12680 assertions /
+  12680 passed / 0 failed / 0 compile-failures, headless View suite 16/16
+  files / 148 tests / 246 assertions / 246 passed / 0 failed.
+  (187 was the previous baseline: 186->187, 6419456 bytes, 19 bytes between
+  186 and 187. No source changed between 185 and 187 -- only the ported #4613
   assertion, which no compiler compiles -- so every number measured at 185
-  holds at 187.
+  held at 187.)
   182 is the generation that implements the **System V aggregate ABI** for
   Linux-X86-64 (below): eightbyte classification at every native boundary,
   which takes `struct-x64-test` from five failing assertions plus an access
@@ -641,6 +647,11 @@
   Linux-ARM64 (1632496 bytes, on `armbian`) as well, which is the toolchain
   end-to-end over both ABI changes. Darwin-ARM64 cross-compiles but the Mac is
   unreachable, so it is not run.
+  Re-verified at **190** after the UTF-16 alignment and GDI+ changes:
+  `red-toolchain-190.exe` is 7690240 bytes, `--self-check` 276 resources, and
+  it compiles `environment/console/GUI/gui-console.red` with `-r` to 3319296
+  bytes in 66 s -- and that console now **opens a window and runs**, which no
+  earlier generation could do here.
   Worth re-running after any codegen change: this is the only build that
   reaches some sites (see above), and it takes about two minutes.
   Note `build/linux-hybrid/hello.reds` is a **no-op** -- `main: does [...]` is
@@ -693,8 +704,9 @@
   backend is unexercised territory. `environment/console/GUI/gui-console.red`
   is the sharpest form of it: the 187 toolchain compiles it with `-r` in 52s to
   3319296 bytes (`GUI backend: native`, `Modules: View JSON CSV`) and the
-  resulting console then dies on the same three `CreateWindowEx failed!` lines,
-  so the GUI console builds but has never been able to open a window here.
+  resulting console then died on the same three `CreateWindowEx failed!` lines.
+  **Fixed at 189/190** -- see the two root causes below; `build/tmp-imp/
+  gui-console.exe` now opens a window and runs the console.
   `CreateWindowExW` returns null with `GetLastError` **998 (ERROR_NOACCESS)**.
   Localized from inside the backend (temporary `print`s in `gui.reds`, since
   reverted). **It is not the call and not the arguments.** A scratch Red/System
@@ -718,13 +730,36 @@
   `set-defaults` -- but it returned 0/998 once, right after
   `dwm-composition-enabled?`. Same inputs, different outcomes, so the failure
   is intermittent and the real call site (deep in face layout, long after
-  `init`) fails every time. That pattern -- kernel probing returning
-  `ERROR_NOACCESS` for pointers the process itself reads happily -- fits a
-  **stack** problem rather than a marshalling one: if RSP is bogus or the
-  region below it is not committed when the syscall traps, Windows reports
-  STATUS_ACCESS_VIOLATION as 998. Next step is to check the stack: stack depth
-  at the real call site, the reserved/committed size in the PE header, and
-  whether Red's evaluator is running the call on a stack of its own.
+  `init`) fails every time.   That pattern is now explained and fixed, and it was **not** the stack: the
+  PE reserves *and* commits 8 MB (`dumpbin /headers`), every call site is
+  16-byte aligned, and `sxe av; sxe sov; sxe sbo` catch nothing. **It is the
+  address of the `#u16` literal.** UTF-16 literals were interned as
+  `[array byte N 1]`, and an inline array takes its alignment from its element
+  width (`layout-type`, `kind = -7`), so one odd-length predecessor left the
+  next literal at an odd address. The kernel probes every `WCHAR*` with its own
+  alignment and raises STATUS_DATATYPE_MISALIGNMENT, which user32 reports as
+  998. `build/tmp-imp/args27.reds` is the proof: the *same* bytes register a
+  class from an even heap address (atom, err 0) and fail with 998 from that
+  same buffer at `+1`. That also explains the "intermittent" result -- which
+  literals land odd depends on the blob layout, so a module-body call could
+  succeed where the identical call inside a function failed.
+  The fix is to intern a `#u16` literal as 16-bit units:
+  `add-static-bytes/wide` in `compiler/rsir-frontend.red` calls
+  `intern-array -4 ((length? data) / 2) 2`, and the bytes-initializer check in
+  `system/codegen/x64-codegen.reds` (site 303) and `arm64-codegen.reds`
+  (site 27) now accepts an element width of 2 rather than only 1.
+  A second, independent blocker sat behind it: **the Windows View backend never
+  called `GdiplusStartup`.** Every GDI+ call returned GdiplusNotInitialized and
+  left its handle null, so `GdipSetStringFormatAlign` took a null critical
+  section and `size-text` segfaulted (`GDIPLUS!GdipSetStringFormatAlign`,
+  AV on `rax=0`). `gui.reds`'s `init` now calls `init-gdiplus` first.
+  Remaining, cosmetic: the console prints two `Math Error: attempt to divide
+  by zero` at startup. `view/flags/no-wait win [resize]` (gui-console.red:302)
+  fires `on-resizing` before `terminal/update-cfg` has measured the font, so
+  `adjust-console-size` divides by `char-width`/`line-h` while both are still
+  0. `update-cfg` runs immediately after and sets them correctly, so the
+  console is fine once up; it is an ordering wart in the console app, not a
+  compiler bug.
   Note `handle!` is not a Red/System type here at all (only Red programs
   define it), so a standalone probe has to spell parameters `int-ptr!`.
   Note too that the **toolchain cannot see edits to `modules/`** -- it embeds

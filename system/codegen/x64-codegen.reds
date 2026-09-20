@@ -12914,12 +12914,18 @@ x64-codegen: context [
 					array-type: as rsir-type! (types
 						+ ((base - 1) * RSIR_TYPE_SIZE))
 					either initializer/kind = BYTES_INITIALIZER [
+						;-- A bytes initializer fills the array wholesale, so it
+						;   fits any element width. UTF-16 literals are interned
+						;   as 16-bit units: that is what gives the global the
+						;   2-byte alignment the kernel demands of every
+						;   WCHAR* it probes.
 						if any [
 							ir-global/initializer-count <> 1
 							initializer/a < 0 initializer/c <> 0
-							array-type/flags <> 1
-							initializer/b <> array-type/member-count
-							(canonical-type array-type/target table) <> -2
+							all [array-type/flags <> 1 array-type/flags <> 2]
+							initializer/b <> (array-type/member-count * array-type/flags)
+							(canonical-type array-type/target table)
+								<> either array-type/flags = 1 [-2][-4]
 						][return fail-invalid 303 "validate-module-initializers/table#3"]
 					][
 						if ir-global/initializer-count <> array-type/member-count [

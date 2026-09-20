@@ -2007,12 +2007,18 @@ arm64-codegen: context [
 					array-type: as rsir-type! (view/types
 						+ ((base - 1) * RSIR_TYPE_SIZE))
 					either initializer/kind = BYTES_INITIALIZER [
+						;-- A bytes initializer fills the array wholesale, so it
+						;   fits any element width. UTF-16 literals are interned
+						;   as 16-bit units: that is what gives the global the
+						;   2-byte alignment the kernel demands of every
+						;   WCHAR* it probes.
 						if any [
 							global/initializer-count <> 1
 							initializer/a < 0 initializer/c <> 0
-							array-type/flags <> 1
-							initializer/b <> array-type/member-count
-							(canonical-type array-type/target view) <> -2
+							all [array-type/flags <> 1 array-type/flags <> 2]
+							initializer/b <> (array-type/member-count * array-type/flags)
+							(canonical-type array-type/target view)
+								<> either array-type/flags = 1 [-2][-4]
 						][return fail-invalid 27 "prepare-global-data/view#7"]
 					][
 						if global/initializer-count <> array-type/member-count [

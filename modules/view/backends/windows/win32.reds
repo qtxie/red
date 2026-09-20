@@ -1041,6 +1041,13 @@ WNDCLASSEX: alias struct! [
 	hIconSm	  	  [handle!]
 ]
 
+GdiplusStartupInput: alias struct! [
+	GdiplusVersion			 [integer!]
+	DebugEventCallback		 [int-ptr!]
+	SuppressBackgroundThread [integer!]
+	SuppressExternalCodecs	 [integer!]
+]
+
 GESTUREINFO: alias struct! [
 	cbSize		 [integer!]
 	dwFlags		 [integer!]
@@ -2391,6 +2398,16 @@ XFORM!: alias struct! [
 		]
 	]
 	"gdiplus.dll" stdcall [
+		GdiplusStartup: "GdiplusStartup" [
+			token		[int-ptr!]
+			input		[GdiplusStartupInput]
+			output		[int-ptr!]
+			return:		[integer!]
+		]
+		GdiplusShutdown: "GdiplusShutdown" [
+			token		[integer!]
+			return:		[integer!]
+		]
 		GdipCreateHICONFromBitmap: "GdipCreateHICONFromBitmap" [
 			bitmap		[integer!]
 			hIcon		[int-ptr!]

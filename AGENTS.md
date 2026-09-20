@@ -20,7 +20,25 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler190.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler194.exe`
+  (193->194, output 6419968 bytes; 194 and 195 differ in 15 bytes -- the PE
+  timestamp, the PE checksum, the output file name, the two `movabs rax`
+  immediates that carry the compiler's build clock, and the
+  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is at a fixed point. 194 carries
+  the **GDI+ startup** fix described below: `GdiplusStartupInput!` now declares
+  `DebugEventCallback` as `int-ptr!`, which is what GDI+ expects on X86-64
+  (pointer at offset 8, struct 24 bytes) and is still exactly right on IA-32.
+  Without it every GDI+ call answered `GdiplusNotInitialized` (18) and
+  `size-text` segfaulted. It also carries two DirectWrite struct overflow
+  fixes (see below). Re-measured at 194: Red/System suite 10593 tests / 12680
+  assertions / 12680 passed / 0 failed / 0 compile-failures; native View suite
+  (`tools/self_hosting/run-red-view-tests.red`) 107 tests / 507 assertions /
+  507 passed / 0 failed; headless View suite 16/16 files / 148 tests / 246
+  assertions / 246 passed / 0 failed; `gui-console` 3320832 bytes, starts
+  clean. `build/red-toolchain/windows-x64/red-toolchain-194.exe` is 7690240
+  bytes, `--self-check` reports 276 resources, and a program it builds prints
+  the same `size-text` as one built by hybrid-compiler194.
+- Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler190.exe`
   (189->190, output 6419968 bytes; 190 and 191 differ in 17 bytes -- the PE
   timestamp, the PE checksum, the output file name, the two `movabs rax`
   immediates that carry the compiler's build clock, and the

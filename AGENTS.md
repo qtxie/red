@@ -20,7 +20,22 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler179.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler182.exe`
+  (181->182, output 6419456 bytes; 182 and 183 differ in 16 bytes -- the PE
+  timestamp, the PE checksum, the two `movabs rax` immediates that carry the
+  compiler's build clock, the output file name's last digit, and the two
+  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is at a fixed point. 182 is the
+  generation that implements the **System V aggregate ABI** for Linux-X86-64
+  (below): eightbyte classification at every native boundary, which is what
+  takes `struct-x64-test` from five failing assertions plus an access
+  violation to 621/621 on Linux-X86-64 while Windows-X86-64 stays 621/621.
+  It leaves the Red/System suite at the same 10593 tests / 12680 assertions /
+  12680 passed / 0 failed / 0 compile-failures, and the Linux-X86-64 slice of
+  it at 40/40 compile, 40/40 run, 0 differed. Linux-ARM64 is unaffected --
+  `x64-codegen/generate` accepts only `ABI_WIN64` or `ABI_SYSV`, so ARM64
+  never reaches the new code -- and `struct-x64-test` there stays 627/628
+  with its one pre-existing assertion.
+- Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler179.exe`
   (178->179, output 6408192 bytes; 179 and 180 differ in 17 bytes -- the PE
   timestamp, the 3-byte PE checksum, the two `movabs rax` immediates that carry
   the compiler's build clock, the output file name's last digit in the two
@@ -327,33 +342,52 @@
   non-code entries for the same reason. And the repro's `#import` must sit at
   top level, not inside `#switch`: from inside a conditional the frontend
   fails earlier and misleadingly with "missing expression".
-- Broken on **Linux-X86-64**: **an aggregate passed across a native call.**
-  The x64 backend applies the *Win64* aggregate rule on every target: an
-  aggregate of exactly 1, 2, 4 or 8 bytes goes into one integer register and
-  any other one is handed over **by reference**. System V splits an aggregate
-  of at most 16 bytes into eightbytes, gives each one an integer or a vector
-  register by what it holds, and puts anything larger in memory. Found through
-  the 64-bit structlib builds: `checkTriple8 [t [triple8! value] bias
-  [integer!]]` emits `lea 0x10(%rsp),%rax` / `mov %rax,%rdi` / `mov %r11d,%esi`
-  -- the struct's address where its three bytes belong -- and answers 290
-  instead of 10; `checkBig` answers 0 instead of 1.
+- Fixed: **an aggregate passed across a native call** on **Linux-X86-64**.
+  The x64 backend applied the *Win64* aggregate rule on every target: an
+  aggregate of exactly 1, 2, 4 or 8 bytes went into one integer register, any
+  other one was handed over **by reference**, and both classes drew from one
+  shared slot counter. Found through the 64-bit structlib builds:
+  `checkTriple8 [t [triple8! value] bias [integer!]]` emitted
+  `lea 0x10(%rsp),%rax` / `mov %rax,%rdi` / `mov %r11d,%esi` -- the struct's
+  address where its three bytes belong -- and answered 290 instead of 10.
+  System V splits an aggregate of at most 16 bytes into eightbytes and gives
+  each one a register by what it holds -- a vector one if that eightbyte holds
+  a floating-point field, an integer one otherwise -- drawing six GPRs and
+  eight XMMs from **independent** counters. Anything larger goes in memory, as
+  does any aggregate whose class has run out. Returns differ too: the integer
+  eightbytes come home in RAX then RDX and the vector ones in XMM0 then XMM1,
+  each class from its own pair, while a MEMORY return rides a hidden pointer in
+  **RDI** where Win64 uses RCX.
+  `x64-codegen.reds` now classifies per eightbyte
+  (`sysv-aggregate-eightbytes`) and one helper, `sysv-claim-argument`, owns the
+  register counting for **every** boundary -- the copy pass, the argument loop,
+  `plan-storage`, the prologue and the return path -- so all five agree by
+  construction instead of by convention. Two traps, both caught only by the
+  assertion totals: (1) the copy pass and `plan-storage` reserve an argument's
+  stack slot **before** the claim counts it out, so `stack-offset` in the
+  argument loop has to be built from that same pre-claim slot and not from the
+  running one -- otherwise every argument that misses a register lands eight
+  bytes high; (2) a hidden return pointer takes the first integer register on
+  both ABIs, so the caller's GPR counter starts at `hidden-shift`, not zero.
   Measured with the real unit, cross-compiled and run with the new 64-bit
-  library beside it (`LD_LIBRARY_PATH=.`): `struct-x64-test` on
-  Linux-X86-64 fails five assertions of the `x64-native-aggregate-abi` group
-  and then dies with an access violation. Linux-ARM64 is 627/628 with one
-  assertion left, and Windows-X86-64 is clean, so it is the System V
-  classification in x64-codegen, not the frontend and not the library.
+  library beside it (`LD_LIBRARY_PATH=.`): `struct-x64-test` went from five
+  failing `x64-native-aggregate-abi` assertions plus an access violation to
+  **621/621** on Linux-X86-64, with Windows-X86-64 holding 621/621 and
+  Linux-ARM64 at 627/628 (one pre-existing assertion). The five were all
+  register-exhaustion or hidden-return-boundary cases -- `checkBigOverflow`,
+  `returnHugeBoundary`, `callHugeBoundaryCallback`, `checkMixedExhaustion` --
+  i.e. exactly the paths where an aggregate does not fit.
   Probes: `build/tmp-imp/structlib-probe-{lin,mac,win,la}.reds` and
-  `build/tmp-imp/sv-probe.reds`. It stayed invisible because `struct-test` and
-  `size-test` were skipped on every non-Windows target -- `libs/` only carried
-  32-bit structlib builds, so those two units were never run there, only
-  excluded.
+  `build/tmp-imp/sv-probe.reds`.
   Red/System-to-Red/System is *not* affected and does not need to be: both
   sides of an internal call use the same by-reference convention, so it is
   self-consistent on every target. `build/tmp-imp/sv-probe.reds` confirms it --
   five functions taking structs by value answer identically on all four
   targets. What must match the C compiler is the boundary: a native call out,
   a callback in, and a value returned either way.
+  It stayed invisible because `struct-test` and `size-test` were skipped on
+  every non-Windows target -- `libs/` only carried 32-bit structlib builds, so
+  those two units were never run there, only excluded.
 - To inspect a codegen failure without rebuilding the compiler, dump the IR
   the frontend hands it: `red-console.exe build/tmp-imp/rsir-dump.red
   <target> <out.rsir>` (it stubs `codegen-module` because the console cannot

@@ -968,14 +968,251 @@ x64-codegen: context [
 		either win64-register-size? size [size][0]
 	]
 
-	win64-hidden-return?: func [
-		ref flags [integer!]
+	;-- Win64 hands an aggregate of exactly 1, 2, 4 or 8 bytes to the callee as
+	;-- an integer of that width and hands any other one over by reference.
+	;-- System V splits an aggregate of at most 16 bytes into eightbytes and
+	;-- gives each one a register by what it holds: one that contains a
+	;-- floating-point field goes in a vector register, every other one in an
+	;-- integer one. Anything larger goes in memory.
+	SYSV_INTEGER: 0
+	SYSV_SSE:     1
+	SYSV_MEMORY: -1
+
+	mark-sysv-eightbytes: func [
+		base size [integer!]
+		floating? [logic!]
+		class-a class-b [int-ptr!]
+		return: [logic!]
+		/local eightbyte last-eightbyte [integer!]
+	][
+		if size <= 0 [return true]
+		eightbyte: base / 8
+		last-eightbyte: (base + size - 1) / 8
+		while [eightbyte <= last-eightbyte][
+			if floating? [
+				either eightbyte = 0 [class-a/1: SYSV_SSE][
+					if eightbyte = 1 [class-b/1: SYSV_SSE]
+				]
+			]
+			eightbyte: eightbyte + 1
+		]
+		true
+	]
+
+	classify-sysv-aggregate: func [
+		ref [integer!]
+		inline? [logic!]
+		table [type-table!]
+		depth [integer!]
+		base [integer!]
+		class-a class-b [int-ptr!]
+		return: [logic!]
+		/local record [rsir-type!] member [rsir-member!] offsets [int-ptr!]
+			kind index offset stride count size alignment [integer!]
+	][
+		if depth > table/type-count [return false]
+		kind: logical-kind ref table
+		case [
+			kind > 0 [
+				size: 0
+				alignment: 0
+				unless layout-type ref false table (depth + 1) :size :alignment [
+					return false
+				]
+				mark-sysv-eightbytes base size any [kind = 9 kind = 10]
+					class-a class-b
+			]
+			kind = -1 [
+				if any [ref <= 0 ref > table/type-count][return false]
+				record: as rsir-type! (table/types + ((ref - 1) * RSIR_TYPE_SIZE))
+				classify-sysv-aggregate record/target inline? table
+					(depth + 1) base class-a class-b
+			]
+			any [kind = -4 kind = -5 kind = -6][
+				mark-sysv-eightbytes base 8 false class-a class-b
+			]
+			any [kind = -2 kind = -3 kind = -7][
+				;-- A pointer to the aggregate, not the aggregate itself.
+				unless inline? [
+					mark-sysv-eightbytes base 8 false class-a class-b
+					return true
+				]
+				if any [ref <= 0 ref > table/type-count][return false]
+				if null? as byte-ptr! table/member-offsets [return false]
+				record: as rsir-type! (table/types + ((ref - 1) * RSIR_TYPE_SIZE))
+				either kind = -7 [
+					stride: record/flags
+					unless any [stride = 1 stride = 2 stride = 4 stride = 8][
+						return false
+					]
+					;-- Only the eightbytes in reach can change a class, so a
+					;-- long array costs no more than its first two elements.
+					count: record/member-count
+					if count > 2 [count: 2]
+					index: 0
+					while [index < count][
+						unless classify-sysv-aggregate record/target false table
+							(depth + 1) (base + (index * stride)) class-a class-b [
+							return false
+						]
+						index: index + 1
+					]
+					true
+				][
+					index: 0
+					while [index < record/member-count][
+						member: as rsir-member! (table/members
+							+ ((record/first-member + index) * RSIR_MEMBER_SIZE))
+						offsets: table/member-offsets + record/first-member + index
+						offset: offsets/value
+						if offset < 0 [return false]
+						unless classify-sysv-aggregate member/type
+							(member/flags = INLINE) table (depth + 1)
+							(base + offset) class-a class-b [return false]
+						index: index + 1
+					]
+					true
+				]
+			]
+			true [kind = -8]			;-- an empty aggregate holds nothing
+		]
+	]
+
+	;-- 1 or 2 for an aggregate that reaches the callee in registers, with the
+	;-- class of each eightbyte, or SYSV_MEMORY for one that goes in memory.
+	sysv-aggregate-eightbytes: func [
+		ref [integer!]
+		table [type-table!]
+		class-a class-b [int-ptr!]
+		return: [integer!]
+		/local size alignment [integer!]
+	][
+		size: 0
+		alignment: 0
+		class-a/1: SYSV_INTEGER
+		class-b/1: SYSV_INTEGER
+		unless inline-object-ref? ref table [return SYSV_MEMORY]
+		unless layout-type ref true table 0 :size :alignment [return SYSV_MEMORY]
+		unless all [size > 0 size <= 16][return SYSV_MEMORY]
+		unless classify-sysv-aggregate ref true table 0 0
+			class-a class-b [return SYSV_MEMORY]
+		either size > 8 [2][1]
+	]
+
+	;-- System V hands an aggregate over as a whole: one register per eightbyte,
+	;-- an integer one or a vector one by what that eightbyte holds, or memory
+	;-- once either class has run out. The copy pass and the argument loop have
+	;-- to reach the same verdict from the same counters, so both ask here and
+	;-- the counters advance in the only place that can see the whole argument.
+	;-- Returns the number of eightbytes, or SYSV_MEMORY; `index-a` and
+	;-- `index-b` are the slot each eightbyte takes in its own class.
+	sysv-aggregate-placement: func [
+		ref [integer!]
+		table [type-table!]
+		gpr-slot xmm-slot [int-ptr!]
+		class-a class-b index-a index-b size-out [int-ptr!]
+		return: [integer!]
+		/local count needed-gpr needed-xmm size alignment [integer!]
+	][
+		size: 0
+		alignment: 0
+		size-out/1: 0
+		unless layout-type ref true table 0 :size :alignment [return SYSV_MEMORY]
+		size-out/1: size
+		count: sysv-aggregate-eightbytes ref table class-a class-b
+		if count = SYSV_MEMORY [return SYSV_MEMORY]
+		needed-gpr: 0
+		needed-xmm: 0
+		either class-a/1 = SYSV_SSE [
+			needed-xmm: 1
+			index-a/1: xmm-slot/1 + 1
+		][
+			needed-gpr: 1
+			index-a/1: gpr-slot/1 + 1
+		]
+		either count = 2 [
+			either class-b/1 = SYSV_SSE [
+				needed-xmm: needed-xmm + 1
+				index-b/1: xmm-slot/1 + needed-xmm
+			][
+				needed-gpr: needed-gpr + 1
+				index-b/1: gpr-slot/1 + needed-gpr
+			]
+		][index-b/1: 0]
+		if any [
+			gpr-slot/1 + needed-gpr > 6
+			xmm-slot/1 + needed-xmm > 8
+		][return SYSV_MEMORY]
+		gpr-slot/1: gpr-slot/1 + needed-gpr
+		xmm-slot/1: xmm-slot/1 + needed-xmm
+		count
+	]
+
+	;-- One System V argument's claim on the register file, taken against the
+	;-- running counters in the order the arguments appear. The pass that copies
+	;-- aggregates and the pass that loads registers both count this way, so an
+	;-- aggregate that falls through to memory lands in the slot the other pass
+	;-- has already reserved for it. Returns the eightbyte count for an
+	;-- aggregate, SYSV_MEMORY for one that goes to the stack, or 0 for a scalar.
+	sysv-claim-argument: func [
+		aggregate? floating? [logic!]
+		ref [integer!]
+		table [type-table!]
+		gpr-slot xmm-slot stack-slot [int-ptr!]
+		class-a class-b index-a index-b size-out [int-ptr!]
+		return: [integer!]
+		/local count size [integer!]
+	][
+		size-out/1: 0
+		either aggregate? [
+			count: sysv-aggregate-placement ref table gpr-slot xmm-slot
+				class-a class-b index-a index-b size-out
+			if count = SYSV_MEMORY [
+				size: size-out/1
+				if size <= 0 [return SYSV_MEMORY]
+				stack-slot/1: stack-slot/1 + ((size + 7) / 8)
+			]
+			count
+		][
+			either floating? [xmm-slot/1: xmm-slot/1 + 1][gpr-slot/1: gpr-slot/1 + 1]
+			unless either floating? [xmm-slot/1 <= 8][gpr-slot/1 <= 6][
+				stack-slot/1: stack-slot/1 + 1
+			]
+			0
+		]
+	]
+
+	;-- Win64 hands an aggregate other than 1, 2, 4 or 8 bytes over by reference,
+	;-- so the home of such a parameter holds a pointer to it. System V passes
+	;-- every aggregate by value, so there the home is the aggregate itself.
+	inline-home-indirect?: func [
+		ref [integer!]
 		table [type-table!]
 		return: [logic!]
 	][
 		all [
+			target-abi <> ABI_SYSV
+			(win64-aggregate-width ref table) = 0
+		]
+	]
+
+	;-- Win64 returns an aggregate of 1, 2, 4 or 8 bytes in RAX and any other
+	;-- one through a hidden pointer in RCX. System V returns one of at most
+	;-- 16 bytes in RAX and RDX, or XMM0 and XMM1, and anything larger through
+	;-- a hidden pointer in RDI.
+	hidden-return?: func [
+		ref flags [integer!]
+		table [type-table!]
+		return: [logic!]
+		/local class-a class-b [integer!]
+	][
+		unless all [
 			(flags and RETURN_VALUE) <> 0
 			aggregate-ref? ref table
+		][return false]
+		either target-abi = ABI_SYSV [
+			(sysv-aggregate-eightbytes ref table :class-a :class-b) = SYSV_MEMORY
+		][
 			(win64-aggregate-width ref table) = 0
 		]
 	]
@@ -2438,7 +2675,7 @@ x64-codegen: context [
 					call/b = callee/parameter-count
 					call/c = callee/return-type
 					(callee/flags and VARIABLE_FLAGS) = 0
-					not win64-hidden-return? callee/return-type callee/flags table
+					not hidden-return? callee/return-type callee/flags table
 				]
 			]
 			if eligible? [
@@ -2497,14 +2734,15 @@ x64-codegen: context [
 			table [type-table!]
 			parameters [byte-ptr!]
 			count index used size alignment hidden-shift physical-slot
-				gpr-slot xmm-slot stack-slot [integer!]
-			register? floating? [logic!]
+				gpr-slot xmm-slot stack-slot stack-base aggregate-count
+				class-a class-b index-a index-b value-size [integer!]
+			register? floating? aggregate? [logic!]
 	][
 		table:      module/table
 		parameters: module/parameters
 		count: fn/parameter-count + fn/local-count
 		index: 1
-		hidden-shift: either win64-hidden-return? fn/return-type fn/flags
+		hidden-shift: either hidden-return? fn/return-type fn/flags
 			table [1][0]
 		used: hidden-shift * 8
 		gpr-slot: hidden-shift
@@ -2514,6 +2752,10 @@ x64-codegen: context [
 			parameter: as rsir-parameter! (parameters
 				+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
 			physical-slot: index + hidden-shift
+			aggregate?: all [
+				index <= fn/parameter-count
+				parameter/flags = INLINE
+			]
 			floating?: all [
 				index <= fn/parameter-count
 				parameter/flags <> INLINE
@@ -2523,10 +2765,19 @@ x64-codegen: context [
 			;-- from the same slot number. System V fills six integer registers
 			;-- and eight vector ones from independent counters, so which
 			;-- arguments reach a register has to be counted per class over
-			;-- the parameters that come first.
+			;-- the parameters that come first; an aggregate takes one register
+			;-- of the matching class per eightbyte.
+			stack-base: stack-slot
 			either target-abi = ABI_SYSV [
-				either floating? [xmm-slot: xmm-slot + 1][gpr-slot: gpr-slot + 1]
-				register?: either floating? [xmm-slot <= 8][gpr-slot <= 6]
+				aggregate-count: sysv-claim-argument aggregate? floating?
+					parameter/type table
+					:gpr-slot :xmm-slot :stack-slot
+					:class-a :class-b :index-a :index-b :value-size
+				register?: either aggregate? [
+					aggregate-count <> SYSV_MEMORY
+				][
+					either floating? [xmm-slot <= 8][gpr-slot <= 6]
+				]
 			][
 				register?: physical-slot <= 4
 			]
@@ -2548,11 +2799,12 @@ x64-codegen: context [
 					either target-abi = ABI_SYSV [
 						;-- System V places the first stack argument directly
 						;-- above the return address; there is no shadow space.
-						if stack-slot > ((2147483647 - 16) / 8)[
+						;-- The claim counted this one out already, and an
+						;-- aggregate takes as many slots as its width needs.
+						if stack-base > ((2147483647 - 16) / 8)[
 							return OUTPUT_FULL
 						]
-						offsets/index: 16 + (stack-slot * 8)
-						stack-slot: stack-slot + 1
+						offsets/index: 16 + (stack-base * 8)
 					][
 						if (physical-slot - 5) > ((2147483647 - 48) / 8)[
 							return OUTPUT_FULL
@@ -2571,12 +2823,25 @@ x64-codegen: context [
 						size: 0
 						alignment: 0
 						unless layout-type parameter/type true table 0 :size :alignment [return fail-invalid 4 "plan-storage/table#3"]
-						if all [
+						either all [
 							index <= fn/parameter-count
-							not win64-register-size? size
+							target-abi = ABI_SYSV
 						][
-							size: 8
+							;-- The prologue spills the home a whole eightbyte at
+							;-- a time, so the home is a whole number of them.
+							if size < 8 [size: 8]
+							size: align size 8
 							alignment: 8
+						][
+							if all [
+								index <= fn/parameter-count
+								not win64-register-size? size
+							][
+								;-- Win64 hands any other aggregate over by
+								;-- reference, so the home there is a pointer.
+								size: 8
+								alignment: 8
+							]
 						]
 					]
 					if used > (2147483647 - size)[return fail-invalid 5 "plan-storage/alignment#4"]
@@ -2647,10 +2912,10 @@ x64-codegen: context [
 				parameter: as rsir-parameter! (module/parameters
 					+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
 				inline?: parameter/flags = INLINE
-				if all [inline? index <= fn/parameter-count][
-					width: win64-aggregate-width parameter/type module/table
-					if width = 0 [inline?: false]
-				]
+				if all [
+					inline? index <= fn/parameter-count
+					inline-home-indirect? parameter/type module/table
+				][inline?: false]
 				unless mark-bitmap-type task/bitmap parameter/type inline?
 					displacement 0 module/table [return false]
 			]
@@ -2740,10 +3005,16 @@ x64-codegen: context [
 						target <= 0
 						(fn/flags and CATCH_FLAG) <> 0
 						(function-effects/target and NO_RETURN) = 0
-						win64-hidden-return? ref flags table
+						hidden-return? ref flags table
 					]
 				][
 					size: aggregate-size ref table
+					;-- System V returns the second eightbyte in a second
+					;-- register, so the slot has to hold a whole pair.
+					if all [
+						target-abi = ABI_SYSV
+						not hidden-return? ref flags table
+					][size: align size 16]
 					if any [size <= 0 used > (2147483647 - size)][
 						return fail-invalid 11 "plan-call-results#5"
 					]
@@ -5323,7 +5594,7 @@ x64-codegen: context [
 		control-uses: view/control-uses
 		storage-offsets: view/storage-offsets
 
-		state/hidden-shift: either win64-hidden-return? fn/return-type fn/flags
+		state/hidden-shift: either hidden-return? fn/return-type fn/flags
 			table [1][0]
 		state/incoming-arguments: 15
 		index: 1
@@ -5472,7 +5743,7 @@ x64-codegen: context [
 				not machine-value? fn/return-type 0 table
 			][return fail-unsupported 53 "plan-function-frame/fn/return-type#2"]
 		]
-		state/hidden-return?: win64-hidden-return? fn/return-type fn/flags table
+		state/hidden-return?: hidden-return? fn/return-type fn/flags table
 		if all [entry? fn/parameter-count <> 0][return fail-unsupported 54 "plan-function-frame/fn/parameter-count#3"]
 
 		state/storage-slots: storage-slots
@@ -5497,7 +5768,9 @@ x64-codegen: context [
 			entry? [logic!]
 			index width signed source-slot target-slot home-register storage-size storage-align
 				encoded written frame-extra physical-slot displacement aggregate-width
-				target-offset catch-threshold allocation-size gpr-slot xmm-slot [integer!]
+				target-offset catch-threshold allocation-size gpr-slot xmm-slot
+				stack-slot aggregate-count class-a class-b index-a index-b
+				value-size [integer!]
 			measure? floating? clear? aggregate-argument? register? [logic!]
 	][
 		module: context/module
@@ -5598,6 +5871,7 @@ x64-codegen: context [
 		; registers is volatile, so a parameter is only ever read from the
 		; home the prologue below spills it into.
 		state/incoming-arguments: either target-abi = ABI_SYSV [0][15]
+		syscall-arguments?: false
 		gpr-slot: state/hidden-shift
 		xmm-slot: 0
 		index: 1
@@ -5621,30 +5895,65 @@ x64-codegen: context [
 			]
 			target-slot: storage-displacement storage-offsets index
 			physical-slot: index + state/hidden-shift
-			;-- Win64 walks one counter for both register classes; System V
-			;-- counts the integer and the vector registers independently.
-			either target-abi = ABI_SYSV [
-				either floating? [xmm-slot: xmm-slot + 1][gpr-slot: gpr-slot + 1]
-				register?: either floating? [xmm-slot <= 8][gpr-slot <= 6]
-			][
-				register?: physical-slot <= 4
-			]
-			if all [target-slot <> 0 register?][
-				at: either measure? [as byte-ptr! 0][code + written]
-				encoded: either floating? [
-					x64-encoder/xmm-frame-store at (capacity - written)
-						either target-abi = ABI_SYSV [
-							xmm-slot - 1
-						][physical-slot - 1] target-slot width
-				][
-					source-slot: either target-abi = ABI_SYSV [
-						argument-register gpr-slot
-					][argument-register physical-slot]
-					x64-encoder/frame-store at (capacity - written)
-						source-slot target-slot width
+			either all [target-abi = ABI_SYSV aggregate-argument?][
+				;-- One register per eightbyte: spill each into the home at its
+				;-- own offset. The home is a whole number of eightbytes, so
+				;-- every store fits inside it.
+				aggregate-count: sysv-claim-argument true false
+					parameter/type table
+					:gpr-slot :xmm-slot :stack-slot
+					:class-a :class-b :index-a :index-b :value-size
+				register?: aggregate-count <> SYSV_MEMORY
+				if all [target-slot <> 0 register?][
+					at: either measure? [as byte-ptr! 0][code + written]
+					encoded: either class-a = SYSV_SSE [
+						x64-encoder/xmm-frame-store at (capacity - written)
+							(index-a - 1) target-slot 8
+					][
+						x64-encoder/frame-store at (capacity - written)
+							(argument-register index-a) target-slot 8
+					]
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+					if aggregate-count = 2 [
+						at: either measure? [as byte-ptr! 0][code + written]
+						encoded: either class-b = SYSV_SSE [
+							x64-encoder/xmm-frame-store at (capacity - written)
+								(index-b - 1) (target-slot + 8) 8
+						][
+							x64-encoder/frame-store at (capacity - written)
+								(argument-register index-b) (target-slot + 8) 8
+						]
+						if encoded < 0 [return OUTPUT_FULL]
+						written: written + encoded
+					]
 				]
-				if encoded < 0 [return OUTPUT_FULL]
-				written: written + encoded
+			][
+				;-- Win64 walks one counter for both register classes; System V
+				;-- counts the integer and the vector registers independently.
+				either target-abi = ABI_SYSV [
+					either floating? [xmm-slot: xmm-slot + 1][gpr-slot: gpr-slot + 1]
+					register?: either floating? [xmm-slot <= 8][gpr-slot <= 6]
+				][
+					register?: physical-slot <= 4
+				]
+				if all [target-slot <> 0 register?][
+					at: either measure? [as byte-ptr! 0][code + written]
+					encoded: either floating? [
+						x64-encoder/xmm-frame-store at (capacity - written)
+							either target-abi = ABI_SYSV [
+								xmm-slot - 1
+							][physical-slot - 1] target-slot width
+					][
+						source-slot: either target-abi = ABI_SYSV [
+							argument-register gpr-slot
+						][argument-register physical-slot]
+						x64-encoder/frame-store at (capacity - written)
+							source-slot target-slot width
+					]
+					if encoded < 0 [return OUTPUT_FULL]
+					written: written + encoded
+				]
 			]
 			index: index + 1
 		]
@@ -6352,7 +6661,7 @@ x64-codegen: context [
 							valid?: all [
 								instruction/b <= fn/parameter-count
 								parameter/flags = INLINE
-								(win64-aggregate-width parameter/type table) = 0
+								inline-home-indirect? parameter/type table
 							]
 							home-register: allocated-storage-register
 								view/allocation-intervals instruction/b index
@@ -7493,6 +7802,20 @@ x64-codegen: context [
 			result-offset [integer!]
 			temp-offset [integer!]
 			physical-count [integer!]
+			slot-id [integer!]
+			copy-gpr [integer!]
+			copy-xmm [integer!]
+			copy-stack [integer!]
+			copy-offset [integer!]
+			aggregate-count [integer!]
+			stack-step [integer!]
+			stack-base [integer!]
+			return-gpr [integer!]
+			return-xmm [integer!]
+			class-a [integer!]
+			class-b [integer!]
+			index-a [integer!]
+			index-b [integer!]
 			call-mode [integer!]
 			list-size [integer!]
 			list-capacity [integer!]
@@ -7731,7 +8054,7 @@ x64-codegen: context [
 							(aggregate-size return-ref table) > 0
 						][return fail-invalid 134 "emit-call-operation/return-ref#20"]
 					]
-					state/hidden-return?: win64-hidden-return? return-ref call-flags table
+					state/hidden-return?: hidden-return? return-ref call-flags table
 					if all [custom-call? state/hidden-return?][return fail-unsupported 135 "emit-call-operation/state/hidden-return#21"]
 					state/hidden-shift: either state/hidden-return? [1][0]
 					physical-count: case [
@@ -7749,9 +8072,26 @@ x64-codegen: context [
 						either target-abi = ABI_SYSV [0][32]
 					]
 					;-- Which System V arguments reach a register is only known once
-					;-- the loop below has seen each type, so reserve the worst case.
+					;-- the loop below has seen each type, so reserve the worst case:
+					;-- every argument on the stack, and an aggregate at its full
+					;-- width rather than the single slot it costs as a scalar.
 					either target-abi = ABI_SYSV [
 						outgoing: outgoing + (physical-count * 8)
+						slot-id: 1
+						while [all [slot-id <= argument-index slot-id <= parameter-count]][
+							parameter: as rsir-parameter! (call-parameters
+								+ ((first-parameter + slot-id - 1) * RSIR_PARAMETER_SIZE))
+							if parameter/flags = INLINE [
+								aggregate-width: aggregate-size parameter/type table
+								if aggregate-width > 0 [
+									if aggregate-width > (2147483647 - outgoing)[
+										return OUTPUT_FULL
+									]
+									outgoing: outgoing + aggregate-width
+								]
+							]
+							slot-id: slot-id + 1
+						]
 					][
 						if physical-count > 4 [
 							outgoing: outgoing + ((physical-count - 4) * 8)
@@ -8077,7 +8417,14 @@ x64-codegen: context [
 					]
 
 					; Copy indirect aggregates before loading volatile argument registers.
+					;-- System V puts an aggregate that missed the registers in the
+					;-- stack argument area, so this pass walks the arguments the way
+					;-- the loop below does and reserves the same slots: the copy
+					;-- clobbers argument registers, which is why it runs first.
 					source-slot: 1
+					copy-gpr: state/hidden-shift
+					copy-xmm: 0
+					copy-stack: 0
 					while [all [
 						not custom-call? not list-call? source-slot <= argument-index
 					]][
@@ -8114,32 +8461,64 @@ x64-codegen: context [
 								return fail-unsupported 146 "emit-call-operation/machine-value#32"
 							]
 						]
-						if aggregate-argument? [
+						aggregate-count: 0
+						value-size: 0
+						;-- A Win64 by-reference copy lives above the stack
+						;-- argument area; a System V one lands inside it.
+						copy-offset: temp-offset
+						either aggregate-argument? [
 							aggregate-width: win64-aggregate-width parameter/type table
-							if aggregate-width = 0 [
-								value-size: aggregate-size parameter/type table
-								if any [
-									value-size <= 0
-									temp-offset > (2147483647 - value-size)
-								][return OUTPUT_FULL]
-								outgoing-end: temp-offset + value-size
-								at: either measure? [as byte-ptr! 0][code + written]
-								encoded: x64-encoder/frame-load at (capacity - written)
-									x64-encoder/RCX slot-displacement
-										(storage-slots + argument-slot) 8 0
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								at: either measure? [as byte-ptr! 0][code + written]
-								encoded: x64-encoder/stack-address at (capacity - written)
-									x64-encoder/RDX temp-offset
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								at: either measure? [as byte-ptr! 0][code + written]
-								encoded: x64-encoder/copy-indirect at
-									(capacity - written) value-size
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
-								if outgoing-end > state/max-outgoing [state/max-outgoing: outgoing-end]
+							either target-abi = ABI_SYSV [
+								;-- The slot this one lands in, taken before the
+								;-- claim below counts it out.
+								copy-offset: copy-stack * 8
+								aggregate-count: sysv-claim-argument
+									true false parameter/type table
+									:copy-gpr :copy-xmm :copy-stack
+									:class-a :class-b :index-a :index-b :value-size
+							][
+								if aggregate-width = 0 [
+									aggregate-count: SYSV_MEMORY
+									value-size: aggregate-size parameter/type table
+								]
+							]
+						][
+							if target-abi = ABI_SYSV [
+								sysv-claim-argument false (all [
+									source-slot <= parameter-count
+									float-type? parameter/type table
+								]) ref table
+									:copy-gpr :copy-xmm :copy-stack
+									:class-a :class-b :index-a :index-b :value-size
+							]
+						]
+						if aggregate-count = SYSV_MEMORY [
+							if any [
+								value-size <= 0
+								copy-offset > (2147483647 - value-size)
+							][return OUTPUT_FULL]
+							outgoing-end: copy-offset + value-size
+							at: either measure? [as byte-ptr! 0][code + written]
+							encoded: x64-encoder/frame-load at (capacity - written)
+								x64-encoder/RCX slot-displacement
+									(storage-slots + argument-slot) 8 0
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either measure? [as byte-ptr! 0][code + written]
+							encoded: x64-encoder/stack-address at (capacity - written)
+								x64-encoder/RDX copy-offset
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							at: either measure? [as byte-ptr! 0][code + written]
+							encoded: x64-encoder/copy-indirect at
+								(capacity - written) value-size
+							if encoded < 0 [return OUTPUT_FULL]
+							written: written + encoded
+							if outgoing-end > state/max-outgoing [state/max-outgoing: outgoing-end]
+							;-- A System V memory argument occupies its own slots in
+							;-- the stack argument area, already counted above; only
+							;-- a Win64 by-reference copy lives above it.
+							unless target-abi = ABI_SYSV [
 								temp-offset: align outgoing-end 16
 								if temp-offset < 0 [return OUTPUT_FULL]
 							]
@@ -8328,7 +8707,9 @@ x64-codegen: context [
 					]
 					temp-offset: align outgoing 16
 					source-slot: 1
-					gpr-slot: 0
+					;-- A hidden return pointer takes the first integer register
+					;-- on either ABI, so the count starts past it.
+					gpr-slot: state/hidden-shift
 					xmm-slot: 0
 					stack-slot: 0
 					syscall-arguments?: syscall?
@@ -8370,22 +8751,81 @@ x64-codegen: context [
 						]
 						;-- Win64 walks a single counter and hands out RCX/RDX/R8/R9
 						;-- or XMM0-3 from the same slot number. System V counts the
-						;-- integer and the vector registers independently.
+						;-- integer and the vector registers independently, and an
+						;-- aggregate takes one register of the matching class per
+						;-- eightbyte. The claim owns the counting there, so the
+						;-- slot this argument took is the one the copy pass
+						;-- reserved -- and that reservation is the slot the walk
+						;-- had reached *before* the claim counted it out.
+					stack-step: 1
+					stack-base: stack-slot
+					aggregate-count: 0
 						either target-abi = ABI_SYSV [
-							either floating? [xmm-slot: xmm-slot + 1][gpr-slot: gpr-slot + 1]
+							aggregate-count: sysv-claim-argument
+								aggregate-argument? floating? target-ref table
+								:gpr-slot :xmm-slot :stack-slot
+								:class-a :class-b :index-a :index-b :value-size
+							register-argument?: either aggregate-argument? [
+								aggregate-count <> SYSV_MEMORY
+							][
+								either floating? [xmm-slot <= 8][gpr-slot <= 6]
+							]
+							stack-step: 0
 						][
 							gpr-slot: physical-slot
 							xmm-slot: physical-slot
+							register-argument?: physical-slot <= 4
 						]
-						register-argument?: either floating? [
-							xmm-slot <= either target-abi = ABI_SYSV [8][4]
-						][
-							gpr-slot <= either target-abi = ABI_SYSV [6][4]
-						]
-						stack-offset: (either target-abi = ABI_SYSV [0][32]) + (stack-slot * 8)
+						stack-offset: (either target-abi = ABI_SYSV [0][32]) + (stack-base * 8)
 						direct-literal?: source-slot >= literal-slot
 						; Win64 stack arguments always occupy complete 8-byte slots.
 						either aggregate-argument? [
+							either target-abi = ABI_SYSV [
+								either register-argument? [
+									;-- Read each eightbyte straight out of the
+									;-- aggregate's home, into the register its
+									;-- class asked for.
+									argument-width: 8
+									at: either measure? [as byte-ptr! 0][code + written]
+									encoded: x64-encoder/frame-load at (capacity - written)
+										x64-encoder/RAX slot-displacement
+											(storage-slots + argument-slot) 8 0
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									at: either measure? [as byte-ptr! 0][code + written]
+									encoded: either class-a = SYSV_SSE [
+										x64-encoder/xmm-load-indirect at
+											(capacity - written) (index-a - 1)
+											x64-encoder/RAX 0 8
+									][
+										x64-encoder/register-load-indirect at
+											(capacity - written)
+											(argument-register index-a)
+											x64-encoder/RAX 0 8 0
+									]
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									if aggregate-count = 2 [
+										at: either measure? [as byte-ptr! 0][code + written]
+										encoded: either class-b = SYSV_SSE [
+											x64-encoder/xmm-load-indirect at
+												(capacity - written) (index-b - 1)
+												x64-encoder/RAX 8 8
+										][
+											x64-encoder/register-load-indirect at
+												(capacity - written)
+												(argument-register index-b)
+												x64-encoder/RAX 8 8 0
+										]
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+								][
+									;-- The copy pass has already laid this one out
+									;-- in the stack argument area.
+									argument-width: 8
+								]
+							][
 							either aggregate-width = 0 [
 								value-size: aggregate-size parameter/type table
 								at: either measure? [as byte-ptr! 0][code + written]
@@ -8427,6 +8867,7 @@ x64-codegen: context [
 							if aggregate-width = 0 [
 								outgoing-end: temp-offset + value-size
 								temp-offset: align outgoing-end 16
+							]
 							]
 						][
 							source-width: value-width ref flags table
@@ -8618,7 +9059,10 @@ x64-codegen: context [
 								written: written + encoded
 							]
 						]
-						unless register-argument? [stack-slot: stack-slot + 1]
+						;-- A System V argument's stack slot is already counted by
+						;-- the claim above, and an aggregate takes as many as its
+						;-- width needs.
+						unless register-argument? [stack-slot: stack-slot + stack-step]
 						source-slot: source-slot + 1
 					]
 					if immediate? [
@@ -8752,14 +9196,61 @@ x64-codegen: context [
 							aggregate-width: win64-aggregate-width return-ref table
 							if any [
 								result-offset >= 0
-								all [aggregate-width = 0 not state/hidden-return?]
+								all [
+									not state/hidden-return?
+									either target-abi = ABI_SYSV [
+										(sysv-aggregate-eightbytes return-ref table
+											:class-a :class-b) = SYSV_MEMORY
+									][aggregate-width = 0]
+								]
 							][return fail-invalid 154 "emit-call-operation/state/hidden-return#40"]
 							if not state/hidden-return? [
-								at: either measure? [as byte-ptr! 0][code + written]
-								encoded: x64-encoder/frame-store at (capacity - written)
-									x64-encoder/RAX result-offset aggregate-width
-								if encoded < 0 [return OUTPUT_FULL]
-								written: written + encoded
+								either target-abi = ABI_SYSV [
+									;-- RAX and RDX for the integer eightbytes in
+									;-- order, XMM0 and XMM1 for the vector ones,
+									;-- one register per eightbyte.
+									aggregate-count: sysv-aggregate-eightbytes
+										return-ref table :class-a :class-b
+									if aggregate-count = SYSV_MEMORY [
+										return fail-invalid 154 "emit-call-operation/state/hidden-return#40"
+									]
+									return-gpr: 0
+									return-xmm: 0
+									at: either measure? [as byte-ptr! 0][code + written]
+									encoded: either class-a = SYSV_SSE [
+										return-xmm: 1
+										x64-encoder/xmm-frame-store at (capacity - written)
+											0 result-offset 8
+									][
+										return-gpr: 1
+										x64-encoder/frame-store at (capacity - written)
+											x64-encoder/RAX result-offset 8
+									]
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+									if aggregate-count = 2 [
+										at: either measure? [as byte-ptr! 0][code + written]
+										encoded: either class-b = SYSV_SSE [
+											x64-encoder/xmm-frame-store at
+												(capacity - written) return-xmm
+												(result-offset + 8) 8
+										][
+											x64-encoder/frame-store at (capacity - written)
+												either return-gpr = 0 [
+													x64-encoder/RAX
+												][x64-encoder/RDX]
+												(result-offset + 8) 8
+										]
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+									]
+								][
+									at: either measure? [as byte-ptr! 0][code + written]
+									encoded: x64-encoder/frame-store at (capacity - written)
+										x64-encoder/RAX result-offset aggregate-width
+									if encoded < 0 [return OUTPUT_FULL]
+									written: written + encoded
+								]
 							]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-address at (capacity - written)
@@ -10703,6 +11194,9 @@ x64-codegen: context [
 			instruction-start [integer!]
 			case-index [integer!]
 			aggregate-width [integer!]
+			aggregate-count [integer!]
+			class-a [integer!]
+			class-b [integer!]
 			value-size [integer!]
 			catch-record [integer!]
 			catch-unwind [integer!]
@@ -11290,7 +11784,7 @@ x64-codegen: context [
 				instruction/op = OP_RETURN [
 					return-ref: instruction/a
 					state/return-value?: (fn/flags and RETURN_VALUE) <> 0
-					state/hidden-return?: win64-hidden-return? fn/return-type fn/flags table
+					state/hidden-return?: hidden-return? fn/return-type fn/flags table
 					if any [
 						return-ref <> fn/return-type
 						instruction/c <> 0
@@ -11388,16 +11882,64 @@ x64-codegen: context [
 										x64-encoder/RAX
 										(0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8 0
 								][
-									if aggregate-width = 0 [return fail-invalid 241 "emit-control-operation/aggregate-width#28"]
-									at: either measure? [as byte-ptr! 0][code + written]
-									encoded: x64-encoder/frame-load at (capacity - written)
-										x64-encoder/RAX slot-displacement
-											(storage-slots + depth) 8 0
-									if encoded < 0 [return OUTPUT_FULL]
-									written: written + encoded
-									at: either measure? [as byte-ptr! 0][code + written]
-									encoded: x64-encoder/load-indirect at
-										(capacity - written) aggregate-width 0
+									either target-abi = ABI_SYSV [
+										aggregate-count: sysv-aggregate-eightbytes
+											return-ref table :class-a :class-b
+										if aggregate-count = SYSV_MEMORY [
+											return fail-invalid 241 "emit-control-operation/aggregate-width#28"
+										]
+										;-- The address rides in RCX, because RAX
+										;-- and RDX carry the eightbytes home.
+										at: either measure? [as byte-ptr! 0][code + written]
+										encoded: x64-encoder/frame-load at (capacity - written)
+											x64-encoder/RCX slot-displacement
+												(storage-slots + depth) 8 0
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+										;-- RAX then RDX for the integer eightbytes,
+										;-- XMM0 then XMM1 for the vector ones. The
+										;-- second goes in first, so the address in
+										;-- RCX is still live for the first.
+										if aggregate-count = 2 [
+											at: either measure? [as byte-ptr! 0][code + written]
+											encoded: either class-b = SYSV_SSE [
+												x64-encoder/xmm-load-indirect at
+													(capacity - written)
+													either class-a = SYSV_SSE [1][0]
+													x64-encoder/RCX 8 8
+											][
+												x64-encoder/register-load-indirect at
+													(capacity - written)
+													either class-a = SYSV_SSE [
+														x64-encoder/RAX
+													][x64-encoder/RDX]
+													x64-encoder/RCX 8 8 0
+											]
+											if encoded < 0 [return OUTPUT_FULL]
+											written: written + encoded
+										]
+										at: either measure? [as byte-ptr! 0][code + written]
+										encoded: either class-a = SYSV_SSE [
+											x64-encoder/xmm-load-indirect at
+												(capacity - written) 0
+												x64-encoder/RCX 0 8
+										][
+											x64-encoder/register-load-indirect at
+												(capacity - written)
+												x64-encoder/RAX x64-encoder/RCX 0 8 0
+										]
+									][
+										if aggregate-width = 0 [return fail-invalid 241 "emit-control-operation/aggregate-width#28"]
+										at: either measure? [as byte-ptr! 0][code + written]
+										encoded: x64-encoder/frame-load at (capacity - written)
+											x64-encoder/RAX slot-displacement
+												(storage-slots + depth) 8 0
+										if encoded < 0 [return OUTPUT_FULL]
+										written: written + encoded
+										at: either measure? [as byte-ptr! 0][code + written]
+										encoded: x64-encoder/load-indirect at
+											(capacity - written) aggregate-width 0
+									]
 								]
 							][
 								ref: stack-types/depth

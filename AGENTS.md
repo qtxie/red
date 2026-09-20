@@ -41,7 +41,18 @@
   Cross-target (every source that changed is Windows-only, so this is a
   control, not an expectation): `hello.red` still prints `red-linux-ok` on
   Linux-X86-64 (1958480 bytes) and Linux-ARM64 (1632264 bytes). Darwin-ARM64
-  is still unrun -- the macmini tunnel keeps refusing 127.0.0.1:5588.
+  **cross-compiles** to a valid Mach-O -- 1667288 bytes, magic `0xfeedfacf`,
+  cputype `0x0100000c`, `MH_EXECUTE`, 17 load commands, linking
+  libSystem / ApplicationServices / CoreFoundation / CoreServices / libobjc /
+  libcurl / AppKit -- but is still **unrun**: the macmini tunnel keeps
+  refusing 127.0.0.1:5588, so only the "it builds" half is covered. (The
+  hybrid compiler rejects plain `Darwin`: it supports Windows-X86-64 PE,
+  Darwin-ARM64 Mach-O and Linux X86-64/ARM64 ELF only.)
+  The old open bug where a `#import` library name past 32 bytes was truncated
+  in the PE DLL-name buffer is still fixed at 194: `dumpbin /dependents`
+  prints `E:\TEMP3\RED\BUILD\TMP-CLEAN\ZEBRA.DLL` and 28/32/33-char names
+  whole. Note the repro needs the imported function to be *called* -- an
+  unused import is pruned and the library never reaches the table.
 - Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler190.exe`
   (189->190, output 6419968 bytes; 190 and 191 differ in 17 bytes -- the PE
   timestamp, the PE checksum, the output file name, the two `movabs rax`

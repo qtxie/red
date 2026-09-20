@@ -248,9 +248,14 @@
   (`red-toolchain-175`, 6690656 bytes, `--self-check` 276 resources) does the
   same natively on the Mac. A dylib that declares no callbacks of its own
   still loads, runs and `dlclose`s, and one that does still fires `on-load`
-  and `on-unload`. Linux dev mode builds now too. Dev mode is still not
-  supported on Windows, where a dev-mode Red program takes an access violation
-  as soon as the collector runs -- which is why the runners all pass `-r`.
+  and `on-unload`. Linux dev mode builds now too, and so does **Windows** --
+  the access violation dev mode used to take there was the collector's bitmap
+  table choice, fixed above, not anything dev mode owns. Verified again on the
+  Windows toolchain rebuilt at 179: `print collect [loop 5 [keep 1]]` after
+  200000 `append`s on a string runs in dev mode and prints the same three
+  lines as `-r`. The runners still pass `-r`, but that is only because a
+  dev-mode run needs a `libRedRT` built from current sources next to the
+  output, not because dev mode is broken.
   Note the toolchain only embeds `environment/`, `runtime/`,
   `system/runtime/`, `modules/` and `system/assets/` (see
   `tools/self_hosting/generate-toolchain-resources.red`): a fix in `compiler/`
@@ -493,19 +498,22 @@
   64-bit library with `cl /LD /O2 /MT /Fe:structlib.dll structlib.c` from
   `system/tests/source/units/libs/`; the 32-bit dll is left alone so 32-bit
   targets keep working.
-- The standalone toolchain builds and runs again:
-  `hybrid-compiler140.exe -r -t Windows-X86-64 -o red-toolchain.exe
-  red-toolchain-windows-hybrid.red` produces 7609344 bytes
-  (`build/red-toolchain/windows-x64/red-toolchain-140.exe`; it needs
+- The standalone toolchain builds and runs again. Re-verified at 179:
+  `hybrid-compiler179.exe -r -t Windows-X86-64 -o
+  build/red-toolchain/windows-x64/red-toolchain-179.exe
+  red-toolchain-windows-hybrid.red` produces 7677952 bytes (it needs
   `build/generated/red-toolchain-resources.generated.red`, which
   `generate-toolchain-resources.exe` regenerates). `--self-check` reports 276
-  resources, and it compiles and runs a Red program both with `-r` and in dev
-  mode -- dev mode builds a fresh libRedRT next to the output, so a stale one
-  there is what makes it look broken. It also cross-compiles all four targets:
-  Linux-X86-64 (ELF x86-64), Linux-ARM64 (ELF aarch64) and Darwin-ARM64
-  (Mach-O arm64). The Phase E note in `handover-quick-test-red-port.md` saying
-  `red-toolchain.exe` SEGFAULTs on every invocation is stale -- the checked-in
-  binary answers `missing source file` and exits 1.
+  resources; it compiles and runs a Red program with `-r` and in dev mode, and
+  dev mode survives the collector. It cross-compiles **and runs** on all four
+  targets -- `hello.red` printing `"hello from the 179 toolchain"` and `9`:
+  Windows-X86-64 1971200 bytes, Linux-X86-64 1958904 (run under WSL),
+  Linux-ARM64 1632576 (run on the armbian box) and Darwin-ARM64 1667280 (run
+  on the Mac; strip the quarantine attribute after `scp`). Earlier numbers for
+  this were 140's: 7609344 bytes. The Phase E note in
+  `handover-quick-test-red-port.md` saying `red-toolchain.exe` SEGFAULTs on
+  every invocation is stale -- the checked-in binary answers
+  `missing source file` and exits 1.
 - `red-console.exe tools/self_hosting/run-red-compiler-tests.red` (the nine
   scripts under tests/source/compiler/) with 140: 262 assertions, 251 passed,
   12 failed, 27 compile-failures. It takes a filename argument to run one

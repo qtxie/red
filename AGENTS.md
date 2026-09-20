@@ -622,6 +622,16 @@
   `handover-quick-test-red-port.md` saying `red-toolchain.exe` SEGFAULTs on
   every invocation is stale -- the checked-in binary answers
   `missing source file` and exits 1.
+  Re-verified at **185**, after the System V and ARM64 ABI changes:
+  `red-toolchain-185.exe` is 7688704 bytes, `--self-check` still reports 276
+  resources, a Red `hello.red` compiles (1970688 with `-r`, 128512 in dev
+  mode) and prints, and a Red/System `print` program compiles and runs.
+  Worth re-running after any codegen change: this is the only build that
+  reaches some sites (see above), and it takes about two minutes.
+  Note `build/linux-hybrid/hello.reds` is a **no-op** -- `main: does [...]` is
+  never called in Red/System, since the entry point is the top level -- so it
+  proves the link works and nothing else. Use a top-level `print` to check a
+  Red/System program actually runs.
 - `red-console.exe tools/self_hosting/run-red-compiler-tests.red` (the nine
   scripts under tests/source/compiler/) with 140: 262 assertions, 251 passed,
   12 failed, 27 compile-failures. It takes a filename argument to run one

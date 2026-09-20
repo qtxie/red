@@ -652,6 +652,17 @@
   it compiles `environment/console/GUI/gui-console.red` with `-r` to 3319296
   bytes in 66 s -- and that console now **opens a window and runs**, which no
   earlier generation could do here.
+  Cross-target at 190, since the change touched both codegen backends:
+  `hello.red` compiles and prints on **Linux-X86-64** (1958496 bytes, under
+  WSL) and **Linux-ARM64** (1632280 bytes, on `armbian`); `struct-x64-test` is
+  **621/621** on Linux-X86-64 and **628/628** on Linux-ARM64 (run it with
+  `LD_LIBRARY_PATH=/home/qt`, where `structlib-arm64.so` lives). A
+  `Red/System` probe printing `as integer! #u16 "..." and 1` reports parity 0
+  on Windows-X86-64, Linux-X86-64 and Linux-ARM64 alike -- that is the
+  alignment fix holding on every backend. Darwin-ARM64 is still not run: the
+  `macmini` tunnel is down (`Connection refused` on 127.0.0.1:5588), but its
+  `layout-type` derives an inline array's alignment from `record/flags` exactly
+  as x64 does, so the Linux-ARM64 numbers cover the same code.
   Worth re-running after any codegen change: this is the only build that
   reaches some sites (see above), and it takes about two minutes.
   Note `build/linux-hybrid/hello.reds` is a **no-op** -- `main: does [...]` is

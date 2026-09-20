@@ -1008,14 +1008,17 @@
   Linux targets agree on every count. Output dirs are target-specific
   (`red-<compiler>-x86-64` / `red-<compiler>-arm64`); without that the two runs
   overwrite each other's logs.
-  Linux ARM64 on `armbian`: 40/40 Red/System units compile, 38 run and 3 of
-  those differ -- all source-gated, none failing (`int64-test` is `#if`'d to
-  32-bit and ARM targets, `pointer-test` keeps an x64-only group, `lib-test`
-  takes a Windows-only include).   `atomic-test` and `queue-test` took a SIGILL:
-  `atomic-rmw` and `atomic-compare-exchange` emitted `ldaddal`/`casal`, the
-  ARMv8.1 LSE atomics, and this board's CPU is ARMv8.0. That is stale -- both
-  emit the load-exclusive/store-exclusive pair now (`ldaxr`/`stlxr`, see the
-  Linux ARM64 at 159 bullet below), and the two units pass on this board.
+  Linux ARM64 on `armbian` and Linux-X86-64 on `wsl`, at 185: **41/41
+  Red/System units compile, 41/41 run, 0 failed assertions on both**. Three
+  units' output differs from the Windows reference, all source-gated and none
+  failing (`int64-test` is `#if`'d to 32-bit and ARM targets, `pointer-test`
+  keeps an x64-only group, `lib-test` takes a Windows-only include) -- and that
+  reference only exists up to gen 98, so a unit without one now prints `NOREF`
+  instead of a false `OK`. `atomic-test` and `queue-test` used to take a SIGILL
+  here: `atomic-rmw` and `atomic-compare-exchange` emitted `ldaddal`/`casal`,
+  the ARMv8.1 LSE atomics, and this board's CPU is ARMv8.0. Both emit the
+  load-exclusive/store-exclusive pair now (`ldaxr`/`stlxr`, see the Linux ARM64
+  at 159 bullet below) and both pass.
   Closed on ARM64: the ELF writer used to patch *every* import to
   `plt + 16*(index+1)`, a branch target, which is wrong for a data reference
   (see the imported-variable bullet below). A data import now gets its own

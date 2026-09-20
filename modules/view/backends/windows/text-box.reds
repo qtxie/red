@@ -204,8 +204,8 @@ OS-text-box-metrics: func [
 		top				[float32!]
 		left			[integer!]
 		lm				[DWRITE_LINE_METRICS]
-		metrics			[DWRITE_TEXT_METRICS]
-		hit				[DWRITE_HIT_TEST_METRICS]
+		metrics			[DWRITE_TEXT_METRICS value]
+		hit				[DWRITE_HIT_TEST_METRICS value]
 		x				[float32!]
 		y				[float32!]
 		trailing?		[integer!]
@@ -220,7 +220,6 @@ OS-text-box-metrics: func [
 ][
 	int: as red-integer! block/rs-head state
 	layout: as handle! int/value
-	left: 0
 	this: as this! layout
 	dl: as IDWriteTextLayout this/vtbl
 
@@ -231,8 +230,7 @@ OS-text-box-metrics: func [
 			x: as float32! 0.0 y: as float32! 0.0
 			int: as red-integer! arg0
 			hr: either TYPE_OF(text) <> TYPE_STRING [0][adjust-index text 0 int/value - 1 1]
-			hit: as DWRITE_HIT_TEST_METRICS :left
-			dl/HitTestTextPosition this hr no :x :y hit
+			dl/HitTestTextPosition this hr no :x :y :hit
 			if y < as float32! 0.0 [y: as float32! 0.0]
 			if type = TBOX_METRICS_OFFSET_LOWER [
 				x: x + hit/width
@@ -246,9 +244,9 @@ OS-text-box-metrics: func [
 			GET_PAIR_XY(pos x y)
 			trailing?: 0
 			inside?: 0
-			hit: as DWRITE_HIT_TEST_METRICS :left
-			dl/HitTestPoint this x y :trailing? :inside? hit
+			dl/HitTestPoint this x y :trailing? :inside? :hit
 			text: as red-string! int + 2
+			left: hit/textPosition
 			if TYPE_OF(text) = TYPE_STRING [left: adjust-index text 0 left -1]
 			if all [type = TBOX_METRICS_INDEX? 0 <> trailing?][left: left + 1]
 			integer/push left + 1
@@ -278,8 +276,7 @@ OS-text-box-metrics: func [
 			float/push as float! y
 		]
 		default [
-			metrics: as DWRITE_TEXT_METRICS :left
-			hr: dl/GetMetrics this metrics
+			hr: dl/GetMetrics this :metrics
 			either type = TBOX_METRICS_SIZE [
 				point2D/push metrics/width metrics/height
 			][
@@ -434,7 +431,7 @@ txt-box-draw-background: func [
 		width		[integer!]
 		top			[integer!]
 		left		[integer!]
-		rc			[RECT_F!]
+		rc			[RECT_F! value]
 		pt			[red-point2d!]
 		brush		[this!]
 ][
@@ -458,8 +455,6 @@ txt-box-draw-background: func [
 	]
 	hits: as DWRITE_HIT_TEST_METRICS line-metrics
 
-	left: 0
-	rc: as RECT_F! :left
 	GET_PAIR_XY(pos x y)
 	s: GET_BUFFER(styles)
 	p: (as int-ptr! s/offset) + styles/head

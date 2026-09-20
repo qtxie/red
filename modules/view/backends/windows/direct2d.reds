@@ -2293,7 +2293,7 @@ set-line-spacing: func [
 		left			[integer!]
 		tf				[IDWriteTextFormat]
 		dl				[IDWriteTextLayout]
-		lm				[DWRITE_LINE_METRICS]
+		lm				[DWRITE_LINE_METRICS value]
 		type			[integer!]
 		h				[float32!]
 ][
@@ -2302,13 +2302,13 @@ set-line-spacing: func [
 		if all [type <> TYPE_INTEGER type <> TYPE_FLOAT][exit]
 		h: get-float32 int
 	]
+	;-- "I" in UTF-16: a layout has to exist before its line metrics exist
 	left: 73 lineCount: 0 lay/value: null
 	dw: as IDWriteFactory dwrite-factory/vtbl
 	dw/CreateTextLayout dwrite-factory as c-string! :left 1 fmt FLT_MAX FLT_MAX :lay
 	layout: as this! lay/value
 	dl: as IDWriteTextLayout layout/vtbl
-	lm: as DWRITE_LINE_METRICS :left
-	dl/GetLineMetrics layout lm 1 :lineCount
+	dl/GetLineMetrics layout :lm 1 :lineCount
 	tf: as IDWriteTextFormat fmt/vtbl
 	if null? int [h: lm/height]
 	if lm/height > h [h: lm/height]

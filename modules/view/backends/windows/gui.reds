@@ -74,7 +74,6 @@ process-id:		0
 border-width:	0
 hScreen:		as handle! 0
 hInstance:		as handle! 0
-gdiplus-token:	as int-ptr! allocate 8
 default-font:	as handle! 0
 hover-saved:	as handle! 0							;-- last window under mouse cursor
 prev-captured:	as handle! 0
@@ -963,18 +962,6 @@ on-gc-mark: does [
 	collector/keep :flags-blk/node
 ]
 
-;-- Every GDI+ call fails with GdiplusNotInitialized until this runs, which
-;   leaves the handles the drawing code then passes back to GDI+ null.
-init-gdiplus: func [
-	/local input [GdiplusStartupInput value]
-][
-	input/GdiplusVersion:			1
-	input/DebugEventCallback:		null
-	input/SuppressBackgroundThread:	0
-	input/SuppressExternalCodecs:	0
-	GdiplusStartup gdiplus-token input null
-]
-
 init: func [
 	/local
 		ver   [red-tuple!]
@@ -985,7 +972,6 @@ init: func [
 	process-id:		GetCurrentProcessId
 	hScreen:		GetDC null
 	hInstance:		GetModuleHandle 0
-	init-gdiplus
 
 	version-info/dwOSVersionInfoSize: size? OSVERSIONINFO
 	GetVersionEx version-info

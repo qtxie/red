@@ -138,7 +138,12 @@ platform: context [
 
 	GdiplusStartupInput!: alias struct! [
 		GdiplusVersion				[integer!]
-		DebugEventCallback			[integer!]
+		;-- A pointer, not an int: GDI+ reads the callback at offset 8 on a
+		;   64-bit target (4 + 4 of padding), so a 4-integer struct leaves
+		;   SuppressBackgroundThread and SuppressExternalCodecs pointing at
+		;   whatever follows. GdiplusStartup then fails with InvalidParameter
+		;   and every later GDI+ call answers GdiplusNotInitialized (18).
+		DebugEventCallback			[int-ptr!]
 		SuppressBackgroundThread	[integer!]
 		SuppressExternalCodecs		[integer!]
 	]
@@ -443,7 +448,7 @@ platform: context [
 	init-gdiplus: func [/local startup-input][
 		startup-input: declare GdiplusStartupInput!
 		startup-input/GdiplusVersion: 1
-		startup-input/DebugEventCallback: 0
+		startup-input/DebugEventCallback: null
 		startup-input/SuppressBackgroundThread: 0
 		startup-input/SuppressExternalCodecs: 0
 		GdiplusStartup as int-ptr! :gdiplus-token as int-ptr! startup-input as int-ptr! 0

@@ -759,11 +759,19 @@
   `intern-array -4 ((length? data) / 2) 2`, and the bytes-initializer check in
   `system/codegen/x64-codegen.reds` (site 303) and `arm64-codegen.reds`
   (site 27) now accepts an element width of 2 rather than only 1.
-  A second, independent blocker sat behind it: **the Windows View backend never
-  called `GdiplusStartup`.** Every GDI+ call returned GdiplusNotInitialized and
-  left its handle null, so `GdipSetStringFormatAlign` took a null critical
-  section and `size-text` segfaulted (`GDIPLUS!GdipSetStringFormatAlign`,
-  AV on `rax=0`). `gui.reds`'s `init` now calls `init-gdiplus` first.
+  A second, independent blocker sat behind it: **GDI+ was never actually
+  started, because `GdiplusStartupInput!` in `runtime/platform/win32.reds`
+  declared `DebugEventCallback` as `integer!`.** That is correct for IA-32
+  (4 x 4 = 16 bytes) but wrong for X86-64, where the callback is a pointer at
+  offset 8 and the struct is 24 bytes; the two trailing BOOLs then land on
+  whatever follows the 16-byte struct. `GdiplusStartup` answers
+  InvalidParameter (2), every later GDI+ call answers GdiplusNotInitialized
+  (18), `GdipCreateStringFormat` leaves its handle 0 and `GdipSetStringFormat
+  Align` takes a null critical section -- so `size-text` segfaulted. Fixed by
+  typing the callback `int-ptr!`; Red/System aligns struct members, so one
+  declaration is now right on both targets. This is why `base.reds` needs no
+  change at all: the legacy compiler emits IA-32, where the old layout was
+  already correct. Do NOT route View text away from GDI+ to work around this.
   One follow-on, fixed in the same pass: the console printed two `Math Error:
   attempt to divide by zero` at startup. `view/flags/no-wait win [resize]`
   (gui-console.red:302) fires `on-resizing` before `terminal/update-cfg` has

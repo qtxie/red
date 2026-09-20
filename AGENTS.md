@@ -97,7 +97,10 @@
   the 16 unit files under tests/source/view/ run clean through it: 16/16 with
   246 assertions, 0 failures. `red-console.exe
   tools/self_hosting/run-red-view-headless-tests.red` (RED_COMPILER pointed at
-  the binary) drives the whole suite. Windows regression: 58/58 Red unit files
+  the binary) drives the whole suite; it takes under a minute and is still
+  148 tests / 246 assertions / 246 passed / 0 failed at **185**, so the
+  Win64 side of the `hidden-return?` change is unchanged.
+  Windows regression: 58/58 Red unit files
   (57 units plus unicode-test, now run in dev mode without `-r`) -- 8812 tests,
   16893 assertions, 16893 passed, 0 compile failures -- and 40/40 Red/System
   units, with the Red/System runner reporting 12680 assertions, 12680 passed,

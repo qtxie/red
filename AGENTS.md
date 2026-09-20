@@ -536,8 +536,9 @@
   tests went from 251 passed / 12 failed on 145 to 258 passed / 5 failed on
   146. Fixed since then: #274, #377 and #1090 were all `#system-global`
   (next entry), #4613 was the currency header (below) and #4526 was an
-  operator-named object field (below). What is left there: #4190 (`face!`
-  needs the View backend) and one assertion of #4613 (money molding).
+  operator-named object field (below). The 185 run is 320 passed / 1 failed,
+  and the one left is #4190 (`face!` needs the View backend); #4613's money
+  molding was the port's own strict text compare, fixed above.
 - Fixed: **`#system-global` was dropped from every dev-mode build.**
   `system/compiler-rsir-core.red` loaded `red/sys-global` inside
   `if embed-red-runtime?`, and that flag is `runtime-linkage = 'embedded`,

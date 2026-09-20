@@ -20,11 +20,15 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler185.exe`
-  (184->185, output 6419456 bytes; 185 and 186 differ in 18 bytes -- the PE
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler187.exe`
+  (186->187, output 6419456 bytes; 186 and 187 differ in 19 bytes -- the PE
   timestamp, the PE checksum, the two `movabs rax` immediates that carry the
   compiler's build clock, the output file name's last digit, and the two
-  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is at a fixed point.
+  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is at a fixed point. (185 vs 186
+  was 18 bytes; the count moves by one whenever the variable-length build date
+  does.) No source changed between 185 and 187 -- only the ported #4613
+  assertion, which no compiler compiles -- so every number measured at 185
+  holds at 187.
   182 is the generation that implements the **System V aggregate ABI** for
   Linux-X86-64 (below): eightbyte classification at every native boundary,
   which takes `struct-x64-test` from five failing assertions plus an access

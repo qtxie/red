@@ -943,6 +943,15 @@
   change's real regression gate, since every one of those units reaches the
   runtime through native calls. Allow ~16 minutes: the 57 units cross-compile
   in parallel and then run in one WSL session.
+  The same driver on **Linux-ARM64** (`... Linux-ARM64 armbian`, ~20 minutes)
+  compiles **57/57** and runs **57/57 clean, 57 exit-0** with the same 16854
+  assertions and the same **0 failed** -- and a diff of the per-unit counts
+  against the X86-64 run is empty, unit for unit. That is the strongest
+  available evidence for Darwin-ARM64 short of running it: `arm64-codegen` is
+  shared, the Red runtime reaches it through the same native calls, and both
+  Linux targets agree on every count. Output dirs are target-specific
+  (`red-<compiler>-x86-64` / `red-<compiler>-arm64`); without that the two runs
+  overwrite each other's logs.
   Linux ARM64 on `armbian`: 40/40 Red/System units compile, 38 run and 3 of
   those differ -- all source-gated, none failing (`int64-test` is `#if`'d to
   32-bit and ARM targets, `pointer-test` keeps an x64-only group, `lib-test`

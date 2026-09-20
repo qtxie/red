@@ -711,9 +711,20 @@
   `flags=2CA0000h`, `x/y=1173/692`, `w/h=233/103`, `id=0`, `parent=0`,
   `inst=400000h`). A **minimal** call still fails --
   `CreateWindowEx 0 #u16 "STATIC" null 0 0 0 0 0 null null null null` -- with
-  `STATIC` a class Windows always has. So look at process and thread *state*
-  in `init` before the first window, not at codegen: `enable-visual-styles`
-  and `DX-init` run there and nothing after them has ever created a window.
+  `STATIC` a class Windows always has.
+  Probing `init` itself then showed it is **not** a one-way state break: the
+  same minimal call returns a real HWND at `init` entry, after
+  `enable-visual-styles`, after the version block, after `DX-init` and after
+  `set-defaults` -- but it returned 0/998 once, right after
+  `dwm-composition-enabled?`. Same inputs, different outcomes, so the failure
+  is intermittent and the real call site (deep in face layout, long after
+  `init`) fails every time. That pattern -- kernel probing returning
+  `ERROR_NOACCESS` for pointers the process itself reads happily -- fits a
+  **stack** problem rather than a marshalling one: if RSP is bogus or the
+  region below it is not committed when the syscall traps, Windows reports
+  STATUS_ACCESS_VIOLATION as 998. Next step is to check the stack: stack depth
+  at the real call site, the reserved/committed size in the PE header, and
+  whether Red's evaluator is running the call on a stack of its own.
   Note `handle!` is not a Red/System type here at all (only Red programs
   define it), so a standalone probe has to spell parameters `int-ptr!`.
   Note too that the **toolchain cannot see edits to `modules/`** -- it embeds

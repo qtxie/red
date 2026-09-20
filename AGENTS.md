@@ -35,7 +35,13 @@
   (`tools/self_hosting/run-red-view-tests.red`) 107 tests / 507 assertions /
   507 passed / 0 failed; headless View suite 16/16 files / 148 tests / 246
   assertions / 246 passed / 0 failed; `gui-console` 3320832 bytes, starts
-  clean. `build/red-toolchain/windows-x64/red-toolchain-194.exe` is 7690240
+  clean. Built again with **195**, the newest generation,
+  `hybrid-compiler195.exe -r -t Windows-X86-64 -o
+  build/tmp-imp/gui-console195.exe environment/console/GUI/gui-console.red`
+  is 3320832 bytes too and **12 bytes** away from the 194 build (same-length
+  output names, so this is the real noise floor, not a shift); it prints
+  `--== Red 0.6.6 ==-- / Type HELP for starting information.` and stays up.
+  `build/red-toolchain/windows-x64/red-toolchain-194.exe` is 7690240
   bytes, `--self-check` reports 276 resources, and a program it builds prints
   the same `size-text` as one built by hybrid-compiler194.
   Cross-target (every source that changed is Windows-only, so this is a
@@ -61,6 +67,15 @@
   a naive `*` glob counts as a failing suite, and the `macmini` tunnel drops
   long-lived ssh sessions -- launch the runner with `nohup ... & disown` and
   poll the log.
+  The same 65-unit suite runs on both Linux targets at 194
+  (`build/linux-hybrid/build-red-suite194.sh` + `deploy-red-suite194.sh`,
+  which take the target and the host as arguments):
+  **Linux-X86-64** (WSL, Ubuntu 24.04) 65/65, 9359 tests, 18026 assertions,
+  0 failed, and **Linux-ARM64** (armbian, Armbian 25.05) 65/65, 9359 tests,
+  18026 assertions, 0 failed -- identical per-unit counts on both. Darwin's
+  9363/18034 is 4 tests and 8 assertions higher and the whole difference is
+  `clipboard-test`, a real 4/8 on Darwin and a no-op 0/0 wherever there is
+  no clipboard backend. `draw-test` is 0/0 everywhere (no View backend).
   Darwin toolchain fixed point, measured on matched pairs: `dt194b` vs
   `dt195b` differ in **140 bytes** and `dt194b` vs `dt194c` (same compiler,
   rebuilt) in **68** -- generation drift is the same order as rebuild noise,

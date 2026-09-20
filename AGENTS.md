@@ -39,13 +39,24 @@
   red-toolchain-darwin-hybrid.red` produces a 6690688-byte Mach-O that
   reports `host: Darwin-ARM64, backend: hybrid-rsir, standalone: true,
   resources: 276`, passes `--self-check`, and compiles and runs both a Red
-  and a Red/System program on an Apple Silicon Mac. On the Mac at 160:
+  and a Red/System program on an Apple Silicon Mac.   Re-verified on the Mac at 179:
   40/40 Red/System units and 23 Red units -- logic, integer, float, char,
   series, append, path, object, map, function, loop, parse, make, convert,
   mold, load, lexer, evaluation, binding, type, routine, recycle and
-  comparison -- pass, 10298 Red assertions with 0 failures. Cross-compile a
-  slice of the Red suite with
-  `build/tmp-redmac/red-cross-darwin.sh COMPILER OUTDIR`.
+  comparison -- pass, 10298 Red assertions with 0 failures, and every
+  per-unit count is the one 160 reported (logic 95, integer 1760, float 1793,
+  char 35, series 1119, append 327, path 60, object 658, map 86, function 147,
+  loop 58, parse 1518, make 3, convert 451, mold 54, load 225, lexer 929,
+  evaluation 294, binding 25, type 42, routine 22, recycle 39, comparison
+  558). Cross-compile a slice of the Red suite with
+  `build/tmp-redmac/red-cross-darwin.sh COMPILER OUTDIR`, or drive both
+  slices with `build/tmp-mac179/build.sh` and run them with
+  `build/tmp-mac179/run.sh DIR LABEL` on the Mac -- note `run.sh` must invoke
+  `./$f`, since a bare `$f` makes the shell search PATH and every unit reports
+  127. `scp -r` drops the execute bit, so chmod on the Mac side. The 40-unit
+  slice is the 43-entry list in `run-red-system-tests.red` minus
+  `struct-test` and `size-test` (they need `structlib.dll`) and
+  `dylib-auto-test` (it is generated with host absolute paths).
   Windows on 156: Red/System suite 10593 tests / 12680 assertions / 12680
   passed / 0 failed / 0 compile-failures.
   157 adds the four deep-stack ARM64 repairs below to 153, which adds the
@@ -244,9 +255,10 @@
   Verified: dev mode cross-compiles all 23 Red units for `Darwin-ARM64` and
   the Mac runs them 23/23, 5723 tests / 10270 assertions / 0 failures
   (`series-test` 1119, `parse-test` 1518, `float-test` 1793, `logic-test` 95
-  -- the same counts release mode reports). The macOS toolchain rebuilt at 175
-  (`red-toolchain-175`, 6690656 bytes, `--self-check` 276 resources) does the
-  same natively on the Mac. A dylib that declares no callbacks of its own
+  -- the same counts release mode reports). The macOS toolchain rebuilt at 179
+  (`build/red-toolchain/darwin-arm64/red-toolchain-179`, 6707072 bytes,
+  `--self-check` 276 resources) does the same natively on the Mac: it compiles
+  a Red program in 10s and runs it. A dylib that declares no callbacks of its own
   still loads, runs and `dlclose`s, and one that does still fires `on-load`
   and `on-unload`. Linux dev mode builds now too, and so does **Windows** --
   the access violation dev mode used to take there was the collector's bitmap

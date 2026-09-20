@@ -920,6 +920,16 @@
     (parse 1518, object 658, series 1119, function 147, the same numbers the
     Mac reported at 179). The change is behaviourally inert for Red, and only
     a native call that spills can tell the two apart.
+    It does **not** leave Darwin-ARM64 codegen untouched, and the control is
+    what shows it: cross-compiling `red-toolchain-darwin-hybrid.red` with 184
+    and with 185 gives the same 6723488 bytes but **5911 differing bytes** in
+    691 runs, all of them frame offsets and immediates, while the same pair on
+    `red-toolchain-windows-hybrid.red` -- which the change cannot reach --
+    differs by **16**, the build-clock noise floor. So Darwin gets the same
+    narrow change Linux-ARM64 gets: any call with more than eight arguments
+    reserves a wider outgoing area. Apple's ARM64 ABI follows AAPCS64 for
+    non-variadic stack arguments, so the wider slots are right there too; what
+    is missing is a run, not a reason.
 - The two ABI changes are now checked against **Red** as well as Red/System,
   which is what actually exercises a native call from the runtime:
   `JOBS=4 bash build/linux-hybrid/red-suite-linux.sh

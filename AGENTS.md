@@ -695,16 +695,30 @@
   3319296 bytes (`GUI backend: native`, `Modules: View JSON CSV`) and the
   resulting console then dies on the same three `CreateWindowEx failed!` lines,
   so the GUI console builds but has never been able to open a window here.
-  Diagnosed with a scratch Red/System probe
-  (`build/tmp-imp/gci3.reds`): all nine system classes resolve through
-  `GetClassInfoExW`; `RegisterClassExW` returns a class atom and
-  `GetLastError` stays 0, but the class it just registered is invisible to a
-  following `GetClassInfoExW` (under both the module handle and null), and
-  `CreateWindowExW` returns null with `GetLastError` **998 (ERROR_NOACCESS)**
-  -- while the 1- and 3-argument imports in the same program are fine. Chase it
-  from the twelve-argument call side first. Note `handle!` is not a Red/System
-  type here at all (only Red programs define it), so a standalone probe has to
-  spell parameters `int-ptr!`.
+  `CreateWindowExW` returns null with `GetLastError` **998 (ERROR_NOACCESS)**.
+  Localized from inside the backend (temporary `print`s in `gui.reds`, since
+  reverted). **It is not the call and not the arguments.** A scratch Red/System
+  probe (`build/tmp-imp/gci*.reds`) registers a class and creates a window
+  fine, and `CreateFontW` -- **fourteen** arguments -- also works when called
+  from inside the failing Red program itself, one line above the
+  `CreateWindowEx` that fails. Ruled out one by one: arity; struct-typed import
+  parameters (`[WNDCLASSEX]` marshals identically to `[byte-ptr!]`);
+  `handle!` versus `int-ptr!` (rewriting all four handle parameters changes
+  nothing); NUL termination (`unicode/to-utf16-len` writes `dst/1: dst/2:
+  null-byte`); pointer validity (`class/1` reads `82 0` and `caption/1` reads
+  `112 0 114 0`, i.e. correct UTF-16, from our own code); literals versus
+  `c-string!` variables; and every argument value (`ws=0`,
+  `flags=2CA0000h`, `x/y=1173/692`, `w/h=233/103`, `id=0`, `parent=0`,
+  `inst=400000h`). A **minimal** call still fails --
+  `CreateWindowEx 0 #u16 "STATIC" null 0 0 0 0 0 null null null null` -- with
+  `STATIC` a class Windows always has. So look at process and thread *state*
+  in `init` before the first window, not at codegen: `enable-visual-styles`
+  and `DX-init` run there and nothing after them has ever created a window.
+  Note `handle!` is not a Red/System type here at all (only Red programs
+  define it), so a standalone probe has to spell parameters `int-ptr!`.
+  Note too that the **toolchain cannot see edits to `modules/`** -- it embeds
+  `build/generated/red-toolchain-resources.generated.red` -- so instrumenting
+  the backend needs `hybrid-compilerN.exe`, not `red-toolchainN.exe`.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler132-does.exe`
   (131->132, output 6337024 bytes; two SOURCE_DATE_EPOCH-pinned
   self-compilations of 132 differ in 1596 bytes -- PE timestamp, checksum, the

@@ -579,6 +579,19 @@
   64-bit library with `cl /LD /O2 /MT /Fe:structlib.dll structlib.c` from
   `system/tests/source/units/libs/`; the 32-bit dll is left alone so 32-bit
   targets keep working.
+- `libs/` now carries a 64-bit build for every host that can run one --
+  `structlib-x64.dll`, `structlib.so` (Linux x86-64), `structlib-arm64.so`
+  (Linux aarch64) and `structlib.dylib` (macOS arm64) -- and
+  `struct-x64-test.reds` names them, so the unit runs on every 64-bit target
+  instead of only Windows: its `#switch OS` picks `structlib.dylib` on macOS
+  and, on other Unix, switches on `target` for `structlib-arm64.so` versus
+  `structlib.so`. Windows keeps `structlib.dll` because the runner copies the
+  x64 build under that name. Verified at 184 straight from the committed
+  source: Windows-X86-64 621/621, Linux-X86-64 621/621, Linux-ARM64 627/628
+  (its one pre-existing assertion), Darwin-ARM64 compiles and names
+  `@loader_path/structlib.dylib` but has not been run. The old i386 names it
+  replaced -- `libstructlib.dylib` and `libstructlib.so` -- are still in
+  `struct-test.reds`, which is the 32-bit unit and keeps using them.
 - The standalone toolchain builds and runs again. Re-verified at 179:
   `hybrid-compiler179.exe -r -t Windows-X86-64 -o
   build/red-toolchain/windows-x64/red-toolchain-179.exe

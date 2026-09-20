@@ -542,11 +542,21 @@ struct-x64-local
 	nested4!: alias struct! [g1	[integer!] sub [huge! value] g2	[integer!]]
 	nested5!: alias struct! [g1	[integer!] sub [super! value] g2 [integer!]]
 
+	;-- Every library named here is a 64-bit build. The i386 ones this test used
+	;-- to name -- libstructlib.dylib and libstructlib.so -- cannot be loaded by
+	;-- an x64 executable, which is what kept the unit off macOS and Linux; the
+	;-- Windows runner copies libs/structlib-x64.dll beside the test as
+	;-- structlib.dll, so that name stays as it is.
 	#switch OS [
 		Windows  [#define STRUCTLIB-file "structlib.dll"]
-		macOS	 [#define STRUCTLIB-file "libstructlib.dylib"]
+		macOS	 [#define STRUCTLIB-file "structlib.dylib"]
 		FreeBSD  [#define STRUCTLIB-file "libstruct-BSD.so"]
-		#default [#define STRUCTLIB-file "libstructlib.so"]
+		#default [
+			#switch target [
+				ARM64   [#define STRUCTLIB-file "structlib-arm64.so"]
+				#default [#define STRUCTLIB-file "structlib.so"]
+			]
+		]
 	]
 
 	#import [

@@ -505,6 +505,7 @@ system-format-PE: context [
 	ILT-size:			4					;-- Import Lookup Table size (8 for 64-bit)
 	pointer-size:		4					;-- Pointer size (8 for 64-bit)
 	imports-refs:		make block! 10		;-- [ptr [DLL imports] ...]
+	import-dir-count:	0					;-- directory entries, address slots included
 	opt-header-size:	224
 	ep-mem-page: 		none
 	ep-file-page:		none
@@ -605,17 +606,21 @@ system-format-PE: context [
 			either PE64? [
 				foreach [def reloc] list [
 					foreach ref reloc [
-						change/part
-							at code ref
-							int-to-bin/to-bin32 (ptr - (base-address + code-base + ref - 1 + 4))
-							4
+						if positive? ref [
+							change/part
+								at code ref
+								int-to-bin/to-bin32 (ptr - (base-address + code-base + ref - 1 + 4))
+								4
+						]
 					]
 					ptr: ptr + pointer-size
 				]
 			][
 				foreach [def reloc] list [
 					pointer/value: ptr
-					foreach ref reloc [change at code ref form-struct pointer]	;TBD: check endianness + x-compilation
+					foreach ref reloc [
+						if positive? ref [change at code ref form-struct pointer]	;TBD: check endianness + x-compilation
+					]
 					ptr: ptr + pointer-size
 				]
 			]
@@ -626,7 +631,8 @@ system-format-PE: context [
 		job [object!]
 		/local spec IDTs ILTs out dlls hints idt ilt ptr ILTs-base hints-base
 			dlls-base IAT-base ILT-size idx IAT-buffer len offset name list def reloc
-			dll idata def-name
+			dll idata def-name lib-offsets slots slot dll-count ref
+			data-rva target-rva data-buf id
 	][
 		spec:		job/sections/import
 		IDTs: 		make block! len: divide length? spec/3 2	;-- list of directory entries
@@ -639,7 +645,10 @@ system-format-PE: context [
 			append spec/3 take/part pos 2				;-- ensures libRedRT is loaded last
 		]												;-- to allow VisualStyles to work properly
 
+		lib-offsets: 	make block! len
+		slots:			make block! 4				;-- [library-index name data-slot ...]
 		foreach [name list] spec/3 [					;-- collecting DLL names in buffer
+			append lib-offsets length? dlls
 			append IDTs idt: make-struct import-directory none
 			idt/name-rva: length? dlls
 			repend dlls [uppercase name null]
@@ -648,7 +657,9 @@ system-format-PE: context [
 		pad4 dlls
 
 		len: 0
+		idx: 0
 		foreach [name list] spec/3 [					;-- collecting function names in buffer
+			idx: idx + 1
 			append/only ILTs make block! 50
 			linker/check-dup-symbols job list
 			foreach [def reloc] list [
@@ -658,8 +669,36 @@ system-format-PE: context [
 				repend hints [#{0000} def-name null]	;-- Ordinal is zero, not used
 				if even? length? def-name [append hints null]
 				len: len + 1
+				foreach ref reloc [
+					if negative? ref [
+						append/only slots reduce [idx def negate ref]
+					]
+				]
 			]
 			len: len + 1								;-- account for null entry
+		]
+		;-- A directory entry of its own for every data slot that takes an
+		;-- import's address. Pointing FirstThunk at the slot is what asks the
+		;-- loader to write the resolved address into it: the import table is
+		;-- the only thing in a PE image that resolves a name to an address
+		;-- after loading, and there is no relocation that can do it. One name
+		;-- and one null terminate each thunk array, so the loader touches
+		;-- exactly the slot it was given.
+		dll-count: length? IDTs
+		foreach slot slots [
+			append IDTs idt: make-struct import-directory none
+			idt/name-rva: pick lib-offsets slot/1
+		]
+		unless empty? slots [
+			foreach slot slots [
+				append/only ILTs make block! 1
+				append last :ILTs ilt: make-struct ILT-struct none
+				ilt/rva: length? hints
+				def-name: form slot/2
+				repend hints [#{0000} def-name null]
+				if even? length? def-name [append hints null]
+			]
+			len: len + (2 * length? slots)				;-- each name and its null
 		]
 
 		ptr:		section-addr?/memory job 'import
@@ -688,6 +727,20 @@ system-format-PE: context [
 			append out form-struct ILT-struct			;-- Ending null ILT entry
 		]
 		IAT-buffer: copy IAT-buffer
+		;-- The loader only snaps a thunk whose slot still holds the hint/name
+		;-- pointer the lookup table holds: a slot that differs from it reads as
+		;-- one a bind has already filled, and is left alone. Seeding the global
+		;-- with the lookup table's own content is what makes it an import
+		;-- address table entry like any other, wherever in the image it sits.
+		data-buf: job/sections/data/2
+		id: 0
+		foreach slot slots [
+			id: id + 1
+			ilt: first pick ILTs (dll-count + id)
+			pointer/value: ilt/rva
+			if PE64? [pointer/_value: 0]
+			change/part at data-buf slot/3 form-struct pointer pointer-size
+		]
 		append out hints
 		append out dlls
 		change next spec out
@@ -696,13 +749,21 @@ system-format-PE: context [
 		insert skip find job/sections 'import 2 idata
 
 		ptr: section-addr?/memory job 'idata
+		data-rva: section-addr?/memory job 'data
 		idx: 1
 		foreach offset IDTs [
-			change skip out (idx * 20) - 4 int-to-bin/to-bin32 IAT-base: ptr + offset
-			list: pick spec/3 idx * 2
-			repend imports-refs [IAT-base list]			;-- save IAT base ptr for relocation
+			either idx > dll-count [
+				slot: pick slots (idx - dll-count)
+				target-rva: data-rva + (slot/3 - 1)
+				change skip out ((idx * 20) - 4) int-to-bin/to-bin32 target-rva
+			][
+				change skip out ((idx * 20) - 4) int-to-bin/to-bin32 IAT-base: ptr + offset
+				list: pick spec/3 (idx * 2)
+				repend imports-refs [IAT-base list]		;-- save IAT base ptr for relocation
+			]
 			idx: idx + 1
 		]
+		import-dir-count: length? IDTs
 	]
 
 	build-export: func [
@@ -967,7 +1028,7 @@ system-format-PE: context [
 		;-- data directory
 		if find job/sections 'import [
 			oh/import-addr:			named-sect-addr? job 'import
-			oh/import-size:			10 * (2 + length? job/sections/import/3)
+			oh/import-size:			20 * (1 + import-dir-count)
 			oh/IAT-addr:			named-sect-addr? job 'idata
 			oh/IAT-size:			length? job/sections/idata/2
 		]

@@ -1663,7 +1663,8 @@ arm64-codegen: context [
 		expected owner [integer!]
 		view [rsir-view!]
 		return: [logic!]
-		/local target [rsir-global!] kind pointee source [integer!]
+		/local target [rsir-global!] imported [rsir-import!]
+			kind pointee source [integer!]
 	][
 		if initializer/kind <> ADDRESS_INITIALIZER [return false]
 		source: either initializer/c = 0 [expected][initializer/c]
@@ -1697,7 +1698,43 @@ arm64-codegen: context [
 				kind: type-kind source view
 				any [source = 0 kind = 12 kind = -4 kind = -5 kind = -6]
 			]
+			initializer/a = IMPORT_ADDRESS [
+				;-- An import's address is only known once the loader has run,
+				;-- so the slot has to be one the loader can fill: a protected
+				;-- global lives in the read-only section, where no dynamic
+				;-- relocation may write.
+				target: as rsir-global! (view/globals
+					+ ((owner - 1) * RSIR_GLOBAL_SIZE))
+				if (target/flags and PROTECTED) <> 0 [return false]
+				if any [
+					initializer/b <= 0
+					initializer/b > view/header/import-count
+				][return false]
+				imported: as rsir-import! (view/imports
+					+ ((initializer/b - 1) * RSIR_IMPORT_SIZE))
+				if (imported/flags and SYSCALL_FLAG) <> 0 [return false]
+				kind: type-kind source view
+				any [source = 0 kind = 12 kind = -4 kind = -5 kind = -6]
+			]
 			true [false]
+		]
+	]
+
+	;-- Functions, globals and imports share one reference space, in that
+	;-- order: an import's slot is already the one its calls are recorded
+	;-- against, so a static initializer needs no bookkeeping of its own.
+	static-address-target-id: func [
+		initializer [rsir-initializer!]
+		view [rsir-view!]
+		return: [integer!]
+	][
+		either initializer/a = GLOBAL_ADDRESS [
+			view/header/function-count + initializer/b
+		][
+			either initializer/a = IMPORT_ADDRESS [
+				view/header/function-count
+					+ view/header/global-count + initializer/b
+			][initializer/b]
 		]
 	]
 
@@ -1988,9 +2025,8 @@ arm64-codegen: context [
 										not valid-static-address-initializer? initializer
 											array-type/target id view
 									][return fail-invalid 30 "prepare-global-data/view#10"]
-									target-id: either initializer/a = GLOBAL_ADDRESS [
-										view/header/function-count + initializer/b
-									][initializer/b]
+									target-id: static-address-target-id
+										initializer view
 									status: record-reference target-id 0 references
 									if status < 0 [return status]
 								]
@@ -2013,9 +2049,8 @@ arm64-codegen: context [
 								not valid-static-address-initializer? initializer
 									global/type id view
 							][return fail-invalid 34 "prepare-global-data/view#14"]
-							target-id: either initializer/a = GLOBAL_ADDRESS [
-								view/header/function-count + initializer/b
-							][initializer/b]
+							target-id: static-address-target-id
+								initializer view
 							status: record-reference target-id 0 references
 							if status < 0 [return status]
 						]
@@ -2135,9 +2170,8 @@ arm64-codegen: context [
 								]
 							]
 							initializer/kind = ADDRESS_INITIALIZER [
-								target-id: either initializer/a = GLOBAL_ADDRESS [
-									view/header/function-count + initializer/b
-								][initializer/b]
+								target-id: static-address-target-id
+									initializer view
 								source-offset: global-offsets/id + item-offset
 								if source-offset > REFERENCE_OFFSET_MASK [
 									return OUTPUT_FULL

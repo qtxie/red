@@ -20,12 +20,15 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler177.exe`
-  (176->177, output 6388224 bytes; the two differ in 17 bytes -- the PE
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler179.exe`
+  (178->179, output 6408192 bytes; 179 and 180 differ in 17 bytes -- the PE
   timestamp, the 3-byte PE checksum, the two `movabs rax` immediates that carry
   the compiler's build clock, the output file name's last digit in the two
   places it is embedded, and the two `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain
-  is back at a fixed point with the dev-mode macOS work in it. All 40
+  is back at a fixed point. 178 is the generation that implements a global
+  initialised with an import's address (below), and it leaves the Red/System
+  suite at 10593 tests / 12680 assertions / 12680 passed / 0 failed /
+  0 compile-failures. All 40
   Darwin-ARM64 Red/System executables are byte-identical between 169 and 176,
   and all 23 dev-mode Red units between 172 and 175, which is what says the
   callback, variadic and `-v` changes are inert for everything already
@@ -252,23 +255,53 @@
   `system/runtime/`, `modules/` and `system/assets/` (see
   `tools/self_hosting/generate-toolchain-resources.red`): a fix in `compiler/`
   needs the toolchain *rebuilt*, not the resources regenerated.
-- Not supported, in **both** backends: **a global initialised with the address
-  of an import.** `#import [...] [imp-fn: "strcmp" [...]]` then `p: :imp-fn`
-  compiles through the frontend and dies in codegen -- on ARM64 at
-  `prepare-global-data site 34 (prepare-global-data/view#14)`, on x64 at
-  `validate-module-initializers site 310
-  (validate-module-initializers/header/function-count#10)`. Repro:
-  `build/tmp-imp/iag-mac.reds` / `iag-plain.reds`. Taking the address of a
-  function or of a global (`p: :f`, `p: :g`) is fine, and so is the address of
-  an import *in code* (`OP_ADDRESS` with `IMPORT_ADDRESS` is implemented); it
-  is only the static-initializer form that is missing. Supporting it means
-  `valid-static-address-initializer?` plus the `target-id` arithmetic in
-  `prepare-global-data` and `write-global-data` in arm64-codegen, the same pair
-  in x64-codegen, and a data-section relocation to the import's GOT/IAT slot in
-  all three linkers -- a feature, not a fix, and nothing is blocked on it.
-  Careful with the repro: put the `#import` at top level, not inside
-  `#switch` -- from inside a conditional the frontend fails earlier and
-  misleadingly with "missing expression".
+- Implemented at 178: **a global initialised with the address of an import.**
+  `#import [...] [imp-fn: "strcmp" [...]]` then `p: :imp-fn` now works on all
+  four targets; it used to die in codegen, on ARM64 at
+  `prepare-global-data site 34` and on x64 at
+  `validate-module-initializers site 310`. Functions, globals and imports
+  already shared one reference-id space in that order, so such an initializer
+  needs no table of its own: its reference rides in the slice the import's
+  *calls* already use, told apart by sign -- a positive entry is a code offset
+  to patch, a negative one is the 1-based position of a slot in the writable
+  data for the loader to fill. That is the encoding `load-codegen` already
+  uses for a data reference, so the bounds checks come for free. ARM64 needed
+  only the arm in `valid-static-address-initializer?` and the `target-id`
+  arithmetic, now shared by its three call sites through
+  `static-address-target-id`; x64 also needed the reference *counted*, in
+  `measure-module-functions` under `argument-marking?` -- the pass that owns
+  the per-import counts -- because an import whose address is only taken
+  would otherwise be handed no slice at all.
+  The three loaders differ only in how the slot gets filled:
+  * PE has no relocation that resolves a name to an address after loading, so
+    the import table is the only mechanism. Each slot gets an
+    `IMAGE_IMPORT_DESCRIPTOR` of its own reusing the library's name, a
+    one-entry lookup table with a null terminator, and `FirstThunk` aimed at
+    the slot. **The slot's on-disk content has to be the lookup table's own
+    hint/name RVA**: the loader skips a thunk whose slot does not still hold
+    it, reading it as one a bind already filled, and a slot left at zero is
+    silently left at zero. That was the entire bug -- hand-patching
+    `FirstThunk` to a range of `.data` addresses filled every one of them as
+    soon as the slot was seeded, and none of them while it was zero.
+  * ELF: one `R_*_GLOB_DAT` per slot in `.rela.dyn`, the fixup the GOT
+    entries get, pointed at the global instead. The symbol index is its
+    1-based position in the flat import list, which is also its `.dynsym`
+    index.
+  * Mach-O: one extra bind per slot, aimed at the data offset. dyld writes
+    the resolved address straight in, which is what the inline
+    `IMPORT_ADDRESS` path already relies on, so the two forms agree.
+  A protected global is rejected: its slot lives in the read-only section,
+  where no dynamic relocation may write. Verified on Windows-X86-64,
+  Darwin-ARM64, Linux-X86-64 and Linux-ARM64 with
+  `build/tmp-imp/iag-check-*.reds` (call through the slot, then compare with
+  the address `:imp-fn` yields in code), `iag-only-*.reds` (address taken and
+  never called) and `iag-arr-*.reds` (array of two import addresses).
+  Two traps: `resolve-import-refs` in ELF.red patches *code* at every entry of
+  an import's reference list, so a negative entry there lands at the head of
+  `.text` and corrupts the entry point -- PE and Mach-O already skip
+  non-code entries for the same reason. And the repro's `#import` must sit at
+  top level, not inside `#switch`: from inside a conditional the frontend
+  fails earlier and misleadingly with "missing expression".
 - To inspect a codegen failure without rebuilding the compiler, dump the IR
   the frontend hands it: `red-console.exe build/tmp-imp/rsir-dump.red
   <target> <out.rsir>` (it stubs `codegen-module` because the console cannot

@@ -486,35 +486,57 @@ linker: context [
 			refs: make block! count-reference
 			reference-id: first-reference
 			repeat index count-reference [
-				reference: read-codegen-word image
+				reference: read-codegen-signed-word image
 					(refs-start + ((reference-id - 1) * 4))
-				unless all [integer? reference reference <= (code-size - 4)][
-					return codegen-fail "native import reference exceeds code"
+				unless integer? reference [
+					return codegen-fail "native import reference is invalid"
 				]
-				either job/target = 'ARM64 [
-					switch/default
-						(arm64-import-reference-kind image (code-offset + reference)) [
-						1 [
-							unless reference <= (code-size - 8) [
-								return codegen-fail "native import page reference exceeds code"
-							]
-							reference-register: (to integer! pick image
-								(code-offset + reference + 1)) and 31
-							append/only refs reduce [reference + 1 reference-register]
+				;-- A static initializer that takes this import's address
+				;-- names a data slot for the loader to fill, not a code
+				;-- offset to patch. The slot rides along with the call
+				;-- references as a negative: its magnitude is the 1-based
+				;-- position in the writable data section.
+				either negative? reference [
+					either reference < rodata-reference-base [
+						data-reference: reference - data-reference-base
+						unless data-reference <= (data-size - 8) [
+							return codegen-fail "native import reference exceeds data"
 						]
-						2 [
-							append refs reference + 1
-						]
+						append refs negate (data-reference + 1)
 					][
-						return codegen-fail "native ARM64 import reference has an invalid opcode"
+						return codegen-fail "native import reference names read-only data"
 					]
-				][append refs reference + 1]
+				][
+					unless reference <= (code-size - 4) [
+						return codegen-fail "native import reference exceeds code"
+					]
+					either job/target = 'ARM64 [
+						switch/default
+							(arm64-import-reference-kind image (code-offset + reference)) [
+							1 [
+								unless reference <= (code-size - 8) [
+									return codegen-fail "native import page reference exceeds code"
+								]
+								reference-register: (to integer! pick image
+									(code-offset + reference + 1)) and 31
+								append/only refs reduce [reference + 1 reference-register]
+							]
+							2 [
+								append refs reference + 1
+							]
+						][
+							return codegen-fail "native ARM64 import reference has an invalid opcode"
+						]
+					][append refs reference + 1]
+				]
 				reference-id: reference-id + 1
 			]
 			;-- An issue! name is what tells every object format apart: a
 			;-- string names a function the code calls through a stub, an
 			;-- issue a variable the code reads through a data slot. The
-			;-- codegen image carries the distinction as flags = 0.
+			;-- codegen image carries the distinction as flags = 0. A negative
+			;-- entry in `refs` is neither: it is a slot the loader fills with
+			;-- this import's address, so it keeps the import alive on its own.
 			append functions either zero? import-flags [to issue! external][external]
 			append/only functions refs
 			id: id + 1

@@ -1468,11 +1468,12 @@ x64-codegen: context [
 
 	valid-static-address-initializer?: func [
 		initializer [rsir-initializer!]
-		expected owner global-count function-count [integer!]
-		globals [byte-ptr!]
+		expected owner global-count function-count import-count [integer!]
+		globals imports [byte-ptr!]
 		table [type-table!]
 		return: [logic!]
-		/local target [rsir-global!] kind pointee source [integer!]
+		/local target [rsir-global!] imported [rsir-import!]
+			kind pointee source [integer!]
 	][
 		if initializer/kind <> ADDRESS_INITIALIZER [return false]
 		source: either initializer/c = 0 [expected][initializer/c]
@@ -1499,6 +1500,21 @@ x64-codegen: context [
 			]
 			initializer/a = FUNCTION_ADDRESS [
 				if any [initializer/b <= 0 initializer/b > function-count][return false]
+				kind: logical-kind source table
+				any [source = 0 kind = 12 kind = -4 kind = -5 kind = -6]
+			]
+			initializer/a = IMPORT_ADDRESS [
+				;-- An import's address is only known once the loader has run,
+				;-- so the slot has to be one the loader can fill: a protected
+				;-- global lives in the read-only section, where no dynamic
+				;-- relocation may write.
+				target: as rsir-global! (globals
+					+ ((owner - 1) * RSIR_GLOBAL_SIZE))
+				if (target/flags and PROTECTED) <> 0 [return false]
+				if any [initializer/b <= 0 initializer/b > import-count][return false]
+				imported: as rsir-import! (imports
+					+ ((initializer/b - 1) * RSIR_IMPORT_SIZE))
+				if (imported/flags and SYSCALL_FLAG) <> 0 [return false]
 				kind: logical-kind source table
 				any [source = 0 kind = 12 kind = -4 kind = -5 kind = -6]
 			]
@@ -12327,7 +12343,7 @@ x64-codegen: context [
 			ir-global [rsir-global!]
 			array-type [rsir-type!]
 			initializer [rsir-initializer!]
-			initializers globals types [byte-ptr!]
+			initializers globals types imports [byte-ptr!]
 			id initializer-id base [integer!]
 			array? [logic!]
 	][
@@ -12336,6 +12352,7 @@ x64-codegen: context [
 		table: module/table
 		types: table/types
 		globals: module/globals
+		imports: module/imports
 		initializers: claim-table ctx ctx/initializer-count RSIR_INITIALIZER_SIZE
 		if null? initializers [return fail-invalid 301 "validate-module-initializers/initializers#1"]
 		id: 1
@@ -12380,7 +12397,8 @@ x64-codegen: context [
 										array-type/flags <> 8
 										not valid-static-address-initializer? initializer
 											array-type/target id header/global-count
-											header/function-count globals table
+											header/function-count header/import-count
+											globals imports table
 									][return fail-invalid 306 "validate-module-initializers/header/function-count#6"]
 								]
 								true [return fail-invalid 307 "validate-module-initializers/function-count#7"]
@@ -12403,7 +12421,8 @@ x64-codegen: context [
 								(ir-global/flags and INLINE) <> 0
 								not valid-static-address-initializer? initializer
 									ir-global/type id header/global-count
-									header/function-count globals table
+									header/function-count header/import-count
+									globals imports table
 							][return fail-invalid 310 "validate-module-initializers/header/function-count#10"]
 						]
 						true [return fail-invalid 311 "validate-module-initializers/function-count#11"]
@@ -12832,6 +12851,13 @@ x64-codegen: context [
 							target-image-function/reference-count:
 								target-image-function/reference-count + 1
 						]
+						initializer/a = IMPORT_ADDRESS [
+							;-- Counted with the import's own references, in
+							;-- the marking pass: that is the pass which owns
+							;-- the per-import counts, and it runs after this
+							;-- one has laid the globals out.
+							0
+						]
 						true [return fail-invalid 320 "place-module-globals/target-image-function/reference-count#2"]
 					]
 					if global-reference-count = 2147483647 [return OUTPUT_FULL]
@@ -12997,13 +13023,17 @@ x64-codegen: context [
 			work [codegen-scratch!]
 			task [codegen-task!]
 			ir-function [rsir-function!]
+			ir-global [rsir-global!]
 			bitmap-function [codegen-function!]
-			functions instructions function-instructions [byte-ptr!]
+			initializer [rsir-initializer!]
+			functions instructions function-instructions
+				globals initializers [byte-ptr!]
 			function-sizes function-frames function-outgoing instruction-effects
-				instruction-offsets relaxed-offsets catch-depths control-uses [int-ptr!]
+				instruction-offsets relaxed-offsets catch-depths control-uses
+				import-refs [int-ptr!]
 			id status next-instruction next-offset function-size strings-size
 				global-size global-align function-names-size code-size
-				literal-size entry-size [integer!]
+				literal-size entry-size initializer-id import-id [integer!]
 			entry? current-entry? [logic!]
 	][
 		header: ctx/header
@@ -13027,6 +13057,36 @@ x64-codegen: context [
 		; use lists and worklists; their permanent owners overwrite them later.
 		status: infer-effects module work ctx/opt-level
 		if status <> 0 [return status]
+		;-- A static initializer that takes an import's address is a reference
+		;-- on that import, sharing the slice its calls already use. The
+		;-- marking pass is the one that sizes every slice, so it counts these
+		;-- too; the emitting pass hands them out after the call references.
+		if argument-marking? [
+			import-refs: work/import-refs
+			globals: module/globals
+			initializers: ctx/initializers
+			id: 1
+			while [id <= header/global-count][
+				ir-global: as rsir-global! (globals
+					+ ((id - 1) * RSIR_GLOBAL_SIZE))
+				initializer-id: 0
+				while [initializer-id < ir-global/initializer-count][
+					initializer: as rsir-initializer! (initializers
+						+ ((ir-global/first-initializer + initializer-id)
+							* RSIR_INITIALIZER_SIZE))
+					if all [
+						initializer/kind = ADDRESS_INITIALIZER
+						initializer/a = IMPORT_ADDRESS
+					][
+						import-id: initializer/b
+						if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
+						import-refs/import-id: import-refs/import-id + 1
+					]
+					initializer-id: initializer-id + 1
+				]
+				id: id + 1
+			]
+		]
 		id: 1
 		while [id <= header/type-count][
 			global-size: 0
@@ -13623,11 +13683,11 @@ x64-codegen: context [
 			initializer [rsir-initializer!]
 			image-global target-image-global [codegen-global!]
 			target-image-function [codegen-function!]
-			references [int-ptr!]
+			references import-refs [int-ptr!]
 			output image-functions image-globals globals initializers types strings
 				rodata-output data-output cursor [byte-ptr!]
 			id initializer-id base slot-width item-offset reference-id
-				global-offset [integer!]
+				global-offset import-id [integer!]
 			array? [logic!]
 	][
 		header: ctx/header
@@ -13639,6 +13699,7 @@ x64-codegen: context [
 		strings: module/strings
 		initializers: ctx/initializers
 		references: ctx/references
+		import-refs: ctx/scratch/import-refs
 		image-functions: output + IMAGE_HEADER_SIZE
 		image-globals: image-functions + (header/function-count * IMAGE_FUNCTION_SIZE)
 		rodata-output: output + ctx/rodata-offset
@@ -13701,6 +13762,11 @@ x64-codegen: context [
 											+ target-image-function/reference-count
 										target-image-function/reference-count:
 											target-image-function/reference-count + 1
+									]
+									initializer/a = IMPORT_ADDRESS [
+										import-id: initializer/b
+										reference-id: import-refs/import-id
+										import-refs/import-id: reference-id + 1
 									]
 									true [return fail-invalid 328 "write-module-data/target-image-function/reference-count#2"]
 								]

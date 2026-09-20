@@ -346,23 +346,41 @@ system-format-MachO-ARM64: context [
 		linker/throw-error "ARM64 Mach-O export trie offsets did not converge"
 	]
 
-	build-bind-info: func [imports [block!] segment-index got-relative [integer!] /local out name][
+	append-bind: func [out [binary!] record [block!] segment-index offset [integer!] /local name][
+		either record/2 <= 15 [
+			append-u8 out 16 or record/2                     ; SET_DYLIB_ORDINAL_IMM
+		][
+			append-u8 out 32                                 ; SET_DYLIB_ORDINAL_ULEB
+			append-uleb128 out record/2
+		]
+		append-u8 out 64                                     ; SET_SYMBOL_TRAILING_FLAGS_IMM
+		name: rejoin ["_" form record/1]
+		append out to binary! name
+		append out #{00}
+		append-u8 out 81                                     ; SET_TYPE_IMM(pointer)
+		append-u8 out 112 or segment-index                   ; SET_SEGMENT_AND_OFFSET_ULEB
+		append-uleb128 out offset
+		append-u8 out 144                                    ; DO_BIND
+	]
+
+	build-bind-info: func [
+		imports [block!]
+		segment-index got-relative data-relative [integer!]
+		/local out ref
+	][
 		out: make binary! 128
 		foreach record imports [
-			either record/2 <= 15 [
-				append-u8 out 16 or record/2                       ; SET_DYLIB_ORDINAL_IMM
-			][
-				append-u8 out 32                                   ; SET_DYLIB_ORDINAL_ULEB
-				append-uleb128 out record/2
+			append-bind out record segment-index got-relative + (record/5 * 8)
+			;-- A global that takes this import's address is bound the same
+			;-- way the GOT slot is: dyld writes the resolved address into it,
+			;-- which is the only way to have the value before the first
+			;-- instruction runs.
+			foreach ref record/3 [
+				if all [integer? ref negative? ref][
+					append-bind out record segment-index
+						data-relative + (negate ref) - 1
+				]
 			]
-			append-u8 out 64                                    ; SET_SYMBOL_TRAILING_FLAGS_IMM
-			name: rejoin ["_" form record/1]
-			append out to binary! name
-			append out #{00}
-			append-u8 out 81                                    ; SET_TYPE_IMM(pointer)
-			append-u8 out 112 or segment-index                  ; SET_SEGMENT_AND_OFFSET_ULEB
-			append-uleb128 out got-relative + (record/5 * 8)
-			append-u8 out 144                                   ; DO_BIND
 		]
 		append-u8 out 0                                      ; DONE
 		out
@@ -455,6 +473,9 @@ system-format-MachO-ARM64: context [
 	][
 		foreach record imports [
 			foreach ref record/3 [
+				;-- A negative entry is a data slot, bound by dyld rather than
+				;-- patched here; it is not a branch to the stub either.
+				if all [integer? ref negative? ref][continue]
 				either block? ref [
 					;-- A page reference names the GOT slot, whose value the
 					;-- loader replaces with the symbol itself; the load the
@@ -665,6 +686,7 @@ system-format-MachO-ARM64: context [
 		data-section-index: 2 + either empty? functions [0][1]
 		if not empty? imports [data-section-index: data-section-index + 1]
 		bind-info: build-bind-info imports data-segment-index 0
+			(data-section-offset - data-offset)
 		rebase-info: build-rebase-info data-relocs rodata-relocs data-segment-index
 			(data-section-offset - data-offset) (const-offset - data-offset)
 		export-trie: build-export-trie exports

@@ -452,7 +452,7 @@ system-format-ELF: context [
 			di-name di-off di-size
 			relro-offset plt-offset gotplt-offset pos list soname base
 			relro-entry dynamic-entry dynamic-section rw-entry gap
-			import-funcs import-vars relro-imports gotplt-count plt-size
+			import-funcs import-vars relro-imports import-slots gotplt-count plt-size
 			ehdr-struct phdr-struct shdr-struct dynamic-struct
 			symbol-struct relocation-struct relro-word-struct
 			reloc-section
@@ -478,6 +478,9 @@ system-format-ELF: context [
 		import-funcs: collect-import-funcs imports
 		import-vars: collect-import-vars imports
 		relro-imports: either elf64-target? job/target [import-vars][imports]
+		import-slots: either elf64-target? job/target [
+			collect-import-slots job
+		][copy []]
 		exports: collect-exports job
 		natives: collect-natives job
 		data-reloc: collect-data-reloc job
@@ -625,7 +628,7 @@ system-format-ELF: context [
 			".hash"			size [machine-word		2 + 2 + (length? imports) + ((length? exports) / 2)]
 			".dynsym"		size [(symbol-struct)	1 + (length? imports) + ((length? exports) / 2)]
 			".dynsym"		align (either elf64-target? job/target [8][4])
-			(reloc-section)	size [(relocation-struct) (length? relro-imports) + (length? data-reloc) + (length? rodata-reloc) + ((length? data-imports) / 3)]
+			(reloc-section)	size [(relocation-struct) (length? relro-imports) + (length? data-reloc) + (length? rodata-reloc) + ((length? data-imports) / 3) + ((length? import-slots) / 2)]
 			(reloc-section)	align (either elf64-target? job/target [8][4])
 			".rela.plt"		size [(relocation-struct) length? import-funcs]
 			".rela.plt"		align (either elf64-target? job/target [8][4])
@@ -790,6 +793,7 @@ system-format-ELF: context [
 				rodata-reloc
 				any [attempt [get-layout-address layout ".rodata"] 0]
 				any [attempt [get-layout-data layout ".rodata"] #{}]
+				import-slots
 		]
 
 		set-layout-data layout ".got.plt" [
@@ -1094,6 +1098,7 @@ system-format-ELF: context [
 		rodata-relocs [block!]
 		rodata-address [integer!]
 		rodata [binary!]
+		slots [block!]
 		/local rel-type result entry len copy-type relative-type glob-dat-type di-name di-off di-size i reloc symbol ptr import-count
 	] [
 		if elf64-target? target-arch [
@@ -1103,7 +1108,7 @@ system-format-ELF: context [
 			reloc: relocation-struct? target-arch
 			import-count: length? symbols
 			result: make block! (length? relocs) + (length? rodata-relocs)
-				+ ((length? data-imports) / 3) + len: length? vars
+				+ ((length? data-imports) / 3) + ((length? slots) / 2) + len: length? vars
 			repeat i len [
 				symbol: vars/:i
 				entry: make-struct reloc none
@@ -1134,6 +1139,17 @@ system-format-ELF: context [
 				entry/addend: 0
 				append result entry
 				i: i + 1
+			]
+			;-- A global initialised with an import's address holds a value
+			;-- only the loader knows, so it gets a global-dynamic fixup of
+			;-- its own: the same one the GOT entries get, pointed at the
+			;-- global instead.
+			foreach [symbol ptr] slots [
+				entry: make-struct reloc none
+				entry/offset: data-address + ptr
+				entry/info: reduce [glob-dat-type symbol]
+				entry/addend: 0
+				append result entry
 			]
 			return result
 		]
@@ -1627,6 +1643,29 @@ system-format-ELF: context [
 		vars
 	]
 
+	collect-import-slots: func [
+		job [object!]
+		/local list index libname libuses symbol refs ref
+	][
+		;-- A static initializer that takes an import's address leaves a slot
+		;-- in the writable data. It is collected as [symbol slot ...] with
+		;-- the symbol's one-based position in the flat import list, which is
+		;-- also its index in .dynsym, and the slot's byte offset in .data.
+		list: make block! 4
+		index: 0
+		foreach [libname libuses] any [attempt [job/sections/import/3] []] [
+			foreach [symbol refs] libuses [
+				index: index + 1
+				foreach ref refs [
+					if all [integer? ref negative? ref][
+						repend list [index (negate ref) - 1]
+					]
+				]
+			]
+		]
+		list
+	]
+
 	collect-exports: func [
 		{Collect a list of exported objects: symbol, type, offset and size. As
 		the object size is not yet stored in the symbol or exports table, we
@@ -1726,6 +1765,10 @@ system-format-ELF: context [
 					index? find funcs symbol
 				]
 				foreach callsite callsites [
+					;-- A negative entry is a data slot a static initializer
+					;-- left for the loader, not a call: the dynamic fixup
+					;-- fills it, and there is nothing in the code to patch.
+					if all [integer? callsite negative? callsite][continue]
 					;-- A block callsite is an AArch64 ADRP/ADD pair naming a
 					;-- slot the code then reads; an integer one is a call or
 					;-- an x86-64 displacement. The two do not agree on what
@@ -1781,6 +1824,7 @@ system-format-ELF: context [
 					rel: make-struct machine-word none
 					rel/value: rel-address-of/symbol relro-offset symbols symbol
 					foreach callsite callsites [
+						if all [integer? callsite negative? callsite][continue]
 						change/part at code callsite serialize-data rel size-of rel
 					]
 				]

@@ -844,7 +844,11 @@
   several places the upstream check never sees, and no test pins it.
 - The Red/System **compiler** test suite (`run-red-system-compiler-tests.red`)
   went 84/124 on 142, 96/124 on 144, 120/124 on 145, 122/124 on 147,
-  123/124 on 149 and 124/124 on 150.
+  123/124 on 149 and 124/124 on 150 -- and is still 124/124 at **185**
+  (0 failed, 70 compile-failures, the same bookkeeping as the Red suite's).
+  It reads the compiler from **`RED_SYSTEM_COMPILER`**, not `RED_COMPILER`;
+  with the wrong name it quits in 300ms saying so, which looks like a crash.
+  Takes ~1 minute.
 - Fixed: **`return` never checked its value against the declared return
   type.** `func [return: [integer!]][return true]` reported `*** Compilation
   Error: native codegen rejected invalid RSIR`; it now reports upstream's

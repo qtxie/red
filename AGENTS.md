@@ -634,6 +634,13 @@
   `red-toolchain-185.exe` is 7688704 bytes, `--self-check` still reports 276
   resources, a Red `hello.red` compiles (1970688 with `-r`, 128512 in dev
   mode) and prints, and a Red/System `print` program compiles and runs.
+  Re-verified again at **187**, the current baseline, and byte-for-byte the
+  same size: 7688704 bytes, `--self-check` 276 resources, `hello.red` 1971200
+  with `-r` and 129024 in dev mode, both printing. It cross-compiles **and
+  runs** `hello.red` on Linux-X86-64 (1958784 bytes, under WSL) and
+  Linux-ARM64 (1632496 bytes, on `armbian`) as well, which is the toolchain
+  end-to-end over both ABI changes. Darwin-ARM64 cross-compiles but the Mac is
+  unreachable, so it is not run.
   Worth re-running after any codegen change: this is the only build that
   reaches some sites (see above), and it takes about two minutes.
   Note `build/linux-hybrid/hello.reds` is a **no-op** -- `main: does [...]` is

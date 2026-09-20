@@ -910,6 +910,19 @@
     (parse 1518, object 658, series 1119, function 147, the same numbers the
     Mac reported at 179). The change is behaviourally inert for Red, and only
     a native call that spills can tell the two apart.
+- The two ABI changes are now checked against **Red** as well as Red/System,
+  which is what actually exercises a native call from the runtime:
+  `JOBS=4 bash build/linux-hybrid/red-suite-linux.sh
+  build/self-hosting/merge-red64/hybrid-compiler185.exe Linux-X86-64 wsl`
+  compiles **57/57** and runs **57/57 clean, 57 exit-0**, 16854 assertions
+  with **0 failed** -- and every per-unit count is the one the Mac reported at
+  179 (logic 95, integer 1760, float 1793, char 35, series 1119, append 327,
+  path 60, object 658, map 86, function 147, loop 58, parse 1518, make 3,
+  convert 451, mold 54, load 225, lexer 929, evaluation 294, binding 25,
+  type 42, routine 22, recycle 39, comparison 558). That is the System V
+  change's real regression gate, since every one of those units reaches the
+  runtime through native calls. Allow ~16 minutes: the 57 units cross-compile
+  in parallel and then run in one WSL session.
   Linux ARM64 on `armbian`: 40/40 Red/System units compile, 38 run and 3 of
   those differ -- all source-gated, none failing (`int64-test` is `#if`'d to
   32-bit and ARM targets, `pointer-test` keeps an x64-only group, `lib-test`

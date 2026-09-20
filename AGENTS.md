@@ -64,11 +64,19 @@
   Darwin toolchain fixed point, measured on matched pairs: `dt194b` vs
   `dt195b` differ in **140 bytes** and `dt194b` vs `dt194c` (same compiler,
   rebuilt) in **68** -- generation drift is the same order as rebuild noise,
-  so Darwin is at a fixed point. Unrelated and unexplained: a build from the
-  previous session (`dt194`, 20:51) sits ~1.85 MB away from today's rebuilds
-  of the same compiler and source, scattered over the whole file from offset
-  3362 up; it is not the resources file (last changed at `69a5527dd`, 20:34)
-  and not the wall clock (today's 21:03 and 21:22 builds agree to 68 bytes).
+  so Darwin is at a fixed point.
+  **When you compare two generations, give the outputs names of equal
+  length.** The output file name is embedded in the image, and a name one
+  character longer shifts the serialized data the same way the
+  `dd-Mmm-yyyy/h:mm:ss` build date does -- except the effect is far larger:
+  a 5-vs-6-character pair differs in ~1.85 MB, almost all of it in
+  `__DATA,__data` (1,830,687 of 2,144,688 bytes; `__TEXT,__text` moves by
+  only 4,825 of 4,544,468), while every equal-length pair sits at 68-140
+  bytes. `dt19a` vs `dt194` (5 vs 5, built a session apart) is 70 bytes and
+  `dt19a` vs `dt194b` (5 vs 6, built minutes apart) is 1,848,597, so it is
+  the length that matters, not the clock or the session. This cost me a
+  detour: a "1.85 MB unexplained spread" between generations was just
+  `dt194` vs `dt194b`.
   The old open bug where a `#import` library name past 32 bytes was truncated
   in the PE DLL-name buffer is still fixed at 194: `dumpbin /dependents`
   prints `E:\TEMP3\RED\BUILD\TMP-CLEAN\ZEBRA.DLL` and 28/32/33-char names

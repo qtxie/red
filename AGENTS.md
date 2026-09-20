@@ -20,21 +20,23 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler182.exe`
-  (181->182, output 6419456 bytes; 182 and 183 differ in 16 bytes -- the PE
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler185.exe`
+  (184->185, output 6419456 bytes; 185 and 186 differ in 18 bytes -- the PE
   timestamp, the PE checksum, the two `movabs rax` immediates that carry the
   compiler's build clock, the output file name's last digit, and the two
-  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is at a fixed point. 182 is the
-  generation that implements the **System V aggregate ABI** for Linux-X86-64
-  (below): eightbyte classification at every native boundary, which is what
-  takes `struct-x64-test` from five failing assertions plus an access
-  violation to 621/621 on Linux-X86-64 while Windows-X86-64 stays 621/621.
-  It leaves the Red/System suite at the same 10593 tests / 12680 assertions /
-  12680 passed / 0 failed / 0 compile-failures, and the Linux-X86-64 slice of
-  it at 40/40 compile, 40/40 run, 0 differed. Linux-ARM64 is unaffected --
-  `x64-codegen/generate` accepts only `ABI_WIN64` or `ABI_SYSV`, so ARM64
-  never reaches the new code -- and `struct-x64-test` there stays 627/628
-  with its one pre-existing assertion.
+  `dd-Mmm-yyyy/h:mm:ss` dates -- so the chain is at a fixed point.
+  182 is the generation that implements the **System V aggregate ABI** for
+  Linux-X86-64 (below): eightbyte classification at every native boundary,
+  which takes `struct-x64-test` from five failing assertions plus an access
+  violation to 621/621 there while Windows-X86-64 stays 621/621. 185 then
+  fixes the **ARM64 stack slot width** (below), which takes Linux-ARM64 from
+  627/628 to 628/628 -- so `struct-x64-test` is now clean on every 64-bit
+  target that can be run. The Red/System suite stays at 10593 tests / 12680
+  assertions / 12680 passed / 0 failed / 0 compile-failures, and both Linux
+  slices of it at 40/40 compile, 40/40 run, 0 differed with every unit
+  reporting 0 failed assertions. The two are independent backends: the first
+  touches `x64-codegen.reds`, whose `generate` accepts only `ABI_WIN64` or
+  `ABI_SYSV`; the second touches `arm64-codegen.reds`.
 - Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler179.exe`
   (178->179, output 6408192 bytes; 179 and 180 differ in 17 bytes -- the PE
   timestamp, the 3-byte PE checksum, the two `movabs rax` immediates that carry
@@ -870,6 +872,23 @@
     printed as whatever x1 held and every unit reported the wrong totals.
     `abi-parameter-location` now publishes the registers the fixed parameters
     took and the trailing ones continue from there (Apple is untouched).
+  * **Fixed: an ARM64 stack argument was packed at its natural width.**
+    AAPCS64 gives every stack argument a whole eight-byte slot, but
+    `abi-parameter-location` advanced the stack offset by `width` -- 4 for an
+    `integer!` or a `float32!` -- so the second and later ones landed short of
+    where the callee reads them. `checkBigOverflow 1 2 3 4 5 6 7 s3 8 42` --
+    seven integers fill x0-x6, so the 16-byte `big!` and both trailing ints go
+    to the stack -- wrote `tail` at sp+16 and `marker` at sp+20, where gcc
+    puts them at sp+16 and **sp+24**; the callee read `marker` from unwritten
+    space and answered 0. Every stack branch now advances by `align size 8`
+    and aligns to `max(alignment, 8)`, which is exactly what
+    `abi-trailing-argument` already did -- its own comment said the rule, the
+    fixed-parameter path just did not follow it. Only the *native* boundary
+    can notice: both sides of a Red/System-to-Red/System call ask the same
+    function, so internal calls were self-consistently wrong and stay correct.
+    `struct-x64-test` goes from 627/628 to **628/628** on Linux-ARM64, its 40
+    units still report 0 failed assertions, and the Windows Red/System suite
+    still reports 12680 assertions / 12680 passed / 0 failed.
   Linux ARM64 on `armbian`: 40/40 Red/System units compile, 38 run and 3 of
   those differ -- all source-gated, none failing (`int64-test` is `#if`'d to
   32-bit and ARM targets, `pointer-test` keeps an x64-only group, `lib-test`

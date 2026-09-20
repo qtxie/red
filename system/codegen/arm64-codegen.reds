@@ -992,7 +992,7 @@ arm64-codegen: context [
 		/local parameter [rsir-parameter!]
 			id ref flags width kind integer-count float-count offset copy-size
 			size alignment hfa-kind hfa-count register-count stack-align
-			stack-size [integer!]
+			stack-size slot [integer!]
 			floating? aggregate? hfa? [logic!]
 	][
 		if any [parameter-count < 0 ordinal < 0 ordinal > parameter-count][
@@ -1041,6 +1041,15 @@ arm64-codegen: context [
 			location/size: size
 			location/alignment: alignment
 			location/hfa-width: either hfa? [either hfa-kind = 9 [4][8]][0]
+			;-- AAPCS64 lays the stack arguments out a whole eight-byte slot at
+			;-- a time -- the size of each one is rounded up, and the offset is
+			;-- aligned to eight or to the argument's own alignment, whichever
+			;-- is larger -- the way abi-trailing-argument already does. An
+			;-- aggregate's slot holds a rounded-up copy of it, but only `size`
+			;-- bytes of that slot are ever written.
+			stack-align: either alignment > 8 [alignment][8]
+			slot: align size 8
+			if slot <= 0 [slot: 8]
 			case [
 				hfa? [
 					either float-count <= (8 - hfa-count) [
@@ -1049,13 +1058,12 @@ arm64-codegen: context [
 						float-count: float-count + hfa-count
 					][
 						float-count: 8
-						stack-align: alignment
 						offset: align offset stack-align
 						if offset < 0 [return OUTPUT_FULL]
 						location/class: ABI_STACK
 						location/stack-offset: offset
-						if offset > (2147483647 - size)[return OUTPUT_FULL]
-						offset: offset + size
+						if offset > (2147483647 - slot)[return OUTPUT_FULL]
+						offset: offset + slot
 					]
 				]
 				all [aggregate? size > 16][
@@ -1085,12 +1093,12 @@ arm64-codegen: context [
 						integer-count: integer-count + register-count
 					][
 						integer-count: 8
-						offset: align offset alignment
+						offset: align offset stack-align
 						if offset < 0 [return OUTPUT_FULL]
 						location/class: ABI_STACK
 						location/stack-offset: offset
-						if offset > (2147483647 - size)[return OUTPUT_FULL]
-						offset: offset + size
+						if offset > (2147483647 - slot)[return OUTPUT_FULL]
+						offset: offset + slot
 					]
 				]
 				floating? [
@@ -1099,12 +1107,12 @@ arm64-codegen: context [
 						location/register-index: float-count
 						float-count: float-count + 1
 					][
-						offset: align offset width
+						offset: align offset stack-align
 						if offset < 0 [return OUTPUT_FULL]
 						location/class: ABI_STACK
 						location/stack-offset: offset
-						if offset > (2147483647 - width)[return OUTPUT_FULL]
-						offset: offset + width
+						if offset > (2147483647 - slot)[return OUTPUT_FULL]
+						offset: offset + slot
 					]
 				]
 				true [
@@ -1113,12 +1121,12 @@ arm64-codegen: context [
 						location/register-index: integer-count
 						integer-count: integer-count + 1
 					][
-						offset: align offset width
+						offset: align offset stack-align
 						if offset < 0 [return OUTPUT_FULL]
 						location/class: ABI_STACK
 						location/stack-offset: offset
-						if offset > (2147483647 - width)[return OUTPUT_FULL]
-						offset: offset + width
+						if offset > (2147483647 - slot)[return OUTPUT_FULL]
+						offset: offset + slot
 					]
 				]
 			]

@@ -20,7 +20,13 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler194.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler196.exe`
+  (195->196, output 6420480 bytes). 196 carries **one real codegen fix**:
+  ARM64 stack arguments are packed at their own alignment on Darwin, not
+  rounded to eight-byte slots as AAPCS64 requires. See "Apple's ARM64 ABI
+  does not round stack arguments up" below -- it is the first thing the
+  whole cross-target matrix existed to catch.
+- Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler194.exe`
   (193->194, output 6419968 bytes; 194 and 195 differ in 15 bytes -- the PE
   timestamp, the PE checksum, the output file name, the two `movabs rax`
   immediates that carry the compiler's build clock, and the
@@ -76,6 +82,17 @@
   9363/18034 is 4 tests and 8 assertions higher and the whole difference is
   `clipboard-test`, a real 4/8 on Darwin and a no-op 0/0 wherever there is
   no clipboard backend. `draw-test` is 0/0 everywhere (no View backend).
+  The 41-unit Red/System suite (`build/linux-hybrid/rs-suite-linux.sh`) is
+  green on both Linux targets as well -- 41/41 compiled and 41/41 ran on
+  Linux-X86-64 and on Linux-ARM64. There is no Windows run log at 194 to diff
+  against, so the two are compared to each other: identical unit for unit
+  except three target-conditional blocks, all by design. `int64-test`'s
+  entire body sits inside `#if any [target = 'IA-32 target = 'ARM target =
+  'ARM64]`, so X86-64 compiles it out (0 tests, against 12 on ARM64);
+  `pointer-test` has an `#if target = 'X86-64` "Pointers large-offset
+  arithmetic" group worth 2 tests and 2 assertions (63 vs 61); and
+  `struct-x64-test` is 621/621 on X86-64 and 628/628 on ARM64, the
+  documented ABI difference.
   Darwin toolchain fixed point, measured on matched pairs: `dt194b` vs
   `dt195b` differ in **140 bytes** and `dt194b` vs `dt194c` (same compiler,
   rebuilt) in **68** -- generation drift is the same order as rebuild noise,
@@ -92,7 +109,55 @@
   the length that matters, not the clock or the session. This cost me a
   detour: a "1.85 MB unexplained spread" between generations was just
   `dt194` vs `dt194b`.
-  The old open bug where a `#import` library name past 32 bytes was truncated
+- Fixed at 196: **Apple's ARM64 ABI does not round stack arguments up to
+  eight bytes.** Running the Red/System suite on Darwin-ARM64 for the first
+  time put `struct-x64-test` at 626/628 where Linux-ARM64 was 628/628. The
+  two failures are `checkBigOverflow 1 2 3 4 5 6 7 s3 8 42` and its callback
+  twin: seven ints fill x0-x6, so the 16-byte `big!` and both trailing ints
+  go to the stack, and the callee read `marker` from unwritten space.
+  Ground truth, from compiling the same C call on both boxes and
+  disassembling:
+
+      Darwin (clang)   x@sp+0  y@sp+4      char@0  short@2  int@4
+      Linux  (gcc)     x@sp+0  y@sp+8      char@0  short@8
+      Darwin           b@0 tail@16 marker@20
+      Linux            b@0 tail@16 marker@24
+
+  So AAPCS64 gives every stack argument a whole eight-byte slot -- `slot:
+  align size 8`, aligned to `max(alignment, 8)` -- while Apple packs each
+  one at its own alignment: `slot: align size alignment`, aligned to
+  `alignment`. `abi-parameter-location` in
+  `system/codegen/arm64-codegen.reds` computes `stack-align` and `slot` once
+  and every stack branch shares them, so that one pair now branches on
+  `target-abi = ABI_AAPCS64`.
+  **This corrects a wrong claim that used to be in this file**: the earlier
+  8-byte-slot fix said "Apple's ARM64 ABI follows AAPCS64 for non-variadic
+  stack arguments, so the wider slots are right there too; what is missing
+  is a run, not a reason." It does not, and the run is what showed it. The
+  old note was right that only the native boundary can tell the difference.
+  Verified: Darwin 626/628 -> **628/628**, Linux-ARM64 still **628/628**,
+  and the whole Red suite in batch mode is 0 failed on both (below).
+  Still open: `abi-trailing-argument`, the variadic path, is **not**
+  ABI-aware and still uses the eight-byte slot.
+- Fixed at 196 (tooling): **`tests/source/units/make-run-all.red`**, the Red
+  port of the Rebol `make-run-all-red.r`. It generates
+  `%auto-tests/run-all-comp1.red`, `run-all-comp2.red` and
+  `run-all-interp.red`, which drive every unit from three binaries instead
+  of 65 -- compiling `run-all-comp1.red` takes 81 s where its 33 separate
+  units took ~13 min. Run it from `tests/source/units/`; the drivers land in
+  `%auto-tests/` and stripped copies of the units in
+  `%auto-tests/run-all/`. Notes: Red has no `join`, so it uses `rejoin`;
+  two units start with a UTF-8 BOM that has to go; `%all-tests.txt` lists
+  `%auto-tests/lexer-auto-test.red`, which has no generator in this tree, so
+  a missing entry is skipped and reported rather than being fatal.
+  With it, the Red suite at 196 in batch mode:
+  **Darwin-ARM64** comp1 4257 tests / 7497 assertions, comp2 5131 / 10604,
+  0 failed; **Linux-ARM64** comp1 4253 / 7489, comp2 5131 / 10604, 0 failed.
+  The 4 tests and 8 assertions between them are `clipboard-test` again.
+  Windows at 196: comp1 4262 / 7508 with **1** failure, `#5220`, which is
+  pre-existing and Windows-only -- 194 on the same unit gives the identical
+  373 tests / 911 assertions / 1 failed, and on ARM64 it is 374 / 912 / 0.
+- The old open bug where a `#import` library name past 32 bytes was truncated
   in the PE DLL-name buffer is still fixed at 194: `dumpbin /dependents`
   prints `E:\TEMP3\RED\BUILD\TMP-CLEAN\ZEBRA.DLL` and 28/32/33-char names
   whole. Note the repro needs the imported function to be *called* -- an
@@ -1146,9 +1211,13 @@
     `red-toolchain-windows-hybrid.red` -- which the change cannot reach --
     differs by **16**, the build-clock noise floor. So Darwin gets the same
     narrow change Linux-ARM64 gets: any call with more than eight arguments
-    reserves a wider outgoing area. Apple's ARM64 ABI follows AAPCS64 for
-    non-variadic stack arguments, so the wider slots are right there too; what
-    is missing is a run, not a reason.
+    reserves a wider outgoing area, and this paragraph used to conclude that
+    "Apple's ARM64 ABI follows AAPCS64 for non-variadic stack arguments, so
+    the wider slots are right there too; what is missing is a run, not a
+    reason." **That is wrong, and the run is what proved it wrong** -- see
+    the 196 entry above. Apple packs each stack argument at its own
+    alignment, so the eight-byte slot this change introduced is exactly
+    wrong for Darwin, and 196 makes it conditional.
 - The two ABI changes are now checked against **Red** as well as Red/System,
   which is what actually exercises a native call from the runtime:
   `JOBS=4 bash build/linux-hybrid/red-suite-linux.sh

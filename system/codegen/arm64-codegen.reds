@@ -1047,9 +1047,22 @@ arm64-codegen: context [
 			;-- is larger -- the way abi-trailing-argument already does. An
 			;-- aggregate's slot holds a rounded-up copy of it, but only `size`
 			;-- bytes of that slot are ever written.
-			stack-align: either alignment > 8 [alignment][8]
-			slot: align size 8
-			if slot <= 0 [slot: 8]
+			;-- Apple's ARM64 ABI does not round up: it packs each stack
+			;-- argument at its own alignment. clang emits `probe8 1 2 3 4 5 6
+			;-- 7 8 x y` with x at sp+0 and y at sp+4, and passes a char, a
+			;-- short and an int at sp+0, sp+2 and sp+4, where gcc rounds every
+			;-- one of those to eight bytes. `checkBigOverflow 1 2 3 4 5 6 7 s3
+			;-- 8 42` is the case that shows it: tail at sp+16 and marker at
+			;-- sp+20 on Darwin, sp+24 under AAPCS64.
+			either target-abi = ABI_AAPCS64 [
+				stack-align: either alignment > 8 [alignment][8]
+				slot: align size 8
+				if slot <= 0 [slot: 8]
+			][
+				stack-align: alignment
+				slot: align size alignment
+				if slot <= 0 [slot: alignment]
+			]
 			case [
 				hfa? [
 					either float-count <= (8 - hfa-count) [

@@ -168,13 +168,21 @@
   All four sites are reached only by 19 MB of IR -- `compile-function` alone is
   34k instructions -- so unit tests cannot find them; the toolchain build is
   the test.
-  Linux ARM64 at 160, on the `armbian` board (Cortex-A53, ARMv8.0, no LSE):
+  Linux ARM64 at 179, on the `armbian` board (Cortex-A53, ARMv8.0, no LSE):
   `bash build/linux-hybrid/rs-suite-linux.sh
-  build/self-hosting/merge-red64/hybrid-compiler160.exe Linux-ARM64 armbian`
-  compiles 40/40 and runs 40/40 with 0 differing -- `atomic-test` 33/33 and
-  `queue-test` 64/64 included, which is what closes the SIGILL note above.
-  Linux x86-64 at 160 (`HOST=wsl`) is also 40/40 compile, 40/40 run, 0
-  differing.
+  build/self-hosting/merge-red64/hybrid-compiler179.exe Linux-ARM64 armbian`
+  compiles 40/40 and runs 40/40 with 0 failed assertions -- `atomic-test` 33/33
+  and `queue-test` 64/64 included, which is what closes the SIGILL note above.
+  Linux x86-64 at 179 (`HOST=wsl`) is the same: 40/40 compile, 40/40 run,
+  0 failed assertions. The driver compares every run against
+  `build/win-regression/rs-hybrid-compiler179/`, the Windows logs from the same
+  generation; three ARM64 units and one x86-64 unit come out "differing" and
+  all four are count-only, with 0 failures on both sides, because the bodies
+  are platform-conditional: `int64-test` is `#if target = 'ARM64` (0 tests on
+  Windows, 12 on ARM64), `pointer-test` is `#if target = 'X86-64`, and
+  `lib-test` is `#either any [OS = 'Linux OS = 'macOS]` (7 tests on Linux,
+  6 on Windows). The output directory is `rs-<gen>-<target>` because the two
+  Linux targets share one generation and would otherwise overwrite each other.
   Fixed at 160: **the linker could not tell a variable import from a function
   import.** `codegen-import!` carried no kind, so `linker/load-codegen` named
   every import with a plain `string!` and every `issue?` test in ELF.red,

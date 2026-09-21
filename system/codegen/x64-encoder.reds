@@ -4,6 +4,8 @@ Red/System [
 ]
 
 x64-encoder: context [
+	; Operand rejection stays -1 so encoding probes can choose a fallback.
+	BUFFER_FULL: -3
 	RAX: 0
 	RCX: 1
 	RDX: 2
@@ -69,7 +71,7 @@ x64-encoder: context [
 		/local at [byte-ptr!]
 	][
 		unless any [catch-id = 0 catch-id = -1 catch-id = -2][return -1]
-		unless room? code capacity 15 [return -1]
+		unless room? code capacity 15 [return BUFFER_FULL]
 		if null? code [return 15]
 		at: code
 		at/1: as byte! 55h                         ; push rbp
@@ -96,7 +98,7 @@ x64-encoder: context [
 		if size = 0 [return 0]
 		if size < 0 [return -1]
 		count: either size <= 127 [4][7]
-		unless room? code capacity count [return -1]
+		unless room? code capacity count [return BUFFER_FULL]
 		if null? code [return count]
 		at: code
 		at/1: as byte! 48h
@@ -117,7 +119,7 @@ x64-encoder: context [
 		capacity amount [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 7 [return -1]
+		unless room? code capacity 7 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 48h
 			code/2: as byte! 81h
@@ -141,7 +143,7 @@ x64-encoder: context [
 		; whose high word is zero.
 		if any [width = 4 high = 0][
 			size: either target >= 8 [6][5]
-			unless room? code capacity size [return -1]
+			unless room? code capacity size [return BUFFER_FULL]
 			if null? code [return size]
 			at: code
 			if target >= 8 [
@@ -155,7 +157,7 @@ x64-encoder: context [
 		; C7 /0 sign-extends imm32 to 64 bits and is three bytes shorter
 		; than movabs.
 		if all [high = -1 low < 0][
-			unless room? code capacity 7 [return -1]
+			unless room? code capacity 7 [return BUFFER_FULL]
 			if null? code [return 7]
 			code/1: as byte! rex true 0 target
 			code/2: as byte! C7h
@@ -163,7 +165,7 @@ x64-encoder: context [
 			write-i32 (code + 3) low
 			return 7
 		]
-		unless room? code capacity 10 [return -1]
+		unless room? code capacity 10 [return BUFFER_FULL]
 		if null? code [return 10]
 		code/1: as byte! either target >= 8 [49h][48h]
 		code/2: as byte! (B8h + (target and 7))
@@ -199,7 +201,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) source target
 		size: either prefix = 40h [2][3]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -224,7 +226,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) source target
 		size: either prefix = 40h [2][3]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -245,7 +247,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) target source
 		size: either prefix = 40h [3][4]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -267,7 +269,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) target source
 		size: either prefix = 40h [3][4]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -289,7 +291,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) 4 source
 		size: either prefix = 40h [2][3]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -312,7 +314,7 @@ x64-encoder: context [
 		immediate-size: either fits-i8? value [1][4]
 		size: 2 + immediate-size
 		if prefix <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -335,7 +337,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) mode target
 		size: either prefix = 40h [2][3]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -358,7 +360,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) mode target
 		size: either prefix = 40h [3][4]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -379,7 +381,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) 2 target
 		size: either prefix = 40h [2][3]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -399,7 +401,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) 3 target
 		size: either prefix = 40h [2][3]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -436,7 +438,7 @@ x64-encoder: context [
 		][return -1]
 		prefix: rex (width = 8) target target
 		size: either prefix = 40h [2][3]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -450,7 +452,7 @@ x64-encoder: context [
 		capacity [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 17 [return -1]
+		unless room? code capacity 17 [return BUFFER_FULL]
 		if null? code [return 17]
 		code/1:  as byte! 31h                    ; xor edx, edx
 		code/2:  as byte! D2h
@@ -474,7 +476,7 @@ x64-encoder: context [
 		capacity displacement [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 5 [return -1]
+		unless room? code capacity 5 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! E9h
 			write-i32 (code + 1) displacement
@@ -488,7 +490,7 @@ x64-encoder: context [
 		return: [integer!]
 	][
 		unless fits-i8? displacement [return -1]
-		unless room? code capacity 2 [return -1]
+		unless room? code capacity 2 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! EBh
 			code/2: as byte! displacement
@@ -519,7 +521,7 @@ x64-encoder: context [
 			condition >= 0 condition <= 15
 		][return -1]
 		unless fits-i8? displacement [return -1]
-		unless room? code capacity 2 [return -1]
+		unless room? code capacity 2 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! (70h + condition)
 			code/2: as byte! displacement
@@ -535,7 +537,7 @@ x64-encoder: context [
 		/local size [integer!] at [byte-ptr!]
 	][
 		size: either skip-current? [25][24]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if skip-current? [at/1: as byte! C9h at: at + 1]
@@ -571,7 +573,7 @@ x64-encoder: context [
 		capacity [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 2 [return -1]
+		unless room? code capacity 2 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 0Fh
 			code/2: as byte! 0Bh
@@ -584,7 +586,7 @@ x64-encoder: context [
 		capacity [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 2 [return -1]
+		unless room? code capacity 2 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 0Fh
 			code/2: as byte! 05h
@@ -600,7 +602,7 @@ x64-encoder: context [
 	][
 		unless all [any [width = 4 width = 8] any [signed = 0 signed = 1]][return -1]
 		size: either signed = 1 [either width = 8 [5][3]][either width = 8 [5][4]]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		case [
 			all [signed = 1 width = 4][
@@ -663,7 +665,7 @@ x64-encoder: context [
 		prefix: rex false target source
 		size: 3
 		if any [prefix <> 40h all [width = 1 source >= 4]][size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if any [prefix <> 40h all [width = 1 source >= 4]][
@@ -699,7 +701,7 @@ x64-encoder: context [
 		prefix: rex (width = 8) target RBP
 		size: opcode-size + 1 + displacement-size
 		if prefix <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -744,7 +746,7 @@ x64-encoder: context [
 			prefix-size: prefix-size + 1
 		]
 		size: prefix-size + 1 + 1 + displacement-size
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if width = 2 [at/1: as byte! 66h at: at + 1]
@@ -772,7 +774,7 @@ x64-encoder: context [
 		displacement-size: either fits-i8? displacement [1][4]
 		size: 6 + displacement-size
 		if width = 8 [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if width = 8 [at/1: as byte! 48h at: at + 1]
@@ -810,7 +812,7 @@ x64-encoder: context [
 		]
 		size: 3 + displacement-size
 		if base-code = 4 [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! rex true target base
@@ -846,7 +848,7 @@ x64-encoder: context [
 		]
 		size: 3 + displacement-size
 		if base-code = 4 [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! rex true source base
@@ -891,7 +893,7 @@ x64-encoder: context [
 		size: opcode-size + 1 + displacement-size
 		if prefix-needed? [size: size + 1]
 		if base-code = 4 [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix-needed? [at/1: as byte! prefix at: at + 1]
@@ -947,7 +949,7 @@ x64-encoder: context [
 		if width = 2 [size: size + 1]
 		if prefix-needed? [size: size + 1]
 		if base-code = 4 [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if width = 2 [at/1: as byte! 66h at: at + 1]
@@ -983,7 +985,7 @@ x64-encoder: context [
 		if prefix <> 40h [size: size + 1]
 		if base-code = 4 [size: size + 1]
 		if base-code = 5 [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! F0h
@@ -1032,7 +1034,7 @@ x64-encoder: context [
 		capacity [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 3 [return -1]
+		unless room? code capacity 3 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 0Fh
 			code/2: as byte! AEh
@@ -1059,7 +1061,7 @@ x64-encoder: context [
 		rex-byte: rex false target RBP
 		size: 4 + displacement-size
 		if rex-byte <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1089,7 +1091,7 @@ x64-encoder: context [
 		rex-byte: rex false source RBP
 		size: 4 + displacement-size
 		if rex-byte <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1121,7 +1123,7 @@ x64-encoder: context [
 		rex-byte: rex false source RSP
 		size: 5 + displacement-size
 		if rex-byte <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1164,7 +1166,7 @@ x64-encoder: context [
 		size: 4 + displacement-size
 		if rex-byte <> 40h [size: size + 1]
 		if low = 4 [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1209,7 +1211,7 @@ x64-encoder: context [
 		size: 4 + displacement-size
 		if rex-byte <> 40h [size: size + 1]
 		if low = 4 [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1240,7 +1242,7 @@ x64-encoder: context [
 		][return -1]
 		rex-byte: rex (width = 8) target source
 		size: either rex-byte = 40h [4][5]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! 66h
@@ -1264,7 +1266,7 @@ x64-encoder: context [
 		][return -1]
 		rex-byte: rex (width = 8) source target
 		size: either rex-byte = 40h [4][5]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! 66h
@@ -1289,7 +1291,7 @@ x64-encoder: context [
 		][return -1]
 		rex-byte: rex false target source
 		size: either rex-byte = 40h [4][5]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1314,7 +1316,7 @@ x64-encoder: context [
 		][return -1]
 		rex-byte: rex false target source
 		size: either rex-byte = 40h [4][5]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1340,7 +1342,7 @@ x64-encoder: context [
 		size: 3
 		if width = 8 [size: size + 1]
 		if rex-byte <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if width = 8 [at/1: as byte! 66h at: at + 1]
@@ -1365,7 +1367,7 @@ x64-encoder: context [
 		][return -1]
 		rex-byte: rex false target source
 		size: either rex-byte = 40h [4][5]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1390,7 +1392,7 @@ x64-encoder: context [
 		][return -1]
 		rex-byte: rex (source-width = 8) target source
 		size: 5
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1414,7 +1416,7 @@ x64-encoder: context [
 		][return -1]
 		rex-byte: rex (target-width = 8) target source
 		size: 5
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1435,7 +1437,7 @@ x64-encoder: context [
 			any [parity = 0 parity = 1 parity = 2]
 		][return -1]
 		if parity = 0 [return condition-result code capacity condition]
-		unless room? code capacity 11 [return -1]
+		unless room? code capacity 11 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 0Fh
 			code/2: as byte! (90h + condition)
@@ -1462,7 +1464,7 @@ x64-encoder: context [
 		displacement-size: either fits-i8? displacement [1][4]
 		mode: either displacement-size = 1 [1][2]
 		size: 3 + displacement-size
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! rex true target RBP
@@ -1493,7 +1495,7 @@ x64-encoder: context [
 			true [2]
 		]
 		size: 4 + displacement-size
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! rex true target RSP
@@ -1513,7 +1515,8 @@ x64-encoder: context [
 		capacity target displacement [integer!]
 		return: [integer!]
 	][
-		unless all [target >= 0 target <= 15 room? code capacity 7][return -1]
+		unless all [target >= 0 target <= 15][return -1]
+		unless room? code capacity 7 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! rex true target RBP
 			code/2: as byte! 8Dh
@@ -1528,7 +1531,8 @@ x64-encoder: context [
 		capacity target displacement [integer!]
 		return: [integer!]
 	][
-		unless all [target >= 0 target <= 15 room? code capacity 7][return -1]
+		unless all [target >= 0 target <= 15][return -1]
+		unless room? code capacity 7 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! rex true target RBP
 			code/2: as byte! 8Bh
@@ -1553,7 +1557,7 @@ x64-encoder: context [
 		prefix: rex (width = 8) target RBP
 		size: opcode-size + 5
 		if prefix <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -1591,7 +1595,7 @@ x64-encoder: context [
 			prefix-size: prefix-size + 1
 		]
 		size: prefix-size + 6
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if width = 2 [at/1: as byte! 66h at: at + 1]
@@ -1615,7 +1619,7 @@ x64-encoder: context [
 		unless all [target >= 0 target <= 15 prefix <> 0][return -1]
 		rex-byte: rex false target RBP
 		size: either rex-byte = 40h [8][9]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1638,7 +1642,7 @@ x64-encoder: context [
 		unless all [source >= 0 source <= 15 prefix <> 0][return -1]
 		rex-byte: rex false source RBP
 		size: either rex-byte = 40h [8][9]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! prefix
@@ -1676,7 +1680,7 @@ x64-encoder: context [
 		if any [target < 0 target > 15][return -1]
 		if value = 0 [return 0]
 		size: either fits-i8? value [4][7]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! rex true 0 target
@@ -1702,7 +1706,7 @@ x64-encoder: context [
 		unless all [target >= 0 target <= 15][return -1]
 		immediate-size: either fits-i8? value [1][4]
 		size: 3 + immediate-size
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! rex true 4 target
@@ -1728,7 +1732,7 @@ x64-encoder: context [
 		prefix: rex (width = 8) 0 target
 		size: either fits-i8? value [3][6]
 		if prefix <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -1749,7 +1753,7 @@ x64-encoder: context [
 		immediate-size: either fits-i8? value [1][4]
 		size: 2 + immediate-size
 		if prefix <> 40h [size: size + 1]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -1772,32 +1776,32 @@ x64-encoder: context [
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: move-register at (capacity - written) RAX RCX 8
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written: written + encoded
 
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: load-indirect at (capacity - written) width 0
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written: written + encoded
 
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: store-indirect at (capacity - written) width
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written: written + encoded
 
 		if advance? [
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
 			encoded: add-immediate at (capacity - written) RCX width
-			if encoded < 0 [return -1]
+			if encoded < 0 [return encoded]
 			written: written + encoded
 
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
 			encoded: add-immediate at (capacity - written) RDX width
-			if encoded < 0 [return -1]
+			if encoded < 0 [return encoded]
 			written: written + encoded
 		]
 		written
@@ -1819,33 +1823,33 @@ x64-encoder: context [
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
 			encoded: move-immediate at (capacity - written) R8 4 chunks 0
-			if encoded < 0 [return -1]
+			if encoded < 0 [return encoded]
 			written: written + encoded
 			loop-start: written
 
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
 			encoded: copy-chunk at (capacity - written) 8 true
-			if encoded < 0 [return -1]
+			if encoded < 0 [return encoded]
 			written: written + encoded
 
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
 			encoded: add-immediate at (capacity - written) R8 -1
-			if encoded < 0 [return -1]
+			if encoded < 0 [return encoded]
 			written: written + encoded
 
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
 			encoded: test-register at (capacity - written) R8 8
-			if encoded < 0 [return -1]
+			if encoded < 0 [return encoded]
 			written: written + encoded
 
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
 			encoded: jump-condition at (capacity - written) 5
 				(loop-start - (written + 6))
-			if encoded < 0 [return -1]
+			if encoded < 0 [return encoded]
 			written: written + encoded
 			remaining: remaining - (chunks * 8)
 		][
@@ -1853,7 +1857,7 @@ x64-encoder: context [
 				at: as byte-ptr! 0
 				if not null? code [at: code + written]
 				encoded: copy-chunk at (capacity - written) 8 (remaining > 8)
-				if encoded < 0 [return -1]
+				if encoded < 0 [return encoded]
 				written: written + encoded
 				remaining: remaining - 8
 			]
@@ -1868,7 +1872,7 @@ x64-encoder: context [
 			at: as byte-ptr! 0
 			if not null? code [at: code + written]
 			encoded: copy-chunk at (capacity - written) width (remaining > width)
-			if encoded < 0 [return -1]
+			if encoded < 0 [return encoded]
 			written: written + encoded
 			remaining: remaining - width
 		]
@@ -1885,7 +1889,7 @@ x64-encoder: context [
 		displacement-size: either all [displacement >= 0 displacement <= 127][1][4]
 		size: either width = 8 [4][3]
 		size: size + displacement-size
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if width = 8 [at/1: as byte! 48h at: at + 1]
@@ -1908,7 +1912,7 @@ x64-encoder: context [
 		if displacement < 0 [return -1]
 		displacement-size: either displacement <= 127 [1][4]
 		size: 7 + displacement-size
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		at/1: as byte! C7h
@@ -1931,7 +1935,7 @@ x64-encoder: context [
 		capacity displacement [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 5 [return -1]
+		unless room? code capacity 5 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! E8h
 			write-i32 (code + 1) displacement
@@ -1947,7 +1951,7 @@ x64-encoder: context [
 	][
 		unless all [register >= 0 register <= 15][return -1]
 		size: either register >= 8 [3][2]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if register >= 8 [at/1: as byte! 41h at: at + 1]
@@ -1961,7 +1965,7 @@ x64-encoder: context [
 		capacity displacement [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 6 [return -1]
+		unless room? code capacity 6 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! FFh
 			code/2: as byte! 15h
@@ -1979,7 +1983,7 @@ x64-encoder: context [
 		unless all [register >= 0 register <= 15][return -1]
 		prefix: rex false 0 register
 		size: either prefix = 40h [1][2]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -1996,7 +2000,7 @@ x64-encoder: context [
 		unless all [register >= 0 register <= 15][return -1]
 		prefix: rex false 0 register
 		size: either prefix = 40h [1][2]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		at: code
 		if prefix <> 40h [at/1: as byte! prefix at: at + 1]
@@ -2005,19 +2009,19 @@ x64-encoder: context [
 	]
 
 	push-flags: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 1 [return -1]
+		unless room? code capacity 1 [return BUFFER_FULL]
 		if not null? code [code/1: as byte! 9Ch]
 		1
 	]
 
 	pop-flags: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 1 [return -1]
+		unless room? code capacity 1 [return BUFFER_FULL]
 		if not null? code [code/1: as byte! 9Dh]
 		1
 	]
 
 	fxsave-stack: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 4 [return -1]
+		unless room? code capacity 4 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 0Fh
 			code/2: as byte! AEh
@@ -2028,7 +2032,7 @@ x64-encoder: context [
 	]
 
 	fxrstor-stack: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 4 [return -1]
+		unless room? code capacity 4 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 0Fh
 			code/2: as byte! AEh
@@ -2043,7 +2047,7 @@ x64-encoder: context [
 		capacity [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 3 [return -1]
+		unless room? code capacity 3 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! F3h
 			code/2: as byte! 48h
@@ -2053,7 +2057,7 @@ x64-encoder: context [
 	]
 
 	stack-top: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 3 [return -1]
+		unless room? code capacity 3 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 48h
 			code/2: as byte! 89h
@@ -2063,7 +2067,7 @@ x64-encoder: context [
 	]
 
 	sign-extend-eax: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 3 [return -1]
+		unless room? code capacity 3 [return BUFFER_FULL]
 		if not null? code [
 			code/1: as byte! 48h
 			code/2: as byte! 63h
@@ -2080,7 +2084,7 @@ x64-encoder: context [
 	][
 		unless all [target >= 0 target <= 15][return -1]
 		size: either target >= 8 [3][2]
-		unless room? code capacity size [return -1]
+		unless room? code capacity size [return BUFFER_FULL]
 		if null? code [return size]
 		either target >= 8 [
 			code/1: as byte! 45h
@@ -2094,13 +2098,13 @@ x64-encoder: context [
 	]
 
 	leave-return: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 2 [return -1]
+		unless room? code capacity 2 [return BUFFER_FULL]
 		if not null? code [code/1: as byte! C9h code/2: as byte! C3h]
 		2
 	]
 
 	return-near: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 1 [return -1]
+		unless room? code capacity 1 [return BUFFER_FULL]
 		if not null? code [code/1: as byte! C3h]
 		1
 	]

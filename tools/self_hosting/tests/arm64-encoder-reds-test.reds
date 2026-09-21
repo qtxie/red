@@ -543,7 +543,7 @@ check size 4 expected
 if (arm64-encoder/move-immediate null 0 arm64-encoder/X11 8 12345678h 0) <> 8 [
 	failures: failures + 1
 ]
-if (arm64-encoder/move-immediate code 7 arm64-encoder/X11 8 12345678h 0) <> -1 [
+if (arm64-encoder/move-immediate code 7 arm64-encoder/X11 8 12345678h 0) <> arm64-encoder/BUFFER_FULL [
 	failures: failures + 1
 ]
 if (arm64-encoder/branch-relative code 256 2) <> -1 [failures: failures + 1]

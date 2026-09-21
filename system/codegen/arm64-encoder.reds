@@ -4,6 +4,8 @@ Red/System [
 ]
 
 arm64-encoder: context [
+	; Operand rejection stays -1 so encoding probes can choose a fallback.
+	BUFFER_FULL: -3
 	X0:   0
 	X1:   1
 	X2:   2
@@ -150,7 +152,7 @@ arm64-encoder: context [
 		capacity value [integer!]
 		return: [integer!]
 	][
-		unless room? code capacity 4 [return -1]
+		unless room? code capacity 4 [return BUFFER_FULL]
 		if not null? code [write-i32 code value]
 		4
 	]
@@ -204,7 +206,7 @@ arm64-encoder: context [
 			][written: written + 4]
 			i: i + 1
 		]
-		unless room? code capacity written [return -1]
+		unless room? code capacity written [return BUFFER_FULL]
 		if null? code [return written]
 
 		base-value: halfword low high base-index
@@ -922,20 +924,20 @@ arm64-encoder: context [
 			pointer <> target pointer <> scratch target <> scratch
 		][return -1]
 		written: move-immediate code capacity target 4 0 0
-		if written < 0 [return -1]
+		if written < 0 [return written]
 		; LDRB Wscratch, [Xpointer], #1
 		opcode: 38401400h or (pointer * 32)
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: instruction at (capacity - written) (opcode or scratch)
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: add-immediate at (capacity - written) target target 1 4
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: branch-zero at (capacity - written) scratch 4 -8 true
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 
@@ -1003,7 +1005,8 @@ arm64-encoder: context [
 		capacity register [integer!]
 		return: [integer!]
 	][
-		unless all [valid-register? register room? code capacity 8][return -1]
+		unless valid-register? register [return -1]
+		unless room? code capacity 8 [return BUFFER_FULL]
 		if not null? code [
 			write-i32 code (90000000h or register)
 			write-i32 (code + 4) ((91000000h or (register * 32)) or register)
@@ -1020,7 +1023,8 @@ arm64-encoder: context [
 		capacity register [integer!]
 		return: [integer!]
 	][
-		unless all [valid-register? register room? code capacity 4][return -1]
+		unless valid-register? register [return -1]
+		unless room? code capacity 4 [return BUFFER_FULL]
 		if not null? code [
 			write-i32 code ((load-opcode 8 0 8 true) or (register * 32) or register)
 		]
@@ -1045,14 +1049,14 @@ arm64-encoder: context [
 		encoded: encode-add-immediate operation target base magnitude 8 false
 		if encoded <> -1 [return instruction code capacity encoded]
 		written: move-immediate code capacity scratch 8 magnitude 0
-		if written < 0 [return -1]
+		if written < 0 [return written]
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		opcode: either operation = OP_ADD [8B206000h][CB206000h]
 		opcode: opcode or (scratch * 65536)
 		opcode: opcode or (base * 32)
 		encoded: instruction at (capacity - written) (opcode or target)
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 
@@ -1123,12 +1127,12 @@ arm64-encoder: context [
 			return instruction code capacity opcode
 		]
 		written: address-offset code capacity scratch base displacement scratch
-		if written < 0 [return -1]
+		if written < 0 [return written]
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		opcode: (load-opcode width signed result-width false) or (scratch * 32)
 		encoded: instruction at (capacity - written) (opcode or target)
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 
@@ -1158,12 +1162,12 @@ arm64-encoder: context [
 			return instruction code capacity opcode
 		]
 		written: address-offset code capacity scratch base displacement scratch
-		if written < 0 [return -1]
+		if written < 0 [return written]
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		opcode: (store-opcode width false) or (scratch * 32)
 		encoded: instruction at (capacity - written) (opcode or source)
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 
@@ -1267,8 +1271,8 @@ arm64-encoder: context [
 			source <> result source <> address source <> value source <> status
 			result <> address result <> value result <> status
 			address <> value address <> status value <> status
-			room? code capacity 16
 		][return -1]
+		unless room? code capacity 16 [return BUFFER_FULL]
 		if null? code [return 16]
 		opcode: 885FFC00h or (address * 32)
 		instruction code capacity (opcode or result)
@@ -1301,8 +1305,8 @@ arm64-encoder: context [
 			valid-register? address valid-register? scratch
 			expected <> replacement expected <> address expected <> scratch
 			replacement <> address replacement <> scratch address <> scratch
-			room? code capacity 32
 		][return -1]
+		unless room? code capacity 32 [return BUFFER_FULL]
 		if null? code [return 32]
 		; LDAXR/STLXR preserve CASAL's acquire-release ordering and retry semantics.
 		opcode: 885FFC00h or (address * 32)
@@ -1459,11 +1463,11 @@ arm64-encoder: context [
 		encoded: encode-add-immediate OP_SUB SP SP size 8 false
 		if encoded <> -1 [return instruction code capacity encoded]
 		written: move-immediate code capacity X16 8 size 0
-		if written < 0 [return -1]
+		if written < 0 [return written]
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: instruction at (capacity - written) CB3063FFh
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 
@@ -1478,11 +1482,11 @@ arm64-encoder: context [
 		encoded: encode-add-immediate OP_ADD SP SP size 8 false
 		if encoded <> -1 [return instruction code capacity encoded]
 		written: move-immediate code capacity X16 8 size 0
-		if written < 0 [return -1]
+		if written < 0 [return written]
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: instruction at (capacity - written) 8B3063FFh
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 
@@ -1493,7 +1497,7 @@ arm64-encoder: context [
 		/local at [byte-ptr!] encoded written [integer!]
 	][
 		unless all [frame-size >= 0 (frame-size and 15) = 0][return -1]
-		unless room? code capacity 8 [return -1]
+		unless room? code capacity 8 [return BUFFER_FULL]
 		if not null? code [
 			write-i32 code A9BF7BFDh
 			write-i32 (code + 4) 910003FDh
@@ -1502,12 +1506,12 @@ arm64-encoder: context [
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		encoded: stack-subtract at (capacity - written) frame-size
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 
 	frame-leave: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 12 [return -1]
+		unless room? code capacity 12 [return BUFFER_FULL]
 		if not null? code [
 			write-i32 code 910003BFh
 			write-i32 (code + 4) A8C17BFDh
@@ -1517,7 +1521,7 @@ arm64-encoder: context [
 	]
 
 	unwind-frame: func [code [byte-ptr!] capacity [integer!] return: [integer!]][
-		unless room? code capacity 8 [return -1]
+		unless room? code capacity 8 [return BUFFER_FULL]
 		if not null? code [
 			write-i32 code 910003BFh
 			write-i32 (code + 4) A8C17BFDh
@@ -1735,13 +1739,13 @@ arm64-encoder: context [
 			return instruction code capacity opcode
 		]
 		written: address-offset code capacity scratch base displacement scratch
-		if written < 0 [return -1]
+		if written < 0 [return written]
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		opcode: either width = 8 [FC400000h][BC400000h]
 		opcode: opcode or (scratch * 32)
 		encoded: instruction at (capacity - written) (opcode or target)
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 
@@ -1775,13 +1779,13 @@ arm64-encoder: context [
 			return instruction code capacity opcode
 		]
 		written: address-offset code capacity scratch base displacement scratch
-		if written < 0 [return -1]
+		if written < 0 [return written]
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
 		opcode: either width = 8 [FC000000h][BC000000h]
 		opcode: opcode or (scratch * 32)
 		encoded: instruction at (capacity - written) (opcode or source)
-		if encoded < 0 [return -1]
+		if encoded < 0 [return encoded]
 		written + encoded
 	]
 

@@ -318,7 +318,7 @@ system-dialect: context [
 		]
 	]
 
-	finish-code: func [/local output message capacity][
+	finish-code: func [/local output message capacity required][
 		capacity: max INITIAL-CODE-BYTES ((length? last-rsir) * 4)
 		capacity: min capacity MAX-CODE-BYTES
 		forever [
@@ -326,14 +326,20 @@ system-dialect: context [
 			last-status: codegen-module
 				last-rsir output codegen-architecture codegen-abi job/opt-level
 			if any [last-status <> 4 capacity = MAX-CODE-BYTES][break]
-			capacity: min (capacity * 2) MAX-CODE-BYTES
+			required: codegen-required
+			if required > MAX-CODE-BYTES [break]
+			capacity: min MAX-CODE-BYTES max required (capacity * 2)
 		]
 		unless last-status = 0 [
+			codegen-report
 			message: switch/default last-status [
 				1 ["native codegen received invalid arguments"]
 				2 ["native codegen rejected invalid RSIR"]
 				3 ["native codegen does not support this RSIR yet"]
 				4 ["native codegen output exceeds its reserved buffer"]
+				5 ["native codegen internal consistency failure"]
+				6 ["native codegen implementation limit exceeded"]
+				7 ["native codegen could not allocate memory"]
 			]["native codegen returned an unknown status"]
 			compiler/throw-error message
 		]

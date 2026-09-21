@@ -277,6 +277,9 @@ arm64-codegen: context [
 	INVALID_IR:  -1
 	UNSUPPORTED: -2
 	OUTPUT_FULL: -3
+	INTERNAL_ERROR: -4
+	RESOURCE_LIMIT: -5
+	OUT_OF_MEMORY: -6
 
 	fail-invalid: func [site [integer!] site-name [c-string!] return: [integer!]][
 		codegen-diag/fail INVALID_IR codegen-diag/FILE_ARM64 site site-name
@@ -284,6 +287,30 @@ arm64-codegen: context [
 
 	fail-unsupported: func [site [integer!] site-name [c-string!] return: [integer!]][
 		codegen-diag/fail UNSUPPORTED codegen-diag/FILE_ARM64 site site-name
+	]
+
+	fail-internal: func [site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail INTERNAL_ERROR codegen-diag/FILE_ARM64 site site-name
+	]
+
+	fail-limit: func [site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail RESOURCE_LIMIT codegen-diag/FILE_ARM64 site site-name
+	]
+
+	fail-memory: func [site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail OUT_OF_MEMORY codegen-diag/FILE_ARM64 site site-name
+	]
+
+	fail-code: func [code site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/propagate code codegen-diag/FILE_ARM64 site site-name
+	]
+
+	fail-output: func [required available site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail-values OUTPUT_FULL codegen-diag/FILE_ARM64 site site-name required available
+	]
+
+	fail-mismatch: func [required actual site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail-values INTERNAL_ERROR codegen-diag/FILE_ARM64 site site-name required actual
 	]
 
 	align: func [value boundary [integer!] return: [integer!]
@@ -1096,17 +1123,17 @@ arm64-codegen: context [
 					][
 						float-count: 8
 						offset: align offset stack-align
-						if offset < 0 [return OUTPUT_FULL]
+						if offset < 0 [return fail-limit 818 "abi-parameter-location/limit#1"]
 						location/class: ABI_STACK
 						location/stack-offset: offset
-						if offset > (2147483647 - slot)[return OUTPUT_FULL]
+						if offset > (2147483647 - slot)[return fail-limit 819 "abi-parameter-location/limit#2"]
 						offset: offset + slot
 					]
 				]
 				all [aggregate? size > 16][
-					if copy-size > (2147483647 - size)[return OUTPUT_FULL]
+					if copy-size > (2147483647 - size)[return fail-limit 820 "abi-parameter-location/limit#3"]
 					copy-size: align copy-size alignment
-					if copy-size < 0 [return OUTPUT_FULL]
+					if copy-size < 0 [return fail-limit 821 "abi-parameter-location/limit#4"]
 					location/copy-offset: copy-size
 					copy-size: copy-size + size
 					either integer-count < 8 [
@@ -1117,9 +1144,9 @@ arm64-codegen: context [
 						location/class: ABI_INDIRECT
 						location/register-index: -1
 						offset: align offset 8
-						if offset < 0 [return OUTPUT_FULL]
+						if offset < 0 [return fail-limit 822 "abi-parameter-location/limit#5"]
 						location/stack-offset: offset
-						if offset > (2147483647 - 8)[return OUTPUT_FULL]
+						if offset > (2147483647 - 8)[return fail-limit 823 "abi-parameter-location/limit#6"]
 						offset: offset + 8
 					]
 				]
@@ -1131,10 +1158,10 @@ arm64-codegen: context [
 					][
 						integer-count: 8
 						offset: align offset stack-align
-						if offset < 0 [return OUTPUT_FULL]
+						if offset < 0 [return fail-limit 824 "abi-parameter-location/limit#7"]
 						location/class: ABI_STACK
 						location/stack-offset: offset
-						if offset > (2147483647 - slot)[return OUTPUT_FULL]
+						if offset > (2147483647 - slot)[return fail-limit 825 "abi-parameter-location/limit#8"]
 						offset: offset + slot
 					]
 				]
@@ -1145,10 +1172,10 @@ arm64-codegen: context [
 						float-count: float-count + 1
 					][
 						offset: align offset stack-align
-						if offset < 0 [return OUTPUT_FULL]
+						if offset < 0 [return fail-limit 826 "abi-parameter-location/limit#9"]
 						location/class: ABI_STACK
 						location/stack-offset: offset
-						if offset > (2147483647 - slot)[return OUTPUT_FULL]
+						if offset > (2147483647 - slot)[return fail-limit 827 "abi-parameter-location/limit#10"]
 						offset: offset + slot
 					]
 				]
@@ -1159,10 +1186,10 @@ arm64-codegen: context [
 						integer-count: integer-count + 1
 					][
 						offset: align offset stack-align
-						if offset < 0 [return OUTPUT_FULL]
+						if offset < 0 [return fail-limit 828 "abi-parameter-location/limit#11"]
 						location/class: ABI_STACK
 						location/stack-offset: offset
-						if offset > (2147483647 - slot)[return OUTPUT_FULL]
+						if offset > (2147483647 - slot)[return fail-limit 829 "abi-parameter-location/limit#12"]
 						offset: offset + slot
 					]
 				]
@@ -1185,11 +1212,11 @@ arm64-codegen: context [
 		location/alignment: 1
 		location/hfa-width: 0
 		stack-size: align offset 16
-		if stack-size < 0 [return OUTPUT_FULL]
+		if stack-size < 0 [return fail-limit 830 "abi-parameter-location/limit#13"]
 		location/stack-size: stack-size
 		copy-size: align copy-size 16
-		if copy-size < 0 [return OUTPUT_FULL]
-		if stack-size > (2147483647 - copy-size)[return OUTPUT_FULL]
+		if copy-size < 0 [return fail-limit 831 "abi-parameter-location/limit#14"]
+		if stack-size > (2147483647 - copy-size)[return fail-limit 832 "abi-parameter-location/limit#15"]
 		location/total-size: stack-size + copy-size
 		0
 	]
@@ -1823,7 +1850,7 @@ arm64-codegen: context [
 	][
 		if target-id <= 0 [return fail-invalid 6 "record-reference/target-id#1"]
 		either null? state/references [
-			if state/counts/target-id = 2147483647 [return OUTPUT_FULL]
+			if state/counts/target-id = 2147483647 [return fail-limit 833 "record-reference/limit#1"]
 			state/counts/target-id: state/counts/target-id + 1
 		][
 			if state/cursors/target-id >= state/counts/target-id [return fail-invalid 7 "record-reference/state/cursors#2"]
@@ -2079,7 +2106,7 @@ arm64-codegen: context [
 									target-id: static-address-target-id
 										initializer view
 									status: record-reference target-id 0 references
-									if status < 0 [return status]
+									if status < 0 [return fail-code status 397 "prepare-global-data/code#1"]
 								]
 								true [return fail-invalid 31 "prepare-global-data/status#11"]
 							]
@@ -2103,7 +2130,7 @@ arm64-codegen: context [
 							target-id: static-address-target-id
 								initializer view
 							status: record-reference target-id 0 references
-							if status < 0 [return status]
+							if status < 0 [return fail-code status 398 "prepare-global-data/code#2"]
 						]
 						true [return fail-invalid 35 "prepare-global-data/status#15"]
 					]
@@ -2135,14 +2162,14 @@ arm64-codegen: context [
 						if any [
 							global-offset < 0
 							global-offset > (2147483647 - global-size)
-						][return OUTPUT_FULL]
+						][return fail-limit 834 "prepare-global-data/limit#3"]
 						rodata-size: global-offset + global-size
 					][
 						global-offset: align data-size global-align
 						if any [
 							global-offset < 0
 							global-offset > (2147483647 - global-size)
-						][return OUTPUT_FULL]
+						][return fail-limit 835 "prepare-global-data/limit#4"]
 						data-size: global-offset + global-size
 					]
 					global-offsets/current: global-offset
@@ -2225,13 +2252,13 @@ arm64-codegen: context [
 									initializer view
 								source-offset: global-offsets/id + item-offset
 								if source-offset > REFERENCE_OFFSET_MASK [
-									return OUTPUT_FULL
+									return fail-limit 836 "write-global-data/limit#2"
 								]
 								reference: either (global/flags and PROTECTED) <> 0 [
 									RODATA_REFERENCE_TAG or source-offset
 								][DATA_REFERENCE_TAG or source-offset]
 								status: record-reference target-id reference references
-								if status < 0 [return status]
+								if status < 0 [return fail-code status 399 "write-global-data/code#1"]
 							]
 							true [return fail-invalid 39 "write-global-data/status#2"]
 						]
@@ -2263,10 +2290,10 @@ arm64-codegen: context [
 				status: record-reference (view/header/function-count + id)
 					(function-position + written)
 					references
-				if status < 0 [return status]
+				if status < 0 [return fail-code status 400 "emit-global-homes/code#1"]
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/page-address at (capacity - written) target
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 401 "emit-global-homes/code#2"]
 				written: written + encoded
 			]
 			id: id + 1
@@ -2785,7 +2812,7 @@ arm64-codegen: context [
 			]
 			index: index + 1
 		]
-		if capacity > ((2147483647 - 4) / 3)[return OUTPUT_FULL]
+		if capacity > ((2147483647 - 4) / 3)[return fail-limit 837 "prepare-exception-structure/limit#1"]
 		plan/unwind: unwind
 		plan/catch-capacity: capacity
 		plan/visible-frame-offset: either unwind = 1 [VISIBLE_FRAME_OFFSET][0]
@@ -2910,7 +2937,7 @@ arm64-codegen: context [
 	][
 		status: prepare-exception-structure view fn first-instruction unwind?
 			scratch plan
-		if status < 0 [return status]
+		if status < 0 [return fail-code status 402 "plan-function/code#1"]
 		plan/hidden-return-offset: 0
 		plan/frame-anchor-register: arm64-encoder/FP
 		plan/frame-anchor-offset: 0
@@ -2928,12 +2955,12 @@ arm64-codegen: context [
 				not classify-hfa fn/return-type INLINE view 0 :kind :width
 				inline-size > 16
 			][
-				if plan/frame-prefix-count = 2147483647 [return OUTPUT_FULL]
+				if plan/frame-prefix-count = 2147483647 [return fail-limit 838 "plan-function/limit#8"]
 				plan/frame-prefix-count: plan/frame-prefix-count + 1
 				plan/hidden-return-offset: 0 - (plan/frame-prefix-count * 8)
 			]
 		]
-		if plan/frame-prefix-count = 2147483647 [return OUTPUT_FULL]
+		if plan/frame-prefix-count = 2147483647 [return fail-limit 839 "plan-function/limit#9"]
 		plan/frame-prefix-count: plan/frame-prefix-count + 1
 		plan/tag-offset: 0 - (plan/frame-prefix-count * 8)
 		count: fn/parameter-count + fn/local-count
@@ -2990,6 +3017,7 @@ arm64-codegen: context [
 		while [id < fn/instruction-count][
 			instruction: as rsir-instruction! (view/instructions
 				+ ((first-instruction + id) * RSIR_INSTRUCTION_SIZE))
+			codegen-diag/mark-instruction (id + 1) as int-ptr! instruction
 			;-- A stack slot deeper than the temp-register pool has no register
 			;-- of its own: it lives in the region spill window. Reserve it
 			;-- wherever the expression stack reaches that depth, because any
@@ -3116,7 +3144,7 @@ arm64-codegen: context [
 			]
 			case [
 				any [instruction/op = OP_LITERAL instruction/op = OP_ADDRESS][
-					if depth = 2147483647 [return OUTPUT_FULL]
+					if depth = 2147483647 [return fail-limit 840 "plan-function/limit#10"]
 					depth: depth + 1
 					scratch/stack-low/depth: either all [
 						instruction/op = OP_ADDRESS
@@ -3134,7 +3162,7 @@ arm64-codegen: context [
 					][return fail-invalid 75 "plan-function/instruction/b#13"]
 					either instruction/b = 0 [
 						if instruction/c <> 0 [return fail-invalid 76 "plan-function/instruction/c#14"]
-						if depth = 2147483647 [return OUTPUT_FULL]
+						if depth = 2147483647 [return fail-limit 841 "plan-function/limit#11"]
 						depth: depth + 1
 					][
 						if depth < 1 [return fail-invalid 77 "plan-function/depth#15"]
@@ -3191,7 +3219,7 @@ arm64-codegen: context [
 							instruction/a = CPU_OVERFLOW_NATIVE
 							instruction/a = CPU_REGISTER_NATIVE
 						][
-							if depth = 2147483647 [return OUTPUT_FULL]
+							if depth = 2147483647 [return fail-limit 842 "plan-function/limit#12"]
 							depth: depth + 1
 							scratch/stack-low/depth: 0
 						]
@@ -3355,7 +3383,7 @@ arm64-codegen: context [
 					status: resolve-call instruction/a call-signature view
 						:call-return :call-first-parameter :call-parameter-count
 						:call-reference :call-source :call-flags
-					if status < 0 [return status]
+					if status < 0 [return fail-code status 403 "plan-function/code#2"]
 					if (call-flags and TYPED) <> 0 [
 						unless all [
 							instruction/c > 0
@@ -3363,10 +3391,10 @@ arm64-codegen: context [
 							typed-metadata/member-count = argument-count
 							call-parameter-count = 2
 						][return fail-invalid 105 "plan-function/call-parameter-count#43"]
-						if argument-count > (2147483647 / 24)[return OUTPUT_FULL]
+						if argument-count > (2147483647 / 24)[return fail-limit 843 "plan-function/limit#13"]
 						typed-size: argument-count * 24
 						call-outgoing: align typed-size 16
-						if call-outgoing < 0 [return OUTPUT_FULL]
+						if call-outgoing < 0 [return fail-limit 844 "plan-function/limit#14"]
 						if call-outgoing > outgoing-size [outgoing-size: call-outgoing]
 						slot: 1
 						while [slot <= argument-count][
@@ -3398,24 +3426,24 @@ arm64-codegen: context [
 							(call-flags and VARIADIC) <> 0
 							(call-flags and 3) <> CDECL
 						][
-							if argument-count > (2147483647 / 8)[return OUTPUT_FULL]
+							if argument-count > (2147483647 / 8)[return fail-limit 845 "plan-function/limit#15"]
 							call-outgoing: align (argument-count * 8) 16
 						][
 							status: abi-parameter-location view layout call-source
 								call-first-parameter call-parameter-count 0 abi-location
-							if status < 0 [return status]
+							if status < 0 [return fail-code status 404 "plan-function/code#3"]
 							call-outgoing: abi-location/total-size
 							if (call-flags and VARIADIC) <> 0 [
 								if (argument-count - call-parameter-count)
 									> ((2147483647 - call-outgoing) / 8) [
-									return OUTPUT_FULL
+									return fail-limit 846 "plan-function/limit#16"
 								]
 								call-outgoing: call-outgoing
 									+ ((argument-count - call-parameter-count) * 8)
 							]
 							call-outgoing: align call-outgoing 16
 						]
-						if call-outgoing < 0 [return OUTPUT_FULL]
+						if call-outgoing < 0 [return fail-limit 847 "plan-function/limit#17"]
 						if call-outgoing > outgoing-size [outgoing-size: call-outgoing]
 					]
 					has-call: 1
@@ -3488,7 +3516,7 @@ arm64-codegen: context [
 						fallthrough?: false
 					][
 						if instruction/b <> 0 [
-							if depth = 2147483647 [return OUTPUT_FULL]
+							if depth = 2147483647 [return fail-limit 848 "plan-function/limit#18"]
 							depth: depth + 1
 							scratch/stack-low/depth: 0
 						]
@@ -3609,7 +3637,7 @@ arm64-codegen: context [
 		if sub-entry-count > 0 [has-call: 1]
 		if frame-anchor? [
 			home-register: available-home-register reserved-home-mask home-mask
-			if home-register < 0 [return fail-unsupported 126 "plan-function/home-register#64"]
+			if home-register < 0 [return fail-limit 126 "plan-function/home-register-limit"]
 			mask: 1 << (home-register - FIRST_HOME_REGISTER)
 			reserved-home-mask: reserved-home-mask or mask
 			home-mask: home-mask or mask
@@ -3643,7 +3671,7 @@ arm64-codegen: context [
 				if id <= fn/parameter-count [
 					status: abi-parameter-location view layout PARAMETER_TABLE
 						fn/first-parameter fn/parameter-count id abi-location
-					if status < 0 [return status]
+					if status < 0 [return fail-code status 405 "plan-function/code#4"]
 				]
 				either any [kind = 9 kind = 10][
 					either float-home-count = FLOAT_HOME_REGISTER_COUNT [
@@ -3681,10 +3709,10 @@ arm64-codegen: context [
 					if id <= fn/parameter-count [
 						status: abi-parameter-location view layout PARAMETER_TABLE
 							fn/first-parameter fn/parameter-count id abi-location
-						if status < 0 [return status]
+						if status < 0 [return fail-code status 406 "plan-function/code#5"]
 					]
 					slot: (inline-size + 7) / 8
-					if frame-home-count > (2147483647 - slot)[return OUTPUT_FULL]
+					if frame-home-count > (2147483647 - slot)[return fail-limit 849 "plan-function/limit#19"]
 					frame-home-count: frame-home-count + slot
 				][
 					width: value-width parameter/type view
@@ -3694,7 +3722,7 @@ arm64-codegen: context [
 					if id <= fn/parameter-count [
 						status: abi-parameter-location view layout PARAMETER_TABLE
 							fn/first-parameter fn/parameter-count id abi-location
-						if status < 0 [return status]
+						if status < 0 [return fail-code status 407 "plan-function/code#6"]
 					]
 					frame-home-count: frame-home-count + 1
 				]
@@ -3726,14 +3754,14 @@ arm64-codegen: context [
 			]
 			id: id + 1
 		]
-		if plan/frame-prefix-count > (2147483647 - home-count)[return OUTPUT_FULL]
+		if plan/frame-prefix-count > (2147483647 - home-count)[return fail-limit 850 "plan-function/limit#20"]
 		total-slots: plan/frame-prefix-count + home-count
-		if total-slots > (2147483647 - float-home-count)[return OUTPUT_FULL]
+		if total-slots > (2147483647 - float-home-count)[return fail-limit 851 "plan-function/limit#21"]
 		total-slots: total-slots + float-home-count
-		if total-slots > (2147483647 - frame-home-count)[return OUTPUT_FULL]
+		if total-slots > (2147483647 - frame-home-count)[return fail-limit 852 "plan-function/limit#22"]
 		total-slots: total-slots + frame-home-count
 		plan/bitmap-slots: total-slots - 4
-		if total-slots > (2147483647 - max-spill)[return OUTPUT_FULL]
+		if total-slots > (2147483647 - max-spill)[return fail-limit 853 "plan-function/limit#23"]
 		total-slots: total-slots + max-spill
 		; Lay the per-region windows out in instruction order, each followed by
 		; the slot that holds the link register while that subroutine runs.
@@ -3746,7 +3774,7 @@ arm64-codegen: context [
 				if instruction/op = OP_ENTRY [
 					region-spill: scratch/entry-spill-limits/id
 					if entry-base > (2147483647 - region-spill - 1)[
-						return OUTPUT_FULL
+						return fail-limit 854 "plan-function/limit#24"
 					]
 					scratch/entry-spill-bases/id: entry-base
 					entry-base: entry-base + region-spill
@@ -3757,7 +3785,7 @@ arm64-codegen: context [
 			]
 		]
 		total-slots: entry-base
-		if total-slots > (2147483647 / 8) [return OUTPUT_FULL]
+		if total-slots > (2147483647 / 8) [return fail-limit 855 "plan-function/limit#25"]
 		frame-allocation: total-slots * 8
 		result-used: frame-allocation
 		id: 1
@@ -3780,7 +3808,7 @@ arm64-codegen: context [
 				status: resolve-call instruction/a call-signature view
 					:call-return :call-first-parameter :call-parameter-count
 					:call-reference :call-source :call-flags
-				if status < 0 [return status]
+				if status < 0 [return fail-code status 408 "plan-function/code#7"]
 				if (call-flags and RETURN_VALUE) <> 0 [
 					unless aggregate-ref? call-return view [return fail-invalid 134 "plan-function/aggregate-ref#72"]
 					result-size: 0
@@ -3790,18 +3818,18 @@ arm64-codegen: context [
 					if any [result-size <= 0 result-align <= 0 result-align > 16][
 						return fail-unsupported 136 "plan-function/result-size#74"
 					]
-					if result-used > (2147483647 - result-size)[return OUTPUT_FULL]
+					if result-used > (2147483647 - result-size)[return fail-limit 856 "plan-function/limit#26"]
 					result-used: align (result-used + result-size) 16
-					if result-used < 0 [return OUTPUT_FULL]
+					if result-used < 0 [return fail-limit 857 "plan-function/limit#27"]
 					result-offsets/id: 0 - result-used
 				]
 			]
 			id: id + 1
 		]
 		frame-allocation: result-used
-		if frame-allocation > (2147483647 - outgoing-size)[return OUTPUT_FULL]
+		if frame-allocation > (2147483647 - outgoing-size)[return fail-limit 858 "plan-function/limit#28"]
 		frame-allocation: align (frame-allocation + outgoing-size) 16
-		if frame-allocation < 0 [return OUTPUT_FULL]
+		if frame-allocation < 0 [return fail-limit 859 "plan-function/limit#29"]
 		plan/storage-count: fn/parameter-count + fn/local-count
 		plan/home-count: home-count
 		plan/home-mask: home-mask
@@ -3893,11 +3921,11 @@ arm64-codegen: context [
 		][return 0]
 		written: compiler-frame-store code capacity arm64-encoder/FP
 			plan/visible-frame-offset 8
-		if written < 0 [return OUTPUT_FULL]
+		if written < 0 [return fail-code written 409 "emit-frame-normalize/code#1"]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-register at (capacity - written)
 			arm64-encoder/FP plan/frame-anchor-register 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 410 "emit-frame-normalize/code#2"]
 		written + encoded
 	]
 
@@ -3914,11 +3942,11 @@ arm64-codegen: context [
 		][return 0]
 		written: compiler-frame-load code capacity arm64-encoder/X16
 			plan/visible-frame-offset 8 0 8
-		if written < 0 [return OUTPUT_FULL]
+		if written < 0 [return fail-code written 411 "emit-visible-frame-restore/code#1"]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-register at (capacity - written)
 			arm64-encoder/FP arm64-encoder/X16 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 412 "emit-visible-frame-restore/code#2"]
 		written + encoded
 	]
 
@@ -4012,12 +4040,12 @@ arm64-codegen: context [
 			plan/tag-offset = 0
 		][return 0]
 		written: arm64-encoder/frame-enter code capacity plan/frame-allocation
-		if written < 0 [return OUTPUT_FULL]
+		if written < 0 [return fail-code written 413 "emit-prologue/code#1"]
 		if plan/hidden-return-offset <> 0 [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: compiler-frame-store at (capacity - written)
 				arm64-encoder/X8 plan/hidden-return-offset 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 414 "emit-prologue/code#2"]
 			written: written + encoded
 		]
 		;-- Publish a stack-pointer bitmap offset where the collector looks for
@@ -4028,20 +4056,20 @@ arm64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-immediate at (capacity - written)
 			arm64-encoder/X16 4 plan/bitmap-index 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 415 "emit-prologue/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/register-store at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/FP BITMAP_SLOT_OFFSET 8
 			arm64-encoder/X17
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 416 "emit-prologue/code#4"]
 		written: written + encoded
 		plan/unwind-fixup: -1
 		if plan/unwind = 1 [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: compiler-frame-store at (capacity - written)
 				arm64-encoder/FP plan/visible-frame-offset 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 417 "emit-prologue/code#5"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			either entry? [
@@ -4052,13 +4080,13 @@ arm64-codegen: context [
 				encoded: arm64-encoder/address-relative at (capacity - written)
 					arm64-encoder/X16 0
 			]
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 418 "emit-prologue/code#6"]
 			written: written + encoded
 			unless entry? [
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/register-store at (capacity - written)
 					arm64-encoder/X16 arm64-encoder/FP -24 8 arm64-encoder/X17
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 419 "emit-prologue/code#7"]
 				written: written + encoded
 			]
 			case [
@@ -4066,44 +4094,44 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/address-relative at (capacity - written)
 						arm64-encoder/X16 16
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 420 "emit-prologue/code#8"]
 					written: written + encoded
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/move-immediate at (capacity - written)
 						arm64-encoder/X17 4 -1 0
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 421 "emit-prologue/code#9"]
 					written: written + encoded
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/store-pair at (capacity - written)
 						arm64-encoder/X16 arm64-encoder/X17 arm64-encoder/FP -16
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 422 "emit-prologue/code#10"]
 					written: written + encoded
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/branch-relative at (capacity - written) 8
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 423 "emit-prologue/code#11"]
 					written: written + encoded
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/trap at (capacity - written)
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 424 "emit-prologue/code#12"]
 					written: written + encoded
 				]
 				(fn/flags and CATCH_FLAG) <> 0 [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/move-immediate at (capacity - written)
 						arm64-encoder/X17 4 -2 0
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 425 "emit-prologue/code#13"]
 					written: written + encoded
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/store-pair at (capacity - written)
 						arm64-encoder/ZR arm64-encoder/X17 arm64-encoder/FP -16
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 426 "emit-prologue/code#14"]
 					written: written + encoded
 				]
 				true [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/store-pair at (capacity - written)
 						arm64-encoder/ZR arm64-encoder/ZR arm64-encoder/FP -16
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 427 "emit-prologue/code#15"]
 					written: written + encoded
 				]
 			]
@@ -4120,7 +4148,7 @@ arm64-codegen: context [
 					register arm64-encoder/FP
 					(0 - ((plan/frame-prefix-count + saved-count) * 8)) 8
 					arm64-encoder/X16
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 428 "emit-prologue/code#16"]
 				written: written + encoded
 			]
 			index: index + 1
@@ -4130,7 +4158,7 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				plan/frame-anchor-register arm64-encoder/FP 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 429 "emit-prologue/code#17"]
 			written: written + encoded
 		]
 		compiler-frame-active?: true
@@ -4141,7 +4169,7 @@ arm64-codegen: context [
 				(FIRST_FLOAT_HOME_REGISTER + index)
 				(0 - ((plan/frame-prefix-count + plan/home-count
 					+ index + 1) * 8)) 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 430 "emit-prologue/code#18"]
 			written: written + encoded
 			index: index + 1
 		]
@@ -4153,7 +4181,7 @@ arm64-codegen: context [
 					+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
 				status: abi-parameter-location view layout PARAMETER_TABLE
 					fn/first-parameter fn/parameter-count slot abi-location
-				if status < 0 [return status]
+				if status < 0 [return fail-code status 431 "emit-prologue/code#19"]
 				width: value-width parameter/type view
 				kind: type-kind parameter/type view
 				if parameter/flags = INLINE [
@@ -4161,7 +4189,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/address-offset at (capacity - written)
 						arm64-encoder/X14 compiler-frame-register target arm64-encoder/X16
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 432 "emit-prologue/code#20"]
 					written: written + encoded
 					case [
 						abi-location/class = ABI_GPR [
@@ -4172,7 +4200,7 @@ arm64-codegen: context [
 								encoded: arm64-encoder/register-store at (capacity - written)
 									(abi-location/register-index + index) arm64-encoder/X14
 									offset 8 arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 433 "emit-prologue/code#21"]
 								written: written + encoded
 								offset: offset + 8
 								index: index + 1
@@ -4187,7 +4215,7 @@ arm64-codegen: context [
 									(capacity - written) (abi-location/register-index + index)
 									arm64-encoder/X14 offset abi-location/hfa-width
 									arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 434 "emit-prologue/code#22"]
 								written: written + encoded
 								offset: offset + abi-location/hfa-width
 								index: index + 1
@@ -4198,12 +4226,12 @@ arm64-codegen: context [
 							encoded: arm64-encoder/address-offset at (capacity - written)
 								arm64-encoder/X15 arm64-encoder/FP
 								(16 + abi-location/stack-offset) arm64-encoder/X16
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 435 "emit-prologue/code#23"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: emit-memory-copy at (capacity - written)
 								arm64-encoder/X14 arm64-encoder/X15 abi-location/size
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 436 "emit-prologue/code#24"]
 							written: written + encoded
 						]
 						abi-location/class = ABI_INDIRECT [
@@ -4218,12 +4246,12 @@ arm64-codegen: context [
 									(16 + abi-location/stack-offset) 8 0 8
 									arm64-encoder/X16
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 437 "emit-prologue/code#25"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: emit-memory-copy at (capacity - written)
 								arm64-encoder/X14 arm64-encoder/X15 abi-location/size
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 438 "emit-prologue/code#26"]
 							written: written + encoded
 						]
 						true [return fail-invalid 140 "emit-prologue/written#3"]
@@ -4279,7 +4307,7 @@ arm64-codegen: context [
 								transfer-width arm64-encoder/X16
 						]
 						if target <= 0 [
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 439 "emit-prologue/code#27"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: either any [kind = 9 kind = 10][
@@ -4293,7 +4321,7 @@ arm64-codegen: context [
 					]
 					true [return fail-invalid 141 "emit-prologue/arm64-encoder#4"]
 				]
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 440 "emit-prologue/code#28"]
 				written: written + encoded
 			]
 			slot: slot + 1
@@ -4317,7 +4345,7 @@ arm64-codegen: context [
 				(FIRST_FLOAT_HOME_REGISTER + index)
 				(0 - ((plan/frame-prefix-count + plan/home-count
 					+ index + 1) * 8)) 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 441 "emit-home-restore/code#1"]
 			written: written + encoded
 			index: index + 1
 		]
@@ -4333,7 +4361,7 @@ arm64-codegen: context [
 					encoded: compiler-frame-load at (capacity - written)
 						register
 						(0 - ((plan/frame-prefix-count + saved-count) * 8)) 8 0 8
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 442 "emit-home-restore/code#2"]
 					written: written + encoded
 				]
 			]
@@ -4344,7 +4372,7 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: compiler-frame-load at (capacity - written)
 				plan/frame-anchor-register plan/frame-anchor-offset 8 0 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 443 "emit-home-restore/code#3"]
 			written: written + encoded
 		]
 		written
@@ -4372,17 +4400,17 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				arm64-encoder/FP plan/frame-anchor-register 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 444 "emit-epilogue/code#1"]
 			written: written + encoded
 		]
 		compiler-frame-active?: true
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: emit-home-restore plan at (capacity - written)
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 445 "emit-epilogue/code#2"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/frame-leave at (capacity - written)
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 446 "emit-epilogue/code#3"]
 		written + encoded
 	]
 
@@ -4398,22 +4426,22 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				arm64-encoder/FP plan/frame-anchor-register 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 447 "emit-unwind-handler/code#1"]
 			written: written + encoded
 		]
 		compiler-frame-active?: true
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: emit-home-restore plan at (capacity - written)
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 448 "emit-unwind-handler/code#2"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/unwind-frame at (capacity - written)
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 449 "emit-unwind-handler/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/jump-register at (capacity - written)
 			arm64-encoder/X3
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 450 "emit-unwind-handler/code#4"]
 		written + encoded
 	]
 
@@ -4460,7 +4488,7 @@ arm64-codegen: context [
 							arm64-encoder/X16 source-width
 							scratch/stack-low/stack-slot scratch/stack-high/stack-slot
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 451 "materialize/code#1"]
 					written: written + encoded
 					either direct-immediate? [
 						encoded: 0
@@ -4480,13 +4508,13 @@ arm64-codegen: context [
 				]
 				true [return fail-invalid 146 "materialize/scratch/stack-low#4"]
 			]
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 452 "materialize/code#2"]
 			written: written + encoded
 			if source-width <> target-width [
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/float-convert at (capacity - written)
 					target target source-width target-width
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 453 "materialize/code#3"]
 				written: written + encoded
 			]
 			return written
@@ -4530,7 +4558,7 @@ arm64-codegen: context [
 				compiler-frame-load code capacity target
 					scratch/stack-low/stack-slot source-width signed operation-width
 			]
-			true [INVALID_IR]
+			true [fail-internal 860 "materialize/invalid-location"]
 		]
 	]
 
@@ -4546,22 +4574,22 @@ arm64-codegen: context [
 	][
 		written: materialize view scratch stack-slot arm64-encoder/X16 -7
 			code capacity
-		if written < 0 [return written]
+		if written < 0 [return fail-code written 454 "emit-stack-resize/code#1"]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/add-immediate at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X16 1 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 455 "emit-stack-resize/code#2"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/logical-immediate at (capacity - written)
 			arm64-encoder/OP_AND arm64-encoder/X16 arm64-encoder/X16 8 -2 -1
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 456 "emit-stack-resize/code#3"]
 		written: written + encoded
 		if clear? [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				arm64-encoder/X17 arm64-encoder/X16 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 457 "emit-stack-resize/code#4"]
 			written: written + encoded
 		]
 		operation: either allocate? [arm64-encoder/OP_SUB][arm64-encoder/OP_ADD]
@@ -4569,40 +4597,40 @@ arm64-codegen: context [
 		encoded: arm64-encoder/add-extended-register at (capacity - written)
 			operation
 			arm64-encoder/SP arm64-encoder/SP arm64-encoder/X16 8 0 3
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 458 "emit-stack-resize/code#5"]
 		written: written + encoded
 		if allocate? [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				result-register arm64-encoder/SP 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 459 "emit-stack-resize/code#6"]
 			written: written + encoded
 		]
 		if clear? [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				arm64-encoder/X16 arm64-encoder/SP 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 460 "emit-stack-resize/code#7"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/branch-zero at (capacity - written)
 				arm64-encoder/X17 8 16 false
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 461 "emit-stack-resize/code#8"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/register-store-post at (capacity - written)
 				arm64-encoder/ZR arm64-encoder/X16 8 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 462 "emit-stack-resize/code#9"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/add-immediate at (capacity - written)
 				arm64-encoder/X17 arm64-encoder/X17 -1 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 463 "emit-stack-resize/code#10"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/branch-zero at (capacity - written)
 				arm64-encoder/X17 8 -8 true
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 464 "emit-stack-resize/code#11"]
 			written: written + encoded
 		]
 		written
@@ -4680,7 +4708,7 @@ arm64-codegen: context [
 			either target < limit [
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: materialize view scratch slot target ref at (capacity - written)
-				if encoded < 0 [return encoded]
+				if encoded < 0 [return fail-code encoded 465 "canonicalize-stack/code#1"]
 				written: written + encoded
 				scratch/stack-locations/slot: LOCATION_REGISTER
 				scratch/stack-low/slot: target
@@ -4691,12 +4719,12 @@ arm64-codegen: context [
 					return fail-unsupported 394 "canonicalize-stack#2"
 				]
 				if (region-base + slot) > region-limit [
-					return fail-invalid 395 "canonicalize-stack/region-base#3"
+					return fail-internal 395 "canonicalize-stack/spill-plan"
 				]
 				target: either floating? [FLOAT_SCRATCH_REGISTER][arm64-encoder/X17]
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: materialize view scratch slot target ref at (capacity - written)
-				if encoded < 0 [return encoded]
+				if encoded < 0 [return fail-code encoded 466 "canonicalize-stack/code#2"]
 				written: written + encoded
 				displacement: 0 - ((region-base + slot) * 8)
 				at: either null? code [as byte-ptr! 0][code + written]
@@ -4707,7 +4735,7 @@ arm64-codegen: context [
 					compiler-frame-store at (capacity - written)
 						target displacement width
 				]
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 467 "canonicalize-stack/code#3"]
 				written: written + encoded
 				scratch/stack-locations/slot: LOCATION_FRAME
 				scratch/stack-low/slot: displacement
@@ -4729,7 +4757,7 @@ arm64-codegen: context [
 			slot ref width target displacement written encoded [integer!]
 			floating? [logic!]
 	][
-		if (region-base + depth) > region-limit [return fail-invalid 149 "spill-live-stack/region-base#1"]
+		if (region-base + depth) > region-limit [return fail-internal 149 "spill-live-stack/spill-plan"]
 		written: 0
 		slot: 1
 		while [slot <= depth][
@@ -4762,7 +4790,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: materialize view scratch slot target ref
 						at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 468 "spill-live-stack/code#1"]
 					written: written + encoded
 				]
 				displacement: 0 - ((region-base + slot) * 8)
@@ -4774,7 +4802,7 @@ arm64-codegen: context [
 					compiler-frame-store at (capacity - written)
 						target displacement width
 				]
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 469 "spill-live-stack/code#2"]
 				written: written + encoded
 				scratch/stack-locations/slot: LOCATION_FRAME
 				scratch/stack-low/slot: displacement
@@ -4821,7 +4849,7 @@ arm64-codegen: context [
 						displacement: 0 - ((region-base + slot) * 8)
 						encoded: compiler-frame-store at capacity
 							scratch/stack-low/slot displacement width
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 470 "spill-value-register/code#1"]
 						scratch/stack-locations/slot: LOCATION_FRAME
 						scratch/stack-low/slot: displacement
 						return encoded
@@ -4854,7 +4882,7 @@ arm64-codegen: context [
 				if out-register/value >= 0 [return 0]
 				written: spill-value-register view scratch depth
 					region-base region-limit at capacity
-				if written < 0 [return written]
+				if written < 0 [return fail-code written 471 "take-temp-register/code#1"]
 				out-register/value: available-temp-register view scratch
 					depth floating? reusable-slot
 				written
@@ -4876,7 +4904,7 @@ arm64-codegen: context [
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/load-vector-pair at (capacity - written)
 					register (register + 1) arm64-encoder/SP offset
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 472 "emit-stack-all/code#1"]
 				written: written + encoded
 				register: register + 2
 			]
@@ -4887,64 +4915,64 @@ arm64-codegen: context [
 				encoded: arm64-encoder/register-load at (capacity - written)
 					arm64-encoder/X16 arm64-encoder/SP offset 8 0 8
 					arm64-encoder/X17
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 473 "emit-stack-all/code#2"]
 				written: written + encoded
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/write-system-register at
 					(capacity - written) system-register arm64-encoder/X16
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 474 "emit-stack-all/code#3"]
 				written: written + encoded
 				system-register: system-register + 1
 			]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/register-load at (capacity - written)
 				arm64-encoder/LR arm64-encoder/SP 240 8 0 8 arm64-encoder/X16
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 475 "emit-stack-all/code#4"]
 			written: written + encoded
 			register: 0
 			while [register < 30][
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/load-pair at (capacity - written)
 					register (register + 1) arm64-encoder/SP (register * 8)
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 476 "emit-stack-all/code#5"]
 				written: written + encoded
 				register: register + 2
 			]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/add-immediate at (capacity - written)
 				arm64-encoder/SP arm64-encoder/SP STACK_ALL_SIZE 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 477 "emit-stack-all/code#6"]
 			written: written + encoded
 		][
 			encoded: arm64-encoder/stack-subtract code capacity STACK_ALL_SIZE
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 478 "emit-stack-all/code#7"]
 			written: written + encoded
 			register: 0
 			while [register < 30][
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/store-pair at (capacity - written)
 					register (register + 1) arm64-encoder/SP (register * 8)
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 479 "emit-stack-all/code#8"]
 				written: written + encoded
 				register: register + 2
 			]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/register-store at (capacity - written)
 				arm64-encoder/LR arm64-encoder/SP 240 8 arm64-encoder/X16
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 480 "emit-stack-all/code#9"]
 			written: written + encoded
 			system-register: arm64-encoder/SYSTEM_NZCV
 			while [system-register <= arm64-encoder/SYSTEM_FPSR][
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/read-system-register at
 					(capacity - written) arm64-encoder/X16 system-register
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 481 "emit-stack-all/code#10"]
 				written: written + encoded
 				offset: 240 + (system-register * 8)
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/register-store at (capacity - written)
 					arm64-encoder/X16 arm64-encoder/SP offset 8 arm64-encoder/X17
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 482 "emit-stack-all/code#11"]
 				written: written + encoded
 				system-register: system-register + 1
 			]
@@ -4954,7 +4982,7 @@ arm64-codegen: context [
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/store-vector-pair at (capacity - written)
 					register (register + 1) arm64-encoder/SP offset
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 483 "emit-stack-all/code#12"]
 				written: written + encoded
 				register: register + 2
 			]
@@ -5013,26 +5041,26 @@ arm64-codegen: context [
 		pair-displacement: 0 - ((record-slot + 1) * 8)
 		written: arm64-encoder/address-offset code capacity arm64-encoder/X2
 			compiler-frame-register pair-displacement arm64-encoder/X16
-		if written < 0 [return OUTPUT_FULL]
+		if written < 0 [return fail-code written 484 "emit-catch-open/code#1"]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/load-pair at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X17 compiler-frame-register -16
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 485 "emit-catch-open/code#2"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/store-pair at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X17 arm64-encoder/X2 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 486 "emit-catch-open/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-register at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/SP 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 487 "emit-catch-open/code#4"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/register-store at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X2 -8 8 arm64-encoder/X17
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 488 "emit-catch-open/code#5"]
 		written: written + encoded
 		displacement: either null? code [0][
 			target-offset - (current-offset + written)
@@ -5040,12 +5068,12 @@ arm64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/address-relative at (capacity - written)
 			arm64-encoder/X16 displacement
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 489 "emit-catch-open/code#6"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/store-pair at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X3 compiler-frame-register -16
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 490 "emit-catch-open/code#7"]
 		written + encoded
 	]
 
@@ -5061,26 +5089,26 @@ arm64-codegen: context [
 		pair-displacement: 0 - ((record-slot + 1) * 8)
 		written: arm64-encoder/address-offset code capacity arm64-encoder/X2
 			compiler-frame-register pair-displacement arm64-encoder/X16
-		if written < 0 [return OUTPUT_FULL]
+		if written < 0 [return fail-code written 491 "emit-catch-restore/code#1"]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/load-pair at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X17 arm64-encoder/X2 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 492 "emit-catch-restore/code#2"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/store-pair at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X17 compiler-frame-register -16
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 493 "emit-catch-restore/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/register-load at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X2 -8 8 0 8 arm64-encoder/X17
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 494 "emit-catch-restore/code#4"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-register at (capacity - written)
 			arm64-encoder/SP arm64-encoder/X16 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 495 "emit-catch-restore/code#5"]
 		written + encoded
 	]
 
@@ -5097,74 +5125,74 @@ arm64-codegen: context [
 		loop-offset: either skip-current? [12][4]
 		encoded: arm64-encoder/address-relative code capacity
 			arm64-encoder/X3 loop-offset
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 496 "emit-throw-unwind/code#1"]
 		written: written + encoded
 		if skip-current? [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/frame-load at (capacity - written)
 				arm64-encoder/X2 -24 8 0 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 497 "emit-throw-unwind/code#2"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/jump-register at (capacity - written)
 				arm64-encoder/X2
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 498 "emit-throw-unwind/code#3"]
 			written: written + encoded
 		]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/frame-load at (capacity - written)
 			arm64-encoder/X1 -8 4 0 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 499 "emit-throw-unwind/code#4"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/compare-register at (capacity - written)
 			arm64-encoder/X1 arm64-encoder/X0 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 500 "emit-throw-unwind/code#5"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/branch-condition at (capacity - written)
 			arm64-encoder/CS 12
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 501 "emit-throw-unwind/code#6"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/frame-load at (capacity - written)
 			arm64-encoder/X2 -24 8 0 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 502 "emit-throw-unwind/code#7"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/jump-register at (capacity - written)
 			arm64-encoder/X2
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 503 "emit-throw-unwind/code#8"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/frame-load at (capacity - written)
 			arm64-encoder/X1 -16 8 0 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 504 "emit-throw-unwind/code#9"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/branch-zero at (capacity - written)
 			arm64-encoder/X1 8 8 true
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 505 "emit-throw-unwind/code#10"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-register at (capacity - written)
 			arm64-encoder/X1 arm64-encoder/LR 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 506 "emit-throw-unwind/code#11"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/frame-load at (capacity - written)
 			arm64-encoder/X2 VISIBLE_FRAME_OFFSET 8 0 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 507 "emit-throw-unwind/code#12"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-register at (capacity - written)
 			arm64-encoder/FP arm64-encoder/X2 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 508 "emit-throw-unwind/code#13"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/jump-register at (capacity - written)
 			arm64-encoder/X1
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 509 "emit-throw-unwind/code#14"]
 		written + encoded
 	]
 
@@ -5181,12 +5209,12 @@ arm64-codegen: context [
 		if result-width = 4 [
 			encoded: arm64-encoder/multiply-long code capacity target left right
 				signed
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 510 "emit-tracked-multiply/code#1"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/compare-extended-register at
 				(capacity - written) target target 8 4 signed
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 511 "emit-tracked-multiply/code#2"]
 			return written + encoded
 		]
 		; A 64-bit product needs both operands twice over, and only X16 and X17
@@ -5198,32 +5226,32 @@ arm64-codegen: context [
 		if left <> arm64-encoder/X16 [
 			encoded: arm64-encoder/move-register code capacity
 				arm64-encoder/X16 left 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 512 "emit-tracked-multiply/code#3"]
 			written: written + encoded
 		]
 		if right <> arm64-encoder/X17 [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				arm64-encoder/X17 right 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 513 "emit-tracked-multiply/code#4"]
 			written: written + encoded
 		]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/multiply-register at (capacity - written)
 			target arm64-encoder/X16 arm64-encoder/X17 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 514 "emit-tracked-multiply/code#5"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/multiply-high at (capacity - written)
 			arm64-encoder/X16 arm64-encoder/X16 arm64-encoder/X17 signed
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 515 "emit-tracked-multiply/code#6"]
 		written: written + encoded
 		either signed = 1 [
 			; Every bit the upper half keeps has to repeat the result's sign.
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/shift-immediate at (capacity - written)
 				arm64-encoder/SHIFT_ARITHMETIC arm64-encoder/X17 target 63 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 516 "emit-tracked-multiply/code#7"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/compare-register at (capacity - written)
@@ -5233,7 +5261,7 @@ arm64-codegen: context [
 			encoded: arm64-encoder/compare-immediate at (capacity - written)
 				arm64-encoder/X16 0 8
 		]
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 517 "emit-tracked-multiply/code#8"]
 		written + encoded
 	]
 
@@ -5264,13 +5292,13 @@ arm64-codegen: context [
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: materialize view scratch right-slot arm64-encoder/X17 right-ref
 					at (capacity - written)
-				if encoded < 0 [return encoded]
+				if encoded < 0 [return fail-code encoded 518 "emit-pointer-binary/code#1"]
 				written: written + encoded
 			]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: materialize view scratch left-slot target left-ref
 				at (capacity - written)
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 519 "emit-pointer-binary/code#2"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: either operation = ADD_OPERATION [
@@ -5280,7 +5308,7 @@ arm64-codegen: context [
 				arm64-encoder/subtract-register at (capacity - written)
 					target target arm64-encoder/X17 8
 			]
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 520 "emit-pointer-binary/code#3"]
 			return written + encoded
 		]
 		stride: pointer-stride left-ref view layout
@@ -5297,13 +5325,13 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: materialize view scratch right-slot arm64-encoder/X17 right-ref
 				at (capacity - written)
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 521 "emit-pointer-binary/code#4"]
 			written: written + encoded
 		]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: materialize view scratch left-slot target left-ref
 			at (capacity - written)
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 522 "emit-pointer-binary/code#5"]
 		written: written + encoded
 		if scratch/stack-locations/right-slot = LOCATION_IMMEDIATE [
 			high: either scratch/stack-low/right-slot < 0 [-1][0]
@@ -5329,7 +5357,7 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-immediate at (capacity - written)
 				arm64-encoder/X17 8 scaled high
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 523 "emit-pointer-binary/code#6"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: either operation = ADD_OPERATION [
@@ -5339,7 +5367,7 @@ arm64-codegen: context [
 				arm64-encoder/subtract-register at (capacity - written)
 					target target arm64-encoder/X17 8
 			]
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 524 "emit-pointer-binary/code#7"]
 			return written + encoded
 		]
 
@@ -5359,23 +5387,23 @@ arm64-codegen: context [
 			encoded: arm64-encoder/add-extended-register at (capacity - written)
 				opcode target target right source-width
 				source-signed shift
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 525 "emit-pointer-binary/code#8"]
 			return written + encoded
 		]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/extend-register at (capacity - written)
 			right right source-width source-signed
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 526 "emit-pointer-binary/code#9"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/move-immediate at (capacity - written)
 			arm64-encoder/X16 8 stride 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 527 "emit-pointer-binary/code#10"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/multiply-register at (capacity - written)
 			right right arm64-encoder/X16 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 528 "emit-pointer-binary/code#11"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: either operation = ADD_OPERATION [
@@ -5383,7 +5411,7 @@ arm64-codegen: context [
 		][
 			arm64-encoder/subtract-register at (capacity - written) target target right 8
 		]
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 529 "emit-pointer-binary/code#12"]
 		written + encoded
 	]
 
@@ -5398,7 +5426,7 @@ arm64-codegen: context [
 			source = arm64-encoder/X16 source = arm64-encoder/X17][return fail-invalid 164 "emit-aggregate-chunk-load/source#1"]
 		written: 0
 		encoded: arm64-encoder/move-immediate code capacity target 8 0 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 530 "emit-aggregate-chunk-load/code#1"]
 		written: written + encoded
 		part-offset: 0
 		while [part-offset < size][
@@ -5411,20 +5439,20 @@ arm64-codegen: context [
 			encoded: arm64-encoder/register-load at (capacity - written)
 				arm64-encoder/X16 source (offset + part-offset) part-width 0 8
 				arm64-encoder/X17
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 531 "emit-aggregate-chunk-load/code#2"]
 			written: written + encoded
 			shift: part-offset * 8
 			if shift > 0 [
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/shift-immediate at (capacity - written)
 					arm64-encoder/SHIFT_LEFT arm64-encoder/X16 arm64-encoder/X16 shift 8
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 532 "emit-aggregate-chunk-load/code#3"]
 				written: written + encoded
 			]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/alu-register at (capacity - written)
 				arm64-encoder/OP_OR target target arm64-encoder/X16 8 false
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 533 "emit-aggregate-chunk-load/code#4"]
 			written: written + encoded
 			part-offset: part-offset + part-width
 		]
@@ -5457,14 +5485,14 @@ arm64-codegen: context [
 				encoded: arm64-encoder/shift-immediate at (capacity - written)
 					arm64-encoder/SHIFT_RIGHT arm64-encoder/X17 source
 					(part-offset * 8) 8
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 534 "emit-aggregate-chunk-store/code#1"]
 				written: written + encoded
 				target: arm64-encoder/X17
 			]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/register-store at (capacity - written)
 				target destination (offset + part-offset) part-width arm64-encoder/X16
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 535 "emit-aggregate-chunk-store/code#2"]
 			written: written + encoded
 			part-offset: part-offset + part-width
 		]
@@ -5495,12 +5523,12 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/register-load at (capacity - written)
 				arm64-encoder/X16 source offset width 0 transfer-width arm64-encoder/X17
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 536 "emit-memory-copy/code#1"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/register-store at (capacity - written)
 				arm64-encoder/X16 destination offset width arm64-encoder/X17
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 537 "emit-memory-copy/code#2"]
 			written: written + encoded
 			offset: offset + width
 			size: size - width
@@ -5599,12 +5627,12 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code]
 			encoded: arm64-encoder/move-register at capacity
 				arm64-encoder/X19 arm64-encoder/SP 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 538 "compile-function/code#1"]
 			written: encoded
 		]
 		encoded: emit-prologue view fn entry? layout scratch plan
 			(either null? code [as byte-ptr! 0][code + written]) (capacity - written)
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 539 "compile-function/code#2"]
 		written: written + encoded
 		compiler-frame-active?: true
 		; Keep the unwind landing pad beside its prologue ADR. A function body
@@ -5613,40 +5641,40 @@ arm64-codegen: context [
 		if all [plan/unwind = 1 not entry?] [
 			if plan/unwind-fixup < 0 [return fail-invalid 389 "compile-function/plan/unwind-fixup#223"]
 			encoded: emit-unwind-handler plan null 0
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 540 "compile-function/code#3"]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/branch-relative at (capacity - written) (encoded + 4)
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 541 "compile-function/code#4"]
 			written: written + encoded
 			handler-offset: written
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: emit-unwind-handler plan at (capacity - written)
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 542 "compile-function/code#5"]
 			written: written + encoded
 			unless measure? [
 				displacement: handler-offset - plan/unwind-fixup
 				at: code + plan/unwind-fixup
 				encoded: arm64-encoder/address-relative at
 					(capacity - plan/unwind-fixup) arm64-encoder/X16 displacement
-				if encoded <> 4 [return OUTPUT_FULL]
+				if encoded <> 4 [return fail-mismatch 4 encoded 543 "compile-function/instruction-size"]
 			]
 		]
 		if all [startup? target-abi = ABI_APPLE_AARCH64] [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				arm64-encoder/X19 arm64-encoder/X0 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 544 "compile-function/code#6"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/move-register at (capacity - written)
 				arm64-encoder/X20 arm64-encoder/X1 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 545 "compile-function/code#7"]
 			written: written + encoded
 		]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: emit-global-homes view scratch (function-base + written)
 			references at (capacity - written)
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 546 "compile-function/code#8"]
 		written: written + encoded
 		depth: 0
 		fallthrough?: true
@@ -5668,7 +5696,7 @@ arm64-codegen: context [
 				ordinal: index + 1
 				instruction: as rsir-instruction! (view/instructions
 					+ ((first-instruction + index) * RSIR_INSTRUCTION_SIZE))
-				codegen-diag/mark-instruction ordinal instruction/op
+				codegen-diag/mark-instruction ordinal as int-ptr! instruction
 				if instruction/op = OP_ENTRY [
 				; An entry is resumed from a BL or from the leading jump, so the
 				; expression stack is empty there whichever way control arrives.
@@ -5692,7 +5720,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: canonicalize-stack view scratch depth
 						region-base region-limit at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 547 "compile-function/code#9"]
 					written: written + encoded
 				]
 				unless adopt-depth? [
@@ -5792,17 +5820,17 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: materialize view scratch depth target ref
 							at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 548 "compile-function/code#10"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/compare-immediate at
 							(capacity - written) target 0 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 549 "compile-function/code#11"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/condition-result at
 							(capacity - written) target arm64-encoder/NE
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 550 "compile-function/code#12"]
 						written: written + encoded
 						scratch/stack-types/depth: target-ref
 						scratch/stack-locations/depth: LOCATION_REGISTER
@@ -5852,7 +5880,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch depth arm64-encoder/X16 ref
 									at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 551 "compile-function/code#13"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/float-move-from-register at
@@ -5862,7 +5890,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch depth
 									FLOAT_SCRATCH_REGISTER ref at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 552 "compile-function/code#14"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/float-move-to-register at
@@ -5880,7 +5908,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch depth arm64-encoder/X16 ref
 									at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 553 "compile-function/code#15"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/integer-to-float at
@@ -5891,7 +5919,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch depth
 									FLOAT_SCRATCH_REGISTER ref at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 554 "compile-function/code#16"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/float-to-integer at
@@ -5899,7 +5927,7 @@ arm64-codegen: context [
 									source-width 4 1
 							]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 555 "compile-function/code#17"]
 						written: written + encoded
 						scratch/stack-types/depth: target-ref
 						scratch/stack-locations/depth: LOCATION_REGISTER
@@ -5991,19 +6019,19 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: materialize view scratch depth target ref
 						at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 556 "compile-function/code#18"]
 					written: written + encoded
 					if target-kind = 11 [
 						width: either source-width = 8 [8][4]
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/compare-immediate at
 							(capacity - written) target 0 width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 557 "compile-function/code#19"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/condition-result at
 							(capacity - written) target 1
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 558 "compile-function/code#20"]
 						written: written + encoded
 					]
 					if integer-type? target-ref view [
@@ -6025,7 +6053,7 @@ arm64-codegen: context [
 							]
 							true [0]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 559 "compile-function/code#21"]
 						written: written + encoded
 					]
 					scratch/stack-types/depth: target-ref
@@ -6042,7 +6070,7 @@ arm64-codegen: context [
 					][return fail-invalid 182 "compile-function/instruction/b#16"]
 					either instruction/b = 0 [
 						if instruction/c <> 0 [return fail-invalid 183 "compile-function/instruction/c#17"]
-						if depth = 2147483647 [return OUTPUT_FULL]
+						if depth = 2147483647 [return fail-limit 861 "compile-function/limit#269"]
 						depth: depth + 1
 					][
 						unless all [
@@ -6063,12 +6091,12 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: materialize view scratch depth arm64-encoder/X16 ref
 							at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 560 "compile-function/code#22"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/c-string-size at (capacity - written)
 							arm64-encoder/X16 target arm64-encoder/X17
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 561 "compile-function/code#23"]
 						written: written + encoded
 						scratch/stack-locations/depth: LOCATION_REGISTER
 						scratch/stack-low/depth: target
@@ -6125,7 +6153,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-register at
 								(capacity - written) target arm64-encoder/SP 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 562 "compile-function/code#24"]
 							written: written + encoded
 							scratch/stack-types/depth: instruction/c
 							scratch/stack-kinds/depth: VALUE
@@ -6154,30 +6182,30 @@ arm64-codegen: context [
 								materialize view scratch depth arm64-encoder/X16 ref
 									at (capacity - written)
 							]
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 563 "compile-function/code#25"]
 							written: written + encoded
 							if any [kind = 9 kind = 10][
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/float-move-to-register at
 									(capacity - written) arm64-encoder/X16
 									FLOAT_SCRATCH_REGISTER width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 564 "compile-function/code#26"]
 								written: written + encoded
 							]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/add-immediate at (capacity - written)
 								arm64-encoder/SP arm64-encoder/SP -8 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 565 "compile-function/code#27"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-register at (capacity - written)
 								arm64-encoder/X17 arm64-encoder/SP 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 566 "compile-function/code#28"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/register-store at (capacity - written)
 								arm64-encoder/X16 arm64-encoder/X17 0 8 arm64-encoder/X9
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 567 "compile-function/code#29"]
 							written: written + encoded
 							depth: depth - 1
 						]
@@ -6191,17 +6219,17 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-register at (capacity - written)
 								arm64-encoder/X16 arm64-encoder/SP 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 568 "compile-function/code#30"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/register-load at (capacity - written)
 								target arm64-encoder/X16 0 8 0 8 arm64-encoder/X17
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 569 "compile-function/code#31"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/add-immediate at (capacity - written)
 								arm64-encoder/SP arm64-encoder/SP 8 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 570 "compile-function/code#32"]
 							written: written + encoded
 							scratch/stack-types/depth: -5
 							scratch/stack-kinds/depth: VALUE
@@ -6222,7 +6250,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-register at
 								(capacity - written) target arm64-encoder/FP 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 571 "compile-function/code#33"]
 							written: written + encoded
 							scratch/stack-types/depth: instruction/c
 							scratch/stack-kinds/depth: VALUE
@@ -6245,7 +6273,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth arm64-encoder/X16
 								instruction/c at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 572 "compile-function/code#34"]
 							written: written + encoded
 							target: either instruction/a = STACK_TOP_SET_NATIVE [
 								arm64-encoder/SP
@@ -6254,7 +6282,7 @@ arm64-codegen: context [
 							encoded: arm64-encoder/move-register at
 								(capacity - written)
 								target arm64-encoder/X16 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 573 "compile-function/code#35"]
 							written: written + encoded
 							scratch/stack-types/depth: instruction/c
 							scratch/stack-kinds/depth: VALUE
@@ -6275,18 +6303,18 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-register at
 								(capacity - written) target arm64-encoder/SP 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 574 "compile-function/code#36"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/logical-immediate at
 								(capacity - written) arm64-encoder/OP_AND
 								arm64-encoder/X16 target 8 -16 -1
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 575 "compile-function/code#37"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-register at
 								(capacity - written) arm64-encoder/SP arm64-encoder/X16 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 576 "compile-function/code#38"]
 							written: written + encoded
 							scratch/stack-types/depth: instruction/c
 							scratch/stack-kinds/depth: VALUE
@@ -6313,7 +6341,7 @@ arm64-codegen: context [
 							encoded: emit-stack-resize view scratch depth target true
 								(instruction/a = STACK_ALLOCATE_ZERO_NATIVE)
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 577 "compile-function/code#39"]
 							written: written + encoded
 							scratch/stack-types/depth: instruction/c
 							scratch/stack-kinds/depth: VALUE
@@ -6332,7 +6360,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: emit-stack-resize view scratch depth 0 false false
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 578 "compile-function/code#40"]
 							written: written + encoded
 							depth: depth - 1
 						]
@@ -6344,12 +6372,12 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: spill-live-stack view scratch depth
 								region-base region-limit at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 579 "compile-function/code#41"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: emit-stack-all at (capacity - written)
 								(instruction/a = STACK_POP_ALL_NATIVE)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 580 "compile-function/code#42"]
 							written: written + encoded
 							if instruction/a = STACK_POP_ALL_NATIVE [
 								last-math-condition: -1
@@ -6367,7 +6395,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/program-counter at
 								(capacity - written) target
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 581 "compile-function/code#43"]
 							written: written + encoded
 							scratch/stack-types/depth: instruction/c
 							scratch/stack-kinds/depth: VALUE
@@ -6377,7 +6405,7 @@ arm64-codegen: context [
 							scratch/stack-flags/depth: 0
 						]
 						instruction/a = CPU_REGISTER_NATIVE [
-							if depth = 2147483647 [return OUTPUT_FULL]
+							if depth = 2147483647 [return fail-limit 862 "compile-function/limit#270"]
 							depth: depth + 1
 							target: FIRST_TEMP_REGISTER + depth - 1
 							if target >= (FIRST_TEMP_REGISTER + TEMP_REGISTER_COUNT)[
@@ -6391,7 +6419,7 @@ arm64-codegen: context [
 								arm64-encoder/move-register at (capacity - written)
 									target register-id 8
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 582 "compile-function/code#44"]
 							written: written + encoded
 							scratch/stack-types/depth: cpu-pointer-ref
 							scratch/stack-kinds/depth: VALUE
@@ -6426,7 +6454,7 @@ arm64-codegen: context [
 									at: either null? code [as byte-ptr! 0][code + written]
 									encoded: compiler-frame-store at
 										(capacity - written) register-id displacement width
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 583 "compile-function/code#45"]
 									written: written + encoded
 									scratch/stack-locations/slot: LOCATION_FRAME
 									scratch/stack-low/slot: displacement
@@ -6441,7 +6469,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth target cpu-pointer-ref
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 584 "compile-function/code#46"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: either all [register-width = 4 register-id = target][
@@ -6451,7 +6479,7 @@ arm64-codegen: context [
 								arm64-encoder/move-register at (capacity - written)
 									register-id target register-width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 585 "compile-function/code#47"]
 							written: written + encoded
 							scratch/stack-types/depth: cpu-pointer-ref
 							scratch/stack-kinds/depth: VALUE
@@ -6475,7 +6503,7 @@ arm64-codegen: context [
 								arm64-encoder/move-immediate at (capacity - written)
 									target 4 0 0
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 586 "compile-function/code#48"]
 							written: written + encoded
 							scratch/stack-types/depth: -11
 							scratch/stack-kinds/depth: VALUE
@@ -6488,7 +6516,7 @@ arm64-codegen: context [
 							if instruction/c <> 0 [return fail-invalid 217 "compile-function/instruction/c#51"]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/memory-fence at (capacity - written)
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 587 "compile-function/code#49"]
 							written: written + encoded
 						]
 						instruction/a = ATOMIC_LOAD_NATIVE [
@@ -6506,12 +6534,12 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth target ref
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 588 "compile-function/code#50"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/atomic-load at (capacity - written)
 								target target
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 589 "compile-function/code#51"]
 							written: written + encoded
 							scratch/stack-types/depth: -5
 							scratch/stack-kinds/depth: VALUE
@@ -6536,17 +6564,17 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch target-slot
 								arm64-encoder/X16 ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 590 "compile-function/code#52"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth arm64-encoder/X17 -5
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 591 "compile-function/code#53"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/atomic-store at (capacity - written)
 								arm64-encoder/X16 arm64-encoder/X17
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 592 "compile-function/code#54"]
 							written: written + encoded
 							depth: depth - 2
 						]
@@ -6576,22 +6604,22 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch target-slot
 								arm64-encoder/X16 ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 593 "compile-function/code#55"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch source-slot target -5
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 594 "compile-function/code#56"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth right -5
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 595 "compile-function/code#57"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-register at (capacity - written)
 								arm64-encoder/X17 target 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 596 "compile-function/code#58"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: either target-abi = ABI_APPLE_AARCH64 [
@@ -6602,17 +6630,17 @@ arm64-codegen: context [
 									(capacity - written) target right arm64-encoder/X16
 									(FIRST_TEMP_REGISTER + source-slot - 1)
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 597 "compile-function/code#59"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/compare-register at (capacity - written)
 								target arm64-encoder/X17 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 598 "compile-function/code#60"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/condition-result at
 								(capacity - written) target arm64-encoder/EQ
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 599 "compile-function/code#61"]
 							written: written + encoded
 							last-math-condition: -1
 							depth: target-slot
@@ -6651,12 +6679,12 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch target-slot
 								arm64-encoder/X16 ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 600 "compile-function/code#62"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth arm64-encoder/X17 -5
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 601 "compile-function/code#63"]
 							written: written + encoded
 							if any [operation = 2 operation = 5][
 								at: either null? code [as byte-ptr! 0][code + written]
@@ -6667,7 +6695,7 @@ arm64-codegen: context [
 									arm64-encoder/move-not-register at (capacity - written)
 										arm64-encoder/X17 arm64-encoder/X17 4
 								]
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 602 "compile-function/code#64"]
 								written: written + encoded
 							]
 							opcode: case [
@@ -6686,7 +6714,7 @@ arm64-codegen: context [
 									opcode arm64-encoder/X17 target arm64-encoder/X16
 									arm64-encoder/X0 arm64-encoder/X1
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 603 "compile-function/code#65"]
 							written: written + encoded
 							if any [(not atomic-old?) atomic-overflow?][
 								if any [operation = 2 operation = 5][
@@ -6698,7 +6726,7 @@ arm64-codegen: context [
 										arm64-encoder/move-not-register at (capacity - written)
 											arm64-encoder/X17 arm64-encoder/X17 4
 									]
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 604 "compile-function/code#66"]
 									written: written + encoded
 								]
 								right: either atomic-old? [arm64-encoder/X16][target]
@@ -6712,7 +6740,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/alu-register at (capacity - written)
 									opcode right target arm64-encoder/X17 4 atomic-overflow?
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 605 "compile-function/code#67"]
 								written: written + encoded
 							]
 							if atomic-overflow? [last-math-condition: arm64-encoder/VS]
@@ -6745,32 +6773,32 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch depth
 									arm64-encoder/X17 ref at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 606 "compile-function/code#68"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/count-leading-zeros at
 									(capacity - written) arm64-encoder/X17
 									arm64-encoder/X17 width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 607 "compile-function/code#69"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/move-immediate at
 									(capacity - written) arm64-encoder/X16 width
 									((width * 8) - 1) 0
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 608 "compile-function/code#70"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/subtract-register at
 									(capacity - written) arm64-encoder/X17
 									arm64-encoder/X16 arm64-encoder/X17 width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 609 "compile-function/code#71"]
 								written: written + encoded
 								displacement: 0 - ((region-base + depth) * 8)
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: compiler-frame-store at
 									(capacity - written) arm64-encoder/X17
 									displacement 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 610 "compile-function/code#72"]
 								written: written + encoded
 								scratch/stack-types/depth: -5
 								scratch/stack-kinds/depth: VALUE
@@ -6784,22 +6812,22 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth target ref
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 611 "compile-function/code#73"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/count-leading-zeros at
 								(capacity - written) target target width
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 612 "compile-function/code#74"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-immediate at (capacity - written)
 								arm64-encoder/X16 width ((width * 8) - 1) 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 613 "compile-function/code#75"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/subtract-register at
 								(capacity - written) target arm64-encoder/X16 target width
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 614 "compile-function/code#76"]
 							written: written + encoded
 							scratch/stack-types/depth: -5
 							scratch/stack-kinds/depth: VALUE
@@ -6855,18 +6883,18 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: take-temp-register view scratch depth false depth
 									region-base region-limit at (capacity - written) :target
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 615 "compile-function/code#77"]
 								written: written + encoded
-								if target < 0 [return fail-unsupported 230 "compile-function/depth#64"]
+								if target < 0 [return fail-limit 230 "compile-function/address-temporary-limit"]
 								status: record-reference
 									(view/header/function-count + slot)
 									(function-base + written)
 									references
-								if status < 0 [return status]
+								if status < 0 [return fail-code status 616 "compile-function/code#78"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/page-address at
 									(capacity - written) target
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 617 "compile-function/code#79"]
 								written: written + encoded
 								scratch/stack-locations/depth: LOCATION_REGISTER
 								scratch/stack-low/depth: target
@@ -6887,11 +6915,11 @@ arm64-codegen: context [
 								; where the callee landed in the code section.
 								status: record-reference slot
 									(function-base + written) references
-								if status < 0 [return status]
+								if status < 0 [return fail-code status 618 "compile-function/code#80"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/page-address at
 									(capacity - written) target
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 619 "compile-function/code#81"]
 								written: written + encoded
 								scratch/stack-types/depth: instruction/c
 								scratch/stack-locations/depth: LOCATION_REGISTER
@@ -6907,18 +6935,18 @@ arm64-codegen: context [
 								]
 								status: record-reference slot
 									(function-base + written) references
-								if status < 0 [return status]
+								if status < 0 [return fail-code status 620 "compile-function/code#82"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/page-address at
 									(capacity - written) arm64-encoder/X17
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 621 "compile-function/code#83"]
 								written: written + encoded
 								displacement: 0 - ((region-base + depth) * 8)
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: compiler-frame-store at
 									(capacity - written) arm64-encoder/X17
 									displacement 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 622 "compile-function/code#84"]
 								written: written + encoded
 								scratch/stack-types/depth: instruction/c
 								;-- The slot holds the address itself, so it is not the
@@ -6962,11 +6990,11 @@ arm64-codegen: context [
 								(view/header/function-count
 									+ view/header/global-count + slot)
 								(function-base + written) references
-							if status < 0 [return status]
+							if status < 0 [return fail-code status 623 "compile-function/code#85"]
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/page-address at
 							(capacity - written) target
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 624 "compile-function/code#86"]
 						written: written + encoded
 						;-- An ADRP/ADD pair can only name a slot: an
 						;-- imported symbol lives in a dylib at a distance
@@ -6979,7 +7007,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/load-register-indirect at
 							(capacity - written) target
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 625 "compile-function/code#87"]
 						written: written + encoded
 						scratch/stack-types/depth: ref
 						scratch/stack-locations/depth: LOCATION_REGISTER
@@ -7012,7 +7040,7 @@ arm64-codegen: context [
 								encoded: arm64-encoder/address-offset at
 									(capacity - written) target compiler-frame-register
 									scratch/homes/slot arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 626 "compile-function/code#88"]
 								written: written + encoded
 							]
 							scratch/stack-locations/depth = LOCATION_REGISTER [
@@ -7026,7 +7054,7 @@ arm64-codegen: context [
 									encoded: arm64-encoder/address-offset at
 										(capacity - written) target scratch/stack-low/depth
 										scratch/stack-high/depth arm64-encoder/X16
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 627 "compile-function/code#89"]
 									written: written + encoded
 								]
 							]
@@ -7049,14 +7077,14 @@ arm64-codegen: context [
 										(capacity - written) arm64-encoder/X17
 										compiler-frame-register scratch/stack-low/depth
 										arm64-encoder/X16
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 628 "compile-function/code#90"]
 									written: written + encoded
 									displacement: 0 - ((region-base + depth) * 8)
 									at: either null? code [as byte-ptr! 0][code + written]
 									encoded: compiler-frame-store at
 										(capacity - written) arm64-encoder/X17
 										displacement 8
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 629 "compile-function/code#91"]
 									written: written + encoded
 									scratch/stack-kinds/depth: VALUE
 									scratch/stack-locations/depth: LOCATION_FRAME
@@ -7070,7 +7098,7 @@ arm64-codegen: context [
 								encoded: arm64-encoder/address-offset at
 									(capacity - written) target compiler-frame-register
 									scratch/stack-low/depth arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 630 "compile-function/code#92"]
 								written: written + encoded
 							]
 							true [return fail-invalid 243 "compile-function/written#77"]
@@ -7112,7 +7140,7 @@ arm64-codegen: context [
 										scratch/stack-high/depth width
 										load-signed result-width arm64-encoder/X16
 								]
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 631 "compile-function/code#93"]
 								written: written + encoded
 							][
 								;-- Deep-stack fallback: the expression stack
@@ -7127,14 +7155,14 @@ arm64-codegen: context [
 									(capacity - written) arm64-encoder/X17
 									scratch/stack-low/depth scratch/stack-high/depth
 									width 0 width arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 632 "compile-function/code#94"]
 								written: written + encoded
 								displacement: 0 - ((region-base + depth) * 8)
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: compiler-frame-store at
 									(capacity - written) arm64-encoder/X17
 									displacement width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 633 "compile-function/code#95"]
 								written: written + encoded
 								scratch/stack-types/depth: ref
 								scratch/stack-kinds/depth: VALUE
@@ -7174,7 +7202,7 @@ arm64-codegen: context [
 									(capacity - written) target scratch/stack-low/depth
 									width load-signed result-width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 634 "compile-function/code#96"]
 							written: written + encoded
 						]
 						true [return fail-invalid 252 "compile-function/written#86"]
@@ -7208,18 +7236,18 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: compiler-frame-load at (capacity - written)
 							arm64-encoder/X17 plan/tag-offset 8 0 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 635 "compile-function/code#97"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/move-immediate at (capacity - written)
 							arm64-encoder/X16 4 tag-variant 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 636 "compile-function/code#98"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/register-store at (capacity - written)
 							arm64-encoder/X16 arm64-encoder/X17 0 tag-width-value
 							arm64-encoder/X15
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 637 "compile-function/code#99"]
 						written: written + encoded
 						tag-variant: 0
 					]
@@ -7242,7 +7270,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch source-slot arm64-encoder/X15
 								ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 638 "compile-function/code#100"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: case [
@@ -7256,14 +7284,14 @@ arm64-codegen: context [
 										arm64-encoder/X14 compiler-frame-register
 										scratch/stack-low/depth arm64-encoder/X16
 								]
-								true [INVALID_IR]
+								true [fail-internal 863 "compile-function/aggregate-location"]
 							]
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 639 "compile-function/code#101"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: emit-memory-copy at (capacity - written)
 								arm64-encoder/X14 arm64-encoder/X15 return-size
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 640 "compile-function/code#102"]
 							written: written + encoded
 							target: arm64-encoder/X14
 						]
@@ -7289,7 +7317,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch source-slot target
 								target-ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 641 "compile-function/code#103"]
 							written: written + encoded
 						]
 						scratch/stack-locations/depth = LOCATION_REGISTER [
@@ -7316,7 +7344,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch source-slot target
 									target-ref at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 642 "compile-function/code#104"]
 								written: written + encoded
 							]
 							at: either null? code [as byte-ptr! 0][code + written]
@@ -7329,7 +7357,7 @@ arm64-codegen: context [
 									(capacity - written) target scratch/stack-low/depth
 									scratch/stack-high/depth width arm64-encoder/X16
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 643 "compile-function/code#105"]
 							written: written + encoded
 						]
 						scratch/stack-locations/depth = LOCATION_FRAME [
@@ -7356,7 +7384,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch source-slot target
 									target-ref at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 644 "compile-function/code#106"]
 								written: written + encoded
 							]
 							at: either null? code [as byte-ptr! 0][code + written]
@@ -7367,7 +7395,7 @@ arm64-codegen: context [
 								compiler-frame-store at
 									(capacity - written) target scratch/stack-low/depth width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 645 "compile-function/code#107"]
 							written: written + encoded
 						]
 						true [return fail-invalid 270 "compile-function/written#104"]
@@ -7413,7 +7441,7 @@ arm64-codegen: context [
 								encoded: arm64-encoder/address-offset at (capacity - written)
 									target compiler-frame-register scratch/stack-low/depth
 									arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 646 "compile-function/code#108"]
 								written: written + encoded
 							][
 								;-- Deep-stack fallback: the temp pool is exhausted,
@@ -7426,14 +7454,14 @@ arm64-codegen: context [
 								encoded: arm64-encoder/address-offset at (capacity - written)
 									arm64-encoder/X17 compiler-frame-register
 									scratch/stack-low/depth arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 647 "compile-function/code#109"]
 								written: written + encoded
 								displacement: 0 - ((region-base + depth) * 8)
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: compiler-frame-store at
 									(capacity - written) arm64-encoder/X17
 									displacement 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 648 "compile-function/code#110"]
 								written: written + encoded
 								scratch/stack-types/depth: instruction/a
 								scratch/stack-kinds/depth: VALUE
@@ -7453,7 +7481,7 @@ arm64-codegen: context [
 									encoded: arm64-encoder/address-offset at (capacity - written)
 										target scratch/stack-low/depth scratch/stack-high/depth
 										arm64-encoder/X16
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 649 "compile-function/code#111"]
 									written: written + encoded
 								][
 									;-- Deep-stack fallback: park the formed address
@@ -7465,14 +7493,14 @@ arm64-codegen: context [
 									encoded: arm64-encoder/address-offset at (capacity - written)
 										arm64-encoder/X17 scratch/stack-low/depth
 										scratch/stack-high/depth arm64-encoder/X16
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 650 "compile-function/code#112"]
 									written: written + encoded
 									displacement: 0 - ((region-base + depth) * 8)
 									at: either null? code [as byte-ptr! 0][code + written]
 									encoded: compiler-frame-store at
 										(capacity - written) arm64-encoder/X17
 										displacement 8
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 651 "compile-function/code#113"]
 									written: written + encoded
 									scratch/stack-types/depth: instruction/a
 									scratch/stack-kinds/depth: VALUE
@@ -7532,7 +7560,7 @@ arm64-codegen: context [
 									at: either null? code [as byte-ptr! 0][code + written]
 									encoded: materialize view scratch target-slot target ref
 										at (capacity - written)
-									if encoded < 0 [return encoded]
+									if encoded < 0 [return fail-code encoded 652 "compile-function/code#114"]
 									written: written + encoded
 									scratch/stack-high/target-slot: scaled
 								][
@@ -7545,20 +7573,20 @@ arm64-codegen: context [
 									at: either null? code [as byte-ptr! 0][code + written]
 									encoded: materialize view scratch target-slot
 										arm64-encoder/X17 ref at (capacity - written)
-									if encoded < 0 [return encoded]
+									if encoded < 0 [return fail-code encoded 653 "compile-function/code#115"]
 									written: written + encoded
 									if scaled <> 0 [
 										at: either null? code [as byte-ptr! 0][code + written]
 										encoded: arm64-encoder/move-immediate at
 											(capacity - written) arm64-encoder/X16
 											8 scaled 0
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 654 "compile-function/code#116"]
 										written: written + encoded
 										at: either null? code [as byte-ptr! 0][code + written]
 										encoded: arm64-encoder/add-register at
 											(capacity - written) arm64-encoder/X17
 											arm64-encoder/X17 arm64-encoder/X16 8
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 655 "compile-function/code#117"]
 										written: written + encoded
 									]
 									target: arm64-encoder/X17
@@ -7577,23 +7605,23 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: take-temp-register view scratch depth false
 								target-slot region-base region-limit at (capacity - written) :target
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 656 "compile-function/code#118"]
 							written: written + encoded
-							if target < 0 [return fail-unsupported 282 "compile-function/target-slot#116"]
+							if target < 0 [return fail-limit 282 "compile-function/index-temporary-limit"]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth arm64-encoder/X17
 								scratch/stack-types/depth at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 657 "compile-function/code#119"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch target-slot target ref
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 658 "compile-function/code#120"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/add-immediate at (capacity - written)
 								arm64-encoder/X17 arm64-encoder/X17 -1 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 659 "compile-function/code#121"]
 							written: written + encoded
 							shift: power-shift stride
 							either shift >= 0 [
@@ -7601,30 +7629,30 @@ arm64-codegen: context [
 								encoded: arm64-encoder/add-extended-register at
 									(capacity - written) arm64-encoder/OP_ADD
 									target target arm64-encoder/X17 4 1 shift
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 660 "compile-function/code#122"]
 								written: written + encoded
 							][
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/extend-register at
 									(capacity - written) arm64-encoder/X17
 									arm64-encoder/X17 4 1
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 661 "compile-function/code#123"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/move-immediate at
 									(capacity - written) arm64-encoder/X16 8 stride 0
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 662 "compile-function/code#124"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/multiply-register at
 									(capacity - written) arm64-encoder/X17
 									arm64-encoder/X17 arm64-encoder/X16 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 663 "compile-function/code#125"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/add-register at
 									(capacity - written) target target arm64-encoder/X17 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 664 "compile-function/code#126"]
 								written: written + encoded
 							]
 							depth: target-slot
@@ -7637,7 +7665,7 @@ arm64-codegen: context [
 					scratch/stack-low/target-slot: target
 				]
 				instruction/op = OP_MEMBER [
-					if any [depth <= 0 instruction/c <> 0][return fail-unsupported 283 "compile-function/instruction/c#117"]
+					if any [depth <= 0 instruction/c <> 0][return fail-invalid 283 "compile-function/member-operands"]
 					ref: scratch/stack-types/depth
 					unless any [
 						scratch/stack-kinds/depth = PLACE
@@ -7669,9 +7697,9 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: take-temp-register view scratch depth false depth
 									region-base region-limit at (capacity - written) :target
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 665 "compile-function/code#127"]
 								written: written + encoded
-								if target < 0 [return fail-unsupported 287 "compile-function/view#121"]
+								if target < 0 [return fail-limit 287 "compile-function/member-temporary-limit"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/address-offset at (capacity - written)
 									target scratch/stack-low/depth scratch/stack-high/depth
@@ -7681,9 +7709,9 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: take-temp-register view scratch depth false depth
 									region-base region-limit at (capacity - written) :target
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 666 "compile-function/code#128"]
 								written: written + encoded
-								if target < 0 [return fail-unsupported 288 "compile-function/view#122"]
+								if target < 0 [return fail-limit 288 "compile-function/member-frame-temporary-limit"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/address-offset at (capacity - written)
 									target compiler-frame-register scratch/stack-low/depth
@@ -7691,12 +7719,12 @@ arm64-codegen: context [
 							]
 							true [return fail-unsupported 289 "compile-function/arm64-encoder#123"]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 667 "compile-function/code#129"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: compiler-frame-store at (capacity - written)
 							target plan/tag-offset 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 668 "compile-function/code#130"]
 						written: written + encoded
 						scratch/stack-locations/depth: LOCATION_REGISTER
 						scratch/stack-low/depth: target
@@ -7728,13 +7756,13 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: take-temp-register view scratch depth false depth
 									region-base region-limit at (capacity - written) :target
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 669 "compile-function/code#131"]
 								written: written + encoded
-								if target < 0 [return fail-unsupported 293 "compile-function/view#127"]
+								if target < 0 [return fail-limit 293 "compile-function/member-offset-temporary-limit"]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch depth target ref
 									at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 670 "compile-function/code#132"]
 								written: written + encoded
 								scratch/stack-locations/depth: LOCATION_REGISTER
 								scratch/stack-low/depth: target
@@ -7763,14 +7791,14 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: materialize view scratch depth target ref
 						at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 671 "compile-function/code#133"]
 					written: written + encoded
 					; The variant number leads the union, so the tag sits at the
 					; front of whatever the value points at.
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/register-load at (capacity - written)
 						target target 0 width 0 4 arm64-encoder/X16
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 672 "compile-function/code#134"]
 					written: written + encoded
 					scratch/stack-types/depth: -5
 					scratch/stack-kinds/depth: VALUE
@@ -7813,13 +7841,13 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: materialize view scratch depth arm64-encoder/X3 -5
 						at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 673 "compile-function/code#135"]
 					written: written + encoded
 					target-offset: either null? code [0][instruction-offsets/target]
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: emit-catch-open at (capacity - written)
 						instruction/b target-offset written
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 674 "compile-function/code#136"]
 					written: written + encoded
 					depth: 0
 					unless merge-control-target target depth fn view scratch
@@ -7837,7 +7865,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: emit-catch-restore at (capacity - written)
 						catch-level
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 675 "compile-function/code#137"]
 					written: written + encoded
 				]
 				instruction/op = OP_THROW [
@@ -7857,7 +7885,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: materialize view scratch source-slot arm64-encoder/X0 -5
 						at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 676 "compile-function/code#138"]
 					written: written + encoded
 					case [
 						scratch/stack-locations/target-slot = 0 [
@@ -7882,16 +7910,16 @@ arm64-codegen: context [
 						]
 						true [return fail-invalid 304 "compile-function/scratch/stack-low#138"]
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 677 "compile-function/code#139"]
 					written: written + encoded
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: emit-frame-normalize plan at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 678 "compile-function/code#140"]
 					written: written + encoded
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: emit-throw-unwind at (capacity - written)
 						((fn/flags and CATCH_FLAG) <> 0)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 679 "compile-function/code#141"]
 					written: written + encoded
 					depth: source-slot - 1
 					fallthrough?: false
@@ -7927,7 +7955,7 @@ arm64-codegen: context [
 					status: resolve-call call-target call-signature view
 						:call-return :call-first-parameter :call-parameter-count
 						:call-reference :call-source :call-flags
-					if status < 0 [return status]
+					if status < 0 [return fail-code status 680 "compile-function/code#142"]
 					call-mode: call-flags and (VARIADIC or TYPED or CUSTOM)
 					custom-call?: call-mode = CUSTOM
 					packed-call?: all [
@@ -7998,7 +8026,7 @@ arm64-codegen: context [
 					][return fail-invalid 314 "compile-function/instruction/c#148"]
 					fixed-stack-size: 0
 					if packed-call? [
-						if argument-count > (2147483647 / 8)[return OUTPUT_FULL]
+						if argument-count > (2147483647 / 8)[return fail-limit 864 "compile-function/limit#272"]
 						list-size: argument-count * 8
 						list-capacity: either list-size < 8 [8][list-size]
 						fixed-stack-size: align list-capacity 16
@@ -8006,13 +8034,13 @@ arm64-codegen: context [
 					if all [(call-flags and TYPED) = 0 not packed-call? not custom-call?] [
 						status: abi-parameter-location view layout call-source
 							call-first-parameter call-parameter-count 0 abi-location
-							if status < 0 [return status]
+							if status < 0 [return fail-code status 681 "compile-function/code#143"]
 						fixed-stack-size: abi-location/stack-size
 					]
 					if all [(call-flags and VARIADIC) <> 0 not packed-call?] [
 						if (argument-count - call-parameter-count)
 							> ((2147483647 - fixed-stack-size) / 8) [
-							return OUTPUT_FULL
+							return fail-limit 865 "compile-function/limit#273"
 						]
 					]
 					argument-origin: depth - argument-count
@@ -8056,7 +8084,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch slot target ref
 									at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 682 "compile-function/code#144"]
 								written: written + encoded
 							]
 							displacement: 0 - ((region-base + slot) * 8)
@@ -8068,7 +8096,7 @@ arm64-codegen: context [
 								compiler-frame-store at
 									(capacity - written) target displacement width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 683 "compile-function/code#145"]
 							written: written + encoded
 							scratch/stack-locations/slot: LOCATION_FRAME
 							scratch/stack-low/slot: displacement
@@ -8089,7 +8117,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: compiler-frame-store at (capacity - written)
 							scratch/stack-low/callee-slot displacement 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 684 "compile-function/code#146"]
 						written: written + encoded
 						scratch/stack-locations/callee-slot: LOCATION_FRAME
 						scratch/stack-low/callee-slot: displacement
@@ -8109,7 +8137,7 @@ arm64-codegen: context [
 						if parameter/flags = INLINE [
 							status: abi-parameter-location view layout call-source
 								call-first-parameter call-parameter-count slot abi-location
-							if status < 0 [return status]
+							if status < 0 [return fail-code status 685 "compile-function/code#147"]
 							if abi-location/class = ABI_INDIRECT [
 								argument-slot: argument-origin + slot
 								unless all [
@@ -8120,18 +8148,18 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch argument-slot
 									arm64-encoder/X15 parameter/type at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 686 "compile-function/code#148"]
 								written: written + encoded
 								copy-offset: fixed-stack-size + abi-location/copy-offset
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/address-offset at (capacity - written)
 									arm64-encoder/X14 arm64-encoder/SP copy-offset arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 687 "compile-function/code#149"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: emit-memory-copy at (capacity - written)
 									arm64-encoder/X14 arm64-encoder/X15 abi-location/size
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 688 "compile-function/code#150"]
 								written: written + encoded
 							]
 						]
@@ -8161,25 +8189,25 @@ arm64-codegen: context [
 							encoded: arm64-encoder/move-immediate at
 								(capacity - written) arm64-encoder/X16 4
 								typed-member/flags 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 689 "compile-function/code#151"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/register-store at
 								(capacity - written) arm64-encoder/X16 arm64-encoder/SP
 								record-offset 4 arm64-encoder/X17
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 690 "compile-function/code#152"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/register-store at
 								(capacity - written) arm64-encoder/ZR arm64-encoder/SP
 								(record-offset + 4) 4 arm64-encoder/X17
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 691 "compile-function/code#153"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/register-store at
 								(capacity - written) arm64-encoder/ZR arm64-encoder/SP
 								(record-offset + 8) 8 arm64-encoder/X17
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 692 "compile-function/code#154"]
 							written: written + encoded
 							floating?: float-type? ref view
 							target: either floating? [
@@ -8188,14 +8216,14 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch argument-slot target ref
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 693 "compile-function/code#155"]
 							written: written + encoded
 							if all [not floating? width < 4][
 								load-signed: either signed-type? ref view [1][0]
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/extend-register at
 									(capacity - written) target target width load-signed
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 694 "compile-function/code#156"]
 								written: written + encoded
 							]
 							at: either null? code [as byte-ptr! 0][code + written]
@@ -8208,7 +8236,7 @@ arm64-codegen: context [
 									target arm64-encoder/SP (record-offset + 8) 8
 									arm64-encoder/X17
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 695 "compile-function/code#157"]
 							written: written + encoded
 							either any [kind = 7 kind = 8][
 								if width = 8 [
@@ -8216,7 +8244,7 @@ arm64-codegen: context [
 									encoded: arm64-encoder/shift-immediate at
 										(capacity - written) arm64-encoder/SHIFT_RIGHT
 										arm64-encoder/X17 arm64-encoder/X16 32 8
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 696 "compile-function/code#158"]
 									written: written + encoded
 								]
 								target: either width = 8 [arm64-encoder/X17][arm64-encoder/ZR]
@@ -8224,7 +8252,7 @@ arm64-codegen: context [
 								encoded: arm64-encoder/register-store at
 									(capacity - written) target
 									arm64-encoder/SP (record-offset + 16) 4 arm64-encoder/X16
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 697 "compile-function/code#159"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/register-store at
@@ -8236,19 +8264,19 @@ arm64-codegen: context [
 									(capacity - written) arm64-encoder/ZR arm64-encoder/SP
 									(record-offset + 16) 8 arm64-encoder/X17
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 698 "compile-function/code#160"]
 							written: written + encoded
 							slot: slot - 1
 						]
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/move-immediate at
 							(capacity - written) arm64-encoder/X0 4 argument-count 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 699 "compile-function/code#161"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/move-register at (capacity - written)
 							arm64-encoder/X1 arm64-encoder/SP 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 700 "compile-function/code#162"]
 						written: written + encoded
 						slot: 0
 					]
@@ -8268,25 +8296,25 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch argument-slot
 								arm64-encoder/X16 ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 701 "compile-function/code#163"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/register-store at (capacity - written)
 								arm64-encoder/X16 arm64-encoder/SP ((slot - 1) * 8)
 								8 arm64-encoder/X17
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 702 "compile-function/code#164"]
 							written: written + encoded
 							slot: slot + 1
 						]
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/move-immediate at (capacity - written)
 							arm64-encoder/X0 4 argument-count 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 703 "compile-function/code#165"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/move-register at (capacity - written)
 							arm64-encoder/X1 arm64-encoder/SP 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 704 "compile-function/code#166"]
 						written: written + encoded
 						slot: 0
 					]
@@ -8309,7 +8337,7 @@ arm64-codegen: context [
 						status: abi-parameter-location view layout call-source
 							call-first-parameter call-parameter-count
 							call-parameter-count abi-location
-						if status < 0 [return status]
+						if status < 0 [return fail-code status 705 "compile-function/code#167"]
 						named-integers: abi-location/integer-used
 						named-floats: abi-location/float-used
 					]
@@ -8322,7 +8350,7 @@ arm64-codegen: context [
 							parameter: call-parameter view call-source call-first-parameter slot
 							status: abi-parameter-location view layout call-source
 								call-first-parameter call-parameter-count slot abi-location
-							if status < 0 [return status]
+							if status < 0 [return fail-code status 706 "compile-function/code#168"]
 							if parameter/flags = INLINE [
 								unless all [
 									aggregate-ref? parameter/type view
@@ -8333,7 +8361,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch argument-slot arm64-encoder/X15
 									parameter/type at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 707 "compile-function/code#169"]
 								written: written + encoded
 								case [
 									abi-location/class = ABI_GPR [
@@ -8346,7 +8374,7 @@ arm64-codegen: context [
 											encoded: emit-aggregate-chunk-load at (capacity - written)
 												(abi-location/register-index + case-index) arm64-encoder/X15
 												chunk-offset chunk-size
-											if encoded < 0 [return encoded]
+											if encoded < 0 [return fail-code encoded 708 "compile-function/code#170"]
 											written: written + encoded
 											chunk-offset: chunk-offset + 8
 											case-index: case-index + 1
@@ -8361,7 +8389,7 @@ arm64-codegen: context [
 												(capacity - written) (abi-location/register-index + case-index)
 												arm64-encoder/X15 chunk-offset abi-location/hfa-width
 												arm64-encoder/X16
-											if encoded < 0 [return OUTPUT_FULL]
+											if encoded < 0 [return fail-code encoded 709 "compile-function/code#171"]
 											written: written + encoded
 											chunk-offset: chunk-offset + abi-location/hfa-width
 											case-index: case-index + 1
@@ -8372,12 +8400,12 @@ arm64-codegen: context [
 										encoded: arm64-encoder/address-offset at (capacity - written)
 											arm64-encoder/X14 arm64-encoder/SP
 											abi-location/stack-offset arm64-encoder/X16
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 710 "compile-function/code#172"]
 										written: written + encoded
 										at: either null? code [as byte-ptr! 0][code + written]
 										encoded: emit-memory-copy at (capacity - written)
 											arm64-encoder/X14 arm64-encoder/X15 abi-location/size
-										if encoded < 0 [return encoded]
+										if encoded < 0 [return fail-code encoded 711 "compile-function/code#173"]
 										written: written + encoded
 									]
 									abi-location/class = ABI_INDIRECT [
@@ -8386,7 +8414,7 @@ arm64-codegen: context [
 										encoded: arm64-encoder/address-offset at (capacity - written)
 											arm64-encoder/X16 arm64-encoder/SP copy-offset
 											arm64-encoder/X17
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 712 "compile-function/code#174"]
 										written: written + encoded
 										either abi-location/register-index >= 0 [
 											at: either null? code [as byte-ptr! 0][code + written]
@@ -8398,7 +8426,7 @@ arm64-codegen: context [
 												arm64-encoder/X16 arm64-encoder/SP
 												abi-location/stack-offset 8 arm64-encoder/X17
 										]
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 713 "compile-function/code#175"]
 										written: written + encoded
 									]
 									true [return fail-invalid 327 "compile-function/written#161"]
@@ -8440,7 +8468,7 @@ arm64-codegen: context [
 									argument-origin call-parameter-count
 									(slot - call-parameter-count)
 									named-integers named-floats abi-location
-								if status < 0 [return status]
+								if status < 0 [return fail-code status 714 "compile-function/code#176"]
 								stack-offset: either abi-location/class = ABI_STACK [
 									abi-location/stack-offset
 								][-1]
@@ -8463,7 +8491,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch argument-slot
 								parameter-register target-ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 715 "compile-function/code#177"]
 							written: written + encoded
 						][
 							if slot > call-parameter-count [
@@ -8475,7 +8503,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch argument-slot target
 								target-ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 716 "compile-function/code#178"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: either floating? [
@@ -8486,7 +8514,7 @@ arm64-codegen: context [
 								arm64-encoder/register-store at (capacity - written)
 									target arm64-encoder/SP stack-offset width arm64-encoder/X17
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 717 "compile-function/code#179"]
 							written: written + encoded
 						]
 						slot: slot - 1
@@ -8503,7 +8531,7 @@ arm64-codegen: context [
 							encoded: arm64-encoder/address-offset at (capacity - written)
 								arm64-encoder/X8 compiler-frame-register result-offset
 								arm64-encoder/X16
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 718 "compile-function/code#180"]
 							written: written + encoded
 						]
 					]
@@ -8511,13 +8539,13 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: materialize view scratch callee-slot
 							arm64-encoder/X17 call-signature at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 719 "compile-function/code#181"]
 						written: written + encoded
 					]
 					unless syscall? [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: emit-frame-normalize plan at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 720 "compile-function/code#182"]
 						written: written + encoded
 					]
 					case [
@@ -8534,7 +8562,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/move-immediate at
 							(capacity - written) trap-number-register 8 syscall-id 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 721 "compile-function/code#183"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/svc at
@@ -8553,7 +8581,7 @@ arm64-codegen: context [
 						call-target < 0 [
 							status: record-reference call-reference
 								(function-base + written) references
-							if status < 0 [return status]
+							if status < 0 [return fail-code status 722 "compile-function/code#184"]
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/call-relative at
 								(capacity - written) displacement
@@ -8567,7 +8595,7 @@ arm64-codegen: context [
 								encoded: materialize view scratch argument-slot
 									arm64-encoder/X0 scratch/stack-types/argument-slot
 									at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 723 "compile-function/code#185"]
 								written: written + encoded
 							]
 							at: either null? code [as byte-ptr! 0][code + written]
@@ -8575,12 +8603,12 @@ arm64-codegen: context [
 								(capacity - written) arm64-encoder/X17
 						]
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 724 "compile-function/code#186"]
 					written: written + encoded
 					unless syscall? [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: emit-visible-frame-restore plan at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 725 "compile-function/code#187"]
 						written: written + encoded
 					]
 					depth: argument-base
@@ -8590,7 +8618,7 @@ arm64-codegen: context [
 							encoded: arm64-encoder/address-offset at (capacity - written)
 								arm64-encoder/X15 compiler-frame-register result-offset
 								arm64-encoder/X16
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 726 "compile-function/code#188"]
 							written: written + encoded
 							case [
 								aggregate-copy? []
@@ -8602,7 +8630,7 @@ arm64-codegen: context [
 										encoded: arm64-encoder/float-register-store at
 											(capacity - written) case-index arm64-encoder/X15
 											(case-index * width) width arm64-encoder/X16
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 727 "compile-function/code#189"]
 										written: written + encoded
 										case-index: case-index + 1
 									]
@@ -8617,7 +8645,7 @@ arm64-codegen: context [
 										encoded: emit-aggregate-chunk-store at
 											(capacity - written) case-index arm64-encoder/X15
 											chunk-offset chunk-size
-										if encoded < 0 [return encoded]
+										if encoded < 0 [return fail-code encoded 728 "compile-function/code#190"]
 										written: written + encoded
 										chunk-offset: chunk-offset + 8
 										case-index: case-index + 1
@@ -8639,7 +8667,7 @@ arm64-codegen: context [
 								encoded: arm64-encoder/extend-register at
 									(capacity - written) arm64-encoder/X0
 									arm64-encoder/X0 width load-signed
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 729 "compile-function/code#191"]
 								written: written + encoded
 							]
 							depth: depth + 1
@@ -8669,7 +8697,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: compiler-frame-store at (capacity - written)
 							arm64-encoder/LR (0 - ((region-limit + 1) * 8)) 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 730 "compile-function/code#192"]
 						written: written + encoded
 					]
 				]
@@ -8716,7 +8744,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch slot target ref
 									at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 731 "compile-function/code#193"]
 								written: written + encoded
 							]
 							displacement: 0 - ((region-base + slot) * 8)
@@ -8728,7 +8756,7 @@ arm64-codegen: context [
 								compiler-frame-store at
 									(capacity - written) target displacement width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 732 "compile-function/code#194"]
 							written: written + encoded
 							scratch/stack-locations/slot: LOCATION_FRAME
 							scratch/stack-low/slot: displacement
@@ -8742,7 +8770,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/call-relative at
 						(capacity - written) displacement
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 733 "compile-function/code#195"]
 					written: written + encoded
 					target: first-instruction + instruction/a
 					either (scratch/instruction-effects/target and EFFECT_RESUMES) = 0 [
@@ -8758,7 +8786,7 @@ arm64-codegen: context [
 								encoded: arm64-encoder/extend-register at
 									(capacity - written) arm64-encoder/X0
 									arm64-encoder/X0 width load-signed
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 734 "compile-function/code#196"]
 								written: written + encoded
 							]
 							depth: depth + 1
@@ -8802,7 +8830,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: materialize view scratch depth arm64-encoder/X0
 							instruction/a at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 735 "compile-function/code#197"]
 						written: written + encoded
 					]
 					depth: 0
@@ -8810,12 +8838,12 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: compiler-frame-load at (capacity - written)
 							arm64-encoder/LR (0 - ((region-limit + 1) * 8)) 8 0 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 736 "compile-function/code#198"]
 						written: written + encoded
 					]
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/return-near at (capacity - written)
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 737 "compile-function/code#199"]
 					written: written + encoded
 					fallthrough?: false
 				]
@@ -8866,7 +8894,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: materialize view scratch depth target ref
 						at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 738 "compile-function/code#200"]
 					written: written + encoded
 					at: either null? code [as byte-ptr! 0][code + written]
 					result-width: either width = 8 [8][4]
@@ -8877,14 +8905,14 @@ arm64-codegen: context [
 						arm64-encoder/move-not-register at (capacity - written)
 							target target result-width
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 739 "compile-function/code#201"]
 					written: written + encoded
 					if all [kind <> 11 width < 4][
 						load-signed: either signed-type? ref view [1][0]
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/extend-register at (capacity - written)
 							target target width load-signed
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 740 "compile-function/code#202"]
 						written: written + encoded
 					]
 					scratch/stack-locations/depth: LOCATION_REGISTER
@@ -9107,7 +9135,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: canonicalize-stack view scratch base-depth
 							region-base region-limit at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 741 "compile-function/code#203"]
 						written: written + encoded
 						unless merge-control-target overflow-target base-depth fn
 							view scratch instruction-depths entry-types
@@ -9119,7 +9147,7 @@ arm64-codegen: context [
 						width: value-width operation-ref view
 						target: FIRST_FLOAT_TEMP_REGISTER + source-slot - 1
 						if target >= (FIRST_FLOAT_TEMP_REGISTER
-							+ FLOAT_TEMP_REGISTER_COUNT)[return fail-unsupported 360 "compile-function#194"]
+							+ FLOAT_TEMP_REGISTER_COUNT)[return fail-limit 360 "compile-function/float-temporary-limit"]
 						right: FLOAT_SCRATCH_REGISTER
 						if all [
 							scratch/stack-locations/depth = LOCATION_REGISTER
@@ -9132,7 +9160,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth FLOAT_SCRATCH_REGISTER
 								operation-ref at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 742 "compile-function/code#204"]
 							written: written + encoded
 							right: FLOAT_SCRATCH_REGISTER
 							right-ready?: true
@@ -9140,13 +9168,13 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: materialize view scratch source-slot target
 							operation-ref at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 743 "compile-function/code#205"]
 						written: written + encoded
 						if all [right = FLOAT_SCRATCH_REGISTER not right-ready?][
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth right operation-ref
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 744 "compile-function/code#206"]
 							written: written + encoded
 						]
 						at: either null? code [as byte-ptr! 0][code + written]
@@ -9173,7 +9201,7 @@ arm64-codegen: context [
 							]
 							true [-1]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 745 "compile-function/code#207"]
 						written: written + encoded
 						depth: source-slot
 						scratch/stack-types/depth: either comparison? [-11][operation-ref]
@@ -9196,14 +9224,14 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/condition-result at
 								(capacity - written) target condition
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 746 "compile-function/code#208"]
 							written: written + encoded
 							either target = arm64-encoder/X17 [
 								displacement: 0 - ((region-base + depth) * 8)
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: compiler-frame-store at
 									(capacity - written) target displacement 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 747 "compile-function/code#209"]
 								written: written + encoded
 								scratch/stack-locations/depth: LOCATION_FRAME
 								scratch/stack-low/depth: displacement
@@ -9266,13 +9294,13 @@ arm64-codegen: context [
 							encoded: emit-pointer-binary view layout scratch
 								source-slot depth arm64-encoder/X16 operation
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 748 "compile-function/code#210"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-register at
 								(capacity - written) arm64-encoder/X17
 								arm64-encoder/X16 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 749 "compile-function/code#211"]
 							written: written + encoded
 							depth: source-slot
 							scratch/stack-types/depth: left-ref
@@ -9285,7 +9313,7 @@ arm64-codegen: context [
 							encoded: compiler-frame-store at
 								(capacity - written) arm64-encoder/X17
 								scratch/stack-low/depth 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 750 "compile-function/code#212"]
 							written: written + encoded
 							last-math-condition: -1
 							index: index + 1
@@ -9298,7 +9326,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch source-slot left left-ref
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 751 "compile-function/code#213"]
 							written: written + encoded
 						]
 						right: arm64-encoder/X17
@@ -9308,7 +9336,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth right right-ref
 								at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 752 "compile-function/code#214"]
 							written: written + encoded
 						]
 						either comparison? [
@@ -9324,12 +9352,12 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/compare-register at
 								(capacity - written) left right width
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 753 "compile-function/code#215"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/condition-result at
 								(capacity - written) right condition
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 754 "compile-function/code#216"]
 							written: written + encoded
 							depth: source-slot
 							scratch/stack-types/depth: -11
@@ -9354,7 +9382,7 @@ arm64-codegen: context [
 										(capacity - written) right left right width
 								]
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 755 "compile-function/code#217"]
 							written: written + encoded
 							depth: source-slot
 							scratch/stack-types/depth: left-ref
@@ -9363,7 +9391,7 @@ arm64-codegen: context [
 						encoded: compiler-frame-store at
 							(capacity - written) right
 							(0 - ((region-base + depth) * 8)) 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 756 "compile-function/code#218"]
 						written: written + encoded
 						scratch/stack-kinds/depth: VALUE
 						scratch/stack-locations/depth: LOCATION_FRAME
@@ -9401,7 +9429,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: emit-pointer-binary view layout scratch source-slot depth
 							target operation at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 757 "compile-function/code#219"]
 						written: written + encoded
 						depth: source-slot
 						scratch/stack-types/depth: left-ref
@@ -9419,14 +9447,14 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: materialize view scratch source-slot left left-ref
 							at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 758 "compile-function/code#220"]
 						written: written + encoded
 					]
 					if all [operation = SHIFT_LOGICAL_OPERATION result-width < 4][
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/extend-register at (capacity - written)
 							arm64-encoder/X16 left result-width 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 759 "compile-function/code#221"]
 						written: written + encoded
 						left: arm64-encoder/X16
 					]
@@ -9474,24 +9502,24 @@ arm64-codegen: context [
 									]
 									encoded: materialize view scratch depth right
 										left-ref at (capacity - written)
-									if encoded < 0 [return encoded]
+									if encoded < 0 [return fail-code encoded 760 "compile-function/code#222"]
 									written: written + encoded
 								]
 								right-ready?: true
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/compare-negative-immediate
 									at (capacity - written) right 1 width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 761 "compile-function/code#223"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/branch-condition at
 									(capacity - written) arm64-encoder/NE 12
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 762 "compile-function/code#224"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/compare-immediate at
 									(capacity - written) left 1 width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 763 "compile-function/code#225"]
 								written: written + encoded
 								displacement: either null? code [0][
 									instruction-offsets/overflow-target - written
@@ -9499,7 +9527,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/branch-condition at
 									(capacity - written) arm64-encoder/VS displacement
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 764 "compile-function/code#226"]
 								written: written + encoded
 							]
 							all [
@@ -9516,7 +9544,7 @@ arm64-codegen: context [
 								encoded: arm64-encoder/shift-immediate at
 									(capacity - written) arm64-encoder/SHIFT_LEFT
 									arm64-encoder/X17 left shift-count width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 765 "compile-function/code#227"]
 								written: written + encoded
 								condition: either load-signed = 1 [
 									arm64-encoder/SHIFT_ARITHMETIC
@@ -9525,12 +9553,12 @@ arm64-codegen: context [
 								encoded: arm64-encoder/shift-immediate at
 									(capacity - written) condition arm64-encoder/X17
 									arm64-encoder/X17 shift-count width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 766 "compile-function/code#228"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/compare-register at
 									(capacity - written) arm64-encoder/X17 left width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 767 "compile-function/code#229"]
 								written: written + encoded
 								displacement: either null? code [0][
 									instruction-offsets/overflow-target - written
@@ -9538,7 +9566,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/branch-condition at
 									(capacity - written) arm64-encoder/NE displacement
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 768 "compile-function/code#230"]
 								written: written + encoded
 							]
 							true [0]
@@ -9634,7 +9662,7 @@ arm64-codegen: context [
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: materialize view scratch depth right left-ref
 									at (capacity - written)
-								if encoded < 0 [return encoded]
+								if encoded < 0 [return fail-code encoded 769 "compile-function/code#231"]
 								written: written + encoded
 							]
 						]
@@ -9683,7 +9711,7 @@ arm64-codegen: context [
 									at: either null? code [as byte-ptr! 0][code + written]
 									encoded: arm64-encoder/move-register at
 										(capacity - written) arm64-encoder/X16 left width
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 770 "compile-function/code#232"]
 									written: written + encoded
 									left: arm64-encoder/X16
 								]
@@ -9691,7 +9719,7 @@ arm64-codegen: context [
 									at: either null? code [as byte-ptr! 0][code + written]
 									encoded: arm64-encoder/move-register at
 										(capacity - written) arm64-encoder/X17 right width
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 771 "compile-function/code#233"]
 									written: written + encoded
 									right: arm64-encoder/X17
 								]
@@ -9700,12 +9728,12 @@ arm64-codegen: context [
 								encoded: arm64-encoder/divide-register at
 									(capacity - written) target left right width
 									load-signed
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 772 "compile-function/code#234"]
 								written: written + encoded
 								at: either null? code [as byte-ptr! 0][code + written]
 								encoded: arm64-encoder/multiply-subtract at
 									(capacity - written) target target right left width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 773 "compile-function/code#235"]
 								written: written + encoded
 								0
 							]
@@ -9749,7 +9777,7 @@ arm64-codegen: context [
 							true [-1]
 						]
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 774 "compile-function/code#236"]
 					written: written + encoded
 					if all [
 						not tracked?
@@ -9761,7 +9789,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/compare-extended-register at
 							(capacity - written) target target 4 result-width load-signed
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 775 "compile-function/code#237"]
 						written: written + encoded
 						last-math-condition: arm64-encoder/NE
 					]
@@ -9790,7 +9818,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/branch-condition at
 								(capacity - written) overflow-condition displacement
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 776 "compile-function/code#238"]
 							written: written + encoded
 						]
 						if result-width < 4 [
@@ -9801,7 +9829,7 @@ arm64-codegen: context [
 							encoded: arm64-encoder/compare-extended-register at
 								(capacity - written) target target width result-width
 								load-signed
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 777 "compile-function/code#239"]
 							written: written + encoded
 							displacement: either null? code [0][
 								instruction-offsets/overflow-target - written
@@ -9809,7 +9837,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/branch-condition at
 								(capacity - written) arm64-encoder/NE displacement
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 778 "compile-function/code#240"]
 							written: written + encoded
 						]
 					]
@@ -9820,30 +9848,30 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/compare-immediate at
 								(capacity - written) right 0 width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 779 "compile-function/code#241"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/conditional-negate at
 								(capacity - written) arm64-encoder/X16 right width
 								arm64-encoder/MI
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 780 "compile-function/code#242"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/compare-immediate at
 							(capacity - written) target 0 width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 781 "compile-function/code#243"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/conditional-select at
 							(capacity - written) arm64-encoder/X16 arm64-encoder/X16
 								arm64-encoder/ZR
 							width arm64-encoder/MI
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 782 "compile-function/code#244"]
 						written: written + encoded
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/add-register at
 							(capacity - written) target target arm64-encoder/X16 width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 783 "compile-function/code#245"]
 						written: written + encoded
 					]
 					if all [not comparison? result-width < 4][
@@ -9851,7 +9879,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/extend-register at (capacity - written)
 							target target result-width load-signed
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 784 "compile-function/code#246"]
 						written: written + encoded
 					]
 					depth: source-slot
@@ -9866,7 +9894,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/condition-result at
 							(capacity - written) target condition
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 785 "compile-function/code#247"]
 						written: written + encoded
 						scratch/stack-locations/depth: LOCATION_REGISTER
 						scratch/stack-low/depth: target
@@ -9898,7 +9926,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: canonicalize-stack view scratch depth
 						region-base region-limit at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 786 "compile-function/code#248"]
 					written: written + encoded
 					catch-level: catch-depths/ordinal
 					catch-unwind: instruction/c
@@ -9906,7 +9934,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: emit-catch-restore at (capacity - written)
 							catch-level
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 787 "compile-function/code#249"]
 						written: written + encoded
 						catch-level: catch-level - 1
 						catch-unwind: catch-unwind - 1
@@ -9932,7 +9960,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/branch-relative at
 						(capacity - written) displacement
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 788 "compile-function/code#250"]
 					written: written + encoded
 					fallthrough?: false
 				]
@@ -9955,7 +9983,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: materialize view scratch source-slot arm64-encoder/X17
 							-11 at (capacity - written)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 789 "compile-function/code#251"]
 						written: written + encoded
 						scratch/stack-locations/source-slot: LOCATION_REGISTER
 						scratch/stack-low/source-slot: arm64-encoder/X17
@@ -9965,7 +9993,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: canonicalize-stack view scratch depth
 						region-base region-limit at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 790 "compile-function/code#252"]
 					written: written + encoded
 					;-- A no-value sub-return tolerates one leftover stack
 					;-- slot, so a path arriving with depth 1 merges as 0.
@@ -10012,7 +10040,7 @@ arm64-codegen: context [
 						]
 						true [return fail-invalid 376 "compile-function/instruction/b#210"]
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 791 "compile-function/code#253"]
 					written: written + encoded
 				]
 				instruction/op = OP_SWITCH [
@@ -10035,13 +10063,13 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: materialize view scratch depth arm64-encoder/X17 ref
 						at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 792 "compile-function/code#254"]
 					written: written + encoded
 					depth: depth - 1
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: canonicalize-stack view scratch depth
 						region-base region-limit at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 793 "compile-function/code#255"]
 					written: written + encoded
 					case-index: 0
 					while [case-index < instruction/b][
@@ -10064,14 +10092,14 @@ arm64-codegen: context [
 							encoded: arm64-encoder/move-immediate at
 								(capacity - written) arm64-encoder/X16 result-width
 								switch-case/low switch-case/high
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 794 "compile-function/code#256"]
 							written: written + encoded
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/compare-register at
 								(capacity - written) arm64-encoder/X17
 								arm64-encoder/X16 result-width
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 795 "compile-function/code#257"]
 						written: written + encoded
 						displacement: either null? code [0][
 							instruction-offsets/target - written
@@ -10079,7 +10107,7 @@ arm64-codegen: context [
 						at: either null? code [as byte-ptr! 0][code + written]
 						encoded: arm64-encoder/branch-condition at
 							(capacity - written) arm64-encoder/EQ displacement
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 796 "compile-function/code#258"]
 						written: written + encoded
 						case-index: case-index + 1
 					]
@@ -10105,7 +10133,7 @@ arm64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/branch-relative at
 						(capacity - written) displacement
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 797 "compile-function/code#259"]
 					written: written + encoded
 					fallthrough?: false
 				]
@@ -10115,7 +10143,7 @@ arm64-codegen: context [
 					][return fail-invalid 380 "compile-function/instruction/a#214"]
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: arm64-encoder/trap at (capacity - written)
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 798 "compile-function/code#260"]
 					written: written + encoded
 					fallthrough?: false
 				]
@@ -10131,7 +10159,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: arm64-encoder/move-immediate at
 								(capacity - written) arm64-encoder/X0 4 0 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 799 "compile-function/code#261"]
 							written: written + encoded
 						]
 					][
@@ -10155,7 +10183,7 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth arm64-encoder/X15
 								instruction/a at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 800 "compile-function/code#262"]
 							written: written + encoded
 							case [
 								hfa-return? [
@@ -10167,7 +10195,7 @@ arm64-codegen: context [
 											(capacity - written) case-index arm64-encoder/X15
 											(case-index * return-width) return-width
 											arm64-encoder/X16
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 801 "compile-function/code#263"]
 										written: written + encoded
 										case-index: case-index + 1
 									]
@@ -10182,7 +10210,7 @@ arm64-codegen: context [
 										encoded: emit-aggregate-chunk-load at
 											(capacity - written) case-index arm64-encoder/X15
 											return-chunk-offset return-chunk-size
-										if encoded < 0 [return encoded]
+										if encoded < 0 [return fail-code encoded 802 "compile-function/code#264"]
 										written: written + encoded
 										return-chunk-offset: return-chunk-offset + 8
 										case-index: case-index + 1
@@ -10194,12 +10222,12 @@ arm64-codegen: context [
 									encoded: compiler-frame-load at
 										(capacity - written) arm64-encoder/X14
 										plan/hidden-return-offset 8 0 8
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 803 "compile-function/code#265"]
 									written: written + encoded
 									at: either null? code [as byte-ptr! 0][code + written]
 									encoded: emit-memory-copy at (capacity - written)
 										arm64-encoder/X14 arm64-encoder/X15 return-size
-									if encoded < 0 [return encoded]
+									if encoded < 0 [return fail-code encoded 804 "compile-function/code#266"]
 									written: written + encoded
 								]
 							]
@@ -10213,14 +10241,14 @@ arm64-codegen: context [
 							at: either null? code [as byte-ptr! 0][code + written]
 							encoded: materialize view scratch depth arm64-encoder/X0
 								instruction/a at (capacity - written)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 805 "compile-function/code#267"]
 							written: written + encoded
 						]
 						depth: 0
 					]
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: emit-epilogue plan at (capacity - written)
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 806 "compile-function/code#268"]
 					written: written + encoded
 					return-count: return-count + 1
 					fallthrough?: false
@@ -10229,7 +10257,7 @@ arm64-codegen: context [
 			]
 			index: index + 1
 		]
-		either not fallthrough? [written][INVALID_IR]
+		either not fallthrough? [written][fail-invalid 866 "compile-function/invalid#274"]
 	]
 
 	release: func [memory [byte-ptr!] result [integer!] return: [integer!]][
@@ -10286,8 +10314,10 @@ arm64-codegen: context [
 		target-abi: abi
 		if any [null? output capacity < 0][return fail-invalid 390 "generate/output#1"]
 		unless any [opt-level = 0 opt-level = 2][return fail-unsupported 391 "generate/opt-level#2"]
-		if (codegen-rsir-reader/open data size view) <> 0 [return fail-invalid 392 "generate/codegen-rsir-reader/open#3"]
+		status: codegen-rsir-reader/open data size view
+		if status <> 0 [return status]
 		header: view/header
+		codegen-diag/bind-module header view/functions view/lines view/file-table view/strings
 		startup?: all [
 			header/module-kind = 3
 			startup-registers-used? view
@@ -10304,35 +10334,35 @@ arm64-codegen: context [
 			]
 			id: id + 1
 		]
-		if header/function-count > (2147483647 / 7)[return OUTPUT_FULL]
+		if header/function-count > (2147483647 / 7)[return fail-limit 867 "generate/limit#9"]
 		words: header/function-count * 7
-		if max-storage > ((2147483647 - words) / 3)[return OUTPUT_FULL]
+		if max-storage > ((2147483647 - words) / 3)[return fail-limit 868 "generate/limit#10"]
 		words: words + (max-storage * 3)
-		if max-instructions > ((2147483647 - words) / 9)[return OUTPUT_FULL]
+		if max-instructions > ((2147483647 - words) / 9)[return fail-limit 869 "generate/limit#11"]
 		words: words + (max-instructions * 9)
 		if header/instruction-count > ((2147483647 - words) / 9)[
-			return OUTPUT_FULL
+			return fail-limit 870 "generate/limit#12"
 		]
 		words: words + (header/instruction-count * 9)
-		if header/switch-count > ((2147483647 - words) / 2)[return OUTPUT_FULL]
+		if header/switch-count > ((2147483647 - words) / 2)[return fail-limit 871 "generate/limit#13"]
 		words: words + (header/switch-count * 2)
-		if header/global-count > ((2147483647 - words) / 6)[return OUTPUT_FULL]
+		if header/global-count > ((2147483647 - words) / 6)[return fail-limit 872 "generate/limit#14"]
 		words: words + (header/global-count * 6)
 		if header/function-count > (2147483647 - header/global-count)[
-			return OUTPUT_FULL
+			return fail-limit 873 "generate/limit#15"
 		]
 		target-count: header/function-count + header/global-count
-		if target-count > (2147483647 - header/import-count)[return OUTPUT_FULL]
+		if target-count > (2147483647 - header/import-count)[return fail-limit 874 "generate/limit#16"]
 		target-count: target-count + header/import-count
-		if target-count > ((2147483647 - words) / 3)[return OUTPUT_FULL]
+		if target-count > ((2147483647 - words) / 3)[return fail-limit 875 "generate/limit#17"]
 		words: words + (target-count * 3)
-		if header/type-count > ((2147483647 - words) / 2)[return OUTPUT_FULL]
+		if header/type-count > ((2147483647 - words) / 2)[return fail-limit 876 "generate/limit#18"]
 		words: words + (header/type-count * 2)
-		if view/member-count > (2147483647 - words)[return OUTPUT_FULL]
+		if view/member-count > (2147483647 - words)[return fail-limit 877 "generate/limit#19"]
 		words: words + view/member-count
-		if words > (2147483647 / 4)[return OUTPUT_FULL]
+		if words > (2147483647 / 4)[return fail-limit 878 "generate/limit#20"]
 		memory: allocate words * 4
-		if null? memory [return OUTPUT_FULL]
+		if null? memory [return fail-memory 879 "generate/memory#21"]
 		function-sizes: as int-ptr! memory
 		function-offsets: function-sizes + header/function-count
 		function-frames: function-offsets + header/function-count
@@ -10406,6 +10436,8 @@ arm64-codegen: context [
 		first-instruction: 0
 		id: 1
 		while [id <= header/function-count][
+			codegen-diag/mark-phase "plan"
+			codegen-diag/mark-function id
 			fn: as rsir-function! (view/functions
 				+ ((id - 1) * RSIR_FUNCTION_SIZE))
 			instruction-starts/id: first-instruction
@@ -10463,19 +10495,19 @@ arm64-codegen: context [
 			]
 		]
 		status: prepare-subroutine-effects view scratch
-		if status < 0 [return release memory status]
+		if status < 0 [return release memory fail-code status 807 "generate/code#1"]
 		status: prepare-control-targets view scratch
-		if status < 0 [return release memory status]
+		if status < 0 [return release memory fail-code status 808 "generate/code#2"]
 
 		data-size: 16
 		rodata-size: 0
 		status: prepare-global-data view layout reference-state
 			global-offsets global-sizes global-owners global-children global-siblings
 			:data-size :rodata-size
-		if status < 0 [return release memory status]
+		if status < 0 [return release memory fail-code status 809 "generate/code#3"]
 
 		bitmap-base: align data-size 8
-		if any [bitmap-base < 0 bitmap-base > (2147483647 - 4)][return release memory OUTPUT_FULL]
+		if any [bitmap-base < 0 bitmap-base > (2147483647 - 4)][return release memory fail-limit 880 "generate/limit#22"]
 		bitmap-base: bitmap-base + 4
 		bitmap-size: 0
 		code-size: 0
@@ -10490,14 +10522,14 @@ arm64-codegen: context [
 			unwind?: unwind-value <> 0
 			status: plan-function view layout fn first-instruction startup-entry?
 				unwind? scratch plan
-			if status < 0 [return release memory status]
+			if status < 0 [return release memory fail-code status 810 "generate/code#4"]
 			plan/bitmap-index: bitmap-size / 4
 			bitmap-offsets/id: bitmap-base + bitmap-size
 			bitmap-sizes/id: stack-bitmap/record-size plan/bitmap-slots
 			if any [
 				bitmap-size > ((0FFFFFFFh * 4) - bitmap-sizes/id)
 				bitmap-sizes/id > (2147483647 - bitmap-base - bitmap-size)
-			][return release memory OUTPUT_FULL]
+			][return release memory fail-limit 881 "generate/limit#23"]
 			bitmap-size: bitmap-size + bitmap-sizes/id
 			function-frames/id: either all [
 				plan/home-count = 0
@@ -10509,16 +10541,18 @@ arm64-codegen: context [
 			][0][
 				16 + plan/frame-allocation
 			]
+			codegen-diag/mark-phase "measure"
 			codegen-diag/mark-function id
 			written: compile-function view layout fn first-instruction entry?
 				startup-entry? scratch plan reference-state as int-ptr! 0 0 null 0
-			if written < 0 [return release memory written]
+			if written < 0 [return release memory fail-code written 811 "generate/code#5"]
 			function-sizes/id: written
-			if code-size > (2147483647 - written)[return release memory OUTPUT_FULL]
+			if code-size > (2147483647 - written)[return release memory fail-limit 882 "generate/limit#24"]
 			code-size: code-size + written
 			first-instruction: first-instruction + fn/instruction-count
 			id: id + 1
 		]
+		codegen-diag/mark-phase "layout"
 		data-size: bitmap-base + bitmap-size
 		reference-count: 0
 		id: 1
@@ -10527,7 +10561,7 @@ arm64-codegen: context [
 				reference-count + 1
 			][0]
 			if reference-count > (2147483647 - reference-state/counts/id)[
-				return release memory OUTPUT_FULL
+				return release memory fail-limit 883 "generate/limit#25"
 			]
 			reference-count: reference-count + reference-state/counts/id
 			id: id + 1
@@ -10537,7 +10571,7 @@ arm64-codegen: context [
 		while [id <= header/import-count][
 			target-id: header/function-count + header/global-count + id
 			if reference-state/counts/target-id > 0 [
-				if used-import-count = 2147483647 [return release memory OUTPUT_FULL]
+				if used-import-count = 2147483647 [return release memory fail-limit 884 "generate/limit#26"]
 				used-import-count: used-import-count + 1
 			]
 			id: id + 1
@@ -10559,24 +10593,24 @@ arm64-codegen: context [
 		]
 
 		if header/function-count > ((2147483647 - IMAGE_HEADER_SIZE) / IMAGE_FUNCTION_SIZE)[
-			return release memory OUTPUT_FULL
+			return release memory fail-limit 885 "generate/limit#27"
 		]
 		metadata-size: IMAGE_HEADER_SIZE
 			+ (header/function-count * IMAGE_FUNCTION_SIZE)
 		if header/global-count > ((2147483647 - metadata-size) / IMAGE_GLOBAL_SIZE)[
-			return release memory OUTPUT_FULL
+			return release memory fail-limit 886 "generate/limit#28"
 		]
 		metadata-size: metadata-size + (header/global-count * IMAGE_GLOBAL_SIZE)
 		if used-import-count > ((2147483647 - metadata-size) / IMAGE_IMPORT_SIZE)[
-			return release memory OUTPUT_FULL
+			return release memory fail-limit 887 "generate/limit#29"
 		]
 		metadata-size: metadata-size + (used-import-count * IMAGE_IMPORT_SIZE)
 		if header/export-count > ((2147483647 - metadata-size) / IMAGE_EXPORT_SIZE)[
-			return release memory OUTPUT_FULL
+			return release memory fail-limit 888 "generate/limit#30"
 		]
 		metadata-size: metadata-size + (header/export-count * IMAGE_EXPORT_SIZE)
 		if reference-count > ((2147483647 - metadata-size) / 4)[
-			return release memory OUTPUT_FULL
+			return release memory fail-limit 889 "generate/limit#31"
 		]
 		metadata-size: metadata-size + (reference-count * 4)
 		names-size: 0
@@ -10584,7 +10618,7 @@ arm64-codegen: context [
 		while [id <= header/function-count][
 			fn: as rsir-function! (view/functions + ((id - 1) * RSIR_FUNCTION_SIZE))
 			if names-size > (2147483647 - fn/name-size)[
-				return release memory OUTPUT_FULL
+				return release memory fail-limit 890 "generate/limit#32"
 			]
 			names-size: names-size + fn/name-size
 			id: id + 1
@@ -10593,7 +10627,7 @@ arm64-codegen: context [
 		while [id <= header/global-count][
 			global: as rsir-global! (view/globals + ((id - 1) * RSIR_GLOBAL_SIZE))
 			if names-size > (2147483647 - global/name-size)[
-				return release memory OUTPUT_FULL
+				return release memory fail-limit 891 "generate/limit#33"
 			]
 			names-size: names-size + global/name-size
 			id: id + 1
@@ -10606,13 +10640,13 @@ arm64-codegen: context [
 				imported: as rsir-import! (view/imports + ((id - 1) * RSIR_IMPORT_SIZE))
 				if imported/library <> last-library [
 					if names-size > (2147483647 - imported/library-size)[
-						return release memory OUTPUT_FULL
+						return release memory fail-limit 892 "generate/limit#34"
 					]
 					names-size: names-size + imported/library-size
 					last-library: imported/library
 				]
 				if names-size > (2147483647 - imported/external-size)[
-					return release memory OUTPUT_FULL
+					return release memory fail-limit 893 "generate/limit#35"
 				]
 				names-size: names-size + imported/external-size
 			]
@@ -10622,36 +10656,36 @@ arm64-codegen: context [
 		while [id <= header/export-count][
 			exported: as rsir-export! (view/exports + ((id - 1) * RSIR_EXPORT_SIZE))
 			if names-size > (2147483647 - exported/name-size)[
-				return release memory OUTPUT_FULL
+				return release memory fail-limit 894 "generate/limit#36"
 			]
 			names-size: names-size + exported/name-size
 			id: id + 1
 		]
 		if metadata-size > (2147483647 - names-size - 15)[
-			return release memory OUTPUT_FULL
+			return release memory fail-limit 895 "generate/limit#37"
 		]
 		code-offset: align (metadata-size + names-size) 16
 		if any [code-offset < 0 code-offset > (2147483647 - code-size - 3)][
-			return release memory OUTPUT_FULL
+			return release memory fail-limit 896 "generate/limit#38"
 		]
 		rodata-offset: align (code-offset + code-size) 4
 		if rodata-offset > (2147483647 - rodata-size - 3)[
-			return release memory OUTPUT_FULL
+			return release memory fail-limit 897 "generate/limit#39"
 		]
 		data-offset: align (rodata-offset + rodata-size) 4
-		if data-offset > (2147483647 - data-size)[return release memory OUTPUT_FULL]
+		if data-offset > (2147483647 - data-size)[return release memory fail-limit 898 "generate/limit#40"]
 		; Debug builds append the sparse line records and the source file table
 				; with their name bytes directly after the data section. Without them
 				; the image still ends at the data section's last byte.
 		line-offset: align (data-offset + data-size) 4
 		debug-size: (header/line-record-count * 12) + (header/file-count * 8)
 		either debug-size > 0 [
-			if debug-size > (2147483647 - line-offset)[return release memory OUTPUT_FULL]
+			if debug-size > (2147483647 - line-offset)[return release memory fail-limit 899 "generate/limit#41"]
 			id: 1
 			while [id <= header/file-count][
 				file-entry: as rsir-file-entry! (view/file-table + ((id - 1) * RSIR_FILE_ENTRY_SIZE))
 				if debug-size > (2147483647 - file-entry/name-size)[
-					return release memory OUTPUT_FULL
+					return release memory fail-limit 900 "generate/limit#42"
 				]
 				debug-size: debug-size + file-entry/name-size
 				id: id + 1
@@ -10660,7 +10694,7 @@ arm64-codegen: context [
 		][
 			total-size: data-offset + data-size
 		]
-		if capacity < total-size [return release memory OUTPUT_FULL]
+		if capacity < total-size [return release memory fail-output total-size capacity 812 "generate/output-capacity"]
 
 		cursor: output
 		finish: output + total-size
@@ -10758,7 +10792,7 @@ arm64-codegen: context [
 			]
 			id: id + 1
 		]
-		if output-import-id <> used-import-count [return release memory INVALID_IR]
+		if output-import-id <> used-import-count [return release memory fail-mismatch used-import-count output-import-id 901 "generate/import-count-mismatch"]
 		id: 1
 		while [id <= header/export-count][
 			exported: as rsir-export! (view/exports + ((id - 1) * RSIR_EXPORT_SIZE))
@@ -10786,31 +10820,36 @@ arm64-codegen: context [
 			startup-entry?: all [entry? startup?]
 			unwind-value: function-unwind/id
 			unwind?: unwind-value <> 0
+			codegen-diag/mark-phase "plan"
 			codegen-diag/mark-function id
 			status: plan-function view layout fn instruction-starts/id startup-entry?
 				unwind? scratch plan
-			if status < 0 [return release memory status]
+			if status < 0 [return release memory fail-code status 813 "generate/code#6"]
 			plan/bitmap-index: (bitmap-offsets/id - bitmap-base) / 4
 			unless write-frame-bitmap (as int-ptr! (output + data-offset + bitmap-offsets/id))
-				view layout fn scratch plan [return release memory INVALID_IR]
+				view layout fn scratch plan [return release memory fail-internal 902 "generate/bitmap-plan"]
+			codegen-diag/mark-phase "emit"
+			codegen-diag/mark-function id
 			written: compile-function view layout fn instruction-starts/id
 				entry? startup-entry? scratch plan reference-state
 				function-offsets function-offsets/id
 				(code + function-offsets/id) function-sizes/id
+			if written < 0 [return release memory fail-code written 814 "generate/code#7"]
 			if written <> function-sizes/id [
-				return release memory either written < 0 [written][INVALID_IR]
+				return release memory fail-mismatch function-sizes/id written 815 "generate/emission-size-mismatch"
 			]
 			id: id + 1
 		]
+		codegen-diag/mark-phase "metadata"
 		rodata-output: output + rodata-offset
 		data-output: output + data-offset
 		status: write-global-data view reference-state global-offsets global-sizes
 			rodata-output data-output
-		if status < 0 [return release memory status]
+		if status < 0 [return release memory fail-code status 816 "generate/code#8"]
 		id: 1
 		while [id <= target-count][
 			if reference-state/cursors/id <> reference-state/counts/id [
-				return release memory INVALID_IR
+				return release memory fail-mismatch reference-state/counts/id reference-state/cursors/id 817 "generate/reference-count-mismatch"
 			]
 			id: id + 1
 		]
@@ -10849,7 +10888,7 @@ arm64-codegen: context [
 				]
 				pass: pass + 1
 			]
-			if emitted <> header/line-record-count [return release memory INVALID_IR]
+			if emitted <> header/line-record-count [return release memory fail-mismatch header/line-record-count emitted 903 "generate/line-record-count-mismatch"]
 			; Write the image's own file table with offsets into the name blob
 			; that follows it, then copy the file names out of the RSIR strings.
 			img-table: debug-cursor

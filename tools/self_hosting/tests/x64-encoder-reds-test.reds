@@ -473,7 +473,7 @@ if (x64-encoder/xmm-load-register code 128 x64-encoder/XMM0
 	failures: failures + 1
 ]
 if (x64-encoder/xmm-store-register code 3 x64-encoder/RAX
-	x64-encoder/XMM0 4) <> -1 [
+	x64-encoder/XMM0 4) <> x64-encoder/BUFFER_FULL [
 	failures: failures + 1
 ]
 size: x64-encoder/xmm-move-register code 128 x64-encoder/XMM1
@@ -546,13 +546,13 @@ if any [size <> 25 (compare-memory code expected size) <> 0][
 	failures: failures + 1
 ]
 if (x64-encoder/throw-unwind null 0 false) <> 24 [failures: failures + 1]
-if (x64-encoder/throw-unwind code 23 false) <> -1 [failures: failures + 1]
-if (x64-encoder/throw-unwind code 24 true) <> -1 [failures: failures + 1]
+if (x64-encoder/throw-unwind code 23 false) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
+if (x64-encoder/throw-unwind code 24 true) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
 if (x64-encoder/stack-top code 128) <> 3 [failures: failures + 1]
 if (x64-encoder/sign-extend-eax code 128) <> 3 [failures: failures + 1]
 if (x64-encoder/clear-register code 128 x64-encoder/R9) <> 3 [failures: failures + 1]
 
-if (x64-encoder/prolog code 14 0 0) <> -1 [failures: failures + 1]
+if (x64-encoder/prolog code 14 0 0) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
 if (x64-encoder/frame-load code 128 x64-encoder/RAX 0 3 0) <> -1 [
 	failures: failures + 1
 ]
@@ -561,7 +561,7 @@ if (x64-encoder/copy-indirect code 128 0) <> -1 [failures: failures + 1]
 if (x64-encoder/stack-address code 128 x64-encoder/RAX -1) <> -1 [
 	failures: failures + 1
 ]
-if (x64-encoder/register-load code 3 x64-encoder/R9 x64-encoder/R10 24) <> -1 [
+if (x64-encoder/register-load code 3 x64-encoder/R9 x64-encoder/R10 24) <> x64-encoder/BUFFER_FULL [
 	failures: failures + 1
 ]
 if (x64-encoder/register-store code 128 16 x64-encoder/RAX 0) <> -1 [
@@ -578,13 +578,13 @@ if (x64-encoder/atomic-exchange-add code 128 16 x64-encoder/RAX) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/atomic-compare-exchange code 3 x64-encoder/RAX
-	x64-encoder/RCX) <> -1 [failures: failures + 1]
-if (x64-encoder/memory-fence code 2) <> -1 [failures: failures + 1]
+	x64-encoder/RCX) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
+if (x64-encoder/memory-fence code 2) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
 if (x64-encoder/negate-register code 128 x64-encoder/RAX 2) <> -1 [
 	failures: failures + 1
 ]
 if (x64-encoder/and-immediate code 128 16 0) <> -1 [failures: failures + 1]
-if (x64-encoder/compare-immediate code 3 x64-encoder/R8 4) <> -1 [
+if (x64-encoder/compare-immediate code 3 x64-encoder/R8 4) <> x64-encoder/BUFFER_FULL [
 	failures: failures + 1
 ]
 if (x64-encoder/outgoing-immediate-store code 128 -1 0) <> -1 [
@@ -603,25 +603,25 @@ if (x64-encoder/condition-result code 128 16) <> -1 [failures: failures + 1]
 if (x64-encoder/test-register code 128 x64-encoder/RAX 2) <> -1 [
 	failures: failures + 1
 ]
-if (x64-encoder/jump-relative code 4 0) <> -1 [failures: failures + 1]
+if (x64-encoder/jump-relative code 4 0) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
 if (x64-encoder/jump-condition code 128 16 0) <> -1 [failures: failures + 1]
-if (x64-encoder/call-register code 1 x64-encoder/RAX) <> -1 [
+if (x64-encoder/call-register code 1 x64-encoder/RAX) <> x64-encoder/BUFFER_FULL [
 	failures: failures + 1
 ]
 if (x64-encoder/call-register code 128 16) <> -1 [failures: failures + 1]
-if (x64-encoder/push-register code 0 x64-encoder/RAX) <> -1 [
+if (x64-encoder/push-register code 0 x64-encoder/RAX) <> x64-encoder/BUFFER_FULL [
 	failures: failures + 1
 ]
 if (x64-encoder/push-register code 128 16) <> -1 [failures: failures + 1]
-if (x64-encoder/pop-register code 0 x64-encoder/RAX) <> -1 [
+if (x64-encoder/pop-register code 0 x64-encoder/RAX) <> x64-encoder/BUFFER_FULL [
 	failures: failures + 1
 ]
 if (x64-encoder/pop-register code 128 16) <> -1 [failures: failures + 1]
-if (x64-encoder/push-flags code 0) <> -1 [failures: failures + 1]
-if (x64-encoder/pop-flags code 0) <> -1 [failures: failures + 1]
-if (x64-encoder/fxsave-stack code 3) <> -1 [failures: failures + 1]
-if (x64-encoder/fxrstor-stack code 3) <> -1 [failures: failures + 1]
-if (x64-encoder/repeat-store-quad code 2) <> -1 [failures: failures + 1]
+if (x64-encoder/push-flags code 0) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
+if (x64-encoder/pop-flags code 0) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
+if (x64-encoder/fxsave-stack code 3) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
+if (x64-encoder/fxrstor-stack code 3) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
+if (x64-encoder/repeat-store-quad code 2) <> x64-encoder/BUFFER_FULL [failures: failures + 1]
 
 free code
 either failures = 0 [

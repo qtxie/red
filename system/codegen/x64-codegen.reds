@@ -426,6 +426,9 @@ x64-codegen: context [
 
 	UNSUPPORTED: -2
 	OUTPUT_FULL: -3
+	INTERNAL_ERROR: -4
+	RESOURCE_LIMIT: -5
+	OUT_OF_MEMORY: -6
 	PREPARE_SKIPPED: 1
 
 	fail-invalid: func [site [integer!] site-name [c-string!] return: [integer!]][
@@ -434,6 +437,30 @@ x64-codegen: context [
 
 	fail-unsupported: func [site [integer!] site-name [c-string!] return: [integer!]][
 		codegen-diag/fail UNSUPPORTED codegen-diag/FILE_X64 site site-name
+	]
+
+	fail-internal: func [site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail INTERNAL_ERROR codegen-diag/FILE_X64 site site-name
+	]
+
+	fail-limit: func [site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail RESOURCE_LIMIT codegen-diag/FILE_X64 site site-name
+	]
+
+	fail-memory: func [site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail OUT_OF_MEMORY codegen-diag/FILE_X64 site site-name
+	]
+
+	fail-code: func [code site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/propagate code codegen-diag/FILE_X64 site site-name
+	]
+
+	fail-output: func [required available site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail-values OUTPUT_FULL codegen-diag/FILE_X64 site site-name required available
+	]
+
+	fail-mismatch: func [required actual site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail-values INTERNAL_ERROR codegen-diag/FILE_X64 site site-name required actual
 	]
 
 	align: func [value boundary [integer!] return: [integer!]
@@ -1366,7 +1393,7 @@ x64-codegen: context [
 			pairs/pair-capacity: 16
 			pairs/slot-capacity: 32
 			pairs/memory: allocate (pairs/pair-capacity * 24)
-			if null? pairs/memory [return OUTPUT_FULL]
+			if null? pairs/memory [return fail-memory 749 "reset-signature-pairs/memory#1"]
 			pairs/epoch: 0
 			stamps: as int-ptr! pairs/memory
 			stamps: stamps + ((pairs/pair-capacity * 2) + pairs/slot-capacity)
@@ -1397,11 +1424,11 @@ x64-codegen: context [
 			new-pairs new-slots new-stamps slot hash-slot stamp [int-ptr!]
 			new-capacity new-slot-capacity index hash [integer!]
 	][
-		if pairs/pair-capacity > (2147483647 / 48)[return OUTPUT_FULL]
+		if pairs/pair-capacity > (2147483647 / 48)[return fail-limit 750 "grow-signature-pairs/limit#1"]
 		new-capacity: pairs/pair-capacity * 2
 		new-slot-capacity: pairs/slot-capacity * 2
 		new-memory: allocate (new-capacity * 24)
-		if null? new-memory [return OUTPUT_FULL]
+		if null? new-memory [return fail-memory 751 "grow-signature-pairs/memory#2"]
 		new-pairs: as int-ptr! new-memory
 		copy-memory new-memory pairs/memory (pairs/pair-count * 8)
 		new-slots: new-pairs + (new-capacity * 2)
@@ -1474,7 +1501,7 @@ x64-codegen: context [
 		]
 		if table/signatures/pair-count = table/signatures/pair-capacity [
 			status: grow-signature-pairs table/signatures
-			if status < 0 [return status]
+			if status < 0 [return fail-code status 331 "queue-compatible-types/code#1"]
 			data: as int-ptr! table/signatures/memory
 			slots: data + (table/signatures/pair-capacity * 2)
 			stamps: slots + table/signatures/slot-capacity
@@ -1505,7 +1532,7 @@ x64-codegen: context [
 			left-member right-member [rsir-member!]
 	][
 		status: reset-signature-pairs table/signatures
-		if status < 0 [return status]
+		if status < 0 [return fail-code status 332 "function-types-compatible/code#1"]
 		status: queue-compatible-types expected actual table
 		if status <> 1 [return status]
 		cursor: 0
@@ -1805,15 +1832,15 @@ x64-codegen: context [
 		return: [integer!]
 		/local encoded written [integer!] at [byte-ptr!]
 	][
-		if source-width <= 0 [return -1]
+		if source-width <= 0 [return fail-internal 829 "load-operation-value/source-width"]
 		encoded: x64-encoder/frame-load code capacity target displacement
 			source-width signed
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 333 "load-operation-value/code#1"]
 		written: encoded
 		if all [operation-width = 8 source-width < 8 signed = 1][
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/sign-extend-register at (capacity - written) target target
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 334 "load-operation-value/code#2"]
 			written: written + encoded
 		]
 		written
@@ -1829,7 +1856,7 @@ x64-codegen: context [
 		unless all [
 			source-width > 0
 			any [operation-width = 4 operation-width = 8]
-		][return -1]
+		][return fail-internal 830 "move-operation-value/width"]
 		transfer-width: either all [
 			operation-width = 8 source-width = 8
 		][8][4]
@@ -1841,7 +1868,7 @@ x64-codegen: context [
 		written: 0
 		if target <> source [
 			encoded: x64-encoder/move-register code capacity target source transfer-width
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 335 "move-operation-value/code#1"]
 			written: encoded
 		]
 		written
@@ -1896,26 +1923,26 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/compare-immediate at (capacity - written)
 			x64-encoder/RAX 80000000h
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 336 "division-overflow-check/code#1"]
 		written: written + encoded
 
 		tail-size: x64-encoder/compare-immediate null 0 x64-encoder/RCX -1
-		if tail-size < 0 [return tail-size]
+		if tail-size < 0 [return fail-code tail-size 337 "division-overflow-check/code#2"]
 		tail-size: tail-size + 6
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/jump-condition at (capacity - written) 5 tail-size
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 338 "division-overflow-check/code#3"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/compare-immediate at (capacity - written)
 			x64-encoder/RCX -1
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 339 "division-overflow-check/code#4"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: jump-condition-to at (capacity - written) 4 target
 			(current + written)
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 340 "division-overflow-check/code#5"]
 		written + encoded
 	]
 
@@ -1931,12 +1958,12 @@ x64-codegen: context [
 			source-width <= operation-width
 			any [signed = 0 signed = 1]
 			count > 0 count < (operation-width * 8)
-		][return -1]
+		][return fail-internal 831 "shift-overflow-check/operands"]
 		written: 0
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/RDX x64-encoder/RAX operation-width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 341 "shift-overflow-check/code#1"]
 		written: written + encoded
 		original: x64-encoder/RAX
 		alignment: (operation-width - source-width) * 8
@@ -1944,35 +1971,35 @@ x64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/shift-immediate at (capacity - written)
 				x64-encoder/RDX 4 alignment operation-width
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 342 "shift-overflow-check/code#2"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/move-register at (capacity - written)
 				x64-encoder/R8 x64-encoder/RDX operation-width
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 343 "shift-overflow-check/code#3"]
 			written: written + encoded
 			original: x64-encoder/R8
 		]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/shift-immediate at (capacity - written)
 			x64-encoder/RDX 4 count operation-width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 344 "shift-overflow-check/code#4"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		mode: either signed = 1 [7][5]
 		encoded: x64-encoder/shift-immediate at (capacity - written)
 			x64-encoder/RDX mode count operation-width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 345 "shift-overflow-check/code#5"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written)
 			39h x64-encoder/RDX original operation-width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 346 "shift-overflow-check/code#6"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: jump-condition-to at (capacity - written) 5
 			target-displacement written
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 347 "shift-overflow-check/code#7"]
 		written + encoded
 	]
 
@@ -1983,7 +2010,7 @@ x64-codegen: context [
 		/local at [byte-ptr!] encoded written lower upper condition [integer!]
 	][
 		unless all [any [width = 1 width = 2] any [signed = 0 signed = 1]][
-			return -1
+			return fail-internal 832 "narrow-overflow-check/operands"
 		]
 		upper: case [
 			width = 1 [either signed = 1 [127][255]]
@@ -1993,25 +2020,25 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/compare-immediate at (capacity - written)
 			x64-encoder/RAX upper
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 348 "narrow-overflow-check/code#1"]
 		written: written + encoded
 		condition: either signed = 1 [15][7]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: jump-condition-to at (capacity - written) condition target
 			(current + written)
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 349 "narrow-overflow-check/code#2"]
 		written: written + encoded
 		if signed = 1 [
 			lower: either width = 1 [-128][-32768]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/compare-immediate at (capacity - written)
 				x64-encoder/RAX lower
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 350 "narrow-overflow-check/code#3"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: jump-condition-to at (capacity - written) 12 target
 				(current + written)
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 351 "narrow-overflow-check/code#4"]
 			written: written + encoded
 		]
 		written
@@ -2031,29 +2058,29 @@ x64-codegen: context [
 		steps: 0
 		node: head
 		while [node > 0][
-			if any [node > fn/instruction-count steps >= fn/instruction-count][return -1]
+			if any [node > fn/instruction-count steps >= fn/instruction-count][return fail-internal 833 "emit-variant-tags/chain"]
 			instruction: as rsir-instruction! (scratch/instructions
 				+ ((node - 1) * RSIR_INSTRUCTION_SIZE))
 			width: scratch/tag-widths/node
 			if any [instruction/b <= 0 scratch/tag-slots/node <= 0
-				not any [width = 1 width = 2 width = 4]][return -1]
+				not any [width = 1 width = 2 width = 4]][return fail-internal 834 "emit-variant-tags/storage-plan"]
 
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/frame-load at (capacity - written)
 				x64-encoder/RDX slot-displacement
 					(state/tag-base + scratch/tag-slots/node) 8 0
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 352 "emit-variant-tags/code#1"]
 			written: written + encoded
 
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/move-immediate-compact at (capacity - written)
 				x64-encoder/RAX 4 instruction/b 0
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 353 "emit-variant-tags/code#2"]
 			written: written + encoded
 
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/store-indirect at (capacity - written) width
-			if encoded < 0 [return encoded]
+			if encoded < 0 [return fail-code encoded 354 "emit-variant-tags/code#3"]
 			written: written + encoded
 			node: scratch/tag-next/node
 			steps: steps + 1
@@ -2336,7 +2363,7 @@ x64-codegen: context [
 		at: either measure? [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/alu-immediate at (task/capacity - written)
 			extension home immediate-value width
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 355 "try-emit-home-update/code#1"]
 		written: written + encoded
 		if measure? [
 			if (depth + 1) > state/max-depth [state/max-depth: depth + 1]
@@ -2483,7 +2510,7 @@ x64-codegen: context [
 		at: either measure? [as byte-ptr! 0][task/code + written]
 		encoded: x64-encoder/binary-register at (task/capacity - written)
 			opcode source-home other-home width
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 356 "try-emit-home-binary-update/code#1"]
 		written: written + encoded
 		if measure? [
 			instruction-offsets: view/instruction-offsets
@@ -2820,12 +2847,12 @@ x64-codegen: context [
 						;-- The claim counted this one out already, and an
 						;-- aggregate takes as many slots as its width needs.
 						if stack-base > ((2147483647 - 16) / 8)[
-							return OUTPUT_FULL
+							return fail-limit 752 "plan-storage/limit#1"
 						]
 						offsets/index: 16 + (stack-base * 8)
 					][
 						if (physical-slot - 5) > ((2147483647 - 48) / 8)[
-							return OUTPUT_FULL
+							return fail-limit 753 "plan-storage/limit#2"
 						]
 						offsets/index: 48 + ((physical-slot - 5) * 8)
 					]
@@ -3063,7 +3090,7 @@ x64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/frame-store at (capacity - written)
 				x64-encoder/RAX displacement width
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 357 "clear-frame-storage/code#1"]
 			written: written + encoded
 			displacement: displacement + width
 			size: size - width
@@ -3176,50 +3203,50 @@ x64-codegen: context [
 		at: code
 		encoded: x64-encoder/move-register at capacity x64-encoder/RAX
 			x64-encoder/RCX width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 358 "normalize-modulo/code#1"]
 		written: written + encoded
 		count: either width = 8 [63][31]
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/shift-immediate at (capacity - written)
 			x64-encoder/RAX 7 count width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 359 "normalize-modulo/code#2"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written) 31h
 			x64-encoder/RCX x64-encoder/RAX width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 360 "normalize-modulo/code#3"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written) 29h
 			x64-encoder/RCX x64-encoder/RAX width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 361 "normalize-modulo/code#4"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/RDX width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 362 "normalize-modulo/code#5"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/shift-immediate at (capacity - written)
 			x64-encoder/RAX 7 count width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 363 "normalize-modulo/code#6"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written) 21h
 			x64-encoder/RAX x64-encoder/RCX width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 364 "normalize-modulo/code#7"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written) 01h
 			x64-encoder/RAX x64-encoder/RDX width
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 365 "normalize-modulo/code#8"]
 		written + encoded
 	]
 
@@ -3233,52 +3260,52 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RAX -8 8 0
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 366 "emit-catch-open/code#1"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX slot-displacement record-slot 8
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 367 "emit-catch-open/code#2"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RAX -16 8 0
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 368 "emit-catch-open/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX slot-displacement (record-slot + 1) 8
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 369 "emit-catch-open/code#4"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RSP slot-displacement (record-slot + 2) 8
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 370 "emit-catch-open/code#5"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RAX slot-displacement filter-slot 4 0
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 371 "emit-catch-open/code#6"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX -8 4
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 372 "emit-catch-open/code#7"]
 		written: written + encoded
 
 		displacement: either null? code [0][target - (current + written + 7)]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/rip-address at (capacity - written)
 			x64-encoder/RAX displacement
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 373 "emit-catch-open/code#8"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX -16 8
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 374 "emit-catch-open/code#9"]
 		written + encoded
 	]
 
@@ -3292,29 +3319,29 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RAX slot-displacement record-slot 8 0
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 375 "emit-catch-restore/code#1"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX -8 8
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 376 "emit-catch-restore/code#2"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RAX slot-displacement (record-slot + 1) 8 0
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 377 "emit-catch-restore/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX -16 8
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 378 "emit-catch-restore/code#4"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RSP slot-displacement (record-slot + 2) 8 0
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 379 "emit-catch-restore/code#5"]
 		written + encoded
 	]
 
@@ -3508,7 +3535,7 @@ x64-codegen: context [
 				]
 				instruction: as rsir-instruction! (instructions
 					+ ((global-index - 1) * RSIR_INSTRUCTION_SIZE))
-				codegen-diag/mark-instruction index instruction/op
+				codegen-diag/mark-instruction index as int-ptr! instruction
 				if any [instruction/op < OP_LITERAL instruction/op > OP_SUB_RETURN][
 					return fail-invalid 14 "infer-effects/instruction/op#2"
 				]
@@ -3945,7 +3972,7 @@ x64-codegen: context [
 		pass: 0
 		while [changed?][
 			pass: pass + 1
-			if pass > 32 [return -1]
+			if pass > 32 [return fail-limit 828 "relax-branches/pass-limit"]
 			reduction: 0
 			index: 1
 			while [index <= (fn/instruction-count + 1)][
@@ -4099,18 +4126,18 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/compare-immediate at (capacity - written)
 			x64-encoder/R8 count
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 380 "emit-custom-argument/code#1"]
 		written: written + encoded
 		load-size: x64-encoder/register-load null 0 target x64-encoder/R10 displacement
-		if load-size < 0 [return OUTPUT_FULL]
+		if load-size < 0 [return fail-code load-size 381 "emit-custom-argument/code#2"]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/jump-condition at (capacity - written) 12 load-size
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 382 "emit-custom-argument/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/register-load at (capacity - written)
 			target x64-encoder/R10 displacement
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 383 "emit-custom-argument/code#4"]
 		written + encoded
 	]
 
@@ -4125,161 +4152,161 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/R8 count-displacement 4 1
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 384 "emit-custom-setup/code#1"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/test-register at (capacity - written) x64-encoder/R8 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 385 "emit-custom-setup/code#2"]
 		written: written + encoded
 		clear-size: x64-encoder/clear-register null 0 x64-encoder/R8
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/jump-condition at (capacity - written) 13 clear-size
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 386 "emit-custom-setup/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/clear-register at (capacity - written) x64-encoder/R8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 387 "emit-custom-setup/code#4"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/R9 x64-encoder/RSP 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 388 "emit-custom-setup/code#5"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/R8 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 389 "emit-custom-setup/code#6"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/sign-extend-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/RAX
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 390 "emit-custom-setup/code#7"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/shift-immediate at (capacity - written)
 			x64-encoder/RAX 4 3 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 391 "emit-custom-setup/code#8"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written)
 			01h x64-encoder/RAX x64-encoder/R9 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 392 "emit-custom-setup/code#9"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX count-displacement 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 393 "emit-custom-setup/code#10"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/RCX x64-encoder/R8 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 394 "emit-custom-setup/code#11"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RCX -4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 395 "emit-custom-setup/code#12"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/test-register at (capacity - written) x64-encoder/RCX 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 396 "emit-custom-setup/code#13"]
 		written: written + encoded
 		clear-size: x64-encoder/clear-register null 0 x64-encoder/RCX
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/jump-condition at (capacity - written) 13 clear-size
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 397 "emit-custom-setup/code#14"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/clear-register at (capacity - written) x64-encoder/RCX
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 398 "emit-custom-setup/code#15"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/RCX 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 399 "emit-custom-setup/code#16"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/sign-extend-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/RAX
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 400 "emit-custom-setup/code#17"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/shift-immediate at (capacity - written)
 			x64-encoder/RAX 4 3 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 401 "emit-custom-setup/code#18"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RAX 32
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 402 "emit-custom-setup/code#19"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written)
 			29h x64-encoder/RSP x64-encoder/RAX 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 403 "emit-custom-setup/code#20"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/and-immediate at (capacity - written)
 			x64-encoder/RSP -16
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 404 "emit-custom-setup/code#21"]
 		written: written + encoded
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/R10 x64-encoder/R9 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 405 "emit-custom-setup/code#22"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/R10 32
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 406 "emit-custom-setup/code#23"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/stack-address at (capacity - written) x64-encoder/RDX 32
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 407 "emit-custom-setup/code#24"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/test-register at (capacity - written) x64-encoder/RCX 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 408 "emit-custom-setup/code#25"]
 		written: written + encoded
 
 		patch: written + 2
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/jump-condition at (capacity - written) 14 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 409 "emit-custom-setup/code#26"]
 		written: written + encoded
 		loop-start: written
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/register-load at (capacity - written)
 			x64-encoder/RAX x64-encoder/R10 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 410 "emit-custom-setup/code#27"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/register-store at (capacity - written)
 			x64-encoder/RAX x64-encoder/RDX 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 411 "emit-custom-setup/code#28"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/R10 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 412 "emit-custom-setup/code#29"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RDX 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 413 "emit-custom-setup/code#30"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RCX -1
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 414 "emit-custom-setup/code#31"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/test-register at (capacity - written) x64-encoder/RCX 4
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 415 "emit-custom-setup/code#32"]
 		written: written + encoded
 		displacement: loop-start - (written + 6)
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/jump-condition at (capacity - written) 15 displacement
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 416 "emit-custom-setup/code#33"]
 		written: written + encoded
 		if not null? code [
 			x64-encoder/write-i32 (code + patch) (written - (patch + 4))
@@ -4288,23 +4315,23 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/R10 x64-encoder/R9 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 417 "emit-custom-setup/code#34"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: emit-custom-argument at (capacity - written) x64-encoder/R9 4 24
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 418 "emit-custom-setup/code#35"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: emit-custom-argument at (capacity - written) x64-encoder/RDX 2 8
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 419 "emit-custom-setup/code#36"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: emit-custom-argument at (capacity - written) x64-encoder/RCX 1 0
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 420 "emit-custom-setup/code#37"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: emit-custom-argument at (capacity - written) x64-encoder/R8 3 16
-		if encoded < 0 [return encoded]
+		if encoded < 0 [return fail-code encoded 421 "emit-custom-setup/code#38"]
 		written + encoded
 	]
 
@@ -4318,12 +4345,12 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/RAX source 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 422 "emit-stack-pointer/code#1"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX displacement 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 423 "emit-stack-pointer/code#2"]
 		written + encoded
 	]
 
@@ -4337,12 +4364,12 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RAX displacement 8 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 424 "emit-stack-set/code#1"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			target x64-encoder/RAX 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 425 "emit-stack-set/code#2"]
 		written + encoded
 	]
 
@@ -4356,17 +4383,17 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/RSP 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 426 "emit-stack-align/code#1"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/and-immediate at (capacity - written)
 			x64-encoder/RSP -16
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 427 "emit-stack-align/code#2"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX displacement 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 428 "emit-stack-align/code#3"]
 		written + encoded
 	]
 
@@ -4381,67 +4408,67 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RAX displacement 4 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 429 "emit-stack-allocate/code#1"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/sign-extend-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/RAX
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 430 "emit-stack-allocate/code#2"]
 		written: written + encoded
 		if clear? [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/move-register at (capacity - written)
 				x64-encoder/RCX x64-encoder/RAX 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 431 "emit-stack-allocate/code#3"]
 			written: written + encoded
 		]
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/shift-immediate at (capacity - written)
 			x64-encoder/RAX 4 3 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 432 "emit-stack-allocate/code#4"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written)
 			29h x64-encoder/RSP x64-encoder/RAX 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 433 "emit-stack-allocate/code#5"]
 		written: written + encoded
 
 		if clear? [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/move-register at (capacity - written)
 				x64-encoder/R9 x64-encoder/RDI 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 434 "emit-stack-allocate/code#6"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/move-register at (capacity - written)
 				x64-encoder/RDI x64-encoder/RSP 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 435 "emit-stack-allocate/code#7"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/clear-register at (capacity - written)
 				x64-encoder/RAX
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 436 "emit-stack-allocate/code#8"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/repeat-store-quad at (capacity - written)
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 437 "emit-stack-allocate/code#9"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/move-register at (capacity - written)
 				x64-encoder/RDI x64-encoder/R9 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 438 "emit-stack-allocate/code#10"]
 			written: written + encoded
 		]
 
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/move-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/RSP 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 439 "emit-stack-allocate/code#11"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-store at (capacity - written)
 			x64-encoder/RAX displacement 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 440 "emit-stack-allocate/code#12"]
 		written + encoded
 	]
 
@@ -4455,22 +4482,22 @@ x64-codegen: context [
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/frame-load at (capacity - written)
 			x64-encoder/RAX displacement 4 0
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 441 "emit-stack-free/code#1"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/sign-extend-register at (capacity - written)
 			x64-encoder/RAX x64-encoder/RAX
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 442 "emit-stack-free/code#2"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/shift-immediate at (capacity - written)
 			x64-encoder/RAX 4 3 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 443 "emit-stack-free/code#3"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/binary-register at (capacity - written)
 			01h x64-encoder/RSP x64-encoder/RAX 8
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 444 "emit-stack-free/code#4"]
 		written + encoded
 	]
 
@@ -4485,21 +4512,21 @@ x64-codegen: context [
 		either restore? [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/fxrstor-stack at (capacity - written)
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 445 "emit-stack-all/code#1"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/register-load at (capacity - written)
 				x64-encoder/RAX x64-encoder/RSP 512
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 446 "emit-stack-all/code#2"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/move-register at (capacity - written)
 				x64-encoder/RSP x64-encoder/RAX 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 447 "emit-stack-all/code#3"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/pop-flags at (capacity - written)
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 448 "emit-stack-all/code#4"]
 			written: written + encoded
 			register: 15
 			while [register >= 0][
@@ -4507,7 +4534,7 @@ x64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/pop-register at (capacity - written)
 						register
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 449 "emit-stack-all/code#5"]
 					written: written + encoded
 				]
 				register: register - 1
@@ -4519,37 +4546,37 @@ x64-codegen: context [
 					at: either null? code [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/push-register at (capacity - written)
 						register
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 450 "emit-stack-all/code#6"]
 					written: written + encoded
 				]
 				register: register + 1
 			]
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/push-flags at (capacity - written)
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 451 "emit-stack-all/code#7"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/move-register at (capacity - written)
 				x64-encoder/RAX x64-encoder/RSP 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 452 "emit-stack-all/code#8"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/and-immediate at (capacity - written)
 				x64-encoder/RSP -16
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 453 "emit-stack-all/code#9"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/allocate-frame at (capacity - written) 528
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 454 "emit-stack-all/code#10"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/fxsave-stack at (capacity - written)
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 455 "emit-stack-all/code#11"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/register-store at (capacity - written)
 				x64-encoder/RAX x64-encoder/RSP 512
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 456 "emit-stack-all/code#12"]
 			written: written + encoded
 		]
 		written
@@ -4699,7 +4726,7 @@ x64-codegen: context [
 		]
 		state/sub-frame: either measure? [8][
 			if task/outgoing-size < 0 [return fail-invalid 26 "validate-function-structure/task/outgoing-size#1"]
-			if task/outgoing-size > (2147483647 - 23)[return OUTPUT_FULL]
+			if task/outgoing-size > (2147483647 - 23)[return fail-limit 754 "validate-function-structure/limit#1"]
 			(align task/outgoing-size 16) + 8
 		]
 		state/tag-capacity: 0
@@ -4835,7 +4862,7 @@ x64-codegen: context [
 				instruction/b <= state/storage-count
 			][
 				source-slot: instruction/b
-				if storage-offsets/source-slot = 2147483647 [return OUTPUT_FULL]
+				if storage-offsets/source-slot = 2147483647 [return fail-limit 755 "validate-function-structure/limit#2"]
 				storage-offsets/source-slot: storage-offsets/source-slot + 1
 			]
 			if all [
@@ -5063,7 +5090,7 @@ x64-codegen: context [
 						]
 						interval/end: next-index
 						weight: either next-instruction/op = OP_LOAD [3][2]
-						if interval/weight > (2147483647 - weight)[return OUTPUT_FULL]
+						if interval/weight > (2147483647 - weight)[return fail-limit 756 "discover-storage-intervals/limit#1"]
 						interval/weight: interval/weight + weight
 					][
 						interval/flags: interval/flags or ALLOCATION_INVALID
@@ -5565,17 +5592,17 @@ x64-codegen: context [
 		task: context/task
 		state: context/state
 		result: reset-register-allocation context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 457 "plan-register-allocation/code#1"]
 		if any [task/opt-level <> 2 task/entry? state/storage-count = 0][return 0]
 		result: discover-storage-intervals context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 458 "plan-register-allocation/code#2"]
 		if state/allocation-count = 0 [return 0]
 		result: discover-abi-constraints context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 459 "plan-register-allocation/code#3"]
 		result: extend-loop-intervals context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 460 "plan-register-allocation/code#4"]
 		result: qualify-storage-intervals context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 461 "plan-register-allocation/code#5"]
 		allocate-storage-intervals context
 	]
 
@@ -5723,28 +5750,28 @@ x64-codegen: context [
 		entry?: task/entry?
 		storage-offsets: view/storage-offsets
 		result: plan-register-allocation context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 462 "plan-function-frame/code#1"]
 
 		state/storage-bytes: plan-storage module fn storage-offsets
-		if state/storage-bytes < 0 [return state/storage-bytes]
+		if state/storage-bytes < 0 [return fail-code state/storage-bytes 463 "plan-function-frame/code#2"]
 		task/bitmap-slots: state/storage-bytes / 8
 		if not null? as byte-ptr! task/bitmap [
-			unless write-frame-bitmap context [return INVALID_IR]
+			unless write-frame-bitmap context [return fail-internal 757 "plan-function-frame/bitmap-plan"]
 		]
 		state/storage-bytes: plan-call-results module fn view state/storage-bytes
-		if state/storage-bytes < 0 [return state/storage-bytes]
+		if state/storage-bytes < 0 [return fail-code state/storage-bytes 464 "plan-function-frame/code#3"]
 		state/native-stack-slot: 0
 		if state/unstable-stack? [
-			if state/storage-bytes > (2147483647 - 8)[return OUTPUT_FULL]
+			if state/storage-bytes > (2147483647 - 8)[return fail-limit 758 "plan-function-frame/limit#5"]
 			state/storage-bytes: state/storage-bytes + 8
 			state/native-stack-slot: state/storage-bytes / 8
 		]
 		storage-slots: state/storage-bytes / 8
 		state/tag-base: storage-slots
-		if storage-slots > (2147483647 - state/tag-capacity)[return OUTPUT_FULL]
+		if storage-slots > (2147483647 - state/tag-capacity)[return fail-limit 759 "plan-function-frame/limit#6"]
 		storage-slots: storage-slots + state/tag-capacity
 		state/catch-base: storage-slots
-		if state/catch-capacity > ((2147483647 - storage-slots) / 3)[return OUTPUT_FULL]
+		if state/catch-capacity > ((2147483647 - storage-slots) / 3)[return fail-limit 760 "plan-function-frame/limit#7"]
 		storage-slots: storage-slots + (state/catch-capacity * 3)
 		state/storage-base: storage-slots
 		state/segment-slots: 0
@@ -5817,12 +5844,12 @@ x64-codegen: context [
 				at: either measure? [as byte-ptr! 0][code + written]
 				encoded: x64-encoder/move-register at (capacity - written)
 					x64-encoder/R12 x64-encoder/RSP 8
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 465 "emit-function-prologue/code#1"]
 				written: written + encoded
 			]
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/prolog at (capacity - written) -1 -1
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 466 "emit-function-prologue/code#2"]
 			written: written + encoded
 
 			;-- Win64 reserves shadow space for the call into the body; a System
@@ -5830,38 +5857,38 @@ x64-codegen: context [
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/allocate-frame at (capacity - written)
 				either target-abi = ABI_SYSV [8][32]
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 467 "emit-function-prologue/code#3"]
 			written: written + encoded
 
 			target-offset: x64-encoder/frame-store null 0
 				x64-encoder/RAX -16 8
-			if target-offset < 0 [return OUTPUT_FULL]
+			if target-offset < 0 [return fail-code target-offset 761 "emit-function-prologue/frame-store-encoding"]
 			displacement: target-offset + 5
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/rip-address at (capacity - written)
 				x64-encoder/RAX displacement
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 468 "emit-function-prologue/code#4"]
 			written: written + encoded
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/frame-store at (capacity - written)
 				x64-encoder/RAX -16 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 469 "emit-function-prologue/code#5"]
 			written: written + encoded
 
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/call-relative at (capacity - written) 2
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 470 "emit-function-prologue/code#6"]
 			written: written + encoded
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/trap at (capacity - written)
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 471 "emit-function-prologue/code#7"]
 			written: written + encoded
 		]
 
 		catch-threshold: either (fn/flags and CATCH_FLAG) <> 0 [-2][0]
 		at: either measure? [as byte-ptr! 0][code + written]
 		encoded: x64-encoder/prolog at (capacity - written) task/bitmap-index catch-threshold
-		if encoded < 0 [return OUTPUT_FULL]
+		if encoded < 0 [return fail-code encoded 472 "emit-function-prologue/code#8"]
 		written: written + encoded
 
 		allocation-size: 0
@@ -5870,7 +5897,7 @@ x64-codegen: context [
 			if frame-extra < 0 [return fail-invalid 55 "emit-function-prologue/frame-extra#1"]
 			at: code + written
 			encoded: x64-encoder/allocate-frame at (capacity - written) frame-extra
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 473 "emit-function-prologue/code#9"]
 			written: written + encoded
 			allocation-size: encoded
 		]
@@ -5878,7 +5905,7 @@ x64-codegen: context [
 			at: either measure? [as byte-ptr! 0][code + written]
 			encoded: x64-encoder/frame-store at (capacity - written)
 				either target-abi = ABI_SYSV [x64-encoder/RDI][x64-encoder/RCX] (0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 474 "emit-function-prologue/code#10"]
 			written: written + encoded
 		]
 
@@ -5931,7 +5958,7 @@ x64-codegen: context [
 						x64-encoder/frame-store at (capacity - written)
 							(argument-register index-a) target-slot 8
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 475 "emit-function-prologue/code#11"]
 					written: written + encoded
 					if aggregate-count = 2 [
 						at: either measure? [as byte-ptr! 0][code + written]
@@ -5942,7 +5969,7 @@ x64-codegen: context [
 							x64-encoder/frame-store at (capacity - written)
 								(argument-register index-b) (target-slot + 8) 8
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 476 "emit-function-prologue/code#12"]
 						written: written + encoded
 					]
 				]
@@ -5969,7 +5996,7 @@ x64-codegen: context [
 						x64-encoder/frame-store at (capacity - written)
 							source-slot target-slot width
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 477 "emit-function-prologue/code#13"]
 					written: written + encoded
 				]
 			]
@@ -6004,7 +6031,7 @@ x64-codegen: context [
 					x64-encoder/frame-load at (capacity - written)
 						home-register target-slot width signed
 				]
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 478 "emit-function-prologue/code#14"]
 				written: written + encoded
 			]
 			index: index + 1
@@ -6020,7 +6047,7 @@ x64-codegen: context [
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/clear-register at (capacity - written)
 						x64-encoder/RAX
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 479 "emit-function-prologue/code#15"]
 					written: written + encoded
 					clear?: true
 				]
@@ -6032,7 +6059,7 @@ x64-codegen: context [
 				at: either measure? [as byte-ptr! 0][code + written]
 				encoded: clear-frame-storage at (capacity - written)
 					storage-displacement storage-offsets index storage-size
-				if encoded < 0 [return encoded]
+				if encoded < 0 [return fail-code encoded 480 "emit-function-prologue/code#16"]
 				written: written + encoded
 			]
 			index: index + 1
@@ -6072,19 +6099,19 @@ x64-codegen: context [
 
 	if measure? [
 			task/outgoing-size: state/max-outgoing
-			if storage-slots > (2147483647 / 8)[return OUTPUT_FULL]
+			if storage-slots > (2147483647 / 8)[return fail-limit 762 "finalize-function/limit#2"]
 			slot-bytes: storage-slots * 8
-			if state/max-depth > ((2147483647 - slot-bytes) / 8)[return OUTPUT_FULL]
+			if state/max-depth > ((2147483647 - slot-bytes) / 8)[return fail-limit 763 "finalize-function/limit#3"]
 			slot-bytes: slot-bytes + (state/max-depth * 8)
-			if slot-bytes > (2147483647 - state/max-outgoing)[return OUTPUT_FULL]
+			if slot-bytes > (2147483647 - state/max-outgoing)[return fail-limit 764 "finalize-function/limit#4"]
 			frame-extra: align (slot-bytes + state/max-outgoing) 16
 			if any [
 				frame-extra < 0
 				frame-extra > (2147483647 - x64-encoder/BASE_FRAME_SIZE)
-			][return OUTPUT_FULL]
+			][return fail-limit 765 "finalize-function/limit#5"]
 			task/frame-size: x64-encoder/BASE_FRAME_SIZE + frame-extra
 			encoded: x64-encoder/allocate-frame null 0 frame-extra
-			if encoded < 0 [return OUTPUT_FULL]
+			if encoded < 0 [return fail-code encoded 481 "finalize-function/code#1"]
 			written: written + encoded
 		]
 		written
@@ -6105,19 +6132,19 @@ x64-codegen: context [
 		context/scratch: scratch
 		context/state: state
 		result: initialize-function-context context module work task
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 482 "compile-function/code#1"]
 		result: validate-function-structure context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 483 "compile-function/code#2"]
 		result: plan-literal-call-targets context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 484 "compile-function/code#3"]
 		result: analyze-function-arguments context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 485 "compile-function/code#4"]
 		result: plan-function-frame context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 486 "compile-function/code#5"]
 		result: emit-function-prologue context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 487 "compile-function/code#6"]
 		result: emit-function-body context
-		if result < 0 [return result]
+		if result < 0 [return fail-code result 488 "compile-function/code#7"]
 		finalize-function context
 	]
 
@@ -6452,7 +6479,7 @@ x64-codegen: context [
 							encoded: x64-encoder/move-immediate-compact at
 								(capacity - written) register-id target-width
 								instruction/b instruction/c
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 489 "emit-value-operation/code#1"]
 							written: written + encoded
 							if floating? [
 								at: either measure? [as byte-ptr! 0][code + written]
@@ -6463,14 +6490,14 @@ x64-codegen: context [
 									x64-encoder/outgoing-store at (capacity - written)
 										(32 + ((physical-slot - 5) * 8)) 8
 								]
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 490 "emit-value-operation/code#2"]
 								written: written + encoded
 							]
 							if all [not floating? physical-slot > 4][
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/outgoing-store at (capacity - written)
 									(32 + ((physical-slot - 5) * 8)) 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 491 "emit-value-operation/code#3"]
 								written: written + encoded
 							]
 							if physical-slot <= 4 [
@@ -6492,7 +6519,7 @@ x64-codegen: context [
 									storage-displacement storage-offsets next-instruction/b
 									instruction/b target-width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 492 "emit-value-operation/code#4"]
 							written: written + encoded
 							state/pending-immediate-index: index
 							state/pending-immediate-value: instruction/b
@@ -6566,7 +6593,7 @@ x64-codegen: context [
 								x64-encoder/move-immediate-compact at (capacity - written)
 									register-id target-width instruction/b instruction/c
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 493 "emit-value-operation/code#5"]
 							written: written + encoded
 							if all [floating? any [paired? all [linear? not direct-store?]]][
 								at: either measure? [as byte-ptr! 0][code + written]
@@ -6575,7 +6602,7 @@ x64-codegen: context [
 								][x64-encoder/XMM0]
 								encoded: x64-encoder/xmm-load-register at
 									(capacity - written) register-id x64-encoder/RAX width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 494 "emit-value-operation/code#6"]
 								written: written + encoded
 							]
 							case [
@@ -6597,7 +6624,7 @@ x64-codegen: context [
 										encoded: x64-encoder/frame-store at
 											(capacity - written) x64-encoder/RAX
 											slot-displacement (storage-slots + depth) target-width
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 495 "emit-value-operation/code#7"]
 										written: written + encoded
 									]
 								]
@@ -6633,7 +6660,7 @@ x64-codegen: context [
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/rip-address at (capacity - written)
 						x64-encoder/RAX displacement
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 496 "emit-value-operation/code#8"]
 					written: written + encoded
 					either linear? [
 						location: LOCATION_GPR
@@ -6642,7 +6669,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement (storage-slots + depth) 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 497 "emit-value-operation/code#9"]
 						written: written + encoded
 					]
 				]
@@ -6801,10 +6828,10 @@ x64-codegen: context [
 						]
 						true [return fail-unsupported 79 "emit-value-operation/register-id#15"]
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 498 "emit-value-operation/code#10"]
 					if import-id > 0 [
 						either argument-marking? [
-							if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
+							if import-refs/import-id = 2147483647 [return fail-limit 766 "emit-value-operation/limit#45"]
 							import-refs/import-id: import-refs/import-id + 1
 						][
 							either measure? [0][
@@ -6822,7 +6849,7 @@ x64-codegen: context [
 							if any [
 								image-global/reference-count = 2147483647
 								task/global-reference-count = 2147483647
-							][return OUTPUT_FULL]
+							][return fail-limit 767 "emit-value-operation/limit#46"]
 							image-global/reference-count: image-global/reference-count + 1
 							task/global-reference-count: task/global-reference-count + 1
 						][
@@ -6861,7 +6888,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement (storage-slots + depth) 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 499 "emit-value-operation/code#11"]
 						written: written + encoded
 						state/location-source: 0
 					]
@@ -6896,7 +6923,7 @@ x64-codegen: context [
 								]
 								true [return fail-invalid 82 "emit-value-operation/state/location-source#18"]
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 500 "emit-value-operation/code#12"]
 							written: written + encoded
 						]
 						stack-flags/depth: 0
@@ -6912,7 +6939,7 @@ x64-codegen: context [
 								encoded: x64-encoder/frame-store at (capacity - written)
 									x64-encoder/RAX
 									slot-displacement (storage-slots + depth) 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 501 "emit-value-operation/code#13"]
 								written: written + encoded
 							]
 						]
@@ -6926,10 +6953,10 @@ x64-codegen: context [
 						if all [flags = 0 not floating? integer-type? ref table
 							any [width = 4 width = 8]][
 							encoded: try-emit-home-binary-update context index ref width prepared
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 502 "emit-value-operation/code#14"]
 							if encoded > 0 [return 0]
 							encoded: try-emit-home-update context index ref width prepared
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 503 "emit-value-operation/code#15"]
 							if encoded > 0 [return 0]
 						]
 						physical-slot: as integer! argument-targets/index
@@ -7085,7 +7112,7 @@ x64-codegen: context [
 								true [return fail-invalid 86 "emit-value-operation/storage-slots#22"]
 							]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 504 "emit-value-operation/code#16"]
 						written: written + encoded
 						if global-target? [
 							unless measure? [
@@ -7101,7 +7128,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/extend-narrow-register at
 								(capacity - written) register-id register-id width signed
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 505 "emit-value-operation/code#17"]
 							written: written + encoded
 						]
 						if location <> LOCATION_ARGUMENT [
@@ -7128,7 +7155,7 @@ x64-codegen: context [
 									(capacity - written) register-id x64-encoder/RAX
 									displacement width signed
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 506 "emit-value-operation/code#18"]
 							written: written + encoded
 						]
 						stack-kinds/depth: VALUE
@@ -7163,7 +7190,7 @@ x64-codegen: context [
 											x64-encoder/RAX
 											slot-displacement (storage-slots + depth) target-width
 									]
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 507 "emit-value-operation/code#19"]
 									written: written + encoded
 								]
 							]
@@ -7205,7 +7232,7 @@ x64-codegen: context [
 								][
 									encoded: x64-encoder/move-register at
 										(capacity - written) register-id x64-encoder/RAX 8
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 508 "emit-value-operation/code#20"]
 									written: written + encoded
 									at: either measure? [as byte-ptr! 0][code + written]
 									x64-encoder/add-immediate at (capacity - written)
@@ -7214,7 +7241,7 @@ x64-codegen: context [
 							]
 							true [return fail-invalid 90 "emit-value-operation/state/location-source#26"]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 509 "emit-value-operation/code#21"]
 						written: written + encoded
 					]
 					stack-types/depth: instruction/a
@@ -7232,7 +7259,7 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX
 								slot-displacement (storage-slots + depth) 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 510 "emit-value-operation/code#22"]
 							written: written + encoded
 						]
 					]
@@ -7268,7 +7295,7 @@ x64-codegen: context [
 						encoded: x64-encoder/frame-load at (capacity - written)
 							x64-encoder/RAX slot-displacement
 								(storage-slots + target-slot) 8 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 511 "emit-value-operation/code#23"]
 						written: written + encoded
 
 						at: either measure? [as byte-ptr! 0][code + written]
@@ -7281,33 +7308,33 @@ x64-codegen: context [
 							x64-encoder/move-immediate-compact at (capacity - written)
 								x64-encoder/RDX 8 instruction/a instruction/c
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 512 "emit-value-operation/code#24"]
 						written: written + encoded
 
 						if instruction/b = 1 [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/add-immediate at (capacity - written)
 								x64-encoder/RDX -1
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 513 "emit-value-operation/code#25"]
 							written: written + encoded
 						]
 						if stride <> 1 [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/multiply-immediate at (capacity - written)
 								x64-encoder/RDX x64-encoder/RDX stride 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 514 "emit-value-operation/code#26"]
 							written: written + encoded
 						]
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/binary-register at (capacity - written)
 							01h x64-encoder/RAX x64-encoder/RDX 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 515 "emit-value-operation/code#27"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement
 								(storage-slots + target-slot) 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 516 "emit-value-operation/code#28"]
 						written: written + encoded
 					]
 					depth: target-slot
@@ -7351,7 +7378,7 @@ x64-codegen: context [
 					][
 						compatibility: implicitly-compatible-types target-ref ref
 							stack-tags/source-slot false table
-						if compatibility < 0 [return compatibility]
+						if compatibility < 0 [return fail-code compatibility 517 "emit-value-operation/code#29"]
 						unless all [
 							compatibility = 1
 							target-flags = flags
@@ -7408,13 +7435,13 @@ x64-codegen: context [
 						]
 						true [return fail-invalid 101 "emit-value-operation/storage-slots#37"]
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 518 "emit-value-operation/code#30"]
 					written: written + encoded
 					if all [aggregate-copy? displacement <> 0][
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/add-immediate at (capacity - written)
 							x64-encoder/RDX displacement
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 519 "emit-value-operation/code#31"]
 						written: written + encoded
 						displacement: 0
 					]
@@ -7428,11 +7455,11 @@ x64-codegen: context [
 						encoded: x64-encoder/frame-load at (capacity - written)
 							x64-encoder/RCX slot-displacement
 								(storage-slots + source-slot) 8 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 520 "emit-value-operation/code#32"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/copy-indirect at (capacity - written) copy-size
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 521 "emit-value-operation/code#33"]
 						written: written + encoded
 						depth: source-slot
 						stack-types/depth: target-ref
@@ -7457,7 +7484,7 @@ x64-codegen: context [
 									(storage-slots + source-slot)
 									(value-width ref flags table) target-width source-signed
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 522 "emit-value-operation/code#34"]
 							written: written + encoded
 						]
 						at: either measure? [as byte-ptr! 0][code + written]
@@ -7505,7 +7532,7 @@ x64-codegen: context [
 								]
 							]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 523 "emit-value-operation/code#35"]
 						written: written + encoded
 						if global-target? [
 							unless measure? [
@@ -7529,7 +7556,7 @@ x64-codegen: context [
 									x64-encoder/RAX
 									slot-displacement (storage-slots + depth) width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 524 "emit-value-operation/code#36"]
 							written: written + encoded
 						]
 					]
@@ -7551,7 +7578,7 @@ x64-codegen: context [
 					state/source-register: 0
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: emit-variant-tags at (capacity - written) tag-head state fn view
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 525 "emit-value-operation/code#37"]
 					written: written + encoded
 					stack-tags/depth: 0
 					if all [
@@ -7621,7 +7648,7 @@ x64-codegen: context [
 						]
 						true [return fail-invalid 108 "emit-value-operation/storage-slots#44"]
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 526 "emit-value-operation/code#38"]
 					written: written + encoded
 					case [
 						location = LOCATION_FRAME [
@@ -7658,11 +7685,11 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement (state/tag-base + state/tag-count) 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 527 "emit-value-operation/code#39"]
 						written: written + encoded
 						stack-tags/depth: index
 					]
-					if state/location-source > (2147483647 - member-offset)[return OUTPUT_FULL]
+					if state/location-source > (2147483647 - member-offset)[return fail-limit 768 "emit-value-operation/limit#47"]
 					state/location-source: state/location-source + member-offset
 					stack-types/depth: member-type
 					stack-flags/depth: member-flags
@@ -7682,12 +7709,12 @@ x64-codegen: context [
 							]
 							true [return fail-invalid 111 "emit-value-operation/state/location-source#47"]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 528 "emit-value-operation/code#40"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement (storage-slots + depth) 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 529 "emit-value-operation/code#41"]
 						written: written + encoded
 						location: LOCATION_NONE
 						state/location-source: 0
@@ -7704,16 +7731,16 @@ x64-codegen: context [
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth) 8 0
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 530 "emit-value-operation/code#42"]
 					written: written + encoded
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/load-indirect at (capacity - written) width 0
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 531 "emit-value-operation/code#43"]
 					written: written + encoded
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth) 4
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 532 "emit-value-operation/code#44"]
 					written: written + encoded
 					stack-types/depth: -5
 					stack-flags/depth: 0
@@ -8081,10 +8108,10 @@ x64-codegen: context [
 						packed-call? [3]
 						true [argument-index]
 					]
-					if physical-count > (2147483647 - state/hidden-shift)[return OUTPUT_FULL]
+					if physical-count > (2147483647 - state/hidden-shift)[return fail-limit 769 "emit-call-operation/limit#66"]
 					physical-count: physical-count + state/hidden-shift
 					if physical-count > (((2147483647 - 32) / 8) + 4)[
-						return OUTPUT_FULL
+						return fail-limit 770 "emit-call-operation/limit#67"
 					]
 					outgoing: either custom-call? [0][
 						either target-abi = ABI_SYSV [0][32]
@@ -8103,7 +8130,7 @@ x64-codegen: context [
 								aggregate-width: aggregate-size parameter/type table
 								if aggregate-width > 0 [
 									if aggregate-width > (2147483647 - outgoing)[
-										return OUTPUT_FULL
+										return fail-limit 771 "emit-call-operation/limit#68"
 									]
 									outgoing: outgoing + aggregate-width
 								]
@@ -8182,7 +8209,7 @@ x64-codegen: context [
 						encoded: x64-encoder/move-immediate-compact at (capacity - written)
 							x64-encoder/RAX target-width following-instruction/b
 							following-instruction/c
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 533 "emit-call-operation/code#1"]
 						written: written + encoded
 						state/pending-immediate-index: -1
 						state/pending-immediate-kind: 0
@@ -8300,13 +8327,13 @@ x64-codegen: context [
 								move-operation-value at (capacity - written)
 									register-id incoming-register width target-width signed
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 534 "emit-call-operation/code#2"]
 							written: written + encoded
 							if all [not floating? width < 4][
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/extend-narrow-register at
 									(capacity - written) register-id register-id width signed
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 535 "emit-call-operation/code#3"]
 								written: written + encoded
 							]
 							location: either floating? [LOCATION_XMM][LOCATION_GPR]
@@ -8341,7 +8368,7 @@ x64-codegen: context [
 									x64-encoder/RAX slot-displacement
 										(storage-slots + depth) target-width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 536 "emit-call-operation/code#4"]
 							written: written + encoded
 							location: LOCATION_NONE
 							state/location-depth: 0
@@ -8393,7 +8420,7 @@ x64-codegen: context [
 								x64-encoder/move-register at (capacity - written)
 									x64-encoder/R11 x64-encoder/RAX target-width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 537 "emit-call-operation/code#5"]
 							written: written + encoded
 							state/location-source: either floating? [
 								located-scratch-xmm
@@ -8401,17 +8428,17 @@ x64-codegen: context [
 						]
 					]
 					temp-offset: align outgoing 16
-					if temp-offset < 0 [return OUTPUT_FULL]
+					if temp-offset < 0 [return fail-limit 772 "emit-call-operation/limit#69"]
 					if all [state/unstable-stack? not custom-call?][
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/move-register at (capacity - written)
 							x64-encoder/RAX x64-encoder/RSP 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 538 "emit-call-operation/code#6"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement state/native-stack-slot 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 539 "emit-call-operation/code#7"]
 						written: written + encoded
 						value-size: 0
 						if not measure? [value-size: task/frame-size]
@@ -8420,17 +8447,17 @@ x64-codegen: context [
 						; immediate must keep one value-independent encoding.
 						encoded: x64-encoder/move-immediate at (capacity - written)
 							x64-encoder/RAX 8 value-size 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 540 "emit-call-operation/code#8"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/binary-register at (capacity - written)
 							29h x64-encoder/RSP x64-encoder/RAX 8
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 541 "emit-call-operation/code#9"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/and-immediate at (capacity - written)
 							x64-encoder/RSP -16
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 542 "emit-call-operation/code#10"]
 						written: written + encoded
 					]
 
@@ -8465,7 +8492,7 @@ x64-codegen: context [
 							][
 								compatibility: implicitly-compatible-types parameter/type ref
 									stack-tags/argument-slot true table
-								if compatibility < 0 [return compatibility]
+								if compatibility < 0 [return fail-code compatibility 543 "emit-call-operation/code#11"]
 								unless all [
 									compatibility = 1
 									parameter/flags = flags
@@ -8514,23 +8541,23 @@ x64-codegen: context [
 							if any [
 								value-size <= 0
 								copy-offset > (2147483647 - value-size)
-							][return OUTPUT_FULL]
+							][return fail-limit 773 "emit-call-operation/limit#70"]
 							outgoing-end: copy-offset + value-size
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RCX slot-displacement
 									(storage-slots + argument-slot) 8 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 544 "emit-call-operation/code#12"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/stack-address at (capacity - written)
 								x64-encoder/RDX copy-offset
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 545 "emit-call-operation/code#13"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/copy-indirect at
 								(capacity - written) value-size
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 546 "emit-call-operation/code#14"]
 							written: written + encoded
 							if outgoing-end > state/max-outgoing [state/max-outgoing: outgoing-end]
 							;-- A System V memory argument occupies its own slots in
@@ -8538,17 +8565,17 @@ x64-codegen: context [
 							;-- a Win64 by-reference copy lives above it.
 							unless target-abi = ABI_SYSV [
 								temp-offset: align outgoing-end 16
-								if temp-offset < 0 [return OUTPUT_FULL]
+								if temp-offset < 0 [return fail-limit 774 "emit-call-operation/limit#71"]
 							]
 						]
 						source-slot: source-slot + 1
 					]
 
 					if packed-call? [
-						if argument-index > (2147483647 / 8)[return OUTPUT_FULL]
+						if argument-index > (2147483647 / 8)[return fail-limit 775 "emit-call-operation/limit#72"]
 						list-size: argument-index * 8
 						list-capacity: either list-size < 8 [8][list-size]
-						if temp-offset > (2147483647 - list-capacity)[return OUTPUT_FULL]
+						if temp-offset > (2147483647 - list-capacity)[return fail-limit 776 "emit-call-operation/limit#73"]
 						outgoing-end: temp-offset + list-capacity
 						if outgoing-end > state/max-outgoing [state/max-outgoing: outgoing-end]
 						source-slot: 1
@@ -8582,12 +8609,12 @@ x64-codegen: context [
 									x64-encoder/RAX slot-displacement
 										(storage-slots + argument-slot) width signed
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 547 "emit-call-operation/code#15"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/outgoing-store at (capacity - written)
 								(temp-offset + ((source-slot - 1) * 8)) 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 548 "emit-call-operation/code#16"]
 							written: written + encoded
 							source-slot: source-slot + 1
 						]
@@ -8595,27 +8622,27 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/move-immediate-compact at (capacity - written)
 							target-slot 4 argument-index 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 549 "emit-call-operation/code#17"]
 						written: written + encoded
 						target-slot: argument-register (state/hidden-shift + 2)
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/stack-address at (capacity - written)
 							target-slot temp-offset
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 550 "emit-call-operation/code#18"]
 						written: written + encoded
 						target-slot: argument-register (state/hidden-shift + 3)
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/move-immediate-compact at (capacity - written)
 							target-slot 4 list-size 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 551 "emit-call-operation/code#19"]
 						written: written + encoded
 					]
 					if typed-call? [
-						if argument-index > (2147483647 / 24)[return OUTPUT_FULL]
+						if argument-index > (2147483647 / 24)[return fail-limit 777 "emit-call-operation/limit#74"]
 						list-size: argument-index * 24
 						list-capacity: either list-size < 8 [8][list-size]
 						if temp-offset > (2147483647 - list-capacity)[
-							return OUTPUT_FULL
+							return fail-limit 778 "emit-call-operation/limit#75"
 						]
 						outgoing-end: temp-offset + list-capacity
 						if outgoing-end > state/max-outgoing [state/max-outgoing: outgoing-end]
@@ -8640,12 +8667,12 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/outgoing-immediate-store
 								at (capacity - written) record-offset typed-member/flags
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 552 "emit-call-operation/code#20"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/outgoing-immediate-store
 								at (capacity - written) (record-offset + 4) 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 553 "emit-call-operation/code#21"]
 							written: written + encoded
 							floating?: float-type? ref table
 							either floating? [
@@ -8653,19 +8680,19 @@ x64-codegen: context [
 								encoded: x64-encoder/xmm-frame-load at (capacity - written)
 									x64-encoder/XMM0 slot-displacement
 									(storage-slots + argument-slot) width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 554 "emit-call-operation/code#22"]
 								written: written + encoded
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/xmm-outgoing-store at
 									(capacity - written) x64-encoder/XMM0
 									(record-offset + 8) width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 555 "emit-call-operation/code#23"]
 								written: written + encoded
 								if width = 4 [
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/outgoing-immediate-store at
 										(capacity - written) (record-offset + 12) 0
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 556 "emit-call-operation/code#24"]
 									written: written + encoded
 								]
 							][
@@ -8674,12 +8701,12 @@ x64-codegen: context [
 								encoded: x64-encoder/frame-load at (capacity - written)
 									x64-encoder/RAX slot-displacement
 									(storage-slots + argument-slot) width signed
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 557 "emit-call-operation/code#25"]
 								written: written + encoded
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/outgoing-store at
 									(capacity - written) (record-offset + 8) 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 558 "emit-call-operation/code#26"]
 								written: written + encoded
 							]
 							kind: logical-kind ref table
@@ -8689,24 +8716,24 @@ x64-codegen: context [
 									x64-encoder/RAX
 									((slot-displacement (storage-slots + argument-slot)) + 4)
 									4 0
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 559 "emit-call-operation/code#27"]
 								written: written + encoded
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/outgoing-store at
 									(capacity - written) (record-offset + 16) 4
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 560 "emit-call-operation/code#28"]
 								written: written + encoded
 							][
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/outgoing-immediate-store at
 									(capacity - written) (record-offset + 16) 0
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 561 "emit-call-operation/code#29"]
 								written: written + encoded
 							]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/outgoing-immediate-store at
 								(capacity - written) (record-offset + 20) 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 562 "emit-call-operation/code#30"]
 							written: written + encoded
 							source-slot: source-slot + 1
 						]
@@ -8714,13 +8741,13 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/move-immediate-compact at (capacity - written)
 							target-slot 4 argument-index 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 563 "emit-call-operation/code#31"]
 						written: written + encoded
 						target-slot: argument-register (state/hidden-shift + 2)
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/stack-address at (capacity - written)
 							target-slot temp-offset
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 564 "emit-call-operation/code#32"]
 						written: written + encoded
 					]
 					temp-offset: align outgoing 16
@@ -8808,7 +8835,7 @@ x64-codegen: context [
 									encoded: x64-encoder/frame-load at (capacity - written)
 										x64-encoder/RAX slot-displacement
 											(storage-slots + argument-slot) 8 0
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 565 "emit-call-operation/code#33"]
 									written: written + encoded
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: either class-a = SYSV_SSE [
@@ -8821,7 +8848,7 @@ x64-codegen: context [
 											(argument-register index-a)
 											x64-encoder/RAX 0 8 0
 									]
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 566 "emit-call-operation/code#34"]
 									written: written + encoded
 									if aggregate-count = 2 [
 										at: either measure? [as byte-ptr! 0][code + written]
@@ -8835,7 +8862,7 @@ x64-codegen: context [
 												(argument-register index-b)
 												x64-encoder/RAX 8 8 0
 										]
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 567 "emit-call-operation/code#35"]
 										written: written + encoded
 									]
 								][
@@ -8849,7 +8876,7 @@ x64-codegen: context [
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/stack-address at (capacity - written)
 									x64-encoder/RAX temp-offset
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 568 "emit-call-operation/code#36"]
 								written: written + encoded
 								argument-width: 8
 							][
@@ -8857,12 +8884,12 @@ x64-codegen: context [
 								encoded: x64-encoder/frame-load at (capacity - written)
 									x64-encoder/RAX slot-displacement
 										(storage-slots + argument-slot) 8 0
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 569 "emit-call-operation/code#37"]
 								written: written + encoded
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/load-indirect at
 									(capacity - written) aggregate-width 0
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 570 "emit-call-operation/code#38"]
 								written: written + encoded
 								argument-width: aggregate-width
 							]
@@ -8872,14 +8899,14 @@ x64-codegen: context [
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/move-register at (capacity - written)
 									target-slot x64-encoder/RAX target-width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 571 "emit-call-operation/code#39"]
 								written: written + encoded
 							][
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/outgoing-store at (capacity - written)
 									stack-offset
 									8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 572 "emit-call-operation/code#40"]
 								written: written + encoded
 							]
 							if aggregate-width = 0 [
@@ -8964,7 +8991,7 @@ x64-codegen: context [
 										]
 									]
 								]
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 573 "emit-call-operation/code#41"]
 								written: written + encoded
 								if all [
 									direct-argument?
@@ -8977,7 +9004,7 @@ x64-codegen: context [
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/extend-narrow-register at
 										(capacity - written) target-slot target-slot source-width signed
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 574 "emit-call-operation/code#42"]
 									written: written + encoded
 								]
 								if all [
@@ -8987,7 +9014,7 @@ x64-codegen: context [
 									encoded: x64-encoder/xmm-convert at
 										(capacity - written) (xmm-slot - 1)
 										(xmm-slot - 1) source-width argument-width
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 575 "emit-call-operation/code#43"]
 									written: written + encoded
 								]
 								if all [
@@ -9004,7 +9031,7 @@ x64-codegen: context [
 									encoded: x64-encoder/xmm-store-register at
 										(capacity - written) target-slot
 										(xmm-slot - 1) argument-width
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 576 "emit-call-operation/code#44"]
 									written: written + encoded
 								]
 							][
@@ -9018,7 +9045,7 @@ x64-codegen: context [
 												encoded: x64-encoder/xmm-convert at
 													(capacity - written) x64-encoder/XMM0
 													state/location-source source-width argument-width
-												if encoded < 0 [return OUTPUT_FULL]
+												if encoded < 0 [return fail-code encoded 577 "emit-call-operation/code#45"]
 												written: written + encoded
 												register-id: x64-encoder/XMM0
 											]
@@ -9031,7 +9058,7 @@ x64-codegen: context [
 											encoded: move-operation-value at (capacity - written)
 												x64-encoder/RAX state/location-source source-width
 												target-width source-signed
-											if encoded < 0 [return OUTPUT_FULL]
+											if encoded < 0 [return fail-code encoded 578 "emit-call-operation/code#46"]
 											written: written + encoded
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/outgoing-store at
@@ -9046,13 +9073,13 @@ x64-codegen: context [
 												(capacity - written) x64-encoder/XMM0
 												slot-displacement (storage-slots + argument-slot)
 												source-width
-											if encoded < 0 [return OUTPUT_FULL]
+											if encoded < 0 [return fail-code encoded 579 "emit-call-operation/code#47"]
 											written: written + encoded
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/xmm-convert at
 												(capacity - written) x64-encoder/XMM0
 												x64-encoder/XMM0 source-width argument-width
-											if encoded < 0 [return OUTPUT_FULL]
+											if encoded < 0 [return fail-code encoded 580 "emit-call-operation/code#48"]
 											written: written + encoded
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/xmm-outgoing-store at
@@ -9064,7 +9091,7 @@ x64-codegen: context [
 												x64-encoder/RAX slot-displacement
 												(storage-slots + argument-slot)
 												(value-width ref flags table) argument-width source-signed
-											if encoded < 0 [return OUTPUT_FULL]
+											if encoded < 0 [return fail-code encoded 581 "emit-call-operation/code#49"]
 											written: written + encoded
 											at: either measure? [as byte-ptr! 0][code + written]
 											encoded: x64-encoder/outgoing-store at
@@ -9073,7 +9100,7 @@ x64-codegen: context [
 										]
 									]
 								]
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 582 "emit-call-operation/code#50"]
 								written: written + encoded
 							]
 						]
@@ -9096,7 +9123,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-address at (capacity - written)
 							either target-abi = ABI_SYSV [x64-encoder/RDI][x64-encoder/RCX] result-offset
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 583 "emit-call-operation/code#51"]
 						written: written + encoded
 					]
 					if indirect? [
@@ -9107,14 +9134,14 @@ x64-codegen: context [
 						encoded: x64-encoder/frame-load at (capacity - written)
 							target-slot slot-displacement
 								(storage-slots + callee-slot) 8 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 584 "emit-call-operation/code#52"]
 						written: written + encoded
 					]
 					if custom-call? [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: emit-custom-setup at (capacity - written)
 							slot-displacement (storage-slots + depth)
-						if encoded < 0 [return encoded]
+						if encoded < 0 [return fail-code encoded 585 "emit-call-operation/code#53"]
 						written: written + encoded
 					]
 					if all [
@@ -9132,7 +9159,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/move-immediate at (capacity - written)
 							x64-encoder/RAX 4 either xmm-slot > 8 [8][xmm-slot] 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 586 "emit-call-operation/code#54"]
 						written: written + encoded
 					]
 					displacement: 0
@@ -9149,7 +9176,7 @@ x64-codegen: context [
 						;-- and R11, which is why the fourth argument rides in R10.
 						encoded: x64-encoder/move-immediate at (capacity - written)
 							x64-encoder/RAX 8 syscall-id 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 587 "emit-call-operation/code#55"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/syscall at (capacity - written)
@@ -9166,10 +9193,10 @@ x64-codegen: context [
 								(capacity - written) target-slot
 						]
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 588 "emit-call-operation/code#56"]
 					if all [import-id > 0 not syscall?] [
 						either argument-marking? [
-							if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
+							if import-refs/import-id = 2147483647 [return fail-limit 779 "emit-call-operation/limit#76"]
 							import-refs/import-id: import-refs/import-id + 1
 						][
 							either measure? [0][
@@ -9185,14 +9212,14 @@ x64-codegen: context [
 						encoded: x64-encoder/frame-load at (capacity - written)
 							x64-encoder/RSP slot-displacement
 								(storage-slots + depth) 8 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 589 "emit-call-operation/code#57"]
 						written: written + encoded
 					]
 					if all [state/unstable-stack? not custom-call?][
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
 							x64-encoder/RSP slot-displacement state/native-stack-slot 8 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 590 "emit-call-operation/code#58"]
 						written: written + encoded
 					]
 					if all [
@@ -9230,7 +9257,7 @@ x64-codegen: context [
 									aggregate-count: sysv-aggregate-eightbytes
 										return-ref table :class-a :class-b
 									if aggregate-count = SYSV_MEMORY [
-										return fail-invalid 154 "emit-call-operation/state/hidden-return#40"
+										return fail-invalid 591 "emit-call-operation/invalid#59"
 									]
 									return-gpr: 0
 									return-xmm: 0
@@ -9244,7 +9271,7 @@ x64-codegen: context [
 										x64-encoder/frame-store at (capacity - written)
 											x64-encoder/RAX result-offset 8
 									]
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 592 "emit-call-operation/code#60"]
 									written: written + encoded
 									if aggregate-count = 2 [
 										at: either measure? [as byte-ptr! 0][code + written]
@@ -9259,21 +9286,21 @@ x64-codegen: context [
 												][x64-encoder/RDX]
 												(result-offset + 8) 8
 										]
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 593 "emit-call-operation/code#61"]
 										written: written + encoded
 									]
 								][
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/frame-store at (capacity - written)
 										x64-encoder/RAX result-offset aggregate-width
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 594 "emit-call-operation/code#62"]
 									written: written + encoded
 								]
 							]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-address at (capacity - written)
 								x64-encoder/RAX result-offset
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 595 "emit-call-operation/code#63"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-store at (capacity - written)
@@ -9292,7 +9319,7 @@ x64-codegen: context [
 								encoded: x64-encoder/extend-narrow-register at
 									(capacity - written) x64-encoder/RAX x64-encoder/RAX
 									width signed
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 596 "emit-call-operation/code#64"]
 								written: written + encoded
 							]
 							at: either measure? [as byte-ptr! 0][code + written]
@@ -9314,7 +9341,7 @@ x64-codegen: context [
 								state/location-source: 0
 							]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 597 "emit-call-operation/code#65"]
 						written: written + encoded
 					]
 				]
@@ -9560,7 +9587,7 @@ x64-codegen: context [
 										encoded: x64-encoder/frame-load at
 											(capacity - written) x64-encoder/RAX
 											slot-displacement (storage-slots + depth) 4 1
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 598 "emit-arithmetic-operation/code#1"]
 										written: written + encoded
 									]
 									at: either measure? [as byte-ptr! 0][code + written]
@@ -9574,7 +9601,7 @@ x64-codegen: context [
 										encoded: x64-encoder/xmm-frame-load at
 											(capacity - written) x64-encoder/XMM0
 											slot-displacement (storage-slots + depth) source-width
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 599 "emit-arithmetic-operation/code#2"]
 										written: written + encoded
 									]
 									at: either measure? [as byte-ptr! 0][code + written]
@@ -9588,7 +9615,7 @@ x64-codegen: context [
 										encoded: x64-encoder/xmm-frame-load at
 											(capacity - written) x64-encoder/XMM0
 											slot-displacement (storage-slots + depth) source-width
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 600 "emit-arithmetic-operation/code#3"]
 										written: written + encoded
 									]
 									at: either measure? [as byte-ptr! 0][code + written]
@@ -9604,7 +9631,7 @@ x64-codegen: context [
 								encoded: x64-encoder/frame-load at (capacity - written)
 									x64-encoder/RAX slot-displacement
 										(storage-slots + depth) source-width signed
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 601 "emit-arithmetic-operation/code#4"]
 								written: written + encoded
 							]
 							encoded: 0
@@ -9613,7 +9640,7 @@ x64-codegen: context [
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/test-register at (capacity - written)
 									x64-encoder/RAX width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 602 "emit-arithmetic-operation/code#5"]
 								written: written + encoded
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/condition-result at
@@ -9637,7 +9664,7 @@ x64-codegen: context [
 								]
 							]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 603 "emit-arithmetic-operation/code#6"]
 						written: written + encoded
 					]
 					if tracked? [
@@ -9658,7 +9685,7 @@ x64-codegen: context [
 									x64-encoder/RAX slot-displacement
 										(storage-slots + depth) width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 604 "emit-arithmetic-operation/code#7"]
 							written: written + encoded
 						]
 					]
@@ -9700,18 +9727,18 @@ x64-codegen: context [
 						encoded: x64-encoder/move-immediate-compact at (capacity - written)
 							x64-encoder/RAX 4 width 0
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 605 "emit-arithmetic-operation/code#8"]
 					written: written + encoded
 					if all [instruction/b = 1 kind = 13][
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/c-string-size at (capacity - written)
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 606 "emit-arithmetic-operation/code#9"]
 						written: written + encoded
 					]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/frame-store at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth) 4
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 607 "emit-arithmetic-operation/code#10"]
 					written: written + encoded
 				]
 				instruction/op = OP_NATIVE [
@@ -9759,7 +9786,7 @@ x64-codegen: context [
 							encoded: emit-stack-pointer at (capacity - written)
 								x64-encoder/RSP slot-displacement
 									(storage-slots + depth)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 608 "emit-arithmetic-operation/code#11"]
 							written: written + encoded
 						]
 						2 [						;-- PUSH
@@ -9774,12 +9801,12 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) width 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 609 "emit-arithmetic-operation/code#12"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/push-register at (capacity - written)
 								x64-encoder/RAX
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 610 "emit-arithmetic-operation/code#13"]
 							written: written + encoded
 							depth: depth - 1
 						]
@@ -9788,7 +9815,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/pop-register at (capacity - written)
 								x64-encoder/RAX
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 611 "emit-arithmetic-operation/code#14"]
 							written: written + encoded
 							depth: depth + 1
 							if depth > state/max-depth [state/max-depth: depth]
@@ -9800,7 +9827,7 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 612 "emit-arithmetic-operation/code#15"]
 							written: written + encoded
 						]
 						4 [						;-- system/stack/frame
@@ -9819,7 +9846,7 @@ x64-codegen: context [
 							encoded: emit-stack-pointer at (capacity - written)
 								x64-encoder/RBP slot-displacement
 									(storage-slots + depth)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 613 "emit-arithmetic-operation/code#16"]
 							written: written + encoded
 						]
 						5 [						;-- system/stack/top:
@@ -9836,7 +9863,7 @@ x64-codegen: context [
 							encoded: emit-stack-set at (capacity - written)
 								x64-encoder/RSP slot-displacement
 									(storage-slots + depth)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 614 "emit-arithmetic-operation/code#17"]
 							written: written + encoded
 							stack-types/depth: instruction/c
 							stack-tags/depth: 0
@@ -9855,7 +9882,7 @@ x64-codegen: context [
 							encoded: emit-stack-set at (capacity - written)
 								x64-encoder/RBP slot-displacement
 									(storage-slots + depth)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 615 "emit-arithmetic-operation/code#18"]
 							written: written + encoded
 							stack-types/depth: instruction/c
 							stack-tags/depth: 0
@@ -9875,7 +9902,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-align at (capacity - written)
 								slot-displacement (storage-slots + depth)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 616 "emit-arithmetic-operation/code#19"]
 							written: written + encoded
 						]
 						8 [						;-- system/stack/allocate
@@ -9891,7 +9918,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-allocate at (capacity - written)
 								slot-displacement (storage-slots + depth) false
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 617 "emit-arithmetic-operation/code#20"]
 							written: written + encoded
 							stack-types/depth: instruction/c
 							stack-flags/depth: 0
@@ -9911,7 +9938,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-allocate at (capacity - written)
 								slot-displacement (storage-slots + depth) true
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 618 "emit-arithmetic-operation/code#21"]
 							written: written + encoded
 							stack-types/depth: instruction/c
 							stack-flags/depth: 0
@@ -9929,7 +9956,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-free at (capacity - written)
 								slot-displacement (storage-slots + depth)
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 619 "emit-arithmetic-operation/code#22"]
 							written: written + encoded
 							depth: depth - 1
 						]
@@ -9937,14 +9964,14 @@ x64-codegen: context [
 							unless instruction/c = 0 [return fail-invalid 180 "emit-arithmetic-operation/instruction/c#24"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-all at (capacity - written) false
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 620 "emit-arithmetic-operation/code#23"]
 							written: written + encoded
 						]
 						12 [					;-- system/stack/pop-all
 							unless instruction/c = 0 [return fail-invalid 181 "emit-arithmetic-operation/instruction/c#25"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: emit-stack-all at (capacity - written) true
-							if encoded < 0 [return encoded]
+							if encoded < 0 [return fail-code encoded 621 "emit-arithmetic-operation/code#24"]
 							written: written + encoded
 						]
 						13 [					;-- system/pc
@@ -9961,18 +9988,18 @@ x64-codegen: context [
 							stack-tags/depth: 0
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/call-relative at (capacity - written) 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 622 "emit-arithmetic-operation/code#25"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/pop-register at (capacity - written)
 								x64-encoder/RAX
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 623 "emit-arithmetic-operation/code#26"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 624 "emit-arithmetic-operation/code#27"]
 							written: written + encoded
 						]
 						14 [					;-- system/cpu/<register>
@@ -9986,14 +10013,14 @@ x64-codegen: context [
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/move-register at (capacity - written)
 									x64-encoder/RAX register-id 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 625 "emit-arithmetic-operation/code#28"]
 								written: written + encoded
 							]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 8
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 626 "emit-arithmetic-operation/code#29"]
 							written: written + encoded
 						]
 						15 [					;-- system/cpu/<register>:
@@ -10006,13 +10033,13 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 8 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 627 "emit-arithmetic-operation/code#30"]
 							written: written + encoded
 							if register-id <> x64-encoder/RAX [
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/move-register at (capacity - written)
 									register-id x64-encoder/RAX 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 628 "emit-arithmetic-operation/code#31"]
 								written: written + encoded
 							]
 							stack-types/depth: state/cpu-pointer-ref
@@ -10037,20 +10064,20 @@ x64-codegen: context [
 							][
 								x64-encoder/condition-result at (capacity - written) 0
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 629 "emit-arithmetic-operation/code#32"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 630 "emit-arithmetic-operation/code#33"]
 							written: written + encoded
 						]
 						17 [					;-- system/atomic/fence
 							unless instruction/c = 0 [return fail-invalid 185 "emit-arithmetic-operation/instruction/c#29"]
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/memory-fence at (capacity - written)
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 631 "emit-arithmetic-operation/code#34"]
 							written: written + encoded
 						]
 						18 [					;-- system/atomic/load
@@ -10067,18 +10094,18 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 8 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 632 "emit-arithmetic-operation/code#35"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/register-load-indirect at
 								(capacity - written) x64-encoder/RAX x64-encoder/RAX 0 4 1
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 633 "emit-arithmetic-operation/code#36"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 634 "emit-arithmetic-operation/code#37"]
 							written: written + encoded
 							stack-types/depth: -5
 							stack-flags/depth: 0
@@ -10103,22 +10130,22 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RDX slot-displacement
 									(storage-slots + target-slot) 8 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 635 "emit-arithmetic-operation/code#38"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4 1
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 636 "emit-arithmetic-operation/code#39"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/register-store-indirect at
 								(capacity - written) x64-encoder/RDX x64-encoder/RAX 0 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 637 "emit-arithmetic-operation/code#40"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/memory-fence at (capacity - written)
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 638 "emit-arithmetic-operation/code#41"]
 							written: written + encoded
 							depth: depth - 2
 						]
@@ -10144,29 +10171,29 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RDX slot-displacement
 									(storage-slots + target-slot) 8 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 639 "emit-arithmetic-operation/code#42"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + source-slot) 4 1
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 640 "emit-arithmetic-operation/code#43"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RCX slot-displacement
 									(storage-slots + depth) 4 1
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 641 "emit-arithmetic-operation/code#44"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/atomic-compare-exchange at
 								(capacity - written) x64-encoder/RDX x64-encoder/RCX
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 642 "emit-arithmetic-operation/code#45"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/condition-result at
 								(capacity - written) 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 643 "emit-arithmetic-operation/code#46"]
 							written: written + encoded
 							state/last-math-operation: 0
 							depth: depth - 2
@@ -10178,7 +10205,7 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 644 "emit-arithmetic-operation/code#47"]
 							written: written + encoded
 						]
 						21 [					;-- system/atomic/<math>
@@ -10202,32 +10229,32 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RDX slot-displacement
 									(storage-slots + target-slot) 8 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 645 "emit-arithmetic-operation/code#48"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RCX slot-displacement
 									(storage-slots + depth) 4 1
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 646 "emit-arithmetic-operation/code#49"]
 							written: written + encoded
 							case [
 								operation <= 2 [
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/move-register at
 										(capacity - written) x64-encoder/RAX x64-encoder/RCX 4
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 647 "emit-arithmetic-operation/code#50"]
 									written: written + encoded
 									if operation = 2 [
 										at: either measure? [as byte-ptr! 0][code + written]
 										encoded: x64-encoder/negate-register at
 											(capacity - written) x64-encoder/RAX 4
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 648 "emit-arithmetic-operation/code#51"]
 										written: written + encoded
 									]
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/atomic-exchange-add at
 										(capacity - written) x64-encoder/RDX x64-encoder/RAX
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 649 "emit-arithmetic-operation/code#52"]
 									written: written + encoded
 									if not atomic-old? [
 										opcode: either operation = 1 [01h][29h]
@@ -10235,7 +10262,7 @@ x64-codegen: context [
 										encoded: x64-encoder/binary-register at
 											(capacity - written) opcode x64-encoder/RAX
 											x64-encoder/RCX 4
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 650 "emit-arithmetic-operation/code#53"]
 										written: written + encoded
 									]
 								]
@@ -10243,13 +10270,13 @@ x64-codegen: context [
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/register-load-indirect at
 										(capacity - written) x64-encoder/RAX x64-encoder/RDX 0 4 1
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 651 "emit-arithmetic-operation/code#54"]
 									written: written + encoded
 									target-offset: written
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/move-register at
 										(capacity - written) x64-encoder/R11 x64-encoder/RAX 4
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 652 "emit-arithmetic-operation/code#55"]
 									written: written + encoded
 									opcode: case [
 										operation = 3 [09h]
@@ -10260,25 +10287,25 @@ x64-codegen: context [
 									encoded: x64-encoder/binary-register at
 										(capacity - written) opcode x64-encoder/R11
 										x64-encoder/RCX 4
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 653 "emit-arithmetic-operation/code#56"]
 									written: written + encoded
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/atomic-compare-exchange at
 										(capacity - written) x64-encoder/RDX x64-encoder/R11
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 654 "emit-arithmetic-operation/code#57"]
 									written: written + encoded
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/jump-condition at
 										(capacity - written) 5
 										(target-offset - (written + 6))
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 655 "emit-arithmetic-operation/code#58"]
 									written: written + encoded
 									if not atomic-old? [
 										at: either measure? [as byte-ptr! 0][code + written]
 										encoded: x64-encoder/move-register at
 											(capacity - written) x64-encoder/RAX
 											x64-encoder/R11 4
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 656 "emit-arithmetic-operation/code#59"]
 										written: written + encoded
 									]
 								]
@@ -10299,7 +10326,7 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 657 "emit-arithmetic-operation/code#60"]
 							written: written + encoded
 						]
 						22 [					;-- LOG-B
@@ -10317,12 +10344,12 @@ x64-codegen: context [
 							encoded: load-operation-value at (capacity - written)
 								x64-encoder/RAX slot-displacement (storage-slots + depth)
 								(value-width stack-types/depth 0 table) operation-width signed
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 658 "emit-arithmetic-operation/code#61"]
 							written: written + encoded
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/bit-scan-reverse at (capacity - written)
 								x64-encoder/RAX x64-encoder/RAX operation-width
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 659 "emit-arithmetic-operation/code#62"]
 							written: written + encoded
 							stack-types/depth: -5
 							stack-flags/depth: 0
@@ -10332,7 +10359,7 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-store at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 660 "emit-arithmetic-operation/code#63"]
 							written: written + encoded
 						]
 						default [return fail-unsupported 191 "emit-arithmetic-operation/default#35"]
@@ -10365,7 +10392,7 @@ x64-codegen: context [
 						encoded: x64-encoder/frame-load at (capacity - written)
 							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							width signed
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 661 "emit-arithmetic-operation/code#64"]
 						written: written + encoded
 					]
 					if located? [
@@ -10380,7 +10407,7 @@ x64-codegen: context [
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) target-width
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 662 "emit-arithmetic-operation/code#65"]
 						written: written + encoded
 					]
 					depth: depth + 1
@@ -10395,7 +10422,7 @@ x64-codegen: context [
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							target-width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 663 "emit-arithmetic-operation/code#66"]
 						written: written + encoded
 					]
 					if located? [state/location-depth: depth]
@@ -10423,19 +10450,19 @@ x64-codegen: context [
 						encoded: load-operation-value at (capacity - written)
 							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							(value-width ref flags table) operation-width signed
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 664 "emit-arithmetic-operation/code#67"]
 						written: written + encoded
 					]
 					either kind = 11 [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/clear-register at (capacity - written)
 							x64-encoder/RDX
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 665 "emit-arithmetic-operation/code#68"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/binary-register at (capacity - written)
 							39h x64-encoder/RAX x64-encoder/RDX operation-width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 666 "emit-arithmetic-operation/code#69"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/condition-result at (capacity - written) 4
@@ -10444,7 +10471,7 @@ x64-codegen: context [
 						encoded: x64-encoder/not-register at (capacity - written)
 							x64-encoder/RAX operation-width
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 667 "emit-arithmetic-operation/code#70"]
 					written: written + encoded
 					location: LOCATION_NONE
 					state/location-depth: 0
@@ -10456,7 +10483,7 @@ x64-codegen: context [
 							encoded: x64-encoder/extend-narrow-register at
 								(capacity - written) x64-encoder/RAX x64-encoder/RAX
 								width signed
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 668 "emit-arithmetic-operation/code#71"]
 							written: written + encoded
 						]
 						location: LOCATION_GPR
@@ -10466,7 +10493,7 @@ x64-codegen: context [
 						encoded: x64-encoder/frame-store at (capacity - written)
 							x64-encoder/RAX slot-displacement (storage-slots + depth)
 							operation-width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 669 "emit-arithmetic-operation/code#72"]
 						written: written + encoded
 					]
 					stack-tags/depth: 0
@@ -10713,7 +10740,7 @@ x64-codegen: context [
 											source-width operation-width
 									]
 								]
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 670 "emit-arithmetic-operation/code#73"]
 								written: written + encoded
 							]
 						]
@@ -10723,14 +10750,14 @@ x64-codegen: context [
 							encoded: x64-encoder/xmm-frame-load at (capacity - written)
 								x64-encoder/XMM0 slot-displacement
 									(storage-slots + target-slot) source-width
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 671 "emit-arithmetic-operation/code#74"]
 							written: written + encoded
 						]
 						if source-width <> operation-width [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/xmm-convert at (capacity - written)
 								x64-encoder/XMM0 x64-encoder/XMM0 source-width operation-width
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 672 "emit-arithmetic-operation/code#75"]
 							written: written + encoded
 						]
 						unless located? [
@@ -10739,14 +10766,14 @@ x64-codegen: context [
 							encoded: x64-encoder/xmm-frame-load at (capacity - written)
 								x64-encoder/XMM1 slot-displacement
 									(storage-slots + depth) source-width
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 673 "emit-arithmetic-operation/code#76"]
 							written: written + encoded
 							if source-width <> operation-width [
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/xmm-convert at (capacity - written)
 									x64-encoder/XMM1 x64-encoder/XMM1
 									source-width operation-width
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 674 "emit-arithmetic-operation/code#77"]
 								written: written + encoded
 							]
 						]
@@ -10760,7 +10787,7 @@ x64-codegen: context [
 							encoded: x64-encoder/xmm-binary at (capacity - written)
 								opcode x64-encoder/XMM0 x64-encoder/XMM1 operation-width
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 675 "emit-arithmetic-operation/code#78"]
 						written: written + encoded
 						if comparison? [
 							condition: float-condition operation
@@ -10769,7 +10796,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/float-condition-result
 								at (capacity - written) condition parity
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 676 "emit-arithmetic-operation/code#79"]
 							written: written + encoded
 						]
 					][
@@ -10820,7 +10847,7 @@ x64-codegen: context [
 							source-slot x64-encoder/RAX
 							(value-width right-ref right-flags table)
 							operation-width source-signed
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 677 "emit-arithmetic-operation/code#80"]
 						written: written + encoded
 					]
 					target-offset: 0
@@ -10835,7 +10862,7 @@ x64-codegen: context [
 							(storage-slots + target-slot)
 							(value-width left-ref left-flags table) operation-width
 							load-signed
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 678 "emit-arithmetic-operation/code#81"]
 						written: written + encoded
 					]
 
@@ -10844,7 +10871,7 @@ x64-codegen: context [
 						encoded: load-operation-value at (capacity - written)
 							source-slot slot-displacement (storage-slots + depth)
 							(value-width right-ref right-flags table) operation-width source-signed
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 679 "emit-arithmetic-operation/code#82"]
 						written: written + encoded
 					]
 
@@ -10863,7 +10890,7 @@ x64-codegen: context [
 								encoded: x64-encoder/multiply-immediate at
 									(capacity - written)
 									x64-encoder/RDX x64-encoder/RDX stride 8
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 680 "emit-arithmetic-operation/code#83"]
 								written: written + encoded
 							]
 						]
@@ -10886,7 +10913,7 @@ x64-codegen: context [
 							]
 							true [0]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 681 "emit-arithmetic-operation/code#84"]
 						written: written + encoded
 					]
 
@@ -11016,7 +11043,7 @@ x64-codegen: context [
 						true [encoded: -1]
 					]
 					if immediate? [state/pending-immediate-index: -1]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 682 "emit-arithmetic-operation/code#85"]
 					written: written + encoded
 
 					if all [tracked? operation <= MULTIPLY_OPERATION][
@@ -11024,13 +11051,13 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: jump-condition-to at (capacity - written) condition
 							target-offset written
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 683 "emit-arithmetic-operation/code#86"]
 						written: written + encoded
 						if width < 4 [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: narrow-overflow-check at (capacity - written)
 								width signed target-offset written
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 684 "emit-arithmetic-operation/code#87"]
 							written: written + encoded
 						]
 					]
@@ -11039,7 +11066,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/move-register at (capacity - written)
 							x64-encoder/RAX x64-encoder/RDX operation-width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 685 "emit-arithmetic-operation/code#88"]
 						written: written + encoded
 					]
 					if operation = MODULO_OPERATION [
@@ -11050,7 +11077,7 @@ x64-codegen: context [
 							encoded: x64-encoder/move-register at (capacity - written)
 								x64-encoder/RAX x64-encoder/RDX operation-width
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 686 "emit-arithmetic-operation/code#89"]
 						written: written + encoded
 					]
 					if comparison? [
@@ -11086,7 +11113,7 @@ x64-codegen: context [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/condition-result at
 								(capacity - written) condition
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 687 "emit-arithmetic-operation/code#90"]
 							written: written + encoded
 						]
 					]
@@ -11125,7 +11152,7 @@ x64-codegen: context [
 							encoded: x64-encoder/extend-narrow-register at
 								(capacity - written) x64-encoder/RAX x64-encoder/RAX
 								width signed
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 688 "emit-arithmetic-operation/code#91"]
 							written: written + encoded
 						]
 						location: either all [floating? not comparison?][
@@ -11143,7 +11170,7 @@ x64-codegen: context [
 								x64-encoder/RAX slot-displacement (storage-slots + depth)
 								operation-width
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 689 "emit-arithmetic-operation/code#92"]
 						written: written + encoded
 					]
 					]
@@ -11284,7 +11311,7 @@ x64-codegen: context [
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: emit-catch-open at (capacity - written)
 						catch-record (storage-slots + depth) target-offset written
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 690 "emit-control-operation/code#1"]
 					written: written + encoded
 					depth: depth - 1
 					if measure? [
@@ -11304,7 +11331,7 @@ x64-codegen: context [
 					catch-record: state/catch-base + ((state/catch-level - 1) * 3) + 1
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: emit-catch-restore at (capacity - written) catch-record
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 691 "emit-control-operation/code#2"]
 					written: written + encoded
 				]
 				instruction/op = OP_THROW [
@@ -11326,35 +11353,35 @@ x64-codegen: context [
 					encoded: x64-encoder/frame-load at (capacity - written)
 						x64-encoder/RAX slot-displacement
 							(storage-slots + source-slot) 4 0
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 692 "emit-control-operation/code#3"]
 					written: written + encoded
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/frame-load at (capacity - written)
 						x64-encoder/RDX slot-displacement
 							(storage-slots + target-slot) 8 0
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 693 "emit-control-operation/code#4"]
 					written: written + encoded
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/store-indirect at (capacity - written) 4
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 694 "emit-control-operation/code#5"]
 					written: written + encoded
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: emit-variant-tags at (capacity - written) tag-head state fn view
-					if encoded < 0 [return encoded]
+					if encoded < 0 [return fail-code encoded 695 "emit-control-operation/code#6"]
 					written: written + encoded
 					if tag-head > 0 [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-load at (capacity - written)
 							x64-encoder/RAX slot-displacement
 								(storage-slots + source-slot) 4 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 696 "emit-control-operation/code#7"]
 						written: written + encoded
 					]
 					depth: source-slot - 1
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/throw-unwind at (capacity - written)
 						((fn/flags and CATCH_FLAG) <> 0)
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 697 "emit-control-operation/code#8"]
 					written: written + encoded
 					state/fallthrough?: false
 				]
@@ -11373,7 +11400,7 @@ x64-codegen: context [
 						catch-record: state/catch-base + ((state/catch-level - 1) * 3) + 1
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: emit-catch-restore at (capacity - written) catch-record
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 698 "emit-control-operation/code#9"]
 						written: written + encoded
 						state/catch-level: state/catch-level - 1
 						catch-unwind: catch-unwind - 1
@@ -11400,7 +11427,7 @@ x64-codegen: context [
 						x64-encoder/jump-relative at (capacity - written)
 							displacement
 					]
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 699 "emit-control-operation/code#10"]
 					written: written + encoded
 					state/fallthrough?: false
 				]
@@ -11448,7 +11475,7 @@ x64-codegen: context [
 								x64-encoder/jump-relative at (capacity - written)
 									displacement
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 700 "emit-control-operation/code#11"]
 							written: written + encoded
 							state/fallthrough?: false
 						]
@@ -11462,14 +11489,14 @@ x64-codegen: context [
 							encoded: x64-encoder/frame-load at (capacity - written)
 								x64-encoder/RAX slot-displacement
 									(storage-slots + depth) 4 0
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 701 "emit-control-operation/code#12"]
 							written: written + encoded
 						]
 						if state/flags-condition < 0 [
 							at: either measure? [as byte-ptr! 0][code + written]
 							encoded: x64-encoder/test-register at
 								(capacity - written) x64-encoder/RAX 4
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 702 "emit-control-operation/code#13"]
 							written: written + encoded
 						]
 						either fold-boolean? [
@@ -11483,13 +11510,13 @@ x64-codegen: context [
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/condition-result at
 									(capacity - written) condition
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 703 "emit-control-operation/code#14"]
 								written: written + encoded
 								at: either measure? [as byte-ptr! 0][code + written]
 								encoded: x64-encoder/frame-store at (capacity - written)
 									x64-encoder/RAX slot-displacement
 										(storage-slots + depth) 4
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 704 "emit-control-operation/code#15"]
 								written: written + encoded
 								state/flags-condition: -1
 							]
@@ -11543,7 +11570,7 @@ x64-codegen: context [
 								x64-encoder/jump-condition at
 									(capacity - written) condition displacement
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 705 "emit-control-operation/code#16"]
 							written: written + encoded
 							location: LOCATION_NONE
 							state/location-depth: 0
@@ -11572,7 +11599,7 @@ x64-codegen: context [
 					encoded: load-operation-value at (capacity - written)
 						x64-encoder/RAX slot-displacement (storage-slots + depth)
 						(value-width ref 0 table) operation-width signed
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 706 "emit-control-operation/code#17"]
 					written: written + encoded
 					depth: depth - 1
 
@@ -11595,12 +11622,12 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/move-immediate-compact at (capacity - written)
 							x64-encoder/RDX operation-width switch-case/low switch-case/high
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 707 "emit-control-operation/code#18"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/binary-register at (capacity - written)
 							39h x64-encoder/RAX x64-encoder/RDX operation-width
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 708 "emit-control-operation/code#19"]
 						written: written + encoded
 						displacement: 0
 						if not measure? [
@@ -11613,7 +11640,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/jump-condition at (capacity - written)
 							4 displacement
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 709 "emit-control-operation/code#20"]
 						written: written + encoded
 						case-index: case-index + 1
 					]
@@ -11636,7 +11663,7 @@ x64-codegen: context [
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/jump-relative at (capacity - written)
 						displacement
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 710 "emit-control-operation/code#21"]
 					written: written + encoded
 					state/fallthrough?: false
 				]
@@ -11646,7 +11673,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/adjust-stack at (capacity - written)
 							(0 - state/sub-frame)
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 711 "emit-control-operation/code#22"]
 						written: written + encoded
 					]
 				]
@@ -11667,7 +11694,7 @@ x64-codegen: context [
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/call-relative at (capacity - written)
 						displacement
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 712 "emit-control-operation/code#23"]
 					written: written + encoded
 					sub-returns?: (instruction-effects/target and EFFECT_RESUMES) <> 0
 					either not sub-returns? [
@@ -11693,7 +11720,7 @@ x64-codegen: context [
 									x64-encoder/RAX slot-displacement
 										(storage-slots + depth) width
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 713 "emit-control-operation/code#24"]
 							written: written + encoded
 						]
 					]
@@ -11712,7 +11739,7 @@ x64-codegen: context [
 					][
 						compatibility: implicitly-compatible-types return-ref stack-types/depth
 							stack-tags/depth false table
-						if compatibility < 0 [return compatibility]
+						if compatibility < 0 [return fail-code compatibility 714 "emit-control-operation/code#25"]
 					]
 					unless all [
 						sub-entry/op = OP_ENTRY sub-entry/a = 1
@@ -11770,16 +11797,16 @@ x64-codegen: context [
 									(value-width ref 0 table) target-width signed
 							]
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 715 "emit-control-operation/code#26"]
 						written: written + encoded
 					]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/adjust-stack at (capacity - written) state/sub-frame
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 716 "emit-control-operation/code#27"]
 					written: written + encoded
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/return-near at (capacity - written)
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 717 "emit-control-operation/code#28"]
 					written: written + encoded
 					location: LOCATION_NONE
 					state/location-depth: 0
@@ -11795,7 +11822,7 @@ x64-codegen: context [
 					][return fail-invalid 234 "emit-control-operation/instruction/c#21"]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/trap at (capacity - written)
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 718 "emit-control-operation/code#29"]
 					written: written + encoded
 					state/fallthrough?: false
 				]
@@ -11821,7 +11848,7 @@ x64-codegen: context [
 						][
 							compatibility: implicitly-compatible-types return-ref stack-types/depth
 								stack-tags/depth false table
-							if compatibility < 0 [return compatibility]
+							if compatibility < 0 [return fail-code compatibility 719 "emit-control-operation/code#30"]
 							unless all [
 								compatibility = 1
 								stack-flags/depth = instruction/b
@@ -11852,11 +11879,11 @@ x64-codegen: context [
 								(storage-slots + depth)
 								(value-width ref flags table) target-width signed
 						]
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 720 "emit-control-operation/code#31"]
 						written: written + encoded
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/call-import at (capacity - written) 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 721 "emit-control-operation/code#32"]
 						if not measure? [
 							if exit-reference-id <= 0 [return fail-invalid 239 "emit-control-operation/exit-reference-id#26"]
 							references/exit-reference-id: function-offset + written + 2
@@ -11865,7 +11892,7 @@ x64-codegen: context [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/clear-register at (capacity - written)
 							x64-encoder/RAX
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 722 "emit-control-operation/code#33"]
 						written: written + encoded
 					][
 						if return-ref <> 0 [
@@ -11880,20 +11907,20 @@ x64-codegen: context [
 									;-- pointer *into* this function.
 									x64-encoder/RCX slot-displacement
 										(storage-slots + depth) 8 0
-								if encoded < 0 [return OUTPUT_FULL]
+								if encoded < 0 [return fail-code encoded 723 "emit-control-operation/code#34"]
 								written: written + encoded
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/frame-load at (capacity - written)
 										x64-encoder/RDX
 										(0 - (x64-encoder/BASE_FRAME_SIZE + 8)) 8 0
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 724 "emit-control-operation/code#35"]
 									written: written + encoded
 									value-size: aggregate-size return-ref table
 									if value-size <= 0 [return fail-invalid 240 "emit-control-operation/value-size#27"]
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/copy-indirect at
 										(capacity - written) value-size
-									if encoded < 0 [return OUTPUT_FULL]
+									if encoded < 0 [return fail-code encoded 725 "emit-control-operation/code#36"]
 									written: written + encoded
 									at: either measure? [as byte-ptr! 0][code + written]
 									encoded: x64-encoder/frame-load at (capacity - written)
@@ -11912,7 +11939,7 @@ x64-codegen: context [
 										encoded: x64-encoder/frame-load at (capacity - written)
 											x64-encoder/RCX slot-displacement
 												(storage-slots + depth) 8 0
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 726 "emit-control-operation/code#37"]
 										written: written + encoded
 										;-- RAX then RDX for the integer eightbytes,
 										;-- XMM0 then XMM1 for the vector ones. The
@@ -11933,7 +11960,7 @@ x64-codegen: context [
 													][x64-encoder/RDX]
 													x64-encoder/RCX 8 8 0
 											]
-											if encoded < 0 [return OUTPUT_FULL]
+											if encoded < 0 [return fail-code encoded 727 "emit-control-operation/code#38"]
 											written: written + encoded
 										]
 										at: either measure? [as byte-ptr! 0][code + written]
@@ -11947,12 +11974,12 @@ x64-codegen: context [
 												x64-encoder/RAX x64-encoder/RCX 0 8 0
 										]
 									][
-										if aggregate-width = 0 [return fail-invalid 241 "emit-control-operation/aggregate-width#28"]
+										if aggregate-width = 0 [return fail-invalid 728 "emit-control-operation/invalid#39"]
 										at: either measure? [as byte-ptr! 0][code + written]
 										encoded: x64-encoder/frame-load at (capacity - written)
 											x64-encoder/RAX slot-displacement
 												(storage-slots + depth) 8 0
-										if encoded < 0 [return OUTPUT_FULL]
+										if encoded < 0 [return fail-code encoded 729 "emit-control-operation/code#40"]
 										written: written + encoded
 										at: either measure? [as byte-ptr! 0][code + written]
 										encoded: x64-encoder/load-indirect at
@@ -11996,13 +12023,13 @@ x64-codegen: context [
 									]
 								]
 							]
-							if encoded < 0 [return OUTPUT_FULL]
+							if encoded < 0 [return fail-code encoded 730 "emit-control-operation/code#41"]
 							written: written + encoded
 						]
 					]
 					at: either measure? [as byte-ptr! 0][code + written]
 					encoded: x64-encoder/leave-return at (capacity - written)
-					if encoded < 0 [return OUTPUT_FULL]
+					if encoded < 0 [return fail-code encoded 731 "emit-control-operation/code#42"]
 					written: written + encoded
 					location: LOCATION_NONE
 					state/location-depth: 0
@@ -12106,9 +12133,9 @@ x64-codegen: context [
 		]
 		if instruction/op = OP_ENTRY [
 			if state/fallthrough? [return fail-invalid 245 "prepare-instruction/state/fallthrough#2"]
-			if state/max-depth > (2147483647 - state/segment-slots)[return OUTPUT_FULL]
+			if state/max-depth > (2147483647 - state/segment-slots)[return fail-limit 780 "prepare-instruction/limit#5"]
 			state/segment-slots: state/segment-slots + state/max-depth
-			if state/storage-base > (2147483647 - state/segment-slots)[return OUTPUT_FULL]
+			if state/storage-base > (2147483647 - state/segment-slots)[return fail-limit 781 "prepare-instruction/limit#6"]
 			storage-slots: state/storage-base + state/segment-slots
 			depth: 0
 			state/max-depth: 0
@@ -12299,19 +12326,19 @@ x64-codegen: context [
 					location = LOCATION_FRAME [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-address at (capacity - written) x64-encoder/RAX state/location-source
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 732 "prepare-instruction/code#1"]
 						written: written + encoded
 					]
 					location = LOCATION_FRAME_INDIRECT [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/frame-load at (capacity - written) x64-encoder/RAX state/location-source 8 0
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 733 "prepare-instruction/code#2"]
 						written: written + encoded
 					]
 					location = LOCATION_ADDRESS [
 						at: either measure? [as byte-ptr! 0][code + written]
 						encoded: x64-encoder/add-immediate at (capacity - written) x64-encoder/RAX state/location-source
-						if encoded < 0 [return OUTPUT_FULL]
+						if encoded < 0 [return fail-code encoded 734 "prepare-instruction/code#3"]
 						written: written + encoded
 					]
 					location = LOCATION_ARGUMENT [return fail-invalid 249 "prepare-instruction/location#6"]
@@ -12345,7 +12372,7 @@ x64-codegen: context [
 							slot-displacement (storage-slots + depth) target-width]
 					true [return fail-invalid 256 "prepare-instruction/storage-slots#13"]
 				]
-				if encoded < 0 [return OUTPUT_FULL]
+				if encoded < 0 [return fail-code encoded 735 "prepare-instruction/code#4"]
 				written: written + encoded
 				location: LOCATION_NONE
 				state/location-depth: 0
@@ -12412,20 +12439,20 @@ x64-codegen: context [
 			frame-extra: task/frame-size - x64-encoder/BASE_FRAME_SIZE
 			if frame-extra < 0 [return fail-invalid 257 "emit-function-body/frame-extra#1"]
 			allocation-size: x64-encoder/allocate-frame null 0 frame-extra
-			if allocation-size < 0 [return OUTPUT_FULL]
+			if allocation-size < 0 [return fail-code allocation-size 782 "emit-function-body/frame-allocation-encoding"]
 		]
 		prepared/allocation-size: allocation-size
 		index: 1
 		while [index <= fn/instruction-count][
 			instruction: as rsir-instruction! (instructions
 				+ ((index - 1) * RSIR_INSTRUCTION_SIZE))
-			codegen-diag/mark-instruction index instruction/op
+			codegen-diag/mark-instruction index as int-ptr! instruction
 			result: prepare-instruction context instruction index prepared
 			if result = PREPARE_SKIPPED [
 				index: index + prepared/advance
 				continue
 			]
-			if result < 0 [return result]
+			if result < 0 [return fail-code result 736 "emit-function-body/code#1"]
 			result: case [
 				any [instruction/op = OP_LITERAL
 					instruction/op = OP_CONSTANT
@@ -12456,9 +12483,9 @@ x64-codegen: context [
 					instruction/op = OP_SUB_RETURN
 					instruction/op = OP_FAIL
 					instruction/op = OP_RETURN] [emit-control-operation context instruction index prepared]
-				true [UNSUPPORTED]
+				true [fail-unsupported 783 "emit-function-body/unsupported#4"]
 			]
-			if result < 0 [return result]
+			if result < 0 [return fail-code result 737 "emit-function-body/code#2"]
 			index: index + prepared/advance
 		]
 		0
@@ -12479,7 +12506,7 @@ x64-codegen: context [
 		if any [
 			offset < 0
 			offset > (2147483647 - global/data-size)
-		][return OUTPUT_FULL]
+		][return fail-limit 784 "place-global-data/limit#1"]
 		global/data-offset: offset
 		either (global/flags and PROTECTED) <> 0 [
 			rodata-size/1: offset + global/data-size
@@ -13137,6 +13164,7 @@ x64-codegen: context [
 		module/global-count: header/global-count
 		module/switch-count: header/switch-count
 		module/instruction-count: header/instruction-count
+		codegen-diag/bind-module header functions lines file-table strings
 		ctx/export-names-size: export-names-size
 		0
 	]
@@ -13164,13 +13192,17 @@ x64-codegen: context [
 		globals: module/globals
 		strings-size: module/strings-size
 		capacity: ctx/capacity
+		if header/function-count > ((2147483647 - IMAGE_HEADER_SIZE) / IMAGE_FUNCTION_SIZE)[
+			return fail-limit 785 "layout-module-globals/limit#1"
+		]
+		metadata-size: IMAGE_HEADER_SIZE + (header/function-count * IMAGE_FUNCTION_SIZE)
+		if header/global-count > ((2147483647 - metadata-size) / IMAGE_GLOBAL_SIZE)[
+			return fail-limit 786 "layout-module-globals/limit#2"
+		]
+		metadata-size: metadata-size + (header/global-count * IMAGE_GLOBAL_SIZE)
+		if metadata-size > capacity [return fail-output metadata-size capacity 738 "layout-module-globals/metadata-capacity"]
 		image-functions: ctx/output + IMAGE_HEADER_SIZE
 		image-globals: image-functions + (header/function-count * IMAGE_FUNCTION_SIZE)
-		metadata-size: IMAGE_HEADER_SIZE + (header/function-count * IMAGE_FUNCTION_SIZE)
-		if any [metadata-size < 0 metadata-size > capacity][return OUTPUT_FULL]
-		if header/global-count > ((capacity - metadata-size) / IMAGE_GLOBAL_SIZE)[
-			return OUTPUT_FULL
-		]
 		global-names-size: 0
 		ctx/rodata-size: 0
 		; The bitmap table follows the globals; this reservation keeps the
@@ -13192,13 +13224,13 @@ x64-codegen: context [
 				ir-global/name < 0 ir-global/name-size < 0
 				ir-global/name-size > strings-size
 				ir-global/name > (strings-size - ir-global/name-size)
-			][return fail-invalid 317 "layout-module-globals/ir-global/name#1"]
+			][return fail-invalid 739 "layout-module-globals/ir-global/name#1"]
 			global-size: 0
 			global-align: 0
 			unless layout-type ir-global/type ((ir-global/flags and INLINE) <> 0)
-				table 0 :global-size :global-align [return fail-invalid 318 "layout-module-globals/table#2"]
+				table 0 :global-size :global-align [return fail-invalid 740 "layout-module-globals/table#2"]
 			if global-names-size > (2147483647 - ir-global/name-size) [
-				return OUTPUT_FULL
+				return fail-limit 787 "layout-module-globals/limit#3"
 			]
 			image-global: as codegen-global! (image-globals
 				+ ((id - 1) * IMAGE_GLOBAL_SIZE))
@@ -13256,7 +13288,7 @@ x64-codegen: context [
 					target-image-global: as codegen-global! (image-globals
 						+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
 					if target-image-global/reference-count = 2147483647 [
-						return OUTPUT_FULL
+						return fail-limit 788 "link-anonymous-globals/limit#1"
 					]
 					target-image-global/reference-count:
 						target-image-global/reference-count + 1
@@ -13376,7 +13408,7 @@ x64-codegen: context [
 		]
 		ctx/rodata-size: rodata-size
 		ctx/data-size: data-size
-		if placed <> header/global-count [return fail-invalid 319 "place-module-globals/header/global-count#1"]
+		if placed <> header/global-count [return fail-invalid 741 "place-module-globals/header/global-count#1"]
 		id: 1
 		while [id <= header/global-count][
 			image-global: as codegen-global! (image-globals
@@ -13397,13 +13429,13 @@ x64-codegen: context [
 				if initializer/kind = ADDRESS_INITIALIZER [
 					image-global: as codegen-global! (image-globals
 						+ ((id - 1) * IMAGE_GLOBAL_SIZE))
-					if image-global/data-offset > REFERENCE_OFFSET_MASK [return OUTPUT_FULL]
+					if image-global/data-offset > REFERENCE_OFFSET_MASK [return fail-limit 789 "place-module-globals/limit#1"]
 					case [
 						initializer/a = GLOBAL_ADDRESS [
 							target-image-global: as codegen-global! (image-globals
 								+ ((initializer/b - 1) * IMAGE_GLOBAL_SIZE))
 							if target-image-global/reference-count = 2147483647 [
-								return OUTPUT_FULL
+								return fail-limit 790 "place-module-globals/limit#2"
 							]
 							target-image-global/reference-count:
 								target-image-global/reference-count + 1
@@ -13412,7 +13444,7 @@ x64-codegen: context [
 							target-image-function: as codegen-function! (image-functions
 								+ ((initializer/b - 1) * IMAGE_FUNCTION_SIZE))
 							if target-image-function/reference-count = 2147483647 [
-								return OUTPUT_FULL
+								return fail-limit 791 "place-module-globals/limit#3"
 							]
 							target-image-function/reference-count:
 								target-image-function/reference-count + 1
@@ -13424,9 +13456,9 @@ x64-codegen: context [
 							;-- one has laid the globals out.
 							0
 						]
-						true [return fail-invalid 320 "place-module-globals/target-image-function/reference-count#2"]
+						true [return fail-invalid 742 "place-module-globals/target-image-function/reference-count#2"]
 					]
-					if global-reference-count = 2147483647 [return OUTPUT_FULL]
+					if global-reference-count = 2147483647 [return fail-limit 792 "place-module-globals/limit#4"]
 					global-reference-count: global-reference-count + 1
 				]
 				initializer-id: initializer-id + 1
@@ -13462,38 +13494,38 @@ x64-codegen: context [
 		member-count: ctx/member-count
 		parameter-count: ctx/parameter-count
 		if header/function-count > ((2147483647 - header/import-count) / 6)[
-			return OUTPUT_FULL
+			return fail-limit 793 "allocate-module-scratch/limit#1"
 		]
 		scratch-count: header/import-count + (header/function-count * 6)
 		if header/instruction-count > ((2147483647 - scratch-count) / 18)[
-			return OUTPUT_FULL
+			return fail-limit 794 "allocate-module-scratch/limit#2"
 		]
 		scratch-count: scratch-count + (header/instruction-count * 18)
 		if header/switch-count > ((2147483647 - scratch-count) / 2)[
-			return OUTPUT_FULL
+			return fail-limit 795 "allocate-module-scratch/limit#3"
 		]
 		scratch-count: scratch-count + (header/switch-count * 2)
 		interval-words: (size? x64-live-interval!) / 4
 		if any [
 			interval-words <= 0
 			scratch-count > (2147483647 - ALLOCATION_OWNER_COUNT)
-		][return OUTPUT_FULL]
+		][return fail-limit 796 "allocate-module-scratch/limit#4"]
 		scratch-count: scratch-count + ALLOCATION_OWNER_COUNT
 		if parameter-count > ((2147483647 - scratch-count)
-			/ (interval-words + 2)) [return OUTPUT_FULL]
+			/ (interval-words + 2)) [return fail-limit 797 "allocate-module-scratch/limit#5"]
 		scratch-count: scratch-count
 			+ (parameter-count * (interval-words + 2))
 		if header/type-count > ((2147483647 - scratch-count) / 4)[
-			return OUTPUT_FULL
+			return fail-limit 798 "allocate-module-scratch/limit#6"
 		]
 		scratch-count: scratch-count + (header/type-count * 4)
-		if member-count > (2147483647 - scratch-count)[return OUTPUT_FULL]
+		if member-count > (2147483647 - scratch-count)[return fail-limit 799 "allocate-module-scratch/limit#7"]
 		scratch-count: scratch-count + member-count
 		if scratch-count > ((2147483647 - header/instruction-count) / 4)[
-			return OUTPUT_FULL
+			return fail-limit 800 "allocate-module-scratch/limit#8"
 		]
 		scratch: allocate ((scratch-count * 4) + header/instruction-count)
-		if null? scratch [return OUTPUT_FULL]
+		if null? scratch [return fail-memory 801 "allocate-module-scratch/memory#9"]
 		ctx/memory: scratch
 		argument-targets: scratch + (scratch-count * 4)
 		; The arrays are laid out in the order they are carved; the layout and
@@ -13645,7 +13677,7 @@ x64-codegen: context [
 						initializer/a = IMPORT_ADDRESS
 					][
 						import-id: initializer/b
-						if import-refs/import-id = 2147483647 [return OUTPUT_FULL]
+						if import-refs/import-id = 2147483647 [return fail-limit 802 "measure-module-functions/limit#2"]
 						import-refs/import-id: import-refs/import-id + 1
 					]
 					initializer-id: initializer-id + 1
@@ -13658,7 +13690,7 @@ x64-codegen: context [
 			global-size: 0
 			global-align: 0
 			unless layout-type id true table 0 :global-size :global-align [
-				return fail-invalid 321 "measure-module-functions/table#1"
+				return fail-invalid 743 "measure-module-functions/table#1"
 			]
 			id: id + 1
 		]
@@ -13697,12 +13729,12 @@ x64-codegen: context [
 			task/entry?: current-entry?
 			task/bitmap-index: ctx/bitmap-size / 4
 			function-size: compile-function module work task
-			if function-size < 0 [return function-size]
+			if function-size < 0 [return fail-code function-size 744 "measure-module-functions/code#1"]
 			bitmap-function: as codegen-function! (task/image-data
 				+ ((id - 1) * IMAGE_FUNCTION_SIZE))
 			bitmap-function/bitmap-offset: ctx/bitmap-base + ctx/bitmap-size
 			bitmap-function/bitmap-size: stack-bitmap/record-size task/bitmap-slots
-			if ctx/bitmap-size > (0FFFFFFFh * 4 - bitmap-function/bitmap-size) [return OUTPUT_FULL]
+			if ctx/bitmap-size > (0FFFFFFFh * 4 - bitmap-function/bitmap-size) [return fail-limit 803 "measure-module-functions/limit#3"]
 			ctx/bitmap-size: ctx/bitmap-size + bitmap-function/bitmap-size
 			function-frames/id: task/frame-size
 			function-outgoing/id: task/outgoing-size
@@ -13719,7 +13751,7 @@ x64-codegen: context [
 			function-size: function-size - status
 			function-sizes/id: function-size
 			if function-names-size > (2147483647 - ir-function/name-size)[
-				return OUTPUT_FULL
+				return fail-limit 804 "measure-module-functions/limit#4"
 			]
 			function-names-size: function-names-size + ir-function/name-size
 			if current-entry? [entry-size: function-size]
@@ -13735,15 +13767,15 @@ x64-codegen: context [
 			current-entry?: all [entry? id = header/entry-function]
 			unless current-entry? [
 				code-size: align code-size FUNCTION_ALIGNMENT
-				if code-size < 0 [return OUTPUT_FULL]
+				if code-size < 0 [return fail-limit 805 "measure-module-functions/limit#5"]
 				function-size: function-sizes/id
-				if code-size > (2147483647 - function-size)[return OUTPUT_FULL]
+				if code-size > (2147483647 - function-size)[return fail-limit 806 "measure-module-functions/limit#6"]
 				code-size: code-size + function-size
 			]
 			id: id + 1
 		]
 		literal-size: task/literal-size
-		if code-size > (2147483647 - literal-size)[return OUTPUT_FULL]
+		if code-size > (2147483647 - literal-size)[return fail-limit 807 "measure-module-functions/limit#7"]
 		ctx/global-reference-count: task/global-reference-count
 		ctx/function-names-size: function-names-size
 		ctx/function-code-size: code-size
@@ -13790,17 +13822,17 @@ x64-codegen: context [
 			if count > 0 [
 				ir-import: as rsir-import! (imports + ((id - 1) * RSIR_IMPORT_SIZE))
 				used-import-count: used-import-count + 1
-				if import-reference-count > (2147483647 - count)[return OUTPUT_FULL]
+				if import-reference-count > (2147483647 - count)[return fail-limit 808 "plan-module-image/limit#1"]
 				import-reference-count: import-reference-count + count
 				if ir-import/library <> last-library [
 					if import-names-size > (2147483647 - ir-import/library-size)[
-						return OUTPUT_FULL
+						return fail-limit 809 "plan-module-image/limit#2"
 					]
 					import-names-size: import-names-size + ir-import/library-size
 					last-library: ir-import/library
 				]
 				if import-names-size > (2147483647 - ir-import/external-size)[
-					return OUTPUT_FULL
+					return fail-limit 810 "plan-module-image/limit#3"
 				]
 				import-names-size: import-names-size + ir-import/external-size
 			]
@@ -13812,7 +13844,7 @@ x64-codegen: context [
 		;-- entry returns, so it imports nothing of its own.
 		if all [entry? target-abi = ABI_WIN64][
 			if any [import-count = 2147483647 reference-count = 2147483647][
-				return OUTPUT_FULL
+				return fail-limit 811 "plan-module-image/limit#4"
 			]
 			import-count: import-count + 1
 			reference-count: reference-count + 1
@@ -13820,56 +13852,56 @@ x64-codegen: context [
 
 		metadata-size: IMAGE_HEADER_SIZE + (header/function-count * IMAGE_FUNCTION_SIZE)
 		if header/global-count > ((2147483647 - metadata-size) / IMAGE_GLOBAL_SIZE)[
-			return OUTPUT_FULL
+			return fail-limit 812 "plan-module-image/limit#5"
 		]
 		metadata-size: metadata-size + (header/global-count * IMAGE_GLOBAL_SIZE)
 		if import-count > ((2147483647 - metadata-size) / IMAGE_IMPORT_SIZE)[
-			return OUTPUT_FULL
+			return fail-limit 813 "plan-module-image/limit#6"
 		]
 		metadata-size: metadata-size + (import-count * IMAGE_IMPORT_SIZE)
 		if header/export-count > ((2147483647 - metadata-size) / IMAGE_EXPORT_SIZE)[
-			return OUTPUT_FULL
+			return fail-limit 814 "plan-module-image/limit#7"
 		]
 		metadata-size: metadata-size + (header/export-count * IMAGE_EXPORT_SIZE)
 		if reference-count > ((2147483647 - metadata-size) / 4)[
-			return OUTPUT_FULL
+			return fail-limit 815 "plan-module-image/limit#8"
 		]
 		metadata-size: metadata-size + (reference-count * 4)
 		names-size: ctx/function-names-size + ctx/global-names-size + import-names-size
-		if names-size > (2147483647 - ctx/export-names-size)[return OUTPUT_FULL]
+		if names-size > (2147483647 - ctx/export-names-size)[return fail-limit 816 "plan-module-image/limit#9"]
 		names-size: names-size + ctx/export-names-size
 		; A Win64 entry module reaches ExitProcess through one synthetic import
 		; whose two names are the only ones not copied out of the input strings.
 		if all [entry? target-abi = ABI_WIN64][names-size: names-size + 23]
 		if any [names-size < 0 metadata-size > (2147483647 - names-size - 15)][
-			return OUTPUT_FULL
+			return fail-limit 817 "plan-module-image/limit#10"
 		]
 		ctx/code-offset: align (metadata-size + names-size) 16
 		if any [
 			ctx/code-offset < 0
 			ctx/code-offset > (2147483647 - code-size - 3)
-		][return OUTPUT_FULL]
+		][return fail-limit 818 "plan-module-image/limit#11"]
 		ctx/rodata-offset: align (ctx/code-offset + code-size) 4
 		if any [
 			ctx/rodata-offset < 0
 			ctx/rodata-offset > (2147483647 - rodata-size - 3)
-		][return OUTPUT_FULL]
+		][return fail-limit 819 "plan-module-image/limit#12"]
 		ctx/data-offset: align (ctx/rodata-offset + rodata-size) 4
 		if any [
 			ctx/data-offset < 0
 			ctx/data-offset > (2147483647 - data-size)
-		][return OUTPUT_FULL]
+		][return fail-limit 820 "plan-module-image/limit#13"]
 		; Debug builds append the sparse line records and the source file table
 		; with their name bytes directly after the data section. Without them
 		; the image still ends at the data section's last byte.
 		ctx/line-offset: align (ctx/data-offset + data-size) 4
 		debug-size: (header/line-record-count * 12) + (header/file-count * 8)
 		either debug-size > 0 [
-			if debug-size > (2147483647 - ctx/line-offset)[return OUTPUT_FULL]
+			if debug-size > (2147483647 - ctx/line-offset)[return fail-limit 821 "plan-module-image/limit#14"]
 			file-entry: as rsir-file-entry! module/file-table
 			id: 1
 			while [id <= header/file-count][
-				if debug-size > (2147483647 - file-entry/name-size)[return OUTPUT_FULL]
+				if debug-size > (2147483647 - file-entry/name-size)[return fail-limit 822 "plan-module-image/limit#15"]
 				debug-size: debug-size + file-entry/name-size
 				file-entry: file-entry + 1
 				id: id + 1
@@ -13878,7 +13910,7 @@ x64-codegen: context [
 		][
 			ctx/total-size: ctx/data-offset + data-size
 		]
-		if ctx/total-size > ctx/capacity [return OUTPUT_FULL]
+		if ctx/total-size > ctx/capacity [return fail-output ctx/total-size ctx/capacity 745 "plan-module-image/output-capacity"]
 		ctx/import-count: import-count
 		ctx/reference-count: reference-count
 		ctx/metadata-size: metadata-size
@@ -13955,9 +13987,9 @@ x64-codegen: context [
 				image-function/code-offset: 0
 			][
 				code-cursor: align code-cursor FUNCTION_ALIGNMENT
-				if code-cursor < 0 [return OUTPUT_FULL]
+				if code-cursor < 0 [return fail-limit 823 "write-module-metadata/limit#1"]
 				image-function/code-offset: code-cursor
-				if code-cursor > (2147483647 - function-sizes/id)[return OUTPUT_FULL]
+				if code-cursor > (2147483647 - function-sizes/id)[return fail-limit 824 "write-module-metadata/limit#2"]
 				code-cursor: code-cursor + function-sizes/id
 			]
 			copy-memory (names + name-cursor) (strings + ir-function/name)
@@ -13965,7 +13997,7 @@ x64-codegen: context [
 			name-cursor: name-cursor + ir-function/name-size
 			id: id + 1
 		]
-		if code-cursor <> ctx/function-code-size [return fail-invalid 325 "write-module-metadata/ctx/function-code-size#1"]
+		if code-cursor <> ctx/function-code-size [return fail-mismatch ctx/function-code-size code-cursor 325 "write-module-metadata/code-size"]
 
 		id: 1
 		while [id <= header/global-count][
@@ -14220,9 +14252,9 @@ x64-codegen: context [
 			task/bitmap: as int-ptr! (output + ctx/data-offset + image-function/bitmap-offset)
 			task/bitmap-index: (image-function/bitmap-offset - ctx/bitmap-base) / 4
 			written: compile-function module work task
-			if written < 0 [return written]
+			if written < 0 [return fail-code written 746 "emit-module-code/code#1"]
 			if written <> image-function/code-size [
-				return fail-invalid 326 "emit-module-code/image-function/code-size#1"
+				return fail-mismatch image-function/code-size written 326 "emit-module-code/emission-size-mismatch"
 			]
 			next-instruction: next-instruction + ir-function/instruction-count
 			next-offset: next-offset + ir-function/instruction-count + 1
@@ -14338,7 +14370,7 @@ x64-codegen: context [
 								]
 								global-offset: image-global/data-offset + item-offset
 								if global-offset > REFERENCE_OFFSET_MASK [
-									return OUTPUT_FULL
+									return fail-limit 825 "write-module-data/limit#1"
 								]
 								references/reference-id: either
 									(image-global/flags and PROTECTED) <> 0 [
@@ -14434,7 +14466,7 @@ x64-codegen: context [
 			pass: pass + 1
 		]
 		if emitted <> header/line-record-count [
-			return fail-invalid 322 "write-module-debug-lines/line-record-count#1"
+			return fail-mismatch header/line-record-count emitted 747 "write-module-debug-lines/line-record-count#1"
 		]
 		; Write the image's own file table with offsets into the name blob that
 		; follows it, then copy the file name bytes out of the RSIR strings.
@@ -14469,9 +14501,9 @@ x64-codegen: context [
 			task [codegen-task! value]
 			status [integer!]
 	][
-		unless any [abi = ABI_WIN64 abi = ABI_SYSV][return fail-unsupported 1 "generate/abi"]
-		target-abi: abi
 		codegen-diag/reset
+		unless any [abi = ABI_WIN64 abi = ABI_SYSV][return fail-unsupported 748 "generate/abi"]
+		target-abi: abi
 		signature-cache/memory: null
 		table/signatures: signature-cache
 		ir-module/table: table
@@ -14490,16 +14522,18 @@ x64-codegen: context [
 		if status = 0 [status: validate-module-parameters ctx]
 		if status = 0 [status: validate-module-initializers ctx]
 		if status = 0 [status: locate-module-strings ctx]
+		codegen-diag/mark-phase "layout"
 		if status = 0 [status: layout-module-globals ctx]
 		if status = 0 [status: link-anonymous-globals ctx]
 		if status = 0 [status: place-module-globals ctx]
 		if status = 0 [
 			ctx/bitmap-base: align ctx/data-size 8
-			if any [ctx/bitmap-base < 0 ctx/bitmap-base > (2147483647 - 4)] [status: OUTPUT_FULL]
+			if any [ctx/bitmap-base < 0 ctx/bitmap-base > (2147483647 - 4)] [status: fail-limit 826 "generate/limit#1"]
 			ctx/bitmap-base: ctx/bitmap-base + 4
 		]
 		if status = 0 [status: allocate-module-scratch ctx]
 		if status = 0 [
+			codegen-diag/mark-phase "measure"
 			argument-marking?: true
 			status: measure-module-functions ctx
 			; Direct argument placement decides a producer's destination register
@@ -14514,15 +14548,18 @@ x64-codegen: context [
 			argument-marking?: false
 		]
 		if status = 0 [
-			either ctx/bitmap-base > (2147483647 - ctx/bitmap-size) [status: OUTPUT_FULL][
+			either ctx/bitmap-base > (2147483647 - ctx/bitmap-size) [status: fail-limit 827 "generate/limit#2"][
 				ctx/data-size: ctx/bitmap-base + ctx/bitmap-size
 			]
 		]
+		codegen-diag/mark-phase "layout"
 		if status = 0 [status: plan-module-image ctx]
 		if status = 0 [status: write-module-metadata ctx]
 		if status = 0 [status: assign-module-references ctx]
 		if status = 0 [status: write-module-exports ctx]
+		codegen-diag/mark-phase "emit"
 		if status = 0 [status: emit-module-code ctx]
+		codegen-diag/mark-phase "metadata"
 		if status = 0 [status: write-module-data ctx]
 		if status = 0 [status: write-module-debug-lines ctx]
 		if status = 0 [status: ctx/total-size]

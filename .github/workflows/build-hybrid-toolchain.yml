@@ -84,6 +84,12 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
+    - name: Audit codegen diagnostics
+      shell: bash
+      run: |
+        python tools/codegen/sync-codegen-sites.py --check
+        python -m unittest discover -s tools/codegen -p test_codegen_sites.py
+
     - name: Download pinned bootstrap compiler (Windows)
       if: matrix.archive == 'zip'
       shell: pwsh

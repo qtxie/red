@@ -40,3 +40,11 @@ codegen-module: routine [
 ][
 	codegen-bridge/run ir artifact architecture abi opt-level
 ]
+
+codegen-required: routine [return: [integer!]][
+	either codegen-diag/status = codegen-diag/OUTPUT_FULL [codegen-diag/expected][0]
+]
+
+codegen-report: routine [][
+	codegen-diag/report
+]

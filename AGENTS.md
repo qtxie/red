@@ -1306,12 +1306,30 @@
      its prompt without crashing.
   2. ~~**Darwin-ARM64 `objc_msgSend`**~~ **fixed at 203**, see below.
 
-  Still open on Linux: the console comes up and then **exits immediately**
-  (status 0) instead of running its event loop, and no window shows up in
-  `xwininfo -root -tree`. `engine.red`'s `ask` returns `"quit"` when
-  `gui-console-ctx/console/state` is unset, so the face is not being
-  realized. Unverified whether that is another GTK3 defect or an artifact of
-  the Xvfb/Weston display used for testing.
+  **The Linux console is up** (re-measured at 203, after `83fac3314`). The
+  "exits immediately / no window" note that used to stand here was wrong on
+  both counts, and the two mistakes are worth remembering:
+
+  - *It does not exit.* It blocks in `do-events` for as long as you let it.
+    The "status 0" readings came from reading `$?` after a pipeline, which
+    yields the status of `head`/`cat`, not of the program. Time it and use
+    `timeout` properly (`exit=124 elapsed=30s` is what a healthy run looks
+    like) before concluding anything about a process ending.
+  - *The window is there, on the wrong display.* This box has
+    `WAYLAND_DISPLAY=wayland-0` set next to `DISPLAY=:0`, so GDK picks the
+    **Wayland** backend and the console window goes to Weston. `xwininfo` is
+    an X tool and sees nothing but GTK's 10x10 group leader. Run with
+    `GDK_BACKEND=x11` and the real window shows up as
+    `"Red Console" 764x541` within a few seconds.
+
+  An A/B against `ff9be6cc7` (built in a scratch worktree, both binaries run
+  the same way) shows no regression from the uniform-handle refactor: window
+  first seen at 8s vs 6s, identical final geometry, identical banner.
+
+  Two further traps in the same area: stdout is block-buffered once it is a
+  file, so a console killed by `pkill` loses everything it printed -- wrap it
+  in `stdbuf -oL`; and `wsl.exe -- bash -c '... \$?'` mangles the escapes, so
+  put anything non-trivial in a heredoc (`wsl.exe -- bash -s <<'EOS'`).
 
 - **Objective-C messages are not Apple-variadic** (fixed at 203). Apple's
   ARM64 ABI spills *every* variadic argument to the stack -- clang emits

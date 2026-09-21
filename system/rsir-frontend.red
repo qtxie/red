@@ -3343,6 +3343,12 @@ compiler-rsir-frontend: context [
 	;-- the cell it means, and dropping it only hides that. A cast is dead
 	;-- weight when the expression already *has* the type it is cast to, so
 	;-- compare the two types by name, not by the layout they collapse to.
+	;-- Two names that *match* are no better a signal: `#call` cannot know the
+	;-- type of the Red/System expressions it pushes, so it casts every one of
+	;-- them to cell!, and that cast is a no-op whenever the value already is
+	;-- one. There is no cast in the source to remove then, and the report
+	;-- points at a line the compiler wrote. Nothing generates scalar casts,
+	;-- so those stay worth reporting.
 	warn-redundant-cast: func [
 		position [block!]
 		source source-flags target target-flags [integer!]
@@ -3351,6 +3357,7 @@ compiler-rsir-frontend: context [
 		source-kind: ref-kind source
 		if all [
 			source-kind <> 'function
+			not find [struct union] source-kind
 			source-flags = target-flags
 			source = target
 		][

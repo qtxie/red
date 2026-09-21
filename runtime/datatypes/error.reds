@@ -228,7 +228,7 @@ error: context [
 		
 		object/copy
 			as red-object! #get system/standard/error
-			as red-object! new
+			new
 			null
 			no
 			null

@@ -570,7 +570,7 @@ natives: context [
 		do-arg: stack/arguments + args
 		fun: 	as red-function! stack/arguments + trace
 		
-		unless OPTION?(do-arg) [do-arg: as red-value! none-value]
+		unless OPTION?(do-arg) [do-arg: none-value]
 		fun?: OPTION?(fun)
 		if fun? [
 			stack/set-parent-func-flag					;-- (#5403, #5401) allows do/trace to fully catch exit/return exceptions
@@ -1279,7 +1279,7 @@ natives: context [
 			TYPE_SET_WORD
 			TYPE_LIT_WORD
 			TYPE_REFINEMENT [
-				either negative? _context/bind-word ctx word [res: as red-value! none-value][
+				either negative? _context/bind-word ctx word [res: none-value][
 					res: as red-value! word
 					if TYPE_OF(word) = TYPE_REFINEMENT [res/header: TYPE_WORD]
 				]

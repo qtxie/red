@@ -189,7 +189,7 @@ tuple: context [
 		#if debug? = yes [if verbose > 0 [print-line "tuple/do-math"]]
 
 		left:  as red-tuple! stack/arguments
-		right: as red-tuple! left + 1
+		right: left + 1
 
 		swap?: no
 		if TYPE_OF(left) <> TYPE_TUPLE [
@@ -464,7 +464,7 @@ tuple: context [
 					either TYPE_OF(gparent) = TYPE_OBJECT [
 						object/fire-on-set as red-object! gparent as red-word! p-item old as red-value! parent
 					][
-						ownership/check as red-value! gparent words/_set-path value int/value 1
+						ownership/check gparent words/_set-path value int/value 1
 					]
 					stack/pop 1								;-- avoid moving stack top
 				]
@@ -660,7 +660,7 @@ tuple: context [
 				value/index: as byte! v
 			]
 		]
-		as red-value! data
+		data
 	]
 
 	reverse: func [

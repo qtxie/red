@@ -321,7 +321,7 @@ point2D: context [
 				either TYPE_OF(gparent) = TYPE_OBJECT [
 					object/fire-on-set as red-object! gparent as red-word! p-item old as red-value! parent
 				][
-					ownership/check as red-value! gparent words/_set-path value axis 1
+					ownership/check gparent words/_set-path value axis 1
 				]
 				stack/pop 1								;-- avoid moving stack top
 			]
@@ -491,8 +491,8 @@ point2D: context [
 			point2D [red-point2D!]
 	][
 		point2D: as red-point2D! stack/arguments
-		point2D/x: as-float32 0.0 - point2D/x
-		point2D/y: as-float32 0.0 - point2D/y
+		point2D/x: 0.0 - point2D/x
+		point2D/y: 0.0 - point2D/y
 		point2D
 	]
 	

@@ -1122,7 +1122,7 @@ interpreter: context [
 								logic/rs-true? stack/top on ref
 							]
 						]
-						get?  [logic/rs-true? as red-value! _context/get ref on ref]
+						get?  [logic/rs-true? _context/get ref on ref]
 						true  [true]
 					]
 					index: case [

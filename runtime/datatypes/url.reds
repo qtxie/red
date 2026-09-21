@@ -582,7 +582,7 @@ url: context [
 			part
 		][
 			data: stack/push data
-			p: as red-object! to-port as red-url! dest no no no OPTION?(seek) none-value no
+			p: as red-object! to-port dest no no no OPTION?(seek) none-value no
 			port/write p data binary? lines? info? append? part seek allow as-arg
 		]
 	]

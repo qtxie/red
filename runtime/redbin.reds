@@ -275,7 +275,7 @@ redbin: context [
 			top: top + size + 1
 		]
 
-		on-gc-mark: does [_hashtable/mark as ptr-ptr! :map]
+		on-gc-mark: does [_hashtable/mark :map]
 		
 		reset: func [/local min-size] [
 			min-size: 16'384
@@ -655,7 +655,7 @@ redbin: context [
 			]
 			TYPE_NONE		[
 				CHECK_RECORD_LEN(1)
-				cell: as cell! none/make-in parent
+				cell: none/make-in parent
 				data + 1
 			]
 			TYPE_LOGIC		[
@@ -1075,7 +1075,7 @@ redbin: context [
 			data
 		][
 			next: null
-			node: preprocess-binding data end table as ptr-ptr! :next
+			node: preprocess-binding data end table :next
 			series: as series! node/value
 			
 			object: copy-cell series/offset + 1 ALLOC_TAIL(parent)
@@ -1363,7 +1363,7 @@ redbin: context [
 			data
 		][
 			next: null
-			node: preprocess-binding data end table as ptr-ptr! :next
+			node: preprocess-binding data end table :next
 			data: fill-context next end table node
 			
 			series: as series! node/value
@@ -1649,7 +1649,7 @@ redbin: context [
 				assert GET_OP_SUBTYPE(op) = TYPE_FUNCTION
 				node: node-handle-from-cell op/code
 				series: resolve-series node
-				copy-cell as red-value! series/offset + 3 as red-value! word
+				copy-cell series/offset + 3 as red-value! word
 				assert TYPE_OF(word) = TYPE_FUNCTION
 			]
 		][
@@ -1669,7 +1669,7 @@ redbin: context [
 			word/ctx: global-ctx
 		][
 			next: null
-			word/ctx: node-handle-of preprocess-binding tail end table as ptr-ptr! :next
+			word/ctx: node-handle-of preprocess-binding tail end table :next
 		]
 		
 		tag
@@ -3607,7 +3607,7 @@ redbin: context [
 					assert GET_OP_SUBTYPE(op) = TYPE_FUNCTION
 					node: node-handle-from-cell op/code
 					series: resolve-series node
-					copy-cell as red-value! series/offset + 3 as red-value! word
+					copy-cell series/offset + 3 as red-value! word
 					assert TYPE_OF(word) = TYPE_FUNCTION
 				]
 				word/header: TYPE_UNSET
@@ -4353,7 +4353,7 @@ redbin: context [
 				TYPE_CHAR		[p: read-varint p end cell: as cell! char/make-in parent cp-val]
 				TYPE_DATATYPE	[p: read-varint p end cell: as cell! datatype/make-in parent cp-val]
 				TYPE_UNSET		[cell: as cell! unset/make-in parent]
-				TYPE_NONE		[cell: as cell! none/make-in parent]
+				TYPE_NONE		[cell: none/make-in parent]
 				TYPE_PAIR		[
 					p: read-svarint p end v: cp-val
 					p: read-svarint p end n: cp-val

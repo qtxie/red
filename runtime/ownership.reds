@@ -140,7 +140,7 @@ ownership: context [
 				]
 
 				if put? [								;-- process series if not already owned
-					slot: as red-value! _hashtable/put-key table series/node
+					slot: _hashtable/put-key table series/node
 					copy-cell container slot
 					copy-cell as red-value! owner slot + 1
 					copy-cell as red-value! word  slot + 2
@@ -163,7 +163,7 @@ ownership: context [
 				s: GET_BUFFER(bits)
 				if s/flags and flag-series-owned = 0 [
 					s/flags: s/flags or flag-series-owned
-					slot: as red-value! _hashtable/put-key table bits/node
+					slot: _hashtable/put-key table bits/node
 					copy-cell container slot
 					copy-cell as red-value! owner slot + 1
 					copy-cell as red-value! word  slot + 2

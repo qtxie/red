@@ -551,7 +551,7 @@ deflate: context [
 		nlens: as byte-ptr! system/stack/allocate 5
 
 		o: out in: *in
-		cursor: as ptr-ptr! :in
+		cursor: :in
 		iend: *in + in-size
 		oend: out + out-size/1
 		state: STATE-HDR

@@ -2237,7 +2237,11 @@ red: context [
 					type: either spec/2/1 = 'float! ['float][get spec/2/1]
 					append/only output append to path! form type 'get
 				][
-					emit reduce ['as spec/2/1]
+					;-- `r_arg` is a red-value! already, so naming a value type
+					;-- again would only be a cast to the type it has.
+					unless find red-value-types form spec/2/1 [
+						emit reduce ['as spec/2/1]
+					]
 				]
 				emit 'r_arg
 				unless head? spec [emit reduce ['+ cnt]]
@@ -3181,9 +3185,10 @@ red: context [
 		comp-sub-block 'repeat-body
 		pop-call
 		insert-head-last [								;-- inject code at loop's head to pre-increment counter
-			emit [										;-- forces a newline marker
-				natives/inc-counter as red-word!		;-- increments the counter
-			]
+				emit [										;-- forces a newline marker
+					natives/inc-counter						;-- increments the counter
+					;-- the reference below is a red-word! already, so no cast
+				]
 			emit-word-ref name
 		]
 		emit-close-frame/last

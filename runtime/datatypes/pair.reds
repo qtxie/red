@@ -363,7 +363,7 @@ pair: context [
 				either TYPE_OF(gparent) = TYPE_OBJECT [
 					object/fire-on-set as red-object! gparent as red-word! p-item old as red-value! parent
 				][
-					ownership/check as red-value! gparent words/_set-path value axis 1
+					ownership/check gparent words/_set-path value axis 1
 				]
 				stack/pop 1								;-- avoid moving stack top
 			]

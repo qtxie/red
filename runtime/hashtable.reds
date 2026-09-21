@@ -608,12 +608,12 @@ _hashtable: context [
 		if type = HASH_TABLE_HASH [
 			if h/indexes <> null [
 				raw: as int-ptr! h/indexes
-				collector/keep-raw as ptr-ptr! :raw
+				collector/keep-raw :raw
 				h/indexes: as node! raw
 			]
 			if h/chains <> null [
 				raw: as int-ptr! h/chains
-				collector/keep-raw as ptr-ptr! :raw
+				collector/keep-raw :raw
 				h/chains: as node! raw
 				s: as series! h/chains/value
 				p: as ptr-ptr! s/offset
@@ -626,12 +626,12 @@ _hashtable: context [
 		]
 		if h/flags <> null [
 			raw: as int-ptr! h/flags
-			collector/keep-raw as ptr-ptr! :raw
+			collector/keep-raw :raw
 			h/flags: as node! raw
 		]
 		if h/keys <> null [
 			raw: as int-ptr! h/keys
-			collector/keep-raw as ptr-ptr! :raw
+			collector/keep-raw :raw
 			h/keys: as node! raw
 		]
 
@@ -653,7 +653,7 @@ _hashtable: context [
 		]
 		if all [type > 0 h/blk <> null][
 			raw: as int-ptr! h/blk
-			collector/mark-block-raw as ptr-ptr! :raw
+			collector/mark-block-raw :raw
 			h/blk: as node! raw
 		]
 	]
@@ -2503,7 +2503,7 @@ _hashtable: context [
 					find?: _BUCKET_IS_NOT_EMPTY(flags ii sh)
 					find?
 				][
-					k: as red-symbol! blk + keys/i
+					k: blk + keys/i
 					s: resolve-series k/cache
 					len2: as-integer (s/tail - s/offset)
 					either any [

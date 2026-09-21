@@ -661,7 +661,7 @@ bitset: context [
 		case [
 			field = words/owned [
 				obj: ownership/owned? bits/node
-				res: as red-value! either null? obj [none-value][obj]
+				res: either null? obj [none-value][obj]
 			]
 			true [
 				--NOT_IMPLEMENTED--						;@@ raise error
@@ -824,7 +824,7 @@ bitset: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "bitset/negate"]]
 
-		copy-cell as red-value! complement bits as red-value! bits
+		copy-cell complement bits as red-value! bits
 	]
 	
 	complement: func [
@@ -991,7 +991,7 @@ bitset: context [
 		chk?: ownership/check as red-value! bits words/_poke data index 1
 		process boxed bits op no CMD_OTHER
 		if chk? [ownership/check as red-value! bits words/_poked data index 1]
-		as red-value! data
+		data
 	]
 	
 	remove: func [

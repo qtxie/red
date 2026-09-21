@@ -416,7 +416,7 @@ date: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "date/do-math"]]
 		left:  as red-date! stack/arguments
-		right: as red-date! left + 1
+		right: left + 1
 		days?: no						;-- return days?
 		time?: DATE_GET_TIME_FLAG(left/date)
 
@@ -1124,7 +1124,7 @@ date: context [
 				either TYPE_OF(gparent) = TYPE_OBJECT [
 					object/fire-on-set as red-object! gparent as red-word! p-item old as red-value! dt
 				][
-					ownership/check as red-value! gparent words/_set-path value field 1
+					ownership/check gparent words/_set-path value field 1
 				]
 				stack/pop 1								;-- avoid moving stack top
 			]

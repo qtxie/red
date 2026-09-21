@@ -157,11 +157,11 @@ block: context [
 		while [slot < tail][
 			if zero? compare value slot COMP_FIND [
 				slot: slot + 1
-				either slot < tail [return slot][return as red-value! none-value]
+				either slot < tail [return slot][return none-value]
 			]
 			slot: slot + 1
 		]
-		as red-value! none-value
+		none-value
 	]
 	
 	rs-take: func [										;-- find value in blk then remove it (collapsing the series buffer)
@@ -1717,7 +1717,7 @@ block: context [
 			not OPTION?(part-arg)
 			1 = _series/get-length blk yes
 		][
-			copy-cell as cell! s/offset as cell! blk
+			copy-cell s/offset as cell! blk
 		]
 		as red-value! blk
 	]

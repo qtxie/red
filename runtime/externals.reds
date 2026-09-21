@@ -222,7 +222,7 @@ externals: context [
 		#if debug? = yes [if verbose > 0 [print-line ["externals/remove: " idx ", " call?]]]
 		
 		assert idx < size
-		rec: as record! list + idx
+		rec: list + idx
 		if call? [release rec]
 		
 		p: list + used									;-- update the used list
@@ -244,7 +244,7 @@ externals: context [
 	mark: func [idx [integer!] /local rec [record!]][	;-- mark an alive record
 		#if debug? = yes [if verbose > 0 [print-line ["externals/mark: " idx]]]
 		assert idx < size
-		rec: as record! list + idx
+		rec: list + idx
 		assert rec/header and flag-free = 0
 		rec/header: rec/header or flag-mark
 	]

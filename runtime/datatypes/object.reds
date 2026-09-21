@@ -50,7 +50,7 @@ object: context [
 		word: as red-word! value
 		ctx: GET_CTX(obj)
 		id: _context/find-word ctx word/symbol yes	
-		if id = -1 [return as red-value! none-value]
+		if id = -1 [return none-value]
 		
 		values: resolve-series ctx/values
 		values/offset + id
@@ -389,7 +389,7 @@ object: context [
 			obj	[red-value!]
 	][
 		s: resolve-series parent-ctx
-		obj: as red-value! s/offset + 1
+		obj: s/offset + 1
 		loc-fire-on-set* obj field
 	]
 	
@@ -480,7 +480,7 @@ object: context [
 		index: p/x >> 16
 		count: p/x and FFFFh
 		if index = -1 [exit]							;-- abort if no on-deep-change* handler		
-		if null? new [new: as red-value! none-value]
+		if null? new [new: none-value]
 
 		ctx: GET_CTX(owner) 
 		s: resolve-series ctx/values
@@ -993,7 +993,7 @@ object: context [
 				]][
 					value: value + 1
 				]
-				if value = tail [value: as red-value! none-value]
+				if value = tail [value: none-value]
 				
 				if all [not only? TYPE_OF(value) = TYPE_WORD][ ;-- reduce the value if allowed
 					word: as red-word! value
@@ -1012,7 +1012,7 @@ object: context [
 					][
 						value: as red-value! false-value
 					]
-					if sym = words/none [value: as red-value! none-value]
+					if sym = words/none [value: none-value]
 				]
 				
 				copy-cell value values + id
@@ -1231,7 +1231,7 @@ object: context [
 				s: GET_BUFFER(blk)
 				
 				while [syms < tail][
-					if syms/header and flag-word-dirty <> 0 [copy-cell as cell! syms ALLOC_TAIL(blk)]
+					if syms/header and flag-word-dirty <> 0 [copy-cell syms ALLOC_TAIL(blk)]
 					syms: syms + 1
 				]
 			]
@@ -1579,7 +1579,7 @@ object: context [
 		word: as red-word! field
 		if TYPE_OF(word) <> TYPE_WORD [fire [TO_ERROR(script invalid-key-type) datatype/push TYPE_OF(word)]]
 		
-		eval-path obj field value as red-value! none-value null null -1 case? no yes no
+		eval-path obj field value none-value null null -1 case? no yes no
 		value
 	]
 

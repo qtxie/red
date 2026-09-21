@@ -1402,7 +1402,7 @@ money: context [
 			set-currency as red-money! result currency
 		]
 		
-		SET_RETURN(result)							;-- swapped arguments
+		stack/set-last result							;-- swapped arguments
 	]
 	
 	;-- Actions --

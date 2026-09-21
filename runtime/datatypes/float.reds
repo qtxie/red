@@ -279,7 +279,7 @@ float: context [
 		#if debug? = yes [if verbose > 0 [print-line "float/do-math"]]
 
 		left:  as red-float! stack/arguments
-		right: as red-float! left + 1
+		right: left + 1
 
 		type1: TYPE_OF(left)
 		type2: TYPE_OF(right)

@@ -31,8 +31,10 @@ compiler-rsir-frontend: context [
 	OS: none									;-- picks the dylib callback signatures
 	build-date: none
 	source-file: none							;-- main source file, seeds the debug file table
+	current-file: none							;-- file the code being scanned or lowered came from
 	debug-files: make block! 8					;-- source files referenced by debug line records
 	current-file-id: 0							;-- file table id of the statements being lowered
+												;-- (diagnostics read it too, so it is kept on every build)
 	main-file-id: 0								;-- file table id of the main source file
 	active-line-table: none						;-- line records of the function being lowered
 	boot-line-table: none						;-- module body records emitted before #user-code
@@ -453,8 +455,29 @@ compiler-rsir-frontend: context [
 		throw/name error 'rsir-error
 	]
 
-	warn: func [message [string! block!]][
-		append/only warnings form either block? message [reduce message][message]
+	;-- Warnings are printed only once the whole module is lowered, by which
+	;-- time the file and line that raised them are gone. Spell the location
+	;-- out while `position` still points into the source.
+	warn-location: func [
+		position [block! paren!]
+		return: [string!]
+		/local text metadata
+	][
+		text: rejoin [" (" either file? current-file [mold current-file]["unknown source"]]
+		;-- Code the Red frontend generated carries no line markers, so there is
+		;-- no line to point at; naming its file is still worth it.
+		metadata: compiler-system-diagnostics/metadata-of position
+		if all [metadata not tail? next metadata pair? metadata/2][
+			append text rejoin [":" compiler-system-diagnostics/line-of position]
+		]
+		append text ")"
+		text
+	]
+
+	warn: func [message [string! block!] /at position [block! paren!] /local text][
+		text: form either block? message [reduce message][message]
+		if at [append text warn-location position]
+		append/only warnings text
 	]
 
 	begin-phase: func [name [word!]][
@@ -1566,7 +1589,9 @@ compiler-rsir-frontend: context [
 						if all [
 							not locals?
 							resolve-name name scope uses enum-values
-						][warn ["function's argument redeclares enumeration:" name]]
+						][
+							warn/at ["function's argument redeclares enumeration:" name] position
+						]
 						append names name
 						position: next position
 					]
@@ -1945,6 +1970,7 @@ compiler-rsir-frontend: context [
 				code: make binary! ((length? body) * 16)
 				active-line-table: either debug? [make block! 16][none]
 				current-file-id: record/11
+				current-file: file-of-id record/11
 				count: stack-body record/6 body record/4 record/5 code
 					record/7 record/8 record/9
 				record/12: active-line-table
@@ -2421,6 +2447,14 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	;-- The reverse lookup `current-file-id` needs to name the file a
+	;-- diagnostic points at. Ids stay valid on every build; only the emitted
+	;-- file table waits for debug mode.
+	file-of-id: func [id [integer!] return: [file! none!] /local name][
+		name: either all [id > 0 id <= length? debug-files][pick debug-files id][none]
+		either file? name [name][none]
+	]
+
 	; Records one sparse debug line entry [instruction-index line file-id] at a
 	; statement boundary, matching the legacy compiler's store-dbg-lines.
 	; An entry is only useful when the instruction cursor advanced beyond the
@@ -2470,7 +2504,8 @@ compiler-rsir-frontend: context [
 				file? position/2
 				position/2 = 'in-memory
 			][fail ERROR-ARGUMENTS "#script requires a file source"]
-			if debug? [current-file-id: register-debug-file position/2]
+			current-file-id: register-debug-file position/2
+			current-file: file-of-id current-file-id
 			position: skip position 2
 		]
 		position
@@ -2481,6 +2516,7 @@ compiler-rsir-frontend: context [
 		with-count [integer!]
 		/local position name spec body child key kind target next-uses
 			spelling id type-spec protected-id alias-id canonical enum saved-file-id
+			saved-file
 	][
 		position: values
 		while [not tail? position][
@@ -2497,12 +2533,15 @@ compiler-rsir-frontend: context [
 				all [issue? position/1 position/1 = #user-code][
 					;-- The #user-code payload belongs to the main source file.
 					saved-file-id: current-file-id
+					saved-file: current-file
 					current-file-id: main-file-id
+					current-file: source-file
 					either all [(length? position) >= 2 block? position/2][
 						scan-block position/2 scope uses with-count
 						position: skip position 2
 					][position: next position]
 					current-file-id: saved-file-id
+					current-file: saved-file
 				]
 				all [issue? position/1 position/1 = #startup-code][
 					startup-module?: true
@@ -3160,7 +3199,9 @@ compiler-rsir-frontend: context [
 		change/part at output 29 int-to-bin/to-bin32 switch-count 4
 		change/part at output 33 int-to-bin/to-bin32 export-count 4
 		change/part at output 37 int-to-bin/to-bin32 line-count 4
-		change/part at output 41 int-to-bin/to-bin32 (length? debug-files) 4
+		;-- `debug-files` is filled on every build because diagnostics read the
+	;-- ids, but the table itself is only part of a debug image.
+	change/part at output 41 int-to-bin/to-bin32 either debug? [length? debug-files][0] 4
 		output
 	]
 
@@ -3296,7 +3337,14 @@ compiler-rsir-frontend: context [
 		]
 	]
 
+	;-- Aggregates are interned by layout, so every Red cell -- red-block!,
+	;-- red-path!, red-series!, cell! -- shares one canonical type. Casting
+	;-- between two of them is still meaningful: it is how the source names
+	;-- the cell it means, and dropping it only hides that. A cast is dead
+	;-- weight when the expression already *has* the type it is cast to, so
+	;-- compare the two types by name, not by the layout they collapse to.
 	warn-redundant-cast: func [
+		position [block!]
 		source source-flags target target-flags [integer!]
 		/local source-kind
 	][
@@ -3304,12 +3352,12 @@ compiler-rsir-frontend: context [
 		if all [
 			source-kind <> 'function
 			source-flags = target-flags
-			(canonical-ref source) = canonical-ref target
+			source = target
 		][
-			warn rejoin [
+			warn/at rejoin [
 				"type casting from " type-spelling source
 				" to " type-spelling target " is not necessary"
-			]
+			] position
 		]
 	]
 
@@ -4190,7 +4238,7 @@ compiler-rsir-frontend: context [
 			id: add-static-bytes value false false
 			emit instructions address-op global-address id 0
 			emit instructions reference-op -13 0 0
-			warn-redundant-cast -13 0 target-ref target-flags
+			warn-redundant-cast position -13 0 target-ref target-flags
 			emit instructions cast-op target-ref target-flags either keep? [1][0]
 			last-type: target-ref
 			last-flags: 0
@@ -4207,7 +4255,7 @@ compiler-rsir-frontend: context [
 			any [tail? literal-end none? select binary-operations literal-end/1]
 		][
 			source-ref: either integer? value [-5][-10]
-			warn-redundant-cast source-ref 0 target-ref target-flags
+			warn-redundant-cast position source-ref 0 target-ref target-flags
 			bits: either keep? [
 				reduce [value 0]
 			][
@@ -4246,7 +4294,7 @@ compiler-rsir-frontend: context [
 				"to" type-spelling target-ref "is not allowed"
 			]
 		]
-		warn-redundant-cast source-ref source-flags target-ref target-flags
+		warn-redundant-cast position source-ref source-flags target-ref target-flags
 		emit instructions cast-op target-ref target-flags either keep? [1][0]
 		last-type: target-ref
 		last-flags: target-flags
@@ -6836,7 +6884,7 @@ compiler-rsir-frontend: context [
 						]
 					][
 						source-ref: either integer? value [-5][-10]
-						warn-redundant-cast source-ref 0 type-info/2 type-info/3
+						warn-redundant-cast position source-ref 0 type-info/2 type-info/3
 						bits: either keep? [
 							reduce [value 0]
 						][float-bits either integer? value [to float! value][value] kind]
@@ -6848,7 +6896,7 @@ compiler-rsir-frontend: context [
 						static-high: bits/2
 						static-next: next next-position
 					][if all [integer? value not float-kind? kind][
-						warn-redundant-cast -5 0 type-info/2 type-info/3
+						warn-redundant-cast position -5 0 type-info/2 type-info/3
 						static?: true
 						static-ref: type-info/2
 						static-low: value
@@ -6859,7 +6907,7 @@ compiler-rsir-frontend: context [
 						any [logic? value all [word? value find [true false yes no] value]]
 						kind = 'logic
 					][
-						warn-redundant-cast -11 0 type-info/2 type-info/3
+						warn-redundant-cast position -11 0 type-info/2 type-info/3
 						static?: true
 						static-ref: type-info/2
 						static-low: either any [
@@ -6873,7 +6921,7 @@ compiler-rsir-frontend: context [
 						string? value
 						find [pointer c-string] kind
 					][
-						warn-redundant-cast -13 0 type-info/2 type-info/3
+						warn-redundant-cast position -13 0 type-info/2 type-info/3
 						id: add-static-bytes c-string-bytes value true protected?
 						static?: true
 						static-ref: type-info/2
@@ -7286,7 +7334,7 @@ compiler-rsir-frontend: context [
 
 	stack-module: func [
 		values scope uses [block!]
-		/local position child target next-uses saved-file-id saved-code saved-locals
+		/local position child target next-uses saved-file-id saved-file saved-code saved-locals
 	][
 		position: values
 		while [not tail? position][
@@ -7314,12 +7362,15 @@ compiler-rsir-frontend: context [
 					;-- The #user-code payload belongs to the main source file,
 					;-- even when the runtime splice left another file current.
 					saved-file-id: current-file-id
+					saved-file: current-file
 					current-file-id: main-file-id
+					current-file: source-file
 					either all [(length? position) >= 2 block? position/2][
 						stack-module position/2 scope uses
 						position: skip position 2
 					][position: next position]
 					current-file-id: saved-file-id
+					current-file: saved-file
 				]
 				all [issue? position/1 position/1 = #startup-code][
 					startup-module?: true
@@ -7671,7 +7722,8 @@ compiler-rsir-frontend: context [
 			clear switches
 			clear strings
 			debug-files: make block! 8
-			current-file-id: either debug? [register-debug-file source-file][0]
+			current-file-id: register-debug-file source-file
+			current-file: file-of-id current-file-id
 			main-file-id: current-file-id
 			active-line-table: none
 			boot-line-table: none

@@ -590,7 +590,7 @@ integer: context [
 
 	remainder: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "integer/remainder"]]
-		as red-value! do-math OP_REM
+		do-math OP_REM
 	]
 
 	absolute: func [
@@ -607,37 +607,37 @@ integer: context [
 
 	add: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "integer/add"]]
-		as red-value! do-math OP_ADD
+		do-math OP_ADD
 	]
 	
 	divide: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "integer/divide"]]
-		as red-value! do-math OP_DIV
+		do-math OP_DIV
 	]
 		
 	multiply: func [return:	[red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "integer/multiply"]]
-		as red-value! do-math OP_MUL
+		do-math OP_MUL
 	]
 	
 	subtract: func [return:	[red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "integer/subtract"]]
-		as red-value! do-math OP_SUB
+		do-math OP_SUB
 	]
 
 	and~: func [return:	[red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "integer/and~"]]
-		as red-value! do-math OP_AND
+		do-math OP_AND
 	]
 
 	or~: func [return: [red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "integer/or~"]]
-		as red-value! do-math OP_OR
+		do-math OP_OR
 	]
 
 	xor~: func [return:	[red-value!]][
 		#if debug? = yes [if verbose > 0 [print-line "integer/xor~"]]
-		as red-value! do-math OP_XOR
+		do-math OP_XOR
 	]
 
 	negate: func [

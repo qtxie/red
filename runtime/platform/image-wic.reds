@@ -621,7 +621,7 @@ OS-image: context [
 		lock: as IWICBitmapLock this/vtbl
 		lock/GetStride this stride
 		size: 0 data: null
-		lock/GetDataPointer this :size as ptr-ptr! :data
+		lock/GetDataPointer this :size :data
 		data
 	]
 
@@ -674,7 +674,7 @@ OS-image: context [
 		lthis: ilock/value
 		lock: as IWICBitmapLock lthis/vtbl
 		size: 0 data: null
-		lock/GetDataPointer lthis :size as ptr-ptr! :data
+		lock/GetDataPointer lthis :size :data
 		scan0: data
 		scan0: scan0 + index
 		ret: scan0/1
@@ -710,7 +710,7 @@ OS-image: context [
 		lthis: ilock/value
 		lock: as IWICBitmapLock lthis/vtbl
 		size: 0 data: null
-		lock/GetDataPointer lthis :size as ptr-ptr! :data
+		lock/GetDataPointer lthis :size :data
 		scan0: data
 		scan0: scan0 + index
 		scan0/1: color
@@ -825,10 +825,10 @@ OS-image: context [
 			GENERIC_READ
 			0	;-- WICDecodeMetadataCacheOnDemand
 			:II [return null]
-		node: get-frame IFAC as com-ptr! :II 0 no
+		node: get-frame IFAC :II 0 no
 		if null? node [return null]
 		inode: as img-node! (as series! node/value) + 1
-		h: as this! inode/handle
+		h: inode/handle
 		if 0 <> IFAC/CreateBitmapFromSource	wic-factory h WICBitmapCacheOnLoad :bitmap [
 			inode/extID: externals/remove inode/extID no
 			delete node
@@ -887,7 +887,7 @@ OS-image: context [
 		lock: as IWICBitmapLock lthis/vtbl
 
 		size: 0 data: null
-		lock/GetDataPointer lthis :size as ptr-ptr! :data
+		lock/GetDataPointer lthis :size :data
 
 		scan0: data
 		end: scan0 + (width * height)
@@ -956,7 +956,7 @@ OS-image: context [
 		if 0 <> IFAC/CreateDecoderFromStream wic-factory stm/ptr null 0 :idec [
 			return null
 		]
-		get-frame IFAC as com-ptr! :idec 0 no
+		get-frame IFAC :idec 0 no
 	]
 
 	encode: func [
@@ -1134,7 +1134,7 @@ OS-image: context [
 		lthis: ilock/value
 		lock: as IWICBitmapLock lthis/vtbl
 		size: 0 data: null
-		lock/GetDataPointer lthis :size as ptr-ptr! :data
+		lock/GetDataPointer lthis :size :data
 		bitmap: CreateBitmap w h 1 32 as byte-ptr! data
 		lock/Release lthis
 		bitmap
@@ -1202,7 +1202,7 @@ OS-image: context [
 		lthis: ilock/value
 		lock: as IWICBitmapLock lthis/vtbl
 		size: 0 data: null
-		lock/GetDataPointer lthis :size as ptr-ptr! :data
+		lock/GetDataPointer lthis :size :data
 		bitmap: 0
 		;-- GdipCreateBitmapFromScan0 uses data without copying it
 		GdipCreateBitmapFromScan0 w h w * 4 PixelFormat32bppARGB as byte-ptr! data :bitmap

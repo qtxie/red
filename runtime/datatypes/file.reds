@@ -258,7 +258,7 @@ file: context [
 		file	[red-value!]
 		return: [red-value!]
 	][
-		as red-value! simple-io/query as red-file! file
+		simple-io/query as red-file! file
 	]
 
 	rename: func [
@@ -303,7 +303,7 @@ file: context [
 			--NOT_IMPLEMENTED--
 		]
 		simple-io/write as red-file! dest data part seek binary? append? lines?
-		as red-value! unset-value
+		unset-value
 	]
 
 	init: does [

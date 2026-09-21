@@ -43,12 +43,12 @@ parser: context [
 	]
 	
 	#define PARSE_SET_INPUT_LENGTH(word) [
-		word: _series/get-length as red-series! input no
+		word: _series/get-length input no
 	]
 	
 	#define PARSE_CHECK_INPUT_EMPTY? [
 		end?: any [
-			_series/rs-tail? as red-series! input
+			_series/rs-tail? input
 			all [positive? part input/head >= part]
 		]
 	]
@@ -1232,7 +1232,7 @@ parser: context [
 									]
 								][
 									before: input/head
-									end?: _series/rs-skip as red-series! input 1
+									end?: _series/rs-skip input 1
 									match?: before = input/head
 									if positive? part [match?: input/head > part or match?]
 									
@@ -1261,7 +1261,7 @@ parser: context [
 							R_SET [
 								if match? [
 									either p/input = input/head [
-										value: as red-value! none-value
+										value: none-value
 									][
 										offset: p/input
 										PARSE_PICK_INPUT
@@ -1587,7 +1587,7 @@ parser: context [
 					]
 				]
 				ST_NEXT_INPUT [
-					end?: _series/rs-skip as red-series! input 1
+					end?: _series/rs-skip input 1
 					if positive? part [end?: input/head >= part or end?]
 					state: ST_CHECK_PENDING
 				]

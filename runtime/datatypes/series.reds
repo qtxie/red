@@ -190,7 +190,7 @@ _series: context [
 		case [
 			field = words/owned [
 				obj: ownership/owned? ser/node
-				res: as red-value! either null? obj [none-value][obj]
+				res: either null? obj [none-value][obj]
 			]
 			true [
 				--NOT_IMPLEMENTED--						;@@ raise error
@@ -1025,7 +1025,7 @@ _series: context [
 		new/head:   0
 		new/extra:  either type = TYPE_VECTOR [ser/extra][0]
 
-		as red-series! new
+		new
 	]
 	
 	modify: func [

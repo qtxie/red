@@ -623,7 +623,7 @@ collector: context [
 		]
 
 		raw: as int-ptr! node
-		_hashtable/mark as ptr-ptr! :raw
+		_hashtable/mark :raw
 	]
 
 	;-- Mark a node-handle! found on the native stack. Handles are integer!
@@ -687,7 +687,7 @@ collector: context [
 		slot: as red-value! ctx
 		node: as int-ptr! resolve-node ctx/symbols
 		if node <> null [
-			_hashtable/mark as ptr-ptr! :node
+			_hashtable/mark :node
 		]
 		unless ON_STACK?(ctx) [mark-block-node :ctx/values]
 		mark-values slot + 1 slot + 2				;-- mark the back-reference value (2nd value)
@@ -778,7 +778,7 @@ collector: context [
 					;keep :ctx/self
 					node: as int-ptr! resolve-node ctx/symbols
 					if node <> null [
-						_hashtable/mark as ptr-ptr! :node
+						_hashtable/mark :node
 					]
 					unless ON_STACK?(ctx) [mark-block-node :ctx/values]
 				]
@@ -789,7 +789,7 @@ collector: context [
 					mark-block-node :hash/node
 					node: as int-ptr! resolve-node hash/table
 					if node <> null [
-						_hashtable/mark as ptr-ptr! :node		;@@ check if previously marked
+						_hashtable/mark :node		;@@ check if previously marked
 					]
 				]
 				TYPE_FUNCTION
@@ -985,7 +985,7 @@ collector: context [
 			][
 				s: find-series-owner node/value
 				if all [s <> null node/value = as int-ptr! s][
-					keep-raw as ptr-ptr! sp
+					keep-raw sp
 					node: as node! sp/value
 					mark-series-root as series! node/value
 					return refs
@@ -1752,11 +1752,11 @@ collector: context [
 		mark-block root
 		#if debug? = yes [if verbose > 1 [probe "marking symbol table"]]
 		p: as int-ptr! symbol/table
-		_hashtable/mark as ptr-ptr! :p			;-- will mark symbols
+		_hashtable/mark :p			;-- will mark symbols
 		symbol/table: as node! p
 		#if debug? = yes [if verbose > 1 [probe "marking ownership table"]]
 		p: as int-ptr! ownership/table
-		_hashtable/mark as ptr-ptr! :p
+		_hashtable/mark :p
 		ownership/table: as node! p
 
 		#if debug? = yes [if verbose > 1 [probe "marking stack"]]

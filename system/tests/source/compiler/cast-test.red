@@ -88,6 +88,8 @@ compiled?: func [
       warning: replace/all copy msg "#type#" type
        either result [
          --assert not none? find qt/comp-output warning
+         ;-- The warning has to say where the cast is, not just that it is.
+         --assert not none? find qt/comp-output rejoin [warning " ("]
        ][
           --assert result                       ;; signify failing test
           print qt/comp-output

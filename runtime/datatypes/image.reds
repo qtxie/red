@@ -236,7 +236,7 @@ image: context [
 		]
 
 		handle: null
-		buf: acquire-buffer src as ptr-ptr! :handle
+		buf: acquire-buffer src :handle
 		either crop1 <> null [
 			pb: allocate crop.w * crop.h * 4
 			image-utils/crop as byte-ptr! buf w h crop.x crop.y crop.w crop.h pb
@@ -249,7 +249,7 @@ image: context [
 		if null? nbuf [dst/header: TYPE_NONE exit]
 		init-image dst OS-image/make-image rect.w/1 rect.h/1 null null null
 		handle2: null
-		buf2: acquire-buffer dst as ptr-ptr! :handle2
+		buf2: acquire-buffer dst :handle2
 		copy-memory as byte-ptr! buf2 as byte-ptr! nbuf rect.w/1 * rect.h/1 * 4
 		release-buffer dst handle2 yes
 		free as byte-ptr! nbuf
@@ -631,7 +631,7 @@ image: context [
 			default [0]
 		]
 		fire [TO_ERROR(script bad-to-arg) datatype/push TYPE_IMAGE spec]
-		as red-image! proto
+		proto
 	]
 
 	serialize: func [
@@ -812,7 +812,7 @@ image: context [
 
 		out-range: 0
 		offset: either null? boxed [img/head + index - 1][get-position img as red-integer! boxed 1 :out-range]
-		as red-value! either out-range = 1 [none-value][rs-pick img offset]
+		either out-range = 1 [none-value][rs-pick img offset]
 	]
 
 	poke: func [
@@ -848,7 +848,7 @@ image: context [
 			OS-image/set-pixel resolve-node img/node offset a << 24 or (r << 16) or (g << 8) or b
 		]
 		ownership/check as red-value! img words/_poke data offset 1
-		as red-value! data
+		data
 	]
 
 	eval-path: func [

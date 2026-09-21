@@ -275,7 +275,7 @@ _context: context [
 					if HANDLE?(obj/on-set) [
 						saved: stack/top
 						old: stack/push slot
-						word: as red-word! word
+						word: word
 						copy-cell value slot
 						object/fire-on-set obj word old value ;-- safe to call, will exit if not defined
 						stack/top: saved
@@ -372,7 +372,7 @@ _context: context [
 			node
 			type
 
-		sym: as red-word! _hashtable/get-ctx-word TO_CTX(new) 0
+		sym: _hashtable/get-ctx-word TO_CTX(new) 0
 		loop slots [
 			sym/ctx: new
 			sym: sym + 1

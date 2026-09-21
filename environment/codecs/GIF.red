@@ -18,7 +18,7 @@ put system/codecs 'gif context [
 	
 	encode: routine [img [image!] where [any-type!]][
 		#if not find [Android Linux FreeBSD NetBSD Syllabe] OS [
-			stack/set-last as cell! image/encode img where IMAGE_GIF
+			stack/set-last image/encode img where IMAGE_GIF
 		]
 	]
 

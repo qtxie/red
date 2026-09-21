@@ -615,7 +615,7 @@ select-key*: func [										;-- called by compiler for SWITCH
 		s	  [series!]
 		step  [integer!]
 ][
-	key: as red-value! stack/arguments
+	key: stack/arguments
 	blk: as red-block! key + 1
 	assert TYPE_OF(blk) = TYPE_BLOCK
 	
@@ -644,7 +644,7 @@ select-key*: func [										;-- called by compiler for SWITCH
 			value: value + step
 		]
 	]
-	either sub? [as red-value! none/push][
+	either sub? [none/push][
 		value: stack/arguments
 		value/header: TYPE_NONE
 		value
@@ -662,7 +662,7 @@ load-single-value: func [
 ][
 	len: 0
 	lexer/scan-alt slot str -1 yes yes yes yes :len null null
-	if len < string/rs-length? str [return as red-value! none-value] ;-- extra characters case
+	if len < string/rs-length? str [return none-value] ;-- extra characters case
 	
 	blk: as red-block! slot
 	assert TYPE_OF(blk) = TYPE_BLOCK

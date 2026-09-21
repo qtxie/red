@@ -137,7 +137,7 @@ map: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "map/extend"]]
 
-		src: as red-block! spec
+		src: spec
 		size: block/rs-length? src
 		if size % 2 <> 0 [fire [TO_ERROR(script invalid-arg) spec]]
 		
@@ -575,7 +575,7 @@ map: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "map/put"]]
 		
-		eval-path map field value as red-value! none-value null null -1 case? no yes no
+		eval-path map field value none-value null null -1 case? no yes no
 		value
 	]
 

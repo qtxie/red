@@ -105,7 +105,7 @@ port: context [
 			new: as red-object! stack/push*
 			object/copy
 				as red-object! #get system/standard/url-parts
-				as red-object! new
+				new
 				null
 				no
 				null
@@ -120,7 +120,7 @@ port: context [
 		new: as red-object! stack/push*
 		object/copy
 			as red-object! #get system/standard/port
-			as red-object! new
+			new
 			null
 			no
 			null
@@ -142,7 +142,7 @@ port: context [
 		unless any [type = TYPE_OBJECT type = TYPE_HANDLE][
 			fire [TO_ERROR(access invalid-actor) spec]
 		]
-		copy-cell as red-value! actor base + field-actor
+		copy-cell actor base + field-actor
 		
 		new
 	]
@@ -255,7 +255,7 @@ port: context [
 		
 		part?: part > -1
 		dup?:  dup > 1
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_change actors/ctx
 		stack/push as red-value! port
 		stack/push value
@@ -293,7 +293,7 @@ port: context [
 		part?: OPTION?(part)
 		with?: OPTION?(with-arg)
 		skip?: OPTION?(skip)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_find actors/ctx
 		stack/push as red-value! port
 		stack/push value
@@ -331,7 +331,7 @@ port: context [
 
 		part?: part > -1
 		dup?: dup > 1
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_insert actors/ctx
 		stack/push as red-value! port
 		stack/push value
@@ -361,7 +361,7 @@ port: context [
 
 		part?: part > -1
 		dup?: dup > 1
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_insert actors/ctx
 		stack/push as red-value! port
 		stack/push value
@@ -386,7 +386,7 @@ port: context [
 		#if debug? = yes [if verbose > 0 [print-line "port/move"]]
 		
 		part?: OPTION?(part)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_move actors/ctx
 		stack/push as red-value! port
 		stack/push target
@@ -411,7 +411,7 @@ port: context [
 		
 		part?: OPTION?(part)
 		types?: OPTION?(types)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_copy actors/ctx
 		stack/push as red-value! port
 		logic/push part?
@@ -572,7 +572,7 @@ port: context [
 		#if debug? = yes [if verbose > 0 [print-line "port/remove"]]
 		
 		part?: OPTION?(part)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_remove actors/ctx
 		stack/push as red-value! port
 		logic/push part?
@@ -592,7 +592,7 @@ port: context [
 		#if debug? = yes [if verbose > 0 [print-line "port/reverse"]]
 
 		part?: OPTION?(part)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_reverse actors/ctx
 		stack/push as red-value! port
 		logic/push part?
@@ -640,7 +640,7 @@ port: context [
 		part?: OPTION?(part)
 		with?: OPTION?(with-arg)
 		skip?: OPTION?(skip)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_select actors/ctx
 		stack/push as red-value! port
 		stack/push value
@@ -680,7 +680,7 @@ port: context [
 		part?: OPTION?(part)
 		comp?: OPTION?(compare)
 		skip?: OPTION?(skip)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_sort actors/ctx
 		stack/push as red-value! port
 		logic/push case?
@@ -705,7 +705,7 @@ port: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "port/swap"]]
 		
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_sort actors/ctx
 		stack/push as red-value! port
 		stack/push series2
@@ -725,7 +725,7 @@ port: context [
 		#if debug? = yes [if verbose > 0 [print-line "port/take"]]
 		
 		part?: OPTION?(part)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_take actors/ctx
 		stack/push as red-value! port
 		logic/push part?
@@ -751,7 +751,7 @@ port: context [
 		#if debug? = yes [if verbose > 0 [print-line "port/trim"]]
 
 		with?: OPTION?(with-arg)
-		actors: get-actors as red-object! port
+		actors: get-actors port
 		stack/mark-func words/_trim actors/ctx
 		stack/push as red-value! port
 		logic/push head?

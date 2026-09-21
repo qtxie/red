@@ -355,7 +355,7 @@ point3D: context [
 				either TYPE_OF(gparent) = TYPE_OBJECT [
 					object/fire-on-set as red-object! gparent as red-word! p-item old as red-value! parent
 				][
-					ownership/check as red-value! gparent words/_set-path value axis 1
+					ownership/check gparent words/_set-path value axis 1
 				]
 				stack/pop 1								;-- avoid moving stack top
 			]
@@ -530,9 +530,9 @@ point3D: context [
 			pt  [red-point3D!]
 	][
 		pt: as red-point3D! stack/arguments
-		pt/x: as-float32 0.0 - pt/x
-		pt/y: as-float32 0.0 - pt/y
-		pt/z: as-float32 0.0 - pt/z
+		pt/x: 0.0 - pt/x
+		pt/y: 0.0 - pt/y
+		pt/z: 0.0 - pt/z
 		pt
 	]
 	

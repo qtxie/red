@@ -309,7 +309,7 @@ clipboard: context [
 							]
 						]
 						if hMem <> null [
-							if zero? bmp [return as red-value! none-value]
+							if zero? bmp [return none-value]
 							#either draw-engine = 'GDI+ [
 								val: as red-value! image/init-image
 									as red-image! stack/push*

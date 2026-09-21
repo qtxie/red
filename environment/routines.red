@@ -199,9 +199,9 @@ write-clipboard: routine [
 	data [any-type!] "string!, block! of files!, an image! or none!"
 	return: [logic!] "indicates success"
 ][
-	clipboard/write as red-value! data
+	clipboard/write data
 ]
 
 write-stdout: routine ["Write data to STDOUT" data [any-type!]][			;-- internal use only
-	simple-io/write null as red-value! data null null no no no
+	simple-io/write null data null null no no no
 ]

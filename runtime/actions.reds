@@ -217,7 +217,7 @@ actions: context [
 		return:	[red-value!]
 	][
 		random
-			as red-value! stack/arguments
+			stack/arguments
 			seed >= 0
 			secure >= 0
 			only >= 0
@@ -1734,7 +1734,7 @@ actions: context [
 			value	[red-value!]
 			case?	[logic!]
 			return:	[red-value!]						;-- value argument passed as result
-		] get-action-ptr as red-value! series ACT_PUT
+		] get-action-ptr series ACT_PUT
 
 		action-put series key value case?
 	]

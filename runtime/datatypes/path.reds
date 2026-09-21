@@ -182,7 +182,7 @@ path: context [
 	][
 		#if debug? = yes [if verbose > 0 [print-line "path/copy"]]
 
-		as red-series! block/copy as red-block! path as red-block! new arg deep? types
+		block/copy as red-block! path as red-block! new arg deep? types
 	]
 	
 	init: does [

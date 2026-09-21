@@ -18,7 +18,7 @@ put system/codecs 'jpeg context [
 	
 	encode: routine [img [image!] where [any-type!]][
 		#if not find [Android FreeBSD NetBSD Syllabe] OS [
-			stack/set-last as cell! image/encode img where IMAGE_JPEG
+			stack/set-last image/encode img where IMAGE_JPEG
 		]
 	]
 

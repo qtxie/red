@@ -262,6 +262,43 @@ jobs:
           environment/console/CLI/console.red
         chmod 755 "build/packages/red-cli-console-$PLATFORM"
 
+    - name: Build the GUI console (Darwin)
+      # The GUI console is a .app bundle, so it only exists on Darwin. It is
+      # built here rather than in a workflow of its own because a bundle that
+      # Apple's loader rejects is a broken generation, not a broken extra.
+      if: matrix.platform == 'darwin-arm64'
+      shell: bash
+      run: |
+        set -euo pipefail
+        ./build/dist/red-toolchain -r -t macOS-ARM64 \
+          -o build/dist/gui-console \
+          environment/console/GUI/gui-console.red
+        chmod 755 build/dist/gui-console.app/Contents/MacOS/gui-console
+
+    - name: Validate Apple ARM64 outputs (Darwin)
+      if: matrix.platform == 'darwin-arm64'
+      shell: bash
+      run: |
+        set -euo pipefail
+        gui=build/dist/gui-console.app/Contents/MacOS/gui-console
+        test -x "$gui"
+        test -f build/dist/gui-console.app/Contents/Info.plist
+
+        for binary in build/dist/red-toolchain build/dist/cli-console "$gui"; do
+          file "$binary" | grep -q 'Mach-O 64-bit.*arm64'
+          otool -hv "$binary" | grep -q ARM64
+          otool -l "$binary" | grep -q LC_CODE_SIGNATURE
+          dyld_info -validate_only "$binary"
+        done
+        otool -L "$gui" | grep -q AppKit.framework
+
+        # The bundle signature covers the bundle; verifying a bare copy is what
+        # checks the executable's own signature.
+        cp "$gui" build/dist/gui-console.signature-probe
+        chmod 755 build/dist/gui-console.signature-probe
+        codesign --verify --strict --verbose=4 build/dist/gui-console.signature-probe
+        rm build/dist/gui-console.signature-probe
+
     - name: Package toolchain (Windows)
       if: matrix.archive == 'zip'
       shell: pwsh
@@ -297,8 +334,22 @@ jobs:
         test -x build/dist/red-toolchain
         COPYFILE_DISABLE=1 tar -czf "build/packages/red-toolchain-$PLATFORM.tar.gz" \
           -C build/dist red-toolchain
+        if [[ -d build/dist/gui-console.app ]]; then
+          COPYFILE_DISABLE=1 tar -czf "build/packages/red-gui-console-$PLATFORM.tar.gz" \
+            -C build/dist gui-console.app
+        fi
         cd build/packages
-        shasum -a 256 "red-toolchain-$PLATFORM.tar.gz" "red-cli-console-$PLATFORM" > SHA256SUMS
+        sums=()
+        for candidate in \
+          "red-toolchain-$PLATFORM.tar.gz" \
+          "red-cli-console-$PLATFORM" \
+          "red-gui-console-$PLATFORM.tar.gz"
+        do
+          if [[ -f "$candidate" ]]; then
+            sums+=("$candidate")
+          fi
+        done
+        shasum -a 256 "${sums[@]}" > SHA256SUMS
 
     - name: Upload seed
       uses: actions/upload-artifact@v7

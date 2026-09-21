@@ -267,6 +267,13 @@ file:   red-bootstrap-speed1.exe
 sha256: 53f947164aaeb9912c233a0d7c4fb960ded05932fce809aaf34df75b9f9f7eba
 ```
 
+The Darwin leg additionally builds `gui-console.app` and checks it the way
+Apple does — `dyld_info -validate_only`, a valid `LC_CODE_SIGNATURE`,
+`codesign --verify --strict`, and the AppKit link — so a generation that
+produces a bundle Apple's loader rejects is never published. It ships as the
+`gui` component of the Darwin seed; the other platforms have no bundle and so
+no `gui` entry.
+
 ### Promotion
 
 `build-toolchain.yml` builds every platform on each push, but only the nightly

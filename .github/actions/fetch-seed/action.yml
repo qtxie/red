@@ -10,7 +10,7 @@ inputs:
     description: 'windows-x64 | linux-x64 | linux-arm64 | darwin-arm64'
     required: true
   component:
-    description: 'toolchain | console'
+    description: 'toolchain | console | gui (gui: Darwin only)'
     required: true
   output:
     description: 'file to write the downloaded asset to'

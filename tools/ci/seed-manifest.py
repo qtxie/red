@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Assemble a CI seed manifest from the artifacts of one seed build.
 
-A seed build uploads one artifact per platform, each holding a toolchain
-archive, a CLI console binary and a SHA256SUMS. This script stages those files
-under unique release asset names and writes the manifest that every later CI
-run reads to find them:
+A seed build uploads one artifact per platform, holding a toolchain archive, a
+CLI console, and whatever else that platform produces -- the GUI console is a
+.app bundle, so only Darwin has one. This script stages those files under
+release-unique names and writes the manifest that every later CI run reads to
+find them:
 
     {
       "generation": "seed-123456",
@@ -14,14 +15,19 @@ run reads to find them:
         "windows-x64": {
           "toolchain": {"name": "red-toolchain-windows-x64.zip", "sha256": "..."},
           "console":   {"name": "red-cli-console-windows-x64.exe", "sha256": "..."}
+        },
+        "darwin-arm64": {
+          "toolchain": {"name": "red-toolchain-darwin-arm64.tar.gz", "sha256": "..."},
+          "console":   {"name": "red-cli-console-darwin-arm64", "sha256": "..."},
+          "gui":       {"name": "red-gui-console-darwin-arm64.tar.gz", "sha256": "..."}
         }
       }
     }
 
 The manifest is the whole pointer. Promoting a generation means publishing its
-binaries to an immutable release and then rewriting MANIFEST.json, so no
-asset is ever overwritten in place and no URL or checksum is configured
-anywhere in the repository.
+binaries to an immutable release and then rewriting MANIFEST.json, so no asset
+is ever overwritten in place and no URL or checksum is configured anywhere in
+the repository.
 """
 
 import argparse
@@ -32,6 +38,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 PLATFORMS = ("windows-x64", "linux-x64", "linux-arm64", "darwin-arm64")
+
+# (filename prefix, manifest key, required). A platform that ships no GUI
+# console simply has no "gui" entry, and fetch-seed only ever asks for a
+# component the manifest actually has.
+COMPONENTS = (
+    ("red-toolchain", "toolchain", True),
+    ("red-cli-console", "console", True),
+    ("red-gui-console", "gui", False),
+)
 
 
 def fail(message):
@@ -46,14 +61,18 @@ def sha256(path):
     return digest.hexdigest()
 
 
-def asset(root, prefix, platform):
-    """The single file named <prefix>-<platform>[.ext] under root."""
+def asset(seeds, prefix, platform, required):
+    """The single file named <prefix>-<platform>[.ext] under seeds."""
     matches = sorted(
-        path for path in root.rglob(f"{prefix}-{platform}*") if path.is_file()
+        path for path in seeds.rglob(f"{prefix}-{platform}*") if path.is_file()
     )
-    if len(matches) != 1:
-        found = ", ".join(str(path) for path in matches) or "none"
-        fail(f"expected one {prefix}-{platform}* under {root}, found: {found}")
+    if not matches:
+        if required:
+            fail(f"no {prefix}-{platform}* under {seeds}")
+        return None
+    if len(matches) > 1:
+        found = ", ".join(str(path) for path in matches)
+        fail(f"expected one {prefix}-{platform}* under {seeds}, found: {found}")
     return matches[0]
 
 
@@ -71,20 +90,18 @@ def build(seeds, stage_dir, generation, commit):
 
     assets = {}
     for platform in PLATFORMS:
-        toolchain = asset(seeds, "red-toolchain", platform)
-        console = asset(seeds, "red-cli-console", platform)
-        assets[platform] = {
-            "toolchain": stage(stage_dir, toolchain, toolchain.name),
-            "console": stage(stage_dir, console, console.name),
-        }
+        entry = {}
+        for prefix, key, required in COMPONENTS:
+            found = asset(seeds, prefix, platform, required)
+            if found is not None:
+                entry[key] = stage(stage_dir, found, found.name)
         # Every platform ships a SHA256SUMS; the name has to change for it to be
         # a distinct release asset.
         for sums in sorted(seeds.rglob("SHA256SUMS")):
             if platform in str(sums.parent):
-                assets[platform]["checksums"] = stage(
-                    stage_dir, sums, f"SHA256SUMS-{platform}"
-                )
+                entry["checksums"] = stage(stage_dir, sums, f"SHA256SUMS-{platform}")
                 break
+        assets[platform] = entry
 
     return {
         "generation": generation,
@@ -112,7 +129,7 @@ def main():
     args.out.write_text(json.dumps(manifest, indent=2) + "\n")
 
     for platform, entry in manifest["assets"].items():
-        print(f"{platform}: {entry['toolchain']['name']}, {entry['console']['name']}")
+        print(f"{platform}: {', '.join(sorted(entry))}")
     print(f"manifest: {args.out}")
 
 

@@ -188,18 +188,24 @@ SHA-256 digest.
 
 ## Hermetic Tests
 
-The Windows suite copies only the compiler and fixtures into a new temporary
-directory:
+The suite copies only the compiler and the fixtures in
+`tools/self_hosting/fixtures/toolchain` into a new temporary directory and
+makes it the working directory, so every path the toolchain sees is relative:
 
-```powershell
-& .\tools\self_hosting\test-windows-hybrid-toolchain.ps1 `
-    -Toolchain .\build\red-toolchain\windows-x64\red-toolchain.exe
+```text
+console tools/self_hosting/test-red-toolchain-hermetic.red \
+    --toolchain build/red-toolchain/windows-x64/red-toolchain.exe
 ```
 
 It builds and runs release and development Red programs, `-O2`, JSON and CSV
 modules, Red/System, a callable DLL export, and a self-closing native View
-window. It verifies output architecture, imports, exports, embedded source
-lookup, and repository-path isolation.
+window. It verifies output architecture, imports, exports and
+repository-path isolation. Pass `--keep` to preserve the scratch directory
+when it fails, `--no-view` to skip the View fixture.
+
+Images are read directly, so the suite needs no `dumpbin`; and the DLL export
+is called back through a Red/System loader that the toolchain under test
+compiles, so it needs no host loader either.
 
 The Darwin equivalent is:
 
@@ -224,8 +230,7 @@ Each generation is compiled to the same staging path and copied out afterwards,
 because the toolchain embeds its own output path: building H2 and H3 under
 different names would make them differ for a reason that has nothing to do with
 the fixed point. The PE comparison is in Red too, so
-`python selfhost.py compare-pe` is no longer part of the gate. The hermetic
-suite is still a separate step, and still host-scripted.
+`python selfhost.py compare-pe` is no longer part of the gate.
 
 The Darwin fixed-point comparison uses consecutive generations under
 equal-length paths. Its documented normalization additionally covers the

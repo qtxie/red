@@ -154,8 +154,9 @@ jobs:
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        & .\tools\self_hosting\test-windows-hybrid-toolchain.ps1 `
-          -Toolchain .\build\fixed-point\h3\red-toolchain.exe
+        & .\build\fixed-point\console.exe `
+          tools\self_hosting\test-red-toolchain-hermetic.red `
+          --toolchain build/fixed-point/h3/red-toolchain.exe
 
     - name: Build standalone Red toolchain (Unix)
       if: matrix.archive != 'zip'

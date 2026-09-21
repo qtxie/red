@@ -436,19 +436,40 @@
   tools/self_hosting/generate-toolchain-resources.red` then
   `build/tmp/gen-res.exe <repo-root> build/generated/red-toolchain-resources
   .generated.red`. Build the generator for the *host*, not the target.
-- **The toolchain is built by Red, not by a shell**:
-  `console.exe tools/self_hosting/build-red-toolchain.red --bootstrap <compiler>`
-  regenerates the resources, compiles, and verifies, on every host. The
-  fixed-point gate is
-  `console.exe tools/self_hosting/build-red-toolchain-fixed-point.red`
-  (three generations, each built by the previous one; the last two must be the
-  same image modulo the COFF timestamp and the PE checksum). `--help` lists the
-  options. Both replaced `build-windows-hybrid-toolchain.ps1`,
-  `build-red-toolchain.sh` and
-  `test-windows-hybrid-toolchain-fixed-point.ps1`, which are gone.
-- **A Red script that dies with an uncaught error still exits 0**, so both
+- **The toolchain is built and tested by Red, not by a shell**:
+  * `console.exe tools/self_hosting/build-red-toolchain.red --bootstrap <compiler>`
+    regenerates the resources, compiles, and verifies, on every host.
+  * `console.exe tools/self_hosting/build-red-toolchain-fixed-point.red`
+    builds three generations, each by the previous one; the last two must be
+    the same image modulo the COFF timestamp and the PE checksum.
+  * `console.exe tools/self_hosting/test-red-toolchain-hermetic.red --toolchain
+    <exe>` copies the toolchain and `fixtures/toolchain/*` into a scratch
+    directory, makes it the working directory, and drives release, `-O2`,
+    module, Red/System, dev/`libRedRT`, shared-library and View builds there.
+  * `--help` lists the options. Shared helpers live in
+    `tools/self_hosting/toolchain-common.red`, pulled in with `#include` (a
+    headerless file is rejected: `*** script is missing a Red header`).
+  These replaced `build-windows-hybrid-toolchain.ps1`, `build-red-toolchain.sh`,
+  `test-windows-hybrid-toolchain-fixed-point.ps1`,
+  `test-windows-hybrid-toolchain.ps1` and `windows-toolchain-tools.ps1`, which
+  are gone: nothing in the toolchain pipeline needs dumpbin, PowerShell or C#
+  any more. The DLL export is called back through a Red/System loader that the
+  toolchain under test compiles.
+- **A Red script that dies with an uncaught error still exits 0**, so all three
   scripts wrap their body: `either error? result: try [body][... quit/return 1]`.
-  `quit/return` inside `try` is *not* caught, so the normal path still exits.
+  `quit/return` inside `try` is *not* caught, so the normal path still exits --
+  which also means cleanup cannot live in that handler: `fail` runs the
+  optional `on-fail` block instead.
+- **Red paths and refinements, verified the hard way**:
+  * A Red console runs a script with the process in the script's own directory,
+    so a relative path typed on the command line resolves against
+    `tools/self_hosting`. `resolve-in` in `toolchain-common.red` resolves every
+    CLI path against the repository root instead.
+  * `f arg /ref` is silently ignored -- a refinement only takes effect in the
+    function's path: `f/ref arg`.
+  * `last lines = marker` parses as `last (lines = marker)`; parenthesize.
+  * `join` on two `file!` values errors; `rejoin` works.
+  * `FFFFFFFFh` is -1 (Red integers are 32-bit).
 - **Dev mode now builds and runs a Red program on macOS** (fixed at 175, was
   the open item above). Three independent blockers, all of them invisible to
   `-r` because only dev mode compiles `libRedRT`:

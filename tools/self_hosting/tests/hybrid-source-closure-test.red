@@ -168,9 +168,6 @@ walk-include-file clean-path to file! rejoin [
 walk-include-file clean-path to file! rejoin [
 	root %red-system-hybrid.red
 ]
-walk-include-file clean-path to file! rejoin [
-	root %red-bootstrap-hybrid-backend.red
-]
 walk-include-file clean-path to file! rejoin [root %red.red]
 walk-include-file clean-path to file! rejoin [
 	root %red-toolchain-hybrid.red
@@ -218,6 +215,8 @@ foreach removed [
 	%compiler/source-loader.red
 	%compiler/options.red
 	%compiler/binding-identity.red
+	%compiler/frontend-cache.red
+	%red-bootstrap-hybrid-backend.red
 ][
 	removed: clean-path to file! rejoin [root removed]
 	either all [exists? removed dir? removed] [
@@ -260,11 +259,9 @@ foreach required [
 	%compiler/bootstrap-driver.red
 	%compiler/bootstrap-options.red
 	%system/toolchain-support.red
-	%compiler/frontend-cache.red
 	%red.red
 	%red-toolchain-hybrid.red
 	%red-system-hybrid.red
-	%red-bootstrap-hybrid-backend.red
 ][
 	required: clean-path to file! rejoin [root required]
 	unless find closure-files required [

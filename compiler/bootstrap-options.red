@@ -17,7 +17,6 @@ compiler-options: context [
 			opt-level: 1
 			o2-ir-dump: none
 			red-only?: false
-			loaded-red: none
 			no-compress?: false
 			show-func-map?: false
 			dll?: false
@@ -87,11 +86,6 @@ compiler-options: context [
 					option-set options 'release? true
 				]
 				token = "--red-only" [option-set options 'red-only? true]
-				token = "--loaded-red" [
-					position: next position
-					if tail? position [return missing-value token]
-					option-set options 'loaded-red to string! position/1
-				]
 				token = "--no-compress" [option-set options 'no-compress? true]
 				token = "--show-func-map" [option-set options 'show-func-map? true]
 				find ["-t" "--target"] token [

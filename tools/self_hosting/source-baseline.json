@@ -5,7 +5,6 @@
     "compiler/bootstrap-options.red",
     "compiler/crush.red",
     "compiler/extractor.red",
-    "compiler/frontend-cache.red",
     "compiler/frontend.red",
     "compiler/modules.red",
     "compiler/preprocessor.red",
@@ -186,7 +185,6 @@
       "compiler/bootstrap-options.red",
       "compiler/crush.red",
       "compiler/extractor.red",
-      "compiler/frontend-cache.red",
       "compiler/frontend.red",
       "compiler/modules.red",
       "compiler/preprocessor.red",
@@ -3393,8 +3391,8 @@
     }
   ],
   "schema": 1,
-  "source_count": 961,
-  "source_tree_sha256": "7199804cdf511b8094a23a12cd41f77c1d9db62f97853a2b151cb8622aa7fa63",
+  "source_count": 957,
+  "source_tree_sha256": "9baca1d4c2a057d727473d15d49bface36140d34b065100e9e911844c0cc68bf",
   "target_registry": {
     "configured_cpu_values": [
       "ARM",

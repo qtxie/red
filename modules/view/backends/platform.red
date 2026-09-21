@@ -668,7 +668,7 @@ system/view/platform: context [
 								][
 									(gui/get-cocoa-handle h) = (as integer! hMonitor)
 								]
-							][h/value = as-integer hMonitor]
+							][(gui/get-gtk-handle h) = hMonitor]
 						]
 					][
 						if parent/ctx <> face/ctx [					;-- if window really moved to a different display
@@ -918,6 +918,7 @@ system/view/platform: context [
 				handle/CLASS_WINDOW
 		]
 	][
+	#either all [config/GUI-engine = 'native config/OS = 'macOS] [
 		refresh-window: routine [h [handle!]][
 			gui/OS-refresh-window h/value
 		]
@@ -935,6 +936,28 @@ system/view/platform: context [
 		make-view: routine [face [object!] parent [handle!]][
 			handle/box gui/OS-make-view face parent/value handle/CLASS_WINDOW
 		]
+	][
+		refresh-window: routine [h [handle!]][
+			gui/OS-refresh-window gui/get-gtk-handle as red-handle! h
+		]
+
+		redraw: routine [face [object!] /local h [handle!]][
+			h: gui/face-handle? face
+			if h <> null [gui/OS-redraw h]
+		]
+
+		show-window: routine [id [handle!]][
+			gui/OS-show-window gui/get-gtk-handle as red-handle! id
+			SET_RETURN(none-value)
+		]
+
+		make-view: routine [face [object!] parent [handle!]][
+			gui/make-gtk-handle-at
+				stack/arguments
+				gui/OS-make-view face gui/get-gtk-handle as red-handle! parent
+				handle/CLASS_WINDOW
+		]
+	]
 	]
 	]
 

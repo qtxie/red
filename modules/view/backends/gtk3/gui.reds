@@ -44,6 +44,8 @@ dpi-factor:		as float32! 1.0
 screen-size-x:		0
 screen-size-y:		0
 
+gtk-handle-ext-type: -1								;-- set by init
+
 #define CHECK_FACE_SIZE(size x y) [
 	if any [x > 65535 y > 65535][
 		fire [TO_ERROR(script invalid-arg) size]
@@ -121,17 +123,58 @@ get-face-flags: func [
 	0
 ]
 
+;-- A handle! cell can only carry a 32-bit payload (see red-handle! in
+;   runtime/structures.reds), but a GTK widget on a PIE Linux binary lives
+;   far above the 4GB line, so its pointer does not fit there. Windows
+;   (set-win-handle) and macOS (set-cocoa-handle) both work around that by
+;   keeping the real pointer in the externals registry and keying it by
+;   extID, and GTK3 does the same. Handles whose payload does fit in 32
+;   bits (including 0) keep extID = -1 and are read straight from the cell.
+get-gtk-handle: func [
+	value	[red-handle!]
+	return: [handle!]
+][
+	either value/extID >= 0 [
+		as handle! externals/get value/extID
+	][
+		as handle! value/value
+	]
+]
+
+set-gtk-handle: func [
+	value	[red-handle!]
+	native	[handle!]
+][
+	value/value: as integer! native
+	value/extID: -1
+	if native <> null [
+		value/extID: externals/store as int-ptr! native gtk-handle-ext-type
+	]
+]
+
+make-gtk-handle-at: func [
+	value	[red-value!]
+	native	[handle!]
+	type	[integer!]
+	return: [red-handle!]
+	/local result [red-handle!]
+][
+	result: handle/make-at value as integer! native type
+	set-gtk-handle result native
+	result
+]
+
 face-handle?: func [
 	face		[red-object!]
 	return:		[handle!]									;-- returns NULL is no handle
 	/local
 		state	[red-block!]
-		int		[red-integer!]
+		h		[red-handle!]
 ][
 	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
 	if TYPE_OF(state) = TYPE_BLOCK [
-		int: as red-integer! block/rs-head state
-		if TYPE_OF(int) = TYPE_HANDLE [return as handle! int/value]
+		h: as red-handle! block/rs-head state
+		if TYPE_OF(h) = TYPE_HANDLE [return get-gtk-handle h]
 	]
 	null
 ]
@@ -141,13 +184,13 @@ get-face-handle: func [
 	return:		[handle!]
 	/local
 		state	[red-block!]
-		int		[red-integer!]
+		h		[red-handle!]
 ][
 	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
 	assert TYPE_OF(state) = TYPE_BLOCK
-	int: as red-integer! block/rs-head state
-	assert TYPE_OF(int) = TYPE_HANDLE
-	as handle! int/value
+	h: as red-handle! block/rs-head state
+	assert TYPE_OF(h) = TYPE_HANDLE
+	get-gtk-handle h
 ]
 
 get-widget-symbol: func [
@@ -820,6 +863,7 @@ init: func [/local disp [handle!]][
 	#if type = 'exe [set-env-theme]
 	set-app-theme "box, button.text-button {min-width: 1px; min-height: 1px;}" yes
 	collector/register as int-ptr! :on-gc-mark
+	gtk-handle-ext-type: externals/register "gtk-handle" null
 	font-ext-type: externals/register "font" as int-ptr! :delete-font
 	tb-ext-type: externals/register "text-layout" as int-ptr! :release-text-layout
 
@@ -865,7 +909,7 @@ add-widget-timer: func [
 	;-- (G_PRIORITY_HIGH_IDLE + 20 = 120), so a high `rate` can never starve the
 	;-- widget's repaints: under load the timer ticks are dropped instead of the
 	;-- UI freezing while the synchronous on-time handler hogs the main loop.
-	timer: g_timeout_add_full 200 ts as integer! :red-timer-action widget null
+	timer: g_timeout_add_full 200 ts as int-ptr! :red-timer-action widget null
 	g_object_set_qdata widget red-timer-id as int-ptr! timer
 ]
 
@@ -1163,7 +1207,7 @@ change-visible: func [
 	/local
 		layout	[handle!]
 ][
-	if all [show? type = window][OS-show-window as-integer widget exit]
+	if all [show? type = window][OS-show-window widget exit]
 
 	layout: get-face-layout widget type
 	if layout <> widget [
@@ -1335,7 +1379,7 @@ change-data: func [
 		][
 			g_signal_handlers_block_by_func(widget :text-list-selected-rows-changed widget)
 			gtk_list_box_unselect_all widget
-			gtk_container_foreach widget as-integer :remove-entry widget
+			gtk_container_foreach widget as int-ptr! :remove-entry widget
 			init-text-list widget as red-block! data selected
 			g_signal_handlers_unblock_by_func(widget :text-list-selected-rows-changed widget)
 		]
@@ -2066,8 +2110,7 @@ update-scroller: func [
 	values: object/get-values scroller
 	parent: as red-object! values + SCROLLER_OBJ_PARENT
 	vertical?: as red-logic! values + SCROLLER_OBJ_VERTICAL?
-	int: as red-integer! block/rs-head as red-block! (object/get-values parent) + FACE_OBJ_STATE
-	widget: as handle! int/value
+	widget: get-gtk-handle as red-handle! block/rs-head as red-block! (object/get-values parent) + FACE_OBJ_STATE
 	type: get-widget-symbol widget
 	container: get-face-layout widget type
 
@@ -2294,7 +2337,7 @@ parse-common-opts: func [
 							]
 						]
 						if hcur <> null [			;-- owned: unref'd when replaced or widget dies
-							g_object_set_qdata_full widget cursor-id hcur as-integer :free-cursor
+							g_object_set_qdata_full widget cursor-id hcur as int-ptr! :free-cursor
 							unless null? win [		;-- realized: show it now (the window refs it);
 								gdk_window_set_cursor win hcur	;-- else widget-realize applies it
 							]
@@ -2328,7 +2371,7 @@ OS-get-current-screen: func [
 	x: 0 y: 0
 	gdk_device_get_position dev null :x :y
 	m: gdk_display_get_monitor_at_point disp x y
-	handle/make-at stack/arguments as-integer m handle/CLASS_MONITOR
+	make-gtk-handle-at stack/arguments m handle/CLASS_MONITOR
 ]
 
 fetch-monitor-info: func [
@@ -2362,7 +2405,7 @@ fetch-monitor-info: func [
 	pair/make-at   alloc-tail s rec/x rec/y
 	pair/make-at   alloc-tail s rec/width rec/height
 	float/make-at  alloc-tail s (as-float dpi) / 96.0
-	handle/make-at alloc-tail s as-integer hMonitor handle/CLASS_MONITOR
+	make-gtk-handle-at alloc-tail s hMonitor handle/CLASS_MONITOR
 ]
 
 OS-fetch-all-screens: func [
@@ -2386,33 +2429,33 @@ OS-fetch-all-screens: func [
 ]
 
 OS-redraw: func [
-	widget		[integer!]
+	widget		[handle!]
 ][
-	if widget <> 0 [								;-- view engine should make sure a valid handle, but it not
-		gtk_widget_queue_draw as handle! widget
+	unless null? widget [							;-- view engine should make sure a valid handle, but it not
+		gtk_widget_queue_draw widget
 	]
 ]
 
 OS-refresh-window: func [
-	widget		[integer!]
+	widget		[handle!]
 ][
 	if all [
-		widget <> 0									;-- view engine should make sure a valid handle, but it not
-		-1 <> as-integer g_object_get_qdata as handle! widget red-face-id
+		not null? widget							;-- view engine should make sure a valid handle, but it not
+		-1 <> as-integer g_object_get_qdata widget red-face-id
 	][
-		gtk_widget_queue_draw as handle! widget
+		gtk_widget_queue_draw widget
 	]
 ]
 
 OS-show-window: func [
-	widget		[integer!]
+	widget		[handle!]
 	/local
 		n		[integer!]
 		win		[handle!]
 		parent	[handle!]
 		focused? [logic!]
 ][
-	win: as handle! widget
+	win: widget
 	if gtk_window_get_modal win [
 		parent: find-active-window-excluding win
 		unless null? parent [gtk_window_set_transient_for win parent]
@@ -2479,8 +2522,8 @@ set-buffer: func [
 
 OS-make-view: func [
 	face		[red-object!]
-	parent		[integer!]
-	return:		[integer!]
+	parent		[handle!]
+	return:		[handle!]
 	/local
 		values		[red-value!]
 		type		[red-word!]
@@ -2566,7 +2609,7 @@ OS-make-view: func [
 			widget: gtk_check_button_new_with_label caption
 		]
 		sym = radio [
-			handle: as handle! parent
+			handle: parent
 			fradio: GET-FIRST-RADIO(handle)
 			either null? fradio [
 				widget: gtk_radio_button_new_with_label null caption
@@ -2827,14 +2870,14 @@ OS-make-view: func [
 	]
 
 	if sym <> window [
-		if parent <> 0 [
-			unless set-widget-child as handle! parent widget offset [
+		unless null? parent [
+			unless set-widget-child parent widget offset [
 				fire [TO_ERROR(script face-type) type]
 			]
 		]
-		set-widget-child-offset as handle! parent widget offset sym
-		either all [parent <> 0 tab-panel = get-widget-symbol as handle! parent][
-			handle: as handle! parent
+		set-widget-child-offset parent widget offset sym
+		either all [not null? parent tab-panel = get-widget-symbol parent][
+			handle: parent
 			g_signal_handlers_block_by_func(handle :tab-panel-switch-page handle)
 			change-visible widget yes sym
 			g_signal_handlers_unblock_by_func(handle :tab-panel-switch-page handle)
@@ -2850,8 +2893,8 @@ OS-make-view: func [
 	connect-widget-events widget values sym
 	
 	if sym = radio [
-		if last-face-type? face as handle! parent sym [
-			connect-radio-toggled-events face widget as handle! parent
+		if last-face-type? face parent sym [
+			connect-radio-toggled-events face widget parent
 		]
 	]
 	
@@ -2871,7 +2914,7 @@ OS-make-view: func [
 
 	as-point2D offset
 	stack/unwind
-	as-integer widget
+	widget
 ]
 
 OS-update-view: func [
@@ -2911,11 +2954,10 @@ OS-update-view: func [
 	]
 
 	s: GET_BUFFER(state)
-	int: as red-integer! s/offset
-	widget: as handle! int/value
+	widget: get-gtk-handle as red-handle! s/offset
 	if null? widget [exit]
 
-	int: int + 1
+	int: as red-integer! s/offset + 1
 	flags: int/value
 	int/value: 0										;-- clear flags first, so a re-entrant update-view (eg. triggered by on-unfocus inside change-pane) doesn't re-process the same flags
 

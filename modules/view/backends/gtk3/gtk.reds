@@ -12,19 +12,22 @@ Red/System [
 
 #define RED_GTK_APP_ID	"org.red-lang.www"
 
+;-- Callbacks are code addresses, so they must travel at pointer width:
+;   a PIE binary is mapped above the 4GB line and `as-integer` would keep
+;   only the low half of the address.
 #define gobj_signal_connect(instance signal handler data) [
-	g_signal_connect_data instance signal as-integer handler data null 0
+	g_signal_connect_data instance signal as int-ptr! handler data null 0
 ]
 #define gobj_signal_connect_after(instance signal handler data) [
-	g_signal_connect_data instance signal as-integer handler data null 1
+	g_signal_connect_data instance signal as int-ptr! handler data null 1
 ]
 
 #define g_signal_handlers_block_by_func(instance handler data) [
-	g_signal_handlers_block_matched instance 8 + 16 0 0 null as-integer handler data
+	g_signal_handlers_block_matched instance 8 + 16 0 0 null as int-ptr! handler data
 ]
 
 #define g_signal_handlers_unblock_by_func(instance handler data) [
-	g_signal_handlers_unblock_matched instance 8 + 16 0 0 null as-integer handler data
+	g_signal_handlers_unblock_matched instance 8 + 16 0 0 null as int-ptr! handler data
 ]
 
 #define g_signal_handlers_disconnect_by_data(instance data) [
@@ -669,12 +672,12 @@ GPtrArray!: alias struct! [
 			quark		[integer!]
 			data		[int-ptr!]
 		]
-		g_object_set_qdata_full: "g_object_set_qdata_full" [
-			object		[int-ptr!]
-			quark		[integer!]
-			data		[int-ptr!]
-			destroy		[integer!]						;-- GDestroyNotify, ran on replace and finalize
-		]
+	g_object_set_qdata_full: "g_object_set_qdata_full" [
+		object		[int-ptr!]
+		quark		[integer!]
+		data		[int-ptr!]
+		destroy		[int-ptr!]						;-- GDestroyNotify, ran on replace and finalize
+	]
 		g_object_get_qdata: "g_object_get_qdata" [
 			object		[int-ptr!]
 			quark		[integer!]
@@ -689,11 +692,11 @@ GPtrArray!: alias struct! [
 		g_clear_object: "g_clear_object" [
 			obj-ptr 		[integer!]
 		]
-		g_signal_connect_data: "g_signal_connect_data" [
-			instance	[int-ptr!]
-			signal		[c-string!]
-			handler		[integer!]
-			data		[int-ptr!]
+	g_signal_connect_data: "g_signal_connect_data" [
+		instance	[int-ptr!]
+		signal		[c-string!]
+		handler		[int-ptr!]
+		data		[int-ptr!]
 			notify		[int-ptr!]
 			flags		[integer!]
 			return:		[integer!]
@@ -719,26 +722,26 @@ GPtrArray!: alias struct! [
 			object  [handle!]
 			handler [integer!]
 		]
-		g_signal_handlers_block_matched: "g_signal_handlers_block_matched" [
-			object		[handle!]
-			mask		[integer!]
-			sig_id		[integer!]
-			detail		[integer!]
-			closure		[int-ptr!]
-			handle		[integer!]
-			data		[int-ptr!]
-			return:		[integer!]
-		]
-		g_signal_handlers_unblock_matched: "g_signal_handlers_unblock_matched" [
-			object		[handle!]
-			mask		[integer!]
-			sig_id		[integer!]
-			detail		[integer!]
-			closure		[int-ptr!]
-			handle		[integer!]
-			data		[int-ptr!]
-			return:		[integer!]
-		]
+	g_signal_handlers_block_matched: "g_signal_handlers_block_matched" [
+		object		[handle!]
+		mask		[integer!]
+		sig_id		[integer!]
+		detail		[integer!]
+		closure		[int-ptr!]
+		handle		[int-ptr!]
+		data		[int-ptr!]
+		return:		[integer!]
+	]
+	g_signal_handlers_unblock_matched: "g_signal_handlers_unblock_matched" [
+		object		[handle!]
+		mask		[integer!]
+		sig_id		[integer!]
+		detail		[integer!]
+		closure		[int-ptr!]
+		handle		[int-ptr!]
+		data		[int-ptr!]
+		return:		[integer!]
+	]
 		g_object_ref: "g_object_ref" [
 			object		[int-ptr!]
 			return:		[int-ptr!]
@@ -756,14 +759,14 @@ GPtrArray!: alias struct! [
 		]
 		g_timeout_add: "g_timeout_add" [
 			ts 			[integer!]
-			handler		[integer!]
+			handler		[int-ptr!]
 			data		[int-ptr!]
 			return:		[integer!]
 		]
 		g_timeout_add_full: "g_timeout_add_full" [
 			priority	[integer!]
 			ts 			[integer!]
-			handler		[integer!]
+			handler		[int-ptr!]
 			data		[int-ptr!]
 			notify		[int-ptr!]
 			return:		[integer!]
@@ -798,11 +801,11 @@ GPtrArray!: alias struct! [
 			len			[integer!]
 			return:		[c-string!]
 		]
-		g_type_check_instance_is_a: "g_type_check_instance_is_a" [
-			handle		[handle!]
-			gtype		[integer!]
-			return:		[logic!]
-		]
+	g_type_check_instance_is_a: "g_type_check_instance_is_a" [
+		handle		[handle!]
+		gtype		[handle!]							;-- GType is a gsize, not a 32-bit int
+		return:		[logic!]
+	]
 		g_application_run: "g_application_run" [
 			app			[handle!]
 			argc		[integer!]
@@ -970,12 +973,12 @@ GPtrArray!: alias struct! [
 		]
 		gtk_clipboard_request_text: "gtk_clipboard_request_text" [
 			clipboard 	[handle!]
-			handler 	[integer!]
+			handler 	[int-ptr!]
 			data		[handle!]
 		]
 		gtk_clipboard_request_image: "gtk_clipboard_request_image" [
 			clipboard 	[handle!]
-			handler 	[integer!]
+			handler 	[int-ptr!]
 			data		[handle!]
 		]
 	;; ]
@@ -1048,7 +1051,7 @@ GPtrArray!: alias struct! [
 		g_list_insert_sorted: "g_list_insert_sorted" [
 			list		[GList!]
 			data		[handle!]
-			comp-func	[integer!]
+			comp-func	[int-ptr!]
 			return:		[GList!]
 		]
 		g_list_remove: "g_list_remove" [
@@ -1514,7 +1517,7 @@ GPtrArray!: alias struct! [
 			return:		[handle!]
 		]
 		gtk_window_get_type: "gtk_window_get_type" [
-			return:		[integer!]
+			return:		[handle!]						;-- GType is a gsize
 		]
 		gtk_window_activate_focus: "gtk_window_activate_focus" [
 			window		[handle!]
@@ -1846,7 +1849,7 @@ GPtrArray!: alias struct! [
 			return:		[logic!]
 		]
 		gtk_widget_get_type: "gtk_widget_get_type" [
-			return:		[integer!]
+			return:		[handle!]						;-- GType is a gsize
 		]
 		gtk_widget_get_parent: "gtk_widget_get_parent" [
 			widget		[handle!]
@@ -1908,7 +1911,7 @@ GPtrArray!: alias struct! [
 		]
 		gtk_container_foreach: "gtk_container_foreach" [
 			container	[handle!]
-			handler		[integer!]
+			handler		[int-ptr!]
 			data		[int-ptr!]
 		]
 		gtk_container_remove: "gtk_container_remove" [
@@ -2024,7 +2027,7 @@ GPtrArray!: alias struct! [
 			y			[integer!]
 		]
 		gtk_layout_get_type: "gtk_layout_get_type" [
-			return:		[integer!]
+			return:		[handle!]						;-- GType is a gsize
 		]
 		gtk_layout_new: "gtk_layout_new" [
 			hadj		[handle!]
@@ -2189,7 +2192,7 @@ GPtrArray!: alias struct! [
 			return:		[handle!]
 		]
 		gtk_label_get_type: "gtk_label_get_type" [
-			return:		[integer!]
+			return:		[handle!]						;-- GType is a gsize
 		]
 		gtk_label_get_text: "gtk_label_get_text" [
 			widget		[handle!]

@@ -2580,7 +2580,7 @@ draw-text-box: func [
 	]
 
 	int: as red-integer! block/rs-head state
-	layout: as handle! int/value
+	layout: get-gtk-handle as red-handle! int
 	GET_PAIR_XY_F(pos x y)
 	text-x: x
 	text-y: y

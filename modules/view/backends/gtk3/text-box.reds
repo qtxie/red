@@ -354,7 +354,7 @@ OS-text-box-metrics: func [
 		x y		[integer!]
 ][
 	rstate: as red-integer! block/rs-head state
-	layout: as handle! rstate/value
+	layout: get-gtk-handle as red-handle! rstate
 	if null? layout [return as red-value! none-value]
 	as red-value! switch type [
 		TBOX_METRICS_OFFSET?
@@ -469,8 +469,8 @@ OS-text-box-layout: func [
 
 	either cached? [
 		int: as red-integer! block/rs-head state
-		layout: as handle! int/value
-		int: int + 1 para: as handle! int/value
+		layout: get-gtk-handle as red-handle! int
+		int: int + 1 para: get-gtk-handle as red-handle! int
 		bool: as red-logic! int + 2
 		bool/value: false
 	][
@@ -483,7 +483,8 @@ OS-text-box-layout: func [
 		block/make-at state 4
 		hndl: handle/make-in state as integer! layout handle/CLASS_RICHTEXT
 		hndl/extID: externals/store layout tb-ext-type	;-- GC releases the layout with the face
-		integer/make-in state as integer! para
+		hndl: handle/make-in state as integer! para handle/CLASS_RICHTEXT
+		if para <> null [hndl/extID: externals/store as int-ptr! para gtk-handle-ext-type]
 		none/make-in state
 		logic/make-in state false
 	]

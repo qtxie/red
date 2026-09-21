@@ -8,22 +8,13 @@ It has two jobs while the Red implementation is being reworked:
 * `diff` runs two compiler commands against the same corpus and preserves raw
   stdout, stderr, and output artifacts while comparing normalized results.
 
-The official direct compiler entrypoint is `red.red`. It uses the Red frontend
-and the hybrid Red/System backend, defaults to development mode, and selects a
-standalone release build with `-r`. `red-bootstrap-windows.red` remains the
-transitional bootstrap entry. The canonical Windows x64 compiler is the
-fixed-point self-hosted binary at
-`build/self-hosting/cc-speed1/red-bootstrap-speed1.exe`; this tool only
-verifies its source closure and compares compiler generations.
-
-The transition build produces an ordinary executable directly:
-
-```powershell
-$compiler = Resolve-Path .\build\self-hosting\cc-speed1\red-bootstrap-speed1.exe
-& $compiler -r -t Windows-X86-64 `
-    -o build\self-hosting\cc-speed1\red-bootstrap-speed1-next.exe `
-    red.red
-```
+The compiler entrypoints are `red-bootstrap-hybrid.red` (full Red + Red/System
+driver, development mode by default, `-r` for standalone release builds) and
+`red-system-hybrid.red` (Red/System-only). The standalone toolchain entry is
+`red-toolchain-hybrid.red`; `tools/self_hosting/build-red-toolchain.red` is the
+supported way to build it. The legacy Rebol-era drivers (`red.r`,
+`red-bootstrap-windows.red`, and the per-platform selfhost entries) are gone;
+the hybrid RSIR pipeline is the only compiler in the tree.
 
 The compiler executable is built in release mode without `-d`; this avoids
 embedding several megabytes of compiler source-line metadata. It still accepts
@@ -84,25 +75,18 @@ compiler and source hashes, target, WSL platform, and paired speedups in
 `report.json`. Use `-WslDistribution NAME` when the default distribution is not
 the intended test environment.
 
-For a focused Red/System check against the compiler sources in the worktree,
-use the interpreted x64 driver. This avoids rebuilding the bootstrap compiler
-when runtime sources have not changed:
+For a focused Red/System check, compile the fixture directly with a bootstrap
+compiler and pass the target explicitly:
 
 ```powershell
-& D:\EE\QTool\red-console.exe `
-    .\tools\self_hosting\compile-x64-red-system.red `
-    Windows-X86-64 `
-    .\tools\self_hosting\fixtures\backend\case-control.reds `
-    .\build\case-control-O2.exe `
-    .\build\case-control-O2.ir `
-    O2
+& .\build\self-hosting\merge-red64\hybrid-compiler202.exe `
+    -r -t Windows-X86-64 `
+    -o .\build\case-control-O2.exe `
+    .\tools\self_hosting\fixtures\backend\case-control.reds
 ```
 
-The driver accepts `Windows-X86-64` and `Linux-X86-64`, maps `O0`, `O1`, and
-`O2` explicitly to levels 0, 1, and 2, and always compiles in development mode.
-It is a focused source-validation tool, not a bootstrap artifact. Run compiler
-invocations serially: check that the previous compiler process has exited before
-starting another one.
+Run compiler invocations serially: check that the previous compiler process has
+exited before starting another one.
 
 No `build.r`, pre-cap, encap, Rebol executable, or `red.r` invocation is
 involved in the normal self-hosted build.

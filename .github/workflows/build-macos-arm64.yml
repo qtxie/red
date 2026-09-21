@@ -1,5 +1,15 @@
 name: Build macOS ARM64 binaries
 
+# The only workflow that builds the macOS GUI console and the only one that
+# checks an output the way Apple does: LC_CODE_SIGNATURE present,
+# dyld_info -validate_only clean, codesign --verify --strict passing, AppKit
+# linked. Getting a non-Windows gui-console to run at all was recent and hard,
+# so this stays even though the seed covers the toolchain itself.
+#
+# It takes its toolchain from the seed rather than rebuilding one. Building a
+# toolchain per push is build-toolchain.yml's job; this only has to answer
+# whether the console sources still produce a loadable .app.
+
 on:
   push:
   pull_request:
@@ -27,43 +37,28 @@ jobs:
         set -euo pipefail
         test "$(uname -m)" = arm64
 
-    - name: Fetch the seed bootstrap compiler
+    - name: Fetch the seed toolchain
       uses: ./.github/actions/fetch-seed
       with:
         platform: darwin-arm64
         component: toolchain
-        output: build/bootstrap/seed-toolchain.tar.gz
+        output: build/toolchain/seed-toolchain.tar.gz
 
-    - name: Unpack the seed bootstrap compiler
+    - name: Unpack the seed toolchain
       shell: bash
       run: |
         set -euo pipefail
-        mkdir -p build/bootstrap/bin
-        tar -xzf build/bootstrap/seed-toolchain.tar.gz -C build/bootstrap/bin
-        chmod 755 build/bootstrap/bin/red-toolchain
-        xattr -dr com.apple.quarantine build/bootstrap/bin/red-toolchain || true
-        file build/bootstrap/bin/red-toolchain | grep -q 'Mach-O 64-bit.*arm64'
-
-    - name: Build standalone Red toolchain
-      shell: bash
-      run: |
-        set -euo pipefail
-        # The build is driven by Red, so the bootstrap first builds the console
-        # that runs it.
-        bootstrap=build/bootstrap/bin/red-toolchain
-        "$bootstrap" -r -t Darwin-ARM64 \
-          -o build/dist/console environment/console/CLI/console.red
-        chmod 755 build/dist/console
-        ./build/dist/console tools/self_hosting/build-red-toolchain.red \
-          --bootstrap "$bootstrap" \
-          --target Darwin-ARM64 \
-          --output build/dist/red-toolchain
+        mkdir -p build/toolchain/bin
+        tar -xzf build/toolchain/seed-toolchain.tar.gz -C build/toolchain/bin
+        chmod 755 build/toolchain/bin/red-toolchain
+        xattr -dr com.apple.quarantine build/toolchain/bin/red-toolchain || true
+        file build/toolchain/bin/red-toolchain | grep -q 'Mach-O 64-bit.*arm64'
 
     - name: Build GUI and CLI consoles
       shell: bash
       run: |
         set -euo pipefail
-        compiler=build/dist/red-toolchain
+        compiler=build/toolchain/bin/red-toolchain
         "$compiler" -r -t macOS-ARM64 \
           -o build/dist/gui-console \
           environment/console/GUI/gui-console.red
@@ -79,13 +74,13 @@ jobs:
       run: |
         set -euo pipefail
         gui=build/dist/gui-console.app/Contents/MacOS/gui-console
-        test -x build/dist/red-toolchain
+        test -x build/toolchain/bin/red-toolchain
         test -x build/dist/cli-console
         test -x "$gui"
         test -f build/dist/gui-console.app/Contents/Info.plist
 
-        build/dist/red-toolchain --self-check
-        for binary in build/dist/red-toolchain build/dist/cli-console "$gui"; do
+        build/toolchain/bin/red-toolchain --self-check
+        for binary in build/toolchain/bin/red-toolchain build/dist/cli-console "$gui"; do
           file "$binary" | grep -q 'Mach-O 64-bit.*arm64'
           otool -hv "$binary" | grep -q ARM64
           otool -l "$binary" | grep -q LC_CODE_SIGNATURE
@@ -98,8 +93,6 @@ jobs:
       run: |
         set -euo pipefail
         mkdir -p build/packages
-        COPYFILE_DISABLE=1 tar -czf build/packages/red-toolchain-darwin-arm64.tar.gz \
-          -C build/dist red-toolchain
         COPYFILE_DISABLE=1 tar -czf build/packages/gui-console-macos-arm64.tar.gz \
           -C build/dist gui-console.app
         COPYFILE_DISABLE=1 tar -czf build/packages/cli-console-darwin-arm64.tar.gz \

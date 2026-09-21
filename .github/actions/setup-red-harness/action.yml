@@ -63,7 +63,9 @@ runs:
         if [[ "$(uname -s)" == Darwin ]]; then
           xattr -dr com.apple.quarantine build/toolchain/red-console build/toolchain/bin || true
         fi
-        build/toolchain/red-console --version || true
+        # Deliberately no trial run here: a Red console that is handed an
+        # argument it does not understand can stay up burning CPU, and the
+        # seed was already verified by checksum.
 
     - name: Record the seed generation
       shell: bash

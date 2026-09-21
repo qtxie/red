@@ -47,6 +47,11 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
+    - name: Audit seed tooling
+      run: |
+        set -euo pipefail
+        python3 -m unittest discover -s tools/ci -p "test_*.py"
+
     - name: Download seed artifacts
       uses: actions/download-artifact@v8
       with:

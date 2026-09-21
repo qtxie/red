@@ -98,11 +98,12 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
-    - name: Audit codegen diagnostics
+    - name: Audit CI tooling
       shell: bash
       run: |
         python tools/codegen/sync-codegen-sites.py --check
         python -m unittest discover -s tools/codegen -p test_codegen_sites.py
+        python -m unittest discover -s tools/ci -p "test_*.py"
 
     - name: Fetch the seed bootstrap
       id: seed

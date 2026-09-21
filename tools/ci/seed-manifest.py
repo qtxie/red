@@ -111,7 +111,7 @@ def build(seeds, stage_dir, generation, commit):
     }
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", required=True, type=Path,
                         help="directory holding one seed-<platform> artifact each")
@@ -121,7 +121,7 @@ def main():
                         help="release tag that will hold this generation")
     parser.add_argument("--commit", required=True, help="commit the seed was built from")
     parser.add_argument("--out", required=True, type=Path, help="manifest to write")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     manifest = build(args.seeds, args.stage, args.generation, args.commit)
 

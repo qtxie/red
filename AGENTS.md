@@ -431,11 +431,15 @@
   is why the toolchain looked fine: only dev mode compiles `libRedRT`.
 - **Editing a runtime file is not enough for the toolchain**: it embeds a
   compressed copy in `build/generated/red-toolchain-resources.generated.red`,
-  which is checked in. Regenerate it or the fix is invisible --
+  which is **generated at build time and never committed** (`build/generated/`
+  is ignored). `build-red-toolchain.red` regenerates it on every run, so use
+  that. For a one-off regenerate by hand --
   `hybrid-compilerN.exe -r -t <host> -o build/tmp/gen-res.exe
   tools/self_hosting/generate-toolchain-resources.red` then
   `build/tmp/gen-res.exe <repo-root> build/generated/red-toolchain-resources
   .generated.red`. Build the generator for the *host*, not the target.
+  A direct compile of `red-toolchain-*-hybrid.red` fails without it: those
+  sources `#include` the archive.
 - **The toolchain is built and tested by Red, not by a shell**:
   * `console.exe tools/self_hosting/build-red-toolchain.red --bootstrap <compiler>`
     regenerates the resources, compiles, and verifies, on every host.
@@ -815,8 +819,8 @@
   `hybrid-compiler179.exe -r -t Windows-X86-64 -o
   build/red-toolchain/windows-x64/red-toolchain-179.exe
   red-toolchain-windows-hybrid.red` produces 7677952 bytes (it needs
-  `build/generated/red-toolchain-resources.generated.red`, which
-  `generate-toolchain-resources.exe` regenerates). `--self-check` reports 276
+  `build/generated/red-toolchain-resources.generated.red`, which is no longer
+  in the repository -- generate it first). `--self-check` reports 276
   resources; it compiles and runs a Red program with `-r` and in dev mode, and
   dev mode survives the collector. It cross-compiles **and runs** on all four
   targets -- `hello.red` printing `"hello from the 179 toolchain"` and `9`:

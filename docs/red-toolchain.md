@@ -25,6 +25,14 @@ sorted by normalized path and contain the raw size, storage method, and
 SHA-256 digest. The manifest digest covers the ordered path, content digest,
 and raw size of every resource.
 
+The archive is a build artifact and is **not committed** (`build/generated/`
+is ignored). Every build regenerates it, so a fresh clone has none: the
+toolchain sources `#include` it, which is why
+`tools/self_hosting/build-red-toolchain.red` is the only supported way to
+build them. Generation is deterministic -- paths sorted, digests per record,
+`SOURCE_DATE_EPOCH` pinned -- so three consecutive builds of the same tree
+produce the same manifest.
+
 The compiler and linker are implemented in Red. Normal compilation does not
 call an external compiler or linker. Darwin application bundles receive the
 ad-hoc signature emitted by Red's Mach-O writer.
@@ -107,7 +115,18 @@ console tools/self_hosting/build-red-toolchain.red \
 `red-toolchain-darwin-hybrid.red` is the same closure as the Windows hybrid
 toolchain, built for the Mac by cross-compiling from the Windows host:
 
+Generate the resource archive first -- the source `#include`s it, and it is
+not in the repository -- then cross-compile:
+
 ```sh
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) \
+  build/self-hosting/merge-red64/hybrid-compilerNNN.exe \
+  -r -t Windows-X86-64 \
+  -o build/tmp/gen-res.exe \
+  tools/self_hosting/generate-toolchain-resources.red
+build/tmp/gen-res.exe "$PWD" \
+  build/generated/red-toolchain-resources.generated.red
+
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) \
   build/self-hosting/merge-red64/hybrid-compilerNNN.exe \
   -r -t Darwin-ARM64 \

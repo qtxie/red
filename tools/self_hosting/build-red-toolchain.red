@@ -21,7 +21,6 @@ Red [
 		--root <dir>        repository root (default: two levels above this file)
 		--epoch <seconds>   SOURCE_DATE_EPOCH (default: the environment, then the
 		                    HEAD commit time; it pins the embedded compiler date)
-		--no-resources      reuse the checked-in resource archive
 		--no-verify         skip the post-build checks
 		-h --help           print this text
 	}
@@ -31,8 +30,9 @@ Red [
 		tools/self_hosting instead of the repository root.
 
 		The resource generator is compiled for the host and the toolchain for the
-		target. The embedded resource archive is regenerated first because the
-		toolchain links it in.
+		target. The embedded resource archive is generated first, on every build,
+		because the toolchain links it in: the toolchain sources `#include` it, so
+		this script is the only way to build them. The archive is never committed.
 
 		Red's `call` waits but cannot kill a child, so this script has no
 		watchdog: a wedged compiler wedges the build instead of timing out.
@@ -54,7 +54,6 @@ options: context [
 	source: none
 	root: none
 	epoch: none
-	no-resources: no
 	no-verify: no
 	help: no
 ]
@@ -79,7 +78,7 @@ parse-options: func [args [block!] /local arg value][
 						set in options value first args
 						args: next args
 					]
-					find [no-resources no-verify] value [set in options value yes]
+					value = 'no-verify [options/no-verify: yes]
 					true [fail ["unknown option:" arg]]
 				]
 			]
@@ -268,7 +267,7 @@ build: does [
 	print ["source:" source]
 	print ["output:" output]
 
-	unless options/no-resources [generate-resources]
+	generate-resources
 	compile-toolchain
 	unless options/no-verify [verify-toolchain]
 

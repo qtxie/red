@@ -1,6 +1,6 @@
 Red [
 	Title: "Standalone compiler toolchain support"
-	File:  %toolchain-support.red
+	File:  %system/toolchain-support.red
 ]
 
 compiler-toolchain: context [

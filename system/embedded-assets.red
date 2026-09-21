@@ -1,6 +1,6 @@
 Red [
     Title: "Embedded compiler assets"
-    File:  %compiler/embedded-assets.red
+    File:  %system/embedded-assets.red
 ]
 
 ; Generated from system/assets/red.ico. Do not edit by hand.

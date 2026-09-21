@@ -2,7 +2,7 @@ Red [
 	Title: "Compiler phase timer tests"
 ]
 
-do %../../../compiler/phase-timer.red
+do %../../../system/phase-timer.red
 
 assert: func [condition [logic!] message [string!]][
 	unless condition [

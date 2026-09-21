@@ -1,7 +1,7 @@
 Red [
 	Title:   "Red/System IEEE-754 library"
 	Author:  "Nenad Rakocevic"
-	File:    %ieee-754.red
+	File:    %system/ieee-754.red
 	Tabs:    4
 	Rights:  "Copyright (C) 2000-2011-2015 Eric Long, -2018 Red Foundation. All rights reserved."
 	License: "BSD-3 - https://github.com/red/red/blob/master/BSD-3-License.txt"

@@ -223,7 +223,7 @@ def _target_registry(root: Path, tracked: set[str]) -> dict[str, Any]:
     format_sources = sorted(
         path for path in tracked if path.startswith("system/formats/") and path.endswith(".r")
     )
-    red_registry_path = root / "compiler" / "target-registry.red"
+    red_registry_path = root / "system" / "target-registry.red"
     red_registry: dict[str, dict[str, str]] = {}
     if red_registry_path.is_file():
         red_text = _read_text(red_registry_path)
@@ -297,7 +297,7 @@ def _target_registry_text(root: Path) -> tuple[str, dict[str, Any]]:
     lines = [
         "Red [",
         '\tTitle: "Generated Red compiler target registry"',
-        "\tFile:  %target-registry.red",
+        "\tFile:  %system/target-registry.red",
         "]",
         "",
         "; Generated from system/config.r. Do not edit by hand.",
@@ -331,12 +331,12 @@ def _target_registry_text(root: Path) -> tuple[str, dict[str, Any]]:
 
 def _target_registry_info(root: Path) -> dict[str, Any]:
     generated, info = _target_registry_text(root)
-    generated_path = root / "compiler" / "target-registry.red"
+    generated_path = root / "system" / "target-registry.red"
     generated_bytes = generated.encode("utf-8")
     actual = generated_path.read_bytes() if generated_path.is_file() else b""
     info.update(
         {
-            "path": "compiler/target-registry.red",
+            "path": "system/target-registry.red",
             "expected_sha256": _sha256(generated_bytes),
             "actual_sha256": _sha256(actual) if actual else None,
             "stale": actual != generated_bytes,
@@ -463,7 +463,7 @@ def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
     source_paths = {record["path"] for record in manifest.get("sources", [])}
     registry = manifest.get("target_registry", {})
     if registry.get("generated", {}).get("stale"):
-        errors.append("compiler/target-registry.red is stale")
+        errors.append("system/target-registry.red is stale")
     for path in registry.get("target_sources", []) + registry.get("format_sources", []):
         if path not in source_paths:
             errors.append(f"registry source is missing from manifest: {path}")
@@ -787,7 +787,7 @@ def _command_baseline(args: argparse.Namespace) -> int:
 def _command_target_registry(args: argparse.Namespace) -> int:
     root = _default_root(args.root)
     generated, _ = _target_registry_text(root)
-    output = Path(args.output) if args.output else root / "compiler" / "target-registry.red"
+    output = Path(args.output) if args.output else root / "system" / "target-registry.red"
     _write_text(output, generated)
     print(f"target registry: {output}")
     return 0
@@ -864,7 +864,7 @@ def build_parser() -> argparse.ArgumentParser:
     baseline.set_defaults(handler=_command_baseline)
 
     target_registry = subparsers.add_parser(
-        "target-registry", help="generate compiler/target-registry.red from config"
+        "target-registry", help="generate system/target-registry.red from config"
     )
     target_registry.add_argument("--output", help="Red output path")
     target_registry.set_defaults(handler=_command_target_registry)

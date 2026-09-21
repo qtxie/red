@@ -1,6 +1,6 @@
 Red [
 	Title: "Red/System compilation job configuration"
-	File:  %compiler/system-job.red
+	File:  %system/system-job.red
 ]
 
 compiler-system-job: context [

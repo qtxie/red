@@ -1,6 +1,6 @@
 Red [
 	Title: "Red compiler phase timing"
-	File:  %phase-timer.red
+	File:  %system/phase-timer.red
 ]
 
 phase-timer: context [

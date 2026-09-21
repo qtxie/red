@@ -259,7 +259,7 @@ foreach required [
 	%system/codegen-bridge.red
 	%compiler/bootstrap-driver.red
 	%compiler/bootstrap-options.red
-	%compiler/toolchain-support.red
+	%system/toolchain-support.red
 	%compiler/saved-frontend.red
 	%red.red
 	%red-toolchain-hybrid.red

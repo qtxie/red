@@ -3,7 +3,7 @@ Red [
 	File:  %transcode-trace-stress.red
 ]
 
-#include %../../compiler/lexer.red
+#include %../../system/lexer.red
 
 path-at: func [base [file!] relative [file!]][
 	clean-path append copy base relative

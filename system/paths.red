@@ -1,6 +1,6 @@
 Red [
 	Title: "Red compiler path normalization"
-	File:  %paths.red
+	File:  %system/paths.red
 ]
 
 compiler-paths: context [

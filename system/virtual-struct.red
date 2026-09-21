@@ -1,6 +1,6 @@
 Red [
 	Title: "Red compiler virtual struct serializer"
-	File:  %virtual-struct.red
+	File:  %system/virtual-struct.red
 ]
 
 virtual-struct: context [

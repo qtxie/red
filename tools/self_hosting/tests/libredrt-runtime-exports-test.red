@@ -2,7 +2,7 @@ Red [
 	Title: "libRedRT runtime export tests"
 ]
 
-do %../../../compiler/host-compat.red
+do %../../../system/host-compat.red
 system/options/path: clean-path %../../../
 do %system/utils/libRedRT.red
 

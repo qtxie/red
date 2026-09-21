@@ -1,6 +1,6 @@
 Red [
 	Title: "Red compiler transcode adapter"
-	File:  %compiler/lexer.red
+	File:  %system/lexer.red
 ]
 
 ; TRANSCODE is Red's supported UTF-8 scanner. Keeping this adapter in the

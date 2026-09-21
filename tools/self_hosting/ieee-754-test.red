@@ -3,8 +3,8 @@ Red [
 	File:  %ieee-754-test.red
 ]
 
-#include %../../compiler/int-to-bin.red
-#include %../../compiler/ieee-754.red
+#include %../../system/int-to-bin.red
+#include %../../system/ieee-754.red
 
 cases: [
 	0.0					#{0000000000000000}

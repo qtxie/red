@@ -5,24 +5,24 @@ Red [
 	License: "BSD-3 - https://github.com/red/red/blob/master/LICENSE"
 ]
 
-#include %../compiler/phase-timer.red
-#include %../compiler/resource-store.red
-#include %../compiler/toolchain-support.red
+#include %phase-timer.red
+#include %resource-store.red
+#include %toolchain-support.red
 #include %compiler-host.red
-#include %../compiler/host-compat.red
-#include %../compiler/int-to-bin.red
-#include %../compiler/sha256.red
-#include %../compiler/ieee-754.red
+#include %host-compat.red
+#include %int-to-bin.red
+#include %sha256.red
+#include %ieee-754.red
 #include %formats/Mach-O-sign.red
-#include %../compiler/virtual-struct.red
-#include %../compiler/paths.red
-#include %../compiler/unicode.red
-#include %../compiler/target-registry.red
-#include %../compiler/system-job.red
-#include %../compiler/lexer.red
-#include %../compiler/system-source.red
-#include %../compiler/system-loader.red
-#include %../compiler/embedded-assets.red
+#include %virtual-struct.red
+#include %paths.red
+#include %unicode.red
+#include %target-registry.red
+#include %system-job.red
+#include %lexer.red
+#include %system-source.red
+#include %system-loader.red
+#include %embedded-assets.red
 #include %formats/PE.red
 #include %formats/Mach-O-ARM64.red
 #include %formats/ELF.red

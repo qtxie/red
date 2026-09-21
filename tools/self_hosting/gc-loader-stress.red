@@ -3,8 +3,8 @@ Red [
 	File:  %gc-loader-stress.red
 ]
 
-#include %../../compiler/lexer.red
-#include %../../compiler/system-source.red
+#include %../../system/lexer.red
+#include %../../system/system-source.red
 
 fail: func [phase [string!] iteration [integer!] value][
 	print ["FAIL" phase "iteration" iteration "type" either value? 'value [type? :value]["unset"]]

@@ -1,6 +1,6 @@
 Red [
 	Title: "Red/System source normalization"
-	File:  %compiler/system-source.red
+	File:  %system/system-source.red
 ]
 
 ; Red integer! is intentionally 32-bit. TRANSCODE therefore returns float! for

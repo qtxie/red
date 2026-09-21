@@ -1,6 +1,6 @@
 Red [
 	Title: "Embedded compiler resource store"
-	File:  %compiler/resource-store.red
+	File:  %system/resource-store.red
 ]
 
 compiler-resource-store: context [

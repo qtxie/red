@@ -1,6 +1,6 @@
 Red [
 	Title: "Generated Red compiler target registry"
-	File:  %target-registry.red
+	File:  %system/target-registry.red
 ]
 
 ; Generated from system/config.r. Do not edit by hand.

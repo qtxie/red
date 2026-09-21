@@ -1,6 +1,6 @@
 Red [
 	Title: "Red compiler Unicode encoders"
-	File:  %unicode.red
+	File:  %system/unicode.red
 ]
 
 unicode: context [

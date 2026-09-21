@@ -2,9 +2,9 @@ Red [
 	Title: "Typed postfix hybrid codegen routine smoke tests"
 ]
 
-#include %../../../compiler/int-to-bin.red
-#include %../../../compiler/ieee-754.red
-#include %../../../compiler/unicode.red
+#include %../../../system/int-to-bin.red
+#include %../../../system/ieee-754.red
+#include %../../../system/unicode.red
 #include %../../../system/codegen-bridge.red
 #include %../../../system/rsir-frontend.red
 

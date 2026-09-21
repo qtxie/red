@@ -1,6 +1,6 @@
 Red [
 	Title: "Rebol host compatibility mezzanines for the self-hosted compiler"
-	File:  %host-compat.red
+	File:  %system/host-compat.red
 	Notes: {
 		Adapted from commit 688f2bdc (system/compiler.red host helpers).
 		Red does not ship these mezzanines; both the Red frontend and the

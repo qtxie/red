@@ -1,6 +1,6 @@
 Red [
 	Title: "Red compiler SHA-256 utilities"
-	File:  %sha256.red
+	File:  %system/sha256.red
 ]
 
 ; Red's checksum native already implements SHA-256 in the runtime.  The old

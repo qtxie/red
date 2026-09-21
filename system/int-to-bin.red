@@ -1,6 +1,6 @@
 Red [
 	Title: "Red compiler integer encoders"
-	File:  %int-to-bin.red
+	File:  %system/int-to-bin.red
 ]
 
 ; Keep integer serialization independent of host molding and decimal/hex text.

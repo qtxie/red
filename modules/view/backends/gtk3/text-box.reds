@@ -354,7 +354,7 @@ OS-text-box-metrics: func [
 		x y		[integer!]
 ][
 	rstate: as red-integer! block/rs-head state
-	layout: get-gtk-handle as red-handle! rstate
+	layout: get-handle as red-handle! rstate
 	if null? layout [return as red-value! none-value]
 	as red-value! switch type [
 		TBOX_METRICS_OFFSET?
@@ -469,8 +469,8 @@ OS-text-box-layout: func [
 
 	either cached? [
 		int: as red-integer! block/rs-head state
-		layout: get-gtk-handle as red-handle! int
-		int: int + 1 para: get-gtk-handle as red-handle! int
+		layout: get-handle as red-handle! int
+		int: int + 1 para: get-handle as red-handle! int
 		bool: as red-logic! int + 2
 		bool/value: false
 	][

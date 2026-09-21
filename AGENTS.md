@@ -1295,18 +1295,23 @@
 - After building a new compiler from any bootstrap, always verify it by
   self-compiling the bootstrap source before adopting it as the new baseline.
 
-- **Remote GUI runtimes are not up yet** (open, found at 202). `gui-console.red`
-  *compiles* for Linux-X86-64, Linux-ARM64 and Darwin-ARM64, but neither
-  remote GUI runs. Two separate defects, both pre-existing in the backends:
-  1. **GTK3, 64-bit pointer truncation.** `set-defaults` held the `gchar*`
-     that `g_object_get` writes for `gtk-font-name` in an `integer!` local,
-     and `set-env-theme` indexed `g_strsplit`'s `gchar**` through a
-     `handle!`, which indexes in integer! units and drops the upper half of
-     every pointer it reads. Both are fixed at 202. A third instance is
-     still open: a wrapper calls `g_object_get_qdata(widget, quark)` with a
-     widget whose upper 32 bits are gone, so the program dies with
-     `*** Runtime Error 1: access violation` before a window opens.
+- ~~**Remote GUI runtimes are not up yet**~~ (found at 202, **closed at 203**;
+  the GTK3 half is recorded under "GTK3 handles must travel at pointer width"
+  below). Both remote GUIs now start:
+  1. ~~**GTK3, 64-bit pointer truncation.**~~ **fixed at 203.** It was not
+     one bug but a whole family of them -- see the entry below. The last of
+     them died in `g_object_get_qdata(widget, quark)` with a widget whose
+     upper 32 bits were gone; the Linux console now prints
+     `--== Red 0.6.6 ==-- / Type HELP for starting information.` and reaches
+     its prompt without crashing.
   2. ~~**Darwin-ARM64 `objc_msgSend`**~~ **fixed at 203**, see below.
+
+  Still open on Linux: the console comes up and then **exits immediately**
+  (status 0) instead of running its event loop, and no window shows up in
+  `xwininfo -root -tree`. `engine.red`'s `ask` returns `"quit"` when
+  `gui-console-ctx/console/state` is unset, so the face is not being
+  realized. Unverified whether that is another GTK3 defect or an artifact of
+  the Xvfb/Weston display used for testing.
 
 - **Objective-C messages are not Apple-variadic** (fixed at 203). Apple's
   ARM64 ABI spills *every* variadic argument to the stack -- clang emits
@@ -1330,6 +1335,89 @@
   was rejected for that reason.
   Evidence: the Darwin gui-console went from 2775984 to 2759568 bytes
   (the stack stores disappeared) and now runs.
+
+- **GTK3 handles must travel at pointer width** (fixed at 203). A `handle!`
+  cell is 16 bytes and its payload is *32 bits*: `red-handle!` is
+  `header/type/value/extID`, four `integer!`s, and `integer!` is 4 bytes
+  (`size? integer!` says so). On a PIE Linux binary every GTK widget, every
+  `GType` and every callback address lives above the 4GB line, so anything
+  stored in `value` silently loses its upper half. Windows and macOS both
+  already dodge this -- every backend's `set-handle` puts the real pointer in
+  the externals registry and keys it by `extID`, and `get-handle` is
+  `either extID >= 0 [externals/get extID][as handle! value/value]` -- but
+  GTK3 read `value` raw, and it was the only backend that did.
+
+  Fixed by giving GTK3 the same trio (`get-handle`, `set-handle`,
+  `make-handle-at` over a `gtk-handle` externals class registered in
+  `init`) and routing widgets, monitors, fonts, rich-text layouts and the
+  rich-text `para` through them. The four `OS-*` entry points
+  (`OS-redraw`, `OS-refresh-window`, `OS-show-window`, `OS-make-view`) took
+  and returned `integer!`; they now speak `handle!` (see
+  "Face handles" below for how `platform.red` names that without branching).
+
+  Three further truncations of the same shape, each found by walking one
+  crash down to the next:
+  - the four GObject `*_get_type` imports (`gtk_window_`, `gtk_widget_`,
+    `gtk_layout_`, `gtk_label_`) returned `integer!`. A `GType` is a
+    `gsize` and, for dynamically registered types, a pointer -- so
+    `g_type_check_instance_is_a` was handed `0x559f0cb0` for `0x5555559f0cb0`.
+    `cairo_pattern_get_type` is *not* one of these: it returns a small
+    `cairo_pattern_type_t` enum and stays `integer!`.
+  - `g_signal_connect_data`'s `handler`, the `handle` of
+    `g_signal_handlers_{block,unblock}_matched`, and
+    `gtk_container_foreach`/`g_timeout_add*`/`gtk_clipboard_request_*` /
+    `g_list_insert_sorted`'s callbacks were all declared `integer!`, and the
+    macros passed `as-integer handler`. GTK then *called* the low half of a
+    code address: the faulting PC was `0x0000000055797eb8` against a real
+    `0x555555797eb8`. These are `int-ptr!` now.
+  - `g_object_set_qdata_full`'s `GDestroyNotify` was `integer!`.
+
+  Debugging note: the give-away is a register holding a value that fits in
+  32 bits next to a sibling register holding a full `0x555555…` pointer --
+  `rdi = 0x559c4730` beside `0x5555559d4120` means "truncated", not "bad".
+  A faulting PC of the form `0x0000000055xxxxxx` is the same story for a
+  callback. `DISPLAY=:0 gdb -batch -ex run -ex bt -ex "info registers"` under
+  WSL finds the next one in about a minute per iteration.
+
+- **Face handles: one accessor trio and one type alias per backend** (at 203).
+  `platform.red` talks to the OS backend through exactly four names, and every
+  backend defines all four:
+
+  | name              | what it is                                          |
+  |-------------------|-----------------------------------------------------|
+  | `get-handle`      | `red-handle!` -> the OS handle                      |
+  | `set-handle`      | stores an OS handle back into a cell                |
+  | `make-handle-at`  | builds a `handle!` cell holding one                 |
+  | `Face-handle!`    | the type a face handle has on this backend          |
+
+  `Face-handle!` is `#define`d once, at the top of `platform.red`'s `#system`
+  block: `int64!` on macOS/ARM64 (`Cocoa-handle!`), `integer!` on
+  macOS/x86-64, `handle!` on Windows and GTK3. Two placement rules it obeys,
+  both discovered the hard way:
+
+  - it cannot live in a backend's own `.reds` -- those are `#included` further
+    down the same `#system` block, *past* the first use
+    (`reattach-window-face`), so their `#define`s are not in scope yet; and
+  - a `#define` written at the top level of the `.red` file never reaches the
+    Red/System side at all -- the Red preprocessor does not expand macros into
+    `#system [...]` bodies, and the RS compiler then reports
+    `undefined word Face-handle!`.
+
+  With that in place `refresh-window`, `redraw`, `show-window`, `make-view`,
+  `draw-face` and the monitor comparison are each written once, with no
+  `#either` on the OS, the ABI or the GUI engine: a four-deep nested `#either`
+  cascade became one `#switch` plus five plain functions. The `test` and
+  `terminal` engines got the same trio -- their handles are small integers that
+  fit the cell, so theirs are one-liners -- which is what lets them share the
+  unconditional code instead of being special-cased.
+
+  Spelling note: a pointer-typed handle is compared against
+  `as Face-handle! 0`, never against `0` -- Red/System rejects `handle! <> 0`
+  with `native codegen rejected invalid RSIR`, and `as <type> 0` is the one
+  form that is right for `pointer!`, `int64!` and `integer!` alike. (`handle!`
+  itself is `#define handle! [pointer! [integer!]]` in
+  `runtime/definitions.reds` -- it is *not* in the RSIR `type-kinds` table, so
+  a standalone `.reds` that has not included the runtime cannot use it.)
 
 # Red/System Idiomatic Patterns - Key Insights
 

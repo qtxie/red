@@ -20,6 +20,22 @@ system/view/platform: context [
 
 	#system [
 
+		;-- Face handles are a backend-private type, and this is the only place
+		;   the mapping is written down. Everything below spells it Face-handle!
+		;   and never branches on the OS, the ABI or the GUI engine; a backend
+		;   joining the set only has to add its case here and define get-handle/
+		;   set-handle/make-handle-at. (It cannot live in the backend's .reds:
+		;   those are #included further down, past the first use.)
+		#switch OS [
+			macOS [
+				#either ABI = 'apple-aarch64 [
+					#define Face-handle! int64!				;-- Cocoa-handle! on ARM64
+				][
+					#define Face-handle! integer!			;-- Cocoa-handle! on x86-64
+				]
+			]
+			#default [#define Face-handle! handle!]			;-- Windows and GTK3
+		]
 		view-log-level: 0
 
 		gui: context [
@@ -659,17 +675,7 @@ system/view/platform: context [
 					if all [
 						TYPE_OF(h) = TYPE_HANDLE
 						h/type = handle/CLASS_MONITOR
-						#either OS = 'Windows [
-							(gui/get-win-handle h) = hMonitor
-						][
-							#either OS = 'macOS [
-								#either ABI = 'apple-aarch64 [
-									(gui/get-cocoa-handle h) = (as int64! hMonitor)
-								][
-									(gui/get-cocoa-handle h) = (as integer! hMonitor)
-								]
-							][(gui/get-gtk-handle h) = hMonitor]
-						]
+						(gui/get-handle h) = (as Face-handle! hMonitor)
 					][
 						if parent/ctx <> face/ctx [					;-- if window really moved to a different display
 							blk: as red-block! (object/get-values parent) + FACE_OBJ_PANE
@@ -874,91 +880,25 @@ system/view/platform: context [
 		SET_RETURN(none-value)
 	]
 
-	#either all [config/GUI-engine = 'native config/OS = 'Windows] [
-		refresh-window: routine [h [handle!]][
-			gui/OS-refresh-window gui/get-win-handle h
-		]
-
-		redraw: routine [face [object!] /local h [handle!]][
-			h: gui/face-handle? face
-			if h <> null [gui/OS-redraw h]
-		]
-
-		show-window: routine [id [handle!]][
-			gui/OS-show-window gui/get-win-handle id
-			SET_RETURN(none-value)
-		]
-
-		make-view: routine [face [object!] parent [handle!]][
-			gui/make-win-handle-at
-				stack/arguments
-				gui/OS-make-view face gui/get-win-handle parent
-				handle/CLASS_WINDOW
-		]
-	][
-	#either all [config/GUI-engine = 'native config/OS = 'macOS config/ABI = 'apple-aarch64] [
-		refresh-window: routine [h [handle!]][
-			gui/OS-refresh-window gui/get-cocoa-handle as red-handle! h
-		]
-
-		redraw: routine [face [object!] /local h [int64!]][
-			h: gui/face-handle? face
-			if h <> 0 [gui/OS-redraw h]
-		]
-
-		show-window: routine [id [handle!]][
-			gui/OS-show-window gui/get-cocoa-handle as red-handle! id
-			SET_RETURN(none-value)
-		]
-
-		make-view: routine [face [object!] parent [handle!]][
-			gui/make-cocoa-handle-at
-				stack/arguments
-				gui/OS-make-view face gui/get-cocoa-handle as red-handle! parent
-				handle/CLASS_WINDOW
-		]
-	][
-	#either all [config/GUI-engine = 'native config/OS = 'macOS] [
-		refresh-window: routine [h [handle!]][
-			gui/OS-refresh-window h/value
-		]
-
-		redraw: routine [face [object!] /local h [integer!]][
-			h: as-integer gui/face-handle? face
-			if h <> 0 [gui/OS-redraw h]
-		]
-
-		show-window: routine [id [handle!]][
-			gui/OS-show-window id/value
-			SET_RETURN(none-value)
-		]
-
-		make-view: routine [face [object!] parent [handle!]][
-			handle/box gui/OS-make-view face parent/value handle/CLASS_WINDOW
-		]
-	][
-		refresh-window: routine [h [handle!]][
-			gui/OS-refresh-window gui/get-gtk-handle as red-handle! h
-		]
-
-		redraw: routine [face [object!] /local h [handle!]][
-			h: gui/face-handle? face
-			if h <> null [gui/OS-redraw h]
-		]
-
-		show-window: routine [id [handle!]][
-			gui/OS-show-window gui/get-gtk-handle as red-handle! id
-			SET_RETURN(none-value)
-		]
-
-		make-view: routine [face [object!] parent [handle!]][
-			gui/make-gtk-handle-at
-				stack/arguments
-				gui/OS-make-view face gui/get-gtk-handle as red-handle! parent
-				handle/CLASS_WINDOW
-		]
+	refresh-window: routine [h [handle!]][
+		gui/OS-refresh-window gui/get-handle as red-handle! h
 	]
+
+	redraw: routine [face [object!] /local h [Face-handle!]][
+		h: gui/face-handle? face
+		if h <> as Face-handle! 0 [gui/OS-redraw h]
 	]
+
+	show-window: routine [id [handle!]][
+		gui/OS-show-window gui/get-handle as red-handle! id
+		SET_RETURN(none-value)
+	]
+
+	make-view: routine [face [object!] parent [handle!]][
+		gui/make-handle-at
+			stack/arguments
+			gui/OS-make-view face gui/get-handle as red-handle! parent
+			handle/CLASS_WINDOW
 	]
 
 	draw-image: routine [image [image!] cmds [block!]][
@@ -967,26 +907,10 @@ system/view/platform: context [
 		ownership/check as red-value! image words/_poke as red-value! image -1 -1
 	]
 
-	#either all [config/GUI-engine = 'native config/OS = 'macOS config/ABI = 'apple-aarch64] [
-		draw-face: routine [face [object!] cmds [block!] /local h [int64!] flags [integer!]][
-			flags: gui/get-flags as red-block! (object/get-values face) + gui/FACE_OBJ_FLAGS
-			h: gui/face-handle? face
-			if h <> 0 [gui/OS-draw-face h cmds flags]
-		]
-	][
-		#either all [config/GUI-engine = 'native config/OS = 'macOS] [
-			draw-face: routine [face [object!] cmds [block!] /local h [integer!] flags [integer!]][
-				flags: gui/get-flags as red-block! (object/get-values face) + gui/FACE_OBJ_FLAGS
-				h: gui/face-handle? face
-				if h <> 0 [gui/OS-draw-face h cmds flags]
-			]
-		][
-			draw-face: routine [face [object!] cmds [block!] /local h [handle!] flags [integer!]][
-				flags: gui/get-flags as red-block! (object/get-values face) + gui/FACE_OBJ_FLAGS
-				h: gui/face-handle? face
-				if h <> null [gui/OS-draw-face h cmds flags]
-			]
-		]
+	draw-face: routine [face [object!] cmds [block!] /local h [Face-handle!] flags [integer!]][
+		flags: gui/get-flags as red-block! (object/get-values face) + gui/FACE_OBJ_FLAGS
+		h: gui/face-handle? face
+		if h <> as Face-handle! 0 [gui/OS-draw-face h cmds flags]
 	]
 
 	do-event-loop: routine [no-wait? [logic!] /local bool [red-logic!]][

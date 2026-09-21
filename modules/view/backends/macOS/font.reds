@@ -113,12 +113,12 @@ make-font: func [
 	either TYPE_OF(blk) <> TYPE_BLOCK [
 		block/make-at blk 2
 		handle-value: handle/make-in blk as integer! hFont handle/CLASS_FONT
-		set-cocoa-handle handle-value hFont
+		set-handle handle-value hFont
 	][
 		handle-value: as red-handle! block/rs-head blk
 		handle-value/header: TYPE_HANDLE
 		handle-value/type: handle/CLASS_FONT
-		set-cocoa-handle handle-value hFont
+		set-handle handle-value hFont
 	]
 
 	link-font-to-face face font
@@ -137,7 +137,7 @@ get-font-handle: func [
 	if TYPE_OF(state) = TYPE_BLOCK [
 		h: as red-handle! block/rs-head state
 		if TYPE_OF(h) = TYPE_HANDLE [
-			return get-cocoa-handle h
+			return get-handle h
 		]
 	]
 	0

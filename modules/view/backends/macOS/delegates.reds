@@ -1870,7 +1870,7 @@ hit-test*: func [
 				return v							;-- face takes the click
 			][
 				pixel-value: OS-image/get-pixel resolve-node img/node (iy * w) + ix
-				either pixel-value >>> 24 = 0 [return as Cocoa-handle! 0][	;-- transparent pixel: the click passes through
+				either pixel-value >>> 24 = 0 [return 0][	;-- transparent pixel: the click passes through
 					return v						;-- opaque one: the face takes it, whatever `color`
 				]									;-- is (an image face has no color: the check below
 			]										;-- would sample the cached bitmap and reject it)
@@ -1897,7 +1897,7 @@ hit-test*: func [
 				as NSInteger! (as-integer pt/x) as NSInteger! (as-integer pt/y)
 			]
 			alpha: objc_msgSend_fpret [pixel sel_getUid "alphaComponent"]
-			if alpha = 0.0 [return as Cocoa-handle! 0]
+			if alpha = 0.0 [return 0]
 		]
 	]
 	v

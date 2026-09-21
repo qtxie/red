@@ -64,6 +64,36 @@ get-node-facet: func [
 	s/offset + facet
 ]
 
+;-- A handle here stands for a widget this engine made up, so it is a small
+;   integer that fits in the cell and needs no externals registry. The three
+;   accessors exist anyway, spelled as on every other backend, so platform.red
+;   can talk to all of them the same way.
+get-handle: func [
+	value	[red-handle!]
+	return: [handle!]
+][
+	as handle! value/value
+]
+
+set-handle: func [
+	value	[red-handle!]
+	native	[handle!]
+][
+	value/value: as integer! native
+]
+
+make-handle-at: func [
+	value	[red-value!]
+	native	[handle!]
+	type	[integer!]
+	return: [red-handle!]
+	/local result [red-handle!]
+][
+	result: handle/make-at value as integer! native type
+	set-handle result native
+	result
+]
+
 face-handle?: func [
 	face	[red-object!]
 	return: [handle!]									;-- returns NULL if no handle
@@ -294,22 +324,22 @@ set-dark-mode: func [
 
 DX-create-dev: func [][]								;-- GPU device init: no-op for headless engine
 
-OS-redraw: func [hWnd [integer!]][]
+OS-redraw: func [hWnd [handle!]][]
 
-OS-refresh-window: func [hWnd [integer!]][]
+OS-refresh-window: func [hWnd [handle!]][]
 
 OS-show-window: func [
-	hWnd [integer!]
+	hWnd [handle!]
 ][
 
 ]
 
 OS-make-view: func [
 	face	[red-object!]
-	parent	[integer!]
-	return: [integer!]
+	parent	[handle!]
+	return: [handle!]
 ][
-	as-integer make-handle
+	make-handle
 ]
 
 

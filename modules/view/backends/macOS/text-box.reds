@@ -37,7 +37,7 @@ get-text-box-state-handle: func [
 ][
 	cell: (block/rs-head state) + index
 	either TYPE_OF(cell) = TYPE_HANDLE [
-		get-cocoa-handle as red-handle! cell
+		get-handle as red-handle! cell
 	][
 		int: as red-integer! cell
 		as Cocoa-handle! int/value

@@ -246,7 +246,7 @@ free-font: func [
 	unless winxp? [
 		h: get-font-handle-slot font 1
 		if h <> null [
-			this: as this! get-win-handle h
+			this: as this! get-handle h
 			either h/extID >= 0 [
 				h/extID: externals/remove h/extID yes
 			][

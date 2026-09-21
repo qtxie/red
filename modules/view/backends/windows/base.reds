@@ -923,7 +923,7 @@ update-base: func [
 			blk: as red-block! values + FACE_OBJ_STATE
 			blk/header: TYPE_BLOCK
 			handle: as red-handle! block/rs-head blk
-			set-win-handle handle hWnd
+			set-handle handle hWnd
 
 			;-- restore z-order
 			SetWindowPos hWnd h-above 0 0 0 0 1819 ;-- 1819: All SWP_NO* flags except SWP_NOZORDER

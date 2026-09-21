@@ -346,7 +346,7 @@ OS-text-box-layout: func [
 			pval: block/rs-head state
 			hndl: as red-handle! pval
 			if TYPE_OF(hndl) = TYPE_HANDLE [ext-id: hndl/extID]
-			old-layout: as this! get-win-handle hndl
+			old-layout: as this! get-handle hndl
 			bool: as red-logic! pval + 3
 			bool/value: false
 		][
@@ -357,7 +357,7 @@ OS-text-box-layout: func [
 			logic/make-in state false			;-- 4: layout?
 			pval: block/rs-head state
 		]
-		make-win-handle-at pval + 1 as handle! target handle/CLASS_RICHTEXT
+		make-handle-at pval + 1 as handle! target handle/CLASS_RICHTEXT
 		DT_WORDBREAK	;-- wrap by default
 	][5]	;-- base face
 	vec: target/styles

@@ -839,7 +839,7 @@ OS-send-event: func [
 	if TYPE_OF(state) <> TYPE_BLOCK [return false]		;-- face not realized -> no live handle (get-face-handle would assert)
 	hd:     as red-handle! block/rs-head state
 	if TYPE_OF(hd) <> TYPE_HANDLE [return false]
-	widget: get-gtk-handle hd
+	widget: get-handle hd
 	if null? widget [return false]
 	vals:  get-face-values widget
 	wd:    as red-word! vals + FACE_OBJ_TYPE

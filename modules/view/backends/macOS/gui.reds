@@ -129,7 +129,7 @@ get-face-flags: func [
 	0
 ]
 
-get-cocoa-handle: func [
+get-handle: func [
 	value	[red-handle!]
 	return: [Cocoa-handle!]
 ][
@@ -140,7 +140,7 @@ get-cocoa-handle: func [
 	]
 ]
 
-set-cocoa-handle: func [
+set-handle: func [
 	value	[red-handle!]
 	native	[Cocoa-handle!]
 ][
@@ -151,7 +151,7 @@ set-cocoa-handle: func [
 	]
 ]
 
-make-cocoa-handle-at: func [
+make-handle-at: func [
 	value	[red-value!]
 	native	[Cocoa-handle!]
 	type	[integer!]
@@ -159,7 +159,7 @@ make-cocoa-handle-at: func [
 	/local result [red-handle!]
 ][
 	result: handle/make-at value as integer! native type
-	set-cocoa-handle result native
+	set-handle result native
 	result
 ]
 
@@ -173,7 +173,7 @@ face-handle?: func [
 	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
 	if TYPE_OF(state) = TYPE_BLOCK [
 		h: as red-handle! block/rs-head state
-		if TYPE_OF(h) = TYPE_HANDLE [return get-cocoa-handle h]
+		if TYPE_OF(h) = TYPE_HANDLE [return get-handle h]
 	]
 	0
 ]
@@ -189,7 +189,7 @@ get-face-handle: func [
 	assert TYPE_OF(state) = TYPE_BLOCK
 	h: as red-handle! block/rs-head state
 	assert TYPE_OF(h) = TYPE_HANDLE
-	get-cocoa-handle h
+	get-handle h
 ]
 
 get-ratio: func [face [red-object!] return: [red-float!]][
@@ -1753,7 +1753,7 @@ update-scroller: func [
 	parent: as red-object! values + SCROLLER_OBJ_PARENT
 	vertical?: as red-logic! values + SCROLLER_OBJ_VERTICAL?
 	handle-value: as red-handle! block/rs-head as red-block! (object/get-values parent) + FACE_OBJ_STATE
-	container: get-cocoa-handle handle-value
+	container: get-handle handle-value
 
 	if flag = SCROLLER_OBJ_VISIBLE? [
 		int: as red-integer! values + SCROLLER_OBJ_VISIBLE?
@@ -2320,7 +2320,7 @@ OS-update-view: func [
 
 	s: GET_BUFFER(state)
 	handle-value: as red-handle! s/offset
-	hWnd: get-cocoa-handle handle-value
+	hWnd: get-handle handle-value
 	int: as red-integer! s/offset + 1
 	flags: int/value
 
@@ -2653,7 +2653,7 @@ fetch-screen-info: func [
 	pair/make-at alloc-tail s as-integer frame/x y
 	pair/make-at alloc-tail s width height
 	float/make-at alloc-tail s COCOA_TO_F64(scale)
-	make-cocoa-handle-at as red-value! alloc-tail s screen handle/CLASS_MONITOR
+	make-handle-at as red-value! alloc-tail s screen handle/CLASS_MONITOR
 ]
 
 OS-fetch-all-screens: func [
@@ -2711,14 +2711,14 @@ OS-get-current-screen: func [
 					point/y >= frame/y
 					point/y < (frame/y + frame/h)
 				][
-					return make-cocoa-handle-at stack/arguments screen handle/CLASS_MONITOR
+					return make-handle-at stack/arguments screen handle/CLASS_MONITOR
 				]
 			]
 			i: i + 1
 		]
 	]
 	screen: objc_msgSend [objc_getClass "NSScreen" sel_getUid "mainScreen"]
-	make-cocoa-handle-at stack/arguments screen handle/CLASS_MONITOR
+	make-handle-at stack/arguments screen handle/CLASS_MONITOR
 ]
 
 OS-alert: func [

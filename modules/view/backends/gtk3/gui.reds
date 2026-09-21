@@ -125,12 +125,13 @@ get-face-flags: func [
 
 ;-- A handle! cell can only carry a 32-bit payload (see red-handle! in
 ;   runtime/structures.reds), but a GTK widget on a PIE Linux binary lives
-;   far above the 4GB line, so its pointer does not fit there. Windows
-;   (set-win-handle) and macOS (set-cocoa-handle) both work around that by
-;   keeping the real pointer in the externals registry and keying it by
-;   extID, and GTK3 does the same. Handles whose payload does fit in 32
+;   far above the 4GB line, so its pointer does not fit there. Every backend
+;   works around that the same way -- keep the real pointer in the externals
+;   registry and key it by extID -- and every backend spells that workaround
+;   get-handle/set-handle/make-handle-at, so platform.red can call it
+;   without knowing which one it got. Handles whose payload does fit in 32
 ;   bits (including 0) keep extID = -1 and are read straight from the cell.
-get-gtk-handle: func [
+get-handle: func [
 	value	[red-handle!]
 	return: [handle!]
 ][
@@ -141,7 +142,7 @@ get-gtk-handle: func [
 	]
 ]
 
-set-gtk-handle: func [
+set-handle: func [
 	value	[red-handle!]
 	native	[handle!]
 ][
@@ -152,7 +153,7 @@ set-gtk-handle: func [
 	]
 ]
 
-make-gtk-handle-at: func [
+make-handle-at: func [
 	value	[red-value!]
 	native	[handle!]
 	type	[integer!]
@@ -160,7 +161,7 @@ make-gtk-handle-at: func [
 	/local result [red-handle!]
 ][
 	result: handle/make-at value as integer! native type
-	set-gtk-handle result native
+	set-handle result native
 	result
 ]
 
@@ -174,7 +175,7 @@ face-handle?: func [
 	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
 	if TYPE_OF(state) = TYPE_BLOCK [
 		h: as red-handle! block/rs-head state
-		if TYPE_OF(h) = TYPE_HANDLE [return get-gtk-handle h]
+		if TYPE_OF(h) = TYPE_HANDLE [return get-handle h]
 	]
 	null
 ]
@@ -190,7 +191,7 @@ get-face-handle: func [
 	assert TYPE_OF(state) = TYPE_BLOCK
 	h: as red-handle! block/rs-head state
 	assert TYPE_OF(h) = TYPE_HANDLE
-	get-gtk-handle h
+	get-handle h
 ]
 
 get-widget-symbol: func [
@@ -2110,7 +2111,7 @@ update-scroller: func [
 	values: object/get-values scroller
 	parent: as red-object! values + SCROLLER_OBJ_PARENT
 	vertical?: as red-logic! values + SCROLLER_OBJ_VERTICAL?
-	widget: get-gtk-handle as red-handle! block/rs-head as red-block! (object/get-values parent) + FACE_OBJ_STATE
+	widget: get-handle as red-handle! block/rs-head as red-block! (object/get-values parent) + FACE_OBJ_STATE
 	type: get-widget-symbol widget
 	container: get-face-layout widget type
 
@@ -2371,7 +2372,7 @@ OS-get-current-screen: func [
 	x: 0 y: 0
 	gdk_device_get_position dev null :x :y
 	m: gdk_display_get_monitor_at_point disp x y
-	make-gtk-handle-at stack/arguments m handle/CLASS_MONITOR
+	make-handle-at stack/arguments m handle/CLASS_MONITOR
 ]
 
 fetch-monitor-info: func [
@@ -2405,7 +2406,7 @@ fetch-monitor-info: func [
 	pair/make-at   alloc-tail s rec/x rec/y
 	pair/make-at   alloc-tail s rec/width rec/height
 	float/make-at  alloc-tail s (as-float dpi) / 96.0
-	make-gtk-handle-at alloc-tail s hMonitor handle/CLASS_MONITOR
+	make-handle-at alloc-tail s hMonitor handle/CLASS_MONITOR
 ]
 
 OS-fetch-all-screens: func [
@@ -2954,7 +2955,7 @@ OS-update-view: func [
 	]
 
 	s: GET_BUFFER(state)
-	widget: get-gtk-handle as red-handle! s/offset
+	widget: get-handle as red-handle! s/offset
 	if null? widget [exit]
 
 	int: as red-integer! s/offset + 1

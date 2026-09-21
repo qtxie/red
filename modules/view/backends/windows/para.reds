@@ -23,7 +23,7 @@ update-area-para: func [
 
 	h: as red-handle! block/rs-head as red-block! (get-face-values hWnd) + FACE_OBJ_STATE
 	h/header: TYPE_HANDLE
-	set-win-handle h hWnd
+	set-handle h hWnd
 ]
 
 update-para: func [

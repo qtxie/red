@@ -134,7 +134,7 @@ clean-up: does [
 	current-msg: null
 ]
 
-get-win-handle: func [
+get-handle: func [
 	value	[red-handle!]
 	return: [handle!]
 ][
@@ -145,7 +145,7 @@ get-win-handle: func [
 	]
 ]
 
-set-win-handle: func [
+set-handle: func [
 	value	[red-handle!]
 	native	[handle!]
 ][
@@ -156,7 +156,7 @@ set-win-handle: func [
 	]
 ]
 
-make-win-handle-at: func [
+make-handle-at: func [
 	value	[red-value!]
 	native	[handle!]
 	type	[integer!]
@@ -164,7 +164,7 @@ make-win-handle-at: func [
 	/local result [red-handle!]
 ][
 	result: handle/make-at value win-handle-low32 native type
-	set-win-handle result native
+	set-handle result native
 	result
 ]
 
@@ -281,7 +281,7 @@ face-handle?: func [
 	state: as red-block! get-node-facet face/ctx FACE_OBJ_STATE
 	if TYPE_OF(state) = TYPE_BLOCK [
 		handle: as red-handle! block/rs-head state
-		if TYPE_OF(handle) = TYPE_HANDLE [return get-win-handle handle]
+		if TYPE_OF(handle) = TYPE_HANDLE [return get-handle handle]
 	]
 	null
 ]
@@ -297,7 +297,7 @@ get-face-handle: func [
 	assert TYPE_OF(state) = TYPE_BLOCK
 	handle: as red-handle! block/rs-head state
 	assert TYPE_OF(handle) = TYPE_HANDLE
-	get-win-handle handle
+	get-handle handle
 ]
 
 get-window-pos: func [
@@ -1185,8 +1185,8 @@ transparent-win?: func [
 		red-handle/header: TYPE_HANDLE
 		red-handle/type: 0
 		red-handle/extID: -1
-		set-win-handle red-handle native
-		assert native = get-win-handle red-handle
+		set-handle red-handle native
+		assert native = get-handle red-handle
 		red-handle/extID: externals/remove red-handle/extID no
 	]
 ]
@@ -1592,7 +1592,7 @@ OS-get-current-screen: func [
 ][
 	GetCursorPos pt
 	hMonitor: MonitorFromPoint pt 2
-	make-win-handle-at stack/arguments hMonitor handle/CLASS_MONITOR
+	make-handle-at stack/arguments hMonitor handle/CLASS_MONITOR
 ]
 
 monitor-enum-proc: func [
@@ -1630,7 +1630,7 @@ monitor-enum-proc: func [
 	pair/make-at   alloc-tail s rec/left rec/top
 	pair/make-at   alloc-tail s rec/right - rec/left rec/bottom - rec/top
 	float/make-at  alloc-tail s as-float DPI
-	make-win-handle-at alloc-tail s hMonitor handle/CLASS_MONITOR
+	make-handle-at alloc-tail s hMonitor handle/CLASS_MONITOR
 	
 	monitor-tail/handle:   hMonitor
 	monitor-tail/DPI:	   DPI

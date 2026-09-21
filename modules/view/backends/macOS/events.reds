@@ -587,7 +587,7 @@ OS-send-event: func [
 	if TYPE_OF(state) <> TYPE_BLOCK [return false]		;-- face not realized -> no live handle (get-face-handle would assert)
 	hd:   as red-handle! block/rs-head state
 	if TYPE_OF(hd) <> TYPE_HANDLE [return false]
-	view: get-cocoa-handle hd
+	view: get-handle hd
 	if zero? view [return false]
 
 	flags: evt/flags									;-- synthetic flags: low word = key codepoint, high bits = View EVT_FLAG_*

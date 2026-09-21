@@ -357,7 +357,7 @@ get-font-handle: func [
 		h [red-handle!]
 ][
 	h: get-font-handle-slot font idx
-	either null? h [null][get-gtk-handle h]
+	either null? h [null][get-handle h]
 ]
 
 get-font: func [
@@ -383,7 +383,7 @@ free-font: func [
 ][
 	h: get-font-handle-slot font 0
 	if h <> null [
-		hFont: get-gtk-handle h
+		hFont: get-handle h
 		pango_attr_list_unref hFont
 		h/extID: externals/remove h/extID no
 		state: as red-block! (object/get-values font) + FONT_OBJ_STATE

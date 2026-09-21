@@ -372,7 +372,7 @@ unless system/console [
 			either output? [
 				output-to-screen
 			][
-				#if OS <> 'Windows [
+				#either OS <> 'Windows [
 					if all [
 						bytes > columns
 						positive? (bytes // columns)

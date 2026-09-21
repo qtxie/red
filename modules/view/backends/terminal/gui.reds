@@ -439,7 +439,7 @@ OS-make-view: func [
 		true			[0]
 	]
 
-	if parent <> 0 [
+	if parent <> null [
 		screen/update-bounding-box widget
 		screen/update-editable-widget widget
 		screen/update-focus-widget widget
@@ -448,7 +448,7 @@ OS-make-view: func [
 	if TYPE_OF(rate) <> TYPE_NONE [change-rate widget rate]
 
 	stack/unwind
-	widget
+	as handle! widget
 ]
 
 unlink-sub-obj: func [

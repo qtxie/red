@@ -26,15 +26,21 @@ system/view/platform: context [
 		;   joining the set only has to add its case here and define get-handle/
 		;   set-handle/make-handle-at. (It cannot live in the backend's .reds:
 		;   those are #included further down, past the first use.)
-		#switch OS [
-			macOS [
-				#either ABI = 'apple-aarch64 [
-					#define Face-handle! int64!				;-- Cocoa-handle! on ARM64
-				][
-					#define Face-handle! integer!			;-- Cocoa-handle! on x86-64
+		;   The terminal TUI backend runs on every OS, so its handle type is
+		;   keyed on the GUI engine; the native ones follow the OS.
+		#either GUI-engine = 'terminal [
+			#define Face-handle! handle!					;-- terminal widgets
+		][
+			#switch OS [
+				macOS [
+					#either ABI = 'apple-aarch64 [
+						#define Face-handle! int64!			;-- Cocoa-handle! on ARM64
+					][
+						#define Face-handle! integer!		;-- Cocoa-handle! on x86-64
+					]
 				]
+				#default [#define Face-handle! handle!]		;-- Windows and GTK3
 			]
-			#default [#define Face-handle! handle!]			;-- Windows and GTK3
 		]
 		view-log-level: 0
 

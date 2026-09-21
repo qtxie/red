@@ -1,5 +1,5 @@
 Red [
-	Title: "Standalone saved-frontend hybrid backend"
+	Title: "Standalone frontend-cache hybrid backend"
 	File:  %red-bootstrap-hybrid-backend.red
 	Config: [show: 'X86-64-Hybrid-only]
 ]
@@ -10,7 +10,7 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 #include %system/compiler-hybrid-bootstrap.red
 #include %compiler/version.red
 #include %compiler/bootstrap-options.red
-#include %compiler/saved-frontend.red
+#include %compiler/frontend-cache.red
 
 recycle/on
 
@@ -76,9 +76,9 @@ compile-saved: func [options [object!] /local source saved job frontend-result r
 	prefix: compiler-system-job/job-get job 'build-prefix
 	unless empty? prefix [make-dir/deep prefix]
 
-	frontend-result: compiler-saved-frontend/load-artifacts
+	frontend-result: compiler-frontend-cache/load-artifacts
 		saved source compiler-system-job/job-get job 'config-name
-	unless block? frontend-result [fail-command compiler-saved-frontend/last-error/message]
+	unless block? frontend-result [fail-command compiler-frontend-cache/last-error/message]
 	print ["Compiling saved frontend" saved "..."]
 	phase-timer/begin 'backend-total
 	system-dialect/compile/options/loaded source job frontend-result

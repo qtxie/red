@@ -260,7 +260,7 @@ foreach required [
 	%compiler/bootstrap-driver.red
 	%compiler/bootstrap-options.red
 	%system/toolchain-support.red
-	%compiler/saved-frontend.red
+	%compiler/frontend-cache.red
 	%red.red
 	%red-toolchain-hybrid.red
 	%red-system-hybrid.red

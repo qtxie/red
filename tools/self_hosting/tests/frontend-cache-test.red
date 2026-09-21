@@ -1,9 +1,9 @@
 Red [
-	Title: "Saved Red frontend artifact test"
+	Title: "Red frontend artifact cache test"
 ]
 
 #include %../../../system/compiler-test-common.red
-#include %../../../compiler/saved-frontend.red
+#include %../../../compiler/frontend-cache.red
 #include %../../../compiler/bootstrap-options.red
 
 fail: func [message [string! block!]][
@@ -17,9 +17,9 @@ check: func [condition [logic!] message [string! block!]][
 
 root: clean-path to file! rejoin [system/options/path %../../../]
 source: clean-path to file! rejoin [root %tools/self_hosting/fixtures/backend/rsir-empty-void.reds]
-base: clean-path to file! rejoin [root %build/self-hosting/saved-frontend-test.reds]
+base: clean-path to file! rejoin [root %build/self-hosting/frontend-cache-test.reds]
 dependency: clean-path to file! rejoin [
-	root %build/self-hosting/saved-frontend-dependency.red
+	root %build/self-hosting/frontend-cache-dependency.red
 ]
 generated: compose/deep [
 	Red/System []
@@ -74,17 +74,17 @@ check not compiler-system-job/job-get runtime-job 'runtime?
 files: reduce [
 	base
 	dependency
-	compiler-saved-frontend/redbin-file base
-	compiler-saved-frontend/resources-file base
-	compiler-saved-frontend/manifest-file base
+	compiler-frontend-cache/redbin-file base
+	compiler-frontend-cache/resources-file base
+	compiler-frontend-cache/manifest-file base
 ]
 foreach file files [if exists? file [delete file]]
 write dependency "dependency-v1"
 
-check file? compiler-saved-frontend/write-artifacts
+check file? compiler-frontend-cache/write-artifacts
 	base source generated redbin resources 'Windows-X86-64
 	"could not write the saved frontend artifact set"
-loaded: compiler-saved-frontend/load-artifacts base source 'Windows-X86-64
+loaded: compiler-frontend-cache/load-artifacts base source 'Windows-X86-64
 check all [
 	block? loaded
 	loaded/1 = base
@@ -94,21 +94,21 @@ check all [
 ]["saved frontend artifact set did not round-trip"]
 
 write dependency "dependency-v2"
-check none? compiler-saved-frontend/load-artifacts base source 'Windows-X86-64
+check none? compiler-frontend-cache/load-artifacts base source 'Windows-X86-64
 	"stale frontend dependency passed manifest verification"
-check (compiler-saved-frontend/last-error/message =
+check (compiler-frontend-cache/last-error/message =
 	"saved frontend dependency checksum mismatch")
 	"stale frontend dependency returned the wrong diagnostic"
 write dependency "dependency-v1"
-check block? compiler-saved-frontend/load-artifacts base source 'Windows-X86-64
+check block? compiler-frontend-cache/load-artifacts base source 'Windows-X86-64
 	"restored frontend dependency did not recover the artifact set"
 
 write/append base " "
-check none? compiler-saved-frontend/load-artifacts base source 'Windows-X86-64
+check none? compiler-frontend-cache/load-artifacts base source 'Windows-X86-64
 	"corrupt generated source passed manifest verification"
-check (compiler-saved-frontend/last-error/message =
+check (compiler-frontend-cache/last-error/message =
 	"saved frontend Red/System checksum mismatch")
 	"corrupt generated source returned the wrong diagnostic"
 
 foreach file files [if exists? file [delete file]]
-print "PASS: saved Red frontend artifacts"
+print "PASS: Red frontend artifact cache"

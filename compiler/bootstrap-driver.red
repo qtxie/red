@@ -15,7 +15,7 @@ unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 #include %crush.red
 #include %frontend.red
 #include %bootstrap-options.red
-#include %saved-frontend.red
+#include %frontend-cache.red
 
 ; Interpreted bootstrap follows Stage0's deep binding operation. The AOT source
 ; materializes this field through frontend.red's nested include instead.
@@ -338,10 +338,10 @@ compile-source: func [
 	][
 		either loaded-red [
 			loaded-path: resolve-source-path loaded-red
-			frontend-result: compiler-saved-frontend/load-artifacts
+			frontend-result: compiler-frontend-cache/load-artifacts
 				loaded-path source compiler-system-job/job-get job 'config-name
 			unless block? frontend-result [
-				fail-command compiler-saved-frontend/last-error/message
+				fail-command compiler-frontend-cache/last-error/message
 			]
 			print ["...frontend cache   :" loaded-path]
 		][
@@ -354,11 +354,11 @@ compile-source: func [
 					fail-command "--red-only requires -o output.reds"
 				]
 				saved-output: to file! compiler-options/option-get options 'output
-				unless compiler-saved-frontend/write-artifacts
+				unless compiler-frontend-cache/write-artifacts
 					saved-output source frontend-result/1 frontend-result/3
 					frontend-result/4 compiler-system-job/job-get job 'config-name
 				[
-					fail-command compiler-saved-frontend/last-error/message
+					fail-command compiler-frontend-cache/last-error/message
 				]
 				return none
 			]

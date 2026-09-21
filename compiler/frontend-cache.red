@@ -1,9 +1,9 @@
 Red [
-	Title: "Saved Red frontend artifact set"
-	File:  %saved-frontend.red
+	Title: "Red frontend artifact cache"
+	File:  %frontend-cache.red
 ]
 
-compiler-saved-frontend: context [
+compiler-frontend-cache: context [
 	VERSION: 2
 	fields: [
 		version source-sha256 generated-sha256 redbin-sha256

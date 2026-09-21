@@ -2,7 +2,7 @@ Red [
 	Title: "Seal legacy --red-only output for the hybrid backend"
 ]
 
-#include %../../compiler/saved-frontend.red
+#include %../../compiler/frontend-cache.red
 
 fail: func [message][
 	print ["*** saved frontend error:" message]
@@ -11,7 +11,7 @@ fail: func [message][
 
 args: any [system/options/args copy []]
 unless (length? args) = 3 [
-	print "Usage: seal-saved-frontend generated.reds original.red Windows-X86-64"
+	print "Usage: seal-frontend-cache generated.reds original.red Windows-X86-64"
 	quit/return 2
 ]
 
@@ -25,8 +25,8 @@ resolve-input: func [raw /local candidate][
 generated: resolve-input args/1
 source: resolve-input args/2
 target: to word! args/3
-unless compiler-saved-frontend/seal-existing generated source target [
-	fail compiler-saved-frontend/last-error/message
+unless compiler-frontend-cache/seal-existing generated source target [
+	fail compiler-frontend-cache/last-error/message
 ]
 print ["Sealed saved frontend:" generated]
 quit/return 0

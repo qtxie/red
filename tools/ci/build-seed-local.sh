@@ -148,10 +148,7 @@ package_platform() {
 
 platforms=("$@")
 if [[ ${#platforms[@]} -eq 0 ]]; then
-  # Only targets with a toolchain source can have one: build-red-toolchain.red
-  # maps Windows-X86-64 and Darwin-ARM64, and nothing else. Linux binaries are
-  # cross-compiled from those, so there is no Linux toolchain to seed.
-  platforms=(windows-x64 darwin-arm64)
+  platforms=(windows-x64 linux-x64 linux-arm64 darwin-arm64)
 fi
 
 for platform in "${platforms[@]}"; do

@@ -9,7 +9,7 @@ does not depend on a repository checkout or an external compiler or linker.
 
 | Host | Entry point | Backend | Targets | Outputs |
 | --- | --- | --- | --- | --- |
-| Windows x64 | `red-toolchain-windows-hybrid.red` | typed postfix RSIR and native x64 codegen | `Windows-X86-64`, `Windows-X86-64-DLL` | PE executable, DLL |
+| any, one cross-compiler | `red-toolchain-hybrid.red` | typed postfix RSIR and native x64/ARM64 codegen | `Windows-X86-64`, `Windows-X86-64-DLL`, `Linux-X86-64`, `Linux-X86-64-SO`, `Linux-ARM64`, `Linux-ARM64-SO`, `Darwin-ARM64`, `Darwin-ARM64-SO`, `macOS-ARM64` | PE executable and DLL, ELF executable, Mach-O executable, `.app` bundle |
 | Darwin ARM64 | `red-toolchain.red` | self-hosted ARM64 backend | `Darwin-ARM64`, `Darwin-ARM64-SO`, `macOS-ARM64` | Mach-O executable, dylib, `.app` bundle |
 
 Both toolchains support release and development builds. A development Red
@@ -59,9 +59,8 @@ The script:
 2. compiles `tools/self_hosting/generate-toolchain-resources.red` **for the
    host** -- it has to run here -- and regenerates
    `build/generated/red-toolchain-resources.generated.red`;
-3. compiles the toolchain source for `--target`
-   (`red-toolchain-windows-hybrid.red` for `Windows-X86-64`,
-   `red-toolchain-darwin-hybrid.red` for `Darwin-ARM64`);
+3. compiles the toolchain source for `--target` -- always
+   `red-toolchain-hybrid.red`, the one cross-compiler, whatever the target;
 4. verifies `--self-check`, `--toolchain-info`, `--list-targets` and
    `--resource-manifest` (the manifest must also agree with `--toolchain-info`)
    and reads the finished binary's own headers: PE32+ x64, dynamic base, NX
@@ -110,10 +109,10 @@ console tools/self_hosting/build-red-toolchain.red \
     --output build/red-toolchain/red-toolchain
 ```
 
-### Darwin ARM64 hybrid cross-build
+### Cross-building for another host
 
-`red-toolchain-darwin-hybrid.red` is the same closure as the Windows hybrid
-toolchain, built for the Mac by cross-compiling from the Windows host:
+One source serves every target, built for a target by cross-compiling from
+the host:
 
 Generate the resource archive first -- the source `#include`s it, and it is
 not in the repository -- then cross-compile:
@@ -131,14 +130,15 @@ SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) \
   build/self-hosting/merge-red64/hybrid-compilerNNN.exe \
   -r -t Darwin-ARM64 \
   -o build/red-toolchain/darwin-arm64/red-toolchain \
-  red-toolchain-darwin-hybrid.red
+  red-toolchain-hybrid.red
 ```
 
-The hybrid core is a cross-compiler, so `config/OS` is 'macOS in that build:
-`bootstrap-driver.red` then reports Darwin-ARM64 as the host and defaults to
-it without `-t`, `compiler-hybrid-common.red` imports the `chmod` its
-executables need, and `libRedRT-target` picks `Darwin-ARM64-SO` so
-development builds produce a `libRedRT.dylib`.
+The hybrid core is a cross-compiler, so the `-t` decides `config/OS`: for
+`Darwin-ARM64` that is 'macOS, and `bootstrap-driver.red` then reports
+Darwin-ARM64 as the host and defaults to it without `-t`,
+`compiler-hybrid-common.red` imports the `chmod` its executables need, and
+`libRedRT-target` picks `Darwin-ARM64-SO` so development builds produce a
+`libRedRT.dylib`.
 
 Verified on an Apple Silicon Mac (Darwin 24.6.0 arm64):
 
@@ -262,13 +262,11 @@ Every CI job takes its compiler and console from a **seed**: one toolchain, one
 CLI console, and where one exists a GUI console, per platform, published as
 GitHub release assets. No workflow reads a repository variable to find them.
 
-Only a target with a toolchain source has one. `build-red-toolchain.red` maps
-`Windows-X86-64` and `Darwin-ARM64`, and nothing else: Linux binaries are
-cross-compiled from those and shipped to a Linux box to run, so there is no
-Linux toolchain to seed and `linux.yml` / `ARM64.yml` stay disabled until a
-Linux toolchain source exists. The manifest reads its platform list from the
-artifact directories, so a new platform joins by getting a leg in
-`build-hybrid-toolchain.yml` and nothing else has to change.
+Every target uses the same source: `red-toolchain-hybrid.red` is a
+cross-compiler, so the `-t` at build time decides the platform. The manifest
+reads its platform list from the artifact directories, so a new platform joins
+by getting a leg in `build-hybrid-toolchain.yml` and nothing else has to
+change.
 
 - `ci-seed` is a floating release that holds nothing but `MANIFEST.json`,
   mapping each platform to its asset name, its SHA-256, and the generation

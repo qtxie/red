@@ -1,6 +1,6 @@
 Red [
-	Title: "Windows x64 hybrid compiler frontend/linker core"
-	File:  %compiler-windows-hybrid-core.red
+	Title: "Hybrid compiler frontend/linker core"
+	File:  %compiler-hybrid-core.red
 ]
 
 ; Keep the hybrid package's source closure independent of the legacy emitter

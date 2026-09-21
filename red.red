@@ -6,5 +6,5 @@ Red [
 
 compiler-command: "red"
 
-#include %system/compiler-windows-hybrid-bootstrap.red
+#include %system/compiler-hybrid-bootstrap.red
 #include %compiler/bootstrap-driver.red

@@ -41,9 +41,9 @@ def platforms(seeds):
     """The platforms a seed build produced, read off its artifact directories.
 
     Deliberately not a fixed list: a platform joins the seed by getting a leg
-    in build-hybrid-toolchain.yml, and nothing else has to change. A toolchain
-    only exists for targets that have a toolchain source -- Windows-X86-64 and
-    Darwin-ARM64 today -- so the set here is whatever the build could make.
+    in build-hybrid-toolchain.yml, and nothing else has to change. Every
+    target uses the same toolchain source, red-toolchain-hybrid.red, which is
+    a cross-compiler.
     """
     found = sorted(
         path.name[len("seed-"):]

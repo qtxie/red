@@ -1,13 +1,13 @@
 Red [
 	Title: "Standalone saved-frontend hybrid backend"
-	File:  %red-bootstrap-windows-hybrid-backend.red
+	File:  %red-bootstrap-hybrid-backend.red
 	Config: [show: 'X86-64-Hybrid-only]
 ]
 
 compiler-root: system/options/path
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
-#include %system/compiler-windows-hybrid-bootstrap.red
+#include %system/compiler-hybrid-bootstrap.red
 #include %compiler/version.red
 #include %compiler/bootstrap-options.red
 #include %compiler/saved-frontend.red

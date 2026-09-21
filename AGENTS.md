@@ -11,7 +11,7 @@
 
 - Verified self-hosting baseline: `build/self-hosting/merge-red64/hybrid-compiler60.exe`
   (built from `hybrid-compiler59.exe`). 59->60 successfully self-compiles
-  `red-bootstrap-windows-hybrid.red` (fixed point, output 5983232 bytes; the two
+  `red-bootstrap-hybrid.red` (fixed point, output 5983232 bytes; the two
   generations emit byte-identical Red/System programs apart from the PE
   timestamp and checksum).
   Debug-mode baseline: `hybrid-compiler59d.exe` (58d->59d, output 8648192
@@ -818,7 +818,7 @@
 - The standalone toolchain builds and runs again. Re-verified at 179:
   `hybrid-compiler179.exe -r -t Windows-X86-64 -o
   build/red-toolchain/windows-x64/red-toolchain-179.exe
-  red-toolchain-windows-hybrid.red` produces 7677952 bytes (it needs
+  red-toolchain-hybrid.red` produces 7677952 bytes (it needs
   `build/generated/red-toolchain-resources.generated.red`, which is no longer
   in the repository -- generate it first). `--self-check` reports 276
   resources; it compiles and runs a Red program with `-r` and in dev mode, and
@@ -1261,7 +1261,7 @@
     what shows it: cross-compiling `red-toolchain-darwin-hybrid.red` with 184
     and with 185 gives the same 6723488 bytes but **5911 differing bytes** in
     691 runs, all of them frame offsets and immediates, while the same pair on
-    `red-toolchain-windows-hybrid.red` -- which the change cannot reach --
+    `red-toolchain-hybrid.red` -- which the change cannot reach --
     differs by **16**, the build-clock noise floor. So Darwin gets the same
     narrow change Linux-ARM64 gets: any call with more than eight arguments
     reserves a wider outgoing area, and this paragraph used to conclude that

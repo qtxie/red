@@ -17,7 +17,7 @@
 ## 2. 自举纪律（AGENTS.md）
 
 - 引导编译器：`build/self-hosting/merge-red64/hybrid-compilerNN.exe`（本分支已推进到 **80**，81 待重生成）。一律用
-  `hybrid-compilerNN.exe -r -t Windows-X86-64 -o build/self-hosting/merge-red64/hybrid-compilerMM.exe red-bootstrap-windows-hybrid.red`
+  `hybrid-compilerNN.exe -r -t Windows-X86-64 -o build/self-hosting/merge-red64/hybrid-compilerMM.exe red-bootstrap-hybrid.red`
   （约 2 分钟）。**禁止 speed1**；每次构建检查 `$LASTEXITCODE`；新编译器必须先自编译验证；大里程碑单独 git commit。
 - Windows 回归比对：`$env:SOURCE_DATE_EPOCH='1700000000'` 固定构建日期后逐字节比对新旧编译器对同一源的 PE 产物；允许差异仅限：PE 时间戳(0x88)、校验和(0xD8)、内嵌的编译器构建日期字符串/生成号。
 - `red-console.exe` 可能挂死，必须带 timeout。
@@ -96,7 +96,7 @@ Linux exe 不能让模块体直接当 ELF 入口：入口是裸栈（argc 在 [r
 ```powershell
 # 构建新编译器（约2分钟，检查退出码）
 cd e:\temp3\red
-.\build\self-hosting\merge-red64\hybrid-compiler80.exe -r -t Windows-X86-64 -o build/self-hosting/merge-red64/hybrid-compiler81.exe red-bootstrap-windows-hybrid.red; "BUILD_EXIT=$LASTEXITCODE"
+.\build\self-hosting\merge-red64\hybrid-compiler80.exe -r -t Windows-X86-64 -o build/self-hosting/merge-red64/hybrid-compiler81.exe red-bootstrap-hybrid.red; "BUILD_EXIT=$LASTEXITCODE"
 
 # 交叉编译 Linux-x64
 .\build\self-hosting\merge-red64\hybrid-compiler81.exe -r -t Linux-X86-64 -o build/linux-hybrid/hello-rs-x64 build/linux-hybrid/hello.reds

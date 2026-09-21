@@ -76,14 +76,14 @@ expect core/2 "finish-code" 1 "compiler-rsir-core"
 expect core/2 "schema" 0 "compiler-rsir-core"
 expect core/2 "adapter" 0 "compiler-rsir-core"
 
-package: inventory/scan load %../../../system/compiler-windows-hybrid-bootstrap.red
+package: inventory/scan load %../../../system/compiler-hybrid-bootstrap.red
 expect package/2 "codegen-module" 0 "hybrid-package"
 expect package/2 "emitter" 0 "hybrid-package"
 expect package/2 "rs-o2-ir" 0 "hybrid-package"
 expect package/2 "linker" 0 "hybrid-package"
 expect package/2 "verify-current" 0 "hybrid-package"
-unless find read %../../../system/compiler-windows-hybrid-bootstrap.red
-	"#include %compiler-windows-hybrid-core.red"
+unless find read %../../../system/compiler-hybrid-bootstrap.red
+	"#include %compiler-hybrid-core.red"
 [
 	fail "hybrid package does not include its direct core"
 ]
@@ -163,17 +163,17 @@ walk-include-file: func [
 ]
 
 walk-include-file clean-path to file! rejoin [
-	root %system/compiler-windows-hybrid-bootstrap.red
+	root %system/compiler-hybrid-bootstrap.red
 ]
 walk-include-file clean-path to file! rejoin [
-	root %red-system-hybrid-windows.red
+	root %red-system-hybrid.red
 ]
 walk-include-file clean-path to file! rejoin [
-	root %red-bootstrap-windows-hybrid-backend.red
+	root %red-bootstrap-hybrid-backend.red
 ]
 walk-include-file clean-path to file! rejoin [root %red.red]
 walk-include-file clean-path to file! rejoin [
-	root %red-toolchain-windows-hybrid.red
+	root %red-toolchain-hybrid.red
 ]
 
 foreach forbidden [
@@ -191,7 +191,7 @@ foreach forbidden [
 ]
 
 foreach required [
-	%system/compiler-windows-hybrid-core.red
+	%system/compiler-hybrid-core.red
 	%system/compiler-hybrid-common.red
 	%system/formats/Mach-O-sign.red
 	%system/formats/Mach-O-ARM64.red
@@ -211,9 +211,9 @@ foreach required [
 	%compiler/toolchain-support.red
 	%compiler/saved-frontend.red
 	%red.red
-	%red-toolchain-windows-hybrid.red
-	%red-system-hybrid-windows.red
-	%red-bootstrap-windows-hybrid-backend.red
+	%red-toolchain-hybrid.red
+	%red-system-hybrid.red
+	%red-bootstrap-hybrid-backend.red
 ][
 	required: clean-path to file! rejoin [root required]
 	unless find closure-files required [

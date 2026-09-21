@@ -51,7 +51,7 @@ ssh macmini 'uname -m'    # -> arm64
   ```bash
   ./build/self-hosting/merge-red64/hybrid-compiler.exe -r -t Windows-X86-64 \
     -o build/self-hosting/merge-red64/hybrid-compiler3.exe \
-    red-bootstrap-windows-hybrid.red
+    red-bootstrap-hybrid.red
   ```
 - **Always check the build's exit code.** `build ... | tail -1` masks
   failures (the `&&` chain keeps going on a dead binary). Use
@@ -59,7 +59,7 @@ ssh macmini 'uname -m'    # -> arm64
 - A plain bootstrap exe can only compile Red/System. Compiling Red
   programs needs the full toolchain (embedded resources), built via
   `tools/self_hosting/build-windows-hybrid-toolchain.ps1` (pwsh 7). The
-  toolchain entry is `red-toolchain-windows-hybrid.red`; its RSIR exceeded
+  toolchain entry is `red-toolchain-hybrid.red`; its RSIR exceeded
   the old 16 MB limit, hence DEFAULT-MAX-BYTES is now 64 MB
   (compiler/rsir-frontend.red).
 - `hybrid-compiler.exe` is currently on disk at the pre-custom-call state;

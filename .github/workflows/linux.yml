@@ -12,6 +12,12 @@ env:
 
 jobs:
   Linux-X64-All:
+    # Blocked: there is no Linux toolchain. build-red-toolchain.red has a
+    # source for Windows-X86-64 and Darwin-ARM64 only, so no Linux seed can be
+    # built and the suites have no compiler to compile their tests with.
+    # Re-enable once a Linux toolchain source exists; Linux binaries today are
+    # cross-compiled from Windows and shipped to a Linux box to run.
+    if: false
     runs-on: ubuntu-24.04
     name: Run Linux x86-64 Tests
     timeout-minutes: 90

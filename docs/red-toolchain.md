@@ -258,9 +258,17 @@ hashes cover those bytes.
 
 ## GitHub Actions
 
-Every CI job takes its compiler and console from a **seed**: one toolchain and
-one CLI console per platform, published as GitHub release assets. No workflow
-reads a repository variable to find them.
+Every CI job takes its compiler and console from a **seed**: one toolchain, one
+CLI console, and where one exists a GUI console, per platform, published as
+GitHub release assets. No workflow reads a repository variable to find them.
+
+Only a target with a toolchain source has one. `build-red-toolchain.red` maps
+`Windows-X86-64` and `Darwin-ARM64`, and nothing else: Linux binaries are
+cross-compiled from those and shipped to a Linux box to run, so there is no
+Linux toolchain to seed and `linux.yml` / `ARM64.yml` stay disabled until a
+Linux toolchain source exists. The manifest reads its platform list from the
+artifact directories, so a new platform joins by getting a leg in
+`build-hybrid-toolchain.yml` and nothing else has to change.
 
 - `ci-seed` is a floating release that holds nothing but `MANIFEST.json`,
   mapping each platform to its asset name, its SHA-256, and the generation

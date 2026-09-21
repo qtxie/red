@@ -21,12 +21,12 @@ manifest_module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = manifest_module
 spec.loader.exec_module(manifest_module)
 
-PLATFORMS = manifest_module.PLATFORMS
+PLATFORMS = ("windows-x64", "linux-x64", "linux-arm64", "darwin-arm64")
 
 
-def seed_tree(root, gui_platforms=()):
+def seed_tree(root, platforms=PLATFORMS, gui_platforms=()):
     """One artifact directory per platform, as a seed build leaves behind."""
-    for platform in PLATFORMS:
+    for platform in platforms:
         directory = root / f"seed-{platform}"
         directory.mkdir(parents=True)
         (directory / f"red-toolchain-{platform}.tar.gz").write_bytes(b"toolchain")
@@ -59,6 +59,12 @@ class ManifestTest(unittest.TestCase):
             "--commit", "abc123",
             "--out", str(self.out),
         ]
+
+    def test_platforms_come_from_the_artifact_directories(self):
+        root = self.root / "two-only"
+        seeds = seed_tree(root, platforms=("windows-x64", "darwin-arm64"))
+        manifest = manifest_module.build(seeds, self.root / "a2", "seed-2", "abc")
+        self.assertEqual(sorted(manifest["assets"]), ["darwin-arm64", "windows-x64"])
 
     def test_every_platform_has_a_toolchain_and_console(self):
         manifest = self.build()

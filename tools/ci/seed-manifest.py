@@ -37,7 +37,22 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-PLATFORMS = ("windows-x64", "linux-x64", "linux-arm64", "darwin-arm64")
+def platforms(seeds):
+    """The platforms a seed build produced, read off its artifact directories.
+
+    Deliberately not a fixed list: a platform joins the seed by getting a leg
+    in build-hybrid-toolchain.yml, and nothing else has to change. A toolchain
+    only exists for targets that have a toolchain source -- Windows-X86-64 and
+    Darwin-ARM64 today -- so the set here is whatever the build could make.
+    """
+    found = sorted(
+        path.name[len("seed-"):]
+        for path in seeds.glob("seed-*")
+        if path.is_dir() and any(path.iterdir())
+    )
+    if not found:
+        fail(f"no seed-<platform> directories under {seeds}")
+    return found
 
 # (filename prefix, manifest key, required). A platform that ships no GUI
 # console simply has no "gui" entry, and fetch-seed only ever asks for a
@@ -89,7 +104,7 @@ def build(seeds, stage_dir, generation, commit):
     stage_dir.mkdir(parents=True, exist_ok=True)
 
     assets = {}
-    for platform in PLATFORMS:
+    for platform in platforms(seeds):
         entry = {}
         for prefix, key, required in COMPONENTS:
             found = asset(seeds, prefix, platform, required)

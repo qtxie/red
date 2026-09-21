@@ -305,7 +305,11 @@ OS-text-box-metrics: func [
 			if zero? cnt [cnt: 1]
 			integer/push cnt
 		]
-		default [0]
+		;-- Every arm has to yield one value: the switch is this function's
+		;   result, and a bare `0` merges into it as an integer!, which does
+		;   not join with the red-value! the other arms produce. `none` is
+		;   what the GTK backend's twin returns here.
+		default [none-value]
 	]
 ]
 

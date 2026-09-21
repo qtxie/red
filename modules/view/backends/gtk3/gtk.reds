@@ -144,6 +144,10 @@ GdkEventButton!: alias struct! [
 	y_root		[float!]
 ]
 
+;-- Laid out exactly as gdk/gdkevents.h declares _GdkEventCrossing. The
+;   motion tail it used to carry -- axes, state, is_hint, device -- belongs
+;   to GdkEventMotion, and it shadowed the real `state` with a second
+;   member of the same name.
 GdkEventCrossing!: alias struct! [
 	type 		[integer!]
 	window		[int-ptr!]
@@ -154,11 +158,6 @@ GdkEventCrossing!: alias struct! [
 	y			[float!]
 	x_root		[float!]
 	y_root		[float!]
-	axes		[float-ptr!]
-	state		[integer!]
-	is_hint1	[byte!]
-	is_hint2	[byte!]
-	device		[int-ptr!]
 	mode		[integer!]
 	detail		[integer!]
 	focus		[logic!]

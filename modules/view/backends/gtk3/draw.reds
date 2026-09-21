@@ -295,7 +295,7 @@ ctx-matrix-adapt: func [
 	if dc/pattern? [exit]
 	cairo_get_matrix dc/cr saved
 	cairo_get_matrix dc/cr c
-	cairo_matrix_multiply c c dc/device-matrix
+	cairo_matrix_multiply c c as cairo_matrix_t! dc/device-matrix
 	cairo_set_matrix dc/cr c
 ]
 

@@ -72,22 +72,25 @@ set-app-theme: func [
 set-env-theme: func [
 	/local
 		env		[str-array!]
-		strarr	[handle!]
+		strarr	[pointer! [c-string!]]
 		str		[c-string!]
 		found	[logic!]
 ][
 	env: system/env-vars
 	found: no
 	until [
-		strarr: g_strsplit env/item "=" 2
-		str: as c-string! strarr/1
+		;-- g_strsplit hands back a gchar**, so it has to be indexed as one:
+		;   a handle! indexes in integer! units and drops the upper half of
+		;   every pointer it reads.
+		strarr: as pointer! [c-string!] g_strsplit env/item "=" 2
+		str: strarr/1
 		if 0 = g_strcmp0 str "RED_GTK_STYLES" [
-			str: as c-string! strarr/2
+			str: strarr/2
 			set-app-theme str no
 			found: yes
 		]
 		env: env + 1
-		g_strfreev strarr
+		g_strfreev as handle! strarr
 		any [found env/item = null]
 	]
 ]

@@ -117,7 +117,10 @@ build-menu: func [
 		key		 [Cocoa-handle!]
 		action	 [Cocoa-handle!]
 ][
-	if TYPE_OF(menu) <> TYPE_BLOCK [return null] 
+	;-- Cocoa-handle! is an int64! here (and an integer! on the other
+	;   Apple ABI), not a pointer!, so a null pointer is not a value it
+	;   can hold. Zero is the same empty handle either way.
+	if TYPE_OF(menu) <> TYPE_BLOCK [return 0]
 
 	value: block/rs-head menu
 	tail:  block/rs-tail menu

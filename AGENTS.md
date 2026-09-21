@@ -20,13 +20,26 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler196.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler202.exe`
+  (201->202, output 6420480 bytes). 202 carries the **gui-console on every
+  remote target** work: `merged-type` now widens two integer widths at a
+  join on both backends (a `switch` arm ending in a char! literal joining a
+  default that yields an integer! used to merge to 0 and be rejected), and
+  the ARM64 float temporaries are v16-v30 instead of v16-v23 -- AAPCS64 and
+  Apple's ABI both make v16-v31 plain temporaries, and eight of them turned
+  a deep float expression into UNSUPPORTED. Re-measured at 202: Red/System
+  suite 10593 tests / 12680 assertions / 12680 passed / 0 failed / 0
+  compile-failures. `gui-console.red` **builds for Linux-X86-64
+  (3347840), Linux-ARM64 (2792624) and Darwin-ARM64 (2775984)** -- the first
+  time any non-Windows gui-console has compiled. Neither of the two remote
+  GUIs is up yet: see "Remote GUI runtimes are not up yet" below.
+- Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler196.exe`
   (195->196, output 6420480 bytes). 196 carries **one real codegen fix**:
   ARM64 stack arguments are packed at their own alignment on Darwin, not
   rounded to eight-byte slots as AAPCS64 requires. See "Apple's ARM64 ABI
   does not round stack arguments up" below -- it is the first thing the
   whole cross-target matrix existed to catch.
-- Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler194.exe`
+- Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler194.exe`
   (193->194, output 6419968 bytes; 194 and 195 differ in 15 bytes -- the PE
   timestamp, the PE checksum, the output file name, the two `movabs rax`
   immediates that carry the compiler's build clock, and the
@@ -1277,6 +1290,31 @@
   by LITERAL/NATIVE system/pc/CALL sequence breaks stack-depth join validation).
 - After building a new compiler from any bootstrap, always verify it by
   self-compiling the bootstrap source before adopting it as the new baseline.
+
+- **Remote GUI runtimes are not up yet** (open, found at 202). `gui-console.red`
+  *compiles* for Linux-X86-64, Linux-ARM64 and Darwin-ARM64, but neither
+  remote GUI runs. Two separate defects, both pre-existing in the backends:
+  1. **GTK3, 64-bit pointer truncation.** `set-defaults` held the `gchar*`
+     that `g_object_get` writes for `gtk-font-name` in an `integer!` local,
+     and `set-env-theme` indexed `g_strsplit`'s `gchar**` through a
+     `handle!`, which indexes in integer! units and drops the upper half of
+     every pointer it reads. Both are fixed at 202. A third instance is
+     still open: a wrapper calls `g_object_get_qdata(widget, quark)` with a
+     widget whose upper 32 bits are gone, so the program dies with
+     `*** Runtime Error 1: access violation` before a window opens.
+  2. **Darwin-ARM64 `objc_msgSend`.** Apple's ARM64 ABI spills *every*
+     variadic argument to the stack -- clang emits `f(1, 2, 3, 4)` as `w0=1`
+     with 2, 3 and 4 at sp+0, sp+8 and sp+16 -- but
+     `objc_msgSend(id self, SEL op, ...)` has two *named* parameters, which
+     must stay in x0 and x1. `cocoa.reds` declares it `[[variadic objc]]`
+     with no parameters at all, so `argument-count > call-parameter-count`
+     holds for every argument and the backend spills all three of them; x0
+     and x1 keep stale values and the runtime reports
+     `+[RedButtonCell dButton]: unrecognized selector`. `arm64-codegen` has
+     no notion of the `objc` attribute -- `compiler-core` uses it only to
+     suppress float32! promotion -- so the fix belongs either in the backend
+     or in the `cocoa.reds` declaration, and has to be checked on every
+     ARM64 and Linux path before it lands.
 
 # Red/System Idiomatic Patterns - Key Insights
 

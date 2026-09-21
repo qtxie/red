@@ -597,13 +597,16 @@ parse-font-name: func [
 
 set-defaults: func [
 	/local
-		font	[integer!]
+		font	[handle!]
 		str		[c-string!]
 		size	[integer!]
 		len		[integer!]
 ][
 	settings: gtk_settings_get_default
-	font: 0
+	font: as handle! 0
+	;-- gtk-font-name is a gchar*, so g_object_get stores a full pointer here:
+	;   an integer! local keeps only its low 32 bits and `as c-string!` on it
+	;   then zero-extends those, handing parse-font-name a wild address.
 	g_object_get [settings "gtk-font-name" :font null]
 
 	str: as c-string! font

@@ -460,7 +460,6 @@ get-event-picked: func [
 	evt		[red-event!]
 	return: [red-value!]
 	/local
-		res [red-value!]
 		int	[red-integer!]
 		obj [Cocoa-handle!]
 		n	[integer!]
@@ -469,6 +468,12 @@ get-event-picked: func [
 		idx	[integer!]
 		synth [synth-event!]
 ][
+	;-- Every arm must leave a value on the stack: the switch is this
+	;   function's result. `res: none/push` was an assignment, which leaves
+	;   nothing, and EVT_DBL_CLICK's bare `if` did the same whenever the
+	;   event did not come from a table view -- so the join after the switch
+	;   had one edge arriving with a value and another without, which the
+	;   ARM64 planner rejects.
 	as red-value! switch evt/type [
 		EVT_ZOOM
 		EVT_PAN
@@ -476,7 +481,7 @@ get-event-picked: func [
 		EVT_TWO_TAP
 		EVT_PRESS_TAP [
 			either evt/type = EVT_ZOOM [
-				res: as red-value! none/push
+				as red-value! none/push
 			][
 				int: as red-integer! stack/push*
 				int/header: TYPE_INTEGER
@@ -507,9 +512,11 @@ get-event-picked: func [
 		EVT_IME [to-red-string ime-text null]
 		EVT_DBL_CLICK [
 			obj: get-event-object evt
-			if (object_getClass obj) = objc_getClass "RedTableView" [
+			either (object_getClass obj) = objc_getClass "RedTableView" [
 				n: as integer! objc_msgSend [obj sel_getUid "selectedRow"]
 				either n = -1 [none/push][integer/push n + 1]
+			][
+				none/push
 			]
 		]
 		default	 [integer/push evt/flags << 16 >> 16]

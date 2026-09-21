@@ -265,7 +265,13 @@ arm64-codegen: context [
 	FIRST_FLOAT_HOME_REGISTER: 8
 	FLOAT_HOME_REGISTER_COUNT: 8
 	FIRST_FLOAT_TEMP_REGISTER: 16
-	FLOAT_TEMP_REGISTER_COUNT: 8
+	;-- AAPCS64 and Apple's ARM64 ABI both make v16-v31 plain temporaries:
+	;   v0-v7 carry arguments and results, and v8-v15 are the callee-saved
+	;   "home" pair above. v31 is kept back as the move scratch, so the
+	;   expression stack can own v16-v30. Eight was an arbitrary slice of
+	;   them and turned a deep float expression -- create-diamond-pattern
+	;   in the GTK backend is one -- into UNSUPPORTED.
+	FLOAT_TEMP_REGISTER_COUNT: 15
 	FLOAT_SCRATCH_REGISTER: 31
 
 	INVALID_IR:  -1
@@ -680,10 +686,28 @@ arm64-codegen: context [
 		]
 		left-kind: type-kind left view
 		right-kind: type-kind right view
-		either all [
-			left-kind = right-kind
-			any [left-kind = -6 left-kind = -2 left-kind = -3]
-		][left][0]
+		case [
+			all [
+				left-kind = right-kind
+				any [left-kind = -6 left-kind = -2 left-kind = -3]
+			][left]
+			;-- Two edges can reach the same place carrying different integer
+			;   widths -- `switch` leaves exactly that behind when one arm ends
+			;   in a char! literal and the default in an integer!. They still
+			;   describe one value: the wider of the two, the same answer a
+			;   binary operation gets from integer-kind-widens?. Widening the
+			;   merge is safe because every arm has already stored its value
+			;   at full register width.
+			all [
+				left-kind >= 1 left-kind <= 8
+				right-kind >= 1 right-kind <= 8
+			][
+				either integer-kind-widens? right-kind left-kind [left][
+					either integer-kind-widens? left-kind right-kind [right][0]
+				]
+			]
+			true [0]
+		]
 	]
 
 	integer-type?: func [ref [integer!] view [rsir-view!] return: [logic!]

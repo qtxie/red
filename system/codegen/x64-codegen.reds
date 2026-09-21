@@ -712,10 +712,28 @@ x64-codegen: context [
 		]
 		left-kind: logical-kind left table
 		right-kind: logical-kind right table
-		either all [
-			left-kind = right-kind
-			any [left-kind = -6 left-kind = -2 left-kind = -3]
-		][left][0]
+		case [
+			all [
+				left-kind = right-kind
+				any [left-kind = -6 left-kind = -2 left-kind = -3]
+			][left]
+			;-- Two edges can reach the same place carrying different integer
+			;   widths -- `switch` leaves exactly that behind when one arm ends
+			;   in a char! literal and the default in an integer!. They still
+			;   describe one value: the wider of the two, the same answer a
+			;   binary operation gets from integer-common-ref. Widening the
+			;   merge is safe because every arm has already stored its value
+			;   at full register width.
+			all [
+				left-kind >= 1 left-kind <= 8
+				right-kind >= 1 right-kind <= 8
+			][
+				either integer-kind-widens? right-kind left-kind [left][
+					either integer-kind-widens? left-kind right-kind [right][0]
+				]
+			]
+			true [0]
+		]
 	]
 
 	signed-type?: func [

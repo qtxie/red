@@ -14,13 +14,7 @@ env:
   RED_SYSTEM_TARGET: Linux-ARM64
 
 jobs:
-  toolchain:
-    uses: ./.github/workflows/build-hybrid-toolchain.yml
-    with:
-      platforms: '["linux-arm64"]'
-
   Run-ARM64-Tests:
-    needs: toolchain
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
     steps:
@@ -30,7 +24,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: linux-arm64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
 
     - name: run every Red suite
       env:

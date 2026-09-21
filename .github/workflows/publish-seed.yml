@@ -1,0 +1,125 @@
+name: Publish a CI seed
+
+# Turns the artifacts of a seed build into the seed every later CI run reads.
+#
+# The binaries go to an immutable release named by the caller
+# (seed-<run id>). The pointer is a separate floating release, ci-seed, that
+# holds nothing but MANIFEST.json. GitHub cannot overwrite a release asset in
+# place, so promotion recreates ci-seed; because the binaries are published
+# first and never rewritten, the new manifest can never name a file that is
+# not there yet.
+#
+# Nothing here is configured: the asset URLs live in the manifest, and the
+# manifest URL is derived from github.repository.
+
+on:
+  workflow_call:
+    inputs:
+      generation:
+        description: 'release tag that will hold this generation'
+        type: string
+        required: true
+      commit:
+        description: 'commit the seed was built from'
+        type: string
+        required: true
+      keep:
+        description: 'how many past generations to keep'
+        type: string
+        required: false
+        default: '5'
+
+permissions:
+  contents: write
+
+# Two promotions must not interleave: the second could recreate ci-seed while
+# the first is still uploading.
+concurrency:
+  group: ci-seed-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Download seed artifacts
+      uses: actions/download-artifact@v8
+      with:
+        pattern: seed-*
+        path: build/seed/artifacts
+
+    - name: Assemble the seed manifest
+      env:
+        GENERATION: ${{ inputs.generation }}
+        COMMIT: ${{ inputs.commit }}
+      run: |
+        set -euo pipefail
+        python3 tools/ci/seed-manifest.py \
+          --seeds build/seed/artifacts \
+          --stage build/seed/assets \
+          --generation "$GENERATION" \
+          --commit "$COMMIT" \
+          --out build/seed/MANIFEST.json
+        cat build/seed/MANIFEST.json >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Publish the generation release
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GENERATION: ${{ inputs.generation }}
+        COMMIT: ${{ inputs.commit }}
+      run: |
+        set -euo pipefail
+        mapfile -d '' files < <(find build/seed/assets -type f -print0 | sort -z)
+        test "${#files[@]}" -gt 0
+        gh release create "$GENERATION" \
+          --target "$COMMIT" \
+          --title "$GENERATION" \
+          --notes "CI seed generation built from $COMMIT." \
+          "${files[@]}"
+
+    - name: Point ci-seed at this generation
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GENERATION: ${{ inputs.generation }}
+        COMMIT: ${{ inputs.commit }}
+      run: |
+        set -euo pipefail
+        gh release delete ci-seed --yes 2>/dev/null || true
+        gh release create ci-seed \
+          --target "$COMMIT" \
+          --title "CI seed" \
+          --notes "Current CI seed: $GENERATION, built from $COMMIT." \
+          build/seed/MANIFEST.json
+
+    - name: Prune old generations
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        KEEP: ${{ inputs.keep }}
+      run: |
+        set -euo pipefail
+        # Written to a file first: a heredoc and a pipe would both be stdin.
+        gh release list --limit 200 --json tagName,createdAt > build/seed/releases.json
+        python3 - "$KEEP" build/seed/releases.json > build/seed/prune.txt <<'PY'
+        import json, sys
+
+        keep = int(sys.argv[1])
+        with open(sys.argv[2]) as handle:
+            releases = json.load(handle)
+        generations = sorted(
+            (item for item in releases if item["tagName"].startswith("seed-")),
+            key=lambda item: item["createdAt"],
+            reverse=True,
+        )
+        for release in generations[keep:]:
+            print(release["tagName"])
+        PY
+        while read -r tag; do
+          test -n "$tag" || continue
+          echo "pruning $tag"
+          gh release delete "$tag" --yes
+        done < build/seed/prune.txt

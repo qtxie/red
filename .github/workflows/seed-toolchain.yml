@@ -1,0 +1,52 @@
+name: Seed the CI toolchain chain
+
+# The cold start of the chain, and the way back when a generation is bad.
+#
+# Run it once with bootstrap-source=auto: nothing is published yet, so each
+# platform falls back to its pinned bootstrap URL and the result becomes the
+# first seed. Run it again later and it builds from the seed instead.
+#
+# Because workflow_dispatch lets you pick a ref, re-running this at an older
+# commit rebuilds that generation and can republish it as the seed, which is
+# the rollback path if a nightly promotion turns out to be broken.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap-source:
+        description: >
+          auto: the current seed, falling back to the pinned bootstrap URL
+          when this platform has no seed yet. seed: the seed only. pinned:
+          the pinned bootstrap URL only.
+        type: choice
+        required: false
+        default: auto
+        options:
+          - auto
+          - seed
+          - pinned
+      platforms:
+        description: 'JSON array of platforms to build'
+        type: string
+        required: false
+        default: '["windows-x64","linux-x64","linux-arm64","darwin-arm64"]'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-hybrid-toolchain.yml
+    with:
+      platforms: ${{ inputs.platforms }}
+      bootstrap-source: ${{ inputs.bootstrap-source }}
+
+  publish:
+    needs: build
+    uses: ./.github/workflows/publish-seed.yml
+    permissions:
+      contents: write
+    with:
+      generation: seed-${{ github.run_id }}
+      commit: ${{ github.sha }}

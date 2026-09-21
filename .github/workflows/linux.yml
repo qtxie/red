@@ -11,13 +11,7 @@ env:
   RED_SYSTEM_TARGET: Linux-X86-64
 
 jobs:
-  toolchain:
-    uses: ./.github/workflows/build-hybrid-toolchain.yml
-    with:
-      platforms: '["linux-x64"]'
-
   Linux-X64-All:
-    needs: toolchain
     runs-on: ubuntu-24.04
     name: Run Linux x86-64 Tests
     timeout-minutes: 90
@@ -36,7 +30,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: linux-x64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
 
     - name: run every Red suite
       env:

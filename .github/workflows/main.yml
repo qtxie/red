@@ -14,13 +14,7 @@ env:
   RED_SYSTEM_LIBRARY_TARGET: Windows-X86-64-DLL
 
 jobs:
-  toolchain:
-    uses: ./.github/workflows/build-hybrid-toolchain.yml
-    with:
-      platforms: '["windows-x64"]'
-
   Core:
-    needs: toolchain
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -28,7 +22,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
     - name: run Red unit tests
       shell: pwsh
       env:
@@ -40,7 +33,6 @@ jobs:
         exit $LASTEXITCODE
 
   Core-Release:
-    needs: toolchain
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -48,7 +40,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
     - name: run Red unit tests in release mode
       shell: pwsh
       env:
@@ -60,7 +51,6 @@ jobs:
         exit $LASTEXITCODE
 
   Core-Debug:
-    needs: toolchain
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -68,7 +58,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
     - name: run Red unit tests in debug mode
       shell: pwsh
       env:
@@ -80,7 +69,6 @@ jobs:
         exit $LASTEXITCODE
 
   View-Headless:
-    needs: toolchain
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -88,7 +76,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
     - name: run headless view/VID test (test GUI backend)
       shell: pwsh
       env:
@@ -100,7 +87,6 @@ jobs:
         exit $LASTEXITCODE
 
   Regression:
-    needs: toolchain
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -108,7 +94,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
     - name: run Red compiler tests
       shell: pwsh
       env:
@@ -120,7 +105,6 @@ jobs:
         exit $LASTEXITCODE
 
   Red-System-Test:
-    needs: toolchain
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -128,7 +112,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
     - name: run Red/System tests
       shell: pwsh
       env:
@@ -143,7 +126,6 @@ jobs:
         exit $LASTEXITCODE
 
   Windows-X64-All:
-    needs: toolchain
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -151,7 +133,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
     - name: prepare Windows x86-64 native test dependencies
       shell: pwsh
       run: |

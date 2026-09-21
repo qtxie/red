@@ -11,7 +11,13 @@ name: Build hybrid toolchain
 #   with:
 #     platforms: '["windows-x64"]'
 #
-# and download `red-toolchain-<platform>`.
+# and download `seed-<platform>`. Each artifact holds a toolchain archive and
+# a CLI console, which together are one generation of the CI seed.
+#
+# The bootstrap comes from the seed by default. With bootstrap-source=auto a
+# platform that has no seed yet falls back to its pinned bootstrap URL, which
+# is how the chain is cold started; auto logs loudly when it does, because a
+# silent fallback would mix generations.
 
 on:
   workflow_dispatch:
@@ -20,12 +26,20 @@ on:
         description: 'JSON array of platforms to build'
         type: string
         default: '["windows-x64","linux-x64","linux-arm64","darwin-arm64"]'
+      bootstrap-source:
+        description: 'auto | seed | pinned'
+        type: string
+        default: auto
   workflow_call:
     inputs:
       platforms:
         description: 'JSON array of platforms to build'
         type: string
         default: '["windows-x64","linux-x64","linux-arm64","darwin-arm64"]'
+      bootstrap-source:
+        description: 'auto | seed | pinned'
+        type: string
+        default: auto
 
 permissions:
   contents: read
@@ -90,8 +104,45 @@ jobs:
         python tools/codegen/sync-codegen-sites.py --check
         python -m unittest discover -s tools/codegen -p test_codegen_sites.py
 
+    - name: Fetch the seed bootstrap
+      id: seed
+      if: inputs.bootstrap-source != 'pinned'
+      continue-on-error: true
+      uses: ./.github/actions/fetch-seed
+      with:
+        platform: ${{ matrix.platform }}
+        component: toolchain
+        output: build/bootstrap/seed-toolchain${{ matrix.archive == 'zip' && '.zip' || '.tar.gz' }}
+
+    - name: Unpack the seed bootstrap (Windows)
+      if: steps.seed.outcome == 'success' && matrix.archive == 'zip'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Expand-Archive -Path 'build\bootstrap\seed-toolchain.zip' `
+          -DestinationPath 'build\bootstrap\bin'
+        # Add-Content, not Out-File: Out-File writes a BOM that can mangle the
+        # first key appended to GITHUB_ENV.
+        Add-Content -Path $env:GITHUB_ENV -Value 'BOOTSTRAP_PATH=build\bootstrap\bin\red-toolchain.exe'
+        echo "bootstrap: seed" >> $env:GITHUB_STEP_SUMMARY
+
+    - name: Unpack the seed bootstrap (Unix)
+      if: steps.seed.outcome == 'success' && matrix.archive != 'zip'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p build/bootstrap/bin
+        tar -xzf build/bootstrap/seed-toolchain.tar.gz -C build/bootstrap/bin
+        chmod 755 build/bootstrap/bin/red-toolchain
+        if [[ "$(uname -s)" == Darwin ]]; then
+          xattr -dr com.apple.quarantine build/bootstrap/bin/red-toolchain || true
+        fi
+        echo "BOOTSTRAP_PATH=build/bootstrap/bin/red-toolchain" >> "$GITHUB_ENV"
+        echo "bootstrap: seed" >> "$GITHUB_STEP_SUMMARY"
+
     - name: Download pinned bootstrap compiler (Windows)
-      if: matrix.archive == 'zip'
+      # Runs when the seed was not requested or is not there yet.
+      if: steps.seed.outcome != 'success' && matrix.archive == 'zip'
       shell: pwsh
       env:
         BOOTSTRAP_URL: ${{ matrix.bootstrap-url }}
@@ -111,9 +162,11 @@ jobs:
         if ($actual -ne $env:BOOTSTRAP_SHA256) {
           throw "Bootstrap SHA-256 mismatch: $actual"
         }
+        Add-Content -Path $env:GITHUB_ENV -Value "BOOTSTRAP_PATH=$env:BOOTSTRAP_PATH"
+        echo "bootstrap: pinned $env:BOOTSTRAP_PATH" >> $env:GITHUB_STEP_SUMMARY
 
     - name: Download pinned bootstrap compiler (Unix)
-      if: matrix.archive != 'zip'
+      if: steps.seed.outcome != 'success' && matrix.archive != 'zip'
       shell: bash
       env:
         BOOTSTRAP_URL: ${{ matrix.bootstrap-url }}
@@ -134,12 +187,22 @@ jobs:
           --output "$BOOTSTRAP_PATH" "$BOOTSTRAP_URL"
         echo "$BOOTSTRAP_SHA256  $BOOTSTRAP_PATH" | shasum -a 256 --check
         chmod 755 "$BOOTSTRAP_PATH"
+        echo "BOOTSTRAP_PATH=$BOOTSTRAP_PATH" >> "$GITHUB_ENV"
+        echo "bootstrap: pinned $BOOTSTRAP_PATH" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Verify a bootstrap was resolved
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -z "${BOOTSTRAP_PATH:-}" ]]; then
+          echo 'No bootstrap compiler. Publish a seed, or run the seed workflow with bootstrap-source=pinned.' >&2
+          exit 1
+        fi
+        echo "bootstrap: $BOOTSTRAP_PATH"
 
     - name: Build a Red console and drive the fixed point (Windows)
       if: matrix.archive == 'zip'
       shell: pwsh
-      env:
-        BOOTSTRAP_PATH: ${{ matrix.bootstrap-path }}
       run: |
         $ErrorActionPreference = 'Stop'
         & $env:BOOTSTRAP_PATH -r -t Windows-X86-64 `
@@ -162,7 +225,6 @@ jobs:
       if: matrix.archive != 'zip'
       shell: bash
       env:
-        BOOTSTRAP_PATH: ${{ matrix.bootstrap-path }}
         TARGET: ${{ matrix.target }}
       run: |
         set -euo pipefail
@@ -176,6 +238,30 @@ jobs:
           --target "$TARGET" \
           --output build/dist/red-toolchain
 
+    - name: Build the CLI console (Windows)
+      if: matrix.archive == 'zip'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        New-Item -ItemType Directory -Force -Path '.\build\packages' | Out-Null
+        & .\build\fixed-point\h3\red-toolchain.exe -r -t Windows-X86-64 `
+          -o .\build\packages\red-cli-console-windows-x64.exe `
+          environment\console\CLI\console.red
+
+    - name: Build the CLI console (Unix)
+      if: matrix.archive != 'zip'
+      shell: bash
+      env:
+        TARGET: ${{ matrix.target }}
+        PLATFORM: ${{ matrix.platform }}
+      run: |
+        set -euo pipefail
+        mkdir -p build/packages
+        ./build/dist/red-toolchain -r -t "$TARGET" \
+          -o "build/packages/red-cli-console-$PLATFORM" \
+          environment/console/CLI/console.red
+        chmod 755 "build/packages/red-cli-console-$PLATFORM"
+
     - name: Package toolchain (Windows)
       if: matrix.archive == 'zip'
       shell: pwsh
@@ -184,8 +270,9 @@ jobs:
       run: |
         $ErrorActionPreference = 'Stop'
         $compiler = '.\build\fixed-point\h3\red-toolchain.exe'
-        $package = ".\build\packages\red-toolchain-$env:PLATFORM"
-        New-Item -ItemType Directory -Force -Path $package | Out-Null
+        # Staged outside build\packages so the artifact is not uploaded twice.
+        $package = ".\build\stage\red-toolchain-$env:PLATFORM"
+        New-Item -ItemType Directory -Force -Path $package,'.\build\packages' | Out-Null
         Copy-Item -LiteralPath $compiler -Destination $package
         & $compiler --toolchain-info |
           Set-Content -LiteralPath (Join-Path $package 'TOOLCHAIN-INFO.txt') -Encoding utf8NoBOM
@@ -193,9 +280,11 @@ jobs:
           Set-Content -LiteralPath (Join-Path $package 'RESOURCE-MANIFEST.txt') -Encoding ascii
         Compress-Archive -Path "$package\*" `
           -DestinationPath ".\build\packages\red-toolchain-$env:PLATFORM.zip"
-        $hash = (Get-FileHash -Algorithm SHA256 ".\build\packages\red-toolchain-$env:PLATFORM.zip").Hash.ToLowerInvariant()
-        "$hash  red-toolchain-$env:PLATFORM.zip" |
-          Set-Content -LiteralPath '.\build\packages\SHA256SUMS' -Encoding ascii
+        $console = ".\build\packages\red-cli-console-$env:PLATFORM.exe"
+        @(
+          "$((Get-FileHash -Algorithm SHA256 ".\build\packages\red-toolchain-$env:PLATFORM.zip").Hash.ToLowerInvariant())  red-toolchain-$env:PLATFORM.zip"
+          "$((Get-FileHash -Algorithm SHA256 $console).Hash.ToLowerInvariant())  red-cli-console-$env:PLATFORM.exe"
+        ) | Set-Content -LiteralPath '.\build\packages\SHA256SUMS' -Encoding ascii
 
     - name: Package toolchain (Unix)
       if: matrix.archive != 'zip'
@@ -209,12 +298,12 @@ jobs:
         COPYFILE_DISABLE=1 tar -czf "build/packages/red-toolchain-$PLATFORM.tar.gz" \
           -C build/dist red-toolchain
         cd build/packages
-        shasum -a 256 "red-toolchain-$PLATFORM.tar.gz" > SHA256SUMS
+        shasum -a 256 "red-toolchain-$PLATFORM.tar.gz" "red-cli-console-$PLATFORM" > SHA256SUMS
 
-    - name: Upload toolchain
+    - name: Upload seed
       uses: actions/upload-artifact@v7
       with:
-        name: red-toolchain-${{ matrix.platform }}
+        name: seed-${{ matrix.platform }}
         path: build/packages/
         if-no-files-found: error
         retention-days: 14

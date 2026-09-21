@@ -14,13 +14,7 @@ env:
   RED_SYSTEM_TARGET: Darwin-ARM64
 
 jobs:
-  toolchain:
-    uses: ./.github/workflows/build-hybrid-toolchain.yml
-    with:
-      platforms: '["darwin-arm64"]'
-
   Run-macOS-ARM64-Tests:
-    needs: toolchain
     runs-on: macos-15
     timeout-minutes: 90
     steps:
@@ -33,7 +27,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: darwin-arm64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
 
     - name: run every Red suite
       env:
@@ -67,7 +60,6 @@ jobs:
           build/self-hosting/**
 
   macOS-ARM64-View-Smoke:
-    needs: toolchain
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -77,7 +69,6 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: darwin-arm64
-        console-url: ${{ vars.RED_CLI_CONSOLE_URL }}
 
     - name: Build macOS ARM64 View smoke
       run: |

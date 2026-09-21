@@ -1,58 +1,81 @@
 name: Set up the Red test harness
 description: >
-  Downloads the hybrid toolchain artifact built by build-hybrid-toolchain.yml
-  and the Red CLI console that drives the suite runners, leaving them at
-  build/toolchain/bin/red-toolchain and build/toolchain/red-console.
+  Fetches the current seed for one platform and leaves a toolchain at
+  build/toolchain/bin/red-toolchain and the console that drives the suite
+  runners at build/toolchain/red-console. Both come from the same generation,
+  so the harness never mixes a compiler and a console of different ages, and
+  neither needs a repository variable.
 
 inputs:
   platform:
     description: 'windows-x64 | linux-x64 | linux-arm64 | darwin-arm64'
     required: true
-  console-url:
-    description: 'URL of the Red CLI console binary for this platform'
-    required: true
+  seed-tag:
+    description: 'release that holds MANIFEST.json; override to pin a generation'
+    required: false
+    default: ci-seed
 
 runs:
   using: composite
   steps:
-    - name: Download hybrid toolchain
-      uses: actions/download-artifact@v8
+    - name: Fetch seed toolchain
+      id: toolchain
+      uses: ./.github/actions/fetch-seed
       with:
-        name: red-toolchain-${{ inputs.platform }}
-        path: build/toolchain
+        platform: ${{ inputs.platform }}
+        component: toolchain
+        output: build/toolchain/seed-toolchain${{ inputs.platform == 'windows-x64' && '.zip' || '.tar.gz' }}
+        seed-tag: ${{ inputs.seed-tag }}
 
-    - name: Unpack hybrid toolchain (Windows)
+    - name: Unpack seed toolchain (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
-      env:
-        PLATFORM: ${{ inputs.platform }}
       run: |
         $ErrorActionPreference = 'Stop'
-        Expand-Archive -Path "build/toolchain/red-toolchain-$env:PLATFORM.zip" `
-          -DestinationPath build/toolchain/bin
+        Expand-Archive -Path 'build/toolchain/seed-toolchain.zip' `
+          -DestinationPath 'build/toolchain/bin'
 
-    - name: Unpack hybrid toolchain (Unix)
+    - name: Unpack seed toolchain (Unix)
       if: runner.os != 'Windows'
       shell: bash
-      env:
-        PLATFORM: ${{ inputs.platform }}
       run: |
         set -euo pipefail
         mkdir -p build/toolchain/bin
-        tar -xzf "build/toolchain/red-toolchain-$PLATFORM.tar.gz" -C build/toolchain/bin
+        tar -xzf build/toolchain/seed-toolchain.tar.gz -C build/toolchain/bin
         chmod 755 build/toolchain/bin/red-toolchain
 
-    - name: Download Red CLI console
+    - name: Fetch seed console
+      id: console
+      uses: ./.github/actions/fetch-seed
+      with:
+        platform: ${{ inputs.platform }}
+        component: console
+        output: build/toolchain/red-console
+        seed-tag: ${{ inputs.seed-tag }}
+
+    - name: Make the seed runnable
       shell: bash
-      env:
-        CONSOLE_URL: ${{ inputs.console-url }}
       run: |
         set -euo pipefail
-        if [[ -z "$CONSOLE_URL" ]]; then
-          echo 'Set the RED_CLI_CONSOLE_URL repository variable.' >&2
-          exit 1
-        fi
-        mkdir -p build/toolchain
-        curl --fail --location --retry 3 --retry-all-errors \
-          --output build/toolchain/red-console "$CONSOLE_URL"
         chmod 755 build/toolchain/red-console
+        # Downloaded binaries are quarantined on macOS and Gatekeeper refuses
+        # to run them until the attribute is cleared.
+        if [[ "$(uname -s)" == Darwin ]]; then
+          xattr -dr com.apple.quarantine build/toolchain/red-console build/toolchain/bin || true
+        fi
+        build/toolchain/red-console --version || true
+
+    - name: Record the seed generation
+      shell: bash
+      env:
+        GENERATION: ${{ steps.toolchain.outputs.generation }}
+        CONSOLE_GENERATION: ${{ steps.console.outputs.generation }}
+      run: |
+        set -euo pipefail
+        {
+          echo "seed generation: $GENERATION"
+          echo "seed console: $CONSOLE_GENERATION"
+        } >> "$GITHUB_STEP_SUMMARY"
+        if [[ "$GENERATION" != "$CONSOLE_GENERATION" ]]; then
+          echo "::warning::toolchain and console came from different seed generations"
+        fi

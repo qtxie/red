@@ -239,16 +239,45 @@ hashes cover those bytes.
 
 ## GitHub Actions
 
-`.github/workflows/build-windows-x64-hybrid-toolchain.yml` builds, verifies,
-and packages the Windows fixed-point compiler. Set the
-`RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL` repository variable to the public URL
-of this pinned bootstrap:
+Every CI job takes its compiler and console from a **seed**: one toolchain and
+one CLI console per platform, published as GitHub release assets. No workflow
+reads a repository variable to find them.
+
+- `ci-seed` is a floating release that holds nothing but `MANIFEST.json`,
+  mapping each platform to its asset name, its SHA-256, and the generation
+  release that holds it.
+- Each generation is an immutable release named `seed-<run id>`.
+- `.github/actions/fetch-seed` resolves the manifest and downloads one
+  component, verifying its checksum. Every URL is derived from
+  `github.repository`, which is why promoting a seed needs no configuration.
+
+### Cold start
+
+The chain still begins from a pinned binary. Run the **Seed the CI toolchain
+chain** workflow (`seed-toolchain.yml`) once: it builds every platform from its
+pinned bootstrap URL and publishes the first generation. After that the chain
+builds from the seed and the pinned URLs go unused.
+
+With `bootstrap-source=auto` a platform that has no seed yet falls back to its
+pinned URL and reports it in the job summary, because a silent fallback would
+mix generations. The pinned bootstraps are:
 
 ```text
 file:   red-bootstrap-speed1.exe
 sha256: 53f947164aaeb9912c233a0d7c4fb960ded05932fce809aaf34df75b9f9f7eba
 ```
 
-`.github/workflows/build-macos-arm64.yml` retains the Darwin ARM64 build and
-its separately pinned bootstrap. Replacing either bootstrap requires review
-and a checksum update in the corresponding workflow.
+### Promotion
+
+`build-toolchain.yml` builds every platform on each push, but only the nightly
+run and an explicit dispatch publish. Promotion is not on the push path
+because a release notifies every repository watcher.
+
+Promotion writes the new generation release first and then repoints `ci-seed`.
+GitHub cannot overwrite a release asset in place, so the pointer release is
+recreated: that swap is the only moment the manifest URL answers 404, and
+`fetch-seed` retries through it. The newest five generations are kept; the rest
+are pruned.
+
+To roll back, re-run `seed-toolchain.yml` at an older commit — the dispatch
+lets you choose the ref, and publishing rebuilds that generation.

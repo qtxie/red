@@ -1,0 +1,49 @@
+name: Build the Red toolchain
+
+# Builds every platform's toolchain and CLI console from the current seed.
+#
+# Publishing is deliberately not on the push path: a release notifies every
+# repository watcher, so the seed advances once a night instead of once a
+# push. Every push still proves the current source builds a toolchain; only
+# the nightly run and an explicit dispatch move the chain forward.
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # 04:00 UTC, after the day's pushes have settled.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: 'publish this build as the new seed'
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: build-toolchain-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-hybrid-toolchain.yml
+    with:
+      platforms: '["windows-x64","linux-x64","linux-arm64","darwin-arm64"]'
+      bootstrap-source: seed
+
+  promote:
+    needs: build
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.promote)
+    uses: ./.github/workflows/publish-seed.yml
+    permissions:
+      contents: write
+    with:
+      generation: seed-${{ github.run_id }}
+      commit: ${{ github.sha }}

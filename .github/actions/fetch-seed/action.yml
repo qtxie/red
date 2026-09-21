@@ -1,0 +1,114 @@
+name: Fetch a CI seed binary
+description: >
+  Resolves the current seed manifest from the floating ci-seed release and
+  downloads one component of it for one platform, verifying its SHA-256.
+  No repository variables are involved: every URL is derived from
+  github.repository, which is why promoting a seed needs no configuration.
+
+inputs:
+  platform:
+    description: 'windows-x64 | linux-x64 | linux-arm64 | darwin-arm64'
+    required: true
+  component:
+    description: 'toolchain | console'
+    required: true
+  output:
+    description: 'file to write the downloaded asset to'
+    required: true
+  seed-tag:
+    description: 'release that holds MANIFEST.json'
+    required: false
+    default: ci-seed
+
+outputs:
+  generation:
+    description: 'release tag this asset was published under'
+    value: ${{ steps.resolve.outputs.generation }}
+  asset:
+    description: 'asset name'
+    value: ${{ steps.resolve.outputs.asset }}
+  sha256:
+    description: 'SHA-256 the asset was verified against'
+    value: ${{ steps.resolve.outputs.sha256 }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve and download ${{ inputs.component }} for ${{ inputs.platform }}
+      id: resolve
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        COMPONENT: ${{ inputs.component }}
+        OUTPUT: ${{ inputs.output }}
+        SEED_TAG: ${{ inputs.seed-tag }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+
+        # Windows images ship python3, some only python; both are preinstalled.
+        py() {
+          if command -v python3 >/dev/null 2>&1; then python3 "$@"
+          elif command -v python >/dev/null 2>&1; then python "$@"
+          else echo 'No python on this runner.' >&2; exit 1
+          fi
+        }
+
+        mkdir -p "$(dirname "$OUTPUT")"
+        manifest="$OUTPUT.seed-manifest.json"
+        resolved="$OUTPUT.seed-resolved"
+
+        # Promotion rewrites MANIFEST.json by recreating a release, so a reader
+        # can catch the swap; retry through it.
+        curl --fail --location --silent --show-error \
+          --retry 5 --retry-all-errors --retry-delay 2 \
+          --output "$manifest" \
+          "https://github.com/$REPO/releases/download/$SEED_TAG/MANIFEST.json"
+
+        py - "$manifest" "$PLATFORM" "$COMPONENT" > "$resolved" <<'PY'
+        import json, sys
+
+        path, platform, component = sys.argv[1:4]
+        with open(path) as fh:
+            manifest = json.load(fh)
+        entry = manifest.get("assets", {}).get(platform)
+        if not entry:
+            sys.exit(f"seed manifest has no platform {platform!r}")
+        item = entry.get(component)
+        if not item:
+            sys.exit(f"seed manifest has no {component!r} for {platform!r}")
+        print(manifest["generation"])
+        print(item["name"])
+        print(item["sha256"])
+        PY
+
+        { read -r generation; read -r asset; read -r sha256; } < "$resolved"
+
+        curl --fail --location --silent --show-error \
+          --retry 5 --retry-all-errors --retry-delay 2 \
+          --output "$OUTPUT" \
+          "https://github.com/$REPO/releases/download/$generation/$asset"
+
+        py - "$OUTPUT" "$sha256" <<'PY'
+        import hashlib, sys
+
+        path, want = sys.argv[1:3]
+        got = hashlib.sha256(open(path, "rb").read()).hexdigest()
+        if got != want.lower():
+            sys.exit(f"seed SHA-256 mismatch for {path}\n  want {want}\n  got  {got}")
+        PY
+
+        rm -f "$manifest" "$resolved"
+
+        # A binary downloaded on macOS is quarantined and Gatekeeper refuses to
+        # run it until the attribute is cleared.
+        if [[ "$(uname -s)" == Darwin ]]; then
+          xattr -dr com.apple.quarantine "$OUTPUT" || true
+        fi
+
+        {
+          echo "generation=$generation"
+          echo "asset=$asset"
+          echo "sha256=$sha256"
+        } >> "$GITHUB_OUTPUT"
+        echo "seed $COMPONENT/$PLATFORM from \`$generation/$asset\`" >> "$GITHUB_STEP_SUMMARY"

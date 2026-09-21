@@ -12,9 +12,6 @@ concurrency:
   group: build-windows-x64-hybrid-toolchain-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  BOOTSTRAP_SHA256: 53f947164aaeb9912c233a0d7c4fb960ded05932fce809aaf34df75b9f9f7eba
-
 jobs:
   build:
     runs-on: windows-2022
@@ -30,28 +27,25 @@ jobs:
         python tools/codegen/sync-codegen-sites.py --check
         python -m unittest discover -s tools/codegen -p test_codegen_sites.py
 
-    - name: Download pinned bootstrap compiler
+    - name: Fetch the seed bootstrap compiler
+      uses: ./.github/actions/fetch-seed
+      with:
+        platform: windows-x64
+        component: toolchain
+        output: build/bootstrap/seed-toolchain.zip
+
+    - name: Unpack the seed bootstrap compiler
       shell: pwsh
-      env:
-        BOOTSTRAP_URL: ${{ vars.RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL }}
       run: |
         $ErrorActionPreference = 'Stop'
-        if (-not $env:BOOTSTRAP_URL) {
-          throw 'Set the RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL repository variable.'
-        }
-        $bootstrap = 'build\bootstrap\red-bootstrap-speed1.exe'
-        New-Item -ItemType Directory -Force -Path (Split-Path $bootstrap) | Out-Null
-        Invoke-WebRequest -Uri $env:BOOTSTRAP_URL -OutFile $bootstrap
-        $actual = (Get-FileHash -Algorithm SHA256 $bootstrap).Hash.ToLowerInvariant()
-        if ($actual -ne $env:BOOTSTRAP_SHA256) {
-          throw "Bootstrap SHA-256 mismatch: $actual"
-        }
+        Expand-Archive -Path 'build\bootstrap\seed-toolchain.zip' `
+          -DestinationPath 'build\bootstrap\bin'
 
     - name: Build a Red console and drive the fixed point
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        $bootstrap = '.\build\bootstrap\red-bootstrap-speed1.exe'
+        $bootstrap = '.\build\bootstrap\bin\red-toolchain.exe'
         & $bootstrap -r -t Windows-X86-64 `
           -o .\build\fixed-point\console.exe environment\console\CLI\console.red
         & .\build\fixed-point\console.exe `

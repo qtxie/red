@@ -12,9 +12,6 @@ concurrency:
   group: build-macos-arm64-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  BOOTSTRAP_SHA256: 644bfb20fe52dcb054ed9c63324f31b139fd163904730bb78a08b72617ebc81c
-
 jobs:
   build:
     runs-on: macos-15
@@ -30,24 +27,22 @@ jobs:
         set -euo pipefail
         test "$(uname -m)" = arm64
 
-    - name: Download pinned bootstrap compiler
+    - name: Fetch the seed bootstrap compiler
+      uses: ./.github/actions/fetch-seed
+      with:
+        platform: darwin-arm64
+        component: toolchain
+        output: build/bootstrap/seed-toolchain.tar.gz
+
+    - name: Unpack the seed bootstrap compiler
       shell: bash
-      env:
-        BOOTSTRAP_URL: ${{ vars.RED_DARWIN_ARM64_BOOTSTRAP_URL }}
       run: |
         set -euo pipefail
-        if [[ -z "$BOOTSTRAP_URL" ]]; then
-          echo "Set the RED_DARWIN_ARM64_BOOTSTRAP_URL repository variable." >&2
-          exit 1
-        fi
-
-        bootstrap=build/bootstrap/red-bootstrap-darwin-arm64
-        mkdir -p "$(dirname "$bootstrap")"
-        curl --fail --location --retry 3 --retry-all-errors \
-          --output "$bootstrap" "$BOOTSTRAP_URL"
-        echo "$BOOTSTRAP_SHA256  $bootstrap" | shasum -a 256 --check
-        chmod 755 "$bootstrap"
-        file "$bootstrap" | grep -q 'Mach-O 64-bit.*arm64'
+        mkdir -p build/bootstrap/bin
+        tar -xzf build/bootstrap/seed-toolchain.tar.gz -C build/bootstrap/bin
+        chmod 755 build/bootstrap/bin/red-toolchain
+        xattr -dr com.apple.quarantine build/bootstrap/bin/red-toolchain || true
+        file build/bootstrap/bin/red-toolchain | grep -q 'Mach-O 64-bit.*arm64'
 
     - name: Build standalone Red toolchain
       shell: bash
@@ -55,7 +50,7 @@ jobs:
         set -euo pipefail
         # The build is driven by Red, so the bootstrap first builds the console
         # that runs it.
-        bootstrap=build/bootstrap/red-bootstrap-darwin-arm64
+        bootstrap=build/bootstrap/bin/red-toolchain
         "$bootstrap" -r -t Darwin-ARM64 \
           -o build/dist/console environment/console/CLI/console.red
         chmod 755 build/dist/console

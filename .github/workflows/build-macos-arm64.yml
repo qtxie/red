@@ -53,9 +53,16 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        tools/self_hosting/build-red-toolchain.sh \
-          build/bootstrap/red-bootstrap-darwin-arm64 \
-          build/dist/red-toolchain
+        # The build is driven by Red, so the bootstrap first builds the console
+        # that runs it.
+        bootstrap=build/bootstrap/red-bootstrap-darwin-arm64
+        "$bootstrap" -r -t Darwin-ARM64 \
+          -o build/dist/console environment/console/CLI/console.red
+        chmod 755 build/dist/console
+        ./build/dist/console tools/self_hosting/build-red-toolchain.red \
+          --bootstrap "$bootstrap" \
+          --target Darwin-ARM64 \
+          --output build/dist/red-toolchain
 
     - name: Build GUI and CLI consoles
       shell: bash

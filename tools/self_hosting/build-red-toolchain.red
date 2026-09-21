@@ -493,4 +493,9 @@ build: does [
 	quit/return 0
 ]
 
-build
+;-- An uncaught script error leaves the console exit status at 0, which would
+;-- pass CI, so report it and fail.
+either error? result: try [build][
+	print ["*** Toolchain build error:" form result]
+	quit/return 1
+][]

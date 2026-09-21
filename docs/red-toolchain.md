@@ -69,26 +69,19 @@ supersedes.
 
 ## Windows x64 Build
 
-The Windows build uses the fixed-point hybrid compiler at
-`build/self-hosting/cc-speed1/red-bootstrap-speed1.exe` by default:
-
-```powershell
-& .\tools\self_hosting\build-windows-hybrid-toolchain.ps1
-```
-
-The output is
-`build/red-toolchain/windows-x64/red-toolchain.exe`. Pass `-Bootstrap`,
-`-Output`, or `-Dumpbin` to override the defaults. Every compiler and fixture
-process has a bounded timeout, and the build verifies PE32+, x64, dynamic-base,
-NX compatibility, embedded resources, target metadata, and the absence of a
-release `libRedRT.dll` import.
-
-The Red script above is the supported path on Windows too:
+The Red script above is the only supported path:
 
 ```text
 console tools/self_hosting/build-red-toolchain.red \
     --bootstrap build/self-hosting/merge-red64/hybrid-compilerNNN.exe
 ```
+
+The output is
+`build/red-toolchain/windows-x64/red-toolchain-<N>.exe`. It verifies PE32+,
+x64, dynamic-base, NX compatibility, embedded resources, target metadata, and
+the absence of a release `libRedRT.dll` import. Red's `call` cannot kill a
+child, so steps are not individually bounded the way the host scripts used to
+bound them.
 
 Run the compiler outside the repository with:
 
@@ -100,12 +93,13 @@ red-toolchain.exe -r -dlib -t Windows-X86-64-DLL -o example.dll example.reds
 ## Darwin ARM64 Build
 
 Use a focused, self-hosted Darwin ARM64 bootstrap compiler. Stage0 is not
-used.
+used. The Red script drives it:
 
-```sh
-tools/self_hosting/build-red-toolchain.sh \
-  build/self-hosting/red-bootstrap-stage2-darwin-arm64-bundle-sign \
-  build/red-toolchain/red-toolchain
+```text
+console tools/self_hosting/build-red-toolchain.red \
+    --target Darwin-ARM64 \
+    --bootstrap <darwin-arm64 bootstrap> \
+    --output build/red-toolchain/red-toolchain
 ```
 
 ### Darwin ARM64 hybrid cross-build
@@ -216,15 +210,22 @@ tools/self_hosting/test-toolchain-hermetic.sh \
 
 ## Fixed Point
 
-The Windows gate builds three consecutive generations through one canonical
-staging path, snapshots H1/H2/H3, compares H2 and H3 after normalizing only the
-PE COFF timestamp and checksum, verifies identical resource manifests, then
-runs the hermetic suite with H3. Builds use `SOURCE_DATE_EPOCH` when supplied,
-or the current Git commit timestamp otherwise:
+The gate builds three consecutive generations through one canonical staging
+path, snapshots H1/H2/H3, compares H2 and H3 after normalizing only the PE COFF
+timestamp and checksum, and verifies identical resource manifests. Builds use
+`SOURCE_DATE_EPOCH` when supplied, or the current Git commit timestamp
+otherwise:
 
-```powershell
-& .\tools\self_hosting\test-windows-hybrid-toolchain-fixed-point.ps1
+```text
+console tools/self_hosting/build-red-toolchain-fixed-point.red
 ```
+
+Each generation is compiled to the same staging path and copied out afterwards,
+because the toolchain embeds its own output path: building H2 and H3 under
+different names would make them differ for a reason that has nothing to do with
+the fixed point. The PE comparison is in Red too, so
+`python selfhost.py compare-pe` is no longer part of the gate. The hermetic
+suite is still a separate step, and still host-scripted.
 
 The Darwin fixed-point comparison uses consecutive generations under
 equal-length paths. Its documented normalization additionally covers the

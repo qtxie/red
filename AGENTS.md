@@ -435,14 +435,20 @@
   `hybrid-compilerN.exe -r -t <host> -o build/tmp/gen-res.exe
   tools/self_hosting/generate-toolchain-resources.red` then
   `build/tmp/gen-res.exe <repo-root> build/generated/red-toolchain-resources
-  .generated.red`. Build the generator for the *host*, not the target:
-  `tools/self_hosting/build-red-toolchain.sh` compiles it for `$target`, which
-  cannot run when cross-compiling.
+  .generated.red`. Build the generator for the *host*, not the target.
 - **The toolchain is built by Red, not by a shell**:
   `console.exe tools/self_hosting/build-red-toolchain.red --bootstrap <compiler>`
-  regenerates the resources, compiles, and verifies, on every host. It replaces
-  `tools/self_hosting/build-windows-hybrid-toolchain.ps1` and
-  `tools/self_hosting/build-red-toolchain.sh`. `--help` lists the options.
+  regenerates the resources, compiles, and verifies, on every host. The
+  fixed-point gate is
+  `console.exe tools/self_hosting/build-red-toolchain-fixed-point.red`
+  (three generations, each built by the previous one; the last two must be the
+  same image modulo the COFF timestamp and the PE checksum). `--help` lists the
+  options. Both replaced `build-windows-hybrid-toolchain.ps1`,
+  `build-red-toolchain.sh` and
+  `test-windows-hybrid-toolchain-fixed-point.ps1`, which are gone.
+- **A Red script that dies with an uncaught error still exits 0**, so both
+  scripts wrap their body: `either error? result: try [body][... quit/return 1]`.
+  `quit/return` inside `try` is *not* caught, so the normal path still exits.
 - **Dev mode now builds and runs a Red program on macOS** (fixed at 175, was
   the open item above). Three independent blockers, all of them invisible to
   `-r` because only dev mode compiles `libRedRT`:

@@ -135,16 +135,27 @@ jobs:
         echo "$BOOTSTRAP_SHA256  $BOOTSTRAP_PATH" | shasum -a 256 --check
         chmod 755 "$BOOTSTRAP_PATH"
 
-    - name: Build and verify fixed point (Windows)
+    - name: Build a Red console and drive the fixed point (Windows)
       if: matrix.archive == 'zip'
       shell: pwsh
       env:
         BOOTSTRAP_PATH: ${{ matrix.bootstrap-path }}
       run: |
         $ErrorActionPreference = 'Stop'
-        & .\tools\self_hosting\test-windows-hybrid-toolchain-fixed-point.ps1 `
-          -Bootstrap $env:BOOTSTRAP_PATH `
-          -OutputRoot .\build\fixed-point
+        & $env:BOOTSTRAP_PATH -r -t Windows-X86-64 `
+          -o .\build\fixed-point\console.exe environment\console\CLI\console.red
+        & .\build\fixed-point\console.exe `
+          tools\self_hosting\build-red-toolchain-fixed-point.red `
+          --bootstrap $env:BOOTSTRAP_PATH `
+          --output-root .\build\fixed-point
+
+    - name: Run the hermetic suite (Windows)
+      if: matrix.archive == 'zip'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        & .\tools\self_hosting\test-windows-hybrid-toolchain.ps1 `
+          -Toolchain .\build\fixed-point\h3\red-toolchain.exe
 
     - name: Build standalone Red toolchain (Unix)
       if: matrix.archive != 'zip'
@@ -154,10 +165,15 @@ jobs:
         TARGET: ${{ matrix.target }}
       run: |
         set -euo pipefail
-        tools/self_hosting/build-red-toolchain.sh \
-          -t "$TARGET" \
-          "$BOOTSTRAP_PATH" \
-          build/dist/red-toolchain
+        # The build is driven by Red, so the bootstrap first builds the console
+        # that runs it.
+        "$BOOTSTRAP_PATH" -r -t "$TARGET" \
+          -o build/dist/console environment/console/CLI/console.red
+        chmod 755 build/dist/console
+        ./build/dist/console tools/self_hosting/build-red-toolchain.red \
+          --bootstrap "$BOOTSTRAP_PATH" \
+          --target "$TARGET" \
+          --output build/dist/red-toolchain
 
     - name: Package toolchain (Windows)
       if: matrix.archive == 'zip'

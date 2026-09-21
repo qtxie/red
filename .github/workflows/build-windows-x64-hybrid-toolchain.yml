@@ -47,13 +47,17 @@ jobs:
           throw "Bootstrap SHA-256 mismatch: $actual"
         }
 
-    - name: Build and verify fixed point
+    - name: Build a Red console and drive the fixed point
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        & .\tools\self_hosting\test-windows-hybrid-toolchain-fixed-point.ps1 `
-          -Bootstrap .\build\bootstrap\red-bootstrap-speed1.exe `
-          -OutputRoot .\build\fixed-point
+        $bootstrap = '.\build\bootstrap\red-bootstrap-speed1.exe'
+        & $bootstrap -r -t Windows-X86-64 `
+          -o .\build\fixed-point\console.exe environment\console\CLI\console.red
+        & .\build\fixed-point\console.exe `
+          tools\self_hosting\build-red-toolchain-fixed-point.red `
+          --bootstrap $bootstrap `
+          --output-root .\build\fixed-point
 
     - name: Package compiler
       shell: pwsh

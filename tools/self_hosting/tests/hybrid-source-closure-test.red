@@ -190,6 +190,57 @@ foreach forbidden [
 	]
 ]
 
+;-- The legacy compiler was deleted from the tree; none of its files may
+;-- come back, and the hybrid closure must never reference them again.
+foreach removed [
+	%red.r
+	%red-toolchain.red
+	%red-selfhost.red
+	%red-frontend-selfhost.red
+	%red-system-selfhost.red
+	%system/compiler.r
+	%system/compiler.red
+	%system/emitter.r
+	%system/linker.r
+	%system/linker-static.r
+	%system/linker-static.red
+	%system/loader.r
+	%system/rsc.r
+	%system/compiler-windows-common.red
+	%system/machine-ir-x64.red
+	%system/targets/
+	%system/utils/IEEE-754.r
+	%system/utils/libRedRT.r
+	%system/utils/sha256.r
+	%compiler/system-emitter.red
+	%compiler/system-layout.red
+	%compiler/system-types.red
+	%compiler/source-loader.red
+	%compiler/options.red
+	%compiler/binding-identity.red
+][
+	removed: clean-path to file! rejoin [root removed]
+	either all [exists? removed dir? removed] [
+		fail ["legacy directory is back on disk: " removed]
+	][
+		if exists? removed [
+			fail ["legacy compiler file is back on disk: " removed]
+		]
+		if find closure-files removed [
+			fail ["hybrid closure references removed legacy file " removed]
+		]
+	]
+]
+
+foreach required [
+	%system/compiler-test-common.red
+][
+	required: clean-path to file! rejoin [root required]
+	unless exists? required [
+		fail ["hybrid test scaffold is missing " required]
+	]
+]
+
 foreach required [
 	%system/compiler-hybrid-core.red
 	%system/compiler-hybrid-common.red

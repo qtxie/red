@@ -10,11 +10,14 @@ does not depend on a repository checkout or an external compiler or linker.
 | Host | Entry point | Backend | Targets | Outputs |
 | --- | --- | --- | --- | --- |
 | any, one cross-compiler | `red-toolchain-hybrid.red` | typed postfix RSIR and native x64/ARM64 codegen | `Windows-X86-64`, `Windows-X86-64-DLL`, `Linux-X86-64`, `Linux-X86-64-SO`, `Linux-ARM64`, `Linux-ARM64-SO`, `Darwin-ARM64`, `Darwin-ARM64-SO`, `macOS-ARM64` | PE executable and DLL, ELF executable, Mach-O executable, `.app` bundle |
-| Darwin ARM64 | `red-toolchain.red` | self-hosted ARM64 backend | `Darwin-ARM64`, `Darwin-ARM64-SO`, `macOS-ARM64` | Mach-O executable, dylib, `.app` bundle |
 
-Both toolchains support release and development builds. A development Red
-application builds `libRedRT` and its include files beside the output. These
-are native host toolchains; cross-compilation is outside this milestone.
+The toolchain supports release and development builds. A development Red
+application builds `libRedRT` and its include files beside the output. The
+hybrid core is a cross-compiler: `-t <target>` at build time decides the
+platform, and the same entry point produces every toolchain. The legacy
+per-platform compilers (`red.r`, `red-toolchain.red`,
+`red-bootstrap-windows.red`) and their backend sources were removed; the
+hybrid RSIR pipeline is the only compiler in the tree.
 
 ## Embedded Resources
 

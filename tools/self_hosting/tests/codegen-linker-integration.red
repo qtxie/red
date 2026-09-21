@@ -2,7 +2,7 @@ Red [
 	Title: "Direct native codegen image to PE linker integration"
 ]
 
-#include %../../../system/compiler-windows-common.red
+#include %../../../system/compiler-test-common.red
 
 red-compiler-process-get: func [spec code [block!]][false]
 red-compiler-process-in: func [path word code [block!]][false]

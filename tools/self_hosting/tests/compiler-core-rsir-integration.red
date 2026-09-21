@@ -2,7 +2,7 @@ Red [
 	Title: "RSIR-core exclusive frontend integration"
 ]
 
-#include %../../../system/compiler-windows-common.red
+#include %../../../system/compiler-test-common.red
 #include %../../../compiler/system-diagnostics.red
 #include %../../../compiler/codegen-bridge.red
 #include %../../../compiler/rsir-frontend.red

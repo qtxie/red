@@ -2,7 +2,7 @@ Red [
 	Title: "RSIR frontend source audit"
 ]
 
-#include %../../../system/compiler-windows-common.red
+#include %../../../system/compiler-test-common.red
 
 emit-rsir-instruction: func [
 	output [binary!]

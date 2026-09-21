@@ -2,7 +2,7 @@ Red [
 	Title: "Saved Red frontend artifact test"
 ]
 
-#include %../../../system/compiler-windows-common.red
+#include %../../../system/compiler-test-common.red
 #include %../../../compiler/saved-frontend.red
 #include %../../../compiler/bootstrap-options.red
 

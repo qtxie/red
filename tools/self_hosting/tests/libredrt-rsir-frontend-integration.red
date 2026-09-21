@@ -6,7 +6,7 @@ system/options/path: clean-path %../../../
 compiler-root: system/options/path
 unless value? 'event! [event!: make datatype! #get-definition TYPE_EVENT]
 
-#include %system/compiler-windows-common.red
+#include %system/compiler-test-common.red
 #include %system/utils/libRedRT.red
 #include %compiler/codegen-bridge.red
 #include %compiler/rsir-frontend.red

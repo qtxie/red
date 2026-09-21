@@ -2,7 +2,7 @@ Red [
 	Title: "Direct libRedRT native image linker integration"
 ]
 
-#include %../../../system/compiler-windows-common.red
+#include %../../../system/compiler-test-common.red
 
 fail: func [message [string! block!]][
 	print ["FAIL:" either block? message [rejoin message][message]]

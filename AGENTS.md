@@ -29,10 +29,14 @@
   Apple's ABI both make v16-v31 plain temporaries, and eight of them turned
   a deep float expression into UNSUPPORTED. Re-measured at 202: Red/System
   suite 10593 tests / 12680 assertions / 12680 passed / 0 failed / 0
-  compile-failures. `gui-console.red` **builds for Linux-X86-64
-  (3347840), Linux-ARM64 (2792624) and Darwin-ARM64 (2775984)** -- the first
-  time any non-Windows gui-console has compiled. Neither of the two remote
-  GUIs is up yet: see "Remote GUI runtimes are not up yet" below.
+  compile-failures.   `gui-console.red` **builds for Linux-X86-64
+  (3347840), Linux-ARM64 (2792624) and Darwin-ARM64 (2759568)** -- the first
+  time any non-Windows gui-console has compiled, and at 203 the Darwin one
+  **runs**: it prints `--== Red 0.6.6 ==-- / Type HELP for starting
+  information.` and stays up, exactly as the Windows build does. That took
+  one more codegen fix, "Objective-C messages are not Apple-variadic"
+  below. The GTK3 runtime is still not up: see "Remote GUI runtimes are not
+  up yet".
 - Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler196.exe`
   (195->196, output 6420480 bytes). 196 carries **one real codegen fix**:
   ARM64 stack arguments are packed at their own alignment on Darwin, not
@@ -1302,19 +1306,30 @@
      still open: a wrapper calls `g_object_get_qdata(widget, quark)` with a
      widget whose upper 32 bits are gone, so the program dies with
      `*** Runtime Error 1: access violation` before a window opens.
-  2. **Darwin-ARM64 `objc_msgSend`.** Apple's ARM64 ABI spills *every*
-     variadic argument to the stack -- clang emits `f(1, 2, 3, 4)` as `w0=1`
-     with 2, 3 and 4 at sp+0, sp+8 and sp+16 -- but
-     `objc_msgSend(id self, SEL op, ...)` has two *named* parameters, which
-     must stay in x0 and x1. `cocoa.reds` declares it `[[variadic objc]]`
-     with no parameters at all, so `argument-count > call-parameter-count`
-     holds for every argument and the backend spills all three of them; x0
-     and x1 keep stale values and the runtime reports
-     `+[RedButtonCell dButton]: unrecognized selector`. `arm64-codegen` has
-     no notion of the `objc` attribute -- `compiler-core` uses it only to
-     suppress float32! promotion -- so the fix belongs either in the backend
-     or in the `cocoa.reds` declaration, and has to be checked on every
-     ARM64 and Linux path before it lands.
+  2. ~~**Darwin-ARM64 `objc_msgSend`**~~ **fixed at 203**, see below.
+
+- **Objective-C messages are not Apple-variadic** (fixed at 203). Apple's
+  ARM64 ABI spills *every* variadic argument to the stack -- clang emits
+  `f(1, 2, 3, 4)` as `w0=1` with 2, 3 and 4 at sp+0, sp+8 and sp+16.
+  `cocoa.reds` declares `objc_msgSend` as `[[variadic objc]]` with no
+  parameters at all, so `slot > call-parameter-count` held for all three of
+  `objc_msgSend [cls sel arg]` and the backend put every one of them on the
+  stack, leaving x0 and x1 holding junk -- the runtime answered
+  `+[RedButtonCell dButton]: unrecognized selector sent to class`.
+  The legacy ARM64 target already knew this: in `system/targets/ARM64.red`
+  `emit-call-import`, `apple-variadic?` is `all [apple-call? ...
+  not objc-call?]`, and an objc import gets plain
+  `prepare-call-args/apple-abi`. `arm64-codegen` now does the same -- the
+  trailing-argument branch is keyed on
+  `any [target-abi = ABI_AAPCS64 (call-flags and OBJC) <> 0]`. `OBJC` is
+  128, already set by `compiler/rsir-frontend.red` and already defined in
+  arm64-codegen; nothing had read it. Declaring `self` and `op` on
+  `objc_msgSend` instead also works and is arguably the more accurate
+  declaration -- `objc_msgSendSuper` has always spelled its two out -- but
+  it moves ~750 call sites under a new `implicitly-compatible?` check and
+  was rejected for that reason.
+  Evidence: the Darwin gui-console went from 2775984 to 2759568 bytes
+  (the stack stores disappeared) and now runs.
 
 # Red/System Idiomatic Patterns - Key Insights
 

@@ -8421,7 +8421,21 @@ arm64-codegen: context [
 							unless (call-flags and VARIADIC) <> 0 [return fail-invalid 330 "compile-function/call-flags#164"]
 							kind: type-kind ref view
 							target-ref: either kind = 9 [-10][ref]
-							either target-abi = ABI_AAPCS64 [
+							;-- Apple's ARM64 ABI spills every variadic
+							;   argument to the stack, but an Objective-C
+							;   message is not one: objc_msgSend is entered
+							;   with self in x0 and op in x1 and the rest
+							;   carrying on from there. The legacy ARM64
+							;   target says the same thing -- apple-variadic?
+							;   is `not objc-call?` there. Spilling all three
+							;   of `objc_msgSend [cls sel arg]` leaves x0 and
+							;   x1 holding whatever the argument computation
+							;   last touched, and the runtime answers
+							;   "unrecognized selector sent to class".
+							either any [
+								target-abi = ABI_AAPCS64
+								(call-flags and OBJC) <> 0
+							][
 								status: abi-trailing-argument view scratch
 									argument-origin call-parameter-count
 									(slot - call-parameter-count)

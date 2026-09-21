@@ -48,9 +48,12 @@ Red/System [
 	P_DETACH:	4
 ]
 
+;-- HANDLE fields are pointer-sized: 8 bytes on X86-64, 4 on IA-32. Sizing them
+;-- as integer! packs them at 4-byte offsets, which is only correct on IA-32 --
+;-- on X86-64 Windows reads hStdOutput from offset 88 and hThread from offset 8.
 process-info!: alias struct! [
-	hProcess	[integer!]
-	hThread		[integer!]
+	hProcess	[int-ptr!]
+	hThread		[int-ptr!]
 	dwProcessId	[integer!]
 	dwThreadId	[integer!]
 ]
@@ -73,14 +76,14 @@ startup-info!: alias struct! [
 	cbReserved2-a	[byte!]
 	cbReserved2-b	[byte!]
 	lpReserved2		[byte-ptr!]
-	hStdInput		[integer!]
-	hStdOutput		[integer!]
-	hStdError		[integer!]
+	hStdInput		[int-ptr!]
+	hStdOutput		[int-ptr!]
+	hStdError		[int-ptr!]
 ]
 
 security-attributes!: alias struct! [
 	nLength				 [integer!]
-	lpSecurityDescriptor [integer!]
+	lpSecurityDescriptor [int-ptr!]					;-- pointer-sized: 4 on IA-32, 8 on X86-64
 	bInheritHandle		 [logic!]
 ]
 

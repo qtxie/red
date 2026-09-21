@@ -220,7 +220,7 @@ ext-process: context [
 			win-error?: no
 			win-shell?: shell?
 			sa/nLength: size? security-attributes!
-			sa/lpSecurityDescriptor: 0
+			sa/lpSecurityDescriptor: null
 			sa/bInheritHandle: true
 
 			out-read:  0								;-- Pipes
@@ -234,9 +234,9 @@ ext-process: context [
 			set-memory as byte-ptr! :s-inf null-byte size? startup-info!
 			s-inf/cb: size? startup-info!
 			s-inf/dwFlags: 0
-			s-inf/hStdInput:  platform/GetStdHandle STD_INPUT_HANDLE
-			s-inf/hStdOutput: platform/GetStdHandle STD_OUTPUT_HANDLE
-			s-inf/hStdError:  platform/GetStdHandle STD_ERROR_HANDLE
+			s-inf/hStdInput:  as int-ptr! platform/GetStdHandle STD_INPUT_HANDLE
+			s-inf/hStdOutput: as int-ptr! platform/GetStdHandle STD_OUTPUT_HANDLE
+			s-inf/hStdError:  as int-ptr! platform/GetStdHandle STD_ERROR_HANDLE
 			
 			dev-null: platform/CreateFileW #u16 "nul:" GENERIC_WRITE FILE_SHARE_WRITE sa OPEN_EXISTING 0 null		;-- Pipe to nul
 			
@@ -261,7 +261,7 @@ ext-process: context [
 						return -1
 					]
 				]
-				s-inf/hStdInput: in-read
+				s-inf/hStdInput: as int-ptr! in-read
 			]
 			either out-buf <> null [
 				either out-buf/count = -1 [
@@ -279,10 +279,10 @@ ext-process: context [
 						return -1
 					]
 				]
-				s-inf/hStdOutput: out-write
+				s-inf/hStdOutput: as int-ptr! out-write
 			][
 				unless console? [						;-- output must be redirected to "nul" or process returns an error code
-					s-inf/hStdOutput: dev-null
+					s-inf/hStdOutput: as int-ptr! dev-null
 				]
 			]
 			either err-buf <> null [
@@ -300,10 +300,10 @@ ext-process: context [
 						return -1
 					]
 				]
-				s-inf/hStdError: err-write
+				s-inf/hStdError: as int-ptr! err-write
 			][
 				unless console? [
-					s-inf/hStdError: dev-null
+					s-inf/hStdError: as int-ptr! dev-null
 				]
 			]
 			if any [in-buf <> null out-buf <> null err-buf <> null][
@@ -373,13 +373,13 @@ ext-process: context [
 				if all [shell? err-buf/count > 0][win-error?: yes]
 			]
 			either any [console? waitend?][
-				platform/WaitForSingleObject p-inf/hProcess INFINITE
-				platform/GetExitCodeProcess p-inf/hProcess :pid
+				platform/WaitForSingleObject as integer! p-inf/hProcess INFINITE
+				platform/GetExitCodeProcess as integer! p-inf/hProcess :pid
 			][
 				pid: p-inf/dwProcessId
 			]
-			platform/CloseHandle p-inf/hProcess
-			platform/CloseHandle p-inf/hThread
+			platform/CloseHandle as integer! p-inf/hProcess
+			platform/CloseHandle as integer! p-inf/hThread
 			platform/CloseHandle dev-null
 			return pid
 		] ; call

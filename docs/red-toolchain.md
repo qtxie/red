@@ -29,6 +29,44 @@ The compiler and linker are implemented in Red. Normal compilation does not
 call an external compiler or linker. Darwin application bundles receive the
 ad-hoc signature emitted by Red's Mach-O writer.
 
+## Building With Red
+
+One Red script builds every toolchain on every host, driven by a Red console.
+It needs no shell, no Windows scripting host, no Python, and no `dumpbin.exe`:
+
+```text
+console tools/self_hosting/build-red-toolchain.red --bootstrap <compiler>
+```
+
+`--bootstrap` is the only option without a default when the fixed-point
+compilers are not in `build/self-hosting/merge-red64/`; `--help` prints the
+rest. The defaults are the newest `hybrid-compilerN.exe` there, the host as
+both generator and toolchain target, and
+`build/red-toolchain/<target>/red-toolchain-<N>`.
+
+The script:
+
+1. pins `SOURCE_DATE_EPOCH` to `--epoch`, to the environment, or to the HEAD
+   commit time, so the embedded compiler date does not move between runs;
+2. compiles `tools/self_hosting/generate-toolchain-resources.red` **for the
+   host** -- it has to run here -- and regenerates
+   `build/generated/red-toolchain-resources.generated.red`;
+3. compiles the toolchain source for `--target`
+   (`red-toolchain-windows-hybrid.red` for `Windows-X86-64`,
+   `red-toolchain-darwin-hybrid.red` for `Darwin-ARM64`);
+4. verifies `--self-check`, `--toolchain-info`, `--list-targets` and
+   `--resource-manifest` (the manifest must also agree with `--toolchain-info`)
+   and reads the finished binary's own headers: PE32+ x64, dynamic base, NX
+   compatibility and no `libRedRT.dll` import on Windows, ELF class and machine
+   on Linux, Mach-O cputype on Darwin.
+
+Every child runs from the repository root with absolute paths and logs both
+streams to `build/red-toolchain/<target>/logs/`. Red's `call` waits but cannot
+kill a child, so a wedged compiler wedges the build instead of timing out.
+
+The Windows and Darwin recipes below are the host-specific scripts this one
+supersedes.
+
 ## Windows x64 Build
 
 The Windows build uses the fixed-point hybrid compiler at
@@ -44,6 +82,13 @@ The output is
 process has a bounded timeout, and the build verifies PE32+, x64, dynamic-base,
 NX compatibility, embedded resources, target metadata, and the absence of a
 release `libRedRT.dll` import.
+
+The Red script above is the supported path on Windows too:
+
+```text
+console tools/self_hosting/build-red-toolchain.red \
+    --bootstrap build/self-hosting/merge-red64/hybrid-compilerNNN.exe
+```
 
 Run the compiler outside the repository with:
 

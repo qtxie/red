@@ -438,6 +438,11 @@
   .generated.red`. Build the generator for the *host*, not the target:
   `tools/self_hosting/build-red-toolchain.sh` compiles it for `$target`, which
   cannot run when cross-compiling.
+- **The toolchain is built by Red, not by a shell**:
+  `console.exe tools/self_hosting/build-red-toolchain.red --bootstrap <compiler>`
+  regenerates the resources, compiles, and verifies, on every host. It replaces
+  `tools/self_hosting/build-windows-hybrid-toolchain.ps1` and
+  `tools/self_hosting/build-red-toolchain.sh`. `--help` lists the options.
 - **Dev mode now builds and runs a Red program on macOS** (fixed at 175, was
   the open item above). Three independent blockers, all of them invisible to
   `-r` because only dev mode compiles `libRedRT`:

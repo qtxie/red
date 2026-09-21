@@ -467,7 +467,7 @@ system-dialect: context [
 			;-- compiled whether the Red runtime is linked in or embedded --
 			;-- tying it to `embed-red-runtime?` dropped it from every dev-mode
 			;-- build, where routines referring to it then failed to resolve.
-			unless empty? red/sys-global [
+			if all [job/red-pass? not empty? red/sys-global][
 				compiler/script: %***sys-global.reds
 				phase-timer/begin 'rs-loader
 				sys-global-source: loader/process red/sys-global

@@ -1,6 +1,6 @@
 Red [
 	Title: "Red/System source locations and diagnostics"
-	File:  %compiler/system-diagnostics.red
+	File:  %system/system-diagnostics.red
 ]
 
 compiler-system-diagnostics: context [

@@ -1,10 +1,10 @@
 Red [
 	Title: "Hybrid compiler native codegen routine"
-	File:  %codegen-bridge.red
+	File:  %system/codegen-bridge.red
 ]
 
 #system [
-	#include %../system/codegen/codegen-bridge.reds
+	#include %codegen/codegen-bridge.reds
 ]
 
 emit-rsir-instruction: routine [

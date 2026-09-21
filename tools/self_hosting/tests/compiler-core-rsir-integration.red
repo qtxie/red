@@ -3,9 +3,9 @@ Red [
 ]
 
 #include %../../../system/compiler-test-common.red
-#include %../../../compiler/system-diagnostics.red
-#include %../../../compiler/codegen-bridge.red
-#include %../../../compiler/rsir-frontend.red
+#include %../../../system/system-diagnostics.red
+#include %../../../system/codegen-bridge.red
+#include %../../../system/rsir-frontend.red
 #include %../../../system/compiler-rsir-core.red
 
 red-compiler-process-get: func [spec code [block!]][false]

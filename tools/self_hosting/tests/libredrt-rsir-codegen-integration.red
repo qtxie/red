@@ -2,7 +2,7 @@ Red [
 	Title: "Direct libRedRT RSIR native codegen integration"
 ]
 
-#include %../../../compiler/codegen-bridge.red
+#include %../../../system/codegen-bridge.red
 
 root: either all [block? system/options/args not empty? system/options/args][
 	clean-path to-red-file to file! system/options/args/1

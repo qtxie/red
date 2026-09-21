@@ -1,6 +1,6 @@
 Red [Title: "Hybrid codegen bridge diagnostic contract"]
 
-#include %../../../compiler/codegen-bridge.red
+#include %../../../system/codegen-bridge.red
 
 check: func [condition [logic!] message [string!]][
 	unless condition [print ["FAIL:" message] quit/return 1]

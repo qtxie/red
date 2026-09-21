@@ -8,7 +8,7 @@ Red [
 ; frontend; neither legacy backend module is compiled into this entry.
 #include %compiler-hybrid-common.red
 #include %utils/libRedRT.red
-#include %../compiler/system-diagnostics.red
-#include %../compiler/codegen-bridge.red
-#include %../compiler/rsir-frontend.red
+#include %system-diagnostics.red
+#include %codegen-bridge.red
+#include %rsir-frontend.red
 #include %compiler-rsir-core.red

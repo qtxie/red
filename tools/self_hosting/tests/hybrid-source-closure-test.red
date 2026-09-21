@@ -89,7 +89,7 @@ unless find read %../../../system/compiler-hybrid-bootstrap.red
 ]
 
 native-bridge-text: read %../../../system/codegen/codegen-bridge.reds
-routine-bridge-text: read %../../../compiler/codegen-bridge.red
+routine-bridge-text: read %../../../system/codegen-bridge.red
 if any [
 	find native-bridge-text "binary/rs-append"
 	find routine-bridge-text "binary/rs-append"
@@ -255,8 +255,8 @@ foreach required [
 	%system/codegen/arm64-encoder.reds
 	%system/codegen/x64-codegen.reds
 	%system/codegen/x64-encoder.reds
-	%compiler/rsir-frontend.red
-	%compiler/codegen-bridge.red
+	%system/rsir-frontend.red
+	%system/codegen-bridge.red
 	%compiler/bootstrap-driver.red
 	%compiler/bootstrap-options.red
 	%compiler/toolchain-support.red

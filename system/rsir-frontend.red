@@ -1,6 +1,6 @@
 Red [
 	Title: "Compact Red/System IR frontend"
-	File:  %rsir-frontend.red
+	File:  %system/rsir-frontend.red
 ]
 
 unless value? 'int-to-bin [do %int-to-bin.red]

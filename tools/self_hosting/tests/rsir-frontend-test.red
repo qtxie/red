@@ -13,7 +13,7 @@ emit-rsir-instruction: func [
 	1
 ]
 
-do %../../../compiler/rsir-frontend.red
+do %../../../system/rsir-frontend.red
 
 frontend: compiler-rsir-frontend
 

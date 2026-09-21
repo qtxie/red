@@ -5,8 +5,8 @@ Red [
 #include %../../../compiler/int-to-bin.red
 #include %../../../compiler/ieee-754.red
 #include %../../../compiler/unicode.red
-#include %../../../compiler/codegen-bridge.red
-#include %../../../compiler/rsir-frontend.red
+#include %../../../system/codegen-bridge.red
+#include %../../../system/rsir-frontend.red
 
 red-compiler-process-get: func [spec code [block!]][false]
 red-compiler-process-in: func [path word code [block!]][false]

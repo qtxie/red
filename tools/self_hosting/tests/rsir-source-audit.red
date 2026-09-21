@@ -15,7 +15,7 @@ emit-rsir-instruction: func [
 	1
 ]
 
-#include %../../../compiler/rsir-frontend.red
+#include %../../../system/rsir-frontend.red
 
 ;-- The audit closure excludes compiler/frontend.red, so the Red-pass hooks
 ;-- the RSIR frontend references need interpreter-level stubs (same set as

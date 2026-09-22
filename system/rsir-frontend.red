@@ -32,6 +32,8 @@ compiler-rsir-frontend: context [
 	build-date: none
 	source-file: none							;-- main source file, seeds the debug file table
 	current-file: none							;-- file the code being scanned or lowered came from
+	statement-file: none						;-- file the statement being lowered came from
+	statement-position: none					;-- where that statement starts
 	debug-files: make block! 8					;-- source files referenced by debug line records
 	current-file-id: 0							;-- file table id of the statements being lowered
 												;-- (diagnostics read it too, so it is kept on every build)
@@ -461,17 +463,59 @@ compiler-rsir-frontend: context [
 	warn-location: func [
 		position [block! paren!]
 		return: [string!]
-		/local text metadata
+		/local text file line source
 	][
-		text: rejoin [" (" either file? current-file [mold current-file]["unknown source"]]
+		file: any [statement-file current-file]
+		text: rejoin [" (" either file? file [mold file]["unknown source"]]
 		;-- Code the Red frontend generated carries no line markers, so there is
 		;-- no line to point at; naming its file is still worth it.
+		line: location-line position
+		if line > 0 [append text rejoin [":" line]]
+		append text ")"
+		;-- A file and a number still leave you looking for the code, so
+		;-- quote the line itself under the location.
+		if source: source-line file line [
+			append text rejoin [newline "*** source: " source]
+		]
+		text
+	]
+
+	;-- The line a position sits on. A cast inside a paren points into the
+	;-- paren's block, which carries no line markers of its own, so fall back
+	;-- to the statement the cast belongs to.
+	location-line: func [position [block! paren!] return: [integer!] /local metadata][
 		metadata: compiler-system-diagnostics/metadata-of position
 		if all [metadata not tail? next metadata pair? metadata/2][
-			append text rejoin [":" compiler-system-diagnostics/line-of position]
+			return compiler-system-diagnostics/line-of position
 		]
-		append text ")"
-		text
+		unless all [block? statement-position not tail? statement-position][return 0]
+		metadata: compiler-system-diagnostics/metadata-of statement-position
+		either all [metadata not tail? next metadata pair? metadata/2][
+			compiler-system-diagnostics/line-of statement-position
+		][0]
+	]
+
+	;-- The source line a location points at. Files are read for this alone,
+	;-- and a build that warns usually warns in one file many times over, so
+	;-- the last one read is kept. A path that cannot be read loses the line,
+	;-- never the warning.
+	cached-source-file: none
+	cached-source-lines: none
+
+	source-line: func [
+		file [file! none!]
+		line [integer!]
+		return: [string! none!]
+		/local lines
+	][
+		unless all [file? file line > 0][return none]
+		unless same? file cached-source-file [
+			cached-source-file: file
+			cached-source-lines: attempt [read/lines file]
+		]
+		lines: cached-source-lines
+		unless all [block? lines line <= length? lines][return none]
+		trim pick lines line
 	]
 
 	warn: func [message [string! block!] /at position [block! paren!] /local text][
@@ -1971,6 +2015,8 @@ compiler-rsir-frontend: context [
 				active-line-table: either debug? [make block! 16][none]
 				current-file-id: record/11
 				current-file: file-of-id record/11
+				statement-file: current-file
+				statement-position: body
 				count: stack-body record/6 body record/4 record/5 code
 					record/7 record/8 record/9
 				record/12: active-line-table
@@ -4993,6 +5039,8 @@ compiler-rsir-frontend: context [
 				position: skip position 2
 				continue
 			]
+			statement-file: current-file
+			statement-position: position
 			record-line instructions position
 			either any [set-word? position/1 set-path? position/1][
 				next-position: stack-assignment position scope uses instructions
@@ -7346,6 +7394,8 @@ compiler-rsir-frontend: context [
 		position: values
 		while [not tail? position][
 			error-position: position
+			statement-file: current-file
+			statement-position: position
 			case [
 				all [position/1 = 'comment (length? position) >= 2][
 					position: skip position 2
@@ -7731,6 +7781,8 @@ compiler-rsir-frontend: context [
 			debug-files: make block! 8
 			current-file-id: register-debug-file source-file
 			current-file: file-of-id current-file-id
+			statement-file: current-file
+			statement-position: none
 			main-file-id: current-file-id
 			active-line-table: none
 			boot-line-table: none

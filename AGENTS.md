@@ -20,9 +20,9 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler211.exe`
-  (210->211, output 6444032 bytes; 210 and 211 are byte-identical, so the
-  chain is at a fixed point). 211 carries the **redundant-cast warning**
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler214.exe`
+  (213->214, output 6449664 bytes; 213 and 214 are byte-identical, so the
+  chain is at a fixed point). 214 carries the **redundant-cast warning**
   work: warnings now print the location that raised them --
   `*** Warning: type casting from integer! to integer! is not necessary
   (%runtime/parse.reds:1235)` -- and, more importantly, they no longer fire
@@ -47,7 +47,17 @@
   merely matches the parameter's. So aggregates are exempt from the warning
   and scalars still report, naming their types. Building
   `red-bootstrap-hybrid.red` went 361 -> 3 -> 0 warnings.
-  Also at 211: `emit-routine` no longer emits `as <value-type> r_arg`
+  A warning also quotes the line it points at --
+  `*** source: print 0 = as integer! i` -- reading the file lazily and
+  caching it. The file it names is the one the *statement* started in
+  (`statement-file`), not `current-file`: lowering an operand walks past the
+  end of a file's code and swallows the next `#script` marker, so a
+  top-level statement in an `#include`d file used to be reported under the
+  *following* file's name (one file ahead, and `skip-script` eats runs of
+  markers, so it could be more than one). The line itself comes from
+  `statement-position`, because a cast written inside a paren sits in a
+  block that carries no line markers of its own.
+  Also at 214: `emit-routine` no longer emits `as <value-type> r_arg`
   (`r_arg` is a `red-value!` already), and `repeat`'s injected
   `natives/inc-counter as red-word!` lost its cast (the reference is a
   `red-word!`). The runtime lost 120 casts to the type the expression

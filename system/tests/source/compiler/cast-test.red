@@ -80,16 +80,23 @@ compiled?: func [
     warning-test: func[
       type [string!]
       src [string!]
+      /local lines line src-line
     ][
       --test-- rejoin ["cast" type "warning"]
       result: false
       result: compiled? src
       msg: "*** Warning: type casting from #type# to #type# is not necessary"
       warning: replace/all copy msg "#type#" type
+      ;-- Every snippet below ends with the line carrying the cast.
+      lines: split src "^/"
+      remove-each line lines [empty? trim line]
+      src-line: either empty? lines [""][trim last lines]
        either result [
          --assert not none? find qt/comp-output warning
          ;-- The warning has to say where the cast is, not just that it is.
          --assert not none? find qt/comp-output rejoin [warning " ("]
+         ;-- ... and show the line, so the number is not a treasure hunt.
+         --assert not none? find qt/comp-output rejoin ["*** source: " src-line]
        ][
           --assert result                       ;; signify failing test
           print qt/comp-output
@@ -161,12 +168,18 @@ compiled?: func [
          p1 = as [pointer! [integer!]] p
     }
     
-    warning-test "struct!" {
+  --test-- "cast struct! no warning"
+    ;-- An identity cast between two aggregates is no longer reported: `#call`
+    ;-- emits `as cell!` for every argument whose type the Red frontend cannot
+    ;-- name, and that no-op points at a line the compiler wrote.
+    result: compiled? {
         Red/System []
          s1: declare struct! [a [integer!] b [integer!]]
          s2: declare struct! [a [integer!] b [integer!]]
          s2 = as [struct! [a [integer!] b [integer!]]] s1
     }
+    --assert result
+    --assert none? find qt/comp-output "is not necessary"
         
 ===end-group=== 
 

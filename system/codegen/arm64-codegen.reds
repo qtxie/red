@@ -2123,15 +2123,26 @@ arm64-codegen: context [
 						]
 						initializer/kind = ADDRESS_INITIALIZER [
 							if any [
-								inline? global-size <> 8
+								inline? global-size > 8
 								not valid-static-address-initializer? initializer
 									global/type id view
 							][return fail-invalid 34 "prepare-global-data/view#14"]
+							;-- A slot the loader has to fill with an address has to
+							;-- be as wide as that address: the relocation a 64-bit
+							;-- image carries is eight bytes, and on a narrower
+							;-- global it would run past the end of the global and
+							;-- overwrite the next one. Widen the footprint the
+							;-- global occupies -- not its type -- so the
+							;-- neighbours survive.
+							if global-size < 8 [
+								global-size: 8
+								global-sizes/id: 8
+							]
 							target-id: static-address-target-id
-								initializer view
-							status: record-reference target-id 0 references
-							if status < 0 [return fail-code status 398 "prepare-global-data/code#2"]
-						]
+									initializer view
+								status: record-reference target-id 0 references
+								if status < 0 [return fail-code status 398 "prepare-global-data/code#2"]
+							]
 						true [return fail-invalid 35 "prepare-global-data/status#15"]
 					]
 				]

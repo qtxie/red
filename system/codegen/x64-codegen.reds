@@ -13180,9 +13180,10 @@ x64-codegen: context [
 			module [rsir-module!]
 			table [type-table!]
 			ir-global [rsir-global!]
+			initializer [rsir-initializer!]
 			image-function [codegen-function!]
 			image-global [codegen-global!]
-			image-functions image-globals globals [byte-ptr!]
+			image-functions image-globals globals initializers [byte-ptr!]
 			id capacity metadata-size strings-size
 				global-size global-align global-names-size [integer!]
 	][
@@ -13190,6 +13191,7 @@ x64-codegen: context [
 		module: ctx/module
 		table: module/table
 		globals: module/globals
+		initializers: ctx/initializers
 		strings-size: module/strings-size
 		capacity: ctx/capacity
 		if header/function-count > ((2147483647 - IMAGE_HEADER_SIZE) / IMAGE_FUNCTION_SIZE)[
@@ -13229,6 +13231,19 @@ x64-codegen: context [
 			global-align: 0
 			unless layout-type ir-global/type ((ir-global/flags and INLINE) <> 0)
 				table 0 :global-size :global-align [return fail-invalid 740 "layout-module-globals/table#2"]
+			;-- A slot the loader has to fill with an address has to be as wide
+			;-- as that address: the relocation a 64-bit image carries is eight
+			;-- bytes, and on a narrower global it would run past the end of the
+			;-- global and overwrite the next one. Widen the footprint the
+			;-- global occupies -- not its type -- so the neighbours survive.
+			if all [global-size > 0 global-size < 8 ir-global/initializer-count = 1][
+				initializer: as rsir-initializer! (initializers
+					+ (ir-global/first-initializer * RSIR_INITIALIZER_SIZE))
+				if initializer/kind = ADDRESS_INITIALIZER [
+					global-size: 8
+					if global-align < 8 [global-align: 8]
+				]
+			]
 			if global-names-size > (2147483647 - ir-global/name-size) [
 				return fail-limit 787 "layout-module-globals/limit#3"
 			]

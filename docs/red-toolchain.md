@@ -268,8 +268,8 @@ GitHub release assets. No workflow reads a repository variable to find them.
 Every target uses the same source: `red-toolchain-hybrid.red` is a
 cross-compiler, so the `-t` at build time decides the platform. The manifest
 reads its platform list from the artifact directories, so a new platform joins
-by getting a leg in `build-hybrid-toolchain.yml` and nothing else has to
-change.
+by getting a leg in the `plan` job of `build-hybrid-toolchain.yml` -- the one
+place the matrix is defined -- and nothing else has to change.
 
 - `ci-seed` is a floating release that holds nothing but `MANIFEST.json`,
   mapping each platform to its asset name, its SHA-256, and the generation

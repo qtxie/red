@@ -160,8 +160,8 @@ machine-arch: has [out][
 host-target: does [
 	case [
 		system/platform = 'Windows ["Windows-X86-64"]		;-- PE x64 is the only Windows target
-		system/platform = 'macOS   [join "Darwin-" target-arch machine-arch]
-		system/platform = 'Linux   [join "Linux-" target-arch machine-arch]
+		system/platform = 'macOS   [rejoin ["Darwin-" target-arch machine-arch]]
+		system/platform = 'Linux   [rejoin ["Linux-" target-arch machine-arch]]
 		true [fail ["unsupported host platform:" system/platform]]
 	]
 ]

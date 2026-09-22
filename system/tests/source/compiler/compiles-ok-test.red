@@ -25,7 +25,7 @@ Red [
   --assert --compiled? {
       Red/System []
       names: protect ["first" "second"]
-      #either target = 'X86-64 [
+      #either any [target = 'X86-64 target = 'ARM64] [
         table: declare pointer! [c-string!]
       ][
         table: declare pointer! [integer!]
@@ -38,13 +38,15 @@ Red [
   --assert --compiled? {
       Red/System []
       table: protect ["first" 5 10]
-      #either target = 'X86-64 [
+      #either any [target = 'X86-64 target = 'ARM64] [
         cursor: declare pointer! [uint64!]
       ][
         cursor: declare pointer! [integer!]
       ]
       cursor: table
-      length: #either target = 'X86-64 [as integer! cursor/2][cursor/2]
+      length: #either any [target = 'X86-64 target = 'ARM64] [
+        as integer! cursor/2
+      ][cursor/2]
     }
 
 ===end-group===

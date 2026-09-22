@@ -98,6 +98,76 @@ ARM64 has and Windows does not (4 vs 3 at 227); it is not an ARM64 gap.
 Do **not** "fix" it by relaxing the ARM64 check: the real fix is either a
 narrow relocation on x64 or the same refusal there.
 
+## A call through an import can unwind: ARM64 dev-mode throws were walking a broken frame chain
+
+`redbin-codec-test` died on **Darwin-ARM64 in dev mode** (`-t Darwin-ARM64`,
+no `-r`): `=== Redbin format: compact ===` and then nothing -- `*** Runtime
+Error 2: invalid alignment`, and under lldb a jump to a non-code address
+(`stxrb`/`udf` bytes at the PC). Release mode, Linux-ARM64 release and every
+x64 target were green, and on Linux-ARM64 *dev* the same defect showed up
+milder: the test's `loop 2 [...]` ran its body once and stopped (87 tests
+instead of 174), exit 0, 0 failures.
+
+Minimal reproducer (dev mode, ARM64; x64 runs the loop twice):
+
+    Red []
+    #include %../../../quick-test/quick-test.red
+    ~~~start-file~~~ "probe"
+    f4: func [][save/as none :>> 'redbin]
+    e: 0
+    loop 2 [e: e + 1 print ["iter" e] print error? try [f4]]
+    print ["total" e]
+
+The same `try [save/as none :>> 'redbin]` written **inline** is fine; it only
+breaks when the throwing runtime call sits in a *called* function.
+
+### Root cause
+
+`arm64-codegen.reds:10485-10535` decides which functions need exception
+metadata (`function-unwind`), then propagates it along calls: a function is
+unwindable if it holds `OP_CATCH`/`OP_THROW`, if it makes an indirect call
+(`OP_CALL` with `a = 0`), or if it calls a function of the same module that is
+itself unwindable. **`a < 0` names an imported symbol**, and imports were
+treated as if they could not unwind -- so a dev-mode function that reaches the
+runtime through an import got no unwind frame at all.
+
+Its frame then never publishes the visible-frame pointer (`frm-4`) nor the
+unwind landing pad (`frm-3`), so `emit-throw-unwind`'s frame walk -- which
+starts deep inside libRedRT and climbs the chain to the catch in the caller --
+reads garbage out of that frame and branches to it. What survives afterwards
+is arbitrary: on Darwin a wild PC, on Linux a clobbered home register holding
+the loop's counter. Release mode is immune because the runtime is in the same
+module, so the ordinary callee propagation covers it; x64 is immune because it
+does not walk CPU frames to unwind at all.
+
+Fix: treat a call whose target is not a function of this module as unwindable
+in both places -- `instruction/a <= 0` when seeding, `target-id <= 0` when
+propagating.
+
+### Verification (233a, built by 232)
+
+- Minimal probe: every loop runs twice again (was 1 for the two `try [fN]`
+  cases), on Linux-ARM64 dev.
+- `redbin-codec-test` dev: Linux-ARM64 **174 tests / 1762 assertions / 0
+  failed** (was 87/895), Darwin-ARM64 **174 / 1762 / 0** (was a crash, exit
+  132 then Runtime Error 2). Release is unchanged at 174/1762.
+- Red/System suite on Linux-ARM64 (`bash build/linux-hybrid/rs-suite-linux.sh
+  ... Linux-ARM64 armbian`): 41 compiled, 41 ran, 0 failed.
+- Red units in dev mode on Linux-ARM64: throw 33, try 40, function 118,
+  series 702, parse 1070, object 250, routine 20, evaluation 189, loop 37,
+  recycle 40, redbin-codec 174 -- all 0 failed. On the Mac in dev mode:
+  throw 33/35, try 40/41, function 118/147, redbin-codec 174/1762.
+- Fixed point: 233a -> 234 at 6450176 bytes, same as 232/233.
+
+### Trap while reproducing this
+
+Do **not** run two compiles of the same generation concurrently, even into
+different output directories: a Darwin dev binary built while a Linux dev
+build ran alongside came out with a second `LC_LOAD_DYLIB` for
+`@loader_path/libRedRT.so` and died in dyld before `main`. Built serially the
+same sources emit only `libRedRT.dylib`. A "the dev binary cannot even load
+its runtime" report is worth re-testing serially before it is believed.
+
 - Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler214.exe`
   (213->214, output 6449664 bytes; 213 and 214 are byte-identical, so the
   chain is at a fixed point). 214 carries the **redundant-cast warning**

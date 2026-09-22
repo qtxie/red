@@ -10490,7 +10490,13 @@ arm64-codegen: context [
 				if any [instruction/op = OP_CATCH instruction/op = OP_THROW][
 					function-unwind/id: 1
 				]
-				if all [instruction/op = OP_CALL instruction/a = 0][
+				;-- A call whose target is not a function of this module -- a
+				;-- pointer (a = 0) or an imported symbol (a < 0) -- can reach
+				;-- a throw this module cannot see. A development build calls
+				;-- the runtime through such imports, so its Red errors arrive
+				;-- from a frame whose unwind state is invisible here; the
+				;-- caller must be unwindable to pass them through.
+				if all [instruction/op = OP_CALL instruction/a <= 0][
 					function-unwind/id: 1
 				]
 				index: index + 1
@@ -10514,7 +10520,7 @@ arm64-codegen: context [
 							+ ((first-instruction + index) * RSIR_INSTRUCTION_SIZE))
 						if instruction/op = OP_CALL [
 							target-id: instruction/a
-							if target-id = 0 [
+							if target-id <= 0 [
 								function-unwind/id: 1
 								changed: 1
 							]

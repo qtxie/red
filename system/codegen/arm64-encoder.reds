@@ -1104,7 +1104,7 @@ arm64-encoder: context [
 		code [byte-ptr!]
 		capacity target base displacement width signed result-width scratch [integer!]
 		return: [integer!]
-		/local at [byte-ptr!] opcode encoded written [integer!] scaled? [logic!]
+		/local at [byte-ptr!] opcode encoded written address [integer!] scaled? [logic!]
 	][
 		unless all [
 			valid-register? target valid-base? base valid-register? scratch scratch <> base
@@ -1126,11 +1126,19 @@ arm64-encoder: context [
 			][opcode or ((displacement and 511) * 4096)]
 			return instruction code capacity opcode
 		]
-		written: address-offset code capacity scratch base displacement scratch
+		;-- The displacement does not fit an unscaled offset, so the
+		;-- address has to be materialised first. It is computed into the
+		;-- destination -- which the load overwrites anyway -- and not
+		;-- into the caller's scratch: that scratch is very often the
+		;-- register holding the *other* operand of the expression this
+		;-- load belongs to, and clobbering it makes the operation read
+		;-- a frame address instead of a value.
+		address: either target = base [scratch][target]
+		written: address-offset code capacity address base displacement scratch
 		if written < 0 [return written]
 		at: as byte-ptr! 0
 		if not null? code [at: code + written]
-		opcode: (load-opcode width signed result-width false) or (scratch * 32)
+		opcode: (load-opcode width signed result-width false) or (address * 32)
 		encoded: instruction at (capacity - written) (opcode or target)
 		if encoded < 0 [return encoded]
 		written + encoded

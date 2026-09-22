@@ -9319,26 +9319,23 @@ arm64-codegen: context [
 							index: index + 1
 							continue
 						]
+						;-- Both operands are copied into the fixed scratch
+						;-- registers instead of being used where they lie: the
+						;-- result lands in the right operand's register, and on
+						;-- a stack this deep that register can be a local's home
+						;-- -- writing it would silently rewrite the local.
 						left: arm64-encoder/X16
-						either scratch/stack-locations/source-slot = LOCATION_REGISTER [
-							left: scratch/stack-low/source-slot
-						][
-							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: materialize view scratch source-slot left left-ref
-								at (capacity - written)
-							if encoded < 0 [return fail-code encoded 751 "compile-function/code#213"]
-							written: written + encoded
-						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: materialize view scratch source-slot left left-ref
+							at (capacity - written)
+						if encoded < 0 [return fail-code encoded 751 "compile-function/code#213"]
+						written: written + encoded
 						right: arm64-encoder/X17
-						either scratch/stack-locations/depth = LOCATION_REGISTER [
-							right: scratch/stack-low/depth
-						][
-							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: materialize view scratch depth right right-ref
-								at (capacity - written)
-							if encoded < 0 [return fail-code encoded 752 "compile-function/code#214"]
-							written: written + encoded
-						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: materialize view scratch depth right right-ref
+							at (capacity - written)
+						if encoded < 0 [return fail-code encoded 752 "compile-function/code#214"]
+						written: written + encoded
 						either comparison? [
 							condition: case [
 								operation = EQUAL_OPERATION [arm64-encoder/EQ]

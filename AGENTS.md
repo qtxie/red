@@ -20,7 +20,51 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler214.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler227.exe`
+  (226->227, output 6450176 bytes). 227 carries the **ARM64 out-of-range
+  frame load** fix: an ARM64-hosted toolchain could not compile *anything*
+  for Linux-ARM64 or Darwin-ARM64 -- every build died with `emission
+  exceeds its measured buffer` at `emit-prologue/code#1`. See "An
+  out-of-range frame load clobbered the other operand" below.
+  228 (227->228) and 229 (228->229) are both 6450176 bytes and differ from
+  each other in only 18 bytes -- the PE timestamp, checksum and the two
+  `dd-Mmm-yyyy/h:mm:ss` build clocks -- so the chain is at a fixed point.
+  The defect is in `system/codegen/arm64-encoder.reds`. When a frame
+  displacement does not fit an unscaled offset (outside -256..255 and not
+  a scaled multiple), `register-load` has to materialise the address
+  first, and it did so **into the caller's scratch register** -- X16
+  everywhere, from `frame-load` and `compiler-frame-load`. X16 is also
+  where the integer expression path parks the *left* operand (`left:
+  arm64-encoder/X16` in `compile-function`), so materialising the right
+  operand overwrote the left one and the operation then subtracted a frame
+  address. Concretely `capacity - written` handed `emit-prologue` a frame
+  address as `capacity`; a negative capacity is BUFFER_FULL (-3), and only
+  the emit pass reports it because `room?` is `any [null? code capacity >=
+  size]` and the measure pass never looks at capacity at all.
+  The address now goes into the **destination** register, which the load
+  overwrites anyway (`address: either target = base [scratch][target]`),
+  so no register other than the destination is touched. `register-store`
+  cannot do the same -- the destination of the address computation would be
+  the value being stored -- and it already refuses `scratch = source`.
+  Separately, the deep-stack integer fallback used an operand's own
+  register as the result register; on a stack that deep that register can
+  be a local's *home* (X19-X28), so the result silently rewrote the local.
+  Both operands are now copied into X16/X17 first.
+  Why the *host* mattered: the compiler's own frame layout differs between
+  hosts, so only an ARM64-hosted compiler reached an out-of-range
+  displacement at those sites. The generated ARM64 code is host-independent
+  -- a cross-compiled binary and a natively built one are byte-identical --
+  which is what made the bug reproducible from Windows.
+  Verified on a real aarch64 host: `hello.reds` and `libRedRT` (the file
+  named in the original report) both compile, a Red program builds and
+  runs, and the Red/System unit suite -- run natively on ARM64 for the
+  first time -- gives 10449 tests / 12082 assertions / 12068 passed / 0
+  compile-failures. The 16 failures are the harness, not codegen:
+  `size-test.reds` asserts 4-byte pointers and the x64 swap in
+  `run-red-system-tests.red` only fires for targets containing "X86-64"
+  (14), and `struct-test.reds` cannot run because no ARM64
+  `libstructlib.so` exists (2).
+- Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler214.exe`
   (213->214, output 6449664 bytes; 213 and 214 are byte-identical, so the
   chain is at a fixed point). 214 carries the **redundant-cast warning**
   work: warnings now print the location that raised them --

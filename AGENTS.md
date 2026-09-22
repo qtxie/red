@@ -58,12 +58,22 @@
   Verified on a real aarch64 host: `hello.reds` and `libRedRT` (the file
   named in the original report) both compile, a Red program builds and
   runs, and the Red/System unit suite -- run natively on ARM64 for the
-  first time -- gives 10449 tests / 12082 assertions / 12068 passed / 0
-  compile-failures. The 16 failures are the harness, not codegen:
-  `size-test.reds` asserts 4-byte pointers and the x64 swap in
-  `run-red-system-tests.red` only fires for targets containing "X86-64"
-  (14), and `struct-test.reds` cannot run because no ARM64
-  `libstructlib.so` exists (2).
+  first time -- is green: 10604 tests / 12710 assertions / 12710 passed /
+  0 failed / 0 compile-failures. Windows-X86-64 10593/12680/12680/0 and
+  Linux-X86-64 10594/12681/12681/0.
+  It took one more change to get there (`7be26bf97`): `run-red-system-tests`
+  swapped in the x64 `size?` and `struct!` units only for targets whose
+  name contains "X86-64", so ARM64 ran the 32-bit ones -- `size-test.reds`
+  asserts 4-byte pointers (14 failures) and `struct-test.reds` imports
+  `libstructlib.so`, an ELF i386 image no 64-bit executable can load (2).
+  The x64 units already cover ARM64; only the selection was wrong. Two
+  things follow from running them: the structlib has to be chosen per OS
+  *and* per architecture and copied under the name the unit imports
+  (Linux-X86-64 was being handed the Windows `structlib-x64.dll`), and
+  because ELF and Mach-O do not resolve a bare name against the
+  executable's own directory the way Windows does, the copy is announced
+  to the loader -- appending, since `libRedRT.so` is found that way on a
+  host that does not install it.
 - Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler214.exe`
   (213->214, output 6449664 bytes; 213 and 214 are byte-identical, so the
   chain is at a fixed point). 214 carries the **redundant-cast warning**

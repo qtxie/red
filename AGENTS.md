@@ -74,6 +74,30 @@
   executable's own directory the way Windows does, the copy is announced
   to the loader -- appending, since `libRedRT.so` is found that way on a
   host that does not install it.
+## A global narrower than 8 bytes cannot hold an address
+
+`i: as integer! :foo` -- a 4-byte global initialised from a function
+address -- is rejected by the ARM64 backend (`prepare-global-data/view#14`,
+site 34, `global-size <> 8`) and accepted by x64. **ARM64 is right and x64
+is buggy**: the address relocation is 8 bytes wide and x64 writes all eight
+into a four-byte slot, clobbering whatever follows.
+
+    Red/System[]
+    foo: func [a [integer!]][]
+    i: as integer! :foo
+    j: 12345678
+    ;-- i is correct (the address truncated to 32 bits); j prints 24005,
+    ;-- which is the high dword of foo's address. Drop the `i:` line and j
+    ;-- prints 12345678 again. Verified on Linux-X86-64 at 227.
+
+`system/tests/source/compiler/cast-test.red`'s "cast function! 1" asserts
+only `--compiled?`, so it never runs the program and never sees the
+corruption -- which is why x64 looks healthy here and ARM64 looks like the
+odd one out. That is the one remaining Red/System-compiler-suite failure
+ARM64 has and Windows does not (4 vs 3 at 227); it is not an ARM64 gap.
+Do **not** "fix" it by relaxing the ARM64 check: the real fix is either a
+narrow relocation on x64 or the same refusal there.
+
 - Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler214.exe`
   (213->214, output 6449664 bytes; 213 and 214 are byte-identical, so the
   chain is at a fixed point). 214 carries the **redundant-cast warning**

@@ -198,6 +198,7 @@
 	red/string/equal?
 	red/string/rs-make-at
 	red/string/get-char
+	red/string/overwrite-char
 	red/string/rs-reset
 	red/string/concatenate
 	red/string/rs-length?
@@ -216,6 +217,9 @@
 	red/unicode/load-utf8
 	red/unicode/decode-utf8-char
 	red/unicode/convert-u16
+	red/unicode/Latin1-to-UCS2
+	red/unicode/Latin1-to-UCS4
+	red/unicode/UCS2-to-UCS4
 
 	red/object/unchanged?
 	red/object/unchanged2?

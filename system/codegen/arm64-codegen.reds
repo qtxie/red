@@ -3644,6 +3644,18 @@ arm64-codegen: context [
 			home-count: home-count + 1
 			plan/frame-anchor-register: home-register
 		]
+		;-- A value the allocator keeps in a home (callee-saved) register
+		;-- survives an ordinary call, but not a `throw` this function catches:
+		;-- the throw longjmps straight to the landing pad, skipping the
+		;-- epilogues of the frames it unwinds, so those callee-saved registers
+		;-- are left holding the unwound frames' values. The landing pad restores
+		;-- only the expression stack, not home registers, so any value live
+		;-- across the catch must be frame-homed -- persistent frame memory
+		;-- survives the SP restore. Functions whose frame anchor is a home
+		;-- register (they move SP through stack intrinsics) are excluded: their
+		;-- catch record is addressed through that register, so they need the
+		;-- separate anchor-preservation path, not this demotion.
+		if all [plan/catch-capacity > 0 not frame-anchor?][stack-all?: true]
 		if stack-all? [
 			id: 1
 			while [id <= count][
@@ -5078,6 +5090,7 @@ arm64-codegen: context [
 	]
 
 	emit-catch-restore: func [
+		plan [arm64-function-plan!]
 		code [byte-ptr!]
 		capacity level [integer!]
 		return: [integer!]
@@ -5100,16 +5113,36 @@ arm64-codegen: context [
 			arm64-encoder/X16 arm64-encoder/X17 compiler-frame-register -16
 		if encoded < 0 [return fail-code encoded 493 "emit-catch-restore/code#3"]
 		written: written + encoded
-		at: either null? code [as byte-ptr! 0][code + written]
-		encoded: arm64-encoder/register-load at (capacity - written)
-			arm64-encoder/X16 arm64-encoder/X2 -8 8 0 8 arm64-encoder/X17
-		if encoded < 0 [return fail-code encoded 494 "emit-catch-restore/code#4"]
-		written: written + encoded
-		at: either null? code [as byte-ptr! 0][code + written]
-		encoded: arm64-encoder/move-register at (capacity - written)
-			arm64-encoder/SP arm64-encoder/X16 8
-		if encoded < 0 [return fail-code encoded 495 "emit-catch-restore/code#5"]
-		written + encoded
+		;-- Restore the CPU stack pointer only for a C-stack function, whose
+		;-- expression stack rides SP. There SP = FP - frame-allocation exactly
+		;-- (frame-enter is `mov x29,sp; sub sp,#frame-allocation`), so the frame
+		;-- base recovers it -- and it must be recomputed, since the throw
+		;-- landing arrives with SP pointing into an unwound inner frame.
+		;--
+		;-- A frame-anchor function is different: it keeps its Red values on a
+		;-- SEPARATE stack addressed through the pinned anchor register, while
+		;-- its CPU SP stays fixed at the frame it entered with (only outgoing
+		;-- call args ride it). Both the throw unwind and a normal catch exit
+		;-- already leave that fixed SP in place, so it needs no restore here.
+		;-- Worse, touching it corrupts it: the anchor is on the other stack (so
+		;-- `anchor - frame-allocation` is a wrong-stack, mis-aligned address),
+		;-- and the record's saved-SP slot lives on the volatile anchor stack
+		;-- where later value pushes overwrite it. So leave SP alone unless the
+		;-- frame base is FP.
+		if plan/frame-anchor-register = arm64-encoder/FP [
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/address-offset at (capacity - written)
+				arm64-encoder/X16 compiler-frame-register
+				(0 - plan/frame-allocation) arm64-encoder/X17
+			if encoded < 0 [return fail-code encoded 494 "emit-catch-restore/code#4"]
+			written: written + encoded
+			at: either null? code [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/move-register at (capacity - written)
+				arm64-encoder/SP arm64-encoder/X16 8
+			if encoded < 0 [return fail-code encoded 495 "emit-catch-restore/code#5"]
+			written: written + encoded
+		]
+		written
 	]
 
 	emit-throw-unwind: func [
@@ -7863,7 +7896,7 @@ arm64-codegen: context [
 						instruction/a > 0 instruction/a < ordinal
 					][return fail-invalid 301 "compile-function/instruction/a#135"]
 					at: either null? code [as byte-ptr! 0][code + written]
-					encoded: emit-catch-restore at (capacity - written)
+					encoded: emit-catch-restore plan at (capacity - written)
 						catch-level
 					if encoded < 0 [return fail-code encoded 675 "compile-function/code#137"]
 					written: written + encoded
@@ -9932,7 +9965,7 @@ arm64-codegen: context [
 					catch-unwind: instruction/c
 					while [catch-unwind > 0][
 						at: either null? code [as byte-ptr! 0][code + written]
-						encoded: emit-catch-restore at (capacity - written)
+						encoded: emit-catch-restore plan at (capacity - written)
 							catch-level
 						if encoded < 0 [return fail-code encoded 787 "compile-function/code#249"]
 						written: written + encoded

@@ -168,18 +168,12 @@ compiled?: func [
          p1 = as [pointer! [integer!]] p
     }
     
-  --test-- "cast struct! no warning"
-    ;-- An identity cast between two aggregates is no longer reported: `#call`
-    ;-- emits `as cell!` for every argument whose type the Red frontend cannot
-    ;-- name, and that no-op points at a line the compiler wrote.
-    result: compiled? {
+    warning-test "struct!" {
         Red/System []
          s1: declare struct! [a [integer!] b [integer!]]
          s2: declare struct! [a [integer!] b [integer!]]
          s2 = as [struct! [a [integer!] b [integer!]]] s1
     }
-    --assert result
-    --assert none? find qt/comp-output "is not necessary"
         
 ===end-group=== 
 

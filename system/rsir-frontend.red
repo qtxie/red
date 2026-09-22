@@ -471,7 +471,8 @@ compiler-rsir-frontend: context [
 		;-- no line to point at; naming its file is still worth it.
 		line: location-line position
 		if line > 0 [append text rejoin [":" line]]
-		append text ")"
+		append text rejoin [" || sf:" mold statement-file " cf:" mold current-file
+			" af:" mold active-function " pos=" copy/part mold position 160]
 		;-- A file and a number still leave you looking for the code, so
 		;-- quote the line itself under the location.
 		if source: source-line file line [

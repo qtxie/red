@@ -18,7 +18,6 @@ comment {
 #include %qt-runner.red
 
 qt/compiler-arguments: any [get-env "RED_SYSTEM_COMPILER_ARGUMENTS" ""]
-qt/library-target: any [get-env "RED_SYSTEM_LIBRARY_TARGET" "Windows-X86-64-DLL"]
 
 ; The executable and library suffixes follow the target, so recover it from the
 ; -t argument when the caller did not name it outright.
@@ -30,6 +29,15 @@ qt/target: any [
 		1 < length? pos
 	][pos/2]
 	"Windows-X86-64"
+]
+;; The shared-object target follows the executable one. Windows spells the
+;; suffix -DLL; every other target the toolchain reports is -SO. It used to
+;; default to Windows-X86-64-DLL outright, which made every non-Windows target
+;; ask for a Windows DLL and emit <name>.so.dll -- a file the runner then
+;; could not find, so both libtest-dll sources counted as compile failures.
+qt/library-target: any [
+	get-env "RED_SYSTEM_LIBRARY_TARGET"
+	rejoin [qt/target either find qt/target "Windows" ["-DLL"]["-SO"]]
 ]
 
 qt/set-compiler "RED_SYSTEM_COMPILER"

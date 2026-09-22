@@ -34,14 +34,48 @@ qt/output-dir: %build/self-hosting/system-suite/
 qt/ensure-output-dir
 qt/set-compiler "RED_SYSTEM_COMPILER"
 
+;-- A 64-bit target runs the x64 variants of the two units that hard-code a
+;-- pointer width: %size-test.reds asserts 4-byte pointers and %struct-test.reds
+;-- loads an i386 library. Anything else runs the 32-bit ones.
+sixty-four?: any [
+	not none? find qt/target "X86-64"
+	not none? find qt/target "ARM64"
+]
+
+;-- The structlib the selected unit can load, and the bare name that unit
+;-- asks the loader for. They are separate because the checked-in builds are
+;-- named after the architecture they were built for, not after what the unit
+;-- imports.
 structlib-file: any [
 	get-env "RED_SYSTEM_STRUCTLIB"
-	;-- The checked-in structlib.dll is a 32-bit image, so the x64 struct test
-	;-- cannot load it: pick the 64-bit build for X86-64 targets.
-	if not none? find qt/target "X86-64" [
-		qt/join-file qt/source-dir %libs/structlib-x64.dll
+	if not none? find qt/target "Windows" [
+		qt/join-file qt/source-dir either sixty-four? [
+			%libs/structlib-x64.dll
+		][%libs/structlib.dll]
 	]
-	qt/join-file qt/source-dir %libs/structlib.dll
+	if not none? find qt/target "Darwin" [qt/join-file qt/source-dir %libs/structlib.dylib]
+	if not none? find qt/target "ARM64" [qt/join-file qt/source-dir %libs/structlib-arm64.so]
+	if sixty-four? [qt/join-file qt/source-dir %libs/structlib.so]
+	qt/join-file qt/source-dir %libs/libstructlib.so
+]
+structlib-name: any [
+	if not none? find qt/target "Windows" [%structlib.dll]
+	if not none? find qt/target "Darwin" [%structlib.dylib]
+	if not none? find qt/target "ARM64" [%structlib-arm64.so]
+	if sixty-four? [%structlib.so]
+	%libstructlib.so
+]
+
+;-- Windows resolves a bare library name against the executable's own
+;-- directory; ELF and Mach-O do not. Announce the copy to the loader instead,
+;-- keeping whatever was already there -- libRedRT.so is found this way on a
+;-- host that does not install it.
+add-library-path: func [directory [file!] /local variable current][
+	variable: either none? find qt/target "Darwin" ["LD_LIBRARY_PATH"]["DYLD_LIBRARY_PATH"]
+	current: get-env variable
+	set-env variable either all [string? current not empty? current][
+		rejoin [current ":" to-local-file directory]
+	][to-local-file directory]
 ]
 arguments: any [system/options/args copy []]
 run-only?: not none? find arguments "--run-only"
@@ -61,7 +95,7 @@ unit-sources: [
 	%system-test.reds %atomic-test.reds %queue-test.reds %push-pop-test.reds
 	%auto-tests/dylib-auto-test.reds
 ]
-if not none? find qt/target "X86-64" [
+if sixty-four? [
 	change find unit-sources %struct-test.reds %struct-x64-test.reds
 	change find unit-sources %size-test.reds %size-x64-test.reds
 ]
@@ -128,7 +162,8 @@ either run-only? [
 			]
 		]
 	]
-	write/binary qt/out-path %structlib.dll read/binary qt/local-path structlib-file
+	write/binary qt/out-path structlib-name read/binary qt/local-path structlib-file
+	unless none? find qt/target "Windows" [add-library-path qt/absolute qt/output-dir]
 
 	foreach relative unit-sources [
 		qt/run-unit qt/join-file qt/source-dir relative

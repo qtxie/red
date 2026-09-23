@@ -103,7 +103,7 @@ try {
 	New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
 
 	$targets = @(
-		@{ Name = 'x64'; TargetArgs = @('-t', 'Windows-X86-64'); GetImport = 'GetWindowLongPtrW'; SetImport = 'SetWindowLongPtrW' },
+		@{ Name = 'x64'; TargetArgs = @('-t', 'MSDOS-X86-64'); GetImport = 'GetWindowLongPtrW'; SetImport = 'SetWindowLongPtrW' },
 		@{ Name = 'x86'; TargetArgs = @(); GetImport = 'GetWindowLongW'; SetImport = 'SetWindowLongW' }
 	)
 

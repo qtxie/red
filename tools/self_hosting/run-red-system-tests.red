@@ -21,13 +21,13 @@ qt/target: any [
 		pos: find split qt/compiler-arguments " " "-t"
 		1 < length? pos
 	][pos/2]
-	"Windows-X86-64"
+	"MSDOS-X86-64"
 ]
 ;; The shared-object target follows the executable one. Windows spells the
 ;; suffix -DLL; every other target the toolchain reports is -SO.
 qt/library-target: any [
 	get-env "RED_SYSTEM_LIBRARY_TARGET"
-	rejoin [qt/target either find qt/target "Windows" ["-DLL"]["-SO"]]
+	rejoin [qt/target either qt/windows-target? ["-DLL"]["-SO"]]
 ]
 qt/source-dir: %system/tests/source/units/
 qt/output-dir: %build/self-hosting/system-suite/
@@ -48,7 +48,7 @@ sixty-four?: any [
 ;-- imports.
 structlib-file: any [
 	get-env "RED_SYSTEM_STRUCTLIB"
-	if not none? find qt/target "Windows" [
+	if qt/windows-target? [
 		qt/join-file qt/source-dir either sixty-four? [
 			%libs/structlib-x64.dll
 		][%libs/structlib.dll]
@@ -59,7 +59,7 @@ structlib-file: any [
 	qt/join-file qt/source-dir %libs/libstructlib.so
 ]
 structlib-name: any [
-	if not none? find qt/target "Windows" [%structlib.dll]
+	if qt/windows-target? [%structlib.dll]
 	if not none? find qt/target "Darwin" [%structlib.dylib]
 	if not none? find qt/target "ARM64" [%structlib-arm64.so]
 	if sixty-four? [%structlib.so]
@@ -163,7 +163,7 @@ either run-only? [
 		]
 	]
 	write/binary qt/out-path structlib-name read/binary qt/local-path structlib-file
-	unless none? find qt/target "Windows" [add-library-path qt/absolute qt/output-dir]
+	if qt/windows-target? [add-library-path qt/absolute qt/output-dir]
 
 	foreach relative unit-sources [
 		qt/run-unit qt/join-file qt/source-dir relative

@@ -45,7 +45,7 @@ try {
 		$source = Join-Path $sourceDir "$name.reds"
 		$exe = Join-Path $artifactDir "$name.exe"
 		$log = Join-Path $artifactDir "$name-compile.log"
-		$args = @('/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d', '-t', 'Windows-X86-64', '-o', $exe, $source)
+		$args = @('/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d', '-t', 'MSDOS-X86-64', '-o', $exe, $source)
 		Invoke-CheckedProcess 'cmd.exe' $args $CompileTimeoutSeconds $log | Out-Null
 		$output = Invoke-CheckedProcess $exe @() $RunTimeoutSeconds
 		$text = if ($null -eq $output) { '' } else { ([string]$output).Trim() }

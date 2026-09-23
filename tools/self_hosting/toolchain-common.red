@@ -89,8 +89,15 @@ resolve-in: func [base [file!] value [string!] /local path][
 	clean-path to-red-file either absolute? value [path][rejoin [base path]]
 ]
 
+;-- A Windows target is not always spelled "Windows": MSDOS-X86-64 is the x64
+;-- console one, named after the sub-system it asks Windows for. The suffix
+;-- follows the OS, so the whole family has to be caught, not one member.
+windows-target?: func [target [string! none!]][
+	all [target any [find target "Windows" find target "MSDOS"]]
+]
+
 executable-suffix: func [target [string!]][
-	either find target "Windows" [%.exe][%""]
+	either windows-target? target [%.exe][%""]
 ]
 
 ;-- --------------------------------------------------------------- processes --
@@ -159,7 +166,7 @@ machine-arch: has [out][
 
 host-target: does [
 	case [
-		system/platform = 'Windows ["Windows-X86-64"]		;-- PE x64 is the only Windows target
+		system/platform = 'Windows ["MSDOS-X86-64"]	;-- PE x64 console is the host's target
 		system/platform = 'macOS   [rejoin ["Darwin-" target-arch machine-arch]]
 		system/platform = 'Linux   [rejoin ["Linux-" target-arch machine-arch]]
 		true [fail ["unsupported host platform:" system/platform]]
@@ -289,7 +296,7 @@ check-image: func [
 	b: read/binary file
 	case [
 		all [(pick b 1) = 77  (pick b 2) = 90][		;-- "MZ"
-			require find target "Windows" [target "should not be a PE image"]
+			require windows-target? target [target "should not be a PE image"]
 			check-pe-headers b form file
 			unless runtime [
 				require not find pe-imports b "LIBREDRT.DLL" [

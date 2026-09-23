@@ -17,7 +17,7 @@ param(
         "tools\self_hosting\fixtures\benchmarks\integer-division-loop.reds",
         "tools\self_hosting\fixtures\benchmarks\date-arithmetic-loop.reds"
     ),
-    [string]$Target = "Windows-X86-64",
+    [string]$Target = "MSDOS-X86-64",
     [ValidateSet("O0", "O1", "O2")]
     [string[]]$Optimizations = @("O0", "O2"),
     [ValidateSet("O0", "O1", "O2")]

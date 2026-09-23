@@ -9,7 +9,14 @@ does not depend on a repository checkout or an external compiler or linker.
 
 | Host | Entry point | Backend | Targets | Outputs |
 | --- | --- | --- | --- | --- |
-| any, one cross-compiler | `red-toolchain-hybrid.red` | typed postfix RSIR and native x64/ARM64 codegen | `Windows-X86-64`, `Windows-X86-64-DLL`, `Linux-X86-64`, `Linux-X86-64-SO`, `Linux-ARM64`, `Linux-ARM64-SO`, `Darwin-ARM64`, `Darwin-ARM64-SO`, `macOS-ARM64` | PE executable and DLL, ELF executable, Mach-O executable, `.app` bundle |
+| any, one cross-compiler | `red-toolchain-hybrid.red` | typed postfix RSIR and native x64/ARM64 codegen | `MSDOS-X86-64`, `Windows-X86-64`, `Windows-X86-64-DLL`, `Linux-X86-64`, `Linux-X86-64-SO`, `Linux-ARM64`, `Linux-ARM64-SO`, `Darwin-ARM64`, `Darwin-ARM64-SO`, `macOS-ARM64` | PE executable and DLL, ELF executable, Mach-O executable, `.app` bundle |
+
+The two Windows x64 targets differ only in the PE sub-system:
+`MSDOS-X86-64` is `IMAGE_SUBSYSTEM_WINDOWS_CUI` (the default when `-t` is
+absent, hence the name the other Windows targets already use for it), and
+`Windows-X86-64` is `IMAGE_SUBSYSTEM_WINDOWS_GUI`, so Windows attaches no
+console window to the process at startup. A GUI executable still has to be a
+View program: the compiler rejects `Windows-X86-64` without `Needs: View`.
 
 The toolchain supports release and development builds. A development Red
 application builds `libRedRT` and its include files beside the output. The
@@ -96,7 +103,7 @@ bound them.
 Run the compiler outside the repository with:
 
 ```powershell
-red-toolchain.exe -r -t Windows-X86-64 -o hello.exe hello.red
+red-toolchain.exe -r -t MSDOS-X86-64 -o hello.exe hello.red
 red-toolchain.exe -r -dlib -t Windows-X86-64-DLL -o example.dll example.reds
 ```
 
@@ -123,7 +130,7 @@ not in the repository -- then cross-compile:
 ```sh
 SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) \
   build/self-hosting/merge-red64/hybrid-compilerNNN.exe \
-  -r -t Windows-X86-64 \
+  -r -t MSDOS-X86-64 \
   -o build/tmp/gen-res.exe \
   tools/self_hosting/generate-toolchain-resources.red
 build/tmp/gen-res.exe "$PWD" \

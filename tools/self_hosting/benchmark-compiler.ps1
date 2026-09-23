@@ -4,7 +4,7 @@ param(
     [string]$Compiler,
 
     [string]$Source = "tests\hello.red",
-    [string]$Target = "Windows-X86-64",
+    [string]$Target = "MSDOS-X86-64",
     [int]$Runs = 1,
     [string]$OutputRoot = "build\compiler-benchmarks",
     [ValidateSet("default", "O0", "O1", "O2")]

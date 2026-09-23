@@ -80,7 +80,7 @@ compiler and pass the target explicitly:
 
 ```powershell
 & .\build\self-hosting\merge-red64\hybrid-compiler202.exe `
-    -r -t Windows-X86-64 `
+    -r -t MSDOS-X86-64 `
     -o .\build\case-control-O2.exe `
     .\tools\self_hosting\fixtures\backend\case-control.reds
 ```

@@ -116,7 +116,7 @@ try {
 
 	$compileArgs = @(
 		'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d',
-		'-t', 'Windows-X86-64', '-o', $executable,
+		'-t', 'MSDOS-X86-64', '-o', $executable,
 		(Join-Path $root 'tests\source\view\windows-x64-minimal.red')
 	)
 	$compileOutput = Invoke-CheckedProcess 'cmd.exe' $compileArgs $CompileTimeoutSeconds `
@@ -176,7 +176,7 @@ quit/return either qt-run-failures = 0 [0][1]
 
 	$suiteCompileArgs = @(
 		'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d',
-		'-t', 'Windows-X86-64', '-o', $suiteExecutable, $suiteSource
+		'-t', 'MSDOS-X86-64', '-o', $suiteExecutable, $suiteSource
 	)
 	$suiteCompileOutput = Invoke-CheckedProcess 'cmd.exe' $suiteCompileArgs $CompileTimeoutSeconds `
 		(Join-Path $artifactDir 'base-self-test-compile.log')

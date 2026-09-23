@@ -64,7 +64,7 @@ try {
 
 	$compileArgs = @(
 		'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d',
-		'-t', 'Windows-X86-64', '-o', $executable, $source
+		'-t', 'MSDOS-X86-64', '-o', $executable, $source
 	)
 	Invoke-CheckedProcess -FilePath 'cmd.exe' -ArgumentList $compileArgs `
 		-TimeoutSeconds $CompileTimeoutSeconds -OutputPath (Join-Path $artifactDir 'compile.log') | Out-Null

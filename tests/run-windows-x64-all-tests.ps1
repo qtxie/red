@@ -92,7 +92,7 @@ function Invoke-PreparePhase {
 	else {
 		$compileArgs = @(
 			'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d',
-			'-t', 'Windows-X86-64', '-o', $canaryExe, $canarySource
+			'-t', 'MSDOS-X86-64', '-o', $canaryExe, $canarySource
 		)
 		$compileOutput = Invoke-CheckedProcess 'cmd.exe' $compileArgs $CompileTimeoutSeconds `
 			(Join-Path $artifactDir 'canary-compile.log')
@@ -109,7 +109,7 @@ function Invoke-PreparePhase {
 		dumpbin = $Dumpbin
 		vcvars64 = $vcvars
 		cdb = Resolve-Cdb $Cdb
-		executableTarget = 'Windows-X86-64'
+		executableTarget = 'MSDOS-X86-64'
 		libraryTarget = 'Windows-X86-64-DLL'
 	} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $artifactDir 'tools.json') -Encoding ASCII
 	Write-Host "Windows x86-64 test preparation passed: PE32+ canary and $structDll"

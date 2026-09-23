@@ -28,7 +28,7 @@ qt/target: any [
 		pos: find split qt/compiler-arguments " " "-t"
 		1 < length? pos
 	][pos/2]
-	"Windows-X86-64"
+	"MSDOS-X86-64"
 ]
 ;; The shared-object target follows the executable one. Windows spells the
 ;; suffix -DLL; every other target the toolchain reports is -SO. It used to
@@ -37,7 +37,7 @@ qt/target: any [
 ;; could not find, so both libtest-dll sources counted as compile failures.
 qt/library-target: any [
 	get-env "RED_SYSTEM_LIBRARY_TARGET"
-	rejoin [qt/target either find qt/target "Windows" ["-DLL"]["-SO"]]
+	rejoin [qt/target either qt/windows-target? ["-DLL"]["-SO"]]
 ]
 
 qt/set-compiler "RED_SYSTEM_COMPILER"

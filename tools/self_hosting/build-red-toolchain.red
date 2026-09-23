@@ -111,17 +111,17 @@ script-file: does [
 ;-- One source, every target: the hybrid core is a cross-compiler, so the
 ;-- target is chosen by -t at build time, not by which file is compiled.
 toolchain-sources: [
-	"Windows-X86-64" %red-toolchain-hybrid.red
-	"Linux-X86-64"   %red-toolchain-hybrid.red
-	"Linux-ARM64"    %red-toolchain-hybrid.red
-	"Darwin-ARM64"   %red-toolchain-hybrid.red
+	"MSDOS-X86-64" %red-toolchain-hybrid.red
+	"Linux-X86-64" %red-toolchain-hybrid.red
+	"Linux-ARM64"  %red-toolchain-hybrid.red
+	"Darwin-ARM64" %red-toolchain-hybrid.red
 ]
 
 target-directories: [
-	"Windows-X86-64" %windows-x64/
-	"Darwin-ARM64"   %darwin-arm64/
-	"Linux-X86-64"   %linux-x64/
-	"Linux-ARM64"    %linux-arm64/
+	"MSDOS-X86-64" %windows-x64/
+	"Darwin-ARM64" %darwin-arm64/
+	"Linux-X86-64" %linux-x64/
+	"Linux-ARM64"  %linux-arm64/
 ]
 
 directory-for: func [target [string!]][

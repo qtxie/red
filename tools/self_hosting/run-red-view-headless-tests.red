@@ -31,7 +31,7 @@ qt/target: any [
 		pos: find split qt/compiler-arguments " " "-t"
 		1 < length? pos
 	][pos/2]
-	"Windows-X86-64"
+	"MSDOS-X86-64"
 ]
 qt/set-compiler "RED_COMPILER"
 qt/output-dir: %build/self-hosting/red-view-headless-suite/

@@ -4,7 +4,7 @@ param(
     [string]$Compiler,
 
     [string]$Source = "tools\self_hosting\fixtures\benchmarks\integer-loop.reds",
-    [string]$Target = "Windows-X86-64",
+    [string]$Target = "MSDOS-X86-64",
     [ValidateSet("O0", "O1", "O2")]
     [string[]]$Optimizations = @("O0", "O1", "O2"),
     [int]$Warmups = 2,

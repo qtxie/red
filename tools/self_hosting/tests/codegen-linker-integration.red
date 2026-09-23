@@ -60,7 +60,7 @@ output: either all [block? system/options/args not empty? system/options/args][
 ]
 set [output-dir output-name] split-path output
 
-base-job: compiler-system-job/new 'Windows-X86-64
+base-job: compiler-system-job/new 'MSDOS-X86-64
 unless object? base-job [fail "could not create the Windows x64 linker job"]
 job-data: copy/deep body-of base-job
 forall job-data [if lit-word? job-data/1 [job-data/1: to word! job-data/1]]

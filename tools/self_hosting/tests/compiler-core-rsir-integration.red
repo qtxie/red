@@ -62,7 +62,7 @@ unless exists? source [fail ["cannot access RSIR integration fixture: " source]]
 check not value? 'emitter "RSIR core installed the legacy emitter"
 check not value? 'rs-o2-ir "RSIR core installed the legacy machine IR"
 
-runtime-job: compiler-system-job/new 'Windows-X86-64
+runtime-job: compiler-system-job/new 'MSDOS-X86-64
 check object? runtime-job "could not create the runtime-linkage test job"
 compiler-system-job/job-set runtime-job 'red-pass? true
 compiler-system-job/job-set runtime-job 'runtime? true
@@ -98,7 +98,7 @@ check all [
 	(select resources 'version) = [Title "RSIR resource test" Version 1.2.3]
 ]["RSIR core did not preserve the Windows resource model"]
 
-job: compiler-system-job/new 'Windows-X86-64
+job: compiler-system-job/new 'MSDOS-X86-64
 unless object? job [fail "could not create the Windows x64 compilation job"]
 compiler-system-job/job-set job 'backend-mode 'rsir
 compiler-system-job/job-set job 'link? false
@@ -158,7 +158,7 @@ run-linked-fixture: func [
 	output: clean-path to file! rejoin [root %build/self-hosting/ output-name]
 	set [output-dir output-name] split-path output
 
-	job: compiler-system-job/new 'Windows-X86-64
+	job: compiler-system-job/new 'MSDOS-X86-64
 	check object? job ["could not create the " label " linker job"]
 	compiler-system-job/job-set job 'backend-mode 'rsir
 	compiler-system-job/job-set job 'link? true

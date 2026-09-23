@@ -16,7 +16,7 @@ recycle/on
 compiler-version: "0.1.0"
 
 print-usage: does [
-	print "Usage: red-system-hybrid [-n] [-O0|-O2] [-dlib] -t Windows-X86-64|Linux-X86-64|Linux-ARM64|Darwin-ARM64 [-o output] source.reds"
+	print "Usage: red-system-hybrid [-n] [-O0|-O2] [-dlib] -t MSDOS-X86-64|Windows-X86-64|Linux-X86-64|Linux-ARM64|Darwin-ARM64 [-o output] source.reds"
 ]
 
 fail-command: func [message][

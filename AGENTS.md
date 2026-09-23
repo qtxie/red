@@ -20,6 +20,21 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
+- Windows x64 has two targets, differing only in the PE sub-system
+  (`system/config.r` -> `system/target-registry.red`, regenerated with
+  `python tools/self_hosting/selfhost.py target-registry`):
+  `MSDOS-X86-64` is `IMAGE_SUBSYSTEM_WINDOWS_CUI` (3) -- what `Windows-X86-64`
+  used to be, and what `-t` defaults to on Windows -- and `Windows-X86-64` is
+  `IMAGE_SUBSYSTEM_WINDOWS_GUI` (2), so Windows attaches no console window.
+  A *Red* program built for the GUI target needs `Needs: View`
+  (`process-needs` in `compiler/frontend.red`); Red/System binaries do not, and
+  that is how the GUI target is exercised without the View engine.
+  Everything that recognized the Windows family by `find target "Windows"`
+  now goes through `windows-target?` (`toolchain-common.red`, `qt-runner.red`),
+  since the console x64 target is no longer spelled that way. Verified at
+  241/242: both 6513664 bytes, `--list-targets` leads with `MSDOS-X86-64`, a
+  default build prints four lines, and a Red/System build with
+  `-t Windows-X86-64` carries sub-system 2.
 - Current baseline: `build/self-hosting/merge-red64/hybrid-compiler227.exe`
   (226->227, output 6450176 bytes). 227 carries the **ARM64 out-of-range
   frame load** fix: an ARM64-hosted toolchain could not compile *anything*

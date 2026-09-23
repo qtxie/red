@@ -143,7 +143,7 @@ fixed-point: does [
 	build-script: root/tools/self_hosting/build-red-toolchain.red
 	require exists? build-script ["build script not found:" build-script]
 
-	target: any [options/target  "Windows-X86-64"]
+	target: any [options/target  "MSDOS-X86-64"]
 	output-root: dirize any [
 		if options/output-root [dirize resolve-in root options/output-root]
 		rejoin [root "build/red-toolchain/windows-x64-fixed-point"]

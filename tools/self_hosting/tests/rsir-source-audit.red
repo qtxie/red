@@ -36,7 +36,7 @@ rsir-source-audit: context [
 		/local job definitions keywords runtime-source source output
 	][
 		last-error: none
-		job: compiler-system-job/new 'Windows-X86-64
+		job: compiler-system-job/new 'MSDOS-X86-64
 		unless object? job [
 			last-error: compiler-system-job/last-error/message
 			return none

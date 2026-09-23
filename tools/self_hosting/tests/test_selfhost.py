@@ -1,3 +1,4 @@
+import re
 import sys
 import textwrap
 import unittest
@@ -139,6 +140,33 @@ class InventoryTests(unittest.TestCase):
                 )
             ],
         )
+
+
+class TargetRegistryTests(unittest.TestCase):
+    """The Windows x64 targets differ only in their PE sub-system."""
+
+    root = Path(__file__).resolve().parents[3]
+
+    def _field(self, target, field):
+        text, _ = selfhost._target_registry_text(self.root)
+        block = re.search(rf"(?ms)^\t{re.escape(target)} \[.*?^\t\]", text)
+        self.assertIsNotNone(block, f"{target} is missing from the registry")
+        match = re.search(rf"(?m)^\t\t{re.escape(field)} (\S+)$", block.group(0))
+        self.assertIsNotNone(match, f"{target} does not set {field}")
+        return match.group(1)
+
+    def test_msdos_x86_64_is_the_console_target(self):
+        self.assertEqual(self._field("MSDOS-X86-64", "sub-system"), "console")
+        self.assertEqual(self._field("MSDOS-X86-64", "target"), "X86-64")
+        self.assertEqual(self._field("MSDOS-X86-64", "type"), "exe")
+
+    def test_windows_x86_64_is_the_gui_target(self):
+        self.assertEqual(self._field("Windows-X86-64", "sub-system"), "GUI")
+        self.assertEqual(self._field("Windows-X86-64", "target"), "X86-64")
+        self.assertEqual(self._field("Windows-X86-64", "type"), "exe")
+
+    def test_checked_in_registry_matches_config(self):
+        self.assertFalse(selfhost._target_registry_info(self.root)["stale"])
 
 
 class DifferentialTests(unittest.TestCase):

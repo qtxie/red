@@ -4,7 +4,7 @@ Red [
 ]
 
 ; Generated from system/config.r. Do not edit by hand.
-target-registry-source-sha256: "b1c3aaaa325fda80ec38a8791125fbf06c983b70b11ce196707913643cc621df"
+target-registry-source-sha256: "f3cb936e72fc4baf1780a8a912087268363c62037300e56520915865b0fd4f78"
 target-registry: [
 	MSDOS [
 		OS Windows
@@ -61,13 +61,22 @@ target-registry: [
 		red-store-bodies? #(false)
 		target IA-32
 	]
-	Windows-X86-64 [
+	MSDOS-X86-64 [
 		OS Windows
 		format PE
 		target X86-64
 		type exe
 		ABI win64
 		sub-system console
+		stack-align-16? #(true)
+	]
+	Windows-X86-64 [
+		OS Windows
+		format PE
+		target X86-64
+		type exe
+		ABI win64
+		sub-system GUI
 		stack-align-16? #(true)
 	]
 	Windows-X86-64-DLL [

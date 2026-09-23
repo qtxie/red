@@ -65,7 +65,7 @@ try {
 
 	$compileArgs = @(
 		'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-c', '--no-view', '-d',
-		'-t', 'Windows-X86-64', '-o', $executable,
+		'-t', 'MSDOS-X86-64', '-o', $executable,
 		(Join-Path $root 'tests\source\runtime\x64-red-smoke.red')
 	)
 	$compileOutput = Invoke-CheckedProcess 'cmd.exe' $compileArgs $CompileTimeoutSeconds `

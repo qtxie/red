@@ -21,7 +21,7 @@ mkdir -p build/seed
 
 target_for() {
   case "$1" in
-    windows-x64)  echo Windows-X86-64 ;;
+    windows-x64)  echo MSDOS-X86-64 ;;
     linux-x64)    echo Linux-X86-64 ;;
     linux-arm64)  echo Linux-ARM64 ;;
     darwin-arm64) echo Darwin-ARM64 ;;

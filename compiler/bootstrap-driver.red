@@ -35,7 +35,7 @@ unless value? 'compiler-command [compiler-command: "red-bootstrap"]
 	compiler-toolchain/configure
 		compiler-toolchain/build-target
 		[
-			"Windows-X86-64" "Windows-X86-64-DLL"
+			"MSDOS-X86-64" "Windows-X86-64" "Windows-X86-64-DLL"
 			"Darwin-ARM64" "Darwin-ARM64-SO"
 			"Linux-X86-64" "Linux-X86-64-SO"
 			"Linux-ARM64" "Linux-ARM64-SO"
@@ -48,7 +48,7 @@ print-usage: does [
 		print rejoin [
 			"Usage: " compiler-command
 			" [-c|--dev|-r] [-u] [-d] [-n] [-O0|-O2] [-dlib] "
-			"[-t Windows-X86-64|Darwin-ARM64|Linux-X86-64|Linux-ARM64] "
+			"[-t MSDOS-X86-64|Windows-X86-64|Darwin-ARM64|Linux-X86-64|Linux-ARM64] "
 			"[-o output] source.red|source.reds"
 		]
 		print rejoin [
@@ -299,13 +299,13 @@ compile-source: func [
 					]
 					(compiler-system-job/job-get job 'format) = 'ELF
 				]
-			][fail-command "hybrid compiler supports Windows-X86-64 PE, Darwin-ARM64 Mach-O and Linux X86-64/ARM64 ELF targets"]
+			][fail-command "hybrid compiler supports Windows X86-64 PE, Darwin-ARM64 Mach-O and Linux X86-64/ARM64 ELF targets"]
 		][
 			unless all [
 				(compiler-system-job/job-get job 'OS) = 'Windows
 				(compiler-system-job/job-get job 'target) = 'X86-64
 				(compiler-system-job/job-get job 'format) = 'PE
-			][fail-command "this compiler supports only Windows-X86-64 PE targets"]
+			][fail-command "this compiler supports only Windows X86-64 PE targets"]
 		]
 	]
 	if none? compiler-system-job/job-get job 'dev-mode? [

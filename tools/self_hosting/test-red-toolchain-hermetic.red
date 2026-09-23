@@ -210,7 +210,7 @@ hermetic: func [/local result resources exports marker][
 	require exists? toolchain ["toolchain not found:" toolchain]
 
 	target: any [options/target  host-target]
-	require find target "Windows" [
+	require windows-target? target [
 		"this suite is shaped by the Windows standalone toolchain, not" target
 	]
 	root-text: form root

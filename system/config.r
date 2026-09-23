@@ -95,13 +95,23 @@ WinDLL [
 	red-store-bodies?: no
 ]
 ;-------------------------
-Windows-X86-64 [
+MSDOS-X86-64 [							; Windows default target (console sub-system)
 	OS:			'Windows
 	format:		'PE
 	target:		'X86-64
 	type:		'exe
 	ABI:		'win64
 	sub-system: 'console
+	stack-align-16?: yes
+]
+;-------------------------
+Windows-X86-64 [						; Windows GUI target: ImageSubsystem is
+	OS:			'Windows				; IMAGE_SUBSYSTEM_WINDOWS_GUI, so Windows
+	format:		'PE						; attaches no console window at startup.
+	target:		'X86-64
+	type:		'exe
+	ABI:		'win64
+	sub-system: 'GUI
 	stack-align-16?: yes
 ]
 ;-------------------------

@@ -12,7 +12,7 @@ line; this script turns the coordinates into the construct that was being
 compiled. Both function and instruction ids are 1-based, so `function=2541`
 is the row at index 2540 below. Dump the IR with `--dump-o2-ir <path>`:
 
-    hybrid-compiler.exe -r -t Windows-X86-64 \
+    hybrid-compiler.exe -r -t MSDOS-X86-64 \
         --dump-o2-ir build/tmp/prog.ir -o build/tmp/prog.exe prog.red
 
 usage:

@@ -18,7 +18,7 @@ compiler-toolchain: context [
 	build-target: #either config/OS = 'macOS ["Darwin-ARM64"][
 		#either config/OS = 'Linux [
 			#either config/target = 'ARM64 ["Linux-ARM64"]["Linux-X86-64"]
-		]["Windows-X86-64"]
+		]["MSDOS-X86-64"]
 	]
 
 	install-embedded: does [

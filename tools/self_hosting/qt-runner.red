@@ -73,17 +73,25 @@ qt: context [
 
 	quote: func [value][rejoin [{"} to-local-file value {"}]]
 
+	;-- A Windows target is not always spelled "Windows": MSDOS-X86-64 is the
+	;-- x64 console one, named after the sub-system it asks Windows for. What
+	;-- follows the target name is the executable suffix and the shared-object
+	;-- suffix, and both follow the OS, so the whole family has to be caught.
+	windows-target?: does [
+		all [target any [find target "Windows" find target "MSDOS"]]
+	]
+
 	;-- Windows executables carry .exe, the ELF and Mach-O targets carry none.
 	;-- The suite runners hard-coded %.exe, which only ever worked on Windows.
 	executable-suffix: does [
-		either all [target find target "Windows"] [%".exe"][%""]
+		either windows-target? [%".exe"][%""]
 	]
 
 	library-suffix: does [
 		case [
-			all [target find target "Windows"]	[%".dll"]
-			all [target find target "Darwin"]	[%".dylib"]
-			true								[%".so"]
+			windows-target?					[%".dll"]
+			all [target find target "Darwin"][%".dylib"]
+			true							[%".so"]
 		]
 	]
 

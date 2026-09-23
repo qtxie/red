@@ -26,10 +26,11 @@ system/view/platform: context [
 		;   joining the set only has to add its case here and define get-handle/
 		;   set-handle/make-handle-at. (It cannot live in the backend's .reds:
 		;   those are #included further down, past the first use.)
-		;   The terminal TUI backend runs on every OS, so its handle type is
-		;   keyed on the GUI engine; the native ones follow the OS.
-		#either GUI-engine = 'terminal [
-			#define Face-handle! handle!					;-- terminal widgets
+		;   The terminal TUI backend and the headless test engine run on every
+		;   OS, so their handle type is keyed on the GUI engine; the native
+		;   ones follow the OS.
+		#either any [GUI-engine = 'terminal GUI-engine = 'test] [
+			#define Face-handle! handle!					;-- terminal widgets, test engine
 		][
 			#switch OS [
 				macOS [

@@ -159,6 +159,163 @@ propagating.
   throw 33/35, try 40/41, function 118/147, redbin-codec 174/1762.
 - Fixed point: 233a -> 234 at 6450176 bytes, same as 232/233.
 
+### Darwin-ARM64 dev-mode suites are green at 234
+
+`bash build/darwin-hybrid/build-suites-dev.sh [compiler] [host]` cross-compiles
+both suites **without `-r`** (dev mode: a Red executable imports the runtime
+from `@loader_path/libRedRT.dylib` instead of carrying it), ships them to the
+Mac and runs them there with `run-suite.sh`. Measured on macmini with 234:
+
+- Red/System: **44 units, 10605 tests / 12711 assertions / 0 failed** -- the
+  42 the script builds, plus `tests/source/runtime/tools-test.reds` (7/7) and
+  the generated `auto-tests/dylib-auto-test.reds` (8/7).
+- Red: **63 units, 9304 tests / 17998 assertions / 0 failed** -- the whole
+  `run-red-unit-tests.red` list, including `regression-test-red`.
+- Per-unit counts are identical to the Linux-ARM64 dev run above (throw
+  33/35, try 40/41, function 118/147, series 702/1119, parse 1070/1518,
+  object 250/630, redbin-codec 174/1762), so the two ARM64 OSes behave the
+  same and neither dropped a case.
+
+Two things the recipe has to get right: the first Red unit is compiled **alone**
+(it is the one that emits `libRedRT.dylib`; two concurrent builds race and
+produce a second `LC_LOAD_DYLIB`), and `struct-x64-test`/`dylib-auto-test`
+import a library by its bare name, which dyld does not resolve against the
+executable's own directory -- `run-suite.sh` exports `DYLD_LIBRARY_PATH=.`
+for that. `dylib-auto-test.reds` is generated with the *Mac's* absolute
+library paths before compiling and restored afterwards; it is tracked, and
+the copy in git carries Windows paths.
+
+### The Darwin toolchain, run natively on the Mac (236)
+
+`bash build/darwin-hybrid/mac-run-suites.sh <toolchain> <source-root> [runner]`
+builds (if needed) and runs any `tools/self_hosting/run-*.red` runner **on the
+Mac**, through the toolchain built for it -- `red-toolchain-hybrid.red`
+cross-compiled with `-t Darwin-ARM64`. The runner starts from
+`tools/self_hosting` (that is what makes `qt/root-dir` the repo root), and the
+toolchain, the runner list and the target travel in the environment. A unit
+that `#import`s a bare library name needs `DYLD_LIBRARY_PATH` pointing at the
+output directory; the script exports it.
+
+Measured on macmini with 236, all five runners native and green:
+
+| runner | result |
+|---|---|
+| `run-red-system-tests` | 10605 tests / 12711 assertions / **0 failed** / 0 compile-failures |
+| `run-red-unit-tests` | 9304 tests / 17998 assertions / **0 failed** / 0 compile-failures |
+| `run-red-view-headless-tests` | 148 tests / 249 assertions / **0 failed** / 0 compile-failures |
+| `run-red-system-compiler-tests` | 142 assertions / 139 passed / 3 failed / 70 compile-failures -- byte-for-byte the Windows numbers, the 3 being `caststruct!warning` |
+| `run-red-compiler-tests` | 321 assertions / 319 passed / 2 failed / 31 compile-failures |
+
+Only `#4190` is a failure Windows shares; `#394` is the one open item (below).
+Three real defects had to be fixed to get here.
+
+#### A toolchain built from a stale resource archive lies about the runtime ABI
+
+`hybrid-compilerNNN.exe -t Darwin-ARM64 red-toolchain-hybrid.red` packs
+whatever `build/generated/red-toolchain-resources.generated.red` is on disk,
+and that file is **generated, not committed**. Building the toolchain that way
+after a runtime export was added gave one that embedded the *previous*
+`system/utils/libRedRT-exports.red`, so every dev-mode Red program that needed
+a newer export died with
+
+    *** Compilation Error: undefined symbol: string   (%modules/view/view.red:441)
+
+`string` here is the *namespace*: `libRedRT-include.red` declared
+`symbol: context [...]` with only the members the stale list knew, a missing
+member fails the path lookup, and the error names the root. The Windows
+bootstrap compiler never shows it because it has no resource store and reads
+`system/utils/libRedRT-exports.red` from disk. Always regenerate first
+(`tools/self_hosting/generate-toolchain-resources.red <repo-root> <out>` fed
+`build/generated/...`), or build through `build-red-toolchain.red`, which does
+that every run. json-test was the visible victim; it is the same trap.
+
+Two footnotes that cost an hour each: an output directory keeps a
+`libRedRT-include.red`/`libRedRT-defs.red` pair that a later build *reuses*
+verbatim, so a stale cache can hide (or fake) the symptom -- delete the
+directory, not just `libRedRT.dylib`; and the member list of the generated
+`words` context is hand-picked in `libRedRT/save-files`, so a program that
+pulls runtime sources in (the View module includes
+`runtime/datatypes/event.reds`) cannot be built against libRedRT at all.
+
+#### On macOS the headless `test` engine spoke the wrong handle type
+
+`compiling tests/view-headless-interpreter.red` for Darwin-ARM64 (release,
+which is what `run-red-view-headless-tests.red` forces with `-r`):
+
+    *** codegen INVALID_IR: RSIR validation failed
+        check: arm64-codegen.reds :: compile-function/view#95 (site 261)
+        op=SET operands=0,0,0  function: exec>ctx||487~redraw
+
+`redraw` is `h: gui/face-handle? face` with `h [Face-handle!]`
+(`modules/view/backends/platform.red:893`). `Face-handle!` is the
+backend-private handle type and the mapping follows the OS -- `int64!` on
+macOS-ARM64 -- but the *test* engine returns `handle!` (a `pointer!`), so the
+store into `h` is a genuine type error there. The terminal engine did not have
+this problem because the mapping already special-cased it: it is keyed on the
+GUI engine, since a headless backend runs on every OS. The test engine is
+headless too, so it joins that case:
+
+    #either any [GUI-engine = 'terminal GUI-engine = 'test] [
+        #define Face-handle! handle!
+
+With that, the interpreter builds for Darwin-ARM64 (2094080), Linux-ARM64 and
+Windows-X86-64, and the suite runs green on the Mac for the first time.
+
+#### libcurl is unusable on a 64-bit Unix target
+
+`#2162` (`write/info https://api.github.com/user [GET [...]]`) crashed the
+compiled program on **Darwin-ARM64 and Linux-X86-64** -- and worked on Windows,
+which never reaches this code (it has a WinHTTP path):
+
+    *** Runtime Error 16: invalid virtual address   (Darwin, EXC_BAD_ACCESS in Curl_vsetopt)
+    *** Runtime Error 1: access violation           (Linux)
+
+Three separate defects in `runtime/simple-io.reds`, all now fixed:
+
+1. Every curl handle and payload was declared `integer!`, which is **4 bytes**
+   on a 64-bit target (`size? integer!` = 4): `curl_easy_init`'s pointer was
+   truncated to 32 bits and libcurl faulted on the first dereference. All of
+   them are `int-ptr!` now, and the call sites pass pointers instead of
+   `as-integer`.
+2. `curl_easy_setopt` is variadic. Declaring it as a fixed-arity C function
+   passes the option argument in a register, while Apple's ARM64 ABI spills
+   every variadic argument to the stack -- the callee then reads a register
+   that holds something else. It is `[[variadic]` now and the call sites use
+   the block form `curl_easy_setopt [curl OPT arg]`.
+3. The two calls that reserve stack room (`curl_easy_perform`,
+   `curl_easy_cleanup`) pushed **three** zero cells. Three cells move sp by 24
+   bytes, which leaves it 8-mod-16, and on ARM64 the callee's very first
+   `stp x22, x21, [sp, #0x30]` then faults with `EXC_BAD_ARM_ALIGN` before it
+   has read a single argument -- which is what `x0 = <valid handle>` at the
+   crash site proved. On `stack-align-16?` targets the stack is 16-byte
+   aligned at a statement boundary, so padding has to come in multiples of
+   four cells, as `interpreter.reds` already does for routine calls.
+
+#### Open: `#394` kills the Darwin-hosted compiler in the frontend
+
+With 236, `run-red-compiler-tests regression-test-redc-1.red` on the Mac stops
+at `#394`:
+
+    *** Script Error: get does not allow none! for its word argument
+
+The same sources built for Windows give 320/1 (only `#4190`). Evidence
+gathered so far, for whoever picks this up:
+
+- It is deterministic on the Mac (three runs, same test) and it is **not** the
+  snippet: that source compiles standalone in a fresh directory, in dev mode
+  and in release, on the Mac and on Windows. It needs the accumulated state of
+  the runner's output directory, which is why it is only visible through the
+  runner.
+- It dies inside `compiler-frontend/compile` -- after `Compiling <src> ...`
+  and before `...frontend time`, per `compiler/bootstrap-driver.red:322`.
+- It is sensitive to the **embedded resource archive, not to the code**: the
+  same compiler binary passes with the previous archive and fails with the one
+  regenerated from the current sources. A toolchain built from pristine HEAD
+  sources with a freshly regenerated archive also passes, so the archive alone
+  is not enough; the two source changes above happen to shift it far enough.
+- `#2162` is gone from that run, so this is not the network test in disguise:
+  redc-1 touches no network.
+
 ### Trap while reproducing this
 
 Do **not** run two compiles of the same generation concurrently, even into

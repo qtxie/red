@@ -2045,30 +2045,33 @@ simple-io: context [
 					return: [integer!]
 				]
 				curl_easy_init: "curl_easy_init" [
-					return: [integer!]
+					return: [int-ptr!]
 				]
-				curl_easy_setopt: "curl_easy_setopt" [
-					curl	[integer!]
+				;-- Every handle and payload is a pointer: curl_easy_setopt is
+				;-- variadic, and an integer!-typed argument truncates on a
+				;-- 64-bit target. The call sites pass the arguments in a block,
+				;-- which is what the [[variadic] attribute requires.
+				curl_easy_setopt: "curl_easy_setopt" [[variadic]
+					curl	[int-ptr!]
 					option	[integer!]
-					param	[integer!]
 					return: [integer!]
 				]
 				curl_easy_getinfo: "curl_easy_getinfo" [
-					curl	[integer!]
+					curl	[int-ptr!]
 					option	[integer!]
 					param	[int-ptr!]
 					return: [integer!]
 				]
 				curl_slist_append: "curl_slist_append" [
-					slist	[integer!]
+					slist	[int-ptr!]
 					pragma	[c-string!]
-					return:	[integer!]
+					return:	[int-ptr!]
 				]
 				curl_slist_free_all: "curl_slist_free_all" [
-					slist	[integer!]
+					slist	[int-ptr!]
 				]
 				curl_easy_perform: "curl_easy_perform" [
-					handle	[integer!]
+					handle	[int-ptr!]
 					return: [integer!]
 				]
 				curl_easy_strerror: "curl_easy_strerror" [
@@ -2076,7 +2079,7 @@ simple-io: context [
 					return: [c-string!]
 				]
 				curl_easy_cleanup: "curl_easy_cleanup" [
-					handle	[integer!]
+					handle	[int-ptr!]
 				]
 				curl_global_cleanup: "curl_global_cleanup" []
 			]
@@ -2179,7 +2182,7 @@ simple-io: context [
 			return: [red-value!]
 			/local
 				len		[integer!]
-				curl	[integer!]
+				curl	[int-ptr!]
 				res		[integer!]
 				buf		[byte-ptr!]
 				action	[integer!]
@@ -2188,7 +2191,7 @@ simple-io: context [
 				tail	[red-value!]
 				s		[series!]
 				str		[red-string!]
-				slist	[integer!]
+				slist	[int-ptr!]
 				mp		[red-hash!]
 				blk		[red-block!]
 				act-str [c-string!]
@@ -2205,13 +2208,13 @@ simple-io: context [
 			curl_global_init CURL_GLOBAL_ALL
 			curl: curl_easy_init
 
-			if zero? curl [
+			if curl = null [
 				#if debug? = yes [print-line "ERROR: libcurl init failed."]
 				curl_global_cleanup
 				return none-value
 			]
 
-			slist: 0
+			slist: null
 			bin: binary/make-at stack/push* 4096
 
 			either action = CURLOPT_CUSTOMREQUEST [
@@ -2220,24 +2223,25 @@ simple-io: context [
 				len: length? cstr
 				act-str: as c-string! allocate len + 1
 				act-str: to-upper (strncpy act-str cstr len + 1) len	;-- copies the NUL byte too
-				curl_easy_setopt curl CURLOPT_CUSTOMREQUEST as-integer act-str
+				curl_easy_setopt [curl CURLOPT_CUSTOMREQUEST as int-ptr! act-str]
 				free as byte-ptr! act-str
 			][
-				curl_easy_setopt curl action 1
+				curl_easy_setopt [curl action 1]
 			]
 			len: string/rs-length? as red-string! url
-			curl_easy_setopt curl CURLOPT_URL as-integer unicode/to-utf8 as red-string! url :len
-			curl_easy_setopt curl CURLOPT_NOPROGRESS 1
-			curl_easy_setopt curl CURLOPT_FOLLOWLOCATION 1
+			curl_easy_setopt [curl CURLOPT_URL as int-ptr!
+				unicode/to-utf8 as red-string! url :len]
+			curl_easy_setopt [curl CURLOPT_NOPROGRESS 1]
+			curl_easy_setopt [curl CURLOPT_FOLLOWLOCATION 1]
 
-			curl_easy_setopt curl CURLOPT_WRITEFUNCTION as-integer :get-http-response
-			curl_easy_setopt curl CURLOPT_WRITEDATA as-integer bin
+			curl_easy_setopt [curl CURLOPT_WRITEFUNCTION as int-ptr! :get-http-response]
+			curl_easy_setopt [curl CURLOPT_WRITEDATA as int-ptr! bin]
 
 			if info? [
 				blk: block/push-only* 3
 				mp: map/make-at stack/push* null 20
-				curl_easy_setopt curl CURLOPT_HEADERDATA as-integer mp
-				curl_easy_setopt curl CURLOPT_HEADERFUNCTION as-integer :get-http-header
+				curl_easy_setopt [curl CURLOPT_HEADERDATA as int-ptr! mp]
+				curl_easy_setopt [curl CURLOPT_HEADERFUNCTION as int-ptr! :get-http-header]
 			]
 
 			either header <> null [
@@ -2256,11 +2260,11 @@ simple-io: context [
 					slist: curl_slist_append slist unicode/to-utf8 str :len
 					value: value + 1
 				]
-				curl_easy_setopt curl CURLOPT_HTTPHEADER slist
+				curl_easy_setopt [curl CURLOPT_HTTPHEADER slist]
 			][
 				slist: curl_slist_append slist "Accept-Charset: UTF-8"
 				slist: curl_slist_append slist "User-Agent: Mozilla/5.0 (Windows NT 6.1; Win64; x64)"
-				curl_easy_setopt curl CURLOPT_HTTPHEADER slist
+				curl_easy_setopt [curl CURLOPT_HTTPHEADER slist]
 			]
 
 			if any [action = CURLOPT_POST action = CURLOPT_CUSTOMREQUEST] [
@@ -2272,15 +2276,15 @@ simple-io: context [
 						buf: binary/rs-head as red-binary! data
 						len: binary/rs-length? as red-binary! data
 					]
-					curl_easy_setopt curl CURLOPT_POSTFIELDSIZE len
-					curl_easy_setopt curl CURLOPT_POSTFIELDS as-integer buf
+					curl_easy_setopt [curl CURLOPT_POSTFIELDSIZE len]
+					curl_easy_setopt [curl CURLOPT_POSTFIELDS as int-ptr! buf]
 				]
 			]
 
-			curl_easy_setopt curl 64 0
+			curl_easy_setopt [curl 64 0]
 
 			saved: system/stack/align
-			push 0 push 0 push 0
+			push 0 push 0 push 0 push 0
 			res: curl_easy_perform curl
 			system/stack/top: saved
 
@@ -2289,9 +2293,9 @@ simple-io: context [
 				integer/make-in blk len
 			]
 
-			unless zero? slist [curl_slist_free_all slist]
+			unless slist = null [curl_slist_free_all slist]
 			saved: system/stack/align
-			push 0 push 0 push 0
+			push 0 push 0 push 0 push 0
 			curl_easy_cleanup curl
 			system/stack/top: saved
 			curl_global_cleanup

@@ -6468,7 +6468,8 @@ compiler-rsir-frontend: context [
 				stack-call target value position scope uses instructions params locals
 			][
 				unless stack-address value scope uses instructions params locals [
-					fail ERROR-REFERENCE ["undefined symbol:" mold value]
+					fail ERROR-REFERENCE ["undefined symbol:" mold value
+						" in" mold active-function warn-location position]
 				]
 				if last-type = 0 [
 					fail ERROR-REFERENCE [
@@ -6678,7 +6679,8 @@ compiler-rsir-frontend: context [
 					return next position
 				]
 				unless stack-address target scope uses instructions params locals [
-					fail ERROR-REFERENCE ["undefined symbol:" mold target]
+					fail ERROR-REFERENCE ["undefined symbol:" mold target
+						" in" mold active-function warn-location position]
 				]
 				if (ref-kind last-type) = 'function [
 					emit instructions load-op 0 0 0

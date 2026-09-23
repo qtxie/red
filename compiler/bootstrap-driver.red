@@ -244,6 +244,7 @@ read-source-marker: func [
 compile-source: func [
 	options [object!]
 	/local source marker job frontend-result backend-result saved-verbosity build-prefix
+		packager-name
 ][
 	unless compiler-options/option-get options 'source [fail-command "missing source file"]
 	source: resolve-source-path compiler-options/option-get options 'source
@@ -314,6 +315,22 @@ compile-source: func [
 		not libRedRT-ready? job
 	][build-libRedRT job]
 
+	;-- A target with a packager needs its bundle signature baked into the
+	;-- executable's own code signature, so prepare runs before the backend
+	;-- links; process then wraps the linked executable after it. Only a
+	;-- toolchain running on macOS can build the bundle: cross compiles leave
+	;-- a bare Mach-O executable, which is what the seed packaging expects.
+	#if config/OS = 'macOS [
+		if all [
+			(compiler-system-job/job-get job 'type) = 'exe
+			packager-name: compiler-system-job/job-get job 'packager
+		][
+			switch/default packager-name [
+				Mach-APP [mach-app-packager/prepare job source]
+			][fail-command rejoin ["unsupported packager: " packager-name]]
+		]
+	]
+
 	print ["Compiling" source "..."]
 	either marker = red-system-marker [
 		phase-timer/begin 'red-system-total
@@ -341,6 +358,18 @@ compile-source: func [
 
 	backend-result: system-dialect/last-result
 	unless block? backend-result [fail-command "Red/System backend did not produce a result"]
+	#if config/OS = 'macOS [
+		if all [
+			(compiler-system-job/job-get job 'type) = 'exe
+			packager-name: compiler-system-job/job-get job 'packager
+		][
+			switch/default packager-name [
+				Mach-APP [
+					poke backend-result 4 mach-app-packager/process job source backend-result/4
+				]
+			][fail-command rejoin ["unsupported packager: " packager-name]]
+		]
+	]
 	print [
 		"...native time      :" backend-result/1
 		"...link time        :" backend-result/2

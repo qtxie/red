@@ -25,6 +25,8 @@ Red [
 #include %embedded-assets.red
 #include %formats/PE.red
 #include %formats/Mach-O-ARM64.red
+#include %formats/Mach-APP-sign.red
+#include %formats/Mach-APP.red
 #include %formats/ELF.red
 
 #if any [config/OS = 'macOS config/OS = 'Linux] [

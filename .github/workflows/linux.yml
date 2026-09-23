@@ -1,6 +1,30 @@
 name: Linux-x86-64
 
-on: [push, pull_request]
+# The Linux x86-64 suites. build-toolchain.yml calls this after the `build` job
+# of that run, so the toolchain the suites compile with is the one built from
+# the same sources they test. A run that built no toolchain has nothing to test
+# with, which is why there is no push trigger here.
+#
+# A manual run is the convenience path, not the gate: a dispatched run builds
+# nothing either, so it takes one published seed generation instead. That is
+# what the `source` fallback in the job below says -- a caller passes `build`,
+# a human passes nothing and gets `seed`.
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: 'toolchain to test with: build (this run) | seed (a published generation)'
+        type: string
+        required: false
+        default: build
+  workflow_dispatch:
+    inputs:
+      seed-tag:
+        description: 'release that holds MANIFEST.json'
+        type: string
+        required: false
+        default: ci-seed
 
 permissions:
   contents: read
@@ -30,6 +54,8 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: linux-x64
+        source: ${{ inputs.source || 'seed' }}
+        seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
 
     - name: run every Red suite
       env:

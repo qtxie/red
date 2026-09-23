@@ -45,12 +45,11 @@ permissions:
   contents: read
   actions: write
 
-# The group has to include the requested platforms: every caller invokes this
-# same workflow, so a group keyed only on the ref would let the Linux job
-# cancel the Windows one, and each caller would then lose its toolchain.
-concurrency:
-  group: build-hybrid-toolchain-${{ inputs.platforms }}-${{ github.ref }}
-  cancel-in-progress: true
+# Deliberately no concurrency here. This workflow has more than one caller
+# (build-toolchain.yml for a push, seed-toolchain.yml for a manual generation or
+# a rollback) and they ask for the same platforms, so any group declared inside
+# it would have one caller cancel the other's build. Cancellation belongs to the
+# caller, which is also the only place that knows what a superseded run means.
 
 jobs:
   # The legs a caller did not ask for are dropped before the matrix is

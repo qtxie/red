@@ -1,6 +1,30 @@
 name: Windows
 
-on: [push, pull_request]
+# The Windows suites. build-toolchain.yml calls this after the `build` job of
+# that run, so the toolchain the suites compile with is the one built from the
+# same sources they test. A run that built no toolchain has nothing to test
+# with, which is why there is no push trigger here.
+#
+# A manual run is the convenience path, not the gate: a dispatched run builds
+# nothing either, so it takes one published seed generation instead. That is
+# what the `source` fallback in each job below says -- a caller passes `build`,
+# a human passes nothing and gets `seed`.
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: 'toolchain to test with: build (this run) | seed (a published generation)'
+        type: string
+        required: false
+        default: build
+  workflow_dispatch:
+    inputs:
+      seed-tag:
+        description: 'release that holds MANIFEST.json'
+        type: string
+        required: false
+        default: ci-seed
 
 permissions:
   contents: read
@@ -22,6 +46,8 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
+        source: ${{ inputs.source || 'seed' }}
+        seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
     - name: run Red unit tests
       shell: pwsh
       env:
@@ -40,6 +66,8 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
+        source: ${{ inputs.source || 'seed' }}
+        seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
     - name: run Red unit tests in release mode
       shell: pwsh
       env:
@@ -58,6 +86,8 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
+        source: ${{ inputs.source || 'seed' }}
+        seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
     - name: run Red unit tests in debug mode
       shell: pwsh
       env:
@@ -76,6 +106,8 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
+        source: ${{ inputs.source || 'seed' }}
+        seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
     - name: run headless view/VID test (test GUI backend)
       shell: pwsh
       env:
@@ -94,6 +126,8 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
+        source: ${{ inputs.source || 'seed' }}
+        seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
     - name: run Red compiler tests
       shell: pwsh
       env:
@@ -112,6 +146,8 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
+        source: ${{ inputs.source || 'seed' }}
+        seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
     - name: run Red/System tests
       shell: pwsh
       env:
@@ -133,6 +169,8 @@ jobs:
     - uses: ./.github/actions/setup-red-harness
       with:
         platform: windows-x64
+        source: ${{ inputs.source || 'seed' }}
+        seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
     - name: prepare Windows x86-64 native test dependencies
       shell: pwsh
       run: |

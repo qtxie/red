@@ -1,11 +1,17 @@
 name: Build the Red toolchain
 
-# Builds every platform's toolchain and CLI console from the current seed.
+# The one workflow a push starts. It builds every platform's toolchain and CLI
+# console from the current source, then runs the suites on all four platforms
+# through the toolchain it just built, so a suite always compiles the sources it
+# is testing. A run that built no toolchain has nothing to test with, which is
+# why the four suite workflows are called from here and no longer trigger on a
+# push of their own.
 #
 # Publishing is deliberately not on the push path: a release notifies every
-# repository watcher, so the seed advances once a night instead of once a
-# push. Every push still proves the current source builds a toolchain; only
-# the nightly run and an explicit dispatch move the chain forward.
+# repository watcher, so the seed advances once a night instead of once a push.
+# The nightly run promotes a generation only once all four suite sets are green
+# -- the seed is the bootstrap every later build starts from, so a generation
+# that cannot pass its own suites must not become one.
 
 on:
   push:
@@ -25,6 +31,11 @@ permissions:
   contents: read
   actions: write
 
+# A new push supersedes the whole pipeline, toolchain and suites alike. The
+# reusable build declares no concurrency of its own: it has two callers that ask
+# for the same platforms, so a group inside it would have them cancel each
+# other. Cancellation belongs to the caller, which is the only place that knows
+# what a superseded run means.
 concurrency:
   group: build-toolchain-${{ github.ref }}
   cancel-in-progress: true
@@ -36,8 +47,29 @@ jobs:
       platforms: '["windows-x64","linux-x64","linux-arm64","darwin-arm64"]'
       bootstrap-source: seed
 
-  promote:
+  # One call per platform. Each suite workflow takes the `seed-<platform>`
+  # artifact this run uploaded, which is what keeps it from compiling today's
+  # sources with an older compiler; `needs: build` is what makes that artifact
+  # exist, and what makes a failed build fail the run instead of handing the
+  # suites a toolchain of some other age.
+  test-windows-x64:
     needs: build
+    uses: ./.github/workflows/windows.yml
+
+  test-linux-x64:
+    needs: build
+    uses: ./.github/workflows/linux.yml
+
+  test-linux-arm64:
+    needs: build
+    uses: ./.github/workflows/ARM64.yml
+
+  test-darwin-arm64:
+    needs: build
+    uses: ./.github/workflows/macOS-ARM64.yml
+
+  promote:
+    needs: [build, test-windows-x64, test-linux-x64, test-linux-arm64, test-darwin-arm64]
     if: >
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && inputs.promote)

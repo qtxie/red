@@ -1,83 +1,122 @@
 name: Set up the Red test harness
 description: >
-  Fetches the current seed for one platform and leaves a toolchain at
-  build/toolchain/bin/red-toolchain and the console that drives the suite
-  runners at build/toolchain/red-console. Both come from the same generation,
-  so the harness never mixes a compiler and a console of different ages, and
-  neither needs a repository variable.
+  Leaves a toolchain at build/toolchain/bin/red-toolchain and the console that
+  drives the suite runners at build/toolchain/red-console.
+
+  With source: build -- what build-toolchain.yml passes -- both come from the
+  toolchain this run just built, the seed-<platform> artifact of
+  build-hybrid-toolchain.yml, so a suite compiles the sources it is testing.
+  With source: seed -- the only source a workflow that built nothing has, i.e. a
+  manual run of one suite workflow -- both come from one published generation.
+  Either way the compiler and the console are of the same age, so the harness
+  never mixes a compiler and a console of different generations, and neither
+  needs a repository variable.
 
 inputs:
   platform:
     description: 'windows-x64 | linux-x64 | linux-arm64 | darwin-arm64'
     required: true
+  source:
+    description: 'build: this run''s toolchain. seed: one published generation.'
+    required: false
+    default: build
   seed-tag:
-    description: 'release that holds MANIFEST.json; override to pin a generation'
+    description: 'release that holds MANIFEST.json (source: seed only)'
     required: false
     default: ci-seed
 
 runs:
   using: composite
   steps:
-    - name: Fetch seed toolchain
+    # Both sources land in the same place under the same names -- a seed
+    # release asset is named after the file the build packaged -- so only these
+    # two steps, and not the unpacking below, care where the toolchain came
+    # from.
+    - name: Download the toolchain this run built
+      if: inputs.source != 'seed'
+      uses: actions/download-artifact@v8
+      with:
+        name: seed-${{ inputs.platform }}
+        path: build/toolchain/generation
+
+    - name: Fetch the seed toolchain
       id: toolchain
+      if: inputs.source == 'seed'
       uses: ./.github/actions/fetch-seed
       with:
         platform: ${{ inputs.platform }}
         component: toolchain
-        output: build/toolchain/seed-toolchain${{ inputs.platform == 'windows-x64' && '.zip' || '.tar.gz' }}
+        output: build/toolchain/generation/red-toolchain-${{ inputs.platform }}${{ inputs.platform == 'windows-x64' && '.zip' || '.tar.gz' }}
         seed-tag: ${{ inputs.seed-tag }}
 
-    - name: Unpack seed toolchain (Windows)
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        $ErrorActionPreference = 'Stop'
-        Expand-Archive -Path 'build/toolchain/seed-toolchain.zip' `
-          -DestinationPath 'build/toolchain/bin'
-
-    - name: Unpack seed toolchain (Unix)
-      if: runner.os != 'Windows'
-      shell: bash
-      run: |
-        set -euo pipefail
-        mkdir -p build/toolchain/bin
-        tar -xzf build/toolchain/seed-toolchain.tar.gz -C build/toolchain/bin
-        chmod 755 build/toolchain/bin/red-toolchain
-
-    - name: Fetch seed console
+    - name: Fetch the seed console
       id: console
+      if: inputs.source == 'seed'
       uses: ./.github/actions/fetch-seed
       with:
         platform: ${{ inputs.platform }}
         component: console
-        output: build/toolchain/red-console
+        output: build/toolchain/generation/red-cli-console-${{ inputs.platform }}${{ inputs.platform == 'windows-x64' && '.exe' || '' }}
         seed-tag: ${{ inputs.seed-tag }}
 
-    - name: Make the seed runnable
+    - name: Unpack the toolchain (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Expand-Archive -Path "build/toolchain/generation/red-toolchain-$env:PLATFORM.zip" `
+          -DestinationPath 'build/toolchain/bin'
+        Copy-Item -LiteralPath "build/toolchain/generation/red-cli-console-$env:PLATFORM.exe" `
+          -Destination 'build/toolchain/red-console'
+
+    - name: Unpack the toolchain (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
+      run: |
+        set -euo pipefail
+        mkdir -p build/toolchain/bin
+        tar -xzf "build/toolchain/generation/red-toolchain-$PLATFORM.tar.gz" -C build/toolchain/bin
+        chmod 755 build/toolchain/bin/red-toolchain
+        cp "build/toolchain/generation/red-cli-console-$PLATFORM" build/toolchain/red-console
+
+    - name: Make the console runnable
       shell: bash
       run: |
         set -euo pipefail
+        # An artifact zip carries no executable bit, and macOS quarantines a
+        # downloaded binary until the attribute is cleared.
         chmod 755 build/toolchain/red-console
-        # Downloaded binaries are quarantined on macOS and Gatekeeper refuses
-        # to run them until the attribute is cleared.
         if [[ "$(uname -s)" == Darwin ]]; then
           xattr -dr com.apple.quarantine build/toolchain/red-console build/toolchain/bin || true
         fi
-        # Deliberately no trial run here: a Red console that is handed an
-        # argument it does not understand can stay up burning CPU, and the
-        # seed was already verified by checksum.
 
-    - name: Record the seed generation
+    # The generation is worth naming in the summary: a suite failure is read
+    # together with the compiler that produced it. --toolchain-info is also the
+    # cheapest check that this binary runs on this runner at all.
+    - name: Record which toolchain this is
       shell: bash
       env:
+        SOURCE: ${{ inputs.source }}
+        PLATFORM: ${{ inputs.platform }}
         GENERATION: ${{ steps.toolchain.outputs.generation }}
         CONSOLE_GENERATION: ${{ steps.console.outputs.generation }}
+        TOOLCHAIN: build/toolchain/bin/red-toolchain${{ inputs.platform == 'windows-x64' && '.exe' || '' }}
       run: |
         set -euo pipefail
         {
-          echo "seed generation: $GENERATION"
-          echo "seed console: $CONSOLE_GENERATION"
+          if [[ "$SOURCE" == 'seed' ]]; then
+            echo "toolchain: seed generation \`$GENERATION\` ($PLATFORM)"
+          else
+            echo "toolchain: this run's \`seed-$PLATFORM\` build"
+          fi
+          "$TOOLCHAIN" --toolchain-info
         } >> "$GITHUB_STEP_SUMMARY"
-        if [[ "$GENERATION" != "$CONSOLE_GENERATION" ]]; then
+        # A promotion recreates the ci-seed release, so the two fetches above can
+        # straddle a swap. Worth saying, since the two would then differ in age.
+        if [[ "$SOURCE" == 'seed' && "$GENERATION" != "$CONSOLE_GENERATION" ]]; then
           echo "::warning::toolchain and console came from different seed generations"
         fi

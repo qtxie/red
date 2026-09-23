@@ -35,6 +35,13 @@ permissions:
   contents: read
   actions: write
 
+# The reusable build declares no concurrency, so a superseded manual run is
+# cancelled here: two overlapping dispatches would otherwise build the same four
+# generations twice.
+concurrency:
+  group: seed-toolchain-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     uses: ./.github/workflows/build-hybrid-toolchain.yml

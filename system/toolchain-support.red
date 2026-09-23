@@ -9,6 +9,18 @@ compiler-toolchain: context [
 	targets: make block! 0
 	backend: "unknown"
 
+	;-- The platform this compiler was built for. `config/OS` and `config/target`
+	;-- are the compile-time view of that build's own target; `system/platform`
+	;-- is the platform of the program under compilation -- a different question,
+	;-- and one that cannot tell Linux-X86-64 from Linux-ARM64. A toolchain built
+	;-- for Linux must not hand its user a Windows PE, so this is what `-t`
+	;-- defaults to, and what a standalone toolchain reports as its host.
+	build-target: #either config/OS = 'macOS ["Darwin-ARM64"][
+		#either config/OS = 'Linux [
+			#either config/target = 'ARM64 ["Linux-ARM64"]["Linux-X86-64"]
+		]["Windows-X86-64"]
+	]
+
 	install-embedded: does [
 		if value? 'toolchain-resource-index [
 			unless all [
@@ -26,9 +38,15 @@ compiler-toolchain: context [
 		host-value [string!]
 		target-values [block!]
 		backend-value [string!]
+		/local position
 	][
 		host: copy host-value
 		targets: copy target-values
+		;-- The target `-t` defaults to leads the list, so the first line of
+		;-- `--list-targets` answers what this build produces for. The rest is
+		;-- the catalogue, in its canonical order.
+		position: find targets host-value
+		if position [targets: append copy position copy/part targets position]
 		backend: copy backend-value
 	]
 

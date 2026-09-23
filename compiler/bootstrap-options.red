@@ -41,10 +41,11 @@ compiler-options: context [
 	parse-args: func [args [block! none!] /hybrid /local options position token][
 		options: make-options
 		if hybrid [
-			option-set options 'target switch/default system/platform [
-				Windows ["Windows-X86-64"]
-				macOS ["Darwin-ARM64"]
-			]["Windows-X86-64"]
+			;-- Without `-t` a compiler produces for the platform it was built
+			;-- for, never for the one it happens to run on: `system/platform` is
+			;-- the client platform of the program under compilation, and it
+			;-- cannot tell the Linux targets apart either.
+			option-set options 'target compiler-toolchain/build-target
 			option-set options 'opt-level 0
 		]
 		either block? args [position: args][position: copy []]

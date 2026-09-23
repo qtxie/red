@@ -208,6 +208,13 @@ red-toolchain --self-check
 `--self-check` decompresses every resource and verifies its raw size and
 SHA-256 digest.
 
+`--toolchain-info` reports the platform a toolchain was built for as its host,
+and `--list-targets` leads with it: that first line is the target a compilation
+without `-t` produces for, and it is the same string in both commands. What
+follows is the full catalogue -- every target the cross-compiler can emit --
+in its canonical order, so the standalone's own target is the only thing the
+order depends on.
+
 ## Hermetic Tests
 
 The suite copies only the compiler and the fixtures in

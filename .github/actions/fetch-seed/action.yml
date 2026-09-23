@@ -84,6 +84,14 @@ runs:
 
         { read -r generation; read -r asset; read -r sha256; } < "$resolved"
 
+        # python on a Windows runner writes CRLF and `read -r` keeps the
+        # carriage return on the value: inside a URL that is malformed input to
+        # curl, and it would fail the SHA-256 comparison below and follow the
+        # generation into the step outputs.
+        generation=${generation%$'\r'}
+        asset=${asset%$'\r'}
+        sha256=${sha256%$'\r'}
+
         curl --fail --location --silent --show-error \
           --retry 5 --retry-all-errors --retry-delay 2 \
           --output "$OUTPUT" \

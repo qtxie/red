@@ -3,31 +3,13 @@ Red [
 	File:  %Mach-APP.red
 ]
 
-#if config/OS = 'macOS [
-	#system-global [
-		#import [
-			LIBC-file cdecl [
-				red-chmod: "chmod" [
-					path [c-string!]
-					mode [integer!]
-					return: [integer!]
-				]
-			]
-		]
-	]
-]
+;-- make-system-file-executable (compiler-hybrid-common.red) runs the bundled
+;-- executable's chmod on macOS and Linux hosts; a Windows host has no exec
+;-- bit, so it reports success and the seed archive carries the mode instead.
 
 mach-app-packager: context [
-	prepared: none
-	join-file: func [base [file!] relative [file!]][append copy base relative]
-	make-executable: #either config/OS = 'macOS [
-		routine [path [file!] return: [logic!] /local value [red-file!]][
-			value: as red-file! stack/arguments
-			zero? red-chmod file/to-OS-path value 493		;-- 0755
-		]
-	][
-		func [path [file!] return: [logic!]][true]
-	]
+prepared: none
+join-file: func [base [file!] relative [file!]][append copy base relative]
 
 	remove-tree: func [dir [file!] /local entry path][
 		foreach entry read dir [
@@ -144,7 +126,7 @@ mach-app-packager: context [
 
 		bundle-executable: join-file bin-dir to file! get in prepared 'executable-name
 		copy-file executable bundle-executable
-		unless make-executable bundle-executable [
+		unless make-system-file-executable bundle-executable [
 			do make error! rejoin [
 				"cannot make bundle executable runnable: " bundle-executable
 			]

@@ -241,10 +241,24 @@ read-source-marker: func [
 	:header
 ]
 
+;-- The packager a target declares (see system/target-registry.red) wraps its
+;-- executables after linking: prepare bakes the bundle signature into the
+;-- executable's own code signature before the backend links, process then
+;-- builds the .app tree around it. Every host can do that -- on Windows there
+;-- is no chmod, so the packaging step ships the archive with the exec bit set.
+;-- Only an exe is packaged; a -dlib shared library is never bundled.
+target-packager: func [job [object!] /local name][
+	unless (compiler-system-job/job-get job 'type) = 'exe [return none]
+	name: compiler-system-job/job-get job 'packager
+	unless any [none? name name = 'Mach-APP] [
+		fail-command rejoin ["unsupported packager: " name]
+	]
+	name
+]
+
 compile-source: func [
 	options [object!]
 	/local source marker job frontend-result backend-result saved-verbosity build-prefix
-		packager-name
 ][
 	unless compiler-options/option-get options 'source [fail-command "missing source file"]
 	source: resolve-source-path compiler-options/option-get options 'source
@@ -315,21 +329,7 @@ compile-source: func [
 		not libRedRT-ready? job
 	][build-libRedRT job]
 
-	;-- A target with a packager needs its bundle signature baked into the
-	;-- executable's own code signature, so prepare runs before the backend
-	;-- links; process then wraps the linked executable after it. Only a
-	;-- toolchain running on macOS can build the bundle: cross compiles leave
-	;-- a bare Mach-O executable, which is what the seed packaging expects.
-	#if config/OS = 'macOS [
-		if all [
-			(compiler-system-job/job-get job 'type) = 'exe
-			packager-name: compiler-system-job/job-get job 'packager
-		][
-			switch/default packager-name [
-				Mach-APP [mach-app-packager/prepare job source]
-			][fail-command rejoin ["unsupported packager: " packager-name]]
-		]
-	]
+	if target-packager job [mach-app-packager/prepare job source]
 
 	print ["Compiling" source "..."]
 	either marker = red-system-marker [
@@ -358,17 +358,8 @@ compile-source: func [
 
 	backend-result: system-dialect/last-result
 	unless block? backend-result [fail-command "Red/System backend did not produce a result"]
-	#if config/OS = 'macOS [
-		if all [
-			(compiler-system-job/job-get job 'type) = 'exe
-			packager-name: compiler-system-job/job-get job 'packager
-		][
-			switch/default packager-name [
-				Mach-APP [
-					poke backend-result 4 mach-app-packager/process job source backend-result/4
-				]
-			][fail-command rejoin ["unsupported packager: " packager-name]]
-		]
+	if target-packager job [
+		poke backend-result 4 mach-app-packager/process job source backend-result/4
 	]
 	print [
 		"...native time      :" backend-result/1

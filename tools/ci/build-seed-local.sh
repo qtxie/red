@@ -75,8 +75,14 @@ if fmt == "zip":
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.write(source, source.name)
 else:
+    # Cross builds run on filesystems without an exec bit (a bundle built on
+    # Windows cannot chmod its executable), so every tar member is archived
+    # 0755 and unpacks runnable.
+    def runnable(member):
+        member.mode = 0o755
+        return member
     with tarfile.open(dest, "w:gz") as archive:
-        archive.add(source, source.name)
+        archive.add(source, source.name, filter=runnable)
 PY
 }
 
@@ -120,8 +126,8 @@ package_platform() {
         -o "$work/gui-console" \
         environment/console/GUI/gui-console.red
     fi
-    # Cross-compiled it is a bare Mach-O executable; the .app bundle only
-    # appears when the build runs on macOS.
+    # The packager wraps the executable wherever the toolchain runs, so a
+    # cross build packages the bundle too; the bare executable is gone after.
     local gui_member=gui-console
     [[ -d "$work/gui-console.app" ]] && gui_member=gui-console.app
     chmod 755 "$work/$gui_member" 2>/dev/null || true

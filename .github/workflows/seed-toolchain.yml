@@ -8,7 +8,7 @@ name: Seed the CI toolchain chain
 #
 # Because workflow_dispatch lets you pick a ref, re-running this at an older
 # commit rebuilds that generation and can republish it as the seed, which is
-# the rollback path if a nightly promotion turns out to be broken.
+# the rollback path if a promoted seed turns out to be broken.
 
 on:
   workflow_dispatch:

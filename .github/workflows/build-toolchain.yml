@@ -8,17 +8,14 @@ name: Build the Red toolchain
 # push of their own.
 #
 # Publishing is deliberately not on the push path: a release notifies every
-# repository watcher, so the seed advances once a night instead of once a push.
-# The nightly run promotes a generation only once all four suite sets are green
-# -- the seed is the bootstrap every later build starts from, so a generation
-# that cannot pass its own suites must not become one.
+# repository watcher, so the seed advances only when this workflow is dispatched
+# with `promote`, and then only from a generation whose four suite sets are
+# green -- the seed is the bootstrap every later build starts from, so a
+# generation that cannot pass its own suites must not become one.
 
 on:
   push:
   pull_request:
-  schedule:
-    # 04:00 UTC, after the day's pushes have settled.
-    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       promote:
@@ -70,9 +67,7 @@ jobs:
 
   promote:
     needs: [build, test-windows-x64, test-linux-x64, test-linux-arm64, test-darwin-arm64]
-    if: >
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && inputs.promote)
+    if: github.event_name == 'workflow_dispatch' && inputs.promote
     uses: ./.github/workflows/publish-seed.yml
     permissions:
       contents: write

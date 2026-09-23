@@ -291,30 +291,87 @@ Three separate defects in `runtime/simple-io.reds`, all now fixed:
    aligned at a statement boundary, so padding has to come in multiples of
    four cells, as `interpreter.reds` already does for routine calls.
 
-#### Open: `#394` kills the Darwin-hosted compiler in the frontend
+#### `#394` was an unguarded `in`/`get` pair in `load-scalars`
 
-With 236, `run-red-compiler-tests regression-test-redc-1.red` on the Mac stops
-at `#394`:
+`run-red-compiler-tests` on the Mac used to stop at `#394`:
 
     *** Script Error: get does not allow none! for its word argument
 
-The same sources built for Windows give 320/1 (only `#4190`). Evidence
-gathered so far, for whoever picks this up:
+The site is `compiler/extractor.red`'s `load-scalars`:
 
-- It is deterministic on the Mac (three runs, same test) and it is **not** the
-  snippet: that source compiles standalone in a fresh directory, in dev mode
-  and in release, on the Mac and on Windows. It needs the accumulated state of
-  the runner's output directory, which is why it is only visible through the
-  runner.
-- It dies inside `compiler-frontend/compile` -- after `Compiling <src> ...`
-  and before `...frontend time`, per `compiler/bootstrap-driver.red:322`.
-- It is sensitive to the **embedded resource archive, not to the code**: the
-  same compiler binary passes with the previous archive and fails with the one
-  regenerated from the current sources. A toolchain built from pristine HEAD
-  sources with a freshly regenerated archive also passes, so the archive alone
-  is not enough; the two source changes above happen to shift it far enough.
-- `#2162` is gone from that run, so this is not the network test in disguise:
-  redc-1 touches no network.
+    foreach name words-of raw [
+        append spec to set-word! name
+        value: get in raw name          ;-- in can return none!
+        append/only spec to block! value
+    ]
+
+`raw` is the context built from the preprocessed `internal!` section of
+`environment/scalars.red`, and the loop re-materializes it with every scalar's
+value coerced `to block!`. `words-of` returns the constructor's **word array**
+(`_hashtable/get-ctx-words`), which is what the loop iterates; `in` is a
+**symbol-hash probe** over the context's `keys`/`flags` table
+(`_hashtable/get-ctx-symbol`). The two are independent readings of the same
+context, so an entry that the word array still lists can miss in the hash --
+and `get` was then handed `none`, which the native argument checker rejects,
+killing the compiler process (exit 254) before anything else could run.
+
+Finding it needed a stack trace, which a release toolchain does not print: a
+one-line `system/state/stack-trace: 5` in `compiler/bootstrap-driver.red`
+makes the uncaught-error report name the frames, and the failing call chain is
+exactly
+
+    *** Stack: either compile init either unless load-scalars foreach foreach get
+
+(`stack/trace` prints outermost first; `init` is `extracts/init`, and the two
+`foreach` frames are the loop and `foreach`'s own mezzanine frame.) Note that
+`try` hides `expand-directives` and the lexer already wraps `transcode/trace`,
+which is what narrows the unguarded `get`s down to this one.
+
+**The trigger is memory layout, not the source.** The same toolchain flips on
+argv bytes alone (`-v 0` vs no flag), on the cwd (`/tmp` vs the repository
+root), on the embedded archive, and on the host: 236 fails the full runner
+deterministically (319/2, `#394` + `#4190`), while a toolchain rebuilt from the
+same sources -- even one whose only difference is a 12-line diagnostic -- can
+pass redc-1 outright. That is why the earlier note about "the accumulated
+output directory" and "the archive, not the code" was misleading: any rebuild
+shifts the layout far enough to hide or expose the race, and the failing
+process is always the same statement.
+
+Fixed by treating the word array as authoritative (as the frontend's only
+consumer of `extracts/scalars` already does, `compiler/frontend.red:1032`) and
+falling back to the scalar's own name instead of feeding `none` to `get`. The
+compiled result is unchanged: 238 and 239 emit byte-identical frontend output
+for the same source (`--red-only`, 133352 bytes, `identical: True`), and
+239 -> 240 is a fixed point at 6450688 bytes with 17 bytes differing (the PE
+timestamp, checksum and build clocks).
+
+The miss itself is in the runtime's context hash, and one asymmetry there is
+worth a look by whoever wants the root cause: `_hashtable/get-ctx-symbol`
+computes the bucket from `symbol/resolve key` but compares the stored entry
+against the *unresolved* `k/symbol` (`runtime/hashtable.reds:2607-2634`), and
+the same split exists between its insert path (`case?` resolves, `k/symbol:
+key` stores raw) and its probe path. A symbol whose alias resolution differs
+from the one in force when the entry was inserted is then bucketed correctly
+but never matches, and `resize` re-buckets through a third formula
+(`murmur3-x86-int` of the entry's second word for id-keyed tables,
+`hash-value` of the spelling otherwise, `:1531-1537`). This is not proven to
+be what fired here -- the compiler-side guard is the fix either way -- but it
+is the shape of bug that would make `words-of` and `in` disagree exactly once
+per layout.
+
+Verified on the Mac, full `run-red-compiler-tests` (all nine scripts):
+
+| toolchain | result |
+|---|---|
+| 236, unfixed (the reported baseline) | 321 / 319 / **2** (`#394`, `#4190`) / 31 |
+| rebuilt, unfixed | 321 / 320 / **1** (`#4190`) / 30 -- the layout hid `#394` |
+| rebuilt, fixed (two runs) | 321 / **320** / **1** (`#4190`) / 30 |
+
+`#1679` and `#1694` (in redc-4) failed once in the first fixed run while the
+box was saturated (load average 8+, ssh sessions dropping); they pass in
+isolation with the same toolchain, pass in the unfixed runs and did not recur
+in the second fixed run, so they are flaky under load, not consequences of the
+fix.
 
 ### Trap while reproducing this
 

@@ -141,7 +141,7 @@ compiler-extractor: context [
 		currencies: copy list
 	]
 
-	load-scalars: func [job [object! none!] /local config values source expanded raw spec name value][
+	load-scalars: func [job [object! none!] /local config values source expanded raw spec name value word][
 		config: any [job context [modules: copy []]]
 		values: transcode read-builtin-binary %environment/scalars.red
 		source: find values to set-word! 'internal!
@@ -154,7 +154,12 @@ compiler-extractor: context [
 		spec: make block! (2 * length? words-of raw)
 		foreach name words-of raw [
 			append spec to set-word! name
-			value: get in raw name
+			; `in` resolves through the context's symbol hash while `words-of`
+			; returns the constructor's word array; the two can disagree, and
+			; `in` returning none used to feed `none` straight to `get`, which
+			; aborts the whole compile. Fall back to the scalar's own name,
+			; like the frontend's only consumer does for a missing field.
+			value: either word: in raw name [get word][reduce [name]]
 			append/only spec to block! value
 		]
 		context spec

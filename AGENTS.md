@@ -20,9 +20,11 @@
   it embeds a `dd-Mmm-yyyy/h:mm:ss` build date of varying length, which shifts
   the serialized data and every absolute address by one byte. Compare generated
   output, not the compiler image, when checking the fixed point.
-- Windows x64 has two targets, differing only in the PE sub-system
-  (`system/config.r` -> `system/target-registry.red`, regenerated with
-  `python tools/self_hosting/selfhost.py target-registry`):
+- `system/target-registry.red` is the only place a target is declared. There is
+  no `system/config.r` any more and no generator: to add or change a target,
+  edit that file. `system/system-job.red` reads it, `system/formats/<fmt>.red`
+  consumes the fields, `--list-targets` reports its names in order.
+- Windows x64 has two targets, differing only in the PE sub-system:
   `MSDOS-X86-64` is `IMAGE_SUBSYSTEM_WINDOWS_CUI` (3) -- what `Windows-X86-64`
   used to be, and what `-t` defaults to on Windows -- and `Windows-X86-64` is
   `IMAGE_SUBSYSTEM_WINDOWS_GUI` (2), so Windows attaches no console window.

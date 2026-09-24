@@ -65,8 +65,6 @@ FILE_LITERAL_RE = re.compile(
     r"(?P<literal>%[^\s\[\]\(\){}\";,]+)",
     re.IGNORECASE,
 )
-TARGET_NAME_RE = re.compile(r"(?m)^\s*([A-Za-z][A-Za-z0-9_-]*)\s*\[")
-FIELD_RE = re.compile(r"(?m)^\s*(target|format|packager)\s*:\s*'?(\S+)")
 COMPILER_DURATION_RE = re.compile(
     r"(?m)^(\.\.\.(?:compilation|linking) time\s*:\s*)"
     r"\d+(?:\.\d+)?[ \t]*(?:ms|s|sec|seconds?)[ \t]*$"
@@ -209,140 +207,32 @@ def _scan_literals(root: Path, source: Path, text: str) -> dict[str, Any]:
     return {"references": references, "unresolved": sorted(set(unresolved))}
 
 
-def _target_registry(root: Path, tracked: set[str]) -> dict[str, Any]:
-    config_path = root / "system" / "config.r"
-    config_text = _read_text(config_path) if config_path.is_file() else ""
-    names = [name for name in TARGET_NAME_RE.findall(config_text) if name != "REBOL"]
-    fields = FIELD_RE.findall(config_text)
-    field_map: dict[str, list[str]] = {"target": [], "format": [], "packager": []}
-    for field, value in fields:
-        field_map[field].append(value.rstrip("]"))
-    target_sources = sorted(
-        path for path in tracked if path.startswith("system/targets/") and path.endswith(".r")
-    )
-    format_sources = sorted(
-        path for path in tracked if path.startswith("system/formats/") and path.endswith(".r")
-    )
-    red_registry_path = root / "system" / "target-registry.red"
-    red_registry: dict[str, dict[str, str]] = {}
-    if red_registry_path.is_file():
-        red_text = _read_text(red_registry_path)
-        red_text = red_text.split("target-registry:", 1)[-1]
-        red_text = red_text.split("compiler-target-classes:", 1)[0]
-        for name, spec in re.findall(
-            r"(?m)^\s*([A-Za-z][A-Za-z0-9_-]*)\s*\[([^\]]*)\]", red_text
-        ):
-            fields_in_spec = dict(
-                re.findall(r"\b(os|format|type|target|packager)\s+([A-Za-z0-9_-]+)", spec)
-            )
-            red_registry[name] = fields_in_spec
-    return {
-        "configured_names": sorted(set(names)),
-        "configured_cpu_values": sorted(set(field_map["target"])),
-        "configured_format_values": sorted(set(field_map["format"])),
-        "configured_packagers": sorted(set(field_map["packager"])),
-        "target_sources": target_sources,
-        "format_sources": format_sources,
-        "red_registry": red_registry,
-        "generated": _target_registry_info(root),
-    }
+def _target_registry(root: Path) -> dict[str, Any]:
+    """Read system/target-registry.red, the single place targets are declared."""
 
-
-def _parse_target_blocks(text: str) -> list[tuple[str, list[tuple[str, str]]]]:
-    targets: list[tuple[str, list[tuple[str, str]]]] = []
-    lines = text.splitlines()
-    index = 0
-    while index < len(lines):
-        match = re.match(
-            r"^\s*([A-Za-z][A-Za-z0-9_-]*)\s*\[\s*(?:;.*)?$",
-            lines[index],
+    text = _read_text(root / "system" / "target-registry.red")
+    body = text.split("target-registry:", 1)[-1]
+    body = body.split("compiler-target-classes:", 1)[0]
+    registry: dict[str, dict[str, str]] = {}
+    for name, spec in re.findall(r"(?m)^\s*([A-Za-z][A-Za-z0-9_-]*)\s*\[([^\]]*)\]", body):
+        registry[name] = dict(
+            re.findall(r"(?m)^\s*([A-Za-z][A-Za-z0-9_?\-\!]*)\s+(\S.*?)\s*$", spec)
         )
-        if not match or match.group(1) == "REBOL":
-            index += 1
-            continue
-        name = match.group(1)
-        fields: list[tuple[str, str]] = []
-        index += 1
-        while index < len(lines):
-            line = lines[index]
-            if re.match(r"^\s*\]\s*(?:;.*)?$", line):
-                break
-            field = re.match(
-                r"^\s*([A-Za-z][A-Za-z0-9_?-]*)\s*:\s*(.*?)\s*(?:;.*)?$",
-                line,
-            )
-            if field:
-                key = field.group(1)
-                value = field.group(2).strip()
-                if value.startswith("'"):
-                    value = value[1:]
-                elif value == "yes":
-                    value = "#(true)"
-                elif value == "no":
-                    value = "#(false)"
-                fields.append((key, value))
-            index += 1
-        targets.append((name, fields))
-        index += 1
-    return targets
+    if not registry:
+        raise ValueError("system/target-registry.red contains no target definitions")
 
+    def values(field: str) -> list[str]:
+        return sorted({spec[field] for spec in registry.values() if field in spec})
 
-def _target_registry_text(root: Path) -> tuple[str, dict[str, Any]]:
-    source_path = root / "system" / "config.r"
-    source = _read_bytes(source_path)
-    targets = _parse_target_blocks(source.decode("utf-8", errors="replace"))
-    if not targets:
-        raise ValueError("system/config.r contains no target definitions")
-    source_sha256 = _sha256(source)
-    lines = [
-        "Red [",
-        '\tTitle: "Generated Red compiler target registry"',
-        "\tFile:  %system/target-registry.red",
-        "]",
-        "",
-        "; Generated from system/config.r. Do not edit by hand.",
-        f'target-registry-source-sha256: "{source_sha256}"',
-        "target-registry: [",
-    ]
-    for name, fields in targets:
-        known = {key.lower() for key, _ in fields}
-        if "target" not in known:
-            fields = [*fields, ("target", "IA-32")]
-        lines.append(f"\t{name} [")
-        for key, value in fields:
-            lines.append(f"\t\t{key} {value}")
-        lines.append("\t]")
-    lines.extend(
-        [
-            "]",
-            "",
-            "compiler-target-classes: [IA-32 ARM X86-64 ARM64]",
-            "compiler-formats: [PE ELF Mach-O]",
-            "compiler-object-formats: [COFF ELF-obj Mach-O-obj]",
-            "",
-        ]
-    )
-    return "\n".join(lines), {
-        "source": "system/config.r",
-        "source_sha256": source_sha256,
-        "target_count": len(targets),
+    return {
+        "path": "system/target-registry.red",
+        "sha256": _sha256(_read_bytes(root / "system" / "target-registry.red")),
+        "names": sorted(registry),
+        "cpu_values": values("target"),
+        "format_values": values("format"),
+        "packagers": values("packager"),
+        "registry": registry,
     }
-
-
-def _target_registry_info(root: Path) -> dict[str, Any]:
-    generated, info = _target_registry_text(root)
-    generated_path = root / "system" / "target-registry.red"
-    generated_bytes = generated.encode("utf-8")
-    actual = generated_path.read_bytes() if generated_path.is_file() else b""
-    info.update(
-        {
-            "path": "system/target-registry.red",
-            "expected_sha256": _sha256(generated_bytes),
-            "actual_sha256": _sha256(actual) if actual else None,
-            "stale": actual != generated_bytes,
-        }
-    )
-    return info
 
 
 def build_manifest(root: Path) -> dict[str, Any]:
@@ -379,7 +269,7 @@ def build_manifest(root: Path) -> dict[str, Any]:
     source_records.sort(key=lambda record: record["path"])
     rebol_records.sort(key=lambda record: record["path"])
     tracked_names = {_posix(path) for path in tracked}
-    registry = _target_registry(root, tracked_names)
+    registry = _target_registry(root)
     entrypoints = [
         path
         for path in ("red-selfhost.red", "red.red", "red.r")
@@ -460,29 +350,18 @@ def build_baseline(root: Path) -> dict[str, Any]:
 
 def _manifest_errors(manifest: Mapping[str, Any]) -> list[str]:
     errors: list[str] = []
-    source_paths = {record["path"] for record in manifest.get("sources", [])}
     registry = manifest.get("target_registry", {})
-    if registry.get("generated", {}).get("stale"):
-        errors.append("system/target-registry.red is stale")
-    for path in registry.get("target_sources", []) + registry.get("format_sources", []):
-        if path not in source_paths:
-            errors.append(f"registry source is missing from manifest: {path}")
-    entrypoint_dependencies = manifest.get("entrypoint_rebol_dependencies", {})
     for entrypoint in ("red.red", "red-selfhost.red"):
-        direct_dependencies = entrypoint_dependencies.get(entrypoint, [])
+        direct_dependencies = manifest.get("entrypoint_rebol_dependencies", {}).get(
+            entrypoint, []
+        )
         if direct_dependencies:
             errors.append(
                 f"direct Red entrypoint {entrypoint} has Rebol dependencies: "
                 + ", ".join(direct_dependencies)
             )
-    configured_names = set(registry.get("configured_names", []))
-    red_names = set(registry.get("red_registry", {}))
-    if red_names and configured_names != red_names:
-        errors.append(
-            "Red target registry differs from system/config.r: "
-            f"missing={sorted(configured_names - red_names)} "
-            f"extra={sorted(red_names - configured_names)}"
-        )
+    if registry and not registry.get("names"):
+        errors.append("system/target-registry.red declares no targets")
     return errors
 
 
@@ -784,15 +663,6 @@ def _command_baseline(args: argparse.Namespace) -> int:
     return 1 if errors else 0
 
 
-def _command_target_registry(args: argparse.Namespace) -> int:
-    root = _default_root(args.root)
-    generated, _ = _target_registry_text(root)
-    output = Path(args.output) if args.output else root / "system" / "target-registry.red"
-    _write_text(output, generated)
-    print(f"target registry: {output}")
-    return 0
-
-
 def _command_verify(args: argparse.Namespace) -> int:
     root = _default_root(args.root)
     expected_path = Path(args.manifest)
@@ -862,12 +732,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     baseline.add_argument("--output", help="JSON output path; stdout when omitted")
     baseline.set_defaults(handler=_command_baseline)
-
-    target_registry = subparsers.add_parser(
-        "target-registry", help="generate system/target-registry.red from config"
-    )
-    target_registry.add_argument("--output", help="Red output path")
-    target_registry.set_defaults(handler=_command_target_registry)
 
     verify = subparsers.add_parser("verify", help="compare a checked manifest with the current tree")
     verify.add_argument("manifest", help="checked JSON manifest")

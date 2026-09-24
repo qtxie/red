@@ -97,8 +97,11 @@ Example:
 python tools/self_hosting/selfhost.py inventory --output build/self-hosting/source-manifest.json
 python tools/self_hosting/selfhost.py verify build/self-hosting/source-manifest.json
 python tools/self_hosting/selfhost.py verify tools/self_hosting/source-baseline.json
-python tools/self_hosting/selfhost.py target-registry
 ```
+
+Targets are declared in `system/target-registry.red` and nowhere else: adding
+one is an edit to that file, not a build step. There is no `system/config.r`
+and no registry generator.
 
 The old Windows Stage0 oracle configurations are retained only for an explicitly
 requested historical audit. Do not run them during normal development:

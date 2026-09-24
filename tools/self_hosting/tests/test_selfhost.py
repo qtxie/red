@@ -122,38 +122,29 @@ class InventoryTests(unittest.TestCase):
             ["direct Red entrypoint red.red has Rebol dependencies: legacy/red.r"],
         )
 
-    def test_target_parser_keeps_nested_options_and_defaults_cpu(self):
-        targets = selfhost._parse_target_blocks(
-            "One [\n\tOS: 'Linux\n\tPIC?: yes\n\tPIE?: no\n\tlegacy: [stat32]\n]\n"
-        )
-        self.assertEqual(
-            targets,
-            [
-                (
-                    "One",
-                    [
-                        ("OS", "Linux"),
-                        ("PIC?", "#(true)"),
-                        ("PIE?", "#(false)"),
-                        ("legacy", "[stat32]"),
-                    ],
-                )
-            ],
-        )
-
 
 class TargetRegistryTests(unittest.TestCase):
-    """The Windows x64 targets differ only in their PE sub-system."""
+    """system/target-registry.red is the single target source: no config.r, no generator."""
 
     root = Path(__file__).resolve().parents[3]
 
+    def setUp(self):
+        self.text = (self.root / "system" / "target-registry.red").read_text(
+            encoding="utf-8"
+        )
+        self.registry = selfhost._target_registry(self.root)
+
     def _field(self, target, field):
-        text, _ = selfhost._target_registry_text(self.root)
-        block = re.search(rf"(?ms)^\t{re.escape(target)} \[.*?^\t\]", text)
+        block = re.search(rf"(?ms)^\t{re.escape(target)} \[.*?^\t\]", self.text)
         self.assertIsNotNone(block, f"{target} is missing from the registry")
         match = re.search(rf"(?m)^\t\t{re.escape(field)} (\S+)$", block.group(0))
         self.assertIsNotNone(match, f"{target} does not set {field}")
         return match.group(1)
+
+    def test_the_registry_is_hand_maintained(self):
+        self.assertNotIn("target-registry-source-sha256", self.text)
+        self.assertNotIn("Do not edit by hand", self.text)
+        self.assertFalse((self.root / "system" / "config.r").exists())
 
     def test_msdos_x86_64_is_the_console_target(self):
         self.assertEqual(self._field("MSDOS-X86-64", "sub-system"), "console")
@@ -165,8 +156,11 @@ class TargetRegistryTests(unittest.TestCase):
         self.assertEqual(self._field("Windows-X86-64", "target"), "X86-64")
         self.assertEqual(self._field("Windows-X86-64", "type"), "exe")
 
-    def test_checked_in_registry_matches_config(self):
-        self.assertFalse(selfhost._target_registry_info(self.root)["stale"])
+    def test_the_reader_reports_every_declared_target(self):
+        self.assertIn("MSDOS-X86-64", self.registry["names"])
+        self.assertIn("Windows-X86-64", self.registry["names"])
+        self.assertEqual(self.registry["registry"]["Windows-X86-64"]["format"], "PE")
+        self.assertIn("Mach-APP", self.registry["packagers"])
 
 
 class DifferentialTests(unittest.TestCase):

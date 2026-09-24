@@ -29,8 +29,15 @@ system/view/platform: context [
 		;   The terminal TUI backend and the headless test engine run on every
 		;   OS, so their handle type is keyed on the GUI engine; the native
 		;   ones follow the OS.
+		;
+		;   A monitor handle reaches this file from the backend as a `handle!`
+		;   (a pointer) on every backend, which is only the same thing as a
+		;   Face-handle! off macOS. TO_FACE_HANDLE is that one conversion: it
+		;   is the only place a cast to Face-handle! is spelled, so no caller
+		;   has to know when it is a no-op.
 		#either any [GUI-engine = 'terminal GUI-engine = 'test] [
 			#define Face-handle! handle!					;-- terminal widgets, test engine
+			#define TO_FACE_HANDLE(value) [(value)]
 		][
 			#switch OS [
 				macOS [
@@ -39,8 +46,12 @@ system/view/platform: context [
 					][
 						#define Face-handle! integer!		;-- Cocoa-handle! on x86-64
 					]
+					#define TO_FACE_HANDLE(value) [(as Face-handle! (value))]
 				]
-				#default [#define Face-handle! handle!]		;-- Windows and GTK3
+				#default [									;-- Windows and GTK3
+					#define Face-handle! handle!
+					#define TO_FACE_HANDLE(value) [(value)]
+				]
 			]
 		]
 		view-log-level: 0
@@ -682,7 +693,7 @@ system/view/platform: context [
 					if all [
 						TYPE_OF(h) = TYPE_HANDLE
 						h/type = handle/CLASS_MONITOR
-						(gui/get-handle h) = (as Face-handle! hMonitor)
+						(gui/get-handle h) = TO_FACE_HANDLE(hMonitor)
 					][
 						if parent/ctx <> face/ctx [					;-- if window really moved to a different display
 							blk: as red-block! (object/get-values parent) + FACE_OBJ_PANE

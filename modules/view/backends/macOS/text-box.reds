@@ -174,7 +174,7 @@ OS-text-box-font-name: func [
 	font: objc_msgSend [
 		objc_getClass "NSFont" sel_getUid "fontWithDescriptor:size:"
 		objc_msgSend [desc sel_getUid "fontDescriptorWithFamily:" str]
-		F64_TO_COCOA(0.0)
+		F64_TO_COCOA 0.0
 	]
 	objc_msgSend [layout sel_addAttribute NSFontAttributeName font as NSUInteger! pos as NSUInteger! len]
 	CFRelease str
@@ -192,13 +192,13 @@ OS-text-box-font-size: func [
 		temp	[CGPoint!]
 ][
 	temp: declare CGPoint!
-	temp/x: as Cocoa-float! size
-	temp/y: as Cocoa-float! 0.0
+	temp/x: F64_TO_COCOA size
+	temp/y: F64_TO_COCOA 0.0
 	desc: objc_msgSend [nsfont sel_getUid "fontDescriptor"]
 	font: objc_msgSend [
 		objc_getClass "NSFont" sel_getUid "fontWithDescriptor:size:"
 		objc_msgSend [desc sel_getUid "fontDescriptorWithSize:" temp/x]
-		F64_TO_COCOA(0.0)
+		F64_TO_COCOA 0.0
 	]
 	objc_msgSend [layout sel_addAttribute NSFontAttributeName font as NSUInteger! pos as NSUInteger! len]
 ]
@@ -266,7 +266,7 @@ OS-text-box-metrics: func [
 		]
 		TBOX_METRICS_INDEX?
 		TBOX_METRICS_CHAR_INDEX? [
-			y: as Cocoa-float! 0.0
+			y: F64_TO_COCOA 0.0
 			pos: as red-pair! arg0
 			xx: 0
 			cg-pt/x: as Cocoa-float! pos/x
@@ -276,7 +276,7 @@ OS-text-box-metrics: func [
 				sel_getUid "characterIndexForPoint:inTextContainer:fractionOfDistanceBetweenInsertionPoints:"
 				cg-pt/x cg-pt/y tc :y
 			]
-			if all [type = TBOX_METRICS_INDEX? y > as Cocoa-float! 0.5][idx: idx + 1]
+			if all [type = TBOX_METRICS_INDEX? y > F64_TO_COCOA 0.5][idx: idx + 1]
 			integer/push idx + 1
 		]
 		TBOX_METRICS_SIZE [
@@ -357,8 +357,8 @@ OS-text-box-layout: func [
 	nsfont: get-font null font
 	cached?: TYPE_OF(state) = TYPE_BLOCK
 
-	sz/w: as Cocoa-float! 1.0e37
-	sz/h: as Cocoa-float! 1.0e37
+	sz/w: F64_TO_COCOA 1.0e37
+	sz/h: F64_TO_COCOA 1.0e37
 
 	either cached? [
 		layout: get-text-box-state-handle state 0
@@ -373,7 +373,7 @@ OS-text-box-layout: func [
 			objc_msgSend [objc_getClass "NSTextContainer" sel_alloc]
 			sel_getUid "initWithSize:" sz/w sz/h
 		]
-		objc_msgSend [tc sel_getUid "setLineFragmentPadding:" F64_TO_COCOA(0.0)]
+		objc_msgSend [tc sel_getUid "setLineFragmentPadding:" F64_TO_COCOA 0.0]
 
 		ts: objc_msgSend [
 			objc_msgSend [objc_getClass "NSTextStorage" sel_alloc]
@@ -391,7 +391,7 @@ OS-text-box-layout: func [
 		para: objc_msgSend [objc_getClass "NSParagraphStyle" sel_getUid "defaultParagraphStyle"]
 		para: objc_msgSend [para sel_getUid "mutableCopy"]
 		advance: objc_msgSend_sz [nsfont sel_getUid "advancementForGlyph:" as NSUInteger! 32]	;-- #" "
-		objc_msgSend [para sel_getUid "setDefaultTabInterval:" advance/w * (as Cocoa-float! 4.0)]
+		objc_msgSend [para sel_getUid "setDefaultTabInterval:" advance/w * (F64_TO_COCOA 4.0)]
 		objc_msgSend [para sel_getUid "setTabStops:" objc_msgSend [objc_getClass "NSArray" sel_getUid "array"]]
 
 		block/make-at state 6

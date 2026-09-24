@@ -431,8 +431,8 @@ OS-request-font: func [
 		;   Apple ABI), so the halving has to stay in the same type: a float32!
 		;   divisor would demote the whole expression and it would no longer
 		;   fit the Cocoa-float! destination.
-		x: wframe/w - pframe/w / F64_TO_COCOA(2.0)	;-- centered over the window, in Cocoa coords
-		y: wframe/h - pframe/h / F64_TO_COCOA(2.0)	;-- (both frames are bottom-left based)
+		x: wframe/w - pframe/w / F64_TO_COCOA 2.0	;-- centered over the window, in Cocoa coords
+		y: wframe/h - pframe/h / F64_TO_COCOA 2.0	;-- (both frames are bottom-left based)
 		x: wframe/x + x
 		y: wframe/y + y
 		objc_msgSend [panel sel_getUid "setFrameOrigin:" x y]

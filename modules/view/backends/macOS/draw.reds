@@ -12,7 +12,7 @@ Red/System [
 
 #include %text-box.reds
 
-#define DRAW_FLOAT_MAX		[F64_TO_COCOA(3.4e38)]
+#define DRAW_FLOAT_MAX		[F64_TO_COCOA 3.4e38]
 
 #either ABI = 'apple-aarch64 [
 	#define sqrtf sqrt
@@ -74,22 +74,22 @@ draw-begin: func [
 		either on-graphic? [							;-- draw on image!, flip the CTM
 			rc: as NSRect! img
 			ctx/rect-y: rc/y
-			CGContextTranslateCTM CGCtx F64_TO_COCOA(0.0) rc/y
-			CGContextScaleCTM CGCtx F64_TO_COCOA(1.0) F64_TO_COCOA(-1.0)
+			CGContextTranslateCTM CGCtx F64_TO_COCOA 0.0 rc/y
+			CGContextScaleCTM CGCtx F64_TO_COCOA 1.0 F64_TO_COCOA -1.0
 		][
-			CGContextTranslateCTM CGCtx F64_TO_COCOA(0.5) F64_TO_COCOA(0.5)
+			CGContextTranslateCTM CGCtx F64_TO_COCOA 0.5 F64_TO_COCOA 0.5
 		]
 	]
 
 	ctx/raw:			CGCtx
 	ctx/ctx-matrix:		CGContextGetCTM CGCtx
-	ctx/matrix/a:		as Cocoa-float! 1.0
-	ctx/matrix/b:		as Cocoa-float! 0.0
-	ctx/matrix/c:		as Cocoa-float! 0.0
-	ctx/matrix/d:		as Cocoa-float! 1.0
-	ctx/matrix/tx:		as Cocoa-float! 0.0
-	ctx/matrix/ty:		as Cocoa-float! 0.0
-	ctx/pen-width:		as Cocoa-float! 1.0
+	ctx/matrix/a:		F64_TO_COCOA 1.0
+	ctx/matrix/b:		F64_TO_COCOA 0.0
+	ctx/matrix/c:		F64_TO_COCOA 0.0
+	ctx/matrix/d:		F64_TO_COCOA 1.0
+	ctx/matrix/tx:		F64_TO_COCOA 0.0
+	ctx/matrix/ty:		F64_TO_COCOA 0.0
+	ctx/pen-width:		F64_TO_COCOA 1.0
 	ctx/pen-style:		0
 	ctx/pen-color:		0						;-- default: black
 	ctx/pen-join:		miter
@@ -101,8 +101,8 @@ draw-begin: func [
 	ctx/font-color?:	no
 	ctx/grad-pos?:		no
 	ctx/colorspace:		CGColorSpaceCreateDeviceRGB
-	ctx/last-pt-x:		as Cocoa-float! 0.0
-	ctx/last-pt-y:		as Cocoa-float! 0.0
+	ctx/last-pt-x:		F64_TO_COCOA 0.0
+	ctx/last-pt-y:		F64_TO_COCOA 0.0
 	ctx/on-image?:		on-graphic?
 
 	objects: declare Cocoa-handle-array!
@@ -246,7 +246,7 @@ OS-draw-line-width: func [
 		width-v	[Cocoa-float!]
 ][
 	width-v: F32_TO_COCOA get-float32 as red-integer! width
-	if width-v <= (as Cocoa-float! 0.0) [width-v: as Cocoa-float! 1.0]
+	if width-v <= (F64_TO_COCOA 0.0) [width-v: F64_TO_COCOA 1.0]
 	dc/pen-width: width-v
 	CGContextSetLineWidth dc/raw width-v
 ]
@@ -272,7 +272,7 @@ OS-draw-line-pattern: func [
 			start: start + 1
 		]
 	]
-	CGContextSetLineDash dc/raw F64_TO_COCOA(0.0) dashes as NSUInteger! cnt
+	CGContextSetLineDash dc/raw F64_TO_COCOA 0.0 dashes as NSUInteger! cnt
 ]
 
 get-shape-center: func [
@@ -296,8 +296,8 @@ get-shape-center: func [
 		centroid-y	[Cocoa-float!]
 ][
 	;-- implementation taken from http://stackoverflow.com/questions/2792443/finding-the-centroid-of-a-polygon
-	signedArea: as Cocoa-float! 0.0
-	centroid-x: as Cocoa-float! 0.0 centroid-y: as Cocoa-float! 0.0
+	signedArea: F64_TO_COCOA 0.0
+	centroid-x: F64_TO_COCOA 0.0 centroid-y: F64_TO_COCOA 0.0
 	point: start
 	loop count [
 		x0: point/x
@@ -311,16 +311,16 @@ get-shape-center: func [
 		centroid-y: centroid-y + ((y0 + y1) * a)
 	]
 
-	signedArea: signedArea * as Cocoa-float! 0.5
-	centroid-x: centroid-x / (signedArea * as Cocoa-float! 6.0)
-	centroid-y: centroid-y / (signedArea * as Cocoa-float! 6.0)
+	signedArea: signedArea * F64_TO_COCOA 0.5
+	centroid-x: centroid-x / (signedArea * F64_TO_COCOA 6.0)
+	centroid-y: centroid-y / (signedArea * F64_TO_COCOA 6.0)
 
 	cx/value: centroid-x
 	cy/value: centroid-y
 
 	if d <> null [
 		;-- take biggest distance
-		d/value: as Cocoa-float! 0.0
+		d/value: F64_TO_COCOA 0.0
 		point: start
 		loop count [
 			dx: centroid-x - point/x
@@ -343,7 +343,7 @@ check-gradient-poly: func [
 		d		[Cocoa-float!]
 		rc		[NSRect! value]
 ][
-	cx: as Cocoa-float! 0.0 cy: as Cocoa-float! 0.0 d: as Cocoa-float! 0.0
+	cx: F64_TO_COCOA 0.0 cy: F64_TO_COCOA 0.0 d: F64_TO_COCOA 0.0
 	type: ctx/grad-type
 	either type = radial [
 		get-shape-center start count :cx :cy :d
@@ -384,10 +384,10 @@ check-gradient-box: func [
 			ctx/grad-y2: ctx/grad-y1
 		]
 		type = radial [
-			dx: lower-x - upper-x + as Cocoa-float! 1.0
-			dy: lower-y - upper-y + as Cocoa-float! 1.0
-			dx: dx / as Cocoa-float! 2.0
-			dy: dy / as Cocoa-float! 2.0
+			dx: lower-x - upper-x + F64_TO_COCOA 1.0
+			dy: lower-y - upper-y + F64_TO_COCOA 1.0
+			dx: dx / F64_TO_COCOA 2.0
+			dy: dy / F64_TO_COCOA 2.0
 			ctx/grad-x1: dx + upper-x
 			ctx/grad-y1: dy + upper-y
 			ctx/grad-x2: ctx/grad-x1
@@ -433,15 +433,15 @@ OS-draw-box: func [
 	y1: uy
 	x2: lx
 	y2: ly
-	xm: x1 + (x2 - x1 / as Cocoa-float! 2.0)
-	ym: y1 + (y2 - y1 / as Cocoa-float! 2.0)
+	xm: x1 + (x2 - x1 / F64_TO_COCOA 2.0)
+	ym: y1 + (y2 - y1 / F64_TO_COCOA 2.0)
 
 	either radius <> null [
 		width: lx - ux
 		height: ly - uy
 		t: either width > height [height][width]
 		rad: F32_TO_COCOA get-float32 radius
-		if (rad * as Cocoa-float! 2.0) > t [rad: t / as Cocoa-float! 2.0]
+		if (rad * F64_TO_COCOA 2.0) > t [rad: t / F64_TO_COCOA 2.0]
 		CGContextMoveToPoint ctx x1 ym
 		CGContextAddArcToPoint ctx x1 y1 xm y1 rad
 		CGContextAddArcToPoint ctx x2 y1 x2 ym rad
@@ -594,7 +594,7 @@ OS-draw-spline: func [
 
 	p: edges
 	i: 0
-	delta: (as Cocoa-float! 1.0) / (as Cocoa-float! 25.0)
+	delta: (F64_TO_COCOA 1.0) / (F64_TO_COCOA 25.0)
 
 	while [i < count][						;-- CatmullRom Spline, tension = 0.5
 		p0: p + (i % num)
@@ -602,18 +602,18 @@ OS-draw-spline: func [
 		p2: p + (i + 2 % num)
 		p3: p + (i + 3 % num)
 
-		t: as Cocoa-float! 0.0
+		t: F64_TO_COCOA 0.0
 		n: 0
 		until [
 			t: t + delta
 			t2: t * t
 			t3: t2 * t
-			x: (as Cocoa-float! 2.0) * p1/x + (p2/x - p0/x * t) +
-			   (((as Cocoa-float! 2.0) * p0/x - ((as Cocoa-float! 5.0) * p1/x) + ((as Cocoa-float! 4.0) * p2/x) - p3/x) * t2) +
-			   ((as Cocoa-float! 3.0) * (p1/x - p2/x) + p3/x - p0/x * t3) * 0.5
-			y: (as Cocoa-float! 2.0) * p1/y + (p2/y - p0/y * t) +
-			   (((as Cocoa-float! 2.0) * p0/y - ((as Cocoa-float! 5.0) * p1/y) + ((as Cocoa-float! 4.0) * p2/y) - p3/y) * t2) +
-			   ((as Cocoa-float! 3.0) * (p1/y - p2/y) + p3/y - p0/y * t3) * 0.5
+			x: (F64_TO_COCOA 2.0) * p1/x + (p2/x - p0/x * t) +
+			   (((F64_TO_COCOA 2.0) * p0/x - ((F64_TO_COCOA 5.0) * p1/x) + ((F64_TO_COCOA 4.0) * p2/x) - p3/x) * t2) +
+			   ((F64_TO_COCOA 3.0) * (p1/x - p2/x) + p3/x - p0/x * t3) * 0.5
+			y: (F64_TO_COCOA 2.0) * p1/y + (p2/y - p0/y * t) +
+			   (((F64_TO_COCOA 2.0) * p0/y - ((F64_TO_COCOA 5.0) * p1/y) + ((F64_TO_COCOA 4.0) * p2/y) - p3/y) * t2) +
+			   ((F64_TO_COCOA 3.0) * (p1/y - p2/y) + p3/y - p0/y * t3) * 0.5
 			CGContextAddLineToPoint ctx x y
 			n: n + 1
 			n = 25
@@ -641,8 +641,8 @@ do-draw-ellipse: func [
 			dc/grad-y1: y
 			dc/grad-y2: y
 		][
-			dx: w / as Cocoa-float! 2.0
-			dy: h / as Cocoa-float! 2.0
+			dx: w / F64_TO_COCOA 2.0
+			dy: h / F64_TO_COCOA 2.0
 			dc/grad-x1: x + dx			;-- center point
 			dc/grad-y1: y + dy
 			dc/grad-x2: dc/grad-x1
@@ -672,8 +672,8 @@ OS-draw-circle: func [
 		radius: radius - 1
 		rad-x: F32_TO_COCOA get-float32 radius
 	]
-	w: rad-x * as Cocoa-float! 2.0
-	h: rad-y * as Cocoa-float! 2.0
+	w: rad-x * F64_TO_COCOA 2.0
+	h: rad-y * F64_TO_COCOA 2.0
 
 	GET_COCOA_XY(center cx cy)
 	do-draw-ellipse dc cx - rad-x cy - rad-y w h
@@ -858,7 +858,7 @@ _draw-arc: func [
 		sx		[Cocoa-float!]
 		sy		[Cocoa-float!]
 ][
-	pi32: as Cocoa-float! PI
+	pi32: F64_TO_COCOA PI
 
 	;-- adjust angles for ellipses
 	alpha: atan2f (sinf alpha) * rx (cosf alpha) * ry
@@ -866,13 +866,13 @@ _draw-arc: func [
 
 	if pi32 < fabsf beta - alpha [
 		either beta > alpha [
-			beta: beta - (pi32 * as Cocoa-float! 2.0)
+			beta: beta - (pi32 * F64_TO_COCOA 2.0)
 		][
-			alpha: alpha - (pi32 * as Cocoa-float! 2.0)
+			alpha: alpha - (pi32 * F64_TO_COCOA 2.0)
 		]
 	]
-	delta: beta - alpha / as Cocoa-float! 2.0
-	bcp: as Cocoa-float! (4.0 / 3.0 * (1.0 - cos COCOA_TO_F64(delta)) / sin COCOA_TO_F64(delta))
+	delta: beta - alpha / F64_TO_COCOA 2.0
+	bcp: F64_TO_COCOA 4.0 / 3.0 * (1.0 - cos COCOA_TO_F64(delta)) / sin COCOA_TO_F64(delta)
 
 	sin-a: sinf alpha
 	sin-b: sinf beta
@@ -926,7 +926,7 @@ OS-draw-arc: func [
 ][
 	ctx: dc/raw
 	GET_COCOA_XY(center cx cy)
-	rad: (as Cocoa-float! PI) / as Cocoa-float! 180.0
+	rad: (F64_TO_COCOA PI) / F64_TO_COCOA 180.0
 
 	radius: center + 1
 	GET_COCOA_XY(radius rad-x rad-y)
@@ -941,26 +941,26 @@ OS-draw-arc: func [
 
 	CGContextBeginPath ctx
 	if closed? [CGContextMoveToPoint ctx cx cy]
-	either any [sweep >= (as Cocoa-float! 359.999) sweep <= (as Cocoa-float! -359.999)][
-		CGContextAddEllipseInRect ctx cx - rad-x cy - rad-y rad-x * as Cocoa-float! 2.0 rad-y * as Cocoa-float! 2.0
+	either any [sweep >= (F64_TO_COCOA 359.999) sweep <= (F64_TO_COCOA -359.999)][
+		CGContextAddEllipseInRect ctx cx - rad-x cy - rad-y rad-x * F64_TO_COCOA 2.0 rad-y * F64_TO_COCOA 2.0
 	][
 		either rad-x <> rad-y [								;-- elliptical arc
-			delta: as Cocoa-float! (PI / 2.0)
-			dir: either sweep < (as Cocoa-float! 0.0) [as Cocoa-float! -1.0][as Cocoa-float! 1.0]
-			drawn: as Cocoa-float! 0.0
+			delta: F64_TO_COCOA PI / 2.0
+			dir: either sweep < (F64_TO_COCOA 0.0) [F64_TO_COCOA -1.0][F64_TO_COCOA 1.0]
+			drawn: F64_TO_COCOA 0.0
 			i: 0
 			until [
 				current: angle-begin + drawn
 				rad: angle-end - current
 				if (rad * dir) > delta [rad: delta * dir]
-				if (rad * dir) <= (as Cocoa-float! 0.000001) [break]
+				if (rad * dir) <= (F64_TO_COCOA 0.000001) [break]
 				_draw-arc ctx cx cy rad-x rad-y current current + rad zero? i closed?
 				drawn: drawn + rad
 				i: i + 1
 				i = 4
 			]
 		][
-			CGContextAddArc ctx cx cy rad-x angle-begin angle-end as-integer (sweep < (as Cocoa-float! 0.0))
+			CGContextAddArc ctx cx cy rad-x angle-begin angle-end as-integer (sweep < (F64_TO_COCOA 0.0))
 		]
 	]
 	either closed? [
@@ -995,10 +995,10 @@ OS-draw-curve: func [
 	GET_COCOA_XY(start sx sy)
 
 	either 2 = ((as-integer end - start) >> 4) [		;-- p0, p1, p2  -->  p0, (p0 + 2p1) / 3, (2p1 + p2) / 3, p2
-		cp1x: (p2x * as Cocoa-float! 2.0) + sx / as Cocoa-float! 3.0
-		cp1y: (p2y * as Cocoa-float! 2.0) + sy / as Cocoa-float! 3.0
-		cp2x: (p2x * as Cocoa-float! 2.0) + p3x / as Cocoa-float! 3.0
-		cp2y: (p2y * as Cocoa-float! 2.0) + p3y / as Cocoa-float! 3.0
+		cp1x: (p2x * F64_TO_COCOA 2.0) + sx / F64_TO_COCOA 3.0
+		cp1y: (p2y * F64_TO_COCOA 2.0) + sy / F64_TO_COCOA 3.0
+		cp2x: (p2x * F64_TO_COCOA 2.0) + p3x / F64_TO_COCOA 3.0
+		cp2y: (p2y * F64_TO_COCOA 2.0) + p3y / F64_TO_COCOA 3.0
 	][
 		cp1x: p2x
 		cp1y: p2y
@@ -1065,18 +1065,18 @@ CG-draw-image: func [						;@@ use CALayer to get very good performance?
 ][
 	either width < 0 [
 		w: as Cocoa-float! 0 - width
-		flip-x: as Cocoa-float! -1.0
+		flip-x: F64_TO_COCOA -1.0
 	][
 		w: as Cocoa-float! width
-		flip-x: as Cocoa-float! 1.0
+		flip-x: F64_TO_COCOA 1.0
 	]
 	tx: as Cocoa-float! x
 	either height < 0 [
 		h: as Cocoa-float! 0 - height
-		flip-y: as Cocoa-float! 1.0
+		flip-y: F64_TO_COCOA 1.0
 	][
 		h: as Cocoa-float! height
-		flip-y: as Cocoa-float! -1.0
+		flip-y: F64_TO_COCOA -1.0
 	]
 	ty: as Cocoa-float! y + height
 	;-- flip coords
@@ -1086,11 +1086,11 @@ CG-draw-image: func [						;@@ use CALayer to get very good performance?
 	CGContextTranslateCTM dc tx ty
 	CGContextScaleCTM dc flip-x flip-y
 
-	CGContextDrawImage dc F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) w h image
+	CGContextDrawImage dc F64_TO_COCOA 0.0 F64_TO_COCOA 0.0 w h image
 
 	;-- flip back
 	CGContextScaleCTM dc flip-x flip-y
-	CGContextTranslateCTM dc (as Cocoa-float! 0.0) - tx (as Cocoa-float! 0.0) - ty
+	CGContextTranslateCTM dc (F64_TO_COCOA 0.0) - tx (F64_TO_COCOA 0.0) - ty
 ]
 
 OS-draw-image: func [
@@ -1205,7 +1205,7 @@ fill-gradient-region: func [
 			dc/grad-pen
 			dc/grad-x2
 			dc/grad-y2
-			F64_TO_COCOA(0.0)
+			F64_TO_COCOA 0.0
 			dc/grad-x1
 			dc/grad-y1
 			dc/grad-radius
@@ -1264,25 +1264,25 @@ OS-draw-grad-pen-old: func [
 	n: 0
 	rotate?: no
 	scale?: no
-	sy: as Cocoa-float! 1.0
+	sy: F64_TO_COCOA 1.0
 	while [
 		int: int + 1
 		n < 3
 	][										;-- fetch angle, scale-x and scale-y (optional)
 		switch TYPE_OF(int) [
 			TYPE_INTEGER	[p: as Cocoa-float! int/value]
-			TYPE_FLOAT		[f: as red-float! int p: as Cocoa-float! f/value]
+			TYPE_FLOAT		[f: as red-float! int p: F64_TO_COCOA f/value]
 			default			[break]
 		]
 		switch n [
-			0	[if p <> (as Cocoa-float! 0.0) [angle: p rotate?: yes]]
-			1	[if p <> (as Cocoa-float! 1.0) [sx: p scale?: yes]]
-			2	[if p <> (as Cocoa-float! 1.0) [sy: p scale?: yes]]
+			0	[if p <> (F64_TO_COCOA 0.0) [angle: p rotate?: yes]]
+			1	[if p <> (F64_TO_COCOA 1.0) [sx: p scale?: yes]]
+			2	[if p <> (F64_TO_COCOA 1.0) [sy: p scale?: yes]]
 		]
 		n: n + 1
 	]
 	if rotate? [
-		p: (as Cocoa-float! PI) / (as Cocoa-float! 180.0)
+		p: (F64_TO_COCOA PI) / (F64_TO_COCOA 180.0)
 		dc/matrix: CGAffineTransformRotate dc/matrix p * angle
 	]
 	if scale? [
@@ -1292,8 +1292,8 @@ OS-draw-grad-pen-old: func [
 	color: colors + 4
 	pos: colors-pos + 1
 	delta: as Cocoa-float! count - 1
-	delta: (as Cocoa-float! 1.0) / delta
-	p: as Cocoa-float! 0.0
+	delta: (F64_TO_COCOA 1.0) / delta
+	p: F64_TO_COCOA 0.0
 	head: as red-value! int
 
 	loop count [
@@ -1304,7 +1304,7 @@ OS-draw-grad-pen-old: func [
 		color/3: (as Cocoa-float! val >> 16 and FFh) / 255.0
 		color/4: (as Cocoa-float! 255 - (val >>> 24)) / 255.0
 		next: head + 1
-		if TYPE_OF(next) = TYPE_FLOAT [head: next f: as red-float! head p: as Cocoa-float! f/value]
+		if TYPE_OF(next) = TYPE_FLOAT [head: next f: as red-float! head p: F64_TO_COCOA f/value]
 		pos/value: p
 		if next <> head [p: p + delta]
 		head: head + 1
@@ -1317,8 +1317,8 @@ OS-draw-grad-pen-old: func [
 	pos: pos - count
 	color: color - (count * 4)
 
-	if pos/value > as Cocoa-float! 0.0 [			;-- first one should be always 0.0
-		colors-pos/value: as Cocoa-float! 0.0
+	if pos/value > F64_TO_COCOA 0.0 [			;-- first one should be always 0.0
+		colors-pos/value: F64_TO_COCOA 0.0
 		colors/1: color/1
 		colors/2: color/2
 		colors/3: color/3
@@ -1371,8 +1371,8 @@ OS-draw-grad-pen: func [
 	color: colors + 4
 	pos: colors-pos + 1
 	delta: as Cocoa-float! count - 1
-	delta: (as Cocoa-float! 1.0) / delta
-	p: as Cocoa-float! 0.0
+	delta: (F64_TO_COCOA 1.0) / delta
+	p: F64_TO_COCOA 0.0
 	head: stops
 	loop count [
 		clr: as red-tuple! either TYPE_OF(head) = TYPE_WORD [_context/get as red-word! head][head]
@@ -1382,7 +1382,7 @@ OS-draw-grad-pen: func [
 		color/3: (as Cocoa-float! val >> 16 and FFh) / 255.0
 		color/4: (as Cocoa-float! 255 - (val >>> 24)) / 255.0
 		next: head + 1
-		if TYPE_OF(next) = TYPE_FLOAT [head: next f: as red-float! head p: as Cocoa-float! f/value]
+		if TYPE_OF(next) = TYPE_FLOAT [head: next f: as red-float! head p: F64_TO_COCOA f/value]
 		pos/value: p
 		if next <> head [p: p + delta]
 		head: head + 1
@@ -1395,8 +1395,8 @@ OS-draw-grad-pen: func [
 	pos: pos - count
 	color: color - (count * 4)
 
-	if pos/value > as Cocoa-float! 0.0 [			;-- first one should be always 0.0
-		colors-pos/value: as Cocoa-float! 0.0
+	if pos/value > F64_TO_COCOA 0.0 [			;-- first one should be always 0.0
+		colors-pos/value: F64_TO_COCOA 0.0
 		colors/1: color/1
 		colors/2: color/2
 		colors/3: color/3
@@ -1445,7 +1445,7 @@ OS-matrix-rotate: func [
 		x y [Cocoa-float!]
 ][
 	ctx: dc/raw
-	rad: (as Cocoa-float! PI) / (as Cocoa-float! 180.0) * (F32_TO_COCOA get-float32 angle)
+	rad: (F64_TO_COCOA PI) / (F64_TO_COCOA 180.0) * (F32_TO_COCOA get-float32 angle)
 	GET_COCOA_XY(center x y)
 	either pen = -1 [
 		if angle <> as red-integer! center [
@@ -1453,7 +1453,7 @@ OS-matrix-rotate: func [
 		]
 		CGContextRotateCTM ctx rad
 		if angle <> as red-integer! center [
-			_OS-matrix-translate ctx (as Cocoa-float! 0.0) - x (as Cocoa-float! 0.0) - y
+			_OS-matrix-translate ctx (F64_TO_COCOA 0.0) - x (F64_TO_COCOA 0.0) - y
 		]
 	][
 		dc/matrix: CGAffineTransformRotate dc/matrix rad
@@ -1478,7 +1478,7 @@ OS-matrix-scale: func [
 		]
 		CGContextScaleCTM dc/raw F32_TO_COCOA get-float32 sx F32_TO_COCOA get-float32 sy
 		if TYPE_OF(center) = TYPE_PAIR [
-			_OS-matrix-translate dc/raw (as Cocoa-float! 0.0) - x (as Cocoa-float! 0.0) - y
+			_OS-matrix-translate dc/raw (F64_TO_COCOA 0.0) - x (F64_TO_COCOA 0.0) - y
 		]
 	][
 		dc/matrix: CGAffineTransformScale dc/matrix F32_TO_COCOA get-float32 sx F32_TO_COCOA get-float32 sy
@@ -1529,12 +1529,12 @@ OS-matrix-skew: func [
 		TYPE_OF(sy) = TYPE_PAIR
 	][0.0][get-float sy]
 
-	m/a: as Cocoa-float! 1.0
-	m/b: as Cocoa-float! either yv = 0.0 [0.0][tan degree-to-radians yv TYPE_TANGENT]
-	m/c: as Cocoa-float! tan degree-to-radians xv TYPE_TANGENT
-	m/d: as Cocoa-float! 1.0
-	m/tx: as Cocoa-float! 0.0
-	m/ty: as Cocoa-float! 0.0
+	m/a: F64_TO_COCOA 1.0
+	m/b: F64_TO_COCOA either yv = 0.0 [0.0][tan degree-to-radians yv TYPE_TANGENT]
+	m/c: F64_TO_COCOA tan degree-to-radians xv TYPE_TANGENT
+	m/d: F64_TO_COCOA 1.0
+	m/tx: F64_TO_COCOA 0.0
+	m/ty: F64_TO_COCOA 0.0
 	GET_COCOA_XY(center x y)
 	either pen = -1 [
 		if TYPE_OF(center) = TYPE_PAIR [
@@ -1542,7 +1542,7 @@ OS-matrix-skew: func [
 		]
 		CGContextConcatCTM dc/raw m
 		if TYPE_OF(center) = TYPE_PAIR [
-			_OS-matrix-translate dc/raw (as Cocoa-float! 0.0) - x (as Cocoa-float! 0.0) - y
+			_OS-matrix-translate dc/raw (F64_TO_COCOA 0.0) - x (F64_TO_COCOA 0.0) - y
 		]
 	][
 		dc/matrix: CGAffineTransformConcat dc/matrix m
@@ -1841,8 +1841,8 @@ draw-curve: func [
 			either dc/shape-curve? [
 				;-- The control point is assumed to be the reflection of the control point
 				;-- on the previous command relative to the current point
-				p1x: dx * (as Cocoa-float! 2.0) - dc/control-x
-				p1y: dy * (as Cocoa-float! 2.0) - dc/control-y
+				p1x: dx * (F64_TO_COCOA 2.0) - dc/control-x
+				p1y: dy * (F64_TO_COCOA 2.0) - dc/control-y
 			][
 				;-- if previous command is not curve/curv/qcurve/qcurv, use current point
 				p1x: dx
@@ -1958,9 +1958,9 @@ OS-draw-shape-arc: func [
 	item: item + 1
 	radius-y: fabsf F32_TO_COCOA get-float32 item
 	item: item + 1
-	pi2: as Cocoa-float! 2.0 * PI
+	pi2: F64_TO_COCOA 2.0 * PI
 	theta: F32_TO_COCOA get-float32 item
-	theta: theta * as Cocoa-float! (PI / 180.0)
+	theta: theta * F64_TO_COCOA PI / 180.0
 	#either ABI = 'apple-aarch64 [
 		theta: fmod theta pi2
 	][
@@ -1968,8 +1968,8 @@ OS-draw-shape-arc: func [
 	]
 
 	;-- calculate center
-	dx: (p1-x - p2-x) / as Cocoa-float! 2.0
-	dy: (p1-y - p2-y) / as Cocoa-float! 2.0
+	dx: (p1-x - p2-x) / F64_TO_COCOA 2.0
+	dy: (p1-y - p2-y) / F64_TO_COCOA 2.0
 	cos-val: cosf theta
 	sin-val: sinf theta
 	X1: (cos-val * dx) + (sin-val * dy)
@@ -1977,24 +1977,24 @@ OS-draw-shape-arc: func [
 	rx2: radius-x * radius-x
 	ry2: radius-y * radius-y
 	rad-check: ((X1 * X1) / rx2) + ((Y1 * Y1) / ry2)
-	if rad-check > as Cocoa-float! 1.0 [
+	if rad-check > F64_TO_COCOA 1.0 [
 		radius-x: radius-x * sqrtf rad-check
 		radius-y: radius-y * sqrtf rad-check
 		rx2: radius-x * radius-x
 		ry2: radius-y * radius-y
 	]
-	either large? = sweep? [sign: as Cocoa-float! -1.0 ][sign: as Cocoa-float! 1.0 ]
+	either large? = sweep? [sign: F64_TO_COCOA -1.0 ][sign: F64_TO_COCOA 1.0 ]
 	sqrt-val: ((rx2 * ry2) - (rx2 * Y1 * Y1) - (ry2 * X1 * X1)) / ((rx2 * Y1 * Y1) + (ry2 * X1 * X1))
-	either sqrt-val < as Cocoa-float! 0.0 [cf: as Cocoa-float! 0.0 ][ cf: sign * sqrtf sqrt-val ]
+	either sqrt-val < F64_TO_COCOA 0.0 [cf: F64_TO_COCOA 0.0 ][ cf: sign * sqrtf sqrt-val ]
 	cx: cf * (radius-x * Y1 / radius-y)
-	cy: cf * (radius-y * X1 / radius-x) * (as Cocoa-float! -1.0)
-	center-x: (cos-val * cx) - (sin-val * cy) + ((p1-x + p2-x) / as Cocoa-float! 2.0)
-	center-y: (sin-val * cx) + (cos-val * cy) + ((p1-y + p2-y) / as Cocoa-float! 2.0)
+	cy: cf * (radius-y * X1 / radius-x) * (F64_TO_COCOA -1.0)
+	center-x: (cos-val * cx) - (sin-val * cy) + ((p1-x + p2-x) / F64_TO_COCOA 2.0)
+	center-y: (sin-val * cx) + (cos-val * cy) + ((p1-y + p2-y) / F64_TO_COCOA 2.0)
 
 	;-- transform our ellipse into the unit circle
-	m: CGAffineTransformMakeScale (as Cocoa-float! 1.0) / radius-x (as Cocoa-float! 1.0) / radius-y
-	m: CGAffineTransformRotate m (as Cocoa-float! 0.0) - theta
-	m: CGAffineTransformTranslate m (as Cocoa-float! 0.0) - center-x (as Cocoa-float! 0.0) - center-y
+	m: CGAffineTransformMakeScale (F64_TO_COCOA 1.0) / radius-x (F64_TO_COCOA 1.0) / radius-y
+	m: CGAffineTransformRotate m (F64_TO_COCOA 0.0) - theta
+	m: CGAffineTransformTranslate m (F64_TO_COCOA 0.0) - center-x (F64_TO_COCOA 0.0) - center-y
 
 	pt1/x: p1-x pt1/y: p1-y
 	pt2/x: p2-x pt2/y: p2-y
@@ -2006,11 +2006,11 @@ OS-draw-shape-arc: func [
 	cy: atan2f pt2/y pt2/x
 	angle-len: cy - cx
 	either sweep? [
-		if angle-len < as Cocoa-float! 0.0 [
+		if angle-len < F64_TO_COCOA 0.0 [
 			angle-len: angle-len + pi2
 		]
 	][
-		if angle-len > as Cocoa-float! 0.0 [
+		if angle-len > F64_TO_COCOA 0.0 [
 			angle-len: angle-len - pi2
 		]
 	]
@@ -2019,7 +2019,7 @@ OS-draw-shape-arc: func [
 	m: CGAffineTransformMakeTranslation center-x center-y
 	m: CGAffineTransformRotate m theta
 	m: CGAffineTransformScale m radius-x radius-y
-	CGPathAddRelativeArc ctx/path :m F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) F64_TO_COCOA(1.0) cx angle-len
+	CGPathAddRelativeArc ctx/path :m F64_TO_COCOA 0.0 F64_TO_COCOA 0.0 F64_TO_COCOA 1.0 cx angle-len
 ]
 
 OS-draw-shape-close: func [
@@ -2065,11 +2065,11 @@ draw-pattern-callback: func [
 	h: dc/pattern-h
 	do-draw ctx null blk no no yes yes
 	if wrap = flip-x [
-		CGContextScaleCTM ctx F64_TO_COCOA(-1.0) 1.0
+		CGContextScaleCTM ctx F64_TO_COCOA -1.0 1.0
 		do-draw ctx null blk no no yes yes
 	]
 	if wrap = flip-y [
-		m: CGAffineTransformMake 1.0 0.0 0.0 F64_TO_COCOA(-1.0) w h
+		m: CGAffineTransformMake 1.0 0.0 0.0 F64_TO_COCOA -1.0 w h
 		CGContextConcatCTM ctx m
 		do-draw ctx null blk no no yes yes
 	]
@@ -2103,11 +2103,11 @@ OS-draw-brush-pattern: func [
 ][
 	dc/pattern-blk: as int-ptr! block
 	ctx: dc/raw
-	alpha: as Cocoa-float! 1.0
+	alpha: F64_TO_COCOA 1.0
 	GET_COCOA_XY(size w h)
 	either crop-1 = null [
-		x: as Cocoa-float! 0.0
-		y: as Cocoa-float! 0.0
+		x: F64_TO_COCOA 0.0
+		y: F64_TO_COCOA 0.0
 	][
 		GET_COCOA_XY(crop-1 x y)
 	]
@@ -2124,8 +2124,8 @@ OS-draw-brush-pattern: func [
 	unless mode = null [wrap: symbol/resolve mode/symbol]
 	dc/pattern-mode: wrap
 	case [
-		any [wrap = flip-x wrap = flip-y] [w: w * (as Cocoa-float! 2.0)]
-		wrap = flip-xy [w: w * (as Cocoa-float! 2.0) h: h * (as Cocoa-float! 2.0)]
+		any [wrap = flip-x wrap = flip-y] [w: w * (F64_TO_COCOA 2.0)]
+		wrap = flip-xy [w: w * (F64_TO_COCOA 2.0) h: h * (F64_TO_COCOA 2.0)]
 		true []
 	]
 
@@ -2146,7 +2146,7 @@ OS-draw-brush-pattern: func [
 	rc/y: y
 	rc/w: width
 	rc/h: height
-	m: CGAffineTransformMake 1.0 0.0 0.0 F64_TO_COCOA(-1.0) 0.0 height
+	m: CGAffineTransformMake 1.0 0.0 0.0 F64_TO_COCOA -1.0 0.0 height
 	pattern: CGPatternCreate as int-ptr! dc rc m width height 0 yes callbacks
 	either brush? [
 		dc/brush?: yes

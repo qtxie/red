@@ -67,17 +67,17 @@ draw-button-interior*: func [
 	title-h: title/h
 	title-y: title/y
 	if any [										;-- no usable title rect: measure the text itself
-		title-h <= as Cocoa-float! 0.0
+		title-h <= F64_TO_COCOA 0.0
 		title-h >= h
 	][
 		text-size: objc_msgSend_sz [
 			objc_msgSend [self sel_getUid "attributedTitle"] sel_getUid "size"
 		]
 		title-h: text-size/h
-		title-y: y + ((h - title-h) / (as Cocoa-float! 2.0))
+		title-y: y + ((h - title-h) / (F64_TO_COCOA 2.0))
 	]
 	if any [										;-- title fills the face: nothing left to align
-		title-h <= as Cocoa-float! 0.0
+		title-h <= F64_TO_COCOA 0.0
 		title-h >= h
 	][
 		objc_msgSendSuper [super cmd x y w h view]
@@ -172,7 +172,7 @@ reset-cursor-rects: func [
 		]
 		objc_msgSend [
 			self sel_getUid "addCursorRect:cursor:"
-			F64_TO_COCOA(0.0) F64_TO_COCOA(0.0) sz/x sz/y cur
+			F64_TO_COCOA 0.0 F64_TO_COCOA 0.0 sz/x sz/y cur
 		]
 	]
 ]
@@ -1343,7 +1343,7 @@ tabview-should-select: func [
 			objc_getAssociatedObject layout RedAttachedWidgetKey
 			sel_getUid "descender"
 		]
-		(as Cocoa-float! 1.5) - d
+		(F64_TO_COCOA 1.5) - d
 	]
 ][
 	set-line-spacing: func [
@@ -1442,9 +1442,9 @@ render-text: func [
 	]
 	container: objc_msgSend [
 		objc_msgSend [objc_getClass "NSTextContainer" sel_alloc]
-		sel_getUid "initWithSize:" sz/w F64_TO_COCOA(1.0e37)
+		sel_getUid "initWithSize:" sz/w F64_TO_COCOA 1.0e37
 	]
-	objc_msgSend [container sel_getUid "setLineFragmentPadding:" F64_TO_COCOA(0.0)]
+	objc_msgSend [container sel_getUid "setLineFragmentPadding:" F64_TO_COCOA 0.0]
 	objc_msgSend [container sel_getUid "setLineBreakMode:" as NSInteger! line-break]
 	layout: objc_msgSend [objc_msgSend [objc_getClass "NSLayoutManager" sel_alloc] sel_init]
 	objc_msgSend [layout sel_getUid "addTextContainer:" container]
@@ -1455,10 +1455,10 @@ render-text: func [
 	range: objc_msgSend_range [layout sel_getUid "glyphRangeForTextContainer:" container]
 	used: objc_msgSend_rect [layout sel_getUid "usedRectForTextContainer:" container]
 	available: sz/h - used/h
-	origin/x: as Cocoa-float! 0.0
-	origin/y: (as Cocoa-float! 0.0) - used/y
+	origin/x: F64_TO_COCOA 0.0
+	origin/y: (F64_TO_COCOA 0.0) - used/y
 	case [
-		(flags and 4) <> 0 [origin/y: (available / as Cocoa-float! 2.0) - used/y]
+		(flags and 4) <> 0 [origin/y: (available / F64_TO_COCOA 2.0) - used/y]
 		(flags and 8) <> 0 [origin/y: available - used/y]
 		true [0]
 	]

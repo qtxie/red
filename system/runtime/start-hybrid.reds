@@ -35,10 +35,12 @@ Red/System [
 	]
 ]]
 
+;-- The cpu fields are int-ptr! already, so no cast: an `as int-ptr!` here
+;-- is a no-op the compiler reports rather than a conversion.
 #either target = 'ARM64 [
-	hybrid-entry-stack: as int-ptr! system/cpu/x19
+	hybrid-entry-stack: system/cpu/x19
 ][
-	hybrid-entry-stack: as int-ptr! system/cpu/r12
+	hybrid-entry-stack: system/cpu/r12
 ]
 
 ;-- The runtime reads the command line from these globals once the body runs.

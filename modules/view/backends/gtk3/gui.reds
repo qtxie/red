@@ -136,7 +136,7 @@ get-handle: func [
 	return: [handle!]
 ][
 	either value/extID >= 0 [
-		as handle! externals/get value/extID
+		externals/get value/extID
 	][
 		as handle! value/value
 	]
@@ -149,7 +149,7 @@ set-handle: func [
 	value/value: as integer! native
 	value/extID: -1
 	if native <> null [
-		value/extID: externals/store as int-ptr! native gtk-handle-ext-type
+		value/extID: externals/store native gtk-handle-ext-type
 	]
 ]
 

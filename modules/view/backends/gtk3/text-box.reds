@@ -484,7 +484,7 @@ OS-text-box-layout: func [
 		hndl: handle/make-in state as integer! layout handle/CLASS_RICHTEXT
 		hndl/extID: externals/store layout tb-ext-type	;-- GC releases the layout with the face
 		hndl: handle/make-in state as integer! para handle/CLASS_RICHTEXT
-		if para <> null [hndl/extID: externals/store as int-ptr! para gtk-handle-ext-type]
+		if para <> null [hndl/extID: externals/store para gtk-handle-ext-type]
 		none/make-in state
 		logic/make-in state false
 	]

@@ -37,7 +37,7 @@ ansi-parser: context [
 
 	on-gc-mark: func [/local raw [int-ptr!]][
 		raw: as int-ptr! buffer
-		collector/keep-raw as ptr-ptr! :raw
+		collector/keep-raw :raw
 		buffer: as node! raw
 	]
 

@@ -503,7 +503,7 @@ get-event-picked: func [
 				][
 					d: objc_msgSend_f32 [event sel_getUid "scrollingDeltaY"]
 					if 1 = as integer! objc_msgSend [event sel_getUid "hasPreciseScrollingDeltas"] [
-						d: d / (as Cocoa-float! 10.0)
+						d: d / (F64_TO_COCOA 10.0)
 					]
 				]
 			]

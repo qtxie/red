@@ -42,8 +42,8 @@ init-camera: func [
 		objects [Cocoa-handle-array!]
 		keys	[Cocoa-handle-array!]
 ][
-	rc/x: as Cocoa-float! 0.0
-	rc/y: as Cocoa-float! 0.0
+	rc/x: F64_TO_COCOA 0.0
+	rc/y: F64_TO_COCOA 0.0
 
 	objc_msgSend [camera sel_getUid "setWantsLayer:" yes]
 	layer: objc_msgSend [camera sel_getUid "layer"]

@@ -42,7 +42,7 @@ make-font: func [
 
 	int: as red-integer! values + FONT_OBJ_SIZE
 	either TYPE_OF(int) <> TYPE_INTEGER [
-		size: as Cocoa-float! 0.0
+		size: F64_TO_COCOA 0.0
 	][
 		size: as Cocoa-float! (int/value * 94 / 72)					;@@ hard coded
 	]

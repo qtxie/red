@@ -346,7 +346,7 @@ set-defaults: func [
 		point-size	[Cocoa-float!]
 ][
 	default-font: objc_msgSend [
-		objc_getClass "NSFont" sel_getUid "systemFontOfSize:" F64_TO_COCOA(0.0)
+		objc_getClass "NSFont" sel_getUid "systemFontOfSize:" F64_TO_COCOA 0.0
 	]
 	objc_msgSend [default-font sel_getUid "retain"]
 
@@ -438,7 +438,7 @@ init: func [
 
 	sz: objc_msgSend_sz [dpi sel_getUid "sizeValue"]
 
-	scaling: as Cocoa-float! 1.0
+	scaling: F64_TO_COCOA 1.0
 	if mac-version >= 1070 [
 		scaling: objc_msgSend_f32 [screen sel_getUid "backingScaleFactor"]
 	]
@@ -607,7 +607,7 @@ change-size: func [
 	GET_COCOA_XY(size rc/x rc/y)
 	SET_PAIR_SIZE_FLAG(hWnd size)
 
-	if all [any [type = button type = toggle] rc/y > as Cocoa-float! 32.0][
+	if all [any [type = button type = toggle] rc/y > F64_TO_COCOA 32.0][
 		objc_msgSend [hWnd sel_getUid "setBezelStyle:" as NSUInteger! NSRegularSquareBezelStyle]
 	]
 	either type = window [
@@ -644,7 +644,7 @@ change-image: func [
 				exit
 			]
 			id: objc_msgSend [objc_getClass "NSImage" sel_getUid "alloc"]
-			id: objc_msgSend [id sel_getUid "initWithCGImage:size:" OS-image/to-cgimage image F64_TO_COCOA(0.0) F64_TO_COCOA(0.0)]
+			id: objc_msgSend [id sel_getUid "initWithCGImage:size:" OS-image/to-cgimage image F64_TO_COCOA 0.0 F64_TO_COCOA 0.0]
 			objc_msgSend [hWnd sel_getUid "setImage:" id]
 			objc_msgSend [id sel_getUid "release"]
 		]
@@ -815,7 +815,7 @@ change-font: func [
 		if type = text-list [
 			nsfont: objc_msgSend [attrs sel_getUid "objectForKey:" NSFontAttributeName]
 			lm: objc_msgSend [objc_msgSend [objc_getClass "NSLayoutManager" sel_alloc] sel_init]
-			pt/x: (as Cocoa-float! 1.0) + objc_msgSend_f32 [lm sel_getUid "defaultLineHeightForFont:" nsfont]
+			pt/x: (F64_TO_COCOA 1.0) + objc_msgSend_f32 [lm sel_getUid "defaultLineHeightForFont:" nsfont]
 			objc_msgSend [lm sel_release]
 			view: objc_msgSend [hWnd sel_getUid "documentView"]
 			objc_msgSend [view sel_getUid "setRowHeight:" pt/x]
@@ -1043,7 +1043,7 @@ change-data: func [
 				keys/v1: NSFontAttributeName
 				attr: make-NSDictionary objects keys as NSUInteger! 1
 			]
-			max-w: as Cocoa-float! 2.0
+			max-w: F64_TO_COCOA 2.0
 			loop len [
 				if TYPE_OF(data) <> TYPE_STRING [continue]
 				nsstr: to-NSString as red-string! data
@@ -1057,7 +1057,7 @@ change-data: func [
 			sz: objc_msgSend_sz [view sel_getUid "frameSize"]
 			rc: make-rect 0 0 as-integer sz/w size/y
 			either max-w > rc/w [
-				rc/w: max-w + as Cocoa-float! 16.0
+				rc/w: max-w + F64_TO_COCOA 16.0
 				make-text-list
 					face
 					hWnd
@@ -1512,8 +1512,8 @@ make-area: func [
 		tbox	[Cocoa-handle!]
 		x		[integer!]
 ][
-	rc/x: as Cocoa-float! 0.0
-	rc/y: as Cocoa-float! 0.0
+	rc/x: F64_TO_COCOA 0.0
+	rc/y: F64_TO_COCOA 0.0
 
 	x: either border? [NSBezelBorder][NSNoBorder]
 	objc_msgSend [container sel_getUid "setBorderType:" as NSUInteger! x]
@@ -1531,7 +1531,7 @@ make-area: func [
 	]
 	store-face-to-obj obj face
 
-	rc/y: as Cocoa-float! 1e37
+	rc/y: F64_TO_COCOA 1e37
 	objc_msgSend [obj sel_getUid "setVerticallyResizable:" yes]
 	objc_msgSend [obj sel_getUid "setHorizontallyResizable:" yes]
 	objc_msgSend [obj sel_getUid "setMinSize:" rc/x rc/h]
@@ -1561,9 +1561,9 @@ make-text-list: func [
 		obj		[Cocoa-handle!]
 		column	[Cocoa-handle!]
 ][
-	rc/x: as Cocoa-float! 0.0
-	rc/y: as Cocoa-float! 0.0
-	rc/w: rc/w - as Cocoa-float! 5.0
+	rc/x: F64_TO_COCOA 0.0
+	rc/y: F64_TO_COCOA 0.0
+	rc/w: rc/w - F64_TO_COCOA 5.0
 
 	id: CFString("RedCol1")
 	column: objc_msgSend [objc_getClass "NSTableColumn" sel_getUid "alloc"]
@@ -1790,12 +1790,12 @@ update-scroller: func [
 	if pos < n [n: pos]
 	if pos < min [pos: min]
 	range: max - min - page + 2
-	frac: either range <= 0 [as float! 1.0][
+	frac: either range <= 0 [1.0][
 		(as float! pos - min) / as float! range
 	]
 
 	sel: max - min
-	knob: either range <= 0 [as Cocoa-float! 1.0][
+	knob: either range <= 0 [F64_TO_COCOA 1.0][
 		(as Cocoa-float! page) / as Cocoa-float! sel
 	]
 
@@ -1891,7 +1891,7 @@ parse-common-opts: func [
 							nsimg: objc_msgSend [
 								OBJC_ALLOC("NSImage")
 								sel_getUid "initWithCGImage:size:" OS-image/to-cgimage img
-								F64_TO_COCOA(0.0) F64_TO_COCOA(0.0)
+								F64_TO_COCOA 0.0 F64_TO_COCOA 0.0
 							]
 							pt/x: as Cocoa-float! IMAGE_WIDTH(img/size) / 2
 							pt/y: as Cocoa-float! IMAGE_HEIGHT(img/size) / 2
@@ -2211,7 +2211,7 @@ OS-make-view: func [
 			if bits and FACET_FLAGS_MODAL <> 0 [append-cocoa-handle active-wins obj]
 		]
 		sym = slider [
-			either rc/w > rc/h [flt: as-float rc/w][flt: as-float rc/h]
+			either rc/w > rc/h [flt: COCOA_TO_F64(rc/w)][flt: COCOA_TO_F64(rc/h)]
 			objc_msgSend [obj sel_getUid "setMaxValue:" flt]
 			flt: get-position-value as red-float! data flt
 			objc_msgSend [obj sel_getUid "setDoubleValue:" flt]
@@ -2221,7 +2221,7 @@ OS-make-view: func [
 		sym = progress [
 			objc_msgSend [obj sel_getUid "setIndeterminate:" false]
 			if rc/h > rc/w [
-				rc/x: as Cocoa-float! -90.0
+				rc/x: F64_TO_COCOA -90.0
 				objc_msgSend [obj sel_getUid "setBoundsRotation:" rc/x]
 			]
 			flt: get-position-value as red-float! data 100.0
@@ -2646,7 +2646,7 @@ fetch-screen-info: func [
 	s: GET_BUFFER(blk)
 	frame: objc_msgSend_rect [screen sel_getUid "frame"]
 	scale: objc_msgSend_f32 [screen sel_getUid "backingScaleFactor"]
-	if scale <= (as Cocoa-float! 0.0) [scale: as Cocoa-float! 1.0]
+	if scale <= (F64_TO_COCOA 0.0) [scale: F64_TO_COCOA 1.0]
 	width: as-integer (frame/w * scale)
 	height: as-integer (frame/h * scale)
 	y: prim-h - (as-integer (frame/y + frame/h))

@@ -18,10 +18,16 @@ Red/System [
 	#define Cocoa-float-ptr! [pointer! [float!]]
 	#define NSInteger! int64!
 	#define NSUInteger! uint64!
-	#define COCOA_TO_F32(value) [as float32! value]
+	;-- A cast expands to `as`, which takes the whole expression that follows
+	;-- it, so a macro that *is* one has to close over its own operand:
+	;-- COCOA_TO_F32(a) + COCOA_TO_F32(b) must not become one cast of a + b.
+	;-- F64_TO_COCOA prefixes arbitrary expressions instead, the way
+	;-- F32_TO_COCOA does: a macro argument is a single token, and a narrowing
+	;-- cast has to reach `2.0 * PI` as one operand.
+	#define COCOA_TO_F32(value) [(as float32! value)]
 	#define F32_TO_COCOA [as float!]
 	#define COCOA_TO_F64(value) [value]			;-- Cocoa-float! is already float! here
-	#define F64_TO_COCOA(value) [value]			;-- float! literals need no narrowing here
+	#define F64_TO_COCOA []						;-- float! literals need no narrowing here
 ][
 	#define Cocoa-handle! integer!
 	#define Cocoa-uhandle! integer!
@@ -32,8 +38,8 @@ Red/System [
 	#define NSUInteger! integer!
 	#define COCOA_TO_F32(value) [value]
 	#define F32_TO_COCOA []
-	#define COCOA_TO_F64(value) [as float! value]
-	#define F64_TO_COCOA(value) [as float32! value]
+	#define COCOA_TO_F64(value) [(as float! value)]
+	#define F64_TO_COCOA [as float32!]
 ]
 
 #either ABI = 'apple-aarch64 [

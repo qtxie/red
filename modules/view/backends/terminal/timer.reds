@@ -33,7 +33,7 @@ timer: context [
 
 	on-gc-mark: func [/local raw [int-ptr!]][
 		raw: as int-ptr! timer-list
-		collector/keep-raw as ptr-ptr! :raw
+		collector/keep-raw :raw
 		timer-list: as node! raw
 	]
 

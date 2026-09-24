@@ -895,6 +895,18 @@ simple-io: context [
 		file
 	]
 
+	;-- stat! is a per-OS layout and st_mode is the one field whose width changes
+	;   with it: a uint16! on macOS/ARM64, an integer! everywhere else. Widening it
+	;   is a real cast only where it is narrow, so the two spellings live here
+	;   instead of at every place that tests one.
+	#define REGULAR-FILE?(s) [
+		#either all [OS = 'macOS ABI = 'apple-aarch64] [
+			(as-integer s/st_mode) and S_IFREG <> 0
+		][
+			s/st_mode and S_IFREG <> 0
+		]
+	]
+
 	file-size?: func [
 		file	 [integer!]
 		return:	 [integer!]
@@ -907,7 +919,7 @@ simple-io: context [
 			any [target = 'X86-64 target = 'ARM64] [
 				s: as stat! system/stack/allocate 36	;-- x86-64 struct stat is 144 bytes
 				either zero? _stat file s [
-					either (as-integer s/st_mode) and S_IFREG <> 0 [
+					either REGULAR-FILE?(s) [
 						s/st_size
 					][-1]
 				][-1]

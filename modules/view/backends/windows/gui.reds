@@ -376,7 +376,7 @@ get-text-size: func [
 		GetClientRect hWnd :rc
 		render-text values hwnd dc :rc str :bbox
 		if pt <> null [
-			pt/x: bbox/width * as float32! 0.98 / dpi-factor
+			pt/x: bbox/width * 0.98 / dpi-factor
 			pt/y: bbox/height / dpi-factor
 		]
 	][	;-- native controls use GDI to draw the text, so we use GDI function to measure the text size

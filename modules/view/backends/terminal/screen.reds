@@ -210,15 +210,15 @@ screen: context [
 
 	on-gc-mark: func [/local raw [int-ptr!]][
 		raw: as int-ptr! win-list
-		collector/keep-raw as ptr-ptr! :raw
+		collector/keep-raw :raw
 		win-list: as node! raw
 
 		raw: as int-ptr! captured
-		collector/keep-raw as ptr-ptr! :raw
+		collector/keep-raw :raw
 		captured: as node! raw
 
 		raw: as int-ptr! esc-sequences
-		collector/keep-raw as ptr-ptr! :raw
+		collector/keep-raw :raw
 		esc-sequences: as node! raw
 		mark-widgets
 	]

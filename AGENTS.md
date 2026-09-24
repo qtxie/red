@@ -38,6 +38,31 @@ console the suite workflows drive. Verified at 243: `gui-console.red` builds
 for `Windows-X86-64` (3320320 bytes, PE sub-system 2), `Linux-X86-64`
 (3349048) and `Linux-ARM64` (2804864).
 
+### A backend rejection that did not say what was wrong
+
+`emit-call-operation` had a single site for `unless all [compatibility = 1
+parameter/flags = flags]`, so "the parameter will not take this type" and "the
+value is not stored the way the parameter wants it" were one failure, and both
+printed only "RSIR validation failed" -- the reason `fail` derives from the
+status code. They are two sites now, and the type one states itself:
+
+    *** codegen INVALID_IR: argument type is not compatible with the parameter
+        check: x64-codegen.reds :: emit-call-operation/parameter/type#30 (site 835)
+        phase=measure function=39 instruction=76 op=CALL (7) operands=-14,4,-5
+        expected=26 actual=-13
+
+`expected`/`actual` are type-table indices -- the reader keeps no type names --
+so the site name and that line are the whole explanation.
+`codegen-diag/fail-explained` is how a site gives its own one-line reason
+instead of the one its status code implies. A new `fail-*` wrapper must be
+registered in `tools/codegen/sync-codegen-sites.py`'s HELPERS: an unregistered
+helper is neither an annotated site nor a bare one, so the audit sees nothing.
+
+Two generations of `red-bootstrap-hybrid.red` have the same size but not the
+same bytes at 243 -- they differ at byte 315427, with and without this change
+-- so a byte-exact fixed point is not something to look for in the bootstrap
+compiler; CI checks `red-toolchain-hybrid.red` over three generations.
+
 # Hybrid Bootstrap Chain Discipline
 
 - Verified self-hosting baseline: `build/self-hosting/merge-red64/hybrid-compiler60.exe`

@@ -25,7 +25,8 @@ KINDS = {"INVALID_IR": "fail-invalid", "UNSUPPORTED": "fail-unsupported",
          "INTERNAL_ERROR": "fail-internal", "RESOURCE_LIMIT": "fail-limit",
          "OUT_OF_MEMORY": "fail-memory"}
 HELPERS = dict.fromkeys(KINDS.values(), 0)
-HELPERS.update({"fail-code": 1, "fail-output": 2, "fail-mismatch": 2})
+HELPERS.update({"fail-code": 1, "fail-output": 2, "fail-mismatch": 2,
+                "fail-type-mismatch": 2})
 
 
 @dataclass

@@ -463,6 +463,15 @@ x64-codegen: context [
 		codegen-diag/fail-values INTERNAL_ERROR codegen-diag/FILE_X64 site site-name required actual
 	]
 
+	;-- A call argument the parameter will not accept. The two types are type-table
+	;-- indices: the reader has no names to print, so the site name and this line
+	;-- are what tell the reader it is a type mismatch and not a malformed call.
+	fail-type-mismatch: func [expected actual site [integer!] site-name [c-string!] return: [integer!]][
+		codegen-diag/fail-explained codegen-diag/INVALID_IR codegen-diag/FILE_X64
+			site site-name "argument type is not compatible with the parameter"
+			expected actual
+	]
+
 	align: func [value boundary [integer!] return: [integer!]
 		/local remainder padding [integer!]
 	][
@@ -8493,10 +8502,15 @@ x64-codegen: context [
 								compatibility: implicitly-compatible-types parameter/type ref
 									stack-tags/argument-slot true table
 								if compatibility < 0 [return fail-code compatibility 543 "emit-call-operation/code#11"]
-								unless all [
-									compatibility = 1
-									parameter/flags = flags
-								][return fail-invalid 144 "emit-call-operation/parameter/flags#30"]
+								;-- Split: "the type does not fit" and "the value is
+								;-- not stored the way the parameter wants it" are
+								;-- different faults and only the first is a mismatch.
+								unless compatibility = 1 [
+									return fail-type-mismatch parameter/type ref 835 "emit-call-operation/parameter/type#30"
+								]
+								unless parameter/flags = flags [
+									return fail-invalid 144 "emit-call-operation/parameter/flags#30"
+								]
 								unless machine-value? ref flags table [
 									return fail-unsupported 145 "emit-call-operation/machine-value#31"
 								]

@@ -174,6 +174,22 @@ codegen-diag: context [
 		status
 	]
 
+	; A status code says what class of failure this is, not what went wrong: a
+	; type check rejected by the backend is INVALID_IR like any other malformed
+	; instruction, and "RSIR validation failed" tells nobody which check ran. A
+	; site that knows better records its own one-line explanation.
+	fail-explained: func [
+		code file-id site-id [integer!] site-name [c-string!]
+		explanation [c-string!]
+		wanted found [integer!]
+		return: [integer!]
+	][
+		if status <> 0 [return status]
+		fail-values code file-id site-id site-name wanted found
+		reason: explanation
+		status
+	]
+
 	propagate: func [
 		code file-id site-id [integer!] site-name [c-string!]
 		return: [integer!]

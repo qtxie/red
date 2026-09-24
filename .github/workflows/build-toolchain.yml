@@ -1,7 +1,8 @@
 name: Build the Red toolchain
 
-# The one workflow a push starts. It builds every platform's toolchain and CLI
-# console from the current source, then runs the suites on all four platforms
+# The one workflow a push starts. It builds every platform's toolchain, CLI
+# console and GUI console from the current source, then runs the suites on all
+# four platforms
 # through the toolchain it just built, so a suite always compiles the sources it
 # is testing. A run that built no toolchain has nothing to test with, which is
 # why the four suite workflows are called from here and no longer trigger on a

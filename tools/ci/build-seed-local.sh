@@ -29,6 +29,18 @@ target_for() {
   esac
 }
 
+# The GUI console needs the target that gives it a window: Windows picks the
+# GUI sub-system, Darwin the app packager, ELF has nothing to pick.
+gui_target_for() {
+  case "$1" in
+    windows-x64)  echo Windows-X86-64 ;;
+    linux-x64)    echo Linux-X86-64 ;;
+    linux-arm64)  echo Linux-ARM64 ;;
+    darwin-arm64) echo macOS-ARM64 ;;
+    *) echo "unknown platform: $1" >&2; return 1 ;;
+  esac
+}
+
 # A toolchain built for another OS cannot be run here, so its post-build
 # self-check has to be skipped.
 verify_flag() {
@@ -43,6 +55,16 @@ toolchain_name() {
 
 console_name() {
   [[ $1 == windows-x64 ]] && echo "red-cli-console-$1.exe" || echo "red-cli-console-$1"
+}
+
+# Same two names for the GUI console: what the compiler writes, and what the
+# seed calls it.
+gui_built_name() {
+  [[ $1 == windows-x64 ]] && echo gui-console.exe || echo gui-console
+}
+
+gui_console_name() {
+  [[ $1 == windows-x64 ]] && echo "red-gui-console-$1.exe" || echo "red-gui-console-$1"
 }
 
 # Git Bash on Windows has no shasum.
@@ -117,21 +139,23 @@ package_platform() {
       environment/console/CLI/console.red
   fi
 
-  if [[ $platform == darwin-arm64 ]]; then
-    if [[ -d "$work/gui-console.app" || -f "$work/gui-console" ]]; then
-      echo "=== $platform: GUI console already built ==="
-    else
-      echo "=== $platform: GUI console ==="
-      "$BOOTSTRAP" -r -t macOS-ARM64 \
-        -o "$work/gui-console" \
-        environment/console/GUI/gui-console.red
-    fi
+  local gui_path="$work/$(gui_built_name "$platform")"
+  if [[ -d "$work/gui-console.app" || -f "$gui_path" ]]; then
+    echo "=== $platform: GUI console already built ==="
+  else
+    echo "=== $platform: GUI console ==="
+    "$BOOTSTRAP" -r -t "$(gui_target_for "$platform")" \
+      -o "$work/gui-console" \
+      environment/console/GUI/gui-console.red
+  fi
+  if [[ -d "$work/gui-console.app" ]]; then
     # The packager wraps the executable wherever the toolchain runs, so a
     # cross build packages the bundle too; the bare executable is gone after.
-    local gui_member=gui-console
-    [[ -d "$work/gui-console.app" ]] && gui_member=gui-console.app
-    chmod 755 "$work/$gui_member" 2>/dev/null || true
-    archive tgz "$work" "$gui_member" "$dir/red-gui-console-$platform.tar.gz"
+    chmod 755 "$work/gui-console.app" 2>/dev/null || true
+    archive tgz "$work" gui-console.app "$dir/red-gui-console-$platform.tar.gz"
+  else
+    cp "$gui_path" "$dir/$(gui_console_name "$platform")"
+    chmod 755 "$dir/$(gui_console_name "$platform")"
   fi
 
   echo "=== $platform: package ==="

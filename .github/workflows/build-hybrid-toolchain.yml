@@ -11,8 +11,10 @@ name: Build hybrid toolchain
 #   with:
 #     platforms: '["windows-x64"]'
 #
-# and download `seed-<platform>`. Each artifact holds a toolchain archive and
-# a CLI console, which together are one generation of the CI seed.
+# and download `seed-<platform>`. Each artifact holds a toolchain archive, a
+# CLI console and a GUI console, which together are one generation of the CI
+# seed. The GUI console ships as a .app bundle on Darwin and as a plain
+# executable everywhere else.
 #
 # The bootstrap comes from the seed by default. With bootstrap-source=auto a
 # platform that has no seed yet falls back to its pinned bootstrap URL, which
@@ -77,12 +79,15 @@ jobs:
           REQUESTED: '${{ inputs.platforms }}'
         run: |
           set -euo pipefail
+          # gui-target is the target that gives the GUI console the window it
+          # needs: Windows has a GUI sub-system next to its console one, Darwin
+          # needs the app packager, and ELF has no sub-system to choose.
           known='
           {"include": [
-            {"platform": "windows-x64", "runner": "windows-2022", "target": "Windows-X86-64", "archive": "zip", "bootstrap-path": "build/bootstrap/red-bootstrap-speed1.exe", "bootstrap-url": "${{ vars.RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL }}", "bootstrap-sha256": "53f947164aaeb9912c233a0d7c4fb960ded05932fce809aaf34df75b9f9f7eba"},
-            {"platform": "darwin-arm64", "runner": "macos-15", "target": "Darwin-ARM64", "archive": "tar", "bootstrap-path": "build/bootstrap/red-bootstrap-darwin-arm64", "bootstrap-url": "${{ vars.RED_DARWIN_ARM64_BOOTSTRAP_URL }}", "bootstrap-sha256": "644bfb20fe52dcb054ed9c63324f31b139fd163904730bb78a08b72617ebc81c"},
-            {"platform": "linux-x64", "runner": "ubuntu-24.04", "target": "Linux-X86-64", "archive": "tar", "bootstrap-path": "build/bootstrap/red-bootstrap-linux-x64", "bootstrap-url": "${{ vars.RED_LINUX_X64_HYBRID_BOOTSTRAP_URL }}", "bootstrap-sha256": "${{ vars.RED_LINUX_X64_BOOTSTRAP_SHA256 }}"},
-            {"platform": "linux-arm64", "runner": "ubuntu-24.04-arm", "target": "Linux-ARM64", "archive": "tar", "bootstrap-path": "build/bootstrap/red-bootstrap-linux-arm64", "bootstrap-url": "${{ vars.RED_LINUX_ARM64_HYBRID_BOOTSTRAP_URL }}", "bootstrap-sha256": "${{ vars.RED_LINUX_ARM64_BOOTSTRAP_SHA256 }}"}
+            {"platform": "windows-x64", "runner": "windows-2022", "target": "MSDOS-X86-64", "gui-target": "Windows-X86-64", "archive": "zip", "bootstrap-path": "build/bootstrap/red-bootstrap-speed1.exe", "bootstrap-url": "${{ vars.RED_WINDOWS_X64_HYBRID_BOOTSTRAP_URL }}", "bootstrap-sha256": "53f947164aaeb9912c233a0d7c4fb960ded05932fce809aaf34df75b9f9f7eba"},
+            {"platform": "darwin-arm64", "runner": "macos-15", "target": "Darwin-ARM64", "gui-target": "macOS-ARM64", "archive": "tar", "bootstrap-path": "build/bootstrap/red-bootstrap-darwin-arm64", "bootstrap-url": "${{ vars.RED_DARWIN_ARM64_BOOTSTRAP_URL }}", "bootstrap-sha256": "644bfb20fe52dcb054ed9c63324f31b139fd163904730bb78a08b72617ebc81c"},
+            {"platform": "linux-x64", "runner": "ubuntu-24.04", "target": "Linux-X86-64", "gui-target": "Linux-X86-64", "archive": "tar", "bootstrap-path": "build/bootstrap/red-bootstrap-linux-x64", "bootstrap-url": "${{ vars.RED_LINUX_X64_HYBRID_BOOTSTRAP_URL }}", "bootstrap-sha256": "${{ vars.RED_LINUX_X64_BOOTSTRAP_SHA256 }}"},
+            {"platform": "linux-arm64", "runner": "ubuntu-24.04-arm", "target": "Linux-ARM64", "gui-target": "Linux-ARM64", "archive": "tar", "bootstrap-path": "build/bootstrap/red-bootstrap-linux-arm64", "bootstrap-url": "${{ vars.RED_LINUX_ARM64_HYBRID_BOOTSTRAP_URL }}", "bootstrap-sha256": "${{ vars.RED_LINUX_ARM64_BOOTSTRAP_SHA256 }}"}
           ]}'
 
           matrix=$(jq -c --argjson requested "$REQUESTED" \
@@ -225,11 +230,16 @@ jobs:
         echo "bootstrap: $BOOTSTRAP_PATH"
 
     - name: Build a Red console and drive the fixed point (Windows)
+      # MSDOS-X86-64, not Windows-X86-64: the latter is the GUI sub-system, so
+      # this console would start with no console attached and its output -- the
+      # fixed-point log CI reads -- would go nowhere.
       if: matrix.archive == 'zip'
       shell: pwsh
+      env:
+        TARGET: ${{ matrix.target }}
       run: |
         $ErrorActionPreference = 'Stop'
-        & $env:BOOTSTRAP_PATH -r -t Windows-X86-64 `
+        & $env:BOOTSTRAP_PATH -r -t $env:TARGET `
           -o .\build\fixed-point\console.exe environment\console\CLI\console.red
         & .\build\fixed-point\console.exe `
           tools\self_hosting\build-red-toolchain-fixed-point.red `
@@ -265,12 +275,30 @@ jobs:
     - name: Build the CLI console (Windows)
       if: matrix.archive == 'zip'
       shell: pwsh
+      env:
+        TARGET: ${{ matrix.target }}
+        PLATFORM: ${{ matrix.platform }}
       run: |
         $ErrorActionPreference = 'Stop'
         New-Item -ItemType Directory -Force -Path '.\build\packages' | Out-Null
-        & .\build\fixed-point\h3\red-toolchain.exe -r -t Windows-X86-64 `
-          -o .\build\packages\red-cli-console-windows-x64.exe `
+        & .\build\fixed-point\h3\red-toolchain.exe -r -t $env:TARGET `
+          -o ".\build\packages\red-cli-console-$env:PLATFORM.exe" `
           environment\console\CLI\console.red
+
+    - name: Build the GUI console (Windows)
+      # The GUI sub-system target: a console one would open a second, empty
+      # console window next to the GUI.
+      if: matrix.archive == 'zip'
+      shell: pwsh
+      env:
+        GUI_TARGET: ${{ matrix.gui-target }}
+        PLATFORM: ${{ matrix.platform }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        New-Item -ItemType Directory -Force -Path '.\build\packages' | Out-Null
+        & .\build\fixed-point\h3\red-toolchain.exe -r -t $env:GUI_TARGET `
+          -o ".\build\packages\red-gui-console-$env:PLATFORM.exe" `
+          environment\console\GUI\gui-console.red
 
     - name: Build the CLI console (Unix)
       if: matrix.archive != 'zip'
@@ -286,15 +314,34 @@ jobs:
           environment/console/CLI/console.red
         chmod 755 "build/packages/red-cli-console-$PLATFORM"
 
-    - name: Build the GUI console (Darwin)
-      # The GUI console is a .app bundle, so it only exists on Darwin. It is
-      # built here rather than in a workflow of its own because a bundle that
-      # Apple's loader rejects is a broken generation, not a broken extra.
-      if: matrix.platform == 'darwin-arm64'
+    - name: Build the GUI console (Unix)
+      # ELF has no sub-system to pick, so the ordinary target is the GUI one
+      # and the console ships bare, the way the CLI console does.
+      if: matrix.archive != 'zip' && matrix.platform != 'darwin-arm64'
       shell: bash
+      env:
+        GUI_TARGET: ${{ matrix.gui-target }}
+        PLATFORM: ${{ matrix.platform }}
       run: |
         set -euo pipefail
-        ./build/dist/red-toolchain -r -t macOS-ARM64 \
+        mkdir -p build/packages
+        ./build/dist/red-toolchain -r -t "$GUI_TARGET" \
+          -o "build/packages/red-gui-console-$PLATFORM" \
+          environment/console/GUI/gui-console.red
+        chmod 755 "build/packages/red-gui-console-$PLATFORM"
+
+    - name: Build the GUI console (Darwin)
+      # Darwin is the one platform whose GUI console is a bundle, so it is
+      # packaged as one. It is built here rather than in a workflow of its own
+      # because a bundle that Apple's loader rejects is a broken generation,
+      # not a broken extra.
+      if: matrix.platform == 'darwin-arm64'
+      shell: bash
+      env:
+        GUI_TARGET: ${{ matrix.gui-target }}
+      run: |
+        set -euo pipefail
+        ./build/dist/red-toolchain -r -t "$GUI_TARGET" \
           -o build/dist/gui-console \
           environment/console/GUI/gui-console.red
         chmod 755 build/dist/gui-console.app/Contents/MacOS/gui-console
@@ -302,13 +349,15 @@ jobs:
     - name: Validate Apple ARM64 outputs (Darwin)
       if: matrix.platform == 'darwin-arm64'
       shell: bash
+      env:
+        PLATFORM: ${{ matrix.platform }}
       run: |
         set -euo pipefail
         gui=build/dist/gui-console.app/Contents/MacOS/gui-console
         test -x "$gui"
         test -f build/dist/gui-console.app/Contents/Info.plist
 
-        for binary in build/dist/red-toolchain build/dist/cli-console "$gui"; do
+        for binary in build/dist/red-toolchain "build/packages/red-cli-console-$PLATFORM" "$gui"; do
           file "$binary" | grep -q 'Mach-O 64-bit.*arm64'
           otool -hv "$binary" | grep -q ARM64
           otool -l "$binary" | grep -q LC_CODE_SIGNATURE
@@ -341,11 +390,14 @@ jobs:
           Set-Content -LiteralPath (Join-Path $package 'RESOURCE-MANIFEST.txt') -Encoding ascii
         Compress-Archive -Path "$package\*" `
           -DestinationPath ".\build\packages\red-toolchain-$env:PLATFORM.zip"
-        $console = ".\build\packages\red-cli-console-$env:PLATFORM.exe"
+        $packages = '.\build\packages'
         @(
-          "$((Get-FileHash -Algorithm SHA256 ".\build\packages\red-toolchain-$env:PLATFORM.zip").Hash.ToLowerInvariant())  red-toolchain-$env:PLATFORM.zip"
-          "$((Get-FileHash -Algorithm SHA256 $console).Hash.ToLowerInvariant())  red-cli-console-$env:PLATFORM.exe"
-        ) | Set-Content -LiteralPath '.\build\packages\SHA256SUMS' -Encoding ascii
+          "red-toolchain-$env:PLATFORM.zip"
+          "red-cli-console-$env:PLATFORM.exe"
+          "red-gui-console-$env:PLATFORM.exe"
+        ) | ForEach-Object {
+          "$((Get-FileHash -Algorithm SHA256 (Join-Path $packages $_)).Hash.ToLowerInvariant())  $_"
+        } | Set-Content -LiteralPath (Join-Path $packages 'SHA256SUMS') -Encoding ascii
 
     - name: Package toolchain (Unix)
       if: matrix.archive != 'zip'
@@ -367,6 +419,7 @@ jobs:
         for candidate in \
           "red-toolchain-$PLATFORM.tar.gz" \
           "red-cli-console-$PLATFORM" \
+          "red-gui-console-$PLATFORM" \
           "red-gui-console-$PLATFORM.tar.gz"
         do
           if [[ -f "$candidate" ]]; then

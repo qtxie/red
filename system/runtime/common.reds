@@ -377,10 +377,17 @@ re-throw: func [/local id [integer!]][
 			#either all [sub-system = 'GUI red-pass? = yes][
 				s: as-c-string system/stack/allocate 256
 				#either OS = 'Windows [
-					#if unicode? = yes [
+					;-- #if takes only a then-block: an `else` block after it is
+					;-- left in the source, which inside a function body is a
+					;-- stray block expression.
+					#either unicode? = yes [
 						s2: as-c-string system/stack/allocate 128
 						red/unicode/convert-u16 msg s2
-						swprintf [s #u16 "*** Runtime Error %d: %s^/*** at: %08Xh" status s2 addr]
+						swprintf [						;-- wide: OS-alert takes UTF-16
+							as pointer! [uint16!] s
+							as pointer! [uint16!] #u16 "*** Runtime Error %d: %s^/*** at: %08Xh"
+							status s2 addr
+						]
 					][
 						sprintf [s "*** Runtime Error %d: %s^/*** at: %08Xh" status msg addr]
 					]

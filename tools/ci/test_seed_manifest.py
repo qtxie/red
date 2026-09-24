@@ -41,7 +41,7 @@ class ManifestTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        self.seeds = seed_tree(self.root / "seeds", gui_platforms=("darwin-arm64",))
+        self.seeds = seed_tree(self.root / "seeds", gui_platforms=PLATFORMS)
         self.stage = self.root / "assets"
         self.out = self.root / "MANIFEST.json"
 
@@ -73,10 +73,18 @@ class ManifestTest(unittest.TestCase):
             self.assertIn("toolchain", entry)
             self.assertIn("console", entry)
 
-    def test_gui_only_where_a_bundle_was_built(self):
+    def test_every_platform_ships_a_gui_console(self):
         manifest = self.build()
-        self.assertIn("gui", manifest["assets"]["darwin-arm64"])
-        self.assertNotIn("gui", manifest["assets"]["windows-x64"])
+        for platform in PLATFORMS:
+            self.assertIn("gui", manifest["assets"][platform])
+
+    def test_a_platform_with_no_gui_console_has_no_entry(self):
+        # The bundle is the only shape that needs an archive; a platform that
+        # stops shipping one must simply drop out of the manifest.
+        seeds = seed_tree(self.root / "no-gui", gui_platforms=())
+        manifest = manifest_module.build(seeds, self.root / "a3", "seed-3", "abc")
+        for platform in PLATFORMS:
+            self.assertNotIn("gui", manifest["assets"][platform])
 
     def test_manifest_records_the_generation(self):
         manifest = self.build()

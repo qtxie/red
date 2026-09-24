@@ -7,6 +7,37 @@
 - do a git commit when finish a major task
 - sudo password: toto
 
+## The GUI console, built on every platform
+
+`build-toolchain.yml` builds `environment/console/GUI/gui-console.red` on all
+four legs, not just Darwin: `-t Windows-X86-64` (the GUI sub-system) on
+Windows, `-t macOS-ARM64` (the only target with the app packager) on Darwin,
+and the ordinary target on Linux, where ELF has no sub-system to pick. Each
+leg ships it as the `gui` component of its seed: a `.app` tarball on Darwin, a
+plain executable elsewhere. Two defects had to be fixed before the Windows one
+compiled at all:
+
+- **`#if` takes no else block.** `system/system-loader.red:356` matches
+  `#if <cond> [then]` and removes only that much when the condition is false,
+  so a second block after it stays in the source -- ignored at the top level,
+  `unsupported expression` inside a function body.
+  `system/runtime/common.reds` wrote `#if unicode? = yes [wide][narrow]`, and
+  `unicode?` is true for every Red program, so the *narrow* branch was the
+  stray one; only the Windows GUI sub-system ever reaches that code, which is
+  why nothing else noticed. It is an `#either` now.
+- **`swprintf` needs its arguments cast**, the way
+  `runtime/platform/win32-print.reds` does it: `as pointer! [uint16!]` on the
+  buffer and on the `#u16` format. Uncast, x64 codegen rejects the call at
+  `emit-call-operation/parameter/flags#30`.
+
+The two Windows steps that compile `console.red` take the target from the
+matrix now (`MSDOS-X86-64`) instead of the literal `Windows-X86-64`: since the
+sub-system split that name is the GUI one, so the CLI console was being built
+as a PE with no console attached -- invisible in CI, and useless as the seed
+console the suite workflows drive. Verified at 243: `gui-console.red` builds
+for `Windows-X86-64` (3320320 bytes, PE sub-system 2), `Linux-X86-64`
+(3349048) and `Linux-ARM64` (2804864).
+
 # Hybrid Bootstrap Chain Discipline
 
 - Verified self-hosting baseline: `build/self-hosting/merge-red64/hybrid-compiler60.exe`

@@ -2,10 +2,9 @@
 """Assemble a CI seed manifest from the artifacts of one seed build.
 
 A seed build uploads one artifact per platform, holding a toolchain archive, a
-CLI console, and whatever else that platform produces -- the GUI console is a
-.app bundle, so only Darwin has one. This script stages those files under
-release-unique names and writes the manifest that every later CI run reads to
-find them:
+CLI console and a GUI console -- a .app bundle on Darwin, a plain executable
+elsewhere. This script stages those files under release-unique names and
+writes the manifest that every later CI run reads to find them:
 
     {
       "generation": "seed-123456",
@@ -14,7 +13,8 @@ find them:
       "assets": {
         "windows-x64": {
           "toolchain": {"name": "red-toolchain-windows-x64.zip", "sha256": "..."},
-          "console":   {"name": "red-cli-console-windows-x64.exe", "sha256": "..."}
+          "console":   {"name": "red-cli-console-windows-x64.exe", "sha256": "..."},
+          "gui":       {"name": "red-gui-console-windows-x64.exe", "sha256": "..."}
         },
         "darwin-arm64": {
           "toolchain": {"name": "red-toolchain-darwin-arm64.tar.gz", "sha256": "..."},

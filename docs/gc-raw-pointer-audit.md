@@ -89,13 +89,24 @@ Measured with generation 254 (built by 253): x64 suite 10593 / 12680 /
 12652 assertions / 0 failed; fixed point 254 → 255 → 256, 255 vs 256
 differing in 5 bytes (PE timestamp, checksum, one output-name digit).
 
-## Open items
+## Closed items
 
-- `_hashtable/get-ctx-symbol` buckets on the *resolved* key but compares
-  the *unresolved* stored symbol, and `resize` re-buckets through a third
-  formula (`runtime/hashtable.reds:2603-2697`, `:1531-1537`). Not proven to
-  have fired, but it is the shape of bug that makes `words-of` and `in`
-  disagree once per layout — the `#394` note in AGENTS.md.
-- Darwin-ARM64 has not run the shadow-enabled suite (Linux-ARM64 is green,
-  41 units / 12652 assertions / 0 failed; the spill code is ABI-independent,
-  so the Mac run is confirmation, not exposure).
+- The `#394` bucketing hypothesis is **disproven** (investigated at 254):
+  insert, probe and `resize` all bucket word-keyed entries by
+  `murmur3-x86-int(symbol/resolve(sym))` — `hash-value`'s `TYPE_ALL_WORD`
+  arm computes exactly that (`data2` is the symbol field in `red-word!`),
+  and `symbol/resolve` is a stable function of the id (the `alias` pointer
+  recorded at interning time), not mode-dependent. The node-keyed family is
+  consistent the same way (`put-key`'s `murmur3 key` == `resize`'s
+  `murmur3 int-key/2`). If `words-of`/`in` disagreement ever reproduces,
+  the bucketing is exonerated; look at the word-array/hash update ordering
+  under GC instead. The compiler-side guard stands.
+- Darwin-ARM64 **has now run the shadow-enabled suites** (dev mode,
+  generation 254): Red/System 42 units / 10590 tests / 12697 assertions /
+  0 failed; Red 63 units / 9304 tests / 17998 assertions / 0 failed — the
+  Red counts are identical to the 236-era Mac numbers, so the shadow spill
+  code and the Phase 3 pins behave the same on both ARM64 OSes.
+
+Nothing remains open. The audit's standing vehicle — `RED_GC_STRESS` plus
+`verify-compaction`, and the pinned shadow protocol on ARM64 — stays active
+on every future compile and stressed run.

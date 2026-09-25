@@ -472,19 +472,34 @@ for the same source (`--red-only`, 133352 bytes, `identical: True`), and
 239 -> 240 is a fixed point at 6450688 bytes with 17 bytes differing (the PE
 timestamp, checksum and build clocks).
 
-The miss itself is in the runtime's context hash, and one asymmetry there is
-worth a look by whoever wants the root cause: `_hashtable/get-ctx-symbol`
+The miss itself is in the runtime's context hash, and one asymmetry there
+looked worth a look by whoever wants the root cause: `_hashtable/get-ctx-symbol`
 computes the bucket from `symbol/resolve key` but compares the stored entry
 against the *unresolved* `k/symbol` (`runtime/hashtable.reds:2607-2634`), and
 the same split exists between its insert path (`case?` resolves, `k/symbol:
 key` stores raw) and its probe path. A symbol whose alias resolution differs
-from the one in force when the entry was inserted is then bucketed correctly
-but never matches, and `resize` re-buckets through a third formula
+from the one in force when the entry was inserted would then be bucketed
+correctly but never match, and `resize` re-buckets through a third formula
 (`murmur3-x86-int` of the entry's second word for id-keyed tables,
-`hash-value` of the spelling otherwise, `:1531-1537`). This is not proven to
-be what fired here -- the compiler-side guard is the fix either way -- but it
-is the shape of bug that would make `words-of` and `in` disagree exactly once
-per layout.
+`hash-value` of the spelling otherwise, `:1531-1537`). **Investigated at 254
+and disproven**: the three formulas agree. `symbol/resolve` is a stable
+function of the id -- it reads the `sym/alias` pointer recorded when the
+spelling was interned (`runtime/datatypes/symbol.reds:102-113`), nothing
+global or mode-dependent. The comparison split is internally consistent per
+mode (case-insensitive resolves both sides, case-sensitive compares raw on
+both sides) and bucketing never depends on the mode. And `resize`'s
+`hash-value` on a word cell hits the `TYPE_ALL_WORD` arm
+(`hashtable.reds:754`), which computes `murmur3-x86-int symbol/resolve
+key/data2` -- `data2` *is* the symbol field (`red-word!` is
+header/ctx/symbol/index, `runtime/structures.reds:219`), the same expression
+the probe buckets by. The node-keyed family is consistent too: `put-key`
+hashes `murmur3 key` where `key` is the node value stored at `k/2`, and
+`resize` re-buckets `murmur3 int-key/2` -- the same slot (that family's
+`keys/` holds byte offsets, which is why `resize` walks it with a byte
+stride while `get-ctx-symbol`'s family uses cell indexes). If `#394` ever
+reproduces, the bucketing is exonerated -- look at the word-array/hash
+update ordering under GC instead. The compiler-side guard stands as the fix
+either way.
 
 Verified on the Mac, full `run-red-compiler-tests` (all nine scripts):
 

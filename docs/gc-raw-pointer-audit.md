@@ -18,6 +18,7 @@ Measured so far, all green:
 | workload | period | result |
 |---|---|---|
 | allocation-heavy Red program (append/map/collect) | 1 and 20 | identical output, exit 0 |
+| allocation-heavy Red program, two loops (string churn + block/string pairs) | 1 | ~7×10⁵ collect+verify cycles, identical output, exit 0 |
 | the compiler itself, full `hello.red` compile | 300 | exit 0, output runs |
 | the whole Red/System unit suite (41 units, compile+run) | 400 | 10593 / 12680 / 0 failed / 0 compile-failures |
 
@@ -56,6 +57,38 @@ Measured so far, all green:
   decision; a new type that the bitmap marks must be added there too, or
   the shadow is silently not taken.
 
+## Phase 3: the checks (generation 254)
+
+- **The plan/emit coupling is pinned.** The has-call audit came out clean:
+  every `OP_NATIVE` subop that can reach the runtime is covered
+  (`STACK_ALLOCATE`/`STACK_FREE` fall inside the `STACK_TOP..STACK_FREE`
+  range check, `STACK_PUSH_ALL`/`STACK_POP_ALL` have their own arm) and
+  the remaining subops are pure instructions — `ATOMIC_*`
+  (LDAXR/STLXR/DMB), `PROGRAM_COUNTER`, `CPU_OVERFLOW`, `CPU_REGISTER`
+  reads, and `LOG_B`, which emits `clz`. There is no gating hole. The one
+  desync that would silently disable the shadows — emit reaching a call
+  site while plan counted none, so no shadow slot was ever reserved — is
+  now a compile error: `OP_CALL` and `OP_SUB_CALL` refuse to spill when
+  `plan/has-call = 0` (`compile-function/plan/has-call#222/#223`). It
+  cannot fire on current code; it fails the build the day a future edit
+  breaks the plan/emit correspondence. `OP_NATIVE` is deliberately
+  unpinned: pure subops legitimately reach its spill site in has-call = 0
+  functions.
+- **A stressed collection verifies its own bookkeeping.** With
+  `RED_GC_STRESS` set, `verify-compaction` (`runtime/collector.reds`) runs
+  after every forced cycle, in release code: every live series buffer in a
+  compacted frame must be pointed back at by its own node
+  (`resolve-node`), `offset`/`tail` must stay inside the buffer, and every
+  big series must agree with its node. Pinned frames are skipped — their
+  dead series are still laid out in place. A violation prints the broken
+  header and exits -1: a misbehaving stress run with this check passing
+  points at generated or runtime code, not at the collector.
+
+Measured with generation 254 (built by 253): x64 suite 10593 / 12680 /
+0 failed, unchanged under `RED_GC_STRESS=400`; ARM64 suite 41 units /
+12652 assertions / 0 failed; fixed point 254 → 255 → 256, 255 vs 256
+differing in 5 bytes (PE timestamp, checksum, one output-name digit).
+
 ## Open items
 
 - `_hashtable/get-ctx-symbol` buckets on the *resolved* key but compares
@@ -63,11 +96,6 @@ Measured so far, all green:
   formula (`runtime/hashtable.reds:2603-2697`, `:1531-1537`). Not proven to
   have fired, but it is the shape of bug that makes `words-of` and `in`
   disagree once per layout — the `#394` note in AGENTS.md.
-- Phase 3 of the plan (debug-build assertions in the runtime's series
-  accessors plus a static RSIR pass that flags pointer-typed
-  register-homed locals live across calls without a shadow) is not built.
-  The shadow mechanism makes the static check mechanical; the debug
-  assertions make stress runs name the faulting site.
 - Darwin-ARM64 has not run the shadow-enabled suite (Linux-ARM64 is green,
   41 units / 12652 assertions / 0 failed; the spill code is ABI-independent,
   so the Mac run is confirmation, not exposure).

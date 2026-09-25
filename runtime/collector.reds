@@ -1748,6 +1748,61 @@ collector: context [
 		;]
 	]
 	
+	;-- Forced by RED_GC_STRESS: after a collection, every live series buffer
+	;-- in the compacted frames must be pointed back at by its own node, and
+	;-- the offset/tail marks must still land inside the buffer. A violation
+	;-- means the collector's bookkeeping failed; when a stressed run
+	;-- misbehaves while this check passes, the stale pointer is in generated
+	;-- or runtime code instead.
+	verify-compaction: func [
+		/local
+			frame [series-frame!]
+			big	  [big-frame!]
+			s	  [series!]
+			heap nxt [series!]
+			node  [node!]
+			buf	  [byte-ptr!]
+	][
+		frame: memory/s-head
+		until [
+			unless frames-list/pinned? as int-ptr! frame [	;-- dead series still laid out there
+				s: as series! frame + 1
+				heap: frame/heap
+				while [s < heap][
+					buf: as byte-ptr! s
+					nxt: as series! (as byte-ptr! s + 1) + s/size + SERIES_BUFFER_PADDING
+					node: resolve-node s/node
+					if any [
+						null? node
+						node/value <> as int-ptr! buf
+						(as byte-ptr! s/tail) > as byte-ptr! nxt
+						(as byte-ptr! s/offset) < buf
+						(as byte-ptr! s/offset) > (as byte-ptr! s/tail)
+					][
+						print [
+							"*** GC verify: broken series header at " buf
+							", node " s/node ", size " s/size lf
+						]
+						quit -1
+					]
+					s: nxt
+				]
+			]
+			frame: frame/next
+			frame = null
+		]
+		big: memory/b-head
+		while [big <> null][
+			s: as series! (as byte-ptr! big) + size? big-frame!
+			node: resolve-node s/node
+			if any [null? node node/value <> as int-ptr! s][
+				print ["*** GC verify: broken big series header at " as byte-ptr! s lf]
+				quit -1
+			]
+			big: big/next
+		]
+	]
+
 	do-mark-sweep: func [
 			/local
 				p		[int-ptr!]
@@ -1871,6 +1926,7 @@ collector: context [
 			]
 			if verbose > 0 [validate]
 		]
+		if stress? [verify-compaction]
 		system/atomic/store :state GC_DONE
 	]
 

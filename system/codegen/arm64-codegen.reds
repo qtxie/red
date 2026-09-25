@@ -8086,6 +8086,14 @@ arm64-codegen: context [
 				instruction/op = OP_CALL [
 					call-target: instruction/a
 					argument-count: instruction/b
+					;-- A real call reached the emit pass, so the plan pass must
+					;-- have counted one: has-call is what reserved the shadow
+					;-- slots this spill parks the register-homed pointer locals
+					;-- in. Zero here means the two walks desynced and a pointer
+					;-- local would survive a collection in its home register.
+					if plan/has-call = 0 [
+						return fail-invalid 388 "compile-function/plan/has-call#222"
+					]
 					written: written + emit-home-spills plan scratch
 						code written capacity
 					; A call through a pointer keeps the callee below its
@@ -8866,6 +8874,12 @@ arm64-codegen: context [
 				]
 				instruction/op = OP_SUB_CALL [
 					sub-target: instruction/a
+					;-- Same contract as the OP_CALL spill: the subroutine may
+					;-- reach a call, so plan must have counted this function as
+					;-- having one, or the shadow slots were never reserved.
+					if plan/has-call = 0 [
+						return fail-invalid 391 "compile-function/plan/has-call#223"
+					]
 					written: written + emit-home-spills plan scratch
 						code written capacity
 					unless all [

@@ -1672,6 +1672,33 @@ its runtime" report is worth re-testing serially before it is believed.
   one-liner for the target and run it on the board *before* trusting any
   codegen change -- 236 vs the new build isolates the backend in one
   minute.
+- Added (Phase 3 of the raw-pointer audit): **the shadow protocol is pinned,
+  and a stressed collection verifies its own bookkeeping.** The has-call
+  audit came out clean -- every OP_NATIVE subop that can reach the runtime
+  is covered (STACK_ALLOCATE/STACK_FREE fall inside the STACK_TOP..STACK_FREE
+  range check, STACK_PUSH_ALL/POP_ALL have their own arm) and the remaining
+  subops are pure instructions: ATOMIC_* (LDAXR/STLXR/DMB), PROGRAM_COUNTER,
+  CPU_OVERFLOW, CPU_REGISTER reads, and LOG_B, which emits `clz`. The one
+  desync that would silently disable the shadows -- emit reaching a call
+  site while plan counted none, so no shadow slot was ever reserved -- is
+  now a compile error: OP_CALL and OP_SUB_CALL refuse to spill when
+  `plan/has-call = 0` (sites `compile-function/plan/has-call#222` and
+  `#223`). It cannot fire on current code; it fails the build the day an
+  edit breaks the plan/emit correspondence. OP_NATIVE is deliberately
+  unpinned: pure subops legitimately reach its spill site in has-call = 0
+  functions. And under `RED_GC_STRESS`, `verify-compaction`
+  (runtime/collector.reds) runs after every forced cycle, in release code:
+  every live series buffer in a compacted frame must be pointed back at by
+  its own node (`resolve-node`), offset/tail must stay inside the buffer,
+  and every big series must agree with its node. Pinned frames are skipped
+  -- their dead series are still laid out in place. A violation prints the
+  broken header and exits -1, so a misbehaving stress run with this check
+  passing points at generated or runtime code, not at the collector.
+  Measured at 254: x64 suite 10593/12680/0/0 unchanged, and again at
+  `RED_GC_STRESS=400`; ARM64 suite 41 units / 12652 assertions / 0 failed;
+  ~700k collect+verify cycles at period 1 on the smoke program with no
+  false positive; fixed point 254 -> 255 -> 256, 255 vs 256 differing in
+  5 bytes (PE timestamp, checksum, one output-name digit).
 - Fixed: the suite runners asked for a DLL target that no longer exists.
   `run-red-system-tests.red` and `run-red-system-compiler-tests.red`
   derived the library target as `<executable-target>-DLL`, and since the

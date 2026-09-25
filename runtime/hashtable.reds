@@ -484,19 +484,6 @@ _hashtable: context [
 	str-buffer-sz: 256
 	refresh-buffer: as red-hash! 0
 
-	hashtable!: alias struct! [
-		size		[integer!]
-		indexes		[node!]
-		chains		[node!]
-		flags		[node!]
-		keys		[node!]
-		blk			[node!]
-		n-occupied	[integer!]
-		n-buckets	[integer!]
-		upper-bound	[integer!]
-		type		[integer!]
-	]
-
 	rs-hashtable!: alias struct! [
 		size		[integer!]
 		flags		[int-ptr!]

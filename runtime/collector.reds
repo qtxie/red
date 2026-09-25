@@ -555,9 +555,10 @@ collector: context [
 		node [node!]
 		/local
 			s sk sf sb [series!]
-			ht   [int-ptr!]
+			h    [hashtable!]
 			kn fn bn [node!]
-			type n-buckets n-occupied upper keys flags blk [integer!]
+			type n-buckets n-occupied upper [integer!]
+			keys flags blk [int-ptr!]
 			raw  [int-ptr!]
 	][
 		if any [null? node null? node/value][exit]
@@ -570,14 +571,14 @@ collector: context [
 		kn: resolve-node s/node
 		if any [null? kn kn <> node][exit]
 
-		ht: as int-ptr! s/offset
-		type: ht/10
-		n-buckets: ht/8
-		n-occupied: ht/7
-		upper: ht/9
-		keys: ht/5
-		flags: ht/4
-		blk: ht/6
+		h: as hashtable! s/offset
+		type: h/type
+		n-buckets: h/n-buckets
+		n-occupied: h/n-occupied
+		upper: h/upper-bound
+		keys: as int-ptr! h/keys
+		flags: as int-ptr! h/flags
+		blk: as int-ptr! h/blk
 		if any [
 			type < HASH_TABLE_HASH
 			type > HASH_TABLE_OWNERSHIP
@@ -588,19 +589,22 @@ collector: context [
 			n-occupied > n-buckets
 			upper <= 0
 			upper > n-buckets
-			keys = 0
-			flags = 0
+			null? keys
+			null? flags
 		][exit]
-		unless frames-list/find as int-ptr! keys FRAME_NODES [exit]
-		unless frames-list/find as int-ptr! flags FRAME_NODES [exit]
-		if all [blk <> 0 not frames-list/find as int-ptr! blk FRAME_NODES][exit]
+		unless frames-list/find keys FRAME_NODES [exit]
+		unless frames-list/find flags FRAME_NODES [exit]
+		if all [not null? blk not frames-list/find blk FRAME_NODES][exit]
 
 		kn: as node! keys
 		if any [null? kn null? kn/value][exit]
 		sk: as series! kn/value
+		;-- keys is built by _alloc-bytes, so it is a unit-1 buffer of
+		;-- n-buckets * size? int-ptr! bytes that the table indexes as
+		;-- 32-bit words. Requiring unit 4 here rejected every table.
 		if any [
-			GET_UNIT(sk) <> 4							;-- key array is integer!
-			sk/size < (n-buckets * size? integer!)
+			GET_UNIT(sk) <> 1
+			sk/size < (n-buckets * size? int-ptr!)
 		][exit]
 
 		fn: as node! flags
@@ -611,7 +615,7 @@ collector: context [
 			sf/size < (n-buckets >> 2)
 		][exit]
 
-		if blk <> 0 [
+		if not null? blk [
 			bn: as node! blk
 			if any [null? bn null? bn/value][exit]
 			sb: as series! bn/value

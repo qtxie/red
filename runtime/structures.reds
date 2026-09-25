@@ -166,6 +166,22 @@ red-symbol!: alias struct! [
 	cache	[node-handle!]									;-- UTF-8 cached version of the string (experimental)
 ]
 
+;-- Live hash table header. The collector validates one of these before it
+;-- deep-marks the table, so the alias is shared rather than private to
+;-- _hashtable: the collector must read the fields, not guess the offsets.
+hashtable!: alias struct! [
+	size		[integer!]
+	indexes		[node!]
+	chains		[node!]
+	flags		[node!]
+	keys		[node!]
+	blk			[node!]
+	n-occupied	[integer!]
+	n-buckets	[integer!]
+	upper-bound	[integer!]
+	type		[integer!]
+]
+
 red-integer!: alias struct! [
 	header 	[integer!]								;-- cell header
 	padding	[integer!]								;-- align value on 64-bit boundary

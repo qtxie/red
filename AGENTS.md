@@ -1640,6 +1640,38 @@ its runtime" report is worth re-testing serially before it is believed.
   for the raw-pointer/GC-staleness audit; the `-v 4` UNTIL failure that
   once looked like its first catch turned out to be the macro collision
   above.
+- Fixed: **ARM64 register-homed pointer locals went stale across calls.**
+  x64 homes every local in a bitmap-marked frame slot, so the collector can
+  always rewrite it; ARM64 homes locals in X19-X28, which survive the call
+  per the ABI -- but the *data they point to* does not survive the
+  collector: compaction moves live buffers, and a pointer local read after
+  an allocation reads freed memory. The whole Red runtime is full of
+  locals like these. Fix (system/codegen/arm64-codegen.reds): a
+  pointer-typed register-homed local gets a **shadow frame slot** marked in
+  the stack bitmap; every OP_CALL/OP_NATIVE spills the homes into the
+  shadows before the call and reloads them after, so between the two the
+  shadow -- which the collector sees and rewrites -- is the copy that
+  matters. OP_SUB_CALL spills *without* reloading: a subroutine shares the
+  caller's frame and its stores to the shared locals are semantic; its own
+  calls refresh the homes. Shadow assignment runs in plan-function after
+  the spill region is known, `bitmap-marked-type?` mirrors the bitmap's
+  own marking decision (inline aggregates recurse into members), and the
+  shadow region sits after `total-slots` with `plan/bitmap-slots` computed
+  from the new end.
+  The first cut was caught by the Linux-ARM64 unit suite *immediately*:
+  every cross-compiled binary died with SIGILL at startup (exit 132, `udf
+  #0` = never-written bytes mid-stream under gdb on the board). The spill
+  helpers were handed `code` -- the buffer **base** -- and emitted at
+  `code + helper-local-written`, overwriting each function's prologue; the
+  house convention is cursor = `code + written`, so the helpers take the
+  caller's `written` as an offset now (five call sites: OP_CALL spill and
+  restore, OP_NATIVE spill and restore, OP_SUB_CALL spill). Suite on
+  armbian: 41 compiled / 41 ran / 12652 assertions / 0 failed; Windows
+  unchanged (the arm64 backend does not fire on x64 targets). A lesson the
+  suite taught twice in one week: cross-compile a `Red/System[] print`
+  one-liner for the target and run it on the board *before* trusting any
+  codegen change -- 236 vs the new build isolates the backend in one
+  minute.
 - Fixed: the suite runners asked for a DLL target that no longer exists.
   `run-red-system-tests.red` and `run-red-system-compiler-tests.red`
   derived the library target as `<executable-target>-DLL`, and since the

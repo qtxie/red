@@ -1586,6 +1586,71 @@ its runtime" report is worth re-testing serially before it is believed.
   246/246, Red compiler tests 251/12 -- all unchanged. 145 self-compiles to
   146 at the same 6349824 bytes, so the whole Red runtime and compiler still
   compile under the stricter rule.
+- Fixed: **every `-v N` (N >= 1) compile of a Red program died with "UNTIL
+  requires a conditional expression as last expression"**, pointing at the
+  until's own condition (`near: [false comment "i > len"]` for
+  `to-red-file`, the one until in the boot environment). Deterministic, any
+  input program, every generation from at least 244 on -- and nothing to do
+  with the GC. Two independent defects, both exercised only when the
+  frontend emits source-position markers (`compiler/frontend.red:5559`,
+  `if verbose > 0 [emit-src-comment expr]`, plus the unconditional context
+  marker at :2791 -- the pair is `[------------| "source text"]`, appended
+  *after* the statements the line lowered):
+  1. `runtime/macros.reds` defined the marker macro
+     `#either verbosity >= 1 [#define ------------| print-line][...]`.
+     The loader's macro table is global, so on a `-v N >= 1` job the
+     red-pass's markers in the generated block expanded to real
+     `print-line` calls -- a value-less statement after the until's
+     condition, and, worse, a compiled program that prints every marked
+     source fragment at runtime. No runtime source uses the marker at all,
+     so the print-line arm was dead weight: the macro is `comment`
+     unconditionally now.
+  2. Even as a `comment` pair the marker broke the conditional check:
+     `stack-block`'s keep? decision (`system/rsir-frontend.red`) used
+     `tail? next-position` to decide "this is the block's last statement,
+     keep its value". A comment pair trailing the last statement made
+     `tail?` false, the value was dropped with a DROP op and `last-type`
+     cleared, and `require-condition` then saw 0. The keep? check now
+     skips trailing comment pairs (`after: next-position,
+     while [all [not tail? after after/1 = 'comment]][after: skip after 2]`)
+     before asking `tail?`. At verbosity 0 no markers are emitted inside
+     function bodies and the context markers never trail a value block,
+     which is why non-verbose compiles were never affected.
+  Reproducer: `Red [] i: 1 until [i: i + 1 i > 3] print i` with `-v 4`
+  failed on every generation; diagnostics that traced the walked body
+  (`mold/only` of `copy/part statement-position 1` in stack-block -- note
+  this fork's `mold/only` prints a block *without* its outer brackets, so
+  the trace shows bare element text) showed the condition's `cmp2ib*`
+  yielding type -11 with the pair right behind it. Fixed: the same source
+  compiles and prints `4` under `-v 4`, hello/tiny2 compile and run clean,
+  and a full compile under the new GC-stress knob holds (below).
+- Added: **`RED_GC_STRESS` runs the collector at a forced pace** --
+  `runtime/collector.reds` reads the env var at init (`period` = run a full
+  cycle every Nth allocation, `1` = every allocation) and
+  `runtime/allocator.reds` counts allocations and calls
+  `collector/do-cycle`. Purpose: compaction moves live buffers, so any
+  raw pointer held across an allocation is a staleness bug; forcing the
+  pace turns "layout-dependent flake" into "crashes immediately". Measured:
+  an allocation-heavy Red program (`append`/`map`/`collect` loops) gives
+  identical output at `RED_GC_STRESS=1` and `=20`; the compiler itself
+  compiles hello-red end to end at `RED_GC_STRESS=300` and the output
+  runs. Period 1 on a full compile is far too slow (minutes per source) --
+  use 200-500 for compiler-sized workloads. Non-numeric or absent values
+  leave the collector at its normal pacing. This is the standing vehicle
+  for the raw-pointer/GC-staleness audit; the `-v 4` UNTIL failure that
+  once looked like its first catch turned out to be the macro collision
+  above.
+- Fixed: the suite runners asked for a DLL target that no longer exists.
+  `run-red-system-tests.red` and `run-red-system-compiler-tests.red`
+  derived the library target as `<executable-target>-DLL`, and since the
+  console target was renamed `MSDOS-X86-64` that asked the registry for
+  `MSDOS-X86-64-DLL` -- "unknown compilation target" for both
+  `libtest-dll*.reds`, and `dylib-auto-test` (8 tests / 7 assertions)
+  skipped. `qt-runner.red` now carries `library-target-for`, which maps
+  the console spelling to the registry's `Windows-X86-64-DLL` and keeps
+  `<target>-SO` everywhere else. Red/System suite with 252:
+  10593 tests / 12680 assertions / 12680 passed / 0 failed /
+  0 compile-failures.
 - Fixed: the hybrid frontend never ported the `as` type-cast compatibility
   check that upstream's `cast` performs (system/compiler.r, mirrored in
   system/compiler-core.red). Without it an invalid cast such as

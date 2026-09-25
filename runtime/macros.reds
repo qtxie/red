@@ -317,11 +317,13 @@ Red/System [
 #define ACTIONS_NB		62							;-- number of actions (exact number)
 #define INHERIT_ACTION	-1							;-- placeholder for letting parent's action pass through
 
-#either verbosity >= 1 [
-	#define ------------| 	print-line
-][
-	#define ------------| 	comment
-]
+;-- The red-pass emits [------------| "source"] pairs as compile-time position
+;-- markers of the code it generates; the lowering skips them as comments. A
+;-- verbosity-dependent print-line expansion here would turn every marker in
+;-- a -v N >= 1 build into a real runtime call printing source fragments --
+;-- and into a value-less statement that breaks condition checks (the last
+;-- statement of an until body, for one). No runtime source uses the marker.
+#define ------------| 	comment
 
 #define TYPE_OF(value)			(value/header and get-type-mask)
 #define TUPLE_SIZE?(value)		(value/header >> 19 and 15)

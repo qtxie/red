@@ -5025,7 +5025,7 @@ compiler-rsir-frontend: context [
 		instructions [binary!]
 		params locals [block!]
 		value-context [integer!]
-		/local position next-position keep? stopped?
+		/local position next-position after keep? stopped?
 	][
 		position: body
 		last-type: 0
@@ -5051,8 +5051,13 @@ compiler-rsir-frontend: context [
 					value-context
 			]
 			stopped?: last-stopped?
+			;-- A source-position marker pair ([------------| "line"] the macro
+			;-- turned into a comment) can trail the last statement of a value
+			;-- block; it must not make the walker drop that statement's value.
+			after: next-position
+			while [all [not tail? after after/1 = 'comment]][after: skip after 2]
 			keep?: all [
-				tail? next-position
+				tail? after
 				any [
 					value-context = tail-value
 					value-context = inferred-value

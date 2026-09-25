@@ -37,7 +37,7 @@ qt/target: any [
 ;; could not find, so both libtest-dll sources counted as compile failures.
 qt/library-target: any [
 	get-env "RED_SYSTEM_LIBRARY_TARGET"
-	rejoin [qt/target either qt/windows-target? ["-DLL"]["-SO"]]
+	qt/library-target-for qt/target
 ]
 
 qt/set-compiler "RED_SYSTEM_COMPILER"

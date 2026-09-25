@@ -81,6 +81,17 @@ qt: context [
 		all [target any [find target "Windows" find target "MSDOS"]]
 	]
 
+	;-- The Windows DLL target keeps its registry name Windows-X86-64-DLL
+	;-- whatever spelling the executable target carries: the console target
+	;-- MSDOS-X86-64 has no -DLL twin of its own in the registry.
+	library-target-for: func [name [string!]][
+		either windows-target? [
+			rejoin [either name = "MSDOS-X86-64" ["Windows-X86-64"][name] "-DLL"]
+		][
+			rejoin [name "-SO"]
+		]
+	]
+
 	;-- Windows executables carry .exe, the ELF and Mach-O targets carry none.
 	;-- The suite runners hard-coded %.exe, which only ever worked on Windows.
 	executable-suffix: does [

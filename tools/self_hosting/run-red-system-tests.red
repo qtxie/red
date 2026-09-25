@@ -27,7 +27,7 @@ qt/target: any [
 ;; suffix -DLL; every other target the toolchain reports is -SO.
 qt/library-target: any [
 	get-env "RED_SYSTEM_LIBRARY_TARGET"
-	rejoin [qt/target either qt/windows-target? ["-DLL"]["-SO"]]
+	qt/library-target-for qt/target
 ]
 qt/source-dir: %system/tests/source/units/
 qt/output-dir: %build/self-hosting/system-suite/

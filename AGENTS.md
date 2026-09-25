@@ -147,6 +147,60 @@ compiler; CI checks `red-toolchain-hybrid.red` over three generations.
   executable's own directory the way Windows does, the copy is announced
   to the loader -- appending, since `libRedRT.so` is found that way on a
   host that does not install it.
+
+## The collector compacts: every raw buffer pointer dies at an allocation (map lost entries)
+
+On linux-arm64, compiling `environment/console/CLI/console.red` with the
+toolchain failed or succeeded depending **only on the output path length**
+(`-o /tmp/xxxx...`, `setarch -R` for a deterministic layout): L=34/35 died
+with `unknown assignment target hybrid-entry-stack` (`select function-storage
+name` returned none from a global `make map!`), L=36-38 with `invalid import
+group` (`select macros position/1`, another global map). The maps were fine at
+process start; entries silently vanished under GC pressure. The same toolchain
+sources pass every suite -- only the compiler-sized compile trips it.
+
+Root cause: **the collector compacts series frames** (`compact-series-frame`
+moves live buffers down), and a GC pass can fire inside *any* allocation
+(`alloc-series-buffer`, `expand-series`, `alloc-tail-unit`). Node handles
+survive a move (`node/value` is updated), but raw `s/offset`, `s/tail` and
+`red-value!` cell pointers held in locals go stale -- and on ARM64 those
+locals live in callee-saved registers, where neither the stack bitmap nor
+`scan-stack-refs` can rewrite them (on x64 spill-to-stack sometimes hides the
+bug, which is why it looked ARM64-host-only). `runtime/hashtable.reds` and
+`runtime/datatypes/map.reds` held such pointers across growth allocations in
+resize/resize-map/put-key/put-all/put-err, so rehash/resize re-bucketed from
+garbage, `keys/x`/flag-bit writes landed in stale copies, and map paths wrote
+values next to a stale cell: an entry "registered" but `select` returns none.
+The fix is mechanical and local: capture the key's **cell index** (logical,
+move-invariant) before anything can allocate, and re-resolve every pointer
+from its node handle after each allocation. `ownership/bind` had the same
+hole after its `put-key`.
+
+Verification (7767c4352): the rebuilt toolchain passes every length probed on
+the armbian box -- 12/34/35/36/37/38 (tc-f6) and 20/30/34/36/40/48 (tc-f7,
+which adds the ownership fix) -- where tc-f3/tc-f5 failed 34-38
+deterministically; map smoke (20000 put/select + make-from-block + extend +
+string keys + overwrites), map-test 86/86, series 1119/1119, recycle 39/39,
+and the Red compiler tests 320/1/30 -- byte-for-byte the pre-fix totals.
+
+Two traps met on the way:
+
+- **A missing call argument consumes the next token in the source.**
+  `stack-call` (`system/rsir-frontend.red`) reads one source token per
+  *callee parameter*, so `map/preprocess-key value` (two params, one arg)
+  ate the following statement as `path` -- at HEAD the next statement was
+  `put node value`, which silently became a nested call evaluated *before*
+  the outer callee; any other following statement (`s: ...`, `i: i + 1`)
+  put a set-word in the expression path and died as
+  `unsupported expression s:`. The error's file/line named the script under
+  compile, not hashtable.reds. Pass every argument explicitly; the
+  "unsupported expression" near-block is the ground truth, the file
+  attribution is not.
+- **`f x = y` parses as `f (x = y)`.** Re-confirmed the AGENTS.md rule the
+  hard way: a probe printed `none` for `select m 'a = 1`. Parenthesize
+  `(select m w) = negate i` and `(length? m3) = length? m2` in test code;
+  `all` short-circuits, so a misparsed tail expression can hide.
+
 ## A global narrower than 8 bytes cannot hold an address
 
 `i: as integer! :foo` -- a 4-byte global initialised from a function

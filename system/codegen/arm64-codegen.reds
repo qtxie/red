@@ -33,6 +33,7 @@ arm64-function-scratch!: alias struct! [
 	switch-effect-links [int-ptr!]
 	switch-effect-users [int-ptr!]
 	global-homes    [int-ptr!]
+	shadow-slots    [int-ptr!]
 ]
 
 arm64-function-plan!: alias struct! [
@@ -3783,7 +3784,6 @@ arm64-codegen: context [
 		total-slots: total-slots + float-home-count
 		if total-slots > (2147483647 - frame-home-count)[return fail-limit 852 "plan-function/limit#22"]
 		total-slots: total-slots + frame-home-count
-		plan/bitmap-slots: total-slots - 4
 		if total-slots > (2147483647 - max-spill)[return fail-limit 853 "plan-function/limit#23"]
 		total-slots: total-slots + max-spill
 		; Lay the per-region windows out in instruction order, each followed by
@@ -3808,6 +3808,30 @@ arm64-codegen: context [
 			]
 		]
 		total-slots: entry-base
+		;-- A pointer homed in a callee-saved register survives the call in the
+		;-- register, but a collection inside the call may move the buffer it
+		;-- points at. Every such local gets a shadow frame slot: spilled before
+		;-- each call, reloaded after, and marked in the stack bitmap so the
+		;-- collector rewrites the shadow while it walks the frame. Leaf
+		;-- functions keep none -- without a call nothing can collect.
+		id: 1
+		while [id <= count][
+			scratch/shadow-slots/id: 0
+			if all [
+				has-call <> 0
+				scratch/storage-kinds/id = STORAGE_REGISTER
+			][
+				parameter: as rsir-parameter! (view/parameters
+					+ ((fn/first-parameter + id - 1) * RSIR_PARAMETER_SIZE))
+				if bitmap-marked-type? parameter/type (parameter/flags = INLINE) view [
+					if total-slots > 2147483646 [return fail-limit 906 "plan-function/shadow-limit"]
+					total-slots: total-slots + 1
+					scratch/shadow-slots/id: total-slots
+				]
+			]
+			id: id + 1
+		]
+		plan/bitmap-slots: total-slots - 4
 		if total-slots > (2147483647 / 8) [return fail-limit 855 "plan-function/limit#25"]
 		frame-allocation: total-slots * 8
 		result-used: frame-allocation
@@ -3973,6 +3997,87 @@ arm64-codegen: context [
 		written + encoded
 	]
 
+	;-- Park every register-homed pointer local in its shadow frame slot before
+	;-- a call, and pick the (possibly collector-updated) copies back up after
+	;-- it. Between the two, the shadow is the only copy the collector can see.
+	;-- `offset` is the caller's `written`: `code` is the buffer base, so the
+	;-- cursor this helper emits from is `code + offset + written`.
+	emit-home-spills: func [
+		plan [arm64-function-plan!] scratch [arm64-function-scratch!]
+		code [byte-ptr!]
+		offset capacity [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] id written encoded [integer!]
+	][
+		written: 0
+		id: 1
+		while [id <= plan/storage-count][
+			if scratch/shadow-slots/id > 0 [
+				at: either null? code [as byte-ptr! 0][code + offset + written]
+				encoded: compiler-frame-store at (capacity - offset - written)
+					scratch/homes/id (0 - (scratch/shadow-slots/id * 8)) 8
+				if encoded < 0 [return fail-code encoded 904 "emit-home-spills/code#1"]
+				written: written + encoded
+			]
+			id: id + 1
+		]
+		written
+	]
+
+	emit-home-restores: func [
+		plan [arm64-function-plan!] scratch [arm64-function-scratch!]
+		code [byte-ptr!]
+		offset capacity [integer!]
+		return: [integer!]
+		/local at [byte-ptr!] id written encoded [integer!]
+	][
+		written: 0
+		id: 1
+		while [id <= plan/storage-count][
+			if scratch/shadow-slots/id > 0 [
+				at: either null? code [as byte-ptr! 0][code + offset + written]
+				encoded: compiler-frame-load at (capacity - offset - written)
+					scratch/homes/id (0 - (scratch/shadow-slots/id * 8)) 8 0 8
+				if encoded < 0 [return fail-code encoded 905 "emit-home-restores/code#1"]
+				written: written + encoded
+			]
+			id: id + 1
+		]
+		written
+	]
+
+	;-- True when a value of this type may reference memory the collector can
+	;-- move: the same test mark-bitmap-type applies slot by slot, so a shadow
+	;-- slot reserved here is exactly the slot the bitmap walk marks.
+	bitmap-marked-type?: func [
+		ref [integer!] inline? [logic!] view [rsir-view!]
+		return: [logic!]
+		/local kind index [integer!] type [rsir-type!] member [rsir-member!]
+	][
+		if ref = 0 [return false]
+		ref: canonical-type ref view
+		kind: type-kind ref view
+		if all [inline? any [kind = -2 kind = -3 kind = -7]] [
+			type: as rsir-type! (view/types + ((ref - 1) * RSIR_TYPE_SIZE))
+			index: 0
+			while [index < type/member-count][
+				either kind = -7 [
+					if bitmap-marked-type? type/target false view [return true]
+				][
+					member: as rsir-member! (view/members
+						+ ((type/first-member + index) * RSIR_MEMBER_SIZE))
+					if bitmap-marked-type? member/type (member/flags = INLINE) view [
+						return true
+					]
+				]
+				index: index + 1
+			]
+			return false
+		]
+		any [kind = 12 kind = 13 kind = 16
+			kind = -2 kind = -3 kind = -4 kind = -5 kind = -6 kind = -7]
+	]
+
 	mark-bitmap-type: func [
 		record [int-ptr!] ref [integer!] inline? [logic!]
 		displacement depth [integer!] view [rsir-view!] layout [arm64-layout-state!]
@@ -4031,6 +4136,12 @@ arm64-codegen: context [
 					+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
 				unless mark-bitmap-type record parameter/type (parameter/flags = INLINE)
 					scratch/homes/index 0 view layout [return false]
+			]
+			if scratch/shadow-slots/index > 0 [
+				parameter: as rsir-parameter! (view/parameters
+					+ ((fn/first-parameter + index - 1) * RSIR_PARAMETER_SIZE))
+				unless mark-bitmap-type record parameter/type (parameter/flags = INLINE)
+					(0 - (scratch/shadow-slots/index * 8)) 0 view layout [return false]
 			]
 			index: index + 1
 		]
@@ -6154,16 +6265,18 @@ arm64-codegen: context [
 					scratch/stack-kinds/depth: VALUE
 					scratch/stack-flags/depth: 0
 				]
-				instruction/op = OP_NATIVE [
-					either any [
-						instruction/a = CPU_REGISTER_NATIVE
-						instruction/a = CPU_REGISTER_SET_NATIVE
-					][
-						unless all [
-							instruction/b >= 0 instruction/c > 0
-							instruction/c <= view/strings-size
-							instruction/b <= (view/strings-size - instruction/c)
-						][return fail-invalid 187 "compile-function/instruction/b#21"]
+					instruction/op = OP_NATIVE [
+						written: written + emit-home-spills plan scratch
+							code written capacity
+						either any [
+							instruction/a = CPU_REGISTER_NATIVE
+							instruction/a = CPU_REGISTER_SET_NATIVE
+						][
+							unless all [
+								instruction/b >= 0 instruction/c > 0
+								instruction/c <= view/strings-size
+								instruction/b <= (view/strings-size - instruction/c)
+							][return fail-invalid 187 "compile-function/instruction/b#21"]
 						register-width: 0
 						register-id: cpu-register-id
 							(view/strings + instruction/b) instruction/c :register-width
@@ -6882,6 +6995,8 @@ arm64-codegen: context [
 						]
 						true [return fail-unsupported 227 "compile-function/scratch/stack-flags#61"]
 					]
+					written: written + emit-home-restores plan scratch
+						code written capacity
 				]
 				instruction/op = OP_ADDRESS [
 					slot: instruction/b
@@ -7971,6 +8086,8 @@ arm64-codegen: context [
 				instruction/op = OP_CALL [
 					call-target: instruction/a
 					argument-count: instruction/b
+					written: written + emit-home-spills plan scratch
+						code written capacity
 					; A call through a pointer keeps the callee below its
 					; arguments, so it claims one more live slot.
 					callee-slots: either call-target = 0 [1][0]
@@ -8655,6 +8772,8 @@ arm64-codegen: context [
 						if encoded < 0 [return fail-code encoded 725 "compile-function/code#187"]
 						written: written + encoded
 					]
+					written: written + emit-home-restores plan scratch
+						code written capacity
 					depth: argument-base
 					if call-return <> 0 [
 						either aggregate-return? [
@@ -8747,6 +8866,8 @@ arm64-codegen: context [
 				]
 				instruction/op = OP_SUB_CALL [
 					sub-target: instruction/a
+					written: written + emit-home-spills plan scratch
+						code written capacity
 					unless all [
 						sub-target > 0
 						sub-target <= fn/instruction-count
@@ -8816,6 +8937,10 @@ arm64-codegen: context [
 						(capacity - written) displacement
 					if encoded < 0 [return fail-code encoded 733 "compile-function/code#195"]
 					written: written + encoded
+					;-- No restores here: the subroutine shares this frame and
+					;-- these home registers, so the values it leaves behind are
+					;-- its assignments to the shared locals. Its own calls
+					;-- refresh the homes; only the shadows need spilling here.
 					target: first-instruction + instruction/a
 					either (scratch/instruction-effects/target and EFFECT_RESUMES) = 0 [
 						fallthrough?: false
@@ -10377,8 +10502,8 @@ arm64-codegen: context [
 		]
 		if header/function-count > (2147483647 / 7)[return fail-limit 867 "generate/limit#9"]
 		words: header/function-count * 7
-		if max-storage > ((2147483647 - words) / 3)[return fail-limit 868 "generate/limit#10"]
-		words: words + (max-storage * 3)
+		if max-storage > ((2147483647 - words) / 4)[return fail-limit 868 "generate/limit#10"]
+		words: words + (max-storage * 4)
 		if max-instructions > ((2147483647 - words) / 9)[return fail-limit 869 "generate/limit#11"]
 		words: words + (max-instructions * 9)
 		if header/instruction-count > ((2147483647 - words) / 9)[
@@ -10412,7 +10537,8 @@ arm64-codegen: context [
 		bitmap-offsets: instruction-starts + header/function-count
 		bitmap-sizes: bitmap-offsets + header/function-count
 		scratch/homes: bitmap-sizes + header/function-count
-		scratch/storage-types: scratch/homes + max-storage
+		scratch/shadow-slots: scratch/homes + max-storage
+		scratch/storage-types: scratch/shadow-slots + max-storage
 		scratch/storage-kinds: scratch/storage-types + max-storage
 		scratch/stack-types: scratch/storage-kinds + max-storage
 		scratch/stack-kinds: scratch/stack-types + max-instructions

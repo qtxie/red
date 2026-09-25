@@ -45,7 +45,46 @@ collector: context [
 
 	
 	indent: 0
-	
+
+	stress?: no										;-- RED_GC_STRESS: run GC passes at a forced pace
+	stress-period: 1								;-- GC every Nth allocation while stressed
+	stress-count: 0
+
+	read-stress-env: func [
+		period [int-ptr!]
+		return: [logic!]
+		/local
+			len n i b [integer!]
+			buf [c-string!]
+	][
+		#either OS = 'Windows [
+			len: platform/get-env #u16 "RED_GC_STRESS" 0 0
+		][
+			len: platform/get-env "RED_GC_STRESS" 0 0
+		]
+		if len <= 0 [period/value: 1 return no]
+		if len > 120 [period/value: 1 return yes]
+		buf: as c-string! allocate 256
+		fill as byte-ptr! buf (as byte-ptr! buf) + 256 #"^(00)"
+		#either OS = 'Windows [
+			platform/get-env #u16 "RED_GC_STRESS" buf 128	;-- valsize is in UTF-16 units
+		][
+			platform/get-env "RED_GC_STRESS" buf 128
+		]
+		n: 0
+		i: 0
+		while [i < 256][							;-- digit filter: reads ASCII and UTF-16 alike
+			b: as-integer buf/i
+			if all [b >= as-integer #"0" b <= as-integer #"9"][
+				if n < 100000000 [n: (n * 10) + (b - as-integer #"0")]
+			]
+			i: i + 1
+		]
+		free as byte-ptr! buf
+		period/value: either n < 1 [1][n]
+		yes
+	]
+
 	init: func [
 		/local mask [integer!]
 	][
@@ -54,6 +93,7 @@ collector: context [
 		stats/pinned-frames:	0
 		stats/pinned-bytes:	0
 		prefs/nodes-gc-trigger: 5						;-- trigger if node frame is unchanged after 5 cycles
+		stress?: read-stress-env :stress-period
 	]
 
 	compare-cb: func [
@@ -1160,6 +1200,7 @@ collector: context [
 		if dst <> null [								;-- no compaction occurred, all series were in use
 			frame/heap: as series! dst					;-- set new heap after last moved region
 			#if debug? = yes [markfill as int-ptr! frame/heap as int-ptr! frame/tail]
+			if stress? [markfill as int-ptr! frame/heap as int-ptr! frame/tail]
 		]
 		refs
 	]
@@ -1298,6 +1339,7 @@ collector: context [
 		if dst <> null [								;-- no compaction occurred, all series were in use
 			frame/heap: as series! dst					;-- set new heap after last moved region
 			#if debug? = yes [markfill as int-ptr! frame/heap as int-ptr! frame/tail]
+			if stress? [markfill as int-ptr! frame/heap as int-ptr! frame/tail]
 		]
 		if all [dst = as byte-ptr! (frame + 1) frame/next <> null][		;-- cache last one
 			free-series-frame frame

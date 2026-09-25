@@ -647,19 +647,19 @@ free-series-frame: func [
 	free-virtual as int-ptr! frame			;-- release the memory to the OS
 ]
 
-#if debug? = yes [
-
-	markfill: func [
-		p		[int-ptr!]
-		end		[int-ptr!]
-	][
-		assert p < end
-		until [
-			p/value: BADCAFE0h
-			p: p + 1
-			p = end
-		]
+markfill: func [
+	p		[int-ptr!]
+	end		[int-ptr!]
+][
+	assert p < end
+	until [
+		p/value: BADCAFE0h
+		p: p + 1
+		p = end
 	]
+]
+
+#if debug? = yes [
 
 	dump-frame: func [
 		frame [series-frame!]				;-- series frame to compact
@@ -753,6 +753,13 @@ alloc-series-buffer: func [
 	sz: SERIES_BUFFER_PADDING + size + size? series-buffer!
 	flag-big: 0
 	series: null
+	if collector/stress? [							;-- RED_GC_STRESS: forced GC cadence
+		collector/stress-count: collector/stress-count + 1
+		if collector/stress-count >= collector/stress-period [
+			collector/stress-count: 0
+			collector/do-cycle
+		]
+	]
 	either (as byte-ptr! sz) >= (as byte-ptr! memory/s-max) [ ;-- alloc a big frame if too big for series frames
 		collector/do-cycle					;-- launch a GC pass
 		series: as series-buffer! alloc-big sz

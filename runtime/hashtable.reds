@@ -823,35 +823,44 @@ _hashtable: context [
 			end	value key [red-value!]
 			i	[integer!]
 	][
+		i: head
 		s: as series! node/value
 		h: as hashtable! s/offset
-
 		s: as series! h/blk/value
 		end: s/tail
-		i: head
-		while [
-			value: s/offset + i
-			value < end
-		][
+		value: s/offset + i
+		while [value < end][
 			either h/type = HASH_TABLE_MAP [
 				key: get node value 0 0 COMP_STRICT_EQUAL no no
 				either key = null [
-					map/preprocess-key value
+					map/preprocess-key value null	;-- 2nd arg is required: a missing one
+													;-- consumes the next token in the source
+					s: as series! node/value		;-- preprocess-key can allocate
+					h: as hashtable! s/offset
+					s: as series! h/blk/value
+					end: s/tail
+					value: s/offset + i				;-- re-derive the key cell after the allocation
 					put node value
 				][
 					copy-cell value + 1 key + 1
-					move-memory 
+					move-memory
 						as byte-ptr! value
 						as byte-ptr! value + 2
 						as-integer s/tail - (value + 2)
 					s/tail: s/tail - 2
-					end: s/tail
 					i: i - skip
 				]
 			][
 				put node value
 			]
 			i: i + skip
+			;-- The puts above can run a GC pass, and compaction moves live
+			;-- buffers: re-resolve everything before reading the blk again.
+			s: as series! node/value
+			h: as hashtable! s/offset
+			s: as series! h/blk/value
+			end: s/tail
+			value: s/offset + i
 		]
 	]
 
@@ -1412,7 +1421,7 @@ _hashtable: context [
 		node			[node!]
 		new-buckets		[integer!]
 		/local
-			start end value key slot [red-value!]
+			value slot [red-value!]
 			s			[series!]
 			h			[hashtable!]
 			k			[int-ptr!]
@@ -1443,19 +1452,19 @@ _hashtable: context [
 		len: vsize >> 4
 		vsize: vsize - size? red-value!
 
-		blk: h/blk		;-- @@ put it on stack, so GC can mark it
-		s: as series! blk/value
-		start: s/offset
-		end: s/tail
+		blk: h/blk								;-- node handle: a move keeps its value current
 		i: 0
 		h/blk: alloc-cells sz * len
 		while [
-			value: start + i
-			value < end
+			s: as series! blk/value				;-- re-resolve: put-key below can GC and move buffers
+			value: s/offset + i
+			value < s/tail
 		][
 			k: as int-ptr! value
 			if value/header = TYPE_UNSET [
 				slot: put-key node k/2
+				s: as series! blk/value			;-- re-resolve the source cell after the allocation
+				value: s/offset + i
 				copy-memory as byte-ptr! slot as byte-ptr! (value + 1) vsize
 			]
 			i: i + len
@@ -1482,10 +1491,6 @@ _hashtable: context [
 		root?: push-table-root node
 
 		int?: h/type >= HASH_TABLE_NODE_KEY
-		s: as series! h/blk/value
-		blk: s/offset
-		s: as series! h/flags/value
-		flags: as int-ptr! s/offset
 		n-buckets: h/n-buckets
 		j: 0
 		new-buckets: round-up new-buckets
@@ -1495,14 +1500,23 @@ _hashtable: context [
 
 		either h/size >= new-size [j: 1][
 			new-flags-node: _alloc-bytes-filled new-buckets >> 2 #"^(AA)"
-			s: as series! new-flags-node/value
-			new-flags: as int-ptr! s/offset
 			if n-buckets < new-buckets [
 				s: expand-series as series! h/keys/value new-buckets * size? int-ptr!
 				s/tail: as cell! (as byte-ptr! s/offset) + s/size
 			]
 		]
 		if zero? j [
+			;-- The allocations above can run a GC pass, and compaction moves
+			;-- live buffers: every pointer used by the re-bucketing loop must
+			;-- be re-resolved from its node handle, which a move keeps current.
+			s: as series! node/value
+			h: as hashtable! s/offset
+			s: as series! new-flags-node/value
+			new-flags: as int-ptr! s/offset
+			s: as series! h/blk/value
+			blk: s/offset
+			s: as series! h/flags/value
+			flags: as int-ptr! s/offset
 			s: as series! h/keys/value
 			keys: as int-ptr! s/offset
 			until [
@@ -1575,6 +1589,10 @@ _hashtable: context [
 			vsize: either h/n-buckets > (h/size << 1) [-1][1]
 			n-buckets: h/n-buckets + vsize
 			resize-map node n-buckets
+			;-- resize-map's allocations can run a GC pass, and compaction moves
+			;-- live buffers: re-resolve the table struct from its node handle.
+			s: as series! node/value
+			h: as hashtable! s/offset
 		]
 
 		vsize: as integer! h/indexes
@@ -1626,6 +1644,15 @@ _hashtable: context [
 		case [
 			_BUCKET_IS_EMPTY(flags ii sh) [
 				k: as int-ptr! alloc-tail-unit blk-node vsize
+				;-- The allocation can run a GC pass, and compaction moves live
+				;-- buffers: re-resolve the table, keys and flags from their
+				;-- node handles before writing through the saved pointers.
+				s: as series! node/value
+				h: as hashtable! s/offset
+				s: as series! h/keys/value
+				keys: as int-ptr! s/offset
+				s: as series! h/flags/value
+				flags: as int-ptr! s/offset
 				k/2: key
 				keys/x: len
 				_BUCKET_SET_BOTH_FALSE(flags ii sh)
@@ -1778,7 +1805,7 @@ _hashtable: context [
 			h	  [hashtable!]
 			keys flags indexes [int-ptr!]
 			chain [node!]
-			x i site last mask step hash n-buckets ii sh idx type [integer!]
+			x i site last mask step hash n-buckets key-idx ii sh idx type [integer!]
 			continue? del? chain? [logic!]
 	][
 		s: as series! node/value
@@ -1786,23 +1813,35 @@ _hashtable: context [
 		type: h/type
 
 		errcode/value: HASH_TABLE_ERR_OK
+		s: as series! h/blk/value
+		key-idx: (as-integer (key - s/offset)) >> 4	;-- logical cell index: stable across buffer moves
 		if h/n-occupied >= h/upper-bound [			;-- update the hash table
 			idx: either h/n-buckets > (h/size << 1) [-1][1]
 			n-buckets: h/n-buckets + idx
 			either type = HASH_TABLE_HASH [
 				rehash node n-buckets
 				errcode/value: HASH_TABLE_ERR_REBUILT
-				return key
+				;-- rehash's allocations can run a GC pass, and compaction moves
+				;-- live buffers: re-derive the key cell from its logical index.
+				s: as series! node/value
+				h: as hashtable! s/offset
+				s: as series! h/blk/value
+				return s/offset + key-idx
 			][
 				if type = HASH_TABLE_MAP [n-buckets: h/n-buckets + 1]
 				resize node n-buckets
 			]
+			;-- The growth's allocations can run a GC pass, and compaction
+			;-- moves live buffers: re-resolve the table and re-derive the key
+			;-- cell from its logical index.
 			s: as series! node/value
 			h: as hashtable! s/offset
+			s: as series! h/blk/value
+			key: s/offset + key-idx
 		]
 
 		s: as series! h/blk/value
-		idx: (as-integer (key - s/offset)) >> 4
+		idx: key-idx
 		blk: s/offset
 
 		s: as series! h/keys/value
@@ -1847,8 +1886,18 @@ _hashtable: context [
 							actions/compare k key COMP_EQUAL
 						][
 							unless chain? [
-								chain: alloc-bytes 4 * size? integer!
-								array/append-ptr h/chains as int-ptr! chain
+								chain: alloc-bytes 4 * size? integer!	;-- can run a GC pass
+								s: as series! node/value
+								h: as hashtable! s/offset
+								array/append-ptr h/chains as int-ptr! chain	;-- can also run one
+								s: as series! node/value			;-- re-resolve what the loop still uses
+								h: as hashtable! s/offset
+								s: as series! h/blk/value
+								blk: s/offset
+								s: as series! h/keys/value
+								keys: as int-ptr! s/offset
+								s: as series! h/flags/value
+								flags: as int-ptr! s/offset
 								array/append-int chain keys/i
 								keys/i: 0 - ((array/length? h/chains) >> log-b size? int-ptr!)
 							]
@@ -1895,7 +1944,12 @@ _hashtable: context [
 			idx: idx + 1
 			indexes/idx: x
 		]
-		key
+		;-- The indexes growth above can run a GC pass, and compaction moves
+		;-- live buffers: re-derive the key cell from its logical index.
+		s: as series! node/value
+		h: as hashtable! s/offset
+		s: as series! h/blk/value
+		s/offset + key-idx
 	]
 
 	get-next: func [

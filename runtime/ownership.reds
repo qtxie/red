@@ -146,6 +146,7 @@ ownership: context [
 					copy-cell as red-value! word  slot + 2
 				]
 				if ANY_BLOCK?(type) [
+					s: GET_BUFFER(series)			;-- re-resolve: put-key's growth can GC
 					if cycles/find? series/node [exit]
 					value: s/offset + series/head
 					tail:  s/tail

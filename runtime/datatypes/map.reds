@@ -124,7 +124,7 @@ map: context [
 		/local
 			src		[red-block!]
 			cell	[red-value!]
-			tail	[red-value!]
+			i		[integer!]
 			value	[red-value!]
 			op		[integer!]
 			s		[series!]
@@ -145,14 +145,15 @@ map: context [
 		size: as-integer s/tail + size - s/offset
 		if size > s/size [expand-series s size]
 
-		s: GET_BUFFER(src)
-		cell: s/offset + src/head
-		tail: s/tail
-
 		op: either case? [COMP_STRICT_EQUAL][COMP_EQUAL]
 		table: resolve-node map/table
 		kkey: stack/push*
-		while [cell < tail][
+		i: src/head
+		while [
+			s: GET_BUFFER(src)						;-- re-resolve: the body allocates
+			cell: s/offset + i
+			cell < s/tail
+		][
 			key: _hashtable/get table cell 0 0 op no no
 			value: cell + 1
 			either key = null [
@@ -162,7 +163,9 @@ map: context [
 				key: copy-cell kkey as cell! alloc-tail-unit s (size? cell!) << 1
 				val: key + 1
 				val/header: TYPE_UNSET
-				_hashtable/put table key
+				key: _hashtable/put table key	;-- put can GC (growth): take the re-derived cell
+				s: GET_BUFFER(src)				;-- re-derive the value cell after the allocations
+				value: s/offset + i + 1
 			][
 				val: key + 1
 				if val/header = MAP_KEY_DELETED [	;-- increase size of keys
@@ -172,7 +175,7 @@ map: context [
 				]
 			]
 			copy-cell value key + 1
-			cell: cell + 2
+			i: i + 2
 		]
 		as red-value! map
 	]
@@ -532,7 +535,7 @@ map: context [
 				key: copy-cell k as cell! alloc-tail-unit s (size? cell!) << 1
 				val: key + 1
 				val/header: TYPE_UNSET
-				_hashtable/put table key
+				key: _hashtable/put table key	;-- put can GC (growth): take the re-derived cell
 			][
 				val: key + 1
 				if val/header = MAP_KEY_DELETED [	;-- increase size of keys

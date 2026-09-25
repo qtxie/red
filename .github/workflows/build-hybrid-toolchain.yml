@@ -3,7 +3,7 @@ name: Build hybrid toolchain
 # One reusable entry point for every platform the hybrid toolchain targets.
 # Each matrix leg runs on its own runner because a bootstrap compiler only runs
 # on the platform it was built for; the toolchain it emits can then cross
-# compile, but the fixed-point build itself has to be native.
+# compile, but the toolchain build itself has to be native.
 #
 # Callers pass the subset they need:
 #
@@ -229,10 +229,10 @@ jobs:
         fi
         echo "bootstrap: $BOOTSTRAP_PATH"
 
-    - name: Build a Red console and drive the fixed point (Windows)
+    - name: Build a Red console and the standalone toolchain (Windows)
       # MSDOS-X86-64, not Windows-X86-64: the latter is the GUI sub-system, so
-      # this console would start with no console attached and its output -- the
-      # fixed-point log CI reads -- would go nowhere.
+      # this console would start with no console attached and the build log CI
+      # reads would go nowhere.
       if: matrix.archive == 'zip'
       shell: pwsh
       env:
@@ -240,20 +240,20 @@ jobs:
       run: |
         $ErrorActionPreference = 'Stop'
         & $env:BOOTSTRAP_PATH -r -t $env:TARGET `
-          -o .\build\fixed-point\console.exe environment\console\CLI\console.red
-        & .\build\fixed-point\console.exe `
-          tools\self_hosting\build-red-toolchain-fixed-point.red `
+          -o .\build\dist\console.exe environment\console\CLI\console.red
+        & .\build\dist\console.exe tools\self_hosting\build-red-toolchain.red `
           --bootstrap $env:BOOTSTRAP_PATH `
-          --output-root .\build\fixed-point
+          --target $env:TARGET `
+          --output .\build\dist\red-toolchain.exe
 
     - name: Run the hermetic suite (Windows)
       if: matrix.archive == 'zip'
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        & .\build\fixed-point\console.exe `
+        & .\build\dist\console.exe `
           tools\self_hosting\test-red-toolchain-hermetic.red `
-          --toolchain build/fixed-point/h3/red-toolchain.exe
+          --toolchain build/dist/red-toolchain.exe
 
     - name: Build standalone Red toolchain (Unix)
       if: matrix.archive != 'zip'
@@ -281,7 +281,7 @@ jobs:
       run: |
         $ErrorActionPreference = 'Stop'
         New-Item -ItemType Directory -Force -Path '.\build\packages' | Out-Null
-        & .\build\fixed-point\h3\red-toolchain.exe -r -t $env:TARGET `
+        & .\build\dist\red-toolchain.exe -r -t $env:TARGET `
           -o ".\build\packages\red-cli-console-$env:PLATFORM.exe" `
           environment\console\CLI\console.red
 
@@ -296,7 +296,7 @@ jobs:
       run: |
         $ErrorActionPreference = 'Stop'
         New-Item -ItemType Directory -Force -Path '.\build\packages' | Out-Null
-        & .\build\fixed-point\h3\red-toolchain.exe -r -t $env:GUI_TARGET `
+        & .\build\dist\red-toolchain.exe -r -t $env:GUI_TARGET `
           -o ".\build\packages\red-gui-console-$env:PLATFORM.exe" `
           environment\console\GUI\gui-console.red
 
@@ -379,7 +379,7 @@ jobs:
         PLATFORM: ${{ matrix.platform }}
       run: |
         $ErrorActionPreference = 'Stop'
-        $compiler = '.\build\fixed-point\h3\red-toolchain.exe'
+        $compiler = '.\build\dist\red-toolchain.exe'
         # Staged outside build\packages so the artifact is not uploaded twice.
         $package = ".\build\stage\red-toolchain-$env:PLATFORM"
         New-Item -ItemType Directory -Force -Path $package,'.\build\packages' | Out-Null

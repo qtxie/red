@@ -60,6 +60,10 @@ jobs:
       run: |
         set -euo pipefail
         failed=0
+        # A unit that never returns takes the whole job with it: the suite is one
+        # process waiting on each unit in turn, so a stall hides every result that
+        # would have come after it and burns the job's 90 minutes doing nothing. The
+        # watchdog bounds each child of the runner and prints where it was stuck.
         for runner in \
           tools/self_hosting/run-red-unit-tests.red \
           tools/self_hosting/run-red-system-tests.red \
@@ -67,7 +71,7 @@ jobs:
           tools/self_hosting/run-red-compiler-tests.red \
           tools/self_hosting/run-red-view-headless-tests.red
         do
-          if ! "$RED_CONSOLE" "$runner"; then
+          if ! tools/ci/watch-stalled.sh 300 -- "$RED_CONSOLE" "$runner"; then
             echo "::error::$runner failed"
             failed=1
           fi

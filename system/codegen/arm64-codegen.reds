@@ -10469,7 +10469,7 @@ arm64-codegen: context [
 					return-count: return-count + 1
 					fallthrough?: false
 				]
-				true [return fail-unsupported 388 "compile-function/fallthrough#222"]
+				true [return fail-unsupported 907 "compile-function/fallthrough#222"]
 			]
 			index: index + 1
 		]
@@ -10529,7 +10529,7 @@ arm64-codegen: context [
 		]
 		target-abi: abi
 		if any [null? output capacity < 0][return fail-invalid 390 "generate/output#1"]
-		unless any [opt-level = 0 opt-level = 2][return fail-unsupported 391 "generate/opt-level#2"]
+		unless any [opt-level = 0 opt-level = 2][return fail-unsupported 908 "generate/opt-level#2"]
 		status: codegen-rsir-reader/open data size view
 		if status <> 0 [return status]
 		header: view/header

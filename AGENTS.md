@@ -57,6 +57,13 @@ so the site name and that line are the whole explanation.
 instead of the one its status code implies. A new `fail-*` wrapper must be
 registered in `tools/codegen/sync-codegen-sites.py`'s HELPERS: an unregistered
 helper is neither an annotated site nor a bare one, so the audit sees nothing.
+Write a new site as `fail-invalid 0 "auto"` and let `--write` give it an id and a
+name; hand-numbering one can silently reuse an id, which `--check` then reports
+as `duplicate or unassigned site id` (the two `plan/has-call` pins did exactly
+that at 9e63dd272, and the two older sites they collided with became 907 and
+908). An id is pure data: 260 -> 261 differs in two materialised immediates
+(`mov eax, 388` -> `907`, `391` -> `908`) and 261 -> 262 is a fixed point at
+6521344 bytes with 16 differing bytes.
 
 Two generations of `red-bootstrap-hybrid.red` have the same size but not the
 same bytes at 243 -- they differ at byte 315427, with and without this change

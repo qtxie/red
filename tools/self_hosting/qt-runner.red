@@ -32,9 +32,30 @@ qt: context [
 	comp-output: make string! 8192		;-- captured compiler output
 	output: make string! 8192			;-- captured program output
 	compile-ok?: false
-	compile-failures: 0
 
 	tests: asserts: passes: failures: 0
+
+	;-- A compile failure is a diagnosis, not yet a verdict: the compiler tests
+	;-- feed the compiler broken source on purpose, and their own assertions say
+	;-- what the compiler should have done with it. So each failure belongs to
+	;-- the test that was running when it happened:
+	;--   claimed   -- the test recorded an assertion, so it saw the outcome and
+	;--                its verdict is the assertion's, not the exit code's.
+	;--   unclaimed -- nothing was checked: a unit that never compiled, or a
+	;--                compile whose result nobody looked at. That is a failure.
+	;-- `compile-failures` keeps its old meaning (every failed compile) so the
+	;-- historical totals still read the same; only `unclaimed` gates, and
+	;-- claimed + unclaimed adds up to it, so a log cannot hide a failure in the
+	;-- difference.
+	compile-failures: claimed: unclaimed: 0
+	pending-compile-failures: 0
+
+	;-- Known failures, declared by the runner as name/reason pairs. An assertion
+	;-- that fails under a declared name is expected and reported as such; a
+	;-- declared name whose assertions all pass is baseline rot and gates, so a
+	;-- fix has to delete its declaration instead of leaving it to lie.
+	expected-failures: make block! 8
+	expected: rot: 0
 
 	current-source: current-output: none
 
@@ -196,6 +217,7 @@ qt: context [
 			output
 		][
 			compile-failures: compile-failures + 1
+			pending-compile-failures: pending-compile-failures + 1
 			print ["compiler failed for" source "status:" status]
 			unless empty? comp-output [print comp-output]
 			none
@@ -256,34 +278,84 @@ qt: context [
 	;-- Compile, run and score one unit source.
 	run-unit: func [
 		source [file!]
-		/local executable status
+		/local executable status result
 	][
+		;-- A unit is not part of the test that ran before it: settle that one
+		;-- first, and settle this one after, so the unit's own compile failure
+		;-- is never claimed by someone else's assertions. Naming the unit here is
+		;-- what lets an unclaimed failure say which unit never compiled.
+		flush-test
+		test-name: form source
 		executable: compile source
-		unless executable [return false]
+		unless executable [flush-test return false]
 		status: run executable
 		if status <> 0 [
 			print ["process failed:" source "status:" status]
 			failures: failures + 1
 		]
-		read-summary output source
+		result: read-summary output source
+		flush-test
+		result
 	]
 
 	; `none` is a legitimate result here: --assert --compile-and-run ... passes
 	; none when the compile failed. Coerce it rather than type-checking it away.
 	record-assertion: func [passed? /local passed][
 		asserts: asserts + 1
+		test-asserts: test-asserts + 1
 		passed: either none? passed? [false][to logic! passed?]
 		either passed [
 			passes: passes + 1
 			true
 		][
-			failures: failures + 1
-			print ["FAILED:" test-name]
-			false
+			either none? test-baseline [
+				failures: failures + 1
+				print ["FAILED:" test-name]
+			][
+				expected: expected + 1
+				print either zero? test-expected [
+					rejoin ["EXPECTED FAILURE: " test-name " -- " test-baseline]
+				][
+					rejoin ["EXPECTED FAILURE: " test-name]
+				]
+				test-expected: test-expected + 1
+				false
+			]
 		]
 	]
 
 	test-name: "unnamed test"
+	test-asserts: 0
+	test-expected: 0
+	test-baseline: none					;-- this test's declared reason, if any
+
+	;-- The declaration is a flat name/reason block so the reason travels with
+	;-- the name: an unexplained baseline is a baseline someone will "fix" by
+	;-- deleting the test.
+	baseline-reason: func [name [string!] /local pos][
+		either pos: find expected-failures name [pos/2][none]
+	]
+
+	;-- Settle the test that just ended: a compile failure it never looked at is
+	;-- a real one, and a declared failure that has stopped happening is a
+	;-- declaration that needs deleting.
+	flush-test: does [
+		unless zero? pending-compile-failures [
+			either zero? test-asserts [
+				unclaimed: unclaimed + pending-compile-failures
+				print ["UNCLAIMED compile failures:" pending-compile-failures "in" test-name]
+			][
+				claimed: claimed + pending-compile-failures
+			]
+			pending-compile-failures: 0
+		]
+		if all [test-baseline test-asserts > 0 zero? test-expected][
+			rot: rot + 1
+			print ["BASELINE ROT:" test-name "passes and is still declared"]
+		]
+		test-asserts: test-expected: 0
+		test-baseline: none
+	]
 
 	cleanup-current: does [
 		foreach file reduce [current-source current-output][
@@ -334,15 +406,23 @@ qt: context [
 	]
 
 	report: func [label [string!]][
+		flush-test
 		print [
 			label
 			"tests" tests
 			"assertions" asserts
 			"passed" passes
 			"failed" failures
+			"expected" expected
 			"compile-failures" compile-failures
+			"claimed" claimed
+			"unclaimed" unclaimed
+			"baseline-rot" rot
 		]
-		quit/return either zero? (failures + compile-failures) [0][1]
+		;-- `expected` and `claimed` are deliberately absent: they are the
+		;-- failures a human has already looked at and written a reason for.
+		;-- Anything new in `failed`, `unclaimed` or `rot` is what stops a run.
+		quit/return either zero? (failures + unclaimed + rot) [0][1]
 	]
 ]
 
@@ -358,7 +438,14 @@ system/options/quiet: true
 ; Test DSL. Global, so scripts pulled in with `do %file.red` see it.
 ;---------------------------------------------------------------------------
 
---test--: func [name][qt/test-name: form name]
+;-- A test boundary is where the previous test's verdict is settled: its pending
+;-- compile failure is claimed or unclaimed, and a declared failure either
+;-- happened or has rotted.
+--test--: func [name][
+	qt/flush-test
+	qt/test-name: form name
+	qt/test-baseline: qt/baseline-reason qt/test-name
+]
 
 --assert: func [condition][qt/record-assertion condition]
 
@@ -379,9 +466,9 @@ system/options/quiet: true
 --separate-log-file: does [none]
 --seperate-log-file: does [none]
 
-~~~start-file~~~: func [name][print ["tests:" name]]
+~~~start-file~~~: func [name][qt/flush-test print ["tests:" name]]
 
-~~~end-file~~~: does [qt/cleanup-current]
+~~~end-file~~~: does [qt/flush-test qt/cleanup-current]
 
 ===start-group===: func [name][none]
 

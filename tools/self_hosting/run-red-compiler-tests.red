@@ -18,6 +18,22 @@ comment {
 
 #include %qt-runner.red
 
+;-- A declared baseline: name/reason pairs for failures that are known, understood
+;-- and not what the suite is there to catch. Without it a run that reproduces
+;-- exactly the expected defects is indistinguishable from one that picked up a
+;-- new one, which is how these suites stayed red for months -- and a red job that
+;-- means nothing is a red job nobody reads. An entry whose test has *stopped*
+;-- failing turns the run red as baseline-rot, so a fix has to delete its entry.
+;--
+;-- #4190 is `fc: make face! [...]`. `face!` lives in modules/view/view.red and
+;-- --compile-and-run-this-red compiles a bare `Red []`, so the snippet cannot make
+;-- a face. Writing `Needs: [View]` into the snippet makes both assertions pass
+;-- (verified), but it doubles the compile and starts exercising the Windows GUI
+;-- backend, which no suite here covers. Delete this entry when either changes.
+qt/expected-failures: [
+	"#4190" "face! needs the View module, which a bare Red [] header omits"
+]
+
 qt/compiler-arguments: any [get-env "RED_COMPILER_ARGUMENTS" ""]
 qt/target: any [
 	get-env "RED_TARGET"

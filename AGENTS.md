@@ -136,6 +136,72 @@ mode pair is the shape `#5013` itself takes -- `Red [] do %s1.red` with
 and it exits 0 now. Windows `-d` is unchanged (2847232 bytes, prints, exit 0),
 since `PE.red` never called the size function.
 
+### A red job that means nothing is a red job nobody reads
+
+Both compiler-test suites have exited 1 on every platform for months:
+
+    Red/System compiler-test totals: assertions 142 passed 139 failed 3 compile-failures 70
+    Red compiler-test totals: assertions 321 passed 319 failed 2 compile-failures 31
+
+`compile-failures` was part of the gate, and all 70 and all 31 of them are the
+suites working as designed: these scripts hand the compiler deliberately broken
+source and assert on what it *says*, so every such compile "fails" and the exit
+code reports that as a failure. A red whose red is 100% bookkeeping cannot be
+read, and two real things hid in it that long -- `caststruct!warning`, an
+expectation generation 214 invalidated on purpose when aggregates became exempt
+from the redundant-cast warning (that case now pins the opposite: an aggregate
+cast must *not* warn), and `#4190`, a snippet that cannot build a `face!` because
+`--compile-and-run-this-red` prepends a bare `Red []` and `face!` lives in the
+View module.
+
+`qt-runner.red` now scores a compile failure by who looked at it:
+
+* **claimed** -- the test recorded at least one assertion, so its verdict is that
+  assertion's and not the compiler's exit code.
+* **unclaimed** -- nothing was checked: a unit that never compiled, or a compile
+  whose result nobody looked at. That gates, as any undeclared assertion failure
+  does.
+
+`compile-failures` keeps its old meaning so the historical totals still read the
+same, and `claimed + unclaimed` always equals it -- a run cannot lose a failure in
+the difference. Failures that *are* understood are declared by the runner as
+name/reason pairs (`qt/expected-failures`); an assertion that fails under a
+declared name is reported as `EXPECTED FAILURE` with its reason and does not gate,
+while a declared name whose assertions all pass is **baseline rot** and does -- so
+a fix has to delete the declaration instead of leaving it to lie.
+
+Verified at 262 (Windows, `MSDOS-X86-64`): Red/System `assertions 141 passed 141
+failed 0 expected 0 compile-failures 70 claimed 70 unclaimed 0 baseline-rot 0`,
+exit 0; Red `assertions 321 passed 320 failed 0 expected 1 compile-failures 30
+claimed 30 unclaimed 0 baseline-rot 0`, exit 0. The gate was then run against
+each shape it has to tell apart:
+
+| probe | totals | exit |
+|---|---|---|
+| compile fails, no assertion | `compile-failures 1 claimed 0 unclaimed 1` | **1** |
+| same, `--assert not ok` looked at it | `compile-failures 1 claimed 1 unclaimed 0` | 0 |
+| declared failure did not happen | `baseline-rot 1` | **1** |
+| declared failure happens | `expected 1` | 0 |
+| undeclared failure | `failed 1` | **1** |
+
+What the gate deliberately does *not* cover: a unit that does not compile is
+unclaimed and stays red by design (that is why `float-test` on Darwin is still a
+failure to fix, not a declaration to write), and the failed-assertion count a
+compiled unit reports for itself goes through `read-summary` and has no baseline
+either.
+
+Two traps met writing it:
+
+- A baseline entry whose reason is a `;--` comment silently un-declares itself:
+  `find expected-failures name` returns the *next value*, so a name followed by
+  another name hands `pos/2` that other name -- or `none` at the tail, which reads
+  as "not declared" and turns the expected failure back into a hard one. Name and
+  reason both have to be block data.
+- `run-unit` names the current test after the unit it is about to compile. Without
+  that, an unclaimed failure -- which by definition belongs to no test -- reports
+  under the *previous* unit's last test name, which sends you to the wrong file.
+
+
 ### A backend rejection that did not say what was wrong
 
 `emit-call-operation` had a single site for `unless all [compatibility = 1

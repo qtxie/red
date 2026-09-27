@@ -168,12 +168,22 @@ compiled?: func [
          p1 = as [pointer! [integer!]] p
     }
     
-    warning-test "struct!" {
+    ;-- An aggregate cast is deliberately *not* reported: `#call` cannot know the
+    ;-- Red/System type of the expressions it pushes, so it casts every one of
+    ;-- them to cell!, and a warning there would point at a line the compiler
+    ;-- wrote rather than one the source has a cast in. See `warn-redundant-cast`
+    ;-- in system/rsir-frontend.red, which exempts struct and union for that
+    ;-- reason while scalars keep reporting.
+    --test-- "cast struct! warning suppressed"
+      result: false
+      result: compiled? {
         Red/System []
          s1: declare struct! [a [integer!] b [integer!]]
          s2: declare struct! [a [integer!] b [integer!]]
          s2 = as [struct! [a [integer!] b [integer!]]] s1
-    }
+      }
+      --assert result
+      --assert none? find qt/comp-output "*** Warning:"
         
 ===end-group=== 
 

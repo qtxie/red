@@ -129,7 +129,8 @@ queue: context [
 	][
 		tail: qe/tail
 		node: qe/data + (tail and qe/capacityMask)
-		if tail <> node/t-flag [return false] ;-- queue is full
+		;-- the flag belongs to the other side: an acquire orders the value store after it
+		if tail <> system/atomic/load :node/t-flag [return false] ;-- queue is full
 		qe/tail: tail + 1
 		node/value: val
 		system/atomic/store :node/h-flag tail
@@ -146,7 +147,8 @@ queue: context [
 	][
 		head: qe/head
 		node: qe/data + (head and qe/capacityMask)
-		if head <> node/h-flag [return null] ;-- queue is empty
+		;-- the release publishing this value is on this flag, so reading it needs an acquire
+		if head <> system/atomic/load :node/h-flag [return null] ;-- queue is empty
 		qe/head: head + 1
 		result: node/value
 		head: head + qe/capacity

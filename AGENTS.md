@@ -2383,6 +2383,81 @@ its runtime" report is worth re-testing serially before it is believed.
   `runtime/definitions.reds` -- it is *not* in the RSIR `type-kinds` table, so
   a standalone `.reds` that has not included the runtime cannot use it.)
 
+## A queue cell read without an acquire loses an item, and the single consumer then spins forever
+
+`Run-ARM64-Tests` stalled on `queue-test` while every other leg was green. The
+watchdog (`tools/ci/watch-stalled.sh`) said where, and the two surviving threads
+named the shape of it:
+
+    STALL: pid 3692 has been alive past 300s
+      thread 3692  state=S cpu=0s   wchan=futex_do_wait   ;-- main, in thread/wait
+      thread 3789  state=R cpu=299s wchan=0               ;-- one worker at 100%
+
+All 31 producers had returned, so the thread left spinning was test 3's **single
+consumer** -- the one that runs `queue/s-pop` against 31 MPMC `queue/push`
+producers. It had already printed `~~~started test~~~ Queue Test` and nothing
+else, and in a release build `--assert` is compiled out, so a wrong answer is
+unreachable: the only way `queue-test` can fail is by hanging.
+
+Root cause: `s-push`/`s-pop` skip the CAS on `qe/tail`/`qe/head` -- that is their
+whole point, the index is owned by exactly one thread -- but they also read the
+*other side's* cell flag with a plain `ldr`. Publishing the payload is a plain
+store ordered only by the `system/atomic/store` (STLR) on that flag, so a plain
+load of the flag pairs with nothing: ARM permits the following `ldr` of
+`node/value` to be satisfied from an older image of the line. The consumer then
+sees `h-flag = head` (valid) with `value = 0`, `qe/head` has already moved past
+that cell, and the item is gone. Test 3 demands exactly as many items as the
+producers push -- 31 x 100000 -- so one loss makes the final
+`while [zero? val][thread/yield]` unbounded. Disassembly of the binary said it
+plainly: `4998: ldr w9, [x20, #8]` (h-flag) then `49cc: ldr x9, [x20]` (value),
+and the whole image carried only 7 `ldar` / 4 `stlr` / 2 `ldaxr` / 2 `stlxr`,
+none of them in the single-threaded paths.
+
+Fix: `s-pop` tests `system/atomic/load :node/h-flag` and `s-push` tests
+`system/atomic/load :node/t-flag`. An LDAR carries LoadLoad *and* LoadStore
+ordering, which is what both paths need -- the consumer's value read must follow
+the flag read, and the producer's value write must follow its own flag read so it
+cannot land while a consumer is still reading the old payload. The plain
+`qe/head`/`qe/tail` access and the STLR publications are unchanged, so the s-
+variants keep the property that makes them worth having. `push`/`pop` already
+acquired both flags and were correct.
+
+Why only that runner: an in-order Cortex-A53 (the `armbian` board) essentially
+never reorders two loads, and x64 is TSO, where load-load order is hardware. Out
+of order and weakly memory modelled is GitHub's ARM64 leg.
+
+Verified:
+* The two added LDARs are in the binary at the right places -- `4904: ldar w10,
+  [x10]` on `node+12` (t-flag) before the `str` into `node+0`, and `49b4: ldar
+  w10, [x10]` on `node+8` (h-flag) before the value load; 7 -> 9 `ldar`, `stlr`
+  unchanged at 4.
+* The consequence was demonstrated on real ARM64 hardware, because a lost item
+  cannot be summoned on an in-order board: a copy of the unit with one successful
+  pop forced to read as empty hangs, and its thread table is the CI report
+  thread for thread -- main `state=S wchan=futex_wait_queue`, one worker
+  `state=R wchan=0`, output stopped after `~~~started test~~~ Queue Test`. The
+  same injection built for x64 hangs on Windows, which is what says the loss is
+  the cause and the reorder is only the ARM-specific way to lose one.
+* Fixed source: Linux-ARM64 on armbian 3 runs / exit 0 / 0 failed (the board was
+  green before as well -- it cannot hit the race, so this is the no-regression
+  gate); Windows x64 build of the fixed unit 64 tests / 64 assertions / 0 failed.
+* `runtime/queue.reds` is included by `queue-test.reds` and by nothing else, so
+  the change cannot move any other unit.
+
+Two probe bugs met on the way, both mine and both worth remembering:
+* `system/stack/allocate N_PROD + 2` is `system/stack/allocate (N_PROD) + 2` --
+  a prefix call takes **one** source token, so the infix tail was applied to the
+  returned pointer and the region came out two slots short. Parenthesise the
+  operand. It cost a false "the queue crashes" reading.
+* `while [i < N_PROD * N_ITERS]` is `while [(i < N_PROD) * N_ITERS]`: no
+  precedence again. It counted 4 of 80000, main then freed the queue under the
+  producers that were still pushing -- an access violation that looked like a
+  runtime defect and was a probe defect.
+* The operand of `system/stack/allocate` is a **slot count, not bytes**: ARM64
+  emits `sub sp, sp, x16, lsl #3` (with `x16 = (n + 1) and not 1`) and x64 emits
+  `shl rax, 3`, so 64 slots is 512 bytes on both. Verified by disassembly, after
+  an 8x-under-allocation theory had to be dropped for exactly this reason.
+
 # Red/System Idiomatic Patterns - Key Insights
 
 ## Reference

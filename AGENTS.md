@@ -1780,6 +1780,27 @@ its runtime" report is worth re-testing serially before it is believed.
   `<target>-SO` everywhere else. Red/System suite with 252:
   10593 tests / 12680 assertions / 12680 passed / 0 failed /
   0 compile-failures.
+  The same hand-glued suffix sat in the hermetic toolchain test, and CI only
+  reached it once the site audit stopped that leg early:
+  `toolchain-library-compile` died with `arg1: "unknown compilation target"`.
+  `toolchain-common.red` now carries the matching `library-target-for` -- a
+  top-level function, where qt-runner's lives inside its object and reads the
+  object's `target`, so the two are separate include trees rather than one
+  helper with two callers. No file includes both.
+- **A bundle signature cannot be verified from a copy of the executable.**
+  `Mach-APP-sign.red` signs with the bundle flag -- `codesign -dvvv` reports
+  `Format=app bundle with Mach-O thin (arm64)` and `Sealed Resources
+  version=2` -- so `codesign --verify` on such a binary re-reads
+  `Contents/Info.plist` *relative to the path it was given*. A copy of the
+  executable anywhere else then fails with `invalid Info.plist (plist or
+  signature have been modified)` no matter how healthy the binary is, which is
+  exactly what both Darwin CI steps were doing (`cp "$exe"
+  …signature-probe` and verify that). Measured on real Apple silicon against
+  the published `gui-console.app`: the in-place executable verifies 0, the
+  bundle verifies 0, a copy of the executable verifies 1, and tampering one
+  text byte or the Info.plist turns the in-place check to 1 -- so in-place plus
+  whole-bundle verification is strictly more coverage than the copy was, and
+  the steps now do exactly that.
 - Fixed: the hybrid frontend never ported the `as` type-cast compatibility
   check that upstream's `cast` performs (system/compiler.r, mirrored in
   system/compiler-core.red). Without it an invalid cast such as

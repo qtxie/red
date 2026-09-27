@@ -262,7 +262,7 @@ hermetic: func [/local result resources exports marker][
 
 	;-- a Red/System shared library, called back through its own export
 	compile-fixture "toolchain-library" reduce [
-		"-r" "-dlib" "-t" rejoin [target "-DLL"] "-o" "toolchain-library.dll" "library.reds"
+		"-r" "-dlib" "-t" library-target-for target "-o" "toolchain-library.dll" "library.reds"
 	]
 	check-image %toolchain-library.dll target
 	exports: pe-exports read/binary %toolchain-library.dll

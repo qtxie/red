@@ -365,12 +365,13 @@ jobs:
         done
         otool -L "$gui" | grep -q AppKit.framework
 
-        # The bundle signature covers the bundle; verifying a bare copy is what
-        # checks the executable's own signature.
-        cp "$gui" build/dist/gui-console.signature-probe
-        chmod 755 build/dist/gui-console.signature-probe
-        codesign --verify --strict --verbose=4 build/dist/gui-console.signature-probe
-        rm build/dist/gui-console.signature-probe
+        # Verify the executable's own signature where it lives: our signer marks
+        # a bundle signature as "app bundle", so codesign re-reads
+        # Contents/Info.plist for it and any copy outside the bundle fails with
+        # "invalid Info.plist" no matter the state of the binary. The bundle line
+        # then checks the seal over the whole tree.
+        codesign --verify --strict --verbose=4 "$gui"
+        codesign --verify --strict --verbose=4 build/dist/gui-console.app
 
     - name: Package toolchain (Windows)
       if: matrix.archive == 'zip'

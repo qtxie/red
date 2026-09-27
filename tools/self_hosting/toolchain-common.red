@@ -100,6 +100,18 @@ executable-suffix: func [target [string!]][
 	either windows-target? target [%.exe][%""]
 ]
 
+;-- A library target is named after its executable one, except on Windows, where
+;-- the registry spells the DLL twin after the GUI family name: the console
+;-- target MSDOS-X86-64 has no -DLL of its own, so gluing the suffix on gives
+;-- "unknown compilation target". qt-runner.red carries the same rule.
+library-target-for: func [name [string!]][
+	either windows-target? name [
+		rejoin [either name = "MSDOS-X86-64" ["Windows-X86-64"][name] "-DLL"]
+	][
+		rejoin [name "-SO"]
+	]
+]
+
 ;-- --------------------------------------------------------------- processes --
 
 quote-arg: func [value [string!]][

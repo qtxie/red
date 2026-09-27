@@ -117,10 +117,11 @@ jobs:
         otool -hv "$exe" | grep -q ARM64
         otool -L "$exe" | grep -q 'AppKit.framework'
         dyld_info -validate_only "$exe"
-        cp "$exe" macos-arm64-view-smoke.signature-probe
-        chmod 755 macos-arm64-view-smoke.signature-probe
-        codesign --verify --strict --verbose=4 macos-arm64-view-smoke.signature-probe
-        rm macos-arm64-view-smoke.signature-probe
+        # In place, not from a copy: a bundle signature is verified against
+        # Contents/Info.plist, so a bare copy of the executable always reports
+        # "invalid Info.plist".
+        codesign --verify --strict --verbose=4 "$exe"
+        codesign --verify --strict --verbose=4 "$app"
         rm -f macos-arm64-view-smoke.ok macos-arm64-view-smoke.error
         if ./$exe; then
           :

@@ -38,6 +38,50 @@ console the suite workflows drive. Verified at 243: `gui-console.red` builds
 for `Windows-X86-64` (3320320 bytes, PE sub-system 2), `Linux-X86-64`
 (3349048) and `Linux-ARM64` (2804864).
 
+### A green Windows suite job that ran nothing
+
+Six `test-windows-x64` jobs reported success in 0.6 s with **zero** lines of
+output. The harness had copied the seed console to
+`build/toolchain/red-console` -- no extension -- and the steps called it as
+`& build/toolchain/red-console <runner>`. PowerShell resolves an extensionless
+path as a *document*, not a program: ShellExecute returns success without
+starting a process, `$LASTEXITCODE` stays unset, and `exit $LASTEXITCODE` over an
+unset variable is **`exit 0`**. Measured on this box, with only an extensionless
+copy of the console present: calling it by that name prints nothing and leaves
+`$LASTEXITCODE` `<unset>`; the same file called as `red-console.exe` prints the
+script's output and sets `0`; and a step whose body is
+`& <extensionless> x; exit $LASTEXITCODE` exits **0**. `bash` has no such rule,
+which is why the three Unix jobs were the only ones telling the truth -- they
+have been failing for real the whole time this looked healthy.
+
+The one job that noticed did it by accident. `Windows-X64-All` gated with
+`if ($LASTEXITCODE -ne 0)`, and `$null -ne 0` is `$true`, so it printed five
+errors with nothing after the words: `run-red-unit-tests.red failed with exit
+code`. Same unset variable, opposite verdict -- which is the whole lesson: a
+gate that reads only a status can be fooled by a command that never started, so
+the gate has to ask for something a non-running process cannot produce.
+
+Two layers now, each verified by running it:
+
+* `setup-red-harness` keeps the `.exe`, exports the single spelling as
+  `$RED_CONSOLE` (all four workflows call the console through that, never a path
+  literal), and adds a **Prove the console runs** step that runs
+  `Red [] print "harness-probe"` and fails setup unless the marker comes back.
+  Against a missing console: `exited non-zero`. Against a program that runs and
+  prints nothing: `ran a script and printed nothing from it`. Against the real
+  console: silent pass.
+* `tools/ci/run-suite.ps1` is the one Windows gate for every suite step: it runs
+  each named runner and treats an **unset** exit code as a failure -- "the
+  console reported no exit code, so it never ran" -- never as a zero. Measured:
+  a passing runner exits 0; one that quits 3 gives `failed with exit code 3`; a
+  two-runner job where only the first fails still runs the second and reports
+  `1 of 2 runners failed`; an unset `$RED_CONSOLE` throws instead of proceeding.
+
+`$PSNativeCommandUseErrorActionPreference = $false` is set there on purpose: with
+`$ErrorActionPreference = 'Stop'` and that preference on (the direction PowerShell
+is moving), a non-zero native exit *throws*, which would end a multi-runner job at
+its first failure and hide the rest.
+
 ### A backend rejection that did not say what was wrong
 
 `emit-call-operation` had a single site for `unless all [compatibility = 1

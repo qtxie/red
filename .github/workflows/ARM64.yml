@@ -67,7 +67,7 @@ jobs:
           tools/self_hosting/run-red-compiler-tests.red \
           tools/self_hosting/run-red-view-headless-tests.red
         do
-          if ! build/toolchain/red-console "$runner"; then
+          if ! "$RED_CONSOLE" "$runner"; then
             echo "::error::$runner failed"
             failed=1
           fi

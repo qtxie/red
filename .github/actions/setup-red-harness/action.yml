@@ -1,7 +1,7 @@
 name: Set up the Red test harness
 description: >
   Leaves a toolchain at build/toolchain/bin/red-toolchain and the console that
-  drives the suite runners at build/toolchain/red-console.
+  drives the suite runners at $RED_CONSOLE.
 
   With source: build -- what build-toolchain.yml passes -- both come from the
   toolchain this run just built, the seed-<platform> artifact of
@@ -68,8 +68,12 @@ runs:
         $ErrorActionPreference = 'Stop'
         Expand-Archive -Path "build/toolchain/generation/red-toolchain-$env:PLATFORM.zip" `
           -DestinationPath 'build/toolchain/bin'
+        # Keep the .exe. PowerShell does not resolve an extensionless path to a
+        # program the way CreateProcess does -- it treats it as a document,
+        # ShellExecute returns success without starting anything, and
+        # $LASTEXITCODE stays unset. See the step that proves the console runs.
         Copy-Item -LiteralPath "build/toolchain/generation/red-cli-console-$env:PLATFORM.exe" `
-          -Destination 'build/toolchain/red-console'
+          -Destination 'build/toolchain/red-console.exe'
 
     - name: Unpack the toolchain (Unix)
       if: runner.os != 'Windows'
@@ -85,13 +89,40 @@ runs:
 
     - name: Make the console runnable
       shell: bash
+      env:
+        CONSOLE: build/toolchain/red-console${{ runner.os == 'Windows' && '.exe' || '' }}
       run: |
         set -euo pipefail
         # An artifact zip carries no executable bit, and macOS quarantines a
         # downloaded binary until the attribute is cleared.
-        chmod 755 build/toolchain/red-console
+        chmod 755 "$CONSOLE"
         if [[ "$(uname -s)" == Darwin ]]; then
-          xattr -dr com.apple.quarantine build/toolchain/red-console build/toolchain/bin || true
+          xattr -dr com.apple.quarantine "$CONSOLE" build/toolchain/bin || true
+        fi
+        # Publish the one spelling of the console path the workflows call. It
+        # carries the extension on Windows because that is the only name under
+        # which the shell there starts it -- see the step below.
+        echo "RED_CONSOLE=$CONSOLE" >> "$GITHUB_ENV"
+
+    # The console drives every suite, so a harness that leaves it unrunnable
+    # must say so here rather than let eight jobs report a clean run they never
+    # had. The trap is Windows-specific and silent: PowerShell resolves an
+    # extensionless path as a *document*, ShellExecute reports success without
+    # starting a process, $LASTEXITCODE stays unset, and `exit $null` is exit 0.
+    - name: Prove the console runs
+      shell: bash
+      run: |
+        set -euo pipefail
+        printf 'Red [] print "harness-probe"\n' > build/toolchain/harness-probe.red
+        if ! output="$("$RED_CONSOLE" build/toolchain/harness-probe.red 2>&1)"; then
+          echo "::error::$RED_CONSOLE exited non-zero"
+          printf '%s\n' "$output"
+          exit 1
+        fi
+        if [[ "$output" != *harness-probe* ]]; then
+          echo "::error::$RED_CONSOLE ran a script and printed nothing from it"
+          printf '%s\n' "$output"
+          exit 1
         fi
 
     # The generation is worth naming in the summary: a suite failure is read

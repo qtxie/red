@@ -53,10 +53,7 @@ jobs:
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
         RED_COMPILER_ARGUMENTS: -t Windows-X86-64
-      run: |
-        $ErrorActionPreference = 'Stop'
-        & build/toolchain/red-console tools/self_hosting/run-red-unit-tests.red
-        exit $LASTEXITCODE
+      run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-unit-tests.red
 
   Core-Release:
     runs-on: windows-latest
@@ -73,10 +70,7 @@ jobs:
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
         RED_COMPILER_ARGUMENTS: -r -t Windows-X86-64
-      run: |
-        $ErrorActionPreference = 'Stop'
-        & build/toolchain/red-console tools/self_hosting/run-red-unit-tests.red
-        exit $LASTEXITCODE
+      run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-unit-tests.red
 
   Core-Debug:
     runs-on: windows-latest
@@ -93,10 +87,7 @@ jobs:
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
         RED_COMPILER_ARGUMENTS: -d -t Windows-X86-64
-      run: |
-        $ErrorActionPreference = 'Stop'
-        & build/toolchain/red-console tools/self_hosting/run-red-unit-tests.red
-        exit $LASTEXITCODE
+      run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-unit-tests.red
 
   View-Headless:
     runs-on: windows-latest
@@ -113,10 +104,7 @@ jobs:
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
         RED_COMPILER_ARGUMENTS: -t Windows-X86-64
-      run: |
-        $ErrorActionPreference = 'Stop'
-        & build/toolchain/red-console tools/self_hosting/run-red-view-headless-tests.red
-        exit $LASTEXITCODE
+      run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-view-headless-tests.red
 
   Regression:
     runs-on: windows-latest
@@ -133,10 +121,7 @@ jobs:
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
         RED_COMPILER_ARGUMENTS: -t Windows-X86-64
-      run: |
-        $ErrorActionPreference = 'Stop'
-        & build/toolchain/red-console tools/self_hosting/run-red-compiler-tests.red
-        exit $LASTEXITCODE
+      run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-compiler-tests.red
 
   Red-System-Test:
     runs-on: windows-latest
@@ -154,12 +139,9 @@ jobs:
         RED_SYSTEM_COMPILER: build/toolchain/bin/red-toolchain.exe
         RED_SYSTEM_COMPILER_ARGUMENTS: -t Windows-X86-64
       run: |
-        $ErrorActionPreference = 'Stop'
-        & build/toolchain/red-console tools/self_hosting/run-red-system-tests.red
-        $suite = $LASTEXITCODE
-        & build/toolchain/red-console tools/self_hosting/run-red-system-compiler-tests.red
-        if ($suite -ne 0) { exit $suite }
-        exit $LASTEXITCODE
+        tools/ci/run-suite.ps1 `
+          tools/self_hosting/run-red-system-tests.red `
+          tools/self_hosting/run-red-system-compiler-tests.red
 
   Windows-X64-All:
     runs-on: windows-latest
@@ -190,23 +172,12 @@ jobs:
         RED_SYSTEM_COMPILER: build/toolchain/bin/red-toolchain.exe
         RED_SYSTEM_COMPILER_ARGUMENTS: -t Windows-X86-64
       run: |
-        $ErrorActionPreference = 'Stop'
-        $runners = @(
-          'tools/self_hosting/run-red-unit-tests.red'
-          'tools/self_hosting/run-red-system-tests.red'
-          'tools/self_hosting/run-red-system-compiler-tests.red'
-          'tools/self_hosting/run-red-compiler-tests.red'
-          'tools/self_hosting/run-red-view-headless-tests.red'
-        )
-        $failed = 0
-        foreach ($runner in $runners) {
-          & build/toolchain/red-console $runner
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::$runner failed with exit code $LASTEXITCODE"
-            $failed = 1
-          }
-        }
-        exit $failed
+        tools/ci/run-suite.ps1 `
+          tools/self_hosting/run-red-unit-tests.red `
+          tools/self_hosting/run-red-system-tests.red `
+          tools/self_hosting/run-red-system-compiler-tests.red `
+          tools/self_hosting/run-red-compiler-tests.red `
+          tools/self_hosting/run-red-view-headless-tests.red
 
     - uses: actions/upload-artifact@v7
       if: failure()

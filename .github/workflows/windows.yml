@@ -32,9 +32,15 @@ permissions:
 
 # The suites are driven by Red runners, so nothing here needs Rebol: Rebol
 # cannot run on ARM64 and the harness has to work everywhere Red does.
+#
+# MSDOS-X86-64 is the Windows console target; Windows-X86-64 names the GUI
+# sub-system, which every suite program here would fail to be (a Red one is
+# rejected outright for not carrying `Needs: View`, and a compiled binary that
+# did link would print into a console Windows never gave it). Only the shared
+# library keeps the GUI spelling, because that is the registry's name for it.
 env:
-  RED_TARGET: Windows-X86-64
-  RED_SYSTEM_TARGET: Windows-X86-64
+  RED_TARGET: MSDOS-X86-64
+  RED_SYSTEM_TARGET: MSDOS-X86-64
   RED_SYSTEM_LIBRARY_TARGET: Windows-X86-64-DLL
 
 jobs:
@@ -52,7 +58,7 @@ jobs:
       shell: pwsh
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_COMPILER_ARGUMENTS: -t Windows-X86-64
+        RED_COMPILER_ARGUMENTS: -t MSDOS-X86-64
       run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-unit-tests.red
 
   Core-Release:
@@ -69,7 +75,7 @@ jobs:
       shell: pwsh
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_COMPILER_ARGUMENTS: -r -t Windows-X86-64
+        RED_COMPILER_ARGUMENTS: -r -t MSDOS-X86-64
       run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-unit-tests.red
 
   Core-Debug:
@@ -86,7 +92,7 @@ jobs:
       shell: pwsh
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_COMPILER_ARGUMENTS: -d -t Windows-X86-64
+        RED_COMPILER_ARGUMENTS: -d -t MSDOS-X86-64
       run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-unit-tests.red
 
   View-Headless:
@@ -103,7 +109,7 @@ jobs:
       shell: pwsh
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_COMPILER_ARGUMENTS: -t Windows-X86-64
+        RED_COMPILER_ARGUMENTS: -t MSDOS-X86-64
       run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-view-headless-tests.red
 
   Regression:
@@ -120,7 +126,7 @@ jobs:
       shell: pwsh
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_COMPILER_ARGUMENTS: -t Windows-X86-64
+        RED_COMPILER_ARGUMENTS: -t MSDOS-X86-64
       run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-compiler-tests.red
 
   Red-System-Test:
@@ -137,7 +143,7 @@ jobs:
       shell: pwsh
       env:
         RED_SYSTEM_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_SYSTEM_COMPILER_ARGUMENTS: -t Windows-X86-64
+        RED_SYSTEM_COMPILER_ARGUMENTS: -t MSDOS-X86-64
       run: |
         tools/ci/run-suite.ps1 `
           tools/self_hosting/run-red-system-tests.red `
@@ -168,9 +174,9 @@ jobs:
       shell: pwsh
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_COMPILER_ARGUMENTS: -t Windows-X86-64
+        RED_COMPILER_ARGUMENTS: -t MSDOS-X86-64
         RED_SYSTEM_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_SYSTEM_COMPILER_ARGUMENTS: -t Windows-X86-64
+        RED_SYSTEM_COMPILER_ARGUMENTS: -t MSDOS-X86-64
       run: |
         tools/ci/run-suite.ps1 `
           tools/self_hosting/run-red-unit-tests.red `

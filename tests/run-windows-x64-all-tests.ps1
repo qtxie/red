@@ -84,7 +84,7 @@ function Invoke-PreparePhase {
 		# The hybrid toolchain is a native compiler: invoke it directly instead
 		# of driving red.r through the Rebol interpreter.
 		$compileArgs = @(
-			'-r', '-d', '-t', 'Windows-X86-64', '-o', $canaryExe, $canarySource
+			'-r', '-d', '-t', 'MSDOS-X86-64', '-o', $canaryExe, $canarySource
 		)
 		$compileOutput = Invoke-CheckedProcess $HybridCompiler $compileArgs $CompileTimeoutSeconds `
 			(Join-Path $artifactDir 'canary-compile.log')

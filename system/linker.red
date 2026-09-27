@@ -886,14 +886,15 @@ linker: context [
 		all [spec/1 = 'native not find [_div_ _udiv_ _i64_div_] name]
 	]
 
-	get-debug-funcs-size: func [job [object!] /local size sc name spec][
+	get-debug-funcs-size: func [job [object!] /local size sc name spec arity args][
 		sc: system-dialect/compiler
 		size: 0
 		foreach [name spec] job/symbols [
 			if is-native? name spec [
-				size: size + 1 + (length? undecorate name)
-					+ 16							;-- size of a record
-					+ sc/get-arity sc/functions/:name/4
+				set [arity args] sc/get-args-array name	;-- the pair build-debug-func-names writes
+				size: size + 16						;-- size of a record
+					+ 1 + (length? undecorate name)	;-- name and its null terminator
+					+ either arity > 0 [length? args][0]
 			]
 		]
 		size

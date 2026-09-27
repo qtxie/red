@@ -58,10 +58,9 @@ system-dialect: context [
 			quit-on-error
 		]
 
-		;-- The linker builds debug stack traces by asking for the arity and the
-		;-- argument type list of each emitted function. The RSIR function table
-		;-- owns that information, so expose the same two queries as the legacy
-		;-- Red/System compiler core does.
+		;-- The linker builds debug stack traces by asking for the argument list of
+		;-- each emitted function. The RSIR function table owns that information,
+		;-- so expose the same query as the legacy Red/System compiler core did.
 		debug-functions: none
 
 		invalidate-debug-functions: does [debug-functions: none]
@@ -81,11 +80,6 @@ system-dialect: context [
 				]
 			]
 			select debug-functions name
-		]
-
-		get-arity: func [name [word!] return: [integer!] /local record][
-			record: function-record name
-			either record [(length? record/7) / 3][0]
 		]
 
 		get-args-array: func [name [word!] /local record count array parameter id][

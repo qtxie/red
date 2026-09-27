@@ -82,6 +82,60 @@ Two layers now, each verified by running it:
 is moving), a non-zero native exit *throws*, which would end a multi-runner job at
 its first failure and hide the rest.
 
+### What the jobs reported once the console really ran
+
+Seven `test-windows-x64` jobs, one line per unit, and a total of nothing run:
+
+    *** Compilation Error: Windows target requires View module (`Needs: View` in the header)
+    Red unit suite totals: tests 0 assertions 0 passed 0 failed 0 compile-failures 63
+
+`windows.yml` still asked for `-t Windows-X86-64`, and since the sub-system split
+that is the **GUI** target -- `process-needs` (compiler/frontend.red:6064) rejects
+a Red program built for it unless it carries `Needs: View`. Verified with one
+command per spelling against the same `Red [] print "target-probe"`:
+`Windows-X86-64` gives that error, `MSDOS-X86-64` links 1973248 bytes and prints.
+A Red/System unit would have *linked* for the GUI target and then printed into a
+console Windows never attached, so the console spelling is right for the whole
+workflow; only `RED_SYSTEM_LIBRARY_TARGET` keeps the `Windows-X86-64-DLL` name,
+because that is what the registry calls it. `tests/run-windows-x64-all-tests.ps1`
+had the same split: its Rebol fallback path already passed `MSDOS-X86-64` while
+its hybrid path passed the GUI one, so the runner canary -- whose *output* is the
+assertion -- was built windowless. Nothing that failed here is a compiler defect;
+the false greens were hiding a stale spelling, exactly as they hid everything else.
+
+### The debug function table sized itself through a field the hybrid core has no right to
+
+`-d` on a **Linux** target could not link at all, which is the one real failure
+behind `#5013` in the Red compiler tests (Windows and Darwin pass it, because
+only ELF precomputes the table size):
+
+    *** Script Error: functions is unset in path sc/functions/:name/4
+    *** Stack: emit-system-file
+
+`linker/get-debug-funcs-size` summed the record sizes with
+`sc/get-arity sc/functions/:name/4` -- upstream's legacy core keeps a `functions`
+block and a four-word record layout, and the hybrid `system-dialect/compiler`
+context exposes only accessors over the RSIR function table. `ELF.red:577` is its
+only caller anywhere (`data-size` grows by the debug tables so that `.data`'s
+declared size covers bytes the writer appends later), while the writer
+`build-debug-func-names` already asks `sc/get-args-array name`. So the two agreed
+on nothing, and the query crashed before either could disagree. They now share one
+source: the size function calls the same accessor and counts what the writer
+appends -- a 16-byte record, the name and its null, and the argument bytes only
+when the arity is non-zero, which is exactly the writer's `either`. The now-unused
+`get-arity` is gone from `system/compiler-rsir-core.red`; `get-args-array` returns
+`[arity array]` and the array is one byte per parameter, so its length *is* the
+arity -- asking it rather than recomputing is what keeps the mirror true if the
+record layout ever moves again.
+
+Verified with the rebuilt toolchain, A/B on the same source and flags: 256 gives
+the error above and writes no output, 262 links (release 2906108 bytes, dev mode
+161552 plus `libRedRT.so`), and both binaries run to exit 0 under WSL. The dev
+mode pair is the shape `#5013` itself takes -- `Red [] do %s1.red` with
+`-d`, s1.red being the test's `recycle/off` + `#macro` + `comment` payload --
+and it exits 0 now. Windows `-d` is unchanged (2847232 bytes, prints, exit 0),
+since `PE.red` never called the size function.
+
 ### A backend rejection that did not say what was wrong
 
 `emit-call-operation` had a single site for `unless all [compatibility = 1

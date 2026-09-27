@@ -2299,6 +2299,23 @@ _hashtable: context [
 		;Let GC do the work?
 	]
 
+	;-- The refresh scratch map is rooted in `root` for the life of the process
+	;-- and reused by every hash operation that shifts indexes. Building it on
+	;-- first use put a 32 KB runtime-internal allocation inside whatever window
+	;-- the program happened to be measuring -- enough to fail a `stats` delta
+	;-- comparison -- so boot arms it before any user code runs.
+	boot: func [
+		/local
+			buf table [node!]
+	][
+		buf: alloc-bytes 4
+		table: init 1024 null HASH_TABLE_NODE_KEY 0
+		refresh-buffer: as red-hash! ALLOC_TAIL(root)
+		refresh-buffer/header: TYPE_MAP
+		refresh-buffer/node: node-handle-of buf
+		refresh-buffer/table: node-handle-of table
+	]
+
 	refresh: func [
 		node	[node!]
 		offset	[integer!]
@@ -2309,21 +2326,13 @@ _hashtable: context [
 		/local
 			s [series!]
 			h [hashtable!]
-			table buf [node!]
+			table [node!]
 			indexes p e keys index flags [int-ptr!]
 			chain [node!]
 			i c-idx idx part ii sh n [integer!]
 	][
 		if size > 30000 [return HASH_TABLE_ERR_REHASH]
 
-		if null? refresh-buffer [
-			buf: alloc-bytes 4
-			table: init 1024 null HASH_TABLE_NODE_KEY 0
-			refresh-buffer: as red-hash! ALLOC_TAIL(root)
-			refresh-buffer/header: TYPE_MAP
-			refresh-buffer/node: node-handle-of buf
-			refresh-buffer/table: node-handle-of table
-		]
 		table: resolve-node refresh-buffer/table
 
 		s: as series! node/value

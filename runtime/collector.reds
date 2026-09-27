@@ -18,6 +18,7 @@ collector: context [
 	verbose: 0
 	active?: no
 	state: GC_DONE
+	gc-frame: as ptr-ptr! 0							;-- frame that requested the current cycle
 	
 	#enum frame-type! [
 		FRAME_NODES
@@ -957,8 +958,15 @@ collector: context [
 		null
 	]
 
+	;-- Retain the series a root points at. `own?` says the root names the series
+	;-- header itself; a root that lands inside the buffer only makes that buffer
+	;-- reachable, it is not evidence about its cells. Deep-marking from an
+	;-- interior hit resurrects every object the stale buffer happens to still
+	;-- reference, and by the runtime's own rule a raw buffer pointer is dead at
+	;-- the next allocation, so no live object can depend on one.
 	mark-series-root: func [
-		s [series!]
+		s     [series!]
+		own?  [logic!]									;-- root names the header, not its payload
 		return: [logic!]
 		/local node [node!] unit [integer!]
 	][
@@ -972,8 +980,8 @@ collector: context [
 		if any [null? node node/value <> as int-ptr! s][return no]
 		keep :s/node
 		unit: GET_UNIT(s)
-		if unit = 1 [mark-hashtable-node node]
-		if all [unit = 16 s/flags and flag-gc-scan = 0][
+		if all [own? unit = 1][mark-hashtable-node node]
+		if all [own? unit = 16 s/flags and flag-gc-scan = 0][
 			s/flags: s/flags or flag-gc-scan
 			mark-values s/offset s/tail
 		]
@@ -1006,12 +1014,20 @@ collector: context [
 	;-- rewrite. Resolve conservative spill candidates through an allocator
 	;-- header before retaining them, so one live interior pointer does not keep
 	;-- every unrelated series in its 2 MiB frame alive.
+	;-- `root?` tells the two kinds of slot apart: a declared slot is written by
+	;-- the frame that owns it, so what it holds still counts as a reference,
+	;-- while the gap below it only carries arguments and spills of calls that
+	;-- have already returned. Nobody reads those addresses again, so a gap word
+	;-- is recorded for rewriting but cannot root the series it lands in -- doing
+	;-- so resurrected everything a completed call had touched. A node pointer is
+	;-- a reference in itself, so it roots from either kind of slot.
 	mark-stack-candidate: func [
-		sp     [ptr-ptr!]
-		store? [logic!]
-		refs   [ptr-ptr!]
+		sp      [ptr-ptr!]
+		store?  [logic!]
+		root?   [logic!]									;-- slot content is a reference
+		refs    [ptr-ptr!]
 		return: [ptr-ptr!]
-		/local p [int-ptr!] node [node!] s [series!] managed? [logic!]
+		/local p [int-ptr!] node [node!] s [series!] managed? [logic!] own? [logic!]
 	][
 		p: sp/value
 		if #either any [target = 'X86-64 target = 'ARM64] [
@@ -1031,7 +1047,7 @@ collector: context [
 				if all [s <> null node/value = as int-ptr! s][
 					keep-raw sp
 					node: as node! sp/value
-					mark-series-root as series! node/value
+					mark-series-root as series! node/value yes
 					return refs
 				]
 			]
@@ -1041,7 +1057,8 @@ collector: context [
 			(frames-list/find-series-frame p) <> null
 		][
 			s: find-series-owner p
-			managed?: all [s <> null mark-series-root s]
+			own?: (as int-ptr! s) = p
+			managed?: all [s <> null any [not root? mark-series-root s own?]]
 			either managed? [
 				if store? [refs: store-stack-ref p sp refs]
 			][
@@ -1076,7 +1093,7 @@ collector: context [
 			while [(as byte-ptr! s) < finish][
 				next: (as byte-ptr! s) + (size? series-buffer!) + s/size + SERIES_BUFFER_PADDING
 				if next > finish [fire [TO_ERROR(internal no-memory)]]
-				if s/flags and series-in-use <> 0 [mark-series-root s]
+				if s/flags and series-in-use <> 0 [mark-series-root s yes]
 				s: as series! next
 			]
 			p: p + 1
@@ -1425,6 +1442,17 @@ collector: context [
 		base': lib-bitarrays-base						;-- points to libRedRT's bitmap array
 		prev: frm
 		frm: as ptr-ptr! frm/value						;-- skip extract-stack-refs own frame
+		;-- The collector's own frames hold scratch, not references: its locals are
+		;-- either permanent roots that phases 1..10 already marked (symbol/table,
+		;-- global-ctx) or, in a debug build, declared slots no branch ever wrote.
+		;-- The latter still carry whatever a previous call left on that address,
+		;-- and conservative scanning turned one into a live object root that kept a
+		;-- dead 160 KB block alive for the rest of the process. The frame that
+		;-- called the collector owns the last word of that chain, so start above it.
+		while [all [frm > prev frm <= gc-frame]][
+			prev: frm
+			frm: as ptr-ptr! frm/value
+		]
 
 		until [
 			caller: either any [null? prev  prev = as ptr-ptr! -1  prev >= as ptr-ptr! stk-bottom][null][
@@ -1518,7 +1546,7 @@ collector: context [
 								]
 								if bits and 1 <> 0 [	;-- check if the slot is a pointer
 									entry: refs
-									refs: mark-stack-candidate sp store? refs
+									refs: mark-stack-candidate sp store? yes refs
 									if refs <> entry [nb: nb + 1]
 								]
 								bits: bits >>> 1		;-- next slot flag
@@ -1659,7 +1687,7 @@ collector: context [
 						sp: sp - 1
 						mark-stack-handle sp
 						entry: refs
-						refs: mark-stack-candidate sp store? refs
+						refs: mark-stack-candidate sp store? no refs
 						if refs <> entry [nb: nb + 1]
 					]
 				]
@@ -1818,6 +1846,8 @@ collector: context [
 	][
 		if GC_RUNNING = system/atomic/load :state [exit]
 		system/atomic/store :state GC_RUNNING			;-- camera widget relies on threads and reads this value.
+		gc-frame: as ptr-ptr! system/stack/frame
+		gc-frame: gc-frame/value						;-- skip the collector's own frames when scanning
 
 		#if debug? = yes [if verbose > 1 [
 			#if OS = 'Windows [platform/dos-console?: no]

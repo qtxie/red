@@ -164,6 +164,21 @@ qt: context [
 		output-dir
 	]
 
+	;-- A development build is satisfied by the runtime triple already sitting in
+	;-- the output directory and reuses it verbatim, so a suite can silently link
+	;-- against whatever was built there last: the dll decides which code runs and
+	;-- the include/defs pair decides which symbols the program side can see. All
+	;-- three have to go, and Red resolves a relative file against this runner's own
+	;-- directory rather than the working one, so the paths must be absolute.
+	clear-runtime: does [
+		foreach name [
+			rejoin ["libRedRT" library-suffix] %libRedRT-include.red %libRedRT-defs.red
+		][
+			name: out-path to file! name
+			if exists? name [delete name]
+		]
+	]
+
 	set-compiler: func [
 		env-var [string!]
 		/local value

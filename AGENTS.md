@@ -1018,12 +1018,16 @@ its runtime" report is worth re-testing serially before it is believed.
   returned a unset! value", which is what its commented-out `; Needs: 'View`
   used to hide. clipboard-test / draw-test / image-test stay out: they need
   the View backend.
-  The one failure is #5220, and it is runtime-side, not a codegen bug: the
-  emitted code does carry `stack/unwind-flush` after the discarded statement
-  (check with `--red-only`), three such statements in a row measure 0, and
-  moving the same statement behind a function call makes it measure 160216.
-  The number tracks allocation history, not liveness -- the interpreter
-  reports -284 where a compiled program reports 162484 on the same source.
+  The one failure used to be #5220, and what this file said about it was wrong:
+  "the emitted code does carry `stack/unwind-flush` after the discarded
+  statement (check with `--red-only`), three such statements in a row measure 0,
+  and moving the same statement behind a function call makes it measure 160216.
+  The number tracks allocation history, not liveness." It does not -- 162484 was
+  one dead 160000-byte block the collector was still retaining, and the
+  interpreter's -284 was the honest number. Fixed; see "Conservative stack
+  scanning rooted three things it should not". `regression-test-red` is 373
+  tests / 911 assertions / **0 failed** and `recycle-test` 40 / 39 / **0
+  failed** in all four mode combinations (dev, dev `-d`, `-r`, `-r -d`).
   MEASURING BEHIND A HARNESS ABORT: `regression-test-redc-5.red` dies at
   #4526 (`do bind [probe 1 ** 2] context [...]` prints `1` then `** has no
   value`, and `--assert 3 = load qt/output` raises a *syntax* error on that
@@ -1820,9 +1824,13 @@ its runtime" report is worth re-testing serially before it is believed.
   an allocation-heavy Red program (`append`/`map`/`collect` loops) gives
   identical output at `RED_GC_STRESS=1` and `=20`; the compiler itself
   compiles hello-red end to end at `RED_GC_STRESS=300` and the output
-  runs. Period 1 on a full compile is far too slow (minutes per source) --
-  use 200-500 for compiler-sized workloads. Non-numeric or absent values
-  leave the collector at its normal pacing. This is the standing vehicle
+  runs. Period 1 on a full compile is far too slow (minutes per source).
+  Note the variable is read by **every** Red process, the compiler included,
+  so exporting it around a suite slows the compiles and not just the units --
+  `=200` did not finish one `-d` unit compile in six minutes. Stress the run:
+  compile with the variable absent, then set it for the built binary.
+  Non-numeric or absent values leave the collector at its normal pacing.
+  This is the standing vehicle
   for the raw-pointer/GC-staleness audit; the `-v 4` UNTIL failure that
   once looked like its first catch turned out to be the macro collision
   above.
@@ -2457,6 +2465,108 @@ Two probe bugs met on the way, both mine and both worth remembering:
   emits `sub sp, sp, x16, lsl #3` (with `x16 = (n + 1) and not 1`) and x64 emits
   `shl rax, 3`, so 64 slots is 512 bytes on both. Verified by disassembly, after
   an 8x-under-allocation theory had to be dropped for exactly this reason.
+
+## Conservative stack scanning rooted three things it should not
+
+CI's four build legs were green and every `test-*` leg red, on two Windows units:
+`recycle-test` at 40 tests / 39 assertions / **3 failed** and
+`regression-test-red` at 373 / 911 / **1 failed** (`#5220`). Both only in the
+`-d` configuration. `#5220` asserts `s2 - s0 < 1000` around a reactor that drops
+an `append/dup [] 'x 10'000` block -- a 160000-byte buffer -- and it reported
+162484. That is not noise and not "allocation history": the block was still
+reachable.
+
+The collector scans the stack conservatively, and `-d` is what made the
+difference: the x64 backend homes **every declared local** in a frame slot and
+bitmap-marks the pointer-shaped ones, where a release build keeps most of them in
+registers the scan never sees. `do-mark-sweep` has two `c-string!` locals that
+only the debug-mode printing writes (`file`, `buf`); at `verbose = 0` no branch
+touches them, so the slots are bitmap-marked, `root?`-worthy -- and hold whatever
+the *previous* call left at that address. One such leftover named the header of a
+live 176-byte unit-16 object cell array, `mark-series-root` deep-scanned it
+because a unit-16 series is a cell array and the cells are marked, and that one
+false root kept the reactor's dead block alive for the rest of the process.
+
+Which frame the leftover sat in was the useful question, and the answer came from
+the walk itself: at iteration *k* of `scan-stack-refs`, `(prev + 1)/value` is a
+return address *inside the function that owns `frm`*, so subtracting the image
+base names the frame. `FRM12778752 caller269739288` is the return site of
+`scan-stack-refs`, so 12778752 was `do-mark-sweep`'s own frame (9 locals) and
+12778864 `do-cycle`'s; the walk stops there because `recycle` calls the collector
+straight from the program's top level.
+
+Three policies, each stated once and applied wherever it applies, rather than a
+special case for the one leftover that happened to hurt:
+
+* **`gc-frame`** -- `do-mark-sweep` records the caller's frame (`system/stack/frame`
+  /value, so the collector's own record is skipped twice over) and
+  `scan-stack-refs` walks past every frame at or below it before it starts
+  marking. The collector's frames hold *scratch*, not references: what it points
+  at is either a permanent root the earlier phases already marked (`symbol/table`,
+  `global-ctx`) or a slot no branch wrote. `gc-frame = 0` outside a cycle makes
+  the loop a no-op, and the invariant the walk still depends on holds on exit --
+  `frm` is the allocator's frame and `prev` its child, so `caller` and the gap
+  bound are unchanged.
+* **`root?`** -- a *declared* slot roots what it holds, because the frame that
+  owns it wrote it. A word in the gap below the locals does not: that region only
+  carries arguments and spills of calls that have already returned, and nobody
+  reads those addresses again. Such a word is still recorded in `refs` so the
+  rewrite pass can update it, but it cannot retain the series it lands in. A node
+  handle is a reference in itself, so it roots from either kind of slot.
+* **`own?`** -- a root that names a series *header* is evidence about the cells
+  inside it; a root that lands in the middle of a buffer is evidence about the
+  buffer only. Deep-marking from an interior hit resurrects every object that
+  stale buffer happens to still point at, and by the runtime's own rule (see "The
+  collector compacts: every raw buffer pointer dies at an allocation") a raw
+  buffer pointer is dead at the next allocation, so no live object can depend on
+  one.
+
+`recycle-test`'s three were the same class on the other side of the fence:
+`_hashtable/refresh` built its 1024-entry scratch map *on first use*, so one
+runtime-internal allocation landed inside whichever `recycle` window the program
+happened to be measuring. `_hashtable/boot`, called from `red/init` before any
+user code runs, arms it up front and takes it out of every window; `refresh` lost
+the lazy arm.
+
+### The harness lied about all of it, and that is the part to remember
+
+With the fix in, the `-d` full-suite run still reported `regression-test-red
+911/1` -- and, unasked for, a `json-test` compile failure on `undefined symbol:
+string`. Both were the stale-runtime trap this file already warns about, and
+neither was real: the suite's output directory carried a `libRedRT.dll` from Sep
+19, and a development build is *satisfied* by whatever triple
+(`libRedRT.dll` + `libRedRT-include.red` + `libRedRT-defs.red`) already sits in
+the output directory, reusing it verbatim. The runner's own guard had two defects
+-- it used `qt/join-file`, which resolves against this runner's directory rather
+than the output one, so it never fired at all, and it deleted only the dll, which
+is the half that decides *which code runs* but not the half that decides which
+symbols the program side can see. Reproved directly: compiling the probe into that
+directory gave `#5220 delta: 162484`, compiling it into a fresh one gave `280`.
+
+`qt/clear-runtime` (`tools/self_hosting/qt-runner.red`) deletes all three through
+`out-path`, and `run-red-unit-tests.red` calls it. A suite number is only worth
+what the runtime beside it is worth: when a dev-mode result contradicts a
+per-unit result, look at the timestamps of the triple before believing either.
+
+Verified: `regression-test-red` 373/911/**0** and `recycle-test` 40/39/**0** in
+dev, dev `-d`, `-r` and `-r -d`, each built by 262 into a clean output directory.
+The whole Core-Debug leg through the same runner is **9303 tests / 17997
+assertions / 17997 passed / 0 failed / 0 compile-failures**, the Core dev leg the
+same numbers, and the Red/System suite unchanged at 10593 / 12680 / 12680 / 0
+failed / 0 compile-failures. CI's leg compiles with the *toolchain*, not the
+hybrid compiler, and this bug is layout-dependent, so the shape was rebuilt and
+re-measured as CI runs it: `build-red-toolchain.red --bootstrap 262 --target
+MSDOS-X86-64` (7797760 bytes, 276 resources verified), then those seventeen
+units in `-d` dev mode through it -- 4253 tests / 8518 assertions / 0 failed / 0
+compile-failures, `json-test` among them at 45/47, which is the unit whose
+compile failure the stale `libRedRT-include.red` used to fake. Every one of the
+seventeen then ran again under `RED_GC_STRESS=200`, which forces a cycle and a
+`verify-compaction` sweep every 200 allocations and so re-lands the collector in
+these frames thousands of times: all exit 0, all `Number of Assertions Failed:
+0`. Stress the *run*, not the build -- see the `RED_GC_STRESS` bullet.
+`run-red-unit-tests.red` now takes unit names on the command line the way
+`run-red-compiler-tests.red` always has, which is how to re-run one unit in a
+configuration that costs ten minutes whole.
 
 # Red/System Idiomatic Patterns - Key Insights
 

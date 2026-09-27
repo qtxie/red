@@ -27,10 +27,9 @@ qt/output-dir: %build/self-hosting/red-unit-suite/
 qt/ensure-output-dir
 qt/set-compiler "RED_COMPILER"
 
-; The compiler reuses an existing libRedRT in the output directory. Drop a stale
-; runtime here so every run links against one built from current sources.
-libRedRT-file: qt/join-file qt/output-dir to file! rejoin ["libRedRT" qt/library-suffix]
-if exists? libRedRT-file [delete libRedRT-file]
+; The compiler links against a runtime it finds in the output directory instead
+; of building one. Drop the whole triple here so every run uses current sources.
+qt/clear-runtime
 
 ; Core console language units only (no View/GUI/clipboard/draw/image).
 unit-sources: [
@@ -62,12 +61,17 @@ unit-sources: [
 	%regression-test-red.red
 ]
 
+;-- Same convention as the compiler-tests runner: name units on the command line
+;-- to iterate on one instead of paying for the whole suite.
+requested: any [system/options/args copy []]
+wanted: func [relative [file!]][any [empty? requested find requested to string! relative]]
+
 foreach relative unit-sources [
-	qt/run-unit qt/join-file qt/source-dir relative
+	if wanted relative [qt/run-unit qt/join-file qt/source-dir relative]
 ]
 
 ;; The Rebol harness ran this one from its "extra" phase, outside the units
 ;; directory. It is folded in here so retiring that harness loses nothing.
-qt/run-unit %tests/source/runtime/unicode-test.red
+if wanted %unicode-test.red [qt/run-unit %tests/source/runtime/unicode-test.red]
 
 qt/report "Red unit suite totals:"

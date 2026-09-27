@@ -248,6 +248,7 @@ red: context [
 		arg-stk:	block/make-fixed root 20000
 		call-stk:	block/make-fixed root 15000			;-- 8000 call slots (20b/slot)
 		symbols: 	block/make-in root 4000
+		_hashtable/boot						;-- arm the hash refresh scratch
 		global-ctx: _context/create 4000 no no 0 CONTEXT_GLOBAL
 
 		case-folding/init

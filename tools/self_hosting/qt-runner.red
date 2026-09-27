@@ -268,7 +268,7 @@ qt: context [
 	read-summary: func [
 		text [string!]
 		name [file! string!]
-		/local tests asserts passes failures
+		/local tests asserts passes failures failed
 	][
 		either parse text [
 			thru "Number of Tests Performed:" some whitespace copy tests some digits
@@ -279,8 +279,18 @@ qt: context [
 			self/tests: self/tests + to integer! tests
 			self/asserts: self/asserts + to integer! asserts
 			self/passes: self/passes + to integer! passes
-			self/failures: self/failures + to integer! failures
+			failed: to integer! failures
+			self/failures: self/failures + failed
 			print ["run" name "tests:" tests "assertions:" asserts "failed:" failures]
+			;-- quick-test names every failing assertion on a line of its own
+			;-- (`--test-- <title> FAILED**************`), and this runner's log is
+			;-- all a remote run shows, so the name has to survive into it. A bare
+			;-- count sends you off to reproduce the whole unit by hand to find one
+			;-- title -- and a unit that is only red on that one machine is exactly
+			;-- the case where reproduction is the expensive part.
+			if failed > 0 [
+				foreach line split text "^/" [if find/case line "FAILED" [print line]]
+			]
 			true
 		][
 			print ["missing Quick-Test summary:" name]

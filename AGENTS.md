@@ -2568,7 +2568,51 @@ these frames thousands of times: all exit 0, all `Number of Assertions Failed:
 `run-red-compiler-tests.red` always has, which is how to re-run one unit in a
 configuration that costs ten minutes whole.
 
-# Red/System Idiomatic Patterns - Key Insights
+### The same policy, second instance: a gap word cannot root a node handle either
+
+`Run-ARM64-Tests` was red on one assertion -- `recycle-block-12`, `stats` after a
+recycle coming out 60 bytes *above* the figure before it, on Linux-ARM64 only.
+That unit is upstream's, every other target passes it, and the residue is exactly
+one 16-byte `unit:1` series that the sweep declines to free. Tracing the mark
+phase inside `libRedRT.so` (a dev-mode binary is a runtime swap away from the one
+the CI-shape build uses, so the tracer went into the runtime and the unit stayed
+put) named a single root: the last declared local slot of the program's own
+top-level frame, holding `0x16081`, whose registry entry still reads `abcde` -- a
+`node-handle!` left behind by `loop 100000 [append b copy s]`.
+
+Two findings, one fixed and one bounded:
+
+* **Fixed**: the 64-bit walk was probing *gap* words for handles. The gap is the
+  region below the declared locals and above the child frame -- outgoing arguments
+  and the spills of calls that have returned -- and 2dd963088 had already decided
+  it cannot root a *pointer*. A handle cannot root from it either, for the same
+  reason and with worse consequences: `#define node-handle! integer!`
+  (`runtime/definitions.reds:58`) makes a handle a bare index, `mark-stack-handle`
+  validates only `handle > 0 handle < node-registry/next`, and `next` is a
+  high-water mark (~113501 by the final cycle of this unit), so **any** small
+  integer in a dead slot roots whatever series happens to own that index. Measured
+  aliases in one cycle: `32` -> `context!`, `88` -> `any`, `144` -> `mid-down?`,
+  `192` -> `cleared`, `80` -> `Syllable` -- symbol ids, unrelated to the heap. Four
+  of the eight handle roots in that cycle came from gap words. The probe stays on
+  IA-32, which publishes no usable frame shape, and the argument that a call in
+  progress is already rooted by the callee's own argument pass is unchanged.
+* **Bounded**: the residue that remains is a *genuine* handle in a *declared* slot,
+  and no runtime test can separate it from a live one -- the compiler's bitmap says
+  only "not a pointer", which is true of every handle. So `recycle-block-12` now
+  asserts `rb12-mem2 - rb12-mem < 4096` with the measurement in a comment instead
+  of the strict decrease: the gate it owns is that 100000 x 16-byte copies come
+  back, which is 1.6 MB, so the tolerance is three orders of magnitude below the
+  regression it exists to catch. Which slots hold a stale handle is frame-layout
+  luck: 0 on x64 and 0 with the same shape inside a called function.
+
+Gating this on the `armbian` board has one trap: `recycle-test`'s last group,
+`recycle-issue-5325`, is the RAM-hungry one the file already excludes for ARM --
+it grows a 490 x 100000-cell block and the kernel kills it at ~1.2 GB against the
+board's 1.9 GB total. Comment that group out in a scratch copy to run the unit on
+the board (38 assertions, 0 failed, residue a steady 60); CI's ARM64 runner has the
+memory and runs all 39.
+
+
 
 ## Reference
 https://static.red-lang.org/red-system-specs.html

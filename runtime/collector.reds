@@ -671,10 +671,19 @@ collector: context [
 		_hashtable/mark :raw
 	]
 
-	;-- Mark a node-handle! found on the native stack. Handles are integer!
-	;-- and never appear in the pointer bitmap. unit-16 cell series deep-mark
-	;-- via mark-block-node. unit-1 is shallow-kept; validated hashtables are
+	;-- Mark a node-handle! found on the native stack. Handles are integer! and
+	;-- never appear in the pointer bitmap, so the bitmap walk probes the slots no
+	;-- pointer bit covers for one: unit-16 cell series deep-mark via
+	;-- mark-block-node, unit-1 is shallow-kept, and validated hashtables are
 	;-- deep-marked so nested keys/flags/blk stay live across GC.
+	;-- The probe is a range test -- the registry takes any handle in (0, next) --
+	;-- and a node-handle! is a bare index, so an unrelated small integer cannot be
+	;-- told apart from a reference: a symbol id in a dead slot roots the series that
+	;-- happens to own that index. The 64-bit walk therefore confines it to declared
+	;-- slots, where root?'s rule for pointers already applies: a call in progress
+	;-- has its arguments rooted by the callee's own arg pass, so a gap word only
+	;-- holds what a completed call left behind. IA-32 publishes no usable frame
+	;-- shape and still probes the whole body.
 	mark-stack-handle: func [
 		sp [ptr-ptr!]
 		/local
@@ -1671,9 +1680,11 @@ collector: context [
 					#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [idx: -1][idx: -3] ;-- locals index
 					disp: -1							;-- scanning direction
 				]
-				;-- node-handle! temps live in the gap below the reserved local frame
-				;-- and above the child frame (call args / expression spills). Formal
-				;-- local-slots cover only declared locals; scan the gap too.
+				;-- The gap below the reserved local frame holds this frame's outgoing
+				;-- arguments and the spills of calls that have returned. Formal
+				;-- local-slots cover only declared locals, so walk the rest -- but
+				;-- record it, do not root from it (see mark-stack-candidate), handles
+				;-- included.
 				;-- Layout (addresses decrease downward): args, frm, fixed, locals, temps, child.
 				#if any [target = 'X86-64 target = 'ARM64] [
 					sp-address: (as byte-ptr! frm) - ((4 + arg-slots + local-slots) * size? pointer!)
@@ -1685,7 +1696,6 @@ collector: context [
 					][prev][as ptr-ptr! system/stack/top]
 					while [sp > slot][
 						sp: sp - 1
-						mark-stack-handle sp
 						entry: refs
 						refs: mark-stack-candidate sp store? no refs
 						if refs <> entry [nb: nb + 1]

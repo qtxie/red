@@ -34,6 +34,7 @@ arm64-function-scratch!: alias struct! [
 	switch-effect-users [int-ptr!]
 	global-homes    [int-ptr!]
 	shadow-slots    [int-ptr!]
+	slot-refs       [int-ptr!]
 ]
 
 arm64-function-plan!: alias struct! [
@@ -2937,7 +2938,7 @@ arm64-codegen: context [
 			reserved-home-mask register-id register-width mask
 			float-home-count frame-allocation outgoing-size call-outgoing
 			typed-size
-			depth max-spill has-call argument-count frame-home-count total-slots status
+			depth max-spill has-call spill-cost argument-count frame-home-count total-slots status
 			call-return call-first-parameter call-parameter-count call-flags
 			call-reference call-source call-signature callee-slots
 			region-ordinal region-spill entry-base
@@ -2988,6 +2989,7 @@ arm64-codegen: context [
 			scratch/homes/id: 0
 			scratch/storage-types/id: parameter/type
 			scratch/storage-kinds/id: 0
+			scratch/slot-refs/id: 0
 			id: id + 1
 		]
 		depths: scratch/plan-depths
@@ -3004,6 +3006,10 @@ arm64-codegen: context [
 		max-spill: 0
 		outgoing-size: 0
 		has-call: plan/unwind
+		;-- Frame accesses *one* shadowed local would pay for in this function:
+		;-- the emit pass spills and reloads around OP_NATIVE and OP_CALL, and
+		;-- spills only around OP_SUB_CALL, so those sites count 2 and 1.
+		spill-cost: 0
 		stack-all?: false
 		frame-anchor?: false
 		home-mask: 0
@@ -3046,6 +3052,11 @@ arm64-codegen: context [
 					instruction/a = LOCAL_ADDRESS [
 						slot: instruction/b
 						if any [slot <= 0 slot > count][return fail-invalid 64 "plan-function/instruction/b#2"]
+						;-- Every access to a local names it here: the emit pass reads or
+						;-- writes the home at this instruction and nowhere else, so this
+						;-- tally is exactly what keeping the slot in memory costs. It is
+						;-- priced against spill-cost below.
+						scratch/slot-refs/slot: scratch/slot-refs/slot + 1
 						parameter: as rsir-parameter! (view/parameters
 							+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
 						; An address that escapes as a reference (`:local`) must live in
@@ -3182,6 +3193,11 @@ arm64-codegen: context [
 					scratch/stack-low/depth: 0
 				]
 				instruction/op = OP_NATIVE [
+					;-- The three arms that add to spill-cost are exactly where the emit
+					;-- pass calls emit-home-spills: a native and a call reload after the
+					;-- call and so cost two frame accesses each, a subroutine shares the
+					;-- caller's frame and costs one.
+					spill-cost: spill-cost + 2
 					either any [
 						instruction/a = CPU_REGISTER_NATIVE
 						instruction/a = CPU_REGISTER_SET_NATIVE
@@ -3370,6 +3386,7 @@ arm64-codegen: context [
 					depth: depth - 1
 				]
 				instruction/op = OP_CALL [
+					spill-cost: spill-cost + 2
 					argument-count: instruction/b
 					if argument-count < 0 [return fail-invalid 103 "plan-function/argument-count#41"]
 					; A call through a pointer keeps the callee below its
@@ -3506,6 +3523,7 @@ arm64-codegen: context [
 					region-spill: 0
 				]
 				instruction/op = OP_SUB_CALL [
+					spill-cost: spill-cost + 1
 					target: instruction/a
 					if any [
 						target <= 0 target > fn/instruction-count
@@ -3707,6 +3725,21 @@ arm64-codegen: context [
 					]
 				][
 					home-register: available-home-register reserved-home-mask home-mask
+					;-- Price the home. A pointer kept in a register has to be parked in
+					;-- a shadow slot and picked back up at every call site this function
+					;-- holds it across -- spill-cost frame accesses. The same pointer in a
+					;-- bitmap-marked frame slot costs one access per use and none at a
+					;-- call, because the collector rewrites the slot in place; record-bitmap
+					;-- already marks it the way it marks every other frame home. So a local
+					;-- the calls outnumber gets no register at all, and the cross product of
+					;-- call sites by pointer locals never forms. Answering -1 is the existing
+					;-- exhausted-pool path: demotion is not a new protocol, it is the one
+					;-- that has always carried the eleventh local.
+					if all [
+						spill-cost > 0
+						bitmap-marked-type? parameter/type false view
+						scratch/slot-refs/id <= spill-cost
+					][home-register: -1]
 					either home-register < 0 [
 						scratch/storage-kinds/id: STORAGE_FRAME
 					][
@@ -3808,12 +3841,15 @@ arm64-codegen: context [
 			]
 		]
 		total-slots: entry-base
-		;-- A pointer homed in a callee-saved register survives the call in the
-		;-- register, but a collection inside the call may move the buffer it
-		;-- points at. Every such local gets a shadow frame slot: spilled before
-		;-- each call, reloaded after, and marked in the stack bitmap so the
-		;-- collector rewrites the shadow while it walks the frame. Leaf
-		;-- functions keep none -- without a call nothing can collect.
+		;-- A pointer that kept its callee-saved register across a call survives
+		;-- the call in the register, but a collection inside the call may move
+		;-- the buffer it points at, so it gets a shadow frame slot: spilled
+		;-- before each call, reloaded after, and marked in the stack bitmap so
+		;-- the collector rewrites the shadow while it walks the frame. Leaf
+		;-- functions keep none -- without a call nothing can collect -- and the
+		;-- locals the calls outnumber keep none either, because home pricing
+		;-- above sent those to a marked frame slot, which needs no traffic at a
+		;-- call at all.
 		id: 1
 		while [id <= count][
 			scratch/shadow-slots/id: 0
@@ -10516,8 +10552,8 @@ arm64-codegen: context [
 		]
 		if header/function-count > (2147483647 / 7)[return fail-limit 867 "generate/limit#9"]
 		words: header/function-count * 7
-		if max-storage > ((2147483647 - words) / 4)[return fail-limit 868 "generate/limit#10"]
-		words: words + (max-storage * 4)
+		if max-storage > ((2147483647 - words) / 5)[return fail-limit 868 "generate/limit#10"]
+		words: words + (max-storage * 5)
 		if max-instructions > ((2147483647 - words) / 9)[return fail-limit 869 "generate/limit#11"]
 		words: words + (max-instructions * 9)
 		if header/instruction-count > ((2147483647 - words) / 9)[
@@ -10552,7 +10588,8 @@ arm64-codegen: context [
 		bitmap-sizes: bitmap-offsets + header/function-count
 		scratch/homes: bitmap-sizes + header/function-count
 		scratch/shadow-slots: scratch/homes + max-storage
-		scratch/storage-types: scratch/shadow-slots + max-storage
+		scratch/slot-refs: scratch/shadow-slots + max-storage
+		scratch/storage-types: scratch/slot-refs + max-storage
 		scratch/storage-kinds: scratch/storage-types + max-storage
 		scratch/stack-types: scratch/storage-kinds + max-storage
 		scratch/stack-kinds: scratch/stack-types + max-instructions

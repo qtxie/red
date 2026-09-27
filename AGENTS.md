@@ -1714,6 +1714,54 @@ its runtime" report is worth re-testing serially before it is believed.
   ~700k collect+verify cycles at period 1 on the smoke program with no
   false positive; fixed point 254 -> 255 -> 256, 255 vs 256 differing in
   5 bytes (PE timestamp, checksum, one output-name digit).
+- Improved (Phase 4 of the raw-pointer audit): **the shadows are priced, and
+  most locals decline them.** The protocol above costs a store+load pair *per
+  pointer-typed register home per call site*, so a function's spill traffic is
+  the product of its call count and its pointer-local count. On the 258
+  Linux-ARM64 console that product measured 45,166 spill sites holding 6.55
+  locals each, 814,704 instructions of pure protocol, 43% of the accesses
+  paying a second instruction (`sub x16, x29, #imm`) because the shadow region
+  is appended past the 255-byte `stur` window at the far end of the frame.
+  `plan-function` now prices the home instead of paying it blindly: the walk
+  that already counts calls tallies each slot's uses in `scratch/slot-refs`
+  (every access to a local names it at exactly one `OP_ADDRESS` /
+  `LOCAL_ADDRESS`, so that tally is complete) and accumulates the traffic the
+  shadows would emit (`2` per OP_NATIVE and OP_CALL, `1` per OP_SUB_CALL, which
+  is what the emit pass actually spills). A pointer-typed register home whose
+  uses do not outnumber that traffic is handed no register at all --
+  `home-register: -1`, the value the exhausted pool already answers, so the
+  local takes a frame slot through the path that has always carried the
+  eleventh local. A frame slot needs *no* traffic at a call:
+  `write-frame-bitmap` marks every `STORAGE_FRAME` home whose type is
+  bitmap-marked, the way x64 has always done, and the collector rewrites the
+  slot in place where it lies. Nothing in the emit pass changed -- it still
+  only obeys `scratch/shadow-slots` -- and a mispriced local is a size question
+  rather than a staleness one, because both protocols were already GC-correct;
+  the demotion therefore also sidesteps the far-end-of-frame tax entirely.
+  Measured at 260 against 258 with equal-length output names: Linux-ARM64
+  console 2,391,344 against 5,653,200 -- below the 2,393,560 shadows cost
+  *nothing* at gen 244 -- and its disassembly has zero spill sites and zero
+  address materialisations; Linux-ARM64 toolchain 6,779,256 against
+  19,864,712 (the x64 toolchain is 7.8 MB, so ARM64 is now the smaller one);
+  Linux-ARM64 GUI console 2,803,216 against 7,019,296; Darwin-ARM64
+  `recycle-test` 1,782,184 against 3,177,544. The Linux-X86-64 console is
+  byte-identical apart from the compiler's own variable-length build date
+  (text 2505383 / data 343136 on both generations). Gates: ARM64 Red/System
+  suite 41 units / 12652 assertions / 0 failed -- unit for unit the 254
+  numbers; ARM64 Red suite 57/57 cross-compiled and 56 run clean at 8768 tests
+  / 16815 assertions / 0 failed, the 57th (`recycle-test`) OOM-killed by the
+  1.9 GB board at 1107 MB peak and killed *the same way by the 258 binary* at
+  1148 MB, which is the board and not the backend -- it passes 39/39 on the Mac
+  under both generations; 16 allocation-heavy units at `RED_GC_STRESS=200`,
+  which runs `verify-compaction` after every forced cycle, all exit 0 with 0
+  failed; the priced console itself runs 200,000 appends plus a 5000-element
+  `collect` on the board. Windows x64 Red/System suite 10593/12680/0/0. A probe
+  function that uses one `byte-ptr!` local 20 times across 2 calls still keeps
+  X19 and still spills to its shadow, so this is the price declining, not the
+  protocol being switched off. Fixed point 259 -> 260 at 6521344 bytes; the
+  1606 differing bytes are the one-byte-shorter clock 259 embeds (it was built
+  by 258) shifting every absolute address, and 259 and 260 emit the same
+  2,391,344-byte ARM64 console.
 - Fixed: the suite runners asked for a DLL target that no longer exists.
   `run-red-system-tests.red` and `run-red-system-compiler-tests.red`
   derived the library target as `<executable-target>-DLL`, and since the

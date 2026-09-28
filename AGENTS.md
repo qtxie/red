@@ -2458,10 +2458,32 @@ fix `macOS-ARM64-View-Smoke` died with `Process completed with exit code 133`
 assertion -- `text alignment bounds are invalid: [[4 64] [28 37] [52 61] [4 29]]`
 (`tests/source/view/macos-arm64-smoke.red`), whose third condition asks a
 one-line top-aligned face for fewer dark rows than a two-line one and measures
-60 against 25. That is a *measurement* question in the smoke probe's
-`dark-text-bounds`, deliberately left alone: crashes outrank pixels, and a suite
-that reports a wrong number is already a different failure class than one that
-never returns.
+60 against 25. Deliberately left alone: crashes outrank pixels, and a suite that
+reports a number is already a different failure class than one that never
+returns.
+
+Measured anyway, to bound what that number means (`build/tmp-obc/bounds-probe.red`
+rebuilds the suite's four faces exactly and prints the dark-pixel count per row;
+same compiler, three readings):
+
+| face | Windows x64 (1x, 100x64 image) | macOS ARM64 on Apple silicon (2x, 200x128) | CI's own report |
+|---|---|---|---|
+| top | rows 5..15 | rows 7..25 | `[4 64]` |
+| middle | rows 5..15 | rows 55..73 | `[28 37]` |
+| bottom | rows 5..15 | rows 105..123 | `[52 61]` |
+| multiline | rows 3..15, 21..33 | rows 7..25, 40..56 | `[4 29]` |
+
+So on Apple silicon the assertion **passes**: the multiline band spans 49 rows
+against the single line's 18, and the three v-align bands are distinct and
+ordered. CI's `middle`/`bottom`/`multiline` bounds are the same measurements at
+1x -- the runner has no Retina display, its image is 100x64, and a 10-row band
+is what Windows' 1x reading gives for one line of this font. Only the `top`
+face differs: at 1x it carries dark pixels down to the last row of the image,
+which neither the 2x Mac nor Windows shows. That is a macOS-backend paint
+question in the 1x path of a top-aligned `text` face -- real, unreproduced
+locally, and not what the crash work was for. (Windows is no oracle here
+either: its three bands are identical, so it ignores `para/v-align` for a `text`
+face altogether, which the Darwin backend honours.)
 
 Two controls say the change reaches nothing else. The chain step 263 -> 264 is a
 fixed point at 6,520,832 bytes with 25 differing bytes (PE timestamp, checksum,

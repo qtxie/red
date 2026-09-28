@@ -84,7 +84,11 @@ rm -f "$compile_log" "$stdout_log" "$stderr_log" "$marker" "$error_file" "$stage
 rm -rf "$tampered_app"
 
 cd "$repo"
-if ! "$compiler" -r -d --show-func-map -t macOS-ARM64 -o "$output_dir/$name" "$source_file" \
+# Exactly the CI spelling: -r, no -d. A -d compile of a Red program reaches
+# runtime/debug-tools.reds' dump-globals, whose pointer arithmetic the ARM64
+# backend still refuses (arm64-codegen site 367), so line records are not
+# available on this target yet -- see the AGENTS.md note on that gap.
+if ! "$compiler" -r -t macOS-ARM64 -o "$output_dir/$name" "$source_file" \
 	>"$compile_log" 2>&1; then
 	cat "$compile_log" >&2
 	printf 'macOS ARM64 release View compilation failed.\n' >&2

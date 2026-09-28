@@ -508,6 +508,10 @@ OS-image: context [
 
 		rect: make-rect 0 0 width height
 		buf: allocate height * bytes-row * n
+		;-- CGContextDrawImage composites, it does not replace: an unset destination would
+		;-- leak the recycled bytes of this heap block through every transparent pixel.
+		;-- Zero is also float 0.0, so the premultiplied arm gets a defined destination too.
+		set-memory buf null-byte height * bytes-row * n
 		ctx: CGBitmapContextCreate
 			buf as Quartz-size! width as Quartz-size! height as Quartz-size! (8 * n)
 			as Quartz-size! (bytes-row * n) color-space info

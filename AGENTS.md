@@ -2808,6 +2808,142 @@ the notice is expected there and is not a reason to loosen the assertion.
 macOS hardware is still owed its reading: the `macmini` tunnel is down, so the next CI
 run is both the first capture under the new metric and the first run of the
 per-control capture group on that backend. Its verdict is in `.stages` and `.error`.
+(That debt is paid -- see "The macOS View suite is green on hardware, and two backend
+defects were underneath it" below. `macmini` is still down; `ssh gh-runner` -- an Apple
+silicon GitHub runner VM, macOS 15.7.9, `VirtualMac2,1` -- is the reachable hardware
+path, and note it is re-imaged between sessions, so `~/redview` has to be recreated.)
+
+## The macOS View suite is green on hardware, and two backend defects were underneath it
+
+The reading the last paragraph above asked for is in. The **shipped**
+`tests/source/view/macos-arm64-smoke.red`, built by `hybrid-compiler264.exe` with CI's
+exact spelling (`-r -t macOS-ARM64`) and run on Apple silicon:
+
+    macos-arm64-view-smoke.ok      MACOS-ARM64-VIEW-OK
+    macos-arm64-view-smoke.error   (absent)
+    macos-arm64-view-smoke.stages  all 15, screens .. window stress, teardown
+    crash reports                  none new; the process exits by itself
+
+That is every group the rewrite introduced -- v-align, h-align, styled, multiline, the
+per-control captures, PNG encoding, window stress, teardown -- passing on the backend
+they were written for. It took two fixes, both real defects in the macOS path, and
+neither of them a pixel disagreement about layout.
+
+### `to-image` composited into an uninitialised destination
+
+`OS-image/load-cgimage` (`runtime/platform/image-quartz.reds:509`) allocated the pixel
+buffer and handed it straight to `CGBitmapContextCreate`, then drew with
+`CGContextDrawImage`. That call **composites** -- `dst = src + dst * (1 - alpha)` -- it
+does not replace. The buffer comes from `allocate`, so it is recycled heap: every pixel
+the image does not cover kept whatever the previous tenant left, at full strength where
+alpha was 0. A `text` face's capture is mostly uncovered, so the bands the suite
+measures were contaminated by garbage rows, and the h-align trio could not be told
+apart. The fix is four bytes of intent before the context is created:
+
+    set-memory buf null-byte height * bytes-row * n
+
+Zero is also float `0.0`, so the premultiplied arm (`info: 2101h`, `n: 4`, then
+`unpremultiply-data`) gets a defined destination that is neutral for the composite --
+`unpremultiply-data` already guards `a = 0.0`, so the two halves agree.
+
+Measured after it, on hardware, the three horizontal-align faces of a 120x24 text come
+home as one 10-row band at three different columns, exactly as the `para/h-align` spec
+says, with no unexplained rows anywhere in the nine captures:
+
+| face | band (face coordinates) | ink | unexplained |
+|---|---|---|---|
+| `left` | `[4 13 0 44]` | 159 | `[]` |
+| `center` | `[4 13 38 82]` | 167 | `[]` |
+| `right` | `[4 13 75 119]` | 152 | `[]` |
+
+44 columns of ink at the left edge, centred (midpoint 60 of 120), and right-flush
+against column 119. The `ink-band` rewrite's own prediction -- "the next hardware
+reading is evidence either way" -- came out as *the metric was right and the capture
+was wrong*: the `[4 64]` that started this was never a 1x painting question.
+
+### A monitor handle was an object pointer, not a monitor identity
+
+The suite's last group is five short-lived windows (`view/no-wait` then `unview/only`).
+On hardware the *second* creation died: exit **254**, no `.error`, no PNG -- the silent
+shape this file already describes, because nothing in the suite had crashed yet and a
+GUI bundle has no stdout. A dedicated probe (`build/tmp-hal`, kept as a scratch tool not
+a test) measured the comparison that `get-current-screen` makes, 20 probes per window:
+
+    before:  flicker-primary: probes=20 unmatched=14   ;-- one run; another gave 0
+             after unview/only: stored=live=false any-match=false unmatched=20  (2..5)
+    after:   every window:    probes=20 unmatched=0, any-match=true at every survey
+
+`system/view/screens/1/state/1` is an `NSScreen*` recorded once, by `refresh-screens`
+at startup, and `refresh-screens` has exactly one caller (the init path -- `grep` finds
+no other). AppKit **recreates the `NSScreen` objects** when the display configuration
+moves, which on this VM happens during ordinary window teardown, and the churn is
+timing-dependent: one sample says `any-match=true` and the next iteration never matches
+again. So the recorded pointer stopped naming any live screen, `get-current-screen`
+matched nothing, and the fall-through handed `center-face` a `block!` for its
+`parent [object!]` -- `expect-arg`, `arg1: 'center-face arg2: block! arg3: 'parent`.
+
+The root fix is that a monitor handle must carry a *monitor identity*. `monitor-id`
+(`modules/view/backends/macOS/gui.reds:2632`) reads the one AppKit guarantees to be
+stable -- `deviceDescription[@"NSScreenNumber"]`, the `CGDirectDisplayID` -- and all
+three `CLASS_MONITOR` boxing sites store that number:
+
+    handle/make-at as red-value! alloc-tail s (monitor-id screen) handle/CLASS_MONITOR
+    handle/box     (monitor-id screen) handle/CLASS_MONITOR
+
+A `red-handle!` payload is a 32-bit `integer!` (`runtime/structures.reds:383-388`) --
+which is precisely why the backend routes real pointers through the externals registry
+(`set-handle` puts the pointer in `extID`, `get-handle` reads it back). A display ID is
+32 bits, so it *is* the identity the cell can hold, and `handle/box`/`make-at` leave
+`extID` at -1: no registry entry, nothing to retire. `handle/compare` then falls to
+`SIGN_COMPARE_RESULT(value1/value value2/value)` (`runtime/datatypes/handle.reds:154`),
+comparing identities rather than objects. The `test` backend already boxed
+`CLASS_MONITOR` that way (`handle/make-at ... 0`), so the shape has precedent, and the
+Windows backend keeps its `HMONITOR` untouched -- nothing outside `backends/macOS/`
+moved except the contract guard below.
+
+**`NSScreen` has no `displayID` property.** A first attempt sent `[screen displayID]`,
+on the belief that it is macOS 10.11+ API; the bundle aborted with
+`doesNotRecognizeSelector:` / SIGABRT, and the Xcode 16.4 SDK's `NSScreen.h` contains
+no `displayID` at all -- only `deviceDescription`. Read the header before trusting a
+remembered API name. `unsignedLongLongValue` (64-bit) rather than `unsignedIntValue` is
+what lets the existing `objc_msgSend` declaration carry the number, truncated by
+`as integer!` to the `uint32_t` it is.
+
+### The contract guard that made the crash legible
+
+`get-current-screen` (`modules/view/view.red:61`) declares `return: [object!]` and, on a
+miss, used to fall out of the `foreach` and return *foreach's series*. The fall-through
+now reports the primary screen, which is what "the screen to place this window on"
+means when the cursor's monitor cannot be identified -- and it keeps the declaration
+true for all three consumers (`view`'s `center-face/with`, `face/parent:`, `unview`'s
+`svs:` followed by `svs/pane`). This is the boundary defence, not the root fix: with it
+alone the suite also stops dying, but `unmatched=20` says the backend was still lost on
+every window after the first.
+
+### What `-d` still cannot do on ARM64, and why the driver changed
+
+`tests/run-macos-arm64-view-tests.sh` compiled with `-r -d --show-func-map` while CI
+compiles `-r -t macOS-ARM64`. The `-d` spelling **cannot build at all** for an ARM64
+target, on any generation reachable here:
+
+    *** codegen UNSUPPORTED: target feature is not implemented
+        check: arm64-codegen.reds :: compile-function/operation#201 (site 367)
+        phase=measure function=1459 instruction=142 op=BINARY (15) operands=12,0,0
+        function: red>dump-globals
+        source: /E/temp3/red/runtime/debug-tools.reds:165
+
+`dump-globals` is compiled in only by `-d`, and its pointer arithmetic lands in the
+register-plus-immediate arm, which accepts just ADD/SUBTRACT/MULTIPLY for that shape.
+So the script never ran end to end -- it died before its first `[ -f "$executable" ]`.
+It now uses CI's spelling, with a comment naming the gap. That gap is open, not
+fixed: no CI leg asks for `-d` on ARM64 (`windows.yml` is the only `-d` consumer, for
+`MSDOS-X86-64`), which is why a whole mode of the ARM64 backend has stayed untested.
+
+Re-measured on Windows with the same sources, so the shared `view.red` change is known
+not to bite the other native backend: headless View suite **148 tests / 246 assertions /
+0 failed**, native Win32 View suite through `run-windows-x64-view-tests.ps1`
+(-HybridCompiler 264, so it compiles the current `modules/`) **3 smoke runs, 107 tests,
+507 assertions, exit 0** -- byte-for-byte the numbers that leg gates on.
 
 ## A queue cell read without an acquire loses an item, and the single consumer then spins forever
 

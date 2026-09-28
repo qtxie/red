@@ -2629,6 +2629,25 @@ OS-draw-face: func [
 	if system/thrown = RED_THROWN_ERROR [system/thrown: 0]
 ]
 
+monitor-id: func [
+	{Stable identity of a screen: the CoreGraphics display it draws to.}
+	screen	[Cocoa-handle!]
+	return:	[integer!]
+	/local
+		desc	[Cocoa-handle!]
+		num		[Cocoa-handle!]
+][
+	;-- AppKit recreates the NSScreen objects whenever the display configuration
+	;-- moves, so an object pointer names a monitor only until the next such event.
+	;-- deviceDescription's NSScreenNumber is the CGDirectDisplayID: it names the
+	;-- monitor itself, and at 32 bits it is exactly what a handle cell's payload
+	;-- field can hold -- so the box needs no externals entry, just the number.
+	desc: objc_msgSend [screen sel_getUid "deviceDescription"]
+	num: objc_msgSend [desc sel_getUid "objectForKey:" NSString("NSScreenNumber")]
+	if num = 0 [return 0]
+	as integer! objc_msgSend [num sel_getUid "unsignedLongLongValue"]
+]
+
 fetch-screen-info: func [
 	screen	[Cocoa-handle!]
 	spec	[red-block!]
@@ -2653,7 +2672,7 @@ fetch-screen-info: func [
 	pair/make-at alloc-tail s as-integer frame/x y
 	pair/make-at alloc-tail s width height
 	float/make-at alloc-tail s COCOA_TO_F64(scale)
-	make-handle-at as red-value! alloc-tail s screen handle/CLASS_MONITOR
+	handle/make-at as red-value! alloc-tail s (monitor-id screen) handle/CLASS_MONITOR
 ]
 
 OS-fetch-all-screens: func [
@@ -2711,14 +2730,14 @@ OS-get-current-screen: func [
 					point/y >= frame/y
 					point/y < (frame/y + frame/h)
 				][
-					return make-handle-at stack/arguments screen handle/CLASS_MONITOR
+					return handle/box (monitor-id screen) handle/CLASS_MONITOR
 				]
 			]
 			i: i + 1
 		]
 	]
 	screen: objc_msgSend [objc_getClass "NSScreen" sel_getUid "mainScreen"]
-	make-handle-at stack/arguments screen handle/CLASS_MONITOR
+	handle/box (monitor-id screen) handle/CLASS_MONITOR
 ]
 
 OS-alert: func [

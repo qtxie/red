@@ -64,6 +64,12 @@ get-current-screen: function [
 ][
 	handle: system/view/platform/get-current-screen
 	foreach screen system/view/screens [if screen/state/1 = handle [return screen]]
+	;-- The backend names a display no face matches: those handles are OS identities
+	;-- (HMONITOR, NSScreen*) recorded when the screens were fetched, and a display
+	;-- reconfiguration or a recreated screen object retires them. Reporting the
+	;-- primary screen keeps the declared object! contract -- falling through here
+	;-- hands back foreach's series, and `center-face` then dies on a block!.
+	system/view/screens/1
 ]
 
 size-text: function [

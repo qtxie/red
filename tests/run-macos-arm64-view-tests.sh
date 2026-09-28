@@ -74,12 +74,13 @@ stdout_log="$output_dir/$name.stdout.log"
 stderr_log="$output_dir/$name.stderr.log"
 marker="$output_dir/$name.ok"
 error_file="$output_dir/$name.error"
+stage_file="$output_dir/$name.stages"
 tampered_app="$output_dir/$name-tampered.app"
 signature_details=
 
 mkdir -p "$output_dir"
 rm -rf "$app"
-rm -f "$compile_log" "$stdout_log" "$stderr_log" "$marker" "$error_file"
+rm -f "$compile_log" "$stdout_log" "$stderr_log" "$marker" "$error_file" "$stage_file"
 rm -rf "$tampered_app"
 
 cd "$repo"
@@ -173,6 +174,9 @@ if [ "$timed_out" = yes ]; then
 fi
 if [ "$status" -ne 0 ]; then
 	[ ! -s "$stderr_log" ] || cat "$stderr_log" >&2
+	# A run that dies before any check can report leaves only the journal:
+	# its last line names the section it entered and did not leave.
+	[ ! -f "$stage_file" ] || cat "$stage_file" >&2
 	printf 'macOS ARM64 View smoke exited with status %s.\n' "$status" >&2
 	exit "$status"
 fi

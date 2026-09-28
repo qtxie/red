@@ -2684,8 +2684,17 @@ rest of the group:
   differs from white, and a control's own capture is its bezel, whose colours
   track the user's appearance setting. What Red does own is the layout VID asked
   for (one `across` row, ordered, not overlapping) and a per-control capture
-  proving each face was created, told how to align, and paints: `scale >= 1`,
-  pixel size = face size at that scale, ink above a scale-squared floor.
+  proving each face was created, told how to align, and paints: `scale >= 1` and
+  ink above a scale-squared floor. The capture's *size* is deliberately not one of
+  the claims -- measured on Windows, the three `102x72` buttons of a panel all
+  return the same `128x90` image, ink included, so a native control's `to-image` is
+  not its face's rectangle on every backend, and asserting it there would test the
+  capture path instead of the control.
+- An empty `field`'s `text` is the backend's choice, not a Red contract: Windows
+  native View leaves it `none!` where the terminal engine initializes `""` (both
+  measured, same spec line `field 150x28`). The check therefore rejects only a
+  value-shaped thing in a text facet, and the field that *does* carry text is
+  covered by the facet-update round trip.
 - `ink-count` compares against the capture's own top-left pixel rather than a
   hard-coded white, so "did this face render" keeps its meaning when the user's
   appearance is dark; and `backing-scale` guards a zero-height face, because a
@@ -2735,6 +2744,70 @@ worth reading -- so the band numbers a run measured are reachable *only* through
 `fail`'s `write error-file`. That is why the assertions put their whole case in one
 string via `report-bands` instead of printing progress: a red job's log is the
 error file plus the PNG, and nothing else.
+
+### A suite that can die without speaking is not a suite
+
+The first hardware run after that rewrite did not fail -- it died. Exit **254**, and
+the artifact step uploaded four files: no `.error`, no `.png`, no `.ok`. 254 is what
+a Red program exits on an uncaught script error, and the timing (5.4 s against the
+previous run's 4.2 s to reach the band assertion) says the new metric did its job and
+let the run pass v-align into the per-control capture group, which had never executed
+on macOS. So the rewrite's own first defect was that **silence was possible**: a
+check that never gets to run cannot report, and nothing in the suite said how far the
+run had got.
+
+Three layers, each verified by running the whole file as a Windows native View build
+(same source, platform gate replaced, `fail` patched to print-and-continue):
+
+* A journal: `mark "<section>"` at 15 boundaries, `write/append stage-file rejoin
+  [name newline]`, and both the workflow step and `tests/run-macos-arm64-view-tests.sh`
+  `cat` it on any non-zero exit. A death no check can report still names the section
+  it entered and did not leave.
+* One guarded capture accessor, `capture`, for all four `to-image` sites: it `try`s
+  the call, then refuses a non-image, a zero extent, or a capture whose `(1x1)`
+  accessor answers no `tuple!`. The middle layer is the one that matters on Darwin --
+  `OS-to-image` returns `none-value` when `face-handle?` is zero
+  (`modules/view/backends/macOS/gui.reds:2544`), and the unguarded version handed that
+  `none!` straight to `backing-scale`, whose `image [image!]` argument then raises an
+  argument-type Script Error. Uncaught, that is exit 254 with nothing to read: the
+  exact reported shape, found by reading the backend rather than the runner.
+* The PNG codec call runs under `try` too, since it is the other place a capture's
+  internals can speak through an error instead of a message.
+
+Trap met writing the third layer, and it is a Red rule worth keeping: **`result: try
+[save/as file image 'png]` raised `*** Script Error: result needs a value`.**
+`save/as` produces no value, assigning an unset! leaves the word *unset*, and reading
+it on the next line is the error -- so the guard became the failure it was meant to
+prevent: the run printed that Script Error, stopped with `png encoding` as its last
+journal line, and never wrote the marker. The block has to end in something that
+yields a value (`... 'png true]`). A `try` wrapper is only safe when its body cannot
+return nothing.
+
+The "GUI stdout is lost" premise was checked as well, and it is the *bundle context*,
+not a flush bug: POSIX `print` goes through libc `putchar`
+(`runtime/platform/POSIX.reds:284 print-UCS2`), and on Linux all three exit shapes --
+normal end, `quit`, uncaught error -- delivered their text both through `| cat` and to
+a redirected file. Nothing is buffered away; a macOS `.app` started from a CI shell
+just has nowhere to put it, which is what the two files above are for.
+
+The Windows reading of the rewritten groups, being the only backend reachable here:
+exit 0, marker written, all 15 stages, the PNG encoded and deleted, and exactly one
+notice left --
+
+    vertical text alignment is invalid in a 64 face:
+      [6 16 1 50 79] -- unexplained dark rows [y count] [6 1] of a 125x80 capture
+      [36 46 1 50 79] -- ...
+      [6 16 1 50 79] -- ...
+
+which is the Windows backend's own gap, not the metric's: top and bottom come out
+byte-identical because it does not honour `para/v-align` for a `text` face, and
+`middle` starts at row 36 of a 64-tall face, below the `centre` anchor the assertion
+uses. Windows is gated by `View-Native` and its 107-test suite, not by this file, so
+the notice is expected there and is not a reason to loosen the assertion.
+
+macOS hardware is still owed its reading: the `macmini` tunnel is down, so the next CI
+run is both the first capture under the new metric and the first run of the
+per-control capture group on that backend. Its verdict is in `.stages` and `.error`.
 
 ## A queue cell read without an acquire loses an item, and the single consumer then spins forever
 

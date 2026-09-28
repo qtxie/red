@@ -12,6 +12,16 @@ error-file: either string? output-dir [
 ][%macos-arm64-view-smoke.error]
 if exists? marker [delete marker]
 if exists? error-file [delete error-file]
+stage-file: either string? output-dir [
+	to file! rejoin [output-dir "/macos-arm64-view-smoke.stages"]
+][%macos-arm64-view-smoke.stages]
+if exists? stage-file [delete stage-file]
+
+;-- A GUI bundle has no readable stdout, so these files are the whole report:
+;-- the error file says what a check measured, the journal says how far the run
+;-- got, which is the only evidence left when the process dies before any check
+;-- can speak. Both are written through, so a crash still leaves them behind.
+mark: func [name [string!]][write/append stage-file rejoin [name newline]]
 
 fail: func [message [string!]][
 	print rejoin ["MACOS-ARM64-VIEW-ERROR: " message]
@@ -20,6 +30,7 @@ fail: func [message [string!]][
 	quit/return 1
 ]
 
+mark "screens"
 unless system/platform = 'macOS [fail "wrong platform"]
 unless all [block? system/view/screens not empty? system/view/screens][
 	fail "no screens discovered"
@@ -174,6 +185,7 @@ result: try/all [
 	]
 ]
 if error? result [fail mold result]
+mark "window built"
 
 repeat count 20 [
 	do-events/no-wait
@@ -182,7 +194,14 @@ repeat count 20 [
 
 unless create-count = 1 [fail "on-created actor was not dispatched"]
 unless time-count = 1 [fail "native time actor was not dispatched"]
-unless string? empty-field-face/text [fail "empty field text was not initialized"]
+;-- What an empty field's text is -- an empty string or none -- belongs to the
+;-- backend: measured, Windows native View leaves it none! where the terminal
+;-- engine initializes it to "". The field that does carry text is checked after
+;-- the facet updates below. All this row owns is that creating the control did
+;-- not write a value-shaped thing (a handle, a number) into a text facet.
+unless any [string? empty-field-face/text none? empty-field-face/text][
+	fail rejoin ["empty field text is not a text value: " mold empty-field-face/text]
+]
 do-actor clicker none 'click
 unless click-count = 1 [fail "click actor was not dispatched"]
 
@@ -193,6 +212,7 @@ unless all [radio-on/data radio-result/text = "on"][
 	fail "radio selection did not dispatch its change actor"
 ]
 
+mark "facet updates"
 field-face/text: "updated"
 unicode-face/text: unicode-text
 area-face/text: unicode-text
@@ -224,6 +244,7 @@ unless all [
 
 unless all [block? window/menu not empty? window/menu][fail "native menu was not created"]
 
+mark "rich text caret and metrics"
 append canvas/draw reduce ['pen black 'text 4x4 rich-box]
 show canvas
 repeat count 10 [do-events/no-wait wait 0.01]
@@ -250,6 +271,7 @@ unless all [point2D? measured measured/x > 0.0 measured/y > 0.0][
 	fail "Unicode text measurement failed"
 ]
 
+mark "window resize"
 target-size: window/size + 20x20
 window/size: target-size
 show window
@@ -268,6 +290,38 @@ backing-scale: func [
 	return:	[integer!]
 ][
 	either zero? face/size/y [0][to integer! (image/size/y / face/size/y)]
+]
+
+capture: func [
+	{A face capture that reports its own failure: a bad to-image must not crash.}
+	face	[object!]
+	return:	[image!]
+	/local image pixel
+][
+	image: try [to-image face]
+	if any [
+		not image? image
+		not pair? image/size
+		image/size/x <= 0
+		image/size/y <= 0
+	][
+		fail rejoin [
+			"to-image on a " mold face/type " face produced "
+			either image? image [rejoin ["size " mold image/size]][mold image]
+		]
+	]
+	;-- Read one pixel before any scan: a Darwin capture is built from a CGImage by
+	;-- OS-to-image, which can hand back none! for a face without a native view, so
+	;-- a capture that answers no pixels is named here rather than ten thousand
+	;-- accessor faults later -- and a script error in a GUI bundle exits 254
+	;-- without ever reaching the report files.
+	pixel: try [image/(1x1)]
+	unless tuple? pixel [
+		fail rejoin [
+			"to-image on a " mold face/type " face answers no pixels: " mold pixel
+		]
+	]
+	image
 ]
 
 ink-count: func [
@@ -291,17 +345,21 @@ ink-count: func [
 ]
 
 check-control: func [
-	{A native control must capture at its face's size and show that it draws.}
+	{A native control must be laid out where VID put it, and must paint.}
 	face	[object!]
 	label	[string!]
 	/local image scale ink
 ][
-	image: to-image face
+	image: capture face
 	scale: backing-scale image face
 	ink: ink-count image
+	;-- The capture's own size is deliberately not asserted: a native control's
+	;-- to-image is not its face's rectangle on every backend -- measured on
+	;-- Windows, the three 102x72 buttons of a panel all captured the same 128x90
+	;-- image, ink included -- so claiming the geometry here would test the
+	;-- capture path, not the control. That it renders is the claim that holds.
 	unless all [
 		scale >= 1
-		image/size/x = (face/size/x * scale)			;-- x and y report one factor
 		ink > (20 * scale * scale)					;-- a bezel paints rows, not a stray pixel
 	][
 		fail rejoin [
@@ -323,6 +381,7 @@ check-control: func [
 ;-- below. A native control answers for the layout VID gave it, and for a capture
 ;-- proving it was created, told how to align -- change-para's button arm runs at
 ;-- make-view for all three of left, center and right -- and paints.
+mark "control layout"
 show button-align-panel
 repeat count 5 [do-events/no-wait wait 0.01]
 pane: button-align-panel/pane
@@ -346,12 +405,10 @@ while [not tail? walk][
 	]
 	walk: next walk
 ]
+mark "per-control captures"
 repeat i 3 [check-control pane/:i rejoin ["pane face " i]]
 
-snapshot: to-image canvas
-unless all [image? snapshot snapshot/size/x > 0 snapshot/size/y > 0][
-	fail "to-image returned an invalid image"
-]
+snapshot: capture canvas
 
 corner: snapshot/(1x1)
 center: snapshot/(as-pair (snapshot/size/x / 2) (snapshot/size/y / 2))
@@ -362,7 +419,7 @@ text-visible?: func [
 	return:	[logic!]
 	/local image
 ][
-	image: to-image face
+	image: capture face
 	(ink-count image) > 10
 ]
 unless text-visible? base-text-face [fail "base face text was not rendered"]
@@ -432,7 +489,7 @@ text-band: function [
 	return: [block!]
 	/local image scale
 ][
-	image: to-image face
+	image: capture face
 	scale: backing-scale image face
 	ink-band image either zero? scale [1][scale]
 ]
@@ -472,6 +529,7 @@ within?: func [
 	delta <= tolerance
 ]
 
+mark "text bands shown"
 show [
 	left-align-face center-align-face right-align-face
 	plain-styled-face styled-face
@@ -480,6 +538,7 @@ show [
 ]
 repeat count 5 [do-events/no-wait wait 0.01]
 
+mark "v-align bands"
 face-height: top-align-face/size/y
 centre: face-height / 2
 quarter: face-height / 4
@@ -508,6 +567,7 @@ unless all [
 	]
 ]
 
+mark "h-align bands"
 face-width: left-align-face/size/x
 edge: face-width / 4
 left-band: text-band left-align-face
@@ -533,6 +593,7 @@ unless all [
 	]
 ]
 
+mark "styled bands"
 plain-band: text-band plain-styled-face
 styled-band: text-band styled-face
 unless all [
@@ -549,6 +610,7 @@ unless all [
 	]
 ]
 
+mark "multiline bands"
 single-band: text-band single-line-base-face
 multi-band: text-band multiline-align-face
 single-height: band-height single-band
@@ -566,15 +628,22 @@ unless all [
 	]
 ]
 
+mark "png encoding"
 if system/build/date/year = 1970 [fail "compiler build date is still the Unix epoch"]
 
 if exists? snapshot-file [delete snapshot-file]
-save/as snapshot-file snapshot 'png
+;-- A codec that raises here would leave nothing but an exit code, so let it speak.
+;-- The trailing logic! is not decoration: `save/as` produces no value, and
+;-- assigning an unset! to a word leaves that word unset, so reading it right back
+;-- would raise `result needs a value` -- the guard would be the new failure.
+result: try [save/as snapshot-file snapshot 'png true]
+if error? result [fail rejoin ["PNG encoding failed: " mold result]]
 unless all [exists? snapshot-file not empty? read/binary snapshot-file][
 	fail "PNG encoding produced no data"
 ]
 delete snapshot-file
 
+mark "window stress"
 repeat count 5 [
 	secondary: view/no-wait [
 		title "Red Apple Silicon window stress"
@@ -590,6 +659,7 @@ repeat count 5 [
 	recycle
 ]
 
+mark "teardown"
 unview/all
 repeat count 20 [do-events/no-wait]
 

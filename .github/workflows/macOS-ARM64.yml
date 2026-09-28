@@ -122,12 +122,15 @@ jobs:
         # "invalid Info.plist".
         codesign --verify --strict --verbose=4 "$exe"
         codesign --verify --strict --verbose=4 "$app"
-        rm -f macos-arm64-view-smoke.ok macos-arm64-view-smoke.error
+        rm -f macos-arm64-view-smoke.ok macos-arm64-view-smoke.error macos-arm64-view-smoke.stages
         if ./$exe; then
           :
         else
           status=$?
           test ! -f macos-arm64-view-smoke.error || cat macos-arm64-view-smoke.error
+          # A run that dies before any check can report leaves only the journal:
+          # its last line names the section it entered and did not leave.
+          test ! -f macos-arm64-view-smoke.stages || cat macos-arm64-view-smoke.stages
           exit "$status"
         fi
         test "$(cat macos-arm64-view-smoke.ok)" = MACOS-ARM64-VIEW-OK

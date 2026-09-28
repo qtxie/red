@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
 	[string]$Compiler,
+	[string]$HybridCompiler,
 	[string]$Dumpbin,
 	[int]$CompileTimeoutSeconds = 240,
 	[int]$RunTimeoutSeconds = 60,
@@ -11,7 +12,18 @@ param(
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 . (Join-Path $PSScriptRoot 'windows-x64-test-tools.ps1')
-$Compiler = Resolve-RedTestCompiler $Compiler $root
+# -HybridCompiler is a native Red toolchain: it compiles the sources itself, so
+# nothing on this path needs Rebol. Without it the compile goes through red.r
+# under the Rebol interpreter named by -Compiler.
+if ($HybridCompiler) {
+	if (-not (Test-Path -LiteralPath $HybridCompiler -PathType Leaf)) {
+		throw "Hybrid compiler not found: $HybridCompiler"
+	}
+	$HybridCompiler = (Resolve-Path -LiteralPath $HybridCompiler).Path
+}
+else {
+	$Compiler = Resolve-RedTestCompiler $Compiler $root
+}
 $Dumpbin = Resolve-VcTool 'dumpbin' $Dumpbin
 $artifactDir = Join-Path $root 'build\windows-x64-view-tests'
 $executable = Join-Path $artifactDir 'view-smoke.exe'
@@ -42,9 +54,10 @@ function Invoke-CheckedProcess {
 		$exitCode = $process.ExitCode
 		$output = (Get-Content -LiteralPath $OutputPath -Raw -ErrorAction SilentlyContinue) +
 			(Get-Content -LiteralPath $stderr -Raw -ErrorAction SilentlyContinue)
-		if ($null -ne $exitCode -and $exitCode -ne 0) {
-			throw "$FilePath exited with $exitCode`n$output"
-		}
+		# A status that cannot be read is not a zero: it means this script never
+		# learned whether the process succeeded.
+		if ($null -eq $exitCode) { throw "$FilePath reported no exit code`n$output" }
+		if ($exitCode -ne 0) { throw "$FilePath exited with $exitCode`n$output" }
 		$output
 	}
 	finally {
@@ -73,7 +86,34 @@ function Invoke-BoundedGuiProcess {
 		$process.Kill($true)
 		throw "$FilePath timed out after $TimeoutSeconds seconds"
 	}
+	# The timed overload returns as soon as the process signals, before the
+	# redirected streams have been drained and the exit status cached; the untimed
+	# wait is what completes that bookkeeping. A status still missing afterwards
+	# means this script never learned whether the run succeeded, which is not a 0.
+	$process.WaitForExit()
+	$process.Refresh()
+	if ($null -eq $process.ExitCode) { throw "$FilePath reported no exit code" }
 	$process.ExitCode
+}
+
+function Invoke-RedCompile {
+	param(
+		[Parameter(Mandatory)][string]$Source,
+		[Parameter(Mandatory)][string]$Target,
+		[Parameter(Mandatory)][string]$LogPath
+	)
+
+	# Both spellings ask for the same build: release with debug info, for the
+	# Windows console target -- the View module needs no GUI sub-system here.
+	$flags = @('-r', '-d', '-t', 'MSDOS-X86-64', '-o', $Target, $Source)
+	if ($HybridCompiler) {
+		Invoke-CheckedProcess $HybridCompiler $flags $CompileTimeoutSeconds $LogPath
+	}
+	else {
+		Invoke-CheckedProcess 'cmd.exe' `
+			((@('/c', $Compiler, '-cqs', (Join-Path $root 'red.r'))) + $flags) `
+			$CompileTimeoutSeconds $LogPath
+	}
 }
 
 function Assert-NoCompilerWarnings {
@@ -108,19 +148,17 @@ function Assert-WindowLongPtrSource {
 }
 
 try {
-	if (-not (Test-Path -LiteralPath $Compiler -PathType Leaf)) { throw "Compiler not found: $Compiler" }
+	if (-not $HybridCompiler -and -not (Test-Path -LiteralPath $Compiler -PathType Leaf)) {
+		throw "Compiler not found: $Compiler"
+	}
 	if (-not (Test-Path -LiteralPath $Dumpbin -PathType Leaf)) { throw "dumpbin not found: $Dumpbin" }
 	Assert-WindowLongPtrSource
 	New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
 	Remove-Item -LiteralPath $executable,$marker -Force -ErrorAction SilentlyContinue
 
-	$compileArgs = @(
-		'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d',
-		'-t', 'MSDOS-X86-64', '-o', $executable,
-		(Join-Path $root 'tests\source\view\windows-x64-minimal.red')
-	)
-	$compileOutput = Invoke-CheckedProcess 'cmd.exe' $compileArgs $CompileTimeoutSeconds `
-		(Join-Path $artifactDir 'compile.log')
+	$compileOutput = Invoke-RedCompile `
+		(Join-Path $root 'tests\source\view\windows-x64-minimal.red') `
+		$executable (Join-Path $artifactDir 'compile.log')
 	Assert-NoCompilerWarnings $compileOutput 'Windows x86-64 View smoke'
 	if ($compileOutput -notmatch 'output file\s+: .*view-smoke\.exe') {
 		throw 'View executable output marker is missing'
@@ -174,11 +212,7 @@ quit/return either qt-run-failures = 0 [0][1]
 '@
 	Set-Content -LiteralPath $suiteSource -Value $baseSelfTest -Encoding UTF8
 
-	$suiteCompileArgs = @(
-		'/c', $Compiler, '-cqs', (Join-Path $root 'red.r'), '-r', '-d',
-		'-t', 'MSDOS-X86-64', '-o', $suiteExecutable, $suiteSource
-	)
-	$suiteCompileOutput = Invoke-CheckedProcess 'cmd.exe' $suiteCompileArgs $CompileTimeoutSeconds `
+	$suiteCompileOutput = Invoke-RedCompile $suiteSource $suiteExecutable `
 		(Join-Path $artifactDir 'base-self-test-compile.log')
 	Assert-NoCompilerWarnings $suiteCompileOutput 'Windows x86-64 View self-test'
 	if ($suiteCompileOutput -notmatch 'output file\s+: .*base-self-test-x64\.exe') {

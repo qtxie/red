@@ -54,7 +54,8 @@ script's output and sets `0`; and a step whose body is
 which is why the three Unix jobs were the only ones telling the truth -- they
 have been failing for real the whole time this looked healthy.
 
-The one job that noticed did it by accident. `Windows-X64-All` gated with
+The one job that noticed did it by accident. `Windows-X64-All` (since replaced by
+`View-Native`, see "Five Windows suites ran twice") gated with
 `if ($LASTEXITCODE -ne 0)`, and `$null -ne 0` is `$true`, so it printed five
 errors with nothing after the words: `run-red-unit-tests.red failed with exit
 code`. Same unset variable, opposite verdict -- which is the whole lesson: a
@@ -233,6 +234,95 @@ Two generations of `red-bootstrap-hybrid.red` have the same size but not the
 same bytes at 243 -- they differ at byte 315427, with and without this change
 -- so a byte-exact fixed point is not something to look for in the bootstrap
 compiler; CI checks `red-toolchain-hybrid.red` over three generations.
+
+### Five Windows suites ran twice, and the Win32 View backend ran nowhere
+
+`Windows-X64-All` drove all five `tools/self_hosting/run-red-*.red` runners
+through `tools/ci/run-suite.ps1` with an env block byte-identical to the six
+jobs above it, so every one of those suites compiled and ran a second time on
+every push -- 14m46s of duplicate. Its first step,
+`run-windows-x64-all-tests.ps1 -Phase Prepare`, built the dependencies of a
+`-Phase Native` run no workflow ever invokes.
+
+That job was also where a reader looking for View coverage found the wrong
+answer. `View-Headless` tests the engine through a stub backend; nothing in
+`windows.yml` reached `modules/view/backends/windows` -- the code that
+registers a window class, opens a window and measures text through GDI+. The
+suite for it existed (`tests/run-windows-x64-view-tests.ps1`, 107 tests / 507
+assertions) but drove its compile through `red.r` under Rebol, and the
+workflows are deliberately Rebol-free: Rebol cannot run on ARM64, so a harness
+written in it cannot be the harness everywhere Red runs.
+
+`Windows-X64-All` is gone and `View-Native` is in its place. The driver takes
+the toolchain directly (`-HybridCompiler`) and compiles both programs itself,
+so it needs no Prepare step and no Rebol. Measured locally against
+`build/red-toolchain/windows-x64/red-toolchain-262.exe`:
+`Windows x86-64 View passed: 3 smoke runs, 107 tests, 507 assertions.` The six
+jobs left are mode-distinct (dev, `-r`, `-d`), so `run-red-unit-tests.red` now
+runs three times per push instead of four.
+`tests/run-windows-x64-all-tests.ps1` stays as the local full-sequence driver;
+nothing in CI calls it.
+
+### A driver script's exit code depends on which PowerShell reads it
+
+The same trap as the harness above, from the other end. Nine of the
+`tests/run-*.ps1` drivers run their subject the same way: `Start-Process
+-PassThru` with no `-Wait`, a timed `WaitForExit(ms)`, then a read of
+`$process.ExitCode`. Measured on this box, one script, two shells, subject
+`cmd /c exit 3`:
+
+    version=7.6.5            timed=3      untimed=3
+    version=5.1.26100.9278   timed=<null> untimed=<null>
+
+Windows PowerShell 5.1 never fills in `.ExitCode` for a `-PassThru` object that
+was not waited on with `-Wait` -- the untimed `WaitForExit()` plus `Refresh()`
+do not fix it -- while pwsh 7 answers in both cases. So those drivers are only
+sound under `pwsh`, which is what every CI step asks for (`shell: pwsh`, 7.6.5
+on the runner). The gates were never vacuous: under 5.1 they go red on *every*
+run, passing or failing, because `$null -ne 0` is `$true`. Two consequences to
+keep straight:
+
+- A driver that reports an exit code of nothing -- and especially one that says
+  `reported no exit code`, which is what the null branch now calls it -- is
+  naming the shell, not the test. Re-run it with `pwsh` before believing any
+  failure it reports.
+- The untimed `WaitForExit()` before reading the status is still required, for
+  a different reason than the exit code: the timed overload returns as soon as
+  the process signals, before the *redirected* streams have been drained, and
+  the output file is what the View suite's assertions read.
+
+### The native View suite prints nothing for six minutes, and that is not a hang
+
+`base-self-test-x64.exe` measured on this box: **365 s wall, exit 0, `107 tests /
+507 assertions / 507 passed / 0 failed`** -- against a `$SuiteTimeoutSeconds` of
+900, so the budget has 2.5x headroom and the whole `View-Native` job (two
+compiles, three smoke runs, the suite) is about eight minutes.
+
+For all but the last instant of that, its log holds one line:
+
+    ~~~started test~~~ base-self-test
+
+because the child's stdout is *block-buffered* once it is a file, exactly as on
+Linux -- which is why this file already wraps a console in `stdbuf -oL` there. The
+bytes sit in the child's buffer and arrive in one write at exit. A driver that
+judges progress by the log's size will therefore call a healthy suite hung. The
+honest signals are elapsed time, CPU, and the side-effect files it writes as it
+goes (`testfile.txt`, `quick-test/runnable/`).
+
+What reading it the wrong way costs: `cdb -p <pid>` to ask "where is it" ends the
+debugee with `STATUS_DEBUGGER_INACTIVE` -- `0xC0000354`, which .NET hands back as
+`-1073740972` -- and the driver then reports
+
+    View self-test exited with -1073740972
+    ~~~started test~~~ base-self-test
+
+a red whose subject is a run that was fine, and whose stdout is the *truncated*
+buffer of that healthy run. It is not even informative while it lasts: the stack
+of the broken-in thread unwinds to one frame (`base_self_test_x64+0x6116d`) with
+no symbols, because a release Red binary has no frame chain Windows can walk. Do
+not attach a debugger to a suite child. Let the driver's own timeout fire -- it
+names the run and the limit -- and re-measure the wall time before touching the
+budget.
 
 # Hybrid Bootstrap Chain Discipline
 
@@ -2458,9 +2548,9 @@ fix `macOS-ARM64-View-Smoke` died with `Process completed with exit code 133`
 assertion -- `text alignment bounds are invalid: [[4 64] [28 37] [52 61] [4 29]]`
 (`tests/source/view/macos-arm64-smoke.red`), whose third condition asks a
 one-line top-aligned face for fewer dark rows than a two-line one and measures
-60 against 25. Deliberately left alone: crashes outrank pixels, and a suite that
-reports a number is already a different failure class than one that never
-returns.
+60 against 25. Deliberately left alone at the time: crashes outrank pixels, and a
+suite that reports a number is already a different failure class than one that
+never returns.
 
 Measured anyway, to bound what that number means (`build/tmp-obc/bounds-probe.red`
 rebuilds the suite's four faces exactly and prints the dark-pixel count per row;
@@ -2479,12 +2569,14 @@ ordered. CI's `middle`/`bottom`/`multiline` bounds are the same measurements at
 1x -- the runner has no Retina display, its image is 100x64, and a 10-row band
 is what Windows' 1x reading gives for one line of this font. Only the `top`
 face differs: at 1x it carries dark pixels down to the last row of the image,
-which neither the 2x Mac nor Windows shows. That is a macOS-backend paint
-question in the 1x path of a top-aligned `text` face -- real, unreproduced
-locally, and not what the crash work was for. (Windows is no oracle here
-either: its three bands are identical, so it ignores `para/v-align` for a `text`
-face altogether, which the Darwin backend honours.)
+which neither the 2x Mac nor Windows shows. (Windows is no oracle here either:
+its three bands are identical, so it ignores `para/v-align` for a `text` face
+altogether, which the Darwin backend honours.)
 
+**This corrects the claim that paragraph closed with**, which put `[4 64]` down
+to "a macOS-backend paint question in the 1x path of a top-aligned `text` face".
+It is the probe's own metric instead -- see "The View-smoke alignment metric was
+measuring any dark pixel, not the glyphs" below.
 Two controls say the change reaches nothing else. The chain step 263 -> 264 is a
 fixed point at 6,520,832 bytes with 25 differing bytes (PE timestamp, checksum,
 the two `movabs` build clocks, the output name's last digit, the two
@@ -2533,6 +2625,116 @@ Traps met while proving it, all of them costly:
   `LIBREDRT.DLL` where the release image embeds ~1.7 MB of runtime. The chain
   step is `-r` (target defaults to `MSDOS-X86-64`); check the dependency list
   before believing any generation-size drop.
+
+## The View-smoke alignment metric was measuring any dark pixel, not the glyphs
+
+The CI reading `[[4 64] [28 37] [52 61] [4 29]]` (the table under the Objective-C
+entry above) came out of `dark-text-bounds`, which took `min-y`/`max-y` over
+*any* pixel whose three channels were all below 128. One dark pixel anywhere
+below the glyphs therefore stretches the band to the last row of the image --
+which is exactly the shape of `[4 64]`: eleven rows of glyph ink and then a
+stray, indistinguishable from a band that reaches row 64.
+
+`ink-band` decides row by row instead. A row counts as glyph ink only if it
+carries at least `3 * scale` dark pixels and is not dark edge to edge, and every
+row it excludes travels with the band it came from, so a red run says what the
+ink looked like rather than asserting a defect:
+
+    vertical text alignment is invalid in a 64 face:
+      [4 15 0 40 440] -- unexplained dark rows [y count] [64 1] of a 100x64 capture
+
+That line is measured, and so is its own old reading: a synthetic 100x64 capture
+with an 11-row glyph band on rows 4..14 and one dark pixel on row 64 -- the shape
+CI's numbers describe -- reads `[4 64]` through `dark-text-bounds` and
+`[3 14 0 40 440]` through `ink-band`, the stray named as `[64 1]`. (The one-row
+shift is a change of coordinates, not a disagreement: the old pair was image rows,
+the new band is face rows, `(row - 1) / scale`, and it is compared against
+anchors taken from `face/size` all the way through, so the shift cancels.) The
+next hardware reading is therefore evidence either way -- the band comes out clean
+and the assertion passes, or the rows and their widths say what is really there.
+The measurement is split from the capture (`ink-band`
+takes an image and a scale, `text-band` takes a face and calls `to-image`) for
+that reason: `sed -n '371,458p' tests/source/view/macos-arm64-smoke.red` feeds a
+driver the shipped code itself, so a synthetic check cannot drift from the
+function it claims to test.
+
+The full-width half of the filter is defensive, not a diagnosis. An
+`NSBitmapImageRep` region that was never painted does flatten to black, and would
+read as one dark row per row of the image; CI's own numbers rule that out for
+*this* failure, because `middle [28 37]` and `bottom [52 61]` come from the same
+capture path and would each have read max 64 if their bands were unpainted.
+
+The same principle -- measure the thing the assertion is about -- reshaped the
+rest of the group:
+
+- Each group now measures its own dimension and compares like with like: the
+  v-align trio against `quarter`/`centre` anchors plus a `within?` tolerance of
+  one row on band *height* (a shifted band, not a stretched one) and on start
+  column; the h-align trio on band *width* and edges; `underline`/`strike`
+  against a new plain twin face by **ink** (`styled-band/5 > plain-band/5`,
+  because a decoration adds ink around the same glyphs and never takes any); and
+  multiline against a new single-line `base` twin that shares its `top` anchor.
+  The old fourth group asked a one-line face and a two-line face for different
+  `max-y` with no shared baseline at all, which is why it was the group that
+  could not tell a metric defect from a layout one.
+- The button group stopped being a pixel test. `to-image` on macOS cannot see a
+  native control's title: AppKit composites the control in its own layer, and the
+  two measured limits are recorded in the source where the decision is made -- a
+  white panel holding three dark-bezel buttons captures *not one pixel* that
+  differs from white, and a control's own capture is its bezel, whose colours
+  track the user's appearance setting. What Red does own is the layout VID asked
+  for (one `across` row, ordered, not overlapping) and a per-control capture
+  proving each face was created, told how to align, and paints: `scale >= 1`,
+  pixel size = face size at that scale, ink above a scale-squared floor.
+- `ink-count` compares against the capture's own top-left pixel rather than a
+  hard-coded white, so "did this face render" keeps its meaning when the user's
+  appearance is dark; and `backing-scale` guards a zero-height face, because a
+  face that was never laid out would otherwise die with a Math Error instead of a
+  named failure.
+
+Verified by running the shipped `ink-band` and `report-bands`, extracted from the
+source as above, against the shipped `dark-text-bounds` from `git show HEAD:` over
+the same four synthetic captures (the last one at 2x, the others at 1x):
+
+| capture | `dark-text-bounds` | `ink-band` | unexplained rows |
+|---|---|---|---|
+| 11-row band + one pixel on the last row | `[4 64]` | `[3 14 0 40 440]` | `[64 1]` |
+| same band + three never-painted rows | `[1 14]` | `[3 14 0 40 440]` | `[1 100 2 100 3 100]` |
+| one speck, nothing else | `[64 64]` | `[0 0 0 0 0]` | `[64 1]` |
+| 2x band + a two-pixel corner | `[1 30]` | `[3 15 0 40 1840]` | `[1 2]` |
+
+The first row is the CI symptom reproduced from its shape, and the metric is what
+moves. The third is the case a min/max cannot express: one dark pixel was a
+61-row band there and is a zero band now, so "nothing rendered" and "one stray"
+are no longer the same number. The fourth is why `scale` is divided out -- the 2x
+band comes home in face coordinates (`3..15`, against the 1x reading's `3..14`;
+the extra row is that capture's odd pixel count, not a scaling error) -- which is
+what lets one assertion mean the same thing on a Retina display and on CI's
+headless 1x runner.
+
+Not yet re-measured on hardware: the `macmini` tunnel is down, so CI's next run is
+the first real capture under the new metric. What is measured is the reading, from
+`to-image`'s own output type -- both metrics consume a Red `image!`, so the
+comparison does not depend on how it was produced -- and the outcome of a real run
+is in its message, not in the colour of the job.
+
+That message has exactly one route out of a GUI bundle, and knowing it saves a
+round trip. The macOS job runs the `.app`'s executable with no
+`RED_VIEW_TEST_OUTPUT_DIR`, so the smoke file's `either string?` fallbacks put all
+three of its outputs at *relative* paths -- and `working-directory` is
+`build/macos-arm64-view-tests`, so they land there:
+
+| file | who reads it |
+|---|---|
+| `macos-arm64-view-smoke.error` | the job's own `cat`, on a non-zero exit |
+| `macos-arm64-view-smoke.png` | only the `if: failure()` artifact |
+| `macos-arm64-view-smoke.ok` | `test "$(cat ...)" = MACOS-ARM64-VIEW-OK` |
+
+`print` goes to stdout, and a GUI process launched from a CI shell has no stdout
+worth reading -- so the band numbers a run measured are reachable *only* through
+`fail`'s `write error-file`. That is why the assertions put their whole case in one
+string via `report-bands` instead of printing progress: a red job's log is the
+error file plus the PNG, and nothing else.
 
 ## A queue cell read without an acquire loses an item, and the single consumer then spins forever
 

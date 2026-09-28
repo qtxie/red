@@ -149,7 +149,16 @@ jobs:
           tools/self_hosting/run-red-system-tests.red `
           tools/self_hosting/run-red-system-compiler-tests.red
 
-  Windows-X64-All:
+  # The native counterpart of View-Headless: the headless backend checks the
+  # engine's logic through a stub, and this one drives the Win32 backend for
+  # real -- registers a window class, opens a window, measures text through
+  # GDI+, and runs the whole `base-self-test` suite against it. Nothing else
+  # here reaches `modules/view/backends/windows`.
+  #
+  # It takes the toolchain directly (-HybridCompiler) rather than red.r under
+  # Rebol, so it needs none of the dependencies the all-tests Prepare phase
+  # builds: the driver compiles and checks both programs itself.
+  View-Native:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
@@ -159,36 +168,18 @@ jobs:
         platform: windows-x64
         source: ${{ inputs.source || 'seed' }}
         seed-tag: ${{ inputs.seed-tag || 'ci-seed' }}
-    - name: prepare Windows x86-64 native test dependencies
+    - name: run the native Windows x86-64 View suite
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        # -HybridCompiler makes the canary compile go through the toolchain
-        # directly; -Compiler is still resolved, but only the Rebol fallback
-        # path would use it.
-        & .\tests\run-windows-x64-all-tests.ps1 -Phase Prepare `
-          -Compiler build/toolchain/bin/red-toolchain.exe `
-          -HybridCompiler build/toolchain/bin/red-toolchain.exe
-
-    - name: run every Red suite
-      shell: pwsh
-      env:
-        RED_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_COMPILER_ARGUMENTS: -t MSDOS-X86-64
-        RED_SYSTEM_COMPILER: build/toolchain/bin/red-toolchain.exe
-        RED_SYSTEM_COMPILER_ARGUMENTS: -t MSDOS-X86-64
-      run: |
-        tools/ci/run-suite.ps1 `
-          tools/self_hosting/run-red-unit-tests.red `
-          tools/self_hosting/run-red-system-tests.red `
-          tools/self_hosting/run-red-system-compiler-tests.red `
-          tools/self_hosting/run-red-compiler-tests.red `
-          tools/self_hosting/run-red-view-headless-tests.red
+        & .\tests\run-windows-x64-view-tests.ps1 `
+          -HybridCompiler build/toolchain/bin/red-toolchain.exe `
+          -KeepArtifactsOnFailure
 
     - uses: actions/upload-artifact@v7
       if: failure()
       with:
-        name: windows-x64-all-test-logs
+        name: windows-x64-view-logs
         if-no-files-found: ignore
         path: |
-          build/self-hosting/**
+          build/windows-x64-view-tests/**

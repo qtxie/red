@@ -52,15 +52,14 @@ tabs-face: none
 left-align-face: none
 center-align-face: none
 right-align-face: none
+plain-styled-face: none
 styled-face: none
 top-align-face: none
 middle-align-face: none
 bottom-align-face: none
+single-line-base-face: none
 multiline-align-face: none
 button-align-panel: none
-button-top-left: none
-button-middle-center: none
-button-bottom-right: none
 scroll-face: none
 calendar-face: none
 canvas: none
@@ -137,18 +136,20 @@ result: try/all [
 		left-align-face: text "ARM64" 120x24 white left font-color black
 		center-align-face: text "ARM64" 120x24 white center font-color black
 		right-align-face: text "ARM64" 120x24 white right font-color black
-		styled-face: text "Styled" 120x24 white underline strike
+		plain-styled-face: text "Styled" 120x24 white font-color black
+		styled-face: text "Styled" 120x24 white underline strike font-color black
 		return
 		top-align-face: text "Vertical" 100x64 white left top font-color black
 		middle-align-face: text "Vertical" 100x64 white left middle font-color black
 		bottom-align-face: text "Vertical" 100x64 white left bottom font-color black
-		multiline-align-face: base "Line one^/Line two" 100x64 white left top font-color black
+		single-line-base-face: base "Vertical" 100x64 white left top font-color black
+		multiline-align-face: base "Vertical^/Vertical" 100x64 white left top font-color black
 		return
 		button-align-panel: panel 340x90 [
 			across
-			button-top-left: button "X" 100x70 left top
-			button-middle-center: button "X" 100x70 center middle
-			button-bottom-right: button "X" 100x70 right bottom
+			button "X" 100x70 left top
+			button "X" 100x70 center middle
+			button "X" 100x70 right bottom
 		]
 		return
 		base-text-face: base "Base text" 160x44 white font-color black
@@ -260,65 +261,92 @@ unless window/size = target-size [
 	]
 ]
 
-button-dark-bounds: func [
-	image [image!]
-	face [object!]
-	parent [object!]
-	/local scale-x scale-y margin-x margin-y left top right bottom min-x min-y max-x max-y xy pixel
+backing-scale: func [
+	{Retina factor a face capture is reported at, from its pixel height.}
+	image	[image!]
+	face	[object!]
+	return:	[integer!]
 ][
-	scale-x: image/size/x / parent/size/x
-	scale-y: image/size/y / parent/size/y
-	margin-x: to integer! (10 * scale-x)
-	margin-y: to integer! (10 * scale-y)
-	left: to integer! (face/offset/x * scale-x)
-	top: to integer! (face/offset/y * scale-y)
-	right: left + to integer! (face/size/x * scale-x)
-	bottom: top + to integer! (face/size/y * scale-y)
-	min-x: right
-	min-y: bottom
-	max-x: left
-	max-y: top
+	either zero? face/size/y [0][to integer! (image/size/y / face/size/y)]
+]
+
+ink-count: func [
+	{How many pixels of an image differ from its top-left one.}
+	image	[image!]
+	return:	[integer!]
+	/local x y base pixel xy changed
+][
+	base: image/(1x1)
+	changed: 0
 	repeat y image/size/y [
 		repeat x image/size/x [
-			if all [
-				x > (left + margin-x) x < (right - margin-x)
-				y > (top + margin-y) y < (bottom - margin-y)
-			][
-				xy: as-pair x y
-				pixel: image/:xy
-				if all [pixel/1 < 64 pixel/2 < 64 pixel/3 < 64][
-					min-x: min min-x x
-					min-y: min min-y y
-					max-x: max max-x x
-					max-y: max max-y y
-				]
+			xy: as-pair x y
+			pixel: image/:xy
+			unless all [pixel/1 = base/1 pixel/2 = base/2 pixel/3 = base/3][
+				changed: changed + 1
 			]
 		]
 	]
-	reduce [min-x - left min-y - top max-x - left max-y - top]
+	changed
 ]
 
-show button-align-panel
-repeat count 5 [do-events/no-wait wait 0.01]
-button-image: to-image button-align-panel
-button-top-left-bounds: button-dark-bounds button-image button-top-left button-align-panel
-button-middle-center-bounds: button-dark-bounds button-image button-middle-center button-align-panel
-button-bottom-right-bounds: button-dark-bounds button-image button-bottom-right button-align-panel
-unless all [
-	button-top-left-bounds/1 < button-middle-center-bounds/1
-	button-middle-center-bounds/1 < button-bottom-right-bounds/1
-	button-top-left-bounds/2 < button-middle-center-bounds/2
-	button-middle-center-bounds/2 < button-bottom-right-bounds/2
+check-control: func [
+	{A native control must capture at its face's size and show that it draws.}
+	face	[object!]
+	label	[string!]
+	/local image scale ink
 ][
-	fail rejoin [
-		"button alignment bounds are invalid: "
-		mold reduce [
-			button-top-left-bounds
-			button-middle-center-bounds
-			button-bottom-right-bounds
+	image: to-image face
+	scale: backing-scale image face
+	ink: ink-count image
+	unless all [
+		scale >= 1
+		image/size/x = (face/size/x * scale)			;-- x and y report one factor
+		ink > (20 * scale * scale)					;-- a bezel paints rows, not a stray pixel
+	][
+		fail rejoin [
+			label " control capture is invalid: image=" mold image/size
+			" face=" mold face/size " scale=" scale " ink=" ink
 		]
 	]
 ]
+
+;-- AppKit composites a native control in its own layer, not in the face's view,
+;-- so to-image on macOS has two measured limits: a container capture carries only
+;-- the container's own drawing (a white panel holding three dark-bezel buttons
+;-- captures not one pixel that differs from white), and a control's own capture is
+;-- its bezel, whose colours track the user's appearance setting. No appearance-
+;-- independent pixel of a button title reaches Red here, and para.reds records the
+;-- backend's other half: NSButtonCell centers its title vertically whatever Red
+;-- asks, and a rounded bezel ignores the cell's alignment. Title placement is
+;-- therefore tested where Red draws the glyphs itself, in the text-band groups
+;-- below. A native control answers for the layout VID gave it, and for a capture
+;-- proving it was created, told how to align -- change-para's button arm runs at
+;-- make-view for all three of left, center and right -- and paints.
+show button-align-panel
+repeat count 5 [do-events/no-wait wait 0.01]
+pane: button-align-panel/pane
+unless all [block? pane 3 = length? pane][
+	fail either block? pane [
+		rejoin ["button panel pane holds " length? pane " faces, not three"]
+	]["button panel has no pane block"]
+]
+walk: next pane
+while [not tail? walk][
+	previous: walk/-1
+	item: walk/1
+	unless all [
+		item/offset/y = previous/offset/y					;-- one across row, on one line
+		item/offset/x >= (previous/offset/x + previous/size/x)	;-- ordered, not overlapping
+	][
+		fail rejoin [
+			"pane faces are not an across row: "
+			mold reduce [previous/offset previous/size item/offset item/size]
+		]
+	]
+	walk: next walk
+]
+repeat i 3 [check-control pane/:i rejoin ["pane face " i]]
 
 snapshot: to-image canvas
 unless all [image? snapshot snapshot/size/x > 0 snapshot/size/y > 0][
@@ -329,50 +357,212 @@ corner: snapshot/(1x1)
 center: snapshot/(as-pair (snapshot/size/x / 2) (snapshot/size/y / 2))
 if corner = center [fail "Draw capture appears blank"]
 
-text-visible?: func [face [object!] /local image background changed xy x y][
+text-visible?: func [
+	face	[object!]
+	return:	[logic!]
+	/local image
+][
 	image: to-image face
-	background: image/(1x1)
-	changed: 0
-	repeat y image/size/y [
-		repeat x image/size/x [
-			xy: as-pair x y
-			if image/:xy <> background [changed: changed + 1]
-		]
-	]
-	changed > 10
+	(ink-count image) > 10
 ]
 unless text-visible? base-text-face [fail "base face text was not rendered"]
 unless text-visible? image-text-face [fail "image face text was not rendered"]
 
-dark-text-bounds: function [face [object!] /local image min-y max-y xy pixel][
-	image: to-image face
-	min-y: image/size/y
-	max-y: 0
+ink-band: function [
+	{Extents of the glyph ink in a face capture, in the face's own coordinates.}
+	image	[image!]
+	scale	[integer!]	"Retina factor the capture is reported at"
+	return: [block!] "top bottom left right, ink, then the dark rows that explain neither and the capture size"
+	/local min-width top bottom left right ink unexplained xy row-left row-right count x y pixel
+][
+	min-width: to integer! (3 * scale)
+	;-- AppKit leaves one- and two-pixel dark corners at the edge of the drawn
+	;-- rectangle; a glyph row is wider than that by a margin.
+	top: 0
+	bottom: 0
+	left: image/size/x
+	right: 0
+	ink: 0
+	unexplained: copy []
 	repeat y image/size/y [
+		count: 0
+		row-left: 0
+		row-right: 0
 		repeat x image/size/x [
 			xy: as-pair x y
 			pixel: image/:xy
 			if all [pixel/1 < 128 pixel/2 < 128 pixel/3 < 128][
-				min-y: min min-y y
-				max-y: max max-y y
+				count: count + 1
+				if zero? row-left [row-left: x]
+				row-right: x
+			]
+		]
+		either all [count >= min-width count < image/size/x][
+			if zero? top [top: y]
+			bottom: y
+			left: min left row-left
+			right: max right row-right
+			ink: ink + count
+		][
+			;-- a row carrying dark pixels that no glyph explains is either a
+			;-- speck at the edge of the rectangle (count below `min-width`) or a
+			;-- band the capture never painted (count = the whole width, which
+			;-- flattens to black). Either way it is kept out of the band and
+			;-- reported with it, so a red run says what the ink looked like.
+			if all [count > 0 (length? unexplained) < 24][
+				append unexplained reduce [y count]
 			]
 		]
 	]
-	reduce [min-y max-y]
+	if zero? bottom [return reduce [0 0 0 0 0 unexplained image/size]]
+	reduce [
+		to integer! ((top - 1) / scale)
+		to integer! (bottom / scale)
+		to integer! ((left - 1) / scale)
+		to integer! (right / scale)
+		ink
+		unexplained
+		image/size
+	]
 ]
 
-top-bounds: dark-text-bounds top-align-face
-middle-bounds: dark-text-bounds middle-align-face
-bottom-bounds: dark-text-bounds bottom-align-face
-multiline-bounds: dark-text-bounds multiline-align-face
+text-band: function [
+	{Extents of the glyphs a face draws, in that face's own coordinates.}
+	face [object!]
+	return: [block!]
+	/local image scale
+][
+	image: to-image face
+	scale: backing-scale image face
+	ink-band image either zero? scale [1][scale]
+]
+
+report-bands: func [
+	{The bands that were measured, and whatever dark rows they did not explain.}
+	bands [block!]
+	return: [string!]
+	/local out walk band
+][
+	out: copy ""
+	walk: bands
+	while [not tail? walk][
+		band: walk/1
+		append out rejoin [newline "  " mold copy/part band 5]
+		if not empty? band/6 [
+			append out rejoin [" -- unexplained dark rows [y count] " mold band/6
+				" of a " mold band/7 " capture"]
+		]
+		walk: next walk
+	]
+	out
+]
+
+band-height: func [band [block!] return: [integer!]][band/2 - band/1]
+band-width: func [band [block!] return: [integer!]][band/4 - band/3]
+within?: func [
+	"Whether two measurements agree to within a number of rows or columns."
+	a [integer!]
+	b [integer!]
+	tolerance [integer!]
+	return: [logic!]
+	/local delta
+][
+	delta: a - b
+	if delta < 0 [delta: negate delta]
+	delta <= tolerance
+]
+
+show [
+	left-align-face center-align-face right-align-face
+	plain-styled-face styled-face
+	top-align-face middle-align-face bottom-align-face
+	single-line-base-face multiline-align-face
+]
+repeat count 5 [do-events/no-wait wait 0.01]
+
+face-height: top-align-face/size/y
+centre: face-height / 2
+quarter: face-height / 4
+top-band: text-band top-align-face
+middle-band: text-band middle-align-face
+bottom-band: text-band bottom-align-face
+top-height: band-height top-band
+middle-height: band-height middle-band
+bottom-height: band-height bottom-band
 unless all [
-	top-bounds/1 < middle-bounds/1
-	middle-bounds/1 < bottom-bounds/1
-	(multiline-bounds/2 - multiline-bounds/1) > (top-bounds/2 - top-bounds/1)
+	top-height > 0
+	middle-height > 0
+	bottom-height > 0							;-- an unmeasured face is an unrendered one
+	top-band/1 < quarter							;-- `top` holds the band against the upper edge
+	middle-band/1 < centre
+	middle-band/2 > centre						;-- `middle` straddles the vertical centre
+	(face-height - bottom-band/2) < quarter		;-- `bottom` holds it against the lower edge
+	within? top-height middle-height 1
+	within? middle-height bottom-height 1		;-- same glyphs: shifted, not stretched
+	within? top-band/3 middle-band/3 1
+	within? middle-band/3 bottom-band/3 1		;-- `left` puts all three at one column
 ][
 	fail rejoin [
-		"text alignment bounds are invalid: "
-		mold reduce [top-bounds middle-bounds bottom-bounds multiline-bounds]
+		"vertical text alignment is invalid in a " mold face-height " face: "
+		report-bands reduce [top-band middle-band bottom-band]
+	]
+]
+
+face-width: left-align-face/size/x
+edge: face-width / 4
+left-band: text-band left-align-face
+center-band: text-band center-align-face
+right-band: text-band right-align-face
+left-span: band-width left-band
+center-span: band-width center-band
+right-span: band-width right-band
+unless all [
+	left-span > 0
+	center-span > 0
+	right-span > 0
+	left-band/3 < center-band/3
+	center-band/3 < right-band/3
+	within? left-span center-span 2				;-- same glyphs: shifted, not stretched
+	within? center-span right-span 2
+	left-band/3 < edge							;-- `left` starts at the left edge
+	(face-width - right-band/4) < edge			;-- `right` ends at the right edge
+][
+	fail rejoin [
+		"horizontal text alignment is invalid in a " mold face-width " wide face: "
+		report-bands reduce [left-band center-band right-band]
+	]
+]
+
+plain-band: text-band plain-styled-face
+styled-band: text-band styled-face
+unless all [
+	(band-height plain-band) > 0
+	;-- an underline and a strike add ink around the same glyphs, they never
+	;-- take any away, so a face that ignores both measures exactly its plain twin
+	styled-band/5 > plain-band/5
+	styled-band/3 <= plain-band/3
+	styled-band/4 >= plain-band/4
+][
+	fail rejoin [
+		"underline and strike were not rendered: "
+		report-bands reduce [plain-band styled-band]
+	]
+]
+
+single-band: text-band single-line-base-face
+multi-band: text-band multiline-align-face
+single-height: band-height single-band
+multi-height: band-height multi-band
+unless all [
+	single-height > 0
+	multi-height > single-height					;-- two lines are taller than one
+	within? multi-band/1 single-band/1 1			;-- their first lines share the `top` anchor
+	multi-band/2 > single-band/2					;-- and the second line falls below the first
+	within? multi-band/3 single-band/3 1
+][
+	fail rejoin [
+		"multiline text layout is invalid: "
+		report-bands reduce [single-band multi-band]
 	]
 ]
 
